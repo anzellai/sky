@@ -11,6 +11,7 @@ module Sky.Generate.Go.Record
     , buildCodegenEnv
     , withFuncTypes
     , withInferredSigs
+    , withDepFieldIndex
     , withRecordAliases
     , collectRecordAliases
     , withDepArities
@@ -138,6 +139,35 @@ withInferredSigs :: Map.Map String ([String], [String], String) -> CodegenEnv ->
 withInferredSigs sigs env = env
     { _cg_funcInferredSigs = Map.union sigs (_cg_funcInferredSigs env)
     }
+
+
+-- | Merge dep-module aliases into the field registry so record
+-- literals in the entry module whose field set matches a dep alias
+-- resolve to the typed `<Prefix>_<Name>_R` struct rather than
+-- degrading to an anonymous struct.
+--
+-- The caller passes (modPrefix, aliases) pairs. We key the extra
+-- registry entries by the module-prefixed name so the struct-literal
+-- codegen emits `State_Model_R{...}` instead of `Model_R{...}`.
+withDepFieldIndex :: [(String, Map.Map String Can.Alias)] -> CodegenEnv -> CodegenEnv
+withDepFieldIndex pairs env =
+    let extra = Map.fromList
+            [ (Set.fromList fieldNames, prefix ++ "_" ++ aliasName)
+            | (prefix, aliases) <- pairs
+            , (aliasName, Can.Alias _ body) <- Map.toList aliases
+            , Just fieldNames <- [recordFieldNames body]
+            ]
+    in env { _cg_fieldIndex = Map.union (_cg_fieldIndex env) extra
+           -- Also the dep aliases so lookupAlias inside codegen finds
+           -- field types for `any(p0).(string)` coercion.
+           , _cg_aliases = Map.union
+                (Map.fromList
+                    [ (prefix ++ "_" ++ aliasName, alias)
+                    | (prefix, aliases) <- pairs
+                    , (aliasName, alias) <- Map.toList aliases
+                    ])
+                (_cg_aliases env)
+           }
 
 
 collectRecordAliases :: Map.Map String Can.Alias -> Set.Set String

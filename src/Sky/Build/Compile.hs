@@ -340,7 +340,9 @@ continueCompile config _entryPath outDir moduleOrder srcHash = do
                     Map.union (Rec._cg_funcInferredSigs e) depInferredSigs
                 }
             putStrLn "-- Generating Go"
-            let goCode = generateGoMulti canMod entrySrcMod config types depDecls depRecAliases depArities depParamTypes depRetTypes depInferredParams depInferredRets depInferredSigs
+            let depAliasPairs = [ (map (\c -> if c == '.' then '_' else c) mn, Can._aliases depMod)
+                                | (mn, depMod) <- validDeps ]
+                goCode = generateGoMulti canMod entrySrcMod config types depDecls depRecAliases depArities depParamTypes depRetTypes depInferredParams depInferredRets depInferredSigs depAliasPairs
             createDirectoryIfMissing True outDir
             let mainGoPath = outDir </> "main.go"
             writeFile mainGoPath goCode
@@ -895,8 +897,8 @@ generateAliasForDep userDefs modPrefix (aliasName, Can.Alias _vars body) =
 
 
 -- | Generate Go with merged dependency declarations
-generateGoMulti :: Can.Module -> Src.Module -> Toml.SkyConfig -> Solve.SolvedTypes -> [GoIr.GoDecl] -> Set.Set String -> Map.Map String Int -> Map.Map String [String] -> Map.Map String String -> Map.Map String [String] -> Map.Map String String -> Map.Map String ([String], [String], String) -> String
-generateGoMulti canMod srcMod config solvedTypes depDecls depRecAliases depArities depParamTypes depRetTypes extraInferredParamTypes extraInferredRetTypes extraInferredSigs =
+generateGoMulti :: Can.Module -> Src.Module -> Toml.SkyConfig -> Solve.SolvedTypes -> [GoIr.GoDecl] -> Set.Set String -> Map.Map String Int -> Map.Map String [String] -> Map.Map String String -> Map.Map String [String] -> Map.Map String String -> Map.Map String ([String], [String], String) -> [(String, Map.Map String Can.Alias)] -> String
+generateGoMulti canMod srcMod config solvedTypes depDecls depRecAliases depArities depParamTypes depRetTypes extraInferredParamTypes extraInferredRetTypes extraInferredSigs depAliasPairs =
     let
         imports = unsafePerformIO $ do
             -- T2/T6: register entry-module + dep-module typed function
@@ -907,15 +909,42 @@ generateGoMulti canMod srcMod config solvedTypes depDecls depRecAliases depAriti
             -- HM-inferred, dep types) so the final env is deterministic
             -- regardless of when `imports` is forced relative to
             -- depDecls during goCode rendering.
-            let (entryParamTys, entryRetTys) = collectFuncTypes "" canMod
+            -- Register HM-inferred sigs for ENTRY module functions too
+            -- so call-site coercion (coerceCallArgs / coerceArg) sees
+            -- the typed params. Without this, calling an entry-module
+            -- typed function from another entry function skips
+            -- coercion and Go rejects any→concrete.
+            let entryInferredSigs = Map.fromList
+                    [ (n, splitInferredSig (countParamsFor n canMod) ty)
+                    | (n, ty) <- Map.toList solvedTypes
+                    , case Map.lookup n (declsByName canMod) of
+                        Just (Can.TypedDef{}) -> False  -- annotation path
+                        _                     -> True
+                    ]
+                entryInferredParams = Map.map (\(_, ps, _) -> ps) entryInferredSigs
+                entryInferredRets   = Map.map (\(_, _, r) -> r) entryInferredSigs
+            -- Gather the FULL record-alias set (entry + dep modules,
+            -- prefixed and unprefixed forms) so collectFuncTypesWith's
+            -- safeReturnTypeWith resolves `Piece` → `Chess_Piece_Piece_R`
+            -- instead of degrading to `any`. Without this, annotated
+            -- entry functions taking record types get `any` params.
+            prevEnv <- readIORef globalCgEnv
+            let allRecAliases = Set.union depRecAliases
+                    (Set.union (Rec.collectRecordAliases (Can._aliases canMod))
+                               (Rec._cg_recordAliases prevEnv))
+                (entryParamTys, entryRetTys) = collectFuncTypesWith allRecAliases "" canMod
                 allParamTys = Map.unions
-                    [ entryParamTys, depParamTypes, extraInferredParamTypes ]
+                    [ entryParamTys, entryInferredParams
+                    , depParamTypes, extraInferredParamTypes ]
                 allRetTys   = Map.unions
-                    [ entryRetTys, depRetTypes, extraInferredRetTypes ]
-                cgEnv = Rec.withInferredSigs extraInferredSigs
+                    [ entryRetTys, entryInferredRets
+                    , depRetTypes, extraInferredRetTypes ]
+                cgEnv = Rec.withInferredSigs
+                          (Map.union extraInferredSigs entryInferredSigs)
                       $ Rec.withFuncTypes allParamTys allRetTys
                       $ Rec.withDepArities depArities
                       $ Rec.withRecordAliases depRecAliases
+                      $ Rec.withDepFieldIndex depAliasPairs
                       $ Rec.buildCodegenEnv solvedTypes canMod
             writeIORef globalCgEnv cgEnv
             return $ collectGoImports canMod srcMod
@@ -1239,24 +1268,23 @@ generateDef def solvedTypes =
                 (n, map fst typedPats, expr)
             Can.DestructDef _ _ -> ("__destruct__", [], error "unreachable: destructdef has no toplevel codegen")
 
-        -- T3 (narrow): prefer the user's annotation (carried by
-        -- TypedDef) and fall back to HM-inferred type from the solver
-        -- map. Both routed through safeReturnType which rejects types
-        -- that can't be safely emitted yet (user ADT names, record
-        -- aliases — need T4 for polymorphic, T7 for user structs).
+        -- Prefer the user's annotation when present, else use HM-
+        -- inferred type. TVars in the inferred type become Go type
+        -- params (T4b) via splitInferredSig.
         mSolvedType = Map.lookup name solvedTypes
         mAnnotTy = case def of
             Can.TypedDef _ _ _ _ ty -> Just ty
             _                       -> Nothing
         goParams = map patternToParam params
-        goRetType = case (mAnnotTy, mSolvedType) of
-            (Just funcType, _) ->
-                let (_argTypes, retType) = splitFuncType (length params) funcType
-                in safeReturnType retType
-            (_, Just funcType) ->
-                let (_argTypes, retType) = splitFuncType (length params) funcType
-                in safeReturnType retType
-            _ -> "any"
+        -- Annotation case: TypedDef's 5th field is the RETURN type
+        -- only; arg types live alongside patterns. For non-TypedDef,
+        -- split the full inferred function type.
+        (entryTypeParams, entryParamGoTys, goRetType) = case (def, mAnnotTy, mSolvedType) of
+            (Can.TypedDef _ _ typedPats _ retTy, _, _) ->
+                ([], map (safeReturnType . snd) typedPats, safeReturnType retTy)
+            (_, _, Just funcType) ->
+                splitInferredSig (length params) funcType
+            _ -> ([], replicate (length params) "any", "any")
         isTyped = case mSolvedType of
             Just funcType ->
                 let (argTypes, retType) = splitFuncType (length params) funcType
@@ -1271,16 +1299,20 @@ generateDef def solvedTypes =
         let rawBody = if isTyped
                 then exprToGoTypedWithRet solvedTypes goRetType body
                 else exprToGo body
-            -- Wrap typed returns in any()-coerced assertion so we match
-            -- Go's return type even when the body expression produces
-            -- `any` (common case) or a concrete typed value.
             bodyExpr = wrapTypedReturn goRetType rawBody
             (goParams', destructStmts) = destructureParams params
+            -- Replace each param's Go type with the typed form (from
+            -- annotation or HM inference). destructureParams gave us
+            -- the parameter patterns with `"any"` types by default.
+            typedGoParams = zipWith
+                (\(GoIr.GoParam pn _) ty -> GoIr.GoParam pn ty)
+                goParams'
+                (entryParamGoTys ++ repeat "any")
         in
         [ GoIr.GoDeclFunc GoIr.GoFuncDecl
             { GoIr._gf_name = goSafeName name
-            , GoIr._gf_typeParams = []
-            , GoIr._gf_params = goParams'
+            , GoIr._gf_typeParams = [ (tp, "any") | tp <- entryTypeParams ]
+            , GoIr._gf_params = typedGoParams
             , GoIr._gf_returnType = goRetType
             , GoIr._gf_body = destructStmts ++ [GoIr.GoReturn bodyExpr]
             }
@@ -1890,7 +1922,17 @@ exprToGo (A.At _ expr) = case expr of
                                      (coerceCallArgs qualName args)
             _ ->
                 let goFunc = exprToGo func
-                    goArgs = map exprToGo args
+                    -- Same-module local function calls (`Can.VarLocal`)
+                    -- benefit from coerceCallArgs too so typed callees
+                    -- get their args asserted at call time. Look up the
+                    -- bare name against the entry-module entries we've
+                    -- registered in env._cg_funcParamTypes.
+                    localQual = case A.toValue func of
+                        Can.VarLocal n -> n
+                        _              -> ""
+                    goArgs = if not (null localQual)
+                        then coerceCallArgs localQual args
+                        else map exprToGo args
                 in if isDirectCallable func
                     then GoIr.GoCall goFunc goArgs
                     else GoIr.GoCall (GoIr.GoQualified "rt" "SkyCall")
@@ -2735,26 +2777,13 @@ exprToMainStmtsTyped types (A.At _ expr) = case expr of
         [GoIr.GoAssign "_" (exprToGoMain types (A.At A.one expr))]
 
 
--- | Generate Go for main body expressions — uses typed path for function calls
--- that target typed functions, any-typed for everything else
+-- | Generate Go for main body expressions. Delegates to the standard
+-- exprToGo so VarTopLevel/VarCtor call-site coercion kicks in at main
+-- call sites just like anywhere else — main used to have a parallel
+-- codegen path that skipped coerceCallArgs, causing typed callee args
+-- to fail at go build when called from `main`.
 exprToGoMain :: Solve.SolvedTypes -> Can.Expr -> GoIr.GoExpr
-exprToGoMain types expr@(A.At _ inner) = case inner of
-    -- For function calls: if the target function is fully typed,
-    -- generate typed arguments
-    Can.Call func args ->
-        let goFunc = exprToGoMain types func
-            goArgs = map (exprToGoMain types) args
-        in GoIr.GoCall goFunc goArgs
-
-    -- Negate: use direct Go negate if we can determine the type
-    Can.Negate e -> GoIr.GoUnary "-" (exprToGoMain types e)
-
-    -- Binop: use direct Go operators when possible
-    Can.Binop op _ _ _ left right ->
-        binopToGo op left right  -- reuse existing binop (still any-typed for main)
-
-    -- Fall back to any-typed for everything else
-    _ -> exprToGo expr
+exprToGoMain _types = exprToGo
 
 
 -- | Legacy untyped main stmts (kept for reference)
