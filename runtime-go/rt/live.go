@@ -699,7 +699,22 @@ type liveApp struct {
 	routes        []liveRoute
 	notFound      any
 	guard         any // Maybe (Msg -> Model -> Result String ()) — nil = no guard
+	api           []apiRoute  // REST-style custom handlers alongside Live pages
+	staticDir     string      // Serves files from this directory under /static/…
+	staticURL     string      // URL mount prefix (default "/static")
 	sessions      sync.Map // sessionID -> *liveSession
+}
+
+
+// apiRoute represents a custom handler mounted outside the TEA cycle.
+// Created from Sky code via `Live.api "GET /webhook/stripe" handleStripe`.
+// The Sky-side handler has signature `Request -> Task String Response`
+// (the same shape Sky.Http.Server uses). The runtime constructs the
+// request map and serialises the response.
+type apiRoute struct {
+	method  string // "GET", "POST", ...  or "" for any
+	pattern string // /path with :param placeholders
+	handler any    // Sky function Request -> Task String Response
 }
 
 type liveRoute struct {
@@ -710,6 +725,109 @@ type liveRoute struct {
 // Route constructor
 func Live_route(path any, page any) any {
 	return liveRoute{path: fmt.Sprintf("%v", path), page: page}
+}
+
+
+// Live_api registers a custom HTTP handler outside the TEA cycle. Used
+// for OAuth callbacks, webhooks, REST endpoints that coexist with a
+// Live app. The Sky-side handler has signature
+//   Request -> Task String Response
+// mirroring Sky.Http.Server.
+//
+// `spec` is a pattern string like "GET /webhook/stripe" or
+// "POST /api/upload". No method prefix = match any method.
+func Live_api(spec any, handler any) any {
+	s := fmt.Sprintf("%v", spec)
+	method, pattern := "", s
+	if idx := strings.Index(s, " "); idx > 0 {
+		method = s[:idx]
+		pattern = strings.TrimSpace(s[idx+1:])
+	}
+	return apiRoute{method: method, pattern: pattern, handler: handler}
+}
+
+
+// dispatchRoot routes a request to:
+//   1. a matching apiRoute (REST handler), OR
+//   2. handleInitial (Live page render).
+func (app *liveApp) dispatchRoot(w http.ResponseWriter, r *http.Request) {
+	for _, ar := range app.api {
+		if ar.method != "" && !strings.EqualFold(ar.method, r.Method) {
+			continue
+		}
+		if params, ok := matchRoute(ar.pattern, r.URL.Path); ok {
+			app.serveAPI(ar, params, w, r)
+			return
+		}
+	}
+	if r.Method == http.MethodGet || r.Method == http.MethodHead {
+		app.handleInitial(w, r)
+		return
+	}
+	http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+}
+
+
+// serveAPI calls the Sky handler with a Request-like map and renders
+// the returned Response.
+func (app *liveApp) serveAPI(ar apiRoute, params []string, w http.ResponseWriter, r *http.Request) {
+	body, _ := io.ReadAll(http.MaxBytesReader(w, r.Body, 10<<20))
+	req := map[string]any{
+		"method": r.Method,
+		"path":   r.URL.Path,
+		"query":  r.URL.RawQuery,
+		"body":   string(body),
+		"params": params,
+		"headers": func() map[string]any {
+			m := map[string]any{}
+			for k, v := range r.Header {
+				if len(v) > 0 {
+					m[k] = v[0]
+				}
+			}
+			return m
+		}(),
+	}
+	result := sky_call(ar.handler, req)
+	// Accept either a rendered response map {status, headers, body} or
+	// a bare string body (defaults to 200 text/plain).
+	status, headers, respBody := unpackResponse(result)
+	for k, v := range headers {
+		w.Header().Set(k, v)
+	}
+	if w.Header().Get("Content-Type") == "" {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	}
+	w.WriteHeader(status)
+	w.Write([]byte(respBody))
+}
+
+
+func unpackResponse(v any) (int, map[string]string, string) {
+	// Sky.Http.Server Response shape:
+	//   record { status : Int, headers : Dict String String, body : String }
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Struct {
+		status := 200
+		headers := map[string]string{}
+		body := ""
+		if f := rv.FieldByName("Status"); f.IsValid() {
+			status = AsInt(f.Interface())
+		}
+		if f := rv.FieldByName("Body"); f.IsValid() {
+			body = fmt.Sprintf("%v", f.Interface())
+		}
+		if f := rv.FieldByName("Headers"); f.IsValid() {
+			if m, ok := f.Interface().(map[string]any); ok {
+				for k, val := range m {
+					headers[k] = fmt.Sprintf("%v", val)
+				}
+			}
+		}
+		return status, headers, body
+	}
+	// Fallback: treat as raw body.
+	return 200, nil, fmt.Sprintf("%v", v)
 }
 
 
@@ -797,11 +915,42 @@ func Live_app(cfg any) any {
 			app.routes = append(app.routes, lr)
 		}
 	}
+	// Custom REST-style routes (OAuth callbacks, webhooks, API endpoints).
+	for _, r := range asList(Field(cfg, "Api")) {
+		if ar, ok := r.(apiRoute); ok {
+			app.api = append(app.api, ar)
+		}
+	}
+	// Static file serving. Sky-side: `static = "public"` → serve
+	// <cwd>/public/* at /static/*. Mount URL can be overridden with
+	// `staticUrl = "/assets"`.
+	if sd := Field(cfg, "Static"); sd != nil {
+		app.staticDir = fmt.Sprintf("%v", sd)
+	} else if v := os.Getenv("SKY_STATIC_DIR"); v != "" {
+		app.staticDir = v
+	}
+	app.staticURL = "/static"
+	if su := Field(cfg, "StaticUrl"); su != nil {
+		if s := fmt.Sprintf("%v", su); s != "" {
+			app.staticURL = s
+		}
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/_live/event", app.handleEvent)
 	mux.HandleFunc("/_live/sse", app.handleSSE)
-	mux.HandleFunc("/", app.handleInitial)
+	// Static assets (if configured) mounted first so api/page routing
+	// doesn't shadow them.
+	if app.staticDir != "" {
+		prefix := app.staticURL
+		if !strings.HasSuffix(prefix, "/") {
+			prefix += "/"
+		}
+		mux.Handle(prefix,
+			http.StripPrefix(prefix, http.FileServer(http.Dir(app.staticDir))))
+	}
+	// API handler dispatcher — matches method + pattern before page handler.
+	mux.HandleFunc("/", app.dispatchRoot)
 
 	port := 8080
 	if p := Field(cfg, "Port"); p != nil {
@@ -1198,14 +1347,60 @@ function __skyFindByKey(scope, key) {
   return null;
 }
 
+// ── Loading indicator ────────────────────────────────────────
+// Call __skyLoaderStart() before network, __skyLoaderEnd() after. An element
+// with id="sky-loader" gets the sky-loading class added/removed. Small
+// 80ms delay so fast responses don't flash the indicator.
+var __skyLoaderEl = null;
+var __skyLoaderTimer = null;
+function __skyLoaderStart() {
+  __skyLoaderEl = __skyLoaderEl || document.getElementById("sky-loader");
+  if (!__skyLoaderEl) return;
+  clearTimeout(__skyLoaderTimer);
+  __skyLoaderTimer = setTimeout(function() {
+    __skyLoaderEl.classList.add("sky-loading");
+  }, 80);
+}
+function __skyLoaderEnd() {
+  clearTimeout(__skyLoaderTimer);
+  if (__skyLoaderEl) __skyLoaderEl.classList.remove("sky-loading");
+}
+
+// ── Debounce ─────────────────────────────────────────────────
+var __skyInputTimers = {};
+function __skyDebouncedSend(id, value, delay) {
+  clearTimeout(__skyInputTimers[id]);
+  __skyInputTimers[id] = setTimeout(function() {
+    __skySend(id, value, { noLoader: true });
+  }, delay);
+}
+
+// ── Core send ────────────────────────────────────────────────
+function __skySend(id, value, opts) {
+  opts = opts || {};
+  if (!opts.noLoader) __skyLoaderStart();
+  fetch("/_live/event", {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({sessionId: __skySid, handlerId: id, value: value}),
+    credentials: "same-origin"
+  }).then(function(r){ return r.text(); }).then(function(t){
+    __skyLoaderEnd();
+    __skyPatch(t);
+  }).catch(function() { __skyLoaderEnd(); });
+}
+
 function skyEvent(ev, id) {
   ev.preventDefault();
   var t = ev.target;
+  // Input events debounce so typing doesn't round-trip every keystroke.
+  if (ev.type === "input" && t && typeof t.value === "string") {
+    __skyDebouncedSend(id, t.value, 150);
+    return;
+  }
   var v = "";
   if (t) {
-    // Forms: serialise every [name]=value into a JSON object so the
-    // update function can read form data without separate onInput
-    // handlers for every field.
+    // Forms: serialise every [name]=value into a JSON object.
     if (ev.type === "submit" && t.tagName === "FORM") {
       var data = {};
       for (var i = 0; i < t.elements.length; i++) {
@@ -1226,13 +1421,53 @@ function skyEvent(ev, id) {
       v = t.checked ? "true" : "false";
     }
   }
-  fetch("/_live/event", {
-    method: "POST",
-    headers: {"Content-Type":"application/json"},
-    body: JSON.stringify({sessionId: __skySid, handlerId: id, value: v}),
-    credentials: "same-origin"
-  }).then(function(r){ return r.text(); }).then(__skyPatch);
+  __skySend(id, v);
 }
+
+// ── File / Image drivers ─────────────────────────────────────
+// onFile / onImage register via data-sky-ev-sky-file / -sky-image
+// attributes. The client reads the chosen file, optionally resizes
+// (for images), and sends a base64 data URL as the event value.
+document.addEventListener("change", function(ev) {
+  var el = ev.target;
+  if (!el || el.tagName !== "INPUT" || el.type !== "file") return;
+  var fileId  = el.getAttribute("data-sky-ev-sky-file");
+  var imageId = el.getAttribute("data-sky-ev-sky-image");
+  var f = el.files && el.files[0];
+  if (!f) return;
+  if (fileId) {
+    var r = new FileReader();
+    r.onload = function(e) { __skySend(fileId, e.target.result); };
+    r.readAsDataURL(f);
+  }
+  if (imageId) {
+    var maxW = parseInt(el.getAttribute("data-sky-ev-sky-file-max-width")  || "1200");
+    var maxH = parseInt(el.getAttribute("data-sky-ev-sky-file-max-height") || "1200");
+    __skyResizeImage(f, maxW, maxH, function(dataUrl) {
+      __skySend(imageId, dataUrl);
+    });
+  }
+});
+
+function __skyResizeImage(file, maxW, maxH, cb) {
+  var img = new Image();
+  var url = URL.createObjectURL(file);
+  img.onload = function() {
+    URL.revokeObjectURL(url);
+    var w = img.width, h = img.height;
+    if (w > maxW) { h = Math.round(h * maxW / w); w = maxW; }
+    if (h > maxH) { w = Math.round(w * maxH / h); h = maxH; }
+    var canvas = document.createElement("canvas");
+    canvas.width = w; canvas.height = h;
+    canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+    cb(canvas.toDataURL("image/jpeg", 0.85));
+  };
+  img.src = url;
+}
+
+// Expose programmatic dispatch for custom JS integrations (e.g. Firebase
+// auth callbacks that need to send a Msg after the SDK resolves).
+window.__sky_send = function(id, value, opts) { __skySend(id, value, opts); };
 // sky-nav: intercept clicks on <a sky-nav ...> links so navigation is a
 // client-side fetch + innerHTML swap instead of a full page reload.
 // Falls back to normal navigation on modifier keys (cmd/ctrl/shift/alt),

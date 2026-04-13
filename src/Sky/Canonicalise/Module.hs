@@ -673,7 +673,7 @@ staticKernelFunctions = Map.fromList
                     "cssVar", "cssVarOr", "defineVar", "calc", "important",
                     "shadows", "borderRadius4", "padding4",
                     "keyframes", "frame", "boxSizingBorderBox"])
-    , ("Live",    ["app", "route"])
+    , ("Live",    ["app", "route", "api"])
     , ("Event",   ["onClick", "onInput", "onChange", "onSubmit", "onDblClick",
                     "onMouseOver", "onMouseOut", "onKeyDown", "onKeyUp",
                     "onFocus", "onBlur",

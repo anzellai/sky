@@ -471,6 +471,7 @@ registry = Map.fromList
     -- ═══════════════════════════════════════════════════════
     , (("Live", "app"),           KernelInfo "rt.Live_app" 1 False)
     , (("Live", "route"),         KernelInfo "rt.Live_route" 2 False)
+    , (("Live", "api"),           KernelInfo "rt.Live_api"   2 False)
 
     -- ═══════════════════════════════════════════════════════
     -- Std.Live.Events
