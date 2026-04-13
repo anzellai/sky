@@ -84,3 +84,8 @@ legacy-ts-compiler/node_modules/
 
 # Legacy dist output (kept under legacy-ts-compiler/ if needed)
 /dist/
+
+# Embedded Sky stdlib materialised next to project src by the LSP
+# (Sky.Build.Compile.writeStdlibTo) so goto-definition has a stable
+# jump target — regenerated on each LSP build, not source code.
+**/src/.sky-stdlib/
