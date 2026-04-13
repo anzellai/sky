@@ -245,11 +245,20 @@ importExposing =
         (Src.ExposingList [])
 
 
--- | Parse all declarations
+-- | Parse all declarations.
+--
+-- Value-level type annotations (the `foo : T` line that precedes
+-- `foo args = body`) are parsed as a separate DeclAnnotation payload
+-- but belong logically to the next DeclValue of the same name. We
+-- carry them through as `pendingAnns` (keyed by name) and splice them
+-- into the matching Src.Value. Unmatched annotations are dropped — the
+-- parser allows them for forward-declared type signatures, which the
+-- rest of the pipeline does not yet consume.
 moduleDeclarations :: Parser ModuleError ([A.Located Src.Value], [A.Located Src.Union], [A.Located Src.Alias], [A.Located Src.Infix])
-moduleDeclarations = go [] [] [] []
+moduleDeclarations = go [] [] [] [] []
   where
-    go vals unions aliases binops =
+    -- pendingAnns :: [(name, annot)]  most-recent first
+    go vals unions aliases binops pendingAnns =
         oneOfWithFallback
             [ do
                 (declType, payload) <- declaration (\r c -> DeclarationError r c)
@@ -257,26 +266,47 @@ moduleDeclarations = go [] [] [] []
                 case declType of
                     DeclValue ->
                         case A.toValue payload of
-                            ValuePayload name params body ann ->
-                                let v = Src.Value (A.At (A.toRegion payload) name) params body ann
-                                in go (A.At (A.toRegion payload) v : vals) unions aliases binops
-                            _ -> go vals unions aliases binops
+                            ValuePayload name params body inlineAnn ->
+                                let
+                                    -- Use any inline annotation first; otherwise
+                                    -- the most recent matching pending one.
+                                    (ann, pendingAnns') = case inlineAnn of
+                                        Just a  -> (Just a, pendingAnns)
+                                        Nothing -> popAnnotation name pendingAnns
+                                    v = Src.Value (A.At (A.toRegion payload) name) params body ann
+                                in go (A.At (A.toRegion payload) v : vals) unions aliases binops pendingAnns'
+                            _ -> go vals unions aliases binops pendingAnns
                     DeclAnnotation ->
-                        -- TODO: attach annotation to the next value declaration
-                        go vals unions aliases binops
+                        case A.toValue payload of
+                            AnnotPayload name annot ->
+                                go vals unions aliases binops ((name, annot) : pendingAnns)
+                            _ -> go vals unions aliases binops pendingAnns
                     DeclUnion ->
                         case A.toValue payload of
                             UnionPayload name vars ctors ->
                                 let u = Src.Union (A.At (A.toRegion payload) name) vars ctors
-                                in go vals (A.At (A.toRegion payload) u : unions) aliases binops
-                            _ -> go vals unions aliases binops
+                                in go vals (A.At (A.toRegion payload) u : unions) aliases binops pendingAnns
+                            _ -> go vals unions aliases binops pendingAnns
                     DeclAlias ->
                         case A.toValue payload of
                             AliasPayload name vars body ->
                                 let a = Src.Alias (A.At (A.toRegion payload) name) vars body
-                                in go vals unions (A.At (A.toRegion payload) a : aliases) binops
-                            _ -> go vals unions aliases binops
+                                in go vals unions (A.At (A.toRegion payload) a : aliases) binops pendingAnns
+                            _ -> go vals unions aliases binops pendingAnns
                     DeclForeign ->
-                        go vals unions aliases binops
+                        go vals unions aliases binops pendingAnns
             ]
             (reverse vals, reverse unions, reverse aliases, reverse binops)
+
+    -- Pop the (most recent) annotation whose name matches; return the
+    -- remaining pending list.
+    popAnnotation
+        :: String
+        -> [(String, A.Located Src.TypeAnnotation)]
+        -> (Maybe (A.Located Src.TypeAnnotation), [(String, A.Located Src.TypeAnnotation)])
+    popAnnotation target = go' []
+      where
+        go' acc []                              = (Nothing, reverse acc)
+        go' acc ((n, a):rest)
+            | n == target                       = (Just a, reverse acc ++ rest)
+            | otherwise                         = go' ((n, a) : acc) rest
