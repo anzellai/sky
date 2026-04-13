@@ -16,6 +16,8 @@
 --   * textDocument/rename                (prepareRename + full WorkspaceEdit)
 --   * textDocument/prepareRename         (validate rename target)
 --   * textDocument/signatureHelp         (parameter info while typing a call)
+--   * textDocument/codeAction            (quick-fixes: unused imports, add annot)
+--   * textDocument/semanticTokens/full   (type-aware syntax highlighting)
 --
 -- Editors supported: VS Code, Neovim, Emacs, Zed, Helix, Sublime LSP.
 --
@@ -165,6 +167,8 @@ dispatch docs req = do
         "textDocument/rename"         -> handleRename docs req reqId
         "textDocument/prepareRename"  -> handlePrepareRename docs req reqId
         "textDocument/signatureHelp"  -> handleSignatureHelp docs req reqId
+        "textDocument/codeAction"          -> handleCodeAction docs req reqId
+        "textDocument/semanticTokens/full" -> handleSemanticTokens docs req reqId
         _ -> case reqId of
             Just _  -> sendReply reqId A.Null
             Nothing -> return ()
@@ -190,6 +194,16 @@ initializeResult = A.object
         , "signatureHelpProvider" A..= A.object
             [ "triggerCharacters"   A..= (["(", " "] :: [T.Text])
             , "retriggerCharacters" A..= ([","]      :: [T.Text])
+            ]
+        , "codeActionProvider" A..= A.object
+            [ "codeActionKinds" A..= (["quickfix", "source.organizeImports"] :: [T.Text])
+            ]
+        , "semanticTokensProvider" A..= A.object
+            [ "legend" A..= A.object
+                [ "tokenTypes"     A..= semanticTokenTypes
+                , "tokenModifiers" A..= ([] :: [T.Text])
+                ]
+            , "full" A..= True
             ]
         , "completionProvider" A..= A.object
             [ "triggerCharacters" A..= (["."] :: [T.Text])
@@ -439,16 +453,32 @@ regionWidth (A.Region s e) =
 
 
 -- | Every (region, name) pair in the module. Ordered as encountered —
--- callers use the first containing region.
+-- callers use the smallest containing region.
 collectIdents :: Src.Module -> [(A.Region, String)]
 collectIdents srcMod =
        [ (A.toRegion ln, n)
        | A.At _ v <- Src._values srcMod
        , let ln = Src._valueName v, let A.At _ n = ln
        ]
-    ++ concatMap valueBodyIdents (Src._values srcMod)
+    ++ concatMap valueIdents (Src._values srcMod)
   where
-    valueBodyIdents (A.At _ v) = exprIdents (Src._valueBody v)
+    valueIdents (A.At _ v) =
+        let pats = Src._valuePatterns v
+            body = Src._valueBody v
+        in concatMap patIdents pats ++ exprIdents body
+
+    -- Binding sites from a pattern (so the user can hover / jump on them).
+    patIdents :: Src.Pattern -> [(A.Region, String)]
+    patIdents (A.At reg p) = case p of
+        Src.PVar n           -> [(reg, n)]
+        Src.PAlias inner (A.At nr n) -> (nr, n) : patIdents inner
+        Src.PCtor _ _ xs     -> concatMap patIdents xs
+        Src.PCtorQual _ _ xs -> concatMap patIdents xs
+        Src.PCons h t        -> patIdents h ++ patIdents t
+        Src.PList xs         -> concatMap patIdents xs
+        Src.PTuple a b cs    -> patIdents a ++ patIdents b ++ concatMap patIdents cs
+        Src.PRecord fields   -> [ (fr, n) | A.At fr n <- fields ]
+        _                    -> []
 
     exprIdents :: Src.Expr -> [(A.Region, String)]
     exprIdents (A.At reg e) = case e of
@@ -456,10 +486,10 @@ collectIdents srcMod =
         Src.VarQual q n     -> [(reg, q ++ "." ++ n)]
         Src.Call f xs       -> exprIdents f ++ concatMap exprIdents xs
         Src.Binops pairs x  -> concatMap (\(e',_) -> exprIdents e') pairs ++ exprIdents x
-        Src.Lambda _ body   -> exprIdents body
+        Src.Lambda ps body  -> concatMap patIdents ps ++ exprIdents body
         Src.If arms e'      -> concatMap (\(c,b) -> exprIdents c ++ exprIdents b) arms ++ exprIdents e'
         Src.Let defs body   -> concatMap defIdents defs ++ exprIdents body
-        Src.Case s arms     -> exprIdents s ++ concatMap (\(_,b) -> exprIdents b) arms
+        Src.Case s arms     -> exprIdents s ++ concatMap (\(p, b) -> patIdents p ++ exprIdents b) arms
         Src.Access t _      -> exprIdents t
         Src.Update _ fs     -> concatMap (exprIdents . snd) fs
         Src.Record fs       -> concatMap (exprIdents . snd) fs
@@ -469,8 +499,8 @@ collectIdents srcMod =
         _                   -> []
 
     defIdents (A.At _ d) = case d of
-        Src.Define _ _ body _ -> exprIdents body
-        Src.Destruct _ body   -> exprIdents body
+        Src.Define (A.At nr n) ps body _ -> (nr, n) : concatMap patIdents ps ++ exprIdents body
+        Src.Destruct pat body            -> patIdents pat ++ exprIdents body
 
 
 regionContains :: A.Region -> Int -> Int -> Bool
@@ -517,6 +547,478 @@ findDefinition srcMod name = firstJust
         in if n == name then Just reg else Nothing
 
     firstJust = foldr (\m acc -> case m of Just r -> Just r; Nothing -> acc) Nothing
+
+
+-- ─── Semantic Tokens ──────────────────────────────────────────────────
+--
+-- LSP encodes semantic tokens as a flat [Int] with 5 integers per token:
+--   [deltaLine, deltaStartChar, length, tokenType, tokenModifiers]
+-- deltaLine and deltaStartChar are relative to the previous token (or 0
+-- if first). Editors use the legend to map integer types to names.
+
+-- | Order here defines the numeric tokenType index sent on the wire.
+semanticTokenTypes :: [T.Text]
+semanticTokenTypes =
+    [ "namespace"   -- 0
+    , "type"        -- 1
+    , "class"       -- 2
+    , "enum"        -- 3
+    , "enumMember"  -- 4
+    , "function"    -- 5
+    , "variable"    -- 6
+    , "parameter"   -- 7
+    , "property"    -- 8
+    , "string"      -- 9
+    , "number"      -- 10
+    , "keyword"     -- 11
+    ]
+
+
+-- | A single semantic token before delta-encoding.
+data SemToken = SemToken
+    { _st_line :: !Int     -- 0-based
+    , _st_col  :: !Int     -- 0-based
+    , _st_len  :: !Int
+    , _st_type :: !Int     -- index into semanticTokenTypes
+    }
+
+
+handleSemanticTokens :: IORef.IORef Docs -> A.Value -> Maybe A.Value -> IO ()
+handleSemanticTokens docs req reqId = do
+    let uri = jsonStrAt ["params", "textDocument", "uri"] req
+    m <- IORef.readIORef docs
+    case Map.lookup uri m of
+        Nothing -> sendReply reqId $ A.object ["data" A..= ([] :: [Int])]
+        Just (_, text) -> case Parse.parseModule text of
+            Left _       -> sendReply reqId $ A.object ["data" A..= ([] :: [Int])]
+            Right srcMod ->
+                let tokens  = sortBy compareTokenPos (collectSemTokens srcMod)
+                    encoded = deltaEncode tokens
+                in sendReply reqId $ A.object ["data" A..= encoded]
+  where
+    compareTokenPos a b =
+        compare (_st_line a, _st_col a) (_st_line b, _st_col b)
+
+
+-- | Flatten to [deltaLine, deltaStartChar, length, tokenType, 0] tuples.
+deltaEncode :: [SemToken] -> [Int]
+deltaEncode = go 0 0
+  where
+    go _ _ [] = []
+    go prevLine prevCol (t:ts) =
+        let dLine = _st_line t - prevLine
+            dCol  = if dLine == 0 then _st_col t - prevCol else _st_col t
+        in [dLine, dCol, _st_len t, _st_type t, 0]
+           ++ go (_st_line t) (_st_col t) ts
+
+
+-- | Walk the source tree, emitting a typed token for every identifier
+-- we can classify.
+collectSemTokens :: Src.Module -> [SemToken]
+collectSemTokens srcMod =
+       -- Imports — each segment is a namespace.
+       concatMap importTokens (Src._imports srcMod)
+    ++ -- Type declarations (unions + aliases): name is a type; ctors are enumMembers.
+       concatMap unionTokens  (Src._unions srcMod)
+    ++ concatMap aliasTokens  (Src._aliases srcMod)
+       -- Value declarations and bodies.
+    ++ concatMap (valueTokens srcMod) (Src._values srcMod)
+  where
+    mkTok reg ty =
+        let A.Region (A.Position l c) (A.Position l2 c2) = reg
+            len = if l == l2 then max 1 (c2 - c) else 1
+        in SemToken (l - 1) (c - 1) len ty
+
+    importTokens imp =
+        let A.At reg segs = Src._importName imp
+            A.Region (A.Position l c) _ = reg
+            -- Length = sum of segments + dots between them.
+            totalLen = case segs of
+                []     -> 0
+                (x:xs) -> length x + sum [length s + 1 | s <- xs]
+        in [SemToken (l - 1) (c - 1) totalLen 0]  -- namespace
+
+    unionTokens (A.At _ u) =
+        let A.At nr _ = Src._unionName u
+        in [mkTok nr 3]  -- enum (type)
+    aliasTokens (A.At _ a) =
+        let A.At nr _ = Src._aliasName a
+        in [mkTok nr 2]  -- class (type alias)
+
+    valueTokens _ (A.At _ v) =
+        let A.At nr _ = Src._valueName v
+            pats      = Src._valuePatterns v
+            body      = Src._valueBody v
+            paramToks = concatMap patternTokens pats
+            paramNames = Set.fromList (concatMap patternNames pats)
+            bodyToks  = exprTokens paramNames body
+            headTokKind = if null pats then 6 else 5  -- variable / function
+        in mkTok nr headTokKind : paramToks ++ bodyToks
+
+    -- Pattern positions for parameter highlighting.
+    patternTokens (A.At reg p) = case p of
+        Src.PVar _       -> [mkTok reg 7]  -- parameter
+        Src.PAlias i (A.At nr _) -> mkTok nr 7 : patternTokens i
+        Src.PTuple a b cs -> concatMap patternTokens (a : b : cs)
+        Src.PList xs     -> concatMap patternTokens xs
+        Src.PCons h t    -> patternTokens h ++ patternTokens t
+        Src.PCtor _ _ xs -> concatMap patternTokens xs
+        Src.PCtorQual _ _ xs -> concatMap patternTokens xs
+        Src.PRecord fields -> [ mkTok fr 7 | A.At fr _ <- fields ]
+        _ -> []
+
+    -- Classify references inside an expression. `locals` tracks names bound
+    -- by surrounding params / lets so we can mark them `variable` vs the
+    -- default `function` for unknown names.
+    exprTokens :: Set.Set String -> Src.Expr -> [SemToken]
+    exprTokens locals (A.At reg e) = case e of
+        Src.Var n
+            | isUpper (headChar n) -> [mkTok reg 4]  -- enumMember (constructor)
+            | Set.member n locals  -> [mkTok reg 6]  -- variable (local)
+            | otherwise            -> [mkTok reg 5]  -- function (top-level or import)
+        Src.VarQual _ n
+            | isUpper (headChar n) -> [mkTok reg 4]
+            | otherwise            -> [mkTok reg 5]
+        Src.Int _    -> [mkTok reg 10]
+        Src.Float _  -> [mkTok reg 10]
+        Src.Str _    -> [mkTok reg 9]
+        Src.Chr _    -> [mkTok reg 9]
+        Src.MultilineStr _ -> [mkTok reg 9]
+        Src.Call f xs -> exprTokens locals f ++ concatMap (exprTokens locals) xs
+        Src.Binops pairs final ->
+            concat [exprTokens locals e' | (e', _) <- pairs] ++ exprTokens locals final
+        Src.Lambda pats body ->
+            let inner = Set.union locals (Set.fromList (concatMap patternNames pats))
+            in concatMap patternTokens pats ++ exprTokens inner body
+        Src.If branches elseE ->
+            concatMap (\(a, b) -> exprTokens locals a ++ exprTokens locals b) branches
+            ++ exprTokens locals elseE
+        Src.Let defs body ->
+            let letNames = Set.fromList (concatMap letDefNamesSafe defs)
+                inner    = Set.union locals letNames
+            in concatMap (letDefTokens inner) defs ++ exprTokens inner body
+        Src.Case scrut arms ->
+            exprTokens locals scrut
+            ++ concatMap (\(p, rhs) ->
+                let inner = Set.union locals (Set.fromList (patternNames p))
+                in patternTokens p ++ exprTokens inner rhs) arms
+        Src.Access t (A.At fr _) -> exprTokens locals t ++ [mkTok fr 8]  -- property
+        Src.Update (A.At nr _) fields ->
+            mkTok nr 6 : concat [mkTok fr 8 : exprTokens locals v | (A.At fr _, v) <- fields]
+        Src.Record fields ->
+            concat [mkTok fr 8 : exprTokens locals v | (A.At fr _, v) <- fields]
+        Src.Tuple a b cs ->
+            exprTokens locals a ++ exprTokens locals b ++ concatMap (exprTokens locals) cs
+        Src.List xs -> concatMap (exprTokens locals) xs
+        Src.Negate i -> exprTokens locals i
+        Src.Accessor _ -> []
+        Src.Op _       -> []
+        Src.Unit       -> []
+
+    letDefNamesSafe (A.At _ d) = case d of
+        Src.Define (A.At _ n) _ _ _ -> [n]
+        Src.Destruct pat _          -> patternNames pat
+
+    letDefTokens locals (A.At _ d) = case d of
+        Src.Define (A.At nr _) pats body _ ->
+            let inner = Set.union locals (Set.fromList (concatMap patternNames pats))
+            in mkTok nr 6 : concatMap patternTokens pats ++ exprTokens inner body
+        Src.Destruct pat body -> patternTokens pat ++ exprTokens locals body
+
+    headChar [] = ' '
+    headChar (c:_) = c
+
+    isUpper c = c >= 'A' && c <= 'Z'
+
+
+-- ─── Code Actions ─────────────────────────────────────────────────────
+
+handleCodeAction :: IORef.IORef Docs -> A.Value -> Maybe A.Value -> IO ()
+handleCodeAction docs req reqId = do
+    let uri = jsonStrAt ["params", "textDocument", "uri"] req
+    m <- IORef.readIORef docs
+    case Map.lookup uri m of
+        Nothing -> sendReply reqId (A.toJSON ([] :: [A.Value]))
+        Just (_, text) -> case Parse.parseModule text of
+            Left _       -> sendReply reqId (A.toJSON ([] :: [A.Value]))
+            Right srcMod -> do
+                annotActions <- addAnnotationActions uri text srcMod
+                let actions = unusedImportActions uri text srcMod
+                           ++ organizeImportsActions uri text srcMod
+                           ++ annotActions
+                sendReply reqId (A.toJSON actions)
+
+
+-- | Detect imports whose exposed (or aliased) names are never referenced
+-- in the module. Offer a one-line removal.
+--
+-- Rules (intentionally conservative to avoid false positives):
+--   * imports ending in `Prelude` are never flagged — they're re-export
+--     surfaces whose operators (e.g. `++`) bypass our AST-level detector;
+--   * we walk value bodies AND type annotations (union ctors + alias bodies
+--     + value-type signatures);
+--   * we ALSO text-scan the raw source for the import's alias as a
+--     word boundary — the parser currently drops value-level type
+--     signatures onto the floor, so AST-only detection is unsafe.
+unusedImportActions :: T.Text -> T.Text -> Src.Module -> [A.Value]
+unusedImportActions uri rawText srcMod =
+    let astRefs = collectAllRefs srcMod
+        isUsed imp = importIsUsed imp astRefs
+                  || importAliasAppearsInSource imp rawText
+        dead = [ imp | imp <- Src._imports srcMod
+                     , not (isPrelude imp)
+                     , not (isUsed imp) ]
+    in map (removeImportAction uri) dead
+  where
+
+    -- Crude "text mention" scan — looks for the alias or last-segment
+    -- surrounded by non-identifier chars anywhere past the imports block.
+    importAliasAppearsInSource imp text =
+        let alias = case Src._importAlias imp of
+                Just a  -> a
+                Nothing -> case Src._importName imp of
+                    A.At _ segs -> last segs
+            pattern = T.pack alias
+            -- Skip the import line itself by starting past the last import.
+            body = pastImports (Src._imports srcMod) text
+        in hasWordMatch pattern body
+
+    pastImports [] t = t
+    pastImports imps t =
+        let lastImportLine = maximum
+                [ l | imp <- imps
+                , let A.At (A.Region _ (A.Position l _)) _ = Src._importName imp
+                ]
+            ls = T.lines t
+        in T.unlines (drop lastImportLine ls)
+
+    -- "word match" = pattern surrounded by non-identifier chars.
+    hasWordMatch pattern haystack = go (T.unpack haystack) (T.unpack pattern)
+      where
+        go src pat =
+            case break (`elem` ['\n', ' ', '\t', '(', ')', ',', '.']) src of
+                (tok, rest)
+                    | tok == pat -> True
+                    | null rest  -> False
+                    | otherwise  -> go (tail rest) pat
+    isPrelude imp = case Src._importName imp of
+        A.At _ segs -> last segs == "Prelude"
+
+    collectAllRefs :: Src.Module -> Set.Set String
+    collectAllRefs m = Set.fromList $
+        concatMap valueRefs   (Src._values m)
+        ++ concatMap unionRefs  (Src._unions m)
+        ++ concatMap aliasRefs  (Src._aliases m)
+
+    valueRefs (A.At _ v) =
+        exprAllRefs (Src._valueBody v)
+        ++ case Src._valueType v of
+            Just (A.At _ ta) -> typeAnnotNames ta
+            Nothing          -> []
+
+    unionRefs (A.At _ u) = concatMap ctorArgNames (Src._unionCtors u)
+    ctorArgNames (A.At _ (_, args)) = concatMap typeAnnotNames args
+
+    aliasRefs (A.At _ al) =
+        let A.At _ ta = Src._aliasType al
+        in typeAnnotNames ta
+
+    -- Every type-level identifier we can see. Qualified names (e.g.
+    -- `String.Char`) contribute both the qualifier and the full dotted form.
+    typeAnnotNames :: Src.TypeAnnotation -> [String]
+    typeAnnotNames t = case t of
+        Src.TVar _             -> []
+        Src.TLambda a b        -> typeAnnotNames a ++ typeAnnotNames b
+        Src.TType _mod segs args -> segs ++ concatMap typeAnnotNames args
+        Src.TTypeQual modPath n args -> [modPath, n] ++ concatMap typeAnnotNames args
+        Src.TRecord fs _       -> concatMap (\(_, ft) -> typeAnnotNames ft) fs
+        Src.TUnit              -> []
+        Src.TTuple a b cs      -> typeAnnotNames a ++ typeAnnotNames b
+                                ++ concatMap typeAnnotNames cs
+
+    exprAllRefs (A.At _ e) = case e of
+        Src.Var n -> [n]
+        Src.VarQual q n -> [q, q ++ "." ++ n]
+        Src.Call f xs -> exprAllRefs f ++ concatMap exprAllRefs xs
+        Src.Binops pairs final ->
+            concat [exprAllRefs e' | (e', _) <- pairs] ++ exprAllRefs final
+        Src.Lambda _ body -> exprAllRefs body
+        Src.If branches elseE ->
+            concat [exprAllRefs a ++ exprAllRefs b | (a, b) <- branches]
+            ++ exprAllRefs elseE
+        Src.Let defs body ->
+            concatMap (\(A.At _ d) -> case d of
+                Src.Define _ _ b _ -> exprAllRefs b
+                Src.Destruct _ b   -> exprAllRefs b) defs
+            ++ exprAllRefs body
+        Src.Case scrut arms ->
+            exprAllRefs scrut ++ concatMap (\(_, b) -> exprAllRefs b) arms
+        Src.Access t _ -> exprAllRefs t
+        Src.Update _ fields -> concat [exprAllRefs v | (_, v) <- fields]
+        Src.Record fields   -> concat [exprAllRefs v | (_, v) <- fields]
+        Src.Tuple a b cs -> exprAllRefs a ++ exprAllRefs b ++ concatMap exprAllRefs cs
+        Src.List xs -> concatMap exprAllRefs xs
+        Src.Negate i -> exprAllRefs i
+        _ -> []
+
+    importIsUsed imp refs =
+        let qualifier = case Src._importAlias imp of
+                Just a  -> a
+                Nothing -> case Src._importName imp of
+                    A.At _ segs -> last segs
+            exposedNames = case Src._importExposing imp of
+                A.At _ (Src.ExposingList xs) -> concatMap exposedName xs
+                _                            -> []
+        in Set.member qualifier refs
+           || any (`Set.member` refs) exposedNames
+
+    exposedName (A.At _ e) = case e of
+        Src.ExposedValue n    -> [n]
+        Src.ExposedType n _   -> [n]
+        Src.ExposedOperator _ -> []
+
+
+removeImportAction :: T.Text -> Src.Import -> A.Value
+removeImportAction uri imp =
+    let A.At reg _ = Src._importName imp
+        -- Remove the full line the import lives on.
+        A.Region (A.Position l _) _ = reg
+        range = lspRange (l - 1) 0 l 0
+    in A.object
+        [ "title"    A..= T.pack "Remove unused import"
+        , "kind"     A..= T.pack "quickfix"
+        , "isPreferred" A..= True
+        , "edit"     A..= A.object
+            [ "changes" A..= A.object
+                [ AK.fromText uri A..=
+                    [ A.object
+                        [ "range"   A..= range
+                        , "newText" A..= T.pack ""
+                        ]
+                    ]
+                ]
+            ]
+        ]
+
+
+-- | Offer to sort every import alphabetically. Always available; LSP
+-- clients filter it by kind `source.organizeImports`.
+organizeImportsActions :: T.Text -> T.Text -> Src.Module -> [A.Value]
+organizeImportsActions uri _text srcMod =
+    case Src._imports srcMod of
+        []  -> []
+        [_] -> []
+        imps ->
+            let sorted = sortBy (comparing importPath) imps
+                sortedPaths = map importPath sorted
+                origPaths   = map importPath imps
+            in if sortedPaths == origPaths
+                then []
+                else [organizeAction uri sorted imps]
+  where
+    importPath imp = case Src._importName imp of
+        A.At _ segs -> segs
+
+
+organizeAction :: T.Text -> [Src.Import] -> [Src.Import] -> A.Value
+organizeAction uri sorted original =
+    let firstReg = case original of
+            (imp:_) -> let A.At r _ = Src._importName imp in r
+            []      -> A.one
+        lastReg  = case reverse original of
+            (imp:_) -> let A.At r _ = Src._importName imp in r
+            []      -> A.one
+        A.Region (A.Position l0 _) _ = firstReg
+        A.Region _ (A.Position l1 _) = lastReg
+        range = lspRange (l0 - 1) 0 l1 9999
+        sortedText = T.intercalate (T.pack "\n") (map renderImport sorted)
+    in A.object
+        [ "title" A..= T.pack "Organize imports"
+        , "kind"  A..= T.pack "source.organizeImports"
+        , "edit"  A..= A.object
+            [ "changes" A..= A.object
+                [ AK.fromText uri A..=
+                    [ A.object
+                        [ "range"   A..= range
+                        , "newText" A..= sortedText
+                        ]
+                    ]
+                ]
+            ]
+        ]
+
+
+renderImport :: Src.Import -> T.Text
+renderImport imp =
+    let A.At _ segs = Src._importName imp
+        base = T.pack ("import " ++ foldr1 (\a b -> a ++ "." ++ b) segs)
+        aliasPart = case Src._importAlias imp of
+            Just a  -> T.pack (" as " ++ a)
+            Nothing -> T.empty
+        exposingPart = case Src._importExposing imp of
+            A.At _ Src.ExposingAll            -> T.pack " exposing (..)"
+            A.At _ (Src.ExposingList [])      -> T.empty
+            A.At _ (Src.ExposingList xs)      ->
+                T.pack (" exposing (" ++ foldr1 (\a b -> a ++ ", " ++ b)
+                                                (concatMap exposedShow xs) ++ ")")
+    in base `T.append` aliasPart `T.append` exposingPart
+  where
+    exposedShow (A.At _ e) = case e of
+        Src.ExposedValue n    -> [n]
+        Src.ExposedType n Src.Public -> [n ++ "(..)"]
+        Src.ExposedType n _   -> [n]
+        Src.ExposedOperator o -> ["(" ++ o ++ ")"]
+
+
+-- | Offer to add a type annotation to any value that lacks one. The
+-- inferred type comes from the solver.
+addAnnotationActions :: T.Text -> T.Text -> Src.Module -> IO [A.Value]
+addAnnotationActions uri _text srcMod = do
+    r <- try (runInfer srcMod) :: IO (Either SomeException (Map.Map String Ty.Type))
+    case r of
+        Left _      -> return []
+        Right types -> return (mapMaybe (annotAction types) (Src._values srcMod))
+  where
+    hasAnnotation v = case Src._valueType v of
+        Just _  -> True
+        Nothing -> False
+
+    runInfer m = case Canonicalise.canonicalise m of
+        Left _       -> return Map.empty
+        Right canMod -> do
+            cs <- Constrain.constrainModule canMod
+            r  <- Solve.solve cs
+            case r of
+                Solve.SolveOk types -> return types
+                _                   -> return Map.empty
+
+    annotAction types (A.At _ v)
+        | hasAnnotation v = Nothing
+        | otherwise =
+            let A.At nr n = Src._valueName v
+            in case Map.lookup n types of
+                Nothing -> Nothing
+                Just t  ->
+                    let typeStr = Solve.showType t
+                        A.Region (A.Position l _) _ = nr
+                        lineIdx = l - 1  -- 0-based
+                        -- Insert `name : type` on a new line just above the decl.
+                        annotLine = T.pack (n ++ " : " ++ typeStr ++ "\n")
+                        insertRange = lspRange lineIdx 0 lineIdx 0
+                    in Just $ A.object
+                        [ "title" A..= T.pack ("Add type annotation: " ++ n ++ " : " ++ typeStr)
+                        , "kind"  A..= T.pack "quickfix"
+                        , "edit"  A..= A.object
+                            [ "changes" A..= A.object
+                                [ AK.fromText uri A..=
+                                    [ A.object
+                                        [ "range"   A..= insertRange
+                                        , "newText" A..= annotLine
+                                        ]
+                                    ]
+                                ]
+                            ]
+                        ]
 
 
 -- ─── References / Rename ─────────────────────────────────────────────
@@ -576,11 +1078,12 @@ handleRename docs req reqId = do
             Right srcMod -> case identAtPosition srcMod (line + 1) (col + 1) of
                 Nothing -> sendReply reqId A.Null
                 Just name -> do
-                    let short = simpleName name
-                        refs  = collectReferences srcMod short
-                        edits =
+                    let short  = simpleName name
+                        nameLen = length short
+                        refs   = collectReferences srcMod short
+                        edits  =
                             [ A.object
-                                [ "range"   A..= regionToLspRange r
+                                [ "range"   A..= clampRangeWidth r nameLen
                                 , "newText" A..= newName
                                 ]
                             | r <- refs
@@ -589,9 +1092,26 @@ handleRename docs req reqId = do
                         [ "changes" A..= A.object [ AK.fromText uri A..= edits ] ]
 
 
+-- | Guarantee a rename edit's end column equals `startCol + nameLength`.
+-- Parser regions are sometimes one char too wide (trailing non-identifier
+-- consumed during lookahead); trimming keeps surrounding whitespace intact.
+clampRangeWidth :: A.Region -> Int -> A.Value
+clampRangeWidth (A.Region s e) nameLen =
+    let startLine = A._line s - 1
+        startCol  = A._col  s - 1
+        endLine   = A._line e - 1
+        fullEndCol = A._col  e - 1
+        -- Only clamp single-line regions; multi-line stays as-is.
+        endCol = if A._line s == A._line e
+                    then min fullEndCol (startCol + nameLen)
+                    else fullEndCol
+    in lspRange startLine startCol endLine endCol
+
+
 -- | Every occurrence of `name` (unqualified) anywhere in the module —
--- declaration, value references, and qualified refs whose rightmost
--- segment matches. Shadowing (lambda params, let bindings) is respected.
+-- top-level declarations, pattern bindings (lambda params, let bindings,
+-- case arms), and call sites. Shadowing is respected: once an inner
+-- scope shadows the name we stop recording inner uses.
 collectReferences :: Src.Module -> String -> [A.Region]
 collectReferences srcMod name =
     let declRefs =
@@ -603,10 +1123,31 @@ collectReferences srcMod name =
             (\(A.At _ v) ->
                 let pats = Src._valuePatterns v
                     body = Src._valueBody v
-                    shadowed = Set.fromList (concatMap patternNames pats)
-                in refsInExpr name shadowed body)
+                    paramHits = patternRefs name pats
+                in paramHits ++ refsInExpr name Set.empty body)
             (Src._values srcMod)
     in declRefs ++ bodyRefs
+
+
+-- | Scan patterns for occurrences of the target name (PVar / PAlias).
+patternRefs :: String -> [Src.Pattern] -> [A.Region]
+patternRefs target = concatMap (patternRefsOne target)
+
+patternRefsOne :: String -> Src.Pattern -> [A.Region]
+patternRefsOne target (A.At reg p) = case p of
+    Src.PVar n
+        | n == target -> [reg]
+        | otherwise   -> []
+    Src.PAlias inner (A.At nr n) ->
+        (if n == target then [nr] else []) ++ patternRefsOne target inner
+    Src.PCtor _ _ xs     -> concatMap (patternRefsOne target) xs
+    Src.PCtorQual _ _ xs -> concatMap (patternRefsOne target) xs
+    Src.PCons h t        -> patternRefsOne target h ++ patternRefsOne target t
+    Src.PList xs         -> concatMap (patternRefsOne target) xs
+    Src.PTuple a b cs    -> patternRefsOne target a ++ patternRefsOne target b
+                          ++ concatMap (patternRefsOne target) cs
+    Src.PRecord fields   -> [ fr | A.At fr n <- fields, n == target ]
+    _                    -> []
 
 
 refsInExpr :: String -> Set.Set String -> Src.Expr -> [A.Region]
@@ -622,21 +1163,34 @@ refsInExpr target shadowed (A.At reg e) = case e of
         concat [refsInExpr target shadowed e' | (e', _) <- pairs]
         ++ refsInExpr target shadowed final
     Src.Lambda pats body ->
-        let shadowed' = Set.union shadowed (Set.fromList (concatMap patternNames pats))
-        in refsInExpr target shadowed' body
+        -- Include the pattern's binding region(s) — renaming the lambda
+        -- parameter means both the binder and every use inside the body
+        -- must update together. Keep the target OUT of `shadowed` so its
+        -- body uses remain reachable.
+        let bound   = Set.fromList (concatMap patternNames pats)
+            others  = Set.delete target bound
+            shadowed' = Set.union shadowed others
+            paramPositions = patternRefs target pats
+        in paramPositions ++ refsInExpr target shadowed' body
     Src.If branches elseE ->
         concat [refsInExpr target shadowed a ++ refsInExpr target shadowed b | (a, b) <- branches]
         ++ refsInExpr target shadowed elseE
     Src.Let defs body ->
-        let defNames = Set.fromList (concatMap letDefNames defs)
-            shadowed' = Set.union shadowed defNames
+        -- Each def's bound name IS a rename target: references to it
+        -- MUST stay visible inside the let body. We therefore only add
+        -- OTHER let-bound names to shadows — not the target itself.
+        let defNames    = Set.fromList (concatMap letDefNames defs)
+            otherDefs   = Set.delete target defNames
+            shadowed'   = Set.union shadowed otherDefs
         in concatMap (letDefRefs target shadowed') defs
         ++ refsInExpr target shadowed' body
     Src.Case scrut arms ->
         refsInExpr target shadowed scrut
         ++ concatMap (\(p, rhs) ->
-            let shadowed' = Set.union shadowed (Set.fromList (patternNames p))
-            in refsInExpr target shadowed' rhs) arms
+            let bound  = Set.fromList (patternNames p)
+                others = Set.delete target bound
+                shadowed' = Set.union shadowed others
+            in patternRefsOne target p ++ refsInExpr target shadowed' rhs) arms
     Src.Access target' _ -> refsInExpr target shadowed target'
     Src.Update _ fields  -> concat [refsInExpr target shadowed v | (_, v) <- fields]
     Src.Record fields    -> concat [refsInExpr target shadowed v | (_, v) <- fields]
@@ -651,11 +1205,18 @@ refsInExpr target shadowed (A.At reg e) = case e of
         Src.Define (A.At _ n) _ _ _ -> [n]
         Src.Destruct pat _          -> patternNames pat
 
+    -- A let-bound value's name is a rename target; its own params are a
+    -- fresh inner shadow scope.
     letDefRefs t sh (A.At _ d) = case d of
-        Src.Define _ pats body _ ->
-            let sh' = Set.union sh (Set.fromList (concatMap patternNames pats))
-            in refsInExpr t sh' body
-        Src.Destruct _ body -> refsInExpr t sh body
+        Src.Define (A.At nr n) pats body _ ->
+            let bindingHit = if n == t then [nr] else []
+                bound   = Set.fromList (concatMap patternNames pats)
+                others  = Set.delete t bound
+                sh'     = Set.union sh others
+                paramHits = patternRefs t pats
+            in bindingHit ++ paramHits ++ refsInExpr t sh' body
+        Src.Destruct pat body ->
+            patternRefsOne t pat ++ refsInExpr t sh body
 
 
 -- | The local names bound by a pattern.
