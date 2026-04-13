@@ -51,6 +51,12 @@ jobs:
           echo "$PWD/sky-out" >> $GITHUB_PATH
           echo "$PWD/bin"      >> $GITHUB_PATH
 
+      - name: Run cabal test suite
+        run: cabal test --test-show-details=direct
+
+      - name: Run scripts/example-sweep.sh --build-only
+        run: bash scripts/example-sweep.sh --build-only
+
       # ─────────────────────────────────────────────────────────
       # Example suite — representative subset. Keep fast so every PR runs.
       # ─────────────────────────────────────────────────────────

@@ -298,12 +298,18 @@ continueCompile config _entryPath outDir moduleOrder srcHash = do
                     Solve.SolveError _ -> return (modName, Map.empty)
             constraints <- Constrain.constrainModule canMod
             solveResult <- Solve.solve constraints
+            -- HM type errors are FATAL (promoted from warning). No
+            -- silent degradation to `any`. This enforces the
+            -- "if it compiles, it works" promise at the entry module.
+            let solverError = case solveResult of
+                    Solve.SolveError e -> Just e
+                    _                  -> Nothing
             types <- case solveResult of
-                Solve.SolveOk types -> do
-                    putStrLn $ "   Types OK (" ++ show (length (Map.keys types)) ++ " bindings)"
-                    return types
+                Solve.SolveOk t -> do
+                    putStrLn $ "   Types OK (" ++ show (length (Map.keys t)) ++ " bindings)"
+                    return t
                 Solve.SolveError err -> do
-                    putStrLn $ "   TYPE WARNING: " ++ err
+                    putStrLn $ "   TYPE ERROR: " ++ err
                     return Map.empty
             -- Merge inferred dep types into the param + return tables
             -- keyed by module-prefixed Go names. Annotation-derived
@@ -345,25 +351,28 @@ continueCompile config _entryPath outDir moduleOrder srcHash = do
                 goCode = generateGoMulti canMod entrySrcMod config types depDecls depRecAliases depArities depParamTypes depRetTypes depInferredParams depInferredRets depInferredSigs depAliasPairs
             createDirectoryIfMissing True outDir
             let mainGoPath = outDir </> "main.go"
-            writeFile mainGoPath goCode
-            putStrLn $ "   Wrote " ++ mainGoPath
-            -- copyRuntime also copies runtime-go/go.mod + go.sum into outDir
-            -- when it can locate the runtime. Only fall back to a minimal
-            -- go.mod here if copyRuntime didn't write one (no runtime found).
-            copyRuntime outDir
-            hasOutMod <- doesFileExist (outDir </> "go.mod")
-            if not hasOutMod
-                then writeFile (outDir </> "go.mod") $ unlines ["module sky-app", "", "go 1.21"]
-                else return ()
-            -- Pull in Go deps declared in sky.toml so generated ffi/*_bindings.go
-            -- can resolve imports.
-            seedGoDependencies outDir (Toml._goDeps config)
-            -- Write cache hash to enable incremental rebuild skip
-            let cacheDir = ".skycache"
-            createDirectoryIfMissing True cacheDir
-            writeFile (cacheDir </> "source.hash") srcHash
-            putStrLn "Compilation successful"
-            return (Right mainGoPath)
+            case solverError of
+              Just err -> return (Left ("Type error: " ++ err))
+              Nothing -> do
+                writeFile mainGoPath goCode
+                putStrLn $ "   Wrote " ++ mainGoPath
+                -- copyRuntime also copies runtime-go/go.mod + go.sum into outDir
+                -- when it can locate the runtime. Only fall back to a minimal
+                -- go.mod here if copyRuntime didn't write one (no runtime found).
+                copyRuntime outDir
+                hasOutMod <- doesFileExist (outDir </> "go.mod")
+                if not hasOutMod
+                    then writeFile (outDir </> "go.mod") $ unlines ["module sky-app", "", "go 1.21"]
+                    else return ()
+                -- Pull in Go deps declared in sky.toml so generated ffi/*_bindings.go
+                -- can resolve imports.
+                seedGoDependencies outDir (Toml._goDeps config)
+                -- Write cache hash to enable incremental rebuild skip
+                let cacheDir = ".skycache"
+                createDirectoryIfMissing True cacheDir
+                writeFile (cacheDir </> "source.hash") srcHash
+                putStrLn "Compilation successful"
+                return (Right mainGoPath)
 
 
 -- LEGACY: single-module parse entry (no longer used from compile)

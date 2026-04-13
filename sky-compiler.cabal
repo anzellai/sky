@@ -119,3 +119,26 @@ executable sky
     -- Sky infrastructure
     Sky.Sky.ModuleName
     Sky.Sky.Toml
+
+
+test-suite sky-tests
+  type:             exitcode-stdio-1.0
+  main-is:          Spec.hs
+  hs-source-dirs:   test
+  default-language: Haskell2010
+  ghc-options:      -Wall -Wno-unused-imports -Wno-name-shadowing -threaded
+
+  build-tool-depends: sky-compiler:sky
+  build-depends:
+      base >= 4.14 && < 5
+    , hspec >= 2.9
+    , process >= 1.6
+    , directory >= 1.3
+    , filepath >= 1.4
+    , bytestring >= 0.11
+    , text >= 1.2
+    , temporary >= 1.3
+
+  other-modules:
+      Sky.Build.CompileSpec
+      Sky.Build.ExampleSweepSpec
