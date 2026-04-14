@@ -1360,6 +1360,11 @@ func Math_abs(n any) any { x := AsInt(n); if x < 0 { return -x }; return x }
 func Math_min(a any, b any) any { if AsInt(a) < AsInt(b) { return a }; return b }
 func Math_max(a any, b any) any { if AsInt(a) > AsInt(b) { return a }; return b }
 
+// P8/Math typed companions — direct int arithmetic, no AsInt boxing.
+func Math_absT(n int) int { if n < 0 { return -n }; return n }
+func Math_minT(a, b int) int { if a < b { return a }; return b }
+func Math_maxT(a, b int) int { if a > b { return a }; return b }
+
 func Field(record any, field string) any {
 	v := reflect.ValueOf(record)
 	if v.Kind() == reflect.Ptr { v = v.Elem() }
@@ -2118,6 +2123,19 @@ func Math_tan(n any) any   { return math.Tan(AsFloat(n)) }
 func Math_pi() any         { return math.Pi }
 func Math_e() any          { return math.E }
 func Math_log(n any) any   { return math.Log(AsFloat(n)) }
+
+// P8/Math typed float companions.
+func Math_sqrtT(n float64) float64              { return math.Sqrt(n) }
+func Math_powT(base, exp float64) float64       { return math.Pow(base, exp) }
+func Math_floorT(n float64) int                 { return int(math.Floor(n)) }
+func Math_ceilT(n float64) int                  { return int(math.Ceil(n)) }
+func Math_roundT(n float64) int                 { return int(math.Round(n)) }
+func Math_sinT(n float64) float64               { return math.Sin(n) }
+func Math_cosT(n float64) float64               { return math.Cos(n) }
+func Math_tanT(n float64) float64               { return math.Tan(n) }
+func Math_piT() float64                         { return math.Pi }
+func Math_eT() float64                          { return math.E }
+func Math_logT(n float64) float64               { return math.Log(n) }
 
 // ═══════════════════════════════════════════════════════════
 // Additional String functions
