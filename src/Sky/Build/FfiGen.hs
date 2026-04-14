@@ -1327,10 +1327,26 @@ isSimpleTypedType t0
         let (inside, rest) = splitFuncArgs 0 s []
         in case rest of
             (')':retRaw) ->
-                let argTypes = if null inside then [] else splitFuncCommas 0 inside [""]
+                let argTypes = if null inside then []
+                               else map dropParamName (splitFuncCommas 0 inside [""])
                     ret      = dropWhile (== ' ') retRaw
                 in Just (argTypes, ret)
             _ -> Nothing
+
+    -- Go func-type literals may use `(name Type, ...)` or just
+    -- `(Type, ...)`. When the piece contains a top-level space the
+    -- preceding word is the param name and the rest is the type.
+    -- Otherwise the whole piece is the type.
+    dropParamName :: String -> String
+    dropParamName piece =
+        let trimmed = dropWhile (== ' ') piece
+        in case break (== ' ') trimmed of
+            (lhs, ' ':rhs) | not (null rhs) && isPlainIdent lhs ->
+                dropWhile (== ' ') rhs
+            _ -> trimmed
+      where
+        isPlainIdent xs = not (null xs) && all isIdentChar xs
+        isIdentChar c = isAlphaNum c || c == '_'
 
     splitFuncArgs :: Int -> String -> String -> (String, String)
     splitFuncArgs _ []        acc = (reverse acc, "")
