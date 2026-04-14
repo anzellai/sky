@@ -229,6 +229,66 @@ func coerceInner[T any](v any) T {
 			}
 		}
 	}
+	// Slice convert: []any source, []X target — rebuild slice element-wise.
+	if rv.Kind() == reflect.Slice {
+		var zero T
+		zt := reflect.TypeOf(zero)
+		if zt != nil && zt.Kind() == reflect.Slice {
+			elemT := zt.Elem()
+			n := rv.Len()
+			out := reflect.MakeSlice(zt, n, n)
+			for i := 0; i < n; i++ {
+				src := rv.Index(i).Interface()
+				if src == nil {
+					continue
+				}
+				srcVal := reflect.ValueOf(src)
+				if elemT.Kind() == reflect.Interface {
+					out.Index(i).Set(srcVal)
+				} else if srcVal.Type().AssignableTo(elemT) {
+					out.Index(i).Set(srcVal)
+				} else if srcVal.Type().ConvertibleTo(elemT) {
+					out.Index(i).Set(srcVal.Convert(elemT))
+				}
+			}
+			return out.Interface().(T)
+		}
+	}
+	// Map convert: map[K]any source, map[K]X target.
+	if rv.Kind() == reflect.Map {
+		var zero T
+		zt := reflect.TypeOf(zero)
+		if zt != nil && zt.Kind() == reflect.Map {
+			keyT := zt.Key()
+			valT := zt.Elem()
+			out := reflect.MakeMapWithSize(zt, rv.Len())
+			iter := rv.MapRange()
+			for iter.Next() {
+				k := iter.Key()
+				vv := iter.Value().Interface()
+				if !k.Type().AssignableTo(keyT) {
+					if k.Type().ConvertibleTo(keyT) {
+						k = k.Convert(keyT)
+					} else {
+						continue
+					}
+				}
+				if vv == nil {
+					out.SetMapIndex(k, reflect.Zero(valT))
+					continue
+				}
+				vvV := reflect.ValueOf(vv)
+				if valT.Kind() == reflect.Interface {
+					out.SetMapIndex(k, vvV)
+				} else if vvV.Type().AssignableTo(valT) {
+					out.SetMapIndex(k, vvV)
+				} else if vvV.Type().ConvertibleTo(valT) {
+					out.SetMapIndex(k, vvV.Convert(valT))
+				}
+			}
+			return out.Interface().(T)
+		}
+	}
 	// Final fallback: Go will panic on invalid assertion; let it.
 	// The panic is the correct "type mismatch at boundary" signal.
 	return v.(T)
