@@ -31,6 +31,30 @@ spec = do
             n `shouldSatisfy` (>= 5)
             ("Go_Uuid_newString(struct{}{}" `isInfixOf` body) `shouldBe` False
 
+        it "feeds typed results through Result.withDefault in skyshop" $ do
+            body <- readFile "examples/13-skyshop/sky-out/main.go"
+            -- Canonical pattern: `Result.withDefault "" (Uuid.newString ())`
+            -- lowers to `rt.Result_withDefault("", rt.Go_Uuid_newStringT())`.
+            -- Before the reflect-fallback fix in Result_withDefault this
+            -- would have silently returned the whole SkyResult struct
+            -- because the old type-asserted path rejected typed shapes.
+            ("rt.Result_withDefault(\"\", rt.Go_Uuid_newStringT())" `isInfixOf` body)
+                `shouldBe` True
+
+        it "registers a typed variant for every migrated call name" $ do
+            -- Spot-check that regenerated bindings actually emit the T
+            -- variant for the one hard-migrated function, across every
+            -- example that imports it.
+            let files =
+                    [ "examples/03-tea-external/ffi/uuid_bindings.go"
+                    , "examples/08-notes-app/ffi/uuid_bindings.go"
+                    , "examples/13-skyshop/ffi/uuid_bindings.go"
+                    ]
+            mapM_ (\fp -> do
+                contents <- readFile fp
+                ("func Go_Uuid_newStringT()" `isInfixOf` contents)
+                    `shouldBe` True) files
+
 
 -- | Count occurrences of a needle in a haystack (non-overlapping).
 substrings :: String -> String -> [()]
