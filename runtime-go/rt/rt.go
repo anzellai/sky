@@ -414,6 +414,15 @@ func Basics_identityT[A any](a A) A { return a }
 // Basics_alwaysT mirrors Basics_always but keeps the T-suffix naming.
 func Basics_alwaysT[A, B any](a A, _ B) A { return a }
 
+// Basics_eqT — strict equality for any comparable type (no reflect).
+// Separate symbol so the typed-dispatch path never needs to decide
+// whether the runtime Eq helper's shape-based comparison is safe.
+func Basics_eqT[A comparable](a, b A) bool { return a == b }
+
+// Basics_fstT / sndT — tuple accessors generic in both element types.
+func Basics_fstT[A, B any](t SkyTuple2) A { return t.V0.(A) }
+func Basics_sndT[A, B any](t SkyTuple2) B { return t.V1.(B) }
+
 func Basics_not(b any) any {
 	return !AsBool(b)
 }
