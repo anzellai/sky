@@ -110,6 +110,55 @@ func Set_diff(a any, b any) any {
 	return out
 }
 
+// P8/Set typed companions — operate on []A slices directly. Sky's
+// SkySet is opaque and keyed on string repr, which keeps ordering
+// semantics simple but means any typed wrapper that exposed the
+// struct would leak `any`. Returning []A matches Set.toList's shape
+// so typed pipelines can flow string/int values without boxing.
+
+func Set_memberT[A comparable](v A, s []A) bool {
+	for _, x := range s { if x == v { return true } }
+	return false
+}
+
+func Set_sizeT[A any](s []A) int { return len(s) }
+
+func Set_fromListT[A comparable](xs []A) []A {
+	seen := map[A]struct{}{}
+	out := make([]A, 0, len(xs))
+	for _, x := range xs {
+		if _, ok := seen[x]; !ok {
+			seen[x] = struct{}{}
+			out = append(out, x)
+		}
+	}
+	return out
+}
+
+func Set_unionT[A comparable](a, b []A) []A {
+	seen := map[A]struct{}{}
+	out := make([]A, 0, len(a)+len(b))
+	for _, x := range a { if _, ok := seen[x]; !ok { seen[x] = struct{}{}; out = append(out, x) } }
+	for _, x := range b { if _, ok := seen[x]; !ok { seen[x] = struct{}{}; out = append(out, x) } }
+	return out
+}
+
+func Set_intersectT[A comparable](a, b []A) []A {
+	bs := map[A]struct{}{}
+	for _, x := range b { bs[x] = struct{}{} }
+	out := make([]A, 0, len(a))
+	for _, x := range a { if _, ok := bs[x]; ok { out = append(out, x) } }
+	return out
+}
+
+func Set_diffT[A comparable](a, b []A) []A {
+	bs := map[A]struct{}{}
+	for _, x := range b { bs[x] = struct{}{} }
+	out := make([]A, 0, len(a))
+	for _, x := range a { if _, ok := bs[x]; !ok { out = append(out, x) } }
+	return out
+}
+
 // ═══════════════════════════════════════════════════════════
 // Sky.Core.Json.Encode — build JSON values
 // ═══════════════════════════════════════════════════════════
