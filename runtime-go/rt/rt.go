@@ -1329,10 +1329,15 @@ func Ffi_isPure(name any) any {
 // SkyADT: runtime type for ADT case-match dispatch.
 // Codegen emits `msg.(rt.SkyADT)` so any local ADT type (with matching Tag/Fields)
 // can be pattern-matched via integer Tag comparison.
+// SkyADT is the canonical runtime shape for every Sky-side ADT. Field
+// ordering matches what Sky's codegen emits for user-defined ADTs
+// (`type X = ...` → `type X struct { Tag int; SkyName string; Fields []any }`)
+// so rt-side constructors (e.g. ErrIo / ErrNetwork) produce values that
+// are assignment-compatible with the user-visible struct types.
 type SkyADT struct {
 	Tag     int
-	Fields  []any
 	SkyName string
+	Fields  []any
 }
 
 
@@ -1350,22 +1355,24 @@ type SkyADT struct {
 // emitted as named structs with capitalised field names, e.g.
 // `Sky_Core_Error_ErrorInfo_R{Message: "...", Details: ...}`.
 
-type skyErrorAdt struct {
-	Tag     int
-	SkyName string
-	Fields  []any
-}
+// Alias rt-side ADT shapes to SkyADT so Sky-emitted Error / Maybe types
+// (type Sky_Core_Error_Error = rt.SkyADT via codegen alias, or direct
+// struct literal with matching layout) are assignment-compatible with
+// values produced by rt's Err*/Maybe* builders.
+type skyErrorAdt = SkyADT
 
-type skyErrorInfo struct {
+// skyErrorInfo mirrors the field names Sky codegen uses when it emits
+// `Sky.Core.Error.ErrorInfo`. Exposed as the exported SkyErrorInfo type
+// so user code's Sky_Core_Error_ErrorInfo_R (which has the same
+// `{ Message string; Details any }` layout) type-aliases to this.
+type SkyErrorInfo struct {
 	Message string
 	Details any
 }
 
-type skyMaybeAdt struct {
-	Tag     int
-	SkyName string
-	Fields  []any
-}
+type skyErrorInfo = SkyErrorInfo
+
+type skyMaybeAdt = SkyADT
 
 func skyMaybeNothing() any {
 	return skyMaybeAdt{Tag: 1, SkyName: "Nothing", Fields: []any{}}

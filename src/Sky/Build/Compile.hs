@@ -1227,7 +1227,12 @@ generateUnionForDep modPrefix (typeName, Can.Union _vars ctors _numAlts opts) =
                 ])
             ]
         _ ->
-            GoIr.GoDeclRaw ("type " ++ qualType ++ " struct { Tag int; SkyName string; Fields []any }")
+            -- Emit as a type alias to rt.SkyADT so values constructed
+            -- here are assignment-compatible with values produced by
+            -- rt-side builders (ErrIo, ErrNetwork, Just/Nothing helpers,
+            -- etc.). Eliminates the `interface {} is rt.SkyADT, not
+            -- Sky_Core_Error_Error` panic class at pattern-match sites.
+            GoIr.GoDeclRaw ("type " ++ qualType ++ " = rt.SkyADT")
             : [ if arity == 0
                   then GoIr.GoDeclVar (qualType ++ "_" ++ cname) qualType
                         (Just (GoIr.GoStructLit qualType
@@ -1497,12 +1502,12 @@ generateUnionTypes canMod =
             -- Enum: type Name int; const ( Name_Ctor = iota ... )
             [ GoIr.GoDeclType typeName (GoIr.GoEnumDef (map (ctorConstName typeName) ctors)) ]
         _ ->
-            -- Tagged union: struct with Tag + SkyName + fields. The
-            -- SkyName field is used by the Sky.Live runtime to derive
-            -- the wire-format msg name (e.g. "Increment") from any
-            -- ADT value without the compiler having to emit a separate
-            -- MsgTagToName table.
-            [ GoIr.GoDeclRaw $ "type " ++ typeName ++ " struct { Tag int; SkyName string; Fields []any }" ]
+            -- Tagged union: alias rt.SkyADT so values constructed here
+            -- are assignment-compatible with values produced by rt-side
+            -- builders (ErrIo/ErrNetwork/etc.). Eliminates the
+            -- "interface {} is rt.SkyADT, not <UserADT>" panic class at
+            -- pattern-match sites.
+            [ GoIr.GoDeclRaw $ "type " ++ typeName ++ " = rt.SkyADT" ]
             ++ map (generateCtorFunc typeName) ctors
 
     ctorConstName typeName (Can.Ctor cname _ _ _) = typeName ++ "_" ++ cname
