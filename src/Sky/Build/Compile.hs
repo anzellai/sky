@@ -2686,6 +2686,10 @@ typedKernelArgCoerce = Map.fromList
     -- Html.text / Css.hex — simple string → X. High-frequency.
     , (("Html",   "text"),    ["AsString"])
     , (("Css",    "hex"),     ["AsString"])
+    , (("Css",    "property"),["AsString", "AsString"])
+    , (("Css",    "px"),      ["AsFloat"])
+    , (("Css",    "rem"),     ["AsFloat"])
+    , (("Attr",   "class"),   ["AsString"])
     -- Basics: pure boolean / integer helpers
     , (("Basics", "not"),     ["AsBool"])
     , (("Basics", "modBy"),   ["AsInt", "AsInt"])
@@ -2743,6 +2747,8 @@ typedKernelLiterals = Set.fromList
     , ("Dict",   "member"),     ("Dict",   "insert")
     , ("Dict",   "keys"),       ("Dict",   "values"),   ("Dict", "get")
     , ("Html",   "text"),       ("Css",    "hex")
+    , ("Css",    "property"),   ("Css",    "px"),       ("Css", "rem")
+    , ("Attr",   "class")
     , ("Basics", "not"),        ("Basics", "modBy"),  ("Basics", "errorToString")
     , ("Time",   "formatISO8601"), ("Time", "formatRFC3339"), ("Time", "formatHTTP")
     , ("Basics", "fst"),        ("Basics", "snd"),   ("Basics", "identity")

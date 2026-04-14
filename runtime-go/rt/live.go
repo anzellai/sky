@@ -196,6 +196,7 @@ func Html_meter(a, c any) any       { return htmlElem("meter")(a, c) }
 
 func attr(k, v string) any          { return attrPair{key: k, val: v} }
 func Attr_class(v any) any          { return attr("class", fmt.Sprintf("%v", v)) }
+func Attr_classT(v string) any      { return attr("class", v) }
 func Attr_id(v any) any             { return attr("id", fmt.Sprintf("%v", v)) }
 func Attr_style(v any) any          { return attr("style", fmt.Sprintf("%v", v)) }
 func Attr_type(v any) any           { return attr("type", fmt.Sprintf("%v", v)) }
@@ -341,10 +342,24 @@ func Css_rule(selector any, props any) any {
 func Css_property(k any, v any) any {
 	return cssProp{k: fmt.Sprintf("%v", k), v: fmt.Sprintf("%v", v)}
 }
+func Css_propertyT(k, v string) any {
+	return cssProp{k: k, v: v}
+}
 
 // Unit helpers
 func Css_px(n any) any  { return fmt.Sprintf("%vpx", n) }
 func Css_rem(n any) any { return fmt.Sprintf("%vrem", n) }
+// Css_pxT / Css_remT: take float64 so both `px 12` (int literal promoted)
+// and `rem 0.9` (float literal) work without separate variants. Sky's
+// dispatch coerces via AsFloat at the call site.
+func Css_pxT(n float64) string  {
+	if n == float64(int(n)) { return fmt.Sprintf("%dpx", int(n)) }
+	return fmt.Sprintf("%gpx", n)
+}
+func Css_remT(n float64) string {
+	if n == float64(int(n)) { return fmt.Sprintf("%drem", int(n)) }
+	return fmt.Sprintf("%grem", n)
+}
 func Css_em(n any) any  { return fmt.Sprintf("%vem", n) }
 func Css_pct(n any) any { return fmt.Sprintf("%v%%", n) }
 func Css_hex(s any) any { return fmt.Sprintf("#%v", s) }
