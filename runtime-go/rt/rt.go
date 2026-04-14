@@ -2031,6 +2031,26 @@ func Encoding_hexDecode(s any) any {
 	return Ok[any, any](string(data))
 }
 
+// P8/Encoding typed companions — direct string in, string/SkyResult out.
+func Encoding_base64EncodeT(s string) string { return base64.StdEncoding.EncodeToString([]byte(s)) }
+func Encoding_base64DecodeT(s string) SkyResult[string, string] {
+	data, err := base64.StdEncoding.DecodeString(s)
+	if err != nil { return Err[string, string](err.Error()) }
+	return Ok[string, string](string(data))
+}
+func Encoding_urlEncodeT(s string) string { return url.QueryEscape(s) }
+func Encoding_urlDecodeT(s string) SkyResult[string, string] {
+	decoded, err := url.QueryUnescape(s)
+	if err != nil { return Err[string, string](err.Error()) }
+	return Ok[string, string](decoded)
+}
+func Encoding_hexEncodeT(s string) string { return hex.EncodeToString([]byte(s)) }
+func Encoding_hexDecodeT(s string) SkyResult[string, string] {
+	data, err := hex.DecodeString(s)
+	if err != nil { return Err[string, string](err.Error()) }
+	return Ok[string, string](string(data))
+}
+
 // ═══════════════════════════════════════════════════════════
 // Regex
 // ═══════════════════════════════════════════════════════════

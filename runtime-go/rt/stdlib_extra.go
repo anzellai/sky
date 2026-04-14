@@ -662,6 +662,13 @@ func Path_isAbsolute(p any) any {
 	return filepath.IsAbs(fmt.Sprintf("%v", p))
 }
 
+// P8/Path typed companions — direct string in, string/bool out.
+func Path_dirT(p string) string        { return filepath.Dir(p) }
+func Path_baseT(p string) string       { return filepath.Base(p) }
+func Path_extT(p string) string        { return filepath.Ext(p) }
+func Path_isAbsoluteT(p string) bool   { return filepath.IsAbs(p) }
+func Path_joinT(parts []string) string { return filepath.Join(parts...) }
+
 // Path.safeJoin : String -> String -> Result String String
 // (root, relative) — joins `root` and `relative`, cleans the result, and
 // returns Err if the resulting path escapes `root` (e.g. via "../../etc/passwd").
