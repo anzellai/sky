@@ -25,28 +25,28 @@ func Go_Iterator_setNewPageInfo(value any) any { reflect.ValueOf(&pkg.NewPageInf
 type FfiT_Go_Iterator_newPager_P0 = pkg.Pageable
 type FfiT_Go_Iterator_newPager_R = *pkg.Pager
 // [pure] typed wrapper for Go_Iterator_newPager (P7 adaptor target)
-func Go_Iterator_newPagerT(p0 pkg.Pageable, p1 int, p2 string) (out SkyResult[any, *pkg.Pager]) {
+func Go_Iterator_newPagerT(arg0 pkg.Pageable, arg1 int, arg2 string) (out SkyResult[any, *pkg.Pager]) {
 	defer SkyFfiRecoverT(&out)()
-	out = Ok[any,*pkg.Pager](pkg.NewPager(p0, p1, p2))
+	out = Ok[any,*pkg.Pager](pkg.NewPager(arg0, arg1, arg2))
 	return
 }
 
 type FfiT_Go_Iterator_pageInfoRemaining_P0 = *pkg.PageInfo
 // [pure] typed wrapper for Go_Iterator_pageInfoRemaining (P7 adaptor target)
-func Go_Iterator_pageInfoRemainingT(p0 *pkg.PageInfo) (out SkyResult[any, int]) {
+func Go_Iterator_pageInfoRemainingT(arg0 *pkg.PageInfo) (out SkyResult[any, int]) {
 	defer SkyFfiRecoverT(&out)()
-	out = Ok[any,int](p0.Remaining())
+	out = Ok[any,int](arg0.Remaining())
 	return
 }
 
 type FfiT_Go_Iterator_pageInfoToken_P0 = *pkg.PageInfo
-func Go_Iterator_pageInfoTokenT(p0 *pkg.PageInfo) string { return p0.Token }
+func Go_Iterator_pageInfoTokenT(arg0 *pkg.PageInfo) string { return arg0.Token }
 
 type FfiT_Go_Iterator_pageInfoSetToken_P1 = *pkg.PageInfo
 func Go_Iterator_pageInfoSetTokenT(value string, recv *pkg.PageInfo) *pkg.PageInfo { recv.Token = value; return recv }
 
 type FfiT_Go_Iterator_pageInfoMaxSize_P0 = *pkg.PageInfo
-func Go_Iterator_pageInfoMaxSizeT(p0 *pkg.PageInfo) int { return p0.MaxSize }
+func Go_Iterator_pageInfoMaxSizeT(arg0 *pkg.PageInfo) int { return arg0.MaxSize }
 
 type FfiT_Go_Iterator_pageInfoSetMaxSize_P1 = *pkg.PageInfo
 func Go_Iterator_pageInfoSetMaxSizeT(value int, recv *pkg.PageInfo) *pkg.PageInfo { recv.MaxSize = value; return recv }
@@ -54,17 +54,17 @@ func Go_Iterator_pageInfoSetMaxSizeT(value int, recv *pkg.PageInfo) *pkg.PageInf
 type FfiT_Go_Iterator_pageablePageInfo_P0 = pkg.Pageable
 type FfiT_Go_Iterator_pageablePageInfo_R = *pkg.PageInfo
 // [pure] typed wrapper for Go_Iterator_pageablePageInfo (P7 adaptor target)
-func Go_Iterator_pageablePageInfoT(p0 pkg.Pageable) (out SkyResult[any, *pkg.PageInfo]) {
+func Go_Iterator_pageablePageInfoT(arg0 pkg.Pageable) (out SkyResult[any, *pkg.PageInfo]) {
 	defer SkyFfiRecoverT(&out)()
-	out = Ok[any,*pkg.PageInfo](p0.PageInfo())
+	out = Ok[any,*pkg.PageInfo](arg0.PageInfo())
 	return
 }
 
 type FfiT_Go_Iterator_pagerNextPage_P0 = *pkg.Pager
 // [fallible] typed wrapper for Go_Iterator_pagerNextPage (P7 adaptor target)
-func Go_Iterator_pagerNextPageT(p0 *pkg.Pager, p1 interface{}) (out SkyResult[any, string]) {
+func Go_Iterator_pagerNextPageT(arg0 *pkg.Pager, arg1 interface{}) (out SkyResult[any, string]) {
 	defer SkyFfiRecoverT(&out)()
-	r0, err := p0.NextPage(p1)
+	r0, err := arg0.NextPage(arg1)
 	if err != nil { out = Err[any,string](ErrFfi(err.Error())); return }
 	out = Ok[any,string](r0)
 	return

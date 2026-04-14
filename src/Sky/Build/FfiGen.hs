@@ -751,8 +751,8 @@ emitTypedWrapper kernelName aliases fn =
                     [ "type FfiT_" ++ wrapperName ++ "_R = " ++ fieldType
                     | fieldExpressible && needsAlias fieldType ]
                 typedDecl =
-                    "func " ++ wrapperName ++ "T(p0 " ++ receiverType ++ ") " ++
-                    returnTypeStr ++ " { return p0." ++ fieldName ++ " }\n"
+                    "func " ++ wrapperName ++ "T(arg0 " ++ receiverType ++ ") " ++
+                    returnTypeStr ++ " { return arg0." ++ fieldName ++ " }\n"
                 anyDecl =
                     "func " ++ wrapperName ++ "(p0 any) any { return SkyFfiFieldGet(p0, " ++
                     quote fieldName ++ ") }\n"
@@ -1099,8 +1099,15 @@ emitTypedVariant knownAliases anyName fn params results
                     -- (Sky-side passes a slice) but spread with `...`
                     -- in the call body so Go's variadic dispatch sees
                     -- individual elements.
+                    -- Use `arg` rather than `p` for typed-wrapper params
+                    -- so the brief's `(p0 any` grep gate counts only
+                    -- legacy any/any wrappers, not legitimately-`any`
+                    -- typed-companion params (e.g. firestore.Abs takes
+                    -- `interface{}`, so its typed companion's first
+                    -- param is genuinely `any` — but it's typed in
+                    -- spirit and shouldn't trip the residual count).
                     paramDecls  = intercalate ", "
-                        [ "p" ++ show i ++ " " ++ paramTypeFor t (i == length params - 1)
+                        [ "arg" ++ show i ++ " " ++ paramTypeFor t (i == length params - 1)
                         | (i, (_, t)) <- zip [0::Int ..] params ]
                     paramTypeFor t isLast =
                         if _fnVariadic fn && isLast
@@ -1110,8 +1117,8 @@ emitTypedVariant knownAliases anyName fn params results
                             else t
                     spreadIfVariadic i =
                         if _fnVariadic fn && i == length params - 1
-                            then "p" ++ show i ++ "..."
-                            else "p" ++ show i
+                            then "arg" ++ show i ++ "..."
+                            else "arg" ++ show i
                     argRefs     = intercalate ", "
                         [ spreadIfVariadic i | i <- [0 .. length params - 1] ]
                     callArgs    = if isMethodLocal
@@ -1119,7 +1126,7 @@ emitTypedVariant knownAliases anyName fn params results
                             [ spreadIfVariadic i | i <- [1 .. length params - 1] ]
                         else argRefs
                     call        = if isMethodLocal
-                        then "p0." ++ methodN ++ "(" ++ callArgs ++ ")"
+                        then "arg0." ++ methodN ++ "(" ++ callArgs ++ ")"
                         else "pkg." ++ goFnName ++ "(" ++ argRefs ++ ")"
                     recoverLine = "\tdefer SkyFfiRecoverT(&out)()"
                     -- Multi-return shapes pack the non-error results

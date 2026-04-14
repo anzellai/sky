@@ -24,61 +24,61 @@ func Go_App_newT() (out SkyResult[any, fyne.App]) {
 
 type FfiT_Go_App_newWithID_R = fyne.App
 // [pure] typed wrapper for Go_App_newWithID (P7 adaptor target)
-func Go_App_newWithIDT(p0 string) (out SkyResult[any, fyne.App]) {
+func Go_App_newWithIDT(arg0 string) (out SkyResult[any, fyne.App]) {
 	defer SkyFfiRecoverT(&out)()
-	out = Ok[any,fyne.App](pkg.NewWithID(p0))
+	out = Ok[any,fyne.App](pkg.NewWithID(arg0))
 	return
 }
 
 type FfiT_Go_App_setMetadata_P0 = fyne.AppMetadata
 // [pure] typed wrapper for Go_App_setMetadata (P7 adaptor target)
-func Go_App_setMetadataT(p0 fyne.AppMetadata) (out SkyResult[any, struct{}]) {
+func Go_App_setMetadataT(arg0 fyne.AppMetadata) (out SkyResult[any, struct{}]) {
 	defer SkyFfiRecoverT(&out)()
-	pkg.SetMetadata(p0)
+	pkg.SetMetadata(arg0)
 	out = Ok[any,struct{}](struct{}{})
 	return
 }
 
 type FfiT_Go_App_settingsSchemaStoragePath_P0 = *pkg.SettingsSchema
 // [pure] typed wrapper for Go_App_settingsSchemaStoragePath (P7 adaptor target)
-func Go_App_settingsSchemaStoragePathT(p0 *pkg.SettingsSchema) (out SkyResult[any, string]) {
+func Go_App_settingsSchemaStoragePathT(arg0 *pkg.SettingsSchema) (out SkyResult[any, string]) {
 	defer SkyFfiRecoverT(&out)()
-	out = Ok[any,string](p0.StoragePath())
+	out = Ok[any,string](arg0.StoragePath())
 	return
 }
 
 type FfiT_Go_App_settingsSchemaThemeName_P0 = *pkg.SettingsSchema
-func Go_App_settingsSchemaThemeNameT(p0 *pkg.SettingsSchema) string { return p0.ThemeName }
+func Go_App_settingsSchemaThemeNameT(arg0 *pkg.SettingsSchema) string { return arg0.ThemeName }
 
 type FfiT_Go_App_settingsSchemaSetThemeName_P1 = *pkg.SettingsSchema
 func Go_App_settingsSchemaSetThemeNameT(value string, recv *pkg.SettingsSchema) *pkg.SettingsSchema { recv.ThemeName = value; return recv }
 
 type FfiT_Go_App_settingsSchemaScale_P0 = *pkg.SettingsSchema
-func Go_App_settingsSchemaScaleT(p0 *pkg.SettingsSchema) float32 { return p0.Scale }
+func Go_App_settingsSchemaScaleT(arg0 *pkg.SettingsSchema) float32 { return arg0.Scale }
 
 type FfiT_Go_App_settingsSchemaSetScale_P1 = *pkg.SettingsSchema
 func Go_App_settingsSchemaSetScaleT(value float32, recv *pkg.SettingsSchema) *pkg.SettingsSchema { recv.Scale = value; return recv }
 
 type FfiT_Go_App_settingsSchemaPrimaryColor_P0 = *pkg.SettingsSchema
-func Go_App_settingsSchemaPrimaryColorT(p0 *pkg.SettingsSchema) string { return p0.PrimaryColor }
+func Go_App_settingsSchemaPrimaryColorT(arg0 *pkg.SettingsSchema) string { return arg0.PrimaryColor }
 
 type FfiT_Go_App_settingsSchemaSetPrimaryColor_P1 = *pkg.SettingsSchema
 func Go_App_settingsSchemaSetPrimaryColorT(value string, recv *pkg.SettingsSchema) *pkg.SettingsSchema { recv.PrimaryColor = value; return recv }
 
 type FfiT_Go_App_settingsSchemaCloudName_P0 = *pkg.SettingsSchema
-func Go_App_settingsSchemaCloudNameT(p0 *pkg.SettingsSchema) string { return p0.CloudName }
+func Go_App_settingsSchemaCloudNameT(arg0 *pkg.SettingsSchema) string { return arg0.CloudName }
 
 type FfiT_Go_App_settingsSchemaSetCloudName_P1 = *pkg.SettingsSchema
 func Go_App_settingsSchemaSetCloudNameT(value string, recv *pkg.SettingsSchema) *pkg.SettingsSchema { recv.CloudName = value; return recv }
 
 type FfiT_Go_App_settingsSchemaCloudConfig_P0 = *pkg.SettingsSchema
-func Go_App_settingsSchemaCloudConfigT(p0 *pkg.SettingsSchema) string { return p0.CloudConfig }
+func Go_App_settingsSchemaCloudConfigT(arg0 *pkg.SettingsSchema) string { return arg0.CloudConfig }
 
 type FfiT_Go_App_settingsSchemaSetCloudConfig_P1 = *pkg.SettingsSchema
 func Go_App_settingsSchemaSetCloudConfigT(value string, recv *pkg.SettingsSchema) *pkg.SettingsSchema { recv.CloudConfig = value; return recv }
 
 type FfiT_Go_App_settingsSchemaDisableAnimations_P0 = *pkg.SettingsSchema
-func Go_App_settingsSchemaDisableAnimationsT(p0 *pkg.SettingsSchema) bool { return p0.DisableAnimations }
+func Go_App_settingsSchemaDisableAnimationsT(arg0 *pkg.SettingsSchema) bool { return arg0.DisableAnimations }
 
 type FfiT_Go_App_settingsSchemaSetDisableAnimations_P1 = *pkg.SettingsSchema
 func Go_App_settingsSchemaSetDisableAnimationsT(value bool, recv *pkg.SettingsSchema) *pkg.SettingsSchema { recv.DisableAnimations = value; return recv }
