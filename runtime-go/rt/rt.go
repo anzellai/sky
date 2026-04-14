@@ -431,6 +431,14 @@ func Basics_clampT(lo, hi, n int) int {
 	return n
 }
 
+// Basics_modByT — integer modulo with Sky's divisor-first convention.
+func Basics_modByT(divisor, n int) int {
+	if divisor == 0 { return 0 }
+	r := n % divisor
+	if r < 0 { r += divisor }
+	return r
+}
+
 func Basics_not(b any) any {
 	return !AsBool(b)
 }
