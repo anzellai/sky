@@ -2351,8 +2351,12 @@ exprToGo (A.At _ expr) = case expr of
                 | not (null args)
                 , all isPrimLiteralArg args
                 , Set.member (modName, funcName) typedKernelLiterals ->
-                    GoIr.GoCall
-                        (GoIr.GoQualified "rt" (modName ++ "_" ++ funcName ++ "T"))
+                    let altSuffix = Map.findWithDefault
+                            (funcName ++ "T")
+                            (modName, funcName)
+                            typedKernelAltName
+                    in GoIr.GoCall
+                        (GoIr.GoQualified "rt" (modName ++ "_" ++ altSuffix))
                         (map exprToGo args)
 
             -- P8 step 4 widening: kernel typed dispatch for non-literal
@@ -2365,8 +2369,12 @@ exprToGo (A.At _ expr) = case expr of
                 | not (null args)
                 , Just coercers <- Map.lookup (modName, funcName) typedKernelArgCoerce
                 , length coercers == length args ->
-                    GoIr.GoCall
-                        (GoIr.GoQualified "rt" (modName ++ "_" ++ funcName ++ "T"))
+                    let altSuffix = Map.findWithDefault
+                            (funcName ++ "T")
+                            (modName, funcName)
+                            typedKernelAltName
+                    in GoIr.GoCall
+                        (GoIr.GoQualified "rt" (modName ++ "_" ++ altSuffix))
                         (zipWith coerceTypedKernelArg coercers args)
 
             Can.VarCtor _opts _home _typeName _ctorName annot ->
@@ -2591,6 +2599,18 @@ isPrimLiteralArg (A.At _ e) = case e of
 --   "AsInt" / "AsFloat" / "AsBool" — runtime primitive coercers.
 --   "AsString" — fmt.Sprintf("%v", arg) wrapper. Defined here as
 --     well, since rt.go uses an inline pattern.
+-- | Override the default `<module>_<func>T` suffix for kernels whose
+-- typed companion has a different Go name. Used when the default
+-- typed companion is generic over element types (requires HM flow)
+-- but an `AnyT` variant exists that preserves Sky's `any`-boxed shape
+-- without needing type inference.
+typedKernelAltName :: Map.Map (String, String) String
+typedKernelAltName = Map.fromList
+    [ (("Basics", "fst"),      "fstAnyT")
+    , (("Basics", "snd"),      "sndAnyT")
+    ]
+
+
 typedKernelArgCoerce :: Map.Map (String, String) [String]
 typedKernelArgCoerce = Map.fromList
     -- Single-arg int → string
@@ -2663,6 +2683,10 @@ typedKernelArgCoerce = Map.fromList
     , (("Basics", "not"),     ["AsBool"])
     , (("Basics", "modBy"),   ["AsInt", "AsInt"])
     , (("Basics", "errorToString"), ["Pass"])
+    -- Basics.fst/snd: dispatch to fstAnyT/sndAnyT via typedKernelAltName;
+    -- they preserve the any-boxed element type without requiring HM flow.
+    , (("Basics", "fst"),     ["AsTuple2"])
+    , (("Basics", "snd"),     ["AsTuple2"])
     -- Time formatters: Int → String
     , (("Time",   "formatISO8601"), ["AsInt"])
     , (("Time",   "formatRFC3339"), ["AsInt"])
@@ -2710,6 +2734,7 @@ typedKernelLiterals = Set.fromList
     , ("Dict",   "keys"),       ("Dict",   "values")
     , ("Basics", "not"),        ("Basics", "modBy"),  ("Basics", "errorToString")
     , ("Time",   "formatISO8601"), ("Time", "formatRFC3339"), ("Time", "formatHTTP")
+    , ("Basics", "fst"),        ("Basics", "snd")
     ]
 
 

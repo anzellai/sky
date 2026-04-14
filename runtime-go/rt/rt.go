@@ -423,6 +423,22 @@ func Basics_eqT[A comparable](a, b A) bool { return a == b }
 func Basics_fstT[A, B any](t SkyTuple2) A { return t.V0.(A) }
 func Basics_sndT[A, B any](t SkyTuple2) B { return t.V1.(B) }
 
+// AsTuple2 coerces Sky-side any to SkyTuple2. All Sky tuple values
+// are boxed as SkyTuple2 at runtime; the Sky checker enforces tuple
+// arity. Used by the typed kernel dispatch for Basics.fst/snd.
+func AsTuple2(v any) SkyTuple2 {
+	if t, ok := v.(SkyTuple2); ok {
+		return t
+	}
+	return SkyTuple2{}
+}
+
+// AnyT shape tuple accessors: preserve Sky's `any`-valued element
+// convention so callers don't need HM element types to use them.
+// Go infers A=any and B=any when invoked as `Basics_fstT[any, any]`.
+func Basics_fstAnyT(t SkyTuple2) any { return t.V0 }
+func Basics_sndAnyT(t SkyTuple2) any { return t.V1 }
+
 // Basics_clampT — common enough to deserve a typed shortcut. Integer
 // version only; Sky's Float clamp is rarely called with literal args.
 func Basics_clampT(lo, hi, n int) int {
