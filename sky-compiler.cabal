@@ -144,6 +144,7 @@ test-suite sky-tests
   other-modules:
       Sky.Build.CompileSpec
       Sky.Build.ExampleSweepSpec
+      Sky.Build.TypedFfiSpec
       Sky.Parse.PatternSpec
       Sky.Canonicalise.ExposingSpec
       Sky.Type.ExhaustivenessSpec
