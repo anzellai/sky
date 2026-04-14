@@ -1280,6 +1280,13 @@ isSimpleTypedType :: String -> Bool
 isSimpleTypedType t0
     -- `interface{}` is Go's `any`. Simple param.
     | t0 == "interface{}" = True
+    -- Simple `func(args...) result` types (no return type or one
+    -- simple return). Each arg type must itself be simple, but
+    -- nested func / chan / map are still rejected.
+    | take 5 t0 == "func("
+    , Just (argTypes, retType) <- splitFunc (drop 5 t0)
+    = all isSimpleTypedType argTypes
+        && (null retType || isSimpleTypedType retType)
     -- Allow simple `map[K]V` where K and V are themselves simple (no
     -- generics, no channels, no funcs). Common for Stripe's Metadata
     -- field which is `map[string]string`.
@@ -1311,6 +1318,36 @@ isSimpleTypedType t0
         in case rest of
             (']':v) -> Just (k, v)
             _       -> Nothing
+
+    -- Split the body of `func(...)` (called with the substring AFTER
+    -- the opening `(`). Returns (arg-types, return-type) where
+    -- return-type is "" when the function has no return.
+    splitFunc :: String -> Maybe ([String], String)
+    splitFunc s =
+        let (inside, rest) = splitFuncArgs 0 s []
+        in case rest of
+            (')':retRaw) ->
+                let argTypes = if null inside then [] else splitFuncCommas 0 inside [""]
+                    ret      = dropWhile (== ' ') retRaw
+                in Just (argTypes, ret)
+            _ -> Nothing
+
+    splitFuncArgs :: Int -> String -> String -> (String, String)
+    splitFuncArgs _ []        acc = (reverse acc, "")
+    splitFuncArgs 0 (')':xs)  acc = (reverse acc, ')':xs)
+    splitFuncArgs d ('(':xs)  acc = splitFuncArgs (d+1) xs ('(':acc)
+    splitFuncArgs d (')':xs)  acc = splitFuncArgs (d-1) xs (')':acc)
+    splitFuncArgs d (x:xs)    acc = splitFuncArgs d xs (x:acc)
+
+    splitFuncCommas :: Int -> String -> [String] -> [String]
+    splitFuncCommas _ [] acc = reverse (map (dropWhile (== ' ') . reverse . dropWhile (== ' ') . reverse) acc)
+    splitFuncCommas 0 (',':xs) (cur:rest) =
+        splitFuncCommas 0 xs ("" : cur : rest)
+    splitFuncCommas d (c:xs) (cur:rest)
+        | c == '(' || c == '[' = splitFuncCommas (d+1) xs ((c:cur):rest)
+        | c == ')' || c == ']' = splitFuncCommas (d-1) xs ((c:cur):rest)
+        | otherwise            = splitFuncCommas d xs ((c:cur):rest)
+    splitFuncCommas _ _ [] = []
 
     splitAtClosingBracket :: Int -> String -> String -> (String, String)
     splitAtClosingBracket _ [] acc = (reverse acc, "")

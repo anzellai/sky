@@ -117,10 +117,13 @@ func Go_Mux_routeHandlerT(p0 *pkg.Route, p1 http.Handler) (out SkyResult[any, *p
 	return
 }
 
-// [pure] Go_Mux.routeHandlerFunc → pkg.RouteHandlerFunc
-func Go_Mux_routeHandlerFunc(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.Route).HandlerFunc(p1.(func(http.ResponseWriter, *http.Request))))
+type FfiT_Go_Mux_routeHandlerFunc_P0 = *pkg.Route
+type FfiT_Go_Mux_routeHandlerFunc_P1 = func(http.ResponseWriter, *http.Request)
+type FfiT_Go_Mux_routeHandlerFunc_R = *pkg.Route
+// [pure] typed wrapper for Go_Mux_routeHandlerFunc (P7 adaptor target)
+func Go_Mux_routeHandlerFuncT(p0 *pkg.Route, p1 func(http.ResponseWriter, *http.Request)) (out SkyResult[any, *pkg.Route]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,*pkg.Route](p0.HandlerFunc(p1))
 	return
 }
 
@@ -490,10 +493,13 @@ func Go_Mux_routerHandleT(p0 *pkg.Router, p1 string, p2 http.Handler) (out SkyRe
 	return
 }
 
-// [pure] Go_Mux.routerHandleFunc → pkg.RouterHandleFunc
-func Go_Mux_routerHandleFunc(p0 any, p1 any, p2 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.Router).HandleFunc(fmt.Sprintf("%v", p1), p2.(func(http.ResponseWriter, *http.Request))))
+type FfiT_Go_Mux_routerHandleFunc_P0 = *pkg.Router
+type FfiT_Go_Mux_routerHandleFunc_P2 = func(http.ResponseWriter, *http.Request)
+type FfiT_Go_Mux_routerHandleFunc_R = *pkg.Route
+// [pure] typed wrapper for Go_Mux_routerHandleFunc (P7 adaptor target)
+func Go_Mux_routerHandleFuncT(p0 *pkg.Router, p1 string, p2 func(http.ResponseWriter, *http.Request)) (out SkyResult[any, *pkg.Route]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,*pkg.Route](p0.HandleFunc(p1, p2))
 	return
 }
 

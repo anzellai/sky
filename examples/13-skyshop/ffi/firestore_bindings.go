@@ -2048,13 +2048,16 @@ func Go_Firestore_clientWithReadOptionsT(p0 *pkg.Client, p1 []pkg.ReadOption) (o
 	return
 }
 
-// [fallible] Go_Firestore.clientRunTransaction → pkg.ClientRunTransaction
-func Go_Firestore_clientRunTransaction(p0 any, p1 any, p2 any, p3 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	err := p0.(*pkg.Client).RunTransaction(p1.(context.Context), p2.(func(context.Context, *pkg.Transaction) error), p3.([]pkg.TransactionOption)...)
-	if err != nil { out = Err[any, any](ErrFfi(err.Error())); return }
-	out = Ok[any, any](struct{}{})
-
+type FfiT_Go_Firestore_clientRunTransaction_P0 = *pkg.Client
+type FfiT_Go_Firestore_clientRunTransaction_P1 = context.Context
+type FfiT_Go_Firestore_clientRunTransaction_P2 = func(context.Context, *pkg.Transaction) error
+type FfiT_Go_Firestore_clientRunTransaction_P3 = []pkg.TransactionOption
+// [fallible] typed wrapper for Go_Firestore_clientRunTransaction (P7 adaptor target)
+func Go_Firestore_clientRunTransactionT(p0 *pkg.Client, p1 context.Context, p2 func(context.Context, *pkg.Transaction) error, p3 []pkg.TransactionOption) (out SkyResult[any, struct{}]) {
+	defer SkyFfiRecoverT(&out)()
+	err := p0.RunTransaction(p1, p2, p3...)
+	if err != nil { out = Err[any,struct{}](ErrFfi(err.Error())); return }
+	out = Ok[any,struct{}](struct{}{})
 	return
 }
 
