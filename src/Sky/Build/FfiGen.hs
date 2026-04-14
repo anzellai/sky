@@ -754,7 +754,11 @@ emitTypedWrapper kernelName aliases fn =
                 else anyDecl
 
         _ | _fnIsFieldSet fn ->
-            -- One-line delegate to SkyFfiFieldSet — value-first for |>.
+            -- Setter typed-emission deferred — Sky's "pointer fields
+            -- auto-wrapped, pass plain values" convention (CLAUDE.md
+            -- §FFI Type Mapping) means setters need richer auto-deref
+            -- logic than a simple `recv.Field = value`. The any/any
+            -- SkyFfiFieldSet path handles it via reflect; keeping it.
             "func " ++ wrapperName ++ "(value any, recv any) any { return SkyFfiFieldSet(value, recv, " ++
             quote (_fnMethodName fn) ++ ") }\n"
 
