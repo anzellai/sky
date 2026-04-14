@@ -1,0 +1,63 @@
+-- Auto-generated FFI binding catalogue for strconv
+--
+-- All auto-generated bindings are registered effect-unknown and are
+-- callable via Sky.Ffi.callTask. Every call returns Task Error a
+-- with panic recovery — any Go panic is caught and surfaced as Err.
+--
+-- Opaque Go struct values flow through Sky as Any; use the bindings
+-- to construct, read and update them. Sky records-with-methods can
+-- bridge this gap idiomatically — define a record type whose methods
+-- are the relevant callTask invocations.
+--
+-- Imports used in this package's wrapper:
+--   pkg "strconv"
+
+package strconv
+-- [pure] AppendBool : []byte -> Bool -> []byte   -- runtime wrap: Task Error
+-- [pure] AppendFloat : []byte -> Float -> byte -> Int -> Int -> []byte   -- runtime wrap: Task Error
+-- [pure] AppendInt : []byte -> Int -> Int -> []byte   -- runtime wrap: Task Error
+-- [pure] AppendQuote : []byte -> String -> []byte   -- runtime wrap: Task Error
+-- [pure] AppendQuoteRune : []byte -> rune -> []byte   -- runtime wrap: Task Error
+-- [pure] AppendQuoteRuneToASCII : []byte -> rune -> []byte   -- runtime wrap: Task Error
+-- [pure] AppendQuoteRuneToGraphic : []byte -> rune -> []byte   -- runtime wrap: Task Error
+-- [pure] AppendQuoteToASCII : []byte -> String -> []byte   -- runtime wrap: Task Error
+-- [pure] AppendQuoteToGraphic : []byte -> String -> []byte   -- runtime wrap: Task Error
+-- [pure] AppendUint : []byte -> uint64 -> Int -> []byte   -- runtime wrap: Task Error
+-- [fallible] Atoi : String -> (Int, String)   -- runtime wrap: Task Error
+-- [pure] CanBackquote : String -> Bool   -- runtime wrap: Task Error
+-- [pure] ErrRange : struct{} -> String   -- runtime wrap: Task Error
+-- [effectful] SetErrRange : String -> struct{}   -- runtime wrap: Task Error
+-- [pure] ErrSyntax : struct{} -> String   -- runtime wrap: Task Error
+-- [effectful] SetErrSyntax : String -> struct{}   -- runtime wrap: Task Error
+-- [pure] FormatBool : Bool -> String   -- runtime wrap: Task Error
+-- [pure] FormatComplex : complex128 -> byte -> Int -> Int -> String   -- runtime wrap: Task Error
+-- [pure] FormatFloat : Float -> byte -> Int -> Int -> String   -- runtime wrap: Task Error
+-- [pure] FormatInt : Int -> Int -> String   -- runtime wrap: Task Error
+-- [pure] FormatUint : uint64 -> Int -> String   -- runtime wrap: Task Error
+-- [pure] IntSize : struct{} -> untyped int   -- runtime wrap: Task Error
+-- [pure] IsGraphic : rune -> Bool   -- runtime wrap: Task Error
+-- [pure] IsPrint : rune -> Bool   -- runtime wrap: Task Error
+-- [pure] Itoa : Int -> String   -- runtime wrap: Task Error
+-- [pure] NumErrorError : NumError -> String   -- runtime wrap: Task Error
+-- [fallible] NumErrorUnwrap : NumError -> String   -- runtime wrap: Task Error
+-- [pure] NumErrorFunc : NumError -> String   -- runtime wrap: Task Error
+-- [pure] NumErrorSetFunc : String -> NumError -> NumError   -- runtime wrap: Task Error
+-- [pure] NumErrorNum : NumError -> String   -- runtime wrap: Task Error
+-- [pure] NumErrorSetNum : String -> NumError -> NumError   -- runtime wrap: Task Error
+-- [pure] NumErrorErr : NumError -> String   -- runtime wrap: Task Error
+-- [pure] NumErrorSetErr : String -> NumError -> NumError   -- runtime wrap: Task Error
+-- [pure] NewNumError : struct{} -> NumError   -- runtime wrap: Task Error
+-- [fallible] ParseBool : String -> (Bool, String)   -- runtime wrap: Task Error
+-- [fallible] ParseComplex : String -> Int -> (complex128, String)   -- runtime wrap: Task Error
+-- [fallible] ParseFloat : String -> Int -> (Float, String)   -- runtime wrap: Task Error
+-- [fallible] ParseInt : String -> Int -> Int -> (Int, String)   -- runtime wrap: Task Error
+-- [fallible] ParseUint : String -> Int -> Int -> (uint64, String)   -- runtime wrap: Task Error
+-- [pure] Quote : String -> String   -- runtime wrap: Task Error
+-- [pure] QuoteRune : rune -> String   -- runtime wrap: Task Error
+-- [pure] QuoteRuneToASCII : rune -> String   -- runtime wrap: Task Error
+-- [pure] QuoteRuneToGraphic : rune -> String   -- runtime wrap: Task Error
+-- [pure] QuoteToASCII : String -> String   -- runtime wrap: Task Error
+-- [pure] QuoteToGraphic : String -> String   -- runtime wrap: Task Error
+-- [fallible] QuotedPrefix : String -> (String, String)   -- runtime wrap: Task Error
+-- [fallible] Unquote : String -> (String, String)   -- runtime wrap: Task Error
+-- [fallible] UnquoteChar : String -> byte -> (rune, Bool, String, String)   -- runtime wrap: Task Error

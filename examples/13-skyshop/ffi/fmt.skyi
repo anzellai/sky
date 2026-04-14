@@ -1,0 +1,53 @@
+-- Auto-generated FFI binding catalogue for fmt
+--
+-- All auto-generated bindings are registered effect-unknown and are
+-- callable via Sky.Ffi.callTask. Every call returns Task Error a
+-- with panic recovery — any Go panic is caught and surfaced as Err.
+--
+-- Opaque Go struct values flow through Sky as Any; use the bindings
+-- to construct, read and update them. Sky records-with-methods can
+-- bridge this gap idiomatically — define a record type whose methods
+-- are the relevant callTask invocations.
+--
+-- Imports used in this package's wrapper:
+--   pkg "fmt"
+--   io "io"
+
+package fmt
+-- [pure] Append : []byte -> []any -> []byte   -- runtime wrap: Task Error
+-- [pure] Appendf : []byte -> String -> []any -> []byte   -- runtime wrap: Task Error
+-- [pure] Appendln : []byte -> []any -> []byte   -- runtime wrap: Task Error
+-- [fallible] Errorf : String -> []any -> String   -- runtime wrap: Task Error
+-- [pure] FormatString : State -> rune -> String   -- runtime wrap: Task Error
+-- [pure] FormatterFormat : Formatter -> State -> rune -> ()   -- runtime wrap: Task Error
+-- [fallible] Fprint : Writer -> []any -> (Int, String)   -- runtime wrap: Task Error
+-- [fallible] Fprintf : Writer -> String -> []any -> (Int, String)   -- runtime wrap: Task Error
+-- [fallible] Fprintln : Writer -> []any -> (Int, String)   -- runtime wrap: Task Error
+-- [fallible] Fscan : Reader -> []any -> (Int, String)   -- runtime wrap: Task Error
+-- [fallible] Fscanf : Reader -> String -> []any -> (Int, String)   -- runtime wrap: Task Error
+-- [fallible] Fscanln : Reader -> []any -> (Int, String)   -- runtime wrap: Task Error
+-- [pure] GoStringerGoString : GoStringer -> String   -- runtime wrap: Task Error
+-- [fallible] Print : []any -> (Int, String)   -- runtime wrap: Task Error
+-- [fallible] Printf : String -> []any -> (Int, String)   -- runtime wrap: Task Error
+-- [fallible] Println : []any -> (Int, String)   -- runtime wrap: Task Error
+-- [fallible] Scan : []any -> (Int, String)   -- runtime wrap: Task Error
+-- [fallible] ScanStateRead : ScanState -> []byte -> (Int, String)   -- runtime wrap: Task Error
+-- [fallible] ScanStateReadRune : ScanState -> (rune, Int, String)   -- runtime wrap: Task Error
+-- [pure] ScanStateSkipSpace : ScanState -> ()   -- runtime wrap: Task Error
+-- [fallible] ScanStateToken : ScanState -> Bool -> func(rune) bool -> ([]byte, String)   -- runtime wrap: Task Error
+-- [fallible] ScanStateUnreadRune : ScanState -> String   -- runtime wrap: Task Error
+-- [pure] ScanStateWidth : ScanState -> (Int, Bool)   -- runtime wrap: Task Error
+-- [fallible] Scanf : String -> []any -> (Int, String)   -- runtime wrap: Task Error
+-- [fallible] Scanln : []any -> (Int, String)   -- runtime wrap: Task Error
+-- [fallible] ScannerScan : Scanner -> ScanState -> rune -> String   -- runtime wrap: Task Error
+-- [pure] Sprint : []any -> String   -- runtime wrap: Task Error
+-- [pure] Sprintf : String -> []any -> String   -- runtime wrap: Task Error
+-- [pure] Sprintln : []any -> String   -- runtime wrap: Task Error
+-- [fallible] Sscan : String -> []any -> (Int, String)   -- runtime wrap: Task Error
+-- [fallible] Sscanf : String -> String -> []any -> (Int, String)   -- runtime wrap: Task Error
+-- [fallible] Sscanln : String -> []any -> (Int, String)   -- runtime wrap: Task Error
+-- [pure] StateFlag : State -> Int -> Bool   -- runtime wrap: Task Error
+-- [pure] StatePrecision : State -> (Int, Bool)   -- runtime wrap: Task Error
+-- [pure] StateWidth : State -> (Int, Bool)   -- runtime wrap: Task Error
+-- [fallible] StateWrite : State -> []byte -> (Int, String)   -- runtime wrap: Task Error
+-- [pure] StringerString : Stringer -> String   -- runtime wrap: Task Error

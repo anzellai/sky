@@ -1,0 +1,235 @@
+-- Auto-generated FFI binding catalogue for os
+--
+-- All auto-generated bindings are registered effect-unknown and are
+-- callable via Sky.Ffi.callTask. Every call returns Task Error a
+-- with panic recovery — any Go panic is caught and surfaced as Err.
+--
+-- Opaque Go struct values flow through Sky as Any; use the bindings
+-- to construct, read and update them. Sky records-with-methods can
+-- bridge this gap idiomatically — define a record type whose methods
+-- are the relevant callTask invocations.
+--
+-- Imports used in this package's wrapper:
+--   io "io"
+--   fs "io/fs"
+--   pkg "os"
+--   time "time"
+
+package os
+-- [pure] Args : struct{} -> []string   -- runtime wrap: Task Error
+-- [effectful] SetArgs : []string -> struct{}   -- runtime wrap: Task Error
+-- [fallible] Chdir : String -> String   -- runtime wrap: Task Error
+-- [fallible] Chmod : String -> FileMode -> String   -- runtime wrap: Task Error
+-- [fallible] Chown : String -> Int -> Int -> String   -- runtime wrap: Task Error
+-- [fallible] Chtimes : String -> Time -> Time -> String   -- runtime wrap: Task Error
+-- [pure] Clearenv : () -> ()   -- runtime wrap: Task Error
+-- [fallible] CopyFS : String -> FS -> String   -- runtime wrap: Task Error
+-- [fallible] Create : String -> (File, String)   -- runtime wrap: Task Error
+-- [fallible] CreateTemp : String -> String -> (File, String)   -- runtime wrap: Task Error
+-- [pure] DevNull : struct{} -> untyped string   -- runtime wrap: Task Error
+-- [pure] DirFS : String -> FS   -- runtime wrap: Task Error
+-- [pure] Environ : () -> []string   -- runtime wrap: Task Error
+-- [pure] ErrClosed : struct{} -> String   -- runtime wrap: Task Error
+-- [effectful] SetErrClosed : String -> struct{}   -- runtime wrap: Task Error
+-- [pure] ErrDeadlineExceeded : struct{} -> String   -- runtime wrap: Task Error
+-- [effectful] SetErrDeadlineExceeded : String -> struct{}   -- runtime wrap: Task Error
+-- [pure] ErrExist : struct{} -> String   -- runtime wrap: Task Error
+-- [effectful] SetErrExist : String -> struct{}   -- runtime wrap: Task Error
+-- [pure] ErrInvalid : struct{} -> String   -- runtime wrap: Task Error
+-- [effectful] SetErrInvalid : String -> struct{}   -- runtime wrap: Task Error
+-- [pure] ErrNoDeadline : struct{} -> String   -- runtime wrap: Task Error
+-- [effectful] SetErrNoDeadline : String -> struct{}   -- runtime wrap: Task Error
+-- [pure] ErrNoHandle : struct{} -> String   -- runtime wrap: Task Error
+-- [effectful] SetErrNoHandle : String -> struct{}   -- runtime wrap: Task Error
+-- [pure] ErrNotExist : struct{} -> String   -- runtime wrap: Task Error
+-- [effectful] SetErrNotExist : String -> struct{}   -- runtime wrap: Task Error
+-- [pure] ErrPermission : struct{} -> String   -- runtime wrap: Task Error
+-- [effectful] SetErrPermission : String -> struct{}   -- runtime wrap: Task Error
+-- [pure] ErrProcessDone : struct{} -> String   -- runtime wrap: Task Error
+-- [effectful] SetErrProcessDone : String -> struct{}   -- runtime wrap: Task Error
+-- [fallible] Executable : () -> (String, String)   -- runtime wrap: Task Error
+-- [pure] Exit : Int -> ()   -- runtime wrap: Task Error
+-- [pure] Expand : String -> func(string) string -> String   -- runtime wrap: Task Error
+-- [pure] ExpandEnv : String -> String   -- runtime wrap: Task Error
+-- [fallible] FileReaddir : File -> Int -> (FileInfo, String)   -- runtime wrap: Task Error
+-- [fallible] FileReaddirnames : File -> Int -> ([]string, String)   -- runtime wrap: Task Error
+-- [fallible] FileReadDir : File -> Int -> (DirEntry, String)   -- runtime wrap: Task Error
+-- [pure] FileName : File -> String   -- runtime wrap: Task Error
+-- [fallible] FileRead : File -> []byte -> (Int, String)   -- runtime wrap: Task Error
+-- [fallible] FileReadAt : File -> []byte -> Int -> (Int, String)   -- runtime wrap: Task Error
+-- [fallible] FileReadFrom : File -> Reader -> (Int, String)   -- runtime wrap: Task Error
+-- [fallible] FileWrite : File -> []byte -> (Int, String)   -- runtime wrap: Task Error
+-- [fallible] FileWriteAt : File -> []byte -> Int -> (Int, String)   -- runtime wrap: Task Error
+-- [fallible] FileWriteTo : File -> Writer -> (Int, String)   -- runtime wrap: Task Error
+-- [fallible] FileSeek : File -> Int -> Int -> (Int, String)   -- runtime wrap: Task Error
+-- [fallible] FileWriteString : File -> String -> (Int, String)   -- runtime wrap: Task Error
+-- [fallible] FileChmod : File -> FileMode -> String   -- runtime wrap: Task Error
+-- [fallible] FileSetDeadline : File -> Time -> String   -- runtime wrap: Task Error
+-- [fallible] FileSetReadDeadline : File -> Time -> String   -- runtime wrap: Task Error
+-- [fallible] FileSetWriteDeadline : File -> Time -> String   -- runtime wrap: Task Error
+-- [fallible] FileSyscallConn : File -> (RawConn, String)   -- runtime wrap: Task Error
+-- [pure] FileFd : File -> uintptr   -- runtime wrap: Task Error
+-- [fallible] FileClose : File -> String   -- runtime wrap: Task Error
+-- [fallible] FileChown : File -> Int -> Int -> String   -- runtime wrap: Task Error
+-- [fallible] FileTruncate : File -> Int -> String   -- runtime wrap: Task Error
+-- [fallible] FileSync : File -> String   -- runtime wrap: Task Error
+-- [fallible] FileChdir : File -> String   -- runtime wrap: Task Error
+-- [fallible] FileStat : File -> (FileInfo, String)   -- runtime wrap: Task Error
+-- [fallible] FindProcess : Int -> (Process, String)   -- runtime wrap: Task Error
+-- [pure] Getegid : () -> Int   -- runtime wrap: Task Error
+-- [pure] Getenv : String -> String   -- runtime wrap: Task Error
+-- [pure] Geteuid : () -> Int   -- runtime wrap: Task Error
+-- [pure] Getgid : () -> Int   -- runtime wrap: Task Error
+-- [fallible] Getgroups : () -> ([]int, String)   -- runtime wrap: Task Error
+-- [pure] Getpagesize : () -> Int   -- runtime wrap: Task Error
+-- [pure] Getpid : () -> Int   -- runtime wrap: Task Error
+-- [pure] Getppid : () -> Int   -- runtime wrap: Task Error
+-- [pure] Getuid : () -> Int   -- runtime wrap: Task Error
+-- [fallible] Getwd : () -> (String, String)   -- runtime wrap: Task Error
+-- [fallible] Hostname : () -> (String, String)   -- runtime wrap: Task Error
+-- [pure] Interrupt : struct{} -> Signal   -- runtime wrap: Task Error
+-- [effectful] SetInterrupt : Signal -> struct{}   -- runtime wrap: Task Error
+-- [pure] IsExist : String -> Bool   -- runtime wrap: Task Error
+-- [pure] IsNotExist : String -> Bool   -- runtime wrap: Task Error
+-- [pure] IsPathSeparator : uint8 -> Bool   -- runtime wrap: Task Error
+-- [pure] IsPermission : String -> Bool   -- runtime wrap: Task Error
+-- [pure] IsTimeout : String -> Bool   -- runtime wrap: Task Error
+-- [pure] Kill : struct{} -> Signal   -- runtime wrap: Task Error
+-- [effectful] SetKill : Signal -> struct{}   -- runtime wrap: Task Error
+-- [fallible] Lchown : String -> Int -> Int -> String   -- runtime wrap: Task Error
+-- [fallible] Link : String -> String -> String   -- runtime wrap: Task Error
+-- [pure] LinkErrorError : LinkError -> String   -- runtime wrap: Task Error
+-- [fallible] LinkErrorUnwrap : LinkError -> String   -- runtime wrap: Task Error
+-- [pure] LinkErrorOp : LinkError -> String   -- runtime wrap: Task Error
+-- [pure] LinkErrorSetOp : String -> LinkError -> LinkError   -- runtime wrap: Task Error
+-- [pure] LinkErrorOld : LinkError -> String   -- runtime wrap: Task Error
+-- [pure] LinkErrorSetOld : String -> LinkError -> LinkError   -- runtime wrap: Task Error
+-- [pure] LinkErrorNew : LinkError -> String   -- runtime wrap: Task Error
+-- [pure] LinkErrorSetNew : String -> LinkError -> LinkError   -- runtime wrap: Task Error
+-- [pure] LinkErrorErr : LinkError -> String   -- runtime wrap: Task Error
+-- [pure] LinkErrorSetErr : String -> LinkError -> LinkError   -- runtime wrap: Task Error
+-- [pure] NewLinkError : struct{} -> LinkError   -- runtime wrap: Task Error
+-- [pure] LookupEnv : String -> (String, Bool)   -- runtime wrap: Task Error
+-- [fallible] Lstat : String -> (FileInfo, String)   -- runtime wrap: Task Error
+-- [fallible] Mkdir : String -> FileMode -> String   -- runtime wrap: Task Error
+-- [fallible] MkdirAll : String -> FileMode -> String   -- runtime wrap: Task Error
+-- [fallible] MkdirTemp : String -> String -> (String, String)   -- runtime wrap: Task Error
+-- [pure] ModeAppend : struct{} -> FileMode   -- runtime wrap: Task Error
+-- [pure] ModeCharDevice : struct{} -> FileMode   -- runtime wrap: Task Error
+-- [pure] ModeDevice : struct{} -> FileMode   -- runtime wrap: Task Error
+-- [pure] ModeDir : struct{} -> FileMode   -- runtime wrap: Task Error
+-- [pure] ModeExclusive : struct{} -> FileMode   -- runtime wrap: Task Error
+-- [pure] ModeIrregular : struct{} -> FileMode   -- runtime wrap: Task Error
+-- [pure] ModeNamedPipe : struct{} -> FileMode   -- runtime wrap: Task Error
+-- [pure] ModePerm : struct{} -> FileMode   -- runtime wrap: Task Error
+-- [pure] ModeSetgid : struct{} -> FileMode   -- runtime wrap: Task Error
+-- [pure] ModeSetuid : struct{} -> FileMode   -- runtime wrap: Task Error
+-- [pure] ModeSocket : struct{} -> FileMode   -- runtime wrap: Task Error
+-- [pure] ModeSticky : struct{} -> FileMode   -- runtime wrap: Task Error
+-- [pure] ModeSymlink : struct{} -> FileMode   -- runtime wrap: Task Error
+-- [pure] ModeTemporary : struct{} -> FileMode   -- runtime wrap: Task Error
+-- [pure] ModeType : struct{} -> FileMode   -- runtime wrap: Task Error
+-- [pure] NewFile : uintptr -> String -> File   -- runtime wrap: Task Error
+-- [fallible] NewSyscallError : String -> String -> String   -- runtime wrap: Task Error
+-- [pure] O_APPEND : struct{} -> Int   -- runtime wrap: Task Error
+-- [pure] O_CREATE : struct{} -> Int   -- runtime wrap: Task Error
+-- [pure] O_EXCL : struct{} -> Int   -- runtime wrap: Task Error
+-- [pure] O_RDONLY : struct{} -> Int   -- runtime wrap: Task Error
+-- [pure] O_RDWR : struct{} -> Int   -- runtime wrap: Task Error
+-- [pure] O_SYNC : struct{} -> Int   -- runtime wrap: Task Error
+-- [pure] O_TRUNC : struct{} -> Int   -- runtime wrap: Task Error
+-- [pure] O_WRONLY : struct{} -> Int   -- runtime wrap: Task Error
+-- [fallible] Open : String -> (File, String)   -- runtime wrap: Task Error
+-- [fallible] OpenFile : String -> Int -> FileMode -> (File, String)   -- runtime wrap: Task Error
+-- [fallible] OpenInRoot : String -> String -> (File, String)   -- runtime wrap: Task Error
+-- [fallible] OpenRoot : String -> (Root, String)   -- runtime wrap: Task Error
+-- [pure] PathListSeparator : struct{} -> untyped rune   -- runtime wrap: Task Error
+-- [pure] PathSeparator : struct{} -> untyped rune   -- runtime wrap: Task Error
+-- [fallible] Pipe : () -> (File, File, String)   -- runtime wrap: Task Error
+-- [pure] ProcAttrDir : ProcAttr -> String   -- runtime wrap: Task Error
+-- [pure] ProcAttrSetDir : String -> ProcAttr -> ProcAttr   -- runtime wrap: Task Error
+-- [pure] ProcAttrEnv : ProcAttr -> []string   -- runtime wrap: Task Error
+-- [pure] ProcAttrSetEnv : []string -> ProcAttr -> ProcAttr   -- runtime wrap: Task Error
+-- [pure] ProcAttrFiles : ProcAttr -> File   -- runtime wrap: Task Error
+-- [pure] ProcAttrSetFiles : File -> ProcAttr -> ProcAttr   -- runtime wrap: Task Error
+-- [pure] ProcAttrSys : ProcAttr -> SysProcAttr   -- runtime wrap: Task Error
+-- [pure] ProcAttrSetSys : SysProcAttr -> ProcAttr -> ProcAttr   -- runtime wrap: Task Error
+-- [pure] NewProcAttr : struct{} -> ProcAttr   -- runtime wrap: Task Error
+-- [fallible] ProcessRelease : Process -> String   -- runtime wrap: Task Error
+-- [fallible] ProcessKill : Process -> String   -- runtime wrap: Task Error
+-- [fallible] ProcessWait : Process -> (ProcessState, String)   -- runtime wrap: Task Error
+-- [fallible] ProcessSignal : Process -> Signal -> String   -- runtime wrap: Task Error
+-- [fallible] ProcessWithHandle : Process -> func(handle uintptr) -> String   -- runtime wrap: Task Error
+-- [pure] ProcessPid : Process -> Int   -- runtime wrap: Task Error
+-- [pure] ProcessSetPid : Int -> Process -> Process   -- runtime wrap: Task Error
+-- [pure] NewProcess : struct{} -> Process   -- runtime wrap: Task Error
+-- [pure] ProcessStateUserTime : ProcessState -> Duration   -- runtime wrap: Task Error
+-- [pure] ProcessStateSystemTime : ProcessState -> Duration   -- runtime wrap: Task Error
+-- [pure] ProcessStateExited : ProcessState -> Bool   -- runtime wrap: Task Error
+-- [pure] ProcessStateSuccess : ProcessState -> Bool   -- runtime wrap: Task Error
+-- [pure] ProcessStateSys : ProcessState -> any   -- runtime wrap: Task Error
+-- [pure] ProcessStateSysUsage : ProcessState -> any   -- runtime wrap: Task Error
+-- [pure] ProcessStatePid : ProcessState -> Int   -- runtime wrap: Task Error
+-- [pure] ProcessStateString : ProcessState -> String   -- runtime wrap: Task Error
+-- [pure] ProcessStateExitCode : ProcessState -> Int   -- runtime wrap: Task Error
+-- [pure] NewProcessState : struct{} -> ProcessState   -- runtime wrap: Task Error
+-- [fallible] ReadDir : String -> (DirEntry, String)   -- runtime wrap: Task Error
+-- [fallible] ReadFile : String -> ([]byte, String)   -- runtime wrap: Task Error
+-- [fallible] Readlink : String -> (String, String)   -- runtime wrap: Task Error
+-- [fallible] Remove : String -> String   -- runtime wrap: Task Error
+-- [fallible] RemoveAll : String -> String   -- runtime wrap: Task Error
+-- [fallible] Rename : String -> String -> String   -- runtime wrap: Task Error
+-- [pure] RootName : Root -> String   -- runtime wrap: Task Error
+-- [fallible] RootClose : Root -> String   -- runtime wrap: Task Error
+-- [fallible] RootOpen : Root -> String -> (File, String)   -- runtime wrap: Task Error
+-- [fallible] RootCreate : Root -> String -> (File, String)   -- runtime wrap: Task Error
+-- [fallible] RootOpenFile : Root -> String -> Int -> FileMode -> (File, String)   -- runtime wrap: Task Error
+-- [fallible] RootOpenRoot : Root -> String -> (Root, String)   -- runtime wrap: Task Error
+-- [fallible] RootChmod : Root -> String -> FileMode -> String   -- runtime wrap: Task Error
+-- [fallible] RootMkdir : Root -> String -> FileMode -> String   -- runtime wrap: Task Error
+-- [fallible] RootMkdirAll : Root -> String -> FileMode -> String   -- runtime wrap: Task Error
+-- [fallible] RootChown : Root -> String -> Int -> Int -> String   -- runtime wrap: Task Error
+-- [fallible] RootLchown : Root -> String -> Int -> Int -> String   -- runtime wrap: Task Error
+-- [fallible] RootChtimes : Root -> String -> Time -> Time -> String   -- runtime wrap: Task Error
+-- [fallible] RootRemove : Root -> String -> String   -- runtime wrap: Task Error
+-- [fallible] RootRemoveAll : Root -> String -> String   -- runtime wrap: Task Error
+-- [fallible] RootStat : Root -> String -> (FileInfo, String)   -- runtime wrap: Task Error
+-- [fallible] RootLstat : Root -> String -> (FileInfo, String)   -- runtime wrap: Task Error
+-- [fallible] RootReadlink : Root -> String -> (String, String)   -- runtime wrap: Task Error
+-- [fallible] RootRename : Root -> String -> String -> String   -- runtime wrap: Task Error
+-- [fallible] RootLink : Root -> String -> String -> String   -- runtime wrap: Task Error
+-- [fallible] RootSymlink : Root -> String -> String -> String   -- runtime wrap: Task Error
+-- [fallible] RootReadFile : Root -> String -> ([]byte, String)   -- runtime wrap: Task Error
+-- [fallible] RootWriteFile : Root -> String -> []byte -> FileMode -> String   -- runtime wrap: Task Error
+-- [pure] RootFS : Root -> FS   -- runtime wrap: Task Error
+-- [pure] NewRoot : struct{} -> Root   -- runtime wrap: Task Error
+-- [pure] SEEK_CUR : struct{} -> Int   -- runtime wrap: Task Error
+-- [pure] SEEK_END : struct{} -> Int   -- runtime wrap: Task Error
+-- [pure] SEEK_SET : struct{} -> Int   -- runtime wrap: Task Error
+-- [pure] SameFile : FileInfo -> FileInfo -> Bool   -- runtime wrap: Task Error
+-- [fallible] Setenv : String -> String -> String   -- runtime wrap: Task Error
+-- [pure] SignalSignal : Signal -> ()   -- runtime wrap: Task Error
+-- [pure] SignalString : Signal -> String   -- runtime wrap: Task Error
+-- [fallible] StartProcess : String -> []string -> ProcAttr -> (Process, String)   -- runtime wrap: Task Error
+-- [fallible] Stat : String -> (FileInfo, String)   -- runtime wrap: Task Error
+-- [pure] Stderr : struct{} -> File   -- runtime wrap: Task Error
+-- [effectful] SetStderr : File -> struct{}   -- runtime wrap: Task Error
+-- [pure] Stdin : struct{} -> File   -- runtime wrap: Task Error
+-- [effectful] SetStdin : File -> struct{}   -- runtime wrap: Task Error
+-- [pure] Stdout : struct{} -> File   -- runtime wrap: Task Error
+-- [effectful] SetStdout : File -> struct{}   -- runtime wrap: Task Error
+-- [fallible] Symlink : String -> String -> String   -- runtime wrap: Task Error
+-- [pure] SyscallErrorError : SyscallError -> String   -- runtime wrap: Task Error
+-- [fallible] SyscallErrorUnwrap : SyscallError -> String   -- runtime wrap: Task Error
+-- [pure] SyscallErrorTimeout : SyscallError -> Bool   -- runtime wrap: Task Error
+-- [pure] SyscallErrorSyscall : SyscallError -> String   -- runtime wrap: Task Error
+-- [pure] SyscallErrorSetSyscall : String -> SyscallError -> SyscallError   -- runtime wrap: Task Error
+-- [pure] SyscallErrorErr : SyscallError -> String   -- runtime wrap: Task Error
+-- [pure] SyscallErrorSetErr : String -> SyscallError -> SyscallError   -- runtime wrap: Task Error
+-- [pure] TempDir : () -> String   -- runtime wrap: Task Error
+-- [fallible] Truncate : String -> Int -> String   -- runtime wrap: Task Error
+-- [fallible] Unsetenv : String -> String   -- runtime wrap: Task Error
+-- [fallible] UserCacheDir : () -> (String, String)   -- runtime wrap: Task Error
+-- [fallible] UserConfigDir : () -> (String, String)   -- runtime wrap: Task Error
+-- [fallible] UserHomeDir : () -> (String, String)   -- runtime wrap: Task Error
+-- [fallible] WriteFile : String -> []byte -> FileMode -> String   -- runtime wrap: Task Error

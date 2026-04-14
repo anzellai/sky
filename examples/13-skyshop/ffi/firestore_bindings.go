@@ -1024,9 +1024,9 @@ func Go_Firestore_arrayMinimumT(arg0 any) (out SkyResult[any, pkg.Expression]) {
 }
 
 // [pure] Go_Firestore.arrayRemove → pkg.ArrayRemove
-func Go_Firestore_arrayRemove(p0 any) (out any) {
+func Go_Firestore_arrayRemove(arg0 any) (out any) {
 	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](pkg.ArrayRemove(p0.([]interface{})...))
+	out = Ok[any, any](pkg.ArrayRemove(arg0.([]interface{})...))
 	return
 }
 
@@ -1047,9 +1047,9 @@ func Go_Firestore_arraySumT(arg0 any) (out SkyResult[any, pkg.Expression]) {
 }
 
 // [pure] Go_Firestore.arrayUnion → pkg.ArrayUnion
-func Go_Firestore_arrayUnion(p0 any) (out any) {
+func Go_Firestore_arrayUnion(arg0 any) (out any) {
 	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](pkg.ArrayUnion(p0.([]interface{})...))
+	out = Ok[any, any](pkg.ArrayUnion(arg0.([]interface{})...))
 	return
 }
 
@@ -4060,23 +4060,23 @@ func Go_Firestore_fieldOf(_ any) (out any) {
 }
 
 // [pure] Go_Firestore.fieldTransformIncrement → pkg.FieldTransformIncrement
-func Go_Firestore_fieldTransformIncrement(p0 any) (out any) {
+func Go_Firestore_fieldTransformIncrement(arg0 any) (out any) {
 	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](pkg.FieldTransformIncrement(p0.(interface{})))
+	out = Ok[any, any](pkg.FieldTransformIncrement(arg0.(interface{})))
 	return
 }
 
 // [pure] Go_Firestore.fieldTransformMaximum → pkg.FieldTransformMaximum
-func Go_Firestore_fieldTransformMaximum(p0 any) (out any) {
+func Go_Firestore_fieldTransformMaximum(arg0 any) (out any) {
 	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](pkg.FieldTransformMaximum(p0.(interface{})))
+	out = Ok[any, any](pkg.FieldTransformMaximum(arg0.(interface{})))
 	return
 }
 
 // [pure] Go_Firestore.fieldTransformMinimum → pkg.FieldTransformMinimum
-func Go_Firestore_fieldTransformMinimum(p0 any) (out any) {
+func Go_Firestore_fieldTransformMinimum(arg0 any) (out any) {
 	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](pkg.FieldTransformMinimum(p0.(interface{})))
+	out = Ok[any, any](pkg.FieldTransformMinimum(arg0.(interface{})))
 	return
 }
 
@@ -4884,9 +4884,9 @@ func Go_Firestore_ifErrorBooleanT(arg0 pkg.BooleanExpression, arg1 pkg.BooleanEx
 }
 
 // [pure] Go_Firestore.increment → pkg.Increment
-func Go_Firestore_increment(p0 any) (out any) {
+func Go_Firestore_increment(arg0 any) (out any) {
 	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](pkg.Increment(p0.(interface{})))
+	out = Ok[any, any](pkg.Increment(arg0.(interface{})))
 	return
 }
 
@@ -5035,9 +5035,9 @@ func Go_Firestore_mapRemoveT(arg0 any, arg1 any) (out SkyResult[any, pkg.Express
 }
 
 // [pure] Go_Firestore.maxAttempts → pkg.MaxAttempts
-func Go_Firestore_maxAttempts(p0 any) (out any) {
+func Go_Firestore_maxAttempts(arg0 any) (out any) {
 	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](pkg.MaxAttempts(AsInt(p0)))
+	out = Ok[any, any](pkg.MaxAttempts(AsInt(arg0)))
 	return
 }
 
@@ -5671,9 +5671,9 @@ func Go_Firestore_propertyPathFilterSetValueT(value interface{}, recv *pkg.Prope
 func Go_Firestore_newPropertyPathFilter(_ any) any { return new(pkg.PropertyPathFilter) }
 
 // Generic identity-pointer helper via reflect.
-func Go_Firestore_ptr(p0 any) (out any) {
+func Go_Firestore_ptr(arg0 any) (out any) {
 	defer SkyFfiRecover(&out)()
-	rv := reflectValueOfAny(p0)
+	rv := reflectValueOfAny(arg0)
 	pv := reflectNewOf(rv.Type())
 	pv.Elem().Set(rv)
 	out = pv.Interface()
@@ -6447,9 +6447,9 @@ func Go_Firestore_withCollectionHintsT(arg0 pkg.CollectionHints) (out SkyResult[
 }
 
 // [pure] Go_Firestore.withCommitResponseTo → pkg.WithCommitResponseTo
-func Go_Firestore_withCommitResponseTo(p0 any) (out any) {
+func Go_Firestore_withCommitResponseTo(arg0 any) (out any) {
 	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](pkg.WithCommitResponseTo(p0.(*pkg.CommitResponse)))
+	out = Ok[any, any](pkg.WithCommitResponseTo(arg0.(*pkg.CommitResponse)))
 	return
 }
 

@@ -1,0 +1,94 @@
+-- Auto-generated FFI binding catalogue for encoding/json
+--
+-- All auto-generated bindings are registered effect-unknown and are
+-- callable via Sky.Ffi.callTask. Every call returns Task Error a
+-- with panic recovery — any Go panic is caught and surfaced as Err.
+--
+-- Opaque Go struct values flow through Sky as Any; use the bindings
+-- to construct, read and update them. Sky records-with-methods can
+-- bridge this gap idiomatically — define a record type whose methods
+-- are the relevant callTask invocations.
+--
+-- Imports used in this package's wrapper:
+--   bytes "bytes"
+--   pkg "encoding/json"
+--   io "io"
+--   reflect "reflect"
+
+package json
+-- [fallible] Compact : Buffer -> []byte -> String   -- runtime wrap: Task Error
+-- [pure] DecoderUseNumber : Decoder -> ()   -- runtime wrap: Task Error
+-- [pure] DecoderDisallowUnknownFields : Decoder -> ()   -- runtime wrap: Task Error
+-- [fallible] DecoderDecode : Decoder -> any -> String   -- runtime wrap: Task Error
+-- [pure] DecoderBuffered : Decoder -> Reader   -- runtime wrap: Task Error
+-- [fallible] DecoderToken : Decoder -> (Token, String)   -- runtime wrap: Task Error
+-- [pure] DecoderMore : Decoder -> Bool   -- runtime wrap: Task Error
+-- [pure] DecoderInputOffset : Decoder -> Int   -- runtime wrap: Task Error
+-- [pure] DelimString : Delim -> String   -- runtime wrap: Task Error
+-- [fallible] EncoderEncode : Encoder -> any -> String   -- runtime wrap: Task Error
+-- [pure] EncoderSetIndent : Encoder -> String -> String -> ()   -- runtime wrap: Task Error
+-- [pure] EncoderSetEscapeHTML : Encoder -> Bool -> ()   -- runtime wrap: Task Error
+-- [pure] HTMLEscape : Buffer -> []byte -> ()   -- runtime wrap: Task Error
+-- [fallible] Indent : Buffer -> []byte -> String -> String -> String   -- runtime wrap: Task Error
+-- [pure] InvalidUTF8ErrorError : InvalidUTF8Error -> String   -- runtime wrap: Task Error
+-- [pure] InvalidUTF8ErrorS : InvalidUTF8Error -> String   -- runtime wrap: Task Error
+-- [pure] InvalidUTF8ErrorSetS : String -> InvalidUTF8Error -> InvalidUTF8Error   -- runtime wrap: Task Error
+-- [pure] NewInvalidUTF8Error : struct{} -> InvalidUTF8Error   -- runtime wrap: Task Error
+-- [pure] InvalidUnmarshalErrorError : InvalidUnmarshalError -> String   -- runtime wrap: Task Error
+-- [pure] InvalidUnmarshalErrorType : InvalidUnmarshalError -> Type   -- runtime wrap: Task Error
+-- [pure] InvalidUnmarshalErrorSetType : Type -> InvalidUnmarshalError -> InvalidUnmarshalError   -- runtime wrap: Task Error
+-- [pure] NewInvalidUnmarshalError : struct{} -> InvalidUnmarshalError   -- runtime wrap: Task Error
+-- [fallible] Marshal : any -> ([]byte, String)   -- runtime wrap: Task Error
+-- [fallible] MarshalIndent : any -> String -> String -> ([]byte, String)   -- runtime wrap: Task Error
+-- [fallible] MarshalerMarshalJSON : Marshaler -> ([]byte, String)   -- runtime wrap: Task Error
+-- [pure] MarshalerErrorError : MarshalerError -> String   -- runtime wrap: Task Error
+-- [fallible] MarshalerErrorUnwrap : MarshalerError -> String   -- runtime wrap: Task Error
+-- [pure] MarshalerErrorType : MarshalerError -> Type   -- runtime wrap: Task Error
+-- [pure] MarshalerErrorSetType : Type -> MarshalerError -> MarshalerError   -- runtime wrap: Task Error
+-- [pure] MarshalerErrorErr : MarshalerError -> String   -- runtime wrap: Task Error
+-- [pure] MarshalerErrorSetErr : String -> MarshalerError -> MarshalerError   -- runtime wrap: Task Error
+-- [pure] NewMarshalerError : struct{} -> MarshalerError   -- runtime wrap: Task Error
+-- [pure] NewDecoder : Reader -> Decoder   -- runtime wrap: Task Error
+-- [pure] NewEncoder : Writer -> Encoder   -- runtime wrap: Task Error
+-- [pure] NumberString : Number -> String   -- runtime wrap: Task Error
+-- [fallible] NumberFloat64 : Number -> (Float, String)   -- runtime wrap: Task Error
+-- [fallible] NumberInt64 : Number -> (Int, String)   -- runtime wrap: Task Error
+-- [fallible] RawMessageMarshalJSON : RawMessage -> ([]byte, String)   -- runtime wrap: Task Error
+-- [fallible] RawMessageUnmarshalJSON : RawMessage -> []byte -> String   -- runtime wrap: Task Error
+-- [pure] SyntaxErrorError : SyntaxError -> String   -- runtime wrap: Task Error
+-- [pure] SyntaxErrorOffset : SyntaxError -> Int   -- runtime wrap: Task Error
+-- [pure] SyntaxErrorSetOffset : Int -> SyntaxError -> SyntaxError   -- runtime wrap: Task Error
+-- [pure] NewSyntaxError : struct{} -> SyntaxError   -- runtime wrap: Task Error
+-- [fallible] Unmarshal : []byte -> any -> String   -- runtime wrap: Task Error
+-- [pure] UnmarshalFieldErrorError : UnmarshalFieldError -> String   -- runtime wrap: Task Error
+-- [pure] UnmarshalFieldErrorKey : UnmarshalFieldError -> String   -- runtime wrap: Task Error
+-- [pure] UnmarshalFieldErrorSetKey : String -> UnmarshalFieldError -> UnmarshalFieldError   -- runtime wrap: Task Error
+-- [pure] UnmarshalFieldErrorType : UnmarshalFieldError -> Type   -- runtime wrap: Task Error
+-- [pure] UnmarshalFieldErrorSetType : Type -> UnmarshalFieldError -> UnmarshalFieldError   -- runtime wrap: Task Error
+-- [pure] UnmarshalFieldErrorField : UnmarshalFieldError -> StructField   -- runtime wrap: Task Error
+-- [pure] UnmarshalFieldErrorSetField : StructField -> UnmarshalFieldError -> UnmarshalFieldError   -- runtime wrap: Task Error
+-- [pure] NewUnmarshalFieldError : struct{} -> UnmarshalFieldError   -- runtime wrap: Task Error
+-- [pure] UnmarshalTypeErrorError : UnmarshalTypeError -> String   -- runtime wrap: Task Error
+-- [pure] UnmarshalTypeErrorValue : UnmarshalTypeError -> String   -- runtime wrap: Task Error
+-- [pure] UnmarshalTypeErrorSetValue : String -> UnmarshalTypeError -> UnmarshalTypeError   -- runtime wrap: Task Error
+-- [pure] UnmarshalTypeErrorType : UnmarshalTypeError -> Type   -- runtime wrap: Task Error
+-- [pure] UnmarshalTypeErrorSetType : Type -> UnmarshalTypeError -> UnmarshalTypeError   -- runtime wrap: Task Error
+-- [pure] UnmarshalTypeErrorOffset : UnmarshalTypeError -> Int   -- runtime wrap: Task Error
+-- [pure] UnmarshalTypeErrorSetOffset : Int -> UnmarshalTypeError -> UnmarshalTypeError   -- runtime wrap: Task Error
+-- [pure] UnmarshalTypeErrorStruct : UnmarshalTypeError -> String   -- runtime wrap: Task Error
+-- [pure] UnmarshalTypeErrorSetStruct : String -> UnmarshalTypeError -> UnmarshalTypeError   -- runtime wrap: Task Error
+-- [pure] UnmarshalTypeErrorField : UnmarshalTypeError -> String   -- runtime wrap: Task Error
+-- [pure] UnmarshalTypeErrorSetField : String -> UnmarshalTypeError -> UnmarshalTypeError   -- runtime wrap: Task Error
+-- [pure] NewUnmarshalTypeError : struct{} -> UnmarshalTypeError   -- runtime wrap: Task Error
+-- [fallible] UnmarshalerUnmarshalJSON : Unmarshaler -> []byte -> String   -- runtime wrap: Task Error
+-- [pure] UnsupportedTypeErrorError : UnsupportedTypeError -> String   -- runtime wrap: Task Error
+-- [pure] UnsupportedTypeErrorType : UnsupportedTypeError -> Type   -- runtime wrap: Task Error
+-- [pure] UnsupportedTypeErrorSetType : Type -> UnsupportedTypeError -> UnsupportedTypeError   -- runtime wrap: Task Error
+-- [pure] NewUnsupportedTypeError : struct{} -> UnsupportedTypeError   -- runtime wrap: Task Error
+-- [pure] UnsupportedValueErrorError : UnsupportedValueError -> String   -- runtime wrap: Task Error
+-- [pure] UnsupportedValueErrorValue : UnsupportedValueError -> Value   -- runtime wrap: Task Error
+-- [pure] UnsupportedValueErrorSetValue : Value -> UnsupportedValueError -> UnsupportedValueError   -- runtime wrap: Task Error
+-- [pure] UnsupportedValueErrorStr : UnsupportedValueError -> String   -- runtime wrap: Task Error
+-- [pure] UnsupportedValueErrorSetStr : String -> UnsupportedValueError -> UnsupportedValueError   -- runtime wrap: Task Error
+-- [pure] NewUnsupportedValueError : struct{} -> UnsupportedValueError   -- runtime wrap: Task Error
+-- [pure] Valid : []byte -> Bool   -- runtime wrap: Task Error

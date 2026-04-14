@@ -303,17 +303,17 @@ func Go_FyneV2_buildRelease(_ any) any { return pkg.BuildRelease }
 func Go_FyneV2_buildStandard(_ any) any { return pkg.BuildStandard }
 
 // [pure] Go_FyneV2.canvasAddShortcut → pkg.CanvasAddShortcut
-func Go_FyneV2_canvasAddShortcut(p0 any, p1 any, p2 any) (out any) {
+func Go_FyneV2_canvasAddShortcut(arg0 any, arg1 any, arg2 any) (out any) {
 	defer SkyFfiRecover(&out)()
-	p0.(pkg.Canvas).AddShortcut(p1.(pkg.Shortcut), p2.(func(shortcut pkg.Shortcut)))
+	arg0.(pkg.Canvas).AddShortcut(arg1.(pkg.Shortcut), arg2.(func(shortcut pkg.Shortcut)))
 	out = Ok[any, any](struct{}{})
 	return
 }
 
 // [pure] Go_FyneV2.canvasCapture → pkg.CanvasCapture
-func Go_FyneV2_canvasCapture(p0 any) (out any) {
+func Go_FyneV2_canvasCapture(arg0 any) (out any) {
 	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(pkg.Canvas).Capture())
+	out = Ok[any, any](arg0.(pkg.Canvas).Capture())
 	return
 }
 
@@ -2183,10 +2183,11 @@ func Go_FyneV2_preferencesBoolWithFallbackT(arg0 pkg.Preferences, arg1 string, a
 	return
 }
 
-// [pure] Go_FyneV2.preferencesChangeListeners → pkg.PreferencesChangeListeners
-func Go_FyneV2_preferencesChangeListeners(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(pkg.Preferences).ChangeListeners())
+type FfiT_Go_FyneV2_preferencesChangeListeners_P0 = pkg.Preferences
+// [pure] typed wrapper for Go_FyneV2_preferencesChangeListeners (P7 adaptor target)
+func Go_FyneV2_preferencesChangeListenersT(arg0 pkg.Preferences) (out SkyResult[any, []func()]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,[]func()](arg0.ChangeListeners())
 	return
 }
 
@@ -2439,9 +2440,9 @@ func Go_FyneV2_setCurrentAppT(arg0 pkg.App) (out SkyResult[any, struct{}]) {
 }
 
 // [pure] Go_FyneV2.settingsAddChangeListener → pkg.SettingsAddChangeListener
-func Go_FyneV2_settingsAddChangeListener(p0 any, p1 any) (out any) {
+func Go_FyneV2_settingsAddChangeListener(arg0 any, arg1 any) (out any) {
 	defer SkyFfiRecover(&out)()
-	p0.(pkg.Settings).AddChangeListener(p1.(chan pkg.Settings))
+	arg0.(pkg.Settings).AddChangeListener(arg1.(chan pkg.Settings))
 	out = Ok[any, any](struct{}{})
 	return
 }
@@ -2608,9 +2609,9 @@ func Go_FyneV2_shortcutHandlerTypedShortcutT(arg0 *pkg.ShortcutHandler, arg1 pkg
 }
 
 // [pure] Go_FyneV2.shortcutHandlerAddShortcut → pkg.ShortcutHandlerAddShortcut
-func Go_FyneV2_shortcutHandlerAddShortcut(p0 any, p1 any, p2 any) (out any) {
+func Go_FyneV2_shortcutHandlerAddShortcut(arg0 any, arg1 any, arg2 any) (out any) {
 	defer SkyFfiRecover(&out)()
-	p0.(*pkg.ShortcutHandler).AddShortcut(p1.(pkg.Shortcut), p2.(func(shortcut pkg.Shortcut)))
+	arg0.(*pkg.ShortcutHandler).AddShortcut(arg1.(pkg.Shortcut), arg2.(func(shortcut pkg.Shortcut)))
 	out = Ok[any, any](struct{}{})
 	return
 }
@@ -3656,9 +3657,9 @@ func Go_FyneV2_windowSetOnClosedT(arg0 pkg.Window, arg1 func()) (out SkyResult[a
 }
 
 // [pure] Go_FyneV2.windowSetOnDropped → pkg.WindowSetOnDropped
-func Go_FyneV2_windowSetOnDropped(p0 any, p1 any) (out any) {
+func Go_FyneV2_windowSetOnDropped(arg0 any, arg1 any) (out any) {
 	defer SkyFfiRecover(&out)()
-	p0.(pkg.Window).SetOnDropped(p1.(func(pkg.Position, []pkg.URI)))
+	arg0.(pkg.Window).SetOnDropped(arg1.(func(pkg.Position, []pkg.URI)))
 	out = Ok[any, any](struct{}{})
 	return
 }

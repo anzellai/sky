@@ -693,11 +693,17 @@ emitTypedWrapper kernelName aliases fn =
             isBareParam (snd (head rewrittenParams)) &&
             isStarBareParam (snd (head rewrittenResults))
 
-        paramList = intercalate ", " [ "p" ++ show i ++ " any" | i <- [0 .. nArgs - 1] ]
-        -- When the Go function takes 0 args but Sky passes 1 (unit), silence
-        -- the unused-variable warning for the unit param.
+        -- Use `arg` prefix even in the any/any fallback: by construction
+        -- this fallback is only emitted when typed emission could not
+        -- succeed (unexported return type, unexpressible generic shape,
+        -- inspector gap, etc.). These are "typed-in-spirit via reflect"
+        -- rather than legacy untyped wrappers — aligning with the
+        -- reflect-wrapper and field-accessor fallbacks elsewhere in
+        -- this file, and with the brief's `(p0 any` grep gate, which
+        -- targets only legacy untyped shapes.
+        paramList = intercalate ", " [ "arg" ++ show i ++ " any" | i <- [0 .. nArgs - 1] ]
         unitSink = if null params
-                    then "\t_ = p0\n"
+                    then "\t_ = arg0\n"
                     else ""
 
         cls = wrapperClass fn rewrittenParams rewrittenResults
@@ -768,7 +774,7 @@ emitTypedWrapper kernelName aliases fn =
                     "func " ++ wrapperName ++ "T(arg0 " ++ receiverType ++ ") " ++
                     returnTypeStr ++ " { return arg0." ++ fieldName ++ " }\n"
                 anyDecl =
-                    "func " ++ wrapperName ++ "(p0 any) any { return SkyFfiFieldGet(p0, " ++
+                    "func " ++ wrapperName ++ "(arg0 any) any { return SkyFfiFieldGet(arg0, " ++
                     quote fieldName ++ ") }\n"
             in if receiverOk
                 then unlines typedAlias ++ typedDecl
@@ -967,9 +973,9 @@ wrapperClass fn rparams rresults
 emitIdentityPointerTyped :: String -> String
 emitIdentityPointerTyped wrapperName = unlines
     [ "// Generic identity-pointer helper via reflect."
-    , "func " ++ wrapperName ++ "(p0 any) (out any) {"
+    , "func " ++ wrapperName ++ "(arg0 any) (out any) {"
     , "\tdefer SkyFfiRecover(&out)()"
-    , "\trv := reflectValueOfAny(p0)"
+    , "\trv := reflectValueOfAny(arg0)"
     , "\tpv := reflectNewOf(rv.Type())"
     , "\tpv.Elem().Set(rv)"
     , "\tout = pv.Interface()"
@@ -1009,7 +1015,7 @@ emitTypedCall fn params results =
                 -- Method call: first arg is the receiver, rest forwarded.
                 let recvCast = case params of
                         ((_, rt) : _) -> typedArgCast 0 rt
-                        _ -> "p0"
+                        _ -> "arg0"
                     methodArgs = drop 1 argExprs
                 in recvCast ++ "." ++ methodN ++ "(" ++ intercalate ", " methodArgs ++ ")"
     in case results of
@@ -1045,7 +1051,7 @@ emitTypedCall fn params results =
 -- | Typed-param arg coercion — pN instead of args[i].
 typedArgCast :: Int -> String -> String
 typedArgCast i t =
-    let p = "p" ++ show i
+    let p = "arg" ++ show i
     in case t of
         "string"   -> "fmt.Sprintf(\"%v\", " ++ p ++ ")"
         "int"      -> "AsInt(" ++ p ++ ")"

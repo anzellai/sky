@@ -119,7 +119,7 @@ typedVariantCount fp = do
   where
     isTypedSig l =
         take 5 l == "func "
-        && ("T()" `isInfixOf` l || "T(p0 " `isInfixOf` l)
+        && ("T()" `isInfixOf` l || "T(p0 " `isInfixOf` l || "T(arg0 " `isInfixOf` l)
 
 
 -- | Count occurrences of a needle in a haystack (non-overlapping).

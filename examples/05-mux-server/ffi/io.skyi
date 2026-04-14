@@ -1,0 +1,104 @@
+-- Auto-generated FFI binding catalogue for io
+--
+-- All auto-generated bindings are registered effect-unknown and are
+-- callable via Sky.Ffi.callTask. Every call returns Task Error a
+-- with panic recovery — any Go panic is caught and surfaced as Err.
+--
+-- Opaque Go struct values flow through Sky as Any; use the bindings
+-- to construct, read and update them. Sky records-with-methods can
+-- bridge this gap idiomatically — define a record type whose methods
+-- are the relevant callTask invocations.
+--
+-- Imports used in this package's wrapper:
+--   pkg "io"
+
+package io
+-- [fallible] ByteReaderReadByte : ByteReader -> (byte, String)   -- runtime wrap: Task Error
+-- [fallible] ByteScannerReadByte : ByteScanner -> (byte, String)   -- runtime wrap: Task Error
+-- [fallible] ByteScannerUnreadByte : ByteScanner -> String   -- runtime wrap: Task Error
+-- [fallible] ByteWriterWriteByte : ByteWriter -> byte -> String   -- runtime wrap: Task Error
+-- [fallible] CloserClose : Closer -> String   -- runtime wrap: Task Error
+-- [fallible] Copy : Writer -> Reader -> (Int, String)   -- runtime wrap: Task Error
+-- [fallible] CopyBuffer : Writer -> Reader -> []byte -> (Int, String)   -- runtime wrap: Task Error
+-- [fallible] CopyN : Writer -> Reader -> Int -> (Int, String)   -- runtime wrap: Task Error
+-- [pure] Discard : struct{} -> Writer   -- runtime wrap: Task Error
+-- [effectful] SetDiscard : Writer -> struct{}   -- runtime wrap: Task Error
+-- [pure] EOF : struct{} -> String   -- runtime wrap: Task Error
+-- [effectful] SetEOF : String -> struct{}   -- runtime wrap: Task Error
+-- [pure] ErrClosedPipe : struct{} -> String   -- runtime wrap: Task Error
+-- [effectful] SetErrClosedPipe : String -> struct{}   -- runtime wrap: Task Error
+-- [pure] ErrNoProgress : struct{} -> String   -- runtime wrap: Task Error
+-- [effectful] SetErrNoProgress : String -> struct{}   -- runtime wrap: Task Error
+-- [pure] ErrShortBuffer : struct{} -> String   -- runtime wrap: Task Error
+-- [effectful] SetErrShortBuffer : String -> struct{}   -- runtime wrap: Task Error
+-- [pure] ErrShortWrite : struct{} -> String   -- runtime wrap: Task Error
+-- [effectful] SetErrShortWrite : String -> struct{}   -- runtime wrap: Task Error
+-- [pure] ErrUnexpectedEOF : struct{} -> String   -- runtime wrap: Task Error
+-- [effectful] SetErrUnexpectedEOF : String -> struct{}   -- runtime wrap: Task Error
+-- [pure] LimitReader : Reader -> Int -> Reader   -- runtime wrap: Task Error
+-- [fallible] LimitedReaderRead : LimitedReader -> []byte -> (Int, String)   -- runtime wrap: Task Error
+-- [pure] LimitedReaderR : LimitedReader -> Reader   -- runtime wrap: Task Error
+-- [pure] LimitedReaderSetR : Reader -> LimitedReader -> LimitedReader   -- runtime wrap: Task Error
+-- [pure] LimitedReaderN : LimitedReader -> Int   -- runtime wrap: Task Error
+-- [pure] LimitedReaderSetN : Int -> LimitedReader -> LimitedReader   -- runtime wrap: Task Error
+-- [pure] NewLimitedReader : struct{} -> LimitedReader   -- runtime wrap: Task Error
+-- [pure] MultiReader : Reader -> Reader   -- runtime wrap: Task Error
+-- [pure] MultiWriter : Writer -> Writer   -- runtime wrap: Task Error
+-- [pure] NewOffsetWriter : WriterAt -> Int -> OffsetWriter   -- runtime wrap: Task Error
+-- [pure] NewSectionReader : ReaderAt -> Int -> Int -> SectionReader   -- runtime wrap: Task Error
+-- [pure] NopCloser : Reader -> ReadCloser   -- runtime wrap: Task Error
+-- [fallible] OffsetWriterWrite : OffsetWriter -> []byte -> (Int, String)   -- runtime wrap: Task Error
+-- [fallible] OffsetWriterWriteAt : OffsetWriter -> []byte -> Int -> (Int, String)   -- runtime wrap: Task Error
+-- [fallible] OffsetWriterSeek : OffsetWriter -> Int -> Int -> (Int, String)   -- runtime wrap: Task Error
+-- [pure] Pipe : () -> (PipeReader, PipeWriter)   -- runtime wrap: Task Error
+-- [fallible] PipeReaderRead : PipeReader -> []byte -> (Int, String)   -- runtime wrap: Task Error
+-- [fallible] PipeReaderClose : PipeReader -> String   -- runtime wrap: Task Error
+-- [fallible] PipeReaderCloseWithError : PipeReader -> String -> String   -- runtime wrap: Task Error
+-- [pure] NewPipeReader : struct{} -> PipeReader   -- runtime wrap: Task Error
+-- [fallible] PipeWriterWrite : PipeWriter -> []byte -> (Int, String)   -- runtime wrap: Task Error
+-- [fallible] PipeWriterClose : PipeWriter -> String   -- runtime wrap: Task Error
+-- [fallible] PipeWriterCloseWithError : PipeWriter -> String -> String   -- runtime wrap: Task Error
+-- [pure] NewPipeWriter : struct{} -> PipeWriter   -- runtime wrap: Task Error
+-- [fallible] ReadAll : Reader -> ([]byte, String)   -- runtime wrap: Task Error
+-- [fallible] ReadAtLeast : Reader -> []byte -> Int -> (Int, String)   -- runtime wrap: Task Error
+-- [fallible] ReadCloserClose : ReadCloser -> String   -- runtime wrap: Task Error
+-- [fallible] ReadCloserRead : ReadCloser -> []byte -> (Int, String)   -- runtime wrap: Task Error
+-- [fallible] ReadFull : Reader -> []byte -> (Int, String)   -- runtime wrap: Task Error
+-- [fallible] ReadSeekCloserClose : ReadSeekCloser -> String   -- runtime wrap: Task Error
+-- [fallible] ReadSeekCloserRead : ReadSeekCloser -> []byte -> (Int, String)   -- runtime wrap: Task Error
+-- [fallible] ReadSeekCloserSeek : ReadSeekCloser -> Int -> Int -> (Int, String)   -- runtime wrap: Task Error
+-- [fallible] ReadSeekerRead : ReadSeeker -> []byte -> (Int, String)   -- runtime wrap: Task Error
+-- [fallible] ReadSeekerSeek : ReadSeeker -> Int -> Int -> (Int, String)   -- runtime wrap: Task Error
+-- [fallible] ReadWriteCloserClose : ReadWriteCloser -> String   -- runtime wrap: Task Error
+-- [fallible] ReadWriteCloserRead : ReadWriteCloser -> []byte -> (Int, String)   -- runtime wrap: Task Error
+-- [fallible] ReadWriteCloserWrite : ReadWriteCloser -> []byte -> (Int, String)   -- runtime wrap: Task Error
+-- [fallible] ReadWriteSeekerRead : ReadWriteSeeker -> []byte -> (Int, String)   -- runtime wrap: Task Error
+-- [fallible] ReadWriteSeekerSeek : ReadWriteSeeker -> Int -> Int -> (Int, String)   -- runtime wrap: Task Error
+-- [fallible] ReadWriteSeekerWrite : ReadWriteSeeker -> []byte -> (Int, String)   -- runtime wrap: Task Error
+-- [fallible] ReadWriterRead : ReadWriter -> []byte -> (Int, String)   -- runtime wrap: Task Error
+-- [fallible] ReadWriterWrite : ReadWriter -> []byte -> (Int, String)   -- runtime wrap: Task Error
+-- [fallible] ReaderRead : Reader -> []byte -> (Int, String)   -- runtime wrap: Task Error
+-- [fallible] ReaderAtReadAt : ReaderAt -> []byte -> Int -> (Int, String)   -- runtime wrap: Task Error
+-- [fallible] ReaderFromReadFrom : ReaderFrom -> Reader -> (Int, String)   -- runtime wrap: Task Error
+-- [fallible] RuneReaderReadRune : RuneReader -> (rune, Int, String)   -- runtime wrap: Task Error
+-- [fallible] RuneScannerReadRune : RuneScanner -> (rune, Int, String)   -- runtime wrap: Task Error
+-- [fallible] RuneScannerUnreadRune : RuneScanner -> String   -- runtime wrap: Task Error
+-- [fallible] SectionReaderRead : SectionReader -> []byte -> (Int, String)   -- runtime wrap: Task Error
+-- [fallible] SectionReaderSeek : SectionReader -> Int -> Int -> (Int, String)   -- runtime wrap: Task Error
+-- [fallible] SectionReaderReadAt : SectionReader -> []byte -> Int -> (Int, String)   -- runtime wrap: Task Error
+-- [pure] SectionReaderSize : SectionReader -> Int   -- runtime wrap: Task Error
+-- [pure] SectionReaderOuter : SectionReader -> (ReaderAt, Int, Int)   -- runtime wrap: Task Error
+-- [pure] SeekCurrent : struct{} -> untyped int   -- runtime wrap: Task Error
+-- [pure] SeekEnd : struct{} -> untyped int   -- runtime wrap: Task Error
+-- [pure] SeekStart : struct{} -> untyped int   -- runtime wrap: Task Error
+-- [fallible] SeekerSeek : Seeker -> Int -> Int -> (Int, String)   -- runtime wrap: Task Error
+-- [fallible] StringWriterWriteString : StringWriter -> String -> (Int, String)   -- runtime wrap: Task Error
+-- [pure] TeeReader : Reader -> Writer -> Reader   -- runtime wrap: Task Error
+-- [fallible] WriteCloserClose : WriteCloser -> String   -- runtime wrap: Task Error
+-- [fallible] WriteCloserWrite : WriteCloser -> []byte -> (Int, String)   -- runtime wrap: Task Error
+-- [fallible] WriteSeekerSeek : WriteSeeker -> Int -> Int -> (Int, String)   -- runtime wrap: Task Error
+-- [fallible] WriteSeekerWrite : WriteSeeker -> []byte -> (Int, String)   -- runtime wrap: Task Error
+-- [fallible] WriteString : Writer -> String -> (Int, String)   -- runtime wrap: Task Error
+-- [fallible] WriterWrite : Writer -> []byte -> (Int, String)   -- runtime wrap: Task Error
+-- [fallible] WriterAtWriteAt : WriterAt -> []byte -> Int -> (Int, String)   -- runtime wrap: Task Error
+-- [fallible] WriterToWriteTo : WriterTo -> Writer -> (Int, String)   -- runtime wrap: Task Error

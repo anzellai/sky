@@ -218,9 +218,9 @@ func Go_Http_clientConnSetStateHookT(arg0 *pkg.ClientConn, arg1 func(*pkg.Client
 func Go_Http_newClientConn(_ any) any { return new(pkg.ClientConn) }
 
 // [effectful] Go_Http.closeNotifierCloseNotify → pkg.CloseNotifierCloseNotify
-func Go_Http_closeNotifierCloseNotify(p0 any) (out any) {
+func Go_Http_closeNotifierCloseNotify(arg0 any) (out any) {
 	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(pkg.CloseNotifier).CloseNotify())
+	out = Ok[any, any](arg0.(pkg.CloseNotifier).CloseNotify())
 	return
 }
 
@@ -1187,9 +1187,9 @@ func Go_Http_proxyFromEnvironmentT(arg0 *pkg.Request) (out SkyResult[any, *url.U
 }
 
 // [effectful] Go_Http.proxyURL → pkg.ProxyURL
-func Go_Http_proxyURL(p0 any) (out any) {
+func Go_Http_proxyURL(arg0 any) (out any) {
 	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](pkg.ProxyURL(p0.(*url.URL)))
+	out = Ok[any, any](pkg.ProxyURL(arg0.(*url.URL)))
 	return
 }
 

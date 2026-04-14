@@ -4959,9 +4959,9 @@ func Go_Widget_newCheckT(arg0 string, arg1 func(bool)) (out SkyResult[any, *pkg.
 }
 
 // [pure] Go_Widget.newCheckGroup → pkg.NewCheckGroup
-func Go_Widget_newCheckGroup(p0 any, p1 any) (out any) {
+func Go_Widget_newCheckGroup(arg0 any, arg1 any) (out any) {
 	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](pkg.NewCheckGroup(p0.([]string), p1.(func([]string))))
+	out = Ok[any, any](pkg.NewCheckGroup(arg0.([]string), arg1.(func([]string))))
 	return
 }
 
@@ -5297,16 +5297,16 @@ func Go_Widget_newSliderWithDataT(arg0 float64, arg1 float64, arg2 binding.Float
 }
 
 // [pure] Go_Widget.newTable → pkg.NewTable
-func Go_Widget_newTable(p0 any, p1 any, p2 any) (out any) {
+func Go_Widget_newTable(arg0 any, arg1 any, arg2 any) (out any) {
 	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](pkg.NewTable(p0.(func() (rows int, cols int)), p1.(func() fyne.CanvasObject), p2.(func(pkg.TableCellID, fyne.CanvasObject))))
+	out = Ok[any, any](pkg.NewTable(arg0.(func() (rows int, cols int)), arg1.(func() fyne.CanvasObject), arg2.(func(pkg.TableCellID, fyne.CanvasObject))))
 	return
 }
 
 // [pure] Go_Widget.newTableWithHeaders → pkg.NewTableWithHeaders
-func Go_Widget_newTableWithHeaders(p0 any, p1 any, p2 any) (out any) {
+func Go_Widget_newTableWithHeaders(arg0 any, arg1 any, arg2 any) (out any) {
 	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](pkg.NewTableWithHeaders(p0.(func() (rows int, cols int)), p1.(func() fyne.CanvasObject), p2.(func(pkg.TableCellID, fyne.CanvasObject))))
+	out = Ok[any, any](pkg.NewTableWithHeaders(arg0.(func() (rows int, cols int)), arg1.(func() fyne.CanvasObject), arg2.(func(pkg.TableCellID, fyne.CanvasObject))))
 	return
 }
 

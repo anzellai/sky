@@ -1,0 +1,27 @@
+{
+  "moduleName": "Context",
+  "kernelName": "Go_Context",
+  "package": "context",
+  "functions": [
+    {"name": "afterFunc", "arity": 2},
+    {"name": "background", "arity": 1},
+    {"name": "canceled", "arity": 1},
+    {"name": "setCanceled", "arity": 1},
+    {"name": "cause", "arity": 1},
+    {"name": "contextDeadline", "arity": 1},
+    {"name": "contextDone", "arity": 1},
+    {"name": "contextErr", "arity": 1},
+    {"name": "contextValue", "arity": 2},
+    {"name": "deadlineExceeded", "arity": 1},
+    {"name": "setDeadlineExceeded", "arity": 1},
+    {"name": "tODO", "arity": 1},
+    {"name": "withCancel", "arity": 1},
+    {"name": "withCancelCause", "arity": 1},
+    {"name": "withDeadline", "arity": 2},
+    {"name": "withDeadlineCause", "arity": 3},
+    {"name": "withTimeout", "arity": 2},
+    {"name": "withTimeoutCause", "arity": 3},
+    {"name": "withValue", "arity": 3},
+    {"name": "withoutCancel", "arity": 1}
+  ]
+}
