@@ -149,3 +149,4 @@ test-suite sky-tests
       Sky.Parse.PatternSpec
       Sky.Canonicalise.ExposingSpec
       Sky.Type.ExhaustivenessSpec
+      Sky.Format.FormatSpec
