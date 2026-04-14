@@ -909,15 +909,49 @@ type SkyADT struct {
 // ═══════════════════════════════════════════════════════════
 
 func Result_map(fn any, result any) any {
-	r := result.(SkyResult[any, any])
-	if r.Tag == 0 { return Ok[any, any](fn.(func(any) any)(r.OkValue)) }
-	return result
+	tag, ok, err := anyResultView(result)
+	if tag < 0 {
+		// Not a recognisable Sky Result — treat as already-unwrapped Ok.
+		return Ok[any, any](fn.(func(any) any)(result))
+	}
+	if tag == 0 {
+		return Ok[any, any](fn.(func(any) any)(ok))
+	}
+	return Err[any, any](err)
 }
 
 func Result_andThen(fn any, result any) any {
-	r := result.(SkyResult[any, any])
-	if r.Tag == 0 { return fn.(func(any) any)(r.OkValue) }
-	return result
+	tag, ok, err := anyResultView(result)
+	if tag < 0 {
+		return Ok[any, any](fn.(func(any) any)(result))
+	}
+	if tag == 0 {
+		return fn.(func(any) any)(ok)
+	}
+	return Err[any, any](err)
+}
+
+
+// anyResultView returns (tag, okValue, errValue) for any Sky Result
+// shape. tag == -1 signals "not a Result" (caller decides policy).
+// Factoring the reflect dance out of each combinator keeps the hot
+// path identical while letting typed FFI wrappers (which return
+// SkyResult[string, A] for some concrete A) flow through without
+// per-combinator `ResultCoerce[any, any]` wrapping at the call site.
+func anyResultView(result any) (int, any, any) {
+	if r, ok := result.(SkyResult[any, any]); ok {
+		return r.Tag, r.OkValue, r.ErrValue
+	}
+	rv := reflect.ValueOf(result)
+	if rv.Kind() == reflect.Struct {
+		tagField := rv.FieldByName("Tag")
+		okField  := rv.FieldByName("OkValue")
+		errField := rv.FieldByName("ErrValue")
+		if tagField.IsValid() && okField.IsValid() && errField.IsValid() {
+			return int(tagField.Int()), okField.Interface(), errField.Interface()
+		}
+	}
+	return -1, nil, nil
 }
 
 func Result_withDefault(def any, result any) any {
@@ -951,9 +985,14 @@ func Result_withDefault(def any, result any) any {
 }
 
 func Result_mapError(fn any, result any) any {
-	r := result.(SkyResult[any, any])
-	if r.Tag == 1 { return Err[any, any](fn.(func(any) any)(r.ErrValue)) }
-	return result
+	tag, ok, err := anyResultView(result)
+	if tag < 0 {
+		return result
+	}
+	if tag == 1 {
+		return Err[any, any](fn.(func(any) any)(err))
+	}
+	return Ok[any, any](ok)
 }
 
 // Result.map2..map5 — apply a function to N successful results, short-
