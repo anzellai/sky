@@ -2596,6 +2596,7 @@ typedKernelArgCoerce = Map.fromList
     -- Single-arg int → string
     [ (("String", "fromInt"),    ["AsInt"])
     , (("String", "fromFloat"),  ["AsFloat"])
+    , (("String", "fromChar"),   ["AsInt"])
     -- String → X
     , (("String", "toUpper"),    ["AsString"])
     , (("String", "toLower"),    ["AsString"])

@@ -1895,6 +1895,9 @@ func String_fromChar(c any) any {
 	return fmt.Sprintf("%v", c)
 }
 
+// P8/String typed companion for fromChar — int rune in, one-rune string out.
+func String_fromCharT(r int) string { return string(rune(r)) }
+
 func String_toChar(s any) any {
 	str := fmt.Sprintf("%v", s)
 	for _, r := range str {
