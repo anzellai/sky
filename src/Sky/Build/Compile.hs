@@ -2653,12 +2653,12 @@ typedKernelArgCoerce = Map.fromList
     , (("List",   "head"),    ["AsList"])
     , (("List",   "reverse"), ["AsList"])
     , (("List",   "isEmpty"), ["AsList"])
-    -- Dict: only member is safe to dispatch without HM element-type
-    -- flow. Dict_keysT/valuesT return []string/[]V which would
-    -- break downstream List ops that expect []any; those need HM
-    -- flow to pick up concrete element types at call sites.
+    -- Dict: keys/values return []any (updated in rt.go) so they
+    -- compose with Sky List ops without []string/[]V mismatch.
     , (("Dict",   "member"),  ["AsString", "AsDict"])
     , (("Dict",   "insert"),  ["AsString", "Pass", "AsDict"])
+    , (("Dict",   "keys"),    ["AsDict"])
+    , (("Dict",   "values"),  ["AsDict"])
     -- Basics: pure boolean / integer helpers
     , (("Basics", "not"),     ["AsBool"])
     , (("Basics", "modBy"),   ["AsInt", "AsInt"])
@@ -2707,6 +2707,7 @@ typedKernelLiterals = Set.fromList
     , ("List",   "length"),     ("List",   "head"),       ("List",   "reverse")
     , ("List",   "isEmpty")
     , ("Dict",   "member"),     ("Dict",   "insert")
+    , ("Dict",   "keys"),       ("Dict",   "values")
     , ("Basics", "not"),        ("Basics", "modBy"),  ("Basics", "errorToString")
     , ("Time",   "formatISO8601"), ("Time", "formatRFC3339"), ("Time", "formatHTTP")
     ]

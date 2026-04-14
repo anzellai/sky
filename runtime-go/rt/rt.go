@@ -1656,15 +1656,19 @@ func Dict_memberT[V any](key string, d map[string]V) bool {
 	return ok
 }
 
-func Dict_keysT[V any](d map[string]V) []string {
-	keys := make([]string, 0, len(d))
-	for k := range d { keys = append(keys, k) }
+// Return []any so Sky's List runtime shape ([]any) is preserved and
+// downstream List.* typed companions unify cleanly (e.g. List_lengthT).
+// Strings are boxed through `any(k)` so V=any inference works when
+// the caller's dict is map[string]V for any V.
+func Dict_keysT[V any](d map[string]V) []any {
+	keys := make([]any, 0, len(d))
+	for k := range d { keys = append(keys, any(k)) }
 	return keys
 }
 
-func Dict_valuesT[V any](d map[string]V) []V {
-	vals := make([]V, 0, len(d))
-	for _, v := range d { vals = append(vals, v) }
+func Dict_valuesT[V any](d map[string]V) []any {
+	vals := make([]any, 0, len(d))
+	for _, v := range d { vals = append(vals, any(v)) }
 	return vals
 }
 
