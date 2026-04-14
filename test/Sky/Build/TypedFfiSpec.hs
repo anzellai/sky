@@ -41,6 +41,15 @@ spec = do
             ("rt.Result_withDefault(\"\", rt.Go_Uuid_newStringT())" `isInfixOf` body)
                 `shouldBe` True
 
+        it "uses ResultAsAny at typed-FFI case subjects" $ do
+            -- ex03's `case Uuid.newString () of Ok _ -> ... Err _ -> ...`
+            -- is the canonical test case for the case-subject shortcut:
+            -- with a typed-FFI source the emitter should prefer
+            -- ResultAsAny over ResultCoerce[any, any]. Regression catcher.
+            body <- readFile "examples/03-tea-external/sky-out/main.go"
+            ("rt.ResultAsAny(rt.Go_Uuid_newStringT())" `isInfixOf` body)
+                `shouldBe` True
+
         it "registers a typed variant for every migrated call name" $ do
             -- Spot-check that regenerated bindings actually emit the T
             -- variant for the one hard-migrated function, across every
