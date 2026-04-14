@@ -39,11 +39,13 @@ func Go_Iterator_pageInfoRemainingT(p0 *pkg.PageInfo) (out SkyResult[string, int
 	return
 }
 
-func Go_Iterator_pageInfoToken(p0 any) any { return SkyFfiFieldGet(p0, "Token") }
+type FfiT_Go_Iterator_pageInfoToken_P0 = *pkg.PageInfo
+func Go_Iterator_pageInfoTokenT(p0 *pkg.PageInfo) string { return p0.Token }
 
 func Go_Iterator_pageInfoSetToken(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Token") }
 
-func Go_Iterator_pageInfoMaxSize(p0 any) any { return SkyFfiFieldGet(p0, "MaxSize") }
+type FfiT_Go_Iterator_pageInfoMaxSize_P0 = *pkg.PageInfo
+func Go_Iterator_pageInfoMaxSizeT(p0 *pkg.PageInfo) int { return p0.MaxSize }
 
 func Go_Iterator_pageInfoSetMaxSize(value any, recv any) any { return SkyFfiFieldSet(value, recv, "MaxSize") }
 

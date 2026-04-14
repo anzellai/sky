@@ -343,11 +343,15 @@ func Go_Mux_routeGetVarNamesT(p0 *pkg.Route) (out SkyResult[string, []string]) {
 
 func Go_Mux_newRoute(_ any) any { return new(pkg.Route) }
 
-func Go_Mux_routeMatchRoute(p0 any) any { return SkyFfiFieldGet(p0, "Route") }
+type FfiT_Go_Mux_routeMatchRoute_P0 = *pkg.RouteMatch
+type FfiT_Go_Mux_routeMatchRoute_R = *pkg.Route
+func Go_Mux_routeMatchRouteT(p0 *pkg.RouteMatch) *pkg.Route { return p0.Route }
 
 func Go_Mux_routeMatchSetRoute(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Route") }
 
-func Go_Mux_routeMatchHandler(p0 any) any { return SkyFfiFieldGet(p0, "Handler") }
+type FfiT_Go_Mux_routeMatchHandler_P0 = *pkg.RouteMatch
+type FfiT_Go_Mux_routeMatchHandler_R = http.Handler
+func Go_Mux_routeMatchHandlerT(p0 *pkg.RouteMatch) http.Handler { return p0.Handler }
 
 func Go_Mux_routeMatchSetHandler(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Handler") }
 
@@ -355,7 +359,8 @@ func Go_Mux_routeMatchVars(p0 any) any { return SkyFfiFieldGet(p0, "Vars") }
 
 func Go_Mux_routeMatchSetVars(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Vars") }
 
-func Go_Mux_routeMatchMatchErr(p0 any) any { return SkyFfiFieldGet(p0, "MatchErr") }
+type FfiT_Go_Mux_routeMatchMatchErr_P0 = *pkg.RouteMatch
+func Go_Mux_routeMatchMatchErrT(p0 *pkg.RouteMatch) error { return p0.MatchErr }
 
 func Go_Mux_routeMatchSetMatchErr(value any, recv any) any { return SkyFfiFieldSet(value, recv, "MatchErr") }
 
@@ -553,15 +558,20 @@ func Go_Mux_routerWalkT(p0 *pkg.Router, p1 pkg.WalkFunc) (out SkyResult[string, 
 	return
 }
 
-func Go_Mux_routerNotFoundHandler(p0 any) any { return SkyFfiFieldGet(p0, "NotFoundHandler") }
+type FfiT_Go_Mux_routerNotFoundHandler_P0 = *pkg.Router
+type FfiT_Go_Mux_routerNotFoundHandler_R = http.Handler
+func Go_Mux_routerNotFoundHandlerT(p0 *pkg.Router) http.Handler { return p0.NotFoundHandler }
 
 func Go_Mux_routerSetNotFoundHandler(value any, recv any) any { return SkyFfiFieldSet(value, recv, "NotFoundHandler") }
 
-func Go_Mux_routerMethodNotAllowedHandler(p0 any) any { return SkyFfiFieldGet(p0, "MethodNotAllowedHandler") }
+type FfiT_Go_Mux_routerMethodNotAllowedHandler_P0 = *pkg.Router
+type FfiT_Go_Mux_routerMethodNotAllowedHandler_R = http.Handler
+func Go_Mux_routerMethodNotAllowedHandlerT(p0 *pkg.Router) http.Handler { return p0.MethodNotAllowedHandler }
 
 func Go_Mux_routerSetMethodNotAllowedHandler(value any, recv any) any { return SkyFfiFieldSet(value, recv, "MethodNotAllowedHandler") }
 
-func Go_Mux_routerKeepContext(p0 any) any { return SkyFfiFieldGet(p0, "KeepContext") }
+type FfiT_Go_Mux_routerKeepContext_P0 = *pkg.Router
+func Go_Mux_routerKeepContextT(p0 *pkg.Router) bool { return p0.KeepContext }
 
 func Go_Mux_routerSetKeepContext(value any, recv any) any { return SkyFfiFieldSet(value, recv, "KeepContext") }
 

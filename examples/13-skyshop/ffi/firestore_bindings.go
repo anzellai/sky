@@ -143,11 +143,15 @@ func Go_Firestore_aggregationQueryPipelineT(p0 *pkg.AggregationQuery) (out SkyRe
 
 func Go_Firestore_newAggregationQuery(_ any) any { return new(pkg.AggregationQuery) }
 
-func Go_Firestore_aggregationResponseResult(p0 any) any { return SkyFfiFieldGet(p0, "Result") }
+type FfiT_Go_Firestore_aggregationResponseResult_P0 = *pkg.AggregationResponse
+type FfiT_Go_Firestore_aggregationResponseResult_R = pkg.AggregationResult
+func Go_Firestore_aggregationResponseResultT(p0 *pkg.AggregationResponse) pkg.AggregationResult { return p0.Result }
 
 func Go_Firestore_aggregationResponseSetResult(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Result") }
 
-func Go_Firestore_aggregationResponseExplainMetrics(p0 any) any { return SkyFfiFieldGet(p0, "ExplainMetrics") }
+type FfiT_Go_Firestore_aggregationResponseExplainMetrics_P0 = *pkg.AggregationResponse
+type FfiT_Go_Firestore_aggregationResponseExplainMetrics_R = *pkg.ExplainMetrics
+func Go_Firestore_aggregationResponseExplainMetricsT(p0 *pkg.AggregationResponse) *pkg.ExplainMetrics { return p0.ExplainMetrics }
 
 func Go_Firestore_aggregationResponseSetExplainMetrics(value any, recv any) any { return SkyFfiFieldSet(value, recv, "ExplainMetrics") }
 
@@ -912,7 +916,9 @@ func Go_Firestore_and(p0 any, p1 any) (out any) {
 	return
 }
 
-func Go_Firestore_andFilterFilters(p0 any) any { return SkyFfiFieldGet(p0, "Filters") }
+type FfiT_Go_Firestore_andFilterFilters_P0 = *pkg.AndFilter
+type FfiT_Go_Firestore_andFilterFilters_R = []pkg.EntityFilter
+func Go_Firestore_andFilterFiltersT(p0 *pkg.AndFilter) []pkg.EntityFilter { return p0.Filters }
 
 func Go_Firestore_andFilterSetFilters(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Filters") }
 
@@ -2002,7 +2008,8 @@ func Go_Firestore_clientRunTransaction(p0 any, p1 any, p2 any, p3 any) (out any)
 	return
 }
 
-func Go_Firestore_clientUsesEmulator(p0 any) any { return SkyFfiFieldGet(p0, "UsesEmulator") }
+type FfiT_Go_Firestore_clientUsesEmulator_P0 = *pkg.Client
+func Go_Firestore_clientUsesEmulatorT(p0 *pkg.Client) bool { return p0.UsesEmulator }
 
 func Go_Firestore_clientSetUsesEmulator(value any, recv any) any { return SkyFfiFieldSet(value, recv, "UsesEmulator") }
 
@@ -2228,7 +2235,9 @@ func Go_Firestore_collectionGroupRefWithRunOptions(p0 any, p1 any) (out any) {
 	return
 }
 
-func Go_Firestore_collectionGroupRefQuery(p0 any) any { return SkyFfiFieldGet(p0, "Query") }
+type FfiT_Go_Firestore_collectionGroupRefQuery_P0 = *pkg.CollectionGroupRef
+type FfiT_Go_Firestore_collectionGroupRefQuery_R = pkg.Query
+func Go_Firestore_collectionGroupRefQueryT(p0 *pkg.CollectionGroupRef) pkg.Query { return p0.Query }
 
 func Go_Firestore_collectionGroupRefSetQuery(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Query") }
 
@@ -2531,19 +2540,25 @@ func Go_Firestore_collectionRefWithRunOptions(p0 any, p1 any) (out any) {
 	return
 }
 
-func Go_Firestore_collectionRefParent(p0 any) any { return SkyFfiFieldGet(p0, "Parent") }
+type FfiT_Go_Firestore_collectionRefParent_P0 = *pkg.CollectionRef
+type FfiT_Go_Firestore_collectionRefParent_R = *pkg.DocumentRef
+func Go_Firestore_collectionRefParentT(p0 *pkg.CollectionRef) *pkg.DocumentRef { return p0.Parent }
 
 func Go_Firestore_collectionRefSetParent(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Parent") }
 
-func Go_Firestore_collectionRefPath(p0 any) any { return SkyFfiFieldGet(p0, "Path") }
+type FfiT_Go_Firestore_collectionRefPath_P0 = *pkg.CollectionRef
+func Go_Firestore_collectionRefPathT(p0 *pkg.CollectionRef) string { return p0.Path }
 
 func Go_Firestore_collectionRefSetPath(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Path") }
 
-func Go_Firestore_collectionRefID(p0 any) any { return SkyFfiFieldGet(p0, "ID") }
+type FfiT_Go_Firestore_collectionRefID_P0 = *pkg.CollectionRef
+func Go_Firestore_collectionRefIDT(p0 *pkg.CollectionRef) string { return p0.ID }
 
 func Go_Firestore_collectionRefSetID(value any, recv any) any { return SkyFfiFieldSet(value, recv, "ID") }
 
-func Go_Firestore_collectionRefQuery(p0 any) any { return SkyFfiFieldGet(p0, "Query") }
+type FfiT_Go_Firestore_collectionRefQuery_P0 = *pkg.CollectionRef
+type FfiT_Go_Firestore_collectionRefQuery_R = pkg.Query
+func Go_Firestore_collectionRefQueryT(p0 *pkg.CollectionRef) pkg.Query { return p0.Query }
 
 func Go_Firestore_collectionRefSetQuery(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Query") }
 
@@ -2692,23 +2707,31 @@ func Go_Firestore_divideT(p0 any, p1 any) (out SkyResult[string, pkg.Expression]
 
 func Go_Firestore_documentAdded(_ any) any { return pkg.DocumentAdded }
 
-func Go_Firestore_documentChangeKind(p0 any) any { return SkyFfiFieldGet(p0, "Kind") }
+type FfiT_Go_Firestore_documentChangeKind_P0 = *pkg.DocumentChange
+type FfiT_Go_Firestore_documentChangeKind_R = pkg.DocumentChangeKind
+func Go_Firestore_documentChangeKindT(p0 *pkg.DocumentChange) pkg.DocumentChangeKind { return p0.Kind }
 
 func Go_Firestore_documentChangeSetKind(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Kind") }
 
-func Go_Firestore_documentChangeDoc(p0 any) any { return SkyFfiFieldGet(p0, "Doc") }
+type FfiT_Go_Firestore_documentChangeDoc_P0 = *pkg.DocumentChange
+type FfiT_Go_Firestore_documentChangeDoc_R = *pkg.DocumentSnapshot
+func Go_Firestore_documentChangeDocT(p0 *pkg.DocumentChange) *pkg.DocumentSnapshot { return p0.Doc }
 
 func Go_Firestore_documentChangeSetDoc(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Doc") }
 
-func Go_Firestore_documentChangeOldDoc(p0 any) any { return SkyFfiFieldGet(p0, "OldDoc") }
+type FfiT_Go_Firestore_documentChangeOldDoc_P0 = *pkg.DocumentChange
+type FfiT_Go_Firestore_documentChangeOldDoc_R = *pkg.DocumentSnapshot
+func Go_Firestore_documentChangeOldDocT(p0 *pkg.DocumentChange) *pkg.DocumentSnapshot { return p0.OldDoc }
 
 func Go_Firestore_documentChangeSetOldDoc(value any, recv any) any { return SkyFfiFieldSet(value, recv, "OldDoc") }
 
-func Go_Firestore_documentChangeOldIndex(p0 any) any { return SkyFfiFieldGet(p0, "OldIndex") }
+type FfiT_Go_Firestore_documentChangeOldIndex_P0 = *pkg.DocumentChange
+func Go_Firestore_documentChangeOldIndexT(p0 *pkg.DocumentChange) int { return p0.OldIndex }
 
 func Go_Firestore_documentChangeSetOldIndex(value any, recv any) any { return SkyFfiFieldSet(value, recv, "OldIndex") }
 
-func Go_Firestore_documentChangeNewIndex(p0 any) any { return SkyFfiFieldGet(p0, "NewIndex") }
+type FfiT_Go_Firestore_documentChangeNewIndex_P0 = *pkg.DocumentChange
+func Go_Firestore_documentChangeNewIndexT(p0 *pkg.DocumentChange) int { return p0.NewIndex }
 
 func Go_Firestore_documentChangeSetNewIndex(value any, recv any) any { return SkyFfiFieldSet(value, recv, "NewIndex") }
 
@@ -2857,15 +2880,19 @@ func Go_Firestore_documentRefWithReadOptions(p0 any, p1 any) (out any) {
 	return
 }
 
-func Go_Firestore_documentRefParent(p0 any) any { return SkyFfiFieldGet(p0, "Parent") }
+type FfiT_Go_Firestore_documentRefParent_P0 = *pkg.DocumentRef
+type FfiT_Go_Firestore_documentRefParent_R = *pkg.CollectionRef
+func Go_Firestore_documentRefParentT(p0 *pkg.DocumentRef) *pkg.CollectionRef { return p0.Parent }
 
 func Go_Firestore_documentRefSetParent(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Parent") }
 
-func Go_Firestore_documentRefPath(p0 any) any { return SkyFfiFieldGet(p0, "Path") }
+type FfiT_Go_Firestore_documentRefPath_P0 = *pkg.DocumentRef
+func Go_Firestore_documentRefPathT(p0 *pkg.DocumentRef) string { return p0.Path }
 
 func Go_Firestore_documentRefSetPath(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Path") }
 
-func Go_Firestore_documentRefID(p0 any) any { return SkyFfiFieldGet(p0, "ID") }
+type FfiT_Go_Firestore_documentRefID_P0 = *pkg.DocumentRef
+func Go_Firestore_documentRefIDT(p0 *pkg.DocumentRef) string { return p0.ID }
 
 func Go_Firestore_documentRefSetID(value any, recv any) any { return SkyFfiFieldSet(value, recv, "ID") }
 
@@ -2951,19 +2978,27 @@ func Go_Firestore_documentSnapshotDataAtPath(p0 any, p1 any) (out any) {
 	return
 }
 
-func Go_Firestore_documentSnapshotRef(p0 any) any { return SkyFfiFieldGet(p0, "Ref") }
+type FfiT_Go_Firestore_documentSnapshotRef_P0 = *pkg.DocumentSnapshot
+type FfiT_Go_Firestore_documentSnapshotRef_R = *pkg.DocumentRef
+func Go_Firestore_documentSnapshotRefT(p0 *pkg.DocumentSnapshot) *pkg.DocumentRef { return p0.Ref }
 
 func Go_Firestore_documentSnapshotSetRef(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Ref") }
 
-func Go_Firestore_documentSnapshotCreateTime(p0 any) any { return SkyFfiFieldGet(p0, "CreateTime") }
+type FfiT_Go_Firestore_documentSnapshotCreateTime_P0 = *pkg.DocumentSnapshot
+type FfiT_Go_Firestore_documentSnapshotCreateTime_R = time.Time
+func Go_Firestore_documentSnapshotCreateTimeT(p0 *pkg.DocumentSnapshot) time.Time { return p0.CreateTime }
 
 func Go_Firestore_documentSnapshotSetCreateTime(value any, recv any) any { return SkyFfiFieldSet(value, recv, "CreateTime") }
 
-func Go_Firestore_documentSnapshotUpdateTime(p0 any) any { return SkyFfiFieldGet(p0, "UpdateTime") }
+type FfiT_Go_Firestore_documentSnapshotUpdateTime_P0 = *pkg.DocumentSnapshot
+type FfiT_Go_Firestore_documentSnapshotUpdateTime_R = time.Time
+func Go_Firestore_documentSnapshotUpdateTimeT(p0 *pkg.DocumentSnapshot) time.Time { return p0.UpdateTime }
 
 func Go_Firestore_documentSnapshotSetUpdateTime(value any, recv any) any { return SkyFfiFieldSet(value, recv, "UpdateTime") }
 
-func Go_Firestore_documentSnapshotReadTime(p0 any) any { return SkyFfiFieldGet(p0, "ReadTime") }
+type FfiT_Go_Firestore_documentSnapshotReadTime_P0 = *pkg.DocumentSnapshot
+type FfiT_Go_Firestore_documentSnapshotReadTime_R = time.Time
+func Go_Firestore_documentSnapshotReadTimeT(p0 *pkg.DocumentSnapshot) time.Time { return p0.ReadTime }
 
 func Go_Firestore_documentSnapshotSetReadTime(value any, recv any) any { return SkyFfiFieldSet(value, recv, "ReadTime") }
 
@@ -3030,15 +3065,19 @@ func Go_Firestore_euclideanDistanceT(p0 any, p1 any) (out SkyResult[string, pkg.
 	return
 }
 
-func Go_Firestore_executionStatsResultsReturned(p0 any) any { return SkyFfiFieldGet(p0, "ResultsReturned") }
+type FfiT_Go_Firestore_executionStatsResultsReturned_P0 = *pkg.ExecutionStats
+func Go_Firestore_executionStatsResultsReturnedT(p0 *pkg.ExecutionStats) int64 { return p0.ResultsReturned }
 
 func Go_Firestore_executionStatsSetResultsReturned(value any, recv any) any { return SkyFfiFieldSet(value, recv, "ResultsReturned") }
 
-func Go_Firestore_executionStatsExecutionDuration(p0 any) any { return SkyFfiFieldGet(p0, "ExecutionDuration") }
+type FfiT_Go_Firestore_executionStatsExecutionDuration_P0 = *pkg.ExecutionStats
+type FfiT_Go_Firestore_executionStatsExecutionDuration_R = *time.Duration
+func Go_Firestore_executionStatsExecutionDurationT(p0 *pkg.ExecutionStats) *time.Duration { return p0.ExecutionDuration }
 
 func Go_Firestore_executionStatsSetExecutionDuration(value any, recv any) any { return SkyFfiFieldSet(value, recv, "ExecutionDuration") }
 
-func Go_Firestore_executionStatsReadOperations(p0 any) any { return SkyFfiFieldGet(p0, "ReadOperations") }
+type FfiT_Go_Firestore_executionStatsReadOperations_P0 = *pkg.ExecutionStats
+func Go_Firestore_executionStatsReadOperationsT(p0 *pkg.ExecutionStats) int64 { return p0.ReadOperations }
 
 func Go_Firestore_executionStatsSetReadOperations(value any, recv any) any { return SkyFfiFieldSet(value, recv, "ReadOperations") }
 
@@ -3060,11 +3099,15 @@ func Go_Firestore_expT(p0 any) (out SkyResult[string, pkg.Expression]) {
 	return
 }
 
-func Go_Firestore_explainMetricsPlanSummary(p0 any) any { return SkyFfiFieldGet(p0, "PlanSummary") }
+type FfiT_Go_Firestore_explainMetricsPlanSummary_P0 = *pkg.ExplainMetrics
+type FfiT_Go_Firestore_explainMetricsPlanSummary_R = *pkg.PlanSummary
+func Go_Firestore_explainMetricsPlanSummaryT(p0 *pkg.ExplainMetrics) *pkg.PlanSummary { return p0.PlanSummary }
 
 func Go_Firestore_explainMetricsSetPlanSummary(value any, recv any) any { return SkyFfiFieldSet(value, recv, "PlanSummary") }
 
-func Go_Firestore_explainMetricsExecutionStats(p0 any) any { return SkyFfiFieldGet(p0, "ExecutionStats") }
+type FfiT_Go_Firestore_explainMetricsExecutionStats_P0 = *pkg.ExplainMetrics
+type FfiT_Go_Firestore_explainMetricsExecutionStats_R = *pkg.ExecutionStats
+func Go_Firestore_explainMetricsExecutionStatsT(p0 *pkg.ExplainMetrics) *pkg.ExecutionStats { return p0.ExecutionStats }
 
 func Go_Firestore_explainMetricsSetExecutionStats(value any, recv any) any { return SkyFfiFieldSet(value, recv, "ExecutionStats") }
 
@@ -3072,7 +3115,8 @@ func Go_Firestore_newExplainMetrics(_ any) any { return new(pkg.ExplainMetrics) 
 
 func Go_Firestore_explainModeAnalyze(_ any) any { return pkg.ExplainModeAnalyze }
 
-func Go_Firestore_explainOptionsAnalyze(p0 any) any { return SkyFfiFieldGet(p0, "Analyze") }
+type FfiT_Go_Firestore_explainOptionsAnalyze_P0 = *pkg.ExplainOptions
+func Go_Firestore_explainOptionsAnalyzeT(p0 *pkg.ExplainOptions) bool { return p0.Analyze }
 
 func Go_Firestore_explainOptionsSetAnalyze(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Analyze") }
 
@@ -3829,7 +3873,8 @@ func Go_Firestore_fieldNotFoundErrorErrorT(p0 *pkg.FieldNotFoundError) (out SkyR
 	return
 }
 
-func Go_Firestore_fieldNotFoundErrorPath(p0 any) any { return SkyFfiFieldGet(p0, "Path") }
+type FfiT_Go_Firestore_fieldNotFoundErrorPath_P0 = *pkg.FieldNotFoundError
+func Go_Firestore_fieldNotFoundErrorPathT(p0 *pkg.FieldNotFoundError) string { return p0.Path }
 
 func Go_Firestore_fieldNotFoundErrorSetPath(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Path") }
 
@@ -3863,11 +3908,13 @@ func Go_Firestore_fieldTransformMinimum(p0 any) (out any) {
 	return
 }
 
-func Go_Firestore_findNearestOptionsDistanceThreshold(p0 any) any { return SkyFfiFieldGet(p0, "DistanceThreshold") }
+type FfiT_Go_Firestore_findNearestOptionsDistanceThreshold_P0 = *pkg.FindNearestOptions
+func Go_Firestore_findNearestOptionsDistanceThresholdT(p0 *pkg.FindNearestOptions) *float64 { return p0.DistanceThreshold }
 
 func Go_Firestore_findNearestOptionsSetDistanceThreshold(value any, recv any) any { return SkyFfiFieldSet(value, recv, "DistanceThreshold") }
 
-func Go_Firestore_findNearestOptionsDistanceResultField(p0 any) any { return SkyFfiFieldGet(p0, "DistanceResultField") }
+type FfiT_Go_Firestore_findNearestOptionsDistanceResultField_P0 = *pkg.FindNearestOptions
+func Go_Firestore_findNearestOptionsDistanceResultFieldT(p0 *pkg.FindNearestOptions) string { return p0.DistanceResultField }
 
 func Go_Firestore_findNearestOptionsSetDistanceResultField(value any, recv any) any { return SkyFfiFieldSet(value, recv, "DistanceResultField") }
 
@@ -4924,17 +4971,23 @@ func Go_Firestore_or(p0 any, p1 any) (out any) {
 	return
 }
 
-func Go_Firestore_orFilterFilters(p0 any) any { return SkyFfiFieldGet(p0, "Filters") }
+type FfiT_Go_Firestore_orFilterFilters_P0 = *pkg.OrFilter
+type FfiT_Go_Firestore_orFilterFilters_R = []pkg.EntityFilter
+func Go_Firestore_orFilterFiltersT(p0 *pkg.OrFilter) []pkg.EntityFilter { return p0.Filters }
 
 func Go_Firestore_orFilterSetFilters(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Filters") }
 
 func Go_Firestore_newOrFilter(_ any) any { return new(pkg.OrFilter) }
 
-func Go_Firestore_orderingExpr(p0 any) any { return SkyFfiFieldGet(p0, "Expr") }
+type FfiT_Go_Firestore_orderingExpr_P0 = *pkg.Ordering
+type FfiT_Go_Firestore_orderingExpr_R = pkg.Expression
+func Go_Firestore_orderingExprT(p0 *pkg.Ordering) pkg.Expression { return p0.Expr }
 
 func Go_Firestore_orderingSetExpr(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Expr") }
 
-func Go_Firestore_orderingDirection(p0 any) any { return SkyFfiFieldGet(p0, "Direction") }
+type FfiT_Go_Firestore_orderingDirection_P0 = *pkg.Ordering
+type FfiT_Go_Firestore_orderingDirection_R = pkg.OrderingDirection
+func Go_Firestore_orderingDirectionT(p0 *pkg.Ordering) pkg.OrderingDirection { return p0.Direction }
 
 func Go_Firestore_orderingSetDirection(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Direction") }
 
@@ -5127,11 +5180,13 @@ func Go_Firestore_pipelineDistanceMeasureDotProduct(_ any) any { return pkg.Pipe
 
 func Go_Firestore_pipelineDistanceMeasureEuclidean(_ any) any { return pkg.PipelineDistanceMeasureEuclidean }
 
-func Go_Firestore_pipelineFindNearestOptionsLimit(p0 any) any { return SkyFfiFieldGet(p0, "Limit") }
+type FfiT_Go_Firestore_pipelineFindNearestOptionsLimit_P0 = *pkg.PipelineFindNearestOptions
+func Go_Firestore_pipelineFindNearestOptionsLimitT(p0 *pkg.PipelineFindNearestOptions) *int { return p0.Limit }
 
 func Go_Firestore_pipelineFindNearestOptionsSetLimit(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Limit") }
 
-func Go_Firestore_pipelineFindNearestOptionsDistanceField(p0 any) any { return SkyFfiFieldGet(p0, "DistanceField") }
+type FfiT_Go_Firestore_pipelineFindNearestOptionsDistanceField_P0 = *pkg.PipelineFindNearestOptions
+func Go_Firestore_pipelineFindNearestOptionsDistanceFieldT(p0 *pkg.PipelineFindNearestOptions) *string { return p0.DistanceField }
 
 func Go_Firestore_pipelineFindNearestOptionsSetDistanceField(value any, recv any) any { return SkyFfiFieldSet(value, recv, "DistanceField") }
 
@@ -5329,11 +5384,13 @@ func Go_Firestore_powT(p0 any, p1 any) (out SkyResult[string, pkg.Expression]) {
 	return
 }
 
-func Go_Firestore_propertyFilterPath(p0 any) any { return SkyFfiFieldGet(p0, "Path") }
+type FfiT_Go_Firestore_propertyFilterPath_P0 = *pkg.PropertyFilter
+func Go_Firestore_propertyFilterPathT(p0 *pkg.PropertyFilter) string { return p0.Path }
 
 func Go_Firestore_propertyFilterSetPath(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Path") }
 
-func Go_Firestore_propertyFilterOperator(p0 any) any { return SkyFfiFieldGet(p0, "Operator") }
+type FfiT_Go_Firestore_propertyFilterOperator_P0 = *pkg.PropertyFilter
+func Go_Firestore_propertyFilterOperatorT(p0 *pkg.PropertyFilter) string { return p0.Operator }
 
 func Go_Firestore_propertyFilterSetOperator(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Operator") }
 
@@ -5343,11 +5400,14 @@ func Go_Firestore_propertyFilterSetValue(value any, recv any) any { return SkyFf
 
 func Go_Firestore_newPropertyFilter(_ any) any { return new(pkg.PropertyFilter) }
 
-func Go_Firestore_propertyPathFilterPath(p0 any) any { return SkyFfiFieldGet(p0, "Path") }
+type FfiT_Go_Firestore_propertyPathFilterPath_P0 = *pkg.PropertyPathFilter
+type FfiT_Go_Firestore_propertyPathFilterPath_R = pkg.FieldPath
+func Go_Firestore_propertyPathFilterPathT(p0 *pkg.PropertyPathFilter) pkg.FieldPath { return p0.Path }
 
 func Go_Firestore_propertyPathFilterSetPath(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Path") }
 
-func Go_Firestore_propertyPathFilterOperator(p0 any) any { return SkyFfiFieldGet(p0, "Operator") }
+type FfiT_Go_Firestore_propertyPathFilterOperator_P0 = *pkg.PropertyPathFilter
+func Go_Firestore_propertyPathFilterOperatorT(p0 *pkg.PropertyPathFilter) string { return p0.Operator }
 
 func Go_Firestore_propertyPathFilterSetOperator(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Operator") }
 
@@ -5579,19 +5639,26 @@ func Go_Firestore_queryPipelineT(p0 pkg.Query) (out SkyResult[string, *pkg.Pipel
 
 func Go_Firestore_newQuery(_ any) any { return new(pkg.Query) }
 
-func Go_Firestore_querySnapshotDocuments(p0 any) any { return SkyFfiFieldGet(p0, "Documents") }
+type FfiT_Go_Firestore_querySnapshotDocuments_P0 = *pkg.QuerySnapshot
+type FfiT_Go_Firestore_querySnapshotDocuments_R = *pkg.DocumentIterator
+func Go_Firestore_querySnapshotDocumentsT(p0 *pkg.QuerySnapshot) *pkg.DocumentIterator { return p0.Documents }
 
 func Go_Firestore_querySnapshotSetDocuments(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Documents") }
 
-func Go_Firestore_querySnapshotSize(p0 any) any { return SkyFfiFieldGet(p0, "Size") }
+type FfiT_Go_Firestore_querySnapshotSize_P0 = *pkg.QuerySnapshot
+func Go_Firestore_querySnapshotSizeT(p0 *pkg.QuerySnapshot) int { return p0.Size }
 
 func Go_Firestore_querySnapshotSetSize(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Size") }
 
-func Go_Firestore_querySnapshotChanges(p0 any) any { return SkyFfiFieldGet(p0, "Changes") }
+type FfiT_Go_Firestore_querySnapshotChanges_P0 = *pkg.QuerySnapshot
+type FfiT_Go_Firestore_querySnapshotChanges_R = []pkg.DocumentChange
+func Go_Firestore_querySnapshotChangesT(p0 *pkg.QuerySnapshot) []pkg.DocumentChange { return p0.Changes }
 
 func Go_Firestore_querySnapshotSetChanges(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Changes") }
 
-func Go_Firestore_querySnapshotReadTime(p0 any) any { return SkyFfiFieldGet(p0, "ReadTime") }
+type FfiT_Go_Firestore_querySnapshotReadTime_P0 = *pkg.QuerySnapshot
+type FfiT_Go_Firestore_querySnapshotReadTime_R = time.Time
+func Go_Firestore_querySnapshotReadTimeT(p0 *pkg.QuerySnapshot) time.Time { return p0.ReadTime }
 
 func Go_Firestore_querySnapshotSetReadTime(value any, recv any) any { return SkyFfiFieldSet(value, recv, "ReadTime") }
 
@@ -5616,7 +5683,9 @@ func Go_Firestore_querySnapshotIteratorStop(p0 any) (out any) {
 	return
 }
 
-func Go_Firestore_querySnapshotIteratorQuery(p0 any) any { return SkyFfiFieldGet(p0, "Query") }
+type FfiT_Go_Firestore_querySnapshotIteratorQuery_P0 = *pkg.QuerySnapshotIterator
+type FfiT_Go_Firestore_querySnapshotIteratorQuery_R = pkg.Query
+func Go_Firestore_querySnapshotIteratorQueryT(p0 *pkg.QuerySnapshotIterator) pkg.Query { return p0.Query }
 
 func Go_Firestore_querySnapshotIteratorSetQuery(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Query") }
 
@@ -5696,11 +5765,14 @@ func Go_Firestore_sampleModeDocuments(_ any) any { return pkg.SampleModeDocument
 
 func Go_Firestore_sampleModePercent(_ any) any { return pkg.SampleModePercent }
 
-func Go_Firestore_sampleSpecSize(p0 any) any { return SkyFfiFieldGet(p0, "Size") }
+type FfiT_Go_Firestore_sampleSpecSize_P0 = *pkg.SampleSpec
+func Go_Firestore_sampleSpecSizeT(p0 *pkg.SampleSpec) any { return p0.Size }
 
 func Go_Firestore_sampleSpecSetSize(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Size") }
 
-func Go_Firestore_sampleSpecMode(p0 any) any { return SkyFfiFieldGet(p0, "Mode") }
+type FfiT_Go_Firestore_sampleSpecMode_P0 = *pkg.SampleSpec
+type FfiT_Go_Firestore_sampleSpecMode_R = pkg.SampleMode
+func Go_Firestore_sampleSpecModeT(p0 *pkg.SampleSpec) pkg.SampleMode { return p0.Mode }
 
 func Go_Firestore_sampleSpecSetMode(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Mode") }
 
@@ -5994,7 +6066,8 @@ func Go_Firestore_unixSecondsToTimestampT(p0 any) (out SkyResult[string, pkg.Exp
 	return
 }
 
-func Go_Firestore_unnestOptionsIndexField(p0 any) any { return SkyFfiFieldGet(p0, "IndexField") }
+type FfiT_Go_Firestore_unnestOptionsIndexField_P0 = *pkg.UnnestOptions
+func Go_Firestore_unnestOptionsIndexFieldT(p0 *pkg.UnnestOptions) any { return p0.IndexField }
 
 func Go_Firestore_unnestOptionsSetIndexField(value any, recv any) any { return SkyFfiFieldSet(value, recv, "IndexField") }
 
@@ -6008,11 +6081,14 @@ func Go_Firestore_updateStringT(p0 pkg.Update) (out SkyResult[string, string]) {
 	return
 }
 
-func Go_Firestore_updatePath(p0 any) any { return SkyFfiFieldGet(p0, "Path") }
+type FfiT_Go_Firestore_updatePath_P0 = *pkg.Update
+func Go_Firestore_updatePathT(p0 *pkg.Update) string { return p0.Path }
 
 func Go_Firestore_updateSetPath(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Path") }
 
-func Go_Firestore_updateFieldPath(p0 any) any { return SkyFfiFieldGet(p0, "FieldPath") }
+type FfiT_Go_Firestore_updateFieldPath_P0 = *pkg.Update
+type FfiT_Go_Firestore_updateFieldPath_R = pkg.FieldPath
+func Go_Firestore_updateFieldPathT(p0 *pkg.Update) pkg.FieldPath { return p0.FieldPath }
 
 func Go_Firestore_updateSetFieldPath(value any, recv any) any { return SkyFfiFieldSet(value, recv, "FieldPath") }
 
@@ -6118,7 +6194,9 @@ func Go_Firestore_writeBatchCommitT(p0 *pkg.WriteBatch, p1 context.Context) (out
 
 func Go_Firestore_newWriteBatch(_ any) any { return new(pkg.WriteBatch) }
 
-func Go_Firestore_writeResultUpdateTime(p0 any) any { return SkyFfiFieldGet(p0, "UpdateTime") }
+type FfiT_Go_Firestore_writeResultUpdateTime_P0 = *pkg.WriteResult
+type FfiT_Go_Firestore_writeResultUpdateTime_R = time.Time
+func Go_Firestore_writeResultUpdateTimeT(p0 *pkg.WriteResult) time.Time { return p0.UpdateTime }
 
 func Go_Firestore_writeResultSetUpdateTime(value any, recv any) any { return SkyFfiFieldSet(value, recv, "UpdateTime") }
 

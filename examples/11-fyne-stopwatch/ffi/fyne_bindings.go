@@ -33,19 +33,25 @@ func Go_FyneV2_animationStop(p0 any) (out any) {
 	return
 }
 
-func Go_FyneV2_animationAutoReverse(p0 any) any { return SkyFfiFieldGet(p0, "AutoReverse") }
+type FfiT_Go_FyneV2_animationAutoReverse_P0 = *pkg.Animation
+func Go_FyneV2_animationAutoReverseT(p0 *pkg.Animation) bool { return p0.AutoReverse }
 
 func Go_FyneV2_animationSetAutoReverse(value any, recv any) any { return SkyFfiFieldSet(value, recv, "AutoReverse") }
 
-func Go_FyneV2_animationCurve(p0 any) any { return SkyFfiFieldGet(p0, "Curve") }
+type FfiT_Go_FyneV2_animationCurve_P0 = *pkg.Animation
+type FfiT_Go_FyneV2_animationCurve_R = pkg.AnimationCurve
+func Go_FyneV2_animationCurveT(p0 *pkg.Animation) pkg.AnimationCurve { return p0.Curve }
 
 func Go_FyneV2_animationSetCurve(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Curve") }
 
-func Go_FyneV2_animationDuration(p0 any) any { return SkyFfiFieldGet(p0, "Duration") }
+type FfiT_Go_FyneV2_animationDuration_P0 = *pkg.Animation
+type FfiT_Go_FyneV2_animationDuration_R = time.Duration
+func Go_FyneV2_animationDurationT(p0 *pkg.Animation) time.Duration { return p0.Duration }
 
 func Go_FyneV2_animationSetDuration(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Duration") }
 
-func Go_FyneV2_animationRepeatCount(p0 any) any { return SkyFfiFieldGet(p0, "RepeatCount") }
+type FfiT_Go_FyneV2_animationRepeatCount_P0 = *pkg.Animation
+func Go_FyneV2_animationRepeatCountT(p0 *pkg.Animation) int { return p0.RepeatCount }
 
 func Go_FyneV2_animationSetRepeatCount(value any, recv any) any { return SkyFfiFieldSet(value, recv, "RepeatCount") }
 
@@ -220,27 +226,34 @@ func Go_FyneV2_appUniqueIDT(p0 pkg.App) (out SkyResult[string, string]) {
 	return
 }
 
-func Go_FyneV2_appMetadataID(p0 any) any { return SkyFfiFieldGet(p0, "ID") }
+type FfiT_Go_FyneV2_appMetadataID_P0 = *pkg.AppMetadata
+func Go_FyneV2_appMetadataIDT(p0 *pkg.AppMetadata) string { return p0.ID }
 
 func Go_FyneV2_appMetadataSetID(value any, recv any) any { return SkyFfiFieldSet(value, recv, "ID") }
 
-func Go_FyneV2_appMetadataName(p0 any) any { return SkyFfiFieldGet(p0, "Name") }
+type FfiT_Go_FyneV2_appMetadataName_P0 = *pkg.AppMetadata
+func Go_FyneV2_appMetadataNameT(p0 *pkg.AppMetadata) string { return p0.Name }
 
 func Go_FyneV2_appMetadataSetName(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Name") }
 
-func Go_FyneV2_appMetadataVersion(p0 any) any { return SkyFfiFieldGet(p0, "Version") }
+type FfiT_Go_FyneV2_appMetadataVersion_P0 = *pkg.AppMetadata
+func Go_FyneV2_appMetadataVersionT(p0 *pkg.AppMetadata) string { return p0.Version }
 
 func Go_FyneV2_appMetadataSetVersion(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Version") }
 
-func Go_FyneV2_appMetadataBuild(p0 any) any { return SkyFfiFieldGet(p0, "Build") }
+type FfiT_Go_FyneV2_appMetadataBuild_P0 = *pkg.AppMetadata
+func Go_FyneV2_appMetadataBuildT(p0 *pkg.AppMetadata) int { return p0.Build }
 
 func Go_FyneV2_appMetadataSetBuild(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Build") }
 
-func Go_FyneV2_appMetadataIcon(p0 any) any { return SkyFfiFieldGet(p0, "Icon") }
+type FfiT_Go_FyneV2_appMetadataIcon_P0 = *pkg.AppMetadata
+type FfiT_Go_FyneV2_appMetadataIcon_R = pkg.Resource
+func Go_FyneV2_appMetadataIconT(p0 *pkg.AppMetadata) pkg.Resource { return p0.Icon }
 
 func Go_FyneV2_appMetadataSetIcon(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Icon") }
 
-func Go_FyneV2_appMetadataRelease(p0 any) any { return SkyFfiFieldGet(p0, "Release") }
+type FfiT_Go_FyneV2_appMetadataRelease_P0 = *pkg.AppMetadata
+func Go_FyneV2_appMetadataReleaseT(p0 *pkg.AppMetadata) bool { return p0.Release }
 
 func Go_FyneV2_appMetadataSetRelease(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Release") }
 
@@ -685,15 +698,20 @@ func Go_FyneV2_containerVisibleT(p0 *pkg.Container) (out SkyResult[string, bool]
 	return
 }
 
-func Go_FyneV2_containerHidden(p0 any) any { return SkyFfiFieldGet(p0, "Hidden") }
+type FfiT_Go_FyneV2_containerHidden_P0 = *pkg.Container
+func Go_FyneV2_containerHiddenT(p0 *pkg.Container) bool { return p0.Hidden }
 
 func Go_FyneV2_containerSetHidden(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Hidden") }
 
-func Go_FyneV2_containerLayout(p0 any) any { return SkyFfiFieldGet(p0, "Layout") }
+type FfiT_Go_FyneV2_containerLayout_P0 = *pkg.Container
+type FfiT_Go_FyneV2_containerLayout_R = pkg.Layout
+func Go_FyneV2_containerLayoutT(p0 *pkg.Container) pkg.Layout { return p0.Layout }
 
 func Go_FyneV2_containerSetLayout(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Layout") }
 
-func Go_FyneV2_containerObjects(p0 any) any { return SkyFfiFieldGet(p0, "Objects") }
+type FfiT_Go_FyneV2_containerObjects_P0 = *pkg.Container
+type FfiT_Go_FyneV2_containerObjects_R = []pkg.CanvasObject
+func Go_FyneV2_containerObjectsT(p0 *pkg.Container) []pkg.CanvasObject { return p0.Objects }
 
 func Go_FyneV2_containerSetObjects(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Objects") }
 
@@ -730,11 +748,13 @@ func Go_FyneV2_deltaIsZeroT(p0 pkg.Delta) (out SkyResult[string, bool]) {
 	return
 }
 
-func Go_FyneV2_deltaDX(p0 any) any { return SkyFfiFieldGet(p0, "DX") }
+type FfiT_Go_FyneV2_deltaDX_P0 = *pkg.Delta
+func Go_FyneV2_deltaDXT(p0 *pkg.Delta) float32 { return p0.DX }
 
 func Go_FyneV2_deltaSetDX(value any, recv any) any { return SkyFfiFieldSet(value, recv, "DX") }
 
-func Go_FyneV2_deltaDY(p0 any) any { return SkyFfiFieldGet(p0, "DY") }
+type FfiT_Go_FyneV2_deltaDY_P0 = *pkg.Delta
+func Go_FyneV2_deltaDYT(p0 *pkg.Delta) float32 { return p0.DY }
 
 func Go_FyneV2_deltaSetDY(value any, recv any) any { return SkyFfiFieldSet(value, recv, "DY") }
 
@@ -837,11 +857,15 @@ func Go_FyneV2_doubleTappableDoubleTapped(p0 any, p1 any) (out any) {
 	return
 }
 
-func Go_FyneV2_dragEventPointEvent(p0 any) any { return SkyFfiFieldGet(p0, "PointEvent") }
+type FfiT_Go_FyneV2_dragEventPointEvent_P0 = *pkg.DragEvent
+type FfiT_Go_FyneV2_dragEventPointEvent_R = pkg.PointEvent
+func Go_FyneV2_dragEventPointEventT(p0 *pkg.DragEvent) pkg.PointEvent { return p0.PointEvent }
 
 func Go_FyneV2_dragEventSetPointEvent(value any, recv any) any { return SkyFfiFieldSet(value, recv, "PointEvent") }
 
-func Go_FyneV2_dragEventDragged(p0 any) any { return SkyFfiFieldGet(p0, "Dragged") }
+type FfiT_Go_FyneV2_dragEventDragged_P0 = *pkg.DragEvent
+type FfiT_Go_FyneV2_dragEventDragged_R = pkg.Delta
+func Go_FyneV2_dragEventDraggedT(p0 *pkg.DragEvent) pkg.Delta { return p0.Dragged }
 
 func Go_FyneV2_dragEventSetDragged(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Dragged") }
 
@@ -1008,7 +1032,8 @@ func Go_FyneV2_focusableTypedRune(p0 any, p1 any) (out any) {
 	return
 }
 
-func Go_FyneV2_hardwareKeyScanCode(p0 any) any { return SkyFfiFieldGet(p0, "ScanCode") }
+type FfiT_Go_FyneV2_hardwareKeyScanCode_P0 = *pkg.HardwareKey
+func Go_FyneV2_hardwareKeyScanCodeT(p0 *pkg.HardwareKey) int { return p0.ScanCode }
 
 func Go_FyneV2_hardwareKeySetScanCode(value any, recv any) any { return SkyFfiFieldSet(value, recv, "ScanCode") }
 
@@ -1084,11 +1109,15 @@ func Go_FyneV2_keyEqual(_ any) any { return pkg.KeyEqual }
 
 func Go_FyneV2_keyEscape(_ any) any { return pkg.KeyEscape }
 
-func Go_FyneV2_keyEventName(p0 any) any { return SkyFfiFieldGet(p0, "Name") }
+type FfiT_Go_FyneV2_keyEventName_P0 = *pkg.KeyEvent
+type FfiT_Go_FyneV2_keyEventName_R = pkg.KeyName
+func Go_FyneV2_keyEventNameT(p0 *pkg.KeyEvent) pkg.KeyName { return p0.Name }
 
 func Go_FyneV2_keyEventSetName(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Name") }
 
-func Go_FyneV2_keyEventPhysical(p0 any) any { return SkyFfiFieldGet(p0, "Physical") }
+type FfiT_Go_FyneV2_keyEventPhysical_P0 = *pkg.KeyEvent
+type FfiT_Go_FyneV2_keyEventPhysical_R = pkg.HardwareKey
+func Go_FyneV2_keyEventPhysicalT(p0 *pkg.KeyEvent) pkg.HardwareKey { return p0.Physical }
 
 func Go_FyneV2_keyEventSetPhysical(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Physical") }
 
@@ -1601,7 +1630,9 @@ func Go_FyneV2_mainMenuRefresh(p0 any) (out any) {
 	return
 }
 
-func Go_FyneV2_mainMenuItems(p0 any) any { return SkyFfiFieldGet(p0, "Items") }
+type FfiT_Go_FyneV2_mainMenuItems_P0 = *pkg.MainMenu
+type FfiT_Go_FyneV2_mainMenuItems_R = []*pkg.Menu
+func Go_FyneV2_mainMenuItemsT(p0 *pkg.MainMenu) []*pkg.Menu { return p0.Items }
 
 func Go_FyneV2_mainMenuSetItems(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Items") }
 
@@ -1629,27 +1660,35 @@ func Go_FyneV2_menuRefresh(p0 any) (out any) {
 	return
 }
 
-func Go_FyneV2_menuLabel(p0 any) any { return SkyFfiFieldGet(p0, "Label") }
+type FfiT_Go_FyneV2_menuLabel_P0 = *pkg.Menu
+func Go_FyneV2_menuLabelT(p0 *pkg.Menu) string { return p0.Label }
 
 func Go_FyneV2_menuSetLabel(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Label") }
 
-func Go_FyneV2_menuItems(p0 any) any { return SkyFfiFieldGet(p0, "Items") }
+type FfiT_Go_FyneV2_menuItems_P0 = *pkg.Menu
+type FfiT_Go_FyneV2_menuItems_R = []*pkg.MenuItem
+func Go_FyneV2_menuItemsT(p0 *pkg.Menu) []*pkg.MenuItem { return p0.Items }
 
 func Go_FyneV2_menuSetItems(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Items") }
 
-func Go_FyneV2_menuItemChildMenu(p0 any) any { return SkyFfiFieldGet(p0, "ChildMenu") }
+type FfiT_Go_FyneV2_menuItemChildMenu_P0 = *pkg.MenuItem
+type FfiT_Go_FyneV2_menuItemChildMenu_R = *pkg.Menu
+func Go_FyneV2_menuItemChildMenuT(p0 *pkg.MenuItem) *pkg.Menu { return p0.ChildMenu }
 
 func Go_FyneV2_menuItemSetChildMenu(value any, recv any) any { return SkyFfiFieldSet(value, recv, "ChildMenu") }
 
-func Go_FyneV2_menuItemIsQuit(p0 any) any { return SkyFfiFieldGet(p0, "IsQuit") }
+type FfiT_Go_FyneV2_menuItemIsQuit_P0 = *pkg.MenuItem
+func Go_FyneV2_menuItemIsQuitT(p0 *pkg.MenuItem) bool { return p0.IsQuit }
 
 func Go_FyneV2_menuItemSetIsQuit(value any, recv any) any { return SkyFfiFieldSet(value, recv, "IsQuit") }
 
-func Go_FyneV2_menuItemIsSeparator(p0 any) any { return SkyFfiFieldGet(p0, "IsSeparator") }
+type FfiT_Go_FyneV2_menuItemIsSeparator_P0 = *pkg.MenuItem
+func Go_FyneV2_menuItemIsSeparatorT(p0 *pkg.MenuItem) bool { return p0.IsSeparator }
 
 func Go_FyneV2_menuItemSetIsSeparator(value any, recv any) any { return SkyFfiFieldSet(value, recv, "IsSeparator") }
 
-func Go_FyneV2_menuItemLabel(p0 any) any { return SkyFfiFieldGet(p0, "Label") }
+type FfiT_Go_FyneV2_menuItemLabel_P0 = *pkg.MenuItem
+func Go_FyneV2_menuItemLabelT(p0 *pkg.MenuItem) string { return p0.Label }
 
 func Go_FyneV2_menuItemSetLabel(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Label") }
 
@@ -1657,19 +1696,25 @@ func Go_FyneV2_menuItemAction(p0 any) any { return SkyFfiFieldGet(p0, "Action") 
 
 func Go_FyneV2_menuItemSetAction(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Action") }
 
-func Go_FyneV2_menuItemDisabled(p0 any) any { return SkyFfiFieldGet(p0, "Disabled") }
+type FfiT_Go_FyneV2_menuItemDisabled_P0 = *pkg.MenuItem
+func Go_FyneV2_menuItemDisabledT(p0 *pkg.MenuItem) bool { return p0.Disabled }
 
 func Go_FyneV2_menuItemSetDisabled(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Disabled") }
 
-func Go_FyneV2_menuItemChecked(p0 any) any { return SkyFfiFieldGet(p0, "Checked") }
+type FfiT_Go_FyneV2_menuItemChecked_P0 = *pkg.MenuItem
+func Go_FyneV2_menuItemCheckedT(p0 *pkg.MenuItem) bool { return p0.Checked }
 
 func Go_FyneV2_menuItemSetChecked(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Checked") }
 
-func Go_FyneV2_menuItemIcon(p0 any) any { return SkyFfiFieldGet(p0, "Icon") }
+type FfiT_Go_FyneV2_menuItemIcon_P0 = *pkg.MenuItem
+type FfiT_Go_FyneV2_menuItemIcon_R = pkg.Resource
+func Go_FyneV2_menuItemIconT(p0 *pkg.MenuItem) pkg.Resource { return p0.Icon }
 
 func Go_FyneV2_menuItemSetIcon(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Icon") }
 
-func Go_FyneV2_menuItemShortcut(p0 any) any { return SkyFfiFieldGet(p0, "Shortcut") }
+type FfiT_Go_FyneV2_menuItemShortcut_P0 = *pkg.MenuItem
+type FfiT_Go_FyneV2_menuItemShortcut_R = pkg.Shortcut
+func Go_FyneV2_menuItemShortcutT(p0 *pkg.MenuItem) pkg.Shortcut { return p0.Shortcut }
 
 func Go_FyneV2_menuItemSetShortcut(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Shortcut") }
 
@@ -1800,11 +1845,13 @@ func Go_FyneV2_newStaticResourceT(p0 string, p1 []byte) (out SkyResult[string, *
 	return
 }
 
-func Go_FyneV2_notificationTitle(p0 any) any { return SkyFfiFieldGet(p0, "Title") }
+type FfiT_Go_FyneV2_notificationTitle_P0 = *pkg.Notification
+func Go_FyneV2_notificationTitleT(p0 *pkg.Notification) string { return p0.Title }
 
 func Go_FyneV2_notificationSetTitle(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Title") }
 
-func Go_FyneV2_notificationContent(p0 any) any { return SkyFfiFieldGet(p0, "Content") }
+type FfiT_Go_FyneV2_notificationContent_P0 = *pkg.Notification
+func Go_FyneV2_notificationContentT(p0 *pkg.Notification) string { return p0.Content }
 
 func Go_FyneV2_notificationSetContent(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Content") }
 
@@ -1850,11 +1897,15 @@ func Go_FyneV2_overlayStackTopT(p0 pkg.OverlayStack) (out SkyResult[string, pkg.
 	return
 }
 
-func Go_FyneV2_pointEventAbsolutePosition(p0 any) any { return SkyFfiFieldGet(p0, "AbsolutePosition") }
+type FfiT_Go_FyneV2_pointEventAbsolutePosition_P0 = *pkg.PointEvent
+type FfiT_Go_FyneV2_pointEventAbsolutePosition_R = pkg.Position
+func Go_FyneV2_pointEventAbsolutePositionT(p0 *pkg.PointEvent) pkg.Position { return p0.AbsolutePosition }
 
 func Go_FyneV2_pointEventSetAbsolutePosition(value any, recv any) any { return SkyFfiFieldSet(value, recv, "AbsolutePosition") }
 
-func Go_FyneV2_pointEventPosition(p0 any) any { return SkyFfiFieldGet(p0, "Position") }
+type FfiT_Go_FyneV2_pointEventPosition_P0 = *pkg.PointEvent
+type FfiT_Go_FyneV2_pointEventPosition_R = pkg.Position
+func Go_FyneV2_pointEventPositionT(p0 *pkg.PointEvent) pkg.Position { return p0.Position }
 
 func Go_FyneV2_pointEventSetPosition(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Position") }
 
@@ -1915,11 +1966,13 @@ func Go_FyneV2_positionSubtractXYT(p0 pkg.Position, p1 float32, p2 float32) (out
 	return
 }
 
-func Go_FyneV2_positionX(p0 any) any { return SkyFfiFieldGet(p0, "X") }
+type FfiT_Go_FyneV2_positionX_P0 = *pkg.Position
+func Go_FyneV2_positionXT(p0 *pkg.Position) float32 { return p0.X }
 
 func Go_FyneV2_positionSetX(value any, recv any) any { return SkyFfiFieldSet(value, recv, "X") }
 
-func Go_FyneV2_positionY(p0 any) any { return SkyFfiFieldGet(p0, "Y") }
+type FfiT_Go_FyneV2_positionY_P0 = *pkg.Position
+func Go_FyneV2_positionYT(p0 *pkg.Position) float32 { return p0.Y }
 
 func Go_FyneV2_positionSetY(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Y") }
 
@@ -2158,11 +2211,15 @@ func Go_FyneV2_resourceNameT(p0 pkg.Resource) (out SkyResult[string, string]) {
 
 func Go_FyneV2_scrollBoth(_ any) any { return pkg.ScrollBoth }
 
-func Go_FyneV2_scrollEventPointEvent(p0 any) any { return SkyFfiFieldGet(p0, "PointEvent") }
+type FfiT_Go_FyneV2_scrollEventPointEvent_P0 = *pkg.ScrollEvent
+type FfiT_Go_FyneV2_scrollEventPointEvent_R = pkg.PointEvent
+func Go_FyneV2_scrollEventPointEventT(p0 *pkg.ScrollEvent) pkg.PointEvent { return p0.PointEvent }
 
 func Go_FyneV2_scrollEventSetPointEvent(value any, recv any) any { return SkyFfiFieldSet(value, recv, "PointEvent") }
 
-func Go_FyneV2_scrollEventScrolled(p0 any) any { return SkyFfiFieldGet(p0, "Scrolled") }
+type FfiT_Go_FyneV2_scrollEventScrolled_P0 = *pkg.ScrollEvent
+type FfiT_Go_FyneV2_scrollEventScrolled_R = pkg.Delta
+func Go_FyneV2_scrollEventScrolledT(p0 *pkg.ScrollEvent) pkg.Delta { return p0.Scrolled }
 
 func Go_FyneV2_scrollEventSetScrolled(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Scrolled") }
 
@@ -2307,7 +2364,9 @@ func Go_FyneV2_shortcutCopyShortcutNameT(p0 *pkg.ShortcutCopy) (out SkyResult[st
 	return
 }
 
-func Go_FyneV2_shortcutCopyClipboard(p0 any) any { return SkyFfiFieldGet(p0, "Clipboard") }
+type FfiT_Go_FyneV2_shortcutCopyClipboard_P0 = *pkg.ShortcutCopy
+type FfiT_Go_FyneV2_shortcutCopyClipboard_R = pkg.Clipboard
+func Go_FyneV2_shortcutCopyClipboardT(p0 *pkg.ShortcutCopy) pkg.Clipboard { return p0.Clipboard }
 
 func Go_FyneV2_shortcutCopySetClipboard(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Clipboard") }
 
@@ -2339,7 +2398,9 @@ func Go_FyneV2_shortcutCutShortcutNameT(p0 *pkg.ShortcutCut) (out SkyResult[stri
 	return
 }
 
-func Go_FyneV2_shortcutCutClipboard(p0 any) any { return SkyFfiFieldGet(p0, "Clipboard") }
+type FfiT_Go_FyneV2_shortcutCutClipboard_P0 = *pkg.ShortcutCut
+type FfiT_Go_FyneV2_shortcutCutClipboard_R = pkg.Clipboard
+func Go_FyneV2_shortcutCutClipboardT(p0 *pkg.ShortcutCut) pkg.Clipboard { return p0.Clipboard }
 
 func Go_FyneV2_shortcutCutSetClipboard(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Clipboard") }
 
@@ -2397,7 +2458,9 @@ func Go_FyneV2_shortcutPasteShortcutNameT(p0 *pkg.ShortcutPaste) (out SkyResult[
 	return
 }
 
-func Go_FyneV2_shortcutPasteClipboard(p0 any) any { return SkyFfiFieldGet(p0, "Clipboard") }
+type FfiT_Go_FyneV2_shortcutPasteClipboard_P0 = *pkg.ShortcutPaste
+type FfiT_Go_FyneV2_shortcutPasteClipboard_R = pkg.Clipboard
+func Go_FyneV2_shortcutPasteClipboardT(p0 *pkg.ShortcutPaste) pkg.Clipboard { return p0.Clipboard }
 
 func Go_FyneV2_shortcutPasteSetClipboard(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Clipboard") }
 
@@ -2570,11 +2633,13 @@ func Go_FyneV2_sizeSubtractWidthHeightT(p0 pkg.Size, p1 float32, p2 float32) (ou
 	return
 }
 
-func Go_FyneV2_sizeWidth(p0 any) any { return SkyFfiFieldGet(p0, "Width") }
+type FfiT_Go_FyneV2_sizeWidth_P0 = *pkg.Size
+func Go_FyneV2_sizeWidthT(p0 *pkg.Size) float32 { return p0.Width }
 
 func Go_FyneV2_sizeSetWidth(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Width") }
 
-func Go_FyneV2_sizeHeight(p0 any) any { return SkyFfiFieldGet(p0, "Height") }
+type FfiT_Go_FyneV2_sizeHeight_P0 = *pkg.Size
+func Go_FyneV2_sizeHeightT(p0 *pkg.Size) float32 { return p0.Height }
 
 func Go_FyneV2_sizeSetHeight(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Height") }
 
@@ -2602,11 +2667,13 @@ func Go_FyneV2_staticResourceGoStringT(p0 *pkg.StaticResource) (out SkyResult[st
 	return
 }
 
-func Go_FyneV2_staticResourceStaticName(p0 any) any { return SkyFfiFieldGet(p0, "StaticName") }
+type FfiT_Go_FyneV2_staticResourceStaticName_P0 = *pkg.StaticResource
+func Go_FyneV2_staticResourceStaticNameT(p0 *pkg.StaticResource) string { return p0.StaticName }
 
 func Go_FyneV2_staticResourceSetStaticName(value any, recv any) any { return SkyFfiFieldSet(value, recv, "StaticName") }
 
-func Go_FyneV2_staticResourceStaticContent(p0 any) any { return SkyFfiFieldGet(p0, "StaticContent") }
+type FfiT_Go_FyneV2_staticResourceStaticContent_P0 = *pkg.StaticResource
+func Go_FyneV2_staticResourceStaticContentT(p0 *pkg.StaticResource) []byte { return p0.StaticContent }
 
 func Go_FyneV2_staticResourceSetStaticContent(value any, recv any) any { return SkyFfiFieldSet(value, recv, "StaticContent") }
 
@@ -2692,27 +2759,33 @@ func Go_FyneV2_textAlignLeading(_ any) any { return pkg.TextAlignLeading }
 
 func Go_FyneV2_textAlignTrailing(_ any) any { return pkg.TextAlignTrailing }
 
-func Go_FyneV2_textStyleBold(p0 any) any { return SkyFfiFieldGet(p0, "Bold") }
+type FfiT_Go_FyneV2_textStyleBold_P0 = *pkg.TextStyle
+func Go_FyneV2_textStyleBoldT(p0 *pkg.TextStyle) bool { return p0.Bold }
 
 func Go_FyneV2_textStyleSetBold(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Bold") }
 
-func Go_FyneV2_textStyleItalic(p0 any) any { return SkyFfiFieldGet(p0, "Italic") }
+type FfiT_Go_FyneV2_textStyleItalic_P0 = *pkg.TextStyle
+func Go_FyneV2_textStyleItalicT(p0 *pkg.TextStyle) bool { return p0.Italic }
 
 func Go_FyneV2_textStyleSetItalic(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Italic") }
 
-func Go_FyneV2_textStyleMonospace(p0 any) any { return SkyFfiFieldGet(p0, "Monospace") }
+type FfiT_Go_FyneV2_textStyleMonospace_P0 = *pkg.TextStyle
+func Go_FyneV2_textStyleMonospaceT(p0 *pkg.TextStyle) bool { return p0.Monospace }
 
 func Go_FyneV2_textStyleSetMonospace(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Monospace") }
 
-func Go_FyneV2_textStyleSymbol(p0 any) any { return SkyFfiFieldGet(p0, "Symbol") }
+type FfiT_Go_FyneV2_textStyleSymbol_P0 = *pkg.TextStyle
+func Go_FyneV2_textStyleSymbolT(p0 *pkg.TextStyle) bool { return p0.Symbol }
 
 func Go_FyneV2_textStyleSetSymbol(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Symbol") }
 
-func Go_FyneV2_textStyleTabWidth(p0 any) any { return SkyFfiFieldGet(p0, "TabWidth") }
+type FfiT_Go_FyneV2_textStyleTabWidth_P0 = *pkg.TextStyle
+func Go_FyneV2_textStyleTabWidthT(p0 *pkg.TextStyle) int { return p0.TabWidth }
 
 func Go_FyneV2_textStyleSetTabWidth(value any, recv any) any { return SkyFfiFieldSet(value, recv, "TabWidth") }
 
-func Go_FyneV2_textStyleUnderline(p0 any) any { return SkyFfiFieldGet(p0, "Underline") }
+type FfiT_Go_FyneV2_textStyleUnderline_P0 = *pkg.TextStyle
+func Go_FyneV2_textStyleUnderlineT(p0 *pkg.TextStyle) bool { return p0.Underline }
 
 func Go_FyneV2_textStyleSetUnderline(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Underline") }
 

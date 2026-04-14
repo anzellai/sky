@@ -128,11 +128,14 @@ func Go_Customer_clientSearchT(p0 pkg.Client, p1 *stripe_go.CustomerSearchParams
 	return
 }
 
-func Go_Customer_clientB(p0 any) any { return SkyFfiFieldGet(p0, "B") }
+type FfiT_Go_Customer_clientB_P0 = *pkg.Client
+type FfiT_Go_Customer_clientB_R = stripe_go.Backend
+func Go_Customer_clientBT(p0 *pkg.Client) stripe_go.Backend { return p0.B }
 
 func Go_Customer_clientSetB(value any, recv any) any { return SkyFfiFieldSet(value, recv, "B") }
 
-func Go_Customer_clientKey(p0 any) any { return SkyFfiFieldGet(p0, "Key") }
+type FfiT_Go_Customer_clientKey_P0 = *pkg.Client
+func Go_Customer_clientKeyT(p0 *pkg.Client) string { return p0.Key }
 
 func Go_Customer_clientSetKey(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Key") }
 
@@ -243,7 +246,9 @@ func Go_Customer_iterNextT(p0 *pkg.Iter) (out SkyResult[string, bool]) {
 	return
 }
 
-func Go_Customer_iterIter(p0 any) any { return SkyFfiFieldGet(p0, "Iter") }
+type FfiT_Go_Customer_iterIter_P0 = *pkg.Iter
+type FfiT_Go_Customer_iterIter_R = *stripe_go.Iter
+func Go_Customer_iterIterT(p0 *pkg.Iter) *stripe_go.Iter { return p0.Iter }
 
 func Go_Customer_iterSetIter(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Iter") }
 
@@ -339,7 +344,9 @@ func Go_Customer_paymentMethodIterNextT(p0 *pkg.PaymentMethodIter) (out SkyResul
 	return
 }
 
-func Go_Customer_paymentMethodIterIter(p0 any) any { return SkyFfiFieldGet(p0, "Iter") }
+type FfiT_Go_Customer_paymentMethodIterIter_P0 = *pkg.PaymentMethodIter
+type FfiT_Go_Customer_paymentMethodIterIter_R = *stripe_go.Iter
+func Go_Customer_paymentMethodIterIterT(p0 *pkg.PaymentMethodIter) *stripe_go.Iter { return p0.Iter }
 
 func Go_Customer_paymentMethodIterSetIter(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Iter") }
 
@@ -426,7 +433,9 @@ func Go_Customer_searchIterSearchResultT(p0 *pkg.SearchIter) (out SkyResult[stri
 	return
 }
 
-func Go_Customer_searchIterSearchIter(p0 any) any { return SkyFfiFieldGet(p0, "SearchIter") }
+type FfiT_Go_Customer_searchIterSearchIter_P0 = *pkg.SearchIter
+type FfiT_Go_Customer_searchIterSearchIter_R = *stripe_go.SearchIter
+func Go_Customer_searchIterSearchIterT(p0 *pkg.SearchIter) *stripe_go.SearchIter { return p0.SearchIter }
 
 func Go_Customer_searchIterSetSearchIter(value any, recv any) any { return SkyFfiFieldSet(value, recv, "SearchIter") }
 

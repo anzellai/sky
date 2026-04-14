@@ -358,11 +358,14 @@ func Go_Uuid_nullUUIDUnmarshalJSONT(p0 *pkg.NullUUID, p1 []byte) (out SkyResult[
 	return
 }
 
-func Go_Uuid_nullUUIDUUID(p0 any) any { return SkyFfiFieldGet(p0, "UUID") }
+type FfiT_Go_Uuid_nullUUIDUUID_P0 = *pkg.NullUUID
+type FfiT_Go_Uuid_nullUUIDUUID_R = pkg.UUID
+func Go_Uuid_nullUUIDUUIDT(p0 *pkg.NullUUID) pkg.UUID { return p0.UUID }
 
 func Go_Uuid_nullUUIDSetUUID(value any, recv any) any { return SkyFfiFieldSet(value, recv, "UUID") }
 
-func Go_Uuid_nullUUIDValid(p0 any) any { return SkyFfiFieldGet(p0, "Valid") }
+type FfiT_Go_Uuid_nullUUIDValid_P0 = *pkg.NullUUID
+func Go_Uuid_nullUUIDValidT(p0 *pkg.NullUUID) bool { return p0.Valid }
 
 func Go_Uuid_nullUUIDSetValid(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Valid") }
 

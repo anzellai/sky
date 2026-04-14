@@ -722,10 +722,36 @@ emitTypedWrapper kernelName aliases fn =
         _ | isIdentityPointer -> emitIdentityPointerTyped wrapperName
 
         _ | _fnIsField fn ->
-            -- One-line delegate to SkyFfiFieldGet. Emitting the reflect
-            -- dance here per-field blew stripe_bindings.go to 1.9M lines.
-            "func " ++ wrapperName ++ "(p0 any) any { return SkyFfiFieldGet(p0, " ++
-            quote (_fnMethodName fn) ++ ") }\n"
+            -- P7: emit a typed accessor `func Go_X_yT(p0 *pkg.Recv) FieldT`
+            -- using direct field access — no reflect, no any boxing.
+            -- Falls back to the SkyFfiFieldGet delegate when types
+            -- aren't expressible (e.g. unbound generic field types).
+            let fieldName = _fnMethodName fn
+                knownAliasesField = Set.fromList (Map.elems aliases)
+                receiverType = case rewrittenParams of
+                    ((_, t):_) -> t
+                    _          -> ""
+                fieldType = case rewrittenResults of
+                    ((_, t):_) -> t
+                    _          -> ""
+                paramOk = isSimpleTypedType receiverType
+                       && allPackagesKnown knownAliasesField receiverType
+                resultOk = isSimpleTypedType fieldType
+                        && allPackagesKnown knownAliasesField fieldType
+                typedAlias =
+                    [ "type FfiT_" ++ wrapperName ++ "_P0 = " ++ receiverType
+                    | needsAlias receiverType ] ++
+                    [ "type FfiT_" ++ wrapperName ++ "_R = " ++ fieldType
+                    | needsAlias fieldType ]
+                typedDecl =
+                    "func " ++ wrapperName ++ "T(p0 " ++ receiverType ++ ") " ++
+                    fieldType ++ " { return p0." ++ fieldName ++ " }\n"
+                anyDecl =
+                    "func " ++ wrapperName ++ "(p0 any) any { return SkyFfiFieldGet(p0, " ++
+                    quote fieldName ++ ") }\n"
+            in if paramOk && resultOk && not (null receiverType) && not (null fieldType)
+                then unlines typedAlias ++ typedDecl
+                else anyDecl
 
         _ | _fnIsFieldSet fn ->
             -- One-line delegate to SkyFfiFieldSet — value-first for |>.

@@ -82,11 +82,14 @@ func Go_Session_clientListLineItemsT(p0 pkg.Client, p1 *stripe_go.CheckoutSessio
 	return
 }
 
-func Go_Session_clientB(p0 any) any { return SkyFfiFieldGet(p0, "B") }
+type FfiT_Go_Session_clientB_P0 = *pkg.Client
+type FfiT_Go_Session_clientB_R = stripe_go.Backend
+func Go_Session_clientBT(p0 *pkg.Client) stripe_go.Backend { return p0.B }
 
 func Go_Session_clientSetB(value any, recv any) any { return SkyFfiFieldSet(value, recv, "B") }
 
-func Go_Session_clientKey(p0 any) any { return SkyFfiFieldGet(p0, "Key") }
+type FfiT_Go_Session_clientKey_P0 = *pkg.Client
+func Go_Session_clientKeyT(p0 *pkg.Client) string { return p0.Key }
 
 func Go_Session_clientSetKey(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Key") }
 
@@ -175,7 +178,9 @@ func Go_Session_iterNextT(p0 *pkg.Iter) (out SkyResult[string, bool]) {
 	return
 }
 
-func Go_Session_iterIter(p0 any) any { return SkyFfiFieldGet(p0, "Iter") }
+type FfiT_Go_Session_iterIter_P0 = *pkg.Iter
+type FfiT_Go_Session_iterIter_R = *stripe_go.Iter
+func Go_Session_iterIterT(p0 *pkg.Iter) *stripe_go.Iter { return p0.Iter }
 
 func Go_Session_iterSetIter(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Iter") }
 
@@ -242,7 +247,9 @@ func Go_Session_lineItemIterNextT(p0 *pkg.LineItemIter) (out SkyResult[string, b
 	return
 }
 
-func Go_Session_lineItemIterIter(p0 any) any { return SkyFfiFieldGet(p0, "Iter") }
+type FfiT_Go_Session_lineItemIterIter_P0 = *pkg.LineItemIter
+type FfiT_Go_Session_lineItemIterIter_R = *stripe_go.Iter
+func Go_Session_lineItemIterIterT(p0 *pkg.LineItemIter) *stripe_go.Iter { return p0.Iter }
 
 func Go_Session_lineItemIterSetIter(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Iter") }
 

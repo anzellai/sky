@@ -46,27 +46,33 @@ func Go_App_settingsSchemaStoragePathT(p0 *pkg.SettingsSchema) (out SkyResult[st
 	return
 }
 
-func Go_App_settingsSchemaThemeName(p0 any) any { return SkyFfiFieldGet(p0, "ThemeName") }
+type FfiT_Go_App_settingsSchemaThemeName_P0 = *pkg.SettingsSchema
+func Go_App_settingsSchemaThemeNameT(p0 *pkg.SettingsSchema) string { return p0.ThemeName }
 
 func Go_App_settingsSchemaSetThemeName(value any, recv any) any { return SkyFfiFieldSet(value, recv, "ThemeName") }
 
-func Go_App_settingsSchemaScale(p0 any) any { return SkyFfiFieldGet(p0, "Scale") }
+type FfiT_Go_App_settingsSchemaScale_P0 = *pkg.SettingsSchema
+func Go_App_settingsSchemaScaleT(p0 *pkg.SettingsSchema) float32 { return p0.Scale }
 
 func Go_App_settingsSchemaSetScale(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Scale") }
 
-func Go_App_settingsSchemaPrimaryColor(p0 any) any { return SkyFfiFieldGet(p0, "PrimaryColor") }
+type FfiT_Go_App_settingsSchemaPrimaryColor_P0 = *pkg.SettingsSchema
+func Go_App_settingsSchemaPrimaryColorT(p0 *pkg.SettingsSchema) string { return p0.PrimaryColor }
 
 func Go_App_settingsSchemaSetPrimaryColor(value any, recv any) any { return SkyFfiFieldSet(value, recv, "PrimaryColor") }
 
-func Go_App_settingsSchemaCloudName(p0 any) any { return SkyFfiFieldGet(p0, "CloudName") }
+type FfiT_Go_App_settingsSchemaCloudName_P0 = *pkg.SettingsSchema
+func Go_App_settingsSchemaCloudNameT(p0 *pkg.SettingsSchema) string { return p0.CloudName }
 
 func Go_App_settingsSchemaSetCloudName(value any, recv any) any { return SkyFfiFieldSet(value, recv, "CloudName") }
 
-func Go_App_settingsSchemaCloudConfig(p0 any) any { return SkyFfiFieldGet(p0, "CloudConfig") }
+type FfiT_Go_App_settingsSchemaCloudConfig_P0 = *pkg.SettingsSchema
+func Go_App_settingsSchemaCloudConfigT(p0 *pkg.SettingsSchema) string { return p0.CloudConfig }
 
 func Go_App_settingsSchemaSetCloudConfig(value any, recv any) any { return SkyFfiFieldSet(value, recv, "CloudConfig") }
 
-func Go_App_settingsSchemaDisableAnimations(p0 any) any { return SkyFfiFieldGet(p0, "DisableAnimations") }
+type FfiT_Go_App_settingsSchemaDisableAnimations_P0 = *pkg.SettingsSchema
+func Go_App_settingsSchemaDisableAnimationsT(p0 *pkg.SettingsSchema) bool { return p0.DisableAnimations }
 
 func Go_App_settingsSchemaSetDisableAnimations(value any, recv any) any { return SkyFfiFieldSet(value, recv, "DisableAnimations") }
 
