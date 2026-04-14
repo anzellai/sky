@@ -997,43 +997,61 @@ func Result_mapError(fn any, result any) any {
 
 // Result.map2..map5 — apply a function to N successful results, short-
 // circuiting on first Err.
+// ── Applicative combinators ─────────────────────────────────────────
+// All of these tolerate any SkyResult[X, Y] shape (via anyResultView)
+// so typed FFI results flow in without an explicit ResultCoerce wrap.
+
 func Result_map2(fn, a, b any) any {
-	ra, _ := a.(SkyResult[any, any]); if ra.Tag != 0 { return a }
-	rb, _ := b.(SkyResult[any, any]); if rb.Tag != 0 { return b }
-	return Ok[any, any](apply2(fn, ra.OkValue, rb.OkValue))
+	ta, oa, ea := anyResultView(a); if ta < 0 { return a }
+	if ta != 0 { return Err[any, any](ea) }
+	tb, ob, eb := anyResultView(b); if tb < 0 { return b }
+	if tb != 0 { return Err[any, any](eb) }
+	return Ok[any, any](apply2(fn, oa, ob))
 }
 
 func Result_map3(fn, a, b, c any) any {
-	ra, _ := a.(SkyResult[any, any]); if ra.Tag != 0 { return a }
-	rb, _ := b.(SkyResult[any, any]); if rb.Tag != 0 { return b }
-	rc, _ := c.(SkyResult[any, any]); if rc.Tag != 0 { return c }
-	return Ok[any, any](apply3(fn, ra.OkValue, rb.OkValue, rc.OkValue))
+	ta, oa, ea := anyResultView(a); if ta < 0 { return a }
+	if ta != 0 { return Err[any, any](ea) }
+	tb, ob, eb := anyResultView(b); if tb < 0 { return b }
+	if tb != 0 { return Err[any, any](eb) }
+	tc, oc, ec := anyResultView(c); if tc < 0 { return c }
+	if tc != 0 { return Err[any, any](ec) }
+	return Ok[any, any](apply3(fn, oa, ob, oc))
 }
 
 func Result_map4(fn, a, b, c, d any) any {
-	ra, _ := a.(SkyResult[any, any]); if ra.Tag != 0 { return a }
-	rb, _ := b.(SkyResult[any, any]); if rb.Tag != 0 { return b }
-	rc, _ := c.(SkyResult[any, any]); if rc.Tag != 0 { return c }
-	rd, _ := d.(SkyResult[any, any]); if rd.Tag != 0 { return d }
-	return Ok[any, any](apply4(fn, ra.OkValue, rb.OkValue, rc.OkValue, rd.OkValue))
+	ta, oa, ea := anyResultView(a); if ta < 0 { return a }
+	if ta != 0 { return Err[any, any](ea) }
+	tb, ob, eb := anyResultView(b); if tb < 0 { return b }
+	if tb != 0 { return Err[any, any](eb) }
+	tc, oc, ec := anyResultView(c); if tc < 0 { return c }
+	if tc != 0 { return Err[any, any](ec) }
+	td, od, ed := anyResultView(d); if td < 0 { return d }
+	if td != 0 { return Err[any, any](ed) }
+	return Ok[any, any](apply4(fn, oa, ob, oc, od))
 }
 
 func Result_map5(fn, a, b, c, d, e any) any {
-	ra, _ := a.(SkyResult[any, any]); if ra.Tag != 0 { return a }
-	rb, _ := b.(SkyResult[any, any]); if rb.Tag != 0 { return b }
-	rc, _ := c.(SkyResult[any, any]); if rc.Tag != 0 { return c }
-	rd, _ := d.(SkyResult[any, any]); if rd.Tag != 0 { return d }
-	re, _ := e.(SkyResult[any, any]); if re.Tag != 0 { return e }
-	return Ok[any, any](apply5(fn, ra.OkValue, rb.OkValue, rc.OkValue, rd.OkValue, re.OkValue))
+	ta, oa, ea := anyResultView(a); if ta < 0 { return a }
+	if ta != 0 { return Err[any, any](ea) }
+	tb, ob, eb := anyResultView(b); if tb < 0 { return b }
+	if tb != 0 { return Err[any, any](eb) }
+	tc, oc, ec := anyResultView(c); if tc < 0 { return c }
+	if tc != 0 { return Err[any, any](ec) }
+	td, od, ed := anyResultView(d); if td < 0 { return d }
+	if td != 0 { return Err[any, any](ed) }
+	te, oe, ee := anyResultView(e); if te < 0 { return e }
+	if te != 0 { return Err[any, any](ee) }
+	return Ok[any, any](apply5(fn, oa, ob, oc, od, oe))
 }
 
 // Result.andMap : Result e (a -> b) -> Result e a -> Result e b
 func Result_andMap(fr, ra any) any {
-	rr, _ := fr.(SkyResult[any, any])
-	if rr.Tag != 0 { return fr }
-	rv, _ := ra.(SkyResult[any, any])
-	if rv.Tag != 0 { return ra }
-	return Ok[any, any](pipelineApply(rr.OkValue, rv.OkValue))
+	tfr, ofn, efn := anyResultView(fr); if tfr < 0 { return fr }
+	if tfr != 0 { return Err[any, any](efn) }
+	tra, oa, ea := anyResultView(ra); if tra < 0 { return ra }
+	if tra != 0 { return Err[any, any](ea) }
+	return Ok[any, any](pipelineApply(ofn, oa))
 }
 
 // Result.combine : List (Result e a) -> Result e (List a)
@@ -1042,10 +1060,10 @@ func Result_combine(results any) any {
 	items := asList(results)
 	out := make([]any, 0, len(items))
 	for _, r := range items {
-		rr, ok := r.(SkyResult[any, any])
-		if !ok { return r }
-		if rr.Tag != 0 { return r }
-		out = append(out, rr.OkValue)
+		tag, ok, err := anyResultView(r)
+		if tag < 0 { return r }
+		if tag != 0 { return Err[any, any](err) }
+		out = append(out, ok)
 	}
 	return Ok[any, any](out)
 }
@@ -1060,10 +1078,10 @@ func Result_traverse(fn, items any) any {
 	}
 	for _, x := range xs {
 		r := f(x)
-		rr, rok := r.(SkyResult[any, any])
-		if !rok { return Err[any, any]("Result.traverse: fn did not return a Result") }
-		if rr.Tag != 0 { return r }
-		out = append(out, rr.OkValue)
+		tag, okVal, err := anyResultView(r)
+		if tag < 0 { return Err[any, any]("Result.traverse: fn did not return a Result") }
+		if tag != 0 { return Err[any, any](err) }
+		out = append(out, okVal)
 	}
 	return Ok[any, any](out)
 }
