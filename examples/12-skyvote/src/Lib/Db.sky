@@ -6,7 +6,7 @@ import Sky.Core.Dict as Dict
 import Std.Db as Db
 import Std.Log exposing (println)
 import Sky.Core.Os as Os
-import Std.IoError exposing (..)
+import Sky.Core.Error as Error exposing (Error)
 
 -- Open the database once at startup. We deliberately exit on failure:
 -- a degraded "fake connection" would silently break every subsequent
@@ -24,12 +24,12 @@ dbConn =
                 identity ""
 
 
--- exec : returns Result IoError () — DB write at the typed boundary.
+-- exec : returns Result Error () — DB write at the typed boundary.
 -- Callers in `update` MUST pattern-match and decide what to do (log,
 -- bubble to notification, retry).
 --
 -- NOTE: omitting annotations here intentionally — typing exec's
--- return as `Result IoError ()` makes the body's `rt.Ok[any, any]`
+-- return as `Result Error ()` makes the body's `rt.Ok[any, any]`
 -- ctor produce `SkyResult[any, any]` which doesn't match the declared
 -- `SkyResult[any, struct{}]` at runtime. Fully typing these needs T4
 -- (context-aware ctor instantiation). Keeping `any` here lets the
@@ -40,7 +40,7 @@ exec queryStr args =
         Ok _ ->
             Ok ()
         Err e ->
-            Err (DbError e)
+            Err (Error.io e)
 
 
 query queryStr args =
@@ -48,7 +48,7 @@ query queryStr args =
         Ok rows ->
             Ok rows
         Err e ->
-            Err (DbError e)
+            Err (Error.io e)
 
 
 -- Missing columns in a row dict are a Sky-side schema mismatch, not a

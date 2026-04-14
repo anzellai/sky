@@ -1,6 +1,7 @@
 module Main exposing (main)
 
 import Sky.Core.Prelude exposing (..)
+import Sky.Core.Result as Result
 import Sky.Core.Maybe exposing (..)
 import Sky.Core.List as List
 import Sky.Core.String as String
@@ -15,7 +16,7 @@ import Std.Time as Time
 import State exposing (..)
 import Lib.Db as Db
 import Lib.Schema as Schema
-import Std.IoError exposing (..)
+import Sky.Core.Error as Error exposing (Error)
 import Lib.Auth as Auth
 import Lib.Ideas as Ideas
 import Lib.Comments as Comments
@@ -35,7 +36,7 @@ init _req =
     let
         _ = Schema.initDb
         _ = println "[APP] SkyVote initialised"
-        ideas = unwrapOr [] (Ideas.getIdeas "newest" "all" "")
+        ideas = Result.withDefault [] (Ideas.getIdeas "newest" "all" "")
     in
         ( { page = BoardPage
         , currentUser = Nothing
@@ -212,7 +213,7 @@ logActivity event targetId userId =
         case result of
             Ok _ -> ()
             Err e ->
-                let _ = println ("[ACTIVITY ERROR] " ++ event ++ ": " ++ errToString e) in
+                let _ = println ("[ACTIVITY ERROR] " ++ event ++ ": " ++ Error.toString e) in
                 ()
 
 
@@ -221,13 +222,13 @@ refreshCurrentView model =
     case model.page of
         BoardPage ->
             let
-                ideas = unwrapOr [] (Ideas.getIdeas model.sortBy model.filterCategory model.searchQuery)
+                ideas = Result.withDefault [] (Ideas.getIdeas model.sortBy model.filterCategory model.searchQuery)
             in
                 ( { model | ideas = ideas }, Cmd.none )
         DetailPage ->
             let
-                idea = unwrapOr Nothing (Ideas.getIdea model.selectedIdeaId)
-                comments = unwrapOr [] (Comments.getComments model.selectedIdeaId)
+                idea = Result.withDefault Nothing (Ideas.getIdea model.selectedIdeaId)
+                comments = Result.withDefault [] (Comments.getComments model.selectedIdeaId)
             in
                 ( { model | selectedIdea = idea , ideaComments = comments }, Cmd.none )
         _ ->
@@ -240,7 +241,7 @@ refreshCurrentView model =
 handleSetSort : String -> Model -> (Model, Cmd Msg)
 handleSetSort sortBy model =
     let
-        ideas = unwrapOr [] (Ideas.getIdeas sortBy model.filterCategory model.searchQuery)
+        ideas = Result.withDefault [] (Ideas.getIdeas sortBy model.filterCategory model.searchQuery)
     in
         ( { model | sortBy = sortBy , ideas = ideas }, Cmd.none )
 
@@ -248,7 +249,7 @@ handleSetSort sortBy model =
 handleSetFilter : String -> Model -> (Model, Cmd Msg)
 handleSetFilter category model =
     let
-        ideas = unwrapOr [] (Ideas.getIdeas model.sortBy category model.searchQuery)
+        ideas = Result.withDefault [] (Ideas.getIdeas model.sortBy category model.searchQuery)
     in
         ( { model | filterCategory = category , ideas = ideas }, Cmd.none )
 
@@ -256,7 +257,7 @@ handleSetFilter category model =
 handleSetSearch : String -> Model -> (Model, Cmd Msg)
 handleSetSearch query model =
     let
-        ideas = unwrapOr [] (Ideas.getIdeas model.sortBy model.filterCategory query)
+        ideas = Result.withDefault [] (Ideas.getIdeas model.sortBy model.filterCategory query)
     in
         ( { model | searchQuery = query , ideas = ideas }, Cmd.none )
 
@@ -275,8 +276,8 @@ handleToggleVoteAuth ideaId user model =
                 let _ = logActivity "vote" ideaId userId in
                 refreshCurrentView model
             Err e ->
-                let _ = println ("[VOTE ERROR] " ++ errToString e) in
-                ( { model | notification = "Could not record your vote: " ++ errToString e }, Cmd.none )
+                let _ = println ("[VOTE ERROR] " ++ Error.toString e) in
+                ( { model | notification = "Could not record your vote: " ++ Error.toString e }, Cmd.none )
 
 
 handleToggleVote : String -> Model -> (Model, Cmd Msg)
@@ -296,8 +297,8 @@ handleToggleVote ideaId model =
 handleViewIdea : String -> Model -> (Model, Cmd Msg)
 handleViewIdea ideaId model =
     let
-        idea = unwrapOr Nothing (Ideas.getIdea ideaId)
-        comments = unwrapOr [] (Comments.getComments ideaId)
+        idea = Result.withDefault Nothing (Ideas.getIdea ideaId)
+        comments = Result.withDefault [] (Comments.getComments ideaId)
     in
         ( { model
             | page = DetailPage
@@ -315,7 +316,7 @@ handleViewIdea ideaId model =
 -- doSubmitComment: createComment is a write that affects the user's
 -- visible state — bubble its IoError to the notification banner so they
 -- know retry is needed. The follow-up reads (getComments / getIdea) use
--- unwrapOr because their failure mode is stale data, not lost data.
+-- Result.withDefault because their failure mode is stale data, not lost data.
 doSubmitComment : (Dict String String) -> Model -> (Model, Cmd Msg)
 doSubmitComment user model =
     let
@@ -323,13 +324,13 @@ doSubmitComment user model =
     in
         case Comments.createComment model.selectedIdeaId userId model.newComment of
             Err e ->
-                let _ = println ("[COMMENT ERROR] " ++ errToString e) in
-                ( { model | notification = "Could not post comment: " ++ errToString e }, Cmd.none )
+                let _ = println ("[COMMENT ERROR] " ++ Error.toString e) in
+                ( { model | notification = "Could not post comment: " ++ Error.toString e }, Cmd.none )
             Ok _ ->
                 let
                     _ = logActivity "comment" model.selectedIdeaId userId
-                    comments = unwrapOr [] (Comments.getComments model.selectedIdeaId)
-                    idea = unwrapOr Nothing (Ideas.getIdea model.selectedIdeaId)
+                    comments = Result.withDefault [] (Comments.getComments model.selectedIdeaId)
+                    idea = Result.withDefault Nothing (Ideas.getIdea model.selectedIdeaId)
                 in
                     ( { model
                         | ideaComments = comments
@@ -356,7 +357,7 @@ handleSubmitComment model =
 handleBackToBoard : Model -> (Model, Cmd Msg)
 handleBackToBoard model =
     let
-        ideas = unwrapOr [] (Ideas.getIdeas model.sortBy model.filterCategory model.searchQuery)
+        ideas = Result.withDefault [] (Ideas.getIdeas model.sortBy model.filterCategory model.searchQuery)
     in
         ( { model
             | page = BoardPage
@@ -380,12 +381,12 @@ doCreateIdea user model =
     in
         case Ideas.createIdea model.submitTitle model.submitDescription model.submitCategory userId of
             Err e ->
-                let _ = println ("[IDEA ERROR] " ++ errToString e) in
-                ( { model | notification = "Could not submit idea: " ++ errToString e }, Cmd.none )
+                let _ = println ("[IDEA ERROR] " ++ Error.toString e) in
+                ( { model | notification = "Could not submit idea: " ++ Error.toString e }, Cmd.none )
             Ok _ ->
                 let
                     _ = logActivity "submit" "" userId
-                    ideas = unwrapOr [] (Ideas.getIdeas model.sortBy model.filterCategory model.searchQuery)
+                    ideas = Result.withDefault [] (Ideas.getIdeas model.sortBy model.filterCategory model.searchQuery)
                 in
                     ( { model
                         | page = BoardPage

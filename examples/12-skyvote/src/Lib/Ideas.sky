@@ -7,10 +7,10 @@ import Sky.Core.String as String
 import Std.Log exposing (println)
 import Sky.Core.Crypto as Crypto
 import Lib.Db as Db
-import Std.IoError exposing (..)
+import Sky.Core.Error as Error exposing (Error)
 
 
-createIdea : String -> String -> String -> String -> Result IoError String
+createIdea : String -> String -> String -> String -> Result Error String
 createIdea title description category authorId =
     let
         id = String.slice 0 12 (Crypto.sha256 (title ++ ":" ++ authorId))
@@ -27,7 +27,7 @@ createIdea title description category authorId =
                 Err e
 
 
-getIdeas : String -> String -> String -> Result IoError (List (Dict String String))
+getIdeas : String -> String -> String -> Result Error (List (Dict String String))
 getIdeas sortBy filterCategory searchQuery =
     let
         baseQuery =
@@ -55,7 +55,7 @@ getIdeas sortBy filterCategory searchQuery =
 
 
 -- getIdea: outer Result is for DB failure, inner Maybe is "found / not".
-getIdea : String -> Result IoError (Maybe (Dict String String))
+getIdea : String -> Result Error (Maybe (Dict String String))
 getIdea ideaId =
     case Db.query
             "SELECT i.id, i.title, i.description, i.category, i.status, i.author_id, i.created_at, u.username as author_name, (SELECT COUNT(*) FROM votes v WHERE v.idea_id = i.id) as vote_count, (SELECT COUNT(*) FROM comments c WHERE c.idea_id = i.id) as comment_count FROM ideas i LEFT JOIN users u ON i.author_id = u.id WHERE i.id = ? LIMIT 1"
@@ -66,14 +66,14 @@ getIdea ideaId =
             Ok (List.head rows)
 
 
-getIdeasByStatus : String -> Result IoError (List (Dict String String))
+getIdeasByStatus : String -> Result Error (List (Dict String String))
 getIdeasByStatus status =
     Db.query
         "SELECT i.id, i.title, i.description, i.category, i.status, i.author_id, i.created_at, u.username as author_name, (SELECT COUNT(*) FROM votes v WHERE v.idea_id = i.id) as vote_count FROM ideas i LEFT JOIN users u ON i.author_id = u.id WHERE i.status = ? ORDER BY vote_count DESC"
         [ status ]
 
 
-toggleVote : String -> String -> Result IoError ()
+toggleVote : String -> String -> Result Error ()
 toggleVote ideaId userId =
     case Db.query
             "SELECT id FROM votes WHERE idea_id = ? AND user_id = ?"
@@ -118,7 +118,7 @@ hasVoted ideaId userId =
             "SELECT id FROM votes WHERE idea_id = ? AND user_id = ?"
             [ ideaId , userId ] of
         Err e ->
-            let _ = println ("[DB ERROR] Ideas.hasVoted: " ++ errToString e) in
+            let _ = println ("[DB ERROR] Ideas.hasVoted: " ++ Error.toString e) in
             False
         Ok rows ->
             case List.head rows of
@@ -133,7 +133,7 @@ getVoteCount ideaId =
             "SELECT COUNT(*) as cnt FROM votes WHERE idea_id = ?"
             [ ideaId ] of
         Err e ->
-            let _ = println ("[DB ERROR] Ideas.getVoteCount: " ++ errToString e) in
+            let _ = println ("[DB ERROR] Ideas.getVoteCount: " ++ Error.toString e) in
             "0"
         Ok rows ->
             case List.head rows of
@@ -143,7 +143,7 @@ getVoteCount ideaId =
                     "0"
 
 
-updateStatus : String -> String -> Result IoError ()
+updateStatus : String -> String -> Result Error ()
 updateStatus ideaId newStatus =
     case Db.exec
             "UPDATE ideas SET status = ?, updated_at = datetime('now') WHERE id = ?"

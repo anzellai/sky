@@ -1,6 +1,7 @@
 module Lib.AuthHandlers exposing (handleSignInSuccess, handleSignIn, handleSignUpSuccess, handleSignUpValidated, handleSignUp, handleSignOut)
 
 import Sky.Core.Prelude exposing (..)
+import Sky.Core.Result as Result
 import Sky.Core.Maybe exposing (..)
 import Sky.Core.String as String
 import Std.Log exposing (println)
@@ -9,12 +10,12 @@ import State exposing (..)
 import Lib.Auth as Auth
 import Lib.Db as Db
 import Lib.Ideas as Ideas
-import Std.IoError exposing (..)
+import Sky.Core.Error as Error exposing (Error(..), ErrorKind(..))
 
 
 handleSignInSuccess user model =
     let
-        ideas = unwrapOr [] (Ideas.getIdeas "newest" "all" "")
+        ideas = Result.withDefault [] (Ideas.getIdeas "newest" "all" "")
         _ = println ("[AUTH] Sign-in: " ++ Db.getField "email" user)
     in
         ( { model
@@ -28,7 +29,7 @@ handleSignInSuccess user model =
         }, Cmd.none )
 
 
--- handleSignIn: Auth.authenticateUser returns Result IoError User. We
+-- handleSignIn: Auth.authenticateUser returns Result Error User. We
 -- pattern-match explicitly: Unauthorised → user-friendly form error;
 -- DbError → generic "service unavailable" so we don't leak details.
 handleSignIn model =
@@ -37,23 +38,26 @@ handleSignIn model =
             handleSignInSuccess user model
         Err e ->
             let
-                _ = println ("[AUTH ERROR] sign-in: " ++ errToString e)
+                _ = println ("[AUTH ERROR] sign-in: " ++ Error.toString e)
                 userMsg =
-                    if isAuthIssue e then
-                        errToString e
-                    else
-                        "Sign-in temporarily unavailable. Please try again."
+                    case e of
+                        Error kind info ->
+                            case kind of
+                                PermissionDenied ->
+                                    info.message
+                                _ ->
+                                    "Sign-in temporarily unavailable. Please try again."
             in
                 ( { model | authError = userMsg }, Cmd.none )
 
 
--- handleSignUpSuccess: getUserById now returns Result IoError (Maybe User).
+-- handleSignUpSuccess: getUserById now returns Result Error (Maybe User).
 -- DB failure → keep them on SignInPage with an explanatory error;
 -- Ok Nothing → race condition / auto-login failure (extremely rare).
 handleSignUpSuccess userId model =
     case Auth.getUserById userId of
         Err e ->
-            let _ = println ("[AUTH ERROR] post-signup lookup: " ++ errToString e) in
+            let _ = println ("[AUTH ERROR] post-signup lookup: " ++ Error.toString e) in
             ( { model
                 | authError = "Account created but auto-login failed. Please sign in."
                 , page = SignInPage
@@ -65,7 +69,7 @@ handleSignUpSuccess userId model =
             }, Cmd.none )
         Ok (Just user) ->
             let
-                ideas = unwrapOr [] (Ideas.getIdeas "newest" "all" "")
+                ideas = Result.withDefault [] (Ideas.getIdeas "newest" "all" "")
                 _ = println ("[AUTH] Sign-up success: " ++ userId)
             in
                 ( { model
@@ -89,8 +93,8 @@ handleSignUpValidated model =
             handleSignUpSuccess userId model
         Err e ->
             let
-                _ = println ("[AUTH ERROR] sign-up: " ++ errToString e)
-                userMsg = errToString e
+                _ = println ("[AUTH ERROR] sign-up: " ++ Error.toString e)
+                userMsg = Error.toString e
             in
                 ( { model | authError = userMsg }, Cmd.none )
 

@@ -3,7 +3,7 @@ module Lib.Schema exposing (initDb)
 import Sky.Core.Prelude exposing (..)
 import Std.Log exposing (println)
 import Lib.Db as Db
-import Std.IoError exposing (..)
+import Sky.Core.Error as Error exposing (Error)
 
 
 -- Schema migrations are CREATE TABLE IF NOT EXISTS — idempotent and
@@ -15,7 +15,7 @@ runMigration label sql =
         Ok _ ->
             ()
         Err e ->
-            let _ = println ("[SCHEMA ERROR] " ++ label ++ ": " ++ errToString e) in
+            let _ = println ("[SCHEMA ERROR] " ++ label ++ ": " ++ Error.toString e) in
             ()
 
 

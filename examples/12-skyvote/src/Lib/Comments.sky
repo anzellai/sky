@@ -5,10 +5,10 @@ import Std.Log exposing (println)
 import Sky.Core.Crypto as Crypto
 import Sky.Core.String as String
 import Lib.Db as Db
-import Std.IoError exposing (..)
+import Sky.Core.Error as Error exposing (Error)
 
 
-createComment : String -> String -> String -> Result IoError ()
+createComment : String -> String -> String -> Result Error ()
 createComment ideaId authorId content =
     let
         id = String.slice 0 12 (Crypto.sha256 (ideaId ++ ":" ++ authorId ++ ":" ++ content))
@@ -25,7 +25,7 @@ createComment ideaId authorId content =
                     Ok ()
 
 
-getComments : String -> Result IoError (List (Dict String String))
+getComments : String -> Result Error (List (Dict String String))
 getComments ideaId =
     Db.query
         "SELECT c.id, c.content, c.created_at, u.username as author_name FROM comments c LEFT JOIN users u ON c.author_id = u.id WHERE c.idea_id = ? ORDER BY c.created_at ASC"
