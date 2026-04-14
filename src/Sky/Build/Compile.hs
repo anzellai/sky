@@ -8,6 +8,7 @@ import qualified Data.Set as Set
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import Data.IORef
+import Data.Maybe (isJust)
 import qualified System.Directory
 import qualified System.FilePath
 import qualified System.Process
@@ -2600,20 +2601,20 @@ caseToGo subject branches =
         -- plain `.(SkyResult[any, any])` runtime-fails because the
         -- generic instantiations are distinct Go types.
         coerceSubject typeName e
+            | Just _ <- stripParametric "rt.SkyResult" typeName, isTypedFfiCall e =
+                -- P7: typed-FFI source returns SkyResult[string, A]
+                -- directly. Leave __subject at its concrete type —
+                -- bindCtorArg detects this via the same predicate
+                -- and emits `__subject.OkValue` without a
+                -- SkyResult[any,any] assertion. Net: zero runtime
+                -- boxing between FFI and case body.
+                e
             | Just params <- stripParametric "rt.SkyResult" typeName =
-                -- P7: if the source is a known typed FFI call we
-                -- already have a concrete SkyResult and just need to
-                -- re-box into [any, any]. ResultAsAny is a cheap
-                -- Tag-switch with two Ok/Err rebuilds — no reflect,
-                -- no generic param inference required at the call
-                -- site beyond Go's own type inference.
-                if params == "any, any" && isTypedFfiCall e
-                    then GoIr.GoCall (GoIr.GoIdent "rt.ResultAsAny") [e]
-                    else GoIr.GoCall (GoIr.GoIdent ("rt.ResultCoerce[" ++ params ++ "]")) [e]
+                GoIr.GoCall (GoIr.GoIdent ("rt.ResultCoerce[" ++ params ++ "]")) [e]
+            | Just _ <- stripParametric "rt.SkyMaybe" typeName, isTypedFfiCall e =
+                e
             | Just inner <- stripParametric "rt.SkyMaybe" typeName =
-                if inner == "any" && isTypedFfiCall e
-                    then GoIr.GoCall (GoIr.GoIdent "rt.MaybeAsAny") [e]
-                    else GoIr.GoCall (GoIr.GoIdent ("rt.MaybeCoerce[" ++ inner ++ "]")) [e]
+                GoIr.GoCall (GoIr.GoIdent ("rt.MaybeCoerce[" ++ inner ++ "]")) [e]
             | otherwise =
                 GoIr.GoTypeAssert (anyWrapped e) typeName
 
@@ -2628,12 +2629,23 @@ caseToGo subject branches =
                 , Set.member fnName typedFfiWrapperSet
                 -> True
             _ -> False
+        -- P7: typed-FFI-source subjects use a distinct name so
+        -- bindCtorArg knows to skip the `any().(SkyResult[any,any])`
+        -- assertion step. Saves one boxing per typed case match.
+        subjectName =
+            case subjectType of
+                Just typeName
+                    | isJust (stripParametric "rt.SkyResult" typeName) && isTypedFfiCall goSubject
+                    -> "__subject_tFfi"
+                    | isJust (stripParametric "rt.SkyMaybe" typeName) && isTypedFfiCall goSubject
+                    -> "__subject_tFfi"
+                _ -> "__subject"
         subjectDecl = case subjectType of
             Just typeName ->
-                GoIr.GoShortDecl "__subject" (coerceSubject typeName goSubject)
+                GoIr.GoShortDecl subjectName (coerceSubject typeName goSubject)
             Nothing ->
-                GoIr.GoShortDecl "__subject" goSubject
-        branchStmts = concatMap (caseBranchToStmts "__subject") branches
+                GoIr.GoShortDecl subjectName goSubject
+        branchStmts = concatMap (caseBranchToStmts subjectName) branches
         -- P3: exhaustiveness is verified before codegen, so this arm is
         -- statically unreachable. We keep a labelled panic as a defence
         -- in depth (compiler bug, not user error) rather than remove it
@@ -2883,27 +2895,32 @@ patternBindings subject pat = case pat of
 bindCtorArg :: String -> String -> Can.PatternCtorArg -> [GoIr.GoStmt]
 bindCtorArg subject ctorName (Can.PatternCtorArg idx _ty pat) =
     let (A.At _ innerPat) = pat
-        -- Type-assert the subject for the special generic ctors. Wrap in
-        -- any(...) first so this works both when the subject is already
-        -- typed (outer case asserted it) and when it's a raw `any` from
-        -- a nested destructure temp.
-        --
-        -- Go accepts: any(x).(SkyResult[any, any]).OkValue
-        -- Works for x : any                → cast-then-assert
-        --       and x : rt.SkyResult[...]  → to-any-then-assert-back (identity)
+        -- P7: a subject name suffixed with "_tFfi" is the typed-FFI
+        -- shortcut — the outer caseToGo already guarantees it's a
+        -- SkyResult[_, _] or SkyMaybe[_] struct, so we can field-
+        -- access directly without a `(any).(SkyResult[any, any])`
+        -- assertion. Wrapping the field access in any() preserves
+        -- the any-typed binding contract for downstream branch code.
+        isTypedFfiSubject =
+            take 5 (reverse subject) == "ifFt_"
         anyWrap n = GoIr.GoCall (GoIr.GoIdent "any") [GoIr.GoIdent n]
         subjectAsStruct = case ctorName of
+            _ | isTypedFfiSubject -> GoIr.GoIdent subject
             "Ok"   -> GoIr.GoTypeAssert (anyWrap subject) "rt.SkyResult[any, any]"
             "Err"  -> GoIr.GoTypeAssert (anyWrap subject) "rt.SkyResult[any, any]"
             "Just" -> GoIr.GoTypeAssert (anyWrap subject) "rt.SkyMaybe[any]"
             _      -> GoIr.GoIdent subject
-        fieldAccess = case ctorName of
+        rawField = case ctorName of
             "Ok"   -> GoIr.GoSelector subjectAsStruct "OkValue"
             "Err"  -> GoIr.GoSelector subjectAsStruct "ErrValue"
             "Just" -> GoIr.GoSelector subjectAsStruct "JustValue"
             _      -> GoIr.GoIndex
                         (GoIr.GoSelector subjectAsStruct "Fields")
                         (GoIr.GoIntLit idx)
+        fieldAccess =
+            if isTypedFfiSubject
+                then GoIr.GoCall (GoIr.GoIdent "any") [rawField]
+                else rawField
     in case innerPat of
         Can.PVar name ->
             if isDiscardName name

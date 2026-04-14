@@ -41,14 +41,20 @@ spec = do
             ("rt.Result_withDefault(\"\", rt.Go_Uuid_newStringT())" `isInfixOf` body)
                 `shouldBe` True
 
-        it "uses ResultAsAny at typed-FFI case subjects" $ do
+        it "elides case-subject boxing for typed-FFI sources" $ do
             -- ex03's `case Uuid.newString () of Ok _ -> ... Err _ -> ...`
-            -- is the canonical test case for the case-subject shortcut:
-            -- with a typed-FFI source the emitter should prefer
-            -- ResultAsAny over ResultCoerce[any, any]. Regression catcher.
+            -- must lower to a direct field access on the typed result,
+            -- with no ResultCoerce / ResultAsAny wrap and no
+            -- `any(__subject).(rt.SkyResult[any, any])` assertion.
+            -- Regression catcher for the P7 typed-subject path.
             body <- readFile "examples/03-tea-external/sky-out/main.go"
-            ("rt.ResultAsAny(rt.Go_Uuid_newStringT())" `isInfixOf` body)
+            ("__subject_tFfi := rt.Go_Uuid_newStringT()" `isInfixOf` body)
                 `shouldBe` True
+            ("any(__subject_tFfi.OkValue)" `isInfixOf` body)
+                `shouldBe` True
+            -- And the wrapped path must NOT appear:
+            ("rt.ResultAsAny(rt.Go_Uuid_newStringT())" `isInfixOf` body)
+                `shouldBe` False
 
         it "registers a typed variant for every migrated call name" $ do
             -- Spot-check that regenerated bindings actually emit the T
