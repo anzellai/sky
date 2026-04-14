@@ -403,6 +403,9 @@ func Basics_always[A any, B any](a A, _ B) A {
 	return a
 }
 
+// P8/Basics typed companions — minimal but commonly exercised.
+func Basics_notT(b bool) bool { return !b }
+
 func Basics_not(b any) any {
 	return !AsBool(b)
 }
