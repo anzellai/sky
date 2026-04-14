@@ -16,34 +16,34 @@ import (
 
 type FfiT_Go_App_new_R = fyne.App
 // [pure] typed wrapper for Go_App_new (P7 adaptor target)
-func Go_App_newT() (out SkyResult[string, fyne.App]) {
+func Go_App_newT() (out SkyResult[any, fyne.App]) {
 	defer SkyFfiRecoverT(&out)()
-	out = Ok[string, fyne.App](pkg.New())
+	out = Ok[any,fyne.App](pkg.New())
 	return
 }
 
 type FfiT_Go_App_newWithID_R = fyne.App
 // [pure] typed wrapper for Go_App_newWithID (P7 adaptor target)
-func Go_App_newWithIDT(p0 string) (out SkyResult[string, fyne.App]) {
+func Go_App_newWithIDT(p0 string) (out SkyResult[any, fyne.App]) {
 	defer SkyFfiRecoverT(&out)()
-	out = Ok[string, fyne.App](pkg.NewWithID(p0))
+	out = Ok[any,fyne.App](pkg.NewWithID(p0))
 	return
 }
 
 type FfiT_Go_App_setMetadata_P0 = fyne.AppMetadata
 // [pure] typed wrapper for Go_App_setMetadata (P7 adaptor target)
-func Go_App_setMetadataT(p0 fyne.AppMetadata) (out SkyResult[string, struct{}]) {
+func Go_App_setMetadataT(p0 fyne.AppMetadata) (out SkyResult[any, struct{}]) {
 	defer SkyFfiRecoverT(&out)()
 	pkg.SetMetadata(p0)
-	out = Ok[string, struct{}](struct{}{})
+	out = Ok[any,struct{}](struct{}{})
 	return
 }
 
 type FfiT_Go_App_settingsSchemaStoragePath_P0 = *pkg.SettingsSchema
 // [pure] typed wrapper for Go_App_settingsSchemaStoragePath (P7 adaptor target)
-func Go_App_settingsSchemaStoragePathT(p0 *pkg.SettingsSchema) (out SkyResult[string, string]) {
+func Go_App_settingsSchemaStoragePathT(p0 *pkg.SettingsSchema) (out SkyResult[any, string]) {
 	defer SkyFfiRecoverT(&out)()
-	out = Ok[string, string](p0.StoragePath())
+	out = Ok[any,string](p0.StoragePath())
 	return
 }
 

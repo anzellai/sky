@@ -1060,6 +1060,77 @@ type SkyADT struct {
 	SkyName string
 }
 
+
+// ── Sky.Core.Error builders ────────────────────────────────────────
+//
+// These produce values structurally compatible with the Sky-side
+// `Sky_Core_Error_Error` ADT so FFI / kernel code can yield typed
+// errors without going through the Sky source layer. Pattern matches
+// in user code (case e of Error PermissionDenied info -> ...) work
+// because the Sky lowerer compares `.Tag` integers and reads
+// `.Fields` by index — both shapes match.
+//
+// Field order for ADT structs Sky emits today: { Tag int; SkyName
+// string; Fields []any }. Records (TypeAlias = {field : T}) are
+// emitted as named structs with capitalised field names, e.g.
+// `Sky_Core_Error_ErrorInfo_R{Message: "...", Details: ...}`.
+
+type skyErrorAdt struct {
+	Tag     int
+	SkyName string
+	Fields  []any
+}
+
+type skyErrorInfo struct {
+	Message string
+	Details any
+}
+
+type skyMaybeAdt struct {
+	Tag     int
+	SkyName string
+	Fields  []any
+}
+
+func skyMaybeNothing() any {
+	return skyMaybeAdt{Tag: 1, SkyName: "Nothing", Fields: []any{}}
+}
+
+// errorKindAdt builds an `Sky.Core.Error.ErrorKind` value with the
+// integer tag matching the constructor order in Error.sky:
+//   0=Io, 1=Network, 2=Ffi, 3=Decode, 4=Timeout, 5=NotFound,
+//   6=PermissionDenied, 7=InvalidInput, 8=Conflict, 9=Unavailable,
+//   10=Unexpected
+func errorKindAdt(tag int, name string) any {
+	return skyErrorAdt{Tag: tag, SkyName: name, Fields: []any{}}
+}
+
+func makeError(kindTag int, kindName, msg string) any {
+	info := skyErrorInfo{Message: msg, Details: skyMaybeNothing()}
+	return skyErrorAdt{
+		Tag:     0,
+		SkyName: "Error",
+		Fields:  []any{errorKindAdt(kindTag, kindName), info},
+	}
+}
+
+// Public Sky-shaped error builders. Used by the FFI runtime to
+// produce structured Error values instead of raw strings.
+func ErrIo(msg string) any               { return makeError(0,  "Io",               msg) }
+func ErrNetwork(msg string) any          { return makeError(1,  "Network",          msg) }
+func ErrFfi(msg string) any              { return makeError(2,  "Ffi",              msg) }
+func ErrDecode(msg string) any           { return makeError(3,  "Decode",           msg) }
+func ErrTimeout() any                    { return makeError(4,  "Timeout",          "operation timed out") }
+func ErrNotFound() any                   { return makeError(5,  "NotFound",         "not found") }
+func ErrPermissionDenied(msg string) any {
+	if msg == "" { msg = "permission denied" }
+	return makeError(6, "PermissionDenied", msg)
+}
+func ErrInvalidInput(msg string) any     { return makeError(7,  "InvalidInput",     msg) }
+func ErrConflict(msg string) any         { return makeError(8,  "Conflict",         msg) }
+func ErrUnavailable(msg string) any      { return makeError(9,  "Unavailable",      msg) }
+func ErrUnexpected(msg string) any       { return makeError(10, "Unexpected",       msg) }
+
 // ═══════════════════════════════════════════════════════════
 // Result operations
 // ═══════════════════════════════════════════════════════════
@@ -3407,26 +3478,29 @@ func Server_static(path any, dir any) any {
 func SkyFfiRecover(out *any) func() {
 	return func() {
 		if r := recover(); r != nil {
-			*out = Err[any, any](fmt.Sprintf("panic: %v", r))
+			*out = Err[any, any](ErrFfi(fmt.Sprintf("panic: %v", r)))
 		}
 	}
 }
 
 // SkyFfiRecoverT is the typed counterpart used by P7's typed FFI wrappers.
-// Parameterised on the success type A; error slot is fixed to string to
-// match the Sky-side `Task String a` contract. Generated typed wrappers
-// wire it in as:
+// Parameterised on the success type A; the error slot is `any` so it
+// can carry a structured Sky.Core.Error value (built via ErrFfi etc.)
+// rather than a raw string. Generated typed wrappers wire it in as:
 //
-//	func <K>_fooT(args ...) (out SkyResult[string, A]) {
+//	func <K>_fooT(args ...) (out SkyResult[any, A]) {
 //	    defer SkyFfiRecoverT(&out)()
 //	    ... actual FFI call ...
-//	    out = Ok[string, A](result)
+//	    out = Ok[any, A](result)
 //	    return
 //	}
-func SkyFfiRecoverT[A any](out *SkyResult[string, A]) func() {
+//
+// On panic we yield Error.ffi("panic: <recovered>") with FfiPanic
+// details when a stack snapshot is available.
+func SkyFfiRecoverT[A any](out *SkyResult[any, A]) func() {
 	return func() {
 		if r := recover(); r != nil {
-			*out = Err[string, A](fmt.Sprintf("panic: %v", r))
+			*out = Err[any, A](ErrFfi(fmt.Sprintf("panic: %v", r)))
 		}
 	}
 }

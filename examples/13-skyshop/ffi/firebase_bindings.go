@@ -27,11 +27,11 @@ type FfiT_Go_GoV4_appAuth_P0 = *pkg.App
 type FfiT_Go_GoV4_appAuth_P1 = context.Context
 type FfiT_Go_GoV4_appAuth_R = *auth.Client
 // [fallible] typed wrapper for Go_GoV4_appAuth (P7 adaptor target)
-func Go_GoV4_appAuthT(p0 *pkg.App, p1 context.Context) (out SkyResult[string, *auth.Client]) {
+func Go_GoV4_appAuthT(p0 *pkg.App, p1 context.Context) (out SkyResult[any, *auth.Client]) {
 	defer SkyFfiRecoverT(&out)()
 	r0, err := p0.Auth(p1)
-	if err != nil { out = Err[string, *auth.Client](err.Error()); return }
-	out = Ok[string, *auth.Client](r0)
+	if err != nil { out = Err[any,*auth.Client](ErrFfi(err.Error())); return }
+	out = Ok[any,*auth.Client](r0)
 	return
 }
 
@@ -39,11 +39,11 @@ type FfiT_Go_GoV4_appDatabase_P0 = *pkg.App
 type FfiT_Go_GoV4_appDatabase_P1 = context.Context
 type FfiT_Go_GoV4_appDatabase_R = *db.Client
 // [fallible] typed wrapper for Go_GoV4_appDatabase (P7 adaptor target)
-func Go_GoV4_appDatabaseT(p0 *pkg.App, p1 context.Context) (out SkyResult[string, *db.Client]) {
+func Go_GoV4_appDatabaseT(p0 *pkg.App, p1 context.Context) (out SkyResult[any, *db.Client]) {
 	defer SkyFfiRecoverT(&out)()
 	r0, err := p0.Database(p1)
-	if err != nil { out = Err[string, *db.Client](err.Error()); return }
-	out = Ok[string, *db.Client](r0)
+	if err != nil { out = Err[any,*db.Client](ErrFfi(err.Error())); return }
+	out = Ok[any,*db.Client](r0)
 	return
 }
 
@@ -51,11 +51,11 @@ type FfiT_Go_GoV4_appDatabaseWithURL_P0 = *pkg.App
 type FfiT_Go_GoV4_appDatabaseWithURL_P1 = context.Context
 type FfiT_Go_GoV4_appDatabaseWithURL_R = *db.Client
 // [fallible] typed wrapper for Go_GoV4_appDatabaseWithURL (P7 adaptor target)
-func Go_GoV4_appDatabaseWithURLT(p0 *pkg.App, p1 context.Context, p2 string) (out SkyResult[string, *db.Client]) {
+func Go_GoV4_appDatabaseWithURLT(p0 *pkg.App, p1 context.Context, p2 string) (out SkyResult[any, *db.Client]) {
 	defer SkyFfiRecoverT(&out)()
 	r0, err := p0.DatabaseWithURL(p1, p2)
-	if err != nil { out = Err[string, *db.Client](err.Error()); return }
-	out = Ok[string, *db.Client](r0)
+	if err != nil { out = Err[any,*db.Client](ErrFfi(err.Error())); return }
+	out = Ok[any,*db.Client](r0)
 	return
 }
 
@@ -63,11 +63,11 @@ type FfiT_Go_GoV4_appStorage_P0 = *pkg.App
 type FfiT_Go_GoV4_appStorage_P1 = context.Context
 type FfiT_Go_GoV4_appStorage_R = *storage.Client
 // [fallible] typed wrapper for Go_GoV4_appStorage (P7 adaptor target)
-func Go_GoV4_appStorageT(p0 *pkg.App, p1 context.Context) (out SkyResult[string, *storage.Client]) {
+func Go_GoV4_appStorageT(p0 *pkg.App, p1 context.Context) (out SkyResult[any, *storage.Client]) {
 	defer SkyFfiRecoverT(&out)()
 	r0, err := p0.Storage(p1)
-	if err != nil { out = Err[string, *storage.Client](err.Error()); return }
-	out = Ok[string, *storage.Client](r0)
+	if err != nil { out = Err[any,*storage.Client](ErrFfi(err.Error())); return }
+	out = Ok[any,*storage.Client](r0)
 	return
 }
 
@@ -75,11 +75,11 @@ type FfiT_Go_GoV4_appFirestore_P0 = *pkg.App
 type FfiT_Go_GoV4_appFirestore_P1 = context.Context
 type FfiT_Go_GoV4_appFirestore_R = *firestore.Client
 // [fallible] typed wrapper for Go_GoV4_appFirestore (P7 adaptor target)
-func Go_GoV4_appFirestoreT(p0 *pkg.App, p1 context.Context) (out SkyResult[string, *firestore.Client]) {
+func Go_GoV4_appFirestoreT(p0 *pkg.App, p1 context.Context) (out SkyResult[any, *firestore.Client]) {
 	defer SkyFfiRecoverT(&out)()
 	r0, err := p0.Firestore(p1)
-	if err != nil { out = Err[string, *firestore.Client](err.Error()); return }
-	out = Ok[string, *firestore.Client](r0)
+	if err != nil { out = Err[any,*firestore.Client](ErrFfi(err.Error())); return }
+	out = Ok[any,*firestore.Client](r0)
 	return
 }
 
@@ -87,11 +87,11 @@ type FfiT_Go_GoV4_appFirestoreWithDatabaseID_P0 = *pkg.App
 type FfiT_Go_GoV4_appFirestoreWithDatabaseID_P1 = context.Context
 type FfiT_Go_GoV4_appFirestoreWithDatabaseID_R = *firestore.Client
 // [fallible] typed wrapper for Go_GoV4_appFirestoreWithDatabaseID (P7 adaptor target)
-func Go_GoV4_appFirestoreWithDatabaseIDT(p0 *pkg.App, p1 context.Context, p2 string) (out SkyResult[string, *firestore.Client]) {
+func Go_GoV4_appFirestoreWithDatabaseIDT(p0 *pkg.App, p1 context.Context, p2 string) (out SkyResult[any, *firestore.Client]) {
 	defer SkyFfiRecoverT(&out)()
 	r0, err := p0.FirestoreWithDatabaseID(p1, p2)
-	if err != nil { out = Err[string, *firestore.Client](err.Error()); return }
-	out = Ok[string, *firestore.Client](r0)
+	if err != nil { out = Err[any,*firestore.Client](ErrFfi(err.Error())); return }
+	out = Ok[any,*firestore.Client](r0)
 	return
 }
 
@@ -99,11 +99,11 @@ type FfiT_Go_GoV4_appInstanceID_P0 = *pkg.App
 type FfiT_Go_GoV4_appInstanceID_P1 = context.Context
 type FfiT_Go_GoV4_appInstanceID_R = *iid.Client
 // [fallible] typed wrapper for Go_GoV4_appInstanceID (P7 adaptor target)
-func Go_GoV4_appInstanceIDT(p0 *pkg.App, p1 context.Context) (out SkyResult[string, *iid.Client]) {
+func Go_GoV4_appInstanceIDT(p0 *pkg.App, p1 context.Context) (out SkyResult[any, *iid.Client]) {
 	defer SkyFfiRecoverT(&out)()
 	r0, err := p0.InstanceID(p1)
-	if err != nil { out = Err[string, *iid.Client](err.Error()); return }
-	out = Ok[string, *iid.Client](r0)
+	if err != nil { out = Err[any,*iid.Client](ErrFfi(err.Error())); return }
+	out = Ok[any,*iid.Client](r0)
 	return
 }
 
@@ -111,11 +111,11 @@ type FfiT_Go_GoV4_appMessaging_P0 = *pkg.App
 type FfiT_Go_GoV4_appMessaging_P1 = context.Context
 type FfiT_Go_GoV4_appMessaging_R = *messaging.Client
 // [fallible] typed wrapper for Go_GoV4_appMessaging (P7 adaptor target)
-func Go_GoV4_appMessagingT(p0 *pkg.App, p1 context.Context) (out SkyResult[string, *messaging.Client]) {
+func Go_GoV4_appMessagingT(p0 *pkg.App, p1 context.Context) (out SkyResult[any, *messaging.Client]) {
 	defer SkyFfiRecoverT(&out)()
 	r0, err := p0.Messaging(p1)
-	if err != nil { out = Err[string, *messaging.Client](err.Error()); return }
-	out = Ok[string, *messaging.Client](r0)
+	if err != nil { out = Err[any,*messaging.Client](ErrFfi(err.Error())); return }
+	out = Ok[any,*messaging.Client](r0)
 	return
 }
 
@@ -123,11 +123,11 @@ type FfiT_Go_GoV4_appAppCheck_P0 = *pkg.App
 type FfiT_Go_GoV4_appAppCheck_P1 = context.Context
 type FfiT_Go_GoV4_appAppCheck_R = *appcheck.Client
 // [fallible] typed wrapper for Go_GoV4_appAppCheck (P7 adaptor target)
-func Go_GoV4_appAppCheckT(p0 *pkg.App, p1 context.Context) (out SkyResult[string, *appcheck.Client]) {
+func Go_GoV4_appAppCheckT(p0 *pkg.App, p1 context.Context) (out SkyResult[any, *appcheck.Client]) {
 	defer SkyFfiRecoverT(&out)()
 	r0, err := p0.AppCheck(p1)
-	if err != nil { out = Err[string, *appcheck.Client](err.Error()); return }
-	out = Ok[string, *appcheck.Client](r0)
+	if err != nil { out = Err[any,*appcheck.Client](ErrFfi(err.Error())); return }
+	out = Ok[any,*appcheck.Client](r0)
 	return
 }
 
@@ -135,11 +135,11 @@ type FfiT_Go_GoV4_appRemoteConfig_P0 = *pkg.App
 type FfiT_Go_GoV4_appRemoteConfig_P1 = context.Context
 type FfiT_Go_GoV4_appRemoteConfig_R = *remoteconfig.Client
 // [fallible] typed wrapper for Go_GoV4_appRemoteConfig (P7 adaptor target)
-func Go_GoV4_appRemoteConfigT(p0 *pkg.App, p1 context.Context) (out SkyResult[string, *remoteconfig.Client]) {
+func Go_GoV4_appRemoteConfigT(p0 *pkg.App, p1 context.Context) (out SkyResult[any, *remoteconfig.Client]) {
 	defer SkyFfiRecoverT(&out)()
 	r0, err := p0.RemoteConfig(p1)
-	if err != nil { out = Err[string, *remoteconfig.Client](err.Error()); return }
-	out = Ok[string, *remoteconfig.Client](r0)
+	if err != nil { out = Err[any,*remoteconfig.Client](ErrFfi(err.Error())); return }
+	out = Ok[any,*remoteconfig.Client](r0)
 	return
 }
 
@@ -177,7 +177,7 @@ func Go_GoV4_newConfig(_ any) any { return new(pkg.Config) }
 func Go_GoV4_newApp(p0 any, p1 any, p2 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	r0, err := pkg.NewApp(p0.(context.Context), p1.(*pkg.Config), p2.([]option.ClientOption)...)
-	if err != nil { out = Err[any, any](err.Error()); return }
+	if err != nil { out = Err[any, any](ErrFfi(err.Error())); return }
 	out = Ok[any, any](r0)
 
 	return

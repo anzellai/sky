@@ -25,17 +25,17 @@ func Go_Iterator_setNewPageInfo(value any) any { reflect.ValueOf(&pkg.NewPageInf
 type FfiT_Go_Iterator_newPager_P0 = pkg.Pageable
 type FfiT_Go_Iterator_newPager_R = *pkg.Pager
 // [pure] typed wrapper for Go_Iterator_newPager (P7 adaptor target)
-func Go_Iterator_newPagerT(p0 pkg.Pageable, p1 int, p2 string) (out SkyResult[string, *pkg.Pager]) {
+func Go_Iterator_newPagerT(p0 pkg.Pageable, p1 int, p2 string) (out SkyResult[any, *pkg.Pager]) {
 	defer SkyFfiRecoverT(&out)()
-	out = Ok[string, *pkg.Pager](pkg.NewPager(p0, p1, p2))
+	out = Ok[any,*pkg.Pager](pkg.NewPager(p0, p1, p2))
 	return
 }
 
 type FfiT_Go_Iterator_pageInfoRemaining_P0 = *pkg.PageInfo
 // [pure] typed wrapper for Go_Iterator_pageInfoRemaining (P7 adaptor target)
-func Go_Iterator_pageInfoRemainingT(p0 *pkg.PageInfo) (out SkyResult[string, int]) {
+func Go_Iterator_pageInfoRemainingT(p0 *pkg.PageInfo) (out SkyResult[any, int]) {
 	defer SkyFfiRecoverT(&out)()
-	out = Ok[string, int](p0.Remaining())
+	out = Ok[any,int](p0.Remaining())
 	return
 }
 
@@ -54,9 +54,9 @@ func Go_Iterator_pageInfoSetMaxSizeT(value int, recv *pkg.PageInfo) *pkg.PageInf
 type FfiT_Go_Iterator_pageablePageInfo_P0 = pkg.Pageable
 type FfiT_Go_Iterator_pageablePageInfo_R = *pkg.PageInfo
 // [pure] typed wrapper for Go_Iterator_pageablePageInfo (P7 adaptor target)
-func Go_Iterator_pageablePageInfoT(p0 pkg.Pageable) (out SkyResult[string, *pkg.PageInfo]) {
+func Go_Iterator_pageablePageInfoT(p0 pkg.Pageable) (out SkyResult[any, *pkg.PageInfo]) {
 	defer SkyFfiRecoverT(&out)()
-	out = Ok[string, *pkg.PageInfo](p0.PageInfo())
+	out = Ok[any,*pkg.PageInfo](p0.PageInfo())
 	return
 }
 
@@ -64,7 +64,7 @@ func Go_Iterator_pageablePageInfoT(p0 pkg.Pageable) (out SkyResult[string, *pkg.
 func Go_Iterator_pagerNextPage(p0 any, p1 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	r0, err := p0.(*pkg.Pager).NextPage(p1.(interface{}))
-	if err != nil { out = Err[any, any](err.Error()); return }
+	if err != nil { out = Err[any, any](ErrFfi(err.Error())); return }
 	out = Ok[any, any](r0)
 
 	return

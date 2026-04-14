@@ -997,7 +997,7 @@ emitTypedCall fn params results =
         [(_, t)]
             | t == "error" -> unlines
                 [ "\terr := " ++ call
-                , "\tif err != nil { out = Err[any, any](err.Error()); return }"
+                , "\tif err != nil { out = Err[any, any](ErrFfi(err.Error())); return }"
                 , "\tout = Ok[any, any](struct{}{})"
                 ]
             | otherwise -> "\tout = Ok[any, any](" ++ call ++ ")"
@@ -1013,7 +1013,7 @@ emitTypedCall fn params results =
             in if lastTy == "error"
                 then unlines
                     [ assignLine
-                    , "\tif err != nil { out = Err[any, any](err.Error()); return }"
+                    , "\tif err != nil { out = Err[any, any](ErrFfi(err.Error())); return }"
                     , "\tout = Ok[any, any](" ++ packResults bindVars ++ ")"
                     ]
                 else unlines
@@ -1105,23 +1105,23 @@ emitTypedVariant knownAliases anyName fn params results
                         then case results of
                             [_] -> -- single `error`
                                 [ "\terr := " ++ call
-                                , "\tif err != nil { out = Err[string, " ++ okType ++
-                                  "](err.Error()); return }"
-                                , "\tout = Ok[string, " ++ okType ++ "](struct{}{})"
+                                , "\tif err != nil { out = Err[any," ++ okType ++
+                                  "](ErrFfi(err.Error())); return }"
+                                , "\tout = Ok[any," ++ okType ++ "](struct{}{})"
                                 ]
                             _   -> -- (T, error)
                                 [ "\tr0, err := " ++ call
-                                , "\tif err != nil { out = Err[string, " ++ okType ++
-                                  "](err.Error()); return }"
-                                , "\tout = Ok[string, " ++ okType ++ "](r0)"
+                                , "\tif err != nil { out = Err[any," ++ okType ++
+                                  "](ErrFfi(err.Error())); return }"
+                                , "\tout = Ok[any," ++ okType ++ "](r0)"
                                 ]
                         else case results of
                             [] -> -- void return: run for side-effects, yield struct{}{}
                                 [ "\t" ++ call
-                                , "\tout = Ok[string, " ++ okType ++ "](struct{}{})"
+                                , "\tout = Ok[any," ++ okType ++ "](struct{}{})"
                                 ]
                             _ ->
-                                [ "\tout = Ok[string, " ++ okType ++ "](" ++ pickExpr call ++ ")"
+                                [ "\tout = Ok[any," ++ okType ++ "](" ++ pickExpr call ++ ")"
                                 ]
                     aliasLines = emitFfiTAliases anyName params okType
                 in Just $ unlines $
@@ -1130,7 +1130,7 @@ emitTypedVariant knownAliases anyName fn params results
                     [ "// [" ++ _fnEffect fn ++ "] typed wrapper for " ++ anyName ++
                       " (P7 adaptor target)"
                     , "func " ++ typedName ++ "(" ++ paramDecls ++
-                      ") (out SkyResult[string, " ++ okType ++ "]) {"
+                      ") (out SkyResult[any, " ++ okType ++ "]) {"
                     , recoverLine
                     ] ++ bodyLines ++ [ "\treturn", "}" ]
   where
