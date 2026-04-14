@@ -2610,6 +2610,7 @@ typedKernelArgCoerce = Map.fromList
     , (("String", "endsWith"),   ["AsString", "AsString"])
     , (("String", "append"),     ["AsString", "AsString"])
     , (("String", "split"),      ["AsString", "AsString"])
+    , (("String", "slice"),      ["AsInt", "AsInt", "AsString"])
     -- Math
     , (("Math",   "abs"),  ["AsInt"])
     , (("Math",   "min"),  ["AsInt", "AsInt"])
@@ -2679,7 +2680,7 @@ typedKernelLiterals = Set.fromList
     , ("String", "reverse"),    ("String", "isEmpty"),    ("String", "length")
     , ("String", "contains"),   ("String", "startsWith"), ("String", "endsWith")
     , ("String", "append"),     ("String", "fromInt"),    ("String", "fromFloat")
-    , ("String", "replace")
+    , ("String", "replace"),    ("String", "slice")
     , ("Math",   "abs"),        ("Math",   "min"),        ("Math",   "max")
     , ("Math",   "sqrt"),       ("Math",   "pow"),        ("Math",   "floor")
     , ("Math",   "ceil"),       ("Math",   "round"),      ("Math",   "sin")

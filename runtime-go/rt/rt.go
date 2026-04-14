@@ -841,6 +841,16 @@ func String_appendT(a, b string) string                { return a + b }
 func String_splitT(sep, s string) []string             { return strings.Split(s, sep) }
 func String_joinT(sep string, parts []string) string   { return strings.Join(parts, sep) }
 func String_replaceT(old, new_, s string) string       { return strings.ReplaceAll(s, old, new_) }
+func String_sliceT(start, end int, s string) string {
+	runes := []rune(s)
+	total := len(runes)
+	if start < 0 { start += total }
+	if end < 0 { end += total }
+	if start < 0 { start = 0 }
+	if end > total { end = total }
+	if start > end { return "" }
+	return string(runes[start:end])
+}
 func String_fromIntT(n int) string                     { return strconv.Itoa(n) }
 func String_fromFloatT(f float64) string               { return strconv.FormatFloat(f, 'g', -1, 64) }
 func String_toIntT(s string) SkyResult[string, int] {
