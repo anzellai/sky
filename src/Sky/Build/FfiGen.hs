@@ -1074,7 +1074,6 @@ emitTypedVariant
     -> [(String, String)]           -- ^ rewritten results
     -> Maybe String
 emitTypedVariant knownAliases anyName fn params results
-    | _fnVariadic fn                 = Nothing
     | _fnIsField fn                  = Nothing
     | _fnIsFieldSet fn               = Nothing
     | _fnIsPkgVar fn                 = Nothing
@@ -1089,13 +1088,28 @@ emitTypedVariant knownAliases anyName fn params results
                     goFnName    = _fnName fn
                     isMethodLocal = isMethod
                     methodN      = _fnMethodName fn
+                    -- Variadic: emit `[]X` for the typed param decl
+                    -- (Sky-side passes a slice) but spread with `...`
+                    -- in the call body so Go's variadic dispatch sees
+                    -- individual elements.
                     paramDecls  = intercalate ", "
-                        [ "p" ++ show i ++ " " ++ t | (i, (_, t)) <- zip [0::Int ..] params ]
+                        [ "p" ++ show i ++ " " ++ paramTypeFor t (i == length params - 1)
+                        | (i, (_, t)) <- zip [0::Int ..] params ]
+                    paramTypeFor t isLast =
+                        if _fnVariadic fn && isLast
+                            then case t of
+                                ('[':']':_) -> t          -- already []X
+                                _           -> "[]" ++ t  -- spread expects a slice
+                            else t
+                    spreadIfVariadic i =
+                        if _fnVariadic fn && i == length params - 1
+                            then "p" ++ show i ++ "..."
+                            else "p" ++ show i
                     argRefs     = intercalate ", "
-                        [ "p" ++ show i | i <- [0 .. length params - 1] ]
+                        [ spreadIfVariadic i | i <- [0 .. length params - 1] ]
                     callArgs    = if isMethodLocal
                         then intercalate ", "
-                            [ "p" ++ show i | i <- [1 .. length params - 1] ]
+                            [ spreadIfVariadic i | i <- [1 .. length params - 1] ]
                         else argRefs
                     call        = if isMethodLocal
                         then "p0." ++ methodN ++ "(" ++ callArgs ++ ")"
