@@ -87,29 +87,67 @@ seedTypedFfiNames = do
     if not present then return () else do
         entries <- listDirectory "ffi"
         let gofiles = [ "ffi" </> e | e <- entries, takeExtension e == ".go" ]
-        nameSets <- mapM scanTypedWrapperFile gofiles
-        writeIORef Env.ffiTypedWrapperNamesRef (Set.unions nameSets)
+        pairLists <- mapM scanTypedWrapperFile gofiles
+        let allEntries = concat pairLists
+        writeIORef Env.ffiTypedWrapperNamesRef (Set.fromList (map fst allEntries))
+        writeIORef Env.ffiTypedWrapperParamsRef (Map.fromList allEntries)
 
 
--- | Return the set of names matching `^func (Go_[A-Za-z0-9_]+T)\(` in
--- the given Go file. Pure line-level matching — does not parse Go.
-scanTypedWrapperFile :: FilePath -> IO (Set.Set String)
+-- | Return `(name, paramGoTypes)` for every `^func Go_X_yT(…)` definition
+-- in the file. Param Go types are parsed directly from the signature
+-- (line-level — FfiGen emits typed wrappers with the signature on one
+-- line). Zero-arg typed wrappers yield ("Go_X_yT", []).
+scanTypedWrapperFile :: FilePath -> IO [(String, [String])]
 scanTypedWrapperFile fp = do
     ok <- doesFileExist fp
-    if not ok then return Set.empty else do
+    if not ok then return [] else do
         contents <- readFile fp
         let ls = lines contents
-            names = [ takeWhile (/= '(') (drop 5 l)
-                    | l <- ls
-                    , take 5 l == "func "
-                    , let rest = drop 5 l
-                    , take 3 rest == "Go_"
-                    , '(' `elem` rest
-                    , let nm = takeWhile (/= '(') rest
-                    , not (null nm)
-                    , last nm == 'T'
-                    ]
-        return (Set.fromList names)
+        return
+            [ (name, paramTypes)
+            | l <- ls
+            , take 5 l == "func "
+            , let rest = drop 5 l
+            , take 3 rest == "Go_"
+            , '(' `elem` rest
+            , let name = takeWhile (/= '(') rest
+            , not (null name)
+            , last name == 'T'
+            , let paramTypes = extractParamTypes (dropWhile (/= '(') rest)
+            ]
+
+
+-- | Parse `(p0 T0, p1 T1, …)` (the param list of a typed wrapper sig)
+-- into [T0, T1, …]. Handles bracketed type params and nested parens as
+-- balanced tokens.
+extractParamTypes :: String -> [String]
+extractParamTypes sig = case sig of
+    ('(':rest) ->
+        let inside = takeParenContents rest 0
+        in map extractTypeAfterName (splitTopComma inside)
+    _ -> []
+  where
+    takeParenContents [] _ = ""
+    takeParenContents (')':_) 0 = ""
+    takeParenContents ('(':xs) d = '(' : takeParenContents xs (d+1)
+    takeParenContents (')':xs) d = ')' : takeParenContents xs (d-1)
+    takeParenContents ('[':xs) d = '[' : takeParenContents xs (d+1)
+    takeParenContents (']':xs) d = ']' : takeParenContents xs (d-1)
+    takeParenContents (x:xs) d   = x : takeParenContents xs d
+
+    splitTopComma str = reverse (map reverse (finish (foldl step ([], [], 0) str)))
+      where
+        step (cur, acc, 0) ','  = ([], cur : acc, 0)
+        step (cur, acc, d) c
+            | c == '[' || c == '(' = (c : cur, acc, d + 1)
+            | c == ']' || c == ')' = (c : cur, acc, d - 1)
+            | otherwise            = (c : cur, acc, d)
+        finish (cur, acc, _) = if null cur then acc else cur : acc
+
+    extractTypeAfterName part =
+        let trimmed = dropWhile (== ' ') part
+            afterName = dropWhile (/= ' ') trimmed
+        in dropWhile (== ' ') afterName
 
 
 -- | Full compilation: parse → canonicalise → codegen → write Go
@@ -1969,21 +2007,24 @@ exprToGo (A.At _ expr) = case expr of
                 , Set.member typedName typedFfiWrapperSet ->
                     GoIr.GoCall (GoIr.GoQualified "rt" typedName) []
 
-            -- P7 step 5b: extend to N-arg FFI where every arg is a
-            -- primitive Sky literal. Literals render directly to typed
-            -- Go literals (string/int/float/bool) so passing them to a
-            -- typed wrapper's concrete param types compiles without a
-            -- coercion step. Non-literal args still route through the
-            -- any/any path.
+            -- P7 step 5b: migrate N-arg FFI by coercing each arg to the
+            -- typed wrapper's declared Go param type. `any(arg).(T)`
+            -- works for both any-typed and concrete-typed sources — a
+            -- no-op in the concrete case. Literal Sky args are still
+            -- emitted as Go literals (no `any(...)` wrap) for
+            -- readability; Go's literal-to-named-type inference keeps
+            -- these compiling.
             Can.VarKernel modName funcName
                 | take 3 modName == "Go_"
                 , not (null args)
                 , not (all isUnitArg args)
-                , all isPrimLiteralArg args
                 , let typedName = modName ++ "_" ++ funcName ++ "T"
-                , Set.member typedName typedFfiWrapperSet ->
+                , Set.member typedName typedFfiWrapperSet
+                , Just paramTys <- Map.lookup typedName typedFfiWrapperParams
+                , length paramTys == length args
+                , all isCallerVisibleGoType paramTys ->
                     GoIr.GoCall (GoIr.GoQualified "rt" typedName)
-                                (map exprToGo args)
+                                (zipWith coerceFfiArg paramTys args)
 
             Can.VarCtor _opts _home _typeName _ctorName annot ->
                 -- ADT constructor partial app: JobDone : Int -> Result -> Msg
@@ -2196,6 +2237,46 @@ isPrimLiteralArg (A.At _ e) = case e of
 {-# NOINLINE typedFfiWrapperSet #-}
 typedFfiWrapperSet :: Set.Set String
 typedFfiWrapperSet = unsafePerformIO (readIORef Env.ffiTypedWrapperNamesRef)
+
+
+-- | Companion snapshot of typed-wrapper param Go types, keyed by the
+-- T-suffix wrapper name. See typedFfiWrapperSet for the invariant.
+{-# NOINLINE typedFfiWrapperParams #-}
+typedFfiWrapperParams :: Map.Map String [String]
+typedFfiWrapperParams = unsafePerformIO (readIORef Env.ffiTypedWrapperParamsRef)
+
+
+-- | Typed-wrapper param types that the sky-out/main.go call site can
+-- actually reference. Typed wrappers reference file-local aliases
+-- (`pkg`, `stripe_go`, etc.) that don't exist in main.go — so we can
+-- only migrate N-arg calls whose param types are expressible without
+-- those file-local aliases. Safe: Go primitives. Unsafe: any
+-- dot-qualified type. Future work: record the main.go-visible import
+-- aliases as part of the FFI registry so more types become callable.
+isCallerVisibleGoType :: String -> Bool
+isCallerVisibleGoType t =
+    let bare = dropWhile (\c -> c == '*' || c == '[' || c == ']' || c == ' ') t
+    in bare `elem`
+        [ "string", "int", "int8", "int16", "int32", "int64"
+        , "uint", "uint8", "uint16", "uint32", "uint64"
+        , "float32", "float64", "bool", "byte", "rune", "error"
+        ]
+
+
+-- | Coerce a Sky arg to a concrete Go type at a typed FFI call site.
+-- Literal args (Str/Int/Float/Chr) render to native Go literals that
+-- Go's type inference matches to the target param type directly —
+-- inserting `any(1).(int)` would actually break, since `any(1)` boxes
+-- the literal and asserting back loses the native-type view. For
+-- everything else, wrap with `any(...)` and then assert to the
+-- declared type, which works whether the source is any-typed or
+-- already concrete.
+coerceFfiArg :: String -> Can.Expr -> GoIr.GoExpr
+coerceFfiArg goType arg =
+    let goArg = exprToGo arg
+    in if isPrimLiteralArg arg
+        then goArg
+        else GoIr.GoTypeAssert (GoIr.GoCall (GoIr.GoIdent "any") [goArg]) goType
 
 
 -- | Can we emit a direct Go call for this callee expression?

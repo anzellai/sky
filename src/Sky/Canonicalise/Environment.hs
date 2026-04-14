@@ -282,6 +282,15 @@ ffiTypedWrapperNamesRef :: IORef (Set.Set String)
 ffiTypedWrapperNamesRef = unsafePerformIO (newIORef Set.empty)
 
 
+-- | P7: per-typed-wrapper param Go types, for call-site coercion of
+-- non-literal args. Keyed by the T-suffix wrapper name (e.g.
+-- "Go_Uuid_parseT" → ["string"]). Populated by seedTypedFfiNames
+-- alongside ffiTypedWrapperNamesRef.
+{-# NOINLINE ffiTypedWrapperParamsRef #-}
+ffiTypedWrapperParamsRef :: IORef (Map.Map String [String])
+ffiTypedWrapperParamsRef = unsafePerformIO (newIORef Map.empty)
+
+
 -- | Kernel module mappings: Sky import path → kernel module name.
 -- Merged on every read so FFI-registered modules resolve the same way as
 -- stdlib kernel modules (Sky.Core.String etc.).
