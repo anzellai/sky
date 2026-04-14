@@ -2615,6 +2615,13 @@ typedKernelAltName = Map.fromList
     , (("List",   "filter"),      "filterAnyT")
     , (("List",   "take"),        "takeAnyT")
     , (("List",   "cons"),        "consAnyT")
+    , (("List",   "drop"),        "dropAnyT")
+    , (("List",   "foldl"),       "foldlAnyT")
+    , (("List",   "foldr"),       "foldrAnyT")
+    , (("List",   "filterMap"),   "filterMapAnyT")
+    , (("List",   "concatMap"),   "concatMapAnyT")
+    , (("List",   "any"),         "anyAnyT")
+    , (("List",   "all"),         "allAnyT")
     ]
 
 
@@ -2702,7 +2709,14 @@ typedKernelArgCoerce = Map.fromList
     , (("List",   "map"),     ["Pass", "AsList"])
     , (("List",   "filter"),  ["Pass", "AsList"])
     , (("List",   "take"),    ["AsInt", "AsList"])
+    , (("List",   "drop"),    ["AsInt", "AsList"])
     , (("List",   "cons"),    ["Pass", "AsList"])
+    , (("List",   "foldl"),   ["Pass", "Pass", "AsList"])
+    , (("List",   "foldr"),   ["Pass", "Pass", "AsList"])
+    , (("List",   "filterMap"), ["Pass", "AsList"])
+    , (("List",   "concatMap"), ["Pass", "AsList"])
+    , (("List",   "any"),     ["Pass", "AsList"])
+    , (("List",   "all"),     ["Pass", "AsList"])
     -- Basics: pure boolean / integer helpers
     , (("Basics", "not"),     ["AsBool"])
     , (("Basics", "modBy"),   ["AsInt", "AsInt"])
@@ -2764,6 +2778,8 @@ typedKernelLiterals = Set.fromList
     , ("Attr",   "class"),     ("Log",    "println")
     , ("Server", "html"),      ("Server", "redirect")
     , ("List",   "map"),       ("List",   "filter"),     ("List", "take"), ("List", "cons")
+    , ("List",   "drop"),      ("List",   "foldl"),      ("List", "foldr")
+    , ("List",   "filterMap"), ("List",   "concatMap"),  ("List", "any"), ("List", "all")
     , ("Basics", "not"),        ("Basics", "modBy"),  ("Basics", "errorToString")
     , ("Time",   "formatISO8601"), ("Time", "formatRFC3339"), ("Time", "formatHTTP")
     , ("Basics", "fst"),        ("Basics", "snd"),   ("Basics", "identity")

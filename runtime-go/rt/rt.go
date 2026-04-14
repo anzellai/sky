@@ -800,6 +800,68 @@ func List_consAnyT(x any, xs []any) []any {
 	return append([]any{x}, xs...)
 }
 
+func List_foldlAnyT(fn any, seed any, xs []any) any {
+	acc := seed
+	for _, x := range xs { acc = SkyCall(fn, acc, x) }
+	return acc
+}
+
+func List_foldrAnyT(fn any, seed any, xs []any) any {
+	acc := seed
+	for i := len(xs) - 1; i >= 0; i-- { acc = SkyCall(fn, xs[i], acc) }
+	return acc
+}
+
+func List_filterMapAnyT(fn any, xs []any) []any {
+	out := make([]any, 0, len(xs))
+	for _, x := range xs {
+		r := SkyCall(fn, x)
+		if m, ok := r.(SkyMaybe[any]); ok {
+			if m.Tag == 0 { out = append(out, m.JustValue) }
+			continue
+		}
+		// reflect fallback for typed SkyMaybe[T]
+		rv := reflect.ValueOf(r)
+		if rv.Kind() == reflect.Struct {
+			tag := rv.FieldByName("Tag")
+			val := rv.FieldByName("JustValue")
+			if tag.IsValid() && val.IsValid() && tag.Int() == 0 {
+				out = append(out, val.Interface())
+			}
+		}
+	}
+	return out
+}
+
+func List_concatMapAnyT(fn any, xs []any) []any {
+	out := []any{}
+	for _, x := range xs {
+		r := SkyCall(fn, x)
+		if sub, ok := r.([]any); ok { out = append(out, sub...) }
+	}
+	return out
+}
+
+func List_anyAnyT(fn any, xs []any) bool {
+	for _, x := range xs {
+		if b, ok := SkyCall(fn, x).(bool); ok && b { return true }
+	}
+	return false
+}
+
+func List_allAnyT(fn any, xs []any) bool {
+	for _, x := range xs {
+		if b, ok := SkyCall(fn, x).(bool); ok && !b { return false }
+	}
+	return true
+}
+
+func List_dropAnyT(n int, xs []any) []any {
+	if n < 0 { n = 0 }
+	if n > len(xs) { return []any{} }
+	return xs[n:]
+}
+
 func List_filterT[A any](fn func(A) bool, xs []A) []A {
 	out := make([]A, 0, len(xs))
 	for _, x := range xs {
