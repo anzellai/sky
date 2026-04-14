@@ -146,7 +146,7 @@ func Uuid_v4() any {
 	return func() any {
 		u, err := uuid.NewRandom()
 		if err != nil {
-			return Err[any, any]("uuid.v4: " + err.Error())
+			return Err[any, any](ErrFfi("uuid.v4: " + err.Error()))
 		}
 		return Ok[any, any](u.String())
 	}
@@ -159,7 +159,7 @@ func Uuid_v7() any {
 	return func() any {
 		u, err := uuid.NewV7()
 		if err != nil {
-			return Err[any, any]("uuid.v7: " + err.Error())
+			return Err[any, any](ErrFfi("uuid.v7: " + err.Error()))
 		}
 		return Ok[any, any](u.String())
 	}
@@ -171,7 +171,7 @@ func Uuid_v7() any {
 func Uuid_parse(s any) any {
 	u, err := uuid.Parse(fmt.Sprintf("%v", s))
 	if err != nil {
-		return Err[any, any]("uuid.parse: " + err.Error())
+		return Err[any, any](ErrFfi("uuid.parse: " + err.Error()))
 	}
 	return Ok[any, any](u.String())
 }
@@ -211,7 +211,7 @@ func Env_require(key any) any {
 		k := fmt.Sprintf("%v", key)
 		v, ok := envLookup(k)
 		if !ok {
-			return Err[any, any]("required env var not set: " + k)
+			return Err[any, any](ErrNotFound())
 		}
 		return Ok[any, any](v)
 	}

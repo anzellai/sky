@@ -1316,7 +1316,7 @@ func Live_app(cfg any) any {
 	fmt.Printf("Sky.Live listening on :%d\n", port)
 	err := srv.ListenAndServe()
 	if err != nil && err != http.ErrServerClosed {
-		return Err[any, any](err.Error())
+		return Err[any, any](ErrFfi(err.Error()))
 	}
 	return Ok[any, any](struct{}{})
 }

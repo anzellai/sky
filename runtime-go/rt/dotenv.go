@@ -56,7 +56,7 @@ func Process_loadEnv(path any) any {
 		p = ".env"
 	}
 	if err := loadDotEnvFile(p, false); err != nil {
-		return Err[any, any](err.Error())
+		return Err[any, any](ErrFfi(err.Error()))
 	}
 	return Ok[any, any](nil)
 }

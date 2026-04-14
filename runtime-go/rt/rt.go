@@ -994,7 +994,7 @@ func invokeFfi(name string, args []any, pureOnly bool) any {
 		return runWithRecover(name, args, fn)
 	}
 	ffiRegistryMu.RUnlock()
-	return Err[any, any]("Ffi: not registered: " + name)
+	return Err[any, any](ErrFfi("Ffi: not registered: " + name))
 }
 
 func runWithRecover(name string, args []any, fn func([]any) any) (result any) {
@@ -1342,12 +1342,12 @@ func Result_traverse(fn, items any) any {
 	out := make([]any, 0, len(xs))
 	f, ok := fn.(func(any) any)
 	if !ok {
-		return Err[any, any]("Result.traverse: fn must be a 1-arg function")
+		return Err[any, any](ErrInvalidInput("Result.traverse: fn must be a 1-arg function"))
 	}
 	for _, x := range xs {
 		r := f(x)
 		tag, okVal, err := anyResultView(r)
-		if tag < 0 { return Err[any, any]("Result.traverse: fn did not return a Result") }
+		if tag < 0 { return Err[any, any](ErrInvalidInput("Result.traverse: fn did not return a Result")) }
 		if tag != 0 { return Err[any, any](err) }
 		out = append(out, okVal)
 	}
@@ -1849,7 +1849,7 @@ func Hex_encode(bytes any) any { return Hex_encodeToString(bytes) }
 func Hex_decode(s any) any {
 	b, err := hex.DecodeString(fmt.Sprintf("%v", s))
 	if err != nil {
-		return Err[any, any](err.Error())
+		return Err[any, any](ErrFfi(err.Error()))
 	}
 	out := make([]any, len(b))
 	for i, v := range b {
@@ -1910,7 +1910,7 @@ func Os_getenv(name any) any {
 	k := fmt.Sprintf("%v", name)
 	v, ok := os.LookupEnv(k)
 	if !ok {
-		return Err[any, any]("env var not set: " + k)
+		return Err[any, any](ErrNotFound())
 	}
 	return Ok[any, any](v)
 }
@@ -1918,7 +1918,7 @@ func Os_getenv(name any) any {
 func Os_cwd(_ any) any {
 	wd, err := os.Getwd()
 	if err != nil {
-		return Err[any, any](err.Error())
+		return Err[any, any](ErrFfi(err.Error()))
 	}
 	return Ok[any, any](wd)
 }
@@ -1980,7 +1980,7 @@ func Time_parseISO8601(s any) any {
 		// Try without nanos
 		t, err = time.Parse(time.RFC3339, str)
 		if err != nil {
-			return Err[any, any]("parseISO8601: " + err.Error())
+			return Err[any, any](ErrDecode("parseISO8601: " + err.Error()))
 		}
 	}
 	return Ok[any, any](t.UnixMilli())
@@ -1991,7 +1991,7 @@ func Time_parseISO8601(s any) any {
 func Time_parse(layout any, s any) any {
 	t, err := time.Parse(fmt.Sprintf("%v", layout), fmt.Sprintf("%v", s))
 	if err != nil {
-		return Err[any, any]("time.parse: " + err.Error())
+		return Err[any, any](ErrDecode("time.parse: " + err.Error()))
 	}
 	return Ok[any, any](t.UnixMilli())
 }
@@ -2030,7 +2030,7 @@ func Random_float(lo any, hi any) any {
 func Random_choice(list any) any {
 	return func() any {
 		items := list.([]any)
-		if len(items) == 0 { return Err[any, any]("empty list") }
+		if len(items) == 0 { return Err[any, any](ErrInvalidInput("empty list")) }
 		return Ok[any, any](items[mrand.Intn(len(items))])
 	}
 }
@@ -2102,7 +2102,7 @@ func Process_exit(code any) any {
 func Process_getEnv(key any) any {
 	return func() any {
 		val := os.Getenv(fmt.Sprintf("%v", key))
-		if val == "" { return Err[any, any]("env var not set: " + fmt.Sprintf("%v", key)) }
+		if val == "" { return Err[any, any](ErrNotFound()) }
 		return Ok[any, any](val)
 	}
 }
@@ -2110,7 +2110,7 @@ func Process_getEnv(key any) any {
 func Process_getCwd() any {
 	return func() any {
 		dir, err := os.Getwd()
-		if err != nil { return Err[any, any](err.Error()) }
+		if err != nil { return Err[any, any](ErrFfi(err.Error())) }
 		return Ok[any, any](dir)
 	}
 }
@@ -2178,20 +2178,20 @@ func File_readFileLimit(path any, limit any) any {
 		}
 		f, err := os.Open(p)
 		if err != nil {
-			return Err[any, any](err.Error())
+			return Err[any, any](ErrFfi(err.Error()))
 		}
 		defer f.Close()
 		// Stat first so we can early-reject oversize files without reading them.
 		st, err := f.Stat()
 		if err != nil {
-			return Err[any, any](err.Error())
+			return Err[any, any](ErrFfi(err.Error()))
 		}
 		if st.Size() > n {
 			return Err[any, any](fmt.Sprintf("file exceeds %d-byte limit (actual: %d)", n, st.Size()))
 		}
 		data, err := io.ReadAll(io.LimitReader(f, n))
 		if err != nil {
-			return Err[any, any](err.Error())
+			return Err[any, any](ErrFfi(err.Error()))
 		}
 		return Ok[any, any](string(data))
 	}
@@ -2204,12 +2204,12 @@ func File_readFileBytes(path any) any {
 	return func() any {
 		f, err := os.Open(fmt.Sprintf("%v", path))
 		if err != nil {
-			return Err[any, any](err.Error())
+			return Err[any, any](ErrFfi(err.Error()))
 		}
 		defer f.Close()
 		data, err := io.ReadAll(io.LimitReader(f, defaultFileReadLimit))
 		if err != nil {
-			return Err[any, any](err.Error())
+			return Err[any, any](ErrFfi(err.Error()))
 		}
 		out := make([]any, len(data))
 		for i, b := range data {
@@ -2222,7 +2222,7 @@ func File_readFileBytes(path any) any {
 func File_writeFile(path any, content any) any {
 	return func() any {
 		err := os.WriteFile(fmt.Sprintf("%v", path), []byte(fmt.Sprintf("%v", content)), 0644)
-		if err != nil { return Err[any, any](err.Error()) }
+		if err != nil { return Err[any, any](ErrFfi(err.Error())) }
 		return Ok[any, any](struct{}{})
 	}
 }
@@ -2230,10 +2230,10 @@ func File_writeFile(path any, content any) any {
 func File_append(path any, content any) any {
 	return func() any {
 		f, err := os.OpenFile(fmt.Sprintf("%v", path), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-		if err != nil { return Err[any, any](err.Error()) }
+		if err != nil { return Err[any, any](ErrFfi(err.Error())) }
 		defer f.Close()
 		_, err = f.WriteString(fmt.Sprintf("%v", content))
-		if err != nil { return Err[any, any](err.Error()) }
+		if err != nil { return Err[any, any](ErrFfi(err.Error())) }
 		return Ok[any, any](struct{}{})
 	}
 }
@@ -2248,7 +2248,7 @@ func File_exists(path any) any {
 func File_remove(path any) any {
 	return func() any {
 		err := os.Remove(fmt.Sprintf("%v", path))
-		if err != nil { return Err[any, any](err.Error()) }
+		if err != nil { return Err[any, any](ErrFfi(err.Error())) }
 		return Ok[any, any](struct{}{})
 	}
 }
@@ -2256,7 +2256,7 @@ func File_remove(path any) any {
 func File_mkdirAll(path any) any {
 	return func() any {
 		err := os.MkdirAll(fmt.Sprintf("%v", path), 0755)
-		if err != nil { return Err[any, any](err.Error()) }
+		if err != nil { return Err[any, any](ErrFfi(err.Error())) }
 		return Ok[any, any](struct{}{})
 	}
 }
@@ -2264,7 +2264,7 @@ func File_mkdirAll(path any) any {
 func File_readDir(path any) any {
 	return func() any {
 		entries, err := os.ReadDir(fmt.Sprintf("%v", path))
-		if err != nil { return Err[any, any](err.Error()) }
+		if err != nil { return Err[any, any](ErrFfi(err.Error())) }
 		result := make([]any, len(entries))
 		for i, e := range entries { result[i] = e.Name() }
 		return Ok[any, any](result)
@@ -2340,7 +2340,7 @@ func Io_readLine() any {
 	return func() any {
 		if stdinReader == nil { stdinReader = bufio.NewReader(os.Stdin) }
 		line, err := stdinReader.ReadString('\n')
-		if err != nil && err != io.EOF { return Err[any, any](err.Error()) }
+		if err != nil && err != io.EOF { return Err[any, any](ErrFfi(err.Error())) }
 		return Ok[any, any](strings.TrimRight(line, "\n\r"))
 	}
 }
@@ -2432,11 +2432,11 @@ func Crypto_randomBytes(n any) any {
 	return func() any {
 		size := AsInt(n)
 		if size <= 0 || size > 1024 {
-			return Err[any, any]("Crypto.randomBytes: size must be 1..1024")
+			return Err[any, any](ErrInvalidInput("Crypto.randomBytes: size must be 1..1024"))
 		}
 		b := make([]byte, size)
 		if _, err := cryptorand.Read(b); err != nil {
-			return Err[any, any]("Crypto.randomBytes: " + err.Error())
+			return Err[any, any](ErrFfi("Crypto.randomBytes: " + err.Error()))
 		}
 		return Ok[any, any](hex.EncodeToString(b))
 	}
@@ -2449,11 +2449,11 @@ func Crypto_randomToken(n any) any {
 	return func() any {
 		size := AsInt(n)
 		if size <= 0 || size > 1024 {
-			return Err[any, any]("Crypto.randomToken: size must be 1..1024")
+			return Err[any, any](ErrInvalidInput("Crypto.randomToken: size must be 1..1024"))
 		}
 		b := make([]byte, size)
 		if _, err := cryptorand.Read(b); err != nil {
-			return Err[any, any]("Crypto.randomToken: " + err.Error())
+			return Err[any, any](ErrFfi("Crypto.randomToken: " + err.Error()))
 		}
 		return Ok[any, any](base64.RawURLEncoding.EncodeToString(b))
 	}
@@ -2469,7 +2469,7 @@ func Encoding_base64Encode(s any) any {
 
 func Encoding_base64Decode(s any) any {
 	data, err := base64.StdEncoding.DecodeString(fmt.Sprintf("%v", s))
-	if err != nil { return Err[any, any](err.Error()) }
+	if err != nil { return Err[any, any](ErrFfi(err.Error())) }
 	return Ok[any, any](string(data))
 }
 
@@ -2479,7 +2479,7 @@ func Encoding_urlEncode(s any) any {
 
 func Encoding_urlDecode(s any) any {
 	decoded, err := url.QueryUnescape(fmt.Sprintf("%v", s))
-	if err != nil { return Err[any, any](err.Error()) }
+	if err != nil { return Err[any, any](ErrFfi(err.Error())) }
 	return Ok[any, any](decoded)
 }
 
@@ -2489,7 +2489,7 @@ func Encoding_hexEncode(s any) any {
 
 func Encoding_hexDecode(s any) any {
 	data, err := hex.DecodeString(fmt.Sprintf("%v", s))
-	if err != nil { return Err[any, any](err.Error()) }
+	if err != nil { return Err[any, any](ErrFfi(err.Error())) }
 	return Ok[any, any](string(data))
 }
 
@@ -3060,7 +3060,7 @@ func Server_listen(port any, routes any) any {
 	fmt.Printf("Sky server listening on http://localhost:%d\n", p)
 	err := srv.ListenAndServe()
 	if err != nil && err != http.ErrServerClosed {
-		return Err[any, any](err.Error())
+		return Err[any, any](ErrFfi(err.Error()))
 	}
 	return Ok[any, any](struct{}{})
 }
@@ -3640,7 +3640,7 @@ func SkyFfiFieldSet(value any, recv any, field string) any {
 //   true  → last Go return must be error; Ok(prefix)/Err on non-nil
 func SkyFfiReflectCall(fn reflect.Value, hasError bool, args []any) any {
 	if !fn.IsValid() || fn.Kind() != reflect.Func {
-		return Err[any, any]("SkyFfiReflectCall: not a function value")
+		return Err[any, any](ErrFfi("SkyFfiReflectCall: not a function value"))
 	}
 	ft := fn.Type()
 	n := ft.NumIn()
@@ -3691,7 +3691,7 @@ func unpackReflectResults(results []reflect.Value, hasError bool) any {
 	case n == 1 && hasError:
 		err, _ := results[0].Interface().(error)
 		if err != nil {
-			return Err[any, any](err.Error())
+			return Err[any, any](ErrFfi(err.Error()))
 		}
 		return Ok[any, any](struct{}{})
 	case n == 1:
@@ -3699,7 +3699,7 @@ func unpackReflectResults(results []reflect.Value, hasError bool) any {
 	case hasError:
 		err, _ := results[n-1].Interface().(error)
 		if err != nil {
-			return Err[any, any](err.Error())
+			return Err[any, any](ErrFfi(err.Error()))
 		}
 		if n == 2 {
 			return Ok[any, any](results[0].Interface())

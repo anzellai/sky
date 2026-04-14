@@ -271,7 +271,7 @@ func JsonDec_decodeString(decoder any, input any) any {
 	var raw any
 	err := json.Unmarshal([]byte(s), &raw)
 	if err != nil {
-		return Err[any, any]("JSON parse error: " + err.Error())
+		return Err[any, any](ErrDecode("JSON parse error: " + err.Error()))
 	}
 	d, ok := decoder.(JsonDecoder)
 	if !ok {
@@ -285,7 +285,7 @@ func JsonDec_string() any {
 		if s, ok := v.(string); ok {
 			return Ok[any, any](s)
 		}
-		return Err[any, any]("expected string")
+		return Err[any, any](ErrDecode("expected string"))
 	}}
 }
 
@@ -294,7 +294,7 @@ func JsonDec_int() any {
 		if f, ok := v.(float64); ok {
 			return Ok[any, any](int(f))
 		}
-		return Err[any, any]("expected int")
+		return Err[any, any](ErrDecode("expected int"))
 	}}
 }
 
@@ -303,7 +303,7 @@ func JsonDec_float() any {
 		if f, ok := v.(float64); ok {
 			return Ok[any, any](f)
 		}
-		return Err[any, any]("expected float")
+		return Err[any, any](ErrDecode("expected float"))
 	}}
 }
 
@@ -312,7 +312,7 @@ func JsonDec_bool() any {
 		if b, ok := v.(bool); ok {
 			return Ok[any, any](b)
 		}
-		return Err[any, any]("expected bool")
+		return Err[any, any](ErrDecode("expected bool"))
 	}}
 }
 
@@ -320,11 +320,11 @@ func JsonDec_field(name any, inner any) any {
 	return JsonDecoder{run: func(v any) any {
 		m, ok := v.(map[string]any)
 		if !ok {
-			return Err[any, any]("expected object")
+			return Err[any, any](ErrDecode("expected object"))
 		}
 		fv, exists := m[fmt.Sprintf("%v", name)]
 		if !exists {
-			return Err[any, any]("missing field: " + fmt.Sprintf("%v", name))
+			return Err[any, any](ErrDecode("missing field: " + fmt.Sprintf("%v", name)))
 		}
 		if d, ok := inner.(JsonDecoder); ok {
 			return d.run(fv)
@@ -337,7 +337,7 @@ func JsonDec_list(inner any) any {
 	return JsonDecoder{run: func(v any) any {
 		arr, ok := v.([]any)
 		if !ok {
-			return Err[any, any]("expected array")
+			return Err[any, any](ErrDecode("expected array"))
 		}
 		out := make([]any, 0, len(arr))
 		for _, item := range arr {
@@ -369,7 +369,7 @@ func JsonDec_map(fn any, inner any) any {
 				return Ok[any, any](f(sr.OkValue))
 			}
 		}
-		return Err[any, any]("decode error")
+		return Err[any, any](ErrDecode("decode error"))
 	}}
 }
 
@@ -388,7 +388,7 @@ func JsonDec_andThen(fn any, inner any) any {
 				}
 			}
 		}
-		return Err[any, any]("decode error")
+		return Err[any, any](ErrDecode("decode error"))
 	}}
 }
 
@@ -404,7 +404,7 @@ func JsonDec_oneOf(decoders any) any {
 				}
 			}
 		}
-		return Err[any, any]("oneOf: no decoder matched")
+		return Err[any, any](ErrDecode("oneOf: no decoder matched"))
 	}}
 }
 
@@ -429,11 +429,11 @@ func JsonDec_at(path any, inner any) any {
 		for _, seg := range asList(path) {
 			m, ok := cur.(map[string]any)
 			if !ok {
-				return Err[any, any]("at: expected object at " + fmt.Sprintf("%v", seg))
+				return Err[any, any](ErrDecode("at: expected object at " + fmt.Sprintf("%v", seg)))
 			}
 			fv, exists := m[fmt.Sprintf("%v", seg)]
 			if !exists {
-				return Err[any, any]("at: missing " + fmt.Sprintf("%v", seg))
+				return Err[any, any](ErrDecode("at: missing " + fmt.Sprintf("%v", seg)))
 			}
 			cur = fv
 		}
@@ -487,7 +487,7 @@ func JsonDec_map5(fn, d1, d2, d3, d4, d5 any) any {
 func runDec(d, v any) any {
 	dd, ok := d.(JsonDecoder)
 	if !ok {
-		return Err[any, any]("expected decoder")
+		return Err[any, any](ErrDecode("expected decoder"))
 	}
 	return dd.run(v)
 }
@@ -522,7 +522,7 @@ func JsonDecP_required(name any, inner any, fnDec any) any {
 		// Run fnDec to get a function
 		fd, ok := fnDec.(JsonDecoder)
 		if !ok {
-			return Err[any, any]("pipeline: fn decoder required")
+			return Err[any, any](ErrDecode("pipeline: fn decoder required"))
 		}
 		fnR := fd.run(v)
 		fnSr, ok := fnR.(SkyResult[any, any])
@@ -532,15 +532,15 @@ func JsonDecP_required(name any, inner any, fnDec any) any {
 		// Extract field
 		m, ok := v.(map[string]any)
 		if !ok {
-			return Err[any, any]("pipeline.required: expected object")
+			return Err[any, any](ErrDecode("pipeline.required: expected object"))
 		}
 		fv, exists := m[fmt.Sprintf("%v", name)]
 		if !exists {
-			return Err[any, any]("pipeline.required: missing field " + fmt.Sprintf("%v", name))
+			return Err[any, any](ErrDecode("pipeline.required: missing field " + fmt.Sprintf("%v", name)))
 		}
 		innerDec, ok := inner.(JsonDecoder)
 		if !ok {
-			return Err[any, any]("pipeline.required: invalid inner decoder")
+			return Err[any, any](ErrDecode("pipeline.required: invalid inner decoder"))
 		}
 		innerR := innerDec.run(fv)
 		innerSr, ok := innerR.(SkyResult[any, any])
@@ -557,7 +557,7 @@ func JsonDecP_optional(name any, inner any, def any, fnDec any) any {
 	return JsonDecoder{run: func(v any) any {
 		fd, ok := fnDec.(JsonDecoder)
 		if !ok {
-			return Err[any, any]("pipeline: fn decoder required")
+			return Err[any, any](ErrDecode("pipeline: fn decoder required"))
 		}
 		fnR := fd.run(v)
 		fnSr, ok := fnR.(SkyResult[any, any])
@@ -584,7 +584,7 @@ func JsonDecP_custom(inner any, fnDec any) any {
 	return JsonDecoder{run: func(v any) any {
 		fd, ok := fnDec.(JsonDecoder)
 		if !ok {
-			return Err[any, any]("pipeline: fn decoder required")
+			return Err[any, any](ErrDecode("pipeline: fn decoder required"))
 		}
 		fnR := fd.run(v)
 		fnSr, ok := fnR.(SkyResult[any, any])
@@ -593,7 +593,7 @@ func JsonDecP_custom(inner any, fnDec any) any {
 		}
 		innerDec, ok := inner.(JsonDecoder)
 		if !ok {
-			return Err[any, any]("pipeline.custom: invalid inner")
+			return Err[any, any](ErrDecode("pipeline.custom: invalid inner"))
 		}
 		innerR := innerDec.run(v)
 		innerSr, ok := innerR.(SkyResult[any, any])
@@ -609,7 +609,7 @@ func JsonDecP_requiredAt(path any, inner any, fnDec any) any {
 	return JsonDecoder{run: func(v any) any {
 		fd, ok := fnDec.(JsonDecoder)
 		if !ok {
-			return Err[any, any]("pipeline: fn decoder required")
+			return Err[any, any](ErrDecode("pipeline: fn decoder required"))
 		}
 		fnR := fd.run(v)
 		fnSr, ok := fnR.(SkyResult[any, any])
@@ -620,17 +620,17 @@ func JsonDecP_requiredAt(path any, inner any, fnDec any) any {
 		for _, seg := range asList(path) {
 			m, ok := cur.(map[string]any)
 			if !ok {
-				return Err[any, any]("pipeline.requiredAt: expected object at " + fmt.Sprintf("%v", seg))
+				return Err[any, any](ErrDecode("pipeline.requiredAt: expected object at " + fmt.Sprintf("%v", seg)))
 			}
 			fv, exists := m[fmt.Sprintf("%v", seg)]
 			if !exists {
-				return Err[any, any]("pipeline.requiredAt: missing " + fmt.Sprintf("%v", seg))
+				return Err[any, any](ErrDecode("pipeline.requiredAt: missing " + fmt.Sprintf("%v", seg)))
 			}
 			cur = fv
 		}
 		innerDec, ok := inner.(JsonDecoder)
 		if !ok {
-			return Err[any, any]("pipeline.requiredAt: invalid inner")
+			return Err[any, any](ErrDecode("pipeline.requiredAt: invalid inner"))
 		}
 		innerR := innerDec.run(cur)
 		innerSr, ok := innerR.(SkyResult[any, any])
@@ -739,7 +739,7 @@ func Path_safeJoin(root any, rel any) any {
 	// paths; strict lexical comparison is sufficient here).
 	absRoot, err := filepath.Abs(rootStr)
 	if err != nil {
-		return Err[any, any]("safeJoin: " + err.Error())
+		return Err[any, any](ErrIo("safeJoin: " + err.Error()))
 	}
 	absRoot = filepath.Clean(absRoot)
 
@@ -751,7 +751,7 @@ func Path_safeJoin(root any, rel any) any {
 	}
 	sep := string(filepath.Separator)
 	if !strings.HasPrefix(joined, absRoot+sep) {
-		return Err[any, any]("safeJoin: path escapes root")
+		return Err[any, any](ErrInvalidInput("safeJoin: path escapes root"))
 	}
 	return Ok[any, any](joined)
 }
@@ -808,11 +808,11 @@ func Http_get(url any) any {
 	return func() any {
 		resp, err := skyHttpClient.Get(u)
 		if err != nil {
-			return Err[any, any]("http.get: " + err.Error())
+			return Err[any, any](ErrNetwork("http.get: " + err.Error()))
 		}
 		body, err := readBoundedBody(resp.Body)
 		if err != nil {
-			return Err[any, any]("http.get read: " + err.Error())
+			return Err[any, any](ErrNetwork("http.get read: " + err.Error()))
 		}
 		hdrs := map[string]string{}
 		for k, v := range resp.Header {
@@ -859,11 +859,11 @@ func Http_post(url any, body any) any {
 	return func() any {
 		resp, err := skyHttpClient.Post(u, "application/json", strings.NewReader(b))
 		if err != nil {
-			return Err[any, any]("http.post: " + err.Error())
+			return Err[any, any](ErrNetwork("http.post: " + err.Error()))
 		}
 		rb, err := readBoundedBody(resp.Body)
 		if err != nil {
-			return Err[any, any]("http.post read: " + err.Error())
+			return Err[any, any](ErrNetwork("http.post read: " + err.Error()))
 		}
 		hdrs := map[string]string{}
 		for k, v := range resp.Header {
@@ -888,7 +888,7 @@ func Http_request(method any, url any, body any, headers any) any {
 	return func() any {
 		req, err := http.NewRequest(m, u, strings.NewReader(b))
 		if err != nil {
-			return Err[any, any]("http.request: " + err.Error())
+			return Err[any, any](ErrNetwork("http.request: " + err.Error()))
 		}
 		if hm, ok := headers.(map[string]any); ok {
 			for k, v := range hm {
@@ -897,11 +897,11 @@ func Http_request(method any, url any, body any, headers any) any {
 		}
 		resp, err := skyHttpClient.Do(req)
 		if err != nil {
-			return Err[any, any]("http.request do: " + err.Error())
+			return Err[any, any](ErrNetwork("http.request do: " + err.Error()))
 		}
 		rb, err := readBoundedBody(resp.Body)
 		if err != nil {
-			return Err[any, any]("http.request read: " + err.Error())
+			return Err[any, any](ErrNetwork("http.request read: " + err.Error()))
 		}
 		hdrs := map[string]string{}
 		for k, v := range resp.Header {

@@ -107,10 +107,10 @@ func Db_connect(path any) any {
 	driver, dsn := detectDriver(p)
 	conn, err := sql.Open(driver, dsn)
 	if err != nil {
-		return Err[any, any]("db connect: " + err.Error())
+		return Err[any, any](ErrIo("db connect: " + err.Error()))
 	}
 	if err := conn.Ping(); err != nil {
-		return Err[any, any]("db ping: " + err.Error())
+		return Err[any, any](ErrIo("db ping: " + err.Error()))
 	}
 	db := &SkyDb{conn: conn, name: p, driver: driver}
 	dbRegistry[p] = db
@@ -143,7 +143,7 @@ func Db_open(args ...any) any {
 	case 2:
 		return Db_connect(args[1])
 	default:
-		return Err[any, any]("Db.open: expected 1 or 2 args")
+		return Err[any, any](ErrInvalidInput("Db.open: expected 1 or 2 args"))
 	}
 }
 
@@ -157,10 +157,10 @@ func Db_execRaw(db any, query any) any {
 func Db_close(db any) any {
 	d, ok := db.(*SkyDb)
 	if !ok {
-		return Err[any, any]("db.close: not a Db")
+		return Err[any, any](ErrInvalidInput("db.close: not a Db"))
 	}
 	if err := d.conn.Close(); err != nil {
-		return Err[any, any](err.Error())
+		return Err[any, any](ErrFfi(err.Error()))
 	}
 	return Ok[any, any](struct{}{})
 }
@@ -170,7 +170,7 @@ func Db_close(db any) any {
 func Db_exec(db any, query any, args any) any {
 	d, ok := db.(*SkyDb)
 	if !ok {
-		return Err[any, any]("db.exec: not a Db")
+		return Err[any, any](ErrInvalidInput("db.exec: not a Db"))
 	}
 	argList := asList(args)
 	goArgs := make([]any, len(argList))
@@ -179,7 +179,7 @@ func Db_exec(db any, query any, args any) any {
 	}
 	res, err := d.conn.Exec(fmt.Sprintf("%v", query), goArgs...)
 	if err != nil {
-		return Err[any, any]("db.exec: " + err.Error())
+		return Err[any, any](ErrIo("db.exec: " + err.Error()))
 	}
 	n, _ := res.RowsAffected()
 	return Ok[any, any](int(n))
@@ -190,7 +190,7 @@ func Db_exec(db any, query any, args any) any {
 func Db_query(db any, query any, args any) any {
 	d, ok := db.(*SkyDb)
 	if !ok {
-		return Err[any, any]("db.query: not a Db")
+		return Err[any, any](ErrInvalidInput("db.query: not a Db"))
 	}
 	argList := asList(args)
 	goArgs := make([]any, len(argList))
@@ -199,13 +199,13 @@ func Db_query(db any, query any, args any) any {
 	}
 	rows, err := d.conn.Query(fmt.Sprintf("%v", query), goArgs...)
 	if err != nil {
-		return Err[any, any]("db.query: " + err.Error())
+		return Err[any, any](ErrIo("db.query: " + err.Error()))
 	}
 	defer rows.Close()
 
 	cols, err := rows.Columns()
 	if err != nil {
-		return Err[any, any]("db.query columns: " + err.Error())
+		return Err[any, any](ErrIo("db.query columns: " + err.Error()))
 	}
 	var out []any
 	for rows.Next() {
@@ -215,7 +215,7 @@ func Db_query(db any, query any, args any) any {
 			ptrs[i] = &raw[i]
 		}
 		if err := rows.Scan(ptrs...); err != nil {
-			return Err[any, any]("db.query scan: " + err.Error())
+			return Err[any, any](ErrIo("db.query scan: " + err.Error()))
 		}
 		rowDict := map[string]any{}
 		for i, c := range cols {
@@ -244,7 +244,7 @@ func Db_queryDecode(db any, query any, args any, decoder any) any {
 		result := d.run(row)
 		sr, ok := result.(SkyResult[any, any])
 		if !ok {
-			return Err[any, any]("decode error")
+			return Err[any, any](ErrDecode("decode error"))
 		}
 		if sr.Tag != 0 {
 			return result
@@ -261,22 +261,22 @@ func Db_queryDecode(db any, query any, args any, decoder any) any {
 func Db_insertRow(db any, table any, row any) any {
 	d, ok := db.(*SkyDb)
 	if !ok {
-		return Err[any, any]("db.insertRow: not a Db")
+		return Err[any, any](ErrInvalidInput("db.insertRow: not a Db"))
 	}
 	m, ok := row.(map[string]any)
 	if !ok {
-		return Err[any, any]("db.insertRow: row must be a Dict")
+		return Err[any, any](ErrInvalidInput("db.insertRow: row must be a Dict"))
 	}
 	qTable := safeTable(table)
 	if qTable == "" {
-		return Err[any, any]("db.insertRow: invalid table name")
+		return Err[any, any](ErrInvalidInput("db.insertRow: invalid table name"))
 	}
 	var cols []string
 	var vals []any
 	for k, v := range m {
 		qc := quoteIdent(k)
 		if qc == "" {
-			return Err[any, any]("db.insertRow: invalid column name: " + k)
+			return Err[any, any](ErrInvalidInput("db.insertRow: invalid column name: " + k))
 		}
 		cols = append(cols, qc)
 		vals = append(vals, v)
@@ -288,13 +288,13 @@ func Db_insertRow(db any, table any, row any) any {
 		q += " RETURNING id"
 		var id int64
 		if err := d.conn.QueryRow(q, vals...).Scan(&id); err != nil {
-			return Err[any, any]("db.insertRow: " + err.Error())
+			return Err[any, any](ErrIo("db.insertRow: " + err.Error()))
 		}
 		return Ok[any, any](int(id))
 	}
 	res, err := d.conn.Exec(q, vals...)
 	if err != nil {
-		return Err[any, any]("db.insertRow: " + err.Error())
+		return Err[any, any](ErrIo("db.insertRow: " + err.Error()))
 	}
 	id, _ := res.LastInsertId()
 	return Ok[any, any](int(id))
@@ -304,11 +304,11 @@ func Db_insertRow(db any, table any, row any) any {
 func Db_getById(db any, table any, id any) any {
 	d, ok := db.(*SkyDb)
 	if !ok {
-		return Err[any, any]("db.getById: not a Db")
+		return Err[any, any](ErrInvalidInput("db.getById: not a Db"))
 	}
 	qTable := safeTable(table)
 	if qTable == "" {
-		return Err[any, any]("db.getById: invalid table name")
+		return Err[any, any](ErrInvalidInput("db.getById: invalid table name"))
 	}
 	q := fmt.Sprintf("SELECT * FROM %s WHERE id = %s LIMIT 1", qTable, d.placeholder(1))
 	result := Db_query(db, q, []any{AsInt(id)})
@@ -318,7 +318,7 @@ func Db_getById(db any, table any, id any) any {
 	}
 	rows := r.OkValue.([]any)
 	if len(rows) == 0 {
-		return Err[any, any]("not found")
+		return Err[any, any](ErrNotFound())
 	}
 	return Ok[any, any](rows[0])
 }
@@ -327,15 +327,15 @@ func Db_getById(db any, table any, id any) any {
 func Db_updateById(db any, table any, id any, row any) any {
 	d, ok := db.(*SkyDb)
 	if !ok {
-		return Err[any, any]("db.updateById: not a Db")
+		return Err[any, any](ErrInvalidInput("db.updateById: not a Db"))
 	}
 	m, ok := row.(map[string]any)
 	if !ok {
-		return Err[any, any]("db.updateById: row must be a Dict")
+		return Err[any, any](ErrInvalidInput("db.updateById: row must be a Dict"))
 	}
 	qTable := safeTable(table)
 	if qTable == "" {
-		return Err[any, any]("db.updateById: invalid table name")
+		return Err[any, any](ErrInvalidInput("db.updateById: invalid table name"))
 	}
 	var sets []string
 	var vals []any
@@ -343,7 +343,7 @@ func Db_updateById(db any, table any, id any, row any) any {
 	for k, v := range m {
 		qc := quoteIdent(k)
 		if qc == "" {
-			return Err[any, any]("db.updateById: invalid column name: " + k)
+			return Err[any, any](ErrInvalidInput("db.updateById: invalid column name: " + k))
 		}
 		sets = append(sets, qc+" = "+d.placeholder(i))
 		vals = append(vals, v)
@@ -353,7 +353,7 @@ func Db_updateById(db any, table any, id any, row any) any {
 	q := fmt.Sprintf("UPDATE %s SET %s WHERE id = %s", qTable, strings.Join(sets, ","), d.placeholder(i))
 	res, err := d.conn.Exec(q, vals...)
 	if err != nil {
-		return Err[any, any]("db.updateById: " + err.Error())
+		return Err[any, any](ErrIo("db.updateById: " + err.Error()))
 	}
 	n, _ := res.RowsAffected()
 	return Ok[any, any](int(n))
@@ -363,16 +363,16 @@ func Db_updateById(db any, table any, id any, row any) any {
 func Db_deleteById(db any, table any, id any) any {
 	d, ok := db.(*SkyDb)
 	if !ok {
-		return Err[any, any]("db.deleteById: not a Db")
+		return Err[any, any](ErrInvalidInput("db.deleteById: not a Db"))
 	}
 	qTable := safeTable(table)
 	if qTable == "" {
-		return Err[any, any]("db.deleteById: invalid table name")
+		return Err[any, any](ErrInvalidInput("db.deleteById: invalid table name"))
 	}
 	q := fmt.Sprintf("DELETE FROM %s WHERE id = %s", qTable, d.placeholder(1))
 	res, err := d.conn.Exec(q, AsInt(id))
 	if err != nil {
-		return Err[any, any]("db.deleteById: " + err.Error())
+		return Err[any, any](ErrIo("db.deleteById: " + err.Error()))
 	}
 	n, _ := res.RowsAffected()
 	return Ok[any, any](int(n))
@@ -387,7 +387,7 @@ func Db_deleteById(db any, table any, id any) any {
 func Db_findWhere(db any, table any, whereClause any, args any) any {
 	qTable := safeTable(table)
 	if qTable == "" {
-		return Err[any, any]("db.findWhere: invalid table name")
+		return Err[any, any](ErrInvalidInput("db.findWhere: invalid table name"))
 	}
 	q := fmt.Sprintf("SELECT * FROM %s WHERE %v", qTable, whereClause)
 	return Db_query(db, q, args)
@@ -397,23 +397,23 @@ func Db_findWhere(db any, table any, whereClause any, args any) any {
 func Db_withTransaction(db any, body any) any {
 	d, ok := db.(*SkyDb)
 	if !ok {
-		return Err[any, any]("db.withTransaction: not a Db")
+		return Err[any, any](ErrInvalidInput("db.withTransaction: not a Db"))
 	}
 	tx, err := d.conn.Begin()
 	if err != nil {
-		return Err[any, any]("tx begin: " + err.Error())
+		return Err[any, any](ErrFfi("tx begin: " + err.Error()))
 	}
 	// We don't have a separate tx handle type yet — pass the db. The semantics
 	// are conservative: if body returns Err, roll back. Otherwise commit.
 	fn, ok := body.(func(any) any)
 	if !ok {
 		tx.Rollback()
-		return Err[any, any]("withTransaction: body is not a function")
+		return Err[any, any](ErrInvalidInput("withTransaction: body is not a function"))
 	}
 	result := fn(db)
 	if sr, ok := result.(SkyResult[any, any]); ok && sr.Tag == 0 {
 		if err := tx.Commit(); err != nil {
-			return Err[any, any]("tx commit: " + err.Error())
+			return Err[any, any](ErrFfi("tx commit: " + err.Error()))
 		}
 		return result
 	}
@@ -459,16 +459,16 @@ func Auth_hashPasswordCost(pw any, cost any) any {
 		c = bcrypt.MaxCost
 	}
 	if len(s) < 8 {
-		return Err[any, any]("hashPassword: password must be at least 8 characters")
+		return Err[any, any](ErrInvalidInput("hashPassword: password must be at least 8 characters"))
 	}
 	// bcrypt truncates at 72 bytes — reject overlong passwords explicitly
 	// to avoid the silent-truncation footgun where pw[0:72] collides.
 	if len(s) > 72 {
-		return Err[any, any]("hashPassword: password longer than 72 bytes (use a KDF like argon2 for long inputs)")
+		return Err[any, any](ErrInvalidInput("hashPassword: password longer than 72 bytes (use a KDF like argon2 for long inputs)"))
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(s), c)
 	if err != nil {
-		return Err[any, any]("hashPassword: " + err.Error())
+		return Err[any, any](ErrFfi("hashPassword: " + err.Error()))
 	}
 	return Ok[any, any](string(hash))
 }
@@ -479,10 +479,10 @@ func Auth_hashPasswordCost(pw any, cost any) any {
 func Auth_passwordStrength(pw any) any {
 	s := fmt.Sprintf("%v", pw)
 	if len(s) < 8 {
-		return Err[any, any]("password must be at least 8 characters")
+		return Err[any, any](ErrInvalidInput("password must be at least 8 characters"))
 	}
 	if len(s) > 72 {
-		return Err[any, any]("password longer than 72 bytes (bcrypt limit)")
+		return Err[any, any](ErrInvalidInput("password longer than 72 bytes (bcrypt limit)"))
 	}
 	hasLetter := false
 	hasDigit := false
@@ -495,10 +495,10 @@ func Auth_passwordStrength(pw any) any {
 		}
 	}
 	if !hasLetter {
-		return Err[any, any]("password must contain a letter")
+		return Err[any, any](ErrInvalidInput("password must contain a letter"))
 	}
 	if !hasDigit {
-		return Err[any, any]("password must contain a digit")
+		return Err[any, any](ErrInvalidInput("password must contain a digit"))
 	}
 	return Ok[any, any](struct{}{})
 }
@@ -533,7 +533,7 @@ func Auth_signToken(secret any, claims any, expirySeconds any) any {
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, mc)
 	signed, err := token.SignedString([]byte(fmt.Sprintf("%v", secret)))
 	if err != nil {
-		return Err[any, any]("signToken: " + err.Error())
+		return Err[any, any](ErrFfi("signToken: " + err.Error()))
 	}
 	return Ok[any, any](signed)
 }
@@ -547,14 +547,14 @@ func Auth_verifyToken(secret any, token any) any {
 		return []byte(fmt.Sprintf("%v", secret)), nil
 	})
 	if err != nil {
-		return Err[any, any]("verifyToken: " + err.Error())
+		return Err[any, any](ErrFfi("verifyToken: " + err.Error()))
 	}
 	if !parsed.Valid {
-		return Err[any, any]("verifyToken: invalid token")
+		return Err[any, any](ErrPermissionDenied("verifyToken: invalid token"))
 	}
 	claims, ok := parsed.Claims.(jwt.MapClaims)
 	if !ok {
-		return Err[any, any]("verifyToken: bad claims")
+		return Err[any, any](ErrPermissionDenied("verifyToken: bad claims"))
 	}
 	out := map[string]any{}
 	for k, v := range claims {
@@ -568,7 +568,7 @@ func Auth_verifyToken(secret any, token any) any {
 func Auth_register(db any, email any, password any) any {
 	d, ok := db.(*SkyDb)
 	if !ok {
-		return Err[any, any]("auth.register: not a Db")
+		return Err[any, any](ErrInvalidInput("auth.register: not a Db"))
 	}
 	// Use portable schema — `SERIAL`/`AUTOINCREMENT` varies, so use lowest
 	// common denominator and let each DB handle sequence.
@@ -580,7 +580,7 @@ func Auth_register(db any, email any, password any) any {
 		created_at BIGINT NOT NULL
 	)`
 	if _, err := d.conn.Exec(schema); err != nil {
-		return Err[any, any]("auth.register create: " + err.Error())
+		return Err[any, any](ErrFfi("auth.register create: " + err.Error()))
 	}
 	hashResult := Auth_hashPassword(password)
 	hr, ok := hashResult.(SkyResult[any, any])
@@ -599,7 +599,7 @@ func Auth_register(db any, email any, password any) any {
 			hr.OkValue,
 			time.Now().Unix(),
 		).Scan(&id); err != nil {
-			return Err[any, any]("auth.register: " + err.Error())
+			return Err[any, any](ErrFfi("auth.register: " + err.Error()))
 		}
 		return Ok[any, any](int(id))
 	}
@@ -609,7 +609,7 @@ func Auth_register(db any, email any, password any) any {
 		time.Now().Unix(),
 	)
 	if err != nil {
-		return Err[any, any]("auth.register: " + err.Error())
+		return Err[any, any](ErrFfi("auth.register: " + err.Error()))
 	}
 	id, _ := res.LastInsertId()
 	return Ok[any, any](int(id))
@@ -627,7 +627,7 @@ func autoIdColumn(driver string) string {
 func Auth_login(db any, email any, password any) any {
 	d, ok := db.(*SkyDb)
 	if !ok {
-		return Err[any, any]("auth.login: not a Db")
+		return Err[any, any](ErrInvalidInput("auth.login: not a Db"))
 	}
 	row := d.conn.QueryRow(
 		fmt.Sprintf("SELECT id, email, password_hash, role FROM users WHERE email = %s", d.placeholder(1)),
@@ -636,11 +636,11 @@ func Auth_login(db any, email any, password any) any {
 	var id int
 	var em, hash, role string
 	if err := row.Scan(&id, &em, &hash, &role); err != nil {
-		return Err[any, any]("auth.login: " + err.Error())
+		return Err[any, any](ErrFfi("auth.login: " + err.Error()))
 	}
 	ok2 := Auth_verifyPassword(password, hash)
 	if b, isB := ok2.(bool); !isB || !b {
-		return Err[any, any]("auth.login: invalid credentials")
+		return Err[any, any](ErrPermissionDenied("auth.login: invalid credentials"))
 	}
 	return Ok[any, any](map[string]any{
 		"id":    id,
@@ -660,9 +660,9 @@ func Db_getField(row any, fname any) any {
 		if v, exists := m[fmt.Sprintf("%v", fname)]; exists {
 			return Ok[any, any](v)
 		}
-		return Err[any, any]("getField: no field '" + fmt.Sprintf("%v", fname) + "'")
+		return Err[any, any](ErrInvalidInput("getField: no field '" + fmt.Sprintf("%v", fname) + "'"))
 	}
-	return Err[any, any]("getField: row is not a record")
+	return Err[any, any](ErrInvalidInput("getField: row is not a record"))
 }
 
 // Db.getFieldOr : default -> row -> fieldName -> any
@@ -681,7 +681,7 @@ func Db_getString(row any, fname any) any {
 			return Ok[any, any](fmt.Sprintf("%v", v))
 		}
 	}
-	return Err[any, any]("getString: no field '" + fmt.Sprintf("%v", fname) + "'")
+	return Err[any, any](ErrInvalidInput("getString: no field '" + fmt.Sprintf("%v", fname) + "'"))
 }
 
 func Db_getInt(row any, fname any) any {
@@ -690,7 +690,7 @@ func Db_getInt(row any, fname any) any {
 			return Ok[any, any](AsInt(v))
 		}
 	}
-	return Err[any, any]("getInt: no field '" + fmt.Sprintf("%v", fname) + "'")
+	return Err[any, any](ErrInvalidInput("getInt: no field '" + fmt.Sprintf("%v", fname) + "'"))
 }
 
 func Db_getBool(row any, fname any) any {
@@ -699,5 +699,5 @@ func Db_getBool(row any, fname any) any {
 			return Ok[any, any](AsBool(v))
 		}
 	}
-	return Err[any, any]("getBool: no field '" + fmt.Sprintf("%v", fname) + "'")
+	return Err[any, any](ErrInvalidInput("getBool: no field '" + fmt.Sprintf("%v", fname) + "'"))
 }
