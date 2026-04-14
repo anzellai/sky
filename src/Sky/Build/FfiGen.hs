@@ -737,7 +737,8 @@ emitTypedWrapper kernelName aliases fn =
                         , "\treturn"
                         , "}"
                         ]
-                typedVariant = case emitTypedVariant wrapperName fn rewrittenParams rewrittenResults of
+                knownAliases = Set.fromList (Map.elems aliases)
+                typedVariant = case emitTypedVariant knownAliases wrapperName fn rewrittenParams rewrittenResults of
                     Just s  -> s
                     Nothing -> ""
             in anyAnyWrapper ++ typedVariant
@@ -956,19 +957,21 @@ packResults vs  = "[]any{" ++ intercalate ", " vs ++ "}"
 -- Call sites still call the any/any wrapper; the typed variant is an
 -- additive optimisation target for a later call-site migration pass.
 emitTypedVariant
-    :: String                       -- ^ any/any wrapper name
+    :: Set.Set String               -- ^ known package aliases in the file
+    -> String                       -- ^ any/any wrapper name
     -> FnInfo
     -> [(String, String)]           -- ^ rewritten params
     -> [(String, String)]           -- ^ rewritten results
     -> Maybe String
-emitTypedVariant anyName fn params results
+emitTypedVariant knownAliases anyName fn params results
     | _fnVariadic fn                 = Nothing
     | _fnIsField fn                  = Nothing
     | _fnIsFieldSet fn               = Nothing
     | _fnIsPkgVar fn                 = Nothing
-    | any (not . isSimpleTypedType . snd) params  = Nothing
-    | any (not . isSimpleTypedType . snd) results = Nothing
+    | any (not . typeIsSafe) (map snd params)  = Nothing
+    | any (not . typeIsSafe) (map snd results) = Nothing
     | isMethod && null params        = Nothing  -- method needs a receiver
+
     | otherwise =
         case classifyTypedResult results of
             Nothing -> Nothing
@@ -1015,6 +1018,42 @@ emitTypedVariant anyName fn params results
                     ] ++ bodyLines ++ [ "\treturn", "}" ]
   where
     isMethod = not (null (_fnMethodName fn))
+    typeIsSafe t = isSimpleTypedType t && allPackagesKnown knownAliases t
+
+
+-- | Do all package-qualified identifiers in this Go type string correspond
+-- to an alias we've declared in the file's import block? `pkg` and `fmt`
+-- are always considered imported. Bare types (no dot) are considered safe.
+-- If we can't prove every dot-qualified prefix is known, the typed
+-- wrapper must not be emitted — its Go signature would reference a
+-- package we haven't imported.
+allPackagesKnown :: Set.Set String -> String -> Bool
+allPackagesKnown known t0 =
+    let t = stripLeading t0
+        prefixes = extractPkgPrefixes t
+    in all (\p -> p == "pkg" || p == "fmt" || Set.member p known) prefixes
+  where
+    stripLeading = dropWhile (\c -> c == '*' || c == '[' || c == ']' || c == ' ')
+
+-- | Extract every "<ident>." package prefix from a Go type string.
+-- e.g. "*pkg.Foo" → ["pkg"], "map[string]stripe_go.Bar" → ["stripe_go"].
+-- We run on the stripped-leading string; nested brackets are deliberately
+-- rejected elsewhere (isSimpleTypedType), so we mostly see flat refs.
+extractPkgPrefixes :: String -> [String]
+extractPkgPrefixes s = go s []
+  where
+    go [] acc = acc
+    go xs acc =
+        let (tok, rest) = span identChar xs
+        in if null tok
+            then case rest of
+                (_:cs) -> go cs acc
+                []     -> acc
+            else case rest of
+                ('.':rest') | not (null tok) && isLower (head tok) ->
+                    go rest' (tok : acc)
+                _ -> go rest acc
+    identChar c = isAlphaNum c || c == '_'
 
 
 -- | Classify a result list for typed emission.
