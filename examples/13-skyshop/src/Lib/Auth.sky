@@ -14,7 +14,7 @@ import Google.Golang.Org.Api.Option as Option
 import Context
 import Fmt
 import Lib.Db as Db
-import Std.IoError exposing (..)
+import Sky.Core.Error as Error exposing (Error(..), ErrorKind(..))
 import Os
 
 ctx = Context.background ()
@@ -106,7 +106,7 @@ verifyToken idToken =
                                     ++ errorToString e
                                 )
                     in
-                        Err (Unauthorised "Authentication failed. Please try again.")
+                        Err (Error.permissionDenied |> Error.withMessage "Authentication failed. Please try again.")
 
         Err e ->
             let
@@ -117,7 +117,7 @@ verifyToken idToken =
                             ++ errorToString e
                         )
             in
-                Err (NetworkError "Authentication service unavailable.")
+                Err (Error.network "Authentication service unavailable.")
 
 
 findOrCreateUser uid email name =
@@ -150,7 +150,7 @@ findOrCreateUser uid email name =
 
                     Just user ->
                         if Db.getBool "suspended" user then
-                            Err (Unauthorised "Account suspended. Please contact support.")
+                            Err (Error.permissionDenied |> Error.withMessage "Account suspended. Please contact support.")
 
                         else
                             let
@@ -166,7 +166,7 @@ findOrCreateUser uid email name =
                                 Ok user
 
                     Nothing ->
-                        Err (DbError "Failed to load user profile.")
+                        Err (Error.io "Failed to load user profile.")
 
             Err e ->
                 Err e

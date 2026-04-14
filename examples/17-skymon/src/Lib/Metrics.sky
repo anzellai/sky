@@ -13,7 +13,7 @@ import Std.Db as Db
 import Std.Log exposing (println)
 import Lib.Database as Database
 import Lib.SafeQuery as SafeQuery
-import Std.IoError exposing (..)
+import Sky.Core.Error as Error exposing (Error(..), ErrorKind(..))
 
 
 createMetric : String -> String -> String -> String -> String
@@ -85,10 +85,10 @@ runSafeQuery dsn query =
     case Db.open "postgres" dsn of
         Err e ->
             let
-                typedErr = DbError e
-                _ = println ("[METRIC ERROR] runSafeQuery/open: " ++ errToString typedErr)
+                typedErr = Error.io e
+                _ = println ("[METRIC ERROR] runSafeQuery/open: " ++ Error.toString typedErr)
             in
-                "error: " ++ errToString typedErr
+                "error: " ++ Error.toString typedErr
         Ok extConn ->
             runSafeQueryWithConn extConn query
 
@@ -97,10 +97,10 @@ runSafeQueryWithConn extConn query =
     case SafeQuery.runReadOnly extConn query [] of
         Err e ->
             let
-                typedErr = DbError e
-                _ = println ("[METRIC ERROR] runSafeQuery: " ++ errToString typedErr)
+                typedErr = Error.io e
+                _ = println ("[METRIC ERROR] runSafeQuery: " ++ Error.toString typedErr)
             in
-                "error: " ++ errToString typedErr
+                "error: " ++ Error.toString typedErr
         Ok rows ->
             extractFirstValue rows
 
@@ -140,10 +140,10 @@ runHttpMetric metric =
                     String.fromInt resp.status
                 Err e ->
                     let
-                        typedErr = NetworkError e
-                        _ = println ("[METRIC ERROR] runHttpMetric " ++ url ++ ": " ++ errToString typedErr)
+                        typedErr = Error.network e
+                        _ = println ("[METRIC ERROR] runHttpMetric " ++ url ++ ": " ++ Error.toString typedErr)
                     in
-                        "error: " ++ errToString typedErr
+                        "error: " ++ Error.toString typedErr
 
 
 runApiMetric : Dict String String -> String
@@ -166,10 +166,10 @@ runApiMetric metric =
                         extractJsonField fieldPath resp.body
                 Err e ->
                     let
-                        typedErr = NetworkError e
-                        _ = println ("[METRIC ERROR] runApiMetric " ++ url ++ ": " ++ errToString typedErr)
+                        typedErr = Error.network e
+                        _ = println ("[METRIC ERROR] runApiMetric " ++ url ++ ": " ++ Error.toString typedErr)
                     in
-                        "error: " ++ errToString typedErr
+                        "error: " ++ Error.toString typedErr
 
 
 recordMetricValue : String -> String -> ()

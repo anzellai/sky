@@ -6,7 +6,7 @@ import Sky.Core.Dict as Dict
 import Sky.Core.Os as Os
 import Std.Db as Db
 import Std.Log exposing (println)
-import Std.IoError exposing (..)
+import Sky.Core.Error as Error exposing (Error(..), ErrorKind(..))
 
 
 -- Open the database once at startup. We deliberately exit on failure:
@@ -37,23 +37,23 @@ getBool field row =
     Db.getBool field row
 
 
--- Typed boundary: returns Result IoError (). Callers in `update` MUST
+-- Typed boundary: returns Result Error (). Callers in `update` MUST
 -- pattern-match and decide what to do (log, notification, retry).
 exec queryStr args =
     case Db.exec conn queryStr args of
         Ok _ ->
             Ok ()
         Err e ->
-            Err (DbError e)
+            Err (Error.io e)
 
 
--- Typed boundary: returns Result IoError (List Row).
+-- Typed boundary: returns Result Error (List Row).
 query queryStr args =
     case Db.query conn queryStr args of
         Ok rows ->
             Ok rows
         Err e ->
-            Err (DbError e)
+            Err (Error.io e)
 
 
 -- Legacy logging fallback helpers. Prefer `query` / `exec` at update
@@ -65,7 +65,7 @@ queryOrLog label queryStr args =
             rows
         Err e ->
             let
-                _ = println ("[DB ERROR] " ++ label ++ ": " ++ errToString e)
+                _ = println ("[DB ERROR] " ++ label ++ ": " ++ Error.toString e)
             in
                 []
 
@@ -76,6 +76,6 @@ execOrLog label queryStr args =
             ()
         Err e ->
             let
-                _ = println ("[DB ERROR] " ++ label ++ ": " ++ errToString e)
+                _ = println ("[DB ERROR] " ++ label ++ ": " ++ Error.toString e)
             in
                 ()

@@ -11,7 +11,7 @@ import Sky.Core.Crypto as Crypto
 import Std.Db as Db
 import Std.Log exposing (println)
 import Lib.Database as Database
-import Std.IoError exposing (..)
+import Sky.Core.Error as Error exposing (Error(..), ErrorKind(..))
 
 
 createMonitor : String -> String -> Int -> String -> String
@@ -56,8 +56,8 @@ checkEndpoint url =
             checkResponseStatus resp
         Err e ->
             let
-                typedErr = NetworkError e
-                _ = println ("[MONITOR ERROR] checkEndpoint " ++ url ++ ": " ++ errToString typedErr)
+                typedErr = Error.network e
+                _ = println ("[MONITOR ERROR] checkEndpoint " ++ url ++ ": " ++ Error.toString typedErr)
             in
                 ( "down", 0 )
 

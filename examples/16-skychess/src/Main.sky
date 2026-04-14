@@ -1,6 +1,7 @@
 module Main exposing (main)
 
 import Sky.Core.Prelude exposing (..)
+import Sky.Core.Result as Result
 import Sky.Core.Maybe exposing (..)
 import Sky.Core.List as List
 import Sky.Core.Dict as Dict
@@ -15,7 +16,7 @@ import Std.Sub as Sub
 import Std.Time as Time
 import State exposing (..)
 import Lib.Games as Games
-import Std.IoError exposing (..)
+import Sky.Core.Error as Error exposing (Error(..), ErrorKind(..))
 import Lib.GameLogic as Logic
 import Chess.Board as Board
 import Chess.Piece exposing (..)
@@ -98,14 +99,14 @@ update msg model =
         UpdateNameInput s ->
             let
                 gamesResult = Games.getGames s
-                games = unwrapOr [] gamesResult
+                games = Result.withDefault [] gamesResult
                 notif =
                     case gamesResult of
                         Ok _ ->
                             model.notification
                         Err e ->
-                            let _ = println ("[CHESS ERROR] loadGames: " ++ errToString e) in
-                            errToString e
+                            let _ = println ("[CHESS ERROR] loadGames: " ++ Error.toString e) in
+                            Error.toString e
             in
                 ( { model
                     | nameInput = s
@@ -162,16 +163,16 @@ handleLoadGame gameId model =
                 Ok _ ->
                     ()
                 Err e ->
-                    let _ = println ("[CHESS ERROR] getGameMoves: " ++ errToString e) in
+                    let _ = println ("[CHESS ERROR] getGameMoves: " ++ Error.toString e) in
                     ()
         _ =
             case gameInfoResult of
                 Ok _ ->
                     ()
                 Err e ->
-                    let _ = println ("[CHESS ERROR] getGame: " ++ errToString e) in
+                    let _ = println ("[CHESS ERROR] getGame: " ++ Error.toString e) in
                     ()
-        moves = unwrapOr [] movesResult
+        moves = Result.withDefault [] movesResult
         gameInfo =
             case gameInfoResult of
                 Ok maybeG ->
@@ -181,11 +182,11 @@ handleLoadGame gameId model =
         loadErr =
             case gameInfoResult of
                 Err e ->
-                    errToString e
+                    Error.toString e
                 Ok _ ->
                     case movesResult of
                         Err e ->
-                            errToString e
+                            Error.toString e
                         Ok _ ->
                             ""
         playerName =
@@ -285,8 +286,8 @@ startGameWithName name model =
     else
         case Games.createGame name of
             Err e ->
-                let _ = println ("[CHESS ERROR] createGame: " ++ errToString e) in
-                ( { model | errorMessage = errToString e , notification = errToString e }, Cmd.none )
+                let _ = println ("[CHESS ERROR] createGame: " ++ Error.toString e) in
+                ( { model | errorMessage = Error.toString e , notification = Error.toString e }, Cmd.none )
             Ok gameId ->
                 startGameWithNameOk name gameId model
 
@@ -384,22 +385,22 @@ handleResign model =
         Ok _ ->
             ( { model | gameStatus = "resigned" }, Cmd.none )
         Err e ->
-            let _ = println ("[CHESS ERROR] resign: " ++ errToString e) in
-            ( { model | gameStatus = "resigned" , notification = errToString e }, Cmd.none )
+            let _ = println ("[CHESS ERROR] resign: " ++ Error.toString e) in
+            ( { model | gameStatus = "resigned" , notification = Error.toString e }, Cmd.none )
 
 
 handleBackToHome : Model -> (Model, Cmd Msg)
 handleBackToHome model =
     let
         gamesResult = Games.getGames model.playerName
-        games = unwrapOr [] gamesResult
+        games = Result.withDefault [] gamesResult
         notif =
             case gamesResult of
                 Ok _ ->
                     ""
                 Err e ->
-                    let _ = println ("[CHESS ERROR] getGames: " ++ errToString e) in
-                    errToString e
+                    let _ = println ("[CHESS ERROR] getGames: " ++ Error.toString e) in
+                    Error.toString e
     in
         ( { model
             | page = HomePage
@@ -419,19 +420,19 @@ handleDeleteGame gameId model =
                 Ok _ ->
                     ()
                 Err e ->
-                    let _ = println ("[CHESS ERROR] deleteGame: " ++ errToString e) in
+                    let _ = println ("[CHESS ERROR] deleteGame: " ++ Error.toString e) in
                     ()
         gamesResult = Games.getGames model.playerName
-        games = unwrapOr [] gamesResult
+        games = Result.withDefault [] gamesResult
         notif =
             case delResult of
                 Err e ->
-                    errToString e
+                    Error.toString e
                 Ok _ ->
                     case gamesResult of
                         Err e ->
-                            let _ = println ("[CHESS ERROR] getGames: " ++ errToString e) in
-                            errToString e
+                            let _ = println ("[CHESS ERROR] getGames: " ++ Error.toString e) in
+                            Error.toString e
                         Ok _ ->
                             model.notification
     in

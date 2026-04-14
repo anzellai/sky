@@ -9,7 +9,7 @@ import Sky.Core.String as String
 import Std.Log exposing (println)
 import Github.Com.Google.Uuid as Uuid
 import Lib.Db as Db
-import Std.IoError exposing (..)
+import Sky.Core.Error as Error exposing (Error(..), ErrorKind(..))
 
 getOrCreateCart userId =
     let
@@ -280,7 +280,7 @@ findDocAndCollection docId =
                     Ok ( "carts", doc )
                 
                 Ok Nothing ->
-                    Err (NotFound "Document not found.")
+                    Err (Error.notFound |> Error.withMessage "Document not found.")
 
                 Err e ->
                     Err e
@@ -417,7 +417,7 @@ checkoutToOrder cartId =
                     Ok orderId
             
             _ ->
-                Err (NotFound "Cart not found.")
+                Err (Error.notFound |> Error.withMessage "Cart not found.")
 
 
 getOrder orderId =

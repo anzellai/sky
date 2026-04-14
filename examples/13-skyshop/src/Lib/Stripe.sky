@@ -10,7 +10,7 @@ import Sky.Core.String as String
 import Std.Log exposing (println)
 import Os
 import Lib.Db as Db
-import Std.IoError exposing (..)
+import Sky.Core.Error as Error exposing (Error(..), ErrorKind(..))
 import Github.Com.Stripe.StripeGo.V84 as Stripe
 import Github.Com.Stripe.StripeGo.V84.Checkout.Session as Session
 import Github.Com.Stripe.StripeGo.V84.Customer as Customer
@@ -82,7 +82,7 @@ createCustomer userId userName userEmail =
                     Ok customerId
             
             Err e ->
-                Err (NetworkError ("Failed to create Stripe customer: " ++ errorToString e))
+                Err (Error.network ("Failed to create Stripe customer: " ++ errorToString e))
 
 
 buildLineItem item =
@@ -118,7 +118,7 @@ buildLineItem item =
 
 createCheckoutSession cartId items userId userName userEmail remarks =
     if apiKey == "" then
-        Err (ValidationError "Stripe API key not configured. Set STRIPE_API_KEY environment variable.")
+        Err (Error.invalidInput "Stripe API key not configured. Set STRIPE_API_KEY environment variable.")
     
     else
         case getOrCreateCustomer userId userName userEmail of
@@ -178,7 +178,7 @@ createCheckoutSession cartId items userId userName userEmail remarks =
                                             ++ errorToString e
                                         )
                             in
-                                Err (NetworkError ("Stripe API error: " ++ errorToString e))
+                                Err (Error.network ("Stripe API error: " ++ errorToString e))
 
 
 type alias PaymentStatus =
@@ -219,13 +219,13 @@ verifyPayment orderId =
                     reference = Db.getField "checkout_reference" order
                 in
                     if reference == "" then
-                        Err (ValidationError "No checkout reference found.")
+                        Err (Error.invalidInput "No checkout reference found.")
                     
                     else
                         verifyStripeSession orderId reference
             
             Nothing ->
-                Err (NotFound "Order not found.")
+                Err (Error.notFound |> Error.withMessage "Order not found.")
 
 
 verifyStripeSession cartId sessionId =
@@ -288,10 +288,10 @@ verifyStripeSession cartId sessionId =
                             }
                 
                 else
-                    Err (ValidationError "Payment not complete.")
+                    Err (Error.invalidInput "Payment not complete.")
 
         Err e ->
-            Err (NetworkError ("Failed to retrieve checkout session: " ++ errorToString e))
+            Err (Error.network ("Failed to retrieve checkout session: " ++ errorToString e))
 
 
 deductStock orderId =

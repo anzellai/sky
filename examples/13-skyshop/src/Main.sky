@@ -23,7 +23,7 @@ import Lib.Cart as Cart
 import Lib.Stripe as Stripe
 import Lib.Notify as Notify
 import Lib.Translation as Tr
-import Std.IoError exposing (..)
+import Sky.Core.Error as Error exposing (Error(..), ErrorKind(..))
 import Page.Home as Home
 import Page.Product as ProductView
 import Page.CartPage as CartView
@@ -289,10 +289,10 @@ handleAddToCart productId model =
                     
                     Err e ->
                         let
-                            _ = println ("[CART ERROR] addItem: " ++ errToString e)
+                            _ = println ("[CART ERROR] addItem: " ++ Error.toString e)
                         in
                             ( { model
-                                | notification = "Failed to add to cart: " ++ errToString e
+                                | notification = "Failed to add to cart: " ++ Error.toString e
                                 , notificationType = "error"
                             }, Cmd.none )
         
@@ -378,14 +378,14 @@ handleStartCheckout model =
                                         Err e ->
                                             ( { model
                                                 | notification =
-                                                    "Checkout failed: " ++ errToString e
+                                                    "Checkout failed: " ++ Error.toString e
                                                 , notificationType = "error"
                                             }, Cmd.none )
 
                                 Err e ->
                                     ( { model
                                         | notification =
-                                            "Could not create order: " ++ errToString e
+                                            "Could not create order: " ++ Error.toString e
                                         , notificationType = "error"
                                     }, Cmd.none )
 
@@ -521,11 +521,11 @@ handleVerifyPayment orderId model =
                                         _ =
                                             println
                                                 (
-                                                "[VERIFY] Payment failed: " ++ errToString e
+                                                "[VERIFY] Payment failed: " ++ Error.toString e
                                                 )
                                     in
                                         ( { base
-                                            | notification = errToString e
+                                            | notification = Error.toString e
                                             , notificationType = "error"
                                         }, Cmd.none )
 
@@ -579,10 +579,10 @@ handleCreateProduct model =
         
         Err e ->
             let
-                _ = println ("[PRODUCT ERROR] createProduct: " ++ errToString e)
+                _ = println ("[PRODUCT ERROR] createProduct: " ++ Error.toString e)
             in
                 ( { model
-                    | notification = "Failed to create product: " ++ errToString e
+                    | notification = "Failed to create product: " ++ Error.toString e
                     , notificationType = "error"
                 }, Cmd.none )
 
@@ -600,10 +600,10 @@ handleUpdateProduct model =
         
         Err e ->
             let
-                _ = println ("[PRODUCT ERROR] updateProduct: " ++ errToString e)
+                _ = println ("[PRODUCT ERROR] updateProduct: " ++ Error.toString e)
             in
                 ( { model
-                    | notification = "Failed to update product: " ++ errToString e
+                    | notification = "Failed to update product: " ++ Error.toString e
                     , notificationType = "error"
                 }, Cmd.none )
 
@@ -625,10 +625,10 @@ handleDeleteProduct productId model =
         
         Err e ->
             let
-                _ = println ("[PRODUCT ERROR] deleteProduct: " ++ errToString e)
+                _ = println ("[PRODUCT ERROR] deleteProduct: " ++ Error.toString e)
             in
                 ( { model
-                    | notification = "Failed to delete product: " ++ errToString e
+                    | notification = "Failed to delete product: " ++ Error.toString e
                     , notificationType = "error"
                 }, Cmd.none )
 
@@ -657,10 +657,10 @@ handleUploadImage model =
             
             Err e ->
                 let
-                    _ = println ("[IMAGE ERROR] uploadImage: " ++ errToString e)
+                    _ = println ("[IMAGE ERROR] uploadImage: " ++ Error.toString e)
                 in
                     ( { model
-                        | notification = "Failed to upload image: " ++ errToString e
+                        | notification = "Failed to upload image: " ++ Error.toString e
                         , notificationType = "error"
                     }, Cmd.none )
 
@@ -681,10 +681,10 @@ handleDeleteImage imageId model =
         
         Err e ->
             let
-                _ = println ("[IMAGE ERROR] deleteImage: " ++ errToString e)
+                _ = println ("[IMAGE ERROR] deleteImage: " ++ Error.toString e)
             in
                 ( { model
-                    | notification = "Failed to delete image: " ++ errToString e
+                    | notification = "Failed to delete image: " ++ Error.toString e
                     , notificationType = "error"
                 }, Cmd.none )
 
@@ -715,10 +715,10 @@ handleUpdateOrderState orderId newState model =
         
         Err e ->
             let
-                _ = println ("[ORDER ERROR] updateOrderState: " ++ errToString e)
+                _ = println ("[ORDER ERROR] updateOrderState: " ++ Error.toString e)
             in
                 ( { model
-                    | notification = "Failed to update order: " ++ errToString e
+                    | notification = "Failed to update order: " ++ Error.toString e
                     , notificationType = "error"
                 }, Cmd.none )
 
@@ -749,9 +749,9 @@ handleFirebaseAuth token model =
             let
                 _ =
                     println
-                        ("[AUTH] Error: " ++ errToString e ++ " — signing out to self-heal")
+                        ("[AUTH] Error: " ++ Error.toString e ++ " — signing out to self-heal")
             in
-                handleSignOut { model | authError = errToString e }
+                handleSignOut { model | authError = Error.toString e }
 
 
 resolvePostAuthPage page =
