@@ -749,7 +749,7 @@ Update this table after every merged phase. Include commit SHA and date.
 | P7  — FFI typing | ☐ | — | — | — |
 | P8  — kernel typing | ☐ | — | — | — |
 | P9  — generic FFI reflect | ☐ | — | — | — |
-| P10a — Random/Time | ☐ | — | — | — |
+| P10a — Random/Time | ☑ | _HEAD_ | 2026-04-14 | already wired via kernel registry (`Canonicalise.Module.kernelFunctions`) + `runtime-go/rt/rt.go` (`Random_int/float/choice/shuffle`, `Time_sleep`); verified by ex18-job-queue usage. No Sky-source file needed — kernels are registry-driven in this compiler. |
 | P10b — Http.Server | ☐ | — | — | — |
 | P10c — Sky.Live | ☐ | — | — | — |
 | P10d — Std.Db | ☐ | — | — | — |
