@@ -16,14 +16,14 @@ All documentation, comments, variable names, function names, and user-facing str
 ALL effectful operations flow through `Task`:
 - **Pure** (`String.length`, `List.map`) — no wrapping
 - **Fallible** (`String.toInt`, `Dict.get`) — `Result` or `Maybe`
-- **Effectful** (`File.readFile`, `Http.get`, `println`) — `Task String a`
+- **Effectful** (`File.readFile`, `Http.get`, `println`) — `Task Error a`
 - **Entry** (`main`) — may return `Task`; runtime auto-executes
 
-FFI boundary mapping: Go `(T, error)` → `Result String T` | Go `error` → `Result String ()` | panics → `Err` | nil → `Maybe`/`Result`
+FFI boundary mapping: Go `(T, error)` → `Result Error T` | Go `error` → `Result Error ()` | panics → `Err` | nil → `Maybe`/`Result`
 
 ## Project Overview
 
-Sky is a pure functional language (Elm-inspired) compiling to Go. Self-hosted compiler, CLI, formatter, LSP, FFI generator — ~6MB native binary. Zero Node.js/TypeScript dependencies.
+Sky is a pure functional language (Elm-inspired) compiling to Go. The compiler is written in Haskell (GHC 9.4+) and ships as a single `sky` binary. Runtime binaries are Go output — single-file, statically-linked, no external runtime needed. See `docs/compiler/journey.md` for why the compiler moved TS → Go → Sky → Haskell.
 
 ## Architecture
 
@@ -32,17 +32,25 @@ source → lexer → layout filtering → parser → AST → module graph → ty
 ```
 
 ```
-src/                              -- Sky compiler (self-hosted, 34 modules)
-  Main.sky                        -- CLI entry point
-  Compiler/                       -- 21 modules: lexer, parser, type checker, lowerer, emitter
-  Ffi/                            -- 4 modules: inspector, binding/wrapper gen, type mapper
-  Formatter/                      -- 2 modules: pretty-printer + formatter
-  Lsp/                            -- 2 modules: JSON-RPC + LSP server
-ts-compiler/                      -- Legacy TypeScript bootstrap (reference only)
-stdlib-go/                        -- Go runtime for stdlib modules
+src/                              -- Sky compiler (Haskell, GHC 9.4+)
+  Sky/Parse/                      -- lexer, layout filter, parser
+  Sky/Canonicalise/               -- name resolution, import validation
+  Sky/Type/                       -- HM inference, exhaustiveness
+  Sky/Build/                      -- orchestration + FFI generator
+  Sky/Generate/Go/                -- Go IR + printer
+  Sky/Lsp/                        -- language server
+  Sky/Format/                     -- elm-format-style formatter
+app/Main.hs                       -- CLI entry point
+runtime-go/rt/                    -- Go runtime (embedded via Template Haskell)
+sky-stdlib/                       -- Sky-side stdlib (embedded)
+tools/sky-ffi-inspect/            -- Go package introspector
+legacy-ts-compiler/               -- Legacy TypeScript bootstrap (reference only)
+legacy-sky-compiler/              -- Legacy self-hosted Sky compiler (reference only)
 templates/CLAUDE.md               -- Template for `sky init` projects
-examples/                         -- 15 example projects
+examples/                         -- 18 example projects
 ```
+
+See `docs/compiler/journey.md` for the TS → Go → Sky → Haskell history.
 
 ## Template Sync (Non-Negotiable)
 
@@ -57,9 +65,9 @@ cd examples/01-hello-world && sky build src/Main.sky
 
 ## Git Push / Release Checklist
 
-1. `rm -rf .skycache && sky build src/Main.sky` — rebuild compiler
-2. `sky-out/app --version` — must print version, NOT start a server
-3. `sky build src/Main.sky` twice — verify self-hosting
+1. `cabal install --overwrite-policy=always --installdir=./sky-out --install-method=copy exe:sky` — rebuild compiler
+2. `sky-out/sky --version` — must print version, NOT start a server
+3. `cabal test` — cabal test suite must pass (18/18 ExampleSweep + TypedFfi + ErrorUnification specs)
 4. **Clean-slate validation of ALL examples (mandatory before every push/tag):**
    ```bash
    for d in examples/*/; do
@@ -165,15 +173,15 @@ Safety: formatter refuses to write if output loses >1/3 of code lines (prevents 
 | Module | Key Functions | Returns |
 |--------|--------------|---------|
 | `Sky.Core.Task` | succeed, fail, map, andThen, perform, sequence, parallel, lazy, **map2/3/4/5, andMap** | Task err a |
-| `Sky.Core.File` | readFile, writeFile, append, mkdirAll, readDir, exists, remove, isDir, tempFile, tempDir, copy | Task String a |
-| `Sky.Core.Process` | run, exit, getEnv, getCwd, loadEnv | Task String a |
-| `Sky.Core.Io` | readLine, readBytes, writeStdout, writeStderr | Task String a |
-| `Sky.Core.Time` | now, unixMillis, sleep | Task String Int |
-| `Sky.Core.Http` | get, post, request | Task String Response |
-| `Sky.Core.Random` | int, float, choice, shuffle | Task String a |
-| `Sky.Http.Server` | listen, get/post/put/delete routes, middleware | Task String () |
-| `Std.Db` | connect, open, exec, query, queryDecode, insertRow, getById, updateById, deleteById, findWhere, withTransaction | Result String a |
-| `Std.Auth` | register, login, verify, logout, verifyEmail, hashPassword, verifyPassword, setRole, signToken, verifyToken | Result String a |
+| `Sky.Core.File` | readFile, writeFile, append, mkdirAll, readDir, exists, remove, isDir, tempFile, tempDir, copy | Task Error a |
+| `Sky.Core.Process` | run, exit, getEnv, getCwd, loadEnv | Task Error a |
+| `Sky.Core.Io` | readLine, readBytes, writeStdout, writeStderr | Task Error a |
+| `Sky.Core.Time` | now, unixMillis, sleep | Task Error Int |
+| `Sky.Core.Http` | get, post, request | Task Error Response |
+| `Sky.Core.Random` | int, float, choice, shuffle | Task Error a |
+| `Sky.Http.Server` | listen, get/post/put/delete routes, middleware | Task Error () |
+| `Std.Db` | connect, open, exec, query, queryDecode, insertRow, getById, updateById, deleteById, findWhere, withTransaction | Result Error a |
+| `Std.Auth` | register, login, verify, logout, verifyEmail, hashPassword, verifyPassword, setRole, signToken, verifyToken | Result Error a |
 
 ### Prelude (implicitly imported)
 `Result (Ok/Err)`, `identity`, `not`, `always`, `fst`, `snd`, `clamp`, `modBy`, `errorToString`
@@ -195,7 +203,7 @@ Pipeline: `sky add pkg` → inspector extracts types → compiler classifies fun
 | Go | Sky |
 |----|-----|
 | `string` / `int`,`int64` / `float64` / `bool` | `String` / `Int` / `Float` / `Bool` |
-| `error` / `(T, error)` / `(T, bool)` | `Result String a` / `Result String T` / `Maybe T` |
+| `error` / `(T, error)` / `(T, bool)` | `Result Error a` / `Result Error T` / `Maybe T` |
 | `*string`, `*int` | `Maybe String`, `Maybe Int` |
 | `*sql.DB` / `[]T` | `Db` (opaque) / `List T` |
 | Go struct / Go interface | Opaque type (constructor + getters + setters / method bindings) |
@@ -231,7 +239,7 @@ HTTP-first (full HTML on load, patches on events), SSE subscriptions, session st
 `update` returns `(Model, Cmd Msg)`. Use `Cmd.perform` to run long-running Tasks in background goroutines — results are dispatched back to `update` via SSE:
 
 ```elm
-type Msg = FetchData | DataLoaded (Result String String)
+type Msg = FetchData | DataLoaded (Result Error String)
 
 update msg model =
     case msg of
@@ -398,7 +406,7 @@ These are current compiler limitations users must work around:
 - **Task.perform returns Result uniformly** — FIXED in v0.7.29. The helper used to unwrap `Ok` values while keeping `Err` as `SkyResult`. Now returns `sky_runTask` result directly so `case Task.perform t of Ok x -> ... ; Err e -> ...` works for both branches.
 
 - **Async Cmd.perform for Sky.Live** — ADDED in v0.8.0. `update` returns `(Model, Cmd Msg)` where `Cmd.perform task toMsg` spawns a goroutine. On completion, the result is dispatched as a Msg through the full update/view/diff/SSE cycle with session locking. `Cmd.batch` runs multiple commands concurrently. Recursive: cmd-triggered updates can spawn more cmds.
-- **Time.sleep + Random.int lowerer mappings** — ADDED in v0.8.0. `Time.sleep : Int -> Task String ()` and `Random.int/float/choice/shuffle` now have Go implementations and lowerer mappings. Type signatures in Resolver for compile-time checking.
+- **Time.sleep + Random.int lowerer mappings** — ADDED in v0.8.0. `Time.sleep : Int -> Task Error ()` and `Random.int/float/choice/shuffle` now have Go implementations and lowerer mappings. Type signatures in Resolver for compile-time checking.
 - **Constructor partial application** — FIXED in v0.8.0. `checkPartialIdent` now checks `importedConstructors` for ADT constructor arities, not just `localFunctionArity`. Fixes `JobDone jid` (partial apply of 2-arg constructor) generating invalid Go.
 - **MultilineStringExpr AST node** — ADDED in v0.8.0. The parser creates `MultilineStringExpr` for `"""..."""` strings instead of desugaring at parse time. The formatter preserves triple-quoted strings. The lowerer desugars at codegen time with `{{expr}}` interpolation handling.
 - **Formatter elm-style improvements** — FIXED in v0.8.0. Tuples break vertically with leading commas. Function args indent 4 spaces (not aligned to callee column). Parenthesised expressions stay compact on one line.

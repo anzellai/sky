@@ -1,6 +1,6 @@
 # CLAUDE.md — Sky Language Project
 
-This is a [Sky](https://github.com/anzellai/sky) project. Sky is a pure functional language inspired by Elm, compiling to Go. The compiler is fully self-hosted (written in Sky, ~6MB native binary, zero Node/TypeScript dependencies).
+This is a [Sky](https://github.com/anzellai/sky) project. Sky is a pure functional language inspired by Elm, compiling to Go. The compiler is written in Haskell (GHC 9.4+) and ships as a single `sky` binary. Users only need the `sky` binary and Go 1.21+ — no Haskell toolchain required to use Sky.
 
 **Core principle: if it compiles, it works.** All side effects flow through `Task`. No runtime panics, no nil leakage, no partial bindings.
 
@@ -128,7 +128,7 @@ pipeline =
 
 -- Execute at the boundary
 result = Task.perform pipeline
--- result : Result String String
+-- result : Result Error String
 ```
 
 **Task API:**
@@ -218,72 +218,76 @@ result = Session.new params
 
 Pointer fields (`*string`, `*int64`, `*bool`) are handled automatically — pass the plain value.
 
-### Error Handling — production pattern
+### Error Handling — `Sky.Core.Error` (v1+ canonical)
 
-Sky's stdlib functions return `Result String a` at the IO boundary. For
-production apps you should wrap that in a typed `IoError` ADT so callers
-can discriminate (retry on network, redirect on auth, surface to UI):
+Since v1.0 every fallible operation uses `Sky.Core.Error`, a structured
+ADT with eleven kinds. No more `Result String` or `Task String` in
+public APIs.
 
 ```elm
--- src/Lib/Io.sky — drop this in every project
-type IoError
-    = DbError String          -- query/exec failed
-    | HttpError Int String    -- (status, body) for 4xx/5xx
-    | NetworkError String     -- connection, timeout, DNS
-    | NotFound String
-    | Unauthorised String     -- 401/403 / auth check rejected
-    | ValidationError String  -- input rejected
-    | DecodeError String      -- JSON / parse failed
-    | UnexpectedError String  -- bridge from String errors
+import Sky.Core.Error as Error exposing (Error(..), ErrorKind(..))
 
-errToString : IoError -> String
-isRetryable : IoError -> Bool   -- True for NetworkError + 5xx
-isAuthIssue : IoError -> Bool   -- True for Unauthorised + 401/403
+-- Type: Error ErrorKind ErrorInfo
+-- ErrorKind: Io | Network | Ffi | Decode | Timeout | NotFound
+--         | PermissionDenied | InvalidInput | Conflict | Unavailable | Unexpected
 
--- For async-loaded fields in your Sky.Live model
-type RemoteData a
-    = NotAsked
-    | Loading
-    | Loaded a
-    | Failed IoError
+-- Constructors:
+Error.io : String -> Error
+Error.network : String -> Error
+Error.ffi : String -> Error
+Error.decode : String -> Error
+Error.timeout : String -> Error
+Error.notFound : Error
+Error.permissionDenied : Error
+Error.invalidInput : String -> Error
+Error.conflict : String -> Error
+Error.unavailable : String -> Error
+Error.unexpected : String -> Error
+
+-- Builders:
+Error.withMessage : String -> Error -> Error
+Error.withDetails : ErrorDetails -> Error -> Error
+Error.toString : Error -> String
+Error.isRetryable : Error -> Bool
 ```
 
-**At every Lib boundary**: wrap the stdlib `String` error in the right
-variant so the type system enforces handling at every caller:
+**Standard library kernels return Error directly**:
 
 ```elm
--- Lib/Db.sky
+-- Db.exec : Db -> String -> List any -> Result Error Int
+-- Http.get : String -> Task Error Response
+-- File.readFile : String -> Task Error String
+
+-- In your Lib wrappers, pass the error through — DO NOT re-wrap:
 exec queryStr args =
     case Db.exec dbConn queryStr args of
-        Ok _  -> Ok ()
-        Err e -> Err (DbError e)
+        Ok _ ->
+            Ok ()
+        Err e ->
+            Err e    -- already a Sky.Core.Error
 ```
 
-**In `update` handlers**: pattern-match explicitly. Log via `println`
-(visible in `sky run`) AND set `model.notification` (visible in UI):
+**In `update` handlers**: pattern-match on kind. Log AND set UI state:
 
 ```elm
 handleSignIn model =
     case Auth.authenticateUser model.email model.password of
         Ok user ->
             ( { model | currentUser = Just user, page = Home }, Cmd.none )
-        Err e ->
+
+        Err (Error kind info) ->
             let
-                _ = println ("[AUTH ERROR] " ++ errToString e)
-                msg = if isAuthIssue e
-                        then errToString e          -- safe to show
-                        else "Service unavailable"  -- generic for infra
+                _ = println ("[AUTH ERROR] " ++ info.message)
+                msg =
+                    case kind of
+                        PermissionDenied -> info.message
+                        InvalidInput -> info.message
+                        _ -> "Service unavailable"
             in
                 ( { model | error = msg }, Cmd.none )
 ```
 
-**In view-helpers** that can't update model (`hasVoted`, formatters,
-display counts), use `unwrapOr default result` — it logs the error and
-returns the default. NEVER use it inside `update`; pattern-match there.
-
-**Use `RemoteData` for async-loaded model fields** (HTTP, Cmd.perform):
-view pattern-matches on `NotAsked | Loading | Loaded a | Failed e` so
-every state has an intentional UI.
+See `docs/errors/error-system.md` in the Sky repo for the full reference.
 
 See `examples/12-skyvote` for the canonical end-to-end reference.
 
@@ -608,8 +612,8 @@ object : List (String, Value) -> Value
 ### Sky.Core.Json.Decode
 
 ```elm
-decodeString : Decoder a -> String -> Result String a
-decodeValue : Decoder a -> Value -> Result String a
+decodeString : Decoder a -> String -> Result Error a
+decodeValue : Decoder a -> Value -> Result Error a
 string : Decoder String
 int : Decoder Int
 float : Decoder Float
@@ -664,7 +668,7 @@ batch : List (Cmd msg) -> Cmd msg
 `Cmd.perform` runs a Task in a background goroutine. When it completes, the result is dispatched as a Msg through the full update/view/diff/SSE cycle:
 
 ```elm
-type Msg = FetchData | DataLoaded (Result String String)
+type Msg = FetchData | DataLoaded (Result Error String)
 
 update msg model =
     case msg of
@@ -704,17 +708,17 @@ every : Int -> msg -> Sub msg    -- timer subscription, fires msg every N millis
 ### Sky.Core.Time
 
 ```elm
-sleep : Int -> Task String ()    -- sleep for N milliseconds (use with Cmd.perform for async delays)
-now : () -> Task String Int      -- current Unix time in milliseconds
+sleep : Int -> Task Error ()    -- sleep for N milliseconds (use with Cmd.perform for async delays)
+now : () -> Task Error Int      -- current Unix time in milliseconds
 ```
 
 ### Sky.Core.Random
 
 ```elm
-int : Int -> Int -> Task String Int       -- random int in [lo, hi] range
-float : Float -> Float -> Task String Float
-choice : List a -> Task String a          -- random element from list
-shuffle : List a -> Task String (List a)  -- Fisher-Yates shuffle
+int : Int -> Int -> Task Error Int       -- random int in [lo, hi] range
+float : Float -> Float -> Task Error Float
+choice : List a -> Task Error a          -- random element from list
+shuffle : List a -> Task Error (List a)  -- Fisher-Yates shuffle
 ```
 
 ### Std.Html
@@ -856,19 +860,19 @@ Math.max 3 7           -- 7
 ### Sky.Core.Time (mixed pure + Task)
 
 ```elm
-Time.now ()            -- Task String Int (Unix millis)
+Time.now ()            -- Task Error Int (Unix millis)
 Time.format "2006-01-02" millis  -- pure: "2025-03-25"
-Time.parse "2006-01-02" "2025-03-25"  -- Result String Int
+Time.parse "2006-01-02" "2025-03-25"  -- Result Error Int
 Time.year millis, Time.month, Time.day, Time.hour, Time.minute, Time.second
-Time.sleep 1000        -- Task String () (sleep 1 second)
+Time.sleep 1000        -- Task Error () (sleep 1 second)
 ```
 
 ### Sky.Core.Http (Task)
 
 ```elm
-Http.get "https://api.example.com/data"     -- Task String Response
-Http.post url body                            -- Task String Response
-Http.request { method, url, headers, body }   -- Task String Response
+Http.get "https://api.example.com/data"     -- Task Error Response
+Http.post url body                            -- Task Error Response
+Http.request { method, url, headers, body }   -- Task Error Response
 
 -- Response = { status : Int, body : String, headers : List (String, String) }
 ```
@@ -902,10 +906,10 @@ Crypto.hmacSha256 "key" "msg"  -- HMAC signature
 ### Sky.Core.Random (Task)
 
 ```elm
-Random.int 1 100           -- Task String Int
-Random.float ()             -- Task String Float (0.0 to 1.0)
-Random.choice ["a","b","c"] -- Task String (Maybe String)
-Random.shuffle [1,2,3,4]    -- Task String (List Int)
+Random.int 1 100           -- Task Error Int
+Random.float ()             -- Task Error Float (0.0 to 1.0)
+Random.choice ["a","b","c"] -- Task Error (Maybe String)
+Random.shuffle [1,2,3,4]    -- Task Error (List Int)
 ```
 
 ### Sky.Http.Server
@@ -1654,7 +1658,7 @@ Env.get "SECRET_KEY"                   -- Maybe String (distinguishes unset vs e
 Env.getOrDefault "PORT" "8080"         -- String with fallback
 Env.getInt "PORT" 8080                 -- Int with fallback (parses)
 Env.getBool "DEBUG" False              -- accepts true/yes/1/on vs false/no/0/off
-Env.require "DATABASE_URL"             -- Task String String — fail-fast at startup
+Env.require "DATABASE_URL"             -- Task Error String — fail-fast at startup
 ```
 
 #### `Sky.Core.Uuid`
@@ -1662,9 +1666,9 @@ Env.require "DATABASE_URL"             -- Task String String — fail-fast at st
 ```elm
 import Sky.Core.Uuid as Uuid
 
-Uuid.v4        -- Task String String — RFC 4122 random (crypto/rand)
-Uuid.v7        -- Task String String — time-ordered (better for DB primary keys)
-Uuid.parse s   -- Result String String — canonicalise or reject
+Uuid.v4        -- Task Error String — RFC 4122 random (crypto/rand)
+Uuid.v7        -- Task Error String — time-ordered (better for DB primary keys)
+Uuid.parse s   -- Result Error String — canonicalise or reject
 ```
 
 #### `Sky.Http.Middleware`
@@ -1742,7 +1746,7 @@ import Sky.Core.Task as Task
 Task.perform (Ffi.callTask "github.com/pkg.DoThing" [arg1, arg2])
 
 -- Hand-audited pure (only via rt.RegisterPure in hand-written ffi/*.go)
-Ffi.callPure "mypkg.reverse" [str]   -- Result String a
+Ffi.callPure "mypkg.reverse" [str]   -- Result Error a
 ```
 
 Workflow:
@@ -1781,7 +1785,7 @@ String.trimStart / trimEnd    -- Unicode whitespace (NBSP, ideographic, etc.)
 Time.formatISO8601 ms    -- "2026-04-12T14:30:00.000Z" (JSON-friendly)
 Time.formatRFC3339 ms    -- like ISO but with nanos
 Time.formatHTTP ms       -- HTTP-date header format
-Time.parseISO8601 str    -- Result String Int (unix millis)
+Time.parseISO8601 str    -- Result Error Int (unix millis)
 Time.addMillis delta ms
 Time.diffMillis later earlier
 ```
@@ -1793,8 +1797,8 @@ Crypto.sha256 "hello"                    -- hex digest
 Crypto.sha512 "hello"
 Crypto.hmacSha256 "secret" "message"     -- for signing cookies/tokens
 Crypto.constantTimeEqual a b             -- use for comparing secrets, NOT ==
-Crypto.randomBytes 16                    -- Task String String, hex
-Crypto.randomToken 32                    -- Task String String, URL-safe base64
+Crypto.randomBytes 16                    -- Task Error String, hex
+Crypto.randomToken 32                    -- Task Error String, URL-safe base64
 ```
 
 ### New Path Safety
@@ -1832,10 +1836,10 @@ import Std.Auth as Auth
 
 Auth.register db email password          -- bcrypt cost 12, creates users table
 Auth.login db email password             -- returns user row on success
-Auth.hashPassword pw                     -- Result String String (bcrypt, min 8, max 72 bytes)
-Auth.passwordStrength pw                 -- Result String () — validator
+Auth.hashPassword pw                     -- Result Error String (bcrypt, min 8, max 72 bytes)
+Auth.passwordStrength pw                 -- Result Error () — validator
 Auth.signToken secret claims expirySeconds -- HS256 JWT
-Auth.verifyToken secret token            -- Result String (Dict String any)
+Auth.verifyToken secret token            -- Result Error (Dict String any)
 ```
 
 ### Editor Integration
