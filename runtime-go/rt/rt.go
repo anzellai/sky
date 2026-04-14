@@ -1949,6 +1949,41 @@ func Process_getCwd() any {
 	}
 }
 
+// P8/Process typed companions — Task-shaped.
+func Process_runT(cmd string, args []string) func() SkyResult[string, string] {
+	return func() SkyResult[string, string] {
+		c := exec.Command(cmd, args...)
+		out, err := c.CombinedOutput()
+		if err != nil {
+			return Err[string, string](fmt.Sprintf("%s: %v", string(out), err))
+		}
+		return Ok[string, string](string(out))
+	}
+}
+
+func Process_exitT(code int) func() SkyResult[string, struct{}] {
+	return func() SkyResult[string, struct{}] {
+		os.Exit(code)
+		return Ok[string, struct{}](struct{}{})
+	}
+}
+
+func Process_getEnvT(key string) func() SkyResult[string, string] {
+	return func() SkyResult[string, string] {
+		val := os.Getenv(key)
+		if val == "" { return Err[string, string]("env var not set: " + key) }
+		return Ok[string, string](val)
+	}
+}
+
+func Process_getCwdT() func() SkyResult[string, string] {
+	return func() SkyResult[string, string] {
+		dir, err := os.Getwd()
+		if err != nil { return Err[string, string](err.Error()) }
+		return Ok[string, string](dir)
+	}
+}
+
 // ═══════════════════════════════════════════════════════════
 // File
 // ═══════════════════════════════════════════════════════════
@@ -2155,6 +2190,32 @@ func Io_writeStderr(s any) any {
 	return func() any {
 		fmt.Fprint(os.Stderr, s)
 		return Ok[any, any](struct{}{})
+	}
+}
+
+// P8/Io typed companions — Task-shaped.
+func Io_readLineT() func() SkyResult[string, string] {
+	return func() SkyResult[string, string] {
+		if stdinReader == nil { stdinReader = bufio.NewReader(os.Stdin) }
+		line, err := stdinReader.ReadString('\n')
+		if err != nil && err != io.EOF {
+			return Err[string, string](err.Error())
+		}
+		return Ok[string, string](strings.TrimRight(line, "\n\r"))
+	}
+}
+
+func Io_writeStdoutT(s string) func() SkyResult[string, struct{}] {
+	return func() SkyResult[string, struct{}] {
+		fmt.Print(s)
+		return Ok[string, struct{}](struct{}{})
+	}
+}
+
+func Io_writeStderrT(s string) func() SkyResult[string, struct{}] {
+	return func() SkyResult[string, struct{}] {
+		fmt.Fprint(os.Stderr, s)
+		return Ok[string, struct{}](struct{}{})
 	}
 }
 
