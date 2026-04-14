@@ -16,12 +16,6 @@ import (
 	"reflect"
 )
 
-// [pure] Go_Mux.cORSMethodMiddleware → pkg.CORSMethodMiddleware
-func Go_Mux_cORSMethodMiddleware(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](pkg.CORSMethodMiddleware(p0.(*pkg.Router)))
-	return
-}
 type FfiT_Go_Mux_cORSMethodMiddleware_P0 = *pkg.Router
 type FfiT_Go_Mux_cORSMethodMiddleware_R = pkg.MiddlewareFunc
 // [pure] typed wrapper for Go_Mux_cORSMethodMiddleware (P7 adaptor target)
@@ -31,12 +25,6 @@ func Go_Mux_cORSMethodMiddlewareT(p0 *pkg.Router) (out SkyResult[string, pkg.Mid
 	return
 }
 
-// [pure] Go_Mux.currentRoute → pkg.CurrentRoute
-func Go_Mux_currentRoute(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](pkg.CurrentRoute(p0.(*http.Request)))
-	return
-}
 type FfiT_Go_Mux_currentRoute_P0 = *http.Request
 type FfiT_Go_Mux_currentRoute_R = *pkg.Route
 // [pure] typed wrapper for Go_Mux_currentRoute (P7 adaptor target)
@@ -54,12 +42,6 @@ func Go_Mux_errNotFound(_ any) any { return pkg.ErrNotFound }
 
 func Go_Mux_setErrNotFound(value any) any { reflect.ValueOf(&pkg.ErrNotFound).Elem().Set(reflect.ValueOf(value).Convert(reflect.TypeOf(pkg.ErrNotFound))); return struct{}{} }
 
-// [pure] Go_Mux.matcherFuncMatch → pkg.MatcherFuncMatch
-func Go_Mux_matcherFuncMatch(p0 any, p1 any, p2 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(pkg.MatcherFunc).Match(p1.(*http.Request), p2.(*pkg.RouteMatch)))
-	return
-}
 type FfiT_Go_Mux_matcherFuncMatch_P0 = pkg.MatcherFunc
 type FfiT_Go_Mux_matcherFuncMatch_P1 = *http.Request
 type FfiT_Go_Mux_matcherFuncMatch_P2 = *pkg.RouteMatch
@@ -70,12 +52,6 @@ func Go_Mux_matcherFuncMatchT(p0 pkg.MatcherFunc, p1 *http.Request, p2 *pkg.Rout
 	return
 }
 
-// [pure] Go_Mux.middlewareFuncMiddleware → pkg.MiddlewareFuncMiddleware
-func Go_Mux_middlewareFuncMiddleware(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(pkg.MiddlewareFunc).Middleware(p1.(http.Handler)))
-	return
-}
 type FfiT_Go_Mux_middlewareFuncMiddleware_P0 = pkg.MiddlewareFunc
 type FfiT_Go_Mux_middlewareFuncMiddleware_P1 = http.Handler
 type FfiT_Go_Mux_middlewareFuncMiddleware_R = http.Handler
@@ -86,13 +62,6 @@ func Go_Mux_middlewareFuncMiddlewareT(p0 pkg.MiddlewareFunc, p1 http.Handler) (o
 	return
 }
 
-// [pure] Go_Mux.newRouter → pkg.NewRouter
-func Go_Mux_newRouter(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	_ = p0
-	out = Ok[any, any](pkg.NewRouter())
-	return
-}
 type FfiT_Go_Mux_newRouter_R = *pkg.Router
 // [pure] typed wrapper for Go_Mux_newRouter (P7 adaptor target)
 func Go_Mux_newRouterT() (out SkyResult[string, *pkg.Router]) {
@@ -101,12 +70,6 @@ func Go_Mux_newRouterT() (out SkyResult[string, *pkg.Router]) {
 	return
 }
 
-// [pure] Go_Mux.routeSkipClean → pkg.RouteSkipClean
-func Go_Mux_routeSkipClean(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.Route).SkipClean())
-	return
-}
 type FfiT_Go_Mux_routeSkipClean_P0 = *pkg.Route
 // [pure] typed wrapper for Go_Mux_routeSkipClean (P7 adaptor target)
 func Go_Mux_routeSkipCleanT(p0 *pkg.Route) (out SkyResult[string, bool]) {
@@ -115,12 +78,6 @@ func Go_Mux_routeSkipCleanT(p0 *pkg.Route) (out SkyResult[string, bool]) {
 	return
 }
 
-// [pure] Go_Mux.routeMatch → pkg.RouteMatch
-func Go_Mux_routeMatch(p0 any, p1 any, p2 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.Route).Match(p1.(*http.Request), p2.(*pkg.RouteMatch)))
-	return
-}
 type FfiT_Go_Mux_routeMatch_P0 = *pkg.Route
 type FfiT_Go_Mux_routeMatch_P1 = *http.Request
 type FfiT_Go_Mux_routeMatch_P2 = *pkg.RouteMatch
@@ -131,15 +88,6 @@ func Go_Mux_routeMatchT(p0 *pkg.Route, p1 *http.Request, p2 *pkg.RouteMatch) (ou
 	return
 }
 
-// [fallible] Go_Mux.routeGetError → pkg.RouteGetError
-func Go_Mux_routeGetError(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	err := p0.(*pkg.Route).GetError()
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](struct{}{})
-
-	return
-}
 type FfiT_Go_Mux_routeGetError_P0 = *pkg.Route
 // [fallible] typed wrapper for Go_Mux_routeGetError (P7 adaptor target)
 func Go_Mux_routeGetErrorT(p0 *pkg.Route) (out SkyResult[string, struct{}]) {
@@ -150,12 +98,6 @@ func Go_Mux_routeGetErrorT(p0 *pkg.Route) (out SkyResult[string, struct{}]) {
 	return
 }
 
-// [pure] Go_Mux.routeBuildOnly → pkg.RouteBuildOnly
-func Go_Mux_routeBuildOnly(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.Route).BuildOnly())
-	return
-}
 type FfiT_Go_Mux_routeBuildOnly_P0 = *pkg.Route
 type FfiT_Go_Mux_routeBuildOnly_R = *pkg.Route
 // [pure] typed wrapper for Go_Mux_routeBuildOnly (P7 adaptor target)
@@ -165,12 +107,6 @@ func Go_Mux_routeBuildOnlyT(p0 *pkg.Route) (out SkyResult[string, *pkg.Route]) {
 	return
 }
 
-// [pure] Go_Mux.routeHandler → pkg.RouteHandler
-func Go_Mux_routeHandler(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.Route).Handler(p1.(http.Handler)))
-	return
-}
 type FfiT_Go_Mux_routeHandler_P0 = *pkg.Route
 type FfiT_Go_Mux_routeHandler_P1 = http.Handler
 type FfiT_Go_Mux_routeHandler_R = *pkg.Route
@@ -188,12 +124,6 @@ func Go_Mux_routeHandlerFunc(p0 any, p1 any) (out any) {
 	return
 }
 
-// [pure] Go_Mux.routeGetHandler → pkg.RouteGetHandler
-func Go_Mux_routeGetHandler(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.Route).GetHandler())
-	return
-}
 type FfiT_Go_Mux_routeGetHandler_P0 = *pkg.Route
 type FfiT_Go_Mux_routeGetHandler_R = http.Handler
 // [pure] typed wrapper for Go_Mux_routeGetHandler (P7 adaptor target)
@@ -203,12 +133,6 @@ func Go_Mux_routeGetHandlerT(p0 *pkg.Route) (out SkyResult[string, http.Handler]
 	return
 }
 
-// [pure] Go_Mux.routeName → pkg.RouteName
-func Go_Mux_routeName(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.Route).Name(fmt.Sprintf("%v", p1)))
-	return
-}
 type FfiT_Go_Mux_routeName_P0 = *pkg.Route
 type FfiT_Go_Mux_routeName_R = *pkg.Route
 // [pure] typed wrapper for Go_Mux_routeName (P7 adaptor target)
@@ -218,12 +142,6 @@ func Go_Mux_routeNameT(p0 *pkg.Route, p1 string) (out SkyResult[string, *pkg.Rou
 	return
 }
 
-// [pure] Go_Mux.routeGetName → pkg.RouteGetName
-func Go_Mux_routeGetName(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.Route).GetName())
-	return
-}
 type FfiT_Go_Mux_routeGetName_P0 = *pkg.Route
 // [pure] typed wrapper for Go_Mux_routeGetName (P7 adaptor target)
 func Go_Mux_routeGetNameT(p0 *pkg.Route) (out SkyResult[string, string]) {
@@ -246,12 +164,6 @@ func Go_Mux_routeHeadersRegexp(p0 any, p1 any) (out any) {
 	return
 }
 
-// [pure] Go_Mux.routeHost → pkg.RouteHost
-func Go_Mux_routeHost(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.Route).Host(fmt.Sprintf("%v", p1)))
-	return
-}
 type FfiT_Go_Mux_routeHost_P0 = *pkg.Route
 type FfiT_Go_Mux_routeHost_R = *pkg.Route
 // [pure] typed wrapper for Go_Mux_routeHost (P7 adaptor target)
@@ -261,12 +173,6 @@ func Go_Mux_routeHostT(p0 *pkg.Route, p1 string) (out SkyResult[string, *pkg.Rou
 	return
 }
 
-// [pure] Go_Mux.routeMatcherFunc → pkg.RouteMatcherFunc
-func Go_Mux_routeMatcherFunc(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.Route).MatcherFunc(p1.(pkg.MatcherFunc)))
-	return
-}
 type FfiT_Go_Mux_routeMatcherFunc_P0 = *pkg.Route
 type FfiT_Go_Mux_routeMatcherFunc_P1 = pkg.MatcherFunc
 type FfiT_Go_Mux_routeMatcherFunc_R = *pkg.Route
@@ -284,12 +190,6 @@ func Go_Mux_routeMethods(p0 any, p1 any) (out any) {
 	return
 }
 
-// [pure] Go_Mux.routePath → pkg.RoutePath
-func Go_Mux_routePath(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.Route).Path(fmt.Sprintf("%v", p1)))
-	return
-}
 type FfiT_Go_Mux_routePath_P0 = *pkg.Route
 type FfiT_Go_Mux_routePath_R = *pkg.Route
 // [pure] typed wrapper for Go_Mux_routePath (P7 adaptor target)
@@ -299,12 +199,6 @@ func Go_Mux_routePathT(p0 *pkg.Route, p1 string) (out SkyResult[string, *pkg.Rou
 	return
 }
 
-// [pure] Go_Mux.routePathPrefix → pkg.RoutePathPrefix
-func Go_Mux_routePathPrefix(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.Route).PathPrefix(fmt.Sprintf("%v", p1)))
-	return
-}
 type FfiT_Go_Mux_routePathPrefix_P0 = *pkg.Route
 type FfiT_Go_Mux_routePathPrefix_R = *pkg.Route
 // [pure] typed wrapper for Go_Mux_routePathPrefix (P7 adaptor target)
@@ -328,12 +222,6 @@ func Go_Mux_routeSchemes(p0 any, p1 any) (out any) {
 	return
 }
 
-// [pure] Go_Mux.routeBuildVarsFunc → pkg.RouteBuildVarsFunc
-func Go_Mux_routeBuildVarsFunc(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.Route).BuildVarsFunc(p1.(pkg.BuildVarsFunc)))
-	return
-}
 type FfiT_Go_Mux_routeBuildVarsFunc_P0 = *pkg.Route
 type FfiT_Go_Mux_routeBuildVarsFunc_P1 = pkg.BuildVarsFunc
 type FfiT_Go_Mux_routeBuildVarsFunc_R = *pkg.Route
@@ -344,12 +232,6 @@ func Go_Mux_routeBuildVarsFuncT(p0 *pkg.Route, p1 pkg.BuildVarsFunc) (out SkyRes
 	return
 }
 
-// [pure] Go_Mux.routeSubrouter → pkg.RouteSubrouter
-func Go_Mux_routeSubrouter(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.Route).Subrouter())
-	return
-}
 type FfiT_Go_Mux_routeSubrouter_P0 = *pkg.Route
 type FfiT_Go_Mux_routeSubrouter_R = *pkg.Router
 // [pure] typed wrapper for Go_Mux_routeSubrouter (P7 adaptor target)
@@ -389,15 +271,6 @@ func Go_Mux_routeURLPath(p0 any, p1 any) (out any) {
 	return
 }
 
-// [fallible] Go_Mux.routeGetPathTemplate → pkg.RouteGetPathTemplate
-func Go_Mux_routeGetPathTemplate(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := p0.(*pkg.Route).GetPathTemplate()
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](r0)
-
-	return
-}
 type FfiT_Go_Mux_routeGetPathTemplate_P0 = *pkg.Route
 // [fallible] typed wrapper for Go_Mux_routeGetPathTemplate (P7 adaptor target)
 func Go_Mux_routeGetPathTemplateT(p0 *pkg.Route) (out SkyResult[string, string]) {
@@ -408,15 +281,6 @@ func Go_Mux_routeGetPathTemplateT(p0 *pkg.Route) (out SkyResult[string, string])
 	return
 }
 
-// [fallible] Go_Mux.routeGetPathRegexp → pkg.RouteGetPathRegexp
-func Go_Mux_routeGetPathRegexp(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := p0.(*pkg.Route).GetPathRegexp()
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](r0)
-
-	return
-}
 type FfiT_Go_Mux_routeGetPathRegexp_P0 = *pkg.Route
 // [fallible] typed wrapper for Go_Mux_routeGetPathRegexp (P7 adaptor target)
 func Go_Mux_routeGetPathRegexpT(p0 *pkg.Route) (out SkyResult[string, string]) {
@@ -427,15 +291,6 @@ func Go_Mux_routeGetPathRegexpT(p0 *pkg.Route) (out SkyResult[string, string]) {
 	return
 }
 
-// [fallible] Go_Mux.routeGetQueriesRegexp → pkg.RouteGetQueriesRegexp
-func Go_Mux_routeGetQueriesRegexp(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := p0.(*pkg.Route).GetQueriesRegexp()
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](r0)
-
-	return
-}
 type FfiT_Go_Mux_routeGetQueriesRegexp_P0 = *pkg.Route
 // [fallible] typed wrapper for Go_Mux_routeGetQueriesRegexp (P7 adaptor target)
 func Go_Mux_routeGetQueriesRegexpT(p0 *pkg.Route) (out SkyResult[string, []string]) {
@@ -446,15 +301,6 @@ func Go_Mux_routeGetQueriesRegexpT(p0 *pkg.Route) (out SkyResult[string, []strin
 	return
 }
 
-// [fallible] Go_Mux.routeGetQueriesTemplates → pkg.RouteGetQueriesTemplates
-func Go_Mux_routeGetQueriesTemplates(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := p0.(*pkg.Route).GetQueriesTemplates()
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](r0)
-
-	return
-}
 type FfiT_Go_Mux_routeGetQueriesTemplates_P0 = *pkg.Route
 // [fallible] typed wrapper for Go_Mux_routeGetQueriesTemplates (P7 adaptor target)
 func Go_Mux_routeGetQueriesTemplatesT(p0 *pkg.Route) (out SkyResult[string, []string]) {
@@ -465,15 +311,6 @@ func Go_Mux_routeGetQueriesTemplatesT(p0 *pkg.Route) (out SkyResult[string, []st
 	return
 }
 
-// [fallible] Go_Mux.routeGetMethods → pkg.RouteGetMethods
-func Go_Mux_routeGetMethods(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := p0.(*pkg.Route).GetMethods()
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](r0)
-
-	return
-}
 type FfiT_Go_Mux_routeGetMethods_P0 = *pkg.Route
 // [fallible] typed wrapper for Go_Mux_routeGetMethods (P7 adaptor target)
 func Go_Mux_routeGetMethodsT(p0 *pkg.Route) (out SkyResult[string, []string]) {
@@ -484,15 +321,6 @@ func Go_Mux_routeGetMethodsT(p0 *pkg.Route) (out SkyResult[string, []string]) {
 	return
 }
 
-// [fallible] Go_Mux.routeGetHostTemplate → pkg.RouteGetHostTemplate
-func Go_Mux_routeGetHostTemplate(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := p0.(*pkg.Route).GetHostTemplate()
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](r0)
-
-	return
-}
 type FfiT_Go_Mux_routeGetHostTemplate_P0 = *pkg.Route
 // [fallible] typed wrapper for Go_Mux_routeGetHostTemplate (P7 adaptor target)
 func Go_Mux_routeGetHostTemplateT(p0 *pkg.Route) (out SkyResult[string, string]) {
@@ -503,15 +331,6 @@ func Go_Mux_routeGetHostTemplateT(p0 *pkg.Route) (out SkyResult[string, string])
 	return
 }
 
-// [fallible] Go_Mux.routeGetVarNames → pkg.RouteGetVarNames
-func Go_Mux_routeGetVarNames(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := p0.(*pkg.Route).GetVarNames()
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](r0)
-
-	return
-}
 type FfiT_Go_Mux_routeGetVarNames_P0 = *pkg.Route
 // [fallible] typed wrapper for Go_Mux_routeGetVarNames (P7 adaptor target)
 func Go_Mux_routeGetVarNamesT(p0 *pkg.Route) (out SkyResult[string, []string]) {
@@ -550,12 +369,6 @@ func Go_Mux_routerUse(p0 any, p1 any) (out any) {
 	return
 }
 
-// [pure] Go_Mux.routerMatch → pkg.RouterMatch
-func Go_Mux_routerMatch(p0 any, p1 any, p2 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.Router).Match(p1.(*http.Request), p2.(*pkg.RouteMatch)))
-	return
-}
 type FfiT_Go_Mux_routerMatch_P0 = *pkg.Router
 type FfiT_Go_Mux_routerMatch_P1 = *http.Request
 type FfiT_Go_Mux_routerMatch_P2 = *pkg.RouteMatch
@@ -574,12 +387,6 @@ func Go_Mux_routerServeHTTP(p0 any, p1 any, p2 any) (out any) {
 	return
 }
 
-// [pure] Go_Mux.routerGet → pkg.RouterGet
-func Go_Mux_routerGet(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.Router).Get(fmt.Sprintf("%v", p1)))
-	return
-}
 type FfiT_Go_Mux_routerGet_P0 = *pkg.Router
 type FfiT_Go_Mux_routerGet_R = *pkg.Route
 // [pure] typed wrapper for Go_Mux_routerGet (P7 adaptor target)
@@ -589,12 +396,6 @@ func Go_Mux_routerGetT(p0 *pkg.Router, p1 string) (out SkyResult[string, *pkg.Ro
 	return
 }
 
-// [pure] Go_Mux.routerGetRoute → pkg.RouterGetRoute
-func Go_Mux_routerGetRoute(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.Router).GetRoute(fmt.Sprintf("%v", p1)))
-	return
-}
 type FfiT_Go_Mux_routerGetRoute_P0 = *pkg.Router
 type FfiT_Go_Mux_routerGetRoute_R = *pkg.Route
 // [pure] typed wrapper for Go_Mux_routerGetRoute (P7 adaptor target)
@@ -604,12 +405,6 @@ func Go_Mux_routerGetRouteT(p0 *pkg.Router, p1 string) (out SkyResult[string, *p
 	return
 }
 
-// [pure] Go_Mux.routerStrictSlash → pkg.RouterStrictSlash
-func Go_Mux_routerStrictSlash(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.Router).StrictSlash(AsBool(p1)))
-	return
-}
 type FfiT_Go_Mux_routerStrictSlash_P0 = *pkg.Router
 type FfiT_Go_Mux_routerStrictSlash_R = *pkg.Router
 // [pure] typed wrapper for Go_Mux_routerStrictSlash (P7 adaptor target)
@@ -619,12 +414,6 @@ func Go_Mux_routerStrictSlashT(p0 *pkg.Router, p1 bool) (out SkyResult[string, *
 	return
 }
 
-// [pure] Go_Mux.routerSkipClean → pkg.RouterSkipClean
-func Go_Mux_routerSkipClean(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.Router).SkipClean(AsBool(p1)))
-	return
-}
 type FfiT_Go_Mux_routerSkipClean_P0 = *pkg.Router
 type FfiT_Go_Mux_routerSkipClean_R = *pkg.Router
 // [pure] typed wrapper for Go_Mux_routerSkipClean (P7 adaptor target)
@@ -634,12 +423,6 @@ func Go_Mux_routerSkipCleanT(p0 *pkg.Router, p1 bool) (out SkyResult[string, *pk
 	return
 }
 
-// [pure] Go_Mux.routerUseEncodedPath → pkg.RouterUseEncodedPath
-func Go_Mux_routerUseEncodedPath(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.Router).UseEncodedPath())
-	return
-}
 type FfiT_Go_Mux_routerUseEncodedPath_P0 = *pkg.Router
 type FfiT_Go_Mux_routerUseEncodedPath_R = *pkg.Router
 // [pure] typed wrapper for Go_Mux_routerUseEncodedPath (P7 adaptor target)
@@ -649,12 +432,6 @@ func Go_Mux_routerUseEncodedPathT(p0 *pkg.Router) (out SkyResult[string, *pkg.Ro
 	return
 }
 
-// [pure] Go_Mux.routerNewRoute → pkg.RouterNewRoute
-func Go_Mux_routerNewRoute(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.Router).NewRoute())
-	return
-}
 type FfiT_Go_Mux_routerNewRoute_P0 = *pkg.Router
 type FfiT_Go_Mux_routerNewRoute_R = *pkg.Route
 // [pure] typed wrapper for Go_Mux_routerNewRoute (P7 adaptor target)
@@ -664,12 +441,6 @@ func Go_Mux_routerNewRouteT(p0 *pkg.Router) (out SkyResult[string, *pkg.Route]) 
 	return
 }
 
-// [pure] Go_Mux.routerName → pkg.RouterName
-func Go_Mux_routerName(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.Router).Name(fmt.Sprintf("%v", p1)))
-	return
-}
 type FfiT_Go_Mux_routerName_P0 = *pkg.Router
 type FfiT_Go_Mux_routerName_R = *pkg.Route
 // [pure] typed wrapper for Go_Mux_routerName (P7 adaptor target)
@@ -679,12 +450,6 @@ func Go_Mux_routerNameT(p0 *pkg.Router, p1 string) (out SkyResult[string, *pkg.R
 	return
 }
 
-// [pure] Go_Mux.routerHandle → pkg.RouterHandle
-func Go_Mux_routerHandle(p0 any, p1 any, p2 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.Router).Handle(fmt.Sprintf("%v", p1), p2.(http.Handler)))
-	return
-}
 type FfiT_Go_Mux_routerHandle_P0 = *pkg.Router
 type FfiT_Go_Mux_routerHandle_P2 = http.Handler
 type FfiT_Go_Mux_routerHandle_R = *pkg.Route
@@ -709,12 +474,6 @@ func Go_Mux_routerHeaders(p0 any, p1 any) (out any) {
 	return
 }
 
-// [pure] Go_Mux.routerHost → pkg.RouterHost
-func Go_Mux_routerHost(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.Router).Host(fmt.Sprintf("%v", p1)))
-	return
-}
 type FfiT_Go_Mux_routerHost_P0 = *pkg.Router
 type FfiT_Go_Mux_routerHost_R = *pkg.Route
 // [pure] typed wrapper for Go_Mux_routerHost (P7 adaptor target)
@@ -724,12 +483,6 @@ func Go_Mux_routerHostT(p0 *pkg.Router, p1 string) (out SkyResult[string, *pkg.R
 	return
 }
 
-// [pure] Go_Mux.routerMatcherFunc → pkg.RouterMatcherFunc
-func Go_Mux_routerMatcherFunc(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.Router).MatcherFunc(p1.(pkg.MatcherFunc)))
-	return
-}
 type FfiT_Go_Mux_routerMatcherFunc_P0 = *pkg.Router
 type FfiT_Go_Mux_routerMatcherFunc_P1 = pkg.MatcherFunc
 type FfiT_Go_Mux_routerMatcherFunc_R = *pkg.Route
@@ -747,12 +500,6 @@ func Go_Mux_routerMethods(p0 any, p1 any) (out any) {
 	return
 }
 
-// [pure] Go_Mux.routerPath → pkg.RouterPath
-func Go_Mux_routerPath(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.Router).Path(fmt.Sprintf("%v", p1)))
-	return
-}
 type FfiT_Go_Mux_routerPath_P0 = *pkg.Router
 type FfiT_Go_Mux_routerPath_R = *pkg.Route
 // [pure] typed wrapper for Go_Mux_routerPath (P7 adaptor target)
@@ -762,12 +509,6 @@ func Go_Mux_routerPathT(p0 *pkg.Router, p1 string) (out SkyResult[string, *pkg.R
 	return
 }
 
-// [pure] Go_Mux.routerPathPrefix → pkg.RouterPathPrefix
-func Go_Mux_routerPathPrefix(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.Router).PathPrefix(fmt.Sprintf("%v", p1)))
-	return
-}
 type FfiT_Go_Mux_routerPathPrefix_P0 = *pkg.Router
 type FfiT_Go_Mux_routerPathPrefix_R = *pkg.Route
 // [pure] typed wrapper for Go_Mux_routerPathPrefix (P7 adaptor target)
@@ -791,12 +532,6 @@ func Go_Mux_routerSchemes(p0 any, p1 any) (out any) {
 	return
 }
 
-// [pure] Go_Mux.routerBuildVarsFunc → pkg.RouterBuildVarsFunc
-func Go_Mux_routerBuildVarsFunc(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.Router).BuildVarsFunc(p1.(pkg.BuildVarsFunc)))
-	return
-}
 type FfiT_Go_Mux_routerBuildVarsFunc_P0 = *pkg.Router
 type FfiT_Go_Mux_routerBuildVarsFunc_P1 = pkg.BuildVarsFunc
 type FfiT_Go_Mux_routerBuildVarsFunc_R = *pkg.Route
@@ -807,15 +542,6 @@ func Go_Mux_routerBuildVarsFuncT(p0 *pkg.Router, p1 pkg.BuildVarsFunc) (out SkyR
 	return
 }
 
-// [fallible] Go_Mux.routerWalk → pkg.RouterWalk
-func Go_Mux_routerWalk(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	err := p0.(*pkg.Router).Walk(p1.(pkg.WalkFunc))
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](struct{}{})
-
-	return
-}
 type FfiT_Go_Mux_routerWalk_P0 = *pkg.Router
 type FfiT_Go_Mux_routerWalk_P1 = pkg.WalkFunc
 // [fallible] typed wrapper for Go_Mux_routerWalk (P7 adaptor target)

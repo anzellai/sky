@@ -24,12 +24,6 @@ import (
 	"reflect"
 )
 
-// [pure] Go_Http.allowQuerySemicolons → pkg.AllowQuerySemicolons
-func Go_Http_allowQuerySemicolons(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](pkg.AllowQuerySemicolons(p0.(pkg.Handler)))
-	return
-}
 type FfiT_Go_Http_allowQuerySemicolons_P0 = pkg.Handler
 type FfiT_Go_Http_allowQuerySemicolons_R = pkg.Handler
 // [pure] typed wrapper for Go_Http_allowQuerySemicolons (P7 adaptor target)
@@ -39,12 +33,6 @@ func Go_Http_allowQuerySemicolonsT(p0 pkg.Handler) (out SkyResult[string, pkg.Ha
 	return
 }
 
-// [pure] Go_Http.canonicalHeaderKey → pkg.CanonicalHeaderKey
-func Go_Http_canonicalHeaderKey(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](pkg.CanonicalHeaderKey(fmt.Sprintf("%v", p0)))
-	return
-}
 // [pure] typed wrapper for Go_Http_canonicalHeaderKey (P7 adaptor target)
 func Go_Http_canonicalHeaderKeyT(p0 string) (out SkyResult[string, string]) {
 	defer SkyFfiRecoverT(&out)()
@@ -52,15 +40,6 @@ func Go_Http_canonicalHeaderKeyT(p0 string) (out SkyResult[string, string]) {
 	return
 }
 
-// [fallible] Go_Http.clientGet → pkg.ClientGet
-func Go_Http_clientGet(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := p0.(*pkg.Client).Get(fmt.Sprintf("%v", p1))
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](r0)
-
-	return
-}
 type FfiT_Go_Http_clientGet_P0 = *pkg.Client
 type FfiT_Go_Http_clientGet_R = *pkg.Response
 // [fallible] typed wrapper for Go_Http_clientGet (P7 adaptor target)
@@ -72,15 +51,6 @@ func Go_Http_clientGetT(p0 *pkg.Client, p1 string) (out SkyResult[string, *pkg.R
 	return
 }
 
-// [fallible] Go_Http.clientDo → pkg.ClientDo
-func Go_Http_clientDo(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := p0.(*pkg.Client).Do(p1.(*pkg.Request))
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](r0)
-
-	return
-}
 type FfiT_Go_Http_clientDo_P0 = *pkg.Client
 type FfiT_Go_Http_clientDo_P1 = *pkg.Request
 type FfiT_Go_Http_clientDo_R = *pkg.Response
@@ -93,15 +63,6 @@ func Go_Http_clientDoT(p0 *pkg.Client, p1 *pkg.Request) (out SkyResult[string, *
 	return
 }
 
-// [fallible] Go_Http.clientPost → pkg.ClientPost
-func Go_Http_clientPost(p0 any, p1 any, p2 any, p3 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := p0.(*pkg.Client).Post(fmt.Sprintf("%v", p1), fmt.Sprintf("%v", p2), p3.(io.Reader))
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](r0)
-
-	return
-}
 type FfiT_Go_Http_clientPost_P0 = *pkg.Client
 type FfiT_Go_Http_clientPost_P3 = io.Reader
 type FfiT_Go_Http_clientPost_R = *pkg.Response
@@ -114,15 +75,6 @@ func Go_Http_clientPostT(p0 *pkg.Client, p1 string, p2 string, p3 io.Reader) (ou
 	return
 }
 
-// [fallible] Go_Http.clientPostForm → pkg.ClientPostForm
-func Go_Http_clientPostForm(p0 any, p1 any, p2 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := p0.(*pkg.Client).PostForm(fmt.Sprintf("%v", p1), p2.(url.Values))
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](r0)
-
-	return
-}
 type FfiT_Go_Http_clientPostForm_P0 = *pkg.Client
 type FfiT_Go_Http_clientPostForm_P2 = url.Values
 type FfiT_Go_Http_clientPostForm_R = *pkg.Response
@@ -135,15 +87,6 @@ func Go_Http_clientPostFormT(p0 *pkg.Client, p1 string, p2 url.Values) (out SkyR
 	return
 }
 
-// [fallible] Go_Http.clientHead → pkg.ClientHead
-func Go_Http_clientHead(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := p0.(*pkg.Client).Head(fmt.Sprintf("%v", p1))
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](r0)
-
-	return
-}
 type FfiT_Go_Http_clientHead_P0 = *pkg.Client
 type FfiT_Go_Http_clientHead_R = *pkg.Response
 // [fallible] typed wrapper for Go_Http_clientHead (P7 adaptor target)
@@ -181,15 +124,6 @@ func Go_Http_clientSetTimeout(value any, recv any) any { return SkyFfiFieldSet(v
 
 func Go_Http_newClient(_ any) any { return new(pkg.Client) }
 
-// [fallible] Go_Http.clientConnClose → pkg.ClientConnClose
-func Go_Http_clientConnClose(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	err := p0.(*pkg.ClientConn).Close()
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](struct{}{})
-
-	return
-}
 type FfiT_Go_Http_clientConnClose_P0 = *pkg.ClientConn
 // [fallible] typed wrapper for Go_Http_clientConnClose (P7 adaptor target)
 func Go_Http_clientConnCloseT(p0 *pkg.ClientConn) (out SkyResult[string, struct{}]) {
@@ -200,15 +134,6 @@ func Go_Http_clientConnCloseT(p0 *pkg.ClientConn) (out SkyResult[string, struct{
 	return
 }
 
-// [fallible] Go_Http.clientConnErr → pkg.ClientConnErr
-func Go_Http_clientConnErr(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	err := p0.(*pkg.ClientConn).Err()
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](struct{}{})
-
-	return
-}
 type FfiT_Go_Http_clientConnErr_P0 = *pkg.ClientConn
 // [fallible] typed wrapper for Go_Http_clientConnErr (P7 adaptor target)
 func Go_Http_clientConnErrT(p0 *pkg.ClientConn) (out SkyResult[string, struct{}]) {
@@ -219,15 +144,6 @@ func Go_Http_clientConnErrT(p0 *pkg.ClientConn) (out SkyResult[string, struct{}]
 	return
 }
 
-// [fallible] Go_Http.clientConnRoundTrip → pkg.ClientConnRoundTrip
-func Go_Http_clientConnRoundTrip(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := p0.(*pkg.ClientConn).RoundTrip(p1.(*pkg.Request))
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](r0)
-
-	return
-}
 type FfiT_Go_Http_clientConnRoundTrip_P0 = *pkg.ClientConn
 type FfiT_Go_Http_clientConnRoundTrip_P1 = *pkg.Request
 type FfiT_Go_Http_clientConnRoundTrip_R = *pkg.Response
@@ -240,12 +156,6 @@ func Go_Http_clientConnRoundTripT(p0 *pkg.ClientConn, p1 *pkg.Request) (out SkyR
 	return
 }
 
-// [pure] Go_Http.clientConnAvailable → pkg.ClientConnAvailable
-func Go_Http_clientConnAvailable(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.ClientConn).Available())
-	return
-}
 type FfiT_Go_Http_clientConnAvailable_P0 = *pkg.ClientConn
 // [pure] typed wrapper for Go_Http_clientConnAvailable (P7 adaptor target)
 func Go_Http_clientConnAvailableT(p0 *pkg.ClientConn) (out SkyResult[string, int]) {
@@ -254,12 +164,6 @@ func Go_Http_clientConnAvailableT(p0 *pkg.ClientConn) (out SkyResult[string, int
 	return
 }
 
-// [pure] Go_Http.clientConnInFlight → pkg.ClientConnInFlight
-func Go_Http_clientConnInFlight(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.ClientConn).InFlight())
-	return
-}
 type FfiT_Go_Http_clientConnInFlight_P0 = *pkg.ClientConn
 // [pure] typed wrapper for Go_Http_clientConnInFlight (P7 adaptor target)
 func Go_Http_clientConnInFlightT(p0 *pkg.ClientConn) (out SkyResult[string, int]) {
@@ -268,15 +172,6 @@ func Go_Http_clientConnInFlightT(p0 *pkg.ClientConn) (out SkyResult[string, int]
 	return
 }
 
-// [fallible] Go_Http.clientConnReserve → pkg.ClientConnReserve
-func Go_Http_clientConnReserve(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	err := p0.(*pkg.ClientConn).Reserve()
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](struct{}{})
-
-	return
-}
 type FfiT_Go_Http_clientConnReserve_P0 = *pkg.ClientConn
 // [fallible] typed wrapper for Go_Http_clientConnReserve (P7 adaptor target)
 func Go_Http_clientConnReserveT(p0 *pkg.ClientConn) (out SkyResult[string, struct{}]) {
@@ -312,12 +207,6 @@ func Go_Http_closeNotifierCloseNotify(p0 any) (out any) {
 	return
 }
 
-// [pure] Go_Http.connStateString → pkg.ConnStateString
-func Go_Http_connStateString(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(pkg.ConnState).String())
-	return
-}
 type FfiT_Go_Http_connStateString_P0 = pkg.ConnState
 // [pure] typed wrapper for Go_Http_connStateString (P7 adaptor target)
 func Go_Http_connStateStringT(p0 pkg.ConnState) (out SkyResult[string, string]) {
@@ -326,12 +215,6 @@ func Go_Http_connStateStringT(p0 pkg.ConnState) (out SkyResult[string, string]) 
 	return
 }
 
-// [pure] Go_Http.cookieString → pkg.CookieString
-func Go_Http_cookieString(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.Cookie).String())
-	return
-}
 type FfiT_Go_Http_cookieString_P0 = *pkg.Cookie
 // [pure] typed wrapper for Go_Http_cookieString (P7 adaptor target)
 func Go_Http_cookieStringT(p0 *pkg.Cookie) (out SkyResult[string, string]) {
@@ -340,15 +223,6 @@ func Go_Http_cookieStringT(p0 *pkg.Cookie) (out SkyResult[string, string]) {
 	return
 }
 
-// [fallible] Go_Http.cookieValid → pkg.CookieValid
-func Go_Http_cookieValid(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	err := p0.(*pkg.Cookie).Valid()
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](struct{}{})
-
-	return
-}
 type FfiT_Go_Http_cookieValid_P0 = *pkg.Cookie
 // [fallible] typed wrapper for Go_Http_cookieValid (P7 adaptor target)
 func Go_Http_cookieValidT(p0 *pkg.Cookie) (out SkyResult[string, struct{}]) {
@@ -417,12 +291,6 @@ func Go_Http_cookieSetUnparsed(value any, recv any) any { return SkyFfiFieldSet(
 
 func Go_Http_newCookie(_ any) any { return new(pkg.Cookie) }
 
-// [pure] Go_Http.cookieJarCookies → pkg.CookieJarCookies
-func Go_Http_cookieJarCookies(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(pkg.CookieJar).Cookies(p1.(*url.URL)))
-	return
-}
 type FfiT_Go_Http_cookieJarCookies_P0 = pkg.CookieJar
 type FfiT_Go_Http_cookieJarCookies_P1 = *url.URL
 type FfiT_Go_Http_cookieJarCookies_R = []*pkg.Cookie
@@ -441,15 +309,6 @@ func Go_Http_cookieJarSetCookies(p0 any, p1 any, p2 any) (out any) {
 	return
 }
 
-// [fallible] Go_Http.crossOriginProtectionAddTrustedOrigin → pkg.CrossOriginProtectionAddTrustedOrigin
-func Go_Http_crossOriginProtectionAddTrustedOrigin(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	err := p0.(*pkg.CrossOriginProtection).AddTrustedOrigin(fmt.Sprintf("%v", p1))
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](struct{}{})
-
-	return
-}
 type FfiT_Go_Http_crossOriginProtectionAddTrustedOrigin_P0 = *pkg.CrossOriginProtection
 // [fallible] typed wrapper for Go_Http_crossOriginProtectionAddTrustedOrigin (P7 adaptor target)
 func Go_Http_crossOriginProtectionAddTrustedOriginT(p0 *pkg.CrossOriginProtection, p1 string) (out SkyResult[string, struct{}]) {
@@ -476,15 +335,6 @@ func Go_Http_crossOriginProtectionSetDenyHandler(p0 any, p1 any) (out any) {
 	return
 }
 
-// [fallible] Go_Http.crossOriginProtectionCheck → pkg.CrossOriginProtectionCheck
-func Go_Http_crossOriginProtectionCheck(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	err := p0.(*pkg.CrossOriginProtection).Check(p1.(*pkg.Request))
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](struct{}{})
-
-	return
-}
 type FfiT_Go_Http_crossOriginProtectionCheck_P0 = *pkg.CrossOriginProtection
 type FfiT_Go_Http_crossOriginProtectionCheck_P1 = *pkg.Request
 // [fallible] typed wrapper for Go_Http_crossOriginProtectionCheck (P7 adaptor target)
@@ -496,12 +346,6 @@ func Go_Http_crossOriginProtectionCheckT(p0 *pkg.CrossOriginProtection, p1 *pkg.
 	return
 }
 
-// [pure] Go_Http.crossOriginProtectionHandler → pkg.CrossOriginProtectionHandler
-func Go_Http_crossOriginProtectionHandler(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.CrossOriginProtection).Handler(p1.(pkg.Handler)))
-	return
-}
 type FfiT_Go_Http_crossOriginProtectionHandler_P0 = *pkg.CrossOriginProtection
 type FfiT_Go_Http_crossOriginProtectionHandler_P1 = pkg.Handler
 type FfiT_Go_Http_crossOriginProtectionHandler_R = pkg.Handler
@@ -528,12 +372,6 @@ func Go_Http_defaultTransport(_ any) any { return pkg.DefaultTransport }
 
 func Go_Http_setDefaultTransport(value any) any { reflect.ValueOf(&pkg.DefaultTransport).Elem().Set(reflect.ValueOf(value).Convert(reflect.TypeOf(pkg.DefaultTransport))); return struct{}{} }
 
-// [pure] Go_Http.detectContentType → pkg.DetectContentType
-func Go_Http_detectContentType(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](pkg.DetectContentType(SkyFfiArg_bytes(p0)))
-	return
-}
 // [pure] typed wrapper for Go_Http_detectContentType (P7 adaptor target)
 func Go_Http_detectContentTypeT(p0 []byte) (out SkyResult[string, string]) {
 	defer SkyFfiRecoverT(&out)()
@@ -541,15 +379,6 @@ func Go_Http_detectContentTypeT(p0 []byte) (out SkyResult[string, string]) {
 	return
 }
 
-// [fallible] Go_Http.dirOpen → pkg.DirOpen
-func Go_Http_dirOpen(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := p0.(pkg.Dir).Open(fmt.Sprintf("%v", p1))
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](r0)
-
-	return
-}
 type FfiT_Go_Http_dirOpen_P0 = pkg.Dir
 type FfiT_Go_Http_dirOpen_R = pkg.File
 // [fallible] typed wrapper for Go_Http_dirOpen (P7 adaptor target)
@@ -657,12 +486,6 @@ func Go_Http_error(p0 any, p1 any, p2 any) (out any) {
 	return
 }
 
-// [pure] Go_Http.fS → pkg.FS
-func Go_Http_fS(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](pkg.FS(p0.(fs.FS)))
-	return
-}
 type FfiT_Go_Http_fS_P0 = fs.FS
 type FfiT_Go_Http_fS_R = pkg.FileSystem
 // [pure] typed wrapper for Go_Http_fS (P7 adaptor target)
@@ -672,15 +495,6 @@ func Go_Http_fST(p0 fs.FS) (out SkyResult[string, pkg.FileSystem]) {
 	return
 }
 
-// [fallible] Go_Http.fileClose → pkg.FileClose
-func Go_Http_fileClose(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	err := p0.(pkg.File).Close()
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](struct{}{})
-
-	return
-}
 type FfiT_Go_Http_fileClose_P0 = pkg.File
 // [fallible] typed wrapper for Go_Http_fileClose (P7 adaptor target)
 func Go_Http_fileCloseT(p0 pkg.File) (out SkyResult[string, struct{}]) {
@@ -691,15 +505,6 @@ func Go_Http_fileCloseT(p0 pkg.File) (out SkyResult[string, struct{}]) {
 	return
 }
 
-// [fallible] Go_Http.fileRead → pkg.FileRead
-func Go_Http_fileRead(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := p0.(pkg.File).Read(SkyFfiArg_bytes(p1))
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](r0)
-
-	return
-}
 type FfiT_Go_Http_fileRead_P0 = pkg.File
 // [fallible] typed wrapper for Go_Http_fileRead (P7 adaptor target)
 func Go_Http_fileReadT(p0 pkg.File, p1 []byte) (out SkyResult[string, int]) {
@@ -710,15 +515,6 @@ func Go_Http_fileReadT(p0 pkg.File, p1 []byte) (out SkyResult[string, int]) {
 	return
 }
 
-// [fallible] Go_Http.fileReaddir → pkg.FileReaddir
-func Go_Http_fileReaddir(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := p0.(pkg.File).Readdir(AsInt(p1))
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](r0)
-
-	return
-}
 type FfiT_Go_Http_fileReaddir_P0 = pkg.File
 type FfiT_Go_Http_fileReaddir_R = []fs.FileInfo
 // [fallible] typed wrapper for Go_Http_fileReaddir (P7 adaptor target)
@@ -730,15 +526,6 @@ func Go_Http_fileReaddirT(p0 pkg.File, p1 int) (out SkyResult[string, []fs.FileI
 	return
 }
 
-// [fallible] Go_Http.fileSeek → pkg.FileSeek
-func Go_Http_fileSeek(p0 any, p1 any, p2 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := p0.(pkg.File).Seek(int64(AsInt(p1)), AsInt(p2))
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](r0)
-
-	return
-}
 type FfiT_Go_Http_fileSeek_P0 = pkg.File
 // [fallible] typed wrapper for Go_Http_fileSeek (P7 adaptor target)
 func Go_Http_fileSeekT(p0 pkg.File, p1 int64, p2 int) (out SkyResult[string, int64]) {
@@ -749,15 +536,6 @@ func Go_Http_fileSeekT(p0 pkg.File, p1 int64, p2 int) (out SkyResult[string, int
 	return
 }
 
-// [fallible] Go_Http.fileStat → pkg.FileStat
-func Go_Http_fileStat(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := p0.(pkg.File).Stat()
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](r0)
-
-	return
-}
 type FfiT_Go_Http_fileStat_P0 = pkg.File
 type FfiT_Go_Http_fileStat_R = fs.FileInfo
 // [fallible] typed wrapper for Go_Http_fileStat (P7 adaptor target)
@@ -769,12 +547,6 @@ func Go_Http_fileStatT(p0 pkg.File) (out SkyResult[string, fs.FileInfo]) {
 	return
 }
 
-// [pure] Go_Http.fileServer → pkg.FileServer
-func Go_Http_fileServer(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](pkg.FileServer(p0.(pkg.FileSystem)))
-	return
-}
 type FfiT_Go_Http_fileServer_P0 = pkg.FileSystem
 type FfiT_Go_Http_fileServer_R = pkg.Handler
 // [pure] typed wrapper for Go_Http_fileServer (P7 adaptor target)
@@ -784,12 +556,6 @@ func Go_Http_fileServerT(p0 pkg.FileSystem) (out SkyResult[string, pkg.Handler])
 	return
 }
 
-// [pure] Go_Http.fileServerFS → pkg.FileServerFS
-func Go_Http_fileServerFS(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](pkg.FileServerFS(p0.(fs.FS)))
-	return
-}
 type FfiT_Go_Http_fileServerFS_P0 = fs.FS
 type FfiT_Go_Http_fileServerFS_R = pkg.Handler
 // [pure] typed wrapper for Go_Http_fileServerFS (P7 adaptor target)
@@ -799,15 +565,6 @@ func Go_Http_fileServerFST(p0 fs.FS) (out SkyResult[string, pkg.Handler]) {
 	return
 }
 
-// [fallible] Go_Http.fileSystemOpen → pkg.FileSystemOpen
-func Go_Http_fileSystemOpen(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := p0.(pkg.FileSystem).Open(fmt.Sprintf("%v", p1))
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](r0)
-
-	return
-}
 type FfiT_Go_Http_fileSystemOpen_P0 = pkg.FileSystem
 type FfiT_Go_Http_fileSystemOpen_R = pkg.File
 // [fallible] typed wrapper for Go_Http_fileSystemOpen (P7 adaptor target)
@@ -827,15 +584,6 @@ func Go_Http_flusherFlush(p0 any) (out any) {
 	return
 }
 
-// [fallible] Go_Http.get → pkg.Get
-func Go_Http_get(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := pkg.Get(fmt.Sprintf("%v", p0))
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](r0)
-
-	return
-}
 type FfiT_Go_Http_get_R = *pkg.Response
 // [fallible] typed wrapper for Go_Http_get (P7 adaptor target)
 func Go_Http_getT(p0 string) (out SkyResult[string, *pkg.Response]) {
@@ -928,15 +676,6 @@ func Go_Http_handlerFuncServeHTTP(p0 any, p1 any, p2 any) (out any) {
 	return
 }
 
-// [fallible] Go_Http.head → pkg.Head
-func Go_Http_head(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := pkg.Head(fmt.Sprintf("%v", p0))
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](r0)
-
-	return
-}
 type FfiT_Go_Http_head_R = *pkg.Response
 // [fallible] typed wrapper for Go_Http_head (P7 adaptor target)
 func Go_Http_headT(p0 string) (out SkyResult[string, *pkg.Response]) {
@@ -963,12 +702,6 @@ func Go_Http_headerSet(p0 any, p1 any, p2 any) (out any) {
 	return
 }
 
-// [pure] Go_Http.headerGet → pkg.HeaderGet
-func Go_Http_headerGet(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(pkg.Header).Get(fmt.Sprintf("%v", p1)))
-	return
-}
 type FfiT_Go_Http_headerGet_P0 = pkg.Header
 // [pure] typed wrapper for Go_Http_headerGet (P7 adaptor target)
 func Go_Http_headerGetT(p0 pkg.Header, p1 string) (out SkyResult[string, string]) {
@@ -977,12 +710,6 @@ func Go_Http_headerGetT(p0 pkg.Header, p1 string) (out SkyResult[string, string]
 	return
 }
 
-// [pure] Go_Http.headerValues → pkg.HeaderValues
-func Go_Http_headerValues(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(pkg.Header).Values(fmt.Sprintf("%v", p1)))
-	return
-}
 type FfiT_Go_Http_headerValues_P0 = pkg.Header
 // [pure] typed wrapper for Go_Http_headerValues (P7 adaptor target)
 func Go_Http_headerValuesT(p0 pkg.Header, p1 string) (out SkyResult[string, []string]) {
@@ -999,15 +726,6 @@ func Go_Http_headerDel(p0 any, p1 any) (out any) {
 	return
 }
 
-// [fallible] Go_Http.headerWrite → pkg.HeaderWrite
-func Go_Http_headerWrite(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	err := p0.(pkg.Header).Write(p1.(io.Writer))
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](struct{}{})
-
-	return
-}
 type FfiT_Go_Http_headerWrite_P0 = pkg.Header
 type FfiT_Go_Http_headerWrite_P1 = io.Writer
 // [fallible] typed wrapper for Go_Http_headerWrite (P7 adaptor target)
@@ -1019,12 +737,6 @@ func Go_Http_headerWriteT(p0 pkg.Header, p1 io.Writer) (out SkyResult[string, st
 	return
 }
 
-// [pure] Go_Http.headerClone → pkg.HeaderClone
-func Go_Http_headerClone(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(pkg.Header).Clone())
-	return
-}
 type FfiT_Go_Http_headerClone_P0 = pkg.Header
 type FfiT_Go_Http_headerClone_R = pkg.Header
 // [pure] typed wrapper for Go_Http_headerClone (P7 adaptor target)
@@ -1054,15 +766,6 @@ func Go_Http_hijackerHijack(p0 any) (out any) {
 	return
 }
 
-// [fallible] Go_Http.listenAndServe → pkg.ListenAndServe
-func Go_Http_listenAndServe(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	err := pkg.ListenAndServe(fmt.Sprintf("%v", p0), p1.(pkg.Handler))
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](struct{}{})
-
-	return
-}
 type FfiT_Go_Http_listenAndServe_P1 = pkg.Handler
 // [fallible] typed wrapper for Go_Http_listenAndServe (P7 adaptor target)
 func Go_Http_listenAndServeT(p0 string, p1 pkg.Handler) (out SkyResult[string, struct{}]) {
@@ -1073,15 +776,6 @@ func Go_Http_listenAndServeT(p0 string, p1 pkg.Handler) (out SkyResult[string, s
 	return
 }
 
-// [fallible] Go_Http.listenAndServeTLS → pkg.ListenAndServeTLS
-func Go_Http_listenAndServeTLS(p0 any, p1 any, p2 any, p3 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	err := pkg.ListenAndServeTLS(fmt.Sprintf("%v", p0), fmt.Sprintf("%v", p1), fmt.Sprintf("%v", p2), p3.(pkg.Handler))
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](struct{}{})
-
-	return
-}
 type FfiT_Go_Http_listenAndServeTLS_P3 = pkg.Handler
 // [fallible] typed wrapper for Go_Http_listenAndServeTLS (P7 adaptor target)
 func Go_Http_listenAndServeTLST(p0 string, p1 string, p2 string, p3 pkg.Handler) (out SkyResult[string, struct{}]) {
@@ -1096,12 +790,6 @@ func Go_Http_localAddrContextKey(_ any) any { return pkg.LocalAddrContextKey }
 
 func Go_Http_setLocalAddrContextKey(value any) any { reflect.ValueOf(&pkg.LocalAddrContextKey).Elem().Set(reflect.ValueOf(value).Convert(reflect.TypeOf(pkg.LocalAddrContextKey))); return struct{}{} }
 
-// [pure] Go_Http.maxBytesErrorError → pkg.MaxBytesErrorError
-func Go_Http_maxBytesErrorError(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.MaxBytesError).Error())
-	return
-}
 type FfiT_Go_Http_maxBytesErrorError_P0 = *pkg.MaxBytesError
 // [pure] typed wrapper for Go_Http_maxBytesErrorError (P7 adaptor target)
 func Go_Http_maxBytesErrorErrorT(p0 *pkg.MaxBytesError) (out SkyResult[string, string]) {
@@ -1116,12 +804,6 @@ func Go_Http_maxBytesErrorSetLimit(value any, recv any) any { return SkyFfiField
 
 func Go_Http_newMaxBytesError(_ any) any { return new(pkg.MaxBytesError) }
 
-// [pure] Go_Http.maxBytesHandler → pkg.MaxBytesHandler
-func Go_Http_maxBytesHandler(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](pkg.MaxBytesHandler(p0.(pkg.Handler), int64(AsInt(p1))))
-	return
-}
 type FfiT_Go_Http_maxBytesHandler_P0 = pkg.Handler
 type FfiT_Go_Http_maxBytesHandler_R = pkg.Handler
 // [pure] typed wrapper for Go_Http_maxBytesHandler (P7 adaptor target)
@@ -1131,12 +813,6 @@ func Go_Http_maxBytesHandlerT(p0 pkg.Handler, p1 int64) (out SkyResult[string, p
 	return
 }
 
-// [pure] Go_Http.maxBytesReader → pkg.MaxBytesReader
-func Go_Http_maxBytesReader(p0 any, p1 any, p2 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](pkg.MaxBytesReader(p0.(pkg.ResponseWriter), p1.(io.ReadCloser), int64(AsInt(p2))))
-	return
-}
 type FfiT_Go_Http_maxBytesReader_P0 = pkg.ResponseWriter
 type FfiT_Go_Http_maxBytesReader_P1 = io.ReadCloser
 type FfiT_Go_Http_maxBytesReader_R = io.ReadCloser
@@ -1165,13 +841,6 @@ func Go_Http_methodPut(_ any) any { return pkg.MethodPut }
 
 func Go_Http_methodTrace(_ any) any { return pkg.MethodTrace }
 
-// [pure] Go_Http.newCrossOriginProtection → pkg.NewCrossOriginProtection
-func Go_Http_newCrossOriginProtection(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	_ = p0
-	out = Ok[any, any](pkg.NewCrossOriginProtection())
-	return
-}
 type FfiT_Go_Http_newCrossOriginProtection_R = *pkg.CrossOriginProtection
 // [pure] typed wrapper for Go_Http_newCrossOriginProtection (P7 adaptor target)
 func Go_Http_newCrossOriginProtectionT() (out SkyResult[string, *pkg.CrossOriginProtection]) {
@@ -1180,12 +849,6 @@ func Go_Http_newCrossOriginProtectionT() (out SkyResult[string, *pkg.CrossOrigin
 	return
 }
 
-// [pure] Go_Http.newFileTransport → pkg.NewFileTransport
-func Go_Http_newFileTransport(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](pkg.NewFileTransport(p0.(pkg.FileSystem)))
-	return
-}
 type FfiT_Go_Http_newFileTransport_P0 = pkg.FileSystem
 type FfiT_Go_Http_newFileTransport_R = pkg.RoundTripper
 // [pure] typed wrapper for Go_Http_newFileTransport (P7 adaptor target)
@@ -1195,12 +858,6 @@ func Go_Http_newFileTransportT(p0 pkg.FileSystem) (out SkyResult[string, pkg.Rou
 	return
 }
 
-// [pure] Go_Http.newFileTransportFS → pkg.NewFileTransportFS
-func Go_Http_newFileTransportFS(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](pkg.NewFileTransportFS(p0.(fs.FS)))
-	return
-}
 type FfiT_Go_Http_newFileTransportFS_P0 = fs.FS
 type FfiT_Go_Http_newFileTransportFS_R = pkg.RoundTripper
 // [pure] typed wrapper for Go_Http_newFileTransportFS (P7 adaptor target)
@@ -1210,15 +867,6 @@ func Go_Http_newFileTransportFST(p0 fs.FS) (out SkyResult[string, pkg.RoundTripp
 	return
 }
 
-// [fallible] Go_Http.newRequest → pkg.NewRequest
-func Go_Http_newRequest(p0 any, p1 any, p2 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := pkg.NewRequest(fmt.Sprintf("%v", p0), fmt.Sprintf("%v", p1), p2.(io.Reader))
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](r0)
-
-	return
-}
 type FfiT_Go_Http_newRequest_P2 = io.Reader
 type FfiT_Go_Http_newRequest_R = *pkg.Request
 // [fallible] typed wrapper for Go_Http_newRequest (P7 adaptor target)
@@ -1230,15 +878,6 @@ func Go_Http_newRequestT(p0 string, p1 string, p2 io.Reader) (out SkyResult[stri
 	return
 }
 
-// [fallible] Go_Http.newRequestWithContext → pkg.NewRequestWithContext
-func Go_Http_newRequestWithContext(p0 any, p1 any, p2 any, p3 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := pkg.NewRequestWithContext(p0.(context.Context), fmt.Sprintf("%v", p1), fmt.Sprintf("%v", p2), p3.(io.Reader))
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](r0)
-
-	return
-}
 type FfiT_Go_Http_newRequestWithContext_P0 = context.Context
 type FfiT_Go_Http_newRequestWithContext_P3 = io.Reader
 type FfiT_Go_Http_newRequestWithContext_R = *pkg.Request
@@ -1251,12 +890,6 @@ func Go_Http_newRequestWithContextT(p0 context.Context, p1 string, p2 string, p3
 	return
 }
 
-// [pure] Go_Http.newResponseController → pkg.NewResponseController
-func Go_Http_newResponseController(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](pkg.NewResponseController(p0.(pkg.ResponseWriter)))
-	return
-}
 type FfiT_Go_Http_newResponseController_P0 = pkg.ResponseWriter
 type FfiT_Go_Http_newResponseController_R = *pkg.ResponseController
 // [pure] typed wrapper for Go_Http_newResponseController (P7 adaptor target)
@@ -1266,13 +899,6 @@ func Go_Http_newResponseControllerT(p0 pkg.ResponseWriter) (out SkyResult[string
 	return
 }
 
-// [pure] Go_Http.newServeMux → pkg.NewServeMux
-func Go_Http_newServeMux(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	_ = p0
-	out = Ok[any, any](pkg.NewServeMux())
-	return
-}
 type FfiT_Go_Http_newServeMux_R = *pkg.ServeMux
 // [pure] typed wrapper for Go_Http_newServeMux (P7 adaptor target)
 func Go_Http_newServeMuxT() (out SkyResult[string, *pkg.ServeMux]) {
@@ -1293,13 +919,6 @@ func Go_Http_notFound(p0 any, p1 any) (out any) {
 	return
 }
 
-// [pure] Go_Http.notFoundHandler → pkg.NotFoundHandler
-func Go_Http_notFoundHandler(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	_ = p0
-	out = Ok[any, any](pkg.NotFoundHandler())
-	return
-}
 type FfiT_Go_Http_notFoundHandler_R = pkg.Handler
 // [pure] typed wrapper for Go_Http_notFoundHandler (P7 adaptor target)
 func Go_Http_notFoundHandlerT() (out SkyResult[string, pkg.Handler]) {
@@ -1308,15 +927,6 @@ func Go_Http_notFoundHandlerT() (out SkyResult[string, pkg.Handler]) {
 	return
 }
 
-// [fallible] Go_Http.parseCookie → pkg.ParseCookie
-func Go_Http_parseCookie(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := pkg.ParseCookie(fmt.Sprintf("%v", p0))
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](r0)
-
-	return
-}
 type FfiT_Go_Http_parseCookie_R = []*pkg.Cookie
 // [fallible] typed wrapper for Go_Http_parseCookie (P7 adaptor target)
 func Go_Http_parseCookieT(p0 string) (out SkyResult[string, []*pkg.Cookie]) {
@@ -1336,15 +946,6 @@ func Go_Http_parseHTTPVersion(p0 any) (out any) {
 	return
 }
 
-// [fallible] Go_Http.parseSetCookie → pkg.ParseSetCookie
-func Go_Http_parseSetCookie(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := pkg.ParseSetCookie(fmt.Sprintf("%v", p0))
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](r0)
-
-	return
-}
 type FfiT_Go_Http_parseSetCookie_R = *pkg.Cookie
 // [fallible] typed wrapper for Go_Http_parseSetCookie (P7 adaptor target)
 func Go_Http_parseSetCookieT(p0 string) (out SkyResult[string, *pkg.Cookie]) {
@@ -1355,15 +956,6 @@ func Go_Http_parseSetCookieT(p0 string) (out SkyResult[string, *pkg.Cookie]) {
 	return
 }
 
-// [fallible] Go_Http.parseTime → pkg.ParseTime
-func Go_Http_parseTime(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := pkg.ParseTime(fmt.Sprintf("%v", p0))
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](r0)
-
-	return
-}
 type FfiT_Go_Http_parseTime_R = time.Time
 // [fallible] typed wrapper for Go_Http_parseTime (P7 adaptor target)
 func Go_Http_parseTimeT(p0 string) (out SkyResult[string, time.Time]) {
@@ -1374,15 +966,6 @@ func Go_Http_parseTimeT(p0 string) (out SkyResult[string, time.Time]) {
 	return
 }
 
-// [fallible] Go_Http.post → pkg.Post
-func Go_Http_post(p0 any, p1 any, p2 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := pkg.Post(fmt.Sprintf("%v", p0), fmt.Sprintf("%v", p1), p2.(io.Reader))
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](r0)
-
-	return
-}
 type FfiT_Go_Http_post_P2 = io.Reader
 type FfiT_Go_Http_post_R = *pkg.Response
 // [fallible] typed wrapper for Go_Http_post (P7 adaptor target)
@@ -1394,15 +977,6 @@ func Go_Http_postT(p0 string, p1 string, p2 io.Reader) (out SkyResult[string, *p
 	return
 }
 
-// [fallible] Go_Http.postForm → pkg.PostForm
-func Go_Http_postForm(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := pkg.PostForm(fmt.Sprintf("%v", p0), p1.(url.Values))
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](r0)
-
-	return
-}
 type FfiT_Go_Http_postForm_P1 = url.Values
 type FfiT_Go_Http_postForm_R = *pkg.Response
 // [fallible] typed wrapper for Go_Http_postForm (P7 adaptor target)
@@ -1414,12 +988,6 @@ func Go_Http_postFormT(p0 string, p1 url.Values) (out SkyResult[string, *pkg.Res
 	return
 }
 
-// [pure] Go_Http.protocolErrorError → pkg.ProtocolErrorError
-func Go_Http_protocolErrorError(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.ProtocolError).Error())
-	return
-}
 type FfiT_Go_Http_protocolErrorError_P0 = *pkg.ProtocolError
 // [pure] typed wrapper for Go_Http_protocolErrorError (P7 adaptor target)
 func Go_Http_protocolErrorErrorT(p0 *pkg.ProtocolError) (out SkyResult[string, string]) {
@@ -1428,12 +996,6 @@ func Go_Http_protocolErrorErrorT(p0 *pkg.ProtocolError) (out SkyResult[string, s
 	return
 }
 
-// [pure] Go_Http.protocolErrorIs → pkg.ProtocolErrorIs
-func Go_Http_protocolErrorIs(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.ProtocolError).Is(p1.(error)))
-	return
-}
 type FfiT_Go_Http_protocolErrorIs_P0 = *pkg.ProtocolError
 // [pure] typed wrapper for Go_Http_protocolErrorIs (P7 adaptor target)
 func Go_Http_protocolErrorIsT(p0 *pkg.ProtocolError, p1 error) (out SkyResult[string, bool]) {
@@ -1448,12 +1010,6 @@ func Go_Http_protocolErrorSetErrorString(value any, recv any) any { return SkyFf
 
 func Go_Http_newProtocolError(_ any) any { return new(pkg.ProtocolError) }
 
-// [pure] Go_Http.protocolsHTTP1 → pkg.ProtocolsHTTP1
-func Go_Http_protocolsHTTP1(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(pkg.Protocols).HTTP1())
-	return
-}
 type FfiT_Go_Http_protocolsHTTP1_P0 = pkg.Protocols
 // [pure] typed wrapper for Go_Http_protocolsHTTP1 (P7 adaptor target)
 func Go_Http_protocolsHTTP1T(p0 pkg.Protocols) (out SkyResult[string, bool]) {
@@ -1470,12 +1026,6 @@ func Go_Http_protocolsSetHTTP1(p0 any, p1 any) (out any) {
 	return
 }
 
-// [pure] Go_Http.protocolsHTTP2 → pkg.ProtocolsHTTP2
-func Go_Http_protocolsHTTP2(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(pkg.Protocols).HTTP2())
-	return
-}
 type FfiT_Go_Http_protocolsHTTP2_P0 = pkg.Protocols
 // [pure] typed wrapper for Go_Http_protocolsHTTP2 (P7 adaptor target)
 func Go_Http_protocolsHTTP2T(p0 pkg.Protocols) (out SkyResult[string, bool]) {
@@ -1492,12 +1042,6 @@ func Go_Http_protocolsSetHTTP2(p0 any, p1 any) (out any) {
 	return
 }
 
-// [pure] Go_Http.protocolsUnencryptedHTTP2 → pkg.ProtocolsUnencryptedHTTP2
-func Go_Http_protocolsUnencryptedHTTP2(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(pkg.Protocols).UnencryptedHTTP2())
-	return
-}
 type FfiT_Go_Http_protocolsUnencryptedHTTP2_P0 = pkg.Protocols
 // [pure] typed wrapper for Go_Http_protocolsUnencryptedHTTP2 (P7 adaptor target)
 func Go_Http_protocolsUnencryptedHTTP2T(p0 pkg.Protocols) (out SkyResult[string, bool]) {
@@ -1514,12 +1058,6 @@ func Go_Http_protocolsSetUnencryptedHTTP2(p0 any, p1 any) (out any) {
 	return
 }
 
-// [pure] Go_Http.protocolsString → pkg.ProtocolsString
-func Go_Http_protocolsString(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(pkg.Protocols).String())
-	return
-}
 type FfiT_Go_Http_protocolsString_P0 = pkg.Protocols
 // [pure] typed wrapper for Go_Http_protocolsString (P7 adaptor target)
 func Go_Http_protocolsStringT(p0 pkg.Protocols) (out SkyResult[string, string]) {
@@ -1530,15 +1068,6 @@ func Go_Http_protocolsStringT(p0 pkg.Protocols) (out SkyResult[string, string]) 
 
 func Go_Http_newProtocols(_ any) any { return new(pkg.Protocols) }
 
-// [fallible] Go_Http.proxyFromEnvironment → pkg.ProxyFromEnvironment
-func Go_Http_proxyFromEnvironment(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := pkg.ProxyFromEnvironment(p0.(*pkg.Request))
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](r0)
-
-	return
-}
 type FfiT_Go_Http_proxyFromEnvironment_P0 = *pkg.Request
 type FfiT_Go_Http_proxyFromEnvironment_R = *url.URL
 // [fallible] typed wrapper for Go_Http_proxyFromEnvironment (P7 adaptor target)
@@ -1567,15 +1096,6 @@ func Go_Http_pushOptionsSetHeader(value any, recv any) any { return SkyFfiFieldS
 
 func Go_Http_newPushOptions(_ any) any { return new(pkg.PushOptions) }
 
-// [fallible] Go_Http.pusherPush → pkg.PusherPush
-func Go_Http_pusherPush(p0 any, p1 any, p2 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	err := p0.(pkg.Pusher).Push(fmt.Sprintf("%v", p1), p2.(*pkg.PushOptions))
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](struct{}{})
-
-	return
-}
 type FfiT_Go_Http_pusherPush_P0 = pkg.Pusher
 type FfiT_Go_Http_pusherPush_P2 = *pkg.PushOptions
 // [fallible] typed wrapper for Go_Http_pusherPush (P7 adaptor target)
@@ -1587,15 +1107,6 @@ func Go_Http_pusherPushT(p0 pkg.Pusher, p1 string, p2 *pkg.PushOptions) (out Sky
 	return
 }
 
-// [fallible] Go_Http.readRequest → pkg.ReadRequest
-func Go_Http_readRequest(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := pkg.ReadRequest(p0.(*bufio.Reader))
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](r0)
-
-	return
-}
 type FfiT_Go_Http_readRequest_P0 = *bufio.Reader
 type FfiT_Go_Http_readRequest_R = *pkg.Request
 // [fallible] typed wrapper for Go_Http_readRequest (P7 adaptor target)
@@ -1607,15 +1118,6 @@ func Go_Http_readRequestT(p0 *bufio.Reader) (out SkyResult[string, *pkg.Request]
 	return
 }
 
-// [fallible] Go_Http.readResponse → pkg.ReadResponse
-func Go_Http_readResponse(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := pkg.ReadResponse(p0.(*bufio.Reader), p1.(*pkg.Request))
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](r0)
-
-	return
-}
 type FfiT_Go_Http_readResponse_P0 = *bufio.Reader
 type FfiT_Go_Http_readResponse_P1 = *pkg.Request
 type FfiT_Go_Http_readResponse_R = *pkg.Response
@@ -1636,12 +1138,6 @@ func Go_Http_redirect(p0 any, p1 any, p2 any, p3 any) (out any) {
 	return
 }
 
-// [pure] Go_Http.redirectHandler → pkg.RedirectHandler
-func Go_Http_redirectHandler(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](pkg.RedirectHandler(fmt.Sprintf("%v", p0), AsInt(p1)))
-	return
-}
 type FfiT_Go_Http_redirectHandler_R = pkg.Handler
 // [pure] typed wrapper for Go_Http_redirectHandler (P7 adaptor target)
 func Go_Http_redirectHandlerT(p0 string, p1 int) (out SkyResult[string, pkg.Handler]) {
@@ -1650,12 +1146,6 @@ func Go_Http_redirectHandlerT(p0 string, p1 int) (out SkyResult[string, pkg.Hand
 	return
 }
 
-// [pure] Go_Http.requestContext → pkg.RequestContext
-func Go_Http_requestContext(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.Request).Context())
-	return
-}
 type FfiT_Go_Http_requestContext_P0 = *pkg.Request
 type FfiT_Go_Http_requestContext_R = context.Context
 // [pure] typed wrapper for Go_Http_requestContext (P7 adaptor target)
@@ -1665,12 +1155,6 @@ func Go_Http_requestContextT(p0 *pkg.Request) (out SkyResult[string, context.Con
 	return
 }
 
-// [pure] Go_Http.requestWithContext → pkg.RequestWithContext
-func Go_Http_requestWithContext(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.Request).WithContext(p1.(context.Context)))
-	return
-}
 type FfiT_Go_Http_requestWithContext_P0 = *pkg.Request
 type FfiT_Go_Http_requestWithContext_P1 = context.Context
 type FfiT_Go_Http_requestWithContext_R = *pkg.Request
@@ -1681,12 +1165,6 @@ func Go_Http_requestWithContextT(p0 *pkg.Request, p1 context.Context) (out SkyRe
 	return
 }
 
-// [pure] Go_Http.requestClone → pkg.RequestClone
-func Go_Http_requestClone(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.Request).Clone(p1.(context.Context)))
-	return
-}
 type FfiT_Go_Http_requestClone_P0 = *pkg.Request
 type FfiT_Go_Http_requestClone_P1 = context.Context
 type FfiT_Go_Http_requestClone_R = *pkg.Request
@@ -1697,12 +1175,6 @@ func Go_Http_requestCloneT(p0 *pkg.Request, p1 context.Context) (out SkyResult[s
 	return
 }
 
-// [pure] Go_Http.requestProtoAtLeast → pkg.RequestProtoAtLeast
-func Go_Http_requestProtoAtLeast(p0 any, p1 any, p2 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.Request).ProtoAtLeast(AsInt(p1), AsInt(p2)))
-	return
-}
 type FfiT_Go_Http_requestProtoAtLeast_P0 = *pkg.Request
 // [pure] typed wrapper for Go_Http_requestProtoAtLeast (P7 adaptor target)
 func Go_Http_requestProtoAtLeastT(p0 *pkg.Request, p1 int, p2 int) (out SkyResult[string, bool]) {
@@ -1711,12 +1183,6 @@ func Go_Http_requestProtoAtLeastT(p0 *pkg.Request, p1 int, p2 int) (out SkyResul
 	return
 }
 
-// [pure] Go_Http.requestUserAgent → pkg.RequestUserAgent
-func Go_Http_requestUserAgent(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.Request).UserAgent())
-	return
-}
 type FfiT_Go_Http_requestUserAgent_P0 = *pkg.Request
 // [pure] typed wrapper for Go_Http_requestUserAgent (P7 adaptor target)
 func Go_Http_requestUserAgentT(p0 *pkg.Request) (out SkyResult[string, string]) {
@@ -1725,12 +1191,6 @@ func Go_Http_requestUserAgentT(p0 *pkg.Request) (out SkyResult[string, string]) 
 	return
 }
 
-// [pure] Go_Http.requestCookies → pkg.RequestCookies
-func Go_Http_requestCookies(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.Request).Cookies())
-	return
-}
 type FfiT_Go_Http_requestCookies_P0 = *pkg.Request
 type FfiT_Go_Http_requestCookies_R = []*pkg.Cookie
 // [pure] typed wrapper for Go_Http_requestCookies (P7 adaptor target)
@@ -1740,12 +1200,6 @@ func Go_Http_requestCookiesT(p0 *pkg.Request) (out SkyResult[string, []*pkg.Cook
 	return
 }
 
-// [pure] Go_Http.requestCookiesNamed → pkg.RequestCookiesNamed
-func Go_Http_requestCookiesNamed(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.Request).CookiesNamed(fmt.Sprintf("%v", p1)))
-	return
-}
 type FfiT_Go_Http_requestCookiesNamed_P0 = *pkg.Request
 type FfiT_Go_Http_requestCookiesNamed_R = []*pkg.Cookie
 // [pure] typed wrapper for Go_Http_requestCookiesNamed (P7 adaptor target)
@@ -1755,15 +1209,6 @@ func Go_Http_requestCookiesNamedT(p0 *pkg.Request, p1 string) (out SkyResult[str
 	return
 }
 
-// [fallible] Go_Http.requestCookie → pkg.RequestCookie
-func Go_Http_requestCookie(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := p0.(*pkg.Request).Cookie(fmt.Sprintf("%v", p1))
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](r0)
-
-	return
-}
 type FfiT_Go_Http_requestCookie_P0 = *pkg.Request
 type FfiT_Go_Http_requestCookie_R = *pkg.Cookie
 // [fallible] typed wrapper for Go_Http_requestCookie (P7 adaptor target)
@@ -1783,12 +1228,6 @@ func Go_Http_requestAddCookie(p0 any, p1 any) (out any) {
 	return
 }
 
-// [pure] Go_Http.requestReferer → pkg.RequestReferer
-func Go_Http_requestReferer(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.Request).Referer())
-	return
-}
 type FfiT_Go_Http_requestReferer_P0 = *pkg.Request
 // [pure] typed wrapper for Go_Http_requestReferer (P7 adaptor target)
 func Go_Http_requestRefererT(p0 *pkg.Request) (out SkyResult[string, string]) {
@@ -1797,15 +1236,6 @@ func Go_Http_requestRefererT(p0 *pkg.Request) (out SkyResult[string, string]) {
 	return
 }
 
-// [fallible] Go_Http.requestMultipartReader → pkg.RequestMultipartReader
-func Go_Http_requestMultipartReader(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := p0.(*pkg.Request).MultipartReader()
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](r0)
-
-	return
-}
 type FfiT_Go_Http_requestMultipartReader_P0 = *pkg.Request
 type FfiT_Go_Http_requestMultipartReader_R = *multipart.Reader
 // [fallible] typed wrapper for Go_Http_requestMultipartReader (P7 adaptor target)
@@ -1817,15 +1247,6 @@ func Go_Http_requestMultipartReaderT(p0 *pkg.Request) (out SkyResult[string, *mu
 	return
 }
 
-// [fallible] Go_Http.requestWrite → pkg.RequestWrite
-func Go_Http_requestWrite(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	err := p0.(*pkg.Request).Write(p1.(io.Writer))
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](struct{}{})
-
-	return
-}
 type FfiT_Go_Http_requestWrite_P0 = *pkg.Request
 type FfiT_Go_Http_requestWrite_P1 = io.Writer
 // [fallible] typed wrapper for Go_Http_requestWrite (P7 adaptor target)
@@ -1837,15 +1258,6 @@ func Go_Http_requestWriteT(p0 *pkg.Request, p1 io.Writer) (out SkyResult[string,
 	return
 }
 
-// [fallible] Go_Http.requestWriteProxy → pkg.RequestWriteProxy
-func Go_Http_requestWriteProxy(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	err := p0.(*pkg.Request).WriteProxy(p1.(io.Writer))
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](struct{}{})
-
-	return
-}
 type FfiT_Go_Http_requestWriteProxy_P0 = *pkg.Request
 type FfiT_Go_Http_requestWriteProxy_P1 = io.Writer
 // [fallible] typed wrapper for Go_Http_requestWriteProxy (P7 adaptor target)
@@ -1874,15 +1286,6 @@ func Go_Http_requestSetBasicAuth(p0 any, p1 any, p2 any) (out any) {
 	return
 }
 
-// [fallible] Go_Http.requestParseForm → pkg.RequestParseForm
-func Go_Http_requestParseForm(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	err := p0.(*pkg.Request).ParseForm()
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](struct{}{})
-
-	return
-}
 type FfiT_Go_Http_requestParseForm_P0 = *pkg.Request
 // [fallible] typed wrapper for Go_Http_requestParseForm (P7 adaptor target)
 func Go_Http_requestParseFormT(p0 *pkg.Request) (out SkyResult[string, struct{}]) {
@@ -1893,15 +1296,6 @@ func Go_Http_requestParseFormT(p0 *pkg.Request) (out SkyResult[string, struct{}]
 	return
 }
 
-// [fallible] Go_Http.requestParseMultipartForm → pkg.RequestParseMultipartForm
-func Go_Http_requestParseMultipartForm(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	err := p0.(*pkg.Request).ParseMultipartForm(int64(AsInt(p1)))
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](struct{}{})
-
-	return
-}
 type FfiT_Go_Http_requestParseMultipartForm_P0 = *pkg.Request
 // [fallible] typed wrapper for Go_Http_requestParseMultipartForm (P7 adaptor target)
 func Go_Http_requestParseMultipartFormT(p0 *pkg.Request, p1 int64) (out SkyResult[string, struct{}]) {
@@ -1912,12 +1306,6 @@ func Go_Http_requestParseMultipartFormT(p0 *pkg.Request, p1 int64) (out SkyResul
 	return
 }
 
-// [pure] Go_Http.requestFormValue → pkg.RequestFormValue
-func Go_Http_requestFormValue(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.Request).FormValue(fmt.Sprintf("%v", p1)))
-	return
-}
 type FfiT_Go_Http_requestFormValue_P0 = *pkg.Request
 // [pure] typed wrapper for Go_Http_requestFormValue (P7 adaptor target)
 func Go_Http_requestFormValueT(p0 *pkg.Request, p1 string) (out SkyResult[string, string]) {
@@ -1926,12 +1314,6 @@ func Go_Http_requestFormValueT(p0 *pkg.Request, p1 string) (out SkyResult[string
 	return
 }
 
-// [pure] Go_Http.requestPostFormValue → pkg.RequestPostFormValue
-func Go_Http_requestPostFormValue(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.Request).PostFormValue(fmt.Sprintf("%v", p1)))
-	return
-}
 type FfiT_Go_Http_requestPostFormValue_P0 = *pkg.Request
 // [pure] typed wrapper for Go_Http_requestPostFormValue (P7 adaptor target)
 func Go_Http_requestPostFormValueT(p0 *pkg.Request, p1 string) (out SkyResult[string, string]) {
@@ -1950,12 +1332,6 @@ func Go_Http_requestFormFile(p0 any, p1 any) (out any) {
 	return
 }
 
-// [pure] Go_Http.requestPathValue → pkg.RequestPathValue
-func Go_Http_requestPathValue(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.Request).PathValue(fmt.Sprintf("%v", p1)))
-	return
-}
 type FfiT_Go_Http_requestPathValue_P0 = *pkg.Request
 // [pure] typed wrapper for Go_Http_requestPathValue (P7 adaptor target)
 func Go_Http_requestPathValueT(p0 *pkg.Request, p1 string) (out SkyResult[string, string]) {
@@ -2060,12 +1436,6 @@ func Go_Http_requestPattern(p0 any) any { return SkyFfiFieldGet(p0, "Pattern") }
 
 func Go_Http_requestSetPattern(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Pattern") }
 
-// [pure] Go_Http.responseCookies → pkg.ResponseCookies
-func Go_Http_responseCookies(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.Response).Cookies())
-	return
-}
 type FfiT_Go_Http_responseCookies_P0 = *pkg.Response
 type FfiT_Go_Http_responseCookies_R = []*pkg.Cookie
 // [pure] typed wrapper for Go_Http_responseCookies (P7 adaptor target)
@@ -2075,15 +1445,6 @@ func Go_Http_responseCookiesT(p0 *pkg.Response) (out SkyResult[string, []*pkg.Co
 	return
 }
 
-// [fallible] Go_Http.responseLocation → pkg.ResponseLocation
-func Go_Http_responseLocation(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := p0.(*pkg.Response).Location()
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](r0)
-
-	return
-}
 type FfiT_Go_Http_responseLocation_P0 = *pkg.Response
 type FfiT_Go_Http_responseLocation_R = *url.URL
 // [fallible] typed wrapper for Go_Http_responseLocation (P7 adaptor target)
@@ -2095,12 +1456,6 @@ func Go_Http_responseLocationT(p0 *pkg.Response) (out SkyResult[string, *url.URL
 	return
 }
 
-// [pure] Go_Http.responseProtoAtLeast → pkg.ResponseProtoAtLeast
-func Go_Http_responseProtoAtLeast(p0 any, p1 any, p2 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.Response).ProtoAtLeast(AsInt(p1), AsInt(p2)))
-	return
-}
 type FfiT_Go_Http_responseProtoAtLeast_P0 = *pkg.Response
 // [pure] typed wrapper for Go_Http_responseProtoAtLeast (P7 adaptor target)
 func Go_Http_responseProtoAtLeastT(p0 *pkg.Response, p1 int, p2 int) (out SkyResult[string, bool]) {
@@ -2109,15 +1464,6 @@ func Go_Http_responseProtoAtLeastT(p0 *pkg.Response, p1 int, p2 int) (out SkyRes
 	return
 }
 
-// [fallible] Go_Http.responseWrite → pkg.ResponseWrite
-func Go_Http_responseWrite(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	err := p0.(*pkg.Response).Write(p1.(io.Writer))
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](struct{}{})
-
-	return
-}
 type FfiT_Go_Http_responseWrite_P0 = *pkg.Response
 type FfiT_Go_Http_responseWrite_P1 = io.Writer
 // [fallible] typed wrapper for Go_Http_responseWrite (P7 adaptor target)
@@ -2187,15 +1533,6 @@ func Go_Http_responseSetTLS(value any, recv any) any { return SkyFfiFieldSet(val
 
 func Go_Http_newResponse(_ any) any { return new(pkg.Response) }
 
-// [fallible] Go_Http.responseControllerFlush → pkg.ResponseControllerFlush
-func Go_Http_responseControllerFlush(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	err := p0.(*pkg.ResponseController).Flush()
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](struct{}{})
-
-	return
-}
 type FfiT_Go_Http_responseControllerFlush_P0 = *pkg.ResponseController
 // [fallible] typed wrapper for Go_Http_responseControllerFlush (P7 adaptor target)
 func Go_Http_responseControllerFlushT(p0 *pkg.ResponseController) (out SkyResult[string, struct{}]) {
@@ -2216,15 +1553,6 @@ func Go_Http_responseControllerHijack(p0 any) (out any) {
 	return
 }
 
-// [fallible] Go_Http.responseControllerSetReadDeadline → pkg.ResponseControllerSetReadDeadline
-func Go_Http_responseControllerSetReadDeadline(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	err := p0.(*pkg.ResponseController).SetReadDeadline(p1.(time.Time))
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](struct{}{})
-
-	return
-}
 type FfiT_Go_Http_responseControllerSetReadDeadline_P0 = *pkg.ResponseController
 type FfiT_Go_Http_responseControllerSetReadDeadline_P1 = time.Time
 // [fallible] typed wrapper for Go_Http_responseControllerSetReadDeadline (P7 adaptor target)
@@ -2236,15 +1564,6 @@ func Go_Http_responseControllerSetReadDeadlineT(p0 *pkg.ResponseController, p1 t
 	return
 }
 
-// [fallible] Go_Http.responseControllerSetWriteDeadline → pkg.ResponseControllerSetWriteDeadline
-func Go_Http_responseControllerSetWriteDeadline(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	err := p0.(*pkg.ResponseController).SetWriteDeadline(p1.(time.Time))
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](struct{}{})
-
-	return
-}
 type FfiT_Go_Http_responseControllerSetWriteDeadline_P0 = *pkg.ResponseController
 type FfiT_Go_Http_responseControllerSetWriteDeadline_P1 = time.Time
 // [fallible] typed wrapper for Go_Http_responseControllerSetWriteDeadline (P7 adaptor target)
@@ -2256,15 +1575,6 @@ func Go_Http_responseControllerSetWriteDeadlineT(p0 *pkg.ResponseController, p1 
 	return
 }
 
-// [fallible] Go_Http.responseControllerEnableFullDuplex → pkg.ResponseControllerEnableFullDuplex
-func Go_Http_responseControllerEnableFullDuplex(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	err := p0.(*pkg.ResponseController).EnableFullDuplex()
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](struct{}{})
-
-	return
-}
 type FfiT_Go_Http_responseControllerEnableFullDuplex_P0 = *pkg.ResponseController
 // [fallible] typed wrapper for Go_Http_responseControllerEnableFullDuplex (P7 adaptor target)
 func Go_Http_responseControllerEnableFullDuplexT(p0 *pkg.ResponseController) (out SkyResult[string, struct{}]) {
@@ -2275,12 +1585,6 @@ func Go_Http_responseControllerEnableFullDuplexT(p0 *pkg.ResponseController) (ou
 	return
 }
 
-// [pure] Go_Http.responseWriterHeader → pkg.ResponseWriterHeader
-func Go_Http_responseWriterHeader(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(pkg.ResponseWriter).Header())
-	return
-}
 type FfiT_Go_Http_responseWriterHeader_P0 = pkg.ResponseWriter
 type FfiT_Go_Http_responseWriterHeader_R = pkg.Header
 // [pure] typed wrapper for Go_Http_responseWriterHeader (P7 adaptor target)
@@ -2290,15 +1594,6 @@ func Go_Http_responseWriterHeaderT(p0 pkg.ResponseWriter) (out SkyResult[string,
 	return
 }
 
-// [fallible] Go_Http.responseWriterWrite → pkg.ResponseWriterWrite
-func Go_Http_responseWriterWrite(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := p0.(pkg.ResponseWriter).Write(SkyFfiArg_bytes(p1))
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](r0)
-
-	return
-}
 type FfiT_Go_Http_responseWriterWrite_P0 = pkg.ResponseWriter
 // [fallible] typed wrapper for Go_Http_responseWriterWrite (P7 adaptor target)
 func Go_Http_responseWriterWriteT(p0 pkg.ResponseWriter, p1 []byte) (out SkyResult[string, int]) {
@@ -2317,15 +1612,6 @@ func Go_Http_responseWriterWriteHeader(p0 any, p1 any) (out any) {
 	return
 }
 
-// [fallible] Go_Http.roundTripperRoundTrip → pkg.RoundTripperRoundTrip
-func Go_Http_roundTripperRoundTrip(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := p0.(pkg.RoundTripper).RoundTrip(p1.(*pkg.Request))
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](r0)
-
-	return
-}
 type FfiT_Go_Http_roundTripperRoundTrip_P0 = pkg.RoundTripper
 type FfiT_Go_Http_roundTripperRoundTrip_P1 = *pkg.Request
 type FfiT_Go_Http_roundTripperRoundTrip_R = *pkg.Response
@@ -2346,15 +1632,6 @@ func Go_Http_sameSiteNoneMode(_ any) any { return pkg.SameSiteNoneMode }
 
 func Go_Http_sameSiteStrictMode(_ any) any { return pkg.SameSiteStrictMode }
 
-// [fallible] Go_Http.serve → pkg.Serve
-func Go_Http_serve(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	err := pkg.Serve(p0.(net.Listener), p1.(pkg.Handler))
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](struct{}{})
-
-	return
-}
 type FfiT_Go_Http_serve_P0 = net.Listener
 type FfiT_Go_Http_serve_P1 = pkg.Handler
 // [fallible] typed wrapper for Go_Http_serve (P7 adaptor target)
@@ -2423,15 +1700,6 @@ func Go_Http_serveMuxHandleFunc(p0 any, p1 any, p2 any) (out any) {
 	return
 }
 
-// [fallible] Go_Http.serveTLS → pkg.ServeTLS
-func Go_Http_serveTLS(p0 any, p1 any, p2 any, p3 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	err := pkg.ServeTLS(p0.(net.Listener), p1.(pkg.Handler), fmt.Sprintf("%v", p2), fmt.Sprintf("%v", p3))
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](struct{}{})
-
-	return
-}
 type FfiT_Go_Http_serveTLS_P0 = net.Listener
 type FfiT_Go_Http_serveTLS_P1 = pkg.Handler
 // [fallible] typed wrapper for Go_Http_serveTLS (P7 adaptor target)
@@ -2443,15 +1711,6 @@ func Go_Http_serveTLST(p0 net.Listener, p1 pkg.Handler, p2 string, p3 string) (o
 	return
 }
 
-// [fallible] Go_Http.serverClose → pkg.ServerClose
-func Go_Http_serverClose(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	err := p0.(*pkg.Server).Close()
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](struct{}{})
-
-	return
-}
 type FfiT_Go_Http_serverClose_P0 = *pkg.Server
 // [fallible] typed wrapper for Go_Http_serverClose (P7 adaptor target)
 func Go_Http_serverCloseT(p0 *pkg.Server) (out SkyResult[string, struct{}]) {
@@ -2462,15 +1721,6 @@ func Go_Http_serverCloseT(p0 *pkg.Server) (out SkyResult[string, struct{}]) {
 	return
 }
 
-// [fallible] Go_Http.serverShutdown → pkg.ServerShutdown
-func Go_Http_serverShutdown(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	err := p0.(*pkg.Server).Shutdown(p1.(context.Context))
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](struct{}{})
-
-	return
-}
 type FfiT_Go_Http_serverShutdown_P0 = *pkg.Server
 type FfiT_Go_Http_serverShutdown_P1 = context.Context
 // [fallible] typed wrapper for Go_Http_serverShutdown (P7 adaptor target)
@@ -2490,15 +1740,6 @@ func Go_Http_serverRegisterOnShutdown(p0 any, p1 any) (out any) {
 	return
 }
 
-// [fallible] Go_Http.serverListenAndServe → pkg.ServerListenAndServe
-func Go_Http_serverListenAndServe(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	err := p0.(*pkg.Server).ListenAndServe()
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](struct{}{})
-
-	return
-}
 type FfiT_Go_Http_serverListenAndServe_P0 = *pkg.Server
 // [fallible] typed wrapper for Go_Http_serverListenAndServe (P7 adaptor target)
 func Go_Http_serverListenAndServeT(p0 *pkg.Server) (out SkyResult[string, struct{}]) {
@@ -2509,15 +1750,6 @@ func Go_Http_serverListenAndServeT(p0 *pkg.Server) (out SkyResult[string, struct
 	return
 }
 
-// [fallible] Go_Http.serverServe → pkg.ServerServe
-func Go_Http_serverServe(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	err := p0.(*pkg.Server).Serve(p1.(net.Listener))
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](struct{}{})
-
-	return
-}
 type FfiT_Go_Http_serverServe_P0 = *pkg.Server
 type FfiT_Go_Http_serverServe_P1 = net.Listener
 // [fallible] typed wrapper for Go_Http_serverServe (P7 adaptor target)
@@ -2529,15 +1761,6 @@ func Go_Http_serverServeT(p0 *pkg.Server, p1 net.Listener) (out SkyResult[string
 	return
 }
 
-// [fallible] Go_Http.serverServeTLS → pkg.ServerServeTLS
-func Go_Http_serverServeTLS(p0 any, p1 any, p2 any, p3 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	err := p0.(*pkg.Server).ServeTLS(p1.(net.Listener), fmt.Sprintf("%v", p2), fmt.Sprintf("%v", p3))
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](struct{}{})
-
-	return
-}
 type FfiT_Go_Http_serverServeTLS_P0 = *pkg.Server
 type FfiT_Go_Http_serverServeTLS_P1 = net.Listener
 // [fallible] typed wrapper for Go_Http_serverServeTLS (P7 adaptor target)
@@ -2557,15 +1780,6 @@ func Go_Http_serverSetKeepAlivesEnabled(p0 any, p1 any) (out any) {
 	return
 }
 
-// [fallible] Go_Http.serverListenAndServeTLS → pkg.ServerListenAndServeTLS
-func Go_Http_serverListenAndServeTLS(p0 any, p1 any, p2 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	err := p0.(*pkg.Server).ListenAndServeTLS(fmt.Sprintf("%v", p1), fmt.Sprintf("%v", p2))
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](struct{}{})
-
-	return
-}
 type FfiT_Go_Http_serverListenAndServeTLS_P0 = *pkg.Server
 // [fallible] typed wrapper for Go_Http_serverListenAndServeTLS (P7 adaptor target)
 func Go_Http_serverListenAndServeTLST(p0 *pkg.Server, p1 string, p2 string) (out SkyResult[string, struct{}]) {
@@ -2770,12 +1984,6 @@ func Go_Http_statusTeapot(_ any) any { return pkg.StatusTeapot }
 
 func Go_Http_statusTemporaryRedirect(_ any) any { return pkg.StatusTemporaryRedirect }
 
-// [pure] Go_Http.statusText → pkg.StatusText
-func Go_Http_statusText(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](pkg.StatusText(AsInt(p0)))
-	return
-}
 // [pure] typed wrapper for Go_Http_statusText (P7 adaptor target)
 func Go_Http_statusTextT(p0 int) (out SkyResult[string, string]) {
 	defer SkyFfiRecoverT(&out)()
@@ -2801,12 +2009,6 @@ func Go_Http_statusUseProxy(_ any) any { return pkg.StatusUseProxy }
 
 func Go_Http_statusVariantAlsoNegotiates(_ any) any { return pkg.StatusVariantAlsoNegotiates }
 
-// [pure] Go_Http.stripPrefix → pkg.StripPrefix
-func Go_Http_stripPrefix(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](pkg.StripPrefix(fmt.Sprintf("%v", p0), p1.(pkg.Handler)))
-	return
-}
 type FfiT_Go_Http_stripPrefix_P1 = pkg.Handler
 type FfiT_Go_Http_stripPrefix_R = pkg.Handler
 // [pure] typed wrapper for Go_Http_stripPrefix (P7 adaptor target)
@@ -2818,12 +2020,6 @@ func Go_Http_stripPrefixT(p0 string, p1 pkg.Handler) (out SkyResult[string, pkg.
 
 func Go_Http_timeFormat(_ any) any { return pkg.TimeFormat }
 
-// [pure] Go_Http.timeoutHandler → pkg.TimeoutHandler
-func Go_Http_timeoutHandler(p0 any, p1 any, p2 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](pkg.TimeoutHandler(p0.(pkg.Handler), p1.(time.Duration), fmt.Sprintf("%v", p2)))
-	return
-}
 type FfiT_Go_Http_timeoutHandler_P0 = pkg.Handler
 type FfiT_Go_Http_timeoutHandler_P1 = time.Duration
 type FfiT_Go_Http_timeoutHandler_R = pkg.Handler
@@ -2836,15 +2032,6 @@ func Go_Http_timeoutHandlerT(p0 pkg.Handler, p1 time.Duration, p2 string) (out S
 
 func Go_Http_trailerPrefix(_ any) any { return pkg.TrailerPrefix }
 
-// [fallible] Go_Http.transportNewClientConn → pkg.TransportNewClientConn
-func Go_Http_transportNewClientConn(p0 any, p1 any, p2 any, p3 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := p0.(*pkg.Transport).NewClientConn(p1.(context.Context), fmt.Sprintf("%v", p2), fmt.Sprintf("%v", p3))
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](r0)
-
-	return
-}
 type FfiT_Go_Http_transportNewClientConn_P0 = *pkg.Transport
 type FfiT_Go_Http_transportNewClientConn_P1 = context.Context
 type FfiT_Go_Http_transportNewClientConn_R = *pkg.ClientConn
@@ -2857,15 +2044,6 @@ func Go_Http_transportNewClientConnT(p0 *pkg.Transport, p1 context.Context, p2 s
 	return
 }
 
-// [fallible] Go_Http.transportRoundTrip → pkg.TransportRoundTrip
-func Go_Http_transportRoundTrip(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := p0.(*pkg.Transport).RoundTrip(p1.(*pkg.Request))
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](r0)
-
-	return
-}
 type FfiT_Go_Http_transportRoundTrip_P0 = *pkg.Transport
 type FfiT_Go_Http_transportRoundTrip_P1 = *pkg.Request
 type FfiT_Go_Http_transportRoundTrip_R = *pkg.Response
@@ -2878,12 +2056,6 @@ func Go_Http_transportRoundTripT(p0 *pkg.Transport, p1 *pkg.Request) (out SkyRes
 	return
 }
 
-// [pure] Go_Http.transportClone → pkg.TransportClone
-func Go_Http_transportClone(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.Transport).Clone())
-	return
-}
 type FfiT_Go_Http_transportClone_P0 = *pkg.Transport
 type FfiT_Go_Http_transportClone_R = *pkg.Transport
 // [pure] typed wrapper for Go_Http_transportClone (P7 adaptor target)

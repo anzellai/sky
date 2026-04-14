@@ -23,15 +23,6 @@ import (
 	option "google.golang.org/api/option"
 )
 
-// [fallible] Go_GoV4.appAuth → pkg.AppAuth
-func Go_GoV4_appAuth(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := p0.(*pkg.App).Auth(p1.(context.Context))
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](r0)
-
-	return
-}
 type FfiT_Go_GoV4_appAuth_P0 = *pkg.App
 type FfiT_Go_GoV4_appAuth_P1 = context.Context
 type FfiT_Go_GoV4_appAuth_R = *auth.Client
@@ -44,15 +35,6 @@ func Go_GoV4_appAuthT(p0 *pkg.App, p1 context.Context) (out SkyResult[string, *a
 	return
 }
 
-// [fallible] Go_GoV4.appDatabase → pkg.AppDatabase
-func Go_GoV4_appDatabase(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := p0.(*pkg.App).Database(p1.(context.Context))
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](r0)
-
-	return
-}
 type FfiT_Go_GoV4_appDatabase_P0 = *pkg.App
 type FfiT_Go_GoV4_appDatabase_P1 = context.Context
 type FfiT_Go_GoV4_appDatabase_R = *db.Client
@@ -65,15 +47,6 @@ func Go_GoV4_appDatabaseT(p0 *pkg.App, p1 context.Context) (out SkyResult[string
 	return
 }
 
-// [fallible] Go_GoV4.appDatabaseWithURL → pkg.AppDatabaseWithURL
-func Go_GoV4_appDatabaseWithURL(p0 any, p1 any, p2 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := p0.(*pkg.App).DatabaseWithURL(p1.(context.Context), fmt.Sprintf("%v", p2))
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](r0)
-
-	return
-}
 type FfiT_Go_GoV4_appDatabaseWithURL_P0 = *pkg.App
 type FfiT_Go_GoV4_appDatabaseWithURL_P1 = context.Context
 type FfiT_Go_GoV4_appDatabaseWithURL_R = *db.Client
@@ -86,15 +59,6 @@ func Go_GoV4_appDatabaseWithURLT(p0 *pkg.App, p1 context.Context, p2 string) (ou
 	return
 }
 
-// [fallible] Go_GoV4.appStorage → pkg.AppStorage
-func Go_GoV4_appStorage(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := p0.(*pkg.App).Storage(p1.(context.Context))
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](r0)
-
-	return
-}
 type FfiT_Go_GoV4_appStorage_P0 = *pkg.App
 type FfiT_Go_GoV4_appStorage_P1 = context.Context
 type FfiT_Go_GoV4_appStorage_R = *storage.Client
@@ -107,15 +71,6 @@ func Go_GoV4_appStorageT(p0 *pkg.App, p1 context.Context) (out SkyResult[string,
 	return
 }
 
-// [fallible] Go_GoV4.appFirestore → pkg.AppFirestore
-func Go_GoV4_appFirestore(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := p0.(*pkg.App).Firestore(p1.(context.Context))
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](r0)
-
-	return
-}
 type FfiT_Go_GoV4_appFirestore_P0 = *pkg.App
 type FfiT_Go_GoV4_appFirestore_P1 = context.Context
 type FfiT_Go_GoV4_appFirestore_R = *firestore.Client
@@ -128,15 +83,6 @@ func Go_GoV4_appFirestoreT(p0 *pkg.App, p1 context.Context) (out SkyResult[strin
 	return
 }
 
-// [fallible] Go_GoV4.appFirestoreWithDatabaseID → pkg.AppFirestoreWithDatabaseID
-func Go_GoV4_appFirestoreWithDatabaseID(p0 any, p1 any, p2 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := p0.(*pkg.App).FirestoreWithDatabaseID(p1.(context.Context), fmt.Sprintf("%v", p2))
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](r0)
-
-	return
-}
 type FfiT_Go_GoV4_appFirestoreWithDatabaseID_P0 = *pkg.App
 type FfiT_Go_GoV4_appFirestoreWithDatabaseID_P1 = context.Context
 type FfiT_Go_GoV4_appFirestoreWithDatabaseID_R = *firestore.Client
@@ -149,15 +95,6 @@ func Go_GoV4_appFirestoreWithDatabaseIDT(p0 *pkg.App, p1 context.Context, p2 str
 	return
 }
 
-// [fallible] Go_GoV4.appInstanceID → pkg.AppInstanceID
-func Go_GoV4_appInstanceID(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := p0.(*pkg.App).InstanceID(p1.(context.Context))
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](r0)
-
-	return
-}
 type FfiT_Go_GoV4_appInstanceID_P0 = *pkg.App
 type FfiT_Go_GoV4_appInstanceID_P1 = context.Context
 type FfiT_Go_GoV4_appInstanceID_R = *iid.Client
@@ -170,15 +107,6 @@ func Go_GoV4_appInstanceIDT(p0 *pkg.App, p1 context.Context) (out SkyResult[stri
 	return
 }
 
-// [fallible] Go_GoV4.appMessaging → pkg.AppMessaging
-func Go_GoV4_appMessaging(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := p0.(*pkg.App).Messaging(p1.(context.Context))
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](r0)
-
-	return
-}
 type FfiT_Go_GoV4_appMessaging_P0 = *pkg.App
 type FfiT_Go_GoV4_appMessaging_P1 = context.Context
 type FfiT_Go_GoV4_appMessaging_R = *messaging.Client
@@ -191,15 +119,6 @@ func Go_GoV4_appMessagingT(p0 *pkg.App, p1 context.Context) (out SkyResult[strin
 	return
 }
 
-// [fallible] Go_GoV4.appAppCheck → pkg.AppAppCheck
-func Go_GoV4_appAppCheck(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := p0.(*pkg.App).AppCheck(p1.(context.Context))
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](r0)
-
-	return
-}
 type FfiT_Go_GoV4_appAppCheck_P0 = *pkg.App
 type FfiT_Go_GoV4_appAppCheck_P1 = context.Context
 type FfiT_Go_GoV4_appAppCheck_R = *appcheck.Client
@@ -212,15 +131,6 @@ func Go_GoV4_appAppCheckT(p0 *pkg.App, p1 context.Context) (out SkyResult[string
 	return
 }
 
-// [fallible] Go_GoV4.appRemoteConfig → pkg.AppRemoteConfig
-func Go_GoV4_appRemoteConfig(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := p0.(*pkg.App).RemoteConfig(p1.(context.Context))
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](r0)
-
-	return
-}
 type FfiT_Go_GoV4_appRemoteConfig_P0 = *pkg.App
 type FfiT_Go_GoV4_appRemoteConfig_P1 = context.Context
 type FfiT_Go_GoV4_appRemoteConfig_R = *remoteconfig.Client

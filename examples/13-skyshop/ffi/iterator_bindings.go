@@ -22,12 +22,6 @@ func Go_Iterator_newPageInfo(_ any) any { return pkg.NewPageInfo }
 
 func Go_Iterator_setNewPageInfo(value any) any { reflect.ValueOf(&pkg.NewPageInfo).Elem().Set(reflect.ValueOf(value).Convert(reflect.TypeOf(pkg.NewPageInfo))); return struct{}{} }
 
-// [pure] Go_Iterator.newPager → pkg.NewPager
-func Go_Iterator_newPager(p0 any, p1 any, p2 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](pkg.NewPager(p0.(pkg.Pageable), AsInt(p1), fmt.Sprintf("%v", p2)))
-	return
-}
 type FfiT_Go_Iterator_newPager_P0 = pkg.Pageable
 type FfiT_Go_Iterator_newPager_R = *pkg.Pager
 // [pure] typed wrapper for Go_Iterator_newPager (P7 adaptor target)
@@ -37,12 +31,6 @@ func Go_Iterator_newPagerT(p0 pkg.Pageable, p1 int, p2 string) (out SkyResult[st
 	return
 }
 
-// [pure] Go_Iterator.pageInfoRemaining → pkg.PageInfoRemaining
-func Go_Iterator_pageInfoRemaining(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.PageInfo).Remaining())
-	return
-}
 type FfiT_Go_Iterator_pageInfoRemaining_P0 = *pkg.PageInfo
 // [pure] typed wrapper for Go_Iterator_pageInfoRemaining (P7 adaptor target)
 func Go_Iterator_pageInfoRemainingT(p0 *pkg.PageInfo) (out SkyResult[string, int]) {
@@ -59,12 +47,6 @@ func Go_Iterator_pageInfoMaxSize(p0 any) any { return SkyFfiFieldGet(p0, "MaxSiz
 
 func Go_Iterator_pageInfoSetMaxSize(value any, recv any) any { return SkyFfiFieldSet(value, recv, "MaxSize") }
 
-// [pure] Go_Iterator.pageablePageInfo → pkg.PageablePageInfo
-func Go_Iterator_pageablePageInfo(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(pkg.Pageable).PageInfo())
-	return
-}
 type FfiT_Go_Iterator_pageablePageInfo_P0 = pkg.Pageable
 type FfiT_Go_Iterator_pageablePageInfo_R = *pkg.PageInfo
 // [pure] typed wrapper for Go_Iterator_pageablePageInfo (P7 adaptor target)

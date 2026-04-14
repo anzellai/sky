@@ -14,15 +14,6 @@ import (
 	stripe_go "github.com/stripe/stripe-go/v84"
 )
 
-// [fallible] Go_Session.clientNew → pkg.ClientNew
-func Go_Session_clientNew(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := p0.(pkg.Client).New(p1.(*stripe_go.CheckoutSessionParams))
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](r0)
-
-	return
-}
 type FfiT_Go_Session_clientNew_P0 = pkg.Client
 type FfiT_Go_Session_clientNew_P1 = *stripe_go.CheckoutSessionParams
 type FfiT_Go_Session_clientNew_R = *stripe_go.CheckoutSession
@@ -35,15 +26,6 @@ func Go_Session_clientNewT(p0 pkg.Client, p1 *stripe_go.CheckoutSessionParams) (
 	return
 }
 
-// [fallible] Go_Session.clientGet → pkg.ClientGet
-func Go_Session_clientGet(p0 any, p1 any, p2 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := p0.(pkg.Client).Get(fmt.Sprintf("%v", p1), p2.(*stripe_go.CheckoutSessionParams))
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](r0)
-
-	return
-}
 type FfiT_Go_Session_clientGet_P0 = pkg.Client
 type FfiT_Go_Session_clientGet_P2 = *stripe_go.CheckoutSessionParams
 type FfiT_Go_Session_clientGet_R = *stripe_go.CheckoutSession
@@ -56,15 +38,6 @@ func Go_Session_clientGetT(p0 pkg.Client, p1 string, p2 *stripe_go.CheckoutSessi
 	return
 }
 
-// [fallible] Go_Session.clientUpdate → pkg.ClientUpdate
-func Go_Session_clientUpdate(p0 any, p1 any, p2 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := p0.(pkg.Client).Update(fmt.Sprintf("%v", p1), p2.(*stripe_go.CheckoutSessionParams))
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](r0)
-
-	return
-}
 type FfiT_Go_Session_clientUpdate_P0 = pkg.Client
 type FfiT_Go_Session_clientUpdate_P2 = *stripe_go.CheckoutSessionParams
 type FfiT_Go_Session_clientUpdate_R = *stripe_go.CheckoutSession
@@ -77,15 +50,6 @@ func Go_Session_clientUpdateT(p0 pkg.Client, p1 string, p2 *stripe_go.CheckoutSe
 	return
 }
 
-// [fallible] Go_Session.clientExpire → pkg.ClientExpire
-func Go_Session_clientExpire(p0 any, p1 any, p2 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := p0.(pkg.Client).Expire(fmt.Sprintf("%v", p1), p2.(*stripe_go.CheckoutSessionExpireParams))
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](r0)
-
-	return
-}
 type FfiT_Go_Session_clientExpire_P0 = pkg.Client
 type FfiT_Go_Session_clientExpire_P2 = *stripe_go.CheckoutSessionExpireParams
 type FfiT_Go_Session_clientExpire_R = *stripe_go.CheckoutSession
@@ -98,12 +62,6 @@ func Go_Session_clientExpireT(p0 pkg.Client, p1 string, p2 *stripe_go.CheckoutSe
 	return
 }
 
-// [pure] Go_Session.clientList → pkg.ClientList
-func Go_Session_clientList(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(pkg.Client).List(p1.(*stripe_go.CheckoutSessionListParams)))
-	return
-}
 type FfiT_Go_Session_clientList_P0 = pkg.Client
 type FfiT_Go_Session_clientList_P1 = *stripe_go.CheckoutSessionListParams
 type FfiT_Go_Session_clientList_R = *pkg.Iter
@@ -114,12 +72,6 @@ func Go_Session_clientListT(p0 pkg.Client, p1 *stripe_go.CheckoutSessionListPara
 	return
 }
 
-// [pure] Go_Session.clientListLineItems → pkg.ClientListLineItems
-func Go_Session_clientListLineItems(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(pkg.Client).ListLineItems(p1.(*stripe_go.CheckoutSessionListLineItemsParams)))
-	return
-}
 type FfiT_Go_Session_clientListLineItems_P0 = pkg.Client
 type FfiT_Go_Session_clientListLineItems_P1 = *stripe_go.CheckoutSessionListLineItemsParams
 type FfiT_Go_Session_clientListLineItems_R = *pkg.LineItemIter
@@ -140,15 +92,6 @@ func Go_Session_clientSetKey(value any, recv any) any { return SkyFfiFieldSet(va
 
 func Go_Session_newClient(_ any) any { return new(pkg.Client) }
 
-// [fallible] Go_Session.expire → pkg.Expire
-func Go_Session_expire(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := pkg.Expire(fmt.Sprintf("%v", p0), p1.(*stripe_go.CheckoutSessionExpireParams))
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](r0)
-
-	return
-}
 type FfiT_Go_Session_expire_P1 = *stripe_go.CheckoutSessionExpireParams
 type FfiT_Go_Session_expire_R = *stripe_go.CheckoutSession
 // [fallible] typed wrapper for Go_Session_expire (P7 adaptor target)
@@ -160,15 +103,6 @@ func Go_Session_expireT(p0 string, p1 *stripe_go.CheckoutSessionExpireParams) (o
 	return
 }
 
-// [fallible] Go_Session.get → pkg.Get
-func Go_Session_get(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := pkg.Get(fmt.Sprintf("%v", p0), p1.(*stripe_go.CheckoutSessionParams))
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](r0)
-
-	return
-}
 type FfiT_Go_Session_get_P1 = *stripe_go.CheckoutSessionParams
 type FfiT_Go_Session_get_R = *stripe_go.CheckoutSession
 // [fallible] typed wrapper for Go_Session_get (P7 adaptor target)
@@ -180,12 +114,6 @@ func Go_Session_getT(p0 string, p1 *stripe_go.CheckoutSessionParams) (out SkyRes
 	return
 }
 
-// [pure] Go_Session.iterCheckoutSession → pkg.IterCheckoutSession
-func Go_Session_iterCheckoutSession(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.Iter).CheckoutSession())
-	return
-}
 type FfiT_Go_Session_iterCheckoutSession_P0 = *pkg.Iter
 type FfiT_Go_Session_iterCheckoutSession_R = *stripe_go.CheckoutSession
 // [pure] typed wrapper for Go_Session_iterCheckoutSession (P7 adaptor target)
@@ -195,12 +123,6 @@ func Go_Session_iterCheckoutSessionT(p0 *pkg.Iter) (out SkyResult[string, *strip
 	return
 }
 
-// [pure] Go_Session.iterCheckoutSessionList → pkg.IterCheckoutSessionList
-func Go_Session_iterCheckoutSessionList(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.Iter).CheckoutSessionList())
-	return
-}
 type FfiT_Go_Session_iterCheckoutSessionList_P0 = *pkg.Iter
 type FfiT_Go_Session_iterCheckoutSessionList_R = *stripe_go.CheckoutSessionList
 // [pure] typed wrapper for Go_Session_iterCheckoutSessionList (P7 adaptor target)
@@ -217,15 +139,6 @@ func Go_Session_iterCurrent(p0 any) (out any) {
 	return
 }
 
-// [fallible] Go_Session.iterErr → pkg.IterErr
-func Go_Session_iterErr(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	err := p0.(*pkg.Iter).Err()
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](struct{}{})
-
-	return
-}
 type FfiT_Go_Session_iterErr_P0 = *pkg.Iter
 // [fallible] typed wrapper for Go_Session_iterErr (P7 adaptor target)
 func Go_Session_iterErrT(p0 *pkg.Iter) (out SkyResult[string, struct{}]) {
@@ -236,12 +149,6 @@ func Go_Session_iterErrT(p0 *pkg.Iter) (out SkyResult[string, struct{}]) {
 	return
 }
 
-// [pure] Go_Session.iterList → pkg.IterList
-func Go_Session_iterList(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.Iter).List())
-	return
-}
 type FfiT_Go_Session_iterList_P0 = *pkg.Iter
 type FfiT_Go_Session_iterList_R = stripe_go.ListContainer
 // [pure] typed wrapper for Go_Session_iterList (P7 adaptor target)
@@ -251,12 +158,6 @@ func Go_Session_iterListT(p0 *pkg.Iter) (out SkyResult[string, stripe_go.ListCon
 	return
 }
 
-// [pure] Go_Session.iterMeta → pkg.IterMeta
-func Go_Session_iterMeta(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.Iter).Meta())
-	return
-}
 type FfiT_Go_Session_iterMeta_P0 = *pkg.Iter
 type FfiT_Go_Session_iterMeta_R = *stripe_go.ListMeta
 // [pure] typed wrapper for Go_Session_iterMeta (P7 adaptor target)
@@ -266,12 +167,6 @@ func Go_Session_iterMetaT(p0 *pkg.Iter) (out SkyResult[string, *stripe_go.ListMe
 	return
 }
 
-// [pure] Go_Session.iterNext → pkg.IterNext
-func Go_Session_iterNext(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.Iter).Next())
-	return
-}
 type FfiT_Go_Session_iterNext_P0 = *pkg.Iter
 // [pure] typed wrapper for Go_Session_iterNext (P7 adaptor target)
 func Go_Session_iterNextT(p0 *pkg.Iter) (out SkyResult[string, bool]) {
@@ -286,12 +181,6 @@ func Go_Session_iterSetIter(value any, recv any) any { return SkyFfiFieldSet(val
 
 func Go_Session_newIter(_ any) any { return new(pkg.Iter) }
 
-// [pure] Go_Session.lineItemIterLineItem → pkg.LineItemIterLineItem
-func Go_Session_lineItemIterLineItem(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.LineItemIter).LineItem())
-	return
-}
 type FfiT_Go_Session_lineItemIterLineItem_P0 = *pkg.LineItemIter
 type FfiT_Go_Session_lineItemIterLineItem_R = *stripe_go.LineItem
 // [pure] typed wrapper for Go_Session_lineItemIterLineItem (P7 adaptor target)
@@ -301,12 +190,6 @@ func Go_Session_lineItemIterLineItemT(p0 *pkg.LineItemIter) (out SkyResult[strin
 	return
 }
 
-// [pure] Go_Session.lineItemIterLineItemList → pkg.LineItemIterLineItemList
-func Go_Session_lineItemIterLineItemList(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.LineItemIter).LineItemList())
-	return
-}
 type FfiT_Go_Session_lineItemIterLineItemList_P0 = *pkg.LineItemIter
 type FfiT_Go_Session_lineItemIterLineItemList_R = *stripe_go.LineItemList
 // [pure] typed wrapper for Go_Session_lineItemIterLineItemList (P7 adaptor target)
@@ -323,15 +206,6 @@ func Go_Session_lineItemIterCurrent(p0 any) (out any) {
 	return
 }
 
-// [fallible] Go_Session.lineItemIterErr → pkg.LineItemIterErr
-func Go_Session_lineItemIterErr(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	err := p0.(*pkg.LineItemIter).Err()
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](struct{}{})
-
-	return
-}
 type FfiT_Go_Session_lineItemIterErr_P0 = *pkg.LineItemIter
 // [fallible] typed wrapper for Go_Session_lineItemIterErr (P7 adaptor target)
 func Go_Session_lineItemIterErrT(p0 *pkg.LineItemIter) (out SkyResult[string, struct{}]) {
@@ -342,12 +216,6 @@ func Go_Session_lineItemIterErrT(p0 *pkg.LineItemIter) (out SkyResult[string, st
 	return
 }
 
-// [pure] Go_Session.lineItemIterList → pkg.LineItemIterList
-func Go_Session_lineItemIterList(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.LineItemIter).List())
-	return
-}
 type FfiT_Go_Session_lineItemIterList_P0 = *pkg.LineItemIter
 type FfiT_Go_Session_lineItemIterList_R = stripe_go.ListContainer
 // [pure] typed wrapper for Go_Session_lineItemIterList (P7 adaptor target)
@@ -357,12 +225,6 @@ func Go_Session_lineItemIterListT(p0 *pkg.LineItemIter) (out SkyResult[string, s
 	return
 }
 
-// [pure] Go_Session.lineItemIterMeta → pkg.LineItemIterMeta
-func Go_Session_lineItemIterMeta(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.LineItemIter).Meta())
-	return
-}
 type FfiT_Go_Session_lineItemIterMeta_P0 = *pkg.LineItemIter
 type FfiT_Go_Session_lineItemIterMeta_R = *stripe_go.ListMeta
 // [pure] typed wrapper for Go_Session_lineItemIterMeta (P7 adaptor target)
@@ -372,12 +234,6 @@ func Go_Session_lineItemIterMetaT(p0 *pkg.LineItemIter) (out SkyResult[string, *
 	return
 }
 
-// [pure] Go_Session.lineItemIterNext → pkg.LineItemIterNext
-func Go_Session_lineItemIterNext(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.LineItemIter).Next())
-	return
-}
 type FfiT_Go_Session_lineItemIterNext_P0 = *pkg.LineItemIter
 // [pure] typed wrapper for Go_Session_lineItemIterNext (P7 adaptor target)
 func Go_Session_lineItemIterNextT(p0 *pkg.LineItemIter) (out SkyResult[string, bool]) {
@@ -392,12 +248,6 @@ func Go_Session_lineItemIterSetIter(value any, recv any) any { return SkyFfiFiel
 
 func Go_Session_newLineItemIter(_ any) any { return new(pkg.LineItemIter) }
 
-// [pure] Go_Session.list → pkg.List
-func Go_Session_list(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](pkg.List(p0.(*stripe_go.CheckoutSessionListParams)))
-	return
-}
 type FfiT_Go_Session_list_P0 = *stripe_go.CheckoutSessionListParams
 type FfiT_Go_Session_list_R = *pkg.Iter
 // [pure] typed wrapper for Go_Session_list (P7 adaptor target)
@@ -407,12 +257,6 @@ func Go_Session_listT(p0 *stripe_go.CheckoutSessionListParams) (out SkyResult[st
 	return
 }
 
-// [pure] Go_Session.listLineItems → pkg.ListLineItems
-func Go_Session_listLineItems(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](pkg.ListLineItems(p0.(*stripe_go.CheckoutSessionListLineItemsParams)))
-	return
-}
 type FfiT_Go_Session_listLineItems_P0 = *stripe_go.CheckoutSessionListLineItemsParams
 type FfiT_Go_Session_listLineItems_R = *pkg.LineItemIter
 // [pure] typed wrapper for Go_Session_listLineItems (P7 adaptor target)
@@ -422,15 +266,6 @@ func Go_Session_listLineItemsT(p0 *stripe_go.CheckoutSessionListLineItemsParams)
 	return
 }
 
-// [fallible] Go_Session.new → pkg.New
-func Go_Session_new(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := pkg.New(p0.(*stripe_go.CheckoutSessionParams))
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](r0)
-
-	return
-}
 type FfiT_Go_Session_new_P0 = *stripe_go.CheckoutSessionParams
 type FfiT_Go_Session_new_R = *stripe_go.CheckoutSession
 // [fallible] typed wrapper for Go_Session_new (P7 adaptor target)
@@ -442,15 +277,6 @@ func Go_Session_newT(p0 *stripe_go.CheckoutSessionParams) (out SkyResult[string,
 	return
 }
 
-// [fallible] Go_Session.update → pkg.Update
-func Go_Session_update(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := pkg.Update(fmt.Sprintf("%v", p0), p1.(*stripe_go.CheckoutSessionParams))
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](r0)
-
-	return
-}
 type FfiT_Go_Session_update_P1 = *stripe_go.CheckoutSessionParams
 type FfiT_Go_Session_update_R = *stripe_go.CheckoutSession
 // [fallible] typed wrapper for Go_Session_update (P7 adaptor target)

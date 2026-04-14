@@ -766,7 +766,14 @@ emitTypedWrapper kernelName aliases fn =
                 typedVariant = case emitTypedVariant knownAliases wrapperName fn rewrittenParams rewrittenResults of
                     Just s  -> s
                     Nothing -> ""
-            in anyAnyWrapper ++ typedVariant
+            -- P7: when a typed variant is available, skip the any/any
+            -- wrapper entirely — call-site codegen always dispatches
+            -- through the typed name with FfiT alias casts for
+            -- non-primitive params. Source-file `(p0 any)` count
+            -- drops to 0 for migratable DirectCall functions.
+            in if null typedVariant
+                then anyAnyWrapper
+                else typedVariant
 
         ReflectTopLevel ->
             unlines (reflectCall ("reflect.ValueOf(pkg." ++ goFnName ++ ")"))
