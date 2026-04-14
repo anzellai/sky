@@ -2959,8 +2959,19 @@ solvedTypeToGo ty = case ty of
                          || Set.member name (Rec._cg_recordAliases env)
         in if isRecordAlias then base ++ "_R" else base
     T.TLambda from to -> "func(" ++ solvedTypeToGo from ++ ") " ++ solvedTypeToGo to
-    T.TRecord _ _ -> "any"  -- TODO: struct type
-    T.TTuple _ _ _ -> "any"  -- TODO: tuple type
+    T.TRecord fields _ ->
+        -- P4: records always map to a named Go struct. If the shape
+        -- matches a registered alias we use its `_R` name. Otherwise
+        -- the anon-registry synthesises a deterministic `Anon_R_<hash>`
+        -- name; the pre-pass emits its struct decl alongside the alias
+        -- decls so Go can resolve it.
+        let env = getCgEnv
+            names = Map.keys fields
+            nonMatch = case Rec.lookupRecordAlias (Rec._cg_fieldIndex env) names of
+                Just aliasName -> aliasName ++ "_R"
+                Nothing        -> synthAnonRecordName fields
+        in nonMatch
+    T.TTuple _ _ _ -> "any"  -- P5: tuples — handled in next phase
     T.TAlias home name _ aliasTy ->
         let modStr = ModuleName.toString home
             base = if null modStr || modStr == "Main"
@@ -3561,3 +3572,41 @@ renderExhaustDiags ds = intercalate_ "\n  " (map render1 ds)
     render1 (Exhaust.Diag region _missing hint) =
         let A.Region (A.Position l c) _ = region
         in "at line " ++ show l ++ ":" ++ show c ++ " — " ++ hint
+
+
+-- | Synthesise a deterministic Go struct name for an anonymous record.
+-- Keyed by the full (fieldName, fieldType) shape so records with the
+-- same field names but different field types are distinct Go types
+-- (per P4). Format: `Anon_R_<sorted names>__<short hash of types>`.
+--
+-- The hash is a simple polynomial over the Show-representation of the
+-- field types. It isn't cryptographic — we only need it to discriminate
+-- between distinct shapes within a single compile unit.
+synthAnonRecordName :: Map.Map String T.FieldType -> String
+synthAnonRecordName fields =
+    let sorted = Map.toAscList fields
+        names  = map fst sorted
+        typeStr = concatMap (\(_, T.FieldType _ ty) -> show ty) sorted
+        nameTag = case names of
+            [] -> "Empty"
+            _  -> intercalate_ "_" (map sanitiseField names)
+    in "Anon_R_" ++ nameTag ++ "__" ++ shortHash (nameTag ++ typeStr)
+  where
+    sanitiseField = map (\c -> if c == '.' || c == '\'' || c == '"' then '_' else c)
+
+
+-- | Simple polynomial hash, base-32 encoded for short readable names.
+shortHash :: String -> String
+shortHash s =
+    let h = foldl (\acc c -> acc * 131 + fromIntegral (fromEnum c)) (17 :: Integer) s
+        absH = abs h
+    in take 8 (toBase32 absH)
+  where
+    toBase32 n
+        | n <= 0    = "0"
+        | otherwise = reverse (go n)
+    go 0 = ""
+    go n =
+        let (q, r) = n `divMod` 32
+            c     = "0123456789abcdefghijklmnopqrstuv" !! fromIntegral r
+        in c : go q
