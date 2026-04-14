@@ -175,6 +175,60 @@ func coerceInner[T any](v any) T {
 	if cast, ok := v.(T); ok {
 		return cast
 	}
+	// Generic fallback: when T is itself a parametric Sky container
+	// (SkyMaybe[X] / SkyResult[E, X] / SkyTask[E, X]) and v is the
+	// any-parameter instantiation of the same container, reconstruct
+	// via reflect rather than panicking. This is the cross-boundary
+	// case between a function body (which produces any-boxed Sky
+	// values) and a function signature (which declares a concrete
+	// inner type).
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Struct {
+		tagField := rv.FieldByName("Tag")
+		if tagField.IsValid() {
+			var zero T
+			zt := reflect.TypeOf(zero)
+			if zt != nil && zt.Kind() == reflect.Struct {
+				// SkyMaybe[T]: fields Tag + JustValue
+				justField := rv.FieldByName("JustValue")
+				if justField.IsValid() && zt.NumField() >= 2 && zt.Field(0).Name == "Tag" {
+					out := reflect.New(zt).Elem()
+					out.FieldByName("Tag").SetInt(tagField.Int())
+					if tagField.Int() == 0 {
+						innerField := out.FieldByName("JustValue")
+						if innerField.IsValid() {
+							innerVal := justField.Interface()
+							if innerField.Type().Kind() == reflect.Interface {
+								innerField.Set(reflect.ValueOf(innerVal))
+							} else if reflect.TypeOf(innerVal) != nil && reflect.TypeOf(innerVal).AssignableTo(innerField.Type()) {
+								innerField.Set(reflect.ValueOf(innerVal))
+							}
+						}
+					}
+					return out.Interface().(T)
+				}
+				// SkyResult[E, A]: fields Tag + OkValue + ErrValue
+				okField := rv.FieldByName("OkValue")
+				errField := rv.FieldByName("ErrValue")
+				if okField.IsValid() && errField.IsValid() {
+					out := reflect.New(zt).Elem()
+					out.FieldByName("Tag").SetInt(tagField.Int())
+					if tagField.Int() == 0 {
+						inner := out.FieldByName("OkValue")
+						if inner.IsValid() && inner.Type().Kind() == reflect.Interface {
+							inner.Set(reflect.ValueOf(okField.Interface()))
+						}
+					} else {
+						inner := out.FieldByName("ErrValue")
+						if inner.IsValid() && inner.Type().Kind() == reflect.Interface {
+							inner.Set(reflect.ValueOf(errField.Interface()))
+						}
+					}
+					return out.Interface().(T)
+				}
+			}
+		}
+	}
 	// Final fallback: Go will panic on invalid assertion; let it.
 	// The panic is the correct "type mismatch at boundary" signal.
 	return v.(T)
