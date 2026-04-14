@@ -2028,6 +2028,20 @@ exprToGo (A.At _ expr) = case expr of
                     GoIr.GoCall (GoIr.GoQualified "rt" typedName)
                                 (zipWith coerceFfiArg paramTys args)
 
+            -- P8 step 4: migrate kernel calls to their typed T companions
+            -- when every arg is a primitive Sky literal. Kernels like
+            -- `String_toUpper("abc")` gain `String_toUpperT("abc")` —
+            -- Go literal-to-named-type inference handles the conversion.
+            -- Narrow scope for safety: literal-arg only, matched against
+            -- a hand-curated list of simple-param kernels.
+            Can.VarKernel modName funcName
+                | not (null args)
+                , all isPrimLiteralArg args
+                , Set.member (modName, funcName) typedKernelLiterals ->
+                    GoIr.GoCall
+                        (GoIr.GoQualified "rt" (modName ++ "_" ++ funcName ++ "T"))
+                        (map exprToGo args)
+
             Can.VarCtor _opts _home _typeName _ctorName annot ->
                 -- ADT constructor partial app: JobDone : Int -> Result -> Msg
                 -- applied to just `jid` must close over jid.
@@ -2231,6 +2245,35 @@ isPrimLiteralArg (A.At _ e) = case e of
     Can.Float _ -> True
     Can.Chr _   -> True
     _           -> False
+
+
+-- | Kernel (mod, name) pairs with a typed `*T` companion whose param
+-- types are all `isCallerVisibleGoType` primitives. Every entry has
+-- been verified to match the runtime's typed-companion signature —
+-- adding a kernel here without a matching `*T` in runtime-go/rt
+-- breaks the build. Conservative list intentionally skips kernels
+-- whose typed variant returns a Task-shaped thunk (caller needs to
+-- execute it) or takes a slice-of-A (literal args are always scalar).
+typedKernelLiterals :: Set.Set (String, String)
+typedKernelLiterals = Set.fromList
+    [ ("String", "toUpper"),    ("String", "toLower"),    ("String", "trim")
+    , ("String", "reverse"),    ("String", "isEmpty"),    ("String", "length")
+    , ("String", "contains"),   ("String", "startsWith"), ("String", "endsWith")
+    , ("String", "append"),     ("String", "fromInt"),    ("String", "fromFloat")
+    , ("String", "replace")
+    , ("Math",   "abs"),        ("Math",   "min"),        ("Math",   "max")
+    , ("Math",   "sqrt"),       ("Math",   "pow"),        ("Math",   "floor")
+    , ("Math",   "ceil"),       ("Math",   "round"),      ("Math",   "sin")
+    , ("Math",   "cos"),        ("Math",   "tan"),        ("Math",   "log")
+    , ("Char",   "isUpper"),    ("Char",   "isLower"),    ("Char",   "isDigit")
+    , ("Char",   "isAlpha"),    ("Char",   "toUpper"),    ("Char",   "toLower")
+    , ("Path",   "dir"),        ("Path",   "base"),       ("Path",   "ext")
+    , ("Path",   "isAbsolute")
+    , ("Encoding", "base64Encode"), ("Encoding", "base64Decode")
+    , ("Encoding", "urlEncode"),    ("Encoding", "urlDecode")
+    , ("Encoding", "hexEncode"),    ("Encoding", "hexDecode")
+    , ("Regex",  "match"),      ("Regex",  "find"),       ("Regex",  "replace")
+    ]
 
 
 -- | Snapshot of Env.ffiTypedWrapperNamesRef taken at every lookup. The
