@@ -13,12 +13,19 @@ import (
 	"fmt"
 	http "net/http"
 	_ "net/url"  // aliased url; unused in emitted wrappers
+	"reflect"
 )
 
 // [pure] Go_Mux.cORSMethodMiddleware → pkg.CORSMethodMiddleware
 func Go_Mux_cORSMethodMiddleware(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](pkg.CORSMethodMiddleware(p0.(*pkg.Router)))
+	return
+}
+// [pure] typed wrapper for Go_Mux_cORSMethodMiddleware (P7 adaptor target)
+func Go_Mux_cORSMethodMiddlewareT(p0 *pkg.Router) (out SkyResult[string, pkg.MiddlewareFunc]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, pkg.MiddlewareFunc](pkg.CORSMethodMiddleware(p0))
 	return
 }
 
@@ -28,6 +35,20 @@ func Go_Mux_currentRoute(p0 any) (out any) {
 	out = Ok[any, any](pkg.CurrentRoute(p0.(*http.Request)))
 	return
 }
+// [pure] typed wrapper for Go_Mux_currentRoute (P7 adaptor target)
+func Go_Mux_currentRouteT(p0 *http.Request) (out SkyResult[string, *pkg.Route]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, *pkg.Route](pkg.CurrentRoute(p0))
+	return
+}
+
+func Go_Mux_errMethodMismatch(_ any) any { return pkg.ErrMethodMismatch }
+
+func Go_Mux_setErrMethodMismatch(value any) any { reflect.ValueOf(&pkg.ErrMethodMismatch).Elem().Set(reflect.ValueOf(value).Convert(reflect.TypeOf(pkg.ErrMethodMismatch))); return struct{}{} }
+
+func Go_Mux_errNotFound(_ any) any { return pkg.ErrNotFound }
+
+func Go_Mux_setErrNotFound(value any) any { reflect.ValueOf(&pkg.ErrNotFound).Elem().Set(reflect.ValueOf(value).Convert(reflect.TypeOf(pkg.ErrNotFound))); return struct{}{} }
 
 // [pure] Go_Mux.matcherFuncMatch → pkg.MatcherFuncMatch
 func Go_Mux_matcherFuncMatch(p0 any, p1 any, p2 any) (out any) {
@@ -48,6 +69,12 @@ func Go_Mux_newRouter(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	_ = p0
 	out = Ok[any, any](pkg.NewRouter())
+	return
+}
+// [pure] typed wrapper for Go_Mux_newRouter (P7 adaptor target)
+func Go_Mux_newRouterT() (out SkyResult[string, *pkg.Router]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, *pkg.Router](pkg.NewRouter())
 	return
 }
 
@@ -294,6 +321,26 @@ func Go_Mux_routeGetVarNames(p0 any) (out any) {
 	return
 }
 
+func Go_Mux_newRoute(_ any) any { return new(pkg.Route) }
+
+func Go_Mux_routeMatchRoute(p0 any) any { return SkyFfiFieldGet(p0, "Route") }
+
+func Go_Mux_routeMatchSetRoute(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Route") }
+
+func Go_Mux_routeMatchHandler(p0 any) any { return SkyFfiFieldGet(p0, "Handler") }
+
+func Go_Mux_routeMatchSetHandler(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Handler") }
+
+func Go_Mux_routeMatchVars(p0 any) any { return SkyFfiFieldGet(p0, "Vars") }
+
+func Go_Mux_routeMatchSetVars(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Vars") }
+
+func Go_Mux_routeMatchMatchErr(p0 any) any { return SkyFfiFieldGet(p0, "MatchErr") }
+
+func Go_Mux_routeMatchSetMatchErr(value any, recv any) any { return SkyFfiFieldSet(value, recv, "MatchErr") }
+
+func Go_Mux_newRouteMatch(_ any) any { return new(pkg.RouteMatch) }
+
 // [pure] Go_Mux.routerUse → pkg.RouterUse
 func Go_Mux_routerUse(p0 any, p1 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -453,12 +500,28 @@ func Go_Mux_routerWalk(p0 any, p1 any) (out any) {
 	return
 }
 
+func Go_Mux_routerNotFoundHandler(p0 any) any { return SkyFfiFieldGet(p0, "NotFoundHandler") }
+
+func Go_Mux_routerSetNotFoundHandler(value any, recv any) any { return SkyFfiFieldSet(value, recv, "NotFoundHandler") }
+
+func Go_Mux_routerMethodNotAllowedHandler(p0 any) any { return SkyFfiFieldGet(p0, "MethodNotAllowedHandler") }
+
+func Go_Mux_routerSetMethodNotAllowedHandler(value any, recv any) any { return SkyFfiFieldSet(value, recv, "MethodNotAllowedHandler") }
+
+func Go_Mux_routerKeepContext(p0 any) any { return SkyFfiFieldGet(p0, "KeepContext") }
+
+func Go_Mux_routerSetKeepContext(value any, recv any) any { return SkyFfiFieldSet(value, recv, "KeepContext") }
+
 // [pure] Go_Mux.setURLVars → pkg.SetURLVars
 func Go_Mux_setURLVars(p0 any, p1 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](pkg.SetURLVars(p0.(*http.Request), p1.(map[string]string)))
 	return
 }
+
+func Go_Mux_skipRouter(_ any) any { return pkg.SkipRouter }
+
+func Go_Mux_setSkipRouter(value any) any { reflect.ValueOf(&pkg.SkipRouter).Elem().Set(reflect.ValueOf(value).Convert(reflect.TypeOf(pkg.SkipRouter))); return struct{}{} }
 
 // [pure] Go_Mux.vars → pkg.Vars
 func Go_Mux_vars(p0 any) (out any) {

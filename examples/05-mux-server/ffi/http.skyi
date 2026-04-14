@@ -12,8 +12,10 @@
 -- Imports used in this package's wrapper:
 --   bufio "bufio"
 --   context "context"
+--   tls "crypto/tls"
 --   io "io"
 --   fs "io/fs"
+--   log "log"
 --   multipart "mime/multipart"
 --   net "net"
 --   pkg "net/http"
@@ -29,6 +31,15 @@ package http
 -- [fallible] ClientPostForm : Client -> String -> Values -> (Response, String)   -- runtime wrap: Task String
 -- [fallible] ClientHead : Client -> String -> (Response, String)   -- runtime wrap: Task String
 -- [pure] ClientCloseIdleConnections : Client -> ()   -- runtime wrap: Task String
+-- [pure] ClientTransport : Client -> RoundTripper   -- runtime wrap: Task String
+-- [pure] ClientSetTransport : RoundTripper -> Client -> Client   -- runtime wrap: Task String
+-- [pure] ClientCheckRedirect : Client -> Request) error   -- runtime wrap: Task String
+-- [pure] ClientSetCheckRedirect : Request) error -> Client -> Client   -- runtime wrap: Task String
+-- [pure] ClientJar : Client -> CookieJar   -- runtime wrap: Task String
+-- [pure] ClientSetJar : CookieJar -> Client -> Client   -- runtime wrap: Task String
+-- [pure] ClientTimeout : Client -> Duration   -- runtime wrap: Task String
+-- [pure] ClientSetTimeout : Duration -> Client -> Client   -- runtime wrap: Task String
+-- [pure] NewClient : struct{} -> Client   -- runtime wrap: Task String
 -- [fallible] ClientConnClose : ClientConn -> String   -- runtime wrap: Task String
 -- [fallible] ClientConnErr : ClientConn -> String   -- runtime wrap: Task String
 -- [fallible] ClientConnRoundTrip : ClientConn -> Request -> (Response, String)   -- runtime wrap: Task String
@@ -37,23 +48,141 @@ package http
 -- [fallible] ClientConnReserve : ClientConn -> String   -- runtime wrap: Task String
 -- [pure] ClientConnRelease : ClientConn -> ()   -- runtime wrap: Task String
 -- [pure] ClientConnSetStateHook : ClientConn -> ClientConn) -> ()   -- runtime wrap: Task String
+-- [pure] NewClientConn : struct{} -> ClientConn   -- runtime wrap: Task String
+-- [effectful] CloseNotifierCloseNotify : CloseNotifier -> <-chan bool   -- runtime wrap: Task String
 -- [pure] ConnStateString : ConnState -> String   -- runtime wrap: Task String
 -- [pure] CookieString : Cookie -> String   -- runtime wrap: Task String
 -- [fallible] CookieValid : Cookie -> String   -- runtime wrap: Task String
+-- [pure] CookieName : Cookie -> String   -- runtime wrap: Task String
+-- [pure] CookieSetName : String -> Cookie -> Cookie   -- runtime wrap: Task String
+-- [pure] CookieValue : Cookie -> String   -- runtime wrap: Task String
+-- [pure] CookieSetValue : String -> Cookie -> Cookie   -- runtime wrap: Task String
+-- [pure] CookieQuoted : Cookie -> Bool   -- runtime wrap: Task String
+-- [pure] CookieSetQuoted : Bool -> Cookie -> Cookie   -- runtime wrap: Task String
+-- [pure] CookiePath : Cookie -> String   -- runtime wrap: Task String
+-- [pure] CookieSetPath : String -> Cookie -> Cookie   -- runtime wrap: Task String
+-- [pure] CookieDomain : Cookie -> String   -- runtime wrap: Task String
+-- [pure] CookieSetDomain : String -> Cookie -> Cookie   -- runtime wrap: Task String
+-- [pure] CookieExpires : Cookie -> Time   -- runtime wrap: Task String
+-- [pure] CookieSetExpires : Time -> Cookie -> Cookie   -- runtime wrap: Task String
+-- [pure] CookieRawExpires : Cookie -> String   -- runtime wrap: Task String
+-- [pure] CookieSetRawExpires : String -> Cookie -> Cookie   -- runtime wrap: Task String
+-- [pure] CookieMaxAge : Cookie -> Int   -- runtime wrap: Task String
+-- [pure] CookieSetMaxAge : Int -> Cookie -> Cookie   -- runtime wrap: Task String
+-- [pure] CookieSecure : Cookie -> Bool   -- runtime wrap: Task String
+-- [pure] CookieSetSecure : Bool -> Cookie -> Cookie   -- runtime wrap: Task String
+-- [pure] CookieHttpOnly : Cookie -> Bool   -- runtime wrap: Task String
+-- [pure] CookieSetHttpOnly : Bool -> Cookie -> Cookie   -- runtime wrap: Task String
+-- [pure] CookieSameSite : Cookie -> SameSite   -- runtime wrap: Task String
+-- [pure] CookieSetSameSite : SameSite -> Cookie -> Cookie   -- runtime wrap: Task String
+-- [pure] CookiePartitioned : Cookie -> Bool   -- runtime wrap: Task String
+-- [pure] CookieSetPartitioned : Bool -> Cookie -> Cookie   -- runtime wrap: Task String
+-- [pure] CookieRaw : Cookie -> String   -- runtime wrap: Task String
+-- [pure] CookieSetRaw : String -> Cookie -> Cookie   -- runtime wrap: Task String
+-- [pure] CookieUnparsed : Cookie -> []string   -- runtime wrap: Task String
+-- [pure] CookieSetUnparsed : []string -> Cookie -> Cookie   -- runtime wrap: Task String
+-- [pure] NewCookie : struct{} -> Cookie   -- runtime wrap: Task String
+-- [pure] CookieJarCookies : CookieJar -> URL -> Cookie   -- runtime wrap: Task String
+-- [pure] CookieJarSetCookies : CookieJar -> URL -> Cookie -> ()   -- runtime wrap: Task String
 -- [fallible] CrossOriginProtectionAddTrustedOrigin : CrossOriginProtection -> String -> String   -- runtime wrap: Task String
 -- [pure] CrossOriginProtectionAddInsecureBypassPattern : CrossOriginProtection -> String -> ()   -- runtime wrap: Task String
 -- [pure] CrossOriginProtectionSetDenyHandler : CrossOriginProtection -> Handler -> ()   -- runtime wrap: Task String
 -- [fallible] CrossOriginProtectionCheck : CrossOriginProtection -> Request -> String   -- runtime wrap: Task String
 -- [pure] CrossOriginProtectionHandler : CrossOriginProtection -> Handler -> Handler   -- runtime wrap: Task String
+-- [pure] DefaultClient : struct{} -> Client   -- runtime wrap: Task String
+-- [effectful] SetDefaultClient : Client -> struct{}   -- runtime wrap: Task String
+-- [pure] DefaultMaxHeaderBytes : struct{} -> untyped int   -- runtime wrap: Task String
+-- [pure] DefaultMaxIdleConnsPerHost : struct{} -> untyped int   -- runtime wrap: Task String
+-- [pure] DefaultServeMux : struct{} -> ServeMux   -- runtime wrap: Task String
+-- [effectful] SetDefaultServeMux : ServeMux -> struct{}   -- runtime wrap: Task String
+-- [pure] DefaultTransport : struct{} -> RoundTripper   -- runtime wrap: Task String
+-- [effectful] SetDefaultTransport : RoundTripper -> struct{}   -- runtime wrap: Task String
 -- [pure] DetectContentType : []byte -> String   -- runtime wrap: Task String
 -- [fallible] DirOpen : Dir -> String -> (File, String)   -- runtime wrap: Task String
+-- [pure] ErrAbortHandler : struct{} -> String   -- runtime wrap: Task String
+-- [effectful] SetErrAbortHandler : String -> struct{}   -- runtime wrap: Task String
+-- [pure] ErrBodyNotAllowed : struct{} -> String   -- runtime wrap: Task String
+-- [effectful] SetErrBodyNotAllowed : String -> struct{}   -- runtime wrap: Task String
+-- [pure] ErrBodyReadAfterClose : struct{} -> String   -- runtime wrap: Task String
+-- [effectful] SetErrBodyReadAfterClose : String -> struct{}   -- runtime wrap: Task String
+-- [pure] ErrContentLength : struct{} -> String   -- runtime wrap: Task String
+-- [effectful] SetErrContentLength : String -> struct{}   -- runtime wrap: Task String
+-- [pure] ErrHandlerTimeout : struct{} -> String   -- runtime wrap: Task String
+-- [effectful] SetErrHandlerTimeout : String -> struct{}   -- runtime wrap: Task String
+-- [pure] ErrHeaderTooLong : struct{} -> ProtocolError   -- runtime wrap: Task String
+-- [effectful] SetErrHeaderTooLong : ProtocolError -> struct{}   -- runtime wrap: Task String
+-- [pure] ErrHijacked : struct{} -> String   -- runtime wrap: Task String
+-- [effectful] SetErrHijacked : String -> struct{}   -- runtime wrap: Task String
+-- [pure] ErrLineTooLong : struct{} -> String   -- runtime wrap: Task String
+-- [effectful] SetErrLineTooLong : String -> struct{}   -- runtime wrap: Task String
+-- [pure] ErrMissingBoundary : struct{} -> ProtocolError   -- runtime wrap: Task String
+-- [effectful] SetErrMissingBoundary : ProtocolError -> struct{}   -- runtime wrap: Task String
+-- [pure] ErrMissingContentLength : struct{} -> ProtocolError   -- runtime wrap: Task String
+-- [effectful] SetErrMissingContentLength : ProtocolError -> struct{}   -- runtime wrap: Task String
+-- [pure] ErrMissingFile : struct{} -> String   -- runtime wrap: Task String
+-- [effectful] SetErrMissingFile : String -> struct{}   -- runtime wrap: Task String
+-- [pure] ErrNoCookie : struct{} -> String   -- runtime wrap: Task String
+-- [effectful] SetErrNoCookie : String -> struct{}   -- runtime wrap: Task String
+-- [pure] ErrNoLocation : struct{} -> String   -- runtime wrap: Task String
+-- [effectful] SetErrNoLocation : String -> struct{}   -- runtime wrap: Task String
+-- [pure] ErrNotMultipart : struct{} -> ProtocolError   -- runtime wrap: Task String
+-- [effectful] SetErrNotMultipart : ProtocolError -> struct{}   -- runtime wrap: Task String
+-- [pure] ErrNotSupported : struct{} -> ProtocolError   -- runtime wrap: Task String
+-- [effectful] SetErrNotSupported : ProtocolError -> struct{}   -- runtime wrap: Task String
+-- [pure] ErrSchemeMismatch : struct{} -> String   -- runtime wrap: Task String
+-- [effectful] SetErrSchemeMismatch : String -> struct{}   -- runtime wrap: Task String
+-- [pure] ErrServerClosed : struct{} -> String   -- runtime wrap: Task String
+-- [effectful] SetErrServerClosed : String -> struct{}   -- runtime wrap: Task String
+-- [pure] ErrShortBody : struct{} -> ProtocolError   -- runtime wrap: Task String
+-- [effectful] SetErrShortBody : ProtocolError -> struct{}   -- runtime wrap: Task String
+-- [pure] ErrSkipAltProtocol : struct{} -> String   -- runtime wrap: Task String
+-- [effectful] SetErrSkipAltProtocol : String -> struct{}   -- runtime wrap: Task String
+-- [pure] ErrUnexpectedTrailer : struct{} -> ProtocolError   -- runtime wrap: Task String
+-- [effectful] SetErrUnexpectedTrailer : ProtocolError -> struct{}   -- runtime wrap: Task String
+-- [pure] ErrUseLastResponse : struct{} -> String   -- runtime wrap: Task String
+-- [effectful] SetErrUseLastResponse : String -> struct{}   -- runtime wrap: Task String
+-- [pure] ErrWriteAfterFlush : struct{} -> String   -- runtime wrap: Task String
+-- [effectful] SetErrWriteAfterFlush : String -> struct{}   -- runtime wrap: Task String
 -- [pure] Error : ResponseWriter -> String -> Int -> ()   -- runtime wrap: Task String
 -- [pure] FS : FS -> FileSystem   -- runtime wrap: Task String
+-- [fallible] FileClose : File -> String   -- runtime wrap: Task String
+-- [fallible] FileRead : File -> []byte -> (Int, String)   -- runtime wrap: Task String
+-- [fallible] FileReaddir : File -> Int -> (FileInfo, String)   -- runtime wrap: Task String
+-- [fallible] FileSeek : File -> Int -> Int -> (Int, String)   -- runtime wrap: Task String
+-- [fallible] FileStat : File -> (FileInfo, String)   -- runtime wrap: Task String
 -- [pure] FileServer : FileSystem -> Handler   -- runtime wrap: Task String
 -- [pure] FileServerFS : FS -> Handler   -- runtime wrap: Task String
+-- [fallible] FileSystemOpen : FileSystem -> String -> (File, String)   -- runtime wrap: Task String
+-- [pure] FlusherFlush : Flusher -> ()   -- runtime wrap: Task String
 -- [fallible] Get : String -> (Response, String)   -- runtime wrap: Task String
+-- [pure] HTTP2ConfigMaxConcurrentStreams : HTTP2Config -> Int   -- runtime wrap: Task String
+-- [pure] HTTP2ConfigSetMaxConcurrentStreams : Int -> HTTP2Config -> HTTP2Config   -- runtime wrap: Task String
+-- [pure] HTTP2ConfigStrictMaxConcurrentRequests : HTTP2Config -> Bool   -- runtime wrap: Task String
+-- [pure] HTTP2ConfigSetStrictMaxConcurrentRequests : Bool -> HTTP2Config -> HTTP2Config   -- runtime wrap: Task String
+-- [pure] HTTP2ConfigMaxDecoderHeaderTableSize : HTTP2Config -> Int   -- runtime wrap: Task String
+-- [pure] HTTP2ConfigSetMaxDecoderHeaderTableSize : Int -> HTTP2Config -> HTTP2Config   -- runtime wrap: Task String
+-- [pure] HTTP2ConfigMaxEncoderHeaderTableSize : HTTP2Config -> Int   -- runtime wrap: Task String
+-- [pure] HTTP2ConfigSetMaxEncoderHeaderTableSize : Int -> HTTP2Config -> HTTP2Config   -- runtime wrap: Task String
+-- [pure] HTTP2ConfigMaxReadFrameSize : HTTP2Config -> Int   -- runtime wrap: Task String
+-- [pure] HTTP2ConfigSetMaxReadFrameSize : Int -> HTTP2Config -> HTTP2Config   -- runtime wrap: Task String
+-- [pure] HTTP2ConfigMaxReceiveBufferPerConnection : HTTP2Config -> Int   -- runtime wrap: Task String
+-- [pure] HTTP2ConfigSetMaxReceiveBufferPerConnection : Int -> HTTP2Config -> HTTP2Config   -- runtime wrap: Task String
+-- [pure] HTTP2ConfigMaxReceiveBufferPerStream : HTTP2Config -> Int   -- runtime wrap: Task String
+-- [pure] HTTP2ConfigSetMaxReceiveBufferPerStream : Int -> HTTP2Config -> HTTP2Config   -- runtime wrap: Task String
+-- [pure] HTTP2ConfigSendPingTimeout : HTTP2Config -> Duration   -- runtime wrap: Task String
+-- [pure] HTTP2ConfigSetSendPingTimeout : Duration -> HTTP2Config -> HTTP2Config   -- runtime wrap: Task String
+-- [pure] HTTP2ConfigPingTimeout : HTTP2Config -> Duration   -- runtime wrap: Task String
+-- [pure] HTTP2ConfigSetPingTimeout : Duration -> HTTP2Config -> HTTP2Config   -- runtime wrap: Task String
+-- [pure] HTTP2ConfigWriteByteTimeout : HTTP2Config -> Duration   -- runtime wrap: Task String
+-- [pure] HTTP2ConfigSetWriteByteTimeout : Duration -> HTTP2Config -> HTTP2Config   -- runtime wrap: Task String
+-- [pure] HTTP2ConfigPermitProhibitedCipherSuites : HTTP2Config -> Bool   -- runtime wrap: Task String
+-- [pure] HTTP2ConfigSetPermitProhibitedCipherSuites : Bool -> HTTP2Config -> HTTP2Config   -- runtime wrap: Task String
+-- [pure] HTTP2ConfigCountError : HTTP2Config -> func(errType string)   -- runtime wrap: Task String
+-- [pure] HTTP2ConfigSetCountError : func(errType string) -> HTTP2Config -> HTTP2Config   -- runtime wrap: Task String
+-- [pure] NewHTTP2Config : struct{} -> HTTP2Config   -- runtime wrap: Task String
 -- [pure] Handle : String -> Handler -> ()   -- runtime wrap: Task String
 -- [pure] HandleFunc : String -> Request) -> ()   -- runtime wrap: Task String
+-- [pure] HandlerServeHTTP : Handler -> ResponseWriter -> Request -> ()   -- runtime wrap: Task String
 -- [pure] HandlerFuncServeHTTP : HandlerFunc -> ResponseWriter -> Request -> ()   -- runtime wrap: Task String
 -- [fallible] Head : String -> (Response, String)   -- runtime wrap: Task String
 -- [pure] HeaderAdd : Header -> String -> String -> ()   -- runtime wrap: Task String
@@ -64,11 +193,26 @@ package http
 -- [fallible] HeaderWrite : Header -> Writer -> String   -- runtime wrap: Task String
 -- [pure] HeaderClone : Header -> Header   -- runtime wrap: Task String
 -- [fallible] HeaderWriteSubset : Header -> Writer -> map[string]bool -> String   -- runtime wrap: Task String
+-- [fallible] HijackerHijack : Hijacker -> (Conn, ReadWriter, String)   -- runtime wrap: Task String
 -- [fallible] ListenAndServe : String -> Handler -> String   -- runtime wrap: Task String
 -- [fallible] ListenAndServeTLS : String -> String -> String -> Handler -> String   -- runtime wrap: Task String
+-- [pure] LocalAddrContextKey : struct{} -> contextKey   -- runtime wrap: Task String
+-- [effectful] SetLocalAddrContextKey : contextKey -> struct{}   -- runtime wrap: Task String
 -- [pure] MaxBytesErrorError : MaxBytesError -> String   -- runtime wrap: Task String
+-- [pure] MaxBytesErrorLimit : MaxBytesError -> Int   -- runtime wrap: Task String
+-- [pure] MaxBytesErrorSetLimit : Int -> MaxBytesError -> MaxBytesError   -- runtime wrap: Task String
+-- [pure] NewMaxBytesError : struct{} -> MaxBytesError   -- runtime wrap: Task String
 -- [pure] MaxBytesHandler : Handler -> Int -> Handler   -- runtime wrap: Task String
 -- [pure] MaxBytesReader : ResponseWriter -> ReadCloser -> Int -> ReadCloser   -- runtime wrap: Task String
+-- [pure] MethodConnect : struct{} -> untyped string   -- runtime wrap: Task String
+-- [pure] MethodDelete : struct{} -> untyped string   -- runtime wrap: Task String
+-- [pure] MethodGet : struct{} -> untyped string   -- runtime wrap: Task String
+-- [pure] MethodHead : struct{} -> untyped string   -- runtime wrap: Task String
+-- [pure] MethodOptions : struct{} -> untyped string   -- runtime wrap: Task String
+-- [pure] MethodPatch : struct{} -> untyped string   -- runtime wrap: Task String
+-- [pure] MethodPost : struct{} -> untyped string   -- runtime wrap: Task String
+-- [pure] MethodPut : struct{} -> untyped string   -- runtime wrap: Task String
+-- [pure] MethodTrace : struct{} -> untyped string   -- runtime wrap: Task String
 -- [pure] NewCrossOriginProtection : () -> CrossOriginProtection   -- runtime wrap: Task String
 -- [pure] NewFileTransport : FileSystem -> RoundTripper   -- runtime wrap: Task String
 -- [pure] NewFileTransportFS : FS -> RoundTripper   -- runtime wrap: Task String
@@ -76,6 +220,8 @@ package http
 -- [fallible] NewRequestWithContext : Context -> String -> String -> Reader -> (Request, String)   -- runtime wrap: Task String
 -- [pure] NewResponseController : ResponseWriter -> ResponseController   -- runtime wrap: Task String
 -- [pure] NewServeMux : () -> ServeMux   -- runtime wrap: Task String
+-- [pure] NoBody : struct{} -> noBody   -- runtime wrap: Task String
+-- [effectful] SetNoBody : noBody -> struct{}   -- runtime wrap: Task String
 -- [pure] NotFound : ResponseWriter -> Request -> ()   -- runtime wrap: Task String
 -- [pure] NotFoundHandler : () -> Handler   -- runtime wrap: Task String
 -- [fallible] ParseCookie : String -> (Cookie, String)   -- runtime wrap: Task String
@@ -86,6 +232,9 @@ package http
 -- [fallible] PostForm : String -> Values -> (Response, String)   -- runtime wrap: Task String
 -- [pure] ProtocolErrorError : ProtocolError -> String   -- runtime wrap: Task String
 -- [pure] ProtocolErrorIs : ProtocolError -> String -> Bool   -- runtime wrap: Task String
+-- [pure] ProtocolErrorErrorString : ProtocolError -> String   -- runtime wrap: Task String
+-- [pure] ProtocolErrorSetErrorString : String -> ProtocolError -> ProtocolError   -- runtime wrap: Task String
+-- [pure] NewProtocolError : struct{} -> ProtocolError   -- runtime wrap: Task String
 -- [pure] ProtocolsHTTP1 : Protocols -> Bool   -- runtime wrap: Task String
 -- [pure] ProtocolsSetHTTP1 : Protocols -> Bool -> ()   -- runtime wrap: Task String
 -- [pure] ProtocolsHTTP2 : Protocols -> Bool   -- runtime wrap: Task String
@@ -93,8 +242,15 @@ package http
 -- [pure] ProtocolsUnencryptedHTTP2 : Protocols -> Bool   -- runtime wrap: Task String
 -- [pure] ProtocolsSetUnencryptedHTTP2 : Protocols -> Bool -> ()   -- runtime wrap: Task String
 -- [pure] ProtocolsString : Protocols -> String   -- runtime wrap: Task String
+-- [pure] NewProtocols : struct{} -> Protocols   -- runtime wrap: Task String
 -- [fallible] ProxyFromEnvironment : Request -> (URL, String)   -- runtime wrap: Task String
 -- [effectful] ProxyURL : URL -> URL, error)   -- runtime wrap: Task String
+-- [pure] PushOptionsMethod : PushOptions -> String   -- runtime wrap: Task String
+-- [pure] PushOptionsSetMethod : String -> PushOptions -> PushOptions   -- runtime wrap: Task String
+-- [pure] PushOptionsHeader : PushOptions -> Header   -- runtime wrap: Task String
+-- [pure] PushOptionsSetHeader : Header -> PushOptions -> PushOptions   -- runtime wrap: Task String
+-- [pure] NewPushOptions : struct{} -> PushOptions   -- runtime wrap: Task String
+-- [fallible] PusherPush : Pusher -> String -> PushOptions -> String   -- runtime wrap: Task String
 -- [fallible] ReadRequest : Reader -> (Request, String)   -- runtime wrap: Task String
 -- [fallible] ReadResponse : Reader -> Request -> (Response, String)   -- runtime wrap: Task String
 -- [pure] Redirect : ResponseWriter -> Request -> String -> Int -> ()   -- runtime wrap: Task String
@@ -121,15 +277,96 @@ package http
 -- [fallible] RequestFormFile : Request -> String -> (File, FileHeader, String)   -- runtime wrap: Task String
 -- [pure] RequestPathValue : Request -> String -> String   -- runtime wrap: Task String
 -- [pure] RequestSetPathValue : Request -> String -> String -> ()   -- runtime wrap: Task String
+-- [pure] RequestMethod : Request -> String   -- runtime wrap: Task String
+-- [pure] RequestSetMethod : String -> Request -> Request   -- runtime wrap: Task String
+-- [pure] RequestURL : Request -> URL   -- runtime wrap: Task String
+-- [pure] RequestSetURL : URL -> Request -> Request   -- runtime wrap: Task String
+-- [pure] RequestProto : Request -> String   -- runtime wrap: Task String
+-- [pure] RequestSetProto : String -> Request -> Request   -- runtime wrap: Task String
+-- [pure] RequestProtoMajor : Request -> Int   -- runtime wrap: Task String
+-- [pure] RequestSetProtoMajor : Int -> Request -> Request   -- runtime wrap: Task String
+-- [pure] RequestProtoMinor : Request -> Int   -- runtime wrap: Task String
+-- [pure] RequestSetProtoMinor : Int -> Request -> Request   -- runtime wrap: Task String
+-- [pure] RequestHeader : Request -> Header   -- runtime wrap: Task String
+-- [pure] RequestSetHeader : Header -> Request -> Request   -- runtime wrap: Task String
+-- [pure] RequestBody : Request -> ReadCloser   -- runtime wrap: Task String
+-- [pure] RequestSetBody : ReadCloser -> Request -> Request   -- runtime wrap: Task String
+-- [pure] RequestGetBody : Request -> ReadCloser, error)   -- runtime wrap: Task String
+-- [pure] RequestSetGetBody : ReadCloser, error) -> Request -> Request   -- runtime wrap: Task String
+-- [pure] RequestContentLength : Request -> Int   -- runtime wrap: Task String
+-- [pure] RequestSetContentLength : Int -> Request -> Request   -- runtime wrap: Task String
+-- [pure] RequestTransferEncoding : Request -> []string   -- runtime wrap: Task String
+-- [pure] RequestSetTransferEncoding : []string -> Request -> Request   -- runtime wrap: Task String
+-- [pure] RequestClose : Request -> Bool   -- runtime wrap: Task String
+-- [pure] RequestSetClose : Bool -> Request -> Request   -- runtime wrap: Task String
+-- [pure] RequestHost : Request -> String   -- runtime wrap: Task String
+-- [pure] RequestSetHost : String -> Request -> Request   -- runtime wrap: Task String
+-- [pure] RequestForm : Request -> Values   -- runtime wrap: Task String
+-- [pure] RequestSetForm : Values -> Request -> Request   -- runtime wrap: Task String
+-- [pure] RequestPostForm : Request -> Values   -- runtime wrap: Task String
+-- [pure] RequestSetPostForm : Values -> Request -> Request   -- runtime wrap: Task String
+-- [pure] RequestMultipartForm : Request -> Form   -- runtime wrap: Task String
+-- [pure] RequestSetMultipartForm : Form -> Request -> Request   -- runtime wrap: Task String
+-- [pure] RequestTrailer : Request -> Header   -- runtime wrap: Task String
+-- [pure] RequestSetTrailer : Header -> Request -> Request   -- runtime wrap: Task String
+-- [pure] RequestRemoteAddr : Request -> String   -- runtime wrap: Task String
+-- [pure] RequestSetRemoteAddr : String -> Request -> Request   -- runtime wrap: Task String
+-- [pure] RequestRequestURI : Request -> String   -- runtime wrap: Task String
+-- [pure] RequestSetRequestURI : String -> Request -> Request   -- runtime wrap: Task String
+-- [pure] RequestTLS : Request -> ConnectionState   -- runtime wrap: Task String
+-- [pure] RequestSetTLS : ConnectionState -> Request -> Request   -- runtime wrap: Task String
+-- [pure] RequestCancel : Request -> <-chan struct{}   -- runtime wrap: Task String
+-- [pure] RequestSetCancel : <-chan struct{} -> Request -> Request   -- runtime wrap: Task String
+-- [pure] RequestResponse : Request -> Response   -- runtime wrap: Task String
+-- [pure] RequestSetResponse : Response -> Request -> Request   -- runtime wrap: Task String
+-- [pure] RequestPattern : Request -> String   -- runtime wrap: Task String
+-- [pure] RequestSetPattern : String -> Request -> Request   -- runtime wrap: Task String
 -- [pure] ResponseCookies : Response -> Cookie   -- runtime wrap: Task String
 -- [fallible] ResponseLocation : Response -> (URL, String)   -- runtime wrap: Task String
 -- [pure] ResponseProtoAtLeast : Response -> Int -> Int -> Bool   -- runtime wrap: Task String
 -- [fallible] ResponseWrite : Response -> Writer -> String   -- runtime wrap: Task String
+-- [pure] ResponseStatus : Response -> String   -- runtime wrap: Task String
+-- [pure] ResponseSetStatus : String -> Response -> Response   -- runtime wrap: Task String
+-- [pure] ResponseStatusCode : Response -> Int   -- runtime wrap: Task String
+-- [pure] ResponseSetStatusCode : Int -> Response -> Response   -- runtime wrap: Task String
+-- [pure] ResponseProto : Response -> String   -- runtime wrap: Task String
+-- [pure] ResponseSetProto : String -> Response -> Response   -- runtime wrap: Task String
+-- [pure] ResponseProtoMajor : Response -> Int   -- runtime wrap: Task String
+-- [pure] ResponseSetProtoMajor : Int -> Response -> Response   -- runtime wrap: Task String
+-- [pure] ResponseProtoMinor : Response -> Int   -- runtime wrap: Task String
+-- [pure] ResponseSetProtoMinor : Int -> Response -> Response   -- runtime wrap: Task String
+-- [pure] ResponseHeader : Response -> Header   -- runtime wrap: Task String
+-- [pure] ResponseSetHeader : Header -> Response -> Response   -- runtime wrap: Task String
+-- [pure] ResponseBody : Response -> ReadCloser   -- runtime wrap: Task String
+-- [pure] ResponseSetBody : ReadCloser -> Response -> Response   -- runtime wrap: Task String
+-- [pure] ResponseContentLength : Response -> Int   -- runtime wrap: Task String
+-- [pure] ResponseSetContentLength : Int -> Response -> Response   -- runtime wrap: Task String
+-- [pure] ResponseTransferEncoding : Response -> []string   -- runtime wrap: Task String
+-- [pure] ResponseSetTransferEncoding : []string -> Response -> Response   -- runtime wrap: Task String
+-- [pure] ResponseClose : Response -> Bool   -- runtime wrap: Task String
+-- [pure] ResponseSetClose : Bool -> Response -> Response   -- runtime wrap: Task String
+-- [pure] ResponseUncompressed : Response -> Bool   -- runtime wrap: Task String
+-- [pure] ResponseSetUncompressed : Bool -> Response -> Response   -- runtime wrap: Task String
+-- [pure] ResponseTrailer : Response -> Header   -- runtime wrap: Task String
+-- [pure] ResponseSetTrailer : Header -> Response -> Response   -- runtime wrap: Task String
+-- [pure] ResponseRequest : Response -> Request   -- runtime wrap: Task String
+-- [pure] ResponseSetRequest : Request -> Response -> Response   -- runtime wrap: Task String
+-- [pure] ResponseTLS : Response -> ConnectionState   -- runtime wrap: Task String
+-- [pure] ResponseSetTLS : ConnectionState -> Response -> Response   -- runtime wrap: Task String
+-- [pure] NewResponse : struct{} -> Response   -- runtime wrap: Task String
 -- [fallible] ResponseControllerFlush : ResponseController -> String   -- runtime wrap: Task String
 -- [fallible] ResponseControllerHijack : ResponseController -> (Conn, ReadWriter, String)   -- runtime wrap: Task String
 -- [fallible] ResponseControllerSetReadDeadline : ResponseController -> Time -> String   -- runtime wrap: Task String
 -- [fallible] ResponseControllerSetWriteDeadline : ResponseController -> Time -> String   -- runtime wrap: Task String
 -- [fallible] ResponseControllerEnableFullDuplex : ResponseController -> String   -- runtime wrap: Task String
+-- [pure] ResponseWriterHeader : ResponseWriter -> Header   -- runtime wrap: Task String
+-- [fallible] ResponseWriterWrite : ResponseWriter -> []byte -> (Int, String)   -- runtime wrap: Task String
+-- [pure] ResponseWriterWriteHeader : ResponseWriter -> Int -> ()   -- runtime wrap: Task String
+-- [fallible] RoundTripperRoundTrip : RoundTripper -> Request -> (Response, String)   -- runtime wrap: Task String
+-- [pure] SameSiteDefaultMode : struct{} -> SameSite   -- runtime wrap: Task String
+-- [pure] SameSiteLaxMode : struct{} -> SameSite   -- runtime wrap: Task String
+-- [pure] SameSiteNoneMode : struct{} -> SameSite   -- runtime wrap: Task String
+-- [pure] SameSiteStrictMode : struct{} -> SameSite   -- runtime wrap: Task String
 -- [fallible] Serve : Listener -> Handler -> String   -- runtime wrap: Task String
 -- [pure] ServeContent : ResponseWriter -> Request -> String -> Time -> ReadSeeker -> ()   -- runtime wrap: Task String
 -- [pure] ServeFile : ResponseWriter -> Request -> String -> ()   -- runtime wrap: Task String
@@ -147,13 +384,168 @@ package http
 -- [fallible] ServerServeTLS : Server -> Listener -> String -> String -> String   -- runtime wrap: Task String
 -- [pure] ServerSetKeepAlivesEnabled : Server -> Bool -> ()   -- runtime wrap: Task String
 -- [fallible] ServerListenAndServeTLS : Server -> String -> String -> String   -- runtime wrap: Task String
+-- [pure] ServerAddr : Server -> String   -- runtime wrap: Task String
+-- [pure] ServerSetAddr : String -> Server -> Server   -- runtime wrap: Task String
+-- [pure] ServerHandler : Server -> Handler   -- runtime wrap: Task String
+-- [pure] ServerSetHandler : Handler -> Server -> Server   -- runtime wrap: Task String
+-- [pure] ServerDisableGeneralOptionsHandler : Server -> Bool   -- runtime wrap: Task String
+-- [pure] ServerSetDisableGeneralOptionsHandler : Bool -> Server -> Server   -- runtime wrap: Task String
+-- [pure] ServerTLSConfig : Server -> Config   -- runtime wrap: Task String
+-- [pure] ServerSetTLSConfig : Config -> Server -> Server   -- runtime wrap: Task String
+-- [pure] ServerReadTimeout : Server -> Duration   -- runtime wrap: Task String
+-- [pure] ServerSetReadTimeout : Duration -> Server -> Server   -- runtime wrap: Task String
+-- [pure] ServerReadHeaderTimeout : Server -> Duration   -- runtime wrap: Task String
+-- [pure] ServerSetReadHeaderTimeout : Duration -> Server -> Server   -- runtime wrap: Task String
+-- [pure] ServerWriteTimeout : Server -> Duration   -- runtime wrap: Task String
+-- [pure] ServerSetWriteTimeout : Duration -> Server -> Server   -- runtime wrap: Task String
+-- [pure] ServerIdleTimeout : Server -> Duration   -- runtime wrap: Task String
+-- [pure] ServerSetIdleTimeout : Duration -> Server -> Server   -- runtime wrap: Task String
+-- [pure] ServerMaxHeaderBytes : Server -> Int   -- runtime wrap: Task String
+-- [pure] ServerSetMaxHeaderBytes : Int -> Server -> Server   -- runtime wrap: Task String
+-- [pure] ServerTLSNextProto : Server -> Handler)   -- runtime wrap: Task String
+-- [pure] ServerSetTLSNextProto : Handler) -> Server -> Server   -- runtime wrap: Task String
+-- [pure] ServerConnState : Server -> ConnState)   -- runtime wrap: Task String
+-- [pure] ServerSetConnState : ConnState) -> Server -> Server   -- runtime wrap: Task String
+-- [pure] ServerErrorLog : Server -> Logger   -- runtime wrap: Task String
+-- [pure] ServerSetErrorLog : Logger -> Server -> Server   -- runtime wrap: Task String
+-- [pure] ServerBaseContext : Server -> Context   -- runtime wrap: Task String
+-- [pure] ServerSetBaseContext : Context -> Server -> Server   -- runtime wrap: Task String
+-- [pure] ServerConnContext : Server -> Context   -- runtime wrap: Task String
+-- [pure] ServerSetConnContext : Context -> Server -> Server   -- runtime wrap: Task String
+-- [pure] ServerHTTP2 : Server -> HTTP2Config   -- runtime wrap: Task String
+-- [pure] ServerSetHTTP2 : HTTP2Config -> Server -> Server   -- runtime wrap: Task String
+-- [pure] ServerProtocols : Server -> Protocols   -- runtime wrap: Task String
+-- [pure] ServerSetProtocols : Protocols -> Server -> Server   -- runtime wrap: Task String
+-- [pure] NewServer : struct{} -> Server   -- runtime wrap: Task String
+-- [pure] ServerContextKey : struct{} -> contextKey   -- runtime wrap: Task String
+-- [effectful] SetServerContextKey : contextKey -> struct{}   -- runtime wrap: Task String
 -- [pure] SetCookie : ResponseWriter -> Cookie -> ()   -- runtime wrap: Task String
+-- [pure] StateActive : struct{} -> ConnState   -- runtime wrap: Task String
+-- [pure] StateClosed : struct{} -> ConnState   -- runtime wrap: Task String
+-- [pure] StateHijacked : struct{} -> ConnState   -- runtime wrap: Task String
+-- [pure] StateIdle : struct{} -> ConnState   -- runtime wrap: Task String
+-- [pure] StateNew : struct{} -> ConnState   -- runtime wrap: Task String
+-- [pure] StatusAccepted : struct{} -> untyped int   -- runtime wrap: Task String
+-- [pure] StatusAlreadyReported : struct{} -> untyped int   -- runtime wrap: Task String
+-- [pure] StatusBadGateway : struct{} -> untyped int   -- runtime wrap: Task String
+-- [pure] StatusBadRequest : struct{} -> untyped int   -- runtime wrap: Task String
+-- [pure] StatusConflict : struct{} -> untyped int   -- runtime wrap: Task String
+-- [pure] StatusContinue : struct{} -> untyped int   -- runtime wrap: Task String
+-- [pure] StatusCreated : struct{} -> untyped int   -- runtime wrap: Task String
+-- [pure] StatusEarlyHints : struct{} -> untyped int   -- runtime wrap: Task String
+-- [pure] StatusExpectationFailed : struct{} -> untyped int   -- runtime wrap: Task String
+-- [pure] StatusFailedDependency : struct{} -> untyped int   -- runtime wrap: Task String
+-- [pure] StatusForbidden : struct{} -> untyped int   -- runtime wrap: Task String
+-- [pure] StatusFound : struct{} -> untyped int   -- runtime wrap: Task String
+-- [pure] StatusGatewayTimeout : struct{} -> untyped int   -- runtime wrap: Task String
+-- [pure] StatusGone : struct{} -> untyped int   -- runtime wrap: Task String
+-- [pure] StatusHTTPVersionNotSupported : struct{} -> untyped int   -- runtime wrap: Task String
+-- [pure] StatusIMUsed : struct{} -> untyped int   -- runtime wrap: Task String
+-- [pure] StatusInsufficientStorage : struct{} -> untyped int   -- runtime wrap: Task String
+-- [pure] StatusInternalServerError : struct{} -> untyped int   -- runtime wrap: Task String
+-- [pure] StatusLengthRequired : struct{} -> untyped int   -- runtime wrap: Task String
+-- [pure] StatusLocked : struct{} -> untyped int   -- runtime wrap: Task String
+-- [pure] StatusLoopDetected : struct{} -> untyped int   -- runtime wrap: Task String
+-- [pure] StatusMethodNotAllowed : struct{} -> untyped int   -- runtime wrap: Task String
+-- [pure] StatusMisdirectedRequest : struct{} -> untyped int   -- runtime wrap: Task String
+-- [pure] StatusMovedPermanently : struct{} -> untyped int   -- runtime wrap: Task String
+-- [pure] StatusMultiStatus : struct{} -> untyped int   -- runtime wrap: Task String
+-- [pure] StatusMultipleChoices : struct{} -> untyped int   -- runtime wrap: Task String
+-- [pure] StatusNetworkAuthenticationRequired : struct{} -> untyped int   -- runtime wrap: Task String
+-- [pure] StatusNoContent : struct{} -> untyped int   -- runtime wrap: Task String
+-- [pure] StatusNonAuthoritativeInfo : struct{} -> untyped int   -- runtime wrap: Task String
+-- [pure] StatusNotAcceptable : struct{} -> untyped int   -- runtime wrap: Task String
+-- [pure] StatusNotExtended : struct{} -> untyped int   -- runtime wrap: Task String
+-- [pure] StatusNotFound : struct{} -> untyped int   -- runtime wrap: Task String
+-- [pure] StatusNotImplemented : struct{} -> untyped int   -- runtime wrap: Task String
+-- [pure] StatusNotModified : struct{} -> untyped int   -- runtime wrap: Task String
+-- [pure] StatusOK : struct{} -> untyped int   -- runtime wrap: Task String
+-- [pure] StatusPartialContent : struct{} -> untyped int   -- runtime wrap: Task String
+-- [pure] StatusPaymentRequired : struct{} -> untyped int   -- runtime wrap: Task String
+-- [pure] StatusPermanentRedirect : struct{} -> untyped int   -- runtime wrap: Task String
+-- [pure] StatusPreconditionFailed : struct{} -> untyped int   -- runtime wrap: Task String
+-- [pure] StatusPreconditionRequired : struct{} -> untyped int   -- runtime wrap: Task String
+-- [pure] StatusProcessing : struct{} -> untyped int   -- runtime wrap: Task String
+-- [pure] StatusProxyAuthRequired : struct{} -> untyped int   -- runtime wrap: Task String
+-- [pure] StatusRequestEntityTooLarge : struct{} -> untyped int   -- runtime wrap: Task String
+-- [pure] StatusRequestHeaderFieldsTooLarge : struct{} -> untyped int   -- runtime wrap: Task String
+-- [pure] StatusRequestTimeout : struct{} -> untyped int   -- runtime wrap: Task String
+-- [pure] StatusRequestURITooLong : struct{} -> untyped int   -- runtime wrap: Task String
+-- [pure] StatusRequestedRangeNotSatisfiable : struct{} -> untyped int   -- runtime wrap: Task String
+-- [pure] StatusResetContent : struct{} -> untyped int   -- runtime wrap: Task String
+-- [pure] StatusSeeOther : struct{} -> untyped int   -- runtime wrap: Task String
+-- [pure] StatusServiceUnavailable : struct{} -> untyped int   -- runtime wrap: Task String
+-- [pure] StatusSwitchingProtocols : struct{} -> untyped int   -- runtime wrap: Task String
+-- [pure] StatusTeapot : struct{} -> untyped int   -- runtime wrap: Task String
+-- [pure] StatusTemporaryRedirect : struct{} -> untyped int   -- runtime wrap: Task String
 -- [pure] StatusText : Int -> String   -- runtime wrap: Task String
+-- [pure] StatusTooEarly : struct{} -> untyped int   -- runtime wrap: Task String
+-- [pure] StatusTooManyRequests : struct{} -> untyped int   -- runtime wrap: Task String
+-- [pure] StatusUnauthorized : struct{} -> untyped int   -- runtime wrap: Task String
+-- [pure] StatusUnavailableForLegalReasons : struct{} -> untyped int   -- runtime wrap: Task String
+-- [pure] StatusUnprocessableEntity : struct{} -> untyped int   -- runtime wrap: Task String
+-- [pure] StatusUnsupportedMediaType : struct{} -> untyped int   -- runtime wrap: Task String
+-- [pure] StatusUpgradeRequired : struct{} -> untyped int   -- runtime wrap: Task String
+-- [pure] StatusUseProxy : struct{} -> untyped int   -- runtime wrap: Task String
+-- [pure] StatusVariantAlsoNegotiates : struct{} -> untyped int   -- runtime wrap: Task String
 -- [pure] StripPrefix : String -> Handler -> Handler   -- runtime wrap: Task String
+-- [pure] TimeFormat : struct{} -> untyped string   -- runtime wrap: Task String
 -- [pure] TimeoutHandler : Handler -> Duration -> String -> Handler   -- runtime wrap: Task String
+-- [pure] TrailerPrefix : struct{} -> untyped string   -- runtime wrap: Task String
 -- [fallible] TransportNewClientConn : Transport -> Context -> String -> String -> (ClientConn, String)   -- runtime wrap: Task String
 -- [fallible] TransportRoundTrip : Transport -> Request -> (Response, String)   -- runtime wrap: Task String
 -- [pure] TransportClone : Transport -> Transport   -- runtime wrap: Task String
 -- [pure] TransportRegisterProtocol : Transport -> String -> RoundTripper -> ()   -- runtime wrap: Task String
 -- [pure] TransportCloseIdleConnections : Transport -> ()   -- runtime wrap: Task String
 -- [pure] TransportCancelRequest : Transport -> Request -> ()   -- runtime wrap: Task String
+-- [pure] TransportProxy : Transport -> URL, error)   -- runtime wrap: Task String
+-- [pure] TransportSetProxy : URL, error) -> Transport -> Transport   -- runtime wrap: Task String
+-- [pure] TransportOnProxyConnectResponse : Transport -> Response) error   -- runtime wrap: Task String
+-- [pure] TransportSetOnProxyConnectResponse : Response) error -> Transport -> Transport   -- runtime wrap: Task String
+-- [pure] TransportDialContext : Transport -> Conn, error)   -- runtime wrap: Task String
+-- [pure] TransportSetDialContext : Conn, error) -> Transport -> Transport   -- runtime wrap: Task String
+-- [pure] TransportDial : Transport -> Conn, error)   -- runtime wrap: Task String
+-- [pure] TransportSetDial : Conn, error) -> Transport -> Transport   -- runtime wrap: Task String
+-- [pure] TransportDialTLSContext : Transport -> Conn, error)   -- runtime wrap: Task String
+-- [pure] TransportSetDialTLSContext : Conn, error) -> Transport -> Transport   -- runtime wrap: Task String
+-- [pure] TransportDialTLS : Transport -> Conn, error)   -- runtime wrap: Task String
+-- [pure] TransportSetDialTLS : Conn, error) -> Transport -> Transport   -- runtime wrap: Task String
+-- [pure] TransportTLSClientConfig : Transport -> Config   -- runtime wrap: Task String
+-- [pure] TransportSetTLSClientConfig : Config -> Transport -> Transport   -- runtime wrap: Task String
+-- [pure] TransportTLSHandshakeTimeout : Transport -> Duration   -- runtime wrap: Task String
+-- [pure] TransportSetTLSHandshakeTimeout : Duration -> Transport -> Transport   -- runtime wrap: Task String
+-- [pure] TransportDisableKeepAlives : Transport -> Bool   -- runtime wrap: Task String
+-- [pure] TransportSetDisableKeepAlives : Bool -> Transport -> Transport   -- runtime wrap: Task String
+-- [pure] TransportDisableCompression : Transport -> Bool   -- runtime wrap: Task String
+-- [pure] TransportSetDisableCompression : Bool -> Transport -> Transport   -- runtime wrap: Task String
+-- [pure] TransportMaxIdleConns : Transport -> Int   -- runtime wrap: Task String
+-- [pure] TransportSetMaxIdleConns : Int -> Transport -> Transport   -- runtime wrap: Task String
+-- [pure] TransportMaxIdleConnsPerHost : Transport -> Int   -- runtime wrap: Task String
+-- [pure] TransportSetMaxIdleConnsPerHost : Int -> Transport -> Transport   -- runtime wrap: Task String
+-- [pure] TransportMaxConnsPerHost : Transport -> Int   -- runtime wrap: Task String
+-- [pure] TransportSetMaxConnsPerHost : Int -> Transport -> Transport   -- runtime wrap: Task String
+-- [pure] TransportIdleConnTimeout : Transport -> Duration   -- runtime wrap: Task String
+-- [pure] TransportSetIdleConnTimeout : Duration -> Transport -> Transport   -- runtime wrap: Task String
+-- [pure] TransportResponseHeaderTimeout : Transport -> Duration   -- runtime wrap: Task String
+-- [pure] TransportSetResponseHeaderTimeout : Duration -> Transport -> Transport   -- runtime wrap: Task String
+-- [pure] TransportExpectContinueTimeout : Transport -> Duration   -- runtime wrap: Task String
+-- [pure] TransportSetExpectContinueTimeout : Duration -> Transport -> Transport   -- runtime wrap: Task String
+-- [pure] TransportTLSNextProto : Transport -> RoundTripper   -- runtime wrap: Task String
+-- [pure] TransportSetTLSNextProto : RoundTripper -> Transport -> Transport   -- runtime wrap: Task String
+-- [pure] TransportProxyConnectHeader : Transport -> Header   -- runtime wrap: Task String
+-- [pure] TransportSetProxyConnectHeader : Header -> Transport -> Transport   -- runtime wrap: Task String
+-- [pure] TransportGetProxyConnectHeader : Transport -> Header, error)   -- runtime wrap: Task String
+-- [pure] TransportSetGetProxyConnectHeader : Header, error) -> Transport -> Transport   -- runtime wrap: Task String
+-- [pure] TransportMaxResponseHeaderBytes : Transport -> Int   -- runtime wrap: Task String
+-- [pure] TransportSetMaxResponseHeaderBytes : Int -> Transport -> Transport   -- runtime wrap: Task String
+-- [pure] TransportWriteBufferSize : Transport -> Int   -- runtime wrap: Task String
+-- [pure] TransportSetWriteBufferSize : Int -> Transport -> Transport   -- runtime wrap: Task String
+-- [pure] TransportReadBufferSize : Transport -> Int   -- runtime wrap: Task String
+-- [pure] TransportSetReadBufferSize : Int -> Transport -> Transport   -- runtime wrap: Task String
+-- [pure] TransportForceAttemptHTTP2 : Transport -> Bool   -- runtime wrap: Task String
+-- [pure] TransportSetForceAttemptHTTP2 : Bool -> Transport -> Transport   -- runtime wrap: Task String
+-- [pure] TransportHTTP2 : Transport -> HTTP2Config   -- runtime wrap: Task String
+-- [pure] TransportSetHTTP2 : HTTP2Config -> Transport -> Transport   -- runtime wrap: Task String
+-- [pure] TransportProtocols : Transport -> Protocols   -- runtime wrap: Task String
+-- [pure] TransportSetProtocols : Protocols -> Transport -> Transport   -- runtime wrap: Task String
+-- [pure] NewTransport : struct{} -> Transport   -- runtime wrap: Task String

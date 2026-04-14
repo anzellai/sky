@@ -17,6 +17,10 @@
 package mux
 -- [pure] CORSMethodMiddleware : Router -> MiddlewareFunc   -- runtime wrap: Task String
 -- [pure] CurrentRoute : Request -> Route   -- runtime wrap: Task String
+-- [pure] ErrMethodMismatch : struct{} -> String   -- runtime wrap: Task String
+-- [effectful] SetErrMethodMismatch : String -> struct{}   -- runtime wrap: Task String
+-- [pure] ErrNotFound : struct{} -> String   -- runtime wrap: Task String
+-- [effectful] SetErrNotFound : String -> struct{}   -- runtime wrap: Task String
 -- [pure] MatcherFuncMatch : MatcherFunc -> Request -> RouteMatch -> Bool   -- runtime wrap: Task String
 -- [pure] MiddlewareFuncMiddleware : MiddlewareFunc -> Handler -> Handler   -- runtime wrap: Task String
 -- [pure] NewRouter : () -> Router   -- runtime wrap: Task String
@@ -50,6 +54,16 @@ package mux
 -- [fallible] RouteGetMethods : Route -> ([]string, String)   -- runtime wrap: Task String
 -- [fallible] RouteGetHostTemplate : Route -> (String, String)   -- runtime wrap: Task String
 -- [fallible] RouteGetVarNames : Route -> ([]string, String)   -- runtime wrap: Task String
+-- [pure] NewRoute : struct{} -> Route   -- runtime wrap: Task String
+-- [pure] RouteMatchRoute : RouteMatch -> Route   -- runtime wrap: Task String
+-- [pure] RouteMatchSetRoute : Route -> RouteMatch -> RouteMatch   -- runtime wrap: Task String
+-- [pure] RouteMatchHandler : RouteMatch -> Handler   -- runtime wrap: Task String
+-- [pure] RouteMatchSetHandler : Handler -> RouteMatch -> RouteMatch   -- runtime wrap: Task String
+-- [pure] RouteMatchVars : RouteMatch -> map[string]string   -- runtime wrap: Task String
+-- [pure] RouteMatchSetVars : map[string]string -> RouteMatch -> RouteMatch   -- runtime wrap: Task String
+-- [pure] RouteMatchMatchErr : RouteMatch -> String   -- runtime wrap: Task String
+-- [pure] RouteMatchSetMatchErr : String -> RouteMatch -> RouteMatch   -- runtime wrap: Task String
+-- [pure] NewRouteMatch : struct{} -> RouteMatch   -- runtime wrap: Task String
 -- [pure] RouterUse : Router -> MiddlewareFunc -> ()   -- runtime wrap: Task String
 -- [pure] RouterMatch : Router -> Request -> RouteMatch -> Bool   -- runtime wrap: Task String
 -- [pure] RouterServeHTTP : Router -> ResponseWriter -> Request -> ()   -- runtime wrap: Task String
@@ -72,5 +86,13 @@ package mux
 -- [pure] RouterSchemes : Router -> []string -> Route   -- runtime wrap: Task String
 -- [pure] RouterBuildVarsFunc : Router -> BuildVarsFunc -> Route   -- runtime wrap: Task String
 -- [fallible] RouterWalk : Router -> WalkFunc -> String   -- runtime wrap: Task String
+-- [pure] RouterNotFoundHandler : Router -> Handler   -- runtime wrap: Task String
+-- [pure] RouterSetNotFoundHandler : Handler -> Router -> Router   -- runtime wrap: Task String
+-- [pure] RouterMethodNotAllowedHandler : Router -> Handler   -- runtime wrap: Task String
+-- [pure] RouterSetMethodNotAllowedHandler : Handler -> Router -> Router   -- runtime wrap: Task String
+-- [pure] RouterKeepContext : Router -> Bool   -- runtime wrap: Task String
+-- [pure] RouterSetKeepContext : Bool -> Router -> Router   -- runtime wrap: Task String
 -- [pure] SetURLVars : Request -> map[string]string -> Request   -- runtime wrap: Task String
+-- [pure] SkipRouter : struct{} -> String   -- runtime wrap: Task String
+-- [effectful] SetSkipRouter : String -> struct{}   -- runtime wrap: Task String
 -- [pure] Vars : Request -> map[string]string   -- runtime wrap: Task String
