@@ -5,11 +5,11 @@ import Sky.Core.Maybe exposing (..)
 import Sky.Core.Result as Result
 import Sky.Core.List as List
 import Sky.Core.String as String
+import Sky.Core.Error as Error exposing (Error)
 import Std.Log exposing (println)
 import Github.Com.Google.Uuid as Uuid
 import Std.Auth as Auth
 import Lib.Db as Db
-import Std.IoError exposing (..)
 
 
 hashPassword : String -> String
@@ -28,10 +28,10 @@ verifyPassword password storedHash = Auth.verifyPassword password storedHash
 generateToken _ = Result.withDefault "" (Uuid.newString ())
 
 
--- createUser : Result IoError String (verification token). Maps DB
--- uniqueness / insert failures to ValidationError so the form can
--- render the message inline.
-createUser : String -> String -> Result IoError String
+-- createUser : Result Error String (verification token). DB unique
+-- constraint violations surface as InvalidInput so the form renders
+-- the message inline.
+createUser : String -> String -> Result Error String
 createUser email password =
     let
         passHash = hashPassword password
@@ -53,7 +53,7 @@ createUser email password =
             Ok _ ->
                 Ok token
             Err _ ->
-                Err (ValidationError "That email is already registered, or a server error occurred.")
+                Err (Error.invalidInput "That email is already registered, or a server error occurred.")
 
 
 checkUserCredentials password user =
@@ -66,16 +66,16 @@ checkUserCredentials password user =
                 Ok user
             else
                 Err
-                    (Unauthorised
-                        "Email not verified yet. Please check the server console for your verification link.")
+                    (Error.permissionDenied
+                        |> Error.withMessage "Email not verified yet. Please check the server console for your verification link.")
         else
-            Err (Unauthorised "Invalid email or password.")
+            Err (Error.permissionDenied |> Error.withMessage "Invalid email or password.")
 
 
--- authenticateUser : Result IoError User. DbError surfaces upstream so
--- callers can show "service unavailable" rather than misleading
--- "bad password". Wrong email / wrong password both Unauthorised.
-authenticateUser : String -> String -> Result IoError (Dict String String)
+-- authenticateUser : Result Error User. DB errors surface upstream so
+-- callers can show "service unavailable" rather than "bad password".
+-- Wrong email / wrong password both PermissionDenied.
+authenticateUser : String -> String -> Result Error (Dict String String)
 authenticateUser email password =
     case Db.query
             "SELECT id, email, password_hash, verified FROM users WHERE email = ? LIMIT 1"
@@ -85,14 +85,14 @@ authenticateUser email password =
         Ok userRows ->
             case List.head userRows of
                 Nothing ->
-                    Err (Unauthorised "Invalid email or password.")
+                    Err (Error.permissionDenied |> Error.withMessage "Invalid email or password.")
                 Just user ->
                     checkUserCredentials password user
 
 
--- createSession : Result IoError String. Propagates the underlying
--- DbError so handlers can distinguish infra failure from auth failure.
-createSession : String -> Result IoError String
+-- createSession : Result Error String. Propagates the underlying IO
+-- error so handlers can distinguish infra failure from auth failure.
+createSession : String -> Result Error String
 createSession userId =
     let
         token = generateToken ()
@@ -107,9 +107,9 @@ createSession userId =
                 Err e
 
 
--- getSessionUser : Result IoError (Maybe User). Outer Result is for
+-- getSessionUser : Result Error (Maybe User). Outer Result is for
 -- DB failures; inner Maybe is "found / not found" which is normal.
-getSessionUser : String -> Result IoError (Maybe (Dict String String))
+getSessionUser : String -> Result Error (Maybe (Dict String String))
 getSessionUser sessionToken =
     case Db.query
             "SELECT u.id, u.email, u.created_at FROM users u INNER JOIN sessions s ON CAST(u.id AS TEXT) = s.user_id WHERE s.token = ? LIMIT 1"
@@ -120,10 +120,10 @@ getSessionUser sessionToken =
             Ok (List.head userRows)
 
 
--- verifyEmail : Result IoError String (success message). DB failures
+-- verifyEmail : Result Error String (success message). DB failures
 -- bubble to the caller so they can render a distinct UI from the
 -- happy path.
-verifyEmail : String -> Result IoError String
+verifyEmail : String -> Result Error String
 verifyEmail token =
     case Db.exec
             "UPDATE users SET verified = 1 WHERE verification_token = ? AND verified = 0"

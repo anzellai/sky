@@ -4,9 +4,9 @@ import Sky.Core.Prelude exposing (..)
 import Sky.Core.Maybe as Maybe
 import Sky.Core.Dict as Dict
 import Sky.Core.Os as Os
+import Sky.Core.Error as Error exposing (Error)
 import Std.Log exposing (println)
 import Std.Db as Db
-import Std.IoError exposing (..)
 
 -- Open the database once at startup. Fail fast on error — a degraded
 -- "fake connection" would silently break every subsequent query.
@@ -22,23 +22,23 @@ conn =
                 identity ""
 
 
--- exec : Result IoError () — typed-error DB write. Callers in `update`
+-- exec : Result Error () — typed-error DB write. Callers in `update`
 -- MUST pattern-match and decide what to do.
 exec queryStr args =
     case Db.exec conn queryStr args of
         Ok _ ->
             Ok ()
         Err e ->
-            Err (DbError e)
+            Err (Error.io e)
 
 
--- query : Result IoError (List Row). Same contract as exec.
+-- query : Result Error (List Row). Same contract as exec.
 query queryStr args =
     case Db.query conn queryStr args of
         Ok rows ->
             Ok rows
         Err e ->
-            Err (DbError e)
+            Err (Error.io e)
 
 
 -- Missing columns are a Sky-side schema mismatch, not a runtime error.

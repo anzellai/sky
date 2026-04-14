@@ -12,7 +12,7 @@ import Lib.Db as Db
 import Lib.Auth as Auth
 import Lib.Notes as Notes
 import Lib.View as View
-import Std.IoError exposing (..)
+import Sky.Core.Error as Error exposing (Error(..), ErrorKind(..))
 
 
 -- ============================================================
@@ -23,7 +23,7 @@ runInit label result =
         Ok _ ->
             ()
         Err e ->
-            let _ = println ("[NOTES ERROR] initDb " ++ label ++ ": " ++ errToString e) in
+            let _ = println ("[NOTES ERROR] initDb " ++ label ++ ": " ++ Error.toString e) in
             ()
 
 
@@ -76,7 +76,7 @@ getSessionToken req =
         |> Maybe.withDefault ""
 
 
--- requireAuth: pattern-matches on Result IoError (Maybe User).
+-- requireAuth: pattern-matches on Result Error (Maybe User).
 -- DB errors log + redirect to sign-in (caller gets no model to update).
 -- Ok Nothing → clear cookie + redirect (session expired/forged).
 requireAuth req onUser =
@@ -88,7 +88,7 @@ requireAuth req onUser =
         else
             case Auth.getSessionUser token of
                 Err e ->
-                    let _ = println ("[NOTES ERROR] session lookup: " ++ errToString e) in
+                    let _ = println ("[NOTES ERROR] session lookup: " ++ Error.toString e) in
                     Server.redirect "/auth/sign-in"
                 Ok Nothing ->
                     Server.redirect "/auth/sign-in"
@@ -115,7 +115,7 @@ handleLanding _ req =
             Task.succeed (Server.redirect "/notes")
 
 
--- handleSignIn: Auth.authenticateUser returns Result IoError User.
+-- handleSignIn: Auth.authenticateUser returns Result Error User.
 -- Unauthorised → show the form error verbatim (already user-safe).
 -- DbError/other → generic "unavailable" message, log details.
 handleSignIn : a -> Request -> Task String Response
@@ -139,25 +139,28 @@ handleSignIn _ req =
                                                "Path=/; HttpOnly; SameSite=Lax")
                             Err e ->
                                 let
-                                    _ = println ("[NOTES ERROR] sign-in createSession: " ++ errToString e)
+                                    _ = println ("[NOTES ERROR] sign-in createSession: " ++ Error.toString e)
                                     userMsg = "Sign-in temporarily unavailable. Please try again."
                                 in
                                     Task.succeed (Server.html (View.signInPage userMsg))
                 Err e ->
                     let
-                        _ = println ("[NOTES ERROR] sign-in: " ++ errToString e)
+                        _ = println ("[NOTES ERROR] sign-in: " ++ Error.toString e)
                         userMsg =
-                            if isAuthIssue e then
-                                errToString e
-                            else
-                                "Sign-in temporarily unavailable. Please try again."
+                            case e of
+                                Error kind info ->
+                                    case kind of
+                                        PermissionDenied ->
+                                            info.message
+                                        _ ->
+                                            "Sign-in temporarily unavailable. Please try again."
                     in
                         Task.succeed (Server.html (View.signInPage userMsg))
     else
         Task.succeed (Server.html (View.signInPage ""))
 
 
--- handleSignUp: Auth.createUser returns Result IoError String.
+-- handleSignUp: Auth.createUser returns Result Error String.
 -- ValidationError gets shown verbatim; other errors get a generic msg.
 handleSignUp : a -> Request -> Task String Response
 handleSignUp _ req =
@@ -181,8 +184,8 @@ handleSignUp _ req =
                         Task.succeed (Server.html (View.signUpSuccessPage ()))
                     Err e ->
                         let
-                            _ = println ("[NOTES ERROR] sign-up: " ++ errToString e)
-                            userMsg = errToString e
+                            _ = println ("[NOTES ERROR] sign-up: " ++ Error.toString e)
+                            userMsg = Error.toString e
                         in
                             Task.succeed
                                 (Server.html (View.signUpPage userMsg))
@@ -206,7 +209,7 @@ handleForgotPassword _ req =
         Task.succeed (Server.html (View.forgotPasswordPage ""))
 
 
--- handleVerify: Auth.verifyEmail returns Result IoError String.
+-- handleVerify: Auth.verifyEmail returns Result Error String.
 -- On DbError we surface a generic failure message (details logged).
 handleVerify : a -> Request -> Task String Response
 handleVerify _ req =
@@ -223,12 +226,12 @@ handleVerify _ req =
                     Task.succeed (Server.html (View.verifyResultPage True msg))
                 Err e ->
                     let
-                        _ = println ("[NOTES ERROR] verify: " ++ errToString e)
+                        _ = println ("[NOTES ERROR] verify: " ++ Error.toString e)
                     in
                         Task.succeed
                             (Server.html
                                 (View.verifyResultPage False
-                                    ("Verification failed: " ++ errToString e)))
+                                    ("Verification failed: " ++ Error.toString e)))
 
 
 handleSignOut : a -> Request -> Task String Response
@@ -240,7 +243,7 @@ handleSignOut _ req =
                 Ok _ ->
                     ()
                 Err e ->
-                    let _ = println ("[NOTES ERROR] sign-out: " ++ errToString e) in
+                    let _ = println ("[NOTES ERROR] sign-out: " ++ Error.toString e) in
                     ()
     in
         Task.succeed
@@ -251,7 +254,7 @@ handleSignOut _ req =
 -- ============================================================
 -- Notes handlers
 -- ============================================================
--- handleNotesList: Notes.getNotes returns Result IoError (List Note).
+-- handleNotesList: Notes.getNotes returns Result Error (List Note).
 -- On DbError show the generic error page — data integrity matters
 -- more than silently rendering an empty list.
 handleNotesList : a -> Request -> Task String Response
@@ -266,8 +269,8 @@ handleNotesList _ req =
                         Ok notes ->
                             Server.html (View.notesListPage email notes)
                         Err e ->
-                            let _ = println ("[NOTES ERROR] list: " ++ errToString e) in
-                            Server.html (View.errorPage ("Failed to load notes: " ++ errToString e))))
+                            let _ = println ("[NOTES ERROR] list: " ++ Error.toString e) in
+                            Server.html (View.errorPage ("Failed to load notes: " ++ Error.toString e))))
 
 
 handleNewNote : a -> Request -> Task String Response
@@ -287,8 +290,8 @@ handleNewNote _ req =
                                 Ok _ ->
                                     Server.redirect "/notes"
                                 Err e ->
-                                    let _ = println ("[NOTES ERROR] createNote: " ++ errToString e) in
-                                    Server.html (View.errorPage ("Failed to save note: " ++ errToString e))
+                                    let _ = println ("[NOTES ERROR] createNote: " ++ Error.toString e) in
+                                    Server.html (View.errorPage ("Failed to save note: " ++ Error.toString e))
                     else
                         Server.html (View.noteFormPage email "" "" "" False)))
 
@@ -308,8 +311,8 @@ handleViewNote _ req =
                         Ok Nothing ->
                             Server.html (View.errorPage "Note not found.")
                         Err e ->
-                            let _ = println ("[NOTES ERROR] getNote: " ++ errToString e) in
-                            Server.html (View.errorPage ("Failed to load note: " ++ errToString e))))
+                            let _ = println ("[NOTES ERROR] getNote: " ++ Error.toString e) in
+                            Server.html (View.errorPage ("Failed to load note: " ++ Error.toString e))))
 
 
 handleEditNote : a -> Request -> Task String Response
@@ -330,8 +333,8 @@ handleEditNote _ req =
                                 Ok _ ->
                                     Server.redirect ("/notes/view?id=" ++ noteId)
                                 Err e ->
-                                    let _ = println ("[NOTES ERROR] updateNote: " ++ errToString e) in
-                                    Server.html (View.errorPage ("Failed to update note: " ++ errToString e))
+                                    let _ = println ("[NOTES ERROR] updateNote: " ++ Error.toString e) in
+                                    Server.html (View.errorPage ("Failed to update note: " ++ Error.toString e))
                     else
                         case Notes.getNote noteId userId of
                             Ok (Just note) ->
@@ -346,8 +349,8 @@ handleEditNote _ req =
                             Ok Nothing ->
                                 Server.html (View.errorPage "Note not found.")
                             Err e ->
-                                let _ = println ("[NOTES ERROR] getNote (edit): " ++ errToString e) in
-                                Server.html (View.errorPage ("Failed to load note: " ++ errToString e))))
+                                let _ = println ("[NOTES ERROR] getNote (edit): " ++ Error.toString e) in
+                                Server.html (View.errorPage ("Failed to load note: " ++ Error.toString e))))
 
 
 handleDeleteNote : a -> Request -> Task String Response
@@ -363,8 +366,8 @@ handleDeleteNote _ req =
                         Ok _ ->
                             Server.redirect "/notes"
                         Err e ->
-                            let _ = println ("[NOTES ERROR] deleteNote: " ++ errToString e) in
-                            Server.html (View.errorPage ("Failed to delete note: " ++ errToString e))))
+                            let _ = println ("[NOTES ERROR] deleteNote: " ++ Error.toString e) in
+                            Server.html (View.errorPage ("Failed to delete note: " ++ Error.toString e))))
 
 
 -- ============================================================
