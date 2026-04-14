@@ -1,7 +1,7 @@
 -- Auto-generated FFI binding catalogue for fyne.io/fyne/v2/app
 --
 -- All auto-generated bindings are registered effect-unknown and are
--- callable via Sky.Ffi.callTask. Every call returns Task String a
+-- callable via Sky.Ffi.callTask. Every call returns Task Error a
 -- with panic recovery — any Go panic is caught and surfaced as Err.
 --
 -- Opaque Go struct values flow through Sky as Any; use the bindings
@@ -14,20 +14,20 @@
 --   pkg "fyne.io/fyne/v2/app"
 
 package app
--- [pure] New : () -> App   -- runtime wrap: Task String
--- [pure] NewWithID : String -> App   -- runtime wrap: Task String
--- [pure] SetMetadata : AppMetadata -> ()   -- runtime wrap: Task String
--- [pure] SettingsSchemaStoragePath : SettingsSchema -> String   -- runtime wrap: Task String
--- [pure] SettingsSchemaThemeName : SettingsSchema -> String   -- runtime wrap: Task String
--- [pure] SettingsSchemaSetThemeName : String -> SettingsSchema -> SettingsSchema   -- runtime wrap: Task String
--- [pure] SettingsSchemaScale : SettingsSchema -> Float   -- runtime wrap: Task String
--- [pure] SettingsSchemaSetScale : Float -> SettingsSchema -> SettingsSchema   -- runtime wrap: Task String
--- [pure] SettingsSchemaPrimaryColor : SettingsSchema -> String   -- runtime wrap: Task String
--- [pure] SettingsSchemaSetPrimaryColor : String -> SettingsSchema -> SettingsSchema   -- runtime wrap: Task String
--- [pure] SettingsSchemaCloudName : SettingsSchema -> String   -- runtime wrap: Task String
--- [pure] SettingsSchemaSetCloudName : String -> SettingsSchema -> SettingsSchema   -- runtime wrap: Task String
--- [pure] SettingsSchemaCloudConfig : SettingsSchema -> String   -- runtime wrap: Task String
--- [pure] SettingsSchemaSetCloudConfig : String -> SettingsSchema -> SettingsSchema   -- runtime wrap: Task String
--- [pure] SettingsSchemaDisableAnimations : SettingsSchema -> Bool   -- runtime wrap: Task String
--- [pure] SettingsSchemaSetDisableAnimations : Bool -> SettingsSchema -> SettingsSchema   -- runtime wrap: Task String
--- [pure] NewSettingsSchema : struct{} -> SettingsSchema   -- runtime wrap: Task String
+-- [pure] New : () -> App   -- runtime wrap: Task Error
+-- [pure] NewWithID : String -> App   -- runtime wrap: Task Error
+-- [pure] SetMetadata : AppMetadata -> ()   -- runtime wrap: Task Error
+-- [pure] SettingsSchemaStoragePath : SettingsSchema -> String   -- runtime wrap: Task Error
+-- [pure] SettingsSchemaThemeName : SettingsSchema -> String   -- runtime wrap: Task Error
+-- [pure] SettingsSchemaSetThemeName : String -> SettingsSchema -> SettingsSchema   -- runtime wrap: Task Error
+-- [pure] SettingsSchemaScale : SettingsSchema -> Float   -- runtime wrap: Task Error
+-- [pure] SettingsSchemaSetScale : Float -> SettingsSchema -> SettingsSchema   -- runtime wrap: Task Error
+-- [pure] SettingsSchemaPrimaryColor : SettingsSchema -> String   -- runtime wrap: Task Error
+-- [pure] SettingsSchemaSetPrimaryColor : String -> SettingsSchema -> SettingsSchema   -- runtime wrap: Task Error
+-- [pure] SettingsSchemaCloudName : SettingsSchema -> String   -- runtime wrap: Task Error
+-- [pure] SettingsSchemaSetCloudName : String -> SettingsSchema -> SettingsSchema   -- runtime wrap: Task Error
+-- [pure] SettingsSchemaCloudConfig : SettingsSchema -> String   -- runtime wrap: Task Error
+-- [pure] SettingsSchemaSetCloudConfig : String -> SettingsSchema -> SettingsSchema   -- runtime wrap: Task Error
+-- [pure] SettingsSchemaDisableAnimations : SettingsSchema -> Bool   -- runtime wrap: Task Error
+-- [pure] SettingsSchemaSetDisableAnimations : Bool -> SettingsSchema -> SettingsSchema   -- runtime wrap: Task Error
+-- [pure] NewSettingsSchema : struct{} -> SettingsSchema   -- runtime wrap: Task Error

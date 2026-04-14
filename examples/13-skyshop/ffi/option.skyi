@@ -1,7 +1,7 @@
 -- Auto-generated FFI binding catalogue for google.golang.org/api/option
 --
 -- All auto-generated bindings are registered effect-unknown and are
--- callable via Sky.Ffi.callTask. Every call returns Task String a
+-- callable via Sky.Ffi.callTask. Every call returns Task Error a
 -- with panic recovery — any Go panic is caught and surfaced as Err.
 --
 -- Opaque Go struct values flow through Sky as Any; use the bindings
@@ -19,33 +19,33 @@
 --   http "net/http"
 
 package option
--- [pure] AuthorizedUser : struct{} -> CredType   -- runtime wrap: Task String
--- [pure] ClientOptionApply : ClientOption -> DialSettings -> ()   -- runtime wrap: Task String
--- [pure] ExternalAccount : struct{} -> CredType   -- runtime wrap: Task String
--- [pure] ImpersonateCredentials : String -> []string -> ClientOption   -- runtime wrap: Task String
--- [pure] ImpersonatedServiceAccount : struct{} -> CredType   -- runtime wrap: Task String
--- [pure] ServiceAccount : struct{} -> CredType   -- runtime wrap: Task String
--- [pure] WithAPIKey : String -> ClientOption   -- runtime wrap: Task String
--- [pure] WithAudiences : []string -> ClientOption   -- runtime wrap: Task String
--- [pure] WithAuthCredentials : Credentials -> ClientOption   -- runtime wrap: Task String
--- [pure] WithAuthCredentialsFile : CredentialsType -> String -> ClientOption   -- runtime wrap: Task String
--- [pure] WithAuthCredentialsJSON : CredentialsType -> []byte -> ClientOption   -- runtime wrap: Task String
--- [pure] WithClientCertSource : ClientCertSource -> ClientOption   -- runtime wrap: Task String
--- [pure] WithCredentials : Credentials -> ClientOption   -- runtime wrap: Task String
--- [pure] WithCredentialsFile : String -> ClientOption   -- runtime wrap: Task String
--- [pure] WithCredentialsJSON : []byte -> ClientOption   -- runtime wrap: Task String
--- [pure] WithEndpoint : String -> ClientOption   -- runtime wrap: Task String
--- [pure] WithGRPCConn : ClientConn -> ClientOption   -- runtime wrap: Task String
--- [pure] WithGRPCConnectionPool : Int -> ClientOption   -- runtime wrap: Task String
--- [pure] WithGRPCDialOption : DialOption -> ClientOption   -- runtime wrap: Task String
--- [pure] WithHTTPClient : Client -> ClientOption   -- runtime wrap: Task String
--- [pure] WithLogger : Logger -> ClientOption   -- runtime wrap: Task String
--- [pure] WithQuotaProject : String -> ClientOption   -- runtime wrap: Task String
--- [pure] WithRequestReason : String -> ClientOption   -- runtime wrap: Task String
--- [pure] WithScopes : []string -> ClientOption   -- runtime wrap: Task String
--- [pure] WithServiceAccountFile : String -> ClientOption   -- runtime wrap: Task String
--- [pure] WithTelemetryDisabled : () -> ClientOption   -- runtime wrap: Task String
--- [pure] WithTokenSource : TokenSource -> ClientOption   -- runtime wrap: Task String
--- [pure] WithUniverseDomain : String -> ClientOption   -- runtime wrap: Task String
--- [pure] WithUserAgent : String -> ClientOption   -- runtime wrap: Task String
--- [pure] WithoutAuthentication : () -> ClientOption   -- runtime wrap: Task String
+-- [pure] AuthorizedUser : struct{} -> CredType   -- runtime wrap: Task Error
+-- [pure] ClientOptionApply : ClientOption -> DialSettings -> ()   -- runtime wrap: Task Error
+-- [pure] ExternalAccount : struct{} -> CredType   -- runtime wrap: Task Error
+-- [pure] ImpersonateCredentials : String -> []string -> ClientOption   -- runtime wrap: Task Error
+-- [pure] ImpersonatedServiceAccount : struct{} -> CredType   -- runtime wrap: Task Error
+-- [pure] ServiceAccount : struct{} -> CredType   -- runtime wrap: Task Error
+-- [pure] WithAPIKey : String -> ClientOption   -- runtime wrap: Task Error
+-- [pure] WithAudiences : []string -> ClientOption   -- runtime wrap: Task Error
+-- [pure] WithAuthCredentials : Credentials -> ClientOption   -- runtime wrap: Task Error
+-- [pure] WithAuthCredentialsFile : CredentialsType -> String -> ClientOption   -- runtime wrap: Task Error
+-- [pure] WithAuthCredentialsJSON : CredentialsType -> []byte -> ClientOption   -- runtime wrap: Task Error
+-- [pure] WithClientCertSource : ClientCertSource -> ClientOption   -- runtime wrap: Task Error
+-- [pure] WithCredentials : Credentials -> ClientOption   -- runtime wrap: Task Error
+-- [pure] WithCredentialsFile : String -> ClientOption   -- runtime wrap: Task Error
+-- [pure] WithCredentialsJSON : []byte -> ClientOption   -- runtime wrap: Task Error
+-- [pure] WithEndpoint : String -> ClientOption   -- runtime wrap: Task Error
+-- [pure] WithGRPCConn : ClientConn -> ClientOption   -- runtime wrap: Task Error
+-- [pure] WithGRPCConnectionPool : Int -> ClientOption   -- runtime wrap: Task Error
+-- [pure] WithGRPCDialOption : DialOption -> ClientOption   -- runtime wrap: Task Error
+-- [pure] WithHTTPClient : Client -> ClientOption   -- runtime wrap: Task Error
+-- [pure] WithLogger : Logger -> ClientOption   -- runtime wrap: Task Error
+-- [pure] WithQuotaProject : String -> ClientOption   -- runtime wrap: Task Error
+-- [pure] WithRequestReason : String -> ClientOption   -- runtime wrap: Task Error
+-- [pure] WithScopes : []string -> ClientOption   -- runtime wrap: Task Error
+-- [pure] WithServiceAccountFile : String -> ClientOption   -- runtime wrap: Task Error
+-- [pure] WithTelemetryDisabled : () -> ClientOption   -- runtime wrap: Task Error
+-- [pure] WithTokenSource : TokenSource -> ClientOption   -- runtime wrap: Task Error
+-- [pure] WithUniverseDomain : String -> ClientOption   -- runtime wrap: Task Error
+-- [pure] WithUserAgent : String -> ClientOption   -- runtime wrap: Task Error
+-- [pure] WithoutAuthentication : () -> ClientOption   -- runtime wrap: Task Error

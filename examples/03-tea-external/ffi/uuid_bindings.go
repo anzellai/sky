@@ -275,13 +275,13 @@ func Go_Uuid_nodeInterfaceT() (out SkyResult[any, string]) {
 	return
 }
 
-// [fallible] Go_Uuid.nullUUIDScan → pkg.NullUUIDScan
-func Go_Uuid_nullUUIDScan(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	err := p0.(*pkg.NullUUID).Scan(p1.(interface{}))
-	if err != nil { out = Err[any, any](ErrFfi(err.Error())); return }
-	out = Ok[any, any](struct{}{})
-
+type FfiT_Go_Uuid_nullUUIDScan_P0 = *pkg.NullUUID
+// [fallible] typed wrapper for Go_Uuid_nullUUIDScan (P7 adaptor target)
+func Go_Uuid_nullUUIDScanT(p0 *pkg.NullUUID, p1 interface{}) (out SkyResult[any, struct{}]) {
+	defer SkyFfiRecoverT(&out)()
+	err := p0.Scan(p1)
+	if err != nil { out = Err[any,struct{}](ErrFfi(err.Error())); return }
+	out = Ok[any,struct{}](struct{}{})
 	return
 }
 
@@ -505,13 +505,13 @@ func Go_Uuid_uUIDNodeIDT(p0 pkg.UUID) (out SkyResult[any, []byte]) {
 	return
 }
 
-// [fallible] Go_Uuid.uUIDScan → pkg.UUIDScan
-func Go_Uuid_uUIDScan(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	err := p0.(*pkg.UUID).Scan(p1.(interface{}))
-	if err != nil { out = Err[any, any](ErrFfi(err.Error())); return }
-	out = Ok[any, any](struct{}{})
-
+type FfiT_Go_Uuid_uUIDScan_P0 = *pkg.UUID
+// [fallible] typed wrapper for Go_Uuid_uUIDScan (P7 adaptor target)
+func Go_Uuid_uUIDScanT(p0 *pkg.UUID, p1 interface{}) (out SkyResult[any, struct{}]) {
+	defer SkyFfiRecoverT(&out)()
+	err := p0.Scan(p1)
+	if err != nil { out = Err[any,struct{}](ErrFfi(err.Error())); return }
+	out = Ok[any,struct{}](struct{}{})
 	return
 }
 

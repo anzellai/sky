@@ -1,7 +1,7 @@
 -- Auto-generated FFI binding catalogue for github.com/stripe/stripe-go/v84/checkout/session
 --
 -- All auto-generated bindings are registered effect-unknown and are
--- callable via Sky.Ffi.callTask. Every call returns Task String a
+-- callable via Sky.Ffi.callTask. Every call returns Task Error a
 -- with panic recovery — any Go panic is caught and surfaced as Err.
 --
 -- Opaque Go struct values flow through Sky as Any; use the bindings
@@ -14,40 +14,40 @@
 --   pkg "github.com/stripe/stripe-go/v84/checkout/session"
 
 package session
--- [fallible] ClientNew : Client -> CheckoutSessionParams -> (CheckoutSession, String)   -- runtime wrap: Task String
--- [fallible] ClientGet : Client -> String -> CheckoutSessionParams -> (CheckoutSession, String)   -- runtime wrap: Task String
--- [fallible] ClientUpdate : Client -> String -> CheckoutSessionParams -> (CheckoutSession, String)   -- runtime wrap: Task String
--- [fallible] ClientExpire : Client -> String -> CheckoutSessionExpireParams -> (CheckoutSession, String)   -- runtime wrap: Task String
--- [pure] ClientList : Client -> CheckoutSessionListParams -> Iter   -- runtime wrap: Task String
--- [pure] ClientListLineItems : Client -> CheckoutSessionListLineItemsParams -> LineItemIter   -- runtime wrap: Task String
--- [pure] ClientB : Client -> Backend   -- runtime wrap: Task String
--- [pure] ClientSetB : Backend -> Client -> Client   -- runtime wrap: Task String
--- [pure] ClientKey : Client -> String   -- runtime wrap: Task String
--- [pure] ClientSetKey : String -> Client -> Client   -- runtime wrap: Task String
--- [pure] NewClient : struct{} -> Client   -- runtime wrap: Task String
--- [fallible] Expire : String -> CheckoutSessionExpireParams -> (CheckoutSession, String)   -- runtime wrap: Task String
--- [fallible] Get : String -> CheckoutSessionParams -> (CheckoutSession, String)   -- runtime wrap: Task String
--- [pure] IterCheckoutSession : Iter -> CheckoutSession   -- runtime wrap: Task String
--- [pure] IterCheckoutSessionList : Iter -> CheckoutSessionList   -- runtime wrap: Task String
--- [pure] IterCurrent : Iter -> interface{}   -- runtime wrap: Task String
--- [fallible] IterErr : Iter -> String   -- runtime wrap: Task String
--- [pure] IterList : Iter -> ListContainer   -- runtime wrap: Task String
--- [pure] IterMeta : Iter -> ListMeta   -- runtime wrap: Task String
--- [pure] IterNext : Iter -> Bool   -- runtime wrap: Task String
--- [pure] IterIter : Iter -> Iter   -- runtime wrap: Task String
--- [pure] IterSetIter : Iter -> Iter -> Iter   -- runtime wrap: Task String
--- [pure] NewIter : struct{} -> Iter   -- runtime wrap: Task String
--- [pure] LineItemIterLineItem : LineItemIter -> LineItem   -- runtime wrap: Task String
--- [pure] LineItemIterLineItemList : LineItemIter -> LineItemList   -- runtime wrap: Task String
--- [pure] LineItemIterCurrent : LineItemIter -> interface{}   -- runtime wrap: Task String
--- [fallible] LineItemIterErr : LineItemIter -> String   -- runtime wrap: Task String
--- [pure] LineItemIterList : LineItemIter -> ListContainer   -- runtime wrap: Task String
--- [pure] LineItemIterMeta : LineItemIter -> ListMeta   -- runtime wrap: Task String
--- [pure] LineItemIterNext : LineItemIter -> Bool   -- runtime wrap: Task String
--- [pure] LineItemIterIter : LineItemIter -> Iter   -- runtime wrap: Task String
--- [pure] LineItemIterSetIter : Iter -> LineItemIter -> LineItemIter   -- runtime wrap: Task String
--- [pure] NewLineItemIter : struct{} -> LineItemIter   -- runtime wrap: Task String
--- [pure] List : CheckoutSessionListParams -> Iter   -- runtime wrap: Task String
--- [pure] ListLineItems : CheckoutSessionListLineItemsParams -> LineItemIter   -- runtime wrap: Task String
--- [fallible] New : CheckoutSessionParams -> (CheckoutSession, String)   -- runtime wrap: Task String
--- [fallible] Update : String -> CheckoutSessionParams -> (CheckoutSession, String)   -- runtime wrap: Task String
+-- [fallible] ClientNew : Client -> CheckoutSessionParams -> (CheckoutSession, String)   -- runtime wrap: Task Error
+-- [fallible] ClientGet : Client -> String -> CheckoutSessionParams -> (CheckoutSession, String)   -- runtime wrap: Task Error
+-- [fallible] ClientUpdate : Client -> String -> CheckoutSessionParams -> (CheckoutSession, String)   -- runtime wrap: Task Error
+-- [fallible] ClientExpire : Client -> String -> CheckoutSessionExpireParams -> (CheckoutSession, String)   -- runtime wrap: Task Error
+-- [pure] ClientList : Client -> CheckoutSessionListParams -> Iter   -- runtime wrap: Task Error
+-- [pure] ClientListLineItems : Client -> CheckoutSessionListLineItemsParams -> LineItemIter   -- runtime wrap: Task Error
+-- [pure] ClientB : Client -> Backend   -- runtime wrap: Task Error
+-- [pure] ClientSetB : Backend -> Client -> Client   -- runtime wrap: Task Error
+-- [pure] ClientKey : Client -> String   -- runtime wrap: Task Error
+-- [pure] ClientSetKey : String -> Client -> Client   -- runtime wrap: Task Error
+-- [pure] NewClient : struct{} -> Client   -- runtime wrap: Task Error
+-- [fallible] Expire : String -> CheckoutSessionExpireParams -> (CheckoutSession, String)   -- runtime wrap: Task Error
+-- [fallible] Get : String -> CheckoutSessionParams -> (CheckoutSession, String)   -- runtime wrap: Task Error
+-- [pure] IterCheckoutSession : Iter -> CheckoutSession   -- runtime wrap: Task Error
+-- [pure] IterCheckoutSessionList : Iter -> CheckoutSessionList   -- runtime wrap: Task Error
+-- [pure] IterCurrent : Iter -> interface{}   -- runtime wrap: Task Error
+-- [fallible] IterErr : Iter -> String   -- runtime wrap: Task Error
+-- [pure] IterList : Iter -> ListContainer   -- runtime wrap: Task Error
+-- [pure] IterMeta : Iter -> ListMeta   -- runtime wrap: Task Error
+-- [pure] IterNext : Iter -> Bool   -- runtime wrap: Task Error
+-- [pure] IterIter : Iter -> Iter   -- runtime wrap: Task Error
+-- [pure] IterSetIter : Iter -> Iter -> Iter   -- runtime wrap: Task Error
+-- [pure] NewIter : struct{} -> Iter   -- runtime wrap: Task Error
+-- [pure] LineItemIterLineItem : LineItemIter -> LineItem   -- runtime wrap: Task Error
+-- [pure] LineItemIterLineItemList : LineItemIter -> LineItemList   -- runtime wrap: Task Error
+-- [pure] LineItemIterCurrent : LineItemIter -> interface{}   -- runtime wrap: Task Error
+-- [fallible] LineItemIterErr : LineItemIter -> String   -- runtime wrap: Task Error
+-- [pure] LineItemIterList : LineItemIter -> ListContainer   -- runtime wrap: Task Error
+-- [pure] LineItemIterMeta : LineItemIter -> ListMeta   -- runtime wrap: Task Error
+-- [pure] LineItemIterNext : LineItemIter -> Bool   -- runtime wrap: Task Error
+-- [pure] LineItemIterIter : LineItemIter -> Iter   -- runtime wrap: Task Error
+-- [pure] LineItemIterSetIter : Iter -> LineItemIter -> LineItemIter   -- runtime wrap: Task Error
+-- [pure] NewLineItemIter : struct{} -> LineItemIter   -- runtime wrap: Task Error
+-- [pure] List : CheckoutSessionListParams -> Iter   -- runtime wrap: Task Error
+-- [pure] ListLineItems : CheckoutSessionListLineItemsParams -> LineItemIter   -- runtime wrap: Task Error
+-- [fallible] New : CheckoutSessionParams -> (CheckoutSession, String)   -- runtime wrap: Task Error
+-- [fallible] Update : String -> CheckoutSessionParams -> (CheckoutSession, String)   -- runtime wrap: Task Error

@@ -1,7 +1,7 @@
 -- Auto-generated FFI binding catalogue for google.golang.org/api/iterator
 --
 -- All auto-generated bindings are registered effect-unknown and are
--- callable via Sky.Ffi.callTask. Every call returns Task String a
+-- callable via Sky.Ffi.callTask. Every call returns Task Error a
 -- with panic recovery — any Go panic is caught and surfaced as Err.
 --
 -- Opaque Go struct values flow through Sky as Any; use the bindings
@@ -13,15 +13,15 @@
 --   pkg "google.golang.org/api/iterator"
 
 package iterator
--- [pure] Done : struct{} -> String   -- runtime wrap: Task String
--- [effectful] SetDone : String -> struct{}   -- runtime wrap: Task String
--- [pure] NewPageInfo : struct{} -> PageInfo, next func() error)   -- runtime wrap: Task String
--- [effectful] SetNewPageInfo : PageInfo, next func() error) -> struct{}   -- runtime wrap: Task String
--- [pure] NewPager : Pageable -> Int -> String -> Pager   -- runtime wrap: Task String
--- [pure] PageInfoRemaining : PageInfo -> Int   -- runtime wrap: Task String
--- [pure] PageInfoToken : PageInfo -> String   -- runtime wrap: Task String
--- [pure] PageInfoSetToken : String -> PageInfo -> PageInfo   -- runtime wrap: Task String
--- [pure] PageInfoMaxSize : PageInfo -> Int   -- runtime wrap: Task String
--- [pure] PageInfoSetMaxSize : Int -> PageInfo -> PageInfo   -- runtime wrap: Task String
--- [pure] PageablePageInfo : Pageable -> PageInfo   -- runtime wrap: Task String
--- [fallible] PagerNextPage : Pager -> interface{} -> (String, String)   -- runtime wrap: Task String
+-- [pure] Done : struct{} -> String   -- runtime wrap: Task Error
+-- [effectful] SetDone : String -> struct{}   -- runtime wrap: Task Error
+-- [pure] NewPageInfo : struct{} -> PageInfo, next func() error)   -- runtime wrap: Task Error
+-- [effectful] SetNewPageInfo : PageInfo, next func() error) -> struct{}   -- runtime wrap: Task Error
+-- [pure] NewPager : Pageable -> Int -> String -> Pager   -- runtime wrap: Task Error
+-- [pure] PageInfoRemaining : PageInfo -> Int   -- runtime wrap: Task Error
+-- [pure] PageInfoToken : PageInfo -> String   -- runtime wrap: Task Error
+-- [pure] PageInfoSetToken : String -> PageInfo -> PageInfo   -- runtime wrap: Task Error
+-- [pure] PageInfoMaxSize : PageInfo -> Int   -- runtime wrap: Task Error
+-- [pure] PageInfoSetMaxSize : Int -> PageInfo -> PageInfo   -- runtime wrap: Task Error
+-- [pure] PageablePageInfo : Pageable -> PageInfo   -- runtime wrap: Task Error
+-- [fallible] PagerNextPage : Pager -> interface{} -> (String, String)   -- runtime wrap: Task Error

@@ -1,7 +1,7 @@
 -- Auto-generated FFI binding catalogue for github.com/stripe/stripe-go/v84/customer
 --
 -- All auto-generated bindings are registered effect-unknown and are
--- callable via Sky.Ffi.callTask. Every call returns Task String a
+-- callable via Sky.Ffi.callTask. Every call returns Task Error a
 -- with panic recovery — any Go panic is caught and surfaced as Err.
 --
 -- Opaque Go struct values flow through Sky as Any; use the bindings
@@ -14,58 +14,58 @@
 --   pkg "github.com/stripe/stripe-go/v84/customer"
 
 package customer
--- [fallible] ClientNew : Client -> CustomerParams -> (Customer, String)   -- runtime wrap: Task String
--- [fallible] ClientGet : Client -> String -> CustomerParams -> (Customer, String)   -- runtime wrap: Task String
--- [fallible] ClientUpdate : Client -> String -> CustomerParams -> (Customer, String)   -- runtime wrap: Task String
--- [fallible] ClientDel : Client -> String -> CustomerParams -> (Customer, String)   -- runtime wrap: Task String
--- [fallible] ClientCreateFundingInstructions : Client -> String -> CustomerCreateFundingInstructionsParams -> (FundingInstructions, String)   -- runtime wrap: Task String
--- [fallible] ClientDeleteDiscount : Client -> String -> CustomerDeleteDiscountParams -> (Customer, String)   -- runtime wrap: Task String
--- [fallible] ClientRetrievePaymentMethod : Client -> String -> CustomerRetrievePaymentMethodParams -> (PaymentMethod, String)   -- runtime wrap: Task String
--- [pure] ClientList : Client -> CustomerListParams -> Iter   -- runtime wrap: Task String
--- [pure] ClientListPaymentMethods : Client -> CustomerListPaymentMethodsParams -> PaymentMethodIter   -- runtime wrap: Task String
--- [pure] ClientSearch : Client -> CustomerSearchParams -> SearchIter   -- runtime wrap: Task String
--- [pure] ClientB : Client -> Backend   -- runtime wrap: Task String
--- [pure] ClientSetB : Backend -> Client -> Client   -- runtime wrap: Task String
--- [pure] ClientKey : Client -> String   -- runtime wrap: Task String
--- [pure] ClientSetKey : String -> Client -> Client   -- runtime wrap: Task String
--- [pure] NewClient : struct{} -> Client   -- runtime wrap: Task String
--- [fallible] CreateFundingInstructions : String -> CustomerCreateFundingInstructionsParams -> (FundingInstructions, String)   -- runtime wrap: Task String
--- [fallible] Del : String -> CustomerParams -> (Customer, String)   -- runtime wrap: Task String
--- [fallible] DeleteDiscount : String -> CustomerDeleteDiscountParams -> (Customer, String)   -- runtime wrap: Task String
--- [fallible] Get : String -> CustomerParams -> (Customer, String)   -- runtime wrap: Task String
--- [pure] IterCustomer : Iter -> Customer   -- runtime wrap: Task String
--- [pure] IterCustomerList : Iter -> CustomerList   -- runtime wrap: Task String
--- [pure] IterCurrent : Iter -> interface{}   -- runtime wrap: Task String
--- [fallible] IterErr : Iter -> String   -- runtime wrap: Task String
--- [pure] IterList : Iter -> ListContainer   -- runtime wrap: Task String
--- [pure] IterMeta : Iter -> ListMeta   -- runtime wrap: Task String
--- [pure] IterNext : Iter -> Bool   -- runtime wrap: Task String
--- [pure] IterIter : Iter -> Iter   -- runtime wrap: Task String
--- [pure] IterSetIter : Iter -> Iter -> Iter   -- runtime wrap: Task String
--- [pure] NewIter : struct{} -> Iter   -- runtime wrap: Task String
--- [pure] List : CustomerListParams -> Iter   -- runtime wrap: Task String
--- [pure] ListPaymentMethods : CustomerListPaymentMethodsParams -> PaymentMethodIter   -- runtime wrap: Task String
--- [fallible] New : CustomerParams -> (Customer, String)   -- runtime wrap: Task String
--- [pure] PaymentMethodIterPaymentMethod : PaymentMethodIter -> PaymentMethod   -- runtime wrap: Task String
--- [pure] PaymentMethodIterPaymentMethodList : PaymentMethodIter -> PaymentMethodList   -- runtime wrap: Task String
--- [pure] PaymentMethodIterCurrent : PaymentMethodIter -> interface{}   -- runtime wrap: Task String
--- [fallible] PaymentMethodIterErr : PaymentMethodIter -> String   -- runtime wrap: Task String
--- [pure] PaymentMethodIterList : PaymentMethodIter -> ListContainer   -- runtime wrap: Task String
--- [pure] PaymentMethodIterMeta : PaymentMethodIter -> ListMeta   -- runtime wrap: Task String
--- [pure] PaymentMethodIterNext : PaymentMethodIter -> Bool   -- runtime wrap: Task String
--- [pure] PaymentMethodIterIter : PaymentMethodIter -> Iter   -- runtime wrap: Task String
--- [pure] PaymentMethodIterSetIter : Iter -> PaymentMethodIter -> PaymentMethodIter   -- runtime wrap: Task String
--- [pure] NewPaymentMethodIter : struct{} -> PaymentMethodIter   -- runtime wrap: Task String
--- [fallible] RetrievePaymentMethod : String -> CustomerRetrievePaymentMethodParams -> (PaymentMethod, String)   -- runtime wrap: Task String
--- [pure] Search : CustomerSearchParams -> SearchIter   -- runtime wrap: Task String
--- [pure] SearchIterCustomer : SearchIter -> Customer   -- runtime wrap: Task String
--- [pure] SearchIterCustomerSearchResult : SearchIter -> CustomerSearchResult   -- runtime wrap: Task String
--- [pure] SearchIterCurrent : SearchIter -> interface{}   -- runtime wrap: Task String
--- [fallible] SearchIterErr : SearchIter -> String   -- runtime wrap: Task String
--- [pure] SearchIterMeta : SearchIter -> SearchMeta   -- runtime wrap: Task String
--- [pure] SearchIterNext : SearchIter -> Bool   -- runtime wrap: Task String
--- [pure] SearchIterSearchResult : SearchIter -> SearchContainer   -- runtime wrap: Task String
--- [pure] SearchIterSearchIter : SearchIter -> SearchIter   -- runtime wrap: Task String
--- [pure] SearchIterSetSearchIter : SearchIter -> SearchIter -> SearchIter   -- runtime wrap: Task String
--- [pure] NewSearchIter : struct{} -> SearchIter   -- runtime wrap: Task String
--- [fallible] Update : String -> CustomerParams -> (Customer, String)   -- runtime wrap: Task String
+-- [fallible] ClientNew : Client -> CustomerParams -> (Customer, String)   -- runtime wrap: Task Error
+-- [fallible] ClientGet : Client -> String -> CustomerParams -> (Customer, String)   -- runtime wrap: Task Error
+-- [fallible] ClientUpdate : Client -> String -> CustomerParams -> (Customer, String)   -- runtime wrap: Task Error
+-- [fallible] ClientDel : Client -> String -> CustomerParams -> (Customer, String)   -- runtime wrap: Task Error
+-- [fallible] ClientCreateFundingInstructions : Client -> String -> CustomerCreateFundingInstructionsParams -> (FundingInstructions, String)   -- runtime wrap: Task Error
+-- [fallible] ClientDeleteDiscount : Client -> String -> CustomerDeleteDiscountParams -> (Customer, String)   -- runtime wrap: Task Error
+-- [fallible] ClientRetrievePaymentMethod : Client -> String -> CustomerRetrievePaymentMethodParams -> (PaymentMethod, String)   -- runtime wrap: Task Error
+-- [pure] ClientList : Client -> CustomerListParams -> Iter   -- runtime wrap: Task Error
+-- [pure] ClientListPaymentMethods : Client -> CustomerListPaymentMethodsParams -> PaymentMethodIter   -- runtime wrap: Task Error
+-- [pure] ClientSearch : Client -> CustomerSearchParams -> SearchIter   -- runtime wrap: Task Error
+-- [pure] ClientB : Client -> Backend   -- runtime wrap: Task Error
+-- [pure] ClientSetB : Backend -> Client -> Client   -- runtime wrap: Task Error
+-- [pure] ClientKey : Client -> String   -- runtime wrap: Task Error
+-- [pure] ClientSetKey : String -> Client -> Client   -- runtime wrap: Task Error
+-- [pure] NewClient : struct{} -> Client   -- runtime wrap: Task Error
+-- [fallible] CreateFundingInstructions : String -> CustomerCreateFundingInstructionsParams -> (FundingInstructions, String)   -- runtime wrap: Task Error
+-- [fallible] Del : String -> CustomerParams -> (Customer, String)   -- runtime wrap: Task Error
+-- [fallible] DeleteDiscount : String -> CustomerDeleteDiscountParams -> (Customer, String)   -- runtime wrap: Task Error
+-- [fallible] Get : String -> CustomerParams -> (Customer, String)   -- runtime wrap: Task Error
+-- [pure] IterCustomer : Iter -> Customer   -- runtime wrap: Task Error
+-- [pure] IterCustomerList : Iter -> CustomerList   -- runtime wrap: Task Error
+-- [pure] IterCurrent : Iter -> interface{}   -- runtime wrap: Task Error
+-- [fallible] IterErr : Iter -> String   -- runtime wrap: Task Error
+-- [pure] IterList : Iter -> ListContainer   -- runtime wrap: Task Error
+-- [pure] IterMeta : Iter -> ListMeta   -- runtime wrap: Task Error
+-- [pure] IterNext : Iter -> Bool   -- runtime wrap: Task Error
+-- [pure] IterIter : Iter -> Iter   -- runtime wrap: Task Error
+-- [pure] IterSetIter : Iter -> Iter -> Iter   -- runtime wrap: Task Error
+-- [pure] NewIter : struct{} -> Iter   -- runtime wrap: Task Error
+-- [pure] List : CustomerListParams -> Iter   -- runtime wrap: Task Error
+-- [pure] ListPaymentMethods : CustomerListPaymentMethodsParams -> PaymentMethodIter   -- runtime wrap: Task Error
+-- [fallible] New : CustomerParams -> (Customer, String)   -- runtime wrap: Task Error
+-- [pure] PaymentMethodIterPaymentMethod : PaymentMethodIter -> PaymentMethod   -- runtime wrap: Task Error
+-- [pure] PaymentMethodIterPaymentMethodList : PaymentMethodIter -> PaymentMethodList   -- runtime wrap: Task Error
+-- [pure] PaymentMethodIterCurrent : PaymentMethodIter -> interface{}   -- runtime wrap: Task Error
+-- [fallible] PaymentMethodIterErr : PaymentMethodIter -> String   -- runtime wrap: Task Error
+-- [pure] PaymentMethodIterList : PaymentMethodIter -> ListContainer   -- runtime wrap: Task Error
+-- [pure] PaymentMethodIterMeta : PaymentMethodIter -> ListMeta   -- runtime wrap: Task Error
+-- [pure] PaymentMethodIterNext : PaymentMethodIter -> Bool   -- runtime wrap: Task Error
+-- [pure] PaymentMethodIterIter : PaymentMethodIter -> Iter   -- runtime wrap: Task Error
+-- [pure] PaymentMethodIterSetIter : Iter -> PaymentMethodIter -> PaymentMethodIter   -- runtime wrap: Task Error
+-- [pure] NewPaymentMethodIter : struct{} -> PaymentMethodIter   -- runtime wrap: Task Error
+-- [fallible] RetrievePaymentMethod : String -> CustomerRetrievePaymentMethodParams -> (PaymentMethod, String)   -- runtime wrap: Task Error
+-- [pure] Search : CustomerSearchParams -> SearchIter   -- runtime wrap: Task Error
+-- [pure] SearchIterCustomer : SearchIter -> Customer   -- runtime wrap: Task Error
+-- [pure] SearchIterCustomerSearchResult : SearchIter -> CustomerSearchResult   -- runtime wrap: Task Error
+-- [pure] SearchIterCurrent : SearchIter -> interface{}   -- runtime wrap: Task Error
+-- [fallible] SearchIterErr : SearchIter -> String   -- runtime wrap: Task Error
+-- [pure] SearchIterMeta : SearchIter -> SearchMeta   -- runtime wrap: Task Error
+-- [pure] SearchIterNext : SearchIter -> Bool   -- runtime wrap: Task Error
+-- [pure] SearchIterSearchResult : SearchIter -> SearchContainer   -- runtime wrap: Task Error
+-- [pure] SearchIterSearchIter : SearchIter -> SearchIter   -- runtime wrap: Task Error
+-- [pure] SearchIterSetSearchIter : SearchIter -> SearchIter -> SearchIter   -- runtime wrap: Task Error
+-- [pure] NewSearchIter : struct{} -> SearchIter   -- runtime wrap: Task Error
+-- [fallible] Update : String -> CustomerParams -> (Customer, String)   -- runtime wrap: Task Error

@@ -155,13 +155,14 @@ func Go_Auth_clientCustomTokenT(p0 *pkg.Client, p1 context.Context, p2 string) (
 	return
 }
 
-// [fallible] Go_Auth.clientCustomTokenWithClaims → pkg.ClientCustomTokenWithClaims
-func Go_Auth_clientCustomTokenWithClaims(p0 any, p1 any, p2 any, p3 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := p0.(*pkg.Client).CustomTokenWithClaims(p1.(context.Context), fmt.Sprintf("%v", p2), p3.(map[string]interface{}))
-	if err != nil { out = Err[any, any](ErrFfi(err.Error())); return }
-	out = Ok[any, any](r0)
-
+type FfiT_Go_Auth_clientCustomTokenWithClaims_P0 = *pkg.Client
+type FfiT_Go_Auth_clientCustomTokenWithClaims_P1 = context.Context
+// [fallible] typed wrapper for Go_Auth_clientCustomTokenWithClaims (P7 adaptor target)
+func Go_Auth_clientCustomTokenWithClaimsT(p0 *pkg.Client, p1 context.Context, p2 string, p3 map[string]interface{}) (out SkyResult[any, string]) {
+	defer SkyFfiRecoverT(&out)()
+	r0, err := p0.CustomTokenWithClaims(p1, p2, p3)
+	if err != nil { out = Err[any,string](ErrFfi(err.Error())); return }
+	out = Ok[any,string](r0)
 	return
 }
 
@@ -431,13 +432,14 @@ func Go_Auth_clientSAMLProviderConfigsT(p0 *pkg.Client, p1 context.Context, p2 s
 	return
 }
 
-// [fallible] Go_Auth.clientSetCustomUserClaims → pkg.ClientSetCustomUserClaims
-func Go_Auth_clientSetCustomUserClaims(p0 any, p1 any, p2 any, p3 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	err := p0.(*pkg.Client).SetCustomUserClaims(p1.(context.Context), fmt.Sprintf("%v", p2), p3.(map[string]interface{}))
-	if err != nil { out = Err[any, any](ErrFfi(err.Error())); return }
-	out = Ok[any, any](struct{}{})
-
+type FfiT_Go_Auth_clientSetCustomUserClaims_P0 = *pkg.Client
+type FfiT_Go_Auth_clientSetCustomUserClaims_P1 = context.Context
+// [fallible] typed wrapper for Go_Auth_clientSetCustomUserClaims (P7 adaptor target)
+func Go_Auth_clientSetCustomUserClaimsT(p0 *pkg.Client, p1 context.Context, p2 string, p3 map[string]interface{}) (out SkyResult[any, struct{}]) {
+	defer SkyFfiRecoverT(&out)()
+	err := p0.SetCustomUserClaims(p1, p2, p3)
+	if err != nil { out = Err[any,struct{}](ErrFfi(err.Error())); return }
+	out = Ok[any,struct{}](struct{}{})
 	return
 }
 
@@ -655,9 +657,11 @@ func Go_Auth_firebaseInfoTenantT(p0 *pkg.FirebaseInfo) string { return p0.Tenant
 type FfiT_Go_Auth_firebaseInfoSetTenant_P1 = *pkg.FirebaseInfo
 func Go_Auth_firebaseInfoSetTenantT(value string, recv *pkg.FirebaseInfo) *pkg.FirebaseInfo { recv.Tenant = value; return recv }
 
-func Go_Auth_firebaseInfoIdentities(p0 any) any { return SkyFfiFieldGet(p0, "Identities") }
+type FfiT_Go_Auth_firebaseInfoIdentities_P0 = *pkg.FirebaseInfo
+func Go_Auth_firebaseInfoIdentitiesT(p0 *pkg.FirebaseInfo) map[string]interface{} { return p0.Identities }
 
-func Go_Auth_firebaseInfoSetIdentities(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Identities") }
+type FfiT_Go_Auth_firebaseInfoSetIdentities_P1 = *pkg.FirebaseInfo
+func Go_Auth_firebaseInfoSetIdentitiesT(value map[string]interface{}, recv *pkg.FirebaseInfo) *pkg.FirebaseInfo { recv.Identities = value; return recv }
 
 func Go_Auth_newFirebaseInfo(_ any) any { return new(pkg.FirebaseInfo) }
 
@@ -1611,13 +1615,14 @@ func Go_Auth_tenantClientCustomTokenT(p0 *pkg.TenantClient, p1 context.Context, 
 	return
 }
 
-// [fallible] Go_Auth.tenantClientCustomTokenWithClaims → pkg.TenantClientCustomTokenWithClaims
-func Go_Auth_tenantClientCustomTokenWithClaims(p0 any, p1 any, p2 any, p3 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := p0.(*pkg.TenantClient).CustomTokenWithClaims(p1.(context.Context), fmt.Sprintf("%v", p2), p3.(map[string]interface{}))
-	if err != nil { out = Err[any, any](ErrFfi(err.Error())); return }
-	out = Ok[any, any](r0)
-
+type FfiT_Go_Auth_tenantClientCustomTokenWithClaims_P0 = *pkg.TenantClient
+type FfiT_Go_Auth_tenantClientCustomTokenWithClaims_P1 = context.Context
+// [fallible] typed wrapper for Go_Auth_tenantClientCustomTokenWithClaims (P7 adaptor target)
+func Go_Auth_tenantClientCustomTokenWithClaimsT(p0 *pkg.TenantClient, p1 context.Context, p2 string, p3 map[string]interface{}) (out SkyResult[any, string]) {
+	defer SkyFfiRecoverT(&out)()
+	r0, err := p0.CustomTokenWithClaims(p1, p2, p3)
+	if err != nil { out = Err[any,string](ErrFfi(err.Error())); return }
+	out = Ok[any,string](r0)
 	return
 }
 
@@ -1887,13 +1892,14 @@ func Go_Auth_tenantClientSAMLProviderConfigsT(p0 *pkg.TenantClient, p1 context.C
 	return
 }
 
-// [fallible] Go_Auth.tenantClientSetCustomUserClaims → pkg.TenantClientSetCustomUserClaims
-func Go_Auth_tenantClientSetCustomUserClaims(p0 any, p1 any, p2 any, p3 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	err := p0.(*pkg.TenantClient).SetCustomUserClaims(p1.(context.Context), fmt.Sprintf("%v", p2), p3.(map[string]interface{}))
-	if err != nil { out = Err[any, any](ErrFfi(err.Error())); return }
-	out = Ok[any, any](struct{}{})
-
+type FfiT_Go_Auth_tenantClientSetCustomUserClaims_P0 = *pkg.TenantClient
+type FfiT_Go_Auth_tenantClientSetCustomUserClaims_P1 = context.Context
+// [fallible] typed wrapper for Go_Auth_tenantClientSetCustomUserClaims (P7 adaptor target)
+func Go_Auth_tenantClientSetCustomUserClaimsT(p0 *pkg.TenantClient, p1 context.Context, p2 string, p3 map[string]interface{}) (out SkyResult[any, struct{}]) {
+	defer SkyFfiRecoverT(&out)()
+	err := p0.SetCustomUserClaims(p1, p2, p3)
+	if err != nil { out = Err[any,struct{}](ErrFfi(err.Error())); return }
+	out = Ok[any,struct{}](struct{}{})
 	return
 }
 
@@ -2225,9 +2231,11 @@ type FfiT_Go_Auth_tokenSetFirebase_P0 = pkg.FirebaseInfo
 type FfiT_Go_Auth_tokenSetFirebase_P1 = *pkg.Token
 func Go_Auth_tokenSetFirebaseT(value pkg.FirebaseInfo, recv *pkg.Token) *pkg.Token { recv.Firebase = value; return recv }
 
-func Go_Auth_tokenClaims(p0 any) any { return SkyFfiFieldGet(p0, "Claims") }
+type FfiT_Go_Auth_tokenClaims_P0 = *pkg.Token
+func Go_Auth_tokenClaimsT(p0 *pkg.Token) map[string]interface{} { return p0.Claims }
 
-func Go_Auth_tokenSetClaims(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Claims") }
+type FfiT_Go_Auth_tokenSetClaims_P1 = *pkg.Token
+func Go_Auth_tokenSetClaimsT(value map[string]interface{}, recv *pkg.Token) *pkg.Token { recv.Claims = value; return recv }
 
 func Go_Auth_newToken(_ any) any { return new(pkg.Token) }
 
@@ -2398,9 +2406,11 @@ type FfiT_Go_Auth_userRecordSetUserInfo_P0 = pkg.UserInfo
 type FfiT_Go_Auth_userRecordSetUserInfo_P1 = *pkg.UserRecord
 func Go_Auth_userRecordSetUserInfoT(value pkg.UserInfo, recv *pkg.UserRecord) *pkg.UserRecord { recv.UserInfo = func() *pkg.UserInfo { v := value; return &v }(); return recv }
 
-func Go_Auth_userRecordCustomClaims(p0 any) any { return SkyFfiFieldGet(p0, "CustomClaims") }
+type FfiT_Go_Auth_userRecordCustomClaims_P0 = *pkg.UserRecord
+func Go_Auth_userRecordCustomClaimsT(p0 *pkg.UserRecord) map[string]interface{} { return p0.CustomClaims }
 
-func Go_Auth_userRecordSetCustomClaims(value any, recv any) any { return SkyFfiFieldSet(value, recv, "CustomClaims") }
+type FfiT_Go_Auth_userRecordSetCustomClaims_P1 = *pkg.UserRecord
+func Go_Auth_userRecordSetCustomClaimsT(value map[string]interface{}, recv *pkg.UserRecord) *pkg.UserRecord { recv.CustomClaims = value; return recv }
 
 type FfiT_Go_Auth_userRecordDisabled_P0 = *pkg.UserRecord
 func Go_Auth_userRecordDisabledT(p0 *pkg.UserRecord) bool { return p0.Disabled }
@@ -2591,10 +2601,12 @@ func Go_Auth_userToImportMetadataT(p0 *pkg.UserToImport, p1 *pkg.UserMetadata) (
 	return
 }
 
-// [pure] Go_Auth.userToImportCustomClaims → pkg.UserToImportCustomClaims
-func Go_Auth_userToImportCustomClaims(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.UserToImport).CustomClaims(p1.(map[string]interface{})))
+type FfiT_Go_Auth_userToImportCustomClaims_P0 = *pkg.UserToImport
+type FfiT_Go_Auth_userToImportCustomClaims_R = *pkg.UserToImport
+// [pure] typed wrapper for Go_Auth_userToImportCustomClaims (P7 adaptor target)
+func Go_Auth_userToImportCustomClaimsT(p0 *pkg.UserToImport, p1 map[string]interface{}) (out SkyResult[any, *pkg.UserToImport]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,*pkg.UserToImport](p0.CustomClaims(p1))
 	return
 }
 
@@ -2646,10 +2658,12 @@ func Go_Auth_userToImportProviderDataT(p0 *pkg.UserToImport, p1 []*pkg.UserProvi
 
 func Go_Auth_newUserToImport(_ any) any { return new(pkg.UserToImport) }
 
-// [pure] Go_Auth.userToUpdateCustomClaims → pkg.UserToUpdateCustomClaims
-func Go_Auth_userToUpdateCustomClaims(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.UserToUpdate).CustomClaims(p1.(map[string]interface{})))
+type FfiT_Go_Auth_userToUpdateCustomClaims_P0 = *pkg.UserToUpdate
+type FfiT_Go_Auth_userToUpdateCustomClaims_R = *pkg.UserToUpdate
+// [pure] typed wrapper for Go_Auth_userToUpdateCustomClaims (P7 adaptor target)
+func Go_Auth_userToUpdateCustomClaimsT(p0 *pkg.UserToUpdate, p1 map[string]interface{}) (out SkyResult[any, *pkg.UserToUpdate]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,*pkg.UserToUpdate](p0.CustomClaims(p1))
 	return
 }
 

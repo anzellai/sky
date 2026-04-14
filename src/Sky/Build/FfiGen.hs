@@ -1225,6 +1225,8 @@ classifyTypedResult results = case results of
 -- bare generic type parameter, or non-identifier gibberish.
 isSimpleTypedType :: String -> Bool
 isSimpleTypedType t0
+    -- `interface{}` is Go's `any`. Simple param.
+    | t0 == "interface{}" = True
     -- Allow simple `map[K]V` where K and V are themselves simple (no
     -- generics, no channels, no funcs). Common for Stripe's Metadata
     -- field which is `map[string]string`.

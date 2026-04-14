@@ -2613,12 +2613,17 @@ typedFfiWrapperParams = unsafePerformIO (readIORef Env.ffiTypedWrapperParamsRef)
 -- aliases as part of the FFI registry so more types become callable.
 isCallerVisibleGoType :: String -> Bool
 isCallerVisibleGoType t =
-    let bare = dropWhile (\c -> c == '*' || c == '[' || c == ']' || c == ' ') t
-    in bare `elem`
-        [ "string", "int", "int8", "int16", "int32", "int64"
-        , "uint", "uint8", "uint16", "uint32", "uint64"
-        , "float32", "float64", "bool", "byte", "rune", "error"
-        ]
+    -- `interface{}` and `any` are Go's empty interface — main.go can
+    -- always use them. Treat the raw string match (not the bare-strip)
+    -- since dropping `*` from `*interface{}` gives nonsense.
+    if t == "interface{}" || t == "any" then True
+    else
+      let bare = dropWhile (\c -> c == '*' || c == '[' || c == ']' || c == ' ') t
+      in bare `elem`
+          [ "string", "int", "int8", "int16", "int32", "int64"
+          , "uint", "uint8", "uint16", "uint32", "uint64"
+          , "float32", "float64", "bool", "byte", "rune", "error"
+          ]
 
 
 -- | Coerce a Sky arg to a concrete Go type at a typed FFI call site.

@@ -60,13 +60,13 @@ func Go_Iterator_pageablePageInfoT(p0 pkg.Pageable) (out SkyResult[any, *pkg.Pag
 	return
 }
 
-// [fallible] Go_Iterator.pagerNextPage → pkg.PagerNextPage
-func Go_Iterator_pagerNextPage(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := p0.(*pkg.Pager).NextPage(p1.(interface{}))
-	if err != nil { out = Err[any, any](ErrFfi(err.Error())); return }
-	out = Ok[any, any](r0)
-
+type FfiT_Go_Iterator_pagerNextPage_P0 = *pkg.Pager
+// [fallible] typed wrapper for Go_Iterator_pagerNextPage (P7 adaptor target)
+func Go_Iterator_pagerNextPageT(p0 *pkg.Pager, p1 interface{}) (out SkyResult[any, string]) {
+	defer SkyFfiRecoverT(&out)()
+	r0, err := p0.NextPage(p1)
+	if err != nil { out = Err[any,string](ErrFfi(err.Error())); return }
+	out = Ok[any,string](r0)
 	return
 }
 

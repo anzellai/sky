@@ -138,10 +138,11 @@ func Go_Session_iterCheckoutSessionListT(p0 *pkg.Iter) (out SkyResult[any, *stri
 	return
 }
 
-// [pure] Go_Session.iterCurrent → pkg.IterCurrent
-func Go_Session_iterCurrent(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.Iter).Current())
+type FfiT_Go_Session_iterCurrent_P0 = *pkg.Iter
+// [pure] typed wrapper for Go_Session_iterCurrent (P7 adaptor target)
+func Go_Session_iterCurrentT(p0 *pkg.Iter) (out SkyResult[any, interface{}]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,interface{}](p0.Current())
 	return
 }
 
@@ -209,10 +210,11 @@ func Go_Session_lineItemIterLineItemListT(p0 *pkg.LineItemIter) (out SkyResult[a
 	return
 }
 
-// [pure] Go_Session.lineItemIterCurrent → pkg.LineItemIterCurrent
-func Go_Session_lineItemIterCurrent(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.LineItemIter).Current())
+type FfiT_Go_Session_lineItemIterCurrent_P0 = *pkg.LineItemIter
+// [pure] typed wrapper for Go_Session_lineItemIterCurrent (P7 adaptor target)
+func Go_Session_lineItemIterCurrentT(p0 *pkg.LineItemIter) (out SkyResult[any, interface{}]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,interface{}](p0.Current())
 	return
 }
 

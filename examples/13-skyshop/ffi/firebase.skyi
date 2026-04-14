@@ -1,7 +1,7 @@
 -- Auto-generated FFI binding catalogue for firebase.google.com/go/v4
 --
 -- All auto-generated bindings are registered effect-unknown and are
--- callable via Sky.Ffi.callTask. Every call returns Task String a
+-- callable via Sky.Ffi.callTask. Every call returns Task Error a
 -- with panic recovery — any Go panic is caught and surfaced as Err.
 --
 -- Opaque Go struct values flow through Sky as Any; use the bindings
@@ -23,26 +23,26 @@
 --   option "google.golang.org/api/option"
 
 package firebase
--- [fallible] AppAuth : App -> Context -> (Client, String)   -- runtime wrap: Task String
--- [fallible] AppDatabase : App -> Context -> (Client, String)   -- runtime wrap: Task String
--- [fallible] AppDatabaseWithURL : App -> Context -> String -> (Client, String)   -- runtime wrap: Task String
--- [fallible] AppStorage : App -> Context -> (Client, String)   -- runtime wrap: Task String
--- [fallible] AppFirestore : App -> Context -> (Client, String)   -- runtime wrap: Task String
--- [fallible] AppFirestoreWithDatabaseID : App -> Context -> String -> (Client, String)   -- runtime wrap: Task String
--- [fallible] AppInstanceID : App -> Context -> (Client, String)   -- runtime wrap: Task String
--- [fallible] AppMessaging : App -> Context -> (Client, String)   -- runtime wrap: Task String
--- [fallible] AppAppCheck : App -> Context -> (Client, String)   -- runtime wrap: Task String
--- [fallible] AppRemoteConfig : App -> Context -> (Client, String)   -- runtime wrap: Task String
--- [pure] ConfigAuthOverride : Config -> *map[string]interface{}   -- runtime wrap: Task String
--- [pure] ConfigSetAuthOverride : *map[string]interface{} -> Config -> Config   -- runtime wrap: Task String
--- [pure] ConfigDatabaseURL : Config -> String   -- runtime wrap: Task String
--- [pure] ConfigSetDatabaseURL : String -> Config -> Config   -- runtime wrap: Task String
--- [pure] ConfigProjectID : Config -> String   -- runtime wrap: Task String
--- [pure] ConfigSetProjectID : String -> Config -> Config   -- runtime wrap: Task String
--- [pure] ConfigServiceAccountID : Config -> String   -- runtime wrap: Task String
--- [pure] ConfigSetServiceAccountID : String -> Config -> Config   -- runtime wrap: Task String
--- [pure] ConfigStorageBucket : Config -> String   -- runtime wrap: Task String
--- [pure] ConfigSetStorageBucket : String -> Config -> Config   -- runtime wrap: Task String
--- [pure] NewConfig : struct{} -> Config   -- runtime wrap: Task String
--- [fallible] NewApp : Context -> Config -> ClientOption -> (App, String)   -- runtime wrap: Task String
--- [pure] Version : struct{} -> untyped string   -- runtime wrap: Task String
+-- [fallible] AppAuth : App -> Context -> (Client, String)   -- runtime wrap: Task Error
+-- [fallible] AppDatabase : App -> Context -> (Client, String)   -- runtime wrap: Task Error
+-- [fallible] AppDatabaseWithURL : App -> Context -> String -> (Client, String)   -- runtime wrap: Task Error
+-- [fallible] AppStorage : App -> Context -> (Client, String)   -- runtime wrap: Task Error
+-- [fallible] AppFirestore : App -> Context -> (Client, String)   -- runtime wrap: Task Error
+-- [fallible] AppFirestoreWithDatabaseID : App -> Context -> String -> (Client, String)   -- runtime wrap: Task Error
+-- [fallible] AppInstanceID : App -> Context -> (Client, String)   -- runtime wrap: Task Error
+-- [fallible] AppMessaging : App -> Context -> (Client, String)   -- runtime wrap: Task Error
+-- [fallible] AppAppCheck : App -> Context -> (Client, String)   -- runtime wrap: Task Error
+-- [fallible] AppRemoteConfig : App -> Context -> (Client, String)   -- runtime wrap: Task Error
+-- [pure] ConfigAuthOverride : Config -> *map[string]interface{}   -- runtime wrap: Task Error
+-- [pure] ConfigSetAuthOverride : *map[string]interface{} -> Config -> Config   -- runtime wrap: Task Error
+-- [pure] ConfigDatabaseURL : Config -> String   -- runtime wrap: Task Error
+-- [pure] ConfigSetDatabaseURL : String -> Config -> Config   -- runtime wrap: Task Error
+-- [pure] ConfigProjectID : Config -> String   -- runtime wrap: Task Error
+-- [pure] ConfigSetProjectID : String -> Config -> Config   -- runtime wrap: Task Error
+-- [pure] ConfigServiceAccountID : Config -> String   -- runtime wrap: Task Error
+-- [pure] ConfigSetServiceAccountID : String -> Config -> Config   -- runtime wrap: Task Error
+-- [pure] ConfigStorageBucket : Config -> String   -- runtime wrap: Task Error
+-- [pure] ConfigSetStorageBucket : String -> Config -> Config   -- runtime wrap: Task Error
+-- [pure] NewConfig : struct{} -> Config   -- runtime wrap: Task Error
+-- [fallible] NewApp : Context -> Config -> ClientOption -> (App, String)   -- runtime wrap: Task Error
+-- [pure] Version : struct{} -> untyped string   -- runtime wrap: Task Error

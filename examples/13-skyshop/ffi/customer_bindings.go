@@ -206,10 +206,11 @@ func Go_Customer_iterCustomerListT(p0 *pkg.Iter) (out SkyResult[any, *stripe_go.
 	return
 }
 
-// [pure] Go_Customer.iterCurrent → pkg.IterCurrent
-func Go_Customer_iterCurrent(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.Iter).Current())
+type FfiT_Go_Customer_iterCurrent_P0 = *pkg.Iter
+// [pure] typed wrapper for Go_Customer_iterCurrent (P7 adaptor target)
+func Go_Customer_iterCurrentT(p0 *pkg.Iter) (out SkyResult[any, interface{}]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,interface{}](p0.Current())
 	return
 }
 
@@ -306,10 +307,11 @@ func Go_Customer_paymentMethodIterPaymentMethodListT(p0 *pkg.PaymentMethodIter) 
 	return
 }
 
-// [pure] Go_Customer.paymentMethodIterCurrent → pkg.PaymentMethodIterCurrent
-func Go_Customer_paymentMethodIterCurrent(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.PaymentMethodIter).Current())
+type FfiT_Go_Customer_paymentMethodIterCurrent_P0 = *pkg.PaymentMethodIter
+// [pure] typed wrapper for Go_Customer_paymentMethodIterCurrent (P7 adaptor target)
+func Go_Customer_paymentMethodIterCurrentT(p0 *pkg.PaymentMethodIter) (out SkyResult[any, interface{}]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,interface{}](p0.Current())
 	return
 }
 
@@ -397,10 +399,11 @@ func Go_Customer_searchIterCustomerSearchResultT(p0 *pkg.SearchIter) (out SkyRes
 	return
 }
 
-// [pure] Go_Customer.searchIterCurrent → pkg.SearchIterCurrent
-func Go_Customer_searchIterCurrent(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.SearchIter).Current())
+type FfiT_Go_Customer_searchIterCurrent_P0 = *pkg.SearchIter
+// [pure] typed wrapper for Go_Customer_searchIterCurrent (P7 adaptor target)
+func Go_Customer_searchIterCurrentT(p0 *pkg.SearchIter) (out SkyResult[any, interface{}]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,interface{}](p0.Current())
 	return
 }
 
