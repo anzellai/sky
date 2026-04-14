@@ -54,6 +54,12 @@ func Go_Option_withAPIKey(p0 any) (out any) {
 	out = Ok[any, any](pkg.WithAPIKey(fmt.Sprintf("%v", p0)))
 	return
 }
+// [pure] typed wrapper for Go_Option_withAPIKey (P7 adaptor target)
+func Go_Option_withAPIKeyT(p0 string) (out SkyResult[string, pkg.ClientOption]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, pkg.ClientOption](pkg.WithAPIKey(p0))
+	return
+}
 
 // [pure] Go_Option.withAudiences → pkg.WithAudiences
 func Go_Option_withAudiences(p0 any) (out any) {
@@ -68,11 +74,23 @@ func Go_Option_withAuthCredentials(p0 any) (out any) {
 	out = Ok[any, any](pkg.WithAuthCredentials(p0.(*auth.Credentials)))
 	return
 }
+// [pure] typed wrapper for Go_Option_withAuthCredentials (P7 adaptor target)
+func Go_Option_withAuthCredentialsT(p0 *auth.Credentials) (out SkyResult[string, pkg.ClientOption]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, pkg.ClientOption](pkg.WithAuthCredentials(p0))
+	return
+}
 
 // [pure] Go_Option.withAuthCredentialsFile → pkg.WithAuthCredentialsFile
 func Go_Option_withAuthCredentialsFile(p0 any, p1 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](pkg.WithAuthCredentialsFile(p0.(pkg.CredentialsType), fmt.Sprintf("%v", p1)))
+	return
+}
+// [pure] typed wrapper for Go_Option_withAuthCredentialsFile (P7 adaptor target)
+func Go_Option_withAuthCredentialsFileT(p0 pkg.CredentialsType, p1 string) (out SkyResult[string, pkg.ClientOption]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, pkg.ClientOption](pkg.WithAuthCredentialsFile(p0, p1))
 	return
 }
 
@@ -82,11 +100,23 @@ func Go_Option_withAuthCredentialsJSON(p0 any, p1 any) (out any) {
 	out = Ok[any, any](pkg.WithAuthCredentialsJSON(p0.(pkg.CredentialsType), SkyFfiArg_bytes(p1)))
 	return
 }
+// [pure] typed wrapper for Go_Option_withAuthCredentialsJSON (P7 adaptor target)
+func Go_Option_withAuthCredentialsJSONT(p0 pkg.CredentialsType, p1 []byte) (out SkyResult[string, pkg.ClientOption]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, pkg.ClientOption](pkg.WithAuthCredentialsJSON(p0, p1))
+	return
+}
 
 // [pure] Go_Option.withClientCertSource → pkg.WithClientCertSource
 func Go_Option_withClientCertSource(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](pkg.WithClientCertSource(p0.(pkg.ClientCertSource)))
+	return
+}
+// [pure] typed wrapper for Go_Option_withClientCertSource (P7 adaptor target)
+func Go_Option_withClientCertSourceT(p0 pkg.ClientCertSource) (out SkyResult[string, pkg.ClientOption]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, pkg.ClientOption](pkg.WithClientCertSource(p0))
 	return
 }
 
@@ -96,11 +126,23 @@ func Go_Option_withCredentials(p0 any) (out any) {
 	out = Ok[any, any](pkg.WithCredentials(p0.(*google.Credentials)))
 	return
 }
+// [pure] typed wrapper for Go_Option_withCredentials (P7 adaptor target)
+func Go_Option_withCredentialsT(p0 *google.Credentials) (out SkyResult[string, pkg.ClientOption]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, pkg.ClientOption](pkg.WithCredentials(p0))
+	return
+}
 
 // [pure] Go_Option.withCredentialsFile → pkg.WithCredentialsFile
 func Go_Option_withCredentialsFile(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](pkg.WithCredentialsFile(fmt.Sprintf("%v", p0)))
+	return
+}
+// [pure] typed wrapper for Go_Option_withCredentialsFile (P7 adaptor target)
+func Go_Option_withCredentialsFileT(p0 string) (out SkyResult[string, pkg.ClientOption]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, pkg.ClientOption](pkg.WithCredentialsFile(p0))
 	return
 }
 
@@ -110,11 +152,23 @@ func Go_Option_withCredentialsJSON(p0 any) (out any) {
 	out = Ok[any, any](pkg.WithCredentialsJSON(SkyFfiArg_bytes(p0)))
 	return
 }
+// [pure] typed wrapper for Go_Option_withCredentialsJSON (P7 adaptor target)
+func Go_Option_withCredentialsJSONT(p0 []byte) (out SkyResult[string, pkg.ClientOption]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, pkg.ClientOption](pkg.WithCredentialsJSON(p0))
+	return
+}
 
 // [pure] Go_Option.withEndpoint → pkg.WithEndpoint
 func Go_Option_withEndpoint(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](pkg.WithEndpoint(fmt.Sprintf("%v", p0)))
+	return
+}
+// [pure] typed wrapper for Go_Option_withEndpoint (P7 adaptor target)
+func Go_Option_withEndpointT(p0 string) (out SkyResult[string, pkg.ClientOption]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, pkg.ClientOption](pkg.WithEndpoint(p0))
 	return
 }
 
@@ -124,11 +178,23 @@ func Go_Option_withGRPCConn(p0 any) (out any) {
 	out = Ok[any, any](pkg.WithGRPCConn(p0.(*grpc.ClientConn)))
 	return
 }
+// [pure] typed wrapper for Go_Option_withGRPCConn (P7 adaptor target)
+func Go_Option_withGRPCConnT(p0 *grpc.ClientConn) (out SkyResult[string, pkg.ClientOption]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, pkg.ClientOption](pkg.WithGRPCConn(p0))
+	return
+}
 
 // [pure] Go_Option.withGRPCConnectionPool → pkg.WithGRPCConnectionPool
 func Go_Option_withGRPCConnectionPool(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](pkg.WithGRPCConnectionPool(AsInt(p0)))
+	return
+}
+// [pure] typed wrapper for Go_Option_withGRPCConnectionPool (P7 adaptor target)
+func Go_Option_withGRPCConnectionPoolT(p0 int) (out SkyResult[string, pkg.ClientOption]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, pkg.ClientOption](pkg.WithGRPCConnectionPool(p0))
 	return
 }
 
@@ -138,11 +204,23 @@ func Go_Option_withGRPCDialOption(p0 any) (out any) {
 	out = Ok[any, any](pkg.WithGRPCDialOption(p0.(grpc.DialOption)))
 	return
 }
+// [pure] typed wrapper for Go_Option_withGRPCDialOption (P7 adaptor target)
+func Go_Option_withGRPCDialOptionT(p0 grpc.DialOption) (out SkyResult[string, pkg.ClientOption]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, pkg.ClientOption](pkg.WithGRPCDialOption(p0))
+	return
+}
 
 // [pure] Go_Option.withHTTPClient → pkg.WithHTTPClient
 func Go_Option_withHTTPClient(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](pkg.WithHTTPClient(p0.(*http.Client)))
+	return
+}
+// [pure] typed wrapper for Go_Option_withHTTPClient (P7 adaptor target)
+func Go_Option_withHTTPClientT(p0 *http.Client) (out SkyResult[string, pkg.ClientOption]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, pkg.ClientOption](pkg.WithHTTPClient(p0))
 	return
 }
 
@@ -152,6 +230,12 @@ func Go_Option_withLogger(p0 any) (out any) {
 	out = Ok[any, any](pkg.WithLogger(p0.(*slog.Logger)))
 	return
 }
+// [pure] typed wrapper for Go_Option_withLogger (P7 adaptor target)
+func Go_Option_withLoggerT(p0 *slog.Logger) (out SkyResult[string, pkg.ClientOption]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, pkg.ClientOption](pkg.WithLogger(p0))
+	return
+}
 
 // [pure] Go_Option.withQuotaProject → pkg.WithQuotaProject
 func Go_Option_withQuotaProject(p0 any) (out any) {
@@ -159,11 +243,23 @@ func Go_Option_withQuotaProject(p0 any) (out any) {
 	out = Ok[any, any](pkg.WithQuotaProject(fmt.Sprintf("%v", p0)))
 	return
 }
+// [pure] typed wrapper for Go_Option_withQuotaProject (P7 adaptor target)
+func Go_Option_withQuotaProjectT(p0 string) (out SkyResult[string, pkg.ClientOption]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, pkg.ClientOption](pkg.WithQuotaProject(p0))
+	return
+}
 
 // [pure] Go_Option.withRequestReason → pkg.WithRequestReason
 func Go_Option_withRequestReason(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](pkg.WithRequestReason(fmt.Sprintf("%v", p0)))
+	return
+}
+// [pure] typed wrapper for Go_Option_withRequestReason (P7 adaptor target)
+func Go_Option_withRequestReasonT(p0 string) (out SkyResult[string, pkg.ClientOption]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, pkg.ClientOption](pkg.WithRequestReason(p0))
 	return
 }
 
@@ -180,12 +276,24 @@ func Go_Option_withServiceAccountFile(p0 any) (out any) {
 	out = Ok[any, any](pkg.WithServiceAccountFile(fmt.Sprintf("%v", p0)))
 	return
 }
+// [pure] typed wrapper for Go_Option_withServiceAccountFile (P7 adaptor target)
+func Go_Option_withServiceAccountFileT(p0 string) (out SkyResult[string, pkg.ClientOption]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, pkg.ClientOption](pkg.WithServiceAccountFile(p0))
+	return
+}
 
 // [pure] Go_Option.withTelemetryDisabled → pkg.WithTelemetryDisabled
 func Go_Option_withTelemetryDisabled(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	_ = p0
 	out = Ok[any, any](pkg.WithTelemetryDisabled())
+	return
+}
+// [pure] typed wrapper for Go_Option_withTelemetryDisabled (P7 adaptor target)
+func Go_Option_withTelemetryDisabledT() (out SkyResult[string, pkg.ClientOption]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, pkg.ClientOption](pkg.WithTelemetryDisabled())
 	return
 }
 
@@ -195,11 +303,23 @@ func Go_Option_withTokenSource(p0 any) (out any) {
 	out = Ok[any, any](pkg.WithTokenSource(p0.(oauth2.TokenSource)))
 	return
 }
+// [pure] typed wrapper for Go_Option_withTokenSource (P7 adaptor target)
+func Go_Option_withTokenSourceT(p0 oauth2.TokenSource) (out SkyResult[string, pkg.ClientOption]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, pkg.ClientOption](pkg.WithTokenSource(p0))
+	return
+}
 
 // [pure] Go_Option.withUniverseDomain → pkg.WithUniverseDomain
 func Go_Option_withUniverseDomain(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](pkg.WithUniverseDomain(fmt.Sprintf("%v", p0)))
+	return
+}
+// [pure] typed wrapper for Go_Option_withUniverseDomain (P7 adaptor target)
+func Go_Option_withUniverseDomainT(p0 string) (out SkyResult[string, pkg.ClientOption]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, pkg.ClientOption](pkg.WithUniverseDomain(p0))
 	return
 }
 
@@ -209,12 +329,24 @@ func Go_Option_withUserAgent(p0 any) (out any) {
 	out = Ok[any, any](pkg.WithUserAgent(fmt.Sprintf("%v", p0)))
 	return
 }
+// [pure] typed wrapper for Go_Option_withUserAgent (P7 adaptor target)
+func Go_Option_withUserAgentT(p0 string) (out SkyResult[string, pkg.ClientOption]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, pkg.ClientOption](pkg.WithUserAgent(p0))
+	return
+}
 
 // [pure] Go_Option.withoutAuthentication → pkg.WithoutAuthentication
 func Go_Option_withoutAuthentication(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	_ = p0
 	out = Ok[any, any](pkg.WithoutAuthentication())
+	return
+}
+// [pure] typed wrapper for Go_Option_withoutAuthentication (P7 adaptor target)
+func Go_Option_withoutAuthenticationT() (out SkyResult[string, pkg.ClientOption]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, pkg.ClientOption](pkg.WithoutAuthentication())
 	return
 }
 
