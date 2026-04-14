@@ -1,0 +1,174 @@
+-- | Sky.Core.Error — the single unified error type used across the
+-- entire stdlib, FFI boundary, and user code.
+--
+-- This replaces:
+--   * String-based errors (no more `Result String a`)
+--   * Std.IoError and its variants
+--   * RemoteData failure states
+--   * Ad-hoc error patterns across every example
+--
+-- Pattern match on `Error` at your boundaries; use constructor helpers
+-- (Error.io, Error.network, Error.ffi, …) when raising errors; and
+-- `Error.toString` when rendering to a user or a log line.
+--
+-- Structured details (`ErrorDetails`) carry extra context — HTTP
+-- status, JSON decode path, FFI panic stack — for debuggers and
+-- higher-level middleware. They are optional; every constructor
+-- below sets `details = Nothing` by default.
+
+module Sky.Core.Error exposing (..)
+
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.Maybe exposing (Maybe(..))
+
+
+type Error
+    = Error ErrorKind ErrorInfo
+
+
+type ErrorKind
+    = Io
+    | Network
+    | Ffi
+    | Decode
+    | Timeout
+    | NotFound
+    | PermissionDenied
+    | InvalidInput
+    | Conflict
+    | Unavailable
+    | Unexpected
+
+
+type alias ErrorInfo =
+    { message : String
+    , details : Maybe ErrorDetails
+    }
+
+
+type ErrorDetails
+    = FfiPanic PanicInfo
+    | TypeMismatch TypeInfo
+    | HttpStatus Int
+    | JsonDecode String
+    | Custom String
+
+
+type alias PanicInfo =
+    { message : String
+    , stack : List String
+    }
+
+
+type alias TypeInfo =
+    { expected : String
+    , actual : String
+    }
+
+
+-- ── Constructors ────────────────────────────────────────────────────
+
+mkInfo : String -> ErrorInfo
+mkInfo msg = { message = msg, details = Nothing }
+
+
+io : String -> Error
+io msg = Error Io (mkInfo msg)
+
+
+network : String -> Error
+network msg = Error Network (mkInfo msg)
+
+
+ffi : String -> Error
+ffi msg = Error Ffi (mkInfo msg)
+
+
+decode : String -> Error
+decode msg = Error Decode (mkInfo msg)
+
+
+timeout : Error
+timeout = Error Timeout (mkInfo "operation timed out")
+
+
+notFound : Error
+notFound = Error NotFound (mkInfo "not found")
+
+
+permissionDenied : Error
+permissionDenied = Error PermissionDenied (mkInfo "permission denied")
+
+
+invalidInput : String -> Error
+invalidInput msg = Error InvalidInput (mkInfo msg)
+
+
+conflict : String -> Error
+conflict msg = Error Conflict (mkInfo msg)
+
+
+unavailable : String -> Error
+unavailable msg = Error Unavailable (mkInfo msg)
+
+
+unexpected : String -> Error
+unexpected msg = Error Unexpected (mkInfo msg)
+
+
+-- ── Modifiers ───────────────────────────────────────────────────────
+
+withMessage : String -> Error -> Error
+withMessage msg err =
+    case err of
+        Error kind info ->
+            Error kind { message = msg, details = info.details }
+
+
+withDetails : ErrorDetails -> Error -> Error
+withDetails d err =
+    case err of
+        Error kind info ->
+            Error kind { message = info.message, details = Just d }
+
+
+-- ── Helpers ─────────────────────────────────────────────────────────
+
+kindLabel : ErrorKind -> String
+kindLabel k =
+    case k of
+        Io               -> "IO"
+        Network          -> "Network"
+        Ffi              -> "FFI"
+        Decode           -> "Decode"
+        Timeout          -> "Timeout"
+        NotFound         -> "NotFound"
+        PermissionDenied -> "PermissionDenied"
+        InvalidInput     -> "InvalidInput"
+        Conflict         -> "Conflict"
+        Unavailable      -> "Unavailable"
+        Unexpected       -> "Unexpected"
+
+
+-- Human-readable `<Kind>: <message>` form. Suitable for logs, toasts,
+-- and terminal output. Pattern-match on the Error directly when the
+-- kind matters for control flow — `toString` is the fallback.
+toString : Error -> String
+toString err =
+    case err of
+        Error kind info ->
+            kindLabel kind ++ ": " ++ info.message
+
+
+-- True for transient error kinds — callers can retry.
+isRetryable : Error -> Bool
+isRetryable err =
+    case err of
+        Error kind _ ->
+            case kind of
+                Timeout     -> True
+                Network     -> True
+                Unavailable -> True
+                _           -> False
