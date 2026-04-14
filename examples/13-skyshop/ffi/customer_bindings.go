@@ -23,6 +23,14 @@ func Go_Customer_clientNew(p0 any, p1 any) (out any) {
 
 	return
 }
+// [fallible] typed wrapper for Go_Customer_clientNew (P7 adaptor target)
+func Go_Customer_clientNewT(p0 pkg.Client, p1 *stripe_go.CustomerParams) (out SkyResult[string, *stripe_go.Customer]) {
+	defer SkyFfiRecoverT(&out)()
+	r0, err := p0.New(p1)
+	if err != nil { out = Err[string, *stripe_go.Customer](err.Error()); return }
+	out = Ok[string, *stripe_go.Customer](r0)
+	return
+}
 
 // [fallible] Go_Customer.clientGet → pkg.ClientGet
 func Go_Customer_clientGet(p0 any, p1 any, p2 any) (out any) {
@@ -31,6 +39,14 @@ func Go_Customer_clientGet(p0 any, p1 any, p2 any) (out any) {
 	if err != nil { out = Err[any, any](err.Error()); return }
 	out = Ok[any, any](r0)
 
+	return
+}
+// [fallible] typed wrapper for Go_Customer_clientGet (P7 adaptor target)
+func Go_Customer_clientGetT(p0 pkg.Client, p1 string, p2 *stripe_go.CustomerParams) (out SkyResult[string, *stripe_go.Customer]) {
+	defer SkyFfiRecoverT(&out)()
+	r0, err := p0.Get(p1, p2)
+	if err != nil { out = Err[string, *stripe_go.Customer](err.Error()); return }
+	out = Ok[string, *stripe_go.Customer](r0)
 	return
 }
 
@@ -43,6 +59,14 @@ func Go_Customer_clientUpdate(p0 any, p1 any, p2 any) (out any) {
 
 	return
 }
+// [fallible] typed wrapper for Go_Customer_clientUpdate (P7 adaptor target)
+func Go_Customer_clientUpdateT(p0 pkg.Client, p1 string, p2 *stripe_go.CustomerParams) (out SkyResult[string, *stripe_go.Customer]) {
+	defer SkyFfiRecoverT(&out)()
+	r0, err := p0.Update(p1, p2)
+	if err != nil { out = Err[string, *stripe_go.Customer](err.Error()); return }
+	out = Ok[string, *stripe_go.Customer](r0)
+	return
+}
 
 // [fallible] Go_Customer.clientDel → pkg.ClientDel
 func Go_Customer_clientDel(p0 any, p1 any, p2 any) (out any) {
@@ -51,6 +75,14 @@ func Go_Customer_clientDel(p0 any, p1 any, p2 any) (out any) {
 	if err != nil { out = Err[any, any](err.Error()); return }
 	out = Ok[any, any](r0)
 
+	return
+}
+// [fallible] typed wrapper for Go_Customer_clientDel (P7 adaptor target)
+func Go_Customer_clientDelT(p0 pkg.Client, p1 string, p2 *stripe_go.CustomerParams) (out SkyResult[string, *stripe_go.Customer]) {
+	defer SkyFfiRecoverT(&out)()
+	r0, err := p0.Del(p1, p2)
+	if err != nil { out = Err[string, *stripe_go.Customer](err.Error()); return }
+	out = Ok[string, *stripe_go.Customer](r0)
 	return
 }
 
@@ -63,6 +95,14 @@ func Go_Customer_clientCreateFundingInstructions(p0 any, p1 any, p2 any) (out an
 
 	return
 }
+// [fallible] typed wrapper for Go_Customer_clientCreateFundingInstructions (P7 adaptor target)
+func Go_Customer_clientCreateFundingInstructionsT(p0 pkg.Client, p1 string, p2 *stripe_go.CustomerCreateFundingInstructionsParams) (out SkyResult[string, *stripe_go.FundingInstructions]) {
+	defer SkyFfiRecoverT(&out)()
+	r0, err := p0.CreateFundingInstructions(p1, p2)
+	if err != nil { out = Err[string, *stripe_go.FundingInstructions](err.Error()); return }
+	out = Ok[string, *stripe_go.FundingInstructions](r0)
+	return
+}
 
 // [fallible] Go_Customer.clientDeleteDiscount → pkg.ClientDeleteDiscount
 func Go_Customer_clientDeleteDiscount(p0 any, p1 any, p2 any) (out any) {
@@ -71,6 +111,14 @@ func Go_Customer_clientDeleteDiscount(p0 any, p1 any, p2 any) (out any) {
 	if err != nil { out = Err[any, any](err.Error()); return }
 	out = Ok[any, any](r0)
 
+	return
+}
+// [fallible] typed wrapper for Go_Customer_clientDeleteDiscount (P7 adaptor target)
+func Go_Customer_clientDeleteDiscountT(p0 pkg.Client, p1 string, p2 *stripe_go.CustomerDeleteDiscountParams) (out SkyResult[string, *stripe_go.Customer]) {
+	defer SkyFfiRecoverT(&out)()
+	r0, err := p0.DeleteDiscount(p1, p2)
+	if err != nil { out = Err[string, *stripe_go.Customer](err.Error()); return }
+	out = Ok[string, *stripe_go.Customer](r0)
 	return
 }
 
@@ -83,11 +131,25 @@ func Go_Customer_clientRetrievePaymentMethod(p0 any, p1 any, p2 any) (out any) {
 
 	return
 }
+// [fallible] typed wrapper for Go_Customer_clientRetrievePaymentMethod (P7 adaptor target)
+func Go_Customer_clientRetrievePaymentMethodT(p0 pkg.Client, p1 string, p2 *stripe_go.CustomerRetrievePaymentMethodParams) (out SkyResult[string, *stripe_go.PaymentMethod]) {
+	defer SkyFfiRecoverT(&out)()
+	r0, err := p0.RetrievePaymentMethod(p1, p2)
+	if err != nil { out = Err[string, *stripe_go.PaymentMethod](err.Error()); return }
+	out = Ok[string, *stripe_go.PaymentMethod](r0)
+	return
+}
 
 // [pure] Go_Customer.clientList → pkg.ClientList
 func Go_Customer_clientList(p0 any, p1 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(pkg.Client).List(p1.(*stripe_go.CustomerListParams)))
+	return
+}
+// [pure] typed wrapper for Go_Customer_clientList (P7 adaptor target)
+func Go_Customer_clientListT(p0 pkg.Client, p1 *stripe_go.CustomerListParams) (out SkyResult[string, *pkg.Iter]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, *pkg.Iter](p0.List(p1))
 	return
 }
 
@@ -97,11 +159,23 @@ func Go_Customer_clientListPaymentMethods(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(pkg.Client).ListPaymentMethods(p1.(*stripe_go.CustomerListPaymentMethodsParams)))
 	return
 }
+// [pure] typed wrapper for Go_Customer_clientListPaymentMethods (P7 adaptor target)
+func Go_Customer_clientListPaymentMethodsT(p0 pkg.Client, p1 *stripe_go.CustomerListPaymentMethodsParams) (out SkyResult[string, *pkg.PaymentMethodIter]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, *pkg.PaymentMethodIter](p0.ListPaymentMethods(p1))
+	return
+}
 
 // [pure] Go_Customer.clientSearch → pkg.ClientSearch
 func Go_Customer_clientSearch(p0 any, p1 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(pkg.Client).Search(p1.(*stripe_go.CustomerSearchParams)))
+	return
+}
+// [pure] typed wrapper for Go_Customer_clientSearch (P7 adaptor target)
+func Go_Customer_clientSearchT(p0 pkg.Client, p1 *stripe_go.CustomerSearchParams) (out SkyResult[string, *pkg.SearchIter]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, *pkg.SearchIter](p0.Search(p1))
 	return
 }
 
@@ -124,6 +198,14 @@ func Go_Customer_createFundingInstructions(p0 any, p1 any) (out any) {
 
 	return
 }
+// [fallible] typed wrapper for Go_Customer_createFundingInstructions (P7 adaptor target)
+func Go_Customer_createFundingInstructionsT(p0 string, p1 *stripe_go.CustomerCreateFundingInstructionsParams) (out SkyResult[string, *stripe_go.FundingInstructions]) {
+	defer SkyFfiRecoverT(&out)()
+	r0, err := pkg.CreateFundingInstructions(p0, p1)
+	if err != nil { out = Err[string, *stripe_go.FundingInstructions](err.Error()); return }
+	out = Ok[string, *stripe_go.FundingInstructions](r0)
+	return
+}
 
 // [fallible] Go_Customer.del → pkg.Del
 func Go_Customer_del(p0 any, p1 any) (out any) {
@@ -132,6 +214,14 @@ func Go_Customer_del(p0 any, p1 any) (out any) {
 	if err != nil { out = Err[any, any](err.Error()); return }
 	out = Ok[any, any](r0)
 
+	return
+}
+// [fallible] typed wrapper for Go_Customer_del (P7 adaptor target)
+func Go_Customer_delT(p0 string, p1 *stripe_go.CustomerParams) (out SkyResult[string, *stripe_go.Customer]) {
+	defer SkyFfiRecoverT(&out)()
+	r0, err := pkg.Del(p0, p1)
+	if err != nil { out = Err[string, *stripe_go.Customer](err.Error()); return }
+	out = Ok[string, *stripe_go.Customer](r0)
 	return
 }
 
@@ -144,6 +234,14 @@ func Go_Customer_deleteDiscount(p0 any, p1 any) (out any) {
 
 	return
 }
+// [fallible] typed wrapper for Go_Customer_deleteDiscount (P7 adaptor target)
+func Go_Customer_deleteDiscountT(p0 string, p1 *stripe_go.CustomerDeleteDiscountParams) (out SkyResult[string, *stripe_go.Customer]) {
+	defer SkyFfiRecoverT(&out)()
+	r0, err := pkg.DeleteDiscount(p0, p1)
+	if err != nil { out = Err[string, *stripe_go.Customer](err.Error()); return }
+	out = Ok[string, *stripe_go.Customer](r0)
+	return
+}
 
 // [fallible] Go_Customer.get → pkg.Get
 func Go_Customer_get(p0 any, p1 any) (out any) {
@@ -154,6 +252,14 @@ func Go_Customer_get(p0 any, p1 any) (out any) {
 
 	return
 }
+// [fallible] typed wrapper for Go_Customer_get (P7 adaptor target)
+func Go_Customer_getT(p0 string, p1 *stripe_go.CustomerParams) (out SkyResult[string, *stripe_go.Customer]) {
+	defer SkyFfiRecoverT(&out)()
+	r0, err := pkg.Get(p0, p1)
+	if err != nil { out = Err[string, *stripe_go.Customer](err.Error()); return }
+	out = Ok[string, *stripe_go.Customer](r0)
+	return
+}
 
 // [pure] Go_Customer.iterCustomer → pkg.IterCustomer
 func Go_Customer_iterCustomer(p0 any) (out any) {
@@ -161,11 +267,23 @@ func Go_Customer_iterCustomer(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Iter).Customer())
 	return
 }
+// [pure] typed wrapper for Go_Customer_iterCustomer (P7 adaptor target)
+func Go_Customer_iterCustomerT(p0 *pkg.Iter) (out SkyResult[string, *stripe_go.Customer]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, *stripe_go.Customer](p0.Customer())
+	return
+}
 
 // [pure] Go_Customer.iterCustomerList → pkg.IterCustomerList
 func Go_Customer_iterCustomerList(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.Iter).CustomerList())
+	return
+}
+// [pure] typed wrapper for Go_Customer_iterCustomerList (P7 adaptor target)
+func Go_Customer_iterCustomerListT(p0 *pkg.Iter) (out SkyResult[string, *stripe_go.CustomerList]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, *stripe_go.CustomerList](p0.CustomerList())
 	return
 }
 
@@ -185,11 +303,25 @@ func Go_Customer_iterErr(p0 any) (out any) {
 
 	return
 }
+// [fallible] typed wrapper for Go_Customer_iterErr (P7 adaptor target)
+func Go_Customer_iterErrT(p0 *pkg.Iter) (out SkyResult[string, struct{}]) {
+	defer SkyFfiRecoverT(&out)()
+	err := p0.Err()
+	if err != nil { out = Err[string, struct{}](err.Error()); return }
+	out = Ok[string, struct{}](struct{}{})
+	return
+}
 
 // [pure] Go_Customer.iterList → pkg.IterList
 func Go_Customer_iterList(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.Iter).List())
+	return
+}
+// [pure] typed wrapper for Go_Customer_iterList (P7 adaptor target)
+func Go_Customer_iterListT(p0 *pkg.Iter) (out SkyResult[string, stripe_go.ListContainer]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, stripe_go.ListContainer](p0.List())
 	return
 }
 
@@ -199,11 +331,23 @@ func Go_Customer_iterMeta(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Iter).Meta())
 	return
 }
+// [pure] typed wrapper for Go_Customer_iterMeta (P7 adaptor target)
+func Go_Customer_iterMetaT(p0 *pkg.Iter) (out SkyResult[string, *stripe_go.ListMeta]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, *stripe_go.ListMeta](p0.Meta())
+	return
+}
 
 // [pure] Go_Customer.iterNext → pkg.IterNext
 func Go_Customer_iterNext(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.Iter).Next())
+	return
+}
+// [pure] typed wrapper for Go_Customer_iterNext (P7 adaptor target)
+func Go_Customer_iterNextT(p0 *pkg.Iter) (out SkyResult[string, bool]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, bool](p0.Next())
 	return
 }
 
@@ -219,11 +363,23 @@ func Go_Customer_list(p0 any) (out any) {
 	out = Ok[any, any](pkg.List(p0.(*stripe_go.CustomerListParams)))
 	return
 }
+// [pure] typed wrapper for Go_Customer_list (P7 adaptor target)
+func Go_Customer_listT(p0 *stripe_go.CustomerListParams) (out SkyResult[string, *pkg.Iter]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, *pkg.Iter](pkg.List(p0))
+	return
+}
 
 // [pure] Go_Customer.listPaymentMethods → pkg.ListPaymentMethods
 func Go_Customer_listPaymentMethods(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](pkg.ListPaymentMethods(p0.(*stripe_go.CustomerListPaymentMethodsParams)))
+	return
+}
+// [pure] typed wrapper for Go_Customer_listPaymentMethods (P7 adaptor target)
+func Go_Customer_listPaymentMethodsT(p0 *stripe_go.CustomerListPaymentMethodsParams) (out SkyResult[string, *pkg.PaymentMethodIter]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, *pkg.PaymentMethodIter](pkg.ListPaymentMethods(p0))
 	return
 }
 
@@ -236,6 +392,14 @@ func Go_Customer_new(p0 any) (out any) {
 
 	return
 }
+// [fallible] typed wrapper for Go_Customer_new (P7 adaptor target)
+func Go_Customer_newT(p0 *stripe_go.CustomerParams) (out SkyResult[string, *stripe_go.Customer]) {
+	defer SkyFfiRecoverT(&out)()
+	r0, err := pkg.New(p0)
+	if err != nil { out = Err[string, *stripe_go.Customer](err.Error()); return }
+	out = Ok[string, *stripe_go.Customer](r0)
+	return
+}
 
 // [pure] Go_Customer.paymentMethodIterPaymentMethod → pkg.PaymentMethodIterPaymentMethod
 func Go_Customer_paymentMethodIterPaymentMethod(p0 any) (out any) {
@@ -243,11 +407,23 @@ func Go_Customer_paymentMethodIterPaymentMethod(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.PaymentMethodIter).PaymentMethod())
 	return
 }
+// [pure] typed wrapper for Go_Customer_paymentMethodIterPaymentMethod (P7 adaptor target)
+func Go_Customer_paymentMethodIterPaymentMethodT(p0 *pkg.PaymentMethodIter) (out SkyResult[string, *stripe_go.PaymentMethod]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, *stripe_go.PaymentMethod](p0.PaymentMethod())
+	return
+}
 
 // [pure] Go_Customer.paymentMethodIterPaymentMethodList → pkg.PaymentMethodIterPaymentMethodList
 func Go_Customer_paymentMethodIterPaymentMethodList(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.PaymentMethodIter).PaymentMethodList())
+	return
+}
+// [pure] typed wrapper for Go_Customer_paymentMethodIterPaymentMethodList (P7 adaptor target)
+func Go_Customer_paymentMethodIterPaymentMethodListT(p0 *pkg.PaymentMethodIter) (out SkyResult[string, *stripe_go.PaymentMethodList]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, *stripe_go.PaymentMethodList](p0.PaymentMethodList())
 	return
 }
 
@@ -267,11 +443,25 @@ func Go_Customer_paymentMethodIterErr(p0 any) (out any) {
 
 	return
 }
+// [fallible] typed wrapper for Go_Customer_paymentMethodIterErr (P7 adaptor target)
+func Go_Customer_paymentMethodIterErrT(p0 *pkg.PaymentMethodIter) (out SkyResult[string, struct{}]) {
+	defer SkyFfiRecoverT(&out)()
+	err := p0.Err()
+	if err != nil { out = Err[string, struct{}](err.Error()); return }
+	out = Ok[string, struct{}](struct{}{})
+	return
+}
 
 // [pure] Go_Customer.paymentMethodIterList → pkg.PaymentMethodIterList
 func Go_Customer_paymentMethodIterList(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.PaymentMethodIter).List())
+	return
+}
+// [pure] typed wrapper for Go_Customer_paymentMethodIterList (P7 adaptor target)
+func Go_Customer_paymentMethodIterListT(p0 *pkg.PaymentMethodIter) (out SkyResult[string, stripe_go.ListContainer]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, stripe_go.ListContainer](p0.List())
 	return
 }
 
@@ -281,11 +471,23 @@ func Go_Customer_paymentMethodIterMeta(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.PaymentMethodIter).Meta())
 	return
 }
+// [pure] typed wrapper for Go_Customer_paymentMethodIterMeta (P7 adaptor target)
+func Go_Customer_paymentMethodIterMetaT(p0 *pkg.PaymentMethodIter) (out SkyResult[string, *stripe_go.ListMeta]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, *stripe_go.ListMeta](p0.Meta())
+	return
+}
 
 // [pure] Go_Customer.paymentMethodIterNext → pkg.PaymentMethodIterNext
 func Go_Customer_paymentMethodIterNext(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.PaymentMethodIter).Next())
+	return
+}
+// [pure] typed wrapper for Go_Customer_paymentMethodIterNext (P7 adaptor target)
+func Go_Customer_paymentMethodIterNextT(p0 *pkg.PaymentMethodIter) (out SkyResult[string, bool]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, bool](p0.Next())
 	return
 }
 
@@ -304,11 +506,25 @@ func Go_Customer_retrievePaymentMethod(p0 any, p1 any) (out any) {
 
 	return
 }
+// [fallible] typed wrapper for Go_Customer_retrievePaymentMethod (P7 adaptor target)
+func Go_Customer_retrievePaymentMethodT(p0 string, p1 *stripe_go.CustomerRetrievePaymentMethodParams) (out SkyResult[string, *stripe_go.PaymentMethod]) {
+	defer SkyFfiRecoverT(&out)()
+	r0, err := pkg.RetrievePaymentMethod(p0, p1)
+	if err != nil { out = Err[string, *stripe_go.PaymentMethod](err.Error()); return }
+	out = Ok[string, *stripe_go.PaymentMethod](r0)
+	return
+}
 
 // [pure] Go_Customer.search → pkg.Search
 func Go_Customer_search(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](pkg.Search(p0.(*stripe_go.CustomerSearchParams)))
+	return
+}
+// [pure] typed wrapper for Go_Customer_search (P7 adaptor target)
+func Go_Customer_searchT(p0 *stripe_go.CustomerSearchParams) (out SkyResult[string, *pkg.SearchIter]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, *pkg.SearchIter](pkg.Search(p0))
 	return
 }
 
@@ -318,11 +534,23 @@ func Go_Customer_searchIterCustomer(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.SearchIter).Customer())
 	return
 }
+// [pure] typed wrapper for Go_Customer_searchIterCustomer (P7 adaptor target)
+func Go_Customer_searchIterCustomerT(p0 *pkg.SearchIter) (out SkyResult[string, *stripe_go.Customer]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, *stripe_go.Customer](p0.Customer())
+	return
+}
 
 // [pure] Go_Customer.searchIterCustomerSearchResult → pkg.SearchIterCustomerSearchResult
 func Go_Customer_searchIterCustomerSearchResult(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.SearchIter).CustomerSearchResult())
+	return
+}
+// [pure] typed wrapper for Go_Customer_searchIterCustomerSearchResult (P7 adaptor target)
+func Go_Customer_searchIterCustomerSearchResultT(p0 *pkg.SearchIter) (out SkyResult[string, *stripe_go.CustomerSearchResult]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, *stripe_go.CustomerSearchResult](p0.CustomerSearchResult())
 	return
 }
 
@@ -342,11 +570,25 @@ func Go_Customer_searchIterErr(p0 any) (out any) {
 
 	return
 }
+// [fallible] typed wrapper for Go_Customer_searchIterErr (P7 adaptor target)
+func Go_Customer_searchIterErrT(p0 *pkg.SearchIter) (out SkyResult[string, struct{}]) {
+	defer SkyFfiRecoverT(&out)()
+	err := p0.Err()
+	if err != nil { out = Err[string, struct{}](err.Error()); return }
+	out = Ok[string, struct{}](struct{}{})
+	return
+}
 
 // [pure] Go_Customer.searchIterMeta → pkg.SearchIterMeta
 func Go_Customer_searchIterMeta(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.SearchIter).Meta())
+	return
+}
+// [pure] typed wrapper for Go_Customer_searchIterMeta (P7 adaptor target)
+func Go_Customer_searchIterMetaT(p0 *pkg.SearchIter) (out SkyResult[string, *stripe_go.SearchMeta]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, *stripe_go.SearchMeta](p0.Meta())
 	return
 }
 
@@ -356,11 +598,23 @@ func Go_Customer_searchIterNext(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.SearchIter).Next())
 	return
 }
+// [pure] typed wrapper for Go_Customer_searchIterNext (P7 adaptor target)
+func Go_Customer_searchIterNextT(p0 *pkg.SearchIter) (out SkyResult[string, bool]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, bool](p0.Next())
+	return
+}
 
 // [pure] Go_Customer.searchIterSearchResult → pkg.SearchIterSearchResult
 func Go_Customer_searchIterSearchResult(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.SearchIter).SearchResult())
+	return
+}
+// [pure] typed wrapper for Go_Customer_searchIterSearchResult (P7 adaptor target)
+func Go_Customer_searchIterSearchResultT(p0 *pkg.SearchIter) (out SkyResult[string, stripe_go.SearchContainer]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, stripe_go.SearchContainer](p0.SearchResult())
 	return
 }
 
@@ -377,6 +631,14 @@ func Go_Customer_update(p0 any, p1 any) (out any) {
 	if err != nil { out = Err[any, any](err.Error()); return }
 	out = Ok[any, any](r0)
 
+	return
+}
+// [fallible] typed wrapper for Go_Customer_update (P7 adaptor target)
+func Go_Customer_updateT(p0 string, p1 *stripe_go.CustomerParams) (out SkyResult[string, *stripe_go.Customer]) {
+	defer SkyFfiRecoverT(&out)()
+	r0, err := pkg.Update(p0, p1)
+	if err != nil { out = Err[string, *stripe_go.Customer](err.Error()); return }
+	out = Ok[string, *stripe_go.Customer](r0)
 	return
 }
 

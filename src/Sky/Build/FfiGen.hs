@@ -966,19 +966,28 @@ emitTypedVariant anyName fn params results
     | _fnIsField fn                  = Nothing
     | _fnIsFieldSet fn               = Nothing
     | _fnIsPkgVar fn                 = Nothing
-    | not (null (_fnMethodName fn))  = Nothing
     | any (not . isSimpleTypedType . snd) params  = Nothing
     | any (not . isSimpleTypedType . snd) results = Nothing
+    | isMethod && null params        = Nothing  -- method needs a receiver
     | otherwise =
         case classifyTypedResult results of
             Nothing -> Nothing
             Just (okType, isEffectful, pickExpr) ->
                 let typedName   = anyName ++ "T"
                     goFnName    = _fnName fn
+                    isMethodLocal = isMethod
+                    methodN      = _fnMethodName fn
                     paramDecls  = intercalate ", "
                         [ "p" ++ show i ++ " " ++ t | (i, (_, t)) <- zip [0::Int ..] params ]
-                    argRefs     = intercalate ", " [ "p" ++ show i | i <- [0 .. length params - 1] ]
-                    call        = "pkg." ++ goFnName ++ "(" ++ argRefs ++ ")"
+                    argRefs     = intercalate ", "
+                        [ "p" ++ show i | i <- [0 .. length params - 1] ]
+                    callArgs    = if isMethodLocal
+                        then intercalate ", "
+                            [ "p" ++ show i | i <- [1 .. length params - 1] ]
+                        else argRefs
+                    call        = if isMethodLocal
+                        then "p0." ++ methodN ++ "(" ++ callArgs ++ ")"
+                        else "pkg." ++ goFnName ++ "(" ++ argRefs ++ ")"
                     recoverLine = "\tdefer SkyFfiRecoverT(&out)()"
                     bodyLines   = if isEffectful
                         then case results of
@@ -1004,6 +1013,8 @@ emitTypedVariant anyName fn params results
                       ") (out SkyResult[string, " ++ okType ++ "]) {"
                     , recoverLine
                     ] ++ bodyLines ++ [ "\treturn", "}" ]
+  where
+    isMethod = not (null (_fnMethodName fn))
 
 
 -- | Classify a result list for typed emission.
