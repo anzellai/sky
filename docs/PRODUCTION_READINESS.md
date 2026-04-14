@@ -875,14 +875,13 @@ Update this table after every merged phase. Include commit SHA and date.
 | P11b — Sky deps | ☑ | _HEAD_ | 2026-04-14 | `Sky.Build.SkyDeps.installDeps` resolves `[dependencies]` via shallow git clone into `.skydeps/<flatpkg>/`, returns source roots to prepend to the module graph. Wired into `sky build`, `sky install`, and the compile pipeline. Verified by ex13-skyshop's `sky-tailwind` dep landing under `.skydeps/` and the full sweep passing. |
 | P12 — reflection audit | ☑ | _HEAD_ | 2026-04-14 | audit done, findings in §P12. 99 `reflect.` occurrences across 4 files; classified into P9-legitimate, structural-access-required, and P7/P8-gated. No new reflection added this plan. |
 
-**Last verified green:** 2026-04-14 (after P0/P1/P2/P3/P11a) — 18/18
-canonical examples build, `cabal test` 7/7 green. P0 harness, P1 parser
-regressions, P2 exposing enforcement, P3 flat-ADT exhaustiveness, and
-P11a `sky upgrade` have landed. The P4→P8 typed-codegen chain is the
-next critical path; P9 (FFI reflect), P10 (stdlib), and P11b (Sky-source
-deps install) can run independently afterward. Golden-output tests per
-codegen feature remain deferred until P4-P6 stabilise the emitted Go
-shapes.
+**Last verified green:** 2026-04-14 (after P0/P1/P2/P3/P4/P5/P6/P9/P10a-e/P11a/P11b/P12).
+`cabal test` 7/7 green, `scripts/example-sweep.sh --build-only` 18/18
+green. All tracker rows ticked EXCEPT P7 and P8, which carry honest
+`[plan]` amendments documenting the typed-FFI call-site-adaptor
+obstacle. The next session's entry point is the P7 adaptor strategy
+spelled out in the P7 amendment text — once that lands, P8's per-module
+kernel retype is mechanical (alphabetical sweep, per-module commit).
 
 **Legend.** ☐ pending · ◐ in progress · ☑ complete
 
