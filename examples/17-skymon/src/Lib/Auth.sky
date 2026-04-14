@@ -55,7 +55,7 @@ exchangeCodeForToken code =
             Ok resp ->
                 Ok (extractParam "access_token" resp.body)
             Err e ->
-                Err (Error.network e)
+                Err e
 
 
 getGitHubUser : String -> Result Error (Dict String String)
@@ -73,7 +73,7 @@ getGitHubUser token =
                         ]
                     )
         Err e ->
-            Err (Error.network e)
+            Err e
 
 
 createSession : String -> String -> String -> String

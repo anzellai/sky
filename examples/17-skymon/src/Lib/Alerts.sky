@@ -212,7 +212,7 @@ fireWebhook url message =
                 Ok _ ->
                     Ok ()
                 Err e ->
-                    Err (Error.network e)
+                    Err e
 
 
 fireSlack : String -> String -> Result Error ()
@@ -228,7 +228,7 @@ fireSlack webhookUrl message =
                 Ok _ ->
                     Ok ()
                 Err e ->
-                    Err (Error.network e)
+                    Err e
 
 
 findMetricById : String -> (List (Dict String String)) -> Maybe (Dict String String)

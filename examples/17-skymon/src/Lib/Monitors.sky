@@ -56,7 +56,7 @@ checkEndpoint url =
             checkResponseStatus resp
         Err e ->
             let
-                typedErr = Error.network e
+                typedErr = e
                 _ = println ("[MONITOR ERROR] checkEndpoint " ++ url ++ ": " ++ Error.toString typedErr)
             in
                 ( "down", 0 )

@@ -140,7 +140,7 @@ runHttpMetric metric =
                     String.fromInt resp.status
                 Err e ->
                     let
-                        typedErr = Error.network e
+                        typedErr = e
                         _ = println ("[METRIC ERROR] runHttpMetric " ++ url ++ ": " ++ Error.toString typedErr)
                     in
                         "error: " ++ Error.toString typedErr
@@ -166,7 +166,7 @@ runApiMetric metric =
                         extractJsonField fieldPath resp.body
                 Err e ->
                     let
-                        typedErr = Error.network e
+                        typedErr = e
                         _ = println ("[METRIC ERROR] runApiMetric " ++ url ++ ": " ++ Error.toString typedErr)
                     in
                         "error: " ++ Error.toString typedErr
