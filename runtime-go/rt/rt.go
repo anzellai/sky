@@ -95,6 +95,16 @@ func ResultAsAny[E any, A any](r SkyResult[E, A]) SkyResult[any, any] {
 	return Err[any, any](any(r.ErrValue))
 }
 
+// MaybeAsAny is the Maybe counterpart of ResultAsAny. Same contract:
+// cheap tag-switch, no reflect, preferred at case-subjects whose
+// source is a known typed FFI call.
+func MaybeAsAny[A any](m SkyMaybe[A]) SkyMaybe[any] {
+	if m.Tag == 0 {
+		return Just[any](any(m.JustValue))
+	}
+	return Nothing[any]()
+}
+
 
 // ResultCoerce reconstructs a SkyResult with target generic params.
 // Works for any source SkyResult[X, Y] via reflection — Go's generic

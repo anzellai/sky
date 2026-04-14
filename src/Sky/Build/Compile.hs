@@ -2611,7 +2611,9 @@ caseToGo subject branches =
                     then GoIr.GoCall (GoIr.GoIdent "rt.ResultAsAny") [e]
                     else GoIr.GoCall (GoIr.GoIdent ("rt.ResultCoerce[" ++ params ++ "]")) [e]
             | Just inner <- stripParametric "rt.SkyMaybe" typeName =
-                GoIr.GoCall (GoIr.GoIdent ("rt.MaybeCoerce[" ++ inner ++ "]")) [e]
+                if inner == "any" && isTypedFfiCall e
+                    then GoIr.GoCall (GoIr.GoIdent "rt.MaybeAsAny") [e]
+                    else GoIr.GoCall (GoIr.GoIdent ("rt.MaybeCoerce[" ++ inner ++ "]")) [e]
             | otherwise =
                 GoIr.GoTypeAssert (anyWrapped e) typeName
 
