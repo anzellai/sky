@@ -27,6 +27,7 @@ embeddedRuntime = $(embedDir "runtime-go")
 -- `import Std.IoError exposing (..)` with no extra setup.
 -- Bump this comment to force a TH rebuild when sky-stdlib files are
 -- added or removed. FileEmbed's dependency tracking doesn't always
--- notice new files otherwise. Version: 2026-04-14 Sky.Core.Error
+-- notice new files otherwise.
+-- Version: 2026-04-14 Sky.Core.Error added; Std.IoError deleted
 embeddedSkyStdlib :: [(FilePath, ByteString)]
 embeddedSkyStdlib = $(embedDir "sky-stdlib")
