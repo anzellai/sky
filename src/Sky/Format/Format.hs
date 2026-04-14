@@ -7,6 +7,36 @@ import qualified Sky.AST.Source as Src
 import qualified Sky.Reporting.Annotation as A
 
 
+-- | Escape a string literal's contents for re-emission. The lexer
+-- stores string values unescaped (interprets \n, \t, \", \\, etc.
+-- into their literal chars); to round-trip we must put the escapes
+-- back or the next parse will misread the content as code. Matches
+-- the escape set accepted by Sky.Parse.Lexer.
+escapeStringLit :: String -> String
+escapeStringLit = concatMap esc
+  where
+    esc '\\' = "\\\\"
+    esc '"'  = "\\\""
+    esc '\n' = "\\n"
+    esc '\t' = "\\t"
+    esc '\r' = "\\r"
+    esc c    = [c]
+
+
+-- | Triple-quoted strings: escape embedded `"""` runs but leave
+-- single / double quotes intact (multiline strings don't need them
+-- escaped — the terminator is `"""`). Escape backslashes so the
+-- interpolation token `{{expr}}` is preserved verbatim and the raw
+-- content round-trips through the lexer.
+escapeMultilineLit :: String -> String
+escapeMultilineLit = go
+  where
+    go [] = []
+    go ('"':'"':'"':rest) = "\\\"\\\"\\\"" ++ go rest
+    go ('\\':rest)        = "\\\\" ++ go rest
+    go (c:rest)           = c : go rest
+
+
 -- | Format a full module
 formatModule :: Src.Module -> String
 formatModule m =
@@ -133,7 +163,7 @@ fmtPattern (A.At _ p) = case p of
     Src.PUnit -> "()"
     Src.PInt n -> show n
     Src.PFloat f -> show f
-    Src.PStr s -> "\"" ++ s ++ "\""
+    Src.PStr s -> "\"" ++ escapeStringLit s ++ "\""
     Src.PBool True -> "True"
     Src.PBool False -> "False"
     Src.PCtor n _ [] -> n
@@ -162,8 +192,8 @@ fmtExpr :: Int -> Src.Expr_ -> String
 fmtExpr _ (Src.Int n) = show n
 fmtExpr _ (Src.Float f) = show f
 fmtExpr _ (Src.Chr s) = "'" ++ s ++ "'"
-fmtExpr _ (Src.Str s) = "\"" ++ s ++ "\""
-fmtExpr _ (Src.MultilineStr s) = "\"\"\"" ++ s ++ "\"\"\""
+fmtExpr _ (Src.Str s) = "\"" ++ escapeStringLit s ++ "\""
+fmtExpr _ (Src.MultilineStr s) = "\"\"\"" ++ escapeMultilineLit s ++ "\"\"\""
 fmtExpr _ (Src.Var n) = n
 fmtExpr _ (Src.VarQual m n) = m ++ "." ++ n
 fmtExpr _ Src.Unit = "()"
