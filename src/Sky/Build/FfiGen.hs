@@ -552,7 +552,16 @@ goArgCast i t = case t of
 emitGoFile :: String -> PkgInfo -> String
 emitGoFile kernelName pkg =
     let aliases = buildAliasTable pkg
-        entries = map (emitTypedWrapper kernelName aliases) (_pkgFns pkg)
+        -- Deduplicate by Sky-facing name. The inspector can surface
+        -- two FnInfos that mangle to the same wrapper name — e.g. a
+        -- struct-field accessor `RichTextStyle.Inline` alongside a
+        -- package-level const `RichTextStyleInline`. Keep the first
+        -- occurrence; the second would be a duplicate Go `func` decl
+        -- and break go build. Field accessors are structurally more
+        -- useful (readable pipeline setters), so order-of-inspector
+        -- is deliberately preserved.
+        seenNames = dedupByFirst (_pkgFns pkg)
+        entries = map (emitTypedWrapper kernelName aliases) seenNames
         anyEmitted = any (not . isSkippedEntry) entries
         -- Any alias that doesn't appear in any emitted entry becomes a blank
         -- import so Go doesn't error with "imported and not used". `pkg` and
@@ -645,6 +654,22 @@ buildImportLinesFiltered pkg aliases anyEmitted used =
 --   2. coerces each Sky-side any to the expected Go type
 --   3. calls pkg.<GoFn>(...)
 --   4. wraps the result in Ok/Err per (T, error)/pure conventions
+-- | Drop FnInfos whose Sky-facing wrapper name (lowerFirst of the Go
+-- function name) is already produced by an earlier entry in the list.
+-- Prevents duplicate `func <K>_<name>` definitions when the FFI
+-- inspector surfaces a field-accessor + pkg-const pair that mangle
+-- to the same identifier.
+dedupByFirst :: [FnInfo] -> [FnInfo]
+dedupByFirst = go Set.empty
+  where
+    go _ []     = []
+    go seen (fn:rest)
+        | Set.member key seen = go seen rest
+        | otherwise           = fn : go (Set.insert key seen) rest
+      where
+        key = lowerFirst (_fnName fn)
+
+
 emitTypedWrapper :: String -> AliasTable -> FnInfo -> String
 emitTypedWrapper kernelName aliases fn =
     let goFnName = _fnName fn

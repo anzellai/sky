@@ -6,6 +6,19 @@
     {"name": "new", "arity": 1},
     {"name": "newWithID", "arity": 1},
     {"name": "setMetadata", "arity": 1},
-    {"name": "settingsSchemaStoragePath", "arity": 1}
+    {"name": "settingsSchemaStoragePath", "arity": 1},
+    {"name": "settingsSchemaThemeName", "arity": 1},
+    {"name": "settingsSchemaSetThemeName", "arity": 2},
+    {"name": "settingsSchemaScale", "arity": 1},
+    {"name": "settingsSchemaSetScale", "arity": 2},
+    {"name": "settingsSchemaPrimaryColor", "arity": 1},
+    {"name": "settingsSchemaSetPrimaryColor", "arity": 2},
+    {"name": "settingsSchemaCloudName", "arity": 1},
+    {"name": "settingsSchemaSetCloudName", "arity": 2},
+    {"name": "settingsSchemaCloudConfig", "arity": 1},
+    {"name": "settingsSchemaSetCloudConfig", "arity": 2},
+    {"name": "settingsSchemaDisableAnimations", "arity": 1},
+    {"name": "settingsSchemaSetDisableAnimations", "arity": 2},
+    {"name": "newSettingsSchema", "arity": 1}
   ]
 }

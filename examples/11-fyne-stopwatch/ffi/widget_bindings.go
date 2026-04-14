@@ -16,9 +16,10 @@ import (
 	binding "fyne.io/fyne/v2/data/binding"
 	desktop "fyne.io/fyne/v2/driver/desktop"
 	mobile "fyne.io/fyne/v2/driver/mobile"
-	_ "image/color"  // aliased color; unused in emitted wrappers
+	color "image/color"
 	url "net/url"
 	time "time"
+	"reflect"
 )
 
 // [pure] Go_Widget.accordionAppend → pkg.AccordionAppend
@@ -51,11 +52,23 @@ func Go_Widget_accordionCreateRenderer(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Accordion).CreateRenderer())
 	return
 }
+// [pure] typed wrapper for Go_Widget_accordionCreateRenderer (P7 adaptor target)
+func Go_Widget_accordionCreateRendererT(p0 *pkg.Accordion) (out SkyResult[string, fyne.WidgetRenderer]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.WidgetRenderer](p0.CreateRenderer())
+	return
+}
 
 // [pure] Go_Widget.accordionMinSize → pkg.AccordionMinSize
 func Go_Widget_accordionMinSize(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.Accordion).MinSize())
+	return
+}
+// [pure] typed wrapper for Go_Widget_accordionMinSize (P7 adaptor target)
+func Go_Widget_accordionMinSizeT(p0 *pkg.Accordion) (out SkyResult[string, fyne.Size]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Size](p0.MinSize())
 	return
 }
 
@@ -129,6 +142,12 @@ func Go_Widget_accordionPosition(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Accordion).Position())
 	return
 }
+// [pure] typed wrapper for Go_Widget_accordionPosition (P7 adaptor target)
+func Go_Widget_accordionPositionT(p0 *pkg.Accordion) (out SkyResult[string, fyne.Position]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Position](p0.Position())
+	return
+}
 
 // [pure] Go_Widget.accordionRefresh → pkg.AccordionRefresh
 func Go_Widget_accordionRefresh(p0 any) (out any) {
@@ -160,11 +179,23 @@ func Go_Widget_accordionSize(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Accordion).Size())
 	return
 }
+// [pure] typed wrapper for Go_Widget_accordionSize (P7 adaptor target)
+func Go_Widget_accordionSizeT(p0 *pkg.Accordion) (out SkyResult[string, fyne.Size]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Size](p0.Size())
+	return
+}
 
 // [pure] Go_Widget.accordionTheme → pkg.AccordionTheme
 func Go_Widget_accordionTheme(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.Accordion).Theme())
+	return
+}
+// [pure] typed wrapper for Go_Widget_accordionTheme (P7 adaptor target)
+func Go_Widget_accordionThemeT(p0 *pkg.Accordion) (out SkyResult[string, fyne.Theme]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Theme](p0.Theme())
 	return
 }
 
@@ -174,11 +205,47 @@ func Go_Widget_accordionVisible(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Accordion).Visible())
 	return
 }
+// [pure] typed wrapper for Go_Widget_accordionVisible (P7 adaptor target)
+func Go_Widget_accordionVisibleT(p0 *pkg.Accordion) (out SkyResult[string, bool]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, bool](p0.Visible())
+	return
+}
+
+func Go_Widget_accordionBaseWidget(p0 any) any { return SkyFfiFieldGet(p0, "BaseWidget") }
+
+func Go_Widget_accordionSetBaseWidget(value any, recv any) any { return SkyFfiFieldSet(value, recv, "BaseWidget") }
+
+func Go_Widget_accordionItems(p0 any) any { return SkyFfiFieldGet(p0, "Items") }
+
+func Go_Widget_accordionSetItems(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Items") }
+
+func Go_Widget_accordionMultiOpen(p0 any) any { return SkyFfiFieldGet(p0, "MultiOpen") }
+
+func Go_Widget_accordionSetMultiOpen(value any, recv any) any { return SkyFfiFieldSet(value, recv, "MultiOpen") }
+
+func Go_Widget_accordionItemTitle(p0 any) any { return SkyFfiFieldGet(p0, "Title") }
+
+func Go_Widget_accordionItemSetTitle(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Title") }
+
+func Go_Widget_accordionItemDetail(p0 any) any { return SkyFfiFieldGet(p0, "Detail") }
+
+func Go_Widget_accordionItemSetDetail(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Detail") }
+
+func Go_Widget_accordionItemOpen(p0 any) any { return SkyFfiFieldGet(p0, "Open") }
+
+func Go_Widget_accordionItemSetOpen(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Open") }
 
 // [pure] Go_Widget.activityMinSize → pkg.ActivityMinSize
 func Go_Widget_activityMinSize(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.Activity).MinSize())
+	return
+}
+// [pure] typed wrapper for Go_Widget_activityMinSize (P7 adaptor target)
+func Go_Widget_activityMinSizeT(p0 *pkg.Activity) (out SkyResult[string, fyne.Size]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Size](p0.MinSize())
 	return
 }
 
@@ -202,6 +269,12 @@ func Go_Widget_activityStop(p0 any) (out any) {
 func Go_Widget_activityCreateRenderer(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.Activity).CreateRenderer())
+	return
+}
+// [pure] typed wrapper for Go_Widget_activityCreateRenderer (P7 adaptor target)
+func Go_Widget_activityCreateRendererT(p0 *pkg.Activity) (out SkyResult[string, fyne.WidgetRenderer]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.WidgetRenderer](p0.CreateRenderer())
 	return
 }
 
@@ -235,6 +308,12 @@ func Go_Widget_activityPosition(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Activity).Position())
 	return
 }
+// [pure] typed wrapper for Go_Widget_activityPosition (P7 adaptor target)
+func Go_Widget_activityPositionT(p0 *pkg.Activity) (out SkyResult[string, fyne.Position]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Position](p0.Position())
+	return
+}
 
 // [pure] Go_Widget.activityRefresh → pkg.ActivityRefresh
 func Go_Widget_activityRefresh(p0 any) (out any) {
@@ -266,11 +345,23 @@ func Go_Widget_activitySize(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Activity).Size())
 	return
 }
+// [pure] typed wrapper for Go_Widget_activitySize (P7 adaptor target)
+func Go_Widget_activitySizeT(p0 *pkg.Activity) (out SkyResult[string, fyne.Size]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Size](p0.Size())
+	return
+}
 
 // [pure] Go_Widget.activityTheme → pkg.ActivityTheme
 func Go_Widget_activityTheme(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.Activity).Theme())
+	return
+}
+// [pure] typed wrapper for Go_Widget_activityTheme (P7 adaptor target)
+func Go_Widget_activityThemeT(p0 *pkg.Activity) (out SkyResult[string, fyne.Theme]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Theme](p0.Theme())
 	return
 }
 
@@ -280,6 +371,18 @@ func Go_Widget_activityVisible(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Activity).Visible())
 	return
 }
+// [pure] typed wrapper for Go_Widget_activityVisible (P7 adaptor target)
+func Go_Widget_activityVisibleT(p0 *pkg.Activity) (out SkyResult[string, bool]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, bool](p0.Visible())
+	return
+}
+
+func Go_Widget_activityBaseWidget(p0 any) any { return SkyFfiFieldGet(p0, "BaseWidget") }
+
+func Go_Widget_activitySetBaseWidget(value any, recv any) any { return SkyFfiFieldSet(value, recv, "BaseWidget") }
+
+func Go_Widget_adaptive(_ any) any { return pkg.Adaptive }
 
 // [pure] Go_Widget.baseWidgetExtendBaseWidget → pkg.BaseWidgetExtendBaseWidget
 func Go_Widget_baseWidgetExtendBaseWidget(p0 any, p1 any) (out any) {
@@ -293,6 +396,12 @@ func Go_Widget_baseWidgetExtendBaseWidget(p0 any, p1 any) (out any) {
 func Go_Widget_baseWidgetSize(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.BaseWidget).Size())
+	return
+}
+// [pure] typed wrapper for Go_Widget_baseWidgetSize (P7 adaptor target)
+func Go_Widget_baseWidgetSizeT(p0 *pkg.BaseWidget) (out SkyResult[string, fyne.Size]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Size](p0.Size())
 	return
 }
 
@@ -310,6 +419,12 @@ func Go_Widget_baseWidgetPosition(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.BaseWidget).Position())
 	return
 }
+// [pure] typed wrapper for Go_Widget_baseWidgetPosition (P7 adaptor target)
+func Go_Widget_baseWidgetPositionT(p0 *pkg.BaseWidget) (out SkyResult[string, fyne.Position]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Position](p0.Position())
+	return
+}
 
 // [pure] Go_Widget.baseWidgetMove → pkg.BaseWidgetMove
 func Go_Widget_baseWidgetMove(p0 any, p1 any) (out any) {
@@ -325,11 +440,23 @@ func Go_Widget_baseWidgetMinSize(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.BaseWidget).MinSize())
 	return
 }
+// [pure] typed wrapper for Go_Widget_baseWidgetMinSize (P7 adaptor target)
+func Go_Widget_baseWidgetMinSizeT(p0 *pkg.BaseWidget) (out SkyResult[string, fyne.Size]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Size](p0.MinSize())
+	return
+}
 
 // [pure] Go_Widget.baseWidgetVisible → pkg.BaseWidgetVisible
 func Go_Widget_baseWidgetVisible(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.BaseWidget).Visible())
+	return
+}
+// [pure] typed wrapper for Go_Widget_baseWidgetVisible (P7 adaptor target)
+func Go_Widget_baseWidgetVisibleT(p0 *pkg.BaseWidget) (out SkyResult[string, bool]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, bool](p0.Visible())
 	return
 }
 
@@ -363,6 +490,18 @@ func Go_Widget_baseWidgetTheme(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.BaseWidget).Theme())
 	return
 }
+// [pure] typed wrapper for Go_Widget_baseWidgetTheme (P7 adaptor target)
+func Go_Widget_baseWidgetThemeT(p0 *pkg.BaseWidget) (out SkyResult[string, fyne.Theme]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Theme](p0.Theme())
+	return
+}
+
+func Go_Widget_baseWidgetHidden(p0 any) any { return SkyFfiFieldGet(p0, "Hidden") }
+
+func Go_Widget_baseWidgetSetHidden(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Hidden") }
+
+func Go_Widget_newBaseWidget(_ any) any { return new(pkg.BaseWidget) }
 
 // [pure] Go_Widget.buttonCreateRenderer → pkg.ButtonCreateRenderer
 func Go_Widget_buttonCreateRenderer(p0 any) (out any) {
@@ -370,11 +509,23 @@ func Go_Widget_buttonCreateRenderer(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Button).CreateRenderer())
 	return
 }
+// [pure] typed wrapper for Go_Widget_buttonCreateRenderer (P7 adaptor target)
+func Go_Widget_buttonCreateRendererT(p0 *pkg.Button) (out SkyResult[string, fyne.WidgetRenderer]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.WidgetRenderer](p0.CreateRenderer())
+	return
+}
 
 // [pure] Go_Widget.buttonCursor → pkg.ButtonCursor
 func Go_Widget_buttonCursor(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.Button).Cursor())
+	return
+}
+// [pure] typed wrapper for Go_Widget_buttonCursor (P7 adaptor target)
+func Go_Widget_buttonCursorT(p0 *pkg.Button) (out SkyResult[string, desktop.Cursor]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, desktop.Cursor](p0.Cursor())
 	return
 }
 
@@ -398,6 +549,12 @@ func Go_Widget_buttonFocusLost(p0 any) (out any) {
 func Go_Widget_buttonMinSize(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.Button).MinSize())
+	return
+}
+// [pure] typed wrapper for Go_Widget_buttonMinSize (P7 adaptor target)
+func Go_Widget_buttonMinSizeT(p0 *pkg.Button) (out SkyResult[string, fyne.Size]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Size](p0.MinSize())
 	return
 }
 
@@ -479,6 +636,12 @@ func Go_Widget_buttonDisabled(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Button).Disabled())
 	return
 }
+// [pure] typed wrapper for Go_Widget_buttonDisabled (P7 adaptor target)
+func Go_Widget_buttonDisabledT(p0 *pkg.Button) (out SkyResult[string, bool]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, bool](p0.Disabled())
+	return
+}
 
 // [pure] Go_Widget.buttonEnable → pkg.ButtonEnable
 func Go_Widget_buttonEnable(p0 any) (out any) {
@@ -518,6 +681,12 @@ func Go_Widget_buttonPosition(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Button).Position())
 	return
 }
+// [pure] typed wrapper for Go_Widget_buttonPosition (P7 adaptor target)
+func Go_Widget_buttonPositionT(p0 *pkg.Button) (out SkyResult[string, fyne.Position]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Position](p0.Position())
+	return
+}
 
 // [pure] Go_Widget.buttonRefresh → pkg.ButtonRefresh
 func Go_Widget_buttonRefresh(p0 any) (out any) {
@@ -549,11 +718,23 @@ func Go_Widget_buttonSize(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Button).Size())
 	return
 }
+// [pure] typed wrapper for Go_Widget_buttonSize (P7 adaptor target)
+func Go_Widget_buttonSizeT(p0 *pkg.Button) (out SkyResult[string, fyne.Size]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Size](p0.Size())
+	return
+}
 
 // [pure] Go_Widget.buttonTheme → pkg.ButtonTheme
 func Go_Widget_buttonTheme(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.Button).Theme())
+	return
+}
+// [pure] typed wrapper for Go_Widget_buttonTheme (P7 adaptor target)
+func Go_Widget_buttonThemeT(p0 *pkg.Button) (out SkyResult[string, fyne.Theme]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Theme](p0.Theme())
 	return
 }
 
@@ -563,11 +744,57 @@ func Go_Widget_buttonVisible(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Button).Visible())
 	return
 }
+// [pure] typed wrapper for Go_Widget_buttonVisible (P7 adaptor target)
+func Go_Widget_buttonVisibleT(p0 *pkg.Button) (out SkyResult[string, bool]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, bool](p0.Visible())
+	return
+}
+
+func Go_Widget_buttonDisableableWidget(p0 any) any { return SkyFfiFieldGet(p0, "DisableableWidget") }
+
+func Go_Widget_buttonSetDisableableWidget(value any, recv any) any { return SkyFfiFieldSet(value, recv, "DisableableWidget") }
+
+func Go_Widget_buttonText(p0 any) any { return SkyFfiFieldGet(p0, "Text") }
+
+func Go_Widget_buttonIcon(p0 any) any { return SkyFfiFieldGet(p0, "Icon") }
+
+func Go_Widget_buttonImportance(p0 any) any { return SkyFfiFieldGet(p0, "Importance") }
+
+func Go_Widget_buttonSetImportance(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Importance") }
+
+func Go_Widget_buttonAlignment(p0 any) any { return SkyFfiFieldGet(p0, "Alignment") }
+
+func Go_Widget_buttonSetAlignment(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Alignment") }
+
+func Go_Widget_buttonIconPlacement(p0 any) any { return SkyFfiFieldGet(p0, "IconPlacement") }
+
+func Go_Widget_buttonSetIconPlacement(value any, recv any) any { return SkyFfiFieldSet(value, recv, "IconPlacement") }
+
+func Go_Widget_buttonOnTapped(p0 any) any { return SkyFfiFieldGet(p0, "OnTapped") }
+
+func Go_Widget_buttonSetOnTapped(value any, recv any) any { return SkyFfiFieldSet(value, recv, "OnTapped") }
+
+func Go_Widget_buttonAlignCenter(_ any) any { return pkg.ButtonAlignCenter }
+
+func Go_Widget_buttonAlignLeading(_ any) any { return pkg.ButtonAlignLeading }
+
+func Go_Widget_buttonAlignTrailing(_ any) any { return pkg.ButtonAlignTrailing }
+
+func Go_Widget_buttonIconLeadingText(_ any) any { return pkg.ButtonIconLeadingText }
+
+func Go_Widget_buttonIconTrailingText(_ any) any { return pkg.ButtonIconTrailingText }
 
 // [pure] Go_Widget.calendarCreateRenderer → pkg.CalendarCreateRenderer
 func Go_Widget_calendarCreateRenderer(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.Calendar).CreateRenderer())
+	return
+}
+// [pure] typed wrapper for Go_Widget_calendarCreateRenderer (P7 adaptor target)
+func Go_Widget_calendarCreateRendererT(p0 *pkg.Calendar) (out SkyResult[string, fyne.WidgetRenderer]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.WidgetRenderer](p0.CreateRenderer())
 	return
 }
 
@@ -593,6 +820,12 @@ func Go_Widget_calendarMinSize(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Calendar).MinSize())
 	return
 }
+// [pure] typed wrapper for Go_Widget_calendarMinSize (P7 adaptor target)
+func Go_Widget_calendarMinSizeT(p0 *pkg.Calendar) (out SkyResult[string, fyne.Size]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Size](p0.MinSize())
+	return
+}
 
 // [pure] Go_Widget.calendarMove → pkg.CalendarMove
 func Go_Widget_calendarMove(p0 any, p1 any) (out any) {
@@ -606,6 +839,12 @@ func Go_Widget_calendarMove(p0 any, p1 any) (out any) {
 func Go_Widget_calendarPosition(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.Calendar).Position())
+	return
+}
+// [pure] typed wrapper for Go_Widget_calendarPosition (P7 adaptor target)
+func Go_Widget_calendarPositionT(p0 *pkg.Calendar) (out SkyResult[string, fyne.Position]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Position](p0.Position())
 	return
 }
 
@@ -639,11 +878,23 @@ func Go_Widget_calendarSize(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Calendar).Size())
 	return
 }
+// [pure] typed wrapper for Go_Widget_calendarSize (P7 adaptor target)
+func Go_Widget_calendarSizeT(p0 *pkg.Calendar) (out SkyResult[string, fyne.Size]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Size](p0.Size())
+	return
+}
 
 // [pure] Go_Widget.calendarTheme → pkg.CalendarTheme
 func Go_Widget_calendarTheme(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.Calendar).Theme())
+	return
+}
+// [pure] typed wrapper for Go_Widget_calendarTheme (P7 adaptor target)
+func Go_Widget_calendarThemeT(p0 *pkg.Calendar) (out SkyResult[string, fyne.Theme]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Theme](p0.Theme())
 	return
 }
 
@@ -653,6 +904,20 @@ func Go_Widget_calendarVisible(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Calendar).Visible())
 	return
 }
+// [pure] typed wrapper for Go_Widget_calendarVisible (P7 adaptor target)
+func Go_Widget_calendarVisibleT(p0 *pkg.Calendar) (out SkyResult[string, bool]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, bool](p0.Visible())
+	return
+}
+
+func Go_Widget_calendarBaseWidget(p0 any) any { return SkyFfiFieldGet(p0, "BaseWidget") }
+
+func Go_Widget_calendarSetBaseWidget(value any, recv any) any { return SkyFfiFieldSet(value, recv, "BaseWidget") }
+
+func Go_Widget_calendarOnChanged(p0 any) any { return SkyFfiFieldGet(p0, "OnChanged") }
+
+func Go_Widget_calendarSetOnChanged(value any, recv any) any { return SkyFfiFieldSet(value, recv, "OnChanged") }
 
 // [pure] Go_Widget.cardCreateRenderer → pkg.CardCreateRenderer
 func Go_Widget_cardCreateRenderer(p0 any) (out any) {
@@ -660,11 +925,23 @@ func Go_Widget_cardCreateRenderer(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Card).CreateRenderer())
 	return
 }
+// [pure] typed wrapper for Go_Widget_cardCreateRenderer (P7 adaptor target)
+func Go_Widget_cardCreateRendererT(p0 *pkg.Card) (out SkyResult[string, fyne.WidgetRenderer]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.WidgetRenderer](p0.CreateRenderer())
+	return
+}
 
 // [pure] Go_Widget.cardMinSize → pkg.CardMinSize
 func Go_Widget_cardMinSize(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.Card).MinSize())
+	return
+}
+// [pure] typed wrapper for Go_Widget_cardMinSize (P7 adaptor target)
+func Go_Widget_cardMinSizeT(p0 *pkg.Card) (out SkyResult[string, fyne.Size]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Size](p0.MinSize())
 	return
 }
 
@@ -730,6 +1007,12 @@ func Go_Widget_cardPosition(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Card).Position())
 	return
 }
+// [pure] typed wrapper for Go_Widget_cardPosition (P7 adaptor target)
+func Go_Widget_cardPositionT(p0 *pkg.Card) (out SkyResult[string, fyne.Position]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Position](p0.Position())
+	return
+}
 
 // [pure] Go_Widget.cardRefresh → pkg.CardRefresh
 func Go_Widget_cardRefresh(p0 any) (out any) {
@@ -761,11 +1044,23 @@ func Go_Widget_cardSize(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Card).Size())
 	return
 }
+// [pure] typed wrapper for Go_Widget_cardSize (P7 adaptor target)
+func Go_Widget_cardSizeT(p0 *pkg.Card) (out SkyResult[string, fyne.Size]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Size](p0.Size())
+	return
+}
 
 // [pure] Go_Widget.cardTheme → pkg.CardTheme
 func Go_Widget_cardTheme(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.Card).Theme())
+	return
+}
+// [pure] typed wrapper for Go_Widget_cardTheme (P7 adaptor target)
+func Go_Widget_cardThemeT(p0 *pkg.Card) (out SkyResult[string, fyne.Theme]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Theme](p0.Theme())
 	return
 }
 
@@ -775,6 +1070,26 @@ func Go_Widget_cardVisible(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Card).Visible())
 	return
 }
+// [pure] typed wrapper for Go_Widget_cardVisible (P7 adaptor target)
+func Go_Widget_cardVisibleT(p0 *pkg.Card) (out SkyResult[string, bool]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, bool](p0.Visible())
+	return
+}
+
+func Go_Widget_cardBaseWidget(p0 any) any { return SkyFfiFieldGet(p0, "BaseWidget") }
+
+func Go_Widget_cardSetBaseWidget(value any, recv any) any { return SkyFfiFieldSet(value, recv, "BaseWidget") }
+
+func Go_Widget_cardTitle(p0 any) any { return SkyFfiFieldGet(p0, "Title") }
+
+func Go_Widget_cardSubtitle(p0 any) any { return SkyFfiFieldGet(p0, "Subtitle") }
+
+func Go_Widget_cardSetSubtitle(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Subtitle") }
+
+func Go_Widget_cardImage(p0 any) any { return SkyFfiFieldGet(p0, "Image") }
+
+func Go_Widget_cardContent(p0 any) any { return SkyFfiFieldGet(p0, "Content") }
 
 // [pure] Go_Widget.checkBind → pkg.CheckBind
 func Go_Widget_checkBind(p0 any, p1 any) (out any) {
@@ -838,11 +1153,23 @@ func Go_Widget_checkMinSize(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Check).MinSize())
 	return
 }
+// [pure] typed wrapper for Go_Widget_checkMinSize (P7 adaptor target)
+func Go_Widget_checkMinSizeT(p0 *pkg.Check) (out SkyResult[string, fyne.Size]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Size](p0.MinSize())
+	return
+}
 
 // [pure] Go_Widget.checkCreateRenderer → pkg.CheckCreateRenderer
 func Go_Widget_checkCreateRenderer(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.Check).CreateRenderer())
+	return
+}
+// [pure] typed wrapper for Go_Widget_checkCreateRenderer (P7 adaptor target)
+func Go_Widget_checkCreateRendererT(p0 *pkg.Check) (out SkyResult[string, fyne.WidgetRenderer]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.WidgetRenderer](p0.CreateRenderer())
 	return
 }
 
@@ -908,6 +1235,12 @@ func Go_Widget_checkDisabled(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Check).Disabled())
 	return
 }
+// [pure] typed wrapper for Go_Widget_checkDisabled (P7 adaptor target)
+func Go_Widget_checkDisabledT(p0 *pkg.Check) (out SkyResult[string, bool]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, bool](p0.Disabled())
+	return
+}
 
 // [pure] Go_Widget.checkEnable → pkg.CheckEnable
 func Go_Widget_checkEnable(p0 any) (out any) {
@@ -937,6 +1270,12 @@ func Go_Widget_checkMove(p0 any, p1 any) (out any) {
 func Go_Widget_checkPosition(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.Check).Position())
+	return
+}
+// [pure] typed wrapper for Go_Widget_checkPosition (P7 adaptor target)
+func Go_Widget_checkPositionT(p0 *pkg.Check) (out SkyResult[string, fyne.Position]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Position](p0.Position())
 	return
 }
 
@@ -970,11 +1309,23 @@ func Go_Widget_checkSize(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Check).Size())
 	return
 }
+// [pure] typed wrapper for Go_Widget_checkSize (P7 adaptor target)
+func Go_Widget_checkSizeT(p0 *pkg.Check) (out SkyResult[string, fyne.Size]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Size](p0.Size())
+	return
+}
 
 // [pure] Go_Widget.checkTheme → pkg.CheckTheme
 func Go_Widget_checkTheme(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.Check).Theme())
+	return
+}
+// [pure] typed wrapper for Go_Widget_checkTheme (P7 adaptor target)
+func Go_Widget_checkThemeT(p0 *pkg.Check) (out SkyResult[string, fyne.Theme]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Theme](p0.Theme())
 	return
 }
 
@@ -984,6 +1335,28 @@ func Go_Widget_checkVisible(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Check).Visible())
 	return
 }
+// [pure] typed wrapper for Go_Widget_checkVisible (P7 adaptor target)
+func Go_Widget_checkVisibleT(p0 *pkg.Check) (out SkyResult[string, bool]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, bool](p0.Visible())
+	return
+}
+
+func Go_Widget_checkDisableableWidget(p0 any) any { return SkyFfiFieldGet(p0, "DisableableWidget") }
+
+func Go_Widget_checkSetDisableableWidget(value any, recv any) any { return SkyFfiFieldSet(value, recv, "DisableableWidget") }
+
+func Go_Widget_checkText(p0 any) any { return SkyFfiFieldGet(p0, "Text") }
+
+func Go_Widget_checkChecked(p0 any) any { return SkyFfiFieldGet(p0, "Checked") }
+
+func Go_Widget_checkPartial(p0 any) any { return SkyFfiFieldGet(p0, "Partial") }
+
+func Go_Widget_checkSetPartial(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Partial") }
+
+func Go_Widget_checkOnChanged(p0 any) any { return SkyFfiFieldGet(p0, "OnChanged") }
+
+func Go_Widget_checkSetOnChanged(value any, recv any) any { return SkyFfiFieldSet(value, recv, "OnChanged") }
 
 // [pure] Go_Widget.checkGroupAppend → pkg.CheckGroupAppend
 func Go_Widget_checkGroupAppend(p0 any, p1 any) (out any) {
@@ -999,11 +1372,23 @@ func Go_Widget_checkGroupCreateRenderer(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.CheckGroup).CreateRenderer())
 	return
 }
+// [pure] typed wrapper for Go_Widget_checkGroupCreateRenderer (P7 adaptor target)
+func Go_Widget_checkGroupCreateRendererT(p0 *pkg.CheckGroup) (out SkyResult[string, fyne.WidgetRenderer]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.WidgetRenderer](p0.CreateRenderer())
+	return
+}
 
 // [pure] Go_Widget.checkGroupMinSize → pkg.CheckGroupMinSize
 func Go_Widget_checkGroupMinSize(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.CheckGroup).MinSize())
+	return
+}
+// [pure] typed wrapper for Go_Widget_checkGroupMinSize (P7 adaptor target)
+func Go_Widget_checkGroupMinSizeT(p0 *pkg.CheckGroup) (out SkyResult[string, fyne.Size]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Size](p0.MinSize())
 	return
 }
 
@@ -1019,6 +1404,12 @@ func Go_Widget_checkGroupRefresh(p0 any) (out any) {
 func Go_Widget_checkGroupRemove(p0 any, p1 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.CheckGroup).Remove(fmt.Sprintf("%v", p1)))
+	return
+}
+// [pure] typed wrapper for Go_Widget_checkGroupRemove (P7 adaptor target)
+func Go_Widget_checkGroupRemoveT(p0 *pkg.CheckGroup, p1 string) (out SkyResult[string, bool]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, bool](p0.Remove(p1))
 	return
 }
 
@@ -1042,6 +1433,12 @@ func Go_Widget_checkGroupDisable(p0 any) (out any) {
 func Go_Widget_checkGroupDisabled(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.CheckGroup).Disabled())
+	return
+}
+// [pure] typed wrapper for Go_Widget_checkGroupDisabled (P7 adaptor target)
+func Go_Widget_checkGroupDisabledT(p0 *pkg.CheckGroup) (out SkyResult[string, bool]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, bool](p0.Disabled())
 	return
 }
 
@@ -1083,6 +1480,12 @@ func Go_Widget_checkGroupPosition(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.CheckGroup).Position())
 	return
 }
+// [pure] typed wrapper for Go_Widget_checkGroupPosition (P7 adaptor target)
+func Go_Widget_checkGroupPositionT(p0 *pkg.CheckGroup) (out SkyResult[string, fyne.Position]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Position](p0.Position())
+	return
+}
 
 // [pure] Go_Widget.checkGroupResize → pkg.CheckGroupResize
 func Go_Widget_checkGroupResize(p0 any, p1 any) (out any) {
@@ -1106,11 +1509,23 @@ func Go_Widget_checkGroupSize(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.CheckGroup).Size())
 	return
 }
+// [pure] typed wrapper for Go_Widget_checkGroupSize (P7 adaptor target)
+func Go_Widget_checkGroupSizeT(p0 *pkg.CheckGroup) (out SkyResult[string, fyne.Size]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Size](p0.Size())
+	return
+}
 
 // [pure] Go_Widget.checkGroupTheme → pkg.CheckGroupTheme
 func Go_Widget_checkGroupTheme(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.CheckGroup).Theme())
+	return
+}
+// [pure] typed wrapper for Go_Widget_checkGroupTheme (P7 adaptor target)
+func Go_Widget_checkGroupThemeT(p0 *pkg.CheckGroup) (out SkyResult[string, fyne.Theme]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Theme](p0.Theme())
 	return
 }
 
@@ -1120,11 +1535,45 @@ func Go_Widget_checkGroupVisible(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.CheckGroup).Visible())
 	return
 }
+// [pure] typed wrapper for Go_Widget_checkGroupVisible (P7 adaptor target)
+func Go_Widget_checkGroupVisibleT(p0 *pkg.CheckGroup) (out SkyResult[string, bool]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, bool](p0.Visible())
+	return
+}
+
+func Go_Widget_checkGroupDisableableWidget(p0 any) any { return SkyFfiFieldGet(p0, "DisableableWidget") }
+
+func Go_Widget_checkGroupSetDisableableWidget(value any, recv any) any { return SkyFfiFieldSet(value, recv, "DisableableWidget") }
+
+func Go_Widget_checkGroupHorizontal(p0 any) any { return SkyFfiFieldGet(p0, "Horizontal") }
+
+func Go_Widget_checkGroupSetHorizontal(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Horizontal") }
+
+func Go_Widget_checkGroupRequired(p0 any) any { return SkyFfiFieldGet(p0, "Required") }
+
+func Go_Widget_checkGroupSetRequired(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Required") }
+
+func Go_Widget_checkGroupOnChanged(p0 any) any { return SkyFfiFieldGet(p0, "OnChanged") }
+
+func Go_Widget_checkGroupSetOnChanged(value any, recv any) any { return SkyFfiFieldSet(value, recv, "OnChanged") }
+
+func Go_Widget_checkGroupOptions(p0 any) any { return SkyFfiFieldGet(p0, "Options") }
+
+func Go_Widget_checkGroupSetOptions(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Options") }
+
+func Go_Widget_checkGroupSelected(p0 any) any { return SkyFfiFieldGet(p0, "Selected") }
 
 // [pure] Go_Widget.customTextGridStyleTextColor → pkg.CustomTextGridStyleTextColor
 func Go_Widget_customTextGridStyleTextColor(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.CustomTextGridStyle).TextColor())
+	return
+}
+// [pure] typed wrapper for Go_Widget_customTextGridStyleTextColor (P7 adaptor target)
+func Go_Widget_customTextGridStyleTextColorT(p0 *pkg.CustomTextGridStyle) (out SkyResult[string, color.Color]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, color.Color](p0.TextColor())
 	return
 }
 
@@ -1134,6 +1583,12 @@ func Go_Widget_customTextGridStyleBackgroundColor(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.CustomTextGridStyle).BackgroundColor())
 	return
 }
+// [pure] typed wrapper for Go_Widget_customTextGridStyleBackgroundColor (P7 adaptor target)
+func Go_Widget_customTextGridStyleBackgroundColorT(p0 *pkg.CustomTextGridStyle) (out SkyResult[string, color.Color]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, color.Color](p0.BackgroundColor())
+	return
+}
 
 // [pure] Go_Widget.customTextGridStyleStyle → pkg.CustomTextGridStyleStyle
 func Go_Widget_customTextGridStyleStyle(p0 any) (out any) {
@@ -1141,11 +1596,39 @@ func Go_Widget_customTextGridStyleStyle(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.CustomTextGridStyle).Style())
 	return
 }
+// [pure] typed wrapper for Go_Widget_customTextGridStyleStyle (P7 adaptor target)
+func Go_Widget_customTextGridStyleStyleT(p0 *pkg.CustomTextGridStyle) (out SkyResult[string, fyne.TextStyle]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.TextStyle](p0.Style())
+	return
+}
+
+func Go_Widget_customTextGridStyleTextStyle(p0 any) any { return SkyFfiFieldGet(p0, "TextStyle") }
+
+func Go_Widget_customTextGridStyleSetTextStyle(value any, recv any) any { return SkyFfiFieldSet(value, recv, "TextStyle") }
+
+func Go_Widget_customTextGridStyleFGColor(p0 any) any { return SkyFfiFieldGet(p0, "FGColor") }
+
+func Go_Widget_customTextGridStyleSetFGColor(value any, recv any) any { return SkyFfiFieldSet(value, recv, "FGColor") }
+
+func Go_Widget_customTextGridStyleBGColor(p0 any) any { return SkyFfiFieldGet(p0, "BGColor") }
+
+func Go_Widget_customTextGridStyleSetBGColor(value any, recv any) any { return SkyFfiFieldSet(value, recv, "BGColor") }
+
+func Go_Widget_newCustomTextGridStyle(_ any) any { return new(pkg.CustomTextGridStyle) }
+
+func Go_Widget_dangerImportance(_ any) any { return pkg.DangerImportance }
 
 // [pure] Go_Widget.dateEntryCreateRenderer → pkg.DateEntryCreateRenderer
 func Go_Widget_dateEntryCreateRenderer(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.DateEntry).CreateRenderer())
+	return
+}
+// [pure] typed wrapper for Go_Widget_dateEntryCreateRenderer (P7 adaptor target)
+func Go_Widget_dateEntryCreateRendererT(p0 *pkg.DateEntry) (out SkyResult[string, fyne.WidgetRenderer]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.WidgetRenderer](p0.CreateRenderer())
 	return
 }
 
@@ -1169,6 +1652,12 @@ func Go_Widget_dateEntryDisable(p0 any) (out any) {
 func Go_Widget_dateEntryMinSize(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.DateEntry).MinSize())
+	return
+}
+// [pure] typed wrapper for Go_Widget_dateEntryMinSize (P7 adaptor target)
+func Go_Widget_dateEntryMinSizeT(p0 *pkg.DateEntry) (out SkyResult[string, fyne.Size]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Size](p0.MinSize())
 	return
 }
 
@@ -1202,6 +1691,12 @@ func Go_Widget_dateEntryAcceptsTab(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.DateEntry).AcceptsTab())
 	return
 }
+// [pure] typed wrapper for Go_Widget_dateEntryAcceptsTab (P7 adaptor target)
+func Go_Widget_dateEntryAcceptsTabT(p0 *pkg.DateEntry) (out SkyResult[string, bool]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, bool](p0.AcceptsTab())
+	return
+}
 
 // [pure] Go_Widget.dateEntryAppend → pkg.DateEntryAppend
 func Go_Widget_dateEntryAppend(p0 any, p1 any) (out any) {
@@ -1225,11 +1720,23 @@ func Go_Widget_dateEntryCursor(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.DateEntry).Cursor())
 	return
 }
+// [pure] typed wrapper for Go_Widget_dateEntryCursor (P7 adaptor target)
+func Go_Widget_dateEntryCursorT(p0 *pkg.DateEntry) (out SkyResult[string, desktop.Cursor]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, desktop.Cursor](p0.Cursor())
+	return
+}
 
 // [pure] Go_Widget.dateEntryCursorPosition → pkg.DateEntryCursorPosition
 func Go_Widget_dateEntryCursorPosition(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.DateEntry).CursorPosition())
+	return
+}
+// [pure] typed wrapper for Go_Widget_dateEntryCursorPosition (P7 adaptor target)
+func Go_Widget_dateEntryCursorPositionT(p0 *pkg.DateEntry) (out SkyResult[string, fyne.Position]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Position](p0.CursorPosition())
 	return
 }
 
@@ -1239,11 +1746,23 @@ func Go_Widget_dateEntryCursorTextOffset(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.DateEntry).CursorTextOffset())
 	return
 }
+// [pure] typed wrapper for Go_Widget_dateEntryCursorTextOffset (P7 adaptor target)
+func Go_Widget_dateEntryCursorTextOffsetT(p0 *pkg.DateEntry) (out SkyResult[string, int]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, int](p0.CursorTextOffset())
+	return
+}
 
 // [pure] Go_Widget.dateEntryDisabled → pkg.DateEntryDisabled
 func Go_Widget_dateEntryDisabled(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.DateEntry).Disabled())
+	return
+}
+// [pure] typed wrapper for Go_Widget_dateEntryDisabled (P7 adaptor target)
+func Go_Widget_dateEntryDisabledT(p0 *pkg.DateEntry) (out SkyResult[string, bool]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, bool](p0.Disabled())
 	return
 }
 
@@ -1325,6 +1844,12 @@ func Go_Widget_dateEntryKeyboard(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.DateEntry).Keyboard())
 	return
 }
+// [pure] typed wrapper for Go_Widget_dateEntryKeyboard (P7 adaptor target)
+func Go_Widget_dateEntryKeyboardT(p0 *pkg.DateEntry) (out SkyResult[string, mobile.KeyboardType]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, mobile.KeyboardType](p0.Keyboard())
+	return
+}
 
 // [pure] Go_Widget.dateEntryMouseDown → pkg.DateEntryMouseDown
 func Go_Widget_dateEntryMouseDown(p0 any, p1 any) (out any) {
@@ -1348,6 +1873,12 @@ func Go_Widget_dateEntryPosition(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.DateEntry).Position())
 	return
 }
+// [pure] typed wrapper for Go_Widget_dateEntryPosition (P7 adaptor target)
+func Go_Widget_dateEntryPositionT(p0 *pkg.DateEntry) (out SkyResult[string, fyne.Position]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Position](p0.Position())
+	return
+}
 
 // [pure] Go_Widget.dateEntryRedo → pkg.DateEntryRedo
 func Go_Widget_dateEntryRedo(p0 any) (out any) {
@@ -1369,6 +1900,12 @@ func Go_Widget_dateEntryRefresh(p0 any) (out any) {
 func Go_Widget_dateEntrySelectedText(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.DateEntry).SelectedText())
+	return
+}
+// [pure] typed wrapper for Go_Widget_dateEntrySelectedText (P7 adaptor target)
+func Go_Widget_dateEntrySelectedTextT(p0 *pkg.DateEntry) (out SkyResult[string, string]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, string](p0.SelectedText())
 	return
 }
 
@@ -1434,6 +1971,12 @@ func Go_Widget_dateEntrySize(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.DateEntry).Size())
 	return
 }
+// [pure] typed wrapper for Go_Widget_dateEntrySize (P7 adaptor target)
+func Go_Widget_dateEntrySizeT(p0 *pkg.DateEntry) (out SkyResult[string, fyne.Size]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Size](p0.Size())
+	return
+}
 
 // [pure] Go_Widget.dateEntryTapped → pkg.DateEntryTapped
 func Go_Widget_dateEntryTapped(p0 any, p1 any) (out any) {
@@ -1455,6 +1998,12 @@ func Go_Widget_dateEntryTappedSecondary(p0 any, p1 any) (out any) {
 func Go_Widget_dateEntryTheme(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.DateEntry).Theme())
+	return
+}
+// [pure] typed wrapper for Go_Widget_dateEntryTheme (P7 adaptor target)
+func Go_Widget_dateEntryThemeT(p0 *pkg.DateEntry) (out SkyResult[string, fyne.Theme]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Theme](p0.Theme())
 	return
 }
 
@@ -1531,6 +2080,14 @@ func Go_Widget_dateEntryValidate(p0 any) (out any) {
 
 	return
 }
+// [fallible] typed wrapper for Go_Widget_dateEntryValidate (P7 adaptor target)
+func Go_Widget_dateEntryValidateT(p0 *pkg.DateEntry) (out SkyResult[string, struct{}]) {
+	defer SkyFfiRecoverT(&out)()
+	err := p0.Validate()
+	if err != nil { out = Err[string, struct{}](err.Error()); return }
+	out = Ok[string, struct{}](struct{}{})
+	return
+}
 
 // [pure] Go_Widget.dateEntryVisible → pkg.DateEntryVisible
 func Go_Widget_dateEntryVisible(p0 any) (out any) {
@@ -1538,6 +2095,22 @@ func Go_Widget_dateEntryVisible(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.DateEntry).Visible())
 	return
 }
+// [pure] typed wrapper for Go_Widget_dateEntryVisible (P7 adaptor target)
+func Go_Widget_dateEntryVisibleT(p0 *pkg.DateEntry) (out SkyResult[string, bool]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, bool](p0.Visible())
+	return
+}
+
+func Go_Widget_dateEntryEntry(p0 any) any { return SkyFfiFieldGet(p0, "Entry") }
+
+func Go_Widget_dateEntrySetEntry(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Entry") }
+
+func Go_Widget_dateEntryDate(p0 any) any { return SkyFfiFieldGet(p0, "Date") }
+
+func Go_Widget_dateEntryOnChanged(p0 any) any { return SkyFfiFieldGet(p0, "OnChanged") }
+
+func Go_Widget_dateEntrySetOnChanged(value any, recv any) any { return SkyFfiFieldSet(value, recv, "OnChanged") }
 
 // [pure] Go_Widget.disableableWidgetEnable → pkg.DisableableWidgetEnable
 func Go_Widget_disableableWidgetEnable(p0 any) (out any) {
@@ -1559,6 +2132,12 @@ func Go_Widget_disableableWidgetDisable(p0 any) (out any) {
 func Go_Widget_disableableWidgetDisabled(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.DisableableWidget).Disabled())
+	return
+}
+// [pure] typed wrapper for Go_Widget_disableableWidgetDisabled (P7 adaptor target)
+func Go_Widget_disableableWidgetDisabledT(p0 *pkg.DisableableWidget) (out SkyResult[string, bool]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, bool](p0.Disabled())
 	return
 }
 
@@ -1584,6 +2163,12 @@ func Go_Widget_disableableWidgetMinSize(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.DisableableWidget).MinSize())
 	return
 }
+// [pure] typed wrapper for Go_Widget_disableableWidgetMinSize (P7 adaptor target)
+func Go_Widget_disableableWidgetMinSizeT(p0 *pkg.DisableableWidget) (out SkyResult[string, fyne.Size]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Size](p0.MinSize())
+	return
+}
 
 // [pure] Go_Widget.disableableWidgetMove → pkg.DisableableWidgetMove
 func Go_Widget_disableableWidgetMove(p0 any, p1 any) (out any) {
@@ -1597,6 +2182,12 @@ func Go_Widget_disableableWidgetMove(p0 any, p1 any) (out any) {
 func Go_Widget_disableableWidgetPosition(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.DisableableWidget).Position())
+	return
+}
+// [pure] typed wrapper for Go_Widget_disableableWidgetPosition (P7 adaptor target)
+func Go_Widget_disableableWidgetPositionT(p0 *pkg.DisableableWidget) (out SkyResult[string, fyne.Position]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Position](p0.Position())
 	return
 }
 
@@ -1630,11 +2221,23 @@ func Go_Widget_disableableWidgetSize(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.DisableableWidget).Size())
 	return
 }
+// [pure] typed wrapper for Go_Widget_disableableWidgetSize (P7 adaptor target)
+func Go_Widget_disableableWidgetSizeT(p0 *pkg.DisableableWidget) (out SkyResult[string, fyne.Size]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Size](p0.Size())
+	return
+}
 
 // [pure] Go_Widget.disableableWidgetTheme → pkg.DisableableWidgetTheme
 func Go_Widget_disableableWidgetTheme(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.DisableableWidget).Theme())
+	return
+}
+// [pure] typed wrapper for Go_Widget_disableableWidgetTheme (P7 adaptor target)
+func Go_Widget_disableableWidgetThemeT(p0 *pkg.DisableableWidget) (out SkyResult[string, fyne.Theme]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Theme](p0.Theme())
 	return
 }
 
@@ -1644,11 +2247,29 @@ func Go_Widget_disableableWidgetVisible(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.DisableableWidget).Visible())
 	return
 }
+// [pure] typed wrapper for Go_Widget_disableableWidgetVisible (P7 adaptor target)
+func Go_Widget_disableableWidgetVisibleT(p0 *pkg.DisableableWidget) (out SkyResult[string, bool]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, bool](p0.Visible())
+	return
+}
+
+func Go_Widget_disableableWidgetBaseWidget(p0 any) any { return SkyFfiFieldGet(p0, "BaseWidget") }
+
+func Go_Widget_disableableWidgetSetBaseWidget(value any, recv any) any { return SkyFfiFieldSet(value, recv, "BaseWidget") }
+
+func Go_Widget_newDisableableWidget(_ any) any { return new(pkg.DisableableWidget) }
 
 // [pure] Go_Widget.entryAcceptsTab → pkg.EntryAcceptsTab
 func Go_Widget_entryAcceptsTab(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.Entry).AcceptsTab())
+	return
+}
+// [pure] typed wrapper for Go_Widget_entryAcceptsTab (P7 adaptor target)
+func Go_Widget_entryAcceptsTabT(p0 *pkg.Entry) (out SkyResult[string, bool]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, bool](p0.AcceptsTab())
 	return
 }
 
@@ -1666,11 +2287,23 @@ func Go_Widget_entryCreateRenderer(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Entry).CreateRenderer())
 	return
 }
+// [pure] typed wrapper for Go_Widget_entryCreateRenderer (P7 adaptor target)
+func Go_Widget_entryCreateRendererT(p0 *pkg.Entry) (out SkyResult[string, fyne.WidgetRenderer]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.WidgetRenderer](p0.CreateRenderer())
+	return
+}
 
 // [pure] Go_Widget.entryCursorPosition → pkg.EntryCursorPosition
 func Go_Widget_entryCursorPosition(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.Entry).CursorPosition())
+	return
+}
+// [pure] typed wrapper for Go_Widget_entryCursorPosition (P7 adaptor target)
+func Go_Widget_entryCursorPositionT(p0 *pkg.Entry) (out SkyResult[string, fyne.Position]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Position](p0.CursorPosition())
 	return
 }
 
@@ -1680,11 +2313,23 @@ func Go_Widget_entryCursorTextOffset(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Entry).CursorTextOffset())
 	return
 }
+// [pure] typed wrapper for Go_Widget_entryCursorTextOffset (P7 adaptor target)
+func Go_Widget_entryCursorTextOffsetT(p0 *pkg.Entry) (out SkyResult[string, int]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, int](p0.CursorTextOffset())
+	return
+}
 
 // [pure] Go_Widget.entryCursor → pkg.EntryCursor
 func Go_Widget_entryCursor(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.Entry).Cursor())
+	return
+}
+// [pure] typed wrapper for Go_Widget_entryCursor (P7 adaptor target)
+func Go_Widget_entryCursorT(p0 *pkg.Entry) (out SkyResult[string, desktop.Cursor]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, desktop.Cursor](p0.Cursor())
 	return
 }
 
@@ -1750,6 +2395,12 @@ func Go_Widget_entryKeyboard(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Entry).Keyboard())
 	return
 }
+// [pure] typed wrapper for Go_Widget_entryKeyboard (P7 adaptor target)
+func Go_Widget_entryKeyboardT(p0 *pkg.Entry) (out SkyResult[string, mobile.KeyboardType]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, mobile.KeyboardType](p0.Keyboard())
+	return
+}
 
 // [pure] Go_Widget.entryKeyDown → pkg.EntryKeyDown
 func Go_Widget_entryKeyDown(p0 any, p1 any) (out any) {
@@ -1771,6 +2422,12 @@ func Go_Widget_entryKeyUp(p0 any, p1 any) (out any) {
 func Go_Widget_entryMinSize(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.Entry).MinSize())
+	return
+}
+// [pure] typed wrapper for Go_Widget_entryMinSize (P7 adaptor target)
+func Go_Widget_entryMinSizeT(p0 *pkg.Entry) (out SkyResult[string, fyne.Size]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Size](p0.MinSize())
 	return
 }
 
@@ -1810,6 +2467,12 @@ func Go_Widget_entryRefresh(p0 any) (out any) {
 func Go_Widget_entrySelectedText(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.Entry).SelectedText())
+	return
+}
+// [pure] typed wrapper for Go_Widget_entrySelectedText (P7 adaptor target)
+func Go_Widget_entrySelectedTextT(p0 *pkg.Entry) (out SkyResult[string, string]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, string](p0.SelectedText())
 	return
 }
 
@@ -1942,6 +2605,14 @@ func Go_Widget_entryValidate(p0 any) (out any) {
 
 	return
 }
+// [fallible] typed wrapper for Go_Widget_entryValidate (P7 adaptor target)
+func Go_Widget_entryValidateT(p0 *pkg.Entry) (out SkyResult[string, struct{}]) {
+	defer SkyFfiRecoverT(&out)()
+	err := p0.Validate()
+	if err != nil { out = Err[string, struct{}](err.Error()); return }
+	out = Ok[string, struct{}](struct{}{})
+	return
+}
 
 // [pure] Go_Widget.entrySetOnValidationChanged → pkg.EntrySetOnValidationChanged
 func Go_Widget_entrySetOnValidationChanged(p0 any, p1 any) (out any) {
@@ -1973,6 +2644,12 @@ func Go_Widget_entryDisabled(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Entry).Disabled())
 	return
 }
+// [pure] typed wrapper for Go_Widget_entryDisabled (P7 adaptor target)
+func Go_Widget_entryDisabledT(p0 *pkg.Entry) (out SkyResult[string, bool]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, bool](p0.Disabled())
+	return
+}
 
 // [pure] Go_Widget.entryEnable → pkg.EntryEnable
 func Go_Widget_entryEnable(p0 any) (out any) {
@@ -1994,6 +2671,12 @@ func Go_Widget_entryMove(p0 any, p1 any) (out any) {
 func Go_Widget_entryPosition(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.Entry).Position())
+	return
+}
+// [pure] typed wrapper for Go_Widget_entryPosition (P7 adaptor target)
+func Go_Widget_entryPositionT(p0 *pkg.Entry) (out SkyResult[string, fyne.Position]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Position](p0.Position())
 	return
 }
 
@@ -2019,11 +2702,23 @@ func Go_Widget_entrySize(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Entry).Size())
 	return
 }
+// [pure] typed wrapper for Go_Widget_entrySize (P7 adaptor target)
+func Go_Widget_entrySizeT(p0 *pkg.Entry) (out SkyResult[string, fyne.Size]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Size](p0.Size())
+	return
+}
 
 // [pure] Go_Widget.entryTheme → pkg.EntryTheme
 func Go_Widget_entryTheme(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.Entry).Theme())
+	return
+}
+// [pure] typed wrapper for Go_Widget_entryTheme (P7 adaptor target)
+func Go_Widget_entryThemeT(p0 *pkg.Entry) (out SkyResult[string, fyne.Theme]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Theme](p0.Theme())
 	return
 }
 
@@ -2033,6 +2728,74 @@ func Go_Widget_entryVisible(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Entry).Visible())
 	return
 }
+// [pure] typed wrapper for Go_Widget_entryVisible (P7 adaptor target)
+func Go_Widget_entryVisibleT(p0 *pkg.Entry) (out SkyResult[string, bool]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, bool](p0.Visible())
+	return
+}
+
+func Go_Widget_entryDisableableWidget(p0 any) any { return SkyFfiFieldGet(p0, "DisableableWidget") }
+
+func Go_Widget_entrySetDisableableWidget(value any, recv any) any { return SkyFfiFieldSet(value, recv, "DisableableWidget") }
+
+func Go_Widget_entryText(p0 any) any { return SkyFfiFieldGet(p0, "Text") }
+
+func Go_Widget_entryTextStyle(p0 any) any { return SkyFfiFieldGet(p0, "TextStyle") }
+
+func Go_Widget_entrySetTextStyle(value any, recv any) any { return SkyFfiFieldSet(value, recv, "TextStyle") }
+
+func Go_Widget_entryPlaceHolder(p0 any) any { return SkyFfiFieldGet(p0, "PlaceHolder") }
+
+func Go_Widget_entryOnChanged(p0 any) any { return SkyFfiFieldGet(p0, "OnChanged") }
+
+func Go_Widget_entrySetOnChanged(value any, recv any) any { return SkyFfiFieldSet(value, recv, "OnChanged") }
+
+func Go_Widget_entryOnSubmitted(p0 any) any { return SkyFfiFieldGet(p0, "OnSubmitted") }
+
+func Go_Widget_entrySetOnSubmitted(value any, recv any) any { return SkyFfiFieldSet(value, recv, "OnSubmitted") }
+
+func Go_Widget_entryPassword(p0 any) any { return SkyFfiFieldGet(p0, "Password") }
+
+func Go_Widget_entrySetPassword(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Password") }
+
+func Go_Widget_entryMultiLine(p0 any) any { return SkyFfiFieldGet(p0, "MultiLine") }
+
+func Go_Widget_entrySetMultiLine(value any, recv any) any { return SkyFfiFieldSet(value, recv, "MultiLine") }
+
+func Go_Widget_entryWrapping(p0 any) any { return SkyFfiFieldGet(p0, "Wrapping") }
+
+func Go_Widget_entrySetWrapping(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Wrapping") }
+
+func Go_Widget_entryScroll(p0 any) any { return SkyFfiFieldGet(p0, "Scroll") }
+
+func Go_Widget_entrySetScroll(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Scroll") }
+
+func Go_Widget_entryValidator(p0 any) any { return SkyFfiFieldGet(p0, "Validator") }
+
+func Go_Widget_entrySetValidator(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Validator") }
+
+func Go_Widget_entryAlwaysShowValidationError(p0 any) any { return SkyFfiFieldGet(p0, "AlwaysShowValidationError") }
+
+func Go_Widget_entrySetAlwaysShowValidationError(value any, recv any) any { return SkyFfiFieldSet(value, recv, "AlwaysShowValidationError") }
+
+func Go_Widget_entryCursorRow(p0 any) any { return SkyFfiFieldGet(p0, "CursorRow") }
+
+func Go_Widget_entrySetCursorRow(value any, recv any) any { return SkyFfiFieldSet(value, recv, "CursorRow") }
+
+func Go_Widget_entryCursorColumn(p0 any) any { return SkyFfiFieldGet(p0, "CursorColumn") }
+
+func Go_Widget_entrySetCursorColumn(value any, recv any) any { return SkyFfiFieldSet(value, recv, "CursorColumn") }
+
+func Go_Widget_entryOnCursorChanged(p0 any) any { return SkyFfiFieldGet(p0, "OnCursorChanged") }
+
+func Go_Widget_entrySetOnCursorChanged(value any, recv any) any { return SkyFfiFieldSet(value, recv, "OnCursorChanged") }
+
+func Go_Widget_entryIcon(p0 any) any { return SkyFfiFieldGet(p0, "Icon") }
+
+func Go_Widget_entryActionItem(p0 any) any { return SkyFfiFieldGet(p0, "ActionItem") }
+
+func Go_Widget_entrySetActionItem(value any, recv any) any { return SkyFfiFieldSet(value, recv, "ActionItem") }
 
 // [pure] Go_Widget.fileIconSetURI → pkg.FileIconSetURI
 func Go_Widget_fileIconSetURI(p0 any, p1 any) (out any) {
@@ -2048,11 +2811,23 @@ func Go_Widget_fileIconMinSize(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.FileIcon).MinSize())
 	return
 }
+// [pure] typed wrapper for Go_Widget_fileIconMinSize (P7 adaptor target)
+func Go_Widget_fileIconMinSizeT(p0 *pkg.FileIcon) (out SkyResult[string, fyne.Size]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Size](p0.MinSize())
+	return
+}
 
 // [pure] Go_Widget.fileIconCreateRenderer → pkg.FileIconCreateRenderer
 func Go_Widget_fileIconCreateRenderer(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.FileIcon).CreateRenderer())
+	return
+}
+// [pure] typed wrapper for Go_Widget_fileIconCreateRenderer (P7 adaptor target)
+func Go_Widget_fileIconCreateRendererT(p0 *pkg.FileIcon) (out SkyResult[string, fyne.WidgetRenderer]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.WidgetRenderer](p0.CreateRenderer())
 	return
 }
 
@@ -2094,6 +2869,12 @@ func Go_Widget_fileIconPosition(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.FileIcon).Position())
 	return
 }
+// [pure] typed wrapper for Go_Widget_fileIconPosition (P7 adaptor target)
+func Go_Widget_fileIconPositionT(p0 *pkg.FileIcon) (out SkyResult[string, fyne.Position]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Position](p0.Position())
+	return
+}
 
 // [pure] Go_Widget.fileIconRefresh → pkg.FileIconRefresh
 func Go_Widget_fileIconRefresh(p0 any) (out any) {
@@ -2125,11 +2906,23 @@ func Go_Widget_fileIconSize(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.FileIcon).Size())
 	return
 }
+// [pure] typed wrapper for Go_Widget_fileIconSize (P7 adaptor target)
+func Go_Widget_fileIconSizeT(p0 *pkg.FileIcon) (out SkyResult[string, fyne.Size]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Size](p0.Size())
+	return
+}
 
 // [pure] Go_Widget.fileIconTheme → pkg.FileIconTheme
 func Go_Widget_fileIconTheme(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.FileIcon).Theme())
+	return
+}
+// [pure] typed wrapper for Go_Widget_fileIconTheme (P7 adaptor target)
+func Go_Widget_fileIconThemeT(p0 *pkg.FileIcon) (out SkyResult[string, fyne.Theme]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Theme](p0.Theme())
 	return
 }
 
@@ -2139,6 +2932,20 @@ func Go_Widget_fileIconVisible(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.FileIcon).Visible())
 	return
 }
+// [pure] typed wrapper for Go_Widget_fileIconVisible (P7 adaptor target)
+func Go_Widget_fileIconVisibleT(p0 *pkg.FileIcon) (out SkyResult[string, bool]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, bool](p0.Visible())
+	return
+}
+
+func Go_Widget_fileIconBaseWidget(p0 any) any { return SkyFfiFieldGet(p0, "BaseWidget") }
+
+func Go_Widget_fileIconSetBaseWidget(value any, recv any) any { return SkyFfiFieldSet(value, recv, "BaseWidget") }
+
+func Go_Widget_fileIconSelected(p0 any) any { return SkyFfiFieldGet(p0, "Selected") }
+
+func Go_Widget_fileIconURI(p0 any) any { return SkyFfiFieldGet(p0, "URI") }
 
 // [pure] Go_Widget.formAppend → pkg.FormAppend
 func Go_Widget_formAppend(p0 any, p1 any, p2 any) (out any) {
@@ -2160,6 +2967,12 @@ func Go_Widget_formAppendItem(p0 any, p1 any) (out any) {
 func Go_Widget_formMinSize(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.Form).MinSize())
+	return
+}
+// [pure] typed wrapper for Go_Widget_formMinSize (P7 adaptor target)
+func Go_Widget_formMinSizeT(p0 *pkg.Form) (out SkyResult[string, fyne.Size]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Size](p0.MinSize())
 	return
 }
 
@@ -2193,6 +3006,12 @@ func Go_Widget_formDisabled(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Form).Disabled())
 	return
 }
+// [pure] typed wrapper for Go_Widget_formDisabled (P7 adaptor target)
+func Go_Widget_formDisabledT(p0 *pkg.Form) (out SkyResult[string, bool]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, bool](p0.Disabled())
+	return
+}
 
 // [pure] Go_Widget.formSetOnValidationChanged → pkg.FormSetOnValidationChanged
 func Go_Widget_formSetOnValidationChanged(p0 any, p1 any) (out any) {
@@ -2211,11 +3030,25 @@ func Go_Widget_formValidate(p0 any) (out any) {
 
 	return
 }
+// [fallible] typed wrapper for Go_Widget_formValidate (P7 adaptor target)
+func Go_Widget_formValidateT(p0 *pkg.Form) (out SkyResult[string, struct{}]) {
+	defer SkyFfiRecoverT(&out)()
+	err := p0.Validate()
+	if err != nil { out = Err[string, struct{}](err.Error()); return }
+	out = Ok[string, struct{}](struct{}{})
+	return
+}
 
 // [pure] Go_Widget.formCreateRenderer → pkg.FormCreateRenderer
 func Go_Widget_formCreateRenderer(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.Form).CreateRenderer())
+	return
+}
+// [pure] typed wrapper for Go_Widget_formCreateRenderer (P7 adaptor target)
+func Go_Widget_formCreateRendererT(p0 *pkg.Form) (out SkyResult[string, fyne.WidgetRenderer]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.WidgetRenderer](p0.CreateRenderer())
 	return
 }
 
@@ -2249,6 +3082,12 @@ func Go_Widget_formPosition(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Form).Position())
 	return
 }
+// [pure] typed wrapper for Go_Widget_formPosition (P7 adaptor target)
+func Go_Widget_formPositionT(p0 *pkg.Form) (out SkyResult[string, fyne.Position]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Position](p0.Position())
+	return
+}
 
 // [pure] Go_Widget.formResize → pkg.FormResize
 func Go_Widget_formResize(p0 any, p1 any) (out any) {
@@ -2272,11 +3111,23 @@ func Go_Widget_formSize(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Form).Size())
 	return
 }
+// [pure] typed wrapper for Go_Widget_formSize (P7 adaptor target)
+func Go_Widget_formSizeT(p0 *pkg.Form) (out SkyResult[string, fyne.Size]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Size](p0.Size())
+	return
+}
 
 // [pure] Go_Widget.formTheme → pkg.FormTheme
 func Go_Widget_formTheme(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.Form).Theme())
+	return
+}
+// [pure] typed wrapper for Go_Widget_formTheme (P7 adaptor target)
+func Go_Widget_formThemeT(p0 *pkg.Form) (out SkyResult[string, fyne.Theme]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Theme](p0.Theme())
 	return
 }
 
@@ -2286,11 +3137,63 @@ func Go_Widget_formVisible(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Form).Visible())
 	return
 }
+// [pure] typed wrapper for Go_Widget_formVisible (P7 adaptor target)
+func Go_Widget_formVisibleT(p0 *pkg.Form) (out SkyResult[string, bool]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, bool](p0.Visible())
+	return
+}
+
+func Go_Widget_formBaseWidget(p0 any) any { return SkyFfiFieldGet(p0, "BaseWidget") }
+
+func Go_Widget_formSetBaseWidget(value any, recv any) any { return SkyFfiFieldSet(value, recv, "BaseWidget") }
+
+func Go_Widget_formItems(p0 any) any { return SkyFfiFieldGet(p0, "Items") }
+
+func Go_Widget_formSetItems(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Items") }
+
+func Go_Widget_formOnSubmit(p0 any) any { return SkyFfiFieldGet(p0, "OnSubmit") }
+
+func Go_Widget_formSetOnSubmit(value any, recv any) any { return SkyFfiFieldSet(value, recv, "OnSubmit") }
+
+func Go_Widget_formOnCancel(p0 any) any { return SkyFfiFieldGet(p0, "OnCancel") }
+
+func Go_Widget_formSetOnCancel(value any, recv any) any { return SkyFfiFieldSet(value, recv, "OnCancel") }
+
+func Go_Widget_formSubmitText(p0 any) any { return SkyFfiFieldGet(p0, "SubmitText") }
+
+func Go_Widget_formSetSubmitText(value any, recv any) any { return SkyFfiFieldSet(value, recv, "SubmitText") }
+
+func Go_Widget_formCancelText(p0 any) any { return SkyFfiFieldGet(p0, "CancelText") }
+
+func Go_Widget_formSetCancelText(value any, recv any) any { return SkyFfiFieldSet(value, recv, "CancelText") }
+
+func Go_Widget_formOrientation(p0 any) any { return SkyFfiFieldGet(p0, "Orientation") }
+
+func Go_Widget_formSetOrientation(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Orientation") }
+
+func Go_Widget_formItemText(p0 any) any { return SkyFfiFieldGet(p0, "Text") }
+
+func Go_Widget_formItemSetText(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Text") }
+
+func Go_Widget_formItemWidget(p0 any) any { return SkyFfiFieldGet(p0, "Widget") }
+
+func Go_Widget_formItemSetWidget(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Widget") }
+
+func Go_Widget_formItemHintText(p0 any) any { return SkyFfiFieldGet(p0, "HintText") }
+
+func Go_Widget_formItemSetHintText(value any, recv any) any { return SkyFfiFieldSet(value, recv, "HintText") }
 
 // [pure] Go_Widget.gridWrapCreateRenderer → pkg.GridWrapCreateRenderer
 func Go_Widget_gridWrapCreateRenderer(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.GridWrap).CreateRenderer())
+	return
+}
+// [pure] typed wrapper for Go_Widget_gridWrapCreateRenderer (P7 adaptor target)
+func Go_Widget_gridWrapCreateRendererT(p0 *pkg.GridWrap) (out SkyResult[string, fyne.WidgetRenderer]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.WidgetRenderer](p0.CreateRenderer())
 	return
 }
 
@@ -2314,6 +3217,12 @@ func Go_Widget_gridWrapFocusLost(p0 any) (out any) {
 func Go_Widget_gridWrapMinSize(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.GridWrap).MinSize())
+	return
+}
+// [pure] typed wrapper for Go_Widget_gridWrapMinSize (P7 adaptor target)
+func Go_Widget_gridWrapMinSizeT(p0 *pkg.GridWrap) (out SkyResult[string, fyne.Size]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Size](p0.MinSize())
 	return
 }
 
@@ -2395,6 +3304,12 @@ func Go_Widget_gridWrapGetScrollOffset(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.GridWrap).GetScrollOffset())
 	return
 }
+// [pure] typed wrapper for Go_Widget_gridWrapGetScrollOffset (P7 adaptor target)
+func Go_Widget_gridWrapGetScrollOffsetT(p0 *pkg.GridWrap) (out SkyResult[string, float32]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, float32](p0.GetScrollOffset())
+	return
+}
 
 // [pure] Go_Widget.gridWrapUnselect → pkg.GridWrapUnselect
 func Go_Widget_gridWrapUnselect(p0 any, p1 any) (out any) {
@@ -2424,6 +3339,12 @@ func Go_Widget_gridWrapRefresh(p0 any) (out any) {
 func Go_Widget_gridWrapColumnCount(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.GridWrap).ColumnCount())
+	return
+}
+// [pure] typed wrapper for Go_Widget_gridWrapColumnCount (P7 adaptor target)
+func Go_Widget_gridWrapColumnCountT(p0 *pkg.GridWrap) (out SkyResult[string, int]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, int](p0.ColumnCount())
 	return
 }
 
@@ -2457,6 +3378,12 @@ func Go_Widget_gridWrapPosition(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.GridWrap).Position())
 	return
 }
+// [pure] typed wrapper for Go_Widget_gridWrapPosition (P7 adaptor target)
+func Go_Widget_gridWrapPositionT(p0 *pkg.GridWrap) (out SkyResult[string, fyne.Position]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Position](p0.Position())
+	return
+}
 
 // [pure] Go_Widget.gridWrapShow → pkg.GridWrapShow
 func Go_Widget_gridWrapShow(p0 any) (out any) {
@@ -2472,11 +3399,23 @@ func Go_Widget_gridWrapSize(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.GridWrap).Size())
 	return
 }
+// [pure] typed wrapper for Go_Widget_gridWrapSize (P7 adaptor target)
+func Go_Widget_gridWrapSizeT(p0 *pkg.GridWrap) (out SkyResult[string, fyne.Size]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Size](p0.Size())
+	return
+}
 
 // [pure] Go_Widget.gridWrapTheme → pkg.GridWrapTheme
 func Go_Widget_gridWrapTheme(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.GridWrap).Theme())
+	return
+}
+// [pure] typed wrapper for Go_Widget_gridWrapTheme (P7 adaptor target)
+func Go_Widget_gridWrapThemeT(p0 *pkg.GridWrap) (out SkyResult[string, fyne.Theme]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Theme](p0.Theme())
 	return
 }
 
@@ -2486,6 +3425,40 @@ func Go_Widget_gridWrapVisible(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.GridWrap).Visible())
 	return
 }
+// [pure] typed wrapper for Go_Widget_gridWrapVisible (P7 adaptor target)
+func Go_Widget_gridWrapVisibleT(p0 *pkg.GridWrap) (out SkyResult[string, bool]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, bool](p0.Visible())
+	return
+}
+
+func Go_Widget_gridWrapBaseWidget(p0 any) any { return SkyFfiFieldGet(p0, "BaseWidget") }
+
+func Go_Widget_gridWrapSetBaseWidget(value any, recv any) any { return SkyFfiFieldSet(value, recv, "BaseWidget") }
+
+func Go_Widget_gridWrapLength(p0 any) any { return SkyFfiFieldGet(p0, "Length") }
+
+func Go_Widget_gridWrapSetLength(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Length") }
+
+func Go_Widget_gridWrapCreateItem(p0 any) any { return SkyFfiFieldGet(p0, "CreateItem") }
+
+func Go_Widget_gridWrapSetCreateItem(value any, recv any) any { return SkyFfiFieldSet(value, recv, "CreateItem") }
+
+func Go_Widget_gridWrapUpdateItem(p0 any) any { return SkyFfiFieldGet(p0, "UpdateItem") }
+
+func Go_Widget_gridWrapSetUpdateItem(value any, recv any) any { return SkyFfiFieldSet(value, recv, "UpdateItem") }
+
+func Go_Widget_gridWrapOnSelected(p0 any) any { return SkyFfiFieldGet(p0, "OnSelected") }
+
+func Go_Widget_gridWrapSetOnSelected(value any, recv any) any { return SkyFfiFieldSet(value, recv, "OnSelected") }
+
+func Go_Widget_gridWrapOnUnselected(p0 any) any { return SkyFfiFieldGet(p0, "OnUnselected") }
+
+func Go_Widget_gridWrapSetOnUnselected(value any, recv any) any { return SkyFfiFieldSet(value, recv, "OnUnselected") }
+
+func Go_Widget_highImportance(_ any) any { return pkg.HighImportance }
+
+func Go_Widget_horizontal(_ any) any { return pkg.Horizontal }
 
 // [pure] Go_Widget.hyperlinkCreateRenderer → pkg.HyperlinkCreateRenderer
 func Go_Widget_hyperlinkCreateRenderer(p0 any) (out any) {
@@ -2493,11 +3466,23 @@ func Go_Widget_hyperlinkCreateRenderer(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Hyperlink).CreateRenderer())
 	return
 }
+// [pure] typed wrapper for Go_Widget_hyperlinkCreateRenderer (P7 adaptor target)
+func Go_Widget_hyperlinkCreateRendererT(p0 *pkg.Hyperlink) (out SkyResult[string, fyne.WidgetRenderer]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.WidgetRenderer](p0.CreateRenderer())
+	return
+}
 
 // [pure] Go_Widget.hyperlinkCursor → pkg.HyperlinkCursor
 func Go_Widget_hyperlinkCursor(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.Hyperlink).Cursor())
+	return
+}
+// [pure] typed wrapper for Go_Widget_hyperlinkCursor (P7 adaptor target)
+func Go_Widget_hyperlinkCursorT(p0 *pkg.Hyperlink) (out SkyResult[string, desktop.Cursor]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, desktop.Cursor](p0.Cursor())
 	return
 }
 
@@ -2555,6 +3540,12 @@ func Go_Widget_hyperlinkMinSize(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Hyperlink).MinSize())
 	return
 }
+// [pure] typed wrapper for Go_Widget_hyperlinkMinSize (P7 adaptor target)
+func Go_Widget_hyperlinkMinSizeT(p0 *pkg.Hyperlink) (out SkyResult[string, fyne.Size]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Size](p0.MinSize())
+	return
+}
 
 // [pure] Go_Widget.hyperlinkResize → pkg.HyperlinkResize
 func Go_Widget_hyperlinkResize(p0 any, p1 any) (out any) {
@@ -2587,6 +3578,14 @@ func Go_Widget_hyperlinkSetURLFromString(p0 any, p1 any) (out any) {
 	if err != nil { out = Err[any, any](err.Error()); return }
 	out = Ok[any, any](struct{}{})
 
+	return
+}
+// [fallible] typed wrapper for Go_Widget_hyperlinkSetURLFromString (P7 adaptor target)
+func Go_Widget_hyperlinkSetURLFromStringT(p0 *pkg.Hyperlink, p1 string) (out SkyResult[string, struct{}]) {
+	defer SkyFfiRecoverT(&out)()
+	err := p0.SetURLFromString(p1)
+	if err != nil { out = Err[string, struct{}](err.Error()); return }
+	out = Ok[string, struct{}](struct{}{})
 	return
 }
 
@@ -2644,6 +3643,12 @@ func Go_Widget_hyperlinkPosition(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Hyperlink).Position())
 	return
 }
+// [pure] typed wrapper for Go_Widget_hyperlinkPosition (P7 adaptor target)
+func Go_Widget_hyperlinkPositionT(p0 *pkg.Hyperlink) (out SkyResult[string, fyne.Position]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Position](p0.Position())
+	return
+}
 
 // [pure] Go_Widget.hyperlinkShow → pkg.HyperlinkShow
 func Go_Widget_hyperlinkShow(p0 any) (out any) {
@@ -2659,11 +3664,23 @@ func Go_Widget_hyperlinkSize(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Hyperlink).Size())
 	return
 }
+// [pure] typed wrapper for Go_Widget_hyperlinkSize (P7 adaptor target)
+func Go_Widget_hyperlinkSizeT(p0 *pkg.Hyperlink) (out SkyResult[string, fyne.Size]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Size](p0.Size())
+	return
+}
 
 // [pure] Go_Widget.hyperlinkTheme → pkg.HyperlinkTheme
 func Go_Widget_hyperlinkTheme(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.Hyperlink).Theme())
+	return
+}
+// [pure] typed wrapper for Go_Widget_hyperlinkTheme (P7 adaptor target)
+func Go_Widget_hyperlinkThemeT(p0 *pkg.Hyperlink) (out SkyResult[string, fyne.Theme]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Theme](p0.Theme())
 	return
 }
 
@@ -2673,11 +3690,55 @@ func Go_Widget_hyperlinkVisible(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Hyperlink).Visible())
 	return
 }
+// [pure] typed wrapper for Go_Widget_hyperlinkVisible (P7 adaptor target)
+func Go_Widget_hyperlinkVisibleT(p0 *pkg.Hyperlink) (out SkyResult[string, bool]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, bool](p0.Visible())
+	return
+}
+
+func Go_Widget_hyperlinkBaseWidget(p0 any) any { return SkyFfiFieldGet(p0, "BaseWidget") }
+
+func Go_Widget_hyperlinkSetBaseWidget(value any, recv any) any { return SkyFfiFieldSet(value, recv, "BaseWidget") }
+
+func Go_Widget_hyperlinkText(p0 any) any { return SkyFfiFieldGet(p0, "Text") }
+
+func Go_Widget_hyperlinkURL(p0 any) any { return SkyFfiFieldGet(p0, "URL") }
+
+func Go_Widget_hyperlinkAlignment(p0 any) any { return SkyFfiFieldGet(p0, "Alignment") }
+
+func Go_Widget_hyperlinkSetAlignment(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Alignment") }
+
+func Go_Widget_hyperlinkWrapping(p0 any) any { return SkyFfiFieldGet(p0, "Wrapping") }
+
+func Go_Widget_hyperlinkSetWrapping(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Wrapping") }
+
+func Go_Widget_hyperlinkTextStyle(p0 any) any { return SkyFfiFieldGet(p0, "TextStyle") }
+
+func Go_Widget_hyperlinkSetTextStyle(value any, recv any) any { return SkyFfiFieldSet(value, recv, "TextStyle") }
+
+func Go_Widget_hyperlinkTruncation(p0 any) any { return SkyFfiFieldGet(p0, "Truncation") }
+
+func Go_Widget_hyperlinkSetTruncation(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Truncation") }
+
+func Go_Widget_hyperlinkSizeName(p0 any) any { return SkyFfiFieldGet(p0, "SizeName") }
+
+func Go_Widget_hyperlinkSetSizeName(value any, recv any) any { return SkyFfiFieldSet(value, recv, "SizeName") }
+
+func Go_Widget_hyperlinkOnTapped(p0 any) any { return SkyFfiFieldGet(p0, "OnTapped") }
+
+func Go_Widget_hyperlinkSetOnTapped(value any, recv any) any { return SkyFfiFieldSet(value, recv, "OnTapped") }
 
 // [pure] Go_Widget.hyperlinkSegmentInline → pkg.HyperlinkSegmentInline
 func Go_Widget_hyperlinkSegmentInline(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.HyperlinkSegment).Inline())
+	return
+}
+// [pure] typed wrapper for Go_Widget_hyperlinkSegmentInline (P7 adaptor target)
+func Go_Widget_hyperlinkSegmentInlineT(p0 *pkg.HyperlinkSegment) (out SkyResult[string, bool]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, bool](p0.Inline())
 	return
 }
 
@@ -2687,11 +3748,23 @@ func Go_Widget_hyperlinkSegmentTextual(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.HyperlinkSegment).Textual())
 	return
 }
+// [pure] typed wrapper for Go_Widget_hyperlinkSegmentTextual (P7 adaptor target)
+func Go_Widget_hyperlinkSegmentTextualT(p0 *pkg.HyperlinkSegment) (out SkyResult[string, string]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, string](p0.Textual())
+	return
+}
 
 // [pure] Go_Widget.hyperlinkSegmentVisual → pkg.HyperlinkSegmentVisual
 func Go_Widget_hyperlinkSegmentVisual(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.HyperlinkSegment).Visual())
+	return
+}
+// [pure] typed wrapper for Go_Widget_hyperlinkSegmentVisual (P7 adaptor target)
+func Go_Widget_hyperlinkSegmentVisualT(p0 *pkg.HyperlinkSegment) (out SkyResult[string, fyne.CanvasObject]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.CanvasObject](p0.Visual())
 	return
 }
 
@@ -2717,6 +3790,12 @@ func Go_Widget_hyperlinkSegmentSelectedText(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.HyperlinkSegment).SelectedText())
 	return
 }
+// [pure] typed wrapper for Go_Widget_hyperlinkSegmentSelectedText (P7 adaptor target)
+func Go_Widget_hyperlinkSegmentSelectedTextT(p0 *pkg.HyperlinkSegment) (out SkyResult[string, string]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, string](p0.SelectedText())
+	return
+}
 
 // [pure] Go_Widget.hyperlinkSegmentUnselect → pkg.HyperlinkSegmentUnselect
 func Go_Widget_hyperlinkSegmentUnselect(p0 any) (out any) {
@@ -2725,6 +3804,24 @@ func Go_Widget_hyperlinkSegmentUnselect(p0 any) (out any) {
 	out = Ok[any, any](struct{}{})
 	return
 }
+
+func Go_Widget_hyperlinkSegmentAlignment(p0 any) any { return SkyFfiFieldGet(p0, "Alignment") }
+
+func Go_Widget_hyperlinkSegmentSetAlignment(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Alignment") }
+
+func Go_Widget_hyperlinkSegmentText(p0 any) any { return SkyFfiFieldGet(p0, "Text") }
+
+func Go_Widget_hyperlinkSegmentSetText(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Text") }
+
+func Go_Widget_hyperlinkSegmentURL(p0 any) any { return SkyFfiFieldGet(p0, "URL") }
+
+func Go_Widget_hyperlinkSegmentSetURL(value any, recv any) any { return SkyFfiFieldSet(value, recv, "URL") }
+
+func Go_Widget_hyperlinkSegmentOnTapped(p0 any) any { return SkyFfiFieldGet(p0, "OnTapped") }
+
+func Go_Widget_hyperlinkSegmentSetOnTapped(value any, recv any) any { return SkyFfiFieldSet(value, recv, "OnTapped") }
+
+func Go_Widget_newHyperlinkSegment(_ any) any { return new(pkg.HyperlinkSegment) }
 
 // [pure] Go_Widget.iconSetResource → pkg.IconSetResource
 func Go_Widget_iconSetResource(p0 any, p1 any) (out any) {
@@ -2740,11 +3837,23 @@ func Go_Widget_iconMinSize(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Icon).MinSize())
 	return
 }
+// [pure] typed wrapper for Go_Widget_iconMinSize (P7 adaptor target)
+func Go_Widget_iconMinSizeT(p0 *pkg.Icon) (out SkyResult[string, fyne.Size]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Size](p0.MinSize())
+	return
+}
 
 // [pure] Go_Widget.iconCreateRenderer → pkg.IconCreateRenderer
 func Go_Widget_iconCreateRenderer(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.Icon).CreateRenderer())
+	return
+}
+// [pure] typed wrapper for Go_Widget_iconCreateRenderer (P7 adaptor target)
+func Go_Widget_iconCreateRendererT(p0 *pkg.Icon) (out SkyResult[string, fyne.WidgetRenderer]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.WidgetRenderer](p0.CreateRenderer())
 	return
 }
 
@@ -2778,6 +3887,12 @@ func Go_Widget_iconPosition(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Icon).Position())
 	return
 }
+// [pure] typed wrapper for Go_Widget_iconPosition (P7 adaptor target)
+func Go_Widget_iconPositionT(p0 *pkg.Icon) (out SkyResult[string, fyne.Position]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Position](p0.Position())
+	return
+}
 
 // [pure] Go_Widget.iconRefresh → pkg.IconRefresh
 func Go_Widget_iconRefresh(p0 any) (out any) {
@@ -2809,11 +3924,23 @@ func Go_Widget_iconSize(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Icon).Size())
 	return
 }
+// [pure] typed wrapper for Go_Widget_iconSize (P7 adaptor target)
+func Go_Widget_iconSizeT(p0 *pkg.Icon) (out SkyResult[string, fyne.Size]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Size](p0.Size())
+	return
+}
 
 // [pure] Go_Widget.iconTheme → pkg.IconTheme
 func Go_Widget_iconTheme(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.Icon).Theme())
+	return
+}
+// [pure] typed wrapper for Go_Widget_iconTheme (P7 adaptor target)
+func Go_Widget_iconThemeT(p0 *pkg.Icon) (out SkyResult[string, fyne.Theme]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Theme](p0.Theme())
 	return
 }
 
@@ -2823,11 +3950,29 @@ func Go_Widget_iconVisible(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Icon).Visible())
 	return
 }
+// [pure] typed wrapper for Go_Widget_iconVisible (P7 adaptor target)
+func Go_Widget_iconVisibleT(p0 *pkg.Icon) (out SkyResult[string, bool]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, bool](p0.Visible())
+	return
+}
+
+func Go_Widget_iconBaseWidget(p0 any) any { return SkyFfiFieldGet(p0, "BaseWidget") }
+
+func Go_Widget_iconSetBaseWidget(value any, recv any) any { return SkyFfiFieldSet(value, recv, "BaseWidget") }
+
+func Go_Widget_iconResource(p0 any) any { return SkyFfiFieldGet(p0, "Resource") }
 
 // [pure] Go_Widget.imageSegmentInline → pkg.ImageSegmentInline
 func Go_Widget_imageSegmentInline(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.ImageSegment).Inline())
+	return
+}
+// [pure] typed wrapper for Go_Widget_imageSegmentInline (P7 adaptor target)
+func Go_Widget_imageSegmentInlineT(p0 *pkg.ImageSegment) (out SkyResult[string, bool]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, bool](p0.Inline())
 	return
 }
 
@@ -2837,11 +3982,23 @@ func Go_Widget_imageSegmentTextual(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.ImageSegment).Textual())
 	return
 }
+// [pure] typed wrapper for Go_Widget_imageSegmentTextual (P7 adaptor target)
+func Go_Widget_imageSegmentTextualT(p0 *pkg.ImageSegment) (out SkyResult[string, string]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, string](p0.Textual())
+	return
+}
 
 // [pure] Go_Widget.imageSegmentVisual → pkg.ImageSegmentVisual
 func Go_Widget_imageSegmentVisual(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.ImageSegment).Visual())
+	return
+}
+// [pure] typed wrapper for Go_Widget_imageSegmentVisual (P7 adaptor target)
+func Go_Widget_imageSegmentVisualT(p0 *pkg.ImageSegment) (out SkyResult[string, fyne.CanvasObject]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.CanvasObject](p0.Visual())
 	return
 }
 
@@ -2867,6 +4024,12 @@ func Go_Widget_imageSegmentSelectedText(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.ImageSegment).SelectedText())
 	return
 }
+// [pure] typed wrapper for Go_Widget_imageSegmentSelectedText (P7 adaptor target)
+func Go_Widget_imageSegmentSelectedTextT(p0 *pkg.ImageSegment) (out SkyResult[string, string]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, string](p0.SelectedText())
+	return
+}
 
 // [pure] Go_Widget.imageSegmentUnselect → pkg.ImageSegmentUnselect
 func Go_Widget_imageSegmentUnselect(p0 any) (out any) {
@@ -2875,6 +4038,20 @@ func Go_Widget_imageSegmentUnselect(p0 any) (out any) {
 	out = Ok[any, any](struct{}{})
 	return
 }
+
+func Go_Widget_imageSegmentSource(p0 any) any { return SkyFfiFieldGet(p0, "Source") }
+
+func Go_Widget_imageSegmentSetSource(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Source") }
+
+func Go_Widget_imageSegmentTitle(p0 any) any { return SkyFfiFieldGet(p0, "Title") }
+
+func Go_Widget_imageSegmentSetTitle(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Title") }
+
+func Go_Widget_imageSegmentAlignment(p0 any) any { return SkyFfiFieldGet(p0, "Alignment") }
+
+func Go_Widget_imageSegmentSetAlignment(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Alignment") }
+
+func Go_Widget_newImageSegment(_ any) any { return new(pkg.ImageSegment) }
 
 // [pure] Go_Widget.labelBind → pkg.LabelBind
 func Go_Widget_labelBind(p0 any, p1 any) (out any) {
@@ -2890,11 +4067,23 @@ func Go_Widget_labelCreateRenderer(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Label).CreateRenderer())
 	return
 }
+// [pure] typed wrapper for Go_Widget_labelCreateRenderer (P7 adaptor target)
+func Go_Widget_labelCreateRendererT(p0 *pkg.Label) (out SkyResult[string, fyne.WidgetRenderer]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.WidgetRenderer](p0.CreateRenderer())
+	return
+}
 
 // [pure] Go_Widget.labelMinSize → pkg.LabelMinSize
 func Go_Widget_labelMinSize(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.Label).MinSize())
+	return
+}
+// [pure] typed wrapper for Go_Widget_labelMinSize (P7 adaptor target)
+func Go_Widget_labelMinSizeT(p0 *pkg.Label) (out SkyResult[string, fyne.Size]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Size](p0.MinSize())
 	return
 }
 
@@ -2910,6 +4099,12 @@ func Go_Widget_labelRefresh(p0 any) (out any) {
 func Go_Widget_labelSelectedText(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.Label).SelectedText())
+	return
+}
+// [pure] typed wrapper for Go_Widget_labelSelectedText (P7 adaptor target)
+func Go_Widget_labelSelectedTextT(p0 *pkg.Label) (out SkyResult[string, string]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, string](p0.SelectedText())
 	return
 }
 
@@ -2959,6 +4154,12 @@ func Go_Widget_labelPosition(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Label).Position())
 	return
 }
+// [pure] typed wrapper for Go_Widget_labelPosition (P7 adaptor target)
+func Go_Widget_labelPositionT(p0 *pkg.Label) (out SkyResult[string, fyne.Position]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Position](p0.Position())
+	return
+}
 
 // [pure] Go_Widget.labelResize → pkg.LabelResize
 func Go_Widget_labelResize(p0 any, p1 any) (out any) {
@@ -2982,11 +4183,23 @@ func Go_Widget_labelSize(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Label).Size())
 	return
 }
+// [pure] typed wrapper for Go_Widget_labelSize (P7 adaptor target)
+func Go_Widget_labelSizeT(p0 *pkg.Label) (out SkyResult[string, fyne.Size]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Size](p0.Size())
+	return
+}
 
 // [pure] Go_Widget.labelTheme → pkg.LabelTheme
 func Go_Widget_labelTheme(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.Label).Theme())
+	return
+}
+// [pure] typed wrapper for Go_Widget_labelTheme (P7 adaptor target)
+func Go_Widget_labelThemeT(p0 *pkg.Label) (out SkyResult[string, fyne.Theme]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Theme](p0.Theme())
 	return
 }
 
@@ -2996,11 +4209,57 @@ func Go_Widget_labelVisible(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Label).Visible())
 	return
 }
+// [pure] typed wrapper for Go_Widget_labelVisible (P7 adaptor target)
+func Go_Widget_labelVisibleT(p0 *pkg.Label) (out SkyResult[string, bool]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, bool](p0.Visible())
+	return
+}
+
+func Go_Widget_labelBaseWidget(p0 any) any { return SkyFfiFieldGet(p0, "BaseWidget") }
+
+func Go_Widget_labelSetBaseWidget(value any, recv any) any { return SkyFfiFieldSet(value, recv, "BaseWidget") }
+
+func Go_Widget_labelText(p0 any) any { return SkyFfiFieldGet(p0, "Text") }
+
+func Go_Widget_labelAlignment(p0 any) any { return SkyFfiFieldGet(p0, "Alignment") }
+
+func Go_Widget_labelSetAlignment(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Alignment") }
+
+func Go_Widget_labelWrapping(p0 any) any { return SkyFfiFieldGet(p0, "Wrapping") }
+
+func Go_Widget_labelSetWrapping(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Wrapping") }
+
+func Go_Widget_labelTextStyle(p0 any) any { return SkyFfiFieldGet(p0, "TextStyle") }
+
+func Go_Widget_labelSetTextStyle(value any, recv any) any { return SkyFfiFieldSet(value, recv, "TextStyle") }
+
+func Go_Widget_labelTruncation(p0 any) any { return SkyFfiFieldGet(p0, "Truncation") }
+
+func Go_Widget_labelSetTruncation(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Truncation") }
+
+func Go_Widget_labelImportance(p0 any) any { return SkyFfiFieldGet(p0, "Importance") }
+
+func Go_Widget_labelSetImportance(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Importance") }
+
+func Go_Widget_labelSizeName(p0 any) any { return SkyFfiFieldGet(p0, "SizeName") }
+
+func Go_Widget_labelSetSizeName(value any, recv any) any { return SkyFfiFieldSet(value, recv, "SizeName") }
+
+func Go_Widget_labelSelectable(p0 any) any { return SkyFfiFieldGet(p0, "Selectable") }
+
+func Go_Widget_labelSetSelectable(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Selectable") }
 
 // [pure] Go_Widget.listCreateRenderer → pkg.ListCreateRenderer
 func Go_Widget_listCreateRenderer(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.List).CreateRenderer())
+	return
+}
+// [pure] typed wrapper for Go_Widget_listCreateRenderer (P7 adaptor target)
+func Go_Widget_listCreateRendererT(p0 *pkg.List) (out SkyResult[string, fyne.WidgetRenderer]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.WidgetRenderer](p0.CreateRenderer())
 	return
 }
 
@@ -3024,6 +4283,12 @@ func Go_Widget_listFocusLost(p0 any) (out any) {
 func Go_Widget_listMinSize(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.List).MinSize())
+	return
+}
+// [pure] typed wrapper for Go_Widget_listMinSize (P7 adaptor target)
+func Go_Widget_listMinSizeT(p0 *pkg.List) (out SkyResult[string, fyne.Size]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Size](p0.MinSize())
 	return
 }
 
@@ -3097,6 +4362,12 @@ func Go_Widget_listGetScrollOffset(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.List).GetScrollOffset())
 	return
 }
+// [pure] typed wrapper for Go_Widget_listGetScrollOffset (P7 adaptor target)
+func Go_Widget_listGetScrollOffsetT(p0 *pkg.List) (out SkyResult[string, float32]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, float32](p0.GetScrollOffset())
+	return
+}
 
 // [pure] Go_Widget.listTypedKey → pkg.ListTypedKey
 func Go_Widget_listTypedKey(p0 any, p1 any) (out any) {
@@ -3168,6 +4439,12 @@ func Go_Widget_listPosition(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.List).Position())
 	return
 }
+// [pure] typed wrapper for Go_Widget_listPosition (P7 adaptor target)
+func Go_Widget_listPositionT(p0 *pkg.List) (out SkyResult[string, fyne.Position]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Position](p0.Position())
+	return
+}
 
 // [pure] Go_Widget.listShow → pkg.ListShow
 func Go_Widget_listShow(p0 any) (out any) {
@@ -3183,11 +4460,23 @@ func Go_Widget_listSize(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.List).Size())
 	return
 }
+// [pure] typed wrapper for Go_Widget_listSize (P7 adaptor target)
+func Go_Widget_listSizeT(p0 *pkg.List) (out SkyResult[string, fyne.Size]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Size](p0.Size())
+	return
+}
 
 // [pure] Go_Widget.listTheme → pkg.ListTheme
 func Go_Widget_listTheme(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.List).Theme())
+	return
+}
+// [pure] typed wrapper for Go_Widget_listTheme (P7 adaptor target)
+func Go_Widget_listThemeT(p0 *pkg.List) (out SkyResult[string, fyne.Theme]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Theme](p0.Theme())
 	return
 }
 
@@ -3197,6 +4486,40 @@ func Go_Widget_listVisible(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.List).Visible())
 	return
 }
+// [pure] typed wrapper for Go_Widget_listVisible (P7 adaptor target)
+func Go_Widget_listVisibleT(p0 *pkg.List) (out SkyResult[string, bool]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, bool](p0.Visible())
+	return
+}
+
+func Go_Widget_listBaseWidget(p0 any) any { return SkyFfiFieldGet(p0, "BaseWidget") }
+
+func Go_Widget_listSetBaseWidget(value any, recv any) any { return SkyFfiFieldSet(value, recv, "BaseWidget") }
+
+func Go_Widget_listLength(p0 any) any { return SkyFfiFieldGet(p0, "Length") }
+
+func Go_Widget_listSetLength(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Length") }
+
+func Go_Widget_listCreateItem(p0 any) any { return SkyFfiFieldGet(p0, "CreateItem") }
+
+func Go_Widget_listSetCreateItem(value any, recv any) any { return SkyFfiFieldSet(value, recv, "CreateItem") }
+
+func Go_Widget_listUpdateItem(p0 any) any { return SkyFfiFieldGet(p0, "UpdateItem") }
+
+func Go_Widget_listSetUpdateItem(value any, recv any) any { return SkyFfiFieldSet(value, recv, "UpdateItem") }
+
+func Go_Widget_listOnSelected(p0 any) any { return SkyFfiFieldGet(p0, "OnSelected") }
+
+func Go_Widget_listSetOnSelected(value any, recv any) any { return SkyFfiFieldSet(value, recv, "OnSelected") }
+
+func Go_Widget_listOnUnselected(p0 any) any { return SkyFfiFieldGet(p0, "OnUnselected") }
+
+func Go_Widget_listSetOnUnselected(value any, recv any) any { return SkyFfiFieldSet(value, recv, "OnUnselected") }
+
+func Go_Widget_listHideSeparators(p0 any) any { return SkyFfiFieldGet(p0, "HideSeparators") }
+
+func Go_Widget_listSetHideSeparators(value any, recv any) any { return SkyFfiFieldSet(value, recv, "HideSeparators") }
 
 // [pure] Go_Widget.listSegmentSetStartNumber → pkg.ListSegmentSetStartNumber
 func Go_Widget_listSegmentSetStartNumber(p0 any, p1 any) (out any) {
@@ -3212,11 +4535,23 @@ func Go_Widget_listSegmentStartNumber(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.ListSegment).StartNumber())
 	return
 }
+// [pure] typed wrapper for Go_Widget_listSegmentStartNumber (P7 adaptor target)
+func Go_Widget_listSegmentStartNumberT(p0 *pkg.ListSegment) (out SkyResult[string, int]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, int](p0.StartNumber())
+	return
+}
 
 // [pure] Go_Widget.listSegmentInline → pkg.ListSegmentInline
 func Go_Widget_listSegmentInline(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.ListSegment).Inline())
+	return
+}
+// [pure] typed wrapper for Go_Widget_listSegmentInline (P7 adaptor target)
+func Go_Widget_listSegmentInlineT(p0 *pkg.ListSegment) (out SkyResult[string, bool]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, bool](p0.Inline())
 	return
 }
 
@@ -3226,6 +4561,12 @@ func Go_Widget_listSegmentSegments(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.ListSegment).Segments())
 	return
 }
+// [pure] typed wrapper for Go_Widget_listSegmentSegments (P7 adaptor target)
+func Go_Widget_listSegmentSegmentsT(p0 *pkg.ListSegment) (out SkyResult[string, []pkg.RichTextSegment]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, []pkg.RichTextSegment](p0.Segments())
+	return
+}
 
 // [pure] Go_Widget.listSegmentTextual → pkg.ListSegmentTextual
 func Go_Widget_listSegmentTextual(p0 any) (out any) {
@@ -3233,11 +4574,23 @@ func Go_Widget_listSegmentTextual(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.ListSegment).Textual())
 	return
 }
+// [pure] typed wrapper for Go_Widget_listSegmentTextual (P7 adaptor target)
+func Go_Widget_listSegmentTextualT(p0 *pkg.ListSegment) (out SkyResult[string, string]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, string](p0.Textual())
+	return
+}
 
 // [pure] Go_Widget.listSegmentVisual → pkg.ListSegmentVisual
 func Go_Widget_listSegmentVisual(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.ListSegment).Visual())
+	return
+}
+// [pure] typed wrapper for Go_Widget_listSegmentVisual (P7 adaptor target)
+func Go_Widget_listSegmentVisualT(p0 *pkg.ListSegment) (out SkyResult[string, fyne.CanvasObject]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.CanvasObject](p0.Visual())
 	return
 }
 
@@ -3263,6 +4616,12 @@ func Go_Widget_listSegmentSelectedText(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.ListSegment).SelectedText())
 	return
 }
+// [pure] typed wrapper for Go_Widget_listSegmentSelectedText (P7 adaptor target)
+func Go_Widget_listSegmentSelectedTextT(p0 *pkg.ListSegment) (out SkyResult[string, string]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, string](p0.SelectedText())
+	return
+}
 
 // [pure] Go_Widget.listSegmentUnselect → pkg.ListSegmentUnselect
 func Go_Widget_listSegmentUnselect(p0 any) (out any) {
@@ -3272,10 +4631,30 @@ func Go_Widget_listSegmentUnselect(p0 any) (out any) {
 	return
 }
 
+func Go_Widget_listSegmentItems(p0 any) any { return SkyFfiFieldGet(p0, "Items") }
+
+func Go_Widget_listSegmentSetItems(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Items") }
+
+func Go_Widget_listSegmentOrdered(p0 any) any { return SkyFfiFieldGet(p0, "Ordered") }
+
+func Go_Widget_listSegmentSetOrdered(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Ordered") }
+
+func Go_Widget_newListSegment(_ any) any { return new(pkg.ListSegment) }
+
+func Go_Widget_lowImportance(_ any) any { return pkg.LowImportance }
+
+func Go_Widget_mediumImportance(_ any) any { return pkg.MediumImportance }
+
 // [pure] Go_Widget.menuActivateLastSubmenu → pkg.MenuActivateLastSubmenu
 func Go_Widget_menuActivateLastSubmenu(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.Menu).ActivateLastSubmenu())
+	return
+}
+// [pure] typed wrapper for Go_Widget_menuActivateLastSubmenu (P7 adaptor target)
+func Go_Widget_menuActivateLastSubmenuT(p0 *pkg.Menu) (out SkyResult[string, bool]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, bool](p0.ActivateLastSubmenu())
 	return
 }
 
@@ -3301,6 +4680,12 @@ func Go_Widget_menuCreateRenderer(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Menu).CreateRenderer())
 	return
 }
+// [pure] typed wrapper for Go_Widget_menuCreateRenderer (P7 adaptor target)
+func Go_Widget_menuCreateRendererT(p0 *pkg.Menu) (out SkyResult[string, fyne.WidgetRenderer]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.WidgetRenderer](p0.CreateRenderer())
+	return
+}
 
 // [pure] Go_Widget.menuDeactivateChild → pkg.MenuDeactivateChild
 func Go_Widget_menuDeactivateChild(p0 any) (out any) {
@@ -3316,11 +4701,23 @@ func Go_Widget_menuDeactivateLastSubmenu(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Menu).DeactivateLastSubmenu())
 	return
 }
+// [pure] typed wrapper for Go_Widget_menuDeactivateLastSubmenu (P7 adaptor target)
+func Go_Widget_menuDeactivateLastSubmenuT(p0 *pkg.Menu) (out SkyResult[string, bool]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, bool](p0.DeactivateLastSubmenu())
+	return
+}
 
 // [pure] Go_Widget.menuMinSize → pkg.MenuMinSize
 func Go_Widget_menuMinSize(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.Menu).MinSize())
+	return
+}
+// [pure] typed wrapper for Go_Widget_menuMinSize (P7 adaptor target)
+func Go_Widget_menuMinSizeT(p0 *pkg.Menu) (out SkyResult[string, fyne.Size]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Size](p0.MinSize())
 	return
 }
 
@@ -3386,6 +4783,12 @@ func Go_Widget_menuPosition(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Menu).Position())
 	return
 }
+// [pure] typed wrapper for Go_Widget_menuPosition (P7 adaptor target)
+func Go_Widget_menuPositionT(p0 *pkg.Menu) (out SkyResult[string, fyne.Position]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Position](p0.Position())
+	return
+}
 
 // [pure] Go_Widget.menuResize → pkg.MenuResize
 func Go_Widget_menuResize(p0 any, p1 any) (out any) {
@@ -3409,11 +4812,23 @@ func Go_Widget_menuSize(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Menu).Size())
 	return
 }
+// [pure] typed wrapper for Go_Widget_menuSize (P7 adaptor target)
+func Go_Widget_menuSizeT(p0 *pkg.Menu) (out SkyResult[string, fyne.Size]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Size](p0.Size())
+	return
+}
 
 // [pure] Go_Widget.menuTheme → pkg.MenuTheme
 func Go_Widget_menuTheme(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.Menu).Theme())
+	return
+}
+// [pure] typed wrapper for Go_Widget_menuTheme (P7 adaptor target)
+func Go_Widget_menuThemeT(p0 *pkg.Menu) (out SkyResult[string, fyne.Theme]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Theme](p0.Theme())
 	return
 }
 
@@ -3423,6 +4838,24 @@ func Go_Widget_menuVisible(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Menu).Visible())
 	return
 }
+// [pure] typed wrapper for Go_Widget_menuVisible (P7 adaptor target)
+func Go_Widget_menuVisibleT(p0 *pkg.Menu) (out SkyResult[string, bool]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, bool](p0.Visible())
+	return
+}
+
+func Go_Widget_menuBaseWidget(p0 any) any { return SkyFfiFieldGet(p0, "BaseWidget") }
+
+func Go_Widget_menuSetBaseWidget(value any, recv any) any { return SkyFfiFieldSet(value, recv, "BaseWidget") }
+
+func Go_Widget_menuItems(p0 any) any { return SkyFfiFieldGet(p0, "Items") }
+
+func Go_Widget_menuSetItems(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Items") }
+
+func Go_Widget_menuOnDismiss(p0 any) any { return SkyFfiFieldGet(p0, "OnDismiss") }
+
+func Go_Widget_menuSetOnDismiss(value any, recv any) any { return SkyFfiFieldSet(value, recv, "OnDismiss") }
 
 // [pure] Go_Widget.newAccordion → pkg.NewAccordion
 func Go_Widget_newAccordion(p0 any) (out any) {
@@ -3437,12 +4870,24 @@ func Go_Widget_newAccordionItem(p0 any, p1 any) (out any) {
 	out = Ok[any, any](pkg.NewAccordionItem(fmt.Sprintf("%v", p0), p1.(fyne.CanvasObject)))
 	return
 }
+// [pure] typed wrapper for Go_Widget_newAccordionItem (P7 adaptor target)
+func Go_Widget_newAccordionItemT(p0 string, p1 fyne.CanvasObject) (out SkyResult[string, *pkg.AccordionItem]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, *pkg.AccordionItem](pkg.NewAccordionItem(p0, p1))
+	return
+}
 
 // [pure] Go_Widget.newActivity → pkg.NewActivity
 func Go_Widget_newActivity(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	_ = p0
 	out = Ok[any, any](pkg.NewActivity())
+	return
+}
+// [pure] typed wrapper for Go_Widget_newActivity (P7 adaptor target)
+func Go_Widget_newActivityT() (out SkyResult[string, *pkg.Activity]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, *pkg.Activity](pkg.NewActivity())
 	return
 }
 
@@ -3473,6 +4918,12 @@ func Go_Widget_newCard(p0 any, p1 any, p2 any) (out any) {
 	out = Ok[any, any](pkg.NewCard(fmt.Sprintf("%v", p0), fmt.Sprintf("%v", p1), p2.(fyne.CanvasObject)))
 	return
 }
+// [pure] typed wrapper for Go_Widget_newCard (P7 adaptor target)
+func Go_Widget_newCardT(p0 string, p1 string, p2 fyne.CanvasObject) (out SkyResult[string, *pkg.Card]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, *pkg.Card](pkg.NewCard(p0, p1, p2))
+	return
+}
 
 // [pure] Go_Widget.newCheck → pkg.NewCheck
 func Go_Widget_newCheck(p0 any, p1 any) (out any) {
@@ -3494,12 +4945,24 @@ func Go_Widget_newCheckWithData(p0 any, p1 any) (out any) {
 	out = Ok[any, any](pkg.NewCheckWithData(fmt.Sprintf("%v", p0), p1.(binding.Bool)))
 	return
 }
+// [pure] typed wrapper for Go_Widget_newCheckWithData (P7 adaptor target)
+func Go_Widget_newCheckWithDataT(p0 string, p1 binding.Bool) (out SkyResult[string, *pkg.Check]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, *pkg.Check](pkg.NewCheckWithData(p0, p1))
+	return
+}
 
 // [pure] Go_Widget.newDateEntry → pkg.NewDateEntry
 func Go_Widget_newDateEntry(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	_ = p0
 	out = Ok[any, any](pkg.NewDateEntry())
+	return
+}
+// [pure] typed wrapper for Go_Widget_newDateEntry (P7 adaptor target)
+func Go_Widget_newDateEntryT() (out SkyResult[string, *pkg.DateEntry]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, *pkg.DateEntry](pkg.NewDateEntry())
 	return
 }
 
@@ -3510,6 +4973,12 @@ func Go_Widget_newEntry(p0 any) (out any) {
 	out = Ok[any, any](pkg.NewEntry())
 	return
 }
+// [pure] typed wrapper for Go_Widget_newEntry (P7 adaptor target)
+func Go_Widget_newEntryT() (out SkyResult[string, *pkg.Entry]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, *pkg.Entry](pkg.NewEntry())
+	return
+}
 
 // [pure] Go_Widget.newEntryWithData → pkg.NewEntryWithData
 func Go_Widget_newEntryWithData(p0 any) (out any) {
@@ -3517,11 +4986,23 @@ func Go_Widget_newEntryWithData(p0 any) (out any) {
 	out = Ok[any, any](pkg.NewEntryWithData(p0.(binding.String)))
 	return
 }
+// [pure] typed wrapper for Go_Widget_newEntryWithData (P7 adaptor target)
+func Go_Widget_newEntryWithDataT(p0 binding.String) (out SkyResult[string, *pkg.Entry]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, *pkg.Entry](pkg.NewEntryWithData(p0))
+	return
+}
 
 // [pure] Go_Widget.newFileIcon → pkg.NewFileIcon
 func Go_Widget_newFileIcon(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](pkg.NewFileIcon(p0.(fyne.URI)))
+	return
+}
+// [pure] typed wrapper for Go_Widget_newFileIcon (P7 adaptor target)
+func Go_Widget_newFileIconT(p0 fyne.URI) (out SkyResult[string, *pkg.FileIcon]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, *pkg.FileIcon](pkg.NewFileIcon(p0))
 	return
 }
 
@@ -3536,6 +5017,12 @@ func Go_Widget_newForm(p0 any) (out any) {
 func Go_Widget_newFormItem(p0 any, p1 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](pkg.NewFormItem(fmt.Sprintf("%v", p0), p1.(fyne.CanvasObject)))
+	return
+}
+// [pure] typed wrapper for Go_Widget_newFormItem (P7 adaptor target)
+func Go_Widget_newFormItemT(p0 string, p1 fyne.CanvasObject) (out SkyResult[string, *pkg.FormItem]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, *pkg.FormItem](pkg.NewFormItem(p0, p1))
 	return
 }
 
@@ -3559,11 +5046,23 @@ func Go_Widget_newHyperlink(p0 any, p1 any) (out any) {
 	out = Ok[any, any](pkg.NewHyperlink(fmt.Sprintf("%v", p0), p1.(*url.URL)))
 	return
 }
+// [pure] typed wrapper for Go_Widget_newHyperlink (P7 adaptor target)
+func Go_Widget_newHyperlinkT(p0 string, p1 *url.URL) (out SkyResult[string, *pkg.Hyperlink]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, *pkg.Hyperlink](pkg.NewHyperlink(p0, p1))
+	return
+}
 
 // [pure] Go_Widget.newHyperlinkWithStyle → pkg.NewHyperlinkWithStyle
 func Go_Widget_newHyperlinkWithStyle(p0 any, p1 any, p2 any, p3 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](pkg.NewHyperlinkWithStyle(fmt.Sprintf("%v", p0), p1.(*url.URL), p2.(fyne.TextAlign), p3.(fyne.TextStyle)))
+	return
+}
+// [pure] typed wrapper for Go_Widget_newHyperlinkWithStyle (P7 adaptor target)
+func Go_Widget_newHyperlinkWithStyleT(p0 string, p1 *url.URL, p2 fyne.TextAlign, p3 fyne.TextStyle) (out SkyResult[string, *pkg.Hyperlink]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, *pkg.Hyperlink](pkg.NewHyperlinkWithStyle(p0, p1, p2, p3))
 	return
 }
 
@@ -3573,11 +5072,23 @@ func Go_Widget_newIcon(p0 any) (out any) {
 	out = Ok[any, any](pkg.NewIcon(p0.(fyne.Resource)))
 	return
 }
+// [pure] typed wrapper for Go_Widget_newIcon (P7 adaptor target)
+func Go_Widget_newIconT(p0 fyne.Resource) (out SkyResult[string, *pkg.Icon]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, *pkg.Icon](pkg.NewIcon(p0))
+	return
+}
 
 // [pure] Go_Widget.newLabel → pkg.NewLabel
 func Go_Widget_newLabel(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](pkg.NewLabel(fmt.Sprintf("%v", p0)))
+	return
+}
+// [pure] typed wrapper for Go_Widget_newLabel (P7 adaptor target)
+func Go_Widget_newLabelT(p0 string) (out SkyResult[string, *pkg.Label]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, *pkg.Label](pkg.NewLabel(p0))
 	return
 }
 
@@ -3587,11 +5098,23 @@ func Go_Widget_newLabelWithData(p0 any) (out any) {
 	out = Ok[any, any](pkg.NewLabelWithData(p0.(binding.String)))
 	return
 }
+// [pure] typed wrapper for Go_Widget_newLabelWithData (P7 adaptor target)
+func Go_Widget_newLabelWithDataT(p0 binding.String) (out SkyResult[string, *pkg.Label]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, *pkg.Label](pkg.NewLabelWithData(p0))
+	return
+}
 
 // [pure] Go_Widget.newLabelWithStyle → pkg.NewLabelWithStyle
 func Go_Widget_newLabelWithStyle(p0 any, p1 any, p2 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](pkg.NewLabelWithStyle(fmt.Sprintf("%v", p0), p1.(fyne.TextAlign), p2.(fyne.TextStyle)))
+	return
+}
+// [pure] typed wrapper for Go_Widget_newLabelWithStyle (P7 adaptor target)
+func Go_Widget_newLabelWithStyleT(p0 string, p1 fyne.TextAlign, p2 fyne.TextStyle) (out SkyResult[string, *pkg.Label]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, *pkg.Label](pkg.NewLabelWithStyle(p0, p1, p2))
 	return
 }
 
@@ -3615,11 +5138,23 @@ func Go_Widget_newMenu(p0 any) (out any) {
 	out = Ok[any, any](pkg.NewMenu(p0.(*fyne.Menu)))
 	return
 }
+// [pure] typed wrapper for Go_Widget_newMenu (P7 adaptor target)
+func Go_Widget_newMenuT(p0 *fyne.Menu) (out SkyResult[string, *pkg.Menu]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, *pkg.Menu](pkg.NewMenu(p0))
+	return
+}
 
 // [pure] Go_Widget.newModalPopUp → pkg.NewModalPopUp
 func Go_Widget_newModalPopUp(p0 any, p1 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](pkg.NewModalPopUp(p0.(fyne.CanvasObject), p1.(fyne.Canvas)))
+	return
+}
+// [pure] typed wrapper for Go_Widget_newModalPopUp (P7 adaptor target)
+func Go_Widget_newModalPopUpT(p0 fyne.CanvasObject, p1 fyne.Canvas) (out SkyResult[string, *pkg.PopUp]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, *pkg.PopUp](pkg.NewModalPopUp(p0, p1))
 	return
 }
 
@@ -3630,12 +5165,24 @@ func Go_Widget_newMultiLineEntry(p0 any) (out any) {
 	out = Ok[any, any](pkg.NewMultiLineEntry())
 	return
 }
+// [pure] typed wrapper for Go_Widget_newMultiLineEntry (P7 adaptor target)
+func Go_Widget_newMultiLineEntryT() (out SkyResult[string, *pkg.Entry]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, *pkg.Entry](pkg.NewMultiLineEntry())
+	return
+}
 
 // [pure] Go_Widget.newPasswordEntry → pkg.NewPasswordEntry
 func Go_Widget_newPasswordEntry(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	_ = p0
 	out = Ok[any, any](pkg.NewPasswordEntry())
+	return
+}
+// [pure] typed wrapper for Go_Widget_newPasswordEntry (P7 adaptor target)
+func Go_Widget_newPasswordEntryT() (out SkyResult[string, *pkg.Entry]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, *pkg.Entry](pkg.NewPasswordEntry())
 	return
 }
 
@@ -3645,11 +5192,23 @@ func Go_Widget_newPopUp(p0 any, p1 any) (out any) {
 	out = Ok[any, any](pkg.NewPopUp(p0.(fyne.CanvasObject), p1.(fyne.Canvas)))
 	return
 }
+// [pure] typed wrapper for Go_Widget_newPopUp (P7 adaptor target)
+func Go_Widget_newPopUpT(p0 fyne.CanvasObject, p1 fyne.Canvas) (out SkyResult[string, *pkg.PopUp]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, *pkg.PopUp](pkg.NewPopUp(p0, p1))
+	return
+}
 
 // [pure] Go_Widget.newPopUpMenu → pkg.NewPopUpMenu
 func Go_Widget_newPopUpMenu(p0 any, p1 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](pkg.NewPopUpMenu(p0.(*fyne.Menu), p1.(fyne.Canvas)))
+	return
+}
+// [pure] typed wrapper for Go_Widget_newPopUpMenu (P7 adaptor target)
+func Go_Widget_newPopUpMenuT(p0 *fyne.Menu, p1 fyne.Canvas) (out SkyResult[string, *pkg.PopUpMenu]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, *pkg.PopUpMenu](pkg.NewPopUpMenu(p0, p1))
 	return
 }
 
@@ -3660,6 +5219,12 @@ func Go_Widget_newProgressBar(p0 any) (out any) {
 	out = Ok[any, any](pkg.NewProgressBar())
 	return
 }
+// [pure] typed wrapper for Go_Widget_newProgressBar (P7 adaptor target)
+func Go_Widget_newProgressBarT() (out SkyResult[string, *pkg.ProgressBar]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, *pkg.ProgressBar](pkg.NewProgressBar())
+	return
+}
 
 // [pure] Go_Widget.newProgressBarInfinite → pkg.NewProgressBarInfinite
 func Go_Widget_newProgressBarInfinite(p0 any) (out any) {
@@ -3668,11 +5233,23 @@ func Go_Widget_newProgressBarInfinite(p0 any) (out any) {
 	out = Ok[any, any](pkg.NewProgressBarInfinite())
 	return
 }
+// [pure] typed wrapper for Go_Widget_newProgressBarInfinite (P7 adaptor target)
+func Go_Widget_newProgressBarInfiniteT() (out SkyResult[string, *pkg.ProgressBarInfinite]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, *pkg.ProgressBarInfinite](pkg.NewProgressBarInfinite())
+	return
+}
 
 // [pure] Go_Widget.newProgressBarWithData → pkg.NewProgressBarWithData
 func Go_Widget_newProgressBarWithData(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](pkg.NewProgressBarWithData(p0.(binding.Float)))
+	return
+}
+// [pure] typed wrapper for Go_Widget_newProgressBarWithData (P7 adaptor target)
+func Go_Widget_newProgressBarWithDataT(p0 binding.Float) (out SkyResult[string, *pkg.ProgressBar]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, *pkg.ProgressBar](pkg.NewProgressBarWithData(p0))
 	return
 }
 
@@ -3696,11 +5273,23 @@ func Go_Widget_newRichTextFromMarkdown(p0 any) (out any) {
 	out = Ok[any, any](pkg.NewRichTextFromMarkdown(fmt.Sprintf("%v", p0)))
 	return
 }
+// [pure] typed wrapper for Go_Widget_newRichTextFromMarkdown (P7 adaptor target)
+func Go_Widget_newRichTextFromMarkdownT(p0 string) (out SkyResult[string, *pkg.RichText]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, *pkg.RichText](pkg.NewRichTextFromMarkdown(p0))
+	return
+}
 
 // [pure] Go_Widget.newRichTextWithText → pkg.NewRichTextWithText
 func Go_Widget_newRichTextWithText(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](pkg.NewRichTextWithText(fmt.Sprintf("%v", p0)))
+	return
+}
+// [pure] typed wrapper for Go_Widget_newRichTextWithText (P7 adaptor target)
+func Go_Widget_newRichTextWithTextT(p0 string) (out SkyResult[string, *pkg.RichText]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, *pkg.RichText](pkg.NewRichTextWithText(p0))
 	return
 }
 
@@ -3717,11 +5306,23 @@ func Go_Widget_newSelectEntry(p0 any) (out any) {
 	out = Ok[any, any](pkg.NewSelectEntry(p0.([]string)))
 	return
 }
+// [pure] typed wrapper for Go_Widget_newSelectEntry (P7 adaptor target)
+func Go_Widget_newSelectEntryT(p0 []string) (out SkyResult[string, *pkg.SelectEntry]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, *pkg.SelectEntry](pkg.NewSelectEntry(p0))
+	return
+}
 
 // [pure] Go_Widget.newSelectWithData → pkg.NewSelectWithData
 func Go_Widget_newSelectWithData(p0 any, p1 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](pkg.NewSelectWithData(p0.([]string), p1.(binding.String)))
+	return
+}
+// [pure] typed wrapper for Go_Widget_newSelectWithData (P7 adaptor target)
+func Go_Widget_newSelectWithDataT(p0 []string, p1 binding.String) (out SkyResult[string, *pkg.Select]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, *pkg.Select](pkg.NewSelectWithData(p0, p1))
 	return
 }
 
@@ -3732,11 +5333,23 @@ func Go_Widget_newSeparator(p0 any) (out any) {
 	out = Ok[any, any](pkg.NewSeparator())
 	return
 }
+// [pure] typed wrapper for Go_Widget_newSeparator (P7 adaptor target)
+func Go_Widget_newSeparatorT() (out SkyResult[string, *pkg.Separator]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, *pkg.Separator](pkg.NewSeparator())
+	return
+}
 
 // [pure] Go_Widget.newSimpleRenderer → pkg.NewSimpleRenderer
 func Go_Widget_newSimpleRenderer(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](pkg.NewSimpleRenderer(p0.(fyne.CanvasObject)))
+	return
+}
+// [pure] typed wrapper for Go_Widget_newSimpleRenderer (P7 adaptor target)
+func Go_Widget_newSimpleRendererT(p0 fyne.CanvasObject) (out SkyResult[string, fyne.WidgetRenderer]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.WidgetRenderer](pkg.NewSimpleRenderer(p0))
 	return
 }
 
@@ -3746,11 +5359,23 @@ func Go_Widget_newSlider(p0 any, p1 any) (out any) {
 	out = Ok[any, any](pkg.NewSlider(AsFloat(p0), AsFloat(p1)))
 	return
 }
+// [pure] typed wrapper for Go_Widget_newSlider (P7 adaptor target)
+func Go_Widget_newSliderT(p0 float64, p1 float64) (out SkyResult[string, *pkg.Slider]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, *pkg.Slider](pkg.NewSlider(p0, p1))
+	return
+}
 
 // [pure] Go_Widget.newSliderWithData → pkg.NewSliderWithData
 func Go_Widget_newSliderWithData(p0 any, p1 any, p2 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](pkg.NewSliderWithData(AsFloat(p0), AsFloat(p1), p2.(binding.Float)))
+	return
+}
+// [pure] typed wrapper for Go_Widget_newSliderWithData (P7 adaptor target)
+func Go_Widget_newSliderWithDataT(p0 float64, p1 float64, p2 binding.Float) (out SkyResult[string, *pkg.Slider]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, *pkg.Slider](pkg.NewSliderWithData(p0, p1, p2))
 	return
 }
 
@@ -3775,11 +5400,23 @@ func Go_Widget_newTextGrid(p0 any) (out any) {
 	out = Ok[any, any](pkg.NewTextGrid())
 	return
 }
+// [pure] typed wrapper for Go_Widget_newTextGrid (P7 adaptor target)
+func Go_Widget_newTextGridT() (out SkyResult[string, *pkg.TextGrid]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, *pkg.TextGrid](pkg.NewTextGrid())
+	return
+}
 
 // [pure] Go_Widget.newTextGridFromString → pkg.NewTextGridFromString
 func Go_Widget_newTextGridFromString(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](pkg.NewTextGridFromString(fmt.Sprintf("%v", p0)))
+	return
+}
+// [pure] typed wrapper for Go_Widget_newTextGridFromString (P7 adaptor target)
+func Go_Widget_newTextGridFromStringT(p0 string) (out SkyResult[string, *pkg.TextGrid]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, *pkg.TextGrid](pkg.NewTextGridFromString(p0))
 	return
 }
 
@@ -3804,12 +5441,24 @@ func Go_Widget_newToolbarSeparator(p0 any) (out any) {
 	out = Ok[any, any](pkg.NewToolbarSeparator())
 	return
 }
+// [pure] typed wrapper for Go_Widget_newToolbarSeparator (P7 adaptor target)
+func Go_Widget_newToolbarSeparatorT() (out SkyResult[string, *pkg.ToolbarSeparator]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, *pkg.ToolbarSeparator](pkg.NewToolbarSeparator())
+	return
+}
 
 // [pure] Go_Widget.newToolbarSpacer → pkg.NewToolbarSpacer
 func Go_Widget_newToolbarSpacer(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	_ = p0
 	out = Ok[any, any](pkg.NewToolbarSpacer())
+	return
+}
+// [pure] typed wrapper for Go_Widget_newToolbarSpacer (P7 adaptor target)
+func Go_Widget_newToolbarSpacerT() (out SkyResult[string, *pkg.ToolbarSpacer]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, *pkg.ToolbarSpacer](pkg.NewToolbarSpacer())
 	return
 }
 
@@ -3840,11 +5489,23 @@ func Go_Widget_paragraphSegmentInline(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.ParagraphSegment).Inline())
 	return
 }
+// [pure] typed wrapper for Go_Widget_paragraphSegmentInline (P7 adaptor target)
+func Go_Widget_paragraphSegmentInlineT(p0 *pkg.ParagraphSegment) (out SkyResult[string, bool]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, bool](p0.Inline())
+	return
+}
 
 // [pure] Go_Widget.paragraphSegmentSegments → pkg.ParagraphSegmentSegments
 func Go_Widget_paragraphSegmentSegments(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.ParagraphSegment).Segments())
+	return
+}
+// [pure] typed wrapper for Go_Widget_paragraphSegmentSegments (P7 adaptor target)
+func Go_Widget_paragraphSegmentSegmentsT(p0 *pkg.ParagraphSegment) (out SkyResult[string, []pkg.RichTextSegment]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, []pkg.RichTextSegment](p0.Segments())
 	return
 }
 
@@ -3854,11 +5515,23 @@ func Go_Widget_paragraphSegmentTextual(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.ParagraphSegment).Textual())
 	return
 }
+// [pure] typed wrapper for Go_Widget_paragraphSegmentTextual (P7 adaptor target)
+func Go_Widget_paragraphSegmentTextualT(p0 *pkg.ParagraphSegment) (out SkyResult[string, string]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, string](p0.Textual())
+	return
+}
 
 // [pure] Go_Widget.paragraphSegmentVisual → pkg.ParagraphSegmentVisual
 func Go_Widget_paragraphSegmentVisual(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.ParagraphSegment).Visual())
+	return
+}
+// [pure] typed wrapper for Go_Widget_paragraphSegmentVisual (P7 adaptor target)
+func Go_Widget_paragraphSegmentVisualT(p0 *pkg.ParagraphSegment) (out SkyResult[string, fyne.CanvasObject]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.CanvasObject](p0.Visual())
 	return
 }
 
@@ -3884,6 +5557,12 @@ func Go_Widget_paragraphSegmentSelectedText(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.ParagraphSegment).SelectedText())
 	return
 }
+// [pure] typed wrapper for Go_Widget_paragraphSegmentSelectedText (P7 adaptor target)
+func Go_Widget_paragraphSegmentSelectedTextT(p0 *pkg.ParagraphSegment) (out SkyResult[string, string]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, string](p0.SelectedText())
+	return
+}
 
 // [pure] Go_Widget.paragraphSegmentUnselect → pkg.ParagraphSegmentUnselect
 func Go_Widget_paragraphSegmentUnselect(p0 any) (out any) {
@@ -3892,6 +5571,12 @@ func Go_Widget_paragraphSegmentUnselect(p0 any) (out any) {
 	out = Ok[any, any](struct{}{})
 	return
 }
+
+func Go_Widget_paragraphSegmentTexts(p0 any) any { return SkyFfiFieldGet(p0, "Texts") }
+
+func Go_Widget_paragraphSegmentSetTexts(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Texts") }
+
+func Go_Widget_newParagraphSegment(_ any) any { return new(pkg.ParagraphSegment) }
 
 // [pure] Go_Widget.popUpHide → pkg.PopUpHide
 func Go_Widget_popUpHide(p0 any) (out any) {
@@ -3963,11 +5648,23 @@ func Go_Widget_popUpMinSize(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.PopUp).MinSize())
 	return
 }
+// [pure] typed wrapper for Go_Widget_popUpMinSize (P7 adaptor target)
+func Go_Widget_popUpMinSizeT(p0 *pkg.PopUp) (out SkyResult[string, fyne.Size]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Size](p0.MinSize())
+	return
+}
 
 // [pure] Go_Widget.popUpCreateRenderer → pkg.PopUpCreateRenderer
 func Go_Widget_popUpCreateRenderer(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.PopUp).CreateRenderer())
+	return
+}
+// [pure] typed wrapper for Go_Widget_popUpCreateRenderer (P7 adaptor target)
+func Go_Widget_popUpCreateRendererT(p0 *pkg.PopUp) (out SkyResult[string, fyne.WidgetRenderer]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.WidgetRenderer](p0.CreateRenderer())
 	return
 }
 
@@ -3985,6 +5682,12 @@ func Go_Widget_popUpPosition(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.PopUp).Position())
 	return
 }
+// [pure] typed wrapper for Go_Widget_popUpPosition (P7 adaptor target)
+func Go_Widget_popUpPositionT(p0 *pkg.PopUp) (out SkyResult[string, fyne.Position]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Position](p0.Position())
+	return
+}
 
 // [pure] Go_Widget.popUpRefresh → pkg.PopUpRefresh
 func Go_Widget_popUpRefresh(p0 any) (out any) {
@@ -4000,11 +5703,23 @@ func Go_Widget_popUpSize(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.PopUp).Size())
 	return
 }
+// [pure] typed wrapper for Go_Widget_popUpSize (P7 adaptor target)
+func Go_Widget_popUpSizeT(p0 *pkg.PopUp) (out SkyResult[string, fyne.Size]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Size](p0.Size())
+	return
+}
 
 // [pure] Go_Widget.popUpTheme → pkg.PopUpTheme
 func Go_Widget_popUpTheme(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.PopUp).Theme())
+	return
+}
+// [pure] typed wrapper for Go_Widget_popUpTheme (P7 adaptor target)
+func Go_Widget_popUpThemeT(p0 *pkg.PopUp) (out SkyResult[string, fyne.Theme]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Theme](p0.Theme())
 	return
 }
 
@@ -4014,6 +5729,24 @@ func Go_Widget_popUpVisible(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.PopUp).Visible())
 	return
 }
+// [pure] typed wrapper for Go_Widget_popUpVisible (P7 adaptor target)
+func Go_Widget_popUpVisibleT(p0 *pkg.PopUp) (out SkyResult[string, bool]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, bool](p0.Visible())
+	return
+}
+
+func Go_Widget_popUpBaseWidget(p0 any) any { return SkyFfiFieldGet(p0, "BaseWidget") }
+
+func Go_Widget_popUpSetBaseWidget(value any, recv any) any { return SkyFfiFieldSet(value, recv, "BaseWidget") }
+
+func Go_Widget_popUpContent(p0 any) any { return SkyFfiFieldGet(p0, "Content") }
+
+func Go_Widget_popUpSetContent(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Content") }
+
+func Go_Widget_popUpCanvas(p0 any) any { return SkyFfiFieldGet(p0, "Canvas") }
+
+func Go_Widget_popUpSetCanvas(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Canvas") }
 
 // [pure] Go_Widget.popUpMenuFocusGained → pkg.PopUpMenuFocusGained
 func Go_Widget_popUpMenuFocusGained(p0 any) (out any) {
@@ -4101,6 +5834,12 @@ func Go_Widget_popUpMenuActivateLastSubmenu(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.PopUpMenu).ActivateLastSubmenu())
 	return
 }
+// [pure] typed wrapper for Go_Widget_popUpMenuActivateLastSubmenu (P7 adaptor target)
+func Go_Widget_popUpMenuActivateLastSubmenuT(p0 *pkg.PopUpMenu) (out SkyResult[string, bool]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, bool](p0.ActivateLastSubmenu())
+	return
+}
 
 // [pure] Go_Widget.popUpMenuActivateNext → pkg.PopUpMenuActivateNext
 func Go_Widget_popUpMenuActivateNext(p0 any) (out any) {
@@ -4124,6 +5863,12 @@ func Go_Widget_popUpMenuCreateRenderer(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.PopUpMenu).CreateRenderer())
 	return
 }
+// [pure] typed wrapper for Go_Widget_popUpMenuCreateRenderer (P7 adaptor target)
+func Go_Widget_popUpMenuCreateRendererT(p0 *pkg.PopUpMenu) (out SkyResult[string, fyne.WidgetRenderer]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.WidgetRenderer](p0.CreateRenderer())
+	return
+}
 
 // [pure] Go_Widget.popUpMenuDeactivateChild → pkg.PopUpMenuDeactivateChild
 func Go_Widget_popUpMenuDeactivateChild(p0 any) (out any) {
@@ -4137,6 +5882,12 @@ func Go_Widget_popUpMenuDeactivateChild(p0 any) (out any) {
 func Go_Widget_popUpMenuDeactivateLastSubmenu(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.PopUpMenu).DeactivateLastSubmenu())
+	return
+}
+// [pure] typed wrapper for Go_Widget_popUpMenuDeactivateLastSubmenu (P7 adaptor target)
+func Go_Widget_popUpMenuDeactivateLastSubmenuT(p0 *pkg.PopUpMenu) (out SkyResult[string, bool]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, bool](p0.DeactivateLastSubmenu())
 	return
 }
 
@@ -4162,11 +5913,23 @@ func Go_Widget_popUpMenuMinSize(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.PopUpMenu).MinSize())
 	return
 }
+// [pure] typed wrapper for Go_Widget_popUpMenuMinSize (P7 adaptor target)
+func Go_Widget_popUpMenuMinSizeT(p0 *pkg.PopUpMenu) (out SkyResult[string, fyne.Size]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Size](p0.MinSize())
+	return
+}
 
 // [pure] Go_Widget.popUpMenuPosition → pkg.PopUpMenuPosition
 func Go_Widget_popUpMenuPosition(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.PopUpMenu).Position())
+	return
+}
+// [pure] typed wrapper for Go_Widget_popUpMenuPosition (P7 adaptor target)
+func Go_Widget_popUpMenuPositionT(p0 *pkg.PopUpMenu) (out SkyResult[string, fyne.Position]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Position](p0.Position())
 	return
 }
 
@@ -4184,6 +5947,12 @@ func Go_Widget_popUpMenuSize(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.PopUpMenu).Size())
 	return
 }
+// [pure] typed wrapper for Go_Widget_popUpMenuSize (P7 adaptor target)
+func Go_Widget_popUpMenuSizeT(p0 *pkg.PopUpMenu) (out SkyResult[string, fyne.Size]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Size](p0.Size())
+	return
+}
 
 // [pure] Go_Widget.popUpMenuTapped → pkg.PopUpMenuTapped
 func Go_Widget_popUpMenuTapped(p0 any, p1 any) (out any) {
@@ -4197,6 +5966,12 @@ func Go_Widget_popUpMenuTapped(p0 any, p1 any) (out any) {
 func Go_Widget_popUpMenuTheme(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.PopUpMenu).Theme())
+	return
+}
+// [pure] typed wrapper for Go_Widget_popUpMenuTheme (P7 adaptor target)
+func Go_Widget_popUpMenuThemeT(p0 *pkg.PopUpMenu) (out SkyResult[string, fyne.Theme]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Theme](p0.Theme())
 	return
 }
 
@@ -4214,6 +5989,16 @@ func Go_Widget_popUpMenuVisible(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.PopUpMenu).Visible())
 	return
 }
+// [pure] typed wrapper for Go_Widget_popUpMenuVisible (P7 adaptor target)
+func Go_Widget_popUpMenuVisibleT(p0 *pkg.PopUpMenu) (out SkyResult[string, bool]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, bool](p0.Visible())
+	return
+}
+
+func Go_Widget_popUpMenuMenu(p0 any) any { return SkyFfiFieldGet(p0, "Menu") }
+
+func Go_Widget_popUpMenuSetMenu(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Menu") }
 
 // [pure] Go_Widget.progressBarBind → pkg.ProgressBarBind
 func Go_Widget_progressBarBind(p0 any, p1 any) (out any) {
@@ -4237,11 +6022,23 @@ func Go_Widget_progressBarMinSize(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.ProgressBar).MinSize())
 	return
 }
+// [pure] typed wrapper for Go_Widget_progressBarMinSize (P7 adaptor target)
+func Go_Widget_progressBarMinSizeT(p0 *pkg.ProgressBar) (out SkyResult[string, fyne.Size]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Size](p0.MinSize())
+	return
+}
 
 // [pure] Go_Widget.progressBarCreateRenderer → pkg.ProgressBarCreateRenderer
 func Go_Widget_progressBarCreateRenderer(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.ProgressBar).CreateRenderer())
+	return
+}
+// [pure] typed wrapper for Go_Widget_progressBarCreateRenderer (P7 adaptor target)
+func Go_Widget_progressBarCreateRendererT(p0 *pkg.ProgressBar) (out SkyResult[string, fyne.WidgetRenderer]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.WidgetRenderer](p0.CreateRenderer())
 	return
 }
 
@@ -4283,6 +6080,12 @@ func Go_Widget_progressBarPosition(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.ProgressBar).Position())
 	return
 }
+// [pure] typed wrapper for Go_Widget_progressBarPosition (P7 adaptor target)
+func Go_Widget_progressBarPositionT(p0 *pkg.ProgressBar) (out SkyResult[string, fyne.Position]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Position](p0.Position())
+	return
+}
 
 // [pure] Go_Widget.progressBarRefresh → pkg.ProgressBarRefresh
 func Go_Widget_progressBarRefresh(p0 any) (out any) {
@@ -4314,11 +6117,23 @@ func Go_Widget_progressBarSize(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.ProgressBar).Size())
 	return
 }
+// [pure] typed wrapper for Go_Widget_progressBarSize (P7 adaptor target)
+func Go_Widget_progressBarSizeT(p0 *pkg.ProgressBar) (out SkyResult[string, fyne.Size]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Size](p0.Size())
+	return
+}
 
 // [pure] Go_Widget.progressBarTheme → pkg.ProgressBarTheme
 func Go_Widget_progressBarTheme(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.ProgressBar).Theme())
+	return
+}
+// [pure] typed wrapper for Go_Widget_progressBarTheme (P7 adaptor target)
+func Go_Widget_progressBarThemeT(p0 *pkg.ProgressBar) (out SkyResult[string, fyne.Theme]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Theme](p0.Theme())
 	return
 }
 
@@ -4328,6 +6143,30 @@ func Go_Widget_progressBarVisible(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.ProgressBar).Visible())
 	return
 }
+// [pure] typed wrapper for Go_Widget_progressBarVisible (P7 adaptor target)
+func Go_Widget_progressBarVisibleT(p0 *pkg.ProgressBar) (out SkyResult[string, bool]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, bool](p0.Visible())
+	return
+}
+
+func Go_Widget_progressBarBaseWidget(p0 any) any { return SkyFfiFieldGet(p0, "BaseWidget") }
+
+func Go_Widget_progressBarSetBaseWidget(value any, recv any) any { return SkyFfiFieldSet(value, recv, "BaseWidget") }
+
+func Go_Widget_progressBarMin(p0 any) any { return SkyFfiFieldGet(p0, "Min") }
+
+func Go_Widget_progressBarSetMin(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Min") }
+
+func Go_Widget_progressBarMax(p0 any) any { return SkyFfiFieldGet(p0, "Max") }
+
+func Go_Widget_progressBarSetMax(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Max") }
+
+func Go_Widget_progressBarValue(p0 any) any { return SkyFfiFieldGet(p0, "Value") }
+
+func Go_Widget_progressBarTextFormatter(p0 any) any { return SkyFfiFieldGet(p0, "TextFormatter") }
+
+func Go_Widget_progressBarSetTextFormatter(value any, recv any) any { return SkyFfiFieldSet(value, recv, "TextFormatter") }
 
 // [pure] Go_Widget.progressBarInfiniteShow → pkg.ProgressBarInfiniteShow
 func Go_Widget_progressBarInfiniteShow(p0 any) (out any) {
@@ -4367,6 +6206,12 @@ func Go_Widget_progressBarInfiniteRunning(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.ProgressBarInfinite).Running())
 	return
 }
+// [pure] typed wrapper for Go_Widget_progressBarInfiniteRunning (P7 adaptor target)
+func Go_Widget_progressBarInfiniteRunningT(p0 *pkg.ProgressBarInfinite) (out SkyResult[string, bool]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, bool](p0.Running())
+	return
+}
 
 // [pure] Go_Widget.progressBarInfiniteMinSize → pkg.ProgressBarInfiniteMinSize
 func Go_Widget_progressBarInfiniteMinSize(p0 any) (out any) {
@@ -4374,11 +6219,23 @@ func Go_Widget_progressBarInfiniteMinSize(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.ProgressBarInfinite).MinSize())
 	return
 }
+// [pure] typed wrapper for Go_Widget_progressBarInfiniteMinSize (P7 adaptor target)
+func Go_Widget_progressBarInfiniteMinSizeT(p0 *pkg.ProgressBarInfinite) (out SkyResult[string, fyne.Size]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Size](p0.MinSize())
+	return
+}
 
 // [pure] Go_Widget.progressBarInfiniteCreateRenderer → pkg.ProgressBarInfiniteCreateRenderer
 func Go_Widget_progressBarInfiniteCreateRenderer(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.ProgressBarInfinite).CreateRenderer())
+	return
+}
+// [pure] typed wrapper for Go_Widget_progressBarInfiniteCreateRenderer (P7 adaptor target)
+func Go_Widget_progressBarInfiniteCreateRendererT(p0 *pkg.ProgressBarInfinite) (out SkyResult[string, fyne.WidgetRenderer]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.WidgetRenderer](p0.CreateRenderer())
 	return
 }
 
@@ -4404,6 +6261,12 @@ func Go_Widget_progressBarInfinitePosition(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.ProgressBarInfinite).Position())
 	return
 }
+// [pure] typed wrapper for Go_Widget_progressBarInfinitePosition (P7 adaptor target)
+func Go_Widget_progressBarInfinitePositionT(p0 *pkg.ProgressBarInfinite) (out SkyResult[string, fyne.Position]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Position](p0.Position())
+	return
+}
 
 // [pure] Go_Widget.progressBarInfiniteRefresh → pkg.ProgressBarInfiniteRefresh
 func Go_Widget_progressBarInfiniteRefresh(p0 any) (out any) {
@@ -4427,11 +6290,23 @@ func Go_Widget_progressBarInfiniteSize(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.ProgressBarInfinite).Size())
 	return
 }
+// [pure] typed wrapper for Go_Widget_progressBarInfiniteSize (P7 adaptor target)
+func Go_Widget_progressBarInfiniteSizeT(p0 *pkg.ProgressBarInfinite) (out SkyResult[string, fyne.Size]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Size](p0.Size())
+	return
+}
 
 // [pure] Go_Widget.progressBarInfiniteTheme → pkg.ProgressBarInfiniteTheme
 func Go_Widget_progressBarInfiniteTheme(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.ProgressBarInfinite).Theme())
+	return
+}
+// [pure] typed wrapper for Go_Widget_progressBarInfiniteTheme (P7 adaptor target)
+func Go_Widget_progressBarInfiniteThemeT(p0 *pkg.ProgressBarInfinite) (out SkyResult[string, fyne.Theme]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Theme](p0.Theme())
 	return
 }
 
@@ -4441,6 +6316,16 @@ func Go_Widget_progressBarInfiniteVisible(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.ProgressBarInfinite).Visible())
 	return
 }
+// [pure] typed wrapper for Go_Widget_progressBarInfiniteVisible (P7 adaptor target)
+func Go_Widget_progressBarInfiniteVisibleT(p0 *pkg.ProgressBarInfinite) (out SkyResult[string, bool]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, bool](p0.Visible())
+	return
+}
+
+func Go_Widget_progressBarInfiniteBaseWidget(p0 any) any { return SkyFfiFieldGet(p0, "BaseWidget") }
+
+func Go_Widget_progressBarInfiniteSetBaseWidget(value any, recv any) any { return SkyFfiFieldSet(value, recv, "BaseWidget") }
 
 // [pure] Go_Widget.radioGroupAppend → pkg.RadioGroupAppend
 func Go_Widget_radioGroupAppend(p0 any, p1 any) (out any) {
@@ -4456,11 +6341,23 @@ func Go_Widget_radioGroupCreateRenderer(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.RadioGroup).CreateRenderer())
 	return
 }
+// [pure] typed wrapper for Go_Widget_radioGroupCreateRenderer (P7 adaptor target)
+func Go_Widget_radioGroupCreateRendererT(p0 *pkg.RadioGroup) (out SkyResult[string, fyne.WidgetRenderer]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.WidgetRenderer](p0.CreateRenderer())
+	return
+}
 
 // [pure] Go_Widget.radioGroupMinSize → pkg.RadioGroupMinSize
 func Go_Widget_radioGroupMinSize(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.RadioGroup).MinSize())
+	return
+}
+// [pure] typed wrapper for Go_Widget_radioGroupMinSize (P7 adaptor target)
+func Go_Widget_radioGroupMinSizeT(p0 *pkg.RadioGroup) (out SkyResult[string, fyne.Size]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Size](p0.MinSize())
 	return
 }
 
@@ -4492,6 +6389,12 @@ func Go_Widget_radioGroupDisable(p0 any) (out any) {
 func Go_Widget_radioGroupDisabled(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.RadioGroup).Disabled())
+	return
+}
+// [pure] typed wrapper for Go_Widget_radioGroupDisabled (P7 adaptor target)
+func Go_Widget_radioGroupDisabledT(p0 *pkg.RadioGroup) (out SkyResult[string, bool]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, bool](p0.Disabled())
 	return
 }
 
@@ -4533,6 +6436,12 @@ func Go_Widget_radioGroupPosition(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.RadioGroup).Position())
 	return
 }
+// [pure] typed wrapper for Go_Widget_radioGroupPosition (P7 adaptor target)
+func Go_Widget_radioGroupPositionT(p0 *pkg.RadioGroup) (out SkyResult[string, fyne.Position]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Position](p0.Position())
+	return
+}
 
 // [pure] Go_Widget.radioGroupResize → pkg.RadioGroupResize
 func Go_Widget_radioGroupResize(p0 any, p1 any) (out any) {
@@ -4556,11 +6465,23 @@ func Go_Widget_radioGroupSize(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.RadioGroup).Size())
 	return
 }
+// [pure] typed wrapper for Go_Widget_radioGroupSize (P7 adaptor target)
+func Go_Widget_radioGroupSizeT(p0 *pkg.RadioGroup) (out SkyResult[string, fyne.Size]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Size](p0.Size())
+	return
+}
 
 // [pure] Go_Widget.radioGroupTheme → pkg.RadioGroupTheme
 func Go_Widget_radioGroupTheme(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.RadioGroup).Theme())
+	return
+}
+// [pure] typed wrapper for Go_Widget_radioGroupTheme (P7 adaptor target)
+func Go_Widget_radioGroupThemeT(p0 *pkg.RadioGroup) (out SkyResult[string, fyne.Theme]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Theme](p0.Theme())
 	return
 }
 
@@ -4570,6 +6491,34 @@ func Go_Widget_radioGroupVisible(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.RadioGroup).Visible())
 	return
 }
+// [pure] typed wrapper for Go_Widget_radioGroupVisible (P7 adaptor target)
+func Go_Widget_radioGroupVisibleT(p0 *pkg.RadioGroup) (out SkyResult[string, bool]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, bool](p0.Visible())
+	return
+}
+
+func Go_Widget_radioGroupDisableableWidget(p0 any) any { return SkyFfiFieldGet(p0, "DisableableWidget") }
+
+func Go_Widget_radioGroupSetDisableableWidget(value any, recv any) any { return SkyFfiFieldSet(value, recv, "DisableableWidget") }
+
+func Go_Widget_radioGroupHorizontal(p0 any) any { return SkyFfiFieldGet(p0, "Horizontal") }
+
+func Go_Widget_radioGroupSetHorizontal(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Horizontal") }
+
+func Go_Widget_radioGroupRequired(p0 any) any { return SkyFfiFieldGet(p0, "Required") }
+
+func Go_Widget_radioGroupSetRequired(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Required") }
+
+func Go_Widget_radioGroupOnChanged(p0 any) any { return SkyFfiFieldGet(p0, "OnChanged") }
+
+func Go_Widget_radioGroupSetOnChanged(value any, recv any) any { return SkyFfiFieldSet(value, recv, "OnChanged") }
+
+func Go_Widget_radioGroupOptions(p0 any) any { return SkyFfiFieldGet(p0, "Options") }
+
+func Go_Widget_radioGroupSetOptions(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Options") }
+
+func Go_Widget_radioGroupSelected(p0 any) any { return SkyFfiFieldGet(p0, "Selected") }
 
 // [pure] Go_Widget.richTextParseMarkdown → pkg.RichTextParseMarkdown
 func Go_Widget_richTextParseMarkdown(p0 any, p1 any) (out any) {
@@ -4593,11 +6542,23 @@ func Go_Widget_richTextCreateRenderer(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.RichText).CreateRenderer())
 	return
 }
+// [pure] typed wrapper for Go_Widget_richTextCreateRenderer (P7 adaptor target)
+func Go_Widget_richTextCreateRendererT(p0 *pkg.RichText) (out SkyResult[string, fyne.WidgetRenderer]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.WidgetRenderer](p0.CreateRenderer())
+	return
+}
 
 // [pure] Go_Widget.richTextMinSize → pkg.RichTextMinSize
 func Go_Widget_richTextMinSize(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.RichText).MinSize())
+	return
+}
+// [pure] typed wrapper for Go_Widget_richTextMinSize (P7 adaptor target)
+func Go_Widget_richTextMinSizeT(p0 *pkg.RichText) (out SkyResult[string, fyne.Size]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Size](p0.MinSize())
 	return
 }
 
@@ -4621,6 +6582,12 @@ func Go_Widget_richTextResize(p0 any, p1 any) (out any) {
 func Go_Widget_richTextString(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.RichText).String())
+	return
+}
+// [pure] typed wrapper for Go_Widget_richTextString (P7 adaptor target)
+func Go_Widget_richTextStringT(p0 *pkg.RichText) (out SkyResult[string, string]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, string](p0.String())
 	return
 }
 
@@ -4654,6 +6621,12 @@ func Go_Widget_richTextPosition(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.RichText).Position())
 	return
 }
+// [pure] typed wrapper for Go_Widget_richTextPosition (P7 adaptor target)
+func Go_Widget_richTextPositionT(p0 *pkg.RichText) (out SkyResult[string, fyne.Position]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Position](p0.Position())
+	return
+}
 
 // [pure] Go_Widget.richTextShow → pkg.RichTextShow
 func Go_Widget_richTextShow(p0 any) (out any) {
@@ -4669,11 +6642,23 @@ func Go_Widget_richTextSize(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.RichText).Size())
 	return
 }
+// [pure] typed wrapper for Go_Widget_richTextSize (P7 adaptor target)
+func Go_Widget_richTextSizeT(p0 *pkg.RichText) (out SkyResult[string, fyne.Size]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Size](p0.Size())
+	return
+}
 
 // [pure] Go_Widget.richTextTheme → pkg.RichTextTheme
 func Go_Widget_richTextTheme(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.RichText).Theme())
+	return
+}
+// [pure] typed wrapper for Go_Widget_richTextTheme (P7 adaptor target)
+func Go_Widget_richTextThemeT(p0 *pkg.RichText) (out SkyResult[string, fyne.Theme]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Theme](p0.Theme())
 	return
 }
 
@@ -4683,6 +6668,32 @@ func Go_Widget_richTextVisible(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.RichText).Visible())
 	return
 }
+// [pure] typed wrapper for Go_Widget_richTextVisible (P7 adaptor target)
+func Go_Widget_richTextVisibleT(p0 *pkg.RichText) (out SkyResult[string, bool]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, bool](p0.Visible())
+	return
+}
+
+func Go_Widget_richTextBaseWidget(p0 any) any { return SkyFfiFieldGet(p0, "BaseWidget") }
+
+func Go_Widget_richTextSetBaseWidget(value any, recv any) any { return SkyFfiFieldSet(value, recv, "BaseWidget") }
+
+func Go_Widget_richTextSegments(p0 any) any { return SkyFfiFieldGet(p0, "Segments") }
+
+func Go_Widget_richTextSetSegments(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Segments") }
+
+func Go_Widget_richTextWrapping(p0 any) any { return SkyFfiFieldGet(p0, "Wrapping") }
+
+func Go_Widget_richTextSetWrapping(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Wrapping") }
+
+func Go_Widget_richTextScroll(p0 any) any { return SkyFfiFieldGet(p0, "Scroll") }
+
+func Go_Widget_richTextSetScroll(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Scroll") }
+
+func Go_Widget_richTextTruncation(p0 any) any { return SkyFfiFieldGet(p0, "Truncation") }
+
+func Go_Widget_richTextSetTruncation(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Truncation") }
 
 // [pure] Go_Widget.richTextBlockSegments → pkg.RichTextBlockSegments
 func Go_Widget_richTextBlockSegments(p0 any) (out any) {
@@ -4690,11 +6701,23 @@ func Go_Widget_richTextBlockSegments(p0 any) (out any) {
 	out = Ok[any, any](p0.(pkg.RichTextBlock).Segments())
 	return
 }
+// [pure] typed wrapper for Go_Widget_richTextBlockSegments (P7 adaptor target)
+func Go_Widget_richTextBlockSegmentsT(p0 pkg.RichTextBlock) (out SkyResult[string, []pkg.RichTextSegment]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, []pkg.RichTextSegment](p0.Segments())
+	return
+}
 
 // [pure] Go_Widget.richTextSegmentInline → pkg.RichTextSegmentInline
 func Go_Widget_richTextSegmentInline(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(pkg.RichTextSegment).Inline())
+	return
+}
+// [pure] typed wrapper for Go_Widget_richTextSegmentInline (P7 adaptor target)
+func Go_Widget_richTextSegmentInlineT(p0 pkg.RichTextSegment) (out SkyResult[string, bool]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, bool](p0.Inline())
 	return
 }
 
@@ -4712,11 +6735,23 @@ func Go_Widget_richTextSegmentSelectedText(p0 any) (out any) {
 	out = Ok[any, any](p0.(pkg.RichTextSegment).SelectedText())
 	return
 }
+// [pure] typed wrapper for Go_Widget_richTextSegmentSelectedText (P7 adaptor target)
+func Go_Widget_richTextSegmentSelectedTextT(p0 pkg.RichTextSegment) (out SkyResult[string, string]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, string](p0.SelectedText())
+	return
+}
 
 // [pure] Go_Widget.richTextSegmentTextual → pkg.RichTextSegmentTextual
 func Go_Widget_richTextSegmentTextual(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(pkg.RichTextSegment).Textual())
+	return
+}
+// [pure] typed wrapper for Go_Widget_richTextSegmentTextual (P7 adaptor target)
+func Go_Widget_richTextSegmentTextualT(p0 pkg.RichTextSegment) (out SkyResult[string, string]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, string](p0.Textual())
 	return
 }
 
@@ -4742,6 +6777,72 @@ func Go_Widget_richTextSegmentVisual(p0 any) (out any) {
 	out = Ok[any, any](p0.(pkg.RichTextSegment).Visual())
 	return
 }
+// [pure] typed wrapper for Go_Widget_richTextSegmentVisual (P7 adaptor target)
+func Go_Widget_richTextSegmentVisualT(p0 pkg.RichTextSegment) (out SkyResult[string, fyne.CanvasObject]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.CanvasObject](p0.Visual())
+	return
+}
+
+func Go_Widget_richTextStyleAlignment(p0 any) any { return SkyFfiFieldGet(p0, "Alignment") }
+
+func Go_Widget_richTextStyleSetAlignment(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Alignment") }
+
+func Go_Widget_richTextStyleColorName(p0 any) any { return SkyFfiFieldGet(p0, "ColorName") }
+
+func Go_Widget_richTextStyleSetColorName(value any, recv any) any { return SkyFfiFieldSet(value, recv, "ColorName") }
+
+func Go_Widget_richTextStyleInline(p0 any) any { return SkyFfiFieldGet(p0, "Inline") }
+
+func Go_Widget_richTextStyleSetInline(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Inline") }
+
+func Go_Widget_richTextStyleSizeName(p0 any) any { return SkyFfiFieldGet(p0, "SizeName") }
+
+func Go_Widget_richTextStyleSetSizeName(value any, recv any) any { return SkyFfiFieldSet(value, recv, "SizeName") }
+
+func Go_Widget_richTextStyleTextStyle(p0 any) any { return SkyFfiFieldGet(p0, "TextStyle") }
+
+func Go_Widget_richTextStyleSetTextStyle(value any, recv any) any { return SkyFfiFieldSet(value, recv, "TextStyle") }
+
+func Go_Widget_newRichTextStyle(_ any) any { return new(pkg.RichTextStyle) }
+
+func Go_Widget_richTextStyleBlockquote(_ any) any { return pkg.RichTextStyleBlockquote }
+
+func Go_Widget_setRichTextStyleBlockquote(value any) any { reflect.ValueOf(&pkg.RichTextStyleBlockquote).Elem().Set(reflect.ValueOf(value).Convert(reflect.TypeOf(pkg.RichTextStyleBlockquote))); return struct{}{} }
+
+func Go_Widget_richTextStyleCodeBlock(_ any) any { return pkg.RichTextStyleCodeBlock }
+
+func Go_Widget_setRichTextStyleCodeBlock(value any) any { reflect.ValueOf(&pkg.RichTextStyleCodeBlock).Elem().Set(reflect.ValueOf(value).Convert(reflect.TypeOf(pkg.RichTextStyleCodeBlock))); return struct{}{} }
+
+func Go_Widget_richTextStyleCodeInline(_ any) any { return pkg.RichTextStyleCodeInline }
+
+func Go_Widget_setRichTextStyleCodeInline(value any) any { reflect.ValueOf(&pkg.RichTextStyleCodeInline).Elem().Set(reflect.ValueOf(value).Convert(reflect.TypeOf(pkg.RichTextStyleCodeInline))); return struct{}{} }
+
+func Go_Widget_richTextStyleEmphasis(_ any) any { return pkg.RichTextStyleEmphasis }
+
+func Go_Widget_setRichTextStyleEmphasis(value any) any { reflect.ValueOf(&pkg.RichTextStyleEmphasis).Elem().Set(reflect.ValueOf(value).Convert(reflect.TypeOf(pkg.RichTextStyleEmphasis))); return struct{}{} }
+
+func Go_Widget_richTextStyleHeading(_ any) any { return pkg.RichTextStyleHeading }
+
+func Go_Widget_setRichTextStyleHeading(value any) any { reflect.ValueOf(&pkg.RichTextStyleHeading).Elem().Set(reflect.ValueOf(value).Convert(reflect.TypeOf(pkg.RichTextStyleHeading))); return struct{}{} }
+
+func Go_Widget_setRichTextStyleInline(value any) any { reflect.ValueOf(&pkg.RichTextStyleInline).Elem().Set(reflect.ValueOf(value).Convert(reflect.TypeOf(pkg.RichTextStyleInline))); return struct{}{} }
+
+func Go_Widget_richTextStyleParagraph(_ any) any { return pkg.RichTextStyleParagraph }
+
+func Go_Widget_setRichTextStyleParagraph(value any) any { reflect.ValueOf(&pkg.RichTextStyleParagraph).Elem().Set(reflect.ValueOf(value).Convert(reflect.TypeOf(pkg.RichTextStyleParagraph))); return struct{}{} }
+
+func Go_Widget_richTextStylePassword(_ any) any { return pkg.RichTextStylePassword }
+
+func Go_Widget_setRichTextStylePassword(value any) any { reflect.ValueOf(&pkg.RichTextStylePassword).Elem().Set(reflect.ValueOf(value).Convert(reflect.TypeOf(pkg.RichTextStylePassword))); return struct{}{} }
+
+func Go_Widget_richTextStyleStrong(_ any) any { return pkg.RichTextStyleStrong }
+
+func Go_Widget_setRichTextStyleStrong(value any) any { reflect.ValueOf(&pkg.RichTextStyleStrong).Elem().Set(reflect.ValueOf(value).Convert(reflect.TypeOf(pkg.RichTextStyleStrong))); return struct{}{} }
+
+func Go_Widget_richTextStyleSubHeading(_ any) any { return pkg.RichTextStyleSubHeading }
+
+func Go_Widget_setRichTextStyleSubHeading(value any) any { reflect.ValueOf(&pkg.RichTextStyleSubHeading).Elem().Set(reflect.ValueOf(value).Convert(reflect.TypeOf(pkg.RichTextStyleSubHeading))); return struct{}{} }
 
 // [pure] Go_Widget.selectBind → pkg.SelectBind
 func Go_Widget_selectBind(p0 any, p1 any) (out any) {
@@ -4763,6 +6864,12 @@ func Go_Widget_selectClearSelected(p0 any) (out any) {
 func Go_Widget_selectCreateRenderer(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.Select).CreateRenderer())
+	return
+}
+// [pure] typed wrapper for Go_Widget_selectCreateRenderer (P7 adaptor target)
+func Go_Widget_selectCreateRendererT(p0 *pkg.Select) (out SkyResult[string, fyne.WidgetRenderer]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.WidgetRenderer](p0.CreateRenderer())
 	return
 }
 
@@ -4794,6 +6901,12 @@ func Go_Widget_selectHide(p0 any) (out any) {
 func Go_Widget_selectMinSize(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.Select).MinSize())
+	return
+}
+// [pure] typed wrapper for Go_Widget_selectMinSize (P7 adaptor target)
+func Go_Widget_selectMinSizeT(p0 *pkg.Select) (out SkyResult[string, fyne.Size]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Size](p0.MinSize())
 	return
 }
 
@@ -4841,6 +6954,12 @@ func Go_Widget_selectResize(p0 any, p1 any) (out any) {
 func Go_Widget_selectSelectedIndex(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.Select).SelectedIndex())
+	return
+}
+// [pure] typed wrapper for Go_Widget_selectSelectedIndex (P7 adaptor target)
+func Go_Widget_selectSelectedIndexT(p0 *pkg.Select) (out SkyResult[string, int]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, int](p0.SelectedIndex())
 	return
 }
 
@@ -4914,6 +7033,12 @@ func Go_Widget_selectDisabled(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Select).Disabled())
 	return
 }
+// [pure] typed wrapper for Go_Widget_selectDisabled (P7 adaptor target)
+func Go_Widget_selectDisabledT(p0 *pkg.Select) (out SkyResult[string, bool]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, bool](p0.Disabled())
+	return
+}
 
 // [pure] Go_Widget.selectEnable → pkg.SelectEnable
 func Go_Widget_selectEnable(p0 any) (out any) {
@@ -4935,6 +7060,12 @@ func Go_Widget_selectExtendBaseWidget(p0 any, p1 any) (out any) {
 func Go_Widget_selectPosition(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.Select).Position())
+	return
+}
+// [pure] typed wrapper for Go_Widget_selectPosition (P7 adaptor target)
+func Go_Widget_selectPositionT(p0 *pkg.Select) (out SkyResult[string, fyne.Position]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Position](p0.Position())
 	return
 }
 
@@ -4960,11 +7091,23 @@ func Go_Widget_selectSize(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Select).Size())
 	return
 }
+// [pure] typed wrapper for Go_Widget_selectSize (P7 adaptor target)
+func Go_Widget_selectSizeT(p0 *pkg.Select) (out SkyResult[string, fyne.Size]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Size](p0.Size())
+	return
+}
 
 // [pure] Go_Widget.selectTheme → pkg.SelectTheme
 func Go_Widget_selectTheme(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.Select).Theme())
+	return
+}
+// [pure] typed wrapper for Go_Widget_selectTheme (P7 adaptor target)
+func Go_Widget_selectThemeT(p0 *pkg.Select) (out SkyResult[string, fyne.Theme]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Theme](p0.Theme())
 	return
 }
 
@@ -4974,11 +7117,43 @@ func Go_Widget_selectVisible(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Select).Visible())
 	return
 }
+// [pure] typed wrapper for Go_Widget_selectVisible (P7 adaptor target)
+func Go_Widget_selectVisibleT(p0 *pkg.Select) (out SkyResult[string, bool]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, bool](p0.Visible())
+	return
+}
+
+func Go_Widget_selectDisableableWidget(p0 any) any { return SkyFfiFieldGet(p0, "DisableableWidget") }
+
+func Go_Widget_selectSetDisableableWidget(value any, recv any) any { return SkyFfiFieldSet(value, recv, "DisableableWidget") }
+
+func Go_Widget_selectAlignment(p0 any) any { return SkyFfiFieldGet(p0, "Alignment") }
+
+func Go_Widget_selectSetAlignment(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Alignment") }
+
+func Go_Widget_selectSelected(p0 any) any { return SkyFfiFieldGet(p0, "Selected") }
+
+func Go_Widget_selectOptions(p0 any) any { return SkyFfiFieldGet(p0, "Options") }
+
+func Go_Widget_selectPlaceHolder(p0 any) any { return SkyFfiFieldGet(p0, "PlaceHolder") }
+
+func Go_Widget_selectSetPlaceHolder(value any, recv any) any { return SkyFfiFieldSet(value, recv, "PlaceHolder") }
+
+func Go_Widget_selectOnChanged(p0 any) any { return SkyFfiFieldGet(p0, "OnChanged") }
+
+func Go_Widget_selectSetOnChanged(value any, recv any) any { return SkyFfiFieldSet(value, recv, "OnChanged") }
 
 // [pure] Go_Widget.selectEntryCreateRenderer → pkg.SelectEntryCreateRenderer
 func Go_Widget_selectEntryCreateRenderer(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.SelectEntry).CreateRenderer())
+	return
+}
+// [pure] typed wrapper for Go_Widget_selectEntryCreateRenderer (P7 adaptor target)
+func Go_Widget_selectEntryCreateRendererT(p0 *pkg.SelectEntry) (out SkyResult[string, fyne.WidgetRenderer]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.WidgetRenderer](p0.CreateRenderer())
 	return
 }
 
@@ -5002,6 +7177,12 @@ func Go_Widget_selectEntryDisable(p0 any) (out any) {
 func Go_Widget_selectEntryMinSize(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.SelectEntry).MinSize())
+	return
+}
+// [pure] typed wrapper for Go_Widget_selectEntryMinSize (P7 adaptor target)
+func Go_Widget_selectEntryMinSizeT(p0 *pkg.SelectEntry) (out SkyResult[string, fyne.Size]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Size](p0.MinSize())
 	return
 }
 
@@ -5035,6 +7216,12 @@ func Go_Widget_selectEntryAcceptsTab(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.SelectEntry).AcceptsTab())
 	return
 }
+// [pure] typed wrapper for Go_Widget_selectEntryAcceptsTab (P7 adaptor target)
+func Go_Widget_selectEntryAcceptsTabT(p0 *pkg.SelectEntry) (out SkyResult[string, bool]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, bool](p0.AcceptsTab())
+	return
+}
 
 // [pure] Go_Widget.selectEntryAppend → pkg.SelectEntryAppend
 func Go_Widget_selectEntryAppend(p0 any, p1 any) (out any) {
@@ -5058,11 +7245,23 @@ func Go_Widget_selectEntryCursor(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.SelectEntry).Cursor())
 	return
 }
+// [pure] typed wrapper for Go_Widget_selectEntryCursor (P7 adaptor target)
+func Go_Widget_selectEntryCursorT(p0 *pkg.SelectEntry) (out SkyResult[string, desktop.Cursor]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, desktop.Cursor](p0.Cursor())
+	return
+}
 
 // [pure] Go_Widget.selectEntryCursorPosition → pkg.SelectEntryCursorPosition
 func Go_Widget_selectEntryCursorPosition(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.SelectEntry).CursorPosition())
+	return
+}
+// [pure] typed wrapper for Go_Widget_selectEntryCursorPosition (P7 adaptor target)
+func Go_Widget_selectEntryCursorPositionT(p0 *pkg.SelectEntry) (out SkyResult[string, fyne.Position]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Position](p0.CursorPosition())
 	return
 }
 
@@ -5072,11 +7271,23 @@ func Go_Widget_selectEntryCursorTextOffset(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.SelectEntry).CursorTextOffset())
 	return
 }
+// [pure] typed wrapper for Go_Widget_selectEntryCursorTextOffset (P7 adaptor target)
+func Go_Widget_selectEntryCursorTextOffsetT(p0 *pkg.SelectEntry) (out SkyResult[string, int]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, int](p0.CursorTextOffset())
+	return
+}
 
 // [pure] Go_Widget.selectEntryDisabled → pkg.SelectEntryDisabled
 func Go_Widget_selectEntryDisabled(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.SelectEntry).Disabled())
+	return
+}
+// [pure] typed wrapper for Go_Widget_selectEntryDisabled (P7 adaptor target)
+func Go_Widget_selectEntryDisabledT(p0 *pkg.SelectEntry) (out SkyResult[string, bool]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, bool](p0.Disabled())
 	return
 }
 
@@ -5158,6 +7369,12 @@ func Go_Widget_selectEntryKeyboard(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.SelectEntry).Keyboard())
 	return
 }
+// [pure] typed wrapper for Go_Widget_selectEntryKeyboard (P7 adaptor target)
+func Go_Widget_selectEntryKeyboardT(p0 *pkg.SelectEntry) (out SkyResult[string, mobile.KeyboardType]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, mobile.KeyboardType](p0.Keyboard())
+	return
+}
 
 // [pure] Go_Widget.selectEntryMouseDown → pkg.SelectEntryMouseDown
 func Go_Widget_selectEntryMouseDown(p0 any, p1 any) (out any) {
@@ -5181,6 +7398,12 @@ func Go_Widget_selectEntryPosition(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.SelectEntry).Position())
 	return
 }
+// [pure] typed wrapper for Go_Widget_selectEntryPosition (P7 adaptor target)
+func Go_Widget_selectEntryPositionT(p0 *pkg.SelectEntry) (out SkyResult[string, fyne.Position]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Position](p0.Position())
+	return
+}
 
 // [pure] Go_Widget.selectEntryRedo → pkg.SelectEntryRedo
 func Go_Widget_selectEntryRedo(p0 any) (out any) {
@@ -5202,6 +7425,12 @@ func Go_Widget_selectEntryRefresh(p0 any) (out any) {
 func Go_Widget_selectEntrySelectedText(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.SelectEntry).SelectedText())
+	return
+}
+// [pure] typed wrapper for Go_Widget_selectEntrySelectedText (P7 adaptor target)
+func Go_Widget_selectEntrySelectedTextT(p0 *pkg.SelectEntry) (out SkyResult[string, string]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, string](p0.SelectedText())
 	return
 }
 
@@ -5267,6 +7496,12 @@ func Go_Widget_selectEntrySize(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.SelectEntry).Size())
 	return
 }
+// [pure] typed wrapper for Go_Widget_selectEntrySize (P7 adaptor target)
+func Go_Widget_selectEntrySizeT(p0 *pkg.SelectEntry) (out SkyResult[string, fyne.Size]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Size](p0.Size())
+	return
+}
 
 // [pure] Go_Widget.selectEntryTapped → pkg.SelectEntryTapped
 func Go_Widget_selectEntryTapped(p0 any, p1 any) (out any) {
@@ -5288,6 +7523,12 @@ func Go_Widget_selectEntryTappedSecondary(p0 any, p1 any) (out any) {
 func Go_Widget_selectEntryTheme(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.SelectEntry).Theme())
+	return
+}
+// [pure] typed wrapper for Go_Widget_selectEntryTheme (P7 adaptor target)
+func Go_Widget_selectEntryThemeT(p0 *pkg.SelectEntry) (out SkyResult[string, fyne.Theme]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Theme](p0.Theme())
 	return
 }
 
@@ -5364,6 +7605,14 @@ func Go_Widget_selectEntryValidate(p0 any) (out any) {
 
 	return
 }
+// [fallible] typed wrapper for Go_Widget_selectEntryValidate (P7 adaptor target)
+func Go_Widget_selectEntryValidateT(p0 *pkg.SelectEntry) (out SkyResult[string, struct{}]) {
+	defer SkyFfiRecoverT(&out)()
+	err := p0.Validate()
+	if err != nil { out = Err[string, struct{}](err.Error()); return }
+	out = Ok[string, struct{}](struct{}{})
+	return
+}
 
 // [pure] Go_Widget.selectEntryVisible → pkg.SelectEntryVisible
 func Go_Widget_selectEntryVisible(p0 any) (out any) {
@@ -5371,6 +7620,16 @@ func Go_Widget_selectEntryVisible(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.SelectEntry).Visible())
 	return
 }
+// [pure] typed wrapper for Go_Widget_selectEntryVisible (P7 adaptor target)
+func Go_Widget_selectEntryVisibleT(p0 *pkg.SelectEntry) (out SkyResult[string, bool]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, bool](p0.Visible())
+	return
+}
+
+func Go_Widget_selectEntryEntry(p0 any) any { return SkyFfiFieldGet(p0, "Entry") }
+
+func Go_Widget_selectEntrySetEntry(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Entry") }
 
 // [pure] Go_Widget.separatorCreateRenderer → pkg.SeparatorCreateRenderer
 func Go_Widget_separatorCreateRenderer(p0 any) (out any) {
@@ -5378,11 +7637,23 @@ func Go_Widget_separatorCreateRenderer(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Separator).CreateRenderer())
 	return
 }
+// [pure] typed wrapper for Go_Widget_separatorCreateRenderer (P7 adaptor target)
+func Go_Widget_separatorCreateRendererT(p0 *pkg.Separator) (out SkyResult[string, fyne.WidgetRenderer]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.WidgetRenderer](p0.CreateRenderer())
+	return
+}
 
 // [pure] Go_Widget.separatorMinSize → pkg.SeparatorMinSize
 func Go_Widget_separatorMinSize(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.Separator).MinSize())
+	return
+}
+// [pure] typed wrapper for Go_Widget_separatorMinSize (P7 adaptor target)
+func Go_Widget_separatorMinSizeT(p0 *pkg.Separator) (out SkyResult[string, fyne.Size]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Size](p0.MinSize())
 	return
 }
 
@@ -5416,6 +7687,12 @@ func Go_Widget_separatorPosition(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Separator).Position())
 	return
 }
+// [pure] typed wrapper for Go_Widget_separatorPosition (P7 adaptor target)
+func Go_Widget_separatorPositionT(p0 *pkg.Separator) (out SkyResult[string, fyne.Position]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Position](p0.Position())
+	return
+}
 
 // [pure] Go_Widget.separatorRefresh → pkg.SeparatorRefresh
 func Go_Widget_separatorRefresh(p0 any) (out any) {
@@ -5447,11 +7724,23 @@ func Go_Widget_separatorSize(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Separator).Size())
 	return
 }
+// [pure] typed wrapper for Go_Widget_separatorSize (P7 adaptor target)
+func Go_Widget_separatorSizeT(p0 *pkg.Separator) (out SkyResult[string, fyne.Size]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Size](p0.Size())
+	return
+}
 
 // [pure] Go_Widget.separatorTheme → pkg.SeparatorTheme
 func Go_Widget_separatorTheme(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.Separator).Theme())
+	return
+}
+// [pure] typed wrapper for Go_Widget_separatorTheme (P7 adaptor target)
+func Go_Widget_separatorThemeT(p0 *pkg.Separator) (out SkyResult[string, fyne.Theme]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Theme](p0.Theme())
 	return
 }
 
@@ -5461,11 +7750,27 @@ func Go_Widget_separatorVisible(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Separator).Visible())
 	return
 }
+// [pure] typed wrapper for Go_Widget_separatorVisible (P7 adaptor target)
+func Go_Widget_separatorVisibleT(p0 *pkg.Separator) (out SkyResult[string, bool]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, bool](p0.Visible())
+	return
+}
+
+func Go_Widget_separatorBaseWidget(p0 any) any { return SkyFfiFieldGet(p0, "BaseWidget") }
+
+func Go_Widget_separatorSetBaseWidget(value any, recv any) any { return SkyFfiFieldSet(value, recv, "BaseWidget") }
 
 // [pure] Go_Widget.separatorSegmentInline → pkg.SeparatorSegmentInline
 func Go_Widget_separatorSegmentInline(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.SeparatorSegment).Inline())
+	return
+}
+// [pure] typed wrapper for Go_Widget_separatorSegmentInline (P7 adaptor target)
+func Go_Widget_separatorSegmentInlineT(p0 *pkg.SeparatorSegment) (out SkyResult[string, bool]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, bool](p0.Inline())
 	return
 }
 
@@ -5475,11 +7780,23 @@ func Go_Widget_separatorSegmentTextual(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.SeparatorSegment).Textual())
 	return
 }
+// [pure] typed wrapper for Go_Widget_separatorSegmentTextual (P7 adaptor target)
+func Go_Widget_separatorSegmentTextualT(p0 *pkg.SeparatorSegment) (out SkyResult[string, string]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, string](p0.Textual())
+	return
+}
 
 // [pure] Go_Widget.separatorSegmentVisual → pkg.SeparatorSegmentVisual
 func Go_Widget_separatorSegmentVisual(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.SeparatorSegment).Visual())
+	return
+}
+// [pure] typed wrapper for Go_Widget_separatorSegmentVisual (P7 adaptor target)
+func Go_Widget_separatorSegmentVisualT(p0 *pkg.SeparatorSegment) (out SkyResult[string, fyne.CanvasObject]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.CanvasObject](p0.Visual())
 	return
 }
 
@@ -5505,6 +7822,12 @@ func Go_Widget_separatorSegmentSelectedText(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.SeparatorSegment).SelectedText())
 	return
 }
+// [pure] typed wrapper for Go_Widget_separatorSegmentSelectedText (P7 adaptor target)
+func Go_Widget_separatorSegmentSelectedTextT(p0 *pkg.SeparatorSegment) (out SkyResult[string, string]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, string](p0.SelectedText())
+	return
+}
 
 // [pure] Go_Widget.separatorSegmentUnselect → pkg.SeparatorSegmentUnselect
 func Go_Widget_separatorSegmentUnselect(p0 any) (out any) {
@@ -5513,6 +7836,8 @@ func Go_Widget_separatorSegmentUnselect(p0 any) (out any) {
 	out = Ok[any, any](struct{}{})
 	return
 }
+
+func Go_Widget_newSeparatorSegment(_ any) any { return new(pkg.SeparatorSegment) }
 
 // [pure] Go_Widget.showModalPopUp → pkg.ShowModalPopUp
 func Go_Widget_showModalPopUp(p0 any, p1 any) (out any) {
@@ -5664,6 +7989,12 @@ func Go_Widget_sliderMinSize(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Slider).MinSize())
 	return
 }
+// [pure] typed wrapper for Go_Widget_sliderMinSize (P7 adaptor target)
+func Go_Widget_sliderMinSizeT(p0 *pkg.Slider) (out SkyResult[string, fyne.Size]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Size](p0.MinSize())
+	return
+}
 
 // [pure] Go_Widget.sliderDisable → pkg.SliderDisable
 func Go_Widget_sliderDisable(p0 any) (out any) {
@@ -5687,11 +8018,23 @@ func Go_Widget_sliderDisabled(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Slider).Disabled())
 	return
 }
+// [pure] typed wrapper for Go_Widget_sliderDisabled (P7 adaptor target)
+func Go_Widget_sliderDisabledT(p0 *pkg.Slider) (out SkyResult[string, bool]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, bool](p0.Disabled())
+	return
+}
 
 // [pure] Go_Widget.sliderCreateRenderer → pkg.SliderCreateRenderer
 func Go_Widget_sliderCreateRenderer(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.Slider).CreateRenderer())
+	return
+}
+// [pure] typed wrapper for Go_Widget_sliderCreateRenderer (P7 adaptor target)
+func Go_Widget_sliderCreateRendererT(p0 *pkg.Slider) (out SkyResult[string, fyne.WidgetRenderer]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.WidgetRenderer](p0.CreateRenderer())
 	return
 }
 
@@ -5733,6 +8076,12 @@ func Go_Widget_sliderPosition(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Slider).Position())
 	return
 }
+// [pure] typed wrapper for Go_Widget_sliderPosition (P7 adaptor target)
+func Go_Widget_sliderPositionT(p0 *pkg.Slider) (out SkyResult[string, fyne.Position]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Position](p0.Position())
+	return
+}
 
 // [pure] Go_Widget.sliderRefresh → pkg.SliderRefresh
 func Go_Widget_sliderRefresh(p0 any) (out any) {
@@ -5764,11 +8113,23 @@ func Go_Widget_sliderSize(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Slider).Size())
 	return
 }
+// [pure] typed wrapper for Go_Widget_sliderSize (P7 adaptor target)
+func Go_Widget_sliderSizeT(p0 *pkg.Slider) (out SkyResult[string, fyne.Size]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Size](p0.Size())
+	return
+}
 
 // [pure] Go_Widget.sliderTheme → pkg.SliderTheme
 func Go_Widget_sliderTheme(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.Slider).Theme())
+	return
+}
+// [pure] typed wrapper for Go_Widget_sliderTheme (P7 adaptor target)
+func Go_Widget_sliderThemeT(p0 *pkg.Slider) (out SkyResult[string, fyne.Theme]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Theme](p0.Theme())
 	return
 }
 
@@ -5778,6 +8139,44 @@ func Go_Widget_sliderVisible(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Slider).Visible())
 	return
 }
+// [pure] typed wrapper for Go_Widget_sliderVisible (P7 adaptor target)
+func Go_Widget_sliderVisibleT(p0 *pkg.Slider) (out SkyResult[string, bool]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, bool](p0.Visible())
+	return
+}
+
+func Go_Widget_sliderBaseWidget(p0 any) any { return SkyFfiFieldGet(p0, "BaseWidget") }
+
+func Go_Widget_sliderSetBaseWidget(value any, recv any) any { return SkyFfiFieldSet(value, recv, "BaseWidget") }
+
+func Go_Widget_sliderValue(p0 any) any { return SkyFfiFieldGet(p0, "Value") }
+
+func Go_Widget_sliderMin(p0 any) any { return SkyFfiFieldGet(p0, "Min") }
+
+func Go_Widget_sliderSetMin(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Min") }
+
+func Go_Widget_sliderMax(p0 any) any { return SkyFfiFieldGet(p0, "Max") }
+
+func Go_Widget_sliderSetMax(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Max") }
+
+func Go_Widget_sliderStep(p0 any) any { return SkyFfiFieldGet(p0, "Step") }
+
+func Go_Widget_sliderSetStep(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Step") }
+
+func Go_Widget_sliderOrientation(p0 any) any { return SkyFfiFieldGet(p0, "Orientation") }
+
+func Go_Widget_sliderSetOrientation(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Orientation") }
+
+func Go_Widget_sliderOnChanged(p0 any) any { return SkyFfiFieldGet(p0, "OnChanged") }
+
+func Go_Widget_sliderSetOnChanged(value any, recv any) any { return SkyFfiFieldSet(value, recv, "OnChanged") }
+
+func Go_Widget_sliderOnChangeEnded(p0 any) any { return SkyFfiFieldGet(p0, "OnChangeEnded") }
+
+func Go_Widget_sliderSetOnChangeEnded(value any, recv any) any { return SkyFfiFieldSet(value, recv, "OnChangeEnded") }
+
+func Go_Widget_successImportance(_ any) any { return pkg.SuccessImportance }
 
 // [pure] Go_Widget.tableCreateRenderer → pkg.TableCreateRenderer
 func Go_Widget_tableCreateRenderer(p0 any) (out any) {
@@ -5785,11 +8184,23 @@ func Go_Widget_tableCreateRenderer(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Table).CreateRenderer())
 	return
 }
+// [pure] typed wrapper for Go_Widget_tableCreateRenderer (P7 adaptor target)
+func Go_Widget_tableCreateRendererT(p0 *pkg.Table) (out SkyResult[string, fyne.WidgetRenderer]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.WidgetRenderer](p0.CreateRenderer())
+	return
+}
 
 // [pure] Go_Widget.tableCursor → pkg.TableCursor
 func Go_Widget_tableCursor(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.Table).Cursor())
+	return
+}
+// [pure] typed wrapper for Go_Widget_tableCursor (P7 adaptor target)
+func Go_Widget_tableCursorT(p0 *pkg.Table) (out SkyResult[string, desktop.Cursor]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, desktop.Cursor](p0.Cursor())
 	return
 }
 
@@ -6031,6 +8442,12 @@ func Go_Widget_tableMinSize(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Table).MinSize())
 	return
 }
+// [pure] typed wrapper for Go_Widget_tableMinSize (P7 adaptor target)
+func Go_Widget_tableMinSizeT(p0 *pkg.Table) (out SkyResult[string, fyne.Size]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Size](p0.MinSize())
+	return
+}
 
 // [pure] Go_Widget.tableMove → pkg.TableMove
 func Go_Widget_tableMove(p0 any, p1 any) (out any) {
@@ -6044,6 +8461,12 @@ func Go_Widget_tableMove(p0 any, p1 any) (out any) {
 func Go_Widget_tablePosition(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.Table).Position())
+	return
+}
+// [pure] typed wrapper for Go_Widget_tablePosition (P7 adaptor target)
+func Go_Widget_tablePositionT(p0 *pkg.Table) (out SkyResult[string, fyne.Position]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Position](p0.Position())
 	return
 }
 
@@ -6077,11 +8500,23 @@ func Go_Widget_tableSize(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Table).Size())
 	return
 }
+// [pure] typed wrapper for Go_Widget_tableSize (P7 adaptor target)
+func Go_Widget_tableSizeT(p0 *pkg.Table) (out SkyResult[string, fyne.Size]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Size](p0.Size())
+	return
+}
 
 // [pure] Go_Widget.tableTheme → pkg.TableTheme
 func Go_Widget_tableTheme(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.Table).Theme())
+	return
+}
+// [pure] typed wrapper for Go_Widget_tableTheme (P7 adaptor target)
+func Go_Widget_tableThemeT(p0 *pkg.Table) (out SkyResult[string, fyne.Theme]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Theme](p0.Theme())
 	return
 }
 
@@ -6091,6 +8526,74 @@ func Go_Widget_tableVisible(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Table).Visible())
 	return
 }
+// [pure] typed wrapper for Go_Widget_tableVisible (P7 adaptor target)
+func Go_Widget_tableVisibleT(p0 *pkg.Table) (out SkyResult[string, bool]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, bool](p0.Visible())
+	return
+}
+
+func Go_Widget_tableBaseWidget(p0 any) any { return SkyFfiFieldGet(p0, "BaseWidget") }
+
+func Go_Widget_tableSetBaseWidget(value any, recv any) any { return SkyFfiFieldSet(value, recv, "BaseWidget") }
+
+func Go_Widget_tableLength(p0 any) any { return SkyFfiFieldGet(p0, "Length") }
+
+func Go_Widget_tableSetLength(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Length") }
+
+func Go_Widget_tableCreateCell(p0 any) any { return SkyFfiFieldGet(p0, "CreateCell") }
+
+func Go_Widget_tableSetCreateCell(value any, recv any) any { return SkyFfiFieldSet(value, recv, "CreateCell") }
+
+func Go_Widget_tableUpdateCell(p0 any) any { return SkyFfiFieldGet(p0, "UpdateCell") }
+
+func Go_Widget_tableSetUpdateCell(value any, recv any) any { return SkyFfiFieldSet(value, recv, "UpdateCell") }
+
+func Go_Widget_tableOnSelected(p0 any) any { return SkyFfiFieldGet(p0, "OnSelected") }
+
+func Go_Widget_tableSetOnSelected(value any, recv any) any { return SkyFfiFieldSet(value, recv, "OnSelected") }
+
+func Go_Widget_tableOnUnselected(p0 any) any { return SkyFfiFieldGet(p0, "OnUnselected") }
+
+func Go_Widget_tableSetOnUnselected(value any, recv any) any { return SkyFfiFieldSet(value, recv, "OnUnselected") }
+
+func Go_Widget_tableShowHeaderRow(p0 any) any { return SkyFfiFieldGet(p0, "ShowHeaderRow") }
+
+func Go_Widget_tableSetShowHeaderRow(value any, recv any) any { return SkyFfiFieldSet(value, recv, "ShowHeaderRow") }
+
+func Go_Widget_tableShowHeaderColumn(p0 any) any { return SkyFfiFieldGet(p0, "ShowHeaderColumn") }
+
+func Go_Widget_tableSetShowHeaderColumn(value any, recv any) any { return SkyFfiFieldSet(value, recv, "ShowHeaderColumn") }
+
+func Go_Widget_tableCreateHeader(p0 any) any { return SkyFfiFieldGet(p0, "CreateHeader") }
+
+func Go_Widget_tableSetCreateHeader(value any, recv any) any { return SkyFfiFieldSet(value, recv, "CreateHeader") }
+
+func Go_Widget_tableUpdateHeader(p0 any) any { return SkyFfiFieldGet(p0, "UpdateHeader") }
+
+func Go_Widget_tableSetUpdateHeader(value any, recv any) any { return SkyFfiFieldSet(value, recv, "UpdateHeader") }
+
+func Go_Widget_tableStickyRowCount(p0 any) any { return SkyFfiFieldGet(p0, "StickyRowCount") }
+
+func Go_Widget_tableSetStickyRowCount(value any, recv any) any { return SkyFfiFieldSet(value, recv, "StickyRowCount") }
+
+func Go_Widget_tableStickyColumnCount(p0 any) any { return SkyFfiFieldGet(p0, "StickyColumnCount") }
+
+func Go_Widget_tableSetStickyColumnCount(value any, recv any) any { return SkyFfiFieldSet(value, recv, "StickyColumnCount") }
+
+func Go_Widget_tableHideSeparators(p0 any) any { return SkyFfiFieldGet(p0, "HideSeparators") }
+
+func Go_Widget_tableSetHideSeparators(value any, recv any) any { return SkyFfiFieldSet(value, recv, "HideSeparators") }
+
+func Go_Widget_tableCellIDRow(p0 any) any { return SkyFfiFieldGet(p0, "Row") }
+
+func Go_Widget_tableCellIDSetRow(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Row") }
+
+func Go_Widget_tableCellIDCol(p0 any) any { return SkyFfiFieldGet(p0, "Col") }
+
+func Go_Widget_tableCellIDSetCol(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Col") }
+
+func Go_Widget_newTableCellID(_ any) any { return new(pkg.TableCellID) }
 
 // [pure] Go_Widget.textGridAppend → pkg.TextGridAppend
 func Go_Widget_textGridAppend(p0 any, p1 any) (out any) {
@@ -6131,11 +8634,23 @@ func Go_Widget_textGridPositionForCursorLocation(p0 any, p1 any, p2 any) (out an
 	out = Ok[any, any](p0.(*pkg.TextGrid).PositionForCursorLocation(AsInt(p1), AsInt(p2)))
 	return
 }
+// [pure] typed wrapper for Go_Widget_textGridPositionForCursorLocation (P7 adaptor target)
+func Go_Widget_textGridPositionForCursorLocationT(p0 *pkg.TextGrid, p1 int, p2 int) (out SkyResult[string, fyne.Position]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Position](p0.PositionForCursorLocation(p1, p2))
+	return
+}
 
 // [pure] Go_Widget.textGridMinSize → pkg.TextGridMinSize
 func Go_Widget_textGridMinSize(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.TextGrid).MinSize())
+	return
+}
+// [pure] typed wrapper for Go_Widget_textGridMinSize (P7 adaptor target)
+func Go_Widget_textGridMinSizeT(p0 *pkg.TextGrid) (out SkyResult[string, fyne.Size]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Size](p0.MinSize())
 	return
 }
 
@@ -6161,6 +8676,12 @@ func Go_Widget_textGridText(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.TextGrid).Text())
 	return
 }
+// [pure] typed wrapper for Go_Widget_textGridText (P7 adaptor target)
+func Go_Widget_textGridTextT(p0 *pkg.TextGrid) (out SkyResult[string, string]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, string](p0.Text())
+	return
+}
 
 // [pure] Go_Widget.textGridRow → pkg.TextGridRow
 func Go_Widget_textGridRow(p0 any, p1 any) (out any) {
@@ -6168,11 +8689,23 @@ func Go_Widget_textGridRow(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.TextGrid).Row(AsInt(p1)))
 	return
 }
+// [pure] typed wrapper for Go_Widget_textGridRow (P7 adaptor target)
+func Go_Widget_textGridRowT(p0 *pkg.TextGrid, p1 int) (out SkyResult[string, pkg.TextGridRow]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, pkg.TextGridRow](p0.Row(p1))
+	return
+}
 
 // [pure] Go_Widget.textGridRowText → pkg.TextGridRowText
 func Go_Widget_textGridRowText(p0 any, p1 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.TextGrid).RowText(AsInt(p1)))
+	return
+}
+// [pure] typed wrapper for Go_Widget_textGridRowText (P7 adaptor target)
+func Go_Widget_textGridRowTextT(p0 *pkg.TextGrid, p1 int) (out SkyResult[string, string]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, string](p0.RowText(p1))
 	return
 }
 
@@ -6230,6 +8763,12 @@ func Go_Widget_textGridCreateRenderer(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.TextGrid).CreateRenderer())
 	return
 }
+// [pure] typed wrapper for Go_Widget_textGridCreateRenderer (P7 adaptor target)
+func Go_Widget_textGridCreateRendererT(p0 *pkg.TextGrid) (out SkyResult[string, fyne.WidgetRenderer]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.WidgetRenderer](p0.CreateRenderer())
+	return
+}
 
 // [pure] Go_Widget.textGridExtendBaseWidget → pkg.TextGridExtendBaseWidget
 func Go_Widget_textGridExtendBaseWidget(p0 any, p1 any) (out any) {
@@ -6261,6 +8800,12 @@ func Go_Widget_textGridPosition(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.TextGrid).Position())
 	return
 }
+// [pure] typed wrapper for Go_Widget_textGridPosition (P7 adaptor target)
+func Go_Widget_textGridPositionT(p0 *pkg.TextGrid) (out SkyResult[string, fyne.Position]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Position](p0.Position())
+	return
+}
 
 // [pure] Go_Widget.textGridRefresh → pkg.TextGridRefresh
 func Go_Widget_textGridRefresh(p0 any) (out any) {
@@ -6284,11 +8829,23 @@ func Go_Widget_textGridSize(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.TextGrid).Size())
 	return
 }
+// [pure] typed wrapper for Go_Widget_textGridSize (P7 adaptor target)
+func Go_Widget_textGridSizeT(p0 *pkg.TextGrid) (out SkyResult[string, fyne.Size]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Size](p0.Size())
+	return
+}
 
 // [pure] Go_Widget.textGridTheme → pkg.TextGridTheme
 func Go_Widget_textGridTheme(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.TextGrid).Theme())
+	return
+}
+// [pure] typed wrapper for Go_Widget_textGridTheme (P7 adaptor target)
+func Go_Widget_textGridThemeT(p0 *pkg.TextGrid) (out SkyResult[string, fyne.Theme]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Theme](p0.Theme())
 	return
 }
 
@@ -6298,11 +8855,67 @@ func Go_Widget_textGridVisible(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.TextGrid).Visible())
 	return
 }
+// [pure] typed wrapper for Go_Widget_textGridVisible (P7 adaptor target)
+func Go_Widget_textGridVisibleT(p0 *pkg.TextGrid) (out SkyResult[string, bool]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, bool](p0.Visible())
+	return
+}
+
+func Go_Widget_textGridBaseWidget(p0 any) any { return SkyFfiFieldGet(p0, "BaseWidget") }
+
+func Go_Widget_textGridSetBaseWidget(value any, recv any) any { return SkyFfiFieldSet(value, recv, "BaseWidget") }
+
+func Go_Widget_textGridRows(p0 any) any { return SkyFfiFieldGet(p0, "Rows") }
+
+func Go_Widget_textGridSetRows(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Rows") }
+
+func Go_Widget_textGridShowLineNumbers(p0 any) any { return SkyFfiFieldGet(p0, "ShowLineNumbers") }
+
+func Go_Widget_textGridSetShowLineNumbers(value any, recv any) any { return SkyFfiFieldSet(value, recv, "ShowLineNumbers") }
+
+func Go_Widget_textGridShowWhitespace(p0 any) any { return SkyFfiFieldGet(p0, "ShowWhitespace") }
+
+func Go_Widget_textGridSetShowWhitespace(value any, recv any) any { return SkyFfiFieldSet(value, recv, "ShowWhitespace") }
+
+func Go_Widget_textGridTabWidth(p0 any) any { return SkyFfiFieldGet(p0, "TabWidth") }
+
+func Go_Widget_textGridSetTabWidth(value any, recv any) any { return SkyFfiFieldSet(value, recv, "TabWidth") }
+
+func Go_Widget_textGridScroll(p0 any) any { return SkyFfiFieldGet(p0, "Scroll") }
+
+func Go_Widget_textGridSetScroll(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Scroll") }
+
+func Go_Widget_textGridCellRune(p0 any) any { return SkyFfiFieldGet(p0, "Rune") }
+
+func Go_Widget_textGridCellSetRune(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Rune") }
+
+func Go_Widget_textGridCellStyle(p0 any) any { return SkyFfiFieldGet(p0, "Style") }
+
+func Go_Widget_textGridCellSetStyle(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Style") }
+
+func Go_Widget_newTextGridCell(_ any) any { return new(pkg.TextGridCell) }
+
+func Go_Widget_textGridRowCells(p0 any) any { return SkyFfiFieldGet(p0, "Cells") }
+
+func Go_Widget_textGridRowSetCells(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Cells") }
+
+func Go_Widget_textGridRowStyle(p0 any) any { return SkyFfiFieldGet(p0, "Style") }
+
+func Go_Widget_textGridRowSetStyle(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Style") }
+
+func Go_Widget_newTextGridRow(_ any) any { return new(pkg.TextGridRow) }
 
 // [pure] Go_Widget.textGridStyleBackgroundColor → pkg.TextGridStyleBackgroundColor
 func Go_Widget_textGridStyleBackgroundColor(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(pkg.TextGridStyle).BackgroundColor())
+	return
+}
+// [pure] typed wrapper for Go_Widget_textGridStyleBackgroundColor (P7 adaptor target)
+func Go_Widget_textGridStyleBackgroundColorT(p0 pkg.TextGridStyle) (out SkyResult[string, color.Color]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, color.Color](p0.BackgroundColor())
 	return
 }
 
@@ -6312,6 +8925,12 @@ func Go_Widget_textGridStyleStyle(p0 any) (out any) {
 	out = Ok[any, any](p0.(pkg.TextGridStyle).Style())
 	return
 }
+// [pure] typed wrapper for Go_Widget_textGridStyleStyle (P7 adaptor target)
+func Go_Widget_textGridStyleStyleT(p0 pkg.TextGridStyle) (out SkyResult[string, fyne.TextStyle]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.TextStyle](p0.Style())
+	return
+}
 
 // [pure] Go_Widget.textGridStyleTextColor → pkg.TextGridStyleTextColor
 func Go_Widget_textGridStyleTextColor(p0 any) (out any) {
@@ -6319,11 +8938,31 @@ func Go_Widget_textGridStyleTextColor(p0 any) (out any) {
 	out = Ok[any, any](p0.(pkg.TextGridStyle).TextColor())
 	return
 }
+// [pure] typed wrapper for Go_Widget_textGridStyleTextColor (P7 adaptor target)
+func Go_Widget_textGridStyleTextColorT(p0 pkg.TextGridStyle) (out SkyResult[string, color.Color]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, color.Color](p0.TextColor())
+	return
+}
+
+func Go_Widget_textGridStyleDefault(_ any) any { return pkg.TextGridStyleDefault }
+
+func Go_Widget_setTextGridStyleDefault(value any) any { reflect.ValueOf(&pkg.TextGridStyleDefault).Elem().Set(reflect.ValueOf(value).Convert(reflect.TypeOf(pkg.TextGridStyleDefault))); return struct{}{} }
+
+func Go_Widget_textGridStyleWhitespace(_ any) any { return pkg.TextGridStyleWhitespace }
+
+func Go_Widget_setTextGridStyleWhitespace(value any) any { reflect.ValueOf(&pkg.TextGridStyleWhitespace).Elem().Set(reflect.ValueOf(value).Convert(reflect.TypeOf(pkg.TextGridStyleWhitespace))); return struct{}{} }
 
 // [pure] Go_Widget.textSegmentInline → pkg.TextSegmentInline
 func Go_Widget_textSegmentInline(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.TextSegment).Inline())
+	return
+}
+// [pure] typed wrapper for Go_Widget_textSegmentInline (P7 adaptor target)
+func Go_Widget_textSegmentInlineT(p0 *pkg.TextSegment) (out SkyResult[string, bool]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, bool](p0.Inline())
 	return
 }
 
@@ -6333,11 +8972,23 @@ func Go_Widget_textSegmentTextual(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.TextSegment).Textual())
 	return
 }
+// [pure] typed wrapper for Go_Widget_textSegmentTextual (P7 adaptor target)
+func Go_Widget_textSegmentTextualT(p0 *pkg.TextSegment) (out SkyResult[string, string]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, string](p0.Textual())
+	return
+}
 
 // [pure] Go_Widget.textSegmentVisual → pkg.TextSegmentVisual
 func Go_Widget_textSegmentVisual(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.TextSegment).Visual())
+	return
+}
+// [pure] typed wrapper for Go_Widget_textSegmentVisual (P7 adaptor target)
+func Go_Widget_textSegmentVisualT(p0 *pkg.TextSegment) (out SkyResult[string, fyne.CanvasObject]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.CanvasObject](p0.Visual())
 	return
 }
 
@@ -6363,6 +9014,12 @@ func Go_Widget_textSegmentSelectedText(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.TextSegment).SelectedText())
 	return
 }
+// [pure] typed wrapper for Go_Widget_textSegmentSelectedText (P7 adaptor target)
+func Go_Widget_textSegmentSelectedTextT(p0 *pkg.TextSegment) (out SkyResult[string, string]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, string](p0.SelectedText())
+	return
+}
 
 // [pure] Go_Widget.textSegmentUnselect → pkg.TextSegmentUnselect
 func Go_Widget_textSegmentUnselect(p0 any) (out any) {
@@ -6372,10 +9029,26 @@ func Go_Widget_textSegmentUnselect(p0 any) (out any) {
 	return
 }
 
+func Go_Widget_textSegmentStyle(p0 any) any { return SkyFfiFieldGet(p0, "Style") }
+
+func Go_Widget_textSegmentSetStyle(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Style") }
+
+func Go_Widget_textSegmentText(p0 any) any { return SkyFfiFieldGet(p0, "Text") }
+
+func Go_Widget_textSegmentSetText(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Text") }
+
+func Go_Widget_newTextSegment(_ any) any { return new(pkg.TextSegment) }
+
 // [pure] Go_Widget.toolbarCreateRenderer → pkg.ToolbarCreateRenderer
 func Go_Widget_toolbarCreateRenderer(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.Toolbar).CreateRenderer())
+	return
+}
+// [pure] typed wrapper for Go_Widget_toolbarCreateRenderer (P7 adaptor target)
+func Go_Widget_toolbarCreateRendererT(p0 *pkg.Toolbar) (out SkyResult[string, fyne.WidgetRenderer]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.WidgetRenderer](p0.CreateRenderer())
 	return
 }
 
@@ -6399,6 +9072,12 @@ func Go_Widget_toolbarPrepend(p0 any, p1 any) (out any) {
 func Go_Widget_toolbarMinSize(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.Toolbar).MinSize())
+	return
+}
+// [pure] typed wrapper for Go_Widget_toolbarMinSize (P7 adaptor target)
+func Go_Widget_toolbarMinSizeT(p0 *pkg.Toolbar) (out SkyResult[string, fyne.Size]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Size](p0.MinSize())
 	return
 }
 
@@ -6432,6 +9111,12 @@ func Go_Widget_toolbarPosition(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Toolbar).Position())
 	return
 }
+// [pure] typed wrapper for Go_Widget_toolbarPosition (P7 adaptor target)
+func Go_Widget_toolbarPositionT(p0 *pkg.Toolbar) (out SkyResult[string, fyne.Position]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Position](p0.Position())
+	return
+}
 
 // [pure] Go_Widget.toolbarRefresh → pkg.ToolbarRefresh
 func Go_Widget_toolbarRefresh(p0 any) (out any) {
@@ -6463,11 +9148,23 @@ func Go_Widget_toolbarSize(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Toolbar).Size())
 	return
 }
+// [pure] typed wrapper for Go_Widget_toolbarSize (P7 adaptor target)
+func Go_Widget_toolbarSizeT(p0 *pkg.Toolbar) (out SkyResult[string, fyne.Size]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Size](p0.Size())
+	return
+}
 
 // [pure] Go_Widget.toolbarTheme → pkg.ToolbarTheme
 func Go_Widget_toolbarTheme(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.Toolbar).Theme())
+	return
+}
+// [pure] typed wrapper for Go_Widget_toolbarTheme (P7 adaptor target)
+func Go_Widget_toolbarThemeT(p0 *pkg.Toolbar) (out SkyResult[string, fyne.Theme]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Theme](p0.Theme())
 	return
 }
 
@@ -6477,11 +9174,31 @@ func Go_Widget_toolbarVisible(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Toolbar).Visible())
 	return
 }
+// [pure] typed wrapper for Go_Widget_toolbarVisible (P7 adaptor target)
+func Go_Widget_toolbarVisibleT(p0 *pkg.Toolbar) (out SkyResult[string, bool]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, bool](p0.Visible())
+	return
+}
+
+func Go_Widget_toolbarBaseWidget(p0 any) any { return SkyFfiFieldGet(p0, "BaseWidget") }
+
+func Go_Widget_toolbarSetBaseWidget(value any, recv any) any { return SkyFfiFieldSet(value, recv, "BaseWidget") }
+
+func Go_Widget_toolbarItems(p0 any) any { return SkyFfiFieldGet(p0, "Items") }
+
+func Go_Widget_toolbarSetItems(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Items") }
 
 // [pure] Go_Widget.toolbarActionToolbarObject → pkg.ToolbarActionToolbarObject
 func Go_Widget_toolbarActionToolbarObject(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.ToolbarAction).ToolbarObject())
+	return
+}
+// [pure] typed wrapper for Go_Widget_toolbarActionToolbarObject (P7 adaptor target)
+func Go_Widget_toolbarActionToolbarObjectT(p0 *pkg.ToolbarAction) (out SkyResult[string, fyne.CanvasObject]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.CanvasObject](p0.ToolbarObject())
 	return
 }
 
@@ -6515,11 +9232,29 @@ func Go_Widget_toolbarActionDisabled(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.ToolbarAction).Disabled())
 	return
 }
+// [pure] typed wrapper for Go_Widget_toolbarActionDisabled (P7 adaptor target)
+func Go_Widget_toolbarActionDisabledT(p0 *pkg.ToolbarAction) (out SkyResult[string, bool]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, bool](p0.Disabled())
+	return
+}
+
+func Go_Widget_toolbarActionIcon(p0 any) any { return SkyFfiFieldGet(p0, "Icon") }
+
+func Go_Widget_toolbarActionOnActivated(p0 any) any { return SkyFfiFieldGet(p0, "OnActivated") }
+
+func Go_Widget_toolbarActionSetOnActivated(value any, recv any) any { return SkyFfiFieldSet(value, recv, "OnActivated") }
 
 // [pure] Go_Widget.toolbarItemToolbarObject → pkg.ToolbarItemToolbarObject
 func Go_Widget_toolbarItemToolbarObject(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(pkg.ToolbarItem).ToolbarObject())
+	return
+}
+// [pure] typed wrapper for Go_Widget_toolbarItemToolbarObject (P7 adaptor target)
+func Go_Widget_toolbarItemToolbarObjectT(p0 pkg.ToolbarItem) (out SkyResult[string, fyne.CanvasObject]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.CanvasObject](p0.ToolbarObject())
 	return
 }
 
@@ -6529,11 +9264,23 @@ func Go_Widget_toolbarSeparatorToolbarObject(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.ToolbarSeparator).ToolbarObject())
 	return
 }
+// [pure] typed wrapper for Go_Widget_toolbarSeparatorToolbarObject (P7 adaptor target)
+func Go_Widget_toolbarSeparatorToolbarObjectT(p0 *pkg.ToolbarSeparator) (out SkyResult[string, fyne.CanvasObject]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.CanvasObject](p0.ToolbarObject())
+	return
+}
 
 // [pure] Go_Widget.toolbarSpacerToolbarObject → pkg.ToolbarSpacerToolbarObject
 func Go_Widget_toolbarSpacerToolbarObject(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.ToolbarSpacer).ToolbarObject())
+	return
+}
+// [pure] typed wrapper for Go_Widget_toolbarSpacerToolbarObject (P7 adaptor target)
+func Go_Widget_toolbarSpacerToolbarObjectT(p0 *pkg.ToolbarSpacer) (out SkyResult[string, fyne.CanvasObject]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.CanvasObject](p0.ToolbarObject())
 	return
 }
 
@@ -6559,11 +9306,23 @@ func Go_Widget_treeCreateRenderer(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Tree).CreateRenderer())
 	return
 }
+// [pure] typed wrapper for Go_Widget_treeCreateRenderer (P7 adaptor target)
+func Go_Widget_treeCreateRendererT(p0 *pkg.Tree) (out SkyResult[string, fyne.WidgetRenderer]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.WidgetRenderer](p0.CreateRenderer())
+	return
+}
 
 // [pure] Go_Widget.treeIsBranchOpen → pkg.TreeIsBranchOpen
 func Go_Widget_treeIsBranchOpen(p0 any, p1 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.Tree).IsBranchOpen(p1.(pkg.TreeNodeID)))
+	return
+}
+// [pure] typed wrapper for Go_Widget_treeIsBranchOpen (P7 adaptor target)
+func Go_Widget_treeIsBranchOpenT(p0 *pkg.Tree, p1 pkg.TreeNodeID) (out SkyResult[string, bool]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, bool](p0.IsBranchOpen(p1))
 	return
 }
 
@@ -6587,6 +9346,12 @@ func Go_Widget_treeFocusLost(p0 any) (out any) {
 func Go_Widget_treeMinSize(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.Tree).MinSize())
+	return
+}
+// [pure] typed wrapper for Go_Widget_treeMinSize (P7 adaptor target)
+func Go_Widget_treeMinSizeT(p0 *pkg.Tree) (out SkyResult[string, fyne.Size]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Size](p0.MinSize())
 	return
 }
 
@@ -6732,6 +9497,12 @@ func Go_Widget_treePosition(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Tree).Position())
 	return
 }
+// [pure] typed wrapper for Go_Widget_treePosition (P7 adaptor target)
+func Go_Widget_treePositionT(p0 *pkg.Tree) (out SkyResult[string, fyne.Position]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Position](p0.Position())
+	return
+}
 
 // [pure] Go_Widget.treeRefresh → pkg.TreeRefresh
 func Go_Widget_treeRefresh(p0 any) (out any) {
@@ -6755,11 +9526,23 @@ func Go_Widget_treeSize(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Tree).Size())
 	return
 }
+// [pure] typed wrapper for Go_Widget_treeSize (P7 adaptor target)
+func Go_Widget_treeSizeT(p0 *pkg.Tree) (out SkyResult[string, fyne.Size]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Size](p0.Size())
+	return
+}
 
 // [pure] Go_Widget.treeTheme → pkg.TreeTheme
 func Go_Widget_treeTheme(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.Tree).Theme())
+	return
+}
+// [pure] typed wrapper for Go_Widget_treeTheme (P7 adaptor target)
+func Go_Widget_treeThemeT(p0 *pkg.Tree) (out SkyResult[string, fyne.Theme]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.Theme](p0.Theme())
 	return
 }
 
@@ -6769,6 +9552,60 @@ func Go_Widget_treeVisible(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Tree).Visible())
 	return
 }
+// [pure] typed wrapper for Go_Widget_treeVisible (P7 adaptor target)
+func Go_Widget_treeVisibleT(p0 *pkg.Tree) (out SkyResult[string, bool]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, bool](p0.Visible())
+	return
+}
+
+func Go_Widget_treeBaseWidget(p0 any) any { return SkyFfiFieldGet(p0, "BaseWidget") }
+
+func Go_Widget_treeSetBaseWidget(value any, recv any) any { return SkyFfiFieldSet(value, recv, "BaseWidget") }
+
+func Go_Widget_treeRoot(p0 any) any { return SkyFfiFieldGet(p0, "Root") }
+
+func Go_Widget_treeSetRoot(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Root") }
+
+func Go_Widget_treeHideSeparators(p0 any) any { return SkyFfiFieldGet(p0, "HideSeparators") }
+
+func Go_Widget_treeSetHideSeparators(value any, recv any) any { return SkyFfiFieldSet(value, recv, "HideSeparators") }
+
+func Go_Widget_treeChildUIDs(p0 any) any { return SkyFfiFieldGet(p0, "ChildUIDs") }
+
+func Go_Widget_treeSetChildUIDs(value any, recv any) any { return SkyFfiFieldSet(value, recv, "ChildUIDs") }
+
+func Go_Widget_treeCreateNode(p0 any) any { return SkyFfiFieldGet(p0, "CreateNode") }
+
+func Go_Widget_treeSetCreateNode(value any, recv any) any { return SkyFfiFieldSet(value, recv, "CreateNode") }
+
+func Go_Widget_treeIsBranch(p0 any) any { return SkyFfiFieldGet(p0, "IsBranch") }
+
+func Go_Widget_treeSetIsBranch(value any, recv any) any { return SkyFfiFieldSet(value, recv, "IsBranch") }
+
+func Go_Widget_treeOnBranchClosed(p0 any) any { return SkyFfiFieldGet(p0, "OnBranchClosed") }
+
+func Go_Widget_treeSetOnBranchClosed(value any, recv any) any { return SkyFfiFieldSet(value, recv, "OnBranchClosed") }
+
+func Go_Widget_treeOnBranchOpened(p0 any) any { return SkyFfiFieldGet(p0, "OnBranchOpened") }
+
+func Go_Widget_treeSetOnBranchOpened(value any, recv any) any { return SkyFfiFieldSet(value, recv, "OnBranchOpened") }
+
+func Go_Widget_treeOnSelected(p0 any) any { return SkyFfiFieldGet(p0, "OnSelected") }
+
+func Go_Widget_treeSetOnSelected(value any, recv any) any { return SkyFfiFieldSet(value, recv, "OnSelected") }
+
+func Go_Widget_treeOnUnselected(p0 any) any { return SkyFfiFieldGet(p0, "OnUnselected") }
+
+func Go_Widget_treeSetOnUnselected(value any, recv any) any { return SkyFfiFieldSet(value, recv, "OnUnselected") }
+
+func Go_Widget_treeUpdateNode(p0 any) any { return SkyFfiFieldGet(p0, "UpdateNode") }
+
+func Go_Widget_treeSetUpdateNode(value any, recv any) any { return SkyFfiFieldSet(value, recv, "UpdateNode") }
+
+func Go_Widget_vertical(_ any) any { return pkg.Vertical }
+
+func Go_Widget_warningImportance(_ any) any { return pkg.WarningImportance }
 
 
 // Pin fmt against "imported and not used" across partial files.

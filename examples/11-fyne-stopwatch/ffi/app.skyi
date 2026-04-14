@@ -18,3 +18,16 @@ package app
 -- [pure] NewWithID : String -> App   -- runtime wrap: Task String
 -- [pure] SetMetadata : AppMetadata -> ()   -- runtime wrap: Task String
 -- [pure] SettingsSchemaStoragePath : SettingsSchema -> String   -- runtime wrap: Task String
+-- [pure] SettingsSchemaThemeName : SettingsSchema -> String   -- runtime wrap: Task String
+-- [pure] SettingsSchemaSetThemeName : String -> SettingsSchema -> SettingsSchema   -- runtime wrap: Task String
+-- [pure] SettingsSchemaScale : SettingsSchema -> Float   -- runtime wrap: Task String
+-- [pure] SettingsSchemaSetScale : Float -> SettingsSchema -> SettingsSchema   -- runtime wrap: Task String
+-- [pure] SettingsSchemaPrimaryColor : SettingsSchema -> String   -- runtime wrap: Task String
+-- [pure] SettingsSchemaSetPrimaryColor : String -> SettingsSchema -> SettingsSchema   -- runtime wrap: Task String
+-- [pure] SettingsSchemaCloudName : SettingsSchema -> String   -- runtime wrap: Task String
+-- [pure] SettingsSchemaSetCloudName : String -> SettingsSchema -> SettingsSchema   -- runtime wrap: Task String
+-- [pure] SettingsSchemaCloudConfig : SettingsSchema -> String   -- runtime wrap: Task String
+-- [pure] SettingsSchemaSetCloudConfig : String -> SettingsSchema -> SettingsSchema   -- runtime wrap: Task String
+-- [pure] SettingsSchemaDisableAnimations : SettingsSchema -> Bool   -- runtime wrap: Task String
+-- [pure] SettingsSchemaSetDisableAnimations : Bool -> SettingsSchema -> SettingsSchema   -- runtime wrap: Task String
+-- [pure] NewSettingsSchema : struct{} -> SettingsSchema   -- runtime wrap: Task String

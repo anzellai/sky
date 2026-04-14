@@ -41,6 +41,18 @@ package widget
 -- [pure] AccordionSize : Accordion -> Size   -- runtime wrap: Task String
 -- [pure] AccordionTheme : Accordion -> Theme   -- runtime wrap: Task String
 -- [pure] AccordionVisible : Accordion -> Bool   -- runtime wrap: Task String
+-- [pure] AccordionBaseWidget : Accordion -> BaseWidget   -- runtime wrap: Task String
+-- [pure] AccordionSetBaseWidget : BaseWidget -> Accordion -> Accordion   -- runtime wrap: Task String
+-- [pure] AccordionItems : Accordion -> AccordionItem   -- runtime wrap: Task String
+-- [pure] AccordionSetItems : AccordionItem -> Accordion -> Accordion   -- runtime wrap: Task String
+-- [pure] AccordionMultiOpen : Accordion -> Bool   -- runtime wrap: Task String
+-- [pure] AccordionSetMultiOpen : Bool -> Accordion -> Accordion   -- runtime wrap: Task String
+-- [pure] AccordionItemTitle : AccordionItem -> String   -- runtime wrap: Task String
+-- [pure] AccordionItemSetTitle : String -> AccordionItem -> AccordionItem   -- runtime wrap: Task String
+-- [pure] AccordionItemDetail : AccordionItem -> CanvasObject   -- runtime wrap: Task String
+-- [pure] AccordionItemSetDetail : CanvasObject -> AccordionItem -> AccordionItem   -- runtime wrap: Task String
+-- [pure] AccordionItemOpen : AccordionItem -> Bool   -- runtime wrap: Task String
+-- [pure] AccordionItemSetOpen : Bool -> AccordionItem -> AccordionItem   -- runtime wrap: Task String
 -- [pure] ActivityMinSize : Activity -> Size   -- runtime wrap: Task String
 -- [pure] ActivityStart : Activity -> ()   -- runtime wrap: Task String
 -- [pure] ActivityStop : Activity -> ()   -- runtime wrap: Task String
@@ -55,6 +67,9 @@ package widget
 -- [pure] ActivitySize : Activity -> Size   -- runtime wrap: Task String
 -- [pure] ActivityTheme : Activity -> Theme   -- runtime wrap: Task String
 -- [pure] ActivityVisible : Activity -> Bool   -- runtime wrap: Task String
+-- [pure] ActivityBaseWidget : Activity -> BaseWidget   -- runtime wrap: Task String
+-- [pure] ActivitySetBaseWidget : BaseWidget -> Activity -> Activity   -- runtime wrap: Task String
+-- [pure] Adaptive : struct{} -> Orientation   -- runtime wrap: Task String
 -- [pure] BaseWidgetExtendBaseWidget : BaseWidget -> Widget -> ()   -- runtime wrap: Task String
 -- [pure] BaseWidgetSize : BaseWidget -> Size   -- runtime wrap: Task String
 -- [pure] BaseWidgetResize : BaseWidget -> Size -> ()   -- runtime wrap: Task String
@@ -66,6 +81,9 @@ package widget
 -- [pure] BaseWidgetHide : BaseWidget -> ()   -- runtime wrap: Task String
 -- [pure] BaseWidgetRefresh : BaseWidget -> ()   -- runtime wrap: Task String
 -- [pure] BaseWidgetTheme : BaseWidget -> Theme   -- runtime wrap: Task String
+-- [pure] BaseWidgetHidden : BaseWidget -> Bool   -- runtime wrap: Task String
+-- [pure] BaseWidgetSetHidden : Bool -> BaseWidget -> BaseWidget   -- runtime wrap: Task String
+-- [pure] NewBaseWidget : struct{} -> BaseWidget   -- runtime wrap: Task String
 -- [pure] ButtonCreateRenderer : Button -> WidgetRenderer   -- runtime wrap: Task String
 -- [pure] ButtonCursor : Button -> Cursor   -- runtime wrap: Task String
 -- [pure] ButtonFocusGained : Button -> ()   -- runtime wrap: Task String
@@ -92,6 +110,23 @@ package widget
 -- [pure] ButtonSize : Button -> Size   -- runtime wrap: Task String
 -- [pure] ButtonTheme : Button -> Theme   -- runtime wrap: Task String
 -- [pure] ButtonVisible : Button -> Bool   -- runtime wrap: Task String
+-- [pure] ButtonDisableableWidget : Button -> DisableableWidget   -- runtime wrap: Task String
+-- [pure] ButtonSetDisableableWidget : DisableableWidget -> Button -> Button   -- runtime wrap: Task String
+-- [pure] ButtonText : Button -> String   -- runtime wrap: Task String
+-- [pure] ButtonIcon : Button -> Resource   -- runtime wrap: Task String
+-- [pure] ButtonImportance : Button -> Importance   -- runtime wrap: Task String
+-- [pure] ButtonSetImportance : Importance -> Button -> Button   -- runtime wrap: Task String
+-- [pure] ButtonAlignment : Button -> ButtonAlign   -- runtime wrap: Task String
+-- [pure] ButtonSetAlignment : ButtonAlign -> Button -> Button   -- runtime wrap: Task String
+-- [pure] ButtonIconPlacement : Button -> ButtonIconPlacement   -- runtime wrap: Task String
+-- [pure] ButtonSetIconPlacement : ButtonIconPlacement -> Button -> Button   -- runtime wrap: Task String
+-- [pure] ButtonOnTapped : Button -> func()   -- runtime wrap: Task String
+-- [pure] ButtonSetOnTapped : func() -> Button -> Button   -- runtime wrap: Task String
+-- [pure] ButtonAlignCenter : struct{} -> ButtonAlign   -- runtime wrap: Task String
+-- [pure] ButtonAlignLeading : struct{} -> ButtonAlign   -- runtime wrap: Task String
+-- [pure] ButtonAlignTrailing : struct{} -> ButtonAlign   -- runtime wrap: Task String
+-- [pure] ButtonIconLeadingText : struct{} -> ButtonIconPlacement   -- runtime wrap: Task String
+-- [pure] ButtonIconTrailingText : struct{} -> ButtonIconPlacement   -- runtime wrap: Task String
 -- [pure] CalendarCreateRenderer : Calendar -> WidgetRenderer   -- runtime wrap: Task String
 -- [pure] CalendarExtendBaseWidget : Calendar -> Widget -> ()   -- runtime wrap: Task String
 -- [pure] CalendarHide : Calendar -> ()   -- runtime wrap: Task String
@@ -104,6 +139,10 @@ package widget
 -- [pure] CalendarSize : Calendar -> Size   -- runtime wrap: Task String
 -- [pure] CalendarTheme : Calendar -> Theme   -- runtime wrap: Task String
 -- [pure] CalendarVisible : Calendar -> Bool   -- runtime wrap: Task String
+-- [pure] CalendarBaseWidget : Calendar -> BaseWidget   -- runtime wrap: Task String
+-- [pure] CalendarSetBaseWidget : BaseWidget -> Calendar -> Calendar   -- runtime wrap: Task String
+-- [pure] CalendarOnChanged : Calendar -> Time)   -- runtime wrap: Task String
+-- [pure] CalendarSetOnChanged : Time) -> Calendar -> Calendar   -- runtime wrap: Task String
 -- [pure] CardCreateRenderer : Card -> WidgetRenderer   -- runtime wrap: Task String
 -- [pure] CardMinSize : Card -> Size   -- runtime wrap: Task String
 -- [pure] CardSetContent : Card -> CanvasObject -> ()   -- runtime wrap: Task String
@@ -120,6 +159,13 @@ package widget
 -- [pure] CardSize : Card -> Size   -- runtime wrap: Task String
 -- [pure] CardTheme : Card -> Theme   -- runtime wrap: Task String
 -- [pure] CardVisible : Card -> Bool   -- runtime wrap: Task String
+-- [pure] CardBaseWidget : Card -> BaseWidget   -- runtime wrap: Task String
+-- [pure] CardSetBaseWidget : BaseWidget -> Card -> Card   -- runtime wrap: Task String
+-- [pure] CardTitle : Card -> String   -- runtime wrap: Task String
+-- [pure] CardSubtitle : Card -> String   -- runtime wrap: Task String
+-- [pure] CardSetSubtitle : String -> Card -> Card   -- runtime wrap: Task String
+-- [pure] CardImage : Card -> Image   -- runtime wrap: Task String
+-- [pure] CardContent : Card -> CanvasObject   -- runtime wrap: Task String
 -- [pure] CheckBind : Check -> Bool -> ()   -- runtime wrap: Task String
 -- [pure] CheckSetChecked : Check -> Bool -> ()   -- runtime wrap: Task String
 -- [pure] CheckHide : Check -> ()   -- runtime wrap: Task String
@@ -147,6 +193,14 @@ package widget
 -- [pure] CheckSize : Check -> Size   -- runtime wrap: Task String
 -- [pure] CheckTheme : Check -> Theme   -- runtime wrap: Task String
 -- [pure] CheckVisible : Check -> Bool   -- runtime wrap: Task String
+-- [pure] CheckDisableableWidget : Check -> DisableableWidget   -- runtime wrap: Task String
+-- [pure] CheckSetDisableableWidget : DisableableWidget -> Check -> Check   -- runtime wrap: Task String
+-- [pure] CheckText : Check -> String   -- runtime wrap: Task String
+-- [pure] CheckChecked : Check -> Bool   -- runtime wrap: Task String
+-- [pure] CheckPartial : Check -> Bool   -- runtime wrap: Task String
+-- [pure] CheckSetPartial : Bool -> Check -> Check   -- runtime wrap: Task String
+-- [pure] CheckOnChanged : Check -> func(bool)   -- runtime wrap: Task String
+-- [pure] CheckSetOnChanged : func(bool) -> Check -> Check   -- runtime wrap: Task String
 -- [pure] CheckGroupAppend : CheckGroup -> String -> ()   -- runtime wrap: Task String
 -- [pure] CheckGroupCreateRenderer : CheckGroup -> WidgetRenderer   -- runtime wrap: Task String
 -- [pure] CheckGroupMinSize : CheckGroup -> Size   -- runtime wrap: Task String
@@ -165,9 +219,28 @@ package widget
 -- [pure] CheckGroupSize : CheckGroup -> Size   -- runtime wrap: Task String
 -- [pure] CheckGroupTheme : CheckGroup -> Theme   -- runtime wrap: Task String
 -- [pure] CheckGroupVisible : CheckGroup -> Bool   -- runtime wrap: Task String
+-- [pure] CheckGroupDisableableWidget : CheckGroup -> DisableableWidget   -- runtime wrap: Task String
+-- [pure] CheckGroupSetDisableableWidget : DisableableWidget -> CheckGroup -> CheckGroup   -- runtime wrap: Task String
+-- [pure] CheckGroupHorizontal : CheckGroup -> Bool   -- runtime wrap: Task String
+-- [pure] CheckGroupSetHorizontal : Bool -> CheckGroup -> CheckGroup   -- runtime wrap: Task String
+-- [pure] CheckGroupRequired : CheckGroup -> Bool   -- runtime wrap: Task String
+-- [pure] CheckGroupSetRequired : Bool -> CheckGroup -> CheckGroup   -- runtime wrap: Task String
+-- [pure] CheckGroupOnChanged : CheckGroup -> func([]string)   -- runtime wrap: Task String
+-- [pure] CheckGroupSetOnChanged : func([]string) -> CheckGroup -> CheckGroup   -- runtime wrap: Task String
+-- [pure] CheckGroupOptions : CheckGroup -> []string   -- runtime wrap: Task String
+-- [pure] CheckGroupSetOptions : []string -> CheckGroup -> CheckGroup   -- runtime wrap: Task String
+-- [pure] CheckGroupSelected : CheckGroup -> []string   -- runtime wrap: Task String
 -- [pure] CustomTextGridStyleTextColor : CustomTextGridStyle -> Color   -- runtime wrap: Task String
 -- [pure] CustomTextGridStyleBackgroundColor : CustomTextGridStyle -> Color   -- runtime wrap: Task String
 -- [pure] CustomTextGridStyleStyle : CustomTextGridStyle -> TextStyle   -- runtime wrap: Task String
+-- [pure] CustomTextGridStyleTextStyle : CustomTextGridStyle -> TextStyle   -- runtime wrap: Task String
+-- [pure] CustomTextGridStyleSetTextStyle : TextStyle -> CustomTextGridStyle -> CustomTextGridStyle   -- runtime wrap: Task String
+-- [pure] CustomTextGridStyleFGColor : CustomTextGridStyle -> Color   -- runtime wrap: Task String
+-- [pure] CustomTextGridStyleSetFGColor : Color -> CustomTextGridStyle -> CustomTextGridStyle   -- runtime wrap: Task String
+-- [pure] CustomTextGridStyleBGColor : CustomTextGridStyle -> Color   -- runtime wrap: Task String
+-- [pure] CustomTextGridStyleSetBGColor : Color -> CustomTextGridStyle -> CustomTextGridStyle   -- runtime wrap: Task String
+-- [pure] NewCustomTextGridStyle : struct{} -> CustomTextGridStyle   -- runtime wrap: Task String
+-- [pure] DangerImportance : struct{} -> Importance   -- runtime wrap: Task String
 -- [pure] DateEntryCreateRenderer : DateEntry -> WidgetRenderer   -- runtime wrap: Task String
 -- [pure] DateEntryEnable : DateEntry -> ()   -- runtime wrap: Task String
 -- [pure] DateEntryDisable : DateEntry -> ()   -- runtime wrap: Task String
@@ -219,6 +292,11 @@ package widget
 -- [pure] DateEntryUndo : DateEntry -> ()   -- runtime wrap: Task String
 -- [fallible] DateEntryValidate : DateEntry -> String   -- runtime wrap: Task String
 -- [pure] DateEntryVisible : DateEntry -> Bool   -- runtime wrap: Task String
+-- [pure] DateEntryEntry : DateEntry -> Entry   -- runtime wrap: Task String
+-- [pure] DateEntrySetEntry : Entry -> DateEntry -> DateEntry   -- runtime wrap: Task String
+-- [pure] DateEntryDate : DateEntry -> Time   -- runtime wrap: Task String
+-- [pure] DateEntryOnChanged : DateEntry -> Time)   -- runtime wrap: Task String
+-- [pure] DateEntrySetOnChanged : Time) -> DateEntry -> DateEntry   -- runtime wrap: Task String
 -- [pure] DisableableWidgetEnable : DisableableWidget -> ()   -- runtime wrap: Task String
 -- [pure] DisableableWidgetDisable : DisableableWidget -> ()   -- runtime wrap: Task String
 -- [pure] DisableableWidgetDisabled : DisableableWidget -> Bool   -- runtime wrap: Task String
@@ -233,6 +311,9 @@ package widget
 -- [pure] DisableableWidgetSize : DisableableWidget -> Size   -- runtime wrap: Task String
 -- [pure] DisableableWidgetTheme : DisableableWidget -> Theme   -- runtime wrap: Task String
 -- [pure] DisableableWidgetVisible : DisableableWidget -> Bool   -- runtime wrap: Task String
+-- [pure] DisableableWidgetBaseWidget : DisableableWidget -> BaseWidget   -- runtime wrap: Task String
+-- [pure] DisableableWidgetSetBaseWidget : BaseWidget -> DisableableWidget -> DisableableWidget   -- runtime wrap: Task String
+-- [pure] NewDisableableWidget : struct{} -> DisableableWidget   -- runtime wrap: Task String
 -- [pure] EntryAcceptsTab : Entry -> Bool   -- runtime wrap: Task String
 -- [pure] EntryBind : Entry -> String -> ()   -- runtime wrap: Task String
 -- [pure] EntryCreateRenderer : Entry -> WidgetRenderer   -- runtime wrap: Task String
@@ -283,6 +364,37 @@ package widget
 -- [pure] EntrySize : Entry -> Size   -- runtime wrap: Task String
 -- [pure] EntryTheme : Entry -> Theme   -- runtime wrap: Task String
 -- [pure] EntryVisible : Entry -> Bool   -- runtime wrap: Task String
+-- [pure] EntryDisableableWidget : Entry -> DisableableWidget   -- runtime wrap: Task String
+-- [pure] EntrySetDisableableWidget : DisableableWidget -> Entry -> Entry   -- runtime wrap: Task String
+-- [pure] EntryText : Entry -> String   -- runtime wrap: Task String
+-- [pure] EntryTextStyle : Entry -> TextStyle   -- runtime wrap: Task String
+-- [pure] EntrySetTextStyle : TextStyle -> Entry -> Entry   -- runtime wrap: Task String
+-- [pure] EntryPlaceHolder : Entry -> String   -- runtime wrap: Task String
+-- [pure] EntryOnChanged : Entry -> func(string)   -- runtime wrap: Task String
+-- [pure] EntrySetOnChanged : func(string) -> Entry -> Entry   -- runtime wrap: Task String
+-- [pure] EntryOnSubmitted : Entry -> func(string)   -- runtime wrap: Task String
+-- [pure] EntrySetOnSubmitted : func(string) -> Entry -> Entry   -- runtime wrap: Task String
+-- [pure] EntryPassword : Entry -> Bool   -- runtime wrap: Task String
+-- [pure] EntrySetPassword : Bool -> Entry -> Entry   -- runtime wrap: Task String
+-- [pure] EntryMultiLine : Entry -> Bool   -- runtime wrap: Task String
+-- [pure] EntrySetMultiLine : Bool -> Entry -> Entry   -- runtime wrap: Task String
+-- [pure] EntryWrapping : Entry -> TextWrap   -- runtime wrap: Task String
+-- [pure] EntrySetWrapping : TextWrap -> Entry -> Entry   -- runtime wrap: Task String
+-- [pure] EntryScroll : Entry -> ScrollDirection   -- runtime wrap: Task String
+-- [pure] EntrySetScroll : ScrollDirection -> Entry -> Entry   -- runtime wrap: Task String
+-- [pure] EntryValidator : Entry -> StringValidator   -- runtime wrap: Task String
+-- [pure] EntrySetValidator : StringValidator -> Entry -> Entry   -- runtime wrap: Task String
+-- [pure] EntryAlwaysShowValidationError : Entry -> Bool   -- runtime wrap: Task String
+-- [pure] EntrySetAlwaysShowValidationError : Bool -> Entry -> Entry   -- runtime wrap: Task String
+-- [pure] EntryCursorRow : Entry -> Int   -- runtime wrap: Task String
+-- [pure] EntrySetCursorRow : Int -> Entry -> Entry   -- runtime wrap: Task String
+-- [pure] EntryCursorColumn : Entry -> Int   -- runtime wrap: Task String
+-- [pure] EntrySetCursorColumn : Int -> Entry -> Entry   -- runtime wrap: Task String
+-- [pure] EntryOnCursorChanged : Entry -> func()   -- runtime wrap: Task String
+-- [pure] EntrySetOnCursorChanged : func() -> Entry -> Entry   -- runtime wrap: Task String
+-- [pure] EntryIcon : Entry -> Resource   -- runtime wrap: Task String
+-- [pure] EntryActionItem : Entry -> CanvasObject   -- runtime wrap: Task String
+-- [pure] EntrySetActionItem : CanvasObject -> Entry -> Entry   -- runtime wrap: Task String
 -- [pure] FileIconSetURI : FileIcon -> URI -> ()   -- runtime wrap: Task String
 -- [pure] FileIconMinSize : FileIcon -> Size   -- runtime wrap: Task String
 -- [pure] FileIconCreateRenderer : FileIcon -> WidgetRenderer   -- runtime wrap: Task String
@@ -297,6 +409,10 @@ package widget
 -- [pure] FileIconSize : FileIcon -> Size   -- runtime wrap: Task String
 -- [pure] FileIconTheme : FileIcon -> Theme   -- runtime wrap: Task String
 -- [pure] FileIconVisible : FileIcon -> Bool   -- runtime wrap: Task String
+-- [pure] FileIconBaseWidget : FileIcon -> BaseWidget   -- runtime wrap: Task String
+-- [pure] FileIconSetBaseWidget : BaseWidget -> FileIcon -> FileIcon   -- runtime wrap: Task String
+-- [pure] FileIconSelected : FileIcon -> Bool   -- runtime wrap: Task String
+-- [pure] FileIconURI : FileIcon -> URI   -- runtime wrap: Task String
 -- [pure] FormAppend : Form -> String -> CanvasObject -> ()   -- runtime wrap: Task String
 -- [pure] FormAppendItem : Form -> FormItem -> ()   -- runtime wrap: Task String
 -- [pure] FormMinSize : Form -> Size   -- runtime wrap: Task String
@@ -316,6 +432,26 @@ package widget
 -- [pure] FormSize : Form -> Size   -- runtime wrap: Task String
 -- [pure] FormTheme : Form -> Theme   -- runtime wrap: Task String
 -- [pure] FormVisible : Form -> Bool   -- runtime wrap: Task String
+-- [pure] FormBaseWidget : Form -> BaseWidget   -- runtime wrap: Task String
+-- [pure] FormSetBaseWidget : BaseWidget -> Form -> Form   -- runtime wrap: Task String
+-- [pure] FormItems : Form -> FormItem   -- runtime wrap: Task String
+-- [pure] FormSetItems : FormItem -> Form -> Form   -- runtime wrap: Task String
+-- [pure] FormOnSubmit : Form -> func()   -- runtime wrap: Task String
+-- [pure] FormSetOnSubmit : func() -> Form -> Form   -- runtime wrap: Task String
+-- [pure] FormOnCancel : Form -> func()   -- runtime wrap: Task String
+-- [pure] FormSetOnCancel : func() -> Form -> Form   -- runtime wrap: Task String
+-- [pure] FormSubmitText : Form -> String   -- runtime wrap: Task String
+-- [pure] FormSetSubmitText : String -> Form -> Form   -- runtime wrap: Task String
+-- [pure] FormCancelText : Form -> String   -- runtime wrap: Task String
+-- [pure] FormSetCancelText : String -> Form -> Form   -- runtime wrap: Task String
+-- [pure] FormOrientation : Form -> Orientation   -- runtime wrap: Task String
+-- [pure] FormSetOrientation : Orientation -> Form -> Form   -- runtime wrap: Task String
+-- [pure] FormItemText : FormItem -> String   -- runtime wrap: Task String
+-- [pure] FormItemSetText : String -> FormItem -> FormItem   -- runtime wrap: Task String
+-- [pure] FormItemWidget : FormItem -> CanvasObject   -- runtime wrap: Task String
+-- [pure] FormItemSetWidget : CanvasObject -> FormItem -> FormItem   -- runtime wrap: Task String
+-- [pure] FormItemHintText : FormItem -> String   -- runtime wrap: Task String
+-- [pure] FormItemSetHintText : String -> FormItem -> FormItem   -- runtime wrap: Task String
 -- [pure] GridWrapCreateRenderer : GridWrap -> WidgetRenderer   -- runtime wrap: Task String
 -- [pure] GridWrapFocusGained : GridWrap -> ()   -- runtime wrap: Task String
 -- [pure] GridWrapFocusLost : GridWrap -> ()   -- runtime wrap: Task String
@@ -342,6 +478,20 @@ package widget
 -- [pure] GridWrapSize : GridWrap -> Size   -- runtime wrap: Task String
 -- [pure] GridWrapTheme : GridWrap -> Theme   -- runtime wrap: Task String
 -- [pure] GridWrapVisible : GridWrap -> Bool   -- runtime wrap: Task String
+-- [pure] GridWrapBaseWidget : GridWrap -> BaseWidget   -- runtime wrap: Task String
+-- [pure] GridWrapSetBaseWidget : BaseWidget -> GridWrap -> GridWrap   -- runtime wrap: Task String
+-- [pure] GridWrapLength : GridWrap -> func() int   -- runtime wrap: Task String
+-- [pure] GridWrapSetLength : func() int -> GridWrap -> GridWrap   -- runtime wrap: Task String
+-- [pure] GridWrapCreateItem : GridWrap -> CanvasObject   -- runtime wrap: Task String
+-- [pure] GridWrapSetCreateItem : CanvasObject -> GridWrap -> GridWrap   -- runtime wrap: Task String
+-- [pure] GridWrapUpdateItem : GridWrap -> CanvasObject)   -- runtime wrap: Task String
+-- [pure] GridWrapSetUpdateItem : CanvasObject) -> GridWrap -> GridWrap   -- runtime wrap: Task String
+-- [pure] GridWrapOnSelected : GridWrap -> GridWrapItemID)   -- runtime wrap: Task String
+-- [pure] GridWrapSetOnSelected : GridWrapItemID) -> GridWrap -> GridWrap   -- runtime wrap: Task String
+-- [pure] GridWrapOnUnselected : GridWrap -> GridWrapItemID)   -- runtime wrap: Task String
+-- [pure] GridWrapSetOnUnselected : GridWrapItemID) -> GridWrap -> GridWrap   -- runtime wrap: Task String
+-- [pure] HighImportance : struct{} -> Importance   -- runtime wrap: Task String
+-- [pure] Horizontal : struct{} -> Orientation   -- runtime wrap: Task String
 -- [pure] HyperlinkCreateRenderer : Hyperlink -> WidgetRenderer   -- runtime wrap: Task String
 -- [pure] HyperlinkCursor : Hyperlink -> Cursor   -- runtime wrap: Task String
 -- [pure] HyperlinkFocusGained : Hyperlink -> ()   -- runtime wrap: Task String
@@ -366,6 +516,22 @@ package widget
 -- [pure] HyperlinkSize : Hyperlink -> Size   -- runtime wrap: Task String
 -- [pure] HyperlinkTheme : Hyperlink -> Theme   -- runtime wrap: Task String
 -- [pure] HyperlinkVisible : Hyperlink -> Bool   -- runtime wrap: Task String
+-- [pure] HyperlinkBaseWidget : Hyperlink -> BaseWidget   -- runtime wrap: Task String
+-- [pure] HyperlinkSetBaseWidget : BaseWidget -> Hyperlink -> Hyperlink   -- runtime wrap: Task String
+-- [pure] HyperlinkText : Hyperlink -> String   -- runtime wrap: Task String
+-- [pure] HyperlinkURL : Hyperlink -> URL   -- runtime wrap: Task String
+-- [pure] HyperlinkAlignment : Hyperlink -> TextAlign   -- runtime wrap: Task String
+-- [pure] HyperlinkSetAlignment : TextAlign -> Hyperlink -> Hyperlink   -- runtime wrap: Task String
+-- [pure] HyperlinkWrapping : Hyperlink -> TextWrap   -- runtime wrap: Task String
+-- [pure] HyperlinkSetWrapping : TextWrap -> Hyperlink -> Hyperlink   -- runtime wrap: Task String
+-- [pure] HyperlinkTextStyle : Hyperlink -> TextStyle   -- runtime wrap: Task String
+-- [pure] HyperlinkSetTextStyle : TextStyle -> Hyperlink -> Hyperlink   -- runtime wrap: Task String
+-- [pure] HyperlinkTruncation : Hyperlink -> TextTruncation   -- runtime wrap: Task String
+-- [pure] HyperlinkSetTruncation : TextTruncation -> Hyperlink -> Hyperlink   -- runtime wrap: Task String
+-- [pure] HyperlinkSizeName : Hyperlink -> ThemeSizeName   -- runtime wrap: Task String
+-- [pure] HyperlinkSetSizeName : ThemeSizeName -> Hyperlink -> Hyperlink   -- runtime wrap: Task String
+-- [pure] HyperlinkOnTapped : Hyperlink -> func()   -- runtime wrap: Task String
+-- [pure] HyperlinkSetOnTapped : func() -> Hyperlink -> Hyperlink   -- runtime wrap: Task String
 -- [pure] HyperlinkSegmentInline : HyperlinkSegment -> Bool   -- runtime wrap: Task String
 -- [pure] HyperlinkSegmentTextual : HyperlinkSegment -> String   -- runtime wrap: Task String
 -- [pure] HyperlinkSegmentVisual : HyperlinkSegment -> CanvasObject   -- runtime wrap: Task String
@@ -373,6 +539,15 @@ package widget
 -- [pure] HyperlinkSegmentSelect : HyperlinkSegment -> Position -> Position -> ()   -- runtime wrap: Task String
 -- [pure] HyperlinkSegmentSelectedText : HyperlinkSegment -> String   -- runtime wrap: Task String
 -- [pure] HyperlinkSegmentUnselect : HyperlinkSegment -> ()   -- runtime wrap: Task String
+-- [pure] HyperlinkSegmentAlignment : HyperlinkSegment -> TextAlign   -- runtime wrap: Task String
+-- [pure] HyperlinkSegmentSetAlignment : TextAlign -> HyperlinkSegment -> HyperlinkSegment   -- runtime wrap: Task String
+-- [pure] HyperlinkSegmentText : HyperlinkSegment -> String   -- runtime wrap: Task String
+-- [pure] HyperlinkSegmentSetText : String -> HyperlinkSegment -> HyperlinkSegment   -- runtime wrap: Task String
+-- [pure] HyperlinkSegmentURL : HyperlinkSegment -> URL   -- runtime wrap: Task String
+-- [pure] HyperlinkSegmentSetURL : URL -> HyperlinkSegment -> HyperlinkSegment   -- runtime wrap: Task String
+-- [pure] HyperlinkSegmentOnTapped : HyperlinkSegment -> func()   -- runtime wrap: Task String
+-- [pure] HyperlinkSegmentSetOnTapped : func() -> HyperlinkSegment -> HyperlinkSegment   -- runtime wrap: Task String
+-- [pure] NewHyperlinkSegment : struct{} -> HyperlinkSegment   -- runtime wrap: Task String
 -- [pure] IconSetResource : Icon -> Resource -> ()   -- runtime wrap: Task String
 -- [pure] IconMinSize : Icon -> Size   -- runtime wrap: Task String
 -- [pure] IconCreateRenderer : Icon -> WidgetRenderer   -- runtime wrap: Task String
@@ -386,6 +561,9 @@ package widget
 -- [pure] IconSize : Icon -> Size   -- runtime wrap: Task String
 -- [pure] IconTheme : Icon -> Theme   -- runtime wrap: Task String
 -- [pure] IconVisible : Icon -> Bool   -- runtime wrap: Task String
+-- [pure] IconBaseWidget : Icon -> BaseWidget   -- runtime wrap: Task String
+-- [pure] IconSetBaseWidget : BaseWidget -> Icon -> Icon   -- runtime wrap: Task String
+-- [pure] IconResource : Icon -> Resource   -- runtime wrap: Task String
 -- [pure] ImageSegmentInline : ImageSegment -> Bool   -- runtime wrap: Task String
 -- [pure] ImageSegmentTextual : ImageSegment -> String   -- runtime wrap: Task String
 -- [pure] ImageSegmentVisual : ImageSegment -> CanvasObject   -- runtime wrap: Task String
@@ -393,6 +571,13 @@ package widget
 -- [pure] ImageSegmentSelect : ImageSegment -> Position -> Position -> ()   -- runtime wrap: Task String
 -- [pure] ImageSegmentSelectedText : ImageSegment -> String   -- runtime wrap: Task String
 -- [pure] ImageSegmentUnselect : ImageSegment -> ()   -- runtime wrap: Task String
+-- [pure] ImageSegmentSource : ImageSegment -> URI   -- runtime wrap: Task String
+-- [pure] ImageSegmentSetSource : URI -> ImageSegment -> ImageSegment   -- runtime wrap: Task String
+-- [pure] ImageSegmentTitle : ImageSegment -> String   -- runtime wrap: Task String
+-- [pure] ImageSegmentSetTitle : String -> ImageSegment -> ImageSegment   -- runtime wrap: Task String
+-- [pure] ImageSegmentAlignment : ImageSegment -> TextAlign   -- runtime wrap: Task String
+-- [pure] ImageSegmentSetAlignment : TextAlign -> ImageSegment -> ImageSegment   -- runtime wrap: Task String
+-- [pure] NewImageSegment : struct{} -> ImageSegment   -- runtime wrap: Task String
 -- [pure] LabelBind : Label -> String -> ()   -- runtime wrap: Task String
 -- [pure] LabelCreateRenderer : Label -> WidgetRenderer   -- runtime wrap: Task String
 -- [pure] LabelMinSize : Label -> Size   -- runtime wrap: Task String
@@ -409,6 +594,23 @@ package widget
 -- [pure] LabelSize : Label -> Size   -- runtime wrap: Task String
 -- [pure] LabelTheme : Label -> Theme   -- runtime wrap: Task String
 -- [pure] LabelVisible : Label -> Bool   -- runtime wrap: Task String
+-- [pure] LabelBaseWidget : Label -> BaseWidget   -- runtime wrap: Task String
+-- [pure] LabelSetBaseWidget : BaseWidget -> Label -> Label   -- runtime wrap: Task String
+-- [pure] LabelText : Label -> String   -- runtime wrap: Task String
+-- [pure] LabelAlignment : Label -> TextAlign   -- runtime wrap: Task String
+-- [pure] LabelSetAlignment : TextAlign -> Label -> Label   -- runtime wrap: Task String
+-- [pure] LabelWrapping : Label -> TextWrap   -- runtime wrap: Task String
+-- [pure] LabelSetWrapping : TextWrap -> Label -> Label   -- runtime wrap: Task String
+-- [pure] LabelTextStyle : Label -> TextStyle   -- runtime wrap: Task String
+-- [pure] LabelSetTextStyle : TextStyle -> Label -> Label   -- runtime wrap: Task String
+-- [pure] LabelTruncation : Label -> TextTruncation   -- runtime wrap: Task String
+-- [pure] LabelSetTruncation : TextTruncation -> Label -> Label   -- runtime wrap: Task String
+-- [pure] LabelImportance : Label -> Importance   -- runtime wrap: Task String
+-- [pure] LabelSetImportance : Importance -> Label -> Label   -- runtime wrap: Task String
+-- [pure] LabelSizeName : Label -> ThemeSizeName   -- runtime wrap: Task String
+-- [pure] LabelSetSizeName : ThemeSizeName -> Label -> Label   -- runtime wrap: Task String
+-- [pure] LabelSelectable : Label -> Bool   -- runtime wrap: Task String
+-- [pure] LabelSetSelectable : Bool -> Label -> Label   -- runtime wrap: Task String
 -- [pure] ListCreateRenderer : List -> WidgetRenderer   -- runtime wrap: Task String
 -- [pure] ListFocusGained : List -> ()   -- runtime wrap: Task String
 -- [pure] ListFocusLost : List -> ()   -- runtime wrap: Task String
@@ -435,6 +637,20 @@ package widget
 -- [pure] ListSize : List -> Size   -- runtime wrap: Task String
 -- [pure] ListTheme : List -> Theme   -- runtime wrap: Task String
 -- [pure] ListVisible : List -> Bool   -- runtime wrap: Task String
+-- [pure] ListBaseWidget : List -> BaseWidget   -- runtime wrap: Task String
+-- [pure] ListSetBaseWidget : BaseWidget -> List -> List   -- runtime wrap: Task String
+-- [pure] ListLength : List -> func() int   -- runtime wrap: Task String
+-- [pure] ListSetLength : func() int -> List -> List   -- runtime wrap: Task String
+-- [pure] ListCreateItem : List -> CanvasObject   -- runtime wrap: Task String
+-- [pure] ListSetCreateItem : CanvasObject -> List -> List   -- runtime wrap: Task String
+-- [pure] ListUpdateItem : List -> CanvasObject)   -- runtime wrap: Task String
+-- [pure] ListSetUpdateItem : CanvasObject) -> List -> List   -- runtime wrap: Task String
+-- [pure] ListOnSelected : List -> ListItemID)   -- runtime wrap: Task String
+-- [pure] ListSetOnSelected : ListItemID) -> List -> List   -- runtime wrap: Task String
+-- [pure] ListOnUnselected : List -> ListItemID)   -- runtime wrap: Task String
+-- [pure] ListSetOnUnselected : ListItemID) -> List -> List   -- runtime wrap: Task String
+-- [pure] ListHideSeparators : List -> Bool   -- runtime wrap: Task String
+-- [pure] ListSetHideSeparators : Bool -> List -> List   -- runtime wrap: Task String
 -- [pure] ListSegmentSetStartNumber : ListSegment -> Int -> ()   -- runtime wrap: Task String
 -- [pure] ListSegmentStartNumber : ListSegment -> Int   -- runtime wrap: Task String
 -- [pure] ListSegmentInline : ListSegment -> Bool   -- runtime wrap: Task String
@@ -445,6 +661,13 @@ package widget
 -- [pure] ListSegmentSelect : ListSegment -> Position -> Position -> ()   -- runtime wrap: Task String
 -- [pure] ListSegmentSelectedText : ListSegment -> String   -- runtime wrap: Task String
 -- [pure] ListSegmentUnselect : ListSegment -> ()   -- runtime wrap: Task String
+-- [pure] ListSegmentItems : ListSegment -> RichTextSegment   -- runtime wrap: Task String
+-- [pure] ListSegmentSetItems : RichTextSegment -> ListSegment -> ListSegment   -- runtime wrap: Task String
+-- [pure] ListSegmentOrdered : ListSegment -> Bool   -- runtime wrap: Task String
+-- [pure] ListSegmentSetOrdered : Bool -> ListSegment -> ListSegment   -- runtime wrap: Task String
+-- [pure] NewListSegment : struct{} -> ListSegment   -- runtime wrap: Task String
+-- [pure] LowImportance : struct{} -> Importance   -- runtime wrap: Task String
+-- [pure] MediumImportance : struct{} -> Importance   -- runtime wrap: Task String
 -- [pure] MenuActivateLastSubmenu : Menu -> Bool   -- runtime wrap: Task String
 -- [pure] MenuActivateNext : Menu -> ()   -- runtime wrap: Task String
 -- [pure] MenuActivatePrevious : Menu -> ()   -- runtime wrap: Task String
@@ -465,6 +688,12 @@ package widget
 -- [pure] MenuSize : Menu -> Size   -- runtime wrap: Task String
 -- [pure] MenuTheme : Menu -> Theme   -- runtime wrap: Task String
 -- [pure] MenuVisible : Menu -> Bool   -- runtime wrap: Task String
+-- [pure] MenuBaseWidget : Menu -> BaseWidget   -- runtime wrap: Task String
+-- [pure] MenuSetBaseWidget : BaseWidget -> Menu -> Menu   -- runtime wrap: Task String
+-- [pure] MenuItems : Menu -> CanvasObject   -- runtime wrap: Task String
+-- [pure] MenuSetItems : CanvasObject -> Menu -> Menu   -- runtime wrap: Task String
+-- [pure] MenuOnDismiss : Menu -> func()   -- runtime wrap: Task String
+-- [pure] MenuSetOnDismiss : func() -> Menu -> Menu   -- runtime wrap: Task String
 -- [pure] NewAccordion : AccordionItem -> Accordion   -- runtime wrap: Task String
 -- [pure] NewAccordionItem : String -> CanvasObject -> AccordionItem   -- runtime wrap: Task String
 -- [pure] NewActivity : () -> Activity   -- runtime wrap: Task String
@@ -530,6 +759,9 @@ package widget
 -- [pure] ParagraphSegmentSelect : ParagraphSegment -> Position -> Position -> ()   -- runtime wrap: Task String
 -- [pure] ParagraphSegmentSelectedText : ParagraphSegment -> String   -- runtime wrap: Task String
 -- [pure] ParagraphSegmentUnselect : ParagraphSegment -> ()   -- runtime wrap: Task String
+-- [pure] ParagraphSegmentTexts : ParagraphSegment -> RichTextSegment   -- runtime wrap: Task String
+-- [pure] ParagraphSegmentSetTexts : RichTextSegment -> ParagraphSegment -> ParagraphSegment   -- runtime wrap: Task String
+-- [pure] NewParagraphSegment : struct{} -> ParagraphSegment   -- runtime wrap: Task String
 -- [pure] PopUpHide : PopUp -> ()   -- runtime wrap: Task String
 -- [pure] PopUpMove : PopUp -> Position -> ()   -- runtime wrap: Task String
 -- [pure] PopUpResize : PopUp -> Size -> ()   -- runtime wrap: Task String
@@ -546,6 +778,12 @@ package widget
 -- [pure] PopUpSize : PopUp -> Size   -- runtime wrap: Task String
 -- [pure] PopUpTheme : PopUp -> Theme   -- runtime wrap: Task String
 -- [pure] PopUpVisible : PopUp -> Bool   -- runtime wrap: Task String
+-- [pure] PopUpBaseWidget : PopUp -> BaseWidget   -- runtime wrap: Task String
+-- [pure] PopUpSetBaseWidget : BaseWidget -> PopUp -> PopUp   -- runtime wrap: Task String
+-- [pure] PopUpContent : PopUp -> CanvasObject   -- runtime wrap: Task String
+-- [pure] PopUpSetContent : CanvasObject -> PopUp -> PopUp   -- runtime wrap: Task String
+-- [pure] PopUpCanvas : PopUp -> Canvas   -- runtime wrap: Task String
+-- [pure] PopUpSetCanvas : Canvas -> PopUp -> PopUp   -- runtime wrap: Task String
 -- [pure] PopUpMenuFocusGained : PopUpMenu -> ()   -- runtime wrap: Task String
 -- [pure] PopUpMenuFocusLost : PopUpMenu -> ()   -- runtime wrap: Task String
 -- [pure] PopUpMenuHide : PopUpMenu -> ()   -- runtime wrap: Task String
@@ -572,6 +810,8 @@ package widget
 -- [pure] PopUpMenuTheme : PopUpMenu -> Theme   -- runtime wrap: Task String
 -- [pure] PopUpMenuTriggerLast : PopUpMenu -> ()   -- runtime wrap: Task String
 -- [pure] PopUpMenuVisible : PopUpMenu -> Bool   -- runtime wrap: Task String
+-- [pure] PopUpMenuMenu : PopUpMenu -> Menu   -- runtime wrap: Task String
+-- [pure] PopUpMenuSetMenu : Menu -> PopUpMenu -> PopUpMenu   -- runtime wrap: Task String
 -- [pure] ProgressBarBind : ProgressBar -> Float -> ()   -- runtime wrap: Task String
 -- [pure] ProgressBarSetValue : ProgressBar -> Float -> ()   -- runtime wrap: Task String
 -- [pure] ProgressBarMinSize : ProgressBar -> Size   -- runtime wrap: Task String
@@ -587,6 +827,15 @@ package widget
 -- [pure] ProgressBarSize : ProgressBar -> Size   -- runtime wrap: Task String
 -- [pure] ProgressBarTheme : ProgressBar -> Theme   -- runtime wrap: Task String
 -- [pure] ProgressBarVisible : ProgressBar -> Bool   -- runtime wrap: Task String
+-- [pure] ProgressBarBaseWidget : ProgressBar -> BaseWidget   -- runtime wrap: Task String
+-- [pure] ProgressBarSetBaseWidget : BaseWidget -> ProgressBar -> ProgressBar   -- runtime wrap: Task String
+-- [pure] ProgressBarMin : ProgressBar -> Float   -- runtime wrap: Task String
+-- [pure] ProgressBarSetMin : Float -> ProgressBar -> ProgressBar   -- runtime wrap: Task String
+-- [pure] ProgressBarMax : ProgressBar -> Float   -- runtime wrap: Task String
+-- [pure] ProgressBarSetMax : Float -> ProgressBar -> ProgressBar   -- runtime wrap: Task String
+-- [pure] ProgressBarValue : ProgressBar -> Float   -- runtime wrap: Task String
+-- [pure] ProgressBarTextFormatter : ProgressBar -> func() string   -- runtime wrap: Task String
+-- [pure] ProgressBarSetTextFormatter : func() string -> ProgressBar -> ProgressBar   -- runtime wrap: Task String
 -- [pure] ProgressBarInfiniteShow : ProgressBarInfinite -> ()   -- runtime wrap: Task String
 -- [pure] ProgressBarInfiniteHide : ProgressBarInfinite -> ()   -- runtime wrap: Task String
 -- [pure] ProgressBarInfiniteStart : ProgressBarInfinite -> ()   -- runtime wrap: Task String
@@ -602,6 +851,8 @@ package widget
 -- [pure] ProgressBarInfiniteSize : ProgressBarInfinite -> Size   -- runtime wrap: Task String
 -- [pure] ProgressBarInfiniteTheme : ProgressBarInfinite -> Theme   -- runtime wrap: Task String
 -- [pure] ProgressBarInfiniteVisible : ProgressBarInfinite -> Bool   -- runtime wrap: Task String
+-- [pure] ProgressBarInfiniteBaseWidget : ProgressBarInfinite -> BaseWidget   -- runtime wrap: Task String
+-- [pure] ProgressBarInfiniteSetBaseWidget : BaseWidget -> ProgressBarInfinite -> ProgressBarInfinite   -- runtime wrap: Task String
 -- [pure] RadioGroupAppend : RadioGroup -> String -> ()   -- runtime wrap: Task String
 -- [pure] RadioGroupCreateRenderer : RadioGroup -> WidgetRenderer   -- runtime wrap: Task String
 -- [pure] RadioGroupMinSize : RadioGroup -> Size   -- runtime wrap: Task String
@@ -619,6 +870,17 @@ package widget
 -- [pure] RadioGroupSize : RadioGroup -> Size   -- runtime wrap: Task String
 -- [pure] RadioGroupTheme : RadioGroup -> Theme   -- runtime wrap: Task String
 -- [pure] RadioGroupVisible : RadioGroup -> Bool   -- runtime wrap: Task String
+-- [pure] RadioGroupDisableableWidget : RadioGroup -> DisableableWidget   -- runtime wrap: Task String
+-- [pure] RadioGroupSetDisableableWidget : DisableableWidget -> RadioGroup -> RadioGroup   -- runtime wrap: Task String
+-- [pure] RadioGroupHorizontal : RadioGroup -> Bool   -- runtime wrap: Task String
+-- [pure] RadioGroupSetHorizontal : Bool -> RadioGroup -> RadioGroup   -- runtime wrap: Task String
+-- [pure] RadioGroupRequired : RadioGroup -> Bool   -- runtime wrap: Task String
+-- [pure] RadioGroupSetRequired : Bool -> RadioGroup -> RadioGroup   -- runtime wrap: Task String
+-- [pure] RadioGroupOnChanged : RadioGroup -> func(string)   -- runtime wrap: Task String
+-- [pure] RadioGroupSetOnChanged : func(string) -> RadioGroup -> RadioGroup   -- runtime wrap: Task String
+-- [pure] RadioGroupOptions : RadioGroup -> []string   -- runtime wrap: Task String
+-- [pure] RadioGroupSetOptions : []string -> RadioGroup -> RadioGroup   -- runtime wrap: Task String
+-- [pure] RadioGroupSelected : RadioGroup -> String   -- runtime wrap: Task String
 -- [pure] RichTextParseMarkdown : RichText -> String -> ()   -- runtime wrap: Task String
 -- [pure] RichTextAppendMarkdown : RichText -> String -> ()   -- runtime wrap: Task String
 -- [pure] RichTextCreateRenderer : RichText -> WidgetRenderer   -- runtime wrap: Task String
@@ -634,6 +896,16 @@ package widget
 -- [pure] RichTextSize : RichText -> Size   -- runtime wrap: Task String
 -- [pure] RichTextTheme : RichText -> Theme   -- runtime wrap: Task String
 -- [pure] RichTextVisible : RichText -> Bool   -- runtime wrap: Task String
+-- [pure] RichTextBaseWidget : RichText -> BaseWidget   -- runtime wrap: Task String
+-- [pure] RichTextSetBaseWidget : BaseWidget -> RichText -> RichText   -- runtime wrap: Task String
+-- [pure] RichTextSegments : RichText -> RichTextSegment   -- runtime wrap: Task String
+-- [pure] RichTextSetSegments : RichTextSegment -> RichText -> RichText   -- runtime wrap: Task String
+-- [pure] RichTextWrapping : RichText -> TextWrap   -- runtime wrap: Task String
+-- [pure] RichTextSetWrapping : TextWrap -> RichText -> RichText   -- runtime wrap: Task String
+-- [pure] RichTextScroll : RichText -> ScrollDirection   -- runtime wrap: Task String
+-- [pure] RichTextSetScroll : ScrollDirection -> RichText -> RichText   -- runtime wrap: Task String
+-- [pure] RichTextTruncation : RichText -> TextTruncation   -- runtime wrap: Task String
+-- [pure] RichTextSetTruncation : TextTruncation -> RichText -> RichText   -- runtime wrap: Task String
 -- [pure] RichTextBlockSegments : RichTextBlock -> RichTextSegment   -- runtime wrap: Task String
 -- [pure] RichTextSegmentInline : RichTextSegment -> Bool   -- runtime wrap: Task String
 -- [pure] RichTextSegmentSelect : RichTextSegment -> Position -> Position -> ()   -- runtime wrap: Task String
@@ -642,6 +914,37 @@ package widget
 -- [pure] RichTextSegmentUnselect : RichTextSegment -> ()   -- runtime wrap: Task String
 -- [pure] RichTextSegmentUpdate : RichTextSegment -> CanvasObject -> ()   -- runtime wrap: Task String
 -- [pure] RichTextSegmentVisual : RichTextSegment -> CanvasObject   -- runtime wrap: Task String
+-- [pure] RichTextStyleAlignment : RichTextStyle -> TextAlign   -- runtime wrap: Task String
+-- [pure] RichTextStyleSetAlignment : TextAlign -> RichTextStyle -> RichTextStyle   -- runtime wrap: Task String
+-- [pure] RichTextStyleColorName : RichTextStyle -> ThemeColorName   -- runtime wrap: Task String
+-- [pure] RichTextStyleSetColorName : ThemeColorName -> RichTextStyle -> RichTextStyle   -- runtime wrap: Task String
+-- [pure] RichTextStyleInline : RichTextStyle -> Bool   -- runtime wrap: Task String
+-- [pure] RichTextStyleSetInline : Bool -> RichTextStyle -> RichTextStyle   -- runtime wrap: Task String
+-- [pure] RichTextStyleSizeName : RichTextStyle -> ThemeSizeName   -- runtime wrap: Task String
+-- [pure] RichTextStyleSetSizeName : ThemeSizeName -> RichTextStyle -> RichTextStyle   -- runtime wrap: Task String
+-- [pure] RichTextStyleTextStyle : RichTextStyle -> TextStyle   -- runtime wrap: Task String
+-- [pure] RichTextStyleSetTextStyle : TextStyle -> RichTextStyle -> RichTextStyle   -- runtime wrap: Task String
+-- [pure] NewRichTextStyle : struct{} -> RichTextStyle   -- runtime wrap: Task String
+-- [pure] RichTextStyleBlockquote : struct{} -> RichTextStyle   -- runtime wrap: Task String
+-- [effectful] SetRichTextStyleBlockquote : RichTextStyle -> struct{}   -- runtime wrap: Task String
+-- [pure] RichTextStyleCodeBlock : struct{} -> RichTextStyle   -- runtime wrap: Task String
+-- [effectful] SetRichTextStyleCodeBlock : RichTextStyle -> struct{}   -- runtime wrap: Task String
+-- [pure] RichTextStyleCodeInline : struct{} -> RichTextStyle   -- runtime wrap: Task String
+-- [effectful] SetRichTextStyleCodeInline : RichTextStyle -> struct{}   -- runtime wrap: Task String
+-- [pure] RichTextStyleEmphasis : struct{} -> RichTextStyle   -- runtime wrap: Task String
+-- [effectful] SetRichTextStyleEmphasis : RichTextStyle -> struct{}   -- runtime wrap: Task String
+-- [pure] RichTextStyleHeading : struct{} -> RichTextStyle   -- runtime wrap: Task String
+-- [effectful] SetRichTextStyleHeading : RichTextStyle -> struct{}   -- runtime wrap: Task String
+-- [pure] RichTextStyleInline : struct{} -> RichTextStyle   -- runtime wrap: Task String
+-- [effectful] SetRichTextStyleInline : RichTextStyle -> struct{}   -- runtime wrap: Task String
+-- [pure] RichTextStyleParagraph : struct{} -> RichTextStyle   -- runtime wrap: Task String
+-- [effectful] SetRichTextStyleParagraph : RichTextStyle -> struct{}   -- runtime wrap: Task String
+-- [pure] RichTextStylePassword : struct{} -> RichTextStyle   -- runtime wrap: Task String
+-- [effectful] SetRichTextStylePassword : RichTextStyle -> struct{}   -- runtime wrap: Task String
+-- [pure] RichTextStyleStrong : struct{} -> RichTextStyle   -- runtime wrap: Task String
+-- [effectful] SetRichTextStyleStrong : RichTextStyle -> struct{}   -- runtime wrap: Task String
+-- [pure] RichTextStyleSubHeading : struct{} -> RichTextStyle   -- runtime wrap: Task String
+-- [effectful] SetRichTextStyleSubHeading : RichTextStyle -> struct{}   -- runtime wrap: Task String
 -- [pure] SelectBind : Select -> String -> ()   -- runtime wrap: Task String
 -- [pure] SelectClearSelected : Select -> ()   -- runtime wrap: Task String
 -- [pure] SelectCreateRenderer : Select -> WidgetRenderer   -- runtime wrap: Task String
@@ -672,6 +975,16 @@ package widget
 -- [pure] SelectSize : Select -> Size   -- runtime wrap: Task String
 -- [pure] SelectTheme : Select -> Theme   -- runtime wrap: Task String
 -- [pure] SelectVisible : Select -> Bool   -- runtime wrap: Task String
+-- [pure] SelectDisableableWidget : Select -> DisableableWidget   -- runtime wrap: Task String
+-- [pure] SelectSetDisableableWidget : DisableableWidget -> Select -> Select   -- runtime wrap: Task String
+-- [pure] SelectAlignment : Select -> TextAlign   -- runtime wrap: Task String
+-- [pure] SelectSetAlignment : TextAlign -> Select -> Select   -- runtime wrap: Task String
+-- [pure] SelectSelected : Select -> String   -- runtime wrap: Task String
+-- [pure] SelectOptions : Select -> []string   -- runtime wrap: Task String
+-- [pure] SelectPlaceHolder : Select -> String   -- runtime wrap: Task String
+-- [pure] SelectSetPlaceHolder : String -> Select -> Select   -- runtime wrap: Task String
+-- [pure] SelectOnChanged : Select -> func(string)   -- runtime wrap: Task String
+-- [pure] SelectSetOnChanged : func(string) -> Select -> Select   -- runtime wrap: Task String
 -- [pure] SelectEntryCreateRenderer : SelectEntry -> WidgetRenderer   -- runtime wrap: Task String
 -- [pure] SelectEntryEnable : SelectEntry -> ()   -- runtime wrap: Task String
 -- [pure] SelectEntryDisable : SelectEntry -> ()   -- runtime wrap: Task String
@@ -723,6 +1036,8 @@ package widget
 -- [pure] SelectEntryUndo : SelectEntry -> ()   -- runtime wrap: Task String
 -- [fallible] SelectEntryValidate : SelectEntry -> String   -- runtime wrap: Task String
 -- [pure] SelectEntryVisible : SelectEntry -> Bool   -- runtime wrap: Task String
+-- [pure] SelectEntryEntry : SelectEntry -> Entry   -- runtime wrap: Task String
+-- [pure] SelectEntrySetEntry : Entry -> SelectEntry -> SelectEntry   -- runtime wrap: Task String
 -- [pure] SeparatorCreateRenderer : Separator -> WidgetRenderer   -- runtime wrap: Task String
 -- [pure] SeparatorMinSize : Separator -> Size   -- runtime wrap: Task String
 -- [pure] SeparatorExtendBaseWidget : Separator -> Widget -> ()   -- runtime wrap: Task String
@@ -735,6 +1050,8 @@ package widget
 -- [pure] SeparatorSize : Separator -> Size   -- runtime wrap: Task String
 -- [pure] SeparatorTheme : Separator -> Theme   -- runtime wrap: Task String
 -- [pure] SeparatorVisible : Separator -> Bool   -- runtime wrap: Task String
+-- [pure] SeparatorBaseWidget : Separator -> BaseWidget   -- runtime wrap: Task String
+-- [pure] SeparatorSetBaseWidget : BaseWidget -> Separator -> Separator   -- runtime wrap: Task String
 -- [pure] SeparatorSegmentInline : SeparatorSegment -> Bool   -- runtime wrap: Task String
 -- [pure] SeparatorSegmentTextual : SeparatorSegment -> String   -- runtime wrap: Task String
 -- [pure] SeparatorSegmentVisual : SeparatorSegment -> CanvasObject   -- runtime wrap: Task String
@@ -742,6 +1059,7 @@ package widget
 -- [pure] SeparatorSegmentSelect : SeparatorSegment -> Position -> Position -> ()   -- runtime wrap: Task String
 -- [pure] SeparatorSegmentSelectedText : SeparatorSegment -> String   -- runtime wrap: Task String
 -- [pure] SeparatorSegmentUnselect : SeparatorSegment -> ()   -- runtime wrap: Task String
+-- [pure] NewSeparatorSegment : struct{} -> SeparatorSegment   -- runtime wrap: Task String
 -- [pure] ShowModalPopUp : CanvasObject -> Canvas -> ()   -- runtime wrap: Task String
 -- [pure] ShowPopUp : CanvasObject -> Canvas -> ()   -- runtime wrap: Task String
 -- [pure] ShowPopUpAtPosition : CanvasObject -> Canvas -> Position -> ()   -- runtime wrap: Task String
@@ -776,6 +1094,22 @@ package widget
 -- [pure] SliderSize : Slider -> Size   -- runtime wrap: Task String
 -- [pure] SliderTheme : Slider -> Theme   -- runtime wrap: Task String
 -- [pure] SliderVisible : Slider -> Bool   -- runtime wrap: Task String
+-- [pure] SliderBaseWidget : Slider -> BaseWidget   -- runtime wrap: Task String
+-- [pure] SliderSetBaseWidget : BaseWidget -> Slider -> Slider   -- runtime wrap: Task String
+-- [pure] SliderValue : Slider -> Float   -- runtime wrap: Task String
+-- [pure] SliderMin : Slider -> Float   -- runtime wrap: Task String
+-- [pure] SliderSetMin : Float -> Slider -> Slider   -- runtime wrap: Task String
+-- [pure] SliderMax : Slider -> Float   -- runtime wrap: Task String
+-- [pure] SliderSetMax : Float -> Slider -> Slider   -- runtime wrap: Task String
+-- [pure] SliderStep : Slider -> Float   -- runtime wrap: Task String
+-- [pure] SliderSetStep : Float -> Slider -> Slider   -- runtime wrap: Task String
+-- [pure] SliderOrientation : Slider -> Orientation   -- runtime wrap: Task String
+-- [pure] SliderSetOrientation : Orientation -> Slider -> Slider   -- runtime wrap: Task String
+-- [pure] SliderOnChanged : Slider -> func(float64)   -- runtime wrap: Task String
+-- [pure] SliderSetOnChanged : func(float64) -> Slider -> Slider   -- runtime wrap: Task String
+-- [pure] SliderOnChangeEnded : Slider -> func(float64)   -- runtime wrap: Task String
+-- [pure] SliderSetOnChangeEnded : func(float64) -> Slider -> Slider   -- runtime wrap: Task String
+-- [pure] SuccessImportance : struct{} -> Importance   -- runtime wrap: Task String
 -- [pure] TableCreateRenderer : Table -> WidgetRenderer   -- runtime wrap: Task String
 -- [pure] TableCursor : Table -> Cursor   -- runtime wrap: Task String
 -- [pure] TableDragged : Table -> DragEvent -> ()   -- runtime wrap: Task String
@@ -816,6 +1150,37 @@ package widget
 -- [pure] TableSize : Table -> Size   -- runtime wrap: Task String
 -- [pure] TableTheme : Table -> Theme   -- runtime wrap: Task String
 -- [pure] TableVisible : Table -> Bool   -- runtime wrap: Task String
+-- [pure] TableBaseWidget : Table -> BaseWidget   -- runtime wrap: Task String
+-- [pure] TableSetBaseWidget : BaseWidget -> Table -> Table   -- runtime wrap: Task String
+-- [pure] TableLength : Table -> func() (rows int, cols int)   -- runtime wrap: Task String
+-- [pure] TableSetLength : func() (rows int, cols int) -> Table -> Table   -- runtime wrap: Task String
+-- [pure] TableCreateCell : Table -> CanvasObject   -- runtime wrap: Task String
+-- [pure] TableSetCreateCell : CanvasObject -> Table -> Table   -- runtime wrap: Task String
+-- [pure] TableUpdateCell : Table -> CanvasObject)   -- runtime wrap: Task String
+-- [pure] TableSetUpdateCell : CanvasObject) -> Table -> Table   -- runtime wrap: Task String
+-- [pure] TableOnSelected : Table -> TableCellID)   -- runtime wrap: Task String
+-- [pure] TableSetOnSelected : TableCellID) -> Table -> Table   -- runtime wrap: Task String
+-- [pure] TableOnUnselected : Table -> TableCellID)   -- runtime wrap: Task String
+-- [pure] TableSetOnUnselected : TableCellID) -> Table -> Table   -- runtime wrap: Task String
+-- [pure] TableShowHeaderRow : Table -> Bool   -- runtime wrap: Task String
+-- [pure] TableSetShowHeaderRow : Bool -> Table -> Table   -- runtime wrap: Task String
+-- [pure] TableShowHeaderColumn : Table -> Bool   -- runtime wrap: Task String
+-- [pure] TableSetShowHeaderColumn : Bool -> Table -> Table   -- runtime wrap: Task String
+-- [pure] TableCreateHeader : Table -> CanvasObject   -- runtime wrap: Task String
+-- [pure] TableSetCreateHeader : CanvasObject -> Table -> Table   -- runtime wrap: Task String
+-- [pure] TableUpdateHeader : Table -> CanvasObject)   -- runtime wrap: Task String
+-- [pure] TableSetUpdateHeader : CanvasObject) -> Table -> Table   -- runtime wrap: Task String
+-- [pure] TableStickyRowCount : Table -> Int   -- runtime wrap: Task String
+-- [pure] TableSetStickyRowCount : Int -> Table -> Table   -- runtime wrap: Task String
+-- [pure] TableStickyColumnCount : Table -> Int   -- runtime wrap: Task String
+-- [pure] TableSetStickyColumnCount : Int -> Table -> Table   -- runtime wrap: Task String
+-- [pure] TableHideSeparators : Table -> Bool   -- runtime wrap: Task String
+-- [pure] TableSetHideSeparators : Bool -> Table -> Table   -- runtime wrap: Task String
+-- [pure] TableCellIDRow : TableCellID -> Int   -- runtime wrap: Task String
+-- [pure] TableCellIDSetRow : Int -> TableCellID -> TableCellID   -- runtime wrap: Task String
+-- [pure] TableCellIDCol : TableCellID -> Int   -- runtime wrap: Task String
+-- [pure] TableCellIDSetCol : Int -> TableCellID -> TableCellID   -- runtime wrap: Task String
+-- [pure] NewTableCellID : struct{} -> TableCellID   -- runtime wrap: Task String
 -- [pure] TextGridAppend : TextGrid -> String -> ()   -- runtime wrap: Task String
 -- [pure] TextGridCursorLocationForPosition : TextGrid -> Position -> (Int, Int)   -- runtime wrap: Task String
 -- [pure] TextGridScrollToTop : TextGrid -> ()   -- runtime wrap: Task String
@@ -843,9 +1208,35 @@ package widget
 -- [pure] TextGridSize : TextGrid -> Size   -- runtime wrap: Task String
 -- [pure] TextGridTheme : TextGrid -> Theme   -- runtime wrap: Task String
 -- [pure] TextGridVisible : TextGrid -> Bool   -- runtime wrap: Task String
+-- [pure] TextGridBaseWidget : TextGrid -> BaseWidget   -- runtime wrap: Task String
+-- [pure] TextGridSetBaseWidget : BaseWidget -> TextGrid -> TextGrid   -- runtime wrap: Task String
+-- [pure] TextGridRows : TextGrid -> TextGridRow   -- runtime wrap: Task String
+-- [pure] TextGridSetRows : TextGridRow -> TextGrid -> TextGrid   -- runtime wrap: Task String
+-- [pure] TextGridShowLineNumbers : TextGrid -> Bool   -- runtime wrap: Task String
+-- [pure] TextGridSetShowLineNumbers : Bool -> TextGrid -> TextGrid   -- runtime wrap: Task String
+-- [pure] TextGridShowWhitespace : TextGrid -> Bool   -- runtime wrap: Task String
+-- [pure] TextGridSetShowWhitespace : Bool -> TextGrid -> TextGrid   -- runtime wrap: Task String
+-- [pure] TextGridTabWidth : TextGrid -> Int   -- runtime wrap: Task String
+-- [pure] TextGridSetTabWidth : Int -> TextGrid -> TextGrid   -- runtime wrap: Task String
+-- [pure] TextGridScroll : TextGrid -> ScrollDirection   -- runtime wrap: Task String
+-- [pure] TextGridSetScroll : ScrollDirection -> TextGrid -> TextGrid   -- runtime wrap: Task String
+-- [pure] TextGridCellRune : TextGridCell -> rune   -- runtime wrap: Task String
+-- [pure] TextGridCellSetRune : rune -> TextGridCell -> TextGridCell   -- runtime wrap: Task String
+-- [pure] TextGridCellStyle : TextGridCell -> TextGridStyle   -- runtime wrap: Task String
+-- [pure] TextGridCellSetStyle : TextGridStyle -> TextGridCell -> TextGridCell   -- runtime wrap: Task String
+-- [pure] NewTextGridCell : struct{} -> TextGridCell   -- runtime wrap: Task String
+-- [pure] TextGridRowCells : TextGridRow -> TextGridCell   -- runtime wrap: Task String
+-- [pure] TextGridRowSetCells : TextGridCell -> TextGridRow -> TextGridRow   -- runtime wrap: Task String
+-- [pure] TextGridRowStyle : TextGridRow -> TextGridStyle   -- runtime wrap: Task String
+-- [pure] TextGridRowSetStyle : TextGridStyle -> TextGridRow -> TextGridRow   -- runtime wrap: Task String
+-- [pure] NewTextGridRow : struct{} -> TextGridRow   -- runtime wrap: Task String
 -- [pure] TextGridStyleBackgroundColor : TextGridStyle -> Color   -- runtime wrap: Task String
 -- [pure] TextGridStyleStyle : TextGridStyle -> TextStyle   -- runtime wrap: Task String
 -- [pure] TextGridStyleTextColor : TextGridStyle -> Color   -- runtime wrap: Task String
+-- [pure] TextGridStyleDefault : struct{} -> TextGridStyle   -- runtime wrap: Task String
+-- [effectful] SetTextGridStyleDefault : TextGridStyle -> struct{}   -- runtime wrap: Task String
+-- [pure] TextGridStyleWhitespace : struct{} -> TextGridStyle   -- runtime wrap: Task String
+-- [effectful] SetTextGridStyleWhitespace : TextGridStyle -> struct{}   -- runtime wrap: Task String
 -- [pure] TextSegmentInline : TextSegment -> Bool   -- runtime wrap: Task String
 -- [pure] TextSegmentTextual : TextSegment -> String   -- runtime wrap: Task String
 -- [pure] TextSegmentVisual : TextSegment -> CanvasObject   -- runtime wrap: Task String
@@ -853,6 +1244,11 @@ package widget
 -- [pure] TextSegmentSelect : TextSegment -> Position -> Position -> ()   -- runtime wrap: Task String
 -- [pure] TextSegmentSelectedText : TextSegment -> String   -- runtime wrap: Task String
 -- [pure] TextSegmentUnselect : TextSegment -> ()   -- runtime wrap: Task String
+-- [pure] TextSegmentStyle : TextSegment -> RichTextStyle   -- runtime wrap: Task String
+-- [pure] TextSegmentSetStyle : RichTextStyle -> TextSegment -> TextSegment   -- runtime wrap: Task String
+-- [pure] TextSegmentText : TextSegment -> String   -- runtime wrap: Task String
+-- [pure] TextSegmentSetText : String -> TextSegment -> TextSegment   -- runtime wrap: Task String
+-- [pure] NewTextSegment : struct{} -> TextSegment   -- runtime wrap: Task String
 -- [pure] ToolbarCreateRenderer : Toolbar -> WidgetRenderer   -- runtime wrap: Task String
 -- [pure] ToolbarAppend : Toolbar -> ToolbarItem -> ()   -- runtime wrap: Task String
 -- [pure] ToolbarPrepend : Toolbar -> ToolbarItem -> ()   -- runtime wrap: Task String
@@ -867,11 +1263,18 @@ package widget
 -- [pure] ToolbarSize : Toolbar -> Size   -- runtime wrap: Task String
 -- [pure] ToolbarTheme : Toolbar -> Theme   -- runtime wrap: Task String
 -- [pure] ToolbarVisible : Toolbar -> Bool   -- runtime wrap: Task String
+-- [pure] ToolbarBaseWidget : Toolbar -> BaseWidget   -- runtime wrap: Task String
+-- [pure] ToolbarSetBaseWidget : BaseWidget -> Toolbar -> Toolbar   -- runtime wrap: Task String
+-- [pure] ToolbarItems : Toolbar -> ToolbarItem   -- runtime wrap: Task String
+-- [pure] ToolbarSetItems : ToolbarItem -> Toolbar -> Toolbar   -- runtime wrap: Task String
 -- [pure] ToolbarActionToolbarObject : ToolbarAction -> CanvasObject   -- runtime wrap: Task String
 -- [pure] ToolbarActionSetIcon : ToolbarAction -> Resource -> ()   -- runtime wrap: Task String
 -- [pure] ToolbarActionEnable : ToolbarAction -> ()   -- runtime wrap: Task String
 -- [pure] ToolbarActionDisable : ToolbarAction -> ()   -- runtime wrap: Task String
 -- [pure] ToolbarActionDisabled : ToolbarAction -> Bool   -- runtime wrap: Task String
+-- [pure] ToolbarActionIcon : ToolbarAction -> Resource   -- runtime wrap: Task String
+-- [pure] ToolbarActionOnActivated : ToolbarAction -> func()   -- runtime wrap: Task String
+-- [pure] ToolbarActionSetOnActivated : func() -> ToolbarAction -> ToolbarAction   -- runtime wrap: Task String
 -- [pure] ToolbarItemToolbarObject : ToolbarItem -> CanvasObject   -- runtime wrap: Task String
 -- [pure] ToolbarSeparatorToolbarObject : ToolbarSeparator -> CanvasObject   -- runtime wrap: Task String
 -- [pure] ToolbarSpacerToolbarObject : ToolbarSpacer -> CanvasObject   -- runtime wrap: Task String
@@ -905,3 +1308,27 @@ package widget
 -- [pure] TreeSize : Tree -> Size   -- runtime wrap: Task String
 -- [pure] TreeTheme : Tree -> Theme   -- runtime wrap: Task String
 -- [pure] TreeVisible : Tree -> Bool   -- runtime wrap: Task String
+-- [pure] TreeBaseWidget : Tree -> BaseWidget   -- runtime wrap: Task String
+-- [pure] TreeSetBaseWidget : BaseWidget -> Tree -> Tree   -- runtime wrap: Task String
+-- [pure] TreeRoot : Tree -> TreeNodeID   -- runtime wrap: Task String
+-- [pure] TreeSetRoot : TreeNodeID -> Tree -> Tree   -- runtime wrap: Task String
+-- [pure] TreeHideSeparators : Tree -> Bool   -- runtime wrap: Task String
+-- [pure] TreeSetHideSeparators : Bool -> Tree -> Tree   -- runtime wrap: Task String
+-- [pure] TreeChildUIDs : Tree -> TreeNodeID)   -- runtime wrap: Task String
+-- [pure] TreeSetChildUIDs : TreeNodeID) -> Tree -> Tree   -- runtime wrap: Task String
+-- [pure] TreeCreateNode : Tree -> CanvasObject)   -- runtime wrap: Task String
+-- [pure] TreeSetCreateNode : CanvasObject) -> Tree -> Tree   -- runtime wrap: Task String
+-- [pure] TreeIsBranch : Tree -> TreeNodeID) (ok bool)   -- runtime wrap: Task String
+-- [pure] TreeSetIsBranch : TreeNodeID) (ok bool) -> Tree -> Tree   -- runtime wrap: Task String
+-- [pure] TreeOnBranchClosed : Tree -> TreeNodeID)   -- runtime wrap: Task String
+-- [pure] TreeSetOnBranchClosed : TreeNodeID) -> Tree -> Tree   -- runtime wrap: Task String
+-- [pure] TreeOnBranchOpened : Tree -> TreeNodeID)   -- runtime wrap: Task String
+-- [pure] TreeSetOnBranchOpened : TreeNodeID) -> Tree -> Tree   -- runtime wrap: Task String
+-- [pure] TreeOnSelected : Tree -> TreeNodeID)   -- runtime wrap: Task String
+-- [pure] TreeSetOnSelected : TreeNodeID) -> Tree -> Tree   -- runtime wrap: Task String
+-- [pure] TreeOnUnselected : Tree -> TreeNodeID)   -- runtime wrap: Task String
+-- [pure] TreeSetOnUnselected : TreeNodeID) -> Tree -> Tree   -- runtime wrap: Task String
+-- [pure] TreeUpdateNode : Tree -> CanvasObject)   -- runtime wrap: Task String
+-- [pure] TreeSetUpdateNode : CanvasObject) -> Tree -> Tree   -- runtime wrap: Task String
+-- [pure] Vertical : struct{} -> Orientation   -- runtime wrap: Task String
+-- [pure] WarningImportance : struct{} -> Importance   -- runtime wrap: Task String

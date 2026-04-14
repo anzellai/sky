@@ -18,6 +18,25 @@
 package fyne
 -- [pure] AnimationStart : Animation -> ()   -- runtime wrap: Task String
 -- [pure] AnimationStop : Animation -> ()   -- runtime wrap: Task String
+-- [pure] AnimationAutoReverse : Animation -> Bool   -- runtime wrap: Task String
+-- [pure] AnimationSetAutoReverse : Bool -> Animation -> Animation   -- runtime wrap: Task String
+-- [pure] AnimationCurve : Animation -> AnimationCurve   -- runtime wrap: Task String
+-- [pure] AnimationSetCurve : AnimationCurve -> Animation -> Animation   -- runtime wrap: Task String
+-- [pure] AnimationDuration : Animation -> Duration   -- runtime wrap: Task String
+-- [pure] AnimationSetDuration : Duration -> Animation -> Animation   -- runtime wrap: Task String
+-- [pure] AnimationRepeatCount : Animation -> Int   -- runtime wrap: Task String
+-- [pure] AnimationSetRepeatCount : Int -> Animation -> Animation   -- runtime wrap: Task String
+-- [pure] AnimationTick : Animation -> func(float32)   -- runtime wrap: Task String
+-- [pure] AnimationSetTick : func(float32) -> Animation -> Animation   -- runtime wrap: Task String
+-- [pure] AnimationEaseIn : struct{} -> func(val float32) float32   -- runtime wrap: Task String
+-- [effectful] SetAnimationEaseIn : func(val float32) float32 -> struct{}   -- runtime wrap: Task String
+-- [pure] AnimationEaseInOut : struct{} -> func(val float32) float32   -- runtime wrap: Task String
+-- [effectful] SetAnimationEaseInOut : func(val float32) float32 -> struct{}   -- runtime wrap: Task String
+-- [pure] AnimationEaseOut : struct{} -> func(val float32) float32   -- runtime wrap: Task String
+-- [effectful] SetAnimationEaseOut : func(val float32) float32 -> struct{}   -- runtime wrap: Task String
+-- [pure] AnimationLinear : struct{} -> func(val float32) float32   -- runtime wrap: Task String
+-- [effectful] SetAnimationLinear : func(val float32) float32 -> struct{}   -- runtime wrap: Task String
+-- [pure] AnimationRepeatForever : struct{} -> untyped int   -- runtime wrap: Task String
 -- [pure] AppClipboard : App -> Clipboard   -- runtime wrap: Task String
 -- [pure] AppCloudProvider : App -> CloudProvider   -- runtime wrap: Task String
 -- [pure] AppDriver : App -> Driver   -- runtime wrap: Task String
@@ -35,6 +54,26 @@ package fyne
 -- [pure] AppSettings : App -> Settings   -- runtime wrap: Task String
 -- [pure] AppStorage : App -> Storage   -- runtime wrap: Task String
 -- [pure] AppUniqueID : App -> String   -- runtime wrap: Task String
+-- [pure] AppMetadataID : AppMetadata -> String   -- runtime wrap: Task String
+-- [pure] AppMetadataSetID : String -> AppMetadata -> AppMetadata   -- runtime wrap: Task String
+-- [pure] AppMetadataName : AppMetadata -> String   -- runtime wrap: Task String
+-- [pure] AppMetadataSetName : String -> AppMetadata -> AppMetadata   -- runtime wrap: Task String
+-- [pure] AppMetadataVersion : AppMetadata -> String   -- runtime wrap: Task String
+-- [pure] AppMetadataSetVersion : String -> AppMetadata -> AppMetadata   -- runtime wrap: Task String
+-- [pure] AppMetadataBuild : AppMetadata -> Int   -- runtime wrap: Task String
+-- [pure] AppMetadataSetBuild : Int -> AppMetadata -> AppMetadata   -- runtime wrap: Task String
+-- [pure] AppMetadataIcon : AppMetadata -> Resource   -- runtime wrap: Task String
+-- [pure] AppMetadataSetIcon : Resource -> AppMetadata -> AppMetadata   -- runtime wrap: Task String
+-- [pure] AppMetadataRelease : AppMetadata -> Bool   -- runtime wrap: Task String
+-- [pure] AppMetadataSetRelease : Bool -> AppMetadata -> AppMetadata   -- runtime wrap: Task String
+-- [pure] AppMetadataCustom : AppMetadata -> map[string]string   -- runtime wrap: Task String
+-- [pure] AppMetadataSetCustom : map[string]string -> AppMetadata -> AppMetadata   -- runtime wrap: Task String
+-- [pure] AppMetadataMigrations : AppMetadata -> map[string]bool   -- runtime wrap: Task String
+-- [pure] AppMetadataSetMigrations : map[string]bool -> AppMetadata -> AppMetadata   -- runtime wrap: Task String
+-- [pure] NewAppMetadata : struct{} -> AppMetadata   -- runtime wrap: Task String
+-- [pure] BuildDebug : struct{} -> BuildType   -- runtime wrap: Task String
+-- [pure] BuildRelease : struct{} -> BuildType   -- runtime wrap: Task String
+-- [pure] BuildStandard : struct{} -> BuildType   -- runtime wrap: Task String
 -- [pure] CanvasAddShortcut : Canvas -> Shortcut -> Shortcut) -> ()   -- runtime wrap: Task String
 -- [pure] CanvasCapture : Canvas -> Image   -- runtime wrap: Task String
 -- [pure] CanvasContent : Canvas -> CanvasObject   -- runtime wrap: Task String
@@ -86,10 +125,20 @@ package fyne
 -- [pure] ContainerShow : Container -> ()   -- runtime wrap: Task String
 -- [pure] ContainerSize : Container -> Size   -- runtime wrap: Task String
 -- [pure] ContainerVisible : Container -> Bool   -- runtime wrap: Task String
+-- [pure] ContainerHidden : Container -> Bool   -- runtime wrap: Task String
+-- [pure] ContainerSetHidden : Bool -> Container -> Container   -- runtime wrap: Task String
+-- [pure] ContainerLayout : Container -> Layout   -- runtime wrap: Task String
+-- [pure] ContainerSetLayout : Layout -> Container -> Container   -- runtime wrap: Task String
+-- [pure] ContainerObjects : Container -> CanvasObject   -- runtime wrap: Task String
+-- [pure] ContainerSetObjects : CanvasObject -> Container -> Container   -- runtime wrap: Task String
 -- [pure] CurrentApp : () -> App   -- runtime wrap: Task String
 -- [pure] CurrentDevice : () -> Device   -- runtime wrap: Task String
 -- [pure] DeltaComponents : Delta -> (Float, Float)   -- runtime wrap: Task String
 -- [pure] DeltaIsZero : Delta -> Bool   -- runtime wrap: Task String
+-- [pure] DeltaDX : Delta -> Float   -- runtime wrap: Task String
+-- [pure] DeltaSetDX : Float -> Delta -> Delta   -- runtime wrap: Task String
+-- [pure] DeltaDY : Delta -> Float   -- runtime wrap: Task String
+-- [pure] DeltaSetDY : Float -> Delta -> Delta   -- runtime wrap: Task String
 -- [pure] DeviceHasKeyboard : Device -> Bool   -- runtime wrap: Task String
 -- [pure] DeviceIsBrowser : Device -> Bool   -- runtime wrap: Task String
 -- [pure] DeviceIsMobile : Device -> Bool   -- runtime wrap: Task String
@@ -102,6 +151,11 @@ package fyne
 -- [pure] Do : func() -> ()   -- runtime wrap: Task String
 -- [pure] DoAndWait : func() -> ()   -- runtime wrap: Task String
 -- [pure] DoubleTappableDoubleTapped : DoubleTappable -> PointEvent -> ()   -- runtime wrap: Task String
+-- [pure] DragEventPointEvent : DragEvent -> PointEvent   -- runtime wrap: Task String
+-- [pure] DragEventSetPointEvent : PointEvent -> DragEvent -> DragEvent   -- runtime wrap: Task String
+-- [pure] DragEventDragged : DragEvent -> Delta   -- runtime wrap: Task String
+-- [pure] DragEventSetDragged : Delta -> DragEvent -> DragEvent   -- runtime wrap: Task String
+-- [pure] NewDragEvent : struct{} -> DragEvent   -- runtime wrap: Task String
 -- [pure] DraggableDragEnd : Draggable -> ()   -- runtime wrap: Task String
 -- [pure] DraggableDragged : Draggable -> DragEvent -> ()   -- runtime wrap: Task String
 -- [pure] DriverAbsolutePositionForObject : Driver -> CanvasObject -> Position   -- runtime wrap: Task String
@@ -121,8 +175,99 @@ package fyne
 -- [pure] FocusableFocusLost : Focusable -> ()   -- runtime wrap: Task String
 -- [pure] FocusableTypedKey : Focusable -> KeyEvent -> ()   -- runtime wrap: Task String
 -- [pure] FocusableTypedRune : Focusable -> rune -> ()   -- runtime wrap: Task String
+-- [pure] HardwareKeyScanCode : HardwareKey -> Int   -- runtime wrap: Task String
+-- [pure] HardwareKeySetScanCode : Int -> HardwareKey -> HardwareKey   -- runtime wrap: Task String
+-- [pure] NewHardwareKey : struct{} -> HardwareKey   -- runtime wrap: Task String
 -- [pure] IsHorizontal : DeviceOrientation -> Bool   -- runtime wrap: Task String
 -- [pure] IsVertical : DeviceOrientation -> Bool   -- runtime wrap: Task String
+-- [pure] Key0 : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] Key1 : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] Key2 : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] Key3 : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] Key4 : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] Key5 : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] Key6 : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] Key7 : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] Key8 : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] Key9 : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeyA : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeyApostrophe : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeyAsterisk : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeyB : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeyBackTick : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeyBackslash : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeyBackspace : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeyC : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeyComma : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeyD : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeyDelete : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeyDown : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeyE : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeyEnd : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeyEnter : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeyEqual : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeyEscape : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeyEventName : KeyEvent -> KeyName   -- runtime wrap: Task String
+-- [pure] KeyEventSetName : KeyName -> KeyEvent -> KeyEvent   -- runtime wrap: Task String
+-- [pure] KeyEventPhysical : KeyEvent -> HardwareKey   -- runtime wrap: Task String
+-- [pure] KeyEventSetPhysical : HardwareKey -> KeyEvent -> KeyEvent   -- runtime wrap: Task String
+-- [pure] NewKeyEvent : struct{} -> KeyEvent   -- runtime wrap: Task String
+-- [pure] KeyF : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeyF1 : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeyF10 : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeyF11 : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeyF12 : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeyF2 : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeyF3 : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeyF4 : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeyF5 : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeyF6 : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeyF7 : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeyF8 : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeyF9 : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeyG : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeyH : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeyHome : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeyI : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeyInsert : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeyJ : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeyK : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeyL : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeyLeft : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeyLeftBracket : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeyM : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeyMinus : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeyModifierAlt : struct{} -> KeyModifier   -- runtime wrap: Task String
+-- [pure] KeyModifierControl : struct{} -> KeyModifier   -- runtime wrap: Task String
+-- [pure] KeyModifierShift : struct{} -> KeyModifier   -- runtime wrap: Task String
+-- [pure] KeyModifierShortcutDefault : struct{} -> KeyModifier   -- runtime wrap: Task String
+-- [pure] KeyModifierSuper : struct{} -> KeyModifier   -- runtime wrap: Task String
+-- [pure] KeyN : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeyO : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeyP : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeyPageDown : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeyPageUp : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeyPeriod : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeyPlus : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeyQ : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeyR : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeyReturn : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeyRight : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeyRightBracket : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeyS : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeySemicolon : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeySlash : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeySpace : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeyT : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeyTab : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeyU : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeyUnknown : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeyUp : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeyV : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeyW : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeyX : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeyY : struct{} -> KeyName   -- runtime wrap: Task String
+-- [pure] KeyZ : struct{} -> KeyName   -- runtime wrap: Task String
 -- [pure] KeyboardShortcutKey : KeyboardShortcut -> KeyName   -- runtime wrap: Task String
 -- [pure] KeyboardShortcutMod : KeyboardShortcut -> KeyModifier   -- runtime wrap: Task String
 -- [pure] KeyboardShortcutShortcutName : KeyboardShortcut -> String   -- runtime wrap: Task String
@@ -169,9 +314,33 @@ package fyne
 -- [pure] LocaleString : Locale -> String   -- runtime wrap: Task String
 -- [pure] LogError : String -> String -> ()   -- runtime wrap: Task String
 -- [pure] MainMenuRefresh : MainMenu -> ()   -- runtime wrap: Task String
+-- [pure] MainMenuItems : MainMenu -> Menu   -- runtime wrap: Task String
+-- [pure] MainMenuSetItems : Menu -> MainMenu -> MainMenu   -- runtime wrap: Task String
 -- [pure] Max : Float -> Float -> Float   -- runtime wrap: Task String
 -- [pure] MeasureText : String -> Float -> TextStyle -> Size   -- runtime wrap: Task String
 -- [pure] MenuRefresh : Menu -> ()   -- runtime wrap: Task String
+-- [pure] MenuLabel : Menu -> String   -- runtime wrap: Task String
+-- [pure] MenuSetLabel : String -> Menu -> Menu   -- runtime wrap: Task String
+-- [pure] MenuItems : Menu -> MenuItem   -- runtime wrap: Task String
+-- [pure] MenuSetItems : MenuItem -> Menu -> Menu   -- runtime wrap: Task String
+-- [pure] MenuItemChildMenu : MenuItem -> Menu   -- runtime wrap: Task String
+-- [pure] MenuItemSetChildMenu : Menu -> MenuItem -> MenuItem   -- runtime wrap: Task String
+-- [pure] MenuItemIsQuit : MenuItem -> Bool   -- runtime wrap: Task String
+-- [pure] MenuItemSetIsQuit : Bool -> MenuItem -> MenuItem   -- runtime wrap: Task String
+-- [pure] MenuItemIsSeparator : MenuItem -> Bool   -- runtime wrap: Task String
+-- [pure] MenuItemSetIsSeparator : Bool -> MenuItem -> MenuItem   -- runtime wrap: Task String
+-- [pure] MenuItemLabel : MenuItem -> String   -- runtime wrap: Task String
+-- [pure] MenuItemSetLabel : String -> MenuItem -> MenuItem   -- runtime wrap: Task String
+-- [pure] MenuItemAction : MenuItem -> func()   -- runtime wrap: Task String
+-- [pure] MenuItemSetAction : func() -> MenuItem -> MenuItem   -- runtime wrap: Task String
+-- [pure] MenuItemDisabled : MenuItem -> Bool   -- runtime wrap: Task String
+-- [pure] MenuItemSetDisabled : Bool -> MenuItem -> MenuItem   -- runtime wrap: Task String
+-- [pure] MenuItemChecked : MenuItem -> Bool   -- runtime wrap: Task String
+-- [pure] MenuItemSetChecked : Bool -> MenuItem -> MenuItem   -- runtime wrap: Task String
+-- [pure] MenuItemIcon : MenuItem -> Resource   -- runtime wrap: Task String
+-- [pure] MenuItemSetIcon : Resource -> MenuItem -> MenuItem   -- runtime wrap: Task String
+-- [pure] MenuItemShortcut : MenuItem -> Shortcut   -- runtime wrap: Task String
+-- [pure] MenuItemSetShortcut : Shortcut -> MenuItem -> MenuItem   -- runtime wrap: Task String
 -- [pure] Min : Float -> Float -> Float   -- runtime wrap: Task String
 -- [pure] NewAnimation : Duration -> func(float32) -> Animation   -- runtime wrap: Task String
 -- [pure] NewContainer : CanvasObject -> Container   -- runtime wrap: Task String
@@ -189,16 +358,34 @@ package fyne
 -- [pure] NewSquareOffsetPos : Float -> Position   -- runtime wrap: Task String
 -- [pure] NewSquareSize : Float -> Size   -- runtime wrap: Task String
 -- [pure] NewStaticResource : String -> []byte -> StaticResource   -- runtime wrap: Task String
+-- [pure] NotificationTitle : Notification -> String   -- runtime wrap: Task String
+-- [pure] NotificationSetTitle : String -> Notification -> Notification   -- runtime wrap: Task String
+-- [pure] NotificationContent : Notification -> String   -- runtime wrap: Task String
+-- [pure] NotificationSetContent : String -> Notification -> Notification   -- runtime wrap: Task String
+-- [pure] OrientationHorizontalLeft : struct{} -> DeviceOrientation   -- runtime wrap: Task String
+-- [pure] OrientationHorizontalRight : struct{} -> DeviceOrientation   -- runtime wrap: Task String
+-- [pure] OrientationVertical : struct{} -> DeviceOrientation   -- runtime wrap: Task String
+-- [pure] OrientationVerticalUpsideDown : struct{} -> DeviceOrientation   -- runtime wrap: Task String
 -- [pure] OverlayStackAdd : OverlayStack -> CanvasObject -> ()   -- runtime wrap: Task String
 -- [pure] OverlayStackList : OverlayStack -> CanvasObject   -- runtime wrap: Task String
 -- [pure] OverlayStackRemove : OverlayStack -> CanvasObject -> ()   -- runtime wrap: Task String
 -- [pure] OverlayStackTop : OverlayStack -> CanvasObject   -- runtime wrap: Task String
+-- [pure] PointEventAbsolutePosition : PointEvent -> Position   -- runtime wrap: Task String
+-- [pure] PointEventSetAbsolutePosition : Position -> PointEvent -> PointEvent   -- runtime wrap: Task String
+-- [pure] PointEventPosition : PointEvent -> Position   -- runtime wrap: Task String
+-- [pure] PointEventSetPosition : Position -> PointEvent -> PointEvent   -- runtime wrap: Task String
+-- [pure] NewPointEvent : struct{} -> PointEvent   -- runtime wrap: Task String
 -- [pure] PositionAdd : Position -> Vector2 -> Position   -- runtime wrap: Task String
 -- [pure] PositionAddXY : Position -> Float -> Float -> Position   -- runtime wrap: Task String
 -- [pure] PositionComponents : Position -> (Float, Float)   -- runtime wrap: Task String
 -- [pure] PositionIsZero : Position -> Bool   -- runtime wrap: Task String
 -- [pure] PositionSubtract : Position -> Vector2 -> Position   -- runtime wrap: Task String
 -- [pure] PositionSubtractXY : Position -> Float -> Float -> Position   -- runtime wrap: Task String
+-- [pure] PositionX : Position -> Float   -- runtime wrap: Task String
+-- [pure] PositionSetX : Float -> Position -> Position   -- runtime wrap: Task String
+-- [pure] PositionY : Position -> Float   -- runtime wrap: Task String
+-- [pure] PositionSetY : Float -> Position -> Position   -- runtime wrap: Task String
+-- [pure] NewPosition : struct{} -> Position   -- runtime wrap: Task String
 -- [pure] PreferencesAddChangeListener : Preferences -> func() -> ()   -- runtime wrap: Task String
 -- [pure] PreferencesBool : Preferences -> String -> Bool   -- runtime wrap: Task String
 -- [pure] PreferencesBoolList : Preferences -> String -> []bool   -- runtime wrap: Task String
@@ -228,6 +415,15 @@ package fyne
 -- [pure] PreferencesStringWithFallback : Preferences -> String -> String -> String   -- runtime wrap: Task String
 -- [pure] ResourceContent : Resource -> []byte   -- runtime wrap: Task String
 -- [pure] ResourceName : Resource -> String   -- runtime wrap: Task String
+-- [pure] ScrollBoth : struct{} -> ScrollDirection   -- runtime wrap: Task String
+-- [pure] ScrollEventPointEvent : ScrollEvent -> PointEvent   -- runtime wrap: Task String
+-- [pure] ScrollEventSetPointEvent : PointEvent -> ScrollEvent -> ScrollEvent   -- runtime wrap: Task String
+-- [pure] ScrollEventScrolled : ScrollEvent -> Delta   -- runtime wrap: Task String
+-- [pure] ScrollEventSetScrolled : Delta -> ScrollEvent -> ScrollEvent   -- runtime wrap: Task String
+-- [pure] NewScrollEvent : struct{} -> ScrollEvent   -- runtime wrap: Task String
+-- [pure] ScrollHorizontalOnly : struct{} -> ScrollDirection   -- runtime wrap: Task String
+-- [pure] ScrollNone : struct{} -> ScrollDirection   -- runtime wrap: Task String
+-- [pure] ScrollVerticalOnly : struct{} -> ScrollDirection   -- runtime wrap: Task String
 -- [pure] ScrollableScrolled : Scrollable -> ScrollEvent -> ()   -- runtime wrap: Task String
 -- [pure] SecondaryTappableTappedSecondary : SecondaryTappable -> PointEvent -> ()   -- runtime wrap: Task String
 -- [pure] SetCurrentApp : App -> ()   -- runtime wrap: Task String
@@ -244,24 +440,37 @@ package fyne
 -- [pure] ShortcutCopyKey : ShortcutCopy -> KeyName   -- runtime wrap: Task String
 -- [pure] ShortcutCopyMod : ShortcutCopy -> KeyModifier   -- runtime wrap: Task String
 -- [pure] ShortcutCopyShortcutName : ShortcutCopy -> String   -- runtime wrap: Task String
+-- [pure] ShortcutCopyClipboard : ShortcutCopy -> Clipboard   -- runtime wrap: Task String
+-- [pure] ShortcutCopySetClipboard : Clipboard -> ShortcutCopy -> ShortcutCopy   -- runtime wrap: Task String
+-- [pure] NewShortcutCopy : struct{} -> ShortcutCopy   -- runtime wrap: Task String
 -- [pure] ShortcutCutKey : ShortcutCut -> KeyName   -- runtime wrap: Task String
 -- [pure] ShortcutCutMod : ShortcutCut -> KeyModifier   -- runtime wrap: Task String
 -- [pure] ShortcutCutShortcutName : ShortcutCut -> String   -- runtime wrap: Task String
+-- [pure] ShortcutCutClipboard : ShortcutCut -> Clipboard   -- runtime wrap: Task String
+-- [pure] ShortcutCutSetClipboard : Clipboard -> ShortcutCut -> ShortcutCut   -- runtime wrap: Task String
+-- [pure] NewShortcutCut : struct{} -> ShortcutCut   -- runtime wrap: Task String
 -- [pure] ShortcutHandlerTypedShortcut : ShortcutHandler -> Shortcut -> ()   -- runtime wrap: Task String
 -- [pure] ShortcutHandlerAddShortcut : ShortcutHandler -> Shortcut -> Shortcut) -> ()   -- runtime wrap: Task String
 -- [pure] ShortcutHandlerRemoveShortcut : ShortcutHandler -> Shortcut -> ()   -- runtime wrap: Task String
+-- [pure] NewShortcutHandler : struct{} -> ShortcutHandler   -- runtime wrap: Task String
 -- [pure] ShortcutPasteKey : ShortcutPaste -> KeyName   -- runtime wrap: Task String
 -- [pure] ShortcutPasteMod : ShortcutPaste -> KeyModifier   -- runtime wrap: Task String
 -- [pure] ShortcutPasteShortcutName : ShortcutPaste -> String   -- runtime wrap: Task String
+-- [pure] ShortcutPasteClipboard : ShortcutPaste -> Clipboard   -- runtime wrap: Task String
+-- [pure] ShortcutPasteSetClipboard : Clipboard -> ShortcutPaste -> ShortcutPaste   -- runtime wrap: Task String
+-- [pure] NewShortcutPaste : struct{} -> ShortcutPaste   -- runtime wrap: Task String
 -- [pure] ShortcutRedoKey : ShortcutRedo -> KeyName   -- runtime wrap: Task String
 -- [pure] ShortcutRedoMod : ShortcutRedo -> KeyModifier   -- runtime wrap: Task String
 -- [pure] ShortcutRedoShortcutName : ShortcutRedo -> String   -- runtime wrap: Task String
+-- [pure] NewShortcutRedo : struct{} -> ShortcutRedo   -- runtime wrap: Task String
 -- [pure] ShortcutSelectAllKey : ShortcutSelectAll -> KeyName   -- runtime wrap: Task String
 -- [pure] ShortcutSelectAllMod : ShortcutSelectAll -> KeyModifier   -- runtime wrap: Task String
 -- [pure] ShortcutSelectAllShortcutName : ShortcutSelectAll -> String   -- runtime wrap: Task String
+-- [pure] NewShortcutSelectAll : struct{} -> ShortcutSelectAll   -- runtime wrap: Task String
 -- [pure] ShortcutUndoKey : ShortcutUndo -> KeyName   -- runtime wrap: Task String
 -- [pure] ShortcutUndoMod : ShortcutUndo -> KeyModifier   -- runtime wrap: Task String
 -- [pure] ShortcutUndoShortcutName : ShortcutUndo -> String   -- runtime wrap: Task String
+-- [pure] NewShortcutUndo : struct{} -> ShortcutUndo   -- runtime wrap: Task String
 -- [pure] ShortcutableTypedShortcut : Shortcutable -> Shortcut -> ()   -- runtime wrap: Task String
 -- [pure] SizeAdd : Size -> Vector2 -> Size   -- runtime wrap: Task String
 -- [pure] SizeAddWidthHeight : Size -> Float -> Float -> Size   -- runtime wrap: Task String
@@ -271,9 +480,17 @@ package fyne
 -- [pure] SizeComponents : Size -> (Float, Float)   -- runtime wrap: Task String
 -- [pure] SizeSubtract : Size -> Vector2 -> Size   -- runtime wrap: Task String
 -- [pure] SizeSubtractWidthHeight : Size -> Float -> Float -> Size   -- runtime wrap: Task String
+-- [pure] SizeWidth : Size -> Float   -- runtime wrap: Task String
+-- [pure] SizeSetWidth : Float -> Size -> Size   -- runtime wrap: Task String
+-- [pure] SizeHeight : Size -> Float   -- runtime wrap: Task String
+-- [pure] SizeSetHeight : Float -> Size -> Size   -- runtime wrap: Task String
 -- [pure] StaticResourceName : StaticResource -> String   -- runtime wrap: Task String
 -- [pure] StaticResourceContent : StaticResource -> []byte   -- runtime wrap: Task String
 -- [pure] StaticResourceGoString : StaticResource -> String   -- runtime wrap: Task String
+-- [pure] StaticResourceStaticName : StaticResource -> String   -- runtime wrap: Task String
+-- [pure] StaticResourceSetStaticName : String -> StaticResource -> StaticResource   -- runtime wrap: Task String
+-- [pure] StaticResourceStaticContent : StaticResource -> []byte   -- runtime wrap: Task String
+-- [pure] StaticResourceSetStaticContent : []byte -> StaticResource -> StaticResource   -- runtime wrap: Task String
 -- [fallible] StorageCreate : Storage -> String -> (URIWriteCloser, String)   -- runtime wrap: Task String
 -- [pure] StorageList : Storage -> []string   -- runtime wrap: Task String
 -- [fallible] StorageOpen : Storage -> String -> (URIReadCloser, String)   -- runtime wrap: Task String
@@ -282,6 +499,29 @@ package fyne
 -- [fallible] StorageSave : Storage -> String -> (URIWriteCloser, String)   -- runtime wrap: Task String
 -- [pure] TabbableAcceptsTab : Tabbable -> Bool   -- runtime wrap: Task String
 -- [pure] TappableTapped : Tappable -> PointEvent -> ()   -- runtime wrap: Task String
+-- [pure] TextAlignCenter : struct{} -> TextAlign   -- runtime wrap: Task String
+-- [pure] TextAlignLeading : struct{} -> TextAlign   -- runtime wrap: Task String
+-- [pure] TextAlignTrailing : struct{} -> TextAlign   -- runtime wrap: Task String
+-- [pure] TextStyleBold : TextStyle -> Bool   -- runtime wrap: Task String
+-- [pure] TextStyleSetBold : Bool -> TextStyle -> TextStyle   -- runtime wrap: Task String
+-- [pure] TextStyleItalic : TextStyle -> Bool   -- runtime wrap: Task String
+-- [pure] TextStyleSetItalic : Bool -> TextStyle -> TextStyle   -- runtime wrap: Task String
+-- [pure] TextStyleMonospace : TextStyle -> Bool   -- runtime wrap: Task String
+-- [pure] TextStyleSetMonospace : Bool -> TextStyle -> TextStyle   -- runtime wrap: Task String
+-- [pure] TextStyleSymbol : TextStyle -> Bool   -- runtime wrap: Task String
+-- [pure] TextStyleSetSymbol : Bool -> TextStyle -> TextStyle   -- runtime wrap: Task String
+-- [pure] TextStyleTabWidth : TextStyle -> Int   -- runtime wrap: Task String
+-- [pure] TextStyleSetTabWidth : Int -> TextStyle -> TextStyle   -- runtime wrap: Task String
+-- [pure] TextStyleUnderline : TextStyle -> Bool   -- runtime wrap: Task String
+-- [pure] TextStyleSetUnderline : Bool -> TextStyle -> TextStyle   -- runtime wrap: Task String
+-- [pure] NewTextStyle : struct{} -> TextStyle   -- runtime wrap: Task String
+-- [pure] TextTruncate : struct{} -> TextWrap   -- runtime wrap: Task String
+-- [pure] TextTruncateClip : struct{} -> TextTruncation   -- runtime wrap: Task String
+-- [pure] TextTruncateEllipsis : struct{} -> TextTruncation   -- runtime wrap: Task String
+-- [pure] TextTruncateOff : struct{} -> TextTruncation   -- runtime wrap: Task String
+-- [pure] TextWrapBreak : struct{} -> TextWrap   -- runtime wrap: Task String
+-- [pure] TextWrapOff : struct{} -> TextWrap   -- runtime wrap: Task String
+-- [pure] TextWrapWord : struct{} -> TextWrap   -- runtime wrap: Task String
 -- [pure] ThemeColor : Theme -> ThemeColorName -> ThemeVariant -> Color   -- runtime wrap: Task String
 -- [pure] ThemeFont : Theme -> TextStyle -> Resource   -- runtime wrap: Task String
 -- [pure] ThemeIcon : Theme -> ThemeIconName -> Resource   -- runtime wrap: Task String

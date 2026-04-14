@@ -21,11 +21,23 @@ func Go_App_new(p0 any) (out any) {
 	out = Ok[any, any](pkg.New())
 	return
 }
+// [pure] typed wrapper for Go_App_new (P7 adaptor target)
+func Go_App_newT() (out SkyResult[string, fyne.App]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.App](pkg.New())
+	return
+}
 
 // [pure] Go_App.newWithID → pkg.NewWithID
 func Go_App_newWithID(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](pkg.NewWithID(fmt.Sprintf("%v", p0)))
+	return
+}
+// [pure] typed wrapper for Go_App_newWithID (P7 adaptor target)
+func Go_App_newWithIDT(p0 string) (out SkyResult[string, fyne.App]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, fyne.App](pkg.NewWithID(p0))
 	return
 }
 
@@ -43,6 +55,38 @@ func Go_App_settingsSchemaStoragePath(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.SettingsSchema).StoragePath())
 	return
 }
+// [pure] typed wrapper for Go_App_settingsSchemaStoragePath (P7 adaptor target)
+func Go_App_settingsSchemaStoragePathT(p0 *pkg.SettingsSchema) (out SkyResult[string, string]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, string](p0.StoragePath())
+	return
+}
+
+func Go_App_settingsSchemaThemeName(p0 any) any { return SkyFfiFieldGet(p0, "ThemeName") }
+
+func Go_App_settingsSchemaSetThemeName(value any, recv any) any { return SkyFfiFieldSet(value, recv, "ThemeName") }
+
+func Go_App_settingsSchemaScale(p0 any) any { return SkyFfiFieldGet(p0, "Scale") }
+
+func Go_App_settingsSchemaSetScale(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Scale") }
+
+func Go_App_settingsSchemaPrimaryColor(p0 any) any { return SkyFfiFieldGet(p0, "PrimaryColor") }
+
+func Go_App_settingsSchemaSetPrimaryColor(value any, recv any) any { return SkyFfiFieldSet(value, recv, "PrimaryColor") }
+
+func Go_App_settingsSchemaCloudName(p0 any) any { return SkyFfiFieldGet(p0, "CloudName") }
+
+func Go_App_settingsSchemaSetCloudName(value any, recv any) any { return SkyFfiFieldSet(value, recv, "CloudName") }
+
+func Go_App_settingsSchemaCloudConfig(p0 any) any { return SkyFfiFieldGet(p0, "CloudConfig") }
+
+func Go_App_settingsSchemaSetCloudConfig(value any, recv any) any { return SkyFfiFieldSet(value, recv, "CloudConfig") }
+
+func Go_App_settingsSchemaDisableAnimations(p0 any) any { return SkyFfiFieldGet(p0, "DisableAnimations") }
+
+func Go_App_settingsSchemaSetDisableAnimations(value any, recv any) any { return SkyFfiFieldSet(value, recv, "DisableAnimations") }
+
+func Go_App_newSettingsSchema(_ any) any { return new(pkg.SettingsSchema) }
 
 
 // Pin fmt against "imported and not used" across partial files.
