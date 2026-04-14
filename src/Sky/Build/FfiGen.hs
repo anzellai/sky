@@ -1287,6 +1287,10 @@ isSimpleTypedType :: String -> Bool
 isSimpleTypedType t0
     -- `interface{}` is Go's `any`. Simple param.
     | t0 == "interface{}" = True
+    -- `[]interface{}` etc. — slice of empty-interface. Strip the
+    -- slice and recurse so `[]interface{}` accepts via the rule
+    -- above.
+    | take 2 t0 == "[]" = isSimpleTypedType (drop 2 t0)
     -- Simple `func(args...) result` types (no return type or one
     -- simple return). Each arg type must itself be simple, but
     -- nested func / chan / map are still rejected.

@@ -2100,17 +2100,21 @@ func Go_Firestore_collectionGroupRefDocumentsT(arg0 *pkg.CollectionGroupRef, arg
 	return
 }
 
-// [pure] Go_Firestore.collectionGroupRefEndAt → pkg.CollectionGroupRefEndAt
-func Go_Firestore_collectionGroupRefEndAt(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.CollectionGroupRef).EndAt(p1.([]interface{})...))
+type FfiT_Go_Firestore_collectionGroupRefEndAt_P0 = *pkg.CollectionGroupRef
+type FfiT_Go_Firestore_collectionGroupRefEndAt_R = pkg.Query
+// [pure] typed wrapper for Go_Firestore_collectionGroupRefEndAt (P7 adaptor target)
+func Go_Firestore_collectionGroupRefEndAtT(arg0 *pkg.CollectionGroupRef, arg1 []interface{}) (out SkyResult[any, pkg.Query]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,pkg.Query](arg0.EndAt(arg1...))
 	return
 }
 
-// [pure] Go_Firestore.collectionGroupRefEndBefore → pkg.CollectionGroupRefEndBefore
-func Go_Firestore_collectionGroupRefEndBefore(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.CollectionGroupRef).EndBefore(p1.([]interface{})...))
+type FfiT_Go_Firestore_collectionGroupRefEndBefore_P0 = *pkg.CollectionGroupRef
+type FfiT_Go_Firestore_collectionGroupRefEndBefore_R = pkg.Query
+// [pure] typed wrapper for Go_Firestore_collectionGroupRefEndBefore (P7 adaptor target)
+func Go_Firestore_collectionGroupRefEndBeforeT(arg0 *pkg.CollectionGroupRef, arg1 []interface{}) (out SkyResult[any, pkg.Query]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,pkg.Query](arg0.EndBefore(arg1...))
 	return
 }
 
@@ -2242,17 +2246,21 @@ func Go_Firestore_collectionGroupRefSnapshotsT(arg0 *pkg.CollectionGroupRef, arg
 	return
 }
 
-// [pure] Go_Firestore.collectionGroupRefStartAfter → pkg.CollectionGroupRefStartAfter
-func Go_Firestore_collectionGroupRefStartAfter(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.CollectionGroupRef).StartAfter(p1.([]interface{})...))
+type FfiT_Go_Firestore_collectionGroupRefStartAfter_P0 = *pkg.CollectionGroupRef
+type FfiT_Go_Firestore_collectionGroupRefStartAfter_R = pkg.Query
+// [pure] typed wrapper for Go_Firestore_collectionGroupRefStartAfter (P7 adaptor target)
+func Go_Firestore_collectionGroupRefStartAfterT(arg0 *pkg.CollectionGroupRef, arg1 []interface{}) (out SkyResult[any, pkg.Query]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,pkg.Query](arg0.StartAfter(arg1...))
 	return
 }
 
-// [pure] Go_Firestore.collectionGroupRefStartAt → pkg.CollectionGroupRefStartAt
-func Go_Firestore_collectionGroupRefStartAt(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.CollectionGroupRef).StartAt(p1.([]interface{})...))
+type FfiT_Go_Firestore_collectionGroupRefStartAt_P0 = *pkg.CollectionGroupRef
+type FfiT_Go_Firestore_collectionGroupRefStartAt_R = pkg.Query
+// [pure] typed wrapper for Go_Firestore_collectionGroupRefStartAt (P7 adaptor target)
+func Go_Firestore_collectionGroupRefStartAtT(arg0 *pkg.CollectionGroupRef, arg1 []interface{}) (out SkyResult[any, pkg.Query]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,pkg.Query](arg0.StartAt(arg1...))
 	return
 }
 
@@ -2436,17 +2444,21 @@ func Go_Firestore_collectionRefDocumentsT(arg0 *pkg.CollectionRef, arg1 context.
 	return
 }
 
-// [pure] Go_Firestore.collectionRefEndAt → pkg.CollectionRefEndAt
-func Go_Firestore_collectionRefEndAt(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.CollectionRef).EndAt(p1.([]interface{})...))
+type FfiT_Go_Firestore_collectionRefEndAt_P0 = *pkg.CollectionRef
+type FfiT_Go_Firestore_collectionRefEndAt_R = pkg.Query
+// [pure] typed wrapper for Go_Firestore_collectionRefEndAt (P7 adaptor target)
+func Go_Firestore_collectionRefEndAtT(arg0 *pkg.CollectionRef, arg1 []interface{}) (out SkyResult[any, pkg.Query]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,pkg.Query](arg0.EndAt(arg1...))
 	return
 }
 
-// [pure] Go_Firestore.collectionRefEndBefore → pkg.CollectionRefEndBefore
-func Go_Firestore_collectionRefEndBefore(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.CollectionRef).EndBefore(p1.([]interface{})...))
+type FfiT_Go_Firestore_collectionRefEndBefore_P0 = *pkg.CollectionRef
+type FfiT_Go_Firestore_collectionRefEndBefore_R = pkg.Query
+// [pure] typed wrapper for Go_Firestore_collectionRefEndBefore (P7 adaptor target)
+func Go_Firestore_collectionRefEndBeforeT(arg0 *pkg.CollectionRef, arg1 []interface{}) (out SkyResult[any, pkg.Query]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,pkg.Query](arg0.EndBefore(arg1...))
 	return
 }
 
@@ -2578,17 +2590,21 @@ func Go_Firestore_collectionRefSnapshotsT(arg0 *pkg.CollectionRef, arg1 context.
 	return
 }
 
-// [pure] Go_Firestore.collectionRefStartAfter → pkg.CollectionRefStartAfter
-func Go_Firestore_collectionRefStartAfter(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.CollectionRef).StartAfter(p1.([]interface{})...))
+type FfiT_Go_Firestore_collectionRefStartAfter_P0 = *pkg.CollectionRef
+type FfiT_Go_Firestore_collectionRefStartAfter_R = pkg.Query
+// [pure] typed wrapper for Go_Firestore_collectionRefStartAfter (P7 adaptor target)
+func Go_Firestore_collectionRefStartAfterT(arg0 *pkg.CollectionRef, arg1 []interface{}) (out SkyResult[any, pkg.Query]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,pkg.Query](arg0.StartAfter(arg1...))
 	return
 }
 
-// [pure] Go_Firestore.collectionRefStartAt → pkg.CollectionRefStartAt
-func Go_Firestore_collectionRefStartAt(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.CollectionRef).StartAt(p1.([]interface{})...))
+type FfiT_Go_Firestore_collectionRefStartAt_P0 = *pkg.CollectionRef
+type FfiT_Go_Firestore_collectionRefStartAt_R = pkg.Query
+// [pure] typed wrapper for Go_Firestore_collectionRefStartAt (P7 adaptor target)
+func Go_Firestore_collectionRefStartAtT(arg0 *pkg.CollectionRef, arg1 []interface{}) (out SkyResult[any, pkg.Query]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,pkg.Query](arg0.StartAt(arg1...))
 	return
 }
 
@@ -5762,31 +5778,39 @@ func Go_Firestore_queryLimitToLastT(arg0 pkg.Query, arg1 int) (out SkyResult[any
 	return
 }
 
-// [pure] Go_Firestore.queryStartAt → pkg.QueryStartAt
-func Go_Firestore_queryStartAt(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(pkg.Query).StartAt(p1.([]interface{})...))
+type FfiT_Go_Firestore_queryStartAt_P0 = pkg.Query
+type FfiT_Go_Firestore_queryStartAt_R = pkg.Query
+// [pure] typed wrapper for Go_Firestore_queryStartAt (P7 adaptor target)
+func Go_Firestore_queryStartAtT(arg0 pkg.Query, arg1 []interface{}) (out SkyResult[any, pkg.Query]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,pkg.Query](arg0.StartAt(arg1...))
 	return
 }
 
-// [pure] Go_Firestore.queryStartAfter → pkg.QueryStartAfter
-func Go_Firestore_queryStartAfter(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(pkg.Query).StartAfter(p1.([]interface{})...))
+type FfiT_Go_Firestore_queryStartAfter_P0 = pkg.Query
+type FfiT_Go_Firestore_queryStartAfter_R = pkg.Query
+// [pure] typed wrapper for Go_Firestore_queryStartAfter (P7 adaptor target)
+func Go_Firestore_queryStartAfterT(arg0 pkg.Query, arg1 []interface{}) (out SkyResult[any, pkg.Query]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,pkg.Query](arg0.StartAfter(arg1...))
 	return
 }
 
-// [pure] Go_Firestore.queryEndAt → pkg.QueryEndAt
-func Go_Firestore_queryEndAt(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(pkg.Query).EndAt(p1.([]interface{})...))
+type FfiT_Go_Firestore_queryEndAt_P0 = pkg.Query
+type FfiT_Go_Firestore_queryEndAt_R = pkg.Query
+// [pure] typed wrapper for Go_Firestore_queryEndAt (P7 adaptor target)
+func Go_Firestore_queryEndAtT(arg0 pkg.Query, arg1 []interface{}) (out SkyResult[any, pkg.Query]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,pkg.Query](arg0.EndAt(arg1...))
 	return
 }
 
-// [pure] Go_Firestore.queryEndBefore → pkg.QueryEndBefore
-func Go_Firestore_queryEndBefore(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(pkg.Query).EndBefore(p1.([]interface{})...))
+type FfiT_Go_Firestore_queryEndBefore_P0 = pkg.Query
+type FfiT_Go_Firestore_queryEndBefore_R = pkg.Query
+// [pure] typed wrapper for Go_Firestore_queryEndBefore (P7 adaptor target)
+func Go_Firestore_queryEndBeforeT(arg0 pkg.Query, arg1 []interface{}) (out SkyResult[any, pkg.Query]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,pkg.Query](arg0.EndBefore(arg1...))
 	return
 }
 
