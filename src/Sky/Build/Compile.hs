@@ -2661,6 +2661,7 @@ typedKernelArgCoerce = Map.fromList
     -- Basics: pure boolean / integer helpers
     , (("Basics", "not"),     ["AsBool"])
     , (("Basics", "modBy"),   ["AsInt", "AsInt"])
+    , (("Basics", "errorToString"), ["Pass"])
     ]
 
 
@@ -2701,7 +2702,7 @@ typedKernelLiterals = Set.fromList
     , ("List",   "length"),     ("List",   "head"),       ("List",   "reverse")
     , ("List",   "isEmpty")
     , ("Dict",   "member"),     ("Dict",   "insert")
-    , ("Basics", "not"),        ("Basics", "modBy")
+    , ("Basics", "not"),        ("Basics", "modBy"),  ("Basics", "errorToString")
     ]
 
 

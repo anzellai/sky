@@ -469,6 +469,16 @@ func Basics_errorToString(v any) any {
 	return fmt.Sprintf("%v", v)
 }
 
+func Basics_errorToStringT(v any) string {
+	switch x := v.(type) {
+	case string:
+		return x
+	case error:
+		return x.Error()
+	}
+	return fmt.Sprintf("%v", v)
+}
+
 // Basics_js — legacy FFI pass-through. Legacy Sky code used `js "nil"` to
 // inject a raw Go nil into an FFI call; here we mirror that so ex13 and
 // similar programs compile without a user-visible change.
