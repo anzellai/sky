@@ -49,7 +49,10 @@ spec = do
             -- Before the reflect-fallback fix in Result_withDefault this
             -- would have silently returned the whole SkyResult struct
             -- because the old type-asserted path rejected typed shapes.
-            ("rt.Result_withDefault(\"\", rt.Go_Uuid_newStringT())" `isInfixOf` body)
+            -- P8: typed kernel dispatch now routes Result.withDefault
+            -- to Result_withDefaultAnyT (same any/any shape, just
+            -- participates in the typedKernelArgCoerce path).
+            ("rt.Result_withDefaultAnyT(\"\", rt.Go_Uuid_newStringT())" `isInfixOf` body)
                 `shouldBe` True
 
         it "elides case-subject boxing for typed-FFI sources" $ do
