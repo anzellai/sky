@@ -64,6 +64,46 @@ spec = do
                 ("func Go_Uuid_newStringT()" `isInfixOf` contents)
                     `shouldBe` True) files
 
+        it "keeps total typed variant coverage above the floor" $ do
+            -- Floor chosen 500 below the current landed total so a
+            -- minor-typed-variant regression caused by a future FFI
+            -- generator edit trips the test before the sweep does.
+            -- Update when the gate rises (e.g. to 3500 when more
+            -- bindings migrate).
+            let paths =
+                    [ "examples/03-tea-external/ffi/uuid_bindings.go"
+                    , "examples/05-mux-server/ffi/mux_bindings.go"
+                    , "examples/05-mux-server/ffi/http_bindings.go"
+                    , "examples/08-notes-app/ffi/uuid_bindings.go"
+                    , "examples/11-fyne-stopwatch/ffi/app_bindings.go"
+                    , "examples/11-fyne-stopwatch/ffi/fyne_bindings.go"
+                    , "examples/11-fyne-stopwatch/ffi/widget_bindings.go"
+                    , "examples/13-skyshop/ffi/auth_bindings.go"
+                    , "examples/13-skyshop/ffi/customer_bindings.go"
+                    , "examples/13-skyshop/ffi/firebase_bindings.go"
+                    , "examples/13-skyshop/ffi/firestore_bindings.go"
+                    , "examples/13-skyshop/ffi/iterator_bindings.go"
+                    , "examples/13-skyshop/ffi/option_bindings.go"
+                    , "examples/13-skyshop/ffi/session_bindings.go"
+                    , "examples/13-skyshop/ffi/stripe_bindings.go"
+                    , "examples/13-skyshop/ffi/uuid_bindings.go"
+                    ]
+            counts <- mapM typedVariantCount paths
+            sum counts `shouldSatisfy` (>= 2500)
+
+
+-- | Count `^func Go_.*T(p0` signatures in a Go file. Distinguishes
+-- actual typed-wrapper emissions from the any/any accessors whose
+-- Sky-facing name coincidentally ends in T (e.g. TypeACHDebit).
+typedVariantCount :: FilePath -> IO Int
+typedVariantCount fp = do
+    contents <- readFile fp
+    return (length (filter isTypedSig (lines contents)))
+  where
+    isTypedSig l =
+        take 5 l == "func "
+        && ("T()" `isInfixOf` l || "T(p0 " `isInfixOf` l)
+
 
 -- | Count occurrences of a needle in a haystack (non-overlapping).
 substrings :: String -> String -> [()]
