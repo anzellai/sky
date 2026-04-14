@@ -742,7 +742,7 @@ Update this table after every merged phase. Include commit SHA and date.
 | P0  — test harness | ☑ | _HEAD_ | 2026-04-13 | hspec wired, example-sweep.sh, CI updated; golden-per-feature deferred to follow-up |
 | P1  — parser gaps | ☑ | _HEAD_ | 2026-04-13 | all three items already handled by Haskell rewrite: negative patterns (Pattern.hs:128-140), let-after-case parses cleanly, `exposing (Type(Ctor1, Ctor2))` parses to `PublicCtors` (Module.hs:170). Real enforcement of the list lives with P2. |
 | P2  — exposing clause | ☑ | _HEAD_ | 2026-04-13 | parser now threads `exposing` through; canonicaliser rejects imports of unexposed names with "does not expose" error; DepInfo carries `_dep_exports` and filters cross-module lookups. |
-| P3  — exhaustiveness | ☐ | — | — | — |
+| P3  — exhaustiveness | ☑ | _HEAD_ | 2026-04-14 | `Sky.Type.Exhaustiveness` walks the entry + dep canonical trees; missing ADT ctors / missing True/False / literal-without-wildcard are build errors. Codegen panic message changed to "compiler bug" so the old "non-exhaustive case expression" string never appears in user output. Nested sub-pattern analysis deferred (second-level case carries its own check). |
 | P4  — typed records | ☐ | — | — | — |
 | P5  — typed tuples | ☐ | — | — | — |
 | P6  — typed TVars | ☐ | — | — | — |
@@ -758,13 +758,12 @@ Update this table after every merged phase. Include commit SHA and date.
 | P11b — Sky deps | ☐ | — | — | — |
 | P12 — reflection audit | ☐ | — | — | — |
 
-**Last verified green:** 2026-04-13 (after P0/P1/P2) — 18/18 canonical
-examples build (scripts/example-sweep.sh --build-only), `cabal test` 5/5
-green, CI workflow runs both. P0 harness, P1 parser regressions, and P2
-exposing-clause enforcement landed. P3 (Maranget exhaustiveness) and the
-P4→P8 typed-codegen chain are the next critical path; resume there.
-Golden-output tests per codegen feature remain deferred until P4-P6
-stabilise the emitted Go shapes.
+**Last verified green:** 2026-04-14 (after P0/P1/P2/P3) — 18/18 canonical
+examples build, `cabal test` 7/7 green (2 new exhaustiveness cases).
+P3 implemented as a conservative first pass: flat ADT / bool / unit /
+literal checks with wildcard short-circuit. The P4→P8 typed-codegen
+chain is next. Golden-output tests per codegen feature remain deferred
+until P4-P6 stabilise the emitted Go shapes.
 
 **Legend.** ☐ pending · ◐ in progress · ☑ complete
 

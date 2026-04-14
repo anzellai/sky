@@ -87,6 +87,7 @@ executable sky
     -- Optimisation
 
     -- Exhaustiveness
+    Sky.Type.Exhaustiveness
 
     -- Go code generation
     Sky.Generate.Go.Ir
@@ -144,3 +145,4 @@ test-suite sky-tests
       Sky.Build.ExampleSweepSpec
       Sky.Parse.PatternSpec
       Sky.Canonicalise.ExposingSpec
+      Sky.Type.ExhaustivenessSpec

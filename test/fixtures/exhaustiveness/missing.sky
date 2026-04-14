@@ -1,0 +1,14 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+type Colour = Red | Green | Blue
+
+describe : Colour -> String
+describe c =
+    case c of
+        Red -> "red"
+        Green -> "green"
+
+main = println (describe Red)

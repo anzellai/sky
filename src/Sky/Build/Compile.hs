@@ -27,6 +27,7 @@ import qualified Sky.Reporting.Annotation as A
 import qualified Sky.Sky.ModuleName as ModuleName
 import qualified Sky.Parse.Module as Parse
 import qualified Sky.Canonicalise.Module as Canonicalise
+import qualified Sky.Type.Exhaustiveness as Exhaust
 import qualified Sky.Generate.Go.Ir as GoIr
 import qualified Sky.Generate.Go.Builder as GoBuilder
 import qualified Sky.Generate.Go.Kernel as Kernel
@@ -312,6 +313,19 @@ continueCompile config _entryPath outDir moduleOrder srcHash = do
                 Solve.SolveError err -> do
                     putStrLn $ "   TYPE ERROR: " ++ err
                     return Map.empty
+            -- P3: exhaustiveness — walk the entry + every dep's canonical
+            -- tree for non-exhaustive case expressions. A miss is a
+            -- compile-time error with source context; the `panic("non-
+            -- exhaustive case expression")` fallback in codegen never
+            -- fires on well-checked code.
+            let entryDiags = Exhaust.checkModule canMod
+                depDiags   = concatMap (\(_, dm) -> Exhaust.checkModule dm) validDeps
+                exhaustErr
+                    | null (entryDiags ++ depDiags) = Nothing
+                    | otherwise = Just $ renderExhaustDiags (entryDiags ++ depDiags)
+            case exhaustErr of
+                Just e  -> putStrLn ("   EXHAUSTIVENESS ERROR: " ++ e)
+                Nothing -> return ()
             -- Merge inferred dep types into the param + return tables
             -- keyed by module-prefixed Go names. Annotation-derived
             -- entries already in the tables win over inferred ones.
@@ -352,9 +366,10 @@ continueCompile config _entryPath outDir moduleOrder srcHash = do
                 goCode = generateGoMulti canMod entrySrcMod config types depDecls depRecAliases depArities depParamTypes depRetTypes depInferredParams depInferredRets depInferredSigs depAliasPairs
             createDirectoryIfMissing True outDir
             let mainGoPath = outDir </> "main.go"
-            case solverError of
-              Just err -> return (Left ("Type error: " ++ err))
-              Nothing -> do
+            case (solverError, exhaustErr) of
+              (Just err, _) -> return (Left ("Type error: " ++ err))
+              (_, Just err) -> return (Left ("Non-exhaustive patterns: " ++ err))
+              _ -> do
                 writeFile mainGoPath goCode
                 putStrLn $ "   Wrote " ++ mainGoPath
                 -- copyRuntime also copies runtime-go/go.mod + go.sum into outDir
@@ -2420,7 +2435,12 @@ caseToGo subject branches =
             Nothing ->
                 GoIr.GoShortDecl "__subject" goSubject
         branchStmts = concatMap (caseBranchToStmts "__subject") branches
-        panicStmt = GoIr.GoExprStmt (GoIr.GoRaw "panic(\"non-exhaustive case expression\")")
+        -- P3: exhaustiveness is verified before codegen, so this arm is
+        -- statically unreachable. We keep a labelled panic as a defence
+        -- in depth (compiler bug, not user error) rather than remove it
+        -- entirely — but the message makes the distinction explicit so
+        -- users never see "non-exhaustive case expression" again.
+        panicStmt = GoIr.GoExprStmt (GoIr.GoRaw "panic(\"sky: internal — codegen reached unreachable case arm (compiler bug)\")")
     in
     GoIr.GoBlock
         (subjectDecl : branchStmts ++ [panicStmt])
@@ -3529,3 +3549,15 @@ intercalate_ :: String -> [String] -> String
 intercalate_ _ [] = ""
 intercalate_ _ [x] = x
 intercalate_ sep (x:xs) = x ++ sep ++ intercalate_ sep xs
+
+
+-- | Combine exhaustiveness diagnostics into a single user-facing string.
+-- Each diagnostic reports a missing-pattern set plus a short hint. We
+-- emit one line per diagnostic; the caller prefixes "Non-exhaustive
+-- patterns:".
+renderExhaustDiags :: [Exhaust.Diag] -> String
+renderExhaustDiags ds = intercalate_ "\n  " (map render1 ds)
+  where
+    render1 (Exhaust.Diag region _missing hint) =
+        let A.Region (A.Position l c) _ = region
+        in "at line " ++ show l ++ ":" ++ show c ++ " — " ++ hint
