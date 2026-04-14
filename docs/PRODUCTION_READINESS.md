@@ -468,6 +468,37 @@ echo "coercions: $BEFORE → $AFTER"  # expect significant drop
 
 ## Phase 7 — FFI wrapper typing
 
+> **2026-04-14 amendment (obstacle).** The acceptance criterion —
+> "Zero `(any) any` function signatures in `ffi/*_bindings.go`" — is a
+> whole-program call-site migration, not a local edit. Every emitted
+> Sky → FFI call site today reads `GoUuid.parse(any)` via a generic
+> dispatch path that assumes the wrapper takes `any`. Switching a
+> wrapper signature to `func(s string) rt.SkyResult[…]` simultaneously
+> requires:
+>   1. Tracking the FFI fn's typed sig in the canonicaliser env so call
+>      sites know what Go type to emit.
+>   2. Emitting `any(expr).(string)` coercions at each call site for
+>      every FFI call (or, preferably, letting the Sky HM result flow
+>      concrete types through to codegen).
+>   3. Adjusting the partial-application synthesis path (`sky_call*`)
+>      so uncurried FFI calls still work.
+>
+> Doing this as a single commit would gate every subsequent phase on
+> a 74k-wrapper rewrite completing atomically. Doing it incrementally
+> without a call-site bridge produces a red sweep between commits,
+> which violates the anti-regression rule.
+>
+> **Resolution path (for a dedicated session):** implement a
+> per-wrapper opt-in — wrapper emits typed sig AND a thin any/any
+> adaptor that call sites keep using. Migrate call-site codegen to
+> prefer the typed sig where the HM type is concrete. Retire the
+> adaptor when call-site migration is complete.
+>
+> Marking P7 `[plan]`-amended; P8 is likewise amended because it
+> depends on P7 landing. P10/P12 lanes remain open and are proceeding.
+
+
+
 **Goal.** FFI wrappers in generated `ffi/*_bindings.go` use `(any) any`
 signatures today. After P4-P6, these can be properly typed.
 
@@ -508,6 +539,23 @@ done
 ---
 
 ## Phase 8 — Kernel stdlib typing
+
+> **2026-04-14 amendment (obstacle).** Kernel retyping runs on the same
+> coordinated-signature bottleneck as P7 — every call site that passes
+> `any` to `Sky_Core_List_map` would break the moment the kernel's
+> signature becomes `func[A,B](f func(A) B, xs []A) []B`. Per-module
+> commits-and-sweep are only green if the call-site coercion path
+> lands first.
+>
+> **Resolution path:** the same adaptor strategy as P7. Add a typed
+> surface (`Sky_Core_List_mapT[A,B]`) beside today's `Sky_Core_List_map`;
+> migrate call-site codegen to prefer the typed form when HM types
+> are concrete; retire the `any/any` form once coverage is complete.
+>
+> P8 remains `[plan]`-amended until the P7 adaptor strategy is in
+> place; the per-module alphabetical retype is then mechanical.
+
+
 
 **Goal.** The 225 kernel functions (`Sky.Core.*` stdlib mapped to
 `runtime-go/rt/rt.go` Go functions) are currently `func X(a any) any`.
