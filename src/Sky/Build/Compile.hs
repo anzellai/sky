@@ -2683,6 +2683,9 @@ typedKernelArgCoerce = Map.fromList
     , (("Dict",   "keys"),    ["AsDict"])
     , (("Dict",   "values"),  ["AsDict"])
     , (("Dict",   "get"),     ["Pass", "Pass"])
+    -- Html.text / Css.hex — simple string → X. High-frequency.
+    , (("Html",   "text"),    ["AsString"])
+    , (("Css",    "hex"),     ["AsString"])
     -- Basics: pure boolean / integer helpers
     , (("Basics", "not"),     ["AsBool"])
     , (("Basics", "modBy"),   ["AsInt", "AsInt"])
@@ -2739,6 +2742,7 @@ typedKernelLiterals = Set.fromList
     , ("List",   "isEmpty")
     , ("Dict",   "member"),     ("Dict",   "insert")
     , ("Dict",   "keys"),       ("Dict",   "values"),   ("Dict", "get")
+    , ("Html",   "text"),       ("Css",    "hex")
     , ("Basics", "not"),        ("Basics", "modBy"),  ("Basics", "errorToString")
     , ("Time",   "formatISO8601"), ("Time", "formatRFC3339"), ("Time", "formatHTTP")
     , ("Basics", "fst"),        ("Basics", "snd"),   ("Basics", "identity")

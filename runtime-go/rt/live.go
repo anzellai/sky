@@ -90,6 +90,7 @@ func asList(v any) []any {
 }
 
 func Html_text(s any) any   { return vtext(fmt.Sprintf("%v", s)) }
+func Html_textT(s string) any { return vtext(s) }
 func Html_div(a, c any) any { return htmlElem("div")(a, c) }
 func Html_span(a, c any) any {
 	return htmlElem("span")(a, c)
@@ -347,6 +348,7 @@ func Css_rem(n any) any { return fmt.Sprintf("%vrem", n) }
 func Css_em(n any) any  { return fmt.Sprintf("%vem", n) }
 func Css_pct(n any) any { return fmt.Sprintf("%v%%", n) }
 func Css_hex(s any) any { return fmt.Sprintf("#%v", s) }
+func Css_hexT(s string) string { return "#" + s }
 
 // Common property shortcuts (name in Sky = lowerCamel → Css_<name>)
 func cssP(k string) func(any) any {
