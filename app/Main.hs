@@ -251,6 +251,18 @@ runCommand cmd = case cmd of
         config <- if hasToml
             then Toml.parseSkyToml <$> readFile "sky.toml"
             else return Toml.defaultConfig
+        -- Regen missing FFI bindings so type-check sees up-to-date .skyi
+        -- signatures without needing the user to run `sky build` first.
+        let goDeps = Toml._goDeps config
+        when (not (null goDeps)) $ do
+            createDirectoryIfMissing True "sky-out"
+            hasGoMod <- doesFileExist "sky-out/go.mod"
+            when (not hasGoMod) $ do
+                hasRt <- doesFileExist "runtime-go/go.mod"
+                if hasRt
+                    then callProcess "cp" ["runtime-go/go.mod", "sky-out/go.mod"]
+                    else writeFile "sky-out/go.mod" $ unlines ["module sky-app", "", "go 1.21"]
+            regenMissingBindings goDeps
         -- Parse + typecheck only (no codegen, no go build)
         result <- Compile.compile config path "sky-out"
         case result of
