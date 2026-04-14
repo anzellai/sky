@@ -659,6 +659,58 @@ func List_append(a any, b any) any {
 	return append(a.([]any), b.([]any)...)
 }
 
+// P8/List typed companions — Go generics for the polymorphic ops.
+// The non-typed `List_*` family stays put; call sites with HM-inferred
+// element types can dispatch to these for zero-boxing iteration.
+
+func List_mapT[A, B any](fn func(A) B, xs []A) []B {
+	out := make([]B, len(xs))
+	for i, x := range xs { out[i] = fn(x) }
+	return out
+}
+
+func List_filterT[A any](fn func(A) bool, xs []A) []A {
+	out := make([]A, 0, len(xs))
+	for _, x := range xs {
+		if fn(x) { out = append(out, x) }
+	}
+	return out
+}
+
+func List_foldlT[A, B any](fn func(B, A) B, seed B, xs []A) B {
+	acc := seed
+	for _, x := range xs { acc = fn(acc, x) }
+	return acc
+}
+
+func List_lengthT[A any](xs []A) int { return len(xs) }
+
+func List_headT[A any](xs []A) SkyMaybe[A] {
+	if len(xs) == 0 { return Nothing[A]() }
+	return Just[A](xs[0])
+}
+
+func List_reverseT[A any](xs []A) []A {
+	n := len(xs)
+	out := make([]A, n)
+	for i, x := range xs { out[n-1-i] = x }
+	return out
+}
+
+func List_takeT[A any](n int, xs []A) []A {
+	if n > len(xs) { n = len(xs) }
+	if n < 0 { n = 0 }
+	return xs[:n]
+}
+
+func List_dropT[A any](n int, xs []A) []A {
+	if n > len(xs) { n = len(xs) }
+	if n < 0 { n = 0 }
+	return xs[n:]
+}
+
+func List_appendT[A any](a, b []A) []A { return append(a, b...) }
+
 func List_range(lo any, hi any) any {
 	l, h := AsInt(lo), AsInt(hi)
 	result := make([]any, 0, h-l+1)
