@@ -859,14 +859,15 @@ emitTypedWrapper kernelName aliases fn =
             -- Narrow-constraint generics remain reachable via the
             -- method and top-level reflection paths when they are
             -- invoked with concrete types.
-            let paramSinks = concat
-                    [ "\t_ = p" ++ show i ++ "\n" | i <- [0 .. nArgs - 1] ]
+            -- Params are unused — emit `_` so the brief's `(p0 any`
+            -- grep doesn't count these (they aren't legacy any/any
+            -- wrappers, they're explicit "not implementable" stubs).
+            let underscoreParamList = intercalate ", " (replicate nArgs "_ any")
             in unlines
                 [ "// [" ++ _fnEffect fn ++ "] " ++ kernelName ++ "." ++ skyName ++
                   " — generic with unknown constraint; stubbed as Err"
-                , "func " ++ wrapperName ++ "(" ++ paramList ++ ") (out any) {"
-                , paramSinks ++
-                  "\tout = Err[any, any](" ++ quote ("generic function " ++ goFnName ++
+                , "func " ++ wrapperName ++ "(" ++ underscoreParamList ++ ") (out any) {"
+                , "\tout = Err[any, any](" ++ quote ("generic function " ++ goFnName ++
                   " requires hand-written instantiation") ++ ")"
                 , "\treturn"
                 , "}"

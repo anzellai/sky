@@ -986,8 +986,7 @@ func Go_Firestore_arrayContainsAnyT(arg0 any, arg1 any) (out SkyResult[any, pkg.
 }
 
 // [pure] Go_Firestore.arrayFromSlice — generic with unknown constraint; stubbed as Err
-func Go_Firestore_arrayFromSlice(p0 any) (out any) {
-	_ = p0
+func Go_Firestore_arrayFromSlice(_ any) (out any) {
 	out = Err[any, any]("generic function ArrayFromSlice requires hand-written instantiation")
 	return
 }
@@ -4055,8 +4054,7 @@ func Go_Firestore_fieldNotFoundErrorSetPathT(value string, recv *pkg.FieldNotFou
 func Go_Firestore_newFieldNotFoundError(_ any) any { return new(pkg.FieldNotFoundError) }
 
 // [pure] Go_Firestore.fieldOf — generic with unknown constraint; stubbed as Err
-func Go_Firestore_fieldOf(p0 any) (out any) {
-	_ = p0
+func Go_Firestore_fieldOf(_ any) (out any) {
 	out = Err[any, any]("generic function FieldOf requires hand-written instantiation")
 	return
 }
