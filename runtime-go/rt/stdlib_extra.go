@@ -173,6 +173,13 @@ func JsonEnc_float(n any) any   { return JsonValue{raw: AsFloat(n)} }
 func JsonEnc_bool(b any) any    { return JsonValue{raw: b} }
 func JsonEnc_null() any         { return JsonValue{raw: nil} }
 
+// P8/Json typed encoder companions — direct primitive in, JsonValue out.
+func JsonEnc_stringT(s string) JsonValue  { return JsonValue{raw: s} }
+func JsonEnc_intT(n int) JsonValue         { return JsonValue{raw: n} }
+func JsonEnc_floatT(f float64) JsonValue   { return JsonValue{raw: f} }
+func JsonEnc_boolT(b bool) JsonValue       { return JsonValue{raw: b} }
+func JsonEnc_nullT() JsonValue             { return JsonValue{raw: nil} }
+
 // JsonEnc.list may be called as:
 //   Encode.list items                   -- 1-arg form (legacy)
 //   Encode.list Encode.string [...]     -- 2-arg (Elm style: map each item)
@@ -814,6 +821,29 @@ func Http_get(url any) any {
 			}
 		}
 		return Ok[any, any](HttpResponse{
+			Status:  resp.StatusCode,
+			Body:    body,
+			Headers: hdrs,
+		})
+	}
+}
+
+// P8/Http typed companion — Task-shaped string in, HttpResponse out.
+func Http_getT(url string) func() SkyResult[string, HttpResponse] {
+	return func() SkyResult[string, HttpResponse] {
+		resp, err := skyHttpClient.Get(url)
+		if err != nil {
+			return Err[string, HttpResponse]("http.get: " + err.Error())
+		}
+		body, err := readBoundedBody(resp.Body)
+		if err != nil {
+			return Err[string, HttpResponse]("http.get read: " + err.Error())
+		}
+		hdrs := map[string]string{}
+		for k, v := range resp.Header {
+			if len(v) > 0 { hdrs[k] = v[0] }
+		}
+		return Ok[string, HttpResponse](HttpResponse{
 			Status:  resp.StatusCode,
 			Body:    body,
 			Headers: hdrs,
