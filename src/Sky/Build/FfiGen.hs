@@ -1290,7 +1290,7 @@ emitSkyi pkg =
         [ "-- Auto-generated FFI binding catalogue for " ++ _pkgPath pkg
         , "--"
         , "-- All auto-generated bindings are registered effect-unknown and are"
-        , "-- callable via Sky.Ffi.callTask. Every call returns Task String a"
+        , "-- callable via Sky.Ffi.callTask. Every call returns Task Error a"
         , "-- with panic recovery — any Go panic is caught and surfaced as Err."
         , "--"
         , "-- Opaque Go struct values flow through Sky as Any; use the bindings"
@@ -1317,7 +1317,7 @@ emitSkyiFn fn =
             else intercalate " -> " (map (goTypeToSky . snd) (_fnParams fn))
                     ++ " -> " ++ goResultsToSky (_fnResults fn)
     in "-- [" ++ _fnEffect fn ++ "] " ++ _fnName fn ++ " : " ++ sig
-       ++ "   -- runtime wrap: Task String"
+       ++ "   -- runtime wrap: Task Error"
 
 
 goResultsToSky :: [(String, String)] -> String

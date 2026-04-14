@@ -60,7 +60,7 @@ data Sym = Sym
     , symFile      :: !FilePath      -- absolute path
     , symRegion    :: !A.Region      -- declaration region (1-based)
     , symKind      :: !SymKind
-    , symTypeSig   :: !(Maybe String)  -- "exec : String -> List Value -> Result IoError ()"
+    , symTypeSig   :: !(Maybe String)  -- "exec : String -> List Value -> Result Error ()"
     , symDoc       :: !(Maybe String)  -- preceding `--` comment block
     } deriving (Show)
 
@@ -287,7 +287,7 @@ renderAnnot = go 0
     intercalateDots (x:xs) = x ++ "." ++ intercalateDots xs
 
 
--- | Synthesize a ctor's type signature: "DbError : String -> IoError"
+-- | Synthesize a ctor's type signature: "Error.io : String -> Error"
 -- or "NotAsked : RemoteData a" or "Loaded : a -> RemoteData a".
 ctorSig :: String -> [String] -> [Src.TypeAnnotation] -> String
 ctorSig typeName vars args =
@@ -532,7 +532,7 @@ loadFfiSymbols projectRoot = do
             ((i, l):_) -> (i, l)
             []         -> (0, T.empty)
 
-    -- Parse "-- [effect] FnName : Type Signature   -- runtime wrap: Task String"
+    -- Parse "-- [effect] FnName : Type Signature   -- runtime wrap: Task Error"
     -- into "name : Type Signature" (dropping the `-- runtime wrap` suffix).
     extractTypeSig nm ln
         | T.null ln = nm ++ " : (FFI binding)"
