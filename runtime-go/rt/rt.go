@@ -1044,6 +1044,47 @@ func Result_andThen(fn any, result any) any {
 }
 
 
+// P8/Result typed companions — Go generics preserve the caller's E
+// and A, so typed Result pipelines compile without any boxing.
+
+func Result_mapT[E, A, B any](fn func(A) B, r SkyResult[E, A]) SkyResult[E, B] {
+	if r.Tag == 0 { return Ok[E, B](fn(r.OkValue)) }
+	return Err[E, B](r.ErrValue)
+}
+
+func Result_andThenT[E, A, B any](fn func(A) SkyResult[E, B], r SkyResult[E, A]) SkyResult[E, B] {
+	if r.Tag == 0 { return fn(r.OkValue) }
+	return Err[E, B](r.ErrValue)
+}
+
+func Result_withDefaultT[E, A any](def A, r SkyResult[E, A]) A {
+	if r.Tag == 0 { return r.OkValue }
+	return def
+}
+
+func Result_mapErrorT[E, F, A any](fn func(E) F, r SkyResult[E, A]) SkyResult[F, A] {
+	if r.Tag == 1 { return Err[F, A](fn(r.ErrValue)) }
+	return Ok[F, A](r.OkValue)
+}
+
+// P8/Maybe typed companions.
+
+func Maybe_mapT[A, B any](fn func(A) B, m SkyMaybe[A]) SkyMaybe[B] {
+	if m.Tag == 0 { return Just[B](fn(m.JustValue)) }
+	return Nothing[B]()
+}
+
+func Maybe_andThenT[A, B any](fn func(A) SkyMaybe[B], m SkyMaybe[A]) SkyMaybe[B] {
+	if m.Tag == 0 { return fn(m.JustValue) }
+	return Nothing[B]()
+}
+
+func Maybe_withDefaultT[A any](def A, m SkyMaybe[A]) A {
+	if m.Tag == 0 { return m.JustValue }
+	return def
+}
+
+
 // anyResultView returns (tag, okValue, errValue) for any Sky Result
 // shape. tag == -1 signals "not a Result" (caller decides policy).
 // Factoring the reflect dance out of each combinator keeps the hot
