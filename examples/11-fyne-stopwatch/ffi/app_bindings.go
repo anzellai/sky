@@ -30,11 +30,12 @@ func Go_App_newWithIDT(p0 string) (out SkyResult[string, fyne.App]) {
 	return
 }
 
-// [pure] Go_App.setMetadata → pkg.SetMetadata
-func Go_App_setMetadata(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	pkg.SetMetadata(p0.(fyne.AppMetadata))
-	out = Ok[any, any](struct{}{})
+type FfiT_Go_App_setMetadata_P0 = fyne.AppMetadata
+// [pure] typed wrapper for Go_App_setMetadata (P7 adaptor target)
+func Go_App_setMetadataT(p0 fyne.AppMetadata) (out SkyResult[string, struct{}]) {
+	defer SkyFfiRecoverT(&out)()
+	pkg.SetMetadata(p0)
+	out = Ok[string, struct{}](struct{}{})
 	return
 }
 
@@ -49,32 +50,38 @@ func Go_App_settingsSchemaStoragePathT(p0 *pkg.SettingsSchema) (out SkyResult[st
 type FfiT_Go_App_settingsSchemaThemeName_P0 = *pkg.SettingsSchema
 func Go_App_settingsSchemaThemeNameT(p0 *pkg.SettingsSchema) string { return p0.ThemeName }
 
-func Go_App_settingsSchemaSetThemeName(value any, recv any) any { return SkyFfiFieldSet(value, recv, "ThemeName") }
+type FfiT_Go_App_settingsSchemaSetThemeName_P1 = *pkg.SettingsSchema
+func Go_App_settingsSchemaSetThemeNameT(value string, recv *pkg.SettingsSchema) *pkg.SettingsSchema { recv.ThemeName = value; return recv }
 
 type FfiT_Go_App_settingsSchemaScale_P0 = *pkg.SettingsSchema
 func Go_App_settingsSchemaScaleT(p0 *pkg.SettingsSchema) float32 { return p0.Scale }
 
-func Go_App_settingsSchemaSetScale(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Scale") }
+type FfiT_Go_App_settingsSchemaSetScale_P1 = *pkg.SettingsSchema
+func Go_App_settingsSchemaSetScaleT(value float32, recv *pkg.SettingsSchema) *pkg.SettingsSchema { recv.Scale = value; return recv }
 
 type FfiT_Go_App_settingsSchemaPrimaryColor_P0 = *pkg.SettingsSchema
 func Go_App_settingsSchemaPrimaryColorT(p0 *pkg.SettingsSchema) string { return p0.PrimaryColor }
 
-func Go_App_settingsSchemaSetPrimaryColor(value any, recv any) any { return SkyFfiFieldSet(value, recv, "PrimaryColor") }
+type FfiT_Go_App_settingsSchemaSetPrimaryColor_P1 = *pkg.SettingsSchema
+func Go_App_settingsSchemaSetPrimaryColorT(value string, recv *pkg.SettingsSchema) *pkg.SettingsSchema { recv.PrimaryColor = value; return recv }
 
 type FfiT_Go_App_settingsSchemaCloudName_P0 = *pkg.SettingsSchema
 func Go_App_settingsSchemaCloudNameT(p0 *pkg.SettingsSchema) string { return p0.CloudName }
 
-func Go_App_settingsSchemaSetCloudName(value any, recv any) any { return SkyFfiFieldSet(value, recv, "CloudName") }
+type FfiT_Go_App_settingsSchemaSetCloudName_P1 = *pkg.SettingsSchema
+func Go_App_settingsSchemaSetCloudNameT(value string, recv *pkg.SettingsSchema) *pkg.SettingsSchema { recv.CloudName = value; return recv }
 
 type FfiT_Go_App_settingsSchemaCloudConfig_P0 = *pkg.SettingsSchema
 func Go_App_settingsSchemaCloudConfigT(p0 *pkg.SettingsSchema) string { return p0.CloudConfig }
 
-func Go_App_settingsSchemaSetCloudConfig(value any, recv any) any { return SkyFfiFieldSet(value, recv, "CloudConfig") }
+type FfiT_Go_App_settingsSchemaSetCloudConfig_P1 = *pkg.SettingsSchema
+func Go_App_settingsSchemaSetCloudConfigT(value string, recv *pkg.SettingsSchema) *pkg.SettingsSchema { recv.CloudConfig = value; return recv }
 
 type FfiT_Go_App_settingsSchemaDisableAnimations_P0 = *pkg.SettingsSchema
 func Go_App_settingsSchemaDisableAnimationsT(p0 *pkg.SettingsSchema) bool { return p0.DisableAnimations }
 
-func Go_App_settingsSchemaSetDisableAnimations(value any, recv any) any { return SkyFfiFieldSet(value, recv, "DisableAnimations") }
+type FfiT_Go_App_settingsSchemaSetDisableAnimations_P1 = *pkg.SettingsSchema
+func Go_App_settingsSchemaSetDisableAnimationsT(value bool, recv *pkg.SettingsSchema) *pkg.SettingsSchema { recv.DisableAnimations = value; return recv }
 
 func Go_App_newSettingsSchema(_ any) any { return new(pkg.SettingsSchema) }
 

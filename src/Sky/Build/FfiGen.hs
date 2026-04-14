@@ -1115,9 +1115,14 @@ emitTypedVariant knownAliases anyName fn params results
                                   "](err.Error()); return }"
                                 , "\tout = Ok[string, " ++ okType ++ "](r0)"
                                 ]
-                        else
-                            [ "\tout = Ok[string, " ++ okType ++ "](" ++ pickExpr call ++ ")"
-                            ]
+                        else case results of
+                            [] -> -- void return: run for side-effects, yield struct{}{}
+                                [ "\t" ++ call
+                                , "\tout = Ok[string, " ++ okType ++ "](struct{}{})"
+                                ]
+                            _ ->
+                                [ "\tout = Ok[string, " ++ okType ++ "](" ++ pickExpr call ++ ")"
+                                ]
                     aliasLines = emitFfiTAliases anyName params okType
                 in Just $ unlines $
                     aliasLines
@@ -1208,6 +1213,7 @@ classifyTypedResult
     :: [(String, String)]
     -> Maybe (String, Bool, String -> String)
 classifyTypedResult results = case results of
+    []                                  -> Just ("struct{}", False, id)
     [(_, "error")]                      -> Just ("struct{}", True , id)
     [(_, t)] | t /= "error"             -> Just (t, False, id)
     [(_, t), (_, "error")] | t /= "error" -> Just (t, True , id)

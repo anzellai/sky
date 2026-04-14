@@ -98,11 +98,12 @@ func Go_Http_clientHeadT(p0 *pkg.Client, p1 string) (out SkyResult[string, *pkg.
 	return
 }
 
-// [pure] Go_Http.clientCloseIdleConnections → pkg.ClientCloseIdleConnections
-func Go_Http_clientCloseIdleConnections(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	p0.(*pkg.Client).CloseIdleConnections()
-	out = Ok[any, any](struct{}{})
+type FfiT_Go_Http_clientCloseIdleConnections_P0 = *pkg.Client
+// [pure] typed wrapper for Go_Http_clientCloseIdleConnections (P7 adaptor target)
+func Go_Http_clientCloseIdleConnectionsT(p0 *pkg.Client) (out SkyResult[string, struct{}]) {
+	defer SkyFfiRecoverT(&out)()
+	p0.CloseIdleConnections()
+	out = Ok[string, struct{}](struct{}{})
 	return
 }
 
@@ -110,7 +111,9 @@ type FfiT_Go_Http_clientTransport_P0 = *pkg.Client
 type FfiT_Go_Http_clientTransport_R = pkg.RoundTripper
 func Go_Http_clientTransportT(p0 *pkg.Client) pkg.RoundTripper { return p0.Transport }
 
-func Go_Http_clientSetTransport(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Transport") }
+type FfiT_Go_Http_clientSetTransport_P0 = pkg.RoundTripper
+type FfiT_Go_Http_clientSetTransport_P1 = *pkg.Client
+func Go_Http_clientSetTransportT(value pkg.RoundTripper, recv *pkg.Client) *pkg.Client { recv.Transport = value; return recv }
 
 func Go_Http_clientCheckRedirect(p0 any) any { return SkyFfiFieldGet(p0, "CheckRedirect") }
 
@@ -120,13 +123,17 @@ type FfiT_Go_Http_clientJar_P0 = *pkg.Client
 type FfiT_Go_Http_clientJar_R = pkg.CookieJar
 func Go_Http_clientJarT(p0 *pkg.Client) pkg.CookieJar { return p0.Jar }
 
-func Go_Http_clientSetJar(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Jar") }
+type FfiT_Go_Http_clientSetJar_P0 = pkg.CookieJar
+type FfiT_Go_Http_clientSetJar_P1 = *pkg.Client
+func Go_Http_clientSetJarT(value pkg.CookieJar, recv *pkg.Client) *pkg.Client { recv.Jar = value; return recv }
 
 type FfiT_Go_Http_clientTimeout_P0 = *pkg.Client
 type FfiT_Go_Http_clientTimeout_R = time.Duration
 func Go_Http_clientTimeoutT(p0 *pkg.Client) time.Duration { return p0.Timeout }
 
-func Go_Http_clientSetTimeout(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Timeout") }
+type FfiT_Go_Http_clientSetTimeout_P0 = time.Duration
+type FfiT_Go_Http_clientSetTimeout_P1 = *pkg.Client
+func Go_Http_clientSetTimeoutT(value time.Duration, recv *pkg.Client) *pkg.Client { recv.Timeout = value; return recv }
 
 func Go_Http_newClient(_ any) any { return new(pkg.Client) }
 
@@ -188,11 +195,12 @@ func Go_Http_clientConnReserveT(p0 *pkg.ClientConn) (out SkyResult[string, struc
 	return
 }
 
-// [pure] Go_Http.clientConnRelease → pkg.ClientConnRelease
-func Go_Http_clientConnRelease(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	p0.(*pkg.ClientConn).Release()
-	out = Ok[any, any](struct{}{})
+type FfiT_Go_Http_clientConnRelease_P0 = *pkg.ClientConn
+// [pure] typed wrapper for Go_Http_clientConnRelease (P7 adaptor target)
+func Go_Http_clientConnReleaseT(p0 *pkg.ClientConn) (out SkyResult[string, struct{}]) {
+	defer SkyFfiRecoverT(&out)()
+	p0.Release()
+	out = Ok[string, struct{}](struct{}{})
 	return
 }
 
@@ -242,74 +250,90 @@ func Go_Http_cookieValidT(p0 *pkg.Cookie) (out SkyResult[string, struct{}]) {
 type FfiT_Go_Http_cookieName_P0 = *pkg.Cookie
 func Go_Http_cookieNameT(p0 *pkg.Cookie) string { return p0.Name }
 
-func Go_Http_cookieSetName(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Name") }
+type FfiT_Go_Http_cookieSetName_P1 = *pkg.Cookie
+func Go_Http_cookieSetNameT(value string, recv *pkg.Cookie) *pkg.Cookie { recv.Name = value; return recv }
 
 type FfiT_Go_Http_cookieValue_P0 = *pkg.Cookie
 func Go_Http_cookieValueT(p0 *pkg.Cookie) string { return p0.Value }
 
-func Go_Http_cookieSetValue(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Value") }
+type FfiT_Go_Http_cookieSetValue_P1 = *pkg.Cookie
+func Go_Http_cookieSetValueT(value string, recv *pkg.Cookie) *pkg.Cookie { recv.Value = value; return recv }
 
 type FfiT_Go_Http_cookieQuoted_P0 = *pkg.Cookie
 func Go_Http_cookieQuotedT(p0 *pkg.Cookie) bool { return p0.Quoted }
 
-func Go_Http_cookieSetQuoted(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Quoted") }
+type FfiT_Go_Http_cookieSetQuoted_P1 = *pkg.Cookie
+func Go_Http_cookieSetQuotedT(value bool, recv *pkg.Cookie) *pkg.Cookie { recv.Quoted = value; return recv }
 
 type FfiT_Go_Http_cookiePath_P0 = *pkg.Cookie
 func Go_Http_cookiePathT(p0 *pkg.Cookie) string { return p0.Path }
 
-func Go_Http_cookieSetPath(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Path") }
+type FfiT_Go_Http_cookieSetPath_P1 = *pkg.Cookie
+func Go_Http_cookieSetPathT(value string, recv *pkg.Cookie) *pkg.Cookie { recv.Path = value; return recv }
 
 type FfiT_Go_Http_cookieDomain_P0 = *pkg.Cookie
 func Go_Http_cookieDomainT(p0 *pkg.Cookie) string { return p0.Domain }
 
-func Go_Http_cookieSetDomain(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Domain") }
+type FfiT_Go_Http_cookieSetDomain_P1 = *pkg.Cookie
+func Go_Http_cookieSetDomainT(value string, recv *pkg.Cookie) *pkg.Cookie { recv.Domain = value; return recv }
 
 type FfiT_Go_Http_cookieExpires_P0 = *pkg.Cookie
 type FfiT_Go_Http_cookieExpires_R = time.Time
 func Go_Http_cookieExpiresT(p0 *pkg.Cookie) time.Time { return p0.Expires }
 
-func Go_Http_cookieSetExpires(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Expires") }
+type FfiT_Go_Http_cookieSetExpires_P0 = time.Time
+type FfiT_Go_Http_cookieSetExpires_P1 = *pkg.Cookie
+func Go_Http_cookieSetExpiresT(value time.Time, recv *pkg.Cookie) *pkg.Cookie { recv.Expires = value; return recv }
 
 type FfiT_Go_Http_cookieRawExpires_P0 = *pkg.Cookie
 func Go_Http_cookieRawExpiresT(p0 *pkg.Cookie) string { return p0.RawExpires }
 
-func Go_Http_cookieSetRawExpires(value any, recv any) any { return SkyFfiFieldSet(value, recv, "RawExpires") }
+type FfiT_Go_Http_cookieSetRawExpires_P1 = *pkg.Cookie
+func Go_Http_cookieSetRawExpiresT(value string, recv *pkg.Cookie) *pkg.Cookie { recv.RawExpires = value; return recv }
 
 type FfiT_Go_Http_cookieMaxAge_P0 = *pkg.Cookie
 func Go_Http_cookieMaxAgeT(p0 *pkg.Cookie) int { return p0.MaxAge }
 
-func Go_Http_cookieSetMaxAge(value any, recv any) any { return SkyFfiFieldSet(value, recv, "MaxAge") }
+type FfiT_Go_Http_cookieSetMaxAge_P1 = *pkg.Cookie
+func Go_Http_cookieSetMaxAgeT(value int, recv *pkg.Cookie) *pkg.Cookie { recv.MaxAge = value; return recv }
 
 type FfiT_Go_Http_cookieSecure_P0 = *pkg.Cookie
 func Go_Http_cookieSecureT(p0 *pkg.Cookie) bool { return p0.Secure }
 
-func Go_Http_cookieSetSecure(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Secure") }
+type FfiT_Go_Http_cookieSetSecure_P1 = *pkg.Cookie
+func Go_Http_cookieSetSecureT(value bool, recv *pkg.Cookie) *pkg.Cookie { recv.Secure = value; return recv }
 
 type FfiT_Go_Http_cookieHttpOnly_P0 = *pkg.Cookie
 func Go_Http_cookieHttpOnlyT(p0 *pkg.Cookie) bool { return p0.HttpOnly }
 
-func Go_Http_cookieSetHttpOnly(value any, recv any) any { return SkyFfiFieldSet(value, recv, "HttpOnly") }
+type FfiT_Go_Http_cookieSetHttpOnly_P1 = *pkg.Cookie
+func Go_Http_cookieSetHttpOnlyT(value bool, recv *pkg.Cookie) *pkg.Cookie { recv.HttpOnly = value; return recv }
 
 type FfiT_Go_Http_cookieSameSite_P0 = *pkg.Cookie
 type FfiT_Go_Http_cookieSameSite_R = pkg.SameSite
 func Go_Http_cookieSameSiteT(p0 *pkg.Cookie) pkg.SameSite { return p0.SameSite }
 
-func Go_Http_cookieSetSameSite(value any, recv any) any { return SkyFfiFieldSet(value, recv, "SameSite") }
+type FfiT_Go_Http_cookieSetSameSite_P0 = pkg.SameSite
+type FfiT_Go_Http_cookieSetSameSite_P1 = *pkg.Cookie
+func Go_Http_cookieSetSameSiteT(value pkg.SameSite, recv *pkg.Cookie) *pkg.Cookie { recv.SameSite = value; return recv }
 
 type FfiT_Go_Http_cookiePartitioned_P0 = *pkg.Cookie
 func Go_Http_cookiePartitionedT(p0 *pkg.Cookie) bool { return p0.Partitioned }
 
-func Go_Http_cookieSetPartitioned(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Partitioned") }
+type FfiT_Go_Http_cookieSetPartitioned_P1 = *pkg.Cookie
+func Go_Http_cookieSetPartitionedT(value bool, recv *pkg.Cookie) *pkg.Cookie { recv.Partitioned = value; return recv }
 
 type FfiT_Go_Http_cookieRaw_P0 = *pkg.Cookie
 func Go_Http_cookieRawT(p0 *pkg.Cookie) string { return p0.Raw }
 
-func Go_Http_cookieSetRaw(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Raw") }
+type FfiT_Go_Http_cookieSetRaw_P1 = *pkg.Cookie
+func Go_Http_cookieSetRawT(value string, recv *pkg.Cookie) *pkg.Cookie { recv.Raw = value; return recv }
 
 type FfiT_Go_Http_cookieUnparsed_P0 = *pkg.Cookie
 func Go_Http_cookieUnparsedT(p0 *pkg.Cookie) []string { return p0.Unparsed }
 
-func Go_Http_cookieSetUnparsed(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Unparsed") }
+type FfiT_Go_Http_cookieSetUnparsed_P1 = *pkg.Cookie
+func Go_Http_cookieSetUnparsedT(value []string, recv *pkg.Cookie) *pkg.Cookie { recv.Unparsed = value; return recv }
 
 func Go_Http_newCookie(_ any) any { return new(pkg.Cookie) }
 
@@ -323,11 +347,14 @@ func Go_Http_cookieJarCookiesT(p0 pkg.CookieJar, p1 *url.URL) (out SkyResult[str
 	return
 }
 
-// [pure] Go_Http.cookieJarSetCookies → pkg.CookieJarSetCookies
-func Go_Http_cookieJarSetCookies(p0 any, p1 any, p2 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	p0.(pkg.CookieJar).SetCookies(p1.(*url.URL), p2.([]*pkg.Cookie))
-	out = Ok[any, any](struct{}{})
+type FfiT_Go_Http_cookieJarSetCookies_P0 = pkg.CookieJar
+type FfiT_Go_Http_cookieJarSetCookies_P1 = *url.URL
+type FfiT_Go_Http_cookieJarSetCookies_P2 = []*pkg.Cookie
+// [pure] typed wrapper for Go_Http_cookieJarSetCookies (P7 adaptor target)
+func Go_Http_cookieJarSetCookiesT(p0 pkg.CookieJar, p1 *url.URL, p2 []*pkg.Cookie) (out SkyResult[string, struct{}]) {
+	defer SkyFfiRecoverT(&out)()
+	p0.SetCookies(p1, p2)
+	out = Ok[string, struct{}](struct{}{})
 	return
 }
 
@@ -341,19 +368,22 @@ func Go_Http_crossOriginProtectionAddTrustedOriginT(p0 *pkg.CrossOriginProtectio
 	return
 }
 
-// [pure] Go_Http.crossOriginProtectionAddInsecureBypassPattern → pkg.CrossOriginProtectionAddInsecureBypassPattern
-func Go_Http_crossOriginProtectionAddInsecureBypassPattern(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	p0.(*pkg.CrossOriginProtection).AddInsecureBypassPattern(fmt.Sprintf("%v", p1))
-	out = Ok[any, any](struct{}{})
+type FfiT_Go_Http_crossOriginProtectionAddInsecureBypassPattern_P0 = *pkg.CrossOriginProtection
+// [pure] typed wrapper for Go_Http_crossOriginProtectionAddInsecureBypassPattern (P7 adaptor target)
+func Go_Http_crossOriginProtectionAddInsecureBypassPatternT(p0 *pkg.CrossOriginProtection, p1 string) (out SkyResult[string, struct{}]) {
+	defer SkyFfiRecoverT(&out)()
+	p0.AddInsecureBypassPattern(p1)
+	out = Ok[string, struct{}](struct{}{})
 	return
 }
 
-// [pure] Go_Http.crossOriginProtectionSetDenyHandler → pkg.CrossOriginProtectionSetDenyHandler
-func Go_Http_crossOriginProtectionSetDenyHandler(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	p0.(*pkg.CrossOriginProtection).SetDenyHandler(p1.(pkg.Handler))
-	out = Ok[any, any](struct{}{})
+type FfiT_Go_Http_crossOriginProtectionSetDenyHandler_P0 = *pkg.CrossOriginProtection
+type FfiT_Go_Http_crossOriginProtectionSetDenyHandler_P1 = pkg.Handler
+// [pure] typed wrapper for Go_Http_crossOriginProtectionSetDenyHandler (P7 adaptor target)
+func Go_Http_crossOriginProtectionSetDenyHandlerT(p0 *pkg.CrossOriginProtection, p1 pkg.Handler) (out SkyResult[string, struct{}]) {
+	defer SkyFfiRecoverT(&out)()
+	p0.SetDenyHandler(p1)
+	out = Ok[string, struct{}](struct{}{})
 	return
 }
 
@@ -500,11 +530,12 @@ func Go_Http_errWriteAfterFlush(_ any) any { return pkg.ErrWriteAfterFlush }
 
 func Go_Http_setErrWriteAfterFlush(value any) any { reflect.ValueOf(&pkg.ErrWriteAfterFlush).Elem().Set(reflect.ValueOf(value).Convert(reflect.TypeOf(pkg.ErrWriteAfterFlush))); return struct{}{} }
 
-// [pure] Go_Http.error → pkg.Error
-func Go_Http_error(p0 any, p1 any, p2 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	pkg.Error(p0.(pkg.ResponseWriter), fmt.Sprintf("%v", p1), AsInt(p2))
-	out = Ok[any, any](struct{}{})
+type FfiT_Go_Http_error_P0 = pkg.ResponseWriter
+// [pure] typed wrapper for Go_Http_error (P7 adaptor target)
+func Go_Http_errorT(p0 pkg.ResponseWriter, p1 string, p2 int) (out SkyResult[string, struct{}]) {
+	defer SkyFfiRecoverT(&out)()
+	pkg.Error(p0, p1, p2)
+	out = Ok[string, struct{}](struct{}{})
 	return
 }
 
@@ -598,11 +629,12 @@ func Go_Http_fileSystemOpenT(p0 pkg.FileSystem, p1 string) (out SkyResult[string
 	return
 }
 
-// [pure] Go_Http.flusherFlush → pkg.FlusherFlush
-func Go_Http_flusherFlush(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	p0.(pkg.Flusher).Flush()
-	out = Ok[any, any](struct{}{})
+type FfiT_Go_Http_flusherFlush_P0 = pkg.Flusher
+// [pure] typed wrapper for Go_Http_flusherFlush (P7 adaptor target)
+func Go_Http_flusherFlushT(p0 pkg.Flusher) (out SkyResult[string, struct{}]) {
+	defer SkyFfiRecoverT(&out)()
+	p0.Flush()
+	out = Ok[string, struct{}](struct{}{})
 	return
 }
 
@@ -619,60 +651,74 @@ func Go_Http_getT(p0 string) (out SkyResult[string, *pkg.Response]) {
 type FfiT_Go_Http_hTTP2ConfigMaxConcurrentStreams_P0 = *pkg.HTTP2Config
 func Go_Http_hTTP2ConfigMaxConcurrentStreamsT(p0 *pkg.HTTP2Config) int { return p0.MaxConcurrentStreams }
 
-func Go_Http_hTTP2ConfigSetMaxConcurrentStreams(value any, recv any) any { return SkyFfiFieldSet(value, recv, "MaxConcurrentStreams") }
+type FfiT_Go_Http_hTTP2ConfigSetMaxConcurrentStreams_P1 = *pkg.HTTP2Config
+func Go_Http_hTTP2ConfigSetMaxConcurrentStreamsT(value int, recv *pkg.HTTP2Config) *pkg.HTTP2Config { recv.MaxConcurrentStreams = value; return recv }
 
 type FfiT_Go_Http_hTTP2ConfigStrictMaxConcurrentRequests_P0 = *pkg.HTTP2Config
 func Go_Http_hTTP2ConfigStrictMaxConcurrentRequestsT(p0 *pkg.HTTP2Config) bool { return p0.StrictMaxConcurrentRequests }
 
-func Go_Http_hTTP2ConfigSetStrictMaxConcurrentRequests(value any, recv any) any { return SkyFfiFieldSet(value, recv, "StrictMaxConcurrentRequests") }
+type FfiT_Go_Http_hTTP2ConfigSetStrictMaxConcurrentRequests_P1 = *pkg.HTTP2Config
+func Go_Http_hTTP2ConfigSetStrictMaxConcurrentRequestsT(value bool, recv *pkg.HTTP2Config) *pkg.HTTP2Config { recv.StrictMaxConcurrentRequests = value; return recv }
 
 type FfiT_Go_Http_hTTP2ConfigMaxDecoderHeaderTableSize_P0 = *pkg.HTTP2Config
 func Go_Http_hTTP2ConfigMaxDecoderHeaderTableSizeT(p0 *pkg.HTTP2Config) int { return p0.MaxDecoderHeaderTableSize }
 
-func Go_Http_hTTP2ConfigSetMaxDecoderHeaderTableSize(value any, recv any) any { return SkyFfiFieldSet(value, recv, "MaxDecoderHeaderTableSize") }
+type FfiT_Go_Http_hTTP2ConfigSetMaxDecoderHeaderTableSize_P1 = *pkg.HTTP2Config
+func Go_Http_hTTP2ConfigSetMaxDecoderHeaderTableSizeT(value int, recv *pkg.HTTP2Config) *pkg.HTTP2Config { recv.MaxDecoderHeaderTableSize = value; return recv }
 
 type FfiT_Go_Http_hTTP2ConfigMaxEncoderHeaderTableSize_P0 = *pkg.HTTP2Config
 func Go_Http_hTTP2ConfigMaxEncoderHeaderTableSizeT(p0 *pkg.HTTP2Config) int { return p0.MaxEncoderHeaderTableSize }
 
-func Go_Http_hTTP2ConfigSetMaxEncoderHeaderTableSize(value any, recv any) any { return SkyFfiFieldSet(value, recv, "MaxEncoderHeaderTableSize") }
+type FfiT_Go_Http_hTTP2ConfigSetMaxEncoderHeaderTableSize_P1 = *pkg.HTTP2Config
+func Go_Http_hTTP2ConfigSetMaxEncoderHeaderTableSizeT(value int, recv *pkg.HTTP2Config) *pkg.HTTP2Config { recv.MaxEncoderHeaderTableSize = value; return recv }
 
 type FfiT_Go_Http_hTTP2ConfigMaxReadFrameSize_P0 = *pkg.HTTP2Config
 func Go_Http_hTTP2ConfigMaxReadFrameSizeT(p0 *pkg.HTTP2Config) int { return p0.MaxReadFrameSize }
 
-func Go_Http_hTTP2ConfigSetMaxReadFrameSize(value any, recv any) any { return SkyFfiFieldSet(value, recv, "MaxReadFrameSize") }
+type FfiT_Go_Http_hTTP2ConfigSetMaxReadFrameSize_P1 = *pkg.HTTP2Config
+func Go_Http_hTTP2ConfigSetMaxReadFrameSizeT(value int, recv *pkg.HTTP2Config) *pkg.HTTP2Config { recv.MaxReadFrameSize = value; return recv }
 
 type FfiT_Go_Http_hTTP2ConfigMaxReceiveBufferPerConnection_P0 = *pkg.HTTP2Config
 func Go_Http_hTTP2ConfigMaxReceiveBufferPerConnectionT(p0 *pkg.HTTP2Config) int { return p0.MaxReceiveBufferPerConnection }
 
-func Go_Http_hTTP2ConfigSetMaxReceiveBufferPerConnection(value any, recv any) any { return SkyFfiFieldSet(value, recv, "MaxReceiveBufferPerConnection") }
+type FfiT_Go_Http_hTTP2ConfigSetMaxReceiveBufferPerConnection_P1 = *pkg.HTTP2Config
+func Go_Http_hTTP2ConfigSetMaxReceiveBufferPerConnectionT(value int, recv *pkg.HTTP2Config) *pkg.HTTP2Config { recv.MaxReceiveBufferPerConnection = value; return recv }
 
 type FfiT_Go_Http_hTTP2ConfigMaxReceiveBufferPerStream_P0 = *pkg.HTTP2Config
 func Go_Http_hTTP2ConfigMaxReceiveBufferPerStreamT(p0 *pkg.HTTP2Config) int { return p0.MaxReceiveBufferPerStream }
 
-func Go_Http_hTTP2ConfigSetMaxReceiveBufferPerStream(value any, recv any) any { return SkyFfiFieldSet(value, recv, "MaxReceiveBufferPerStream") }
+type FfiT_Go_Http_hTTP2ConfigSetMaxReceiveBufferPerStream_P1 = *pkg.HTTP2Config
+func Go_Http_hTTP2ConfigSetMaxReceiveBufferPerStreamT(value int, recv *pkg.HTTP2Config) *pkg.HTTP2Config { recv.MaxReceiveBufferPerStream = value; return recv }
 
 type FfiT_Go_Http_hTTP2ConfigSendPingTimeout_P0 = *pkg.HTTP2Config
 type FfiT_Go_Http_hTTP2ConfigSendPingTimeout_R = time.Duration
 func Go_Http_hTTP2ConfigSendPingTimeoutT(p0 *pkg.HTTP2Config) time.Duration { return p0.SendPingTimeout }
 
-func Go_Http_hTTP2ConfigSetSendPingTimeout(value any, recv any) any { return SkyFfiFieldSet(value, recv, "SendPingTimeout") }
+type FfiT_Go_Http_hTTP2ConfigSetSendPingTimeout_P0 = time.Duration
+type FfiT_Go_Http_hTTP2ConfigSetSendPingTimeout_P1 = *pkg.HTTP2Config
+func Go_Http_hTTP2ConfigSetSendPingTimeoutT(value time.Duration, recv *pkg.HTTP2Config) *pkg.HTTP2Config { recv.SendPingTimeout = value; return recv }
 
 type FfiT_Go_Http_hTTP2ConfigPingTimeout_P0 = *pkg.HTTP2Config
 type FfiT_Go_Http_hTTP2ConfigPingTimeout_R = time.Duration
 func Go_Http_hTTP2ConfigPingTimeoutT(p0 *pkg.HTTP2Config) time.Duration { return p0.PingTimeout }
 
-func Go_Http_hTTP2ConfigSetPingTimeout(value any, recv any) any { return SkyFfiFieldSet(value, recv, "PingTimeout") }
+type FfiT_Go_Http_hTTP2ConfigSetPingTimeout_P0 = time.Duration
+type FfiT_Go_Http_hTTP2ConfigSetPingTimeout_P1 = *pkg.HTTP2Config
+func Go_Http_hTTP2ConfigSetPingTimeoutT(value time.Duration, recv *pkg.HTTP2Config) *pkg.HTTP2Config { recv.PingTimeout = value; return recv }
 
 type FfiT_Go_Http_hTTP2ConfigWriteByteTimeout_P0 = *pkg.HTTP2Config
 type FfiT_Go_Http_hTTP2ConfigWriteByteTimeout_R = time.Duration
 func Go_Http_hTTP2ConfigWriteByteTimeoutT(p0 *pkg.HTTP2Config) time.Duration { return p0.WriteByteTimeout }
 
-func Go_Http_hTTP2ConfigSetWriteByteTimeout(value any, recv any) any { return SkyFfiFieldSet(value, recv, "WriteByteTimeout") }
+type FfiT_Go_Http_hTTP2ConfigSetWriteByteTimeout_P0 = time.Duration
+type FfiT_Go_Http_hTTP2ConfigSetWriteByteTimeout_P1 = *pkg.HTTP2Config
+func Go_Http_hTTP2ConfigSetWriteByteTimeoutT(value time.Duration, recv *pkg.HTTP2Config) *pkg.HTTP2Config { recv.WriteByteTimeout = value; return recv }
 
 type FfiT_Go_Http_hTTP2ConfigPermitProhibitedCipherSuites_P0 = *pkg.HTTP2Config
 func Go_Http_hTTP2ConfigPermitProhibitedCipherSuitesT(p0 *pkg.HTTP2Config) bool { return p0.PermitProhibitedCipherSuites }
 
-func Go_Http_hTTP2ConfigSetPermitProhibitedCipherSuites(value any, recv any) any { return SkyFfiFieldSet(value, recv, "PermitProhibitedCipherSuites") }
+type FfiT_Go_Http_hTTP2ConfigSetPermitProhibitedCipherSuites_P1 = *pkg.HTTP2Config
+func Go_Http_hTTP2ConfigSetPermitProhibitedCipherSuitesT(value bool, recv *pkg.HTTP2Config) *pkg.HTTP2Config { recv.PermitProhibitedCipherSuites = value; return recv }
 
 func Go_Http_hTTP2ConfigCountError(p0 any) any { return SkyFfiFieldGet(p0, "CountError") }
 
@@ -680,11 +726,12 @@ func Go_Http_hTTP2ConfigSetCountError(value any, recv any) any { return SkyFfiFi
 
 func Go_Http_newHTTP2Config(_ any) any { return new(pkg.HTTP2Config) }
 
-// [pure] Go_Http.handle → pkg.Handle
-func Go_Http_handle(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	pkg.Handle(fmt.Sprintf("%v", p0), p1.(pkg.Handler))
-	out = Ok[any, any](struct{}{})
+type FfiT_Go_Http_handle_P1 = pkg.Handler
+// [pure] typed wrapper for Go_Http_handle (P7 adaptor target)
+func Go_Http_handleT(p0 string, p1 pkg.Handler) (out SkyResult[string, struct{}]) {
+	defer SkyFfiRecoverT(&out)()
+	pkg.Handle(p0, p1)
+	out = Ok[string, struct{}](struct{}{})
 	return
 }
 
@@ -696,19 +743,25 @@ func Go_Http_handleFunc(p0 any, p1 any) (out any) {
 	return
 }
 
-// [pure] Go_Http.handlerServeHTTP → pkg.HandlerServeHTTP
-func Go_Http_handlerServeHTTP(p0 any, p1 any, p2 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	p0.(pkg.Handler).ServeHTTP(p1.(pkg.ResponseWriter), p2.(*pkg.Request))
-	out = Ok[any, any](struct{}{})
+type FfiT_Go_Http_handlerServeHTTP_P0 = pkg.Handler
+type FfiT_Go_Http_handlerServeHTTP_P1 = pkg.ResponseWriter
+type FfiT_Go_Http_handlerServeHTTP_P2 = *pkg.Request
+// [pure] typed wrapper for Go_Http_handlerServeHTTP (P7 adaptor target)
+func Go_Http_handlerServeHTTPT(p0 pkg.Handler, p1 pkg.ResponseWriter, p2 *pkg.Request) (out SkyResult[string, struct{}]) {
+	defer SkyFfiRecoverT(&out)()
+	p0.ServeHTTP(p1, p2)
+	out = Ok[string, struct{}](struct{}{})
 	return
 }
 
-// [pure] Go_Http.handlerFuncServeHTTP → pkg.HandlerFuncServeHTTP
-func Go_Http_handlerFuncServeHTTP(p0 any, p1 any, p2 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	p0.(pkg.HandlerFunc).ServeHTTP(p1.(pkg.ResponseWriter), p2.(*pkg.Request))
-	out = Ok[any, any](struct{}{})
+type FfiT_Go_Http_handlerFuncServeHTTP_P0 = pkg.HandlerFunc
+type FfiT_Go_Http_handlerFuncServeHTTP_P1 = pkg.ResponseWriter
+type FfiT_Go_Http_handlerFuncServeHTTP_P2 = *pkg.Request
+// [pure] typed wrapper for Go_Http_handlerFuncServeHTTP (P7 adaptor target)
+func Go_Http_handlerFuncServeHTTPT(p0 pkg.HandlerFunc, p1 pkg.ResponseWriter, p2 *pkg.Request) (out SkyResult[string, struct{}]) {
+	defer SkyFfiRecoverT(&out)()
+	p0.ServeHTTP(p1, p2)
+	out = Ok[string, struct{}](struct{}{})
 	return
 }
 
@@ -722,19 +775,21 @@ func Go_Http_headT(p0 string) (out SkyResult[string, *pkg.Response]) {
 	return
 }
 
-// [pure] Go_Http.headerAdd → pkg.HeaderAdd
-func Go_Http_headerAdd(p0 any, p1 any, p2 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	p0.(pkg.Header).Add(fmt.Sprintf("%v", p1), fmt.Sprintf("%v", p2))
-	out = Ok[any, any](struct{}{})
+type FfiT_Go_Http_headerAdd_P0 = pkg.Header
+// [pure] typed wrapper for Go_Http_headerAdd (P7 adaptor target)
+func Go_Http_headerAddT(p0 pkg.Header, p1 string, p2 string) (out SkyResult[string, struct{}]) {
+	defer SkyFfiRecoverT(&out)()
+	p0.Add(p1, p2)
+	out = Ok[string, struct{}](struct{}{})
 	return
 }
 
-// [pure] Go_Http.headerSet → pkg.HeaderSet
-func Go_Http_headerSet(p0 any, p1 any, p2 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	p0.(pkg.Header).Set(fmt.Sprintf("%v", p1), fmt.Sprintf("%v", p2))
-	out = Ok[any, any](struct{}{})
+type FfiT_Go_Http_headerSet_P0 = pkg.Header
+// [pure] typed wrapper for Go_Http_headerSet (P7 adaptor target)
+func Go_Http_headerSetT(p0 pkg.Header, p1 string, p2 string) (out SkyResult[string, struct{}]) {
+	defer SkyFfiRecoverT(&out)()
+	p0.Set(p1, p2)
+	out = Ok[string, struct{}](struct{}{})
 	return
 }
 
@@ -754,11 +809,12 @@ func Go_Http_headerValuesT(p0 pkg.Header, p1 string) (out SkyResult[string, []st
 	return
 }
 
-// [pure] Go_Http.headerDel → pkg.HeaderDel
-func Go_Http_headerDel(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	p0.(pkg.Header).Del(fmt.Sprintf("%v", p1))
-	out = Ok[any, any](struct{}{})
+type FfiT_Go_Http_headerDel_P0 = pkg.Header
+// [pure] typed wrapper for Go_Http_headerDel (P7 adaptor target)
+func Go_Http_headerDelT(p0 pkg.Header, p1 string) (out SkyResult[string, struct{}]) {
+	defer SkyFfiRecoverT(&out)()
+	p0.Del(p1)
+	out = Ok[string, struct{}](struct{}{})
 	return
 }
 
@@ -837,7 +893,8 @@ func Go_Http_maxBytesErrorErrorT(p0 *pkg.MaxBytesError) (out SkyResult[string, s
 type FfiT_Go_Http_maxBytesErrorLimit_P0 = *pkg.MaxBytesError
 func Go_Http_maxBytesErrorLimitT(p0 *pkg.MaxBytesError) int64 { return p0.Limit }
 
-func Go_Http_maxBytesErrorSetLimit(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Limit") }
+type FfiT_Go_Http_maxBytesErrorSetLimit_P1 = *pkg.MaxBytesError
+func Go_Http_maxBytesErrorSetLimitT(value int64, recv *pkg.MaxBytesError) *pkg.MaxBytesError { recv.Limit = value; return recv }
 
 func Go_Http_newMaxBytesError(_ any) any { return new(pkg.MaxBytesError) }
 
@@ -948,11 +1005,13 @@ func Go_Http_noBody(_ any) any { return pkg.NoBody }
 
 func Go_Http_setNoBody(value any) any { reflect.ValueOf(&pkg.NoBody).Elem().Set(reflect.ValueOf(value).Convert(reflect.TypeOf(pkg.NoBody))); return struct{}{} }
 
-// [pure] Go_Http.notFound → pkg.NotFound
-func Go_Http_notFound(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	pkg.NotFound(p0.(pkg.ResponseWriter), p1.(*pkg.Request))
-	out = Ok[any, any](struct{}{})
+type FfiT_Go_Http_notFound_P0 = pkg.ResponseWriter
+type FfiT_Go_Http_notFound_P1 = *pkg.Request
+// [pure] typed wrapper for Go_Http_notFound (P7 adaptor target)
+func Go_Http_notFoundT(p0 pkg.ResponseWriter, p1 *pkg.Request) (out SkyResult[string, struct{}]) {
+	defer SkyFfiRecoverT(&out)()
+	pkg.NotFound(p0, p1)
+	out = Ok[string, struct{}](struct{}{})
 	return
 }
 
@@ -1044,7 +1103,8 @@ func Go_Http_protocolErrorIsT(p0 *pkg.ProtocolError, p1 error) (out SkyResult[st
 type FfiT_Go_Http_protocolErrorErrorString_P0 = *pkg.ProtocolError
 func Go_Http_protocolErrorErrorStringT(p0 *pkg.ProtocolError) string { return p0.ErrorString }
 
-func Go_Http_protocolErrorSetErrorString(value any, recv any) any { return SkyFfiFieldSet(value, recv, "ErrorString") }
+type FfiT_Go_Http_protocolErrorSetErrorString_P1 = *pkg.ProtocolError
+func Go_Http_protocolErrorSetErrorStringT(value string, recv *pkg.ProtocolError) *pkg.ProtocolError { recv.ErrorString = value; return recv }
 
 func Go_Http_newProtocolError(_ any) any { return new(pkg.ProtocolError) }
 
@@ -1056,11 +1116,12 @@ func Go_Http_protocolsHTTP1T(p0 pkg.Protocols) (out SkyResult[string, bool]) {
 	return
 }
 
-// [pure] Go_Http.protocolsSetHTTP1 → pkg.ProtocolsSetHTTP1
-func Go_Http_protocolsSetHTTP1(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	p0.(*pkg.Protocols).SetHTTP1(AsBool(p1))
-	out = Ok[any, any](struct{}{})
+type FfiT_Go_Http_protocolsSetHTTP1_P0 = *pkg.Protocols
+// [pure] typed wrapper for Go_Http_protocolsSetHTTP1 (P7 adaptor target)
+func Go_Http_protocolsSetHTTP1T(p0 *pkg.Protocols, p1 bool) (out SkyResult[string, struct{}]) {
+	defer SkyFfiRecoverT(&out)()
+	p0.SetHTTP1(p1)
+	out = Ok[string, struct{}](struct{}{})
 	return
 }
 
@@ -1072,11 +1133,12 @@ func Go_Http_protocolsHTTP2T(p0 pkg.Protocols) (out SkyResult[string, bool]) {
 	return
 }
 
-// [pure] Go_Http.protocolsSetHTTP2 → pkg.ProtocolsSetHTTP2
-func Go_Http_protocolsSetHTTP2(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	p0.(*pkg.Protocols).SetHTTP2(AsBool(p1))
-	out = Ok[any, any](struct{}{})
+type FfiT_Go_Http_protocolsSetHTTP2_P0 = *pkg.Protocols
+// [pure] typed wrapper for Go_Http_protocolsSetHTTP2 (P7 adaptor target)
+func Go_Http_protocolsSetHTTP2T(p0 *pkg.Protocols, p1 bool) (out SkyResult[string, struct{}]) {
+	defer SkyFfiRecoverT(&out)()
+	p0.SetHTTP2(p1)
+	out = Ok[string, struct{}](struct{}{})
 	return
 }
 
@@ -1088,11 +1150,12 @@ func Go_Http_protocolsUnencryptedHTTP2T(p0 pkg.Protocols) (out SkyResult[string,
 	return
 }
 
-// [pure] Go_Http.protocolsSetUnencryptedHTTP2 → pkg.ProtocolsSetUnencryptedHTTP2
-func Go_Http_protocolsSetUnencryptedHTTP2(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	p0.(*pkg.Protocols).SetUnencryptedHTTP2(AsBool(p1))
-	out = Ok[any, any](struct{}{})
+type FfiT_Go_Http_protocolsSetUnencryptedHTTP2_P0 = *pkg.Protocols
+// [pure] typed wrapper for Go_Http_protocolsSetUnencryptedHTTP2 (P7 adaptor target)
+func Go_Http_protocolsSetUnencryptedHTTP2T(p0 *pkg.Protocols, p1 bool) (out SkyResult[string, struct{}]) {
+	defer SkyFfiRecoverT(&out)()
+	p0.SetUnencryptedHTTP2(p1)
+	out = Ok[string, struct{}](struct{}{})
 	return
 }
 
@@ -1127,13 +1190,16 @@ func Go_Http_proxyURL(p0 any) (out any) {
 type FfiT_Go_Http_pushOptionsMethod_P0 = *pkg.PushOptions
 func Go_Http_pushOptionsMethodT(p0 *pkg.PushOptions) string { return p0.Method }
 
-func Go_Http_pushOptionsSetMethod(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Method") }
+type FfiT_Go_Http_pushOptionsSetMethod_P1 = *pkg.PushOptions
+func Go_Http_pushOptionsSetMethodT(value string, recv *pkg.PushOptions) *pkg.PushOptions { recv.Method = value; return recv }
 
 type FfiT_Go_Http_pushOptionsHeader_P0 = *pkg.PushOptions
 type FfiT_Go_Http_pushOptionsHeader_R = pkg.Header
 func Go_Http_pushOptionsHeaderT(p0 *pkg.PushOptions) pkg.Header { return p0.Header }
 
-func Go_Http_pushOptionsSetHeader(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Header") }
+type FfiT_Go_Http_pushOptionsSetHeader_P0 = pkg.Header
+type FfiT_Go_Http_pushOptionsSetHeader_P1 = *pkg.PushOptions
+func Go_Http_pushOptionsSetHeaderT(value pkg.Header, recv *pkg.PushOptions) *pkg.PushOptions { recv.Header = value; return recv }
 
 func Go_Http_newPushOptions(_ any) any { return new(pkg.PushOptions) }
 
@@ -1171,11 +1237,13 @@ func Go_Http_readResponseT(p0 *bufio.Reader, p1 *pkg.Request) (out SkyResult[str
 	return
 }
 
-// [pure] Go_Http.redirect → pkg.Redirect
-func Go_Http_redirect(p0 any, p1 any, p2 any, p3 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	pkg.Redirect(p0.(pkg.ResponseWriter), p1.(*pkg.Request), fmt.Sprintf("%v", p2), AsInt(p3))
-	out = Ok[any, any](struct{}{})
+type FfiT_Go_Http_redirect_P0 = pkg.ResponseWriter
+type FfiT_Go_Http_redirect_P1 = *pkg.Request
+// [pure] typed wrapper for Go_Http_redirect (P7 adaptor target)
+func Go_Http_redirectT(p0 pkg.ResponseWriter, p1 *pkg.Request, p2 string, p3 int) (out SkyResult[string, struct{}]) {
+	defer SkyFfiRecoverT(&out)()
+	pkg.Redirect(p0, p1, p2, p3)
+	out = Ok[string, struct{}](struct{}{})
 	return
 }
 
@@ -1261,11 +1329,13 @@ func Go_Http_requestCookieT(p0 *pkg.Request, p1 string) (out SkyResult[string, *
 	return
 }
 
-// [pure] Go_Http.requestAddCookie → pkg.RequestAddCookie
-func Go_Http_requestAddCookie(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	p0.(*pkg.Request).AddCookie(p1.(*pkg.Cookie))
-	out = Ok[any, any](struct{}{})
+type FfiT_Go_Http_requestAddCookie_P0 = *pkg.Request
+type FfiT_Go_Http_requestAddCookie_P1 = *pkg.Cookie
+// [pure] typed wrapper for Go_Http_requestAddCookie (P7 adaptor target)
+func Go_Http_requestAddCookieT(p0 *pkg.Request, p1 *pkg.Cookie) (out SkyResult[string, struct{}]) {
+	defer SkyFfiRecoverT(&out)()
+	p0.AddCookie(p1)
+	out = Ok[string, struct{}](struct{}{})
 	return
 }
 
@@ -1319,11 +1389,12 @@ func Go_Http_requestBasicAuth(p0 any) (out any) {
 	return
 }
 
-// [pure] Go_Http.requestSetBasicAuth → pkg.RequestSetBasicAuth
-func Go_Http_requestSetBasicAuth(p0 any, p1 any, p2 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	p0.(*pkg.Request).SetBasicAuth(fmt.Sprintf("%v", p1), fmt.Sprintf("%v", p2))
-	out = Ok[any, any](struct{}{})
+type FfiT_Go_Http_requestSetBasicAuth_P0 = *pkg.Request
+// [pure] typed wrapper for Go_Http_requestSetBasicAuth (P7 adaptor target)
+func Go_Http_requestSetBasicAuthT(p0 *pkg.Request, p1 string, p2 string) (out SkyResult[string, struct{}]) {
+	defer SkyFfiRecoverT(&out)()
+	p0.SetBasicAuth(p1, p2)
+	out = Ok[string, struct{}](struct{}{})
 	return
 }
 
@@ -1381,51 +1452,62 @@ func Go_Http_requestPathValueT(p0 *pkg.Request, p1 string) (out SkyResult[string
 	return
 }
 
-// [pure] Go_Http.requestSetPathValue → pkg.RequestSetPathValue
-func Go_Http_requestSetPathValue(p0 any, p1 any, p2 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	p0.(*pkg.Request).SetPathValue(fmt.Sprintf("%v", p1), fmt.Sprintf("%v", p2))
-	out = Ok[any, any](struct{}{})
+type FfiT_Go_Http_requestSetPathValue_P0 = *pkg.Request
+// [pure] typed wrapper for Go_Http_requestSetPathValue (P7 adaptor target)
+func Go_Http_requestSetPathValueT(p0 *pkg.Request, p1 string, p2 string) (out SkyResult[string, struct{}]) {
+	defer SkyFfiRecoverT(&out)()
+	p0.SetPathValue(p1, p2)
+	out = Ok[string, struct{}](struct{}{})
 	return
 }
 
 type FfiT_Go_Http_requestMethod_P0 = *pkg.Request
 func Go_Http_requestMethodT(p0 *pkg.Request) string { return p0.Method }
 
-func Go_Http_requestSetMethod(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Method") }
+type FfiT_Go_Http_requestSetMethod_P1 = *pkg.Request
+func Go_Http_requestSetMethodT(value string, recv *pkg.Request) *pkg.Request { recv.Method = value; return recv }
 
 type FfiT_Go_Http_requestURL_P0 = *pkg.Request
 type FfiT_Go_Http_requestURL_R = *url.URL
 func Go_Http_requestURLT(p0 *pkg.Request) *url.URL { return p0.URL }
 
-func Go_Http_requestSetURL(value any, recv any) any { return SkyFfiFieldSet(value, recv, "URL") }
+type FfiT_Go_Http_requestSetURL_P0 = url.URL
+type FfiT_Go_Http_requestSetURL_P1 = *pkg.Request
+func Go_Http_requestSetURLT(value url.URL, recv *pkg.Request) *pkg.Request { recv.URL = func() *url.URL { v := value; return &v }(); return recv }
 
 type FfiT_Go_Http_requestProto_P0 = *pkg.Request
 func Go_Http_requestProtoT(p0 *pkg.Request) string { return p0.Proto }
 
-func Go_Http_requestSetProto(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Proto") }
+type FfiT_Go_Http_requestSetProto_P1 = *pkg.Request
+func Go_Http_requestSetProtoT(value string, recv *pkg.Request) *pkg.Request { recv.Proto = value; return recv }
 
 type FfiT_Go_Http_requestProtoMajor_P0 = *pkg.Request
 func Go_Http_requestProtoMajorT(p0 *pkg.Request) int { return p0.ProtoMajor }
 
-func Go_Http_requestSetProtoMajor(value any, recv any) any { return SkyFfiFieldSet(value, recv, "ProtoMajor") }
+type FfiT_Go_Http_requestSetProtoMajor_P1 = *pkg.Request
+func Go_Http_requestSetProtoMajorT(value int, recv *pkg.Request) *pkg.Request { recv.ProtoMajor = value; return recv }
 
 type FfiT_Go_Http_requestProtoMinor_P0 = *pkg.Request
 func Go_Http_requestProtoMinorT(p0 *pkg.Request) int { return p0.ProtoMinor }
 
-func Go_Http_requestSetProtoMinor(value any, recv any) any { return SkyFfiFieldSet(value, recv, "ProtoMinor") }
+type FfiT_Go_Http_requestSetProtoMinor_P1 = *pkg.Request
+func Go_Http_requestSetProtoMinorT(value int, recv *pkg.Request) *pkg.Request { recv.ProtoMinor = value; return recv }
 
 type FfiT_Go_Http_requestHeader_P0 = *pkg.Request
 type FfiT_Go_Http_requestHeader_R = pkg.Header
 func Go_Http_requestHeaderT(p0 *pkg.Request) pkg.Header { return p0.Header }
 
-func Go_Http_requestSetHeader(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Header") }
+type FfiT_Go_Http_requestSetHeader_P0 = pkg.Header
+type FfiT_Go_Http_requestSetHeader_P1 = *pkg.Request
+func Go_Http_requestSetHeaderT(value pkg.Header, recv *pkg.Request) *pkg.Request { recv.Header = value; return recv }
 
 type FfiT_Go_Http_requestBody_P0 = *pkg.Request
 type FfiT_Go_Http_requestBody_R = io.ReadCloser
 func Go_Http_requestBodyT(p0 *pkg.Request) io.ReadCloser { return p0.Body }
 
-func Go_Http_requestSetBody(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Body") }
+type FfiT_Go_Http_requestSetBody_P0 = io.ReadCloser
+type FfiT_Go_Http_requestSetBody_P1 = *pkg.Request
+func Go_Http_requestSetBodyT(value io.ReadCloser, recv *pkg.Request) *pkg.Request { recv.Body = value; return recv }
 
 func Go_Http_requestGetBody(p0 any) any { return SkyFfiFieldGet(p0, "GetBody") }
 
@@ -1434,62 +1516,78 @@ func Go_Http_requestSetGetBody(value any, recv any) any { return SkyFfiFieldSet(
 type FfiT_Go_Http_requestContentLength_P0 = *pkg.Request
 func Go_Http_requestContentLengthT(p0 *pkg.Request) int64 { return p0.ContentLength }
 
-func Go_Http_requestSetContentLength(value any, recv any) any { return SkyFfiFieldSet(value, recv, "ContentLength") }
+type FfiT_Go_Http_requestSetContentLength_P1 = *pkg.Request
+func Go_Http_requestSetContentLengthT(value int64, recv *pkg.Request) *pkg.Request { recv.ContentLength = value; return recv }
 
 type FfiT_Go_Http_requestTransferEncoding_P0 = *pkg.Request
 func Go_Http_requestTransferEncodingT(p0 *pkg.Request) []string { return p0.TransferEncoding }
 
-func Go_Http_requestSetTransferEncoding(value any, recv any) any { return SkyFfiFieldSet(value, recv, "TransferEncoding") }
+type FfiT_Go_Http_requestSetTransferEncoding_P1 = *pkg.Request
+func Go_Http_requestSetTransferEncodingT(value []string, recv *pkg.Request) *pkg.Request { recv.TransferEncoding = value; return recv }
 
 type FfiT_Go_Http_requestClose_P0 = *pkg.Request
 func Go_Http_requestCloseT(p0 *pkg.Request) bool { return p0.Close }
 
-func Go_Http_requestSetClose(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Close") }
+type FfiT_Go_Http_requestSetClose_P1 = *pkg.Request
+func Go_Http_requestSetCloseT(value bool, recv *pkg.Request) *pkg.Request { recv.Close = value; return recv }
 
 type FfiT_Go_Http_requestHost_P0 = *pkg.Request
 func Go_Http_requestHostT(p0 *pkg.Request) string { return p0.Host }
 
-func Go_Http_requestSetHost(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Host") }
+type FfiT_Go_Http_requestSetHost_P1 = *pkg.Request
+func Go_Http_requestSetHostT(value string, recv *pkg.Request) *pkg.Request { recv.Host = value; return recv }
 
 type FfiT_Go_Http_requestForm_P0 = *pkg.Request
 type FfiT_Go_Http_requestForm_R = url.Values
 func Go_Http_requestFormT(p0 *pkg.Request) url.Values { return p0.Form }
 
-func Go_Http_requestSetForm(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Form") }
+type FfiT_Go_Http_requestSetForm_P0 = url.Values
+type FfiT_Go_Http_requestSetForm_P1 = *pkg.Request
+func Go_Http_requestSetFormT(value url.Values, recv *pkg.Request) *pkg.Request { recv.Form = value; return recv }
 
 type FfiT_Go_Http_requestPostForm_P0 = *pkg.Request
 type FfiT_Go_Http_requestPostForm_R = url.Values
 func Go_Http_requestPostFormT(p0 *pkg.Request) url.Values { return p0.PostForm }
 
-func Go_Http_requestSetPostForm(value any, recv any) any { return SkyFfiFieldSet(value, recv, "PostForm") }
+type FfiT_Go_Http_requestSetPostForm_P0 = url.Values
+type FfiT_Go_Http_requestSetPostForm_P1 = *pkg.Request
+func Go_Http_requestSetPostFormT(value url.Values, recv *pkg.Request) *pkg.Request { recv.PostForm = value; return recv }
 
 type FfiT_Go_Http_requestMultipartForm_P0 = *pkg.Request
 type FfiT_Go_Http_requestMultipartForm_R = *multipart.Form
 func Go_Http_requestMultipartFormT(p0 *pkg.Request) *multipart.Form { return p0.MultipartForm }
 
-func Go_Http_requestSetMultipartForm(value any, recv any) any { return SkyFfiFieldSet(value, recv, "MultipartForm") }
+type FfiT_Go_Http_requestSetMultipartForm_P0 = multipart.Form
+type FfiT_Go_Http_requestSetMultipartForm_P1 = *pkg.Request
+func Go_Http_requestSetMultipartFormT(value multipart.Form, recv *pkg.Request) *pkg.Request { recv.MultipartForm = func() *multipart.Form { v := value; return &v }(); return recv }
 
 type FfiT_Go_Http_requestTrailer_P0 = *pkg.Request
 type FfiT_Go_Http_requestTrailer_R = pkg.Header
 func Go_Http_requestTrailerT(p0 *pkg.Request) pkg.Header { return p0.Trailer }
 
-func Go_Http_requestSetTrailer(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Trailer") }
+type FfiT_Go_Http_requestSetTrailer_P0 = pkg.Header
+type FfiT_Go_Http_requestSetTrailer_P1 = *pkg.Request
+func Go_Http_requestSetTrailerT(value pkg.Header, recv *pkg.Request) *pkg.Request { recv.Trailer = value; return recv }
 
 type FfiT_Go_Http_requestRemoteAddr_P0 = *pkg.Request
 func Go_Http_requestRemoteAddrT(p0 *pkg.Request) string { return p0.RemoteAddr }
 
-func Go_Http_requestSetRemoteAddr(value any, recv any) any { return SkyFfiFieldSet(value, recv, "RemoteAddr") }
+type FfiT_Go_Http_requestSetRemoteAddr_P1 = *pkg.Request
+func Go_Http_requestSetRemoteAddrT(value string, recv *pkg.Request) *pkg.Request { recv.RemoteAddr = value; return recv }
 
 type FfiT_Go_Http_requestRequestURI_P0 = *pkg.Request
 func Go_Http_requestRequestURIT(p0 *pkg.Request) string { return p0.RequestURI }
 
-func Go_Http_requestSetRequestURI(value any, recv any) any { return SkyFfiFieldSet(value, recv, "RequestURI") }
+type FfiT_Go_Http_requestSetRequestURI_P1 = *pkg.Request
+func Go_Http_requestSetRequestURIT(value string, recv *pkg.Request) *pkg.Request { recv.RequestURI = value; return recv }
 
 type FfiT_Go_Http_requestTLS_P0 = *pkg.Request
 type FfiT_Go_Http_requestTLS_R = *tls.ConnectionState
 func Go_Http_requestTLST(p0 *pkg.Request) *tls.ConnectionState { return p0.TLS }
 
-func Go_Http_requestSetTLS(value any, recv any) any { return SkyFfiFieldSet(value, recv, "TLS") }
+type FfiT_Go_Http_requestSetTLS_P0 = tls.ConnectionState
+type FfiT_Go_Http_requestSetTLS_P1 = *pkg.Request
+func Go_Http_requestSetTLST(value tls.ConnectionState, recv *pkg.Request) *pkg.Request { recv.TLS = func() *tls.ConnectionState { v := value; return &v }(); return recv }
 
 func Go_Http_requestCancel(p0 any) any { return SkyFfiFieldGet(p0, "Cancel") }
 
@@ -1499,12 +1597,15 @@ type FfiT_Go_Http_requestResponse_P0 = *pkg.Request
 type FfiT_Go_Http_requestResponse_R = *pkg.Response
 func Go_Http_requestResponseT(p0 *pkg.Request) *pkg.Response { return p0.Response }
 
-func Go_Http_requestSetResponse(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Response") }
+type FfiT_Go_Http_requestSetResponse_P0 = pkg.Response
+type FfiT_Go_Http_requestSetResponse_P1 = *pkg.Request
+func Go_Http_requestSetResponseT(value pkg.Response, recv *pkg.Request) *pkg.Request { recv.Response = func() *pkg.Response { v := value; return &v }(); return recv }
 
 type FfiT_Go_Http_requestPattern_P0 = *pkg.Request
 func Go_Http_requestPatternT(p0 *pkg.Request) string { return p0.Pattern }
 
-func Go_Http_requestSetPattern(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Pattern") }
+type FfiT_Go_Http_requestSetPattern_P1 = *pkg.Request
+func Go_Http_requestSetPatternT(value string, recv *pkg.Request) *pkg.Request { recv.Pattern = value; return recv }
 
 type FfiT_Go_Http_responseCookies_P0 = *pkg.Response
 type FfiT_Go_Http_responseCookies_R = []*pkg.Cookie
@@ -1548,77 +1649,96 @@ func Go_Http_responseWriteT(p0 *pkg.Response, p1 io.Writer) (out SkyResult[strin
 type FfiT_Go_Http_responseStatus_P0 = *pkg.Response
 func Go_Http_responseStatusT(p0 *pkg.Response) string { return p0.Status }
 
-func Go_Http_responseSetStatus(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Status") }
+type FfiT_Go_Http_responseSetStatus_P1 = *pkg.Response
+func Go_Http_responseSetStatusT(value string, recv *pkg.Response) *pkg.Response { recv.Status = value; return recv }
 
 type FfiT_Go_Http_responseStatusCode_P0 = *pkg.Response
 func Go_Http_responseStatusCodeT(p0 *pkg.Response) int { return p0.StatusCode }
 
-func Go_Http_responseSetStatusCode(value any, recv any) any { return SkyFfiFieldSet(value, recv, "StatusCode") }
+type FfiT_Go_Http_responseSetStatusCode_P1 = *pkg.Response
+func Go_Http_responseSetStatusCodeT(value int, recv *pkg.Response) *pkg.Response { recv.StatusCode = value; return recv }
 
 type FfiT_Go_Http_responseProto_P0 = *pkg.Response
 func Go_Http_responseProtoT(p0 *pkg.Response) string { return p0.Proto }
 
-func Go_Http_responseSetProto(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Proto") }
+type FfiT_Go_Http_responseSetProto_P1 = *pkg.Response
+func Go_Http_responseSetProtoT(value string, recv *pkg.Response) *pkg.Response { recv.Proto = value; return recv }
 
 type FfiT_Go_Http_responseProtoMajor_P0 = *pkg.Response
 func Go_Http_responseProtoMajorT(p0 *pkg.Response) int { return p0.ProtoMajor }
 
-func Go_Http_responseSetProtoMajor(value any, recv any) any { return SkyFfiFieldSet(value, recv, "ProtoMajor") }
+type FfiT_Go_Http_responseSetProtoMajor_P1 = *pkg.Response
+func Go_Http_responseSetProtoMajorT(value int, recv *pkg.Response) *pkg.Response { recv.ProtoMajor = value; return recv }
 
 type FfiT_Go_Http_responseProtoMinor_P0 = *pkg.Response
 func Go_Http_responseProtoMinorT(p0 *pkg.Response) int { return p0.ProtoMinor }
 
-func Go_Http_responseSetProtoMinor(value any, recv any) any { return SkyFfiFieldSet(value, recv, "ProtoMinor") }
+type FfiT_Go_Http_responseSetProtoMinor_P1 = *pkg.Response
+func Go_Http_responseSetProtoMinorT(value int, recv *pkg.Response) *pkg.Response { recv.ProtoMinor = value; return recv }
 
 type FfiT_Go_Http_responseHeader_P0 = *pkg.Response
 type FfiT_Go_Http_responseHeader_R = pkg.Header
 func Go_Http_responseHeaderT(p0 *pkg.Response) pkg.Header { return p0.Header }
 
-func Go_Http_responseSetHeader(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Header") }
+type FfiT_Go_Http_responseSetHeader_P0 = pkg.Header
+type FfiT_Go_Http_responseSetHeader_P1 = *pkg.Response
+func Go_Http_responseSetHeaderT(value pkg.Header, recv *pkg.Response) *pkg.Response { recv.Header = value; return recv }
 
 type FfiT_Go_Http_responseBody_P0 = *pkg.Response
 type FfiT_Go_Http_responseBody_R = io.ReadCloser
 func Go_Http_responseBodyT(p0 *pkg.Response) io.ReadCloser { return p0.Body }
 
-func Go_Http_responseSetBody(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Body") }
+type FfiT_Go_Http_responseSetBody_P0 = io.ReadCloser
+type FfiT_Go_Http_responseSetBody_P1 = *pkg.Response
+func Go_Http_responseSetBodyT(value io.ReadCloser, recv *pkg.Response) *pkg.Response { recv.Body = value; return recv }
 
 type FfiT_Go_Http_responseContentLength_P0 = *pkg.Response
 func Go_Http_responseContentLengthT(p0 *pkg.Response) int64 { return p0.ContentLength }
 
-func Go_Http_responseSetContentLength(value any, recv any) any { return SkyFfiFieldSet(value, recv, "ContentLength") }
+type FfiT_Go_Http_responseSetContentLength_P1 = *pkg.Response
+func Go_Http_responseSetContentLengthT(value int64, recv *pkg.Response) *pkg.Response { recv.ContentLength = value; return recv }
 
 type FfiT_Go_Http_responseTransferEncoding_P0 = *pkg.Response
 func Go_Http_responseTransferEncodingT(p0 *pkg.Response) []string { return p0.TransferEncoding }
 
-func Go_Http_responseSetTransferEncoding(value any, recv any) any { return SkyFfiFieldSet(value, recv, "TransferEncoding") }
+type FfiT_Go_Http_responseSetTransferEncoding_P1 = *pkg.Response
+func Go_Http_responseSetTransferEncodingT(value []string, recv *pkg.Response) *pkg.Response { recv.TransferEncoding = value; return recv }
 
 type FfiT_Go_Http_responseClose_P0 = *pkg.Response
 func Go_Http_responseCloseT(p0 *pkg.Response) bool { return p0.Close }
 
-func Go_Http_responseSetClose(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Close") }
+type FfiT_Go_Http_responseSetClose_P1 = *pkg.Response
+func Go_Http_responseSetCloseT(value bool, recv *pkg.Response) *pkg.Response { recv.Close = value; return recv }
 
 type FfiT_Go_Http_responseUncompressed_P0 = *pkg.Response
 func Go_Http_responseUncompressedT(p0 *pkg.Response) bool { return p0.Uncompressed }
 
-func Go_Http_responseSetUncompressed(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Uncompressed") }
+type FfiT_Go_Http_responseSetUncompressed_P1 = *pkg.Response
+func Go_Http_responseSetUncompressedT(value bool, recv *pkg.Response) *pkg.Response { recv.Uncompressed = value; return recv }
 
 type FfiT_Go_Http_responseTrailer_P0 = *pkg.Response
 type FfiT_Go_Http_responseTrailer_R = pkg.Header
 func Go_Http_responseTrailerT(p0 *pkg.Response) pkg.Header { return p0.Trailer }
 
-func Go_Http_responseSetTrailer(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Trailer") }
+type FfiT_Go_Http_responseSetTrailer_P0 = pkg.Header
+type FfiT_Go_Http_responseSetTrailer_P1 = *pkg.Response
+func Go_Http_responseSetTrailerT(value pkg.Header, recv *pkg.Response) *pkg.Response { recv.Trailer = value; return recv }
 
 type FfiT_Go_Http_responseRequest_P0 = *pkg.Response
 type FfiT_Go_Http_responseRequest_R = *pkg.Request
 func Go_Http_responseRequestT(p0 *pkg.Response) *pkg.Request { return p0.Request }
 
-func Go_Http_responseSetRequest(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Request") }
+type FfiT_Go_Http_responseSetRequest_P0 = pkg.Request
+type FfiT_Go_Http_responseSetRequest_P1 = *pkg.Response
+func Go_Http_responseSetRequestT(value pkg.Request, recv *pkg.Response) *pkg.Response { recv.Request = func() *pkg.Request { v := value; return &v }(); return recv }
 
 type FfiT_Go_Http_responseTLS_P0 = *pkg.Response
 type FfiT_Go_Http_responseTLS_R = *tls.ConnectionState
 func Go_Http_responseTLST(p0 *pkg.Response) *tls.ConnectionState { return p0.TLS }
 
-func Go_Http_responseSetTLS(value any, recv any) any { return SkyFfiFieldSet(value, recv, "TLS") }
+type FfiT_Go_Http_responseSetTLS_P0 = tls.ConnectionState
+type FfiT_Go_Http_responseSetTLS_P1 = *pkg.Response
+func Go_Http_responseSetTLST(value tls.ConnectionState, recv *pkg.Response) *pkg.Response { recv.TLS = func() *tls.ConnectionState { v := value; return &v }(); return recv }
 
 func Go_Http_newResponse(_ any) any { return new(pkg.Response) }
 
@@ -1693,11 +1813,12 @@ func Go_Http_responseWriterWriteT(p0 pkg.ResponseWriter, p1 []byte) (out SkyResu
 	return
 }
 
-// [pure] Go_Http.responseWriterWriteHeader → pkg.ResponseWriterWriteHeader
-func Go_Http_responseWriterWriteHeader(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	p0.(pkg.ResponseWriter).WriteHeader(AsInt(p1))
-	out = Ok[any, any](struct{}{})
+type FfiT_Go_Http_responseWriterWriteHeader_P0 = pkg.ResponseWriter
+// [pure] typed wrapper for Go_Http_responseWriterWriteHeader (P7 adaptor target)
+func Go_Http_responseWriterWriteHeaderT(p0 pkg.ResponseWriter, p1 int) (out SkyResult[string, struct{}]) {
+	defer SkyFfiRecoverT(&out)()
+	p0.WriteHeader(p1)
+	out = Ok[string, struct{}](struct{}{})
 	return
 }
 
@@ -1732,27 +1853,36 @@ func Go_Http_serveT(p0 net.Listener, p1 pkg.Handler) (out SkyResult[string, stru
 	return
 }
 
-// [pure] Go_Http.serveContent → pkg.ServeContent
-func Go_Http_serveContent(p0 any, p1 any, p2 any, p3 any, p4 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	pkg.ServeContent(p0.(pkg.ResponseWriter), p1.(*pkg.Request), fmt.Sprintf("%v", p2), p3.(time.Time), p4.(io.ReadSeeker))
-	out = Ok[any, any](struct{}{})
+type FfiT_Go_Http_serveContent_P0 = pkg.ResponseWriter
+type FfiT_Go_Http_serveContent_P1 = *pkg.Request
+type FfiT_Go_Http_serveContent_P3 = time.Time
+type FfiT_Go_Http_serveContent_P4 = io.ReadSeeker
+// [pure] typed wrapper for Go_Http_serveContent (P7 adaptor target)
+func Go_Http_serveContentT(p0 pkg.ResponseWriter, p1 *pkg.Request, p2 string, p3 time.Time, p4 io.ReadSeeker) (out SkyResult[string, struct{}]) {
+	defer SkyFfiRecoverT(&out)()
+	pkg.ServeContent(p0, p1, p2, p3, p4)
+	out = Ok[string, struct{}](struct{}{})
 	return
 }
 
-// [pure] Go_Http.serveFile → pkg.ServeFile
-func Go_Http_serveFile(p0 any, p1 any, p2 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	pkg.ServeFile(p0.(pkg.ResponseWriter), p1.(*pkg.Request), fmt.Sprintf("%v", p2))
-	out = Ok[any, any](struct{}{})
+type FfiT_Go_Http_serveFile_P0 = pkg.ResponseWriter
+type FfiT_Go_Http_serveFile_P1 = *pkg.Request
+// [pure] typed wrapper for Go_Http_serveFile (P7 adaptor target)
+func Go_Http_serveFileT(p0 pkg.ResponseWriter, p1 *pkg.Request, p2 string) (out SkyResult[string, struct{}]) {
+	defer SkyFfiRecoverT(&out)()
+	pkg.ServeFile(p0, p1, p2)
+	out = Ok[string, struct{}](struct{}{})
 	return
 }
 
-// [pure] Go_Http.serveFileFS → pkg.ServeFileFS
-func Go_Http_serveFileFS(p0 any, p1 any, p2 any, p3 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	pkg.ServeFileFS(p0.(pkg.ResponseWriter), p1.(*pkg.Request), p2.(fs.FS), fmt.Sprintf("%v", p3))
-	out = Ok[any, any](struct{}{})
+type FfiT_Go_Http_serveFileFS_P0 = pkg.ResponseWriter
+type FfiT_Go_Http_serveFileFS_P1 = *pkg.Request
+type FfiT_Go_Http_serveFileFS_P2 = fs.FS
+// [pure] typed wrapper for Go_Http_serveFileFS (P7 adaptor target)
+func Go_Http_serveFileFST(p0 pkg.ResponseWriter, p1 *pkg.Request, p2 fs.FS, p3 string) (out SkyResult[string, struct{}]) {
+	defer SkyFfiRecoverT(&out)()
+	pkg.ServeFileFS(p0, p1, p2, p3)
+	out = Ok[string, struct{}](struct{}{})
 	return
 }
 
@@ -1765,19 +1895,24 @@ func Go_Http_serveMuxHandler(p0 any, p1 any) (out any) {
 	return
 }
 
-// [pure] Go_Http.serveMuxServeHTTP → pkg.ServeMuxServeHTTP
-func Go_Http_serveMuxServeHTTP(p0 any, p1 any, p2 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	p0.(*pkg.ServeMux).ServeHTTP(p1.(pkg.ResponseWriter), p2.(*pkg.Request))
-	out = Ok[any, any](struct{}{})
+type FfiT_Go_Http_serveMuxServeHTTP_P0 = *pkg.ServeMux
+type FfiT_Go_Http_serveMuxServeHTTP_P1 = pkg.ResponseWriter
+type FfiT_Go_Http_serveMuxServeHTTP_P2 = *pkg.Request
+// [pure] typed wrapper for Go_Http_serveMuxServeHTTP (P7 adaptor target)
+func Go_Http_serveMuxServeHTTPT(p0 *pkg.ServeMux, p1 pkg.ResponseWriter, p2 *pkg.Request) (out SkyResult[string, struct{}]) {
+	defer SkyFfiRecoverT(&out)()
+	p0.ServeHTTP(p1, p2)
+	out = Ok[string, struct{}](struct{}{})
 	return
 }
 
-// [pure] Go_Http.serveMuxHandle → pkg.ServeMuxHandle
-func Go_Http_serveMuxHandle(p0 any, p1 any, p2 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	p0.(*pkg.ServeMux).Handle(fmt.Sprintf("%v", p1), p2.(pkg.Handler))
-	out = Ok[any, any](struct{}{})
+type FfiT_Go_Http_serveMuxHandle_P0 = *pkg.ServeMux
+type FfiT_Go_Http_serveMuxHandle_P2 = pkg.Handler
+// [pure] typed wrapper for Go_Http_serveMuxHandle (P7 adaptor target)
+func Go_Http_serveMuxHandleT(p0 *pkg.ServeMux, p1 string, p2 pkg.Handler) (out SkyResult[string, struct{}]) {
+	defer SkyFfiRecoverT(&out)()
+	p0.Handle(p1, p2)
+	out = Ok[string, struct{}](struct{}{})
 	return
 }
 
@@ -1861,11 +1996,12 @@ func Go_Http_serverServeTLST(p0 *pkg.Server, p1 net.Listener, p2 string, p3 stri
 	return
 }
 
-// [pure] Go_Http.serverSetKeepAlivesEnabled → pkg.ServerSetKeepAlivesEnabled
-func Go_Http_serverSetKeepAlivesEnabled(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	p0.(*pkg.Server).SetKeepAlivesEnabled(AsBool(p1))
-	out = Ok[any, any](struct{}{})
+type FfiT_Go_Http_serverSetKeepAlivesEnabled_P0 = *pkg.Server
+// [pure] typed wrapper for Go_Http_serverSetKeepAlivesEnabled (P7 adaptor target)
+func Go_Http_serverSetKeepAlivesEnabledT(p0 *pkg.Server, p1 bool) (out SkyResult[string, struct{}]) {
+	defer SkyFfiRecoverT(&out)()
+	p0.SetKeepAlivesEnabled(p1)
+	out = Ok[string, struct{}](struct{}{})
 	return
 }
 
@@ -1882,53 +2018,68 @@ func Go_Http_serverListenAndServeTLST(p0 *pkg.Server, p1 string, p2 string) (out
 type FfiT_Go_Http_serverAddr_P0 = *pkg.Server
 func Go_Http_serverAddrT(p0 *pkg.Server) string { return p0.Addr }
 
-func Go_Http_serverSetAddr(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Addr") }
+type FfiT_Go_Http_serverSetAddr_P1 = *pkg.Server
+func Go_Http_serverSetAddrT(value string, recv *pkg.Server) *pkg.Server { recv.Addr = value; return recv }
 
 type FfiT_Go_Http_serverHandler_P0 = *pkg.Server
 type FfiT_Go_Http_serverHandler_R = pkg.Handler
 func Go_Http_serverHandlerT(p0 *pkg.Server) pkg.Handler { return p0.Handler }
 
-func Go_Http_serverSetHandler(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Handler") }
+type FfiT_Go_Http_serverSetHandler_P0 = pkg.Handler
+type FfiT_Go_Http_serverSetHandler_P1 = *pkg.Server
+func Go_Http_serverSetHandlerT(value pkg.Handler, recv *pkg.Server) *pkg.Server { recv.Handler = value; return recv }
 
 type FfiT_Go_Http_serverDisableGeneralOptionsHandler_P0 = *pkg.Server
 func Go_Http_serverDisableGeneralOptionsHandlerT(p0 *pkg.Server) bool { return p0.DisableGeneralOptionsHandler }
 
-func Go_Http_serverSetDisableGeneralOptionsHandler(value any, recv any) any { return SkyFfiFieldSet(value, recv, "DisableGeneralOptionsHandler") }
+type FfiT_Go_Http_serverSetDisableGeneralOptionsHandler_P1 = *pkg.Server
+func Go_Http_serverSetDisableGeneralOptionsHandlerT(value bool, recv *pkg.Server) *pkg.Server { recv.DisableGeneralOptionsHandler = value; return recv }
 
 type FfiT_Go_Http_serverTLSConfig_P0 = *pkg.Server
 type FfiT_Go_Http_serverTLSConfig_R = *tls.Config
 func Go_Http_serverTLSConfigT(p0 *pkg.Server) *tls.Config { return p0.TLSConfig }
 
-func Go_Http_serverSetTLSConfig(value any, recv any) any { return SkyFfiFieldSet(value, recv, "TLSConfig") }
+type FfiT_Go_Http_serverSetTLSConfig_P0 = tls.Config
+type FfiT_Go_Http_serverSetTLSConfig_P1 = *pkg.Server
+func Go_Http_serverSetTLSConfigT(value tls.Config, recv *pkg.Server) *pkg.Server { recv.TLSConfig = func() *tls.Config { v := value; return &v }(); return recv }
 
 type FfiT_Go_Http_serverReadTimeout_P0 = *pkg.Server
 type FfiT_Go_Http_serverReadTimeout_R = time.Duration
 func Go_Http_serverReadTimeoutT(p0 *pkg.Server) time.Duration { return p0.ReadTimeout }
 
-func Go_Http_serverSetReadTimeout(value any, recv any) any { return SkyFfiFieldSet(value, recv, "ReadTimeout") }
+type FfiT_Go_Http_serverSetReadTimeout_P0 = time.Duration
+type FfiT_Go_Http_serverSetReadTimeout_P1 = *pkg.Server
+func Go_Http_serverSetReadTimeoutT(value time.Duration, recv *pkg.Server) *pkg.Server { recv.ReadTimeout = value; return recv }
 
 type FfiT_Go_Http_serverReadHeaderTimeout_P0 = *pkg.Server
 type FfiT_Go_Http_serverReadHeaderTimeout_R = time.Duration
 func Go_Http_serverReadHeaderTimeoutT(p0 *pkg.Server) time.Duration { return p0.ReadHeaderTimeout }
 
-func Go_Http_serverSetReadHeaderTimeout(value any, recv any) any { return SkyFfiFieldSet(value, recv, "ReadHeaderTimeout") }
+type FfiT_Go_Http_serverSetReadHeaderTimeout_P0 = time.Duration
+type FfiT_Go_Http_serverSetReadHeaderTimeout_P1 = *pkg.Server
+func Go_Http_serverSetReadHeaderTimeoutT(value time.Duration, recv *pkg.Server) *pkg.Server { recv.ReadHeaderTimeout = value; return recv }
 
 type FfiT_Go_Http_serverWriteTimeout_P0 = *pkg.Server
 type FfiT_Go_Http_serverWriteTimeout_R = time.Duration
 func Go_Http_serverWriteTimeoutT(p0 *pkg.Server) time.Duration { return p0.WriteTimeout }
 
-func Go_Http_serverSetWriteTimeout(value any, recv any) any { return SkyFfiFieldSet(value, recv, "WriteTimeout") }
+type FfiT_Go_Http_serverSetWriteTimeout_P0 = time.Duration
+type FfiT_Go_Http_serverSetWriteTimeout_P1 = *pkg.Server
+func Go_Http_serverSetWriteTimeoutT(value time.Duration, recv *pkg.Server) *pkg.Server { recv.WriteTimeout = value; return recv }
 
 type FfiT_Go_Http_serverIdleTimeout_P0 = *pkg.Server
 type FfiT_Go_Http_serverIdleTimeout_R = time.Duration
 func Go_Http_serverIdleTimeoutT(p0 *pkg.Server) time.Duration { return p0.IdleTimeout }
 
-func Go_Http_serverSetIdleTimeout(value any, recv any) any { return SkyFfiFieldSet(value, recv, "IdleTimeout") }
+type FfiT_Go_Http_serverSetIdleTimeout_P0 = time.Duration
+type FfiT_Go_Http_serverSetIdleTimeout_P1 = *pkg.Server
+func Go_Http_serverSetIdleTimeoutT(value time.Duration, recv *pkg.Server) *pkg.Server { recv.IdleTimeout = value; return recv }
 
 type FfiT_Go_Http_serverMaxHeaderBytes_P0 = *pkg.Server
 func Go_Http_serverMaxHeaderBytesT(p0 *pkg.Server) int { return p0.MaxHeaderBytes }
 
-func Go_Http_serverSetMaxHeaderBytes(value any, recv any) any { return SkyFfiFieldSet(value, recv, "MaxHeaderBytes") }
+type FfiT_Go_Http_serverSetMaxHeaderBytes_P1 = *pkg.Server
+func Go_Http_serverSetMaxHeaderBytesT(value int, recv *pkg.Server) *pkg.Server { recv.MaxHeaderBytes = value; return recv }
 
 func Go_Http_serverTLSNextProto(p0 any) any { return SkyFfiFieldGet(p0, "TLSNextProto") }
 
@@ -1942,7 +2093,9 @@ type FfiT_Go_Http_serverErrorLog_P0 = *pkg.Server
 type FfiT_Go_Http_serverErrorLog_R = *log.Logger
 func Go_Http_serverErrorLogT(p0 *pkg.Server) *log.Logger { return p0.ErrorLog }
 
-func Go_Http_serverSetErrorLog(value any, recv any) any { return SkyFfiFieldSet(value, recv, "ErrorLog") }
+type FfiT_Go_Http_serverSetErrorLog_P0 = log.Logger
+type FfiT_Go_Http_serverSetErrorLog_P1 = *pkg.Server
+func Go_Http_serverSetErrorLogT(value log.Logger, recv *pkg.Server) *pkg.Server { recv.ErrorLog = func() *log.Logger { v := value; return &v }(); return recv }
 
 func Go_Http_serverBaseContext(p0 any) any { return SkyFfiFieldGet(p0, "BaseContext") }
 
@@ -1956,13 +2109,17 @@ type FfiT_Go_Http_serverHTTP2_P0 = *pkg.Server
 type FfiT_Go_Http_serverHTTP2_R = *pkg.HTTP2Config
 func Go_Http_serverHTTP2T(p0 *pkg.Server) *pkg.HTTP2Config { return p0.HTTP2 }
 
-func Go_Http_serverSetHTTP2(value any, recv any) any { return SkyFfiFieldSet(value, recv, "HTTP2") }
+type FfiT_Go_Http_serverSetHTTP2_P0 = pkg.HTTP2Config
+type FfiT_Go_Http_serverSetHTTP2_P1 = *pkg.Server
+func Go_Http_serverSetHTTP2T(value pkg.HTTP2Config, recv *pkg.Server) *pkg.Server { recv.HTTP2 = func() *pkg.HTTP2Config { v := value; return &v }(); return recv }
 
 type FfiT_Go_Http_serverProtocols_P0 = *pkg.Server
 type FfiT_Go_Http_serverProtocols_R = *pkg.Protocols
 func Go_Http_serverProtocolsT(p0 *pkg.Server) *pkg.Protocols { return p0.Protocols }
 
-func Go_Http_serverSetProtocols(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Protocols") }
+type FfiT_Go_Http_serverSetProtocols_P0 = pkg.Protocols
+type FfiT_Go_Http_serverSetProtocols_P1 = *pkg.Server
+func Go_Http_serverSetProtocolsT(value pkg.Protocols, recv *pkg.Server) *pkg.Server { recv.Protocols = func() *pkg.Protocols { v := value; return &v }(); return recv }
 
 func Go_Http_newServer(_ any) any { return new(pkg.Server) }
 
@@ -1970,11 +2127,13 @@ func Go_Http_serverContextKey(_ any) any { return pkg.ServerContextKey }
 
 func Go_Http_setServerContextKey(value any) any { reflect.ValueOf(&pkg.ServerContextKey).Elem().Set(reflect.ValueOf(value).Convert(reflect.TypeOf(pkg.ServerContextKey))); return struct{}{} }
 
-// [pure] Go_Http.setCookie → pkg.SetCookie
-func Go_Http_setCookie(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	pkg.SetCookie(p0.(pkg.ResponseWriter), p1.(*pkg.Cookie))
-	out = Ok[any, any](struct{}{})
+type FfiT_Go_Http_setCookie_P0 = pkg.ResponseWriter
+type FfiT_Go_Http_setCookie_P1 = *pkg.Cookie
+// [pure] typed wrapper for Go_Http_setCookie (P7 adaptor target)
+func Go_Http_setCookieT(p0 pkg.ResponseWriter, p1 *pkg.Cookie) (out SkyResult[string, struct{}]) {
+	defer SkyFfiRecoverT(&out)()
+	pkg.SetCookie(p0, p1)
+	out = Ok[string, struct{}](struct{}{})
 	return
 }
 
@@ -2175,27 +2334,32 @@ func Go_Http_transportCloneT(p0 *pkg.Transport) (out SkyResult[string, *pkg.Tran
 	return
 }
 
-// [pure] Go_Http.transportRegisterProtocol → pkg.TransportRegisterProtocol
-func Go_Http_transportRegisterProtocol(p0 any, p1 any, p2 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	p0.(*pkg.Transport).RegisterProtocol(fmt.Sprintf("%v", p1), p2.(pkg.RoundTripper))
-	out = Ok[any, any](struct{}{})
+type FfiT_Go_Http_transportRegisterProtocol_P0 = *pkg.Transport
+type FfiT_Go_Http_transportRegisterProtocol_P2 = pkg.RoundTripper
+// [pure] typed wrapper for Go_Http_transportRegisterProtocol (P7 adaptor target)
+func Go_Http_transportRegisterProtocolT(p0 *pkg.Transport, p1 string, p2 pkg.RoundTripper) (out SkyResult[string, struct{}]) {
+	defer SkyFfiRecoverT(&out)()
+	p0.RegisterProtocol(p1, p2)
+	out = Ok[string, struct{}](struct{}{})
 	return
 }
 
-// [pure] Go_Http.transportCloseIdleConnections → pkg.TransportCloseIdleConnections
-func Go_Http_transportCloseIdleConnections(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	p0.(*pkg.Transport).CloseIdleConnections()
-	out = Ok[any, any](struct{}{})
+type FfiT_Go_Http_transportCloseIdleConnections_P0 = *pkg.Transport
+// [pure] typed wrapper for Go_Http_transportCloseIdleConnections (P7 adaptor target)
+func Go_Http_transportCloseIdleConnectionsT(p0 *pkg.Transport) (out SkyResult[string, struct{}]) {
+	defer SkyFfiRecoverT(&out)()
+	p0.CloseIdleConnections()
+	out = Ok[string, struct{}](struct{}{})
 	return
 }
 
-// [pure] Go_Http.transportCancelRequest → pkg.TransportCancelRequest
-func Go_Http_transportCancelRequest(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	p0.(*pkg.Transport).CancelRequest(p1.(*pkg.Request))
-	out = Ok[any, any](struct{}{})
+type FfiT_Go_Http_transportCancelRequest_P0 = *pkg.Transport
+type FfiT_Go_Http_transportCancelRequest_P1 = *pkg.Request
+// [pure] typed wrapper for Go_Http_transportCancelRequest (P7 adaptor target)
+func Go_Http_transportCancelRequestT(p0 *pkg.Transport, p1 *pkg.Request) (out SkyResult[string, struct{}]) {
+	defer SkyFfiRecoverT(&out)()
+	p0.CancelRequest(p1)
+	out = Ok[string, struct{}](struct{}{})
 	return
 }
 
@@ -2227,56 +2391,71 @@ type FfiT_Go_Http_transportTLSClientConfig_P0 = *pkg.Transport
 type FfiT_Go_Http_transportTLSClientConfig_R = *tls.Config
 func Go_Http_transportTLSClientConfigT(p0 *pkg.Transport) *tls.Config { return p0.TLSClientConfig }
 
-func Go_Http_transportSetTLSClientConfig(value any, recv any) any { return SkyFfiFieldSet(value, recv, "TLSClientConfig") }
+type FfiT_Go_Http_transportSetTLSClientConfig_P0 = tls.Config
+type FfiT_Go_Http_transportSetTLSClientConfig_P1 = *pkg.Transport
+func Go_Http_transportSetTLSClientConfigT(value tls.Config, recv *pkg.Transport) *pkg.Transport { recv.TLSClientConfig = func() *tls.Config { v := value; return &v }(); return recv }
 
 type FfiT_Go_Http_transportTLSHandshakeTimeout_P0 = *pkg.Transport
 type FfiT_Go_Http_transportTLSHandshakeTimeout_R = time.Duration
 func Go_Http_transportTLSHandshakeTimeoutT(p0 *pkg.Transport) time.Duration { return p0.TLSHandshakeTimeout }
 
-func Go_Http_transportSetTLSHandshakeTimeout(value any, recv any) any { return SkyFfiFieldSet(value, recv, "TLSHandshakeTimeout") }
+type FfiT_Go_Http_transportSetTLSHandshakeTimeout_P0 = time.Duration
+type FfiT_Go_Http_transportSetTLSHandshakeTimeout_P1 = *pkg.Transport
+func Go_Http_transportSetTLSHandshakeTimeoutT(value time.Duration, recv *pkg.Transport) *pkg.Transport { recv.TLSHandshakeTimeout = value; return recv }
 
 type FfiT_Go_Http_transportDisableKeepAlives_P0 = *pkg.Transport
 func Go_Http_transportDisableKeepAlivesT(p0 *pkg.Transport) bool { return p0.DisableKeepAlives }
 
-func Go_Http_transportSetDisableKeepAlives(value any, recv any) any { return SkyFfiFieldSet(value, recv, "DisableKeepAlives") }
+type FfiT_Go_Http_transportSetDisableKeepAlives_P1 = *pkg.Transport
+func Go_Http_transportSetDisableKeepAlivesT(value bool, recv *pkg.Transport) *pkg.Transport { recv.DisableKeepAlives = value; return recv }
 
 type FfiT_Go_Http_transportDisableCompression_P0 = *pkg.Transport
 func Go_Http_transportDisableCompressionT(p0 *pkg.Transport) bool { return p0.DisableCompression }
 
-func Go_Http_transportSetDisableCompression(value any, recv any) any { return SkyFfiFieldSet(value, recv, "DisableCompression") }
+type FfiT_Go_Http_transportSetDisableCompression_P1 = *pkg.Transport
+func Go_Http_transportSetDisableCompressionT(value bool, recv *pkg.Transport) *pkg.Transport { recv.DisableCompression = value; return recv }
 
 type FfiT_Go_Http_transportMaxIdleConns_P0 = *pkg.Transport
 func Go_Http_transportMaxIdleConnsT(p0 *pkg.Transport) int { return p0.MaxIdleConns }
 
-func Go_Http_transportSetMaxIdleConns(value any, recv any) any { return SkyFfiFieldSet(value, recv, "MaxIdleConns") }
+type FfiT_Go_Http_transportSetMaxIdleConns_P1 = *pkg.Transport
+func Go_Http_transportSetMaxIdleConnsT(value int, recv *pkg.Transport) *pkg.Transport { recv.MaxIdleConns = value; return recv }
 
 type FfiT_Go_Http_transportMaxIdleConnsPerHost_P0 = *pkg.Transport
 func Go_Http_transportMaxIdleConnsPerHostT(p0 *pkg.Transport) int { return p0.MaxIdleConnsPerHost }
 
-func Go_Http_transportSetMaxIdleConnsPerHost(value any, recv any) any { return SkyFfiFieldSet(value, recv, "MaxIdleConnsPerHost") }
+type FfiT_Go_Http_transportSetMaxIdleConnsPerHost_P1 = *pkg.Transport
+func Go_Http_transportSetMaxIdleConnsPerHostT(value int, recv *pkg.Transport) *pkg.Transport { recv.MaxIdleConnsPerHost = value; return recv }
 
 type FfiT_Go_Http_transportMaxConnsPerHost_P0 = *pkg.Transport
 func Go_Http_transportMaxConnsPerHostT(p0 *pkg.Transport) int { return p0.MaxConnsPerHost }
 
-func Go_Http_transportSetMaxConnsPerHost(value any, recv any) any { return SkyFfiFieldSet(value, recv, "MaxConnsPerHost") }
+type FfiT_Go_Http_transportSetMaxConnsPerHost_P1 = *pkg.Transport
+func Go_Http_transportSetMaxConnsPerHostT(value int, recv *pkg.Transport) *pkg.Transport { recv.MaxConnsPerHost = value; return recv }
 
 type FfiT_Go_Http_transportIdleConnTimeout_P0 = *pkg.Transport
 type FfiT_Go_Http_transportIdleConnTimeout_R = time.Duration
 func Go_Http_transportIdleConnTimeoutT(p0 *pkg.Transport) time.Duration { return p0.IdleConnTimeout }
 
-func Go_Http_transportSetIdleConnTimeout(value any, recv any) any { return SkyFfiFieldSet(value, recv, "IdleConnTimeout") }
+type FfiT_Go_Http_transportSetIdleConnTimeout_P0 = time.Duration
+type FfiT_Go_Http_transportSetIdleConnTimeout_P1 = *pkg.Transport
+func Go_Http_transportSetIdleConnTimeoutT(value time.Duration, recv *pkg.Transport) *pkg.Transport { recv.IdleConnTimeout = value; return recv }
 
 type FfiT_Go_Http_transportResponseHeaderTimeout_P0 = *pkg.Transport
 type FfiT_Go_Http_transportResponseHeaderTimeout_R = time.Duration
 func Go_Http_transportResponseHeaderTimeoutT(p0 *pkg.Transport) time.Duration { return p0.ResponseHeaderTimeout }
 
-func Go_Http_transportSetResponseHeaderTimeout(value any, recv any) any { return SkyFfiFieldSet(value, recv, "ResponseHeaderTimeout") }
+type FfiT_Go_Http_transportSetResponseHeaderTimeout_P0 = time.Duration
+type FfiT_Go_Http_transportSetResponseHeaderTimeout_P1 = *pkg.Transport
+func Go_Http_transportSetResponseHeaderTimeoutT(value time.Duration, recv *pkg.Transport) *pkg.Transport { recv.ResponseHeaderTimeout = value; return recv }
 
 type FfiT_Go_Http_transportExpectContinueTimeout_P0 = *pkg.Transport
 type FfiT_Go_Http_transportExpectContinueTimeout_R = time.Duration
 func Go_Http_transportExpectContinueTimeoutT(p0 *pkg.Transport) time.Duration { return p0.ExpectContinueTimeout }
 
-func Go_Http_transportSetExpectContinueTimeout(value any, recv any) any { return SkyFfiFieldSet(value, recv, "ExpectContinueTimeout") }
+type FfiT_Go_Http_transportSetExpectContinueTimeout_P0 = time.Duration
+type FfiT_Go_Http_transportSetExpectContinueTimeout_P1 = *pkg.Transport
+func Go_Http_transportSetExpectContinueTimeoutT(value time.Duration, recv *pkg.Transport) *pkg.Transport { recv.ExpectContinueTimeout = value; return recv }
 
 func Go_Http_transportTLSNextProto(p0 any) any { return SkyFfiFieldGet(p0, "TLSNextProto") }
 
@@ -2286,7 +2465,9 @@ type FfiT_Go_Http_transportProxyConnectHeader_P0 = *pkg.Transport
 type FfiT_Go_Http_transportProxyConnectHeader_R = pkg.Header
 func Go_Http_transportProxyConnectHeaderT(p0 *pkg.Transport) pkg.Header { return p0.ProxyConnectHeader }
 
-func Go_Http_transportSetProxyConnectHeader(value any, recv any) any { return SkyFfiFieldSet(value, recv, "ProxyConnectHeader") }
+type FfiT_Go_Http_transportSetProxyConnectHeader_P0 = pkg.Header
+type FfiT_Go_Http_transportSetProxyConnectHeader_P1 = *pkg.Transport
+func Go_Http_transportSetProxyConnectHeaderT(value pkg.Header, recv *pkg.Transport) *pkg.Transport { recv.ProxyConnectHeader = value; return recv }
 
 func Go_Http_transportGetProxyConnectHeader(p0 any) any { return SkyFfiFieldGet(p0, "GetProxyConnectHeader") }
 
@@ -2295,34 +2476,42 @@ func Go_Http_transportSetGetProxyConnectHeader(value any, recv any) any { return
 type FfiT_Go_Http_transportMaxResponseHeaderBytes_P0 = *pkg.Transport
 func Go_Http_transportMaxResponseHeaderBytesT(p0 *pkg.Transport) int64 { return p0.MaxResponseHeaderBytes }
 
-func Go_Http_transportSetMaxResponseHeaderBytes(value any, recv any) any { return SkyFfiFieldSet(value, recv, "MaxResponseHeaderBytes") }
+type FfiT_Go_Http_transportSetMaxResponseHeaderBytes_P1 = *pkg.Transport
+func Go_Http_transportSetMaxResponseHeaderBytesT(value int64, recv *pkg.Transport) *pkg.Transport { recv.MaxResponseHeaderBytes = value; return recv }
 
 type FfiT_Go_Http_transportWriteBufferSize_P0 = *pkg.Transport
 func Go_Http_transportWriteBufferSizeT(p0 *pkg.Transport) int { return p0.WriteBufferSize }
 
-func Go_Http_transportSetWriteBufferSize(value any, recv any) any { return SkyFfiFieldSet(value, recv, "WriteBufferSize") }
+type FfiT_Go_Http_transportSetWriteBufferSize_P1 = *pkg.Transport
+func Go_Http_transportSetWriteBufferSizeT(value int, recv *pkg.Transport) *pkg.Transport { recv.WriteBufferSize = value; return recv }
 
 type FfiT_Go_Http_transportReadBufferSize_P0 = *pkg.Transport
 func Go_Http_transportReadBufferSizeT(p0 *pkg.Transport) int { return p0.ReadBufferSize }
 
-func Go_Http_transportSetReadBufferSize(value any, recv any) any { return SkyFfiFieldSet(value, recv, "ReadBufferSize") }
+type FfiT_Go_Http_transportSetReadBufferSize_P1 = *pkg.Transport
+func Go_Http_transportSetReadBufferSizeT(value int, recv *pkg.Transport) *pkg.Transport { recv.ReadBufferSize = value; return recv }
 
 type FfiT_Go_Http_transportForceAttemptHTTP2_P0 = *pkg.Transport
 func Go_Http_transportForceAttemptHTTP2T(p0 *pkg.Transport) bool { return p0.ForceAttemptHTTP2 }
 
-func Go_Http_transportSetForceAttemptHTTP2(value any, recv any) any { return SkyFfiFieldSet(value, recv, "ForceAttemptHTTP2") }
+type FfiT_Go_Http_transportSetForceAttemptHTTP2_P1 = *pkg.Transport
+func Go_Http_transportSetForceAttemptHTTP2T(value bool, recv *pkg.Transport) *pkg.Transport { recv.ForceAttemptHTTP2 = value; return recv }
 
 type FfiT_Go_Http_transportHTTP2_P0 = *pkg.Transport
 type FfiT_Go_Http_transportHTTP2_R = *pkg.HTTP2Config
 func Go_Http_transportHTTP2T(p0 *pkg.Transport) *pkg.HTTP2Config { return p0.HTTP2 }
 
-func Go_Http_transportSetHTTP2(value any, recv any) any { return SkyFfiFieldSet(value, recv, "HTTP2") }
+type FfiT_Go_Http_transportSetHTTP2_P0 = pkg.HTTP2Config
+type FfiT_Go_Http_transportSetHTTP2_P1 = *pkg.Transport
+func Go_Http_transportSetHTTP2T(value pkg.HTTP2Config, recv *pkg.Transport) *pkg.Transport { recv.HTTP2 = func() *pkg.HTTP2Config { v := value; return &v }(); return recv }
 
 type FfiT_Go_Http_transportProtocols_P0 = *pkg.Transport
 type FfiT_Go_Http_transportProtocols_R = *pkg.Protocols
 func Go_Http_transportProtocolsT(p0 *pkg.Transport) *pkg.Protocols { return p0.Protocols }
 
-func Go_Http_transportSetProtocols(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Protocols") }
+type FfiT_Go_Http_transportSetProtocols_P0 = pkg.Protocols
+type FfiT_Go_Http_transportSetProtocols_P1 = *pkg.Transport
+func Go_Http_transportSetProtocolsT(value pkg.Protocols, recv *pkg.Transport) *pkg.Transport { recv.Protocols = func() *pkg.Protocols { v := value; return &v }(); return recv }
 
 func Go_Http_newTransport(_ any) any { return new(pkg.Transport) }
 

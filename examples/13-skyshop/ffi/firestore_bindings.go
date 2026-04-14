@@ -1805,19 +1805,21 @@ func Go_Firestore_booleanExpressionVectorLengthT(p0 pkg.BooleanExpression) (out 
 	return
 }
 
-// [pure] Go_Firestore.bulkWriterEnd → pkg.BulkWriterEnd
-func Go_Firestore_bulkWriterEnd(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	p0.(*pkg.BulkWriter).End()
-	out = Ok[any, any](struct{}{})
+type FfiT_Go_Firestore_bulkWriterEnd_P0 = *pkg.BulkWriter
+// [pure] typed wrapper for Go_Firestore_bulkWriterEnd (P7 adaptor target)
+func Go_Firestore_bulkWriterEndT(p0 *pkg.BulkWriter) (out SkyResult[string, struct{}]) {
+	defer SkyFfiRecoverT(&out)()
+	p0.End()
+	out = Ok[string, struct{}](struct{}{})
 	return
 }
 
-// [pure] Go_Firestore.bulkWriterFlush → pkg.BulkWriterFlush
-func Go_Firestore_bulkWriterFlush(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	p0.(*pkg.BulkWriter).Flush()
-	out = Ok[any, any](struct{}{})
+type FfiT_Go_Firestore_bulkWriterFlush_P0 = *pkg.BulkWriter
+// [pure] typed wrapper for Go_Firestore_bulkWriterFlush (P7 adaptor target)
+func Go_Firestore_bulkWriterFlushT(p0 *pkg.BulkWriter) (out SkyResult[string, struct{}]) {
+	defer SkyFfiRecoverT(&out)()
+	p0.Flush()
+	out = Ok[string, struct{}](struct{}{})
 	return
 }
 
@@ -2792,11 +2794,12 @@ func Go_Firestore_documentIteratorNextT(p0 *pkg.DocumentIterator) (out SkyResult
 	return
 }
 
-// [pure] Go_Firestore.documentIteratorStop → pkg.DocumentIteratorStop
-func Go_Firestore_documentIteratorStop(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	p0.(*pkg.DocumentIterator).Stop()
-	out = Ok[any, any](struct{}{})
+type FfiT_Go_Firestore_documentIteratorStop_P0 = *pkg.DocumentIterator
+// [pure] typed wrapper for Go_Firestore_documentIteratorStop (P7 adaptor target)
+func Go_Firestore_documentIteratorStopT(p0 *pkg.DocumentIterator) (out SkyResult[string, struct{}]) {
+	defer SkyFfiRecoverT(&out)()
+	p0.Stop()
+	out = Ok[string, struct{}](struct{}{})
 	return
 }
 
@@ -3050,11 +3053,12 @@ func Go_Firestore_documentSnapshotIteratorNextT(p0 *pkg.DocumentSnapshotIterator
 	return
 }
 
-// [pure] Go_Firestore.documentSnapshotIteratorStop → pkg.DocumentSnapshotIteratorStop
-func Go_Firestore_documentSnapshotIteratorStop(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	p0.(*pkg.DocumentSnapshotIterator).Stop()
-	out = Ok[any, any](struct{}{})
+type FfiT_Go_Firestore_documentSnapshotIteratorStop_P0 = *pkg.DocumentSnapshotIterator
+// [pure] typed wrapper for Go_Firestore_documentSnapshotIteratorStop (P7 adaptor target)
+func Go_Firestore_documentSnapshotIteratorStopT(p0 *pkg.DocumentSnapshotIterator) (out SkyResult[string, struct{}]) {
+	defer SkyFfiRecoverT(&out)()
+	p0.Stop()
+	out = Ok[string, struct{}](struct{}{})
 	return
 }
 
@@ -5321,11 +5325,12 @@ func Go_Firestore_pipelineResultIteratorNextT(p0 *pkg.PipelineResultIterator) (o
 	return
 }
 
-// [pure] Go_Firestore.pipelineResultIteratorStop → pkg.PipelineResultIteratorStop
-func Go_Firestore_pipelineResultIteratorStop(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	p0.(*pkg.PipelineResultIterator).Stop()
-	out = Ok[any, any](struct{}{})
+type FfiT_Go_Firestore_pipelineResultIteratorStop_P0 = *pkg.PipelineResultIterator
+// [pure] typed wrapper for Go_Firestore_pipelineResultIteratorStop (P7 adaptor target)
+func Go_Firestore_pipelineResultIteratorStopT(p0 *pkg.PipelineResultIterator) (out SkyResult[string, struct{}]) {
+	defer SkyFfiRecoverT(&out)()
+	p0.Stop()
+	out = Ok[string, struct{}](struct{}{})
 	return
 }
 
@@ -5742,11 +5747,12 @@ func Go_Firestore_querySnapshotIteratorNextT(p0 *pkg.QuerySnapshotIterator) (out
 	return
 }
 
-// [pure] Go_Firestore.querySnapshotIteratorStop → pkg.QuerySnapshotIteratorStop
-func Go_Firestore_querySnapshotIteratorStop(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	p0.(*pkg.QuerySnapshotIterator).Stop()
-	out = Ok[any, any](struct{}{})
+type FfiT_Go_Firestore_querySnapshotIteratorStop_P0 = *pkg.QuerySnapshotIterator
+// [pure] typed wrapper for Go_Firestore_querySnapshotIteratorStop (P7 adaptor target)
+func Go_Firestore_querySnapshotIteratorStopT(p0 *pkg.QuerySnapshotIterator) (out SkyResult[string, struct{}]) {
+	defer SkyFfiRecoverT(&out)()
+	p0.Stop()
+	out = Ok[string, struct{}](struct{}{})
 	return
 }
 

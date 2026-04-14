@@ -24,12 +24,11 @@ func Go_Uuid_clockSequenceT() (out SkyResult[string, int]) {
 	return
 }
 
-// [pure] Go_Uuid.disableRandPool → pkg.DisableRandPool
-func Go_Uuid_disableRandPool(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	_ = p0
+// [pure] typed wrapper for Go_Uuid_disableRandPool (P7 adaptor target)
+func Go_Uuid_disableRandPoolT() (out SkyResult[string, struct{}]) {
+	defer SkyFfiRecoverT(&out)()
 	pkg.DisableRandPool()
-	out = Ok[any, any](struct{}{})
+	out = Ok[string, struct{}](struct{}{})
 	return
 }
 
@@ -41,12 +40,11 @@ func Go_Uuid_domainStringT(p0 pkg.Domain) (out SkyResult[string, string]) {
 	return
 }
 
-// [pure] Go_Uuid.enableRandPool → pkg.EnableRandPool
-func Go_Uuid_enableRandPool(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	_ = p0
+// [pure] typed wrapper for Go_Uuid_enableRandPool (P7 adaptor target)
+func Go_Uuid_enableRandPoolT() (out SkyResult[string, struct{}]) {
+	defer SkyFfiRecoverT(&out)()
 	pkg.EnableRandPool()
-	out = Ok[any, any](struct{}{})
+	out = Ok[string, struct{}](struct{}{})
 	return
 }
 
@@ -402,11 +400,11 @@ func Go_Uuid_rFC4122(_ any) any { return pkg.RFC4122 }
 
 func Go_Uuid_reserved(_ any) any { return pkg.Reserved }
 
-// [pure] Go_Uuid.setClockSequence → pkg.SetClockSequence
-func Go_Uuid_setClockSequence(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	pkg.SetClockSequence(AsInt(p0))
-	out = Ok[any, any](struct{}{})
+// [pure] typed wrapper for Go_Uuid_setClockSequence (P7 adaptor target)
+func Go_Uuid_setClockSequenceT(p0 int) (out SkyResult[string, struct{}]) {
+	defer SkyFfiRecoverT(&out)()
+	pkg.SetClockSequence(p0)
+	out = Ok[string, struct{}](struct{}{})
 	return
 }
 
@@ -424,11 +422,12 @@ func Go_Uuid_setNodeInterfaceT(p0 string) (out SkyResult[string, bool]) {
 	return
 }
 
-// [pure] Go_Uuid.setRand → pkg.SetRand
-func Go_Uuid_setRand(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	pkg.SetRand(p0.(io.Reader))
-	out = Ok[any, any](struct{}{})
+type FfiT_Go_Uuid_setRand_P0 = io.Reader
+// [pure] typed wrapper for Go_Uuid_setRand (P7 adaptor target)
+func Go_Uuid_setRandT(p0 io.Reader) (out SkyResult[string, struct{}]) {
+	defer SkyFfiRecoverT(&out)()
+	pkg.SetRand(p0)
+	out = Ok[string, struct{}](struct{}{})
 	return
 }
 
