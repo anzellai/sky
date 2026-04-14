@@ -1233,6 +1233,15 @@ func Result_andThenT[E, A, B any](fn func(A) SkyResult[E, B], r SkyResult[E, A])
 	return Err[E, B](r.ErrValue)
 }
 
+// Result_withDefaultAnyT: Sky-any shape of withDefault. Accepts
+// either an `any`-boxed SkyResult[any, any] or a concretely-typed
+// SkyResult[_, _] from a typed FFI wrapper (reflect fallback). Used
+// by the typed kernel dispatch when HM element flow isn't available
+// at the call site.
+func Result_withDefaultAnyT(def any, result any) any {
+	return Result_withDefault(def, result)
+}
+
 func Result_withDefaultT[E, A any](def A, r SkyResult[E, A]) A {
 	if r.Tag == 0 { return r.OkValue }
 	return def
@@ -1253,6 +1262,10 @@ func Maybe_mapT[A, B any](fn func(A) B, m SkyMaybe[A]) SkyMaybe[B] {
 func Maybe_andThenT[A, B any](fn func(A) SkyMaybe[B], m SkyMaybe[A]) SkyMaybe[B] {
 	if m.Tag == 0 { return fn(m.JustValue) }
 	return Nothing[B]()
+}
+
+func Maybe_withDefaultAnyT(def any, maybe any) any {
+	return Maybe_withDefault(def, maybe)
 }
 
 func Maybe_withDefaultT[A any](def A, m SkyMaybe[A]) A {

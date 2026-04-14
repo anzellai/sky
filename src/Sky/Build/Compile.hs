@@ -2606,8 +2606,10 @@ isPrimLiteralArg (A.At _ e) = case e of
 -- without needing type inference.
 typedKernelAltName :: Map.Map (String, String) String
 typedKernelAltName = Map.fromList
-    [ (("Basics", "fst"),      "fstAnyT")
-    , (("Basics", "snd"),      "sndAnyT")
+    [ (("Basics", "fst"),        "fstAnyT")
+    , (("Basics", "snd"),        "sndAnyT")
+    , (("Result", "withDefault"), "withDefaultAnyT")
+    , (("Maybe",  "withDefault"), "withDefaultAnyT")
     ]
 
 
@@ -2687,6 +2689,9 @@ typedKernelArgCoerce = Map.fromList
     -- they preserve the any-boxed element type without requiring HM flow.
     , (("Basics", "fst"),     ["AsTuple2"])
     , (("Basics", "snd"),     ["AsTuple2"])
+    , (("Basics", "identity"), ["Pass"])
+    , (("Result", "withDefault"), ["Pass", "Pass"])
+    , (("Maybe",  "withDefault"), ["Pass", "Pass"])
     -- Time formatters: Int → String
     , (("Time",   "formatISO8601"), ["AsInt"])
     , (("Time",   "formatRFC3339"), ["AsInt"])
@@ -2734,7 +2739,8 @@ typedKernelLiterals = Set.fromList
     , ("Dict",   "keys"),       ("Dict",   "values")
     , ("Basics", "not"),        ("Basics", "modBy"),  ("Basics", "errorToString")
     , ("Time",   "formatISO8601"), ("Time", "formatRFC3339"), ("Time", "formatHTTP")
-    , ("Basics", "fst"),        ("Basics", "snd")
+    , ("Basics", "fst"),        ("Basics", "snd"),   ("Basics", "identity")
+    , ("Result", "withDefault"), ("Maybe",  "withDefault")
     ]
 
 
