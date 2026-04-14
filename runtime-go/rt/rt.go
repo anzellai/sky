@@ -28,6 +28,7 @@ import (
 	"sync"
 	"time"
 	"unicode"
+	"unicode/utf8"
 )
 
 // ═══════════════════════════════════════════════════════════
@@ -696,6 +697,41 @@ func String_trim(s any) any { return strings.TrimSpace(fmt.Sprintf("%v", s)) }
 func String_contains(sub any, s any) any { return strings.Contains(fmt.Sprintf("%v", s), fmt.Sprintf("%v", sub)) }
 func String_startsWith(prefix any, s any) any { return strings.HasPrefix(fmt.Sprintf("%v", s), fmt.Sprintf("%v", prefix)) }
 func String_reverse(s any) any { runes := []rune(fmt.Sprintf("%v", s)); for i, j := 0, len(runes)-1; i < j; i, j = i+1, j-1 { runes[i], runes[j] = runes[j], runes[i] }; return string(runes) }
+
+// P8/String typed companions — direct string in/out, no fmt.Sprintf
+// boxing. Length is rune-count (matches the any/any behaviour via
+// utf8.RuneCountInString).
+func String_toUpperT(s string) string                  { return strings.ToUpper(s) }
+func String_toLowerT(s string) string                  { return strings.ToLower(s) }
+func String_trimT(s string) string                     { return strings.TrimSpace(s) }
+func String_containsT(sub, s string) bool              { return strings.Contains(s, sub) }
+func String_startsWithT(prefix, s string) bool         { return strings.HasPrefix(s, prefix) }
+func String_endsWithT(suffix, s string) bool           { return strings.HasSuffix(s, suffix) }
+func String_reverseT(s string) string {
+	runes := []rune(s)
+	for i, j := 0, len(runes)-1; i < j; i, j = i+1, j-1 {
+		runes[i], runes[j] = runes[j], runes[i]
+	}
+	return string(runes)
+}
+func String_lengthT(s string) int                      { return utf8.RuneCountInString(s) }
+func String_isEmptyT(s string) bool                    { return s == "" }
+func String_appendT(a, b string) string                { return a + b }
+func String_splitT(sep, s string) []string             { return strings.Split(s, sep) }
+func String_joinT(sep string, parts []string) string   { return strings.Join(parts, sep) }
+func String_replaceT(old, new_, s string) string       { return strings.ReplaceAll(s, old, new_) }
+func String_fromIntT(n int) string                     { return strconv.Itoa(n) }
+func String_fromFloatT(f float64) string               { return strconv.FormatFloat(f, 'g', -1, 64) }
+func String_toIntT(s string) SkyResult[string, int] {
+	n, err := strconv.Atoi(strings.TrimSpace(s))
+	if err != nil { return Err[string, int](err.Error()) }
+	return Ok[string, int](n)
+}
+func String_toFloatT(s string) SkyResult[string, float64] {
+	f, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
+	if err != nil { return Err[string, float64](err.Error()) }
+	return Ok[string, float64](f)
+}
 
 // ═══════════════════════════════════════════════════════════
 // Record operations
