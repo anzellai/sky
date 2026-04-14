@@ -36,6 +36,7 @@
 module Sky.Build.FfiGen
     ( generateBindings
     , runInspector
+    , slugify
     ) where
 
 import qualified Data.Aeson as A
@@ -147,13 +148,14 @@ findInspector = do
 
 generateBindings :: PkgInfo -> IO [String]
 generateBindings pkg = do
-    createDirectoryIfMissing True "ffi"
+    createDirectoryIfMissing True ".skycache/ffi"
+    createDirectoryIfMissing True ".skycache/go"
     let slug = slugify (_pkgName pkg)
         kname = kernelNameFromPkg pkg
         mname = pkgToModuleName (_pkgPath pkg)
-        goFile  = "ffi" </> (slug ++ "_bindings.go")
-        skyiFile = "ffi" </> (slug ++ ".skyi")
-        jsonFile = "ffi" </> (slug ++ ".kernel.json")
+        goFile   = ".skycache/go"  </> (slug ++ "_bindings.go")
+        skyiFile = ".skycache/ffi" </> (slug ++ ".skyi")
+        jsonFile = ".skycache/ffi" </> (slug ++ ".kernel.json")
         names = map (\fn -> mname ++ "." ++ lowerFirst (_fnName fn)) (_pkgFns pkg)
     writeFile goFile (emitGoFile kname pkg)
     writeFile skyiFile (emitSkyi pkg)

@@ -481,7 +481,7 @@ aliasToModule imports tag =
 -- bindings (`Uuid.newString`, `Stripe.newCheckoutSessionParams`, etc.).
 loadFfiSymbols :: FilePath -> IO [Sym]
 loadFfiSymbols projectRoot = do
-    let ffiDir = projectRoot </> "ffi"
+    let ffiDir = projectRoot </> ".skycache" </> "ffi"
     exists <- Dir.doesDirectoryExist ffiDir
     if not exists then return []
     else do

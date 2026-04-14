@@ -82,13 +82,14 @@ loadAndSeedFfiRegistry = do
 
 -- | P7: scan ffi/*.go (and ffi/**/*.go) for `^func Go_X_yT(` definitions
 -- and populate Env.ffiTypedWrapperNamesRef so call-site codegen can
--- prefer the typed variant. Silently tolerates a missing ffi/ dir.
+-- prefer the typed variant. Silently tolerates a missing .skycache/go dir.
 seedTypedFfiNames :: IO ()
 seedTypedFfiNames = do
-    present <- doesDirectoryExist "ffi"
+    let ffiDir = ".skycache/go"
+    present <- doesDirectoryExist ffiDir
     if not present then return () else do
-        entries <- listDirectory "ffi"
-        let gofiles = [ "ffi" </> e | e <- entries, takeExtension e == ".go" ]
+        entries <- listDirectory ffiDir
+        let gofiles = [ ffiDir </> e | e <- entries, takeExtension e == ".go" ]
         pairLists <- mapM scanTypedWrapperFile gofiles
         let allEntries = concat pairLists
         writeIORef Env.ffiTypedWrapperNamesRef (Set.fromList (map fst allEntries))
@@ -877,7 +878,7 @@ takeFuncBody = go []
 
 copyFfiDir :: FilePath -> IO ()
 copyFfiDir outDir = do
-    let ffiDir = "ffi"
+    let ffiDir = ".skycache/go"
         dstDir = outDir </> "rt"
     exists <- doesDirectoryExist ffiDir
     if not exists then return ()

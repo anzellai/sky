@@ -25,6 +25,31 @@ import qualified Sky.Build.FfiGen as FfiGen
 import qualified Sky.Build.SkyDeps as SkyDeps
 
 
+-- | For each declared go dep, regenerate the FFI bindings when its
+-- `.skycache/ffi/<slug>.kernel.json` file is absent. Used by `sky
+-- install` and the `sky build` auto-regen fallback. Silently skips
+-- inspector failures — user can still run `sky add <pkg>` manually.
+regenMissingBindings :: [(String, String)] -> IO ()
+regenMissingBindings deps = do
+    createDirectoryIfMissing True ".skycache/ffi"
+    mapM_ regenOne deps
+  where
+    regenOne (pkg, _ver) = do
+        let slug = FfiGen.slugify pkg
+            jsonPath = ".skycache/ffi/" ++ slug ++ ".kernel.json"
+        already <- doesFileExist jsonPath
+        if already then return ()
+        else do
+            -- Fetch Go module + generate bindings. Same flow as `sky add`.
+            callProcess "sh" ["-c", "cd sky-out && go get " ++ pkg ++ " 2>&1 | grep -v '^go:' >&2 || true"]
+            r <- FfiGen.runInspector pkg
+            case r of
+                Left _   -> return ()
+                Right info -> do
+                    _ <- FfiGen.generateBindings info
+                    return ()
+
+
 -- | Sky compiler CLI
 -- Commands: build, run, check, fmt, init, add, remove, install, lsp, upgrade, version
 main :: IO ()
@@ -174,6 +199,17 @@ runCommand cmd = case cmd of
             else return Toml.defaultConfig
         let outDir = "sky-out"
         createDirectoryIfMissing True outDir
+        -- Auto-regen missing Go FFI bindings before compile. Idempotent:
+        -- skips deps whose .kernel.json is already present.
+        let goDeps = Toml._goDeps config
+        when (not (null goDeps)) $ do
+            hasGoMod <- doesFileExist "sky-out/go.mod"
+            when (not hasGoMod) $ do
+                hasRt <- doesFileExist "runtime-go/go.mod"
+                if hasRt
+                    then callProcess "cp" ["runtime-go/go.mod", "sky-out/go.mod"]
+                    else writeFile "sky-out/go.mod" $ unlines ["module sky-app", "", "go 1.21"]
+            regenMissingBindings goDeps
         result <- Compile.compile config path outDir
         case result of
             Left err -> return (Left err)
@@ -191,6 +227,15 @@ runCommand cmd = case cmd of
             else return Toml.defaultConfig
         let outDir = "sky-out"
         createDirectoryIfMissing True outDir
+        let goDeps = Toml._goDeps config
+        when (not (null goDeps)) $ do
+            hasGoMod <- doesFileExist "sky-out/go.mod"
+            when (not hasGoMod) $ do
+                hasRt <- doesFileExist "runtime-go/go.mod"
+                if hasRt
+                    then callProcess "cp" ["runtime-go/go.mod", "sky-out/go.mod"]
+                    else writeFile "sky-out/go.mod" $ unlines ["module sky-app", "", "go 1.21"]
+            regenMissingBindings goDeps
         result <- Compile.compile config path outDir
         case result of
             Left err -> return (Left err)
@@ -343,9 +388,24 @@ runCommand cmd = case cmd of
             then Toml.parseSkyToml <$> readFile "sky.toml"
             else return Toml.defaultConfig
         _ <- SkyDeps.installDeps (Toml._skyDeps config)
+        -- Auto-regen Go FFI bindings for every declared go dep whose
+        -- `.skycache/ffi/<slug>.kernel.json` is absent. This replaces
+        -- the old workflow where bindings were checked-in under ffi/.
+        let goDeps = Toml._goDeps config
+        when (not (null goDeps)) $ do
+            createDirectoryIfMissing True "sky-out"
+            hasGoMod <- doesFileExist "sky-out/go.mod"
+            when (not hasGoMod) $ do
+                hasRt <- doesFileExist "runtime-go/go.mod"
+                if hasRt
+                    then callProcess "cp" ["runtime-go/go.mod", "sky-out/go.mod"]
+                    else writeFile "sky-out/go.mod" $ unlines ["module sky-app", "", "go 1.21"]
+            regenMissingBindings goDeps
         case Toml._skyDeps config of
-            [] -> putStrLn "No [dependencies] entries in sky.toml."
+            [] -> return ()
             _  -> putStrLn "Sky dependencies installed."
+        when (null (Toml._skyDeps config) && null goDeps) $
+            putStrLn "No [dependencies] or [go.dependencies] entries in sky.toml."
         return (Right ())
 
     Update -> do

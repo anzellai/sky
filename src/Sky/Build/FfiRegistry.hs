@@ -81,12 +81,13 @@ instance A.FromJSON FfiModule where
 -- Disk scanning
 -- ═══════════════════════════════════════════════════════════
 
--- | Load the FfiRegistry from `ffi/*.kernel.json` in the current working
--- directory. Silently returns an empty registry if the ffi directory is
--- absent — this is the common case for projects with no FFI deps.
+-- | Load the FfiRegistry from `.skycache/ffi/*.kernel.json` in the current
+-- working directory. Silently returns an empty registry if the cache
+-- directory is absent — this is the common case for projects with no
+-- FFI deps.
 loadRegistry :: IO FfiRegistry
 loadRegistry = do
-    let ffiDir = "ffi"
+    let ffiDir = ".skycache/ffi"
     exists <- doesDirectoryExist ffiDir
     if not exists
         then return emptyRegistry
