@@ -1917,6 +1917,17 @@ exprToGo (A.At _ expr) = case expr of
 
     Can.Call func args ->
         case A.toValue func of
+            -- P7 step 4: migrate Go_Uuid.newString call sites to the typed
+            -- T-suffix wrapper. Sky source writes `Uuid.newString ()`, which
+            -- canonicalises to VarKernel "Go_Uuid" "newString" applied to
+            -- a single Unit arg. The typed variant Go_Uuid_newStringT takes
+            -- zero args and returns SkyResult[string, string]. Downstream
+            -- combinators like Result.withDefault now fall back to reflect
+            -- so the concrete result type flows without ResultCoerce wrap.
+            Can.VarKernel "Go_Uuid" "newString"
+                | all isUnitArg args ->
+                    GoIr.GoCall (GoIr.GoQualified "rt" "Go_Uuid_newStringT") []
+
             Can.VarCtor _opts _home _typeName _ctorName annot ->
                 -- ADT constructor partial app: JobDone : Int -> Result -> Msg
                 -- applied to just `jid` must close over jid.
@@ -2100,6 +2111,14 @@ coerceToFieldType targetTy e
     | targetTy == "any" || null targetTy = e
     | otherwise =
         GoIr.GoTypeAssert (GoIr.GoCall (GoIr.GoIdent "any") [e]) targetTy
+
+
+-- | Is this arg `()`? Used by P7 typed-FFI migration to recognise the
+-- zero-arg Sky call convention `VarKernel _ _ applied to [Unit]`.
+isUnitArg :: Can.Expr -> Bool
+isUnitArg (A.At _ e) = case e of
+    Can.Unit -> True
+    _        -> False
 
 
 -- | Can we emit a direct Go call for this callee expression?

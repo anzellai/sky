@@ -925,15 +925,29 @@ func Result_withDefault(def any, result any) any {
 	// (e.g. when withDefault is applied twice). Treat non-Result inputs
 	// as already-extracted Ok values rather than panicking — matches
 	// Elm's "graceful degradation" intent for this combinator.
-	r, ok := result.(SkyResult[any, any])
-	if !ok {
-		if result == nil {
+	if r, ok := result.(SkyResult[any, any]); ok {
+		if r.Tag == 0 { return r.OkValue }
+		return def
+	}
+	// P7: typed FFI wrappers now return SkyResult[string, A] for some
+	// concrete A. Rather than type-asserting every instantiation, fall
+	// through to reflect on the struct shape — same approach ResultCoerce
+	// uses for its generic fallback.
+	rv := reflect.ValueOf(result)
+	if rv.Kind() == reflect.Struct {
+		tagField := rv.FieldByName("Tag")
+		okField  := rv.FieldByName("OkValue")
+		if tagField.IsValid() && okField.IsValid() {
+			if tagField.Int() == 0 {
+				return okField.Interface()
+			}
 			return def
 		}
-		return result
 	}
-	if r.Tag == 0 { return r.OkValue }
-	return def
+	if result == nil {
+		return def
+	}
+	return result
 }
 
 func Result_mapError(fn any, result any) any {
