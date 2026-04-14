@@ -2070,6 +2070,57 @@ func File_readDir(path any) any {
 	}
 }
 
+// P8/File typed companions — return `func() SkyResult[string, T]`
+// thunks matching the Task ABI. Covers the path-only operations;
+// richer APIs (readFileLimit, readDir) keep the any/any shape
+// because their Task payloads include additional args.
+func File_readFileT(path string) func() SkyResult[string, string] {
+	return func() SkyResult[string, string] {
+		v := File_readFile(path).(func() any)()
+		if r, ok := v.(SkyResult[any, any]); ok {
+			if r.Tag == 0 { return Ok[string, string](fmt.Sprintf("%v", r.OkValue)) }
+			return Err[string, string](fmt.Sprintf("%v", r.ErrValue))
+		}
+		return Err[string, string]("unexpected runtime shape")
+	}
+}
+
+func File_existsT(path string) func() SkyResult[string, bool] {
+	return func() SkyResult[string, bool] {
+		_, err := os.Stat(path)
+		if err == nil { return Ok[string, bool](true) }
+		if os.IsNotExist(err) { return Ok[string, bool](false) }
+		return Err[string, bool](err.Error())
+	}
+}
+
+func File_writeFileT(path, content string) func() SkyResult[string, struct{}] {
+	return func() SkyResult[string, struct{}] {
+		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+			return Err[string, struct{}](err.Error())
+		}
+		return Ok[string, struct{}](struct{}{})
+	}
+}
+
+func File_removeT(path string) func() SkyResult[string, struct{}] {
+	return func() SkyResult[string, struct{}] {
+		if err := os.Remove(path); err != nil {
+			return Err[string, struct{}](err.Error())
+		}
+		return Ok[string, struct{}](struct{}{})
+	}
+}
+
+func File_mkdirAllT(path string) func() SkyResult[string, struct{}] {
+	return func() SkyResult[string, struct{}] {
+		if err := os.MkdirAll(path, 0755); err != nil {
+			return Err[string, struct{}](err.Error())
+		}
+		return Ok[string, struct{}](struct{}{})
+	}
+}
+
 func File_isDir(path any) any {
 	return func() any {
 		info, err := os.Stat(fmt.Sprintf("%v", path))
