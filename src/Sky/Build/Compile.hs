@@ -16,7 +16,7 @@ import Control.Monad (when)
 import System.Directory (createDirectoryIfMissing, doesDirectoryExist, doesFileExist, copyFile, listDirectory)
 import System.IO (hFlush, stdout, readFile', stderr, hPutStrLn)
 import System.IO.Unsafe (unsafePerformIO)
-import System.FilePath (takeDirectory, (</>))
+import System.FilePath (takeDirectory, takeExtension, (</>))
 
 import qualified Data.ByteString as BS
 import Sky.Build.EmbeddedRuntime (embeddedRuntime, embeddedSkyStdlib)
@@ -72,9 +72,44 @@ loadAndSeedFfiRegistry = do
                 ]
     writeIORef Env.ffiKernelModulesRef moduleMap
     writeIORef Env.ffiKernelFunctionsRef functionMap
+    seedTypedFfiNames
     if null mods
         then return ()
         else putStrLn $ "-- Loaded " ++ show (length mods) ++ " FFI module(s)"
+
+
+-- | P7: scan ffi/*.go (and ffi/**/*.go) for `^func Go_X_yT(` definitions
+-- and populate Env.ffiTypedWrapperNamesRef so call-site codegen can
+-- prefer the typed variant. Silently tolerates a missing ffi/ dir.
+seedTypedFfiNames :: IO ()
+seedTypedFfiNames = do
+    present <- doesDirectoryExist "ffi"
+    if not present then return () else do
+        entries <- listDirectory "ffi"
+        let gofiles = [ "ffi" </> e | e <- entries, takeExtension e == ".go" ]
+        nameSets <- mapM scanTypedWrapperFile gofiles
+        writeIORef Env.ffiTypedWrapperNamesRef (Set.unions nameSets)
+
+
+-- | Return the set of names matching `^func (Go_[A-Za-z0-9_]+T)\(` in
+-- the given Go file. Pure line-level matching — does not parse Go.
+scanTypedWrapperFile :: FilePath -> IO (Set.Set String)
+scanTypedWrapperFile fp = do
+    ok <- doesFileExist fp
+    if not ok then return Set.empty else do
+        contents <- readFile fp
+        let ls = lines contents
+            names = [ takeWhile (/= '(') (drop 5 l)
+                    | l <- ls
+                    , take 5 l == "func "
+                    , let rest = drop 5 l
+                    , take 3 rest == "Go_"
+                    , '(' `elem` rest
+                    , let nm = takeWhile (/= '(') rest
+                    , not (null nm)
+                    , last nm == 'T'
+                    ]
+        return (Set.fromList names)
 
 
 -- | Full compilation: parse → canonicalise → codegen → write Go
@@ -1917,16 +1952,22 @@ exprToGo (A.At _ expr) = case expr of
 
     Can.Call func args ->
         case A.toValue func of
-            -- P7 step 4: migrate Go_Uuid.newString call sites to the typed
-            -- T-suffix wrapper. Sky source writes `Uuid.newString ()`, which
-            -- canonicalises to VarKernel "Go_Uuid" "newString" applied to
-            -- a single Unit arg. The typed variant Go_Uuid_newStringT takes
-            -- zero args and returns SkyResult[string, string]. Downstream
-            -- combinators like Result.withDefault now fall back to reflect
-            -- so the concrete result type flows without ResultCoerce wrap.
-            Can.VarKernel "Go_Uuid" "newString"
-                | all isUnitArg args ->
-                    GoIr.GoCall (GoIr.GoQualified "rt" "Go_Uuid_newStringT") []
+            -- P7 step 5: generalise the zero-arg FFI migration. Any
+            -- Sky `KernelMod.fn ()` where (a) the kernel module name
+            -- starts with "Go_" (i.e. it's a user-added FFI package,
+            -- not a built-in kernel like Sky_Core_*), (b) the call has
+            -- a single Unit arg, and (c) FfiGen has emitted a typed
+            -- variant `<Kernel>_<fn>T` (registered in the IORef seeded
+            -- from ffi/*.go at compile start), routes to the typed
+            -- wrapper with no unit arg. Result.withDefault and the
+            -- `case _ of Ok/Err` path both accept any SkyResult shape
+            -- via reflect, so downstream semantics are preserved.
+            Can.VarKernel modName funcName
+                | take 3 modName == "Go_"
+                , all isUnitArg args
+                , let typedName = modName ++ "_" ++ funcName ++ "T"
+                , Set.member typedName typedFfiWrapperSet ->
+                    GoIr.GoCall (GoIr.GoQualified "rt" typedName) []
 
             Can.VarCtor _opts _home _typeName _ctorName annot ->
                 -- ADT constructor partial app: JobDone : Int -> Result -> Msg
@@ -2119,6 +2160,14 @@ isUnitArg :: Can.Expr -> Bool
 isUnitArg (A.At _ e) = case e of
     Can.Unit -> True
     _        -> False
+
+
+-- | Snapshot of Env.ffiTypedWrapperNamesRef taken at every lookup. The
+-- unsafePerformIO is fine here: the set is populated once at compile
+-- start (before canonicalisation runs) and never mutated afterwards.
+{-# NOINLINE typedFfiWrapperSet #-}
+typedFfiWrapperSet :: Set.Set String
+typedFfiWrapperSet = unsafePerformIO (readIORef Env.ffiTypedWrapperNamesRef)
 
 
 -- | Can we emit a direct Go call for this callee expression?

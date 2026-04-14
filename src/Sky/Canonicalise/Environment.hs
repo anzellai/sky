@@ -3,6 +3,7 @@
 module Sky.Canonicalise.Environment where
 
 import qualified Data.Map.Strict as Map
+import qualified Data.Set as Set
 import Data.IORef (IORef, newIORef, readIORef)
 import System.IO.Unsafe (unsafePerformIO)
 import qualified Sky.AST.Canonical as Can
@@ -264,6 +265,21 @@ ffiKernelModulesRef = unsafePerformIO (newIORef Map.empty)
 {-# NOINLINE ffiKernelFunctionsRef #-}
 ffiKernelFunctionsRef :: IORef (Map.Map String [String])
 ffiKernelFunctionsRef = unsafePerformIO (newIORef Map.empty)
+
+
+-- | P7: names of FFI kernel functions (in the <Kernel>_<func> shape,
+-- e.g. "Go_Uuid_newString") for which a typed T-suffix wrapper has
+-- been emitted by FfiGen. Call-site codegen consults this set to
+-- decide whether to emit the typed variant directly.
+--
+-- Populated by `Sky.Build.Compile.seedTypedFfiNames`, which scans
+-- the examples' ffi/*.go files and records every `^func Go_X_yT(`
+-- definition. Empty unless seeded, in which case the fallback is the
+-- any/any wrapper (safe default — Go build will surface a missing
+-- T name if the caller wrongly assumes it exists).
+{-# NOINLINE ffiTypedWrapperNamesRef #-}
+ffiTypedWrapperNamesRef :: IORef (Set.Set String)
+ffiTypedWrapperNamesRef = unsafePerformIO (newIORef Set.empty)
 
 
 -- | Kernel module mappings: Sky import path → kernel module name.
