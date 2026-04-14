@@ -1224,23 +1224,45 @@ classifyTypedResult results = case results of
 -- Rejects anything that looks like a function, channel, map, ellipsis,
 -- bare generic type parameter, or non-identifier gibberish.
 isSimpleTypedType :: String -> Bool
-isSimpleTypedType t0 =
-    let t = dropWhile (== '*') t0
-        t' = case t of
-            ('[':']':rest) -> rest
-            _              -> t
-    in not (null t')
-       && not ("func(" `isSubstringOf` t')
-       && not ("chan " `isSubstringOf` t')
-       && not ("<-chan" `isSubstringOf` t')
-       && not ("chan<-" `isSubstringOf` t')
-       && not ("map[" `isSubstringOf` t')
-       && not ("..." `isSubstringOf` t')
-       && not ("[" `isSubstringOf` t')
-       && not (isBareParam t')
-       && all isTypeChar t'
+isSimpleTypedType t0
+    -- Allow simple `map[K]V` where K and V are themselves simple (no
+    -- generics, no channels, no funcs). Common for Stripe's Metadata
+    -- field which is `map[string]string`.
+    | take 4 t0 == "map["
+    , Just (k, v) <- splitMap (drop 4 t0)
+    = isSimpleTypedType k && isSimpleTypedType v
+    | otherwise =
+        let t = dropWhile (== '*') t0
+            t' = case t of
+                ('[':']':rest) -> rest
+                _              -> t
+        in not (null t')
+           && not ("func(" `isSubstringOf` t')
+           && not ("chan " `isSubstringOf` t')
+           && not ("<-chan" `isSubstringOf` t')
+           && not ("chan<-" `isSubstringOf` t')
+           && not ("map[" `isSubstringOf` t')
+           && not ("..." `isSubstringOf` t')
+           && not ("[" `isSubstringOf` t')
+           && not (isBareParam t')
+           && all isTypeChar t'
   where
     isTypeChar c = isAlphaNum c || c == '.' || c == '_' || c == '*' || c == '/'
+
+    -- Split `<key>]<value>` for the content inside `map[...`.
+    splitMap :: String -> Maybe (String, String)
+    splitMap s =
+        let (k, rest) = splitAtClosingBracket 0 s []
+        in case rest of
+            (']':v) -> Just (k, v)
+            _       -> Nothing
+
+    splitAtClosingBracket :: Int -> String -> String -> (String, String)
+    splitAtClosingBracket _ [] acc = (reverse acc, "")
+    splitAtClosingBracket 0 (']':xs) acc = (reverse acc, ']':xs)
+    splitAtClosingBracket d ('[':xs) acc = splitAtClosingBracket (d+1) xs ('[':acc)
+    splitAtClosingBracket d (']':xs) acc = splitAtClosingBracket (d-1) xs (']':acc)
+    splitAtClosingBracket d (x:xs)   acc = splitAtClosingBracket d xs (x:acc)
 
 
 isSkippedEntry :: String -> Bool

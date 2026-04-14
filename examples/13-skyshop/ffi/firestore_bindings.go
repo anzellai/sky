@@ -4865,10 +4865,11 @@ func Go_Firestore_logicalMinimum(p0 any, p1 any) (out any) {
 	return
 }
 
-// [pure] Go_Firestore.map → pkg.Map
-func Go_Firestore_map(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](pkg.Map(p0.(map[string]any)))
+type FfiT_Go_Firestore_map_R = pkg.Expression
+// [pure] typed wrapper for Go_Firestore_map (P7 adaptor target)
+func Go_Firestore_mapT(p0 map[string]any) (out SkyResult[string, pkg.Expression]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, pkg.Expression](pkg.Map(p0))
 	return
 }
 
@@ -5295,10 +5296,11 @@ func Go_Firestore_pipelineResultExistsT(p0 *pkg.PipelineResult) (out SkyResult[s
 	return
 }
 
-// [pure] Go_Firestore.pipelineResultData → pkg.PipelineResultData
-func Go_Firestore_pipelineResultData(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.PipelineResult).Data())
+type FfiT_Go_Firestore_pipelineResultData_P0 = *pkg.PipelineResult
+// [pure] typed wrapper for Go_Firestore_pipelineResultData (P7 adaptor target)
+func Go_Firestore_pipelineResultDataT(p0 *pkg.PipelineResult) (out SkyResult[string, map[string]any]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, map[string]any](p0.Data())
 	return
 }
 
