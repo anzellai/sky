@@ -723,12 +723,32 @@ func RecordUpdate(base any, updates map[string]any) any {
 // ═══════════════════════════════════════════════════════════
 // Tuple types
 // ═══════════════════════════════════════════════════════════
+//
+// P5: typed tuples. The generic T2..T5 types are the primary shape.
+// SkyTuple2/3 remain as type aliases to the any-parameterised T2/T3 so
+// existing literal-site and pattern-destructure codegen continues to
+// work without refactor. Annotated call sites (via solvedTypeToGo)
+// emit the parameterised form `rt.T2[int, string]` directly, and Go's
+// compiler validates element shape from there.
+//
+// Arity >5 routes to SkyTupleN (slice-backed, heterogeneous) since a
+// 6-wide tuple is a code-smell per the plan — users should use a
+// record alias instead.
 
-type SkyTuple2 struct { V0, V1 any }
-type SkyTuple3 struct { V0, V1, V2 any }
-// SkyTupleN: arity ≥ 4 tuples use a uniform slice-backed struct. Element
-// access in generated code is `t.Vs[i]`, symmetric with `.V0/.V1/.V2` on
-// 2/3-tuples.
+type T2[A, B any] struct { V0 A; V1 B }
+type T3[A, B, C any] struct { V0 A; V1 B; V2 C }
+type T4[A, B, C, D any] struct { V0 A; V1 B; V2 C; V3 D }
+type T5[A, B, C, D, E any] struct { V0 A; V1 B; V2 C; V3 D; V4 E }
+
+// Back-compat aliases. Literal codegen (`Can.Tuple`) still produces
+// `SkyTuple2{V0:..., V1:...}` — with these aliases the same value also
+// types as `rt.T2[any, any]`, so solvedTypeToGo's typed emission and
+// literal emission interop without churn.
+type SkyTuple2 = T2[any, any]
+type SkyTuple3 = T3[any, any, any]
+
+// SkyTupleN: arity ≥ 6 tuples use a uniform slice-backed struct. Element
+// access in generated code is `t.Vs[i]`.
 type SkyTupleN struct { Vs []any }
 
 // ═══════════════════════════════════════════════════════════

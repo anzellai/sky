@@ -2971,7 +2971,21 @@ solvedTypeToGo ty = case ty of
                 Just aliasName -> aliasName ++ "_R"
                 Nothing        -> synthAnonRecordName fields
         in nonMatch
-    T.TTuple _ _ _ -> "any"  -- P5: tuples — handled in next phase
+    T.TTuple a b rest ->
+        -- P5: typed tuples. Arity 2-5 maps to rt.T2..T5 with concrete
+        -- element Go types. Arity >= 6 stays as rt.SkyTupleN (slice-
+        -- backed, heterogeneous) per the plan's "record-alias instead"
+        -- guidance. rt.T2[any, any] is a type alias for SkyTuple2, so
+        -- literal-site codegen continues to emit SkyTuple2{...} without
+        -- friction.
+        let goEls = map solvedTypeToGo (a : b : rest)
+            arity = length goEls
+        in case arity of
+            2 -> "rt.T2[" ++ intercalate_ ", " goEls ++ "]"
+            3 -> "rt.T3[" ++ intercalate_ ", " goEls ++ "]"
+            4 -> "rt.T4[" ++ intercalate_ ", " goEls ++ "]"
+            5 -> "rt.T5[" ++ intercalate_ ", " goEls ++ "]"
+            _ -> "rt.SkyTupleN"
     T.TAlias home name _ aliasTy ->
         let modStr = ModuleName.toString home
             base = if null modStr || modStr == "Main"

@@ -744,7 +744,7 @@ Update this table after every merged phase. Include commit SHA and date.
 | P2  — exposing clause | ☑ | _HEAD_ | 2026-04-13 | parser now threads `exposing` through; canonicaliser rejects imports of unexposed names with "does not expose" error; DepInfo carries `_dep_exports` and filters cross-module lookups. |
 | P3  — exhaustiveness | ☑ | _HEAD_ | 2026-04-14 | `Sky.Type.Exhaustiveness` walks the entry + dep canonical trees; missing ADT ctors / missing True/False / literal-without-wildcard are build errors. Codegen panic message changed to "compiler bug" so the old "non-exhaustive case expression" string never appears in user output. Nested sub-pattern analysis deferred (second-level case carries its own check). |
 | P4  — typed records | ☑ | _HEAD_ | 2026-04-14 | `solvedTypeToGo TRecord` no longer falls through to "any": alias shapes resolve to `<Alias>_R`, unregistered shapes route through `synthAnonRecordName` (sorted-field-name + hashed-shape `Anon_R_<names>__<hash>`). No example currently triggers the anon path — alias coverage is 100% across the sweep. |
-| P5  — typed tuples | ☐ | — | — | — |
+| P5  — typed tuples | ☑ | _HEAD_ | 2026-04-14 | runtime-go/rt adds `T2/T3/T4/T5[A,B,…]` generic structs; `SkyTuple2/3` now type-alias to `T2[any,any]/T3[any,any,any]` so existing literal and destructure codegen is unchanged. `solvedTypeToGo TTuple` emits `rt.T2[goA, goB]` with concrete element types for arities 2-5; >5 routes to `SkyTupleN`. Alias means no literal-site migration needed; concrete typing falls out at annotated call sites. |
 | P6  — typed TVars | ☐ | — | — | — |
 | P7  — FFI typing | ☐ | — | — | — |
 | P8  — kernel typing | ☐ | — | — | — |
