@@ -1575,6 +1575,16 @@ func Dict_values(dict any) any {
 	return result
 }
 
+// AsDict coerces a Sky-side any to map[string]any. Sky Dict is
+// always map[string]any at runtime; typed Dict companions take
+// map[string]V and Go infers V=any.
+func AsDict(v any) map[string]any {
+	if m, ok := v.(map[string]any); ok {
+		return m
+	}
+	return map[string]any{}
+}
+
 func Dict_toList(dict any) any {
 	m := dict.(map[string]any)
 	result := make([]any, 0, len(m))

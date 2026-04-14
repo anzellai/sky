@@ -2651,6 +2651,11 @@ typedKernelArgCoerce = Map.fromList
     , (("List",   "head"),    ["AsList"])
     , (("List",   "reverse"), ["AsList"])
     , (("List",   "isEmpty"), ["AsList"])
+    -- Dict: only member is safe to dispatch without HM element-type
+    -- flow. Dict_keysT/valuesT return []string/[]V which would
+    -- break downstream List ops that expect []any; those need HM
+    -- flow to pick up concrete element types at call sites.
+    , (("Dict",   "member"),  ["AsString", "AsDict"])
     ]
 
 
@@ -2686,6 +2691,7 @@ typedKernelLiterals = Set.fromList
     , ("Regex",  "match"),      ("Regex",  "find"),       ("Regex",  "replace")
     , ("List",   "length"),     ("List",   "head"),       ("List",   "reverse")
     , ("List",   "isEmpty")
+    , ("Dict",   "member")
     ]
 
 
