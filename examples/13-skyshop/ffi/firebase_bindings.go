@@ -143,7 +143,8 @@ func Go_GoV4_appRemoteConfigT(p0 *pkg.App, p1 context.Context) (out SkyResult[an
 	return
 }
 
-func Go_GoV4_configAuthOverride(p0 any) any { return SkyFfiFieldGet(p0, "AuthOverride") }
+type FfiT_Go_GoV4_configAuthOverride_P0 = *pkg.Config
+func Go_GoV4_configAuthOverrideT(p0 *pkg.Config) any { return p0.AuthOverride }
 
 func Go_GoV4_configSetAuthOverride(value any, recv any) any { return SkyFfiFieldSet(value, recv, "AuthOverride") }
 

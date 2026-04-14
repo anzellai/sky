@@ -724,8 +724,12 @@ emitTypedWrapper kernelName aliases fn =
         _ | _fnIsField fn ->
             -- P7: emit a typed accessor `func Go_X_yT(p0 *pkg.Recv) FieldT`
             -- using direct field access — no reflect, no any boxing.
-            -- Falls back to the SkyFfiFieldGet delegate when types
-            -- aren't expressible (e.g. unbound generic field types).
+            -- When the receiver type is expressible but the field type
+            -- is not (typical for func-typed fields like
+            -- http.Server.ConnContext: func(ctx, c) ctx), emit
+            -- `func Go_X_yT(p0 *pkg.Recv) any { return p0.Field }` —
+            -- still drops the receiver from the (p0 any) gate even
+            -- though the field flows through any.
             let fieldName = _fnMethodName fn
                 knownAliasesField = Set.fromList (Map.elems aliases)
                 receiverType = case rewrittenParams of
@@ -734,22 +738,25 @@ emitTypedWrapper kernelName aliases fn =
                 fieldType = case rewrittenResults of
                     ((_, t):_) -> t
                     _          -> ""
-                paramOk = isSimpleTypedType receiverType
-                       && allPackagesKnown knownAliasesField receiverType
-                resultOk = isSimpleTypedType fieldType
-                        && allPackagesKnown knownAliasesField fieldType
+                receiverOk = isSimpleTypedType receiverType
+                          && allPackagesKnown knownAliasesField receiverType
+                          && not (null receiverType)
+                fieldExpressible = isSimpleTypedType fieldType
+                                && allPackagesKnown knownAliasesField fieldType
+                                && not (null fieldType)
+                returnTypeStr   = if fieldExpressible then fieldType else "any"
                 typedAlias =
                     [ "type FfiT_" ++ wrapperName ++ "_P0 = " ++ receiverType
                     | needsAlias receiverType ] ++
                     [ "type FfiT_" ++ wrapperName ++ "_R = " ++ fieldType
-                    | needsAlias fieldType ]
+                    | fieldExpressible && needsAlias fieldType ]
                 typedDecl =
                     "func " ++ wrapperName ++ "T(p0 " ++ receiverType ++ ") " ++
-                    fieldType ++ " { return p0." ++ fieldName ++ " }\n"
+                    returnTypeStr ++ " { return p0." ++ fieldName ++ " }\n"
                 anyDecl =
                     "func " ++ wrapperName ++ "(p0 any) any { return SkyFfiFieldGet(p0, " ++
                     quote fieldName ++ ") }\n"
-            in if paramOk && resultOk && not (null receiverType) && not (null fieldType)
+            in if receiverOk
                 then unlines typedAlias ++ typedDecl
                 else anyDecl
 

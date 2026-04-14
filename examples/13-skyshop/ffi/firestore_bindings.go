@@ -3219,7 +3219,8 @@ func Go_Firestore_executionStatsReadOperationsT(p0 *pkg.ExecutionStats) int64 { 
 type FfiT_Go_Firestore_executionStatsSetReadOperations_P1 = *pkg.ExecutionStats
 func Go_Firestore_executionStatsSetReadOperationsT(value int64, recv *pkg.ExecutionStats) *pkg.ExecutionStats { recv.ReadOperations = value; return recv }
 
-func Go_Firestore_executionStatsDebugStats(p0 any) any { return SkyFfiFieldGet(p0, "DebugStats") }
+type FfiT_Go_Firestore_executionStatsDebugStats_P0 = *pkg.ExecutionStats
+func Go_Firestore_executionStatsDebugStatsT(p0 *pkg.ExecutionStats) any { return p0.DebugStats }
 
 func Go_Firestore_executionStatsSetDebugStats(value any, recv any) any { return SkyFfiFieldSet(value, recv, "DebugStats") }
 
@@ -5595,7 +5596,8 @@ func Go_Firestore_pipelineSourceCreateFromAggregationQueryT(p0 *pkg.PipelineSour
 
 func Go_Firestore_newPipelineSource(_ any) any { return new(pkg.PipelineSource) }
 
-func Go_Firestore_planSummaryIndexesUsed(p0 any) any { return SkyFfiFieldGet(p0, "IndexesUsed") }
+type FfiT_Go_Firestore_planSummaryIndexesUsed_P0 = *pkg.PlanSummary
+func Go_Firestore_planSummaryIndexesUsedT(p0 *pkg.PlanSummary) any { return p0.IndexesUsed }
 
 func Go_Firestore_planSummarySetIndexesUsed(value any, recv any) any { return SkyFfiFieldSet(value, recv, "IndexesUsed") }
 

@@ -115,7 +115,8 @@ type FfiT_Go_Http_clientSetTransport_P0 = pkg.RoundTripper
 type FfiT_Go_Http_clientSetTransport_P1 = *pkg.Client
 func Go_Http_clientSetTransportT(value pkg.RoundTripper, recv *pkg.Client) *pkg.Client { recv.Transport = value; return recv }
 
-func Go_Http_clientCheckRedirect(p0 any) any { return SkyFfiFieldGet(p0, "CheckRedirect") }
+type FfiT_Go_Http_clientCheckRedirect_P0 = *pkg.Client
+func Go_Http_clientCheckRedirectT(p0 *pkg.Client) any { return p0.CheckRedirect }
 
 func Go_Http_clientSetCheckRedirect(value any, recv any) any { return SkyFfiFieldSet(value, recv, "CheckRedirect") }
 
@@ -720,7 +721,8 @@ func Go_Http_hTTP2ConfigPermitProhibitedCipherSuitesT(p0 *pkg.HTTP2Config) bool 
 type FfiT_Go_Http_hTTP2ConfigSetPermitProhibitedCipherSuites_P1 = *pkg.HTTP2Config
 func Go_Http_hTTP2ConfigSetPermitProhibitedCipherSuitesT(value bool, recv *pkg.HTTP2Config) *pkg.HTTP2Config { recv.PermitProhibitedCipherSuites = value; return recv }
 
-func Go_Http_hTTP2ConfigCountError(p0 any) any { return SkyFfiFieldGet(p0, "CountError") }
+type FfiT_Go_Http_hTTP2ConfigCountError_P0 = *pkg.HTTP2Config
+func Go_Http_hTTP2ConfigCountErrorT(p0 *pkg.HTTP2Config) any { return p0.CountError }
 
 func Go_Http_hTTP2ConfigSetCountError(value any, recv any) any { return SkyFfiFieldSet(value, recv, "CountError") }
 
@@ -1509,7 +1511,8 @@ type FfiT_Go_Http_requestSetBody_P0 = io.ReadCloser
 type FfiT_Go_Http_requestSetBody_P1 = *pkg.Request
 func Go_Http_requestSetBodyT(value io.ReadCloser, recv *pkg.Request) *pkg.Request { recv.Body = value; return recv }
 
-func Go_Http_requestGetBody(p0 any) any { return SkyFfiFieldGet(p0, "GetBody") }
+type FfiT_Go_Http_requestGetBody_P0 = *pkg.Request
+func Go_Http_requestGetBodyT(p0 *pkg.Request) any { return p0.GetBody }
 
 func Go_Http_requestSetGetBody(value any, recv any) any { return SkyFfiFieldSet(value, recv, "GetBody") }
 
@@ -1589,7 +1592,8 @@ type FfiT_Go_Http_requestSetTLS_P0 = tls.ConnectionState
 type FfiT_Go_Http_requestSetTLS_P1 = *pkg.Request
 func Go_Http_requestSetTLST(value tls.ConnectionState, recv *pkg.Request) *pkg.Request { recv.TLS = func() *tls.ConnectionState { v := value; return &v }(); return recv }
 
-func Go_Http_requestCancel(p0 any) any { return SkyFfiFieldGet(p0, "Cancel") }
+type FfiT_Go_Http_requestCancel_P0 = *pkg.Request
+func Go_Http_requestCancelT(p0 *pkg.Request) any { return p0.Cancel }
 
 func Go_Http_requestSetCancel(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Cancel") }
 
@@ -2082,11 +2086,13 @@ func Go_Http_serverMaxHeaderBytesT(p0 *pkg.Server) int { return p0.MaxHeaderByte
 type FfiT_Go_Http_serverSetMaxHeaderBytes_P1 = *pkg.Server
 func Go_Http_serverSetMaxHeaderBytesT(value int, recv *pkg.Server) *pkg.Server { recv.MaxHeaderBytes = value; return recv }
 
-func Go_Http_serverTLSNextProto(p0 any) any { return SkyFfiFieldGet(p0, "TLSNextProto") }
+type FfiT_Go_Http_serverTLSNextProto_P0 = *pkg.Server
+func Go_Http_serverTLSNextProtoT(p0 *pkg.Server) any { return p0.TLSNextProto }
 
 func Go_Http_serverSetTLSNextProto(value any, recv any) any { return SkyFfiFieldSet(value, recv, "TLSNextProto") }
 
-func Go_Http_serverConnState(p0 any) any { return SkyFfiFieldGet(p0, "ConnState") }
+type FfiT_Go_Http_serverConnState_P0 = *pkg.Server
+func Go_Http_serverConnStateT(p0 *pkg.Server) any { return p0.ConnState }
 
 func Go_Http_serverSetConnState(value any, recv any) any { return SkyFfiFieldSet(value, recv, "ConnState") }
 
@@ -2098,11 +2104,13 @@ type FfiT_Go_Http_serverSetErrorLog_P0 = log.Logger
 type FfiT_Go_Http_serverSetErrorLog_P1 = *pkg.Server
 func Go_Http_serverSetErrorLogT(value log.Logger, recv *pkg.Server) *pkg.Server { recv.ErrorLog = func() *log.Logger { v := value; return &v }(); return recv }
 
-func Go_Http_serverBaseContext(p0 any) any { return SkyFfiFieldGet(p0, "BaseContext") }
+type FfiT_Go_Http_serverBaseContext_P0 = *pkg.Server
+func Go_Http_serverBaseContextT(p0 *pkg.Server) any { return p0.BaseContext }
 
 func Go_Http_serverSetBaseContext(value any, recv any) any { return SkyFfiFieldSet(value, recv, "BaseContext") }
 
-func Go_Http_serverConnContext(p0 any) any { return SkyFfiFieldGet(p0, "ConnContext") }
+type FfiT_Go_Http_serverConnContext_P0 = *pkg.Server
+func Go_Http_serverConnContextT(p0 *pkg.Server) any { return p0.ConnContext }
 
 func Go_Http_serverSetConnContext(value any, recv any) any { return SkyFfiFieldSet(value, recv, "ConnContext") }
 
@@ -2364,27 +2372,33 @@ func Go_Http_transportCancelRequestT(p0 *pkg.Transport, p1 *pkg.Request) (out Sk
 	return
 }
 
-func Go_Http_transportProxy(p0 any) any { return SkyFfiFieldGet(p0, "Proxy") }
+type FfiT_Go_Http_transportProxy_P0 = *pkg.Transport
+func Go_Http_transportProxyT(p0 *pkg.Transport) any { return p0.Proxy }
 
 func Go_Http_transportSetProxy(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Proxy") }
 
-func Go_Http_transportOnProxyConnectResponse(p0 any) any { return SkyFfiFieldGet(p0, "OnProxyConnectResponse") }
+type FfiT_Go_Http_transportOnProxyConnectResponse_P0 = *pkg.Transport
+func Go_Http_transportOnProxyConnectResponseT(p0 *pkg.Transport) any { return p0.OnProxyConnectResponse }
 
 func Go_Http_transportSetOnProxyConnectResponse(value any, recv any) any { return SkyFfiFieldSet(value, recv, "OnProxyConnectResponse") }
 
-func Go_Http_transportDialContext(p0 any) any { return SkyFfiFieldGet(p0, "DialContext") }
+type FfiT_Go_Http_transportDialContext_P0 = *pkg.Transport
+func Go_Http_transportDialContextT(p0 *pkg.Transport) any { return p0.DialContext }
 
 func Go_Http_transportSetDialContext(value any, recv any) any { return SkyFfiFieldSet(value, recv, "DialContext") }
 
-func Go_Http_transportDial(p0 any) any { return SkyFfiFieldGet(p0, "Dial") }
+type FfiT_Go_Http_transportDial_P0 = *pkg.Transport
+func Go_Http_transportDialT(p0 *pkg.Transport) any { return p0.Dial }
 
 func Go_Http_transportSetDial(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Dial") }
 
-func Go_Http_transportDialTLSContext(p0 any) any { return SkyFfiFieldGet(p0, "DialTLSContext") }
+type FfiT_Go_Http_transportDialTLSContext_P0 = *pkg.Transport
+func Go_Http_transportDialTLSContextT(p0 *pkg.Transport) any { return p0.DialTLSContext }
 
 func Go_Http_transportSetDialTLSContext(value any, recv any) any { return SkyFfiFieldSet(value, recv, "DialTLSContext") }
 
-func Go_Http_transportDialTLS(p0 any) any { return SkyFfiFieldGet(p0, "DialTLS") }
+type FfiT_Go_Http_transportDialTLS_P0 = *pkg.Transport
+func Go_Http_transportDialTLST(p0 *pkg.Transport) any { return p0.DialTLS }
 
 func Go_Http_transportSetDialTLS(value any, recv any) any { return SkyFfiFieldSet(value, recv, "DialTLS") }
 
@@ -2458,7 +2472,8 @@ type FfiT_Go_Http_transportSetExpectContinueTimeout_P0 = time.Duration
 type FfiT_Go_Http_transportSetExpectContinueTimeout_P1 = *pkg.Transport
 func Go_Http_transportSetExpectContinueTimeoutT(value time.Duration, recv *pkg.Transport) *pkg.Transport { recv.ExpectContinueTimeout = value; return recv }
 
-func Go_Http_transportTLSNextProto(p0 any) any { return SkyFfiFieldGet(p0, "TLSNextProto") }
+type FfiT_Go_Http_transportTLSNextProto_P0 = *pkg.Transport
+func Go_Http_transportTLSNextProtoT(p0 *pkg.Transport) any { return p0.TLSNextProto }
 
 func Go_Http_transportSetTLSNextProto(value any, recv any) any { return SkyFfiFieldSet(value, recv, "TLSNextProto") }
 
@@ -2470,7 +2485,8 @@ type FfiT_Go_Http_transportSetProxyConnectHeader_P0 = pkg.Header
 type FfiT_Go_Http_transportSetProxyConnectHeader_P1 = *pkg.Transport
 func Go_Http_transportSetProxyConnectHeaderT(value pkg.Header, recv *pkg.Transport) *pkg.Transport { recv.ProxyConnectHeader = value; return recv }
 
-func Go_Http_transportGetProxyConnectHeader(p0 any) any { return SkyFfiFieldGet(p0, "GetProxyConnectHeader") }
+type FfiT_Go_Http_transportGetProxyConnectHeader_P0 = *pkg.Transport
+func Go_Http_transportGetProxyConnectHeaderT(p0 *pkg.Transport) any { return p0.GetProxyConnectHeader }
 
 func Go_Http_transportSetGetProxyConnectHeader(value any, recv any) any { return SkyFfiFieldSet(value, recv, "GetProxyConnectHeader") }
 

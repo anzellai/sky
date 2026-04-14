@@ -63,7 +63,8 @@ func Go_FyneV2_animationRepeatCountT(p0 *pkg.Animation) int { return p0.RepeatCo
 type FfiT_Go_FyneV2_animationSetRepeatCount_P1 = *pkg.Animation
 func Go_FyneV2_animationSetRepeatCountT(value int, recv *pkg.Animation) *pkg.Animation { recv.RepeatCount = value; return recv }
 
-func Go_FyneV2_animationTick(p0 any) any { return SkyFfiFieldGet(p0, "Tick") }
+type FfiT_Go_FyneV2_animationTick_P0 = *pkg.Animation
+func Go_FyneV2_animationTickT(p0 *pkg.Animation) any { return p0.Tick }
 
 func Go_FyneV2_animationSetTick(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Tick") }
 
@@ -1807,7 +1808,8 @@ func Go_FyneV2_menuItemLabelT(p0 *pkg.MenuItem) string { return p0.Label }
 type FfiT_Go_FyneV2_menuItemSetLabel_P1 = *pkg.MenuItem
 func Go_FyneV2_menuItemSetLabelT(value string, recv *pkg.MenuItem) *pkg.MenuItem { recv.Label = value; return recv }
 
-func Go_FyneV2_menuItemAction(p0 any) any { return SkyFfiFieldGet(p0, "Action") }
+type FfiT_Go_FyneV2_menuItemAction_P0 = *pkg.MenuItem
+func Go_FyneV2_menuItemActionT(p0 *pkg.MenuItem) any { return p0.Action }
 
 func Go_FyneV2_menuItemSetAction(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Action") }
 
