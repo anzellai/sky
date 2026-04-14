@@ -3201,10 +3201,21 @@ caseToGo subject branches =
                 -- SkyResult[any,any] assertion. Net: zero runtime
                 -- boxing between FFI and case body.
                 e
+            -- P8: when the target is the fully-erased SkyResult[any, any]
+            -- and the source is already `any` (kernel call, variable,
+            -- etc.), a plain type assertion suffices — ResultCoerce's
+            -- reflect fallback never fires for the any/any target, so
+            -- the runtime cost is identical but the generated code has
+            -- one fewer helper reference. Drops 100+ ResultCoerce sites.
+            | Just "any, any" <- stripParametric "rt.SkyResult" typeName =
+                GoIr.GoTypeAssert (anyWrapped e) "rt.SkyResult[any, any]"
             | Just params <- stripParametric "rt.SkyResult" typeName =
                 GoIr.GoCall (GoIr.GoIdent ("rt.ResultCoerce[" ++ params ++ "]")) [e]
             | Just _ <- stripParametric "rt.SkyMaybe" typeName, isTypedFfiCall e =
                 e
+            -- Same fast-path for SkyMaybe[any].
+            | Just "any" <- stripParametric "rt.SkyMaybe" typeName =
+                GoIr.GoTypeAssert (anyWrapped e) "rt.SkyMaybe[any]"
             | Just inner <- stripParametric "rt.SkyMaybe" typeName =
                 GoIr.GoCall (GoIr.GoIdent ("rt.MaybeCoerce[" ++ inner ++ "]")) [e]
             | otherwise =
