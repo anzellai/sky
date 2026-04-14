@@ -2748,6 +2748,25 @@ func SkyFfiRecover(out *any) func() {
 	}
 }
 
+// SkyFfiRecoverT is the typed counterpart used by P7's typed FFI wrappers.
+// Parameterised on the success type A; error slot is fixed to string to
+// match the Sky-side `Task String a` contract. Generated typed wrappers
+// wire it in as:
+//
+//	func <K>_fooT(args ...) (out SkyResult[string, A]) {
+//	    defer SkyFfiRecoverT(&out)()
+//	    ... actual FFI call ...
+//	    out = Ok[string, A](result)
+//	    return
+//	}
+func SkyFfiRecoverT[A any](out *SkyResult[string, A]) func() {
+	return func() {
+		if r := recover(); r != nil {
+			*out = Err[string, A](fmt.Sprintf("panic: %v", r))
+		}
+	}
+}
+
 // SkyFfiArg_string coerces a Sky-side any to a Go string without allocating
 // when the value is already a string. Used by generated FFI wrappers.
 func SkyFfiArg_string(v any) string {

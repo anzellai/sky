@@ -727,15 +727,20 @@ emitTypedWrapper kernelName aliases fn =
                     _fnName fn ++ " }\n"
 
         DirectCall ->
-            unlines
-                [ "// [" ++ _fnEffect fn ++ "] " ++ kernelName ++ "." ++ skyName ++
-                  " → pkg." ++ goFnName
-                , "func " ++ wrapperName ++ "(" ++ paramList ++ ") (out any) {"
-                , "\tdefer SkyFfiRecover(&out)()"
-                , unitSink ++ emitTypedCall fn rewrittenParams rewrittenResults
-                , "\treturn"
-                , "}"
-                ]
+            let anyAnyWrapper =
+                    unlines
+                        [ "// [" ++ _fnEffect fn ++ "] " ++ kernelName ++ "." ++ skyName ++
+                          " → pkg." ++ goFnName
+                        , "func " ++ wrapperName ++ "(" ++ paramList ++ ") (out any) {"
+                        , "\tdefer SkyFfiRecover(&out)()"
+                        , unitSink ++ emitTypedCall fn rewrittenParams rewrittenResults
+                        , "\treturn"
+                        , "}"
+                        ]
+                typedVariant = case emitTypedVariant wrapperName fn rewrittenParams rewrittenResults of
+                    Just s  -> s
+                    Nothing -> ""
+            in anyAnyWrapper ++ typedVariant
 
         ReflectTopLevel ->
             unlines (reflectCall ("reflect.ValueOf(pkg." ++ goFnName ++ ")"))
@@ -936,6 +941,110 @@ packResults :: [String] -> String
 packResults []  = "struct{}{}"
 packResults [v] = v
 packResults vs  = "[]any{" ++ intercalate ", " vs ++ "}"
+
+
+-- | P7: emit a strongly-typed T-suffix wrapper alongside the any/any one,
+-- when all param and result types are expressible as concrete Go syntax.
+--
+-- Narrow scope (intentional — widens in follow-up commits):
+--   * Only the DirectCall wrapper class (the caller already guarantees this).
+--   * Not variadic.
+--   * Not a synthetic field getter/setter / pkg-var accessor.
+--   * All param/result types pass `isSimpleTypedType`.
+--   * Result shapes: none, single non-error, single error, or (T, error).
+--
+-- Call sites still call the any/any wrapper; the typed variant is an
+-- additive optimisation target for a later call-site migration pass.
+emitTypedVariant
+    :: String                       -- ^ any/any wrapper name
+    -> FnInfo
+    -> [(String, String)]           -- ^ rewritten params
+    -> [(String, String)]           -- ^ rewritten results
+    -> Maybe String
+emitTypedVariant anyName fn params results
+    | _fnVariadic fn                 = Nothing
+    | _fnIsField fn                  = Nothing
+    | _fnIsFieldSet fn               = Nothing
+    | _fnIsPkgVar fn                 = Nothing
+    | not (null (_fnMethodName fn))  = Nothing
+    | any (not . isSimpleTypedType . snd) params  = Nothing
+    | any (not . isSimpleTypedType . snd) results = Nothing
+    | otherwise =
+        case classifyTypedResult results of
+            Nothing -> Nothing
+            Just (okType, isEffectful, pickExpr) ->
+                let typedName   = anyName ++ "T"
+                    goFnName    = _fnName fn
+                    paramDecls  = intercalate ", "
+                        [ "p" ++ show i ++ " " ++ t | (i, (_, t)) <- zip [0::Int ..] params ]
+                    argRefs     = intercalate ", " [ "p" ++ show i | i <- [0 .. length params - 1] ]
+                    call        = "pkg." ++ goFnName ++ "(" ++ argRefs ++ ")"
+                    recoverLine = "\tdefer SkyFfiRecoverT(&out)()"
+                    bodyLines   = if isEffectful
+                        then case results of
+                            [_] -> -- single `error`
+                                [ "\terr := " ++ call
+                                , "\tif err != nil { out = Err[string, " ++ okType ++
+                                  "](err.Error()); return }"
+                                , "\tout = Ok[string, " ++ okType ++ "](struct{}{})"
+                                ]
+                            _   -> -- (T, error)
+                                [ "\tr0, err := " ++ call
+                                , "\tif err != nil { out = Err[string, " ++ okType ++
+                                  "](err.Error()); return }"
+                                , "\tout = Ok[string, " ++ okType ++ "](r0)"
+                                ]
+                        else
+                            [ "\tout = Ok[string, " ++ okType ++ "](" ++ pickExpr call ++ ")"
+                            ]
+                in Just $ unlines $
+                    [ "// [" ++ _fnEffect fn ++ "] typed wrapper for " ++ anyName ++
+                      " (P7 adaptor target)"
+                    , "func " ++ typedName ++ "(" ++ paramDecls ++
+                      ") (out SkyResult[string, " ++ okType ++ "]) {"
+                    , recoverLine
+                    ] ++ bodyLines ++ [ "\treturn", "}" ]
+
+
+-- | Classify a result list for typed emission.
+-- Returns `Just (okGoType, isEffectful, pickExpr)`:
+--   * okGoType    — Go type for the Ok slot of SkyResult[string, _].
+--   * isEffectful — True when the last result type is `error`.
+--   * pickExpr    — how to produce the Ok value from the bare call expression
+--                   (used only when !isEffectful).
+-- Returns Nothing for shapes we don't yet handle (multi-return non-error,
+-- 3+ returns, etc.).
+classifyTypedResult
+    :: [(String, String)]
+    -> Maybe (String, Bool, String -> String)
+classifyTypedResult results = case results of
+    [(_, "error")]                      -> Just ("struct{}", True , id)
+    [(_, t)] | t /= "error"             -> Just (t, False, id)
+    [(_, t), (_, "error")] | t /= "error" -> Just (t, True , id)
+    _                                   -> Nothing
+
+
+-- | Concrete Go types we can render directly in a typed wrapper signature.
+-- Rejects anything that looks like a function, channel, map, ellipsis,
+-- bare generic type parameter, or non-identifier gibberish.
+isSimpleTypedType :: String -> Bool
+isSimpleTypedType t0 =
+    let t = dropWhile (== '*') t0
+        t' = case t of
+            ('[':']':rest) -> rest
+            _              -> t
+    in not (null t')
+       && not ("func(" `isSubstringOf` t')
+       && not ("chan " `isSubstringOf` t')
+       && not ("<-chan" `isSubstringOf` t')
+       && not ("chan<-" `isSubstringOf` t')
+       && not ("map[" `isSubstringOf` t')
+       && not ("..." `isSubstringOf` t')
+       && not ("[" `isSubstringOf` t')
+       && not (isBareParam t')
+       && all isTypeChar t'
+  where
+    isTypeChar c = isAlphaNum c || c == '.' || c == '_' || c == '*' || c == '/'
 
 
 isSkippedEntry :: String -> Bool

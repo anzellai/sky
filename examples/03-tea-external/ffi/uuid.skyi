@@ -21,10 +21,24 @@ package uuid
 -- [pure] DomainString : Domain -> String   -- runtime wrap: Task String
 -- [pure] EnableRandPool : () -> ()   -- runtime wrap: Task String
 -- [fallible] FromBytes : []byte -> (UUID, String)   -- runtime wrap: Task String
+-- [pure] Future : struct{} -> Variant   -- runtime wrap: Task String
 -- [fallible] GetTime : () -> (Time, uint16, String)   -- runtime wrap: Task String
+-- [pure] Group : struct{} -> Domain   -- runtime wrap: Task String
+-- [pure] Invalid : struct{} -> Variant   -- runtime wrap: Task String
 -- [pure] IsInvalidLengthError : String -> Bool   -- runtime wrap: Task String
+-- [pure] Max : struct{} -> UUID   -- runtime wrap: Task String
+-- [effectful] SetMax : UUID -> struct{}   -- runtime wrap: Task String
+-- [pure] Microsoft : struct{} -> Variant   -- runtime wrap: Task String
 -- [pure] Must : UUID -> String -> UUID   -- runtime wrap: Task String
 -- [pure] MustParse : String -> UUID   -- runtime wrap: Task String
+-- [pure] NameSpaceDNS : struct{} -> UUID   -- runtime wrap: Task String
+-- [effectful] SetNameSpaceDNS : UUID -> struct{}   -- runtime wrap: Task String
+-- [pure] NameSpaceOID : struct{} -> UUID   -- runtime wrap: Task String
+-- [effectful] SetNameSpaceOID : UUID -> struct{}   -- runtime wrap: Task String
+-- [pure] NameSpaceURL : struct{} -> UUID   -- runtime wrap: Task String
+-- [effectful] SetNameSpaceURL : UUID -> struct{}   -- runtime wrap: Task String
+-- [pure] NameSpaceX500 : struct{} -> UUID   -- runtime wrap: Task String
+-- [effectful] SetNameSpaceX500 : UUID -> struct{}   -- runtime wrap: Task String
 -- [pure] New : () -> UUID   -- runtime wrap: Task String
 -- [fallible] NewDCEGroup : () -> (UUID, String)   -- runtime wrap: Task String
 -- [fallible] NewDCEPerson : () -> (UUID, String)   -- runtime wrap: Task String
@@ -39,6 +53,8 @@ package uuid
 -- [fallible] NewV6 : () -> (UUID, String)   -- runtime wrap: Task String
 -- [fallible] NewV7 : () -> (UUID, String)   -- runtime wrap: Task String
 -- [fallible] NewV7FromReader : Reader -> (UUID, String)   -- runtime wrap: Task String
+-- [pure] Nil : struct{} -> UUID   -- runtime wrap: Task String
+-- [effectful] SetNil : UUID -> struct{}   -- runtime wrap: Task String
 -- [pure] NodeID : () -> []byte   -- runtime wrap: Task String
 -- [pure] NodeInterface : () -> String   -- runtime wrap: Task String
 -- [fallible] NullUUIDScan : NullUUID -> interface{} -> String   -- runtime wrap: Task String
@@ -53,8 +69,13 @@ package uuid
 -- [pure] NullUUIDSetUUID : UUID -> NullUUID -> NullUUID   -- runtime wrap: Task String
 -- [pure] NullUUIDValid : NullUUID -> Bool   -- runtime wrap: Task String
 -- [pure] NullUUIDSetValid : Bool -> NullUUID -> NullUUID   -- runtime wrap: Task String
+-- [pure] NewNullUUID : struct{} -> NullUUID   -- runtime wrap: Task String
+-- [pure] Org : struct{} -> Domain   -- runtime wrap: Task String
 -- [fallible] Parse : String -> (UUID, String)   -- runtime wrap: Task String
 -- [fallible] ParseBytes : []byte -> (UUID, String)   -- runtime wrap: Task String
+-- [pure] Person : struct{} -> Domain   -- runtime wrap: Task String
+-- [pure] RFC4122 : struct{} -> Variant   -- runtime wrap: Task String
+-- [pure] Reserved : struct{} -> Variant   -- runtime wrap: Task String
 -- [pure] SetClockSequence : Int -> ()   -- runtime wrap: Task String
 -- [pure] SetNodeID : []byte -> Bool   -- runtime wrap: Task String
 -- [pure] SetNodeInterface : String -> Bool   -- runtime wrap: Task String
