@@ -145,6 +145,7 @@ test-suite sky-tests
       Sky.Build.CompileSpec
       Sky.Build.ExampleSweepSpec
       Sky.Build.TypedFfiSpec
+      Sky.ErrorUnificationSpec
       Sky.Parse.PatternSpec
       Sky.Canonicalise.ExposingSpec
       Sky.Type.ExhaustivenessSpec
