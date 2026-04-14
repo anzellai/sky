@@ -598,6 +598,19 @@ func AsString(v any) string {
 	return fmt.Sprintf("%v", v)
 }
 
+// AsList coerces a Sky-side any to []any. Sky lists are always
+// []any at runtime (element type erased); typed List kernel
+// companions take []A and Go infers A = any at the call site.
+// A typed flow-analysis pass will later substitute the element
+// type when the HM checker has it, enabling `List_lengthT[int]`
+// and friends without reflection.
+func AsList(v any) []any {
+	if xs, ok := v.([]any); ok {
+		return xs
+	}
+	return nil
+}
+
 func AsInt(v any) int {
 	switch n := v.(type) {
 	case int:
@@ -756,6 +769,8 @@ func List_takeT[A any](n int, xs []A) []A {
 	if n < 0 { n = 0 }
 	return xs[:n]
 }
+
+func List_isEmptyT[A any](xs []A) bool { return len(xs) == 0 }
 
 func List_dropT[A any](n int, xs []A) []A {
 	if n > len(xs) { n = len(xs) }

@@ -2643,6 +2643,14 @@ typedKernelArgCoerce = Map.fromList
     , (("Encoding", "hexDecode"),    ["AsString"])
     , (("Regex",  "match"),   ["AsString", "AsString"])
     , (("Regex",  "find"),    ["AsString", "AsString"])
+    -- List (single-list arg): dispatch to typed companions that
+    -- accept []any. Sky's List elements are always erased to any
+    -- at runtime, so `rt.List_lengthT(rt.AsList(xs))` is exactly
+    -- the typed shape — Go infers A = any from AsList's return.
+    , (("List",   "length"),  ["AsList"])
+    , (("List",   "head"),    ["AsList"])
+    , (("List",   "reverse"), ["AsList"])
+    , (("List",   "isEmpty"), ["AsList"])
     ]
 
 
@@ -2676,6 +2684,8 @@ typedKernelLiterals = Set.fromList
     , ("Encoding", "urlEncode"),    ("Encoding", "urlDecode")
     , ("Encoding", "hexEncode"),    ("Encoding", "hexDecode")
     , ("Regex",  "match"),      ("Regex",  "find"),       ("Regex",  "replace")
+    , ("List",   "length"),     ("List",   "head"),       ("List",   "reverse")
+    , ("List",   "isEmpty")
     ]
 
 
