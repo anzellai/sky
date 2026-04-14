@@ -2092,6 +2092,35 @@ func Regex_split(pattern any, s any) any {
 	return result
 }
 
+// P8/Regex typed companions — direct string in/out, SkyMaybe[string]
+// for `find`, []string for list-returning operations.
+func Regex_matchT(pattern, s string) bool {
+	matched, _ := regexp.MatchString(pattern, s)
+	return matched
+}
+func Regex_findT(pattern, s string) SkyMaybe[string] {
+	re, err := regexp.Compile(pattern)
+	if err != nil { return Nothing[string]() }
+	m := re.FindString(s)
+	if m == "" { return Nothing[string]() }
+	return Just[string](m)
+}
+func Regex_findAllT(pattern, s string) []string {
+	re, err := regexp.Compile(pattern)
+	if err != nil { return []string{} }
+	return re.FindAllString(s, -1)
+}
+func Regex_replaceT(pattern, replacement, s string) string {
+	re, err := regexp.Compile(pattern)
+	if err != nil { return s }
+	return re.ReplaceAllString(s, replacement)
+}
+func Regex_splitT(pattern, s string) []string {
+	re, err := regexp.Compile(pattern)
+	if err != nil { return []string{s} }
+	return re.Split(s, -1)
+}
+
 // ═══════════════════════════════════════════════════════════
 // Char
 // ═══════════════════════════════════════════════════════════
