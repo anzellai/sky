@@ -2601,11 +2601,31 @@ caseToGo subject branches =
         -- generic instantiations are distinct Go types.
         coerceSubject typeName e
             | Just params <- stripParametric "rt.SkyResult" typeName =
-                GoIr.GoCall (GoIr.GoIdent ("rt.ResultCoerce[" ++ params ++ "]")) [e]
+                -- P7: if the source is a known typed FFI call we
+                -- already have a concrete SkyResult and just need to
+                -- re-box into [any, any]. ResultAsAny is a cheap
+                -- Tag-switch with two Ok/Err rebuilds — no reflect,
+                -- no generic param inference required at the call
+                -- site beyond Go's own type inference.
+                if params == "any, any" && isTypedFfiCall e
+                    then GoIr.GoCall (GoIr.GoIdent "rt.ResultAsAny") [e]
+                    else GoIr.GoCall (GoIr.GoIdent ("rt.ResultCoerce[" ++ params ++ "]")) [e]
             | Just inner <- stripParametric "rt.SkyMaybe" typeName =
                 GoIr.GoCall (GoIr.GoIdent ("rt.MaybeCoerce[" ++ inner ++ "]")) [e]
             | otherwise =
                 GoIr.GoTypeAssert (anyWrapped e) typeName
+
+
+        -- Peek through the GoExpr tree for a `rt.Go_X_yT(...)` call —
+        -- the exact shape the typed-FFI call-site migration emits.
+        isTypedFfiCall expr = case expr of
+            GoIr.GoCall (GoIr.GoQualified "rt" fnName) _
+                | take 3 fnName == "Go_"
+                , not (null fnName)
+                , last fnName == 'T'
+                , Set.member fnName typedFfiWrapperSet
+                -> True
+            _ -> False
         subjectDecl = case subjectType of
             Just typeName ->
                 GoIr.GoShortDecl "__subject" (coerceSubject typeName goSubject)

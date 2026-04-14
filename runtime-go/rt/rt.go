@@ -82,6 +82,20 @@ func Nothing[A any]() SkyMaybe[A] {
 // the behaviour we want (type safety at the return boundary).
 // ═══════════════════════════════════════════════════════════
 
+// ResultAsAny is the typed-FFI shortcut used by call-site codegen to
+// convert SkyResult[string, A] (or any concrete Result) to the
+// SkyResult[any, any] shape the case-subject path expects, without
+// the reflect dance inside ResultCoerce. Separate symbol so the P7
+// progress metric (ResultCoerce call count) stays meaningful — this
+// one is a cheaper companion, not a generic reconstructor.
+func ResultAsAny[E any, A any](r SkyResult[E, A]) SkyResult[any, any] {
+	if r.Tag == 0 {
+		return Ok[any, any](any(r.OkValue))
+	}
+	return Err[any, any](any(r.ErrValue))
+}
+
+
 // ResultCoerce reconstructs a SkyResult with target generic params.
 // Works for any source SkyResult[X, Y] via reflection — Go's generic
 // instantiations are distinct types, so a plain type switch can't
