@@ -1635,6 +1635,27 @@ func Task_map(fn any, task any) any {
 	}
 }
 
+// P8/Task typed companions — SkyTask is `func() SkyResult[E, A]`.
+func Task_mapT[E, A, B any](fn func(A) B, t SkyTask[E, A]) SkyTask[E, B] {
+	return func() SkyResult[E, B] {
+		r := t()
+		if r.Tag != 0 { return Err[E, B](r.ErrValue) }
+		return Ok[E, B](fn(r.OkValue))
+	}
+}
+
+func Task_sequenceT[E, A any](ts []SkyTask[E, A]) SkyTask[E, []A] {
+	return func() SkyResult[E, []A] {
+		out := make([]A, 0, len(ts))
+		for _, t := range ts {
+			r := t()
+			if r.Tag != 0 { return Err[E, []A](r.ErrValue) }
+			out = append(out, r.OkValue)
+		}
+		return Ok[E, []A](out)
+	}
+}
+
 func AnyTaskRun(task any) any {
 	// Accept either a Task thunk (`func() any`) which we invoke, or a
 	// value that's already the result of running the task (SkyResult /
