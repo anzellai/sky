@@ -1419,6 +1419,50 @@ func Dict_map(fn any, dict any) any {
 	return result
 }
 
+// P8/Dict typed companions — generic over value type V.
+func Dict_emptyT[V any]() map[string]V { return map[string]V{} }
+
+func Dict_insertT[V any](key string, val V, d map[string]V) map[string]V {
+	out := make(map[string]V, len(d)+1)
+	for k, v := range d { out[k] = v }
+	out[key] = val
+	return out
+}
+
+func Dict_getT[V any](key string, d map[string]V) SkyMaybe[V] {
+	if v, ok := d[key]; ok { return Just[V](v) }
+	return Nothing[V]()
+}
+
+func Dict_removeT[V any](key string, d map[string]V) map[string]V {
+	out := make(map[string]V, len(d))
+	for k, v := range d { if k != key { out[k] = v } }
+	return out
+}
+
+func Dict_memberT[V any](key string, d map[string]V) bool {
+	_, ok := d[key]
+	return ok
+}
+
+func Dict_keysT[V any](d map[string]V) []string {
+	keys := make([]string, 0, len(d))
+	for k := range d { keys = append(keys, k) }
+	return keys
+}
+
+func Dict_valuesT[V any](d map[string]V) []V {
+	vals := make([]V, 0, len(d))
+	for _, v := range d { vals = append(vals, v) }
+	return vals
+}
+
+func Dict_mapT[V, W any](fn func(V) W, d map[string]V) map[string]W {
+	out := make(map[string]W, len(d))
+	for k, v := range d { out[k] = fn(v) }
+	return out
+}
+
 func Dict_foldl(fn any, acc any, dict any) any {
 	f := fn.(func(any) any)
 	m := dict.(map[string]any)
