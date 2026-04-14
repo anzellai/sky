@@ -14,6 +14,17 @@ import Data.List (isInfixOf)
 spec :: Spec
 spec = do
     describe "P7 typed-FFI call sites" $ do
+        it "emits the typed Uuid.newString wrapper in the runtime" $ do
+            -- Sanity: the rt.SkyFfiRecoverT helper and the typed
+            -- Go_Uuid_newStringT wrapper are what the call-site
+            -- migration points at. If the emitter or runtime stops
+            -- producing either, no amount of compiler-level dispatch
+            -- will help.
+            rtOk <- readFile "runtime-go/rt/rt.go"
+            ("SkyFfiRecoverT[A any]" `isInfixOf` rtOk) `shouldBe` True
+            wrapper <- readFile "examples/03-tea-external/ffi/uuid_bindings.go"
+            ("defer SkyFfiRecoverT(&out)()" `isInfixOf` wrapper) `shouldBe` True
+
         it "routes Uuid.newString through Go_Uuid_newStringT in ex03" $ do
             body <- readFile "examples/03-tea-external/sky-out/main.go"
             ("Go_Uuid_newStringT" `isInfixOf` body) `shouldBe` True
