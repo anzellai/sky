@@ -2610,6 +2610,7 @@ typedKernelAltName = Map.fromList
     , (("Basics", "snd"),        "sndAnyT")
     , (("Result", "withDefault"), "withDefaultAnyT")
     , (("Maybe",  "withDefault"), "withDefaultAnyT")
+    , (("Dict",   "get"),         "getAnyT")
     ]
 
 
@@ -2681,6 +2682,7 @@ typedKernelArgCoerce = Map.fromList
     , (("Dict",   "insert"),  ["AsString", "Pass", "AsDict"])
     , (("Dict",   "keys"),    ["AsDict"])
     , (("Dict",   "values"),  ["AsDict"])
+    , (("Dict",   "get"),     ["Pass", "Pass"])
     -- Basics: pure boolean / integer helpers
     , (("Basics", "not"),     ["AsBool"])
     , (("Basics", "modBy"),   ["AsInt", "AsInt"])
@@ -2736,7 +2738,7 @@ typedKernelLiterals = Set.fromList
     , ("List",   "length"),     ("List",   "head"),       ("List",   "reverse")
     , ("List",   "isEmpty")
     , ("Dict",   "member"),     ("Dict",   "insert")
-    , ("Dict",   "keys"),       ("Dict",   "values")
+    , ("Dict",   "keys"),       ("Dict",   "values"),   ("Dict", "get")
     , ("Basics", "not"),        ("Basics", "modBy"),  ("Basics", "errorToString")
     , ("Time",   "formatISO8601"), ("Time", "formatRFC3339"), ("Time", "formatHTTP")
     , ("Basics", "fst"),        ("Basics", "snd"),   ("Basics", "identity")

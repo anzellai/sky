@@ -1669,6 +1669,13 @@ func Dict_insertT[V any](key string, val V, d map[string]V) map[string]V {
 	return out
 }
 
+// Dict_getAnyT: delegates to the any/any Dict_get. The typed Dict_getT
+// below requires HM element flow; AnyT fires whenever dispatch needs
+// Sky's any-boxed shape.
+func Dict_getAnyT(key any, dict any) any {
+	return Dict_get(key, dict)
+}
+
 func Dict_getT[V any](key string, d map[string]V) SkyMaybe[V] {
 	if v, ok := d[key]; ok { return Just[V](v) }
 	return Nothing[V]()
