@@ -439,6 +439,14 @@ func Basics_modByT(divisor, n int) int {
 	return r
 }
 
+// Basics_ordT — generic ordering comparison. Sky's compare kernel has
+// a polymorphic shape; the typed companion specialises to primitives.
+func Basics_ordT[A interface{ ~int | ~float64 | ~string }](a, b A) int {
+	if a < b { return -1 }
+	if a > b { return 1 }
+	return 0
+}
+
 func Basics_not(b any) any {
 	return !AsBool(b)
 }
