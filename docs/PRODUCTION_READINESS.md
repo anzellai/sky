@@ -755,7 +755,7 @@ Update this table after every merged phase. Include commit SHA and date.
 | P10d — Std.Db | ☐ | — | — | — |
 | P10e — Std.Auth | ☐ | — | — | — |
 | P11a — sky upgrade | ☑ | _HEAD_ | 2026-04-14 | `sky upgrade` detects platform, hits GitHub releases API, downloads the matching tarball, verifies the extracted binary, atomically swaps. No new Haskell deps (shells out to curl+tar). Fails cleanly on 404/parse errors without corrupting the existing binary. |
-| P11b — Sky deps | ☐ | — | — | — |
+| P11b — Sky deps | ☑ | _HEAD_ | 2026-04-14 | `Sky.Build.SkyDeps.installDeps` resolves `[dependencies]` via shallow git clone into `.skydeps/<flatpkg>/`, returns source roots to prepend to the module graph. Wired into `sky build`, `sky install`, and the compile pipeline. Verified by ex13-skyshop's `sky-tailwind` dep landing under `.skydeps/` and the full sweep passing. |
 | P12 — reflection audit | ☐ | — | — | — |
 
 **Last verified green:** 2026-04-14 (after P0/P1/P2/P3/P11a) — 18/18
