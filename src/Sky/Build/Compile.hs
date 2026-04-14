@@ -2611,6 +2611,7 @@ typedKernelArgCoerce = Map.fromList
     , (("String", "append"),     ["AsString", "AsString"])
     , (("String", "split"),      ["AsString", "AsString"])
     , (("String", "slice"),      ["AsInt", "AsInt", "AsString"])
+    , (("String", "replace"),    ["AsString", "AsString", "AsString"])
     -- Math
     , (("Math",   "abs"),  ["AsInt"])
     , (("Math",   "min"),  ["AsInt", "AsInt"])
