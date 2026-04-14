@@ -1013,7 +1013,6 @@ emitTypedVariant knownAliases anyName fn params results
     | any (not . typeIsSafe) (map snd params)  = Nothing
     | any (not . typeIsSafe) (map snd results) = Nothing
     | isMethod && null params        = Nothing  -- method needs a receiver
-
     | otherwise =
         case classifyTypedResult results of
             Nothing -> Nothing
@@ -1051,7 +1050,10 @@ emitTypedVariant knownAliases anyName fn params results
                         else
                             [ "\tout = Ok[string, " ++ okType ++ "](" ++ pickExpr call ++ ")"
                             ]
+                    aliasLines = emitFfiTAliases anyName params okType
                 in Just $ unlines $
+                    aliasLines
+                    ++
                     [ "// [" ++ _fnEffect fn ++ "] typed wrapper for " ++ anyName ++
                       " (P7 adaptor target)"
                     , "func " ++ typedName ++ "(" ++ paramDecls ++
@@ -1061,6 +1063,34 @@ emitTypedVariant knownAliases anyName fn params results
   where
     isMethod = not (null (_fnMethodName fn))
     typeIsSafe t = isSimpleTypedType t && allPackagesKnown knownAliases t
+
+
+-- | Emit `type FfiT_<WrapperName>_P<N> = <goType>` aliases so main.go
+-- can reference otherwise-file-local FFI types through the `rt.`
+-- package. Primitives (string / int / bool / ...) don't need aliases;
+-- only types that reference a non-caller-visible package prefix.
+emitFfiTAliases :: String -> [(String, String)] -> String -> [String]
+emitFfiTAliases anyName params okType =
+    let paramAliases =
+            [ "type FfiT_" ++ anyName ++ "_P" ++ show i ++ " = " ++ t
+            | (i, (_, t)) <- zip [0::Int ..] params
+            , needsAlias t
+            ]
+        resultAlias =
+            if needsAlias okType
+                then [ "type FfiT_" ++ anyName ++ "_R = " ++ okType ]
+                else []
+    in paramAliases ++ resultAlias
+
+
+-- | Whether a Go type string needs a re-exported `FfiT_*` alias so
+-- callers outside this file can use it. Primitive types don't;
+-- anything with a `.` (qualified pkg reference) or `*`/`[]` leading
+-- decoration of a dotted type does.
+needsAlias :: String -> Bool
+needsAlias t =
+    let bare = dropWhile (\c -> c == '*' || c == '[' || c == ']' || c == ' ') t
+    in '.' `elem` bare
 
 
 -- | Do all package-qualified identifiers in this Go type string correspond

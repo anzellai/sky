@@ -11,7 +11,7 @@ package rt
 import (
 	pkg "github.com/google/uuid"
 	"fmt"
-	_ "database/sql/driver"  // aliased driver; unused in emitted wrappers
+	driver "database/sql/driver"
 	hash "hash"
 	io "io"
 	"reflect"
@@ -46,6 +46,13 @@ func Go_Uuid_domainString(p0 any) (out any) {
 	out = Ok[any, any](p0.(pkg.Domain).String())
 	return
 }
+type FfiT_Go_Uuid_domainString_P0 = pkg.Domain
+// [pure] typed wrapper for Go_Uuid_domainString (P7 adaptor target)
+func Go_Uuid_domainStringT(p0 pkg.Domain) (out SkyResult[string, string]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, string](p0.String())
+	return
+}
 
 // [pure] Go_Uuid.enableRandPool → pkg.EnableRandPool
 func Go_Uuid_enableRandPool(p0 any) (out any) {
@@ -65,6 +72,7 @@ func Go_Uuid_fromBytes(p0 any) (out any) {
 
 	return
 }
+type FfiT_Go_Uuid_fromBytes_R = pkg.UUID
 // [fallible] typed wrapper for Go_Uuid_fromBytes (P7 adaptor target)
 func Go_Uuid_fromBytesT(p0 []byte) (out SkyResult[string, pkg.UUID]) {
 	defer SkyFfiRecoverT(&out)()
@@ -116,6 +124,8 @@ func Go_Uuid_must(p0 any, p1 any) (out any) {
 	out = Ok[any, any](pkg.Must(p0.(pkg.UUID), p1.(error)))
 	return
 }
+type FfiT_Go_Uuid_must_P0 = pkg.UUID
+type FfiT_Go_Uuid_must_R = pkg.UUID
 // [pure] typed wrapper for Go_Uuid_must (P7 adaptor target)
 func Go_Uuid_mustT(p0 pkg.UUID, p1 error) (out SkyResult[string, pkg.UUID]) {
 	defer SkyFfiRecoverT(&out)()
@@ -129,6 +139,7 @@ func Go_Uuid_mustParse(p0 any) (out any) {
 	out = Ok[any, any](pkg.MustParse(fmt.Sprintf("%v", p0)))
 	return
 }
+type FfiT_Go_Uuid_mustParse_R = pkg.UUID
 // [pure] typed wrapper for Go_Uuid_mustParse (P7 adaptor target)
 func Go_Uuid_mustParseT(p0 string) (out SkyResult[string, pkg.UUID]) {
 	defer SkyFfiRecoverT(&out)()
@@ -159,6 +170,7 @@ func Go_Uuid_new(p0 any) (out any) {
 	out = Ok[any, any](pkg.New())
 	return
 }
+type FfiT_Go_Uuid_new_R = pkg.UUID
 // [pure] typed wrapper for Go_Uuid_new (P7 adaptor target)
 func Go_Uuid_newT() (out SkyResult[string, pkg.UUID]) {
 	defer SkyFfiRecoverT(&out)()
@@ -176,6 +188,7 @@ func Go_Uuid_newDCEGroup(p0 any) (out any) {
 
 	return
 }
+type FfiT_Go_Uuid_newDCEGroup_R = pkg.UUID
 // [fallible] typed wrapper for Go_Uuid_newDCEGroup (P7 adaptor target)
 func Go_Uuid_newDCEGroupT() (out SkyResult[string, pkg.UUID]) {
 	defer SkyFfiRecoverT(&out)()
@@ -195,6 +208,7 @@ func Go_Uuid_newDCEPerson(p0 any) (out any) {
 
 	return
 }
+type FfiT_Go_Uuid_newDCEPerson_R = pkg.UUID
 // [fallible] typed wrapper for Go_Uuid_newDCEPerson (P7 adaptor target)
 func Go_Uuid_newDCEPersonT() (out SkyResult[string, pkg.UUID]) {
 	defer SkyFfiRecoverT(&out)()
@@ -213,6 +227,8 @@ func Go_Uuid_newDCESecurity(p0 any, p1 any) (out any) {
 
 	return
 }
+type FfiT_Go_Uuid_newDCESecurity_P0 = pkg.Domain
+type FfiT_Go_Uuid_newDCESecurity_R = pkg.UUID
 // [fallible] typed wrapper for Go_Uuid_newDCESecurity (P7 adaptor target)
 func Go_Uuid_newDCESecurityT(p0 pkg.Domain, p1 uint32) (out SkyResult[string, pkg.UUID]) {
 	defer SkyFfiRecoverT(&out)()
@@ -228,6 +244,9 @@ func Go_Uuid_newHash(p0 any, p1 any, p2 any, p3 any) (out any) {
 	out = Ok[any, any](pkg.NewHash(p0.(hash.Hash), p1.(pkg.UUID), SkyFfiArg_bytes(p2), AsInt(p3)))
 	return
 }
+type FfiT_Go_Uuid_newHash_P0 = hash.Hash
+type FfiT_Go_Uuid_newHash_P1 = pkg.UUID
+type FfiT_Go_Uuid_newHash_R = pkg.UUID
 // [pure] typed wrapper for Go_Uuid_newHash (P7 adaptor target)
 func Go_Uuid_newHashT(p0 hash.Hash, p1 pkg.UUID, p2 []byte, p3 int) (out SkyResult[string, pkg.UUID]) {
 	defer SkyFfiRecoverT(&out)()
@@ -241,6 +260,8 @@ func Go_Uuid_newMD5(p0 any, p1 any) (out any) {
 	out = Ok[any, any](pkg.NewMD5(p0.(pkg.UUID), SkyFfiArg_bytes(p1)))
 	return
 }
+type FfiT_Go_Uuid_newMD5_P0 = pkg.UUID
+type FfiT_Go_Uuid_newMD5_R = pkg.UUID
 // [pure] typed wrapper for Go_Uuid_newMD5 (P7 adaptor target)
 func Go_Uuid_newMD5T(p0 pkg.UUID, p1 []byte) (out SkyResult[string, pkg.UUID]) {
 	defer SkyFfiRecoverT(&out)()
@@ -258,6 +279,7 @@ func Go_Uuid_newRandom(p0 any) (out any) {
 
 	return
 }
+type FfiT_Go_Uuid_newRandom_R = pkg.UUID
 // [fallible] typed wrapper for Go_Uuid_newRandom (P7 adaptor target)
 func Go_Uuid_newRandomT() (out SkyResult[string, pkg.UUID]) {
 	defer SkyFfiRecoverT(&out)()
@@ -276,6 +298,8 @@ func Go_Uuid_newRandomFromReader(p0 any) (out any) {
 
 	return
 }
+type FfiT_Go_Uuid_newRandomFromReader_P0 = io.Reader
+type FfiT_Go_Uuid_newRandomFromReader_R = pkg.UUID
 // [fallible] typed wrapper for Go_Uuid_newRandomFromReader (P7 adaptor target)
 func Go_Uuid_newRandomFromReaderT(p0 io.Reader) (out SkyResult[string, pkg.UUID]) {
 	defer SkyFfiRecoverT(&out)()
@@ -291,6 +315,8 @@ func Go_Uuid_newSHA1(p0 any, p1 any) (out any) {
 	out = Ok[any, any](pkg.NewSHA1(p0.(pkg.UUID), SkyFfiArg_bytes(p1)))
 	return
 }
+type FfiT_Go_Uuid_newSHA1_P0 = pkg.UUID
+type FfiT_Go_Uuid_newSHA1_R = pkg.UUID
 // [pure] typed wrapper for Go_Uuid_newSHA1 (P7 adaptor target)
 func Go_Uuid_newSHA1T(p0 pkg.UUID, p1 []byte) (out SkyResult[string, pkg.UUID]) {
 	defer SkyFfiRecoverT(&out)()
@@ -322,6 +348,7 @@ func Go_Uuid_newUUID(p0 any) (out any) {
 
 	return
 }
+type FfiT_Go_Uuid_newUUID_R = pkg.UUID
 // [fallible] typed wrapper for Go_Uuid_newUUID (P7 adaptor target)
 func Go_Uuid_newUUIDT() (out SkyResult[string, pkg.UUID]) {
 	defer SkyFfiRecoverT(&out)()
@@ -341,6 +368,7 @@ func Go_Uuid_newV6(p0 any) (out any) {
 
 	return
 }
+type FfiT_Go_Uuid_newV6_R = pkg.UUID
 // [fallible] typed wrapper for Go_Uuid_newV6 (P7 adaptor target)
 func Go_Uuid_newV6T() (out SkyResult[string, pkg.UUID]) {
 	defer SkyFfiRecoverT(&out)()
@@ -360,6 +388,7 @@ func Go_Uuid_newV7(p0 any) (out any) {
 
 	return
 }
+type FfiT_Go_Uuid_newV7_R = pkg.UUID
 // [fallible] typed wrapper for Go_Uuid_newV7 (P7 adaptor target)
 func Go_Uuid_newV7T() (out SkyResult[string, pkg.UUID]) {
 	defer SkyFfiRecoverT(&out)()
@@ -378,6 +407,8 @@ func Go_Uuid_newV7FromReader(p0 any) (out any) {
 
 	return
 }
+type FfiT_Go_Uuid_newV7FromReader_P0 = io.Reader
+type FfiT_Go_Uuid_newV7FromReader_R = pkg.UUID
 // [fallible] typed wrapper for Go_Uuid_newV7FromReader (P7 adaptor target)
 func Go_Uuid_newV7FromReaderT(p0 io.Reader) (out SkyResult[string, pkg.UUID]) {
 	defer SkyFfiRecoverT(&out)()
@@ -438,6 +469,16 @@ func Go_Uuid_nullUUIDValue(p0 any) (out any) {
 
 	return
 }
+type FfiT_Go_Uuid_nullUUIDValue_P0 = pkg.NullUUID
+type FfiT_Go_Uuid_nullUUIDValue_R = driver.Value
+// [fallible] typed wrapper for Go_Uuid_nullUUIDValue (P7 adaptor target)
+func Go_Uuid_nullUUIDValueT(p0 pkg.NullUUID) (out SkyResult[string, driver.Value]) {
+	defer SkyFfiRecoverT(&out)()
+	r0, err := p0.Value()
+	if err != nil { out = Err[string, driver.Value](err.Error()); return }
+	out = Ok[string, driver.Value](r0)
+	return
+}
 
 // [fallible] Go_Uuid.nullUUIDMarshalBinary → pkg.NullUUIDMarshalBinary
 func Go_Uuid_nullUUIDMarshalBinary(p0 any) (out any) {
@@ -446,6 +487,15 @@ func Go_Uuid_nullUUIDMarshalBinary(p0 any) (out any) {
 	if err != nil { out = Err[any, any](err.Error()); return }
 	out = Ok[any, any](r0)
 
+	return
+}
+type FfiT_Go_Uuid_nullUUIDMarshalBinary_P0 = pkg.NullUUID
+// [fallible] typed wrapper for Go_Uuid_nullUUIDMarshalBinary (P7 adaptor target)
+func Go_Uuid_nullUUIDMarshalBinaryT(p0 pkg.NullUUID) (out SkyResult[string, []byte]) {
+	defer SkyFfiRecoverT(&out)()
+	r0, err := p0.MarshalBinary()
+	if err != nil { out = Err[string, []byte](err.Error()); return }
+	out = Ok[string, []byte](r0)
 	return
 }
 
@@ -458,6 +508,15 @@ func Go_Uuid_nullUUIDUnmarshalBinary(p0 any, p1 any) (out any) {
 
 	return
 }
+type FfiT_Go_Uuid_nullUUIDUnmarshalBinary_P0 = *pkg.NullUUID
+// [fallible] typed wrapper for Go_Uuid_nullUUIDUnmarshalBinary (P7 adaptor target)
+func Go_Uuid_nullUUIDUnmarshalBinaryT(p0 *pkg.NullUUID, p1 []byte) (out SkyResult[string, struct{}]) {
+	defer SkyFfiRecoverT(&out)()
+	err := p0.UnmarshalBinary(p1)
+	if err != nil { out = Err[string, struct{}](err.Error()); return }
+	out = Ok[string, struct{}](struct{}{})
+	return
+}
 
 // [fallible] Go_Uuid.nullUUIDMarshalText → pkg.NullUUIDMarshalText
 func Go_Uuid_nullUUIDMarshalText(p0 any) (out any) {
@@ -466,6 +525,15 @@ func Go_Uuid_nullUUIDMarshalText(p0 any) (out any) {
 	if err != nil { out = Err[any, any](err.Error()); return }
 	out = Ok[any, any](r0)
 
+	return
+}
+type FfiT_Go_Uuid_nullUUIDMarshalText_P0 = pkg.NullUUID
+// [fallible] typed wrapper for Go_Uuid_nullUUIDMarshalText (P7 adaptor target)
+func Go_Uuid_nullUUIDMarshalTextT(p0 pkg.NullUUID) (out SkyResult[string, []byte]) {
+	defer SkyFfiRecoverT(&out)()
+	r0, err := p0.MarshalText()
+	if err != nil { out = Err[string, []byte](err.Error()); return }
+	out = Ok[string, []byte](r0)
 	return
 }
 
@@ -478,6 +546,15 @@ func Go_Uuid_nullUUIDUnmarshalText(p0 any, p1 any) (out any) {
 
 	return
 }
+type FfiT_Go_Uuid_nullUUIDUnmarshalText_P0 = *pkg.NullUUID
+// [fallible] typed wrapper for Go_Uuid_nullUUIDUnmarshalText (P7 adaptor target)
+func Go_Uuid_nullUUIDUnmarshalTextT(p0 *pkg.NullUUID, p1 []byte) (out SkyResult[string, struct{}]) {
+	defer SkyFfiRecoverT(&out)()
+	err := p0.UnmarshalText(p1)
+	if err != nil { out = Err[string, struct{}](err.Error()); return }
+	out = Ok[string, struct{}](struct{}{})
+	return
+}
 
 // [fallible] Go_Uuid.nullUUIDMarshalJSON → pkg.NullUUIDMarshalJSON
 func Go_Uuid_nullUUIDMarshalJSON(p0 any) (out any) {
@@ -488,6 +565,15 @@ func Go_Uuid_nullUUIDMarshalJSON(p0 any) (out any) {
 
 	return
 }
+type FfiT_Go_Uuid_nullUUIDMarshalJSON_P0 = pkg.NullUUID
+// [fallible] typed wrapper for Go_Uuid_nullUUIDMarshalJSON (P7 adaptor target)
+func Go_Uuid_nullUUIDMarshalJSONT(p0 pkg.NullUUID) (out SkyResult[string, []byte]) {
+	defer SkyFfiRecoverT(&out)()
+	r0, err := p0.MarshalJSON()
+	if err != nil { out = Err[string, []byte](err.Error()); return }
+	out = Ok[string, []byte](r0)
+	return
+}
 
 // [fallible] Go_Uuid.nullUUIDUnmarshalJSON → pkg.NullUUIDUnmarshalJSON
 func Go_Uuid_nullUUIDUnmarshalJSON(p0 any, p1 any) (out any) {
@@ -496,6 +582,15 @@ func Go_Uuid_nullUUIDUnmarshalJSON(p0 any, p1 any) (out any) {
 	if err != nil { out = Err[any, any](err.Error()); return }
 	out = Ok[any, any](struct{}{})
 
+	return
+}
+type FfiT_Go_Uuid_nullUUIDUnmarshalJSON_P0 = *pkg.NullUUID
+// [fallible] typed wrapper for Go_Uuid_nullUUIDUnmarshalJSON (P7 adaptor target)
+func Go_Uuid_nullUUIDUnmarshalJSONT(p0 *pkg.NullUUID, p1 []byte) (out SkyResult[string, struct{}]) {
+	defer SkyFfiRecoverT(&out)()
+	err := p0.UnmarshalJSON(p1)
+	if err != nil { out = Err[string, struct{}](err.Error()); return }
+	out = Ok[string, struct{}](struct{}{})
 	return
 }
 
@@ -520,6 +615,7 @@ func Go_Uuid_parse(p0 any) (out any) {
 
 	return
 }
+type FfiT_Go_Uuid_parse_R = pkg.UUID
 // [fallible] typed wrapper for Go_Uuid_parse (P7 adaptor target)
 func Go_Uuid_parseT(p0 string) (out SkyResult[string, pkg.UUID]) {
 	defer SkyFfiRecoverT(&out)()
@@ -538,6 +634,7 @@ func Go_Uuid_parseBytes(p0 any) (out any) {
 
 	return
 }
+type FfiT_Go_Uuid_parseBytes_R = pkg.UUID
 // [fallible] typed wrapper for Go_Uuid_parseBytes (P7 adaptor target)
 func Go_Uuid_parseBytesT(p0 []byte) (out SkyResult[string, pkg.UUID]) {
 	defer SkyFfiRecoverT(&out)()
@@ -610,11 +707,26 @@ func Go_Uuid_uUIDDomain(p0 any) (out any) {
 	out = Ok[any, any](p0.(pkg.UUID).Domain())
 	return
 }
+type FfiT_Go_Uuid_uUIDDomain_P0 = pkg.UUID
+type FfiT_Go_Uuid_uUIDDomain_R = pkg.Domain
+// [pure] typed wrapper for Go_Uuid_uUIDDomain (P7 adaptor target)
+func Go_Uuid_uUIDDomainT(p0 pkg.UUID) (out SkyResult[string, pkg.Domain]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, pkg.Domain](p0.Domain())
+	return
+}
 
 // [pure] Go_Uuid.uUIDID → pkg.UUIDID
 func Go_Uuid_uUIDID(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(pkg.UUID).ID())
+	return
+}
+type FfiT_Go_Uuid_uUIDID_P0 = pkg.UUID
+// [pure] typed wrapper for Go_Uuid_uUIDID (P7 adaptor target)
+func Go_Uuid_uUIDIDT(p0 pkg.UUID) (out SkyResult[string, uint32]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, uint32](p0.ID())
 	return
 }
 
@@ -627,6 +739,15 @@ func Go_Uuid_uUIDMarshalText(p0 any) (out any) {
 
 	return
 }
+type FfiT_Go_Uuid_uUIDMarshalText_P0 = pkg.UUID
+// [fallible] typed wrapper for Go_Uuid_uUIDMarshalText (P7 adaptor target)
+func Go_Uuid_uUIDMarshalTextT(p0 pkg.UUID) (out SkyResult[string, []byte]) {
+	defer SkyFfiRecoverT(&out)()
+	r0, err := p0.MarshalText()
+	if err != nil { out = Err[string, []byte](err.Error()); return }
+	out = Ok[string, []byte](r0)
+	return
+}
 
 // [fallible] Go_Uuid.uUIDUnmarshalText → pkg.UUIDUnmarshalText
 func Go_Uuid_uUIDUnmarshalText(p0 any, p1 any) (out any) {
@@ -635,6 +756,15 @@ func Go_Uuid_uUIDUnmarshalText(p0 any, p1 any) (out any) {
 	if err != nil { out = Err[any, any](err.Error()); return }
 	out = Ok[any, any](struct{}{})
 
+	return
+}
+type FfiT_Go_Uuid_uUIDUnmarshalText_P0 = *pkg.UUID
+// [fallible] typed wrapper for Go_Uuid_uUIDUnmarshalText (P7 adaptor target)
+func Go_Uuid_uUIDUnmarshalTextT(p0 *pkg.UUID, p1 []byte) (out SkyResult[string, struct{}]) {
+	defer SkyFfiRecoverT(&out)()
+	err := p0.UnmarshalText(p1)
+	if err != nil { out = Err[string, struct{}](err.Error()); return }
+	out = Ok[string, struct{}](struct{}{})
 	return
 }
 
@@ -647,6 +777,15 @@ func Go_Uuid_uUIDMarshalBinary(p0 any) (out any) {
 
 	return
 }
+type FfiT_Go_Uuid_uUIDMarshalBinary_P0 = pkg.UUID
+// [fallible] typed wrapper for Go_Uuid_uUIDMarshalBinary (P7 adaptor target)
+func Go_Uuid_uUIDMarshalBinaryT(p0 pkg.UUID) (out SkyResult[string, []byte]) {
+	defer SkyFfiRecoverT(&out)()
+	r0, err := p0.MarshalBinary()
+	if err != nil { out = Err[string, []byte](err.Error()); return }
+	out = Ok[string, []byte](r0)
+	return
+}
 
 // [fallible] Go_Uuid.uUIDUnmarshalBinary → pkg.UUIDUnmarshalBinary
 func Go_Uuid_uUIDUnmarshalBinary(p0 any, p1 any) (out any) {
@@ -657,11 +796,27 @@ func Go_Uuid_uUIDUnmarshalBinary(p0 any, p1 any) (out any) {
 
 	return
 }
+type FfiT_Go_Uuid_uUIDUnmarshalBinary_P0 = *pkg.UUID
+// [fallible] typed wrapper for Go_Uuid_uUIDUnmarshalBinary (P7 adaptor target)
+func Go_Uuid_uUIDUnmarshalBinaryT(p0 *pkg.UUID, p1 []byte) (out SkyResult[string, struct{}]) {
+	defer SkyFfiRecoverT(&out)()
+	err := p0.UnmarshalBinary(p1)
+	if err != nil { out = Err[string, struct{}](err.Error()); return }
+	out = Ok[string, struct{}](struct{}{})
+	return
+}
 
 // [pure] Go_Uuid.uUIDNodeID → pkg.UUIDNodeID
 func Go_Uuid_uUIDNodeID(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(pkg.UUID).NodeID())
+	return
+}
+type FfiT_Go_Uuid_uUIDNodeID_P0 = pkg.UUID
+// [pure] typed wrapper for Go_Uuid_uUIDNodeID (P7 adaptor target)
+func Go_Uuid_uUIDNodeIDT(p0 pkg.UUID) (out SkyResult[string, []byte]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, []byte](p0.NodeID())
 	return
 }
 
@@ -684,11 +839,29 @@ func Go_Uuid_uUIDValue(p0 any) (out any) {
 
 	return
 }
+type FfiT_Go_Uuid_uUIDValue_P0 = pkg.UUID
+type FfiT_Go_Uuid_uUIDValue_R = driver.Value
+// [fallible] typed wrapper for Go_Uuid_uUIDValue (P7 adaptor target)
+func Go_Uuid_uUIDValueT(p0 pkg.UUID) (out SkyResult[string, driver.Value]) {
+	defer SkyFfiRecoverT(&out)()
+	r0, err := p0.Value()
+	if err != nil { out = Err[string, driver.Value](err.Error()); return }
+	out = Ok[string, driver.Value](r0)
+	return
+}
 
 // [pure] Go_Uuid.uUIDTime → pkg.UUIDTime
 func Go_Uuid_uUIDTime(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(pkg.UUID).Time())
+	return
+}
+type FfiT_Go_Uuid_uUIDTime_P0 = pkg.UUID
+type FfiT_Go_Uuid_uUIDTime_R = pkg.Time
+// [pure] typed wrapper for Go_Uuid_uUIDTime (P7 adaptor target)
+func Go_Uuid_uUIDTimeT(p0 pkg.UUID) (out SkyResult[string, pkg.Time]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, pkg.Time](p0.Time())
 	return
 }
 
@@ -698,11 +871,25 @@ func Go_Uuid_uUIDClockSequence(p0 any) (out any) {
 	out = Ok[any, any](p0.(pkg.UUID).ClockSequence())
 	return
 }
+type FfiT_Go_Uuid_uUIDClockSequence_P0 = pkg.UUID
+// [pure] typed wrapper for Go_Uuid_uUIDClockSequence (P7 adaptor target)
+func Go_Uuid_uUIDClockSequenceT(p0 pkg.UUID) (out SkyResult[string, int]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, int](p0.ClockSequence())
+	return
+}
 
 // [pure] Go_Uuid.uUIDString → pkg.UUIDString
 func Go_Uuid_uUIDString(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(pkg.UUID).String())
+	return
+}
+type FfiT_Go_Uuid_uUIDString_P0 = pkg.UUID
+// [pure] typed wrapper for Go_Uuid_uUIDString (P7 adaptor target)
+func Go_Uuid_uUIDStringT(p0 pkg.UUID) (out SkyResult[string, string]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, string](p0.String())
 	return
 }
 
@@ -712,11 +899,26 @@ func Go_Uuid_uUIDURN(p0 any) (out any) {
 	out = Ok[any, any](p0.(pkg.UUID).URN())
 	return
 }
+type FfiT_Go_Uuid_uUIDURN_P0 = pkg.UUID
+// [pure] typed wrapper for Go_Uuid_uUIDURN (P7 adaptor target)
+func Go_Uuid_uUIDURNT(p0 pkg.UUID) (out SkyResult[string, string]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, string](p0.URN())
+	return
+}
 
 // [pure] Go_Uuid.uUIDVariant → pkg.UUIDVariant
 func Go_Uuid_uUIDVariant(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(pkg.UUID).Variant())
+	return
+}
+type FfiT_Go_Uuid_uUIDVariant_P0 = pkg.UUID
+type FfiT_Go_Uuid_uUIDVariant_R = pkg.Variant
+// [pure] typed wrapper for Go_Uuid_uUIDVariant (P7 adaptor target)
+func Go_Uuid_uUIDVariantT(p0 pkg.UUID) (out SkyResult[string, pkg.Variant]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, pkg.Variant](p0.Variant())
 	return
 }
 
@@ -726,11 +928,26 @@ func Go_Uuid_uUIDVersion(p0 any) (out any) {
 	out = Ok[any, any](p0.(pkg.UUID).Version())
 	return
 }
+type FfiT_Go_Uuid_uUIDVersion_P0 = pkg.UUID
+type FfiT_Go_Uuid_uUIDVersion_R = pkg.Version
+// [pure] typed wrapper for Go_Uuid_uUIDVersion (P7 adaptor target)
+func Go_Uuid_uUIDVersionT(p0 pkg.UUID) (out SkyResult[string, pkg.Version]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, pkg.Version](p0.Version())
+	return
+}
 
 // [pure] Go_Uuid.uUIDsStrings → pkg.UUIDsStrings
 func Go_Uuid_uUIDsStrings(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(pkg.UUIDs).Strings())
+	return
+}
+type FfiT_Go_Uuid_uUIDsStrings_P0 = pkg.UUIDs
+// [pure] typed wrapper for Go_Uuid_uUIDsStrings (P7 adaptor target)
+func Go_Uuid_uUIDsStringsT(p0 pkg.UUIDs) (out SkyResult[string, []string]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, []string](p0.Strings())
 	return
 }
 
@@ -758,11 +975,25 @@ func Go_Uuid_variantString(p0 any) (out any) {
 	out = Ok[any, any](p0.(pkg.Variant).String())
 	return
 }
+type FfiT_Go_Uuid_variantString_P0 = pkg.Variant
+// [pure] typed wrapper for Go_Uuid_variantString (P7 adaptor target)
+func Go_Uuid_variantStringT(p0 pkg.Variant) (out SkyResult[string, string]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, string](p0.String())
+	return
+}
 
 // [pure] Go_Uuid.versionString → pkg.VersionString
 func Go_Uuid_versionString(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(pkg.Version).String())
+	return
+}
+type FfiT_Go_Uuid_versionString_P0 = pkg.Version
+// [pure] typed wrapper for Go_Uuid_versionString (P7 adaptor target)
+func Go_Uuid_versionStringT(p0 pkg.Version) (out SkyResult[string, string]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[string, string](p0.String())
 	return
 }
 

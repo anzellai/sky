@@ -21,6 +21,7 @@ func Go_App_new(p0 any) (out any) {
 	out = Ok[any, any](pkg.New())
 	return
 }
+type FfiT_Go_App_new_R = fyne.App
 // [pure] typed wrapper for Go_App_new (P7 adaptor target)
 func Go_App_newT() (out SkyResult[string, fyne.App]) {
 	defer SkyFfiRecoverT(&out)()
@@ -34,6 +35,7 @@ func Go_App_newWithID(p0 any) (out any) {
 	out = Ok[any, any](pkg.NewWithID(fmt.Sprintf("%v", p0)))
 	return
 }
+type FfiT_Go_App_newWithID_R = fyne.App
 // [pure] typed wrapper for Go_App_newWithID (P7 adaptor target)
 func Go_App_newWithIDT(p0 string) (out SkyResult[string, fyne.App]) {
 	defer SkyFfiRecoverT(&out)()
@@ -55,6 +57,7 @@ func Go_App_settingsSchemaStoragePath(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.SettingsSchema).StoragePath())
 	return
 }
+type FfiT_Go_App_settingsSchemaStoragePath_P0 = *pkg.SettingsSchema
 // [pure] typed wrapper for Go_App_settingsSchemaStoragePath (P7 adaptor target)
 func Go_App_settingsSchemaStoragePathT(p0 *pkg.SettingsSchema) (out SkyResult[string, string]) {
 	defer SkyFfiRecoverT(&out)()

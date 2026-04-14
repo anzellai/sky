@@ -62,6 +62,9 @@ func Go_Auth_clientSessionCookie(p0 any, p1 any, p2 any, p3 any) (out any) {
 
 	return
 }
+type FfiT_Go_Auth_clientSessionCookie_P0 = *pkg.Client
+type FfiT_Go_Auth_clientSessionCookie_P1 = context.Context
+type FfiT_Go_Auth_clientSessionCookie_P3 = time.Duration
 // [fallible] typed wrapper for Go_Auth_clientSessionCookie (P7 adaptor target)
 func Go_Auth_clientSessionCookieT(p0 *pkg.Client, p1 context.Context, p2 string, p3 time.Duration) (out SkyResult[string, string]) {
 	defer SkyFfiRecoverT(&out)()
@@ -80,6 +83,9 @@ func Go_Auth_clientVerifySessionCookie(p0 any, p1 any, p2 any) (out any) {
 
 	return
 }
+type FfiT_Go_Auth_clientVerifySessionCookie_P0 = *pkg.Client
+type FfiT_Go_Auth_clientVerifySessionCookie_P1 = context.Context
+type FfiT_Go_Auth_clientVerifySessionCookie_R = *pkg.Token
 // [fallible] typed wrapper for Go_Auth_clientVerifySessionCookie (P7 adaptor target)
 func Go_Auth_clientVerifySessionCookieT(p0 *pkg.Client, p1 context.Context, p2 string) (out SkyResult[string, *pkg.Token]) {
 	defer SkyFfiRecoverT(&out)()
@@ -98,6 +104,9 @@ func Go_Auth_clientVerifySessionCookieAndCheckRevoked(p0 any, p1 any, p2 any) (o
 
 	return
 }
+type FfiT_Go_Auth_clientVerifySessionCookieAndCheckRevoked_P0 = *pkg.Client
+type FfiT_Go_Auth_clientVerifySessionCookieAndCheckRevoked_P1 = context.Context
+type FfiT_Go_Auth_clientVerifySessionCookieAndCheckRevoked_R = *pkg.Token
 // [fallible] typed wrapper for Go_Auth_clientVerifySessionCookieAndCheckRevoked (P7 adaptor target)
 func Go_Auth_clientVerifySessionCookieAndCheckRevokedT(p0 *pkg.Client, p1 context.Context, p2 string) (out SkyResult[string, *pkg.Token]) {
 	defer SkyFfiRecoverT(&out)()
@@ -116,6 +125,10 @@ func Go_Auth_clientCreateOIDCProviderConfig(p0 any, p1 any, p2 any) (out any) {
 
 	return
 }
+type FfiT_Go_Auth_clientCreateOIDCProviderConfig_P0 = *pkg.Client
+type FfiT_Go_Auth_clientCreateOIDCProviderConfig_P1 = context.Context
+type FfiT_Go_Auth_clientCreateOIDCProviderConfig_P2 = *pkg.OIDCProviderConfigToCreate
+type FfiT_Go_Auth_clientCreateOIDCProviderConfig_R = *pkg.OIDCProviderConfig
 // [fallible] typed wrapper for Go_Auth_clientCreateOIDCProviderConfig (P7 adaptor target)
 func Go_Auth_clientCreateOIDCProviderConfigT(p0 *pkg.Client, p1 context.Context, p2 *pkg.OIDCProviderConfigToCreate) (out SkyResult[string, *pkg.OIDCProviderConfig]) {
 	defer SkyFfiRecoverT(&out)()
@@ -134,6 +147,10 @@ func Go_Auth_clientCreateSAMLProviderConfig(p0 any, p1 any, p2 any) (out any) {
 
 	return
 }
+type FfiT_Go_Auth_clientCreateSAMLProviderConfig_P0 = *pkg.Client
+type FfiT_Go_Auth_clientCreateSAMLProviderConfig_P1 = context.Context
+type FfiT_Go_Auth_clientCreateSAMLProviderConfig_P2 = *pkg.SAMLProviderConfigToCreate
+type FfiT_Go_Auth_clientCreateSAMLProviderConfig_R = *pkg.SAMLProviderConfig
 // [fallible] typed wrapper for Go_Auth_clientCreateSAMLProviderConfig (P7 adaptor target)
 func Go_Auth_clientCreateSAMLProviderConfigT(p0 *pkg.Client, p1 context.Context, p2 *pkg.SAMLProviderConfigToCreate) (out SkyResult[string, *pkg.SAMLProviderConfig]) {
 	defer SkyFfiRecoverT(&out)()
@@ -152,6 +169,10 @@ func Go_Auth_clientCreateUser(p0 any, p1 any, p2 any) (out any) {
 
 	return
 }
+type FfiT_Go_Auth_clientCreateUser_P0 = *pkg.Client
+type FfiT_Go_Auth_clientCreateUser_P1 = context.Context
+type FfiT_Go_Auth_clientCreateUser_P2 = *pkg.UserToCreate
+type FfiT_Go_Auth_clientCreateUser_R = *pkg.UserRecord
 // [fallible] typed wrapper for Go_Auth_clientCreateUser (P7 adaptor target)
 func Go_Auth_clientCreateUserT(p0 *pkg.Client, p1 context.Context, p2 *pkg.UserToCreate) (out SkyResult[string, *pkg.UserRecord]) {
 	defer SkyFfiRecoverT(&out)()
@@ -170,6 +191,8 @@ func Go_Auth_clientCustomToken(p0 any, p1 any, p2 any) (out any) {
 
 	return
 }
+type FfiT_Go_Auth_clientCustomToken_P0 = *pkg.Client
+type FfiT_Go_Auth_clientCustomToken_P1 = context.Context
 // [fallible] typed wrapper for Go_Auth_clientCustomToken (P7 adaptor target)
 func Go_Auth_clientCustomTokenT(p0 *pkg.Client, p1 context.Context, p2 string) (out SkyResult[string, string]) {
 	defer SkyFfiRecoverT(&out)()
@@ -198,6 +221,8 @@ func Go_Auth_clientDeleteOIDCProviderConfig(p0 any, p1 any, p2 any) (out any) {
 
 	return
 }
+type FfiT_Go_Auth_clientDeleteOIDCProviderConfig_P0 = *pkg.Client
+type FfiT_Go_Auth_clientDeleteOIDCProviderConfig_P1 = context.Context
 // [fallible] typed wrapper for Go_Auth_clientDeleteOIDCProviderConfig (P7 adaptor target)
 func Go_Auth_clientDeleteOIDCProviderConfigT(p0 *pkg.Client, p1 context.Context, p2 string) (out SkyResult[string, struct{}]) {
 	defer SkyFfiRecoverT(&out)()
@@ -216,6 +241,8 @@ func Go_Auth_clientDeleteSAMLProviderConfig(p0 any, p1 any, p2 any) (out any) {
 
 	return
 }
+type FfiT_Go_Auth_clientDeleteSAMLProviderConfig_P0 = *pkg.Client
+type FfiT_Go_Auth_clientDeleteSAMLProviderConfig_P1 = context.Context
 // [fallible] typed wrapper for Go_Auth_clientDeleteSAMLProviderConfig (P7 adaptor target)
 func Go_Auth_clientDeleteSAMLProviderConfigT(p0 *pkg.Client, p1 context.Context, p2 string) (out SkyResult[string, struct{}]) {
 	defer SkyFfiRecoverT(&out)()
@@ -234,6 +261,8 @@ func Go_Auth_clientDeleteUser(p0 any, p1 any, p2 any) (out any) {
 
 	return
 }
+type FfiT_Go_Auth_clientDeleteUser_P0 = *pkg.Client
+type FfiT_Go_Auth_clientDeleteUser_P1 = context.Context
 // [fallible] typed wrapper for Go_Auth_clientDeleteUser (P7 adaptor target)
 func Go_Auth_clientDeleteUserT(p0 *pkg.Client, p1 context.Context, p2 string) (out SkyResult[string, struct{}]) {
 	defer SkyFfiRecoverT(&out)()
@@ -252,6 +281,9 @@ func Go_Auth_clientDeleteUsers(p0 any, p1 any, p2 any) (out any) {
 
 	return
 }
+type FfiT_Go_Auth_clientDeleteUsers_P0 = *pkg.Client
+type FfiT_Go_Auth_clientDeleteUsers_P1 = context.Context
+type FfiT_Go_Auth_clientDeleteUsers_R = *pkg.DeleteUsersResult
 // [fallible] typed wrapper for Go_Auth_clientDeleteUsers (P7 adaptor target)
 func Go_Auth_clientDeleteUsersT(p0 *pkg.Client, p1 context.Context, p2 []string) (out SkyResult[string, *pkg.DeleteUsersResult]) {
 	defer SkyFfiRecoverT(&out)()
@@ -270,6 +302,9 @@ func Go_Auth_clientEmailSignInLink(p0 any, p1 any, p2 any, p3 any) (out any) {
 
 	return
 }
+type FfiT_Go_Auth_clientEmailSignInLink_P0 = *pkg.Client
+type FfiT_Go_Auth_clientEmailSignInLink_P1 = context.Context
+type FfiT_Go_Auth_clientEmailSignInLink_P3 = *pkg.ActionCodeSettings
 // [fallible] typed wrapper for Go_Auth_clientEmailSignInLink (P7 adaptor target)
 func Go_Auth_clientEmailSignInLinkT(p0 *pkg.Client, p1 context.Context, p2 string, p3 *pkg.ActionCodeSettings) (out SkyResult[string, string]) {
 	defer SkyFfiRecoverT(&out)()
@@ -288,6 +323,8 @@ func Go_Auth_clientEmailVerificationLink(p0 any, p1 any, p2 any) (out any) {
 
 	return
 }
+type FfiT_Go_Auth_clientEmailVerificationLink_P0 = *pkg.Client
+type FfiT_Go_Auth_clientEmailVerificationLink_P1 = context.Context
 // [fallible] typed wrapper for Go_Auth_clientEmailVerificationLink (P7 adaptor target)
 func Go_Auth_clientEmailVerificationLinkT(p0 *pkg.Client, p1 context.Context, p2 string) (out SkyResult[string, string]) {
 	defer SkyFfiRecoverT(&out)()
@@ -306,6 +343,9 @@ func Go_Auth_clientEmailVerificationLinkWithSettings(p0 any, p1 any, p2 any, p3 
 
 	return
 }
+type FfiT_Go_Auth_clientEmailVerificationLinkWithSettings_P0 = *pkg.Client
+type FfiT_Go_Auth_clientEmailVerificationLinkWithSettings_P1 = context.Context
+type FfiT_Go_Auth_clientEmailVerificationLinkWithSettings_P3 = *pkg.ActionCodeSettings
 // [fallible] typed wrapper for Go_Auth_clientEmailVerificationLinkWithSettings (P7 adaptor target)
 func Go_Auth_clientEmailVerificationLinkWithSettingsT(p0 *pkg.Client, p1 context.Context, p2 string, p3 *pkg.ActionCodeSettings) (out SkyResult[string, string]) {
 	defer SkyFfiRecoverT(&out)()
@@ -324,6 +364,9 @@ func Go_Auth_clientGetProjectConfig(p0 any, p1 any) (out any) {
 
 	return
 }
+type FfiT_Go_Auth_clientGetProjectConfig_P0 = *pkg.Client
+type FfiT_Go_Auth_clientGetProjectConfig_P1 = context.Context
+type FfiT_Go_Auth_clientGetProjectConfig_R = *pkg.ProjectConfig
 // [fallible] typed wrapper for Go_Auth_clientGetProjectConfig (P7 adaptor target)
 func Go_Auth_clientGetProjectConfigT(p0 *pkg.Client, p1 context.Context) (out SkyResult[string, *pkg.ProjectConfig]) {
 	defer SkyFfiRecoverT(&out)()
@@ -342,6 +385,9 @@ func Go_Auth_clientGetUser(p0 any, p1 any, p2 any) (out any) {
 
 	return
 }
+type FfiT_Go_Auth_clientGetUser_P0 = *pkg.Client
+type FfiT_Go_Auth_clientGetUser_P1 = context.Context
+type FfiT_Go_Auth_clientGetUser_R = *pkg.UserRecord
 // [fallible] typed wrapper for Go_Auth_clientGetUser (P7 adaptor target)
 func Go_Auth_clientGetUserT(p0 *pkg.Client, p1 context.Context, p2 string) (out SkyResult[string, *pkg.UserRecord]) {
 	defer SkyFfiRecoverT(&out)()
@@ -360,6 +406,9 @@ func Go_Auth_clientGetUserByEmail(p0 any, p1 any, p2 any) (out any) {
 
 	return
 }
+type FfiT_Go_Auth_clientGetUserByEmail_P0 = *pkg.Client
+type FfiT_Go_Auth_clientGetUserByEmail_P1 = context.Context
+type FfiT_Go_Auth_clientGetUserByEmail_R = *pkg.UserRecord
 // [fallible] typed wrapper for Go_Auth_clientGetUserByEmail (P7 adaptor target)
 func Go_Auth_clientGetUserByEmailT(p0 *pkg.Client, p1 context.Context, p2 string) (out SkyResult[string, *pkg.UserRecord]) {
 	defer SkyFfiRecoverT(&out)()
@@ -378,6 +427,9 @@ func Go_Auth_clientGetUserByPhoneNumber(p0 any, p1 any, p2 any) (out any) {
 
 	return
 }
+type FfiT_Go_Auth_clientGetUserByPhoneNumber_P0 = *pkg.Client
+type FfiT_Go_Auth_clientGetUserByPhoneNumber_P1 = context.Context
+type FfiT_Go_Auth_clientGetUserByPhoneNumber_R = *pkg.UserRecord
 // [fallible] typed wrapper for Go_Auth_clientGetUserByPhoneNumber (P7 adaptor target)
 func Go_Auth_clientGetUserByPhoneNumberT(p0 *pkg.Client, p1 context.Context, p2 string) (out SkyResult[string, *pkg.UserRecord]) {
 	defer SkyFfiRecoverT(&out)()
@@ -396,6 +448,9 @@ func Go_Auth_clientGetUserByProviderID(p0 any, p1 any, p2 any, p3 any) (out any)
 
 	return
 }
+type FfiT_Go_Auth_clientGetUserByProviderID_P0 = *pkg.Client
+type FfiT_Go_Auth_clientGetUserByProviderID_P1 = context.Context
+type FfiT_Go_Auth_clientGetUserByProviderID_R = *pkg.UserRecord
 // [fallible] typed wrapper for Go_Auth_clientGetUserByProviderID (P7 adaptor target)
 func Go_Auth_clientGetUserByProviderIDT(p0 *pkg.Client, p1 context.Context, p2 string, p3 string) (out SkyResult[string, *pkg.UserRecord]) {
 	defer SkyFfiRecoverT(&out)()
@@ -414,6 +469,9 @@ func Go_Auth_clientGetUserByProviderUID(p0 any, p1 any, p2 any, p3 any) (out any
 
 	return
 }
+type FfiT_Go_Auth_clientGetUserByProviderUID_P0 = *pkg.Client
+type FfiT_Go_Auth_clientGetUserByProviderUID_P1 = context.Context
+type FfiT_Go_Auth_clientGetUserByProviderUID_R = *pkg.UserRecord
 // [fallible] typed wrapper for Go_Auth_clientGetUserByProviderUID (P7 adaptor target)
 func Go_Auth_clientGetUserByProviderUIDT(p0 *pkg.Client, p1 context.Context, p2 string, p3 string) (out SkyResult[string, *pkg.UserRecord]) {
 	defer SkyFfiRecoverT(&out)()
@@ -432,6 +490,10 @@ func Go_Auth_clientGetUsers(p0 any, p1 any, p2 any) (out any) {
 
 	return
 }
+type FfiT_Go_Auth_clientGetUsers_P0 = *pkg.Client
+type FfiT_Go_Auth_clientGetUsers_P1 = context.Context
+type FfiT_Go_Auth_clientGetUsers_P2 = []pkg.UserIdentifier
+type FfiT_Go_Auth_clientGetUsers_R = *pkg.GetUsersResult
 // [fallible] typed wrapper for Go_Auth_clientGetUsers (P7 adaptor target)
 func Go_Auth_clientGetUsersT(p0 *pkg.Client, p1 context.Context, p2 []pkg.UserIdentifier) (out SkyResult[string, *pkg.GetUsersResult]) {
 	defer SkyFfiRecoverT(&out)()
@@ -460,6 +522,9 @@ func Go_Auth_clientOIDCProviderConfig(p0 any, p1 any, p2 any) (out any) {
 
 	return
 }
+type FfiT_Go_Auth_clientOIDCProviderConfig_P0 = *pkg.Client
+type FfiT_Go_Auth_clientOIDCProviderConfig_P1 = context.Context
+type FfiT_Go_Auth_clientOIDCProviderConfig_R = *pkg.OIDCProviderConfig
 // [fallible] typed wrapper for Go_Auth_clientOIDCProviderConfig (P7 adaptor target)
 func Go_Auth_clientOIDCProviderConfigT(p0 *pkg.Client, p1 context.Context, p2 string) (out SkyResult[string, *pkg.OIDCProviderConfig]) {
 	defer SkyFfiRecoverT(&out)()
@@ -475,6 +540,9 @@ func Go_Auth_clientOIDCProviderConfigs(p0 any, p1 any, p2 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Client).OIDCProviderConfigs(p1.(context.Context), fmt.Sprintf("%v", p2)))
 	return
 }
+type FfiT_Go_Auth_clientOIDCProviderConfigs_P0 = *pkg.Client
+type FfiT_Go_Auth_clientOIDCProviderConfigs_P1 = context.Context
+type FfiT_Go_Auth_clientOIDCProviderConfigs_R = *pkg.OIDCProviderConfigIterator
 // [pure] typed wrapper for Go_Auth_clientOIDCProviderConfigs (P7 adaptor target)
 func Go_Auth_clientOIDCProviderConfigsT(p0 *pkg.Client, p1 context.Context, p2 string) (out SkyResult[string, *pkg.OIDCProviderConfigIterator]) {
 	defer SkyFfiRecoverT(&out)()
@@ -491,6 +559,8 @@ func Go_Auth_clientPasswordResetLink(p0 any, p1 any, p2 any) (out any) {
 
 	return
 }
+type FfiT_Go_Auth_clientPasswordResetLink_P0 = *pkg.Client
+type FfiT_Go_Auth_clientPasswordResetLink_P1 = context.Context
 // [fallible] typed wrapper for Go_Auth_clientPasswordResetLink (P7 adaptor target)
 func Go_Auth_clientPasswordResetLinkT(p0 *pkg.Client, p1 context.Context, p2 string) (out SkyResult[string, string]) {
 	defer SkyFfiRecoverT(&out)()
@@ -509,6 +579,9 @@ func Go_Auth_clientPasswordResetLinkWithSettings(p0 any, p1 any, p2 any, p3 any)
 
 	return
 }
+type FfiT_Go_Auth_clientPasswordResetLinkWithSettings_P0 = *pkg.Client
+type FfiT_Go_Auth_clientPasswordResetLinkWithSettings_P1 = context.Context
+type FfiT_Go_Auth_clientPasswordResetLinkWithSettings_P3 = *pkg.ActionCodeSettings
 // [fallible] typed wrapper for Go_Auth_clientPasswordResetLinkWithSettings (P7 adaptor target)
 func Go_Auth_clientPasswordResetLinkWithSettingsT(p0 *pkg.Client, p1 context.Context, p2 string, p3 *pkg.ActionCodeSettings) (out SkyResult[string, string]) {
 	defer SkyFfiRecoverT(&out)()
@@ -527,6 +600,10 @@ func Go_Auth_clientQueryUsers(p0 any, p1 any, p2 any) (out any) {
 
 	return
 }
+type FfiT_Go_Auth_clientQueryUsers_P0 = *pkg.Client
+type FfiT_Go_Auth_clientQueryUsers_P1 = context.Context
+type FfiT_Go_Auth_clientQueryUsers_P2 = *pkg.QueryUsersRequest
+type FfiT_Go_Auth_clientQueryUsers_R = *pkg.QueryUserInfoResponse
 // [fallible] typed wrapper for Go_Auth_clientQueryUsers (P7 adaptor target)
 func Go_Auth_clientQueryUsersT(p0 *pkg.Client, p1 context.Context, p2 *pkg.QueryUsersRequest) (out SkyResult[string, *pkg.QueryUserInfoResponse]) {
 	defer SkyFfiRecoverT(&out)()
@@ -545,6 +622,8 @@ func Go_Auth_clientRevokeRefreshTokens(p0 any, p1 any, p2 any) (out any) {
 
 	return
 }
+type FfiT_Go_Auth_clientRevokeRefreshTokens_P0 = *pkg.Client
+type FfiT_Go_Auth_clientRevokeRefreshTokens_P1 = context.Context
 // [fallible] typed wrapper for Go_Auth_clientRevokeRefreshTokens (P7 adaptor target)
 func Go_Auth_clientRevokeRefreshTokensT(p0 *pkg.Client, p1 context.Context, p2 string) (out SkyResult[string, struct{}]) {
 	defer SkyFfiRecoverT(&out)()
@@ -563,6 +642,9 @@ func Go_Auth_clientSAMLProviderConfig(p0 any, p1 any, p2 any) (out any) {
 
 	return
 }
+type FfiT_Go_Auth_clientSAMLProviderConfig_P0 = *pkg.Client
+type FfiT_Go_Auth_clientSAMLProviderConfig_P1 = context.Context
+type FfiT_Go_Auth_clientSAMLProviderConfig_R = *pkg.SAMLProviderConfig
 // [fallible] typed wrapper for Go_Auth_clientSAMLProviderConfig (P7 adaptor target)
 func Go_Auth_clientSAMLProviderConfigT(p0 *pkg.Client, p1 context.Context, p2 string) (out SkyResult[string, *pkg.SAMLProviderConfig]) {
 	defer SkyFfiRecoverT(&out)()
@@ -578,6 +660,9 @@ func Go_Auth_clientSAMLProviderConfigs(p0 any, p1 any, p2 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Client).SAMLProviderConfigs(p1.(context.Context), fmt.Sprintf("%v", p2)))
 	return
 }
+type FfiT_Go_Auth_clientSAMLProviderConfigs_P0 = *pkg.Client
+type FfiT_Go_Auth_clientSAMLProviderConfigs_P1 = context.Context
+type FfiT_Go_Auth_clientSAMLProviderConfigs_R = *pkg.SAMLProviderConfigIterator
 // [pure] typed wrapper for Go_Auth_clientSAMLProviderConfigs (P7 adaptor target)
 func Go_Auth_clientSAMLProviderConfigsT(p0 *pkg.Client, p1 context.Context, p2 string) (out SkyResult[string, *pkg.SAMLProviderConfigIterator]) {
 	defer SkyFfiRecoverT(&out)()
@@ -604,6 +689,10 @@ func Go_Auth_clientUpdateOIDCProviderConfig(p0 any, p1 any, p2 any, p3 any) (out
 
 	return
 }
+type FfiT_Go_Auth_clientUpdateOIDCProviderConfig_P0 = *pkg.Client
+type FfiT_Go_Auth_clientUpdateOIDCProviderConfig_P1 = context.Context
+type FfiT_Go_Auth_clientUpdateOIDCProviderConfig_P3 = *pkg.OIDCProviderConfigToUpdate
+type FfiT_Go_Auth_clientUpdateOIDCProviderConfig_R = *pkg.OIDCProviderConfig
 // [fallible] typed wrapper for Go_Auth_clientUpdateOIDCProviderConfig (P7 adaptor target)
 func Go_Auth_clientUpdateOIDCProviderConfigT(p0 *pkg.Client, p1 context.Context, p2 string, p3 *pkg.OIDCProviderConfigToUpdate) (out SkyResult[string, *pkg.OIDCProviderConfig]) {
 	defer SkyFfiRecoverT(&out)()
@@ -622,6 +711,10 @@ func Go_Auth_clientUpdateProjectConfig(p0 any, p1 any, p2 any) (out any) {
 
 	return
 }
+type FfiT_Go_Auth_clientUpdateProjectConfig_P0 = *pkg.Client
+type FfiT_Go_Auth_clientUpdateProjectConfig_P1 = context.Context
+type FfiT_Go_Auth_clientUpdateProjectConfig_P2 = *pkg.ProjectConfigToUpdate
+type FfiT_Go_Auth_clientUpdateProjectConfig_R = *pkg.ProjectConfig
 // [fallible] typed wrapper for Go_Auth_clientUpdateProjectConfig (P7 adaptor target)
 func Go_Auth_clientUpdateProjectConfigT(p0 *pkg.Client, p1 context.Context, p2 *pkg.ProjectConfigToUpdate) (out SkyResult[string, *pkg.ProjectConfig]) {
 	defer SkyFfiRecoverT(&out)()
@@ -640,6 +733,10 @@ func Go_Auth_clientUpdateSAMLProviderConfig(p0 any, p1 any, p2 any, p3 any) (out
 
 	return
 }
+type FfiT_Go_Auth_clientUpdateSAMLProviderConfig_P0 = *pkg.Client
+type FfiT_Go_Auth_clientUpdateSAMLProviderConfig_P1 = context.Context
+type FfiT_Go_Auth_clientUpdateSAMLProviderConfig_P3 = *pkg.SAMLProviderConfigToUpdate
+type FfiT_Go_Auth_clientUpdateSAMLProviderConfig_R = *pkg.SAMLProviderConfig
 // [fallible] typed wrapper for Go_Auth_clientUpdateSAMLProviderConfig (P7 adaptor target)
 func Go_Auth_clientUpdateSAMLProviderConfigT(p0 *pkg.Client, p1 context.Context, p2 string, p3 *pkg.SAMLProviderConfigToUpdate) (out SkyResult[string, *pkg.SAMLProviderConfig]) {
 	defer SkyFfiRecoverT(&out)()
@@ -658,6 +755,10 @@ func Go_Auth_clientUpdateUser(p0 any, p1 any, p2 any, p3 any) (out any) {
 
 	return
 }
+type FfiT_Go_Auth_clientUpdateUser_P0 = *pkg.Client
+type FfiT_Go_Auth_clientUpdateUser_P1 = context.Context
+type FfiT_Go_Auth_clientUpdateUser_P3 = *pkg.UserToUpdate
+type FfiT_Go_Auth_clientUpdateUser_R = *pkg.UserRecord
 // [fallible] typed wrapper for Go_Auth_clientUpdateUser (P7 adaptor target)
 func Go_Auth_clientUpdateUserT(p0 *pkg.Client, p1 context.Context, p2 string, p3 *pkg.UserToUpdate) (out SkyResult[string, *pkg.UserRecord]) {
 	defer SkyFfiRecoverT(&out)()
@@ -673,6 +774,9 @@ func Go_Auth_clientUsers(p0 any, p1 any, p2 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.Client).Users(p1.(context.Context), fmt.Sprintf("%v", p2)))
 	return
 }
+type FfiT_Go_Auth_clientUsers_P0 = *pkg.Client
+type FfiT_Go_Auth_clientUsers_P1 = context.Context
+type FfiT_Go_Auth_clientUsers_R = *pkg.UserIterator
 // [pure] typed wrapper for Go_Auth_clientUsers (P7 adaptor target)
 func Go_Auth_clientUsersT(p0 *pkg.Client, p1 context.Context, p2 string) (out SkyResult[string, *pkg.UserIterator]) {
 	defer SkyFfiRecoverT(&out)()
@@ -689,6 +793,9 @@ func Go_Auth_clientVerifyIDToken(p0 any, p1 any, p2 any) (out any) {
 
 	return
 }
+type FfiT_Go_Auth_clientVerifyIDToken_P0 = *pkg.Client
+type FfiT_Go_Auth_clientVerifyIDToken_P1 = context.Context
+type FfiT_Go_Auth_clientVerifyIDToken_R = *pkg.Token
 // [fallible] typed wrapper for Go_Auth_clientVerifyIDToken (P7 adaptor target)
 func Go_Auth_clientVerifyIDTokenT(p0 *pkg.Client, p1 context.Context, p2 string) (out SkyResult[string, *pkg.Token]) {
 	defer SkyFfiRecoverT(&out)()
@@ -707,6 +814,9 @@ func Go_Auth_clientVerifyIDTokenAndCheckRevoked(p0 any, p1 any, p2 any) (out any
 
 	return
 }
+type FfiT_Go_Auth_clientVerifyIDTokenAndCheckRevoked_P0 = *pkg.Client
+type FfiT_Go_Auth_clientVerifyIDTokenAndCheckRevoked_P1 = context.Context
+type FfiT_Go_Auth_clientVerifyIDTokenAndCheckRevoked_R = *pkg.Token
 // [fallible] typed wrapper for Go_Auth_clientVerifyIDTokenAndCheckRevoked (P7 adaptor target)
 func Go_Auth_clientVerifyIDTokenAndCheckRevokedT(p0 *pkg.Client, p1 context.Context, p2 string) (out SkyResult[string, *pkg.Token]) {
 	defer SkyFfiRecoverT(&out)()
@@ -1212,6 +1322,8 @@ func Go_Auth_oIDCProviderConfigIteratorPageInfo(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.OIDCProviderConfigIterator).PageInfo())
 	return
 }
+type FfiT_Go_Auth_oIDCProviderConfigIteratorPageInfo_P0 = *pkg.OIDCProviderConfigIterator
+type FfiT_Go_Auth_oIDCProviderConfigIteratorPageInfo_R = *iterator.PageInfo
 // [pure] typed wrapper for Go_Auth_oIDCProviderConfigIteratorPageInfo (P7 adaptor target)
 func Go_Auth_oIDCProviderConfigIteratorPageInfoT(p0 *pkg.OIDCProviderConfigIterator) (out SkyResult[string, *iterator.PageInfo]) {
 	defer SkyFfiRecoverT(&out)()
@@ -1228,6 +1340,8 @@ func Go_Auth_oIDCProviderConfigIteratorNext(p0 any) (out any) {
 
 	return
 }
+type FfiT_Go_Auth_oIDCProviderConfigIteratorNext_P0 = *pkg.OIDCProviderConfigIterator
+type FfiT_Go_Auth_oIDCProviderConfigIteratorNext_R = *pkg.OIDCProviderConfig
 // [fallible] typed wrapper for Go_Auth_oIDCProviderConfigIteratorNext (P7 adaptor target)
 func Go_Auth_oIDCProviderConfigIteratorNextT(p0 *pkg.OIDCProviderConfigIterator) (out SkyResult[string, *pkg.OIDCProviderConfig]) {
 	defer SkyFfiRecoverT(&out)()
@@ -1245,6 +1359,8 @@ func Go_Auth_oIDCProviderConfigToCreateID(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.OIDCProviderConfigToCreate).ID(fmt.Sprintf("%v", p1)))
 	return
 }
+type FfiT_Go_Auth_oIDCProviderConfigToCreateID_P0 = *pkg.OIDCProviderConfigToCreate
+type FfiT_Go_Auth_oIDCProviderConfigToCreateID_R = *pkg.OIDCProviderConfigToCreate
 // [pure] typed wrapper for Go_Auth_oIDCProviderConfigToCreateID (P7 adaptor target)
 func Go_Auth_oIDCProviderConfigToCreateIDT(p0 *pkg.OIDCProviderConfigToCreate, p1 string) (out SkyResult[string, *pkg.OIDCProviderConfigToCreate]) {
 	defer SkyFfiRecoverT(&out)()
@@ -1258,6 +1374,8 @@ func Go_Auth_oIDCProviderConfigToCreateClientID(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.OIDCProviderConfigToCreate).ClientID(fmt.Sprintf("%v", p1)))
 	return
 }
+type FfiT_Go_Auth_oIDCProviderConfigToCreateClientID_P0 = *pkg.OIDCProviderConfigToCreate
+type FfiT_Go_Auth_oIDCProviderConfigToCreateClientID_R = *pkg.OIDCProviderConfigToCreate
 // [pure] typed wrapper for Go_Auth_oIDCProviderConfigToCreateClientID (P7 adaptor target)
 func Go_Auth_oIDCProviderConfigToCreateClientIDT(p0 *pkg.OIDCProviderConfigToCreate, p1 string) (out SkyResult[string, *pkg.OIDCProviderConfigToCreate]) {
 	defer SkyFfiRecoverT(&out)()
@@ -1271,6 +1389,8 @@ func Go_Auth_oIDCProviderConfigToCreateIssuer(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.OIDCProviderConfigToCreate).Issuer(fmt.Sprintf("%v", p1)))
 	return
 }
+type FfiT_Go_Auth_oIDCProviderConfigToCreateIssuer_P0 = *pkg.OIDCProviderConfigToCreate
+type FfiT_Go_Auth_oIDCProviderConfigToCreateIssuer_R = *pkg.OIDCProviderConfigToCreate
 // [pure] typed wrapper for Go_Auth_oIDCProviderConfigToCreateIssuer (P7 adaptor target)
 func Go_Auth_oIDCProviderConfigToCreateIssuerT(p0 *pkg.OIDCProviderConfigToCreate, p1 string) (out SkyResult[string, *pkg.OIDCProviderConfigToCreate]) {
 	defer SkyFfiRecoverT(&out)()
@@ -1284,6 +1404,8 @@ func Go_Auth_oIDCProviderConfigToCreateDisplayName(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.OIDCProviderConfigToCreate).DisplayName(fmt.Sprintf("%v", p1)))
 	return
 }
+type FfiT_Go_Auth_oIDCProviderConfigToCreateDisplayName_P0 = *pkg.OIDCProviderConfigToCreate
+type FfiT_Go_Auth_oIDCProviderConfigToCreateDisplayName_R = *pkg.OIDCProviderConfigToCreate
 // [pure] typed wrapper for Go_Auth_oIDCProviderConfigToCreateDisplayName (P7 adaptor target)
 func Go_Auth_oIDCProviderConfigToCreateDisplayNameT(p0 *pkg.OIDCProviderConfigToCreate, p1 string) (out SkyResult[string, *pkg.OIDCProviderConfigToCreate]) {
 	defer SkyFfiRecoverT(&out)()
@@ -1297,6 +1419,8 @@ func Go_Auth_oIDCProviderConfigToCreateEnabled(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.OIDCProviderConfigToCreate).Enabled(AsBool(p1)))
 	return
 }
+type FfiT_Go_Auth_oIDCProviderConfigToCreateEnabled_P0 = *pkg.OIDCProviderConfigToCreate
+type FfiT_Go_Auth_oIDCProviderConfigToCreateEnabled_R = *pkg.OIDCProviderConfigToCreate
 // [pure] typed wrapper for Go_Auth_oIDCProviderConfigToCreateEnabled (P7 adaptor target)
 func Go_Auth_oIDCProviderConfigToCreateEnabledT(p0 *pkg.OIDCProviderConfigToCreate, p1 bool) (out SkyResult[string, *pkg.OIDCProviderConfigToCreate]) {
 	defer SkyFfiRecoverT(&out)()
@@ -1310,6 +1434,8 @@ func Go_Auth_oIDCProviderConfigToCreateClientSecret(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.OIDCProviderConfigToCreate).ClientSecret(fmt.Sprintf("%v", p1)))
 	return
 }
+type FfiT_Go_Auth_oIDCProviderConfigToCreateClientSecret_P0 = *pkg.OIDCProviderConfigToCreate
+type FfiT_Go_Auth_oIDCProviderConfigToCreateClientSecret_R = *pkg.OIDCProviderConfigToCreate
 // [pure] typed wrapper for Go_Auth_oIDCProviderConfigToCreateClientSecret (P7 adaptor target)
 func Go_Auth_oIDCProviderConfigToCreateClientSecretT(p0 *pkg.OIDCProviderConfigToCreate, p1 string) (out SkyResult[string, *pkg.OIDCProviderConfigToCreate]) {
 	defer SkyFfiRecoverT(&out)()
@@ -1323,6 +1449,8 @@ func Go_Auth_oIDCProviderConfigToCreateIDTokenResponseType(p0 any, p1 any) (out 
 	out = Ok[any, any](p0.(*pkg.OIDCProviderConfigToCreate).IDTokenResponseType(AsBool(p1)))
 	return
 }
+type FfiT_Go_Auth_oIDCProviderConfigToCreateIDTokenResponseType_P0 = *pkg.OIDCProviderConfigToCreate
+type FfiT_Go_Auth_oIDCProviderConfigToCreateIDTokenResponseType_R = *pkg.OIDCProviderConfigToCreate
 // [pure] typed wrapper for Go_Auth_oIDCProviderConfigToCreateIDTokenResponseType (P7 adaptor target)
 func Go_Auth_oIDCProviderConfigToCreateIDTokenResponseTypeT(p0 *pkg.OIDCProviderConfigToCreate, p1 bool) (out SkyResult[string, *pkg.OIDCProviderConfigToCreate]) {
 	defer SkyFfiRecoverT(&out)()
@@ -1336,6 +1464,8 @@ func Go_Auth_oIDCProviderConfigToCreateCodeResponseType(p0 any, p1 any) (out any
 	out = Ok[any, any](p0.(*pkg.OIDCProviderConfigToCreate).CodeResponseType(AsBool(p1)))
 	return
 }
+type FfiT_Go_Auth_oIDCProviderConfigToCreateCodeResponseType_P0 = *pkg.OIDCProviderConfigToCreate
+type FfiT_Go_Auth_oIDCProviderConfigToCreateCodeResponseType_R = *pkg.OIDCProviderConfigToCreate
 // [pure] typed wrapper for Go_Auth_oIDCProviderConfigToCreateCodeResponseType (P7 adaptor target)
 func Go_Auth_oIDCProviderConfigToCreateCodeResponseTypeT(p0 *pkg.OIDCProviderConfigToCreate, p1 bool) (out SkyResult[string, *pkg.OIDCProviderConfigToCreate]) {
 	defer SkyFfiRecoverT(&out)()
@@ -1351,6 +1481,8 @@ func Go_Auth_oIDCProviderConfigToUpdateClientID(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.OIDCProviderConfigToUpdate).ClientID(fmt.Sprintf("%v", p1)))
 	return
 }
+type FfiT_Go_Auth_oIDCProviderConfigToUpdateClientID_P0 = *pkg.OIDCProviderConfigToUpdate
+type FfiT_Go_Auth_oIDCProviderConfigToUpdateClientID_R = *pkg.OIDCProviderConfigToUpdate
 // [pure] typed wrapper for Go_Auth_oIDCProviderConfigToUpdateClientID (P7 adaptor target)
 func Go_Auth_oIDCProviderConfigToUpdateClientIDT(p0 *pkg.OIDCProviderConfigToUpdate, p1 string) (out SkyResult[string, *pkg.OIDCProviderConfigToUpdate]) {
 	defer SkyFfiRecoverT(&out)()
@@ -1364,6 +1496,8 @@ func Go_Auth_oIDCProviderConfigToUpdateIssuer(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.OIDCProviderConfigToUpdate).Issuer(fmt.Sprintf("%v", p1)))
 	return
 }
+type FfiT_Go_Auth_oIDCProviderConfigToUpdateIssuer_P0 = *pkg.OIDCProviderConfigToUpdate
+type FfiT_Go_Auth_oIDCProviderConfigToUpdateIssuer_R = *pkg.OIDCProviderConfigToUpdate
 // [pure] typed wrapper for Go_Auth_oIDCProviderConfigToUpdateIssuer (P7 adaptor target)
 func Go_Auth_oIDCProviderConfigToUpdateIssuerT(p0 *pkg.OIDCProviderConfigToUpdate, p1 string) (out SkyResult[string, *pkg.OIDCProviderConfigToUpdate]) {
 	defer SkyFfiRecoverT(&out)()
@@ -1377,6 +1511,8 @@ func Go_Auth_oIDCProviderConfigToUpdateDisplayName(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.OIDCProviderConfigToUpdate).DisplayName(fmt.Sprintf("%v", p1)))
 	return
 }
+type FfiT_Go_Auth_oIDCProviderConfigToUpdateDisplayName_P0 = *pkg.OIDCProviderConfigToUpdate
+type FfiT_Go_Auth_oIDCProviderConfigToUpdateDisplayName_R = *pkg.OIDCProviderConfigToUpdate
 // [pure] typed wrapper for Go_Auth_oIDCProviderConfigToUpdateDisplayName (P7 adaptor target)
 func Go_Auth_oIDCProviderConfigToUpdateDisplayNameT(p0 *pkg.OIDCProviderConfigToUpdate, p1 string) (out SkyResult[string, *pkg.OIDCProviderConfigToUpdate]) {
 	defer SkyFfiRecoverT(&out)()
@@ -1390,6 +1526,8 @@ func Go_Auth_oIDCProviderConfigToUpdateEnabled(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.OIDCProviderConfigToUpdate).Enabled(AsBool(p1)))
 	return
 }
+type FfiT_Go_Auth_oIDCProviderConfigToUpdateEnabled_P0 = *pkg.OIDCProviderConfigToUpdate
+type FfiT_Go_Auth_oIDCProviderConfigToUpdateEnabled_R = *pkg.OIDCProviderConfigToUpdate
 // [pure] typed wrapper for Go_Auth_oIDCProviderConfigToUpdateEnabled (P7 adaptor target)
 func Go_Auth_oIDCProviderConfigToUpdateEnabledT(p0 *pkg.OIDCProviderConfigToUpdate, p1 bool) (out SkyResult[string, *pkg.OIDCProviderConfigToUpdate]) {
 	defer SkyFfiRecoverT(&out)()
@@ -1403,6 +1541,8 @@ func Go_Auth_oIDCProviderConfigToUpdateClientSecret(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.OIDCProviderConfigToUpdate).ClientSecret(fmt.Sprintf("%v", p1)))
 	return
 }
+type FfiT_Go_Auth_oIDCProviderConfigToUpdateClientSecret_P0 = *pkg.OIDCProviderConfigToUpdate
+type FfiT_Go_Auth_oIDCProviderConfigToUpdateClientSecret_R = *pkg.OIDCProviderConfigToUpdate
 // [pure] typed wrapper for Go_Auth_oIDCProviderConfigToUpdateClientSecret (P7 adaptor target)
 func Go_Auth_oIDCProviderConfigToUpdateClientSecretT(p0 *pkg.OIDCProviderConfigToUpdate, p1 string) (out SkyResult[string, *pkg.OIDCProviderConfigToUpdate]) {
 	defer SkyFfiRecoverT(&out)()
@@ -1416,6 +1556,8 @@ func Go_Auth_oIDCProviderConfigToUpdateIDTokenResponseType(p0 any, p1 any) (out 
 	out = Ok[any, any](p0.(*pkg.OIDCProviderConfigToUpdate).IDTokenResponseType(AsBool(p1)))
 	return
 }
+type FfiT_Go_Auth_oIDCProviderConfigToUpdateIDTokenResponseType_P0 = *pkg.OIDCProviderConfigToUpdate
+type FfiT_Go_Auth_oIDCProviderConfigToUpdateIDTokenResponseType_R = *pkg.OIDCProviderConfigToUpdate
 // [pure] typed wrapper for Go_Auth_oIDCProviderConfigToUpdateIDTokenResponseType (P7 adaptor target)
 func Go_Auth_oIDCProviderConfigToUpdateIDTokenResponseTypeT(p0 *pkg.OIDCProviderConfigToUpdate, p1 bool) (out SkyResult[string, *pkg.OIDCProviderConfigToUpdate]) {
 	defer SkyFfiRecoverT(&out)()
@@ -1429,6 +1571,8 @@ func Go_Auth_oIDCProviderConfigToUpdateCodeResponseType(p0 any, p1 any) (out any
 	out = Ok[any, any](p0.(*pkg.OIDCProviderConfigToUpdate).CodeResponseType(AsBool(p1)))
 	return
 }
+type FfiT_Go_Auth_oIDCProviderConfigToUpdateCodeResponseType_P0 = *pkg.OIDCProviderConfigToUpdate
+type FfiT_Go_Auth_oIDCProviderConfigToUpdateCodeResponseType_R = *pkg.OIDCProviderConfigToUpdate
 // [pure] typed wrapper for Go_Auth_oIDCProviderConfigToUpdateCodeResponseType (P7 adaptor target)
 func Go_Auth_oIDCProviderConfigToUpdateCodeResponseTypeT(p0 *pkg.OIDCProviderConfigToUpdate, p1 bool) (out SkyResult[string, *pkg.OIDCProviderConfigToUpdate]) {
 	defer SkyFfiRecoverT(&out)()
@@ -1462,6 +1606,9 @@ func Go_Auth_projectConfigToUpdateMultiFactorConfig(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.ProjectConfigToUpdate).MultiFactorConfig(p1.(pkg.MultiFactorConfig)))
 	return
 }
+type FfiT_Go_Auth_projectConfigToUpdateMultiFactorConfig_P0 = *pkg.ProjectConfigToUpdate
+type FfiT_Go_Auth_projectConfigToUpdateMultiFactorConfig_P1 = pkg.MultiFactorConfig
+type FfiT_Go_Auth_projectConfigToUpdateMultiFactorConfig_R = *pkg.ProjectConfigToUpdate
 // [pure] typed wrapper for Go_Auth_projectConfigToUpdateMultiFactorConfig (P7 adaptor target)
 func Go_Auth_projectConfigToUpdateMultiFactorConfigT(p0 *pkg.ProjectConfigToUpdate, p1 pkg.MultiFactorConfig) (out SkyResult[string, *pkg.ProjectConfigToUpdate]) {
 	defer SkyFfiRecoverT(&out)()
@@ -1575,6 +1722,8 @@ func Go_Auth_sAMLProviderConfigIteratorPageInfo(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.SAMLProviderConfigIterator).PageInfo())
 	return
 }
+type FfiT_Go_Auth_sAMLProviderConfigIteratorPageInfo_P0 = *pkg.SAMLProviderConfigIterator
+type FfiT_Go_Auth_sAMLProviderConfigIteratorPageInfo_R = *iterator.PageInfo
 // [pure] typed wrapper for Go_Auth_sAMLProviderConfigIteratorPageInfo (P7 adaptor target)
 func Go_Auth_sAMLProviderConfigIteratorPageInfoT(p0 *pkg.SAMLProviderConfigIterator) (out SkyResult[string, *iterator.PageInfo]) {
 	defer SkyFfiRecoverT(&out)()
@@ -1591,6 +1740,8 @@ func Go_Auth_sAMLProviderConfigIteratorNext(p0 any) (out any) {
 
 	return
 }
+type FfiT_Go_Auth_sAMLProviderConfigIteratorNext_P0 = *pkg.SAMLProviderConfigIterator
+type FfiT_Go_Auth_sAMLProviderConfigIteratorNext_R = *pkg.SAMLProviderConfig
 // [fallible] typed wrapper for Go_Auth_sAMLProviderConfigIteratorNext (P7 adaptor target)
 func Go_Auth_sAMLProviderConfigIteratorNextT(p0 *pkg.SAMLProviderConfigIterator) (out SkyResult[string, *pkg.SAMLProviderConfig]) {
 	defer SkyFfiRecoverT(&out)()
@@ -1608,6 +1759,8 @@ func Go_Auth_sAMLProviderConfigToCreateID(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.SAMLProviderConfigToCreate).ID(fmt.Sprintf("%v", p1)))
 	return
 }
+type FfiT_Go_Auth_sAMLProviderConfigToCreateID_P0 = *pkg.SAMLProviderConfigToCreate
+type FfiT_Go_Auth_sAMLProviderConfigToCreateID_R = *pkg.SAMLProviderConfigToCreate
 // [pure] typed wrapper for Go_Auth_sAMLProviderConfigToCreateID (P7 adaptor target)
 func Go_Auth_sAMLProviderConfigToCreateIDT(p0 *pkg.SAMLProviderConfigToCreate, p1 string) (out SkyResult[string, *pkg.SAMLProviderConfigToCreate]) {
 	defer SkyFfiRecoverT(&out)()
@@ -1621,6 +1774,8 @@ func Go_Auth_sAMLProviderConfigToCreateIDPEntityID(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.SAMLProviderConfigToCreate).IDPEntityID(fmt.Sprintf("%v", p1)))
 	return
 }
+type FfiT_Go_Auth_sAMLProviderConfigToCreateIDPEntityID_P0 = *pkg.SAMLProviderConfigToCreate
+type FfiT_Go_Auth_sAMLProviderConfigToCreateIDPEntityID_R = *pkg.SAMLProviderConfigToCreate
 // [pure] typed wrapper for Go_Auth_sAMLProviderConfigToCreateIDPEntityID (P7 adaptor target)
 func Go_Auth_sAMLProviderConfigToCreateIDPEntityIDT(p0 *pkg.SAMLProviderConfigToCreate, p1 string) (out SkyResult[string, *pkg.SAMLProviderConfigToCreate]) {
 	defer SkyFfiRecoverT(&out)()
@@ -1634,6 +1789,8 @@ func Go_Auth_sAMLProviderConfigToCreateSSOURL(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.SAMLProviderConfigToCreate).SSOURL(fmt.Sprintf("%v", p1)))
 	return
 }
+type FfiT_Go_Auth_sAMLProviderConfigToCreateSSOURL_P0 = *pkg.SAMLProviderConfigToCreate
+type FfiT_Go_Auth_sAMLProviderConfigToCreateSSOURL_R = *pkg.SAMLProviderConfigToCreate
 // [pure] typed wrapper for Go_Auth_sAMLProviderConfigToCreateSSOURL (P7 adaptor target)
 func Go_Auth_sAMLProviderConfigToCreateSSOURLT(p0 *pkg.SAMLProviderConfigToCreate, p1 string) (out SkyResult[string, *pkg.SAMLProviderConfigToCreate]) {
 	defer SkyFfiRecoverT(&out)()
@@ -1647,6 +1804,8 @@ func Go_Auth_sAMLProviderConfigToCreateRequestSigningEnabled(p0 any, p1 any) (ou
 	out = Ok[any, any](p0.(*pkg.SAMLProviderConfigToCreate).RequestSigningEnabled(AsBool(p1)))
 	return
 }
+type FfiT_Go_Auth_sAMLProviderConfigToCreateRequestSigningEnabled_P0 = *pkg.SAMLProviderConfigToCreate
+type FfiT_Go_Auth_sAMLProviderConfigToCreateRequestSigningEnabled_R = *pkg.SAMLProviderConfigToCreate
 // [pure] typed wrapper for Go_Auth_sAMLProviderConfigToCreateRequestSigningEnabled (P7 adaptor target)
 func Go_Auth_sAMLProviderConfigToCreateRequestSigningEnabledT(p0 *pkg.SAMLProviderConfigToCreate, p1 bool) (out SkyResult[string, *pkg.SAMLProviderConfigToCreate]) {
 	defer SkyFfiRecoverT(&out)()
@@ -1660,6 +1819,8 @@ func Go_Auth_sAMLProviderConfigToCreateX509Certificates(p0 any, p1 any) (out any
 	out = Ok[any, any](p0.(*pkg.SAMLProviderConfigToCreate).X509Certificates(p1.([]string)))
 	return
 }
+type FfiT_Go_Auth_sAMLProviderConfigToCreateX509Certificates_P0 = *pkg.SAMLProviderConfigToCreate
+type FfiT_Go_Auth_sAMLProviderConfigToCreateX509Certificates_R = *pkg.SAMLProviderConfigToCreate
 // [pure] typed wrapper for Go_Auth_sAMLProviderConfigToCreateX509Certificates (P7 adaptor target)
 func Go_Auth_sAMLProviderConfigToCreateX509CertificatesT(p0 *pkg.SAMLProviderConfigToCreate, p1 []string) (out SkyResult[string, *pkg.SAMLProviderConfigToCreate]) {
 	defer SkyFfiRecoverT(&out)()
@@ -1673,6 +1834,8 @@ func Go_Auth_sAMLProviderConfigToCreateRPEntityID(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.SAMLProviderConfigToCreate).RPEntityID(fmt.Sprintf("%v", p1)))
 	return
 }
+type FfiT_Go_Auth_sAMLProviderConfigToCreateRPEntityID_P0 = *pkg.SAMLProviderConfigToCreate
+type FfiT_Go_Auth_sAMLProviderConfigToCreateRPEntityID_R = *pkg.SAMLProviderConfigToCreate
 // [pure] typed wrapper for Go_Auth_sAMLProviderConfigToCreateRPEntityID (P7 adaptor target)
 func Go_Auth_sAMLProviderConfigToCreateRPEntityIDT(p0 *pkg.SAMLProviderConfigToCreate, p1 string) (out SkyResult[string, *pkg.SAMLProviderConfigToCreate]) {
 	defer SkyFfiRecoverT(&out)()
@@ -1686,6 +1849,8 @@ func Go_Auth_sAMLProviderConfigToCreateCallbackURL(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.SAMLProviderConfigToCreate).CallbackURL(fmt.Sprintf("%v", p1)))
 	return
 }
+type FfiT_Go_Auth_sAMLProviderConfigToCreateCallbackURL_P0 = *pkg.SAMLProviderConfigToCreate
+type FfiT_Go_Auth_sAMLProviderConfigToCreateCallbackURL_R = *pkg.SAMLProviderConfigToCreate
 // [pure] typed wrapper for Go_Auth_sAMLProviderConfigToCreateCallbackURL (P7 adaptor target)
 func Go_Auth_sAMLProviderConfigToCreateCallbackURLT(p0 *pkg.SAMLProviderConfigToCreate, p1 string) (out SkyResult[string, *pkg.SAMLProviderConfigToCreate]) {
 	defer SkyFfiRecoverT(&out)()
@@ -1699,6 +1864,8 @@ func Go_Auth_sAMLProviderConfigToCreateDisplayName(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.SAMLProviderConfigToCreate).DisplayName(fmt.Sprintf("%v", p1)))
 	return
 }
+type FfiT_Go_Auth_sAMLProviderConfigToCreateDisplayName_P0 = *pkg.SAMLProviderConfigToCreate
+type FfiT_Go_Auth_sAMLProviderConfigToCreateDisplayName_R = *pkg.SAMLProviderConfigToCreate
 // [pure] typed wrapper for Go_Auth_sAMLProviderConfigToCreateDisplayName (P7 adaptor target)
 func Go_Auth_sAMLProviderConfigToCreateDisplayNameT(p0 *pkg.SAMLProviderConfigToCreate, p1 string) (out SkyResult[string, *pkg.SAMLProviderConfigToCreate]) {
 	defer SkyFfiRecoverT(&out)()
@@ -1712,6 +1879,8 @@ func Go_Auth_sAMLProviderConfigToCreateEnabled(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.SAMLProviderConfigToCreate).Enabled(AsBool(p1)))
 	return
 }
+type FfiT_Go_Auth_sAMLProviderConfigToCreateEnabled_P0 = *pkg.SAMLProviderConfigToCreate
+type FfiT_Go_Auth_sAMLProviderConfigToCreateEnabled_R = *pkg.SAMLProviderConfigToCreate
 // [pure] typed wrapper for Go_Auth_sAMLProviderConfigToCreateEnabled (P7 adaptor target)
 func Go_Auth_sAMLProviderConfigToCreateEnabledT(p0 *pkg.SAMLProviderConfigToCreate, p1 bool) (out SkyResult[string, *pkg.SAMLProviderConfigToCreate]) {
 	defer SkyFfiRecoverT(&out)()
@@ -1727,6 +1896,8 @@ func Go_Auth_sAMLProviderConfigToUpdateIDPEntityID(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.SAMLProviderConfigToUpdate).IDPEntityID(fmt.Sprintf("%v", p1)))
 	return
 }
+type FfiT_Go_Auth_sAMLProviderConfigToUpdateIDPEntityID_P0 = *pkg.SAMLProviderConfigToUpdate
+type FfiT_Go_Auth_sAMLProviderConfigToUpdateIDPEntityID_R = *pkg.SAMLProviderConfigToUpdate
 // [pure] typed wrapper for Go_Auth_sAMLProviderConfigToUpdateIDPEntityID (P7 adaptor target)
 func Go_Auth_sAMLProviderConfigToUpdateIDPEntityIDT(p0 *pkg.SAMLProviderConfigToUpdate, p1 string) (out SkyResult[string, *pkg.SAMLProviderConfigToUpdate]) {
 	defer SkyFfiRecoverT(&out)()
@@ -1740,6 +1911,8 @@ func Go_Auth_sAMLProviderConfigToUpdateSSOURL(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.SAMLProviderConfigToUpdate).SSOURL(fmt.Sprintf("%v", p1)))
 	return
 }
+type FfiT_Go_Auth_sAMLProviderConfigToUpdateSSOURL_P0 = *pkg.SAMLProviderConfigToUpdate
+type FfiT_Go_Auth_sAMLProviderConfigToUpdateSSOURL_R = *pkg.SAMLProviderConfigToUpdate
 // [pure] typed wrapper for Go_Auth_sAMLProviderConfigToUpdateSSOURL (P7 adaptor target)
 func Go_Auth_sAMLProviderConfigToUpdateSSOURLT(p0 *pkg.SAMLProviderConfigToUpdate, p1 string) (out SkyResult[string, *pkg.SAMLProviderConfigToUpdate]) {
 	defer SkyFfiRecoverT(&out)()
@@ -1753,6 +1926,8 @@ func Go_Auth_sAMLProviderConfigToUpdateRequestSigningEnabled(p0 any, p1 any) (ou
 	out = Ok[any, any](p0.(*pkg.SAMLProviderConfigToUpdate).RequestSigningEnabled(AsBool(p1)))
 	return
 }
+type FfiT_Go_Auth_sAMLProviderConfigToUpdateRequestSigningEnabled_P0 = *pkg.SAMLProviderConfigToUpdate
+type FfiT_Go_Auth_sAMLProviderConfigToUpdateRequestSigningEnabled_R = *pkg.SAMLProviderConfigToUpdate
 // [pure] typed wrapper for Go_Auth_sAMLProviderConfigToUpdateRequestSigningEnabled (P7 adaptor target)
 func Go_Auth_sAMLProviderConfigToUpdateRequestSigningEnabledT(p0 *pkg.SAMLProviderConfigToUpdate, p1 bool) (out SkyResult[string, *pkg.SAMLProviderConfigToUpdate]) {
 	defer SkyFfiRecoverT(&out)()
@@ -1766,6 +1941,8 @@ func Go_Auth_sAMLProviderConfigToUpdateX509Certificates(p0 any, p1 any) (out any
 	out = Ok[any, any](p0.(*pkg.SAMLProviderConfigToUpdate).X509Certificates(p1.([]string)))
 	return
 }
+type FfiT_Go_Auth_sAMLProviderConfigToUpdateX509Certificates_P0 = *pkg.SAMLProviderConfigToUpdate
+type FfiT_Go_Auth_sAMLProviderConfigToUpdateX509Certificates_R = *pkg.SAMLProviderConfigToUpdate
 // [pure] typed wrapper for Go_Auth_sAMLProviderConfigToUpdateX509Certificates (P7 adaptor target)
 func Go_Auth_sAMLProviderConfigToUpdateX509CertificatesT(p0 *pkg.SAMLProviderConfigToUpdate, p1 []string) (out SkyResult[string, *pkg.SAMLProviderConfigToUpdate]) {
 	defer SkyFfiRecoverT(&out)()
@@ -1779,6 +1956,8 @@ func Go_Auth_sAMLProviderConfigToUpdateRPEntityID(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.SAMLProviderConfigToUpdate).RPEntityID(fmt.Sprintf("%v", p1)))
 	return
 }
+type FfiT_Go_Auth_sAMLProviderConfigToUpdateRPEntityID_P0 = *pkg.SAMLProviderConfigToUpdate
+type FfiT_Go_Auth_sAMLProviderConfigToUpdateRPEntityID_R = *pkg.SAMLProviderConfigToUpdate
 // [pure] typed wrapper for Go_Auth_sAMLProviderConfigToUpdateRPEntityID (P7 adaptor target)
 func Go_Auth_sAMLProviderConfigToUpdateRPEntityIDT(p0 *pkg.SAMLProviderConfigToUpdate, p1 string) (out SkyResult[string, *pkg.SAMLProviderConfigToUpdate]) {
 	defer SkyFfiRecoverT(&out)()
@@ -1792,6 +1971,8 @@ func Go_Auth_sAMLProviderConfigToUpdateCallbackURL(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.SAMLProviderConfigToUpdate).CallbackURL(fmt.Sprintf("%v", p1)))
 	return
 }
+type FfiT_Go_Auth_sAMLProviderConfigToUpdateCallbackURL_P0 = *pkg.SAMLProviderConfigToUpdate
+type FfiT_Go_Auth_sAMLProviderConfigToUpdateCallbackURL_R = *pkg.SAMLProviderConfigToUpdate
 // [pure] typed wrapper for Go_Auth_sAMLProviderConfigToUpdateCallbackURL (P7 adaptor target)
 func Go_Auth_sAMLProviderConfigToUpdateCallbackURLT(p0 *pkg.SAMLProviderConfigToUpdate, p1 string) (out SkyResult[string, *pkg.SAMLProviderConfigToUpdate]) {
 	defer SkyFfiRecoverT(&out)()
@@ -1805,6 +1986,8 @@ func Go_Auth_sAMLProviderConfigToUpdateDisplayName(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.SAMLProviderConfigToUpdate).DisplayName(fmt.Sprintf("%v", p1)))
 	return
 }
+type FfiT_Go_Auth_sAMLProviderConfigToUpdateDisplayName_P0 = *pkg.SAMLProviderConfigToUpdate
+type FfiT_Go_Auth_sAMLProviderConfigToUpdateDisplayName_R = *pkg.SAMLProviderConfigToUpdate
 // [pure] typed wrapper for Go_Auth_sAMLProviderConfigToUpdateDisplayName (P7 adaptor target)
 func Go_Auth_sAMLProviderConfigToUpdateDisplayNameT(p0 *pkg.SAMLProviderConfigToUpdate, p1 string) (out SkyResult[string, *pkg.SAMLProviderConfigToUpdate]) {
 	defer SkyFfiRecoverT(&out)()
@@ -1818,6 +2001,8 @@ func Go_Auth_sAMLProviderConfigToUpdateEnabled(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.SAMLProviderConfigToUpdate).Enabled(AsBool(p1)))
 	return
 }
+type FfiT_Go_Auth_sAMLProviderConfigToUpdateEnabled_P0 = *pkg.SAMLProviderConfigToUpdate
+type FfiT_Go_Auth_sAMLProviderConfigToUpdateEnabled_R = *pkg.SAMLProviderConfigToUpdate
 // [pure] typed wrapper for Go_Auth_sAMLProviderConfigToUpdateEnabled (P7 adaptor target)
 func Go_Auth_sAMLProviderConfigToUpdateEnabledT(p0 *pkg.SAMLProviderConfigToUpdate, p1 bool) (out SkyResult[string, *pkg.SAMLProviderConfigToUpdate]) {
 	defer SkyFfiRecoverT(&out)()
@@ -1869,6 +2054,7 @@ func Go_Auth_tenantClientTenantID(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.TenantClient).TenantID())
 	return
 }
+type FfiT_Go_Auth_tenantClientTenantID_P0 = *pkg.TenantClient
 // [pure] typed wrapper for Go_Auth_tenantClientTenantID (P7 adaptor target)
 func Go_Auth_tenantClientTenantIDT(p0 *pkg.TenantClient) (out SkyResult[string, string]) {
 	defer SkyFfiRecoverT(&out)()
@@ -1885,6 +2071,10 @@ func Go_Auth_tenantClientCreateOIDCProviderConfig(p0 any, p1 any, p2 any) (out a
 
 	return
 }
+type FfiT_Go_Auth_tenantClientCreateOIDCProviderConfig_P0 = *pkg.TenantClient
+type FfiT_Go_Auth_tenantClientCreateOIDCProviderConfig_P1 = context.Context
+type FfiT_Go_Auth_tenantClientCreateOIDCProviderConfig_P2 = *pkg.OIDCProviderConfigToCreate
+type FfiT_Go_Auth_tenantClientCreateOIDCProviderConfig_R = *pkg.OIDCProviderConfig
 // [fallible] typed wrapper for Go_Auth_tenantClientCreateOIDCProviderConfig (P7 adaptor target)
 func Go_Auth_tenantClientCreateOIDCProviderConfigT(p0 *pkg.TenantClient, p1 context.Context, p2 *pkg.OIDCProviderConfigToCreate) (out SkyResult[string, *pkg.OIDCProviderConfig]) {
 	defer SkyFfiRecoverT(&out)()
@@ -1903,6 +2093,10 @@ func Go_Auth_tenantClientCreateSAMLProviderConfig(p0 any, p1 any, p2 any) (out a
 
 	return
 }
+type FfiT_Go_Auth_tenantClientCreateSAMLProviderConfig_P0 = *pkg.TenantClient
+type FfiT_Go_Auth_tenantClientCreateSAMLProviderConfig_P1 = context.Context
+type FfiT_Go_Auth_tenantClientCreateSAMLProviderConfig_P2 = *pkg.SAMLProviderConfigToCreate
+type FfiT_Go_Auth_tenantClientCreateSAMLProviderConfig_R = *pkg.SAMLProviderConfig
 // [fallible] typed wrapper for Go_Auth_tenantClientCreateSAMLProviderConfig (P7 adaptor target)
 func Go_Auth_tenantClientCreateSAMLProviderConfigT(p0 *pkg.TenantClient, p1 context.Context, p2 *pkg.SAMLProviderConfigToCreate) (out SkyResult[string, *pkg.SAMLProviderConfig]) {
 	defer SkyFfiRecoverT(&out)()
@@ -1921,6 +2115,10 @@ func Go_Auth_tenantClientCreateUser(p0 any, p1 any, p2 any) (out any) {
 
 	return
 }
+type FfiT_Go_Auth_tenantClientCreateUser_P0 = *pkg.TenantClient
+type FfiT_Go_Auth_tenantClientCreateUser_P1 = context.Context
+type FfiT_Go_Auth_tenantClientCreateUser_P2 = *pkg.UserToCreate
+type FfiT_Go_Auth_tenantClientCreateUser_R = *pkg.UserRecord
 // [fallible] typed wrapper for Go_Auth_tenantClientCreateUser (P7 adaptor target)
 func Go_Auth_tenantClientCreateUserT(p0 *pkg.TenantClient, p1 context.Context, p2 *pkg.UserToCreate) (out SkyResult[string, *pkg.UserRecord]) {
 	defer SkyFfiRecoverT(&out)()
@@ -1939,6 +2137,8 @@ func Go_Auth_tenantClientCustomToken(p0 any, p1 any, p2 any) (out any) {
 
 	return
 }
+type FfiT_Go_Auth_tenantClientCustomToken_P0 = *pkg.TenantClient
+type FfiT_Go_Auth_tenantClientCustomToken_P1 = context.Context
 // [fallible] typed wrapper for Go_Auth_tenantClientCustomToken (P7 adaptor target)
 func Go_Auth_tenantClientCustomTokenT(p0 *pkg.TenantClient, p1 context.Context, p2 string) (out SkyResult[string, string]) {
 	defer SkyFfiRecoverT(&out)()
@@ -1967,6 +2167,8 @@ func Go_Auth_tenantClientDeleteOIDCProviderConfig(p0 any, p1 any, p2 any) (out a
 
 	return
 }
+type FfiT_Go_Auth_tenantClientDeleteOIDCProviderConfig_P0 = *pkg.TenantClient
+type FfiT_Go_Auth_tenantClientDeleteOIDCProviderConfig_P1 = context.Context
 // [fallible] typed wrapper for Go_Auth_tenantClientDeleteOIDCProviderConfig (P7 adaptor target)
 func Go_Auth_tenantClientDeleteOIDCProviderConfigT(p0 *pkg.TenantClient, p1 context.Context, p2 string) (out SkyResult[string, struct{}]) {
 	defer SkyFfiRecoverT(&out)()
@@ -1985,6 +2187,8 @@ func Go_Auth_tenantClientDeleteSAMLProviderConfig(p0 any, p1 any, p2 any) (out a
 
 	return
 }
+type FfiT_Go_Auth_tenantClientDeleteSAMLProviderConfig_P0 = *pkg.TenantClient
+type FfiT_Go_Auth_tenantClientDeleteSAMLProviderConfig_P1 = context.Context
 // [fallible] typed wrapper for Go_Auth_tenantClientDeleteSAMLProviderConfig (P7 adaptor target)
 func Go_Auth_tenantClientDeleteSAMLProviderConfigT(p0 *pkg.TenantClient, p1 context.Context, p2 string) (out SkyResult[string, struct{}]) {
 	defer SkyFfiRecoverT(&out)()
@@ -2003,6 +2207,8 @@ func Go_Auth_tenantClientDeleteUser(p0 any, p1 any, p2 any) (out any) {
 
 	return
 }
+type FfiT_Go_Auth_tenantClientDeleteUser_P0 = *pkg.TenantClient
+type FfiT_Go_Auth_tenantClientDeleteUser_P1 = context.Context
 // [fallible] typed wrapper for Go_Auth_tenantClientDeleteUser (P7 adaptor target)
 func Go_Auth_tenantClientDeleteUserT(p0 *pkg.TenantClient, p1 context.Context, p2 string) (out SkyResult[string, struct{}]) {
 	defer SkyFfiRecoverT(&out)()
@@ -2021,6 +2227,9 @@ func Go_Auth_tenantClientDeleteUsers(p0 any, p1 any, p2 any) (out any) {
 
 	return
 }
+type FfiT_Go_Auth_tenantClientDeleteUsers_P0 = *pkg.TenantClient
+type FfiT_Go_Auth_tenantClientDeleteUsers_P1 = context.Context
+type FfiT_Go_Auth_tenantClientDeleteUsers_R = *pkg.DeleteUsersResult
 // [fallible] typed wrapper for Go_Auth_tenantClientDeleteUsers (P7 adaptor target)
 func Go_Auth_tenantClientDeleteUsersT(p0 *pkg.TenantClient, p1 context.Context, p2 []string) (out SkyResult[string, *pkg.DeleteUsersResult]) {
 	defer SkyFfiRecoverT(&out)()
@@ -2039,6 +2248,9 @@ func Go_Auth_tenantClientEmailSignInLink(p0 any, p1 any, p2 any, p3 any) (out an
 
 	return
 }
+type FfiT_Go_Auth_tenantClientEmailSignInLink_P0 = *pkg.TenantClient
+type FfiT_Go_Auth_tenantClientEmailSignInLink_P1 = context.Context
+type FfiT_Go_Auth_tenantClientEmailSignInLink_P3 = *pkg.ActionCodeSettings
 // [fallible] typed wrapper for Go_Auth_tenantClientEmailSignInLink (P7 adaptor target)
 func Go_Auth_tenantClientEmailSignInLinkT(p0 *pkg.TenantClient, p1 context.Context, p2 string, p3 *pkg.ActionCodeSettings) (out SkyResult[string, string]) {
 	defer SkyFfiRecoverT(&out)()
@@ -2057,6 +2269,8 @@ func Go_Auth_tenantClientEmailVerificationLink(p0 any, p1 any, p2 any) (out any)
 
 	return
 }
+type FfiT_Go_Auth_tenantClientEmailVerificationLink_P0 = *pkg.TenantClient
+type FfiT_Go_Auth_tenantClientEmailVerificationLink_P1 = context.Context
 // [fallible] typed wrapper for Go_Auth_tenantClientEmailVerificationLink (P7 adaptor target)
 func Go_Auth_tenantClientEmailVerificationLinkT(p0 *pkg.TenantClient, p1 context.Context, p2 string) (out SkyResult[string, string]) {
 	defer SkyFfiRecoverT(&out)()
@@ -2075,6 +2289,9 @@ func Go_Auth_tenantClientEmailVerificationLinkWithSettings(p0 any, p1 any, p2 an
 
 	return
 }
+type FfiT_Go_Auth_tenantClientEmailVerificationLinkWithSettings_P0 = *pkg.TenantClient
+type FfiT_Go_Auth_tenantClientEmailVerificationLinkWithSettings_P1 = context.Context
+type FfiT_Go_Auth_tenantClientEmailVerificationLinkWithSettings_P3 = *pkg.ActionCodeSettings
 // [fallible] typed wrapper for Go_Auth_tenantClientEmailVerificationLinkWithSettings (P7 adaptor target)
 func Go_Auth_tenantClientEmailVerificationLinkWithSettingsT(p0 *pkg.TenantClient, p1 context.Context, p2 string, p3 *pkg.ActionCodeSettings) (out SkyResult[string, string]) {
 	defer SkyFfiRecoverT(&out)()
@@ -2093,6 +2310,9 @@ func Go_Auth_tenantClientGetProjectConfig(p0 any, p1 any) (out any) {
 
 	return
 }
+type FfiT_Go_Auth_tenantClientGetProjectConfig_P0 = *pkg.TenantClient
+type FfiT_Go_Auth_tenantClientGetProjectConfig_P1 = context.Context
+type FfiT_Go_Auth_tenantClientGetProjectConfig_R = *pkg.ProjectConfig
 // [fallible] typed wrapper for Go_Auth_tenantClientGetProjectConfig (P7 adaptor target)
 func Go_Auth_tenantClientGetProjectConfigT(p0 *pkg.TenantClient, p1 context.Context) (out SkyResult[string, *pkg.ProjectConfig]) {
 	defer SkyFfiRecoverT(&out)()
@@ -2111,6 +2331,9 @@ func Go_Auth_tenantClientGetUser(p0 any, p1 any, p2 any) (out any) {
 
 	return
 }
+type FfiT_Go_Auth_tenantClientGetUser_P0 = *pkg.TenantClient
+type FfiT_Go_Auth_tenantClientGetUser_P1 = context.Context
+type FfiT_Go_Auth_tenantClientGetUser_R = *pkg.UserRecord
 // [fallible] typed wrapper for Go_Auth_tenantClientGetUser (P7 adaptor target)
 func Go_Auth_tenantClientGetUserT(p0 *pkg.TenantClient, p1 context.Context, p2 string) (out SkyResult[string, *pkg.UserRecord]) {
 	defer SkyFfiRecoverT(&out)()
@@ -2129,6 +2352,9 @@ func Go_Auth_tenantClientGetUserByEmail(p0 any, p1 any, p2 any) (out any) {
 
 	return
 }
+type FfiT_Go_Auth_tenantClientGetUserByEmail_P0 = *pkg.TenantClient
+type FfiT_Go_Auth_tenantClientGetUserByEmail_P1 = context.Context
+type FfiT_Go_Auth_tenantClientGetUserByEmail_R = *pkg.UserRecord
 // [fallible] typed wrapper for Go_Auth_tenantClientGetUserByEmail (P7 adaptor target)
 func Go_Auth_tenantClientGetUserByEmailT(p0 *pkg.TenantClient, p1 context.Context, p2 string) (out SkyResult[string, *pkg.UserRecord]) {
 	defer SkyFfiRecoverT(&out)()
@@ -2147,6 +2373,9 @@ func Go_Auth_tenantClientGetUserByPhoneNumber(p0 any, p1 any, p2 any) (out any) 
 
 	return
 }
+type FfiT_Go_Auth_tenantClientGetUserByPhoneNumber_P0 = *pkg.TenantClient
+type FfiT_Go_Auth_tenantClientGetUserByPhoneNumber_P1 = context.Context
+type FfiT_Go_Auth_tenantClientGetUserByPhoneNumber_R = *pkg.UserRecord
 // [fallible] typed wrapper for Go_Auth_tenantClientGetUserByPhoneNumber (P7 adaptor target)
 func Go_Auth_tenantClientGetUserByPhoneNumberT(p0 *pkg.TenantClient, p1 context.Context, p2 string) (out SkyResult[string, *pkg.UserRecord]) {
 	defer SkyFfiRecoverT(&out)()
@@ -2165,6 +2394,9 @@ func Go_Auth_tenantClientGetUserByProviderID(p0 any, p1 any, p2 any, p3 any) (ou
 
 	return
 }
+type FfiT_Go_Auth_tenantClientGetUserByProviderID_P0 = *pkg.TenantClient
+type FfiT_Go_Auth_tenantClientGetUserByProviderID_P1 = context.Context
+type FfiT_Go_Auth_tenantClientGetUserByProviderID_R = *pkg.UserRecord
 // [fallible] typed wrapper for Go_Auth_tenantClientGetUserByProviderID (P7 adaptor target)
 func Go_Auth_tenantClientGetUserByProviderIDT(p0 *pkg.TenantClient, p1 context.Context, p2 string, p3 string) (out SkyResult[string, *pkg.UserRecord]) {
 	defer SkyFfiRecoverT(&out)()
@@ -2183,6 +2415,9 @@ func Go_Auth_tenantClientGetUserByProviderUID(p0 any, p1 any, p2 any, p3 any) (o
 
 	return
 }
+type FfiT_Go_Auth_tenantClientGetUserByProviderUID_P0 = *pkg.TenantClient
+type FfiT_Go_Auth_tenantClientGetUserByProviderUID_P1 = context.Context
+type FfiT_Go_Auth_tenantClientGetUserByProviderUID_R = *pkg.UserRecord
 // [fallible] typed wrapper for Go_Auth_tenantClientGetUserByProviderUID (P7 adaptor target)
 func Go_Auth_tenantClientGetUserByProviderUIDT(p0 *pkg.TenantClient, p1 context.Context, p2 string, p3 string) (out SkyResult[string, *pkg.UserRecord]) {
 	defer SkyFfiRecoverT(&out)()
@@ -2201,6 +2436,10 @@ func Go_Auth_tenantClientGetUsers(p0 any, p1 any, p2 any) (out any) {
 
 	return
 }
+type FfiT_Go_Auth_tenantClientGetUsers_P0 = *pkg.TenantClient
+type FfiT_Go_Auth_tenantClientGetUsers_P1 = context.Context
+type FfiT_Go_Auth_tenantClientGetUsers_P2 = []pkg.UserIdentifier
+type FfiT_Go_Auth_tenantClientGetUsers_R = *pkg.GetUsersResult
 // [fallible] typed wrapper for Go_Auth_tenantClientGetUsers (P7 adaptor target)
 func Go_Auth_tenantClientGetUsersT(p0 *pkg.TenantClient, p1 context.Context, p2 []pkg.UserIdentifier) (out SkyResult[string, *pkg.GetUsersResult]) {
 	defer SkyFfiRecoverT(&out)()
@@ -2229,6 +2468,9 @@ func Go_Auth_tenantClientOIDCProviderConfig(p0 any, p1 any, p2 any) (out any) {
 
 	return
 }
+type FfiT_Go_Auth_tenantClientOIDCProviderConfig_P0 = *pkg.TenantClient
+type FfiT_Go_Auth_tenantClientOIDCProviderConfig_P1 = context.Context
+type FfiT_Go_Auth_tenantClientOIDCProviderConfig_R = *pkg.OIDCProviderConfig
 // [fallible] typed wrapper for Go_Auth_tenantClientOIDCProviderConfig (P7 adaptor target)
 func Go_Auth_tenantClientOIDCProviderConfigT(p0 *pkg.TenantClient, p1 context.Context, p2 string) (out SkyResult[string, *pkg.OIDCProviderConfig]) {
 	defer SkyFfiRecoverT(&out)()
@@ -2244,6 +2486,9 @@ func Go_Auth_tenantClientOIDCProviderConfigs(p0 any, p1 any, p2 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.TenantClient).OIDCProviderConfigs(p1.(context.Context), fmt.Sprintf("%v", p2)))
 	return
 }
+type FfiT_Go_Auth_tenantClientOIDCProviderConfigs_P0 = *pkg.TenantClient
+type FfiT_Go_Auth_tenantClientOIDCProviderConfigs_P1 = context.Context
+type FfiT_Go_Auth_tenantClientOIDCProviderConfigs_R = *pkg.OIDCProviderConfigIterator
 // [pure] typed wrapper for Go_Auth_tenantClientOIDCProviderConfigs (P7 adaptor target)
 func Go_Auth_tenantClientOIDCProviderConfigsT(p0 *pkg.TenantClient, p1 context.Context, p2 string) (out SkyResult[string, *pkg.OIDCProviderConfigIterator]) {
 	defer SkyFfiRecoverT(&out)()
@@ -2260,6 +2505,8 @@ func Go_Auth_tenantClientPasswordResetLink(p0 any, p1 any, p2 any) (out any) {
 
 	return
 }
+type FfiT_Go_Auth_tenantClientPasswordResetLink_P0 = *pkg.TenantClient
+type FfiT_Go_Auth_tenantClientPasswordResetLink_P1 = context.Context
 // [fallible] typed wrapper for Go_Auth_tenantClientPasswordResetLink (P7 adaptor target)
 func Go_Auth_tenantClientPasswordResetLinkT(p0 *pkg.TenantClient, p1 context.Context, p2 string) (out SkyResult[string, string]) {
 	defer SkyFfiRecoverT(&out)()
@@ -2278,6 +2525,9 @@ func Go_Auth_tenantClientPasswordResetLinkWithSettings(p0 any, p1 any, p2 any, p
 
 	return
 }
+type FfiT_Go_Auth_tenantClientPasswordResetLinkWithSettings_P0 = *pkg.TenantClient
+type FfiT_Go_Auth_tenantClientPasswordResetLinkWithSettings_P1 = context.Context
+type FfiT_Go_Auth_tenantClientPasswordResetLinkWithSettings_P3 = *pkg.ActionCodeSettings
 // [fallible] typed wrapper for Go_Auth_tenantClientPasswordResetLinkWithSettings (P7 adaptor target)
 func Go_Auth_tenantClientPasswordResetLinkWithSettingsT(p0 *pkg.TenantClient, p1 context.Context, p2 string, p3 *pkg.ActionCodeSettings) (out SkyResult[string, string]) {
 	defer SkyFfiRecoverT(&out)()
@@ -2296,6 +2546,10 @@ func Go_Auth_tenantClientQueryUsers(p0 any, p1 any, p2 any) (out any) {
 
 	return
 }
+type FfiT_Go_Auth_tenantClientQueryUsers_P0 = *pkg.TenantClient
+type FfiT_Go_Auth_tenantClientQueryUsers_P1 = context.Context
+type FfiT_Go_Auth_tenantClientQueryUsers_P2 = *pkg.QueryUsersRequest
+type FfiT_Go_Auth_tenantClientQueryUsers_R = *pkg.QueryUserInfoResponse
 // [fallible] typed wrapper for Go_Auth_tenantClientQueryUsers (P7 adaptor target)
 func Go_Auth_tenantClientQueryUsersT(p0 *pkg.TenantClient, p1 context.Context, p2 *pkg.QueryUsersRequest) (out SkyResult[string, *pkg.QueryUserInfoResponse]) {
 	defer SkyFfiRecoverT(&out)()
@@ -2314,6 +2568,8 @@ func Go_Auth_tenantClientRevokeRefreshTokens(p0 any, p1 any, p2 any) (out any) {
 
 	return
 }
+type FfiT_Go_Auth_tenantClientRevokeRefreshTokens_P0 = *pkg.TenantClient
+type FfiT_Go_Auth_tenantClientRevokeRefreshTokens_P1 = context.Context
 // [fallible] typed wrapper for Go_Auth_tenantClientRevokeRefreshTokens (P7 adaptor target)
 func Go_Auth_tenantClientRevokeRefreshTokensT(p0 *pkg.TenantClient, p1 context.Context, p2 string) (out SkyResult[string, struct{}]) {
 	defer SkyFfiRecoverT(&out)()
@@ -2332,6 +2588,9 @@ func Go_Auth_tenantClientSAMLProviderConfig(p0 any, p1 any, p2 any) (out any) {
 
 	return
 }
+type FfiT_Go_Auth_tenantClientSAMLProviderConfig_P0 = *pkg.TenantClient
+type FfiT_Go_Auth_tenantClientSAMLProviderConfig_P1 = context.Context
+type FfiT_Go_Auth_tenantClientSAMLProviderConfig_R = *pkg.SAMLProviderConfig
 // [fallible] typed wrapper for Go_Auth_tenantClientSAMLProviderConfig (P7 adaptor target)
 func Go_Auth_tenantClientSAMLProviderConfigT(p0 *pkg.TenantClient, p1 context.Context, p2 string) (out SkyResult[string, *pkg.SAMLProviderConfig]) {
 	defer SkyFfiRecoverT(&out)()
@@ -2347,6 +2606,9 @@ func Go_Auth_tenantClientSAMLProviderConfigs(p0 any, p1 any, p2 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.TenantClient).SAMLProviderConfigs(p1.(context.Context), fmt.Sprintf("%v", p2)))
 	return
 }
+type FfiT_Go_Auth_tenantClientSAMLProviderConfigs_P0 = *pkg.TenantClient
+type FfiT_Go_Auth_tenantClientSAMLProviderConfigs_P1 = context.Context
+type FfiT_Go_Auth_tenantClientSAMLProviderConfigs_R = *pkg.SAMLProviderConfigIterator
 // [pure] typed wrapper for Go_Auth_tenantClientSAMLProviderConfigs (P7 adaptor target)
 func Go_Auth_tenantClientSAMLProviderConfigsT(p0 *pkg.TenantClient, p1 context.Context, p2 string) (out SkyResult[string, *pkg.SAMLProviderConfigIterator]) {
 	defer SkyFfiRecoverT(&out)()
@@ -2373,6 +2635,10 @@ func Go_Auth_tenantClientUpdateOIDCProviderConfig(p0 any, p1 any, p2 any, p3 any
 
 	return
 }
+type FfiT_Go_Auth_tenantClientUpdateOIDCProviderConfig_P0 = *pkg.TenantClient
+type FfiT_Go_Auth_tenantClientUpdateOIDCProviderConfig_P1 = context.Context
+type FfiT_Go_Auth_tenantClientUpdateOIDCProviderConfig_P3 = *pkg.OIDCProviderConfigToUpdate
+type FfiT_Go_Auth_tenantClientUpdateOIDCProviderConfig_R = *pkg.OIDCProviderConfig
 // [fallible] typed wrapper for Go_Auth_tenantClientUpdateOIDCProviderConfig (P7 adaptor target)
 func Go_Auth_tenantClientUpdateOIDCProviderConfigT(p0 *pkg.TenantClient, p1 context.Context, p2 string, p3 *pkg.OIDCProviderConfigToUpdate) (out SkyResult[string, *pkg.OIDCProviderConfig]) {
 	defer SkyFfiRecoverT(&out)()
@@ -2391,6 +2657,10 @@ func Go_Auth_tenantClientUpdateProjectConfig(p0 any, p1 any, p2 any) (out any) {
 
 	return
 }
+type FfiT_Go_Auth_tenantClientUpdateProjectConfig_P0 = *pkg.TenantClient
+type FfiT_Go_Auth_tenantClientUpdateProjectConfig_P1 = context.Context
+type FfiT_Go_Auth_tenantClientUpdateProjectConfig_P2 = *pkg.ProjectConfigToUpdate
+type FfiT_Go_Auth_tenantClientUpdateProjectConfig_R = *pkg.ProjectConfig
 // [fallible] typed wrapper for Go_Auth_tenantClientUpdateProjectConfig (P7 adaptor target)
 func Go_Auth_tenantClientUpdateProjectConfigT(p0 *pkg.TenantClient, p1 context.Context, p2 *pkg.ProjectConfigToUpdate) (out SkyResult[string, *pkg.ProjectConfig]) {
 	defer SkyFfiRecoverT(&out)()
@@ -2409,6 +2679,10 @@ func Go_Auth_tenantClientUpdateSAMLProviderConfig(p0 any, p1 any, p2 any, p3 any
 
 	return
 }
+type FfiT_Go_Auth_tenantClientUpdateSAMLProviderConfig_P0 = *pkg.TenantClient
+type FfiT_Go_Auth_tenantClientUpdateSAMLProviderConfig_P1 = context.Context
+type FfiT_Go_Auth_tenantClientUpdateSAMLProviderConfig_P3 = *pkg.SAMLProviderConfigToUpdate
+type FfiT_Go_Auth_tenantClientUpdateSAMLProviderConfig_R = *pkg.SAMLProviderConfig
 // [fallible] typed wrapper for Go_Auth_tenantClientUpdateSAMLProviderConfig (P7 adaptor target)
 func Go_Auth_tenantClientUpdateSAMLProviderConfigT(p0 *pkg.TenantClient, p1 context.Context, p2 string, p3 *pkg.SAMLProviderConfigToUpdate) (out SkyResult[string, *pkg.SAMLProviderConfig]) {
 	defer SkyFfiRecoverT(&out)()
@@ -2427,6 +2701,10 @@ func Go_Auth_tenantClientUpdateUser(p0 any, p1 any, p2 any, p3 any) (out any) {
 
 	return
 }
+type FfiT_Go_Auth_tenantClientUpdateUser_P0 = *pkg.TenantClient
+type FfiT_Go_Auth_tenantClientUpdateUser_P1 = context.Context
+type FfiT_Go_Auth_tenantClientUpdateUser_P3 = *pkg.UserToUpdate
+type FfiT_Go_Auth_tenantClientUpdateUser_R = *pkg.UserRecord
 // [fallible] typed wrapper for Go_Auth_tenantClientUpdateUser (P7 adaptor target)
 func Go_Auth_tenantClientUpdateUserT(p0 *pkg.TenantClient, p1 context.Context, p2 string, p3 *pkg.UserToUpdate) (out SkyResult[string, *pkg.UserRecord]) {
 	defer SkyFfiRecoverT(&out)()
@@ -2442,6 +2720,9 @@ func Go_Auth_tenantClientUsers(p0 any, p1 any, p2 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.TenantClient).Users(p1.(context.Context), fmt.Sprintf("%v", p2)))
 	return
 }
+type FfiT_Go_Auth_tenantClientUsers_P0 = *pkg.TenantClient
+type FfiT_Go_Auth_tenantClientUsers_P1 = context.Context
+type FfiT_Go_Auth_tenantClientUsers_R = *pkg.UserIterator
 // [pure] typed wrapper for Go_Auth_tenantClientUsers (P7 adaptor target)
 func Go_Auth_tenantClientUsersT(p0 *pkg.TenantClient, p1 context.Context, p2 string) (out SkyResult[string, *pkg.UserIterator]) {
 	defer SkyFfiRecoverT(&out)()
@@ -2458,6 +2739,9 @@ func Go_Auth_tenantClientVerifyIDToken(p0 any, p1 any, p2 any) (out any) {
 
 	return
 }
+type FfiT_Go_Auth_tenantClientVerifyIDToken_P0 = *pkg.TenantClient
+type FfiT_Go_Auth_tenantClientVerifyIDToken_P1 = context.Context
+type FfiT_Go_Auth_tenantClientVerifyIDToken_R = *pkg.Token
 // [fallible] typed wrapper for Go_Auth_tenantClientVerifyIDToken (P7 adaptor target)
 func Go_Auth_tenantClientVerifyIDTokenT(p0 *pkg.TenantClient, p1 context.Context, p2 string) (out SkyResult[string, *pkg.Token]) {
 	defer SkyFfiRecoverT(&out)()
@@ -2476,6 +2760,9 @@ func Go_Auth_tenantClientVerifyIDTokenAndCheckRevoked(p0 any, p1 any, p2 any) (o
 
 	return
 }
+type FfiT_Go_Auth_tenantClientVerifyIDTokenAndCheckRevoked_P0 = *pkg.TenantClient
+type FfiT_Go_Auth_tenantClientVerifyIDTokenAndCheckRevoked_P1 = context.Context
+type FfiT_Go_Auth_tenantClientVerifyIDTokenAndCheckRevoked_R = *pkg.Token
 // [fallible] typed wrapper for Go_Auth_tenantClientVerifyIDTokenAndCheckRevoked (P7 adaptor target)
 func Go_Auth_tenantClientVerifyIDTokenAndCheckRevokedT(p0 *pkg.TenantClient, p1 context.Context, p2 string) (out SkyResult[string, *pkg.Token]) {
 	defer SkyFfiRecoverT(&out)()
@@ -2493,6 +2780,8 @@ func Go_Auth_tenantIteratorPageInfo(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.TenantIterator).PageInfo())
 	return
 }
+type FfiT_Go_Auth_tenantIteratorPageInfo_P0 = *pkg.TenantIterator
+type FfiT_Go_Auth_tenantIteratorPageInfo_R = *iterator.PageInfo
 // [pure] typed wrapper for Go_Auth_tenantIteratorPageInfo (P7 adaptor target)
 func Go_Auth_tenantIteratorPageInfoT(p0 *pkg.TenantIterator) (out SkyResult[string, *iterator.PageInfo]) {
 	defer SkyFfiRecoverT(&out)()
@@ -2509,6 +2798,8 @@ func Go_Auth_tenantIteratorNext(p0 any) (out any) {
 
 	return
 }
+type FfiT_Go_Auth_tenantIteratorNext_P0 = *pkg.TenantIterator
+type FfiT_Go_Auth_tenantIteratorNext_R = *pkg.Tenant
 // [fallible] typed wrapper for Go_Auth_tenantIteratorNext (P7 adaptor target)
 func Go_Auth_tenantIteratorNextT(p0 *pkg.TenantIterator) (out SkyResult[string, *pkg.Tenant]) {
 	defer SkyFfiRecoverT(&out)()
@@ -2529,6 +2820,8 @@ func Go_Auth_tenantManagerAuthForTenant(p0 any, p1 any) (out any) {
 
 	return
 }
+type FfiT_Go_Auth_tenantManagerAuthForTenant_P0 = *pkg.TenantManager
+type FfiT_Go_Auth_tenantManagerAuthForTenant_R = *pkg.TenantClient
 // [fallible] typed wrapper for Go_Auth_tenantManagerAuthForTenant (P7 adaptor target)
 func Go_Auth_tenantManagerAuthForTenantT(p0 *pkg.TenantManager, p1 string) (out SkyResult[string, *pkg.TenantClient]) {
 	defer SkyFfiRecoverT(&out)()
@@ -2547,6 +2840,9 @@ func Go_Auth_tenantManagerTenant(p0 any, p1 any, p2 any) (out any) {
 
 	return
 }
+type FfiT_Go_Auth_tenantManagerTenant_P0 = *pkg.TenantManager
+type FfiT_Go_Auth_tenantManagerTenant_P1 = context.Context
+type FfiT_Go_Auth_tenantManagerTenant_R = *pkg.Tenant
 // [fallible] typed wrapper for Go_Auth_tenantManagerTenant (P7 adaptor target)
 func Go_Auth_tenantManagerTenantT(p0 *pkg.TenantManager, p1 context.Context, p2 string) (out SkyResult[string, *pkg.Tenant]) {
 	defer SkyFfiRecoverT(&out)()
@@ -2565,6 +2861,10 @@ func Go_Auth_tenantManagerCreateTenant(p0 any, p1 any, p2 any) (out any) {
 
 	return
 }
+type FfiT_Go_Auth_tenantManagerCreateTenant_P0 = *pkg.TenantManager
+type FfiT_Go_Auth_tenantManagerCreateTenant_P1 = context.Context
+type FfiT_Go_Auth_tenantManagerCreateTenant_P2 = *pkg.TenantToCreate
+type FfiT_Go_Auth_tenantManagerCreateTenant_R = *pkg.Tenant
 // [fallible] typed wrapper for Go_Auth_tenantManagerCreateTenant (P7 adaptor target)
 func Go_Auth_tenantManagerCreateTenantT(p0 *pkg.TenantManager, p1 context.Context, p2 *pkg.TenantToCreate) (out SkyResult[string, *pkg.Tenant]) {
 	defer SkyFfiRecoverT(&out)()
@@ -2583,6 +2883,10 @@ func Go_Auth_tenantManagerUpdateTenant(p0 any, p1 any, p2 any, p3 any) (out any)
 
 	return
 }
+type FfiT_Go_Auth_tenantManagerUpdateTenant_P0 = *pkg.TenantManager
+type FfiT_Go_Auth_tenantManagerUpdateTenant_P1 = context.Context
+type FfiT_Go_Auth_tenantManagerUpdateTenant_P3 = *pkg.TenantToUpdate
+type FfiT_Go_Auth_tenantManagerUpdateTenant_R = *pkg.Tenant
 // [fallible] typed wrapper for Go_Auth_tenantManagerUpdateTenant (P7 adaptor target)
 func Go_Auth_tenantManagerUpdateTenantT(p0 *pkg.TenantManager, p1 context.Context, p2 string, p3 *pkg.TenantToUpdate) (out SkyResult[string, *pkg.Tenant]) {
 	defer SkyFfiRecoverT(&out)()
@@ -2601,6 +2905,8 @@ func Go_Auth_tenantManagerDeleteTenant(p0 any, p1 any, p2 any) (out any) {
 
 	return
 }
+type FfiT_Go_Auth_tenantManagerDeleteTenant_P0 = *pkg.TenantManager
+type FfiT_Go_Auth_tenantManagerDeleteTenant_P1 = context.Context
 // [fallible] typed wrapper for Go_Auth_tenantManagerDeleteTenant (P7 adaptor target)
 func Go_Auth_tenantManagerDeleteTenantT(p0 *pkg.TenantManager, p1 context.Context, p2 string) (out SkyResult[string, struct{}]) {
 	defer SkyFfiRecoverT(&out)()
@@ -2616,6 +2922,9 @@ func Go_Auth_tenantManagerTenants(p0 any, p1 any, p2 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.TenantManager).Tenants(p1.(context.Context), fmt.Sprintf("%v", p2)))
 	return
 }
+type FfiT_Go_Auth_tenantManagerTenants_P0 = *pkg.TenantManager
+type FfiT_Go_Auth_tenantManagerTenants_P1 = context.Context
+type FfiT_Go_Auth_tenantManagerTenants_R = *pkg.TenantIterator
 // [pure] typed wrapper for Go_Auth_tenantManagerTenants (P7 adaptor target)
 func Go_Auth_tenantManagerTenantsT(p0 *pkg.TenantManager, p1 context.Context, p2 string) (out SkyResult[string, *pkg.TenantIterator]) {
 	defer SkyFfiRecoverT(&out)()
@@ -2631,6 +2940,8 @@ func Go_Auth_tenantToCreateDisplayName(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.TenantToCreate).DisplayName(fmt.Sprintf("%v", p1)))
 	return
 }
+type FfiT_Go_Auth_tenantToCreateDisplayName_P0 = *pkg.TenantToCreate
+type FfiT_Go_Auth_tenantToCreateDisplayName_R = *pkg.TenantToCreate
 // [pure] typed wrapper for Go_Auth_tenantToCreateDisplayName (P7 adaptor target)
 func Go_Auth_tenantToCreateDisplayNameT(p0 *pkg.TenantToCreate, p1 string) (out SkyResult[string, *pkg.TenantToCreate]) {
 	defer SkyFfiRecoverT(&out)()
@@ -2644,6 +2955,8 @@ func Go_Auth_tenantToCreateAllowPasswordSignUp(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.TenantToCreate).AllowPasswordSignUp(AsBool(p1)))
 	return
 }
+type FfiT_Go_Auth_tenantToCreateAllowPasswordSignUp_P0 = *pkg.TenantToCreate
+type FfiT_Go_Auth_tenantToCreateAllowPasswordSignUp_R = *pkg.TenantToCreate
 // [pure] typed wrapper for Go_Auth_tenantToCreateAllowPasswordSignUp (P7 adaptor target)
 func Go_Auth_tenantToCreateAllowPasswordSignUpT(p0 *pkg.TenantToCreate, p1 bool) (out SkyResult[string, *pkg.TenantToCreate]) {
 	defer SkyFfiRecoverT(&out)()
@@ -2657,6 +2970,8 @@ func Go_Auth_tenantToCreateEnableEmailLinkSignIn(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.TenantToCreate).EnableEmailLinkSignIn(AsBool(p1)))
 	return
 }
+type FfiT_Go_Auth_tenantToCreateEnableEmailLinkSignIn_P0 = *pkg.TenantToCreate
+type FfiT_Go_Auth_tenantToCreateEnableEmailLinkSignIn_R = *pkg.TenantToCreate
 // [pure] typed wrapper for Go_Auth_tenantToCreateEnableEmailLinkSignIn (P7 adaptor target)
 func Go_Auth_tenantToCreateEnableEmailLinkSignInT(p0 *pkg.TenantToCreate, p1 bool) (out SkyResult[string, *pkg.TenantToCreate]) {
 	defer SkyFfiRecoverT(&out)()
@@ -2670,6 +2985,8 @@ func Go_Auth_tenantToCreateEnableAnonymousUsers(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.TenantToCreate).EnableAnonymousUsers(AsBool(p1)))
 	return
 }
+type FfiT_Go_Auth_tenantToCreateEnableAnonymousUsers_P0 = *pkg.TenantToCreate
+type FfiT_Go_Auth_tenantToCreateEnableAnonymousUsers_R = *pkg.TenantToCreate
 // [pure] typed wrapper for Go_Auth_tenantToCreateEnableAnonymousUsers (P7 adaptor target)
 func Go_Auth_tenantToCreateEnableAnonymousUsersT(p0 *pkg.TenantToCreate, p1 bool) (out SkyResult[string, *pkg.TenantToCreate]) {
 	defer SkyFfiRecoverT(&out)()
@@ -2683,6 +3000,9 @@ func Go_Auth_tenantToCreateMultiFactorConfig(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.TenantToCreate).MultiFactorConfig(p1.(pkg.MultiFactorConfig)))
 	return
 }
+type FfiT_Go_Auth_tenantToCreateMultiFactorConfig_P0 = *pkg.TenantToCreate
+type FfiT_Go_Auth_tenantToCreateMultiFactorConfig_P1 = pkg.MultiFactorConfig
+type FfiT_Go_Auth_tenantToCreateMultiFactorConfig_R = *pkg.TenantToCreate
 // [pure] typed wrapper for Go_Auth_tenantToCreateMultiFactorConfig (P7 adaptor target)
 func Go_Auth_tenantToCreateMultiFactorConfigT(p0 *pkg.TenantToCreate, p1 pkg.MultiFactorConfig) (out SkyResult[string, *pkg.TenantToCreate]) {
 	defer SkyFfiRecoverT(&out)()
@@ -2698,6 +3018,8 @@ func Go_Auth_tenantToUpdateDisplayName(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.TenantToUpdate).DisplayName(fmt.Sprintf("%v", p1)))
 	return
 }
+type FfiT_Go_Auth_tenantToUpdateDisplayName_P0 = *pkg.TenantToUpdate
+type FfiT_Go_Auth_tenantToUpdateDisplayName_R = *pkg.TenantToUpdate
 // [pure] typed wrapper for Go_Auth_tenantToUpdateDisplayName (P7 adaptor target)
 func Go_Auth_tenantToUpdateDisplayNameT(p0 *pkg.TenantToUpdate, p1 string) (out SkyResult[string, *pkg.TenantToUpdate]) {
 	defer SkyFfiRecoverT(&out)()
@@ -2711,6 +3033,8 @@ func Go_Auth_tenantToUpdateAllowPasswordSignUp(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.TenantToUpdate).AllowPasswordSignUp(AsBool(p1)))
 	return
 }
+type FfiT_Go_Auth_tenantToUpdateAllowPasswordSignUp_P0 = *pkg.TenantToUpdate
+type FfiT_Go_Auth_tenantToUpdateAllowPasswordSignUp_R = *pkg.TenantToUpdate
 // [pure] typed wrapper for Go_Auth_tenantToUpdateAllowPasswordSignUp (P7 adaptor target)
 func Go_Auth_tenantToUpdateAllowPasswordSignUpT(p0 *pkg.TenantToUpdate, p1 bool) (out SkyResult[string, *pkg.TenantToUpdate]) {
 	defer SkyFfiRecoverT(&out)()
@@ -2724,6 +3048,8 @@ func Go_Auth_tenantToUpdateEnableEmailLinkSignIn(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.TenantToUpdate).EnableEmailLinkSignIn(AsBool(p1)))
 	return
 }
+type FfiT_Go_Auth_tenantToUpdateEnableEmailLinkSignIn_P0 = *pkg.TenantToUpdate
+type FfiT_Go_Auth_tenantToUpdateEnableEmailLinkSignIn_R = *pkg.TenantToUpdate
 // [pure] typed wrapper for Go_Auth_tenantToUpdateEnableEmailLinkSignIn (P7 adaptor target)
 func Go_Auth_tenantToUpdateEnableEmailLinkSignInT(p0 *pkg.TenantToUpdate, p1 bool) (out SkyResult[string, *pkg.TenantToUpdate]) {
 	defer SkyFfiRecoverT(&out)()
@@ -2737,6 +3063,8 @@ func Go_Auth_tenantToUpdateEnableAnonymousUsers(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.TenantToUpdate).EnableAnonymousUsers(AsBool(p1)))
 	return
 }
+type FfiT_Go_Auth_tenantToUpdateEnableAnonymousUsers_P0 = *pkg.TenantToUpdate
+type FfiT_Go_Auth_tenantToUpdateEnableAnonymousUsers_R = *pkg.TenantToUpdate
 // [pure] typed wrapper for Go_Auth_tenantToUpdateEnableAnonymousUsers (P7 adaptor target)
 func Go_Auth_tenantToUpdateEnableAnonymousUsersT(p0 *pkg.TenantToUpdate, p1 bool) (out SkyResult[string, *pkg.TenantToUpdate]) {
 	defer SkyFfiRecoverT(&out)()
@@ -2750,6 +3078,9 @@ func Go_Auth_tenantToUpdateMultiFactorConfig(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.TenantToUpdate).MultiFactorConfig(p1.(pkg.MultiFactorConfig)))
 	return
 }
+type FfiT_Go_Auth_tenantToUpdateMultiFactorConfig_P0 = *pkg.TenantToUpdate
+type FfiT_Go_Auth_tenantToUpdateMultiFactorConfig_P1 = pkg.MultiFactorConfig
+type FfiT_Go_Auth_tenantToUpdateMultiFactorConfig_R = *pkg.TenantToUpdate
 // [pure] typed wrapper for Go_Auth_tenantToUpdateMultiFactorConfig (P7 adaptor target)
 func Go_Auth_tenantToUpdateMultiFactorConfigT(p0 *pkg.TenantToUpdate, p1 pkg.MultiFactorConfig) (out SkyResult[string, *pkg.TenantToUpdate]) {
 	defer SkyFfiRecoverT(&out)()
@@ -2866,6 +3197,8 @@ func Go_Auth_userIteratorPageInfo(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.UserIterator).PageInfo())
 	return
 }
+type FfiT_Go_Auth_userIteratorPageInfo_P0 = *pkg.UserIterator
+type FfiT_Go_Auth_userIteratorPageInfo_R = *iterator.PageInfo
 // [pure] typed wrapper for Go_Auth_userIteratorPageInfo (P7 adaptor target)
 func Go_Auth_userIteratorPageInfoT(p0 *pkg.UserIterator) (out SkyResult[string, *iterator.PageInfo]) {
 	defer SkyFfiRecoverT(&out)()
@@ -2882,6 +3215,8 @@ func Go_Auth_userIteratorNext(p0 any) (out any) {
 
 	return
 }
+type FfiT_Go_Auth_userIteratorNext_P0 = *pkg.UserIterator
+type FfiT_Go_Auth_userIteratorNext_R = *pkg.ExportedUserRecord
 // [fallible] typed wrapper for Go_Auth_userIteratorNext (P7 adaptor target)
 func Go_Auth_userIteratorNextT(p0 *pkg.UserIterator) (out SkyResult[string, *pkg.ExportedUserRecord]) {
 	defer SkyFfiRecoverT(&out)()
@@ -2973,6 +3308,8 @@ func Go_Auth_userToCreateDisabled(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.UserToCreate).Disabled(AsBool(p1)))
 	return
 }
+type FfiT_Go_Auth_userToCreateDisabled_P0 = *pkg.UserToCreate
+type FfiT_Go_Auth_userToCreateDisabled_R = *pkg.UserToCreate
 // [pure] typed wrapper for Go_Auth_userToCreateDisabled (P7 adaptor target)
 func Go_Auth_userToCreateDisabledT(p0 *pkg.UserToCreate, p1 bool) (out SkyResult[string, *pkg.UserToCreate]) {
 	defer SkyFfiRecoverT(&out)()
@@ -2986,6 +3323,8 @@ func Go_Auth_userToCreateDisplayName(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.UserToCreate).DisplayName(fmt.Sprintf("%v", p1)))
 	return
 }
+type FfiT_Go_Auth_userToCreateDisplayName_P0 = *pkg.UserToCreate
+type FfiT_Go_Auth_userToCreateDisplayName_R = *pkg.UserToCreate
 // [pure] typed wrapper for Go_Auth_userToCreateDisplayName (P7 adaptor target)
 func Go_Auth_userToCreateDisplayNameT(p0 *pkg.UserToCreate, p1 string) (out SkyResult[string, *pkg.UserToCreate]) {
 	defer SkyFfiRecoverT(&out)()
@@ -2999,6 +3338,8 @@ func Go_Auth_userToCreateEmail(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.UserToCreate).Email(fmt.Sprintf("%v", p1)))
 	return
 }
+type FfiT_Go_Auth_userToCreateEmail_P0 = *pkg.UserToCreate
+type FfiT_Go_Auth_userToCreateEmail_R = *pkg.UserToCreate
 // [pure] typed wrapper for Go_Auth_userToCreateEmail (P7 adaptor target)
 func Go_Auth_userToCreateEmailT(p0 *pkg.UserToCreate, p1 string) (out SkyResult[string, *pkg.UserToCreate]) {
 	defer SkyFfiRecoverT(&out)()
@@ -3012,6 +3353,8 @@ func Go_Auth_userToCreateEmailVerified(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.UserToCreate).EmailVerified(AsBool(p1)))
 	return
 }
+type FfiT_Go_Auth_userToCreateEmailVerified_P0 = *pkg.UserToCreate
+type FfiT_Go_Auth_userToCreateEmailVerified_R = *pkg.UserToCreate
 // [pure] typed wrapper for Go_Auth_userToCreateEmailVerified (P7 adaptor target)
 func Go_Auth_userToCreateEmailVerifiedT(p0 *pkg.UserToCreate, p1 bool) (out SkyResult[string, *pkg.UserToCreate]) {
 	defer SkyFfiRecoverT(&out)()
@@ -3025,6 +3368,8 @@ func Go_Auth_userToCreatePassword(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.UserToCreate).Password(fmt.Sprintf("%v", p1)))
 	return
 }
+type FfiT_Go_Auth_userToCreatePassword_P0 = *pkg.UserToCreate
+type FfiT_Go_Auth_userToCreatePassword_R = *pkg.UserToCreate
 // [pure] typed wrapper for Go_Auth_userToCreatePassword (P7 adaptor target)
 func Go_Auth_userToCreatePasswordT(p0 *pkg.UserToCreate, p1 string) (out SkyResult[string, *pkg.UserToCreate]) {
 	defer SkyFfiRecoverT(&out)()
@@ -3038,6 +3383,8 @@ func Go_Auth_userToCreatePhoneNumber(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.UserToCreate).PhoneNumber(fmt.Sprintf("%v", p1)))
 	return
 }
+type FfiT_Go_Auth_userToCreatePhoneNumber_P0 = *pkg.UserToCreate
+type FfiT_Go_Auth_userToCreatePhoneNumber_R = *pkg.UserToCreate
 // [pure] typed wrapper for Go_Auth_userToCreatePhoneNumber (P7 adaptor target)
 func Go_Auth_userToCreatePhoneNumberT(p0 *pkg.UserToCreate, p1 string) (out SkyResult[string, *pkg.UserToCreate]) {
 	defer SkyFfiRecoverT(&out)()
@@ -3051,6 +3398,8 @@ func Go_Auth_userToCreatePhotoURL(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.UserToCreate).PhotoURL(fmt.Sprintf("%v", p1)))
 	return
 }
+type FfiT_Go_Auth_userToCreatePhotoURL_P0 = *pkg.UserToCreate
+type FfiT_Go_Auth_userToCreatePhotoURL_R = *pkg.UserToCreate
 // [pure] typed wrapper for Go_Auth_userToCreatePhotoURL (P7 adaptor target)
 func Go_Auth_userToCreatePhotoURLT(p0 *pkg.UserToCreate, p1 string) (out SkyResult[string, *pkg.UserToCreate]) {
 	defer SkyFfiRecoverT(&out)()
@@ -3064,6 +3413,8 @@ func Go_Auth_userToCreateUID(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.UserToCreate).UID(fmt.Sprintf("%v", p1)))
 	return
 }
+type FfiT_Go_Auth_userToCreateUID_P0 = *pkg.UserToCreate
+type FfiT_Go_Auth_userToCreateUID_R = *pkg.UserToCreate
 // [pure] typed wrapper for Go_Auth_userToCreateUID (P7 adaptor target)
 func Go_Auth_userToCreateUIDT(p0 *pkg.UserToCreate, p1 string) (out SkyResult[string, *pkg.UserToCreate]) {
 	defer SkyFfiRecoverT(&out)()
@@ -3077,6 +3428,9 @@ func Go_Auth_userToCreateMFASettings(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.UserToCreate).MFASettings(p1.(pkg.MultiFactorSettings)))
 	return
 }
+type FfiT_Go_Auth_userToCreateMFASettings_P0 = *pkg.UserToCreate
+type FfiT_Go_Auth_userToCreateMFASettings_P1 = pkg.MultiFactorSettings
+type FfiT_Go_Auth_userToCreateMFASettings_R = *pkg.UserToCreate
 // [pure] typed wrapper for Go_Auth_userToCreateMFASettings (P7 adaptor target)
 func Go_Auth_userToCreateMFASettingsT(p0 *pkg.UserToCreate, p1 pkg.MultiFactorSettings) (out SkyResult[string, *pkg.UserToCreate]) {
 	defer SkyFfiRecoverT(&out)()
@@ -3092,6 +3446,8 @@ func Go_Auth_userToImportUID(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.UserToImport).UID(fmt.Sprintf("%v", p1)))
 	return
 }
+type FfiT_Go_Auth_userToImportUID_P0 = *pkg.UserToImport
+type FfiT_Go_Auth_userToImportUID_R = *pkg.UserToImport
 // [pure] typed wrapper for Go_Auth_userToImportUID (P7 adaptor target)
 func Go_Auth_userToImportUIDT(p0 *pkg.UserToImport, p1 string) (out SkyResult[string, *pkg.UserToImport]) {
 	defer SkyFfiRecoverT(&out)()
@@ -3105,6 +3461,8 @@ func Go_Auth_userToImportEmail(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.UserToImport).Email(fmt.Sprintf("%v", p1)))
 	return
 }
+type FfiT_Go_Auth_userToImportEmail_P0 = *pkg.UserToImport
+type FfiT_Go_Auth_userToImportEmail_R = *pkg.UserToImport
 // [pure] typed wrapper for Go_Auth_userToImportEmail (P7 adaptor target)
 func Go_Auth_userToImportEmailT(p0 *pkg.UserToImport, p1 string) (out SkyResult[string, *pkg.UserToImport]) {
 	defer SkyFfiRecoverT(&out)()
@@ -3118,6 +3476,8 @@ func Go_Auth_userToImportDisplayName(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.UserToImport).DisplayName(fmt.Sprintf("%v", p1)))
 	return
 }
+type FfiT_Go_Auth_userToImportDisplayName_P0 = *pkg.UserToImport
+type FfiT_Go_Auth_userToImportDisplayName_R = *pkg.UserToImport
 // [pure] typed wrapper for Go_Auth_userToImportDisplayName (P7 adaptor target)
 func Go_Auth_userToImportDisplayNameT(p0 *pkg.UserToImport, p1 string) (out SkyResult[string, *pkg.UserToImport]) {
 	defer SkyFfiRecoverT(&out)()
@@ -3131,6 +3491,8 @@ func Go_Auth_userToImportPhotoURL(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.UserToImport).PhotoURL(fmt.Sprintf("%v", p1)))
 	return
 }
+type FfiT_Go_Auth_userToImportPhotoURL_P0 = *pkg.UserToImport
+type FfiT_Go_Auth_userToImportPhotoURL_R = *pkg.UserToImport
 // [pure] typed wrapper for Go_Auth_userToImportPhotoURL (P7 adaptor target)
 func Go_Auth_userToImportPhotoURLT(p0 *pkg.UserToImport, p1 string) (out SkyResult[string, *pkg.UserToImport]) {
 	defer SkyFfiRecoverT(&out)()
@@ -3144,6 +3506,8 @@ func Go_Auth_userToImportPhoneNumber(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.UserToImport).PhoneNumber(fmt.Sprintf("%v", p1)))
 	return
 }
+type FfiT_Go_Auth_userToImportPhoneNumber_P0 = *pkg.UserToImport
+type FfiT_Go_Auth_userToImportPhoneNumber_R = *pkg.UserToImport
 // [pure] typed wrapper for Go_Auth_userToImportPhoneNumber (P7 adaptor target)
 func Go_Auth_userToImportPhoneNumberT(p0 *pkg.UserToImport, p1 string) (out SkyResult[string, *pkg.UserToImport]) {
 	defer SkyFfiRecoverT(&out)()
@@ -3157,6 +3521,9 @@ func Go_Auth_userToImportMetadata(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.UserToImport).Metadata(p1.(*pkg.UserMetadata)))
 	return
 }
+type FfiT_Go_Auth_userToImportMetadata_P0 = *pkg.UserToImport
+type FfiT_Go_Auth_userToImportMetadata_P1 = *pkg.UserMetadata
+type FfiT_Go_Auth_userToImportMetadata_R = *pkg.UserToImport
 // [pure] typed wrapper for Go_Auth_userToImportMetadata (P7 adaptor target)
 func Go_Auth_userToImportMetadataT(p0 *pkg.UserToImport, p1 *pkg.UserMetadata) (out SkyResult[string, *pkg.UserToImport]) {
 	defer SkyFfiRecoverT(&out)()
@@ -3177,6 +3544,8 @@ func Go_Auth_userToImportDisabled(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.UserToImport).Disabled(AsBool(p1)))
 	return
 }
+type FfiT_Go_Auth_userToImportDisabled_P0 = *pkg.UserToImport
+type FfiT_Go_Auth_userToImportDisabled_R = *pkg.UserToImport
 // [pure] typed wrapper for Go_Auth_userToImportDisabled (P7 adaptor target)
 func Go_Auth_userToImportDisabledT(p0 *pkg.UserToImport, p1 bool) (out SkyResult[string, *pkg.UserToImport]) {
 	defer SkyFfiRecoverT(&out)()
@@ -3190,6 +3559,8 @@ func Go_Auth_userToImportEmailVerified(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.UserToImport).EmailVerified(AsBool(p1)))
 	return
 }
+type FfiT_Go_Auth_userToImportEmailVerified_P0 = *pkg.UserToImport
+type FfiT_Go_Auth_userToImportEmailVerified_R = *pkg.UserToImport
 // [pure] typed wrapper for Go_Auth_userToImportEmailVerified (P7 adaptor target)
 func Go_Auth_userToImportEmailVerifiedT(p0 *pkg.UserToImport, p1 bool) (out SkyResult[string, *pkg.UserToImport]) {
 	defer SkyFfiRecoverT(&out)()
@@ -3203,6 +3574,8 @@ func Go_Auth_userToImportPasswordHash(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.UserToImport).PasswordHash(SkyFfiArg_bytes(p1)))
 	return
 }
+type FfiT_Go_Auth_userToImportPasswordHash_P0 = *pkg.UserToImport
+type FfiT_Go_Auth_userToImportPasswordHash_R = *pkg.UserToImport
 // [pure] typed wrapper for Go_Auth_userToImportPasswordHash (P7 adaptor target)
 func Go_Auth_userToImportPasswordHashT(p0 *pkg.UserToImport, p1 []byte) (out SkyResult[string, *pkg.UserToImport]) {
 	defer SkyFfiRecoverT(&out)()
@@ -3216,6 +3589,8 @@ func Go_Auth_userToImportPasswordSalt(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.UserToImport).PasswordSalt(SkyFfiArg_bytes(p1)))
 	return
 }
+type FfiT_Go_Auth_userToImportPasswordSalt_P0 = *pkg.UserToImport
+type FfiT_Go_Auth_userToImportPasswordSalt_R = *pkg.UserToImport
 // [pure] typed wrapper for Go_Auth_userToImportPasswordSalt (P7 adaptor target)
 func Go_Auth_userToImportPasswordSaltT(p0 *pkg.UserToImport, p1 []byte) (out SkyResult[string, *pkg.UserToImport]) {
 	defer SkyFfiRecoverT(&out)()
@@ -3229,6 +3604,9 @@ func Go_Auth_userToImportProviderData(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.UserToImport).ProviderData(p1.([]*pkg.UserProvider)))
 	return
 }
+type FfiT_Go_Auth_userToImportProviderData_P0 = *pkg.UserToImport
+type FfiT_Go_Auth_userToImportProviderData_P1 = []*pkg.UserProvider
+type FfiT_Go_Auth_userToImportProviderData_R = *pkg.UserToImport
 // [pure] typed wrapper for Go_Auth_userToImportProviderData (P7 adaptor target)
 func Go_Auth_userToImportProviderDataT(p0 *pkg.UserToImport, p1 []*pkg.UserProvider) (out SkyResult[string, *pkg.UserToImport]) {
 	defer SkyFfiRecoverT(&out)()
@@ -3251,6 +3629,8 @@ func Go_Auth_userToUpdateDisabled(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.UserToUpdate).Disabled(AsBool(p1)))
 	return
 }
+type FfiT_Go_Auth_userToUpdateDisabled_P0 = *pkg.UserToUpdate
+type FfiT_Go_Auth_userToUpdateDisabled_R = *pkg.UserToUpdate
 // [pure] typed wrapper for Go_Auth_userToUpdateDisabled (P7 adaptor target)
 func Go_Auth_userToUpdateDisabledT(p0 *pkg.UserToUpdate, p1 bool) (out SkyResult[string, *pkg.UserToUpdate]) {
 	defer SkyFfiRecoverT(&out)()
@@ -3264,6 +3644,8 @@ func Go_Auth_userToUpdateDisplayName(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.UserToUpdate).DisplayName(fmt.Sprintf("%v", p1)))
 	return
 }
+type FfiT_Go_Auth_userToUpdateDisplayName_P0 = *pkg.UserToUpdate
+type FfiT_Go_Auth_userToUpdateDisplayName_R = *pkg.UserToUpdate
 // [pure] typed wrapper for Go_Auth_userToUpdateDisplayName (P7 adaptor target)
 func Go_Auth_userToUpdateDisplayNameT(p0 *pkg.UserToUpdate, p1 string) (out SkyResult[string, *pkg.UserToUpdate]) {
 	defer SkyFfiRecoverT(&out)()
@@ -3277,6 +3659,8 @@ func Go_Auth_userToUpdateEmail(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.UserToUpdate).Email(fmt.Sprintf("%v", p1)))
 	return
 }
+type FfiT_Go_Auth_userToUpdateEmail_P0 = *pkg.UserToUpdate
+type FfiT_Go_Auth_userToUpdateEmail_R = *pkg.UserToUpdate
 // [pure] typed wrapper for Go_Auth_userToUpdateEmail (P7 adaptor target)
 func Go_Auth_userToUpdateEmailT(p0 *pkg.UserToUpdate, p1 string) (out SkyResult[string, *pkg.UserToUpdate]) {
 	defer SkyFfiRecoverT(&out)()
@@ -3290,6 +3674,8 @@ func Go_Auth_userToUpdateEmailVerified(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.UserToUpdate).EmailVerified(AsBool(p1)))
 	return
 }
+type FfiT_Go_Auth_userToUpdateEmailVerified_P0 = *pkg.UserToUpdate
+type FfiT_Go_Auth_userToUpdateEmailVerified_R = *pkg.UserToUpdate
 // [pure] typed wrapper for Go_Auth_userToUpdateEmailVerified (P7 adaptor target)
 func Go_Auth_userToUpdateEmailVerifiedT(p0 *pkg.UserToUpdate, p1 bool) (out SkyResult[string, *pkg.UserToUpdate]) {
 	defer SkyFfiRecoverT(&out)()
@@ -3303,6 +3689,8 @@ func Go_Auth_userToUpdatePassword(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.UserToUpdate).Password(fmt.Sprintf("%v", p1)))
 	return
 }
+type FfiT_Go_Auth_userToUpdatePassword_P0 = *pkg.UserToUpdate
+type FfiT_Go_Auth_userToUpdatePassword_R = *pkg.UserToUpdate
 // [pure] typed wrapper for Go_Auth_userToUpdatePassword (P7 adaptor target)
 func Go_Auth_userToUpdatePasswordT(p0 *pkg.UserToUpdate, p1 string) (out SkyResult[string, *pkg.UserToUpdate]) {
 	defer SkyFfiRecoverT(&out)()
@@ -3316,6 +3704,8 @@ func Go_Auth_userToUpdatePhoneNumber(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.UserToUpdate).PhoneNumber(fmt.Sprintf("%v", p1)))
 	return
 }
+type FfiT_Go_Auth_userToUpdatePhoneNumber_P0 = *pkg.UserToUpdate
+type FfiT_Go_Auth_userToUpdatePhoneNumber_R = *pkg.UserToUpdate
 // [pure] typed wrapper for Go_Auth_userToUpdatePhoneNumber (P7 adaptor target)
 func Go_Auth_userToUpdatePhoneNumberT(p0 *pkg.UserToUpdate, p1 string) (out SkyResult[string, *pkg.UserToUpdate]) {
 	defer SkyFfiRecoverT(&out)()
@@ -3329,6 +3719,8 @@ func Go_Auth_userToUpdatePhotoURL(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.UserToUpdate).PhotoURL(fmt.Sprintf("%v", p1)))
 	return
 }
+type FfiT_Go_Auth_userToUpdatePhotoURL_P0 = *pkg.UserToUpdate
+type FfiT_Go_Auth_userToUpdatePhotoURL_R = *pkg.UserToUpdate
 // [pure] typed wrapper for Go_Auth_userToUpdatePhotoURL (P7 adaptor target)
 func Go_Auth_userToUpdatePhotoURLT(p0 *pkg.UserToUpdate, p1 string) (out SkyResult[string, *pkg.UserToUpdate]) {
 	defer SkyFfiRecoverT(&out)()
@@ -3342,6 +3734,9 @@ func Go_Auth_userToUpdateMFASettings(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.UserToUpdate).MFASettings(p1.(pkg.MultiFactorSettings)))
 	return
 }
+type FfiT_Go_Auth_userToUpdateMFASettings_P0 = *pkg.UserToUpdate
+type FfiT_Go_Auth_userToUpdateMFASettings_P1 = pkg.MultiFactorSettings
+type FfiT_Go_Auth_userToUpdateMFASettings_R = *pkg.UserToUpdate
 // [pure] typed wrapper for Go_Auth_userToUpdateMFASettings (P7 adaptor target)
 func Go_Auth_userToUpdateMFASettingsT(p0 *pkg.UserToUpdate, p1 pkg.MultiFactorSettings) (out SkyResult[string, *pkg.UserToUpdate]) {
 	defer SkyFfiRecoverT(&out)()
@@ -3355,6 +3750,9 @@ func Go_Auth_userToUpdateProviderToLink(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.UserToUpdate).ProviderToLink(p1.(*pkg.UserProvider)))
 	return
 }
+type FfiT_Go_Auth_userToUpdateProviderToLink_P0 = *pkg.UserToUpdate
+type FfiT_Go_Auth_userToUpdateProviderToLink_P1 = *pkg.UserProvider
+type FfiT_Go_Auth_userToUpdateProviderToLink_R = *pkg.UserToUpdate
 // [pure] typed wrapper for Go_Auth_userToUpdateProviderToLink (P7 adaptor target)
 func Go_Auth_userToUpdateProviderToLinkT(p0 *pkg.UserToUpdate, p1 *pkg.UserProvider) (out SkyResult[string, *pkg.UserToUpdate]) {
 	defer SkyFfiRecoverT(&out)()
@@ -3368,6 +3766,8 @@ func Go_Auth_userToUpdateProvidersToDelete(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.UserToUpdate).ProvidersToDelete(p1.([]string)))
 	return
 }
+type FfiT_Go_Auth_userToUpdateProvidersToDelete_P0 = *pkg.UserToUpdate
+type FfiT_Go_Auth_userToUpdateProvidersToDelete_R = *pkg.UserToUpdate
 // [pure] typed wrapper for Go_Auth_userToUpdateProvidersToDelete (P7 adaptor target)
 func Go_Auth_userToUpdateProvidersToDeleteT(p0 *pkg.UserToUpdate, p1 []string) (out SkyResult[string, *pkg.UserToUpdate]) {
 	defer SkyFfiRecoverT(&out)()
@@ -3383,6 +3783,8 @@ func Go_Auth_withHash(p0 any) (out any) {
 	out = Ok[any, any](pkg.WithHash(p0.(pkg.UserImportHash)))
 	return
 }
+type FfiT_Go_Auth_withHash_P0 = pkg.UserImportHash
+type FfiT_Go_Auth_withHash_R = pkg.UserImportOption
 // [pure] typed wrapper for Go_Auth_withHash (P7 adaptor target)
 func Go_Auth_withHashT(p0 pkg.UserImportHash) (out SkyResult[string, pkg.UserImportOption]) {
 	defer SkyFfiRecoverT(&out)()

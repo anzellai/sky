@@ -2333,10 +2333,13 @@ exprToGo (A.At _ expr) = case expr of
                 , let typedName = modName ++ "_" ++ funcName ++ "T"
                 , Set.member typedName typedFfiWrapperSet
                 , Just paramTys <- Map.lookup typedName typedFfiWrapperParams
-                , length paramTys == length args
-                , all isCallerVisibleGoType paramTys ->
-                    GoIr.GoCall (GoIr.GoQualified "rt" typedName)
-                                (zipWith coerceFfiArg paramTys args)
+                , length paramTys == length args ->
+                    let anyWrapperName = modName ++ "_" ++ funcName
+                    in GoIr.GoCall (GoIr.GoQualified "rt" typedName)
+                                (zipWith3 (coerceFfiArgViaAlias anyWrapperName)
+                                          [0 :: Int ..]
+                                          paramTys
+                                          args)
 
             -- P8 step 4: migrate kernel calls to their typed T companions
             -- when every arg is a primitive Sky literal. Kernels like
@@ -2632,6 +2635,23 @@ coerceFfiArg goType arg =
     in if isPrimLiteralArg arg
         then goArg
         else GoIr.GoTypeAssert (GoIr.GoCall (GoIr.GoIdent "any") [goArg]) goType
+
+
+-- | Call-site coercion that consults the `rt.FfiT_<Name>_P<N>` alias
+-- when the target param type isn't a caller-visible primitive. FfiGen
+-- emits those aliases alongside every typed wrapper whose params or
+-- return reference an FFI-file-local type, so main.go can cast
+-- through them without needing the underlying Go package import.
+coerceFfiArgViaAlias :: String -> Int -> String -> Can.Expr -> GoIr.GoExpr
+coerceFfiArgViaAlias anyWrapperName idx goType arg
+    | isPrimLiteralArg arg   = exprToGo arg
+    | isCallerVisibleGoType goType =
+        GoIr.GoTypeAssert (GoIr.GoCall (GoIr.GoIdent "any") [exprToGo arg]) goType
+    | otherwise =
+        let aliasName = "rt.FfiT_" ++ anyWrapperName ++ "_P" ++ show idx
+        in GoIr.GoTypeAssert
+              (GoIr.GoCall (GoIr.GoIdent "any") [exprToGo arg])
+              aliasName
 
 
 -- | Can we emit a direct Go call for this callee expression?

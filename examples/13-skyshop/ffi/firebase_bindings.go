@@ -32,6 +32,9 @@ func Go_GoV4_appAuth(p0 any, p1 any) (out any) {
 
 	return
 }
+type FfiT_Go_GoV4_appAuth_P0 = *pkg.App
+type FfiT_Go_GoV4_appAuth_P1 = context.Context
+type FfiT_Go_GoV4_appAuth_R = *auth.Client
 // [fallible] typed wrapper for Go_GoV4_appAuth (P7 adaptor target)
 func Go_GoV4_appAuthT(p0 *pkg.App, p1 context.Context) (out SkyResult[string, *auth.Client]) {
 	defer SkyFfiRecoverT(&out)()
@@ -50,6 +53,9 @@ func Go_GoV4_appDatabase(p0 any, p1 any) (out any) {
 
 	return
 }
+type FfiT_Go_GoV4_appDatabase_P0 = *pkg.App
+type FfiT_Go_GoV4_appDatabase_P1 = context.Context
+type FfiT_Go_GoV4_appDatabase_R = *db.Client
 // [fallible] typed wrapper for Go_GoV4_appDatabase (P7 adaptor target)
 func Go_GoV4_appDatabaseT(p0 *pkg.App, p1 context.Context) (out SkyResult[string, *db.Client]) {
 	defer SkyFfiRecoverT(&out)()
@@ -68,6 +74,9 @@ func Go_GoV4_appDatabaseWithURL(p0 any, p1 any, p2 any) (out any) {
 
 	return
 }
+type FfiT_Go_GoV4_appDatabaseWithURL_P0 = *pkg.App
+type FfiT_Go_GoV4_appDatabaseWithURL_P1 = context.Context
+type FfiT_Go_GoV4_appDatabaseWithURL_R = *db.Client
 // [fallible] typed wrapper for Go_GoV4_appDatabaseWithURL (P7 adaptor target)
 func Go_GoV4_appDatabaseWithURLT(p0 *pkg.App, p1 context.Context, p2 string) (out SkyResult[string, *db.Client]) {
 	defer SkyFfiRecoverT(&out)()
@@ -86,6 +95,9 @@ func Go_GoV4_appStorage(p0 any, p1 any) (out any) {
 
 	return
 }
+type FfiT_Go_GoV4_appStorage_P0 = *pkg.App
+type FfiT_Go_GoV4_appStorage_P1 = context.Context
+type FfiT_Go_GoV4_appStorage_R = *storage.Client
 // [fallible] typed wrapper for Go_GoV4_appStorage (P7 adaptor target)
 func Go_GoV4_appStorageT(p0 *pkg.App, p1 context.Context) (out SkyResult[string, *storage.Client]) {
 	defer SkyFfiRecoverT(&out)()
@@ -104,6 +116,9 @@ func Go_GoV4_appFirestore(p0 any, p1 any) (out any) {
 
 	return
 }
+type FfiT_Go_GoV4_appFirestore_P0 = *pkg.App
+type FfiT_Go_GoV4_appFirestore_P1 = context.Context
+type FfiT_Go_GoV4_appFirestore_R = *firestore.Client
 // [fallible] typed wrapper for Go_GoV4_appFirestore (P7 adaptor target)
 func Go_GoV4_appFirestoreT(p0 *pkg.App, p1 context.Context) (out SkyResult[string, *firestore.Client]) {
 	defer SkyFfiRecoverT(&out)()
@@ -122,6 +137,9 @@ func Go_GoV4_appFirestoreWithDatabaseID(p0 any, p1 any, p2 any) (out any) {
 
 	return
 }
+type FfiT_Go_GoV4_appFirestoreWithDatabaseID_P0 = *pkg.App
+type FfiT_Go_GoV4_appFirestoreWithDatabaseID_P1 = context.Context
+type FfiT_Go_GoV4_appFirestoreWithDatabaseID_R = *firestore.Client
 // [fallible] typed wrapper for Go_GoV4_appFirestoreWithDatabaseID (P7 adaptor target)
 func Go_GoV4_appFirestoreWithDatabaseIDT(p0 *pkg.App, p1 context.Context, p2 string) (out SkyResult[string, *firestore.Client]) {
 	defer SkyFfiRecoverT(&out)()
@@ -140,6 +158,9 @@ func Go_GoV4_appInstanceID(p0 any, p1 any) (out any) {
 
 	return
 }
+type FfiT_Go_GoV4_appInstanceID_P0 = *pkg.App
+type FfiT_Go_GoV4_appInstanceID_P1 = context.Context
+type FfiT_Go_GoV4_appInstanceID_R = *iid.Client
 // [fallible] typed wrapper for Go_GoV4_appInstanceID (P7 adaptor target)
 func Go_GoV4_appInstanceIDT(p0 *pkg.App, p1 context.Context) (out SkyResult[string, *iid.Client]) {
 	defer SkyFfiRecoverT(&out)()
@@ -158,6 +179,9 @@ func Go_GoV4_appMessaging(p0 any, p1 any) (out any) {
 
 	return
 }
+type FfiT_Go_GoV4_appMessaging_P0 = *pkg.App
+type FfiT_Go_GoV4_appMessaging_P1 = context.Context
+type FfiT_Go_GoV4_appMessaging_R = *messaging.Client
 // [fallible] typed wrapper for Go_GoV4_appMessaging (P7 adaptor target)
 func Go_GoV4_appMessagingT(p0 *pkg.App, p1 context.Context) (out SkyResult[string, *messaging.Client]) {
 	defer SkyFfiRecoverT(&out)()
@@ -176,6 +200,9 @@ func Go_GoV4_appAppCheck(p0 any, p1 any) (out any) {
 
 	return
 }
+type FfiT_Go_GoV4_appAppCheck_P0 = *pkg.App
+type FfiT_Go_GoV4_appAppCheck_P1 = context.Context
+type FfiT_Go_GoV4_appAppCheck_R = *appcheck.Client
 // [fallible] typed wrapper for Go_GoV4_appAppCheck (P7 adaptor target)
 func Go_GoV4_appAppCheckT(p0 *pkg.App, p1 context.Context) (out SkyResult[string, *appcheck.Client]) {
 	defer SkyFfiRecoverT(&out)()
@@ -194,6 +221,9 @@ func Go_GoV4_appRemoteConfig(p0 any, p1 any) (out any) {
 
 	return
 }
+type FfiT_Go_GoV4_appRemoteConfig_P0 = *pkg.App
+type FfiT_Go_GoV4_appRemoteConfig_P1 = context.Context
+type FfiT_Go_GoV4_appRemoteConfig_R = *remoteconfig.Client
 // [fallible] typed wrapper for Go_GoV4_appRemoteConfig (P7 adaptor target)
 func Go_GoV4_appRemoteConfigT(p0 *pkg.App, p1 context.Context) (out SkyResult[string, *remoteconfig.Client]) {
 	defer SkyFfiRecoverT(&out)()
