@@ -1969,6 +1969,22 @@ exprToGo (A.At _ expr) = case expr of
                 , Set.member typedName typedFfiWrapperSet ->
                     GoIr.GoCall (GoIr.GoQualified "rt" typedName) []
 
+            -- P7 step 5b: extend to N-arg FFI where every arg is a
+            -- primitive Sky literal. Literals render directly to typed
+            -- Go literals (string/int/float/bool) so passing them to a
+            -- typed wrapper's concrete param types compiles without a
+            -- coercion step. Non-literal args still route through the
+            -- any/any path.
+            Can.VarKernel modName funcName
+                | take 3 modName == "Go_"
+                , not (null args)
+                , not (all isUnitArg args)
+                , all isPrimLiteralArg args
+                , let typedName = modName ++ "_" ++ funcName ++ "T"
+                , Set.member typedName typedFfiWrapperSet ->
+                    GoIr.GoCall (GoIr.GoQualified "rt" typedName)
+                                (map exprToGo args)
+
             Can.VarCtor _opts _home _typeName _ctorName annot ->
                 -- ADT constructor partial app: JobDone : Int -> Result -> Msg
                 -- applied to just `jid` must close over jid.
@@ -2160,6 +2176,18 @@ isUnitArg :: Can.Expr -> Bool
 isUnitArg (A.At _ e) = case e of
     Can.Unit -> True
     _        -> False
+
+
+-- | Primitive Sky literal args — safe to pass directly to a typed FFI
+-- wrapper's concrete Go param type because Go's literal inference
+-- produces the matching primitive type. Used by P7 step 5b.
+isPrimLiteralArg :: Can.Expr -> Bool
+isPrimLiteralArg (A.At _ e) = case e of
+    Can.Str _   -> True
+    Can.Int _   -> True
+    Can.Float _ -> True
+    Can.Chr _   -> True
+    _           -> False
 
 
 -- | Snapshot of Env.ffiTypedWrapperNamesRef taken at every lookup. The
