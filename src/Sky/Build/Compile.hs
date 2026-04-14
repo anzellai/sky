@@ -2868,14 +2868,17 @@ binopToGo op left right = case op of
 -- If func is already a call `f(args...)`, append value as additional arg: `f(args..., value)`
 pipeApply :: Can.Expr -> Can.Expr -> GoIr.GoExpr
 pipeApply valueExpr funcExpr =
-    let goValue = exprToGo valueExpr
+    -- Reify `value |> func args` as a regular Can.Call so it goes
+    -- through the same exprToGo Can.Call branch — this picks up the
+    -- typed-FFI / typed-kernel migrations that would otherwise be
+    -- missed by the bypass that calls exprToGo on each piece directly.
+    let region = case funcExpr of A.At r _ -> r
+        synth f xs = exprToGo (A.At region (Can.Call f xs))
     in case funcExpr of
-        -- If the RHS is a function call with args: f(a) |> g(b) → g(b, f(a))
         A.At _ (Can.Call innerFunc innerArgs) ->
-            GoIr.GoCall (exprToGo innerFunc) (map exprToGo innerArgs ++ [goValue])
-        -- Otherwise: a |> f → f(a)
+            synth innerFunc (innerArgs ++ [valueExpr])
         _ ->
-            GoIr.GoCall (exprToGo funcExpr) [goValue]
+            synth funcExpr [valueExpr]
 
 
 -- ═══════════════════════════════════════════════════════════

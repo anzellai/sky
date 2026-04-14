@@ -132,12 +132,15 @@ type FfiT_Go_Customer_clientB_P0 = *pkg.Client
 type FfiT_Go_Customer_clientB_R = stripe_go.Backend
 func Go_Customer_clientBT(p0 *pkg.Client) stripe_go.Backend { return p0.B }
 
-func Go_Customer_clientSetB(value any, recv any) any { return SkyFfiFieldSet(value, recv, "B") }
+type FfiT_Go_Customer_clientSetB_P0 = stripe_go.Backend
+type FfiT_Go_Customer_clientSetB_P1 = *pkg.Client
+func Go_Customer_clientSetBT(value stripe_go.Backend, recv *pkg.Client) *pkg.Client { recv.B = value; return recv }
 
 type FfiT_Go_Customer_clientKey_P0 = *pkg.Client
 func Go_Customer_clientKeyT(p0 *pkg.Client) string { return p0.Key }
 
-func Go_Customer_clientSetKey(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Key") }
+type FfiT_Go_Customer_clientSetKey_P1 = *pkg.Client
+func Go_Customer_clientSetKeyT(value string, recv *pkg.Client) *pkg.Client { recv.Key = value; return recv }
 
 func Go_Customer_newClient(_ any) any { return new(pkg.Client) }
 
@@ -250,7 +253,9 @@ type FfiT_Go_Customer_iterIter_P0 = *pkg.Iter
 type FfiT_Go_Customer_iterIter_R = *stripe_go.Iter
 func Go_Customer_iterIterT(p0 *pkg.Iter) *stripe_go.Iter { return p0.Iter }
 
-func Go_Customer_iterSetIter(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Iter") }
+type FfiT_Go_Customer_iterSetIter_P0 = stripe_go.Iter
+type FfiT_Go_Customer_iterSetIter_P1 = *pkg.Iter
+func Go_Customer_iterSetIterT(value stripe_go.Iter, recv *pkg.Iter) *pkg.Iter { recv.Iter = func() *stripe_go.Iter { v := value; return &v }(); return recv }
 
 func Go_Customer_newIter(_ any) any { return new(pkg.Iter) }
 
@@ -348,7 +353,9 @@ type FfiT_Go_Customer_paymentMethodIterIter_P0 = *pkg.PaymentMethodIter
 type FfiT_Go_Customer_paymentMethodIterIter_R = *stripe_go.Iter
 func Go_Customer_paymentMethodIterIterT(p0 *pkg.PaymentMethodIter) *stripe_go.Iter { return p0.Iter }
 
-func Go_Customer_paymentMethodIterSetIter(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Iter") }
+type FfiT_Go_Customer_paymentMethodIterSetIter_P0 = stripe_go.Iter
+type FfiT_Go_Customer_paymentMethodIterSetIter_P1 = *pkg.PaymentMethodIter
+func Go_Customer_paymentMethodIterSetIterT(value stripe_go.Iter, recv *pkg.PaymentMethodIter) *pkg.PaymentMethodIter { recv.Iter = func() *stripe_go.Iter { v := value; return &v }(); return recv }
 
 func Go_Customer_newPaymentMethodIter(_ any) any { return new(pkg.PaymentMethodIter) }
 
@@ -437,7 +444,9 @@ type FfiT_Go_Customer_searchIterSearchIter_P0 = *pkg.SearchIter
 type FfiT_Go_Customer_searchIterSearchIter_R = *stripe_go.SearchIter
 func Go_Customer_searchIterSearchIterT(p0 *pkg.SearchIter) *stripe_go.SearchIter { return p0.SearchIter }
 
-func Go_Customer_searchIterSetSearchIter(value any, recv any) any { return SkyFfiFieldSet(value, recv, "SearchIter") }
+type FfiT_Go_Customer_searchIterSetSearchIter_P0 = stripe_go.SearchIter
+type FfiT_Go_Customer_searchIterSetSearchIter_P1 = *pkg.SearchIter
+func Go_Customer_searchIterSetSearchIterT(value stripe_go.SearchIter, recv *pkg.SearchIter) *pkg.SearchIter { recv.SearchIter = func() *stripe_go.SearchIter { v := value; return &v }(); return recv }
 
 func Go_Customer_newSearchIter(_ any) any { return new(pkg.SearchIter) }
 

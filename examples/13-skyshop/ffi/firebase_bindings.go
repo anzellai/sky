@@ -150,22 +150,26 @@ func Go_GoV4_configSetAuthOverride(value any, recv any) any { return SkyFfiField
 type FfiT_Go_GoV4_configDatabaseURL_P0 = *pkg.Config
 func Go_GoV4_configDatabaseURLT(p0 *pkg.Config) string { return p0.DatabaseURL }
 
-func Go_GoV4_configSetDatabaseURL(value any, recv any) any { return SkyFfiFieldSet(value, recv, "DatabaseURL") }
+type FfiT_Go_GoV4_configSetDatabaseURL_P1 = *pkg.Config
+func Go_GoV4_configSetDatabaseURLT(value string, recv *pkg.Config) *pkg.Config { recv.DatabaseURL = value; return recv }
 
 type FfiT_Go_GoV4_configProjectID_P0 = *pkg.Config
 func Go_GoV4_configProjectIDT(p0 *pkg.Config) string { return p0.ProjectID }
 
-func Go_GoV4_configSetProjectID(value any, recv any) any { return SkyFfiFieldSet(value, recv, "ProjectID") }
+type FfiT_Go_GoV4_configSetProjectID_P1 = *pkg.Config
+func Go_GoV4_configSetProjectIDT(value string, recv *pkg.Config) *pkg.Config { recv.ProjectID = value; return recv }
 
 type FfiT_Go_GoV4_configServiceAccountID_P0 = *pkg.Config
 func Go_GoV4_configServiceAccountIDT(p0 *pkg.Config) string { return p0.ServiceAccountID }
 
-func Go_GoV4_configSetServiceAccountID(value any, recv any) any { return SkyFfiFieldSet(value, recv, "ServiceAccountID") }
+type FfiT_Go_GoV4_configSetServiceAccountID_P1 = *pkg.Config
+func Go_GoV4_configSetServiceAccountIDT(value string, recv *pkg.Config) *pkg.Config { recv.ServiceAccountID = value; return recv }
 
 type FfiT_Go_GoV4_configStorageBucket_P0 = *pkg.Config
 func Go_GoV4_configStorageBucketT(p0 *pkg.Config) string { return p0.StorageBucket }
 
-func Go_GoV4_configSetStorageBucket(value any, recv any) any { return SkyFfiFieldSet(value, recv, "StorageBucket") }
+type FfiT_Go_GoV4_configSetStorageBucket_P1 = *pkg.Config
+func Go_GoV4_configSetStorageBucketT(value string, recv *pkg.Config) *pkg.Config { recv.StorageBucket = value; return recv }
 
 func Go_GoV4_newConfig(_ any) any { return new(pkg.Config) }
 

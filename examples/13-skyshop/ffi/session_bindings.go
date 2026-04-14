@@ -86,12 +86,15 @@ type FfiT_Go_Session_clientB_P0 = *pkg.Client
 type FfiT_Go_Session_clientB_R = stripe_go.Backend
 func Go_Session_clientBT(p0 *pkg.Client) stripe_go.Backend { return p0.B }
 
-func Go_Session_clientSetB(value any, recv any) any { return SkyFfiFieldSet(value, recv, "B") }
+type FfiT_Go_Session_clientSetB_P0 = stripe_go.Backend
+type FfiT_Go_Session_clientSetB_P1 = *pkg.Client
+func Go_Session_clientSetBT(value stripe_go.Backend, recv *pkg.Client) *pkg.Client { recv.B = value; return recv }
 
 type FfiT_Go_Session_clientKey_P0 = *pkg.Client
 func Go_Session_clientKeyT(p0 *pkg.Client) string { return p0.Key }
 
-func Go_Session_clientSetKey(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Key") }
+type FfiT_Go_Session_clientSetKey_P1 = *pkg.Client
+func Go_Session_clientSetKeyT(value string, recv *pkg.Client) *pkg.Client { recv.Key = value; return recv }
 
 func Go_Session_newClient(_ any) any { return new(pkg.Client) }
 
@@ -182,7 +185,9 @@ type FfiT_Go_Session_iterIter_P0 = *pkg.Iter
 type FfiT_Go_Session_iterIter_R = *stripe_go.Iter
 func Go_Session_iterIterT(p0 *pkg.Iter) *stripe_go.Iter { return p0.Iter }
 
-func Go_Session_iterSetIter(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Iter") }
+type FfiT_Go_Session_iterSetIter_P0 = stripe_go.Iter
+type FfiT_Go_Session_iterSetIter_P1 = *pkg.Iter
+func Go_Session_iterSetIterT(value stripe_go.Iter, recv *pkg.Iter) *pkg.Iter { recv.Iter = func() *stripe_go.Iter { v := value; return &v }(); return recv }
 
 func Go_Session_newIter(_ any) any { return new(pkg.Iter) }
 
@@ -251,7 +256,9 @@ type FfiT_Go_Session_lineItemIterIter_P0 = *pkg.LineItemIter
 type FfiT_Go_Session_lineItemIterIter_R = *stripe_go.Iter
 func Go_Session_lineItemIterIterT(p0 *pkg.LineItemIter) *stripe_go.Iter { return p0.Iter }
 
-func Go_Session_lineItemIterSetIter(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Iter") }
+type FfiT_Go_Session_lineItemIterSetIter_P0 = stripe_go.Iter
+type FfiT_Go_Session_lineItemIterSetIter_P1 = *pkg.LineItemIter
+func Go_Session_lineItemIterSetIterT(value stripe_go.Iter, recv *pkg.LineItemIter) *pkg.LineItemIter { recv.Iter = func() *stripe_go.Iter { v := value; return &v }(); return recv }
 
 func Go_Session_newLineItemIter(_ any) any { return new(pkg.LineItemIter) }
 

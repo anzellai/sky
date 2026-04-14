@@ -20,42 +20,50 @@ import (
 type FfiT_Go_Auth_actionCodeSettingsURL_P0 = *pkg.ActionCodeSettings
 func Go_Auth_actionCodeSettingsURLT(p0 *pkg.ActionCodeSettings) string { return p0.URL }
 
-func Go_Auth_actionCodeSettingsSetURL(value any, recv any) any { return SkyFfiFieldSet(value, recv, "URL") }
+type FfiT_Go_Auth_actionCodeSettingsSetURL_P1 = *pkg.ActionCodeSettings
+func Go_Auth_actionCodeSettingsSetURLT(value string, recv *pkg.ActionCodeSettings) *pkg.ActionCodeSettings { recv.URL = value; return recv }
 
 type FfiT_Go_Auth_actionCodeSettingsHandleCodeInApp_P0 = *pkg.ActionCodeSettings
 func Go_Auth_actionCodeSettingsHandleCodeInAppT(p0 *pkg.ActionCodeSettings) bool { return p0.HandleCodeInApp }
 
-func Go_Auth_actionCodeSettingsSetHandleCodeInApp(value any, recv any) any { return SkyFfiFieldSet(value, recv, "HandleCodeInApp") }
+type FfiT_Go_Auth_actionCodeSettingsSetHandleCodeInApp_P1 = *pkg.ActionCodeSettings
+func Go_Auth_actionCodeSettingsSetHandleCodeInAppT(value bool, recv *pkg.ActionCodeSettings) *pkg.ActionCodeSettings { recv.HandleCodeInApp = value; return recv }
 
 type FfiT_Go_Auth_actionCodeSettingsIOSBundleID_P0 = *pkg.ActionCodeSettings
 func Go_Auth_actionCodeSettingsIOSBundleIDT(p0 *pkg.ActionCodeSettings) string { return p0.IOSBundleID }
 
-func Go_Auth_actionCodeSettingsSetIOSBundleID(value any, recv any) any { return SkyFfiFieldSet(value, recv, "IOSBundleID") }
+type FfiT_Go_Auth_actionCodeSettingsSetIOSBundleID_P1 = *pkg.ActionCodeSettings
+func Go_Auth_actionCodeSettingsSetIOSBundleIDT(value string, recv *pkg.ActionCodeSettings) *pkg.ActionCodeSettings { recv.IOSBundleID = value; return recv }
 
 type FfiT_Go_Auth_actionCodeSettingsAndroidPackageName_P0 = *pkg.ActionCodeSettings
 func Go_Auth_actionCodeSettingsAndroidPackageNameT(p0 *pkg.ActionCodeSettings) string { return p0.AndroidPackageName }
 
-func Go_Auth_actionCodeSettingsSetAndroidPackageName(value any, recv any) any { return SkyFfiFieldSet(value, recv, "AndroidPackageName") }
+type FfiT_Go_Auth_actionCodeSettingsSetAndroidPackageName_P1 = *pkg.ActionCodeSettings
+func Go_Auth_actionCodeSettingsSetAndroidPackageNameT(value string, recv *pkg.ActionCodeSettings) *pkg.ActionCodeSettings { recv.AndroidPackageName = value; return recv }
 
 type FfiT_Go_Auth_actionCodeSettingsAndroidMinimumVersion_P0 = *pkg.ActionCodeSettings
 func Go_Auth_actionCodeSettingsAndroidMinimumVersionT(p0 *pkg.ActionCodeSettings) string { return p0.AndroidMinimumVersion }
 
-func Go_Auth_actionCodeSettingsSetAndroidMinimumVersion(value any, recv any) any { return SkyFfiFieldSet(value, recv, "AndroidMinimumVersion") }
+type FfiT_Go_Auth_actionCodeSettingsSetAndroidMinimumVersion_P1 = *pkg.ActionCodeSettings
+func Go_Auth_actionCodeSettingsSetAndroidMinimumVersionT(value string, recv *pkg.ActionCodeSettings) *pkg.ActionCodeSettings { recv.AndroidMinimumVersion = value; return recv }
 
 type FfiT_Go_Auth_actionCodeSettingsAndroidInstallApp_P0 = *pkg.ActionCodeSettings
 func Go_Auth_actionCodeSettingsAndroidInstallAppT(p0 *pkg.ActionCodeSettings) bool { return p0.AndroidInstallApp }
 
-func Go_Auth_actionCodeSettingsSetAndroidInstallApp(value any, recv any) any { return SkyFfiFieldSet(value, recv, "AndroidInstallApp") }
+type FfiT_Go_Auth_actionCodeSettingsSetAndroidInstallApp_P1 = *pkg.ActionCodeSettings
+func Go_Auth_actionCodeSettingsSetAndroidInstallAppT(value bool, recv *pkg.ActionCodeSettings) *pkg.ActionCodeSettings { recv.AndroidInstallApp = value; return recv }
 
 type FfiT_Go_Auth_actionCodeSettingsLinkDomain_P0 = *pkg.ActionCodeSettings
 func Go_Auth_actionCodeSettingsLinkDomainT(p0 *pkg.ActionCodeSettings) string { return p0.LinkDomain }
 
-func Go_Auth_actionCodeSettingsSetLinkDomain(value any, recv any) any { return SkyFfiFieldSet(value, recv, "LinkDomain") }
+type FfiT_Go_Auth_actionCodeSettingsSetLinkDomain_P1 = *pkg.ActionCodeSettings
+func Go_Auth_actionCodeSettingsSetLinkDomainT(value string, recv *pkg.ActionCodeSettings) *pkg.ActionCodeSettings { recv.LinkDomain = value; return recv }
 
 type FfiT_Go_Auth_actionCodeSettingsDynamicLinkDomain_P0 = *pkg.ActionCodeSettings
 func Go_Auth_actionCodeSettingsDynamicLinkDomainT(p0 *pkg.ActionCodeSettings) string { return p0.DynamicLinkDomain }
 
-func Go_Auth_actionCodeSettingsSetDynamicLinkDomain(value any, recv any) any { return SkyFfiFieldSet(value, recv, "DynamicLinkDomain") }
+type FfiT_Go_Auth_actionCodeSettingsSetDynamicLinkDomain_P1 = *pkg.ActionCodeSettings
+func Go_Auth_actionCodeSettingsSetDynamicLinkDomainT(value string, recv *pkg.ActionCodeSettings) *pkg.ActionCodeSettings { recv.DynamicLinkDomain = value; return recv }
 
 func Go_Auth_newActionCodeSettings(_ any) any { return new(pkg.ActionCodeSettings) }
 
@@ -523,37 +531,45 @@ type FfiT_Go_Auth_clientTenantManager_P0 = *pkg.Client
 type FfiT_Go_Auth_clientTenantManager_R = *pkg.TenantManager
 func Go_Auth_clientTenantManagerT(p0 *pkg.Client) *pkg.TenantManager { return p0.TenantManager }
 
-func Go_Auth_clientSetTenantManager(value any, recv any) any { return SkyFfiFieldSet(value, recv, "TenantManager") }
+type FfiT_Go_Auth_clientSetTenantManager_P0 = pkg.TenantManager
+type FfiT_Go_Auth_clientSetTenantManager_P1 = *pkg.Client
+func Go_Auth_clientSetTenantManagerT(value pkg.TenantManager, recv *pkg.Client) *pkg.Client { recv.TenantManager = func() *pkg.TenantManager { v := value; return &v }(); return recv }
 
 func Go_Auth_createdAt(_ any) any { return pkg.CreatedAt }
 
 type FfiT_Go_Auth_deleteUsersErrorInfoIndex_P0 = *pkg.DeleteUsersErrorInfo
 func Go_Auth_deleteUsersErrorInfoIndexT(p0 *pkg.DeleteUsersErrorInfo) int { return p0.Index }
 
-func Go_Auth_deleteUsersErrorInfoSetIndex(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Index") }
+type FfiT_Go_Auth_deleteUsersErrorInfoSetIndex_P1 = *pkg.DeleteUsersErrorInfo
+func Go_Auth_deleteUsersErrorInfoSetIndexT(value int, recv *pkg.DeleteUsersErrorInfo) *pkg.DeleteUsersErrorInfo { recv.Index = value; return recv }
 
 type FfiT_Go_Auth_deleteUsersErrorInfoReason_P0 = *pkg.DeleteUsersErrorInfo
 func Go_Auth_deleteUsersErrorInfoReasonT(p0 *pkg.DeleteUsersErrorInfo) string { return p0.Reason }
 
-func Go_Auth_deleteUsersErrorInfoSetReason(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Reason") }
+type FfiT_Go_Auth_deleteUsersErrorInfoSetReason_P1 = *pkg.DeleteUsersErrorInfo
+func Go_Auth_deleteUsersErrorInfoSetReasonT(value string, recv *pkg.DeleteUsersErrorInfo) *pkg.DeleteUsersErrorInfo { recv.Reason = value; return recv }
 
 func Go_Auth_newDeleteUsersErrorInfo(_ any) any { return new(pkg.DeleteUsersErrorInfo) }
 
 type FfiT_Go_Auth_deleteUsersResultSuccessCount_P0 = *pkg.DeleteUsersResult
 func Go_Auth_deleteUsersResultSuccessCountT(p0 *pkg.DeleteUsersResult) int { return p0.SuccessCount }
 
-func Go_Auth_deleteUsersResultSetSuccessCount(value any, recv any) any { return SkyFfiFieldSet(value, recv, "SuccessCount") }
+type FfiT_Go_Auth_deleteUsersResultSetSuccessCount_P1 = *pkg.DeleteUsersResult
+func Go_Auth_deleteUsersResultSetSuccessCountT(value int, recv *pkg.DeleteUsersResult) *pkg.DeleteUsersResult { recv.SuccessCount = value; return recv }
 
 type FfiT_Go_Auth_deleteUsersResultFailureCount_P0 = *pkg.DeleteUsersResult
 func Go_Auth_deleteUsersResultFailureCountT(p0 *pkg.DeleteUsersResult) int { return p0.FailureCount }
 
-func Go_Auth_deleteUsersResultSetFailureCount(value any, recv any) any { return SkyFfiFieldSet(value, recv, "FailureCount") }
+type FfiT_Go_Auth_deleteUsersResultSetFailureCount_P1 = *pkg.DeleteUsersResult
+func Go_Auth_deleteUsersResultSetFailureCountT(value int, recv *pkg.DeleteUsersResult) *pkg.DeleteUsersResult { recv.FailureCount = value; return recv }
 
 type FfiT_Go_Auth_deleteUsersResultErrors_P0 = *pkg.DeleteUsersResult
 type FfiT_Go_Auth_deleteUsersResultErrors_R = []*pkg.DeleteUsersErrorInfo
 func Go_Auth_deleteUsersResultErrorsT(p0 *pkg.DeleteUsersResult) []*pkg.DeleteUsersErrorInfo { return p0.Errors }
 
-func Go_Auth_deleteUsersResultSetErrors(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Errors") }
+type FfiT_Go_Auth_deleteUsersResultSetErrors_P0 = []*pkg.DeleteUsersErrorInfo
+type FfiT_Go_Auth_deleteUsersResultSetErrors_P1 = *pkg.DeleteUsersResult
+func Go_Auth_deleteUsersResultSetErrorsT(value []*pkg.DeleteUsersErrorInfo, recv *pkg.DeleteUsersResult) *pkg.DeleteUsersResult { recv.Errors = value; return recv }
 
 func Go_Auth_newDeleteUsersResult(_ any) any { return new(pkg.DeleteUsersResult) }
 
@@ -564,7 +580,8 @@ func Go_Auth_disabled(_ any) any { return pkg.Disabled }
 type FfiT_Go_Auth_emailIdentifierEmail_P0 = *pkg.EmailIdentifier
 func Go_Auth_emailIdentifierEmailT(p0 *pkg.EmailIdentifier) string { return p0.Email }
 
-func Go_Auth_emailIdentifierSetEmail(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Email") }
+type FfiT_Go_Auth_emailIdentifierSetEmail_P1 = *pkg.EmailIdentifier
+func Go_Auth_emailIdentifierSetEmailT(value string, recv *pkg.EmailIdentifier) *pkg.EmailIdentifier { recv.Email = value; return recv }
 
 func Go_Auth_newEmailIdentifier(_ any) any { return new(pkg.EmailIdentifier) }
 
@@ -573,12 +590,14 @@ func Go_Auth_enabled(_ any) any { return pkg.Enabled }
 type FfiT_Go_Auth_errorInfoIndex_P0 = *pkg.ErrorInfo
 func Go_Auth_errorInfoIndexT(p0 *pkg.ErrorInfo) int { return p0.Index }
 
-func Go_Auth_errorInfoSetIndex(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Index") }
+type FfiT_Go_Auth_errorInfoSetIndex_P1 = *pkg.ErrorInfo
+func Go_Auth_errorInfoSetIndexT(value int, recv *pkg.ErrorInfo) *pkg.ErrorInfo { recv.Index = value; return recv }
 
 type FfiT_Go_Auth_errorInfoReason_P0 = *pkg.ErrorInfo
 func Go_Auth_errorInfoReasonT(p0 *pkg.ErrorInfo) string { return p0.Reason }
 
-func Go_Auth_errorInfoSetReason(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Reason") }
+type FfiT_Go_Auth_errorInfoSetReason_P1 = *pkg.ErrorInfo
+func Go_Auth_errorInfoSetReasonT(value string, recv *pkg.ErrorInfo) *pkg.ErrorInfo { recv.Reason = value; return recv }
 
 func Go_Auth_newErrorInfo(_ any) any { return new(pkg.ErrorInfo) }
 
@@ -586,46 +605,55 @@ type FfiT_Go_Auth_exportedUserRecordUserRecord_P0 = *pkg.ExportedUserRecord
 type FfiT_Go_Auth_exportedUserRecordUserRecord_R = *pkg.UserRecord
 func Go_Auth_exportedUserRecordUserRecordT(p0 *pkg.ExportedUserRecord) *pkg.UserRecord { return p0.UserRecord }
 
-func Go_Auth_exportedUserRecordSetUserRecord(value any, recv any) any { return SkyFfiFieldSet(value, recv, "UserRecord") }
+type FfiT_Go_Auth_exportedUserRecordSetUserRecord_P0 = pkg.UserRecord
+type FfiT_Go_Auth_exportedUserRecordSetUserRecord_P1 = *pkg.ExportedUserRecord
+func Go_Auth_exportedUserRecordSetUserRecordT(value pkg.UserRecord, recv *pkg.ExportedUserRecord) *pkg.ExportedUserRecord { recv.UserRecord = func() *pkg.UserRecord { v := value; return &v }(); return recv }
 
 type FfiT_Go_Auth_exportedUserRecordPasswordHash_P0 = *pkg.ExportedUserRecord
 func Go_Auth_exportedUserRecordPasswordHashT(p0 *pkg.ExportedUserRecord) string { return p0.PasswordHash }
 
-func Go_Auth_exportedUserRecordSetPasswordHash(value any, recv any) any { return SkyFfiFieldSet(value, recv, "PasswordHash") }
+type FfiT_Go_Auth_exportedUserRecordSetPasswordHash_P1 = *pkg.ExportedUserRecord
+func Go_Auth_exportedUserRecordSetPasswordHashT(value string, recv *pkg.ExportedUserRecord) *pkg.ExportedUserRecord { recv.PasswordHash = value; return recv }
 
 type FfiT_Go_Auth_exportedUserRecordPasswordSalt_P0 = *pkg.ExportedUserRecord
 func Go_Auth_exportedUserRecordPasswordSaltT(p0 *pkg.ExportedUserRecord) string { return p0.PasswordSalt }
 
-func Go_Auth_exportedUserRecordSetPasswordSalt(value any, recv any) any { return SkyFfiFieldSet(value, recv, "PasswordSalt") }
+type FfiT_Go_Auth_exportedUserRecordSetPasswordSalt_P1 = *pkg.ExportedUserRecord
+func Go_Auth_exportedUserRecordSetPasswordSaltT(value string, recv *pkg.ExportedUserRecord) *pkg.ExportedUserRecord { recv.PasswordSalt = value; return recv }
 
 func Go_Auth_newExportedUserRecord(_ any) any { return new(pkg.ExportedUserRecord) }
 
 type FfiT_Go_Auth_expressionEmail_P0 = *pkg.Expression
 func Go_Auth_expressionEmailT(p0 *pkg.Expression) string { return p0.Email }
 
-func Go_Auth_expressionSetEmail(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Email") }
+type FfiT_Go_Auth_expressionSetEmail_P1 = *pkg.Expression
+func Go_Auth_expressionSetEmailT(value string, recv *pkg.Expression) *pkg.Expression { recv.Email = value; return recv }
 
 type FfiT_Go_Auth_expressionPhoneNumber_P0 = *pkg.Expression
 func Go_Auth_expressionPhoneNumberT(p0 *pkg.Expression) string { return p0.PhoneNumber }
 
-func Go_Auth_expressionSetPhoneNumber(value any, recv any) any { return SkyFfiFieldSet(value, recv, "PhoneNumber") }
+type FfiT_Go_Auth_expressionSetPhoneNumber_P1 = *pkg.Expression
+func Go_Auth_expressionSetPhoneNumberT(value string, recv *pkg.Expression) *pkg.Expression { recv.PhoneNumber = value; return recv }
 
 type FfiT_Go_Auth_expressionUID_P0 = *pkg.Expression
 func Go_Auth_expressionUIDT(p0 *pkg.Expression) string { return p0.UID }
 
-func Go_Auth_expressionSetUID(value any, recv any) any { return SkyFfiFieldSet(value, recv, "UID") }
+type FfiT_Go_Auth_expressionSetUID_P1 = *pkg.Expression
+func Go_Auth_expressionSetUIDT(value string, recv *pkg.Expression) *pkg.Expression { recv.UID = value; return recv }
 
 func Go_Auth_newExpression(_ any) any { return new(pkg.Expression) }
 
 type FfiT_Go_Auth_firebaseInfoSignInProvider_P0 = *pkg.FirebaseInfo
 func Go_Auth_firebaseInfoSignInProviderT(p0 *pkg.FirebaseInfo) string { return p0.SignInProvider }
 
-func Go_Auth_firebaseInfoSetSignInProvider(value any, recv any) any { return SkyFfiFieldSet(value, recv, "SignInProvider") }
+type FfiT_Go_Auth_firebaseInfoSetSignInProvider_P1 = *pkg.FirebaseInfo
+func Go_Auth_firebaseInfoSetSignInProviderT(value string, recv *pkg.FirebaseInfo) *pkg.FirebaseInfo { recv.SignInProvider = value; return recv }
 
 type FfiT_Go_Auth_firebaseInfoTenant_P0 = *pkg.FirebaseInfo
 func Go_Auth_firebaseInfoTenantT(p0 *pkg.FirebaseInfo) string { return p0.Tenant }
 
-func Go_Auth_firebaseInfoSetTenant(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Tenant") }
+type FfiT_Go_Auth_firebaseInfoSetTenant_P1 = *pkg.FirebaseInfo
+func Go_Auth_firebaseInfoSetTenantT(value string, recv *pkg.FirebaseInfo) *pkg.FirebaseInfo { recv.Tenant = value; return recv }
 
 func Go_Auth_firebaseInfoIdentities(p0 any) any { return SkyFfiFieldGet(p0, "Identities") }
 
@@ -637,13 +665,17 @@ type FfiT_Go_Auth_getUsersResultUsers_P0 = *pkg.GetUsersResult
 type FfiT_Go_Auth_getUsersResultUsers_R = []*pkg.UserRecord
 func Go_Auth_getUsersResultUsersT(p0 *pkg.GetUsersResult) []*pkg.UserRecord { return p0.Users }
 
-func Go_Auth_getUsersResultSetUsers(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Users") }
+type FfiT_Go_Auth_getUsersResultSetUsers_P0 = []*pkg.UserRecord
+type FfiT_Go_Auth_getUsersResultSetUsers_P1 = *pkg.GetUsersResult
+func Go_Auth_getUsersResultSetUsersT(value []*pkg.UserRecord, recv *pkg.GetUsersResult) *pkg.GetUsersResult { recv.Users = value; return recv }
 
 type FfiT_Go_Auth_getUsersResultNotFound_P0 = *pkg.GetUsersResult
 type FfiT_Go_Auth_getUsersResultNotFound_R = []pkg.UserIdentifier
 func Go_Auth_getUsersResultNotFoundT(p0 *pkg.GetUsersResult) []pkg.UserIdentifier { return p0.NotFound }
 
-func Go_Auth_getUsersResultSetNotFound(value any, recv any) any { return SkyFfiFieldSet(value, recv, "NotFound") }
+type FfiT_Go_Auth_getUsersResultSetNotFound_P0 = []pkg.UserIdentifier
+type FfiT_Go_Auth_getUsersResultSetNotFound_P1 = *pkg.GetUsersResult
+func Go_Auth_getUsersResultSetNotFoundT(value []pkg.UserIdentifier, recv *pkg.GetUsersResult) *pkg.GetUsersResult { recv.NotFound = value; return recv }
 
 func Go_Auth_newGetUsersResult(_ any) any { return new(pkg.GetUsersResult) }
 
@@ -814,46 +846,57 @@ type FfiT_Go_Auth_multiFactorConfigProviderConfigs_P0 = *pkg.MultiFactorConfig
 type FfiT_Go_Auth_multiFactorConfigProviderConfigs_R = []*pkg.ProviderConfig
 func Go_Auth_multiFactorConfigProviderConfigsT(p0 *pkg.MultiFactorConfig) []*pkg.ProviderConfig { return p0.ProviderConfigs }
 
-func Go_Auth_multiFactorConfigSetProviderConfigs(value any, recv any) any { return SkyFfiFieldSet(value, recv, "ProviderConfigs") }
+type FfiT_Go_Auth_multiFactorConfigSetProviderConfigs_P0 = []*pkg.ProviderConfig
+type FfiT_Go_Auth_multiFactorConfigSetProviderConfigs_P1 = *pkg.MultiFactorConfig
+func Go_Auth_multiFactorConfigSetProviderConfigsT(value []*pkg.ProviderConfig, recv *pkg.MultiFactorConfig) *pkg.MultiFactorConfig { recv.ProviderConfigs = value; return recv }
 
 func Go_Auth_newMultiFactorConfig(_ any) any { return new(pkg.MultiFactorConfig) }
 
 type FfiT_Go_Auth_multiFactorInfoUID_P0 = *pkg.MultiFactorInfo
 func Go_Auth_multiFactorInfoUIDT(p0 *pkg.MultiFactorInfo) string { return p0.UID }
 
-func Go_Auth_multiFactorInfoSetUID(value any, recv any) any { return SkyFfiFieldSet(value, recv, "UID") }
+type FfiT_Go_Auth_multiFactorInfoSetUID_P1 = *pkg.MultiFactorInfo
+func Go_Auth_multiFactorInfoSetUIDT(value string, recv *pkg.MultiFactorInfo) *pkg.MultiFactorInfo { recv.UID = value; return recv }
 
 type FfiT_Go_Auth_multiFactorInfoDisplayName_P0 = *pkg.MultiFactorInfo
 func Go_Auth_multiFactorInfoDisplayNameT(p0 *pkg.MultiFactorInfo) string { return p0.DisplayName }
 
-func Go_Auth_multiFactorInfoSetDisplayName(value any, recv any) any { return SkyFfiFieldSet(value, recv, "DisplayName") }
+type FfiT_Go_Auth_multiFactorInfoSetDisplayName_P1 = *pkg.MultiFactorInfo
+func Go_Auth_multiFactorInfoSetDisplayNameT(value string, recv *pkg.MultiFactorInfo) *pkg.MultiFactorInfo { recv.DisplayName = value; return recv }
 
 type FfiT_Go_Auth_multiFactorInfoEnrollmentTimestamp_P0 = *pkg.MultiFactorInfo
 func Go_Auth_multiFactorInfoEnrollmentTimestampT(p0 *pkg.MultiFactorInfo) int64 { return p0.EnrollmentTimestamp }
 
-func Go_Auth_multiFactorInfoSetEnrollmentTimestamp(value any, recv any) any { return SkyFfiFieldSet(value, recv, "EnrollmentTimestamp") }
+type FfiT_Go_Auth_multiFactorInfoSetEnrollmentTimestamp_P1 = *pkg.MultiFactorInfo
+func Go_Auth_multiFactorInfoSetEnrollmentTimestampT(value int64, recv *pkg.MultiFactorInfo) *pkg.MultiFactorInfo { recv.EnrollmentTimestamp = value; return recv }
 
 type FfiT_Go_Auth_multiFactorInfoFactorID_P0 = *pkg.MultiFactorInfo
 func Go_Auth_multiFactorInfoFactorIDT(p0 *pkg.MultiFactorInfo) string { return p0.FactorID }
 
-func Go_Auth_multiFactorInfoSetFactorID(value any, recv any) any { return SkyFfiFieldSet(value, recv, "FactorID") }
+type FfiT_Go_Auth_multiFactorInfoSetFactorID_P1 = *pkg.MultiFactorInfo
+func Go_Auth_multiFactorInfoSetFactorIDT(value string, recv *pkg.MultiFactorInfo) *pkg.MultiFactorInfo { recv.FactorID = value; return recv }
 
 type FfiT_Go_Auth_multiFactorInfoPhoneNumber_P0 = *pkg.MultiFactorInfo
 func Go_Auth_multiFactorInfoPhoneNumberT(p0 *pkg.MultiFactorInfo) string { return p0.PhoneNumber }
 
-func Go_Auth_multiFactorInfoSetPhoneNumber(value any, recv any) any { return SkyFfiFieldSet(value, recv, "PhoneNumber") }
+type FfiT_Go_Auth_multiFactorInfoSetPhoneNumber_P1 = *pkg.MultiFactorInfo
+func Go_Auth_multiFactorInfoSetPhoneNumberT(value string, recv *pkg.MultiFactorInfo) *pkg.MultiFactorInfo { recv.PhoneNumber = value; return recv }
 
 type FfiT_Go_Auth_multiFactorInfoPhone_P0 = *pkg.MultiFactorInfo
 type FfiT_Go_Auth_multiFactorInfoPhone_R = *pkg.PhoneMultiFactorInfo
 func Go_Auth_multiFactorInfoPhoneT(p0 *pkg.MultiFactorInfo) *pkg.PhoneMultiFactorInfo { return p0.Phone }
 
-func Go_Auth_multiFactorInfoSetPhone(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Phone") }
+type FfiT_Go_Auth_multiFactorInfoSetPhone_P0 = pkg.PhoneMultiFactorInfo
+type FfiT_Go_Auth_multiFactorInfoSetPhone_P1 = *pkg.MultiFactorInfo
+func Go_Auth_multiFactorInfoSetPhoneT(value pkg.PhoneMultiFactorInfo, recv *pkg.MultiFactorInfo) *pkg.MultiFactorInfo { recv.Phone = func() *pkg.PhoneMultiFactorInfo { v := value; return &v }(); return recv }
 
 type FfiT_Go_Auth_multiFactorInfoTOTP_P0 = *pkg.MultiFactorInfo
 type FfiT_Go_Auth_multiFactorInfoTOTP_R = *pkg.TOTPMultiFactorInfo
 func Go_Auth_multiFactorInfoTOTPT(p0 *pkg.MultiFactorInfo) *pkg.TOTPMultiFactorInfo { return p0.TOTP }
 
-func Go_Auth_multiFactorInfoSetTOTP(value any, recv any) any { return SkyFfiFieldSet(value, recv, "TOTP") }
+type FfiT_Go_Auth_multiFactorInfoSetTOTP_P0 = pkg.TOTPMultiFactorInfo
+type FfiT_Go_Auth_multiFactorInfoSetTOTP_P1 = *pkg.MultiFactorInfo
+func Go_Auth_multiFactorInfoSetTOTPT(value pkg.TOTPMultiFactorInfo, recv *pkg.MultiFactorInfo) *pkg.MultiFactorInfo { recv.TOTP = func() *pkg.TOTPMultiFactorInfo { v := value; return &v }(); return recv }
 
 func Go_Auth_newMultiFactorInfo(_ any) any { return new(pkg.MultiFactorInfo) }
 
@@ -861,7 +904,9 @@ type FfiT_Go_Auth_multiFactorSettingsEnrolledFactors_P0 = *pkg.MultiFactorSettin
 type FfiT_Go_Auth_multiFactorSettingsEnrolledFactors_R = []*pkg.MultiFactorInfo
 func Go_Auth_multiFactorSettingsEnrolledFactorsT(p0 *pkg.MultiFactorSettings) []*pkg.MultiFactorInfo { return p0.EnrolledFactors }
 
-func Go_Auth_multiFactorSettingsSetEnrolledFactors(value any, recv any) any { return SkyFfiFieldSet(value, recv, "EnrolledFactors") }
+type FfiT_Go_Auth_multiFactorSettingsSetEnrolledFactors_P0 = []*pkg.MultiFactorInfo
+type FfiT_Go_Auth_multiFactorSettingsSetEnrolledFactors_P1 = *pkg.MultiFactorSettings
+func Go_Auth_multiFactorSettingsSetEnrolledFactorsT(value []*pkg.MultiFactorInfo, recv *pkg.MultiFactorSettings) *pkg.MultiFactorSettings { recv.EnrolledFactors = value; return recv }
 
 func Go_Auth_newMultiFactorSettings(_ any) any { return new(pkg.MultiFactorSettings) }
 
@@ -877,42 +922,50 @@ func Go_Auth_newClient(p0 any, p1 any) (out any) {
 type FfiT_Go_Auth_oIDCProviderConfigID_P0 = *pkg.OIDCProviderConfig
 func Go_Auth_oIDCProviderConfigIDT(p0 *pkg.OIDCProviderConfig) string { return p0.ID }
 
-func Go_Auth_oIDCProviderConfigSetID(value any, recv any) any { return SkyFfiFieldSet(value, recv, "ID") }
+type FfiT_Go_Auth_oIDCProviderConfigSetID_P1 = *pkg.OIDCProviderConfig
+func Go_Auth_oIDCProviderConfigSetIDT(value string, recv *pkg.OIDCProviderConfig) *pkg.OIDCProviderConfig { recv.ID = value; return recv }
 
 type FfiT_Go_Auth_oIDCProviderConfigDisplayName_P0 = *pkg.OIDCProviderConfig
 func Go_Auth_oIDCProviderConfigDisplayNameT(p0 *pkg.OIDCProviderConfig) string { return p0.DisplayName }
 
-func Go_Auth_oIDCProviderConfigSetDisplayName(value any, recv any) any { return SkyFfiFieldSet(value, recv, "DisplayName") }
+type FfiT_Go_Auth_oIDCProviderConfigSetDisplayName_P1 = *pkg.OIDCProviderConfig
+func Go_Auth_oIDCProviderConfigSetDisplayNameT(value string, recv *pkg.OIDCProviderConfig) *pkg.OIDCProviderConfig { recv.DisplayName = value; return recv }
 
 type FfiT_Go_Auth_oIDCProviderConfigEnabled_P0 = *pkg.OIDCProviderConfig
 func Go_Auth_oIDCProviderConfigEnabledT(p0 *pkg.OIDCProviderConfig) bool { return p0.Enabled }
 
-func Go_Auth_oIDCProviderConfigSetEnabled(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Enabled") }
+type FfiT_Go_Auth_oIDCProviderConfigSetEnabled_P1 = *pkg.OIDCProviderConfig
+func Go_Auth_oIDCProviderConfigSetEnabledT(value bool, recv *pkg.OIDCProviderConfig) *pkg.OIDCProviderConfig { recv.Enabled = value; return recv }
 
 type FfiT_Go_Auth_oIDCProviderConfigClientID_P0 = *pkg.OIDCProviderConfig
 func Go_Auth_oIDCProviderConfigClientIDT(p0 *pkg.OIDCProviderConfig) string { return p0.ClientID }
 
-func Go_Auth_oIDCProviderConfigSetClientID(value any, recv any) any { return SkyFfiFieldSet(value, recv, "ClientID") }
+type FfiT_Go_Auth_oIDCProviderConfigSetClientID_P1 = *pkg.OIDCProviderConfig
+func Go_Auth_oIDCProviderConfigSetClientIDT(value string, recv *pkg.OIDCProviderConfig) *pkg.OIDCProviderConfig { recv.ClientID = value; return recv }
 
 type FfiT_Go_Auth_oIDCProviderConfigIssuer_P0 = *pkg.OIDCProviderConfig
 func Go_Auth_oIDCProviderConfigIssuerT(p0 *pkg.OIDCProviderConfig) string { return p0.Issuer }
 
-func Go_Auth_oIDCProviderConfigSetIssuer(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Issuer") }
+type FfiT_Go_Auth_oIDCProviderConfigSetIssuer_P1 = *pkg.OIDCProviderConfig
+func Go_Auth_oIDCProviderConfigSetIssuerT(value string, recv *pkg.OIDCProviderConfig) *pkg.OIDCProviderConfig { recv.Issuer = value; return recv }
 
 type FfiT_Go_Auth_oIDCProviderConfigClientSecret_P0 = *pkg.OIDCProviderConfig
 func Go_Auth_oIDCProviderConfigClientSecretT(p0 *pkg.OIDCProviderConfig) string { return p0.ClientSecret }
 
-func Go_Auth_oIDCProviderConfigSetClientSecret(value any, recv any) any { return SkyFfiFieldSet(value, recv, "ClientSecret") }
+type FfiT_Go_Auth_oIDCProviderConfigSetClientSecret_P1 = *pkg.OIDCProviderConfig
+func Go_Auth_oIDCProviderConfigSetClientSecretT(value string, recv *pkg.OIDCProviderConfig) *pkg.OIDCProviderConfig { recv.ClientSecret = value; return recv }
 
 type FfiT_Go_Auth_oIDCProviderConfigCodeResponseType_P0 = *pkg.OIDCProviderConfig
 func Go_Auth_oIDCProviderConfigCodeResponseTypeT(p0 *pkg.OIDCProviderConfig) bool { return p0.CodeResponseType }
 
-func Go_Auth_oIDCProviderConfigSetCodeResponseType(value any, recv any) any { return SkyFfiFieldSet(value, recv, "CodeResponseType") }
+type FfiT_Go_Auth_oIDCProviderConfigSetCodeResponseType_P1 = *pkg.OIDCProviderConfig
+func Go_Auth_oIDCProviderConfigSetCodeResponseTypeT(value bool, recv *pkg.OIDCProviderConfig) *pkg.OIDCProviderConfig { recv.CodeResponseType = value; return recv }
 
 type FfiT_Go_Auth_oIDCProviderConfigIDTokenResponseType_P0 = *pkg.OIDCProviderConfig
 func Go_Auth_oIDCProviderConfigIDTokenResponseTypeT(p0 *pkg.OIDCProviderConfig) bool { return p0.IDTokenResponseType }
 
-func Go_Auth_oIDCProviderConfigSetIDTokenResponseType(value any, recv any) any { return SkyFfiFieldSet(value, recv, "IDTokenResponseType") }
+type FfiT_Go_Auth_oIDCProviderConfigSetIDTokenResponseType_P1 = *pkg.OIDCProviderConfig
+func Go_Auth_oIDCProviderConfigSetIDTokenResponseTypeT(value bool, recv *pkg.OIDCProviderConfig) *pkg.OIDCProviderConfig { recv.IDTokenResponseType = value; return recv }
 
 func Go_Auth_newOIDCProviderConfig(_ any) any { return new(pkg.OIDCProviderConfig) }
 
@@ -1080,14 +1133,16 @@ func Go_Auth_newOIDCProviderConfigToUpdate(_ any) any { return new(pkg.OIDCProvi
 type FfiT_Go_Auth_phoneIdentifierPhoneNumber_P0 = *pkg.PhoneIdentifier
 func Go_Auth_phoneIdentifierPhoneNumberT(p0 *pkg.PhoneIdentifier) string { return p0.PhoneNumber }
 
-func Go_Auth_phoneIdentifierSetPhoneNumber(value any, recv any) any { return SkyFfiFieldSet(value, recv, "PhoneNumber") }
+type FfiT_Go_Auth_phoneIdentifierSetPhoneNumber_P1 = *pkg.PhoneIdentifier
+func Go_Auth_phoneIdentifierSetPhoneNumberT(value string, recv *pkg.PhoneIdentifier) *pkg.PhoneIdentifier { recv.PhoneNumber = value; return recv }
 
 func Go_Auth_newPhoneIdentifier(_ any) any { return new(pkg.PhoneIdentifier) }
 
 type FfiT_Go_Auth_phoneMultiFactorInfoPhoneNumber_P0 = *pkg.PhoneMultiFactorInfo
 func Go_Auth_phoneMultiFactorInfoPhoneNumberT(p0 *pkg.PhoneMultiFactorInfo) string { return p0.PhoneNumber }
 
-func Go_Auth_phoneMultiFactorInfoSetPhoneNumber(value any, recv any) any { return SkyFfiFieldSet(value, recv, "PhoneNumber") }
+type FfiT_Go_Auth_phoneMultiFactorInfoSetPhoneNumber_P1 = *pkg.PhoneMultiFactorInfo
+func Go_Auth_phoneMultiFactorInfoSetPhoneNumberT(value string, recv *pkg.PhoneMultiFactorInfo) *pkg.PhoneMultiFactorInfo { recv.PhoneNumber = value; return recv }
 
 func Go_Auth_newPhoneMultiFactorInfo(_ any) any { return new(pkg.PhoneMultiFactorInfo) }
 
@@ -1095,7 +1150,9 @@ type FfiT_Go_Auth_projectConfigMultiFactorConfig_P0 = *pkg.ProjectConfig
 type FfiT_Go_Auth_projectConfigMultiFactorConfig_R = *pkg.MultiFactorConfig
 func Go_Auth_projectConfigMultiFactorConfigT(p0 *pkg.ProjectConfig) *pkg.MultiFactorConfig { return p0.MultiFactorConfig }
 
-func Go_Auth_projectConfigSetMultiFactorConfig(value any, recv any) any { return SkyFfiFieldSet(value, recv, "MultiFactorConfig") }
+type FfiT_Go_Auth_projectConfigSetMultiFactorConfig_P0 = pkg.MultiFactorConfig
+type FfiT_Go_Auth_projectConfigSetMultiFactorConfig_P1 = *pkg.ProjectConfig
+func Go_Auth_projectConfigSetMultiFactorConfigT(value pkg.MultiFactorConfig, recv *pkg.ProjectConfig) *pkg.ProjectConfig { recv.MultiFactorConfig = func() *pkg.MultiFactorConfig { v := value; return &v }(); return recv }
 
 func Go_Auth_newProjectConfig(_ any) any { return new(pkg.ProjectConfig) }
 
@@ -1115,25 +1172,31 @@ type FfiT_Go_Auth_providerConfigState_P0 = *pkg.ProviderConfig
 type FfiT_Go_Auth_providerConfigState_R = pkg.MultiFactorConfigState
 func Go_Auth_providerConfigStateT(p0 *pkg.ProviderConfig) pkg.MultiFactorConfigState { return p0.State }
 
-func Go_Auth_providerConfigSetState(value any, recv any) any { return SkyFfiFieldSet(value, recv, "State") }
+type FfiT_Go_Auth_providerConfigSetState_P0 = pkg.MultiFactorConfigState
+type FfiT_Go_Auth_providerConfigSetState_P1 = *pkg.ProviderConfig
+func Go_Auth_providerConfigSetStateT(value pkg.MultiFactorConfigState, recv *pkg.ProviderConfig) *pkg.ProviderConfig { recv.State = value; return recv }
 
 type FfiT_Go_Auth_providerConfigTOTPProviderConfig_P0 = *pkg.ProviderConfig
 type FfiT_Go_Auth_providerConfigTOTPProviderConfig_R = *pkg.TOTPProviderConfig
 func Go_Auth_providerConfigTOTPProviderConfigT(p0 *pkg.ProviderConfig) *pkg.TOTPProviderConfig { return p0.TOTPProviderConfig }
 
-func Go_Auth_providerConfigSetTOTPProviderConfig(value any, recv any) any { return SkyFfiFieldSet(value, recv, "TOTPProviderConfig") }
+type FfiT_Go_Auth_providerConfigSetTOTPProviderConfig_P0 = pkg.TOTPProviderConfig
+type FfiT_Go_Auth_providerConfigSetTOTPProviderConfig_P1 = *pkg.ProviderConfig
+func Go_Auth_providerConfigSetTOTPProviderConfigT(value pkg.TOTPProviderConfig, recv *pkg.ProviderConfig) *pkg.ProviderConfig { recv.TOTPProviderConfig = func() *pkg.TOTPProviderConfig { v := value; return &v }(); return recv }
 
 func Go_Auth_newProviderConfig(_ any) any { return new(pkg.ProviderConfig) }
 
 type FfiT_Go_Auth_providerIdentifierProviderID_P0 = *pkg.ProviderIdentifier
 func Go_Auth_providerIdentifierProviderIDT(p0 *pkg.ProviderIdentifier) string { return p0.ProviderID }
 
-func Go_Auth_providerIdentifierSetProviderID(value any, recv any) any { return SkyFfiFieldSet(value, recv, "ProviderID") }
+type FfiT_Go_Auth_providerIdentifierSetProviderID_P1 = *pkg.ProviderIdentifier
+func Go_Auth_providerIdentifierSetProviderIDT(value string, recv *pkg.ProviderIdentifier) *pkg.ProviderIdentifier { recv.ProviderID = value; return recv }
 
 type FfiT_Go_Auth_providerIdentifierProviderUID_P0 = *pkg.ProviderIdentifier
 func Go_Auth_providerIdentifierProviderUIDT(p0 *pkg.ProviderIdentifier) string { return p0.ProviderUID }
 
-func Go_Auth_providerIdentifierSetProviderUID(value any, recv any) any { return SkyFfiFieldSet(value, recv, "ProviderUID") }
+type FfiT_Go_Auth_providerIdentifierSetProviderUID_P1 = *pkg.ProviderIdentifier
+func Go_Auth_providerIdentifierSetProviderUIDT(value string, recv *pkg.ProviderIdentifier) *pkg.ProviderIdentifier { recv.ProviderUID = value; return recv }
 
 func Go_Auth_newProviderIdentifier(_ any) any { return new(pkg.ProviderIdentifier) }
 
@@ -1141,99 +1204,121 @@ type FfiT_Go_Auth_queryUserInfoResponseUsers_P0 = *pkg.QueryUserInfoResponse
 type FfiT_Go_Auth_queryUserInfoResponseUsers_R = []*pkg.UserRecord
 func Go_Auth_queryUserInfoResponseUsersT(p0 *pkg.QueryUserInfoResponse) []*pkg.UserRecord { return p0.Users }
 
-func Go_Auth_queryUserInfoResponseSetUsers(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Users") }
+type FfiT_Go_Auth_queryUserInfoResponseSetUsers_P0 = []*pkg.UserRecord
+type FfiT_Go_Auth_queryUserInfoResponseSetUsers_P1 = *pkg.QueryUserInfoResponse
+func Go_Auth_queryUserInfoResponseSetUsersT(value []*pkg.UserRecord, recv *pkg.QueryUserInfoResponse) *pkg.QueryUserInfoResponse { recv.Users = value; return recv }
 
 type FfiT_Go_Auth_queryUserInfoResponseCount_P0 = *pkg.QueryUserInfoResponse
 func Go_Auth_queryUserInfoResponseCountT(p0 *pkg.QueryUserInfoResponse) int64 { return p0.Count }
 
-func Go_Auth_queryUserInfoResponseSetCount(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Count") }
+type FfiT_Go_Auth_queryUserInfoResponseSetCount_P1 = *pkg.QueryUserInfoResponse
+func Go_Auth_queryUserInfoResponseSetCountT(value int64, recv *pkg.QueryUserInfoResponse) *pkg.QueryUserInfoResponse { recv.Count = value; return recv }
 
 func Go_Auth_newQueryUserInfoResponse(_ any) any { return new(pkg.QueryUserInfoResponse) }
 
 type FfiT_Go_Auth_queryUsersRequestReturnUserInfo_P0 = *pkg.QueryUsersRequest
 func Go_Auth_queryUsersRequestReturnUserInfoT(p0 *pkg.QueryUsersRequest) *bool { return p0.ReturnUserInfo }
 
-func Go_Auth_queryUsersRequestSetReturnUserInfo(value any, recv any) any { return SkyFfiFieldSet(value, recv, "ReturnUserInfo") }
+type FfiT_Go_Auth_queryUsersRequestSetReturnUserInfo_P1 = *pkg.QueryUsersRequest
+func Go_Auth_queryUsersRequestSetReturnUserInfoT(value bool, recv *pkg.QueryUsersRequest) *pkg.QueryUsersRequest { recv.ReturnUserInfo = func() *bool { v := value; return &v }(); return recv }
 
 type FfiT_Go_Auth_queryUsersRequestLimit_P0 = *pkg.QueryUsersRequest
 func Go_Auth_queryUsersRequestLimitT(p0 *pkg.QueryUsersRequest) int64 { return p0.Limit }
 
-func Go_Auth_queryUsersRequestSetLimit(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Limit") }
+type FfiT_Go_Auth_queryUsersRequestSetLimit_P1 = *pkg.QueryUsersRequest
+func Go_Auth_queryUsersRequestSetLimitT(value int64, recv *pkg.QueryUsersRequest) *pkg.QueryUsersRequest { recv.Limit = value; return recv }
 
 type FfiT_Go_Auth_queryUsersRequestOffset_P0 = *pkg.QueryUsersRequest
 func Go_Auth_queryUsersRequestOffsetT(p0 *pkg.QueryUsersRequest) int64 { return p0.Offset }
 
-func Go_Auth_queryUsersRequestSetOffset(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Offset") }
+type FfiT_Go_Auth_queryUsersRequestSetOffset_P1 = *pkg.QueryUsersRequest
+func Go_Auth_queryUsersRequestSetOffsetT(value int64, recv *pkg.QueryUsersRequest) *pkg.QueryUsersRequest { recv.Offset = value; return recv }
 
 type FfiT_Go_Auth_queryUsersRequestSortBy_P0 = *pkg.QueryUsersRequest
 type FfiT_Go_Auth_queryUsersRequestSortBy_R = pkg.SortBy
 func Go_Auth_queryUsersRequestSortByT(p0 *pkg.QueryUsersRequest) pkg.SortBy { return p0.SortBy }
 
-func Go_Auth_queryUsersRequestSetSortBy(value any, recv any) any { return SkyFfiFieldSet(value, recv, "SortBy") }
+type FfiT_Go_Auth_queryUsersRequestSetSortBy_P0 = pkg.SortBy
+type FfiT_Go_Auth_queryUsersRequestSetSortBy_P1 = *pkg.QueryUsersRequest
+func Go_Auth_queryUsersRequestSetSortByT(value pkg.SortBy, recv *pkg.QueryUsersRequest) *pkg.QueryUsersRequest { recv.SortBy = value; return recv }
 
 type FfiT_Go_Auth_queryUsersRequestOrder_P0 = *pkg.QueryUsersRequest
 type FfiT_Go_Auth_queryUsersRequestOrder_R = pkg.Order
 func Go_Auth_queryUsersRequestOrderT(p0 *pkg.QueryUsersRequest) pkg.Order { return p0.Order }
 
-func Go_Auth_queryUsersRequestSetOrder(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Order") }
+type FfiT_Go_Auth_queryUsersRequestSetOrder_P0 = pkg.Order
+type FfiT_Go_Auth_queryUsersRequestSetOrder_P1 = *pkg.QueryUsersRequest
+func Go_Auth_queryUsersRequestSetOrderT(value pkg.Order, recv *pkg.QueryUsersRequest) *pkg.QueryUsersRequest { recv.Order = value; return recv }
 
 type FfiT_Go_Auth_queryUsersRequestTenantID_P0 = *pkg.QueryUsersRequest
 func Go_Auth_queryUsersRequestTenantIDT(p0 *pkg.QueryUsersRequest) string { return p0.TenantID }
 
-func Go_Auth_queryUsersRequestSetTenantID(value any, recv any) any { return SkyFfiFieldSet(value, recv, "TenantID") }
+type FfiT_Go_Auth_queryUsersRequestSetTenantID_P1 = *pkg.QueryUsersRequest
+func Go_Auth_queryUsersRequestSetTenantIDT(value string, recv *pkg.QueryUsersRequest) *pkg.QueryUsersRequest { recv.TenantID = value; return recv }
 
 type FfiT_Go_Auth_queryUsersRequestExpression_P0 = *pkg.QueryUsersRequest
 type FfiT_Go_Auth_queryUsersRequestExpression_R = []*pkg.Expression
 func Go_Auth_queryUsersRequestExpressionT(p0 *pkg.QueryUsersRequest) []*pkg.Expression { return p0.Expression }
 
-func Go_Auth_queryUsersRequestSetExpression(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Expression") }
+type FfiT_Go_Auth_queryUsersRequestSetExpression_P0 = []*pkg.Expression
+type FfiT_Go_Auth_queryUsersRequestSetExpression_P1 = *pkg.QueryUsersRequest
+func Go_Auth_queryUsersRequestSetExpressionT(value []*pkg.Expression, recv *pkg.QueryUsersRequest) *pkg.QueryUsersRequest { recv.Expression = value; return recv }
 
 func Go_Auth_newQueryUsersRequest(_ any) any { return new(pkg.QueryUsersRequest) }
 
 type FfiT_Go_Auth_sAMLProviderConfigID_P0 = *pkg.SAMLProviderConfig
 func Go_Auth_sAMLProviderConfigIDT(p0 *pkg.SAMLProviderConfig) string { return p0.ID }
 
-func Go_Auth_sAMLProviderConfigSetID(value any, recv any) any { return SkyFfiFieldSet(value, recv, "ID") }
+type FfiT_Go_Auth_sAMLProviderConfigSetID_P1 = *pkg.SAMLProviderConfig
+func Go_Auth_sAMLProviderConfigSetIDT(value string, recv *pkg.SAMLProviderConfig) *pkg.SAMLProviderConfig { recv.ID = value; return recv }
 
 type FfiT_Go_Auth_sAMLProviderConfigDisplayName_P0 = *pkg.SAMLProviderConfig
 func Go_Auth_sAMLProviderConfigDisplayNameT(p0 *pkg.SAMLProviderConfig) string { return p0.DisplayName }
 
-func Go_Auth_sAMLProviderConfigSetDisplayName(value any, recv any) any { return SkyFfiFieldSet(value, recv, "DisplayName") }
+type FfiT_Go_Auth_sAMLProviderConfigSetDisplayName_P1 = *pkg.SAMLProviderConfig
+func Go_Auth_sAMLProviderConfigSetDisplayNameT(value string, recv *pkg.SAMLProviderConfig) *pkg.SAMLProviderConfig { recv.DisplayName = value; return recv }
 
 type FfiT_Go_Auth_sAMLProviderConfigEnabled_P0 = *pkg.SAMLProviderConfig
 func Go_Auth_sAMLProviderConfigEnabledT(p0 *pkg.SAMLProviderConfig) bool { return p0.Enabled }
 
-func Go_Auth_sAMLProviderConfigSetEnabled(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Enabled") }
+type FfiT_Go_Auth_sAMLProviderConfigSetEnabled_P1 = *pkg.SAMLProviderConfig
+func Go_Auth_sAMLProviderConfigSetEnabledT(value bool, recv *pkg.SAMLProviderConfig) *pkg.SAMLProviderConfig { recv.Enabled = value; return recv }
 
 type FfiT_Go_Auth_sAMLProviderConfigIDPEntityID_P0 = *pkg.SAMLProviderConfig
 func Go_Auth_sAMLProviderConfigIDPEntityIDT(p0 *pkg.SAMLProviderConfig) string { return p0.IDPEntityID }
 
-func Go_Auth_sAMLProviderConfigSetIDPEntityID(value any, recv any) any { return SkyFfiFieldSet(value, recv, "IDPEntityID") }
+type FfiT_Go_Auth_sAMLProviderConfigSetIDPEntityID_P1 = *pkg.SAMLProviderConfig
+func Go_Auth_sAMLProviderConfigSetIDPEntityIDT(value string, recv *pkg.SAMLProviderConfig) *pkg.SAMLProviderConfig { recv.IDPEntityID = value; return recv }
 
 type FfiT_Go_Auth_sAMLProviderConfigSSOURL_P0 = *pkg.SAMLProviderConfig
 func Go_Auth_sAMLProviderConfigSSOURLT(p0 *pkg.SAMLProviderConfig) string { return p0.SSOURL }
 
-func Go_Auth_sAMLProviderConfigSetSSOURL(value any, recv any) any { return SkyFfiFieldSet(value, recv, "SSOURL") }
+type FfiT_Go_Auth_sAMLProviderConfigSetSSOURL_P1 = *pkg.SAMLProviderConfig
+func Go_Auth_sAMLProviderConfigSetSSOURLT(value string, recv *pkg.SAMLProviderConfig) *pkg.SAMLProviderConfig { recv.SSOURL = value; return recv }
 
 type FfiT_Go_Auth_sAMLProviderConfigRequestSigningEnabled_P0 = *pkg.SAMLProviderConfig
 func Go_Auth_sAMLProviderConfigRequestSigningEnabledT(p0 *pkg.SAMLProviderConfig) bool { return p0.RequestSigningEnabled }
 
-func Go_Auth_sAMLProviderConfigSetRequestSigningEnabled(value any, recv any) any { return SkyFfiFieldSet(value, recv, "RequestSigningEnabled") }
+type FfiT_Go_Auth_sAMLProviderConfigSetRequestSigningEnabled_P1 = *pkg.SAMLProviderConfig
+func Go_Auth_sAMLProviderConfigSetRequestSigningEnabledT(value bool, recv *pkg.SAMLProviderConfig) *pkg.SAMLProviderConfig { recv.RequestSigningEnabled = value; return recv }
 
 type FfiT_Go_Auth_sAMLProviderConfigX509Certificates_P0 = *pkg.SAMLProviderConfig
 func Go_Auth_sAMLProviderConfigX509CertificatesT(p0 *pkg.SAMLProviderConfig) []string { return p0.X509Certificates }
 
-func Go_Auth_sAMLProviderConfigSetX509Certificates(value any, recv any) any { return SkyFfiFieldSet(value, recv, "X509Certificates") }
+type FfiT_Go_Auth_sAMLProviderConfigSetX509Certificates_P1 = *pkg.SAMLProviderConfig
+func Go_Auth_sAMLProviderConfigSetX509CertificatesT(value []string, recv *pkg.SAMLProviderConfig) *pkg.SAMLProviderConfig { recv.X509Certificates = value; return recv }
 
 type FfiT_Go_Auth_sAMLProviderConfigRPEntityID_P0 = *pkg.SAMLProviderConfig
 func Go_Auth_sAMLProviderConfigRPEntityIDT(p0 *pkg.SAMLProviderConfig) string { return p0.RPEntityID }
 
-func Go_Auth_sAMLProviderConfigSetRPEntityID(value any, recv any) any { return SkyFfiFieldSet(value, recv, "RPEntityID") }
+type FfiT_Go_Auth_sAMLProviderConfigSetRPEntityID_P1 = *pkg.SAMLProviderConfig
+func Go_Auth_sAMLProviderConfigSetRPEntityIDT(value string, recv *pkg.SAMLProviderConfig) *pkg.SAMLProviderConfig { recv.RPEntityID = value; return recv }
 
 type FfiT_Go_Auth_sAMLProviderConfigCallbackURL_P0 = *pkg.SAMLProviderConfig
 func Go_Auth_sAMLProviderConfigCallbackURLT(p0 *pkg.SAMLProviderConfig) string { return p0.CallbackURL }
 
-func Go_Auth_sAMLProviderConfigSetCallbackURL(value any, recv any) any { return SkyFfiFieldSet(value, recv, "CallbackURL") }
+type FfiT_Go_Auth_sAMLProviderConfigSetCallbackURL_P1 = *pkg.SAMLProviderConfig
+func Go_Auth_sAMLProviderConfigSetCallbackURLT(value string, recv *pkg.SAMLProviderConfig) *pkg.SAMLProviderConfig { recv.CallbackURL = value; return recv }
 
 func Go_Auth_newSAMLProviderConfig(_ any) any { return new(pkg.SAMLProviderConfig) }
 
@@ -1423,40 +1508,48 @@ func Go_Auth_newTOTPMultiFactorInfo(_ any) any { return new(pkg.TOTPMultiFactorI
 type FfiT_Go_Auth_tOTPProviderConfigAdjacentIntervals_P0 = *pkg.TOTPProviderConfig
 func Go_Auth_tOTPProviderConfigAdjacentIntervalsT(p0 *pkg.TOTPProviderConfig) int { return p0.AdjacentIntervals }
 
-func Go_Auth_tOTPProviderConfigSetAdjacentIntervals(value any, recv any) any { return SkyFfiFieldSet(value, recv, "AdjacentIntervals") }
+type FfiT_Go_Auth_tOTPProviderConfigSetAdjacentIntervals_P1 = *pkg.TOTPProviderConfig
+func Go_Auth_tOTPProviderConfigSetAdjacentIntervalsT(value int, recv *pkg.TOTPProviderConfig) *pkg.TOTPProviderConfig { recv.AdjacentIntervals = value; return recv }
 
 func Go_Auth_newTOTPProviderConfig(_ any) any { return new(pkg.TOTPProviderConfig) }
 
 type FfiT_Go_Auth_tenantID_P0 = *pkg.Tenant
 func Go_Auth_tenantIDT(p0 *pkg.Tenant) string { return p0.ID }
 
-func Go_Auth_tenantSetID(value any, recv any) any { return SkyFfiFieldSet(value, recv, "ID") }
+type FfiT_Go_Auth_tenantSetID_P1 = *pkg.Tenant
+func Go_Auth_tenantSetIDT(value string, recv *pkg.Tenant) *pkg.Tenant { recv.ID = value; return recv }
 
 type FfiT_Go_Auth_tenantDisplayName_P0 = *pkg.Tenant
 func Go_Auth_tenantDisplayNameT(p0 *pkg.Tenant) string { return p0.DisplayName }
 
-func Go_Auth_tenantSetDisplayName(value any, recv any) any { return SkyFfiFieldSet(value, recv, "DisplayName") }
+type FfiT_Go_Auth_tenantSetDisplayName_P1 = *pkg.Tenant
+func Go_Auth_tenantSetDisplayNameT(value string, recv *pkg.Tenant) *pkg.Tenant { recv.DisplayName = value; return recv }
 
 type FfiT_Go_Auth_tenantAllowPasswordSignUp_P0 = *pkg.Tenant
 func Go_Auth_tenantAllowPasswordSignUpT(p0 *pkg.Tenant) bool { return p0.AllowPasswordSignUp }
 
-func Go_Auth_tenantSetAllowPasswordSignUp(value any, recv any) any { return SkyFfiFieldSet(value, recv, "AllowPasswordSignUp") }
+type FfiT_Go_Auth_tenantSetAllowPasswordSignUp_P1 = *pkg.Tenant
+func Go_Auth_tenantSetAllowPasswordSignUpT(value bool, recv *pkg.Tenant) *pkg.Tenant { recv.AllowPasswordSignUp = value; return recv }
 
 type FfiT_Go_Auth_tenantEnableEmailLinkSignIn_P0 = *pkg.Tenant
 func Go_Auth_tenantEnableEmailLinkSignInT(p0 *pkg.Tenant) bool { return p0.EnableEmailLinkSignIn }
 
-func Go_Auth_tenantSetEnableEmailLinkSignIn(value any, recv any) any { return SkyFfiFieldSet(value, recv, "EnableEmailLinkSignIn") }
+type FfiT_Go_Auth_tenantSetEnableEmailLinkSignIn_P1 = *pkg.Tenant
+func Go_Auth_tenantSetEnableEmailLinkSignInT(value bool, recv *pkg.Tenant) *pkg.Tenant { recv.EnableEmailLinkSignIn = value; return recv }
 
 type FfiT_Go_Auth_tenantEnableAnonymousUsers_P0 = *pkg.Tenant
 func Go_Auth_tenantEnableAnonymousUsersT(p0 *pkg.Tenant) bool { return p0.EnableAnonymousUsers }
 
-func Go_Auth_tenantSetEnableAnonymousUsers(value any, recv any) any { return SkyFfiFieldSet(value, recv, "EnableAnonymousUsers") }
+type FfiT_Go_Auth_tenantSetEnableAnonymousUsers_P1 = *pkg.Tenant
+func Go_Auth_tenantSetEnableAnonymousUsersT(value bool, recv *pkg.Tenant) *pkg.Tenant { recv.EnableAnonymousUsers = value; return recv }
 
 type FfiT_Go_Auth_tenantMultiFactorConfig_P0 = *pkg.Tenant
 type FfiT_Go_Auth_tenantMultiFactorConfig_R = *pkg.MultiFactorConfig
 func Go_Auth_tenantMultiFactorConfigT(p0 *pkg.Tenant) *pkg.MultiFactorConfig { return p0.MultiFactorConfig }
 
-func Go_Auth_tenantSetMultiFactorConfig(value any, recv any) any { return SkyFfiFieldSet(value, recv, "MultiFactorConfig") }
+type FfiT_Go_Auth_tenantSetMultiFactorConfig_P0 = pkg.MultiFactorConfig
+type FfiT_Go_Auth_tenantSetMultiFactorConfig_P1 = *pkg.Tenant
+func Go_Auth_tenantSetMultiFactorConfigT(value pkg.MultiFactorConfig, recv *pkg.Tenant) *pkg.Tenant { recv.MultiFactorConfig = func() *pkg.MultiFactorConfig { v := value; return &v }(); return recv }
 
 func Go_Auth_newTenant(_ any) any { return new(pkg.Tenant) }
 
@@ -2085,43 +2178,52 @@ func Go_Auth_newTenantToUpdate(_ any) any { return new(pkg.TenantToUpdate) }
 type FfiT_Go_Auth_tokenAuthTime_P0 = *pkg.Token
 func Go_Auth_tokenAuthTimeT(p0 *pkg.Token) int64 { return p0.AuthTime }
 
-func Go_Auth_tokenSetAuthTime(value any, recv any) any { return SkyFfiFieldSet(value, recv, "AuthTime") }
+type FfiT_Go_Auth_tokenSetAuthTime_P1 = *pkg.Token
+func Go_Auth_tokenSetAuthTimeT(value int64, recv *pkg.Token) *pkg.Token { recv.AuthTime = value; return recv }
 
 type FfiT_Go_Auth_tokenIssuer_P0 = *pkg.Token
 func Go_Auth_tokenIssuerT(p0 *pkg.Token) string { return p0.Issuer }
 
-func Go_Auth_tokenSetIssuer(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Issuer") }
+type FfiT_Go_Auth_tokenSetIssuer_P1 = *pkg.Token
+func Go_Auth_tokenSetIssuerT(value string, recv *pkg.Token) *pkg.Token { recv.Issuer = value; return recv }
 
 type FfiT_Go_Auth_tokenAudience_P0 = *pkg.Token
 func Go_Auth_tokenAudienceT(p0 *pkg.Token) string { return p0.Audience }
 
-func Go_Auth_tokenSetAudience(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Audience") }
+type FfiT_Go_Auth_tokenSetAudience_P1 = *pkg.Token
+func Go_Auth_tokenSetAudienceT(value string, recv *pkg.Token) *pkg.Token { recv.Audience = value; return recv }
 
 type FfiT_Go_Auth_tokenExpires_P0 = *pkg.Token
 func Go_Auth_tokenExpiresT(p0 *pkg.Token) int64 { return p0.Expires }
 
-func Go_Auth_tokenSetExpires(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Expires") }
+type FfiT_Go_Auth_tokenSetExpires_P1 = *pkg.Token
+func Go_Auth_tokenSetExpiresT(value int64, recv *pkg.Token) *pkg.Token { recv.Expires = value; return recv }
 
 type FfiT_Go_Auth_tokenIssuedAt_P0 = *pkg.Token
 func Go_Auth_tokenIssuedAtT(p0 *pkg.Token) int64 { return p0.IssuedAt }
 
-func Go_Auth_tokenSetIssuedAt(value any, recv any) any { return SkyFfiFieldSet(value, recv, "IssuedAt") }
+type FfiT_Go_Auth_tokenSetIssuedAt_P1 = *pkg.Token
+func Go_Auth_tokenSetIssuedAtT(value int64, recv *pkg.Token) *pkg.Token { recv.IssuedAt = value; return recv }
 
 type FfiT_Go_Auth_tokenSubject_P0 = *pkg.Token
 func Go_Auth_tokenSubjectT(p0 *pkg.Token) string { return p0.Subject }
 
-func Go_Auth_tokenSetSubject(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Subject") }
+type FfiT_Go_Auth_tokenSetSubject_P1 = *pkg.Token
+func Go_Auth_tokenSetSubjectT(value string, recv *pkg.Token) *pkg.Token { recv.Subject = value; return recv }
 
 type FfiT_Go_Auth_tokenUID_P0 = *pkg.Token
 func Go_Auth_tokenUIDT(p0 *pkg.Token) string { return p0.UID }
 
-func Go_Auth_tokenSetUID(value any, recv any) any { return SkyFfiFieldSet(value, recv, "UID") }
+type FfiT_Go_Auth_tokenSetUID_P1 = *pkg.Token
+func Go_Auth_tokenSetUIDT(value string, recv *pkg.Token) *pkg.Token { recv.UID = value; return recv }
 
 type FfiT_Go_Auth_tokenFirebase_P0 = *pkg.Token
 type FfiT_Go_Auth_tokenFirebase_R = pkg.FirebaseInfo
 func Go_Auth_tokenFirebaseT(p0 *pkg.Token) pkg.FirebaseInfo { return p0.Firebase }
 
-func Go_Auth_tokenSetFirebase(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Firebase") }
+type FfiT_Go_Auth_tokenSetFirebase_P0 = pkg.FirebaseInfo
+type FfiT_Go_Auth_tokenSetFirebase_P1 = *pkg.Token
+func Go_Auth_tokenSetFirebaseT(value pkg.FirebaseInfo, recv *pkg.Token) *pkg.Token { recv.Firebase = value; return recv }
 
 func Go_Auth_tokenClaims(p0 any) any { return SkyFfiFieldGet(p0, "Claims") }
 
@@ -2134,7 +2236,8 @@ func Go_Auth_uID(_ any) any { return pkg.UID }
 type FfiT_Go_Auth_uIDIdentifierUID_P0 = *pkg.UIDIdentifier
 func Go_Auth_uIDIdentifierUIDT(p0 *pkg.UIDIdentifier) string { return p0.UID }
 
-func Go_Auth_uIDIdentifierSetUID(value any, recv any) any { return SkyFfiFieldSet(value, recv, "UID") }
+type FfiT_Go_Auth_uIDIdentifierSetUID_P1 = *pkg.UIDIdentifier
+func Go_Auth_uIDIdentifierSetUIDT(value string, recv *pkg.UIDIdentifier) *pkg.UIDIdentifier { recv.UID = value; return recv }
 
 func Go_Auth_newUIDIdentifier(_ any) any { return new(pkg.UIDIdentifier) }
 
@@ -2156,50 +2259,60 @@ func Go_Auth_userImportHashConfig(p0 any) (out any) {
 type FfiT_Go_Auth_userImportResultSuccessCount_P0 = *pkg.UserImportResult
 func Go_Auth_userImportResultSuccessCountT(p0 *pkg.UserImportResult) int { return p0.SuccessCount }
 
-func Go_Auth_userImportResultSetSuccessCount(value any, recv any) any { return SkyFfiFieldSet(value, recv, "SuccessCount") }
+type FfiT_Go_Auth_userImportResultSetSuccessCount_P1 = *pkg.UserImportResult
+func Go_Auth_userImportResultSetSuccessCountT(value int, recv *pkg.UserImportResult) *pkg.UserImportResult { recv.SuccessCount = value; return recv }
 
 type FfiT_Go_Auth_userImportResultFailureCount_P0 = *pkg.UserImportResult
 func Go_Auth_userImportResultFailureCountT(p0 *pkg.UserImportResult) int { return p0.FailureCount }
 
-func Go_Auth_userImportResultSetFailureCount(value any, recv any) any { return SkyFfiFieldSet(value, recv, "FailureCount") }
+type FfiT_Go_Auth_userImportResultSetFailureCount_P1 = *pkg.UserImportResult
+func Go_Auth_userImportResultSetFailureCountT(value int, recv *pkg.UserImportResult) *pkg.UserImportResult { recv.FailureCount = value; return recv }
 
 type FfiT_Go_Auth_userImportResultErrors_P0 = *pkg.UserImportResult
 type FfiT_Go_Auth_userImportResultErrors_R = []*pkg.ErrorInfo
 func Go_Auth_userImportResultErrorsT(p0 *pkg.UserImportResult) []*pkg.ErrorInfo { return p0.Errors }
 
-func Go_Auth_userImportResultSetErrors(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Errors") }
+type FfiT_Go_Auth_userImportResultSetErrors_P0 = []*pkg.ErrorInfo
+type FfiT_Go_Auth_userImportResultSetErrors_P1 = *pkg.UserImportResult
+func Go_Auth_userImportResultSetErrorsT(value []*pkg.ErrorInfo, recv *pkg.UserImportResult) *pkg.UserImportResult { recv.Errors = value; return recv }
 
 func Go_Auth_newUserImportResult(_ any) any { return new(pkg.UserImportResult) }
 
 type FfiT_Go_Auth_userInfoDisplayName_P0 = *pkg.UserInfo
 func Go_Auth_userInfoDisplayNameT(p0 *pkg.UserInfo) string { return p0.DisplayName }
 
-func Go_Auth_userInfoSetDisplayName(value any, recv any) any { return SkyFfiFieldSet(value, recv, "DisplayName") }
+type FfiT_Go_Auth_userInfoSetDisplayName_P1 = *pkg.UserInfo
+func Go_Auth_userInfoSetDisplayNameT(value string, recv *pkg.UserInfo) *pkg.UserInfo { recv.DisplayName = value; return recv }
 
 type FfiT_Go_Auth_userInfoEmail_P0 = *pkg.UserInfo
 func Go_Auth_userInfoEmailT(p0 *pkg.UserInfo) string { return p0.Email }
 
-func Go_Auth_userInfoSetEmail(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Email") }
+type FfiT_Go_Auth_userInfoSetEmail_P1 = *pkg.UserInfo
+func Go_Auth_userInfoSetEmailT(value string, recv *pkg.UserInfo) *pkg.UserInfo { recv.Email = value; return recv }
 
 type FfiT_Go_Auth_userInfoPhoneNumber_P0 = *pkg.UserInfo
 func Go_Auth_userInfoPhoneNumberT(p0 *pkg.UserInfo) string { return p0.PhoneNumber }
 
-func Go_Auth_userInfoSetPhoneNumber(value any, recv any) any { return SkyFfiFieldSet(value, recv, "PhoneNumber") }
+type FfiT_Go_Auth_userInfoSetPhoneNumber_P1 = *pkg.UserInfo
+func Go_Auth_userInfoSetPhoneNumberT(value string, recv *pkg.UserInfo) *pkg.UserInfo { recv.PhoneNumber = value; return recv }
 
 type FfiT_Go_Auth_userInfoPhotoURL_P0 = *pkg.UserInfo
 func Go_Auth_userInfoPhotoURLT(p0 *pkg.UserInfo) string { return p0.PhotoURL }
 
-func Go_Auth_userInfoSetPhotoURL(value any, recv any) any { return SkyFfiFieldSet(value, recv, "PhotoURL") }
+type FfiT_Go_Auth_userInfoSetPhotoURL_P1 = *pkg.UserInfo
+func Go_Auth_userInfoSetPhotoURLT(value string, recv *pkg.UserInfo) *pkg.UserInfo { recv.PhotoURL = value; return recv }
 
 type FfiT_Go_Auth_userInfoProviderID_P0 = *pkg.UserInfo
 func Go_Auth_userInfoProviderIDT(p0 *pkg.UserInfo) string { return p0.ProviderID }
 
-func Go_Auth_userInfoSetProviderID(value any, recv any) any { return SkyFfiFieldSet(value, recv, "ProviderID") }
+type FfiT_Go_Auth_userInfoSetProviderID_P1 = *pkg.UserInfo
+func Go_Auth_userInfoSetProviderIDT(value string, recv *pkg.UserInfo) *pkg.UserInfo { recv.ProviderID = value; return recv }
 
 type FfiT_Go_Auth_userInfoUID_P0 = *pkg.UserInfo
 func Go_Auth_userInfoUIDT(p0 *pkg.UserInfo) string { return p0.UID }
 
-func Go_Auth_userInfoSetUID(value any, recv any) any { return SkyFfiFieldSet(value, recv, "UID") }
+type FfiT_Go_Auth_userInfoSetUID_P1 = *pkg.UserInfo
+func Go_Auth_userInfoSetUIDT(value string, recv *pkg.UserInfo) *pkg.UserInfo { recv.UID = value; return recv }
 
 func Go_Auth_newUserInfo(_ any) any { return new(pkg.UserInfo) }
 
@@ -2228,44 +2341,52 @@ func Go_Auth_newUserIterator(_ any) any { return new(pkg.UserIterator) }
 type FfiT_Go_Auth_userMetadataCreationTimestamp_P0 = *pkg.UserMetadata
 func Go_Auth_userMetadataCreationTimestampT(p0 *pkg.UserMetadata) int64 { return p0.CreationTimestamp }
 
-func Go_Auth_userMetadataSetCreationTimestamp(value any, recv any) any { return SkyFfiFieldSet(value, recv, "CreationTimestamp") }
+type FfiT_Go_Auth_userMetadataSetCreationTimestamp_P1 = *pkg.UserMetadata
+func Go_Auth_userMetadataSetCreationTimestampT(value int64, recv *pkg.UserMetadata) *pkg.UserMetadata { recv.CreationTimestamp = value; return recv }
 
 type FfiT_Go_Auth_userMetadataLastLogInTimestamp_P0 = *pkg.UserMetadata
 func Go_Auth_userMetadataLastLogInTimestampT(p0 *pkg.UserMetadata) int64 { return p0.LastLogInTimestamp }
 
-func Go_Auth_userMetadataSetLastLogInTimestamp(value any, recv any) any { return SkyFfiFieldSet(value, recv, "LastLogInTimestamp") }
+type FfiT_Go_Auth_userMetadataSetLastLogInTimestamp_P1 = *pkg.UserMetadata
+func Go_Auth_userMetadataSetLastLogInTimestampT(value int64, recv *pkg.UserMetadata) *pkg.UserMetadata { recv.LastLogInTimestamp = value; return recv }
 
 type FfiT_Go_Auth_userMetadataLastRefreshTimestamp_P0 = *pkg.UserMetadata
 func Go_Auth_userMetadataLastRefreshTimestampT(p0 *pkg.UserMetadata) int64 { return p0.LastRefreshTimestamp }
 
-func Go_Auth_userMetadataSetLastRefreshTimestamp(value any, recv any) any { return SkyFfiFieldSet(value, recv, "LastRefreshTimestamp") }
+type FfiT_Go_Auth_userMetadataSetLastRefreshTimestamp_P1 = *pkg.UserMetadata
+func Go_Auth_userMetadataSetLastRefreshTimestampT(value int64, recv *pkg.UserMetadata) *pkg.UserMetadata { recv.LastRefreshTimestamp = value; return recv }
 
 func Go_Auth_newUserMetadata(_ any) any { return new(pkg.UserMetadata) }
 
 type FfiT_Go_Auth_userProviderUID_P0 = *pkg.UserProvider
 func Go_Auth_userProviderUIDT(p0 *pkg.UserProvider) string { return p0.UID }
 
-func Go_Auth_userProviderSetUID(value any, recv any) any { return SkyFfiFieldSet(value, recv, "UID") }
+type FfiT_Go_Auth_userProviderSetUID_P1 = *pkg.UserProvider
+func Go_Auth_userProviderSetUIDT(value string, recv *pkg.UserProvider) *pkg.UserProvider { recv.UID = value; return recv }
 
 type FfiT_Go_Auth_userProviderProviderID_P0 = *pkg.UserProvider
 func Go_Auth_userProviderProviderIDT(p0 *pkg.UserProvider) string { return p0.ProviderID }
 
-func Go_Auth_userProviderSetProviderID(value any, recv any) any { return SkyFfiFieldSet(value, recv, "ProviderID") }
+type FfiT_Go_Auth_userProviderSetProviderID_P1 = *pkg.UserProvider
+func Go_Auth_userProviderSetProviderIDT(value string, recv *pkg.UserProvider) *pkg.UserProvider { recv.ProviderID = value; return recv }
 
 type FfiT_Go_Auth_userProviderEmail_P0 = *pkg.UserProvider
 func Go_Auth_userProviderEmailT(p0 *pkg.UserProvider) string { return p0.Email }
 
-func Go_Auth_userProviderSetEmail(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Email") }
+type FfiT_Go_Auth_userProviderSetEmail_P1 = *pkg.UserProvider
+func Go_Auth_userProviderSetEmailT(value string, recv *pkg.UserProvider) *pkg.UserProvider { recv.Email = value; return recv }
 
 type FfiT_Go_Auth_userProviderDisplayName_P0 = *pkg.UserProvider
 func Go_Auth_userProviderDisplayNameT(p0 *pkg.UserProvider) string { return p0.DisplayName }
 
-func Go_Auth_userProviderSetDisplayName(value any, recv any) any { return SkyFfiFieldSet(value, recv, "DisplayName") }
+type FfiT_Go_Auth_userProviderSetDisplayName_P1 = *pkg.UserProvider
+func Go_Auth_userProviderSetDisplayNameT(value string, recv *pkg.UserProvider) *pkg.UserProvider { recv.DisplayName = value; return recv }
 
 type FfiT_Go_Auth_userProviderPhotoURL_P0 = *pkg.UserProvider
 func Go_Auth_userProviderPhotoURLT(p0 *pkg.UserProvider) string { return p0.PhotoURL }
 
-func Go_Auth_userProviderSetPhotoURL(value any, recv any) any { return SkyFfiFieldSet(value, recv, "PhotoURL") }
+type FfiT_Go_Auth_userProviderSetPhotoURL_P1 = *pkg.UserProvider
+func Go_Auth_userProviderSetPhotoURLT(value string, recv *pkg.UserProvider) *pkg.UserProvider { recv.PhotoURL = value; return recv }
 
 func Go_Auth_newUserProvider(_ any) any { return new(pkg.UserProvider) }
 
@@ -2273,7 +2394,9 @@ type FfiT_Go_Auth_userRecordUserInfo_P0 = *pkg.UserRecord
 type FfiT_Go_Auth_userRecordUserInfo_R = *pkg.UserInfo
 func Go_Auth_userRecordUserInfoT(p0 *pkg.UserRecord) *pkg.UserInfo { return p0.UserInfo }
 
-func Go_Auth_userRecordSetUserInfo(value any, recv any) any { return SkyFfiFieldSet(value, recv, "UserInfo") }
+type FfiT_Go_Auth_userRecordSetUserInfo_P0 = pkg.UserInfo
+type FfiT_Go_Auth_userRecordSetUserInfo_P1 = *pkg.UserRecord
+func Go_Auth_userRecordSetUserInfoT(value pkg.UserInfo, recv *pkg.UserRecord) *pkg.UserRecord { recv.UserInfo = func() *pkg.UserInfo { v := value; return &v }(); return recv }
 
 func Go_Auth_userRecordCustomClaims(p0 any) any { return SkyFfiFieldGet(p0, "CustomClaims") }
 
@@ -2282,40 +2405,50 @@ func Go_Auth_userRecordSetCustomClaims(value any, recv any) any { return SkyFfiF
 type FfiT_Go_Auth_userRecordDisabled_P0 = *pkg.UserRecord
 func Go_Auth_userRecordDisabledT(p0 *pkg.UserRecord) bool { return p0.Disabled }
 
-func Go_Auth_userRecordSetDisabled(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Disabled") }
+type FfiT_Go_Auth_userRecordSetDisabled_P1 = *pkg.UserRecord
+func Go_Auth_userRecordSetDisabledT(value bool, recv *pkg.UserRecord) *pkg.UserRecord { recv.Disabled = value; return recv }
 
 type FfiT_Go_Auth_userRecordEmailVerified_P0 = *pkg.UserRecord
 func Go_Auth_userRecordEmailVerifiedT(p0 *pkg.UserRecord) bool { return p0.EmailVerified }
 
-func Go_Auth_userRecordSetEmailVerified(value any, recv any) any { return SkyFfiFieldSet(value, recv, "EmailVerified") }
+type FfiT_Go_Auth_userRecordSetEmailVerified_P1 = *pkg.UserRecord
+func Go_Auth_userRecordSetEmailVerifiedT(value bool, recv *pkg.UserRecord) *pkg.UserRecord { recv.EmailVerified = value; return recv }
 
 type FfiT_Go_Auth_userRecordProviderUserInfo_P0 = *pkg.UserRecord
 type FfiT_Go_Auth_userRecordProviderUserInfo_R = []*pkg.UserInfo
 func Go_Auth_userRecordProviderUserInfoT(p0 *pkg.UserRecord) []*pkg.UserInfo { return p0.ProviderUserInfo }
 
-func Go_Auth_userRecordSetProviderUserInfo(value any, recv any) any { return SkyFfiFieldSet(value, recv, "ProviderUserInfo") }
+type FfiT_Go_Auth_userRecordSetProviderUserInfo_P0 = []*pkg.UserInfo
+type FfiT_Go_Auth_userRecordSetProviderUserInfo_P1 = *pkg.UserRecord
+func Go_Auth_userRecordSetProviderUserInfoT(value []*pkg.UserInfo, recv *pkg.UserRecord) *pkg.UserRecord { recv.ProviderUserInfo = value; return recv }
 
 type FfiT_Go_Auth_userRecordTokensValidAfterMillis_P0 = *pkg.UserRecord
 func Go_Auth_userRecordTokensValidAfterMillisT(p0 *pkg.UserRecord) int64 { return p0.TokensValidAfterMillis }
 
-func Go_Auth_userRecordSetTokensValidAfterMillis(value any, recv any) any { return SkyFfiFieldSet(value, recv, "TokensValidAfterMillis") }
+type FfiT_Go_Auth_userRecordSetTokensValidAfterMillis_P1 = *pkg.UserRecord
+func Go_Auth_userRecordSetTokensValidAfterMillisT(value int64, recv *pkg.UserRecord) *pkg.UserRecord { recv.TokensValidAfterMillis = value; return recv }
 
 type FfiT_Go_Auth_userRecordUserMetadata_P0 = *pkg.UserRecord
 type FfiT_Go_Auth_userRecordUserMetadata_R = *pkg.UserMetadata
 func Go_Auth_userRecordUserMetadataT(p0 *pkg.UserRecord) *pkg.UserMetadata { return p0.UserMetadata }
 
-func Go_Auth_userRecordSetUserMetadata(value any, recv any) any { return SkyFfiFieldSet(value, recv, "UserMetadata") }
+type FfiT_Go_Auth_userRecordSetUserMetadata_P0 = pkg.UserMetadata
+type FfiT_Go_Auth_userRecordSetUserMetadata_P1 = *pkg.UserRecord
+func Go_Auth_userRecordSetUserMetadataT(value pkg.UserMetadata, recv *pkg.UserRecord) *pkg.UserRecord { recv.UserMetadata = func() *pkg.UserMetadata { v := value; return &v }(); return recv }
 
 type FfiT_Go_Auth_userRecordTenantID_P0 = *pkg.UserRecord
 func Go_Auth_userRecordTenantIDT(p0 *pkg.UserRecord) string { return p0.TenantID }
 
-func Go_Auth_userRecordSetTenantID(value any, recv any) any { return SkyFfiFieldSet(value, recv, "TenantID") }
+type FfiT_Go_Auth_userRecordSetTenantID_P1 = *pkg.UserRecord
+func Go_Auth_userRecordSetTenantIDT(value string, recv *pkg.UserRecord) *pkg.UserRecord { recv.TenantID = value; return recv }
 
 type FfiT_Go_Auth_userRecordMultiFactor_P0 = *pkg.UserRecord
 type FfiT_Go_Auth_userRecordMultiFactor_R = *pkg.MultiFactorSettings
 func Go_Auth_userRecordMultiFactorT(p0 *pkg.UserRecord) *pkg.MultiFactorSettings { return p0.MultiFactor }
 
-func Go_Auth_userRecordSetMultiFactor(value any, recv any) any { return SkyFfiFieldSet(value, recv, "MultiFactor") }
+type FfiT_Go_Auth_userRecordSetMultiFactor_P0 = pkg.MultiFactorSettings
+type FfiT_Go_Auth_userRecordSetMultiFactor_P1 = *pkg.UserRecord
+func Go_Auth_userRecordSetMultiFactorT(value pkg.MultiFactorSettings, recv *pkg.UserRecord) *pkg.UserRecord { recv.MultiFactor = func() *pkg.MultiFactorSettings { v := value; return &v }(); return recv }
 
 func Go_Auth_newUserRecord(_ any) any { return new(pkg.UserRecord) }
 

@@ -362,12 +362,15 @@ type FfiT_Go_Uuid_nullUUIDUUID_P0 = *pkg.NullUUID
 type FfiT_Go_Uuid_nullUUIDUUID_R = pkg.UUID
 func Go_Uuid_nullUUIDUUIDT(p0 *pkg.NullUUID) pkg.UUID { return p0.UUID }
 
-func Go_Uuid_nullUUIDSetUUID(value any, recv any) any { return SkyFfiFieldSet(value, recv, "UUID") }
+type FfiT_Go_Uuid_nullUUIDSetUUID_P0 = pkg.UUID
+type FfiT_Go_Uuid_nullUUIDSetUUID_P1 = *pkg.NullUUID
+func Go_Uuid_nullUUIDSetUUIDT(value pkg.UUID, recv *pkg.NullUUID) *pkg.NullUUID { recv.UUID = value; return recv }
 
 type FfiT_Go_Uuid_nullUUIDValid_P0 = *pkg.NullUUID
 func Go_Uuid_nullUUIDValidT(p0 *pkg.NullUUID) bool { return p0.Valid }
 
-func Go_Uuid_nullUUIDSetValid(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Valid") }
+type FfiT_Go_Uuid_nullUUIDSetValid_P1 = *pkg.NullUUID
+func Go_Uuid_nullUUIDSetValidT(value bool, recv *pkg.NullUUID) *pkg.NullUUID { recv.Valid = value; return recv }
 
 func Go_Uuid_newNullUUID(_ any) any { return new(pkg.NullUUID) }
 

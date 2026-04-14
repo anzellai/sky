@@ -754,13 +754,44 @@ emitTypedWrapper kernelName aliases fn =
                 else anyDecl
 
         _ | _fnIsFieldSet fn ->
-            -- Setter typed-emission deferred — Sky's "pointer fields
-            -- auto-wrapped, pass plain values" convention (CLAUDE.md
-            -- §FFI Type Mapping) means setters need richer auto-deref
-            -- logic than a simple `recv.Field = value`. The any/any
-            -- SkyFfiFieldSet path handles it via reflect; keeping it.
-            "func " ++ wrapperName ++ "(value any, recv any) any { return SkyFfiFieldSet(value, recv, " ++
-            quote (_fnMethodName fn) ++ ") }\n"
+            -- P7: typed setter with Sky's auto-wrap-pointer convention.
+            -- For `*X` value types, the typed signature accepts `X`
+            -- and assigns via `&v` so callers pass plain values per
+            -- CLAUDE.md §FFI. For non-pointer types, direct assign.
+            -- Falls back to the SkyFfiFieldSet reflect helper when
+            -- types aren't expressible.
+            let fieldName = _fnMethodName fn
+                knownAliasesSet = Set.fromList (Map.elems aliases)
+                rawValueType = case rewrittenParams of
+                    ((_, t):_) -> t
+                    _          -> ""
+                receiverType = case drop 1 rewrittenParams of
+                    ((_, t):_) -> t
+                    _          -> ""
+                (skySideValue, assignExpr) = case rawValueType of
+                    ('*':inner) -> (inner, "func() *" ++ inner ++ " { v := value; return &v }()")
+                    _           -> (rawValueType, "value")
+                paramsOk = isSimpleTypedType rawValueType
+                        && allPackagesKnown knownAliasesSet rawValueType
+                        && isSimpleTypedType receiverType
+                        && allPackagesKnown knownAliasesSet receiverType
+                        && not (null rawValueType)
+                        && not (null receiverType)
+                typedAliasSet =
+                    [ "type FfiT_" ++ wrapperName ++ "_P0 = " ++ skySideValue
+                    | needsAlias skySideValue ] ++
+                    [ "type FfiT_" ++ wrapperName ++ "_P1 = " ++ receiverType
+                    | needsAlias receiverType ]
+                typedDeclSet =
+                    "func " ++ wrapperName ++ "T(value " ++ skySideValue ++
+                    ", recv " ++ receiverType ++ ") " ++ receiverType ++
+                    " { recv." ++ fieldName ++ " = " ++ assignExpr ++ "; return recv }\n"
+                anyDeclSet =
+                    "func " ++ wrapperName ++ "(value any, recv any) any { return SkyFfiFieldSet(value, recv, " ++
+                    quote fieldName ++ ") }\n"
+            in if paramsOk
+                then unlines typedAliasSet ++ typedDeclSet
+                else anyDeclSet
 
         _ | _fnIsPkgVar fn ->
             case (_fnRecvType fn, _fnMethodName fn) of

@@ -42,12 +42,14 @@ func Go_Iterator_pageInfoRemainingT(p0 *pkg.PageInfo) (out SkyResult[string, int
 type FfiT_Go_Iterator_pageInfoToken_P0 = *pkg.PageInfo
 func Go_Iterator_pageInfoTokenT(p0 *pkg.PageInfo) string { return p0.Token }
 
-func Go_Iterator_pageInfoSetToken(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Token") }
+type FfiT_Go_Iterator_pageInfoSetToken_P1 = *pkg.PageInfo
+func Go_Iterator_pageInfoSetTokenT(value string, recv *pkg.PageInfo) *pkg.PageInfo { recv.Token = value; return recv }
 
 type FfiT_Go_Iterator_pageInfoMaxSize_P0 = *pkg.PageInfo
 func Go_Iterator_pageInfoMaxSizeT(p0 *pkg.PageInfo) int { return p0.MaxSize }
 
-func Go_Iterator_pageInfoSetMaxSize(value any, recv any) any { return SkyFfiFieldSet(value, recv, "MaxSize") }
+type FfiT_Go_Iterator_pageInfoSetMaxSize_P1 = *pkg.PageInfo
+func Go_Iterator_pageInfoSetMaxSizeT(value int, recv *pkg.PageInfo) *pkg.PageInfo { recv.MaxSize = value; return recv }
 
 type FfiT_Go_Iterator_pageablePageInfo_P0 = pkg.Pageable
 type FfiT_Go_Iterator_pageablePageInfo_R = *pkg.PageInfo
