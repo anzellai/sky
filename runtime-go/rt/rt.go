@@ -1183,6 +1183,76 @@ func anyMaybeView(maybe any) (int, any) {
 	return -1, nil
 }
 
+
+// ── Maybe applicative combinators (parallel to Result) ─────────────
+// Short-circuits on the first Nothing. All accept any SkyMaybe[X]
+// shape via anyMaybeView, so typed-FFI Maybe producers flow in
+// without an explicit MaybeCoerce wrap.
+
+func Maybe_map2(fn, a, b any) any {
+	ta, oa := anyMaybeView(a); if ta < 0 || ta != 0 { return Nothing[any]() }
+	tb, ob := anyMaybeView(b); if tb < 0 || tb != 0 { return Nothing[any]() }
+	return Just[any](apply2(fn, oa, ob))
+}
+
+func Maybe_map3(fn, a, b, c any) any {
+	ta, oa := anyMaybeView(a); if ta < 0 || ta != 0 { return Nothing[any]() }
+	tb, ob := anyMaybeView(b); if tb < 0 || tb != 0 { return Nothing[any]() }
+	tc, oc := anyMaybeView(c); if tc < 0 || tc != 0 { return Nothing[any]() }
+	return Just[any](apply3(fn, oa, ob, oc))
+}
+
+func Maybe_map4(fn, a, b, c, d any) any {
+	ta, oa := anyMaybeView(a); if ta < 0 || ta != 0 { return Nothing[any]() }
+	tb, ob := anyMaybeView(b); if tb < 0 || tb != 0 { return Nothing[any]() }
+	tc, oc := anyMaybeView(c); if tc < 0 || tc != 0 { return Nothing[any]() }
+	td, od := anyMaybeView(d); if td < 0 || td != 0 { return Nothing[any]() }
+	return Just[any](apply4(fn, oa, ob, oc, od))
+}
+
+func Maybe_map5(fn, a, b, c, d, e any) any {
+	ta, oa := anyMaybeView(a); if ta < 0 || ta != 0 { return Nothing[any]() }
+	tb, ob := anyMaybeView(b); if tb < 0 || tb != 0 { return Nothing[any]() }
+	tc, oc := anyMaybeView(c); if tc < 0 || tc != 0 { return Nothing[any]() }
+	td, od := anyMaybeView(d); if td < 0 || td != 0 { return Nothing[any]() }
+	te, oe := anyMaybeView(e); if te < 0 || te != 0 { return Nothing[any]() }
+	return Just[any](apply5(fn, oa, ob, oc, od, oe))
+}
+
+// Maybe.andMap : Maybe (a -> b) -> Maybe a -> Maybe b
+func Maybe_andMap(fm, ma any) any {
+	tfm, ofn := anyMaybeView(fm); if tfm < 0 || tfm != 0 { return Nothing[any]() }
+	tma, oa  := anyMaybeView(ma); if tma < 0 || tma != 0 { return Nothing[any]() }
+	return Just[any](pipelineApply(ofn, oa))
+}
+
+// Maybe.combine : List (Maybe a) -> Maybe (List a) — first Nothing
+// short-circuits (Just only when every element is Just).
+func Maybe_combine(maybes any) any {
+	items := asList(maybes)
+	out := make([]any, 0, len(items))
+	for _, m := range items {
+		tag, just := anyMaybeView(m)
+		if tag < 0 || tag != 0 { return Nothing[any]() }
+		out = append(out, just)
+	}
+	return Just[any](out)
+}
+
+// Maybe.traverse : (a -> Maybe b) -> List a -> Maybe (List b)
+func Maybe_traverse(fn, items any) any {
+	xs := asList(items)
+	out := make([]any, 0, len(xs))
+	f, ok := fn.(func(any) any)
+	if !ok { return Nothing[any]() }
+	for _, x := range xs {
+		tag, just := anyMaybeView(f(x))
+		if tag < 0 || tag != 0 { return Nothing[any]() }
+		out = append(out, just)
+	}
+	return Just[any](out)
+}
+
 // ═══════════════════════════════════════════════════════════
 // Record field access (reflect-based for any-typed params)
 // ═══════════════════════════════════════════════════════════

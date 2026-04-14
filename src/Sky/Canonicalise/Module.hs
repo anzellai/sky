@@ -671,7 +671,8 @@ staticKernelFunctions = Map.fromList
     , ("Dict",    ["empty", "insert", "get", "remove", "member", "keys", "values",
                     "toList", "fromList", "map", "foldl", "union"])
     , ("Set",     ["empty", "insert", "remove", "member", "union", "diff", "intersect", "fromList"])
-    , ("Maybe",   ["withDefault", "map", "andThen"])
+    , ("Maybe",   ["withDefault", "map", "andThen", "map2", "map3", "map4", "map5",
+                    "andMap", "combine", "traverse"])
     , ("Result",  ["withDefault", "map", "andThen", "mapError", "map2", "map3", "map4", "map5",
                     "andMap", "combine", "traverse"])
     , ("Task",    ["succeed", "fail", "map", "andThen", "perform", "sequence", "parallel",

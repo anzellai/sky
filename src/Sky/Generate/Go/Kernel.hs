@@ -163,6 +163,13 @@ registry = Map.fromList
     , (("Maybe", "withDefault"),  KernelInfo "rt.Maybe_withDefault" 2 False)
     , (("Maybe", "map"),          KernelInfo "rt.Maybe_map" 2 False)
     , (("Maybe", "andThen"),      KernelInfo "rt.Maybe_andThen" 2 False)
+    , (("Maybe", "map2"),         KernelInfo "rt.Maybe_map2" 3 False)
+    , (("Maybe", "map3"),         KernelInfo "rt.Maybe_map3" 4 False)
+    , (("Maybe", "map4"),         KernelInfo "rt.Maybe_map4" 5 False)
+    , (("Maybe", "map5"),         KernelInfo "rt.Maybe_map5" 6 False)
+    , (("Maybe", "andMap"),       KernelInfo "rt.Maybe_andMap" 2 False)
+    , (("Maybe", "combine"),      KernelInfo "rt.Maybe_combine" 1 False)
+    , (("Maybe", "traverse"),     KernelInfo "rt.Maybe_traverse" 2 False)
 
     -- ═══════════════════════════════════════════════════════
     -- Result
