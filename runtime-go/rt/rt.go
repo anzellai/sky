@@ -1576,6 +1576,17 @@ func Time_timeString(ms any) any {
 	return Ok[any, any](time.Unix(int64(AsInt(ms))/1000, 0).Format("15:04:05"))
 }
 
+// P8/Time typed companions — direct int ms, no any boxing.
+func Time_nowT() SkyResult[string, int] {
+	return Ok[string, int](int(time.Now().UnixMilli()))
+}
+func Time_timeStringT(ms int) SkyResult[string, string] {
+	return Ok[string, string](time.Unix(int64(ms)/1000, 0).Format("15:04:05"))
+}
+func Time_unixMillisT() SkyResult[string, int] {
+	return Ok[string, int](int(time.Now().UnixMilli()))
+}
+
 // Sha256, Hex, String.toBytes wrappers matching the Sky.Core namespace split.
 // sum256: (List Int of UTF-8 bytes) -> Result String (List Int of hash bytes)
 func Sha256_sum256(bytes any) any {
