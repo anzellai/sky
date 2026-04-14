@@ -2084,12 +2084,24 @@ func firstRune(c any) rune {
 	return 0
 }
 
+// ── Char kernel: any/any path kept for legacy callers, typed T path
+// added in P8 so call sites with a statically known rune can call
+// directly without the firstRune boxing dance.
+
 func Char_isUpper(c any) any { return unicode.IsUpper(firstRune(c)) }
 func Char_isLower(c any) any { return unicode.IsLower(firstRune(c)) }
 func Char_isDigit(c any) any { return unicode.IsDigit(firstRune(c)) }
 func Char_isAlpha(c any) any { return unicode.IsLetter(firstRune(c)) }
 func Char_toUpper(c any) any { return string(unicode.ToUpper(firstRune(c))) }
 func Char_toLower(c any) any { return string(unicode.ToLower(firstRune(c))) }
+
+// Typed companions — direct rune→bool/string, no any boxing.
+func Char_isUpperT(c rune) bool   { return unicode.IsUpper(c) }
+func Char_isLowerT(c rune) bool   { return unicode.IsLower(c) }
+func Char_isDigitT(c rune) bool   { return unicode.IsDigit(c) }
+func Char_isAlphaT(c rune) bool   { return unicode.IsLetter(c) }
+func Char_toUpperT(c rune) string { return string(unicode.ToUpper(c)) }
+func Char_toLowerT(c rune) string { return string(unicode.ToLower(c)) }
 
 // ═══════════════════════════════════════════════════════════
 // Math (extended)
