@@ -747,13 +747,30 @@ emitTypedWrapper kernelName aliases fn =
             unlines (reflectCall ("reflect.ValueOf(pkg." ++ goFnName ++ ")"))
 
         ReflectGeneric ->
-            -- P9: top-level generic functions with an `any` type-param
-            -- constraint are safely callable via `reflect.ValueOf(pkg.F[any])`.
-            -- SkyFfiReflectCall handles argument boxing, panic recovery, and
-            -- effect-aware return shape. If the generic has a narrower
-            -- constraint the runtime call raises a recovered panic which
-            -- SkyFfiRecover maps to Err — strictly better than always-Err.
-            unlines (reflectCall ("reflect.ValueOf(pkg." ++ goFnName ++ "[any])"))
+            -- P9 originally emitted `reflect.ValueOf(pkg.F[any])` here.
+            -- That works for generics whose constraint is `any`, but
+            -- compiles to an invalid type instantiation when the
+            -- constraint is narrower (e.g. `~string` on stripe's
+            -- generic `String[T ~string]`, or `string | FieldPath` on
+            -- firestore's `FieldOf`). Because the FFI inspector does
+            -- not surface constraint info, we cannot distinguish the
+            -- cases at binding-generation time — so we fall back to
+            -- the always-Err stub, which is safe for every generic.
+            -- Narrow-constraint generics remain reachable via the
+            -- method and top-level reflection paths when they are
+            -- invoked with concrete types.
+            let paramSinks = concat
+                    [ "\t_ = p" ++ show i ++ "\n" | i <- [0 .. nArgs - 1] ]
+            in unlines
+                [ "// [" ++ _fnEffect fn ++ "] " ++ kernelName ++ "." ++ skyName ++
+                  " — generic with unknown constraint; stubbed as Err"
+                , "func " ++ wrapperName ++ "(" ++ paramList ++ ") (out any) {"
+                , paramSinks ++
+                  "\tout = Err[any, any](" ++ quote ("generic function " ++ goFnName ++
+                  " requires hand-written instantiation") ++ ")"
+                , "\treturn"
+                , "}"
+                ]
 
         ReflectMethod methodName ->
             unlines
