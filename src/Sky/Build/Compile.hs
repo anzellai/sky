@@ -458,6 +458,10 @@ continueCompile config _entryPath outDir moduleOrder srcHash = do
                 -- Pull in Go deps declared in sky.toml so generated ffi/*_bindings.go
                 -- can resolve imports.
                 seedGoDependencies outDir (Toml._goDeps config)
+                -- P7: strip unreferenced FFI wrappers from sky-out/rt/*_bindings.go.
+                -- This eliminates tens of thousands of any/any wrapper bodies
+                -- the user code never calls (stripe alone contributes 74k).
+                dceFfiWrappers outDir
                 -- Write cache hash to enable incremental rebuild skip
                 let cacheDir = ".skycache"
                 createDirectoryIfMissing True cacheDir
@@ -563,6 +567,312 @@ seedGoDependencies outDir deps = do
             case ec of
                 System.Exit.ExitSuccess -> return ()
                 _ -> putStrLn $ "      go get " ++ target ++ " FAILED: " ++ out
+
+
+-- | P7 FFI DCE: strip unused `func Go_...` wrapper bodies from the
+-- copied-into-sky-out bindings files. Walks `sky-out/main.go` plus
+-- every other Go file outside `sky-out/rt/` for `rt.Go_<name>(` call
+-- sites, collects the reachable wrapper names (including typed `*T`
+-- companions referenced through the compile's call-site migration),
+-- then rewrites each `sky-out/rt/*_bindings.go` keeping only those
+-- wrapper bodies. Imports + header comments are preserved as-is —
+-- Go's compiler is happy to see unused imports as long as some
+-- blank `_` import retains them, which every bindings file already
+-- does via the `// Pin fmt against ...` footer.
+--
+-- Stripe alone goes from ~74k wrapper bodies to a few dozen; the
+-- `grep 'func [A-Z][a-zA-Z0-9_]*(p0 any' examples/*/ffi/*.go` gate
+-- is exercised against the ffi/ source files (not sky-out/rt), so
+-- this DCE also preserves those files' size.
+dceFfiWrappers :: FilePath -> IO ()
+dceFfiWrappers outDir = do
+    let rtDir = outDir </> "rt"
+    rtExists <- doesDirectoryExist rtDir
+    if not rtExists then return () else do
+        -- Collect caller-side referenced names.
+        nonRtFiles <- collectNonRtGoFiles outDir
+        referenced <- foldr1Concat nonRtFiles collectRtReferences Set.empty
+        putStrLn $ "   [DCE] caller-side rt.* identifiers: " ++ show (Set.size referenced)
+        -- Binding files to prune are those starting with a Go-package slug.
+        -- We DO NOT touch hand-maintained rt.go / live.go / db_auth.go /
+        -- stdlib_extra.go / stdlib_web.go / live_store.go — those are the
+        -- runtime, not FFI generator output.
+        rtEntries <- listDirectory rtDir
+        let bindingFiles =
+                [ rtDir </> e
+                | e <- rtEntries
+                , takeExtension e == ".go"
+                , "_bindings.go" `isSuffixOfPlain` e
+                ]
+        mapM_ (pruneBindingFile referenced) bindingFiles
+  where
+    isSuffixOfPlain suf s =
+        length s >= length suf && drop (length s - length suf) s == suf
+
+    foldr1Concat :: [FilePath]
+                 -> (FilePath -> IO (Set.Set String))
+                 -> Set.Set String -> IO (Set.Set String)
+    foldr1Concat files f acc0 = do
+        sets <- mapM f files
+        return (foldr Set.union acc0 sets)
+
+
+-- | List every `*.go` file under `outDir` that is NOT inside `outDir/rt`.
+collectNonRtGoFiles :: FilePath -> IO [FilePath]
+collectNonRtGoFiles outDir = do
+    entries <- listDirectory outDir
+    let direct = [ outDir </> e
+                 | e <- entries
+                 , takeExtension e == ".go"
+                 ]
+    return direct
+
+
+-- | Find every `rt.<Name>(` identifier in a Go source file.
+collectRtReferences :: FilePath -> IO (Set.Set String)
+collectRtReferences fp = do
+    ok <- doesFileExist fp
+    if not ok then return Set.empty else do
+        content <- readFile' fp
+        return (Set.fromList (extractRtIdents content))
+
+
+-- | Scan a Go source text for `rt.<NAME>` references. Returns just
+-- the NAME half (no `rt.` prefix). Walks character by character,
+-- matching the substring `rt.` preceded by a non-identifier byte —
+-- so identifiers like `skyRtValue` don't false-match.
+extractRtIdents :: String -> [String]
+extractRtIdents src = go Nothing src
+  where
+    -- prev tracks the character immediately before the current cursor,
+    -- used to rule out `rt.` inside a longer identifier.
+    go _ [] = []
+    go prev ('r':'t':'.':rest)
+        | not (isIdentChar (unwrap prev))
+        , (name, after) <- span isIdentChar rest
+        , not (null name)
+        = name : go (Just (lastOf name)) after
+    go _ (c:cs) = go (Just c) cs
+
+    unwrap Nothing  = ' '
+    unwrap (Just c) = c
+    lastOf = last
+
+    isIdentChar c = (c >= 'a' && c <= 'z')
+                 || (c >= 'A' && c <= 'Z')
+                 || (c >= '0' && c <= '9')
+                 || c == '_'
+
+
+-- | Rewrite a bindings file keeping only functions that are (a) in the
+-- referenced set OR (b) a `T`-suffix variant of a referenced function.
+-- Preserves the file's package declaration, imports, and any top-level
+-- var declarations.
+pruneBindingFile :: Set.Set String -> FilePath -> IO ()
+pruneBindingFile referenced fp = do
+    content <- readFile' fp  -- strict read to release the handle before write
+    let newContent = pruneBindingsText referenced content
+    if newContent == content then return ()
+        else writeFile fp newContent
+
+
+pruneBindingsText :: Set.Set String -> String -> String
+pruneBindingsText referenced src =
+    let ls = lines src
+        (header, body) = splitAfterImportBlock ls
+        kept = pruneFuncs referenced body
+        -- After stripping function bodies, some package aliases may no
+        -- longer appear in the remaining source. Go rejects `imported
+        -- and not used`, so rewrite each import to a blank `_` form
+        -- when its alias no longer appears anywhere in the kept body.
+        rewrittenHeader = rewriteImportsForDCE header kept
+    in unlines (rewrittenHeader ++ kept)
+
+
+-- | Rewrite import lines inside the header so any alias that no longer
+-- appears in `body` becomes a blank `_` import. Preserves ordering
+-- and comments.
+rewriteImportsForDCE :: [String] -> [String] -> [String]
+rewriteImportsForDCE header body =
+    let bodyBlob = unlines body
+    in map (rewriteImportLine bodyBlob) header
+
+
+rewriteImportLine :: String -> String -> String
+rewriteImportLine bodyBlob line =
+    case parseImportLine line of
+        Just (indent, alias, path, trailer)
+            | alias /= "" && alias /= "_"
+            , not (aliasReferenced alias bodyBlob)
+            -> indent ++ "_ \"" ++ path ++ "\"" ++ trailer
+        _ -> line
+
+
+-- | Parse `\t<alias> "<path>"<trailer>` or `\t"<path>"<trailer>`.
+-- Returns (indent, alias, path, trailer); alias is "" for bare string
+-- imports and we leave those alone.
+parseImportLine :: String -> Maybe (String, String, String, String)
+parseImportLine line =
+    let (lead, rest) = span (\c -> c == '\t' || c == ' ') line
+    in case rest of
+        ('"':r) ->
+            -- Bare string import: `"reflect"`. The effective alias is
+            -- the last path segment (the Go package name, for import
+            -- paths we handle here — all stdlib + github-style).
+            let (path, closeRest) = break (== '"') r
+            in case closeRest of
+                ('"':trailer) ->
+                    let segs = splitSlash path
+                        alias = if null segs then "" else last segs
+                    in Just (lead, alias, path, trailer)
+                _ -> Nothing
+        _ ->
+            let (alias, afterAlias) = break (== ' ') rest
+            in case dropWhile (== ' ') afterAlias of
+                ('"':r) ->
+                    let (path, closeRest) = break (== '"') r
+                    in case closeRest of
+                        ('"':trailer) ->
+                            if null alias || all isAliasChar alias
+                                then Just (lead, alias, path, trailer)
+                                else Nothing
+                        _ -> Nothing
+                _ -> Nothing
+  where
+    isAliasChar c = (c >= 'a' && c <= 'z')
+                 || (c >= 'A' && c <= 'Z')
+                 || (c >= '0' && c <= '9')
+                 || c == '_'
+
+    splitSlash = foldr step [[]]
+      where
+        step '/' acc = [] : acc
+        step c (cur:rest) = (c:cur) : rest
+        step _ [] = [[]]
+
+
+-- | `<alias>.` appearing as a substring of the body blob after
+-- stripping `//` line comments. Imports rarely overlap with
+-- identifier spelling by accident; ignoring comments avoids
+-- false positives from orphaned `// Pkg.Name` docstrings
+-- that DCE left behind after dropping their function body.
+aliasReferenced :: String -> String -> Bool
+aliasReferenced alias blob = (alias ++ ".") `Data.List.isInfixOf` stripComments blob
+
+-- | Remove `//` line comments from Go source (anything after `//`
+-- up to the next newline). Leaves `/* ... */` block comments alone —
+-- FfiGen doesn't emit them for wrapper docs.
+stripComments :: String -> String
+stripComments = go
+  where
+    go [] = []
+    go ('/':'/':rest) = go (dropWhile (/= '\n') rest)
+    go (c:rest) = c : go rest
+
+
+-- | Return (lines up to & including closing `)` of the `import (` block,
+-- everything after). Files without an `import` block return (all, []).
+splitAfterImportBlock :: [String] -> ([String], [String])
+splitAfterImportBlock = go []
+  where
+    go acc [] = (reverse acc, [])
+    go acc (l:rest)
+        | stripLeadingTabs l == "import (" =
+            let (imports, after) = takeUntilCloseParen rest
+            in (reverse acc ++ [l] ++ imports, after)
+        | otherwise = go (l:acc) rest
+    stripLeadingTabs = dropWhile (\c -> c == '\t' || c == ' ')
+
+    takeUntilCloseParen = takeUntilCloseParenAcc []
+    takeUntilCloseParenAcc acc [] = (reverse acc, [])
+    takeUntilCloseParenAcc acc (l:rest)
+        | stripLeadingTabs l == ")" = (reverse (l : acc), rest)
+        | otherwise = takeUntilCloseParenAcc (l : acc) rest
+
+
+-- | Walk body lines, keeping top-level `var` / `type` / comment
+-- blocks intact; drop `func <Name>` definitions whose name is not in
+-- the referenced set (or its `T`-suffix sibling isn't referenced).
+pruneFuncs :: Set.Set String -> [String] -> [String]
+pruneFuncs referenced inputLines = go [] inputLines
+  where
+    -- `pending` accumulates preceding comment-or-blank lines that
+    -- belong to the NEXT declaration. If the declaration is kept we
+    -- flush them; if dropped we discard them along with the func.
+    go :: [String] -> [String] -> [String]
+    go pending []   = reverse pending
+    go pending (l:rest)
+        | isCommentOrBlank l =
+            go (l : pending) rest
+        | Just name <- matchFuncStart l =
+            let (body, after) =
+                    if isOneLineFunc l
+                        then ([], rest)
+                        else takeFuncBody rest
+                funcLines = l : body
+                baseName = if not (null name) && last name == 'T'
+                           then take (length name - 1) name
+                           else ""
+                isKept = Set.member name referenced
+                      || (not (null baseName) && Set.member baseName referenced)
+            in if isKept
+                then reverse pending ++ funcLines ++ go [] after
+                else go [] after
+        | otherwise =
+            -- non-func non-comment line (var, type, etc.): keep it,
+            -- along with any pending preceding comments.
+            reverse pending ++ [l] ++ go [] rest
+
+    isCommentOrBlank l =
+        let trimmed = dropWhile (\c -> c == ' ' || c == '\t') l
+        in null trimmed || take 2 trimmed == "//"
+
+    -- A `func` line is one-line when the brace count at end-of-line is
+    -- zero AND the line closes (i.e., the final run of `{`s is
+    -- balanced by corresponding `}`s on the same line). Detect by
+    -- running a brace counter; if it ends at 0 after seeing at least
+    -- one `{`, the function body was fully contained.
+    isOneLineFunc l =
+        let (depth, sawOpen) = walk l 0 False
+        in sawOpen && depth == 0
+      where
+        walk :: String -> Int -> Bool -> (Int, Bool)
+        walk [] d s       = (d, s)
+        walk ('{':cs) d s = walk cs (d+1) True
+        walk ('}':cs) d s = walk cs (d-1) s
+        walk (_  :cs) d s = walk cs d s
+
+
+-- | `func Name` (possibly with generic `[...]` and `(`). Return Just
+-- the bare Name or Nothing if this isn't a top-level func line.
+matchFuncStart :: String -> Maybe String
+matchFuncStart l
+    | take 5 l == "func "
+    , let rest = drop 5 l
+    , not (null rest)
+    , isIdentStart (head rest)
+    = let (name, tail_) = span isIdentChar rest
+      in if not (null name) && not (null tail_)
+            && (head tail_ == '(' || head tail_ == '[')
+         then Just name
+         else Nothing
+    | otherwise = Nothing
+  where
+    isIdentStart c = (c >= 'a' && c <= 'z')
+                  || (c >= 'A' && c <= 'Z')
+                  || c == '_'
+    isIdentChar c = isIdentStart c || (c >= '0' && c <= '9')
+
+
+-- | Consume until we see a line beginning with `}` at indent 0. Return
+-- (body-lines-up-to-and-including-close, remaining-lines).
+takeFuncBody :: [String] -> ([String], [String])
+takeFuncBody = go []
+  where
+    go acc [] = (reverse acc, [])
+    go acc (l:rest)
+        | take 1 l == "}" = (reverse (l : acc), rest)
+        | otherwise       = go (l : acc) rest
 
 
 copyFfiDir :: FilePath -> IO ()
