@@ -22,7 +22,7 @@ spec = do
             -- will help.
             rtOk <- readFile "runtime-go/rt/rt.go"
             ("SkyFfiRecoverT[A any]" `isInfixOf` rtOk) `shouldBe` True
-            wrapper <- readFile "examples/03-tea-external/ffi/uuid_bindings.go"
+            wrapper <- readFile "examples/03-tea-external/.skycache/go/uuid_bindings.go"
             ("defer SkyFfiRecoverT(&out)()" `isInfixOf` wrapper) `shouldBe` True
 
         it "routes Uuid.newString through Go_Uuid_newStringT in ex03" $ do
@@ -75,9 +75,9 @@ spec = do
             -- variant for the one hard-migrated function, across every
             -- example that imports it.
             let files =
-                    [ "examples/03-tea-external/ffi/uuid_bindings.go"
-                    , "examples/08-notes-app/ffi/uuid_bindings.go"
-                    , "examples/13-skyshop/ffi/uuid_bindings.go"
+                    [ "examples/03-tea-external/.skycache/go/uuid_bindings.go"
+                    , "examples/08-notes-app/.skycache/go/uuid_bindings.go"
+                    , "examples/13-skyshop/.skycache/go/uuid_bindings.go"
                     ]
             mapM_ (\fp -> do
                 contents <- readFile fp
@@ -91,22 +91,22 @@ spec = do
             -- Update when the gate rises (e.g. to 3500 when more
             -- bindings migrate).
             let paths =
-                    [ "examples/03-tea-external/ffi/uuid_bindings.go"
-                    , "examples/05-mux-server/ffi/mux_bindings.go"
-                    , "examples/05-mux-server/ffi/http_bindings.go"
-                    , "examples/08-notes-app/ffi/uuid_bindings.go"
-                    , "examples/11-fyne-stopwatch/ffi/app_bindings.go"
-                    , "examples/11-fyne-stopwatch/ffi/fyne_bindings.go"
-                    , "examples/11-fyne-stopwatch/ffi/widget_bindings.go"
-                    , "examples/13-skyshop/ffi/auth_bindings.go"
-                    , "examples/13-skyshop/ffi/customer_bindings.go"
-                    , "examples/13-skyshop/ffi/firebase_bindings.go"
-                    , "examples/13-skyshop/ffi/firestore_bindings.go"
-                    , "examples/13-skyshop/ffi/iterator_bindings.go"
-                    , "examples/13-skyshop/ffi/option_bindings.go"
-                    , "examples/13-skyshop/ffi/session_bindings.go"
-                    , "examples/13-skyshop/ffi/stripe_bindings.go"
-                    , "examples/13-skyshop/ffi/uuid_bindings.go"
+                    [ "examples/03-tea-external/.skycache/go/uuid_bindings.go"
+                    , "examples/05-mux-server/.skycache/go/mux_bindings.go"
+                    , "examples/05-mux-server/.skycache/go/http_bindings.go"
+                    , "examples/08-notes-app/.skycache/go/uuid_bindings.go"
+                    , "examples/11-fyne-stopwatch/.skycache/go/app_bindings.go"
+                    , "examples/11-fyne-stopwatch/.skycache/go/fyne_bindings.go"
+                    , "examples/11-fyne-stopwatch/.skycache/go/widget_bindings.go"
+                    , "examples/13-skyshop/.skycache/go/auth_bindings.go"
+                    , "examples/13-skyshop/.skycache/go/customer_bindings.go"
+                    , "examples/13-skyshop/.skycache/go/firebase_bindings.go"
+                    , "examples/13-skyshop/.skycache/go/firestore_bindings.go"
+                    , "examples/13-skyshop/.skycache/go/iterator_bindings.go"
+                    , "examples/13-skyshop/.skycache/go/option_bindings.go"
+                    , "examples/13-skyshop/.skycache/go/session_bindings.go"
+                    , "examples/13-skyshop/.skycache/go/stripe_bindings.go"
+                    , "examples/13-skyshop/.skycache/go/uuid_bindings.go"
                     ]
             counts <- mapM typedVariantCount paths
             sum counts `shouldSatisfy` (>= 2800)
