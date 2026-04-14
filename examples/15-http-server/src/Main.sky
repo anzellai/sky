@@ -5,6 +5,7 @@ import Sky.Core.Task as Task
 import Sky.Core.String as String
 import Sky.Http.Server as Server
 import Sky.Http.Server exposing (Request, Response)
+import Sky.Core.Error as Error exposing (Error)
 
 main =
     Server.listen 8000
@@ -17,7 +18,7 @@ main =
         ]
 
 
-handleHome : Request -> Task String Response
+handleHome : Request -> Task Error Response
 handleHome req =
     Task.succeed
         (
@@ -32,7 +33,7 @@ handleHome req =
         )
 
 
-handleHello : Request -> Task String Response
+handleHello : Request -> Task Error Response
 handleHello req =
     let
         name =
@@ -47,12 +48,12 @@ handleHello req =
         Task.succeed (Server.text ("Hello, " ++ name ++ "!"))
 
 
-handleStatus : Request -> Task String Response
+handleStatus : Request -> Task Error Response
 handleStatus req =
     Task.succeed (Server.json "{\"status\":\"ok\",\"server\":\"Sky\"}")
 
 
-handleEcho : Request -> Task String Response
+handleEcho : Request -> Task Error Response
 handleEcho req =
     Task.succeed
         (
@@ -83,7 +84,7 @@ parseVisitInt v =
             1
 
 
-handleCookieDemo : Request -> Task String Response
+handleCookieDemo : Request -> Task Error Response
 handleCookieDemo req =
     let
         visitCount = parseVisitCount (Server.getCookie "visits" req)
@@ -100,5 +101,5 @@ handleCookieDemo req =
             )
 
 
-handleRedirect : Request -> Task String Response
+handleRedirect : Request -> Task Error Response
 handleRedirect req = Task.succeed (Server.redirect "/hello/redirected")

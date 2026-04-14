@@ -170,9 +170,9 @@ compile config entryPath outDir = do
     -- in order after the primary project source root.
     depRoots <- SkyDeps.installDeps (Toml._skyDeps config)
 
-    -- Phase 0c: Materialise the embedded Sky stdlib (Std.IoError, etc.)
+    -- Phase 0c: Materialise the embedded Sky stdlib (Sky.Core.Error, etc.)
     -- into outDir/.sky-stdlib/ and add it as a discovery root so
-    -- `import Std.IoError` resolves with no user setup. Stdlib lives
+    -- `import Sky.Core.Error` resolves with no user setup. Stdlib lives
     -- LAST in the root list so a user's local Std/* override wins.
     stdlibRoot <- writeEmbeddedSkyStdlib outDir
 
@@ -947,7 +947,7 @@ copyRuntime outDir = do
 -- ═══════════════════════════════════════════════════════════
 
 -- | Per-module workspace typecheck result. Keys are dotted module
--- names ("Lib.Db", "Std.IoError", "Main").
+-- names ("Lib.Db", "Sky.Core.Error", "Main").
 data WorkspaceTypecheck = WorkspaceTypecheck
     { _wt_modules :: Map.Map String WorkspaceModule
     , _wt_canonError :: Maybe (String, String)  -- (moduleName, error)
@@ -1062,7 +1062,7 @@ writeStdlibTo root = do
         BS.writeFile dst bytes
 
 
--- | Materialise the embedded Sky stdlib (Std.IoError, Std.RemoteData,
+-- | Materialise the embedded Sky stdlib (Sky.Core.Error,
 -- etc.) into <outDir>/.sky-stdlib/ at build start. Returns the root
 -- path so `discoverModulesMulti` can probe it. Always rewritten so a
 -- compiler upgrade picks up the latest stdlib without `sky clean`.

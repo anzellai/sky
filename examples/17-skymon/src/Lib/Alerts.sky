@@ -255,8 +255,8 @@ parseFloat : String -> Float
 parseFloat s =
     case String.toInt s of
 
-        Ok n ->
+        Just n ->
             identity n
 
-        Err _ ->
+        Nothing ->
             0

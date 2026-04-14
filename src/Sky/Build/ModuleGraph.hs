@@ -153,7 +153,7 @@ getImportName imp =
 -- assumed to be kernel modules (Sky.Core.*, Std.Db, etc. — implemented
 -- in Go in runtime-go/rt/) and get resolved later by the canonicaliser
 -- via the kernel registry. This lets new on-disk stdlib modules
--- (Std.IoError, Std.RemoteData, ...) participate in the module graph
+-- (Sky.Core.Error, ...) participate in the module graph
 -- without a per-module allowlist.
 isLocalImport :: String -> Bool
 isLocalImport _ = True

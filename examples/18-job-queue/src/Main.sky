@@ -6,6 +6,7 @@ import Sky.Core.String as String
 import Sky.Core.Task as Task
 import Sky.Core.Time as Time
 import Sky.Core.Random as Random
+import Sky.Core.Error as Error exposing (Error)
 import Std.Live as Live exposing (app, route)
 import Std.Html exposing (..)
 import Std.Live.Events exposing (onClick)
@@ -22,7 +23,7 @@ type Msg
     | RunSlow
     | RunFail
     | RunBatch
-    | JobDone Int (Result String String)
+    | JobDone Int (Result Error String)
     | ClearDone
 
 
@@ -60,7 +61,7 @@ sleepThenRandom ms lo hi =
 
 sleepThenFail ms msg =
     Time.sleep ms
-        |> Task.andThen (\_ -> Task.fail msg)
+        |> Task.andThen (\_ -> Task.fail (Error.unexpected msg))
 
 
 doBatch model =
@@ -87,12 +88,12 @@ doBatch model =
 
 resolveResult result =
     case result of
-        
+
         Ok v ->
             v
-        
+
         Err e ->
-            "Error: " ++ e
+            "Error: " ++ Error.toString e
 
 
 handleDone jid result model =

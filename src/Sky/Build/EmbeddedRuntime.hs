@@ -21,10 +21,10 @@ embeddedRuntime = $(embedDir "runtime-go")
 
 
 -- | Pairs of (relative-path-within-sky-stdlib, file-contents) for the
--- Sky-source stdlib modules (Std.IoError, etc.) that ship with every
+-- Sky-source stdlib modules (Sky.Core.Error, etc.) that ship with every
 -- project. Materialised to <outDir>/.sky-stdlib/ at build start and
 -- added to the module discovery roots, so user code can
--- `import Std.IoError exposing (..)` with no extra setup.
+-- `import Sky.Core.Error as Error` with no extra setup.
 -- Bump this comment to force a TH rebuild when sky-stdlib files are
 -- added or removed. FileEmbed's dependency tracking doesn't always
 -- notice new files otherwise.

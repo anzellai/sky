@@ -7,6 +7,7 @@ import Sky.Core.List as List
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Result as Result
 import Sky.Core.String as String
+import Sky.Core.Error as Error exposing (Error)
 import Std.Log exposing (println)
 
 -- ============================================================
@@ -228,40 +229,40 @@ type alias Profile =
     { name : String , age : Int , active : Bool }
 
 
-parseString : String -> String -> Result String String
+parseString : String -> String -> Result Error String
 parseString fieldName value =
     if String.isEmpty value then
-        Err ("missing field: " ++ fieldName)
-    
+        Err (Error.invalidInput ("missing field: " ++ fieldName))
+
     else
         Ok value
 
 
-parseAge : String -> Result String Int
+parseAge : String -> Result Error Int
 parseAge value =
     case String.toInt value of
-        
+
         Just n ->
             if n >= 0 && n <= 150 then
                 Ok n
-            
+
             else
-                Err "age out of range"
-        
+                Err (Error.invalidInput "age out of range")
+
         Nothing ->
-            Err "age must be a number"
+            Err (Error.invalidInput "age must be a number")
 
 
-parseFlag : String -> Result String Bool
+parseFlag : String -> Result Error Bool
 parseFlag value =
     if value == "true" then
         Ok True
-    
+
     else if value == "false" then
         Ok False
-    
+
     else
-        Err "flag must be true or false"
+        Err (Error.invalidInput "flag must be true or false")
 
 
 -- All three Results combine via map3 — no nested case, no andThen
@@ -279,7 +280,7 @@ combineHeterogeneousExample =
             "OK: " ++ p.name ++ ", age " ++ String.fromInt p.age
         
         Err e ->
-            "ERR: " ++ e
+            "ERR: " ++ Error.toString e
 
 
 -- 11. Homogeneous combine via Result.combine
@@ -290,12 +291,12 @@ combineHomogeneousExample =
             Result.combine [ parseAge "25" , parseAge "30" , parseAge "42" ]
     in
         case parses of
-            
+
             Ok ages ->
                 "OK ages: " ++ String.join ", " (List.map String.fromInt ages)
-            
+
             Err e ->
-                "ERR: " ++ e
+                "ERR: " ++ Error.toString e
 
 
 -- 12. Result.traverse — map a function over a list and collect.
@@ -308,7 +309,7 @@ traverseExample =
                 ++ String.fromInt (List.foldl (\a acc -> a + acc) 0 ages)
         
         Err e ->
-            "ERR: " ++ e
+            "ERR: " ++ Error.toString e
 
 
 -- ============================================================

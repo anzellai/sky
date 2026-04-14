@@ -54,7 +54,7 @@ data SymKind
 
 
 data Sym = Sym
-    { symQualName  :: !String        -- "Lib.Db.exec" or "Std.IoError.DbError"
+    { symQualName  :: !String        -- "Lib.Db.exec" or "Sky.Core.Error.io"
     , symLocalName :: !String        -- "exec" or "DbError"
     , symModule    :: !String        -- "Lib.Db"
     , symFile      :: !FilePath      -- absolute path
@@ -66,7 +66,7 @@ data Sym = Sym
 
 
 data Import = Import
-    { impModule    :: !String          -- "Std.IoError"
+    { impModule    :: !String          -- "Sky.Core.Error"
     , impAlias     :: !(Maybe String)  -- "Db" if `import Lib.Db as Db`
     , impExposeAll :: !Bool            -- True for `exposing (..)`
     , impExposed   :: !(Set.Set String)-- explicit names from `exposing (a, b)`
@@ -414,7 +414,7 @@ docCommentBefore src (A.Region s _) =
 
 -- ─── Lookup ────────────────────────────────────────────────────────────
 
--- | Look up a fully-qualified symbol like "Std.IoError.DbError".
+-- | Look up a fully-qualified symbol like "Sky.Core.Error.io".
 lookupQualified :: Index -> String -> Maybe Sym
 lookupQualified idx q = Map.lookup q (idxByQual idx)
 
