@@ -10,6 +10,7 @@
 -- are the relevant callTask invocations.
 --
 -- Imports used in this package's wrapper:
+--   driver "database/sql/driver"
 --   pkg "github.com/google/uuid"
 --   hash "hash"
 --   io "io"
@@ -17,12 +18,27 @@
 package uuid
 -- [pure] ClockSequence : () -> Int   -- runtime wrap: Task String
 -- [pure] DisableRandPool : () -> ()   -- runtime wrap: Task String
+-- [pure] DomainString : Domain -> String   -- runtime wrap: Task String
 -- [pure] EnableRandPool : () -> ()   -- runtime wrap: Task String
 -- [fallible] FromBytes : []byte -> (UUID, String)   -- runtime wrap: Task String
+-- [pure] Future : struct{} -> Variant   -- runtime wrap: Task String
 -- [fallible] GetTime : () -> (Time, uint16, String)   -- runtime wrap: Task String
+-- [pure] Group : struct{} -> Domain   -- runtime wrap: Task String
+-- [pure] Invalid : struct{} -> Variant   -- runtime wrap: Task String
 -- [pure] IsInvalidLengthError : String -> Bool   -- runtime wrap: Task String
+-- [pure] Max : struct{} -> UUID   -- runtime wrap: Task String
+-- [effectful] SetMax : UUID -> struct{}   -- runtime wrap: Task String
+-- [pure] Microsoft : struct{} -> Variant   -- runtime wrap: Task String
 -- [pure] Must : UUID -> String -> UUID   -- runtime wrap: Task String
 -- [pure] MustParse : String -> UUID   -- runtime wrap: Task String
+-- [pure] NameSpaceDNS : struct{} -> UUID   -- runtime wrap: Task String
+-- [effectful] SetNameSpaceDNS : UUID -> struct{}   -- runtime wrap: Task String
+-- [pure] NameSpaceOID : struct{} -> UUID   -- runtime wrap: Task String
+-- [effectful] SetNameSpaceOID : UUID -> struct{}   -- runtime wrap: Task String
+-- [pure] NameSpaceURL : struct{} -> UUID   -- runtime wrap: Task String
+-- [effectful] SetNameSpaceURL : UUID -> struct{}   -- runtime wrap: Task String
+-- [pure] NameSpaceX500 : struct{} -> UUID   -- runtime wrap: Task String
+-- [effectful] SetNameSpaceX500 : UUID -> struct{}   -- runtime wrap: Task String
 -- [pure] New : () -> UUID   -- runtime wrap: Task String
 -- [fallible] NewDCEGroup : () -> (UUID, String)   -- runtime wrap: Task String
 -- [fallible] NewDCEPerson : () -> (UUID, String)   -- runtime wrap: Task String
@@ -37,12 +53,50 @@ package uuid
 -- [fallible] NewV6 : () -> (UUID, String)   -- runtime wrap: Task String
 -- [fallible] NewV7 : () -> (UUID, String)   -- runtime wrap: Task String
 -- [fallible] NewV7FromReader : Reader -> (UUID, String)   -- runtime wrap: Task String
+-- [pure] Nil : struct{} -> UUID   -- runtime wrap: Task String
+-- [effectful] SetNil : UUID -> struct{}   -- runtime wrap: Task String
 -- [pure] NodeID : () -> []byte   -- runtime wrap: Task String
 -- [pure] NodeInterface : () -> String   -- runtime wrap: Task String
+-- [fallible] NullUUIDScan : NullUUID -> interface{} -> String   -- runtime wrap: Task String
+-- [fallible] NullUUIDValue : NullUUID -> (Value, String)   -- runtime wrap: Task String
+-- [fallible] NullUUIDMarshalBinary : NullUUID -> ([]byte, String)   -- runtime wrap: Task String
+-- [fallible] NullUUIDUnmarshalBinary : NullUUID -> []byte -> String   -- runtime wrap: Task String
+-- [fallible] NullUUIDMarshalText : NullUUID -> ([]byte, String)   -- runtime wrap: Task String
+-- [fallible] NullUUIDUnmarshalText : NullUUID -> []byte -> String   -- runtime wrap: Task String
+-- [fallible] NullUUIDMarshalJSON : NullUUID -> ([]byte, String)   -- runtime wrap: Task String
+-- [fallible] NullUUIDUnmarshalJSON : NullUUID -> []byte -> String   -- runtime wrap: Task String
+-- [pure] NullUUIDUUID : NullUUID -> UUID   -- runtime wrap: Task String
+-- [pure] NullUUIDSetUUID : UUID -> NullUUID -> NullUUID   -- runtime wrap: Task String
+-- [pure] NullUUIDValid : NullUUID -> Bool   -- runtime wrap: Task String
+-- [pure] NullUUIDSetValid : Bool -> NullUUID -> NullUUID   -- runtime wrap: Task String
+-- [pure] NewNullUUID : struct{} -> NullUUID   -- runtime wrap: Task String
+-- [pure] Org : struct{} -> Domain   -- runtime wrap: Task String
 -- [fallible] Parse : String -> (UUID, String)   -- runtime wrap: Task String
 -- [fallible] ParseBytes : []byte -> (UUID, String)   -- runtime wrap: Task String
+-- [pure] Person : struct{} -> Domain   -- runtime wrap: Task String
+-- [pure] RFC4122 : struct{} -> Variant   -- runtime wrap: Task String
+-- [pure] Reserved : struct{} -> Variant   -- runtime wrap: Task String
 -- [pure] SetClockSequence : Int -> ()   -- runtime wrap: Task String
 -- [pure] SetNodeID : []byte -> Bool   -- runtime wrap: Task String
 -- [pure] SetNodeInterface : String -> Bool   -- runtime wrap: Task String
 -- [pure] SetRand : Reader -> ()   -- runtime wrap: Task String
+-- [pure] TimeUnixTime : Time -> (Int, Int)   -- runtime wrap: Task String
+-- [pure] UUIDDomain : UUID -> Domain   -- runtime wrap: Task String
+-- [pure] UUIDID : UUID -> uint32   -- runtime wrap: Task String
+-- [fallible] UUIDMarshalText : UUID -> ([]byte, String)   -- runtime wrap: Task String
+-- [fallible] UUIDUnmarshalText : UUID -> []byte -> String   -- runtime wrap: Task String
+-- [fallible] UUIDMarshalBinary : UUID -> ([]byte, String)   -- runtime wrap: Task String
+-- [fallible] UUIDUnmarshalBinary : UUID -> []byte -> String   -- runtime wrap: Task String
+-- [pure] UUIDNodeID : UUID -> []byte   -- runtime wrap: Task String
+-- [fallible] UUIDScan : UUID -> interface{} -> String   -- runtime wrap: Task String
+-- [fallible] UUIDValue : UUID -> (Value, String)   -- runtime wrap: Task String
+-- [pure] UUIDTime : UUID -> Time   -- runtime wrap: Task String
+-- [pure] UUIDClockSequence : UUID -> Int   -- runtime wrap: Task String
+-- [pure] UUIDString : UUID -> String   -- runtime wrap: Task String
+-- [pure] UUIDURN : UUID -> String   -- runtime wrap: Task String
+-- [pure] UUIDVariant : UUID -> Variant   -- runtime wrap: Task String
+-- [pure] UUIDVersion : UUID -> Version   -- runtime wrap: Task String
+-- [pure] UUIDsStrings : UUIDs -> []string   -- runtime wrap: Task String
 -- [fallible] Validate : String -> String   -- runtime wrap: Task String
+-- [pure] VariantString : Variant -> String   -- runtime wrap: Task String
+-- [pure] VersionString : Version -> String   -- runtime wrap: Task String
