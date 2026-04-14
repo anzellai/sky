@@ -246,6 +246,14 @@ func Log_println(args ...any) any {
 	return struct{}{}
 }
 
+// Log_printlnT: typed single-arg companion. Sky's `println` surface
+// takes exactly one value (the Log.println stdlib function), so we
+// don't lose generality by binding the typed variant to one arg.
+func Log_printlnT(arg any) struct{} {
+	fmt.Println(arg)
+	return struct{}{}
+}
+
 // ═══════════════════════════════════════════════════════════
 // Structured logging — severity levels + optional JSON output.
 // Set SKY_LOG_FORMAT=json for one-line JSON records suitable for log
