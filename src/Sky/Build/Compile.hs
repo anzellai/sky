@@ -2611,6 +2611,10 @@ typedKernelAltName = Map.fromList
     , (("Result", "withDefault"), "withDefaultAnyT")
     , (("Maybe",  "withDefault"), "withDefaultAnyT")
     , (("Dict",   "get"),         "getAnyT")
+    , (("List",   "map"),         "mapAnyT")
+    , (("List",   "filter"),      "filterAnyT")
+    , (("List",   "take"),        "takeAnyT")
+    , (("List",   "cons"),        "consAnyT")
     ]
 
 
@@ -2694,6 +2698,11 @@ typedKernelArgCoerce = Map.fromList
     , (("Log",    "println"), ["Pass"])
     , (("Server", "html"),    ["AsString"])
     , (("Server", "redirect"),["AsString"])
+    -- List generic helpers: Pass the fn closure, AsList the slice.
+    , (("List",   "map"),     ["Pass", "AsList"])
+    , (("List",   "filter"),  ["Pass", "AsList"])
+    , (("List",   "take"),    ["AsInt", "AsList"])
+    , (("List",   "cons"),    ["Pass", "AsList"])
     -- Basics: pure boolean / integer helpers
     , (("Basics", "not"),     ["AsBool"])
     , (("Basics", "modBy"),   ["AsInt", "AsInt"])
@@ -2754,6 +2763,7 @@ typedKernelLiterals = Set.fromList
     , ("Css",    "property"),   ("Css",    "px"),       ("Css", "rem")
     , ("Attr",   "class"),     ("Log",    "println")
     , ("Server", "html"),      ("Server", "redirect")
+    , ("List",   "map"),       ("List",   "filter"),     ("List", "take"), ("List", "cons")
     , ("Basics", "not"),        ("Basics", "modBy"),  ("Basics", "errorToString")
     , ("Time",   "formatISO8601"), ("Time", "formatRFC3339"), ("Time", "formatHTTP")
     , ("Basics", "fst"),        ("Basics", "snd"),   ("Basics", "identity")

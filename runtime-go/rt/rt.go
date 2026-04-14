@@ -770,6 +770,36 @@ func List_mapT[A, B any](fn func(A) B, xs []A) []B {
 	return out
 }
 
+// List_mapAnyT: call-site dispatch target for List.map when the Sky
+// function value is an `any`-boxed closure (the normal case without HM
+// element flow). Uses SkyCall to invoke the function — same shape as
+// the any/any List_map kernel, but with a typed slice contract.
+func List_mapAnyT(fn any, xs []any) []any {
+	out := make([]any, len(xs))
+	for i, x := range xs { out[i] = SkyCall(fn, x) }
+	return out
+}
+
+func List_filterAnyT(fn any, xs []any) []any {
+	out := make([]any, 0, len(xs))
+	for _, x := range xs {
+		if b, ok := SkyCall(fn, x).(bool); ok && b {
+			out = append(out, x)
+		}
+	}
+	return out
+}
+
+func List_takeAnyT(n int, xs []any) []any {
+	if n < 0 { n = 0 }
+	if n > len(xs) { n = len(xs) }
+	return xs[:n]
+}
+
+func List_consAnyT(x any, xs []any) []any {
+	return append([]any{x}, xs...)
+}
+
 func List_filterT[A any](fn func(A) bool, xs []A) []A {
 	out := make([]A, 0, len(xs))
 	for _, x := range xs {
