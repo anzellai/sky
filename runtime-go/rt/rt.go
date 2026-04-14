@@ -2019,6 +2019,16 @@ func Time_formatHTTP(ms any) any {
 	return t.Format(http.TimeFormat)
 }
 
+func Time_formatISO8601T(ms int) string {
+	return time.UnixMilli(int64(ms)).UTC().Format("2006-01-02T15:04:05.000Z")
+}
+func Time_formatRFC3339T(ms int) string {
+	return time.UnixMilli(int64(ms)).UTC().Format(time.RFC3339Nano)
+}
+func Time_formatHTTPT(ms int) string {
+	return time.UnixMilli(int64(ms)).UTC().Format(http.TimeFormat)
+}
+
 // Time.format : String -> Int -> String
 // (goLayout, unixMillis) — emits a custom Go-style layout. Sky exposes the
 // Go reference layout "2006-01-02 15:04:05" verbatim. Prefer formatISO8601

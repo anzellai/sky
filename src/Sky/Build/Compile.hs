@@ -2662,6 +2662,10 @@ typedKernelArgCoerce = Map.fromList
     , (("Basics", "not"),     ["AsBool"])
     , (("Basics", "modBy"),   ["AsInt", "AsInt"])
     , (("Basics", "errorToString"), ["Pass"])
+    -- Time formatters: Int → String
+    , (("Time",   "formatISO8601"), ["AsInt"])
+    , (("Time",   "formatRFC3339"), ["AsInt"])
+    , (("Time",   "formatHTTP"),    ["AsInt"])
     ]
 
 
@@ -2703,6 +2707,7 @@ typedKernelLiterals = Set.fromList
     , ("List",   "isEmpty")
     , ("Dict",   "member"),     ("Dict",   "insert")
     , ("Basics", "not"),        ("Basics", "modBy"),  ("Basics", "errorToString")
+    , ("Time",   "formatISO8601"), ("Time", "formatRFC3339"), ("Time", "formatHTTP")
     ]
 
 
