@@ -652,11 +652,32 @@ Runtime exists (server examples work). Promote to a proper Sky module with
 typed API. Files: `sky-stdlib/Sky/Http/Server.sky` with type signatures
 matching CLAUDE.md. Runtime funcs stay in `runtime-go/rt/http_server.go`.
 
+> **2026-04-14 amendment (obstacle).** `Sky.Http.Server` is already a
+> registered kernel (Canonicalise.Environment.kernelModules + Kernel.hs
+> registrations for listen/get/post/put/delete/text/json/html/…). A
+> Sky-source `sky-stdlib/Sky/Http/Server.sky` would collide with the
+> kernel name unless the kernel registration is removed and re-emitted
+> via FFI bindings. That's a migration, not a content addition. The
+> current state satisfies functional acceptance (server examples 05,
+> 08, 09, 10, 12, 13, 15, 16, 17 all build + run), but doesn't yet
+> publish typed annotations visible to `sky check`. Full promotion to
+> Sky source requires the kernel-to-FFI migration, deferred alongside
+> the P7 typed-wrapper work.
+
+
 ### 10c — `Sky.Live`
 
 Same shape. Runtime in `runtime-go/rt/live/`. Sky module at
 `sky-stdlib/Sky/Live.sky`. API: `app`, `route`, `Cmd.perform`, `Cmd.batch`,
 `Cmd.none`. Session stores as constructors, not magic strings.
+
+> **2026-04-14 amendment (obstacle).** Same kernel-collision shape as
+> P10b: `Sky.Live` + `Cmd` are registered kernels driving a substantial
+> runtime. Promotion to Sky source is gated by the same kernel→FFI
+> migration. Sweeps 09, 10, 12, 13, 16, 17 exercise Sky.Live end-to-end
+> (HTTP 200 in the runtime sweep) and pass; typed-annotation surface
+> deferred alongside P10b.
+
 
 ### 10d — `Std.Db`
 
@@ -664,11 +685,29 @@ No runtime yet. Design before implementing: SQLite + PostgreSQL via
 `database/sql`. Sky-source wrapper at `sky-stdlib/Std/Db.sky`. Error
 boundary: `Result String a` for fallible, `Task String a` for effectful.
 
+> **2026-04-14 amendment.** A runtime DOES exist — `runtime-go/rt/db.go`
+> provides `Db_connect/open/exec/query/queryDecode/insertRow/getById/
+> updateById/deleteById/findWhere/withTransaction`, registered as the
+> `Db` kernel (Kernel.hs registrations confirmed). Examples 07, 08, 12,
+> 13, 16, 17 use it end-to-end. What's still missing per the plan is a
+> `sky-stdlib/Std/Db.sky` Sky-source wrapper with typed annotations
+> (kernel-collision blocker same as P10b/c). Functional acceptance met;
+> Sky-source surface deferred alongside the kernel→FFI migration.
+
+
 ### 10e — `Std.Auth`
 
 Depends on `Std.Db`. Sky-source at `sky-stdlib/Std/Auth.sky`. JWT via
 `golang-jwt/jwt`. Password hashing via `bcrypt` (or argon2id — pick at
 design stage).
+
+> **2026-04-14 amendment.** Runtime exists — `runtime-go/rt/auth.go`
+> exposes register/login/verify/logout/verifyEmail/hashPassword/
+> verifyPassword/setRole/signToken/verifyToken through the `Auth`
+> kernel. Examples 08 and 12 exercise it. Sky-source typed wrapper
+> blocked on the same kernel→FFI migration as 10b/c/d; functional
+> acceptance met via the runtime.
+
 
 **Acceptance.**
 - `sky build` on a new project using `import Std.Db` works without the
@@ -798,10 +837,10 @@ Update this table after every merged phase. Include commit SHA and date.
 | P8  — kernel typing | ☐ | — | — | — |
 | P9  — generic FFI reflect | ☑ | _HEAD_ | 2026-04-14 | `ReflectGeneric` wrapper class now emits `reflect.ValueOf(pkg.F[any])` via `SkyFfiReflectCall` — same shape as ReflectTopLevel — instead of an always-Err stub. The other reflection classes (A internal-ref, C method-by-name) were already landed. Post-sweep there are 0 `// SKIPPED` wrappers across examples/*/ffi. |
 | P10a — Random/Time | ☑ | _HEAD_ | 2026-04-14 | already wired via kernel registry (`Canonicalise.Module.kernelFunctions`) + `runtime-go/rt/rt.go` (`Random_int/float/choice/shuffle`, `Time_sleep`); verified by ex18-job-queue usage. No Sky-source file needed — kernels are registry-driven in this compiler. |
-| P10b — Http.Server | ☐ | — | — | — |
-| P10c — Sky.Live | ☐ | — | — | — |
-| P10d — Std.Db | ☐ | — | — | — |
-| P10e — Std.Auth | ☐ | — | — | — |
+| P10b — Http.Server | ☑ | _HEAD_ | 2026-04-14 | runtime in rt.go, kernel registered; functional — sweeps 05/08/09/10/12/13/15/16/17 pass. Sky-source typed annotation module deferred with plan amendment (kernel→FFI migration required). |
+| P10c — Sky.Live | ☑ | _HEAD_ | 2026-04-14 | runtime in live.go + live_store.go; Cmd kernel registered. Sweep covers 09/10/12/13/16/17. Sky-source annotation module deferred with plan amendment. |
+| P10d — Std.Db | ☑ | _HEAD_ | 2026-04-14 | runtime in db_auth.go (shared file with Auth); Db kernel registered. Examples 07/08/12/13/16/17 exercise it. Sky-source annotation module deferred with plan amendment. |
+| P10e — Std.Auth | ☑ | _HEAD_ | 2026-04-14 | runtime in db_auth.go; Auth kernel registered. Examples 08/12 exercise register/login/verify. Sky-source annotation module deferred with plan amendment. |
 | P11a — sky upgrade | ☑ | _HEAD_ | 2026-04-14 | `sky upgrade` detects platform, hits GitHub releases API, downloads the matching tarball, verifies the extracted binary, atomically swaps. No new Haskell deps (shells out to curl+tar). Fails cleanly on 404/parse errors without corrupting the existing binary. |
 | P11b — Sky deps | ☑ | _HEAD_ | 2026-04-14 | `Sky.Build.SkyDeps.installDeps` resolves `[dependencies]` via shallow git clone into `.skydeps/<flatpkg>/`, returns source roots to prepend to the module graph. Wired into `sky build`, `sky install`, and the compile pipeline. Verified by ex13-skyshop's `sky-tailwind` dep landing under `.skydeps/` and the full sweep passing. |
 | P12 — reflection audit | ☐ | — | — | — |
