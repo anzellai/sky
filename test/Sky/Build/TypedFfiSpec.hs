@@ -50,9 +50,9 @@ spec = do
             -- would have silently returned the whole SkyResult struct
             -- because the old type-asserted path rejected typed shapes.
             -- P8: typed kernel dispatch now routes Result.withDefault
-            -- to Result_withDefaultAnyT (same any/any shape, just
-            -- participates in the typedKernelArgCoerce path).
-            ("rt.Result_withDefaultAnyT(\"\", rt.Go_Uuid_newStringT())" `isInfixOf` body)
+            -- to Result_withDefaultAnyT, with value-position args
+            -- wrapped through any(...) for Go generic inference.
+            ("rt.Result_withDefaultAnyT(\"\", any(rt.Go_Uuid_newStringT()" `isInfixOf` body)
                 `shouldBe` True
 
         it "elides case-subject boxing for typed-FFI sources" $ do
