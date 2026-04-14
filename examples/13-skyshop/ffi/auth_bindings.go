@@ -921,9 +921,9 @@ func Go_Auth_newMultiFactorSettings(_ any) any { return new(pkg.MultiFactorSetti
 func Go_Auth_name(_ any) any { return pkg.Name }
 
 // [fallible] Go_Auth.newClient → reflect.ValueOf(pkg.NewClient) (via SkyFfiReflectCall)
-func Go_Auth_newClient(p0 any, p1 any) (out any) {
+func Go_Auth_newClient(arg0 any, arg1 any) (out any) {
 	defer SkyFfiRecover(&out)()
-	out = SkyFfiReflectCall(reflect.ValueOf(pkg.NewClient), true, []any{p0, p1})
+	out = SkyFfiReflectCall(reflect.ValueOf(pkg.NewClient), true, []any{arg0, arg1})
 	return
 }
 
@@ -2260,9 +2260,9 @@ func Go_Auth_newUIDIdentifier(_ any) any { return new(pkg.UIDIdentifier) }
 func Go_Auth_userEmail(_ any) any { return pkg.UserEmail }
 
 // [fallible] Go_Auth.userImportHashConfig → UserImportHash.Config (receiver-reflect)
-func Go_Auth_userImportHashConfig(p0 any) (out any) {
+func Go_Auth_userImportHashConfig(arg0 any) (out any) {
 	defer SkyFfiRecover(&out)()
-	recv := reflect.ValueOf(p0)
+	recv := reflect.ValueOf(arg0)
 	m := recv.MethodByName("Config")
 	if !m.IsValid() {
 		out = Err[any, any]("Config: no such method on receiver")

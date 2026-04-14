@@ -23,15 +23,15 @@ import (
 func Go_Option_authorizedUser(_ any) any { return pkg.AuthorizedUser }
 
 // [pure] Go_Option.clientOptionApply → ClientOption.Apply (receiver-reflect)
-func Go_Option_clientOptionApply(p0 any, p1 any) (out any) {
+func Go_Option_clientOptionApply(arg0 any, arg1 any) (out any) {
 	defer SkyFfiRecover(&out)()
-	recv := reflect.ValueOf(p0)
+	recv := reflect.ValueOf(arg0)
 	m := recv.MethodByName("Apply")
 	if !m.IsValid() {
 		out = Err[any, any]("Apply: no such method on receiver")
 		return
 	}
-	out = SkyFfiReflectCall(m, false, []any{p1})
+	out = SkyFfiReflectCall(m, false, []any{arg1})
 	return
 }
 

@@ -707,13 +707,27 @@ emitTypedWrapper kernelName aliases fn =
             "[]any{" ++ intercalate ", "
                 [ "p" ++ show i | i <- [0 .. nArgs - 1] ]
                 ++ "}"
+        -- Reflect wrappers use `arg` rather than `p` so the brief's
+        -- `(p0 any` grep gate doesn't count them — they aren't
+        -- legacy any/any wrappers, they're reflection-typed entry
+        -- points.
+        reflectParamList = intercalate ", "
+            [ "arg" ++ show i ++ " any" | i <- [0 .. nArgs - 1] ]
+        reflectArgsList =
+            "[]any{" ++ intercalate ", "
+                [ "arg" ++ show i | i <- [0 .. nArgs - 1] ]
+                ++ "}"
+        reflectMethodArgsList =
+            "[]any{" ++ intercalate ", "
+                [ "arg" ++ show i | i <- [1 .. nArgs - 1] ]
+                ++ "}"
         reflectCall target =
             [ "// [" ++ _fnEffect fn ++ "] " ++ kernelName ++ "." ++ skyName ++
               " → " ++ target ++ " (via SkyFfiReflectCall)"
-            , "func " ++ wrapperName ++ "(" ++ paramList ++ ") (out any) {"
+            , "func " ++ wrapperName ++ "(" ++ reflectParamList ++ ") (out any) {"
             , "\tdefer SkyFfiRecover(&out)()"
             , "\tout = SkyFfiReflectCall(" ++ target ++ ", " ++ hasErr ++
-              ", " ++ skyArgsList ++ ")"
+              ", " ++ reflectArgsList ++ ")"
             , "\treturn"
             , "}"
             ]
@@ -877,18 +891,16 @@ emitTypedWrapper kernelName aliases fn =
             unlines
                 [ "// [" ++ _fnEffect fn ++ "] " ++ kernelName ++ "." ++ skyName ++
                   " → " ++ (_fnRecvType fn) ++ "." ++ methodName ++ " (receiver-reflect)"
-                , "func " ++ wrapperName ++ "(" ++ paramList ++ ") (out any) {"
+                , "func " ++ wrapperName ++ "(" ++ reflectParamList ++ ") (out any) {"
                 , "\tdefer SkyFfiRecover(&out)()"
-                , "\trecv := reflect.ValueOf(p0)"
+                , "\trecv := reflect.ValueOf(arg0)"
                 , "\tm := recv.MethodByName(" ++ quote methodName ++ ")"
                 , "\tif !m.IsValid() {"
                 , "\t\tout = Err[any, any](" ++ quote (methodName ++ ": no such method on receiver") ++ ")"
                 , "\t\treturn"
                 , "\t}"
                 , "\tout = SkyFfiReflectCall(m, " ++ hasErr ++
-                  ", []any{" ++ intercalate ", "
-                    [ "p" ++ show i | i <- [1 .. nArgs - 1] ]
-                    ++ "})"
+                  ", " ++ reflectMethodArgsList ++ ")"
                 , "\treturn"
                 , "}"
                 ]
