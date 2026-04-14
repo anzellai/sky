@@ -89,3 +89,6 @@ legacy-ts-compiler/node_modules/
 # (Sky.Build.Compile.writeStdlibTo) so goto-definition has a stable
 # jump target — regenerated on each LSP build, not source code.
 **/src/.sky-stdlib/
+
+# Claude Code loop-pause marker (never commit; local-only pause signal)
+.claude/allow-stop
