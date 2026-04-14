@@ -748,7 +748,7 @@ Update this table after every merged phase. Include commit SHA and date.
 | P6  — typed TVars | ☑ | _HEAD_ | 2026-04-14 | the generic-signature emitter (from prior `codegen: Go generics for HM-inferred TVars` work) already produces `func Name[T1 any, T2 any](...)` for polymorphic HM-inferred functions (evidence: ~36 generic funcs across examples). `solvedTypeToGo TVar -> "any"` remains at expression-position use sites because Go type parameters can't appear outside enclosing function sigs — this is the correct fallback, not an escape hatch. The 276 ResultCoerce/MaybeCoerce call sites drop as P7/P8 thread concrete element types. |
 | P7  — FFI typing | ☐ | — | — | — |
 | P8  — kernel typing | ☐ | — | — | — |
-| P9  — generic FFI reflect | ☐ | — | — | — |
+| P9  — generic FFI reflect | ☑ | _HEAD_ | 2026-04-14 | `ReflectGeneric` wrapper class now emits `reflect.ValueOf(pkg.F[any])` via `SkyFfiReflectCall` — same shape as ReflectTopLevel — instead of an always-Err stub. The other reflection classes (A internal-ref, C method-by-name) were already landed. Post-sweep there are 0 `// SKIPPED` wrappers across examples/*/ffi. |
 | P10a — Random/Time | ☑ | _HEAD_ | 2026-04-14 | already wired via kernel registry (`Canonicalise.Module.kernelFunctions`) + `runtime-go/rt/rt.go` (`Random_int/float/choice/shuffle`, `Time_sleep`); verified by ex18-job-queue usage. No Sky-source file needed — kernels are registry-driven in this compiler. |
 | P10b — Http.Server | ☐ | — | — | — |
 | P10c — Sky.Live | ☐ | — | — | — |

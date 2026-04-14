@@ -741,23 +741,13 @@ emitTypedWrapper kernelName aliases fn =
             unlines (reflectCall ("reflect.ValueOf(pkg." ++ goFnName ++ ")"))
 
         ReflectGeneric ->
-            -- Top-level generic functions can only be instantiated with `any`
-            -- when their type-param constraint is `any`. The inspector JSON
-            -- doesn't expose the constraint, so we emit a runtime stub that
-            -- returns Err. Users who need a specific instantiation can add a
-            -- hand-written ffi/<pkg>_manual.go with the concrete type.
-            let paramSinks = concat
-                    [ "\t_ = p" ++ show i ++ "\n" | i <- [0 .. nArgs - 1] ]
-            in unlines
-                [ "// [" ++ _fnEffect fn ++ "] " ++ kernelName ++ "." ++ skyName ++
-                  " → pkg." ++ goFnName ++
-                  " — generic function (stub; instantiate manually if needed)"
-                , "func " ++ wrapperName ++ "(" ++ paramList ++ ") (out any) {"
-                , paramSinks ++
-                  "\tout = Err[any, any](" ++ quote ("generic function " ++ goFnName ++ " requires hand-written instantiation") ++ ")"
-                , "\treturn"
-                , "}"
-                ]
+            -- P9: top-level generic functions with an `any` type-param
+            -- constraint are safely callable via `reflect.ValueOf(pkg.F[any])`.
+            -- SkyFfiReflectCall handles argument boxing, panic recovery, and
+            -- effect-aware return shape. If the generic has a narrower
+            -- constraint the runtime call raises a recovered panic which
+            -- SkyFfiRecover maps to Err — strictly better than always-Err.
+            unlines (reflectCall ("reflect.ValueOf(pkg." ++ goFnName ++ "[any])"))
 
         ReflectMethod methodName ->
             unlines
