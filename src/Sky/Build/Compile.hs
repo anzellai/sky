@@ -2622,6 +2622,11 @@ typedKernelAltName = Map.fromList
     , (("List",   "concatMap"),   "concatMapAnyT")
     , (("List",   "any"),         "anyAnyT")
     , (("List",   "all"),         "allAnyT")
+    , (("Result", "map"),         "mapAnyT")
+    , (("Result", "andThen"),     "andThenAnyT")
+    , (("Result", "mapError"),    "mapErrorAnyT")
+    , (("Maybe",  "map"),         "mapAnyT")
+    , (("Maybe",  "andThen"),     "andThenAnyT")
     ]
 
 
@@ -2717,6 +2722,11 @@ typedKernelArgCoerce = Map.fromList
     , (("List",   "concatMap"), ["Pass", "AsList"])
     , (("List",   "any"),     ["Pass", "AsList"])
     , (("List",   "all"),     ["Pass", "AsList"])
+    , (("Result", "map"),     ["Pass", "Pass"])
+    , (("Result", "andThen"), ["Pass", "Pass"])
+    , (("Result", "mapError"),["Pass", "Pass"])
+    , (("Maybe",  "map"),     ["Pass", "Pass"])
+    , (("Maybe",  "andThen"), ["Pass", "Pass"])
     -- Basics: pure boolean / integer helpers
     , (("Basics", "not"),     ["AsBool"])
     , (("Basics", "modBy"),   ["AsInt", "AsInt"])
@@ -2780,6 +2790,8 @@ typedKernelLiterals = Set.fromList
     , ("List",   "map"),       ("List",   "filter"),     ("List", "take"), ("List", "cons")
     , ("List",   "drop"),      ("List",   "foldl"),      ("List", "foldr")
     , ("List",   "filterMap"), ("List",   "concatMap"),  ("List", "any"), ("List", "all")
+    , ("Result", "map"),       ("Result", "andThen"),    ("Result", "mapError")
+    , ("Maybe",  "map"),       ("Maybe",  "andThen")
     , ("Basics", "not"),        ("Basics", "modBy"),  ("Basics", "errorToString")
     , ("Time",   "formatISO8601"), ("Time", "formatRFC3339"), ("Time", "formatHTTP")
     , ("Basics", "fst"),        ("Basics", "snd"),   ("Basics", "identity")

@@ -1320,6 +1320,31 @@ func Result_andThen(fn any, result any) any {
 }
 
 
+// Result/Maybe AnyT combinators: call-site dispatch targets that
+// preserve the any-boxed shape but skip the interface function-value
+// cast (use SkyCall instead, which handles both curried Sky closures
+// and uncurried multi-arg functions).
+func Result_mapAnyT(fn any, result any) any {
+	tag, ok, err := anyResultView(result)
+	if tag < 0 { return Ok[any, any](SkyCall(fn, result)) }
+	if tag == 0 { return Ok[any, any](SkyCall(fn, ok)) }
+	return Err[any, any](err)
+}
+
+func Result_andThenAnyT(fn any, result any) any {
+	tag, ok, err := anyResultView(result)
+	if tag < 0 { return Ok[any, any](SkyCall(fn, result)) }
+	if tag == 0 { return SkyCall(fn, ok) }
+	return Err[any, any](err)
+}
+
+func Result_mapErrorAnyT(fn any, result any) any {
+	tag, ok, err := anyResultView(result)
+	if tag < 0 { return Ok[any, any](result) }
+	if tag == 0 { return Ok[any, any](ok) }
+	return Err[any, any](SkyCall(fn, err))
+}
+
 // P8/Result typed companions — Go generics preserve the caller's E
 // and A, so typed Result pipelines compile without any boxing.
 
@@ -1579,6 +1604,20 @@ func Maybe_andThen(fn any, maybe any) any {
 		return fn.(func(any) any)(maybe)
 	}
 	if tag == 0 { return fn.(func(any) any)(just) }
+	return Nothing[any]()
+}
+
+func Maybe_mapAnyT(fn any, maybe any) any {
+	tag, just := anyMaybeView(maybe)
+	if tag < 0 { return Just[any](SkyCall(fn, maybe)) }
+	if tag == 0 { return Just[any](SkyCall(fn, just)) }
+	return Nothing[any]()
+}
+
+func Maybe_andThenAnyT(fn any, maybe any) any {
+	tag, just := anyMaybeView(maybe)
+	if tag < 0 { return SkyCall(fn, maybe) }
+	if tag == 0 { return SkyCall(fn, just) }
 	return Nothing[any]()
 }
 
