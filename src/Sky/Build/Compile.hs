@@ -9,6 +9,7 @@ import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import Data.IORef
 import Data.Maybe (isJust)
+import qualified Data.List
 import qualified System.Directory
 import qualified System.FilePath
 import qualified System.Process
@@ -2619,8 +2620,15 @@ caseToGo subject branches =
                 GoIr.GoTypeAssert (anyWrapped e) typeName
 
 
-        -- Peek through the GoExpr tree for a `rt.Go_X_yT(...)` call —
-        -- the exact shape the typed-FFI call-site migration emits.
+        -- Peek through the GoExpr tree for sources whose Go type is
+        -- known to be a concrete SkyResult / SkyMaybe struct (not an
+        -- `any` interface), so the case-subject emission can elide
+        -- the ResultCoerce reflect dance. Two recognisers:
+        --   * Typed FFI calls (`rt.Go_X_yT(...)`) — fixed naming
+        --     convention, registered in typedFfiWrapperSet.
+        --   * Sky top-level function calls whose return type starts
+        --     with `rt.SkyResult[` or `rt.SkyMaybe[` per the codegen
+        --     env's funcRetType map (populated by HM inference).
         isTypedFfiCall expr = case expr of
             GoIr.GoCall (GoIr.GoQualified "rt" fnName) _
                 | take 3 fnName == "Go_"
@@ -2628,7 +2636,19 @@ caseToGo subject branches =
                 , last fnName == 'T'
                 , Set.member fnName typedFfiWrapperSet
                 -> True
+            GoIr.GoCall (GoIr.GoIdent qualName) _
+                | Just retTy <- Map.lookup qualName funcRetTypeMap
+                , isConcreteResultOrMaybe retTy
+                -> True
             _ -> False
+
+        funcRetTypeMap = Rec._cg_funcRetType getCgEnv
+
+        isConcreteResultOrMaybe t =
+            "rt.SkyResult[" `Data.List.isPrefixOf` t
+                && not ("rt.SkyResult[any, any]" `Data.List.isPrefixOf` t)
+            || "rt.SkyMaybe[" `Data.List.isPrefixOf` t
+                && not ("rt.SkyMaybe[any]" `Data.List.isPrefixOf` t)
         -- P7: typed-FFI-source subjects use a distinct name so
         -- bindCtorArg knows to skip the `any().(SkyResult[any,any])`
         -- assertion step. Saves one boxing per typed case match.
@@ -2901,8 +2921,13 @@ bindCtorArg subject ctorName (Can.PatternCtorArg idx _ty pat) =
         -- access directly without a `(any).(SkyResult[any, any])`
         -- assertion. Wrapping the field access in any() preserves
         -- the any-typed binding contract for downstream branch code.
+        -- Only the OUTER case's subject carries the typed-FFI shape.
+        -- Nested destructure temps (`__sky_cf_N_<parent>`) inherit the
+        -- suffix textually but are `any`-typed — reject them so
+        -- patternBindings falls through to the any-assertion path.
         isTypedFfiSubject =
             take 5 (reverse subject) == "ifFt_"
+            && not ("__sky_cf_" `Data.List.isPrefixOf` subject)
         anyWrap n = GoIr.GoCall (GoIr.GoIdent "any") [GoIr.GoIdent n]
         subjectAsStruct = case ctorName of
             _ | isTypedFfiSubject -> GoIr.GoIdent subject
