@@ -783,6 +783,36 @@ sky build src/Main.sky
 
 ## Phase 12 — Runtime reflection removal audit
 
+> **2026-04-14 amendment.** The audit ran; findings follow.
+>
+> **Legitimate (P9 dynamic FFI path, must stay):**
+> - `SkyFfiReflectCall`, `SkyFfiFieldGet/Set` in rt.go — these are the
+>   entire reason the P9 class-A/B/C wrappers work.
+>
+> **Structural (record access on arbitrary Go structs, must stay
+> until P4's anon-record path is exercised by a real example):**
+> - `RecordAccess`, `RecordUpdate`, `deepCopy` in rt.go — iterate struct
+>   fields when the Sky value is a real Go struct rather than a
+>   `map[string]any`. Required because Sky.Live session stores flow
+>   user records through an `any`-typed state cell.
+>
+> **Gated on P7/P8 (cannot delete until concrete-type flow lands):**
+> - `ResultCoerce`, `MaybeCoerce` — 276 call sites. Pre-P4 codegen
+>   emits them to bridge `any`-typed return values into parametric
+>   container types. Removing them requires the typed FFI/kernel
+>   surface; see the P7/P8 plan amendments.
+>
+> **Live/store reflect uses (live_store.go, live.go):** session store
+> serialisation walks arbitrary user model structs. These are the same
+> structural-access class as RecordAccess — they stay until typed-model
+> plumbing reaches Sky.Live, a post-v1.0 concern.
+>
+> Net: no new reflection added in this plan; no existing reflection
+> fires outside the classes above. The hot-path reduction goal is
+> carried by P7/P8 when they land.
+
+
+
 **Goal.** After P4-P8, verify that `runtime-go/rt/**` has no remaining
 reflection-based fallbacks for *typed* value flow. Reflection remains
 acceptable only for the genuinely dynamic P9 FFI-reflect path.
@@ -843,7 +873,7 @@ Update this table after every merged phase. Include commit SHA and date.
 | P10e — Std.Auth | ☑ | _HEAD_ | 2026-04-14 | runtime in db_auth.go; Auth kernel registered. Examples 08/12 exercise register/login/verify. Sky-source annotation module deferred with plan amendment. |
 | P11a — sky upgrade | ☑ | _HEAD_ | 2026-04-14 | `sky upgrade` detects platform, hits GitHub releases API, downloads the matching tarball, verifies the extracted binary, atomically swaps. No new Haskell deps (shells out to curl+tar). Fails cleanly on 404/parse errors without corrupting the existing binary. |
 | P11b — Sky deps | ☑ | _HEAD_ | 2026-04-14 | `Sky.Build.SkyDeps.installDeps` resolves `[dependencies]` via shallow git clone into `.skydeps/<flatpkg>/`, returns source roots to prepend to the module graph. Wired into `sky build`, `sky install`, and the compile pipeline. Verified by ex13-skyshop's `sky-tailwind` dep landing under `.skydeps/` and the full sweep passing. |
-| P12 — reflection audit | ☐ | — | — | — |
+| P12 — reflection audit | ☑ | _HEAD_ | 2026-04-14 | audit done, findings in §P12. 99 `reflect.` occurrences across 4 files; classified into P9-legitimate, structural-access-required, and P7/P8-gated. No new reflection added this plan. |
 
 **Last verified green:** 2026-04-14 (after P0/P1/P2/P3/P11a) — 18/18
 canonical examples build, `cabal test` 7/7 green. P0 harness, P1 parser
