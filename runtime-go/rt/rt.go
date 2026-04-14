@@ -1095,21 +1095,50 @@ func stringifyLogArgs(args []any) any {
 // ═══════════════════════════════════════════════════════════
 
 func Maybe_withDefault(def any, maybe any) any {
-	m := maybe.(SkyMaybe[any])
-	if m.Tag == 0 { return m.JustValue }
+	tag, just := anyMaybeView(maybe)
+	if tag < 0 {
+		if maybe == nil { return def }
+		return maybe
+	}
+	if tag == 0 { return just }
 	return def
 }
 
 func Maybe_map(fn any, maybe any) any {
-	m := maybe.(SkyMaybe[any])
-	if m.Tag == 0 { return Just[any](fn.(func(any) any)(m.JustValue)) }
-	return maybe
+	tag, just := anyMaybeView(maybe)
+	if tag < 0 {
+		return Just[any](fn.(func(any) any)(maybe))
+	}
+	if tag == 0 { return Just[any](fn.(func(any) any)(just)) }
+	return Nothing[any]()
 }
 
 func Maybe_andThen(fn any, maybe any) any {
-	m := maybe.(SkyMaybe[any])
-	if m.Tag == 0 { return fn.(func(any) any)(m.JustValue) }
-	return maybe
+	tag, just := anyMaybeView(maybe)
+	if tag < 0 {
+		return fn.(func(any) any)(maybe)
+	}
+	if tag == 0 { return fn.(func(any) any)(just) }
+	return Nothing[any]()
+}
+
+
+// anyMaybeView returns (tag, justValue) for any SkyMaybe shape. Mirrors
+// anyResultView. tag == -1 means "not a Maybe" and the caller decides
+// how to handle it — typically by treating the value as already-unwrapped.
+func anyMaybeView(maybe any) (int, any) {
+	if m, ok := maybe.(SkyMaybe[any]); ok {
+		return m.Tag, m.JustValue
+	}
+	rv := reflect.ValueOf(maybe)
+	if rv.Kind() == reflect.Struct {
+		tagField  := rv.FieldByName("Tag")
+		justField := rv.FieldByName("JustValue")
+		if tagField.IsValid() && justField.IsValid() {
+			return int(tagField.Int()), justField.Interface()
+		}
+	}
+	return -1, nil
 }
 
 // ═══════════════════════════════════════════════════════════
