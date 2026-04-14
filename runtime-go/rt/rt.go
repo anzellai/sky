@@ -1909,6 +1909,36 @@ func Random_shuffle(list any) any {
 	}
 }
 
+// P8/Random typed companions — Task-shaped.
+func Random_intT(lo, hi int) func() SkyResult[string, int] {
+	return func() SkyResult[string, int] {
+		if hi <= lo { return Ok[string, int](lo) }
+		return Ok[string, int](lo + mrand.Intn(hi-lo+1))
+	}
+}
+
+func Random_floatT(lo, hi float64) func() SkyResult[string, float64] {
+	return func() SkyResult[string, float64] {
+		return Ok[string, float64](lo + mrand.Float64()*(hi-lo))
+	}
+}
+
+func Random_choiceT[A any](xs []A) func() SkyResult[string, A] {
+	return func() SkyResult[string, A] {
+		if len(xs) == 0 { return Err[string, A]("empty list") }
+		return Ok[string, A](xs[mrand.Intn(len(xs))])
+	}
+}
+
+func Random_shuffleT[A any](xs []A) func() SkyResult[string, []A] {
+	return func() SkyResult[string, []A] {
+		out := make([]A, len(xs))
+		copy(out, xs)
+		mrand.Shuffle(len(out), func(i, j int) { out[i], out[j] = out[j], out[i] })
+		return Ok[string, []A](out)
+	}
+}
+
 // ═══════════════════════════════════════════════════════════
 // Process
 // ═══════════════════════════════════════════════════════════
