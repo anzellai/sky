@@ -2657,6 +2657,7 @@ typedKernelArgCoerce = Map.fromList
     -- break downstream List ops that expect []any; those need HM
     -- flow to pick up concrete element types at call sites.
     , (("Dict",   "member"),  ["AsString", "AsDict"])
+    , (("Dict",   "insert"),  ["AsString", "Pass", "AsDict"])
     -- Basics: pure boolean / integer helpers
     , (("Basics", "not"),     ["AsBool"])
     , (("Basics", "modBy"),   ["AsInt", "AsInt"])
@@ -2670,6 +2671,10 @@ typedKernelArgCoerce = Map.fromList
 coerceTypedKernelArg :: String -> Can.Expr -> GoIr.GoExpr
 coerceTypedKernelArg coercer arg
     | isPrimLiteralArg arg = exprToGo arg
+    -- "Pass" erases the arg's concrete type via `any(arg)` so Go
+    -- generic inference picks V=any uniformly (e.g. Dict_insertT[V]
+    -- where the dict side came in as map[string]any via AsDict).
+    | coercer == "Pass" = GoIr.GoCall (GoIr.GoIdent "any") [exprToGo arg]
     | otherwise =
         GoIr.GoCall (GoIr.GoQualified "rt" coercer) [exprToGo arg]
 
@@ -2695,7 +2700,7 @@ typedKernelLiterals = Set.fromList
     , ("Regex",  "match"),      ("Regex",  "find"),       ("Regex",  "replace")
     , ("List",   "length"),     ("List",   "head"),       ("List",   "reverse")
     , ("List",   "isEmpty")
-    , ("Dict",   "member")
+    , ("Dict",   "member"),     ("Dict",   "insert")
     , ("Basics", "not"),        ("Basics", "modBy")
     ]
 
