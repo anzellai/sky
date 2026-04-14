@@ -2355,6 +2355,20 @@ exprToGo (A.At _ expr) = case expr of
                         (GoIr.GoQualified "rt" (modName ++ "_" ++ funcName ++ "T"))
                         (map exprToGo args)
 
+            -- P8 step 4 widening: kernel typed dispatch for non-literal
+            -- args. Coerces each arg via the appropriate runtime helper
+            -- (rt.AsInt / rt.AsFloat / rt.AsBool / fmt.Sprintf for
+            -- string) so the typed kernel sees a concrete primitive
+            -- value. Only fires for kernels whose Sky-level signature
+            -- is described in `typedKernelArgCoerce`.
+            Can.VarKernel modName funcName
+                | not (null args)
+                , Just coercers <- Map.lookup (modName, funcName) typedKernelArgCoerce
+                , length coercers == length args ->
+                    GoIr.GoCall
+                        (GoIr.GoQualified "rt" (modName ++ "_" ++ funcName ++ "T"))
+                        (zipWith coerceTypedKernelArg coercers args)
+
             Can.VarCtor _opts _home _typeName _ctorName annot ->
                 -- ADT constructor partial app: JobDone : Int -> Result -> Msg
                 -- applied to just `jid` must close over jid.
@@ -2567,6 +2581,81 @@ isPrimLiteralArg (A.At _ e) = case e of
 -- breaks the build. Conservative list intentionally skips kernels
 -- whose typed variant returns a Task-shaped thunk (caller needs to
 -- execute it) or takes a slice-of-A (literal args are always scalar).
+-- | Per-arg runtime coercer for each kernel that has a typed `*T`
+-- companion. Each entry is (mod, fn) → list of coerce names — one
+-- per arg. The coerce name is the rt.* function used to convert an
+-- any-typed Sky value to the concrete primitive expected by the
+-- typed kernel; the call site emits e.g. `rt.String_fromIntT(rt.AsInt(arg))`.
+--
+-- Coercers:
+--   "AsInt" / "AsFloat" / "AsBool" — runtime primitive coercers.
+--   "AsString" — fmt.Sprintf("%v", arg) wrapper. Defined here as
+--     well, since rt.go uses an inline pattern.
+typedKernelArgCoerce :: Map.Map (String, String) [String]
+typedKernelArgCoerce = Map.fromList
+    -- Single-arg int → string
+    [ (("String", "fromInt"),    ["AsInt"])
+    , (("String", "fromFloat"),  ["AsFloat"])
+    -- String → X
+    , (("String", "toUpper"),    ["AsString"])
+    , (("String", "toLower"),    ["AsString"])
+    , (("String", "trim"),       ["AsString"])
+    , (("String", "reverse"),    ["AsString"])
+    , (("String", "isEmpty"),    ["AsString"])
+    , (("String", "length"),     ["AsString"])
+    -- (String, String) → X
+    , (("String", "contains"),   ["AsString", "AsString"])
+    , (("String", "startsWith"), ["AsString", "AsString"])
+    , (("String", "endsWith"),   ["AsString", "AsString"])
+    , (("String", "append"),     ["AsString", "AsString"])
+    , (("String", "split"),      ["AsString", "AsString"])
+    -- Math
+    , (("Math",   "abs"),  ["AsInt"])
+    , (("Math",   "min"),  ["AsInt", "AsInt"])
+    , (("Math",   "max"),  ["AsInt", "AsInt"])
+    , (("Math",   "sqrt"), ["AsFloat"])
+    , (("Math",   "pow"),  ["AsFloat", "AsFloat"])
+    , (("Math",   "floor"),["AsFloat"])
+    , (("Math",   "ceil"), ["AsFloat"])
+    , (("Math",   "round"),["AsFloat"])
+    , (("Math",   "sin"),  ["AsFloat"])
+    , (("Math",   "cos"),  ["AsFloat"])
+    , (("Math",   "tan"),  ["AsFloat"])
+    , (("Math",   "log"),  ["AsFloat"])
+    -- Char (ints used as runes — Sky's Char is rune)
+    , (("Char",   "isUpper"),  ["AsInt"])
+    , (("Char",   "isLower"),  ["AsInt"])
+    , (("Char",   "isDigit"),  ["AsInt"])
+    , (("Char",   "isAlpha"),  ["AsInt"])
+    , (("Char",   "toUpper"),  ["AsInt"])
+    , (("Char",   "toLower"),  ["AsInt"])
+    -- Path / Encoding / Regex (single-string args)
+    , (("Path",   "dir"),        ["AsString"])
+    , (("Path",   "base"),       ["AsString"])
+    , (("Path",   "ext"),        ["AsString"])
+    , (("Path",   "isAbsolute"), ["AsString"])
+    , (("Encoding", "base64Encode"), ["AsString"])
+    , (("Encoding", "base64Decode"), ["AsString"])
+    , (("Encoding", "urlEncode"),    ["AsString"])
+    , (("Encoding", "urlDecode"),    ["AsString"])
+    , (("Encoding", "hexEncode"),    ["AsString"])
+    , (("Encoding", "hexDecode"),    ["AsString"])
+    , (("Regex",  "match"),   ["AsString", "AsString"])
+    , (("Regex",  "find"),    ["AsString", "AsString"])
+    ]
+
+
+-- | Render a single arg coerced through the named runtime helper.
+-- "AsString" is special-cased as `fmt.Sprintf("%v", arg)` to match
+-- the existing convention; AsInt / AsFloat / AsBool are direct
+-- rt.* calls. Literals pass through as-is.
+coerceTypedKernelArg :: String -> Can.Expr -> GoIr.GoExpr
+coerceTypedKernelArg coercer arg
+    | isPrimLiteralArg arg = exprToGo arg
+    | otherwise =
+        GoIr.GoCall (GoIr.GoQualified "rt" coercer) [exprToGo arg]
+
+
 typedKernelLiterals :: Set.Set (String, String)
 typedKernelLiterals = Set.fromList
     [ ("String", "toUpper"),    ("String", "toLower"),    ("String", "trim")

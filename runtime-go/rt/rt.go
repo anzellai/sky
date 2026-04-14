@@ -588,6 +588,16 @@ func Concat(a, b any) any {
 // Arithmetic and comparison (any-typed, until type checker)
 // ═══════════════════════════════════════════════════════════
 
+// AsString coerces a Sky-side any to a Go string. Mirrors the existing
+// SkyFfiArg_string / fmt.Sprintf("%v", v) idiom but exposed as the
+// canonical name the typed-kernel dispatch emits.
+func AsString(v any) string {
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return fmt.Sprintf("%v", v)
+}
+
 func AsInt(v any) int {
 	switch n := v.(type) {
 	case int:
