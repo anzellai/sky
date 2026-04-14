@@ -40,7 +40,7 @@ exec queryStr args =
         Ok _ ->
             Ok ()
         Err e ->
-            Err (Error.io e)
+            Err e
 
 
 query queryStr args =
@@ -48,7 +48,7 @@ query queryStr args =
         Ok rows ->
             Ok rows
         Err e ->
-            Err (Error.io e)
+            Err e
 
 
 -- Missing columns in a row dict are a Sky-side schema mismatch, not a

@@ -39,7 +39,7 @@ exec queryStr args =
         Ok _ ->
             Ok ()
         Err e ->
-            Err (Error.io e)
+            Err e
 
 
 -- query : Result Error (List Row). Same contract as exec.
@@ -48,7 +48,7 @@ query queryStr args =
         Ok rows ->
             Ok rows
         Err e ->
-            Err (Error.io e)
+            Err e
 
 
 initSchema conn =

@@ -16,8 +16,8 @@ runReadOnly dbConn query params =
         case Db.query dbConn query params of
             Ok rows ->
                 Ok rows
-            Err msg ->
-                Err (Error.io msg)
+            Err e ->
+                Err e
 
     else
         let

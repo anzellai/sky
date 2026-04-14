@@ -44,7 +44,7 @@ exec queryStr args =
         Ok _ ->
             Ok ()
         Err e ->
-            Err (Error.io e)
+            Err e
 
 
 -- Typed boundary: returns Result Error (List Row).
@@ -53,7 +53,7 @@ query queryStr args =
         Ok rows ->
             Ok rows
         Err e ->
-            Err (Error.io e)
+            Err e
 
 
 -- Legacy logging fallback helpers. Prefer `query` / `exec` at update

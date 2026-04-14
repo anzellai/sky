@@ -85,7 +85,7 @@ runSafeQuery dsn query =
     case Db.open "postgres" dsn of
         Err e ->
             let
-                typedErr = Error.io e
+                typedErr = e
                 _ = println ("[METRIC ERROR] runSafeQuery/open: " ++ Error.toString typedErr)
             in
                 "error: " ++ Error.toString typedErr
@@ -97,7 +97,7 @@ runSafeQueryWithConn extConn query =
     case SafeQuery.runReadOnly extConn query [] of
         Err e ->
             let
-                typedErr = Error.io e
+                typedErr = e
                 _ = println ("[METRIC ERROR] runSafeQuery: " ++ Error.toString typedErr)
             in
                 "error: " ++ Error.toString typedErr
