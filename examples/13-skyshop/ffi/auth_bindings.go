@@ -331,13 +331,17 @@ func Go_Auth_clientGetUsersT(p0 *pkg.Client, p1 context.Context, p2 []pkg.UserId
 	return
 }
 
-// [fallible] Go_Auth.clientImportUsers → pkg.ClientImportUsers
-func Go_Auth_clientImportUsers(p0 any, p1 any, p2 any, p3 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := p0.(*pkg.Client).ImportUsers(p1.(context.Context), p2.([]*pkg.UserToImport), p3.([]pkg.UserImportOption)...)
-	if err != nil { out = Err[any, any](ErrFfi(err.Error())); return }
-	out = Ok[any, any](r0)
-
+type FfiT_Go_Auth_clientImportUsers_P0 = *pkg.Client
+type FfiT_Go_Auth_clientImportUsers_P1 = context.Context
+type FfiT_Go_Auth_clientImportUsers_P2 = []*pkg.UserToImport
+type FfiT_Go_Auth_clientImportUsers_P3 = []pkg.UserImportOption
+type FfiT_Go_Auth_clientImportUsers_R = *pkg.UserImportResult
+// [fallible] typed wrapper for Go_Auth_clientImportUsers (P7 adaptor target)
+func Go_Auth_clientImportUsersT(p0 *pkg.Client, p1 context.Context, p2 []*pkg.UserToImport, p3 []pkg.UserImportOption) (out SkyResult[any, *pkg.UserImportResult]) {
+	defer SkyFfiRecoverT(&out)()
+	r0, err := p0.ImportUsers(p1, p2, p3...)
+	if err != nil { out = Err[any,*pkg.UserImportResult](ErrFfi(err.Error())); return }
+	out = Ok[any,*pkg.UserImportResult](r0)
 	return
 }
 
@@ -1791,13 +1795,17 @@ func Go_Auth_tenantClientGetUsersT(p0 *pkg.TenantClient, p1 context.Context, p2 
 	return
 }
 
-// [fallible] Go_Auth.tenantClientImportUsers → pkg.TenantClientImportUsers
-func Go_Auth_tenantClientImportUsers(p0 any, p1 any, p2 any, p3 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := p0.(*pkg.TenantClient).ImportUsers(p1.(context.Context), p2.([]*pkg.UserToImport), p3.([]pkg.UserImportOption)...)
-	if err != nil { out = Err[any, any](ErrFfi(err.Error())); return }
-	out = Ok[any, any](r0)
-
+type FfiT_Go_Auth_tenantClientImportUsers_P0 = *pkg.TenantClient
+type FfiT_Go_Auth_tenantClientImportUsers_P1 = context.Context
+type FfiT_Go_Auth_tenantClientImportUsers_P2 = []*pkg.UserToImport
+type FfiT_Go_Auth_tenantClientImportUsers_P3 = []pkg.UserImportOption
+type FfiT_Go_Auth_tenantClientImportUsers_R = *pkg.UserImportResult
+// [fallible] typed wrapper for Go_Auth_tenantClientImportUsers (P7 adaptor target)
+func Go_Auth_tenantClientImportUsersT(p0 *pkg.TenantClient, p1 context.Context, p2 []*pkg.UserToImport, p3 []pkg.UserImportOption) (out SkyResult[any, *pkg.UserImportResult]) {
+	defer SkyFfiRecoverT(&out)()
+	r0, err := p0.ImportUsers(p1, p2, p3...)
+	if err != nil { out = Err[any,*pkg.UserImportResult](ErrFfi(err.Error())); return }
+	out = Ok[any,*pkg.UserImportResult](r0)
 	return
 }
 

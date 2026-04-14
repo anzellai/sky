@@ -44,10 +44,12 @@ func Go_Firestore_aggregateFunctionAsT(p0 pkg.AggregateFunction, p1 string) (out
 	return
 }
 
-// [pure] Go_Firestore.aggregateSpecWithGroups → pkg.AggregateSpecWithGroups
-func Go_Firestore_aggregateSpecWithGroups(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.AggregateSpec).WithGroups(p1.([]any)...))
+type FfiT_Go_Firestore_aggregateSpecWithGroups_P0 = *pkg.AggregateSpec
+type FfiT_Go_Firestore_aggregateSpecWithGroups_R = *pkg.AggregateSpec
+// [pure] typed wrapper for Go_Firestore_aggregateSpecWithGroups (P7 adaptor target)
+func Go_Firestore_aggregateSpecWithGroupsT(p0 *pkg.AggregateSpec, p1 []any) (out SkyResult[any, *pkg.AggregateSpec]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,*pkg.AggregateSpec](p0.WithGroups(p1...))
 	return
 }
 
@@ -190,10 +192,12 @@ func Go_Firestore_aliasedExpressionAddT(p0 *pkg.AliasedExpression, p1 any) (out 
 	return
 }
 
-// [pure] Go_Firestore.aliasedExpressionArrayConcat → pkg.AliasedExpressionArrayConcat
-func Go_Firestore_aliasedExpressionArrayConcat(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.AliasedExpression).ArrayConcat(p1.([]any)...))
+type FfiT_Go_Firestore_aliasedExpressionArrayConcat_P0 = *pkg.AliasedExpression
+type FfiT_Go_Firestore_aliasedExpressionArrayConcat_R = pkg.Expression
+// [pure] typed wrapper for Go_Firestore_aliasedExpressionArrayConcat (P7 adaptor target)
+func Go_Firestore_aliasedExpressionArrayConcatT(p0 *pkg.AliasedExpression, p1 []any) (out SkyResult[any, pkg.Expression]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,pkg.Expression](p0.ArrayConcat(p1...))
 	return
 }
 
@@ -332,10 +336,12 @@ func Go_Firestore_aliasedExpressionCharLengthT(p0 *pkg.AliasedExpression) (out S
 	return
 }
 
-// [pure] Go_Firestore.aliasedExpressionConcat → pkg.AliasedExpressionConcat
-func Go_Firestore_aliasedExpressionConcat(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.AliasedExpression).Concat(p1.([]any)...))
+type FfiT_Go_Firestore_aliasedExpressionConcat_P0 = *pkg.AliasedExpression
+type FfiT_Go_Firestore_aliasedExpressionConcat_R = pkg.Expression
+// [pure] typed wrapper for Go_Firestore_aliasedExpressionConcat (P7 adaptor target)
+func Go_Firestore_aliasedExpressionConcatT(p0 *pkg.AliasedExpression, p1 []any) (out SkyResult[any, pkg.Expression]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,pkg.Expression](p0.Concat(p1...))
 	return
 }
 
@@ -582,10 +588,14 @@ func Go_Firestore_aliasedExpressionMapGetT(p0 *pkg.AliasedExpression, p1 any) (o
 	return
 }
 
-// [pure] Go_Firestore.aliasedExpressionMapMerge → pkg.AliasedExpressionMapMerge
-func Go_Firestore_aliasedExpressionMapMerge(p0 any, p1 any, p2 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.AliasedExpression).MapMerge(p1.(pkg.Expression), p2.([]pkg.Expression)...))
+type FfiT_Go_Firestore_aliasedExpressionMapMerge_P0 = *pkg.AliasedExpression
+type FfiT_Go_Firestore_aliasedExpressionMapMerge_P1 = pkg.Expression
+type FfiT_Go_Firestore_aliasedExpressionMapMerge_P2 = []pkg.Expression
+type FfiT_Go_Firestore_aliasedExpressionMapMerge_R = pkg.Expression
+// [pure] typed wrapper for Go_Firestore_aliasedExpressionMapMerge (P7 adaptor target)
+func Go_Firestore_aliasedExpressionMapMergeT(p0 *pkg.AliasedExpression, p1 pkg.Expression, p2 []pkg.Expression) (out SkyResult[any, pkg.Expression]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,pkg.Expression](p0.MapMerge(p1, p2...))
 	return
 }
 
@@ -724,10 +734,12 @@ func Go_Firestore_aliasedExpressionStartsWithT(p0 *pkg.AliasedExpression, p1 any
 	return
 }
 
-// [pure] Go_Firestore.aliasedExpressionStringConcat → pkg.AliasedExpressionStringConcat
-func Go_Firestore_aliasedExpressionStringConcat(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.AliasedExpression).StringConcat(p1.([]any)...))
+type FfiT_Go_Firestore_aliasedExpressionStringConcat_P0 = *pkg.AliasedExpression
+type FfiT_Go_Firestore_aliasedExpressionStringConcat_R = pkg.Expression
+// [pure] typed wrapper for Go_Firestore_aliasedExpressionStringConcat (P7 adaptor target)
+func Go_Firestore_aliasedExpressionStringConcatT(p0 *pkg.AliasedExpression, p1 []any) (out SkyResult[any, pkg.Expression]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,pkg.Expression](p0.StringConcat(p1...))
 	return
 }
 
@@ -913,10 +925,13 @@ func Go_Firestore_aliasedExpressionVectorLengthT(p0 *pkg.AliasedExpression) (out
 
 func Go_Firestore_newAliasedExpression(_ any) any { return new(pkg.AliasedExpression) }
 
-// [pure] Go_Firestore.and → pkg.And
-func Go_Firestore_and(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](pkg.And(p0.(pkg.BooleanExpression), p1.([]pkg.BooleanExpression)...))
+type FfiT_Go_Firestore_and_P0 = pkg.BooleanExpression
+type FfiT_Go_Firestore_and_P1 = []pkg.BooleanExpression
+type FfiT_Go_Firestore_and_R = pkg.BooleanExpression
+// [pure] typed wrapper for Go_Firestore_and (P7 adaptor target)
+func Go_Firestore_andT(p0 pkg.BooleanExpression, p1 []pkg.BooleanExpression) (out SkyResult[any, pkg.BooleanExpression]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,pkg.BooleanExpression](pkg.And(p0, p1...))
 	return
 }
 
@@ -930,17 +945,19 @@ func Go_Firestore_andFilterSetFiltersT(value []pkg.EntityFilter, recv *pkg.AndFi
 
 func Go_Firestore_newAndFilter(_ any) any { return new(pkg.AndFilter) }
 
-// [pure] Go_Firestore.array → pkg.Array
-func Go_Firestore_array(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](pkg.Array(p0.([]any)...))
+type FfiT_Go_Firestore_array_R = pkg.Expression
+// [pure] typed wrapper for Go_Firestore_array (P7 adaptor target)
+func Go_Firestore_arrayT(p0 []any) (out SkyResult[any, pkg.Expression]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,pkg.Expression](pkg.Array(p0...))
 	return
 }
 
-// [pure] Go_Firestore.arrayConcat → pkg.ArrayConcat
-func Go_Firestore_arrayConcat(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](pkg.ArrayConcat(p0.(any), p1.([]any)...))
+type FfiT_Go_Firestore_arrayConcat_R = pkg.Expression
+// [pure] typed wrapper for Go_Firestore_arrayConcat (P7 adaptor target)
+func Go_Firestore_arrayConcatT(p0 any, p1 []any) (out SkyResult[any, pkg.Expression]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,pkg.Expression](pkg.ArrayConcat(p0, p1...))
 	return
 }
 
@@ -1074,10 +1091,12 @@ func Go_Firestore_booleanExpressionAddT(p0 pkg.BooleanExpression, p1 any) (out S
 	return
 }
 
-// [pure] Go_Firestore.booleanExpressionArrayConcat → pkg.BooleanExpressionArrayConcat
-func Go_Firestore_booleanExpressionArrayConcat(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(pkg.BooleanExpression).ArrayConcat(p1.([]any)...))
+type FfiT_Go_Firestore_booleanExpressionArrayConcat_P0 = pkg.BooleanExpression
+type FfiT_Go_Firestore_booleanExpressionArrayConcat_R = pkg.Expression
+// [pure] typed wrapper for Go_Firestore_booleanExpressionArrayConcat (P7 adaptor target)
+func Go_Firestore_booleanExpressionArrayConcatT(p0 pkg.BooleanExpression, p1 []any) (out SkyResult[any, pkg.Expression]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,pkg.Expression](p0.ArrayConcat(p1...))
 	return
 }
 
@@ -1216,10 +1235,12 @@ func Go_Firestore_booleanExpressionCharLengthT(p0 pkg.BooleanExpression) (out Sk
 	return
 }
 
-// [pure] Go_Firestore.booleanExpressionConcat → pkg.BooleanExpressionConcat
-func Go_Firestore_booleanExpressionConcat(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(pkg.BooleanExpression).Concat(p1.([]any)...))
+type FfiT_Go_Firestore_booleanExpressionConcat_P0 = pkg.BooleanExpression
+type FfiT_Go_Firestore_booleanExpressionConcat_R = pkg.Expression
+// [pure] typed wrapper for Go_Firestore_booleanExpressionConcat (P7 adaptor target)
+func Go_Firestore_booleanExpressionConcatT(p0 pkg.BooleanExpression, p1 []any) (out SkyResult[any, pkg.Expression]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,pkg.Expression](p0.Concat(p1...))
 	return
 }
 
@@ -1485,10 +1506,14 @@ func Go_Firestore_booleanExpressionMapGetT(p0 pkg.BooleanExpression, p1 any) (ou
 	return
 }
 
-// [pure] Go_Firestore.booleanExpressionMapMerge → pkg.BooleanExpressionMapMerge
-func Go_Firestore_booleanExpressionMapMerge(p0 any, p1 any, p2 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(pkg.BooleanExpression).MapMerge(p1.(pkg.Expression), p2.([]pkg.Expression)...))
+type FfiT_Go_Firestore_booleanExpressionMapMerge_P0 = pkg.BooleanExpression
+type FfiT_Go_Firestore_booleanExpressionMapMerge_P1 = pkg.Expression
+type FfiT_Go_Firestore_booleanExpressionMapMerge_P2 = []pkg.Expression
+type FfiT_Go_Firestore_booleanExpressionMapMerge_R = pkg.Expression
+// [pure] typed wrapper for Go_Firestore_booleanExpressionMapMerge (P7 adaptor target)
+func Go_Firestore_booleanExpressionMapMergeT(p0 pkg.BooleanExpression, p1 pkg.Expression, p2 []pkg.Expression) (out SkyResult[any, pkg.Expression]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,pkg.Expression](p0.MapMerge(p1, p2...))
 	return
 }
 
@@ -1618,10 +1643,12 @@ func Go_Firestore_booleanExpressionStartsWithT(p0 pkg.BooleanExpression, p1 any)
 	return
 }
 
-// [pure] Go_Firestore.booleanExpressionStringConcat → pkg.BooleanExpressionStringConcat
-func Go_Firestore_booleanExpressionStringConcat(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(pkg.BooleanExpression).StringConcat(p1.([]any)...))
+type FfiT_Go_Firestore_booleanExpressionStringConcat_P0 = pkg.BooleanExpression
+type FfiT_Go_Firestore_booleanExpressionStringConcat_R = pkg.Expression
+// [pure] typed wrapper for Go_Firestore_booleanExpressionStringConcat (P7 adaptor target)
+func Go_Firestore_booleanExpressionStringConcatT(p0 pkg.BooleanExpression, p1 []any) (out SkyResult[any, pkg.Expression]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,pkg.Expression](p0.StringConcat(p1...))
 	return
 }
 
@@ -1835,33 +1862,43 @@ func Go_Firestore_bulkWriterCreateT(p0 *pkg.BulkWriter, p1 *pkg.DocumentRef, p2 
 	return
 }
 
-// [fallible] Go_Firestore.bulkWriterDelete → pkg.BulkWriterDelete
-func Go_Firestore_bulkWriterDelete(p0 any, p1 any, p2 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := p0.(*pkg.BulkWriter).Delete(p1.(*pkg.DocumentRef), p2.([]pkg.Precondition)...)
-	if err != nil { out = Err[any, any](ErrFfi(err.Error())); return }
-	out = Ok[any, any](r0)
-
+type FfiT_Go_Firestore_bulkWriterDelete_P0 = *pkg.BulkWriter
+type FfiT_Go_Firestore_bulkWriterDelete_P1 = *pkg.DocumentRef
+type FfiT_Go_Firestore_bulkWriterDelete_P2 = []pkg.Precondition
+type FfiT_Go_Firestore_bulkWriterDelete_R = *pkg.BulkWriterJob
+// [fallible] typed wrapper for Go_Firestore_bulkWriterDelete (P7 adaptor target)
+func Go_Firestore_bulkWriterDeleteT(p0 *pkg.BulkWriter, p1 *pkg.DocumentRef, p2 []pkg.Precondition) (out SkyResult[any, *pkg.BulkWriterJob]) {
+	defer SkyFfiRecoverT(&out)()
+	r0, err := p0.Delete(p1, p2...)
+	if err != nil { out = Err[any,*pkg.BulkWriterJob](ErrFfi(err.Error())); return }
+	out = Ok[any,*pkg.BulkWriterJob](r0)
 	return
 }
 
-// [fallible] Go_Firestore.bulkWriterSet → pkg.BulkWriterSet
-func Go_Firestore_bulkWriterSet(p0 any, p1 any, p2 any, p3 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := p0.(*pkg.BulkWriter).Set(p1.(*pkg.DocumentRef), p2.(interface{}), p3.([]pkg.SetOption)...)
-	if err != nil { out = Err[any, any](ErrFfi(err.Error())); return }
-	out = Ok[any, any](r0)
-
+type FfiT_Go_Firestore_bulkWriterSet_P0 = *pkg.BulkWriter
+type FfiT_Go_Firestore_bulkWriterSet_P1 = *pkg.DocumentRef
+type FfiT_Go_Firestore_bulkWriterSet_P3 = []pkg.SetOption
+type FfiT_Go_Firestore_bulkWriterSet_R = *pkg.BulkWriterJob
+// [fallible] typed wrapper for Go_Firestore_bulkWriterSet (P7 adaptor target)
+func Go_Firestore_bulkWriterSetT(p0 *pkg.BulkWriter, p1 *pkg.DocumentRef, p2 interface{}, p3 []pkg.SetOption) (out SkyResult[any, *pkg.BulkWriterJob]) {
+	defer SkyFfiRecoverT(&out)()
+	r0, err := p0.Set(p1, p2, p3...)
+	if err != nil { out = Err[any,*pkg.BulkWriterJob](ErrFfi(err.Error())); return }
+	out = Ok[any,*pkg.BulkWriterJob](r0)
 	return
 }
 
-// [fallible] Go_Firestore.bulkWriterUpdate → pkg.BulkWriterUpdate
-func Go_Firestore_bulkWriterUpdate(p0 any, p1 any, p2 any, p3 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := p0.(*pkg.BulkWriter).Update(p1.(*pkg.DocumentRef), p2.([]pkg.Update), p3.([]pkg.Precondition)...)
-	if err != nil { out = Err[any, any](ErrFfi(err.Error())); return }
-	out = Ok[any, any](r0)
-
+type FfiT_Go_Firestore_bulkWriterUpdate_P0 = *pkg.BulkWriter
+type FfiT_Go_Firestore_bulkWriterUpdate_P1 = *pkg.DocumentRef
+type FfiT_Go_Firestore_bulkWriterUpdate_P2 = []pkg.Update
+type FfiT_Go_Firestore_bulkWriterUpdate_P3 = []pkg.Precondition
+type FfiT_Go_Firestore_bulkWriterUpdate_R = *pkg.BulkWriterJob
+// [fallible] typed wrapper for Go_Firestore_bulkWriterUpdate (P7 adaptor target)
+func Go_Firestore_bulkWriterUpdateT(p0 *pkg.BulkWriter, p1 *pkg.DocumentRef, p2 []pkg.Update, p3 []pkg.Precondition) (out SkyResult[any, *pkg.BulkWriterJob]) {
+	defer SkyFfiRecoverT(&out)()
+	r0, err := p0.Update(p1, p2, p3...)
+	if err != nil { out = Err[any,*pkg.BulkWriterJob](ErrFfi(err.Error())); return }
+	out = Ok[any,*pkg.BulkWriterJob](r0)
 	return
 }
 
@@ -2001,10 +2038,13 @@ func Go_Firestore_clientBulkWriterT(p0 *pkg.Client, p1 context.Context) (out Sky
 	return
 }
 
-// [pure] Go_Firestore.clientWithReadOptions → pkg.ClientWithReadOptions
-func Go_Firestore_clientWithReadOptions(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.Client).WithReadOptions(p1.([]pkg.ReadOption)...))
+type FfiT_Go_Firestore_clientWithReadOptions_P0 = *pkg.Client
+type FfiT_Go_Firestore_clientWithReadOptions_P1 = []pkg.ReadOption
+type FfiT_Go_Firestore_clientWithReadOptions_R = *pkg.Client
+// [pure] typed wrapper for Go_Firestore_clientWithReadOptions (P7 adaptor target)
+func Go_Firestore_clientWithReadOptionsT(p0 *pkg.Client, p1 []pkg.ReadOption) (out SkyResult[any, *pkg.Client]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,*pkg.Client](p0.WithReadOptions(p1...))
 	return
 }
 
@@ -2160,17 +2200,22 @@ func Go_Firestore_collectionGroupRefPipelineT(p0 *pkg.CollectionGroupRef) (out S
 	return
 }
 
-// [pure] Go_Firestore.collectionGroupRefSelect → pkg.CollectionGroupRefSelect
-func Go_Firestore_collectionGroupRefSelect(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.CollectionGroupRef).Select(p1.([]string)...))
+type FfiT_Go_Firestore_collectionGroupRefSelect_P0 = *pkg.CollectionGroupRef
+type FfiT_Go_Firestore_collectionGroupRefSelect_R = pkg.Query
+// [pure] typed wrapper for Go_Firestore_collectionGroupRefSelect (P7 adaptor target)
+func Go_Firestore_collectionGroupRefSelectT(p0 *pkg.CollectionGroupRef, p1 []string) (out SkyResult[any, pkg.Query]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,pkg.Query](p0.Select(p1...))
 	return
 }
 
-// [pure] Go_Firestore.collectionGroupRefSelectPaths → pkg.CollectionGroupRefSelectPaths
-func Go_Firestore_collectionGroupRefSelectPaths(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.CollectionGroupRef).SelectPaths(p1.([]pkg.FieldPath)...))
+type FfiT_Go_Firestore_collectionGroupRefSelectPaths_P0 = *pkg.CollectionGroupRef
+type FfiT_Go_Firestore_collectionGroupRefSelectPaths_P1 = []pkg.FieldPath
+type FfiT_Go_Firestore_collectionGroupRefSelectPaths_R = pkg.Query
+// [pure] typed wrapper for Go_Firestore_collectionGroupRefSelectPaths (P7 adaptor target)
+func Go_Firestore_collectionGroupRefSelectPathsT(p0 *pkg.CollectionGroupRef, p1 []pkg.FieldPath) (out SkyResult[any, pkg.Query]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,pkg.Query](p0.SelectPaths(p1...))
 	return
 }
 
@@ -2237,17 +2282,23 @@ func Go_Firestore_collectionGroupRefWherePathT(p0 *pkg.CollectionGroupRef, p1 pk
 	return
 }
 
-// [pure] Go_Firestore.collectionGroupRefWithReadOptions → pkg.CollectionGroupRefWithReadOptions
-func Go_Firestore_collectionGroupRefWithReadOptions(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.CollectionGroupRef).WithReadOptions(p1.([]pkg.ReadOption)...))
+type FfiT_Go_Firestore_collectionGroupRefWithReadOptions_P0 = *pkg.CollectionGroupRef
+type FfiT_Go_Firestore_collectionGroupRefWithReadOptions_P1 = []pkg.ReadOption
+type FfiT_Go_Firestore_collectionGroupRefWithReadOptions_R = *pkg.Query
+// [pure] typed wrapper for Go_Firestore_collectionGroupRefWithReadOptions (P7 adaptor target)
+func Go_Firestore_collectionGroupRefWithReadOptionsT(p0 *pkg.CollectionGroupRef, p1 []pkg.ReadOption) (out SkyResult[any, *pkg.Query]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,*pkg.Query](p0.WithReadOptions(p1...))
 	return
 }
 
-// [pure] Go_Firestore.collectionGroupRefWithRunOptions → pkg.CollectionGroupRefWithRunOptions
-func Go_Firestore_collectionGroupRefWithRunOptions(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.CollectionGroupRef).WithRunOptions(p1.([]pkg.RunOption)...))
+type FfiT_Go_Firestore_collectionGroupRefWithRunOptions_P0 = *pkg.CollectionGroupRef
+type FfiT_Go_Firestore_collectionGroupRefWithRunOptions_P1 = []pkg.RunOption
+type FfiT_Go_Firestore_collectionGroupRefWithRunOptions_R = pkg.Query
+// [pure] typed wrapper for Go_Firestore_collectionGroupRefWithRunOptions (P7 adaptor target)
+func Go_Firestore_collectionGroupRefWithRunOptionsT(p0 *pkg.CollectionGroupRef, p1 []pkg.RunOption) (out SkyResult[any, pkg.Query]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,pkg.Query](p0.WithRunOptions(p1...))
 	return
 }
 
@@ -2270,10 +2321,12 @@ func Go_Firestore_collectionHintsWithForceIndexT(p0 pkg.CollectionHints, p1 stri
 	return
 }
 
-// [pure] Go_Firestore.collectionHintsWithIgnoreIndexFields → pkg.CollectionHintsWithIgnoreIndexFields
-func Go_Firestore_collectionHintsWithIgnoreIndexFields(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(pkg.CollectionHints).WithIgnoreIndexFields(p1.([]string)...))
+type FfiT_Go_Firestore_collectionHintsWithIgnoreIndexFields_P0 = pkg.CollectionHints
+type FfiT_Go_Firestore_collectionHintsWithIgnoreIndexFields_R = pkg.CollectionHints
+// [pure] typed wrapper for Go_Firestore_collectionHintsWithIgnoreIndexFields (P7 adaptor target)
+func Go_Firestore_collectionHintsWithIgnoreIndexFieldsT(p0 pkg.CollectionHints, p1 []string) (out SkyResult[any, pkg.CollectionHints]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,pkg.CollectionHints](p0.WithIgnoreIndexFields(p1...))
 	return
 }
 
@@ -2349,10 +2402,13 @@ func Go_Firestore_collectionRefDocumentRefsT(p0 *pkg.CollectionRef, p1 context.C
 	return
 }
 
-// [pure] Go_Firestore.collectionRefWithReadOptions → pkg.CollectionRefWithReadOptions
-func Go_Firestore_collectionRefWithReadOptions(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.CollectionRef).WithReadOptions(p1.([]pkg.ReadOption)...))
+type FfiT_Go_Firestore_collectionRefWithReadOptions_P0 = *pkg.CollectionRef
+type FfiT_Go_Firestore_collectionRefWithReadOptions_P1 = []pkg.ReadOption
+type FfiT_Go_Firestore_collectionRefWithReadOptions_R = *pkg.CollectionRef
+// [pure] typed wrapper for Go_Firestore_collectionRefWithReadOptions (P7 adaptor target)
+func Go_Firestore_collectionRefWithReadOptionsT(p0 *pkg.CollectionRef, p1 []pkg.ReadOption) (out SkyResult[any, *pkg.CollectionRef]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,*pkg.CollectionRef](p0.WithReadOptions(p1...))
 	return
 }
 
@@ -2480,17 +2536,22 @@ func Go_Firestore_collectionRefPipelineT(p0 *pkg.CollectionRef) (out SkyResult[a
 	return
 }
 
-// [pure] Go_Firestore.collectionRefSelect → pkg.CollectionRefSelect
-func Go_Firestore_collectionRefSelect(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.CollectionRef).Select(p1.([]string)...))
+type FfiT_Go_Firestore_collectionRefSelect_P0 = *pkg.CollectionRef
+type FfiT_Go_Firestore_collectionRefSelect_R = pkg.Query
+// [pure] typed wrapper for Go_Firestore_collectionRefSelect (P7 adaptor target)
+func Go_Firestore_collectionRefSelectT(p0 *pkg.CollectionRef, p1 []string) (out SkyResult[any, pkg.Query]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,pkg.Query](p0.Select(p1...))
 	return
 }
 
-// [pure] Go_Firestore.collectionRefSelectPaths → pkg.CollectionRefSelectPaths
-func Go_Firestore_collectionRefSelectPaths(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.CollectionRef).SelectPaths(p1.([]pkg.FieldPath)...))
+type FfiT_Go_Firestore_collectionRefSelectPaths_P0 = *pkg.CollectionRef
+type FfiT_Go_Firestore_collectionRefSelectPaths_P1 = []pkg.FieldPath
+type FfiT_Go_Firestore_collectionRefSelectPaths_R = pkg.Query
+// [pure] typed wrapper for Go_Firestore_collectionRefSelectPaths (P7 adaptor target)
+func Go_Firestore_collectionRefSelectPathsT(p0 *pkg.CollectionRef, p1 []pkg.FieldPath) (out SkyResult[any, pkg.Query]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,pkg.Query](p0.SelectPaths(p1...))
 	return
 }
 
@@ -2557,10 +2618,13 @@ func Go_Firestore_collectionRefWherePathT(p0 *pkg.CollectionRef, p1 pkg.FieldPat
 	return
 }
 
-// [pure] Go_Firestore.collectionRefWithRunOptions → pkg.CollectionRefWithRunOptions
-func Go_Firestore_collectionRefWithRunOptions(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.CollectionRef).WithRunOptions(p1.([]pkg.RunOption)...))
+type FfiT_Go_Firestore_collectionRefWithRunOptions_P0 = *pkg.CollectionRef
+type FfiT_Go_Firestore_collectionRefWithRunOptions_P1 = []pkg.RunOption
+type FfiT_Go_Firestore_collectionRefWithRunOptions_R = pkg.Query
+// [pure] typed wrapper for Go_Firestore_collectionRefWithRunOptions (P7 adaptor target)
+func Go_Firestore_collectionRefWithRunOptionsT(p0 *pkg.CollectionRef, p1 []pkg.RunOption) (out SkyResult[any, pkg.Query]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,pkg.Query](p0.WithRunOptions(p1...))
 	return
 }
 
@@ -2605,10 +2669,11 @@ func Go_Firestore_commitResponseCommitTimeT(p0 *pkg.CommitResponse) (out SkyResu
 
 func Go_Firestore_newCommitResponse(_ any) any { return new(pkg.CommitResponse) }
 
-// [pure] Go_Firestore.concat → pkg.Concat
-func Go_Firestore_concat(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](pkg.Concat(p0.(any), p1.([]any)...))
+type FfiT_Go_Firestore_concat_R = pkg.Expression
+// [pure] typed wrapper for Go_Firestore_concat (P7 adaptor target)
+func Go_Firestore_concatT(p0 any, p1 []any) (out SkyResult[any, pkg.Expression]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,pkg.Expression](pkg.Concat(p0, p1...))
 	return
 }
 
@@ -2864,33 +2929,43 @@ func Go_Firestore_documentRefCreateT(p0 *pkg.DocumentRef, p1 context.Context, p2
 	return
 }
 
-// [fallible] Go_Firestore.documentRefSet → pkg.DocumentRefSet
-func Go_Firestore_documentRefSet(p0 any, p1 any, p2 any, p3 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := p0.(*pkg.DocumentRef).Set(p1.(context.Context), p2.(interface{}), p3.([]pkg.SetOption)...)
-	if err != nil { out = Err[any, any](ErrFfi(err.Error())); return }
-	out = Ok[any, any](r0)
-
+type FfiT_Go_Firestore_documentRefSet_P0 = *pkg.DocumentRef
+type FfiT_Go_Firestore_documentRefSet_P1 = context.Context
+type FfiT_Go_Firestore_documentRefSet_P3 = []pkg.SetOption
+type FfiT_Go_Firestore_documentRefSet_R = *pkg.WriteResult
+// [fallible] typed wrapper for Go_Firestore_documentRefSet (P7 adaptor target)
+func Go_Firestore_documentRefSetT(p0 *pkg.DocumentRef, p1 context.Context, p2 interface{}, p3 []pkg.SetOption) (out SkyResult[any, *pkg.WriteResult]) {
+	defer SkyFfiRecoverT(&out)()
+	r0, err := p0.Set(p1, p2, p3...)
+	if err != nil { out = Err[any,*pkg.WriteResult](ErrFfi(err.Error())); return }
+	out = Ok[any,*pkg.WriteResult](r0)
 	return
 }
 
-// [fallible] Go_Firestore.documentRefDelete → pkg.DocumentRefDelete
-func Go_Firestore_documentRefDelete(p0 any, p1 any, p2 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := p0.(*pkg.DocumentRef).Delete(p1.(context.Context), p2.([]pkg.Precondition)...)
-	if err != nil { out = Err[any, any](ErrFfi(err.Error())); return }
-	out = Ok[any, any](r0)
-
+type FfiT_Go_Firestore_documentRefDelete_P0 = *pkg.DocumentRef
+type FfiT_Go_Firestore_documentRefDelete_P1 = context.Context
+type FfiT_Go_Firestore_documentRefDelete_P2 = []pkg.Precondition
+type FfiT_Go_Firestore_documentRefDelete_R = *pkg.WriteResult
+// [fallible] typed wrapper for Go_Firestore_documentRefDelete (P7 adaptor target)
+func Go_Firestore_documentRefDeleteT(p0 *pkg.DocumentRef, p1 context.Context, p2 []pkg.Precondition) (out SkyResult[any, *pkg.WriteResult]) {
+	defer SkyFfiRecoverT(&out)()
+	r0, err := p0.Delete(p1, p2...)
+	if err != nil { out = Err[any,*pkg.WriteResult](ErrFfi(err.Error())); return }
+	out = Ok[any,*pkg.WriteResult](r0)
 	return
 }
 
-// [fallible] Go_Firestore.documentRefUpdate → pkg.DocumentRefUpdate
-func Go_Firestore_documentRefUpdate(p0 any, p1 any, p2 any, p3 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := p0.(*pkg.DocumentRef).Update(p1.(context.Context), p2.([]pkg.Update), p3.([]pkg.Precondition)...)
-	if err != nil { out = Err[any, any](ErrFfi(err.Error())); return }
-	out = Ok[any, any](r0)
-
+type FfiT_Go_Firestore_documentRefUpdate_P0 = *pkg.DocumentRef
+type FfiT_Go_Firestore_documentRefUpdate_P1 = context.Context
+type FfiT_Go_Firestore_documentRefUpdate_P2 = []pkg.Update
+type FfiT_Go_Firestore_documentRefUpdate_P3 = []pkg.Precondition
+type FfiT_Go_Firestore_documentRefUpdate_R = *pkg.WriteResult
+// [fallible] typed wrapper for Go_Firestore_documentRefUpdate (P7 adaptor target)
+func Go_Firestore_documentRefUpdateT(p0 *pkg.DocumentRef, p1 context.Context, p2 []pkg.Update, p3 []pkg.Precondition) (out SkyResult[any, *pkg.WriteResult]) {
+	defer SkyFfiRecoverT(&out)()
+	r0, err := p0.Update(p1, p2, p3...)
+	if err != nil { out = Err[any,*pkg.WriteResult](ErrFfi(err.Error())); return }
+	out = Ok[any,*pkg.WriteResult](r0)
 	return
 }
 
@@ -2914,10 +2989,13 @@ func Go_Firestore_documentRefSnapshotsT(p0 *pkg.DocumentRef, p1 context.Context)
 	return
 }
 
-// [pure] Go_Firestore.documentRefWithReadOptions → pkg.DocumentRefWithReadOptions
-func Go_Firestore_documentRefWithReadOptions(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.DocumentRef).WithReadOptions(p1.([]pkg.ReadOption)...))
+type FfiT_Go_Firestore_documentRefWithReadOptions_P0 = *pkg.DocumentRef
+type FfiT_Go_Firestore_documentRefWithReadOptions_P1 = []pkg.ReadOption
+type FfiT_Go_Firestore_documentRefWithReadOptions_R = *pkg.DocumentRef
+// [pure] typed wrapper for Go_Firestore_documentRefWithReadOptions (P7 adaptor target)
+func Go_Firestore_documentRefWithReadOptionsT(p0 *pkg.DocumentRef, p1 []pkg.ReadOption) (out SkyResult[any, *pkg.DocumentRef]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,*pkg.DocumentRef](p0.WithReadOptions(p1...))
 	return
 }
 
@@ -3228,10 +3306,12 @@ func Go_Firestore_expressionAddT(p0 pkg.Expression, p1 any) (out SkyResult[any, 
 	return
 }
 
-// [pure] Go_Firestore.expressionArrayConcat → pkg.ExpressionArrayConcat
-func Go_Firestore_expressionArrayConcat(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(pkg.Expression).ArrayConcat(p1.([]any)...))
+type FfiT_Go_Firestore_expressionArrayConcat_P0 = pkg.Expression
+type FfiT_Go_Firestore_expressionArrayConcat_R = pkg.Expression
+// [pure] typed wrapper for Go_Firestore_expressionArrayConcat (P7 adaptor target)
+func Go_Firestore_expressionArrayConcatT(p0 pkg.Expression, p1 []any) (out SkyResult[any, pkg.Expression]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,pkg.Expression](p0.ArrayConcat(p1...))
 	return
 }
 
@@ -3370,10 +3450,12 @@ func Go_Firestore_expressionCharLengthT(p0 pkg.Expression) (out SkyResult[any, p
 	return
 }
 
-// [pure] Go_Firestore.expressionConcat → pkg.ExpressionConcat
-func Go_Firestore_expressionConcat(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(pkg.Expression).Concat(p1.([]any)...))
+type FfiT_Go_Firestore_expressionConcat_P0 = pkg.Expression
+type FfiT_Go_Firestore_expressionConcat_R = pkg.Expression
+// [pure] typed wrapper for Go_Firestore_expressionConcat (P7 adaptor target)
+func Go_Firestore_expressionConcatT(p0 pkg.Expression, p1 []any) (out SkyResult[any, pkg.Expression]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,pkg.Expression](p0.Concat(p1...))
 	return
 }
 
@@ -3611,10 +3693,14 @@ func Go_Firestore_expressionMapGetT(p0 pkg.Expression, p1 any) (out SkyResult[an
 	return
 }
 
-// [pure] Go_Firestore.expressionMapMerge → pkg.ExpressionMapMerge
-func Go_Firestore_expressionMapMerge(p0 any, p1 any, p2 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(pkg.Expression).MapMerge(p1.(pkg.Expression), p2.([]pkg.Expression)...))
+type FfiT_Go_Firestore_expressionMapMerge_P0 = pkg.Expression
+type FfiT_Go_Firestore_expressionMapMerge_P1 = pkg.Expression
+type FfiT_Go_Firestore_expressionMapMerge_P2 = []pkg.Expression
+type FfiT_Go_Firestore_expressionMapMerge_R = pkg.Expression
+// [pure] typed wrapper for Go_Firestore_expressionMapMerge (P7 adaptor target)
+func Go_Firestore_expressionMapMergeT(p0 pkg.Expression, p1 pkg.Expression, p2 []pkg.Expression) (out SkyResult[any, pkg.Expression]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,pkg.Expression](p0.MapMerge(p1, p2...))
 	return
 }
 
@@ -3735,10 +3821,12 @@ func Go_Firestore_expressionStartsWithT(p0 pkg.Expression, p1 any) (out SkyResul
 	return
 }
 
-// [pure] Go_Firestore.expressionStringConcat → pkg.ExpressionStringConcat
-func Go_Firestore_expressionStringConcat(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(pkg.Expression).StringConcat(p1.([]any)...))
+type FfiT_Go_Firestore_expressionStringConcat_P0 = pkg.Expression
+type FfiT_Go_Firestore_expressionStringConcat_R = pkg.Expression
+// [pure] typed wrapper for Go_Firestore_expressionStringConcat (P7 adaptor target)
+func Go_Firestore_expressionStringConcatT(p0 pkg.Expression, p1 []any) (out SkyResult[any, pkg.Expression]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,pkg.Expression](p0.StringConcat(p1...))
 	return
 }
 
@@ -4014,10 +4102,12 @@ func Go_Firestore_functionExpressionAddT(p0 pkg.FunctionExpression, p1 any) (out
 	return
 }
 
-// [pure] Go_Firestore.functionExpressionArrayConcat → pkg.FunctionExpressionArrayConcat
-func Go_Firestore_functionExpressionArrayConcat(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(pkg.FunctionExpression).ArrayConcat(p1.([]any)...))
+type FfiT_Go_Firestore_functionExpressionArrayConcat_P0 = pkg.FunctionExpression
+type FfiT_Go_Firestore_functionExpressionArrayConcat_R = pkg.Expression
+// [pure] typed wrapper for Go_Firestore_functionExpressionArrayConcat (P7 adaptor target)
+func Go_Firestore_functionExpressionArrayConcatT(p0 pkg.FunctionExpression, p1 []any) (out SkyResult[any, pkg.Expression]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,pkg.Expression](p0.ArrayConcat(p1...))
 	return
 }
 
@@ -4156,10 +4246,12 @@ func Go_Firestore_functionExpressionCharLengthT(p0 pkg.FunctionExpression) (out 
 	return
 }
 
-// [pure] Go_Firestore.functionExpressionConcat → pkg.FunctionExpressionConcat
-func Go_Firestore_functionExpressionConcat(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(pkg.FunctionExpression).Concat(p1.([]any)...))
+type FfiT_Go_Firestore_functionExpressionConcat_P0 = pkg.FunctionExpression
+type FfiT_Go_Firestore_functionExpressionConcat_R = pkg.Expression
+// [pure] typed wrapper for Go_Firestore_functionExpressionConcat (P7 adaptor target)
+func Go_Firestore_functionExpressionConcatT(p0 pkg.FunctionExpression, p1 []any) (out SkyResult[any, pkg.Expression]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,pkg.Expression](p0.Concat(p1...))
 	return
 }
 
@@ -4397,10 +4489,14 @@ func Go_Firestore_functionExpressionMapGetT(p0 pkg.FunctionExpression, p1 any) (
 	return
 }
 
-// [pure] Go_Firestore.functionExpressionMapMerge → pkg.FunctionExpressionMapMerge
-func Go_Firestore_functionExpressionMapMerge(p0 any, p1 any, p2 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(pkg.FunctionExpression).MapMerge(p1.(pkg.Expression), p2.([]pkg.Expression)...))
+type FfiT_Go_Firestore_functionExpressionMapMerge_P0 = pkg.FunctionExpression
+type FfiT_Go_Firestore_functionExpressionMapMerge_P1 = pkg.Expression
+type FfiT_Go_Firestore_functionExpressionMapMerge_P2 = []pkg.Expression
+type FfiT_Go_Firestore_functionExpressionMapMerge_R = pkg.Expression
+// [pure] typed wrapper for Go_Firestore_functionExpressionMapMerge (P7 adaptor target)
+func Go_Firestore_functionExpressionMapMergeT(p0 pkg.FunctionExpression, p1 pkg.Expression, p2 []pkg.Expression) (out SkyResult[any, pkg.Expression]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,pkg.Expression](p0.MapMerge(p1, p2...))
 	return
 }
 
@@ -4521,10 +4617,12 @@ func Go_Firestore_functionExpressionStartsWithT(p0 pkg.FunctionExpression, p1 an
 	return
 }
 
-// [pure] Go_Firestore.functionExpressionStringConcat → pkg.FunctionExpressionStringConcat
-func Go_Firestore_functionExpressionStringConcat(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(pkg.FunctionExpression).StringConcat(p1.([]any)...))
+type FfiT_Go_Firestore_functionExpressionStringConcat_P0 = pkg.FunctionExpression
+type FfiT_Go_Firestore_functionExpressionStringConcat_R = pkg.Expression
+// [pure] typed wrapper for Go_Firestore_functionExpressionStringConcat (P7 adaptor target)
+func Go_Firestore_functionExpressionStringConcatT(p0 pkg.FunctionExpression, p1 []any) (out SkyResult[any, pkg.Expression]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,pkg.Expression](p0.StringConcat(p1...))
 	return
 }
 
@@ -4868,17 +4966,19 @@ func Go_Firestore_logWatchStreams(_ any) any { return pkg.LogWatchStreams }
 
 func Go_Firestore_setLogWatchStreams(value any) any { reflect.ValueOf(&pkg.LogWatchStreams).Elem().Set(reflect.ValueOf(value).Convert(reflect.TypeOf(pkg.LogWatchStreams))); return struct{}{} }
 
-// [pure] Go_Firestore.logicalMaximum → pkg.LogicalMaximum
-func Go_Firestore_logicalMaximum(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](pkg.LogicalMaximum(p0.(any), p1.([]any)...))
+type FfiT_Go_Firestore_logicalMaximum_R = pkg.Expression
+// [pure] typed wrapper for Go_Firestore_logicalMaximum (P7 adaptor target)
+func Go_Firestore_logicalMaximumT(p0 any, p1 []any) (out SkyResult[any, pkg.Expression]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,pkg.Expression](pkg.LogicalMaximum(p0, p1...))
 	return
 }
 
-// [pure] Go_Firestore.logicalMinimum → pkg.LogicalMinimum
-func Go_Firestore_logicalMinimum(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](pkg.LogicalMinimum(p0.(any), p1.([]any)...))
+type FfiT_Go_Firestore_logicalMinimum_R = pkg.Expression
+// [pure] typed wrapper for Go_Firestore_logicalMinimum (P7 adaptor target)
+func Go_Firestore_logicalMinimumT(p0 any, p1 []any) (out SkyResult[any, pkg.Expression]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,pkg.Expression](pkg.LogicalMinimum(p0, p1...))
 	return
 }
 
@@ -4898,10 +4998,13 @@ func Go_Firestore_mapGetT(p0 any, p1 any) (out SkyResult[any, pkg.Expression]) {
 	return
 }
 
-// [pure] Go_Firestore.mapMerge → pkg.MapMerge
-func Go_Firestore_mapMerge(p0 any, p1 any, p2 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](pkg.MapMerge(p0.(any), p1.(pkg.Expression), p2.([]pkg.Expression)...))
+type FfiT_Go_Firestore_mapMerge_P1 = pkg.Expression
+type FfiT_Go_Firestore_mapMerge_P2 = []pkg.Expression
+type FfiT_Go_Firestore_mapMerge_R = pkg.Expression
+// [pure] typed wrapper for Go_Firestore_mapMerge (P7 adaptor target)
+func Go_Firestore_mapMergeT(p0 any, p1 pkg.Expression, p2 []pkg.Expression) (out SkyResult[any, pkg.Expression]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,pkg.Expression](pkg.MapMerge(p0, p1, p2...))
 	return
 }
 
@@ -4928,10 +5031,12 @@ func Go_Firestore_maximumT(p0 any) (out SkyResult[any, pkg.AggregateFunction]) {
 	return
 }
 
-// [pure] Go_Firestore.merge → pkg.Merge
-func Go_Firestore_merge(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](pkg.Merge(p0.([]pkg.FieldPath)...))
+type FfiT_Go_Firestore_merge_P0 = []pkg.FieldPath
+type FfiT_Go_Firestore_merge_R = pkg.SetOption
+// [pure] typed wrapper for Go_Firestore_merge (P7 adaptor target)
+func Go_Firestore_mergeT(p0 []pkg.FieldPath) (out SkyResult[any, pkg.SetOption]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,pkg.SetOption](pkg.Merge(p0...))
 	return
 }
 
@@ -4963,40 +5068,48 @@ func Go_Firestore_multiplyT(p0 any, p1 any) (out SkyResult[any, pkg.Expression])
 	return
 }
 
-// [pure] Go_Firestore.newAggregateSpec → pkg.NewAggregateSpec
-func Go_Firestore_newAggregateSpec(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](pkg.NewAggregateSpec(p0.([]*pkg.AliasedAggregate)...))
+type FfiT_Go_Firestore_newAggregateSpec_P0 = []*pkg.AliasedAggregate
+type FfiT_Go_Firestore_newAggregateSpec_R = *pkg.AggregateSpec
+// [pure] typed wrapper for Go_Firestore_newAggregateSpec (P7 adaptor target)
+func Go_Firestore_newAggregateSpecT(p0 []*pkg.AliasedAggregate) (out SkyResult[any, *pkg.AggregateSpec]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,*pkg.AggregateSpec](pkg.NewAggregateSpec(p0...))
 	return
 }
 
-// [fallible] Go_Firestore.newClient → pkg.NewClient
-func Go_Firestore_newClient(p0 any, p1 any, p2 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := pkg.NewClient(p0.(context.Context), fmt.Sprintf("%v", p1), p2.([]option.ClientOption)...)
-	if err != nil { out = Err[any, any](ErrFfi(err.Error())); return }
-	out = Ok[any, any](r0)
-
+type FfiT_Go_Firestore_newClient_P0 = context.Context
+type FfiT_Go_Firestore_newClient_P2 = []option.ClientOption
+type FfiT_Go_Firestore_newClient_R = *pkg.Client
+// [fallible] typed wrapper for Go_Firestore_newClient (P7 adaptor target)
+func Go_Firestore_newClientT(p0 context.Context, p1 string, p2 []option.ClientOption) (out SkyResult[any, *pkg.Client]) {
+	defer SkyFfiRecoverT(&out)()
+	r0, err := pkg.NewClient(p0, p1, p2...)
+	if err != nil { out = Err[any,*pkg.Client](ErrFfi(err.Error())); return }
+	out = Ok[any,*pkg.Client](r0)
 	return
 }
 
-// [fallible] Go_Firestore.newClientWithDatabase → pkg.NewClientWithDatabase
-func Go_Firestore_newClientWithDatabase(p0 any, p1 any, p2 any, p3 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := pkg.NewClientWithDatabase(p0.(context.Context), fmt.Sprintf("%v", p1), fmt.Sprintf("%v", p2), p3.([]option.ClientOption)...)
-	if err != nil { out = Err[any, any](ErrFfi(err.Error())); return }
-	out = Ok[any, any](r0)
-
+type FfiT_Go_Firestore_newClientWithDatabase_P0 = context.Context
+type FfiT_Go_Firestore_newClientWithDatabase_P3 = []option.ClientOption
+type FfiT_Go_Firestore_newClientWithDatabase_R = *pkg.Client
+// [fallible] typed wrapper for Go_Firestore_newClientWithDatabase (P7 adaptor target)
+func Go_Firestore_newClientWithDatabaseT(p0 context.Context, p1 string, p2 string, p3 []option.ClientOption) (out SkyResult[any, *pkg.Client]) {
+	defer SkyFfiRecoverT(&out)()
+	r0, err := pkg.NewClientWithDatabase(p0, p1, p2, p3...)
+	if err != nil { out = Err[any,*pkg.Client](ErrFfi(err.Error())); return }
+	out = Ok[any,*pkg.Client](r0)
 	return
 }
 
-// [fallible] Go_Firestore.newRESTClient → pkg.NewRESTClient
-func Go_Firestore_newRESTClient(p0 any, p1 any, p2 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := pkg.NewRESTClient(p0.(context.Context), fmt.Sprintf("%v", p1), p2.([]option.ClientOption)...)
-	if err != nil { out = Err[any, any](ErrFfi(err.Error())); return }
-	out = Ok[any, any](r0)
-
+type FfiT_Go_Firestore_newRESTClient_P0 = context.Context
+type FfiT_Go_Firestore_newRESTClient_P2 = []option.ClientOption
+type FfiT_Go_Firestore_newRESTClient_R = *pkg.Client
+// [fallible] typed wrapper for Go_Firestore_newRESTClient (P7 adaptor target)
+func Go_Firestore_newRESTClientT(p0 context.Context, p1 string, p2 []option.ClientOption) (out SkyResult[any, *pkg.Client]) {
+	defer SkyFfiRecoverT(&out)()
+	r0, err := pkg.NewRESTClient(p0, p1, p2...)
+	if err != nil { out = Err[any,*pkg.Client](ErrFfi(err.Error())); return }
+	out = Ok[any,*pkg.Client](r0)
 	return
 }
 
@@ -5033,10 +5146,13 @@ func Go_Firestore_notEqualAnyT(p0 any, p1 any) (out SkyResult[any, pkg.BooleanEx
 	return
 }
 
-// [pure] Go_Firestore.or → pkg.Or
-func Go_Firestore_or(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](pkg.Or(p0.(pkg.BooleanExpression), p1.([]pkg.BooleanExpression)...))
+type FfiT_Go_Firestore_or_P0 = pkg.BooleanExpression
+type FfiT_Go_Firestore_or_P1 = []pkg.BooleanExpression
+type FfiT_Go_Firestore_or_R = pkg.BooleanExpression
+// [pure] typed wrapper for Go_Firestore_or (P7 adaptor target)
+func Go_Firestore_orT(p0 pkg.BooleanExpression, p1 []pkg.BooleanExpression) (out SkyResult[any, pkg.BooleanExpression]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,pkg.BooleanExpression](pkg.Or(p0, p1...))
 	return
 }
 
@@ -5082,17 +5198,23 @@ func Go_Firestore_pipelineExecuteT(p0 *pkg.Pipeline, p1 context.Context) (out Sk
 	return
 }
 
-// [pure] Go_Firestore.pipelineWithReadOptions → pkg.PipelineWithReadOptions
-func Go_Firestore_pipelineWithReadOptions(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.Pipeline).WithReadOptions(p1.([]pkg.ReadOption)...))
+type FfiT_Go_Firestore_pipelineWithReadOptions_P0 = *pkg.Pipeline
+type FfiT_Go_Firestore_pipelineWithReadOptions_P1 = []pkg.ReadOption
+type FfiT_Go_Firestore_pipelineWithReadOptions_R = *pkg.Pipeline
+// [pure] typed wrapper for Go_Firestore_pipelineWithReadOptions (P7 adaptor target)
+func Go_Firestore_pipelineWithReadOptionsT(p0 *pkg.Pipeline, p1 []pkg.ReadOption) (out SkyResult[any, *pkg.Pipeline]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,*pkg.Pipeline](p0.WithReadOptions(p1...))
 	return
 }
 
-// [pure] Go_Firestore.pipelineWithExecuteOptions → pkg.PipelineWithExecuteOptions
-func Go_Firestore_pipelineWithExecuteOptions(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.Pipeline).WithExecuteOptions(p1.([]pkg.ExecuteOption)...))
+type FfiT_Go_Firestore_pipelineWithExecuteOptions_P0 = *pkg.Pipeline
+type FfiT_Go_Firestore_pipelineWithExecuteOptions_P1 = []pkg.ExecuteOption
+type FfiT_Go_Firestore_pipelineWithExecuteOptions_R = *pkg.Pipeline
+// [pure] typed wrapper for Go_Firestore_pipelineWithExecuteOptions (P7 adaptor target)
+func Go_Firestore_pipelineWithExecuteOptionsT(p0 *pkg.Pipeline, p1 []pkg.ExecuteOption) (out SkyResult[any, *pkg.Pipeline]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,*pkg.Pipeline](p0.WithExecuteOptions(p1...))
 	return
 }
 
@@ -5105,10 +5227,13 @@ func Go_Firestore_pipelineLimitT(p0 *pkg.Pipeline, p1 int) (out SkyResult[any, *
 	return
 }
 
-// [pure] Go_Firestore.pipelineSort → pkg.PipelineSort
-func Go_Firestore_pipelineSort(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.Pipeline).Sort(p1.([]pkg.Ordering)...))
+type FfiT_Go_Firestore_pipelineSort_P0 = *pkg.Pipeline
+type FfiT_Go_Firestore_pipelineSort_P1 = []pkg.Ordering
+type FfiT_Go_Firestore_pipelineSort_R = *pkg.Pipeline
+// [pure] typed wrapper for Go_Firestore_pipelineSort (P7 adaptor target)
+func Go_Firestore_pipelineSortT(p0 *pkg.Pipeline, p1 []pkg.Ordering) (out SkyResult[any, *pkg.Pipeline]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,*pkg.Pipeline](p0.Sort(p1...))
 	return
 }
 
@@ -5121,31 +5246,40 @@ func Go_Firestore_pipelineOffsetT(p0 *pkg.Pipeline, p1 int) (out SkyResult[any, 
 	return
 }
 
-// [pure] Go_Firestore.pipelineSelect → pkg.PipelineSelect
-func Go_Firestore_pipelineSelect(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.Pipeline).Select(p1.([]any)...))
+type FfiT_Go_Firestore_pipelineSelect_P0 = *pkg.Pipeline
+type FfiT_Go_Firestore_pipelineSelect_R = *pkg.Pipeline
+// [pure] typed wrapper for Go_Firestore_pipelineSelect (P7 adaptor target)
+func Go_Firestore_pipelineSelectT(p0 *pkg.Pipeline, p1 []any) (out SkyResult[any, *pkg.Pipeline]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,*pkg.Pipeline](p0.Select(p1...))
 	return
 }
 
-// [pure] Go_Firestore.pipelineDistinct → pkg.PipelineDistinct
-func Go_Firestore_pipelineDistinct(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.Pipeline).Distinct(p1.([]any)...))
+type FfiT_Go_Firestore_pipelineDistinct_P0 = *pkg.Pipeline
+type FfiT_Go_Firestore_pipelineDistinct_R = *pkg.Pipeline
+// [pure] typed wrapper for Go_Firestore_pipelineDistinct (P7 adaptor target)
+func Go_Firestore_pipelineDistinctT(p0 *pkg.Pipeline, p1 []any) (out SkyResult[any, *pkg.Pipeline]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,*pkg.Pipeline](p0.Distinct(p1...))
 	return
 }
 
-// [pure] Go_Firestore.pipelineAddFields → pkg.PipelineAddFields
-func Go_Firestore_pipelineAddFields(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.Pipeline).AddFields(p1.([]pkg.Selectable)...))
+type FfiT_Go_Firestore_pipelineAddFields_P0 = *pkg.Pipeline
+type FfiT_Go_Firestore_pipelineAddFields_P1 = []pkg.Selectable
+type FfiT_Go_Firestore_pipelineAddFields_R = *pkg.Pipeline
+// [pure] typed wrapper for Go_Firestore_pipelineAddFields (P7 adaptor target)
+func Go_Firestore_pipelineAddFieldsT(p0 *pkg.Pipeline, p1 []pkg.Selectable) (out SkyResult[any, *pkg.Pipeline]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,*pkg.Pipeline](p0.AddFields(p1...))
 	return
 }
 
-// [pure] Go_Firestore.pipelineRemoveFields → pkg.PipelineRemoveFields
-func Go_Firestore_pipelineRemoveFields(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.Pipeline).RemoveFields(p1.([]any)...))
+type FfiT_Go_Firestore_pipelineRemoveFields_P0 = *pkg.Pipeline
+type FfiT_Go_Firestore_pipelineRemoveFields_R = *pkg.Pipeline
+// [pure] typed wrapper for Go_Firestore_pipelineRemoveFields (P7 adaptor target)
+func Go_Firestore_pipelineRemoveFieldsT(p0 *pkg.Pipeline, p1 []any) (out SkyResult[any, *pkg.Pipeline]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,*pkg.Pipeline](p0.RemoveFields(p1...))
 	return
 }
 
@@ -5159,10 +5293,13 @@ func Go_Firestore_pipelineWhereT(p0 *pkg.Pipeline, p1 pkg.BooleanExpression) (ou
 	return
 }
 
-// [pure] Go_Firestore.pipelineAggregate → pkg.PipelineAggregate
-func Go_Firestore_pipelineAggregate(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.Pipeline).Aggregate(p1.([]*pkg.AliasedAggregate)...))
+type FfiT_Go_Firestore_pipelineAggregate_P0 = *pkg.Pipeline
+type FfiT_Go_Firestore_pipelineAggregate_P1 = []*pkg.AliasedAggregate
+type FfiT_Go_Firestore_pipelineAggregate_R = *pkg.Pipeline
+// [pure] typed wrapper for Go_Firestore_pipelineAggregate (P7 adaptor target)
+func Go_Firestore_pipelineAggregateT(p0 *pkg.Pipeline, p1 []*pkg.AliasedAggregate) (out SkyResult[any, *pkg.Pipeline]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,*pkg.Pipeline](p0.Aggregate(p1...))
 	return
 }
 
@@ -5397,17 +5534,23 @@ func Go_Firestore_pipelineSnapshotExplainStatsT(p0 *pkg.PipelineSnapshot) (out S
 
 func Go_Firestore_newPipelineSnapshot(_ any) any { return new(pkg.PipelineSnapshot) }
 
-// [pure] Go_Firestore.pipelineSourceCollection → pkg.PipelineSourceCollection
-func Go_Firestore_pipelineSourceCollection(p0 any, p1 any, p2 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.PipelineSource).Collection(fmt.Sprintf("%v", p1), p2.([]pkg.CollectionOption)...))
+type FfiT_Go_Firestore_pipelineSourceCollection_P0 = *pkg.PipelineSource
+type FfiT_Go_Firestore_pipelineSourceCollection_P2 = []pkg.CollectionOption
+type FfiT_Go_Firestore_pipelineSourceCollection_R = *pkg.Pipeline
+// [pure] typed wrapper for Go_Firestore_pipelineSourceCollection (P7 adaptor target)
+func Go_Firestore_pipelineSourceCollectionT(p0 *pkg.PipelineSource, p1 string, p2 []pkg.CollectionOption) (out SkyResult[any, *pkg.Pipeline]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,*pkg.Pipeline](p0.Collection(p1, p2...))
 	return
 }
 
-// [pure] Go_Firestore.pipelineSourceCollectionGroup → pkg.PipelineSourceCollectionGroup
-func Go_Firestore_pipelineSourceCollectionGroup(p0 any, p1 any, p2 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.PipelineSource).CollectionGroup(fmt.Sprintf("%v", p1), p2.([]pkg.CollectionGroupOption)...))
+type FfiT_Go_Firestore_pipelineSourceCollectionGroup_P0 = *pkg.PipelineSource
+type FfiT_Go_Firestore_pipelineSourceCollectionGroup_P2 = []pkg.CollectionGroupOption
+type FfiT_Go_Firestore_pipelineSourceCollectionGroup_R = *pkg.Pipeline
+// [pure] typed wrapper for Go_Firestore_pipelineSourceCollectionGroup (P7 adaptor target)
+func Go_Firestore_pipelineSourceCollectionGroupT(p0 *pkg.PipelineSource, p1 string, p2 []pkg.CollectionGroupOption) (out SkyResult[any, *pkg.Pipeline]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,*pkg.Pipeline](p0.CollectionGroup(p1, p2...))
 	return
 }
 
@@ -5420,10 +5563,13 @@ func Go_Firestore_pipelineSourceDatabaseT(p0 *pkg.PipelineSource) (out SkyResult
 	return
 }
 
-// [pure] Go_Firestore.pipelineSourceDocuments → pkg.PipelineSourceDocuments
-func Go_Firestore_pipelineSourceDocuments(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.PipelineSource).Documents(p1.([]*pkg.DocumentRef)...))
+type FfiT_Go_Firestore_pipelineSourceDocuments_P0 = *pkg.PipelineSource
+type FfiT_Go_Firestore_pipelineSourceDocuments_P1 = []*pkg.DocumentRef
+type FfiT_Go_Firestore_pipelineSourceDocuments_R = *pkg.Pipeline
+// [pure] typed wrapper for Go_Firestore_pipelineSourceDocuments (P7 adaptor target)
+func Go_Firestore_pipelineSourceDocumentsT(p0 *pkg.PipelineSource, p1 []*pkg.DocumentRef) (out SkyResult[any, *pkg.Pipeline]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,*pkg.Pipeline](p0.Documents(p1...))
 	return
 }
 
@@ -5515,17 +5661,22 @@ func Go_Firestore_ptr(p0 any) (out any) {
 	return
 }
 
-// [pure] Go_Firestore.querySelect → pkg.QuerySelect
-func Go_Firestore_querySelect(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(pkg.Query).Select(p1.([]string)...))
+type FfiT_Go_Firestore_querySelect_P0 = pkg.Query
+type FfiT_Go_Firestore_querySelect_R = pkg.Query
+// [pure] typed wrapper for Go_Firestore_querySelect (P7 adaptor target)
+func Go_Firestore_querySelectT(p0 pkg.Query, p1 []string) (out SkyResult[any, pkg.Query]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,pkg.Query](p0.Select(p1...))
 	return
 }
 
-// [pure] Go_Firestore.querySelectPaths → pkg.QuerySelectPaths
-func Go_Firestore_querySelectPaths(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(pkg.Query).SelectPaths(p1.([]pkg.FieldPath)...))
+type FfiT_Go_Firestore_querySelectPaths_P0 = pkg.Query
+type FfiT_Go_Firestore_querySelectPaths_P1 = []pkg.FieldPath
+type FfiT_Go_Firestore_querySelectPaths_R = pkg.Query
+// [pure] typed wrapper for Go_Firestore_querySelectPaths (P7 adaptor target)
+func Go_Firestore_querySelectPathsT(p0 pkg.Query, p1 []pkg.FieldPath) (out SkyResult[any, pkg.Query]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,pkg.Query](p0.SelectPaths(p1...))
 	return
 }
 
@@ -5634,10 +5785,13 @@ func Go_Firestore_queryEndBefore(p0 any, p1 any) (out any) {
 	return
 }
 
-// [pure] Go_Firestore.queryWithRunOptions → pkg.QueryWithRunOptions
-func Go_Firestore_queryWithRunOptions(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(pkg.Query).WithRunOptions(p1.([]pkg.RunOption)...))
+type FfiT_Go_Firestore_queryWithRunOptions_P0 = pkg.Query
+type FfiT_Go_Firestore_queryWithRunOptions_P1 = []pkg.RunOption
+type FfiT_Go_Firestore_queryWithRunOptions_R = pkg.Query
+// [pure] typed wrapper for Go_Firestore_queryWithRunOptions (P7 adaptor target)
+func Go_Firestore_queryWithRunOptionsT(p0 pkg.Query, p1 []pkg.RunOption) (out SkyResult[any, pkg.Query]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,pkg.Query](p0.WithRunOptions(p1...))
 	return
 }
 
@@ -5714,10 +5868,13 @@ func Go_Firestore_querySnapshotsT(p0 pkg.Query, p1 context.Context) (out SkyResu
 	return
 }
 
-// [pure] Go_Firestore.queryWithReadOptions → pkg.QueryWithReadOptions
-func Go_Firestore_queryWithReadOptions(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.Query).WithReadOptions(p1.([]pkg.ReadOption)...))
+type FfiT_Go_Firestore_queryWithReadOptions_P0 = *pkg.Query
+type FfiT_Go_Firestore_queryWithReadOptions_P1 = []pkg.ReadOption
+type FfiT_Go_Firestore_queryWithReadOptions_R = *pkg.Query
+// [pure] typed wrapper for Go_Firestore_queryWithReadOptions (P7 adaptor target)
+func Go_Firestore_queryWithReadOptionsT(p0 *pkg.Query, p1 []pkg.ReadOption) (out SkyResult[any, *pkg.Query]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,*pkg.Query](p0.WithReadOptions(p1...))
 	return
 }
 
@@ -5794,10 +5951,12 @@ func Go_Firestore_querySnapshotIteratorSetQueryT(value pkg.Query, recv *pkg.Quer
 
 func Go_Firestore_newQuerySnapshotIterator(_ any) any { return new(pkg.QuerySnapshotIterator) }
 
-// [pure] Go_Firestore.rawStageWithArguments → pkg.RawStageWithArguments
-func Go_Firestore_rawStageWithArguments(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.RawStage).WithArguments(p1.([]any)...))
+type FfiT_Go_Firestore_rawStageWithArguments_P0 = *pkg.RawStage
+type FfiT_Go_Firestore_rawStageWithArguments_R = *pkg.RawStage
+// [pure] typed wrapper for Go_Firestore_rawStageWithArguments (P7 adaptor target)
+func Go_Firestore_rawStageWithArgumentsT(p0 *pkg.RawStage, p1 []any) (out SkyResult[any, *pkg.RawStage]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,*pkg.RawStage](p0.WithArguments(p1...))
 	return
 }
 
@@ -5910,10 +6069,11 @@ func Go_Firestore_startsWithT(p0 any, p1 any) (out SkyResult[any, pkg.BooleanExp
 	return
 }
 
-// [pure] Go_Firestore.stringConcat → pkg.StringConcat
-func Go_Firestore_stringConcat(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](pkg.StringConcat(p0.(any), p1.([]any)...))
+type FfiT_Go_Firestore_stringConcat_R = pkg.Expression
+// [pure] typed wrapper for Go_Firestore_stringConcat (P7 adaptor target)
+func Go_Firestore_stringConcatT(p0 any, p1 []any) (out SkyResult[any, pkg.Expression]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,pkg.Expression](pkg.StringConcat(p0, p1...))
 	return
 }
 
@@ -6084,40 +6244,50 @@ func Go_Firestore_transactionCreateT(p0 *pkg.Transaction, p1 *pkg.DocumentRef, p
 	return
 }
 
-// [fallible] Go_Firestore.transactionSet → pkg.TransactionSet
-func Go_Firestore_transactionSet(p0 any, p1 any, p2 any, p3 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	err := p0.(*pkg.Transaction).Set(p1.(*pkg.DocumentRef), p2.(interface{}), p3.([]pkg.SetOption)...)
-	if err != nil { out = Err[any, any](ErrFfi(err.Error())); return }
-	out = Ok[any, any](struct{}{})
-
+type FfiT_Go_Firestore_transactionSet_P0 = *pkg.Transaction
+type FfiT_Go_Firestore_transactionSet_P1 = *pkg.DocumentRef
+type FfiT_Go_Firestore_transactionSet_P3 = []pkg.SetOption
+// [fallible] typed wrapper for Go_Firestore_transactionSet (P7 adaptor target)
+func Go_Firestore_transactionSetT(p0 *pkg.Transaction, p1 *pkg.DocumentRef, p2 interface{}, p3 []pkg.SetOption) (out SkyResult[any, struct{}]) {
+	defer SkyFfiRecoverT(&out)()
+	err := p0.Set(p1, p2, p3...)
+	if err != nil { out = Err[any,struct{}](ErrFfi(err.Error())); return }
+	out = Ok[any,struct{}](struct{}{})
 	return
 }
 
-// [fallible] Go_Firestore.transactionDelete → pkg.TransactionDelete
-func Go_Firestore_transactionDelete(p0 any, p1 any, p2 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	err := p0.(*pkg.Transaction).Delete(p1.(*pkg.DocumentRef), p2.([]pkg.Precondition)...)
-	if err != nil { out = Err[any, any](ErrFfi(err.Error())); return }
-	out = Ok[any, any](struct{}{})
-
+type FfiT_Go_Firestore_transactionDelete_P0 = *pkg.Transaction
+type FfiT_Go_Firestore_transactionDelete_P1 = *pkg.DocumentRef
+type FfiT_Go_Firestore_transactionDelete_P2 = []pkg.Precondition
+// [fallible] typed wrapper for Go_Firestore_transactionDelete (P7 adaptor target)
+func Go_Firestore_transactionDeleteT(p0 *pkg.Transaction, p1 *pkg.DocumentRef, p2 []pkg.Precondition) (out SkyResult[any, struct{}]) {
+	defer SkyFfiRecoverT(&out)()
+	err := p0.Delete(p1, p2...)
+	if err != nil { out = Err[any,struct{}](ErrFfi(err.Error())); return }
+	out = Ok[any,struct{}](struct{}{})
 	return
 }
 
-// [fallible] Go_Firestore.transactionUpdate → pkg.TransactionUpdate
-func Go_Firestore_transactionUpdate(p0 any, p1 any, p2 any, p3 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	err := p0.(*pkg.Transaction).Update(p1.(*pkg.DocumentRef), p2.([]pkg.Update), p3.([]pkg.Precondition)...)
-	if err != nil { out = Err[any, any](ErrFfi(err.Error())); return }
-	out = Ok[any, any](struct{}{})
-
+type FfiT_Go_Firestore_transactionUpdate_P0 = *pkg.Transaction
+type FfiT_Go_Firestore_transactionUpdate_P1 = *pkg.DocumentRef
+type FfiT_Go_Firestore_transactionUpdate_P2 = []pkg.Update
+type FfiT_Go_Firestore_transactionUpdate_P3 = []pkg.Precondition
+// [fallible] typed wrapper for Go_Firestore_transactionUpdate (P7 adaptor target)
+func Go_Firestore_transactionUpdateT(p0 *pkg.Transaction, p1 *pkg.DocumentRef, p2 []pkg.Update, p3 []pkg.Precondition) (out SkyResult[any, struct{}]) {
+	defer SkyFfiRecoverT(&out)()
+	err := p0.Update(p1, p2, p3...)
+	if err != nil { out = Err[any,struct{}](ErrFfi(err.Error())); return }
+	out = Ok[any,struct{}](struct{}{})
 	return
 }
 
-// [pure] Go_Firestore.transactionWithReadOptions → pkg.TransactionWithReadOptions
-func Go_Firestore_transactionWithReadOptions(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.Transaction).WithReadOptions(p1.([]pkg.ReadOption)...))
+type FfiT_Go_Firestore_transactionWithReadOptions_P0 = *pkg.Transaction
+type FfiT_Go_Firestore_transactionWithReadOptions_P1 = []pkg.ReadOption
+type FfiT_Go_Firestore_transactionWithReadOptions_R = *pkg.Transaction
+// [pure] typed wrapper for Go_Firestore_transactionWithReadOptions (P7 adaptor target)
+func Go_Firestore_transactionWithReadOptionsT(p0 *pkg.Transaction, p1 []pkg.ReadOption) (out SkyResult[any, *pkg.Transaction]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,*pkg.Transaction](p0.WithReadOptions(p1...))
 	return
 }
 
@@ -6275,24 +6445,37 @@ func Go_Firestore_writeBatchCreateT(p0 *pkg.WriteBatch, p1 *pkg.DocumentRef, p2 
 	return
 }
 
-// [pure] Go_Firestore.writeBatchSet → pkg.WriteBatchSet
-func Go_Firestore_writeBatchSet(p0 any, p1 any, p2 any, p3 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.WriteBatch).Set(p1.(*pkg.DocumentRef), p2.(interface{}), p3.([]pkg.SetOption)...))
+type FfiT_Go_Firestore_writeBatchSet_P0 = *pkg.WriteBatch
+type FfiT_Go_Firestore_writeBatchSet_P1 = *pkg.DocumentRef
+type FfiT_Go_Firestore_writeBatchSet_P3 = []pkg.SetOption
+type FfiT_Go_Firestore_writeBatchSet_R = *pkg.WriteBatch
+// [pure] typed wrapper for Go_Firestore_writeBatchSet (P7 adaptor target)
+func Go_Firestore_writeBatchSetT(p0 *pkg.WriteBatch, p1 *pkg.DocumentRef, p2 interface{}, p3 []pkg.SetOption) (out SkyResult[any, *pkg.WriteBatch]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,*pkg.WriteBatch](p0.Set(p1, p2, p3...))
 	return
 }
 
-// [pure] Go_Firestore.writeBatchDelete → pkg.WriteBatchDelete
-func Go_Firestore_writeBatchDelete(p0 any, p1 any, p2 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.WriteBatch).Delete(p1.(*pkg.DocumentRef), p2.([]pkg.Precondition)...))
+type FfiT_Go_Firestore_writeBatchDelete_P0 = *pkg.WriteBatch
+type FfiT_Go_Firestore_writeBatchDelete_P1 = *pkg.DocumentRef
+type FfiT_Go_Firestore_writeBatchDelete_P2 = []pkg.Precondition
+type FfiT_Go_Firestore_writeBatchDelete_R = *pkg.WriteBatch
+// [pure] typed wrapper for Go_Firestore_writeBatchDelete (P7 adaptor target)
+func Go_Firestore_writeBatchDeleteT(p0 *pkg.WriteBatch, p1 *pkg.DocumentRef, p2 []pkg.Precondition) (out SkyResult[any, *pkg.WriteBatch]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,*pkg.WriteBatch](p0.Delete(p1, p2...))
 	return
 }
 
-// [pure] Go_Firestore.writeBatchUpdate → pkg.WriteBatchUpdate
-func Go_Firestore_writeBatchUpdate(p0 any, p1 any, p2 any, p3 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](p0.(*pkg.WriteBatch).Update(p1.(*pkg.DocumentRef), p2.([]pkg.Update), p3.([]pkg.Precondition)...))
+type FfiT_Go_Firestore_writeBatchUpdate_P0 = *pkg.WriteBatch
+type FfiT_Go_Firestore_writeBatchUpdate_P1 = *pkg.DocumentRef
+type FfiT_Go_Firestore_writeBatchUpdate_P2 = []pkg.Update
+type FfiT_Go_Firestore_writeBatchUpdate_P3 = []pkg.Precondition
+type FfiT_Go_Firestore_writeBatchUpdate_R = *pkg.WriteBatch
+// [pure] typed wrapper for Go_Firestore_writeBatchUpdate (P7 adaptor target)
+func Go_Firestore_writeBatchUpdateT(p0 *pkg.WriteBatch, p1 *pkg.DocumentRef, p2 []pkg.Update, p3 []pkg.Precondition) (out SkyResult[any, *pkg.WriteBatch]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,*pkg.WriteBatch](p0.Update(p1, p2, p3...))
 	return
 }
 
@@ -6320,10 +6503,13 @@ func Go_Firestore_writeResultSetUpdateTimeT(value time.Time, recv *pkg.WriteResu
 
 func Go_Firestore_newWriteResult(_ any) any { return new(pkg.WriteResult) }
 
-// [pure] Go_Firestore.xor → pkg.Xor
-func Go_Firestore_xor(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](pkg.Xor(p0.(pkg.BooleanExpression), p1.([]pkg.BooleanExpression)...))
+type FfiT_Go_Firestore_xor_P0 = pkg.BooleanExpression
+type FfiT_Go_Firestore_xor_P1 = []pkg.BooleanExpression
+type FfiT_Go_Firestore_xor_R = pkg.BooleanExpression
+// [pure] typed wrapper for Go_Firestore_xor (P7 adaptor target)
+func Go_Firestore_xorT(p0 pkg.BooleanExpression, p1 []pkg.BooleanExpression) (out SkyResult[any, pkg.BooleanExpression]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,pkg.BooleanExpression](pkg.Xor(p0, p1...))
 	return
 }
 

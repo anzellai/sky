@@ -4838,10 +4838,12 @@ func Go_Widget_menuOnDismiss(p0 any) any { return SkyFfiFieldGet(p0, "OnDismiss"
 
 func Go_Widget_menuSetOnDismiss(value any, recv any) any { return SkyFfiFieldSet(value, recv, "OnDismiss") }
 
-// [pure] Go_Widget.newAccordion → pkg.NewAccordion
-func Go_Widget_newAccordion(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](pkg.NewAccordion(p0.([]*pkg.AccordionItem)...))
+type FfiT_Go_Widget_newAccordion_P0 = []*pkg.AccordionItem
+type FfiT_Go_Widget_newAccordion_R = *pkg.Accordion
+// [pure] typed wrapper for Go_Widget_newAccordion (P7 adaptor target)
+func Go_Widget_newAccordionT(p0 []*pkg.AccordionItem) (out SkyResult[any, *pkg.Accordion]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,*pkg.Accordion](pkg.NewAccordion(p0...))
 	return
 }
 
@@ -4949,10 +4951,12 @@ func Go_Widget_newFileIconT(p0 fyne.URI) (out SkyResult[any, *pkg.FileIcon]) {
 	return
 }
 
-// [pure] Go_Widget.newForm → pkg.NewForm
-func Go_Widget_newForm(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](pkg.NewForm(p0.([]*pkg.FormItem)...))
+type FfiT_Go_Widget_newForm_P0 = []*pkg.FormItem
+type FfiT_Go_Widget_newForm_R = *pkg.Form
+// [pure] typed wrapper for Go_Widget_newForm (P7 adaptor target)
+func Go_Widget_newFormT(p0 []*pkg.FormItem) (out SkyResult[any, *pkg.Form]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,*pkg.Form](pkg.NewForm(p0...))
 	return
 }
 
@@ -5136,10 +5140,12 @@ func Go_Widget_newRadioGroup(p0 any, p1 any) (out any) {
 	return
 }
 
-// [pure] Go_Widget.newRichText → pkg.NewRichText
-func Go_Widget_newRichText(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](pkg.NewRichText(p0.([]pkg.RichTextSegment)...))
+type FfiT_Go_Widget_newRichText_P0 = []pkg.RichTextSegment
+type FfiT_Go_Widget_newRichText_R = *pkg.RichText
+// [pure] typed wrapper for Go_Widget_newRichText (P7 adaptor target)
+func Go_Widget_newRichTextT(p0 []pkg.RichTextSegment) (out SkyResult[any, *pkg.RichText]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,*pkg.RichText](pkg.NewRichText(p0...))
 	return
 }
 
@@ -5247,10 +5253,12 @@ func Go_Widget_newTextGridFromStringT(p0 string) (out SkyResult[any, *pkg.TextGr
 	return
 }
 
-// [pure] Go_Widget.newToolbar → pkg.NewToolbar
-func Go_Widget_newToolbar(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](pkg.NewToolbar(p0.([]pkg.ToolbarItem)...))
+type FfiT_Go_Widget_newToolbar_P0 = []pkg.ToolbarItem
+type FfiT_Go_Widget_newToolbar_R = *pkg.Toolbar
+// [pure] typed wrapper for Go_Widget_newToolbar (P7 adaptor target)
+func Go_Widget_newToolbarT(p0 []pkg.ToolbarItem) (out SkyResult[any, *pkg.Toolbar]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,*pkg.Toolbar](pkg.NewToolbar(p0...))
 	return
 }
 

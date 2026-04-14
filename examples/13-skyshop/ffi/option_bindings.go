@@ -37,10 +37,11 @@ func Go_Option_clientOptionApply(p0 any, p1 any) (out any) {
 
 func Go_Option_externalAccount(_ any) any { return pkg.ExternalAccount }
 
-// [pure] Go_Option.impersonateCredentials → pkg.ImpersonateCredentials
-func Go_Option_impersonateCredentials(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](pkg.ImpersonateCredentials(fmt.Sprintf("%v", p0), p1.([]string)...))
+type FfiT_Go_Option_impersonateCredentials_R = pkg.ClientOption
+// [pure] typed wrapper for Go_Option_impersonateCredentials (P7 adaptor target)
+func Go_Option_impersonateCredentialsT(p0 string, p1 []string) (out SkyResult[any, pkg.ClientOption]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,pkg.ClientOption](pkg.ImpersonateCredentials(p0, p1...))
 	return
 }
 
@@ -56,10 +57,11 @@ func Go_Option_withAPIKeyT(p0 string) (out SkyResult[any, pkg.ClientOption]) {
 	return
 }
 
-// [pure] Go_Option.withAudiences → pkg.WithAudiences
-func Go_Option_withAudiences(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](pkg.WithAudiences(p0.([]string)...))
+type FfiT_Go_Option_withAudiences_R = pkg.ClientOption
+// [pure] typed wrapper for Go_Option_withAudiences (P7 adaptor target)
+func Go_Option_withAudiencesT(p0 []string) (out SkyResult[any, pkg.ClientOption]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,pkg.ClientOption](pkg.WithAudiences(p0...))
 	return
 }
 
@@ -192,10 +194,11 @@ func Go_Option_withRequestReasonT(p0 string) (out SkyResult[any, pkg.ClientOptio
 	return
 }
 
-// [pure] Go_Option.withScopes → pkg.WithScopes
-func Go_Option_withScopes(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](pkg.WithScopes(p0.([]string)...))
+type FfiT_Go_Option_withScopes_R = pkg.ClientOption
+// [pure] typed wrapper for Go_Option_withScopes (P7 adaptor target)
+func Go_Option_withScopesT(p0 []string) (out SkyResult[any, pkg.ClientOption]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,pkg.ClientOption](pkg.WithScopes(p0...))
 	return
 }
 

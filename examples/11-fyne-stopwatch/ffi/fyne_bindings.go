@@ -1853,24 +1853,31 @@ func Go_FyneV2_newAnimation(p0 any, p1 any) (out any) {
 	return
 }
 
-// [pure] Go_FyneV2.newContainer → pkg.NewContainer
-func Go_FyneV2_newContainer(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](pkg.NewContainer(p0.([]pkg.CanvasObject)...))
+type FfiT_Go_FyneV2_newContainer_P0 = []pkg.CanvasObject
+type FfiT_Go_FyneV2_newContainer_R = *pkg.Container
+// [pure] typed wrapper for Go_FyneV2_newContainer (P7 adaptor target)
+func Go_FyneV2_newContainerT(p0 []pkg.CanvasObject) (out SkyResult[any, *pkg.Container]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,*pkg.Container](pkg.NewContainer(p0...))
 	return
 }
 
-// [pure] Go_FyneV2.newContainerWithLayout → pkg.NewContainerWithLayout
-func Go_FyneV2_newContainerWithLayout(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](pkg.NewContainerWithLayout(p0.(pkg.Layout), p1.([]pkg.CanvasObject)...))
+type FfiT_Go_FyneV2_newContainerWithLayout_P0 = pkg.Layout
+type FfiT_Go_FyneV2_newContainerWithLayout_P1 = []pkg.CanvasObject
+type FfiT_Go_FyneV2_newContainerWithLayout_R = *pkg.Container
+// [pure] typed wrapper for Go_FyneV2_newContainerWithLayout (P7 adaptor target)
+func Go_FyneV2_newContainerWithLayoutT(p0 pkg.Layout, p1 []pkg.CanvasObject) (out SkyResult[any, *pkg.Container]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,*pkg.Container](pkg.NewContainerWithLayout(p0, p1...))
 	return
 }
 
-// [pure] Go_FyneV2.newContainerWithoutLayout → pkg.NewContainerWithoutLayout
-func Go_FyneV2_newContainerWithoutLayout(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](pkg.NewContainerWithoutLayout(p0.([]pkg.CanvasObject)...))
+type FfiT_Go_FyneV2_newContainerWithoutLayout_P0 = []pkg.CanvasObject
+type FfiT_Go_FyneV2_newContainerWithoutLayout_R = *pkg.Container
+// [pure] typed wrapper for Go_FyneV2_newContainerWithoutLayout (P7 adaptor target)
+func Go_FyneV2_newContainerWithoutLayoutT(p0 []pkg.CanvasObject) (out SkyResult[any, *pkg.Container]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,*pkg.Container](pkg.NewContainerWithoutLayout(p0...))
 	return
 }
 
@@ -1882,17 +1889,21 @@ func Go_FyneV2_newDeltaT(p0 float32, p1 float32) (out SkyResult[any, pkg.Delta])
 	return
 }
 
-// [pure] Go_FyneV2.newMainMenu → pkg.NewMainMenu
-func Go_FyneV2_newMainMenu(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](pkg.NewMainMenu(p0.([]*pkg.Menu)...))
+type FfiT_Go_FyneV2_newMainMenu_P0 = []*pkg.Menu
+type FfiT_Go_FyneV2_newMainMenu_R = *pkg.MainMenu
+// [pure] typed wrapper for Go_FyneV2_newMainMenu (P7 adaptor target)
+func Go_FyneV2_newMainMenuT(p0 []*pkg.Menu) (out SkyResult[any, *pkg.MainMenu]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,*pkg.MainMenu](pkg.NewMainMenu(p0...))
 	return
 }
 
-// [pure] Go_FyneV2.newMenu → pkg.NewMenu
-func Go_FyneV2_newMenu(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](pkg.NewMenu(fmt.Sprintf("%v", p0), p1.([]*pkg.MenuItem)...))
+type FfiT_Go_FyneV2_newMenu_P1 = []*pkg.MenuItem
+type FfiT_Go_FyneV2_newMenu_R = *pkg.Menu
+// [pure] typed wrapper for Go_FyneV2_newMenu (P7 adaptor target)
+func Go_FyneV2_newMenuT(p0 string, p1 []*pkg.MenuItem) (out SkyResult[any, *pkg.Menu]) {
+	defer SkyFfiRecoverT(&out)()
+	out = Ok[any,*pkg.Menu](pkg.NewMenu(p0, p1...))
 	return
 }
 

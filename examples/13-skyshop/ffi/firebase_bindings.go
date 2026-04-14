@@ -173,13 +173,16 @@ func Go_GoV4_configSetStorageBucketT(value string, recv *pkg.Config) *pkg.Config
 
 func Go_GoV4_newConfig(_ any) any { return new(pkg.Config) }
 
-// [fallible] Go_GoV4.newApp → pkg.NewApp
-func Go_GoV4_newApp(p0 any, p1 any, p2 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := pkg.NewApp(p0.(context.Context), p1.(*pkg.Config), p2.([]option.ClientOption)...)
-	if err != nil { out = Err[any, any](ErrFfi(err.Error())); return }
-	out = Ok[any, any](r0)
-
+type FfiT_Go_GoV4_newApp_P0 = context.Context
+type FfiT_Go_GoV4_newApp_P1 = *pkg.Config
+type FfiT_Go_GoV4_newApp_P2 = []option.ClientOption
+type FfiT_Go_GoV4_newApp_R = *pkg.App
+// [fallible] typed wrapper for Go_GoV4_newApp (P7 adaptor target)
+func Go_GoV4_newAppT(p0 context.Context, p1 *pkg.Config, p2 []option.ClientOption) (out SkyResult[any, *pkg.App]) {
+	defer SkyFfiRecoverT(&out)()
+	r0, err := pkg.NewApp(p0, p1, p2...)
+	if err != nil { out = Err[any,*pkg.App](ErrFfi(err.Error())); return }
+	out = Ok[any,*pkg.App](r0)
 	return
 }
 
