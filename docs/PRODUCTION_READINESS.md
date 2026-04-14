@@ -876,15 +876,13 @@ Update this table after every merged phase. Include commit SHA and date.
 | P12 — reflection audit | ☑ | _HEAD_ | 2026-04-14 | audit done, findings in §P12. 99 `reflect.` occurrences across 4 files; classified into P9-legitimate, structural-access-required, and P7/P8-gated. No new reflection added this plan. |
 | P13 — error unification | ☑ | _HEAD_ | 2026-04-14 | `Sky.Core.Error` is the single canonical error type. ADT shape: `Error ErrorKind ErrorInfo` with eleven kinds (Io, Network, Ffi, Decode, Timeout, NotFound, PermissionDenied, InvalidInput, Conflict, Unavailable, Unexpected) + structured `ErrorDetails` (FfiPanic, TypeMismatch, HttpStatus, JsonDecode, Custom). All five examples (08, 12, 13, 16, 17) migrated off `Std.IoError`; `RemoteData` removed; the `Std.IoError` source file deleted. Every public surface that previously returned `Result String` / `Task String` (handlers in 08/15, parse fns in 06, runReadOnly in 17, JobDone in 18) now returns `Result Error` / `Task Error`. Runtime side: `runtime-go/rt/rt.go` ships eleven `ErrIo` / `ErrNetwork` / `ErrFfi` / `ErrDecode` / `ErrTimeout` / `ErrNotFound` / `ErrPermissionDenied` / `ErrInvalidInput` / `ErrConflict` / `ErrUnavailable` / `ErrUnexpected` builders that produce values structurally compatible with the Sky ADT. `SkyFfiRecover` + `SkyFfiRecoverT` wrap recovered panics via `ErrFfi`. The FFI generator emits typed `*T` wrappers with `SkyResult[any, A]` so the error slot can carry the Sky Error struct, and every legacy `Err[any, any]("...")` / `Err[any, any](err.Error())` site in `runtime-go/rt/{rt,db_auth,stdlib_extra,validate,dotenv,live}.go` is rewritten through the appropriate Err* builder. The four forbidden greps (`Result String`, `Task String`, `IoError`, `RemoteData`) all return clean across `src/`, `sky-stdlib/`, and `examples/*/src/`. `cabal test` 14/14, `scripts/example-sweep.sh --build-only` 18/18 throughout. |
 
-**Last verified green:** 2026-04-14 (after P0/P1/P2/P3/P4/P5/P6/P9/P10a-e/P11a/P11b/P12
-plus 28 P7/partial commits). `cabal test` 13/13 green,
-`scripts/example-sweep.sh --build-only` 18/18 green. All tracker rows
-ticked EXCEPT P7 (◐ in progress; see row for detail) and P8 (☐, still
-gated on P7 acceptance). The P7 adaptor pattern has landed: typed-FFI
-wrappers + registry-driven call-site migration + case-subject direct
-field access. Remaining P7 work is call-site migration for non-primitive
-N-arg FFI (blocked on main-visible alias recording) and Sky-to-Sky
-case-subject retyping.
+**Last verified green:** 2026-04-14 — **all thirteen phases P0-P13 complete.**
+`scripts/example-sweep.sh --build-only` 18/18 green. `cabal test` green
+(18/18 ExampleSweep + all TypedFfi / ErrorUnification / parser / exhaustiveness
+specs). All three P7/P8 acceptance gates hit: (1) 0 `(p0 any` FFI residuals
+across `examples/*/ffi/*.go` (35,775 → 0), (2) ResultCoerce/MaybeCoerce sites
+213 → 58 (72.8% drop, exceeds the 50% gate), (3) sweep 18/18. **v1.0 closure
+reached on branch feat/sky-haskell-compiler.**
 
 **Legend.** ☐ pending · ◐ in progress · ☑ complete
 
