@@ -8433,12 +8433,13 @@ func Go_Widget_textGridAppendT(p0 *pkg.TextGrid, p1 string) (out SkyResult[any, 
 	return
 }
 
-// [pure] Go_Widget.textGridCursorLocationForPosition → pkg.TextGridCursorLocationForPosition
-func Go_Widget_textGridCursorLocationForPosition(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, r1 := p0.(*pkg.TextGrid).CursorLocationForPosition(p1.(fyne.Position))
-	out = Ok[any, any]([]any{r0, r1})
-
+type FfiT_Go_Widget_textGridCursorLocationForPosition_P0 = *pkg.TextGrid
+type FfiT_Go_Widget_textGridCursorLocationForPosition_P1 = fyne.Position
+// [pure] typed wrapper for Go_Widget_textGridCursorLocationForPosition (P7 adaptor target)
+func Go_Widget_textGridCursorLocationForPositionT(p0 *pkg.TextGrid, p1 fyne.Position) (out SkyResult[any, SkyTuple2]) {
+	defer SkyFfiRecoverT(&out)()
+	r0, r1 := p0.CursorLocationForPosition(p1)
+	out = Ok[any,SkyTuple2](SkyTuple2{V0: any(r0), V1: any(r1)})
 	return
 }
 

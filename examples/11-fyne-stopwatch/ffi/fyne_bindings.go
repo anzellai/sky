@@ -361,12 +361,12 @@ func Go_FyneV2_canvasFocusedT(p0 pkg.Canvas) (out SkyResult[any, pkg.Focusable])
 	return
 }
 
-// [pure] Go_FyneV2.canvasInteractiveArea → pkg.CanvasInteractiveArea
-func Go_FyneV2_canvasInteractiveArea(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, r1 := p0.(pkg.Canvas).InteractiveArea()
-	out = Ok[any, any]([]any{r0, r1})
-
+type FfiT_Go_FyneV2_canvasInteractiveArea_P0 = pkg.Canvas
+// [pure] typed wrapper for Go_FyneV2_canvasInteractiveArea (P7 adaptor target)
+func Go_FyneV2_canvasInteractiveAreaT(p0 pkg.Canvas) (out SkyResult[any, SkyTuple2]) {
+	defer SkyFfiRecoverT(&out)()
+	r0, r1 := p0.InteractiveArea()
+	out = Ok[any,SkyTuple2](SkyTuple2{V0: any(r0), V1: any(r1)})
 	return
 }
 
@@ -393,12 +393,13 @@ func Go_FyneV2_canvasOverlaysT(p0 pkg.Canvas) (out SkyResult[any, pkg.OverlaySta
 	return
 }
 
-// [pure] Go_FyneV2.canvasPixelCoordinateForPosition → pkg.CanvasPixelCoordinateForPosition
-func Go_FyneV2_canvasPixelCoordinateForPosition(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, r1 := p0.(pkg.Canvas).PixelCoordinateForPosition(p1.(pkg.Position))
-	out = Ok[any, any]([]any{r0, r1})
-
+type FfiT_Go_FyneV2_canvasPixelCoordinateForPosition_P0 = pkg.Canvas
+type FfiT_Go_FyneV2_canvasPixelCoordinateForPosition_P1 = pkg.Position
+// [pure] typed wrapper for Go_FyneV2_canvasPixelCoordinateForPosition (P7 adaptor target)
+func Go_FyneV2_canvasPixelCoordinateForPositionT(p0 pkg.Canvas, p1 pkg.Position) (out SkyResult[any, SkyTuple2]) {
+	defer SkyFfiRecoverT(&out)()
+	r0, r1 := p0.PixelCoordinateForPosition(p1)
+	out = Ok[any,SkyTuple2](SkyTuple2{V0: any(r0), V1: any(r1)})
 	return
 }
 
@@ -798,12 +799,12 @@ func Go_FyneV2_currentDeviceT() (out SkyResult[any, pkg.Device]) {
 	return
 }
 
-// [pure] Go_FyneV2.deltaComponents → pkg.DeltaComponents
-func Go_FyneV2_deltaComponents(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, r1 := p0.(pkg.Delta).Components()
-	out = Ok[any, any]([]any{r0, r1})
-
+type FfiT_Go_FyneV2_deltaComponents_P0 = pkg.Delta
+// [pure] typed wrapper for Go_FyneV2_deltaComponents (P7 adaptor target)
+func Go_FyneV2_deltaComponentsT(p0 pkg.Delta) (out SkyResult[any, SkyTuple2]) {
+	defer SkyFfiRecoverT(&out)()
+	r0, r1 := p0.Components()
+	out = Ok[any,SkyTuple2](SkyTuple2{V0: any(r0), V1: any(r1)})
 	return
 }
 
@@ -1040,12 +1041,14 @@ func Go_FyneV2_driverQuitT(p0 pkg.Driver) (out SkyResult[any, struct{}]) {
 	return
 }
 
-// [pure] Go_FyneV2.driverRenderedTextSize → pkg.DriverRenderedTextSize
-func Go_FyneV2_driverRenderedTextSize(p0 any, p1 any, p2 any, p3 any, p4 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, r1 := p0.(pkg.Driver).RenderedTextSize(fmt.Sprintf("%v", p1), float32(AsFloat(p2)), p3.(pkg.TextStyle), p4.(pkg.Resource))
-	out = Ok[any, any]([]any{r0, r1})
-
+type FfiT_Go_FyneV2_driverRenderedTextSize_P0 = pkg.Driver
+type FfiT_Go_FyneV2_driverRenderedTextSize_P3 = pkg.TextStyle
+type FfiT_Go_FyneV2_driverRenderedTextSize_P4 = pkg.Resource
+// [pure] typed wrapper for Go_FyneV2_driverRenderedTextSize (P7 adaptor target)
+func Go_FyneV2_driverRenderedTextSizeT(p0 pkg.Driver, p1 string, p2 float32, p3 pkg.TextStyle, p4 pkg.Resource) (out SkyResult[any, SkyTuple2]) {
+	defer SkyFfiRecoverT(&out)()
+	r0, r1 := p0.RenderedTextSize(p1, p2, p3, p4)
+	out = Ok[any,SkyTuple2](SkyTuple2{V0: any(r0), V1: any(r1)})
 	return
 }
 
@@ -2058,12 +2061,12 @@ func Go_FyneV2_positionAddXYT(p0 pkg.Position, p1 float32, p2 float32) (out SkyR
 	return
 }
 
-// [pure] Go_FyneV2.positionComponents → pkg.PositionComponents
-func Go_FyneV2_positionComponents(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, r1 := p0.(pkg.Position).Components()
-	out = Ok[any, any]([]any{r0, r1})
-
+type FfiT_Go_FyneV2_positionComponents_P0 = pkg.Position
+// [pure] typed wrapper for Go_FyneV2_positionComponents (P7 adaptor target)
+func Go_FyneV2_positionComponentsT(p0 pkg.Position) (out SkyResult[any, SkyTuple2]) {
+	defer SkyFfiRecoverT(&out)()
+	r0, r1 := p0.Components()
+	out = Ok[any,SkyTuple2](SkyTuple2{V0: any(r0), V1: any(r1)})
 	return
 }
 
@@ -2767,12 +2770,12 @@ func Go_FyneV2_sizeMinT(p0 pkg.Size, p1 pkg.Vector2) (out SkyResult[any, pkg.Siz
 	return
 }
 
-// [pure] Go_FyneV2.sizeComponents → pkg.SizeComponents
-func Go_FyneV2_sizeComponents(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, r1 := p0.(pkg.Size).Components()
-	out = Ok[any, any]([]any{r0, r1})
-
+type FfiT_Go_FyneV2_sizeComponents_P0 = pkg.Size
+// [pure] typed wrapper for Go_FyneV2_sizeComponents (P7 adaptor target)
+func Go_FyneV2_sizeComponentsT(p0 pkg.Size) (out SkyResult[any, SkyTuple2]) {
+	defer SkyFfiRecoverT(&out)()
+	r0, r1 := p0.Components()
+	out = Ok[any,SkyTuple2](SkyTuple2{V0: any(r0), V1: any(r1)})
 	return
 }
 
@@ -3273,12 +3276,12 @@ func Go_FyneV2_validatableValidateT(p0 pkg.Validatable) (out SkyResult[any, stru
 	return
 }
 
-// [pure] Go_FyneV2.vector2Components → pkg.Vector2Components
-func Go_FyneV2_vector2Components(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, r1 := p0.(pkg.Vector2).Components()
-	out = Ok[any, any]([]any{r0, r1})
-
+type FfiT_Go_FyneV2_vector2Components_P0 = pkg.Vector2
+// [pure] typed wrapper for Go_FyneV2_vector2Components (P7 adaptor target)
+func Go_FyneV2_vector2ComponentsT(p0 pkg.Vector2) (out SkyResult[any, SkyTuple2]) {
+	defer SkyFfiRecoverT(&out)()
+	r0, r1 := p0.Components()
+	out = Ok[any,SkyTuple2](SkyTuple2{V0: any(r0), V1: any(r1)})
 	return
 }
 

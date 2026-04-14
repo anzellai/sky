@@ -2328,13 +2328,14 @@ func Go_Firestore_collectionRefNewDocT(p0 *pkg.CollectionRef) (out SkyResult[any
 	return
 }
 
-// [fallible] Go_Firestore.collectionRefAdd → pkg.CollectionRefAdd
-func Go_Firestore_collectionRefAdd(p0 any, p1 any, p2 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, r1, err := p0.(*pkg.CollectionRef).Add(p1.(context.Context), p2.(interface{}))
-	if err != nil { out = Err[any, any](ErrFfi(err.Error())); return }
-	out = Ok[any, any]([]any{r0, r1})
-
+type FfiT_Go_Firestore_collectionRefAdd_P0 = *pkg.CollectionRef
+type FfiT_Go_Firestore_collectionRefAdd_P1 = context.Context
+// [fallible] typed wrapper for Go_Firestore_collectionRefAdd (P7 adaptor target)
+func Go_Firestore_collectionRefAddT(p0 *pkg.CollectionRef, p1 context.Context, p2 interface{}) (out SkyResult[any, SkyTuple2]) {
+	defer SkyFfiRecoverT(&out)()
+	r0, r1, err := p0.Add(p1, p2)
+	if err != nil { out = Err[any,SkyTuple2](ErrFfi(err.Error())); return }
+	out = Ok[any,SkyTuple2](SkyTuple2{V0: any(r0), V1: any(r1)})
 	return
 }
 

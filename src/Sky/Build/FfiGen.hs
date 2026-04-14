@@ -1101,6 +1101,18 @@ emitTypedVariant knownAliases anyName fn params results
                         then "p0." ++ methodN ++ "(" ++ callArgs ++ ")"
                         else "pkg." ++ goFnName ++ "(" ++ argRefs ++ ")"
                     recoverLine = "\tdefer SkyFfiRecoverT(&out)()"
+                    -- Multi-return shapes pack the non-error results
+                    -- into a SkyTuple2 / SkyTuple3 literal.
+                    packTuple :: [String] -> String
+                    packTuple [a]       = a
+                    packTuple [a, b]    = "SkyTuple2{V0: any(" ++ a ++ "), V1: any(" ++ b ++ ")}"
+                    packTuple [a, b, c] = "SkyTuple3{V0: any(" ++ a ++ "), V1: any(" ++ b ++ "), V2: any(" ++ c ++ ")}"
+                    packTuple xs        =
+                        "SkyTupleN{Vs: []any{" ++ intercalate ", " [ "any(" ++ x ++ ")" | x <- xs ] ++ "}}"
+                    nonErrorCount =
+                        case results of
+                            _ -> length [ () | (_, t) <- results, t /= "error" ]
+                    rNames = [ "r" ++ show i | i <- [0 .. nonErrorCount - 1] ]
                     bodyLines   = if isEffectful
                         then case results of
                             [_] -> -- single `error`
@@ -1109,19 +1121,27 @@ emitTypedVariant knownAliases anyName fn params results
                                   "](ErrFfi(err.Error())); return }"
                                 , "\tout = Ok[any," ++ okType ++ "](struct{}{})"
                                 ]
-                            _   -> -- (T, error)
-                                [ "\tr0, err := " ++ call
+                            _   -> -- (T, ..., error)
+                                let lhs = intercalate ", " (rNames ++ ["err"])
+                                in
+                                [ "\t" ++ lhs ++ " := " ++ call
                                 , "\tif err != nil { out = Err[any," ++ okType ++
                                   "](ErrFfi(err.Error())); return }"
-                                , "\tout = Ok[any," ++ okType ++ "](r0)"
+                                , "\tout = Ok[any," ++ okType ++ "](" ++ packTuple rNames ++ ")"
                                 ]
                         else case results of
                             [] -> -- void return: run for side-effects, yield struct{}{}
                                 [ "\t" ++ call
                                 , "\tout = Ok[any," ++ okType ++ "](struct{}{})"
                                 ]
-                            _ ->
+                            [_] ->
                                 [ "\tout = Ok[any," ++ okType ++ "](" ++ pickExpr call ++ ")"
+                                ]
+                            _ -> -- (T, ...) without error
+                                let lhs = intercalate ", " rNames
+                                in
+                                [ "\t" ++ lhs ++ " := " ++ call
+                                , "\tout = Ok[any," ++ okType ++ "](" ++ packTuple rNames ++ ")"
                                 ]
                     aliasLines = emitFfiTAliases anyName params okType
                 in Just $ unlines $
@@ -1217,6 +1237,18 @@ classifyTypedResult results = case results of
     [(_, "error")]                      -> Just ("struct{}", True , id)
     [(_, t)] | t /= "error"             -> Just (t, False, id)
     [(_, t), (_, "error")] | t /= "error" -> Just (t, True , id)
+    -- (T, U) without error: pack as SkyTuple2.
+    [(_, t1), (_, t2)] | t1 /= "error" && t2 /= "error" ->
+        Just ("SkyTuple2", False, id)
+    -- (T, U, error): pack as SkyTuple2.
+    [(_, t1), (_, t2), (_, "error")] | t1 /= "error" && t2 /= "error" ->
+        Just ("SkyTuple2", True , id)
+    -- (T, U, V) without error: pack as SkyTuple3.
+    [(_, t1), (_, t2), (_, t3)] | t1 /= "error" && t2 /= "error" && t3 /= "error" ->
+        Just ("SkyTuple3", False, id)
+    -- (T, U, V, error): pack as SkyTuple3.
+    [(_, t1), (_, t2), (_, t3), (_, "error")] | t1 /= "error" && t2 /= "error" && t3 /= "error" ->
+        Just ("SkyTuple3", True , id)
     _                                   -> Nothing
 
 

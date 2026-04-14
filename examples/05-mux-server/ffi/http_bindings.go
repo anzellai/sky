@@ -849,13 +849,13 @@ func Go_Http_headerWriteSubsetT(p0 pkg.Header, p1 io.Writer, p2 map[string]bool)
 	return
 }
 
-// [fallible] Go_Http.hijackerHijack → pkg.HijackerHijack
-func Go_Http_hijackerHijack(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, r1, err := p0.(pkg.Hijacker).Hijack()
-	if err != nil { out = Err[any, any](ErrFfi(err.Error())); return }
-	out = Ok[any, any]([]any{r0, r1})
-
+type FfiT_Go_Http_hijackerHijack_P0 = pkg.Hijacker
+// [fallible] typed wrapper for Go_Http_hijackerHijack (P7 adaptor target)
+func Go_Http_hijackerHijackT(p0 pkg.Hijacker) (out SkyResult[any, SkyTuple2]) {
+	defer SkyFfiRecoverT(&out)()
+	r0, r1, err := p0.Hijack()
+	if err != nil { out = Err[any,SkyTuple2](ErrFfi(err.Error())); return }
+	out = Ok[any,SkyTuple2](SkyTuple2{V0: any(r0), V1: any(r1)})
 	return
 }
 
@@ -1034,12 +1034,11 @@ func Go_Http_parseCookieT(p0 string) (out SkyResult[any, []*pkg.Cookie]) {
 	return
 }
 
-// [pure] Go_Http.parseHTTPVersion → pkg.ParseHTTPVersion
-func Go_Http_parseHTTPVersion(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, r1, r2 := pkg.ParseHTTPVersion(fmt.Sprintf("%v", p0))
-	out = Ok[any, any]([]any{r0, r1, r2})
-
+// [pure] typed wrapper for Go_Http_parseHTTPVersion (P7 adaptor target)
+func Go_Http_parseHTTPVersionT(p0 string) (out SkyResult[any, SkyTuple3]) {
+	defer SkyFfiRecoverT(&out)()
+	r0, r1, r2 := pkg.ParseHTTPVersion(p0)
+	out = Ok[any,SkyTuple3](SkyTuple3{V0: any(r0), V1: any(r1), V2: any(r2)})
 	return
 }
 
@@ -1381,12 +1380,12 @@ func Go_Http_requestWriteProxyT(p0 *pkg.Request, p1 io.Writer) (out SkyResult[an
 	return
 }
 
-// [pure] Go_Http.requestBasicAuth → pkg.RequestBasicAuth
-func Go_Http_requestBasicAuth(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, r1, r2 := p0.(*pkg.Request).BasicAuth()
-	out = Ok[any, any]([]any{r0, r1, r2})
-
+type FfiT_Go_Http_requestBasicAuth_P0 = *pkg.Request
+// [pure] typed wrapper for Go_Http_requestBasicAuth (P7 adaptor target)
+func Go_Http_requestBasicAuthT(p0 *pkg.Request) (out SkyResult[any, SkyTuple3]) {
+	defer SkyFfiRecoverT(&out)()
+	r0, r1, r2 := p0.BasicAuth()
+	out = Ok[any,SkyTuple3](SkyTuple3{V0: any(r0), V1: any(r1), V2: any(r2)})
 	return
 }
 
@@ -1435,13 +1434,13 @@ func Go_Http_requestPostFormValueT(p0 *pkg.Request, p1 string) (out SkyResult[an
 	return
 }
 
-// [fallible] Go_Http.requestFormFile → pkg.RequestFormFile
-func Go_Http_requestFormFile(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, r1, err := p0.(*pkg.Request).FormFile(fmt.Sprintf("%v", p1))
-	if err != nil { out = Err[any, any](ErrFfi(err.Error())); return }
-	out = Ok[any, any]([]any{r0, r1})
-
+type FfiT_Go_Http_requestFormFile_P0 = *pkg.Request
+// [fallible] typed wrapper for Go_Http_requestFormFile (P7 adaptor target)
+func Go_Http_requestFormFileT(p0 *pkg.Request, p1 string) (out SkyResult[any, SkyTuple2]) {
+	defer SkyFfiRecoverT(&out)()
+	r0, r1, err := p0.FormFile(p1)
+	if err != nil { out = Err[any,SkyTuple2](ErrFfi(err.Error())); return }
+	out = Ok[any,SkyTuple2](SkyTuple2{V0: any(r0), V1: any(r1)})
 	return
 }
 
@@ -1753,13 +1752,13 @@ func Go_Http_responseControllerFlushT(p0 *pkg.ResponseController) (out SkyResult
 	return
 }
 
-// [fallible] Go_Http.responseControllerHijack → pkg.ResponseControllerHijack
-func Go_Http_responseControllerHijack(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, r1, err := p0.(*pkg.ResponseController).Hijack()
-	if err != nil { out = Err[any, any](ErrFfi(err.Error())); return }
-	out = Ok[any, any]([]any{r0, r1})
-
+type FfiT_Go_Http_responseControllerHijack_P0 = *pkg.ResponseController
+// [fallible] typed wrapper for Go_Http_responseControllerHijack (P7 adaptor target)
+func Go_Http_responseControllerHijackT(p0 *pkg.ResponseController) (out SkyResult[any, SkyTuple2]) {
+	defer SkyFfiRecoverT(&out)()
+	r0, r1, err := p0.Hijack()
+	if err != nil { out = Err[any,SkyTuple2](ErrFfi(err.Error())); return }
+	out = Ok[any,SkyTuple2](SkyTuple2{V0: any(r0), V1: any(r1)})
 	return
 }
 
@@ -1887,12 +1886,13 @@ func Go_Http_serveFileFST(p0 pkg.ResponseWriter, p1 *pkg.Request, p2 fs.FS, p3 s
 	return
 }
 
-// [pure] Go_Http.serveMuxHandler → pkg.ServeMuxHandler
-func Go_Http_serveMuxHandler(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, r1 := p0.(*pkg.ServeMux).Handler(p1.(*pkg.Request))
-	out = Ok[any, any]([]any{r0, r1})
-
+type FfiT_Go_Http_serveMuxHandler_P0 = *pkg.ServeMux
+type FfiT_Go_Http_serveMuxHandler_P1 = *pkg.Request
+// [pure] typed wrapper for Go_Http_serveMuxHandler (P7 adaptor target)
+func Go_Http_serveMuxHandlerT(p0 *pkg.ServeMux, p1 *pkg.Request) (out SkyResult[any, SkyTuple2]) {
+	defer SkyFfiRecoverT(&out)()
+	r0, r1 := p0.Handler(p1)
+	out = Ok[any,SkyTuple2](SkyTuple2{V0: any(r0), V1: any(r1)})
 	return
 }
 

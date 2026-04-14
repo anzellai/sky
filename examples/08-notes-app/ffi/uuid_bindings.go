@@ -60,14 +60,12 @@ func Go_Uuid_fromBytesT(p0 []byte) (out SkyResult[any, pkg.UUID]) {
 
 func Go_Uuid_future(_ any) any { return pkg.Future }
 
-// [fallible] Go_Uuid.getTime → pkg.GetTime
-func Go_Uuid_getTime(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	_ = p0
+// [fallible] typed wrapper for Go_Uuid_getTime (P7 adaptor target)
+func Go_Uuid_getTimeT() (out SkyResult[any, SkyTuple2]) {
+	defer SkyFfiRecoverT(&out)()
 	r0, r1, err := pkg.GetTime()
-	if err != nil { out = Err[any, any](ErrFfi(err.Error())); return }
-	out = Ok[any, any]([]any{r0, r1})
-
+	if err != nil { out = Err[any,SkyTuple2](ErrFfi(err.Error())); return }
+	out = Ok[any,SkyTuple2](SkyTuple2{V0: any(r0), V1: any(r1)})
 	return
 }
 
@@ -431,12 +429,12 @@ func Go_Uuid_setRandT(p0 io.Reader) (out SkyResult[any, struct{}]) {
 	return
 }
 
-// [pure] Go_Uuid.timeUnixTime → pkg.TimeUnixTime
-func Go_Uuid_timeUnixTime(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, r1 := p0.(pkg.Time).UnixTime()
-	out = Ok[any, any]([]any{r0, r1})
-
+type FfiT_Go_Uuid_timeUnixTime_P0 = pkg.Time
+// [pure] typed wrapper for Go_Uuid_timeUnixTime (P7 adaptor target)
+func Go_Uuid_timeUnixTimeT(p0 pkg.Time) (out SkyResult[any, SkyTuple2]) {
+	defer SkyFfiRecoverT(&out)()
+	r0, r1 := p0.UnixTime()
+	out = Ok[any,SkyTuple2](SkyTuple2{V0: any(r0), V1: any(r1)})
 	return
 }
 
