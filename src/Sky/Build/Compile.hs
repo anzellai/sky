@@ -2692,6 +2692,8 @@ typedKernelArgCoerce = Map.fromList
     , (("Attr",   "class"),   ["AsString"])
     -- Log.println: single-arg, any → struct{}{}. Very high-frequency.
     , (("Log",    "println"), ["Pass"])
+    , (("Server", "html"),    ["AsString"])
+    , (("Server", "redirect"),["AsString"])
     -- Basics: pure boolean / integer helpers
     , (("Basics", "not"),     ["AsBool"])
     , (("Basics", "modBy"),   ["AsInt", "AsInt"])
@@ -2751,6 +2753,7 @@ typedKernelLiterals = Set.fromList
     , ("Html",   "text"),       ("Css",    "hex")
     , ("Css",    "property"),   ("Css",    "px"),       ("Css", "rem")
     , ("Attr",   "class"),     ("Log",    "println")
+    , ("Server", "html"),      ("Server", "redirect")
     , ("Basics", "not"),        ("Basics", "modBy"),  ("Basics", "errorToString")
     , ("Time",   "formatISO8601"), ("Time", "formatRFC3339"), ("Time", "formatHTTP")
     , ("Basics", "fst"),        ("Basics", "snd"),   ("Basics", "identity")

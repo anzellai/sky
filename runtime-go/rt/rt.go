@@ -3208,6 +3208,9 @@ func Server_json(body any) any {
 func Server_html(body any) any {
 	return SkyResponse{Status: 200, Body: fmt.Sprintf("%v", body), ContentType: "text/html"}
 }
+func Server_htmlT(body string) SkyResponse {
+	return SkyResponse{Status: 200, Body: body, ContentType: "text/html"}
+}
 
 func Server_withStatus(status any, resp any) any {
 	r := resp.(SkyResponse)
@@ -3219,6 +3222,12 @@ func Server_redirect(url any) any {
 	return SkyResponse{
 		Status: 302,
 		Headers: map[string]string{"Location": fmt.Sprintf("%v", url)},
+	}
+}
+func Server_redirectT(url string) SkyResponse {
+	return SkyResponse{
+		Status: 302,
+		Headers: map[string]string{"Location": url},
 	}
 }
 
