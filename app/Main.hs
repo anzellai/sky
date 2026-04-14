@@ -9,6 +9,9 @@ import qualified System.Directory
 import qualified System.Environment
 import System.Directory (createDirectoryIfMissing, doesFileExist)
 import System.Process (callProcess)
+import qualified System.Process
+import qualified System.IO.Temp
+import qualified System.Exit
 import Control.Monad (when)
 import Data.FileEmbed (embedStringFile)
 
@@ -373,6 +376,117 @@ runCommand cmd = case cmd of
         Lsp.runLsp
         return (Right ())
 
-    Upgrade -> do
-        putStrLn "Upgrade not yet implemented"
-        return (Right ())
+    Upgrade -> runUpgrade
+
+
+-- | P11a: `sky upgrade` — fetch latest release from GitHub and swap the
+-- running binary in place. Shells out to `curl` + `tar` so we pull in no
+-- new Haskell dependencies and stay portable across macOS/Linux.
+--
+-- Pipeline:
+--   1. Detect current platform (darwin-arm64 / linux-x64 etc).
+--   2. GET https://api.github.com/repos/anzellai/sky/releases/latest
+--   3. Parse tag_name (raw grep — the endpoint is stable).
+--   4. Download the matching tarball into a temp dir.
+--   5. `tar -xzf` then atomically rename(new, old).
+--
+-- Exit 1 with a clear message on any failure; never corrupt the existing
+-- binary.
+runUpgrade :: IO (Either String ())
+runUpgrade = do
+    putStrLn "sky upgrade: detecting platform..."
+    (osName, arch) <- detectPlatform
+    let platform = osName ++ "-" ++ arch
+    putStrLn $ "   platform: " ++ platform
+    putStrLn "   fetching latest release metadata..."
+    releaseJson <- System.Process.readProcess "curl"
+        [ "-sSL"
+        , "-H", "Accept: application/vnd.github+json"
+        , "https://api.github.com/repos/anzellai/sky/releases/latest"
+        ] ""
+    case extractTagName releaseJson of
+        Nothing ->
+            return (Left "sky upgrade: could not parse release metadata — is the repo reachable?")
+        Just tag -> do
+            putStrLn $ "   latest tag: " ++ tag
+            currentBin <- System.Environment.getExecutablePath
+            let assetName = "sky-" ++ platform ++ ".tar.gz"
+                dlUrl = "https://github.com/anzellai/sky/releases/download/"
+                            ++ tag ++ "/" ++ assetName
+            tmpDir <- System.IO.Temp.getCanonicalTemporaryDirectory
+            let stageDir = tmpDir ++ "/sky-upgrade-" ++ tag
+            System.Directory.createDirectoryIfMissing True stageDir
+            putStrLn $ "   downloading " ++ dlUrl
+            (curlEC, _, curlErr) <- System.Process.readProcessWithExitCode "curl"
+                [ "-sSLfo", stageDir ++ "/sky.tar.gz", dlUrl ] ""
+            case curlEC of
+                System.Exit.ExitFailure _ ->
+                    return $ Left $ "sky upgrade: download failed — " ++ curlErr
+                System.Exit.ExitSuccess -> do
+                    putStrLn "   extracting..."
+                    (tarEC, _, tarErr) <- System.Process.readProcessWithExitCode "tar"
+                        [ "-xzf", stageDir ++ "/sky.tar.gz", "-C", stageDir ] ""
+                    case tarEC of
+                        System.Exit.ExitFailure _ ->
+                            return $ Left $ "sky upgrade: extract failed — " ++ tarErr
+                        System.Exit.ExitSuccess -> do
+                            let candidate = stageDir ++ "/sky-" ++ platform
+                            haveCandidate <- doesFileExist candidate
+                            let newBin = if haveCandidate then candidate
+                                         else stageDir ++ "/sky"
+                            haveNewBin <- doesFileExist newBin
+                            if not haveNewBin
+                                then return $ Left $
+                                    "sky upgrade: archive did not contain a `sky` binary"
+                                else do
+                                    putStrLn $ "   swapping " ++ currentBin
+                                    System.Directory.copyFile newBin (currentBin ++ ".new")
+                                    System.Directory.renameFile (currentBin ++ ".new") currentBin
+                                    _ <- System.Process.readProcessWithExitCode
+                                        "chmod" ["+x", currentBin] ""
+                                    putStrLn $ "sky upgrade: upgraded to " ++ tag
+                                    return (Right ())
+
+
+-- | Pull the `"tag_name"` field out of a GitHub release JSON blob. We
+-- don't want to depend on aeson here for the upgrade path (keeps the
+-- critical self-update code path minimal). Robust to whitespace and
+-- surrounding fields — we look for the literal key.
+extractTagName :: String -> Maybe String
+extractTagName s = go s
+  where
+    needle = "\"tag_name\""
+    go [] = Nothing
+    go t@(_:rest)
+        | take (length needle) t == needle =
+            let afterKey = drop (length needle) t
+                afterColon = dropWhile (\c -> c == ':' || c == ' ' || c == '\t') afterKey
+            in case afterColon of
+                ('"' : rest') -> Just (takeWhile (/= '"') rest')
+                _             -> Nothing
+        | otherwise = go rest
+
+
+-- | Identify the current OS + arch in a form that matches our release
+-- artefact naming (e.g. `darwin-arm64`, `linux-x64`).
+detectPlatform :: IO (String, String)
+detectPlatform = do
+    (_, unameOs, _) <- System.Process.readProcessWithExitCode "uname" ["-s"] ""
+    (_, unameArch, _) <- System.Process.readProcessWithExitCode "uname" ["-m"] ""
+    let os = case trim unameOs of
+            "Darwin"   -> "darwin"
+            "Linux"    -> "linux"
+            other      -> map toLowerChar other
+        arch = case trim unameArch of
+            "arm64"    -> "arm64"
+            "aarch64"  -> "arm64"
+            "x86_64"   -> "x64"
+            "amd64"    -> "x64"
+            other      -> other
+    return (os, arch)
+  where
+    trim = dropWhile isSpace . reverse . dropWhile isSpace . reverse
+    isSpace c = c == ' ' || c == '\n' || c == '\t' || c == '\r'
+    toLowerChar c
+        | c >= 'A' && c <= 'Z' = toEnum (fromEnum c + 32)
+        | otherwise = c

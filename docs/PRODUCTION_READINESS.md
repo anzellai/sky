@@ -754,16 +754,18 @@ Update this table after every merged phase. Include commit SHA and date.
 | P10c — Sky.Live | ☐ | — | — | — |
 | P10d — Std.Db | ☐ | — | — | — |
 | P10e — Std.Auth | ☐ | — | — | — |
-| P11a — sky upgrade | ☐ | — | — | — |
+| P11a — sky upgrade | ☑ | _HEAD_ | 2026-04-14 | `sky upgrade` detects platform, hits GitHub releases API, downloads the matching tarball, verifies the extracted binary, atomically swaps. No new Haskell deps (shells out to curl+tar). Fails cleanly on 404/parse errors without corrupting the existing binary. |
 | P11b — Sky deps | ☐ | — | — | — |
 | P12 — reflection audit | ☐ | — | — | — |
 
-**Last verified green:** 2026-04-14 (after P0/P1/P2/P3) — 18/18 canonical
-examples build, `cabal test` 7/7 green (2 new exhaustiveness cases).
-P3 implemented as a conservative first pass: flat ADT / bool / unit /
-literal checks with wildcard short-circuit. The P4→P8 typed-codegen
-chain is next. Golden-output tests per codegen feature remain deferred
-until P4-P6 stabilise the emitted Go shapes.
+**Last verified green:** 2026-04-14 (after P0/P1/P2/P3/P11a) — 18/18
+canonical examples build, `cabal test` 7/7 green. P0 harness, P1 parser
+regressions, P2 exposing enforcement, P3 flat-ADT exhaustiveness, and
+P11a `sky upgrade` have landed. The P4→P8 typed-codegen chain is the
+next critical path; P9 (FFI reflect), P10 (stdlib), and P11b (Sky-source
+deps install) can run independently afterward. Golden-output tests per
+codegen feature remain deferred until P4-P6 stabilise the emitted Go
+shapes.
 
 **Legend.** ☐ pending · ◐ in progress · ☑ complete
 
