@@ -95,7 +95,7 @@ spec = do
                     , "examples/13-skyshop/ffi/uuid_bindings.go"
                     ]
             counts <- mapM typedVariantCount paths
-            sum counts `shouldSatisfy` (>= 2500)
+            sum counts `shouldSatisfy` (>= 3000)
 
 
 -- | Count `^func Go_.*T(p0` signatures in a Go file. Distinguishes
