@@ -2656,6 +2656,9 @@ typedKernelArgCoerce = Map.fromList
     -- break downstream List ops that expect []any; those need HM
     -- flow to pick up concrete element types at call sites.
     , (("Dict",   "member"),  ["AsString", "AsDict"])
+    -- Basics: pure boolean / integer helpers
+    , (("Basics", "not"),     ["AsBool"])
+    , (("Basics", "modBy"),   ["AsInt", "AsInt"])
     ]
 
 
@@ -2692,6 +2695,7 @@ typedKernelLiterals = Set.fromList
     , ("List",   "length"),     ("List",   "head"),       ("List",   "reverse")
     , ("List",   "isEmpty")
     , ("Dict",   "member")
+    , ("Basics", "not"),        ("Basics", "modBy")
     ]
 
 
