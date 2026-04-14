@@ -406,6 +406,14 @@ func Basics_always[A any, B any](a A, _ B) A {
 // P8/Basics typed companions — minimal but commonly exercised.
 func Basics_notT(b bool) bool { return !b }
 
+// Basics_identityT reuses the existing generic Basics_identity
+// implementation but exposes the conventional T suffix for consistent
+// kernel lookups.
+func Basics_identityT[A any](a A) A { return a }
+
+// Basics_alwaysT mirrors Basics_always but keeps the T-suffix naming.
+func Basics_alwaysT[A, B any](a A, _ B) A { return a }
+
 func Basics_not(b any) any {
 	return !AsBool(b)
 }
