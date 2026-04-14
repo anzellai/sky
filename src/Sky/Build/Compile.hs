@@ -2640,15 +2640,21 @@ caseToGo subject branches =
                 | Just retTy <- Map.lookup qualName funcRetTypeMap
                 , isConcreteResultOrMaybe retTy
                 -> True
+            GoIr.GoCall (GoIr.GoIdent qualName) _
+                | Just (_, _, retTy) <- Map.lookup qualName inferredSigMap
+                , isConcreteResultOrMaybe retTy
+                -> True
             _ -> False
 
         funcRetTypeMap = Rec._cg_funcRetType getCgEnv
+        inferredSigMap = Rec._cg_funcInferredSigs getCgEnv
 
         isConcreteResultOrMaybe t =
-            "rt.SkyResult[" `Data.List.isPrefixOf` t
-                && not ("rt.SkyResult[any, any]" `Data.List.isPrefixOf` t)
-            || "rt.SkyMaybe[" `Data.List.isPrefixOf` t
-                && not ("rt.SkyMaybe[any]" `Data.List.isPrefixOf` t)
+            let isResult = "rt.SkyResult[" `Data.List.isPrefixOf` t
+                         && not ("rt.SkyResult[any, any]" `Data.List.isPrefixOf` t)
+                isMaybe  = "rt.SkyMaybe[" `Data.List.isPrefixOf` t
+                         && not ("rt.SkyMaybe[any]" `Data.List.isPrefixOf` t)
+            in isResult || isMaybe
         -- P7: typed-FFI-source subjects use a distinct name so
         -- bindCtorArg knows to skip the `any().(SkyResult[any,any])`
         -- assertion step. Saves one boxing per typed case match.
