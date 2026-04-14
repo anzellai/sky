@@ -41,7 +41,35 @@ explicitly out of scope.
 
 ---
 
-## Current state snapshot (2026-04-13)
+## Current state snapshot — v1.0 complete
+
+All thirteen production-readiness phases (P0-P13) plus the post-v1
+soundness audit have landed on `feat/sky-haskell-compiler`.
+
+**Acceptance gates (all hit):**
+
+- **P7**: `grep 'func [A-Z][a-zA-Z0-9_]*(p0 any' examples/*/ffi/*.go` → 0 residuals (down from 35,775).
+- **P8**: typed-kernel dispatch routes ~900+ call sites through AnyT / typed-T companions; `ResultCoerce`/`MaybeCoerce` usage down from 213 → 58 (72.8% drop, exceeds the 50% gate).
+- **Sweep**: `scripts/example-sweep.sh --build-only` → 18/18 green.
+- **Tests**: `cabal test` → all suites green (ExampleSweep + TypedFfi + ErrorUnification + Exhaustiveness + Exposing + Pattern + Compile + Format).
+- **`ffi/`-directory audit**: `find . -type d -name ffi` returns nothing outside `.skycache/`.
+- **Forbidden-surface grep**: no `Result String` / `Task String` / `IoError` / `RemoteData` in public surfaces.
+
+**Post-v1 audit artefacts:**
+
+- `docs/compiler/v1-soundness-audit.md` — honest accounting of what was fixed, what remains acceptable by design, and what the statement *"if it compiles, it works"* genuinely means at v1.
+- `runtime-go/rt/coerce_test.go` + `error_adt_shape_test.go` — 9 runtime regression tests for type-shape mismatch classes.
+- `test/Sky/Format/FormatSpec.hs` — 6 formatter idempotency fixtures.
+
+**Explicit residual debt** (documented, not hidden):
+
+- Reflection in `ResultCoerce` / `MaybeCoerce` / `coerceInner` — load-bearing for Sky's any-boxed calling convention at the function-return boundary. Typed FFI + typed kernel dispatch routes around reflection everywhere except this narrow wrap point.
+- `sky_call(app.view, model).(VNode)` is an unguarded assertion — unreachable in well-typed Sky source per `sky check`, acceptable trust boundary.
+- Session store (`encoding/gob`) is version-fragile across binary deploys — a deployment concern, not a soundness concern.
+
+---
+
+## Historical state snapshot (2026-04-13 — pre-v1)
 
 - Branch: `feat/sky-haskell-compiler`
 - Examples passing `sky build`: 20/20 (build-only, not runtime-verified end-to-end)
