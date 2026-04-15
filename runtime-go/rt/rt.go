@@ -1081,6 +1081,52 @@ func Eq(a, b any) any {
 	return deepEq(a, b)
 }
 
+// isSkyADT reports whether v is a Sky-canonical ADT struct
+// (SkyMaybe[T], SkyResult[E, A], SkyTuple2/3[…]). Detected by the
+// presence of an int Tag field plus at least one of the named
+// payload fields. Used by deepEq to short-circuit equality on the
+// active tag rather than comparing zero-valued payload fields of
+// different generic instantiations.
+func isSkyADT(v reflect.Value) bool {
+	if v.Kind() != reflect.Struct {
+		return false
+	}
+	tag := v.FieldByName("Tag")
+	if !tag.IsValid() || tag.Kind() != reflect.Int {
+		return false
+	}
+	for _, name := range []string{"JustValue", "OkValue", "ErrValue"} {
+		if v.FieldByName(name).IsValid() {
+			return true
+		}
+	}
+	return false
+}
+
+// skyADTActiveFields returns the list of payload field names that
+// matter for the given tag in a Sky ADT struct. For SkyMaybe Tag=0
+// → ["JustValue"], Tag=1 → []. For SkyResult Tag=0 → ["OkValue"],
+// Tag=1 → ["ErrValue"]. The struct layout determines which family.
+func skyADTActiveFields(v reflect.Value, tag int) []string {
+	hasJust := v.FieldByName("JustValue").IsValid()
+	hasOk := v.FieldByName("OkValue").IsValid()
+	if hasJust && !hasOk {
+		// SkyMaybe-shaped.
+		if tag == 0 {
+			return []string{"JustValue"}
+		}
+		return nil
+	}
+	if hasOk {
+		// SkyResult-shaped.
+		if tag == 0 {
+			return []string{"OkValue"}
+		}
+		return []string{"ErrValue"}
+	}
+	return nil
+}
+
 func deepEq(a, b any) bool {
 	if a == nil || b == nil {
 		return a == nil && b == nil
@@ -1130,6 +1176,37 @@ func deepEq(a, b any) bool {
 		}
 		return true
 	case reflect.Struct:
+		// Audit P0-7: Sky's canonical ADT structs (SkyMaybe[T],
+		// SkyResult[E, A], SkyTuple2/3) carry the active discriminator
+		// in `Tag` plus payloads in named fields. Comparing
+		// `SkyMaybe[any]{Tag:1}` (Nothing) to `SkyMaybe[string]{Tag:1}`
+		// (Nothing) used to fall through the fields-by-name path and
+		// compare zero-value JustValue payloads of different Go types
+		// (`nil` any vs `""` string), returning false. The fix is to
+		// short-circuit on Tag for Sky ADTs: only the active payload
+		// matters.
+		if isSkyADT(ra) && isSkyADT(rb) {
+			tA := ra.FieldByName("Tag").Int()
+			tB := rb.FieldByName("Tag").Int()
+			if tA != tB {
+				return false
+			}
+			// Compare only the field corresponding to the active tag.
+			// For SkyMaybe: Tag=0 → JustValue, Tag=1 → no payload.
+			// For SkyResult: Tag=0 → OkValue, Tag=1 → ErrValue.
+			activeFields := skyADTActiveFields(ra, int(tA))
+			for _, f := range activeFields {
+				fa := ra.FieldByName(f)
+				fb := rb.FieldByName(f)
+				if !fa.IsValid() || !fb.IsValid() {
+					continue
+				}
+				if !deepEq(fa.Interface(), fb.Interface()) {
+					return false
+				}
+			}
+			return true
+		}
 		if ra.Type() != rb.Type() {
 			// Fields-by-name fallback for aliased Sky ADTs that
 			// share layout but not type identity.
