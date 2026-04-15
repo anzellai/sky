@@ -18,6 +18,16 @@ spec = do
             let script = cwd </> "scripts" </> "example-sweep.sh"
             haveScript <- doesFileExist script
             haveScript `shouldBe` True
-            (ec, _out, _err) <- readCreateProcessWithExitCode
+            (ec, out, err) <- readCreateProcessWithExitCode
                 (proc "bash" [script, "--build-only"]) ""
+            -- Surface the sweep's output when it fails so CI logs show
+            -- which example failed and why. Without this the hspec
+            -- failure is just "ExitFailure 1" with no diagnosis.
+            case ec of
+                ExitSuccess -> return ()
+                _ -> do
+                    putStrLn "─── example-sweep.sh stdout ───"
+                    putStrLn out
+                    putStrLn "─── example-sweep.sh stderr ───"
+                    putStrLn err
             ec `shouldBe` ExitSuccess
