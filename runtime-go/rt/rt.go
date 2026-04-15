@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"math"
 	mrand "math/rand"
 	"net/http"
@@ -3461,6 +3462,7 @@ func Server_listen(port any, routes any) any {
 			// Panic recovery — one bad handler mustn't kill the process.
 			defer func() {
 				if rec := recover(); rec != nil {
+					log.Printf("[sky.http] panic handling %s %s: %v\n%s", req.Method, req.URL.Path, rec, debugStack())
 					w.WriteHeader(500)
 					fmt.Fprint(w, "Internal Server Error")
 				}
