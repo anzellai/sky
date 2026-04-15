@@ -19,6 +19,7 @@ import qualified System.Exit
 import Control.Monad (when)
 import Data.FileEmbed (embedStringFile)
 
+import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import qualified Sky.Build.Compile as Compile
 import qualified Sky.Sky.Toml as Toml
@@ -634,9 +635,12 @@ runCommand cmd = case cmd of
                     Left err -> return (Left $ "Parse error: " ++ show err)
                     Right srcMod -> do
                         let formatted = Format.formatModule srcMod
-                        writeFile path formatted
-                        putStrLn $ "Formatted " ++ path
-                        return (Right ())
+                        case fmtSafetyCheck src (T.pack formatted) of
+                            Just msg -> return (Left msg)
+                            Nothing -> do
+                                writeFile path formatted
+                                putStrLn $ "Formatted " ++ path
+                                return (Right ())
             FmtStdin -> do
                 src <- TIO.getContents
                 case ParseMod.parseModule src of
@@ -646,8 +650,16 @@ runCommand cmd = case cmd of
                         TIO.putStr src
                         return (Left $ "Parse error: " ++ show err)
                     Right srcMod -> do
-                        putStr (Format.formatModule srcMod)
-                        return (Right ())
+                        let formatted = Format.formatModule srcMod
+                        case fmtSafetyCheck src (T.pack formatted) of
+                            Just msg -> do
+                                -- Echo the original back so editors don't
+                                -- blank the buffer on refusal.
+                                TIO.putStr src
+                                return (Left msg)
+                            Nothing -> do
+                                putStr formatted
+                                return (Right ())
 
     Init mName -> do
         let name = maybe "sky-project" id mName
@@ -930,3 +942,38 @@ detectPlatform = do
     toLowerChar c
         | c >= 'A' && c <= 'Z' = toEnum (fromEnum c + 32)
         | otherwise = c
+
+
+-- ─── Formatter safety guard ──────────────────────────────────────────
+-- Refuses to write formatter output that silently drops comments or
+-- loses more than 1/3 of the original code lines.
+--
+-- Why: the parser currently skips line/block comments entirely rather
+-- than attaching them to the AST, so Format.formatModule has nothing
+-- to emit — the result is byte-identical except every comment is
+-- gone. A user who runs `sky fmt` on a heavily-commented file would
+-- silently lose their comments. Until the AST gains comment nodes,
+-- fail loudly instead of destroying the source.
+fmtSafetyCheck :: T.Text -> T.Text -> Maybe String
+fmtSafetyCheck srcIn srcOut =
+    let commentsBefore = countComments srcIn
+        commentsAfter  = countComments srcOut
+        linesBefore    = length (T.lines srcIn)
+        linesAfter     = length (T.lines srcOut)
+    in if commentsBefore > commentsAfter
+         then Just $ unlines
+             [ "refusing to format: " ++ show commentsBefore
+                 ++ " comment line(s) in input but only "
+                 ++ show commentsAfter ++ " in output."
+             , "sky fmt does not round-trip comments yet; the AST drops them during parsing."
+             , "Until the AST gains comment nodes, strip comments first or format the file by hand."
+             ]
+       else if linesBefore > 0 && linesAfter * 3 < linesBefore * 2
+         then Just $ "refusing to format: output is " ++ show linesAfter
+             ++ " lines vs input " ++ show linesBefore
+             ++ " (>1/3 loss — likely a parse partial match)."
+       else Nothing
+  where
+    countComments t =
+        length [l | l <- map T.strip (T.lines t)
+                  , T.pack "--" `T.isPrefixOf` l || T.pack "{-" `T.isPrefixOf` l]

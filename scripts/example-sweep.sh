@@ -129,5 +129,18 @@ echo
 echo "sweep: $pass passed, $fail failed"
 if [[ $fail -gt 0 ]]; then
     printf '  - %s\n' "${failures[@]}"
+    # Dump the build log for every failed example so CI shows the real
+    # compile error, not just "example foo: build failed". Without this
+    # the failure message points at a /tmp path the CI runner no longer
+    # has by the time the log is archived.
+    for f in "${failures[@]}"; do
+        name="${f%%:*}"
+        log="/tmp/sky-build-$name.log"
+        if [[ -r "$log" ]]; then
+            echo
+            echo "─── $log ───"
+            tail -60 "$log"
+        fi
+    done
     exit 1
 fi
