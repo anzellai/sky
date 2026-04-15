@@ -90,7 +90,7 @@ data Index = Index
     , idxModules   :: !(Map String FilePath)
     , idxImports   :: !(Map FilePath [Import])
     , idxLocals    :: !(Map FilePath [LocalBinding])
-    , idxLocalTypes :: !(Map FilePath (Map String Ty.Type))
+    , idxLocalTypes :: !(Map FilePath (Map String [Ty.Type]))
       -- Per-file map of bound-name → inferred type, including local
       -- let / lambda / case-branch bindings. Populated from the
       -- solver's local-type accumulator (Solve._locals) so LSP hover
@@ -627,10 +627,17 @@ lookupLocal idx file line col name =
             []    -> Nothing
     in fmap (\b ->
         let localTypes = fromMaybe Map.empty (Map.lookup file (idxLocalTypes idx))
-            inferredTy = Map.lookup (lbName b) localTypes
-            sig = case inferredTy of
-                Just ty -> Just (lbName b ++ " : " ++ Solve.showType ty)
-                Nothing -> Just (lbName b ++ " : (local binding)")
+            inferredTys = fromMaybe [] (Map.lookup (lbName b) localTypes)
+            -- Audit P2-2: localTypes holds ALL captures for this name
+            -- (innermost-first from the solver side). LSP's `best`
+            -- is also the innermost matching LocalBinding by scope.
+            -- For same-function shadowing, both agree on "index 0"
+            -- for the binding the hover resolved to. For cross-
+            -- function same-name bindings the mapping is best-effort
+            -- — documented limitation.
+            sig = case inferredTys of
+                (ty:_) -> Just (lbName b ++ " : " ++ Solve.showType ty)
+                []     -> Just (lbName b ++ " : (local binding)")
         in Sym
             { symQualName = "(local) " ++ lbName b
             , symLocalName = lbName b

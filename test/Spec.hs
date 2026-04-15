@@ -14,6 +14,7 @@ import qualified Sky.Build.CheckIsBuildSpec
 import qualified Sky.Build.RecordFieldOrderSpec
 import qualified Sky.Build.UnreachableGateSpec
 import qualified Sky.Parse.CommentsSpec
+import qualified Sky.Lsp.HoverShadowingSpec
 
 main :: IO ()
 main = hspec $ do
@@ -38,3 +39,5 @@ main = hspec $ do
     describe "Sky.Build.UnreachableGate"  Sky.Build.UnreachableGateSpec.spec
     -- Audit P2-1: parser captures comments into Src._comments.
     describe "Sky.Parse.Comments"         Sky.Parse.CommentsSpec.spec
+    -- Audit P2-2: LSP local-type shadowing guard.
+    describe "Sky.Lsp.HoverShadowing"     Sky.Lsp.HoverShadowingSpec.spec

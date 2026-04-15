@@ -45,14 +45,16 @@ data SolverState = SolverState
     { _env      :: !(Map.Map String T.Variable)  -- variable name → UF variable
     , _varCache :: !(IORef (Map.Map String T.Variable))  -- TVar name → shared UF variable
     , _rank     :: !Int
-    , _locals   :: !(IORef (Map.Map String T.Type))
-      -- Captured local-binding resolved types. Populated in the CLet
-      -- handler after the body is solved (but before env restore), so
-      -- LSP hover can surface types for let / lambda / case names —
-      -- which are otherwise invisible to SolvedTypes (top-level only).
-      -- Keyed by binding name; on shadowing, innermost wins (we see
-      -- the outer binding first, then overwrite when the inner CLet
-      -- fires). Fine for hover because LSP scopes by region lookup.
+    , _locals   :: !(IORef (Map.Map String [T.Type]))
+      -- Audit P2-2: store the FULL list of resolved types per
+      -- binding name (one entry per CLet-capture firing). Inner
+      -- scopes fire first (their body-solve completes while outer
+      -- body-solve is still in flight), so with front-of-list
+      -- prepend the innermost binding ends up at index 0. LSP's
+      -- lookupLocal picks the smallest enclosing scope's binding
+      -- which is also innermost; both agree on "index 0" for the
+      -- shadowed case. For a single binding (no shadowing) the
+      -- list has one element regardless.
     }
 
 
@@ -79,8 +81,10 @@ solve constraint = do
 
 -- | Like `solve`, but also returns the accumulated local-binding types.
 -- LSP hover uses this so it can surface `file : Int` instead of
--- "(local binding)" without the types leaking into codegen.
-solveWithLocals :: T.Constraint -> IO (SolveResult, Map.Map String T.Type)
+-- "(local binding)" without the types leaking into codegen. Audit
+-- P2-2: the returned map is `name → [types]` (ordered innermost-first)
+-- so shadowed locals don't collapse on hover.
+solveWithLocals :: T.Constraint -> IO (SolveResult, Map.Map String [T.Type])
 solveWithLocals constraint = do
     cache <- newIORef Map.empty
     locals <- newIORef Map.empty
@@ -261,8 +265,13 @@ solveHelp state constraint = case constraint of
                 -- hover relies on this for let / lambda param hovers.
                 mapM_ (\(name, var) -> do
                     ty <- variableToType var
+                    -- Prepend so innermost captures sit at index 0.
+                    -- LSP's lookupLocal pairs this with its own
+                    -- smallest-enclosing-scope match on source
+                    -- positions, so both agree on "pick [0]" for a
+                    -- shadowed name.
                     modifyIORef' (_locals state3)
-                        (Map.insertWith (\_ old -> old) name ty))
+                        (Map.insertWith (\new old -> new ++ old) name [ty]))
                     headerVars
                 -- Restore outer scope's env for the shadowed names.
                 let restoredEnv = foldr restoreBinding (_env state3) savedBindings

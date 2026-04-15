@@ -156,3 +156,4 @@ test-suite sky-tests
       Sky.Build.RecordFieldOrderSpec
       Sky.Build.UnreachableGateSpec
       Sky.Parse.CommentsSpec
+      Sky.Lsp.HoverShadowingSpec

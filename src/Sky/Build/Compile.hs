@@ -959,7 +959,7 @@ data WorkspaceModule = WorkspaceModule
     , _wm_src         :: Src.Module
     , _wm_canon       :: Can.Module
     , _wm_types       :: Map.Map String T.Type   -- top-level binding name → inferred type
-    , _wm_localTypes  :: Map.Map String T.Type   -- let / lambda / case-pattern name → inferred type
+    , _wm_localTypes  :: Map.Map String [T.Type] -- audit P2-2: innermost-first list per name (supports shadowing)
     , _wm_source      :: T.Text                  -- raw text for doc-comment scanning
     }
 
