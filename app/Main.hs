@@ -8,6 +8,10 @@ import System.IO (hPutStrLn, stderr)
 import qualified System.Directory
 import qualified System.Environment
 import System.Directory (createDirectoryIfMissing, doesFileExist)
+import System.IO.Error (catchIOError)
+import System.FilePath ((</>), takeExtension, takeDirectory, takeFileName, dropExtension, splitDirectories)
+import System.Exit (exitWith)
+import Data.List (isPrefixOf, stripPrefix)
 import System.Process (callProcess)
 import qualified System.Process
 import qualified System.IO.Temp
@@ -23,6 +27,32 @@ import qualified Sky.Format.Format as Format
 import qualified Sky.Lsp.Server as Lsp
 import qualified Sky.Build.FfiGen as FfiGen
 import qualified Sky.Build.SkyDeps as SkyDeps
+
+
+-- | Derive a dotted Sky module name from a source file path. The
+-- path is expected to be absolute; we peel off the source root
+-- (`<cwd>/src/` or `<cwd>/tests/`) and translate `/` → `.`, dropping
+-- the `.sky` extension. Returns Nothing for files outside those
+-- roots so the caller can emit a user-friendly error.
+moduleNameFromPath :: FilePath -> FilePath -> Maybe String
+moduleNameFromPath cwd absPath
+    | takeExtension absPath /= ".sky" = Nothing
+    | otherwise =
+        let candidates = [cwd </> "src", cwd </> "tests"]
+            stripRoot root =
+                stripPrefix (root ++ "/") absPath
+            relative = foldr
+                (\root acc -> case acc of
+                    Just _  -> acc
+                    Nothing -> stripRoot root)
+                Nothing
+                candidates
+        in case relative of
+            Nothing -> Nothing
+            Just rel ->
+                let stem = dropExtension rel
+                    parts = splitDirectories stem
+                in Just (foldr (\a b -> if null b then a else a ++ "." ++ b) "" parts)
 
 
 -- | For each declared go dep, regenerate the FFI bindings when its
@@ -83,6 +113,7 @@ data Command
     | Run FilePath
     | Check FilePath
     | Fmt FilePath
+    | Test FilePath
     | Init (Maybe String)
     | Add String
     | Remove String
@@ -105,6 +136,8 @@ commandParser = subparser
         (info (Check <$> fileArg) (progDesc "Type-check only"))
     <> command "fmt"
         (info (Fmt <$> fileArg) (progDesc "Format source file"))
+    <> command "test"
+        (info (Test <$> fileArg) (progDesc "Run a Sky test module (exposing `tests : List Test`)"))
     <> command "init"
         (info (Init <$> optional (argument str (metavar "NAME")))
             (progDesc "Create new project"))
@@ -270,6 +303,73 @@ runCommand cmd = case cmd of
             Right _ -> do
                 putStrLn "No errors found."
                 return (Right ())
+
+    Test path -> do
+        -- Synthesise a temporary Main.sky that imports the user's test
+        -- module and calls `Sky.Test.runMain tests`. Build + run via the
+        -- same pipeline as `sky build`; exit code is propagated so CI
+        -- picks up failures. The synthesis keeps user test modules
+        -- minimal: `module FooTest exposing (tests); tests = [...]`.
+        hasToml <- doesFileExist "sky.toml"
+        config <- if hasToml
+            then Toml.parseSkyToml <$> readFile "sky.toml"
+            else return Toml.defaultConfig
+        absPath <- System.Directory.canonicalizePath path
+        cwd <- System.Directory.getCurrentDirectory
+        testModName <- case moduleNameFromPath cwd absPath of
+            Just n  -> return n
+            Nothing -> do
+                hPutStrLn stderr $
+                    "sky test: " ++ path ++ " must live under src/ or tests/ so its module name can be derived"
+                exitFailure
+        -- Write the synthesised entry. Place it under src/ so the
+        -- module-graph walker picks it up alongside the user's tree.
+        let entryDir  = "src"
+            entryFile = entryDir </> "SkyTestEntry__.sky"
+            entryBody = unlines
+                [ "module SkyTestEntry__ exposing (main)"
+                , ""
+                , "import Sky.Test as Test"
+                , "import " ++ testModName ++ " as Suite"
+                , ""
+                , "main ="
+                , "    Test.runMain Suite.tests"
+                ]
+        createDirectoryIfMissing True entryDir
+        writeFile entryFile entryBody
+        let outDir = "sky-out"
+        createDirectoryIfMissing True outDir
+        let goDeps = Toml._goDeps config
+        when (not (null goDeps)) $ do
+            hasGoMod <- doesFileExist "sky-out/go.mod"
+            when (not hasGoMod) $ do
+                hasRt <- doesFileExist "runtime-go/go.mod"
+                if hasRt
+                    then callProcess "cp" ["runtime-go/go.mod", "sky-out/go.mod"]
+                    else writeFile "sky-out/go.mod" $ unlines ["module sky-app", "", "go 1.21"]
+            regenMissingBindings goDeps
+        result <- Compile.compile config entryFile outDir
+        -- Clean up the entry regardless of compile outcome.
+        let cleanup = do
+                System.Directory.removeFile entryFile
+                    `catchIOError` (\_ -> return ())
+        case result of
+            Left err -> do
+                cleanup
+                return (Left err)
+            Right _ -> do
+                let binName = Toml._binName config
+                callProcess "sh" ["-c", "cd " ++ outDir ++ " && go build -o " ++ binName ++ " ."]
+                cleanup
+                -- Run with inherited stdout/stderr so test output is
+                -- visible; propagate exit code.
+                (_, _, _, ph) <- System.Process.createProcess
+                    (System.Process.proc (outDir ++ "/" ++ binName) [])
+                ec <- System.Process.waitForProcess ph
+                case ec of
+                    System.Exit.ExitSuccess   -> return (Right ())
+                    System.Exit.ExitFailure n ->
+                        exitWith (System.Exit.ExitFailure n)
 
     Fmt path -> do
         src <- TIO.readFile path

@@ -861,6 +861,29 @@ func AdtTag(v any) int {
 	return -1
 }
 
+// AdtField returns the idx-th field of any SkyADT-shaped value. Used
+// by user-defined ctor pattern binding paths where the subject is
+// any-typed (came from rt.ResultOk / rt.ResultErr / rt.MaybeJust).
+func AdtField(v any, idx int) any {
+	if v == nil {
+		return nil
+	}
+	if a, ok := v.(SkyADT); ok {
+		if idx < 0 || idx >= len(a.Fields) {
+			return nil
+		}
+		return a.Fields[idx]
+	}
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Struct {
+		f := rv.FieldByName("Fields")
+		if f.IsValid() && f.Kind() == reflect.Slice && idx >= 0 && idx < f.Len() {
+			return f.Index(idx).Interface()
+		}
+	}
+	return nil
+}
+
 // AsList coerces a Sky-side any to []any. Sky lists are always
 // []any at runtime (element type erased); typed List kernel
 // companions take []A and Go infers A = any at the call site.

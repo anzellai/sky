@@ -3652,9 +3652,15 @@ bindCtorArg subject ctorName (Can.PatternCtorArg idx _ty pat) =
             "Ok"   -> helperFor "ResultOk"
             "Err"  -> helperFor "ResultErr"
             "Just" -> helperFor "MaybeJust"
-            _      -> GoIr.GoIndex
-                        (GoIr.GoSelector (GoIr.GoIdent subject) "Fields")
-                        (GoIr.GoIntLit idx)
+            _      ->
+                -- Custom ADT: use rt.AdtField runtime helper so an
+                -- any-typed subject (e.g. bound from
+                -- rt.ResultOk/ErrValue above, or a nested destructure
+                -- temp) still reads .Fields[idx] without requiring a
+                -- type-assertion to the emitted ADT struct.
+                GoIr.GoCall
+                    (GoIr.GoQualified "rt" "AdtField")
+                    [GoIr.GoCall (GoIr.GoIdent "any") [GoIr.GoIdent subject], GoIr.GoIntLit idx]
         fieldAccess =
             if isTypedFfiSubject
                 then GoIr.GoCall (GoIr.GoIdent "any") [rawField]

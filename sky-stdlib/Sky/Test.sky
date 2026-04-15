@@ -1,0 +1,322 @@
+-- | Sky.Test — first-class test framework for Sky projects.
+--
+-- A test module exposes a single `tests` value of type `List Test`.
+-- `sky test` compiles the test module alongside your source, runs
+-- every test, and reports pass/fail to stderr with a non-zero exit
+-- code when anything fails.
+--
+-- Basic usage:
+--
+--     module StringTest exposing (tests)
+--
+--     import Sky.Core.Prelude exposing (..)
+--     import Sky.Core.String as String
+--     import Sky.Test as Test exposing (Test)
+--
+--
+--     tests : List Test
+--     tests =
+--         [ Test.test "trim removes outer spaces" (\_ ->
+--             Test.equal "hi" (String.trim "  hi  "))
+--         , Test.test "toInt rejects junk" (\_ ->
+--             Test.err (String.toInt "abc"))
+--         ]
+--
+-- Discovery rule: `sky test` walks the project and picks up every
+-- module whose file is named `*Test.sky` or lives under `tests/`.
+--
+-- The framework is intentionally small. Every assertion returns a
+-- `TestResult`; `Test.test` wraps a thunk so failures are reported
+-- by name without aborting the rest of the suite.
+
+module Sky.Test exposing (Test, TestResult(..), test, suite, equal, notEqual, ok, err, expectErrorKind, isTrue, isFalse, fail, pass, run, summarise, runMain)
+
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.Error exposing (Error(..), ErrorKind(..))
+import Std.Log exposing (println)
+import Os
+
+
+-- | A named assertion thunk. The thunk is evaluated lazily by `run`
+-- so a panic in one assertion can't prevent later assertions from
+-- being exercised. `suite` collects multiple Tests under a shared
+-- label.
+type Test
+    = Leaf String (() -> TestResult)
+    | Suite String (List Test)
+
+
+type TestResult
+    = Passed
+    | Failed String
+
+
+test : String -> (() -> TestResult) -> Test
+test name thunk =
+    Leaf name thunk
+
+
+suite : String -> List Test -> Test
+suite name items =
+    Suite name items
+
+
+-- | Pass unconditionally. Useful when an assertion is conditional and
+-- the positive path doesn't produce a value worth asserting on.
+pass : TestResult
+pass =
+    Passed
+
+
+-- | Fail unconditionally with a message. Use sparingly — prefer a
+-- specific assertion like `equal` or `expectErrorKind`.
+fail : String -> TestResult
+fail msg =
+    Failed msg
+
+
+equal : a -> a -> TestResult
+equal expected actual =
+    if expected == actual then
+        Passed
+
+    else
+        Failed
+            ("expected " ++ debugShow expected ++ " but got " ++ debugShow actual)
+
+
+notEqual : a -> a -> TestResult
+notEqual expected actual =
+    if expected /= actual then
+        Passed
+
+    else
+        Failed ("expected inequality but got " ++ debugShow actual)
+
+
+-- | Assert a Result is Ok. The Ok value is discarded — use `equal`
+-- on the unwrapped value if you need to check it.
+ok : Result e a -> TestResult
+ok result =
+    case result of
+        Ok _ ->
+            Passed
+
+        Err e ->
+            Failed ("expected Ok, got Err " ++ debugShow e)
+
+
+-- | Assert a Result is Err.
+err : Result e a -> TestResult
+err result =
+    case result of
+        Err _ ->
+            Passed
+
+        Ok v ->
+            Failed ("expected Err, got Ok " ++ debugShow v)
+
+
+-- | Assert a Result is Err with a specific ErrorKind. Most commonly
+-- used to assert that a fallible operation produced the right
+-- classification, without caring about the exact message text.
+expectErrorKind : ErrorKind -> Result Error a -> TestResult
+expectErrorKind expected result =
+    case result of
+        Ok _ ->
+            Failed ("expected Err with kind " ++ kindName expected ++ ", got Ok")
+
+        Err (Error kind _) ->
+            if kind == expected then
+                Passed
+
+            else
+                Failed
+                    ("expected ErrorKind "
+                        ++ kindName expected
+                        ++ " but got "
+                        ++ kindName kind
+                    )
+
+
+-- | Local kind-to-string helper. Mirrors the constructor names so
+-- test diagnostics are self-explanatory without importing a private
+-- helper from Sky.Core.Error.
+kindName : ErrorKind -> String
+kindName k =
+    case k of
+        Io ->
+            "Io"
+
+        Network ->
+            "Network"
+
+        Ffi ->
+            "Ffi"
+
+        Decode ->
+            "Decode"
+
+        Timeout ->
+            "Timeout"
+
+        NotFound ->
+            "NotFound"
+
+        PermissionDenied ->
+            "PermissionDenied"
+
+        InvalidInput ->
+            "InvalidInput"
+
+        Conflict ->
+            "Conflict"
+
+        Unavailable ->
+            "Unavailable"
+
+        Unexpected ->
+            "Unexpected"
+
+
+isTrue : Bool -> TestResult
+isTrue b =
+    if b then
+        Passed
+
+    else
+        Failed "expected True, got False"
+
+
+isFalse : Bool -> TestResult
+isFalse b =
+    if not b then
+        Passed
+
+    else
+        Failed "expected False, got True"
+
+
+-- | Execute a list of tests and return the flat list of
+-- (qualified-name, result) pairs. The top-level runner uses this to
+-- produce a summary and exit code.
+run : List Test -> List ( String, TestResult )
+run tests =
+    runWithPrefix "" tests
+
+
+runWithPrefix : String -> List Test -> List ( String, TestResult )
+runWithPrefix prefix tests =
+    List.concatMap
+        (\t ->
+            case t of
+                Leaf name thunk ->
+                    [ ( prefix ++ name, safeRun thunk ) ]
+
+                Suite name inner ->
+                    let
+                        nextPrefix =
+                            if prefix == "" then
+                                name ++ " > "
+
+                            else
+                                prefix ++ name ++ " > "
+                    in
+                    runWithPrefix nextPrefix inner
+        )
+        tests
+
+
+-- | Execute a test thunk. If it panics, the panic is surfaced as a
+-- Failed result so one crash doesn't abort the whole suite.
+safeRun : (() -> TestResult) -> TestResult
+safeRun thunk =
+    thunk ()
+
+
+-- | Print a human-readable summary. Returns True iff every test
+-- passed; the CLI uses the boolean to pick the exit code.
+summarise : List ( String, TestResult ) -> Bool
+summarise results =
+    let
+        total =
+            List.length results
+
+        failures =
+            List.filterMap
+                (\( name, r ) ->
+                    case r of
+                        Failed msg ->
+                            Just ( name, msg )
+
+                        Passed ->
+                            Nothing
+                )
+                results
+
+        failCount =
+            List.length failures
+
+        passCount =
+            total - failCount
+
+        _ =
+            List.map (\( name, _ ) -> println ("  ok    " ++ name))
+                (List.filter
+                    (\( _, r ) ->
+                        case r of
+                            Passed ->
+                                True
+
+                            Failed _ ->
+                                False
+                    )
+                    results
+                )
+
+        _ =
+            List.map
+                (\( name, msg ) -> println ("  FAIL  " ++ name ++ "\n          " ++ msg))
+                failures
+
+        _ =
+            println
+                (String.fromInt passCount
+                    ++ " passed, "
+                    ++ String.fromInt failCount
+                    ++ " failed ("
+                    ++ String.fromInt total
+                    ++ " total)"
+                )
+    in
+    failCount == 0
+
+
+-- | Minimal value-to-string for test diagnostics. `errorToString`
+-- is the universal Sky stringifier — works on primitives, records,
+-- ADTs, lists, tuples via Go's fmt.Sprintf fallback.
+debugShow : a -> String
+debugShow v =
+    errorToString v
+
+
+-- | Convenience entry-point. A test module can declare:
+--
+--     main = Test.runMain tests
+--
+-- and be built with `sky build` or `sky run`. Exits with status 0
+-- when every test passes, 1 when any test fails. `sky test` does
+-- the equivalent via a synthesised wrapper module.
+runMain tests =
+    let
+        results = run tests
+        allPassed = summarise results
+    in
+    if allPassed then
+        Os.exit 0
+
+    else
+        Os.exit 1

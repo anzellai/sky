@@ -29,5 +29,6 @@ embeddedRuntime = $(embedDir "runtime-go")
 -- added or removed. FileEmbed's dependency tracking doesn't always
 -- notice new files otherwise.
 -- Version: 2026-04-14 Sky.Core.Error added; Std.IoError deleted
+-- Version: 2026-04-15 Sky.Test added
 embeddedSkyStdlib :: [(FilePath, ByteString)]
 embeddedSkyStdlib = $(embedDir "sky-stdlib")

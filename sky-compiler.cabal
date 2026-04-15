@@ -14,6 +14,7 @@ extra-source-files:
     runtime-go/go.sum
     runtime-go/rt/*.go
     sky-stdlib/Sky/Core/*.sky
+    sky-stdlib/Sky/*.sky
 
 executable sky
   main-is:          Main.hs
