@@ -3982,9 +3982,14 @@ func Server_listen(port any, routes any) any {
 
 		mux.HandleFunc(pattern, func(w http.ResponseWriter, req *http.Request) {
 			// Panic recovery — one bad handler mustn't kill the process.
+			// Audit P1-5: prod-mode logs omit the Go stack trace from
+			// stderr (to avoid leaking internal paths + memory
+			// addresses) and write the full frame to .skylog/panic.log
+			// for post-mortem inspection. Dev mode keeps the full
+			// stack on stderr for fast-feedback debugging.
 			defer func() {
 				if rec := recover(); rec != nil {
-					log.Printf("[sky.http] panic handling %s %s: %v\n%s", req.Method, req.URL.Path, rec, debugStack())
+					logPanicFrame(req.Method, req.URL.Path, rec)
 					w.WriteHeader(500)
 					fmt.Fprint(w, "Internal Server Error")
 				}
@@ -4484,7 +4489,8 @@ func Server_withCookie(args ...any) any {
 		if r.Headers == nil {
 			r.Headers = map[string]string{}
 		}
-		r.Headers["Set-Cookie"] = fmt.Sprintf("%s=%s; Path=/; HttpOnly; SameSite=Lax", c.Name, c.Value)
+		r.Headers["Set-Cookie"] = fmt.Sprintf("%s=%s; %s", c.Name, c.Value,
+			securifyCookieAttrs("Path=/; HttpOnly; SameSite=Lax"))
 		return r
 	case 3:
 		name, value, resp := args[0], args[1], args[2]
@@ -4505,8 +4511,75 @@ func setCookieHeader(resp any, name, value, attrs string) any {
 	if r.Headers == nil {
 		r.Headers = map[string]string{}
 	}
-	r.Headers["Set-Cookie"] = fmt.Sprintf("%s=%s; %s", name, value, attrs)
+	r.Headers["Set-Cookie"] = fmt.Sprintf("%s=%s; %s", name, value, securifyCookieAttrs(attrs))
 	return r
+}
+
+// ── Audit P1-5: production-mode hardening ────────────────────
+// Two concerns, one env-var switch (SKY_ENV=prod).
+//   (1) Cookies default to HttpOnly + SameSite=Lax. In prod mode we
+//       additionally force Secure so the browser refuses to send the
+//       cookie over plain HTTP (defence against a
+//       forgotten-to-redirect-to-HTTPS deployment). If the caller
+//       supplied explicit attrs that already contain "Secure", we
+//       leave them alone — don't duplicate.
+//   (2) Panic recovery prints to stderr in dev (full stack for fast
+//       feedback) and writes a compact method+path+kind line to
+//       stderr plus the full frame to .skylog/panic.log in prod
+//       (no stack-trace leak in aggregated logs).
+
+// isProd reports whether SKY_ENV=prod is set. Kept as a small
+// function so tests can monkey-patch via env var at runtime.
+func isProd() bool {
+	return os.Getenv("SKY_ENV") == "prod"
+}
+
+// securifyCookieAttrs appends "; Secure" to an attribute string in
+// prod mode, unless it's already present. Idempotent for the
+// caller-opt-in path too.
+func securifyCookieAttrs(attrs string) string {
+	if !isProd() {
+		return attrs
+	}
+	// strings.Contains is fine here; "Secure" in a cookie name is
+	// not a typical payload and this runs only on server response.
+	if strings.Contains(strings.ToLower(attrs), "secure") {
+		return attrs
+	}
+	if attrs == "" {
+		return "Secure"
+	}
+	return attrs + "; Secure"
+}
+
+// logPanicFrame writes the panic context to the right place given
+// SKY_ENV. Dev: full frame on stderr. Prod: compact summary on
+// stderr + full frame appended to .skylog/panic.log (which the host
+// should rotate). Robust against the skylog dir not being
+// writeable: falls back to stderr-only in that case so we never
+// lose a panic report entirely.
+func logPanicFrame(method, path string, rec any) {
+	errKind := fmt.Sprintf("%T", rec)
+	if isProd() {
+		// Compact stderr line — no stack trace, no internal paths.
+		fmt.Fprintf(os.Stderr, "[sky.http] panic %s %s (%s)\n", method, path, errKind)
+		// Full frame to .skylog/panic.log
+		full := fmt.Sprintf("[%s] %s %s %s: %v\n%s\n",
+			time.Now().UTC().Format(time.RFC3339),
+			method, path, errKind, rec, debugStack())
+		_ = os.MkdirAll(".skylog", 0o750)
+		f, err := os.OpenFile(".skylog/panic.log",
+			os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+		if err == nil {
+			_, _ = f.WriteString(full)
+			_ = f.Close()
+		}
+		return
+	}
+	// Dev mode: full trace on stderr for fast feedback (matches the
+	// previous behaviour exactly).
+	log.Printf("[sky.http] panic handling %s %s: %v\n%s",
+		method, path, rec, debugStack())
 }
 
 // Server.method : Request -> String   — HTTP method name in upper case.
@@ -4553,8 +4626,8 @@ func Server_csrfIssue(resp any) any {
 		r.Headers = map[string]string{}
 	}
 	r.Headers["Set-Cookie"] = fmt.Sprintf(
-		"%s=%s; Path=/; HttpOnly; SameSite=Strict",
-		csrfCookieName, token)
+		"%s=%s; %s", csrfCookieName, token,
+		securifyCookieAttrs("Path=/; HttpOnly; SameSite=Strict"))
 	return SkyTuple2{V0: token, V1: r}
 }
 
