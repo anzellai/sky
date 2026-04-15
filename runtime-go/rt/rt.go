@@ -897,7 +897,47 @@ func AsList(v any) []any {
 	return nil
 }
 
+// AsInt coerces an any-typed value to int. Panics on non-numeric
+// input with a descriptive message. The panic is caught by the Sky
+// runtime panic-recovery layer (SkyFfiRecover, Server_listen,
+// Live_app) and surfaces as Err(InvalidInput "…") at the nearest
+// Task boundary — no more silent `0` for a type mismatch.
+//
+// Audit P0-2: the pre-fix version returned 0 on any non-numeric
+// input, letting `rt.Add("x", 1)` evaluate to 1. That turned type
+// errors into wrong answers. Callers that genuinely want a 0
+// default on miss must use AsIntOrZero explicitly so the laxity is
+// visible at the call site.
 func AsInt(v any) int {
+	switch n := v.(type) {
+	case int:
+		return n
+	case int64:
+		return int(n)
+	case int32:
+		return int(n)
+	case int16:
+		return int(n)
+	case int8:
+		return int(n)
+	case uint:
+		return int(n)
+	case uint64:
+		return int(n)
+	case uint32:
+		return int(n)
+	case float64:
+		return int(n)
+	case float32:
+		return int(n)
+	}
+	panic(fmt.Sprintf("rt.AsInt: expected numeric value, got %T (%v)", v, v))
+}
+
+// AsIntOrZero is the display-only fallback: returns 0 on non-numeric
+// input without panicking. Only use this where a missing / wrongly-
+// typed value legitimately means "no value shown" (e.g. HTML output).
+func AsIntOrZero(v any) int {
 	switch n := v.(type) {
 	case int:
 		return n
@@ -922,15 +962,114 @@ func AsInt(v any) int {
 	}
 	return 0
 }
-func AsFloat(v any) float64 { if f, ok := v.(float64); ok { return f }; if n, ok := v.(int); ok { return float64(n) }; return 0 }
-func AsBool(v any) bool { if b, ok := v.(bool); ok { return b }; return false }
 
-func Add(a, b any) any { return AsInt(a) + AsInt(b) }
-func Sub(a, b any) any { return AsInt(a) - AsInt(b) }
-func Mul(a, b any) any { return AsInt(a) * AsInt(b) }
-func Div(a, b any) any { if AsInt(b) == 0 { return 0 }; return AsInt(a) / AsInt(b) }
-func IntDiv(a, b any) any { if AsInt(b) == 0 { return 0 }; return AsInt(a) / AsInt(b) }
-func Rem(a, b any) any { if AsInt(b) == 0 { return 0 }; return AsInt(a) % AsInt(b) }
+// AsFloat panics on non-numeric input. Accepts any int / float.
+func AsFloat(v any) float64 {
+	switch n := v.(type) {
+	case float64:
+		return n
+	case float32:
+		return float64(n)
+	case int:
+		return float64(n)
+	case int64:
+		return float64(n)
+	case int32:
+		return float64(n)
+	}
+	panic(fmt.Sprintf("rt.AsFloat: expected numeric value, got %T (%v)", v, v))
+}
+
+// AsFloatOrZero is the display-only lenient variant. See AsIntOrZero.
+func AsFloatOrZero(v any) float64 {
+	switch n := v.(type) {
+	case float64:
+		return n
+	case float32:
+		return float64(n)
+	case int:
+		return float64(n)
+	case int64:
+		return float64(n)
+	case int32:
+		return float64(n)
+	}
+	return 0
+}
+
+// AsBool panics on non-bool input.
+func AsBool(v any) bool {
+	if b, ok := v.(bool); ok {
+		return b
+	}
+	panic(fmt.Sprintf("rt.AsBool: expected bool, got %T (%v)", v, v))
+}
+
+// AsBoolOrFalse is the display-only lenient variant.
+func AsBoolOrFalse(v any) bool {
+	if b, ok := v.(bool); ok {
+		return b
+	}
+	return false
+}
+
+// isFloatish reports whether v is a float type (vs an int). Used by
+// arithmetic / comparison to pick the right op and preserve precision.
+func isFloatish(v any) bool {
+	switch v.(type) {
+	case float64, float32:
+		return true
+	}
+	return false
+}
+
+func Add(a, b any) any {
+	if isFloatish(a) || isFloatish(b) {
+		return AsFloat(a) + AsFloat(b)
+	}
+	return AsInt(a) + AsInt(b)
+}
+
+func Sub(a, b any) any {
+	if isFloatish(a) || isFloatish(b) {
+		return AsFloat(a) - AsFloat(b)
+	}
+	return AsInt(a) - AsInt(b)
+}
+
+func Mul(a, b any) any {
+	if isFloatish(a) || isFloatish(b) {
+		return AsFloat(a) * AsFloat(b)
+	}
+	return AsInt(a) * AsInt(b)
+}
+
+func Div(a, b any) any {
+	// Sky's `/` is float division (Elm convention). Always float.
+	db := AsFloat(b)
+	if db == 0 {
+		panic("rt.Div: division by zero")
+	}
+	return AsFloat(a) / db
+}
+
+func IntDiv(a, b any) any {
+	// Sky's `//` is integer division. Panic on div-by-zero so the
+	// error path surfaces via panic-recovery as Err, not silent 0.
+	db := AsInt(b)
+	if db == 0 {
+		panic("rt.IntDiv: integer division by zero")
+	}
+	return AsInt(a) / db
+}
+
+func Rem(a, b any) any {
+	db := AsInt(b)
+	if db == 0 {
+		panic("rt.Rem: modulo by zero")
+	}
+	return AsInt(a) % db
+}
 
 // Eq — structural equality tolerant of Sky's any-boxed values.
 // Primitives compare via Go's `==`. Slices compare element-wise,
@@ -1023,15 +1162,66 @@ func deepEq(a, b any) bool {
 	}
 	return false
 }
-func Gt(a, b any) any { return AsInt(a) > AsInt(b) }
-func Lt(a, b any) any { return AsInt(a) < AsInt(b) }
-func Gte(a, b any) any { return AsInt(a) >= AsInt(b) }
-func Lte(a, b any) any { return AsInt(a) <= AsInt(b) }
+// Comparison operators. Dispatch on the left operand's concrete type
+// so `3.14 < 4.0`, `"apple" < "banana"`, and `true && false` all do
+// the right thing. Prior to P0-2 these silently routed through AsInt,
+// so strings compared as `0 < 0 = false` and float comparisons
+// truncated to int — a wrong-answer class that passed the type
+// checker.
+func Gt(a, b any) any { return cmp(a, b) > 0 }
+func Lt(a, b any) any { return cmp(a, b) < 0 }
+func Gte(a, b any) any { return cmp(a, b) >= 0 }
+func Lte(a, b any) any { return cmp(a, b) <= 0 }
+
+// cmp returns -1/0/+1 with a type-aware compare. Panics on type
+// mismatch between a and b so the error surfaces via rt panic-recovery
+// as Err at the Task boundary.
+func cmp(a, b any) int {
+	// String vs string.
+	if sa, ok := a.(string); ok {
+		sb, bok := b.(string)
+		if !bok {
+			panic(fmt.Sprintf("rt.cmp: type mismatch (left %T, right %T)", a, b))
+		}
+		switch {
+		case sa < sb:
+			return -1
+		case sa > sb:
+			return 1
+		}
+		return 0
+	}
+	// Numeric (int or float). Promote to float if either side is float,
+	// preserving sub-integer precision.
+	if isFloatish(a) || isFloatish(b) {
+		fa, fb := AsFloat(a), AsFloat(b)
+		switch {
+		case fa < fb:
+			return -1
+		case fa > fb:
+			return 1
+		}
+		return 0
+	}
+	ia, ib := AsInt(a), AsInt(b)
+	switch {
+	case ia < ib:
+		return -1
+	case ia > ib:
+		return 1
+	}
+	return 0
+}
 
 func And(a, b any) any { return AsBool(a) && AsBool(b) }
 func Or(a, b any) any { return AsBool(a) || AsBool(b) }
 
-func Negate(a any) any { return -AsInt(a) }
+func Negate(a any) any {
+	if isFloatish(a) {
+		return -AsFloat(a)
+	}
+	return -AsInt(a)
+}
 
 // ═══════════════════════════════════════════════════════════
 // List operations
