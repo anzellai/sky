@@ -955,11 +955,12 @@ data WorkspaceTypecheck = WorkspaceTypecheck
     }
 
 data WorkspaceModule = WorkspaceModule
-    { _wm_path   :: FilePath
-    , _wm_src    :: Src.Module
-    , _wm_canon  :: Can.Module
-    , _wm_types  :: Map.Map String T.Type   -- binding name → inferred type
-    , _wm_source :: T.Text                  -- raw text for doc-comment scanning
+    { _wm_path        :: FilePath
+    , _wm_src         :: Src.Module
+    , _wm_canon       :: Can.Module
+    , _wm_types       :: Map.Map String T.Type   -- top-level binding name → inferred type
+    , _wm_localTypes  :: Map.Map String T.Type   -- let / lambda / case-pattern name → inferred type
+    , _wm_source      :: T.Text                  -- raw text for doc-comment scanning
     }
 
 
@@ -1020,21 +1021,22 @@ typecheckWorkspace config entryPath = do
             Left err -> return (n, Left err, srcMod, path, src)
             Right canMod -> do
                 cs <- Constrain.constrainModule canMod
-                r  <- Solve.solve cs
+                (r, localTys) <- Solve.solveWithLocals cs
                 let types = case r of
                         Solve.SolveOk t -> t
                         _               -> Map.empty
-                return (n, Right (canMod, types), srcMod, path, src)
+                return (n, Right (canMod, types, localTys), srcMod, path, src)
 
     let modMap = Map.fromList
             [ (n, WorkspaceModule
-                { _wm_path = path
-                , _wm_src = srcMod
-                , _wm_canon = canMod
-                , _wm_types = types
-                , _wm_source = src
+                { _wm_path        = path
+                , _wm_src         = srcMod
+                , _wm_canon       = canMod
+                , _wm_types       = types
+                , _wm_localTypes  = localTys
+                , _wm_source      = src
                 })
-            | (n, Right (canMod, types), srcMod, path, src) <- perMod
+            | (n, Right (canMod, types, localTys), srcMod, path, src) <- perMod
             ]
         firstError = listToMaybeFirst
             [ (n, err) | (n, Left err, _, _, _) <- perMod ]

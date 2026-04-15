@@ -90,6 +90,14 @@ data Index = Index
     , idxModules   :: !(Map String FilePath)
     , idxImports   :: !(Map FilePath [Import])
     , idxLocals    :: !(Map FilePath [LocalBinding])
+    , idxLocalTypes :: !(Map FilePath (Map String Ty.Type))
+      -- Per-file map of bound-name → inferred type, including local
+      -- let / lambda / case-branch bindings. Populated from the
+      -- solver's local-type accumulator (Solve._locals) so LSP hover
+      -- on a let-binding or lambda param surfaces the inferred type
+      -- instead of a "(local binding)" placeholder. Name collisions
+      -- are resolved innermost-wins by the solver; for hover we also
+      -- rely on lookupLocal's smallest-scope selection on top of this.
     , idxFileSrc   :: !(Map FilePath T.Text)
     , idxRoot      :: !(Maybe FilePath)
     } deriving (Show)
@@ -103,6 +111,7 @@ emptyIndex = Index
     , idxModules = Map.empty
     , idxImports = Map.empty
     , idxLocals = Map.empty
+    , idxLocalTypes = Map.empty
     , idxFileSrc = Map.empty
     , idxRoot = Nothing
     }
@@ -142,36 +151,43 @@ buildIndex projectRoot = do
 fromTypecheck :: Maybe FilePath -> Compile.WorkspaceTypecheck -> Index
 fromTypecheck root wt =
     let modList = Map.toList (Compile._wt_modules wt)
-        (allTops, allLocals, allImports, allFileSrc, modPaths) =
-            foldr step ([], [], [], [], []) modList
+        (allTops, allLocals, allImports, allFileSrc, modPaths, allLocalTypes) =
+            foldr step ([], [], [], [], [], []) modList
         byQual = Map.fromList [ (symQualName s, s) | s <- allTops ]
         byLocal = Map.fromListWith (++)
             [ (symLocalName s, [s]) | s <- allTops ]
         byFile = Map.fromListWith (++)
             [ (symFile s, [s]) | s <- allTops ]
     in Index
-        { idxByQual   = byQual
-        , idxByLocal  = byLocal
-        , idxByFile   = byFile
-        , idxModules  = Map.fromList modPaths
-        , idxImports  = Map.fromList allImports
-        , idxLocals   = Map.fromList allLocals
-        , idxFileSrc  = Map.fromList allFileSrc
-        , idxRoot     = root
+        { idxByQual    = byQual
+        , idxByLocal   = byLocal
+        , idxByFile    = byFile
+        , idxModules   = Map.fromList modPaths
+        , idxImports   = Map.fromList allImports
+        , idxLocals    = Map.fromList allLocals
+        , idxLocalTypes = Map.fromList allLocalTypes
+        , idxFileSrc   = Map.fromList allFileSrc
+        , idxRoot      = root
         }
   where
-    step (modName, wmod) (tops, locals, imps, srcs, mods) =
+    step (modName, wmod) (tops, locals, imps, srcs, mods, ltypes) =
         let path = Compile._wm_path wmod
             srcMod = Compile._wm_src wmod
             types = Compile._wm_types wmod
+            localTys = Compile._wm_localTypes wmod
             srcText = Compile._wm_source wmod
             tops' = symFromTopLevel modName path srcText types srcMod
             locals' = (path, collectLocalBindings srcMod)
             imps' = (path, fromImports (Src._imports srcMod))
             srcs' = (path, srcText)
             mods' = (modName, path)
+            -- Local-binding types come from the solver's separate
+            -- _locals accumulator so they don't bleed into SolvedTypes
+            -- (which codegen uses and where they'd trigger spurious
+            -- `.(T)` assertions on already-typed function params).
+            ltypes' = (path, localTys)
         in (tops' ++ tops, locals' : locals, imps' : imps,
-            srcs' : srcs, mods' : mods)
+            srcs' : srcs, mods' : mods, ltypes' : ltypes)
 
 
 -- | Extract top-level symbols (functions, type aliases, ADT ctors) for
@@ -609,20 +625,22 @@ lookupLocal idx file line col name =
         best = case sortOn (regionWidth . lbScope) matching of
             (b:_) -> Just b
             []    -> Nothing
-    in fmap (\b -> Sym
-        { symQualName = "(local) " ++ lbName b
-        , symLocalName = lbName b
-        , symModule = ""
-        , symFile = file
-        , symRegion = lbRegion b
-        , symKind = SymLocal
-        -- Local bindings (let, lambda param, case pattern) don't yet
-        -- carry a solver-inferred type. Showing "(local binding)"
-        -- distinguishes a found-but-untyped local from a hover miss,
-        -- and from solver gibberish (fresh tXXX vars).
-        , symTypeSig = Just (lbName b ++ " : (local binding)")
-        , symDoc = Nothing
-        }) best
+    in fmap (\b ->
+        let localTypes = fromMaybe Map.empty (Map.lookup file (idxLocalTypes idx))
+            inferredTy = Map.lookup (lbName b) localTypes
+            sig = case inferredTy of
+                Just ty -> Just (lbName b ++ " : " ++ Solve.showType ty)
+                Nothing -> Just (lbName b ++ " : (local binding)")
+        in Sym
+            { symQualName = "(local) " ++ lbName b
+            , symLocalName = lbName b
+            , symModule = ""
+            , symFile = file
+            , symRegion = lbRegion b
+            , symKind = SymLocal
+            , symTypeSig = sig
+            , symDoc = Nothing
+            }) best
   where
     regionContains (A.Region rs re) ln cl =
         let afterStart = (A._line rs < ln) || (A._line rs == ln && A._col rs <= cl)

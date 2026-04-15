@@ -4,6 +4,7 @@
 -- Adapted from Elm's Type.Solve.
 module Sky.Type.Solve
     ( solve
+    , solveWithLocals
     , SolveResult(..)
     , SolvedTypes
     , showType
@@ -44,6 +45,14 @@ data SolverState = SolverState
     { _env      :: !(Map.Map String T.Variable)  -- variable name → UF variable
     , _varCache :: !(IORef (Map.Map String T.Variable))  -- TVar name → shared UF variable
     , _rank     :: !Int
+    , _locals   :: !(IORef (Map.Map String T.Type))
+      -- Captured local-binding resolved types. Populated in the CLet
+      -- handler after the body is solved (but before env restore), so
+      -- LSP hover can surface types for let / lambda / case names —
+      -- which are otherwise invisible to SolvedTypes (top-level only).
+      -- Keyed by binding name; on shadowing, innermost wins (we see
+      -- the outer binding first, then overwrite when the inner CLet
+      -- fires). Fine for hover because LSP scopes by region lookup.
     }
 
 
@@ -51,13 +60,39 @@ data SolverState = SolverState
 solve :: T.Constraint -> IO SolveResult
 solve constraint = do
     cache <- newIORef Map.empty
-    let state0 = SolverState Map.empty cache 0
+    locals <- newIORef Map.empty
+    let state0 = SolverState Map.empty cache 0 locals
     (result, finalState) <- solveHelp state0 constraint
     case result of
         Nothing -> do
+            -- SolvedTypes contains ONLY top-level names. Local binding
+            -- types (let, lambda param, case pattern) live on the
+            -- SolveState's _locals ref and come out via solveWithLocals.
+            -- Keeping them out of SolvedTypes matters for codegen:
+            -- Compile.exprToGoTyped asserts `.(T)` on VarLocal when
+            -- its type is concrete in SolvedTypes, which would panic
+            -- for already-typed function params.
             solvedTypes <- readSolvedTypes (_env finalState)
             return (SolveOk solvedTypes)
         Just err -> return (SolveError err)
+
+
+-- | Like `solve`, but also returns the accumulated local-binding types.
+-- LSP hover uses this so it can surface `file : Int` instead of
+-- "(local binding)" without the types leaking into codegen.
+solveWithLocals :: T.Constraint -> IO (SolveResult, Map.Map String T.Type)
+solveWithLocals constraint = do
+    cache <- newIORef Map.empty
+    locals <- newIORef Map.empty
+    let state0 = SolverState Map.empty cache 0 locals
+    (result, finalState) <- solveHelp state0 constraint
+    localTypes <- readIORef (_locals finalState)
+    case result of
+        Nothing -> do
+            solvedTypes <- readSolvedTypes (_env finalState)
+            return (SolveOk solvedTypes, localTypes)
+        Just err ->
+            return (SolveError err, localTypes)
 
 
 -- | Convert a Type to a UF Variable, SHARING variables for the same TVar name.
@@ -220,6 +255,15 @@ solveHelp state constraint = case constraint of
                                        (_env state1) headerVars
                         }
                 (bodyErr, state3) <- solveHelp state2 bodyCon
+                -- Capture each header name's resolved type BEFORE we
+                -- restore the outer env. This is the only hook where
+                -- local-binding types are known to the solver; LSP
+                -- hover relies on this for let / lambda param hovers.
+                mapM_ (\(name, var) -> do
+                    ty <- variableToType var
+                    modifyIORef' (_locals state3)
+                        (Map.insertWith (\_ old -> old) name ty))
+                    headerVars
                 -- Restore outer scope's env for the shadowed names.
                 let restoredEnv = foldr restoreBinding (_env state3) savedBindings
                     restoreBinding (name, Just old) e = Map.insert name old e
