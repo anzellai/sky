@@ -35,12 +35,18 @@ import qualified Sky.Build.SkyDeps as SkyDeps
 -- the `.sky` extension. Returns Nothing for files outside those
 -- roots so the caller can emit a user-friendly error.
 moduleNameFromPath :: FilePath -> FilePath -> Maybe String
-moduleNameFromPath cwd absPath
+moduleNameFromPath = moduleNameFromPathWithRoots ["src", "tests"]
+
+
+moduleNameFromPathWithRoots :: [FilePath] -> FilePath -> FilePath -> Maybe String
+moduleNameFromPathWithRoots roots cwd absPath
     | takeExtension absPath /= ".sky" = Nothing
     | otherwise =
-        let candidates = [cwd </> "src", cwd </> "tests"]
-            stripRoot root =
-                stripPrefix (root ++ "/") absPath
+        let normaliseRoot r = if r == "." || null r
+                then cwd
+                else cwd </> r
+            candidates = map normaliseRoot roots
+            stripRoot root = stripPrefix (root ++ "/") absPath
             relative = foldr
                 (\root acc -> case acc of
                     Just _  -> acc
@@ -50,9 +56,18 @@ moduleNameFromPath cwd absPath
         in case relative of
             Nothing -> Nothing
             Just rel ->
-                let stem = dropExtension rel
+                let stem  = dropExtension rel
                     parts = splitDirectories stem
-                in Just (foldr (\a b -> if null b then a else a ++ "." ++ b) "" parts)
+                    -- Sky module segments must begin with an uppercase
+                    -- letter. Test directory path segments are often
+                    -- lowercase (tests/core/FooTest.sky → core is
+                    -- `core` on disk, `Core` in Sky). Capitalise the
+                    -- first letter of every segment when it isn't
+                    -- already uppercase.
+                    capFirst (c:cs) | c >= 'a' && c <= 'z' = toEnum (fromEnum c - 32) : cs
+                    capFirst s = s
+                    rewritten = map capFirst parts
+                in Just (foldr (\a b -> if null b then a else a ++ "." ++ b) "" rewritten)
 
 
 -- | For each declared go dep, regenerate the FFI bindings when its
@@ -316,15 +331,20 @@ runCommand cmd = case cmd of
             else return Toml.defaultConfig
         absPath <- System.Directory.canonicalizePath path
         cwd <- System.Directory.getCurrentDirectory
-        testModName <- case moduleNameFromPath cwd absPath of
+        -- Honour the configured source root (default src/) and the
+        -- common tests/ convention.
+        let sourceRoots = [Toml._sourceRoot config, "src", "tests"]
+        testModName <- case moduleNameFromPathWithRoots sourceRoots cwd absPath of
             Just n  -> return n
             Nothing -> do
                 hPutStrLn stderr $
                     "sky test: " ++ path ++ " must live under src/ or tests/ so its module name can be derived"
                 exitFailure
-        -- Write the synthesised entry. Place it under src/ so the
-        -- module-graph walker picks it up alongside the user's tree.
-        let entryDir  = "src"
+        -- Write the synthesised entry into the project's configured
+        -- source root (defaults to `src/`; test projects commonly use
+        -- `tests/`). Placing it anywhere else would leave it outside
+        -- the module-graph walker's scan.
+        let entryDir  = Toml._sourceRoot config
             entryFile = entryDir </> "SkyTestEntry__.sky"
             entryBody = unlines
                 [ "module SkyTestEntry__ exposing (main)"

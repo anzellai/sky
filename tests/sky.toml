@@ -1,0 +1,6 @@
+name = "sky-core-tests"
+version = "0.0.0"
+entry = "Core/CoreTest.sky"
+
+[source]
+root = "."

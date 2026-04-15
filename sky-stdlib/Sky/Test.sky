@@ -210,24 +210,26 @@ run tests =
 
 runWithPrefix : String -> List Test -> List ( String, TestResult )
 runWithPrefix prefix tests =
-    List.concatMap
-        (\t ->
-            case t of
-                Leaf name thunk ->
-                    [ ( prefix ++ name, safeRun thunk ) ]
+    List.concat
+        (List.map
+            (\t ->
+                case t of
+                    Leaf name thunk ->
+                        [ ( prefix ++ name, safeRun thunk ) ]
 
-                Suite name inner ->
-                    let
-                        nextPrefix =
-                            if prefix == "" then
-                                name ++ " > "
+                    Suite name inner ->
+                        let
+                            nextPrefix =
+                                if prefix == "" then
+                                    name ++ " > "
 
-                            else
-                                prefix ++ name ++ " > "
-                    in
-                    runWithPrefix nextPrefix inner
+                                else
+                                    prefix ++ name ++ " > "
+                        in
+                        runWithPrefix nextPrefix inner
+            )
+            tests
         )
-        tests
 
 
 -- | Execute a test thunk. If it panics, the panic is surfaced as a
