@@ -521,7 +521,7 @@ Legend: ☐ not started · ◐ in progress · ☑ done.
 | P0-7 | Test.equal deep equality | ☑ | 2026-04-15, a85bb70 |
 | P1-1 | CSRF support | ☑ | 2026-04-15, 16ba414 |
 | P1-2 | Rate limit middleware | ☑ | 2026-04-15, b05c664 |
-| P1-3 | Db.findWhere safe API | ☐ | |
+| P1-3 | Db.findWhere safe API | ☑ | 2026-04-15, commit TBD |
 | P1-4 | Auth secrets typed + min-length | ☐ | |
 | P1-5 | Cookie Secure + prod-mode logs | ☐ | |
 | P2-1 | AST comment preservation | ☐ | |

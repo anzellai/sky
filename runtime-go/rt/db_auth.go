@@ -378,18 +378,121 @@ func Db_deleteById(db any, table any, id any) any {
 	return Ok[any, any](int(n))
 }
 
-// Db.findWhere : Db -> String -> String -> List any -> Result String (List (Dict String any))
-// NOTE: the WHERE clause is passed through as-is so callers can express complex
-// predicates. VALUES supplied in `args` go through parameter placeholders, but
-// the WHERE clause text itself is not escaped — never build it from untrusted
-// input; use parameter placeholders inside the clause instead (`name = $1`).
-// The table name is validated and quoted.
+// Db.findWhere — audit P1-3: renamed to Db_unsafeFindWhere at the Sky
+// level. The old name remains as a thin alias for compiled binaries
+// in sky-out/* dirs that haven't been regenerated yet. All new code
+// must use Db.findOneByField / Db.findManyByField / Db.findByConditions
+// (parameterised, table + column names validated) or explicit
+// Db.unsafeFindWhere with an injection-risk comment.
 func Db_findWhere(db any, table any, whereClause any, args any) any {
+	return Db_unsafeFindWhere(db, table, whereClause, args)
+}
+
+// Db.unsafeFindWhere : Db -> String -> String -> List any -> Result Error (List Row)
+// Raw-SQL WHERE clause. Table is validated and quoted; arguments go
+// through parameter placeholders; the WHERE clause text itself is
+// NOT escaped. NEVER build the clause from untrusted input. Use
+// Db.findOneByField / Db.findManyByField / Db.findByConditions when
+// the predicate is a field/value comparison — those are parameterised
+// end-to-end and safe with any input.
+func Db_unsafeFindWhere(db any, table any, whereClause any, args any) any {
 	qTable := safeTable(table)
 	if qTable == "" {
-		return Err[any, any](ErrInvalidInput("db.findWhere: invalid table name"))
+		return Err[any, any](ErrInvalidInput("db.unsafeFindWhere: invalid table name"))
 	}
 	q := fmt.Sprintf("SELECT * FROM %s WHERE %v", qTable, whereClause)
+	return Db_query(db, q, args)
+}
+
+// Db.findOneByField : Db -> String -> String -> any -> Result Error (Maybe Row)
+// Returns the first row where `field = value`. Table and column names
+// go through safeTable / quoteIdent — unsafe characters reject; the
+// value is always bound as a SQL parameter. Audit P1-3.
+func Db_findOneByField(db any, table any, field any, value any) any {
+	d, ok := db.(*SkyDb)
+	if !ok {
+		return Err[any, any](ErrInvalidInput("db.findOneByField: not a Db"))
+	}
+	qTable := safeTable(table)
+	if qTable == "" {
+		return Err[any, any](ErrInvalidInput("db.findOneByField: invalid table name"))
+	}
+	qField := quoteIdent(fmt.Sprintf("%v", field))
+	if qField == "" {
+		return Err[any, any](ErrInvalidInput("db.findOneByField: invalid column name"))
+	}
+	q := fmt.Sprintf("SELECT * FROM %s WHERE %s = %s LIMIT 1", qTable, qField, d.placeholder(1))
+	res := Db_query(db, q, []any{value})
+	sr, ok := res.(SkyResult[any, any])
+	if !ok || sr.Tag != 0 {
+		return res
+	}
+	rows, ok := sr.OkValue.([]any)
+	if !ok {
+		return Err[any, any](ErrIo("db.findOneByField: unexpected result shape"))
+	}
+	if len(rows) == 0 {
+		return Ok[any, any](Nothing[any]())
+	}
+	return Ok[any, any](Just[any](rows[0]))
+}
+
+// Db.findManyByField : Db -> String -> String -> any -> Result Error (List Row)
+// Returns all rows where `field = value`. Same safety properties as
+// findOneByField — identifiers validated, value bound as a parameter.
+func Db_findManyByField(db any, table any, field any, value any) any {
+	d, ok := db.(*SkyDb)
+	if !ok {
+		return Err[any, any](ErrInvalidInput("db.findManyByField: not a Db"))
+	}
+	qTable := safeTable(table)
+	if qTable == "" {
+		return Err[any, any](ErrInvalidInput("db.findManyByField: invalid table name"))
+	}
+	qField := quoteIdent(fmt.Sprintf("%v", field))
+	if qField == "" {
+		return Err[any, any](ErrInvalidInput("db.findManyByField: invalid column name"))
+	}
+	q := fmt.Sprintf("SELECT * FROM %s WHERE %s = %s", qTable, qField, d.placeholder(1))
+	return Db_query(db, q, []any{value})
+}
+
+// Db.findByConditions : Db -> String -> Dict String any -> Result Error (List Row)
+// Returns all rows matching every column = value in the conditions
+// map (AND across entries). Column names validated; all values bound
+// as parameters. The condition map's iteration order is Go-random
+// but deterministic for any given map, so the emitted SQL is
+// consistent across rows — no ordering surprises.
+func Db_findByConditions(db any, table any, conditions any) any {
+	d, ok := db.(*SkyDb)
+	if !ok {
+		return Err[any, any](ErrInvalidInput("db.findByConditions: not a Db"))
+	}
+	qTable := safeTable(table)
+	if qTable == "" {
+		return Err[any, any](ErrInvalidInput("db.findByConditions: invalid table name"))
+	}
+	m, ok := conditions.(map[string]any)
+	if !ok {
+		return Err[any, any](ErrInvalidInput("db.findByConditions: conditions must be a Dict String any"))
+	}
+	if len(m) == 0 {
+		q := fmt.Sprintf("SELECT * FROM %s", qTable)
+		return Db_query(db, q, []any{})
+	}
+	clauses := make([]string, 0, len(m))
+	args := make([]any, 0, len(m))
+	i := 1
+	for col, val := range m {
+		qc := quoteIdent(col)
+		if qc == "" {
+			return Err[any, any](ErrInvalidInput("db.findByConditions: invalid column name: " + col))
+		}
+		clauses = append(clauses, fmt.Sprintf("%s = %s", qc, d.placeholder(i)))
+		args = append(args, val)
+		i++
+	}
+	q := fmt.Sprintf("SELECT * FROM %s WHERE %s", qTable, strings.Join(clauses, " AND "))
 	return Db_query(db, q, args)
 }
 

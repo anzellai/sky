@@ -573,6 +573,11 @@ registry = Map.fromList
     , (("Db", "updateById"),      KernelInfo "rt.Db_updateById" 4 False)
     , (("Db", "deleteById"),      KernelInfo "rt.Db_deleteById" 3 False)
     , (("Db", "findWhere"),       KernelInfo "rt.Db_findWhere" 4 False)
+    -- audit P1-3: parameterised safe alternatives to findWhere
+    , (("Db", "findOneByField"),    KernelInfo "rt.Db_findOneByField" 4 False)
+    , (("Db", "findManyByField"),   KernelInfo "rt.Db_findManyByField" 4 False)
+    , (("Db", "findByConditions"),  KernelInfo "rt.Db_findByConditions" 3 False)
+    , (("Db", "unsafeFindWhere"),   KernelInfo "rt.Db_unsafeFindWhere" 4 False)
     , (("Db", "withTransaction"), KernelInfo "rt.Db_withTransaction" 2 False)
 
     -- ═══════════════════════════════════════════════════════
