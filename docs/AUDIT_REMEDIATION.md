@@ -433,7 +433,7 @@ itself (not the sweep script).
 **Acceptance.** CI passes only when `sky verify` passes every
 non-skipped example.
 
-### [ ] P3-2 LSP integration test harness
+### [x] P3-2 LSP integration test harness
 **Problem.** No tests for `sky lsp`. Hover regressions ship silently.
 
 **Fix.** `test/Sky/Lsp/ProtocolSpec.hs`: spawns `sky lsp`, sends
@@ -530,7 +530,7 @@ Legend: ☐ not started · ◐ in progress · ☑ done.
 | P2-4 | sky verify scenarios | ☑ | 2026-04-15, fa96595 |
 | P2-5 | Session store type safety | ☑ | 2026-04-15, 0d2b431 |
 | P3-1 | CI uses sky verify | ☑ | 2026-04-15, 270d564 |
-| P3-2 | LSP integration tests | ☐ | |
+| P3-2 | LSP integration tests | ☑ | ProtocolSpec covers initialize + hover |
 | P3-3 | No-TH-dance runtime dep | ☐ | |
 | P3-4 | %v audit | ☐ | |
 | P4-1 | Typed codegen v1.0 | ☐ | refers to PRODUCTION_READINESS.md |

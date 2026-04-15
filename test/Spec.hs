@@ -18,6 +18,7 @@ import qualified Sky.Lsp.HoverShadowingSpec
 import qualified Sky.Lsp.RenameStableSpec
 import qualified Sky.Build.VerifyScenarioSpec
 import qualified Sky.Build.VerifyAllSpec
+import qualified Sky.Lsp.ProtocolSpec
 
 main :: IO ()
 main = hspec $ do
@@ -50,3 +51,5 @@ main = hspec $ do
     describe "Sky.Build.VerifyScenario"   Sky.Build.VerifyScenarioSpec.spec
     -- Audit P3-1: sky verify covers all examples for CI.
     describe "Sky.Build.VerifyAll"        Sky.Build.VerifyAllSpec.spec
+    -- Audit P3-2: LSP protocol integration.
+    describe "Sky.Lsp.Protocol"           Sky.Lsp.ProtocolSpec.spec
