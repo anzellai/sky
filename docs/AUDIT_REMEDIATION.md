@@ -516,7 +516,7 @@ Legend: ☐ not started · ◐ in progress · ☑ done.
 | P0-2 | Silent numeric coercion → fallible | ☑ | 2026-04-15, f56d85c |
 | P0-3 | Typed-return coercion generalised | ☑ | 2026-04-15, 96def08 |
 | P0-4 | Record field declaration order | ☑ | 2026-04-15, 88bbbf2 |
-| P0-5 | Unreachable panic → Err | ☑ | 2026-04-15, commit TBD |
+| P0-5 | Unreachable panic → Err | ☑ | 2026-04-15, 9c3836f |
 | P0-6 | FFI skyCallDirect type-safe | ☐ | |
 | P0-7 | Test.equal deep equality | ☐ | |
 | P1-1 | CSRF support | ☐ | |
