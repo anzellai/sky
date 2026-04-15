@@ -1854,16 +1854,23 @@ wrapTypedReturn retType body
             (GoIr.GoIdent ("rt.MaybeCoerce[" ++ inner ++ "]"))
             [body]
     | Just _ <- stripParametric "rt.SkyTask" retType =
-        -- Sky Tasks are returned by `rt.AnyTaskSucceed` and friends
-        -- as `any` holding `func() any`. A direct `.(rt.SkyTask[...])`
-        -- assertion on that would panic (different Go function type),
-        -- so route through rt.TaskCoerce which rewraps either shape
-        -- into a proper `rt.SkyTask[any, any]`.
         GoIr.GoCall (GoIr.GoIdent "rt.TaskCoerce") [body]
+    -- Audit P0-3: replace raw `any(body).(T)` with a runtime Coerce
+    -- helper. Direct assertion panics with a cryptic 'interface
+    -- conversion' message on mismatch; Coerce gives a site-identified
+    -- diagnostic and propagates via rt panic-recovery as Err. Also
+    -- handles reflect-convertible types (numeric widenings, typed
+    -- aliases) which the raw assertion rejects.
+    | retType == "string" =
+        GoIr.GoCall (GoIr.GoIdent "rt.CoerceString") [body]
+    | retType == "int" =
+        GoIr.GoCall (GoIr.GoIdent "rt.CoerceInt") [body]
+    | retType == "bool" =
+        GoIr.GoCall (GoIr.GoIdent "rt.CoerceBool") [body]
+    | retType == "float64" =
+        GoIr.GoCall (GoIr.GoIdent "rt.CoerceFloat") [body]
     | otherwise =
-        GoIr.GoTypeAssert
-            (GoIr.GoCall (GoIr.GoIdent "any") [body])
-            retType
+        GoIr.GoCall (GoIr.GoIdent ("rt.Coerce[" ++ retType ++ "]")) [body]
 
 
 -- | If `s` is shaped like `<prefix>[params]`, return `params`;

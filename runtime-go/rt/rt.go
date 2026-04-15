@@ -2469,6 +2469,80 @@ func TaskCoerce(v any) SkyTask[any, any] {
 	})
 }
 
+// Coerce — audit P0-3. Replaces raw `any(body).(T)` assertions that
+// codegen used to emit at typed-return boundaries. Direct assertion
+// panics with a cryptic `interface conversion: interface {} is …, not
+// …` message; Coerce fails with a clear site-identified message that
+// propagates through rt's panic recovery as a clean
+// Err(InvalidInput) at the nearest Task boundary.
+//
+// Behaviour: if v holds T, return it. Else if v is reflect-convertible
+// to T (handles numeric widening, typed-alias round-trips, etc.),
+// convert and return. Else panic with a diagnostic naming both the
+// expected and actual Go types.
+//
+// Usage: emitted as `rt.Coerce[T](body)` where T is a concrete Go
+// type (e.g. `State_Model_R`). For primitives prefer the named
+// helpers (CoerceString/Int/Bool/Float) — they're identical in
+// behaviour but compile without generic instantiation and give a
+// smaller-footprint emit.
+func Coerce[T any](v any) T {
+	if t, ok := v.(T); ok {
+		return t
+	}
+	var zero T
+	rv := reflect.ValueOf(v)
+	targetTy := reflect.TypeOf(zero)
+	// Reflect-convertible includes Go's numeric-widening and
+	// semantically-wrong coercions we must REJECT (int→string converts
+	// 42 to ASCII "*"). Allow conversion only between numeric kinds
+	// or between identical kinds (struct-to-struct reinterpret).
+	if rv.IsValid() && targetTy != nil && rv.Type().ConvertibleTo(targetTy) {
+		if safeReflectConvert(rv.Kind(), targetTy.Kind()) {
+			return rv.Convert(targetTy).Interface().(T)
+		}
+	}
+	panic(fmt.Sprintf("rt.Coerce: expected %T, got %T (%v)", zero, v, v))
+}
+
+// safeReflectConvert whitelists reflect.Value.Convert pairs that are
+// semantically meaningful for Sky's type system. Numeric widening
+// between int/float variants is fine. Everything else — especially
+// int→string (ASCII character reinterpret), []byte→string (unsafe
+// if the source is mutated later) — is rejected so Coerce panics
+// with a type-mismatch diagnostic instead of silently producing
+// garbage.
+func safeReflectConvert(from, to reflect.Kind) bool {
+	isNumeric := func(k reflect.Kind) bool {
+		switch k {
+		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+			reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+			reflect.Float32, reflect.Float64:
+			return true
+		}
+		return false
+	}
+	if isNumeric(from) && isNumeric(to) {
+		return true
+	}
+	// Same-kind struct/map/slice/array reinterpret is fine (type-alias
+	// round-trip). Not numeric → not string.
+	return from == to && from != reflect.String
+}
+
+// CoerceString is a named shortcut that avoids generic instantiation
+// at every string-returning typed boundary. Identical to Coerce[string].
+func CoerceString(v any) string {
+	if s, ok := v.(string); ok {
+		return s
+	}
+	panic(fmt.Sprintf("rt.CoerceString: expected string, got %T (%v)", v, v))
+}
+
+func CoerceInt(v any) int { return AsInt(v) }      // AsInt is strict post-P0-2
+func CoerceBool(v any) bool { return AsBool(v) }   // same
+func CoerceFloat(v any) float64 { return AsFloat(v) }
+
 // Run a task thunk regardless of whether it was built via
 // AnyTaskSucceed (now typed as SkyTask[any, any]) or via an older
 // `func() any` form. Returns SkyResult[any, any].
