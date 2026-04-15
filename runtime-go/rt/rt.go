@@ -932,7 +932,97 @@ func Div(a, b any) any { if AsInt(b) == 0 { return 0 }; return AsInt(a) / AsInt(
 func IntDiv(a, b any) any { if AsInt(b) == 0 { return 0 }; return AsInt(a) / AsInt(b) }
 func Rem(a, b any) any { if AsInt(b) == 0 { return 0 }; return AsInt(a) % AsInt(b) }
 
-func Eq(a, b any) any { return a == b }
+// Eq — structural equality tolerant of Sky's any-boxed values.
+// Primitives compare via Go's `==`. Slices compare element-wise,
+// maps key-wise, structs (ADTs / records) field-wise. This replaces
+// the old direct `a == b` which panicked on uncomparable types
+// (`[]any`, `map[string]any`, etc.) the moment user code wrote
+// `List.map id [1,2] == [1,2]`.
+func Eq(a, b any) any {
+	return deepEq(a, b)
+}
+
+func deepEq(a, b any) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	ra, rb := reflect.ValueOf(a), reflect.ValueOf(b)
+	if ra.Kind() != rb.Kind() {
+		// Cross-kind fallback: let Go compare ints with floats via formatted equality.
+		if ra.Type().Comparable() && rb.Type().Comparable() {
+			return ra.Interface() == rb.Interface()
+		}
+		return false
+	}
+	switch ra.Kind() {
+	case reflect.Bool:
+		return ra.Bool() == rb.Bool()
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return ra.Int() == rb.Int()
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return ra.Uint() == rb.Uint()
+	case reflect.Float32, reflect.Float64:
+		return ra.Float() == rb.Float()
+	case reflect.String:
+		return ra.String() == rb.String()
+	case reflect.Slice, reflect.Array:
+		if ra.Len() != rb.Len() {
+			return false
+		}
+		for i := 0; i < ra.Len(); i++ {
+			if !deepEq(ra.Index(i).Interface(), rb.Index(i).Interface()) {
+				return false
+			}
+		}
+		return true
+	case reflect.Map:
+		if ra.Len() != rb.Len() {
+			return false
+		}
+		iter := ra.MapRange()
+		for iter.Next() {
+			bv := rb.MapIndex(iter.Key())
+			if !bv.IsValid() {
+				return false
+			}
+			if !deepEq(iter.Value().Interface(), bv.Interface()) {
+				return false
+			}
+		}
+		return true
+	case reflect.Struct:
+		if ra.Type() != rb.Type() {
+			// Fields-by-name fallback for aliased Sky ADTs that
+			// share layout but not type identity.
+			if ra.NumField() != rb.NumField() {
+				return false
+			}
+			for i := 0; i < ra.NumField(); i++ {
+				fa := ra.Type().Field(i).Name
+				fb := rb.FieldByName(fa)
+				if !fb.IsValid() {
+					return false
+				}
+				if !deepEq(ra.Field(i).Interface(), fb.Interface()) {
+					return false
+				}
+			}
+			return true
+		}
+		for i := 0; i < ra.NumField(); i++ {
+			if !deepEq(ra.Field(i).Interface(), rb.Field(i).Interface()) {
+				return false
+			}
+		}
+		return true
+	case reflect.Interface, reflect.Pointer:
+		return deepEq(ra.Elem().Interface(), rb.Elem().Interface())
+	}
+	if ra.Type().Comparable() && rb.Type().Comparable() {
+		return ra.Interface() == rb.Interface()
+	}
+	return false
+}
 func Gt(a, b any) any { return AsInt(a) > AsInt(b) }
 func Lt(a, b any) any { return AsInt(a) < AsInt(b) }
 func Gte(a, b any) any { return AsInt(a) >= AsInt(b) }
