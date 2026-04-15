@@ -529,7 +529,7 @@ Legend: ☐ not started · ◐ in progress · ☑ done.
 | P2-3 | LSP TVar global renaming | ☑ | 2026-04-15, 170b77e |
 | P2-4 | sky verify scenarios | ☑ | 2026-04-15, fa96595 |
 | P2-5 | Session store type safety | ☑ | 2026-04-15, 0d2b431 |
-| P3-1 | CI uses sky verify | ☑ | 2026-04-15, commit TBD |
+| P3-1 | CI uses sky verify | ☑ | 2026-04-15, 270d564 |
 | P3-2 | LSP integration tests | ☐ | |
 | P3-3 | No-TH-dance runtime dep | ☐ | |
 | P3-4 | %v audit | ☐ | |
