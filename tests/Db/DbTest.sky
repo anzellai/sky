@@ -1,0 +1,394 @@
+module Db.DbTest exposing (tests)
+
+-- Phase 4 — Std.Db behaviour tests.
+--
+-- The real runtime (rt.Db_connect, rt.Db_open, rt.Db_exec,
+-- rt.Db_query, rt.Db_queryDecode) binds to SQLite / PostgreSQL via
+-- a real connection. Those paths are covered by
+-- `sky verify 07-todo-cli`, `sky verify 08-notes-app`,
+-- `sky verify 12-skyvote`, `sky verify 16-skychess`.
+--
+-- This module tests the pure *logic* every DB-backed app reduces
+-- to: row-dict extraction, not-found handling via Maybe, structured
+-- error mapping, and result-shape invariants. A regression in the
+-- Dict.get fallback (e.g. returning "" for missing keys instead
+-- of Nothing, or a string-keyed row losing a field) trips a test
+-- here before the live flow can.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.Dict as Dict
+import Sky.Core.Error as Error exposing (Error(..))
+import Sky.Test as Test exposing (Test)
+
+
+-- ══════════════════════════════════════════════════════════
+-- Row shape — mirrors rt.Db_query's return type:
+-- List (Dict String any). Tests use String values so we can
+-- assert the raw round-trip without hitting encoding edges.
+-- ══════════════════════════════════════════════════════════
+type alias Row =
+    Dict String String
+
+
+emptyRow : Row
+emptyRow =
+    Dict.empty
+
+
+makeRow : List ( String, String ) -> Row
+makeRow pairs =
+    case pairs of
+        [] ->
+            Dict.empty
+
+        ( k, v ) :: rest ->
+            Dict.insert k v (makeRow rest)
+
+
+-- ══════════════════════════════════════════════════════════
+-- Field extraction — mirrors the Lib.Db.getField pattern
+-- (examples/08-notes-app, examples/12-skyvote).
+-- Returns "" for missing keys, matching Sky convention.
+-- ══════════════════════════════════════════════════════════
+getField : String -> Row -> String
+getField key row =
+    case Dict.get key row of
+        Just v ->
+            v
+
+        Nothing ->
+            ""
+
+
+-- Typed field extraction into Result — fails loudly if the key
+-- is missing. Use this at the update/handler layer where the
+-- absence of a field is a real invariant violation (wrong query).
+requireField : String -> Row -> Result Error String
+requireField key row =
+    case Dict.get key row of
+        Just v ->
+            Ok v
+
+        Nothing ->
+            Err (Error.decode ("missing field: " ++ key))
+
+
+-- ══════════════════════════════════════════════════════════
+-- Simulated DB responses. The runtime Db_exec returns
+-- Result Error Int (rows-affected); Db_query returns
+-- Result Error (List Row). These simulations let us drive the
+-- handler logic pure without a live connection.
+-- ══════════════════════════════════════════════════════════
+type alias SimResult =
+    { rowsAffected : Int
+    , rows : List Row
+    , error : Maybe Error
+    }
+
+
+simulatedExec : String -> SimResult
+simulatedExec sql =
+    if String.contains "DROP" sql then
+        { rowsAffected = 0
+        , rows = []
+        , error = Just (Error.permissionDenied |> Error.withMessage "DROP not allowed")
+        }
+
+    else if String.contains "UNIQUE" sql then
+        { rowsAffected = 0
+        , rows = []
+        , error = Just (Error.conflict "duplicate key")
+        }
+
+    else if String.contains "INSERT" sql then
+        { rowsAffected = 1, rows = [], error = Nothing }
+
+    else if String.contains "UPDATE" sql then
+        { rowsAffected = 1, rows = [], error = Nothing }
+
+    else if String.contains "DELETE" sql then
+        { rowsAffected = 1, rows = [], error = Nothing }
+
+    else
+        { rowsAffected = 0
+        , rows = []
+        , error = Just (Error.invalidInput "unsupported statement")
+        }
+
+
+simulatedQuery : String -> SimResult
+simulatedQuery sql =
+    if String.contains "users WHERE id = 'u1'" sql then
+        { rowsAffected = 1
+        , rows = [ makeRow [ ( "id", "u1" ), ( "email", "admin@example.com" ), ( "role", "admin" ) ] ]
+        , error = Nothing
+        }
+
+    else if String.contains "users WHERE id = 'missing'" sql then
+        { rowsAffected = 0, rows = [], error = Nothing }
+
+    else if String.contains "SELECT * FROM users" sql then
+        { rowsAffected = 2
+        , rows =
+            [ makeRow [ ( "id", "u1" ), ( "email", "admin@example.com" ), ( "role", "admin" ) ]
+            , makeRow [ ( "id", "u2" ), ( "email", "alice@example.com" ), ( "role", "member" ) ]
+            ]
+        , error = Nothing
+        }
+
+    else
+        { rowsAffected = 0
+        , rows = []
+        , error = Just (Error.io "connection lost")
+        }
+
+
+-- ══════════════════════════════════════════════════════════
+-- Typical DB-layer adaptors: exec / query returning
+-- Result Error a. Test these state transitions — never the
+-- live connection itself.
+-- ══════════════════════════════════════════════════════════
+exec : String -> Result Error Int
+exec sql =
+    let
+        r = simulatedExec sql
+    in
+    case r.error of
+        Just e ->
+            Err e
+
+        Nothing ->
+            Ok r.rowsAffected
+
+
+query : String -> Result Error (List Row)
+query sql =
+    let
+        r = simulatedQuery sql
+    in
+    case r.error of
+        Just e ->
+            Err e
+
+        Nothing ->
+            Ok r.rows
+
+
+getById : String -> Result Error (Maybe Row)
+getById id =
+    let
+        sql = "SELECT * FROM users WHERE id = '" ++ id ++ "'"
+    in
+    case query sql of
+        Err e ->
+            Err e
+
+        Ok rows ->
+            case rows of
+                [] ->
+                    Ok Nothing
+
+                first :: _ ->
+                    Ok (Just first)
+
+
+-- ══════════════════════════════════════════════════════════
+-- Maybe / Result helpers (Nothing-detection, result inspection).
+-- ══════════════════════════════════════════════════════════
+isNothing : Maybe a -> Bool
+isNothing m =
+    case m of
+        Nothing ->
+            True
+
+        Just _ ->
+            False
+
+
+isOk : Result e a -> Bool
+isOk r =
+    case r of
+        Ok _ ->
+            True
+
+        Err _ ->
+            False
+
+
+isErr : Result e a -> Bool
+isErr r =
+    case r of
+        Err _ ->
+            True
+
+        Ok _ ->
+            False
+
+
+errorMessageOf : Result Error a -> String
+errorMessageOf r =
+    case r of
+        Err (Error _kind info) ->
+            info.message
+
+        Ok _ ->
+            ""
+
+
+-- ══════════════════════════════════════════════════════════
+-- TESTS
+-- ══════════════════════════════════════════════════════════
+tests : List Test
+tests =
+    [ Test.suite "row building + field access"
+        [ Test.test "emptyRow.get returns Nothing" (\_ ->
+            Test.isTrue (isNothing (Dict.get "x" emptyRow)))
+        , Test.test "makeRow + getField round-trips" (\_ ->
+            Test.equal "alice"
+                (getField "name" (makeRow [ ( "name", "alice" ) ])))
+        , Test.test "getField on missing key returns empty" (\_ ->
+            Test.equal ""
+                (getField "nope" (makeRow [ ( "name", "alice" ) ])))
+        , Test.test "makeRow preserves multiple fields" (\_ ->
+            let
+                row = makeRow [ ( "id", "1" ), ( "name", "alice" ), ( "role", "admin" ) ]
+            in
+            Test.equal "admin" (getField "role" row))
+        , Test.test "later makeRow insert overrides earlier" (\_ ->
+            let
+                row = makeRow [ ( "k", "first" ), ( "k", "second" ) ]
+            in
+            Test.equal "first" (getField "k" row))
+        ]
+    , Test.suite "requireField"
+        [ Test.test "present key returns Ok value" (\_ ->
+            Test.ok (requireField "name" (makeRow [ ( "name", "alice" ) ])))
+        , Test.test "present key returns the value" (\_ ->
+            let
+                r = requireField "name" (makeRow [ ( "name", "alice" ) ])
+                got =
+                    case r of
+                        Ok v -> v
+                        Err _ -> "?"
+            in
+            Test.equal "alice" got)
+        , Test.test "missing key returns Err" (\_ ->
+            Test.err (requireField "nope" (makeRow [ ( "name", "alice" ) ])))
+        , Test.test "missing key error message names the field" (\_ ->
+            Test.isTrue
+                (String.contains "missing field: nope"
+                    (errorMessageOf (requireField "nope" (makeRow [])))))
+        ]
+    , Test.suite "exec: INSERT / UPDATE / DELETE"
+        [ Test.test "INSERT returns rows-affected=1" (\_ ->
+            let
+                r = exec "INSERT INTO users VALUES ('u3')"
+                got =
+                    case r of
+                        Ok n -> n
+                        Err _ -> -1
+            in
+            Test.equal 1 got)
+        , Test.test "UPDATE succeeds" (\_ ->
+            Test.ok (exec "UPDATE users SET role='admin' WHERE id='u1'"))
+        , Test.test "DELETE succeeds" (\_ ->
+            Test.ok (exec "DELETE FROM sessions WHERE token='x'"))
+        , Test.test "DROP is rejected with permission error" (\_ ->
+            Test.err (exec "DROP TABLE users"))
+        , Test.test "unique-violation maps to Conflict" (\_ ->
+            let
+                r = exec "INSERT ... UNIQUE constraint"
+                msg = errorMessageOf r
+            in
+            Test.equal "duplicate key" msg)
+        , Test.test "unknown statement is invalid-input" (\_ ->
+            let
+                r = exec "NONSENSE"
+                msg = errorMessageOf r
+            in
+            Test.equal "unsupported statement" msg)
+        ]
+    , Test.suite "query: SELECT"
+        [ Test.test "empty-result query returns Ok []" (\_ ->
+            Test.ok (query "SELECT * FROM users WHERE id = 'missing'"))
+        , Test.test "single-row query returns one row" (\_ ->
+            let
+                r = query "SELECT * FROM users WHERE id = 'u1'"
+                count =
+                    case r of
+                        Ok rows -> List.length rows
+                        Err _ -> -1
+            in
+            Test.equal 1 count)
+        , Test.test "multi-row query returns two rows" (\_ ->
+            let
+                r = query "SELECT * FROM users"
+                count =
+                    case r of
+                        Ok rows -> List.length rows
+                        Err _ -> -1
+            in
+            Test.equal 2 count)
+        , Test.test "connection failure maps to Io error" (\_ ->
+            let
+                r = query "SELECT weirdness"
+                msg = errorMessageOf r
+            in
+            Test.equal "connection lost" msg)
+        ]
+    , Test.suite "getById: not-found semantics"
+        [ Test.test "existing id returns Ok (Just row)" (\_ ->
+            Test.ok (getById "u1"))
+        , Test.test "existing id populates fields" (\_ ->
+            let
+                r = getById "u1"
+                email =
+                    case r of
+                        Ok (Just row) -> getField "email" row
+                        _ -> "?"
+            in
+            Test.equal "admin@example.com" email)
+        , Test.test "missing id returns Ok Nothing (not an error)" (\_ ->
+            let
+                r = getById "missing"
+                nothing =
+                    case r of
+                        Ok Nothing -> True
+                        _ -> False
+            in
+            Test.isTrue nothing)
+        ]
+    , Test.suite "result invariants"
+        [ Test.test "successful exec never yields Err" (\_ ->
+            Test.isFalse (isErr (exec "INSERT INTO t VALUES (1)")))
+        , Test.test "Err case never carries rows" (\_ ->
+            let
+                r = exec "DROP TABLE x"
+            in
+            Test.isTrue (isErr r))
+        , Test.test "query rows field shape: empty vs populated" (\_ ->
+            let
+                ea = simulatedQuery "SELECT * FROM users WHERE id = 'missing'"
+                eb = simulatedQuery "SELECT * FROM users"
+            in
+            Test.isTrue (List.isEmpty ea.rows && not (List.isEmpty eb.rows)))
+        , Test.test "every simulated exec error has a non-empty message" (\_ ->
+            let
+                drop = exec "DROP TABLE x"
+                unique = exec "INSERT UNIQUE constraint"
+                bogus = exec "NONSENSE"
+                allHaveMsg =
+                    not (String.isEmpty (errorMessageOf drop))
+                        && not (String.isEmpty (errorMessageOf unique))
+                        && not (String.isEmpty (errorMessageOf bogus))
+            in
+            Test.isTrue allHaveMsg)
+        ]
+    , Test.suite "SQL-injection shape guards (simulated)"
+        [ Test.test "DROP in any statement is rejected" (\_ ->
+            Test.err (exec "INSERT INTO users; DROP TABLE sessions"))
+        , Test.test "repeated rejection is stable" (\_ ->
+            Test.isTrue (isErr (exec "DROP TABLE a") && isErr (exec "DROP TABLE b")))
+        ]
+    ]

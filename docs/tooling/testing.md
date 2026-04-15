@@ -124,6 +124,9 @@ Current permanent regressions:
 - `tests/Live/CounterTest.sky` — 19 Sky.Live TEA loop tests (init / update / model invariants / event dispatch).
 - `tests/Live/FormTest.sky` — 20 Sky.Live form-handling tests (validation / state machine transitions / sign-out).
 - `tests/Live/SessionTest.sky` — 18 Sky.Live subscription + session round-trip tests.
+- `tests/Server/HttpServerTest.sky` — 43 Sky.Http.Server pure-seam tests (route matching, path params, response builders, request record shape, status classification).
+- `tests/Auth/AuthTest.sky` — 28 Sky.Auth state-machine tests (sign-in success/failure, sign-out, session resume, error classification, authenticated/unauthenticated invariants).
+- `tests/Db/DbTest.sky` — 28 Std.Db pure-seam tests (row building, field extraction, exec/query simulation, not-found vs. error, structured-error mapping).
 
 ## Known limits
 
