@@ -13,7 +13,7 @@ All documentation, comments, variable names, function names, and user-facing str
 
 ## Non-Regression Rules
 
-These constraints are enforced by `scripts/check-forbidden.sh` and `test/Sky/ErrorUnificationSpec.hs`. Violating them breaks the repo:
+These constraints are enforced by `sky verify (forbidden-pattern gate runs first)` and `test/Sky/ErrorUnificationSpec.hs`. Violating them breaks the repo:
 
 - **No `Result String a`** in any public surface. Use `Result Error a`.
 - **No `Task String a`** in any public surface. Use `Task Error a`.
@@ -26,7 +26,7 @@ These constraints are enforced by `scripts/check-forbidden.sh` and `test/Sky/Err
 - **Every new language feature or runtime helper needs a test.** Cabal specs for compile-time behaviour; `runtime-go/rt/*_test.go` for runtime helpers; `tests/**/*Test.sky` for stdlib semantics.
 - **Every bug becomes a regression test** *before* landing the fix. The failing test is the discovery artefact; without it, the class comes back.
 - **`sky test <file>` is the user-facing runner.** See `sky-stdlib/Sky/Test.sky` for the API.
-- **Runtime verification on every push.** `scripts/verify-examples.sh` builds and runs each example, catching panics and HTTP failures that `--build-only` misses.
+- **Runtime verification on every push.** `sky verify` builds and runs each example, catching panics and HTTP failures that `--build-only` misses.
 
 ## Tooling Rules
 

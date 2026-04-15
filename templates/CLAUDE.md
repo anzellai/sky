@@ -48,7 +48,7 @@ tests =
 
 Assertions: `equal`, `notEqual`, `ok`, `err`, `expectErrorKind`, `isTrue`, `isFalse`, `fail`, `pass`.
 
-Non-regression rules (enforced by `scripts/check-forbidden.sh`):
+Non-regression rules (enforced by `sky verify (forbidden-pattern gate runs first)`):
 
 - No `Result String a` or `Task String a` in any public surface — use `Result Error a` / `Task Error a`.
 - No `Std.IoError` (deleted), no `RemoteData` (deleted).

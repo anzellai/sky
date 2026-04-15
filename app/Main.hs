@@ -2,7 +2,7 @@
 module Main where
 
 import Options.Applicative
-import System.Exit (exitFailure, exitSuccess)
+import System.Exit (exitFailure, exitSuccess, ExitCode(..))
 import System.IO (hPutStrLn, stderr)
 
 import qualified System.Directory
@@ -27,6 +27,215 @@ import qualified Sky.Format.Format as Format
 import qualified Sky.Lsp.Server as Lsp
 import qualified Sky.Build.FfiGen as FfiGen
 import qualified Sky.Build.SkyDeps as SkyDeps
+
+
+-- | End-to-end verification (replaces scripts/verify-examples.sh +
+-- scripts/check-forbidden.sh). Returns True iff everything passed.
+--
+-- Stages:
+--   1. Forbidden-pattern gate across src/, sky-stdlib/, examples/*/src/
+--      (rejects Result String / Task String / Std.IoError / RemoteData).
+--   2. Build + run every example (or the one named via `target`).
+--      Panics in stderr / non-zero exit / non-2xx HTTP → fail.
+runVerify :: Maybe String -> IO Bool
+runVerify target = do
+    cwd <- System.Directory.getCurrentDirectory
+    forbiddenOk <- case target of
+        Just _  -> return True   -- per-example run skips the global gate
+        Nothing -> checkForbidden cwd
+    when (not forbiddenOk) $
+        hPutStrLn stderr "verify: forbidden-pattern gate failed"
+    exampleOk <- runExampleVerify cwd target
+    return (forbiddenOk && exampleOk)
+
+
+-- | Grep gate for pre-v1 error-surface patterns. Fails the verify
+-- run if any non-comment line in the Sky sources matches. Mirrors
+-- test/Sky/ErrorUnificationSpec.hs for quick local runs.
+checkForbidden :: FilePath -> IO Bool
+checkForbidden cwd = do
+    let patterns =
+            [ ("Result String",  "Result[[:space:]]+String[[:space:]]")
+            , ("Task String",    "Task[[:space:]]+String[[:space:]]")
+            , ("Std.IoError",    "Std\\.IoError")
+            , ("RemoteData",     "\\bRemoteData\\b")
+            ]
+        roots = ["src", "sky-stdlib"] ++ [cwd ++ "/examples"]
+    results <- mapM (checkOne roots) patterns
+    let fails = [ label | (label, False) <- zip (map fst patterns) results ]
+    mapM_ (\l -> hPutStrLn stderr $ "  FORBIDDEN " ++ l) fails
+    return (null fails)
+  where
+    checkOne _roots (_label, pat) = do
+        (_ec, out, _) <- System.Process.readProcessWithExitCode "sh"
+            [ "-c"
+            , unwords
+                [ "grep -rn --include='*.sky'"
+                , "--exclude-dir=.skycache --exclude-dir=.skydeps --exclude-dir=sky-out"
+                , shellQuote pat
+                , shellQuote cwd ++ "/src"
+                , shellQuote cwd ++ "/sky-stdlib"
+                , shellQuote cwd ++ "/examples"
+                , "2>/dev/null | grep -vE '^[^:]*:[0-9]+:[[:space:]]*--' | head -5"
+                ]
+            ] ""
+        -- `out` is the filtered grep output (excluding comment-only lines).
+        -- True = no matches = pass.
+        return (null (filter (not . null) (lines out)))
+
+
+shellQuote :: String -> String
+shellQuote s = "'" ++ concatMap esc s ++ "'"
+  where esc '\'' = "'\\''"; esc c = [c]
+
+
+-- | Build + runtime-probe each example. Classification mirrors the
+-- original scripts/example-sweep.sh: server / gui / cli. Failure
+-- modes: build-fail, non-zero exit, panic in log, non-2xx HTTP.
+runExampleVerify :: FilePath -> Maybe String -> IO Bool
+runExampleVerify cwd target = do
+    let examplesDir = cwd ++ "/examples"
+    hasDir <- System.Directory.doesDirectoryExist examplesDir
+    if not hasDir
+        then do
+            hPutStrLn stderr "verify: no examples/ directory"
+            return True
+        else do
+            entries <- System.Directory.listDirectory examplesDir
+            let dirs = case target of
+                    Just t  -> filter (== t) entries
+                    Nothing -> entries
+                exampleDirs = [examplesDir ++ "/" ++ d | d <- dirs]
+            mapM_ (verifyOne cwd) exampleDirs
+            hasFailures <- readFile "/tmp/sky-verify-fails.txt"
+                `catchIOError` (\_ -> return "")
+            return (null (filter (not . null) (lines hasFailures)))
+
+
+-- | Verify one example. Writes any failure reason to
+-- /tmp/sky-verify-fails.txt (append). Uses the same shell primitives
+-- the prior scripts/verify-examples.sh relied on — sky build, exec,
+-- curl probe — now orchestrated from Haskell so the one-binary
+-- contract holds.
+verifyOne :: FilePath -> FilePath -> IO ()
+verifyOne cwd dir = do
+    let name = takeFileName dir
+        tomlPath = dir </> "sky.toml"
+        logPath  = "/tmp/sky-verify-" ++ name ++ ".log"
+    hasToml <- doesFileExist tomlPath
+    if not hasToml then return () else do
+        -- Clean build.
+        _ <- System.Process.readProcessWithExitCode "sh"
+            [ "-c"
+            , unwords
+                [ "cd", shellQuote dir, "&&"
+                , "rm -rf sky-out .skycache", "&&"
+                , shellQuote (cwd ++ "/sky-out/sky"), "build src/Main.sky"
+                , ">", shellQuote logPath, "2>&1"
+                ]
+            ] ""
+        let bin = dir </> "sky-out" </> "app"
+        hasBin <- doesFileExist bin
+        if not hasBin
+            then do
+                putStrLn $ "  FAIL build: " ++ name
+                appendFile "/tmp/sky-verify-fails.txt" (name ++ ":build\n")
+            else classifyAndRun cwd name dir bin logPath
+
+
+classifyAndRun :: FilePath -> String -> FilePath -> FilePath -> FilePath -> IO ()
+classifyAndRun _cwd name dir bin logPath
+    | isGui name = putStrLn $ "  gui skipped runtime: " ++ name
+    | isServer name = do
+        port <- readPortFromToml (dir </> "sky.toml")
+        (_, stdoutTxt, _) <- System.Process.readProcessWithExitCode "sh"
+            [ "-c"
+            , unwords
+                [ "(cd", shellQuote dir, "&& exec ./sky-out/app) >", shellQuote logPath, "2>&1 &"
+                , "pid=$!;"
+                , "tries=0; code=000;"
+                , "while [ $tries -lt 20 ]; do"
+                , "  code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 1 'http://localhost:" ++ show port ++ "/' 2>/dev/null);"
+                , "  case \"$code\" in 2??|3??) break;; esac;"
+                , "  sleep 0.5; tries=$((tries+1));"
+                , "done;"
+                , "kill $pid 2>/dev/null; wait $pid 2>/dev/null;"
+                , "if grep -Eq 'panic:|runtime error:|\\[sky\\.live\\] panic|\\[sky\\.http\\] panic' " ++ shellQuote logPath ++ "; then"
+                , "  printf '%s\\n' '  FAIL panic: " ++ name ++ "'; echo " ++ shellQuote (name ++ ":panic") ++ " >> /tmp/sky-verify-fails.txt;"
+                , "elif echo \"$code\" | grep -Eq '^(2|3)[0-9][0-9]$'; then"
+                , "  printf '%s\\n' \"  runtime ok: " ++ name ++ " (http $code)\";"
+                , "else"
+                , "  printf '%s\\n' \"  FAIL http$code: " ++ name ++ "\"; echo " ++ shellQuote (name ++ ":http") ++ " >> /tmp/sky-verify-fails.txt;"
+                , "fi"
+                ]
+            ] ""
+        putStr stdoutTxt
+        return ()
+    | otherwise = do
+        -- CLI example: run; panic / non-zero exit = fail.
+        (ec, _, _) <- System.Process.readProcessWithExitCode "sh"
+            [ "-c"
+            , "cd " ++ shellQuote dir ++ " && ./sky-out/app > " ++ shellQuote logPath ++ " 2>&1"
+            ] ""
+        hasPanic <- hasPanicIn logPath
+        case (ec, hasPanic) of
+            (_, True) -> do
+                putStrLn $ "  FAIL panic: " ++ name
+                appendFile "/tmp/sky-verify-fails.txt" (name ++ ":panic\n")
+            (System.Exit.ExitFailure n, _) -> do
+                putStrLn $ "  FAIL exit " ++ show n ++ ": " ++ name
+                appendFile "/tmp/sky-verify-fails.txt" (name ++ ":exit\n")
+            _ -> do
+                -- expected.txt comparison if the file exists.
+                let expected = dir </> "expected.txt"
+                hasExpected <- doesFileExist expected
+                if hasExpected
+                    then do
+                        want <- readFile expected
+                        got  <- readFile logPath
+                        if want == got
+                            then putStrLn $ "  runtime ok: " ++ name
+                            else do
+                                putStrLn $ "  FAIL expected.txt mismatch: " ++ name
+                                appendFile "/tmp/sky-verify-fails.txt" (name ++ ":expected\n")
+                    else putStrLn $ "  runtime ok: " ++ name
+
+
+hasPanicIn :: FilePath -> IO Bool
+hasPanicIn path = do
+    exists <- doesFileExist path
+    if not exists then return False else do
+        content <- readFile path
+        return ("panic:" `isPrefixOf` dropWhile (/= '\n') content
+                || "panic:" `isSubstringOf` content)
+
+
+isSubstringOf :: String -> String -> Bool
+isSubstringOf needle hay = any (isPrefixOf needle) (tails hay)
+  where tails [] = [[]]; tails (_:xs') = [] : map id (tails xs')
+
+
+readPortFromToml :: FilePath -> IO Int
+readPortFromToml path = do
+    src <- readFile path
+    let ls = [ dropWhile (\c -> c == ' ' || c == '=') (drop 4 l)
+             | l <- lines src
+             , "port" `isPrefixOf` l
+             ]
+        digits = filter (`elem` ['0'..'9']) (concat ls)
+    return (if null digits then 8000 else read digits)
+
+
+isServer :: String -> Bool
+isServer n = n `elem`
+    [ "05-mux-server", "08-notes-app", "09-live-counter"
+    , "10-live-component", "12-skyvote", "13-skyshop"
+    , "15-http-server", "16-skychess", "17-skymon", "18-job-queue"
+    ]
+
+
+isGui :: String -> Bool
+isGui n = n == "11-fyne-stopwatch"
 
 
 -- | Derive a dotted Sky module name from a source file path. The
@@ -129,6 +338,7 @@ data Command
     | Check FilePath
     | Fmt FilePath
     | Test FilePath
+    | Verify (Maybe String)      -- Nothing = all examples; Just name = one
     | Init (Maybe String)
     | Add String
     | Remove String
@@ -153,6 +363,9 @@ commandParser = subparser
         (info (Fmt <$> fileArg) (progDesc "Format source file"))
     <> command "test"
         (info (Test <$> fileArg) (progDesc "Run a Sky test module (exposing `tests : List Test`)"))
+    <> command "verify"
+        (info (Verify <$> optional (argument str (metavar "EXAMPLE")))
+            (progDesc "Build + run + panic-check every example; enforce forbidden-pattern gate"))
     <> command "init"
         (info (Init <$> optional (argument str (metavar "NAME")))
             (progDesc "Create new project"))
@@ -390,6 +603,10 @@ runCommand cmd = case cmd of
                     System.Exit.ExitSuccess   -> return (Right ())
                     System.Exit.ExitFailure n ->
                         exitWith (System.Exit.ExitFailure n)
+
+    Verify target -> do
+        ok <- runVerify target
+        if ok then return (Right ()) else exitWith (System.Exit.ExitFailure 1)
 
     Fmt path -> do
         src <- TIO.readFile path

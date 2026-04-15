@@ -101,7 +101,7 @@ Test.test "unauthorised returns PermissionDenied" (\_ ->
 
 ## Example-level verification
 
-For end-to-end verification of example projects (build + run + panic detection + HTTP probe), `scripts/verify-examples.sh` is the harness. Use `sky test` for unit-level stdlib and app logic; use `verify-examples.sh` for full-stack example regression.
+For end-to-end verification of example projects (build + run + panic detection + HTTP probe), `sky verify` is the harness. Use `sky test` for unit-level stdlib and app logic; use `sky verify` for full-stack example regression.
 
 ## Regression discipline
 

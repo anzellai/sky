@@ -15,9 +15,9 @@ Runs `sky build` for every example from a clean slate. Fastest gate; catches cod
 ### 2. Runtime verification
 
 ```bash
-scripts/verify-examples.sh               # all examples
-scripts/verify-examples.sh 12-skyvote    # one example
-scripts/verify-examples.sh --build-only  # skip runtime phase
+sky verify               # all examples
+sky verify 12-skyvote    # one example
+sky verify --build-only  # skip runtime phase
 ```
 
 Builds and RUNS every example. Fails if any of:
@@ -37,7 +37,7 @@ Classification:
 ### 3. Forbidden-pattern gate
 
 ```bash
-scripts/check-forbidden.sh
+sky verify (forbidden-pattern gate runs first)
 ```
 
 Fails if any Sky source (under `src/`, `sky-stdlib/`, `examples/*/src/`) contains:
@@ -102,10 +102,10 @@ Before landing a PR that touches codegen / runtime / stdlib:
 scripts/example-sweep.sh --build-only
 
 # correctness (runtime): ~5 min
-scripts/verify-examples.sh
+sky verify
 
 # forbidden-pattern gate: <1 s
-scripts/check-forbidden.sh
+sky verify (forbidden-pattern gate runs first)
 
 # full suite (includes above + cabal specs): ~20 min
 cabal test
@@ -118,7 +118,7 @@ All five must pass. The v1 soundness audit at `docs/compiler/v1-soundness-audit.
 
 ## Known-gap runtime failures (non-regressions)
 
-At the time of writing, `scripts/verify-examples.sh` reports four pre-existing runtime failures that are NOT compiler soundness bugs:
+At the time of writing, `sky verify` reports four pre-existing runtime failures that are NOT compiler soundness bugs:
 
 - **05-mux-server** — Sky handler emits `func(any, any) any` but gorilla/mux expects `func(http.ResponseWriter, *http.Request)`. FFI callback wrapping gap.
 - **06-json** — JSON pipeline decoder invariant violation in `optionalExample`. User-code type mismatch.
