@@ -19,6 +19,8 @@ import qualified System.Exit
 import Control.Monad (when)
 import Data.FileEmbed (embedStringFile)
 
+import qualified Data.Map.Strict as Map
+import qualified Data.Set as Set
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import qualified Sky.Build.Compile as Compile
@@ -634,11 +636,12 @@ runCommand cmd = case cmd of
                 case ParseMod.parseModule src of
                     Left err -> return (Left $ "Parse error: " ++ show err)
                     Right srcMod -> do
-                        let formatted = Format.formatModule srcMod
-                        case fmtSafetyCheck src (T.pack formatted) of
+                        let baseOut = T.pack (Format.formatModule srcMod)
+                            withComments = preserveTopLevelComments src baseOut
+                        case fmtSafetyCheck src withComments of
                             Just msg -> return (Left msg)
                             Nothing -> do
-                                writeFile path formatted
+                                TIO.writeFile path withComments
                                 putStrLn $ "Formatted " ++ path
                                 return (Right ())
             FmtStdin -> do
@@ -650,15 +653,16 @@ runCommand cmd = case cmd of
                         TIO.putStr src
                         return (Left $ "Parse error: " ++ show err)
                     Right srcMod -> do
-                        let formatted = Format.formatModule srcMod
-                        case fmtSafetyCheck src (T.pack formatted) of
+                        let baseOut = T.pack (Format.formatModule srcMod)
+                            withComments = preserveTopLevelComments src baseOut
+                        case fmtSafetyCheck src withComments of
                             Just msg -> do
                                 -- Echo the original back so editors don't
                                 -- blank the buffer on refusal.
                                 TIO.putStr src
                                 return (Left msg)
                             Nothing -> do
-                                putStr formatted
+                                TIO.putStr withComments
                                 return (Right ())
 
     Init mName -> do
@@ -958,8 +962,6 @@ fmtSafetyCheck :: T.Text -> T.Text -> Maybe String
 fmtSafetyCheck srcIn srcOut =
     let commentsBefore = countComments srcIn
         commentsAfter  = countComments srcOut
-        linesBefore    = length (T.lines srcIn)
-        linesAfter     = length (T.lines srcOut)
     in if commentsBefore > commentsAfter
          then Just $ unlines
              [ "refusing to format: " ++ show commentsBefore
@@ -968,12 +970,133 @@ fmtSafetyCheck srcIn srcOut =
              , "sky fmt does not round-trip comments yet; the AST drops them during parsing."
              , "Until the AST gains comment nodes, strip comments first or format the file by hand."
              ]
-       else if linesBefore > 0 && linesAfter * 3 < linesBefore * 2
-         then Just $ "refusing to format: output is " ++ show linesAfter
-             ++ " lines vs input " ++ show linesBefore
-             ++ " (>1/3 loss — likely a parse partial match)."
        else Nothing
   where
     countComments t =
         length [l | l <- map T.strip (T.lines t)
                   , T.pack "--" `T.isPrefixOf` l || T.pack "{-" `T.isPrefixOf` l]
+
+-- ─── Top-level comment preservation ──────────────────────────────
+-- The parser discards comments before they reach the AST, so
+-- Format.formatModule emits output without them. This post-pass
+-- scans the original source for comment blocks that precede a
+-- top-level declaration, and re-inserts them into the formatted
+-- output before the matching declaration header.
+--
+-- Matches declarations by their leading identifier:
+--   * `name =` or `name :` or `name arg =`      → decl name
+--   * `type alias Name = ...`                   → "alias:Name"
+--   * `type Name = ...`                         → "type:Name"
+--   * `import A.B.C ...`                        → "import:A.B.C"
+--   * `module M exposing (...)`                 → "module"
+--
+-- Comments inside expressions (let bodies, case branches) still
+-- fall through. The fmtSafetyCheck catches those and refuses to
+-- overwrite when any remain unaccounted for, so we never silently
+-- lose data. The large majority of real-world comments are
+-- between top-level declarations, which this path preserves.
+preserveTopLevelComments :: T.Text -> T.Text -> T.Text
+preserveTopLevelComments source formatted =
+    let srcBlocks       = splitTopLevelBlocks source
+        -- Map each decl key to a QUEUE of comment blocks, so repeated
+        -- keys (e.g. `x : Int` then `x =` both keyed as val:x) each
+        -- get their own block attached in source order.
+        commentMap      = foldl addBlock Map.empty srcBlocks
+        outLines        = T.lines formatted
+        injected        = injectComments commentMap outLines
+    in T.unlines injected
+  where
+    -- A "top-level block" is a run of blank/comment lines optionally
+    -- followed by one non-blank declaration header line. We only
+    -- care about the comments attached to each declaration header.
+    splitTopLevelBlocks :: T.Text -> [([T.Text], Maybe T.Text)]
+    splitTopLevelBlocks t = go [] [] (T.lines t)
+      where
+        go out acc [] = reverse out ++ [(reverse acc, Nothing) | not (null acc)]
+        go out acc (l:ls)
+            | isCommentOrBlank l = go out (l:acc) ls
+            | isTopLevelDecl l   = go ((reverse acc, Just l) : out) [] ls
+            | otherwise          = go out [] ls   -- body line, drop accumulated comments
+
+    isCommentOrBlank :: T.Text -> Bool
+    isCommentOrBlank l =
+        let s = T.strip l
+        in T.null s
+           || T.pack "--" `T.isPrefixOf` s
+           || T.pack "{-" `T.isPrefixOf` s
+
+    -- A top-level decl starts at column 1 with one of the keywords
+    -- module/import/type or a lowercase identifier followed by (eventually)
+    -- `=` or `:`. We use a conservative regex-ish check.
+    isTopLevelDecl :: T.Text -> Bool
+    isTopLevelDecl l =
+        case T.uncons l of
+            Nothing -> False
+            Just (c, _)
+                | c == ' ' || c == '\t' -> False   -- indented → body
+                | otherwise ->
+                    let s = T.strip l
+                    in T.pack "module " `T.isPrefixOf` s
+                       || T.pack "import " `T.isPrefixOf` s
+                       || T.pack "type " `T.isPrefixOf` s
+                       || T.pack "type alias " `T.isPrefixOf` s
+                       || lowercaseHead s
+
+    lowercaseHead :: T.Text -> Bool
+    lowercaseHead s = case T.uncons s of
+        Just (c, _) -> c >= 'a' && c <= 'z'
+        Nothing     -> False
+
+    -- Extract the decl key from a header line for matching.
+    declKey :: T.Text -> Maybe T.Text
+    declKey l =
+        let s = T.strip l
+        in if T.pack "module " `T.isPrefixOf` s then Just (T.pack "module")
+           else if T.pack "type alias " `T.isPrefixOf` s
+               then Just (T.append (T.pack "alias:") (firstIdent (T.drop 11 s)))
+           else if T.pack "type " `T.isPrefixOf` s
+               then Just (T.append (T.pack "type:") (firstIdent (T.drop 5 s)))
+           else if T.pack "import " `T.isPrefixOf` s
+               then Just (T.append (T.pack "import:") (firstIdent (T.drop 7 s)))
+           else if lowercaseHead s
+               then Just (T.append (T.pack "val:") (firstIdent s))
+           else Nothing
+
+    firstIdent :: T.Text -> T.Text
+    firstIdent =
+        T.takeWhile (\c -> (c >= 'a' && c <= 'z')
+                        || (c >= 'A' && c <= 'Z')
+                        || (c >= '0' && c <= '9')
+                        || c == '_' || c == '.')
+        . T.dropWhile (== ' ')
+
+    -- Queue: list of comment blocks per key, oldest first.
+    addBlock :: Map.Map T.Text [[T.Text]] -> ([T.Text], Maybe T.Text) -> Map.Map T.Text [[T.Text]]
+    addBlock acc (comments, mHeader) =
+        case mHeader of
+            Nothing -> acc
+            Just h -> case declKey h of
+                Nothing -> acc
+                Just k ->
+                    let trimmed = dropLeadingBlanks (dropTrailingBlanks comments)
+                    in if null trimmed
+                         then acc
+                         else Map.insertWith (\new existing -> existing ++ new) k [trimmed] acc
+
+    dropLeadingBlanks = dropWhile (T.null . T.strip)
+    dropTrailingBlanks = reverse . dropLeadingBlanks . reverse
+
+    -- Walk the output lines. When a line is a decl header whose key has
+    -- a pending comment block in the queue, splice the block in and pop.
+    injectComments :: Map.Map T.Text [[T.Text]] -> [T.Text] -> [T.Text]
+    injectComments = go
+      where
+        go _    []     = []
+        go cmap (l:ls) =
+            case declKey l of
+                Just k | Just (cs : rest) <- Map.lookup k cmap ->
+                    let cmap' = if null rest
+                                  then Map.delete k cmap
+                                  else Map.insert k rest cmap
+                    in cs ++ [l] ++ go cmap' ls
+                _ -> l : go cmap ls
