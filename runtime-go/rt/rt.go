@@ -746,6 +746,120 @@ func AsString(v any) string {
 	return fmt.Sprintf("%v", v)
 }
 
+// ResultTag reads the Tag field from any SkyResult[E, A] instantiation.
+// Used by case-pattern codegen to check nested ctor patterns without
+// hitting the 'SkyResult[string, X] not SkyResult[any, any]' class of
+// type-assertion panics. Returns -1 for non-SkyResult inputs so the
+// comparison falls through to the default case.
+func ResultTag(v any) int {
+	if v == nil {
+		return -1
+	}
+	if r, ok := v.(SkyResult[any, any]); ok {
+		return r.Tag
+	}
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Struct {
+		f := rv.FieldByName("Tag")
+		if f.IsValid() {
+			return int(f.Int())
+		}
+	}
+	return -1
+}
+
+// MaybeTag mirrors ResultTag for SkyMaybe[A].
+func MaybeTag(v any) int {
+	if v == nil {
+		return -1
+	}
+	if m, ok := v.(SkyMaybe[any]); ok {
+		return m.Tag
+	}
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Struct {
+		f := rv.FieldByName("Tag")
+		if f.IsValid() {
+			return int(f.Int())
+		}
+	}
+	return -1
+}
+
+// ResultOk / ResultErr / MaybeJust return the inner value of any
+// SkyResult[E, A] / SkyMaybe[A] instantiation. Accept any-typed
+// sources that could be SkyResult[_, _] / SkyMaybe[_] for distinct
+// generic instantiations, avoiding the type-assertion panic class.
+func ResultOk(v any) any {
+	if v == nil {
+		return nil
+	}
+	if r, ok := v.(SkyResult[any, any]); ok {
+		return r.OkValue
+	}
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Struct {
+		f := rv.FieldByName("OkValue")
+		if f.IsValid() {
+			return f.Interface()
+		}
+	}
+	return nil
+}
+
+func ResultErr(v any) any {
+	if v == nil {
+		return nil
+	}
+	if r, ok := v.(SkyResult[any, any]); ok {
+		return r.ErrValue
+	}
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Struct {
+		f := rv.FieldByName("ErrValue")
+		if f.IsValid() {
+			return f.Interface()
+		}
+	}
+	return nil
+}
+
+func MaybeJust(v any) any {
+	if v == nil {
+		return nil
+	}
+	if m, ok := v.(SkyMaybe[any]); ok {
+		return m.JustValue
+	}
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Struct {
+		f := rv.FieldByName("JustValue")
+		if f.IsValid() {
+			return f.Interface()
+		}
+	}
+	return nil
+}
+
+// AdtTag mirrors ResultTag/MaybeTag for SkyADT (every Sky-emitted ADT
+// is a SkyADT alias). Used by user-defined nested ctor patterns.
+func AdtTag(v any) int {
+	if v == nil {
+		return -1
+	}
+	if a, ok := v.(SkyADT); ok {
+		return a.Tag
+	}
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Struct {
+		f := rv.FieldByName("Tag")
+		if f.IsValid() {
+			return int(f.Int())
+		}
+	}
+	return -1
+}
+
 // AsList coerces a Sky-side any to []any. Sky lists are always
 // []any at runtime (element type erased); typed List kernel
 // companions take []A and Go infers A = any at the call site.

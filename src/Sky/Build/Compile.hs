@@ -3207,21 +3207,10 @@ caseToGo subject branches =
                 -- SkyResult[any,any] assertion. Net: zero runtime
                 -- boxing between FFI and case body.
                 e
-            -- P8: when the target is the fully-erased SkyResult[any, any]
-            -- and the source is already `any` (kernel call, variable,
-            -- etc.), a plain type assertion suffices — ResultCoerce's
-            -- reflect fallback never fires for the any/any target, so
-            -- the runtime cost is identical but the generated code has
-            -- one fewer helper reference. Drops 100+ ResultCoerce sites.
-            | Just "any, any" <- stripParametric "rt.SkyResult" typeName =
-                GoIr.GoTypeAssert (anyWrapped e) "rt.SkyResult[any, any]"
             | Just params <- stripParametric "rt.SkyResult" typeName =
                 GoIr.GoCall (GoIr.GoIdent ("rt.ResultCoerce[" ++ params ++ "]")) [e]
             | Just _ <- stripParametric "rt.SkyMaybe" typeName, isTypedFfiCall e =
                 e
-            -- Same fast-path for SkyMaybe[any].
-            | Just "any" <- stripParametric "rt.SkyMaybe" typeName =
-                GoIr.GoTypeAssert (anyWrapped e) "rt.SkyMaybe[any]"
             | Just inner <- stripParametric "rt.SkyMaybe" typeName =
                 GoIr.GoCall (GoIr.GoIdent ("rt.MaybeCoerce[" ++ inner ++ "]")) [e]
             | otherwise =
@@ -3431,10 +3420,13 @@ argPatternCondition subject ctorName idx pat = case pat of
 
     _ ->
         -- Build the Go expression for the sub-value using bindCtorArg's
-        -- naming convention. The result's type is whatever the outer
-        -- ctor's field promises; we cast through any() so downstream
-        -- assertions work for both typed-FFI sources and the any-typed
-        -- fallback.
+        -- naming convention. Source type may be:
+        --   * `any` — needs `.(SkyResult[any,any])` etc. to read .Tag.
+        --   * typed `SkyResult[any, X]` / `SkyMaybe[X]` — direct field access.
+        --   * a `_tFfi`-suffix variable — always concrete; direct access.
+        -- Using `rt.AdtTag(v)` / `rt.ResultTag(v)` / `rt.MaybeTag(v)`
+        -- runtime helpers instead of a type-assert avoids the
+        -- `SkyMaybe[string] not SkyMaybe[any]` panic class.
         let accessor = case ctorName of
                 "Ok"   -> GoIr.GoSelector (GoIr.GoIdent subject) "OkValue"
                 "Err"  -> GoIr.GoSelector (GoIr.GoIdent subject) "ErrValue"
@@ -3445,7 +3437,9 @@ argPatternCondition subject ctorName idx pat = case pat of
             tagCast ty = GoIr.GoTypeAssert
                             (GoIr.GoCall (GoIr.GoIdent "any") [accessor])
                             ty
-            tagFieldOf ty = GoIr.GoSelector (tagCast ty) "Tag"
+            tagHelperFor helper =
+                GoIr.GoCall (GoIr.GoQualified "rt" helper)
+                    [GoIr.GoCall (GoIr.GoIdent "any") [accessor]]
         in case pat of
             Can.PCtor home innerTypeName innerUnion innerCtor innerIdx _innerArgs ->
                 case Can._u_opts innerUnion of
@@ -3468,16 +3462,18 @@ argPatternCondition subject ctorName idx pat = case pat of
                                     (tagCast "int")
                                     (GoIr.GoIdent qualName)
                     _ ->
-                        -- Tagged struct: read .Tag through the Ok/Err/
-                        -- Just/Nothing cast, or direct for user ADTs
-                        -- (every Sky-emitted ADT is a rt.SkyADT alias
-                        -- — `.Tag` is always valid).
+                        -- Read .Tag via runtime helper that tolerates
+                        -- any generic instantiation of SkyResult/SkyMaybe.
+                        -- User ADTs are rt.SkyADT aliases so direct
+                        -- `.Tag` works; still route through rt.AdtTag
+                        -- for consistency and to accept any-typed
+                        -- sources without an extra cast.
                         let innerTag = case innerCtor of
-                                "Ok"       -> tagFieldOf "rt.SkyResult[any, any]"
-                                "Err"      -> tagFieldOf "rt.SkyResult[any, any]"
-                                "Just"     -> tagFieldOf "rt.SkyMaybe[any]"
-                                "Nothing"  -> tagFieldOf "rt.SkyMaybe[any]"
-                                _          -> GoIr.GoSelector accessor "Tag"
+                                "Ok"       -> tagHelperFor "ResultTag"
+                                "Err"      -> tagHelperFor "ResultTag"
+                                "Just"     -> tagHelperFor "MaybeTag"
+                                "Nothing"  -> tagHelperFor "MaybeTag"
+                                _          -> tagHelperFor "AdtTag"
                         in Just $ GoIr.GoBinary "=="
                                 innerTag
                                 (GoIr.GoIntLit innerIdx)
@@ -3637,18 +3633,27 @@ bindCtorArg subject ctorName (Can.PatternCtorArg idx _ty pat) =
             take 5 (reverse subject) == "ifFt_"
             && not ("__sky_cf_" `Data.List.isPrefixOf` subject)
         anyWrap n = GoIr.GoCall (GoIr.GoIdent "any") [GoIr.GoIdent n]
-        subjectAsStruct = case ctorName of
-            _ | isTypedFfiSubject -> GoIr.GoIdent subject
-            "Ok"   -> GoIr.GoTypeAssert (anyWrap subject) "rt.SkyResult[any, any]"
-            "Err"  -> GoIr.GoTypeAssert (anyWrap subject) "rt.SkyResult[any, any]"
-            "Just" -> GoIr.GoTypeAssert (anyWrap subject) "rt.SkyMaybe[any]"
-            _      -> GoIr.GoIdent subject
+        -- Runtime helper unwraps any SkyResult/SkyMaybe instantiation
+        -- without a type-assertion panic — used when the subject is
+        -- any-typed (nested destructure temps, non-_tFfi subjects
+        -- whose runtime type could differ from SkyResult[any,any]).
+        helperFor helper = GoIr.GoCall
+            (GoIr.GoQualified "rt" helper)
+            [anyWrap subject]
         rawField = case ctorName of
-            "Ok"   -> GoIr.GoSelector subjectAsStruct "OkValue"
-            "Err"  -> GoIr.GoSelector subjectAsStruct "ErrValue"
-            "Just" -> GoIr.GoSelector subjectAsStruct "JustValue"
+            _ | isTypedFfiSubject ->
+                case ctorName of
+                    "Ok"   -> GoIr.GoSelector (GoIr.GoIdent subject) "OkValue"
+                    "Err"  -> GoIr.GoSelector (GoIr.GoIdent subject) "ErrValue"
+                    "Just" -> GoIr.GoSelector (GoIr.GoIdent subject) "JustValue"
+                    _      -> GoIr.GoIndex
+                                (GoIr.GoSelector (GoIr.GoIdent subject) "Fields")
+                                (GoIr.GoIntLit idx)
+            "Ok"   -> helperFor "ResultOk"
+            "Err"  -> helperFor "ResultErr"
+            "Just" -> helperFor "MaybeJust"
             _      -> GoIr.GoIndex
-                        (GoIr.GoSelector subjectAsStruct "Fields")
+                        (GoIr.GoSelector (GoIr.GoIdent subject) "Fields")
                         (GoIr.GoIntLit idx)
         fieldAccess =
             if isTypedFfiSubject
