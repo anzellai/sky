@@ -3364,10 +3364,22 @@ patternCondition subject pat = case pat of
                     (GoIr.GoIdent subject)
                     (GoIr.GoIdent qualName)
             _ ->
-                -- Tagged struct: match on .Tag field
-                Just $ GoIr.GoBinary "=="
-                    (GoIr.GoSelector (GoIr.GoIdent subject) "Tag")
-                    (GoIr.GoIntLit ctorIdx)
+                -- Tagged struct: match outer .Tag AND recurse into every
+                -- ctor arg that carries a sub-pattern condition. Without
+                -- the recursion, `Ok Nothing` and `Ok (Just x)` both
+                -- collapse to `subject.Tag == 0` and the first matching
+                -- branch swallows every Ok case — a silent soundness
+                -- bug (skyvote sign-up: 'Account created but auto-login
+                -- failed' showed even when the user was found).
+                let outer = GoIr.GoBinary "=="
+                        (GoIr.GoSelector (GoIr.GoIdent subject) "Tag")
+                        (GoIr.GoIntLit ctorIdx)
+                    inners =
+                        [ c
+                        | Can.PatternCtorArg idx _ (A.At _ argPat) <- args
+                        , Just c <- [argPatternCondition subject ctorName idx argPat]
+                        ]
+                in Just $ foldl (GoIr.GoBinary "&&") outer inners
 
     Can.PUnit -> Nothing  -- always matches
 
@@ -3393,6 +3405,88 @@ patternCondition subject pat = case pat of
     Can.PAlias inner _ ->
         let (A.At _ innerPat) = inner
         in patternCondition subject innerPat
+
+
+-- | Condition for a sub-pattern sitting inside a ctor argument. Uses
+-- the same field accessor that bindCtorArg would use (`.OkValue`,
+-- `.ErrValue`, `.JustValue`, or `.Fields[idx]`). Returns Nothing for
+-- catch-all sub-patterns (PVar / PAnything / PUnit) whose presence
+-- doesn't restrict the outer ctor match.
+--
+-- Only emits a condition for sub-patterns that actually narrow the
+-- match — nested ctor, literal, bool, char, list-length, cons.
+argPatternCondition :: String -> String -> Int -> Can.Pattern_ -> Maybe GoIr.GoExpr
+argPatternCondition subject ctorName idx pat = case pat of
+    -- Catch-alls and always-match shapes: no condition.
+    Can.PAnything  -> Nothing
+    Can.PVar _     -> Nothing
+    Can.PUnit      -> Nothing
+    Can.PTuple{}   -> Nothing
+    Can.PRecord _  -> Nothing
+
+    -- Alias: recurse through to the inner pattern, same accessor.
+    Can.PAlias inner _ ->
+        let (A.At _ innerPat) = inner
+        in argPatternCondition subject ctorName idx innerPat
+
+    _ ->
+        -- Build the Go expression for the sub-value using bindCtorArg's
+        -- naming convention. The result's type is whatever the outer
+        -- ctor's field promises; we cast through any() so downstream
+        -- assertions work for both typed-FFI sources and the any-typed
+        -- fallback.
+        let accessor = case ctorName of
+                "Ok"   -> GoIr.GoSelector (GoIr.GoIdent subject) "OkValue"
+                "Err"  -> GoIr.GoSelector (GoIr.GoIdent subject) "ErrValue"
+                "Just" -> GoIr.GoSelector (GoIr.GoIdent subject) "JustValue"
+                _      -> GoIr.GoIndex
+                            (GoIr.GoSelector (GoIr.GoIdent subject) "Fields")
+                            (GoIr.GoIntLit idx)
+            tagCast ty = GoIr.GoTypeAssert
+                            (GoIr.GoCall (GoIr.GoIdent "any") [accessor])
+                            ty
+            tagFieldOf ty = GoIr.GoSelector (tagCast ty) "Tag"
+        in case pat of
+            Can.PCtor home innerTypeName innerUnion innerCtor innerIdx _innerArgs ->
+                case Can._u_opts innerUnion of
+                    Can.Enum
+                        -- Bool is special: canonically an enum (True/False)
+                        -- but at runtime Sky uses Go `bool`, not an int
+                        -- constant. Compare via `any(x).(bool) == true/false`.
+                        | innerTypeName == "Bool" ->
+                            Just $ GoIr.GoBinary "=="
+                                (tagCast "bool")
+                                (GoIr.GoBoolLit (innerCtor == "True"))
+                        | otherwise ->
+                            let modStr = ModuleName.toString home
+                                qualName =
+                                    if null modStr || modStr == "Main"
+                                        then innerTypeName ++ "_" ++ innerCtor
+                                        else map (\c -> if c == '.' then '_' else c) modStr
+                                             ++ "_" ++ innerTypeName ++ "_" ++ innerCtor
+                            in Just $ GoIr.GoBinary "=="
+                                    (tagCast "int")
+                                    (GoIr.GoIdent qualName)
+                    _ ->
+                        -- Tagged struct: read .Tag through the Ok/Err/
+                        -- Just/Nothing cast, or direct for user ADTs
+                        -- (every Sky-emitted ADT is a rt.SkyADT alias
+                        -- — `.Tag` is always valid).
+                        let innerTag = case innerCtor of
+                                "Ok"       -> tagFieldOf "rt.SkyResult[any, any]"
+                                "Err"      -> tagFieldOf "rt.SkyResult[any, any]"
+                                "Just"     -> tagFieldOf "rt.SkyMaybe[any]"
+                                "Nothing"  -> tagFieldOf "rt.SkyMaybe[any]"
+                                _          -> GoIr.GoSelector accessor "Tag"
+                        in Just $ GoIr.GoBinary "=="
+                                innerTag
+                                (GoIr.GoIntLit innerIdx)
+
+            Can.PInt n   -> Just (GoIr.GoBinary "==" (tagCast "int")    (GoIr.GoIntLit n))
+            Can.PStr s   -> Just (GoIr.GoBinary "==" (tagCast "string") (GoIr.GoStringLit s))
+            Can.PBool b  -> Just (GoIr.GoBinary "==" (tagCast "bool")   (GoIr.GoBoolLit b))
+            Can.PChr c   -> Just (GoIr.GoBinary "==" (tagCast "rune")   (GoIr.GoRuneLit c))
+            _            -> Nothing
 
 
 -- | Generate Go variable bindings from a pattern
