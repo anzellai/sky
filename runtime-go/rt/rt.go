@@ -4720,19 +4720,37 @@ func SkyCall(f any, args ...any) any {
 
 func skyCallDirect(rv reflect.Value, args []any) any {
 	vals := make([]reflect.Value, len(args))
+	fnType := rv.Type()
 	for i, a := range args {
-		pt := rv.Type().In(i)
+		pt := fnType.In(i)
 		if a == nil {
 			vals[i] = reflect.Zero(pt)
 			continue
 		}
 		av := reflect.ValueOf(a)
-		if av.Type() == pt {
+		switch {
+		case av.Type() == pt:
 			vals[i] = av
-		} else if av.Type().ConvertibleTo(pt) {
+		case pt.Kind() == reflect.Interface && av.Type().Implements(pt):
+			// `any` (or any other interface) param accepts everything
+			// that satisfies the interface — most Sky-internal dispatch
+			// is all-any so this is the common path.
+			vals[i] = av
+		case av.Type().ConvertibleTo(pt) && safeReflectConvert(av.Kind(), pt.Kind()):
+			// Numeric widening / same-kind reinterpret. Whitelist gated
+			// to avoid Go's surprise int→string ASCII reinterpret etc.
+			// (See rt.Coerce for the same rule.)
 			vals[i] = av.Convert(pt)
-		} else {
-			vals[i] = av
+		default:
+			// Audit P0-6: pre-fix this branch silently passed `av` into
+			// reflect.Call with a wrong type, which then panicked inside
+			// reflect with a cryptic "reflect: Call using X as Y" message.
+			// SkyFfiRecover caught it and produced Err, which masked the
+			// real boundary check. Now we surface a clean diagnostic
+			// directly so observability shows the FFI mismatch.
+			panic(fmt.Sprintf(
+				"rt.skyCallDirect: argument %d type mismatch — function expects %v, got %T (%v)",
+				i, pt, a, a))
 		}
 	}
 	out := rv.Call(vals)
