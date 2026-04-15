@@ -3939,14 +3939,15 @@ type SkyRoute struct {
 
 // SkyRequest wraps an HTTP request
 type SkyRequest struct {
-	Method  string
-	Path    string
-	Body    string
-	Headers map[string]any
-	Params  map[string]any
-	Query   map[string]any
-	Cookies map[string]string
-	Form    map[string]string
+	Method     string
+	Path       string
+	Body       string
+	Headers    map[string]any
+	Params     map[string]any
+	Query      map[string]any
+	Cookies    map[string]string
+	Form       map[string]string
+	RemoteAddr string // audit P1-2: client IP for rate-limit keying
 }
 
 // SkyResponse wraps an HTTP response
@@ -3992,12 +3993,13 @@ func Server_listen(port any, routes any) any {
 			req.Body = http.MaxBytesReader(w, req.Body, serverMaxBodyBytes)
 
 			skyReq := SkyRequest{
-				Method:  req.Method,
-				Path:    req.URL.Path,
-				Headers: make(map[string]any),
-				Params:  make(map[string]any),
-				Query:   make(map[string]any),
-				Cookies: make(map[string]string),
+				Method:     req.Method,
+				Path:       req.URL.Path,
+				Headers:    make(map[string]any),
+				Params:     make(map[string]any),
+				Query:      make(map[string]any),
+				Cookies:    make(map[string]string),
+				RemoteAddr: req.RemoteAddr,
 			}
 			for _, ck := range req.Cookies() {
 				skyReq.Cookies[ck.Name] = ck.Value
@@ -4167,6 +4169,104 @@ func Server_header(name any, req any) any {
 // ═══════════════════════════════════════════════════════════
 // Sky.Http.Middleware — handler → handler transformations
 // ═══════════════════════════════════════════════════════════
+
+// ── Rate limit (audit P1-2) ──────────────────────────────────
+// Sliding-window per-IP counter. Buckets each client IP's request
+// timestamps in a ring and rejects with 429 Too Many Requests once
+// the count within the last minute exceeds the configured cap.
+//
+// Deployments behind a reverse proxy should terminate at the proxy
+// and pass X-Forwarded-For; this helper reads req.RemoteAddr which
+// is what the Go http.Server exposes (the direct peer). For
+// production use behind a proxy, extract the real client IP upstream
+// of rateLimit — leaving that policy decision to the caller is
+// deliberate because it depends on the trust relationship with the
+// proxy.
+//
+// State is in-memory only; restarting the process resets all
+// counters. That's appropriate for a single-node service and
+// explicitly flagged as a limitation in the docs. For multi-node
+// coordinated rate limiting, a Redis-backed counter would plug in
+// via the same interface.
+
+var (
+	rateLimitMu      sync.Mutex
+	rateLimitBuckets = map[string][]time.Time{}
+)
+
+const rateLimitWindow = time.Minute
+
+// Middleware.rateLimit : Int -> Handler -> Handler
+// Wraps a handler so each client IP is allowed at most `maxPerMinute`
+// requests in a rolling 60-second window. On overflow, returns
+// 429 Too Many Requests with a Retry-After: 60 header, bypassing the
+// wrapped handler entirely (no DB work, no log spam, no leak of
+// application state).
+func Middleware_rateLimit(maxPerMinute any, handler any) any {
+	limit := AsInt(maxPerMinute)
+	return func(req any) any {
+		return func() any {
+			r, _ := req.(SkyRequest)
+			key := r.RemoteAddr
+			if key == "" {
+				// No IP → don't rate-limit (the direct-handler path
+				// in unit tests has this shape). Production always
+				// has RemoteAddr set by net/http.
+				task := handler.(func(any) any)(req)
+				return anyTaskInvoke(task)
+			}
+			if rateLimitHit(key, limit) {
+				resp := SkyResponse{
+					Status: 429,
+					Body:   "Too Many Requests",
+					Headers: map[string]string{
+						"Retry-After":  "60",
+						"Content-Type": "text/plain",
+					},
+				}
+				return Ok[any, any](resp)
+			}
+			task := handler.(func(any) any)(req)
+			return anyTaskInvoke(task)
+		}
+	}
+}
+
+// rateLimitHit records a request for `key` and returns true if the
+// key has exceeded `limit` requests within the sliding window.
+// Trims stale timestamps on each call so the map doesn't grow
+// unbounded for long-lived IPs.
+func rateLimitHit(key string, limit int) bool {
+	now := time.Now()
+	cutoff := now.Add(-rateLimitWindow)
+	rateLimitMu.Lock()
+	defer rateLimitMu.Unlock()
+	hist := rateLimitBuckets[key]
+	// Drop stale entries.
+	i := 0
+	for ; i < len(hist); i++ {
+		if hist[i].After(cutoff) {
+			break
+		}
+	}
+	hist = hist[i:]
+	if len(hist) >= limit {
+		// Still over quota even before recording this one.
+		rateLimitBuckets[key] = hist
+		return true
+	}
+	hist = append(hist, now)
+	rateLimitBuckets[key] = hist
+	return false
+}
+
+// rateLimitReset — test-only helper. Not exported through the
+// kernel registry. Lets the spec reset state between cases.
+func rateLimitReset() {
+	rateLimitMu.Lock()
+	rateLimitBuckets = map[string][]time.Time{}
+	rateLimitMu.Unlock()
+}
 
 // Middleware.withCors : List String -> Handler -> Handler
 // Takes a list of allowed origins ("*" for all) and wraps a handler to

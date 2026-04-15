@@ -107,6 +107,8 @@ registry = Map.fromList
     , (("Middleware", "withLogging"),     KernelInfo "rt.Middleware_withLogging" 1 False)
     , (("Middleware", "withBasicAuth"),   KernelInfo "rt.Middleware_withBasicAuth" 3 False)
     , (("Middleware", "withRateLimit"),   KernelInfo "rt.Middleware_withRateLimit" 4 False)
+    -- audit P1-2: simple per-IP fixed-window rate limit
+    , (("Middleware", "rateLimit"),        KernelInfo "rt.Middleware_rateLimit" 2 False)
 
     -- Sky.Ffi — name-based dispatch to user-supplied Go bindings
     , (("Ffi", "call"),           KernelInfo "rt.Ffi_call" 2 False)
