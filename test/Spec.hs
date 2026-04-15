@@ -12,6 +12,7 @@ import qualified Sky.Format.FormatSpec
 import qualified Sky.Build.NestedPatternSpec
 import qualified Sky.Build.CheckIsBuildSpec
 import qualified Sky.Build.RecordFieldOrderSpec
+import qualified Sky.Build.UnreachableGateSpec
 
 main :: IO ()
 main = hspec $ do
@@ -31,3 +32,6 @@ main = hspec $ do
     describe "Sky.Build.CheckIsBuild"    Sky.Build.CheckIsBuildSpec.spec
     -- Audit P0-4: record auto-ctor respects declaration order.
     describe "Sky.Build.RecordFieldOrder" Sky.Build.RecordFieldOrderSpec.spec
+    -- Audit P0-5: no raw `panic("sky: internal…)` in emitted Go.
+    -- Runs AFTER ExampleSweep so the sky-out/main.go files are fresh.
+    describe "Sky.Build.UnreachableGate"  Sky.Build.UnreachableGateSpec.spec

@@ -2543,6 +2543,26 @@ func CoerceInt(v any) int { return AsInt(v) }      // AsInt is strict post-P0-2
 func CoerceBool(v any) bool { return AsBool(v) }   // same
 func CoerceFloat(v any) float64 { return AsFloat(v) }
 
+// Unreachable — audit P0-5. Stands in for raw
+// `panic("sky: internal — codegen reached unreachable case arm …")`
+// emissions at case-arm fallbacks. Logs to stderr (always, regardless
+// of Slog config) and then panics with a distinguishable marker so
+// rt's outer recovery layers (SkyFfiRecover, Server_listen defer,
+// Live_app defer) convert the crash into a clean Err at the Task
+// boundary instead of killing the process.
+//
+// `site` is a short identifier (typically the codegen-generated
+// name of the case subject) so on-call can grep logs to find the
+// originating case block. Returns `any` so it can be inlined as a
+// value-position expression in codegen — but it panics before the
+// return, so the return type is only there to satisfy Go's type
+// inference at the call site.
+func Unreachable(site string) any {
+	msg := "sky: codegen reached an arm the exhaustiveness checker said was impossible"
+	fmt.Fprintf(os.Stderr, "[sky.unreachable] %s (site=%s)\n%s\n", msg, site, debugStack())
+	panic(fmt.Sprintf("sky.Unreachable(%s): %s", site, msg))
+}
+
 // Run a task thunk regardless of whether it was built via
 // AnyTaskSucceed (now typed as SkyTask[any, any]) or via an older
 // `func() any` form. Returns SkyResult[any, any].

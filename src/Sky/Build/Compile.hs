@@ -3310,14 +3310,18 @@ caseToGo subject branches =
                 GoIr.GoShortDecl subjectName goSubject
         branchStmts = concatMap (caseBranchToStmts subjectName) branches
         -- P3: exhaustiveness is verified before codegen, so this arm is
-        -- statically unreachable. We keep a labelled panic as a defence
-        -- in depth (compiler bug, not user error) rather than remove it
-        -- entirely — but the message makes the distinction explicit so
-        -- users never see "non-exhaustive case expression" again.
-        panicStmt = GoIr.GoExprStmt (GoIr.GoRaw "panic(\"sky: internal — codegen reached unreachable case arm (compiler bug)\")")
+        -- statically unreachable. Audit P0-5: route through
+        -- rt.Unreachable instead of a raw panic so any future
+        -- exhaustiveness-vs-codegen drift surfaces as a clean Err at
+        -- the Task boundary (rt's panic-recovery catches the panic
+        -- that Unreachable raises) rather than killing the process.
+        -- The site identifier lets on-call locate the originating
+        -- case block in logs.
+        unreachableStmt = GoIr.GoExprStmt
+            (GoIr.GoRaw ("_ = rt.Unreachable(\"case/" ++ subjectName ++ "\")"))
     in
     GoIr.GoBlock
-        (subjectDecl : branchStmts ++ [panicStmt])
+        (subjectDecl : branchStmts ++ [unreachableStmt])
         (GoIr.GoRaw "nil")  -- unreachable, branches return
 
 
