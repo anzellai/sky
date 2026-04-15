@@ -3827,19 +3827,31 @@ exprToGoTyped types retType (A.At _ expr) = case expr of
                         _ -> GoIr.GoCall goFunc goArgs
                 _ -> GoIr.GoCall goFunc goArgs
             -- If the called function has a known return type and we need a primitive,
-            -- assert the result. This handles: n * factorial(n-1) where factorial returns any
-            funcRetType = case func of
-                A.At _ (Can.VarLocal name) ->
-                    case Map.lookup name types of
-                        Just ft -> let (_, rt) = splitFuncType (length args) ft in Just rt
-                        Nothing -> Nothing
+            -- assert the result. This handles: n * factorial(n-1) where factorial returns any.
+            -- BUT: if the callee is itself emitted with a fully-typed Go signature
+            -- (concrete params + concrete return, fully applied), the Go call already
+            -- yields a concrete value and asserting `.(T)` on it would be a Go error.
+            calleeInfo = case func of
                 A.At _ (Can.VarTopLevel _ name) ->
                     case Map.lookup name types of
-                        Just ft -> let (_, rt) = splitFuncType (length args) ft in Just rt
+                        Just ft ->
+                            let (argTys, rtTy) = splitFuncType (length args) ft
+                                fullyTyped = length argTys == length args
+                                           && isConcreteType rtTy
+                                           && all isConcreteType argTys
+                            in Just (rtTy, fullyTyped)
+                        Nothing -> Nothing
+                A.At _ (Can.VarLocal name) ->
+                    case Map.lookup name types of
+                        Just ft ->
+                            let (_, rtTy) = splitFuncType (length args) ft
+                            in Just (rtTy, False)  -- VarLocal calls go through any-dispatch
                         Nothing -> Nothing
                 _ -> Nothing
-        in case funcRetType of
-            Just rt | isConcreteType rt -> GoIr.GoTypeAssert callExpr (solvedTypeToGo rt)
+        in case calleeInfo of
+            Just (_, True) -> callExpr  -- typed-emitted callee returns concrete directly
+            Just (rt, False) | isConcreteType rt ->
+                GoIr.GoTypeAssert callExpr (solvedTypeToGo rt)
             _ -> callExpr
 
     Can.Negate inner -> GoIr.GoUnary "-" (exprToGoTyped types retType inner)

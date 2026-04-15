@@ -8,7 +8,7 @@ safeDiv a b =
     if b == 0 then
         Nothing
     else
-        Just (a / b)
+        Just (a // b)
 
 showMaybe result =
     case result of

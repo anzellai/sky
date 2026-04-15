@@ -51,6 +51,9 @@ jobs:
           echo "$PWD/sky-out" >> $GITHUB_PATH
           echo "$PWD/bin"      >> $GITHUB_PATH
 
+      - name: Smoke-test sky binary
+        run: sky --version
+
       - name: Run cabal test suite
         run: cabal test --test-show-details=direct
 
@@ -138,7 +141,8 @@ jobs:
         run: |
           mkdir -p dist
           cp sky-out/sky dist/${{ matrix.artifact }}
-          tar czf dist/${{ matrix.artifact }}.tar.gz -C dist ${{ matrix.artifact }}
+          cp bin/sky-ffi-inspect dist/sky-ffi-inspect-${{ matrix.artifact }} || true
+          tar czf dist/${{ matrix.artifact }}.tar.gz -C dist ${{ matrix.artifact }} $( [ -f dist/sky-ffi-inspect-${{ matrix.artifact }} ] && echo sky-ffi-inspect-${{ matrix.artifact }} )
           ls -la dist/
 
       - uses: actions/upload-artifact@v4

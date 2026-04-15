@@ -336,7 +336,7 @@ data Command
     = Build FilePath
     | Run FilePath
     | Check FilePath
-    | Fmt FilePath
+    | Fmt FmtTarget
     | Test FilePath
     | Verify (Maybe String)      -- Nothing = all examples; Just name = one
     | Init (Maybe String)
@@ -351,6 +351,12 @@ data Command
     deriving (Show)
 
 
+data FmtTarget
+    = FmtFile FilePath
+    | FmtStdin
+    deriving (Show)
+
+
 commandParser :: Parser Command
 commandParser = subparser
     ( command "build"
@@ -360,7 +366,8 @@ commandParser = subparser
     <> command "check"
         (info (Check <$> fileArg) (progDesc "Type-check only"))
     <> command "fmt"
-        (info (Fmt <$> fileArg) (progDesc "Format source file"))
+        (info (Fmt <$> fmtTargetArg)
+            (progDesc "Format source file (or stdin with --stdin / -)"))
     <> command "test"
         (info (Test <$> fileArg) (progDesc "Run a Sky test module (exposing `tests : List Test`)"))
     <> command "verify"
@@ -397,6 +404,17 @@ commandParser = subparser
 
 fileArg :: Parser FilePath
 fileArg = argument str (metavar "FILE" <> value "src/Main.sky")
+
+
+-- Accept either `--stdin` / `-` / positional FILE. Used by `sky fmt`
+-- so editors (helix, neovim, vscode) can pipe buffers directly.
+fmtTargetArg :: Parser FmtTarget
+fmtTargetArg =
+    flag' FmtStdin (long "stdin" <> help "Read source from stdin, write formatted output to stdout")
+  <|> (toTarget <$> argument str (metavar "FILE" <> value "src/Main.sky"))
+  where
+    toTarget "-"  = FmtStdin
+    toTarget path = FmtFile path
 
 
 -- | CLAUDE.md contents are embedded into the sky binary at build time
@@ -608,15 +626,28 @@ runCommand cmd = case cmd of
         ok <- runVerify target
         if ok then return (Right ()) else exitWith (System.Exit.ExitFailure 1)
 
-    Fmt path -> do
-        src <- TIO.readFile path
-        case ParseMod.parseModule src of
-            Left err -> return (Left $ "Parse error: " ++ show err)
-            Right srcMod -> do
-                let formatted = Format.formatModule srcMod
-                writeFile path formatted
-                putStrLn $ "Formatted " ++ path
-                return (Right ())
+    Fmt target -> do
+        case target of
+            FmtFile path -> do
+                src <- TIO.readFile path
+                case ParseMod.parseModule src of
+                    Left err -> return (Left $ "Parse error: " ++ show err)
+                    Right srcMod -> do
+                        let formatted = Format.formatModule srcMod
+                        writeFile path formatted
+                        putStrLn $ "Formatted " ++ path
+                        return (Right ())
+            FmtStdin -> do
+                src <- TIO.getContents
+                case ParseMod.parseModule src of
+                    Left err -> do
+                        -- On parse error, echo the original source back so
+                        -- editors don't blank the buffer, and report error to stderr.
+                        TIO.putStr src
+                        return (Left $ "Parse error: " ++ show err)
+                    Right srcMod -> do
+                        putStr (Format.formatModule srcMod)
+                        return (Right ())
 
     Init mName -> do
         let name = maybe "sky-project" id mName
