@@ -68,6 +68,16 @@ run_example() {
     local dir="$ROOT/examples/$name"
     [[ -d "$dir" ]] || { failures+=("$name: missing directory"); fail=$((fail+1)); return; }
 
+    # GUI examples (Fyne) need X11/GTK dev libs on Linux. On a headless
+    # CI runner without them, the Go build pulls in cgo deps that fail
+    # at link time. Honoured by `sky verify` / `sky test` too.
+    # Set SKIP_GUI_LINUX=0 in an env with the libs installed to override.
+    if [[ "$kind" == "gui" && "$(uname -s)" == "Linux" && "${SKIP_GUI_LINUX:-1}" == "1" ]]; then
+        echo "  [skip] $name: GUI example on Linux (set SKIP_GUI_LINUX=0 to run)"
+        pass=$((pass+1))
+        return
+    fi
+
     (
         cd "$dir"
         if [[ $CLEAN -eq 1 ]]; then
