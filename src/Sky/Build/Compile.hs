@@ -9,7 +9,7 @@ import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import Data.IORef
 import Data.Maybe (isJust)
-import qualified Data.List
+import qualified Data.List as List
 import qualified System.Directory
 import qualified System.FilePath
 import qualified System.Process
@@ -758,7 +758,7 @@ parseImportLine line =
 -- false positives from orphaned `// Pkg.Name` docstrings
 -- that DCE left behind after dropping their function body.
 aliasReferenced :: String -> String -> Bool
-aliasReferenced alias blob = (alias ++ ".") `Data.List.isInfixOf` stripComments blob
+aliasReferenced alias blob = (alias ++ ".") `List.isInfixOf` stripComments blob
 
 -- | Remove `//` line comments from Go source (anything after `//`
 -- up to the next newline). Leaves `/* ... */` block comments alone —
@@ -1277,7 +1277,12 @@ generateAliasForDep userDefs modPrefix (aliasName, Can.Alias _vars body) =
         structName = qualName ++ "_R"
     in case body of
         T.TRecord fields _ ->
-            let fieldList = Map.toList fields
+            -- Sort by declaration index so the auto-generated constructor's
+            -- positional parameters match the user's field order. Map.toList
+            -- alone returns alphabetical order, which swaps `Piece King White`
+            -- (kind first) into `Piece White King` at the Go boundary and
+            -- panics on the `.(T)` type assertion.
+            let fieldList = List.sortOn (T._fieldIndex . snd) (Map.toList fields)
                 -- T7 (record field typing): emit struct with typed
                 -- fields when the alias's field types are concrete
                 -- primitives or known runtime-safe types. Fall back to
@@ -1573,7 +1578,10 @@ generateAliasTypes canMod =
   where
     generateAlias userDefinedNames (name, Can.Alias _vars body) = case body of
         T.TRecord fields _ ->
-            let fieldList = Map.toList fields
+            -- Field declaration order (via _fieldIndex) is the auto-ctor's
+            -- positional API. Sorting by it keeps `Piece kind colour` the same
+            -- on the Go side. See generateAliasForDep for the same note.
+            let fieldList = List.sortOn (T._fieldIndex . snd) (Map.toList fields)
                 hasMethods = any (\(_, T.FieldType _ ty) -> isFuncType ty) fieldList
             in if hasMethods
                 then generateInterface name fieldList
@@ -3247,10 +3255,10 @@ caseToGo subject branches =
         inferredSigMap = Rec._cg_funcInferredSigs getCgEnv
 
         isConcreteResultOrMaybe t =
-            let isResult = "rt.SkyResult[" `Data.List.isPrefixOf` t
-                         && not ("rt.SkyResult[any, any]" `Data.List.isPrefixOf` t)
-                isMaybe  = "rt.SkyMaybe[" `Data.List.isPrefixOf` t
-                         && not ("rt.SkyMaybe[any]" `Data.List.isPrefixOf` t)
+            let isResult = "rt.SkyResult[" `List.isPrefixOf` t
+                         && not ("rt.SkyResult[any, any]" `List.isPrefixOf` t)
+                isMaybe  = "rt.SkyMaybe[" `List.isPrefixOf` t
+                         && not ("rt.SkyMaybe[any]" `List.isPrefixOf` t)
             in isResult || isMaybe
         -- P7: typed-FFI-source subjects use a distinct name so
         -- bindCtorArg knows to skip the `any().(SkyResult[any,any])`
@@ -3631,7 +3639,7 @@ bindCtorArg subject ctorName (Can.PatternCtorArg idx _ty pat) =
         -- patternBindings falls through to the any-assertion path.
         isTypedFfiSubject =
             take 5 (reverse subject) == "ifFt_"
-            && not ("__sky_cf_" `Data.List.isPrefixOf` subject)
+            && not ("__sky_cf_" `List.isPrefixOf` subject)
         anyWrap n = GoIr.GoCall (GoIr.GoIdent "any") [GoIr.GoIdent n]
         -- Runtime helper unwraps any SkyResult/SkyMaybe instantiation
         -- without a type-assertion panic — used when the subject is

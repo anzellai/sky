@@ -21,6 +21,7 @@ module Sky.Generate.Go.Record
 
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
+import qualified Data.List as List
 import qualified Sky.AST.Canonical as Can
 import qualified Sky.Reporting.Annotation as A
 import qualified Sky.Type.Type as T
@@ -202,11 +203,18 @@ lookupRecordAlias registry fieldNames =
     Map.lookup (Set.fromList fieldNames) registry
 
 
--- | Classify a type alias as data record, behaviour record, or non-record
+-- | Classify a type alias as data record, behaviour record, or non-record.
+-- Fields must be returned in *declaration order* (via FieldType's
+-- _fieldIndex), not in Map key order (which is alphabetical). The
+-- auto-generated record constructor `Foo : T1 -> T2 -> ... -> Foo`
+-- uses this ordering as its positional API; if we reorder, user code
+-- like `Piece King White` passes args into a constructor that expects
+-- `(Colour, Kind)` and panics at runtime on the type assertion.
 classifyAlias :: Can.Alias -> AliasKind
 classifyAlias (Can.Alias _ body) = case body of
     T.TRecord fields _ ->
-        let fieldList = map (\(name, T.FieldType _ ty) -> (name, ty)) (Map.toList fields)
+        let sorted = List.sortOn (T._fieldIndex . snd) (Map.toList fields)
+            fieldList = map (\(name, T.FieldType _ ty) -> (name, ty)) sorted
             hasFuncField = any (\(_, ty) -> isFuncType ty) fieldList
         in if hasFuncField
             then BehaviourRecord fieldList
