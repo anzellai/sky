@@ -1853,6 +1853,13 @@ wrapTypedReturn retType body
         GoIr.GoCall
             (GoIr.GoIdent ("rt.MaybeCoerce[" ++ inner ++ "]"))
             [body]
+    | Just _ <- stripParametric "rt.SkyTask" retType =
+        -- Sky Tasks are returned by `rt.AnyTaskSucceed` and friends
+        -- as `any` holding `func() any`. A direct `.(rt.SkyTask[...])`
+        -- assertion on that would panic (different Go function type),
+        -- so route through rt.TaskCoerce which rewraps either shape
+        -- into a proper `rt.SkyTask[any, any]`.
+        GoIr.GoCall (GoIr.GoIdent "rt.TaskCoerce") [body]
     | otherwise =
         GoIr.GoTypeAssert
             (GoIr.GoCall (GoIr.GoIdent "any") [body])

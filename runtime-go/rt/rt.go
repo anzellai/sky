@@ -2250,6 +2250,10 @@ func Field(record any, field string) any {
 // Any-typed Task wrappers (until type checker provides types)
 // ═══════════════════════════════════════════════════════════
 
+// Returns an any-typed Task thunk. Shape: `func() any` that returns
+// SkyResult[any, any]. Callers invoke via anyTaskInvoke so downstream
+// paths don't care whether they got a raw `func() any` or the typed
+// SkyTask[any, any] form.
 func AnyTaskSucceed(v any) any {
 	return func() any { return Ok[any, any](v) }
 }
@@ -2258,16 +2262,54 @@ func AnyTaskFail(e any) any {
 	return func() any { return Err[any, any](e) }
 }
 
+// TaskCoerce converts any Task-shaped value (`func() any`, the typed
+// `SkyTask[any, any]`, or already-resolved SkyResult) into the typed
+// `SkyTask[any, any]` form that typed-codegen call sites expect.
+// The compiler inserts this at every typed-return boundary where the
+// inner value came from the any-typed Task builders (AnyTaskSucceed /
+// AnyTaskAndThen / …) but the outer signature declares
+// `rt.SkyTask[any, any]`. Without it, the previous direct
+// `.(rt.SkyTask[any, any])` assertion panicked on `func() any`.
+func TaskCoerce(v any) SkyTask[any, any] {
+	if t, ok := v.(SkyTask[any, any]); ok {
+		return t
+	}
+	return SkyTask[any, any](func() SkyResult[any, any] {
+		return anyTaskInvoke(v)
+	})
+}
+
+// Run a task thunk regardless of whether it was built via
+// AnyTaskSucceed (now typed as SkyTask[any, any]) or via an older
+// `func() any` form. Returns SkyResult[any, any].
+func anyTaskInvoke(task any) SkyResult[any, any] {
+	switch t := task.(type) {
+	case SkyTask[any, any]:
+		return t()
+	case func() SkyResult[any, any]:
+		return t()
+	case func() any:
+		r := t()
+		if res, ok := r.(SkyResult[any, any]); ok {
+			return res
+		}
+		return Ok[any, any](r)
+	}
+	// Already-resolved value (rare): treat as Ok.
+	if res, ok := task.(SkyResult[any, any]); ok {
+		return res
+	}
+	return Ok[any, any](task)
+}
+
 func AnyTaskAndThen(fn any, task any) any {
-	return func() any {
-		t := task.(func() any)
-		r := t().(SkyResult[any, any])
+	return SkyTask[any, any](func() SkyResult[any, any] {
+		r := anyTaskInvoke(task)
 		if r.Tag == 0 {
-			next := fn.(func(any) any)(r.OkValue).(func() any)
-			return next()
+			return anyTaskInvoke(fn.(func(any) any)(r.OkValue))
 		}
 		return Err[any, any](r.ErrValue)
-	}
+	})
 }
 
 // Task_sequence: run tasks in order, collect results as a list.
@@ -2355,12 +2397,17 @@ func Task_sequenceT[E, A any](ts []SkyTask[E, A]) SkyTask[E, []A] {
 }
 
 func AnyTaskRun(task any) any {
-	// Accept either a Task thunk (`func() any`) which we invoke, or a
-	// value that's already the result of running the task (SkyResult /
-	// SkyTask). Sky.Http.Server's `listen` is an example that returns
-	// `Ok (()) / Err msg` directly rather than a deferred thunk — we
-	// treat that as "task already done".
+	// Accept either a Task thunk (`func() any` or the typed
+	// `SkyTask[any,any]`), which we invoke, or a value that's
+	// already the result of running the task (SkyResult /
+	// SkyTask). Sky.Http.Server's `listen` is an example that
+	// returns `Ok (()) / Err msg` directly rather than a deferred
+	// thunk — we treat that as "task already done".
 	switch t := task.(type) {
+	case SkyTask[any, any]:
+		return t()
+	case func() SkyResult[any, any]:
+		return t()
 	case func() any:
 		return t()
 	}
@@ -3612,10 +3659,33 @@ func Server_listen(port any, routes any) any {
 				if len(v) > 0 { skyReq.Query[k] = v[0] }
 			}
 
-			task := handler.(func(any) any)(skyReq)
-			result := task.(func() any)()
+			// Call the Sky handler and invoke the returned Task
+			// thunk. SkyCall uses reflect so it accepts any
+			// callable shape (any/typed codegen both work).
+			// anyTaskInvoke normalises the thunk regardless of
+			// whether it's `func() any`, `SkyTask[any, any]`, or
+			// an already-resolved SkyResult.
+			task := SkyCall(handler, skyReq)
+			result := any(anyTaskInvoke(task))
 
+			// Accept both the bare SkyResult[any,any] AND the
+			// wider typed SkyResult shapes that typed codegen may
+			// now emit. Fall back via reflect.
 			resp, ok := result.(SkyResult[any, any])
+			if !ok {
+				rv := reflect.ValueOf(result)
+				if rv.IsValid() && rv.Kind() == reflect.Struct {
+					tagF := rv.FieldByName("Tag")
+					okF  := rv.FieldByName("OkValue")
+					if tagF.IsValid() && okF.IsValid() {
+						resp = SkyResult[any, any]{
+							Tag:     int(tagF.Int()),
+							OkValue: okF.Interface(),
+						}
+						ok = true
+					}
+				}
+			}
 			if ok && resp.Tag == 0 {
 				skyResp := resp.OkValue.(SkyResponse)
 				for k, v := range skyResp.Headers {
@@ -3779,7 +3849,7 @@ func Middleware_withCors(origins any, handler any) any {
 			}
 			// Delegate to inner handler, then add CORS headers to response.
 			task := handler.(func(any) any)(req)
-			res := task.(func() any)()
+			res := any(anyTaskInvoke(task))
 			if sr, ok := res.(SkyResult[any, any]); ok && sr.Tag == 0 {
 				if resp, ok := sr.OkValue.(SkyResponse); ok {
 					if resp.Headers == nil {
@@ -3804,7 +3874,7 @@ func Middleware_withLogging(handler any) any {
 			r, _ := req.(SkyRequest)
 			start := time.Now()
 			task := handler.(func(any) any)(req)
-			res := task.(func() any)()
+			res := any(anyTaskInvoke(task))
 			status := 0
 			if sr, ok := res.(SkyResult[any, any]); ok && sr.Tag == 0 {
 				if resp, ok := sr.OkValue.(SkyResponse); ok {
