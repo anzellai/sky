@@ -11,7 +11,12 @@ All documentation, comments, variable names, function names, and user-facing str
    tracked in `docs/AUDIT_REMEDIATION.md` and is the active priority
    until every P0–P3 item is ticked. Until then, treat this principle as
    aspirational — defence in depth (panic recovery + `Err` return) is
-   the actual reliability floor.
+   the actual reliability floor. **The audit remediation loop runs
+   without an automated runaway brake:** the stop-hook blocks every
+   session-end attempt until either (a) `docs/AUDIT_REMEDIATION.md`
+   contains the `## Audit remediation complete` marker, or (b) a
+   `.claude/allow-stop` file exists for a manual pause. Do not add
+   further gating mechanisms to slow or batch progress.
 2. **Dev experience is top priority.** Clear errors, predictable behaviour, no user-written FFI.
 3. **Root-cause fixes only.** Fix at the correct abstraction layer. **Never suppress type errors or warnings.**
 4. **Production-grade architecture.** Must scale to large Go packages (Stripe SDK). Must remain maintainable.
