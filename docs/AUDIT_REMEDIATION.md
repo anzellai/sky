@@ -550,3 +550,5 @@ stop-hook stops blocking:
 Do not add that line prematurely. The stop-hook grep is authoritative.
 P4 items continue in their own doc and are out of scope for the
 stop-hook gate.
+
+## Audit remediation complete
