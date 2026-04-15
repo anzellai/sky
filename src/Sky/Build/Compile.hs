@@ -1303,12 +1303,11 @@ generateAliasForDep userDefs modPrefix (aliasName, Can.Alias _vars body) =
                 hasUserCtor = Set.member aliasName userDefs
                 paramList = zipWith (\i _ -> "p" ++ show i) [0::Int ..] fieldList
                 paramDecls = intercalate_ ", " [p ++ " any" | p <- paramList]
+                -- Audit P0-3: rt.Coerce* helpers over raw `.(T)`.
                 fieldInits =
                     [ let goTy = fieldGoType fty
                           src = "p" ++ show i
-                          coerced = if goTy == "any"
-                                        then src
-                                        else "any(" ++ src ++ ").(" ++ goTy ++ ")"
+                          coerced = coerceExprFor goTy src
                       in capitalise_ fn ++ ": " ++ coerced
                     | (i, (fn, T.FieldType _ fty)) <- zip [0::Int ..] fieldList
                     ]
@@ -1602,12 +1601,16 @@ generateAliasTypes canMod =
                 (capitalise fname, fieldGoType ftype)) fields
             paramList = zipWith (\i _ -> "p" ++ show i) [0::Int ..] fields
             paramDecls = intercalate_ ", " [p ++ " any" | p <- paramList]
+            -- Audit P0-3: route each param through the rt.Coerce*
+            -- helper instead of a raw `any(p).(T)` assertion. Raw
+            -- asserts panic with Go's cryptic interface-conversion
+            -- message; Coerce helpers carry a site-identified
+            -- diagnostic and surface via rt panic-recovery as a
+            -- clean Err at the Task boundary.
             fieldInits =
                 [ let goTy = fieldGoType fty
                       src = "p" ++ show i
-                      coerced = if goTy == "any"
-                                    then src
-                                    else "any(" ++ src ++ ").(" ++ goTy ++ ")"
+                      coerced = coerceExprFor goTy src
                   in capitalise_ fn ++ ": " ++ coerced
                 | (i, (fn, T.FieldType _ fty)) <- zip [0::Int ..] fields
                 ]
@@ -1842,6 +1845,19 @@ isPolymorphicRet s
 -- the body is built via the default `rt.Ok[any, any]` and the target
 -- has specific E/A — the generic instantiations are distinct Go types.
 -- ResultCoerce/MaybeCoerce reconstruct the value with target params.
+-- | Render an inline coercion expression from `any` to `goTy`. String
+-- fragment, emitted inside record-ctor field initialisers. See
+-- wrapTypedReturn for the GoExpr-level equivalent.
+coerceExprFor :: String -> String -> String
+coerceExprFor goTy src = case goTy of
+    "any"     -> src
+    "string"  -> "rt.CoerceString(" ++ src ++ ")"
+    "int"     -> "rt.CoerceInt(" ++ src ++ ")"
+    "bool"    -> "rt.CoerceBool(" ++ src ++ ")"
+    "float64" -> "rt.CoerceFloat(" ++ src ++ ")"
+    _         -> "rt.Coerce[" ++ goTy ++ "](" ++ src ++ ")"
+
+
 wrapTypedReturn :: String -> GoIr.GoExpr -> GoIr.GoExpr
 wrapTypedReturn retType body
     | retType == "any" = body

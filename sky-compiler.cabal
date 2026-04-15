@@ -153,3 +153,4 @@ test-suite sky-tests
       Sky.Format.FormatSpec
       Sky.Build.NestedPatternSpec
       Sky.Build.CheckIsBuildSpec
+      Sky.Build.RecordFieldOrderSpec

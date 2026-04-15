@@ -11,6 +11,7 @@ import qualified Sky.Type.ExhaustivenessSpec
 import qualified Sky.Format.FormatSpec
 import qualified Sky.Build.NestedPatternSpec
 import qualified Sky.Build.CheckIsBuildSpec
+import qualified Sky.Build.RecordFieldOrderSpec
 
 main :: IO ()
 main = hspec $ do
@@ -28,3 +29,5 @@ main = hspec $ do
     describe "Sky.Build.TypedFfi"        Sky.Build.TypedFfiSpec.spec
     -- Audit P0-1: sky check must be ≥ sky build.
     describe "Sky.Build.CheckIsBuild"    Sky.Build.CheckIsBuildSpec.spec
+    -- Audit P0-4: record auto-ctor respects declaration order.
+    describe "Sky.Build.RecordFieldOrder" Sky.Build.RecordFieldOrderSpec.spec
