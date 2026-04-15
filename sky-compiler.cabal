@@ -158,3 +158,4 @@ test-suite sky-tests
       Sky.Parse.CommentsSpec
       Sky.Lsp.HoverShadowingSpec
       Sky.Lsp.RenameStableSpec
+      Sky.Build.VerifyScenarioSpec

@@ -16,6 +16,7 @@ import qualified Sky.Build.UnreachableGateSpec
 import qualified Sky.Parse.CommentsSpec
 import qualified Sky.Lsp.HoverShadowingSpec
 import qualified Sky.Lsp.RenameStableSpec
+import qualified Sky.Build.VerifyScenarioSpec
 
 main :: IO ()
 main = hspec $ do
@@ -44,3 +45,5 @@ main = hspec $ do
     describe "Sky.Lsp.HoverShadowing"     Sky.Lsp.HoverShadowingSpec.spec
     -- Audit P2-3: module-stable TVar renaming.
     describe "Sky.Lsp.RenameStable"       Sky.Lsp.RenameStableSpec.spec
+    -- Audit P2-4: sky verify scenario support.
+    describe "Sky.Build.VerifyScenario"   Sky.Build.VerifyScenarioSpec.spec

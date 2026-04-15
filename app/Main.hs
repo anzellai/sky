@@ -1,4 +1,5 @@
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE OverloadedStrings #-}
 module Main where
 
 import Options.Applicative
@@ -11,7 +12,7 @@ import System.Directory (createDirectoryIfMissing, doesFileExist)
 import System.IO.Error (catchIOError)
 import System.FilePath ((</>), takeExtension, takeDirectory, takeFileName, dropExtension, splitDirectories)
 import System.Exit (exitWith)
-import Data.List (isPrefixOf, stripPrefix)
+import Data.List (isPrefixOf, stripPrefix, tails)
 import System.Process (callProcess)
 import qualified System.Process
 import qualified System.IO.Temp
@@ -21,6 +22,10 @@ import Data.FileEmbed (embedStringFile)
 
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
+import qualified Data.Aeson as Aeson
+import Data.Aeson ((.:), (.:?), (.!=))
+import qualified Data.ByteString as B
+import qualified Data.ByteString.Lazy as BL
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import qualified Sky.Build.Compile as Compile
@@ -151,29 +156,15 @@ classifyAndRun _cwd name dir bin logPath
     | isGui name = putStrLn $ "  gui skipped runtime: " ++ name
     | isServer name = do
         port <- readPortFromToml (dir </> "sky.toml")
-        (_, stdoutTxt, _) <- System.Process.readProcessWithExitCode "sh"
-            [ "-c"
-            , unwords
-                [ "(cd", shellQuote dir, "&& exec ./sky-out/app) >", shellQuote logPath, "2>&1 &"
-                , "pid=$!;"
-                , "tries=0; code=000;"
-                , "while [ $tries -lt 20 ]; do"
-                , "  code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 1 'http://localhost:" ++ show port ++ "/' 2>/dev/null);"
-                , "  case \"$code\" in 2??|3??) break;; esac;"
-                , "  sleep 0.5; tries=$((tries+1));"
-                , "done;"
-                , "kill $pid 2>/dev/null; wait $pid 2>/dev/null;"
-                , "if grep -Eq 'panic:|runtime error:|\\[sky\\.live\\] panic|\\[sky\\.http\\] panic' " ++ shellQuote logPath ++ "; then"
-                , "  printf '%s\\n' '  FAIL panic: " ++ name ++ "'; echo " ++ shellQuote (name ++ ":panic") ++ " >> /tmp/sky-verify-fails.txt;"
-                , "elif echo \"$code\" | grep -Eq '^(2|3)[0-9][0-9]$'; then"
-                , "  printf '%s\\n' \"  runtime ok: " ++ name ++ " (http $code)\";"
-                , "else"
-                , "  printf '%s\\n' \"  FAIL http$code: " ++ name ++ "\"; echo " ++ shellQuote (name ++ ":http") ++ " >> /tmp/sky-verify-fails.txt;"
-                , "fi"
-                ]
-            ] ""
-        putStr stdoutTxt
-        return ()
+        -- Audit P2-4: per-example scenario file. If
+        -- examples/<n>/verify.json exists, run each listed request
+        -- and assert status + body-substring. Otherwise fall back
+        -- to the single GET / probe.
+        let scenarioPath = dir </> "verify.json"
+        hasScenario <- doesFileExist scenarioPath
+        if hasScenario
+            then runScenario name dir logPath port scenarioPath
+            else runDefaultProbe name dir logPath port
     | otherwise = do
         -- CLI example: run; panic / non-zero exit = fail.
         (ec, _, _) <- System.Process.readProcessWithExitCode "sh"
@@ -204,6 +195,158 @@ classifyAndRun _cwd name dir bin logPath
                     else putStrLn $ "  runtime ok: " ++ name
 
 
+-- Audit P2-4: scenario-driven server example verification.
+--
+-- verify.json shape:
+--   { "requests":
+--       [ { "method": "GET",  "path": "/",           "expectStatus": 200,
+--           "expectBody": ["Welcome"]                                  }
+--       , { "method": "POST", "path": "/api/echo",   "body": "hi",
+--           "expectStatus": 200, "expectBody": ["hi"]                  }
+--       ]
+--   }
+--
+-- Any failing request (status mismatch, missing body substring,
+-- panic log line) fails the whole example and appends an entry to
+-- /tmp/sky-verify-fails.txt. This replaces the "just check HTTP
+-- 200 on /" smoke test which would pass a handler that returns
+-- an empty 200 response — surfacing the bug class the audit
+-- identified as M6.
+runScenario :: String -> FilePath -> FilePath -> Int -> FilePath -> IO ()
+runScenario name dir logPath port scenarioPath = do
+    raw <- B.readFile scenarioPath
+    case Aeson.eitherDecode (BL.fromStrict raw) of
+        Left err -> do
+            putStrLn $ "  FAIL scenario parse: " ++ name ++ " (" ++ err ++ ")"
+            appendFile "/tmp/sky-verify-fails.txt" (name ++ ":scenario-parse\n")
+        Right scenario -> do
+            -- Start the server with a dedicated spawn so we can
+            -- run multiple requests against it. Matches the
+            -- existing default-probe shell shape so the panic
+            -- detector below keeps finding its markers.
+            let serverCmd = unwords
+                    [ "(cd", shellQuote dir, "&& exec ./sky-out/app) >"
+                    , shellQuote logPath, "2>&1 &"
+                    , "echo $!"
+                    ]
+            (_, pidTxt, _) <- System.Process.readProcessWithExitCode "sh"
+                ["-c", serverCmd] ""
+            let pid = takeWhile (\c -> c /= '\n' && c /= ' ') pidTxt
+            -- Wait for the server to come up (same 20-try / 0.5s
+            -- loop as the default probe).
+            _ <- System.Process.readProcessWithExitCode "sh"
+                ["-c", unwords
+                    [ "for i in $(seq 1 20); do"
+                    , "  code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 1"
+                    , "    'http://localhost:" ++ show port ++ "/' 2>/dev/null);"
+                    , "  case \"$code\" in 2??|3??|4??) break;; esac;"
+                    , "  sleep 0.5;"
+                    , "done"
+                    ]] ""
+            -- Run each scenario request, collecting failures.
+            failures <- mapM (runScenarioRequest port) (scenarioRequests scenario)
+            -- Stop the server.
+            _ <- System.Process.readProcessWithExitCode "sh"
+                ["-c", "kill " ++ pid ++ " 2>/dev/null; wait " ++ pid ++ " 2>/dev/null"]
+                ""
+            panicked <- hasPanicIn logPath
+            case (panicked, concat failures) of
+                (True, _) -> do
+                    putStrLn $ "  FAIL panic: " ++ name
+                    appendFile "/tmp/sky-verify-fails.txt" (name ++ ":panic\n")
+                (False, []) ->
+                    putStrLn $ "  runtime ok: " ++ name ++ " (scenario: "
+                        ++ show (length (scenarioRequests scenario)) ++ " requests)"
+                (False, reasons) -> do
+                    mapM_ (\r -> putStrLn $ "  FAIL scenario: " ++ name ++ ": " ++ r) reasons
+                    appendFile "/tmp/sky-verify-fails.txt" (name ++ ":scenario\n")
+
+
+runDefaultProbe :: String -> FilePath -> FilePath -> Int -> IO ()
+runDefaultProbe name dir logPath port = do
+    (_, stdoutTxt, _) <- System.Process.readProcessWithExitCode "sh"
+        [ "-c"
+        , unwords
+            [ "(cd", shellQuote dir, "&& exec ./sky-out/app) >", shellQuote logPath, "2>&1 &"
+            , "pid=$!;"
+            , "tries=0; code=000;"
+            , "while [ $tries -lt 20 ]; do"
+            , "  code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 1 'http://localhost:" ++ show port ++ "/' 2>/dev/null);"
+            , "  case \"$code\" in 2??|3??) break;; esac;"
+            , "  sleep 0.5; tries=$((tries+1));"
+            , "done;"
+            , "kill $pid 2>/dev/null; wait $pid 2>/dev/null;"
+            , "if grep -Eq 'panic:|runtime error:|\\[sky\\.live\\] panic|\\[sky\\.http\\] panic' " ++ shellQuote logPath ++ "; then"
+            , "  printf '%s\\n' '  FAIL panic: " ++ name ++ "'; echo " ++ shellQuote (name ++ ":panic") ++ " >> /tmp/sky-verify-fails.txt;"
+            , "elif echo \"$code\" | grep -Eq '^(2|3)[0-9][0-9]$'; then"
+            , "  printf '%s\\n' \"  runtime ok: " ++ name ++ " (http $code)\";"
+            , "else"
+            , "  printf '%s\\n' \"  FAIL http$code: " ++ name ++ "\"; echo " ++ shellQuote (name ++ ":http") ++ " >> /tmp/sky-verify-fails.txt;"
+            , "fi"
+            ]
+        ] ""
+    putStr stdoutTxt
+
+
+-- One scenario request; returns [] on success, [reason] on failure.
+runScenarioRequest :: Int -> ScenarioRequest -> IO [String]
+runScenarioRequest port req = do
+    let url = "http://localhost:" ++ show port ++ srPath req
+        method = srMethod req
+        bodyArg = case srBody req of
+            Just b  -> "--data " ++ shellQuote b
+            Nothing -> ""
+        -- Write response body to a per-request temp file so
+        -- subsequent reads can't be clobbered by a background
+        -- process. /tmp is fine — we're bounded to the verify run.
+        respFile = "/tmp/sky-verify-resp-"
+                   ++ filter (\c -> c /= '/' && c /= ' ') (method ++ srPath req)
+        cmd = unwords
+            [ "curl -s -o", shellQuote respFile, "-w '%{http_code}' --max-time 5"
+            , "-X", method
+            , bodyArg
+            , shellQuote url
+            ]
+    (_, codeOut, _) <- System.Process.readProcessWithExitCode "sh" ["-c", cmd] ""
+    let code = takeWhile (/= '\n') (dropWhile (== ' ') codeOut)
+    body <- readFile respFile
+    let statusReasons = case srExpectStatus req of
+            Just expected | show expected /= code ->
+                [method ++ " " ++ srPath req ++ ": got status " ++ code
+                    ++ ", expected " ++ show expected]
+            _ -> []
+        bodyReasons =
+            [ method ++ " " ++ srPath req ++ ": body missing substring " ++ show sub
+            | sub <- srExpectBody req
+            , not (sub `isSubstringOf` body)
+            ]
+    return (statusReasons ++ bodyReasons)
+
+
+data Scenario = Scenario { scenarioRequests :: [ScenarioRequest] }
+data ScenarioRequest = ScenarioRequest
+    { srMethod       :: String
+    , srPath         :: String
+    , srBody         :: Maybe String
+    , srExpectStatus :: Maybe Int
+    , srExpectBody   :: [String]
+    }
+
+
+instance Aeson.FromJSON Scenario where
+    parseJSON = Aeson.withObject "Scenario" $ \o ->
+        Scenario <$> o .: "requests"
+
+instance Aeson.FromJSON ScenarioRequest where
+    parseJSON = Aeson.withObject "ScenarioRequest" $ \o -> do
+        m  <- o .:? "method"      .!= ("GET" :: String)
+        p  <- o .:  "path"
+        b  <- o .:? "body"
+        es <- o .:? "expectStatus"
+        eb <- o .:? "expectBody"  .!= ([] :: [String])
+        return (ScenarioRequest m p b es eb)
+
+
 hasPanicIn :: FilePath -> IO Bool
 hasPanicIn path = do
     exists <- doesFileExist path
@@ -215,7 +358,6 @@ hasPanicIn path = do
 
 isSubstringOf :: String -> String -> Bool
 isSubstringOf needle hay = any (isPrefixOf needle) (tails hay)
-  where tails [] = [[]]; tails (_:xs') = [] : map id (tails xs')
 
 
 readPortFromToml :: FilePath -> IO Int

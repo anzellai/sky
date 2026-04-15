@@ -1,0 +1,7 @@
+{
+    "_comment": "Audit P2-4: per-example scenario file for sky verify. Each request is tested against expected status and body substrings. A regression that changes a handler response (status code or body text) now fails the verify step — the old 'just check HTTP 200 on /' would silently accept an empty 200 response.",
+    "requests": [
+        { "method": "GET", "path": "/",           "expectStatus": 200, "expectBody": ["Sky HTTP Server"] },
+        { "method": "GET", "path": "/api/status", "expectStatus": 200, "expectBody": ["status"] }
+    ]
+}
