@@ -4417,6 +4417,76 @@ func Server_method(req any) any {
 	return "GET"
 }
 
+// ── CSRF (audit P1-1) ────────────────────────────────────────
+// Double-submit cookie pattern. Safer than a stateless HMAC because
+// a leaked secret doesn't enable token forgery — and simpler than a
+// session-store-keyed token because there's no per-session state to
+// maintain. Cookie defaults to HttpOnly+SameSite=Strict so the token
+// can't be read by JS, but is still readable to Sky-side render
+// because we hand the token back as a return value, not via reading
+// the cookie at render time.
+//
+// Usage from Sky:
+//   GET handler:
+//     ( token, resp ) = Server.csrfIssue baseResp
+//     -- Embed token in form: <input type="hidden" name="__csrf" value="<token>">
+//   POST handler:
+//     if Server.csrfVerify req then ... else 403
+
+const csrfCookieName = "__csrf"
+const csrfFormField = "__csrf"
+
+// Server.csrfIssue : SkyResponse -> ( String, SkyResponse )
+// Generates a fresh token and attaches it as a Set-Cookie header on
+// the response. Returns the token + updated response as a Sky tuple
+// so the caller can embed the token in their HTML form.
+func Server_csrfIssue(resp any) any {
+	r, ok := resp.(SkyResponse)
+	if !ok {
+		// Honour the contract even when the wrong shape comes in;
+		// the caller's pattern-match will catch the (empty, resp)
+		// pair if the response wasn't a SkyResponse.
+		return SkyTuple2{V0: "", V1: resp}
+	}
+	token := generateCsrfToken()
+	if r.Headers == nil {
+		r.Headers = map[string]string{}
+	}
+	r.Headers["Set-Cookie"] = fmt.Sprintf(
+		"%s=%s; Path=/; HttpOnly; SameSite=Strict",
+		csrfCookieName, token)
+	return SkyTuple2{V0: token, V1: r}
+}
+
+// Server.csrfVerify : Request -> Bool
+// Returns true iff the request's __csrf cookie matches its __csrf
+// form field. Both must be present and equal.
+func Server_csrfVerify(req any) any {
+	r, ok := req.(SkyRequest)
+	if !ok {
+		return false
+	}
+	cookieVal := ""
+	if r.Cookies != nil {
+		cookieVal = r.Cookies[csrfCookieName]
+	}
+	formVal := ""
+	if r.Form != nil {
+		formVal = r.Form[csrfFormField]
+	}
+	if cookieVal == "" || formVal == "" {
+		return false
+	}
+	// Constant-time compare to avoid timing-attack token discovery.
+	return subtle.ConstantTimeCompare([]byte(cookieVal), []byte(formVal)) == 1
+}
+
+func generateCsrfToken() string {
+	b := make([]byte, 32)
+	_, _ = cryptorand.Read(b)
+	return hex.EncodeToString(b)
+}
+
 // Server.formValue : String -> Request -> String
 func Server_formValue(key any, req any) any {
 	if r, ok := req.(SkyRequest); ok {

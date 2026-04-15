@@ -308,6 +308,9 @@ registry = Map.fromList
     , (("Server", "withCookie"),  KernelInfo "rt.Server_withCookie" 2 False)
     , (("Server", "withHeader"),  KernelInfo "rt.Server_withHeader" 3 False)
     , (("Server", "any"),         KernelInfo "rt.Server_any" 2 False)
+    -- audit P1-1: CSRF support (double-submit cookie pattern)
+    , (("Server", "csrfIssue"),   KernelInfo "rt.Server_csrfIssue" 1 False)
+    , (("Server", "csrfVerify"),  KernelInfo "rt.Server_csrfVerify" 1 False)
     , (("List", "isEmpty"),       KernelInfo "rt.List_isEmpty" 1 False)
     , (("Io", "writeString"),     KernelInfo "rt.Io_writeString" 1 False)
 
