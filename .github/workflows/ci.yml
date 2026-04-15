@@ -57,68 +57,17 @@ jobs:
       - name: Run cabal test suite
         run: cabal test --test-show-details=direct
 
-      - name: Run scripts/example-sweep.sh --build-only
-        run: bash scripts/example-sweep.sh --build-only
-
-      # ─────────────────────────────────────────────────────────
-      # Example suite — representative subset. Keep fast so every PR runs.
-      # ─────────────────────────────────────────────────────────
-      - name: Test hello-world
-        run: |
-          cd examples/01-hello-world
-          rm -rf sky-out .skycache
-          sky build src/Main.sky
-          ./sky-out/app | grep "Hello from Sky!"
-
-      - name: Test local-pkg
-        run: |
-          cd examples/04-local-pkg
-          rm -rf sky-out .skycache
-          sky build src/Main.sky
-          ./sky-out/app | grep "Calculation result"
-
-      - name: Test task-demo
-        run: |
-          cd examples/14-task-demo
-          rm -rf sky-out .skycache
-          sky build src/Main.sky
-          ./sky-out/app | grep "Hello, Sky!"
-
-      - name: Test live-counter
-        run: |
-          cd examples/09-live-counter
-          rm -rf sky-out .skycache
-          sky build src/Main.sky
-          ./sky-out/app &
-          SERVER_PID=$!
-          sleep 3
-          curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/ | grep 200
-          kill $SERVER_PID 2>/dev/null || true
-          wait 2>/dev/null || true
-
-      - name: Test http-server
-        run: |
-          cd examples/15-http-server
-          rm -rf sky-out .skycache
-          sky build src/Main.sky
-          ./sky-out/app &
-          SERVER_PID=$!
-          sleep 3
-          curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/ | grep 200
-          kill $SERVER_PID 2>/dev/null || true
-          wait 2>/dev/null || true
-
-      - name: Test job-queue
-        run: |
-          cd examples/18-job-queue
-          rm -rf sky-out .skycache
-          sky build src/Main.sky
-          ./sky-out/app &
-          SERVER_PID=$!
-          sleep 3
-          curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/ | grep 200
-          kill $SERVER_PID 2>/dev/null || true
-          wait 2>/dev/null || true
+      # Audit P3-1: `sky verify` is the canonical runtime check.
+      # Covers every example with build + run + panic-check, honours
+      # per-example verify.json scenarios (P2-4), and skips GUI
+      # examples on headless Linux (see scripts/example-sweep.sh —
+      # verify defers to it for the skip policy). This replaces the
+      # per-example cherry-picked curl probes that rotted
+      # independently (15-http-server was broken for an unknown
+      # period before anyone noticed, because it wasn't in the
+      # cherry list).
+      - name: Run sky verify on all examples
+        run: sky verify
 
       # ─────────────────────────────────────────────────────────
       # Tooling smoke tests

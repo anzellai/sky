@@ -17,6 +17,7 @@ import qualified Sky.Parse.CommentsSpec
 import qualified Sky.Lsp.HoverShadowingSpec
 import qualified Sky.Lsp.RenameStableSpec
 import qualified Sky.Build.VerifyScenarioSpec
+import qualified Sky.Build.VerifyAllSpec
 
 main :: IO ()
 main = hspec $ do
@@ -47,3 +48,5 @@ main = hspec $ do
     describe "Sky.Lsp.RenameStable"       Sky.Lsp.RenameStableSpec.spec
     -- Audit P2-4: sky verify scenario support.
     describe "Sky.Build.VerifyScenario"   Sky.Build.VerifyScenarioSpec.spec
+    -- Audit P3-1: sky verify covers all examples for CI.
+    describe "Sky.Build.VerifyAll"        Sky.Build.VerifyAllSpec.spec

@@ -132,23 +132,50 @@ verifyOne cwd dir = do
         logPath  = "/tmp/sky-verify-" ++ name ++ ".log"
     hasToml <- doesFileExist tomlPath
     if not hasToml then return () else do
-        -- Clean build.
-        _ <- System.Process.readProcessWithExitCode "sh"
-            [ "-c"
-            , unwords
-                [ "cd", shellQuote dir, "&&"
-                , "rm -rf sky-out .skycache", "&&"
-                , shellQuote (cwd ++ "/sky-out/sky"), "build src/Main.sky"
-                , ">", shellQuote logPath, "2>&1"
-                ]
-            ] ""
-        let bin = dir </> "sky-out" </> "app"
-        hasBin <- doesFileExist bin
-        if not hasBin
-            then do
-                putStrLn $ "  FAIL build: " ++ name
-                appendFile "/tmp/sky-verify-fails.txt" (name ++ ":build\n")
-            else classifyAndRun cwd name dir bin logPath
+        -- Audit P3-1: Fyne GUI example needs GTK / Cocoa dev libs
+        -- at link time. Headless Linux CI (GitHub Actions ubuntu-latest)
+        -- doesn't ship them, so the `go build` step fails even if
+        -- the Sky-level code compiles cleanly. Skip the whole verify
+        -- step on Linux for any GUI example by default; the SKY_SKIP_GUI=0
+        -- override lets a GUI-capable runner still exercise it.
+        skipGui <- shouldSkipGui name
+        if skipGui
+            then putStrLn $ "  [skip] " ++ name ++ ": GUI example on Linux (set SKY_SKIP_GUI=0 to run)"
+            else do
+                -- Clean build.
+                _ <- System.Process.readProcessWithExitCode "sh"
+                    [ "-c"
+                    , unwords
+                        [ "cd", shellQuote dir, "&&"
+                        , "rm -rf sky-out .skycache", "&&"
+                        , shellQuote (cwd ++ "/sky-out/sky"), "build src/Main.sky"
+                        , ">", shellQuote logPath, "2>&1"
+                        ]
+                    ] ""
+                let bin = dir </> "sky-out" </> "app"
+                hasBin <- doesFileExist bin
+                if not hasBin
+                    then do
+                        putStrLn $ "  FAIL build: " ++ name
+                        appendFile "/tmp/sky-verify-fails.txt" (name ++ ":build\n")
+                    else classifyAndRun cwd name dir bin logPath
+
+
+-- shouldSkipGui: true only when this is a GUI example AND
+-- SKY_SKIP_GUI is unset or "1" AND we're on Linux (darwin has
+-- Cocoa so Fyne builds there).
+shouldSkipGui :: String -> IO Bool
+shouldSkipGui name
+    | not (isGui name) = return False
+    | otherwise = do
+        skipEnv <- System.Environment.lookupEnv "SKY_SKIP_GUI"
+        case skipEnv of
+            Just "0" -> return False
+            _        -> do
+                (_, uname, _) <- System.Process.readProcessWithExitCode
+                    "uname" ["-s"] ""
+                let sys = takeWhile (/= '\n') uname
+                return (sys == "Linux")
 
 
 classifyAndRun :: FilePath -> String -> FilePath -> FilePath -> FilePath -> IO ()
