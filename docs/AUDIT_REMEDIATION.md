@@ -513,7 +513,7 @@ Legend: ☐ not started · ◐ in progress · ☑ done.
 | ID | Title | Status | Verified (date, commit) |
 |----|-------|--------|-------------------------|
 | P0-1 | sky check runs Go emitter | ☑ | 2026-04-15, 660cc66 |
-| P0-2 | Silent numeric coercion → fallible | ☑ | 2026-04-15, commit TBD |
+| P0-2 | Silent numeric coercion → fallible | ☑ | 2026-04-15, f56d85c |
 | P0-3 | Typed-return coercion generalised | ☐ | |
 | P0-4 | Record field declaration order | ☐ | |
 | P0-5 | Unreachable panic → Err | ☐ | |
