@@ -19,6 +19,9 @@ main = hspec $ do
     describe "Sky.Type.Exhaustiveness"   Sky.Type.ExhaustivenessSpec.spec
     describe "Sky.Format.Format"         Sky.Format.FormatSpec.spec
     describe "Sky.Build.NestedPattern"   Sky.Build.NestedPatternSpec.spec
-    describe "Sky.Build.TypedFfi"        Sky.Build.TypedFfiSpec.spec
     describe "Sky.ErrorUnification"      Sky.ErrorUnificationSpec.spec
+    -- ExampleSweep must run before TypedFfi: the typed-FFI checks
+    -- read `examples/*/sky-out/main.go` and `.skycache/go/*` which
+    -- only exist after the sweep has built them.
     describe "Sky.Build.ExampleSweep"    Sky.Build.ExampleSweepSpec.spec
+    describe "Sky.Build.TypedFfi"        Sky.Build.TypedFfiSpec.spec
