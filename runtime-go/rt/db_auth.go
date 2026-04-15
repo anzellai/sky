@@ -616,9 +616,46 @@ func Auth_verifyPassword(pw any, hashed any) any {
 	return err == nil
 }
 
-// Auth.signToken : String -> Dict String any -> Int -> Result String String
+// Audit P1-4: Auth secret policy.
+//
+// Pre-fix, signToken/verifyToken accepted `secret any` and did
+// `fmt.Sprintf("%v", secret)` to coerce. That silently stringified
+// any value — passing a nil, Maybe, or Dict produced a wrong but
+// deterministic secret ("<nil>", "map[...:...]") that signed and
+// verified against itself, hiding the bug. Now the secret must be
+// a String at the Sky type level and a `string` at the Go runtime
+// layer; len < 32 bytes is rejected up front so no caller can sign
+// with an insecure key by accident.
+//
+// authSecretMinBytes is the lower bound. 32 bytes matches HMAC-SHA256's
+// block size and is the conservative minimum for JWT HS256 per RFC 7518
+// §3.2 ("a key of the same size as the hash output (for HS256, 256
+// bits) or larger MUST be used").
+const authSecretMinBytes = 32
+
+// coerceAuthSecret enforces the typed-secret invariant. Returns the
+// secret bytes on success; an Err SkyResult on any policy violation.
+func coerceAuthSecret(v any, callerTag string) ([]byte, any) {
+	s, ok := v.(string)
+	if !ok {
+		return nil, Err[any, any](ErrInvalidInput(
+			callerTag + ": secret must be a String, got " + fmt.Sprintf("%T", v)))
+	}
+	if len(s) < authSecretMinBytes {
+		return nil, Err[any, any](ErrInvalidInput(fmt.Sprintf(
+			"%s: secret too short (%d bytes, minimum %d)",
+			callerTag, len(s), authSecretMinBytes)))
+	}
+	return []byte(s), nil
+}
+
+// Auth.signToken : String -> Dict String any -> Int -> Result Error String
 // (secret, claims, expirySeconds)
 func Auth_signToken(secret any, claims any, expirySeconds any) any {
+	keyBytes, errRes := coerceAuthSecret(secret, "signToken")
+	if errRes != nil {
+		return errRes
+	}
 	m := map[string]any{}
 	if c, ok := claims.(map[string]any); ok {
 		for k, v := range c {
@@ -634,20 +671,29 @@ func Auth_signToken(secret any, claims any, expirySeconds any) any {
 		mc[k] = v
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, mc)
-	signed, err := token.SignedString([]byte(fmt.Sprintf("%v", secret)))
+	signed, err := token.SignedString(keyBytes)
 	if err != nil {
 		return Err[any, any](ErrFfi("signToken: " + err.Error()))
 	}
 	return Ok[any, any](signed)
 }
 
-// Auth.verifyToken : String -> String -> Result String (Dict String any)
+// Auth.verifyToken : String -> String -> Result Error (Dict String any)
 func Auth_verifyToken(secret any, token any) any {
-	parsed, err := jwt.Parse(fmt.Sprintf("%v", token), func(t *jwt.Token) (any, error) {
+	keyBytes, errRes := coerceAuthSecret(secret, "verifyToken")
+	if errRes != nil {
+		return errRes
+	}
+	tokStr, ok := token.(string)
+	if !ok {
+		return Err[any, any](ErrInvalidInput(fmt.Sprintf(
+			"verifyToken: token must be a String, got %T", token)))
+	}
+	parsed, err := jwt.Parse(tokStr, func(t *jwt.Token) (any, error) {
 		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, errors.New("unexpected signing method")
 		}
-		return []byte(fmt.Sprintf("%v", secret)), nil
+		return keyBytes, nil
 	})
 	if err != nil {
 		return Err[any, any](ErrFfi("verifyToken: " + err.Error()))
