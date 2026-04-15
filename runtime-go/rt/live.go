@@ -1352,6 +1352,34 @@ func setSecurityHeaders(h http.Header) {
 	}
 }
 
+// isBrowserNoisePath reports whether `p` is a path a browser or crawler
+// requests automatically (favicon, service-worker probe, source-map
+// fetch, .well-known discovery, static asset by extension). These must
+// never trigger app.init — otherwise a fresh page load races the real
+// GET / against /favicon.ico before the sky_sid cookie is set, and both
+// requests run init, double-firing user-visible "initialised" logging.
+func isBrowserNoisePath(p string) bool {
+	switch p {
+	case "/favicon.ico", "/robots.txt", "/sitemap.xml",
+		"/apple-touch-icon.png", "/apple-touch-icon-precomposed.png",
+		"/service-worker.js", "/sw.js", "/manifest.json":
+		return true
+	}
+	if strings.HasPrefix(p, "/.well-known/") {
+		return true
+	}
+	// Requests for assets by well-known extension are browser noise —
+	// real page routes never end in these suffixes.
+	for _, ext := range []string{".ico", ".png", ".jpg", ".jpeg", ".gif",
+		".svg", ".webp", ".css", ".js", ".map", ".woff", ".woff2", ".ttf"} {
+		if strings.HasSuffix(p, ext) {
+			return true
+		}
+	}
+	return false
+}
+
+
 func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	// Reuse the existing session when the cookie maps to one. Calling
 	// init() on every GET (favicons, devtools previews, prefetch, second
@@ -1364,13 +1392,22 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 
 	sess, existing := app.store.Get(sid)
 
-	// If the URL doesn't match any registered route AND we already have a
-	// live session for this sid, treat it as browser noise (favicon,
-	// devtools prefetch, ...) and 404 without touching the session.
-	// Without this guard the noise re-renders the notFound page over the
-	// existing handlers map and the very next event POST 404s with
-	// "handler not found".
+	// Browser-noise paths (favicons, devtools prefetch, static asset
+	// probes, .well-known) 404 unconditionally. Without this guard, a
+	// cold page load races the real GET / against /favicon.ico: both
+	// arrive before Set-Cookie is processed, both see "no session",
+	// both run init — the user sees [APP] initialised twice. Runtime
+	// internals (/_sky/*) are also excluded since they are served by
+	// dedicated handlers registered separately.
 	_, routed := matchAnyRoute(app, r.URL.Path)
+	if !routed && isBrowserNoisePath(r.URL.Path) {
+		http.NotFound(w, r)
+		return
+	}
+
+	// If the URL doesn't match any registered route AND we already have
+	// a live session, 404 without touching it — prevents an unknown
+	// path wiping sess.handlers and breaking the next event POST.
 	if !routed && existing && sess != nil && sess.model != nil {
 		http.NotFound(w, r)
 		return
@@ -1768,17 +1805,24 @@ function __skyPatch(t) {
 }
 
 // __skyElementKey: stable key used to re-locate the focused element in
-// the patched DOM. Priority: id > name > tag+position-path.
+// the patched DOM. Priority: id > name > sky-id (runtime-assigned).
+// sky-id is the critical fallback — inputs without id/name (the common
+// case for form fields) would otherwise lose focus on every patch.
 function __skyElementKey(el) {
   if (!el || el === document.body) return null;
   if (el.id) return {kind: "id", v: el.id};
   if (el.name) return {kind: "name", v: el.name, tag: el.tagName};
+  var skyId = el.getAttribute && el.getAttribute("sky-id");
+  if (skyId) return {kind: "sky-id", v: skyId};
   return null;
 }
 function __skyFindByKey(scope, key) {
   if (key.kind === "id") return document.getElementById(key.v);
   if (key.kind === "name") {
     return scope.querySelector(key.tag.toLowerCase() + '[name="' + key.v + '"]');
+  }
+  if (key.kind === "sky-id") {
+    return scope.querySelector('[sky-id="' + key.v.replace(/"/g, '\\"') + '"]');
   }
   return null;
 }

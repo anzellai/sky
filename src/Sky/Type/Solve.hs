@@ -294,24 +294,75 @@ flatTypeToType flat = case flat of
 -- TYPE DISPLAY
 -- ═══════════════════════════════════════════════════════════
 
+-- | Public entry point: rename fresh type variables to a, b, c, ...
+-- before rendering so hover/error messages don't leak solver-internal
+-- names (t47, _carg61) that confuse users.
 showType :: T.Type -> String
-showType ty = case ty of
+showType ty = showTypeR (renameVars ty)
+
+-- | Render with already-renamed vars (used internally so lambda bodies
+-- reuse the parent's renaming).
+showTypeR :: T.Type -> String
+showTypeR ty = case ty of
     T.TVar name -> name
     T.TUnit -> "()"
     T.TType _ name [] -> name
-    T.TType _ name args -> name ++ " " ++ unwords (map showTypeAtom args)
-    T.TLambda from to -> showTypeAtom from ++ " -> " ++ showType to
+    T.TType _ name args -> name ++ " " ++ unwords (map showTypeAtomR args)
+    T.TLambda from to -> showTypeAtomR from ++ " -> " ++ showTypeR to
     T.TRecord _ _ -> "{ ... }"
-    T.TTuple a b _ -> "( " ++ showType a ++ ", " ++ showType b ++ " )"
+    T.TTuple a b _ -> "( " ++ showTypeR a ++ ", " ++ showTypeR b ++ " )"
     T.TAlias _ name _ _ -> name
 
 
-showTypeAtom :: T.Type -> String
-showTypeAtom ty = case ty of
+showTypeAtomR :: T.Type -> String
+showTypeAtomR ty = case ty of
     T.TVar name -> name
     T.TType _ name [] -> name
     T.TUnit -> "()"
-    _ -> "(" ++ showType ty ++ ")"
+    _ -> "(" ++ showTypeR ty ++ ")"
+
+
+-- | Collect TVar names in left-to-right occurrence order and rewrite
+-- them to a, b, c, ... This gives stable user-facing type sigs that
+-- don't expose solver-internal fresh-name counters.
+renameVars :: T.Type -> T.Type
+renameVars ty =
+    let names = collectVarNames ty
+        rename = Map.fromList (zip names humanNames)
+        sub n = Map.findWithDefault n n rename
+    in substVar sub ty
+
+collectVarNames :: T.Type -> [String]
+collectVarNames = nubOrdered . go
+  where
+    go (T.TVar n) = [n]
+    go (T.TType _ _ args) = concatMap go args
+    go (T.TLambda a b) = go a ++ go b
+    go (T.TTuple a b cs) = concatMap go (a : b : cs)
+    go (T.TAlias _ _ subs b) = concatMap (go . snd) subs ++ goAlias b
+    go _ = []
+    goAlias (T.Hoisted t) = go t
+    goAlias (T.Filled t)  = go t
+    nubOrdered = foldr (\x acc -> if x `elem` acc then acc else x : acc) []
+
+substVar :: (String -> String) -> T.Type -> T.Type
+substVar f ty = case ty of
+    T.TVar n -> T.TVar (f n)
+    T.TType m n args -> T.TType m n (map (substVar f) args)
+    T.TLambda a b -> T.TLambda (substVar f a) (substVar f b)
+    T.TTuple a b cs -> T.TTuple (substVar f a) (substVar f b) (map (substVar f) cs)
+    T.TAlias m n subs body ->
+        T.TAlias m n [(k, substVar f v) | (k, v) <- subs] (substAlias f body)
+    other -> other
+  where
+    substAlias g (T.Hoisted t) = T.Hoisted (substVar g t)
+    substAlias g (T.Filled t)  = T.Filled  (substVar g t)
+
+-- | Infinite "a, b, c, ..., z, a1, b1, ..." sequence.
+humanNames :: [String]
+humanNames =
+    [[c] | c <- ['a' .. 'z']]
+    ++ [ [c] ++ show (n :: Int) | n <- [1..], c <- ['a' .. 'z'] ]
 
 
 showExpected :: T.Expected T.Type -> String

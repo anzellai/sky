@@ -616,7 +616,11 @@ lookupLocal idx file line col name =
         , symFile = file
         , symRegion = lbRegion b
         , symKind = SymLocal
-        , symTypeSig = Nothing
+        -- Local bindings (let, lambda param, case pattern) don't yet
+        -- carry a solver-inferred type. Showing "(local binding)"
+        -- distinguishes a found-but-untyped local from a hover miss,
+        -- and from solver gibberish (fresh tXXX vars).
+        , symTypeSig = Just (lbName b ++ " : (local binding)")
         , symDoc = Nothing
         }) best
   where
