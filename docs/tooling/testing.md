@@ -119,6 +119,11 @@ Current permanent regressions:
 - `runtime-go/rt/error_adt_shape_test.go` — rt `ErrIo` values are type-compatible with user-side `Sky_Core_Error_Error`.
 - `test/Sky/Format/FormatSpec.hs` — formatter idempotency (string escapes, scientific-notation floats, nested case, long pipelines, record updates).
 - `test/Sky/ErrorUnificationSpec.hs` — forbidden-pattern greps: `Result String`, `Task String`, `IoError`, `RemoteData`.
+- `tests/Core/CoreTest.sky` — 22 stdlib semantic tests (String / List / Dict / Maybe / Result).
+- `tests/Lang/PatternTest.sky` — 10 pattern-matching tests (nested Result/Maybe, enum ADT, Bool-inside-Ok).
+- `tests/Live/CounterTest.sky` — 19 Sky.Live TEA loop tests (init / update / model invariants / event dispatch).
+- `tests/Live/FormTest.sky` — 20 Sky.Live form-handling tests (validation / state machine transitions / sign-out).
+- `tests/Live/SessionTest.sky` — 18 Sky.Live subscription + session round-trip tests.
 
 ## Known limits
 

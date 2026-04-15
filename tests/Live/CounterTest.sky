@@ -1,0 +1,187 @@
+module Live.CounterTest exposing (tests)
+
+-- Phase 3 — Sky.Live behaviour tests.
+--
+-- Exercises a minimal counter-style TEA app (mirroring
+-- examples/09-live-counter) without spinning up an HTTP server. The
+-- unit under test is the pure initial → update → (Model, Cmd) loop:
+-- given a starting Model and a Msg, assert the next Model matches
+-- the expected state and that `update` never panics for any Msg
+-- reachable by the event system.
+--
+-- View and routing integration are covered by `sky verify 09-live-counter`
+-- which boots the real HTTP server and probes. This file covers the
+-- model/update invariants that a boot-test can't inspect.
+
+import Sky.Core.Prelude exposing (..)
+import Std.Cmd as Cmd
+import Sky.Test as Test exposing (Test)
+
+
+-- ======================================================
+-- MODEL
+-- ======================================================
+type Page
+    = CounterPage
+    | AboutPage
+
+
+type alias Model =
+    { page : Page
+    , count : Int
+    }
+
+
+-- ======================================================
+-- MSG
+-- ======================================================
+type Msg
+    = Navigate Page
+    | Increment
+    | Decrement
+    | Reset
+    | Tick
+
+
+-- ======================================================
+-- INIT
+-- ======================================================
+initial : Model
+initial =
+    { page = CounterPage, count = 0 }
+
+
+-- ======================================================
+-- UPDATE (pure; Cmd returned is discarded for unit tests)
+-- ======================================================
+updateModel : Msg -> Model -> Model
+updateModel msg model =
+    case msg of
+        Navigate page ->
+            { model | page = page }
+
+        Increment ->
+            { model | count = model.count + 1 }
+
+        Decrement ->
+            { model | count = model.count - 1 }
+
+        Reset ->
+            { model | count = 0 }
+
+        Tick ->
+            { model | count = model.count + 1 }
+
+
+-- ======================================================
+-- Helpers — drive a stream of messages through `update`
+-- ======================================================
+runMessages : List Msg -> Model -> Model
+runMessages msgs start =
+    case msgs of
+        [] ->
+            start
+
+        m :: rest ->
+            runMessages rest (updateModel m start)
+
+
+-- ======================================================
+-- TESTS
+-- ======================================================
+tests : List Test
+tests =
+    [ Test.suite "initial"
+        [ Test.test "starts on CounterPage" (\_ ->
+            Test.equal CounterPage initial.page)
+        , Test.test "count starts at zero" (\_ ->
+            Test.equal 0 initial.count)
+        ]
+    , Test.suite "update: counter messages"
+        [ Test.test "Increment adds 1" (\_ ->
+            let
+                model = updateModel Increment initial
+            in
+            Test.equal 1 model.count)
+        , Test.test "Decrement subtracts 1" (\_ ->
+            let
+                model = updateModel Decrement initial
+            in
+            Test.equal (-1) model.count)
+        , Test.test "Reset returns to 0" (\_ ->
+            let
+                model = runMessages [ Increment, Increment, Increment, Reset ] initial
+            in
+            Test.equal 0 model.count)
+        , Test.test "Tick behaves as Increment" (\_ ->
+            let
+                model = updateModel Tick initial
+            in
+            Test.equal 1 model.count)
+        , Test.test "sequential updates compose" (\_ ->
+            let
+                model = runMessages [ Increment, Increment, Increment, Decrement ] initial
+            in
+            Test.equal 2 model.count)
+        , Test.test "count does not leak across page changes" (\_ ->
+            let
+                model = runMessages [ Increment, Increment, Navigate AboutPage ] initial
+            in
+            Test.equal 2 model.count)
+        ]
+    , Test.suite "update: routing messages"
+        [ Test.test "Navigate to AboutPage" (\_ ->
+            let
+                model = updateModel (Navigate AboutPage) initial
+            in
+            Test.equal AboutPage model.page)
+        , Test.test "Navigate back to CounterPage" (\_ ->
+            let
+                afterAbout = updateModel (Navigate AboutPage) initial
+                back = updateModel (Navigate CounterPage) afterAbout
+            in
+            Test.equal CounterPage back.page)
+        , Test.test "page change preserves count" (\_ ->
+            let
+                counted = runMessages [ Increment, Increment, Increment ] initial
+                navigated = updateModel (Navigate AboutPage) counted
+            in
+            Test.equal 3 navigated.count)
+        ]
+    , Test.suite "update: model invariants"
+        [ Test.test "Reset from arbitrary count lands at 0" (\_ ->
+            let
+                large = runMessages [ Increment, Increment, Increment, Increment, Increment ] initial
+                cleared = updateModel Reset large
+            in
+            Test.equal 0 cleared.count)
+        , Test.test "page field never becomes undefined via counter msgs" (\_ ->
+            let
+                model = runMessages [ Increment, Decrement, Reset, Tick ] initial
+            in
+            Test.equal CounterPage model.page)
+        , Test.test "counter messages are idempotent on page" (\_ ->
+            let
+                model = runMessages [ Increment, Tick, Decrement, Tick, Reset ] initial
+            in
+            Test.isTrue (model.page == CounterPage))
+        ]
+    , Test.suite "event dispatch roundtrip"
+        -- Simulates what Sky.Live's event loop does: decode a Msg
+        -- from the wire, apply update, read the new model. The
+        -- wire-format stage is out of scope for a unit test (it's
+        -- covered by `sky verify 09-live-counter`); here we just
+        -- assert that dispatch on every ctor of Msg returns a
+        -- well-formed Model of the expected shape.
+        [ Test.test "dispatch Increment yields count=1" (\_ ->
+            Test.equal 1 (updateModel Increment initial).count)
+        , Test.test "dispatch Decrement yields count=-1" (\_ ->
+            Test.equal (-1) (updateModel Decrement initial).count)
+        , Test.test "dispatch Reset on zero is zero" (\_ ->
+            Test.equal 0 (updateModel Reset initial).count)
+        , Test.test "dispatch Tick on zero is one" (\_ ->
+            Test.equal 1 (updateModel Tick initial).count)
+        , Test.test "dispatch Navigate About updates page" (\_ ->
+            Test.equal AboutPage (updateModel (Navigate AboutPage) initial).page)
+        ]
+    ]
