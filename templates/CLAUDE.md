@@ -12,6 +12,7 @@ sky build src/Main.sky    # Compile to Go binary (output: sky-out/app)
 sky run src/Main.sky      # Build and run
 sky check src/Main.sky    # Type-check without compiling (cross-module ADT + alias resolution)
 sky fmt src/Main.sky      # Format code (Elm-style: 4-space indent, leading commas)
+sky test tests/MyTest.sky # Run a test module (exposes `tests : List Test`)
 sky add <package>         # Add dependency + generate bindings + update sky.toml
 sky remove <package>      # Remove dependency from sky.toml + clean cache
 sky install               # Install all deps + auto-generate missing bindings
@@ -21,6 +22,38 @@ sky lsp                   # Start Language Server
 sky clean                 # Remove build artifacts
 sky --version             # Show version
 ```
+
+## Testing (Sky.Test)
+
+A test module exposes a single `tests : List Test` value. `sky test <path>` compiles it alongside your project and runs every test, failing with exit 1 on any assertion failure.
+
+```elm
+module StringTest exposing (tests)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Test as Test exposing (Test)
+
+
+tests : List Test
+tests =
+    [ Test.test "trim removes outer spaces" (\_ ->
+        Test.equal "hi" (String.trim "  hi  "))
+    , Test.test "toInt rejects junk" (\_ ->
+        Test.err (String.toInt "abc"))
+    , Test.test "contains finds substring" (\_ ->
+        Test.isTrue (String.contains "ell" "hello"))
+    ]
+```
+
+Assertions: `equal`, `notEqual`, `ok`, `err`, `expectErrorKind`, `isTrue`, `isFalse`, `fail`, `pass`.
+
+Non-regression rules (enforced by `scripts/check-forbidden.sh`):
+
+- No `Result String a` or `Task String a` in any public surface — use `Result Error a` / `Task Error a`.
+- No `Std.IoError` (deleted), no `RemoteData` (deleted).
+- Every bug you fix must land with a regression test in `tests/`.
+
 
 ## Language Syntax
 

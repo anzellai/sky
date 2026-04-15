@@ -11,6 +11,29 @@ All documentation, comments, variable names, function names, and user-facing str
 3. **Root-cause fixes only.** Fix at the correct abstraction layer. **Never suppress type errors or warnings.**
 4. **Production-grade architecture.** Must scale to large Go packages (Stripe SDK). Must remain maintainable.
 
+## Non-Regression Rules
+
+These constraints are enforced by `scripts/check-forbidden.sh` and `test/Sky/ErrorUnificationSpec.hs`. Violating them breaks the repo:
+
+- **No `Result String a`** in any public surface. Use `Result Error a`.
+- **No `Task String a`** in any public surface. Use `Task Error a`.
+- **No `Std.IoError`** — the pre-v1 error ADT was deleted.
+- **No `RemoteData`** — the pre-v1 async-state type was deleted.
+- **No runtime panic from well-typed Sky code.** Every known panic class has a regression test in `runtime-go/rt/*_test.go` or `test/Sky/**Spec.hs`.
+
+## Testing Rules
+
+- **Every new language feature or runtime helper needs a test.** Cabal specs for compile-time behaviour; `runtime-go/rt/*_test.go` for runtime helpers; `tests/**/*Test.sky` for stdlib semantics.
+- **Every bug becomes a regression test** *before* landing the fix. The failing test is the discovery artefact; without it, the class comes back.
+- **`sky test <file>` is the user-facing runner.** See `sky-stdlib/Sky/Test.sky` for the API.
+- **Runtime verification on every push.** `scripts/verify-examples.sh` builds and runs each example, catching panics and HTTP failures that `--build-only` misses.
+
+## Tooling Rules
+
+- **CLI commands must be correct end-to-end.** `sky build` / `sky run` / `sky check` / `sky fmt` / `sky test` all auto-regen missing FFI bindings and propagate exit codes.
+- **LSP capabilities must match `docs/tooling/lsp.md`.** If you add a capability, document it. If a feature is incomplete, narrow the claim — don't lie in docs.
+- **Formatter must be idempotent.** Two passes produce byte-identical output. Fixtures in `test/Sky/Format/FormatSpec.hs` guard this.
+
 ## Effect Boundary: Task
 
 ALL effectful operations flow through `Task`:
@@ -95,6 +118,7 @@ sky build src/Main.sky            # Compile → sky-out/app
 sky run src/Main.sky              # Build and run
 sky check src/Main.sky            # Type-check only
 sky fmt src/Main.sky              # Format (Elm-style)
+sky test tests/MyTest.sky         # Run a Sky test module (exposing `tests : List Test`)
 sky add github.com/some/package   # Add dependency + generate bindings
 sky remove <package>              # Remove dependency
 sky install                       # Install deps + generate missing bindings
