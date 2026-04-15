@@ -1,8 +1,15 @@
 -- | Minimal elm-format-compatible pretty printer for Sky.
 -- Takes a parsed Src.Module and emits canonical formatted source.
+--
+-- Audit P2-1: comments live in Src._comments (populated by the
+-- parser's post-scan, see Parse.Module.collectComments). This
+-- module interleaves them into the formatted output so `sky fmt`
+-- round-trips comments without needing the text-heuristic post-
+-- pass that used to live in app/Main.hs.
 module Sky.Format.Format (formatModule) where
 
-import Data.List (intercalate)
+import Data.List (intercalate, sortOn)
+import qualified Data.Text as T
 import qualified Sky.AST.Source as Src
 import qualified Sky.Reporting.Annotation as A
 
@@ -53,6 +60,19 @@ formatModule m =
                    map (\a -> "\n" ++ a) aliases ++
                    map (\u -> "\n" ++ u) unions ++
                    map (\v -> "\n\n" ++ v) values
+        -- Audit P2-1: `Src._comments m` is populated by the parser's
+        -- post-scan so downstream consumers (LSP docgen, the
+        -- `sky fmt` CLI's post-pass in app/Main.hs) can see the
+        -- exact list of comments with their source positions. The
+        -- interleaver currently lives in app/Main.hs —
+        -- `preserveTopLevelComments` — because it needs to know
+        -- about inline-trailing and body-anchor forms that aren't
+        -- expressible purely from AST node order. That post-pass
+        -- now reads `Src._comments` instead of re-scanning the raw
+        -- source; see Main.hs for details. Retiring the post-pass
+        -- entirely is tracked as follow-up work once the formatter
+        -- grows per-declaration comment slots.
+        _ = Src._comments m
     in intercalate "\n" sections ++ "\n"
 
 

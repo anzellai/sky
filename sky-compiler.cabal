@@ -155,3 +155,4 @@ test-suite sky-tests
       Sky.Build.CheckIsBuildSpec
       Sky.Build.RecordFieldOrderSpec
       Sky.Build.UnreachableGateSpec
+      Sky.Parse.CommentsSpec

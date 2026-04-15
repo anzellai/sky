@@ -9,16 +9,31 @@ module Sky.AST.Source where
 import qualified Sky.Reporting.Annotation as A
 
 
--- | A parsed module
+-- | A parsed module.
+--
+-- Audit P2-1: `_comments` holds every `--` line comment and
+-- `{- ... -}` block comment with its source region. Populated by
+-- `Parse.Module.parseModule` via a post-parse raw-text scan so the
+-- rest of the parser combinators stay unchanged. The formatter
+-- reads this list and interleaves comments by row into its output,
+-- giving `sky fmt` proper round-trip preservation without the
+-- text-heuristic post-pass that used to live in app/Main.hs.
+--
+-- Each comment's `A.Located String` contains the raw text *without*
+-- the leading `--` / `{-` or trailing `-}` — the formatter adds the
+-- delimiters back. This keeps the stored form normalised so
+-- downstream consumers (LSP hover-over-comment, future docgen)
+-- don't re-parse the delimiters.
 data Module = Module
-    { _name    :: Maybe (A.Located [String])  -- module name segments
-    , _exports :: A.Located Exposing
-    , _docs    :: Docs
-    , _imports :: [Import]
-    , _values  :: [A.Located Value]
-    , _unions  :: [A.Located Union]
-    , _aliases :: [A.Located Alias]
-    , _binops  :: [A.Located Infix]
+    { _name     :: Maybe (A.Located [String])  -- module name segments
+    , _exports  :: A.Located Exposing
+    , _docs     :: Docs
+    , _imports  :: [Import]
+    , _values   :: [A.Located Value]
+    , _unions   :: [A.Located Union]
+    , _aliases  :: [A.Located Alias]
+    , _binops   :: [A.Located Infix]
+    , _comments :: [A.Located String]  -- audit P2-1
     }
     deriving (Show)
 

@@ -13,6 +13,7 @@ import qualified Sky.Build.NestedPatternSpec
 import qualified Sky.Build.CheckIsBuildSpec
 import qualified Sky.Build.RecordFieldOrderSpec
 import qualified Sky.Build.UnreachableGateSpec
+import qualified Sky.Parse.CommentsSpec
 
 main :: IO ()
 main = hspec $ do
@@ -35,3 +36,5 @@ main = hspec $ do
     -- Audit P0-5: no raw `panic("sky: internal…)` in emitted Go.
     -- Runs AFTER ExampleSweep so the sky-out/main.go files are fresh.
     describe "Sky.Build.UnreachableGate"  Sky.Build.UnreachableGateSpec.spec
+    -- Audit P2-1: parser captures comments into Src._comments.
+    describe "Sky.Parse.Comments"         Sky.Parse.CommentsSpec.spec

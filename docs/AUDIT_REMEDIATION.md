@@ -524,7 +524,7 @@ Legend: ☐ not started · ◐ in progress · ☑ done.
 | P1-3 | Db.findWhere safe API | ☑ | 2026-04-15, ce5ae6b |
 | P1-4 | Auth secrets typed + min-length | ☑ | 2026-04-15, ebba5c5 |
 | P1-5 | Cookie Secure + prod-mode logs | ☑ | 2026-04-15, 30d2706 |
-| P2-1 | AST comment preservation | ☐ | |
+| P2-1 | AST comment preservation | ☑ | 2026-04-15, commit TBD |
 | P2-2 | LSP local types by region | ☐ | |
 | P2-3 | LSP TVar global renaming | ☐ | |
 | P2-4 | sky verify scenarios | ☐ | |

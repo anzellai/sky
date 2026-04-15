@@ -20,10 +20,72 @@ data ModuleError
     deriving (Show)
 
 
--- | Parse a complete Sky module
+-- | Parse a complete Sky module.
+--
+-- Audit P2-1: also does a raw-text scan of the source for comments
+-- and attaches them to `Src._comments`. The combinator-level parser
+-- stays comment-free (comments are whitespace as far as layout /
+-- indentation are concerned); the formatter uses this list to
+-- round-trip comments through `sky fmt`.
 parseModule :: T.Text -> Either ModuleError Src.Module
 parseModule src =
-    fromText moduleParser (\r c -> ModuleExpected r c) src
+    case fromText moduleParser (\r c -> ModuleExpected r c) src of
+        Left e  -> Left e
+        Right m -> Right m { Src._comments = collectComments src }
+
+
+-- Walk the source text row-by-row, emitting one A.Located String per
+-- line/block comment. Block comments span multiple rows and are
+-- emitted with a Region covering the full start..end span. Contents
+-- are stored WITHOUT the `--`, `{-`, `-}` delimiters — the formatter
+-- re-inserts them on emit.
+collectComments :: T.Text -> [A.Located String]
+collectComments src = go 1 1 (T.unpack src) []
+  where
+    go _ _ []            acc = reverse acc
+    go r _ ('\n':xs)     acc = go (r + 1) 1 xs acc
+    go r c ('-':'-':xs)  acc =
+        let (body, rest) = span (/= '\n') xs
+            endCol       = c + 2 + length body
+            region       = A.Region (A.Position r c) (A.Position r endCol)
+        in go r endCol rest (A.At region (trimStart body) : acc)
+    go r c ('{':'-':xs)  acc =
+        let (body, rest, r', c', consumed) = takeBlockBody xs r (c + 2) 1
+            region = A.Region (A.Position r c) (A.Position r' c')
+        in if consumed
+             then go r' c' rest (A.At region body : acc)
+             else reverse acc   -- unclosed block; stop scanning to avoid run-on
+    go r c ('"':xs)      acc = skipString r (c + 1) xs acc
+    go r c (_:xs)        acc = go r (c + 1) xs acc
+
+    -- Skip a Sky double-quoted string literal so a `--` inside a
+    -- string isn't treated as a line comment. Triple-quoted strings
+    -- also supported (scanner just treats them as nested quotes).
+    skipString r c []            acc = reverse acc
+    skipString r _ ('\n':xs)     acc = go (r + 1) 1 xs acc
+    skipString r c ('\\':_:xs)   acc = skipString r (c + 2) xs acc
+    skipString r c ('"':xs)      acc = go r (c + 1) xs acc
+    skipString r c (_:xs)        acc = skipString r (c + 1) xs acc
+
+    -- Consume block body; returns (body, rest, endRow, endCol, closed).
+    -- Handles nested `{- -}` per Sky's documented lexer rules.
+    takeBlockBody :: String -> Int -> Int -> Int -> (String, String, Int, Int, Bool)
+    takeBlockBody []             r c _    = ("", "", r, c, False)
+    takeBlockBody ('-':'}':rest) r c 1    = ("", rest, r, c + 2, True)
+    takeBlockBody ('-':'}':rest) r c d    =
+        let (b, rr, rrr, rc, ok) = takeBlockBody rest r (c + 2) (d - 1)
+        in ("-}" ++ b, rr, rrr, rc, ok)
+    takeBlockBody ('{':'-':rest) r c d    =
+        let (b, rr, rrr, rc, ok) = takeBlockBody rest r (c + 2) (d + 1)
+        in ("{-" ++ b, rr, rrr, rc, ok)
+    takeBlockBody ('\n':rest)    r _ d    =
+        let (b, rr, rrr, rc, ok) = takeBlockBody rest (r + 1) 1 d
+        in ('\n':b, rr, rrr, rc, ok)
+    takeBlockBody (x:rest)       r c d    =
+        let (b, rr, rrr, rc, ok) = takeBlockBody rest r (c + 1) d
+        in (x:b, rr, rrr, rc, ok)
+
+    trimStart = dropWhile (== ' ')
 
 
 moduleParser :: Parser ModuleError Src.Module
@@ -55,6 +117,7 @@ moduleParser = do
         , Src._unions = unions
         , Src._aliases = aliases
         , Src._binops = binops
+        , Src._comments = []   -- populated by parseModule's post-scan
         }
 
 
