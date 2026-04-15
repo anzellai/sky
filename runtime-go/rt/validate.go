@@ -1,3 +1,8 @@
+// validate.go — input-validation kernels (URL/email/regex etc.).
+//
+// Audit P3-4: `%v` sites here are display-only — they format the
+// offending value back into a validation error message for the
+// user to read ("bad email: <v>"). No secret material flows here.
 package rt
 
 import (

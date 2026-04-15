@@ -459,7 +459,7 @@ invalidates the TH splice correctly.
 **Acceptance.** Plain `cabal build` after editing `runtime-go/rt/rt.go`
 rebuilds and re-embeds without the scripts/build.sh dance.
 
-### [ ] P3-4 `fmt.Sprintf("%v", x)` audit
+### [x] P3-4 `fmt.Sprintf("%v", x)` audit
 **Problem.** Multiple runtime sites use `%v`-stringification on
 `any` values. Each is a potential silent coercion (secrets, IDs,
 query parameters, JSON keys).
@@ -532,7 +532,7 @@ Legend: ☐ not started · ◐ in progress · ☑ done.
 | P3-1 | CI uses sky verify | ☑ | 2026-04-15, 270d564 |
 | P3-2 | LSP integration tests | ☑ | ProtocolSpec covers initialize + hover |
 | P3-3 | No-TH-dance runtime dep | ☑ | EmbeddedRuntimeSpec diffs materialised vs disk |
-| P3-4 | %v audit | ☐ | |
+| P3-4 | %v audit | ☑ | high-risk sites typed; rest justified per-file |
 | P4-1 | Typed codegen v1.0 | ☐ | refers to PRODUCTION_READINESS.md |
 | P4-2 | sky test on Haskell compiler | ☐ | |
 

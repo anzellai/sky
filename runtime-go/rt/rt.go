@@ -1,3 +1,22 @@
+// rt.go — Sky runtime core: Result/Maybe/Task ADTs, reflect-based
+// FFI dispatch, panic recovery, numeric coercion, stdlib kernels.
+//
+// Audit P3-4: this file has ~140 `fmt.Sprintf("%v", x)` call sites.
+// They fall into three justified categories:
+//   (1) panic messages — rt.Coerce/AsInt/AsBool/AsFloat failures
+//       stringify the offending value to help the user debug the
+//       boundary bug. Never secret material (Auth secrets go through
+//       coerceAuthSecret in db_auth.go).
+//   (2) display-only toString kernels — rt.toString, stdlib Int→String,
+//       debug prints. These are explicitly for user output.
+//   (3) error-message composition — ErrInvalidInput / ErrIo wrap the
+//       offending value in a descriptive message. Cryptographic
+//       tokens (CSRF, HMAC signatures) use crypto/subtle compares
+//       and never pass through %v.
+// No password, session id, auth token, cookie value, or SQL query
+// reaches a %v site in this file. Secret-bearing code paths live in
+// db_auth.go (covered by p3_4_typed_strings_test.go) and live.go
+// (file-header justification).
 package rt
 
 import (

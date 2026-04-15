@@ -82,7 +82,32 @@ func isSafeIdent(s string) bool {
 
 // safeTable wraps a table identifier after validation; returns "" if invalid.
 func safeTable(v any) string {
-	return quoteIdent(fmt.Sprintf("%v", v))
+	return quoteIdent(mustStringDisplay(v))
+}
+
+// Audit P3-4: every `fmt.Sprintf("%v", x)` in the hot paths
+// (passwords, SQL queries, table/column identifiers) was a silent
+// coercion waiting to happen. A non-string caller — nil, Maybe,
+// Dict, Int — would stringify deterministically and feed garbage
+// into bcrypt or the SQL driver. `mustStringTyped` returns a typed
+// Err SkyResult on non-string input so boundary bugs surface
+// immediately instead of hashing "<nil>" or queuing a syntax-error
+// SQL call. `mustStringDisplay` is the explicit display-only path,
+// reserved for identifier wrappers where the value is statically a
+// string at the Sky type level.
+func mustStringTyped(v any, callerTag string) (string, any) {
+	if s, ok := v.(string); ok {
+		return s, nil
+	}
+	return "", Err[any, any](ErrInvalidInput(
+		callerTag + ": expected String, got " + fmt.Sprintf("%T", v)))
+}
+
+func mustStringDisplay(v any) string {
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return fmt.Sprintf("%v", v)
 }
 
 var (
@@ -98,7 +123,10 @@ var (
 //   "postgresql://..."     — equivalent
 //   "host=... user=... ..." — libpq-style keyword connection string
 func Db_connect(path any) any {
-	p := fmt.Sprintf("%v", path)
+	p, errRes := mustStringTyped(path, "db.connect")
+	if errRes != nil {
+		return errRes
+	}
 	dbRegistryMu.Lock()
 	defer dbRegistryMu.Unlock()
 	if existing, ok := dbRegistry[p]; ok {
@@ -177,7 +205,11 @@ func Db_exec(db any, query any, args any) any {
 	for i, a := range argList {
 		goArgs[i] = a
 	}
-	res, err := d.conn.Exec(fmt.Sprintf("%v", query), goArgs...)
+	q, errRes := mustStringTyped(query, "db.exec")
+	if errRes != nil {
+		return errRes
+	}
+	res, err := d.conn.Exec(q, goArgs...)
 	if err != nil {
 		return Err[any, any](ErrIo("db.exec: " + err.Error()))
 	}
@@ -197,7 +229,11 @@ func Db_query(db any, query any, args any) any {
 	for i, a := range argList {
 		goArgs[i] = a
 	}
-	rows, err := d.conn.Query(fmt.Sprintf("%v", query), goArgs...)
+	q, errRes := mustStringTyped(query, "db.query")
+	if errRes != nil {
+		return errRes
+	}
+	rows, err := d.conn.Query(q, goArgs...)
 	if err != nil {
 		return Err[any, any](ErrIo("db.query: " + err.Error()))
 	}
@@ -553,7 +589,10 @@ func Auth_hashPassword(pw any) any {
 
 // Auth.hashPasswordCost : String -> Int -> Result String String
 func Auth_hashPasswordCost(pw any, cost any) any {
-	s := fmt.Sprintf("%v", pw)
+	s, errRes := mustStringTyped(pw, "hashPassword")
+	if errRes != nil {
+		return errRes
+	}
 	c := AsInt(cost)
 	if c < bcrypt.MinCost {
 		c = bcrypt.MinCost
@@ -580,7 +619,10 @@ func Auth_hashPasswordCost(pw any, cost any) any {
 // Enforces a safe baseline: ≥8 chars, ≤72 bytes, at least one letter + one digit.
 // Returns Ok () if strong enough, Err describing what's missing otherwise.
 func Auth_passwordStrength(pw any) any {
-	s := fmt.Sprintf("%v", pw)
+	s, errRes := mustStringTyped(pw, "passwordStrength")
+	if errRes != nil {
+		return errRes
+	}
 	if len(s) < 8 {
 		return Err[any, any](ErrInvalidInput("password must be at least 8 characters"))
 	}
@@ -609,10 +651,14 @@ func Auth_passwordStrength(pw any) any {
 // Auth.verifyPassword : String -> String -> Bool
 // (password, hash) — returns True on match
 func Auth_verifyPassword(pw any, hashed any) any {
-	err := bcrypt.CompareHashAndPassword(
-		[]byte(fmt.Sprintf("%v", hashed)),
-		[]byte(fmt.Sprintf("%v", pw)),
-	)
+	h, ok1 := pw.(string)
+	p, ok2 := hashed.(string)
+	if !ok1 || !ok2 {
+		// Audit P3-4: non-string caller can't have signed this hash;
+		// deterministic False is safer than comparing "<nil>" bytes.
+		return false
+	}
+	err := bcrypt.CompareHashAndPassword([]byte(p), []byte(h))
 	return err == nil
 }
 

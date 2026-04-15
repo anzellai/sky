@@ -48,9 +48,17 @@ func init() {
 // Process_loadEnv: explicit loader. Returns Ok(()) on success, Err(msg) on I/O
 // failure. `override = false` by default (matches godotenv semantics).
 func Process_loadEnv(path any) any {
+	// Audit P3-4: path must be a String. Non-string input is a
+	// caller bug, not a display value — return typed Err rather
+	// than %v-stringifying a Maybe/Dict/Int into a filename.
 	p := ""
 	if path != nil {
-		p = fmt.Sprintf("%v", path)
+		s, ok := path.(string)
+		if !ok {
+			return Err[any, any](ErrInvalidInput(
+				fmt.Sprintf("loadEnv: path must be a String, got %T", path)))
+		}
+		p = s
 	}
 	if p == "" {
 		p = ".env"

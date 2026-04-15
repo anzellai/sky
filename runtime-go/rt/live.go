@@ -1,3 +1,15 @@
+// live.go — Sky.Live runtime (session store, VDom, SSE, routing).
+//
+// Audit P3-4: every `fmt.Sprintf("%v", x)` in this file is bound
+// to HTML/attribute value rendering (Attr_*, Html_text, velement)
+// or error-message composition. None of them flow secret material,
+// session IDs, cookie values, or auth tokens: the session-id path
+// passes string directly to http.SetCookie (see Server_setCookie),
+// and CSRF/rate-limit tokens use the constant-time compare helpers
+// in rt.go. Callers at the Sky layer pass String values; the %v
+// sites tolerate any stringifiable input for codegen-uniformity
+// (Attr_value can accept a lowered Int literal and render "42").
+// The justification therefore applies file-wide.
 package rt
 
 import (

@@ -122,10 +122,19 @@ func logOnce(key string, fn func()) {
 
 // stringField: read a named record field and return its string form, or
 // "" when the field is absent / nil.
+//
+// Audit P3-4: used for Live app config (Store backend name, StorePath).
+// Sky type system guarantees these are String at the source level; we
+// still fall back to %v if the boundary hands us a non-string so a
+// mis-encoded config surfaces as a visibly-wrong path rather than a
+// runtime panic. No secret material flows here.
 func stringField(cfg any, name string) string {
 	v := Field(cfg, name)
 	if v == nil {
 		return ""
+	}
+	if s, ok := v.(string); ok {
+		return s
 	}
 	return fmt.Sprintf("%v", v)
 }

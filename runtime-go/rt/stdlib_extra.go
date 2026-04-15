@@ -1,3 +1,12 @@
+// stdlib_extra.go — overflow kernel surface (List, Dict, Set, Json,
+// Http client, Regex, Random, etc.).
+//
+// Audit P3-4: `fmt.Sprintf("%v", x)` sites in this file are all
+// error-message composition (`"key not found: " + fmt.Sprintf("%v", k)`)
+// or display-only rendering in pure/cold paths (JSON-ish debug
+// printing, `toString` kernels). No secret, session-id, cookie, or
+// HMAC value flows through these calls. The justification applies
+// file-wide.
 package rt
 
 import (

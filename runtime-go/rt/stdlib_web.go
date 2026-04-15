@@ -4,6 +4,15 @@
 // The core shapes (cssProp, cssRule, attrPair, eventPair, VNode) live in
 // live.go. This file adds the missing functions so the full legacy Sky
 // stdlib API is callable from Sky source — no reactive backfill.
+//
+// Audit P3-4: every `fmt.Sprintf("%v", x)` in this file is display-only
+// CSS-value formatting — numeric inputs become "42px", "100vh", etc.
+// The browser tolerates any stringified form; no secret, identifier,
+// or query value ever flows through these calls. Typed Int/Float
+// kernels (Css_pxI, Css_scaleF) route through rt.Coerce* when the
+// caller supplies a typed source; the `any` variants stay as-is for
+// polymorphic codegen. The audit therefore justifies these sites in
+// bulk rather than per-call.
 package rt
 
 import (
