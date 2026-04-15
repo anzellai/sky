@@ -526,7 +526,7 @@ Legend: ☐ not started · ◐ in progress · ☑ done.
 | P1-5 | Cookie Secure + prod-mode logs | ☑ | 2026-04-15, 30d2706 |
 | P2-1 | AST comment preservation | ☑ | 2026-04-15, c544fe9 |
 | P2-2 | LSP local types by region | ☑ | 2026-04-15, cae934c |
-| P2-3 | LSP TVar global renaming | ☑ | 2026-04-15, commit TBD |
+| P2-3 | LSP TVar global renaming | ☑ | 2026-04-15, 170b77e |
 | P2-4 | sky verify scenarios | ☐ | |
 | P2-5 | Session store type safety | ☐ | |
 | P3-1 | CI uses sky verify | ☐ | |
