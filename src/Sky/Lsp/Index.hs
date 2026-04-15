@@ -91,6 +91,11 @@ data Index = Index
     , idxImports   :: !(Map FilePath [Import])
     , idxLocals    :: !(Map FilePath [LocalBinding])
     , idxLocalTypes :: !(Map FilePath (Map String [Ty.Type]))
+    , idxRenaming  :: !(Map FilePath (Map String String))
+      -- Audit P2-3: per-file stable TVar → human-letter renaming
+      -- so the same solver-level TVar (t108) renders as the same
+      -- letter ('a') across every hover in a single file. Prevents
+      -- the two-hovers-two-letters confusion class.
       -- Per-file map of bound-name → inferred type, including local
       -- let / lambda / case-branch bindings. Populated from the
       -- solver's local-type accumulator (Solve._locals) so LSP hover
@@ -112,6 +117,7 @@ emptyIndex = Index
     , idxImports = Map.empty
     , idxLocals = Map.empty
     , idxLocalTypes = Map.empty
+    , idxRenaming  = Map.empty
     , idxFileSrc = Map.empty
     , idxRoot = Nothing
     }
@@ -158,6 +164,25 @@ fromTypecheck root wt =
             [ (symLocalName s, [s]) | s <- allTops ]
         byFile = Map.fromListWith (++)
             [ (symFile s, [s]) | s <- allTops ]
+        -- Audit P2-3: precompute a stable TVar → human-letter
+        -- renaming per file. Union every displayed type (top-level
+        -- + local) so the same solver-level name renders
+        -- identically across every hover in that file.
+        -- renamingFor — collect every displayed type for a file
+        -- (top-level `_wm_types` values + all entries in
+        -- `_wm_localTypes`'s lists) and feed them to
+        -- Solve.moduleRenaming so each fresh solver TVar gets a
+        -- stable letter across every hover.
+        wmForPath p =
+            [ wm | (_, wm) <- Map.toList (Compile._wt_modules wt)
+                 , Compile._wm_path wm == p ]
+        renamingFor path =
+            let wms = wmForPath path
+                topTys = concatMap (Map.elems . Compile._wm_types) wms
+                localTys = concatMap (concat . Map.elems . Compile._wm_localTypes) wms
+            in Solve.moduleRenaming (topTys ++ localTys)
+        renamings = Map.fromList
+            [ (p, renamingFor p) | (_, p) <- modPaths ]
     in Index
         { idxByQual    = byQual
         , idxByLocal   = byLocal
@@ -166,6 +191,7 @@ fromTypecheck root wt =
         , idxImports   = Map.fromList allImports
         , idxLocals    = Map.fromList allLocals
         , idxLocalTypes = Map.fromList allLocalTypes
+        , idxRenaming  = renamings
         , idxFileSrc   = Map.fromList allFileSrc
         , idxRoot      = root
         }
@@ -628,15 +654,16 @@ lookupLocal idx file line col name =
     in fmap (\b ->
         let localTypes = fromMaybe Map.empty (Map.lookup file (idxLocalTypes idx))
             inferredTys = fromMaybe [] (Map.lookup (lbName b) localTypes)
+            rename = fromMaybe Map.empty (Map.lookup file (idxRenaming idx))
             -- Audit P2-2: localTypes holds ALL captures for this name
             -- (innermost-first from the solver side). LSP's `best`
             -- is also the innermost matching LocalBinding by scope.
             -- For same-function shadowing, both agree on "index 0"
-            -- for the binding the hover resolved to. For cross-
-            -- function same-name bindings the mapping is best-effort
-            -- — documented limitation.
+            -- for the binding the hover resolved to.
+            -- Audit P2-3: render through the module's cached
+            -- renaming so TVar letters stay stable across hovers.
             sig = case inferredTys of
-                (ty:_) -> Just (lbName b ++ " : " ++ Solve.showType ty)
+                (ty:_) -> Just (lbName b ++ " : " ++ Solve.showTypeWith rename ty)
                 []     -> Just (lbName b ++ " : (local binding)")
         in Sym
             { symQualName = "(local) " ++ lbName b

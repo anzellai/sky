@@ -15,6 +15,7 @@ import qualified Sky.Build.RecordFieldOrderSpec
 import qualified Sky.Build.UnreachableGateSpec
 import qualified Sky.Parse.CommentsSpec
 import qualified Sky.Lsp.HoverShadowingSpec
+import qualified Sky.Lsp.RenameStableSpec
 
 main :: IO ()
 main = hspec $ do
@@ -41,3 +42,5 @@ main = hspec $ do
     describe "Sky.Parse.Comments"         Sky.Parse.CommentsSpec.spec
     -- Audit P2-2: LSP local-type shadowing guard.
     describe "Sky.Lsp.HoverShadowing"     Sky.Lsp.HoverShadowingSpec.spec
+    -- Audit P2-3: module-stable TVar renaming.
+    describe "Sky.Lsp.RenameStable"       Sky.Lsp.RenameStableSpec.spec

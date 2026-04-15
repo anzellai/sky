@@ -8,6 +8,8 @@ module Sky.Type.Solve
     , SolveResult(..)
     , SolvedTypes
     , showType
+    , showTypeWith
+    , moduleRenaming
     )
     where
 
@@ -350,8 +352,31 @@ flatTypeToType flat = case flat of
 -- | Public entry point: rename fresh type variables to a, b, c, ...
 -- before rendering so hover/error messages don't leak solver-internal
 -- names (t47, _carg61) that confuse users.
+--
+-- Renames are per-call, so two independent `showType` invocations
+-- both start from `a`. For cross-hover consistency within a single
+-- module use `showTypeWith` / `moduleRenaming` (audit P2-3).
 showType :: T.Type -> String
 showType ty = showTypeR (renameVars ty)
+
+-- | Render a type using a pre-computed module-level renaming.
+-- The same solver-level TVar (e.g. t108) keeps the same human
+-- letter across every hover in the module, so a user reading
+-- two hovers doesn't see t108 as 'a' here and 'b' there.
+showTypeWith :: Map.Map String String -> T.Type -> String
+showTypeWith rename ty = showTypeR (substVar (\n -> Map.findWithDefault n n rename) ty)
+
+-- | Build a stable per-module renaming from all types that will be
+-- displayed (top-level function signatures + local binding types
+-- + anything else the LSP index wants to cache). The returned map
+-- assigns consecutive human-readable names in first-occurrence
+-- order. Call sites pass the result to `showTypeWith`.
+moduleRenaming :: [T.Type] -> Map.Map String String
+moduleRenaming tys =
+    let allNames = nubOrdered (concatMap collectVarNames tys)
+    in Map.fromList (zip allNames humanNames)
+  where
+    nubOrdered = foldr (\x acc -> if x `elem` acc then acc else x : acc) []
 
 -- | Render with already-renamed vars (used internally so lambda bodies
 -- reuse the parent's renaming).
