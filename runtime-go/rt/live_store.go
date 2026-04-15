@@ -50,6 +50,20 @@ func gobRegisterAll(v any) {
 	walkGob(reflect.ValueOf(v))
 }
 
+// Audit P2-5: pre-register the Sky-canonical container types so
+// gob can encode them at an `any` interface boundary. Without
+// these, encoding a `map[string]any` top-level model (the typical
+// Sky.Live shape pre-typed-codegen) fails with "gob: type not
+// registered for interface: map[string]interface {}".
+func init() {
+	gob.Register(map[string]any{})
+	gob.Register([]any{})
+	gob.Register(SkyMaybe[any]{})
+	gob.Register(SkyResult[any, any]{})
+	gob.Register(SkyTuple2{})
+	gob.Register(SkyTuple3{})
+}
+
 func walkGob(v reflect.Value) {
 	if !v.IsValid() {
 		return
@@ -447,6 +461,17 @@ type storableSession struct {
 }
 
 func encodeSession(s *liveSession) ([]byte, error) {
+	// Audit P2-5: validate the value graph against the session-safe
+	// whitelist BEFORE handing it to gob. Gob silently skips func /
+	// chan / unexported fields, so a model that contains a closure,
+	// a channel, or an FFI opaque handle would round-trip as
+	// garbage on the next load — fine in the in-memory store which
+	// keeps values by reference, but corrupting for SQLite /
+	// Postgres / Redis deployments. Rejecting up front gives a
+	// diagnosable error before bad data lands in the store.
+	if err := validateSessionValue(s.model, "model"); err != nil {
+		return nil, err
+	}
 	// Walk the value graph to discover + register every concrete struct
 	// type at an interface boundary. Safe to call repeatedly — we cache
 	// registered types.
@@ -462,6 +487,77 @@ func encodeSession(s *liveSession) ([]byte, error) {
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+// validateSessionValue walks v recursively and rejects kinds that
+// gob can't meaningfully persist for Sky programs:
+//   - reflect.Func    — closures don't round-trip; the new instance
+//                       would decode as nil and crash on first call.
+//   - reflect.Chan    — runtime-only.
+//   - reflect.UnsafePointer — never safe to persist.
+//   - unexported struct fields containing any of the above.
+// Accepted: numeric primitives, bool, string, slice/array/map/struct
+// whose elements are themselves session-safe, pointer to the same,
+// and typed nil interface values.
+//
+// Returns nil for the whole-graph-safe case; otherwise a descriptive
+// error naming the offending path (e.g. "model.Handlers[0].Fn: func").
+func validateSessionValue(v any, path string) error {
+	return walkValidateGob(reflect.ValueOf(v), path, make(map[uintptr]bool))
+}
+
+func walkValidateGob(v reflect.Value, path string, seen map[uintptr]bool) error {
+	if !v.IsValid() {
+		return nil
+	}
+	switch v.Kind() {
+	case reflect.Func:
+		return fmt.Errorf("session value at %s is a func — not session-safe (closures can't round-trip)", path)
+	case reflect.Chan:
+		return fmt.Errorf("session value at %s is a chan — not session-safe", path)
+	case reflect.UnsafePointer:
+		return fmt.Errorf("session value at %s is unsafe.Pointer — not session-safe", path)
+	case reflect.Ptr, reflect.Interface:
+		if v.IsNil() {
+			return nil
+		}
+		// Ptr: break cycles.
+		if v.Kind() == reflect.Ptr {
+			p := v.Pointer()
+			if seen[p] {
+				return nil
+			}
+			seen[p] = true
+		}
+		return walkValidateGob(v.Elem(), path, seen)
+	case reflect.Struct:
+		t := v.Type()
+		for i := 0; i < v.NumField(); i++ {
+			childPath := path + "." + t.Field(i).Name
+			if err := walkValidateGob(v.Field(i), childPath, seen); err != nil {
+				return err
+			}
+		}
+		return nil
+	case reflect.Slice, reflect.Array:
+		for i := 0; i < v.Len(); i++ {
+			if err := walkValidateGob(v.Index(i), fmt.Sprintf("%s[%d]", path, i), seen); err != nil {
+				return err
+			}
+		}
+		return nil
+	case reflect.Map:
+		it := v.MapRange()
+		for it.Next() {
+			k := fmt.Sprintf("%v", it.Key().Interface())
+			if err := walkValidateGob(it.Value(), path+"["+k+"]", seen); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	// Primitives (int*, uint*, float*, bool, string) are always OK.
+	return nil
 }
 
 func decodeSession(blob []byte) (*liveSession, error) {
