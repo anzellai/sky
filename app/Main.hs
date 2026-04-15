@@ -648,22 +648,23 @@ runCommand cmd = case cmd of
                 src <- TIO.getContents
                 case ParseMod.parseModule src of
                     Left err -> do
-                        -- On parse error, echo the original source back so
-                        -- editors don't blank the buffer, and report error to stderr.
                         TIO.putStr src
                         return (Left $ "Parse error: " ++ show err)
                     Right srcMod -> do
                         let baseOut = T.pack (Format.formatModule srcMod)
                             withComments = preserveTopLevelComments src baseOut
-                        case fmtSafetyCheck src withComments of
-                            Just msg -> do
-                                -- Echo the original back so editors don't
-                                -- blank the buffer on refusal.
-                                TIO.putStr src
-                                return (Left msg)
-                            Nothing -> do
-                                TIO.putStr withComments
-                                return (Right ())
+                        force <- System.Environment.lookupEnv "SKY_FMT_FORCE"
+                        debug <- System.Environment.lookupEnv "SKY_FMT_DEBUG"
+                        case debug of
+                            Just _ -> do
+                                hPutStrLn stderr "=== baseOut (pre-preserver) ==="
+                                TIO.hPutStr stderr baseOut
+                                hPutStrLn stderr "=== withComments (post-preserver) ==="
+                            _ -> return ()
+                        case (force, fmtSafetyCheck src withComments) of
+                            (Just _, _)        -> TIO.putStr withComments >> return (Right ())
+                            (Nothing, Just m)  -> TIO.putStr src >> return (Left m)
+                            (Nothing, Nothing) -> TIO.putStr withComments >> return (Right ())
 
     Init mName -> do
         let name = maybe "sky-project" id mName
@@ -976,47 +977,146 @@ fmtSafetyCheck srcIn srcOut =
         length [l | l <- map T.strip (T.lines t)
                   , T.pack "--" `T.isPrefixOf` l || T.pack "{-" `T.isPrefixOf` l]
 
--- ─── Top-level comment preservation ──────────────────────────────
+-- ─── Comment preservation across sky fmt ─────────────────────────
 -- The parser discards comments before they reach the AST, so
 -- Format.formatModule emits output without them. This post-pass
--- scans the original source for comment blocks that precede a
--- top-level declaration, and re-inserts them into the formatted
--- output before the matching declaration header.
+-- scans the original source for comment blocks and re-inserts them
+-- into the formatted output, keyed by either:
+--   * the next top-level declaration header (for module-level comments)
+--   * the preceding code line's stripped text (for body comments inside
+--     let / case / etc.).
 --
--- Matches declarations by their leading identifier:
---   * `name =` or `name :` or `name arg =`      → decl name
---   * `type alias Name = ...`                   → "alias:Name"
---   * `type Name = ...`                         → "type:Name"
---   * `import A.B.C ...`                        → "import:A.B.C"
---   * `module M exposing (...)`                 → "module"
+-- Declaration header keys:
+--   * `name =` / `name :` / `name arg =`       → "val:name"
+--   * `type alias Name = ...`                  → "alias:Name"
+--   * `type Name = ...`                        → "type:Name"
+--   * `import A.B.C ...`                       → "import:A.B.C"
+--   * `module M exposing (...)`                → "module"
 --
--- Comments inside expressions (let bodies, case branches) still
--- fall through. The fmtSafetyCheck catches those and refuses to
--- overwrite when any remain unaccounted for, so we never silently
--- lose data. The large majority of real-world comments are
--- between top-level declarations, which this path preserves.
+-- Body-comment anchors use "after:<stripped preceding line>" and are
+-- matched on first-occurrence in the output. This gives correct
+-- placement for the common case (comments inside let bodies) without
+-- needing per-node AST position tracking.
 preserveTopLevelComments :: T.Text -> T.Text -> T.Text
 preserveTopLevelComments source formatted =
-    let srcBlocks       = splitTopLevelBlocks source
-        -- Map each decl key to a QUEUE of comment blocks, so repeated
-        -- keys (e.g. `x : Int` then `x =` both keyed as val:x) each
-        -- get their own block attached in source order.
-        commentMap      = foldl addBlock Map.empty srcBlocks
-        outLines        = T.lines formatted
-        injected        = injectComments commentMap outLines
+    let srcBlocks    = collectCommentBlocks source
+        headerMap    = foldl addHeaderBlock Map.empty srcBlocks
+        anchorMap    = foldl addAnchorBlock Map.empty srcBlocks
+        trailingMap  = collectTrailingComments source
+        outLines     = T.lines formatted
+        withTrailing = map (reattachTrailing trailingMap) outLines
+        injected     = injectComments headerMap anchorMap withTrailing
     in T.unlines injected
   where
-    -- A "top-level block" is a run of blank/comment lines optionally
-    -- followed by one non-blank declaration header line. We only
-    -- care about the comments attached to each declaration header.
-    splitTopLevelBlocks :: T.Text -> [([T.Text], Maybe T.Text)]
-    splitTopLevelBlocks t = go [] [] (T.lines t)
+    -- Walk source; for each run of comment/blank lines, produce a
+    -- block keyed either by the NEXT non-blank line (header anchor)
+    -- or the PREVIOUS non-blank line (body anchor), whichever is
+    -- appropriate. A line is a header if it starts at col 1 with a
+    -- keyword or a lowercase identifier; otherwise it's a body line
+    -- (inside a let, case, etc.).
+    collectCommentBlocks :: T.Text -> [([T.Text], T.Text, Bool)]
+    -- each entry: (commentLines, anchorText, isHeader)
+    -- anchorText is:
+    --   * the stripped header line when isHeader=True (match via declKey)
+    --   * the stripped preceding code line (minus trailing comment) when
+    --     isHeader=False, so downstream matching against the formatter's
+    --     output (which has stripped trailing comments) still works.
+    collectCommentBlocks t = walk Nothing [] (T.lines t)
       where
-        go out acc [] = reverse out ++ [(reverse acc, Nothing) | not (null acc)]
-        go out acc (l:ls)
-            | isCommentOrBlank l = go out (l:acc) ls
-            | isTopLevelDecl l   = go ((reverse acc, Just l) : out) [] ls
-            | otherwise          = go out [] ls   -- body line, drop accumulated comments
+        walk _prev _acc [] = []
+        walk prev acc (l:ls)
+            | isCommentOrBlank l = walk prev (acc ++ [l]) ls
+            | isTopLevelDecl l =
+                let trimmed = trimBlanks acc
+                    anchorKey = stripTrailingComment (T.strip l)
+                    rest = walk (Just anchorKey) [] ls
+                in if null trimmed
+                     then rest
+                     else (trimmed, T.strip l, True) : rest
+            | otherwise =
+                let trimmed = trimBlanks acc
+                    anchorKey = stripTrailingComment (T.strip l)
+                    rest = walk (Just anchorKey) [] ls
+                in case (trimmed, prev) of
+                    ([], _) -> rest
+                    (_, Just p) -> (trimmed, p, False) : rest
+                    (_, Nothing) -> rest
+
+    -- Strip a trailing "-- comment" from a stripped code line so the
+    -- anchor key stays stable across fmt (which drops trailing comments).
+    -- Approximate: splits on first "  --" (two-or-more spaces before --)
+    -- or "--" at end-of-expression context.
+    stripTrailingComment :: T.Text -> T.Text
+    stripTrailingComment s =
+        case T.breakOn (T.pack "--") s of
+            (before, after)
+                | T.null after -> s
+                | otherwise    ->
+                    -- Only treat as comment if preceded by whitespace or at BOL.
+                    let rev = T.reverse before
+                    in case T.uncons rev of
+                        Just (c, _) | c == ' ' || c == '\t' -> T.stripEnd before
+                        _ -> s
+
+    -- Build: stripped-code-before-`--`  →  "  -- comment text"
+    -- (preserving the exact leading whitespace before the `--` so
+    -- reattachment is byte-identical).
+    collectTrailingComments :: T.Text -> Map.Map T.Text T.Text
+    collectTrailingComments t = foldl step Map.empty (T.lines t)
+      where
+        step acc fullLine =
+            case splitTrailingComment fullLine of
+                Nothing -> acc
+                Just (codePart, trailingPart) ->
+                    let key = T.strip codePart
+                    in if T.null key then acc
+                       else Map.insertWith (\_ old -> old) key trailingPart acc
+
+    -- Return (codeUpToButNotIncluding "--", "  -- rest of line")
+    -- only when the line is not a whole-line comment/blank/block-comment.
+    -- Ignores `--` that appears inside a string literal (simple state machine).
+    splitTrailingComment :: T.Text -> Maybe (T.Text, T.Text)
+    splitTrailingComment fullLine =
+        let s = T.strip fullLine
+        in if T.null s
+              || T.pack "--" `T.isPrefixOf` s
+              || T.pack "{-" `T.isPrefixOf` s
+             then Nothing
+             else scan 0 False (T.unpack fullLine)
+      where
+        scan _ _ [] = Nothing
+        scan i inStr (c:rest)
+            | inStr =
+                if c == '\\' && not (null rest)
+                  then scan (i+2) True (drop 1 rest)
+                  else if c == '"' then scan (i+1) False rest
+                       else scan (i+1) True rest
+            | c == '"' = scan (i+1) True rest
+            | c == '-', '-':_ <- rest
+            , i > 0
+            , precedingIsSpace i fullLine
+                = let (code, after) = T.splitAt i fullLine
+                  in Just (code, after)
+            | otherwise = scan (i+1) False rest
+
+        precedingIsSpace i line =
+            case T.uncons (T.reverse (T.take i line)) of
+                Just (c, _) -> c == ' ' || c == '\t'
+                Nothing     -> False
+
+    reattachTrailing :: Map.Map T.Text T.Text -> T.Text -> T.Text
+    reattachTrailing tm l =
+        let code = T.stripEnd l
+            key  = T.strip code
+        in case Map.lookup key tm of
+            Just trailing ->
+                if T.pack "--" `T.isInfixOf` code
+                  then l
+                  else T.append code trailing
+            Nothing -> l
+
+    trimBlanks = reverse . dropWhile (T.null . T.strip)
+               . reverse . dropWhile (T.null . T.strip)
 
     isCommentOrBlank :: T.Text -> Bool
     isCommentOrBlank l =
@@ -1025,15 +1125,13 @@ preserveTopLevelComments source formatted =
            || T.pack "--" `T.isPrefixOf` s
            || T.pack "{-" `T.isPrefixOf` s
 
-    -- A top-level decl starts at column 1 with one of the keywords
-    -- module/import/type or a lowercase identifier followed by (eventually)
-    -- `=` or `:`. We use a conservative regex-ish check.
+    -- Top-level decl: starts at col 1 with a keyword or lowercase ident.
     isTopLevelDecl :: T.Text -> Bool
     isTopLevelDecl l =
         case T.uncons l of
             Nothing -> False
             Just (c, _)
-                | c == ' ' || c == '\t' -> False   -- indented → body
+                | c == ' ' || c == '\t' -> False
                 | otherwise ->
                     let s = T.strip l
                     in T.pack "module " `T.isPrefixOf` s
@@ -1047,7 +1145,6 @@ preserveTopLevelComments source formatted =
         Just (c, _) -> c >= 'a' && c <= 'z'
         Nothing     -> False
 
-    -- Extract the decl key from a header line for matching.
     declKey :: T.Text -> Maybe T.Text
     declKey l =
         let s = T.strip l
@@ -1070,33 +1167,56 @@ preserveTopLevelComments source formatted =
                         || c == '_' || c == '.')
         . T.dropWhile (== ' ')
 
-    -- Queue: list of comment blocks per key, oldest first.
-    addBlock :: Map.Map T.Text [[T.Text]] -> ([T.Text], Maybe T.Text) -> Map.Map T.Text [[T.Text]]
-    addBlock acc (comments, mHeader) =
-        case mHeader of
+    -- Header map: decl key → queue of comment blocks (source order).
+    addHeaderBlock :: Map.Map T.Text [[T.Text]] -> ([T.Text], T.Text, Bool) -> Map.Map T.Text [[T.Text]]
+    addHeaderBlock acc (cs, anchor, isHeader) =
+        if not isHeader then acc
+        else case declKey anchor of
             Nothing -> acc
-            Just h -> case declKey h of
-                Nothing -> acc
-                Just k ->
-                    let trimmed = dropLeadingBlanks (dropTrailingBlanks comments)
-                    in if null trimmed
-                         then acc
-                         else Map.insertWith (\new existing -> existing ++ new) k [trimmed] acc
+            Just k  -> Map.insertWith (\new existing -> existing ++ new) k [cs] acc
 
-    dropLeadingBlanks = dropWhile (T.null . T.strip)
-    dropTrailingBlanks = reverse . dropLeadingBlanks . reverse
+    -- Anchor map: stripped preceding-code line → queue of comment blocks.
+    addAnchorBlock :: Map.Map T.Text [[T.Text]] -> ([T.Text], T.Text, Bool) -> Map.Map T.Text [[T.Text]]
+    addAnchorBlock acc (cs, anchor, isHeader) =
+        if isHeader then acc
+        else Map.insertWith (\new existing -> existing ++ new) anchor [cs] acc
 
-    -- Walk the output lines. When a line is a decl header whose key has
-    -- a pending comment block in the queue, splice the block in and pop.
-    injectComments :: Map.Map T.Text [[T.Text]] -> [T.Text] -> [T.Text]
+    -- Walk output lines, splicing comments in at header/anchor matches.
+    injectComments :: Map.Map T.Text [[T.Text]] -> Map.Map T.Text [[T.Text]]
+                   -> [T.Text] -> [T.Text]
     injectComments = go
       where
-        go _    []     = []
-        go cmap (l:ls) =
-            case declKey l of
-                Just k | Just (cs : rest) <- Map.lookup k cmap ->
-                    let cmap' = if null rest
-                                  then Map.delete k cmap
-                                  else Map.insert k rest cmap
-                    in cs ++ [l] ++ go cmap' ls
-                _ -> l : go cmap ls
+        go _  _  [] = []
+        go hm am (l:ls) =
+            -- Header injection fires BEFORE the line.
+            let stripped = T.strip l
+                headerHit = case declKey l of
+                    Just k | Just (cs:rest) <- Map.lookup k hm ->
+                        let hm' = if null rest then Map.delete k hm
+                                               else Map.insert k rest hm
+                        in Just (cs, hm')
+                    _ -> Nothing
+                -- Anchor injection fires AFTER the line (splice body
+                -- comments below the matched code line).
+                anchorHit = case Map.lookup stripped am of
+                    Just (cs:rest) ->
+                        let am' = if null rest then Map.delete stripped am
+                                               else Map.insert stripped rest am
+                        in Just (cs, am')
+                    _ -> Nothing
+            in case (headerHit, anchorHit) of
+                (Just (hcs, hm'), Just (acs, am')) ->
+                    hcs ++ [l] ++ indentLike l acs ++ go hm' am' ls
+                (Just (hcs, hm'), Nothing) ->
+                    hcs ++ [l] ++ go hm' am ls
+                (Nothing, Just (acs, am')) ->
+                    l : indentLike l acs ++ go hm am' ls
+                (Nothing, Nothing) ->
+                    l : go hm am ls
+
+    -- Re-indent comment block to match the indentation of the anchor line.
+    -- Preserves the internal stripped shape so multi-line comments line up.
+    indentLike :: T.Text -> [T.Text] -> [T.Text]
+    indentLike ref cs =
+        let indent = T.takeWhile (\c -> c == ' ' || c == '\t') ref
+        in map (\c -> if T.null (T.strip c) then c else T.append indent (T.stripStart c)) cs

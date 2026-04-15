@@ -654,15 +654,27 @@ func Auth_setRole(db any, userId any, role any) any {
 	return Db_updateById(db, "users", userId, map[string]any{"role": fmt.Sprintf("%v", role)})
 }
 
-// Db.getField : map -> String -> Result String any (any-typed field extract)
-func Db_getField(row any, fname any) any {
+// Db.getField : String -> Dict String a -> String
+// Sky convention: returns the field value as a string (stringified),
+// empty string when the key is missing or the row is not a dict.
+// This mirrors Dict.get "key" row |> Maybe.withDefault "", which is
+// the shape every Sky user expects from a row-field accessor.
+// NOTE: earlier versions wrapped the result in a Result — every
+// caller then had to unwrap (unnecessarily), and typed-codegen
+// paths with `.(string)` assertions panicked when the wrapper leaked
+// through. If you need distinguishable "missing" behaviour, use
+// Db.getFieldOr with a sentinel default, or the dedicated
+// getString/getInt/getBool helpers (which still return Result).
+func Db_getField(fname any, row any) string {
 	if m, ok := row.(map[string]any); ok {
 		if v, exists := m[fmt.Sprintf("%v", fname)]; exists {
-			return Ok[any, any](v)
+			if s, isStr := v.(string); isStr {
+				return s
+			}
+			return fmt.Sprintf("%v", v)
 		}
-		return Err[any, any](ErrInvalidInput("getField: no field '" + fmt.Sprintf("%v", fname) + "'"))
 	}
-	return Err[any, any](ErrInvalidInput("getField: row is not a record"))
+	return ""
 }
 
 // Db.getFieldOr : default -> row -> fieldName -> any

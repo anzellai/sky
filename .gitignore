@@ -79,6 +79,10 @@ legacy-ts-compiler/node_modules/
 *.db-shm
 *.db-wal
 
+# Stray SQLite files named literally "{}" when a test's connection
+# string was the unsubstituted placeholder. Never source; never commit.
+**/\{\}
+
 # macOS
 .DS_Store
 
