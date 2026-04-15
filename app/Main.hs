@@ -535,9 +535,10 @@ runCommand cmd = case cmd of
             else return Toml.defaultConfig
         -- Regen missing FFI bindings so type-check sees up-to-date .skyi
         -- signatures without needing the user to run `sky build` first.
-        let goDeps = Toml._goDeps config
+        let outDir = "sky-out"
+            goDeps = Toml._goDeps config
         when (not (null goDeps)) $ do
-            createDirectoryIfMissing True "sky-out"
+            createDirectoryIfMissing True outDir
             hasGoMod <- doesFileExist "sky-out/go.mod"
             when (not hasGoMod) $ do
                 hasRt <- doesFileExist "runtime-go/go.mod"
@@ -545,13 +546,33 @@ runCommand cmd = case cmd of
                     then callProcess "cp" ["runtime-go/go.mod", "sky-out/go.mod"]
                     else writeFile "sky-out/go.mod" $ unlines ["module sky-app", "", "go 1.21"]
             regenMissingBindings goDeps
-        -- Parse + typecheck only (no codegen, no go build)
-        result <- Compile.compile config path "sky-out"
+        -- P0-1 (audit): sky check must be a superset of sky build. Run
+        -- the full emit + `go build` so codegen-stage failures surface
+        -- here instead of only when the user runs `sky build`. Without
+        -- this gate the checker accepted programs that panicked at
+        -- runtime (typed-callee .(T) assertions, record-ctor field
+        -- swaps, Task-return coercion holes) because the Sky type
+        -- system was satisfied but codegen produced invalid Go.
+        result <- Compile.compile config path outDir
         case result of
             Left err -> return (Left err)
             Right _ -> do
-                putStrLn "No errors found."
-                return (Right ())
+                putStrLn "Running go build..."
+                (ec, _, berr) <- System.Process.readCreateProcessWithExitCode
+                    (System.Process.shell
+                        ("cd " ++ outDir ++ " && go build -o /dev/null ."))
+                    ""
+                case ec of
+                    System.Exit.ExitSuccess -> do
+                        putStrLn "No errors found."
+                        return (Right ())
+                    System.Exit.ExitFailure _ -> do
+                        let msg = "Codegen produced Go that `go build` rejects.\n"
+                                ++ "This is a compiler-side bug — the Sky type system\n"
+                                ++ "accepted the program but Go did not.\n\n"
+                                ++ "Go errors:\n"
+                                ++ berr
+                        return (Left msg)
 
     Test path -> do
         -- Synthesise a temporary Main.sky that imports the user's test

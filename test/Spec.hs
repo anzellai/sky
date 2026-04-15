@@ -10,6 +10,7 @@ import qualified Sky.Canonicalise.ExposingSpec
 import qualified Sky.Type.ExhaustivenessSpec
 import qualified Sky.Format.FormatSpec
 import qualified Sky.Build.NestedPatternSpec
+import qualified Sky.Build.CheckIsBuildSpec
 
 main :: IO ()
 main = hspec $ do
@@ -25,3 +26,5 @@ main = hspec $ do
     -- only exist after the sweep has built them.
     describe "Sky.Build.ExampleSweep"    Sky.Build.ExampleSweepSpec.spec
     describe "Sky.Build.TypedFfi"        Sky.Build.TypedFfiSpec.spec
+    -- Audit P0-1: sky check must be ≥ sky build.
+    describe "Sky.Build.CheckIsBuild"    Sky.Build.CheckIsBuildSpec.spec

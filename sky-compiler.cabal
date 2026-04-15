@@ -152,3 +152,4 @@ test-suite sky-tests
       Sky.Type.ExhaustivenessSpec
       Sky.Format.FormatSpec
       Sky.Build.NestedPatternSpec
+      Sky.Build.CheckIsBuildSpec
