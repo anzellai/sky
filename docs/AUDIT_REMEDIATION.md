@@ -527,7 +527,7 @@ Legend: ☐ not started · ◐ in progress · ☑ done.
 | P2-1 | AST comment preservation | ☑ | 2026-04-15, c544fe9 |
 | P2-2 | LSP local types by region | ☑ | 2026-04-15, cae934c |
 | P2-3 | LSP TVar global renaming | ☑ | 2026-04-15, 170b77e |
-| P2-4 | sky verify scenarios | ☑ | 2026-04-15, commit TBD |
+| P2-4 | sky verify scenarios | ☑ | 2026-04-15, fa96595 |
 | P2-5 | Session store type safety | ☐ | |
 | P3-1 | CI uses sky verify | ☐ | |
 | P3-2 | LSP integration tests | ☐ | |
