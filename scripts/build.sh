@@ -65,13 +65,10 @@ fi
 mkdir -p sky-out bin
 
 # ─── build compiler ─────────────────────────────────────────────────
-# Force the embedded-runtime TH splice to re-bake when runtime-go/ has
-# any file newer than the embedder source (covers new files, which
-# Template Haskell's dependency tracker can't see retroactively).
-if [[ -n "$(find runtime-go -type f -newer src/Sky/Build/EmbeddedRuntime.hs 2>/dev/null | head -1)" ]]; then
-    say "runtime-go changed — bumping EmbeddedRuntime.hs to force re-embed"
-    touch src/Sky/Build/EmbeddedRuntime.hs
-fi
+# Audit P3-3: the old mtime dance (touching EmbeddedRuntime.hs when
+# any runtime-go file was newer) is no longer needed — cabal tracks
+# each embedded file via Template Haskell's qAddDependentFile. A
+# cabal-test spec (Sky.Build.EmbeddedRuntimeSpec) guards against drift.
 
 say "building sky compiler (cabal)"
 cabal update >/dev/null

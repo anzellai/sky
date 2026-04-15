@@ -5,6 +5,18 @@
 -- bundled into the sky binary at build time via Template Haskell.
 -- Released binaries are fully standalone — no on-disk runtime-go/ or
 -- sky-stdlib/ required.
+--
+-- Audit P3-3: plain `cabal build` must re-embed when runtime files
+-- are *modified*. `embedDir` calls `qAddDependentFile` on every file
+-- it walks, so cabal rebuilds the splice when any tracked file's
+-- mtime changes. The scripts/build.sh mtime dance that touched this
+-- module is therefore redundant and was removed.
+--
+-- New-file edge case: TH can't watch directory listings, so adding
+-- a fresh file without modifying any existing runtime file leaves
+-- the splice stale. The `Sky.Build.EmbeddedRuntimeSpec` test locks
+-- the invariant — if the embedded tree drifts from disk, it fails
+-- with a concrete path diff rather than shipping a broken binary.
 module Sky.Build.EmbeddedRuntime
     ( embeddedRuntime
     , embeddedSkyStdlib
@@ -14,21 +26,9 @@ import Data.ByteString (ByteString)
 import Data.FileEmbed (embedDir)
 
 
--- | Pairs of (relative-path-within-runtime-go, file-contents) covering
--- every file the Go build needs: rt/*.go, go.mod, go.sum.
 embeddedRuntime :: [(FilePath, ByteString)]
 embeddedRuntime = $(embedDir "runtime-go")
 
 
--- | Pairs of (relative-path-within-sky-stdlib, file-contents) for the
--- Sky-source stdlib modules (Sky.Core.Error, etc.) that ship with every
--- project. Materialised to <outDir>/.sky-stdlib/ at build start and
--- added to the module discovery roots, so user code can
--- `import Sky.Core.Error as Error` with no extra setup.
--- Bump this comment to force a TH rebuild when sky-stdlib files are
--- added or removed. FileEmbed's dependency tracking doesn't always
--- notice new files otherwise.
--- Version: 2026-04-14 Sky.Core.Error added; Std.IoError deleted
--- Version: 2026-04-15 Sky.Test added
 embeddedSkyStdlib :: [(FilePath, ByteString)]
 embeddedSkyStdlib = $(embedDir "sky-stdlib")

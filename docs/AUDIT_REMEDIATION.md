@@ -445,7 +445,7 @@ response payload.
 **Acceptance.** Spec covers: hover on top-level, local let binding,
 lambda param, imported name, FFI binding, nested-scope shadowed name.
 
-### [ ] P3-3 Remove TH mtime dance; real runtime dependency
+### [x] P3-3 Remove TH mtime dance; real runtime dependency
 **Problem.** `scripts/build.sh` touches `src/Sky/Build/EmbeddedRuntime.hs`
 if any `runtime-go/*` file is newer. `cabal build` doesn't automatically
 invoke this, so plain `cabal build` ships a stale runtime.
@@ -531,7 +531,7 @@ Legend: ☐ not started · ◐ in progress · ☑ done.
 | P2-5 | Session store type safety | ☑ | 2026-04-15, 0d2b431 |
 | P3-1 | CI uses sky verify | ☑ | 2026-04-15, 270d564 |
 | P3-2 | LSP integration tests | ☑ | ProtocolSpec covers initialize + hover |
-| P3-3 | No-TH-dance runtime dep | ☐ | |
+| P3-3 | No-TH-dance runtime dep | ☑ | EmbeddedRuntimeSpec diffs materialised vs disk |
 | P3-4 | %v audit | ☐ | |
 | P4-1 | Typed codegen v1.0 | ☐ | refers to PRODUCTION_READINESS.md |
 | P4-2 | sky test on Haskell compiler | ☐ | |

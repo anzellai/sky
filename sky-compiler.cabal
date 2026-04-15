@@ -162,3 +162,4 @@ test-suite sky-tests
       Sky.Build.VerifyScenarioSpec
       Sky.Build.VerifyAllSpec
       Sky.Lsp.ProtocolSpec
+    , Sky.Build.EmbeddedRuntimeSpec
