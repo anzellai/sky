@@ -1514,8 +1514,16 @@ func List_consAnyT(x any, xs []any) []any {
 }
 
 func List_foldlAnyT(fn any, seed any, xs []any) any {
+	// Sky follows Elm's foldl convention:
+	//   List.foldl : (a -> b -> b) -> b -> List a -> b
+	// i.e. fn takes ELEMENT then accumulator. Pre-fix this passed
+	// (acc, x), silently corrupting any foldl over a non-trivial
+	// reducer — e.g. skychess's Eval.evaluate walked 64 squares
+	// but the accumulator got overwritten by each list element on
+	// every iteration, so eval always returned the last element
+	// (63) regardless of actual board material.
 	acc := seed
-	for _, x := range xs { acc = SkyCall(fn, acc, x) }
+	for _, x := range xs { acc = SkyCall(fn, x, acc) }
 	return acc
 }
 

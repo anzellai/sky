@@ -7,38 +7,37 @@ v0.10+ / v1.0 concerns.
 
 ---
 
-## Skychess AI plays sub-optimal moves
+## Skychess AI regression — FIXED
 
-**Gap.** The 16-skychess example's AI sometimes makes moves that
-don't capture obvious hanging pieces or plays material-losing
-moves.
+**Root cause.** Not a chess-algorithm issue. `rt.List_foldlAnyT`
+(the typed-codegen foldl variant, introduced in the P7/P8 typed-
+codegen phase) passed arguments to the reducer in the wrong order:
+`SkyCall(fn, acc, x)` instead of `SkyCall(fn, x, acc)`. Sky follows
+Elm's `List.foldl : (a -> b -> b) -> b -> List a -> b` convention
+— element first, accumulator second. The inverted order meant
+`Eval.evaluate` (a fold over all 64 squares) silently overwrote
+its accumulator with each list element on every iteration; the
+final "material score" was always just the last square index (63).
+Every example using foldl through the typed path exhibited the
+same class of bug — chess was where it showed visibly (AI playing
+by material=63 instead of actual evaluation).
 
-**Known.** Algorithmically the code is sound (2-ply negamax,
-correct `oppositeColour`, correct sign conventions, reasonable
-material + piece-square tables). The bug is downstream. Likely
-candidates:
+**Fix.** One-line swap in `runtime-go/rt/rt.go:List_foldlAnyT`.
+The older `List_foldl` (non-T) was always correct; only the newer
+typed-T variant had the bug.
 
-1. `Move.applyMove` producing a partially-updated board via
-   `Dict Int → map[string]any` key-conversion asymmetry.
-2. `Move.allLegalMoves` missing captures for some piece kinds.
-3. `Eval.evaluate` piece-square-table indexing off-by-one in the
-   Black-mirror path.
+**Regression fence.** `examples/16-skychess/tests/ChessPrimitivesTest.sky`
+— 5 Sky-level tests exercising the chess primitives:
 
-**Won't fix in v0.9 because:** root-causing requires a chess-deep-
-debug session with Sky-level primitive tests — writing board
-fixtures, asserting `applyMove` move-by-move, and tracing the
-negamax tree manually for a known-good position. This is a
-quality issue in a single example, not a compiler or runtime
-correctness issue. The example is still playable; the AI is just
-weak.
+- `setPiece + getPiece` round-trip
+- `movePiece` relocates the piece
+- `materialValue` returns the expected material ranking
+- `Eval.evaluate` is positive for a lone White piece
+- `Eval.evaluate` is negative for a lone Black piece — this one
+  exposed the bug; pre-fix it returned +63 for a Black knight
+  instead of a negative value
 
-**Workaround for users.** None; play against a weaker opponent.
-
-**Workaround for investigators.** `sky test tests/**/*Test.sky`
-now works (the module-discovery fix shipped alongside
-`test/Sky/Cli/TestSpec.hs`). A future session should add
-`examples/16-skychess/tests/ChessPrimitivesTest.sky` exercising
-the primitives in isolation, then fix at the root.
+All 5 green at HEAD; the Eval tests FAIL against HEAD~1.
 
 ---
 
