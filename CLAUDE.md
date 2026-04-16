@@ -248,8 +248,8 @@ boundary (Elm-ports analogy). See `docs/ffi/boundary-philosophy.md`.
 | Go return | Sky type |
 |---|---|
 | `string` / `int`/`int64` / `float64` / `bool` (element types) | `String` / `Int` / `Float` / `Bool` |
-| `T` (single, no error, non-pointer) | `Result Error T` |
-| `*T` (single pointer, no error) | `Result Error (Maybe T)` |
+| `T` (single, no error) | `Result Error T` |
+| `*T` (single pointer, no error) | `Result Error T` (opaque; nil-deref → Err via recover) |
 | `(T, error)` / `error` | `Result Error T` / `Result Error ()` |
 | `(T, bool)` (comma-ok) | `Result Error (Maybe T)` |
 | `(T, *NamedErr)` where NamedErr implements error | `Result Error T` |
@@ -257,6 +257,10 @@ boundary (Elm-ports analogy). See `docs/ffi/boundary-philosophy.md`.
 | `*sql.DB` / `[]T` / `map[string]V` | `Result Error Db` / `Result Error (List T)` / `Result Error (Dict String V)` |
 | Go struct / Go interface | Opaque type (constructor + getters + setters / method bindings, all wrapped in Result) |
 | void | `Result Error ()` |
+
+Bare `*T` returns are NOT wrapped in Maybe — Go SDK builder chains
+(Firestore, Stripe) rely on chaining pointer returns. Defer-recover
+catches downstream nil-deref and surfaces `Err(ErrFfi(...))`.
 
 Nil-receiver checks are added to every method/getter/setter wrapper —
 calling on a nil opaque returns `Err(ErrFfi "nil receiver: T.M")` instead

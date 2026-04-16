@@ -195,8 +195,13 @@ getDocWithClient client collection docId =
 getDocInner colRef docId =
     case Firestore.collectionRefDoc colRef docId of
 
-        Err _ ->
-            Ok Nothing
+        Err e ->
+            -- Propagate boundary failure up. Distinct from
+            -- `Ok Nothing` (doc genuinely not found) — callers must
+            -- handle "DB unreachable / FFI panic" separately from
+            -- "no row matched". Demonstrates real-world handling:
+            -- never collapse "system broken" into "no result".
+            Err (Error.io ("Firestore.collectionRefDoc failed for " ++ docId ++ ": " ++ Error.toString e))
 
         Ok docRef ->
             getDocRef docRef
@@ -208,8 +213,8 @@ getDocRef docRef =
         Ok snapshot ->
             getDocSnapshot snapshot
 
-        Err _ ->
-            Ok Nothing
+        Err e ->
+            Err (Error.io ("Firestore.documentRefGet failed: " ++ Error.toString e))
 
 
 getDocSnapshot snapshot =

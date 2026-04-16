@@ -126,25 +126,48 @@ refreshAdminOrders model =
     { model | adminOrders = Cart.getOrdersByState model.adminOrderFilter }
 
 
+-- TEA pattern for FFI errors: pattern-match the Result, set
+-- model.notification on Err so view renders an error banner. Don't
+-- collapse boundary failures into "no data" — the user needs to know
+-- whether to retry or accept "this product doesn't exist".
 loadProductDetail model productId =
-    let
-        product = Products.getProduct productId
-        images = Products.listProductImages productId
-    in
-        { model | product = product , productImages = images , quantity = 1 }
+    case Products.getProduct productId of
+
+        Ok product ->
+            let
+                images = Products.listProductImages productId
+            in
+                { model | product = product, productImages = images, quantity = 1, notification = "" }
+
+        Err e ->
+            { model
+                | product = Nothing
+                , productImages = []
+                , notification = "Couldn't load product: " ++ Error.toString e
+            }
 
 
 loadOrderDetail model orderId =
     let
-        ( order, items ) = Cart.getOrderWithItems orderId
+        ( orderResult, items ) = Cart.getOrderWithItems orderId
     in
-        { model | order = order , orderItems = items }
+        case orderResult of
+
+            Ok order ->
+                { model | order = order, orderItems = items, notification = "" }
+
+            Err e ->
+                { model
+                    | order = Nothing
+                    , orderItems = []
+                    , notification = "Couldn't load order " ++ orderId ++ ": " ++ Error.toString e
+                }
 
 
 loadEditProduct model productId =
     case Products.getProduct productId of
-        
-        Just product ->
+
+        Ok (Just product) ->
             let
                 images = Products.listProductImages productId
             in
@@ -160,10 +183,14 @@ loadEditProduct model productId =
                     , editPublished = Db.getBool "published" product
                     , productImages = images
                     , editImageData = ""
+                    , notification = ""
                 }
-        
-        Nothing ->
-            model
+
+        Ok Nothing ->
+            { model | notification = "Product " ++ productId ++ " not found" }
+
+        Err e ->
+            { model | notification = "Couldn't load product for edit: " ++ Error.toString e }
 
 
 clearEditForm model =
@@ -404,19 +431,26 @@ handleVerifyPayment orderId model =
     let
                                     -- Update user profile with shipping address
         _ = println ("[VERIFY] Looking up order: " ++ orderId)
-        ( order, items ) = Cart.getOrderWithItems orderId
-        _ =
-            case order of
-                
-                Just _ ->
-                    println "[VERIFY] Order found"
-                
-                Nothing ->
-                    println "[VERIFY] Order NOT found"
+        ( orderResult, items ) = Cart.getOrderWithItems orderId
+        order =
+            case orderResult of
+
+                Ok m ->
+                    m
+
+                Err e ->
+                    -- Boundary failure during checkout verification is
+                    -- serious; we surface the operator log AND fall
+                    -- through to "order not found" UX. A real shop
+                    -- would alert ops here (PagerDuty / Sentry).
+                    let
+                        _ = println ("[VERIFY] DB failed: " ++ Error.toString e)
+                    in
+                        Nothing
         base = { model | order = order , orderItems = items }
     in
         case order of
-            
+
             Just orderDoc ->
                 let
                     state = Db.getField "state" orderDoc
@@ -502,7 +536,20 @@ handleVerifyPayment orderId model =
                                                 
                                                 Nothing ->
                                                     ()
-                                        updatedOrder = Cart.getOrder orderId
+                                        updatedOrder =
+                                            -- Re-fetch the order after marking paid. If the
+                                            -- DB call fails here we degrade gracefully (caller
+                                            -- still got the success path), but log so ops can
+                                            -- diagnose. A real shop should retry async via
+                                            -- Cmd.perform.
+                                            case Cart.getOrder orderId of
+                                                Ok m ->
+                                                    m
+                                                Err e ->
+                                                    let
+                                                        _ = println ("[VERIFY] post-paid lookup failed: " ++ Error.toString e)
+                                                    in
+                                                        Nothing
                                         orderItems = Cart.getOrderItems orderId
                                     in
                                         ( refreshCart
@@ -702,7 +749,11 @@ handleUpdateOrderState orderId newState model =
 -- UPDATE
 -- ══════════════════════════════════════════════════════
                 updatedModel = refreshAdminOrders model
-                ( order, items ) = Cart.getOrderWithItems orderId
+                ( orderResult, items ) = Cart.getOrderWithItems orderId
+                order =
+                    case orderResult of
+                        Ok m -> m
+                        Err _ -> Nothing
             in
                 ( { updatedModel
                     | order = order

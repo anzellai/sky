@@ -244,21 +244,26 @@ on what Go returns:
 
 | Go Return | Sky Return |
 |-----------|------------|
-| `T` (single, no error, non-pointer) | `Result Error T` |
-| `*T` (single pointer, no error) | `Result Error (Maybe T)` |
+| `T` (single, no error) | `Result Error T` |
+| `*T` (single pointer, no error) | `Result Error T` (opaque; nil-deref → Err via recover) |
 | `(T, error)` | `Result Error T` |
 | `(T, *NamedErr)` where NamedErr implements error | `Result Error T` |
 | `(T1, T2, error)` | `Result Error (Tuple2 T1 T2)` |
 | `error` | `Result Error Unit` |
 | `(T, bool)` (comma-ok) | `Result Error (Maybe T)` |
-| `*sql.DB` | `Result Error (Maybe Db)` (opaque handle) |
+| `*sql.DB` | `Result Error Db` (opaque handle) |
 | `[]string` | `Result Error (List String)` |
 | `map[string]int` | `Result Error (Dict String Int)` |
 | void | `Result Error Unit` |
 
-For `*T` and `(T, bool)` you handle two layers: the Result captures
-boundary failure (panic, type mismatch); the Maybe captures Go's
-"nothing here" signal (nil pointer, comma-ok false).
+For `(T, bool)` comma-ok returns you handle two layers: the Result
+captures boundary failure (panic, type mismatch); the Maybe captures
+Go's "nothing here" signal (comma-ok false).
+
+Bare `*T` returns aren't auto-wrapped in `Maybe` — many Go SDKs
+chain pointer returns through builders/getters and wrapping every
+hop in `Maybe` would break the chain. Genuine "may be nil" is
+expressed via `(T, error)` or `(T, bool)` in idiomatic Go.
 
 Method calls on a nil opaque return `Err(ErrFfi "nil receiver: ...")`
 instead of panicking — every method/getter/setter wrapper has a

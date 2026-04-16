@@ -131,12 +131,12 @@ result =
         |> Result.andThen Session.create
 ```
 
-### For nil-prone Go returns, you handle two layers
+### For (T, bool) comma-ok returns, you handle two layers
 
-`func F() *T` (nil-able pointer, no error companion) and
-`func F() (T, bool)` (comma-ok) both map to
-`Result Error (Maybe T)`. The Result captures the boundary failure
-(panic, type mismatch); the Maybe captures Go's "nothing here":
+Go's `func F() (T, bool)` (map lookups, type assertions,
+sync.Map.Load) maps to `Result Error (Maybe T)`. The Result
+captures boundary failure (panic, type mismatch); the Maybe
+captures Go's "nothing here":
 
 ```elm
 -- Looking up a key that may not exist
@@ -152,6 +152,39 @@ case SomeMap.get key of
         -- The FFI call itself failed (panic, etc.)
         logBoundaryFailure e
 ```
+
+### Bare `*T` returns are NOT auto-wrapped in Maybe
+
+Many Go SDKs use builder patterns:
+
+```go
+session, err := stripe.New(params).
+    Customer(custID).
+    LineItems(items).
+    Confirm(ctx)
+```
+
+Each intermediate call returns `*Builder`. The pointer is
+conventionally non-nil — wrapping every hop in `Maybe` would force
+the user to unwrap at every step:
+
+```elm
+-- Hypothetical Maybe-wrapped chain (rejected design)
+case Stripe.new params of
+    Ok (Just s1) ->
+        case Stripe.customer custID s1 of
+            Ok (Just s2) ->
+                case Stripe.lineItems items s2 of
+                    Ok (Just s3) -> ...
+                    ...
+```
+
+Sky's design: `*T` returns flow through as `Result Error T`. If
+the Go SDK genuinely returns nil and the user calls a method on
+it, the defer-recover catches the nil-deref panic and surfaces
+`Err(ErrFfi("nil pointer..."))`. Go authors who explicitly mean
+"this can be nothing" use `(T, error)` or `(T, bool)` — those map
+cleanly to `Result Error T` / `Result Error (Maybe T)`.
 
 ### Method calls have nil-receiver guards
 

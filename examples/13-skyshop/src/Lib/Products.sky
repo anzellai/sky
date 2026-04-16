@@ -7,6 +7,7 @@ import Sky.Core.List as List
 import Sky.Core.Dict as Dict
 import Sky.Core.String as String
 import Std.Log exposing (println)
+import Sky.Core.Error as Error exposing (Error(..))
 import Github.Com.Google.Uuid as Uuid
 import Lib.Db as Db
 
@@ -34,14 +35,11 @@ listAllProducts =
         Result.withDefault [] result
 
 
+-- getProduct returns Result Error (Maybe Product). update converts
+-- Err to a notification (db down → "We can't load products right now,
+-- try again"); Ok Nothing → "Product not found"; Ok (Just p) → render.
 getProduct productId =
-    case Db.getDoc "products" productId of
-        
-        Ok maybeProduct ->
-            maybeProduct
-        
-        Err _ ->
-            Nothing
+    Db.getDoc "products" productId
 
 
 searchProducts query category sortBy sortDir =

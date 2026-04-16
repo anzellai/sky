@@ -13,6 +13,25 @@ import Chess.Ai as Ai
 import Lib.Games as Games
 import Sky.Core.Error as Error exposing (Error(..), ErrorKind(..))
 
+
+-- logIfErr inspects a Result and logs with a tag if it's Err.
+-- Returns the underlying () so it composes in let-bindings without
+-- silently discarding failures the way `_ = Result.withDefault ()`
+-- did. Real apps would also surface this to the user (notification,
+-- error-recovery flow); chess uses println so the failure shows in
+-- the server log without breaking the game-play path.
+logIfErr : String -> Result Error () -> ()
+logIfErr tag r =
+    case r of
+        Ok _ ->
+            ()
+
+        Err e ->
+            let
+                _ = println ("[CHESS][persist-fail] " ++ tag ++ ": " ++ Error.toString e)
+            in
+                ()
+
 executeWhiteMove : Int -> Int -> Model -> (Model, Cmd Msg)
 executeWhiteMove from to model =
     let
@@ -28,7 +47,7 @@ executeWhitePart2 from to algebraic newBoard captured model =
     let
         newEp = Move.newEnPassantSquare from to model.board
         moveNum = List.length model.moveHistory + 1
-        _ = Result.withDefault () (Games.saveMove model.gameId moveNum from to algebraic "White")
+        _ = logIfErr ("saveMove White " ++ algebraic) (Games.saveMove model.gameId moveNum from to algebraic "White")
         newCaptured = appendCaptured captured model.capturedByWhite
         newHistory = model.moveHistory ++ [ algebraic ]
     in
@@ -135,7 +154,7 @@ doBlackPart2 from to algebraic newBoard captured model =
     let
         newEp = Move.newEnPassantSquare from to model.board
         moveNum = List.length model.moveHistory + 1
-        _ = Result.withDefault () (Games.saveMove model.gameId moveNum from to algebraic "Black")
+        _ = logIfErr ("saveMove Black " ++ algebraic) (Games.saveMove model.gameId moveNum from to algebraic "Black")
         newCaptured = appendCaptured captured model.capturedByBlack
         newHistory = model.moveHistory ++ [ algebraic ]
     in
@@ -183,7 +202,7 @@ resolveAfterBlack updated whiteCanMove whiteInCheck =
 finishGame : String -> Model -> (Model, Cmd Msg)
 finishGame result model =
     let
-        _ = Result.withDefault () (Games.updateGameStatus model.gameId "finished" result)
+        _ = logIfErr ("updateGameStatus " ++ result) (Games.updateGameStatus model.gameId "finished" result)
     in
         ( { model | gameStatus = result }, Cmd.none )
 

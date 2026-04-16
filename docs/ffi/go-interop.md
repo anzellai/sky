@@ -69,8 +69,8 @@ The wrapping shape depends on what the Go function returns:
 
 | Go return | Sky type |
 |---|---|
-| `T` (single, non-pointer) | `Result Error T` |
-| `*T` (single pointer, no error) | `Result Error (Maybe T)` |
+| `T` (single, no error) | `Result Error T` |
+| `*T` (single pointer, no error) | `Result Error T` (opaque; nil-deref panic → Err via recover) |
 | `(T, error)` | `Result Error T` |
 | `error` | `Result Error ()` |
 | `(T, bool)` (comma-ok) | `Result Error (Maybe T)` |
@@ -80,7 +80,7 @@ The wrapping shape depends on what the Go function returns:
 | `(T, U, V)` | `Result Error (T, U, V)` |
 | `[]T` | `Result Error (List T)` |
 | `map[string]V` | `Result Error (Dict String V)` |
-| `*pkg.Struct` (opaque) | `Result Error (Maybe Struct)` (with generated getters/setters) |
+| `*pkg.Struct` (opaque) | `Result Error Struct` (with generated getters/setters) |
 | `interface{}` / `any` | `Result Error any` (boxed) |
 | void (no return) | `Result Error ()` |
 
@@ -95,10 +95,17 @@ Element-type mapping (used inside the wrappers above):
 
 Notes:
 
-- **`Result Error (Maybe T)`** for `*T` and `(T, bool)` returns means
-  you handle two layers: the Result captures boundary failure
+- **`Result Error (Maybe T)`** for `(T, bool)` comma-ok returns
+  means you handle two layers: the Result captures boundary failure
   (panic, type mismatch, runtime error); the Maybe captures Go's
-  "nothing here" signal (nil pointer, comma-ok false).
+  "nothing here" signal (comma-ok false).
+- **Bare `*T` returns** are NOT auto-wrapped in `Maybe` because Go
+  SDK builder/getter chains (`Firestore.client.Collection(x).Doc(y)`,
+  `Stripe.params.SetMode(x).SetCustomer(y)`) rely on chaining
+  pointer returns. If a Go function genuinely returns nil, the
+  defer-recover catches the downstream nil-deref and surfaces an
+  `Err(ErrFfi("nil pointer..."))`. Go authors who mean "nothing
+  here" use `(T, error)` or `(T, bool)` — those map cleanly.
 - **Named error types** (`*os.PathError`, `*url.Error`,
   `*json.SyntaxError`, etc.) are detected via Go's
   `types.Implements` — they map to `Error` even though the type

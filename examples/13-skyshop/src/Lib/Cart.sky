@@ -63,14 +63,15 @@ createCart userId =
                 Err e
 
 
+-- getCart returns Result Error (Maybe Cart). Three cases at the
+-- TEA call site:
+--   Ok (Just cart) — cart exists; render normally
+--   Ok Nothing     — cart genuinely doesn't exist; render empty state
+--   Err e          — DB / FFI failure; set model.notification, render
+--                    error banner. The update loop is the natural
+--                    place to convert boundary failures into UX.
 getCart cartId =
-    case Db.getDoc "carts" cartId of
-        
-        Ok maybeCart ->
-            maybeCart
-        
-        Err _ ->
-            Nothing
+    Db.getDoc "carts" cartId
 
 
 getCartItems cartId =
@@ -122,19 +123,22 @@ enrichCartItem item =
                 item
 
 
+-- getCartWithItems returns (Result Error (Maybe Cart), List Item).
+-- Callers pattern-match on the Result and convert Err to a
+-- notification in update.
 getCartWithItems cartId =
     let
-        cart = getCart cartId
+        cartResult = getCart cartId
         items =
-            case cart of
-                
-                Just c ->
+            case cartResult of
+
+                Ok (Just c) ->
                     getCartItems (Db.getField "id" c)
-                
-                Nothing ->
+
+                _ ->
                     []
     in
-        ( cart, items )
+        ( cartResult, items )
 
 
 addItem cartId productId quantity =
@@ -420,14 +424,10 @@ checkoutToOrder cartId =
                 Err (Error.notFound |> Error.withMessage "Cart not found.")
 
 
+-- Same shape as getCart: Result Error (Maybe Order). update converts
+-- Err to a notification; view renders the banner.
 getOrder orderId =
-    case Db.getDoc "orders" orderId of
-        
-        Ok maybeOrder ->
-            maybeOrder
-        
-        Err _ ->
-            Nothing
+    Db.getDoc "orders" orderId
 
 
 getOrderItems orderId =
@@ -438,19 +438,23 @@ getOrderItems orderId =
         orderId
 
 
+-- getOrderWithItems returns (Result Error (Maybe Order), List Item).
+-- The order tuple-element preserves the Result so callers can react
+-- to a DB failure separately from "no such order". Items default to
+-- empty when order is absent or fetch failed.
 getOrderWithItems orderId =
     let
-        order = getOrder orderId
+        orderResult = getOrder orderId
         items =
-            case order of
-                
-                Just _ ->
+            case orderResult of
+
+                Ok (Just _) ->
                     getOrderItems orderId
-                
-                Nothing ->
+
+                _ ->
                     []
     in
-        ( order, items )
+        ( orderResult, items )
 
 
 getUserCarts userId =

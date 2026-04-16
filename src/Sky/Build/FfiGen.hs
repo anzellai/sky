@@ -1321,11 +1321,17 @@ classifyTypedResult
 classifyTypedResult results = case results of
     []                                  -> Just ("struct{}", False, id)
     [(_, "error")]                      -> Just ("struct{}", True , id)
-    -- Single pointer return (no error) → Maybe via NilToMaybe.
-    -- Go can return nil; wrapping in Maybe makes it visible at
-    -- the Sky type level. Excludes `*error` (handled as fallible).
-    [(_, t)] | isPointerType t && t /= "error" ->
-        Just ("SkyMaybe[" ++ t ++ "]", False, \call -> "NilToMaybe(" ++ call ++ ")")
+    -- Single pointer return (no error) — kept as plain T (not Maybe).
+    -- Wrapping every *T return in Maybe breaks Go-SDK chained
+    -- builder patterns (Firestore.client.Collection(x).Doc(y),
+    -- Stripe.params.SetMode(x).SetCustomer(y), etc.) where the
+    -- pointer is conventionally non-nil and downstream code
+    -- expects to chain methods on it. The defer-recover still
+    -- catches genuine nil-deref panics at runtime and converts
+    -- them to Err(ErrFfi(...)). For functions that genuinely
+    -- can return nil (lookups, optional accessors), Go convention
+    -- is to return (T, error) or (T, bool) — those are handled
+    -- correctly by the (T, error) and (T, bool) cases below.
     [(_, t)] | t /= "error"             -> Just (t, False, id)
     [(_, t), (_, "error")] | t /= "error" -> Just (t, True , id)
     -- (T, bool) comma-ok pattern → Maybe T via CommaOkToMaybe.
