@@ -6,24 +6,24 @@ All documentation, comments, variable names, function names, and user-facing str
 
 ## Core Principles (Non-Negotiable)
 
-1. **If it compiles, it works.** Goal, not yet guaranteed. The 2026-04-15
-   adversarial audit documented five counterexamples; remediation is
-   tracked in `docs/AUDIT_REMEDIATION.md` and is the active priority
-   until every P0–P3 item is ticked. Until then, treat this principle as
-   aspirational — defence in depth (panic recovery + `Err` return) is
-   the actual reliability floor. **The audit remediation loop runs
-   without an automated runaway brake:** the stop-hook blocks every
-   session-end attempt until either (a) `docs/AUDIT_REMEDIATION.md`
-   contains the `## Audit remediation complete` marker, or (b) a
-   `.claude/allow-stop` file exists for a manual pause. Do not add
-   further gating mechanisms to slow or batch progress.
+1. **If it compiles, it works.** The 2026-04-15 adversarial audit
+   documented 23 counterexamples across P0 (soundness floor), P1
+   (security), P2 (soundness cleanup), and P3 (tooling). All 23 are
+   remediated with regression tests (see `docs/AUDIT_REMEDIATION.md`
+   — completion marker landed 2026-04-16). The principle now holds
+   for every path exercised by `cabal test`, `scripts/example-sweep.sh`,
+   and `runtime-go/rt/*_test.go`. Residual P4 items (fully-typed
+   codegen to eliminate `any` in emitted Go, and Sky-test harness
+   port) remain as future-work tracked in `docs/PRODUCTION_READINESS.md`.
+   Defence in depth (panic recovery + `Err` return at Task boundaries)
+   remains the reliability floor under that v1.0 milestone.
 2. **Dev experience is top priority.** Clear errors, predictable behaviour, no user-written FFI.
 3. **Root-cause fixes only.** Fix at the correct abstraction layer. **Never suppress type errors or warnings.**
 4. **Production-grade architecture.** Must scale to large Go packages (Stripe SDK). Must remain maintainable.
 
 ## Non-Regression Rules
 
-These constraints are enforced by `sky verify (forbidden-pattern gate runs first)`, `test/Sky/ErrorUnificationSpec.hs`, and the audit-remediation specs being added under `test/Sky/**`. Violating them breaks the repo:
+These constraints are enforced by `sky verify`, `test/Sky/ErrorUnificationSpec.hs`, and the audit-remediation specs under `test/Sky/**`. Violating them breaks the repo:
 
 - **No `Result String a`** in any public surface. Use `Result Error a`.
 - **No `Task String a`** in any public surface. Use `Task Error a`.

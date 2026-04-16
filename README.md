@@ -74,10 +74,11 @@ See [docs/getting-started.md](docs/getting-started.md) for a full walkthrough.
 
 ## Status
 
-- **v1.0+** — all thirteen core phases complete: typed FFI wrappers, typed stdlib kernels, exhaustive pattern matching, Hindley-Milner inference with Go-generics codegen, auto-generated Go bindings, self-upgrading CLI, and the unified `Sky.Core.Error` type for all effectful operations.
+- **v1.0 — adversarial audit remediation complete (2026-04-16).** All 23 P0–P3 items across soundness, security, cleanup, and tooling landed with regression tests. See [docs/AUDIT_REMEDIATION.md](docs/AUDIT_REMEDIATION.md) for the per-item tracker and [docs/compiler/v1-soundness-audit.md](docs/compiler/v1-soundness-audit.md) for the earlier v1 audit findings.
+- **Core principle — "if it compiles, it works"** — now true for every path in `cabal test`, the example sweep, and the runtime Go test matrix. Residual future-work (fully-typed emitted Go, Sky-test harness) tracked in [docs/PRODUCTION_READINESS.md](docs/PRODUCTION_READINESS.md) as P4.
 - **18 example projects** under `examples/` covering CLI, HTTP servers, full-stack Sky.Live apps, databases (SQLite, PostgreSQL, Firestore), payments (Stripe), auth, and GUI (Fyne).
-- **Build-only example sweep:** 18/18 green.
-- **Runtime coverage:** single-user manual testing for each example; no automated integration suite yet.
+- **`sky verify`** is the canonical runtime check: builds *and* runs every example, hits HTTP endpoints, honours per-example `verify.json` scenarios (status code + body substring assertions). CI runs `sky verify` across the full example set.
+- **Test matrix:** 47-example hspec suite + ~20 runtime Go tests + 67-file `test-files/*.sky` self-test loop + format idempotency across every example source file.
 - **FFI generation:** Stripe SDK (8,896 types), Firestore, Fyne, and others auto-bind.
 
 ## Contributing

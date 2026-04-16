@@ -36,11 +36,8 @@ Classification:
 
 ### 3. Forbidden-pattern gate
 
-```bash
-sky verify (forbidden-pattern gate runs first)
-```
-
-Fails if any Sky source (under `src/`, `sky-stdlib/`, `examples/*/src/`) contains:
+Runs as the first phase of `sky verify`. Fails if any Sky source
+(under `src/`, `sky-stdlib/`, `examples/*/src/`) contains:
 
 - `Result String …` / `Task String …` — pre-v1 stringly error types.
 - `Std.IoError` — deleted pre-v1.
@@ -58,15 +55,25 @@ Runs eight spec modules:
 
 | Spec | Scope |
 |------|-------|
-| `Sky.Build.CompileSpec` | Basic build correctness |
-| `Sky.Parse.PatternSpec` | Parser regression (P1) |
-| `Sky.Canonicalise.ExposingSpec` | Import validation (P2) |
-| `Sky.Type.ExhaustivenessSpec` | Pattern exhaustiveness (P3) |
+| `Sky.Build.CompileSpec` | Basic build correctness + type-error-is-fatal |
+| `Sky.Parse.PatternSpec` | Parser regression |
+| `Sky.Canonicalise.ExposingSpec` | Import validation |
+| `Sky.Type.ExhaustivenessSpec` | Pattern exhaustiveness |
 | `Sky.Format.FormatSpec` | Formatter idempotency fixtures |
 | `Sky.Build.NestedPatternSpec` | Nested ctor-pattern discrimination (skyvote regression) |
 | `Sky.Build.TypedFfiSpec` | Typed FFI wrapper + call-site migration |
 | `Sky.ErrorUnification` | `Result String` / `Task String` / `IoError` / `RemoteData` forbidden gates |
 | `Sky.Build.ExampleSweep` | Build-only sweep as a cabal check |
+| `Sky.Build.CheckIsBuild` | Audit P0-1 — `sky check` runs `go build` |
+| `Sky.Build.RecordFieldOrder` | Audit P0-4 — auto-ctor field order |
+| `Sky.Build.UnreachableGate` | Audit P0-5 — no raw internal `panic` in emitted Go |
+| `Sky.Parse.Comments` | Audit P2-1 — comments survive fmt |
+| `Sky.Lsp.HoverShadowing` | Audit P2-2 — LSP local-type per-region |
+| `Sky.Lsp.RenameStable` | Audit P2-3 — stable TVar letters |
+| `Sky.Build.VerifyScenario` | Audit P2-4 — per-example verify.json |
+| `Sky.Build.VerifyAll` | Audit P3-1 — `sky verify` no-arg iterates all examples |
+| `Sky.Lsp.Protocol` | Audit P3-2 — LSP JSON-RPC integration |
+| `Sky.Build.EmbeddedRuntime` | Audit P3-3 — embedded runtime tracks disk |
 
 ### 5. Runtime unit tests in `runtime-go/rt/`
 
@@ -78,6 +85,16 @@ Runs Go-side regression tests:
 
 - `coerce_test.go` — ResultCoerce / MaybeCoerce with nested Sky shapes.
 - `error_adt_shape_test.go` — rt-side `ErrIo` / `ErrNetwork` values are type-compatible with Sky-emitted `Sky_Core_Error_Error`.
+- `arith_strict_test.go` — audit P0-2, strict AsInt/Bool/Float.
+- `coerce_site_test.go` — audit P0-3, rt.Coerce rejects bad shapes.
+- `skycall_strict_test.go` — audit P0-6, reflect FFI dispatch is type-safe.
+- `eq_deep_test.go` — audit P0-7, Test.equal deep structural equality.
+- `csrf_test.go` / `ratelimit_test.go` — audit P1-1, P1-2.
+- `db_safe_test.go` / `auth_secret_test.go` — audit P1-3, P1-4.
+- `prod_hardening_test.go` — audit P1-5, cookie Secure in prod.
+- `unreachable_test.go` — audit P0-5, rt.Unreachable.
+- `live_store_roundtrip_test.go` — audit P2-5, session store gob round-trip.
+- `p3_4_typed_strings_test.go` — audit P3-4, typed hot paths.
 
 ## What each layer catches
 

@@ -2,7 +2,11 @@
 
 **Scope:** every path where Sky source type-checks but generated output can still panic or misbehave. Every claim in the documentation and tooling was checked against the actual implementation.
 
-**Honest verdict:** *"if it compiles, it works"* is now **mostly true**, with three explicitly-named exceptions (listed below). Every source-to-runtime shape mismatch discovered during the audit has been closed with a test fixture in `runtime-go/rt/*_test.go` or `test/Sky/**Spec.hs`.
+**Honest verdict:** *"if it compiles, it works"* is now **true for every path exercised by the test matrix**, with documented residual debt around calling convention (see Remaining explicit debt below and `docs/PRODUCTION_READINESS.md` P4-1). Every source-to-runtime shape mismatch discovered during the audit has been closed with a regression test in `runtime-go/rt/*_test.go` or `test/Sky/**Spec.hs`.
+
+> **Follow-up:** a second, adversarial audit landed 2026-04-15/16 and
+> closed 23 further items across soundness, security, cleanup, and
+> tooling. Per-item tracker + acceptance criteria: [../AUDIT_REMEDIATION.md](../AUDIT_REMEDIATION.md).
 
 ---
 

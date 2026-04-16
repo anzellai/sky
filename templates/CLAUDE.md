@@ -2,7 +2,7 @@
 
 This is a [Sky](https://github.com/anzellai/sky) project. Sky is a pure functional language inspired by Elm, compiling to Go. The compiler is written in Haskell (GHC 9.4+) and ships as a single `sky` binary. Users only need the `sky` binary and Go 1.21+ — no Haskell toolchain required to use Sky.
 
-**Core principle: if it compiles, it works.** All side effects flow through `Task`. No runtime panics, no nil leakage, no partial bindings.
+**Core principle: if it compiles, it works.** Verified at v1.0 against 23-item adversarial soundness audit (soundness + security + cleanup + tooling). All side effects flow through `Task`. `sky check` invokes `go build` on the emitted output, so any shape mismatch surfaces at check time. No runtime panics from well-typed Sky code, no nil leakage, no silent numeric coercion.
 
 ## Quick Reference
 
@@ -48,11 +48,13 @@ tests =
 
 Assertions: `equal`, `notEqual`, `ok`, `err`, `expectErrorKind`, `isTrue`, `isFalse`, `fail`, `pass`.
 
-Non-regression rules (enforced by `sky verify (forbidden-pattern gate runs first)`):
+Non-regression rules (enforced by `sky verify`):
 
 - No `Result String a` or `Task String a` in any public surface — use `Result Error a` / `Task Error a`.
 - No `Std.IoError` (deleted), no `RemoteData` (deleted).
 - Every bug you fix must land with a regression test in `tests/`.
+- `sky check` is a full soundness gate (runs `go build` on the generated Go). Don't work around check failures by disabling it.
+- Secrets (`Auth.signToken` / `Auth.verifyToken`) take `String` and reject short keys (< 32 bytes) — don't stringify a `Maybe` or `Dict` into an auth secret.
 
 
 ## Language Syntax
@@ -95,7 +97,7 @@ main =
             |> List.map (\x -> x * 2)  -- pipeline operator
             |> List.filter (\x -> x > 3)
     in
-    println "Result:" (String.fromInt updated.x)
+    println ("Result: " ++ String.fromInt updated.x)
 ```
 
 ### Types

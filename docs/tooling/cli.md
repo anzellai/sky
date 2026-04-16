@@ -25,7 +25,39 @@ Pipeline:
 
 ### `sky check [path]`
 
-Type-check only. No codegen, no `go build`. Useful in editor integrations.
+Fully validate the program. `sky check` is a strict superset of `sky build`:
+it runs parsing, canonicalisation, HM inference, Go codegen, *and* invokes
+`go build` on the emitted output — without producing a runnable binary. If
+`sky build` would fail, `sky check` fails with the same error. This is the
+v1.0 soundness gate (audit P0-1) — editor integrations should use it
+directly.
+
+### `sky verify [example]`
+
+CI canonical runtime check. Iterates every directory under `examples/`
+(or the named one), builds, runs, and asserts runtime behaviour:
+
+- HTTP examples: hits `/` (and any routes declared in `examples/<n>/verify.json`)
+  and checks status codes + body substrings.
+- GUI examples (Fyne): skipped on headless CI via `SKY_SKIP_GUI=1`.
+
+Output lines: `runtime ok: <name>`, `FAIL scenario: ...`, `FAIL build: ...`,
+`[skip] <name>: ...`. Exit code is non-zero if any example fails.
+
+Scenario file format:
+
+```json
+{
+    "requests": [
+        { "method": "GET", "path": "/",           "expectStatus": 200, "expectBody": ["Hello"] },
+        { "method": "GET", "path": "/api/status", "expectStatus": 200, "expectBody": ["status"] }
+    ]
+}
+```
+
+### `sky test <file>`
+
+Run a Sky test module. See [`testing.md`](testing.md).
 
 ## Cache & cleanup
 
