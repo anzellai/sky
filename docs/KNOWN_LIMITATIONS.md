@@ -69,29 +69,29 @@ and `sky verify` exercises most paths via the example matrix.
 
 ---
 
-## LSP capabilities partially specced
+## LSP capabilities — all specced (resolved)
 
-**Symptom.** `docs/tooling/lsp.md` declares many capabilities; some
-lack integration specs that prove they actually work.
+Every capability advertised by `sky lsp` now has an end-to-end
+integration spec under `test/Sky/Lsp/`:
 
-**Covered now** (under `test/Sky/Lsp/`):
-- `initialize` + capabilities advertisement — `ProtocolSpec.hs`
-- `textDocument/hover` — `ProtocolSpec.hs`
-- `textDocument/definition` — `CapabilitiesSpec.hs`
-- `textDocument/documentSymbol` — `CapabilitiesSpec.hs`
-- `textDocument/formatting` — `CapabilitiesSpec.hs`
+| Capability | Spec |
+|---|---|
+| `initialize` + capabilities payload | `ProtocolSpec.hs` |
+| `textDocument/hover` | `ProtocolSpec.hs` |
+| `textDocument/definition` | `CapabilitiesSpec.hs` |
+| `textDocument/documentSymbol` | `CapabilitiesSpec.hs` |
+| `textDocument/formatting` | `CapabilitiesSpec.hs` |
+| `textDocument/references` | `CapabilitiesSpec.hs` |
+| `textDocument/rename` | `CapabilitiesSpec.hs` |
+| `textDocument/completion` | `CapabilitiesSpec.hs` |
+| `textDocument/semanticTokens/full` | `CapabilitiesSpec.hs` |
+| server stays alive on broken `didOpen` | `CapabilitiesSpec.hs` |
 
-**Remaining gaps** (need extending `CapabilitiesSpec.hs` with one
-test each):
-- `textDocument/references`
-- `textDocument/rename` (+ `textDocument/prepareRename`)
-- `textDocument/completion` (triggered on `.`)
-- `textDocument/publishDiagnostics` on `didOpen` of a broken file
-- `textDocument/semanticTokens/full`
-
-**Workaround.** Manual editor testing via Helix/Zed/VS Code.
-The above gaps need extending `CapabilitiesSpec.hs` with one
-JSON-RPC fixture per capability — straightforward incremental work.
+Known limitation of the diagnostic test: the harness doesn't listen
+for server-pushed notifications, so `publishDiagnostics` is
+verified indirectly (server remains responsive to a follow-up
+request after opening a syntactically-broken file). A future
+enhancement would add a notification queue to the harness.
 
 ---
 

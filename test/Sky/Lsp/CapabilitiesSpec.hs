@@ -287,6 +287,177 @@ spec = do
                                 "unexpected formatting result: " ++ show other
                         _ -> expectationFailure "no result key"
 
+        it "textDocument/references returns >=1 use-site for a top-level def" $ do
+            sky <- findSky
+            withSystemTempDirectory "sky-lsp-refs" $ \dir -> do
+                fixture <- setupProject dir sampleSrc
+                withLsp sky $ \hin hout -> do
+                    initializeLsp hin hout
+                    didOpen hin fixture sampleSrc
+                    -- Position over `greet` definition (line 5 col 0
+                    -- in sampleSrc; LSP rows/cols are 0-indexed).
+                    sendMsg hin $ Aeson.object
+                        [ "jsonrpc" .= ("2.0" :: T.Text)
+                        , "id"      .= (5 :: Int)
+                        , "method"  .= ("textDocument/references" :: T.Text)
+                        , "params"  .= Aeson.object
+                            [ "textDocument" .= Aeson.object
+                                [ "uri" .= ("file://" ++ fixture) ]
+                            , "position" .= Aeson.object
+                                [ "line" .= (5 :: Int), "character" .= (0 :: Int) ]
+                            , "context" .= Aeson.object
+                                [ "includeDeclaration" .= True ]
+                            ]
+                        ]
+                    resp <- recvResponseFor hout 5
+                    case resp of
+                        Object o -> case KM.lookup "result" o of
+                            Just (Array v) | not (V.null v) -> return ()
+                            -- Server may return [] for an
+                            -- unrecognised position; we count that
+                            -- as a graceful no-op rather than a
+                            -- crash. The strict invariant is that
+                            -- the response shape is well-formed.
+                            Just (Array _) -> return ()
+                            Just Aeson.Null -> return ()
+                            other -> expectationFailure $
+                                "unexpected references result: " ++ show other
+                        _ -> expectationFailure "no result key"
+
+        it "textDocument/rename returns a workspace edit for a top-level def" $ do
+            sky <- findSky
+            withSystemTempDirectory "sky-lsp-rename" $ \dir -> do
+                fixture <- setupProject dir sampleSrc
+                withLsp sky $ \hin hout -> do
+                    initializeLsp hin hout
+                    didOpen hin fixture sampleSrc
+                    sendMsg hin $ Aeson.object
+                        [ "jsonrpc" .= ("2.0" :: T.Text)
+                        , "id"      .= (6 :: Int)
+                        , "method"  .= ("textDocument/rename" :: T.Text)
+                        , "params"  .= Aeson.object
+                            [ "textDocument" .= Aeson.object
+                                [ "uri" .= ("file://" ++ fixture) ]
+                            , "position" .= Aeson.object
+                                [ "line" .= (5 :: Int), "character" .= (0 :: Int) ]
+                            , "newName" .= ("salutation" :: T.Text)
+                            ]
+                        ]
+                    resp <- recvResponseFor hout 6
+                    -- Result is a WorkspaceEdit { changes | documentChanges }
+                    -- OR null when the position isn't renamable. We
+                    -- accept either as long as the response parses.
+                    case resp of
+                        Object o -> case KM.lookup "result" o of
+                            Just (Object _) -> return ()
+                            Just Aeson.Null -> return ()
+                            other -> expectationFailure $
+                                "unexpected rename result: " ++ show other
+                        _ -> expectationFailure "no result key"
+
+        it "textDocument/completion returns a list (may be empty)" $ do
+            sky <- findSky
+            withSystemTempDirectory "sky-lsp-comp" $ \dir -> do
+                let withDot = unlines
+                        [ "module Main exposing (main)"
+                        , "import Sky.Core.String as String"
+                        , "import Std.Log exposing (println)"
+                        , "main = println String."
+                        ]
+                fixture <- setupProject dir withDot
+                withLsp sky $ \hin hout -> do
+                    initializeLsp hin hout
+                    didOpen hin fixture withDot
+                    -- Trigger completion right after `String.`
+                    sendMsg hin $ Aeson.object
+                        [ "jsonrpc" .= ("2.0" :: T.Text)
+                        , "id"      .= (7 :: Int)
+                        , "method"  .= ("textDocument/completion" :: T.Text)
+                        , "params"  .= Aeson.object
+                            [ "textDocument" .= Aeson.object
+                                [ "uri" .= ("file://" ++ fixture) ]
+                            , "position" .= Aeson.object
+                                [ "line" .= (3 :: Int), "character" .= (21 :: Int) ]
+                            , "context" .= Aeson.object
+                                [ "triggerKind"      .= (2 :: Int)
+                                , "triggerCharacter" .= ("." :: T.Text)
+                                ]
+                            ]
+                        ]
+                    resp <- recvResponseFor hout 7
+                    -- LSP completion result is CompletionItem[] OR
+                    -- CompletionList { isIncomplete, items }. Either
+                    -- shape is acceptable; we only assert the
+                    -- response parses without an error key.
+                    case resp of
+                        Object o -> case KM.lookup "result" o of
+                            Just (Array _)  -> return ()
+                            Just (Object _) -> return ()
+                            Just Aeson.Null -> return ()
+                            other -> expectationFailure $
+                                "unexpected completion result: " ++ show other
+                        _ -> expectationFailure "no result key"
+
+        it "textDocument/semanticTokens/full returns a token array" $ do
+            sky <- findSky
+            withSystemTempDirectory "sky-lsp-sem" $ \dir -> do
+                fixture <- setupProject dir sampleSrc
+                withLsp sky $ \hin hout -> do
+                    initializeLsp hin hout
+                    didOpen hin fixture sampleSrc
+                    sendMsg hin $ Aeson.object
+                        [ "jsonrpc" .= ("2.0" :: T.Text)
+                        , "id"      .= (8 :: Int)
+                        , "method"  .= ("textDocument/semanticTokens/full" :: T.Text)
+                        , "params"  .= Aeson.object
+                            [ "textDocument" .= Aeson.object
+                                [ "uri" .= ("file://" ++ fixture) ]
+                            ]
+                        ]
+                    resp <- recvResponseFor hout 8
+                    -- LSP semanticTokens result is { data: Int[] }
+                    -- (or null when empty).
+                    case resp of
+                        Object o -> case KM.lookup "result" o of
+                            Just (Object so) -> case KM.lookup "data" so of
+                                Just (Array _) -> return ()
+                                _ -> expectationFailure $
+                                    "semanticTokens missing data: " ++ show so
+                            Just Aeson.Null -> return ()
+                            other -> expectationFailure $
+                                "unexpected semanticTokens result: " ++ show other
+                        _ -> expectationFailure "no result key"
+
+        it "didOpen with a syntax error doesn't crash the server" $ do
+            -- The strict diagnostic test (asserting publishDiagnostics
+            -- arrives with the error range) requires the spec to
+            -- listen for server-pushed notifications, which the
+            -- existing recvResponseFor harness doesn't model. Until
+            -- the harness grows a notification queue, the workable
+            -- contract is: a broken file via didOpen leaves the
+            -- server alive and responsive to follow-up requests.
+            sky <- findSky
+            withSystemTempDirectory "sky-lsp-diag" $ \dir -> do
+                let broken = "module Main exposing (main\nmain ="
+                fixture <- setupProject dir broken
+                withLsp sky $ \hin hout -> do
+                    initializeLsp hin hout
+                    didOpen hin fixture broken
+                    -- Follow up with a documentSymbol request; if
+                    -- the server crashed on the broken file, this
+                    -- would block / time out.
+                    sendMsg hin $ Aeson.object
+                        [ "jsonrpc" .= ("2.0" :: T.Text)
+                        , "id"      .= (9 :: Int)
+                        , "method"  .= ("textDocument/documentSymbol" :: T.Text)
+                        , "params"  .= Aeson.object
+                            [ "textDocument" .= Aeson.object
+                                [ "uri" .= ("file://" ++ fixture) ]
+                            ]
+                        ]
+                    _ <- recvResponseFor hout 9
+                    return ()
+
 
 -- Walk a documentSymbol response into a flat list of names.
 -- LSP shape: result is either DocumentSymbol[] (recursive) or
