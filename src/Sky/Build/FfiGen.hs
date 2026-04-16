@@ -1528,18 +1528,42 @@ goResultsToSky rs = "(" ++ intercalate ", " (map (goTypeToSky . snd) rs) ++ ")"
 
 
 goTypeToSky :: String -> String
-goTypeToSky t = case t of
-    "string"  -> "String"
-    "int"     -> "Int"
-    "int64"   -> "Int"
-    "int32"   -> "Int"
-    "float64" -> "Float"
-    "float32" -> "Float"
-    "bool"    -> "Bool"
-    "error"   -> "String"
-    _         -> stripPkg t
+goTypeToSky t
+    | take 5 t == "func(" = formatFuncType (drop 5 t)
+    | otherwise = case t of
+        "string"  -> "String"
+        "int"     -> "Int"
+        "int64"   -> "Int"
+        "int32"   -> "Int"
+        "float64" -> "Float"
+        "float32" -> "Float"
+        "bool"    -> "Bool"
+        "error"   -> "String"
+        _         -> stripPkg t
   where
     stripPkg = reverse . takeWhile (/= '.') . reverse
+
+    formatFuncType body =
+        let (argPart, retPart) = splitAtCloseParen body
+            args = splitCommas argPart
+            skyArgs = map (goTypeToSky . trim') args
+            skyRet  = if null retPart then "()" else goTypeToSky (trim' retPart)
+        in "(" ++ intercalate " -> " (skyArgs ++ [skyRet]) ++ ")"
+
+    splitAtCloseParen s = go 0 [] s
+      where
+        go _ acc [] = (reverse acc, "")
+        go 0 acc (')':rest) = (reverse acc, rest)
+        go n acc ('(':rest) = go (n+1) ('(':acc) rest
+        go n acc (')':rest) = go (n-1) (')':acc) rest
+        go n acc (c:rest)   = go n (c:acc) rest
+
+    splitCommas s = case break (== ',') s of
+        (a, [])   -> [a]
+        (a, _:rest) -> a : splitCommas rest
+
+    trim' = dropWhile isSpace . reverse . dropWhile isSpace . reverse
+    isSpace c = c == ' '
 
 
 -- ══════════════════════════════════════════════════════════════════════════
