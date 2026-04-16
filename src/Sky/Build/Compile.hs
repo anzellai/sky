@@ -177,9 +177,16 @@ compile config entryPath outDir = do
     -- LAST in the root list so a user's local Std/* override wins.
     stdlibRoot <- writeEmbeddedSkyStdlib outDir
 
-    -- Phase 1: Discover all modules
+    -- Phase 1: Discover all modules.
+    -- tests/ is an implicit extra root when it exists — `sky test`
+    -- writes a synthesised entry under src/ that imports the test
+    -- module from tests/, and the graph walker needs to see both
+    -- roots for the import to resolve. Harmless for non-test builds
+    -- because a tests/ dir without modules contributes no modules.
     putStrLn "-- Discovering modules"
-    modules <- Graph.discoverModulesMulti (sourceRoot : depRoots ++ [stdlibRoot]) entryPath
+    testsRootExists <- doesDirectoryExist "tests"
+    let extraTestsRoot = if testsRootExists then ["tests"] else []
+    modules <- Graph.discoverModulesMulti (sourceRoot : depRoots ++ extraTestsRoot ++ [stdlibRoot]) entryPath
     let moduleOrder = Graph.compilationOrder modules
     putStrLn $ "   Found " ++ show (length moduleOrder) ++ " module(s)"
 
@@ -982,8 +989,10 @@ typecheckWorkspace config entryPath = do
     -- predictable for goto-definition jumps.
     let stdlibSideDir = entryDir </> ".sky-stdlib"
     stdlibRoot <- writeStdlibTo stdlibSideDir
+    testsRootExists2 <- doesDirectoryExist "tests"
+    let extraTestsRoot2 = if testsRootExists2 then ["tests"] else []
     modules <- Graph.discoverModulesMulti
-        (sourceRoot : depRoots ++ [stdlibRoot]) entryPath
+        (sourceRoot : depRoots ++ extraTestsRoot2 ++ [stdlibRoot]) entryPath
     let moduleOrder = Graph.compilationOrder modules
 
     -- Parse all

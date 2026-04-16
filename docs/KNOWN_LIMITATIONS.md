@@ -55,10 +55,9 @@ could ship undetected.
 - `sky run` — exit propagation + stdout capture — `RunSpec.hs`
 - `sky fmt` — second-pass idempotency — `FmtSpec.hs`
 - `sky clean` — removes managed dirs only, preserves user files — `CleanSpec.hs`
+- `sky test` — pass/fail propagation — `TestSpec.hs`
 
 **Remaining gaps:**
-- `sky test` — pass/fail propagation. Needs a passing + failing
-  fixture in `tests/`. Blocked on item 5a (Sky-test-runner-in-cabal).
 - `sky add/remove/install/update` — network-dependent; spec needs
   to mock the Go module proxy or skip-with-reason on offline CI.
 - `sky upgrade` — hits GitHub releases; needs `SKY_UPGRADE_URL`
@@ -127,6 +126,10 @@ domain logic regressions slip through:
   build clean but require live credentials to genuinely run; e2e
   contracts skip the deep-API path
 
-These need targeted Sky-level tests via `sky test tests/**/*Test.sky`
-once that test runner is fully wired into `cabal test` (audit P4-2,
-out of scope for the v0.9 line).
+**Partial progress.** `sky test tests/**/*Test.sky` now works
+(module-discovery bug where `tests/` wasn't an implicit source
+root fixed in the same commit as `test/Sky/Cli/TestSpec.hs`). This
+unblocks targeted Sky-level regression tests for the categories
+above — a future session should add them as each class is caught
+in the wild (e.g. the chess primitives as a Sky test when
+investigating AI weakness).

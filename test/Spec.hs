@@ -27,6 +27,7 @@ import qualified Sky.Cli.InitSpec
 import qualified Sky.Cli.RunSpec
 import qualified Sky.Cli.FmtSpec
 import qualified Sky.Cli.CleanSpec
+import qualified Sky.Cli.TestSpec
 
 main :: IO ()
 main = hspec $ do
@@ -73,3 +74,4 @@ main = hspec $ do
     describe "Sky.Cli.Run"                 Sky.Cli.RunSpec.spec
     describe "Sky.Cli.Fmt"                 Sky.Cli.FmtSpec.spec
     describe "Sky.Cli.Clean"               Sky.Cli.CleanSpec.spec
+    describe "Sky.Cli.Test"                Sky.Cli.TestSpec.spec
