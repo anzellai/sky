@@ -30,6 +30,11 @@
 #      LSP surfaces every compile-time error as publishDiagnostics.
 #      Brief: .claude/prompts/soundness-and-lsp-diagnostics.md
 #      Marker: `.claude/soundness-lsp-complete` exists.
+#   7. Skyshop runtime + LSP hover completeness — skyshop runs
+#      correctly end-to-end; LSP hover shows type signatures for
+#      ALL identifiers (not just names).
+#      Brief: .claude/prompts/skyshop-and-lsp-hover.md
+#      Marker: `.claude/skyshop-lsp-hover-complete` exists.
 #
 # Manual escape: `touch .claude/allow-stop` lets the turn end regardless
 # of gate state. Remove the file (or it's removed by `git clean -fdx`)
@@ -135,6 +140,18 @@ if [[ ! -f "$SOUND_MARKER" ]]; then
 {
   "decision": "block",
   "reason": "Compiler soundness + LSP diagnostic parity NOT complete. Empirically verified gaps: (1) canonicaliser doesn't catch undefined variables — typos pass through to Go which errors with 'compiler-side bug'; not user-friendly, no position. (2) LSP's computeDiagnostics pipeline skips the exhaustiveness pass — users see 'case does not cover: Blue' at sky-build time but the editor stays silent. Dev experience is top priority; these are the biggest regressions in the compile→error→edit loop. Read .claude/prompts/soundness-and-lsp-diagnostics.md — 7-item brief: fix Gap 1 (canonicaliser), DRY the LSP test harness, fix Gap 2a (LSP exhaustiveness), 2b (LSP unbound), broader audit of diagnostic quality, CI parity, touch .claude/soundness-lsp-complete. Tests first (failing-at-HEAD-passing-post-fix pattern). No spec-without-fix limbo. Realistically 2-4 sessions. To pause: touch .claude/allow-stop."
+}
+EOF
+    exit 0
+fi
+
+# ── Gate 7: skyshop runtime + LSP hover completeness
+SHOP_MARKER=".claude/skyshop-lsp-hover-complete"
+if [[ ! -f "$SHOP_MARKER" ]]; then
+    cat <<'EOF'
+{
+  "decision": "block",
+  "reason": "Skyshop runtime + LSP hover completeness NOT done. Two non-negotiable outcomes: (1) skyshop example runs correctly end-to-end — every route responds, no handler-not-found, no double init, styling renders. (2) LSP hover shows correct type signatures for ALL identifiers — variables, functions, constructors, imports, stdlib, FFI. 'Shows the variable name' is unacceptable. Read .claude/prompts/skyshop-and-lsp-hover.md — full brief with diagnostic methodology, fix strategy, verification gates. No mid-session stoppage, no 'pre-existing' dismissals. Done: touch .claude/skyshop-lsp-hover-complete. To pause: touch .claude/allow-stop."
 }
 EOF
     exit 0
