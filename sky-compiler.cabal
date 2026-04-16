@@ -164,6 +164,7 @@ test-suite sky-tests
       Sky.Build.UnreachableGateSpec
       Sky.Parse.CommentsSpec
       Sky.Lsp.Harness
+      Sky.Lsp.DiagnosticsSpec
       Sky.Lsp.HoverShadowingSpec
       Sky.Lsp.RenameStableSpec
       Sky.Build.VerifyScenarioSpec

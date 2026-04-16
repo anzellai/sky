@@ -49,6 +49,7 @@ import qualified Sky.Canonicalise.Module as Canonicalise
 import qualified Sky.Type.Constrain.Module as Constrain
 import qualified Sky.Type.Solve as Solve
 import qualified Sky.Type.Type as Ty
+import qualified Sky.Type.Exhaustiveness as Exhaust
 import qualified Sky.AST.Source as Src
 import qualified Sky.Reporting.Annotation as A
 import qualified Sky.Format.Format as Fmt
@@ -487,6 +488,12 @@ computeDiagnostics src = do
 -- Canonicalise + solver errors: the downstream phases emit messages with
 -- a leading `LINE:COL: ` prefix when they know the location; stripMsgPos
 -- extracts it and we fall back to (0,0) otherwise.
+--
+-- Exhaustiveness: after a successful solve, we run the exhaustiveness
+-- pass so users see "case does not cover: Blue" in their editor —
+-- same signal `sky build` emits, no more asymmetry between the two.
+-- Each `Exhaust.Diag` carries a real `A.Region`, so we can produce a
+-- precise range without parsing a LINE:COL prefix.
 runPipeline :: T.Text -> IO [A.Value]
 runPipeline src = case Parse.parseModule src of
     Left err ->
@@ -499,9 +506,30 @@ runPipeline src = case Parse.parseModule src of
                 cs <- Constrain.constrainModule canMod
                 r  <- Solve.solve cs
                 case r of
-                    Solve.SolveOk _ -> return []
                     Solve.SolveError err ->
                         return [diagnosticFromMessage ("Type error: " ++ err)]
+                    Solve.SolveOk _ ->
+                        return (map exhaustDiagnostic (Exhaust.checkModule canMod))
+
+
+-- | Convert an exhaustiveness diagnostic into an LSP diagnostic. The
+-- region is the case-expression region carried by the `Diag`.
+exhaustDiagnostic :: Exhaust.Diag -> A.Value
+exhaustDiagnostic (Exhaust.Diag region missing hint) =
+    let A.Region (A.Position r1 c1) (A.Position r2 c2) = region
+        line1 = max 0 (r1 - 1)
+        col1  = max 0 (c1 - 1)
+        line2 = max 0 (r2 - 1)
+        col2  = max 0 (c2 - 1)
+        msg = case missing of
+            [] -> hint
+            _  -> "Non-exhaustive patterns: " ++ hint
+                ++ " (missing: " ++ listWithCommas missing ++ ")"
+    in mkDiagnostic line1 col1 line2 col2 msg 1
+  where
+    listWithCommas [] = ""
+    listWithCommas [x] = x
+    listWithCommas (x:xs) = x ++ ", " ++ listWithCommas xs
 
 
 -- | Extract `LINE:COL:` prefix if present; otherwise return no position.
