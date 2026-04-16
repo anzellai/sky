@@ -111,9 +111,17 @@ canonicaliseWithDeps deps srcMod =
 
         -- Exports
         exports = canonicaliseExports (Src._exports srcMod)
-    in case (importHidingErrors, collisions) of
-        (err:_, _) -> Left err
-        (_, Just err) -> Left err
+
+        -- Unbound-name check. Runs against env4 (which has all imports,
+        -- exposed names, constructors, and top-level decls registered).
+        -- Walking order mirrors collectUnqualExprRegions but also consults
+        -- the full env — so typos like `messgae` get caught at the Sky
+        -- layer with a line:col, instead of falling through to `go build`.
+        unboundErrs = collectUnboundNameErrors env4 srcMod
+    in case (importHidingErrors, collisions, unboundErrs) of
+        (err:_, _, _) -> Left err
+        (_, Just err, _) -> Left err
+        (_, _, err:_) -> Left err
         _ -> Right $ Can.Module
             { Can._name    = modName
             , Can._exports = exports
@@ -534,6 +542,49 @@ checkAmbiguousUses ambiguous localNames srcMod
         (a, _:rest) -> a : splitDots rest
 
 
+-- | Collect "Undefined name: X" errors (with line:col positions) for every
+-- unqualified variable reference that doesn't resolve against env's unqualified
+-- var map, ctor map, or a pattern-bound local in scope. This is the Sky-layer
+-- fence for typos like `messgae` that otherwise fall through to `go build`
+-- (the historic "compiler-side bug" message the user would see).
+--
+-- Qualified references (e.g. `Module.thing`) and identifiers used inside
+-- patterns are intentionally out of scope here — see the broader audit notes
+-- in .claude/prompts/soundness-and-lsp-diagnostics.md.
+collectUnboundNameErrors :: Env.Env -> Src.Module -> [String]
+collectUnboundNameErrors env srcMod =
+    let
+        isBound n =
+               Map.member n (Env._vars env)
+            || Map.member n (Env._ctors env)
+
+        collect (A.At _ v) =
+            let pats     = Src._valuePatterns v
+                body     = Src._valueBody v
+                shadowed = Set.fromList (concatMap patternNames pats)
+            in collectUnqualExprRegions shadowed body
+
+        allRefs = concatMap collect (Src._values srcMod)
+        unbound = [ (n, reg) | (n, reg) <- allRefs, not (isBound n) ]
+
+        formatOne (n, A.Region (A.Position r c) _) =
+            "Line " ++ show r ++ ", column " ++ show c
+                ++ ": Undefined name: " ++ n
+                ++ "\n    I cannot find a `" ++ n
+                ++ "` in scope. Check for a typo, or add an import that exposes this name."
+    in
+        map formatOne (dedupeByName unbound)
+  where
+    -- If `foo` is used 12 times and all 12 are unbound, report only the
+    -- first. Prevents a 12-line wall of the same message.
+    dedupeByName :: [(String, A.Region)] -> [(String, A.Region)]
+    dedupeByName xs =
+        let step (seen, acc) (n, reg)
+                | Set.member n seen = (seen, acc)
+                | otherwise         = (Set.insert n seen, (n, reg) : acc)
+        in reverse (snd (foldl step (Set.empty, []) xs))
+
+
 -- | Same as collectUnqualExpr but also records each reference's source region.
 collectUnqualExprRegions :: Set.Set String -> Src.Expr -> [(String, A.Region)]
 collectUnqualExprRegions shadowed (A.At reg e) = case e of
@@ -842,7 +893,11 @@ registerUnions tmap env unions =
         in (name, Env.CtorHome home typeName name idx arity union annot)
 
 
--- | Register type aliases
+-- | Register type aliases. Record aliases double as constructor functions
+-- (Elm convention: `type alias Foo = { a : A, b : B }` auto-generates
+-- `Foo : A -> B -> Foo`). We register the alias name in `_vars` so
+-- `Decode.succeed UserProfile` resolves at canonicalise time instead of
+-- leaking through to Go codegen and tripping the unbound-name check.
 registerAliases :: Map.Map String ModuleName.Canonical -> Env.Env -> [A.Located Src.Alias] -> Env.Env
 registerAliases tmap env aliases =
     foldl registerAlias env aliases
@@ -854,7 +909,16 @@ registerAliases tmap env aliases =
             vars = map (\(A.At _ v) -> v) (Src._aliasVars a)
             body = case Src._aliasType a of A.At _ t -> CanType.canonicaliseTypeAnnotationWith tmap home t
             info = Env.AliasInfo home vars body
-        in e { Env._aliases = Map.insert name info (Env._aliases e) }
+            e1 = e { Env._aliases = Map.insert name info (Env._aliases e) }
+            -- Record aliases expose their name as an auto-ctor value.
+            -- Non-record aliases are purely type-level and don't contribute
+            -- a constructor (e.g. `type alias Id = String`).
+            isRecordAlias = case body of
+                Can.TRecord{} -> True
+                _             -> False
+        in if isRecordAlias
+            then e1 { Env._vars = Map.insert name (Env.VarTopLevel home) (Env._vars e1) }
+            else e1
 
 
 -- ═══════════════════════════════════════════════════════════
