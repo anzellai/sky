@@ -10,6 +10,7 @@ import qualified System.Directory
 import qualified System.Environment
 import System.Directory (createDirectoryIfMissing, doesFileExist)
 import System.IO.Error (catchIOError)
+import qualified Control.Exception
 import System.FilePath ((</>), takeExtension, takeDirectory, takeFileName, dropExtension, splitDirectories)
 import System.Exit (exitWith)
 import Data.List (isPrefixOf, stripPrefix, tails)
@@ -793,7 +794,9 @@ runCommand cmd = case cmd of
                     else writeFile "sky-out/go.mod" $ unlines ["module sky-app", "", "go 1.21"]
             regenMissingBindings goDeps
         result <- Compile.compile config entryFile outDir
-        -- Clean up the entry regardless of compile outcome.
+        -- Clean up the entry regardless of compile outcome. Pre-fix,
+        -- a go-build exception skipped the cleanup line, leaving
+        -- SkyTestEntry__.sky in src/ across sessions.
         let cleanup = do
                 System.Directory.removeFile entryFile
                     `catchIOError` (\_ -> return ())
@@ -803,17 +806,28 @@ runCommand cmd = case cmd of
                 return (Left err)
             Right _ -> do
                 let binName = Toml._binName config
-                callProcess "sh" ["-c", "cd " ++ outDir ++ " && go build -o " ++ binName ++ " ."]
+                -- go build may fail (undefined references etc.);
+                -- wrap in try so cleanup always runs.
+                buildRc <- Control.Exception.try
+                    (callProcess "sh"
+                        ["-c", "cd " ++ outDir ++ " && go build -o " ++ binName ++ " ."])
+                    :: IO (Either Control.Exception.SomeException ())
                 cleanup
-                -- Run with inherited stdout/stderr so test output is
-                -- visible; propagate exit code.
-                (_, _, _, ph) <- System.Process.createProcess
-                    (System.Process.proc (outDir ++ "/" ++ binName) [])
-                ec <- System.Process.waitForProcess ph
-                case ec of
-                    System.Exit.ExitSuccess   -> return (Right ())
-                    System.Exit.ExitFailure n ->
-                        exitWith (System.Exit.ExitFailure n)
+                case buildRc of
+                    Left e -> do
+                        hPutStrLn stderr $
+                            "sky test: go build failed: " ++ show e
+                        exitWith (System.Exit.ExitFailure 1)
+                    Right () -> do
+                        -- Run with inherited stdout/stderr so test
+                        -- output is visible; propagate exit code.
+                        (_, _, _, ph) <- System.Process.createProcess
+                            (System.Process.proc (outDir ++ "/" ++ binName) [])
+                        ec <- System.Process.waitForProcess ph
+                        case ec of
+                            System.Exit.ExitSuccess   -> return (Right ())
+                            System.Exit.ExitFailure n ->
+                                exitWith (System.Exit.ExitFailure n)
 
     Verify target -> do
         ok <- runVerify target
