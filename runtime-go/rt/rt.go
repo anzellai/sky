@@ -1919,10 +1919,15 @@ type SkyErrorInfo struct {
 
 type skyErrorInfo = SkyErrorInfo
 
-type skyMaybeAdt = SkyADT
-
+// skyMaybeNothing returns the canonical SkyMaybe representation for
+// Nothing, matching what codegen emits (`rt.Nothing[any]()`). The
+// previous version returned a SkyADT struct — a different Go type
+// under `any`-boxing — so code that type-asserted the Details field
+// as `SkyMaybe[any]` (the codegen path for `case details of Just d
+// -> ... Nothing -> ...`) would panic with a type-identity
+// mismatch, the same class of bug as the ErrorKind enum gap.
 func skyMaybeNothing() any {
-	return skyMaybeAdt{Tag: 1, SkyName: "Nothing", Fields: []any{}}
+	return Nothing[any]()
 }
 
 // errorKindAdt builds an `Sky.Core.Error.ErrorKind` value with the
