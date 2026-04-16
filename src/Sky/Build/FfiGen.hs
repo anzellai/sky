@@ -51,6 +51,7 @@ import System.Directory (createDirectoryIfMissing, doesFileExist, getCurrentDire
 import System.Environment (lookupEnv)
 import System.FilePath ((</>), takeDirectory)
 import System.Process (readProcessWithExitCode)
+import qualified Sky.Build.EmbeddedInspector as EI
 
 
 -- | Information extracted about one Go function
@@ -107,10 +108,10 @@ instance A.FromJSON PkgInfo where
 
 runInspector :: String -> IO (Either String PkgInfo)
 runInspector pkgPath = do
-    inspectorPath <- findInspector
-    case inspectorPath of
-        Nothing -> return (Left "sky-ffi-inspect binary not found on disk. Build bin/sky-ffi-inspect or set SKY_FFI_INSPECTOR=/path.")
-        Just bin -> do
+    resolved <- resolveInspector
+    case resolved of
+        Left e    -> return (Left e)
+        Right bin -> do
             let cmd = "cd sky-out && " ++ bin ++ " " ++ pkgPath
             (_, out, err) <- readProcessWithExitCode "sh" ["-c", cmd] ""
             if null out
@@ -118,6 +119,27 @@ runInspector pkgPath = do
                 else case A.eitherDecode (BL.fromStrict (TE.encodeUtf8 (T.pack out))) of
                     Left e  -> return (Left $ "sky-ffi-inspect: json: " ++ e)
                     Right p -> return (Right p)
+
+
+-- | Resolve a working `sky-ffi-inspect` binary. Preference order:
+--
+--   1. `$SKY_FFI_INSPECTOR` (explicit override — honoured first for
+--      contributor workflows and test harnesses).
+--   2. `./bin/sky-ffi-inspect` walking up ancestor directories (in-
+--      tree dev builds).
+--   3. Embedded fallback — materialise the bundled Go source from
+--      the sky binary to `$XDG_CACHE_HOME/sky/tools/`, `go build`,
+--      cache. This is what released binaries hit: a single `sky`
+--      executable that self-provisions its helper on first use.
+--
+-- Returns the path, or a descriptive error if every strategy fails
+-- (most commonly: no `go` on PATH).
+resolveInspector :: IO (Either String FilePath)
+resolveInspector = do
+    disk <- findInspector
+    case disk of
+        Just p  -> return (Right p)
+        Nothing -> EI.ensureInspector
 
 
 -- | Probe common locations for the sky-ffi-inspect binary.

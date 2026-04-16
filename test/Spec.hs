@@ -20,6 +20,7 @@ import qualified Sky.Build.VerifyScenarioSpec
 import qualified Sky.Build.VerifyAllSpec
 import qualified Sky.Lsp.ProtocolSpec
 import qualified Sky.Build.EmbeddedRuntimeSpec
+import qualified Sky.Build.EmbeddedInspectorSpec
 
 main :: IO ()
 main = hspec $ do
@@ -56,3 +57,5 @@ main = hspec $ do
     describe "Sky.Lsp.Protocol"           Sky.Lsp.ProtocolSpec.spec
     -- Audit P3-3: embedded runtime must track on-disk tree.
     describe "Sky.Build.EmbeddedRuntime"  Sky.Build.EmbeddedRuntimeSpec.spec
+    -- Embedded sky-ffi-inspect: single-binary release shape.
+    describe "Sky.Build.EmbeddedInspector" Sky.Build.EmbeddedInspectorSpec.spec

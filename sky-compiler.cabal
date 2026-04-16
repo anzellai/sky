@@ -15,6 +15,9 @@ extra-source-files:
     runtime-go/rt/*.go
     sky-stdlib/Sky/Core/*.sky
     sky-stdlib/Sky/*.sky
+    tools/sky-ffi-inspect/main.go
+    tools/sky-ffi-inspect/go.mod
+    tools/sky-ffi-inspect/go.sum
 
 executable sky
   main-is:          Main.hs
@@ -112,6 +115,7 @@ executable sky
     Sky.Build.Compile
     Sky.Build.Dce
     Sky.Build.EmbeddedRuntime
+    Sky.Build.EmbeddedInspector
     Sky.Build.FfiGen
     Sky.Build.FfiRegistry
     Sky.Build.SkyDeps
@@ -163,3 +167,4 @@ test-suite sky-tests
       Sky.Build.VerifyAllSpec
       Sky.Lsp.ProtocolSpec
     , Sky.Build.EmbeddedRuntimeSpec
+    , Sky.Build.EmbeddedInspectorSpec

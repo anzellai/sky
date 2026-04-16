@@ -2,8 +2,15 @@
 # scripts/build.sh — local single-command build.
 #
 # Produces:
-#   sky-out/sky            — the Sky compiler (Haskell)
-#   bin/sky-ffi-inspect    — the Go helper used by `sky add` for FFI inspection
+#   sky-out/sky            — the Sky compiler (Haskell) — the only
+#                             artefact needed by end users; the
+#                             sky-ffi-inspect helper is embedded and
+#                             self-provisions into
+#                             $XDG_CACHE_HOME/sky/tools/ on first use.
+#   bin/sky-ffi-inspect    — local dev copy (optional). Contributors
+#                             get an in-tree binary so FfiGen
+#                             resolves without paying the first-use
+#                             go-build cost each branch switch.
 #
 # Optional flags:
 #   --sweep       run every example end-to-end after the build (takes ~2 min)
@@ -81,7 +88,10 @@ chmod +x sky-out/sky
 ./sky-out/sky --version
 
 # ─── build sky-ffi-inspect ──────────────────────────────────────────
-say "building sky-ffi-inspect (go)"
+# Optional — the helper's source is embedded into the sky binary and
+# self-provisions at first use. We still build it in-tree so
+# contributors avoid the first-use cost when switching branches.
+say "building sky-ffi-inspect (go) — optional dev copy"
 ( cd tools/sky-ffi-inspect && go build -ldflags="-s -w" -o "$ROOT/bin/sky-ffi-inspect" . )
 test -x bin/sky-ffi-inspect
 
