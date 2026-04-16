@@ -161,7 +161,7 @@ runCommand conn cmd cmdArg =
             showUsage ()
 
 
-db = Db.connect ()
+db = Db.connect "todos.db"
 
 
 main =
