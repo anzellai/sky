@@ -81,7 +81,9 @@ src/                              -- Sky compiler (Haskell, GHC 9.4+)
 app/Main.hs                       -- CLI entry point
 runtime-go/rt/                    -- Go runtime (embedded via Template Haskell)
 sky-stdlib/                       -- Sky-side stdlib (embedded)
-tools/sky-ffi-inspect/            -- Go package introspector
+tools/sky-ffi-inspect/            -- Go package introspector (embedded via TH;
+                                     self-provisions to XDG cache on first use
+                                     so releases ship a single `sky` binary)
 legacy-ts-compiler/               -- Legacy TypeScript bootstrap (reference only)
 legacy-sky-compiler/              -- Legacy self-hosted Sky compiler (reference only)
 templates/CLAUDE.md               -- Template for `sky init` projects
@@ -392,6 +394,7 @@ Single braces `{` are literal — safe for JavaScript, CSS, JSON, SQL. Interpola
 13. **Runtime optimisations** — `sky_equal` type-switch, `sky_asString` via `strconv`, ASCII fast paths
 14. **ADT structs** (v0.7.10+) — `SkyADT{Tag: N, SkyName: "Name", V0: val}`, integer tag matching, struct field access
 15. **Type annotations** — `// sky:type funcName : Type` comments on all declarations
+16. **Single-binary release** — `tools/sky-ffi-inspect/` Go source embedded via TH (`Sky.Build.EmbeddedInspector`); materialises + go-builds to `$XDG_CACHE_HOME/sky/tools/sky-ffi-inspect-<hash>/` on first `sky add`. Cold-start ~4s, warm instant. Content-hash keys the cache dir so `sky upgrade` auto-invalidates. Dev workflow still picks up `bin/sky-ffi-inspect` via ancestor walk so contributors don't rebuild per branch.
 
 ### Historical Fixes (all resolved)
 

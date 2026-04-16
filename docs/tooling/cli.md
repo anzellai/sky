@@ -83,6 +83,18 @@ sky add github.com/google/uuid
 sky add github.com/stripe/stripe-go/v84
 ```
 
+The FFI inspector (`sky-ffi-inspect`) is embedded in the `sky`
+binary and self-provisions into `$XDG_CACHE_HOME/sky/tools/` on
+first use — no separate install required. Cold start costs one
+`go build` (~4s); subsequent calls are instant. Content-hashed
+cache means `sky upgrade` invalidates the helper automatically.
+
+Overrides, in probe order:
+
+1. `$SKY_FFI_INSPECTOR` — absolute path to a pre-built helper.
+2. `bin/sky-ffi-inspect` in the cwd or any ancestor (dev workflow).
+3. Embedded fallback (default for installed binaries).
+
 ### `sky remove <pkg>`
 
 Drops the dependency from `sky.toml` and prunes the Go module cache.

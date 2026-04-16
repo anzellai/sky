@@ -32,14 +32,14 @@ See [docs/compiler/journey.md](docs/compiler/journey.md) for the full compiler h
 ## Quick start
 
 ```bash
-# macOS / Linux
+# macOS / Linux — single-binary install
 curl -fsSL https://raw.githubusercontent.com/anzellai/sky/main/install.sh | sh
 
 # Or with Docker
 docker run --rm -v $(pwd):/app -w /app anzel/sky sky --help
 ```
 
-> **Prerequisite:** [Go](https://go.dev) 1.21+ installed — Sky compiles to Go.
+> **Prerequisite:** [Go](https://go.dev) 1.21+ installed — Sky compiles to Go and uses Go's toolchain to produce your binary.
 
 Create and run a project:
 
@@ -49,7 +49,24 @@ cd hello
 sky run src/Main.sky
 ```
 
-See [docs/getting-started.md](docs/getting-started.md) for a full walkthrough.
+Sky ships as a **single `sky` executable**. The FFI-introspection
+helper (`sky-ffi-inspect`) is embedded and self-provisions into
+`$XDG_CACHE_HOME/sky/tools/` on first `sky add` — no second binary
+to install or keep on `$PATH`.
+
+See [docs/getting-started.md](docs/getting-started.md) for a walkthrough.
+
+### Building from source
+
+Contributors: see [docs/development.md](docs/development.md) for the
+full build + test story, including the pinned GHC/Go toolchain, the
+`./scripts/build.sh` entrypoint, and reproducible builds via Nix:
+
+```bash
+# quickest path on any system with nix
+nix develop            # GHC 9.4.8 + Go + every system dep, sandboxed
+./scripts/build.sh --clean
+```
 
 ## Documentation
 
@@ -71,6 +88,7 @@ See [docs/getting-started.md](docs/getting-started.md) for a full walkthrough.
 | Version history | [docs/compiler/versions.md](docs/compiler/versions.md) |
 | CLI reference | [docs/tooling/cli.md](docs/tooling/cli.md) |
 | LSP | [docs/tooling/lsp.md](docs/tooling/lsp.md) |
+| Development & contributing | [docs/development.md](docs/development.md) |
 
 ## Status
 
