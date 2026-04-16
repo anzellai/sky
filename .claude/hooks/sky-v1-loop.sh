@@ -25,6 +25,11 @@
 #      deliberate-deferral with stated justification.
 #      Brief: .claude/prompts/known-limitations-resolution.md
 #      Marker: `.claude/known-limitations-resolved` exists.
+#   6. Compiler soundness + LSP diagnostic parity — canonicaliser
+#      catches every source-level error (not Go as a fallback);
+#      LSP surfaces every compile-time error as publishDiagnostics.
+#      Brief: .claude/prompts/soundness-and-lsp-diagnostics.md
+#      Marker: `.claude/soundness-lsp-complete` exists.
 #
 # Manual escape: `touch .claude/allow-stop` lets the turn end regardless
 # of gate state. Remove the file (or it's removed by `git clean -fdx`)
@@ -118,6 +123,18 @@ if [[ ! -f "$KL_MARKER" ]]; then
 {
   "decision": "block",
   "reason": "Known limitations NOT resolved. docs/KNOWN_LIMITATIONS.md still lists: skychess AI sub-optimality (root cause unknown), 7 missing CLI subcommand specs, 8 missing LSP capability specs, bash→Haskell e2e port pending, plus categorical 'compiles-it-works' gaps (no Sky-test runner in cabal-test, no concurrency fixtures, no external-service-skip semantics). Read .claude/prompts/known-limitations-resolution.md — it's an 8-item brief with diagnostic-first methodology: write the failing test FIRST, then fix, then doc-update. Each session lands at minimum one item end-to-end. Done condition: every entry in KNOWN_LIMITATIONS.md is either fixed (entry purged) or has explicit 'won't fix in v0.9' justification, then `touch .claude/known-limitations-resolved`. Do NOT ship spec-without-fix limbo — if a spec lands, the underlying fix lands in the same session. Do NOT add v1.0 references. To pause: touch .claude/allow-stop."
+}
+EOF
+    exit 0
+fi
+
+# ── Gate 6: compiler soundness + LSP diagnostic parity
+SOUND_MARKER=".claude/soundness-lsp-complete"
+if [[ ! -f "$SOUND_MARKER" ]]; then
+    cat <<'EOF'
+{
+  "decision": "block",
+  "reason": "Compiler soundness + LSP diagnostic parity NOT complete. Empirically verified gaps: (1) canonicaliser doesn't catch undefined variables — typos pass through to Go which errors with 'compiler-side bug'; not user-friendly, no position. (2) LSP's computeDiagnostics pipeline skips the exhaustiveness pass — users see 'case does not cover: Blue' at sky-build time but the editor stays silent. Dev experience is top priority; these are the biggest regressions in the compile→error→edit loop. Read .claude/prompts/soundness-and-lsp-diagnostics.md — 7-item brief: fix Gap 1 (canonicaliser), DRY the LSP test harness, fix Gap 2a (LSP exhaustiveness), 2b (LSP unbound), broader audit of diagnostic quality, CI parity, touch .claude/soundness-lsp-complete. Tests first (failing-at-HEAD-passing-post-fix pattern). No spec-without-fix limbo. Realistically 2-4 sessions. To pause: touch .claude/allow-stop."
 }
 EOF
     exit 0
