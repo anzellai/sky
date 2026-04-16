@@ -20,6 +20,11 @@
 #      docs reconciled with reality.
 #      Brief: .claude/prompts/compiler-cli-lsp-audit.md
 #      Marker: `.claude/compiler-cli-lsp-audit-complete` exists.
+#   5. Known-limitations resolution — convert each entry in
+#      docs/KNOWN_LIMITATIONS.md into a shipped fix or a
+#      deliberate-deferral with stated justification.
+#      Brief: .claude/prompts/known-limitations-resolution.md
+#      Marker: `.claude/known-limitations-resolved` exists.
 #
 # Manual escape: `touch .claude/allow-stop` lets the turn end regardless
 # of gate state. Remove the file (or it's removed by `git clean -fdx`)
@@ -101,6 +106,18 @@ if [[ ! -f "$AUDIT_MARKER" ]]; then
 {
   "decision": "block",
   "reason": "Compiler + CLI + LSP audit NOT complete. Multiple gaps suspected: skychess AI plays nonsense moves despite algorithmically-correct negamax (likely Move.applyMove or eval indexing bug); CLI commands lack per-subcommand specs (any silent exit-code regression goes undetected); LSP capabilities documented in docs/tooling/lsp.md may be aspirational. Read .claude/prompts/compiler-cli-lsp-audit.md — it's a 8-item brief covering: (1) skychess AI Sky-level tests + fix, (2) compiler regression specs for every language construct + error message, (3) test/Sky/Cli/*Spec.hs for every sky subcommand, (4) LSP per-capability specs, (5) port the bash e2e harness into `sky verify --e2e` (Haskell), (6) reconcile docs with reality, (7) push + watch CI green, (8) touch .claude/compiler-cli-lsp-audit-complete. Do NOT relax test expectations — if a behaviour is hard to assert, the behaviour is the bug, pin it down. Do NOT add v1.0 references. To pause: touch .claude/allow-stop."
+}
+EOF
+    exit 0
+fi
+
+# ── Gate 5: known-limitations resolution
+KL_MARKER=".claude/known-limitations-resolved"
+if [[ ! -f "$KL_MARKER" ]]; then
+    cat <<'EOF'
+{
+  "decision": "block",
+  "reason": "Known limitations NOT resolved. docs/KNOWN_LIMITATIONS.md still lists: skychess AI sub-optimality (root cause unknown), 7 missing CLI subcommand specs, 8 missing LSP capability specs, bash→Haskell e2e port pending, plus categorical 'compiles-it-works' gaps (no Sky-test runner in cabal-test, no concurrency fixtures, no external-service-skip semantics). Read .claude/prompts/known-limitations-resolution.md — it's an 8-item brief with diagnostic-first methodology: write the failing test FIRST, then fix, then doc-update. Each session lands at minimum one item end-to-end. Done condition: every entry in KNOWN_LIMITATIONS.md is either fixed (entry purged) or has explicit 'won't fix in v0.9' justification, then `touch .claude/known-limitations-resolved`. Do NOT ship spec-without-fix limbo — if a spec lands, the underlying fix lands in the same session. Do NOT add v1.0 references. To pause: touch .claude/allow-stop."
 }
 EOF
     exit 0
