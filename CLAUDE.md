@@ -241,27 +241,45 @@ List.parallelMap : (a -> b) -> List a -> List b          -- pure goroutine map
 Pipeline: `sky add pkg` → inspector extracts types → compiler classifies functions → generates `.skyi` + Go wrapper with panic recovery → DCE strips unused → `sky install` auto-generates missing bindings. Large packages (>50KB) use `sky-ffi-gen` for usage-driven bindings.
 
 ### Type Mapping
-| Go | Sky |
-|----|-----|
-| `string` / `int`,`int64` / `float64` / `bool` | `String` / `Int` / `Float` / `Bool` |
-| `error` / `(T, error)` / `(T, bool)` | `Result Error a` / `Result Error T` / `Maybe T` |
-| `*string`, `*int` | `Maybe String`, `Maybe Int` |
-| `*sql.DB` / `[]T` | `Db` (opaque) / `List T` |
-| Go struct / Go interface | Opaque type (constructor + getters + setters / method bindings) |
+
+**Every FFI call returns `Result Error T`.** The boundary is a trust
+boundary (Elm-ports analogy). See `docs/ffi/boundary-philosophy.md`.
+
+| Go return | Sky type |
+|---|---|
+| `string` / `int`/`int64` / `float64` / `bool` (element types) | `String` / `Int` / `Float` / `Bool` |
+| `T` (single, no error, non-pointer) | `Result Error T` |
+| `*T` (single pointer, no error) | `Result Error (Maybe T)` |
+| `(T, error)` / `error` | `Result Error T` / `Result Error ()` |
+| `(T, bool)` (comma-ok) | `Result Error (Maybe T)` |
+| `(T, *NamedErr)` where NamedErr implements error | `Result Error T` |
+| `(T, U)` (no error/bool) | `Result Error (T, U)` |
+| `*sql.DB` / `[]T` / `map[string]V` | `Result Error Db` / `Result Error (List T)` / `Result Error (Dict String V)` |
+| Go struct / Go interface | Opaque type (constructor + getters + setters / method bindings, all wrapped in Result) |
+| void | `Result Error ()` |
+
+Nil-receiver checks are added to every method/getter/setter wrapper —
+calling on a nil opaque returns `Err(ErrFfi "nil receiver: T.M")` instead
+of panicking.
 
 ### Opaque Struct Pattern (Builder)
 
-Go structs are opaque — use generated constructors and pipeline setters (value first, struct second for `|>`):
+Go structs are opaque — use generated constructors and pipeline setters (value first, struct second for `|>`). Every FFI call returns `Result Error T`; the example below shows the typical "stitch values out of Results then call" pattern using `Result.andThen`:
+
 ```elm
--- Constructor: newTypeName () -> TypeName
--- Getter: typeNameFieldName : TypeName -> FieldType
--- Setter: typeNameSetFieldName : FieldType -> TypeName -> TypeName
-params =
+-- Constructor: newTypeName () -> Result Error TypeName
+-- Getter: typeNameFieldName : TypeName -> Result Error FieldType
+-- Setter: typeNameSetFieldName : FieldType -> TypeName -> Result Error TypeName
+
+createSession : String -> Result Error CheckoutSession
+createSession successUrl =
     Stripe.newCheckoutSessionParams ()
-        |> Stripe.checkoutSessionParamsSetMode "payment"
-        |> Stripe.checkoutSessionParamsSetSuccessURL successUrl
+        |> Result.andThen (Stripe.checkoutSessionParamsSetMode "payment")
+        |> Result.andThen (Stripe.checkoutSessionParamsSetSuccessURL successUrl)
+        |> Result.andThen Stripe.newCheckoutSession
 ```
-Pointer fields auto-wrapped — pass plain values. For nested structs, build inner first.
+
+Pointer fields auto-wrapped — pass plain values. For nested structs, build inner first. Boundary failure (panic, type mismatch) surfaces as `Err`; user code chains via `Result.andThen` / `withDefault` / `case`.
 
 ## Sky.Live
 

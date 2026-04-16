@@ -15,7 +15,7 @@ visible and forces explicit error handling (like Rust's `?`).
 
 ---
 
-## P0 — Named error types (inspector bug)
+## P0 — Named error types (inspector bug) — landed e1faa21
 
 **Problem.** `sky-ffi-inspect/main.go:classifyEffect` checks
 `r.Type == "error"` — a string literal match. Go functions
@@ -58,7 +58,7 @@ a named error type and verify `sky-ffi-inspect` classifies it as
 
 ---
 
-## P1 — Nil pointer returns → Maybe
+## P1 — Nil pointer returns → Maybe — landed e1faa21
 
 **Problem.** `func F() *T` can return `nil`. Sky wraps it as an
 opaque value. If the user calls a method on a nil opaque, Go panics.
@@ -95,7 +95,7 @@ signature shows `Maybe User`.
 
 ---
 
-## P2 — (T, bool) comma-ok → Maybe
+## P2 — (T, bool) comma-ok → Maybe — landed e1faa21
 
 **Problem.** Go's `map[K]V` lookup, type assertions, and
 `sync.Map.Load` return `(T, bool)`. The docs claim this maps to
@@ -133,7 +133,7 @@ generates a wrapper returning `SkyMaybe[string]` inside Result.
 
 ---
 
-## P3 — Interface-nil wrapping
+## P3 — Interface-nil wrapping — landed e1faa21
 
 **Problem.** `func F() io.Reader` can return a non-nil interface
 value whose underlying pointer is nil (`(*os.File)(nil)` satisfies
@@ -225,3 +225,25 @@ trust boundary but not deferred. The Result wrapping captures the
 trust boundary; Task would add ceremony without benefit for
 synchronous operations. If a user wants to defer an FFI call, they
 can use `Task.lazy (\_ -> Ffi.call ...)` explicitly.
+
+---
+
+## Status
+
+All four items landed in commit `e1faa21` (2026-04-16).
+
+- P0 (named error types) — `sky-ffi-inspect` uses `types.Implements`.
+- P1 (`*T` → `Maybe`) — codegen wraps via `rt.NilToMaybe`.
+- P2 (`(T, bool)` → `Maybe`) — codegen wraps via `rt.CommaOkToMaybe`.
+- P3 (nil-receiver checks) — every method wrapper guards before call.
+
+Docs + samples updated in the follow-up commit. New
+`docs/ffi/boundary-philosophy.md` explains the trust-boundary design
+(Elm ports analogy, Result vs Task, when to prefer stdlib).
+
+Verification (run before each commit in this work):
+- `bash scripts/example-sweep.sh --build-only` → 18/18
+- `cd runtime-go && go test ./rt/` → all pass
+- self-tests across `test-files/*.sky` → 67/67
+- `cabal test` → all specs pass
+- `sky verify <key examples>` → runtime ok

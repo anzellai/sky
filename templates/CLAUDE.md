@@ -200,13 +200,31 @@ squares = List.parallelMap (\n -> n * n) [ 1, 2, 3, 4, 5 ]
 
 ## Go Interop (FFI)
 
-Sky can import any Go package. The compiler auto-generates type-safe Task-wrapped bindings at build time:
+Sky can import any Go package. The compiler auto-generates type-safe
+**Result-wrapped** bindings at build time. Every FFI call returns
+`Result Error T` because the FFI boundary is a trust boundary —
+Go can panic, return nil, or fail in ways Sky's type checker can't
+see. The Result wrapping forces explicit handling at every call site
+(like Rust's `?`). When in doubt, prefer Sky's stdlib.
 
 ```elm
 import Net.Http as Http                    -- net/http
 import Github.Com.Google.Uuid as Uuid      -- github.com/google/uuid
 import Database.Sql as Sql                 -- database/sql
 import Drivers.Sqlite as _ exposing (..)   -- side-effect import (Go driver)
+import Sky.Core.Result as Result
+import Sky.Core.Error as Error
+import Std.Log exposing (println)
+
+
+-- Typical pattern: case-match every FFI call
+example =
+    case Uuid.newString of
+        Ok id ->
+            println id
+
+        Err e ->
+            println ("uuid failed: " ++ Error.toString e)
 ```
 
 ### Naming Convention
@@ -221,16 +239,30 @@ import Drivers.Sqlite as _ exposing (..)   -- side-effect import (Go driver)
 
 ### Return Type Mapping
 
+Every FFI call returns `Result Error T`. The Ok side's shape depends
+on what Go returns:
+
 | Go Return | Sky Return |
 |-----------|------------|
+| `T` (single, no error, non-pointer) | `Result Error T` |
+| `*T` (single pointer, no error) | `Result Error (Maybe T)` |
 | `(T, error)` | `Result Error T` |
+| `(T, *NamedErr)` where NamedErr implements error | `Result Error T` |
 | `(T1, T2, error)` | `Result Error (Tuple2 T1 T2)` |
 | `error` | `Result Error Unit` |
-| `(T, bool)` | `Maybe T` (comma-ok pattern) |
-| `*string`, `*int` | `Maybe String`, `Maybe Int` |
-| `*sql.DB` | `Db` (opaque handle) |
-| `[]string` | `List String` |
-| `map[string]int` | `Map String Int` |
+| `(T, bool)` (comma-ok) | `Result Error (Maybe T)` |
+| `*sql.DB` | `Result Error (Maybe Db)` (opaque handle) |
+| `[]string` | `Result Error (List String)` |
+| `map[string]int` | `Result Error (Dict String Int)` |
+| void | `Result Error Unit` |
+
+For `*T` and `(T, bool)` you handle two layers: the Result captures
+boundary failure (panic, type mismatch); the Maybe captures Go's
+"nothing here" signal (nil pointer, comma-ok false).
+
+Method calls on a nil opaque return `Err(ErrFfi "nil receiver: ...")`
+instead of panicking — every method/getter/setter wrapper has a
+nil-receiver guard.
 
 ### Opaque Structs (Builder Pattern)
 
@@ -242,13 +274,13 @@ All Go structs are opaque types in Sky. Use constructors + pipeline setters:
 -- Setter:     Pkg.typeNameSetFieldName value receiver  (pipeline-friendly)
 
 -- Example: build a Stripe checkout session
-params =
+-- Each setter returns Result Error TypeName, so chain via Result.andThen.
+result =
     Stripe.newCheckoutSessionParams ()
-        |> Stripe.checkoutSessionParamsSetMode "payment"
-        |> Stripe.checkoutSessionParamsSetSuccessURL url
-        |> Stripe.checkoutSessionParamsSetCustomer customerId
-
-result = Session.new params
+        |> Result.andThen (Stripe.checkoutSessionParamsSetMode "payment")
+        |> Result.andThen (Stripe.checkoutSessionParamsSetSuccessURL url)
+        |> Result.andThen (Stripe.checkoutSessionParamsSetCustomer customerId)
+        |> Result.andThen Session.new
 ```
 
 Pointer fields (`*string`, `*int64`, `*bool`) are handled automatically — pass the plain value.
@@ -1130,17 +1162,25 @@ main =
     let
         _ = loadEnv ""   -- load .env file
         port = Maybe.withDefault "8000" (getEnv "PORT")
-        r = Mux.newRouter ()
-        _ = Mux.routerHandleFunc r "/" indexHandler
     in
-    Http.listenAndServe (":" ++ port) r
+    -- Each FFI call returns Result; chain through Result.andThen
+    -- so the first failure short-circuits the rest.
+    Mux.newRouter ()
+        |> Result.andThen (\r ->
+            Mux.routerHandleFunc r "/" indexHandler
+                |> Result.andThen (\_ -> Http.listenAndServe (":" ++ port) r))
+        |> Result.withDefault ()
 
 indexHandler w req =
-    let
-        header = Http.responseWriterHeader w
-        _ = Http.headerSet header "Content-Type" "text/html"
-    in
-    Io.writeString w (render (div [] [ text "Hello" ]))
+    case Http.responseWriterHeader w of
+        Ok header ->
+            Http.headerSet header "Content-Type" "text/html"
+                |> Result.andThen (\_ ->
+                    Io.writeString w (render (div [] [ text "Hello" ])))
+                |> Result.withDefault ()
+
+        Err _ ->
+            ()
 ```
 
 ### 3. Sky.Live App (Server-Driven UI with SSE)
@@ -1210,47 +1250,64 @@ Go package paths map to PascalCase Sky module names:
 
 ### Calling Conventions
 
+Every FFI call returns `Result Error T`. Pattern-match or chain via
+`Result.andThen` / `Result.withDefault` at every call site.
+
 ```elm
--- Zero-arg Go functions/variables: pass unit ()
-args = Os.stdin ()           -- os.Stdin
-uuid = Uuid.newString ()     -- uuid.NewString()
-now = Time.now ()            -- time.Now()
+-- Zero-arg Go functions/variables: no () in Sky (returns Result)
+case Uuid.newString of
+    Ok id -> useId id
+    Err e -> handleError e
 
--- Go methods: first arg is receiver
-Mux.routerHandleFunc router "/path" handler   -- router.HandleFunc("/path", handler)
-Sql.dBClose db                                -- db.Close()
-Http.responseWriterHeader w                   -- w.Header()
+-- Or with Result.withDefault for "bail to a default"
+id = Result.withDefault "anonymous" Uuid.newString
 
--- Go struct fields: accessor function
-Http.requestBody req         -- req.Body
-Http.requestUrl req          -- req.URL
+-- Go methods: first arg is receiver. Returns Result.
+case Mux.routerHandleFunc router "/path" handler of
+    Ok _ -> ...
+    Err e -> ...
 
--- Go constants: accessed as values
-Http.statusOK                -- http.StatusOK
+-- Go struct fields: accessor function returns Result
+case Http.requestUrl req of
+    Ok url -> ...
+    Err e -> ...
 
--- Go package variables: getter + setter
-key = Stripe.key ()          -- stripe.Key (getter, returns current value)
-Stripe.setKey "sk_test_..."  -- stripe.Key = "sk_test_..." (setter)
+-- Go constants: accessed as values (still Result-wrapped)
+status = Result.withDefault 200 Http.statusOK
 
--- Go struct construction: use opaque constructors + setters
-params =
-    Stripe.newCheckoutSessionParams ()                 -- &stripe.CheckoutSessionParams{}
-        |> Stripe.checkoutSessionParamsSetMode "payment"  -- params.Mode = stripe.String("payment")
-        |> Stripe.checkoutSessionParamsSetCustomer id     -- params.Customer = stripe.String(id)
+-- Go package variables: getter + setter (both Result)
+key = Result.withDefault "" (Stripe.key ())
+case Stripe.setKey "sk_test_..." of
+    Ok _ -> ...
+    Err e -> ...
+
+-- Go struct construction: chain setters via Result.andThen
+-- Each setter returns Result Error TypeName.
+result =
+    Stripe.newCheckoutSessionParams ()
+        |> Result.andThen (Stripe.checkoutSessionParamsSetMode "payment")
+        |> Result.andThen (Stripe.checkoutSessionParamsSetCustomer id)
 
 -- Nested structs: build inner first, then set on outer
-priceData = Stripe.newCheckoutSessionLineItemPriceDataParams ()
-    |> Stripe.checkoutSessionLineItemPriceDataParamsSetCurrency "gbp"
-    |> Stripe.checkoutSessionLineItemPriceDataParamsSetUnitAmount 1000
-lineItem = Stripe.newCheckoutSessionLineItemParams ()
-    |> Stripe.checkoutSessionLineItemParamsSetPriceData priceData
+priceDataResult =
+    Stripe.newCheckoutSessionLineItemPriceDataParams ()
+        |> Result.andThen (Stripe.checkoutSessionLineItemPriceDataParamsSetCurrency "gbp")
+        |> Result.andThen (Stripe.checkoutSessionLineItemPriceDataParamsSetUnitAmount 1000)
 
--- Variadic args: pass as List
-Exec.command "sh" ["-c", "echo hello"]   -- exec.Command("sh", "-c", "echo hello")
-
--- []byte args: use String.toBytes
-Sha256.sum256 (String.toBytes data)
+lineItemResult =
+    priceDataResult
+        |> Result.andThen (\priceData ->
+            Stripe.newCheckoutSessionLineItemParams ()
+                |> Result.andThen (Stripe.checkoutSessionLineItemParamsSetPriceData priceData))
 ```
+
+**Why all the Results?** The FFI boundary can fail in ways Sky's
+type system can't see (Go panics, nil pointers, missing config,
+goroutine leaks). Every wrapper catches these via panic recovery
+and returns `Err(ErrFfi(...))` instead of crashing. See
+`docs/ffi/boundary-philosophy.md` for the full reasoning. **Prefer
+Sky's stdlib** (`Std.Crypto`, `Std.Time`, `Std.Http`, etc.) where
+available — those don't pay the Result tax for genuinely-pure ops.
 
 **Important**: Never pass Sky records `{ field = value }` as Go struct parameters. Always use the `newTypeName ()` constructor + `typeNameSetField value` setters. Sky records are `map[string]any` at runtime; Go functions expect typed struct pointers.
 
@@ -1264,25 +1321,28 @@ import Modernc.Org.Sqlite as _    -- registers "sqlite" driver for database/sql
 
 ### Handler Functions (HTTP)
 
-Go HTTP handlers take `(http.ResponseWriter, *http.Request)`:
+Go HTTP handlers take `(http.ResponseWriter, *http.Request)`. Each
+FFI call is a Result; chain via `Result.andThen` and let the first
+`Err` short-circuit:
 
 ```elm
 handler : ResponseWriter -> Request -> Unit
 handler w req =
-    let
-        header = Http.responseWriterHeader w
-        _ = Http.headerSet header "Content-Type" "text/html"
-        _ = Io.writeString w "Hello"
-    in
-    ()
+    Http.responseWriterHeader w
+        |> Result.andThen (\header -> Http.headerSet header "Content-Type" "text/html")
+        |> Result.andThen (\_ -> Io.writeString w "Hello")
+        |> Result.withDefault ()
 
 -- Cookie management
-token = case Http.requestCookie req "session" of
-    Ok cookie -> Http.cookieValue cookie
-    Err _ -> ""
+token =
+    case Http.requestCookie req "session" of
+        Ok cookie ->
+            Result.withDefault "" (Http.cookieValue cookie)
+        Err _ ->
+            ""
 
 -- Form values
-email = Http.requestFormValue req "email"
+email = Result.withDefault "" (Http.requestFormValue req "email")
 
 -- Redirect
 Http.redirect w req "/login" 302
