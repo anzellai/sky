@@ -1,0 +1,10 @@
+{
+    "kind": "cli",
+    "steps": [
+        {
+            "args": [],
+            "expectExit": 0,
+            "expectStdoutContains": ["Hello"]
+        }
+    ]
+}

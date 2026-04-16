@@ -1,0 +1,28 @@
+{
+    "kind": "server",
+    "port": 8000,
+    "startupWaitMs": 2000,
+    "steps": [
+        {
+            "name": "index",
+            "method": "GET",
+            "path": "/",
+            "expectStatus": 200,
+            "expectBodyContains": ["Sky HTTP Server"]
+        },
+        {
+            "name": "api status",
+            "method": "GET",
+            "path": "/api/status",
+            "expectStatus": 200,
+            "expectBodyContains": ["status", "ok"]
+        },
+        {
+            "name": "hello route",
+            "method": "GET",
+            "path": "/hello/world",
+            "expectStatus": 200,
+            "expectBodyContains": ["world"]
+        }
+    ]
+}

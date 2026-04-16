@@ -173,7 +173,9 @@ main =
         Ok conn ->
             let
                 _ = initDb conn
-                userArgs = List.drop 1 (Os.args ())
+                -- Os.args already returns user args only (Go's os.Args[1:]);
+                -- don't drop another element.
+                userArgs = Os.args ()
                 cmd = getArg userArgs
                 cmdArg = getArg (List.drop 1 userArgs)
             in

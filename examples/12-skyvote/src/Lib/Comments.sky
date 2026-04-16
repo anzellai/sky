@@ -4,6 +4,8 @@ import Sky.Core.Prelude exposing (..)
 import Std.Log exposing (println)
 import Sky.Core.Crypto as Crypto
 import Sky.Core.String as String
+import Sky.Core.Time as Time
+import Sky.Core.Result as Result
 import Lib.Db as Db
 import Sky.Core.Error as Error exposing (Error)
 
@@ -11,7 +13,13 @@ import Sky.Core.Error as Error exposing (Error)
 createComment : String -> String -> String -> Result Error ()
 createComment ideaId authorId content =
     let
-        id = String.slice 0 12 (Crypto.sha256 (ideaId ++ ":" ++ authorId ++ ":" ++ content))
+        -- Include the current millis in the id material so identical
+        -- content from the same user on the same idea doesn't collide
+        -- on the PRIMARY KEY. Pre-fix, re-submitting the same text
+        -- returned a UNIQUE/PK constraint error even though the user's
+        -- action was legitimate.
+        nowMs = Result.withDefault 0 Time.unixMillis
+        id = String.slice 0 12 (Crypto.sha256 (ideaId ++ ":" ++ authorId ++ ":" ++ content ++ ":" ++ String.fromInt nowMs))
     in
         case Db.exec
                 "INSERT INTO comments (id, idea_id, author_id, content) VALUES (?, ?, ?, ?)"

@@ -69,6 +69,15 @@ jobs:
       - name: Run sky verify on all examples
         run: sky verify
 
+      # E2E harness — behavioural contracts per example (CLI flow
+      # dispatch, HTTP body assertions, DB-error-log checks) that
+      # `sky verify` alone misses. Catches logic/CLI/DB regressions
+      # where the smoke test passes but the app's domain behaviour
+      # is broken. Each example with examples/<n>/e2e.json runs
+      # against its contract; any mismatch fails CI.
+      - name: Run end-to-end contract tests
+        run: bash scripts/example-e2e.sh
+
       # ─────────────────────────────────────────────────────────
       # Tooling smoke tests
       # ─────────────────────────────────────────────────────────
