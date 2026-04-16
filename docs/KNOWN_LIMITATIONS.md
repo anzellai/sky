@@ -155,3 +155,65 @@ exhaustive pattern matching, 67 self-tests, 18 example sweep,
 17 e2e contracts, 10 LSP capability specs, 7 CLI specs, and
 the entire audit-remediation test matrix green. Everything
 above is future work on top of that floor.
+
+---
+
+## Diagnostic audit findings (2026-04-16)
+
+Audit ran as part of the soundness-and-lsp-diagnostics loop
+(`.claude/prompts/soundness-and-lsp-diagnostics.md`). Fixed this
+session: canonicaliser catches undefined names; LSP publishes
+exhaustiveness + unbound-name diagnostics. Three residual gaps,
+classified:
+
+### Record field typos silently return nil — DEFERRED (v0.10+)
+
+**Symptom.** `alice.naem` (typo of `.name`) on a record with a
+declared type passes `sky check`, compiles, and returns `nil` at
+runtime. Generated Go: `rt.Field(alice, "Naem")`.
+
+**Root cause.** `Sky.Type.Constrain.Expression.constrainExpr_`
+returns `CTrue` for `Can.Access _target _field` — the type checker
+never constrains field access against the target's record shape.
+Catching this properly needs row-polymorphic record constraints
+(`{ field : a | r }`) and a post-solve pass that flags concrete
+record accesses whose field isn't a member.
+
+**Won't fix in v0.9 because:** row polymorphism is a substantial
+HM extension; the work impacts Constrain, Solve, and the error
+formatter. Not a correctness floor issue — codegen is honest
+about what it produces (explicit `rt.Field` call), and the nil
+result surfaces the mistake quickly at the first use site.
+
+**Workaround.** Use destructuring at the function boundary
+(`\{ name } -> ...`) when possible — destructure patterns are
+checked against the record shape.
+
+### Unused imports — DEFERRED (policy call)
+
+**Symptom.** `import Sky.Core.List as List` with no `List.xxx`
+use site is silently accepted.
+
+**Won't fix in v0.9 because:** Elm emits a warning for this; Sky
+does not currently track a warning channel distinct from errors.
+Adding a warning class is a v0.10+ concern (affects error
+formatter, CI integration, LSP severity mapping). The in-editor
+"grey text" / organise-imports class of feature is a downstream
+tooling feature, not a soundness gap.
+
+### Name shadowing — DEFERRED (policy call)
+
+**Symptom.** `let x = 1 in let x = 2 in x` silently evaluates to
+2. No warning.
+
+**Won't fix in v0.9 because:** Elm forbids shadowing; Sky does
+not. This is a language-design decision that would change the
+semantics of existing programs. Punt to a language-spec review
+for v0.10+.
+
+---
+
+These three gaps are recorded here so future sessions can pick
+them up. The v0.9 line is complete on the soundness-LSP axis:
+every error the compiler catches flows through both `sky build`
+and `textDocument/publishDiagnostics`.
