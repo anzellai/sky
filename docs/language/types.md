@@ -97,7 +97,7 @@ Result e a
 
 Use `Maybe` for optional values, `Result` for fallible pure computations. Both are generic in their payload type.
 
-In v1+, every public fallible surface uses `Result Error a` (not `Result String a`). See [../errors/error-system.md](../errors/error-system.md).
+Since v0.9, every public fallible surface uses `Result Error a` (not `Result String a`). See [../errors/error-system.md](../errors/error-system.md).
 
 ## Task
 

@@ -1,6 +1,6 @@
 cabal-version: 2.4
 name:          sky-compiler
-version:       1.0.0
+version:       0.9.0
 synopsis:      Sky language compiler — Elm-inspired, compiles to typed Go
 license:       MIT
 author:        Anzel Lai

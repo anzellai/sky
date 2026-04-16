@@ -2,7 +2,7 @@
 
 This is a [Sky](https://github.com/anzellai/sky) project. Sky is a pure functional language inspired by Elm, compiling to Go. The compiler is written in Haskell (GHC 9.4+) and ships as a single `sky` binary. Users only need the `sky` binary and Go 1.21+ — no Haskell toolchain required to use Sky.
 
-**Core principle: if it compiles, it works.** Verified at v1.0 against 23-item adversarial soundness audit (soundness + security + cleanup + tooling). All side effects flow through `Task`. `sky check` invokes `go build` on the emitted output, so any shape mismatch surfaces at check time. No runtime panics from well-typed Sky code, no nil leakage, no silent numeric coercion.
+**Core principle: if it compiles, it works.** Verified at v0.9 against 23-item adversarial soundness audit (soundness + security + cleanup + tooling). All side effects flow through `Task`. `sky check` invokes `go build` on the emitted output, so any shape mismatch surfaces at check time. No runtime panics from well-typed Sky code, no nil leakage, no silent numeric coercion.
 
 ## Quick Reference
 
@@ -253,9 +253,9 @@ result = Session.new params
 
 Pointer fields (`*string`, `*int64`, `*bool`) are handled automatically — pass the plain value.
 
-### Error Handling — `Sky.Core.Error` (v1+ canonical)
+### Error Handling — `Sky.Core.Error` (v0.9+ canonical)
 
-Since v1.0 every fallible operation uses `Sky.Core.Error`, a structured
+Since v0.9 every fallible operation uses `Sky.Core.Error`, a structured
 ADT with eleven kinds. No more `Result String` or `Task String` in
 public APIs.
 

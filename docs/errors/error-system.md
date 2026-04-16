@@ -1,6 +1,6 @@
 # Error system
 
-Since v1.0, **every fallible operation in Sky returns a value whose error slot is `Sky.Core.Error`** — a structured ADT with eleven kinds and typed details. There is no more `Result String` or `Task String` on any public surface.
+Since v0.9, **every fallible operation in Sky returns a value whose error slot is `Sky.Core.Error`** — a structured ADT with eleven kinds and typed details. There is no more `Result String` or `Task String` on any public surface.
 
 ## The shape
 
@@ -150,7 +150,7 @@ loadUser : String -> Task Error User
 
 If your error branch was `Err e -> Err (Error.io e)` and the upstream now returns `Error` (not `String`), collapse to `Err e -> Err e`. Error chaining through combinators preserves the kind.
 
-Forbidden in v1+ public surfaces (enforced by `Sky.ErrorUnificationSpec`):
+Forbidden in v0.9+ public surfaces (enforced by `Sky.ErrorUnificationSpec`):
 
 - `Result String a`
 - `Task String a`

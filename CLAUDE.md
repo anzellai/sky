@@ -16,7 +16,7 @@ All documentation, comments, variable names, function names, and user-facing str
    codegen to eliminate `any` in emitted Go, and Sky-test harness
    port) remain as future-work tracked in `docs/PRODUCTION_READINESS.md`.
    Defence in depth (panic recovery + `Err` return at Task boundaries)
-   remains the reliability floor under that v1.0 milestone.
+   remains the reliability floor under the v1.0 milestone.
 2. **Dev experience is top priority.** Clear errors, predictable behaviour, no user-written FFI.
 3. **Root-cause fixes only.** Fix at the correct abstraction layer. **Never suppress type errors or warnings.**
 4. **Production-grade architecture.** Must scale to large Go packages (Stripe SDK). Must remain maintainable.

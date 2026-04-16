@@ -29,7 +29,7 @@ Fully validate the program. `sky check` is a strict superset of `sky build`:
 it runs parsing, canonicalisation, HM inference, Go codegen, *and* invokes
 `go build` on the emitted output — without producing a runnable binary. If
 `sky build` would fail, `sky check` fails with the same error. This is the
-v1.0 soundness gate (audit P0-1) — editor integrations should use it
+v0.9 soundness gate (audit P0-1) — editor integrations should use it
 directly.
 
 ### `sky verify [example]`

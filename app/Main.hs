@@ -639,7 +639,7 @@ templateSearchPaths filename = do
 runCommand :: Command -> IO (Either String ())
 runCommand cmd = case cmd of
     Version -> do
-        putStrLn "sky v1.0.0 (haskell)"
+        putStrLn "sky v0.9.0 (haskell)"
         return (Right ())
 
     Build path -> do

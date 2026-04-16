@@ -70,7 +70,7 @@
         # ────────────────────────────────────────────────────────────
         packages.sky = pkgs.stdenv.mkDerivation rec {
           pname = "sky";
-          version = "1.0.0";
+          version = "0.9.0";
           src = ./.;
 
           nativeBuildInputs = [ ghc cabal ] ++ commonLibs;

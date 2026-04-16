@@ -2,7 +2,7 @@
 
 This is a feature-level changelog covering major architectural shifts. For the line-level history see `git log`.
 
-## v1.0 — post-v1 closure (April 2026)
+## v0.9 — Haskell compiler rewrite (April 2026)
 
 **Branch:** `feat/sky-haskell-compiler` (pre-merge).
 
@@ -98,4 +98,4 @@ Post-v1 cleanup:
 
 ---
 
-**Note on semver:** Sky's pre-v1 minor versions carried breaking changes routinely. v1.0+ commits to semver — breaking language or CLI changes increment the major version.
+**Note on semver:** Sky's pre-v1 minor versions carried breaking changes routinely. v1.0 (when reached) will commit to semver — breaking language or CLI changes will increment the major version.
