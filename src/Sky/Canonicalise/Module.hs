@@ -117,7 +117,16 @@ canonicaliseWithDeps deps srcMod =
         -- Walking order mirrors collectUnqualExprRegions but also consults
         -- the full env — so typos like `messgae` get caught at the Sky
         -- layer with a line:col, instead of falling through to `go build`.
-        unboundErrs = collectUnboundNameErrors env4 srcMod
+        --
+        -- Guard: only run when deps is non-empty OR the module has no
+        -- user-module imports. When deps is empty (LSP single-file path,
+        -- or zero-deps `canonicalise`), cross-module constructors aren't
+        -- registered in env4, so references like `HomePage` from
+        -- `import State exposing (..)` would be false positives.
+        hasUserImports = any (not . isKernelImport) (Src._imports srcMod)
+        unboundErrs
+            | Map.null deps && hasUserImports = []
+            | otherwise = collectUnboundNameErrors env4 srcMod
     in case (importHidingErrors, collisions, unboundErrs) of
         (err:_, _, _) -> Left err
         (_, Just err, _) -> Left err
@@ -700,6 +709,13 @@ patternNames (A.At _ p) = case p of
     Src.PRecord ns    -> map (\(A.At _ n) -> n) ns
     Src.PAlias inner (A.At _ n) -> n : patternNames inner
     _                 -> []
+
+
+isKernelImport :: Src.Import -> Bool
+isKernelImport imp =
+    let segs = case Src._importName imp of A.At _ s -> s
+        path = ModuleName.joinWith "." segs
+    in Map.member path Env.kernelModules
 
 
 staticKernelFunctions :: Map.Map String [String]
