@@ -1008,6 +1008,12 @@ type liveSession struct {
 	model    any
 	handlers map[string]any
 	prevTree *VNode // Last rendered tree; used by the diff protocol.
+	// Last rendered body string. Any dispatch that produces a byte-
+	// identical body is a no-op from the client's perspective; we
+	// suppress the SSE push to avoid flooding the wire when a
+	// Time.every subscription ticks but the model-derived view
+	// hasn't actually changed.
+	prevBody string
 	lastSeen time.Time
 	mu       sync.Mutex
 	// SSE outbound channel: any writer goroutine may push an HTML patch
@@ -1456,6 +1462,7 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	assignSkyIDs(&vn, "r")
 	body := renderVNode(vn, sess.handlers)
 	sess.prevTree = &vn
+	sess.prevBody = body
 	app.store.Set(sid, sess)
 
 	setSecurityHeaders(w.Header())
@@ -1545,6 +1552,15 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 	// state. Memory store is a no-op on Set for an already-tracked sid.
 	app.store.Set(req.SessionID, sess)
 
+	// dispatch returns "" when the event produced a byte-identical
+	// view (no-op update). Reply with an empty patch list so the
+	// client acknowledges the event without the server shipping a
+	// redundant HTML frame.
+	if body2 == "" {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"patches": []any{}})
+		return
+	}
 	// When we have a prior tree we can reply with a minimal patch set
 	// (preserving unrelated DOM state client-side). On first interaction
 	// (prev == nil) or when the tree shape changed so drastically that
@@ -1602,6 +1618,15 @@ func (app *liveApp) dispatch(sess *liveSession, msg any) string {
 	app.runCmd(sess, cmd)
 	// Re-evaluate subscriptions based on new model
 	app.setupSubscriptions(sess)
+	// No-op suppression: if the rendered body is byte-identical to
+	// the last one we pushed, return "" so producer goroutines can
+	// skip the SSE write. A Time.every subscription that ticks
+	// without mutating any view-reachable state produces the same
+	// HTML twice; there's no reason to ship a patch.
+	if body == sess.prevBody {
+		return ""
+	}
+	sess.prevBody = body
 	return body
 }
 
@@ -1673,6 +1698,10 @@ func (app *liveApp) runPerform(sess *liveSession, task any, toMsg any) {
 	sess.mu.Lock()
 	body := app.dispatch(sess, msg)
 	sess.mu.Unlock()
+	// Empty body = dispatch determined the view is unchanged.
+	if body == "" {
+		return
+	}
 	// Notify SSE listeners
 	select {
 	case sess.sseCh <- body:
@@ -1717,6 +1746,12 @@ func (app *liveApp) setupSubscriptions(sess *liveSession) {
 				}
 				body := app.dispatch(sess, msg)
 				sess.mu.Unlock()
+				// Suppress SSE write when the tick didn't change
+				// the view — prevents Time.every from pushing an
+				// identical HTML frame every interval.
+				if body == "" {
+					continue
+				}
 				select {
 				case sess.sseCh <- body:
 				default:

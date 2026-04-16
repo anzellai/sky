@@ -86,7 +86,20 @@ view model =
             Home.viewHome model
 
 
-subscriptions model = Time.every 500 ComputerMove
+-- Only subscribe to the AI tick when it's actually the AI's turn and
+-- the game is live. An unconditional `Time.every 500 ComputerMove`
+-- fires the message every 500ms regardless of game state — on
+-- Sky.Live <= 1.0.0 the runtime already suppresses byte-identical
+-- views, but we also want the AI to not burn dispatch cycles on the
+-- human's turn, while the game is finished, or on the home page.
+subscriptions model =
+    if model.page == GamePage
+        && model.turn == Black
+        && model.gameStatus == "playing"
+    then
+        Time.every 500 ComputerMove
+    else
+        Sub.none
 
 
 update : Msg -> Model -> (Model, Cmd Msg)
