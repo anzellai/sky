@@ -168,3 +168,4 @@ test-suite sky-tests
       Sky.Lsp.ProtocolSpec
     , Sky.Build.EmbeddedRuntimeSpec
     , Sky.Build.EmbeddedInspectorSpec
+    , Sky.Cli.ExitCodesSpec

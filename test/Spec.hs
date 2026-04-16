@@ -21,6 +21,7 @@ import qualified Sky.Build.VerifyAllSpec
 import qualified Sky.Lsp.ProtocolSpec
 import qualified Sky.Build.EmbeddedRuntimeSpec
 import qualified Sky.Build.EmbeddedInspectorSpec
+import qualified Sky.Cli.ExitCodesSpec
 
 main :: IO ()
 main = hspec $ do
@@ -59,3 +60,5 @@ main = hspec $ do
     describe "Sky.Build.EmbeddedRuntime"  Sky.Build.EmbeddedRuntimeSpec.spec
     -- Embedded sky-ffi-inspect: single-binary release shape.
     describe "Sky.Build.EmbeddedInspector" Sky.Build.EmbeddedInspectorSpec.spec
+    -- Per-subcommand CLI exit-code contracts.
+    describe "Sky.Cli.ExitCodes"           Sky.Cli.ExitCodesSpec.spec
