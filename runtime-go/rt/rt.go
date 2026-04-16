@@ -1875,6 +1875,39 @@ type SkyADT struct {
 // values produced by rt's Err*/Maybe* builders.
 type skyErrorAdt = SkyADT
 
+
+// EnumTagIs compares an any-boxed zero-arg ADT value against an
+// integer constructor tag. The value may arrive in either of two
+// representations:
+//
+//   1. Typed int constant (`Sky_Core_Error_ErrorKind_Io`) — the
+//      form codegen emits when every constructor of an ADT has
+//      zero arguments (the Can.Enum optimisation).
+//   2. `SkyADT{Tag: N, SkyName: "Io"}` — the form rt builders
+//      produce (`makeError` / `errorKindAdt`) because rt doesn't
+//      know about per-ADT Can.Enum lowering in user code.
+//
+// Without a tolerant compare, every `case kind of Io -> ...`
+// downstream of a rt-built error hit `rt.Unreachable` — the
+// typed-int constant and the SkyADT struct are distinct Go
+// types under `any == any`, so the `==` always returned false.
+// Codegen emits `rt.EnumTagIs(__subject, N)` for Can.Enum case
+// branches so both representations flow cleanly through user
+// pattern matches.
+func EnumTagIs(subject any, tag int) bool {
+	if adt, ok := subject.(SkyADT); ok {
+		return adt.Tag == tag
+	}
+	rv := reflect.ValueOf(subject)
+	switch rv.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return int(rv.Int()) == tag
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return int(rv.Uint()) == tag
+	}
+	return false
+}
+
 // skyErrorInfo mirrors the field names Sky codegen uses when it emits
 // `Sky.Core.Error.ErrorInfo`. Exposed as the exported SkyErrorInfo type
 // so user code's Sky_Core_Error_ErrorInfo_R (which has the same

@@ -3387,15 +3387,30 @@ patternCondition subject pat = case pat of
     Can.PCtor home typeName union ctorName ctorIdx args ->
         case Can._u_opts union of
             Can.Enum ->
-                -- Enum: compare int value directly
-                let modStr = ModuleName.toString home
-                    qualName = if null modStr || modStr == "Main"
+                -- Enum: zero-arg ADT. Route through rt.EnumTagIs so
+                -- values arriving from rt builders (SkyADT with the
+                -- matching Tag) compare equal to the typed-int
+                -- constant codegen would otherwise emit. Without
+                -- this, `case (error.kind) of Io -> …` lowered by
+                -- codegen would never match an rt.ErrIo-built kind
+                -- because `Sky_Core_Error_ErrorKind(0) != SkyADT{Tag:0}`
+                -- under Go's `any == any` rules — the Sky case would
+                -- fall through to rt.Unreachable.
+                --
+                -- Keeping the named constants live for elsewhere
+                -- (debugger strings, direct construction) is free —
+                -- they still compile, this branch just doesn't use
+                -- `==` on them.
+                let _modStr = ModuleName.toString home
+                    _qualName = if null _modStr || _modStr == "Main"
                         then typeName ++ "_" ++ ctorName
-                        else (map (\c -> if c == '.' then '_' else c) modStr)
+                        else (map (\c -> if c == '.' then '_' else c) _modStr)
                              ++ "_" ++ typeName ++ "_" ++ ctorName
-                in Just $ GoIr.GoBinary "=="
-                    (GoIr.GoIdent subject)
-                    (GoIr.GoIdent qualName)
+                in Just $ GoIr.GoCall
+                    (GoIr.GoQualified "rt" "EnumTagIs")
+                    [ GoIr.GoIdent subject
+                    , GoIr.GoIntLit ctorIdx
+                    ]
             _ ->
                 -- Tagged struct: match outer .Tag AND recurse into every
                 -- ctor arg that carries a sub-pattern condition. Without
