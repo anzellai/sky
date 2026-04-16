@@ -86,6 +86,71 @@ func Nothing[A any]() SkyMaybe[A] {
 	return SkyMaybe[A]{Tag: 1}
 }
 
+// makeFuncAdapter wraps a Sky-side `func(any, ..., any) any`-shaped
+// callable so it satisfies a Go-typed function signature expected
+// by the FFI boundary. The returned reflect.Value's Interface() is
+// the new function value of the target type.
+//
+// At call time: incoming Go-typed args are boxed to `any` and passed
+// to the original Sky func; the Sky func's return is unwrapped/
+// coerced into the target signature's return slot(s). Skips when
+// the original return type doesn't match — Sky `func(...) any`
+// returning a value the target type expects.
+//
+// Used inside Coerce to bridge the Sky-handler → Go-typed-callback
+// gap (mux.HandleFunc, http.Handle, fyne callbacks, etc.).
+func makeFuncAdapter[T any](skyFn reflect.Value, targetTy reflect.Type) any {
+	wrapped := reflect.MakeFunc(targetTy, func(inArgs []reflect.Value) []reflect.Value {
+		// Box each arg to `any` for the Sky func.
+		boxedArgs := make([]reflect.Value, len(inArgs))
+		for i, a := range inArgs {
+			boxedArgs[i] = reflect.ValueOf(a.Interface())
+		}
+		// If Sky func is `func(any, ..., any) any` (variadic-like),
+		// match in-arity. If it has different arity, pad/truncate
+		// silently — the Sky type checker should have caught this.
+		skyTy := skyFn.Type()
+		nin := skyTy.NumIn()
+		if nin != len(boxedArgs) && !skyTy.IsVariadic() {
+			// Best-effort: pad with zero values or truncate.
+			if nin > len(boxedArgs) {
+				for i := len(boxedArgs); i < nin; i++ {
+					boxedArgs = append(boxedArgs, reflect.Zero(skyTy.In(i)))
+				}
+			} else {
+				boxedArgs = boxedArgs[:nin]
+			}
+		}
+		out := skyFn.Call(boxedArgs)
+		// Build return values for the target signature.
+		nOut := targetTy.NumOut()
+		results := make([]reflect.Value, nOut)
+		for i := 0; i < nOut; i++ {
+			outTy := targetTy.Out(i)
+			if i < len(out) {
+				v := out[i]
+				if v.Type().AssignableTo(outTy) {
+					results[i] = v
+				} else if v.IsValid() && v.Kind() == reflect.Interface && !v.IsNil() {
+					inner := v.Elem()
+					if inner.Type().AssignableTo(outTy) {
+						results[i] = inner
+					} else {
+						results[i] = reflect.Zero(outTy)
+					}
+				} else {
+					results[i] = reflect.Zero(outTy)
+				}
+			} else {
+				results[i] = reflect.Zero(outTy)
+			}
+		}
+		return results
+	})
+	return wrapped.Interface()
+}
+
+
 // CommaOkToMaybe converts Go's `(T, bool)` comma-ok pattern into
 // a Sky Maybe. Used by typed FFI wrappers for functions like
 // map[K]V lookups, sync.Map.Load, type assertions, etc.
@@ -2662,6 +2727,17 @@ func Coerce[T any](v any) T {
 		// empty/nil slices, return nil of the target slice type.
 		// For non-empty slices, convert element-by-element via
 		// reflect.
+		// Function adapter: Sky callbacks are lowered to
+		// `func(any, any, ...) any`, but typed Go FFI wrappers
+		// expect concrete signatures (e.g. `func(http.ResponseWriter,
+		// *http.Request)`). MakeFunc builds a thunk of the target
+		// signature that boxes incoming args via interface, calls
+		// the Sky func, and unwraps the return. Without this, every
+		// FFI that takes a Go callback (mux.HandleFunc, http.Handle,
+		// fyne callbacks, etc.) panics at the typed-arg boundary.
+		if rv.Kind() == reflect.Func && targetTy.Kind() == reflect.Func {
+			return makeFuncAdapter[T](rv, targetTy).(T)
+		}
 		if rv.Kind() == reflect.Slice && targetTy.Kind() == reflect.Slice {
 			n := rv.Len()
 			out := reflect.MakeSlice(targetTy, n, n)

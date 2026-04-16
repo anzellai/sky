@@ -104,8 +104,8 @@ requireAuth req onUser =
 -- ============================================================
 -- Auth handlers
 -- ============================================================
-handleLanding : a -> Request -> Task Error Response
-handleLanding _ req =
+handleLanding : Request -> Task Error Response
+handleLanding req =
     let
         token = getSessionToken req
     in
@@ -118,8 +118,8 @@ handleLanding _ req =
 -- handleSignIn: Auth.authenticateUser returns Result Error User.
 -- Unauthorised → show the form error verbatim (already user-safe).
 -- DbError/other → generic "unavailable" message, log details.
-handleSignIn : a -> Request -> Task Error Response
-handleSignIn _ req =
+handleSignIn : Request -> Task Error Response
+handleSignIn req =
     if Server.method req == "POST" then
         let
             email = Server.formValue "email" req
@@ -162,8 +162,8 @@ handleSignIn _ req =
 
 -- handleSignUp: Auth.createUser returns Result Error String.
 -- ValidationError gets shown verbatim; other errors get a generic msg.
-handleSignUp : a -> Request -> Task Error Response
-handleSignUp _ req =
+handleSignUp : Request -> Task Error Response
+handleSignUp req =
     if Server.method req == "POST" then
         let
             email = Server.formValue "email" req
@@ -193,8 +193,8 @@ handleSignUp _ req =
         Task.succeed (Server.html (View.signUpPage ""))
 
 
-handleForgotPassword : a -> Request -> Task Error Response
-handleForgotPassword _ req =
+handleForgotPassword : Request -> Task Error Response
+handleForgotPassword req =
     if Server.method req == "POST" then
         let
             email = Server.formValue "email" req
@@ -211,8 +211,8 @@ handleForgotPassword _ req =
 
 -- handleVerify: Auth.verifyEmail returns Result Error String.
 -- On DbError we surface a generic failure message (details logged).
-handleVerify : a -> Request -> Task Error Response
-handleVerify _ req =
+handleVerify : Request -> Task Error Response
+handleVerify req =
     let
         token = Maybe.withDefault "" (Server.queryParam "token" req)
     in
@@ -234,8 +234,8 @@ handleVerify _ req =
                                     ("Verification failed: " ++ Error.toString e)))
 
 
-handleSignOut : a -> Request -> Task Error Response
-handleSignOut _ req =
+handleSignOut : Request -> Task Error Response
+handleSignOut req =
     let
         token = getSessionToken req
         _ =
@@ -257,8 +257,8 @@ handleSignOut _ req =
 -- handleNotesList: Notes.getNotes returns Result Error (List Note).
 -- On DbError show the generic error page — data integrity matters
 -- more than silently rendering an empty list.
-handleNotesList : a -> Request -> Task Error Response
-handleNotesList _ req =
+handleNotesList : Request -> Task Error Response
+handleNotesList req =
     Task.succeed
         (requireAuth req
             (\user email ->
@@ -273,8 +273,8 @@ handleNotesList _ req =
                             Server.html (View.errorPage ("Failed to load notes: " ++ Error.toString e))))
 
 
-handleNewNote : a -> Request -> Task Error Response
-handleNewNote _ req =
+handleNewNote : Request -> Task Error Response
+handleNewNote req =
     Task.succeed
         (requireAuth req
             (\user email ->
@@ -296,8 +296,8 @@ handleNewNote _ req =
                         Server.html (View.noteFormPage email "" "" "" False)))
 
 
-handleViewNote : a -> Request -> Task Error Response
-handleViewNote _ req =
+handleViewNote : Request -> Task Error Response
+handleViewNote req =
     Task.succeed
         (requireAuth req
             (\user email ->
@@ -315,8 +315,8 @@ handleViewNote _ req =
                             Server.html (View.errorPage ("Failed to load note: " ++ Error.toString e))))
 
 
-handleEditNote : a -> Request -> Task Error Response
-handleEditNote _ req =
+handleEditNote : Request -> Task Error Response
+handleEditNote req =
     Task.succeed
         (requireAuth req
             (\user email ->
@@ -353,8 +353,8 @@ handleEditNote _ req =
                                 Server.html (View.errorPage ("Failed to load note: " ++ Error.toString e))))
 
 
-handleDeleteNote : a -> Request -> Task Error Response
-handleDeleteNote _ req =
+handleDeleteNote : Request -> Task Error Response
+handleDeleteNote req =
     Task.succeed
         (requireAuth req
             (\user email ->
