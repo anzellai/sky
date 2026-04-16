@@ -86,6 +86,26 @@ func Nothing[A any]() SkyMaybe[A] {
 	return SkyMaybe[A]{Tag: 1}
 }
 
+// CommaOkToMaybe converts Go's `(T, bool)` comma-ok pattern into
+// a Sky Maybe. Used by typed FFI wrappers for functions like
+// map[K]V lookups, sync.Map.Load, type assertions, etc.
+func CommaOkToMaybe[T any](v T, ok bool) SkyMaybe[T] {
+	if ok {
+		return Just[T](v)
+	}
+	return Nothing[T]()
+}
+
+// NilToMaybe wraps a Go pointer return in a Sky Maybe. Nil becomes
+// Nothing; non-nil becomes Just. Used by typed FFI wrappers for
+// functions returning *T without an error companion.
+func NilToMaybe[T any](v *T) SkyMaybe[*T] {
+	if v == nil {
+		return Nothing[*T]()
+	}
+	return Just[*T](v)
+}
+
 
 // ═══════════════════════════════════════════════════════════
 // Generic-coercion helpers (T4)

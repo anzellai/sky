@@ -1172,6 +1172,15 @@ emitTypedVariant knownAliases anyName fn params results
                         then "arg0." ++ methodN ++ "(" ++ callArgs ++ ")"
                         else "pkg." ++ goFnName ++ "(" ++ argRefs ++ ")"
                     recoverLine = "\tdefer SkyFfiRecoverT(&out)()"
+                    -- P3: nil-receiver check for methods with pointer
+                    -- receivers. Go will panic on `nil.Method()` — we
+                    -- catch it here with a typed Err instead of
+                    -- relying on the generic defer-recover (which
+                    -- produces a less informative panic message).
+                    nilRecvCheck = if isMethodLocal && not (null params) && isPointerType (snd (head params))
+                        then "\tif arg0 == nil { out = Err[any," ++ okType ++
+                             "](ErrFfi(\"nil receiver: " ++ _fnRecvType fn ++ "." ++ methodN ++ "\")); return }"
+                        else ""
                     -- Multi-return shapes pack the non-error results
                     -- into a SkyTuple2 / SkyTuple3 literal.
                     packTuple :: [String] -> String
@@ -1208,6 +1217,11 @@ emitTypedVariant knownAliases anyName fn params results
                             [_] ->
                                 [ "\tout = Ok[any," ++ okType ++ "](" ++ pickExpr call ++ ")"
                                 ]
+                            -- (T, bool) comma-ok → CommaOkToMaybe
+                            [(_, t), (_, "bool")] | t /= "bool" ->
+                                [ "\tr0, r1 := " ++ call
+                                , "\tout = Ok[any," ++ okType ++ "](CommaOkToMaybe(r0, r1))"
+                                ]
                             _ -> -- (T, ...) without error
                                 let lhs = intercalate ", " rNames
                                 in
@@ -1223,7 +1237,8 @@ emitTypedVariant knownAliases anyName fn params results
                     , "func " ++ typedName ++ "(" ++ paramDecls ++
                       ") (out SkyResult[any, " ++ okType ++ "]) {"
                     , recoverLine
-                    ] ++ bodyLines ++ [ "\treturn", "}" ]
+                    ] ++ (if null nilRecvCheck then [] else [nilRecvCheck])
+                      ++ bodyLines ++ [ "\treturn", "}" ]
   where
     isMethod = not (null (_fnMethodName fn))
     typeIsSafe t = isSimpleTypedType t && allPackagesKnown knownAliases t
@@ -1306,8 +1321,20 @@ classifyTypedResult
 classifyTypedResult results = case results of
     []                                  -> Just ("struct{}", False, id)
     [(_, "error")]                      -> Just ("struct{}", True , id)
+    -- Single pointer return (no error) → Maybe via NilToMaybe.
+    -- Go can return nil; wrapping in Maybe makes it visible at
+    -- the Sky type level. Excludes `*error` (handled as fallible).
+    [(_, t)] | isPointerType t && t /= "error" ->
+        Just ("SkyMaybe[" ++ t ++ "]", False, \call -> "NilToMaybe(" ++ call ++ ")")
     [(_, t)] | t /= "error"             -> Just (t, False, id)
     [(_, t), (_, "error")] | t /= "error" -> Just (t, True , id)
+    -- (T, bool) comma-ok pattern → Maybe T via CommaOkToMaybe.
+    -- Go's map lookup, type assertion, sync.Map.Load all return
+    -- (T, bool). The bool signals presence — map to Sky Maybe.
+    -- The two-result body path emits `r0, r1 := call` then packs.
+    -- CommaOkToMaybe takes both and returns SkyMaybe.
+    [(_, t), (_, "bool")] | t /= "error" && t /= "bool" ->
+        Just ("SkyMaybe[" ++ t ++ "]", False, id)
     -- (T, U) without error: pack as SkyTuple2.
     [(_, t1), (_, t2)] | t1 /= "error" && t2 /= "error" ->
         Just ("SkyTuple2", False, id)
@@ -1321,6 +1348,12 @@ classifyTypedResult results = case results of
     [(_, t1), (_, t2), (_, t3), (_, "error")] | t1 /= "error" && t2 /= "error" && t3 /= "error" ->
         Just ("SkyTuple3", True , id)
     _                                   -> Nothing
+
+
+-- | Does this Go type string represent a pointer type?
+isPointerType :: String -> Bool
+isPointerType ('*':_) = True
+isPointerType _       = False
 
 
 -- | Concrete Go types we can render directly in a typed wrapper signature.

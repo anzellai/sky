@@ -41,8 +41,9 @@ import (
 )
 
 type Param struct {
-	Name string `json:"name,omitempty"`
-	Type string `json:"type"`
+	Name   string     `json:"name,omitempty"`
+	Type   string     `json:"type"`
+	GoType types.Type `json:"-"` // unexported; used for interface-implements checks
 }
 
 type Function struct {
@@ -283,7 +284,7 @@ func resultsOf(sig *types.Signature) []Param {
 	out := make([]Param, 0, sig.Results().Len())
 	for i := 0; i < sig.Results().Len(); i++ {
 		r := sig.Results().At(i)
-		out = append(out, Param{Name: r.Name(), Type: r.Type().String()})
+		out = append(out, Param{Name: r.Name(), Type: r.Type().String(), GoType: r.Type()})
 	}
 	return out
 }
@@ -463,13 +464,49 @@ func describe(fn *types.Func, sig *types.Signature) Function {
 	}
 }
 
+// errorIface is the Go `error` interface, looked up once from the
+// universe scope. Used by implementsError to detect named error
+// types (e.g. *os.PathError) that implement `error` but whose
+// type string isn't literally "error".
+var errorIface *types.Interface
+
+func init() {
+	obj := types.Universe.Lookup("error")
+	if obj != nil {
+		errorIface = obj.Type().Underlying().(*types.Interface)
+	}
+}
+
+// implementsError checks whether a Go type (or its pointer form)
+// satisfies the built-in `error` interface. Catches named error
+// types like *os.PathError, *url.Error, *json.SyntaxError that
+// the old string-match "error" missed.
+func implementsError(t types.Type) bool {
+	if errorIface == nil {
+		return false
+	}
+	if types.Implements(t, errorIface) {
+		return true
+	}
+	// Check *T as well — Go convention is pointer receivers on
+	// Error() methods.
+	if _, isPtr := t.(*types.Pointer); !isPtr {
+		return types.Implements(types.NewPointer(t), errorIface)
+	}
+	return false
+}
+
 // classifyEffect chooses pure / fallible / effectful from the result list.
 // Conservative: when in doubt, call it effectful.
 func classifyEffect(results []Param) string {
-	// error-returning functions are fallible (and typically effectful too,
-	// but the Result wrapping is the important thing)
+	// error-returning functions are fallible. Check both the literal
+	// "error" string AND whether the type implements the error
+	// interface (catches named error types like *os.PathError).
 	for _, r := range results {
 		if r.Type == "error" {
+			return "fallible"
+		}
+		if r.GoType != nil && implementsError(r.GoType) {
 			return "fallible"
 		}
 	}
