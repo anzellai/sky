@@ -15,6 +15,11 @@
 #      to catch logic/CLI/DB regressions that HTTP-200 probes miss.
 #      Brief: .claude/prompts/end-to-end-testing.md
 #      Marker: `.claude/e2e-harness-complete` exists.
+#   4. Compiler + CLI + LSP audit — every command and language
+#      construct gets a regression spec; skychess AI investigated;
+#      docs reconciled with reality.
+#      Brief: .claude/prompts/compiler-cli-lsp-audit.md
+#      Marker: `.claude/compiler-cli-lsp-audit-complete` exists.
 #
 # Manual escape: `touch .claude/allow-stop` lets the turn end regardless
 # of gate state. Remove the file (or it's removed by `git clean -fdx`)
@@ -84,6 +89,18 @@ if [[ ! -f "$E2E_MARKER" ]]; then
 {
   "decision": "block",
   "reason": "End-to-end test harness NOT complete. Current CI catches compile-time and HTTP-200 smoke regressions but MISSES logic/CLI/DB regressions. User caught three manually (todo-cli args broken, skychess AI regressed to nonsense moves, skyvote comment insert hits UNIQUE constraint). Read .claude/prompts/end-to-end-testing.md — it's a 6-item self-contained brief: add e2e.json contract per example, extend `sky verify --e2e` runner, fix the three known bugs (each gated by its contract), wire into CI. Done condition: touch .claude/e2e-harness-complete after all six items land. Do NOT change example semantics to pass tests — the bugs are real and must be fixed at the code level. To pause: touch .claude/allow-stop."
+}
+EOF
+    exit 0
+fi
+
+# ── Gate 4: compiler + CLI + LSP audit
+AUDIT_MARKER=".claude/compiler-cli-lsp-audit-complete"
+if [[ ! -f "$AUDIT_MARKER" ]]; then
+    cat <<'EOF'
+{
+  "decision": "block",
+  "reason": "Compiler + CLI + LSP audit NOT complete. Multiple gaps suspected: skychess AI plays nonsense moves despite algorithmically-correct negamax (likely Move.applyMove or eval indexing bug); CLI commands lack per-subcommand specs (any silent exit-code regression goes undetected); LSP capabilities documented in docs/tooling/lsp.md may be aspirational. Read .claude/prompts/compiler-cli-lsp-audit.md — it's a 8-item brief covering: (1) skychess AI Sky-level tests + fix, (2) compiler regression specs for every language construct + error message, (3) test/Sky/Cli/*Spec.hs for every sky subcommand, (4) LSP per-capability specs, (5) port the bash e2e harness into `sky verify --e2e` (Haskell), (6) reconcile docs with reality, (7) push + watch CI green, (8) touch .claude/compiler-cli-lsp-audit-complete. Do NOT relax test expectations — if a behaviour is hard to assert, the behaviour is the bug, pin it down. Do NOT add v1.0 references. To pause: touch .claude/allow-stop."
 }
 EOF
     exit 0
