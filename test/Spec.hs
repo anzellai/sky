@@ -22,6 +22,7 @@ import qualified Sky.Build.VerifyAllSpec
 import qualified Sky.Lsp.ProtocolSpec
 import qualified Sky.Lsp.CapabilitiesSpec
 import qualified Sky.Lsp.DiagnosticsSpec
+import qualified Sky.Lsp.HoverTypesSpec
 import qualified Sky.Build.EmbeddedRuntimeSpec
 import qualified Sky.Build.EmbeddedInspectorSpec
 import qualified Sky.Cli.ExitCodesSpec
@@ -69,6 +70,7 @@ main = hspec $ do
     describe "Sky.Lsp.Capabilities"       Sky.Lsp.CapabilitiesSpec.spec
     -- Gap 2 (soundness): LSP publishDiagnostics parity with sky check.
     describe "Sky.Lsp.Diagnostics"        Sky.Lsp.DiagnosticsSpec.spec
+    describe "Sky.Lsp.HoverTypes"         Sky.Lsp.HoverTypesSpec.spec
     -- Audit P3-3: embedded runtime must track on-disk tree.
     describe "Sky.Build.EmbeddedRuntime"  Sky.Build.EmbeddedRuntimeSpec.spec
     -- Embedded sky-ffi-inspect: single-binary release shape.

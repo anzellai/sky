@@ -272,8 +272,34 @@ computeHoverIdx st file text line col =
                 idx <- getIndex st file
                 let mSym = Idx.lookupAtCursor idx file (line + 1) (col + 1) name
                 case mSym of
-                    Just s  -> return (Just (mkHover (renderSym s)))
-                    Nothing -> return (Just (mkHover name))
+                    Just s | hasType s -> return (Just (mkHover (renderSym s)))
+                    _ -> do
+                        -- Fallback: run the single-file solve pipeline so
+                        -- identifiers not in the index (stdlib kernels,
+                        -- prelude builtins) or indexed without a type
+                        -- (inferred functions) still get a type on hover.
+                        solvedType <- solveForName srcMod name
+                        case solvedType of
+                            Just t  ->
+                                let sig = name ++ " : " ++ Solve.showType t
+                                    modLine = case mSym of
+                                        Just s | Idx.symModule s /= "" ->
+                                            "\n-- defined in " ++ Idx.symModule s
+                                        _ -> ""
+                                in return (Just (mkHover (sig ++ modLine)))
+                            Nothing ->
+                                case kernelTypeSig name of
+                                    Just sig -> return (Just (mkHover (name ++ " : " ++ sig)))
+                                    Nothing  -> case mSym of
+                                        Just s  -> return (Just (mkHover (renderSym s)))
+                                        Nothing -> return (Just (mkHover name))
+
+
+-- | Does this Sym carry a real type signature?
+hasType :: Idx.Sym -> Bool
+hasType s = case Idx.symTypeSig s of
+    Just _  -> True
+    Nothing -> False
 
 
 -- | Format a Sym for hover Markdown: type signature first, then a blank
@@ -627,6 +653,49 @@ handleHover docs req reqId = do
             case r of
                 Right (Just h) -> sendReply reqId h
                 _              -> sendReply reqId A.Null
+
+
+-- | Run the solve pipeline on a parsed module and return the inferred
+-- type for a specific name. Checks both the top-level solver env AND
+-- the locals accumulator (which captures every CLet-bound name, i.e.
+-- all declarations including top-level — the solver's env-restore
+-- removes top-level names from the final env, but _locals retains them).
+solveForName :: Src.Module -> String -> IO (Maybe Ty.Type)
+solveForName srcMod name =
+    case Canonicalise.canonicalise srcMod of
+        Left _       -> return Nothing
+        Right canMod -> do
+            cs <- Constrain.constrainModule canMod
+            (r, localTys) <- Solve.solveWithLocals cs
+            case r of
+                Solve.SolveOk types ->
+                    case Map.lookup name types of
+                        Just t  -> return (Just t)
+                        Nothing -> case Map.lookup name localTys of
+                            Just (t:_) -> return (Just t)
+                            _          -> return Nothing
+                _ -> return Nothing
+
+
+-- | Hard-coded type signatures for stdlib kernel functions. These are
+-- the functions available without any import (Prelude) or via the
+-- standard `Sky.Core.*` / `Std.*` imports. The index may miss them
+-- because kernel modules don't have .sky source files to index.
+kernelTypeSig :: String -> Maybe String
+kernelTypeSig name = Map.lookup name kernelSigs
+  where
+    kernelSigs = Map.fromList
+        [ ("println",      "a -> Task Error ()")
+        , ("identity",     "a -> a")
+        , ("always",       "a -> b -> a")
+        , ("not",          "Bool -> Bool")
+        , ("toString",     "a -> String")
+        , ("modBy",        "Int -> Int -> Int")
+        , ("clamp",        "comparable -> comparable -> comparable -> comparable")
+        , ("fst",          "( a, b ) -> a")
+        , ("snd",          "( a, b ) -> b")
+        , ("errorToString","Error -> String")
+        ]
 
 
 -- | Find the identifier at (line, col) (LSP 0-based) and return its type
