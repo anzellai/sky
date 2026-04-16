@@ -8,7 +8,7 @@ import System.IO (hPutStrLn, stderr)
 
 import qualified System.Directory
 import qualified System.Environment
-import System.Directory (createDirectoryIfMissing, doesFileExist)
+import System.Directory (createDirectoryIfMissing, doesFileExist, removeFile)
 import System.IO.Error (catchIOError)
 import qualified Control.Exception
 import System.FilePath ((</>), takeExtension, takeDirectory, takeFileName, dropExtension, splitDirectories)
@@ -115,6 +115,11 @@ runExampleVerify cwd target = do
                     Just t  -> filter (== t) entries
                     Nothing -> entries
                 exampleDirs = [examplesDir ++ "/" ++ d | d <- dirs]
+            -- Clean the failure log before running so stale entries from
+            -- a prior invocation (e.g. cabal test → sky verify in the
+            -- same CI job) don't cause a false exit-code-1.
+            removeFile "/tmp/sky-verify-fails.txt"
+                `catchIOError` (\_ -> return ())
             mapM_ (verifyOne cwd) exampleDirs
             hasFailures <- readFile "/tmp/sky-verify-fails.txt"
                 `catchIOError` (\_ -> return "")
