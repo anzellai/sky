@@ -2627,13 +2627,41 @@ func Coerce[T any](v any) T {
 	var zero T
 	rv := reflect.ValueOf(v)
 	targetTy := reflect.TypeOf(zero)
-	// Reflect-convertible includes Go's numeric-widening and
-	// semantically-wrong coercions we must REJECT (int→string converts
-	// 42 to ASCII "*"). Allow conversion only between numeric kinds
-	// or between identical kinds (struct-to-struct reinterpret).
-	if rv.IsValid() && targetTy != nil && rv.Type().ConvertibleTo(targetTy) {
-		if safeReflectConvert(rv.Kind(), targetTy.Kind()) {
-			return rv.Convert(targetTy).Interface().(T)
+
+	if rv.IsValid() && targetTy != nil {
+		// Numeric-widening (safe subset).
+		if rv.Type().ConvertibleTo(targetTy) {
+			if safeReflectConvert(rv.Kind(), targetTy.Kind()) {
+				return rv.Convert(targetTy).Interface().(T)
+			}
+		}
+		// Slice coercion: []any → []ConcreteT. Sky lists are
+		// homogeneously-typed at the Sky level but lowered to
+		// []any in codegen. Typed FFI wrappers expect the
+		// concrete slice type (e.g. []option.ClientOption). For
+		// empty/nil slices, return nil of the target slice type.
+		// For non-empty slices, convert element-by-element via
+		// reflect.
+		if rv.Kind() == reflect.Slice && targetTy.Kind() == reflect.Slice {
+			n := rv.Len()
+			out := reflect.MakeSlice(targetTy, n, n)
+			elemTy := targetTy.Elem()
+			for i := 0; i < n; i++ {
+				elem := rv.Index(i).Interface()
+				ev := reflect.ValueOf(elem)
+				if ev.IsValid() && ev.Type().ConvertibleTo(elemTy) {
+					out.Index(i).Set(ev.Convert(elemTy))
+				} else if ev.IsValid() && ev.Type().AssignableTo(elemTy) {
+					out.Index(i).Set(ev)
+				} else if elemTy.Kind() == reflect.Interface {
+					out.Index(i).Set(ev)
+				} else {
+					panic(fmt.Sprintf(
+						"rt.Coerce: slice element [%d]: cannot convert %T to %v",
+						i, elem, elemTy))
+				}
+			}
+			return out.Interface().(T)
 		}
 	}
 	panic(fmt.Sprintf("rt.Coerce: expected %T, got %T (%v)", zero, v, v))

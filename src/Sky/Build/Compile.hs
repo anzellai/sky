@@ -2887,15 +2887,17 @@ isCallerVisibleGoType t =
 -- Go's type inference matches to the target param type directly —
 -- inserting `any(1).(int)` would actually break, since `any(1)` boxes
 -- the literal and asserting back loses the native-type view. For
--- everything else, wrap with `any(...)` and then assert to the
--- declared type, which works whether the source is any-typed or
--- already concrete.
+-- everything else, route through `rt.Coerce[T]()` which handles
+-- the full matrix: direct type assertion when the runtime type
+-- matches, reflect-based numeric widening, and (post-skyshop-fix)
+-- slice coercion (`[]any` → `[]ConcreteT`) so an empty list `[]`
+-- in Sky can flow into a Go function expecting `[]option.ClientOption`.
 coerceFfiArg :: String -> Can.Expr -> GoIr.GoExpr
 coerceFfiArg goType arg =
     let goArg = exprToGo arg
     in if isPrimLiteralArg arg
         then goArg
-        else GoIr.GoTypeAssert (GoIr.GoCall (GoIr.GoIdent "any") [goArg]) goType
+        else coerceVia goType goArg
 
 
 -- | Call-site coercion that consults the `rt.FfiT_<Name>_P<N>` alias
@@ -2907,12 +2909,23 @@ coerceFfiArgViaAlias :: String -> Int -> String -> Can.Expr -> GoIr.GoExpr
 coerceFfiArgViaAlias anyWrapperName idx goType arg
     | isPrimLiteralArg arg   = exprToGo arg
     | isCallerVisibleGoType goType =
-        GoIr.GoTypeAssert (GoIr.GoCall (GoIr.GoIdent "any") [exprToGo arg]) goType
+        coerceVia goType (exprToGo arg)
     | otherwise =
         let aliasName = "rt.FfiT_" ++ anyWrapperName ++ "_P" ++ show idx
-        in GoIr.GoTypeAssert
-              (GoIr.GoCall (GoIr.GoIdent "any") [exprToGo arg])
-              aliasName
+        in coerceVia aliasName (exprToGo arg)
+
+
+-- | Emit `rt.Coerce[T](expr)` (or the named shortcut for prim
+-- types) so typed FFI boundaries handle representation mismatches
+-- ([]any → []ConcreteT, struct reinterpret, numeric widening)
+-- instead of panicking on a raw `.(T)` assertion.
+coerceVia :: String -> GoIr.GoExpr -> GoIr.GoExpr
+coerceVia goType goArg = case goType of
+    "string"  -> GoIr.GoCall (GoIr.GoIdent "rt.CoerceString") [goArg]
+    "int"     -> GoIr.GoCall (GoIr.GoIdent "rt.CoerceInt") [goArg]
+    "bool"    -> GoIr.GoCall (GoIr.GoIdent "rt.CoerceBool") [goArg]
+    "float64" -> GoIr.GoCall (GoIr.GoIdent "rt.CoerceFloat") [goArg]
+    _         -> GoIr.GoCall (GoIr.GoIdent ("rt.Coerce[" ++ goType ++ "]")) [goArg]
 
 
 -- | Can we emit a direct Go call for this callee expression?
