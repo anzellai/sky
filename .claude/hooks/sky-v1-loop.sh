@@ -11,6 +11,10 @@
 #   2. FFI boundary docs cleanup — update docs/samples/tests after the
 #      P0-P3 FFI fixes (commit e1faa21) so they match the new mapping.
 #      Marker: `docs/ffi/boundary-philosophy.md` exists.
+#   3. End-to-end testing harness — behavioural contracts per example
+#      to catch logic/CLI/DB regressions that HTTP-200 probes miss.
+#      Brief: .claude/prompts/end-to-end-testing.md
+#      Marker: `.claude/e2e-harness-complete` exists.
 #
 # Manual escape: `touch .claude/allow-stop` lets the turn end regardless
 # of gate state. Remove the file (or it's removed by `git clean -fdx`)
@@ -68,6 +72,18 @@ if [[ ! -f "$FFI_MARKER" ]]; then
 {
   "decision": "block",
   "reason": "FFI boundary docs cleanup NOT complete. The compiler fixes (P0-P3) landed in e1faa21 but the docs/samples/tests still reflect the OLD mapping. Read .claude/prompts/ffi-boundary-docs.md — it's a self-contained 7-item brief with verification gates. Done condition: docs/ffi/boundary-philosophy.md exists, doc commit landed, all six verification gates green (compiler builds, 67/67 self-tests, 18/18 example sweep, runtime go tests, cabal test, sky verify on key examples). Do NOT propose changing FFI from Result to Task — that's a settled design (Result for synchronous boundary, Task for deferred Sky effects). Do NOT add v1.0 references — v0.9 is the current version. To pause: touch .claude/allow-stop."
+}
+EOF
+    exit 0
+fi
+
+# ── Gate 3: end-to-end test harness
+E2E_MARKER=".claude/e2e-harness-complete"
+if [[ ! -f "$E2E_MARKER" ]]; then
+    cat <<'EOF'
+{
+  "decision": "block",
+  "reason": "End-to-end test harness NOT complete. Current CI catches compile-time and HTTP-200 smoke regressions but MISSES logic/CLI/DB regressions. User caught three manually (todo-cli args broken, skychess AI regressed to nonsense moves, skyvote comment insert hits UNIQUE constraint). Read .claude/prompts/end-to-end-testing.md — it's a 6-item self-contained brief: add e2e.json contract per example, extend `sky verify --e2e` runner, fix the three known bugs (each gated by its contract), wire into CI. Done condition: touch .claude/e2e-harness-complete after all six items land. Do NOT change example semantics to pass tests — the bugs are real and must be fixed at the code level. To pause: touch .claude/allow-stop."
 }
 EOF
     exit 0
