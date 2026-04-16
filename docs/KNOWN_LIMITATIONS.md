@@ -71,17 +71,27 @@ and `sky verify` exercises most paths via the example matrix.
 
 ## LSP capabilities partially specced
 
-**Symptom.** `docs/tooling/lsp.md` declares many capabilities;
-`Sky.Lsp.ProtocolSpec` only verifies `initialize` and `hover`.
+**Symptom.** `docs/tooling/lsp.md` declares many capabilities; some
+lack integration specs that prove they actually work.
 
-**Known.** Capabilities asserted to work but lacking integration
-specs: definition, references, rename (with prepareProvider),
-document symbols, formatting, completion (triggered on `.`),
-diagnostics on file open, semantic tokens.
+**Covered now** (under `test/Sky/Lsp/`):
+- `initialize` + capabilities advertisement — `ProtocolSpec.hs`
+- `textDocument/hover` — `ProtocolSpec.hs`
+- `textDocument/definition` — `CapabilitiesSpec.hs`
+- `textDocument/documentSymbol` — `CapabilitiesSpec.hs`
+- `textDocument/formatting` — `CapabilitiesSpec.hs`
 
-**Workaround.** None — manual editor testing via Helix/Zed/VS Code.
-A future session should extend `ProtocolSpec` (or split into
-per-capability specs) with JSON-RPC fixtures for each.
+**Remaining gaps** (need extending `CapabilitiesSpec.hs` with one
+test each):
+- `textDocument/references`
+- `textDocument/rename` (+ `textDocument/prepareRename`)
+- `textDocument/completion` (triggered on `.`)
+- `textDocument/publishDiagnostics` on `didOpen` of a broken file
+- `textDocument/semanticTokens/full`
+
+**Workaround.** Manual editor testing via Helix/Zed/VS Code.
+The above gaps need extending `CapabilitiesSpec.hs` with one
+JSON-RPC fixture per capability — straightforward incremental work.
 
 ---
 
