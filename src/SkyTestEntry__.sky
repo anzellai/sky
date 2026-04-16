@@ -1,7 +1,0 @@
-module SkyTestEntry__ exposing (main)
-
-import Sky.Test as Test
-import Core.CoreTest as Suite
-
-main =
-    Test.runMain Suite.tests
