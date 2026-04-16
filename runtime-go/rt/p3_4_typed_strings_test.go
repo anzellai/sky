@@ -57,6 +57,28 @@ func TestDbExec_rejectsNonStringQuery(t *testing.T) {
 	}
 }
 
+func TestDbConnect_unitFallsBackToSkyDbPath(t *testing.T) {
+	// Sky `()` evaluates to struct{} at the Go FFI boundary.
+	// Db.connect () should consult SKY_DB_PATH (set from sky.toml
+	// [database].path at program startup).
+	t.Setenv("SKY_DB_PATH", ":memory:")
+	r := Db_connect(struct{}{})
+	if isErr := func() bool {
+		sr, ok := r.(SkyResult[any, any]); return ok && sr.Tag == 1
+	}(); isErr {
+		t.Fatalf("Db.connect () must succeed when SKY_DB_PATH is set, got %+v", r)
+	}
+}
+
+func TestDbConnect_unitWithoutSkyDbPathIsErr(t *testing.T) {
+	// No SKY_DB_PATH → typed Err with a helpful message instead
+	// of silently opening a file named `{}` (the pre-P3-4 bug).
+	t.Setenv("SKY_DB_PATH", "")
+	if !p34IsErr(Db_connect(struct{}{})) {
+		t.Fatalf("Db.connect () must be Err when SKY_DB_PATH unset")
+	}
+}
+
 func TestDbQuery_rejectsNonStringQuery(t *testing.T) {
 	conn := Db_connect(":memory:")
 	db := okValue(conn)

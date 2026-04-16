@@ -17,7 +17,7 @@ import Sky.Core.Error as Error exposing (Error(..), ErrorKind(..))
 -- subsequent query — it's strictly better to surface the problem now
 -- than to ship empty data to users.
 dbConn =
-    case Db.connect "skychess.db" of
+    case Db.connect () of
         Ok conn ->
             conn
         Err e ->
