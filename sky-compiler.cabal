@@ -169,3 +169,7 @@ test-suite sky-tests
     , Sky.Build.EmbeddedRuntimeSpec
     , Sky.Build.EmbeddedInspectorSpec
     , Sky.Cli.ExitCodesSpec
+    , Sky.Cli.InitSpec
+    , Sky.Cli.RunSpec
+    , Sky.Cli.FmtSpec
+    , Sky.Cli.CleanSpec

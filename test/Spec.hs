@@ -22,6 +22,10 @@ import qualified Sky.Lsp.ProtocolSpec
 import qualified Sky.Build.EmbeddedRuntimeSpec
 import qualified Sky.Build.EmbeddedInspectorSpec
 import qualified Sky.Cli.ExitCodesSpec
+import qualified Sky.Cli.InitSpec
+import qualified Sky.Cli.RunSpec
+import qualified Sky.Cli.FmtSpec
+import qualified Sky.Cli.CleanSpec
 
 main :: IO ()
 main = hspec $ do
@@ -62,3 +66,7 @@ main = hspec $ do
     describe "Sky.Build.EmbeddedInspector" Sky.Build.EmbeddedInspectorSpec.spec
     -- Per-subcommand CLI exit-code contracts.
     describe "Sky.Cli.ExitCodes"           Sky.Cli.ExitCodesSpec.spec
+    describe "Sky.Cli.Init"                Sky.Cli.InitSpec.spec
+    describe "Sky.Cli.Run"                 Sky.Cli.RunSpec.spec
+    describe "Sky.Cli.Fmt"                 Sky.Cli.FmtSpec.spec
+    describe "Sky.Cli.Clean"               Sky.Cli.CleanSpec.spec

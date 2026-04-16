@@ -43,26 +43,26 @@ exercising the chess primitives directly (via `sky test`).
 
 ## CLI per-subcommand specs are partial
 
-**Symptom.** Most `sky <subcommand>` commands have no automated
+**Symptom.** Some `sky <subcommand>` commands have no automated
 contract verifying their exit codes / outputs. A silent regression
 where (for example) `sky build` exits 0 despite a `go build` error
 could ship undetected.
 
-**Known.** `test/Sky/Cli/ExitCodesSpec.hs` covers the highest-impact
-flows:
-- `sky --version` — banner + exit 0
-- `sky build` (well-typed source) — exit 0
-- `sky build` (broken source / Go-level error) — exit non-zero
-- `sky check` — exit 0 on well-typed source
+**Covered now** (one spec module per command under `test/Sky/Cli/`):
+- `sky --version`, `sky build` (ok / syntax error / Go-level error),
+  `sky check` — `ExitCodesSpec.hs`
+- `sky init <name>` — scaffolding + scaffold-builds-clean — `InitSpec.hs`
+- `sky run` — exit propagation + stdout capture — `RunSpec.hs`
+- `sky fmt` — second-pass idempotency — `FmtSpec.hs`
+- `sky clean` — removes managed dirs only, preserves user files — `CleanSpec.hs`
 
-Coverage gaps (need `test/Sky/Cli/<Cmd>Spec.hs`):
-- `sky init <name>` — scaffolding correctness
-- `sky run` — propagates app exit code
-- `sky fmt` — idempotency, refusal on data loss
-- `sky test` — pass/fail propagation
-- `sky add/remove/install/update` — dep-management correctness
-- `sky upgrade` — graceful offline handling
-- `sky clean` — only removes intended dirs
+**Remaining gaps:**
+- `sky test` — pass/fail propagation. Needs a passing + failing
+  fixture in `tests/`. Blocked on item 5a (Sky-test-runner-in-cabal).
+- `sky add/remove/install/update` — network-dependent; spec needs
+  to mock the Go module proxy or skip-with-reason on offline CI.
+- `sky upgrade` — hits GitHub releases; needs `SKY_UPGRADE_URL`
+  env-var override for hermetic testing.
 
 **Workaround.** Manual validation via `bash scripts/example-sweep.sh`
 and `sky verify` exercises most paths via the example matrix.
