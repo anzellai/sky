@@ -300,8 +300,15 @@ importAlias =
         [ do
             keyword (\r c -> ImportExpected r c) (T.pack "as")
             spaces
-            name <- upper (\r c -> ImportExpected r c)
-            return (Just name)
+            oneOfWithFallback
+                [ do
+                    char (\r c -> ImportExpected r c) '_'
+                    return (Just "_")
+                , do
+                    name <- upper (\r c -> ImportExpected r c)
+                    return (Just name)
+                ]
+                Nothing
         ]
         Nothing
 

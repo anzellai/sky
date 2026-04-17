@@ -9,6 +9,7 @@ import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import Data.IORef
 import Data.Maybe (isJust)
+import qualified Data.Char as Char
 import qualified Data.List as List
 import qualified System.Directory
 import qualified System.FilePath
@@ -1480,12 +1481,29 @@ generateGo canMod srcMod config solvedTypes =
 
 -- | Collect Go imports needed
 collectGoImports :: Can.Module -> Src.Module -> [GoIr.GoImport]
-collectGoImports _canMod _srcMod =
+collectGoImports _canMod srcMod =
     -- Import as blank to avoid "imported and not used" when user's main is
     -- a pure value. If main uses rt.* anywhere, Go doesn't complain about
     -- adding a blank import alongside the aliased one.
     -- Simpler: emit `_ = rt.Log_println` in a blank var at top.
     [ GoIr.GoImport "sky-app/rt" (Just "rt") ]
+    ++ sideEffectImports (Src._imports srcMod)
+  where
+    sideEffectImports imps =
+        [ GoIr.GoImport (skyModToGoPath segs) (Just "_")
+        | imp <- imps
+        , Src._importAlias imp == Just "_"
+        , let A.At _ segs = Src._importName imp
+        ]
+    skyModToGoPath segs =
+        let parts = concatMap splitCamel segs
+        in List.intercalate "/" (map toLowerFirst parts)
+    toLowerFirst [] = []
+    toLowerFirst (c:cs) = Char.toLower c : cs
+    splitCamel [] = []
+    splitCamel s =
+        let (word, rest) = break Char.isUpper (drop 1 s)
+        in (take 1 s ++ word) : splitCamel rest
 
 
 -- | Check if module imports Task
