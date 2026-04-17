@@ -39,16 +39,17 @@ func TestCoerce_PanicsOnMismatch(t *testing.T) {
 	}
 }
 
-func TestCoerceString_StrictButClear(t *testing.T) {
+func TestCoerceString_GracefulConversion(t *testing.T) {
 	if CoerceString("ok") != "ok" {
 		t.Fatal("CoerceString identity broken")
 	}
-	panicked, msg := didPanic(func() { _ = CoerceString(123) })
-	if !panicked {
-		t.Fatal("CoerceString(123) did not panic — silent coercion hole")
+	// SQLite and other DB drivers return int/float/bool — CoerceString
+	// must convert gracefully instead of panicking.
+	if CoerceString(123) != "123" {
+		t.Fatal("CoerceString(123) should produce \"123\"")
 	}
-	if !strings.Contains(msg, "rt.CoerceString") {
-		t.Fatalf("missing rt.CoerceString in panic: %q", msg)
+	if CoerceString(true) != "true" {
+		t.Fatal("CoerceString(true) should produce \"true\"")
 	}
 }
 

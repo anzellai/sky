@@ -1261,7 +1261,13 @@ func deepEq(a, b any) bool {
 	}
 	ra, rb := reflect.ValueOf(a), reflect.ValueOf(b)
 	if ra.Kind() != rb.Kind() {
-		// Cross-kind fallback: let Go compare ints with floats via formatted equality.
+		// Cross-kind: when one side is a string and the other is a
+		// numeric/bool, stringify the non-string side. DB drivers
+		// return int64 for SQLite integers but Sky code compares
+		// with string literals like `verified == "1"`.
+		if ra.Kind() == reflect.String || rb.Kind() == reflect.String {
+			return fmt.Sprintf("%v", a) == fmt.Sprintf("%v", b)
+		}
 		if ra.Type().Comparable() && rb.Type().Comparable() {
 			return ra.Interface() == rb.Interface()
 		}
@@ -2895,10 +2901,7 @@ func safeReflectConvert(from, to reflect.Kind) bool {
 // CoerceString is a named shortcut that avoids generic instantiation
 // at every string-returning typed boundary. Identical to Coerce[string].
 func CoerceString(v any) string {
-	if s, ok := v.(string); ok {
-		return s
-	}
-	panic(fmt.Sprintf("rt.CoerceString: expected string, got %T (%v)", v, v))
+	return AsString(v)
 }
 
 func CoerceInt(v any) int { return AsInt(v) }      // AsInt is strict post-P0-2
