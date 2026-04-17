@@ -2779,6 +2779,10 @@ func Coerce[T any](v any) T {
 			elemTy := targetTy.Elem()
 			for i := 0; i < n; i++ {
 				elem := rv.Index(i).Interface()
+				// FFI boundary: Sky lists may contain Result-wrapped
+				// values (from typed T-suffix wrappers). Unwrap Ok
+				// values before coercing to the target element type.
+				elem = unwrapResultOk(elem)
 				ev := reflect.ValueOf(elem)
 				if ev.IsValid() && ev.Type().ConvertibleTo(elemTy) {
 					out.Index(i).Set(ev.Convert(elemTy))
@@ -2797,6 +2801,22 @@ func Coerce[T any](v any) T {
 	}
 	panic(fmt.Sprintf("rt.Coerce: expected %T, got %T (%v)", zero, v, v))
 }
+
+// unwrapResultOk extracts the Ok value from a SkyResult if present.
+// Returns the original value unchanged for non-Result inputs.
+func unwrapResultOk(v any) any {
+	rv := reflect.ValueOf(v)
+	if !rv.IsValid() || rv.Kind() != reflect.Struct {
+		return v
+	}
+	tagF := rv.FieldByName("Tag")
+	okF := rv.FieldByName("OkValue")
+	if tagF.IsValid() && okF.IsValid() && tagF.Int() == 0 {
+		return okF.Interface()
+	}
+	return v
+}
+
 
 // safeReflectConvert whitelists reflect.Value.Convert pairs that are
 // semantically meaningful for Sky's type system. Numeric widening
