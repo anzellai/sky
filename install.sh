@@ -71,26 +71,38 @@ install_sky() {
     EXT=""
     if [ "$PLATFORM" = "windows" ]; then
         EXT=".exe"
-        ARCHIVE="${ARTIFACT}.zip"
-    else
-        ARCHIVE="${ARTIFACT}.tar.gz"
     fi
-    URL="https://github.com/$REPO/releases/download/v${VERSION}/${ARCHIVE}"
-
-    info "Downloading sky v${VERSION}..."
 
     TMPDIR=$(mktemp -d)
     trap 'rm -rf "$TMPDIR"' EXIT
 
-    if ! curl -fsSL "$URL" -o "$TMPDIR/$ARCHIVE"; then
-        error "Failed to download $URL\nCheck that v${VERSION} exists at https://github.com/$REPO/releases"
+    info "Downloading sky v${VERSION}..."
+
+    # Try archive format first (v0.8.1+), fall back to raw binary (v0.8.0 and earlier)
+    DOWNLOADED=0
+    if [ "$PLATFORM" = "windows" ]; then
+        ARCHIVE="${ARTIFACT}.zip"
+    else
+        ARCHIVE="${ARTIFACT}.tar.gz"
+    fi
+    ARCHIVE_URL="https://github.com/$REPO/releases/download/v${VERSION}/${ARCHIVE}"
+    RAW_URL="https://github.com/$REPO/releases/download/v${VERSION}/${ARTIFACT}${EXT}"
+
+    if curl -fsSL "$ARCHIVE_URL" -o "$TMPDIR/$ARCHIVE" 2>/dev/null; then
+        cd "$TMPDIR"
+        if [ "$PLATFORM" = "windows" ]; then
+            unzip -q "$ARCHIVE"
+        else
+            tar xzf "$ARCHIVE"
+        fi
+        DOWNLOADED=1
+    elif curl -fsSL "$RAW_URL" -o "$TMPDIR/${ARTIFACT}${EXT}" 2>/dev/null; then
+        cd "$TMPDIR"
+        DOWNLOADED=1
     fi
 
-    cd "$TMPDIR"
-    if [ "$PLATFORM" = "windows" ]; then
-        unzip -q "$ARCHIVE"
-    else
-        tar xzf "$ARCHIVE"
+    if [ "$DOWNLOADED" = "0" ]; then
+        error "Failed to download sky v${VERSION}\nCheck https://github.com/$REPO/releases"
     fi
 
     # Install sky binary
