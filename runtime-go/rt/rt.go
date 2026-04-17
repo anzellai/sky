@@ -2734,6 +2734,17 @@ func Coerce[T any](v any) T {
 		return t
 	}
 	var zero T
+	// nil passes through for pointer/interface/slice/map/func targets.
+	// Sky's `js "nil"` produces Go nil; typed FFI wrappers may need to
+	// pass nil as a *Config or similar pointer arg.
+	if v == nil {
+		targetTy := reflect.TypeOf((*T)(nil)).Elem()
+		switch targetTy.Kind() {
+		case reflect.Ptr, reflect.Interface, reflect.Slice,
+			reflect.Map, reflect.Func, reflect.Chan:
+			return zero
+		}
+	}
 	rv := reflect.ValueOf(v)
 	targetTy := reflect.TypeOf(zero)
 
