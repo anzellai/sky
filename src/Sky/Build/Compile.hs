@@ -1267,6 +1267,11 @@ generateUnionForDep modPrefix (typeName, Can.Union _vars ctors _numAlts opts) =
                         }
               | Can.Ctor cname idx arity argTys <- ctors
               ]
+            ++ [ GoIr.GoDeclRaw $ "func init() { "
+                   ++ concatMap (\(Can.Ctor cname idx _ _) ->
+                        "rt.RegisterAdtTag(\"" ++ cname ++ "\", " ++ show idx ++ "); ")
+                        ctors
+                   ++ "}" ]
   where
     -- T1: dep ctor params typed from declared union's arg types.
     ctorArgGoTypeDep i argTys
@@ -1524,6 +1529,11 @@ generateUnionTypes canMod =
             -- pattern-match sites.
             [ GoIr.GoDeclRaw $ "type " ++ typeName ++ " = rt.SkyADT" ]
             ++ map (generateCtorFunc typeName) ctors
+            ++ [ GoIr.GoDeclRaw $ "func init() { "
+                   ++ concatMap (\(Can.Ctor cname idx _ _) ->
+                        "rt.RegisterAdtTag(\"" ++ cname ++ "\", " ++ show idx ++ "); ")
+                        ctors
+                   ++ "}" ]
 
     ctorConstName typeName (Can.Ctor cname _ _ _) = typeName ++ "_" ++ cname
 

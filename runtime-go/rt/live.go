@@ -1035,6 +1035,8 @@ type liveApp struct {
 	staticURL     string      // URL mount prefix (default "/static")
 	store         SessionStore // sessionID -> *liveSession (memory, sqlite, or postgres)
 	locker        *sessionLocker
+	msgTags       map[string]int // SkyName → Tag cache for direct-send events
+	msgTagsMu     sync.Mutex
 }
 
 
@@ -1255,6 +1257,7 @@ func Live_app(cfg any) any {
 		notFound:      Field(cfg, "NotFound"),
 		guard:         Field(cfg, "Guard"),
 		locker:        newSessionLocker(),
+		msgTags:       make(map[string]int),
 	}
 	for _, r := range asList(Field(cfg, "Routes")) {
 		if lr, ok := r.(liveRoute); ok {
@@ -1531,6 +1534,36 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 		sess.prevTree = &vn
 	}
 	msg, ok := sess.handlers[req.HandlerID]
+	if !ok && req.Msg != "" && req.HandlerID == "" {
+		// Direct-send path: the frontend called __sky_send("MsgName", args)
+		// without a handler ID (e.g. Firebase auth callback, subscription
+		// timers, external JS integrations). Construct the ADT value
+		// directly from the constructor name and arguments instead of
+		// looking up a render-time handler closure.
+		//
+		// Tag resolution: look up the global ADT tag registry (populated
+		// by codegen's init() block), then fall back to the per-app cache
+		// built during previous dispatches.
+		tag := -1
+		if t, ok := LookupAdtTag(req.Msg); ok {
+			tag = t
+		} else {
+			app.msgTagsMu.Lock()
+			if t2, ok2 := app.msgTags[req.Msg]; ok2 {
+				tag = t2
+			}
+			app.msgTagsMu.Unlock()
+		}
+		var fields []any
+		for _, raw := range req.Args {
+			var v any
+			if err := json.Unmarshal(raw, &v); err == nil {
+				fields = append(fields, v)
+			}
+		}
+		msg = SkyADT{Tag: tag, SkyName: req.Msg, Fields: fields}
+		ok = true
+	}
 	if !ok {
 		sess.mu.Unlock()
 		http.Error(w, "handler not found", 404)
@@ -1540,7 +1573,9 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 	// onSubmit / onKeyDown etc.) apply each incoming arg in order to
 	// produce a concrete Msg ADT value. Falls through to the legacy
 	// single-value form when only `value` was sent.
-	msg = applyMsgArgs(msg, req.Args, req.Value)
+	if _, isSkyAdt := msg.(SkyADT); !isSkyAdt {
+		msg = applyMsgArgs(msg, req.Args, req.Value)
+	}
 	// Keep a reference to the previous tree BEFORE dispatch mutates it.
 	prev := sess.prevTree
 	body2 := app.dispatch(sess, msg)
@@ -1603,6 +1638,15 @@ func (app *liveApp) dispatch(sess *liveSession, msg any) string {
 			})
 			return app.renderView(sess)
 		}
+	}
+	// Cache the SkyName→Tag mapping from every dispatched message so
+	// direct-send events (__sky_send) can construct correctly-tagged
+	// ADTs at runtime. Normal handler-dispatched events always carry
+	// the codegen-assigned tag; direct-send events arrive with Tag -1.
+	if adt, ok := msg.(SkyADT); ok && adt.Tag >= 0 {
+		app.msgTagsMu.Lock()
+		app.msgTags[adt.SkyName] = adt.Tag
+		app.msgTagsMu.Unlock()
 	}
 	result := sky_call2(app.update, msg, sess.model)
 	sess.model = tupleFirst(result)

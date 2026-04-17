@@ -1948,6 +1948,26 @@ type SkyADT struct {
 }
 
 
+// adtTagRegistry maps constructor SkyName → Tag for runtime-constructed
+// ADTs (e.g. __sky_send events). Populated by RegisterAdtTag which the
+// codegen's init() block calls for each Msg constructor.
+var adtTagRegistry = make(map[string]int)
+var adtTagRegistryMu sync.Mutex
+
+func RegisterAdtTag(skyName string, tag int) {
+	adtTagRegistryMu.Lock()
+	adtTagRegistry[skyName] = tag
+	adtTagRegistryMu.Unlock()
+}
+
+func LookupAdtTag(skyName string) (int, bool) {
+	adtTagRegistryMu.Lock()
+	tag, ok := adtTagRegistry[skyName]
+	adtTagRegistryMu.Unlock()
+	return tag, ok
+}
+
+
 // ── Sky.Core.Error builders ────────────────────────────────────────
 //
 // These produce values structurally compatible with the Sky-side
