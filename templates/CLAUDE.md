@@ -643,6 +643,14 @@ isDir : String -> Bool
 tempFile : String -> Result Error String             -- create temp file with prefix, returns path
 tempDir : String -> Result Error String              -- create temp dir with prefix, returns path
 copy : String -> String -> Result Error Unit
+rename : String -> String -> Result Error Unit
+```
+
+### Sky.Core.Args
+
+```elm
+getArg : Int -> Maybe String                         -- os.Args[n] (0 = program name, 1 = first arg)
+getArgs : () -> List String                          -- os.Args[1:] (all args except program name)
 ```
 
 ### Sky.Core.Process

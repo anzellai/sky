@@ -214,9 +214,10 @@ Safety: formatter refuses to write if output loses >1/3 of code lines (prevents 
 | Module | Key Functions | Returns |
 |--------|--------------|---------|
 | `Sky.Core.Task` | succeed, fail, map, andThen, perform, sequence, parallel, lazy, **map2/3/4/5, andMap** | Task err a |
-| `Sky.Core.File` | readFile, writeFile, append, mkdirAll, readDir, exists, remove, isDir, tempFile, tempDir, copy | Task Error a |
+| `Sky.Core.File` | readFile, writeFile, append, mkdirAll, readDir, exists, remove, isDir, tempFile, tempDir, copy, rename | Task Error a |
 | `Sky.Core.Process` | run, exit, getEnv, getCwd, loadEnv | Task Error a |
 | `Sky.Core.Io` | readLine, readBytes, writeStdout, writeStderr | Task Error a |
+| `Sky.Core.Args` | getArg, getArgs | Maybe String / List String |
 | `Sky.Core.Time` | now, unixMillis, sleep | Task Error Int |
 | `Sky.Core.Http` | get, post, request | Task Error Response |
 | `Sky.Core.Random` | int, float, choice, shuffle | Task Error a |
