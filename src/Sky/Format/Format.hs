@@ -220,9 +220,17 @@ fmtExpr _ Src.Unit = "()"
 fmtExpr _ (Src.Op o) = "(" ++ o ++ ")"
 fmtExpr lvl (Src.Negate e) = "-" ++ fmtExpr lvl (A.toValue e)
 fmtExpr lvl (Src.List xs) =
-    "[" ++ intercalate ", " (map (fmtExpr lvl . A.toValue) xs) ++ "]"
+    let items = map (fmtExpr lvl . A.toValue) xs
+        oneLine = "[ " ++ intercalate ", " items ++ " ]"
+    in if null xs then "[]"
+       else if length items == 1 then "[" ++ head items ++ "]"
+       else if length oneLine <= 80 then oneLine
+       else fmtMultiLine lvl "[ " ", " "]" items
 fmtExpr lvl (Src.Tuple a b cs) =
-    "(" ++ intercalate ", " (map (fmtExpr lvl . A.toValue) (a:b:cs)) ++ ")"
+    let items = map (fmtExpr lvl . A.toValue) (a:b:cs)
+        oneLine = "( " ++ intercalate ", " items ++ " )"
+    in if length oneLine <= 80 then oneLine
+       else fmtMultiLine lvl "( " ", " ")" items
 fmtExpr _ (Src.Accessor f) = "." ++ f
 fmtExpr lvl (Src.Access e (A.At _ f)) = fmtExpr lvl (A.toValue e) ++ "." ++ f
 fmtExpr lvl (Src.Call f args) =
@@ -243,9 +251,17 @@ fmtExpr lvl (Src.Case subj branches) =
     in "case " ++ fmtExpr lvl (A.toValue subj) ++ " of\n" ++
        intercalate "\n\n" (map branchStr branches)
 fmtExpr lvl (Src.Record fs) =
-    "{ " ++ intercalate ", " (map (\(A.At _ n, e) -> n ++ " = " ++ fmtExpr lvl (A.toValue e)) fs) ++ " }"
+    let items = map (\(A.At _ n, e) -> n ++ " = " ++ fmtExpr lvl (A.toValue e)) fs
+        oneLine = "{ " ++ intercalate ", " items ++ " }"
+    in if null fs then "{}"
+       else if length oneLine <= 80 then oneLine
+       else fmtMultiLine lvl "{ " ", " "}" items
 fmtExpr lvl (Src.Update (A.At _ n) fs) =
-    "{ " ++ n ++ " | " ++ intercalate ", " (map (\(A.At _ fn, e) -> fn ++ " = " ++ fmtExpr lvl (A.toValue e)) fs) ++ " }"
+    let items = map (\(A.At _ fn, e) -> fn ++ " = " ++ fmtExpr lvl (A.toValue e)) fs
+        oneLine = "{ " ++ n ++ " | " ++ intercalate ", " items ++ " }"
+    in if length oneLine <= 80 then oneLine
+       else "{ " ++ n ++ "\n" ++ indent (lvl+1) ++ "| " ++
+            intercalate ("\n" ++ indent (lvl+1) ++ ", ") items ++ "\n" ++ indent lvl ++ "}"
 
 
 fmtArg :: Int -> Src.Expr -> String
@@ -277,6 +293,14 @@ fmtDef lvl d =
         paramsStr = if null params then "" else " " ++ unwords params
         body = fmtExpr lvl (A.toValue (Src._defBody d))
     in name ++ paramsStr ++ " = " ++ body
+
+
+fmtMultiLine :: Int -> String -> String -> String -> [String] -> String
+fmtMultiLine lvl open sep close items = case items of
+    []     -> open ++ close
+    (x:xs) -> open ++ x ++ "\n" ++
+              concatMap (\i -> indent lvl ++ sep ++ i ++ "\n") xs ++
+              indent lvl ++ close
 
 
 indent :: Int -> String

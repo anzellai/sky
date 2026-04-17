@@ -2305,12 +2305,8 @@ func Result_combine(results any) any {
 func Result_traverse(fn, items any) any {
 	xs := asList(items)
 	out := make([]any, 0, len(xs))
-	f, ok := fn.(func(any) any)
-	if !ok {
-		return Err[any, any](ErrInvalidInput("Result.traverse: fn must be a 1-arg function"))
-	}
 	for _, x := range xs {
-		r := f(x)
+		r := SkyCall(fn, x)
 		tag, okVal, err := anyResultView(r)
 		if tag < 0 { return Err[any, any](ErrInvalidInput("Result.traverse: fn did not return a Result")) }
 		if tag != 0 { return Err[any, any](err) }

@@ -1399,29 +1399,27 @@ func isBrowserNoisePath(p string) bool {
 
 
 func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
+	// Browser-noise paths (favicons, devtools prefetch, static asset
+	// probes, .well-known) 404 BEFORE session creation. Without this
+	// guard, a cold page load races the real GET / against /favicon.ico:
+	// both arrive before Set-Cookie is processed, both see "no session",
+	// both run init — the user sees [APP] initialised twice.
+	_, routed := matchAnyRoute(app, r.URL.Path)
+	if !routed && isBrowserNoisePath(r.URL.Path) {
+		http.NotFound(w, r)
+		return
+	}
+
 	// Reuse the existing session when the cookie maps to one. Calling
-	// init() on every GET (favicons, devtools previews, prefetch, second
-	// tabs) would otherwise wipe sess.handlers and break the very next
-	// event POST with "handler not found". Per-session lock prevents
+	// init() on every GET (devtools previews, prefetch, second tabs)
+	// would otherwise wipe sess.handlers and break the very next event
+	// POST with "handler not found". Per-session lock prevents
 	// concurrent re-renders racing each other's handlers.
 	sid := sessionID(r, w)
 	app.locker.Lock(sid)
 	defer app.locker.Unlock(sid)
 
 	sess, existing := app.store.Get(sid)
-
-	// Browser-noise paths (favicons, devtools prefetch, static asset
-	// probes, .well-known) 404 unconditionally. Without this guard, a
-	// cold page load races the real GET / against /favicon.ico: both
-	// arrive before Set-Cookie is processed, both see "no session",
-	// both run init — the user sees [APP] initialised twice. Runtime
-	// internals (/_sky/*) are also excluded since they are served by
-	// dedicated handlers registered separately.
-	_, routed := matchAnyRoute(app, r.URL.Path)
-	if !routed && isBrowserNoisePath(r.URL.Path) {
-		http.NotFound(w, r)
-		return
-	}
 
 	// If the URL doesn't match any registered route AND we already have
 	// a live session, 404 without touching it — prevents an unknown

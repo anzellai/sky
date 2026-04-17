@@ -157,5 +157,17 @@ EOF
     exit 0
 fi
 
+# ── Gate 8: Sky.Live lifecycle soundness + runtime fixes
+LIVE_MARKER=".claude/skylive-lifecycle-complete"
+if [[ ! -f "$LIVE_MARKER" ]]; then
+    cat <<'EOF'
+{
+  "decision": "block",
+  "reason": "Sky.Live lifecycle + runtime fixes NOT complete. Bugs: (1) Result.traverse 'fn must be a 1-arg function' in 06-json, (2) favicon.ico triggers full app init per request, (3) skyshop handler-not-found on routes in browser, (4) sky fmt doesn't format lists in Elm style, (5) Sky.Live lifecycle audit needed. Read .claude/prompts/skylive-lifecycle-and-fixes.md. Fix at root cause, tests first. No mid-session stoppage. Done: touch .claude/skylive-lifecycle-complete. To pause: touch .claude/allow-stop."
+}
+EOF
+    exit 0
+fi
+
 # All gates green — let the turn end.
 exit 0
