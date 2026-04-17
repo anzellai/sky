@@ -31,8 +31,8 @@ pickBest moves board model colour best bestScore =
                 result = Move.applyMove from to board model
                 newBoard = fst result
                 -- Simple negamax: evaluate from the perspective of the side to move.
-                -- depth 0 = static evaluation, depth 1 = look at all replies.
-                score = negamax newBoard model (oppositeColour colour) 1
+                -- depth 0 = static eval, depth 2 = look 2 moves ahead per side.
+                score = negamax newBoard model (oppositeColour colour) 2
                 adjustedScore = 0 - score
             in
                 if adjustedScore > bestScore then
