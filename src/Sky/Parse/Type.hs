@@ -102,9 +102,20 @@ typeAtom mkError =
                      char mkError '}'
                      return (Src.TRecord fields Nothing)
 
-        , -- Type constructor: Maybe, List, MyType
+        , -- Type constructor: Maybe, List, MyType, or qualified: Set.Set
           do name <- upper mkError
-             return (Src.TType "" [name] [])
+             spaces
+             mc <- peek
+             case mc of
+                 Just '.' ->
+                     oneOfWithFallback
+                         [ do
+                             char mkError '.'
+                             qname <- upper mkError
+                             return (Src.TTypeQual name qname [])
+                         ]
+                         (Src.TType "" [name] [])
+                 _ -> return (Src.TType "" [name] [])
 
         , -- Type variable: a, b, comparable
           do name <- lower mkError

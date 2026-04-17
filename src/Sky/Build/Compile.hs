@@ -1496,14 +1496,16 @@ collectGoImports _canMod srcMod =
         , let A.At _ segs = Src._importName imp
         ]
     skyModToGoPath segs =
-        let parts = concatMap splitCamel segs
-        in List.intercalate "/" (map toLowerFirst parts)
-    toLowerFirst [] = []
-    toLowerFirst (c:cs) = Char.toLower c : cs
-    splitCamel [] = []
-    splitCamel s =
-        let (word, rest) = break Char.isUpper (drop 1 s)
-        in (take 1 s ++ word) : splitCamel rest
+        let lowered = map (map Char.toLower) segs
+        in reconstructGoPath lowered
+    reconstructGoPath parts = case parts of
+        [] -> ""
+        [p] -> p
+        (a:b:rest) ->
+            let firstTwo = a ++ "." ++ b
+            in case rest of
+                [] -> firstTwo
+                _  -> firstTwo ++ "/" ++ List.intercalate "/" rest
 
 
 -- | Check if module imports Task

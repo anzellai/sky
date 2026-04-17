@@ -441,32 +441,41 @@ chunkToExpr env (ExprChunk body) =
 --   foo            — bare lowercase identifier
 --   record.field   — field access
 --   Module.func    — qualified value
+--   func arg       — function call (e.g. errorToString e, String.fromInt n)
 -- Anything more complex: fall back to a string of the literal {{...}} so
 -- the developer sees their code in output (clear signal to simplify).
 resolveInterpolationRef :: Env.Env -> String -> Can.Expr
 resolveInterpolationRef env s =
-    case break (== '.') s of
+    -- Check for function call (contains space)
+    case break (== ' ') s of
+        (func, ' ':argStr) | not (null func) && not (null argStr) ->
+            let arg = dropWhile (== ' ') argStr
+                funcExpr = resolveInterpolationRef env func
+                argExpr  = resolveInterpolationRef env arg
+            in A.At A.one (Can.Call funcExpr [argExpr])
+        _ -> resolveSimpleRef env s
+  where
+    resolveSimpleRef env' s' = case break (== '.') s' of
         (name, "") ->
-            -- bare identifier
-            case Env.lookupVar name env of
+            case Env.lookupVar name env' of
                 Just (Env.VarTopLevel home) ->
                     A.At A.one (Can.VarTopLevel home name)
+                Just (Env.VarKernel modName fn) ->
+                    A.At A.one (Can.VarKernel modName fn)
                 _ ->
                     A.At A.one (Can.VarLocal name)
         (first, '.':rest) ->
             if not (null first) && Char.isUpper (head first)
                 then
-                    -- Module.name (qualified value or kernel)
-                    case Env.lookupImportAlias first env of
+                    case Env.lookupImportAlias first env' of
                         Just canonical ->
                             let kernelMod = ModuleName.toString canonical
                             in A.At A.one (Can.VarKernel kernelMod rest)
                         Nothing ->
-                            A.At A.one (Can.Str ("{{" ++ s ++ "}}"))
+                            A.At A.one (Can.Str ("{{" ++ s' ++ "}}"))
                 else
-                    -- record.field — field access on local binding
                     A.At A.one
                         (Can.Access
                             (A.At A.one (Can.VarLocal first))
                             (A.At A.one rest))
-        _ -> A.At A.one (Can.Str ("{{" ++ s ++ "}}"))
+        _ -> A.At A.one (Can.Str ("{{" ++ s' ++ "}}"))

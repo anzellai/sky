@@ -1,61 +1,48 @@
 # ─────────────────────────────────────────────────────────────
-# Sky Language — Dockerfile (Haskell-compiler edition)
+# Sky Language — Dockerfile
 #
-# Builds the Sky compiler (Haskell/GHC) in a build stage, then ships it
-# into a slim runtime image along with the Go toolchain (required at
-# build time by `sky build` because Sky emits Go).
+# Downloads the pre-built Sky binary from GitHub releases and ships it
+# with the Go toolchain (required by `sky build` since Sky emits Go).
 #
 # Usage:
 #   docker build -t sky .
 #   docker run --rm -v $(pwd)/my-app:/app -w /app sky sky build src/Main.sky
+#
+# Build args:
+#   SKY_VERSION  — version to install (default: latest)
 # ─────────────────────────────────────────────────────────────
 
-# ───── Stage 1: build the Haskell compiler ─────
-FROM haskell:9.4.8 AS builder
-
-WORKDIR /src
-
-# Copy cabal manifest first for better layer caching
-COPY sky-compiler.cabal ./
-RUN cabal update && cabal build --only-dependencies --dry-run || true
-
-# Now copy sources
-COPY app ./app
-COPY src ./src
-
-RUN cabal update \
- && cabal build \
- && mkdir -p /out \
- && cp "$(cabal list-bin sky)" /out/sky
-
-# ───── Stage 2: build supporting Go tool (FFI inspector) ─────
-FROM golang:1.26-bookworm AS tools-builder
-WORKDIR /t
-COPY tools/sky-ffi-inspect ./sky-ffi-inspect
-RUN cd sky-ffi-inspect && go build -ldflags="-s -w" -o /out/sky-ffi-inspect .
-
-# ───── Stage 3: runtime image ─────
 FROM golang:1.26-bookworm
 
+ARG SKY_VERSION=""
+ARG TARGETARCH
+
 RUN apt-get update \
- && apt-get install -y --no-install-recommends \
-    ca-certificates git \
-    libgmp10 libffi8 libtinfo6 \
+ && apt-get install -y --no-install-recommends curl ca-certificates git \
  && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /out/sky /usr/local/bin/sky
-COPY --from=tools-builder /out/sky-ffi-inspect /usr/local/bin/sky-ffi-inspect
-
-# Sky needs its runtime sources at build time. Ship them under SKY_RUNTIME_DIR.
-RUN mkdir -p /opt/sky/runtime-go
-COPY runtime-go /opt/sky/runtime-go
-ENV SKY_RUNTIME_DIR=/opt/sky/runtime-go
-
-# Templates (read by `sky init`)
-COPY templates /opt/sky/templates
-
-RUN sky --version
+# Download sky binary from GitHub releases
+RUN set -e; \
+    ARCH=$(echo "${TARGETARCH:-amd64}" | sed 's/amd64/x64/'); \
+    if [ -z "$SKY_VERSION" ]; then \
+        SKY_VERSION=$(curl -fsSL https://api.github.com/repos/anzellai/sky/releases/latest \
+            | grep '"tag_name"' | sed 's/.*"v\(.*\)".*/\1/'); \
+    fi; \
+    echo "Installing sky v${SKY_VERSION} for linux-${ARCH}"; \
+    ARCHIVE_URL="https://github.com/anzellai/sky/releases/download/v${SKY_VERSION}/sky-linux-${ARCH}.tar.gz"; \
+    RAW_URL="https://github.com/anzellai/sky/releases/download/v${SKY_VERSION}/sky-linux-${ARCH}"; \
+    if curl -fsSL "$ARCHIVE_URL" -o /tmp/sky.tar.gz 2>/dev/null; then \
+        cd /tmp && tar xzf sky.tar.gz; \
+        mv sky-linux-${ARCH} /usr/local/bin/sky; \
+        [ -f sky-ffi-inspect-sky-linux-${ARCH} ] && mv sky-ffi-inspect-sky-linux-${ARCH} /usr/local/bin/sky-ffi-inspect; \
+        rm -f sky.tar.gz; \
+    elif curl -fsSL "$RAW_URL" -o /usr/local/bin/sky 2>/dev/null; then \
+        echo "Downloaded raw binary"; \
+    else \
+        echo "Failed to download sky v${SKY_VERSION}" && exit 1; \
+    fi; \
+    chmod +x /usr/local/bin/sky; \
+    sky --version
 
 WORKDIR /app
-ENTRYPOINT []
-CMD ["sky", "--help"]
+ENTRYPOINT ["sky"]
