@@ -868,9 +868,15 @@ func AsString(v any) string {
 	if vn, ok := v.(VNode); ok {
 		return renderVNode(vn, nil)
 	}
+	if bs, ok := v.([]byte); ok {
+		return string(bs)
+	}
 	v = derefPointer(unwrapAny(v))
 	if s, ok := v.(string); ok {
 		return s
+	}
+	if bs, ok := v.([]byte); ok {
+		return string(bs)
 	}
 	return fmt.Sprintf("%v", v)
 }

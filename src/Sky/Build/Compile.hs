@@ -3033,6 +3033,10 @@ coerceArg e ty
         GoIr.GoCall (GoIr.GoIdent ("rt.ResultCoerce[" ++ params ++ "]")) [e]
     | Just inner <- stripParametric "rt.SkyMaybe" ty =
         GoIr.GoCall (GoIr.GoIdent ("rt.MaybeCoerce[" ++ inner ++ "]")) [e]
+    | ty == "string" = GoIr.GoCall (GoIr.GoIdent "rt.CoerceString") [e]
+    | ty == "int"    = GoIr.GoCall (GoIr.GoIdent "rt.CoerceInt") [e]
+    | ty == "bool"   = GoIr.GoCall (GoIr.GoIdent "rt.CoerceBool") [e]
+    | ty == "float64"= GoIr.GoCall (GoIr.GoIdent "rt.CoerceFloat") [e]
     | otherwise =
         GoIr.GoTypeAssert
             (GoIr.GoCall (GoIr.GoIdent "any") [e]) ty
