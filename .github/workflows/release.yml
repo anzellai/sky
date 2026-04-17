@@ -67,6 +67,8 @@ jobs:
         shell: bash
         run: |
           cabal update
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          sed -i.bak "s/^version:.*$/version:       ${TAG_VERSION}/" sky-compiler.cabal
           cabal build exe:sky -O2
           SKY_BIN="$(cabal list-bin sky)"
           mkdir -p dist

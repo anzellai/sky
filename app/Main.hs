@@ -4,6 +4,8 @@ module Main where
 
 import Options.Applicative
 import System.Exit (exitFailure, exitSuccess, ExitCode(..))
+import qualified Data.Version
+import qualified Paths_sky_compiler
 import System.IO (hPutStrLn, stderr)
 
 import qualified System.Directory
@@ -642,10 +644,14 @@ templateSearchPaths filename = do
     (</>) a b = a ++ "/" ++ b
 
 
+skyVersionString :: String
+skyVersionString = "sky v" ++ Data.Version.showVersion Paths_sky_compiler.version
+
+
 runCommand :: Command -> IO (Either String ())
 runCommand cmd = case cmd of
     Version -> do
-        putStrLn "sky v0.9.0 (haskell)"
+        putStrLn skyVersionString
         return (Right ())
 
     Build path -> do

@@ -3996,8 +3996,9 @@ func String_slice(start any, end any, s any) any {
 // ═══════════════════════════════════════════════════════════
 
 func List_isEmpty(list any) any {
-	items, ok := list.([]any)
-	return ok && len(items) == 0 || list == nil
+	if list == nil { return true }
+	items := asList(list)
+	return len(items) == 0
 }
 
 // Io_writeString — accepts (text) to stdout OR (writer, text) to the
@@ -4022,7 +4023,7 @@ func Io_writeString(args ...any) any {
 }
 
 func List_sort(list any) any {
-	items := list.([]any)
+	items := asList(list)
 	result := make([]any, len(items))
 	copy(result, items)
 	sort.Slice(result, func(i, j int) bool {
@@ -4034,7 +4035,7 @@ func List_sort(list any) any {
 // List_sortBy(keyFn, xs) — stable sort by the `keyFn elem` projection.
 // Keys may be Int, Float, String, or anything fmt.Sprintf can format.
 func List_sortBy(keyFn any, list any) any {
-	items, _ := list.([]any)
+	items := asList(list)
 	result := make([]any, len(items))
 	copy(result, items)
 	sort.SliceStable(result, func(i, j int) bool {
@@ -4062,34 +4063,32 @@ func skyLessThan(a, b any) bool {
 }
 
 func List_member(item any, list any) any {
-	items := list.([]any)
+	items := asList(list)
 	for _, v := range items {
-		if v == item { return true }
+		if Eq(v, item) == true { return true }
 	}
 	return false
 }
 
 func List_any(fn any, list any) any {
-	f := fn.(func(any) any)
-	items := list.([]any)
+	items := asList(list)
 	for _, item := range items {
-		if AsBool(f(item)) { return true }
+		if AsBool(SkyCall(fn, item)) { return true }
 	}
 	return false
 }
 
 func List_all(fn any, list any) any {
-	f := fn.(func(any) any)
-	items := list.([]any)
+	items := asList(list)
 	for _, item := range items {
-		if !AsBool(f(item)) { return false }
+		if !AsBool(SkyCall(fn, item)) { return false }
 	}
 	return true
 }
 
 func List_zip(a any, b any) any {
-	la := a.([]any)
-	lb := b.([]any)
+	la := asList(a)
+	lb := asList(b)
 	n := len(la)
 	if len(lb) < n { n = len(lb) }
 	result := make([]any, n)
@@ -4098,49 +4097,46 @@ func List_zip(a any, b any) any {
 }
 
 func List_concat(lists any) any {
-	items := lists.([]any)
+	items := asList(lists)
 	var result []any
 	for _, l := range items {
-		result = append(result, l.([]any)...)
+		result = append(result, asList(l)...)
 	}
 	return result
 }
 
 func List_concatMap(fn any, list any) any {
-	f := fn.(func(any) any)
-	items := list.([]any)
+	items := asList(list)
 	var result []any
 	for _, item := range items {
-		mapped := f(item).([]any)
+		mapped := asList(SkyCall(fn, item))
 		result = append(result, mapped...)
 	}
 	return result
 }
 
 func List_filterMap(fn any, list any) any {
-	f := fn.(func(any) any)
-	items := list.([]any)
+	items := asList(list)
 	var result []any
 	for _, item := range items {
-		maybe := f(item).(SkyMaybe[any])
+		maybe := MaybeCoerce[any](SkyCall(fn, item))
 		if maybe.Tag == 0 { result = append(result, maybe.JustValue) }
 	}
 	return result
 }
 
 func List_foldr(fn any, acc any, list any) any {
-	f := fn.(func(any) any)
-	items := list.([]any)
+	items := asList(list)
 	result := acc
 	for i := len(items) - 1; i >= 0; i-- {
-		step := f(items[i])
-		result = step.(func(any) any)(result)
+		step := SkyCall(fn, items[i])
+		result = SkyCall(step, result)
 	}
 	return result
 }
 
 func List_tail(list any) any {
-	items := list.([]any)
+	items := asList(list)
 	if len(items) == 0 { return Nothing[any]() }
 	return Just[any](items[1:])
 }
