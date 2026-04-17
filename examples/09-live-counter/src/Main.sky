@@ -118,7 +118,6 @@ viewCounter model =
     ]
 
 
-viewAbout : String
 viewAbout =
     div [class "about"] [ h1 [] [text "About Sky.Live"]
     , p [] [text "This is a Sky.Live application -- an HTTP-first, server-driven UI."]

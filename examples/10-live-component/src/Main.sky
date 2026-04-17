@@ -49,6 +49,9 @@ update msg model =
         UpdateTitle t ->
             ( { model | title = t }, Cmd.none )
 
+        CounterMsg counterMsg ->
+            ( { model | myCounter = Counter.update counterMsg model.myCounter }, Cmd.none )
+
         _ ->
             ( model, Cmd.none )
 

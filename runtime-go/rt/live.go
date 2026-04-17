@@ -625,6 +625,16 @@ func renderVNode(n VNode, handlers map[string]any) string {
 	if n.Kind == "raw" {
 		return n.Text
 	}
+	// Html.doctype wraps children in a pseudo-element; render as
+	// <!DOCTYPE html> followed by the children directly.
+	if n.Tag == "!doctype-wrapper" {
+		var sb strings.Builder
+		sb.WriteString("<!DOCTYPE html>")
+		for _, c := range n.Children {
+			sb.WriteString(renderVNode(c, handlers))
+		}
+		return sb.String()
+	}
 	var sb strings.Builder
 	sb.WriteString("<")
 	sb.WriteString(n.Tag)
@@ -1904,6 +1914,8 @@ function __skyPatch(t) {
   }
   // Re-bind sky-* events for the fresh DOM subtree.
   __skyBindEvents(document);
+  // Process data-sky-eval attributes (e.g. skySignOut() on sign-out).
+  __skyRunEvals(root);
 }
 
 // __skyElementKey: stable key used to re-locate the focused element in
@@ -2034,6 +2046,11 @@ function __skyBindEvents(root) {
   for (var i = 0; i < events.length; i++) {
     __skyBindOne(root, events[i]);
   }
+}
+
+function __skyRunEvals(root) {
+  var el = (root || document).querySelector("[data-sky-eval]");
+  if (el) { try { (new Function(el.getAttribute("data-sky-eval")))(); } catch(e) {} el.remove(); }
 }
 
 function __skyBindOne(root, eventName) {
