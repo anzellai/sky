@@ -1,5 +1,4 @@
 module Ui.Layout exposing (page)
-
 import Sky.Core.Prelude exposing (..)
 import Std.Html exposing (..)
 import Std.Html.Attributes exposing (..)
@@ -7,33 +6,26 @@ import Std.Live.Events exposing (onClick)
 import State exposing (..)
 import Ui.Styles exposing (globalStyles)
 
+
 page model content =
-    div []
-        [ styleNode [] globalStyles
-        , viewHeader model
-        , div [ class "container" ] [ content ]
-        ]
+    div [] [ styleNode [] globalStyles
+    , viewHeader model
+    , div [class "container"] [content]
+    ]
 
 
 viewHeader model =
-    headerNode [ class "header" ]
-        [ div [ class "header-inner" ]
-              [ a [ href "/" , attribute "sky-nav" "" , class "logo" ]
-                    [ text "\u265E SkyChess" ]
-              , nav [ class "nav" ] [ viewNavItems model ]
-              ]
-        ]
+    headerNode [class "header"] [div [class "header-inner"] [ a [ href "/", attribute "sky-nav" "", class "logo" ] [text "♞ SkyChess"]
+    , nav [class "nav"] [viewNavItems model]
+    ]]
 
 
 viewNavItems model =
     case model.page of
-        
         GamePage ->
-            span [ class "nav-info" ]
-                [ span [ class "nav-player" ] [ text model.playerName ]
-                , button [ onClick BackToHome , class "btn btn-ghost btn-sm" ]
-                      [ text "Home" ]
-                ]
-        
+            span [class "nav-info"] [ span [class "nav-player"] [text model.playerName]
+            , button [ onClick BackToHome, class "btn btn-ghost btn-sm" ] [text "Home"]
+            ]
+
         _ ->
             text ""

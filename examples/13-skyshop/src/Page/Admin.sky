@@ -5,7 +5,9 @@ import Sky.Core.Maybe exposing (..)
 import Sky.Core.List as List
 import Sky.Core.String as String
 import Std.Html exposing (..)
+import Std.Html as Html
 import Std.Html.Attributes exposing (..)
+import Std.Html.Attributes as Attr
 import Std.Live.Events exposing (onClick, onInput, onChange, onImage, fileMaxWidth, fileMaxHeight)
 import State exposing (..)
 import Ui.Layout as Layout
@@ -14,7 +16,7 @@ import Lib.Money as Money
 import Lib.Products as Products
 import Lib.Translation as Tr
 import Tailwind exposing (..)
-import Tailwind.Responsive exposing (sm, md, lg)
+import Tailwind.Responsive as Responsive
 
 -- ══════════════════════════════════════════════════════
 -- ADMIN PRODUCT LIST
@@ -32,7 +34,7 @@ viewAdminProducts model =
             div []
                 [ div [ tw [ flex , justifyBetween , itemsCenter , mb6 ] ]
                       [ div []
-                            [ h1 [ tw [ text2xl , fontBold , textGray900 ] ]
+                            [ Html.h1 [ tw [ text2xl , fontBold , textGray900 ] ]
                                   [ text (Tr.t lang "admin.products") ]
                             , p [ tw [ textGray500 , mt1 ] ]
                                   [ text
@@ -80,11 +82,11 @@ viewAdminProducts model =
                                       "display:grid;grid-template-columns:2fr 1fr 1fr 1fr .5fr;align-items:center;min-width:600px"
                                 ]
                                 [ text "Product"
-                                , span [ tw [ hidden_ , md block ] ]
+                                , span [ tw [ hidden_ , Responsive.md block ] ]
                                       [ text "Category" ]
-                                , span [ tw [ hidden_ , md block ] ]
+                                , span [ tw [ hidden_ , Responsive.md block ] ]
                                       [ text "Price" ]
-                                , span [ tw [ hidden_ , md block ] ]
+                                , span [ tw [ hidden_ , Responsive.md block ] ]
                                       [ text "Stock" ]
                                 , text "Status"
                                 ]
@@ -129,19 +131,19 @@ viewAdminProductRow model product =
                   , span [ tw [ fontMedium , textGray900 , textSm ] ]
                         [ text title ]
                   ]
-            , span [ tw [ hidden_ , md block , textSm , textGray500 ] ]
+            , span [ tw [ hidden_ , Responsive.md block , textSm , textGray500 ] ]
                   [ text category ]
             , span
                   [ tw
                         [ hidden_
-                        , md block
+                        , Responsive.md block
                         , textSm
                         , fontMedium
                         , textGray900
                         ]
                   ]
                   [ text pricing.original ]
-            , span [ tw [ hidden_ , md block , textSm , textGray500 ] ]
+            , span [ tw [ hidden_ , Responsive.md block , textSm , textGray500 ] ]
                   [ text
                         (
                         if stock < 0 then
@@ -174,7 +176,7 @@ viewAdminNewProduct model =
                         , tw [ textSm , textGray500 ]
                         ]
                         [ text "< Products" ]
-                  , h1 [ tw [ text2xl , fontBold , textGray900 , mt2 ] ]
+                  , Html.h1 [ tw [ text2xl , fontBold , textGray900 , mt2 ] ]
                         [ text (Tr.t model.lang "admin.newProduct") ]
                   ]
             , viewProductForm model
@@ -194,7 +196,7 @@ viewAdminEditProduct model =
                         ]
                         [ text "< Products" ]
                   , div [ tw [ flex , justifyBetween , itemsCenter , mt2 ] ]
-                        [ h1 [ tw [ text2xl , fontBold , textGray900 ] ]
+                        [ Html.h1 [ tw [ text2xl , fontBold , textGray900 ] ]
                               [ text (Tr.t model.lang "admin.editProduct") ]
                         , button
                               [ onClick (DeleteProduct model.editProductId)
@@ -219,7 +221,7 @@ viewProductForm model =
     in
         div [ Layout.card ]
             [ div [ Layout.cardHeader ]
-                  [ h3 [ tw [ fontSemibold , textGray900 , textSm ] ]
+                  [ Html.h3 [ tw [ fontSemibold , textGray900 , textSm ] ]
                         [ text (Tr.t lang "admin.product.basicInfo") ]
                   ]
             , div [ Layout.cardBody , tw [ flex , flexCol , gap5 ] ]
@@ -247,7 +249,7 @@ viewProductForm model =
                               ]
                               []
                         ]
-                  , div [ tw [ grid , gridCols1 , sm gridCols2 , gap4 ] ]
+                  , div [ tw [ grid , gridCols1 , Responsive.sm gridCols2 , gap4 ] ]
                         [ div []
                               [ label [ Layout.formLabel_ ]
                                     [ text (Tr.t lang "admin.product.category")
@@ -301,9 +303,9 @@ viewProductForm model =
                         ]
                   ]
             , div [ Layout.cardSection ]
-                  [ h3 [ tw [ fontSemibold , textGray900 , textSm , mb4 ] ]
+                  [ Html.h3 [ tw [ fontSemibold , textGray900 , textSm , mb4 ] ]
                         [ text (Tr.t lang "admin.product.pricingInventory") ]
-                  , div [ tw [ grid , gridCols1 , sm gridCols3 , gap4 ] ]
+                  , div [ tw [ grid , gridCols1 , Responsive.sm gridCols3 , gap4 ] ]
                         [ div []
                               [ label [ Layout.formLabel_ ]
                                     [ text (Tr.t lang "admin.product.price") ]
@@ -314,7 +316,7 @@ viewProductForm model =
                                     , Layout.formInput
                                     , placeholder "0"
                                     , required ()
-                                    , min "0"
+                                    , Attr.min "0"
                                     ]
                               ]
                         , div []
@@ -327,7 +329,7 @@ viewProductForm model =
                                     , onInput UpdateEditDiscount
                                     , Layout.formInput
                                     , placeholder "0"
-                                    , min "0"
+                                    , Attr.min "0"
                                     ]
                               ]
                         , div []
@@ -339,7 +341,7 @@ viewProductForm model =
                                     , onInput UpdateEditStock
                                     , Layout.formInput
                                     , placeholder "-1"
-                                    , min "-1"
+                                    , Attr.min "-1"
                                     ]
                               ]
                         ]
@@ -396,7 +398,7 @@ viewImageManager model =
                   [ Layout.cardHeader
                   , tw [ flex , justifyBetween , itemsCenter ]
                   ]
-                  [ h3 [ tw [ fontSemibold , textGray900 , textSm ] ]
+                  [ Html.h3 [ tw [ fontSemibold , textGray900 , textSm ] ]
                         [ text
                               (
                               Tr.t lang "admin.product.images"
@@ -470,7 +472,7 @@ viewAdminOrders model =
             (
             div []
                 [ div [ tw [ mb6 ] ]
-                      [ h1 [ tw [ text2xl , fontBold , textGray900 ] ]
+                      [ Html.h1 [ tw [ text2xl , fontBold , textGray900 ] ]
                             [ text (Tr.t lang "admin.orders") ]
                       , p [ tw [ textGray500 , mt1 ] ]
                             [ text
@@ -497,9 +499,9 @@ viewAdminOrders model =
                                       "display:grid;grid-template-columns:2fr 1fr 1fr 1fr;align-items:center;min-width:500px"
                                 ]
                                 [ text "Customer"
-                                , span [ tw [ hidden_ , md block ] ]
+                                , span [ tw [ hidden_ , Responsive.md block ] ]
                                       [ text "Total" ]
-                                , span [ tw [ hidden_ , md block ] ]
+                                , span [ tw [ hidden_ , Responsive.md block ] ]
                                       [ text "Date" ]
                                 , text "Status"
                                 ]
@@ -592,14 +594,14 @@ viewAdminOrderRow model order =
             , span
                   [ tw
                         [ hidden_
-                        , md block
+                        , Responsive.md block
                         , textSm
                         , fontMedium
                         , textGray900
                         ]
                   ]
                   [ text (Money.formatPrice totalAmount totalCurrency) ]
-            , span [ tw [ hidden_ , md block , textXs , textGray500 ] ]
+            , span [ tw [ hidden_ , Responsive.md block , textXs , textGray500 ] ]
                   [ text createdAt ]
             , stateBadge model st
             ]
@@ -674,12 +676,12 @@ viewAdminOrderDetail model order =
                         ]
                         [ text "< Orders" ]
                   , div [ tw [ flex , justifyBetween , itemsCenter , mt2 ] ]
-                        [ h1 [ tw [ text2xl , fontBold , textGray900 ] ]
+                        [ Html.h1 [ tw [ text2xl , fontBold , textGray900 ] ]
                               [ text (Tr.t lang "order.detail") ]
                         , stateBadge model st
                         ]
                   ]
-            , div [ tw [ grid , gridCols1 , sm gridCols2 , gap6 , mb6 ] ]
+            , div [ tw [ grid , gridCols1 , Responsive.sm gridCols2 , gap6 , mb6 ] ]
                   [ infoCard "Customer" [ userName , userEmail ]
                   , infoCard "Total"
                         [ Money.formatPrice totalAmount totalCurrency
@@ -702,7 +704,7 @@ viewAdminOrderDetail model order =
                   ]
             , div [ Layout.card , tw [ mb6 ] ]
                   [ div [ Layout.cardBody ]
-                        [ h3
+                        [ Html.h3
                               [ tw [ fontSemibold , textGray900 , textSm , mb3 ]
                               ]
                               [ text (Tr.t lang "admin.order.updateState") ]

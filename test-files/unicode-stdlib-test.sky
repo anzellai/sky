@@ -1,0 +1,27 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Std.Log exposing (println)
+
+main =
+    let
+        -- Valid UTF-8
+        _ = if String.isValid "世界" then println "valid" else println "invalid"
+        -- NFC normalization: "café" composed vs decomposed → same result
+        composed = "café"
+        decomposed = "cafe\u{0301}"
+        _ = println (String.fromInt (String.length composed))
+        _ = println (String.fromInt (String.length decomposed))
+        -- After NFC normalization, lengths should match
+        _ = println (String.fromInt (String.length (String.normalize decomposed)))
+        -- Case-insensitive Unicode comparison
+        _ = if String.equalFold "HÉLLO" "héllo" then println "fold eq" else println "fold neq"
+        -- Graphemes: family emoji is 1 grapheme but many code points
+        _ = println (String.fromInt (String.graphemes "👨‍👩‍👧"))
+        _ = println (String.fromInt (String.length "👨‍👩‍👧"))
+        -- trimStart/trimEnd with Unicode whitespace (ideographic space U+3000)
+        _ = println (String.trimStart "\u{3000}  hello")
+        _ = println (String.trimEnd "hello\u{3000}  ")
+    in
+        println "unicode stdlib ok"

@@ -5,7 +5,9 @@ import Sky.Core.Maybe exposing (..)
 import Sky.Core.List as List
 import Sky.Core.String as String
 import Std.Html exposing (..)
+import Std.Html as Html
 import Std.Html.Attributes exposing (..)
+import Std.Html.Attributes as Attr
 import Std.Live.Events exposing (onClick, onInput)
 import State exposing (..)
 import Ui.Layout as Layout
@@ -14,7 +16,7 @@ import Lib.Money as Money
 import Lib.Products as Products
 import Lib.Translation as Tr
 import Tailwind exposing (..)
-import Tailwind.Responsive exposing (sm, md, lg)
+import Tailwind.Responsive as Responsive
 
 viewProduct model =
     Layout.page model
@@ -62,7 +64,7 @@ viewProductDetail model product =
                   , span [ tw [ textSm , textGray600 ] ] [ text title ]
                   ]
             , div
-                  [ tw [ grid , gridCols1 , lg gridCols2 , gap8 , itemsStart ]
+                  [ tw [ grid , gridCols1 , Responsive.lg gridCols2 , gap8 , itemsStart ]
                   , style "gap:3rem"
                   ]
                   [ viewImageGallery images
@@ -79,7 +81,7 @@ viewProductDetail model product =
                               , style "letter-spacing:.1em"
                               ]
                               [ text (Tr.tCategory lang category) ]
-                        , h1
+                        , Html.h1
                               [ tw [ text3xl , fontBold , textGray900 , mb5 ]
                               , style "line-height:1.2"
                               ]
@@ -88,7 +90,7 @@ viewProductDetail model product =
                         , viewDetailStock model stock
                         , if summary != "" then
                             div [ tw [ mt6 ] ]
-                                [ h3
+                                [ Html.h3
                                       [ tw
                                             [ textSm
                                             , fontSemibold
@@ -149,7 +151,7 @@ viewImageGallery images =
                 Nothing ->
                     text ""
             , if List.length images > 1 then
-                div [ tw [ grid , gridCols3 , md gridCols4 , gap2 ] ]
+                div [ tw [ grid , gridCols3 , Responsive.md gridCols4 , gap2 ] ]
                     (
                     List.map
                         (
@@ -283,8 +285,8 @@ viewAddToCart model product stock =
                                       [ type_ "number"
                                       , value (String.fromInt model.quantity)
                                       , onInput UpdateQuantity
-                                      , min "1"
-                                      , max
+                                      , Attr.min "1"
+                                      , Attr.max
                                             (
                                             if stock > 0 then
                                                 String.fromInt stock

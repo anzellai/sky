@@ -1,0 +1,21 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Std.Log exposing (println)
+
+main =
+    let
+        -- htmlEscape: XSS payload becomes visible text
+        attacker = "<script>alert('xss')</script>"
+        _ = println (String.htmlEscape attacker)
+        -- Round-trip with attribute-breaking chars
+        _ = println (String.htmlEscape "a\"b&c<d>e'f")
+        -- truncate at grapheme boundary (won't split emoji)
+        _ = println (String.truncate 3 "Hello 👨‍👩‍👧 World")
+        _ = println (String.truncate 1 "👨‍👩‍👧")
+        -- ellipsize adds … when truncated
+        _ = println (String.ellipsize 10 "This is a long sentence")
+        _ = println (String.ellipsize 100 "short")
+    in
+        println "sanitize ok"

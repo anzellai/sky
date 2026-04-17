@@ -10,8 +10,10 @@ import Sky.Core.Task as Task
 import Sky.Core.Crypto as Crypto
 import Sky.Core.Json.Decode as Decode
 import Std.Db as Db
+import Std.Log exposing (println)
 import Lib.Database as Database
 import Lib.SafeQuery as SafeQuery
+import Sky.Core.Error as Error exposing (Error(..), ErrorKind(..))
 
 
 createMetric : String -> String -> String -> String -> String
@@ -19,7 +21,7 @@ createMetric name sourceType configJson visibility =
     let
         metId = String.slice 0 12 (Crypto.sha256 (name ++ ":" ++ sourceType))
         _ =
-            Db.exec Database.conn
+            Database.execOrLog "Metrics.createMetric"
                 "INSERT OR REPLACE INTO metrics (id, name, source_type, config_json, visibility) VALUES (?, ?, ?, ?, ?)"
                 [ metId, name, sourceType, configJson, visibility ]
     in
@@ -29,17 +31,18 @@ createMetric name sourceType configJson visibility =
 deleteMetric : String -> ()
 deleteMetric metId =
     let
-        _ = Db.exec Database.conn "DELETE FROM metric_history WHERE metric_id = ?" [ metId ]
-        _ = Db.exec Database.conn "DELETE FROM alerts WHERE metric_id = ?" [ metId ]
-        _ = Db.exec Database.conn "DELETE FROM metrics WHERE id = ?" [ metId ]
+        _ = Database.execOrLog "Metrics.deleteMetric/history" "DELETE FROM metric_history WHERE metric_id = ?" [ metId ]
+        _ = Database.execOrLog "Metrics.deleteMetric/alerts" "DELETE FROM alerts WHERE metric_id = ?" [ metId ]
+        _ = Database.execOrLog "Metrics.deleteMetric/row" "DELETE FROM metrics WHERE id = ?" [ metId ]
     in
         ()
 
 
 getMetrics : List (Dict String String)
 getMetrics =
-    Result.withDefault []
-        (Db.query Database.conn "SELECT * FROM metrics ORDER BY name" [])
+    Database.queryOrLog "Metrics.getMetrics"
+        "SELECT * FROM metrics ORDER BY name"
+        []
 
 
 runMetric : Dict String String -> String
@@ -74,23 +77,30 @@ runSqlMetric metric =
             runSafeQuery dsn query
 
 
+-- runSafeQuery / runSafeQueryWithConn: metric-collector string API.
+-- Errors are surfaced as "error: <typed-cause>" AND logged so operators
+-- see the structured IoError form in stderr.
 runSafeQuery : String -> String -> String
 runSafeQuery dsn query =
     case Db.open "postgres" dsn of
-
         Err e ->
-            "error: " ++ e
-
+            let
+                typedErr = e
+                _ = println ("[METRIC ERROR] runSafeQuery/open: " ++ Error.toString typedErr)
+            in
+                "error: " ++ Error.toString typedErr
         Ok extConn ->
             runSafeQueryWithConn extConn query
 
 
 runSafeQueryWithConn extConn query =
     case SafeQuery.runReadOnly extConn query [] of
-
         Err e ->
-            "error: " ++ e
-
+            let
+                typedErr = e
+                _ = println ("[METRIC ERROR] runSafeQuery: " ++ Error.toString typedErr)
+            in
+                "error: " ++ Error.toString typedErr
         Ok rows ->
             extractFirstValue rows
 
@@ -126,12 +136,14 @@ runHttpMetric metric =
 
         else
             case Task.run (Http.get url) of
-
                 Ok resp ->
                     String.fromInt resp.status
-
                 Err e ->
-                    "error: " ++ e
+                    let
+                        typedErr = e
+                        _ = println ("[METRIC ERROR] runHttpMetric " ++ url ++ ": " ++ Error.toString typedErr)
+                    in
+                        "error: " ++ Error.toString typedErr
 
 
 runApiMetric : Dict String String -> String
@@ -146,27 +158,29 @@ runApiMetric metric =
 
         else
             case Task.run (Http.get url) of
-
                 Ok resp ->
                     if String.isEmpty fieldPath then
                         resp.body
 
                     else
                         extractJsonField fieldPath resp.body
-
                 Err e ->
-                    "error: " ++ e
+                    let
+                        typedErr = e
+                        _ = println ("[METRIC ERROR] runApiMetric " ++ url ++ ": " ++ Error.toString typedErr)
+                    in
+                        "error: " ++ Error.toString typedErr
 
 
 recordMetricValue : String -> String -> ()
 recordMetricValue metId value =
     let
         _ =
-            Db.exec Database.conn
+            Database.execOrLog "Metrics.recordMetricValue/update"
                 "UPDATE metrics SET last_value = ?, last_updated = datetime('now') WHERE id = ?"
                 [ value, metId ]
         _ =
-            Db.exec Database.conn
+            Database.execOrLog "Metrics.recordMetricValue/history"
                 "INSERT INTO metric_history (metric_id, value) VALUES (?, ?)"
                 [ metId, value ]
     in
@@ -175,11 +189,9 @@ recordMetricValue metId value =
 
 getMetricHistory : String -> Int -> List (Dict String String)
 getMetricHistory metId limit =
-    Result.withDefault []
-        (Db.query Database.conn
-            "SELECT value, recorded_at FROM metric_history WHERE metric_id = ? ORDER BY recorded_at DESC LIMIT ?"
-            [ metId, String.fromInt limit ]
-        )
+    Database.queryOrLog "Metrics.getMetricHistory"
+        "SELECT value, recorded_at FROM metric_history WHERE metric_id = ? ORDER BY recorded_at DESC LIMIT ?"
+        [ metId, String.fromInt limit ]
 
 
 extractJsonField : String -> String -> String

@@ -1,0 +1,13 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Std.Log exposing (println)
+
+main =
+    let
+        n = 42
+        s = String.fromInt n
+        greeting = "The answer is " ++ s
+    in
+        println greeting

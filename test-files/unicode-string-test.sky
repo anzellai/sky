@@ -1,0 +1,44 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.Char as Char
+import Std.Log exposing (println)
+
+main =
+    let
+        -- Length should count runes, not bytes
+        _ = println (String.fromInt (String.length "世界"))
+        -- Expected: 2 (was 6 before fix)
+
+        _ = println (String.fromInt (String.length "Héllo"))
+        -- Expected: 5 (was 6 before fix — é is 2 bytes)
+
+        _ = println (String.fromInt (String.length "🌏🌍"))
+        -- Expected: 2 (was 8 before fix — each emoji is 4 bytes)
+
+        -- slice should be rune-based
+        _ = println (String.slice 0 2 "世界abc")
+        -- Expected: "世界"
+
+        _ = println (String.slice 2 5 "世界abc")
+        -- Expected: "abc"
+
+        -- left/right should be rune-based
+        _ = println (String.left 3 "Hello, 世界!")
+        -- Expected: "Hel"
+
+        -- Char predicates on Unicode
+        _ = println (if Char.isAlpha '世' then "alpha yes" else "alpha no")
+        -- Expected: "alpha yes"
+
+        _ = println (Char.toUpper 'é')
+        -- Expected: "É"
+
+        _ = println (String.reverse "abc世界")
+        -- Expected: "界世cba"
+
+        _ = println (String.toUpper "héllo")
+        -- Expected: "HÉLLO"
+    in
+        println "unicode string ok"

@@ -1,0 +1,28 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.Result as Result
+import Sky.Core.Maybe as Maybe
+import Std.Log exposing (println)
+
+parseInt s =
+    case String.toInt s of
+        Just n -> Ok n
+        Nothing -> Err ("Not a number: " ++ s)
+
+doubleResult r =
+    Result.map (\n -> n * 2) r
+
+main =
+    let
+        good = parseInt "21"
+        doubled = doubleResult good
+        bad = parseInt "abc"
+        _ = case doubled of
+            Ok n -> println ("Doubled: " ++ String.fromInt n)
+            Err e -> println ("Error: " ++ e)
+    in
+        case bad of
+            Ok n -> println ("Got: " ++ String.fromInt n)
+            Err e -> println ("Error: " ++ e)

@@ -1,0 +1,46 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Std.Html exposing (..)
+import Std.Html.Attributes exposing (..)
+import Std.Live exposing (app, route)
+import Std.Live.Events exposing (onClick)
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+
+type Msg
+    = Increment
+    | Decrement
+    | Reset
+
+type alias Model = { count : Int }
+
+init _req = ( { count = 0 }, Cmd.none )
+
+update msg model =
+    case msg of
+        Increment -> ( { model | count = model.count + 1 }, Cmd.none )
+        Decrement -> ( { model | count = model.count - 1 }, Cmd.none )
+        Reset -> ( { model | count = 0 }, Cmd.none )
+
+subscriptions _m = Sub.none
+
+view model =
+    div [ class "app" ]
+        [ h1 [] [ text "Sky.Live Counter" ]
+        , div [ class "count" ] [ text (String.fromInt model.count) ]
+        , button [ onClick Decrement ] [ text "-" ]
+        , button [ onClick Reset ] [ text "Reset" ]
+        , button [ onClick Increment ] [ text "+" ]
+        ]
+
+main =
+    app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        , routes = [ route "/" 0 ]
+        , notFound = 0
+        }

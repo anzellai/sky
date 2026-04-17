@@ -1,5 +1,4 @@
 module Chess.Move exposing (..)
-
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Dict as Dict
 import Sky.Core.Maybe as Maybe
@@ -8,24 +7,24 @@ import Sky.Core.String as String
 import Chess.Piece exposing (..)
 import Chess.Board as Board
 
+
 -- ======================================================
 -- MOVE GENERATION
 -- ======================================================
 -- Get all legal moves for a piece at the given square
-legalMovesForSquare : Int -> Colour -> (Dict Int Piece) -> Model -> List Int
+legalMovesForSquare : Int -> Colour -> Dict Int Piece -> Model -> List Int
 legalMovesForSquare sq colour board model =
     let
--- Generate pseudo-legal moves (before check validation)
+    -- Generate pseudo-legal moves (before check validation)
         pseudo = pseudoLegalMoves sq colour board model
     in
         filterLegalMoves sq colour board pseudo
 
 
-filterLegalMoves : Int -> Colour -> (Dict Int Piece) -> (List Int) -> List Int
+filterLegalMoves : Int -> Colour -> Dict Int Piece -> List Int -> List Int
 filterLegalMoves from colour board targets =
     if List.isEmpty targets then
         []
-
     else
         let
             target = Maybe.withDefault (-1) (List.head targets)
@@ -34,15 +33,13 @@ filterLegalMoves from colour board targets =
         in
             if not (isInCheck colour newBoard) then
                 target :: filterLegalMoves from colour board rest
-
             else
                 filterLegalMoves from colour board rest
 
 
-pseudoLegalMoves : Int -> Colour -> (Dict Int Piece) -> Model -> List Int
+pseudoLegalMoves : Int -> Colour -> Dict Int Piece -> Model -> List Int
 pseudoLegalMoves sq colour board model =
     case Board.getPiece sq board of
-
         Just piece ->
             dispatchMoves piece.kind sq colour board model
 
@@ -50,31 +47,25 @@ pseudoLegalMoves sq colour board model =
             []
 
 
-dispatchMoves : Kind -> Int -> Colour -> (Dict Int Piece) -> Model -> List Int
+dispatchMoves : Kind -> Int -> Colour -> Dict Int Piece -> Model -> List Int
 dispatchMoves kind sq colour board model =
     if kind == Pawn then
         pawnMoves sq colour board model
-
     else if kind == Knight then
         knightMoves sq colour board
-
     else if kind == Bishop then
         bishopMoves sq colour board
-
     else if kind == Rook then
         rookMoves sq colour board
-
     else if kind == Queen then
         queenMoves sq colour board
-
     else if kind == King then
         kingMoves sq colour board model
-
     else
         []
 
 
-pawnMoves : Int -> Colour -> (Dict Int Piece) -> Model -> List Int
+pawnMoves : Int -> Colour -> Dict Int Piece -> Model -> List Int
 pawnMoves sq colour board model =
     let
         dir = pawnDirection colour
@@ -91,12 +82,11 @@ pawnDirection : Colour -> Int
 pawnDirection colour =
     if colour == White then
         -1
-
     else
         1
 
 
-pawnForward : Int -> Int -> Colour -> (Dict Int Piece) -> Int -> List Int
+pawnForward : Int -> Int -> Colour -> Dict Int Piece -> Int -> List Int
 pawnForward sq dir colour board row =
     let
         oneStep = sq + dir * 8
@@ -105,27 +95,23 @@ pawnForward sq dir colour board row =
     in
         if not (isEmptySquare oneStep board) then
             []
-
         else if row == startRow && isEmptySquare twoStep board then
-            [ oneStep , twoStep ]
-
+            [ oneStep, twoStep ]
         else
-            [ oneStep ]
+            [oneStep]
 
 
 pawnStartRow : Colour -> Int
 pawnStartRow colour =
     if colour == White then
         6
-
     else
         1
 
 
-isEmptySquare : Int -> (Dict Int Piece) -> Bool
+isEmptySquare : Int -> Dict Int Piece -> Bool
 isEmptySquare sq board =
     case Dict.get sq board of
-
         Just _ ->
             False
 
@@ -133,7 +119,7 @@ isEmptySquare sq board =
             sq >= 0 && sq <= 63
 
 
-pawnCaptures : Int -> Int -> Colour -> (Dict Int Piece) -> Int -> List Int
+pawnCaptures : Int -> Int -> Colour -> Dict Int Piece -> Int -> List Int
 pawnCaptures sq dir colour board col =
     let
         leftCap = pawnCaptureLeft sq dir colour board col
@@ -148,11 +134,9 @@ pawnCaptureLeft sq dir colour board col =
             target = sq + dir * 8 - 1
         in
             if isEnemyAt target colour board then
-                [ target ]
-
+                [target]
             else
                 []
-
     else
         []
 
@@ -163,11 +147,9 @@ pawnCaptureRight sq dir colour board col =
             target = sq + dir * 8 + 1
         in
             if isEnemyAt target colour board then
-                [ target ]
-
+                [target]
             else
                 []
-
     else
         []
 
@@ -175,7 +157,6 @@ pawnCaptureRight sq dir colour board col =
 pawnEnPassant sq dir colour board model col =
     if model.enPassantSquare < 0 then
         []
-
     else
         let
             epTarget = model.enPassantSquare
@@ -187,24 +168,21 @@ pawnEnPassant sq dir colour board model col =
 
 pawnEpLeft sq dir col epTarget =
     if col > 0 && sq + dir * 8 - 1 == epTarget then
-        [ epTarget ]
-
+        [epTarget]
     else
         []
 
 
 pawnEpRight sq dir col epTarget =
     if col < 7 && sq + dir * 8 + 1 == epTarget then
-        [ epTarget ]
-
+        [epTarget]
     else
         []
 
 
-isEnemyAt : Int -> Colour -> (Dict Int Piece) -> Bool
+isEnemyAt : Int -> Colour -> Dict Int Piece -> Bool
 isEnemyAt sq colour board =
     case Dict.get sq board of
-
         Just piece ->
             piece.colour /= colour
 
@@ -212,10 +190,9 @@ isEnemyAt sq colour board =
             False
 
 
-isFriendlyAt : Int -> Colour -> (Dict Int Piece) -> Bool
+isFriendlyAt : Int -> Colour -> Dict Int Piece -> Bool
 isFriendlyAt sq colour board =
     case Dict.get sq board of
-
         Just piece ->
             piece.colour == colour
 
@@ -223,74 +200,70 @@ isFriendlyAt sq colour board =
             False
 
 
-knightMoves : Int -> Colour -> (Dict Int Piece) -> List Int
+knightMoves : Int -> Colour -> Dict Int Piece -> List Int
 knightMoves sq colour board =
     let
         row = sq // 8
         col = modBy 8 sq
-        offsets =
-            [ ( -2, -1 )
-            , ( -2, 1 )
-            , ( -1, -2 )
-            , ( -1, 2 )
-            , ( 1, -2 )
-            , ( 1, 2 )
-            , ( 2, -1 )
-            , ( 2, 1 )
-            ]
+        offsets = [ ( -2, -1 )
+        , ( -2, 1 )
+        , ( -1, -2 )
+        , ( -1, 2 )
+        , ( 1, -2 )
+        , ( 1, 2 )
+        , ( 2, -1 )
+        , ( 2, 1 )
+        ]
     in
         List.filterMap (\off -> tryOffset row col off colour board) offsets
 
 
-tryOffset : Int -> Int -> (Int, Int) -> Colour -> (Dict Int Piece) -> Maybe Int
+tryOffset : Int -> Int -> (Int, Int) -> Colour -> Dict Int Piece -> Maybe Int
 tryOffset row col off colour board =
     let
         newRow = row + fst off
         newCol = col + snd off
         target = newRow * 8 + newCol
     in
-        if Board.isOnBoard newRow newCol
-            && not (isFriendlyAt target colour board) then
+        if Board.isOnBoard newRow newCol && not (isFriendlyAt target colour board) then
             Just target
-
         else
             Nothing
 
 
-bishopMoves : Int -> Colour -> (Dict Int Piece) -> List Int
+bishopMoves : Int -> Colour -> Dict Int Piece -> List Int
 bishopMoves sq colour board =
     let
-        dirs = [ ( -1, -1 ) , ( -1, 1 ) , ( 1, -1 ) , ( 1, 1 ) ]
+        dirs = [ ( -1, -1 ), ( -1, 1 ), ( 1, -1 ), ( 1, 1 ) ]
     in
         List.concatMap (\d -> slideMoves sq d colour board) dirs
 
 
-rookMoves : Int -> Colour -> (Dict Int Piece) -> List Int
+rookMoves : Int -> Colour -> Dict Int Piece -> List Int
 rookMoves sq colour board =
     let
-        dirs = [ ( -1, 0 ) , ( 1, 0 ) , ( 0, -1 ) , ( 0, 1 ) ]
+        dirs = [ ( -1, 0 ), ( 1, 0 ), ( 0, -1 ), ( 0, 1 ) ]
     in
         List.concatMap (\d -> slideMoves sq d colour board) dirs
 
 
-queenMoves : Int -> Colour -> (Dict Int Piece) -> List Int
+queenMoves : Int -> Colour -> Dict Int Piece -> List Int
 queenMoves sq colour board =
     let
-        dirs =
-            [ ( -1, -1 )
-            , ( -1, 0 )
-            , ( -1, 1 )
-            , ( 0, -1 )
-            , ( 0, 1 )
-            , ( 1, -1 )
-            , ( 1, 0 )
-            , ( 1, 1 )
-            ]
+        dirs = [ ( -1, -1 )
+        , ( -1, 0 )
+        , ( -1, 1 )
+        , ( 0, -1 )
+        , ( 0, 1 )
+        , ( 1, -1 )
+        , ( 1, 0 )
+        , ( 1, 1 )
+        ]
     in
         List.concatMap (\d -> slideMoves sq d colour board) dirs
 
 
-slideMoves : Int -> (Int, Int) -> Colour -> (Dict Int Piece) -> List Int
+slideMoves : Int -> (Int, Int) -> Colour -> Dict Int Piece -> List Int
 slideMoves sq dir colour board =
     let
         row = sq // 8
@@ -299,11 +272,10 @@ slideMoves sq dir colour board =
         slideStep (row + fst dir) (col + snd dir) dir colour board
 
 
-slideStep : Int -> Int -> (Int, Int) -> Colour -> (Dict Int Piece) -> List Int
+slideStep : Int -> Int -> (Int, Int) -> Colour -> Dict Int Piece -> List Int
 slideStep row col dir colour board =
     if not (Board.isOnBoard row col) then
         []
-
     else
         let
             target = row * 8 + col
@@ -311,14 +283,12 @@ slideStep row col dir colour board =
             slideStepCheck target row col dir colour board
 
 
-slideStepCheck : Int -> Int -> Int -> (Int, Int) -> Colour -> (Dict Int Piece) -> List Int
+slideStepCheck : Int -> Int -> Int -> (Int, Int) -> Colour -> Dict Int Piece -> List Int
 slideStepCheck target row col dir colour board =
     case Dict.get target board of
-
         Just piece ->
             if piece.colour /= colour then
-                [ target ]
-
+                [target]
             else
                 []
 
@@ -326,37 +296,35 @@ slideStepCheck target row col dir colour board =
             target :: slideStep (row + fst dir) (col + snd dir) dir colour board
 
 
-kingMoves : Int -> Colour -> (Dict Int Piece) -> Model -> List Int
+kingMoves : Int -> Colour -> Dict Int Piece -> Model -> List Int
 kingMoves sq colour board model =
     let
         row = sq // 8
         col = modBy 8 sq
-        dirs =
-            [ ( -1, -1 )
-            , ( -1, 0 )
-            , ( -1, 1 )
-            , ( 0, -1 )
-            , ( 0, 1 )
-            , ( 1, -1 )
-            , ( 1, 0 )
-            , ( 1, 1 )
-            ]
+        dirs = [ ( -1, -1 )
+        , ( -1, 0 )
+        , ( -1, 1 )
+        , ( 0, -1 )
+        , ( 0, 1 )
+        , ( 1, -1 )
+        , ( 1, 0 )
+        , ( 1, 1 )
+        ]
         normal = List.filterMap (\d -> tryOffset row col d colour board) dirs
         castling = castlingMoves colour board model
     in
         normal ++ castling
 
 
-castlingMoves : Colour -> (Dict Int Piece) -> Model -> List Int
+castlingMoves : Colour -> Dict Int Piece -> Model -> List Int
 castlingMoves colour board model =
     if colour == White then
         whiteCastling board model
-
     else
         blackCastling board model
 
 
-whiteCastling : (Dict Int Piece) -> Model -> List Int
+whiteCastling : Dict Int Piece -> Model -> List Int
 whiteCastling board model =
     let
         ks = whiteKingsideCastle board model
@@ -368,40 +336,30 @@ whiteCastling board model =
 whiteKingsideCastle board model =
     if model.whiteKingMoved || model.whiteRookHMoved then
         []
-
     else if not (isEmptySquare 61 board) || not (isEmptySquare 62 board) then
         []
-
     else if isInCheck White board then
         []
-
     else if isAttackedBy Black 61 board || isAttackedBy Black 62 board then
         []
-
     else
-        [ 62 ]
+        [62]
 
 
 whiteQueensideCastle board model =
     if model.whiteKingMoved || model.whiteRookAMoved then
         []
-
-    else if not (isEmptySquare 57 board)
-        || not (isEmptySquare 58 board)
-        || not (isEmptySquare 59 board) then
+    else if not (isEmptySquare 57 board) || not (isEmptySquare 58 board) || not (isEmptySquare 59 board) then
         []
-
     else if isInCheck White board then
         []
-
     else if isAttackedBy Black 58 board || isAttackedBy Black 59 board then
         []
-
     else
-        [ 58 ]
+        [58]
 
 
-blackCastling : (Dict Int Piece) -> Model -> List Int
+blackCastling : Dict Int Piece -> Model -> List Int
 blackCastling board model =
     let
         ks = blackKingsideCastle board model
@@ -413,43 +371,33 @@ blackCastling board model =
 blackKingsideCastle board model =
     if model.blackKingMoved || model.blackRookHMoved then
         []
-
     else if not (isEmptySquare 5 board) || not (isEmptySquare 6 board) then
         []
-
     else if isInCheck Black board then
         []
-
     else if isAttackedBy White 5 board || isAttackedBy White 6 board then
         []
-
     else
-        [ 6 ]
+        [6]
 
 
 blackQueensideCastle board model =
     if model.blackKingMoved || model.blackRookAMoved then
         []
-
-    else if not (isEmptySquare 1 board)
-        || not (isEmptySquare 2 board)
-        || not (isEmptySquare 3 board) then
+    else if not (isEmptySquare 1 board) || not (isEmptySquare 2 board) || not (isEmptySquare 3 board) then
         []
-
     else if isInCheck Black board then
         []
-
     else if isAttackedBy White 2 board || isAttackedBy White 3 board then
         []
-
     else
-        [ 2 ]
+        [2]
 
 
 -- ======================================================
 -- CHECK DETECTION
 -- ======================================================
-isInCheck : Colour -> (Dict Int Piece) -> Bool
+isInCheck : Colour -> Dict Int Piece -> Bool
 isInCheck colour board =
     let
         kingPos = Board.findKing colour board
@@ -457,41 +405,30 @@ isInCheck colour board =
     in
         if kingPos < 0 then
             False
-
         else
             isAttackedBy enemy kingPos board
 
 
-isAttackedBy : Colour -> Int -> (Dict Int Piece) -> Bool
+isAttackedBy : Colour -> Int -> Dict Int Piece -> Bool
 isAttackedBy colour sq board =
-    attackedByPawn colour sq board
-        || attackedByKnight colour sq board
-        || attackedBySlider colour sq board Bishop
-               [ ( -1, -1 ) , ( -1, 1 ) , ( 1, -1 ) , ( 1, 1 ) ]
-        || attackedBySlider colour sq board Rook
-               [ ( -1, 0 ) , ( 1, 0 ) , ( 0, -1 ) , ( 0, 1 ) ]
-        || attackedBySlider colour sq board Queen
-               [ ( -1, -1 )
-               , ( -1, 0 )
-               , ( -1, 1 )
-               , ( 0, -1 )
-               , ( 0, 1 )
-               , ( 1, -1 )
-               , ( 1, 0 )
-               , ( 1, 1 )
-               ]
-        || attackedByKing colour sq board
+    attackedByPawn colour sq board || attackedByKnight colour sq board || attackedBySlider colour sq board Bishop [ ( -1, -1 ), ( -1, 1 ), ( 1, -1 ), ( 1, 1 ) ] || attackedBySlider colour sq board Rook [ ( -1, 0 ), ( 1, 0 ), ( 0, -1 ), ( 0, 1 ) ] || attackedBySlider colour sq board Queen [ ( -1, -1 )
+    , ( -1, 0 )
+    , ( -1, 1 )
+    , ( 0, -1 )
+    , ( 0, 1 )
+    , ( 1, -1 )
+    , ( 1, 0 )
+    , ( 1, 1 )
+    ] || attackedByKing colour sq board
 
 
-attackedByPawn : Colour -> Int -> (Dict Int Piece) -> Bool
+attackedByPawn : Colour -> Int -> Dict Int Piece -> Bool
 attackedByPawn colour sq board =
     let
-        dir =
-            if colour == White then
-                1
-
-            else
-                -1
+        dir = if colour == White then
+            1
+        else
+            -1
         row = sq // 8
         col = modBy 8 sq
         left = checkPawnAttack (row + dir) (col - 1) colour board
@@ -500,11 +437,10 @@ attackedByPawn colour sq board =
         left || right
 
 
-checkPawnAttack : Int -> Int -> Colour -> (Dict Int Piece) -> Bool
+checkPawnAttack : Int -> Int -> Colour -> Dict Int Piece -> Bool
 checkPawnAttack row col colour board =
     if not (Board.isOnBoard row col) then
         False
-
     else
         let
             target = row * 8 + col
@@ -512,10 +448,9 @@ checkPawnAttack row col colour board =
             isPieceAt target Pawn colour board
 
 
-isPieceAt : Int -> Kind -> Colour -> (Dict Int Piece) -> Bool
+isPieceAt : Int -> Kind -> Colour -> Dict Int Piece -> Bool
 isPieceAt sq kind colour board =
     case Dict.get sq board of
-
         Just piece ->
             piece.kind == kind && piece.colour == colour
 
@@ -523,26 +458,25 @@ isPieceAt sq kind colour board =
             False
 
 
-attackedByKnight : Colour -> Int -> (Dict Int Piece) -> Bool
+attackedByKnight : Colour -> Int -> Dict Int Piece -> Bool
 attackedByKnight colour sq board =
     let
         row = sq // 8
         col = modBy 8 sq
-        offsets =
-            [ ( -2, -1 )
-            , ( -2, 1 )
-            , ( -1, -2 )
-            , ( -1, 2 )
-            , ( 1, -2 )
-            , ( 1, 2 )
-            , ( 2, -1 )
-            , ( 2, 1 )
-            ]
+        offsets = [ ( -2, -1 )
+        , ( -2, 1 )
+        , ( -1, -2 )
+        , ( -1, 2 )
+        , ( 1, -2 )
+        , ( 1, 2 )
+        , ( 2, -1 )
+        , ( 2, 1 )
+        ]
     in
         List.any (\off -> checkKnightAttack row col off colour board) offsets
 
 
-checkKnightAttack : Int -> Int -> (Int, Int) -> Colour -> (Dict Int Piece) -> Bool
+checkKnightAttack : Int -> Int -> (Int, Int) -> Colour -> Dict Int Piece -> Bool
 checkKnightAttack row col off colour board =
     let
         nr = row + fst off
@@ -550,17 +484,16 @@ checkKnightAttack row col off colour board =
     in
         if Board.isOnBoard nr nc then
             isPieceAt (nr * 8 + nc) Knight colour board
-
         else
             False
 
 
-attackedBySlider : Colour -> Int -> (Dict Int Piece) -> Kind -> (List (Int, Int)) -> Bool
+attackedBySlider : Colour -> Int -> Dict Int Piece -> Kind -> List (Int, Int) -> Bool
 attackedBySlider colour sq board kind dirs =
     List.any (\d -> checkSliderDir sq d colour board kind) dirs
 
 
-checkSliderDir : Int -> (Int, Int) -> Colour -> (Dict Int Piece) -> Kind -> Bool
+checkSliderDir : Int -> (Int, Int) -> Colour -> Dict Int Piece -> Kind -> Bool
 checkSliderDir sq dir colour board kind =
     let
         row = sq // 8
@@ -569,11 +502,10 @@ checkSliderDir sq dir colour board kind =
         walkSlider (row + fst dir) (col + snd dir) dir colour board kind
 
 
-walkSlider : Int -> Int -> (Int, Int) -> Colour -> (Dict Int Piece) -> Kind -> Bool
+walkSlider : Int -> Int -> (Int, Int) -> Colour -> Dict Int Piece -> Kind -> Bool
 walkSlider row col dir colour board kind =
     if not (Board.isOnBoard row col) then
         False
-
     else
         let
             target = row * 8 + col
@@ -581,10 +513,9 @@ walkSlider row col dir colour board kind =
             checkSliderSquare target row col dir colour board kind
 
 
-checkSliderSquare : Int -> Int -> Int -> (Int, Int) -> Colour -> (Dict Int Piece) -> Kind -> Bool
+checkSliderSquare : Int -> Int -> Int -> (Int, Int) -> Colour -> Dict Int Piece -> Kind -> Bool
 checkSliderSquare target row col dir colour board kind =
     case Dict.get target board of
-
         Just piece ->
             piece.kind == kind && piece.colour == colour
 
@@ -592,26 +523,25 @@ checkSliderSquare target row col dir colour board kind =
             walkSlider (row + fst dir) (col + snd dir) dir colour board kind
 
 
-attackedByKing : Colour -> Int -> (Dict Int Piece) -> Bool
+attackedByKing : Colour -> Int -> Dict Int Piece -> Bool
 attackedByKing colour sq board =
     let
         row = sq // 8
         col = modBy 8 sq
-        dirs =
-            [ ( -1, -1 )
-            , ( -1, 0 )
-            , ( -1, 1 )
-            , ( 0, -1 )
-            , ( 0, 1 )
-            , ( 1, -1 )
-            , ( 1, 0 )
-            , ( 1, 1 )
-            ]
+        dirs = [ ( -1, -1 )
+        , ( -1, 0 )
+        , ( -1, 1 )
+        , ( 0, -1 )
+        , ( 0, 1 )
+        , ( 1, -1 )
+        , ( 1, 0 )
+        , ( 1, 1 )
+        ]
     in
         List.any (\d -> checkKingAttack row col d colour board) dirs
 
 
-checkKingAttack : Int -> Int -> (Int, Int) -> Colour -> (Dict Int Piece) -> Bool
+checkKingAttack : Int -> Int -> (Int, Int) -> Colour -> Dict Int Piece -> Bool
 checkKingAttack row col dir colour board =
     let
         nr = row + fst dir
@@ -619,7 +549,6 @@ checkKingAttack row col dir colour board =
     in
         if Board.isOnBoard nr nc then
             isPieceAt (nr * 8 + nc) King colour board
-
         else
             False
 
@@ -627,54 +556,37 @@ checkKingAttack row col dir colour board =
 -- ======================================================
 -- GAME STATE CHECKS
 -- ======================================================
-hasLegalMoves : Colour -> (Dict Int Piece) -> Model -> Bool
+hasLegalMoves : Colour -> Dict Int Piece -> Model -> Bool
 hasLegalMoves colour board model =
     let
         pieces = Board.allPiecesOfColour colour board
     in
-        List.any
-            (
-            \pair ->
-                not
-                    (
-                    List.isEmpty
-                        (legalMovesForSquare (fst pair) colour board model)
-                    )
-            )
-            pieces
+        List.any (\pair -> not (List.isEmpty (legalMovesForSquare (fst pair) colour board model))) pieces
 
 
-allLegalMoves : Colour -> (Dict Int Piece) -> Model -> List (Int, Int)
+allLegalMoves : Colour -> Dict Int Piece -> Model -> List (Int, Int)
 allLegalMoves colour board model =
     let
         pieces = Board.allPiecesOfColour colour board
     in
-        List.concatMap
-            (
-            \pair ->
-                let
-                    from = fst pair
-                    targets = legalMovesForSquare from colour board model
-                in
-                    List.map (\to -> ( from, to )) targets
-            )
-            pieces
+        List.concatMap (\pair -> let
+            from = fst pair
+            targets = legalMovesForSquare from colour board model
+        in
+            List.map (\to -> ( from, to )) targets) pieces
 
 
 -- ======================================================
 -- APPLY MOVE
 -- ======================================================
-applyMove : Int -> Int -> (Dict Int Piece) -> Model -> (Dict Int Piece, Maybe String)
+applyMove : Int -> Int -> Dict Int Piece -> Model -> (Dict Int Piece, Maybe String)
 applyMove from to board model =
     case Board.getPiece from board of
-
         Just piece ->
             let
                 captured = getCaptured to board
                 boardAfterCapture = Board.movePiece from to board
-                boardAfterSpecial =
-                    handleSpecialMoves piece.kind piece.colour from to boardAfterCapture
-                        model
+                boardAfterSpecial = handleSpecialMoves piece.kind piece.colour from to boardAfterCapture model
                 boardFinal = handlePromotion piece.kind piece.colour to boardAfterSpecial
             in
                 ( boardFinal, captured )
@@ -683,10 +595,9 @@ applyMove from to board model =
             ( board, Nothing )
 
 
-getCaptured : Int -> (Dict Int Piece) -> Maybe String
+getCaptured : Int -> Dict Int Piece -> Maybe String
 getCaptured sq board =
     case Dict.get sq board of
-
         Just piece ->
             Just (symbol piece.kind piece.colour)
 
@@ -694,53 +605,47 @@ getCaptured sq board =
             Nothing
 
 
-handleSpecialMoves : Kind -> Colour -> Int -> Int -> (Dict Int Piece) -> Model -> Dict Int Piece
+handleSpecialMoves : Kind -> Colour -> Int -> Int -> Dict Int Piece -> Model -> Dict Int Piece
 handleSpecialMoves kind colour from to board model =
     if kind == King then
         handleCastlingMove colour from to board
-
     else if kind == Pawn then
         handleEnPassantCapture from to board model
-
     else
         board
 
 
-handleCastlingMove : Colour -> Int -> Int -> (Dict Int Piece) -> Dict Int Piece
+handleCastlingMove : Colour -> Int -> Int -> Dict Int Piece -> Dict Int Piece
 handleCastlingMove colour from to board =
     let
         diff = to - from
     in
         if diff == 2 then
             Board.movePiece (from + 3) (from + 1) board
-
         else if diff == -2 then
             Board.movePiece (from - 4) (from - 1) board
-
         else
             board
 
 
-handleEnPassantCapture : Int -> Int -> (Dict Int Piece) -> Model -> Dict Int Piece
+handleEnPassantCapture : Int -> Int -> Dict Int Piece -> Model -> Dict Int Piece
 handleEnPassantCapture from to board model =
     if to == model.enPassantSquare then
         let
-            capturedPawnSq = from + (modBy 8 to - modBy 8 from)
+            capturedPawnSq = from + modBy 8 to - modBy 8 from
         in
             Board.removePiece capturedPawnSq board
-
     else
         board
 
 
-handlePromotion : Kind -> Colour -> Int -> (Dict Int Piece) -> Dict Int Piece
+handlePromotion : Kind -> Colour -> Int -> Dict Int Piece -> Dict Int Piece
 handlePromotion kind colour to board =
     let
         row = to // 8
     in
-        if kind == Pawn && (row == 0 || row == 7) then
+        if kind == Pawn && row == 0 || row == 7 then
             Board.setPiece to (Piece Queen colour) board
-
         else
             board
 
@@ -748,14 +653,12 @@ handlePromotion kind colour to board =
 -- ======================================================
 -- ALGEBRAIC NOTATION
 -- ======================================================
-moveToAlgebraic : Int -> Int -> (Dict Int Piece) -> Model -> String
+moveToAlgebraic : Int -> Int -> Dict Int Piece -> Model -> String
 moveToAlgebraic from to board model =
     case Board.getPiece from board of
-
         Just piece ->
             let
-                isCapture =
-                    isEnemyAt to piece.colour board || to == model.enPassantSquare
+                isCapture = isEnemyAt to piece.colour board || to == model.enPassantSquare
                 targetStr = Board.squareToAlgebraic to
                 diff = to - from
             in
@@ -768,13 +671,10 @@ moveToAlgebraic from to board model =
 buildAlgebraic kind from diff isCapture targetStr =
     if kind == King && diff == 2 then
         "O-O"
-
     else if kind == King && diff == -2 then
         "O-O-O"
-
     else if kind == Pawn then
         buildPawnAlgebraic from isCapture targetStr
-
     else
         buildPieceAlgebraic kind isCapture targetStr
 
@@ -782,7 +682,6 @@ buildAlgebraic kind from diff isCapture targetStr =
 buildPawnAlgebraic from isCapture targetStr =
     if isCapture then
         Board.fileToChar (modBy 8 from) ++ "x" ++ targetStr
-
     else
         targetStr
 
@@ -790,12 +689,10 @@ buildPawnAlgebraic from isCapture targetStr =
 buildPieceAlgebraic kind isCapture targetStr =
     let
         prefix = piecePrefix kind
-        cap =
-            if isCapture then
-                "x"
-
-            else
-                ""
+        cap = if isCapture then
+            "x"
+        else
+            ""
     in
         prefix ++ cap ++ targetStr
 
@@ -803,23 +700,19 @@ buildPieceAlgebraic kind isCapture targetStr =
 -- ======================================================
 -- UPDATE EN PASSANT SQUARE
 -- ======================================================
-newEnPassantSquare : Int -> Int -> (Dict Int Piece) -> Int
+newEnPassantSquare : Int -> Int -> Dict Int Piece -> Int
 newEnPassantSquare from to board =
     case Board.getPiece from board of
-
         Just piece ->
             let
                 diff = to - from
-                absDiff =
-                    if diff < 0 then
-                        0 - diff
-
-                    else
-                        diff
+                absDiff = if diff < 0 then
+                    0 - diff
+                else
+                    diff
             in
                 if piece.kind == Pawn && absDiff == 16 then
-                    (from + to) // 2
-
+                    from + to // 2
                 else
                     -1
 

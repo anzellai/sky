@@ -1,0 +1,17 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Std.Log exposing (println)
+
+showInt n = String.fromInt n
+
+add a b = a + b
+
+main =
+    let
+        x = add 3 4
+        _ = println (showInt x)
+        y = add 10 20
+    in
+        println (showInt y)

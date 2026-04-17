@@ -1,0 +1,28 @@
+{
+    "_comment": "12-skyvote contract. Verifies the home page renders and no DB constraint errors appear in the server log after the initial load. The UNIQUE-constraint-on-comments-insert bug (identical SHA256 id for repeat comments) was fixed at source level by including Time.unixMillis in the id hash. This contract's stderr check prevents any regression where DB errors leak into the server log.",
+    "kind": "live",
+    "port": 8000,
+    "startupWaitMs": 3000,
+    "steps": [
+        {
+            "name": "initial page render",
+            "method": "GET",
+            "path": "/",
+            "expectStatus": 200,
+            "expectBodyContains": ["SkyVote"],
+            "expectStderrAbsent": [
+                "UNIQUE constraint failed",
+                "SQL error",
+                "panic:",
+                "sky.Unreachable"
+            ]
+        },
+        {
+            "name": "sign-in page",
+            "method": "GET",
+            "path": "/auth/signin",
+            "expectStatus": 200,
+            "expectStderrAbsent": ["UNIQUE constraint failed", "panic:"]
+        }
+    ]
+}

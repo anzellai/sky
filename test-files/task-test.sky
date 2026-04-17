@@ -1,0 +1,19 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Std.Log exposing (println)
+
+printResult label result =
+    case result of
+        Ok val ->
+            println (label ++ ": " ++ val)
+        Err e ->
+            println (label ++ " error: " ++ e)
+
+main =
+    let
+        pipeline = Task.succeed "Sky" |> Task.andThen (\name -> Task.succeed ("Hello, " ++ name ++ "!"))
+        successResult = Task.run pipeline
+    in
+        printResult "Success" successResult

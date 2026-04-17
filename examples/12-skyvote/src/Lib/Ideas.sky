@@ -1,173 +1,152 @@
 module Lib.Ideas exposing (createIdea, getIdeas, getIdea, getIdeasByStatus, toggleVote, hasVoted, getVoteCount, updateStatus)
-
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Maybe exposing (..)
-import Sky.Core.Result as Result
 import Sky.Core.List as List
 import Sky.Core.String as String
 import Std.Log exposing (println)
 import Sky.Core.Crypto as Crypto
 import Lib.Db as Db
+import Sky.Core.Error as Error exposing (Error)
 
+
+createIdea : String -> String -> String -> String -> Result Error String
 createIdea title description category authorId =
     let
         id = String.slice 0 12 (Crypto.sha256 (title ++ ":" ++ authorId))
-        result =
-            Db.exec
-                "INSERT INTO ideas (id, title, description, category, author_id) VALUES (?, ?, ?, ?, ?)"
-                [ id , title , description , category , authorId ]
-        _ = println ("[IDEA] Created: " ++ title ++ " by " ++ authorId)
     in
-        case result of
-            
+        case Db.exec "INSERT INTO ideas (id, title, description, category, author_id) VALUES (?, ?, ?, ?, ?)" [ id, title, description, category, authorId ] of
             Ok _ ->
-                Ok id
-            
+                let
+                    _ = println ("[IDEA] Created: " ++ title ++ " by " ++ authorId)
+                in
+                    Ok id
+
             Err e ->
                 Err e
 
 
+getIdeas : String -> String -> String -> Result Error List Dict String String
 getIdeas sortBy filterCategory searchQuery =
     let
-        baseQuery =
-            "SELECT i.id, i.title, i.description, i.category, i.status, i.author_id, i.created_at, u.username as author_name, (SELECT COUNT(*) FROM votes v WHERE v.idea_id = i.id) as vote_count, (SELECT COUNT(*) FROM comments c WHERE c.idea_id = i.id) as comment_count FROM ideas i LEFT JOIN users u ON i.author_id = u.id"
-        whereClause =
-            if filterCategory == "all" then
-                if searchQuery == "" then
-                    ""
-                
-                else
-                    " WHERE (i.title LIKE '%"
-                        ++ searchQuery
-                            ++ "%' OR i.description LIKE '%"
-                                ++ searchQuery ++ "%')"
-            
-            else if searchQuery == "" then
-                " WHERE i.category = '" ++ filterCategory ++ "'"
-            
+        baseQuery = "SELECT i.id, i.title, i.description, i.category, i.status, i.author_id, i.created_at, u.username as author_name, (SELECT COUNT(*) FROM votes v WHERE v.idea_id = i.id) as vote_count, (SELECT COUNT(*) FROM comments c WHERE c.idea_id = i.id) as comment_count FROM ideas i LEFT JOIN users u ON i.author_id = u.id"
+        whereClause = if filterCategory == "all" then
+            if searchQuery == "" then
+                ""
             else
-                " WHERE i.category = '"
-                    ++ filterCategory
-                        ++ "' AND (i.title LIKE '%"
-                            ++ searchQuery
-                                ++ "%' OR i.description LIKE '%"
-                                    ++ searchQuery ++ "%')"
-        orderClause =
-            if sortBy == "votes" then
-                " ORDER BY vote_count DESC, i.created_at DESC"
-            
-            else if sortBy == "comments" then
-                " ORDER BY comment_count DESC, i.created_at DESC"
-            
-            else
-                " ORDER BY i.created_at DESC"
+                " WHERE (i.title LIKE '%" ++ searchQuery ++ "%' OR i.description LIKE '%" ++ searchQuery ++ "%')"
+        else if searchQuery == "" then
+            " WHERE i.category = '" ++ filterCategory ++ "'"
+        else
+            " WHERE i.category = '" ++ filterCategory ++ "' AND (i.title LIKE '%" ++ searchQuery ++ "%' OR i.description LIKE '%" ++ searchQuery ++ "%')"
+        orderClause = if sortBy == "votes" then
+            " ORDER BY vote_count DESC, i.created_at DESC"
+        else if sortBy == "comments" then
+            " ORDER BY comment_count DESC, i.created_at DESC"
+        else
+            " ORDER BY i.created_at DESC"
         fullQuery = baseQuery ++ whereClause ++ orderClause
     in
-        Result.withDefault [] (Db.queryRows fullQuery [])
+        Db.query fullQuery []
 
 
+-- getIdea: outer Result is for DB failure, inner Maybe is "found / not".
+getIdea : String -> Result Error Maybe Dict String String
 getIdea ideaId =
-    let
-        rows =
-            Db.queryRows
-                "SELECT i.id, i.title, i.description, i.category, i.status, i.author_id, i.created_at, u.username as author_name, (SELECT COUNT(*) FROM votes v WHERE v.idea_id = i.id) as vote_count, (SELECT COUNT(*) FROM comments c WHERE c.idea_id = i.id) as comment_count FROM ideas i LEFT JOIN users u ON i.author_id = u.id WHERE i.id = ? LIMIT 1"
-                [ ideaId ]
-        ideaRows = Result.withDefault [] rows
-    in
-        List.head ideaRows
+    case Db.query "SELECT i.id, i.title, i.description, i.category, i.status, i.author_id, i.created_at, u.username as author_name, (SELECT COUNT(*) FROM votes v WHERE v.idea_id = i.id) as vote_count, (SELECT COUNT(*) FROM comments c WHERE c.idea_id = i.id) as comment_count FROM ideas i LEFT JOIN users u ON i.author_id = u.id WHERE i.id = ? LIMIT 1" [ideaId] of
+        Err e ->
+            Err e
+
+        Ok rows ->
+            Ok (List.head rows)
 
 
+getIdeasByStatus : String -> Result Error List Dict String String
 getIdeasByStatus status =
-    Result.withDefault []
-        (
-        Db.queryRows
-            "SELECT i.id, i.title, i.description, i.category, i.status, i.author_id, i.created_at, u.username as author_name, (SELECT COUNT(*) FROM votes v WHERE v.idea_id = i.id) as vote_count FROM ideas i LEFT JOIN users u ON i.author_id = u.id WHERE i.status = ? ORDER BY vote_count DESC"
-            [ status ]
-        )
+    Db.query "SELECT i.id, i.title, i.description, i.category, i.status, i.author_id, i.created_at, u.username as author_name, (SELECT COUNT(*) FROM votes v WHERE v.idea_id = i.id) as vote_count FROM ideas i LEFT JOIN users u ON i.author_id = u.id WHERE i.status = ? ORDER BY vote_count DESC" [status]
 
 
+toggleVote : String -> String -> Result Error ()
 toggleVote ideaId userId =
-    let
-        existingRows =
-            Result.withDefault []
-                (
-                Db.queryRows
-                    "SELECT id FROM votes WHERE idea_id = ? AND user_id = ?"
-                    [ ideaId , userId ]
-                )
-    in
-        case List.head existingRows of
-            
-            Just _ ->
-                let
-                    _ =
-                        Db.exec
-                            "DELETE FROM votes WHERE idea_id = ? AND user_id = ?"
-                            [ ideaId , userId ]
-                    _ =
-                        println
-                            ("[VOTE] Removed: " ++ userId ++ " on " ++ ideaId)
-                in
-                    ()
-            
-            Nothing ->
-                let
-                    voteId =
-                        String.slice 0 12
-                            (Crypto.sha256 (ideaId ++ ":" ++ userId))
-                    _ =
-                        Db.exec
-                            "INSERT INTO votes (id, idea_id, user_id) VALUES (?, ?, ?)"
-                            [ voteId , ideaId , userId ]
-                    _ = println ("[VOTE] Added: " ++ userId ++ " on " ++ ideaId)
-                in
-                    ()
+    case Db.query "SELECT id FROM votes WHERE idea_id = ? AND user_id = ?" [ ideaId, userId ] of
+        Err e ->
+            Err e
+
+        Ok existingRows ->
+            case List.head existingRows of
+                Just _ ->
+                    case Db.exec "DELETE FROM votes WHERE idea_id = ? AND user_id = ?" [ ideaId, userId ] of
+                        Err e ->
+                            Err e
+
+                        Ok _ ->
+                            let
+                                _ = println ("[VOTE] Removed: " ++ userId ++ " on " ++ ideaId)
+                            in
+                                Ok ()
+
+                Nothing ->
+                    let
+                        voteId = String.slice 0 12 (Crypto.sha256 (ideaId ++ ":" ++ userId))
+                    in
+                        case Db.exec "INSERT INTO votes (id, idea_id, user_id) VALUES (?, ?, ?)" [ voteId, ideaId, userId ] of
+                            Err e ->
+                                Err e
+
+                            Ok _ ->
+                                let
+                                    _ = println ("[VOTE] Added: " ++ userId ++ " on " ++ ideaId)
+                                in
+                                    Ok ()
 
 
+-- hasVoted: convenience predicate for the view. DB failure → False
+-- (vote button still renders, the user just won't see the "voted" highlight).
+-- The error has already been logged at the toggleVote site if it's chronic.
+hasVoted : String -> String -> Bool
 hasVoted ideaId userId =
-    let
-        rows =
-            Result.withDefault []
-                (
-                Db.queryRows
-                    "SELECT id FROM votes WHERE idea_id = ? AND user_id = ?"
-                    [ ideaId , userId ]
-                )
-    in
-        case List.head rows of
-            
-            Just _ ->
-                True
-            
-            Nothing ->
+    case Db.query "SELECT id FROM votes WHERE idea_id = ? AND user_id = ?" [ ideaId, userId ] of
+        Err e ->
+            let
+                _ = println ("[DB ERROR] Ideas.hasVoted: " ++ Error.toString e)
+            in
                 False
 
+        Ok rows ->
+            case List.head rows of
+                Just _ ->
+                    True
 
+                Nothing ->
+                    False
+
+
+-- getVoteCount: same view-helper degradation pattern as hasVoted.
+getVoteCount : String -> String
 getVoteCount ideaId =
-    let
-        rows =
-            Result.withDefault []
-                (
-                Db.queryRows
-                    "SELECT COUNT(*) as cnt FROM votes WHERE idea_id = ?"
-                    [ ideaId ]
-                )
-    in
-        case List.head rows of
-            
-            Just row ->
-                Db.getField "cnt" row
-            
-            Nothing ->
+    case Db.query "SELECT COUNT(*) as cnt FROM votes WHERE idea_id = ?" [ideaId] of
+        Err e ->
+            let
+                _ = println ("[DB ERROR] Ideas.getVoteCount: " ++ Error.toString e)
+            in
                 "0"
 
+        Ok rows ->
+            case List.head rows of
+                Just row ->
+                    Db.getField "cnt" row
 
+                Nothing ->
+                    "0"
+
+
+updateStatus : String -> String -> Result Error ()
 updateStatus ideaId newStatus =
-    let
-        _ =
-            Db.exec
-                "UPDATE ideas SET status = ?, updated_at = datetime('now') WHERE id = ?"
-                [ newStatus , ideaId ]
-        _ = println ("[IDEA] Status changed: " ++ ideaId ++ " -> " ++ newStatus)
-    in
-        ()
+    case Db.exec "UPDATE ideas SET status = ?, updated_at = datetime('now') WHERE id = ?" [ newStatus, ideaId ] of
+        Err e ->
+            Err e
+
+        Ok _ ->
+            let
+                _ = println ("[IDEA] Status changed: " ++ ideaId ++ " -> " ++ newStatus)
+            in
+                Ok ()

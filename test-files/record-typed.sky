@@ -1,0 +1,20 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Std.Log exposing (println)
+
+type alias Person =
+    { name : String
+    , age : Int
+    }
+
+greetPerson person =
+    "Hello, " ++ person.name ++ "! Age: " ++ String.fromInt person.age
+
+main =
+    let
+        alice = { name = "Alice", age = 30 }
+        _ = println (greetPerson alice)
+    in
+        println "done"

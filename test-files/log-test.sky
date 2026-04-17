@@ -1,0 +1,16 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Dict as Dict
+import Std.Log as Log
+
+main =
+    let
+        _ = Log.debug "will be hidden by default"
+        _ = Log.info "hello info"
+        _ = Log.warn "something's off"
+        _ = Log.error "something's wrong"
+        ctx = Dict.insert "user" "alice" (Dict.insert "action" "login" Dict.empty)
+        _ = Log.with "request processed" ctx
+    in
+        Log.info "done"

@@ -1,5 +1,4 @@
 module Main exposing (main)
-
 -- 07-todo-cli: A TODO app with SQLite persistence using Sky.Db.
 --
 -- Usage:
@@ -20,9 +19,9 @@ import Os
 import Log.Slog as Slog
 import Std.Log exposing (println)
 
+
 initDb conn =
-    Db.execRaw conn
-        """CREATE TABLE IF NOT EXISTS todos (
+    Db.execRaw conn """CREATE TABLE IF NOT EXISTS todos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             title TEXT NOT NULL,
             done INTEGER DEFAULT 0
@@ -31,23 +30,18 @@ initDb conn =
 
 addTodo conn todoTitle =
     let
-        _ = Db.insertRow conn "todos" (Dict.fromList [ ( "title", todoTitle ) ])
-        _ = Slog.info "Action" [ "Added:" , todoTitle ]
+        _ = Db.insertRow conn "todos" (Dict.fromList [( "title", todoTitle )])
+        _ = Slog.info "Action" [ "Added:", todoTitle ]
     in
         println ("Added: " ++ todoTitle)
 
 
 listTodos conn =
     let
-        rows =
-            Result.withDefault []
-                (
-                Db.query conn "SELECT id, title, done FROM todos ORDER BY id" []
-                )
+        rows = Result.withDefault [] (Db.query conn "SELECT id, title, done FROM todos ORDER BY id" [])
     in
         if List.isEmpty rows then
             println "No todos yet. Add one with: ./app add \"My task\""
-        
         else
             let
                 _ = println "Your TODOs:"
@@ -61,33 +55,31 @@ formatTodo row =
         todoId = Db.getField "id" row
         todoName = Db.getField "title" row
         todoDone = Db.getField "done" row
-        status =
-            if todoDone == "1" then
-                "[x]"
-            
-            else
-                "[ ]"
+        status = if todoDone == "1" then
+            "[x]"
+        else
+            "[ ]"
     in
         "  " ++ todoId ++ ". " ++ status ++ " " ++ todoName
 
 
 markDone conn idStr =
     let
-        _ = Db.exec conn "UPDATE todos SET done = 1 WHERE id = ?" [ idStr ]
+        _ = Db.exec conn "UPDATE todos SET done = 1 WHERE id = ?" [idStr]
     in
         println ("Marked as done: " ++ idStr)
 
 
 markUndone conn idStr =
     let
-        _ = Db.exec conn "UPDATE todos SET done = 0 WHERE id = ?" [ idStr ]
+        _ = Db.exec conn "UPDATE todos SET done = 0 WHERE id = ?" [idStr]
     in
         println ("Marked as not done: " ++ idStr)
 
 
 removeTodo conn idStr =
     let
-        _ = Db.exec conn "DELETE FROM todos WHERE id = ?" [ idStr ]
+        _ = Db.exec conn "DELETE FROM todos WHERE id = ?" [idStr]
     in
         println ("Removed todo: " ++ idStr)
 
@@ -114,66 +106,64 @@ showUsage _ =
         println ""
 
 
-getArg argList = Maybe.withDefault "" (List.head argList)
+getArg argList =
+    Maybe.withDefault "" (List.head argList)
 
 
 runCommand conn cmd cmdArg =
     case cmd of
-        
         "add" ->
             if cmdArg == "" then
                 println "Usage: ./app add <title>"
-            
             else
                 addTodo conn cmdArg
-        
+
         "list" ->
             listTodos conn
-        
+
         "done" ->
             if cmdArg == "" then
                 println "Usage: ./app done <id>"
-            
             else
                 markDone conn cmdArg
-        
+
         "undone" ->
             if cmdArg == "" then
                 println "Usage: ./app undone <id>"
-            
             else
                 markUndone conn cmdArg
-        
+
         "remove" ->
             if cmdArg == "" then
                 println "Usage: ./app remove <id>"
-            
             else
                 removeTodo conn cmdArg
-        
+
         "clear" ->
             clearDone conn
-        
+
         "help" ->
             showUsage ()
-        
+
         _ ->
             showUsage ()
 
 
-db = Db.connect ()
+db =
+    Db.connect ()
 
 
 main =
     case db of
-        
         Err e ->
             println ("Database error: " ++ e)
-        
+
         Ok conn ->
             let
                 _ = initDb conn
-                userArgs = List.drop 1 (Os.args ())
+                -- Os.args already returns user args only (Go's os.Args[1:]);
+                -- don't drop another element.
+                userArgs = Os.args ()
                 cmd = getArg userArgs
                 cmdArg = getArg (List.drop 1 userArgs)
             in

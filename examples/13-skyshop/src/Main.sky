@@ -23,6 +23,7 @@ import Lib.Cart as Cart
 import Lib.Stripe as Stripe
 import Lib.Notify as Notify
 import Lib.Translation as Tr
+import Sky.Core.Error as Error exposing (Error(..), ErrorKind(..))
 import Page.Home as Home
 import Page.Product as ProductView
 import Page.CartPage as CartView
@@ -125,25 +126,48 @@ refreshAdminOrders model =
     { model | adminOrders = Cart.getOrdersByState model.adminOrderFilter }
 
 
+-- TEA pattern for FFI errors: pattern-match the Result, set
+-- model.notification on Err so view renders an error banner. Don't
+-- collapse boundary failures into "no data" — the user needs to know
+-- whether to retry or accept "this product doesn't exist".
 loadProductDetail model productId =
-    let
-        product = Products.getProduct productId
-        images = Products.listProductImages productId
-    in
-        { model | product = product , productImages = images , quantity = 1 }
+    case Products.getProduct productId of
+
+        Ok product ->
+            let
+                images = Products.listProductImages productId
+            in
+                { model | product = product, productImages = images, quantity = 1, notification = "" }
+
+        Err e ->
+            { model
+                | product = Nothing
+                , productImages = []
+                , notification = "Couldn't load product: " ++ Error.toString e
+            }
 
 
 loadOrderDetail model orderId =
     let
-        ( order, items ) = Cart.getOrderWithItems orderId
+        ( orderResult, items ) = Cart.getOrderWithItems orderId
     in
-        { model | order = order , orderItems = items }
+        case orderResult of
+
+            Ok order ->
+                { model | order = order, orderItems = items, notification = "" }
+
+            Err e ->
+                { model
+                    | order = Nothing
+                    , orderItems = []
+                    , notification = "Couldn't load order " ++ orderId ++ ": " ++ Error.toString e
+                }
 
 
 loadEditProduct model productId =
     case Products.getProduct productId of
-        
-        Just product ->
+
+        Ok (Just product) ->
             let
                 images = Products.listProductImages productId
             in
@@ -159,10 +183,14 @@ loadEditProduct model productId =
                     , editPublished = Db.getBool "published" product
                     , productImages = images
                     , editImageData = ""
+                    , notification = ""
                 }
-        
-        Nothing ->
-            model
+
+        Ok Nothing ->
+            { model | notification = "Product " ++ productId ++ " not found" }
+
+        Err e ->
+            { model | notification = "Couldn't load product for edit: " ++ Error.toString e }
 
 
 clearEditForm model =
@@ -287,10 +315,13 @@ handleAddToCart productId model =
                             ( updatedModel, Cmd.none )
                     
                     Err e ->
-                        ( { model
-                            | notification = "Failed to add to cart: " ++ e
-                            , notificationType = "error"
-                        }, Cmd.none )
+                        let
+                            _ = println ("[CART ERROR] addItem: " ++ Error.toString e)
+                        in
+                            ( { model
+                                | notification = "Failed to add to cart: " ++ Error.toString e
+                                , notificationType = "error"
+                            }, Cmd.none )
         
         Nothing ->
             ( { model
@@ -374,14 +405,14 @@ handleStartCheckout model =
                                         Err e ->
                                             ( { model
                                                 | notification =
-                                                    "Checkout failed: " ++ e
+                                                    "Checkout failed: " ++ Error.toString e
                                                 , notificationType = "error"
                                             }, Cmd.none )
 
                                 Err e ->
                                     ( { model
                                         | notification =
-                                            "Could not create order: " ++ e
+                                            "Could not create order: " ++ Error.toString e
                                         , notificationType = "error"
                                     }, Cmd.none )
 
@@ -400,19 +431,26 @@ handleVerifyPayment orderId model =
     let
                                     -- Update user profile with shipping address
         _ = println ("[VERIFY] Looking up order: " ++ orderId)
-        ( order, items ) = Cart.getOrderWithItems orderId
-        _ =
-            case order of
-                
-                Just _ ->
-                    println "[VERIFY] Order found"
-                
-                Nothing ->
-                    println "[VERIFY] Order NOT found"
+        ( orderResult, items ) = Cart.getOrderWithItems orderId
+        order =
+            case orderResult of
+
+                Ok m ->
+                    m
+
+                Err e ->
+                    -- Boundary failure during checkout verification is
+                    -- serious; we surface the operator log AND fall
+                    -- through to "order not found" UX. A real shop
+                    -- would alert ops here (PagerDuty / Sentry).
+                    let
+                        _ = println ("[VERIFY] DB failed: " ++ Error.toString e)
+                    in
+                        Nothing
         base = { model | order = order , orderItems = items }
     in
         case order of
-            
+
             Just orderDoc ->
                 let
                     state = Db.getField "state" orderDoc
@@ -498,7 +536,20 @@ handleVerifyPayment orderId model =
                                                 
                                                 Nothing ->
                                                     ()
-                                        updatedOrder = Cart.getOrder orderId
+                                        updatedOrder =
+                                            -- Re-fetch the order after marking paid. If the
+                                            -- DB call fails here we degrade gracefully (caller
+                                            -- still got the success path), but log so ops can
+                                            -- diagnose. A real shop should retry async via
+                                            -- Cmd.perform.
+                                            case Cart.getOrder orderId of
+                                                Ok m ->
+                                                    m
+                                                Err e ->
+                                                    let
+                                                        _ = println ("[VERIFY] post-paid lookup failed: " ++ Error.toString e)
+                                                    in
+                                                        Nothing
                                         orderItems = Cart.getOrderItems orderId
                                     in
                                         ( refreshCart
@@ -517,11 +568,11 @@ handleVerifyPayment orderId model =
                                         _ =
                                             println
                                                 (
-                                                "[VERIFY] Payment failed: " ++ e
+                                                "[VERIFY] Payment failed: " ++ Error.toString e
                                                 )
                                     in
                                         ( { base
-                                            | notification = e
+                                            | notification = Error.toString e
                                             , notificationType = "error"
                                         }, Cmd.none )
 
@@ -574,10 +625,13 @@ handleCreateProduct model =
                 ( withEdit, Cmd.none )
         
         Err e ->
-            ( { model
-                | notification = "Failed to create product: " ++ e
-                , notificationType = "error"
-            }, Cmd.none )
+            let
+                _ = println ("[PRODUCT ERROR] createProduct: " ++ Error.toString e)
+            in
+                ( { model
+                    | notification = "Failed to create product: " ++ Error.toString e
+                    , notificationType = "error"
+                }, Cmd.none )
 
 
 handleUpdateProduct : Model -> (Model, Cmd Msg)
@@ -592,10 +646,13 @@ handleUpdateProduct model =
                   }, Cmd.none )
         
         Err e ->
-            ( { model
-                | notification = "Failed to update product: " ++ e
-                , notificationType = "error"
-            }, Cmd.none )
+            let
+                _ = println ("[PRODUCT ERROR] updateProduct: " ++ Error.toString e)
+            in
+                ( { model
+                    | notification = "Failed to update product: " ++ Error.toString e
+                    , notificationType = "error"
+                }, Cmd.none )
 
 
 handleDeleteProduct : String -> Model -> (Model, Cmd Msg)
@@ -614,10 +671,13 @@ handleDeleteProduct productId model =
                   ), Cmd.none )
         
         Err e ->
-            ( { model
-                | notification = "Failed to delete product: " ++ e
-                , notificationType = "error"
-            }, Cmd.none )
+            let
+                _ = println ("[PRODUCT ERROR] deleteProduct: " ++ Error.toString e)
+            in
+                ( { model
+                    | notification = "Failed to delete product: " ++ Error.toString e
+                    , notificationType = "error"
+                }, Cmd.none )
 
 
 handleUploadImage : Model -> (Model, Cmd Msg)
@@ -643,10 +703,13 @@ handleUploadImage model =
                     }, Cmd.none )
             
             Err e ->
-                ( { model
-                    | notification = "Failed to upload image: " ++ e
-                    , notificationType = "error"
-                }, Cmd.none )
+                let
+                    _ = println ("[IMAGE ERROR] uploadImage: " ++ Error.toString e)
+                in
+                    ( { model
+                        | notification = "Failed to upload image: " ++ Error.toString e
+                        , notificationType = "error"
+                    }, Cmd.none )
 
 
 handleDeleteImage : String -> Model -> (Model, Cmd Msg)
@@ -664,10 +727,13 @@ handleDeleteImage imageId model =
                 }, Cmd.none )
         
         Err e ->
-            ( { model
-                | notification = "Failed to delete image: " ++ e
-                , notificationType = "error"
-            }, Cmd.none )
+            let
+                _ = println ("[IMAGE ERROR] deleteImage: " ++ Error.toString e)
+            in
+                ( { model
+                    | notification = "Failed to delete image: " ++ Error.toString e
+                    , notificationType = "error"
+                }, Cmd.none )
 
 
 -- ══════════════════════════════════════════════════════
@@ -683,7 +749,11 @@ handleUpdateOrderState orderId newState model =
 -- UPDATE
 -- ══════════════════════════════════════════════════════
                 updatedModel = refreshAdminOrders model
-                ( order, items ) = Cart.getOrderWithItems orderId
+                ( orderResult, items ) = Cart.getOrderWithItems orderId
+                order =
+                    case orderResult of
+                        Ok m -> m
+                        Err _ -> Nothing
             in
                 ( { updatedModel
                     | order = order
@@ -695,10 +765,13 @@ handleUpdateOrderState orderId newState model =
                 }, Cmd.none )
         
         Err e ->
-            ( { model
-                | notification = "Failed to update order: " ++ e
-                , notificationType = "error"
-            }, Cmd.none )
+            let
+                _ = println ("[ORDER ERROR] updateOrderState: " ++ Error.toString e)
+            in
+                ( { model
+                    | notification = "Failed to update order: " ++ Error.toString e
+                    , notificationType = "error"
+                }, Cmd.none )
 
 
 handleFirebaseAuth token model =
@@ -727,9 +800,9 @@ handleFirebaseAuth token model =
             let
                 _ =
                     println
-                        ("[AUTH] Error: " ++ e ++ " — signing out to self-heal")
+                        ("[AUTH] Error: " ++ Error.toString e ++ " — signing out to self-heal")
             in
-                handleSignOut { model | authError = e }
+                handleSignOut { model | authError = Error.toString e }
 
 
 resolvePostAuthPage page =

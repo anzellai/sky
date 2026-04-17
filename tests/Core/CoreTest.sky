@@ -1,0 +1,43 @@
+module Core.CoreTest exposing (tests)
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.Dict as Dict
+import Sky.Core.Maybe as Maybe
+import Sky.Core.Result as Result
+import Sky.Test as Test exposing (Test)
+
+
+tests : List Test
+tests =
+    [ Test.suite "String" [ Test.test "trim" (\_ -> Test.equal "hi" (String.trim "  hi  "))
+    , Test.test "toUpper" (\_ -> Test.equal "HELLO" (String.toUpper "hello"))
+    , Test.test "contains" (\_ -> Test.isTrue (String.contains "ell" "hello"))
+    , Test.test "startsWith" (\_ -> Test.isTrue (String.startsWith "he" "hello"))
+    , Test.test "endsWith" (\_ -> Test.isTrue (String.endsWith "lo" "hello"))
+    , Test.test "length counts runes" (\_ -> Test.equal 5 (String.length "hello"))
+    , Test.test "slice" (\_ -> Test.equal "ell" (String.slice 1 4 "hello"))
+    ]
+    , Test.suite "List" [ Test.test "length" (\_ -> Test.equal 3 (List.length [ 1, 2, 3 ]))
+    , Test.test "reverse" (\_ -> Test.equal [ 3, 2, 1 ] (List.reverse [ 1, 2, 3 ]))
+    , Test.test "reverse first elem" (\_ -> Test.equal (Just 3) (List.head (List.reverse [ 1, 2, 3 ])))
+    , Test.test "head finds first" (\_ -> Test.equal (Just 1) (List.head [ 1, 2, 3 ]))
+    , Test.test "head on empty is Nothing" (\_ -> Test.equal Nothing (List.head []))
+    , Test.test "isEmpty detects" (\_ -> Test.isTrue (List.isEmpty []))
+    , Test.test "deep equality on nested list" (\_ -> Test.equal [ [ 1, 2 ], [ 3, 4 ] ] [ [ 1, 2 ], [ 3, 4 ] ])
+    ]
+    , Test.suite "Dict" [ Test.test "empty + insert + get" (\_ -> let
+        d = Dict.insert "hello" 42 Dict.empty
+    in
+        Test.equal (Just 42) (Dict.get "hello" d))
+    , Test.test "get missing returns Nothing" (\_ -> Test.equal Nothing (Dict.get "nope" Dict.empty))
+    ]
+    , Test.suite "Result" [ Test.test "Ok passes ok-assert" (\_ -> Test.ok (Ok 1))
+    , Test.test "Err passes err-assert" (\_ -> Test.err (Err "boom"))
+    , Test.test "withDefault falls back on Err" (\_ -> Test.equal 0 (Result.withDefault 0 (Err "x")))
+    , Test.test "withDefault passes Ok" (\_ -> Test.equal 42 (Result.withDefault 0 (Ok 42)))
+    ]
+    , Test.suite "Maybe" [ Test.test "withDefault Just" (\_ -> Test.equal 42 (Maybe.withDefault 0 (Just 42)))
+    , Test.test "withDefault Nothing" (\_ -> Test.equal 0 (Maybe.withDefault 0 Nothing))
+    ]
+    ]

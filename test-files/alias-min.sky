@@ -1,0 +1,5 @@
+module Main exposing (main)
+
+type alias Name = String
+
+main = 42

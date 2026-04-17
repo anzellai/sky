@@ -1,0 +1,21 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Http.Server as Server
+import Std.Log exposing (println)
+
+handleHome req =
+    Task.succeed (Server.html "<h1>Hello from Sky!</h1>")
+
+handleApi req =
+    Task.succeed (Server.json "{\"status\": \"ok\"}")
+
+main =
+    let
+        _ = println "Starting server on port 8080..."
+    in
+        Server.listen 8080
+            [ Server.get "/" handleHome
+            , Server.get "/api" handleApi
+            ]

@@ -1,0 +1,15 @@
+{
+    "kind": "server",
+    "port": 8000,
+    "startupWaitMs": 3000,
+    "steps": [
+        {
+            "name": "landing",
+            "method": "GET",
+            "path": "/",
+            "expectStatus": 200,
+            "expectBodyContains": ["SkyNotes"],
+            "expectStderrAbsent": ["panic:", "sky.Unreachable"]
+        }
+    ]
+}

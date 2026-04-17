@@ -1,0 +1,14 @@
+{
+    "kind": "live",
+    "port": 8000,
+    "startupWaitMs": 4000,
+    "steps": [
+        {
+            "name": "home",
+            "method": "GET",
+            "path": "/",
+            "expectStatus": 200,
+            "expectStderrAbsent": ["panic:", "sky.Unreachable", "UNIQUE constraint"]
+        }
+    ]
+}

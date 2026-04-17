@@ -1,0 +1,36 @@
+module Main exposing (main)
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+
+-- Negative integer pattern in case arm
+sign : Int -> String
+sign n =
+    case n of
+        -1 ->
+            "minus-one"
+
+        0 ->
+            "zero"
+
+        _ ->
+            "other"
+
+
+-- Parameterised let binding after multi-line case (KL #9)
+classify : Int -> String
+classify n =
+    let
+        label = case n of
+            0 ->
+                "zero"
+
+            _ ->
+                "other"
+        mark j = label ++ "-" ++ String.fromInt j
+    in
+        mark n
+
+
+main =
+    println (classify 3 ++ "/" ++ sign (-1))

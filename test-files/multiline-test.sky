@@ -1,0 +1,14 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+main =
+    let
+        html = """<html>
+<body>
+  <h1>Hello</h1>
+</body>
+</html>"""
+    in
+        println html

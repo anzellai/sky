@@ -14,6 +14,7 @@ import Google.Golang.Org.Api.Option as Option
 import Context
 import Fmt
 import Lib.Db as Db
+import Sky.Core.Error as Error exposing (Error(..), ErrorKind(..))
 import Os
 
 ctx = Context.background ()
@@ -44,16 +45,16 @@ getAuthClient _ =
         opts =
             if credFile == "" then
                 []
-            
+
             else
                 [ Option.withCredentialsFile credFile ]
         appResult = Firebase.newApp ctx (js "nil") opts
     in
         case appResult of
-            
+
             Ok app_ ->
                 Firebase.appAuth app_ ctx
-            
+
             Err e ->
                 Err e
 
@@ -63,20 +64,20 @@ getAuthClient _ =
 -- ══════════════════════════════════════════════════════
 claimString key claims =
     case Dict.get key claims of
-        
+
         Just val ->
             Fmt.sprint [ val ]
-        
+
         Nothing ->
             ""
 
 
 verifyToken idToken =
     case getAuthClient () of
-        
+
         Ok client ->
             case FirebaseAuth.clientVerifyIDToken client ctx idToken of
-                
+
                 Ok token ->
                     let
                         uid = FirebaseAuth.tokenUID token
@@ -95,7 +96,7 @@ verifyToken idToken =
 -- because Firestore Set with merge is atomic at the document level.
 -- No query-then-create race condition.
                         findOrCreateUser uid email name
-                
+
                 Err e ->
                     let
                         _ =
@@ -105,7 +106,7 @@ verifyToken idToken =
                                     ++ errorToString e
                                 )
                     in
-                        Err "Authentication failed. Please try again."
+                        Err (Error.permissionDenied |> Error.withMessage "Authentication failed. Please try again.")
 
         Err e ->
             let
@@ -116,7 +117,7 @@ verifyToken idToken =
                             ++ errorToString e
                         )
             in
-                Err "Authentication service unavailable."
+                Err (Error.network "Authentication service unavailable.")
 
 
 findOrCreateUser uid email name =
@@ -125,7 +126,7 @@ findOrCreateUser uid email name =
         adminStr =
             if isAdminUser then
                 "true"
-            
+
             else
                 "false"
         -- Set with merge: updates email/name/admin but preserves
@@ -149,7 +150,7 @@ findOrCreateUser uid email name =
 
                     Just user ->
                         if Db.getBool "suspended" user then
-                            Err "Account suspended. Please contact support."
+                            Err (Error.permissionDenied |> Error.withMessage "Account suspended. Please contact support.")
 
                         else
                             let
@@ -165,7 +166,7 @@ findOrCreateUser uid email name =
                                 Ok user
 
                     Nothing ->
-                        Err "Failed to load user profile."
+                        Err (Error.io "Failed to load user profile.")
 
             Err e ->
                 Err e
@@ -186,9 +187,9 @@ getUserById userId = Db.getDoc "users" userId
 
 getSessionUser userId =
     case getUserById userId of
-        
+
         Ok maybeUser ->
             maybeUser
-        
+
         Err _ ->
             Nothing

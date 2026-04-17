@@ -1,0 +1,20 @@
+{
+    "_comment": "16-skychess contract. Verifies the home page renders and the game board is in the response. The AI-making-dumb-moves regression needs deeper game-state testing (drive through Sky.Live event dispatch, capture move quality) which requires extending the e2e harness. For this iteration: catch crashes, ensure the game page loads, and alert on any Unreachable / panic in the server log.",
+    "kind": "live",
+    "port": 8000,
+    "startupWaitMs": 3000,
+    "steps": [
+        {
+            "name": "home renders",
+            "method": "GET",
+            "path": "/",
+            "expectStatus": 200,
+            "expectBodyContains": ["chess-board", "Enter your name"],
+            "expectStderrAbsent": [
+                "panic:",
+                "sky.Unreachable",
+                "FATAL"
+            ]
+        }
+    ]
+}

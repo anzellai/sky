@@ -1,0 +1,23 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.Dict as Dict
+import Sky.Core.List as List
+import Std.Log exposing (println)
+
+main =
+    let
+        empty = Dict.empty
+        d1 = Dict.insert "name" "Alice" empty
+        d2 = Dict.insert "age" "30" d1
+        d3 = Dict.insert "city" "London" d2
+        name = case Dict.get "name" d3 of
+            Just v -> v
+            Nothing -> "unknown"
+        keys = Dict.keys d3
+        _ = println ("Name: " ++ name)
+        _ = println ("Keys: " ++ String.join ", " keys)
+        hasMember = Dict.member "age" d3
+    in
+        println ("Has age: " ++ String.fromInt (if hasMember then 1 else 0))

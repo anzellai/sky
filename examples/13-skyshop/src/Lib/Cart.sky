@@ -9,6 +9,7 @@ import Sky.Core.String as String
 import Std.Log exposing (println)
 import Github.Com.Google.Uuid as Uuid
 import Lib.Db as Db
+import Sky.Core.Error as Error exposing (Error(..), ErrorKind(..))
 
 getOrCreateCart userId =
     let
@@ -62,20 +63,25 @@ createCart userId =
                 Err e
 
 
+-- getCart returns Result Error (Maybe Cart). Three cases at the
+-- TEA call site:
+--   Ok (Just cart) — cart exists; render normally
+--   Ok Nothing     — cart genuinely doesn't exist; render empty state
+--   Err e          — DB / FFI failure; set model.notification, render
+--                    error banner. The update loop is the natural
+--                    place to convert boundary failures into UX.
 getCart cartId =
-    case Db.getDoc "carts" cartId of
-        
-        Ok maybeCart ->
-            maybeCart
-        
-        Err _ ->
-            Nothing
+    Db.getDoc "carts" cartId
 
 
 getCartItems cartId =
     let
-        itemsResult = Db.queryWhere "cart_items" "cart_id" "==" cartId
-        items = Result.withDefault [] itemsResult
+        items =
+            Db.queryWhereOrLog "Cart.getCartItems"
+                "cart_items"
+                "cart_id"
+                "=="
+                cartId
     in
         List.map (enrichCartItem) items
 
@@ -117,26 +123,32 @@ enrichCartItem item =
                 item
 
 
+-- getCartWithItems returns (Result Error (Maybe Cart), List Item).
+-- Callers pattern-match on the Result and convert Err to a
+-- notification in update.
 getCartWithItems cartId =
     let
-        cart = getCart cartId
+        cartResult = getCart cartId
         items =
-            case cart of
-                
-                Just c ->
+            case cartResult of
+
+                Ok (Just c) ->
                     getCartItems (Db.getField "id" c)
-                
-                Nothing ->
+
+                _ ->
                     []
     in
-        ( cart, items )
+        ( cartResult, items )
 
 
 addItem cartId productId quantity =
     let
         existingItems =
-            Result.withDefault []
-                (Db.queryWhere "cart_items" "cart_id" "==" cartId)
+            Db.queryWhereOrLog "Cart.addItem"
+                "cart_items"
+                "cart_id"
+                "=="
+                cartId
         matchingItems =
             List.filter (\item -> Db.getField "product_id" item == productId)
                 existingItems
@@ -272,8 +284,8 @@ findDocAndCollection docId =
                     Ok ( "carts", doc )
                 
                 Ok Nothing ->
-                    Err "Document not found."
-                
+                    Err (Error.notFound |> Error.withMessage "Document not found.")
+
                 Err e ->
                     Err e
 
@@ -372,8 +384,11 @@ checkoutToOrder cartId =
                             (Dict.insert "cart_id" cartId cart)
                     _ = Db.setDoc "orders" orderId orderData
                     cartItems =
-                        Result.withDefault []
-                            (Db.queryWhere "cart_items" "cart_id" "==" cartId)
+                        Db.queryWhereOrLog "Cart.checkoutToOrder"
+                            "cart_items"
+                            "cart_id"
+                            "=="
+                            cartId
                     _ =
                         List.map
                             (
@@ -406,40 +421,44 @@ checkoutToOrder cartId =
                     Ok orderId
             
             _ ->
-                Err "Cart not found."
+                Err (Error.notFound |> Error.withMessage "Cart not found.")
 
 
+-- Same shape as getCart: Result Error (Maybe Order). update converts
+-- Err to a notification; view renders the banner.
 getOrder orderId =
-    case Db.getDoc "orders" orderId of
-        
-        Ok maybeOrder ->
-            maybeOrder
-        
-        Err _ ->
-            Nothing
+    Db.getDoc "orders" orderId
 
 
 getOrderItems orderId =
-    Result.withDefault [] (Db.queryWhere "order_items" "order_id" "==" orderId)
+    Db.queryWhereOrLog "Cart.getOrderItems"
+        "order_items"
+        "order_id"
+        "=="
+        orderId
 
 
+-- getOrderWithItems returns (Result Error (Maybe Order), List Item).
+-- The order tuple-element preserves the Result so callers can react
+-- to a DB failure separately from "no such order". Items default to
+-- empty when order is absent or fetch failed.
 getOrderWithItems orderId =
     let
-        order = getOrder orderId
+        orderResult = getOrder orderId
         items =
-            case order of
-                
-                Just _ ->
+            case orderResult of
+
+                Ok (Just _) ->
                     getOrderItems orderId
-                
-                Nothing ->
+
+                _ ->
                     []
     in
-        ( order, items )
+        ( orderResult, items )
 
 
 getUserCarts userId =
-    Result.withDefault [] (Db.queryWhere "orders" "owner_id" "==" userId)
+    Db.queryWhereOrLog "Cart.getUserCarts" "orders" "owner_id" "==" userId
 
 
 getOrdersByState state =
@@ -449,15 +468,18 @@ getOrdersByState state =
     else
         let
             orders =
-                Result.withDefault []
-                    (Db.queryWhere "orders" "state" "==" state)
+                Db.queryWhereOrLog "Cart.getOrdersByState"
+                    "orders"
+                    "state"
+                    "=="
+                    state
         in
             List.map (enrichOrderWithUser) orders
 
 
 getAllOrders =
     let
-        allOrders = Result.withDefault [] (Db.queryDocs "orders")
+        allOrders = Db.queryDocsOrLog "Cart.getAllOrders" "orders"
     in
         List.map (enrichOrderWithUser) allOrders
 

@@ -1,0 +1,12 @@
+module Lib.Hidden exposing (visible)
+import Sky.Core.Prelude exposing (..)
+
+
+visible : Int
+visible =
+    1
+
+
+secret : Int
+secret =
+    99

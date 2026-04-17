@@ -1,19 +1,28 @@
-module Lib.Database exposing (conn, getField, getInt, getBool)
+module Lib.Database exposing (conn, getField, getInt, getBool, exec, query, queryOrLog, execOrLog)
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Maybe as Maybe
 import Sky.Core.Dict as Dict
+import Sky.Core.Os as Os
 import Std.Db as Db
+import Std.Log exposing (println)
+import Sky.Core.Error as Error exposing (Error(..), ErrorKind(..))
 
 
+-- Open the database once at startup. We deliberately exit on failure:
+-- a degraded "fake connection" would silently break every subsequent
+-- query — strictly better to surface the problem now than to ship
+-- empty data to users.
 conn =
     case Db.open "sqlite" "skymon.db" of
-
         Ok c ->
             c
-
-        Err _ ->
-            identity ""
+        Err e ->
+            let
+                _ = println ("[FATAL] Cannot open skymon.db: " ++ e)
+                _ = Os.exit 1
+            in
+                identity ""
 
 
 getField field row =
@@ -26,3 +35,47 @@ getInt field row =
 
 getBool field row =
     Db.getBool field row
+
+
+-- Typed boundary: returns Result Error (). Callers in `update` MUST
+-- pattern-match and decide what to do (log, notification, retry).
+exec queryStr args =
+    case Db.exec conn queryStr args of
+        Ok _ ->
+            Ok ()
+        Err e ->
+            Err e
+
+
+-- Typed boundary: returns Result Error (List Row).
+query queryStr args =
+    case Db.query conn queryStr args of
+        Ok rows ->
+            Ok rows
+        Err e ->
+            Err e
+
+
+-- Legacy logging fallback helpers. Prefer `query` / `exec` at update
+-- boundaries; use these in view-helper contexts or fire-and-forget
+-- sites where there's no model to update.
+queryOrLog label queryStr args =
+    case query queryStr args of
+        Ok rows ->
+            rows
+        Err e ->
+            let
+                _ = println ("[DB ERROR] " ++ label ++ ": " ++ Error.toString e)
+            in
+                []
+
+
+execOrLog label queryStr args =
+    case exec queryStr args of
+        Ok _ ->
+            ()
+        Err e ->
+            let
+                _ = println ("[DB ERROR] " ++ label ++ ": " ++ Error.toString e)
+            in
+                ()

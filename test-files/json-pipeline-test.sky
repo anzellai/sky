@@ -1,0 +1,22 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Json.Decode as Decode
+import Sky.Core.Json.Decode.Pipeline as Pipeline
+import Sky.Core.Json.Encode as Encode
+import Std.Log exposing (println)
+
+makePerson name age = { name = name, age = age }
+
+personDecoder =
+    Decode.succeed makePerson
+        |> Pipeline.required "name" Decode.string
+        |> Pipeline.required "age" Decode.int
+
+main =
+    let
+        json = "{\"name\":\"Alice\",\"age\":30}"
+    in
+        case Decode.decodeString personDecoder json of
+            Ok _person -> println "decoded person"
+            Err e -> println e

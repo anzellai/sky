@@ -1,0 +1,24 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Std.Log exposing (println)
+
+authOk name =
+    case name of
+        "alice" -> Ok name
+        _ -> Err "denied"
+
+createSession _ = Ok "sess"
+
+handler name =
+    case authOk name of
+        Ok user ->
+            case createSession user of
+                Ok tok -> Task.succeed tok
+                Err msg -> Task.succeed msg
+
+        Err msg ->
+            Task.succeed msg
+
+main = println "start"

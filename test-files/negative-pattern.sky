@@ -1,0 +1,24 @@
+module Main exposing (main)
+
+import Std.Log exposing (println)
+
+
+classify n =
+    case n of
+        -1 ->
+            "neg one"
+        0 ->
+            "zero"
+        1 ->
+            "one"
+        _ ->
+            "other"
+
+
+main =
+    let
+        _ = println (classify (-1))
+        _ = println (classify 0)
+        _ = println (classify 42)
+    in
+        ()

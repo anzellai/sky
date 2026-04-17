@@ -1,7 +1,7 @@
 -- ══════════════════════════════════════════════════════
 -- FIELD ACCESSORS
 -- ══════════════════════════════════════════════════════
-module Lib.Db exposing (getDoc, setDoc, queryDocs, queryWhere, queryWhereOrder, deleteDoc, getField, getInt, getBool, intVal, boolVal, floatVal, initDb)
+module Lib.Db exposing (getDoc, setDoc, queryDocs, queryWhere, queryWhereOrder, deleteDoc, getField, getInt, getBool, intVal, boolVal, floatVal, initDb, queryWhereOrLog, queryWhereOrderOrLog, queryDocsOrLog)
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Maybe as Maybe
@@ -14,6 +14,7 @@ import Cloud.Google.Com.Go.Firestore as Firestore
 import Context
 import Fmt
 import Os
+import Sky.Core.Error as Error exposing (Error(..), ErrorKind(..))
 
 getField field row = Maybe.withDefault "" (Dict.get field row)
 
@@ -24,7 +25,7 @@ getInt field row =
     in
         if val == "" then
             0
-        
+
         else
             val
                 |> String.toInt
@@ -38,18 +39,40 @@ getBool field row =
         val == "1" || val == "true"
 
 
+-- Bridge a raw Firestore/gRPC error string into a typed Error.
+-- Permission failures get PermissionDenied, NotFound for missing
+-- documents, Network for transport issues, Io for everything else.
+-- Avoids "string contains 401" fragility upstream.
+wrapDbError : String -> Error
+wrapDbError msg =
+    if String.contains "PermissionDenied" msg
+        || String.contains "PERMISSION_DENIED" msg
+        || String.contains "permission denied" msg
+        || String.contains "Unauthenticated" msg then
+        Error.permissionDenied |> Error.withMessage msg
+    else if String.contains "NotFound" msg
+        || String.contains "not found" msg then
+        Error.notFound |> Error.withMessage msg
+    else if String.contains "Unavailable" msg
+        || String.contains "DeadlineExceeded" msg
+        || String.contains "connection refused" msg then
+        Error.network msg
+    else
+        Error.io msg
+
+
 -- ══════════════════════════════════════════════════════
 -- INIT (no schema needed for Firestore)
 -- ══════════════════════════════════════════════════════
 initDb _ =
     case getFirestoreClient () of
-        
+
         Ok _ ->
             let
                 _ = println "[DB] Firestore client initialised"
             in
                 ()
-        
+
         Err e ->
             let
                 _ =
@@ -64,22 +87,22 @@ initDb _ =
 
 runQuery q =
     case Firestore.queryDocuments q ctx of
-        
+
         Err e ->
-            Err (errorToString e)
-        
+            Err (wrapDbError (errorToString e))
+
         Ok iter ->
             getAllSnapshots iter
 
 
 getAllSnapshots iter =
     case Firestore.documentIteratorGetAll iter of
-        
+
         Ok snapshots ->
             Ok (List.map snapshotToDict snapshots)
-        
+
         Err e ->
-            Err (errorToString e)
+            Err (wrapDbError (errorToString e))
 
 
 -- ══════════════════════════════════════════════════════
@@ -94,7 +117,7 @@ getProjectId _ =
     in
         if env == "" then
             "skyshop"
-        
+
         else
             env
 
@@ -141,60 +164,65 @@ floatVal f = identity f
 -- ══════════════════════════════════════════════════════
 getCollection client collection =
     case Firestore.clientCollection client collection of
-        
+
         Ok colRef ->
             Ok colRef
-        
+
         Err e ->
-            Err (errorToString e)
+            Err (wrapDbError (errorToString e))
 
 
 getDoc collection docId =
     case getFirestoreClient () of
-        
+
         Err e ->
-            Err (errorToString e)
-        
+            Err (wrapDbError (errorToString e))
+
         Ok client ->
             getDocWithClient client collection docId
 
 
 getDocWithClient client collection docId =
     case getCollection client collection of
-        
+
         Err e ->
             Err e
-        
+
         Ok colRef ->
             getDocInner colRef docId
 
 
 getDocInner colRef docId =
     case Firestore.collectionRefDoc colRef docId of
-        
-        Err _ ->
-            Ok Nothing
-        
+
+        Err e ->
+            -- Propagate boundary failure up. Distinct from
+            -- `Ok Nothing` (doc genuinely not found) — callers must
+            -- handle "DB unreachable / FFI panic" separately from
+            -- "no row matched". Demonstrates real-world handling:
+            -- never collapse "system broken" into "no result".
+            Err (Error.io ("Firestore.collectionRefDoc failed for " ++ docId ++ ": " ++ Error.toString e))
+
         Ok docRef ->
             getDocRef docRef
 
 
 getDocRef docRef =
     case Firestore.documentRefGet docRef ctx of
-        
+
         Ok snapshot ->
             getDocSnapshot snapshot
-        
-        Err _ ->
-            Ok Nothing
+
+        Err e ->
+            Err (Error.io ("Firestore.documentRefGet failed: " ++ Error.toString e))
 
 
 getDocSnapshot snapshot =
     case Firestore.documentSnapshotExists snapshot of
-        
+
         Ok True ->
             Ok (Just (snapshotToDict snapshot))
-        
+
         _ ->
             Ok Nothing
 
@@ -204,30 +232,30 @@ mergeOpts = [ Firestore.mergeAll () ]
 
 setDoc collection docId data =
     case getFirestoreClient () of
-        
+
         Err e ->
-            Err (errorToString e)
-        
+            Err (wrapDbError (errorToString e))
+
         Ok client ->
             setDocWithClient client collection docId data
 
 
 setDocWithClient client collection docId data =
     case getCollection client collection of
-        
+
         Err e ->
             Err e
-        
+
         Ok colRef ->
             setDocInner colRef docId data
 
 
 setDocInner colRef docId data =
     case Firestore.collectionRefDoc colRef docId of
-        
+
         Err e ->
-            Err (errorToString e)
-        
+            Err (wrapDbError (errorToString e))
+
         Ok docRef ->
             setDocRef docRef data
 
@@ -237,70 +265,70 @@ setDocRef docRef data =
         goMap = dictToMap data
     in
         case Firestore.documentRefSet docRef ctx goMap mergeOpts of
-            
+
             Ok _ ->
                 Ok ()
-            
+
             Err e ->
-                Err (errorToString e)
+                Err (wrapDbError (errorToString e))
 
 
 queryDocs collection =
     case getFirestoreClient () of
-        
+
         Err e ->
-            Err (errorToString e)
-        
+            Err (wrapDbError (errorToString e))
+
         Ok client ->
             queryDocsWithClient client collection
 
 
 queryDocsWithClient client collection =
     case getCollection client collection of
-        
+
         Err e ->
             Err e
-        
+
         Ok colRef ->
             queryDocsInner colRef
 
 
 queryDocsInner colRef =
     case Firestore.collectionRefDocuments colRef ctx of
-        
+
         Err e ->
-            Err (errorToString e)
-        
+            Err (wrapDbError (errorToString e))
+
         Ok iter ->
             getAllSnapshots iter
 
 
 queryWhere collection field op value =
     case getFirestoreClient () of
-        
+
         Err e ->
-            Err (errorToString e)
-        
+            Err (wrapDbError (errorToString e))
+
         Ok client ->
             queryWhereWithClient client collection field op value
 
 
 queryWhereWithClient client collection field op value =
     case getCollection client collection of
-        
+
         Err e ->
             Err e
-        
+
         Ok colRef ->
             queryWhereInner colRef field op value
 
 
 queryWhereInner colRef field op value =
     case Firestore.collectionRefWhere colRef field op value of
-        
+
         Err e ->
-            Err (errorToString e)
-        
+            Err (wrapDbError (errorToString e))
+
         Ok q ->
 -- ══════════════════════════════════════════════════════
 -- SHARED QUERY HELPERS
@@ -310,10 +338,10 @@ queryWhereInner colRef field op value =
 
 queryWhereOrder collection field op value orderField dir =
     case getFirestoreClient () of
-        
+
         Err e ->
-            Err (errorToString e)
-        
+            Err (wrapDbError (errorToString e))
+
         Ok client ->
             queryWhereOrderWithClient client collection field op value
                 orderField
@@ -322,20 +350,20 @@ queryWhereOrder collection field op value orderField dir =
 
 queryWhereOrderWithClient client collection field op value orderField dir =
     case getCollection client collection of
-        
+
         Err e ->
             Err e
-        
+
         Ok colRef ->
             queryWhereOrderInner colRef field op value orderField dir
 
 
 queryWhereOrderInner colRef field op value orderField dir =
     case Firestore.collectionRefWhere colRef field op value of
-        
+
         Err e ->
-            Err (errorToString e)
-        
+            Err (wrapDbError (errorToString e))
+
         Ok q ->
             queryWhereOrderQuery q orderField dir
 
@@ -345,54 +373,98 @@ queryWhereOrderQuery q orderField dir =
         direction =
             if dir == "desc" then
                 Firestore.desc
-            
+
             else
                 Firestore.asc
     in
         case Firestore.queryOrderBy q orderField direction of
-            
+
             Err e ->
-                Err (errorToString e)
-            
+                Err (wrapDbError (errorToString e))
+
             Ok ordered ->
                 runQuery ordered
 
 
 deleteDoc collection docId =
     case getFirestoreClient () of
-        
+
         Err e ->
-            Err (errorToString e)
-        
+            Err (wrapDbError (errorToString e))
+
         Ok client ->
             deleteDocWithClient client collection docId
 
 
 deleteDocWithClient client collection docId =
     case getCollection client collection of
-        
+
         Err e ->
             Err e
-        
+
         Ok colRef ->
             deleteDocInner colRef docId
 
 
 deleteDocInner colRef docId =
     case Firestore.collectionRefDoc colRef docId of
-        
+
         Err e ->
-            Err (errorToString e)
-        
+            Err (wrapDbError (errorToString e))
+
         Ok docRef ->
             deleteDocRef docRef
 
 
 deleteDocRef docRef =
     case Firestore.documentRefDelete docRef ctx [] of
-        
+
         Ok _ ->
             Ok ()
-        
+
         Err e ->
-            Err (errorToString e)
+            Err (wrapDbError (errorToString e))
+
+
+-- ══════════════════════════════════════════════════════
+-- LOGGING HELPERS
+-- Use these instead of Result.withDefault [] to avoid
+-- silently swallowing Firestore errors.
+-- ══════════════════════════════════════════════════════
+queryWhereOrLog label collection field op value =
+    case queryWhere collection field op value of
+
+        Ok rows ->
+            rows
+
+        Err e ->
+            let
+                _ = println ("[DB ERROR] " ++ label ++ ": " ++ Error.toString e)
+            in
+                []
+
+
+queryWhereOrderOrLog label collection field op value orderField dir =
+    case queryWhereOrder collection field op value orderField dir of
+
+        Ok rows ->
+            rows
+
+        Err e ->
+            let
+                _ = println ("[DB ERROR] " ++ label ++ ": " ++ Error.toString e)
+            in
+                []
+
+
+queryDocsOrLog label collection =
+    case queryDocs collection of
+
+        Ok rows ->
+            rows
+
+        Err e ->
+            let
+                _ = println ("[DB ERROR] " ++ label ++ ": " ++ Error.toString e)
+            in
+                []

@@ -1,0 +1,14 @@
+{
+    "kind": "live",
+    "port": 8000,
+    "startupWaitMs": 2000,
+    "steps": [
+        {
+            "name": "initial render",
+            "method": "GET",
+            "path": "/",
+            "expectStatus": 200,
+            "expectBodyContains": ["Counter", "sky-click"]
+        }
+    ]
+}

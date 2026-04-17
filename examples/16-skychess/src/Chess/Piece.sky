@@ -1,12 +1,12 @@
 module Chess.Piece exposing (..)
-
 import Sky.Core.Prelude exposing (..)
 
+type alias Piece =
+    { kind : Kind, colour : Colour }
 
 type Colour
     = White
     | Black
-
 
 type Kind
     = King
@@ -17,20 +17,11 @@ type Kind
     | Pawn
 
 
-type alias Piece =
-    { kind : Kind
-    , colour : Colour
-    }
-
-
 -- The `Piece` constructor (`Piece : Kind -> Colour -> Piece`) is
 -- auto-generated from the type alias above (Sky v0.7.26+).
-
-
 oppositeColour : Colour -> Colour
 oppositeColour colour =
     case colour of
-
         White ->
             Black
 
@@ -41,7 +32,6 @@ oppositeColour colour =
 symbol : Kind -> Colour -> String
 symbol kind colour =
     case colour of
-
         White ->
             whiteSymbol kind
 
@@ -52,53 +42,50 @@ symbol kind colour =
 whiteSymbol : Kind -> String
 whiteSymbol kind =
     case kind of
-
         King ->
-            "\u2654"
+            "♔"
 
         Queen ->
-            "\u2655"
+            "♕"
 
         Rook ->
-            "\u2656"
+            "♖"
 
         Bishop ->
-            "\u2657"
+            "♗"
 
         Knight ->
-            "\u2658"
+            "♘"
 
         Pawn ->
-            "\u2659"
+            "♙"
 
 
 blackSymbol : Kind -> String
 blackSymbol kind =
     case kind of
-
         King ->
-            "\u265A"
+            "♚"
 
         Queen ->
-            "\u265B"
+            "♛"
 
         Rook ->
-            "\u265C"
+            "♜"
 
         Bishop ->
-            "\u265D"
+            "♝"
 
         Knight ->
-            "\u265E"
+            "♞"
 
         Pawn ->
-            "\u265F"
+            "♟"
 
 
 materialValue : Kind -> Int
 materialValue kind =
     case kind of
-
         Queen ->
             900
 
@@ -121,7 +108,6 @@ materialValue kind =
 piecePrefix : Kind -> String
 piecePrefix kind =
     case kind of
-
         King ->
             "K"
 

@@ -1,0 +1,20 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Std.Log exposing (println)
+
+main =
+    let
+        numbers = [ 1, 2, 3, 4, 5 ]
+        doubled = List.map (\n -> n * 2) numbers
+        sum = List.foldl (\n acc -> acc + n) 0 numbers
+        evens = List.filter (\n -> n > 2) numbers
+        _ = println ("Numbers: " ++ showList doubled)
+        _ = println ("Sum: " ++ String.fromInt sum)
+    in
+        println ("Filtered: " ++ showList evens)
+
+showList items =
+    "[" ++ String.join ", " (List.map String.fromInt items) ++ "]"

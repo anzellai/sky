@@ -1,0 +1,54 @@
+{
+    "_comment": "Behavioural contract for 07-todo-cli. Verifies that CLI args actually dispatch subcommands end-to-end: add -> persist -> list -> done -> list reflects the state change. Pre-fix, Os.args was dropped twice (example + runtime), making every 'add'/'list' fall through to showUsage. Contract catches that class of bug.",
+    "kind": "cli",
+    "setup": {
+        "cleanArtifacts": ["todos.db"]
+    },
+    "steps": [
+        {
+            "args": ["add", "Buy milk"],
+            "expectExit": 0,
+            "expectStdoutContains": ["Added: Buy milk"]
+        },
+        {
+            "args": ["add", "Write docs"],
+            "expectExit": 0,
+            "expectStdoutContains": ["Added: Write docs"]
+        },
+        {
+            "args": ["list"],
+            "expectExit": 0,
+            "expectStdoutContains": ["Buy milk", "Write docs"]
+        },
+        {
+            "args": ["done", "1"],
+            "expectExit": 0,
+            "expectStdoutContains": ["Marked as done: 1"]
+        },
+        {
+            "args": ["list"],
+            "expectExit": 0,
+            "expectStdoutContains": ["[x]", "Buy milk", "[ ]", "Write docs"]
+        },
+        {
+            "args": ["remove", "2"],
+            "expectExit": 0,
+            "expectStdoutContains": ["Removed todo: 2"]
+        },
+        {
+            "args": ["list"],
+            "expectExit": 0,
+            "expectStdoutContains": ["Buy milk"]
+        },
+        {
+            "args": ["clear"],
+            "expectExit": 0,
+            "expectStdoutContains": ["Cleared completed todos"]
+        },
+        {
+            "args": ["list"],
+            "expectExit": 0,
+            "expectStdoutContains": ["No todos yet"]
+        }
+    ]
+}

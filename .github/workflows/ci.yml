@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'feat/**']
   pull_request:
     branches: [main]
 
@@ -10,6 +10,7 @@ jobs:
   build-and-test:
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
@@ -20,97 +21,89 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: haskell-actions/setup@v2
+        with:
+          ghc-version: '9.4.8'
+          cabal-version: '3.10.3.0'
+
       - uses: actions/setup-go@v5
         with:
           go-version: '1.26'
           cache: true
 
-      # Build tools (needed for compilation pipeline)
-      - name: Build tools
-        run: |
-          go install golang.org/x/tools/cmd/goimports@latest &
-          go build -o /usr/local/bin/skyi-filter tools/skyi_filter.go &
-          go build -o /usr/local/bin/sky-dce tools/sky_dce.go &
-          go build -o /usr/local/bin/sky-ffi-gen tools/sky_ffi_gen.go &
-          wait
+      - name: Cache cabal store
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cabal/store
+            ~/.cabal/packages
+            dist-newstyle
+          key: ${{ runner.os }}-cabal-${{ hashFiles('sky-compiler.cabal') }}
+          restore-keys: |
+            ${{ runner.os }}-cabal-
 
-      # Bootstrap: build compiler from committed Go source (bootstrap/main.go)
-      - name: Bootstrap compiler from Go source
+      # Single-command local/CI parity: scripts/build.sh does everything
+      # the manual steps below used to — compile sky, build sky-ffi-inspect,
+      # install to sky-out/ + bin/. Adds self-test + example sweep when flagged.
+      - name: Build compiler + tooling
         run: |
-          cd bootstrap
-          go build -gcflags=all=-l -o app .
-          cd ..
-          cp -f bootstrap/app /usr/local/bin/sky
-          sky --version
+          ./scripts/build.sh --self-tests
+          echo "$PWD/sky-out" >> $GITHUB_PATH
+          echo "$PWD/bin"      >> $GITHUB_PATH
 
-      # Phase 1: compile from Sky source
-      - name: Phase 1 compile
-        run: |
-          rm -rf .skycache sky-out
-          sky build src/Main.sky
-          cp -f sky-out/app /usr/local/bin/sky
-          sky --version
+      - name: Smoke-test sky binary
+        run: sky --version
 
-      # Phase 2: self-host (new compiler compiles itself)
-      - name: Phase 2 self-host
-        run: |
-          rm -rf .skycache sky-out
-          sky build src/Main.sky
-          cp -f sky-out/app /usr/local/bin/sky
-          sky --version
+      - name: Run cabal test suite
+        run: cabal test --test-show-details=direct
 
-      # Verify the built compiler works
-      - name: Verify compiler
-        run: |
-          sky check src/Main.sky
-          echo "Compiler verification passed"
+      # Audit P3-1: `sky verify` is the canonical runtime check.
+      # Covers every example with build + run + panic-check, honours
+      # per-example verify.json scenarios (P2-4), and skips GUI
+      # examples on headless Linux (see scripts/example-sweep.sh —
+      # verify defers to it for the skip policy). This replaces the
+      # per-example cherry-picked curl probes that rotted
+      # independently (15-http-server was broken for an unknown
+      # period before anyone noticed, because it wasn't in the
+      # cherry list).
+      - name: Run sky verify on all examples
+        run: sky verify
 
-      # Verify type safety features in generated code
-      - name: Verify type safety
-        run: |
-          grep -q 'panic("non-exhaustive case expression")' sky-out/main.go && echo "Non-exhaustive panic: OK"
+      # E2E harness — behavioural contracts per example (CLI flow
+      # dispatch, HTTP body assertions, DB-error-log checks) that
+      # `sky verify` alone misses. Catches logic/CLI/DB regressions
+      # where the smoke test passes but the app's domain behaviour
+      # is broken. Each example with examples/<n>/e2e.json runs
+      # against its contract; any mismatch fails CI.
+      - name: Run end-to-end contract tests
+        run: bash scripts/example-e2e.sh
 
-      # Test examples — each builds in its own directory so sky-out/
-      # at repo root (the compiler) is never overwritten.
-      - name: Test hello-world
+      # ─────────────────────────────────────────────────────────
+      # Tooling smoke tests
+      # ─────────────────────────────────────────────────────────
+      - name: Test sky fmt (idempotent)
         run: |
-          cd examples/01-hello-world
-          sky build src/Main.sky
-          sky-out/app | grep "Hello from Sky!"
+          cp test-files/simple-case.sky /tmp/fmt-test.sky
+          sky fmt /tmp/fmt-test.sky
+          cp /tmp/fmt-test.sky /tmp/fmt-test2.sky
+          sky fmt /tmp/fmt-test2.sky
+          diff /tmp/fmt-test.sky /tmp/fmt-test2.sky
 
-      - name: Test json
-        run: |
-          cd examples/06-json
-          sky build src/Main.sky
-          sky-out/app | grep "Done!"
+      - name: Test sky check
+        run: sky check test-files/simple-case.sky
 
-      - name: Test local-pkg
+      # ─────────────────────────────────────────────────────────
+      # Artifact
+      # ─────────────────────────────────────────────────────────
+      - name: Package artifact
         run: |
-          cd examples/04-local-pkg
-          sky build src/Main.sky
-          sky-out/app | grep "Calculation result"
+          mkdir -p dist
+          cp sky-out/sky dist/${{ matrix.artifact }}
+          cp bin/sky-ffi-inspect dist/sky-ffi-inspect-${{ matrix.artifact }} || true
+          tar czf dist/${{ matrix.artifact }}.tar.gz -C dist ${{ matrix.artifact }} $( [ -f dist/sky-ffi-inspect-${{ matrix.artifact }} ] && echo sky-ffi-inspect-${{ matrix.artifact }} )
+          ls -la dist/
 
-      - name: Test task-demo
-        run: |
-          cd examples/14-task-demo
-          sky build src/Main.sky
-          sky-out/app | grep "Hello, Sky!"
-
-      # Test examples — with Go FFI
-      - name: Test go-stdlib (FFI)
-        run: |
-          cd examples/02-go-stdlib
-          sky install
-          sky build src/Main.sky
-          sky-out/app | grep "SHA256"
-
-      - name: Test live-component
-        run: |
-          cd examples/10-live-component
-          sky build src/Main.sky
-
-      # Test Go FFI toolchain
-      - name: Test sky add (Go stdlib)
-        run: |
-          sky add fmt
-          test -f .skycache/go/fmt/bindings.skyi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/${{ matrix.artifact }}.tar.gz

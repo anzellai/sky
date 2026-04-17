@@ -30,8 +30,8 @@ firebaseadminsdk*.json
 # Logs
 *.log
 
-# Session data
-data/
+# Session data (repo-root only — don't shadow src/Sky/Data/)
+/data/
 
 # Test files
 test-*.js
@@ -47,3 +47,52 @@ examples/13-skyshop/assets/
 # Bootstrap build artifact (source is kept, binary is not)
 bootstrap/app
 sky-lang.org
+dist-newstyle/
+.cabal-sandbox/
+cabal.sandbox.config
+*.hi
+*.o
+*.dyn_hi
+*.dyn_o
+.ghc.environment.*
+dist-newstyle/
+.cabal-sandbox/
+cabal.sandbox.config
+*.hi
+*.o
+*.dyn_hi
+*.dyn_o
+.ghc.environment.*
+
+# Haskell compiler build
+dist-newstyle/
+
+# Legacy compilers
+legacy-sky-compiler/bin/
+legacy-sky-compiler/dist/
+legacy-sky-compiler/sky-out/
+legacy-sky-compiler/.skycache/
+legacy-ts-compiler/node_modules/
+
+# Runtime database files (from running examples at repo root)
+*.db
+*.db-shm
+*.db-wal
+
+# Stray SQLite files named literally "{}" when a test's connection
+# string was the unsubstituted placeholder. Never source; never commit.
+**/\{\}
+
+# macOS
+.DS_Store
+
+# Legacy dist output (kept under legacy-ts-compiler/ if needed)
+/dist/
+
+# Embedded Sky stdlib materialised next to project src by the LSP
+# (Sky.Build.Compile.writeStdlibTo) so goto-definition has a stable
+# jump target — regenerated on each LSP build, not source code.
+**/src/.sky-stdlib/
+
+# Claude Code loop-pause marker (never commit; local-only pause signal)
+.claude/allow-stop

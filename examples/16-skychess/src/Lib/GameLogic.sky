@@ -1,6 +1,6 @@
 module Lib.GameLogic exposing (..)
-
 import Sky.Core.Prelude exposing (..)
+import Sky.Core.Result as Result
 import Sky.Core.Maybe exposing (..)
 import Sky.Core.List as List
 import Sky.Core.Dict as Dict
@@ -10,6 +10,27 @@ import Chess.Piece exposing (..)
 import Chess.Move as Move
 import Chess.Ai as Ai
 import Lib.Games as Games
+import Sky.Core.Error as Error exposing (Error(..), ErrorKind(..))
+
+
+-- logIfErr inspects a Result and logs with a tag if it's Err.
+-- Returns the underlying () so it composes in let-bindings without
+-- silently discarding failures the way `_ = Result.withDefault ()`
+-- did. Real apps would also surface this to the user (notification,
+-- error-recovery flow); chess uses println so the failure shows in
+-- the server log without breaking the game-play path.
+logIfErr : String -> Result Error () -> ()
+logIfErr tag r =
+    case r of
+        Ok _ ->
+            ()
+
+        Err e ->
+            let
+                _ = println ("[CHESS][persist-fail] " ++ tag ++ ": " ++ Error.toString e)
+            in
+                ()
+
 
 executeWhiteMove : Int -> Int -> Model -> (Model, Cmd Msg)
 executeWhiteMove from to model =
@@ -26,31 +47,30 @@ executeWhitePart2 from to algebraic newBoard captured model =
     let
         newEp = Move.newEnPassantSquare from to model.board
         moveNum = List.length model.moveHistory + 1
-        _ = Games.saveMove model.gameId moveNum from to algebraic "White"
+        _ = logIfErr ("saveMove White " ++ algebraic) (Games.saveMove model.gameId moveNum from to algebraic "White")
         newCaptured = appendCaptured captured model.capturedByWhite
-        newHistory = model.moveHistory ++ [ algebraic ]
+        newHistory = model.moveHistory ++ [algebraic]
     in
         buildWhiteUpdate from to newBoard newEp newCaptured newHistory model
 
 
 buildWhiteUpdate from to newBoard newEp newCaptured newHistory model =
-    afterWhiteMove
-        { model
-            | board = newBoard
-            , selectedSquare = -1
-            , legalMoves = []
-            , lastMoveFrom = from
-            , lastMoveTo = to
-            , moveHistory = newHistory
-            , capturedByWhite = newCaptured
-            , enPassantSquare = newEp
-            , whiteKingMoved = model.whiteKingMoved || from == 60
-            , blackKingMoved = model.blackKingMoved || from == 4
-            , whiteRookAMoved = model.whiteRookAMoved || from == 56
-            , whiteRookHMoved = model.whiteRookHMoved || from == 63
-            , blackRookAMoved = model.blackRookAMoved || from == 0
-            , blackRookHMoved = model.blackRookHMoved || from == 7
-        }
+    afterWhiteMove { model
+        | board = newBoard
+        , selectedSquare = -1
+        , legalMoves = []
+        , lastMoveFrom = from
+        , lastMoveTo = to
+        , moveHistory = newHistory
+        , capturedByWhite = newCaptured
+        , enPassantSquare = newEp
+        , whiteKingMoved = model.whiteKingMoved || from == 60
+        , blackKingMoved = model.blackKingMoved || from == 4
+        , whiteRookAMoved = model.whiteRookAMoved || from == 56
+        , whiteRookHMoved = model.whiteRookHMoved || from == 63
+        , blackRookAMoved = model.blackRookAMoved || from == 0
+        , blackRookHMoved = model.blackRookHMoved || from == 7
+    }
 
 
 afterWhiteMove updated =
@@ -64,12 +84,10 @@ afterWhiteMove updated =
 resolveAfterWhite updated blackCanMove blackInCheck =
     if not blackCanMove && blackInCheck then
         finishGame "checkmate-white" updated
-
     else if not blackCanMove then
         finishGame "stalemate" updated
-
     else
-        ( { updated | turn = Black , computerThinking = True }, Cmd.none )
+        ( { updated | turn = Black, computerThinking = True }, Cmd.none )
 
 
 executeBlackMove : Model -> (Model, Cmd Msg)
@@ -79,34 +97,11 @@ executeBlackMove model =
         from = fst movePair
         to = snd movePair
         pieces = Board.allPiecesOfColour Black model.board
-        _ =
-            println
-                ("[AI] Black pieces: " ++ String.fromInt (List.length pieces))
+        _ = println ("[AI] Black pieces: " ++ String.fromInt (List.length pieces))
         allMoves = Move.allLegalMoves Black model.board model
-        _ =
-            println
-                ("[AI] Legal moves: " ++ String.fromInt (List.length allMoves))
-        _ =
-            println
-                (
-                "[AI] Best: "
-                    ++ String.fromInt from ++ "->" ++ String.fromInt to
-                )
-        _ =
-            println
-                (
-                "[AI] First 10: "
-                    ++ String.join " "
-                           (
-                           List.map
-                               (
-                               \m ->
-                                   String.fromInt (fst m)
-                                       ++ "->" ++ String.fromInt (snd m)
-                               )
-                               (List.take 10 allMoves)
-                           )
-                )
+        _ = println ("[AI] Legal moves: " ++ String.fromInt (List.length allMoves))
+        _ = println ("[AI] Best: " ++ String.fromInt from ++ "->" ++ String.fromInt to)
+        _ = println ("[AI] First 10: " ++ String.join " " (List.map (\m -> String.fromInt (fst m) ++ "->" ++ String.fromInt (snd m)) (List.take 10 allMoves)))
     in
         applyBlackOr from to model
 
@@ -114,7 +109,6 @@ executeBlackMove model =
 applyBlackOr from to model =
     if from < 0 then
         ( { model | computerThinking = False }, Cmd.none )
-
     else
         doBlackMove from to model
 
@@ -133,30 +127,29 @@ doBlackPart2 from to algebraic newBoard captured model =
     let
         newEp = Move.newEnPassantSquare from to model.board
         moveNum = List.length model.moveHistory + 1
-        _ = Games.saveMove model.gameId moveNum from to algebraic "Black"
+        _ = logIfErr ("saveMove Black " ++ algebraic) (Games.saveMove model.gameId moveNum from to algebraic "Black")
         newCaptured = appendCaptured captured model.capturedByBlack
-        newHistory = model.moveHistory ++ [ algebraic ]
+        newHistory = model.moveHistory ++ [algebraic]
     in
         buildBlackUpdate from to newBoard newEp newCaptured newHistory model
 
 
 buildBlackUpdate from to newBoard newEp newCaptured newHistory model =
-    afterBlackMove
-        { model
-            | board = newBoard
-            , computerThinking = False
-            , lastMoveFrom = from
-            , lastMoveTo = to
-            , moveHistory = newHistory
-            , capturedByBlack = newCaptured
-            , enPassantSquare = newEp
-            , whiteKingMoved = model.whiteKingMoved || from == 60
-            , blackKingMoved = model.blackKingMoved || from == 4
-            , whiteRookAMoved = model.whiteRookAMoved || from == 56
-            , whiteRookHMoved = model.whiteRookHMoved || from == 63
-            , blackRookAMoved = model.blackRookAMoved || from == 0
-            , blackRookHMoved = model.blackRookHMoved || from == 7
-        }
+    afterBlackMove { model
+        | board = newBoard
+        , computerThinking = False
+        , lastMoveFrom = from
+        , lastMoveTo = to
+        , moveHistory = newHistory
+        , capturedByBlack = newCaptured
+        , enPassantSquare = newEp
+        , whiteKingMoved = model.whiteKingMoved || from == 60
+        , blackKingMoved = model.blackKingMoved || from == 4
+        , whiteRookAMoved = model.whiteRookAMoved || from == 56
+        , whiteRookHMoved = model.whiteRookHMoved || from == 63
+        , blackRookAMoved = model.blackRookAMoved || from == 0
+        , blackRookHMoved = model.blackRookHMoved || from == 7
+    }
 
 
 afterBlackMove updated =
@@ -170,10 +163,8 @@ afterBlackMove updated =
 resolveAfterBlack updated whiteCanMove whiteInCheck =
     if not whiteCanMove && whiteInCheck then
         finishGame "checkmate-black" updated
-
     else if not whiteCanMove then
         finishGame "stalemate" updated
-
     else
         ( { updated | turn = White }, Cmd.none )
 
@@ -181,17 +172,16 @@ resolveAfterBlack updated whiteCanMove whiteInCheck =
 finishGame : String -> Model -> (Model, Cmd Msg)
 finishGame result model =
     let
-        _ = Games.updateGameStatus model.gameId "finished" result
+        _ = logIfErr ("updateGameStatus " ++ result) (Games.updateGameStatus model.gameId "finished" result)
     in
         ( { model | gameStatus = result }, Cmd.none )
 
 
-appendCaptured : (Maybe String) -> (List String) -> List String
+appendCaptured : Maybe String -> List String -> List String
 appendCaptured captured existing =
     case captured of
-
         Just sym ->
-            existing ++ [ sym ]
+            existing ++ [sym]
 
         Nothing ->
             existing

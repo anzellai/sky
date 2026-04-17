@@ -1,0 +1,20 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+classify n =
+    if n > 0 then
+        "positive"
+    else if n < 0 then
+        "negative"
+    else
+        "zero"
+
+main =
+    let
+        a = classify 5
+        b = classify (-3)
+        c = classify 0
+    in
+        println (a ++ " " ++ b ++ " " ++ c)

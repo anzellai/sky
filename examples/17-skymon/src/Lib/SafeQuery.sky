@@ -4,18 +4,26 @@ import Sky.Core.Prelude exposing (..)
 import Sky.Core.String as String
 import Sky.Core.Result as Result
 import Sky.Core.Dict as Dict
+import Sky.Core.Error as Error exposing (Error)
 import Std.Db as Db
 
 
 -- Run a query ONLY if it is a SELECT/WITH statement.
 -- Rejects INSERT, UPDATE, DELETE, DROP, ALTER, CREATE, TRUNCATE etc.
-runReadOnly : a -> String -> List String -> Result String (List (Dict String String))
+runReadOnly : a -> String -> List String -> Result Error (List (Dict String String))
 runReadOnly dbConn query params =
     if isSelectOnly query then
-        Db.query dbConn query params
+        case Db.query dbConn query params of
+            Ok rows ->
+                Ok rows
+            Err e ->
+                Err e
 
     else
-        Err ("Query rejected: only SELECT queries are allowed. Got: " ++ String.slice 0 50 query)
+        let
+            msg = "Query rejected: only SELECT queries are allowed. Got: " ++ String.slice 0 50 query
+        in
+            Err (Error.invalidInput msg)
 
 
 -- Check if a SQL query is read-only (SELECT or WITH ... SELECT).

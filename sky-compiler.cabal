@@ -1,0 +1,184 @@
+cabal-version: 2.4
+name:          sky-compiler
+version:       0.9.0
+synopsis:      Sky language compiler — Elm-inspired, compiles to typed Go
+license:       MIT
+author:        Anzel Lai
+build-type:    Simple
+
+-- Embedded templates (via Data.FileEmbed) + runtime sources must be
+-- shipped in the cabal sdist so `cabal install` works from a tarball.
+extra-source-files:
+    templates/CLAUDE.md
+    runtime-go/go.mod
+    runtime-go/go.sum
+    runtime-go/rt/*.go
+    sky-stdlib/Sky/Core/*.sky
+    sky-stdlib/Sky/*.sky
+    tools/sky-ffi-inspect/main.go
+    tools/sky-ffi-inspect/go.mod
+    tools/sky-ffi-inspect/go.sum
+
+executable sky
+  main-is:          Main.hs
+  hs-source-dirs:   app, src
+  default-language: Haskell2010
+  ghc-options:
+    -O2 -rtsopts -threaded
+    -Wall -Wno-name-shadowing -Wno-unused-matches -Wno-unused-imports
+    -Wno-missing-signatures -Wno-incomplete-patterns
+
+  build-depends:
+    base >= 4.14 && < 5,
+    bytestring >= 0.11,
+    containers >= 0.6,
+    directory >= 1.3,
+    filepath >= 1.4,
+    mtl >= 2.2,
+    process >= 1.6,
+    text >= 1.2,
+    time >= 1.9,
+    vector >= 0.12,
+    binary >= 0.8,
+    utf8-string >= 1.0,
+    optparse-applicative >= 0.17,
+    aeson >= 2.0,
+    async >= 2.2,
+    cryptohash-sha256 >= 0.11,
+    ansi-terminal >= 0.11,
+    file-embed >= 0.0.15,
+    template-haskell >= 2.18,
+    temporary >= 1.3
+
+  autogen-modules: Paths_sky_compiler
+  other-modules:
+    Paths_sky_compiler
+    -- Data (copied from Elm)
+
+    -- AST
+    Sky.AST.Source
+    Sky.AST.Canonical
+
+    -- Parser
+    Sky.Parse.Primitives
+    Sky.Parse.Space
+    Sky.Parse.Keyword
+    Sky.Parse.Symbol
+    Sky.Parse.Variable
+    Sky.Parse.Number
+    Sky.Parse.String
+    Sky.Parse.Type
+    Sky.Parse.Pattern
+    Sky.Parse.Expression
+    Sky.Parse.Declaration
+    Sky.Parse.Module
+
+    -- Canonicalisation
+    Sky.Canonicalise.Module
+    Sky.Canonicalise.Environment
+    Sky.Canonicalise.Expression
+    Sky.Canonicalise.Pattern
+    Sky.Canonicalise.Type
+
+    -- Type system
+    Sky.Type.UnionFind
+    Sky.Type.Occurs
+    Sky.Type.Type
+    Sky.Type.Unify
+    Sky.Type.Solve
+    Sky.Type.Instantiate
+    Sky.Type.Constrain.Module
+    Sky.Type.Constrain.Expression
+    Sky.Type.Constrain.Pattern
+
+    -- Optimisation
+
+    -- Exhaustiveness
+    Sky.Type.Exhaustiveness
+
+    -- Go code generation
+    Sky.Generate.Go.Ir
+    Sky.Generate.Go.Builder
+    Sky.Generate.Go.Type
+    Sky.Generate.Go.Kernel
+    Sky.Generate.Go.Record
+
+    -- FFI
+
+    -- Formatter
+    Sky.Format.Format
+
+    -- LSP
+    Sky.Lsp.Index
+    Sky.Lsp.Server
+
+    -- Build system
+    Sky.Build.ModuleGraph
+    Sky.Build.Compile
+    Sky.Build.Dce
+    Sky.Build.EmbeddedRuntime
+    Sky.Build.EmbeddedInspector
+    Sky.Build.FfiGen
+    Sky.Build.FfiRegistry
+    Sky.Build.SkyDeps
+
+    -- Reporting
+    Sky.Reporting.Annotation
+
+    -- Sky infrastructure
+    Sky.Sky.ModuleName
+    Sky.Sky.Toml
+
+
+test-suite sky-tests
+  type:             exitcode-stdio-1.0
+  main-is:          Spec.hs
+  hs-source-dirs:   test
+  default-language: Haskell2010
+  ghc-options:      -Wall -Wno-unused-imports -Wno-name-shadowing -threaded
+
+  build-tool-depends: sky-compiler:sky
+  build-depends:
+      base >= 4.14 && < 5
+    , hspec >= 2.9
+    , process >= 1.6
+    , directory >= 1.3
+    , filepath >= 1.4
+    , bytestring >= 0.11
+    , text >= 1.2
+    , temporary >= 1.3
+    , aeson >= 2.0
+    , vector >= 0.12
+
+  other-modules:
+      Sky.Build.CompileSpec
+      Sky.Build.ExampleSweepSpec
+      Sky.Build.TypedFfiSpec
+      Sky.ErrorUnificationSpec
+      Sky.Parse.PatternSpec
+      Sky.Canonicalise.ExposingSpec
+      Sky.Canonicalise.UnboundSpec
+      Sky.Type.ExhaustivenessSpec
+      Sky.Format.FormatSpec
+      Sky.Build.NestedPatternSpec
+      Sky.Build.CheckIsBuildSpec
+      Sky.Build.RecordFieldOrderSpec
+      Sky.Build.UnreachableGateSpec
+      Sky.Parse.CommentsSpec
+      Sky.Lsp.Harness
+      Sky.Lsp.DiagnosticsSpec
+      Sky.Lsp.HoverTypesSpec
+      Sky.Lsp.HoverShadowingSpec
+      Sky.Lsp.RenameStableSpec
+      Sky.Build.VerifyScenarioSpec
+      Sky.Build.VerifyAllSpec
+      Sky.Lsp.ProtocolSpec
+    , Sky.Lsp.CapabilitiesSpec
+    , Sky.Build.EmbeddedRuntimeSpec
+    , Sky.Build.EmbeddedInspectorSpec
+    , Sky.Cli.ExitCodesSpec
+    , Sky.Cli.InitSpec
+    , Sky.Cli.RunSpec
+    , Sky.Cli.FmtSpec
+    , Sky.Cli.CleanSpec
+    , Sky.Cli.TestSpec

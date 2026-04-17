@@ -1,0 +1,238 @@
+module Live.SessionTest exposing (tests)
+
+-- Phase 3 — Sky.Live subscription & session-shape tests.
+--
+-- Simulates what the Sky.Live runtime does between requests:
+-- (1) derives subscriptions from the current model, (2) encodes /
+-- decodes the model across a pretend wire boundary, (3) feeds
+-- incoming events (with session handlers attached) back into
+-- update. These tests don't boot the real session store — they
+-- assert the pure shapes the store round-trips through.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Test as Test exposing (Test)
+
+
+-- ======================================================
+-- MODEL — a multi-page app with background polling that
+-- only runs when the user is on the Dashboard.
+-- ======================================================
+type Page
+    = LoginPage
+    | DashboardPage
+    | SettingsPage
+
+
+type alias Model =
+    { page : Page
+    , tickCount : Int
+    , lastSeen : Int
+    , active : Bool
+    }
+
+
+type Msg
+    = Tick Int
+    | Navigate Page
+    | SetActive Bool
+
+
+type Subscription
+    = NoSubscription
+    | Poll Int
+    | Idle
+
+
+-- ======================================================
+-- subscriptions : Model -> Subscription
+-- ======================================================
+subscriptionsFor : Model -> Subscription
+subscriptionsFor model =
+    case model.page of
+        DashboardPage ->
+            if model.active then
+                Poll 1000
+
+            else
+                Idle
+
+        SettingsPage ->
+            Idle
+
+        LoginPage ->
+            NoSubscription
+
+
+-- ======================================================
+-- INIT
+-- ======================================================
+initial : Model
+initial =
+    { page = LoginPage
+    , tickCount = 0
+    , lastSeen = 0
+    , active = True
+    }
+
+
+-- ======================================================
+-- UPDATE
+-- ======================================================
+updateModel : Msg -> Model -> Model
+updateModel msg model =
+    case msg of
+        Tick t ->
+            { model | tickCount = model.tickCount + 1, lastSeen = t }
+
+        Navigate page ->
+            { model | page = page }
+
+        SetActive a ->
+            { model | active = a }
+
+
+run : List Msg -> Model -> Model
+run msgs m =
+    case msgs of
+        [] ->
+            m
+
+        x :: xs ->
+            run xs (updateModel x m)
+
+
+-- ======================================================
+-- Session round-trip simulation. A real store encodes /
+-- decodes via gob; here we assert that the derived
+-- subscription for a round-tripped model is identical —
+-- the only invariant the store must preserve.
+-- ======================================================
+roundTrip : Model -> Model
+roundTrip m =
+    { page = m.page
+    , tickCount = m.tickCount
+    , lastSeen = m.lastSeen
+    , active = m.active
+    }
+
+
+-- ======================================================
+-- TESTS
+-- ======================================================
+tests : List Test
+tests =
+    [ Test.suite "subscriptions"
+        [ Test.test "LoginPage has no subscription" (\_ ->
+            Test.equal NoSubscription (subscriptionsFor initial))
+        , Test.test "DashboardPage active polls" (\_ ->
+            let
+                m = updateModel (Navigate DashboardPage) initial
+            in
+            case subscriptionsFor m of
+                Poll _ ->
+                    Test.pass
+
+                _ ->
+                    Test.fail "expected Poll subscription")
+        , Test.test "DashboardPage inactive is Idle" (\_ ->
+            let
+                m = run [ Navigate DashboardPage, SetActive False ] initial
+            in
+            Test.equal Idle (subscriptionsFor m))
+        , Test.test "SettingsPage is Idle" (\_ ->
+            let
+                m = updateModel (Navigate SettingsPage) initial
+            in
+            Test.equal Idle (subscriptionsFor m))
+        , Test.test "subscription changes when navigating" (\_ ->
+            let
+                dashboard = updateModel (Navigate DashboardPage) initial
+                login = updateModel (Navigate LoginPage) dashboard
+            in
+            Test.equal NoSubscription (subscriptionsFor login))
+        ]
+    , Test.suite "tick accumulation"
+        [ Test.test "single Tick increments count" (\_ ->
+            Test.equal 1 (updateModel (Tick 100) initial).tickCount)
+        , Test.test "Tick records lastSeen" (\_ ->
+            Test.equal 500 (updateModel (Tick 500) initial).lastSeen)
+        , Test.test "multiple Ticks accumulate" (\_ ->
+            let
+                m = run [ Tick 100, Tick 200, Tick 300 ] initial
+            in
+            Test.equal 3 m.tickCount)
+        , Test.test "final lastSeen is most recent" (\_ ->
+            let
+                m = run [ Tick 100, Tick 200, Tick 300 ] initial
+            in
+            Test.equal 300 m.lastSeen)
+        ]
+    , Test.suite "session round-trip"
+        -- The store encodes model → bytes → model. The real store
+        -- uses encoding/gob; here we simulate a structurally
+        -- identical copy and assert every invariant survives.
+        [ Test.test "roundTrip preserves page" (\_ ->
+            let
+                m = updateModel (Navigate DashboardPage) initial
+                rtM = roundTrip m
+            in
+            Test.equal m.page rtM.page)
+        , Test.test "roundTrip preserves tickCount" (\_ ->
+            let
+                m = run [ Tick 1, Tick 2, Tick 3 ] initial
+                rtM = roundTrip m
+            in
+            Test.equal m.tickCount rtM.tickCount)
+        , Test.test "roundTrip preserves subscriptions" (\_ ->
+            let
+                m = updateModel (Navigate DashboardPage) initial
+                rtM = roundTrip m
+                subA = subscriptionsFor m
+                subB = subscriptionsFor rtM
+            in
+            Test.equal subA subB)
+        , Test.test "roundTrip is idempotent" (\_ ->
+            let
+                once = roundTrip initial
+                twice = roundTrip once
+            in
+            Test.equal once twice)
+        ]
+    , Test.suite "event dispatch after roundtrip"
+        -- Simulates the end-to-end flow: user clicks, server
+        -- loads session, applies update, saves session, renders.
+        [ Test.test "dispatch Navigate after roundtrip" (\_ ->
+            let
+                loaded = roundTrip initial
+                next = updateModel (Navigate DashboardPage) loaded
+            in
+            Test.equal DashboardPage next.page)
+        , Test.test "state propagates across multiple rt cycles" (\_ ->
+            let
+                m1 = roundTrip initial
+                m2 = roundTrip (updateModel (Navigate DashboardPage) m1)
+                m3 = roundTrip (updateModel (Tick 1) m2)
+                m4 = roundTrip (updateModel (Tick 2) m3)
+            in
+            Test.equal 2 m4.tickCount)
+        ]
+    , Test.suite "invariants"
+        [ Test.test "tickCount monotonically non-decreasing" (\_ ->
+            let
+                m1 = updateModel (Tick 10) initial
+                m2 = updateModel (Tick 20) m1
+            in
+            Test.isTrue (m2.tickCount >= m1.tickCount))
+        , Test.test "Navigate alone does not tick" (\_ ->
+            let
+                m = run [ Navigate DashboardPage, Navigate SettingsPage ] initial
+            in
+            Test.equal 0 m.tickCount)
+        , Test.test "SetActive does not touch page" (\_ ->
+            let
+                m = run [ Navigate DashboardPage, SetActive False, SetActive True ] initial
+            in
+            Test.equal DashboardPage m.page)
+        ]
+    ]

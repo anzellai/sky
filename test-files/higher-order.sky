@@ -1,0 +1,26 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Std.Log exposing (println)
+
+apply f x = f x
+
+double n = n * 2
+
+square n = n * n
+
+main =
+    let
+        numbers = [ 1, 2, 3, 4, 5 ]
+        doubled = List.map double numbers
+        squared = List.map square numbers
+        applied = apply double 21
+        _ = println ("Doubled: " ++ showList doubled)
+        _ = println ("Squared: " ++ showList squared)
+    in
+        println ("apply double 21 = " ++ String.fromInt applied)
+
+showList items =
+    "[" ++ String.join ", " (List.map String.fromInt items) ++ "]"

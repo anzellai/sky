@@ -1,8 +1,8 @@
 # CLAUDE.md — Sky Language Project
 
-This is a [Sky](https://github.com/anzellai/sky) project. Sky is a pure functional language inspired by Elm, compiling to Go. The compiler is fully self-hosted (written in Sky, ~6MB native binary, zero Node/TypeScript dependencies).
+This is a [Sky](https://github.com/anzellai/sky) project. Sky is a pure functional language inspired by Elm, compiling to Go. The compiler is written in Haskell (GHC 9.4+) and ships as a single `sky` binary. Users only need the `sky` binary and Go 1.21+ — no Haskell toolchain required to use Sky.
 
-**Core principle: if it compiles, it works.** All side effects flow through `Task`. No runtime panics, no nil leakage, no partial bindings.
+**Core principle: if it compiles, it works.** Verified at v0.9 against 23-item adversarial soundness audit (soundness + security + cleanup + tooling). All side effects flow through `Task`. `sky check` invokes `go build` on the emitted output, so any shape mismatch surfaces at check time. No runtime panics from well-typed Sky code, no nil leakage, no silent numeric coercion.
 
 ## Quick Reference
 
@@ -12,6 +12,7 @@ sky build src/Main.sky    # Compile to Go binary (output: sky-out/app)
 sky run src/Main.sky      # Build and run
 sky check src/Main.sky    # Type-check without compiling (cross-module ADT + alias resolution)
 sky fmt src/Main.sky      # Format code (Elm-style: 4-space indent, leading commas)
+sky test tests/MyTest.sky # Run a test module (exposes `tests : List Test`)
 sky add <package>         # Add dependency + generate bindings + update sky.toml
 sky remove <package>      # Remove dependency from sky.toml + clean cache
 sky install               # Install all deps + auto-generate missing bindings
@@ -21,6 +22,40 @@ sky lsp                   # Start Language Server
 sky clean                 # Remove build artifacts
 sky --version             # Show version
 ```
+
+## Testing (Sky.Test)
+
+A test module exposes a single `tests : List Test` value. `sky test <path>` compiles it alongside your project and runs every test, failing with exit 1 on any assertion failure.
+
+```elm
+module StringTest exposing (tests)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Test as Test exposing (Test)
+
+
+tests : List Test
+tests =
+    [ Test.test "trim removes outer spaces" (\_ ->
+        Test.equal "hi" (String.trim "  hi  "))
+    , Test.test "toInt rejects junk" (\_ ->
+        Test.err (String.toInt "abc"))
+    , Test.test "contains finds substring" (\_ ->
+        Test.isTrue (String.contains "ell" "hello"))
+    ]
+```
+
+Assertions: `equal`, `notEqual`, `ok`, `err`, `expectErrorKind`, `isTrue`, `isFalse`, `fail`, `pass`.
+
+Non-regression rules (enforced by `sky verify`):
+
+- No `Result String a` or `Task String a` in any public surface — use `Result Error a` / `Task Error a`.
+- No `Std.IoError` (deleted), no `RemoteData` (deleted).
+- Every bug you fix must land with a regression test in `tests/`.
+- `sky check` is a full soundness gate (runs `go build` on the generated Go). Don't work around check failures by disabling it.
+- Secrets (`Auth.signToken` / `Auth.verifyToken`) take `String` and reject short keys (< 32 bytes) — don't stringify a `Maybe` or `Dict` into an auth secret.
+
 
 ## Language Syntax
 
@@ -62,7 +97,7 @@ main =
             |> List.map (\x -> x * 2)  -- pipeline operator
             |> List.filter (\x -> x > 3)
     in
-    println "Result:" (String.fromInt updated.x)
+    println ("Result: " ++ String.fromInt updated.x)
 ```
 
 ### Types
@@ -128,7 +163,7 @@ pipeline =
 
 -- Execute at the boundary
 result = Task.perform pipeline
--- result : Result String String
+-- result : Result Error String
 ```
 
 **Task API:**
@@ -165,13 +200,31 @@ squares = List.parallelMap (\n -> n * n) [ 1, 2, 3, 4, 5 ]
 
 ## Go Interop (FFI)
 
-Sky can import any Go package. The compiler auto-generates type-safe Task-wrapped bindings at build time:
+Sky can import any Go package. The compiler auto-generates type-safe
+**Result-wrapped** bindings at build time. Every FFI call returns
+`Result Error T` because the FFI boundary is a trust boundary —
+Go can panic, return nil, or fail in ways Sky's type checker can't
+see. The Result wrapping forces explicit handling at every call site
+(like Rust's `?`). When in doubt, prefer Sky's stdlib.
 
 ```elm
 import Net.Http as Http                    -- net/http
 import Github.Com.Google.Uuid as Uuid      -- github.com/google/uuid
 import Database.Sql as Sql                 -- database/sql
 import Drivers.Sqlite as _ exposing (..)   -- side-effect import (Go driver)
+import Sky.Core.Result as Result
+import Sky.Core.Error as Error
+import Std.Log exposing (println)
+
+
+-- Typical pattern: case-match every FFI call
+example =
+    case Uuid.newString of
+        Ok id ->
+            println id
+
+        Err e ->
+            println ("uuid failed: " ++ Error.toString e)
 ```
 
 ### Naming Convention
@@ -186,16 +239,35 @@ import Drivers.Sqlite as _ exposing (..)   -- side-effect import (Go driver)
 
 ### Return Type Mapping
 
+Every FFI call returns `Result Error T`. The Ok side's shape depends
+on what Go returns:
+
 | Go Return | Sky Return |
 |-----------|------------|
+| `T` (single, no error) | `Result Error T` |
+| `*T` (single pointer, no error) | `Result Error T` (opaque; nil-deref → Err via recover) |
 | `(T, error)` | `Result Error T` |
+| `(T, *NamedErr)` where NamedErr implements error | `Result Error T` |
 | `(T1, T2, error)` | `Result Error (Tuple2 T1 T2)` |
 | `error` | `Result Error Unit` |
-| `(T, bool)` | `Maybe T` (comma-ok pattern) |
-| `*string`, `*int` | `Maybe String`, `Maybe Int` |
-| `*sql.DB` | `Db` (opaque handle) |
-| `[]string` | `List String` |
-| `map[string]int` | `Map String Int` |
+| `(T, bool)` (comma-ok) | `Result Error (Maybe T)` |
+| `*sql.DB` | `Result Error Db` (opaque handle) |
+| `[]string` | `Result Error (List String)` |
+| `map[string]int` | `Result Error (Dict String Int)` |
+| void | `Result Error Unit` |
+
+For `(T, bool)` comma-ok returns you handle two layers: the Result
+captures boundary failure (panic, type mismatch); the Maybe captures
+Go's "nothing here" signal (comma-ok false).
+
+Bare `*T` returns aren't auto-wrapped in `Maybe` — many Go SDKs
+chain pointer returns through builders/getters and wrapping every
+hop in `Maybe` would break the chain. Genuine "may be nil" is
+expressed via `(T, error)` or `(T, bool)` in idiomatic Go.
+
+Method calls on a nil opaque return `Err(ErrFfi "nil receiver: ...")`
+instead of panicking — every method/getter/setter wrapper has a
+nil-receiver guard.
 
 ### Opaque Structs (Builder Pattern)
 
@@ -207,24 +279,89 @@ All Go structs are opaque types in Sky. Use constructors + pipeline setters:
 -- Setter:     Pkg.typeNameSetFieldName value receiver  (pipeline-friendly)
 
 -- Example: build a Stripe checkout session
-params =
+-- Each setter returns Result Error TypeName, so chain via Result.andThen.
+result =
     Stripe.newCheckoutSessionParams ()
-        |> Stripe.checkoutSessionParamsSetMode "payment"
-        |> Stripe.checkoutSessionParamsSetSuccessURL url
-        |> Stripe.checkoutSessionParamsSetCustomer customerId
-
-result = Session.new params
+        |> Result.andThen (Stripe.checkoutSessionParamsSetMode "payment")
+        |> Result.andThen (Stripe.checkoutSessionParamsSetSuccessURL url)
+        |> Result.andThen (Stripe.checkoutSessionParamsSetCustomer customerId)
+        |> Result.andThen Session.new
 ```
 
 Pointer fields (`*string`, `*int64`, `*bool`) are handled automatically — pass the plain value.
 
-### Error Handling
+### Error Handling — `Sky.Core.Error` (v0.9+ canonical)
+
+Since v0.9 every fallible operation uses `Sky.Core.Error`, a structured
+ADT with eleven kinds. No more `Result String` or `Task String` in
+public APIs.
 
 ```elm
-case Http.listenAndServe ":8000" handler of
-    Ok _ -> println "Started"
-    Err e -> println "Failed:" (errorToString e)
+import Sky.Core.Error as Error exposing (Error(..), ErrorKind(..))
+
+-- Type: Error ErrorKind ErrorInfo
+-- ErrorKind: Io | Network | Ffi | Decode | Timeout | NotFound
+--         | PermissionDenied | InvalidInput | Conflict | Unavailable | Unexpected
+
+-- Constructors:
+Error.io : String -> Error
+Error.network : String -> Error
+Error.ffi : String -> Error
+Error.decode : String -> Error
+Error.timeout : String -> Error
+Error.notFound : Error
+Error.permissionDenied : Error
+Error.invalidInput : String -> Error
+Error.conflict : String -> Error
+Error.unavailable : String -> Error
+Error.unexpected : String -> Error
+
+-- Builders:
+Error.withMessage : String -> Error -> Error
+Error.withDetails : ErrorDetails -> Error -> Error
+Error.toString : Error -> String
+Error.isRetryable : Error -> Bool
 ```
+
+**Standard library kernels return Error directly**:
+
+```elm
+-- Db.exec : Db -> String -> List any -> Result Error Int
+-- Http.get : String -> Task Error Response
+-- File.readFile : String -> Task Error String
+
+-- In your Lib wrappers, pass the error through — DO NOT re-wrap:
+exec queryStr args =
+    case Db.exec dbConn queryStr args of
+        Ok _ ->
+            Ok ()
+        Err e ->
+            Err e    -- already a Sky.Core.Error
+```
+
+**In `update` handlers**: pattern-match on kind. Log AND set UI state:
+
+```elm
+handleSignIn model =
+    case Auth.authenticateUser model.email model.password of
+        Ok user ->
+            ( { model | currentUser = Just user, page = Home }, Cmd.none )
+
+        Err (Error kind info) ->
+            let
+                _ = println ("[AUTH ERROR] " ++ info.message)
+                msg =
+                    case kind of
+                        PermissionDenied -> info.message
+                        InvalidInput -> info.message
+                        _ -> "Service unavailable"
+            in
+                ( { model | error = msg }, Cmd.none )
+```
+
+See `docs/errors/error-system.md` in the Sky repo for the full reference.
+
+See `examples/12-skyvote` for the canonical end-to-end reference.
 
 ## Standard Library — Complete API
 
@@ -547,8 +684,8 @@ object : List (String, Value) -> Value
 ### Sky.Core.Json.Decode
 
 ```elm
-decodeString : Decoder a -> String -> Result String a
-decodeValue : Decoder a -> Value -> Result String a
+decodeString : Decoder a -> String -> Result Error a
+decodeValue : Decoder a -> Value -> Result Error a
 string : Decoder String
 int : Decoder Int
 float : Decoder Float
@@ -603,7 +740,7 @@ batch : List (Cmd msg) -> Cmd msg
 `Cmd.perform` runs a Task in a background goroutine. When it completes, the result is dispatched as a Msg through the full update/view/diff/SSE cycle:
 
 ```elm
-type Msg = FetchData | DataLoaded (Result String String)
+type Msg = FetchData | DataLoaded (Result Error String)
 
 update msg model =
     case msg of
@@ -643,17 +780,17 @@ every : Int -> msg -> Sub msg    -- timer subscription, fires msg every N millis
 ### Sky.Core.Time
 
 ```elm
-sleep : Int -> Task String ()    -- sleep for N milliseconds (use with Cmd.perform for async delays)
-now : () -> Task String Int      -- current Unix time in milliseconds
+sleep : Int -> Task Error ()    -- sleep for N milliseconds (use with Cmd.perform for async delays)
+now : () -> Task Error Int      -- current Unix time in milliseconds
 ```
 
 ### Sky.Core.Random
 
 ```elm
-int : Int -> Int -> Task String Int       -- random int in [lo, hi] range
-float : Float -> Float -> Task String Float
-choice : List a -> Task String a          -- random element from list
-shuffle : List a -> Task String (List a)  -- Fisher-Yates shuffle
+int : Int -> Int -> Task Error Int       -- random int in [lo, hi] range
+float : Float -> Float -> Task Error Float
+choice : List a -> Task Error a          -- random element from list
+shuffle : List a -> Task Error (List a)  -- Fisher-Yates shuffle
 ```
 
 ### Std.Html
@@ -795,19 +932,19 @@ Math.max 3 7           -- 7
 ### Sky.Core.Time (mixed pure + Task)
 
 ```elm
-Time.now ()            -- Task String Int (Unix millis)
+Time.now ()            -- Task Error Int (Unix millis)
 Time.format "2006-01-02" millis  -- pure: "2025-03-25"
-Time.parse "2006-01-02" "2025-03-25"  -- Result String Int
+Time.parse "2006-01-02" "2025-03-25"  -- Result Error Int
 Time.year millis, Time.month, Time.day, Time.hour, Time.minute, Time.second
-Time.sleep 1000        -- Task String () (sleep 1 second)
+Time.sleep 1000        -- Task Error () (sleep 1 second)
 ```
 
 ### Sky.Core.Http (Task)
 
 ```elm
-Http.get "https://api.example.com/data"     -- Task String Response
-Http.post url body                            -- Task String Response
-Http.request { method, url, headers, body }   -- Task String Response
+Http.get "https://api.example.com/data"     -- Task Error Response
+Http.post url body                            -- Task Error Response
+Http.request { method, url, headers, body }   -- Task Error Response
 
 -- Response = { status : Int, body : String, headers : List (String, String) }
 ```
@@ -841,10 +978,10 @@ Crypto.hmacSha256 "key" "msg"  -- HMAC signature
 ### Sky.Core.Random (Task)
 
 ```elm
-Random.int 1 100           -- Task String Int
-Random.float ()             -- Task String Float (0.0 to 1.0)
-Random.choice ["a","b","c"] -- Task String (Maybe String)
-Random.shuffle [1,2,3,4]    -- Task String (List Int)
+Random.int 1 100           -- Task Error Int
+Random.float ()             -- Task Error Float (0.0 to 1.0)
+Random.choice ["a","b","c"] -- Task Error (Maybe String)
+Random.shuffle [1,2,3,4]    -- Task Error (List Int)
 ```
 
 ### Sky.Http.Server
@@ -1030,17 +1167,25 @@ main =
     let
         _ = loadEnv ""   -- load .env file
         port = Maybe.withDefault "8000" (getEnv "PORT")
-        r = Mux.newRouter ()
-        _ = Mux.routerHandleFunc r "/" indexHandler
     in
-    Http.listenAndServe (":" ++ port) r
+    -- Each FFI call returns Result; chain through Result.andThen
+    -- so the first failure short-circuits the rest.
+    Mux.newRouter ()
+        |> Result.andThen (\r ->
+            Mux.routerHandleFunc r "/" indexHandler
+                |> Result.andThen (\_ -> Http.listenAndServe (":" ++ port) r))
+        |> Result.withDefault ()
 
 indexHandler w req =
-    let
-        header = Http.responseWriterHeader w
-        _ = Http.headerSet header "Content-Type" "text/html"
-    in
-    Io.writeString w (render (div [] [ text "Hello" ]))
+    case Http.responseWriterHeader w of
+        Ok header ->
+            Http.headerSet header "Content-Type" "text/html"
+                |> Result.andThen (\_ ->
+                    Io.writeString w (render (div [] [ text "Hello" ])))
+                |> Result.withDefault ()
+
+        Err _ ->
+            ()
 ```
 
 ### 3. Sky.Live App (Server-Driven UI with SSE)
@@ -1110,47 +1255,64 @@ Go package paths map to PascalCase Sky module names:
 
 ### Calling Conventions
 
+Every FFI call returns `Result Error T`. Pattern-match or chain via
+`Result.andThen` / `Result.withDefault` at every call site.
+
 ```elm
--- Zero-arg Go functions/variables: pass unit ()
-args = Os.stdin ()           -- os.Stdin
-uuid = Uuid.newString ()     -- uuid.NewString()
-now = Time.now ()            -- time.Now()
+-- Zero-arg Go functions/variables: no () in Sky (returns Result)
+case Uuid.newString of
+    Ok id -> useId id
+    Err e -> handleError e
 
--- Go methods: first arg is receiver
-Mux.routerHandleFunc router "/path" handler   -- router.HandleFunc("/path", handler)
-Sql.dBClose db                                -- db.Close()
-Http.responseWriterHeader w                   -- w.Header()
+-- Or with Result.withDefault for "bail to a default"
+id = Result.withDefault "anonymous" Uuid.newString
 
--- Go struct fields: accessor function
-Http.requestBody req         -- req.Body
-Http.requestUrl req          -- req.URL
+-- Go methods: first arg is receiver. Returns Result.
+case Mux.routerHandleFunc router "/path" handler of
+    Ok _ -> ...
+    Err e -> ...
 
--- Go constants: accessed as values
-Http.statusOK                -- http.StatusOK
+-- Go struct fields: accessor function returns Result
+case Http.requestUrl req of
+    Ok url -> ...
+    Err e -> ...
 
--- Go package variables: getter + setter
-key = Stripe.key ()          -- stripe.Key (getter, returns current value)
-Stripe.setKey "sk_test_..."  -- stripe.Key = "sk_test_..." (setter)
+-- Go constants: accessed as values (still Result-wrapped)
+status = Result.withDefault 200 Http.statusOK
 
--- Go struct construction: use opaque constructors + setters
-params =
-    Stripe.newCheckoutSessionParams ()                 -- &stripe.CheckoutSessionParams{}
-        |> Stripe.checkoutSessionParamsSetMode "payment"  -- params.Mode = stripe.String("payment")
-        |> Stripe.checkoutSessionParamsSetCustomer id     -- params.Customer = stripe.String(id)
+-- Go package variables: getter + setter (both Result)
+key = Result.withDefault "" (Stripe.key ())
+case Stripe.setKey "sk_test_..." of
+    Ok _ -> ...
+    Err e -> ...
+
+-- Go struct construction: chain setters via Result.andThen
+-- Each setter returns Result Error TypeName.
+result =
+    Stripe.newCheckoutSessionParams ()
+        |> Result.andThen (Stripe.checkoutSessionParamsSetMode "payment")
+        |> Result.andThen (Stripe.checkoutSessionParamsSetCustomer id)
 
 -- Nested structs: build inner first, then set on outer
-priceData = Stripe.newCheckoutSessionLineItemPriceDataParams ()
-    |> Stripe.checkoutSessionLineItemPriceDataParamsSetCurrency "gbp"
-    |> Stripe.checkoutSessionLineItemPriceDataParamsSetUnitAmount 1000
-lineItem = Stripe.newCheckoutSessionLineItemParams ()
-    |> Stripe.checkoutSessionLineItemParamsSetPriceData priceData
+priceDataResult =
+    Stripe.newCheckoutSessionLineItemPriceDataParams ()
+        |> Result.andThen (Stripe.checkoutSessionLineItemPriceDataParamsSetCurrency "gbp")
+        |> Result.andThen (Stripe.checkoutSessionLineItemPriceDataParamsSetUnitAmount 1000)
 
--- Variadic args: pass as List
-Exec.command "sh" ["-c", "echo hello"]   -- exec.Command("sh", "-c", "echo hello")
-
--- []byte args: use String.toBytes
-Sha256.sum256 (String.toBytes data)
+lineItemResult =
+    priceDataResult
+        |> Result.andThen (\priceData ->
+            Stripe.newCheckoutSessionLineItemParams ()
+                |> Result.andThen (Stripe.checkoutSessionLineItemParamsSetPriceData priceData))
 ```
+
+**Why all the Results?** The FFI boundary can fail in ways Sky's
+type system can't see (Go panics, nil pointers, missing config,
+goroutine leaks). Every wrapper catches these via panic recovery
+and returns `Err(ErrFfi(...))` instead of crashing. See
+`docs/ffi/boundary-philosophy.md` for the full reasoning. **Prefer
+Sky's stdlib** (`Std.Crypto`, `Std.Time`, `Std.Http`, etc.) where
+available — those don't pay the Result tax for genuinely-pure ops.
 
 **Important**: Never pass Sky records `{ field = value }` as Go struct parameters. Always use the `newTypeName ()` constructor + `typeNameSetField value` setters. Sky records are `map[string]any` at runtime; Go functions expect typed struct pointers.
 
@@ -1164,25 +1326,28 @@ import Modernc.Org.Sqlite as _    -- registers "sqlite" driver for database/sql
 
 ### Handler Functions (HTTP)
 
-Go HTTP handlers take `(http.ResponseWriter, *http.Request)`:
+Go HTTP handlers take `(http.ResponseWriter, *http.Request)`. Each
+FFI call is a Result; chain via `Result.andThen` and let the first
+`Err` short-circuit:
 
 ```elm
 handler : ResponseWriter -> Request -> Unit
 handler w req =
-    let
-        header = Http.responseWriterHeader w
-        _ = Http.headerSet header "Content-Type" "text/html"
-        _ = Io.writeString w "Hello"
-    in
-    ()
+    Http.responseWriterHeader w
+        |> Result.andThen (\header -> Http.headerSet header "Content-Type" "text/html")
+        |> Result.andThen (\_ -> Io.writeString w "Hello")
+        |> Result.withDefault ()
 
 -- Cookie management
-token = case Http.requestCookie req "session" of
-    Ok cookie -> Http.cookieValue cookie
-    Err _ -> ""
+token =
+    case Http.requestCookie req "session" of
+        Ok cookie ->
+            Result.withDefault "" (Http.cookieValue cookie)
+        Err _ ->
+            ""
 
 -- Form values
-email = Http.requestFormValue req "email"
+email = Result.withDefault "" (Http.requestFormValue req "email")
 
 -- Redirect
 Http.redirect w req "/login" 302
@@ -1537,3 +1702,272 @@ userDecoder =
 
 result = Decode.decodeString userDecoder jsonString
 ```
+
+
+---
+
+## New Compiler Additions (Haskell-based Sky compiler)
+
+The following features are available in the new Haskell-based compiler.
+Everything in the sections above still applies — this appends new surface.
+
+### Safety Guarantees (on by default)
+
+Every Sky program gets these out of the box with zero configuration:
+
+| Attack vector | Defence |
+|---------------|---------|
+| SQL injection | `Std.Db` validates identifiers (Unicode-aware allow-list) and ANSI-quotes them; values always go through parameter placeholders |
+| XSS | `String.htmlEscape`, auto-escape in `Sky.Live` VNode renderer, `X-Content-Type-Options: nosniff`, `isUrl` rejects `javascript:` / `data:` |
+| CSRF / Clickjacking | `X-Frame-Options: SAMEORIGIN`, `Referrer-Policy: strict-origin-when-cross-origin` sent by default |
+| Path traversal | `Path.safeJoin root rel` |
+| DoS (body size) | HTTP server caps request body at 32 MiB → 413; Live event body capped at 1 MiB; `File.readFile` caps at 100 MiB |
+| DoS (timeouts) | ReadHeaderTimeout 10s, ReadTimeout 30s, WriteTimeout 30s, IdleTimeout 120s; HTTP client 30s |
+| DoS (request rate) | `RateLimit.allow name key cap perSec` token-bucket |
+| Command injection | `Process.run` uses argv; never shell interpretation |
+| Timing attacks | `Crypto.constantTimeEqual` for comparing secrets; bcrypt is already constant-time |
+| Weak randomness | `Crypto.randomBytes`/`randomToken`, `Uuid.v4`/`v7`, Sky.Live session IDs all use `crypto/rand` |
+| Password brute force | bcrypt cost 12; `Auth.passwordStrength` validates ≥8 chars + letter + digit |
+| Panic cascading | Every HTTP/Live/FFI handler wraps in `recover()` — returns 500/Err, process never crashes |
+| Unicode correctness | `String.length/slice/left/right` are rune-based; `String.normalize` (NFC) + `graphemes` (UAX #29) available |
+
+### New Standard Library Modules
+
+#### `Std.Log` — structured logging
+
+```elm
+import Std.Log as Log
+
+Log.info "server started"              -- human format: <timestamp> INFO server started
+Log.warn "rate-limit hit"              -- goes to stderr
+Log.error "db connection lost"         -- goes to stderr
+Log.with "request completed"           -- with key-value context
+    (Dict.fromList [("method", "GET"), ("status", 200)])
+```
+
+Configure via env vars:
+- `SKY_LOG_LEVEL` = `debug|info|warn|error` (default info)
+- `SKY_LOG_FORMAT` = `json` to emit one-line JSON per record
+
+#### `Std.Env` — type-safe environment access
+
+```elm
+import Std.Env as Env
+
+Env.get "SECRET_KEY"                   -- Maybe String (distinguishes unset vs empty)
+Env.getOrDefault "PORT" "8080"         -- String with fallback
+Env.getInt "PORT" 8080                 -- Int with fallback (parses)
+Env.getBool "DEBUG" False              -- accepts true/yes/1/on vs false/no/0/off
+Env.require "DATABASE_URL"             -- Task Error String — fail-fast at startup
+```
+
+#### `Sky.Core.Uuid`
+
+```elm
+import Sky.Core.Uuid as Uuid
+
+Uuid.v4        -- Task Error String — RFC 4122 random (crypto/rand)
+Uuid.v7        -- Task Error String — time-ordered (better for DB primary keys)
+Uuid.parse s   -- Result Error String — canonicalise or reject
+```
+
+#### `Sky.Http.Middleware`
+
+```elm
+import Sky.Http.Server as Server
+import Sky.Http.Middleware as M
+
+main =
+    Server.listen 8080
+        [ Server.get "/" (M.withLogging (M.withCors ["*"] homeHandler))
+        , Server.get "/admin" (M.withBasicAuth "alice" "secret" adminHandler)
+        , Server.post "/api" (M.withRateLimit "api" 100 10 apiHandler)  -- 100 burst, 10/sec refill
+        ]
+```
+
+#### `Sky.Http.RateLimit`
+
+```elm
+import Sky.Http.RateLimit as RL
+RL.allow "login" userEmail 5 1   -- 5 attempts, 1/sec refill → Bool
+```
+
+#### `Std.Html` / `Std.Css` / `Std.Live` — web framework
+
+```elm
+import Std.Html exposing (..)
+import Std.Html.Attributes exposing (..)
+import Std.Live exposing (app, route)
+import Std.Live.Events exposing (onClick)
+
+type Msg = Increment | Decrement
+type alias Model = { count : Int }
+
+init _ = ({ count = 0 }, Cmd.none)
+
+update msg model =
+    case msg of
+        Increment -> ({ model | count = model.count + 1 }, Cmd.none)
+        Decrement -> ({ model | count = model.count - 1 }, Cmd.none)
+
+view model =
+    div [ class "app" ]
+        [ h1 [] [ text (String.fromInt model.count) ]
+        , button [ onClick Decrement ] [ text "-" ]
+        , button [ onClick Increment ] [ text "+" ]
+        ]
+
+main =
+    app
+        { init = init, update = update, view = view
+        , subscriptions = \_ -> Sub.none
+        , routes = [ route "/" () ], notFound = ()
+        }
+```
+
+SSE subscriptions work out of the box:
+
+```elm
+subscriptions model =
+    case model.page of
+        CounterPage -> Sub.every 1000 Tick   -- tick every second via SSE
+        _ -> Sub.none
+```
+
+#### `Sky.Ffi` — safe FFI to arbitrary Go packages
+
+Sky's FFI has a strict effect boundary enforced at runtime:
+
+```elm
+import Sky.Ffi as Ffi
+import Sky.Core.Task as Task
+
+-- Effect-unknown (auto-generated): must use callTask
+Task.perform (Ffi.callTask "github.com/pkg.DoThing" [arg1, arg2])
+
+-- Hand-audited pure (only via rt.RegisterPure in hand-written ffi/*.go)
+Ffi.callPure "mypkg.reverse" [str]   -- Result Error a
+```
+
+Workflow:
+```bash
+sky add github.com/stripe/stripe-go/v82     # auto-fetches + generates bindings
+```
+
+The generator:
+- Emits `ffi/<slug>_bindings.go` with `rt.Register` calls
+- Auto-discovers + imports all referenced Go packages (stdlib, parent packages)
+- Every binding wraps in panic-recover → Err; never crashes process
+- Generics (`Fetch[T]`) genuinely can't be realised — SKIPPED with clear comment
+
+### New String Functions (Unicode-correct)
+
+```elm
+String.length "世界"          -- 2 (runes, not bytes)
+String.graphemes "👨‍👩‍👧"    -- 1 (UAX #29 grapheme cluster, emoji family = 1 char)
+String.normalize s            -- NFC canonical form (web standard)
+String.normalizeNFD s         -- decomposed form (for diacritic-insensitive search)
+String.equalFold a b          -- case-insensitive Unicode equality
+String.casefold s             -- Unicode-aware lowercase for comparison
+String.isValid s              -- True iff valid UTF-8
+String.slugify s              -- URL-safe, Unicode-preserving
+String.htmlEscape s           -- & < > " ' → HTML entities
+String.truncate n s           -- cut at n graphemes (never mid-emoji)
+String.ellipsize n s          -- truncate + "…"
+String.isEmail s              -- RFC 5322 syntactic check
+String.isUrl s                -- rejects javascript:/data: (XSS-safe)
+String.trimStart / trimEnd    -- Unicode whitespace (NBSP, ideographic, etc.)
+```
+
+### New Time Functions
+
+```elm
+Time.formatISO8601 ms    -- "2026-04-12T14:30:00.000Z" (JSON-friendly)
+Time.formatRFC3339 ms    -- like ISO but with nanos
+Time.formatHTTP ms       -- HTTP-date header format
+Time.parseISO8601 str    -- Result Error Int (unix millis)
+Time.addMillis delta ms
+Time.diffMillis later earlier
+```
+
+### New Crypto Functions
+
+```elm
+Crypto.sha256 "hello"                    -- hex digest
+Crypto.sha512 "hello"
+Crypto.hmacSha256 "secret" "message"     -- for signing cookies/tokens
+Crypto.constantTimeEqual a b             -- use for comparing secrets, NOT ==
+Crypto.randomBytes 16                    -- Task Error String, hex
+Crypto.randomToken 32                    -- Task Error String, URL-safe base64
+```
+
+### New Path Safety
+
+```elm
+Path.safeJoin "/var/www" "public/index.html"    -- Ok "/var/www/public/index.html"
+Path.safeJoin "/var/www" "../../etc/passwd"     -- Err "safeJoin: path escapes root"
+```
+
+### `Std.Db` — SQLite + PostgreSQL
+
+Auto-detects driver from connection string:
+
+```elm
+import Std.Db as Db
+
+-- SQLite
+db = Db.connect ":memory:"
+db = Db.connect "/tmp/app.db"
+
+-- PostgreSQL (pgx driver)
+db = Db.connect "postgres://user:pw@localhost:5432/mydb?sslmode=disable"
+
+-- All identifiers validated + ANSI-quoted; values parameterised
+Db.insertRow db "users" (Dict.fromList [("email", "alice@example.com")])
+Db.query db "SELECT * FROM users WHERE email = ?" ["alice@example.com"]
+Db.getById db "users" 42
+Db.updateById db "users" 42 (Dict.fromList [("role", "admin")])
+```
+
+### `Std.Auth`
+
+```elm
+import Std.Auth as Auth
+
+Auth.register db email password          -- bcrypt cost 12, creates users table
+Auth.login db email password             -- returns user row on success
+Auth.hashPassword pw                     -- Result Error String (bcrypt, min 8, max 72 bytes)
+Auth.passwordStrength pw                 -- Result Error () — validator
+Auth.signToken secret claims expirySeconds -- HS256 JWT
+Auth.verifyToken secret token            -- Result Error (Dict String any)
+```
+
+### Editor Integration
+
+VS Code / Neovim / Emacs / Zed / Helix / Sublime all work via `sky lsp`.
+Configure your editor to run `sky lsp` for `.sky` files.
+The server provides:
+- Diagnostics on save (type errors, parse errors)
+- Hover with inferred types
+- Completion (top-level defs + stdlib)
+
+### Incremental Builds
+
+Build artifacts cached in `.skycache/`. Source-hash-based: if no source files
+have changed, Sky skips parse/canonicalise/type-check and reuses main.go.
+Set `SKY_DCE=0` to disable dead-code elimination for debugging.
+
+### FFI: How Generated Bindings Stay Safe
+
+The generator uses **two runtime registries**:
+- `rt.Register(name, fn)` — effect-unknown (default); only `Ffi.callTask`
+- `rt.RegisterPure(name, fn)` — hand-audited pure; allows `Ffi.callPure`
+
+Every auto-generated binding is effect-unknown. You get `Err "use callTask"`
+if you try `callPure` on it — the runtime itself enforces Sky's effect
+boundary. To promote an audited Go function to pure, write a hand-crafted
+`ffi/<pkg>_pure.go` that calls `rt.RegisterPure` — it shadows the
+auto-generated binding.
+
+All FFI calls go through `defer/recover`: any Go panic becomes a Sky `Err`,
+never a process crash.
