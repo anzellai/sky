@@ -27,9 +27,6 @@ jobs:
           - os: ubuntu-24.04-arm
             artifact: sky-linux-arm64
             ext: ''
-          - os: macos-13
-            artifact: sky-darwin-x64
-            ext: ''
           - os: macos-latest
             artifact: sky-darwin-arm64
             ext: ''
