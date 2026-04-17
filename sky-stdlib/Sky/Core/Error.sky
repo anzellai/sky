@@ -15,18 +15,22 @@
 -- status, JSON decode path, FFI panic stack — for debuggers and
 -- higher-level middleware. They are optional; every constructor
 -- below sets `details = Nothing` by default.
-
 module Sky.Core.Error exposing (..)
-
-
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.String as String
 import Sky.Core.Maybe exposing (Maybe(..))
 
+type alias ErrorInfo =
+    { message : String, details : Maybe ErrorDetails }
+
+type alias PanicInfo =
+    { message : String, stack : List String }
+
+type alias TypeInfo =
+    { expected : String, actual : String }
 
 type Error
     = Error ErrorKind ErrorInfo
-
 
 type ErrorKind
     = Io
@@ -41,13 +45,6 @@ type ErrorKind
     | Unavailable
     | Unexpected
 
-
-type alias ErrorInfo =
-    { message : String
-    , details : Maybe ErrorDetails
-    }
-
-
 type ErrorDetails
     = FfiPanic PanicInfo
     | TypeMismatch TypeInfo
@@ -56,70 +53,68 @@ type ErrorDetails
     | Custom String
 
 
-type alias PanicInfo =
-    { message : String
-    , stack : List String
-    }
-
-
-type alias TypeInfo =
-    { expected : String
-    , actual : String
-    }
-
-
 -- ── Constructors ────────────────────────────────────────────────────
-
 mkInfo : String -> ErrorInfo
-mkInfo msg = { message = msg, details = Nothing }
+mkInfo msg =
+    { message = msg, details = Nothing }
 
 
 io : String -> Error
-io msg = Error Io (mkInfo msg)
+io msg =
+    Error Io (mkInfo msg)
 
 
 network : String -> Error
-network msg = Error Network (mkInfo msg)
+network msg =
+    Error Network (mkInfo msg)
 
 
 ffi : String -> Error
-ffi msg = Error Ffi (mkInfo msg)
+ffi msg =
+    Error Ffi (mkInfo msg)
 
 
 decode : String -> Error
-decode msg = Error Decode (mkInfo msg)
+decode msg =
+    Error Decode (mkInfo msg)
 
 
 timeout : Error
-timeout = Error Timeout (mkInfo "operation timed out")
+timeout =
+    Error Timeout (mkInfo "operation timed out")
 
 
 notFound : Error
-notFound = Error NotFound (mkInfo "not found")
+notFound =
+    Error NotFound (mkInfo "not found")
 
 
 permissionDenied : Error
-permissionDenied = Error PermissionDenied (mkInfo "permission denied")
+permissionDenied =
+    Error PermissionDenied (mkInfo "permission denied")
 
 
 invalidInput : String -> Error
-invalidInput msg = Error InvalidInput (mkInfo msg)
+invalidInput msg =
+    Error InvalidInput (mkInfo msg)
 
 
 conflict : String -> Error
-conflict msg = Error Conflict (mkInfo msg)
+conflict msg =
+    Error Conflict (mkInfo msg)
 
 
 unavailable : String -> Error
-unavailable msg = Error Unavailable (mkInfo msg)
+unavailable msg =
+    Error Unavailable (mkInfo msg)
 
 
 unexpected : String -> Error
-unexpected msg = Error Unexpected (mkInfo msg)
+unexpected msg =
+    Error Unexpected (mkInfo msg)
 
 
 -- ── Modifiers ───────────────────────────────────────────────────────
-
 withMessage : String -> Error -> Error
 withMessage msg err =
     case err of
@@ -135,21 +130,41 @@ withDetails d err =
 
 
 -- ── Helpers ─────────────────────────────────────────────────────────
-
 kindLabel : ErrorKind -> String
 kindLabel k =
     case k of
-        Io               -> "IO"
-        Network          -> "Network"
-        Ffi              -> "FFI"
-        Decode           -> "Decode"
-        Timeout          -> "Timeout"
-        NotFound         -> "NotFound"
-        PermissionDenied -> "PermissionDenied"
-        InvalidInput     -> "InvalidInput"
-        Conflict         -> "Conflict"
-        Unavailable      -> "Unavailable"
-        Unexpected       -> "Unexpected"
+        Io ->
+            "IO"
+
+        Network ->
+            "Network"
+
+        Ffi ->
+            "FFI"
+
+        Decode ->
+            "Decode"
+
+        Timeout ->
+            "Timeout"
+
+        NotFound ->
+            "NotFound"
+
+        PermissionDenied ->
+            "PermissionDenied"
+
+        InvalidInput ->
+            "InvalidInput"
+
+        Conflict ->
+            "Conflict"
+
+        Unavailable ->
+            "Unavailable"
+
+        Unexpected ->
+            "Unexpected"
 
 
 -- Human-readable `<Kind>: <message>` form. Suitable for logs, toasts,
@@ -168,7 +183,14 @@ isRetryable err =
     case err of
         Error kind _ ->
             case kind of
-                Timeout     -> True
-                Network     -> True
-                Unavailable -> True
-                _           -> False
+                Timeout ->
+                    True
+
+                Network ->
+                    True
+
+                Unavailable ->
+                    True
+
+                _ ->
+                    False

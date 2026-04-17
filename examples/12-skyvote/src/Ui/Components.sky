@@ -2,7 +2,6 @@
 -- BADGES
 -- ======================================================
 module Ui.Components exposing (badge, statusBadge, ideaCard, statCard, emptyState)
-
 import Sky.Core.Prelude exposing (..)
 import Std.Html exposing (..)
 import Std.Html.Attributes exposing (..)
@@ -11,25 +10,22 @@ import State exposing (..)
 import Lib.Db as Db
 import Lib.Ideas as Ideas
 
-badge label badgeClass = span [ class ("badge " ++ badgeClass) ] [ text label ]
+
+badge label badgeClass =
+    span [class ("badge " ++ badgeClass)] [text label]
 
 
 statusBadge status =
     if status == "open" then
         badge "Open" "badge-open"
-    
     else if status == "planned" then
         badge "Planned" "badge-planned"
-    
     else if status == "in-progress" then
         badge "In Progress" "badge-in-progress"
-    
     else if status == "done" then
         badge "Done" "badge-done"
-    
     else if status == "declined" then
         badge "Declined" "badge-declined"
-    
     else
         badge status "badge-open"
 
@@ -37,10 +33,8 @@ statusBadge status =
 categoryBadge category =
     if category == "bug" then
         badge "Bug" "badge-bug"
-    
     else if category == "improvement" then
         badge "Improvement" "badge-improvement"
-    
     else
         badge "Feature" "badge-feature"
 
@@ -49,16 +43,14 @@ categoryBadge category =
 -- STAT CARD
 -- ======================================================
 statCard label value =
-    div [ class "stat-card" ]
-        [ div [ class "stat-value" ] [ text value ]
-        , div [ class "stat-label" ] [ text label ]
-        ]
+    div [class "stat-card"] [ div [class "stat-value"] [text value], div [class "stat-label"] [text label] ]
 
 
 -- ======================================================
 -- EMPTY STATE
 -- ======================================================
-emptyState message = div [ class "empty-state" ] [ p [] [ text message ] ]
+emptyState message =
+    div [class "empty-state"] [p [] [text message]]
 
 
 -- ======================================================
@@ -72,35 +64,20 @@ ideaCard idea userId =
         category = Db.getField "category" idea
         status = Db.getField "status" idea
         authorName = Db.getField "author_name" idea
-        isVoted =
-            if userId == "" then
-                False
-            
-            else
-                Ideas.hasVoted ideaId userId
+        isVoted = if userId == "" then
+            False
+        else
+            Ideas.hasVoted ideaId userId
     in
-        div [ class "idea-card" ]
-            [ div []
-                  [ button [ onClick (ToggleVote ideaId) , class "vote-btn" ]
-                        [ span [ class "vote-count" ] [ text voteCount ]
-                        , span [ class "vote-label" ] [ text "votes" ]
-                        ]
-                  ]
-            , div [ class "idea-content" ]
-                  [ div []
-                        [ button
-                              [ onClick (ViewIdea ideaId)
-                              , class "idea-title-btn"
-                              ]
-                              [ text (Db.getField "title" idea) ]
-                        ]
-                  , p [ class "idea-desc" ]
-                        [ text (Db.getField "description" idea) ]
-                  , div [ class "idea-meta" ]
-                        [ categoryBadge category
-                        , statusBadge status
-                        , span [] [ text ("by " ++ authorName) ]
-                        , span [] [ text (commentCount ++ " comments") ]
-                        ]
-                  ]
-            ]
+        div [class "idea-card"] [ div [] [button [ onClick (ToggleVote ideaId), class "vote-btn" ] [ span [class "vote-count"] [text voteCount]
+        , span [class "vote-label"] [text "votes"]
+        ]]
+        , div [class "idea-content"] [ div [] [button [ onClick (ViewIdea ideaId), class "idea-title-btn" ] [text (Db.getField "title" idea)]]
+        , p [class "idea-desc"] [text (Db.getField "description" idea)]
+        , div [class "idea-meta"] [ categoryBadge category
+        , statusBadge status
+        , span [] [text ("by " ++ authorName)]
+        , span [] [text (commentCount ++ " comments")]
+        ]
+        ]
+        ]

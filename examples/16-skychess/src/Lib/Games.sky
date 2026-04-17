@@ -1,5 +1,4 @@
 module Lib.Games exposing (..)
-
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Result as Result
 import Sky.Core.Maybe as Maybe
@@ -12,6 +11,7 @@ import Std.Log exposing (println)
 import Sky.Core.Os as Os
 import Sky.Core.Error as Error exposing (Error(..), ErrorKind(..))
 
+
 -- Open the database once at startup. We deliberately exit here on
 -- failure: a degraded "fake connection" would silently break every
 -- subsequent query — it's strictly better to surface the problem now
@@ -20,6 +20,7 @@ dbConn =
     case Db.connect () of
         Ok conn ->
             conn
+
         Err e ->
             let
                 _ = println ("[FATAL] Cannot open skychess.db: " ++ e)
@@ -28,7 +29,8 @@ dbConn =
                 identity ""
 
 
-getConn _ = dbConn
+getConn _ =
+    dbConn
 
 
 -- exec : Result Error () — typed boundary for writes. Callers in
@@ -38,6 +40,7 @@ exec queryStr args =
     case Db.exec dbConn queryStr args of
         Ok _ ->
             Ok ()
+
         Err e ->
             Err e
 
@@ -47,15 +50,14 @@ query queryStr args =
     case Db.query dbConn queryStr args of
         Ok rows ->
             Ok rows
+
         Err e ->
             Err e
 
 
 initSchema conn =
     let
-        _ =
-            Db.execRaw conn
-                """CREATE TABLE IF NOT EXISTS games (
+        _ = Db.execRaw conn """CREATE TABLE IF NOT EXISTS games (
                     id TEXT PRIMARY KEY,
                     player_name TEXT NOT NULL,
                     status TEXT NOT NULL DEFAULT 'playing',
@@ -64,9 +66,7 @@ initSchema conn =
                     created_at TEXT DEFAULT (datetime('now')),
                     updated_at TEXT DEFAULT (datetime('now'))
                 )"""
-        _ =
-            Db.execRaw conn
-                """CREATE TABLE IF NOT EXISTS moves (
+        _ = Db.execRaw conn """CREATE TABLE IF NOT EXISTS moves (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     game_id TEXT NOT NULL,
                     move_number INTEGER NOT NULL,
@@ -86,14 +86,12 @@ createGame playerName =
     let
         existing = Result.withDefault [] (getGames playerName)
         count = String.fromInt (List.length existing)
-        gameId =
-            String.slice 0 12 (Crypto.sha256 (playerName ++ ":game:" ++ count))
+        gameId = String.slice 0 12 (Crypto.sha256 (playerName ++ ":game:" ++ count))
     in
-        case exec
-                "INSERT INTO games (id, player_name, status, result, move_count) VALUES (?, ?, 'playing', '', 0)"
-                [ gameId , playerName ] of
+        case exec "INSERT INTO games (id, player_name, status, result, move_count) VALUES (?, ?, 'playing', '', 0)" [ gameId, playerName ] of
             Ok _ ->
                 Ok gameId
+
             Err e ->
                 Err e
 
@@ -101,65 +99,57 @@ createGame playerName =
 -- saveMove : Result Error () — writes move + updates count.
 saveMove : String -> Int -> Int -> Int -> String -> String -> Result Error ()
 saveMove gameId moveNum from to algebraic colour =
-    case exec
-            "INSERT INTO moves (game_id, move_number, from_square, to_square, algebraic, colour) VALUES (?, ?, ?, ?, ?, ?)"
-            [ gameId
-            , String.fromInt moveNum
-            , String.fromInt from
-            , String.fromInt to
-            , algebraic
-            , colour
-            ] of
+    case exec "INSERT INTO moves (game_id, move_number, from_square, to_square, algebraic, colour) VALUES (?, ?, ?, ?, ?, ?)" [ gameId
+    , String.fromInt moveNum
+    , String.fromInt from
+    , String.fromInt to
+    , algebraic
+    , colour
+    ] of
         Err e ->
             Err e
+
         Ok _ ->
-            exec
-                "UPDATE games SET move_count = ?, updated_at = datetime('now') WHERE id = ?"
-                [ String.fromInt moveNum , gameId ]
+            exec "UPDATE games SET move_count = ?, updated_at = datetime('now') WHERE id = ?" [ String.fromInt moveNum, gameId ]
 
 
 updateGameStatus : String -> String -> String -> Result Error ()
 updateGameStatus gameId status result =
-    exec
-        "UPDATE games SET status = ?, result = ?, updated_at = datetime('now') WHERE id = ?"
-        [ status , result , gameId ]
+    exec "UPDATE games SET status = ?, result = ?, updated_at = datetime('now') WHERE id = ?" [ status, result, gameId ]
 
 
-getGames : String -> Result Error (List (Dict String String))
+getGames : String -> Result Error List Dict String String
 getGames playerName =
-    query
-        "SELECT * FROM games WHERE player_name = ? ORDER BY created_at DESC LIMIT 20"
-        [ playerName ]
+    query "SELECT * FROM games WHERE player_name = ? ORDER BY created_at DESC LIMIT 20" [playerName]
 
 
-getGameMoves : String -> Result Error (List (Dict String String))
+getGameMoves : String -> Result Error List Dict String String
 getGameMoves gameId =
-    query
-        "SELECT * FROM moves WHERE game_id = ? ORDER BY move_number ASC"
-        [ gameId ]
+    query "SELECT * FROM moves WHERE game_id = ? ORDER BY move_number ASC" [gameId]
 
 
 -- getGame : Result Error (Maybe Row). Outer Result = infra failure;
 -- inner Maybe = found/not-found which is normal.
-getGame : String -> Result Error (Maybe (Dict String String))
+getGame : String -> Result Error Maybe Dict String String
 getGame gameId =
-    case query
-            "SELECT * FROM games WHERE id = ? LIMIT 1"
-            [ gameId ] of
+    case query "SELECT * FROM games WHERE id = ? LIMIT 1" [gameId] of
         Err e ->
             Err e
+
         Ok rows ->
             Ok (List.head rows)
 
 
 deleteGame : String -> Result Error ()
 deleteGame gameId =
-    case exec "DELETE FROM moves WHERE game_id = ?" [ gameId ] of
+    case exec "DELETE FROM moves WHERE game_id = ?" [gameId] of
         Err e ->
             Err e
+
         Ok _ ->
-            exec "DELETE FROM games WHERE id = ?" [ gameId ]
+            exec "DELETE FROM games WHERE id = ?" [gameId]
 
 
-getField : String -> (Dict String String) -> String
-getField field row = Db.getField field row
+getField : String -> Dict String String -> String
+getField field row =
+    Db.getField field row

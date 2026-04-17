@@ -1,5 +1,4 @@
 module Lib.Auth exposing (hashPassword, verifyPassword, generateToken, createUser, authenticateUser, createSession, getSessionUser, verifyEmail)
-
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Maybe exposing (..)
 import Sky.Core.Result as Result
@@ -17,15 +16,18 @@ hashPassword password =
     case Auth.hashPassword password of
         Ok hash ->
             hash
+
         Err _ ->
             ""
 
 
 verifyPassword : String -> String -> Bool
-verifyPassword password storedHash = Auth.verifyPassword password storedHash
+verifyPassword password storedHash =
+    Auth.verifyPassword password storedHash
 
 
-generateToken _ = Result.withDefault "" (Uuid.newString ())
+generateToken _ =
+    Result.withDefault "" (Uuid.newString ())
 
 
 -- createUser : Result Error String (verification token). DB unique
@@ -44,14 +46,12 @@ createUser email password =
         _ = println ("  http://localhost:8000/auth/verify?token=" ++ token)
         _ = println "=========================================="
         _ = println ""
-        result =
-            Db.exec
-                "INSERT INTO users (email, password_hash, verification_token) VALUES (?, ?, ?)"
-                [ email , passHash , token ]
+        result = Db.exec "INSERT INTO users (email, password_hash, verification_token) VALUES (?, ?, ?)" [ email, passHash, token ]
     in
         case result of
             Ok _ ->
                 Ok token
+
             Err _ ->
                 Err (Error.invalidInput "That email is already registered, or a server error occurred.")
 
@@ -65,9 +65,7 @@ checkUserCredentials password user =
             if verified == "1" then
                 Ok user
             else
-                Err
-                    (Error.permissionDenied
-                        |> Error.withMessage "Email not verified yet. Please check the server console for your verification link.")
+                Err (Error.permissionDenied |> Error.withMessage "Email not verified yet. Please check the server console for your verification link.")
         else
             Err (Error.permissionDenied |> Error.withMessage "Invalid email or password.")
 
@@ -75,17 +73,17 @@ checkUserCredentials password user =
 -- authenticateUser : Result Error User. DB errors surface upstream so
 -- callers can show "service unavailable" rather than "bad password".
 -- Wrong email / wrong password both PermissionDenied.
-authenticateUser : String -> String -> Result Error (Dict String String)
+authenticateUser : String -> String -> Result Error Dict String String
 authenticateUser email password =
-    case Db.query
-            "SELECT id, email, password_hash, verified FROM users WHERE email = ? LIMIT 1"
-            [ email ] of
+    case Db.query "SELECT id, email, password_hash, verified FROM users WHERE email = ? LIMIT 1" [email] of
         Err e ->
             Err e
+
         Ok userRows ->
             case List.head userRows of
                 Nothing ->
                     Err (Error.permissionDenied |> Error.withMessage "Invalid email or password.")
+
                 Just user ->
                     checkUserCredentials password user
 
@@ -96,26 +94,24 @@ createSession : String -> Result Error String
 createSession userId =
     let
         token = generateToken ()
-        result =
-            Db.exec "INSERT INTO sessions (user_id, token) VALUES (?, ?)"
-                [ userId , token ]
+        result = Db.exec "INSERT INTO sessions (user_id, token) VALUES (?, ?)" [ userId, token ]
     in
         case result of
             Ok _ ->
                 Ok token
+
             Err e ->
                 Err e
 
 
 -- getSessionUser : Result Error (Maybe User). Outer Result is for
 -- DB failures; inner Maybe is "found / not found" which is normal.
-getSessionUser : String -> Result Error (Maybe (Dict String String))
+getSessionUser : String -> Result Error Maybe Dict String String
 getSessionUser sessionToken =
-    case Db.query
-            "SELECT u.id, u.email, u.created_at FROM users u INNER JOIN sessions s ON CAST(u.id AS TEXT) = s.user_id WHERE s.token = ? LIMIT 1"
-            [ sessionToken ] of
+    case Db.query "SELECT u.id, u.email, u.created_at FROM users u INNER JOIN sessions s ON CAST(u.id AS TEXT) = s.user_id WHERE s.token = ? LIMIT 1" [sessionToken] of
         Err e ->
             Err e
+
         Ok userRows ->
             Ok (List.head userRows)
 
@@ -125,10 +121,9 @@ getSessionUser sessionToken =
 -- happy path.
 verifyEmail : String -> Result Error String
 verifyEmail token =
-    case Db.exec
-            "UPDATE users SET verified = 1 WHERE verification_token = ? AND verified = 0"
-            [ token ] of
+    case Db.exec "UPDATE users SET verified = 1 WHERE verification_token = ? AND verified = 0" [token] of
         Ok _ ->
             Ok "Your email has been verified! You can now sign in."
+
         Err e ->
             Err e

@@ -1,5 +1,4 @@
 module Main exposing (main)
-
 import Sky.Core.Json.Decode as Decode
 import Sky.Core.Json.Decode.Pipeline as Pipeline
 import Sky.Core.Json.Encode as Encode
@@ -10,209 +9,9 @@ import Sky.Core.String as String
 import Sky.Core.Error as Error exposing (Error)
 import Std.Log exposing (println)
 
--- ============================================================
--- Encoding Examples (same API as Elm's Json.Encode)
--- ============================================================
--- 1. Simple flat object
-encodeSimple =
-    let
-        val =
-            Encode.object
-                [ ( "name", Encode.string "Alice" )
-                , ( "age", Encode.int 30 )
-                , ( "active", Encode.bool True )
-                ]
-    in
-        Encode.encode 2 val
-
-
--- 2. Complex nested object with lists
-encodeComplex =
-    let
-        val =
-            Encode.object
-                [ ( "user", Encode.object
-                                [ ( "name", Encode.string "Bob" )
-                                , ( "email", Encode.string "bob@example.com" )
-                                , ( "age", Encode.int 25 )
-                                ] )
-                , ( "tags", Encode.list Encode.string [ "admin" , "premium" ] )
-                , ( "scores", Encode.list Encode.int [ 95 , 87 , 92 ] )
-                ]
-    in
-        Encode.encode 2 val
-
-
--- ============================================================
--- Decoding Examples (same API as Elm's Json.Decode)
--- ============================================================
--- 3. Simple field decoding with map2
-simpleDecoder =
-    Decode.map2 (\n a -> n ++ ", age " ++ String.fromInt a)
-        (Decode.field "name" Decode.string)
-        (Decode.field "age" Decode.int)
-
-
-decodeSimpleExample =
-    Result.withDefault "decode error"
-        (Decode.decodeString simpleDecoder "{\"name\":\"Charlie\",\"age\":28}")
-
-
--- 4. Pipeline Decoding (same API as Elm's Json.Decode.Pipeline!)
-userDecoder =
-    Decode.succeed
-        (
-        \name email age verified ->
-            { name = name , email = email , age = age , verified = verified }
-        )
-        |> Pipeline.required "name" Decode.string
-        |> Pipeline.required "email" Decode.string
-        |> Pipeline.required "age" Decode.int
-        |> Pipeline.required "verified" Decode.bool
-
-
-pipelineExample =
-    let
-        result =
-            Decode.decodeString userDecoder
-                "{\"name\":\"Diana\",\"email\":\"diana@example.com\",\"age\":32,\"verified\":true}"
-    in
-        Result.withDefault "pipeline error"
-            (Result.map (\u -> u.name ++ " (" ++ u.email ++ ")") result)
-
-
 -- 5. Pipeline with optional fields
 type alias UserProfile =
-    { username : String
-    , bio : String
-    , followers : Int
-    }
-
-
--- The auto-generated `UserProfile : String -> String -> Int -> UserProfile`
--- constructor (v0.7.26+) lets us drop the explicit lambda. The fields
--- match the JSON shape one-to-one, so the type checker enforces both
--- shape and order — try changing `bio` to a different type and `sky
--- check` will flag the mismatch.
-profileDecoder =
-    Decode.succeed UserProfile
-        |> Pipeline.required "username" Decode.string
-        |> Pipeline.optional "bio" Decode.string "No bio provided"
-        |> Pipeline.optional "followers" Decode.int 0
-
-
-optionalExample =
-    let
-        result =
-            Decode.decodeString profileDecoder
-                "{\"username\":\"skydev\",\"followers\":42}"
-    in
-        Result.withDefault "profile error"
-            (
-            Result.map
-                (
-                \p ->
-                    "@"
-                        ++ p.username
-                            ++ ", bio: "
-                                ++ p.bio
-                                    ++ ", followers: "
-                                        ++ String.fromInt p.followers
-                )
-                result
-            )
-
-
--- 6. Nested field access
-nestedDecoder =
-    Decode.map2 (\n c -> n ++ " from " ++ c)
-        (Decode.at [ "user" , "profile" , "name" ] Decode.string)
-        (Decode.at [ "user" , "profile" , "city" ] Decode.string)
-
-
-nestedExample =
-    Result.withDefault "nested error"
-        (
-        Decode.decodeString nestedDecoder
-            "{\"user\":{\"profile\":{\"name\":\"Eve\",\"city\":\"London\"}}}"
-        )
-
-
--- 7. Decoding a list of objects
-todoDecoder =
-    Decode.succeed (\id title done -> { id = id , title = title , done = done })
-        |> Pipeline.required "id" Decode.int
-        |> Pipeline.required "title" Decode.string
-        |> Pipeline.required "done" Decode.bool
-
-
-todoListDecoder = Decode.list todoDecoder
-
-
-listExample =
-    let
-        result =
-            Decode.decodeString todoListDecoder
-                "[{\"id\":1,\"title\":\"Buy milk\",\"done\":false},{\"id\":2,\"title\":\"Write Sky\",\"done\":true}]"
-    in
-        Result.withDefault "list error"
-            (
-            Result.map
-                (\todos -> String.join ", " (List.map (\t -> t.title) todos))
-                result
-            )
-
-
--- 8. Roundtrip: Encode -> JSON String -> Decode
-roundtrip =
-    let
-        original =
-            Encode.object
-                [ ( "items", Encode.list
-                                 (
-                                 \n ->
-                                     Encode.object
-                                         [ ( "name", Encode.string n ) ]
-                                 )
-                                 [ "Alice" , "Bob" , "Charlie" ] )
-                , ( "count", Encode.int 3 )
-                ]
-        jsonStr = Encode.encode 0 original
-        decoder =
-            Decode.map2
-                (
-                \c ns ->
-                    "Count: "
-                        ++ String.fromInt c
-                            ++ ", Names: " ++ String.join ", " ns
-                )
-                (Decode.field "count" Decode.int)
-                (
-                Decode.field "items"
-                    (Decode.list (Decode.field "name" Decode.string))
-                )
-        result = Decode.decodeString decoder jsonStr
-    in
-        Result.withDefault "roundtrip error" result
-
-
--- 9. oneOf - handling multiple possible formats
-flexibleDecoder =
-    Decode.field "value"
-        (Decode.oneOf [ Decode.map String.fromInt Decode.int , Decode.string ])
-
-
-flexibleExample =
-    let
-        r1 =
-            Result.withDefault "?"
-                (Decode.decodeString flexibleDecoder "{\"value\":42}")
-        r2 =
-            Result.withDefault "?"
-                (Decode.decodeString flexibleDecoder "{\"value\":\"hello\"}")
-    in
-        r1 ++ " and " ++ r2
-
+    { username : String, bio : String, followers : Int }
 
 -- ============================================================
 -- Result combinators (v0.7.25+) — for combining MULTIPLE Results
@@ -226,14 +25,136 @@ flexibleExample =
 -- Sky auto-generates `Profile : String -> Int -> Bool -> Profile`
 -- from the field declaration order, just like Elm.
 type alias Profile =
-    { name : String , age : Int , active : Bool }
+    { name : String, age : Int, active : Bool }
+
+
+-- ============================================================
+-- Encoding Examples (same API as Elm's Json.Encode)
+-- ============================================================
+-- 1. Simple flat object
+encodeSimple =
+    let
+        val = Encode.object [ ( "name", Encode.string "Alice" )
+        , ( "age", Encode.int 30 )
+        , ( "active", Encode.bool True )
+        ]
+    in
+        Encode.encode 2 val
+
+
+-- 2. Complex nested object with lists
+encodeComplex =
+    let
+        val = Encode.object [ ( "user"
+        , Encode.object [ ( "name", Encode.string "Bob" )
+        , ( "email", Encode.string "bob@example.com" )
+        , ( "age", Encode.int 25 )
+        ]
+        )
+        , ( "tags", Encode.list Encode.string [ "admin", "premium" ] )
+        , ( "scores", Encode.list Encode.int [ 95, 87, 92 ] )
+        ]
+    in
+        Encode.encode 2 val
+
+
+-- ============================================================
+-- Decoding Examples (same API as Elm's Json.Decode)
+-- ============================================================
+-- 3. Simple field decoding with map2
+simpleDecoder =
+    Decode.map2 (\n a -> n ++ ", age " ++ String.fromInt a) (Decode.field "name" Decode.string) (Decode.field "age" Decode.int)
+
+
+decodeSimpleExample =
+    Result.withDefault "decode error" (Decode.decodeString simpleDecoder "{\"name\":\"Charlie\",\"age\":28}")
+
+
+-- 4. Pipeline Decoding (same API as Elm's Json.Decode.Pipeline!)
+userDecoder =
+    Decode.succeed (\name email age verified -> { name = name, email = email, age = age, verified = verified }) |> Pipeline.required "name" Decode.string |> Pipeline.required "email" Decode.string |> Pipeline.required "age" Decode.int |> Pipeline.required "verified" Decode.bool
+
+
+pipelineExample =
+    let
+        result = Decode.decodeString userDecoder "{\"name\":\"Diana\",\"email\":\"diana@example.com\",\"age\":32,\"verified\":true}"
+    in
+        Result.withDefault "pipeline error" (Result.map (\u -> u.name ++ " (" ++ u.email ++ ")") result)
+
+
+-- The auto-generated `UserProfile : String -> String -> Int -> UserProfile`
+-- constructor (v0.7.26+) lets us drop the explicit lambda. The fields
+-- match the JSON shape one-to-one, so the type checker enforces both
+-- shape and order — try changing `bio` to a different type and `sky
+-- check` will flag the mismatch.
+profileDecoder =
+    Decode.succeed UserProfile |> Pipeline.required "username" Decode.string |> Pipeline.optional "bio" Decode.string "No bio provided" |> Pipeline.optional "followers" Decode.int 0
+
+
+optionalExample =
+    let
+        result = Decode.decodeString profileDecoder "{\"username\":\"skydev\",\"followers\":42}"
+    in
+        Result.withDefault "profile error" (Result.map (\p -> "@" ++ p.username ++ ", bio: " ++ p.bio ++ ", followers: " ++ String.fromInt p.followers) result)
+
+
+-- 6. Nested field access
+nestedDecoder =
+    Decode.map2 (\n c -> n ++ " from " ++ c) (Decode.at [ "user", "profile", "name" ] Decode.string) (Decode.at [ "user", "profile", "city" ] Decode.string)
+
+
+nestedExample =
+    Result.withDefault "nested error" (Decode.decodeString nestedDecoder "{\"user\":{\"profile\":{\"name\":\"Eve\",\"city\":\"London\"}}}")
+
+
+-- 7. Decoding a list of objects
+todoDecoder =
+    Decode.succeed (\id title done -> { id = id, title = title, done = done }) |> Pipeline.required "id" Decode.int |> Pipeline.required "title" Decode.string |> Pipeline.required "done" Decode.bool
+
+
+todoListDecoder =
+    Decode.list todoDecoder
+
+
+listExample =
+    let
+        result = Decode.decodeString todoListDecoder "[{\"id\":1,\"title\":\"Buy milk\",\"done\":false},{\"id\":2,\"title\":\"Write Sky\",\"done\":true}]"
+    in
+        Result.withDefault "list error" (Result.map (\todos -> String.join ", " (List.map (\t -> t.title) todos)) result)
+
+
+-- 8. Roundtrip: Encode -> JSON String -> Decode
+roundtrip =
+    let
+        original = Encode.object [ ( "items"
+        , Encode.list (\n -> Encode.object [( "name", Encode.string n )]) [ "Alice", "Bob", "Charlie" ]
+        )
+        , ( "count", Encode.int 3 )
+        ]
+        jsonStr = Encode.encode 0 original
+        decoder = Decode.map2 (\c ns -> "Count: " ++ String.fromInt c ++ ", Names: " ++ String.join ", " ns) (Decode.field "count" Decode.int) (Decode.field "items" (Decode.list (Decode.field "name" Decode.string)))
+        result = Decode.decodeString decoder jsonStr
+    in
+        Result.withDefault "roundtrip error" result
+
+
+-- 9. oneOf - handling multiple possible formats
+flexibleDecoder =
+    Decode.field "value" (Decode.oneOf [ Decode.map String.fromInt Decode.int, Decode.string ])
+
+
+flexibleExample =
+    let
+        r1 = Result.withDefault "?" (Decode.decodeString flexibleDecoder "{\"value\":42}")
+        r2 = Result.withDefault "?" (Decode.decodeString flexibleDecoder "{\"value\":\"hello\"}")
+    in
+        r1 ++ " and " ++ r2
 
 
 parseString : String -> String -> Result Error String
 parseString fieldName value =
     if String.isEmpty value then
         Err (Error.invalidInput ("missing field: " ++ fieldName))
-
     else
         Ok value
 
@@ -241,11 +162,9 @@ parseString fieldName value =
 parseAge : String -> Result Error Int
 parseAge value =
     case String.toInt value of
-
         Just n ->
             if n >= 0 && n <= 150 then
                 Ok n
-
             else
                 Err (Error.invalidInput "age out of range")
 
@@ -257,10 +176,8 @@ parseFlag : String -> Result Error Bool
 parseFlag value =
     if value == "true" then
         Ok True
-
     else if value == "false" then
         Ok False
-
     else
         Err (Error.invalidInput "flag must be true or false")
 
@@ -269,16 +186,14 @@ parseFlag value =
 -- pyramid, no makeProfile helper. The type alias `Profile` IS the
 -- constructor, courtesy of Sky's auto-generated record constructors.
 profileFromInputs name age active =
-    Result.map3 Profile (parseString "name" name) (parseAge age)
-        (parseFlag active)
+    Result.map3 Profile (parseString "name" name) (parseAge age) (parseFlag active)
 
 
 combineHeterogeneousExample =
     case profileFromInputs "Alice" "30" "true" of
-        
         Ok p ->
             "OK: " ++ p.name ++ ", age " ++ String.fromInt p.age
-        
+
         Err e ->
             "ERR: " ++ Error.toString e
 
@@ -287,11 +202,9 @@ combineHeterogeneousExample =
 --     Same type, variable length — collect a list of Results into a Result of list.
 combineHomogeneousExample =
     let
-        parses =
-            Result.combine [ parseAge "25" , parseAge "30" , parseAge "42" ]
+        parses = Result.combine [ parseAge "25", parseAge "30", parseAge "42" ]
     in
         case parses of
-
             Ok ages ->
                 "OK ages: " ++ String.join ", " (List.map String.fromInt ages)
 
@@ -302,12 +215,10 @@ combineHomogeneousExample =
 -- 12. Result.traverse — map a function over a list and collect.
 --     Equivalent to (Result.combine << List.map f) but in one pass.
 traverseExample =
-    case Result.traverse parseAge [ "20" , "30" , "40" ] of
-        
+    case Result.traverse parseAge [ "20", "30", "40" ] of
         Ok ages ->
-            "Sum of ages: "
-                ++ String.fromInt (List.foldl (\a acc -> a + acc) 0 ages)
-        
+            "Sum of ages: " ++ String.fromInt (List.foldl (\a acc -> a + acc) 0 ages)
+
         Err e ->
             "ERR: " ++ Error.toString e
 
@@ -359,4 +270,5 @@ main =
 
 
 Profile : String -> Int -> Bool -> Profile
-Profile name age active = { name = name , age = age , active = active }
+Profile name age active =
+    { name = name, age = age, active = active }

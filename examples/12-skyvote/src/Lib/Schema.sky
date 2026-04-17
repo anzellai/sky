@@ -1,5 +1,4 @@
 module Lib.Schema exposing (initDb)
-
 import Sky.Core.Prelude exposing (..)
 import Std.Log exposing (println)
 import Lib.Db as Db
@@ -14,9 +13,12 @@ runMigration label sql =
     case Db.exec sql [] of
         Ok _ ->
             ()
+
         Err e ->
-            let _ = println ("[SCHEMA ERROR] " ++ label ++ ": " ++ Error.toString e) in
-            ()
+            let
+                _ = println ("[SCHEMA ERROR] " ++ label ++ ": " ++ Error.toString e)
+            in
+                ()
 
 
 initDb =

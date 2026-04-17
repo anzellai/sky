@@ -1,5 +1,4 @@
 module Lib.Db exposing (exec, query, getField)
-
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Maybe as Maybe
 import Sky.Core.Dict as Dict
@@ -7,6 +6,7 @@ import Std.Db as Db
 import Std.Log exposing (println)
 import Sky.Core.Os as Os
 import Sky.Core.Error as Error exposing (Error)
+
 
 -- Open the database once at startup. We deliberately exit on failure:
 -- a degraded "fake connection" would silently break every subsequent
@@ -16,6 +16,7 @@ dbConn =
     case Db.open "sqlite" "skyvote.db" of
         Ok c ->
             c
+
         Err e ->
             let
                 _ = println ("[FATAL] Cannot open skyvote.db: " ++ e)
@@ -39,6 +40,7 @@ exec queryStr args =
     case Db.exec dbConn queryStr args of
         Ok _ ->
             Ok ()
+
         Err e ->
             Err e
 
@@ -47,6 +49,7 @@ query queryStr args =
     case Db.query dbConn queryStr args of
         Ok rows ->
             Ok rows
+
         Err e ->
             Err e
 
@@ -60,4 +63,5 @@ query queryStr args =
 -- signature loose. Callers who know the column's type should use
 -- `String.fromInt (String.toInt (getField ...))` or explicit
 -- assertion to coerce, rather than relying on the annotation.
-getField field row = Maybe.withDefault "" (Dict.get field row)
+getField field row =
+    Maybe.withDefault "" (Dict.get field row)

@@ -1,5 +1,4 @@
 module Lib.Comments exposing (createComment, getComments)
-
 import Sky.Core.Prelude exposing (..)
 import Std.Log exposing (println)
 import Sky.Core.Crypto as Crypto
@@ -13,19 +12,18 @@ import Sky.Core.Error as Error exposing (Error)
 createComment : String -> String -> String -> Result Error ()
 createComment ideaId authorId content =
     let
-        -- Include the current millis in the id material so identical
-        -- content from the same user on the same idea doesn't collide
-        -- on the PRIMARY KEY. Pre-fix, re-submitting the same text
-        -- returned a UNIQUE/PK constraint error even though the user's
-        -- action was legitimate.
+    -- Include the current millis in the id material so identical
+    -- content from the same user on the same idea doesn't collide
+    -- on the PRIMARY KEY. Pre-fix, re-submitting the same text
+    -- returned a UNIQUE/PK constraint error even though the user's
+    -- action was legitimate.
         nowMs = Result.withDefault 0 Time.unixMillis
         id = String.slice 0 12 (Crypto.sha256 (ideaId ++ ":" ++ authorId ++ ":" ++ content ++ ":" ++ String.fromInt nowMs))
     in
-        case Db.exec
-                "INSERT INTO comments (id, idea_id, author_id, content) VALUES (?, ?, ?, ?)"
-                [ id , ideaId , authorId , content ] of
+        case Db.exec "INSERT INTO comments (id, idea_id, author_id, content) VALUES (?, ?, ?, ?)" [ id, ideaId, authorId, content ] of
             Err e ->
                 Err e
+
             Ok _ ->
                 let
                     _ = println ("[COMMENT] Added on " ++ ideaId ++ " by " ++ authorId)
@@ -33,8 +31,6 @@ createComment ideaId authorId content =
                     Ok ()
 
 
-getComments : String -> Result Error (List (Dict String String))
+getComments : String -> Result Error List Dict String String
 getComments ideaId =
-    Db.query
-        "SELECT c.id, c.content, c.created_at, u.username as author_name FROM comments c LEFT JOIN users u ON c.author_id = u.id WHERE c.idea_id = ? ORDER BY c.created_at ASC"
-        [ ideaId ]
+    Db.query "SELECT c.id, c.content, c.created_at, u.username as author_name FROM comments c LEFT JOIN users u ON c.author_id = u.id WHERE c.idea_id = ? ORDER BY c.created_at ASC" [ideaId]

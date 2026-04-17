@@ -1,5 +1,4 @@
 module Live.FormTest exposing (tests)
-
 -- Phase 3 — Sky.Live form-handling behaviour tests.
 --
 -- Covers the class of Sky.Live apps that validate user input before
@@ -9,11 +8,12 @@ module Live.FormTest exposing (tests)
 -- in the model's error field, (b) successful submits clear form
 -- fields + set a notification, and (c) subsequent messages see the
 -- transitioned state.
-
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.String as String
 import Sky.Test as Test exposing (Test)
 
+type alias Model =
+    { page : Page, email : String, password : String, error : String, notification : String, currentUser : Maybe String }
 
 -- ======================================================
 -- MODEL — mirrors skyvote's AuthPage/SignInPage shape
@@ -21,17 +21,6 @@ import Sky.Test as Test exposing (Test)
 type Page
     = LoginPage
     | DashboardPage
-
-
-type alias Model =
-    { page : Page
-    , email : String
-    , password : String
-    , error : String
-    , notification : String
-    , currentUser : Maybe String
-    }
-
 
 type Msg
     = SetEmail String
@@ -62,13 +51,10 @@ validate : String -> String -> Result String String
 validate email password =
     if String.length email == 0 then
         Err "Email required"
-
     else if String.length password < 8 then
         Err "Password too short (min 8)"
-
     else if String.contains "@" email == False then
         Err "Invalid email"
-
     else
         Ok email
 
@@ -100,11 +86,7 @@ updateModel msg model =
                     }
 
         SignOut ->
-            { model
-                | page = LoginPage
-                , currentUser = Nothing
-                , notification = ""
-            }
+            { model | page = LoginPage, currentUser = Nothing, notification = "" }
 
         NavigateTo page ->
             { model | page = page }
@@ -125,146 +107,87 @@ run msgs m =
 -- ======================================================
 tests : List Test
 tests =
-    [ Test.suite "form input"
-        [ Test.test "SetEmail updates field" (\_ ->
-            Test.equal "alice@example.com"
-                (updateModel (SetEmail "alice@example.com") initial).email)
-        , Test.test "SetPassword updates field" (\_ ->
-            Test.equal "secret123"
-                (updateModel (SetPassword "secret123") initial).password)
-        , Test.test "SetEmail clears prior error" (\_ ->
-            let
-                dirty = updateModel Submit initial
-                clean = updateModel (SetEmail "a@b.c") dirty
-            in
-            Test.equal "" clean.error)
-        ]
-    , Test.suite "validation"
-        [ Test.test "empty email rejected" (\_ ->
-            let
-                m = run [ SetPassword "longenough" , Submit ] initial
-            in
-            Test.equal "Email required" m.error)
-        , Test.test "short password rejected" (\_ ->
-            let
-                m = run [ SetEmail "a@b.c" , SetPassword "short" , Submit ] initial
-            in
-            Test.equal "Password too short (min 8)" m.error)
-        , Test.test "missing @ rejected" (\_ ->
-            let
-                m = run [ SetEmail "no-at-sign" , SetPassword "longenough" , Submit ] initial
-            in
-            Test.equal "Invalid email" m.error)
-        , Test.test "validation failure keeps page as LoginPage" (\_ ->
-            let
-                m = run [ SetPassword "x" , Submit ] initial
-            in
-            Test.equal LoginPage m.page)
-        , Test.test "validation failure preserves typed fields" (\_ ->
-            let
-                m = run [ SetEmail "hi@test" , SetPassword "x" , Submit ] initial
-            in
-            Test.equal "hi@test" m.email)
-        ]
-    , Test.suite "successful login"
-        [ Test.test "valid submit transitions to DashboardPage" (\_ ->
-            let
-                m = run [ SetEmail "a@b.c" , SetPassword "password" , Submit ] initial
-            in
-            Test.equal DashboardPage m.page)
-        , Test.test "valid submit records currentUser" (\_ ->
-            let
-                m = run [ SetEmail "a@b.c" , SetPassword "password" , Submit ] initial
-            in
-            Test.equal (Just "a@b.c") m.currentUser)
-        , Test.test "valid submit clears password" (\_ ->
-            let
-                m = run [ SetEmail "a@b.c" , SetPassword "password" , Submit ] initial
-            in
-            Test.equal "" m.password)
-        , Test.test "valid submit sets notification" (\_ ->
-            let
-                m = run [ SetEmail "a@b.c" , SetPassword "password" , Submit ] initial
-            in
-            Test.equal "Welcome!" m.notification)
-        , Test.test "valid submit clears error" (\_ ->
-            let
-                m = run
-                        [ SetPassword "x"
-                        , Submit
-                        , SetEmail "a@b.c"
-                        , SetPassword "password"
-                        , Submit
-                        ]
-                        initial
-            in
-            Test.equal "" m.error)
-        ]
-    , Test.suite "sign-out"
-        [ Test.test "SignOut returns to LoginPage" (\_ ->
-            let
-                m = run
-                        [ SetEmail "a@b.c"
-                        , SetPassword "password"
-                        , Submit
-                        , SignOut
-                        ]
-                        initial
-            in
-            Test.equal LoginPage m.page)
-        , Test.test "SignOut clears currentUser" (\_ ->
-            let
-                m = run
-                        [ SetEmail "a@b.c"
-                        , SetPassword "password"
-                        , Submit
-                        , SignOut
-                        ]
-                        initial
-            in
-            Test.equal Nothing m.currentUser)
-        , Test.test "SignOut clears notification" (\_ ->
-            let
-                m = run
-                        [ SetEmail "a@b.c"
-                        , SetPassword "password"
-                        , Submit
-                        , SignOut
-                        ]
-                        initial
-            in
-            Test.equal "" m.notification)
-        ]
-    , Test.suite "state machine invariants"
-        [ Test.test "LoginPage never has currentUser set" (\_ ->
-            let
-                m = run [ SetEmail "hi" , SetPassword "x" , Submit ] initial
-            in
-            Test.equal Nothing m.currentUser)
-        , Test.test "DashboardPage always has currentUser set" (\_ ->
-            let
-                m = run [ SetEmail "a@b.c" , SetPassword "password" , Submit ] initial
-                hasUser =
-                    case m.currentUser of
-                        Just _ ->
-                            True
+    [ Test.suite "form input" [ Test.test "SetEmail updates field" (\_ -> Test.equal "alice@example.com" updateModel (SetEmail "alice@example.com") initial.email)
+    , Test.test "SetPassword updates field" (\_ -> Test.equal "secret123" updateModel (SetPassword "secret123") initial.password)
+    , Test.test "SetEmail clears prior error" (\_ -> let
+        dirty = updateModel Submit initial
+        clean = updateModel (SetEmail "a@b.c") dirty
+    in
+        Test.equal "" clean.error)
+    ]
+    , Test.suite "validation" [ Test.test "empty email rejected" (\_ -> let
+        m = run [ SetPassword "longenough", Submit ] initial
+    in
+        Test.equal "Email required" m.error)
+    , Test.test "short password rejected" (\_ -> let
+        m = run [ SetEmail "a@b.c", SetPassword "short", Submit ] initial
+    in
+        Test.equal "Password too short (min 8)" m.error)
+    , Test.test "missing @ rejected" (\_ -> let
+        m = run [ SetEmail "no-at-sign", SetPassword "longenough", Submit ] initial
+    in
+        Test.equal "Invalid email" m.error)
+    , Test.test "validation failure keeps page as LoginPage" (\_ -> let
+        m = run [ SetPassword "x", Submit ] initial
+    in
+        Test.equal LoginPage m.page)
+    , Test.test "validation failure preserves typed fields" (\_ -> let
+        m = run [ SetEmail "hi@test", SetPassword "x", Submit ] initial
+    in
+        Test.equal "hi@test" m.email)
+    ]
+    , Test.suite "successful login" [ Test.test "valid submit transitions to DashboardPage" (\_ -> let
+        m = run [ SetEmail "a@b.c", SetPassword "password", Submit ] initial
+    in
+        Test.equal DashboardPage m.page)
+    , Test.test "valid submit records currentUser" (\_ -> let
+        m = run [ SetEmail "a@b.c", SetPassword "password", Submit ] initial
+    in
+        Test.equal (Just "a@b.c") m.currentUser)
+    , Test.test "valid submit clears password" (\_ -> let
+        m = run [ SetEmail "a@b.c", SetPassword "password", Submit ] initial
+    in
+        Test.equal "" m.password)
+    , Test.test "valid submit sets notification" (\_ -> let
+        m = run [ SetEmail "a@b.c", SetPassword "password", Submit ] initial
+    in
+        Test.equal "Welcome!" m.notification)
+    , Test.test "valid submit clears error" (\_ -> let
+        m = run [ SetPassword "x", Submit, SetEmail "a@b.c", SetPassword "password", Submit ] initial
+    in
+        Test.equal "" m.error)
+    ]
+    , Test.suite "sign-out" [ Test.test "SignOut returns to LoginPage" (\_ -> let
+        m = run [ SetEmail "a@b.c", SetPassword "password", Submit, SignOut ] initial
+    in
+        Test.equal LoginPage m.page)
+    , Test.test "SignOut clears currentUser" (\_ -> let
+        m = run [ SetEmail "a@b.c", SetPassword "password", Submit, SignOut ] initial
+    in
+        Test.equal Nothing m.currentUser)
+    , Test.test "SignOut clears notification" (\_ -> let
+        m = run [ SetEmail "a@b.c", SetPassword "password", Submit, SignOut ] initial
+    in
+        Test.equal "" m.notification)
+    ]
+    , Test.suite "state machine invariants" [ Test.test "LoginPage never has currentUser set" (\_ -> let
+        m = run [ SetEmail "hi", SetPassword "x", Submit ] initial
+    in
+        Test.equal Nothing m.currentUser)
+    , Test.test "DashboardPage always has currentUser set" (\_ -> let
+        m = run [ SetEmail "a@b.c", SetPassword "password", Submit ] initial
+        hasUser = case m.currentUser of
+            Just _ ->
+                True
 
-                        Nothing ->
-                            False
-            in
-            Test.isTrue hasUser)
-        , Test.test "empty model yields LoginPage" (\_ ->
-            Test.equal LoginPage initial.page)
-        , Test.test "repeated Submit with bad input keeps model stable" (\_ ->
-            let
-                m = run
-                        [ SetPassword "bad"
-                        , Submit
-                        , Submit
-                        , Submit
-                        ]
-                        initial
-            in
-            Test.equal LoginPage m.page)
-        ]
+            Nothing ->
+                False
+    in
+        Test.isTrue hasUser)
+    , Test.test "empty model yields LoginPage" (\_ -> Test.equal LoginPage initial.page)
+    , Test.test "repeated Submit with bad input keeps model stable" (\_ -> let
+        m = run [ SetPassword "bad", Submit, Submit, Submit ] initial
+    in
+        Test.equal LoginPage m.page)
+    ]
     ]

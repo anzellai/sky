@@ -1,5 +1,4 @@
 module Lib.AuthHandlers exposing (handleSignInSuccess, handleSignIn, handleSignUpSuccess, handleSignUpValidated, handleSignUp, handleSignOut)
-
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Result as Result
 import Sky.Core.Maybe exposing (..)
@@ -26,7 +25,9 @@ handleSignInSuccess user model =
             , authPassword = ""
             , authError = ""
             , notification = "Welcome back!"
-        }, Cmd.none )
+        }
+        , Cmd.none
+        )
 
 
 -- handleSignIn: Auth.authenticateUser returns Result Error User. We
@@ -36,17 +37,18 @@ handleSignIn model =
     case Auth.authenticateUser model.authEmail model.authPassword of
         Ok user ->
             handleSignInSuccess user model
+
         Err e ->
             let
                 _ = println ("[AUTH ERROR] sign-in: " ++ Error.toString e)
-                userMsg =
-                    case e of
-                        Error kind info ->
-                            case kind of
-                                PermissionDenied ->
-                                    info.message
-                                _ ->
-                                    "Sign-in temporarily unavailable. Please try again."
+                userMsg = case e of
+                    Error kind info ->
+                        case kind of
+                            PermissionDenied ->
+                                info.message
+
+                            _ ->
+                                "Sign-in temporarily unavailable. Please try again."
             in
                 ( { model | authError = userMsg }, Cmd.none )
 
@@ -57,16 +59,24 @@ handleSignIn model =
 handleSignUpSuccess userId model =
     case Auth.getUserById userId of
         Err e ->
-            let _ = println ("[AUTH ERROR] post-signup lookup: " ++ Error.toString e) in
-            ( { model
-                | authError = "Account created but auto-login failed. Please sign in."
-                , page = SignInPage
-            }, Cmd.none )
+            let
+                _ = println ("[AUTH ERROR] post-signup lookup: " ++ Error.toString e)
+            in
+                ( { model
+                    | authError = "Account created but auto-login failed. Please sign in."
+                    , page = SignInPage
+                }
+                , Cmd.none
+                )
+
         Ok Nothing ->
             ( { model
                 | authError = "Account created but auto-login failed. Please sign in."
                 , page = SignInPage
-            }, Cmd.none )
+            }
+            , Cmd.none
+            )
+
         Ok (Just user) ->
             let
                 ideas = Result.withDefault [] (Ideas.getIdeas "newest" "all" "")
@@ -81,7 +91,9 @@ handleSignUpSuccess userId model =
                     , authPassword = ""
                     , authError = ""
                     , notification = "Account created! Welcome to SkyVote!"
-                }, Cmd.none )
+                }
+                , Cmd.none
+                )
 
 
 -- handleSignUpValidated: ValidationError vs DbError differentiation —
@@ -91,6 +103,7 @@ handleSignUpValidated model =
     case Auth.createUser model.authUsername model.authEmail model.authPassword of
         Ok userId ->
             handleSignUpSuccess userId model
+
         Err e ->
             let
                 _ = println ("[AUTH ERROR] sign-up: " ++ Error.toString e)
@@ -119,4 +132,6 @@ handleSignOut model =
             , page = BoardPage
             , notification = ""
             , authError = ""
-        }, Cmd.none )
+        }
+        , Cmd.none
+        )

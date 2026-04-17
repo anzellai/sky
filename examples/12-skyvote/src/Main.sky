@@ -1,5 +1,4 @@
 module Main exposing (main)
-
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Result as Result
 import Sky.Core.Maybe exposing (..)
@@ -27,6 +26,7 @@ import Page.AuthPage as PageAuth
 import Page.About as About
 import Page.Roadmap as Roadmap
 import Lib.AuthHandlers as AuthHandlers
+
 
 -- ======================================================
 -- INIT
@@ -56,28 +56,28 @@ init _req =
         , authPassword = ""
         , authError = ""
         , notification = ""
-        }, Cmd.none )
+        }
+        , Cmd.none
+        )
 
 
 -- ======================================================
 -- APP (must be early -- parser drops last functions)
 -- ======================================================
 main =
-    app
-        { init = init
-        , update = update
-        , view = view
-        , subscriptions = subscriptions
-        , routes =
-            [ route "/" BoardPage
-            , route "/submit" SubmitPage
-            , route "/auth/signin" SignInPage
-            , route "/auth/signup" SignUpPage
-            , route "/about" AboutPage
-            , route "/roadmap" RoadmapPage
-            ]
-        , notFound = NotFoundPage
-        }
+    app { init = init
+    , update = update
+    , view = view
+    , subscriptions = subscriptions
+    , routes = [ route "/" BoardPage
+    , route "/submit" SubmitPage
+    , route "/auth/signin" SignInPage
+    , route "/auth/signup" SignUpPage
+    , route "/about" AboutPage
+    , route "/roadmap" RoadmapPage
+    ]
+    , notFound = NotFoundPage
+    }
 
 
 -- ======================================================
@@ -86,28 +86,27 @@ main =
 view : Model -> VNode
 view model =
     case model.page of
-        
         BoardPage ->
             Board.viewBoard model
-        
+
         DetailPage ->
             Detail.viewDetail model
-        
+
         SubmitPage ->
             Submit.viewSubmit model
-        
+
         SignInPage ->
             PageAuth.viewSignIn model
-        
+
         SignUpPage ->
             PageAuth.viewSignUp model
-        
+
         AboutPage ->
             About.viewAbout model
-        
+
         RoadmapPage ->
             Roadmap.viewRoadmap model
-        
+
         NotFoundPage ->
             Board.viewBoard model
 
@@ -117,13 +116,12 @@ view model =
 -- ======================================================
 subscriptions model =
     case model.page of
-        
         BoardPage ->
             Time.every 10000 Tick
-        
+
         DetailPage ->
             Time.every 10000 Tick
-        
+
         _ ->
             Sub.none
 
@@ -134,64 +132,66 @@ subscriptions model =
 update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
     case msg of
-        
         Navigate page ->
-            ( { model | page = page , notification = "" , authError = "" }, Cmd.none )
-        
+            ( { model | page = page, notification = "", authError = "" }, Cmd.none )
+
         SetSort sortBy ->
+-- ======================================================
+-- BOARD HANDLERS
+-- ======================================================
             handleSetSort sortBy model
-        
+
         SetFilter category ->
             handleSetFilter category model
-        
+
         SetSearch query ->
             handleSetSearch query model
-        
+
         ToggleVote ideaId ->
             handleToggleVote ideaId model
-        
+
         ViewIdea ideaId ->
             handleViewIdea ideaId model
-        
+
         UpdateComment content ->
             ( { model | newComment = content }, Cmd.none )
-        
+
         SubmitComment ->
             handleSubmitComment model
-        
+
         BackToBoard ->
             handleBackToBoard model
-        
+
         UpdateTitle t ->
             ( { model | submitTitle = t }, Cmd.none )
-        
+
         UpdateDescription d ->
             ( { model | submitDescription = d }, Cmd.none )
-        
+
         UpdateCategory c ->
             ( { model | submitCategory = c }, Cmd.none )
-        
+
         SubmitIdea ->
             handleSubmitIdea model
-        
+
         UpdateEmail e ->
             ( { model | authEmail = e }, Cmd.none )
-        
+
         UpdateUsername u ->
             ( { model | authUsername = u }, Cmd.none )
-        
+
         UpdatePassword p ->
             ( { model | authPassword = p }, Cmd.none )
-        
+
         DoSignIn ->
             AuthHandlers.handleSignIn model
-        
+
         DoSignUp ->
             AuthHandlers.handleSignUp model
-        
+
         DoSignOut ->
             AuthHandlers.handleSignOut model
-        
+
         Tick ->
             refreshCurrentView model
 
@@ -205,16 +205,17 @@ update msg model =
 -- vote/comment flow.
 logActivity event targetId userId =
     let
-        result =
-            Db.exec
-                "INSERT INTO activity_log (id, event, data, user_id) VALUES (?, ?, ?, ?)"
-                [ event ++ "-" ++ targetId , event , targetId , userId ]
+        result = Db.exec "INSERT INTO activity_log (id, event, data, user_id) VALUES (?, ?, ?, ?)" [ event ++ "-" ++ targetId, event, targetId, userId ]
     in
         case result of
-            Ok _ -> ()
-            Err e ->
-                let _ = println ("[ACTIVITY ERROR] " ++ event ++ ": " ++ Error.toString e) in
+            Ok _ ->
                 ()
+
+            Err e ->
+                let
+                    _ = println ("[ACTIVITY ERROR] " ++ event ++ ": " ++ Error.toString e)
+                in
+                    ()
 
 
 refreshCurrentView : Model -> (Model, Cmd Msg)
@@ -225,25 +226,24 @@ refreshCurrentView model =
                 ideas = Result.withDefault [] (Ideas.getIdeas model.sortBy model.filterCategory model.searchQuery)
             in
                 ( { model | ideas = ideas }, Cmd.none )
+
         DetailPage ->
             let
                 idea = Result.withDefault Nothing (Ideas.getIdea model.selectedIdeaId)
                 comments = Result.withDefault [] (Comments.getComments model.selectedIdeaId)
             in
-                ( { model | selectedIdea = idea , ideaComments = comments }, Cmd.none )
+                ( { model | selectedIdea = idea, ideaComments = comments }, Cmd.none )
+
         _ ->
             ( model, Cmd.none )
 
 
--- ======================================================
--- BOARD HANDLERS
--- ======================================================
 handleSetSort : String -> Model -> (Model, Cmd Msg)
 handleSetSort sortBy model =
     let
         ideas = Result.withDefault [] (Ideas.getIdeas sortBy model.filterCategory model.searchQuery)
     in
-        ( { model | sortBy = sortBy , ideas = ideas }, Cmd.none )
+        ( { model | sortBy = sortBy, ideas = ideas }, Cmd.none )
 
 
 handleSetFilter : String -> Model -> (Model, Cmd Msg)
@@ -251,7 +251,7 @@ handleSetFilter category model =
     let
         ideas = Result.withDefault [] (Ideas.getIdeas model.sortBy category model.searchQuery)
     in
-        ( { model | filterCategory = category , ideas = ideas }, Cmd.none )
+        ( { model | filterCategory = category, ideas = ideas }, Cmd.none )
 
 
 handleSetSearch : String -> Model -> (Model, Cmd Msg)
@@ -259,39 +259,44 @@ handleSetSearch query model =
     let
         ideas = Result.withDefault [] (Ideas.getIdeas model.sortBy model.filterCategory query)
     in
-        ( { model | searchQuery = query , ideas = ideas }, Cmd.none )
+        ( { model | searchQuery = query, ideas = ideas }, Cmd.none )
 
 
 -- handleToggleVoteAuth: typed boundary — toggleVote can fail (e.g.
 -- DB timeout). We bubble the error to model.notification so the user
 -- sees "we couldn't record your vote" rather than appearing to vote
 -- silently and finding it gone on next refresh.
-handleToggleVoteAuth : String -> (Dict String String) -> Model -> (Model, Cmd Msg)
+handleToggleVoteAuth : String -> Dict String String -> Model -> (Model, Cmd Msg)
 handleToggleVoteAuth ideaId user model =
     let
         userId = Db.getField "id" user
     in
         case Ideas.toggleVote ideaId userId of
             Ok _ ->
-                let _ = logActivity "vote" ideaId userId in
-                refreshCurrentView model
+                let
+                    _ = logActivity "vote" ideaId userId
+                in
+                    refreshCurrentView model
+
             Err e ->
-                let _ = println ("[VOTE ERROR] " ++ Error.toString e) in
-                ( { model | notification = "Could not record your vote: " ++ Error.toString e }, Cmd.none )
+                let
+                    _ = println ("[VOTE ERROR] " ++ Error.toString e)
+                in
+                    ( { model | notification = "Could not record your vote: " ++ Error.toString e }
+                    , Cmd.none
+                    )
 
 
 handleToggleVote : String -> Model -> (Model, Cmd Msg)
 handleToggleVote ideaId model =
     case model.currentUser of
-        
         Just user ->
             handleToggleVoteAuth ideaId user model
-        
+
         Nothing ->
-            ( { model
-                | page = SignInPage
-                , authError = "Please sign in to vote."
-            }, Cmd.none )
+            ( { model | page = SignInPage, authError = "Please sign in to vote." }
+            , Cmd.none
+            )
 
 
 handleViewIdea : String -> Model -> (Model, Cmd Msg)
@@ -307,7 +312,9 @@ handleViewIdea ideaId model =
             , ideaComments = comments
             , newComment = ""
             , notification = ""
-        }, Cmd.none )
+        }
+        , Cmd.none
+        )
 
 
 -- ======================================================
@@ -317,39 +324,40 @@ handleViewIdea ideaId model =
 -- visible state — bubble its IoError to the notification banner so they
 -- know retry is needed. The follow-up reads (getComments / getIdea) use
 -- Result.withDefault because their failure mode is stale data, not lost data.
-doSubmitComment : (Dict String String) -> Model -> (Model, Cmd Msg)
+doSubmitComment : Dict String String -> Model -> (Model, Cmd Msg)
 doSubmitComment user model =
     let
         userId = Db.getField "id" user
     in
         case Comments.createComment model.selectedIdeaId userId model.newComment of
             Err e ->
-                let _ = println ("[COMMENT ERROR] " ++ Error.toString e) in
-                ( { model | notification = "Could not post comment: " ++ Error.toString e }, Cmd.none )
+                let
+                    _ = println ("[COMMENT ERROR] " ++ Error.toString e)
+                in
+                    ( { model | notification = "Could not post comment: " ++ Error.toString e }
+                    , Cmd.none
+                    )
+
             Ok _ ->
                 let
                     _ = logActivity "comment" model.selectedIdeaId userId
                     comments = Result.withDefault [] (Comments.getComments model.selectedIdeaId)
                     idea = Result.withDefault Nothing (Ideas.getIdea model.selectedIdeaId)
                 in
-                    ( { model
-                        | ideaComments = comments
-                        , selectedIdea = idea
-                        , newComment = ""
-                    }, Cmd.none )
+                    ( { model | ideaComments = comments, selectedIdea = idea, newComment = "" }
+                    , Cmd.none
+                    )
 
 
 handleSubmitComment : Model -> (Model, Cmd Msg)
 handleSubmitComment model =
     case model.currentUser of
-        
         Just user ->
             if model.newComment == "" then
                 ( model, Cmd.none )
-            
             else
                 doSubmitComment user model
-        
+
         Nothing ->
             ( { model | page = SignInPage }, Cmd.none )
 
@@ -365,7 +373,9 @@ handleBackToBoard model =
             , selectedIdea = Nothing
             , selectedIdeaId = ""
             , notification = ""
-        }, Cmd.none )
+        }
+        , Cmd.none
+        )
 
 
 -- ======================================================
@@ -374,15 +384,20 @@ handleBackToBoard model =
 -- doCreateIdea: critical write — surface any failure to the user so
 -- they don't believe their idea was accepted. Stays on SubmitPage to
 -- preserve their typed text on retry.
-doCreateIdea : (Dict String String) -> Model -> (Model, Cmd Msg)
+doCreateIdea : Dict String String -> Model -> (Model, Cmd Msg)
 doCreateIdea user model =
     let
         userId = Db.getField "id" user
     in
         case Ideas.createIdea model.submitTitle model.submitDescription model.submitCategory userId of
             Err e ->
-                let _ = println ("[IDEA ERROR] " ++ Error.toString e) in
-                ( { model | notification = "Could not submit idea: " ++ Error.toString e }, Cmd.none )
+                let
+                    _ = println ("[IDEA ERROR] " ++ Error.toString e)
+                in
+                    ( { model | notification = "Could not submit idea: " ++ Error.toString e }
+                    , Cmd.none
+                    )
+
             Ok _ ->
                 let
                     _ = logActivity "submit" "" userId
@@ -395,19 +410,19 @@ doCreateIdea user model =
                         , submitDescription = ""
                         , submitCategory = "feature"
                         , notification = "Your idea has been submitted!"
-                    }, Cmd.none )
+                    }
+                    , Cmd.none
+                    )
 
 
 handleSubmitIdea : Model -> (Model, Cmd Msg)
 handleSubmitIdea model =
     case model.currentUser of
-        
         Just user ->
             if model.submitTitle == "" then
                 ( model, Cmd.none )
-            
             else
                 doCreateIdea user model
-        
+
         Nothing ->
             ( { model | page = SignInPage }, Cmd.none )

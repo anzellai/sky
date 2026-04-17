@@ -1,11 +1,11 @@
 module Main exposing (main)
-
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Result as Result
 import Std.Log exposing (println)
 import Net.Http as Http
 import Github.Com.Gorilla.Mux as Mux
 import Io
+
 
 writeResponse w text =
     let
@@ -14,13 +14,16 @@ writeResponse w text =
         ()
 
 
-indexHandler w _ = writeResponse w "Welcome to Sky Mux Server!"
+indexHandler w _ =
+    writeResponse w "Welcome to Sky Mux Server!"
 
 
-echoHandler w req = writeResponse w "echo received"
+echoHandler w req =
+    writeResponse w "echo received"
 
 
-pingHandler w _ = writeResponse w "pong"
+pingHandler w _ =
+    writeResponse w "pong"
 
 
 setupRoutes router =
@@ -41,13 +44,12 @@ startServer router =
 
 main =
     case Mux.newRouter () of
-        
         Ok router ->
             let
                 _ = startServer (setupRoutes router)
             in
                 ()
-        
+
         Err e ->
             let
                 _ = println ("Failed to create router: " ++ e)

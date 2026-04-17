@@ -1,15 +1,14 @@
 module Main exposing (main)
-
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Result as Result
 import Std.Log exposing (println)
 import Github.Com.Google.Uuid as Uuid
 
+
 main =
     case Uuid.newString () of
-        
         Ok uuid ->
             println ("Generated UUID: " ++ uuid)
-        
+
         Err e ->
             println ("Failed to generate UUID: " ++ e)

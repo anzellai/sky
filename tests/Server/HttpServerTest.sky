@@ -1,5 +1,4 @@
 module Server.HttpServerTest exposing (tests)
-
 -- Phase 4 — Sky.Http.Server pure-seam behaviour tests.
 --
 -- The real runtime lives in runtime-go/rt/rt.go (Server_listen,
@@ -15,42 +14,25 @@ module Server.HttpServerTest exposing (tests)
 -- in any of these shapes (silent status drop, wrong content-type,
 -- param lookup returning Just for missing key) will trip a test
 -- before a live boot does.
-
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.String as String
 import Sky.Core.List as List
 import Sky.Test as Test exposing (Test)
-
 
 -- ══════════════════════════════════════════════════════════
 -- Request / response records — mirror rt.SkyRequest /
 -- rt.SkyResponse shapes.
 -- ══════════════════════════════════════════════════════════
 type alias Request =
-    { method : String
-    , path : String
-    , params : List ( String, String )
-    , query : List ( String, String )
-    , cookies : List ( String, String )
-    }
-
+    { method : String, path : String, params : List (String, String), query : List (String, String), cookies : List (String, String) }
 
 type alias Response =
-    { status : Int
-    , body : String
-    , contentType : String
-    , location : String
-    }
+    { status : Int, body : String, contentType : String, location : String }
 
 
 emptyRequest : Request
 emptyRequest =
-    { method = "GET"
-    , path = "/"
-    , params = []
-    , query = []
-    , cookies = []
-    }
+    { method = "GET", path = "/", params = [], query = [], cookies = [] }
 
 
 text : String -> Response
@@ -83,7 +65,7 @@ redirect url =
 -- String.split which returns []string and doesn't compose with
 -- Sky's List kernels — tracked separately).
 -- ══════════════════════════════════════════════════════════
-matchSegments : List String -> List String -> List ( String, String ) -> Maybe (List ( String, String ))
+matchSegments : List String -> List String -> List (String, String) -> Maybe List (String, String)
 matchSegments pp ap acc =
     case pp of
         [] ->
@@ -104,16 +86,14 @@ matchSegments pp ap acc =
                         let
                             name = String.slice 1 (String.length p) p
                         in
-                        matchSegments ps rest (( name, a ) :: acc)
-
+                            matchSegments ps rest (( name, a ) :: acc)
                     else if p == a then
                         matchSegments ps rest acc
-
                     else
                         Nothing
 
 
-matchRouteSegs : List String -> List String -> Maybe (List ( String, String ))
+matchRouteSegs : List String -> List String -> Maybe List (String, String)
 matchRouteSegs pp ap =
     matchSegments pp ap []
 
@@ -131,16 +111,15 @@ isNothing m =
             False
 
 
-lookupParam : String -> List ( String, String ) -> Maybe String
+lookupParam : String -> List (String, String) -> Maybe String
 lookupParam key pairs =
     case pairs of
         [] ->
             Nothing
 
-        ( k, v ) :: rest ->
+        (k, v) :: rest ->
             if k == key then
                 Just v
-
             else
                 lookupParam key rest
 
@@ -169,28 +148,24 @@ memberParam =
     let
         matched = matchRouteSegs [ "orgs", ":o", "members", ":m" ] [ "orgs", "acme", "members", "alice" ]
     in
-    case matched of
-        Just ps ->
-            lookupParam "m" ps
+        case matched of
+            Just ps ->
+                lookupParam "m" ps
 
-        Nothing ->
-            Nothing
+            Nothing ->
+                Nothing
 
 
 statusForCategory : String -> Int
 statusForCategory c =
     if c == "auth" then
         401
-
     else if c == "missing" then
         404
-
     else if c == "invalid" then
         400
-
     else if c == "ok" then
         200
-
     else
         500
 
@@ -200,127 +175,63 @@ statusForCategory c =
 -- ══════════════════════════════════════════════════════════
 tests : List Test
 tests =
-    [ Test.suite "response builders"
-        [ Test.test "text status defaults to 200" (\_ ->
-            Test.equal 200 (text "hi").status)
-        , Test.test "text sets content-type" (\_ ->
-            Test.equal "text/plain" (text "hi").contentType)
-        , Test.test "text body round-trips" (\_ ->
-            Test.equal "hello" (text "hello").body)
-        , Test.test "json sets application/json" (\_ ->
-            Test.equal "application/json" (json "{}").contentType)
-        , Test.test "html sets text/html" (\_ ->
-            Test.equal "text/html" (html "<p/>").contentType)
-        , Test.test "withStatus overrides status" (\_ ->
-            Test.equal 201 (withStatus 201 (json "{}")).status)
-        , Test.test "withStatus preserves body" (\_ ->
-            Test.equal "{}" (withStatus 201 (json "{}")).body)
-        , Test.test "withStatus preserves content-type" (\_ ->
-            Test.equal "application/json" (withStatus 201 (json "{}")).contentType)
-        , Test.test "redirect status is 302" (\_ ->
-            Test.equal 302 (redirect "/login").status)
-        , Test.test "redirect captures Location" (\_ ->
-            Test.equal "/login" (redirect "/login").location)
-        , Test.test "redirect body is empty" (\_ ->
-            Test.equal "" (redirect "/login").body)
-        ]
-    , Test.suite "route matching: literals"
-        [ Test.test "exact match yields empty params" (\_ ->
-            Test.equal (Just [])
-                (matchRouteSegs [ "users" ] [ "users" ]))
-        , Test.test "non-match returns Nothing" (\_ ->
-            Test.isTrue (isNothing (matchRouteSegs [ "users" ] [ "posts" ])))
-        , Test.test "length mismatch returns Nothing" (\_ ->
-            Test.isTrue (isNothing (matchRouteSegs [ "users" ] [ "users", "1" ])))
-        , Test.test "root (empty segs) matches" (\_ ->
-            Test.equal (Just []) (matchRouteSegs [] []))
-        , Test.test "nested literal match" (\_ ->
-            Test.equal (Just [])
-                (matchRouteSegs [ "api", "v1", "users" ] [ "api", "v1", "users" ]))
-        , Test.test "nested literal mismatch" (\_ ->
-            Test.isTrue (isNothing (matchRouteSegs [ "api", "v1", "users" ] [ "api", "v2", "users" ])))
-        ]
-    , Test.suite "route matching: path params"
-        [ Test.test "single :id" (\_ ->
-            Test.equal (Just [ ( "id", "42" ) ])
-                (matchRouteSegs [ "users", ":id" ] [ "users", "42" ]))
-        , Test.test "multiple params" (\_ ->
-            Test.equal (Just [ ( "org", "acme" ), ( "proj", "site" ) ])
-                (matchRouteSegs
-                    [ "orgs", ":org", "projects", ":proj" ]
-                    [ "orgs", "acme", "projects", "site" ]))
-        , Test.test "mixed literal + param" (\_ ->
-            Test.equal (Just [ ( "id", "99" ) ])
-                (matchRouteSegs
-                    [ "posts", ":id", "edit" ]
-                    [ "posts", "99", "edit" ]))
-        , Test.test "wrong literal fails despite param match" (\_ ->
-            Test.isTrue (isNothing (matchRouteSegs [ "posts", ":id", "edit" ] [ "posts", "99", "view" ])))
-        , Test.test "param captures verbatim (hyphens allowed)" (\_ ->
-            Test.equal (Just [ ( "slug", "hello-world_2024" ) ])
-                (matchRouteSegs
-                    [ "posts", ":slug" ]
-                    [ "posts", "hello-world_2024" ]))
-        ]
-    , Test.suite "param / query / cookie lookup"
-        [ Test.test "key found" (\_ ->
-            Test.equal (Just "alice")
-                (lookupParam "user" [ ( "user", "alice" ), ( "role", "admin" ) ]))
-        , Test.test "missing key returns Nothing" (\_ ->
-            Test.isTrue (isNothing (lookupParam "nope" [ ( "user", "alice" ) ])))
-        , Test.test "empty pair list returns Nothing" (\_ ->
-            Test.isTrue (isNothing (lookupParam "any" [])))
-        , Test.test "first match wins on duplicate" (\_ ->
-            Test.equal (Just "first")
-                (lookupParam "k" [ ( "k", "first" ), ( "k", "second" ) ]))
-        , Test.test "case-sensitive" (\_ ->
-            Test.isTrue (isNothing (lookupParam "User" [ ( "user", "alice" ) ])))
-        ]
-    , Test.suite "request record shape"
-        [ Test.test "emptyRequest is GET /" (\_ ->
-            Test.equal "GET" emptyRequest.method)
-        , Test.test "emptyRequest path is root" (\_ ->
-            Test.equal "/" emptyRequest.path)
-        , Test.test "emptyRequest params empty" (\_ ->
-            Test.isTrue (List.isEmpty emptyRequest.params))
-        , Test.test "emptyRequest cookies empty" (\_ ->
-            Test.isTrue (List.isEmpty emptyRequest.cookies))
-        , Test.test "request update captures new path" (\_ ->
-            let
-                r = { emptyRequest | path = "/users/42" }
-            in
-            Test.equal "/users/42" r.path)
-        , Test.test "request update preserves method" (\_ ->
-            let
-                r = { emptyRequest | path = "/users/42" }
-            in
-            Test.equal "GET" r.method)
-        ]
-    , Test.suite "status classification"
-        [ Test.test "auth → 401" (\_ ->
-            Test.equal 401 (statusForCategory "auth"))
-        , Test.test "missing → 404" (\_ ->
-            Test.equal 404 (statusForCategory "missing"))
-        , Test.test "invalid → 400" (\_ ->
-            Test.equal 400 (statusForCategory "invalid"))
-        , Test.test "ok → 200" (\_ ->
-            Test.equal 200 (statusForCategory "ok"))
-        , Test.test "unknown → 500" (\_ ->
-            Test.equal 500 (statusForCategory "anything-else"))
-        , Test.test "empty → 500 (safe default)" (\_ ->
-            Test.equal 500 (statusForCategory ""))
-        ]
-    , Test.suite "integration: route + param + response shape"
-        [ Test.test "matched path + lookup builds json body" (\_ ->
-            Test.equal "{\"id\":\"42\"}" (idResponseBody [ "users", "42" ]).body)
-        , Test.test "non-matching segments yield Nothing" (\_ ->
-            Test.isTrue (isNothing (matchRouteSegs [ "users", ":id" ] [ "posts", "1" ])))
-        , Test.test "match + lookup returns Just for existing key" (\_ ->
-            Test.equal (Just "alice") (memberParam))
-        , Test.test "status set via withStatus survives re-read" (\_ ->
-            let
-                r = withStatus 404 (html "<p>not found</p>")
-            in
-            Test.equal "<p>not found</p>" r.body)
-        ]
+    [ Test.suite "response builders" [ Test.test "text status defaults to 200" (\_ -> Test.equal 200 text "hi".status)
+    , Test.test "text sets content-type" (\_ -> Test.equal "text/plain" text "hi".contentType)
+    , Test.test "text body round-trips" (\_ -> Test.equal "hello" text "hello".body)
+    , Test.test "json sets application/json" (\_ -> Test.equal "application/json" json "{}".contentType)
+    , Test.test "html sets text/html" (\_ -> Test.equal "text/html" html "<p/>".contentType)
+    , Test.test "withStatus overrides status" (\_ -> Test.equal 201 withStatus 201 (json "{}").status)
+    , Test.test "withStatus preserves body" (\_ -> Test.equal "{}" withStatus 201 (json "{}").body)
+    , Test.test "withStatus preserves content-type" (\_ -> Test.equal "application/json" withStatus 201 (json "{}").contentType)
+    , Test.test "redirect status is 302" (\_ -> Test.equal 302 redirect "/login".status)
+    , Test.test "redirect captures Location" (\_ -> Test.equal "/login" redirect "/login".location)
+    , Test.test "redirect body is empty" (\_ -> Test.equal "" redirect "/login".body)
+    ]
+    , Test.suite "route matching: literals" [ Test.test "exact match yields empty params" (\_ -> Test.equal (Just []) (matchRouteSegs ["users"] ["users"]))
+    , Test.test "non-match returns Nothing" (\_ -> Test.isTrue (isNothing (matchRouteSegs ["users"] ["posts"])))
+    , Test.test "length mismatch returns Nothing" (\_ -> Test.isTrue (isNothing (matchRouteSegs ["users"] [ "users", "1" ])))
+    , Test.test "root (empty segs) matches" (\_ -> Test.equal (Just []) (matchRouteSegs [] []))
+    , Test.test "nested literal match" (\_ -> Test.equal (Just []) (matchRouteSegs [ "api", "v1", "users" ] [ "api", "v1", "users" ]))
+    , Test.test "nested literal mismatch" (\_ -> Test.isTrue (isNothing (matchRouteSegs [ "api", "v1", "users" ] [ "api", "v2", "users" ])))
+    ]
+    , Test.suite "route matching: path params" [ Test.test "single :id" (\_ -> Test.equal (Just [( "id", "42" )]) (matchRouteSegs [ "users", ":id" ] [ "users", "42" ]))
+    , Test.test "multiple params" (\_ -> Test.equal (Just [ ( "org", "acme" ), ( "proj", "site" ) ]) (matchRouteSegs [ "orgs", ":org", "projects", ":proj" ] [ "orgs", "acme", "projects", "site" ]))
+    , Test.test "mixed literal + param" (\_ -> Test.equal (Just [( "id", "99" )]) (matchRouteSegs [ "posts", ":id", "edit" ] [ "posts", "99", "edit" ]))
+    , Test.test "wrong literal fails despite param match" (\_ -> Test.isTrue (isNothing (matchRouteSegs [ "posts", ":id", "edit" ] [ "posts", "99", "view" ])))
+    , Test.test "param captures verbatim (hyphens allowed)" (\_ -> Test.equal (Just [( "slug", "hello-world_2024" )]) (matchRouteSegs [ "posts", ":slug" ] [ "posts", "hello-world_2024" ]))
+    ]
+    , Test.suite "param / query / cookie lookup" [ Test.test "key found" (\_ -> Test.equal (Just "alice") (lookupParam "user" [ ( "user", "alice" ), ( "role", "admin" ) ]))
+    , Test.test "missing key returns Nothing" (\_ -> Test.isTrue (isNothing (lookupParam "nope" [( "user", "alice" )])))
+    , Test.test "empty pair list returns Nothing" (\_ -> Test.isTrue (isNothing (lookupParam "any" [])))
+    , Test.test "first match wins on duplicate" (\_ -> Test.equal (Just "first") (lookupParam "k" [ ( "k", "first" ), ( "k", "second" ) ]))
+    , Test.test "case-sensitive" (\_ -> Test.isTrue (isNothing (lookupParam "User" [( "user", "alice" )])))
+    ]
+    , Test.suite "request record shape" [ Test.test "emptyRequest is GET /" (\_ -> Test.equal "GET" emptyRequest.method)
+    , Test.test "emptyRequest path is root" (\_ -> Test.equal "/" emptyRequest.path)
+    , Test.test "emptyRequest params empty" (\_ -> Test.isTrue (List.isEmpty emptyRequest.params))
+    , Test.test "emptyRequest cookies empty" (\_ -> Test.isTrue (List.isEmpty emptyRequest.cookies))
+    , Test.test "request update captures new path" (\_ -> let
+        r = { emptyRequest | path = "/users/42" }
+    in
+        Test.equal "/users/42" r.path)
+    , Test.test "request update preserves method" (\_ -> let
+        r = { emptyRequest | path = "/users/42" }
+    in
+        Test.equal "GET" r.method)
+    ]
+    , Test.suite "status classification" [ Test.test "auth → 401" (\_ -> Test.equal 401 (statusForCategory "auth"))
+    , Test.test "missing → 404" (\_ -> Test.equal 404 (statusForCategory "missing"))
+    , Test.test "invalid → 400" (\_ -> Test.equal 400 (statusForCategory "invalid"))
+    , Test.test "ok → 200" (\_ -> Test.equal 200 (statusForCategory "ok"))
+    , Test.test "unknown → 500" (\_ -> Test.equal 500 (statusForCategory "anything-else"))
+    , Test.test "empty → 500 (safe default)" (\_ -> Test.equal 500 (statusForCategory ""))
+    ]
+    , Test.suite "integration: route + param + response shape" [ Test.test "matched path + lookup builds json body" (\_ -> Test.equal "{\"id\":\"42\"}" idResponseBody [ "users", "42" ].body)
+    , Test.test "non-matching segments yield Nothing" (\_ -> Test.isTrue (isNothing (matchRouteSegs [ "users", ":id" ] [ "posts", "1" ])))
+    , Test.test "match + lookup returns Just for existing key" (\_ -> Test.equal (Just "alice") memberParam)
+    , Test.test "status set via withStatus survives re-read" (\_ -> let
+        r = withStatus 404 (html "<p>not found</p>")
+    in
+        Test.equal "<p>not found</p>" r.body)
+    ]
     ]

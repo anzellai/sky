@@ -1,5 +1,4 @@
 module Lib.Auth exposing (hashPassword, verifyPassword, createUser, authenticateUser, getUserById)
-
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Maybe exposing (..)
 import Sky.Core.List as List
@@ -16,12 +15,14 @@ hashPassword password =
     case Auth.hashPassword password of
         Ok hash ->
             hash
+
         Err _ ->
             ""
 
 
 verifyPassword : String -> String -> Bool
-verifyPassword password storedHash = Auth.verifyPassword password storedHash
+verifyPassword password storedHash =
+    Auth.verifyPassword password storedHash
 
 
 -- createUser : returns Result Error UserId. Surfaces unique-key /
@@ -33,14 +34,13 @@ createUser username email password =
         id = String.slice 0 12 (Crypto.sha256 (username ++ ":" ++ email))
         passHash = hashPassword password
     in
-        case Db.exec
-                "INSERT INTO users (id, username, email, password_hash) VALUES (?, ?, ?, ?)"
-                [ id , username , email , passHash ] of
+        case Db.exec "INSERT INTO users (id, username, email, password_hash) VALUES (?, ?, ?, ?)" [ id, username, email, passHash ] of
             Ok _ ->
                 let
                     _ = println ("[AUTH] User created: " ++ username ++ " (" ++ email ++ ")")
                 in
                     Ok id
+
             Err _ ->
                 Err (Error.invalidInput "Username or email already taken.")
 
@@ -49,13 +49,12 @@ createUser username email password =
 -- callers can show "DB unavailable" rather than misleading "bad password".
 -- Wrong password / unknown email both return Unauthorised — same UI text,
 -- avoids leaking which one was wrong (security best practice).
-authenticateUser : String -> String -> Result Error (Dict String String)
+authenticateUser : String -> String -> Result Error Dict String String
 authenticateUser email password =
-    case Db.query
-            "SELECT id, username, email, password_hash FROM users WHERE email = ? LIMIT 1"
-            [ email ] of
+    case Db.query "SELECT id, username, email, password_hash FROM users WHERE email = ? LIMIT 1" [email] of
         Err e ->
             Err e
+
         Ok userRows ->
             case List.head userRows of
                 Nothing ->
@@ -63,6 +62,7 @@ authenticateUser email password =
                         _ = println ("[AUTH] Sign-in failed (not found): " ++ email)
                     in
                         Err (Error.permissionDenied |> Error.withMessage "Invalid email or password.")
+
                 Just user ->
                     let
                         storedHash = Db.getField "password_hash" user
@@ -82,12 +82,11 @@ authenticateUser email password =
 -- getUserById : Result Error (Maybe User). The outer Result is for
 -- DB failures; the inner Maybe is "found / not found" which is normal
 -- and not an error.
-getUserById : String -> Result Error (Maybe (Dict String String))
+getUserById : String -> Result Error Maybe Dict String String
 getUserById userId =
-    case Db.query
-            "SELECT id, username, email FROM users WHERE id = ? LIMIT 1"
-            [ userId ] of
+    case Db.query "SELECT id, username, email FROM users WHERE id = ? LIMIT 1" [userId] of
         Err e ->
             Err e
+
         Ok userRows ->
             Ok (List.head userRows)

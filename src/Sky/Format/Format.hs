@@ -266,14 +266,18 @@ fmtExpr lvl (Src.Update (A.At _ n) fs) =
 
 fmtArg :: Int -> Src.Expr -> String
 fmtArg lvl e = case A.toValue e of
-    Src.Call _ _ -> "(" ++ fmtExpr lvl (A.toValue e) ++ ")"
-    Src.Binops _ _ -> "(" ++ fmtExpr lvl (A.toValue e) ++ ")"
-    Src.If _ _ -> "(" ++ fmtExpr lvl (A.toValue e) ++ ")"
-    Src.Let _ _ -> "(" ++ fmtExpr lvl (A.toValue e) ++ ")"
-    Src.Case _ _ -> "(" ++ fmtExpr lvl (A.toValue e) ++ ")"
-    Src.Lambda _ _ -> "(" ++ fmtExpr lvl (A.toValue e) ++ ")"
-    Src.Negate _ -> "(" ++ fmtExpr lvl (A.toValue e) ++ ")"
+    Src.Call _ _ -> wrapParen lvl e
+    Src.Binops _ _ -> wrapParen lvl e
+    Src.If _ _ -> wrapParen lvl e
+    Src.Let _ _ -> wrapParen lvl e
+    Src.Case _ _ -> wrapParen lvl e
+    Src.Lambda _ _ -> wrapParen lvl e
+    Src.Negate _ -> wrapParen lvl e
     _ -> fmtExpr lvl (A.toValue e)
+
+
+wrapParen :: Int -> Src.Expr -> String
+wrapParen lvl e = "(" ++ fmtExpr lvl (A.toValue e) ++ ")"
 
 
 fmtIf :: Int -> [(Src.Expr, Src.Expr)] -> Src.Expr -> String
