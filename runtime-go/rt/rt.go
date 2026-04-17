@@ -454,6 +454,7 @@ func ComposeR[A any, B any, C any](g func(B) C, f func(A) B) func(A) C {
 // Debug_toString: universal stringify for any Sky value. Used by the
 // multiline-string interpolation desugarer at canonicalise time.
 func Debug_toString(v any) any {
+	v = derefPointer(unwrapAny(v))
 	if s, ok := v.(string); ok {
 		return s
 	}
@@ -695,7 +696,7 @@ func Basics_not(b any) any {
 }
 
 func Basics_toString(v any) string {
-	return fmt.Sprintf("%v", v)
+	return fmt.Sprintf("%v", derefPointer(unwrapAny(v)))
 }
 
 // Basics_errorToString — Elm-compat extractor for Result errors. Preserves
@@ -763,7 +764,23 @@ func Context_withCancel(parent any) any {
 // Fmt — subset of Go's fmt pkg for string-building interop
 // ═══════════════════════════════════════════════════════════
 
-func Fmt_sprint(args ...any) any    { return fmt.Sprint(args...) }
+func derefPointer(v any) any {
+	if v == nil { return v }
+	rv := reflect.ValueOf(v)
+	for rv.Kind() == reflect.Ptr {
+		if rv.IsNil() { return nil }
+		rv = rv.Elem()
+	}
+	return rv.Interface()
+}
+
+func Fmt_sprint(args ...any) any {
+	derefed := make([]any, len(args))
+	for i, a := range args {
+		derefed[i] = derefPointer(a)
+	}
+	return fmt.Sprint(derefed...)
+}
 func Fmt_sprintf(format any, args ...any) any {
 	return fmt.Sprintf(fmt.Sprintf("%v", format), args...)
 }
@@ -2514,7 +2531,7 @@ func Dict_insert(key any, val any, dict any) any {
 func Dict_get(key any, dict any) any {
 	m := AsDict(unwrapAny(dict))
 	v, ok := m[fmt.Sprintf("%v", key)]
-	if ok { return Just[any](v) }
+	if ok { return Just[any](derefPointer(v)) }
 	return Nothing[any]()
 }
 
@@ -2576,7 +2593,10 @@ func Dict_fromList(list any) any {
 func Dict_map(fn any, dict any) any {
 	m := AsDict(unwrapAny(dict))
 	result := make(map[string]any, len(m))
-	for k, v := range m { result[k] = SkyCall(fn, v) }
+	for k, v := range m {
+		step := SkyCall(fn, k)
+		result[k] = SkyCall(step, v)
+	}
 	return result
 }
 
