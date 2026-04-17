@@ -753,7 +753,9 @@ staticKernelFunctions = Map.fromList
     , ("Math",    ["sqrt", "pow", "abs", "floor", "ceil", "round", "sin", "cos", "tan", "pi", "e", "log", "min", "max"])
     , ("Io",      ["readLine", "readBytes", "writeStdout", "writeStderr", "writeString"])
     , ("File",    ["readFile", "readFileLimit", "readFileBytes",
-                    "writeFile", "append", "mkdirAll", "readDir", "exists", "remove", "isDir"])
+                    "writeFile", "append", "mkdirAll", "readDir", "exists", "remove", "isDir",
+                    "tempFile", "copy", "rename"])
+    , ("Args",    ["getArg", "getArgs"])
     , ("Process", ["run", "exit", "getEnv", "getCwd", "loadEnv"])
     , ("Http",    ["get", "post", "request"])
     , ("Server",  ["listen", "get", "post", "put", "delete", "static", "text", "json", "html",

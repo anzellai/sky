@@ -3449,6 +3449,30 @@ func Process_getCwdT() func() SkyResult[string, string] {
 }
 
 // ═══════════════════════════════════════════════════════════
+// Args (command-line arguments)
+// ═══════════════════════════════════════════════════════════
+
+func Args_getArg(n any) any {
+	idx := AsInt(n)
+	if idx < 0 || idx >= len(os.Args) {
+		return Nothing[any]()
+	}
+	return Just[any](os.Args[idx])
+}
+
+func Args_getArgs(args ...any) any {
+	if len(os.Args) <= 1 {
+		return []any{}
+	}
+	result := make([]any, len(os.Args)-1)
+	for i, a := range os.Args[1:] {
+		result[i] = a
+	}
+	return result
+}
+
+
+// ═══════════════════════════════════════════════════════════
 // File
 // ═══════════════════════════════════════════════════════════
 
@@ -3628,19 +3652,54 @@ func File_isDir(path any) any {
 	}
 }
 
+func File_tempFile(prefix any) any {
+	f, err := os.CreateTemp("", AsString(prefix))
+	if err != nil {
+		return Err[any, any](ErrIo(err.Error()))
+	}
+	name := f.Name()
+	f.Close()
+	return Ok[any, any](name)
+}
+
+func File_copy(src any, dst any) any {
+	srcPath := AsString(src)
+	dstPath := AsString(dst)
+	in, err := os.Open(srcPath)
+	if err != nil {
+		return Err[any, any](ErrIo(err.Error()))
+	}
+	defer in.Close()
+	out, err := os.Create(dstPath)
+	if err != nil {
+		return Err[any, any](ErrIo(err.Error()))
+	}
+	defer out.Close()
+	if _, err := io.Copy(out, in); err != nil {
+		return Err[any, any](ErrIo(err.Error()))
+	}
+	return Ok[any, any](struct{}{})
+}
+
+func File_rename(src any, dst any) any {
+	err := os.Rename(AsString(src), AsString(dst))
+	if err != nil {
+		return Err[any, any](ErrIo(err.Error()))
+	}
+	return Ok[any, any](struct{}{})
+}
+
 // ═══════════════════════════════════════════════════════════
 // Io
 // ═══════════════════════════════════════════════════════════
 
 var stdinReader *bufio.Reader
 
-func Io_readLine() any {
-	return func() any {
-		if stdinReader == nil { stdinReader = bufio.NewReader(os.Stdin) }
-		line, err := stdinReader.ReadString('\n')
-		if err != nil && err != io.EOF { return Err[any, any](ErrFfi(err.Error())) }
-		return Ok[any, any](strings.TrimRight(line, "\n\r"))
-	}
+func Io_readLine(args ...any) any {
+	if stdinReader == nil { stdinReader = bufio.NewReader(os.Stdin) }
+	line, err := stdinReader.ReadString('\n')
+	if err != nil && err != io.EOF { return Err[any, any](ErrFfi(err.Error())) }
+	return Ok[any, any](strings.TrimRight(line, "\n\r"))
 }
 
 func Io_writeStdout(s any) any {

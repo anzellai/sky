@@ -248,8 +248,14 @@ registry = Map.fromList
     , (("File", "mkdirAll"),      KernelInfo "rt.File_mkdirAll" 1 False)
     , (("File", "readDir"),       KernelInfo "rt.File_readDir" 1 False)
     , (("File", "isDir"),         KernelInfo "rt.File_isDir" 1 False)
+    , (("File", "tempFile"),     KernelInfo "rt.File_tempFile" 1 False)
+    , (("File", "copy"),         KernelInfo "rt.File_copy" 2 False)
+    , (("File", "rename"),       KernelInfo "rt.File_rename" 2 False)
 
-    , (("Io", "readLine"),        KernelInfo "rt.Io_readLine" 0 False)
+    , (("Args", "getArg"),       KernelInfo "rt.Args_getArg" 1 False)
+    , (("Args", "getArgs"),      KernelInfo "rt.Args_getArgs" 0 False)
+
+    , (("Io", "readLine"),        KernelInfo "rt.Io_readLine" 1 False)
     , (("Io", "writeStdout"),     KernelInfo "rt.Io_writeStdout" 1 False)
     , (("Io", "writeStderr"),     KernelInfo "rt.Io_writeStderr" 1 False)
 
