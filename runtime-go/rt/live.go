@@ -62,6 +62,8 @@ func velement(tag string, attrs []any, children []any) VNode {
 			node.Attrs[v.key] = v.val
 		case eventPair:
 			node.Events[v.name] = v.msg
+		case SkyTuple2:
+			node.Attrs[fmt.Sprintf("%v", v.V0)] = fmt.Sprintf("%v", v.V1)
 		}
 	}
 	for _, c := range children {
