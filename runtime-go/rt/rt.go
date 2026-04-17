@@ -851,7 +851,7 @@ func Concat(a, b any) any {
 			return out
 		}
 	}
-	return fmt.Sprintf("%v%v", a, b)
+	return AsString(a) + AsString(b)
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -4303,6 +4303,20 @@ func Server_listen(port any, routes any) any {
 					return
 				}
 				skyReq.Body = string(bodyBytes)
+			}
+			// Parse form data (application/x-www-form-urlencoded)
+			// from the body so Server.formValue works.
+			if req.Method == "POST" || req.Method == "PUT" || req.Method == "PATCH" {
+				skyReq.Form = make(map[string]string)
+				ct := req.Header.Get("Content-Type")
+				if strings.HasPrefix(ct, "application/x-www-form-urlencoded") || ct == "" {
+					vals, err := url.ParseQuery(skyReq.Body)
+					if err == nil {
+						for k, v := range vals {
+							if len(v) > 0 { skyReq.Form[k] = v[0] }
+						}
+					}
+				}
 			}
 			for k, v := range req.URL.Query() {
 				if len(v) > 0 { skyReq.Query[k] = v[0] }
