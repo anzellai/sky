@@ -1723,6 +1723,7 @@ func RecordGet(record any, field string) any {
 // RecordUpdate copies a record (map or struct) and applies field overrides.
 // Works on both map[string]any and typed Go structs via reflect.
 func RecordUpdate(base any, updates map[string]any) any {
+	base = unwrapAny(base)
 	// Fast path: map-based record
 	if m, ok := base.(map[string]any); ok {
 		result := make(map[string]any, len(m)+len(updates))
@@ -2503,7 +2504,7 @@ func Maybe_traverse(fn, items any) any {
 func Dict_empty() any { return map[string]any{} }
 
 func Dict_insert(key any, val any, dict any) any {
-	m := dict.(map[string]any)
+	m := AsDict(unwrapAny(dict))
 	new := make(map[string]any, len(m)+1)
 	for k, v := range m { new[k] = v }
 	new[fmt.Sprintf("%v", key)] = val
@@ -2511,14 +2512,14 @@ func Dict_insert(key any, val any, dict any) any {
 }
 
 func Dict_get(key any, dict any) any {
-	m := dict.(map[string]any)
+	m := AsDict(unwrapAny(dict))
 	v, ok := m[fmt.Sprintf("%v", key)]
 	if ok { return Just[any](v) }
 	return Nothing[any]()
 }
 
 func Dict_remove(key any, dict any) any {
-	m := dict.(map[string]any)
+	m := AsDict(unwrapAny(dict))
 	new := make(map[string]any, len(m))
 	k := fmt.Sprintf("%v", key)
 	for kk, v := range m { if kk != k { new[kk] = v } }
@@ -2526,29 +2527,29 @@ func Dict_remove(key any, dict any) any {
 }
 
 func Dict_member(key any, dict any) any {
-	m := dict.(map[string]any)
+	m := AsDict(unwrapAny(dict))
 	_, ok := m[fmt.Sprintf("%v", key)]
 	return ok
 }
 
 func Dict_keys(dict any) any {
-	m := dict.(map[string]any)
+	m := AsDict(unwrapAny(dict))
 	result := make([]any, 0, len(m))
 	for k := range m { result = append(result, k) }
 	return result
 }
 
 func Dict_values(dict any) any {
-	m := dict.(map[string]any)
+	m := AsDict(unwrapAny(dict))
 	result := make([]any, 0, len(m))
 	for _, v := range m { result = append(result, v) }
 	return result
 }
 
 // AsDict coerces a Sky-side any to map[string]any. Sky Dict is
-// always map[string]any at runtime; typed Dict companions take
-// map[string]V and Go infers V=any.
+// always map[string]any at runtime; auto-unwraps SkyResult/SkyMaybe.
 func AsDict(v any) map[string]any {
+	v = unwrapAny(v)
 	if m, ok := v.(map[string]any); ok {
 		return m
 	}
@@ -2556,14 +2557,14 @@ func AsDict(v any) map[string]any {
 }
 
 func Dict_toList(dict any) any {
-	m := dict.(map[string]any)
+	m := AsDict(unwrapAny(dict))
 	result := make([]any, 0, len(m))
 	for k, v := range m { result = append(result, SkyTuple2{V0: k, V1: v}) }
 	return result
 }
 
 func Dict_fromList(list any) any {
-	items := list.([]any)
+	items := asList(list)
 	result := make(map[string]any, len(items))
 	for _, item := range items {
 		t := item.(SkyTuple2)
@@ -2573,10 +2574,9 @@ func Dict_fromList(list any) any {
 }
 
 func Dict_map(fn any, dict any) any {
-	f := fn.(func(any) any)
-	m := dict.(map[string]any)
+	m := AsDict(unwrapAny(dict))
 	result := make(map[string]any, len(m))
-	for k, v := range m { result[k] = f(v) }
+	for k, v := range m { result[k] = SkyCall(fn, v) }
 	return result
 }
 
@@ -2636,20 +2636,19 @@ func Dict_mapT[V, W any](fn func(V) W, d map[string]V) map[string]W {
 }
 
 func Dict_foldl(fn any, acc any, dict any) any {
-	f := fn.(func(any) any)
-	m := dict.(map[string]any)
+	m := AsDict(unwrapAny(dict))
 	result := acc
 	for k, v := range m {
-		step := f(k)
-		step2 := step.(func(any) any)(v)
-		result = step2.(func(any) any)(result)
+		step := SkyCall(fn, k)
+		step2 := SkyCall(step, v)
+		result = SkyCall(step2, result)
 	}
 	return result
 }
 
 func Dict_union(a any, b any) any {
-	ma := a.(map[string]any)
-	mb := b.(map[string]any)
+	ma := AsDict(unwrapAny(a))
+	mb := AsDict(unwrapAny(b))
 	result := make(map[string]any, len(ma)+len(mb))
 	for k, v := range mb { result[k] = v }
 	for k, v := range ma { result[k] = v }
@@ -2670,11 +2669,15 @@ func Math_minT(a, b int) int { if a < b { return a }; return b }
 func Math_maxT(a, b int) int { if a > b { return a }; return b }
 
 func Field(record any, field string) any {
+	record = unwrapAny(record)
 	v := reflect.ValueOf(record)
 	if v.Kind() == reflect.Ptr { v = v.Elem() }
 	if v.Kind() == reflect.Struct {
 		f := v.FieldByName(field)
 		if f.IsValid() { return f.Interface() }
+	}
+	if m, ok := record.(map[string]any); ok {
+		return m[field]
 	}
 	return nil
 }
@@ -2802,20 +2805,39 @@ func Coerce[T any](v any) T {
 	panic(fmt.Sprintf("rt.Coerce: expected %T, got %T (%v)", zero, v, v))
 }
 
-// unwrapResultOk extracts the Ok value from a SkyResult if present.
-// Returns the original value unchanged for non-Result inputs.
-func unwrapResultOk(v any) any {
+// unwrapAny recursively extracts the inner value from SkyResult and
+// SkyMaybe wrappers. This is the universal FFI boundary defence: typed
+// FFI wrappers return SkyResult[E, T] but downstream Sky code may pass
+// the wrapped value to runtime functions (Dict.map, List.member, etc.)
+// that expect the raw T. Without this, every such site panics with
+// "interface {} is rt.SkyResult[...], not <expected>".
+func unwrapAny(v any) any {
+	if v == nil {
+		return v
+	}
 	rv := reflect.ValueOf(v)
-	if !rv.IsValid() || rv.Kind() != reflect.Struct {
+	if rv.Kind() != reflect.Struct {
 		return v
 	}
 	tagF := rv.FieldByName("Tag")
+	if !tagF.IsValid() {
+		return v
+	}
+	// SkyResult: unwrap Ok (Tag==0 → OkValue)
 	okF := rv.FieldByName("OkValue")
-	if tagF.IsValid() && okF.IsValid() && tagF.Int() == 0 {
-		return okF.Interface()
+	if okF.IsValid() && tagF.Int() == 0 {
+		return unwrapAny(okF.Interface())
+	}
+	// SkyMaybe: unwrap Just (Tag==0 → JustValue)
+	justF := rv.FieldByName("JustValue")
+	if justF.IsValid() && tagF.Int() == 0 {
+		return justF.Interface()
 	}
 	return v
 }
+
+// unwrapResultOk is the legacy name — delegates to unwrapAny.
+func unwrapResultOk(v any) any { return unwrapAny(v) }
 
 
 // safeReflectConvert whitelists reflect.Value.Convert pairs that are

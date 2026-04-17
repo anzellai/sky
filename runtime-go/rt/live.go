@@ -97,8 +97,19 @@ func asList(v any) []any {
 	if v == nil {
 		return nil
 	}
+	v = unwrapAny(v)
 	if l, ok := v.([]any); ok {
 		return l
+	}
+	// Handle typed slices ([]string, []int, etc.) via reflect
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Slice {
+		n := rv.Len()
+		out := make([]any, n)
+		for i := 0; i < n; i++ {
+			out[i] = rv.Index(i).Interface()
+		}
+		return out
 	}
 	return []any{v}
 }
