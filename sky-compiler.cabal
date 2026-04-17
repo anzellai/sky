@@ -107,6 +107,7 @@ executable sky
 
     -- Formatter
     Sky.Format.Format
+    Sky.Format.Doc
 
     -- LSP
     Sky.Lsp.Index
