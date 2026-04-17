@@ -50,7 +50,10 @@ update msg model =
             ( { model | title = t }, Cmd.none )
 
         CounterMsg counterMsg ->
-            ( { model | myCounter = Counter.update counterMsg model.myCounter }, Cmd.none )
+            let
+                ( newCounter, _ ) = Counter.update counterMsg model.myCounter
+            in
+            ( { model | myCounter = newCounter }, Cmd.none )
 
         _ ->
             ( model, Cmd.none )
