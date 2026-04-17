@@ -47,4 +47,4 @@ query queryStr args =
 -- Missing columns are a Sky-side schema mismatch, not a runtime error.
 -- Empty string lets the view degrade predictably for display-only reads.
 getField field row =
-    Maybe.withDefault "" (Dict.get field row)
+    toString (Maybe.withDefault "" (Dict.get field row))

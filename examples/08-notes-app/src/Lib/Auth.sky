@@ -62,7 +62,7 @@ checkUserCredentials password user =
         verified = Db.getField "verified" user
     in
         if verifyPassword password storedHash then
-            if toString verified == "1" || verified == "1" then
+            if verified == "1" then
                 Ok user
             else
                 Err (Error.permissionDenied |> Error.withMessage "Email not verified yet. Please check the server console for your verification link.")
