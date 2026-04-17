@@ -101,6 +101,7 @@ nix develop            # GHC 9.4.8 + Go + every system dep, sandboxed
 | Compiler journey (TS→Go→Sky→Haskell) | [docs/compiler/journey.md](docs/compiler/journey.md) |
 | Version history | [docs/compiler/versions.md](docs/compiler/versions.md) |
 | CLI reference | [docs/tooling/cli.md](docs/tooling/cli.md) |
+| Testing (`sky test`) | [docs/tooling/testing.md](docs/tooling/testing.md) |
 | LSP | [docs/tooling/lsp.md](docs/tooling/lsp.md) |
 | Development & contributing | [docs/development.md](docs/development.md) |
 
