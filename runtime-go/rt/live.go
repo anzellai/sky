@@ -1897,6 +1897,22 @@ function __skyPatch(t) {
   var active = document.activeElement;
   var key = __skyElementKey(active);
   var selStart = null, selEnd = null;
+  var activeValue = null;
+  var activeIsInput = active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.tagName === "SELECT");
+  if (activeIsInput) {
+    activeValue = active.value;
+  }
+  // Snapshot ALL input values with pending debounces so they survive the patch.
+  var pendingValues = {};
+  var inputs = root.querySelectorAll("input, textarea, select");
+  for (var pi = 0; pi < inputs.length; pi++) {
+    var inp = inputs[pi];
+    var inpHid = inp.getAttribute("data-sky-hid");
+    if (inpHid && __skyInputPending[inpHid]) {
+      var inpKey = inp.getAttribute("sky-id") || inpHid;
+      pendingValues[inpKey] = inp.value;
+    }
+  }
   if (active && "selectionStart" in active) {
     try { selStart = active.selectionStart; selEnd = active.selectionEnd; } catch (e) {}
   }
@@ -1906,10 +1922,25 @@ function __skyPatch(t) {
   if (key) {
     var newEl = __skyFindByKey(root, key);
     if (newEl) {
+      // Optimistic input: if the user was typing in this element,
+      // restore their current value instead of the server's stale
+      // value. Prevents character loss from network round-trip lag.
+      if (activeIsInput && activeValue !== null && newEl.value !== activeValue) {
+        newEl.value = activeValue;
+      }
       newEl.focus();
       if (selStart !== null && "selectionStart" in newEl) {
         try { newEl.selectionStart = selStart; newEl.selectionEnd = selEnd; } catch (e) {}
       }
+    }
+  }
+  // Restore pending input values that were overwritten by innerHTML.
+  var newInputs = root.querySelectorAll("input, textarea, select");
+  for (var ri = 0; ri < newInputs.length; ri++) {
+    var ni = newInputs[ri];
+    var niKey = ni.getAttribute("sky-id") || ni.getAttribute("data-sky-hid");
+    if (niKey && pendingValues[niKey] !== undefined && ni.value !== pendingValues[niKey]) {
+      ni.value = pendingValues[niKey];
     }
   }
   // Re-bind sky-* events for the fresh DOM subtree.
@@ -1962,13 +1993,31 @@ function __skyLoaderEnd() {
 
 // ── Debounce ─────────────────────────────────────────────────
 var __skyInputTimers = {};
+var __skyInputPending = {};
 function __skyDebouncedSend(msgName, args, hid, delay) {
   var key = hid || msgName;
   clearTimeout(__skyInputTimers[key]);
+  __skyInputPending[key] = { msgName: msgName, args: args, hid: hid };
   __skyInputTimers[key] = setTimeout(function() {
+    delete __skyInputPending[key];
     __skySend(msgName, args, hid, { noLoader: true });
   }, delay);
 }
+// Flush pending debounced input on blur (tab away / click elsewhere).
+// Without this, typing fast then tabbing loses the last keystrokes
+// because the debounce hasn't fired yet.
+document.addEventListener("focusout", function(ev) {
+  var t = ev.target;
+  if (!t) return;
+  var hid = t.getAttribute("data-sky-hid");
+  var key = hid || t.getAttribute("sky-input");
+  if (key && __skyInputPending[key]) {
+    clearTimeout(__skyInputTimers[key]);
+    var p = __skyInputPending[key];
+    delete __skyInputPending[key];
+    __skySend(p.msgName, p.args, p.hid, { noLoader: true });
+  }
+}, true);
 
 // ── Core send ────────────────────────────────────────────────
 // Wire format: {sid, msg: "MsgName", args: [...], handlerId: "..."}.

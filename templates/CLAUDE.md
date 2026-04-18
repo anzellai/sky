@@ -1553,6 +1553,7 @@ For apps with custom user fields (username, avatar), use `Auth.hashPassword`/`Au
 - Pattern match on **`Maybe`** (`Just val` / `Nothing`) for Go `*primitive` pointer returns
 - **Nested patterns work**: `Ok (Just x)` and `Ok Nothing` are fully supported in case expressions
 - **Import conventions**: Use `exposing (..)` sparingly — when two modules export the same name (e.g., `Std.Html` and `Tailwind` both export `hidden`, `h2`, etc.), the first import wins. Prefer qualified imports (`import Foo as F`) to avoid collisions. If using `Tailwind exposing (..)` alongside `Std.Html exposing (..)`, use `hidden_` (with underscore) for the Tailwind version, and `headerNode`/`footerNode` for HTML5 semantic elements
+- **`exposing (Type(..))` limitation**: `import MyModule exposing (MyType(..))` does NOT expose ADT constructors for user-defined modules. Use `import MyModule exposing (..)` instead, or qualify constructors: `MyModule.MyConstructor`
 - **`//` for integer division**: Use `//` (Elm-style) or regular `/` — both work. `//` always returns `Int`, `modBy divisor n` returns `n % divisor`
 
 ## Code Formatting (`sky fmt`)
