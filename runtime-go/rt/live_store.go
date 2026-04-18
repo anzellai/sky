@@ -465,7 +465,9 @@ func (s *postgresStore) cleanupLoop() {
 // the missing runtime bits.
 type storableSession struct {
 	Model    any
-	PrevTree *VNode
+	// PrevTree excluded: VNode.Events holds function values which
+	// gob can't encode. The tree is rebuilt from view(model) on
+	// restore — handleEvent already handles empty prevTree.
 	LastSeen time.Time
 }
 
@@ -485,12 +487,10 @@ func encodeSession(s *liveSession) ([]byte, error) {
 	// type at an interface boundary. Safe to call repeatedly — we cache
 	// registered types.
 	gobRegisterAll(s.model)
-	gobRegisterAll(s.prevTree)
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
 	if err := enc.Encode(storableSession{
 		Model:    s.model,
-		PrevTree: s.prevTree,
 		LastSeen: s.lastSeen,
 	}); err != nil {
 		return nil, err
@@ -576,7 +576,7 @@ func decodeSession(blob []byte) (*liveSession, error) {
 	}
 	sess := &liveSession{
 		model:     st.Model,
-		prevTree:  st.PrevTree,
+		prevTree:  nil, // rebuilt on next render via handleEvent
 		handlers:  map[string]any{},
 		sseCh:     make(chan string, 16),
 		cancelSub: make(chan struct{}),
