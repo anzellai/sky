@@ -1193,6 +1193,16 @@ func unpackResponse(v any) (int, map[string]string, string) {
 				}
 			}
 		}
+		// Fall back to ContentType field when Headers doesn't set it.
+		// SkyResponse uses ContentType as a convenience field set by
+		// Server.html / Server.json / Server.text.
+		if _, hasCT := headers["Content-Type"]; !hasCT {
+			if f := rv.FieldByName("ContentType"); f.IsValid() {
+				if s, ok := f.Interface().(string); ok && s != "" {
+					headers["Content-Type"] = s
+				}
+			}
+		}
 		return status, headers, body
 	}
 	// Fallback: treat as raw body.

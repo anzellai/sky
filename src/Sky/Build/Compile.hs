@@ -2696,8 +2696,10 @@ typedKernelAltName = Map.fromList
     , (("Result", "withDefault"), "withDefaultAnyT")
     , (("Maybe",  "withDefault"), "withDefaultAnyT")
     , (("Dict",   "get"),         "getAnyT")
-    , (("List",   "map"),         "mapAnyT")
-    , (("List",   "filter"),      "filterAnyT")
+    , (("List",   "map"),         "mapAny")
+    , (("List",   "filter"),      "filterAny")
+    , (("List",   "head"),        "headAny")
+    , (("List",   "reverse"),     "reverseAny")
     , (("List",   "take"),        "takeAnyT")
     , (("List",   "cons"),        "consAnyT")
     , (("List",   "drop"),        "dropAnyT")
@@ -2774,8 +2776,8 @@ typedKernelArgCoerce = Map.fromList
     -- at runtime, so `rt.List_lengthT(rt.AsList(xs))` is exactly
     -- the typed shape — Go infers A = any from AsList's return.
     , (("List",   "length"),  ["AsList"])
-    , (("List",   "head"),    ["AsList"])
-    , (("List",   "reverse"), ["AsList"])
+    , (("List",   "head"),    ["Pass"])
+    , (("List",   "reverse"), ["Pass"])
     , (("List",   "isEmpty"), ["AsList"])
     -- Dict: keys/values return []any (updated in rt.go) so they
     -- compose with Sky List ops without []string/[]V mismatch.
@@ -2796,8 +2798,8 @@ typedKernelArgCoerce = Map.fromList
     , (("Server", "html"),    ["AsString"])
     , (("Server", "redirect"),["AsString"])
     -- List generic helpers: Pass the fn closure, AsList the slice.
-    , (("List",   "map"),     ["Pass", "AsList"])
-    , (("List",   "filter"),  ["Pass", "AsList"])
+    , (("List",   "map"),     ["Pass", "Pass"])
+    , (("List",   "filter"),  ["Pass", "Pass"])
     , (("List",   "take"),    ["AsInt", "AsList"])
     , (("List",   "drop"),    ["AsInt", "AsList"])
     , (("List",   "cons"),    ["Pass", "AsList"])

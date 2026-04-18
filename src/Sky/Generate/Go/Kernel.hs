@@ -121,12 +121,12 @@ registry = Map.fromList
     -- List
     -- ═══════════════════════════════════════════════════════
     -- List: use any-typed runtime functions until type checker provides types
-    , (("List", "map"),           KernelInfo "rt.List_map" 2 False)
-    , (("List", "filter"),        KernelInfo "rt.List_filter" 2 False)
+    , (("List", "map"),           KernelInfo "rt.List_mapAny" 2 False)
+    , (("List", "filter"),        KernelInfo "rt.List_filterAny" 2 False)
     , (("List", "foldl"),         KernelInfo "rt.List_foldl" 3 False)
     , (("List", "foldr"),         KernelInfo "rt.List_foldr" 3 False)
     , (("List", "length"),        KernelInfo "rt.List_length" 1 False)
-    , (("List", "head"),          KernelInfo "rt.List_head" 1 False)
+    , (("List", "head"),          KernelInfo "rt.List_headAny" 1 False)
     , (("List", "tail"),          KernelInfo "rt.List_tail" 1 False)
     , (("List", "indexedMap"),   KernelInfo "rt.List_indexedMap" 2 False)
     , (("List", "find"),         KernelInfo "rt.List_find" 2 False)
@@ -135,7 +135,7 @@ registry = Map.fromList
     , (("List", "append"),        KernelInfo "rt.List_append" 2 False)
     , (("List", "concat"),        KernelInfo "rt.List_concat" 1 False)
     , (("List", "concatMap"),     KernelInfo "rt.List_concatMap" 2 False)
-    , (("List", "reverse"),       KernelInfo "rt.List_reverse" 1 False)
+    , (("List", "reverse"),       KernelInfo "rt.List_reverseAny" 1 False)
     , (("List", "sort"),          KernelInfo "rt.List_sort" 1 False)
     , (("List", "sortBy"),        KernelInfo "rt.List_sortBy" 2 False)
     , (("List", "member"),        KernelInfo "rt.List_member" 2 False)
