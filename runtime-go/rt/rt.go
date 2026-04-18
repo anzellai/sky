@@ -2161,11 +2161,10 @@ func ErrUnexpected(msg string) any       { return makeError(10, "Unexpected",   
 func Result_map(fn any, result any) any {
 	tag, ok, err := anyResultView(result)
 	if tag < 0 {
-		// Not a recognisable Sky Result — treat as already-unwrapped Ok.
-		return Ok[any, any](fn.(func(any) any)(result))
+		return Ok[any, any](SkyCall(fn, result))
 	}
 	if tag == 0 {
-		return Ok[any, any](fn.(func(any) any)(ok))
+		return Ok[any, any](SkyCall(fn, ok))
 	}
 	return Err[any, any](err)
 }
@@ -2173,10 +2172,10 @@ func Result_map(fn any, result any) any {
 func Result_andThen(fn any, result any) any {
 	tag, ok, err := anyResultView(result)
 	if tag < 0 {
-		return Ok[any, any](fn.(func(any) any)(result))
+		return Ok[any, any](SkyCall(fn, result))
 	}
 	if tag == 0 {
-		return fn.(func(any) any)(ok)
+		return SkyCall(fn, ok)
 	}
 	return Err[any, any](err)
 }
@@ -2319,7 +2318,7 @@ func Result_mapError(fn any, result any) any {
 		return result
 	}
 	if tag == 1 {
-		return Err[any, any](fn.(func(any) any)(err))
+		return Err[any, any](SkyCall(fn, err))
 	}
 	return Ok[any, any](ok)
 }
@@ -2450,18 +2449,18 @@ func Maybe_withDefault(def any, maybe any) any {
 func Maybe_map(fn any, maybe any) any {
 	tag, just := anyMaybeView(maybe)
 	if tag < 0 {
-		return Just[any](fn.(func(any) any)(maybe))
+		return Just[any](SkyCall(fn, maybe))
 	}
-	if tag == 0 { return Just[any](fn.(func(any) any)(just)) }
+	if tag == 0 { return Just[any](SkyCall(fn, just)) }
 	return Nothing[any]()
 }
 
 func Maybe_andThen(fn any, maybe any) any {
 	tag, just := anyMaybeView(maybe)
 	if tag < 0 {
-		return fn.(func(any) any)(maybe)
+		return SkyCall(fn, maybe)
 	}
-	if tag == 0 { return fn.(func(any) any)(just) }
+	if tag == 0 { return SkyCall(fn, just) }
 	return Nothing[any]()
 }
 
@@ -3000,7 +2999,7 @@ func AnyTaskAndThen(fn any, task any) any {
 	return SkyTask[any, any](func() SkyResult[any, any] {
 		r := anyTaskInvoke(task)
 		if r.Tag == 0 {
-			return anyTaskInvoke(fn.(func(any) any)(r.OkValue))
+			return anyTaskInvoke(SkyCall(fn, r.OkValue))
 		}
 		return Err[any, any](r.ErrValue)
 	})
