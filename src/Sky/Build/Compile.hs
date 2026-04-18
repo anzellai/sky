@@ -4033,14 +4033,27 @@ solvedTypeToGo ty = case ty of
     T.TType _ "Bool" [] -> "bool"
     T.TType _ "String" [] -> "string"
     T.TType _ "Char" [] -> "rune"
-    -- Container types: stay as any at runtime (Go doesn't have covariant generics)
-    -- The type checker validates element types but Go uses []any, rt.SkyResult[any,any] etc.
-    T.TType _ "List" _ -> "any"  -- []any at runtime
-    T.TType _ "Maybe" _ -> "any"  -- rt.SkyMaybe[any] at runtime
-    T.TType _ "Result" _ -> "any"  -- rt.SkyResult[any,any] at runtime
-    T.TType _ "Task" _ -> "any"  -- rt.SkyTask[any,any] at runtime
-    T.TType _ "Dict" _ -> "any"  -- map[string]any at runtime
-    T.TType _ "Set" _ -> "any"   -- map[any]bool at runtime
+    -- Container types: emit concrete Go generic instantiations.
+    -- Pre-v1.0 these were all `any`; now we emit the concrete type
+    -- so Go's type system validates the structure and gob can encode
+    -- without runtime type walkers.
+    T.TType _ "List" [elem] ->
+        let elemGo = solvedTypeToGo elem
+        in if elemGo == "any" then "[]any" else "[]" ++ elemGo
+    T.TType _ "List" _ -> "[]any"
+    T.TType _ "Maybe" [a] ->
+        "rt.SkyMaybe[" ++ solvedTypeToGo a ++ "]"
+    T.TType _ "Maybe" _ -> "rt.SkyMaybe[any]"
+    T.TType _ "Result" [e, a] ->
+        "rt.SkyResult[" ++ solvedTypeToGo e ++ ", " ++ solvedTypeToGo a ++ "]"
+    T.TType _ "Result" _ -> "rt.SkyResult[any, any]"
+    T.TType _ "Task" [e, a] ->
+        "rt.SkyTask[" ++ solvedTypeToGo e ++ ", " ++ solvedTypeToGo a ++ "]"
+    T.TType _ "Task" _ -> "rt.SkyTask[any, any]"
+    T.TType _ "Dict" [_, v] ->
+        "map[string]" ++ solvedTypeToGo v
+    T.TType _ "Dict" _ -> "map[string]any"
+    T.TType _ "Set" _ -> "map[any]bool"
     T.TType home name _ ->
         let modStr = ModuleName.toString home
             base = if null modStr || modStr == "Main"
