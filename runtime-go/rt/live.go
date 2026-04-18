@@ -1926,61 +1926,16 @@ var __skySid = %q;
 function __skyPatch(t) {
   var root = document.getElementById("sky-root");
   if (!root) return;
-  // If the response contains a full <div id="sky-root"> wrapper (from a
-  // navigation request), strip the wrapper.
   var m = t.match(/<div id="sky-root">([\s\S]*?)<\/div><script>/);
   if (m) t = m[1];
-  var active = document.activeElement;
-  var key = __skyElementKey(active);
-  var selStart = null, selEnd = null;
-  var activeValue = null;
-  var activeIsInput = active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.tagName === "SELECT");
-  if (activeIsInput) {
-    activeValue = active.value;
-  }
-  // Snapshot ALL input values with pending debounces so they survive the patch.
-  var pendingValues = {};
-  var inputs = root.querySelectorAll("input, textarea, select");
-  for (var pi = 0; pi < inputs.length; pi++) {
-    var inp = inputs[pi];
-    var inpHid = inp.getAttribute("data-sky-hid");
-    if (inpHid && __skyInputPending[inpHid]) {
-      var inpKey = inp.getAttribute("sky-id") || inpHid;
-      pendingValues[inpKey] = inp.value;
-    }
-  }
-  if (active && "selectionStart" in active) {
-    try { selStart = active.selectionStart; selEnd = active.selectionEnd; } catch (e) {}
-  }
   var scrollX = window.scrollX, scrollY = window.scrollY;
-  root.innerHTML = t;
+  // Morphdom-lite: parse new HTML, walk by sky-id, patch in-place.
+  // Input elements that are focused or have pending debounces are
+  // NEVER touched — the user's live value is the source of truth.
+  var tmp = document.createElement("div");
+  tmp.innerHTML = t;
+  __skyMorph(root, tmp);
   window.scrollTo(scrollX, scrollY);
-  if (key) {
-    var newEl = __skyFindByKey(root, key);
-    if (newEl) {
-      newEl.focus();
-      // Optimistic input: restore value + cursor position together.
-      // Setting value resets selectionStart, so cursor must be
-      // restored AFTER value assignment.
-      if (activeIsInput && activeValue !== null) {
-        newEl.value = activeValue;
-        if (selStart !== null && "selectionStart" in newEl) {
-          try { newEl.selectionStart = selStart; newEl.selectionEnd = selEnd; } catch (e) {}
-        }
-      } else if (selStart !== null && "selectionStart" in newEl) {
-        try { newEl.selectionStart = selStart; newEl.selectionEnd = selEnd; } catch (e) {}
-      }
-    }
-  }
-  // Restore pending input values that were overwritten by innerHTML.
-  var newInputs = root.querySelectorAll("input, textarea, select");
-  for (var ri = 0; ri < newInputs.length; ri++) {
-    var ni = newInputs[ri];
-    var niKey = ni.getAttribute("sky-id") || ni.getAttribute("data-sky-hid");
-    if (niKey && pendingValues[niKey] !== undefined && ni.value !== pendingValues[niKey]) {
-      ni.value = pendingValues[niKey];
-    }
-  }
   // Re-bind sky-* events for the fresh DOM subtree.
   __skyBindEvents(document);
   // Process data-sky-eval attributes (e.g. skySignOut() on sign-out).
@@ -2132,6 +2087,93 @@ function __skyBindEvents(root) {
                 "mousedown", "mouseup"];
   for (var i = 0; i < events.length; i++) {
     __skyBindOne(root, events[i]);
+  }
+}
+
+// ── Morphdom-lite ────────────────────────────────────────────
+// Walk old and new DOM trees by sky-id. Patch in-place instead of
+// innerHTML replacement. Focused/pending inputs are never touched.
+function __skyMorph(oldParent, newParent) {
+  var oldKids = oldParent.childNodes;
+  var newKids = newParent.childNodes;
+  // Build sky-id index for old children
+  var oldById = {};
+  for (var i = 0; i < oldKids.length; i++) {
+    var sid = oldKids[i].getAttribute ? oldKids[i].getAttribute("sky-id") : null;
+    if (sid) oldById[sid] = oldKids[i];
+  }
+  // Walk new children
+  for (var j = 0; j < newKids.length; j++) {
+    var newNode = newKids[j];
+    var newSid = newNode.getAttribute ? newNode.getAttribute("sky-id") : null;
+    var oldNode = newSid ? oldById[newSid] : (j < oldKids.length ? oldKids[j] : null);
+    if (!oldNode) {
+      // New node — append
+      oldParent.appendChild(newNode.cloneNode(true));
+      continue;
+    }
+    if (oldNode.nodeType === 3 && newNode.nodeType === 3) {
+      // Text nodes — update if different
+      if (oldNode.textContent !== newNode.textContent) {
+        oldNode.textContent = newNode.textContent;
+      }
+      continue;
+    }
+    if (oldNode.nodeType !== newNode.nodeType || oldNode.tagName !== (newNode.tagName || "")) {
+      // Different node type — replace entirely
+      oldParent.replaceChild(newNode.cloneNode(true), oldNode);
+      continue;
+    }
+    // Same element type — check if it's a protected input
+    var tag = (oldNode.tagName || "").toUpperCase();
+    var isInput = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+    var isFocused = oldNode === document.activeElement;
+    var hid = oldNode.getAttribute ? oldNode.getAttribute("data-sky-hid") : null;
+    var hasPending = hid && __skyInputPending[hid];
+    if (isInput && (isFocused || hasPending)) {
+      // SKIP — user is typing here. Don't touch value or attributes.
+      // Update non-value attributes only (class, style, etc.)
+      __skyPatchAttrs(oldNode, newNode, true);
+      continue;
+    }
+    // Patch attributes
+    __skyPatchAttrs(oldNode, newNode, false);
+    // Recurse into children
+    if (newNode.childNodes.length > 0 || oldNode.childNodes.length > 0) {
+      __skyMorph(oldNode, newNode);
+    }
+  }
+  // Remove excess old children
+  while (oldParent.childNodes.length > newKids.length) {
+    oldParent.removeChild(oldParent.lastChild);
+  }
+}
+
+function __skyPatchAttrs(oldEl, newEl, skipValue) {
+  if (!oldEl.attributes || !newEl.attributes) return;
+  // Remove attrs not in new
+  var toRemove = [];
+  for (var i = 0; i < oldEl.attributes.length; i++) {
+    var name = oldEl.attributes[i].name;
+    if (skipValue && name === "value") continue;
+    if (!newEl.hasAttribute(name)) toRemove.push(name);
+  }
+  for (var r = 0; r < toRemove.length; r++) oldEl.removeAttribute(toRemove[r]);
+  // Set/update attrs from new
+  for (var j = 0; j < newEl.attributes.length; j++) {
+    var attr = newEl.attributes[j];
+    if (skipValue && attr.name === "value") continue;
+    if (oldEl.getAttribute(attr.name) !== attr.value) {
+      oldEl.setAttribute(attr.name, attr.value);
+    }
+  }
+  // For non-protected inputs, sync .value from attribute
+  if (!skipValue) {
+    var t = (oldEl.tagName || "").toUpperCase();
+    if (t === "INPUT" || t === "TEXTAREA" || t === "SELECT") {
+      var newVal = newEl.getAttribute("value") || newEl.value || "";
+      if (oldEl.value !== newVal) oldEl.value = newVal;
+    }
   }
 }
 
