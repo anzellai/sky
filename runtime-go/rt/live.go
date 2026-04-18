@@ -1360,13 +1360,20 @@ func Live_app(cfg any) any {
 	mux.HandleFunc("/", app.dispatchRoot)
 
 	// Pre-register model types with gob so DB-backed session stores
-	// can decode existing sessions on restart. Without this, the first
-	// Get after a restart fails with "gob: name not registered".
+	// can decode existing sessions on restart.
+	// Two passes:
+	//   1. Type-graph walk: registers SkyMaybe[User_R] etc. even when
+	//      init returns Nothing/[]/empty — walks the struct DEFINITION,
+	//      not the runtime value, so concrete generic instantiations
+	//      in struct fields are caught.
+	//   2. Value walk: catches anything the type walker misses (e.g.
+	//      dynamically-typed map entries).
 	func() {
 		defer func() { recover() }()
 		req := map[string]any{"path": "/"}
 		res := sky_call(app.init, req)
 		model := tupleFirst(res)
+		GobRegisterTypeGraph(reflect.TypeOf(model))
 		gobRegisterAll(model)
 	}()
 

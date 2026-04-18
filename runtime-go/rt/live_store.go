@@ -26,6 +26,7 @@ import (
 	"log"
 	"os"
 	"reflect"
+	"strings"
 	"sync"
 	"time"
 
@@ -48,6 +49,60 @@ func gobRegisterAll(v any) {
 	gobRegMu.Lock()
 	defer gobRegMu.Unlock()
 	walkGob(reflect.ValueOf(v))
+}
+
+// GobRegisterTypeGraph walks a TYPE definition tree (not a value) and
+// registers every concrete Sky wrapper instantiation it finds. Unlike
+// the value-walker, this catches SkyMaybe[User_R] even when the init
+// model has Nothing (which is SkyMaybe[any]{Tag:1} at runtime).
+func GobRegisterTypeGraph(root reflect.Type) {
+	gobRegMu.Lock()
+	defer gobRegMu.Unlock()
+	seen := map[reflect.Type]bool{}
+	walkGobType(root, seen)
+}
+
+func walkGobType(t reflect.Type, seen map[reflect.Type]bool) {
+	for t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+	if seen[t] {
+		return
+	}
+	seen[t] = true
+
+	if isSkyWrapperType(t) && !gobRegistered[t] {
+		gobRegistered[t] = true
+		defer func() { recover() }()
+		gob.Register(reflect.Zero(t).Interface())
+	}
+
+	if t.PkgPath() != "" && t.Kind() == reflect.Struct && !gobRegistered[t] {
+		gobRegistered[t] = true
+		defer func() { recover() }()
+		gob.Register(reflect.Zero(t).Interface())
+	}
+
+	switch t.Kind() {
+	case reflect.Struct:
+		for i := 0; i < t.NumField(); i++ {
+			walkGobType(t.Field(i).Type, seen)
+		}
+	case reflect.Slice, reflect.Array:
+		walkGobType(t.Elem(), seen)
+	case reflect.Map:
+		walkGobType(t.Key(), seen)
+		walkGobType(t.Elem(), seen)
+	}
+}
+
+func isSkyWrapperType(t reflect.Type) bool {
+	name := t.Name()
+	return strings.HasPrefix(name, "SkyMaybe[") ||
+		strings.HasPrefix(name, "SkyResult[") ||
+		strings.HasPrefix(name, "SkyTuple2[") ||
+		strings.HasPrefix(name, "SkyTuple3[") ||
+		strings.HasPrefix(name, "SkyTask[")
 }
 
 // Audit P2-5: pre-register the Sky-canonical container types so
