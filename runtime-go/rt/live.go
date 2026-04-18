@@ -1175,9 +1175,21 @@ func unpackResponse(v any) (int, map[string]string, string) {
 			body = fmt.Sprintf("%v", f.Interface())
 		}
 		if f := rv.FieldByName("Headers"); f.IsValid() {
-			if m, ok := f.Interface().(map[string]any); ok {
+			switch m := f.Interface().(type) {
+			case map[string]string:
+				for k, val := range m {
+					headers[k] = val
+				}
+			case map[string]any:
 				for k, val := range m {
 					headers[k] = fmt.Sprintf("%v", val)
+				}
+			default:
+				// Reflect fallback for other map types
+				if f.Kind() == reflect.Map {
+					for _, key := range f.MapKeys() {
+						headers[fmt.Sprintf("%v", key.Interface())] = fmt.Sprintf("%v", f.MapIndex(key).Interface())
+					}
 				}
 			}
 		}
