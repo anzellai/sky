@@ -2342,6 +2342,48 @@ func isFunc(v any) bool {
 	return reflect.ValueOf(v).Kind() == reflect.Func
 }
 
+// coerceReflectArg converts a reflect.Value to the target type when they
+// are struct-layout-compatible but different generic instantiations.
+// E.g. SkyResult[any, any] → SkyResult[any, Payload_R]. Copies fields
+// by name so Tag, OkValue, ErrValue, JustValue, Fields, SkyName all
+// transfer regardless of the generic parameters.
+func coerceReflectArg(av reflect.Value, want reflect.Type) reflect.Value {
+	if !av.IsValid() {
+		return reflect.Zero(want)
+	}
+	if av.Type().AssignableTo(want) {
+		return av
+	}
+	if av.Type().ConvertibleTo(want) {
+		return av.Convert(want)
+	}
+	// Struct-to-struct: copy fields by name (handles cross-generic SkyResult, SkyMaybe, SkyADT)
+	if av.Kind() == reflect.Struct && want.Kind() == reflect.Struct {
+		dst := reflect.New(want).Elem()
+		for i := 0; i < av.NumField(); i++ {
+			name := av.Type().Field(i).Name
+			df := dst.FieldByName(name)
+			sf := av.Field(i)
+			if df.IsValid() && df.CanSet() {
+				if sf.Type().AssignableTo(df.Type()) {
+					df.Set(sf)
+				} else if df.Type().Kind() == reflect.Interface {
+					df.Set(sf)
+				} else {
+					// Recurse for nested generics
+					df.Set(coerceReflectArg(sf, df.Type()))
+				}
+			}
+		}
+		return dst
+	}
+	// Interface target: wrap as-is
+	if want.Kind() == reflect.Interface {
+		return av
+	}
+	return av
+}
+
 func sky_call(f any, arg any) any {
 	if f == nil {
 		return nil
@@ -2361,6 +2403,7 @@ func sky_call(f any, arg any) any {
 	if !av.IsValid() {
 		av = reflect.Zero(rv.Type().In(0))
 	}
+	av = coerceReflectArg(av, rv.Type().In(0))
 	out := rv.Call([]reflect.Value{av})
 	if len(out) > 0 {
 		return out[0].Interface()
@@ -2382,6 +2425,8 @@ func sky_call2(f any, a, b any) any {
 		if !bv.IsValid() {
 			bv = reflect.Zero(rv.Type().In(1))
 		}
+		av = coerceReflectArg(av, rv.Type().In(0))
+		bv = coerceReflectArg(bv, rv.Type().In(1))
 		out := rv.Call([]reflect.Value{av, bv})
 		if len(out) > 0 {
 			return out[0].Interface()
