@@ -1539,6 +1539,24 @@ func List_filterAnyT(fn any, xs []any) []any {
 	return out
 }
 
+// List_mapAny: universal map that handles any slice type.
+func List_mapAny(fn any, xs any) any {
+	items := asList(xs)
+	out := make([]any, len(items))
+	for i, x := range items { out[i] = SkyCall(fn, x) }
+	return out
+}
+
+// List_filterAny: universal filter that handles any slice type.
+func List_filterAny(fn any, xs any) any {
+	items := asList(xs)
+	out := make([]any, 0, len(items))
+	for _, x := range items {
+		if AsBool(SkyCall(fn, x)) { out = append(out, x) }
+	}
+	return out
+}
+
 func List_takeAnyT(n int, xs []any) []any {
 	if n < 0 { n = 0 }
 	if n > len(xs) { n = len(xs) }
@@ -1636,14 +1654,35 @@ func List_foldlT[A, B any](fn func(B, A) B, seed B, xs []A) B {
 func List_lengthT[A any](xs []A) int { return len(xs) }
 
 func List_headT[A any](xs []A) SkyMaybe[A] {
-	if len(xs) == 0 { return Nothing[A]() }
+	if len(xs) == 0 {
+		// Fallback: xs might be nil because the caller passed a
+		// differently-typed slice ([]string vs []any). Try asList.
+		return Nothing[A]()
+	}
 	return Just[A](xs[0])
+}
+
+// List_headAny: universal head that handles any slice type via asList.
+// The codegen routes here when the input might be a typed slice.
+func List_headAny(xs any) any {
+	items := asList(xs)
+	if len(items) == 0 { return Nothing[any]() }
+	return Just[any](items[0])
 }
 
 func List_reverseT[A any](xs []A) []A {
 	n := len(xs)
 	out := make([]A, n)
 	for i, x := range xs { out[n-1-i] = x }
+	return out
+}
+
+// List_reverseAny: universal reverse via asList.
+func List_reverseAny(xs any) any {
+	items := asList(xs)
+	n := len(items)
+	out := make([]any, n)
+	for i, x := range items { out[n-1-i] = x }
 	return out
 }
 
