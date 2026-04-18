@@ -135,6 +135,16 @@ cd examples/01-hello-world && sky build src/Main.sky
 6. Test in temp dir: `sky init mytest`, `sky build && sky run`, `sky add fmt`, `sky remove fmt`, `sky upgrade`
 7. Verify `.github/workflows/ci.yml` matches build steps
 
+## CI/CD Rules
+
+When pushing to `main`, cancel any in-progress **CI build** runs (not release runs) since the new commit supersedes them:
+```bash
+# Cancel in-progress CI runs on main before pushing
+gh run list --branch main --status in_progress --workflow CI --json databaseId --jq '.[].databaseId' | xargs -I{} gh run cancel {} 2>/dev/null
+git push origin main
+```
+Never cancel **release** runs (triggered by tags) — those produce binaries users download.
+
 ## Shell Commands
 
 Always use `-f` flag with `rm` and `cp` (`rm -f`, `rm -rf`, `cp -f`).
