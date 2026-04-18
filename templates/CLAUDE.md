@@ -1408,7 +1408,9 @@ input = "debounce"              # "debounce" | "blur"
 store = "memory"                # memory | sqlite | redis | postgresql | firestore
 ```
 
-Sky.Live config is embedded at compile time but can be overridden at runtime via env vars or a `.env` file. Env var names mirror sky.toml: `SKY_LIVE_PORT`, `SKY_LIVE_INPUT`, `SKY_LIVE_POLL_INTERVAL`, `SKY_LIVE_SESSION_STORE`, `SKY_LIVE_SESSION_PATH`, `SKY_LIVE_SESSION_URL`, `SKY_LIVE_STATIC_DIR`, `SKY_LIVE_TTL`. Priority: compiled defaults < sky.toml < env vars < .env file.
+Sky.Live config is embedded at compile time but can be overridden at runtime. Env var names mirror sky.toml: `SKY_LIVE_PORT`, `SKY_LIVE_INPUT`, `SKY_LIVE_POLL_INTERVAL`, `SKY_LIVE_SESSION_STORE`, `SKY_LIVE_SESSION_PATH`, `SKY_LIVE_SESSION_URL`, `SKY_LIVE_STATIC_DIR`, `SKY_LIVE_TTL`.
+
+**Priority (highest wins):** system env vars > `.env` file > `sky.toml` defaults. System env vars always win so production deployments can override without editing files. `.env` is for local dev convenience.
 
 ### Importing Sky Dependencies
 

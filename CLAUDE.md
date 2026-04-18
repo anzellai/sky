@@ -59,6 +59,18 @@ ALL effectful operations flow through `Task`:
 
 FFI boundary mapping: Go `(T, error)` → `Result Error T` | Go `error` → `Result Error ()` | panics → `Err` | nil → `Maybe`/`Result`
 
+## Environment Variable Precedence
+
+Configuration values resolve in this order (highest priority first):
+
+1. **System environment variables** (`export PORT=8080`, Docker `ENV`, CI vars)
+2. **`.env` file** in the working directory (auto-loaded at startup, never overrides existing env vars)
+3. **`sky.toml`** defaults (compiled into the binary via `init()`, only set when not already present)
+
+This follows the standard convention (godotenv, Docker): system env vars always win so production deployments can override `.env` defaults without editing files. The `.env` file is for local development convenience.
+
+Sky.Live-specific env vars: `SKY_LIVE_PORT`, `SKY_LIVE_TTL`, `SKY_LIVE_STORE`, `SKY_AUTH_TOKEN_TTL`, `SKY_AUTH_COOKIE`.
+
 ## Project Overview
 
 Sky is a pure functional language (Elm-inspired) compiling to Go. The compiler is written in Haskell (GHC 9.4+) and ships as a single `sky` binary. Runtime binaries are Go output — single-file, statically-linked, no external runtime needed. See `docs/compiler/journey.md` for why the compiler moved TS → Go → Sky → Haskell.
