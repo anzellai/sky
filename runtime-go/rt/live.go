@@ -1958,14 +1958,16 @@ function __skyPatch(t) {
   if (key) {
     var newEl = __skyFindByKey(root, key);
     if (newEl) {
-      // Optimistic input: if the user was typing in this element,
-      // restore their current value instead of the server's stale
-      // value. Prevents character loss from network round-trip lag.
-      if (activeIsInput && activeValue !== null && newEl.value !== activeValue) {
-        newEl.value = activeValue;
-      }
       newEl.focus();
-      if (selStart !== null && "selectionStart" in newEl) {
+      // Optimistic input: restore value + cursor position together.
+      // Setting value resets selectionStart, so cursor must be
+      // restored AFTER value assignment.
+      if (activeIsInput && activeValue !== null) {
+        newEl.value = activeValue;
+        if (selStart !== null && "selectionStart" in newEl) {
+          try { newEl.selectionStart = selStart; newEl.selectionEnd = selEnd; } catch (e) {}
+        }
+      } else if (selStart !== null && "selectionStart" in newEl) {
         try { newEl.selectionStart = selStart; newEl.selectionEnd = selEnd; } catch (e) {}
       }
     }
@@ -2351,6 +2353,10 @@ func coerceReflectArg(av reflect.Value, want reflect.Type) reflect.Value {
 	if !av.IsValid() {
 		return reflect.Zero(want)
 	}
+	// Unwrap interface values to their concrete type
+	for av.Kind() == reflect.Interface && !av.IsNil() {
+		av = av.Elem()
+	}
 	if av.Type().AssignableTo(want) {
 		return av
 	}
@@ -2364,15 +2370,22 @@ func coerceReflectArg(av reflect.Value, want reflect.Type) reflect.Value {
 			name := av.Type().Field(i).Name
 			df := dst.FieldByName(name)
 			sf := av.Field(i)
-			if df.IsValid() && df.CanSet() {
-				if sf.Type().AssignableTo(df.Type()) {
-					df.Set(sf)
-				} else if df.Type().Kind() == reflect.Interface {
-					df.Set(sf)
-				} else {
-					// Recurse for nested generics
-					df.Set(coerceReflectArg(sf, df.Type()))
-				}
+			if !df.IsValid() || !df.CanSet() {
+				continue
+			}
+			// Unwrap interface-typed source fields
+			for sf.Kind() == reflect.Interface && !sf.IsNil() {
+				sf = sf.Elem()
+			}
+			if sf.Type().AssignableTo(df.Type()) {
+				df.Set(sf)
+			} else if df.Type().Kind() == reflect.Interface {
+				df.Set(sf)
+			} else if sf.Kind() == reflect.Struct && df.Kind() == reflect.Struct {
+				df.Set(coerceReflectArg(sf, df.Type()))
+			} else {
+				// Last resort: set via interface boxing
+				df.Set(reflect.ValueOf(sf.Interface()).Convert(df.Type()))
 			}
 		}
 		return dst
@@ -2380,6 +2393,10 @@ func coerceReflectArg(av reflect.Value, want reflect.Type) reflect.Value {
 	// Interface target: wrap as-is
 	if want.Kind() == reflect.Interface {
 		return av
+	}
+	// Concrete target from interface value: try direct conversion
+	if av.Type().ConvertibleTo(want) {
+		return av.Convert(want)
 	}
 	return av
 }

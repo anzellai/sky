@@ -1329,7 +1329,9 @@ generateAliasForDep userDefs modPrefix (aliasName, Can.Alias _vars body) =
                 ctorDecl = GoIr.GoDeclRaw $
                     "func " ++ qualName ++ "(" ++ paramDecls ++ ") " ++ structName ++
                     " { return " ++ structName ++ "{" ++ intercalate_ ", " fieldInits ++ "} }"
-            in structDecl : [ctorDecl | not hasUserCtor]
+                gobDecl = GoIr.GoDeclRaw $
+                    "func init() { rt.RegisterGobType(" ++ structName ++ "{}) }"
+            in structDecl : gobDecl : [ctorDecl | not hasUserCtor]
         _ ->
             [ GoIr.GoDeclRaw ("type " ++ qualName ++ " = any") ]
 
@@ -1656,9 +1658,12 @@ generateAliasTypes canMod =
             ctorDecl = GoIr.GoDeclRaw $
                 "func " ++ name ++ "(" ++ paramDecls ++ ") " ++ structName ++
                 " { return " ++ structName ++ "{" ++ intercalate_ ", " fieldInits ++ "} }"
+            gobDecl = GoIr.GoDeclRaw $
+                "func init() { rt.RegisterGobType(" ++ structName ++ "{}) }"
         in if Set.member name userDefinedNames
-               then [ GoIr.GoDeclType structName (GoIr.GoStructDef goFields) ]
+               then [ GoIr.GoDeclType structName (GoIr.GoStructDef goFields), gobDecl ]
                else [ GoIr.GoDeclType structName (GoIr.GoStructDef goFields)
+                    , gobDecl
                     , ctorDecl
                     ]
 

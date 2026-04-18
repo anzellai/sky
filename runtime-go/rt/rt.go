@@ -2030,6 +2030,10 @@ type SkyADT struct {
 var adtTagRegistry = make(map[string]int)
 var adtTagRegistryMu sync.Mutex
 
+func RegisterGobType(v any) {
+	gobRegisterAll(v)
+}
+
 func RegisterAdtTag(skyName string, tag int) {
 	adtTagRegistryMu.Lock()
 	adtTagRegistry[skyName] = tag
