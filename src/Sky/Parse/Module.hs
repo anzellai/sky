@@ -133,9 +133,9 @@ moduleHeader = do
             keyword (\r c -> ModuleExpected r c) (T.pack "module")
             spaces
             name <- addLocation (moduleName (\r c -> ModuleNameExpected r c))
-            spaces
+            freshLine (\r c -> ModuleExpected r c)
             keyword (\r c -> ModuleExpected r c) (T.pack "exposing")
-            spaces
+            freshLine (\r c -> ModuleExpected r c)
             expo <- addLocation (exposingClause (\r c -> ModuleExpected r c))
             return (Just name, Just expo)
         _ -> return (Nothing, Nothing)

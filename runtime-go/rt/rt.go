@@ -4258,6 +4258,26 @@ func List_tail(list any) any {
 	return Just[any](items[1:])
 }
 
+func List_indexedMap(fn any, list any) any {
+	items := asList(list)
+	result := make([]any, len(items))
+	for i, item := range items {
+		step := SkyCall(fn, i)
+		result[i] = SkyCall(step, item)
+	}
+	return result
+}
+
+func List_find(fn any, list any) any {
+	items := asList(list)
+	for _, item := range items {
+		if AsBool(SkyCall(fn, item)) {
+			return Just[any](item)
+		}
+	}
+	return Nothing[any]()
+}
+
 // Suppress unused import warnings
 var _ = bufio.NewReader
 var _ = io.EOF

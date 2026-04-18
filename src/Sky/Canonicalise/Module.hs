@@ -734,7 +734,7 @@ staticKernelFunctions = Map.fromList
     , ("List",    ["map", "filter", "foldl", "foldr", "length", "head", "tail",
                     "take", "drop", "append", "concat", "concatMap", "reverse",
                     "sort", "sortBy", "member", "any", "all", "range", "zip", "filterMap",
-                    "parallelMap", "isEmpty"])
+                    "parallelMap", "isEmpty", "indexedMap", "find"])
     , ("Dict",    ["empty", "insert", "get", "remove", "member", "keys", "values",
                     "toList", "fromList", "map", "foldl", "union"])
     , ("Set",     ["empty", "insert", "remove", "member", "union", "diff", "intersect", "fromList"])

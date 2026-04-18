@@ -128,6 +128,8 @@ registry = Map.fromList
     , (("List", "length"),        KernelInfo "rt.List_length" 1 False)
     , (("List", "head"),          KernelInfo "rt.List_head" 1 False)
     , (("List", "tail"),          KernelInfo "rt.List_tail" 1 False)
+    , (("List", "indexedMap"),   KernelInfo "rt.List_indexedMap" 2 False)
+    , (("List", "find"),         KernelInfo "rt.List_find" 2 False)
     , (("List", "take"),          KernelInfo "rt.List_take" 2 False)
     , (("List", "drop"),          KernelInfo "rt.List_drop" 2 False)
     , (("List", "append"),        KernelInfo "rt.List_append" 2 False)
