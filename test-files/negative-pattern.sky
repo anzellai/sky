@@ -5,12 +5,16 @@ import Std.Log exposing (println)
 
 classify n =
     case n of
+
         -1 ->
             "neg one"
+
         0 ->
             "zero"
+
         1 ->
             "one"
+
         _ ->
             "other"
 

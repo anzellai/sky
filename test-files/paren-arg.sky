@@ -3,6 +3,10 @@ module Main exposing (main)
 import Sky.Core.String as String
 import Std.Log exposing (println)
 
-double n = n + n
 
-main = println (String.fromInt (double (3 + 4)))
+double n =
+    n + n
+
+
+main =
+    println (String.fromInt (double (3 + 4)))

@@ -1,4 +1,5 @@
 module Main exposing (main)
+
 import Sky.Core.Prelude exposing (..)
 import Lib.Hidden exposing (visible, secret)
 import Std.Log exposing (println)

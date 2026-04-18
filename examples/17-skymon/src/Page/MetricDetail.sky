@@ -19,21 +19,21 @@ viewMetricDetail metId model =
     let
         metric = List.head (List.filter (\m -> m.id == metId) model.metrics)
     in
-        Layout.page model
-            (
-            case metric of
+        Layout.page
+            model
+            (case metric of
 
-                Just met ->
-                    viewMetricContent met
+                 Just met ->
+                     viewMetricContent met
 
-                Nothing ->
-                    viewNotFound
-            )
+                 Nothing ->
+                     viewNotFound)
 
 
 viewMetricContent : Metric -> VNode
 viewMetricContent met =
-    div []
+    div
+        []
         [ viewBackButton
         , viewMetricHeader met
         , viewMetricValue met
@@ -44,21 +44,33 @@ viewMetricContent met =
 
 viewBackButton : VNode
 viewBackButton =
-    button [ onClick (Navigate DashboardPage), class "btn btn-ghost btn-sm", style "margin-bottom: 16px" ]
-        [ text "\u2190 Back to Dashboard" ]
+    button
+        [ onClick (Navigate DashboardPage)
+        , class "btn btn-ghost btn-sm"
+        , style "margin-bottom: 16px"
+        ]
+        [text "← Back to Dashboard"]
 
 
 viewMetricHeader : Metric -> VNode
 viewMetricHeader met =
-    div [ class "card", style "margin-bottom: 24px" ]
-        [ div [ style "display: flex; justify-content: space-between; align-items: center" ]
-              [ div []
-                    [ h2 [ style "font-size: 24px; color: #f1f5f9; margin-bottom: 4px" ] [ text met.name ]
-                    , p [ style "color: #64748b; font-size: 13px" ] [ text ("Type: " ++ met.sourceType) ]
-                    ]
-              , viewVisLabel met.visibility
-              ]
-        ]
+    div
+        [ class "card", style "margin-bottom: 24px" ]
+        [div
+            [style
+                "display: flex; justify-content: space-between; align-items: center"]
+            [ div
+                  []
+                  [ h2
+                        [style
+                            "font-size: 24px; color: #f1f5f9; margin-bottom: 4px"]
+                        [text met.name]
+                  , p
+                        [style "color: #64748b; font-size: 13px"]
+                        [text ("Type: " ++ met.sourceType)]
+                  ]
+            , viewVisLabel met.visibility
+            ]]
 
 
 viewVisLabel : Visibility -> VNode
@@ -66,26 +78,34 @@ viewVisLabel vis =
     case vis of
 
         VisPublic ->
-            span [ class "badge badge-public" ] [ text "public" ]
+            span [class "badge badge-public"] [text "public"]
 
         VisAdmin ->
-            span [ class "badge badge-admin" ] [ text "admin" ]
+            span [class "badge badge-admin"] [text "admin"]
 
         VisUser ->
-            span [ class "badge badge-user" ] [ text "user" ]
+            span [class "badge badge-user"] [text "user"]
 
 
 viewMetricValue : Metric -> VNode
 viewMetricValue met =
-    div [ class "grid", style "margin-bottom: 24px" ]
-        [ div [ class "card" ]
-              [ div [ class "card-title" ] [ text "Current Value" ]
-              , div [ class "card-value", style "color: #38bdf8" ] [ text met.lastValue ]
-              , div [ class "card-subtitle" ] [ text met.lastUpdated ]
+    div
+        [ class "grid", style "margin-bottom: 24px" ]
+        [ div
+              [class "card"]
+              [ div [class "card-title"] [text "Current Value"]
+              , div
+                    [ class "card-value", style "color: #38bdf8" ]
+                    [text met.lastValue]
+              , div [class "card-subtitle"] [text met.lastUpdated]
               ]
-        , div [ class "card" ]
-              [ div [ class "card-title" ] [ text "Source" ]
-              , div [ style "font-size: 18px; color: #f1f5f9; font-weight: 600; margin-top: 8px" ] [ text met.sourceType ]
+        , div
+              [class "card"]
+              [ div [class "card-title"] [text "Source"]
+              , div
+                    [style
+                        "font-size: 18px; color: #f1f5f9; font-weight: 600; margin-top: 8px"]
+                    [text met.sourceType]
               ]
         ]
 
@@ -94,48 +114,63 @@ viewMetricHistory : String -> VNode
 viewMetricHistory metId =
     let
         history = Metrics.getMetricHistory metId 50
-        values = List.map (\r -> parseIntOr0 (Database.getField "value" r)) history
+        values =
+            List.map (\r -> parseIntOr0 (Database.getField "value" r)) history
     in
-        div [ class "card" ]
-            [ h3 [ style "font-size: 16px; color: #f1f5f9; margin-bottom: 16px" ] [ text "Value History" ]
+        div
+            [class "card"]
+            [ h3
+                  [style "font-size: 16px; color: #f1f5f9; margin-bottom: 16px"]
+                  [text "Value History"]
             , Charts.sparkline 600 80 (List.reverse values)
             , viewHistoryTable history
             ]
 
 
-viewHistoryTable : (List (Dict String String)) -> VNode
+viewHistoryTable : List (Dict String String) -> VNode
 viewHistoryTable history =
     if List.isEmpty history then
-        p [ style "color: #64748b; margin-top: 16px" ] [ text "No data yet — values will appear after the first collection." ]
+        p
+            [style "color: #64748b; margin-top: 16px"]
+            [text "No data yet — values will appear after the first collection."]
 
     else
-        div [ style "margin-top: 16px; max-height: 300px; overflow-y: auto" ]
-            [ table [ class "table" ]
-                  [ node "thead" []
-                        [ tr []
-                              [ th [] [ text "Time" ]
-                              , th [] [ text "Value" ]
-                              ]
-                        ]
-                  , node "tbody" []
-                        (List.map viewHistoryRow (List.take 30 history))
-                  ]
-            ]
+        div
+            [style "margin-top: 16px; max-height: 300px; overflow-y: auto"]
+            [table
+                [class "table"]
+                [ node
+                      "thead"
+                      []
+                      [tr [] [ th [] [text "Time"], th [] [text "Value"] ]]
+                , node
+                      "tbody"
+                      []
+                      (List.map viewHistoryRow (List.take 30 history))
+                ]]
 
 
-viewHistoryRow : (Dict String String) -> VNode
+viewHistoryRow : Dict String String -> VNode
 viewHistoryRow row =
-    tr []
-        [ td [ style "color: #64748b; font-size: 12px" ] [ text (Database.getField "recorded_at" row) ]
-        , td [ style "color: #38bdf8; font-weight: 600" ] [ text (Database.getField "value" row) ]
+    tr
+        []
+        [ td
+              [style "color: #64748b; font-size: 12px"]
+              [text (Database.getField "recorded_at" row)]
+        , td
+              [style "color: #38bdf8; font-weight: 600"]
+              [text (Database.getField "value" row)]
         ]
 
 
 viewNotFound : VNode
 viewNotFound =
-    div [ class "empty-state" ]
-        [ h3 [] [ text "Metric not found" ]
-        , button [ onClick (Navigate DashboardPage), class "btn btn-primary" ] [ text "Back to Dashboard" ]
+    div
+        [class "empty-state"]
+        [ h3 [] [text "Metric not found"]
+        , button
+              [ onClick (Navigate DashboardPage), class "btn btn-primary" ]
+              [text "Back to Dashboard"]
         ]
 
 
@@ -159,33 +194,45 @@ viewMetricAlertHistory metId =
             text ""
 
         else
-            div [ class "card", style "margin-top: 24px" ]
-                [ h3 [ style "font-size: 16px; color: #f1f5f9; margin-bottom: 16px" ]
-                      [ text "\u26a0 Alert History" ]
-                , table [ class "table" ]
-                      [ node "thead" []
-                            [ tr []
-                                  [ th [] [ text "Time" ]
-                                  , th [] [ text "Value" ]
-                                  , th [] [ text "Condition" ]
-                                  , th [] [ text "Notified via" ]
-                                  ]
-                            ]
-                      , node "tbody" []
-                            (List.map viewAlertRow history)
+            div
+                [ class "card", style "margin-top: 24px" ]
+                [ h3
+                      [style
+                          "font-size: 16px; color: #f1f5f9; margin-bottom: 16px"]
+                      [text "⚠ Alert History"]
+                , table
+                      [class "table"]
+                      [ node
+                            "thead"
+                            []
+                            [tr
+                                []
+                                [ th [] [text "Time"]
+                                , th [] [text "Value"]
+                                , th [] [text "Condition"]
+                                , th [] [text "Notified via"]
+                                ]]
+                      , node "tbody" [] (List.map viewAlertRow history)
                       ]
                 ]
 
 
-viewAlertRow : (Dict String String) -> VNode
+viewAlertRow : Dict String String -> VNode
 viewAlertRow row =
-    tr []
-        [ td [ style "color: #64748b; font-size: 12px" ]
-              [ text (Database.getField "fired_at" row) ]
-        , td [ style "color: #ef4444; font-weight: 600" ]
-              [ text (Database.getField "metric_value" row) ]
-        , td [ style "color: #a78bfa; font-family: monospace" ]
-              [ text (Database.getField "condition" row ++ " " ++ Database.getField "threshold" row) ]
-        , td [ style "color: #64748b" ]
-              [ text (Database.getField "notify_type" row) ]
+    tr
+        []
+        [ td
+              [style "color: #64748b; font-size: 12px"]
+              [text (Database.getField "fired_at" row)]
+        , td
+              [style "color: #ef4444; font-weight: 600"]
+              [text (Database.getField "metric_value" row)]
+        , td
+              [style "color: #a78bfa; font-family: monospace"]
+              [text
+                  (Database.getField "condition" row ++ " "
+                       ++ Database.getField "threshold" row)]
+        , td
+              [style "color: #64748b"]
+              [text (Database.getField "notify_type" row)]
         ]

@@ -1,4 +1,5 @@
 module Lib.Schema exposing (initDb)
+
 import Sky.Core.Prelude exposing (..)
 import Std.Log exposing (println)
 import Lib.Db as Db
@@ -11,26 +12,35 @@ import Sky.Core.Error as Error exposing (Error)
 -- surface it via their typed Result returns.
 runMigration label sql =
     case Db.exec sql [] of
+
         Ok _ ->
             ()
 
         Err e ->
             let
-                _ = println ("[SCHEMA ERROR] " ++ label ++ ": " ++ Error.toString e)
+                _ =
+                    println
+                        ("[SCHEMA ERROR] " ++ label ++ ": " ++ Error.toString e)
             in
                 ()
 
 
 initDb =
     let
-        _ = runMigration "users" """CREATE TABLE IF NOT EXISTS users (
+        _ =
+            runMigration
+                "users"
+                """CREATE TABLE IF NOT EXISTS users (
                     id TEXT PRIMARY KEY,
                     username TEXT NOT NULL UNIQUE,
                     email TEXT NOT NULL UNIQUE,
                     password_hash TEXT NOT NULL,
                     created_at TEXT DEFAULT (datetime('now'))
                 )"""
-        _ = runMigration "ideas" """CREATE TABLE IF NOT EXISTS ideas (
+        _ =
+            runMigration
+                "ideas"
+                """CREATE TABLE IF NOT EXISTS ideas (
                     id TEXT PRIMARY KEY,
                     title TEXT NOT NULL,
                     description TEXT NOT NULL DEFAULT '',
@@ -40,21 +50,30 @@ initDb =
                     created_at TEXT DEFAULT (datetime('now')),
                     updated_at TEXT DEFAULT (datetime('now'))
                 )"""
-        _ = runMigration "votes" """CREATE TABLE IF NOT EXISTS votes (
+        _ =
+            runMigration
+                "votes"
+                """CREATE TABLE IF NOT EXISTS votes (
                     id TEXT PRIMARY KEY,
                     idea_id TEXT NOT NULL,
                     user_id TEXT NOT NULL,
                     created_at TEXT DEFAULT (datetime('now')),
                     UNIQUE(idea_id, user_id)
                 )"""
-        _ = runMigration "comments" """CREATE TABLE IF NOT EXISTS comments (
+        _ =
+            runMigration
+                "comments"
+                """CREATE TABLE IF NOT EXISTS comments (
                     id TEXT PRIMARY KEY,
                     idea_id TEXT NOT NULL,
                     author_id TEXT NOT NULL,
                     content TEXT NOT NULL,
                     created_at TEXT DEFAULT (datetime('now'))
                 )"""
-        _ = runMigration "activity_log" """CREATE TABLE IF NOT EXISTS activity_log (
+        _ =
+            runMigration
+                "activity_log"
+                """CREATE TABLE IF NOT EXISTS activity_log (
                     id TEXT PRIMARY KEY,
                     event TEXT NOT NULL,
                     data TEXT NOT NULL DEFAULT '',

@@ -1,4 +1,5 @@
 module Main exposing (main)
+
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Result as Result
 import Sky.Core.Maybe exposing (..)
@@ -25,57 +26,59 @@ import Page.Game as Game
 import Ui.Layout as Layout
 
 
-init : a -> (Model, Cmd Msg)
+init : a -> ( Model, Cmd Msg )
 init _req =
     let
         _ = Games.initSchema (Games.getConn ())
         _ = println "[APP] SkyChess initialised"
     in
         ( { page = HomePage
-        , playerName = ""
-        , nameInput = ""
-        , gameId = ""
-        , board = Dict.empty
-        , turn = White
-        , selectedSquare = -1
-        , legalMoves = []
-        , moveHistory = []
-        , gameStatus = "playing"
-        , computerThinking = False
-        , lastMoveFrom = -1
-        , lastMoveTo = -1
-        , capturedByWhite = []
-        , capturedByBlack = []
-        , whiteKingMoved = False
-        , blackKingMoved = False
-        , whiteRookAMoved = False
-        , whiteRookHMoved = False
-        , blackRookAMoved = False
-        , blackRookHMoved = False
-        , enPassantSquare = -1
-        , halfMoveClock = 0
-        , fullMoveNumber = 1
-        , savedGames = []
-        , notification = ""
-        , errorMessage = ""
-        }
+          , playerName = ""
+          , nameInput = ""
+          , gameId = ""
+          , board = Dict.empty
+          , turn = White
+          , selectedSquare = -1
+          , legalMoves = []
+          , moveHistory = []
+          , gameStatus = "playing"
+          , computerThinking = False
+          , lastMoveFrom = -1
+          , lastMoveTo = -1
+          , capturedByWhite = []
+          , capturedByBlack = []
+          , whiteKingMoved = False
+          , blackKingMoved = False
+          , whiteRookAMoved = False
+          , whiteRookHMoved = False
+          , blackRookAMoved = False
+          , blackRookHMoved = False
+          , enPassantSquare = -1
+          , halfMoveClock = 0
+          , fullMoveNumber = 1
+          , savedGames = []
+          , notification = ""
+          , errorMessage = ""
+          }
         , Cmd.none
         )
 
 
 main =
-    app { init = init
-    , update = update
-    , view = view
-    , subscriptions = subscriptions
-    , routes = [ route "/" HomePage, route "/game" GamePage ]
-    , notFound = NotFoundPage
-    }
+    app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        , routes = [ route "/" HomePage, route "/game" GamePage ]
+        , notFound = NotFoundPage
+        }
 
 
 view : Model -> VNode
 view model =
     case model.page of
+
         HomePage ->
             Home.viewHome model
 
@@ -93,15 +96,18 @@ view model =
 -- views, but we also want the AI to not burn dispatch cycles on the
 -- human's turn, while the game is finished, or on the home page.
 subscriptions model =
-    if model.page == GamePage && model.turn == Black && model.gameStatus == "playing" then
+    if model.page == GamePage && model.turn == Black && model.gameStatus
+        == "playing" then
         Time.every 500 ComputerMove
+
     else
         Sub.none
 
 
-update : Msg -> Model -> (Model, Cmd Msg)
+update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+
         Navigate page ->
             ( { model | page = page, notification = "" }, Cmd.none )
 
@@ -109,22 +115,26 @@ update msg model =
             let
                 gamesResult = Games.getGames s
                 games = Result.withDefault [] gamesResult
-                notif = case gamesResult of
-                    Ok _ ->
-                        model.notification
+                notif =
+                    case gamesResult of
 
-                    Err e ->
-                        let
-                            _ = println ("[CHESS ERROR] loadGames: " ++ Error.toString e)
-                        in
-                            Error.toString e
+                        Ok _ ->
+                            model.notification
+
+                        Err e ->
+                            let
+                                _ =
+                                    println
+                                        ("[CHESS ERROR] loadGames: "
+                                             ++ Error.toString e)
+                            in
+                                Error.toString e
             in
-                ( { model
-                    | nameInput = s
-                    , savedGames = games
-                    , playerName = s
-                    , notification = notif
-                }
+                ( { model | nameInput = s
+                  , savedGames = games
+                  , playerName = s
+                  , notification = notif
+                  }
                 , Cmd.none
                 )
 
@@ -153,113 +163,136 @@ update msg model =
             handleDeleteGame gameId model
 
 
-handleStartNewGame : Model -> (Model, Cmd Msg)
+handleStartNewGame : Model -> ( Model, Cmd Msg )
 handleStartNewGame model =
     let
-        name = if model.nameInput == "" then
-            model.playerName
-        else
-            model.nameInput
+        name =
+            if model.nameInput == "" then
+                model.playerName
+
+            else
+                model.nameInput
     in
         startGameWithName name model
 
 
-handleLoadGame : String -> Model -> (Model, Cmd Msg)
+handleLoadGame : String -> Model -> ( Model, Cmd Msg )
 handleLoadGame gameId model =
     let
         movesResult = Games.getGameMoves gameId
         gameInfoResult = Games.getGame gameId
-        _ = case movesResult of
-            Ok _ ->
-                ()
+        _ =
+            case movesResult of
 
-            Err e ->
-                let
-                    _ = println ("[CHESS ERROR] getGameMoves: " ++ Error.toString e)
-                in
+                Ok _ ->
                     ()
-        _ = case gameInfoResult of
-            Ok _ ->
-                ()
 
-            Err e ->
-                let
-                    _ = println ("[CHESS ERROR] getGame: " ++ Error.toString e)
-                in
+                Err e ->
+                    let
+                        _ =
+                            println
+                                ("[CHESS ERROR] getGameMoves: "
+                                     ++ Error.toString e)
+                    in
+                        ()
+        _ =
+            case gameInfoResult of
+
+                Ok _ ->
                     ()
+
+                Err e ->
+                    let
+                        _ =
+                            println
+                                ("[CHESS ERROR] getGame: " ++ Error.toString e)
+                    in
+                        ()
         moves = Result.withDefault [] movesResult
-        gameInfo = case gameInfoResult of
-            Ok maybeG ->
-                maybeG
+        gameInfo =
+            case gameInfoResult of
 
-            Err _ ->
-                Nothing
-        loadErr = case gameInfoResult of
-            Err e ->
-                Error.toString e
+                Ok maybeG ->
+                    maybeG
 
-            Ok _ ->
-                case movesResult of
-                    Err e ->
-                        Error.toString e
+                Err _ ->
+                    Nothing
+        loadErr =
+            case gameInfoResult of
 
-                    Ok _ ->
-                        ""
-        playerName = case gameInfo of
-            Just g ->
-                Games.getField "player_name" g
+                Err e ->
+                    Error.toString e
 
-            Nothing ->
-                model.playerName
+                Ok _ ->
+                    case movesResult of
+
+                        Err e ->
+                            Error.toString e
+
+                        Ok _ ->
+                            ""
+        playerName =
+            case gameInfo of
+
+                Just g ->
+                    Games.getField "player_name" g
+
+                Nothing ->
+                    model.playerName
         result = replayMoves moves Board.initialBoard
         board = fst result
         history = snd result
         moveCount = List.length history
-        turn = if modBy 2 moveCount == 0 then
-            White
-        else
-            Black
-        status = case gameInfo of
-            Just g ->
-                let
-                    s = Games.getField "status" g
-                    r = Games.getField "result" g
-                in
-                    if s == "finished" then
-                        r
-                    else
-                        "playing"
+        turn =
+            if modBy 2 moveCount == 0 then
+                White
 
-            Nothing ->
-                "playing"
+            else
+                Black
+        status =
+            case gameInfo of
+
+                Just g ->
+                    let
+                        s = Games.getField "status" g
+                        r = Games.getField "result" g
+                    in
+                        if s == "finished" then
+                            r
+
+                        else
+                            "playing"
+
+                Nothing ->
+                    "playing"
     in
-        ( { model
-            | page = GamePage
-            , playerName = playerName
-            , gameId = gameId
-            , board = board
-            , turn = turn
-            , selectedSquare = -1
-            , legalMoves = []
-            , moveHistory = history
-            , gameStatus = status
-            , computerThinking = False
-            , lastMoveFrom = -1
-            , lastMoveTo = -1
-            , notification = loadErr
-            , errorMessage = ""
-        }
+        ( { model | page = GamePage
+          , playerName = playerName
+          , gameId = gameId
+          , board = board
+          , turn = turn
+          , selectedSquare = -1
+          , legalMoves = []
+          , moveHistory = history
+          , gameStatus = status
+          , computerThinking = False
+          , lastMoveFrom = -1
+          , lastMoveTo = -1
+          , notification = loadErr
+          , errorMessage = ""
+          }
         , Cmd.none
         )
 
 
-replayMoves : List Dict String String -> Dict Int Piece -> (Dict Int Piece, List String)
+replayMoves : List Dict String String -> Dict Int Piece -> ( Dict Int Piece, List String )
 replayMoves moves board =
     replayMovesLoop moves board []
 
 
 replayMovesLoop moves board history =
     case moves of
+
         [] ->
             ( board, history )
 
@@ -270,38 +303,55 @@ replayMovesLoop moves board history =
                 algebraic = Games.getField "algebraic" move
             in
                 case String.toInt fromStr of
+
                     Just from ->
                         case String.toInt toStr of
+
                             Just to ->
                                 let
                                     newBoard = Board.movePiece from to board
                                 in
-                                    replayMovesLoop rest newBoard (history ++ [algebraic])
+                                    replayMovesLoop
+                                        rest
+                                        newBoard
+                                        (history ++ [algebraic])
 
                             Nothing ->
                                 let
-                                    _ = println ("[REPLAY ERROR] bad to_square: " ++ toStr)
+                                    _ =
+                                        println
+                                            ("[REPLAY ERROR] bad to_square: "
+                                                 ++ toStr)
                                 in
                                     replayMovesLoop rest board history
 
                     Nothing ->
                         let
-                            _ = println ("[REPLAY ERROR] bad from_square: " ++ fromStr)
+                            _ =
+                                println
+                                    ("[REPLAY ERROR] bad from_square: "
+                                         ++ fromStr)
                         in
                             replayMovesLoop rest board history
 
 
-startGameWithName : String -> Model -> (Model, Cmd Msg)
+startGameWithName : String -> Model -> ( Model, Cmd Msg )
 startGameWithName name model =
     if name == "" then
         ( { model | errorMessage = "Please enter your name" }, Cmd.none )
+
     else
         case Games.createGame name of
+
             Err e ->
                 let
-                    _ = println ("[CHESS ERROR] createGame: " ++ Error.toString e)
+                    _ =
+                        println
+                            ("[CHESS ERROR] createGame: " ++ Error.toString e)
                 in
-                    ( { model | errorMessage = Error.toString e, notification = Error.toString e }
+                    ( { model | errorMessage = Error.toString e
+                      , notification = Error.toString e
+                      }
                     , Cmd.none
                     )
 
@@ -309,58 +359,63 @@ startGameWithName name model =
                 startGameWithNameOk name gameId model
 
 
-startGameWithNameOk : String -> String -> Model -> (Model, Cmd Msg)
+startGameWithNameOk : String -> String -> Model -> ( Model, Cmd Msg )
 startGameWithNameOk name gameId model =
-    ( { model
-        | page = GamePage
-        , playerName = name
-        , gameId = gameId
-        , board = Board.initialBoard
-        , turn = White
-        , selectedSquare = -1
-        , legalMoves = []
-        , moveHistory = []
-        , gameStatus = "playing"
-        , computerThinking = False
-        , lastMoveFrom = -1
-        , lastMoveTo = -1
-        , capturedByWhite = []
-        , capturedByBlack = []
-        , whiteKingMoved = False
-        , blackKingMoved = False
-        , whiteRookAMoved = False
-        , whiteRookHMoved = False
-        , blackRookAMoved = False
-        , blackRookHMoved = False
-        , enPassantSquare = -1
-        , halfMoveClock = 0
-        , fullMoveNumber = 1
-        , notification = ""
-        , errorMessage = ""
-    }
+    ( { model | page = GamePage
+      , playerName = name
+      , gameId = gameId
+      , board = Board.initialBoard
+      , turn = White
+      , selectedSquare = -1
+      , legalMoves = []
+      , moveHistory = []
+      , gameStatus = "playing"
+      , computerThinking = False
+      , lastMoveFrom = -1
+      , lastMoveTo = -1
+      , capturedByWhite = []
+      , capturedByBlack = []
+      , whiteKingMoved = False
+      , blackKingMoved = False
+      , whiteRookAMoved = False
+      , whiteRookHMoved = False
+      , blackRookAMoved = False
+      , blackRookHMoved = False
+      , enPassantSquare = -1
+      , halfMoveClock = 0
+      , fullMoveNumber = 1
+      , notification = ""
+      , errorMessage = ""
+      }
     , Cmd.none
     )
 
 
-handleClickSquare : Int -> Model -> (Model, Cmd Msg)
+handleClickSquare : Int -> Model -> ( Model, Cmd Msg )
 handleClickSquare sq model =
     if model.gameStatus /= "playing" then
         ( model, Cmd.none )
+
     else if model.turn /= White then
         ( model, Cmd.none )
+
     else if model.selectedSquare == -1 then
         trySelectPiece sq model
+
     else if sq == model.selectedSquare then
         ( { model | selectedSquare = -1, legalMoves = [] }, Cmd.none )
+
     else if List.member sq model.legalMoves then
         Logic.executeWhiteMove model.selectedSquare sq model
+
     else
         trySelectPiece sq model
 
 
-trySelectPiece : Int -> Model -> (Model, Cmd Msg)
+trySelectPiece : Int -> Model -> ( Model, Cmd Msg )
 trySelectPiece sq model =
     case Dict.get sq model.board of
+
         Just piece ->
             selectIfWhite sq piece model
 
@@ -368,30 +423,34 @@ trySelectPiece sq model =
             ( model, Cmd.none )
 
 
-selectIfWhite : Int -> Piece -> Model -> (Model, Cmd Msg)
+selectIfWhite : Int -> Piece -> Model -> ( Model, Cmd Msg )
 selectIfWhite sq piece model =
     if piece.colour == White then
         let
             moves = Move.legalMovesForSquare sq White model.board model
         in
             ( { model | selectedSquare = sq, legalMoves = moves }, Cmd.none )
+
     else
         ( model, Cmd.none )
 
 
-handleComputerMove : Model -> (Model, Cmd Msg)
+handleComputerMove : Model -> ( Model, Cmd Msg )
 handleComputerMove model =
     if model.turn /= Black then
         ( { model | computerThinking = False }, Cmd.none )
+
     else if model.gameStatus /= "playing" then
         ( { model | computerThinking = False }, Cmd.none )
+
     else
         Logic.executeBlackMove model
 
 
-handleResign : Model -> (Model, Cmd Msg)
+handleResign : Model -> ( Model, Cmd Msg )
 handleResign model =
     case Games.updateGameStatus model.gameId "finished" "resigned" of
+
         Ok _ ->
             ( { model | gameStatus = "resigned" }, Cmd.none )
 
@@ -399,65 +458,81 @@ handleResign model =
             let
                 _ = println ("[CHESS ERROR] resign: " ++ Error.toString e)
             in
-                ( { model | gameStatus = "resigned", notification = Error.toString e }
+                ( { model | gameStatus = "resigned"
+                  , notification = Error.toString e
+                  }
                 , Cmd.none
                 )
 
 
-handleBackToHome : Model -> (Model, Cmd Msg)
+handleBackToHome : Model -> ( Model, Cmd Msg )
 handleBackToHome model =
     let
         gamesResult = Games.getGames model.playerName
         games = Result.withDefault [] gamesResult
-        notif = case gamesResult of
-            Ok _ ->
-                ""
+        notif =
+            case gamesResult of
 
-            Err e ->
-                let
-                    _ = println ("[CHESS ERROR] getGames: " ++ Error.toString e)
-                in
-                    Error.toString e
+                Ok _ ->
+                    ""
+
+                Err e ->
+                    let
+                        _ =
+                            println
+                                ("[CHESS ERROR] getGames: " ++ Error.toString e)
+                    in
+                        Error.toString e
     in
-        ( { model
-            | page = HomePage
-            , savedGames = games
-            , selectedSquare = -1
-            , legalMoves = []
-            , notification = notif
-        }
+        ( { model | page = HomePage
+          , savedGames = games
+          , selectedSquare = -1
+          , legalMoves = []
+          , notification = notif
+          }
         , Cmd.none
         )
 
 
-handleDeleteGame : String -> Model -> (Model, Cmd Msg)
+handleDeleteGame : String -> Model -> ( Model, Cmd Msg )
 handleDeleteGame gameId model =
     let
         delResult = Games.deleteGame gameId
-        _ = case delResult of
-            Ok _ ->
-                ()
+        _ =
+            case delResult of
 
-            Err e ->
-                let
-                    _ = println ("[CHESS ERROR] deleteGame: " ++ Error.toString e)
-                in
+                Ok _ ->
                     ()
+
+                Err e ->
+                    let
+                        _ =
+                            println
+                                ("[CHESS ERROR] deleteGame: "
+                                     ++ Error.toString e)
+                    in
+                        ()
         gamesResult = Games.getGames model.playerName
         games = Result.withDefault [] gamesResult
-        notif = case delResult of
-            Err e ->
-                Error.toString e
+        notif =
+            case delResult of
 
-            Ok _ ->
-                case gamesResult of
-                    Err e ->
-                        let
-                            _ = println ("[CHESS ERROR] getGames: " ++ Error.toString e)
-                        in
-                            Error.toString e
+                Err e ->
+                    Error.toString e
 
-                    Ok _ ->
-                        model.notification
+                Ok _ ->
+                    case gamesResult of
+
+                        Err e ->
+                            let
+                                _ =
+                                    println
+                                        ("[CHESS ERROR] getGames: "
+                                             ++ Error.toString e)
+                            in
+                                Error.toString e
+
+                        Ok _ ->
+                            model.notification
     in
         ( { model | savedGames = games, notification = notif }, Cmd.none )

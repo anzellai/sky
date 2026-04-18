@@ -14,14 +14,18 @@ runReadOnly : a -> String -> List String -> Result Error (List (Dict String Stri
 runReadOnly dbConn query params =
     if isSelectOnly query then
         case Db.query dbConn query params of
+
             Ok rows ->
                 Ok rows
+
             Err e ->
                 Err e
 
     else
         let
-            msg = "Query rejected: only SELECT queries are allowed. Got: " ++ String.slice 0 50 query
+            msg =
+                "Query rejected: only SELECT queries are allowed. Got: "
+                    ++ String.slice 0 50 query
         in
             Err (Error.invalidInput msg)
 

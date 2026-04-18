@@ -14,6 +14,7 @@ import Net.Http as Http
 import Strings as GoStrings
 import Io as Io
 
+
 notifyOrderPlaced cart items userName userEmail =
     let
         env = Result.withDefault "" (Os.getenv "ENV")
@@ -24,16 +25,14 @@ notifyOrderPlaced cart items userName userEmail =
         prefix =
             if env == "production" then
                 "[REAL]"
-            
+
             else
                 "[Test]"
         subject =
             prefix ++ " New order from " ++ userName ++ " (" ++ userEmail ++ ")"
         body =
-            subject
-                ++ " - "
-                    ++ itemCount
-                        ++ " items, " ++ totalCurrency ++ " " ++ totalAmount
+            subject ++ " - " ++ itemCount ++ " items, " ++ totalCurrency ++ " "
+                ++ totalAmount
         notificationId = Result.withDefault "" (Uuid.newString ())
         notificationData =
             Dict.fromList
@@ -54,10 +53,10 @@ notifyOrderPlaced cart items userName userEmail =
 
 ignoreResult result =
     case result of
-        
+
         Ok _ ->
             ()
-        
+
         Err _ ->
             ()
 
@@ -74,25 +73,25 @@ sendEmailNotification notificationId subject body =
                         "[NOTIFY] Email not configured (SMTP_HOST or NOTIFY_TO missing), skipping."
             in
                 ()
-        
+
         else
             let
                 _ =
                     println
-                        (
-                        "[NOTIFY] Would send email to "
-                            ++ notifyTo ++ ": " ++ subject
-                        )
+                        ("[NOTIFY] Would send email to " ++ notifyTo ++ ": "
+                             ++ subject)
                 _ =
                     case Db.getDoc "notifications" notificationId of
-                        
+
                         Ok (Just notification) ->
-                            Db.setDoc "notifications" notificationId
-                                (
-                                Dict.insert "sent" (Db.boolVal True)
-                                    notification
-                                )
-                        
+                            Db.setDoc
+                                "notifications"
+                                notificationId
+                                (Dict.insert
+                                     "sent"
+                                     (Db.boolVal True)
+                                     notification)
+
                         _ ->
                             Ok ()
             in

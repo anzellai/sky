@@ -3,7 +3,8 @@ module Main exposing (main)
 import Std.Log exposing (println)
 
 
-splitPair x = ( x, x + 1 )
+splitPair x =
+    ( x, x + 1 )
 
 
 main =

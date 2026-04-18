@@ -4,9 +4,10 @@ import Sky.Core.Prelude exposing (..)
 import Sky.Core.String as String
 import Std.Log exposing (println)
 
+
 main =
     let
-        -- htmlEscape: XSS payload becomes visible text
+    -- htmlEscape: XSS payload becomes visible text
         attacker = "<script>alert('xss')</script>"
         _ = println (String.htmlEscape attacker)
         -- Round-trip with attribute-breaking chars

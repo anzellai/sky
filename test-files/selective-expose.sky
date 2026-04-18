@@ -2,16 +2,21 @@ module Main exposing (main, Colour(Red, Green))
 
 import Std.Log exposing (println)
 
-
-type Colour = Red | Green | Blue
+type Colour
+    = Red
+    | Green
+    | Blue
 
 
 describe c =
     case c of
+
         Red ->
             "red"
+
         Green ->
             "green"
+
         Blue ->
             "blue"
 

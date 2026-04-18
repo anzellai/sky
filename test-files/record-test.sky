@@ -4,10 +4,12 @@ import Sky.Core.Prelude exposing (..)
 import Sky.Core.String as String
 import Std.Log exposing (println)
 
+
 main =
     let
         person = { name = "Alice", age = 30 }
-        greeting = "Hello, " ++ person.name ++ "! Age: " ++ String.fromInt person.age
+        greeting =
+            "Hello, " ++ person.name ++ "! Age: " ++ String.fromInt person.age
         updated = { person | name = "Bob" }
         greeting2 = "Hello, " ++ updated.name ++ "!"
         _ = println greeting

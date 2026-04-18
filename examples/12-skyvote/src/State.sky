@@ -1,4 +1,5 @@
 module State exposing (..)
+
 import Sky.Core.Maybe exposing (..)
 
 type alias Model =

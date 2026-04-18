@@ -16,7 +16,6 @@ import Std.Sub as Sub
 type Page
     = DashboardPage
 
-
 type Msg
     = Navigate Page
     | RunFast
@@ -28,12 +27,13 @@ type Msg
 
 
 init _ =
-    ( { page = DashboardPage , jobs = [] , nextId = 1 , ok = 0 , fail = 0 }
+    ( { page = DashboardPage, jobs = [], nextId = 1, ok = 0, fail = 0 }
     , Cmd.none
     )
 
 
-mkJob id name = { id = id , name = name , running = True , result = "" }
+mkJob id name =
+    { id = id, name = name, running = True, result = "" }
 
 
 addJob model name task =
@@ -42,26 +42,25 @@ addJob model name task =
         job = mkJob jid name
         cmd = Cmd.perform task (JobDone jid)
     in
-        ( { model | jobs = List.append model.jobs [ job ] , nextId = jid + 1 }
+        ( { model | jobs = List.append model.jobs [job], nextId = jid + 1 }
         , cmd
         )
 
 
 sleepThen ms value =
-    Time.sleep ms
-        |> Task.andThen (\_ -> Task.succeed value)
+    Time.sleep ms |> Task.andThen (\_ -> Task.succeed value)
 
 
 sleepThenRandom ms lo hi =
-    Time.sleep ms
-        |> Task.andThen (\_ -> Random.int lo hi)
+    Time.sleep ms |> Task.andThen (\_ -> Random.int lo hi)
         |> Task.andThen
-            (\n -> Task.succeed ("Processed " ++ String.fromInt n ++ " records"))
+               (\n ->
+                    Task.succeed
+                        ("Processed " ++ String.fromInt n ++ " records"))
 
 
 sleepThenFail ms msg =
-    Time.sleep ms
-        |> Task.andThen (\_ -> Task.fail (Error.unexpected msg))
+    Time.sleep ms |> Task.andThen (\_ -> Task.fail (Error.unexpected msg))
 
 
 doBatch model =
@@ -81,9 +80,7 @@ doBatch model =
                 , Cmd.perform (sleepThen 4000 "Report: 42 pages") (JobDone i3)
                 ]
     in
-        ( { model | jobs = List.append model.jobs jobs , nextId = i3 + 1 }
-        , cmd
-        )
+        ( { model | jobs = List.append model.jobs jobs, nextId = i3 + 1 }, cmd )
 
 
 resolveResult result =
@@ -102,67 +99,69 @@ handleDone jid result model =
         newJobs =
             List.map
                 (\j ->
-                    if j.id == jid then
-                        { j | running = False , result = r }
-                    
-                    else
-                        j)
+                     if j.id == jid then
+                         { j | running = False, result = r }
+
+                     else
+                         j)
                 model.jobs
         addOk =
             case result of
-                
+
                 Ok _ ->
                     1
-                
+
                 Err _ ->
                     0
         addFail =
             case result of
-                
+
                 Ok _ ->
                     0
-                
+
                 Err _ ->
                     1
     in
-        ( { model
-            | jobs = newJobs
-            , ok = model.ok + addOk
-            , fail = model.fail + addFail
-        }
+        ( { model | jobs = newJobs
+          , ok = model.ok + addOk
+          , fail = model.fail + addFail
+          }
         , Cmd.none
         )
 
 
 update msg model =
     case msg of
-        
+
         Navigate p ->
-            ( { model | page = p } , Cmd.none )
-        
+            ( { model | page = p }, Cmd.none )
+
         RunFast ->
             addJob model "Fast computation" (sleepThen 500 "Result: 42")
-        
+
         RunSlow ->
             addJob model "Heavy processing" (sleepThenRandom 3000 100 9999)
-        
+
         RunFail ->
-            addJob model "Unreliable API call"
+            addJob
+                model
+                "Unreliable API call"
                 (sleepThenFail 2000 "Connection timeout")
-        
+
         RunBatch ->
             doBatch model
-        
+
         JobDone jid result ->
             handleDone jid result model
-        
+
         ClearDone ->
             ( { model | jobs = List.filter (\j -> j.running) model.jobs }
             , Cmd.none
             )
 
 
-subscriptions model = Sub.none
+subscriptions model =
+    Sub.none
 
 
 viewJob job =
@@ -170,13 +169,13 @@ viewJob job =
         status =
             if job.running then
                 "[running]"
-            
+
             else
                 job.result
         jid = String.fromInt job.id
         jname = job.name
     in
-        div [] [ text ("""#{{jid}} {{jname}} - {{status}}""") ]
+        div [] [text """#{{jid}} {{jname}} - {{status}}"""]
 
 
 view model =
@@ -188,20 +187,22 @@ view model =
         failCount = String.fromInt model.fail
         total = String.fromInt (List.length model.jobs)
     in
-        div []
-            [ h1 [] [ text "Job Queue Dashboard" ]
-            , p [] [ text "Async Cmd.perform with Sky.Live" ]
-            , p []
-                [ text
-                    ("""Running: {{running}} | OK: {{okCount}} | Failed: {{failCount}} | Total: {{total}}""")
-                ]
-            , div []
-                [ button [ onClick RunFast ] [ text "Fast Job (0.5s)" ]
-                , button [ onClick RunSlow ] [ text "Slow Job (3s)" ]
-                , button [ onClick RunFail ] [ text "Failing Job (2s)" ]
-                , button [ onClick RunBatch ] [ text "Batch (3 jobs)" ]
-                , button [ onClick ClearDone ] [ text "Clear Finished" ]
-                ]
+        div
+            []
+            [ h1 [] [text "Job Queue Dashboard"]
+            , p [] [text "Async Cmd.perform with Sky.Live"]
+            , p
+                  []
+                  [text
+                      """Running: {{running}} | OK: {{okCount}} | Failed: {{failCount}} | Total: {{total}}"""]
+            , div
+                  []
+                  [ button [onClick RunFast] [text "Fast Job (0.5s)"]
+                  , button [onClick RunSlow] [text "Slow Job (3s)"]
+                  , button [onClick RunFail] [text "Failing Job (2s)"]
+                  , button [onClick RunBatch] [text "Batch (3 jobs)"]
+                  , button [onClick ClearDone] [text "Clear Finished"]
+                  ]
             , div [] (List.map viewJob (List.reverse model.jobs))
             ]
 
@@ -212,6 +213,6 @@ main =
         , update = update
         , view = view
         , subscriptions = subscriptions
-        , routes = [ route "/" DashboardPage ]
+        , routes = [route "/" DashboardPage]
         , notFound = DashboardPage
         }

@@ -1,4 +1,5 @@
 module Lib.Auth exposing (hashPassword, verifyPassword, createUser, authenticateUser, getUserById)
+
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Maybe exposing (..)
 import Sky.Core.List as List
@@ -13,6 +14,7 @@ import Sky.Core.Error as Error exposing (Error)
 hashPassword : String -> String
 hashPassword password =
     case Auth.hashPassword password of
+
         Ok hash ->
             hash
 
@@ -34,10 +36,17 @@ createUser username email password =
         id = String.slice 0 12 (Crypto.sha256 (username ++ ":" ++ email))
         passHash = hashPassword password
     in
-        case Db.exec "INSERT INTO users (id, username, email, password_hash) VALUES (?, ?, ?, ?)" [ id, username, email, passHash ] of
+        case Db.exec
+                 "INSERT INTO users (id, username, email, password_hash) VALUES (?, ?, ?, ?)"
+                 [ id, username, email, passHash ] of
+
             Ok _ ->
                 let
-                    _ = println ("[AUTH] User created: " ++ username ++ " (" ++ email ++ ")")
+                    _ =
+                        println
+                            ("[AUTH] User created: " ++ username ++ " ("
+                                 ++ email
+                                 ++ ")")
                 in
                     Ok id
 
@@ -51,17 +60,26 @@ createUser username email password =
 -- avoids leaking which one was wrong (security best practice).
 authenticateUser : String -> String -> Result Error Dict String String
 authenticateUser email password =
-    case Db.query "SELECT id, username, email, password_hash FROM users WHERE email = ? LIMIT 1" [email] of
+    case Db.query
+             "SELECT id, username, email, password_hash FROM users WHERE email = ? LIMIT 1"
+             [email] of
+
         Err e ->
             Err e
 
         Ok userRows ->
             case List.head userRows of
+
                 Nothing ->
                     let
-                        _ = println ("[AUTH] Sign-in failed (not found): " ++ email)
+                        _ =
+                            println
+                                ("[AUTH] Sign-in failed (not found): " ++ email)
                     in
-                        Err (Error.permissionDenied |> Error.withMessage "Invalid email or password.")
+                        Err
+                            (Error.permissionDenied
+                                 |> Error.withMessage
+                                        "Invalid email or password.")
 
                 Just user ->
                     let
@@ -69,14 +87,23 @@ authenticateUser email password =
                     in
                         if verifyPassword password storedHash then
                             let
-                                _ = println ("[AUTH] Sign-in success: " ++ email)
+                                _ =
+                                    println
+                                        ("[AUTH] Sign-in success: " ++ email)
                             in
                                 Ok user
+
                         else
                             let
-                                _ = println ("[AUTH] Sign-in failed (bad password): " ++ email)
+                                _ =
+                                    println
+                                        ("[AUTH] Sign-in failed (bad password): "
+                                             ++ email)
                             in
-                                Err (Error.permissionDenied |> Error.withMessage "Invalid email or password.")
+                                Err
+                                    (Error.permissionDenied
+                                         |> Error.withMessage
+                                                "Invalid email or password.")
 
 
 -- getUserById : Result Error (Maybe User). The outer Result is for
@@ -84,7 +111,10 @@ authenticateUser email password =
 -- and not an error.
 getUserById : String -> Result Error Maybe Dict String String
 getUserById userId =
-    case Db.query "SELECT id, username, email FROM users WHERE id = ? LIMIT 1" [userId] of
+    case Db.query
+             "SELECT id, username, email FROM users WHERE id = ? LIMIT 1"
+             [userId] of
+
         Err e ->
             Err e
 

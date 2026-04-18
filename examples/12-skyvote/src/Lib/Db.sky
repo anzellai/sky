@@ -1,4 +1,5 @@
 module Lib.Db exposing (exec, query, getField)
+
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Maybe as Maybe
 import Sky.Core.Dict as Dict
@@ -14,6 +15,7 @@ import Sky.Core.Error as Error exposing (Error)
 -- empty data to users.
 dbConn =
     case Db.open "sqlite" "skyvote.db" of
+
         Ok c ->
             c
 
@@ -38,6 +40,7 @@ dbConn =
 -- coerceCallArgs at call sites.
 exec queryStr args =
     case Db.exec dbConn queryStr args of
+
         Ok _ ->
             Ok ()
 
@@ -47,6 +50,7 @@ exec queryStr args =
 
 query queryStr args =
     case Db.query dbConn queryStr args of
+
         Ok rows ->
             Ok rows
 

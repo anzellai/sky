@@ -4,6 +4,10 @@ import Sky.Core.Prelude exposing (..)
 import Sky.Core.String as String
 import Std.Log exposing (println)
 
-add a b = a + b
 
-main = println (String.fromInt (add 3 4))
+add a b =
+    a + b
+
+
+main =
+    println (String.fromInt (add 3 4))

@@ -5,8 +5,9 @@ import Std.Html exposing (..)
 import Std.Html.Attributes exposing (..)
 import Std.Log exposing (println)
 
+
 main =
     let
-        _ = div [ class "app" ] [ text "Hello" ]
+        _ = div [class "app"] [text "Hello"]
     in
         println "done"

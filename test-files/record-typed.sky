@@ -5,12 +5,12 @@ import Sky.Core.String as String
 import Std.Log exposing (println)
 
 type alias Person =
-    { name : String
-    , age : Int
-    }
+    { name : String, age : Int }
+
 
 greetPerson person =
     "Hello, " ++ person.name ++ "! Age: " ++ String.fromInt person.age
+
 
 main =
     let

@@ -1,4 +1,5 @@
 module Ui.Layout exposing (page, pageWithAuth)
+
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Maybe exposing (..)
 import Sky.Core.String as String
@@ -16,6 +17,7 @@ import Lib.Db as Db
 viewNotification model =
     if model.notification == "" then
         text ""
+
     else
         div [class "notification"] [text model.notification]
 
@@ -24,46 +26,103 @@ viewNotification model =
 -- PAGE LAYOUT
 -- ======================================================
 page model content =
-    div [] [ styleNode [] globalStyles
-    , viewHeader model
-    , div [class "container"] [ viewNotification model, content ]
-    ]
+    div
+        []
+        [ styleNode [] globalStyles
+        , viewHeader model
+        , div [class "container"] [ viewNotification model, content ]
+        ]
 
 
 pageWithAuth model content =
     case model.currentUser of
+
         Just _ ->
             page model content
 
         Nothing ->
-            page model (div [class "auth-container"] [div [class "card"] [p [class "auth-prompt"] [ text "Please "
-            , a [ href "/auth/signin", attribute "sky-nav" "" ] [text "sign in"]
-            , text " to access this page."
-            ]]])
+            page
+                model
+                (div
+                     [class "auth-container"]
+                     [div
+                         [class "card"]
+                         [p
+                             [class "auth-prompt"]
+                             [ text "Please "
+                             , a
+                                   [ href "/auth/signin"
+                                   , attribute "sky-nav" ""
+                                   ]
+                                   [text "sign in"]
+                             , text " to access this page."
+                             ]]])
 
 
 -- ======================================================
 -- HEADER
 -- ======================================================
 viewHeader model =
-    headerNode [class "header"] [div [class "header-inner"] [ a [ href "/", attribute "sky-nav" "", class "logo" ] [text "SkyVote"]
-    , nav [class "nav"] [ a [ href "/", attribute "sky-nav" "", class "nav-link" ] [text "Board"]
-    , a [ href "/roadmap", attribute "sky-nav" "", class "nav-link" ] [text "Roadmap"]
-    , a [ href "/about", attribute "sky-nav" "", class "nav-link" ] [text "About"]
-    , viewAuthNav model
-    ]
-    ]]
+    headerNode
+        [class "header"]
+        [div
+            [class "header-inner"]
+            [ a
+                  [ href "/", attribute "sky-nav" "", class "logo" ]
+                  [text "SkyVote"]
+            , nav
+                  [class "nav"]
+                  [ a
+                        [ href "/", attribute "sky-nav" "", class "nav-link" ]
+                        [text "Board"]
+                  , a
+                        [ href "/roadmap"
+                        , attribute "sky-nav" ""
+                        , class "nav-link"
+                        ]
+                        [text "Roadmap"]
+                  , a
+                        [ href "/about"
+                        , attribute "sky-nav" ""
+                        , class "nav-link"
+                        ]
+                        [text "About"]
+                  , viewAuthNav model
+                  ]
+            ]]
 
 
 viewAuthNav model =
     case model.currentUser of
+
         Just user ->
-            span [class "auth-nav"] [ a [ href "/submit", attribute "sky-nav" "", class "btn btn-primary btn-sm" ] [text "Submit Idea"]
-            , span [class "nav-link"] [text (Db.getField "username" user)]
-            , button [ onClick DoSignOut, class "btn btn-ghost btn-sm" ] [text "Sign out"]
-            ]
+            span
+                [class "auth-nav"]
+                [ a
+                      [ href "/submit"
+                      , attribute "sky-nav" ""
+                      , class "btn btn-primary btn-sm"
+                      ]
+                      [text "Submit Idea"]
+                , span [class "nav-link"] [text (Db.getField "username" user)]
+                , button
+                      [ onClick DoSignOut, class "btn btn-ghost btn-sm" ]
+                      [text "Sign out"]
+                ]
 
         Nothing ->
-            span [class "auth-nav-anon"] [ a [ href "/auth/signin", attribute "sky-nav" "", class "nav-link" ] [text "Sign in"]
-            , a [ href "/auth/signup", attribute "sky-nav" "", class "btn btn-primary btn-sm" ] [text "Sign up"]
-            ]
+            span
+                [class "auth-nav-anon"]
+                [ a
+                      [ href "/auth/signin"
+                      , attribute "sky-nav" ""
+                      , class "nav-link"
+                      ]
+                      [text "Sign in"]
+                , a
+                      [ href "/auth/signup"
+                      , attribute "sky-nav" ""
+                      , class "btn btn-primary btn-sm"
+                      ]
+                      [text "Sign up"]
+                ]

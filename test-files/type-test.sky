@@ -4,6 +4,10 @@ import Sky.Core.Prelude exposing (..)
 import Sky.Core.String as String
 import Std.Log exposing (println)
 
-double n = n + n
 
-main = println (String.fromInt (double 5))
+double n =
+    n + n
+
+
+main =
+    println (String.fromInt (double 5))

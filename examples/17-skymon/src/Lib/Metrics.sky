@@ -19,9 +19,11 @@ import Sky.Core.Error as Error exposing (Error(..), ErrorKind(..))
 createMetric : String -> String -> String -> String -> String
 createMetric name sourceType configJson visibility =
     let
-        metId = String.slice 0 12 (Crypto.sha256 (name ++ ":" ++ sourceType))
+        metId =
+            String.slice 0 12 (Crypto.sha256 (name ++ ":" ++ sourceType))
         _ =
-            Database.execOrLog "Metrics.createMetric"
+            Database.execOrLog
+                "Metrics.createMetric"
                 "INSERT OR REPLACE INTO metrics (id, name, source_type, config_json, visibility) VALUES (?, ?, ?, ?, ?)"
                 [ metId, name, sourceType, configJson, visibility ]
     in
@@ -31,16 +33,29 @@ createMetric name sourceType configJson visibility =
 deleteMetric : String -> ()
 deleteMetric metId =
     let
-        _ = Database.execOrLog "Metrics.deleteMetric/history" "DELETE FROM metric_history WHERE metric_id = ?" [ metId ]
-        _ = Database.execOrLog "Metrics.deleteMetric/alerts" "DELETE FROM alerts WHERE metric_id = ?" [ metId ]
-        _ = Database.execOrLog "Metrics.deleteMetric/row" "DELETE FROM metrics WHERE id = ?" [ metId ]
+        _ =
+            Database.execOrLog
+                "Metrics.deleteMetric/history"
+                "DELETE FROM metric_history WHERE metric_id = ?"
+                [metId]
+        _ =
+            Database.execOrLog
+                "Metrics.deleteMetric/alerts"
+                "DELETE FROM alerts WHERE metric_id = ?"
+                [metId]
+        _ =
+            Database.execOrLog
+                "Metrics.deleteMetric/row"
+                "DELETE FROM metrics WHERE id = ?"
+                [metId]
     in
         ()
 
 
 getMetrics : List (Dict String String)
 getMetrics =
-    Database.queryOrLog "Metrics.getMetrics"
+    Database.queryOrLog
+        "Metrics.getMetrics"
         "SELECT * FROM metrics ORDER BY name"
         []
 
@@ -74,33 +89,43 @@ runSqlMetric metric =
             "error: missing dsn or query in config"
 
         else
-            runSafeQuery dsn query
-
-
 -- runSafeQuery / runSafeQueryWithConn: metric-collector string API.
 -- Errors are surfaced as "error: <typed-cause>" AND logged so operators
 -- see the structured IoError form in stderr.
+            runSafeQuery dsn query
+
+
 runSafeQuery : String -> String -> String
 runSafeQuery dsn query =
     case Db.open "postgres" dsn of
+
         Err e ->
             let
                 typedErr = e
-                _ = println ("[METRIC ERROR] runSafeQuery/open: " ++ Error.toString typedErr)
+                _ =
+                    println
+                        ("[METRIC ERROR] runSafeQuery/open: "
+                             ++ Error.toString typedErr)
             in
                 "error: " ++ Error.toString typedErr
+
         Ok extConn ->
             runSafeQueryWithConn extConn query
 
 
 runSafeQueryWithConn extConn query =
     case SafeQuery.runReadOnly extConn query [] of
+
         Err e ->
             let
                 typedErr = e
-                _ = println ("[METRIC ERROR] runSafeQuery: " ++ Error.toString typedErr)
+                _ =
+                    println
+                        ("[METRIC ERROR] runSafeQuery: "
+                             ++ Error.toString typedErr)
             in
                 "error: " ++ Error.toString typedErr
+
         Ok rows ->
             extractFirstValue rows
 
@@ -136,12 +161,17 @@ runHttpMetric metric =
 
         else
             case Task.run (Http.get url) of
+
                 Ok resp ->
                     String.fromInt resp.status
+
                 Err e ->
                     let
                         typedErr = e
-                        _ = println ("[METRIC ERROR] runHttpMetric " ++ url ++ ": " ++ Error.toString typedErr)
+                        _ =
+                            println
+                                ("[METRIC ERROR] runHttpMetric " ++ url ++ ": "
+                                     ++ Error.toString typedErr)
                     in
                         "error: " ++ Error.toString typedErr
 
@@ -158,16 +188,21 @@ runApiMetric metric =
 
         else
             case Task.run (Http.get url) of
+
                 Ok resp ->
                     if String.isEmpty fieldPath then
                         resp.body
 
                     else
                         extractJsonField fieldPath resp.body
+
                 Err e ->
                     let
                         typedErr = e
-                        _ = println ("[METRIC ERROR] runApiMetric " ++ url ++ ": " ++ Error.toString typedErr)
+                        _ =
+                            println
+                                ("[METRIC ERROR] runApiMetric " ++ url ++ ": "
+                                     ++ Error.toString typedErr)
                     in
                         "error: " ++ Error.toString typedErr
 
@@ -176,11 +211,13 @@ recordMetricValue : String -> String -> ()
 recordMetricValue metId value =
     let
         _ =
-            Database.execOrLog "Metrics.recordMetricValue/update"
+            Database.execOrLog
+                "Metrics.recordMetricValue/update"
                 "UPDATE metrics SET last_value = ?, last_updated = datetime('now') WHERE id = ?"
                 [ value, metId ]
         _ =
-            Database.execOrLog "Metrics.recordMetricValue/history"
+            Database.execOrLog
+                "Metrics.recordMetricValue/history"
                 "INSERT INTO metric_history (metric_id, value) VALUES (?, ?)"
                 [ metId, value ]
     in
@@ -189,7 +226,8 @@ recordMetricValue metId value =
 
 getMetricHistory : String -> Int -> List (Dict String String)
 getMetricHistory metId limit =
-    Database.queryOrLog "Metrics.getMetricHistory"
+    Database.queryOrLog
+        "Metrics.getMetricHistory"
         "SELECT value, recorded_at FROM metric_history WHERE metric_id = ? ORDER BY recorded_at DESC LIMIT ?"
         [ metId, String.fromInt limit ]
 

@@ -8,7 +8,8 @@ import Lib.Database exposing (conn)
 initDb =
     let
         _ =
-            Db.execRaw conn
+            Db.execRaw
+                conn
                 """CREATE TABLE IF NOT EXISTS monitors (
                     id TEXT PRIMARY KEY,
                     name TEXT NOT NULL,
@@ -21,7 +22,8 @@ initDb =
                     created_at TEXT DEFAULT (datetime('now'))
                 )"""
         _ =
-            Db.execRaw conn
+            Db.execRaw
+                conn
                 """CREATE TABLE IF NOT EXISTS metrics (
                     id TEXT PRIMARY KEY,
                     name TEXT NOT NULL,
@@ -33,7 +35,8 @@ initDb =
                     created_at TEXT DEFAULT (datetime('now'))
                 )"""
         _ =
-            Db.execRaw conn
+            Db.execRaw
+                conn
                 """CREATE TABLE IF NOT EXISTS metric_history (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     metric_id TEXT NOT NULL,
@@ -41,7 +44,8 @@ initDb =
                     recorded_at TEXT DEFAULT (datetime('now'))
                 )"""
         _ =
-            Db.execRaw conn
+            Db.execRaw
+                conn
                 """CREATE TABLE IF NOT EXISTS alerts (
                     id TEXT PRIMARY KEY,
                     metric_id TEXT NOT NULL,
@@ -53,7 +57,8 @@ initDb =
                     created_at TEXT DEFAULT (datetime('now'))
                 )"""
         _ =
-            Db.execRaw conn
+            Db.execRaw
+                conn
                 """CREATE TABLE IF NOT EXISTS sessions (
                     id TEXT PRIMARY KEY,
                     username TEXT NOT NULL,
@@ -62,7 +67,8 @@ initDb =
                     created_at TEXT DEFAULT (datetime('now'))
                 )"""
         _ =
-            Db.execRaw conn
+            Db.execRaw
+                conn
                 """CREATE TABLE IF NOT EXISTS monitor_history (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     monitor_id TEXT NOT NULL,
@@ -71,7 +77,8 @@ initDb =
                     checked_at TEXT DEFAULT (datetime('now'))
                 )"""
         _ =
-            Db.execRaw conn
+            Db.execRaw
+                conn
                 """CREATE TABLE IF NOT EXISTS alert_history (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     alert_id TEXT NOT NULL,

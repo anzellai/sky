@@ -16,23 +16,24 @@ import Ui.Charts as Charts
 viewMonitorDetail : String -> Model -> VNode
 viewMonitorDetail monId model =
     let
-        monitor = List.head (List.filter (\m -> m.id == monId) model.monitors)
+        monitor =
+            List.head (List.filter (\m -> m.id == monId) model.monitors)
     in
-        Layout.page model
-            (
-            case monitor of
+        Layout.page
+            model
+            (case monitor of
 
-                Just mon ->
-                    viewMonitorContent mon
+                 Just mon ->
+                     viewMonitorContent mon
 
-                Nothing ->
-                    viewNotFound
-            )
+                 Nothing ->
+                     viewNotFound)
 
 
 viewMonitorContent : Monitor -> VNode
 viewMonitorContent mon =
-    div []
+    div
+        []
         [ viewBackButton
         , viewMonitorHeader mon
         , viewMonitorStats mon
@@ -42,21 +43,31 @@ viewMonitorContent mon =
 
 viewBackButton : VNode
 viewBackButton =
-    button [ onClick (Navigate DashboardPage), class "btn btn-ghost btn-sm", style "margin-bottom: 16px" ]
-        [ text "\u2190 Back to Dashboard" ]
+    button
+        [ onClick (Navigate DashboardPage)
+        , class "btn btn-ghost btn-sm"
+        , style "margin-bottom: 16px"
+        ]
+        [text "← Back to Dashboard"]
 
 
 viewMonitorHeader : Monitor -> VNode
 viewMonitorHeader mon =
-    div [ class "card", style "margin-bottom: 24px" ]
-        [ div [ style "display: flex; justify-content: space-between; align-items: center" ]
-              [ div []
-                    [ h2 [ style "font-size: 24px; color: #f1f5f9; margin-bottom: 4px" ] [ text mon.name ]
-                    , p [ style "color: #64748b; font-size: 13px" ] [ text mon.url ]
-                    ]
-              , viewStatusBadge mon.status
-              ]
-        ]
+    div
+        [ class "card", style "margin-bottom: 24px" ]
+        [div
+            [style
+                "display: flex; justify-content: space-between; align-items: center"]
+            [ div
+                  []
+                  [ h2
+                        [style
+                            "font-size: 24px; color: #f1f5f9; margin-bottom: 4px"]
+                        [text mon.name]
+                  , p [style "color: #64748b; font-size: 13px"] [text mon.url]
+                  ]
+            , viewStatusBadge mon.status
+            ]]
 
 
 viewStatusBadge : MonitorStatus -> VNode
@@ -65,8 +76,11 @@ viewStatusBadge status =
         color = statusColor status
         label = statusLabel status
     in
-        span [ style ("padding: 6px 16px; border-radius: 20px; font-weight: 600; font-size: 13px; background: " ++ color) ]
-            [ text label ]
+        span
+            [style
+                ("padding: 6px 16px; border-radius: 20px; font-weight: 600; font-size: 13px; background: "
+                     ++ color)]
+            [text label]
 
 
 statusColor : MonitorStatus -> String
@@ -89,13 +103,13 @@ statusColor s =
 statusLabel : MonitorStatus -> String
 statusLabel s =
     if s == Healthy then
-        "\u2713 Healthy"
+        "✓ Healthy"
 
     else if s == Degraded then
-        "\u26a0 Degraded"
+        "⚠ Degraded"
 
     else if s == Down then
-        "\u2717 Down"
+        "✗ Down"
 
     else
         "? Unknown"
@@ -103,18 +117,30 @@ statusLabel s =
 
 viewMonitorStats : Monitor -> VNode
 viewMonitorStats mon =
-    div [ class "grid", style "margin-bottom: 24px" ]
-        [ statCard (String.fromInt mon.responseTime ++ "ms") "Response Time" "#38bdf8"
-        , statCard (String.fromInt mon.interval ++ "s") "Check Interval" "#a78bfa"
+    div
+        [ class "grid", style "margin-bottom: 24px" ]
+        [ statCard
+              (String.fromInt mon.responseTime ++ "ms")
+              "Response Time"
+              "#38bdf8"
+        , statCard
+              (String.fromInt mon.interval ++ "s")
+              "Check Interval"
+              "#a78bfa"
         , statCard mon.lastChecked "Last Checked" "#94a3b8"
         ]
 
 
 statCard : String -> String -> String -> VNode
 statCard value label color =
-    div [ class "card" ]
-        [ div [ class "card-value", style ("font-size: 24px; color: " ++ color) ] [ text value ]
-        , div [ class "card-subtitle" ] [ text label ]
+    div
+        [class "card"]
+        [ div
+              [ class "card-value"
+              , style ("font-size: 24px; color: " ++ color)
+              ]
+              [text value]
+        , div [class "card-subtitle"] [text label]
         ]
 
 
@@ -122,58 +148,88 @@ viewMonitorHistory : String -> VNode
 viewMonitorHistory monId =
     let
         history = Monitors.getMonitorHistory monId 50
-        responseTimes = List.map (\r -> parseIntOr0 (Database.getField "response_time" r)) history
+        responseTimes =
+            List.map
+                (\r -> parseIntOr0 (Database.getField "response_time" r))
+                history
         statuses = List.map (\r -> Database.getField "status" r) history
     in
-        div [ class "card" ]
-            [ h3 [ style "font-size: 16px; color: #f1f5f9; margin-bottom: 16px" ] [ text "Response Time History" ]
+        div
+            [class "card"]
+            [ h3
+                  [style "font-size: 16px; color: #f1f5f9; margin-bottom: 16px"]
+                  [text "Response Time History"]
             , Charts.sparkline 600 60 (List.reverse responseTimes)
-            , div [ style "margin-top: 16px" ]
-                  [ h4 [ style "font-size: 14px; color: #94a3b8; margin-bottom: 8px" ] [ text "Status History" ]
+            , div
+                  [style "margin-top: 16px"]
+                  [ h4
+                        [style
+                            "font-size: 14px; color: #94a3b8; margin-bottom: 8px"]
+                        [text "Status History"]
                   , Charts.statusBar 8 (List.reverse statuses)
                   ]
             , viewHistoryTable history
             ]
 
 
-viewHistoryTable : (List (Dict String String)) -> VNode
+viewHistoryTable : List (Dict String String) -> VNode
 viewHistoryTable history =
     if List.isEmpty history then
-        p [ style "color: #64748b; margin-top: 16px" ] [ text "No history yet — checks will appear after the first interval." ]
+        p
+            [style "color: #64748b; margin-top: 16px"]
+            [text "No history yet — checks will appear after the first interval."]
 
     else
-        div [ style "margin-top: 16px; max-height: 300px; overflow-y: auto" ]
-            [ table [ class "table" ]
-                  [ node "thead" []
-                        [ tr []
-                              [ th [] [ text "Time" ]
-                              , th [] [ text "Status" ]
-                              , th [] [ text "Response" ]
-                              ]
-                        ]
-                  , node "tbody" []
-                        (List.map viewHistoryRow (List.take 20 history))
-                  ]
-            ]
+        div
+            [style "margin-top: 16px; max-height: 300px; overflow-y: auto"]
+            [table
+                [class "table"]
+                [ node
+                      "thead"
+                      []
+                      [tr
+                          []
+                          [ th [] [text "Time"]
+                          , th [] [text "Status"]
+                          , th [] [text "Response"]
+                          ]]
+                , node
+                      "tbody"
+                      []
+                      (List.map viewHistoryRow (List.take 20 history))
+                ]]
 
 
-viewHistoryRow : (Dict String String) -> VNode
+viewHistoryRow : Dict String String -> VNode
 viewHistoryRow row =
-    tr []
-        [ td [ style "color: #64748b; font-size: 12px" ] [ text (Database.getField "checked_at" row) ]
-        , td []
-              [ span [ class ("status-dot status-" ++ Database.getField "status" row), style "margin-right: 6px" ] []
+    tr
+        []
+        [ td
+              [style "color: #64748b; font-size: 12px"]
+              [text (Database.getField "checked_at" row)]
+        , td
+              []
+              [ span
+                    [ class
+                          ("status-dot status-"
+                               ++ Database.getField "status" row)
+                    , style "margin-right: 6px"
+                    ]
+                    []
               , text (Database.getField "status" row)
               ]
-        , td [] [ text (Database.getField "response_time" row ++ "ms") ]
+        , td [] [text (Database.getField "response_time" row ++ "ms")]
         ]
 
 
 viewNotFound : VNode
 viewNotFound =
-    div [ class "empty-state" ]
-        [ h3 [] [ text "Monitor not found" ]
-        , button [ onClick (Navigate DashboardPage), class "btn btn-primary" ] [ text "Back to Dashboard" ]
+    div
+        [class "empty-state"]
+        [ h3 [] [text "Monitor not found"]
+        , button
+              [ onClick (Navigate DashboardPage), class "btn btn-primary" ]
+              [text "Back to Dashboard"]
         ]
 
 

@@ -4,9 +4,14 @@ import Sky.Core.Prelude exposing (..)
 import Sky.Core.String as String
 import Std.Log exposing (println)
 
-showInt n = String.fromInt n
 
-add a b = a + b
+showInt n =
+    String.fromInt n
+
+
+add a b =
+    a + b
+
 
 main =
     let

@@ -4,10 +4,19 @@ import Sky.Core.Prelude exposing (..)
 import Sky.Core.String as String
 import Std.Log exposing (println)
 
+
 -- Unicode identifiers
-café = "latte"
-αβγ = 42
-北京 = "Beijing"
+café =
+    "latte"
+
+
+αβγ =
+    42
+
+
+北京 =
+    "Beijing"
+
 
 main =
     let

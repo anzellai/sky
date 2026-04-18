@@ -9,11 +9,19 @@ type Color
     | Green
     | Blue
 
+
 colorName color =
     case color of
-        Red -> "red"
-        Green -> "green"
-        Blue -> "blue"
+
+        Red ->
+            "red"
+
+        Green ->
+            "green"
+
+        Blue ->
+            "blue"
+
 
 main =
     let

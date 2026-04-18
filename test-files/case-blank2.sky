@@ -2,11 +2,16 @@ module Main exposing (main)
 
 import Std.Log exposing (println)
 
+
 showResult result =
     case result of
+
         Ok val ->
             println val
+
         Err e ->
             println e
 
-main = showResult (Ok "works")
+
+main =
+    showResult (Ok "works")

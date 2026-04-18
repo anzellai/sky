@@ -1,9 +1,7 @@
 -- Parser completeness stress-test.
 -- Exercises every supported Sky syntax feature in one file.
 -- Catches regressions if a parser path narrows.
-
 module Main exposing (main, Colour(Red, Green, Blue), Shape(..), Result)
-
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.List as List
@@ -11,28 +9,28 @@ import Sky.Core.String as String
 import Sky.Core.Result as Result
 import Std.Log exposing (println)
 
+-- Type alias — data record
+type alias Point =
+    { x : Float, y : Float }
+
+-- Type alias — parameterised
+type alias Pair a b =
+    { first : a, second : b }
 
 -- ADTs: enum + parameterised
-type Colour = Red | Green | Blue
-
+type Colour
+    = Red
+    | Green
+    | Blue
 
 type Shape
     = Circle Float
     | Rectangle Float Float
     | Triangle Float Float Float
 
-
 type Tree a
     = Leaf
     | Node a (Tree a) (Tree a)
-
-
--- Type alias — data record
-type alias Point = { x : Float, y : Float }
-
-
--- Type alias — parameterised
-type alias Pair a b = { first : a, second : b }
 
 
 -- Nested / multi-arg function types in annotations
@@ -43,7 +41,8 @@ applyTwice f n =
 
 -- Record literal + field access
 origin : Point
-origin = { x = 0.0, y = 0.0 }
+origin =
+    { x = 0.0, y = 0.0 }
 
 
 distance : Point -> Point -> Float
@@ -73,14 +72,19 @@ swap pair =
 describe : List Int -> String
 describe xs =
     case xs of
+
         [] ->
             "empty"
-        [ 1 ] ->
+
+        [1] ->
             "singleton one"
-        [ x, y ] ->
+
+        [x, y] ->
             "two elements"
+
         1 :: 2 :: _ ->
             "starts 1,2"
+
         h :: _ ->
             "head " ++ String.fromInt h
 
@@ -88,10 +92,13 @@ describe xs =
 classify : Int -> String
 classify n =
     case n of
+
         -1 ->
             "negative one"
+
         0 ->
             "zero"
+
         _ ->
             "other"
 
@@ -100,8 +107,10 @@ classify n =
 firstOrSelf : Result String Int -> Result String Int
 firstOrSelf r =
     case r of
+
         Ok x as whole ->
             whole
+
         Err _ ->
             Ok 0
 
@@ -110,24 +119,27 @@ firstOrSelf r =
 flatten : Maybe (Maybe Int) -> Int
 flatten m =
     case m of
+
         Just (Just n) ->
             n
+
         _ ->
             -1
 
 
 -- Lambda: multiple params
-pairMaker = \a b -> ( a, b )
+pairMaker =
+    \a b -> ( a, b )
 
 
 -- Pipe operators
 doubled =
-    [ 1, 2, 3 ]
-        |> List.map (\n -> n * 2)
+    [ 1, 2, 3 ] |> List.map (\n -> n * 2)
 
 
 -- Composition: see plain use (no sections needed)
-incThenShow = \n -> String.fromInt (n + 1)
+incThenShow =
+    \n -> String.fromInt (n + 1)
 
 
 -- Let with multiple bindings, mutual recursion
@@ -137,7 +149,11 @@ factorial n =
         isBase x = x <= 1
         step y = y * factorial (y - 1)
     in
-        if isBase n then 1 else step n
+        if isBase n then
+            1
+
+        else
+            step n
 
 
 -- if / else if / else chain
@@ -145,8 +161,10 @@ sign : Int -> Int
 sign n =
     if n > 0 then
         1
+
     else if n < 0 then
         -1
+
     else
         0
 

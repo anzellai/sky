@@ -11,22 +11,23 @@ import Github.Com.Google.Uuid as Uuid
 import Lib.Db as Db
 import Sky.Core.Error as Error exposing (Error(..), ErrorKind(..))
 
+
 getOrCreateCart userId =
     let
         cartId = userId ++ "-cart"
     in
         case Db.getDoc "carts" cartId of
-            
+
             Ok (Just cart) ->
                 if Db.getField "state" cart == "ongoing" then
                     Ok cart
-                
+
                 else
                     createCart userId
-            
+
             Ok Nothing ->
                 createCart userId
-            
+
             Err e ->
                 Err e
 
@@ -55,10 +56,10 @@ createCart userId =
                 ]
     in
         case Db.setDoc "carts" cartId cartData of
-            
+
             Ok _ ->
                 Ok cartData
-            
+
             Err e ->
                 Err e
 
@@ -77,13 +78,14 @@ getCart cartId =
 getCartItems cartId =
     let
         items =
-            Db.queryWhereOrLog "Cart.getCartItems"
+            Db.queryWhereOrLog
+                "Cart.getCartItems"
                 "cart_items"
                 "cart_id"
                 "=="
                 cartId
     in
-        List.map (enrichCartItem) items
+        List.map enrichCartItem items
 
 
 enrichCartItem item =
@@ -91,34 +93,31 @@ enrichCartItem item =
         productId = Db.getField "product_id" item
     in
         case Db.getDoc "products" productId of
-            
+
             Ok (Just product) ->
-                Dict.insert "title" (Db.getField "title" product)
-                    (
-                    Dict.insert "summary" (Db.getField "summary" product)
-                        (
-                        Dict.insert "price_amount"
-                            (Db.getField "price_amount" product)
-                            (
-                            Dict.insert "price_currency"
-                                (Db.getField "price_currency" product)
-                                (
-                                Dict.insert "price_discount"
-                                    (Db.getField "price_discount" product)
-                                    (
-                                    Dict.insert "price_tax"
-                                        (Db.getField "price_tax" product)
-                                        (
-                                        Dict.insert "stock"
-                                            (Db.getField "stock" product)
-                                            item
-                                        )
-                                    )
-                                )
-                            )
-                        )
-                    )
-            
+                Dict.insert
+                    "title"
+                    (Db.getField "title" product)
+                    (Dict.insert
+                         "summary"
+                         (Db.getField "summary" product)
+                         (Dict.insert
+                              "price_amount"
+                              (Db.getField "price_amount" product)
+                              (Dict.insert
+                                   "price_currency"
+                                   (Db.getField "price_currency" product)
+                                   (Dict.insert
+                                        "price_discount"
+                                        (Db.getField "price_discount" product)
+                                        (Dict.insert
+                                             "price_tax"
+                                             (Db.getField "price_tax" product)
+                                             (Dict.insert
+                                                  "stock"
+                                                  (Db.getField "stock" product)
+                                                  item))))))
+
             _ ->
                 item
 
@@ -144,17 +143,14 @@ getCartWithItems cartId =
 addItem cartId productId quantity =
     let
         existingItems =
-            Db.queryWhereOrLog "Cart.addItem"
-                "cart_items"
-                "cart_id"
-                "=="
-                cartId
+            Db.queryWhereOrLog "Cart.addItem" "cart_items" "cart_id" "==" cartId
         matchingItems =
-            List.filter (\item -> Db.getField "product_id" item == productId)
+            List.filter
+                (\item -> Db.getField "product_id" item == productId)
                 existingItems
     in
         case List.head matchingItems of
-            
+
             Just existing ->
                 let
                     existingQty = Db.getInt "quantity" existing
@@ -166,7 +162,7 @@ addItem cartId productId quantity =
                     _ = recalculateTotal cartId
                 in
                     Ok ()
-            
+
             Nothing ->
                 let
                     itemId = Result.withDefault "" (Uuid.newString ())
@@ -186,10 +182,10 @@ addItem cartId productId quantity =
 updateItemQty itemId quantity =
     if quantity <= 0 then
         removeItem itemId
-    
+
     else
         case Db.getDoc "cart_items" itemId of
-            
+
             Ok (Just item) ->
                 let
                     updatedItem =
@@ -198,14 +194,14 @@ updateItemQty itemId quantity =
                     _ = recalculateTotal (Db.getField "cart_id" item)
                 in
                     Ok ()
-            
+
             _ ->
                 Ok ()
 
 
 removeItem itemId =
     case Db.getDoc "cart_items" itemId of
-        
+
         Ok (Just item) ->
             let
                 cartId = Db.getField "cart_id" item
@@ -216,10 +212,10 @@ removeItem itemId =
                         _ = recalculateTotal cartId
                     in
                         Ok ()
-                
+
                 else
                     Ok ()
-        
+
         _ ->
             Ok ()
 
@@ -229,62 +225,64 @@ recalculateTotal cartId =
         items = getCartItems cartId
         total =
             List.foldl
-                (
-                \item acc ->
-                    let
-                        price = Db.getInt "price_amount" item
-                        discount = Db.getInt "price_discount" item
-                        qty = Db.getInt "quantity" item
-                        effectivePrice = price - discount
-                        itemTotal =
-                            if effectivePrice > 0 then
-                                effectivePrice * qty
-                            
-                            else
-                                0
-                    in
-                        acc + itemTotal
-                )
+                (\item acc ->
+                     let
+                         price = Db.getInt "price_amount" item
+                         discount = Db.getInt "price_discount" item
+                         qty = Db.getInt "quantity" item
+                         effectivePrice = price - discount
+                         itemTotal =
+                             if effectivePrice > 0 then
+                                 effectivePrice * qty
+
+                             else
+                                 0
+                     in
+                         acc + itemTotal)
                 0
                 items
         currency =
             case List.head items of
-                
+
                 Just item ->
                     Db.getField "price_currency" item
-                
+
                 Nothing ->
                     "GBP"
     in
         case Db.getDoc "carts" cartId of
-            
+
             Ok (Just cart) ->
                 let
                     updatedCart =
-                        Dict.insert "total_amount" (Db.intVal total)
+                        Dict.insert
+                            "total_amount"
+                            (Db.intVal total)
                             (Dict.insert "total_currency" currency cart)
                     _ = Db.setDoc "carts" cartId updatedCart
                 in
                     total
-            
+
             _ ->
                 total
 
 
 findDocAndCollection docId =
     case Db.getDoc "orders" docId of
-        
+
         Ok (Just doc) ->
             Ok ( "orders", doc )
-        
+
         _ ->
             case Db.getDoc "carts" docId of
-                
+
                 Ok (Just doc) ->
                     Ok ( "carts", doc )
-                
+
                 Ok Nothing ->
-                    Err (Error.notFound |> Error.withMessage "Document not found.")
+                    Err
+                        (Error.notFound
+                             |> Error.withMessage "Document not found.")
 
                 Err e ->
                     Err e
@@ -299,9 +297,8 @@ setCartState docId newState =
                 result = Db.setDoc collection docId updatedDoc
                 _ =
                     println
-                        (
-                        "[ORDER] State changed: " ++ docId ++ " -> " ++ newState
-                        )
+                        ("[ORDER] State changed: " ++ docId ++ " -> "
+                             ++ newState)
             in
                 case result of
 
@@ -317,56 +314,58 @@ setCartState docId newState =
 
 setCheckout docId link reference remarks =
     case findDocAndCollection docId of
-        
+
         Ok ( collection, doc ) ->
             let
                 updatedDoc =
-                    Dict.insert "checkout_link" link
-                        (
-                        Dict.insert "checkout_reference" reference
-                            (Dict.insert "checkout_remarks" remarks doc)
-                        )
+                    Dict.insert
+                        "checkout_link"
+                        link
+                        (Dict.insert
+                             "checkout_reference"
+                             reference
+                             (Dict.insert "checkout_remarks" remarks doc))
             in
                 Db.setDoc collection docId updatedDoc
-        
+
         Err e ->
             Err e
 
 
 setShipping docId name email phone line1 line2 city country postcode =
     case findDocAndCollection docId of
-        
+
         Ok ( collection, doc ) ->
             let
                 updatedDoc =
-                    Dict.insert "shipping_name" name
-                        (
-                        Dict.insert "shipping_email" email
-                            (
-                            Dict.insert "shipping_phone" phone
-                                (
-                                Dict.insert "shipping_line1" line1
-                                    (
-                                    Dict.insert "shipping_line2" line2
-                                        (
-                                        Dict.insert "shipping_city" city
-                                            (
-                                            Dict.insert "shipping_country"
-                                                country
-                                                (
-                                                Dict.insert "shipping_postcode"
-                                                    postcode
-                                                    doc
-                                                )
-                                            )
-                                        )
-                                    )
-                                )
-                            )
-                        )
+                    Dict.insert
+                        "shipping_name"
+                        name
+                        (Dict.insert
+                             "shipping_email"
+                             email
+                             (Dict.insert
+                                  "shipping_phone"
+                                  phone
+                                  (Dict.insert
+                                       "shipping_line1"
+                                       line1
+                                       (Dict.insert
+                                            "shipping_line2"
+                                            line2
+                                            (Dict.insert
+                                                 "shipping_city"
+                                                 city
+                                                 (Dict.insert
+                                                      "shipping_country"
+                                                      country
+                                                      (Dict.insert
+                                                           "shipping_postcode"
+                                                           postcode
+                                                           doc)))))))
             in
                 Db.setDoc collection docId updatedDoc
-        
+
         Err e ->
             Err e
 
@@ -376,50 +375,53 @@ checkoutToOrder cartId =
         orderId = Result.withDefault "" (Uuid.newString ())
     in
         case Db.getDoc "carts" cartId of
-            
+
             Ok (Just cart) ->
                 let
                     orderData =
-                        Dict.insert "id" orderId
+                        Dict.insert
+                            "id"
+                            orderId
                             (Dict.insert "cart_id" cartId cart)
                     _ = Db.setDoc "orders" orderId orderData
                     cartItems =
-                        Db.queryWhereOrLog "Cart.checkoutToOrder"
+                        Db.queryWhereOrLog
+                            "Cart.checkoutToOrder"
                             "cart_items"
                             "cart_id"
                             "=="
                             cartId
                     _ =
                         List.map
-                            (
-                            \item ->
-                                let
-                                    itemId =
-                                        Result.withDefault ""
-                                            (Uuid.newString ())
-                                    enriched = enrichCartItem item
-                                    orderItem =
-                                        Dict.insert "id" itemId
-                                            (
-                                            Dict.insert "order_id" orderId
-                                                (
-                                                Dict.insert "cart_id" cartId
-                                                    enriched
-                                                )
-                                            )
-                                in
-                                    Db.setDoc "order_items" itemId orderItem
-                            )
+                            (\item ->
+                                 let
+                                     itemId =
+                                         Result.withDefault
+                                             ""
+                                             (Uuid.newString ())
+                                     enriched = enrichCartItem item
+                                     orderItem =
+                                         Dict.insert
+                                             "id"
+                                             itemId
+                                             (Dict.insert
+                                                  "order_id"
+                                                  orderId
+                                                  (Dict.insert
+                                                       "cart_id"
+                                                       cartId
+                                                       enriched))
+                                 in
+                                     Db.setDoc "order_items" itemId orderItem)
                             cartItems
                     _ =
                         println
-                            (
-                            "[CHECKOUT] Created order "
-                                ++ orderId ++ " from cart " ++ cartId
-                            )
+                            ("[CHECKOUT] Created order " ++ orderId
+                                 ++ " from cart "
+                                 ++ cartId)
                 in
                     Ok orderId
-            
+
             _ ->
                 Err (Error.notFound |> Error.withMessage "Cart not found.")
 
@@ -431,7 +433,8 @@ getOrder orderId =
 
 
 getOrderItems orderId =
-    Db.queryWhereOrLog "Cart.getOrderItems"
+    Db.queryWhereOrLog
+        "Cart.getOrderItems"
         "order_items"
         "order_id"
         "=="
@@ -464,24 +467,25 @@ getUserCarts userId =
 getOrdersByState state =
     if state == "all" then
         getAllOrders
-    
+
     else
         let
             orders =
-                Db.queryWhereOrLog "Cart.getOrdersByState"
+                Db.queryWhereOrLog
+                    "Cart.getOrdersByState"
                     "orders"
                     "state"
                     "=="
                     state
         in
-            List.map (enrichOrderWithUser) orders
+            List.map enrichOrderWithUser orders
 
 
 getAllOrders =
     let
         allOrders = Db.queryDocsOrLog "Cart.getAllOrders" "orders"
     in
-        List.map (enrichOrderWithUser) allOrders
+        List.map enrichOrderWithUser allOrders
 
 
 enrichOrderWithUser order =
@@ -489,10 +493,12 @@ enrichOrderWithUser order =
         ownerId = Db.getField "owner_id" order
     in
         case Db.getDoc "users" ownerId of
-            
+
             Ok (Just user) ->
-                Dict.insert "user_name" (Db.getField "name" user)
+                Dict.insert
+                    "user_name"
+                    (Db.getField "name" user)
                     (Dict.insert "user_email" (Db.getField "email" user) order)
-            
+
             _ ->
                 order

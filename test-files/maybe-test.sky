@@ -4,18 +4,24 @@ import Sky.Core.Prelude exposing (..)
 import Sky.Core.String as String
 import Std.Log exposing (println)
 
+
 safeDiv a b =
     if b == 0 then
         Nothing
+
     else
         Just (a // b)
 
+
 showMaybe result =
     case result of
+
         Just val ->
             "Got: " ++ String.fromInt val
+
         Nothing ->
             "Nothing"
+
 
 main =
     let

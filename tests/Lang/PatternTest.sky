@@ -1,4 +1,5 @@
 module Lang.PatternTest exposing (tests)
+
 import Sky.Core.Prelude exposing (..)
 import Sky.Test as Test exposing (Test)
 
@@ -11,6 +12,7 @@ type Colour
 colourName : Colour -> String
 colourName c =
     case c of
+
         Red ->
             "red"
 
@@ -24,6 +26,7 @@ colourName c =
 classify : Result String Maybe Int -> String
 classify r =
     case r of
+
         Err _ ->
             "err"
 
@@ -33,41 +36,69 @@ classify r =
         Ok (Just n) ->
             if n > 0 then
                 "positive"
+
             else if n == 0 then
                 "zero"
+
             else
                 "negative"
 
 
 tests : List Test
 tests =
-    [ Test.suite "nested constructor patterns" [ Test.test "Err branch" (\_ -> Test.equal "err" (classify (Err "x")))
-    , Test.test "Ok Nothing branch" (\_ -> Test.equal "nothing" (classify (Ok Nothing)))
-    , Test.test "Ok (Just 1) -> positive" (\_ -> Test.equal "positive" (classify (Ok (Just 1))))
-    , Test.test "Ok (Just 0) -> zero" (\_ -> Test.equal "zero" (classify (Ok (Just 0))))
-    , Test.test "Ok (Just -1) -> negative" (\_ -> Test.equal "negative" (classify (Ok (Just (-1)))))
-    ]
-    , Test.suite "enum ADT pattern" [ Test.test "Red" (\_ -> Test.equal "red" (colourName Red))
-    , Test.test "Green" (\_ -> Test.equal "green" (colourName Green))
-    , Test.test "Blue" (\_ -> Test.equal "blue" (colourName Blue))
-    ]
-    , Test.suite "Bool enum pattern inside Ok" [ Test.test "Ok True" (\_ -> Test.equal "yes" (case Ok True of
-        Ok True ->
-            "yes"
+    [ Test.suite
+          "nested constructor patterns"
+          [ Test.test "Err branch" (\_ -> Test.equal "err" (classify (Err "x")))
+          , Test.test
+                "Ok Nothing branch"
+                (\_ -> Test.equal "nothing" (classify (Ok Nothing)))
+          , Test.test
+                "Ok (Just 1) -> positive"
+                (\_ -> Test.equal "positive" (classify (Ok (Just 1))))
+          , Test.test
+                "Ok (Just 0) -> zero"
+                (\_ -> Test.equal "zero" (classify (Ok (Just 0))))
+          , Test.test
+                "Ok (Just -1) -> negative"
+                (\_ -> Test.equal "negative" (classify (Ok (Just (-1)))))
+          ]
+    , Test.suite
+          "enum ADT pattern"
+          [ Test.test "Red" (\_ -> Test.equal "red" (colourName Red))
+          , Test.test "Green" (\_ -> Test.equal "green" (colourName Green))
+          , Test.test "Blue" (\_ -> Test.equal "blue" (colourName Blue))
+          ]
+    , Test.suite
+          "Bool enum pattern inside Ok"
+          [ Test.test
+                "Ok True"
+                (\_ ->
+                     Test.equal
+                         "yes"
+                         (case Ok True of
 
-        Ok False ->
-            "no"
+                              Ok True ->
+                                  "yes"
 
-        Err _ ->
-            "err"))
-    , Test.test "Ok False" (\_ -> Test.equal "no" (case Ok False of
-        Ok True ->
-            "yes"
+                              Ok False ->
+                                  "no"
 
-        Ok False ->
-            "no"
+                              Err _ ->
+                                  "err"))
+          , Test.test
+                "Ok False"
+                (\_ ->
+                     Test.equal
+                         "no"
+                         (case Ok False of
 
-        Err _ ->
-            "err"))
-    ]
+                              Ok True ->
+                                  "yes"
+
+                              Ok False ->
+                                  "no"
+
+                              Err _ ->
+                                  "err"))
+          ]
     ]

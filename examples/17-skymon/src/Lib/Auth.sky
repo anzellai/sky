@@ -31,9 +31,8 @@ getAdmins =
 
 getGitHubAuthUrl : String
 getGitHubAuthUrl =
-    "https://github.com/login/oauth/authorize?client_id="
-        ++ getGitHubClientId
-            ++ "&scope=read:user,read:org"
+    "https://github.com/login/oauth/authorize?client_id=" ++ getGitHubClientId
+        ++ "&scope=read:user,read:org"
 
 
 -- Typed boundary: transport failures surface as NetworkError so callers
@@ -42,7 +41,8 @@ exchangeCodeForToken : String -> Result Error String
 exchangeCodeForToken code =
     let
         body =
-            String.join "&"
+            String.join
+                "&"
                 [ "client_id=" ++ getGitHubClientId
                 , "client_secret=" ++ getGitHubClientSecret
                 , "code=" ++ code
@@ -52,15 +52,19 @@ exchangeCodeForToken code =
                 (Http.post "https://github.com/login/oauth/access_token" body)
     in
         case result of
+
             Ok resp ->
                 Ok (extractParam "access_token" resp.body)
+
             Err e ->
                 Err e
 
 
 getGitHubUser : String -> Result Error (Dict String String)
 getGitHubUser token =
-    case Task.run (Http.get ("https://api.github.com/user?access_token=" ++ token)) of
+    case Task.run
+             (Http.get ("https://api.github.com/user?access_token=" ++ token)) of
+
         Ok resp ->
             let
                 login = extractJsonSimple "login" resp.body
@@ -68,10 +72,8 @@ getGitHubUser token =
             in
                 Ok
                     (Dict.fromList
-                        [ ( "username", login )
-                        , ( "avatar_url", avatar )
-                        ]
-                    )
+                         [ ( "username", login ), ( "avatar_url", avatar ) ])
+
         Err e ->
             Err e
 
@@ -79,9 +81,14 @@ getGitHubUser token =
 createSession : String -> String -> String -> String
 createSession username avatarUrl role =
     let
-        sessionId = String.slice 0 32 (Crypto.sha256 (username ++ ":" ++ String.fromInt 0))
+        sessionId =
+            String.slice
+                0
+                32
+                (Crypto.sha256 (username ++ ":" ++ String.fromInt 0))
         _ =
-            Database.execOrLog "Auth.createSession"
+            Database.execOrLog
+                "Auth.createSession"
                 "INSERT OR REPLACE INTO sessions (id, username, avatar_url, role) VALUES (?, ?, ?, ?)"
                 [ sessionId, username, avatarUrl, role ]
     in
@@ -93,24 +100,38 @@ createSession username avatarUrl role =
 -- separates "infra broken" from "session not valid".
 getSession : String -> Result Error (Dict String String)
 getSession sessionId =
-    case Database.query "SELECT * FROM sessions WHERE id = ? LIMIT 1" [ sessionId ] of
+    case Database.query
+             "SELECT * FROM sessions WHERE id = ? LIMIT 1"
+             [sessionId] of
+
         Err e ->
             let
-                _ = println ("[AUTH ERROR] getSession: " ++ Error.toString e)
+                _ =
+                    println ("[AUTH ERROR] getSession: " ++ Error.toString e)
             in
                 Err e
+
         Ok rows ->
             case rows of
+
                 row :: _ ->
                     Ok row
+
                 [] ->
-                    Err (Error.permissionDenied |> Error.withMessage "Session not found or expired.")
+                    Err
+                        (Error.permissionDenied
+                             |> Error.withMessage
+                                    "Session not found or expired.")
 
 
 deleteSession : String -> ()
 deleteSession sessionId =
     let
-        _ = Database.execOrLog "Auth.deleteSession" "DELETE FROM sessions WHERE id = ?" [ sessionId ]
+        _ =
+            Database.execOrLog
+                "Auth.deleteSession"
+                "DELETE FROM sessions WHERE id = ?"
+                [sessionId]
     in
         ()
 
@@ -118,9 +139,8 @@ deleteSession sessionId =
 resolveRole : String -> String
 resolveRole username =
     let
-        admins = String.split "," (getAdmins)
-        isAdmin =
-            List.any (\a -> String.trim a == username) admins
+        admins = String.split "," getAdmins
+        isAdmin = List.any (\a -> String.trim a == username) admins
     in
         if isAdmin then
             "admin"

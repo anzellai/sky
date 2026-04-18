@@ -1,4 +1,5 @@
 module Lib.Db exposing (conn, exec, query, getField)
+
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Maybe as Maybe
 import Sky.Core.Dict as Dict
@@ -12,6 +13,7 @@ import Std.Db as Db
 -- "fake connection" would silently break every subsequent query.
 conn =
     case Db.open "sqlite" "skynotes.db" of
+
         Ok c ->
             c
 
@@ -27,6 +29,7 @@ conn =
 -- MUST pattern-match and decide what to do.
 exec queryStr args =
     case Db.exec conn queryStr args of
+
         Ok _ ->
             Ok ()
 
@@ -37,6 +40,7 @@ exec queryStr args =
 -- query : Result Error (List Row). Same contract as exec.
 query queryStr args =
     case Db.query conn queryStr args of
+
         Ok rows ->
             Ok rows
 

@@ -29,6 +29,7 @@
 -- `TestResult`; `Test.test` wraps a thunk so failures are reported
 -- by name without aborting the rest of the suite.
 module Sky.Test exposing (Test, TestResult(..), test, suite, equal, notEqual, ok, err, expectErrorKind, isTrue, isFalse, fail, pass, run, summarise, runMain)
+
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.List as List
 import Sky.Core.String as String
@@ -77,14 +78,18 @@ equal : a -> a -> TestResult
 equal expected actual =
     if expected == actual then
         Passed
+
     else
-        Failed ("expected " ++ debugShow expected ++ " but got " ++ debugShow actual)
+        Failed
+            ("expected " ++ debugShow expected ++ " but got "
+                 ++ debugShow actual)
 
 
 notEqual : a -> a -> TestResult
 notEqual expected actual =
     if expected /= actual then
         Passed
+
     else
         Failed ("expected inequality but got " ++ debugShow actual)
 
@@ -94,6 +99,7 @@ notEqual expected actual =
 ok : Result e a -> TestResult
 ok result =
     case result of
+
         Ok _ ->
             Passed
 
@@ -105,6 +111,7 @@ ok result =
 err : Result e a -> TestResult
 err result =
     case result of
+
         Err _ ->
             Passed
 
@@ -118,14 +125,19 @@ err result =
 expectErrorKind : ErrorKind -> Result Error a -> TestResult
 expectErrorKind expected result =
     case result of
+
         Ok _ ->
-            Failed ("expected Err with kind " ++ kindName expected ++ ", got Ok")
+            Failed
+                ("expected Err with kind " ++ kindName expected ++ ", got Ok")
 
         Err (Error kind _) ->
             if kind == expected then
                 Passed
+
             else
-                Failed ("expected ErrorKind " ++ kindName expected ++ " but got " ++ kindName kind)
+                Failed
+                    ("expected ErrorKind " ++ kindName expected ++ " but got "
+                         ++ kindName kind)
 
 
 -- | Local kind-to-string helper. Mirrors the constructor names so
@@ -134,6 +146,7 @@ expectErrorKind expected result =
 kindName : ErrorKind -> String
 kindName k =
     case k of
+
         Io ->
             "Io"
 
@@ -172,6 +185,7 @@ isTrue : Bool -> TestResult
 isTrue b =
     if b then
         Passed
+
     else
         Failed "expected True, got False"
 
@@ -180,6 +194,7 @@ isFalse : Bool -> TestResult
 isFalse b =
     if not b then
         Passed
+
     else
         Failed "expected False, got True"
 
@@ -187,25 +202,32 @@ isFalse b =
 -- | Execute a list of tests and return the flat list of
 -- (qualified-name, result) pairs. The top-level runner uses this to
 -- produce a summary and exit code.
-run : List Test -> List (String, TestResult)
+run : List Test -> List ( String, TestResult )
 run tests =
     runWithPrefix "" tests
 
 
-runWithPrefix : String -> List Test -> List (String, TestResult)
+runWithPrefix : String -> List Test -> List ( String, TestResult )
 runWithPrefix prefix tests =
-    List.concat (List.map (\t -> case t of
-        Leaf name thunk ->
-            [( prefix ++ name, safeRun thunk )]
+    List.concat
+        (List.map
+             (\t ->
+                  case t of
 
-        Suite name inner ->
-            let
-                nextPrefix = if prefix == "" then
-                    name ++ " > "
-                else
-                    prefix ++ name ++ " > "
-            in
-                runWithPrefix nextPrefix inner) tests)
+                      Leaf name thunk ->
+                          [( prefix ++ name, safeRun thunk )]
+
+                      Suite name inner ->
+                          let
+                              nextPrefix =
+                                  if prefix == "" then
+                                      name ++ " > "
+
+                                  else
+                                      prefix ++ name ++ " > "
+                          in
+                              runWithPrefix nextPrefix inner)
+             tests)
 
 
 -- | Execute a test thunk. If it panics, the panic is surfaced as a
@@ -217,26 +239,48 @@ safeRun thunk =
 
 -- | Print a human-readable summary. Returns True iff every test
 -- passed; the CLI uses the boolean to pick the exit code.
-summarise : List (String, TestResult) -> Bool
+summarise : List ( String, TestResult ) -> Bool
 summarise results =
     let
         total = List.length results
-        failures = List.filterMap (\(name, r) -> case r of
-            Failed msg ->
-                Just ( name, msg )
+        failures =
+            List.filterMap
+                (\( name, r ) ->
+                     case r of
 
-            Passed ->
-                Nothing) results
+                         Failed msg ->
+                             Just ( name, msg )
+
+                         Passed ->
+                             Nothing)
+                results
         failCount = List.length failures
         passCount = total - failCount
-        _ = List.map (\(name, _) -> println ("  ok    " ++ name)) (List.filter (\(_, r) -> case r of
-            Passed ->
-                True
+        _ =
+            List.map
+                (\( name, _ ) -> println ("  ok    " ++ name))
+                (List.filter
+                     (\( _, r ) ->
+                          case r of
 
-            Failed _ ->
-                False) results)
-        _ = List.map (\(name, msg) -> println ("  FAIL  " ++ name ++ "\n          " ++ msg)) failures
-        _ = println (String.fromInt passCount ++ " passed, " ++ String.fromInt failCount ++ " failed (" ++ String.fromInt total ++ " total)")
+                              Passed ->
+                                  True
+
+                              Failed _ ->
+                                  False)
+                     results)
+        _ =
+            List.map
+                (\( name, msg ) ->
+                     println ("  FAIL  " ++ name ++ "\n          " ++ msg))
+                failures
+        _ =
+            println
+                (String.fromInt passCount ++ " passed, "
+                     ++ String.fromInt failCount
+                     ++ " failed ("
+                     ++ String.fromInt total
+                     ++ " total)")
     in
         failCount == 0
 
@@ -263,5 +307,6 @@ runMain tests =
     in
         if allPassed then
             Os.exit 0
+
         else
             Os.exit 1

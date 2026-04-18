@@ -10,26 +10,40 @@ import Std.Cmd as Cmd
 import Std.Sub as Sub
 import Std.Time as Time
 
-type Msg = Tick Int | Reset
+type alias Model =
+    { count : Int }
 
-type alias Model = { count : Int }
+type Msg
+    = Tick Int
+    | Reset
 
-init _r = ({ count = 0 }, Cmd.none)
+
+init _r =
+    ( { count = 0 }, Cmd.none )
+
 
 update msg model =
     case msg of
-        Tick _ -> ({ model | count = model.count + 1 }, Cmd.none)
-        Reset -> ({ model | count = 0 }, Cmd.none)
+
+        Tick _ ->
+            ( { model | count = model.count + 1 }, Cmd.none )
+
+        Reset ->
+            ( { model | count = 0 }, Cmd.none )
+
 
 subscriptions _m =
     Sub.every 500 Tick
 
+
 view model =
-    div []
-        [ h1 [] [ text "Auto-ticker" ]
-        , div [] [ text (String.fromInt model.count) ]
-        , button [ onClick Reset ] [ text "Reset" ]
+    div
+        []
+        [ h1 [] [text "Auto-ticker"]
+        , div [] [text (String.fromInt model.count)]
+        , button [onClick Reset] [text "Reset"]
         ]
+
 
 main =
     app
@@ -37,6 +51,6 @@ main =
         , update = update
         , view = view
         , subscriptions = subscriptions
-        , routes = [ route "/" 0 ]
+        , routes = [route "/" 0]
         , notFound = 0
         }

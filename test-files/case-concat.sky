@@ -3,12 +3,16 @@ module Main exposing (main)
 import Sky.Core.Prelude exposing (..)
 import Std.Log exposing (println)
 
+
 printResult label result =
     case result of
+
         Ok val ->
             println (label ++ ": " ++ val)
+
         Err e ->
             println (label ++ " error: " ++ e)
+
 
 main =
     let

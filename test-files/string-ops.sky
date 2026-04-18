@@ -4,6 +4,7 @@ import Sky.Core.Prelude exposing (..)
 import Sky.Core.String as String
 import Std.Log exposing (println)
 
+
 main =
     let
         n = 42

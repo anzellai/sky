@@ -1,4 +1,5 @@
 module Main exposing (main)
+
 -- 07-todo-cli: A TODO app with SQLite persistence using Sky.Db.
 --
 -- Usage:
@@ -21,7 +22,9 @@ import Std.Log exposing (println)
 
 
 initDb conn =
-    Db.execRaw conn """CREATE TABLE IF NOT EXISTS todos (
+    Db.execRaw
+        conn
+        """CREATE TABLE IF NOT EXISTS todos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             title TEXT NOT NULL,
             done INTEGER DEFAULT 0
@@ -30,7 +33,8 @@ initDb conn =
 
 addTodo conn todoTitle =
     let
-        _ = Db.insertRow conn "todos" (Dict.fromList [( "title", todoTitle )])
+        _ =
+            Db.insertRow conn "todos" (Dict.fromList [( "title", todoTitle )])
         _ = Slog.info "Action" [ "Added:", todoTitle ]
     in
         println ("Added: " ++ todoTitle)
@@ -38,10 +42,17 @@ addTodo conn todoTitle =
 
 listTodos conn =
     let
-        rows = Result.withDefault [] (Db.query conn "SELECT id, title, done FROM todos ORDER BY id" [])
+        rows =
+            Result.withDefault
+                []
+                (Db.query
+                     conn
+                     "SELECT id, title, done FROM todos ORDER BY id"
+                     [])
     in
         if List.isEmpty rows then
             println "No todos yet. Add one with: ./app add \"My task\""
+
         else
             let
                 _ = println "Your TODOs:"
@@ -55,10 +66,12 @@ formatTodo row =
         todoId = Db.getField "id" row
         todoName = Db.getField "title" row
         todoDone = Db.getField "done" row
-        status = if todoDone == "1" then
-            "[x]"
-        else
-            "[ ]"
+        status =
+            if todoDone == "1" then
+                "[x]"
+
+            else
+                "[ ]"
     in
         "  " ++ todoId ++ ". " ++ status ++ " " ++ todoName
 
@@ -112,9 +125,11 @@ getArg argList =
 
 runCommand conn cmd cmdArg =
     case cmd of
+
         "add" ->
             if cmdArg == "" then
                 println "Usage: ./app add <title>"
+
             else
                 addTodo conn cmdArg
 
@@ -124,18 +139,21 @@ runCommand conn cmd cmdArg =
         "done" ->
             if cmdArg == "" then
                 println "Usage: ./app done <id>"
+
             else
                 markDone conn cmdArg
 
         "undone" ->
             if cmdArg == "" then
                 println "Usage: ./app undone <id>"
+
             else
                 markUndone conn cmdArg
 
         "remove" ->
             if cmdArg == "" then
                 println "Usage: ./app remove <id>"
+
             else
                 removeTodo conn cmdArg
 
@@ -155,6 +173,7 @@ db =
 
 main =
     case db of
+
         Err e ->
             println ("Database error: " ++ e)
 

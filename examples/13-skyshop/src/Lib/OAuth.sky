@@ -30,6 +30,7 @@ import Sky.Core.Result as Result
 import Os
 import Lib.Auth as Auth
 
+
 firebaseAuthScript _ =
     let
         apiKey = Result.withDefault "" (Os.getenv "FIREBASE_API_KEY")
@@ -69,4 +70,5 @@ function skySignOut(){if(_fbReady){firebase.auth().signOut();}}
 </script>"""
 
 
-handleAuthCallback token = Auth.verifyToken token
+handleAuthCallback token =
+    Auth.verifyToken token

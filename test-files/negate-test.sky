@@ -4,11 +4,14 @@ import Sky.Core.Prelude exposing (..)
 import Sky.Core.String as String
 import Std.Log exposing (println)
 
+
 abs n =
     if n < 0 then
         -n
+
     else
         n
+
 
 main =
     let

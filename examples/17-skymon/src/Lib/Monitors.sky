@@ -19,7 +19,8 @@ createMonitor name url interval visibility =
     let
         monId = String.slice 0 12 (Crypto.sha256 (name ++ ":" ++ url))
         _ =
-            Database.execOrLog "Monitors.createMonitor"
+            Database.execOrLog
+                "Monitors.createMonitor"
                 "INSERT OR REPLACE INTO monitors (id, name, url, interval_secs, visibility) VALUES (?, ?, ?, ?, ?)"
                 [ monId, name, url, String.fromInt interval, visibility ]
     in
@@ -29,15 +30,24 @@ createMonitor name url interval visibility =
 deleteMonitor : String -> ()
 deleteMonitor monId =
     let
-        _ = Database.execOrLog "Monitors.deleteMonitor/history" "DELETE FROM monitor_history WHERE monitor_id = ?" [ monId ]
-        _ = Database.execOrLog "Monitors.deleteMonitor/row" "DELETE FROM monitors WHERE id = ?" [ monId ]
+        _ =
+            Database.execOrLog
+                "Monitors.deleteMonitor/history"
+                "DELETE FROM monitor_history WHERE monitor_id = ?"
+                [monId]
+        _ =
+            Database.execOrLog
+                "Monitors.deleteMonitor/row"
+                "DELETE FROM monitors WHERE id = ?"
+                [monId]
     in
         ()
 
 
 getMonitors : List (Dict String String)
 getMonitors =
-    Database.queryOrLog "Monitors.getMonitors"
+    Database.queryOrLog
+        "Monitors.getMonitors"
         "SELECT * FROM monitors ORDER BY name"
         []
 
@@ -52,12 +62,17 @@ getMonitors =
 checkEndpoint : String -> ( String, Int )
 checkEndpoint url =
     case Task.run (Http.get url) of
+
         Ok resp ->
             checkResponseStatus resp
+
         Err e ->
             let
                 typedErr = e
-                _ = println ("[MONITOR ERROR] checkEndpoint " ++ url ++ ": " ++ Error.toString typedErr)
+                _ =
+                    println
+                        ("[MONITOR ERROR] checkEndpoint " ++ url ++ ": "
+                             ++ Error.toString typedErr)
             in
                 ( "down", 0 )
 
@@ -80,11 +95,13 @@ recordCheck : String -> String -> Int -> ()
 recordCheck monId status responseTime =
     let
         _ =
-            Database.execOrLog "Monitors.recordCheck/update"
+            Database.execOrLog
+                "Monitors.recordCheck/update"
                 "UPDATE monitors SET status = ?, response_time = ?, last_checked = datetime('now') WHERE id = ?"
                 [ status, String.fromInt responseTime, monId ]
         _ =
-            Database.execOrLog "Monitors.recordCheck/history"
+            Database.execOrLog
+                "Monitors.recordCheck/history"
                 "INSERT INTO monitor_history (monitor_id, status, response_time) VALUES (?, ?, ?)"
                 [ monId, status, String.fromInt responseTime ]
     in
@@ -93,6 +110,7 @@ recordCheck monId status responseTime =
 
 getMonitorHistory : String -> Int -> List (Dict String String)
 getMonitorHistory monId limit =
-    Database.queryOrLog "Monitors.getMonitorHistory"
+    Database.queryOrLog
+        "Monitors.getMonitorHistory"
         "SELECT status, response_time, checked_at FROM monitor_history WHERE monitor_id = ? ORDER BY checked_at DESC LIMIT ?"
         [ monId, String.fromInt limit ]

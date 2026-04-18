@@ -9,27 +9,40 @@ import Std.Live.Events exposing (onClick)
 import Std.Cmd as Cmd
 import Std.Sub as Sub
 
+type alias Model =
+    { count : Int }
+
 type Msg
     = Increment
     | Decrement
 
-type alias Model = { count : Int }
 
-init _req = ( { count = 0 }, Cmd.none )
+init _req =
+    ( { count = 0 }, Cmd.none )
+
 
 update msg model =
     case msg of
-        Increment -> ( { model | count = model.count + 1 }, Cmd.none )
-        Decrement -> ( { model | count = model.count - 1 }, Cmd.none )
 
-subscriptions _model = Sub.none
+        Increment ->
+            ( { model | count = model.count + 1 }, Cmd.none )
+
+        Decrement ->
+            ( { model | count = model.count - 1 }, Cmd.none )
+
+
+subscriptions _model =
+    Sub.none
+
 
 view model =
-    div [ class "app" ]
-        [ h1 [] [ text "Counter" ]
-        , button [ onClick Decrement ] [ text "-" ]
-        , button [ onClick Increment ] [ text "+" ]
+    div
+        [class "app"]
+        [ h1 [] [text "Counter"]
+        , button [onClick Decrement] [text "-"]
+        , button [onClick Increment] [text "+"]
         ]
+
 
 main =
     app
@@ -37,6 +50,6 @@ main =
         , update = update
         , view = view
         , subscriptions = subscriptions
-        , routes = [ route "/" 0 ]
+        , routes = [route "/" 0]
         , notFound = 0
         }

@@ -1,4 +1,5 @@
 module Main exposing (main)
+
 import Sky.Core.Prelude exposing (..)
 import Std.Log exposing (println)
 
@@ -11,6 +12,7 @@ type Colour
 describe : Colour -> String
 describe c =
     case c of
+
         Red ->
             "red"
 

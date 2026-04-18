@@ -1,6 +1,7 @@
 -- Evaluate position from white's perspective
 -- Positive = white advantage, negative = black advantage
 module Chess.Eval exposing (evaluate)
+
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Dict as Dict
 import Sky.Core.List as List
@@ -11,12 +12,17 @@ import Chess.Board as Board
 
 evaluate : Dict Int Piece -> Int
 evaluate board =
-    List.foldl (\sq acc -> case Dict.get sq board of
-        Just piece ->
-            acc + evaluatePieceAt sq piece
+    List.foldl
+        (\sq acc ->
+             case Dict.get sq board of
 
-        Nothing ->
-            acc) 0 Board.allSquares
+                 Just piece ->
+                     acc + evaluatePieceAt sq piece
+
+                 Nothing ->
+                     acc)
+        0
+        Board.allSquares
 
 
 evaluatePieceAt : Int -> Piece -> Int
@@ -28,6 +34,7 @@ evaluatePieceAt sq piece =
     in
         if piece.colour == White then
             total
+
         else
             0 - total
 
@@ -35,10 +42,12 @@ evaluatePieceAt sq piece =
 pieceSquareValue : Kind -> Colour -> Int -> Int
 pieceSquareValue kind colour sq =
     let
-        idx = if colour == White then
-            sq
-        else
-            mirrorIndex sq
+        idx =
+            if colour == White then
+                sq
+
+            else
+                mirrorIndex sq
         table = getTable kind
     in
         tableValue table idx
@@ -61,23 +70,29 @@ tableValue table idx =
 getTable : Kind -> List Int
 getTable kind =
     if kind == Pawn then
--- Pawn: encourage central and advanced pawns
+    -- Pawn: encourage central and advanced pawns
         pawnTable
+
     else if kind == Knight then
--- Knight: encourage centre
+    -- Knight: encourage centre
         knightTable
+
     else if kind == Bishop then
--- Bishop: encourage long diagonals
+    -- Bishop: encourage long diagonals
         bishopTable
+
     else if kind == Rook then
--- Rook: encourage 7th rank and open files
+    -- Rook: encourage 7th rank and open files
         rookTable
+
     else if kind == Queen then
--- Queen: slight central preference
+    -- Queen: slight central preference
         queenTable
+
     else if kind == King then
--- King: encourage castled position (middlegame)
+    -- King: encourage castled position (middlegame)
         kingTable
+
     else
         []
 

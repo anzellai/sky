@@ -15,23 +15,36 @@ sparkline width height values =
 
     else
         let
-            maxVal = List.foldl (\v acc -> if v > acc then v else acc) 1 values
+            maxVal =
+                List.foldl
+                    (\v acc ->
+                         if v > acc then
+                             v
+
+                         else
+                             acc)
+                    1
+                    values
             points = buildSparklinePoints width height maxVal values 0
         in
-            node "svg"
+            node
+                "svg"
                 [ attribute "width" (String.fromInt width)
                 , attribute "height" (String.fromInt height)
-                , attribute "viewBox" ("0 0 " ++ String.fromInt width ++ " " ++ String.fromInt height)
+                , attribute
+                      "viewBox"
+                      ("0 0 " ++ String.fromInt width ++ " "
+                           ++ String.fromInt height)
                 , class "sparkline"
                 ]
-                [ node "polyline"
-                      [ attribute "points" points
-                      , attribute "fill" "none"
-                      , attribute "stroke" "#38bdf8"
-                      , attribute "stroke-width" "1.5"
-                      ]
-                      []
-                ]
+                [node
+                    "polyline"
+                    [ attribute "points" points
+                    , attribute "fill" "none"
+                    , attribute "stroke" "#38bdf8"
+                    , attribute "stroke-width" "1.5"
+                    ]
+                    []]
 
 
 buildSparklinePoints : Int -> Int -> Int -> List Int -> Int -> String
@@ -44,10 +57,11 @@ buildSparklinePoints width height maxVal values idx =
         v :: rest ->
             let
                 total = idx + List.length rest + 1
-                x = idx * width // (total - 1 + 1)
-                y = height - (v * height // (maxVal + 1))
+                x = idx * width // total - 1 + 1
+                y = height - v * height // maxVal + 1
                 point = String.fromInt x ++ "," ++ String.fromInt y
-                remaining = buildSparklinePoints width height maxVal rest (idx + 1)
+                remaining =
+                    buildSparklinePoints width height maxVal rest (idx + 1)
             in
                 if String.isEmpty remaining then
                     point
@@ -59,8 +73,11 @@ buildSparklinePoints width height maxVal values idx =
 -- Render a status bar showing recent check history as colored blocks.
 statusBar : Int -> List String -> VNode
 statusBar blockWidth statuses =
-    node "svg"
-        [ attribute "width" (String.fromInt (List.length statuses * (blockWidth + 2)))
+    node
+        "svg"
+        [ attribute
+              "width"
+              (String.fromInt (List.length statuses * blockWidth + 2))
         , attribute "height" "20"
         , class "status-bar-svg"
         ]
@@ -78,8 +95,9 @@ buildStatusBlocks statuses blockWidth idx =
             let
                 color = statusColor status
                 block =
-                    node "rect"
-                        [ attribute "x" (String.fromInt (idx * (blockWidth + 2)))
+                    node
+                        "rect"
+                        [ attribute "x" (String.fromInt (idx * blockWidth + 2))
                         , attribute "y" "0"
                         , attribute "width" (String.fromInt blockWidth)
                         , attribute "height" "20"

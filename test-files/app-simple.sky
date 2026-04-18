@@ -5,9 +5,8 @@ import Sky.Core.String as String
 import Std.Log exposing (println)
 
 type alias Config =
-    { greeting : String
-    , maxItems : Int
-    }
+    { greeting : String, maxItems : Int }
+
 
 main =
     let

@@ -1,4 +1,5 @@
 module Main exposing (main)
+
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Result as Result
 import Std.Log exposing (println)
@@ -44,6 +45,7 @@ startServer router =
 
 main =
     case Mux.newRouter () of
+
         Ok router ->
             let
                 _ = startServer (setupRoutes router)

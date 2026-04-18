@@ -5,11 +5,18 @@ import Sky.Core.String as String
 import Sky.Core.List as List
 import Std.Log exposing (println)
 
-apply f x = f x
 
-double n = n * 2
+apply f x =
+    f x
 
-square n = n * n
+
+double n =
+    n * 2
+
+
+square n =
+    n * n
+
 
 main =
     let
@@ -21,6 +28,7 @@ main =
         _ = println ("Squared: " ++ showList squared)
     in
         println ("apply double 21 = " ++ String.fromInt applied)
+
 
 showList items =
     "[" ++ String.join ", " (List.map String.fromInt items) ++ "]"

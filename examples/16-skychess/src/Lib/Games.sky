@@ -1,4 +1,5 @@
 module Lib.Games exposing (..)
+
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Result as Result
 import Sky.Core.Maybe as Maybe
@@ -18,6 +19,7 @@ import Sky.Core.Error as Error exposing (Error(..), ErrorKind(..))
 -- than to ship empty data to users.
 dbConn =
     case Db.connect () of
+
         Ok conn ->
             conn
 
@@ -38,6 +40,7 @@ getConn _ =
 -- notification, retry).
 exec queryStr args =
     case Db.exec dbConn queryStr args of
+
         Ok _ ->
             Ok ()
 
@@ -48,6 +51,7 @@ exec queryStr args =
 -- query : Result Error (List Row). Same contract as exec.
 query queryStr args =
     case Db.query dbConn queryStr args of
+
         Ok rows ->
             Ok rows
 
@@ -57,7 +61,10 @@ query queryStr args =
 
 initSchema conn =
     let
-        _ = Db.execRaw conn """CREATE TABLE IF NOT EXISTS games (
+        _ =
+            Db.execRaw
+                conn
+                """CREATE TABLE IF NOT EXISTS games (
                     id TEXT PRIMARY KEY,
                     player_name TEXT NOT NULL,
                     status TEXT NOT NULL DEFAULT 'playing',
@@ -66,7 +73,10 @@ initSchema conn =
                     created_at TEXT DEFAULT (datetime('now')),
                     updated_at TEXT DEFAULT (datetime('now'))
                 )"""
-        _ = Db.execRaw conn """CREATE TABLE IF NOT EXISTS moves (
+        _ =
+            Db.execRaw
+                conn
+                """CREATE TABLE IF NOT EXISTS moves (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     game_id TEXT NOT NULL,
                     move_number INTEGER NOT NULL,
@@ -86,9 +96,13 @@ createGame playerName =
     let
         existing = Result.withDefault [] (getGames playerName)
         count = String.fromInt (List.length existing)
-        gameId = String.slice 0 12 (Crypto.sha256 (playerName ++ ":game:" ++ count))
+        gameId =
+            String.slice 0 12 (Crypto.sha256 (playerName ++ ":game:" ++ count))
     in
-        case exec "INSERT INTO games (id, player_name, status, result, move_count) VALUES (?, ?, 'playing', '', 0)" [ gameId, playerName ] of
+        case exec
+                 "INSERT INTO games (id, player_name, status, result, move_count) VALUES (?, ?, 'playing', '', 0)"
+                 [ gameId, playerName ] of
+
             Ok _ ->
                 Ok gameId
 
@@ -99,33 +113,44 @@ createGame playerName =
 -- saveMove : Result Error () — writes move + updates count.
 saveMove : String -> Int -> Int -> Int -> String -> String -> Result Error ()
 saveMove gameId moveNum from to algebraic colour =
-    case exec "INSERT INTO moves (game_id, move_number, from_square, to_square, algebraic, colour) VALUES (?, ?, ?, ?, ?, ?)" [ gameId
-    , String.fromInt moveNum
-    , String.fromInt from
-    , String.fromInt to
-    , algebraic
-    , colour
-    ] of
+    case exec
+             "INSERT INTO moves (game_id, move_number, from_square, to_square, algebraic, colour) VALUES (?, ?, ?, ?, ?, ?)"
+             [ gameId
+             , String.fromInt moveNum
+             , String.fromInt from
+             , String.fromInt to
+             , algebraic
+             , colour
+             ] of
+
         Err e ->
             Err e
 
         Ok _ ->
-            exec "UPDATE games SET move_count = ?, updated_at = datetime('now') WHERE id = ?" [ String.fromInt moveNum, gameId ]
+            exec
+                "UPDATE games SET move_count = ?, updated_at = datetime('now') WHERE id = ?"
+                [ String.fromInt moveNum, gameId ]
 
 
 updateGameStatus : String -> String -> String -> Result Error ()
 updateGameStatus gameId status result =
-    exec "UPDATE games SET status = ?, result = ?, updated_at = datetime('now') WHERE id = ?" [ status, result, gameId ]
+    exec
+        "UPDATE games SET status = ?, result = ?, updated_at = datetime('now') WHERE id = ?"
+        [ status, result, gameId ]
 
 
 getGames : String -> Result Error List Dict String String
 getGames playerName =
-    query "SELECT * FROM games WHERE player_name = ? ORDER BY created_at DESC LIMIT 20" [playerName]
+    query
+        "SELECT * FROM games WHERE player_name = ? ORDER BY created_at DESC LIMIT 20"
+        [playerName]
 
 
 getGameMoves : String -> Result Error List Dict String String
 getGameMoves gameId =
-    query "SELECT * FROM moves WHERE game_id = ? ORDER BY move_number ASC" [gameId]
+    query
+        "SELECT * FROM moves WHERE game_id = ? ORDER BY move_number ASC"
+        [gameId]
 
 
 -- getGame : Result Error (Maybe Row). Outer Result = infra failure;
@@ -133,6 +158,7 @@ getGameMoves gameId =
 getGame : String -> Result Error Maybe Dict String String
 getGame gameId =
     case query "SELECT * FROM games WHERE id = ? LIMIT 1" [gameId] of
+
         Err e ->
             Err e
 
@@ -143,6 +169,7 @@ getGame gameId =
 deleteGame : String -> Result Error ()
 deleteGame gameId =
     case exec "DELETE FROM moves WHERE game_id = ?" [gameId] of
+
         Err e ->
             Err e
 

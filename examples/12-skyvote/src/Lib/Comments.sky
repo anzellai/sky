@@ -1,4 +1,5 @@
 module Lib.Comments exposing (createComment, getComments)
+
 import Sky.Core.Prelude exposing (..)
 import Std.Log exposing (println)
 import Sky.Core.Crypto as Crypto
@@ -18,19 +19,33 @@ createComment ideaId authorId content =
     -- returned a UNIQUE/PK constraint error even though the user's
     -- action was legitimate.
         nowMs = Result.withDefault 0 Time.unixMillis
-        id = String.slice 0 12 (Crypto.sha256 (ideaId ++ ":" ++ authorId ++ ":" ++ content ++ ":" ++ String.fromInt nowMs))
+        id =
+            String.slice
+                0
+                12
+                (Crypto.sha256
+                     (ideaId ++ ":" ++ authorId ++ ":" ++ content ++ ":"
+                          ++ String.fromInt nowMs))
     in
-        case Db.exec "INSERT INTO comments (id, idea_id, author_id, content) VALUES (?, ?, ?, ?)" [ id, ideaId, authorId, content ] of
+        case Db.exec
+                 "INSERT INTO comments (id, idea_id, author_id, content) VALUES (?, ?, ?, ?)"
+                 [ id, ideaId, authorId, content ] of
+
             Err e ->
                 Err e
 
             Ok _ ->
                 let
-                    _ = println ("[COMMENT] Added on " ++ ideaId ++ " by " ++ authorId)
+                    _ =
+                        println
+                            ("[COMMENT] Added on " ++ ideaId ++ " by "
+                                 ++ authorId)
                 in
                     Ok ()
 
 
 getComments : String -> Result Error List Dict String String
 getComments ideaId =
-    Db.query "SELECT c.id, c.content, c.created_at, u.username as author_name FROM comments c LEFT JOIN users u ON c.author_id = u.id WHERE c.idea_id = ? ORDER BY c.created_at ASC" [ideaId]
+    Db.query
+        "SELECT c.id, c.content, c.created_at, u.username as author_name FROM comments c LEFT JOIN users u ON c.author_id = u.id WHERE c.idea_id = ? ORDER BY c.created_at ASC"
+        [ideaId]

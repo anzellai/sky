@@ -1,4 +1,5 @@
 module Main exposing (main)
+
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Task as Task
 import Std.Log exposing (println)
@@ -6,16 +7,27 @@ import Std.Log exposing (println)
 
 main =
     let
-        pipeline = Task.succeed "Sky" |> Task.andThen (\name -> Task.succeed ("Hello, " ++ name ++ "!")) |> Task.andThen (\greeting -> Task.succeed (greeting ++ " Task is the effect boundary."))
+        pipeline =
+            Task.succeed "Sky"
+                |> Task.andThen
+                       (\name -> Task.succeed ("Hello, " ++ name ++ "!"))
+                |> Task.andThen
+                       (\greeting ->
+                            Task.succeed
+                                (greeting ++ " Task is the effect boundary."))
         successResult = Task.run pipeline
         _ = printResult "Success" successResult
-        failResult = Task.run (Task.fail "intentional" |> Task.andThen (\_ -> Task.succeed "unreachable"))
+        failResult =
+            Task.run
+                (Task.fail "intentional"
+                     |> Task.andThen (\_ -> Task.succeed "unreachable"))
     in
         printResult "Fail" failResult
 
 
 printResult label result =
     case result of
+
         Ok val ->
             println (label ++ ": " ++ val)
 

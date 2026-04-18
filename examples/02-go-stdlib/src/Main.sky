@@ -1,4 +1,5 @@
 module Main exposing (main)
+
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Result as Result
 import Sky.Core.String as String
@@ -12,23 +13,33 @@ import Sky.Core.Task as Task
 
 main =
     let
-        nowStr = Time.now |> Result.andThen (\t -> Time.timeString t) |> Result.withDefault "unknown"
+        nowStr =
+            Time.now |> Result.andThen (\t -> Time.timeString t)
+                |> Result.withDefault "unknown"
         _ = println ("Current time: " ++ nowStr)
         data = "Hello, Sky!"
-        hashResult = Sha256.sum256 (String.toBytes data) |> Result.andThen (\hash -> Hex.encodeToString hash)
-        _ = case hashResult of
-            Ok hashStr ->
-                println ("SHA256 of 'Hello, Sky!': " ++ hashStr)
+        hashResult =
+            Sha256.sum256 (String.toBytes data)
+                |> Result.andThen (\hash -> Hex.encodeToString hash)
+        _ =
+            case hashResult of
 
-            Err e ->
-                println ("Hash error: " ++ e)
+                Ok hashStr ->
+                    println ("SHA256 of 'Hello, Sky!': " ++ hashStr)
+
+                Err e ->
+                    println ("Hash error: " ++ e)
         _ = println "Sending HTTP request..."
         httpResult = Task.run (Http.get "https://httpbin.org/get")
-        _ = case httpResult of
-            Ok resp ->
-                println ("HTTP response received, body length: " ++ String.fromInt (String.length resp.body))
+        _ =
+            case httpResult of
 
-            Err e ->
-                println ("HTTP error: " ++ e)
+                Ok resp ->
+                    println
+                        ("HTTP response received, body length: "
+                             ++ String.fromInt (String.length resp.body))
+
+                Err e ->
+                    println ("HTTP error: " ++ e)
     in
         ()

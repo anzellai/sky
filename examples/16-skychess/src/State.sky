@@ -1,4 +1,5 @@
 module State exposing (..)
+
 import Sky.Core.Maybe exposing (..)
 import Chess.Piece exposing (..)
 

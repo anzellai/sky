@@ -4,9 +4,14 @@ import Sky.Core.Prelude exposing (..)
 import Sky.Core.String as String
 import Std.Log exposing (println)
 
-getName person = person.name
 
-getAge person = person.age
+getName person =
+    person.name
+
+
+getAge person =
+    person.age
+
 
 main =
     let

@@ -1,4 +1,5 @@
 module Auth.AuthTest exposing (tests)
+
 -- Phase 4 — Sky.Auth behaviour tests.
 --
 -- The real runtime (rt.Auth_hashPassword, rt.Auth_verifyPassword,
@@ -38,7 +39,11 @@ type alias Credentials =
 
 unauthenticated : AuthState
 unauthenticated =
-    { currentUser = Nothing, sessionToken = "", lastError = "", loginAttempts = 0 }
+    { currentUser = Nothing
+    , sessionToken = ""
+    , lastError = ""
+    , loginAttempts = 0
+    }
 
 
 -- Simulated password-verify. In production rt.Auth_verifyPassword
@@ -48,12 +53,16 @@ simulatedAuthenticate : Credentials -> Result Error User
 simulatedAuthenticate creds =
     if creds.email == "" then
         Err (Error.invalidInput "Email required")
+
     else if String.length creds.password < 8 then
         Err (Error.invalidInput "Password too short")
+
     else if creds.email == "admin@example.com" && creds.password == "adminpass" then
         Ok { id = "u1", email = "admin@example.com", role = "admin" }
+
     else if creds.email == "alice@example.com" && creds.password == "alicepass" then
         Ok { id = "u2", email = "alice@example.com", role = "member" }
+
     else
         Err (Error.permissionDenied |> Error.withMessage "Invalid credentials")
 
@@ -69,10 +78,13 @@ simulatedResolveToken : String -> Result Error User
 simulatedResolveToken token =
     if token == "tok_u1" then
         Ok { id = "u1", email = "admin@example.com", role = "admin" }
+
     else if token == "tok_u2" then
         Ok { id = "u2", email = "alice@example.com", role = "member" }
+
     else if String.isEmpty token then
         Err (Error.permissionDenied |> Error.withMessage "No session")
+
     else
         Err (Error.permissionDenied |> Error.withMessage "Invalid session")
 
@@ -85,16 +97,18 @@ simulatedResolveToken token =
 signIn : Credentials -> AuthState -> AuthState
 signIn creds s =
     case simulatedAuthenticate creds of
+
         Ok user ->
-            { s
-                | currentUser = Just user
-                , sessionToken = simulatedMintToken user
-                , lastError = ""
-                , loginAttempts = 0
+            { s | currentUser = Just user
+            , sessionToken = simulatedMintToken user
+            , lastError = ""
+            , loginAttempts = 0
             }
 
         Err e ->
-            { s | lastError = errorMessageOf e, loginAttempts = s.loginAttempts + 1 }
+            { s | lastError = errorMessageOf e
+            , loginAttempts = s.loginAttempts + 1
+            }
 
 
 signOut : AuthState -> AuthState
@@ -105,16 +119,24 @@ signOut s =
 resume : String -> AuthState -> AuthState
 resume token s =
     case simulatedResolveToken token of
+
         Ok user ->
-            { s | currentUser = Just user, sessionToken = token, lastError = "" }
+            { s | currentUser = Just user
+            , sessionToken = token
+            , lastError = ""
+            }
 
         Err e ->
-            { s | currentUser = Nothing, sessionToken = "", lastError = errorMessageOf e }
+            { s | currentUser = Nothing
+            , sessionToken = ""
+            , lastError = errorMessageOf e
+            }
 
 
 errorMessageOf : Error -> String
 errorMessageOf e =
     case e of
+
         Error _kind info ->
             info.message
 
@@ -127,6 +149,7 @@ errorMessageOf e =
 isNothing : Maybe a -> Bool
 isNothing m =
     case m of
+
         Nothing ->
             True
 
@@ -141,15 +164,21 @@ isNothing m =
 isAuthError : Error -> Bool
 isAuthError e =
     case e of
+
         Error _ info ->
-            String.contains "permission" info.message || String.contains "session" info.message
+            String.contains "permission" info.message
+                || String.contains "session" info.message
 
 
 isValidationError : Error -> Bool
 isValidationError e =
     case e of
+
         Error _ info ->
-            String.contains "required" info.message || String.contains "invalid" info.message || String.contains "too short" info.message || String.contains "bad" info.message
+            String.contains "required" info.message
+                || String.contains "invalid" info.message
+                || String.contains "too short" info.message
+                || String.contains "bad" info.message
 
 
 -- ══════════════════════════════════════════════════════════
@@ -157,138 +186,323 @@ isValidationError e =
 -- ══════════════════════════════════════════════════════════
 tests : List Test
 tests =
-    [ Test.suite "sign-in: success" [ Test.test "valid admin sets currentUser" (\_ -> let
-        s = signIn { email = "admin@example.com", password = "adminpass" } unauthenticated
-        hasUser = case s.currentUser of
-            Just _ ->
-                True
+    [ Test.suite
+          "sign-in: success"
+          [ Test.test
+                "valid admin sets currentUser"
+                (\_ ->
+                     let
+                         s =
+                             signIn
+                                 { email = "admin@example.com"
+                                 , password = "adminpass"
+                                 }
+                                 unauthenticated
+                         hasUser =
+                             case s.currentUser of
 
-            Nothing ->
-                False
-    in
-        Test.isTrue hasUser)
-    , Test.test "valid alice mints a token" (\_ -> let
-        s = signIn { email = "alice@example.com", password = "alicepass" } unauthenticated
-    in
-        Test.equal "tok_u2" s.sessionToken)
-    , Test.test "success clears previous error" (\_ -> let
-        dirty = { unauthenticated | lastError = "prior" }
-        s = signIn { email = "admin@example.com", password = "adminpass" } dirty
-    in
-        Test.equal "" s.lastError)
-    , Test.test "success resets loginAttempts" (\_ -> let
-        attempted = { unauthenticated | loginAttempts = 3 }
-        s = signIn { email = "admin@example.com", password = "adminpass" } attempted
-    in
-        Test.equal 0 s.loginAttempts)
-    ]
-    , Test.suite "sign-in: failure" [ Test.test "wrong password sets permission error" (\_ -> let
-        s = signIn { email = "admin@example.com", password = "wrongpasss" } unauthenticated
-    in
-        Test.equal "Invalid credentials" s.lastError)
-    , Test.test "wrong password does not set user" (\_ -> let
-        s = signIn { email = "admin@example.com", password = "wrongpasss" } unauthenticated
-    in
-        Test.isTrue (isNothing s.currentUser))
-    , Test.test "wrong password increments attempts" (\_ -> let
-        s = signIn { email = "admin@example.com", password = "wrongpasss" } unauthenticated
-    in
-        Test.equal 1 s.loginAttempts)
-    , Test.test "empty email is validation error" (\_ -> let
-        s = signIn { email = "", password = "longenough" } unauthenticated
-    in
-        Test.equal "Email required" s.lastError)
-    , Test.test "short password is validation error" (\_ -> let
-        s = signIn { email = "x@y.z", password = "short" } unauthenticated
-    in
-        Test.equal "Password too short" s.lastError)
-    , Test.test "repeated bad logins accumulate attempts" (\_ -> let
-        bad = { email = "admin@example.com", password = "wrongpasss" }
-        s = signIn bad (signIn bad (signIn bad unauthenticated))
-    in
-        Test.equal 3 s.loginAttempts)
-    ]
-    , Test.suite "sign-out" [ Test.test "clears currentUser" (\_ -> let
-        signedIn = signIn { email = "admin@example.com", password = "adminpass" } unauthenticated
-        out = signOut signedIn
-    in
-        Test.isTrue (isNothing out.currentUser))
-    , Test.test "clears session token" (\_ -> let
-        signedIn = signIn { email = "admin@example.com", password = "adminpass" } unauthenticated
-        out = signOut signedIn
-    in
-        Test.equal "" out.sessionToken)
-    , Test.test "from unauthenticated is no-op shape" (\_ -> let
-        out = signOut unauthenticated
-    in
-        Test.isTrue (isNothing out.currentUser))
-    ]
-    , Test.suite "session resume" [ Test.test "valid token restores user" (\_ -> let
-        s = resume "tok_u1" unauthenticated
-        ok = case s.currentUser of
-            Just u ->
-                u.email == "admin@example.com"
+                                 Just _ ->
+                                     True
 
-            Nothing ->
-                False
-    in
-        Test.isTrue ok)
-    , Test.test "valid token captures sessionToken" (\_ -> let
-        s = resume "tok_u1" unauthenticated
-    in
-        Test.equal "tok_u1" s.sessionToken)
-    , Test.test "unknown token yields Nothing user" (\_ -> let
-        s = resume "tok_bogus" unauthenticated
-    in
-        Test.isTrue (isNothing s.currentUser))
-    , Test.test "unknown token sets auth error" (\_ -> let
-        s = resume "tok_bogus" unauthenticated
-    in
-        Test.equal "Invalid session" s.lastError)
-    , Test.test "empty token yields 'No session'" (\_ -> let
-        s = resume "" unauthenticated
-    in
-        Test.equal "No session" s.lastError)
-    ]
-    , Test.suite "error classification" [ Test.test "permission denied classifies as auth error" (\_ -> Test.isTrue (isAuthError Error.permissionDenied))
-    , Test.test "io error does not classify as auth" (\_ -> Test.isFalse (isAuthError (Error.io "disk full")))
-    , Test.test "invalid input classifies as validation" (\_ -> Test.isTrue (isValidationError (Error.invalidInput "bad")))
-    , Test.test "permission denied is not validation" (\_ -> Test.isFalse (isValidationError Error.permissionDenied))
-    ]
-    , Test.suite "state machine invariants" [ Test.test "authenticated state always has currentUser set" (\_ -> let
-        s = signIn { email = "admin@example.com", password = "adminpass" } unauthenticated
-        hasUser = case s.currentUser of
-            Just _ ->
-                True
+                                 Nothing ->
+                                     False
+                     in
+                         Test.isTrue hasUser)
+          , Test.test
+                "valid alice mints a token"
+                (\_ ->
+                     let
+                         s =
+                             signIn
+                                 { email = "alice@example.com"
+                                 , password = "alicepass"
+                                 }
+                                 unauthenticated
+                     in
+                         Test.equal "tok_u2" s.sessionToken)
+          , Test.test
+                "success clears previous error"
+                (\_ ->
+                     let
+                         dirty = { unauthenticated | lastError = "prior" }
+                         s =
+                             signIn
+                                 { email = "admin@example.com"
+                                 , password = "adminpass"
+                                 }
+                                 dirty
+                     in
+                         Test.equal "" s.lastError)
+          , Test.test
+                "success resets loginAttempts"
+                (\_ ->
+                     let
+                         attempted = { unauthenticated | loginAttempts = 3 }
+                         s =
+                             signIn
+                                 { email = "admin@example.com"
+                                 , password = "adminpass"
+                                 }
+                                 attempted
+                     in
+                         Test.equal 0 s.loginAttempts)
+          ]
+    , Test.suite
+          "sign-in: failure"
+          [ Test.test
+                "wrong password sets permission error"
+                (\_ ->
+                     let
+                         s =
+                             signIn
+                                 { email = "admin@example.com"
+                                 , password = "wrongpasss"
+                                 }
+                                 unauthenticated
+                     in
+                         Test.equal "Invalid credentials" s.lastError)
+          , Test.test
+                "wrong password does not set user"
+                (\_ ->
+                     let
+                         s =
+                             signIn
+                                 { email = "admin@example.com"
+                                 , password = "wrongpasss"
+                                 }
+                                 unauthenticated
+                     in
+                         Test.isTrue (isNothing s.currentUser))
+          , Test.test
+                "wrong password increments attempts"
+                (\_ ->
+                     let
+                         s =
+                             signIn
+                                 { email = "admin@example.com"
+                                 , password = "wrongpasss"
+                                 }
+                                 unauthenticated
+                     in
+                         Test.equal 1 s.loginAttempts)
+          , Test.test
+                "empty email is validation error"
+                (\_ ->
+                     let
+                         s =
+                             signIn
+                                 { email = "", password = "longenough" }
+                                 unauthenticated
+                     in
+                         Test.equal "Email required" s.lastError)
+          , Test.test
+                "short password is validation error"
+                (\_ ->
+                     let
+                         s =
+                             signIn
+                                 { email = "x@y.z", password = "short" }
+                                 unauthenticated
+                     in
+                         Test.equal "Password too short" s.lastError)
+          , Test.test
+                "repeated bad logins accumulate attempts"
+                (\_ ->
+                     let
+                         bad =
+                             { email = "admin@example.com"
+                             , password = "wrongpasss"
+                             }
+                         s =
+                             signIn
+                                 bad
+                                 (signIn bad (signIn bad unauthenticated))
+                     in
+                         Test.equal 3 s.loginAttempts)
+          ]
+    , Test.suite
+          "sign-out"
+          [ Test.test
+                "clears currentUser"
+                (\_ ->
+                     let
+                         signedIn =
+                             signIn
+                                 { email = "admin@example.com"
+                                 , password = "adminpass"
+                                 }
+                                 unauthenticated
+                         out = signOut signedIn
+                     in
+                         Test.isTrue (isNothing out.currentUser))
+          , Test.test
+                "clears session token"
+                (\_ ->
+                     let
+                         signedIn =
+                             signIn
+                                 { email = "admin@example.com"
+                                 , password = "adminpass"
+                                 }
+                                 unauthenticated
+                         out = signOut signedIn
+                     in
+                         Test.equal "" out.sessionToken)
+          , Test.test
+                "from unauthenticated is no-op shape"
+                (\_ ->
+                     let
+                         out = signOut unauthenticated
+                     in
+                         Test.isTrue (isNothing out.currentUser))
+          ]
+    , Test.suite
+          "session resume"
+          [ Test.test
+                "valid token restores user"
+                (\_ ->
+                     let
+                         s = resume "tok_u1" unauthenticated
+                         ok =
+                             case s.currentUser of
 
-            Nothing ->
-                False
-    in
-        Test.isTrue hasUser)
-    , Test.test "unauthenticated state has empty sessionToken" (\_ -> Test.equal "" unauthenticated.sessionToken)
-    , Test.test "sign-out after sign-in matches fresh unauth shape (user)" (\_ -> let
-        s = signOut (signIn { email = "admin@example.com", password = "adminpass" } unauthenticated)
-    in
-        Test.isTrue (isNothing s.currentUser))
-    , Test.test "sign-out after sign-in matches fresh unauth shape (token)" (\_ -> let
-        s = signOut (signIn { email = "admin@example.com", password = "adminpass" } unauthenticated)
-    in
-        Test.equal "" s.sessionToken)
-    , Test.test "failed sign-in does not overwrite a good session" (\_ -> let
-        signedIn = signIn { email = "admin@example.com", password = "adminpass" } unauthenticated
-        attempted = signIn { email = "x", password = "short" } signedIn
-        hasOriginal = case attempted.currentUser of
-            Just u ->
-                u.email == "admin@example.com"
+                                 Just u ->
+                                     u.email == "admin@example.com"
 
-            Nothing ->
-                False
-    in
-        Test.isTrue hasOriginal)
-    , Test.test "resume with empty token clears prior user" (\_ -> let
-        signedIn = signIn { email = "admin@example.com", password = "adminpass" } unauthenticated
-        cleared = resume "" signedIn
-    in
-        Test.isTrue (isNothing cleared.currentUser))
-    ]
+                                 Nothing ->
+                                     False
+                     in
+                         Test.isTrue ok)
+          , Test.test
+                "valid token captures sessionToken"
+                (\_ ->
+                     let
+                         s = resume "tok_u1" unauthenticated
+                     in
+                         Test.equal "tok_u1" s.sessionToken)
+          , Test.test
+                "unknown token yields Nothing user"
+                (\_ ->
+                     let
+                         s = resume "tok_bogus" unauthenticated
+                     in
+                         Test.isTrue (isNothing s.currentUser))
+          , Test.test
+                "unknown token sets auth error"
+                (\_ ->
+                     let
+                         s = resume "tok_bogus" unauthenticated
+                     in
+                         Test.equal "Invalid session" s.lastError)
+          , Test.test
+                "empty token yields 'No session'"
+                (\_ ->
+                     let
+                         s = resume "" unauthenticated
+                     in
+                         Test.equal "No session" s.lastError)
+          ]
+    , Test.suite
+          "error classification"
+          [ Test.test
+                "permission denied classifies as auth error"
+                (\_ -> Test.isTrue (isAuthError Error.permissionDenied))
+          , Test.test
+                "io error does not classify as auth"
+                (\_ -> Test.isFalse (isAuthError (Error.io "disk full")))
+          , Test.test
+                "invalid input classifies as validation"
+                (\_ ->
+                     Test.isTrue (isValidationError (Error.invalidInput "bad")))
+          , Test.test
+                "permission denied is not validation"
+                (\_ -> Test.isFalse (isValidationError Error.permissionDenied))
+          ]
+    , Test.suite
+          "state machine invariants"
+          [ Test.test
+                "authenticated state always has currentUser set"
+                (\_ ->
+                     let
+                         s =
+                             signIn
+                                 { email = "admin@example.com"
+                                 , password = "adminpass"
+                                 }
+                                 unauthenticated
+                         hasUser =
+                             case s.currentUser of
+
+                                 Just _ ->
+                                     True
+
+                                 Nothing ->
+                                     False
+                     in
+                         Test.isTrue hasUser)
+          , Test.test
+                "unauthenticated state has empty sessionToken"
+                (\_ -> Test.equal "" unauthenticated.sessionToken)
+          , Test.test
+                "sign-out after sign-in matches fresh unauth shape (user)"
+                (\_ ->
+                     let
+                         s =
+                             signOut
+                                 (signIn
+                                      { email = "admin@example.com"
+                                      , password = "adminpass"
+                                      }
+                                      unauthenticated)
+                     in
+                         Test.isTrue (isNothing s.currentUser))
+          , Test.test
+                "sign-out after sign-in matches fresh unauth shape (token)"
+                (\_ ->
+                     let
+                         s =
+                             signOut
+                                 (signIn
+                                      { email = "admin@example.com"
+                                      , password = "adminpass"
+                                      }
+                                      unauthenticated)
+                     in
+                         Test.equal "" s.sessionToken)
+          , Test.test
+                "failed sign-in does not overwrite a good session"
+                (\_ ->
+                     let
+                         signedIn =
+                             signIn
+                                 { email = "admin@example.com"
+                                 , password = "adminpass"
+                                 }
+                                 unauthenticated
+                         attempted =
+                             signIn { email = "x", password = "short" } signedIn
+                         hasOriginal =
+                             case attempted.currentUser of
+
+                                 Just u ->
+                                     u.email == "admin@example.com"
+
+                                 Nothing ->
+                                     False
+                     in
+                         Test.isTrue hasOriginal)
+          , Test.test
+                "resume with empty token clears prior user"
+                (\_ ->
+                     let
+                         signedIn =
+                             signIn
+                                 { email = "admin@example.com"
+                                 , password = "adminpass"
+                                 }
+                                 unauthenticated
+                         cleared = resume "" signedIn
+                     in
+                         Test.isTrue (isNothing cleared.currentUser))
+          ]
     ]

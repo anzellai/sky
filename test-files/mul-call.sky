@@ -3,7 +3,10 @@ module Main exposing (main)
 import Sky.Core.String as String
 import Std.Log exposing (println)
 
-double n = n + n
+
+double n =
+    n + n
+
 
 main =
     let

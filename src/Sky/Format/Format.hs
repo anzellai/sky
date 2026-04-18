@@ -26,7 +26,7 @@ formatModule m =
         unions = map (fmtUnion . A.toValue) (Src._unions m)
         values = map (fmtValue . A.toValue) (Src._values m)
         sections = filter (not . null) [header] ++
-                   (if null imports then [] else [intercalate "\n" imports]) ++
+                   (if null imports then [] else ["\n" ++ intercalate "\n" imports]) ++
                    map (\a -> "\n" ++ a) aliases ++
                    map (\u -> "\n" ++ u) unions ++
                    map (\v -> "\n\n" ++ v) values
@@ -226,17 +226,23 @@ fmt col (Src.Call f args) =
 
 -- Binary operators (pipelines break at each |>)
 fmt col (Src.Binops segs tail_) =
-    let parts = map (\(e, A.At _ op) -> (fmt col (A.toValue e), op)) segs
-        lastStr = fmt col (A.toValue tail_)
-        oneLine = concatMap (\(s, op) -> s ++ " " ++ op ++ " ") parts ++ lastStr
+    let opCol = col + step
+        parts = map (\(e, A.At _ op) -> (e, op)) segs
+        fmtPart (e, op) = fmt col (A.toValue e) ++ " " ++ op ++ " "
+        oneLine = concatMap fmtPart parts ++ fmt col (A.toValue tail_)
     in if col + length oneLine <= 80
        then oneLine
-       else let (firstStr, firstOp) = head parts
+       else let (firstE, _) = head parts
                 rest = tail parts
                 lastOp = snd (last parts)
-            in firstStr
-               ++ concatMap (\(s, op) -> "\n" ++ ind (col + step) ++ op ++ " " ++ s) rest
-               ++ "\n" ++ ind (col + step) ++ lastOp ++ " " ++ lastStr
+                fmtFirst = fmt col (A.toValue firstE)
+                fmtRest (e, op) =
+                    let rhsCol = opCol + length op + 1
+                    in "\n" ++ ind opCol ++ op ++ " " ++ fmt rhsCol (A.toValue e)
+                fmtLast =
+                    let rhsCol = opCol + length lastOp + 1
+                    in "\n" ++ ind opCol ++ lastOp ++ " " ++ fmt rhsCol (A.toValue tail_)
+            in fmtFirst ++ concatMap fmtRest rest ++ fmtLast
 
 -- Lambda
 fmt col (Src.Lambda pats body) =
@@ -265,9 +271,10 @@ fmt col (Src.Let defs body) =
        ++ ind col ++ "in\n"
        ++ ind (col + step) ++ bodyStr
 
--- Case
+-- Case — subject formatted at col+5 (after "case "), "of" on same line
 fmt col (Src.Case subj branches) =
-    let subjStr = fmt col (A.toValue subj)
+    let subjCol = col + 5
+        subjStr = fmt subjCol (A.toValue subj)
         branchStrs = map (fmtCaseBranch (col + step)) branches
     in "case " ++ subjStr ++ " of"
        ++ concatMap (\b -> "\n\n" ++ ind (col + step) ++ b) branchStrs

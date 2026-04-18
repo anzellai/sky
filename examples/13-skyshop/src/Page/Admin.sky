@@ -18,6 +18,7 @@ import Lib.Translation as Tr
 import Tailwind exposing (..)
 import Tailwind.Responsive as Responsive
 
+
 -- ══════════════════════════════════════════════════════
 -- ADMIN PRODUCT LIST
 -- ══════════════════════════════════════════════════════
@@ -29,72 +30,70 @@ viewAdminProducts model =
             List.length (List.filter (\p -> Db.getBool "published" p) products)
         draftCount = List.length products - publishedCount
     in
-        Layout.adminPage model
-            (
-            div []
-                [ div [ tw [ flex , justifyBetween , itemsCenter , mb6 ] ]
-                      [ div []
-                            [ Html.h1 [ tw [ text2xl , fontBold , textGray900 ] ]
-                                  [ text (Tr.t lang "admin.products") ]
-                            , p [ tw [ textGray500 , mt1 ] ]
-                                  [ text
-                                        (
-                                        String.fromInt (List.length products)
+        Layout.adminPage
+            model
+            (div
+                 []
+                 [ div
+                       [tw [ flex, justifyBetween, itemsCenter, mb6 ]]
+                       [ div
+                             []
+                             [ Html.h1
+                                   [tw [ text2xl, fontBold, textGray900 ]]
+                                   [text (Tr.t lang "admin.products")]
+                             , p
+                                   [tw [ textGray500, mt1 ]]
+                                   [text
+                                       (String.fromInt (List.length products)
                                             ++ " total / "
-                                                ++ String.fromInt publishedCount
-                                                    ++ " published / "
-                                                        ++ String.fromInt
-                                                               draftCount
-                                                            ++ " draft"
-                                        )
-                                  ]
-                            ]
-                      , a
-                            [ href "/admin/products/new"
-                            , attribute "sky-nav" ""
-                            , Layout.btnPrimary
-                            ]
-                            [ text ("+ " ++ Tr.t lang "admin.newProduct") ]
-                      ]
-                , div [ Layout.card , style "overflow-x:auto" ]
-                      (
-                      if List.isEmpty products then
-                          [ div [ tw [ p8 , textCenter ] ]
-                                [ p [ tw [ textGray400 , mb4 ] ]
-                                      [ text "No products yet" ]
+                                            ++ String.fromInt publishedCount
+                                            ++ " published / "
+                                            ++ String.fromInt draftCount
+                                            ++ " draft")]
+                             ]
+                       , a
+                             [ href "/admin/products/new"
+                             , attribute "sky-nav" ""
+                             , Layout.btnPrimary
+                             ]
+                             [text ("+ " ++ Tr.t lang "admin.newProduct")]
+                       ]
+                 , div
+                       [ Layout.card, style "overflow-x:auto" ]
+                       (if List.isEmpty products then
+                            [div
+                                [tw [ p8, textCenter ]]
+                                [ p
+                                      [tw [ textGray400, mb4 ]]
+                                      [text "No products yet"]
                                 , a
                                       [ href "/admin/products/new"
                                       , attribute "sky-nav" ""
-                                      , tw
-                                            [ textSm
-                                            , textBlue600
-                                            , fontSemibold
-                                            ]
+                                      , tw [ textSm, textBlue600, fontSemibold ]
                                       ]
-                                      [ text "Create your first product" ]
-                                ]
-                          ]
-                      
-                      else
-                          [ div
+                                      [text "Create your first product"]
+                                ]]
+
+                        else
+                            [div
                                 [ Layout.tableHeader_
                                 , style
                                       "display:grid;grid-template-columns:2fr 1fr 1fr 1fr .5fr;align-items:center;min-width:600px"
                                 ]
                                 [ text "Product"
-                                , span [ tw [ hidden_ , Responsive.md block ] ]
-                                      [ text "Category" ]
-                                , span [ tw [ hidden_ , Responsive.md block ] ]
-                                      [ text "Price" ]
-                                , span [ tw [ hidden_ , Responsive.md block ] ]
-                                      [ text "Stock" ]
+                                , span
+                                      [tw [ hidden_, Responsive.md block ]]
+                                      [text "Category"]
+                                , span
+                                      [tw [ hidden_, Responsive.md block ]]
+                                      [text "Price"]
+                                , span
+                                      [tw [ hidden_, Responsive.md block ]]
+                                      [text "Stock"]
                                 , text "Status"
-                                ]
-                          ]
-                              ++ List.map (viewAdminProductRow model) products
-                      )
-                ]
-            )
+                                ]]
+                                ++ List.map (viewAdminProductRow model) products)
+                 ])
 
 
 viewAdminProductRow model product =
@@ -108,10 +107,10 @@ viewAdminProductRow model product =
         images = Products.listProductImages productId
         thumb =
             case List.head images of
-                
+
                 Just img ->
                     Db.getField "data" img
-                
+
                 Nothing ->
                     ""
     in
@@ -122,42 +121,40 @@ viewAdminProductRow model product =
             , style
                   "display:grid;grid-template-columns:2fr 1fr 1fr 1fr .5fr;align-items:center;min-width:600px"
             ]
-            [ div [ tw [ flex , itemsCenter , gap3 ] ]
+            [ div
+                  [tw [ flex, itemsCenter, gap3 ]]
                   [ if thumb != "" then
-                      img [ src thumb , alt title , Layout.adminThumb ]
-                  
-                  else
-                      div [ Layout.adminThumbPlaceholder ] [ text "~" ]
-                  , span [ tw [ fontMedium , textGray900 , textSm ] ]
-                        [ text title ]
+                        img [ src thumb, alt title, Layout.adminThumb ]
+
+                    else
+                        div [Layout.adminThumbPlaceholder] [text "~"]
+                  , span [tw [ fontMedium, textGray900, textSm ]] [text title]
                   ]
-            , span [ tw [ hidden_ , Responsive.md block , textSm , textGray500 ] ]
-                  [ text category ]
             , span
-                  [ tw
-                        [ hidden_
-                        , Responsive.md block
-                        , textSm
-                        , fontMedium
-                        , textGray900
-                        ]
-                  ]
-                  [ text pricing.original ]
-            , span [ tw [ hidden_ , Responsive.md block , textSm , textGray500 ] ]
-                  [ text
-                        (
-                        if stock < 0 then
-                            "Unlimited"
-                        
-                        else
-                            String.fromInt stock
-                        )
-                  ]
+                  [tw [ hidden_, Responsive.md block, textSm, textGray500 ]]
+                  [text category]
+            , span
+                  [tw
+                      [ hidden_
+                      , Responsive.md block
+                      , textSm
+                      , fontMedium
+                      , textGray900
+                      ]]
+                  [text pricing.original]
+            , span
+                  [tw [ hidden_, Responsive.md block, textSm, textGray500 ]]
+                  [text
+                      (if stock < 0 then
+                           "Unlimited"
+
+                       else
+                           String.fromInt stock)]
             , if published then
-                span [ Layout.badgeLive ] [ text "Live" ]
-            
-            else
-                span [ Layout.badgeDraft ] [ text "Draft" ]
+                  span [Layout.badgeLive] [text "Live"]
+
+              else
+                  span [Layout.badgeDraft] [text "Draft"]
             ]
 
 
@@ -165,69 +162,79 @@ viewAdminProductRow model product =
 -- ADMIN PRODUCT FORM
 -- ══════════════════════════════════════════════════════
 viewAdminNewProduct model =
-    Layout.adminPage model
-        (
-        div []
-            [ div [ tw [ mb6 ] ]
-                  [ a
-                        [ href "/admin/products"
-            -- Image Manager
-                        , attribute "sky-nav" ""
-                        , tw [ textSm , textGray500 ]
-                        ]
-                        [ text "< Products" ]
-                  , Html.h1 [ tw [ text2xl , fontBold , textGray900 , mt2 ] ]
-                        [ text (Tr.t model.lang "admin.newProduct") ]
-                  ]
-            , viewProductForm model
-            ]
-        )
+    Layout.adminPage
+        model
+        (div
+             []
+             [ div
+                   [tw [mb6]]
+                   [ a
+                         [ href "/admin/products"
+                         -- Image Manager
+                         , attribute "sky-nav" ""
+                         , tw [ textSm, textGray500 ]
+                         ]
+                         [text "< Products"]
+                   , Html.h1
+                         [tw [ text2xl, fontBold, textGray900, mt2 ]]
+                         [text (Tr.t model.lang "admin.newProduct")]
+                   ]
+             , viewProductForm model
+             ])
 
 
 viewAdminEditProduct model =
-    Layout.adminPage model
-        (
-        div []
-            [ div [ tw [ mb6 ] ]
-                  [ a
-                        [ href "/admin/products"
-                        , attribute "sky-nav" ""
-                        , tw [ textSm , textGray500 ]
-                        ]
-                        [ text "< Products" ]
-                  , div [ tw [ flex , justifyBetween , itemsCenter , mt2 ] ]
-                        [ Html.h1 [ tw [ text2xl , fontBold , textGray900 ] ]
-                              [ text (Tr.t model.lang "admin.editProduct") ]
-                        , button
-                              [ onClick (DeleteProduct model.editProductId)
-                              , Layout.btnDangerOutline
-                              ]
-                              [ text (Tr.t model.lang "admin.product.delete") ]
-                        ]
-                  ]
-            , viewProductForm model
-            , if model.editProductId != "" then
-                viewImageManager model
-            
-            else
-                text ""
-            ]
-        )
+    Layout.adminPage
+        model
+        (div
+             []
+             [ div
+                   [tw [mb6]]
+                   [ a
+                         [ href "/admin/products"
+                         , attribute "sky-nav" ""
+                         , tw [ textSm, textGray500 ]
+                         ]
+                         [text "< Products"]
+                   , div
+                         [tw [ flex, justifyBetween, itemsCenter, mt2 ]]
+                         [ Html.h1
+                               [tw [ text2xl, fontBold, textGray900 ]]
+                               [text (Tr.t model.lang "admin.editProduct")]
+                         , button
+                               [ onClick (DeleteProduct model.editProductId)
+                               , Layout.btnDangerOutline
+                               ]
+                               [text (Tr.t model.lang "admin.product.delete")]
+                         ]
+                   ]
+             , viewProductForm model
+             , if model.editProductId != "" then
+                   viewImageManager model
+
+               else
+                   text ""
+             ])
 
 
 viewProductForm model =
     let
         lang = model.lang
     in
-        div [ Layout.card ]
-            [ div [ Layout.cardHeader ]
-                  [ Html.h3 [ tw [ fontSemibold , textGray900 , textSm ] ]
-                        [ text (Tr.t lang "admin.product.basicInfo") ]
-                  ]
-            , div [ Layout.cardBody , tw [ flex , flexCol , gap5 ] ]
-                  [ div []
-                        [ label [ Layout.formLabel_ ]
-                              [ text (Tr.t lang "admin.product.title") ]
+        div
+            [Layout.card]
+            [ div
+                  [Layout.cardHeader]
+                  [Html.h3
+                      [tw [ fontSemibold, textGray900, textSm ]]
+                      [text (Tr.t lang "admin.product.basicInfo")]]
+            , div
+                  [ Layout.cardBody, tw [ flex, flexCol, gap5 ] ]
+                  [ div
+                        []
+                        [ label
+                              [Layout.formLabel_]
+                              [text (Tr.t lang "admin.product.title")]
                         , input
                               [ type_ "text"
                               , value model.editTitle
@@ -237,9 +244,11 @@ viewProductForm model =
                               , required ()
                               ]
                         ]
-                  , div []
-                        [ label [ Layout.formLabel_ ]
-                              [ text (Tr.t lang "admin.product.summary") ]
+                  , div
+                        []
+                        [ label
+                              [Layout.formLabel_]
+                              [text (Tr.t lang "admin.product.summary")]
                         , textarea
                               [ value model.editSummary
                               , onInput UpdateEditSummary
@@ -249,66 +258,66 @@ viewProductForm model =
                               ]
                               []
                         ]
-                  , div [ tw [ grid , gridCols1 , Responsive.sm gridCols2 , gap4 ] ]
-                        [ div []
-                              [ label [ Layout.formLabel_ ]
-                                    [ text (Tr.t lang "admin.product.category")
-                                    ]
+                  , div
+                        [tw [ grid, gridCols1, Responsive.sm gridCols2, gap4 ]]
+                        [ div
+                              []
+                              [ label
+                                    [Layout.formLabel_]
+                                    [text (Tr.t lang "admin.product.category")]
                               , select
                                     [ onChange UpdateEditCategory
                                     , Layout.formInput
                                     ]
-                                    (
-                                    List.map
-                                        (
-                                        \cat ->
-                                            option
-                                                [ value cat
-                                                , if cat == model.editCategory then
-                                                    selected ()
-                                                
-                                                else
-                                                    class ""
-                                                ]
-                                                [ text cat ]
-                                        )
-                                        allCategories
-                                    )
+                                    (List.map
+                                         (\cat ->
+                                              option
+                                                  [ value cat
+                                                  , if cat == model.editCategory then
+                                                        selected ()
+
+                                                    else
+                                                        class ""
+                                                  ]
+                                                  [text cat])
+                                         allCategories)
                               ]
-                        , div []
-                              [ label [ Layout.formLabel_ ]
-                                    [ text (Tr.t lang "admin.product.currency")
-                                    ]
+                        , div
+                              []
+                              [ label
+                                    [Layout.formLabel_]
+                                    [text (Tr.t lang "admin.product.currency")]
                               , select
                                     [ onChange UpdateEditCurrency
                                     , Layout.formInput
                                     ]
-                                    (
-                                    List.map
-                                        (
-                                        \cur ->
-                                            option
-                                                [ value cur
-                                                , if cur == model.editCurrency then
-                                                    selected ()
-                                                
-                                                else
-                                                    class ""
-                                                ]
-                                                [ text cur ]
-                                        )
-                                        allCurrencies
-                                    )
+                                    (List.map
+                                         (\cur ->
+                                              option
+                                                  [ value cur
+                                                  , if cur == model.editCurrency then
+                                                        selected ()
+
+                                                    else
+                                                        class ""
+                                                  ]
+                                                  [text cur])
+                                         allCurrencies)
                               ]
                         ]
                   ]
-            , div [ Layout.cardSection ]
-                  [ Html.h3 [ tw [ fontSemibold , textGray900 , textSm , mb4 ] ]
-                        [ text (Tr.t lang "admin.product.pricingInventory") ]
-                  , div [ tw [ grid , gridCols1 , Responsive.sm gridCols3 , gap4 ] ]
-                        [ div []
-                              [ label [ Layout.formLabel_ ]
-                                    [ text (Tr.t lang "admin.product.price") ]
+            , div
+                  [Layout.cardSection]
+                  [ Html.h3
+                        [tw [ fontSemibold, textGray900, textSm, mb4 ]]
+                        [text (Tr.t lang "admin.product.pricingInventory")]
+                  , div
+                        [tw [ grid, gridCols1, Responsive.sm gridCols3, gap4 ]]
+                        [ div
+                              []
+                              [ label
+                                    [Layout.formLabel_]
+                                    [text (Tr.t lang "admin.product.price")]
                               , input
                                     [ type_ "number"
                                     , value (String.fromInt model.editPrice)
@@ -319,10 +328,11 @@ viewProductForm model =
                                     , Attr.min "0"
                                     ]
                               ]
-                        , div []
-                              [ label [ Layout.formLabel_ ]
-                                    [ text (Tr.t lang "admin.product.discount")
-                                    ]
+                        , div
+                              []
+                              [ label
+                                    [Layout.formLabel_]
+                                    [text (Tr.t lang "admin.product.discount")]
                               , input
                                     [ type_ "number"
                                     , value (String.fromInt model.editDiscount)
@@ -332,9 +342,11 @@ viewProductForm model =
                                     , Attr.min "0"
                                     ]
                               ]
-                        , div []
-                              [ label [ Layout.formLabel_ ]
-                                    [ text (Tr.t lang "admin.product.stock") ]
+                        , div
+                              []
+                              [ label
+                                    [Layout.formLabel_]
+                                    [text (Tr.t lang "admin.product.stock")]
                               , input
                                     [ type_ "number"
                                     , value (String.fromInt model.editStock)
@@ -346,43 +358,42 @@ viewProductForm model =
                               ]
                         ]
                   ]
-            , div [ Layout.cardFooter ]
-                  [ div [ tw [ flex , itemsCenter , gap3 ] ]
+            , div
+                  [Layout.cardFooter]
+                  [ div
+                        [tw [ flex, itemsCenter, gap3 ]]
                         [ button
                               [ onClick ToggleEditPublished
                               , class
-                                    (
-                                    if model.editPublished then
-                                        "toggle toggle-on"
-                                    
-                                    else
-                                        "toggle toggle-off"
-                                    )
+                                    (if model.editPublished then
+                                         "toggle toggle-on"
+
+                                     else
+                                         "toggle toggle-off")
                               ]
-                              [ span
-                                    [ class
-                                          (
-                                          if model.editPublished then
-                                              "toggle-knob toggle-knob-on"
-                                          
-                                          else
-                                              "toggle-knob toggle-knob-off"
-                                          )
-                                    ]
-                                    []
-                              ]
-                        , span [ tw [ textSm , fontMedium , textGray700 ] ]
-                              [ text (Tr.t lang "admin.product.published") ]
+                              [span
+                                  [class
+                                      (if model.editPublished then
+                                           "toggle-knob toggle-knob-on"
+
+                                       else
+                                           "toggle-knob toggle-knob-off")]
+                                  []]
+                        , span
+                              [tw [ textSm, fontMedium, textGray700 ]]
+                              [text (Tr.t lang "admin.product.published")]
                         ]
-                  , div [ tw [ flex , gap3 ] ]
+                  , div
+                        [tw [ flex, gap3 ]]
                         [ a
                               [ href "/admin/products"
                               , attribute "sky-nav" ""
                               , Layout.btnSecondary
                               ]
-                              [ text (Tr.t lang "common.cancel") ]
-                        , button [ onClick SubmitProduct , Layout.btnPrimary ]
-                              [ text (Tr.t lang "admin.product.save") ]
+                              [text (Tr.t lang "common.cancel")]
+                        , button
+                              [ onClick SubmitProduct, Layout.btnPrimary ]
+                              [text (Tr.t lang "admin.product.save")]
                         ]
                   ]
             ]
@@ -393,69 +404,67 @@ viewImageManager model =
         lang = model.lang
         images = model.productImages
     in
-        div [ Layout.card , tw [ mt6 ] ]
+        div
+            [ Layout.card, tw [mt6] ]
             [ div
                   [ Layout.cardHeader
-                  , tw [ flex , justifyBetween , itemsCenter ]
+                  , tw [ flex, justifyBetween, itemsCenter ]
                   ]
-                  [ Html.h3 [ tw [ fontSemibold , textGray900 , textSm ] ]
-                        [ text
-                              (
-                              Tr.t lang "admin.product.images"
-                                  ++ " ("
-                                      ++ String.fromInt (List.length images)
-                                          ++ ")"
-                              )
-                        ]
-                  ]
-            , div [ Layout.cardBody ]
+                  [Html.h3
+                      [tw [ fontSemibold, textGray900, textSm ]]
+                      [text
+                          (Tr.t lang "admin.product.images" ++ " ("
+                               ++ String.fromInt (List.length images)
+                               ++ ")")]]
+            , div
+                  [Layout.cardBody]
                   [ if List.isEmpty images then
-                      text ""
-                  
-                  else
-                      div
-                          [ tw [ grid , gap4 , mb6 ]
-                          , style
-                                "grid-template-columns:repeat(auto-fill,minmax(120px,1fr))"
-                          ]
-                          (
-                          List.map
-                              (
-                              \imgRow ->
-                                  let
-                                      imageId = Db.getField "id" imgRow
-                                  in
-                                      div [ Layout.imgCardSquare ]
-                                          [ img
-                                                [ src
-                                                      (
-                                                      Db.getField "data" imgRow
-                                                      )
-                                                , alt "Product image"
-                                                , Layout.objectCover_
-                                                ]
-                                          , button
-                                                [ onClick (DeleteImage imageId)
-                                                , Layout.imgOverlayDelete
-                                                ]
-                                                [ text "x" ]
-                                          ]
-                              )
-                              images
-                          )
-                  , div [ Layout.uploadZone ]
-                        [ div [ tw [ flex1 ] ]
-                              [ input
-                                    [ type_ "file"
-                                    , attribute "accept" "image/*"
-                                    , onImage UpdateImageData
-                                    , fileMaxWidth 1200
-                                    , fileMaxHeight 1200
-                                    , tw [ textSm ]
-                                    ]
-                              ]
-                        , button [ onClick UploadImage , Layout.btnPrimary ]
-                              [ text (Tr.t lang "admin.product.upload") ]
+                        text ""
+
+                    else
+                        div
+                            [ tw [ grid, gap4, mb6 ]
+                            , style
+                                  "grid-template-columns:repeat(auto-fill,minmax(120px,1fr))"
+                            ]
+                            (List.map
+                                 (\imgRow ->
+                                      let
+                                          imageId = Db.getField "id" imgRow
+                                      in
+                                          div
+                                              [Layout.imgCardSquare]
+                                              [ img
+                                                    [ src
+                                                          (Db.getField
+                                                               "data"
+                                                               imgRow)
+                                                    , alt "Product image"
+                                                    , Layout.objectCover_
+                                                    ]
+                                              , button
+                                                    [ onClick
+                                                          (DeleteImage imageId)
+                                                    , Layout.imgOverlayDelete
+                                                    ]
+                                                    [text "x"]
+                                              ])
+                                 images)
+                  , div
+                        [Layout.uploadZone]
+                        [ div
+                              [tw [flex1]]
+                              [input
+                                  [ type_ "file"
+                                  , attribute "accept" "image/*"
+                                  , onImage UpdateImageData
+                                  , fileMaxWidth 1200
+                                  , fileMaxHeight 1200
+                                  , tw [textSm]
+                                  ]]
+                        , button
+                              [ onClick UploadImage, Layout.btnPrimary ]
+                              [text (Tr.t lang "admin.product.upload")]
                         ]
                   ]
             ]
@@ -468,102 +477,100 @@ viewAdminOrders model =
     let
         lang = model.lang
     in
-        Layout.adminPage model
-            (
-            div []
-                [ div [ tw [ mb6 ] ]
-                      [ Html.h1 [ tw [ text2xl , fontBold , textGray900 ] ]
-                            [ text (Tr.t lang "admin.orders") ]
-                      , p [ tw [ textGray500 , mt1 ] ]
-                            [ text
-                                  (
-                                  String.fromInt (List.length model.adminOrders)
-                                      ++ " orders"
-                                  )
-                            ]
-                      ]
-                , viewOrderFilter model
-                , div [ Layout.card , style "overflow-x:auto" ]
-                      (
-                      if List.isEmpty model.adminOrders then
-                          [ div [ tw [ p8 , textCenter ] ]
-                                [ p [ tw [ textGray400 ] ]
-                                      [ text "No orders found" ]
-                                ]
-                          ]
-                      
-                      else
-                          [ div
+        Layout.adminPage
+            model
+            (div
+                 []
+                 [ div
+                       [tw [mb6]]
+                       [ Html.h1
+                             [tw [ text2xl, fontBold, textGray900 ]]
+                             [text (Tr.t lang "admin.orders")]
+                       , p
+                             [tw [ textGray500, mt1 ]]
+                             [text
+                                 (String.fromInt (List.length model.adminOrders)
+                                      ++ " orders")]
+                       ]
+                 , viewOrderFilter model
+                 , div
+                       [ Layout.card, style "overflow-x:auto" ]
+                       (if List.isEmpty model.adminOrders then
+                            [div
+                                [tw [ p8, textCenter ]]
+                                [p [tw [textGray400]] [text "No orders found"]]]
+
+                        else
+                            [div
                                 [ Layout.tableHeader_
                                 , style
                                       "display:grid;grid-template-columns:2fr 1fr 1fr 1fr;align-items:center;min-width:500px"
                                 ]
                                 [ text "Customer"
-                                , span [ tw [ hidden_ , Responsive.md block ] ]
-                                      [ text "Total" ]
-                                , span [ tw [ hidden_ , Responsive.md block ] ]
-                                      [ text "Date" ]
+                                , span
+                                      [tw [ hidden_, Responsive.md block ]]
+                                      [text "Total"]
+                                , span
+                                      [tw [ hidden_, Responsive.md block ]]
+                                      [text "Date"]
                                 , text "Status"
-                                ]
-                          ]
-                              ++ List.map (viewAdminOrderRow model)
-                                     model.adminOrders
-                      )
-                ]
-            )
+                                ]]
+                                ++ List.map
+                                       (viewAdminOrderRow model)
+                                       model.adminOrders)
+                 ])
 
 
 viewOrderFilter model =
-    div [ tw [ flex , flexWrap , gap2 , mb4 ] ]
-        (
-        [ orderFilterBtn "all" "All" model.adminOrderFilter ]
-            ++ List.map
-                   (
-                   \st ->
-                       orderFilterBtn st (Tr.tCartState model.lang st)
-                           model.adminOrderFilter
-                   )
-                   [ "pending"
-                   , "ordered"
-                   , "shipped"
-                   , "delivered"
-                   , "cancelled"
-                   , "refunded"
-                   ]
-        )
+    div
+        [tw [ flex, flexWrap, gap2, mb4 ]]
+        ([orderFilterBtn "all" "All" model.adminOrderFilter]
+             ++ List.map
+                    (\st ->
+                         orderFilterBtn
+                             st
+                             (Tr.tCartState model.lang st)
+                             model.adminOrderFilter)
+                    [ "pending"
+                    , "ordered"
+                    , "shipped"
+                    , "delivered"
+                    , "cancelled"
+                    , "refunded"
+                    ])
 
 
 orderFilterBtn filterValue label activeFilter =
     button
         [ onClick (SetAdminOrderFilter filterValue)
         , if activeFilter == filterValue then
-            tw
-                [ textSm
-                , px4
-                , py1
-                , roundedFull
-                , fontSemibold
-                , bgBlue600
-                , textWhite
-                , border
-                , borderBlue600
-                ]
-        
-        else
-            tw
-                [ textSm
-                , px4
-                , py1
-                , roundedFull
-                , fontMedium
-                , bgWhite
-                , textGray500
-                , border
-                , borderGray200
-                , hover borderGray400
-                ]
+              tw
+                  [ textSm
+                  , px4
+                  , py1
+                  , roundedFull
+                  , fontSemibold
+                  , bgBlue600
+                  , textWhite
+                  , border
+                  , borderBlue600
+                  ]
+
+          else
+              tw
+                  [ textSm
+                  , px4
+                  , py1
+                  , roundedFull
+                  , fontMedium
+                  , bgWhite
+                  , textGray500
+                  , border
+                  , borderGray200
+                  , hover borderGray400
+                  ]
         ]
-        [ text label ]
+        [text label]
 
 
 -- ══════════════════════════════════════════════════════
@@ -586,23 +593,23 @@ viewAdminOrderRow model order =
             , style
                   "display:grid;grid-template-columns:2fr 1fr 1fr 1fr;align-items:center;min-width:500px"
             ]
-            [ div []
-                  [ div [ tw [ fontMedium , textSm , textGray900 ] ]
-                        [ text userName ]
-                  , div [ tw [ textXs , textGray400 ] ] [ text userEmail ]
+            [ div
+                  []
+                  [ div [tw [ fontMedium, textSm, textGray900 ]] [text userName]
+                  , div [tw [ textXs, textGray400 ]] [text userEmail]
                   ]
             , span
-                  [ tw
-                        [ hidden_
-                        , Responsive.md block
-                        , textSm
-                        , fontMedium
-                        , textGray900
-                        ]
-                  ]
-                  [ text (Money.formatPrice totalAmount totalCurrency) ]
-            , span [ tw [ hidden_ , Responsive.md block , textXs , textGray500 ] ]
-                  [ text createdAt ]
+                  [tw
+                      [ hidden_
+                      , Responsive.md block
+                      , textSm
+                      , fontMedium
+                      , textGray900
+                      ]]
+                  [text (Money.formatPrice totalAmount totalCurrency)]
+            , span
+                  [tw [ hidden_, Responsive.md block, textXs, textGray500 ]]
+                  [text createdAt]
             , stateBadge model st
             ]
 
@@ -611,43 +618,43 @@ stateBadge model st =
     let
         badgeStyle =
             case st of
-                
+
                 "ordered" ->
                     Layout.badgeOrdered
-                
+
                 "shipped" ->
                     Layout.badgeShipped
-                
+
                 "delivered" ->
                     Layout.badgeDelivered
-                
+
                 "cancelled" ->
                     Layout.badgeCancelled
-                
+
                 "refunded" ->
                     Layout.badgeRefunded
-                
+
                 "pending" ->
                     Layout.badgePending
-                
+
                 _ ->
                     Layout.badgeDraft
     in
-        span [ badgeStyle ] [ text (Tr.tCartState model.lang st) ]
+        span [badgeStyle] [text (Tr.tCartState model.lang st)]
 
 
 viewAdminOrder model =
-    Layout.adminPage model
-        (
-        case model.order of
-            
-            Just order ->
-                viewAdminOrderDetail model order
-            
-            Nothing ->
-                div [ tw [ textCenter , py16 ] ]
-                    [ p [ tw [ textGray400 ] ] [ text "Order not found." ] ]
-        )
+    Layout.adminPage
+        model
+        (case model.order of
+
+             Just order ->
+                 viewAdminOrderDetail model order
+
+             Nothing ->
+                 div
+                     [tw [ textCenter, py16 ]]
+                     [p [tw [textGray400]] [text "Order not found."]])
 
 
 viewAdminOrderDetail model order =
@@ -667,93 +674,94 @@ viewAdminOrderDetail model order =
         remarks = Db.getField "checkout_remarks" order
         createdAt = Db.getField "created_at" order
     in
-        div []
-            [ div [ tw [ mb6 ] ]
+        div
+            []
+            [ div
+                  [tw [mb6]]
                   [ a
                         [ href "/admin/orders"
                         , attribute "sky-nav" ""
-                        , tw [ textSm , textGray500 ]
+                        , tw [ textSm, textGray500 ]
                         ]
-                        [ text "< Orders" ]
-                  , div [ tw [ flex , justifyBetween , itemsCenter , mt2 ] ]
-                        [ Html.h1 [ tw [ text2xl , fontBold , textGray900 ] ]
-                              [ text (Tr.t lang "order.detail") ]
+                        [text "< Orders"]
+                  , div
+                        [tw [ flex, justifyBetween, itemsCenter, mt2 ]]
+                        [ Html.h1
+                              [tw [ text2xl, fontBold, textGray900 ]]
+                              [text (Tr.t lang "order.detail")]
                         , stateBadge model st
                         ]
                   ]
-            , div [ tw [ grid , gridCols1 , Responsive.sm gridCols2 , gap6 , mb6 ] ]
-                  [ infoCard "Customer" [ userName , userEmail ]
-                  , infoCard "Total"
+            , div
+                  [tw [ grid, gridCols1, Responsive.sm gridCols2, gap6, mb6 ]]
+                  [ infoCard "Customer" [ userName, userEmail ]
+                  , infoCard
+                        "Total"
                         [ Money.formatPrice totalAmount totalCurrency
                         , createdAt
                         ]
                   , if shippingName != "" then
-                      infoCard "Shipping"
-                          [ shippingName
-                          , shippingLine1 ++ ", " ++ shippingCity
-                          , shippingPostcode ++ " " ++ shippingCountry
-                          ]
-                  
-                  else
-                      text ""
+                        infoCard
+                            "Shipping"
+                            [ shippingName
+                            , shippingLine1 ++ ", " ++ shippingCity
+                            , shippingPostcode ++ " " ++ shippingCountry
+                            ]
+
+                    else
+                        text ""
                   , if remarks != "" then
-                      infoCard "Remarks" [ remarks ]
-                  
-                  else
-                      text ""
+                        infoCard "Remarks" [remarks]
+
+                    else
+                        text ""
                   ]
-            , div [ Layout.card , tw [ mb6 ] ]
-                  [ div [ Layout.cardBody ]
-                        [ Html.h3
-                              [ tw [ fontSemibold , textGray900 , textSm , mb3 ]
-                              ]
-                              [ text (Tr.t lang "admin.order.updateState") ]
-                        , div [ tw [ flex , flexWrap , gap2 ] ]
-                              (
-                              List.map
-                                  (
-                                  \newState ->
+            , div
+                  [ Layout.card, tw [mb6] ]
+                  [div
+                      [Layout.cardBody]
+                      [ Html.h3
+                            [tw [ fontSemibold, textGray900, textSm, mb3 ]]
+                            [text (Tr.t lang "admin.order.updateState")]
+                      , div
+                            [tw [ flex, flexWrap, gap2 ]]
+                            (List.map
+                                 (\newState ->
                                       if newState != st && newState != "ongoing" then
                                           button
                                               [ onClick
-                                                    (
-                                                    UpdateOrderState orderId
-                                                        newState
-                                                    )
+                                                    (UpdateOrderState
+                                                         orderId
+                                                         newState)
                                               , Layout.btnState
                                               ]
-                                              [ text
-                                                    (
-                                                    Tr.tCartState lang newState
-                                                    )
-                                              ]
-                                      
+                                              [text (Tr.tCartState lang newState)]
+
                                       else
-                                          text ""
-                                  )
-                                  allCartStates
-                              )
-                        ]
-                  ]
-            , div [ Layout.card ]
-                  [ div [ Layout.cardHeader ]
-                        [ span [ tw [ textSm , fontSemibold , textGray600 ] ]
-                              [ text "Items" ]
-                        ]
+                                          text "")
+                                 allCartStates)
+                      ]]
+            , div
+                  [Layout.card]
+                  [ div
+                        [Layout.cardHeader]
+                        [span
+                            [tw [ textSm, fontSemibold, textGray600 ]]
+                            [text "Items"]]
                   , div [] (List.map viewAdminOrderItem model.orderItems)
                   ]
             ]
 
 
 infoCard title lines =
-    div [ Layout.infoCard_ ]
-        [ span [ Layout.infoCardLabel ] [ text title ]
-        , div []
-              (
-              List.map
-                  (\line -> p [ tw [ textSm , textGray700 ] ] [ text line ])
-                  lines
-              )
+    div
+        [Layout.infoCard_]
+        [ span [Layout.infoCardLabel] [text title]
+        , div
+              []
+              (List.map
+                   (\line -> p [tw [ textSm, textGray700 ]] [text line])
+                   lines)
         ]
 
 
@@ -767,18 +775,19 @@ viewAdminOrderItem item =
         effectivePrice =
             if discount > 0 then
                 price - discount
-            
+
             else
                 price
         lineTotal_ = Money.formatPrice (effectivePrice * qty) currency
     in
-        div [ Layout.adminRow ]
-            [ div [ tw [ flex1 ] ]
-                  [ span [ tw [ textSm , fontMedium , textGray900 ] ]
-                        [ text title ]
-                  , span [ tw [ textXs , textGray400 , ml2 ] ]
-                        [ text ("x" ++ String.fromInt qty) ]
+        div
+            [Layout.adminRow]
+            [ div
+                  [tw [flex1]]
+                  [ span [tw [ textSm, fontMedium, textGray900 ]] [text title]
+                  , span
+                        [tw [ textXs, textGray400, ml2 ]]
+                        [text ("x" ++ String.fromInt qty)]
                   ]
-            , span [ tw [ textSm , fontSemibold , textGray900 ] ]
-                  [ text lineTotal_ ]
+            , span [tw [ textSm, fontSemibold, textGray900 ]] [text lineTotal_]
             ]

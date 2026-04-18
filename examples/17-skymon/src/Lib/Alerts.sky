@@ -17,11 +17,23 @@ import Sky.Core.Error as Error exposing (Error(..), ErrorKind(..))
 createAlert : String -> String -> String -> String -> String -> String
 createAlert metricId condition threshold notifyType notifyTarget =
     let
-        alertId = String.slice 0 12 (Crypto.sha256 (metricId ++ ":" ++ condition ++ ":" ++ threshold))
+        alertId =
+            String.slice
+                0
+                12
+                (Crypto.sha256
+                     (metricId ++ ":" ++ condition ++ ":" ++ threshold))
         _ =
-            Database.execOrLog "Alerts.createAlert"
+            Database.execOrLog
+                "Alerts.createAlert"
                 "INSERT OR REPLACE INTO alerts (id, metric_id, condition, threshold, notify_type, notify_target) VALUES (?, ?, ?, ?, ?, ?)"
-                [ alertId, metricId, condition, threshold, notifyType, notifyTarget ]
+                [ alertId
+                , metricId
+                , condition
+                , threshold
+                , notifyType
+                , notifyTarget
+                ]
     in
         alertId
 
@@ -29,27 +41,33 @@ createAlert metricId condition threshold notifyType notifyTarget =
 deleteAlert : String -> ()
 deleteAlert alertId =
     let
-        _ = Database.execOrLog "Alerts.deleteAlert" "DELETE FROM alerts WHERE id = ?" [ alertId ]
+        _ =
+            Database.execOrLog
+                "Alerts.deleteAlert"
+                "DELETE FROM alerts WHERE id = ?"
+                [alertId]
     in
         ()
 
 
 getAlerts : List (Dict String String)
 getAlerts =
-    Database.queryOrLog "Alerts.getAlerts"
+    Database.queryOrLog
+        "Alerts.getAlerts"
         "SELECT * FROM alerts ORDER BY created_at DESC"
         []
 
 
 getAlertsForMetric : String -> List (Dict String String)
 getAlertsForMetric metricId =
-    Database.queryOrLog "Alerts.getAlertsForMetric"
+    Database.queryOrLog
+        "Alerts.getAlertsForMetric"
         "SELECT * FROM alerts WHERE metric_id = ? ORDER BY created_at DESC"
-        [ metricId ]
+        [metricId]
 
 
 -- Check all alerts against current metric values and fire notifications
-checkAlerts : (List (Dict String String)) -> (List (Dict String String)) -> ()
+checkAlerts : List (Dict String String) -> List (Dict String String) -> ()
 checkAlerts alerts metrics =
     case alerts of
 
@@ -63,7 +81,7 @@ checkAlerts alerts metrics =
                 checkAlerts rest metrics
 
 
-checkOneAlert : (Dict String String) -> (List (Dict String String)) -> ()
+checkOneAlert : Dict String String -> List (Dict String String) -> ()
 checkOneAlert alert metrics =
     let
         metricId = Database.getField "metric_id" alert
@@ -79,7 +97,7 @@ checkOneAlert alert metrics =
             checkAlertCondition alert metric condition threshold
 
 
-checkAlertCondition : (Dict String String) -> (Maybe (Dict String String)) -> String -> String -> ()
+checkAlertCondition : Dict String String -> Maybe (Dict String String) -> String -> String -> ()
 checkAlertCondition alert maybeMetric condition threshold =
     case maybeMetric of
 
@@ -126,13 +144,14 @@ evaluateCondition valueStr condition thresholdStr =
             String.contains thresholdStr valueStr
 
         else if condition == "down" then
-            valueStr == "down" || valueStr == "0" || String.startsWith "error" valueStr
+            valueStr == "down" || valueStr == "0"
+                || String.startsWith "error" valueStr
 
         else
             False
 
 
-fireAlert : (Dict String String) -> String -> ()
+fireAlert : Dict String String -> String -> ()
 fireAlert alert currentValue =
     let
         alertId = Database.getField "id" alert
@@ -142,14 +161,28 @@ fireAlert alert currentValue =
         condition = Database.getField "condition" alert
         threshold = Database.getField "threshold" alert
         message =
-            "SkyMon Alert: metric " ++ metricId
-                ++ " value " ++ currentValue
-                    ++ " " ++ condition ++ " " ++ threshold
-        _ = recordAlertFired alertId metricId currentValue condition threshold notifyType
+            "SkyMon Alert: metric " ++ metricId ++ " value " ++ currentValue
+                ++ " "
+                ++ condition
+                ++ " "
+                ++ threshold
+        _ =
+            recordAlertFired
+                alertId
+                metricId
+                currentValue
+                condition
+                threshold
+                notifyType
         _ = println ("[ALERT] " ++ message)
     in
         if notifyType == "webhook" then
-            logFireResult "webhook" notifyTarget (fireWebhook notifyTarget message)
+-- Centralised delivery logging so every notify variant uses the same
+-- "[ALERT ERROR] kind target: typedErr" format.
+            logFireResult
+                "webhook"
+                notifyTarget
+                (fireWebhook notifyTarget message)
 
         else if notifyType == "slack" then
             logFireResult "slack" notifyTarget (fireSlack notifyTarget message)
@@ -158,16 +191,19 @@ fireAlert alert currentValue =
             ()
 
 
--- Centralised delivery logging so every notify variant uses the same
--- "[ALERT ERROR] kind target: typedErr" format.
 logFireResult : String -> String -> Result Error () -> ()
 logFireResult kind target result =
     case result of
+
         Ok _ ->
             ()
+
         Err e ->
             let
-                _ = println ("[ALERT ERROR] " ++ kind ++ " " ++ target ++ ": " ++ Error.toString e)
+                _ =
+                    println
+                        ("[ALERT ERROR] " ++ kind ++ " " ++ target ++ ": "
+                             ++ Error.toString e)
             in
                 ()
 
@@ -176,7 +212,8 @@ recordAlertFired : String -> String -> String -> String -> String -> String -> (
 recordAlertFired alertId metricId value condition threshold notifyType =
     let
         _ =
-            Database.execOrLog "Alerts.recordAlertFired"
+            Database.execOrLog
+                "Alerts.recordAlertFired"
                 "INSERT INTO alert_history (alert_id, metric_id, metric_value, condition, threshold, notify_type) VALUES (?, ?, ?, ?, ?, ?)"
                 [ alertId, metricId, value, condition, threshold, notifyType ]
     in
@@ -185,14 +222,16 @@ recordAlertFired alertId metricId value condition threshold notifyType =
 
 getAlertHistory : Int -> List (Dict String String)
 getAlertHistory limit =
-    Database.queryOrLog "Alerts.getAlertHistory"
+    Database.queryOrLog
+        "Alerts.getAlertHistory"
         "SELECT * FROM alert_history ORDER BY fired_at DESC LIMIT ?"
-        [ String.fromInt limit ]
+        [String.fromInt limit]
 
 
 getAlertHistoryForMetric : String -> Int -> List (Dict String String)
 getAlertHistoryForMetric metricId limit =
-    Database.queryOrLog "Alerts.getAlertHistoryForMetric"
+    Database.queryOrLog
+        "Alerts.getAlertHistoryForMetric"
         "SELECT * FROM alert_history WHERE metric_id = ? ORDER BY fired_at DESC LIMIT ?"
         [ metricId, String.fromInt limit ]
 
@@ -209,8 +248,10 @@ fireWebhook url message =
             body = "{\"text\":\"" ++ escapeJson message ++ "\"}"
         in
             case Task.run (Http.post url body) of
+
                 Ok _ ->
                     Ok ()
+
                 Err e ->
                     Err e
 
@@ -225,13 +266,15 @@ fireSlack webhookUrl message =
             body = "{\"text\":\"" ++ escapeJson message ++ "\"}"
         in
             case Task.run (Http.post webhookUrl body) of
+
                 Ok _ ->
                     Ok ()
+
                 Err e ->
                     Err e
 
 
-findMetricById : String -> (List (Dict String String)) -> Maybe (Dict String String)
+findMetricById : String -> List (Dict String String) -> Maybe (Dict String String)
 findMetricById metricId metrics =
     case metrics of
 

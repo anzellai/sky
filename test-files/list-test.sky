@@ -5,6 +5,7 @@ import Sky.Core.String as String
 import Sky.Core.List as List
 import Std.Log exposing (println)
 
+
 main =
     let
         numbers = [ 1, 2, 3, 4, 5 ]
@@ -15,6 +16,7 @@ main =
         _ = println ("Sum: " ++ String.fromInt sum)
     in
         println ("Filtered: " ++ showList evens)
+
 
 showList items =
     "[" ++ String.join ", " (List.map String.fromInt items) ++ "]"

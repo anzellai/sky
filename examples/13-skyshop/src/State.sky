@@ -5,6 +5,12 @@ import Sky.Core.Maybe exposing (..)
 import Sky.Core.Dict as Dict
 
 -- ══════════════════════════════════════════════════════
+-- MODEL
+-- ══════════════════════════════════════════════════════
+type alias Model =
+    { page : Page, lang : String, user : Maybe (Dict String String), authError : String, products : List (Dict String String), product : Maybe (Dict String String), productImages : List (Dict String String), search : String, categoryFilter : String, sortBy : String, sortDir : String, cart : Maybe (Dict String String), cartItems : List (Dict String String), cartRemarks : String, checkoutUrl : String, orders : List (Dict String String), order : Maybe (Dict String String), orderItems : List (Dict String String), editProductId : String, editTitle : String, editSummary : String, editCategory : String, editPrice : Int, editDiscount : Int, editCurrency : String, editStock : Int, editPublished : Bool, editImageData : String, adminOrders : List (Dict String String), adminOrderFilter : String, quantity : Int, notification : String, notificationType : String, signOutPending : Bool }
+
+-- ══════════════════════════════════════════════════════
 -- PAGES
 -- ══════════════════════════════════════════════════════
 type Page
@@ -24,7 +30,6 @@ type Page
     | PrivacyPolicyPage
     | TermsPage
     | NotFoundPage
-
 
 -- ══════════════════════════════════════════════════════
 -- MESSAGES
@@ -64,47 +69,6 @@ type Msg
     | FirebaseAuth String
     | Tick
     | NoOp
-
-
--- ══════════════════════════════════════════════════════
--- MODEL
--- ══════════════════════════════════════════════════════
-type alias Model =
-    { page : Page
-    , lang : String
-    , user : Maybe (Dict String String)
-    , authError : String
-    , products : List (Dict String String)
-    , product : Maybe (Dict String String)
-    , productImages : List (Dict String String)
-    , search : String
-    , categoryFilter : String
-    , sortBy : String
-    , sortDir : String
-    , cart : Maybe (Dict String String)
-    , cartItems : List (Dict String String)
-    , cartRemarks : String
-    , checkoutUrl : String
-    , orders : List (Dict String String)
-    , order : Maybe (Dict String String)
-    , orderItems : List (Dict String String)
-    , editProductId : String
-    , editTitle : String
-    , editSummary : String
-    , editCategory : String
-    , editPrice : Int
-    , editDiscount : Int
-    , editCurrency : String
-    , editStock : Int
-    , editPublished : Bool
-    , editImageData : String
-    , adminOrders : List (Dict String String)
-    , adminOrderFilter : String
-    , quantity : Int
-    , notification : String
-    , notificationType : String
-    , signOutPending : Bool
-    }
 
 
 -- ══════════════════════════════════════════════════════
@@ -175,4 +139,5 @@ allCartStates =
     ]
 
 
-allCurrencies = [ "GBP" , "HKD" , "USD" ]
+allCurrencies =
+    [ "GBP", "HKD", "USD" ]

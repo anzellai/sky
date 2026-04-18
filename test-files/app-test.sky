@@ -10,11 +10,19 @@ type Priority
     | Medium
     | Low
 
+
 priorityLabel p =
     case p of
-        High -> "HIGH"
-        Medium -> "MED"
-        Low -> "LOW"
+
+        High ->
+            "HIGH"
+
+        Medium ->
+            "MED"
+
+        Low ->
+            "LOW"
+
 
 main =
     let
@@ -23,6 +31,10 @@ main =
             , { name = "Write docs", priority = Low }
             , { name = "Add feature", priority = Medium }
             ]
-        formatted = List.map (\item -> "[" ++ priorityLabel item.priority ++ "] " ++ item.name) items
+        formatted =
+            List.map
+                (\item ->
+                     "[" ++ priorityLabel item.priority ++ "] " ++ item.name)
+                items
     in
         println (String.join ", " formatted)

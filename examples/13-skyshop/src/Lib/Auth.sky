@@ -17,21 +17,28 @@ import Lib.Db as Db
 import Sky.Core.Error as Error exposing (Error(..), ErrorKind(..))
 import Os
 
-ctx = Context.background ()
+
+ctx =
+    Context.background ()
 
 
 adminEmails _ =
     let
         envAdmins = Result.withDefault "" (Os.getenv "ADMIN_EMAILS")
     in
+    -- Idempotent upsert using firebase_uid as document ID.
+    -- Concurrent calls from onAuthStateChanged can never create duplicates
+    -- because Firestore Set with merge is atomic at the document level.
+    -- No query-then-create race condition.
         if envAdmins == "" then
-            [ "admin@example.com" ]
+            ["admin@example.com"]
 
         else
             String.split "," envAdmins
 
 
-isAdmin user = Db.getBool "is_admin" user
+isAdmin user =
+    Db.getBool "is_admin" user
 
 
 -- ══════════════════════════════════════════════════════
@@ -47,7 +54,7 @@ getAuthClient _ =
                 []
 
             else
-                [ Option.withCredentialsFile credFile ]
+                [Option.withCredentialsFile credFile]
         appResult = Firebase.newApp ctx (js "nil") opts
     in
         case appResult of
@@ -66,7 +73,7 @@ claimString key claims =
     case Dict.get key claims of
 
         Just val ->
-            Fmt.sprint [ val ]
+            Fmt.sprint [val]
 
         Nothing ->
             ""
@@ -86,36 +93,31 @@ verifyToken idToken =
                         name = claimString "name" claims
                         _ =
                             println
-                                (
-                                "[AUTH] Firebase token verified for: "
-                                    ++ email ++ " (uid: " ++ uid ++ ")"
-                                )
+                                ("[AUTH] Firebase token verified for: " ++ email
+                                     ++ " (uid: "
+                                     ++ uid
+                                     ++ ")")
                     in
--- Idempotent upsert using firebase_uid as document ID.
--- Concurrent calls from onAuthStateChanged can never create duplicates
--- because Firestore Set with merge is atomic at the document level.
--- No query-then-create race condition.
                         findOrCreateUser uid email name
 
                 Err e ->
                     let
                         _ =
                             println
-                                (
-                                "[AUTH] Firebase token verification failed: "
-                                    ++ errorToString e
-                                )
+                                ("[AUTH] Firebase token verification failed: "
+                                     ++ errorToString e)
                     in
-                        Err (Error.permissionDenied |> Error.withMessage "Authentication failed. Please try again.")
+                        Err
+                            (Error.permissionDenied
+                                 |> Error.withMessage
+                                        "Authentication failed. Please try again.")
 
         Err e ->
             let
                 _ =
                     println
-                        (
-                        "[AUTH] Firebase auth client error: "
-                            ++ errorToString e
-                        )
+                        ("[AUTH] Firebase auth client error: "
+                             ++ errorToString e)
             in
                 Err (Error.network "Authentication service unavailable.")
 
@@ -129,8 +131,8 @@ findOrCreateUser uid email name =
 
             else
                 "false"
-        -- Set with merge: updates email/name/admin but preserves
-        -- existing fields (phone, address) from previous writes.
+                -- Set with merge: updates email/name/admin but preserves
+                -- existing fields (phone, address) from previous writes.
         upsertData =
             Dict.fromList
                 [ ( "id", uid )
@@ -150,18 +152,19 @@ findOrCreateUser uid email name =
 
                     Just user ->
                         if Db.getBool "suspended" user then
-                            Err (Error.permissionDenied |> Error.withMessage "Account suspended. Please contact support.")
+                            Err
+                                (Error.permissionDenied
+                                     |> Error.withMessage
+                                            "Account suspended. Please contact support.")
 
                         else
                             let
                                 _ =
                                     println
-                                        (
-                                        "[AUTH] Signed in: "
-                                            ++ email
-                                                ++ " (admin: "
-                                                    ++ adminStr ++ ")"
-                                        )
+                                        ("[AUTH] Signed in: " ++ email
+                                             ++ " (admin: "
+                                             ++ adminStr
+                                             ++ ")")
                             in
                                 Ok user
 
@@ -182,7 +185,8 @@ signOut =
         ()
 
 
-getUserById userId = Db.getDoc "users" userId
+getUserById userId =
+    Db.getDoc "users" userId
 
 
 getSessionUser userId =

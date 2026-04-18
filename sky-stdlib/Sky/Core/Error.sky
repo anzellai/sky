@@ -16,6 +16,7 @@
 -- higher-level middleware. They are optional; every constructor
 -- below sets `details = Nothing` by default.
 module Sky.Core.Error exposing (..)
+
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.String as String
 import Sky.Core.Maybe exposing (Maybe(..))
@@ -118,6 +119,7 @@ unexpected msg =
 withMessage : String -> Error -> Error
 withMessage msg err =
     case err of
+
         Error kind info ->
             Error kind { message = msg, details = info.details }
 
@@ -125,6 +127,7 @@ withMessage msg err =
 withDetails : ErrorDetails -> Error -> Error
 withDetails d err =
     case err of
+
         Error kind info ->
             Error kind { message = info.message, details = Just d }
 
@@ -133,6 +136,7 @@ withDetails d err =
 kindLabel : ErrorKind -> String
 kindLabel k =
     case k of
+
         Io ->
             "IO"
 
@@ -173,6 +177,7 @@ kindLabel k =
 toString : Error -> String
 toString err =
     case err of
+
         Error kind info ->
             kindLabel kind ++ ": " ++ info.message
 
@@ -181,8 +186,10 @@ toString err =
 isRetryable : Error -> Bool
 isRetryable err =
     case err of
+
         Error kind _ ->
             case kind of
+
                 Timeout ->
                     True
 

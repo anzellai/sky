@@ -1,4 +1,5 @@
 module Main exposing (main)
+
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Task as Task
 import Sky.Core.String as String
@@ -8,18 +9,22 @@ import Sky.Core.Error as Error exposing (Error)
 
 
 main =
-    Server.listen 8000 [ Server.get "/" handleHome
-    , Server.get "/hello/:name" handleHello
-    , Server.get "/api/status" handleStatus
-    , Server.post "/api/echo" handleEcho
-    , Server.get "/cookie-demo" handleCookieDemo
-    , Server.get "/redirect" handleRedirect
-    ]
+    Server.listen
+        8000
+        [ Server.get "/" handleHome
+        , Server.get "/hello/:name" handleHello
+        , Server.get "/api/status" handleStatus
+        , Server.post "/api/echo" handleEcho
+        , Server.get "/cookie-demo" handleCookieDemo
+        , Server.get "/redirect" handleRedirect
+        ]
 
 
 handleHome : Request -> Task Error Response
 handleHome req =
-    Task.succeed (Server.html """<h1>Sky HTTP Server</h1>
+    Task.succeed
+        (Server.html
+             """<h1>Sky HTTP Server</h1>
 <ul>
     <li><a href='/hello/world'>Hello World</a></li>
     <li><a href='/api/status'>API Status</a></li>
@@ -31,12 +36,14 @@ handleHome req =
 handleHello : Request -> Task Error Response
 handleHello req =
     let
-        name = case Server.param "name" req of
-            Just n ->
-                n
+        name =
+            case Server.param "name" req of
 
-            Nothing ->
-                "stranger"
+                Just n ->
+                    n
+
+                Nothing ->
+                    "stranger"
     in
         Task.succeed (Server.text ("Hello, " ++ name ++ "!"))
 
@@ -54,6 +61,7 @@ handleEcho req =
 parseVisitCount : Maybe String -> Int
 parseVisitCount maybeCookie =
     case maybeCookie of
+
         Just v ->
             parseVisitInt v
 
@@ -64,6 +72,7 @@ parseVisitCount maybeCookie =
 parseVisitInt : String -> Int
 parseVisitInt v =
     case String.toInt v of
+
         Just n ->
             n + 1
 
@@ -77,10 +86,13 @@ handleCookieDemo req =
         visitCount = parseVisitCount (Server.getCookie "visits" req)
         visitCookie = Server.cookie "visits" (String.fromInt visitCount)
     in
-        Task.succeed (let
-            countStr = String.fromInt visitCount
-        in
-            Server.html """<h1>Visit #{{countStr}}</h1><p>Refresh to increment!</p>""" |> Server.withCookie visitCookie)
+        Task.succeed
+            (let
+                 countStr = String.fromInt visitCount
+             in
+                 Server.html
+                     """<h1>Visit #{{countStr}}</h1><p>Refresh to increment!</p>"""
+                     |> Server.withCookie visitCookie)
 
 
 handleRedirect : Request -> Task Error Response

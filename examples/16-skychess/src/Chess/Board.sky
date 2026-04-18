@@ -1,4 +1,5 @@
 module Chess.Board exposing (..)
+
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Dict as Dict
 import Sky.Core.Maybe as Maybe
@@ -27,6 +28,7 @@ removePiece sq board =
 movePiece : Int -> Int -> Dict Int Piece -> Dict Int Piece
 movePiece from to board =
     case Dict.get from board of
+
         Just piece ->
             Dict.insert to piece (Dict.remove from board)
 
@@ -64,18 +66,25 @@ fileToChar : Int -> String
 fileToChar f =
     if f == 0 then
         "a"
+
     else if f == 1 then
         "b"
+
     else if f == 2 then
         "c"
+
     else if f == 3 then
         "d"
+
     else if f == 4 then
         "e"
+
     else if f == 5 then
         "f"
+
     else if f == 6 then
         "g"
+
     else
         "h"
 
@@ -93,6 +102,7 @@ findKing colour board =
 findKingLoop : Colour -> Dict Int Piece -> List Int -> Int
 findKingLoop colour board squares =
     case squares of
+
         [] ->
             -1
 
@@ -103,9 +113,11 @@ findKingLoop colour board squares =
 checkKingSquare : Int -> Colour -> Dict Int Piece -> List Int -> Int
 checkKingSquare sq colour board rest =
     case Dict.get sq board of
+
         Just piece ->
             if piece.kind == King && piece.colour == colour then
                 sq
+
             else
                 findKingLoop colour board rest
 
@@ -113,17 +125,19 @@ checkKingSquare sq colour board rest =
             findKingLoop colour board rest
 
 
-allPiecesOfColour : Colour -> Dict Int Piece -> List (Int, Piece)
+allPiecesOfColour : Colour -> Dict Int Piece -> List ( Int, Piece )
 allPiecesOfColour colour board =
     List.filterMap (\sq -> checkSquareColour sq colour board) allSquares
 
 
-checkSquareColour : Int -> Colour -> Dict Int Piece -> Maybe (Int, Piece)
+checkSquareColour : Int -> Colour -> Dict Int Piece -> Maybe ( Int, Piece )
 checkSquareColour sq colour board =
     case Dict.get sq board of
+
         Just piece ->
             if piece.colour == colour then
                 Just ( sq, piece )
+
             else
                 Nothing
 
@@ -203,36 +217,37 @@ allSquares =
 -- Initial board position
 initialBoard : Dict Int Piece
 initialBoard =
-    Dict.fromList [ ( 0, Piece Rook Black )
-    , ( 1, Piece Knight Black )
-    , ( 2, Piece Bishop Black )
-    , ( 3, Piece Queen Black )
-    , ( 4, Piece King Black )
-    , ( 5, Piece Bishop Black )
-    , ( 6, Piece Knight Black )
-    , ( 7, Piece Rook Black )
-    , ( 8, Piece Pawn Black )
-    , ( 9, Piece Pawn Black )
-    , ( 10, Piece Pawn Black )
-    , ( 11, Piece Pawn Black )
-    , ( 12, Piece Pawn Black )
-    , ( 13, Piece Pawn Black )
-    , ( 14, Piece Pawn Black )
-    , ( 15, Piece Pawn Black )
-    , ( 48, Piece Pawn White )
-    , ( 49, Piece Pawn White )
-    , ( 50, Piece Pawn White )
-    , ( 51, Piece Pawn White )
-    , ( 52, Piece Pawn White )
-    , ( 53, Piece Pawn White )
-    , ( 54, Piece Pawn White )
-    , ( 55, Piece Pawn White )
-    , ( 56, Piece Rook White )
-    , ( 57, Piece Knight White )
-    , ( 58, Piece Bishop White )
-    , ( 59, Piece Queen White )
-    , ( 60, Piece King White )
-    , ( 61, Piece Bishop White )
-    , ( 62, Piece Knight White )
-    , ( 63, Piece Rook White )
-    ]
+    Dict.fromList
+        [ ( 0, Piece Rook Black )
+        , ( 1, Piece Knight Black )
+        , ( 2, Piece Bishop Black )
+        , ( 3, Piece Queen Black )
+        , ( 4, Piece King Black )
+        , ( 5, Piece Bishop Black )
+        , ( 6, Piece Knight Black )
+        , ( 7, Piece Rook Black )
+        , ( 8, Piece Pawn Black )
+        , ( 9, Piece Pawn Black )
+        , ( 10, Piece Pawn Black )
+        , ( 11, Piece Pawn Black )
+        , ( 12, Piece Pawn Black )
+        , ( 13, Piece Pawn Black )
+        , ( 14, Piece Pawn Black )
+        , ( 15, Piece Pawn Black )
+        , ( 48, Piece Pawn White )
+        , ( 49, Piece Pawn White )
+        , ( 50, Piece Pawn White )
+        , ( 51, Piece Pawn White )
+        , ( 52, Piece Pawn White )
+        , ( 53, Piece Pawn White )
+        , ( 54, Piece Pawn White )
+        , ( 55, Piece Pawn White )
+        , ( 56, Piece Rook White )
+        , ( 57, Piece Knight White )
+        , ( 58, Piece Bishop White )
+        , ( 59, Piece Queen White )
+        , ( 60, Piece King White )
+        , ( 61, Piece Bishop White )
+        , ( 62, Piece Knight White )
+        , ( 63, Piece Rook White )
+        ]

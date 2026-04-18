@@ -11,6 +11,7 @@ import Sky.Core.Error as Error exposing (Error(..))
 import Github.Com.Google.Uuid as Uuid
 import Lib.Db as Db
 
+
 listProducts =
     Db.queryWhereOrLog "Products.listProducts" "products" "published" "==" True
 
@@ -20,15 +21,13 @@ listAllProducts =
         result = Db.queryDocs "products"
         _ =
             case result of
-                
+
                 Ok products ->
                     println
-                        (
-                        "[PRODUCTS] Loaded "
-                            ++ String.fromInt (List.length products)
-                                ++ " products"
-                        )
-                
+                        ("[PRODUCTS] Loaded "
+                             ++ String.fromInt (List.length products)
+                             ++ " products")
+
                 Err e ->
                     println ("[PRODUCTS] ERROR loading products: " ++ e)
     in
@@ -46,9 +45,7 @@ searchProducts query category sortBy sortDir =
     let
         allProducts = listProducts
         filtered =
-            allProducts
-                |> filterByCategory category
-                |> filterBySearch query
+            allProducts |> filterByCategory category |> filterBySearch query
                 |> sortProducts sortBy sortDir
     in
         filtered
@@ -57,7 +54,7 @@ searchProducts query category sortBy sortDir =
 filterByCategory category products =
     if category == "all" || category == "" then
         products
-    
+
     else
         List.filter (\p -> Db.getField "category" p == category) products
 
@@ -65,19 +62,19 @@ filterByCategory category products =
 filterBySearch query products =
     if query == "" then
         products
-    
+
     else
         let
             lowerQuery = String.toLower query
         in
             List.filter
-                (
-                \p ->
-                    String.contains lowerQuery
-                        (String.toLower (Db.getField "title" p))
-                        || String.contains lowerQuery
-                               (String.toLower (Db.getField "summary" p))
-                )
+                (\p ->
+                     String.contains
+                         lowerQuery
+                         (String.toLower (Db.getField "title" p))
+                         || String.contains
+                                lowerQuery
+                                (String.toLower (Db.getField "summary" p)))
                 products
 
 
@@ -86,22 +83,20 @@ sortProducts sortBy sortDir products =
         sorted =
             if sortBy == "price" then
                 List.sortBy
-                    (
-                    \p ->
-                        Db.getInt "price_amount" p - Db.getInt "price_discount"
-                                                         p
-                    )
+                    (\p ->
+                         Db.getInt "price_amount" p
+                             - Db.getInt "price_discount" p)
                     products
-            
+
             else if sortBy == "title" then
                 List.sortBy (\_ -> 0) products
-            
+
             else
                 products
     in
         if sortDir == "desc" then
             List.reverse sorted
-        
+
         else
             sorted
 
@@ -125,13 +120,13 @@ createProduct title summary category priceAmount priceCurrency priceDiscount sto
         result = Db.setDoc "products" productId productData
     in
         case result of
-            
+
             Ok _ ->
                 let
                     _ = println ("[PRODUCT] Created: " ++ title)
                 in
                     Ok productId
-            
+
             Err e ->
                 Err e
 
@@ -153,13 +148,13 @@ updateProduct productId title summary category priceAmount priceCurrency priceDi
         result = Db.setDoc "products" productId productData
     in
         case result of
-            
+
             Ok _ ->
                 let
                     _ = println ("[PRODUCT] Updated: " ++ productId)
                 in
                     Ok productId
-            
+
             Err e ->
                 Err e
 
@@ -172,7 +167,8 @@ deleteProduct productId =
                 (\img -> Db.deleteDoc "product_images" (Db.getField "id" img))
                 images
         cartItems =
-            Db.queryWhereOrLog "Products.deleteProduct"
+            Db.queryWhereOrLog
+                "Products.deleteProduct"
                 "cart_items"
                 "product_id"
                 "=="
@@ -185,16 +181,17 @@ deleteProduct productId =
         _ = println ("[PRODUCT] Deleted: " ++ productId)
     in
         case result of
-            
+
             Ok v ->
                 Ok v
-            
+
             Err e ->
                 Err e
 
 
 listProductImages productId =
-    Db.queryWhereOrLog "Products.listProductImages"
+    Db.queryWhereOrLog
+        "Products.listProductImages"
         "product_images"
         "product_id"
         "=="
@@ -216,13 +213,13 @@ addProductImage productId imageData =
         result = Db.setDoc "product_images" imageId imageDoc
     in
         case result of
-            
+
             Ok _ ->
                 let
                     _ = println ("[IMAGE] Added to product: " ++ productId)
                 in
                     Ok imageId
-            
+
             Err e ->
                 Err e
 
@@ -233,9 +230,9 @@ deleteProductImage imageId =
         _ = println ("[IMAGE] Deleted: " ++ imageId)
     in
         case result of
-            
+
             Ok v ->
                 Ok v
-            
+
             Err e ->
                 Err e

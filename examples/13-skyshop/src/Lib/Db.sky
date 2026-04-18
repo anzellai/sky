@@ -16,7 +16,9 @@ import Fmt
 import Os
 import Sky.Core.Error as Error exposing (Error(..), ErrorKind(..))
 
-getField field row = Maybe.withDefault "" (Dict.get field row)
+
+getField field row =
+    Maybe.withDefault "" (Dict.get field row)
 
 
 getInt field row =
@@ -27,9 +29,7 @@ getInt field row =
             0
 
         else
-            val
-                |> String.toInt
-                |> Result.withDefault 0
+            val |> String.toInt |> Result.withDefault 0
 
 
 getBool field row =
@@ -50,13 +50,14 @@ wrapDbError msg =
         || String.contains "permission denied" msg
         || String.contains "Unauthenticated" msg then
         Error.permissionDenied |> Error.withMessage msg
-    else if String.contains "NotFound" msg
-        || String.contains "not found" msg then
+
+    else if String.contains "NotFound" msg || String.contains "not found" msg then
         Error.notFound |> Error.withMessage msg
-    else if String.contains "Unavailable" msg
-        || String.contains "DeadlineExceeded" msg
+
+    else if String.contains "Unavailable" msg || String.contains "DeadlineExceeded" msg
         || String.contains "connection refused" msg then
         Error.network msg
+
     else
         Error.io msg
 
@@ -74,13 +75,16 @@ initDb _ =
                 ()
 
         Err e ->
+        -- Propagate boundary failure up. Distinct from
+        -- `Ok Nothing` (doc genuinely not found) — callers must
+        -- handle "DB unreachable / FFI panic" separately from
+        -- "no row matched". Demonstrates real-world handling:
+        -- never collapse "system broken" into "no result".
             let
                 _ =
                     println
-                        (
-                        "[DB] ERROR: Failed to initialise Firestore: "
-                            ++ errorToString e
-                        )
+                        ("[DB] ERROR: Failed to initialise Firestore: "
+                             ++ errorToString e)
             in
                 ()
 
@@ -108,7 +112,8 @@ getAllSnapshots iter =
 -- ══════════════════════════════════════════════════════
 -- FIRESTORE CLIENT
 -- ══════════════════════════════════════════════════════
-ctx = Context.background ()
+ctx =
+    Context.background ()
 
 
 getProjectId _ =
@@ -122,41 +127,49 @@ getProjectId _ =
             env
 
 
-getFirestoreClient _ = Firestore.newClient ctx (getProjectId ()) []
+getFirestoreClient _ =
+    Firestore.newClient ctx (getProjectId ()) []
 
 
 -- ══════════════════════════════════════════════════════
 -- HELPERS
 -- ══════════════════════════════════════════════════════
-anyToString val = Fmt.sprint [ val ]
+anyToString val =
+    Fmt.sprint [val]
 
 
 snapshotToDict snapshot =
     let
         rawData = Firestore.documentSnapshotData snapshot
-        docId = Firestore.documentRefID (Firestore.documentSnapshotRef snapshot)
+        docId =
+            Firestore.documentRefID (Firestore.documentSnapshotRef snapshot)
     in
         Dict.insert "id" docId (mapToStringDict rawData)
 
 
-mapToStringDict rawMap = Dict.map (\_ v -> anyToString v) rawMap
+mapToStringDict rawMap =
+    Dict.map (\_ v -> anyToString v) rawMap
 
 
-dictToMap dict = dict
+dictToMap dict =
+    dict
 
 
 -- Typed value wrappers for storing native types in Firestore Dicts.
 -- These pass values through as-is (identity at runtime).
 intVal : Int -> a
-intVal n = identity n
+intVal n =
+    identity n
 
 
 boolVal : Bool -> a
-boolVal b = identity b
+boolVal b =
+    identity b
 
 
 floatVal : Float -> a
-floatVal f = identity f
+floatVal f =
+    identity f
 
 
 -- ══════════════════════════════════════════════════════
@@ -196,12 +209,10 @@ getDocInner colRef docId =
     case Firestore.collectionRefDoc colRef docId of
 
         Err e ->
-            -- Propagate boundary failure up. Distinct from
-            -- `Ok Nothing` (doc genuinely not found) — callers must
-            -- handle "DB unreachable / FFI panic" separately from
-            -- "no row matched". Demonstrates real-world handling:
-            -- never collapse "system broken" into "no result".
-            Err (Error.io ("Firestore.collectionRefDoc failed for " ++ docId ++ ": " ++ Error.toString e))
+            Err
+                (Error.io
+                     ("Firestore.collectionRefDoc failed for " ++ docId ++ ": "
+                          ++ Error.toString e))
 
         Ok docRef ->
             getDocRef docRef
@@ -214,7 +225,9 @@ getDocRef docRef =
             getDocSnapshot snapshot
 
         Err e ->
-            Err (Error.io ("Firestore.documentRefGet failed: " ++ Error.toString e))
+            Err
+                (Error.io
+                     ("Firestore.documentRefGet failed: " ++ Error.toString e))
 
 
 getDocSnapshot snapshot =
@@ -227,7 +240,8 @@ getDocSnapshot snapshot =
             Ok Nothing
 
 
-mergeOpts = [ Firestore.mergeAll () ]
+mergeOpts =
+    [Firestore.mergeAll ()]
 
 
 setDoc collection docId data =
@@ -330,9 +344,9 @@ queryWhereInner colRef field op value =
             Err (wrapDbError (errorToString e))
 
         Ok q ->
--- ══════════════════════════════════════════════════════
--- SHARED QUERY HELPERS
--- ══════════════════════════════════════════════════════
+        -- ══════════════════════════════════════════════════════
+        -- SHARED QUERY HELPERS
+        -- ══════════════════════════════════════════════════════
             runQuery q
 
 
@@ -343,7 +357,12 @@ queryWhereOrder collection field op value orderField dir =
             Err (wrapDbError (errorToString e))
 
         Ok client ->
-            queryWhereOrderWithClient client collection field op value
+            queryWhereOrderWithClient
+                client
+                collection
+                field
+                op
+                value
                 orderField
                 dir
 
@@ -439,7 +458,8 @@ queryWhereOrLog label collection field op value =
 
         Err e ->
             let
-                _ = println ("[DB ERROR] " ++ label ++ ": " ++ Error.toString e)
+                _ =
+                    println ("[DB ERROR] " ++ label ++ ": " ++ Error.toString e)
             in
                 []
 
@@ -452,7 +472,8 @@ queryWhereOrderOrLog label collection field op value orderField dir =
 
         Err e ->
             let
-                _ = println ("[DB ERROR] " ++ label ++ ": " ++ Error.toString e)
+                _ =
+                    println ("[DB ERROR] " ++ label ++ ": " ++ Error.toString e)
             in
                 []
 
@@ -465,6 +486,7 @@ queryDocsOrLog label collection =
 
         Err e ->
             let
-                _ = println ("[DB ERROR] " ++ label ++ ": " ++ Error.toString e)
+                _ =
+                    println ("[DB ERROR] " ++ label ++ ": " ++ Error.toString e)
             in
                 []

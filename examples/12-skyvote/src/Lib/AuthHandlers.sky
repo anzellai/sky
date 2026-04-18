@@ -1,4 +1,5 @@
 module Lib.AuthHandlers exposing (handleSignInSuccess, handleSignIn, handleSignUpSuccess, handleSignUpValidated, handleSignUp, handleSignOut)
+
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Result as Result
 import Sky.Core.Maybe exposing (..)
@@ -17,15 +18,14 @@ handleSignInSuccess user model =
         ideas = Result.withDefault [] (Ideas.getIdeas "newest" "all" "")
         _ = println ("[AUTH] Sign-in: " ++ Db.getField "email" user)
     in
-        ( { model
-            | currentUser = Just user
-            , ideas = ideas
-            , page = BoardPage
-            , authEmail = ""
-            , authPassword = ""
-            , authError = ""
-            , notification = "Welcome back!"
-        }
+        ( { model | currentUser = Just user
+          , ideas = ideas
+          , page = BoardPage
+          , authEmail = ""
+          , authPassword = ""
+          , authError = ""
+          , notification = "Welcome back!"
+          }
         , Cmd.none
         )
 
@@ -35,20 +35,24 @@ handleSignInSuccess user model =
 -- DbError → generic "service unavailable" so we don't leak details.
 handleSignIn model =
     case Auth.authenticateUser model.authEmail model.authPassword of
+
         Ok user ->
             handleSignInSuccess user model
 
         Err e ->
             let
                 _ = println ("[AUTH ERROR] sign-in: " ++ Error.toString e)
-                userMsg = case e of
-                    Error kind info ->
-                        case kind of
-                            PermissionDenied ->
-                                info.message
+                userMsg =
+                    case e of
 
-                            _ ->
-                                "Sign-in temporarily unavailable. Please try again."
+                        Error kind info ->
+                            case kind of
+
+                                PermissionDenied ->
+                                    info.message
+
+                                _ ->
+                                    "Sign-in temporarily unavailable. Please try again."
             in
                 ( { model | authError = userMsg }, Cmd.none )
 
@@ -58,40 +62,41 @@ handleSignIn model =
 -- Ok Nothing → race condition / auto-login failure (extremely rare).
 handleSignUpSuccess userId model =
     case Auth.getUserById userId of
+
         Err e ->
             let
-                _ = println ("[AUTH ERROR] post-signup lookup: " ++ Error.toString e)
+                _ =
+                    println
+                        ("[AUTH ERROR] post-signup lookup: " ++ Error.toString e)
             in
-                ( { model
-                    | authError = "Account created but auto-login failed. Please sign in."
-                    , page = SignInPage
-                }
+                ( { model | authError = "Account created but auto-login failed. Please sign in."
+                  , page = SignInPage
+                  }
                 , Cmd.none
                 )
 
         Ok Nothing ->
-            ( { model
-                | authError = "Account created but auto-login failed. Please sign in."
-                , page = SignInPage
-            }
+            ( { model | authError = "Account created but auto-login failed. Please sign in."
+              , page = SignInPage
+              }
             , Cmd.none
             )
 
         Ok (Just user) ->
             let
-                ideas = Result.withDefault [] (Ideas.getIdeas "newest" "all" "")
+                ideas =
+                    Result.withDefault [] (Ideas.getIdeas "newest" "all" "")
                 _ = println ("[AUTH] Sign-up success: " ++ userId)
             in
-                ( { model
-                    | currentUser = Just user
-                    , ideas = ideas
-                    , page = BoardPage
-                    , authEmail = ""
-                    , authUsername = ""
-                    , authPassword = ""
-                    , authError = ""
-                    , notification = "Account created! Welcome to SkyVote!"
-                }
+                ( { model | currentUser = Just user
+                  , ideas = ideas
+                  , page = BoardPage
+                  , authEmail = ""
+                  , authUsername = ""
+                  , authPassword = ""
+                  , authError = ""
+                  , notification = "Account created! Welcome to SkyVote!"
+                  }
                 , Cmd.none
                 )
 
@@ -101,6 +106,7 @@ handleSignUpSuccess userId model =
 -- but a generic message for infra failures.
 handleSignUpValidated model =
     case Auth.createUser model.authUsername model.authEmail model.authPassword of
+
         Ok userId ->
             handleSignUpSuccess userId model
 
@@ -115,10 +121,15 @@ handleSignUpValidated model =
 handleSignUp model =
     if model.authEmail == "" then
         ( { model | authError = "Email is required." }, Cmd.none )
+
     else if model.authUsername == "" then
         ( { model | authError = "Username is required." }, Cmd.none )
+
     else if String.length model.authPassword < 8 then
-        ( { model | authError = "Password must be at least 8 characters." }, Cmd.none )
+        ( { model | authError = "Password must be at least 8 characters." }
+        , Cmd.none
+        )
+
     else
         handleSignUpValidated model
 
@@ -127,11 +138,10 @@ handleSignOut model =
     let
         _ = println "[AUTH] User signed out"
     in
-        ( { model
-            | currentUser = Nothing
-            , page = BoardPage
-            , notification = ""
-            , authError = ""
-        }
+        ( { model | currentUser = Nothing
+          , page = BoardPage
+          , notification = ""
+          , authError = ""
+          }
         , Cmd.none
         )

@@ -1,4 +1,5 @@
 module Lib.Utils exposing (add, formatMessage)
+
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.String as String
 

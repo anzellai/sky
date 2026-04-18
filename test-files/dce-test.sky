@@ -3,17 +3,29 @@ module Main exposing (main)
 import Sky.Core.Prelude exposing (..)
 import Std.Log exposing (println)
 
+
 -- Used transitively via main
-greet name = "hi " ++ name
+greet name =
+    "hi " ++ name
+
 
 -- Reachable from main
-used = greet "world"
+used =
+    greet "world"
+
 
 -- UNREACHABLE — should be pruned by DCE
-unusedA = "never called"
+unusedA =
+    "never called"
 
-unusedB x = unusedA ++ x
 
-unusedC = unusedB "foo"
+unusedB x =
+    unusedA ++ x
 
-main = println used
+
+unusedC =
+    unusedB "foo"
+
+
+main =
+    println used

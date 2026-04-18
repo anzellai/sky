@@ -15,54 +15,70 @@ import Ui.Layout as Layout
 
 viewSettings : Model -> VNode
 viewSettings model =
-    Layout.page model
-        (
-        div []
-            [ h2 [ class "section-title" ] [ text "Settings" ]
-            , viewAddMonitorForm model
-            , viewMonitorList model
-            , viewAddMetricForm model
-            , viewMetricList model
-            ]
-        )
+    Layout.page
+        model
+        (div
+             []
+             [ h2 [class "section-title"] [text "Settings"]
+             , viewAddMonitorForm model
+             , viewMonitorList model
+             , viewAddMetricForm model
+             , viewMetricList model
+             ])
 
 
 viewAddMonitorForm : Model -> VNode
 viewAddMonitorForm model =
-    div [ class "card", style "margin-bottom: 24px" ]
-        [ h3 [ style "font-size: 16px; color: #f1f5f9; margin-bottom: 16px" ]
-              [ text "Add Monitor" ]
-        , div [ class "form-group" ]
-              [ label [ class "form-label" ] [ text "Name" ]
+    div
+        [ class "card", style "margin-bottom: 24px" ]
+        [ h3
+              [style "font-size: 16px; color: #f1f5f9; margin-bottom: 16px"]
+              [text "Add Monitor"]
+        , div
+              [class "form-group"]
+              [ label [class "form-label"] [text "Name"]
               , input
                     [ type_ "text"
                     , class "form-input"
                     , placeholder "My API"
-                    , value (Maybe.withDefault "" (Dict.get "monitor_name" model.configInput))
+                    , value
+                          (Maybe.withDefault
+                               ""
+                               (Dict.get "monitor_name" model.configInput))
                     , onInput InputMonitorName
                     ]
               ]
-        , div [ class "form-group" ]
-              [ label [ class "form-label" ] [ text "URL" ]
+        , div
+              [class "form-group"]
+              [ label [class "form-label"] [text "URL"]
               , input
                     [ type_ "text"
                     , class "form-input"
                     , placeholder "https://api.example.com/health"
-                    , value (Maybe.withDefault "" (Dict.get "monitor_url" model.configInput))
+                    , value
+                          (Maybe.withDefault
+                               ""
+                               (Dict.get "monitor_url" model.configInput))
                     , onInput InputMonitorUrl
                     ]
               ]
-        , div [ class "form-group" ]
-              [ label [ class "form-label" ] [ text "Visibility" ]
+        , div
+              [class "form-group"]
+              [ label [class "form-label"] [text "Visibility"]
               , input
                     [ type_ "text"
                     , class "form-input"
                     , placeholder "public, user, or admin"
-                    , value (Maybe.withDefault "user" (Dict.get "monitor_visibility" model.configInput))
+                    , value
+                          (Maybe.withDefault
+                               "user"
+                               (Dict.get "monitor_visibility" model.configInput))
                     , onInput InputMonitorVis
                     ]
               ]
-        , button [ onClick AddMonitor, class "btn btn-primary" ] [ text "Add Monitor" ]
+        , button
+              [ onClick AddMonitor, class "btn btn-primary" ]
+              [text "Add Monitor"]
         ]
 
 
@@ -72,105 +88,153 @@ viewMonitorList model =
         text ""
 
     else
-        div [ style "margin-bottom: 24px" ]
-            [ h3 [ style "font-size: 16px; color: #f1f5f9; margin-bottom: 12px" ]
-                  [ text "Existing Monitors" ]
-            , table [ class "table" ]
-                  [ node "thead" []
-                        [ tr []
-                              [ th [] [ text "Name" ]
-                              , th [] [ text "URL" ]
-                              , th [] [ text "Status" ]
-                              , th [] [ text "Visibility" ]
-                              , th [] [ text "" ]
-                              ]
-                        ]
-                  , node "tbody" []
-                        (List.map viewMonitorRow model.monitors)
+        div
+            [style "margin-bottom: 24px"]
+            [ h3
+                  [style "font-size: 16px; color: #f1f5f9; margin-bottom: 12px"]
+                  [text "Existing Monitors"]
+            , table
+                  [class "table"]
+                  [ node
+                        "thead"
+                        []
+                        [tr
+                            []
+                            [ th [] [text "Name"]
+                            , th [] [text "URL"]
+                            , th [] [text "Status"]
+                            , th [] [text "Visibility"]
+                            , th [] [text ""]
+                            ]]
+                  , node "tbody" [] (List.map viewMonitorRow model.monitors)
                   ]
             ]
 
 
 viewMonitorRow : Monitor -> VNode
 viewMonitorRow monitor =
-    tr []
-        [ td [ style "font-weight: 600" ] [ text monitor.name ]
-        , td [ style "color: #64748b; font-size: 12px" ] [ text monitor.url ]
-        , td []
-              [ span [ class ("status-dot status-" ++ statusStr monitor.status), style "margin-right: 8px" ] []
+    tr
+        []
+        [ td [style "font-weight: 600"] [text monitor.name]
+        , td [style "color: #64748b; font-size: 12px"] [text monitor.url]
+        , td
+              []
+              [ span
+                    [ class ("status-dot status-" ++ statusStr monitor.status)
+                    , style "margin-right: 8px"
+                    ]
+                    []
               , text (statusStr monitor.status)
               ]
-        , td [] [ viewVisBadge monitor.visibility ]
-        , td []
-              [ button [ onClick (DeleteMonitor monitor.id), class "btn btn-danger btn-sm" ] [ text "Delete" ] ]
+        , td [] [viewVisBadge monitor.visibility]
+        , td
+              []
+              [button
+                  [ onClick (DeleteMonitor monitor.id)
+                  , class "btn btn-danger btn-sm"
+                  ]
+                  [text "Delete"]]
         ]
 
 
 viewAddMetricForm : Model -> VNode
 viewAddMetricForm model =
-    div [ class "card", style "margin-bottom: 24px" ]
-        [ h3 [ style "font-size: 16px; color: #f1f5f9; margin-bottom: 16px" ]
-              [ text "Add Metric" ]
-        , div [ class "form-group" ]
-              [ label [ class "form-label" ] [ text "Name" ]
+    div
+        [ class "card", style "margin-bottom: 24px" ]
+        [ h3
+              [style "font-size: 16px; color: #f1f5f9; margin-bottom: 16px"]
+              [text "Add Metric"]
+        , div
+              [class "form-group"]
+              [ label [class "form-label"] [text "Name"]
               , input
                     [ type_ "text"
                     , class "form-input"
                     , placeholder "Orders/Hour"
-                    , value (Maybe.withDefault "" (Dict.get "metric_name" model.configInput))
+                    , value
+                          (Maybe.withDefault
+                               ""
+                               (Dict.get "metric_name" model.configInput))
                     , onInput InputMetricName
                     ]
               ]
-        , div [ class "form-group" ]
-              [ label [ class "form-label" ] [ text "Type (http, sql, api)" ]
+        , div
+              [class "form-group"]
+              [ label [class "form-label"] [text "Type (http, sql, api)"]
               , input
                     [ type_ "text"
                     , class "form-input"
                     , placeholder "http"
-                    , value (Maybe.withDefault "" (Dict.get "metric_type" model.configInput))
+                    , value
+                          (Maybe.withDefault
+                               ""
+                               (Dict.get "metric_type" model.configInput))
                     , onInput InputMetricType
                     ]
               ]
-        , div [ class "form-group" ]
-              [ label [ class "form-label" ] [ text "URL / DSN" ]
+        , div
+              [class "form-group"]
+              [ label [class "form-label"] [text "URL / DSN"]
               , input
                     [ type_ "text"
                     , class "form-input"
-                    , placeholder "https://api.example.com/stats or postgres://..."
-                    , value (Maybe.withDefault "" (Dict.get "metric_url" model.configInput))
+                    , placeholder
+                          "https://api.example.com/stats or postgres://..."
+                    , value
+                          (Maybe.withDefault
+                               ""
+                               (Dict.get "metric_url" model.configInput))
                     , onInput InputMetricUrl
                     ]
               ]
-        , div [ class "form-group" ]
-              [ label [ class "form-label" ] [ text "SQL Query (for sql type)" ]
-              , node "textarea"
+        , div
+              [class "form-group"]
+              [ label [class "form-label"] [text "SQL Query (for sql type)"]
+              , node
+                    "textarea"
                     [ class "form-textarea"
-                    , placeholder "SELECT COUNT(*) FROM orders WHERE created_at > datetime('now', '-1 hour')"
+                    , placeholder
+                          "SELECT COUNT(*) FROM orders WHERE created_at > datetime('now', '-1 hour')"
                     , onInput InputMetricQuery
                     ]
-                    [ text (Maybe.withDefault "" (Dict.get "metric_query" model.configInput)) ]
+                    [text
+                        (Maybe.withDefault
+                             ""
+                             (Dict.get "metric_query" model.configInput))]
               ]
-        , div [ class "form-group" ]
-              [ label [ class "form-label" ] [ text "Visibility" ]
+        , div
+              [class "form-group"]
+              [ label [class "form-label"] [text "Visibility"]
               , input
                     [ type_ "text"
                     , class "form-input"
                     , placeholder "public, user, or admin"
-                    , value (Maybe.withDefault "user" (Dict.get "metric_visibility" model.configInput))
+                    , value
+                          (Maybe.withDefault
+                               "user"
+                               (Dict.get "metric_visibility" model.configInput))
                     , onInput InputMetricVis
                     ]
               ]
-        , div [ class "form-group" ]
-              [ label [ class "form-label" ] [ text "JSON Field Path (for api type)" ]
+        , div
+              [class "form-group"]
+              [ label
+                    [class "form-label"]
+                    [text "JSON Field Path (for api type)"]
               , input
                     [ type_ "text"
                     , class "form-input"
                     , placeholder "data.count or result.0.value"
-                    , value (Maybe.withDefault "" (Dict.get "metric_field" model.configInput))
+                    , value
+                          (Maybe.withDefault
+                               ""
+                               (Dict.get "metric_field" model.configInput))
                     , onInput InputMetricField
                     ]
               ]
-        , button [ onClick AddMetric, class "btn btn-primary" ] [ text "Add Metric" ]
+        , button
+              [ onClick AddMetric, class "btn btn-primary" ]
+              [text "Add Metric"]
         ]
 
 
@@ -180,34 +244,44 @@ viewMetricList model =
         text ""
 
     else
-        div [ style "margin-bottom: 24px" ]
-            [ h3 [ style "font-size: 16px; color: #f1f5f9; margin-bottom: 12px" ]
-                  [ text "Existing Metrics" ]
-            , table [ class "table" ]
-                  [ node "thead" []
-                        [ tr []
-                              [ th [] [ text "Name" ]
-                              , th [] [ text "Type" ]
-                              , th [] [ text "Value" ]
-                              , th [] [ text "Visibility" ]
-                              , th [] [ text "" ]
-                              ]
-                        ]
-                  , node "tbody" []
-                        (List.map viewMetricRow model.metrics)
+        div
+            [style "margin-bottom: 24px"]
+            [ h3
+                  [style "font-size: 16px; color: #f1f5f9; margin-bottom: 12px"]
+                  [text "Existing Metrics"]
+            , table
+                  [class "table"]
+                  [ node
+                        "thead"
+                        []
+                        [tr
+                            []
+                            [ th [] [text "Name"]
+                            , th [] [text "Type"]
+                            , th [] [text "Value"]
+                            , th [] [text "Visibility"]
+                            , th [] [text ""]
+                            ]]
+                  , node "tbody" [] (List.map viewMetricRow model.metrics)
                   ]
             ]
 
 
 viewMetricRow : Metric -> VNode
 viewMetricRow metric =
-    tr []
-        [ td [ style "font-weight: 600" ] [ text metric.name ]
-        , td [ style "color: #64748b" ] [ text metric.sourceType ]
-        , td [ style "color: #38bdf8; font-weight: 600" ] [ text metric.lastValue ]
-        , td [] [ viewVisBadge metric.visibility ]
-        , td []
-              [ button [ onClick (DeleteMetric metric.id), class "btn btn-danger btn-sm" ] [ text "Delete" ] ]
+    tr
+        []
+        [ td [style "font-weight: 600"] [text metric.name]
+        , td [style "color: #64748b"] [text metric.sourceType]
+        , td [style "color: #38bdf8; font-weight: 600"] [text metric.lastValue]
+        , td [] [viewVisBadge metric.visibility]
+        , td
+              []
+              [button
+                  [ onClick (DeleteMetric metric.id)
+                  , class "btn btn-danger btn-sm"
+                  ]
+                  [text "Delete"]]
         ]
 
 
@@ -233,10 +307,10 @@ viewVisBadge vis =
     case vis of
 
         VisPublic ->
-            span [ class "badge badge-public" ] [ text "public" ]
+            span [class "badge badge-public"] [text "public"]
 
         VisAdmin ->
-            span [ class "badge badge-admin" ] [ text "admin" ]
+            span [class "badge badge-admin"] [text "admin"]
 
         VisUser ->
-            span [ class "badge badge-user" ] [ text "user" ]
+            span [class "badge badge-user"] [text "user"]
