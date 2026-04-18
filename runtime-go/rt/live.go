@@ -1349,6 +1349,17 @@ func Live_app(cfg any) any {
 	// API handler dispatcher — matches method + pattern before page handler.
 	mux.HandleFunc("/", app.dispatchRoot)
 
+	// Pre-register model types with gob so DB-backed session stores
+	// can decode existing sessions on restart. Without this, the first
+	// Get after a restart fails with "gob: name not registered".
+	func() {
+		defer func() { recover() }()
+		req := map[string]any{"path": "/"}
+		res := sky_call(app.init, req)
+		model := tupleFirst(res)
+		gobRegisterAll(model)
+	}()
+
 	port := 8080
 	if p := Field(cfg, "Port"); p != nil {
 		port = AsInt(p)
@@ -1476,6 +1487,9 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 		res := sky_call(app.init, req)
 		model = tupleFirst(res)
 		cmd = tupleSecond(res)
+		// Register model types for gob encoding so DB-backed
+		// session stores can decode them on future Get calls.
+		gobRegisterAll(model)
 		sess = &liveSession{
 			sseCh:     make(chan string, 16),
 			cancelSub: make(chan struct{}),
