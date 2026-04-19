@@ -1275,12 +1275,8 @@ generateUnionForDep modPrefix (typeName, Can.Union _vars ctors _numAlts opts) =
                    ++ "}" ]
   where
     -- T1: dep ctor params typed from declared union's arg types.
-    ctorArgGoTypeDep i argTys
-        | i < length argTys =
-            let ty = argTys !! i
-                goTy = safeReturnType ty
-            in if goTy == "any" then "any" else goTy
-        | otherwise = "any"
+    -- All dep ctor params are `any` until monomorphised codegen.
+    ctorArgGoTypeDep _ _ = "any"
 
 
 -- | Emit a dep module's type alias. Record aliases become Go named structs
@@ -1592,12 +1588,10 @@ generateUnionTypes canMod =
     -- T1: ctor params are typed from the union's declared arg types,
     -- degrading to `any` for polymorphic TVars (T4 territory). Call
     -- sites coerce via the VarCtor branch of exprToGo Can.Call.
-    ctorArgGoType i argTys
-        | i < length argTys =
-            let ty = argTys !! i
-                goTy = safeReturnType ty
-            in if goTy == "any" then "any" else stripLocalPrefix goTy
-        | otherwise = "any"
+    -- All ctor params are `any` until monomorphised codegen lands.
+    -- Ctors are called from untyped expression contexts (exprToGo
+    -- emits `any`-typed values), so typed params cause mismatches.
+    ctorArgGoType _ _ = "any"
 
     hasTVar :: T.Type -> Bool
     hasTVar t = case t of
