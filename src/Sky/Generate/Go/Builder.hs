@@ -111,7 +111,13 @@ renderTypeDef name def = case def of
         ["type " ++ name ++ " = " ++ target]
 
     GoEnumDef values ->
-        ["type " ++ name ++ " int", "", "const ("]
+        -- `type X = int` (alias, not a distinct type) so values
+        -- flowing through `any` and then type-asserted to X succeed
+        -- — the runtime boxes plain `int` for all integer ADT tags,
+        -- and Go requires the runtime and static types to match
+        -- exactly for `.(T)` unless T is an interface. Alias makes
+        -- int and X the same static type.
+        ["type " ++ name ++ " = int", "", "const ("]
         ++ zipWith (\v i -> if i == 0 then "\t" ++ v ++ " " ++ name ++ " = iota" else "\t" ++ v)
             values [0::Int ..]
         ++ [")"]

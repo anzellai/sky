@@ -75,5 +75,11 @@ spec = do
                 -- because the user calls `R 99 "hi" True` expecting
                 -- beta=99 but would receive alpha=99 (int→string cast
                 -- panic).
-                let ctorOrder = "Beta: rt.CoerceInt(p0), Alpha: rt.CoerceString(p1), Gamma: rt.CoerceBool(p2)"
-                (ctorOrder `isInfixOf` goSrc) `shouldBe` True
+                -- With typed-codegen, the ctor params are concretely
+                -- typed (int/string/bool) so rt.CoerceX isn't needed;
+                -- accept either the coerced or raw form, but still
+                -- assert the FIELD ORDER is Beta→Alpha→Gamma.
+                let ctorTyped = "Beta: p0, Alpha: p1, Gamma: p2"
+                    ctorCoerced = "Beta: rt.CoerceInt(p0), Alpha: rt.CoerceString(p1), Gamma: rt.CoerceBool(p2)"
+                ((ctorTyped `isInfixOf` goSrc) || (ctorCoerced `isInfixOf` goSrc))
+                    `shouldBe` True

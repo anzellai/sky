@@ -2143,7 +2143,13 @@ func skyMaybeNothing() any {
 //   6=PermissionDenied, 7=InvalidInput, 8=Conflict, 9=Unavailable,
 //   10=Unexpected
 func errorKindAdt(tag int, name string) any {
-	return skyErrorAdt{Tag: tag, SkyName: name, Fields: []any{}}
+	// Typed codegen maps Sky's pure-enum `ErrorKind` to a Go `int`
+	// (via iota). We return the raw tag so `AdtField(err, 0)` yields
+	// an int that type-asserts to `Sky_Core_Error_ErrorKind` without
+	// panicking. Name is retained in telemetry via skyErrorAdt.Fields
+	// reconstruction where needed.
+	_ = name
+	return tag
 }
 
 func makeError(kindTag int, kindName, msg string) any {
@@ -3017,6 +3023,34 @@ func anyTaskInvoke(task any) SkyResult[any, any] {
 			return res
 		}
 		return Ok[any, any](r)
+	}
+	// Typed codegen may produce `SkyTask[E, A]` with concrete E/A that
+	// Go's type switch can't case on generically. Reflect into the
+	// task: if it's a `func() SkyResult[E, A]`, call it and convert
+	// the result to SkyResult[any, any] via the Tag/OkValue/ErrValue
+	// field extraction pattern used elsewhere in this file.
+	rv := reflect.ValueOf(task)
+	if rv.IsValid() && rv.Kind() == reflect.Func && rv.Type().NumIn() == 0 && rv.Type().NumOut() == 1 {
+		out := rv.Call(nil)
+		if len(out) == 1 {
+			resv := out[0]
+			if resv.Kind() == reflect.Struct {
+				tagF := resv.FieldByName("Tag")
+				okF := resv.FieldByName("OkValue")
+				errF := resv.FieldByName("ErrValue")
+				if tagF.IsValid() && okF.IsValid() && errF.IsValid() {
+					return SkyResult[any, any]{
+						Tag:      int(tagF.Int()),
+						OkValue:  okF.Interface(),
+						ErrValue: errF.Interface(),
+					}
+				}
+			}
+			if res, ok := resv.Interface().(SkyResult[any, any]); ok {
+				return res
+			}
+			return Ok[any, any](resv.Interface())
+		}
 	}
 	// Already-resolved value (rare): treat as Ok.
 	if res, ok := task.(SkyResult[any, any]); ok {

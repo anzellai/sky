@@ -44,7 +44,7 @@ createComment ideaId authorId content =
                     Ok ()
 
 
-getComments : String -> Result Error List (Dict String String)
+getComments : String -> Result Error (List (Dict String String))
 getComments ideaId =
     Db.query
         "SELECT c.id, c.content, c.created_at, u.username as author_name FROM comments c LEFT JOIN users u ON c.author_id = u.id WHERE c.idea_id = ? ORDER BY c.created_at ASC"

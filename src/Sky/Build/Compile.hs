@@ -4390,9 +4390,10 @@ solvedTypeToGo ty = case ty of
     -- Container types: emit concrete Go generic instantiations.
     -- The body codegen must produce matching types (e.g. Nothing[T]()
     -- not Nothing[any]()). Monomorphisation ensures this.
-    T.TType _ "List" [elem] ->
-        let elemGo = solvedTypeToGo elem
-        in if elemGo == "any" then "[]any" else "[]" ++ elemGo
+    -- Lists stay `[]any` universally because the runtime always
+    -- produces `[]any` for Sky list values — a typed `[]map[string]
+    -- string` field would fail the `any(v).(...)` type assertion at
+    -- the record-constructor call site with no conversion path.
     T.TType _ "List" _ -> "[]any"
     T.TType _ "Cmd" _ -> "rt.SkyCmd"
     T.TType _ "Sub" _ -> "rt.SkySub"
@@ -4405,8 +4406,9 @@ solvedTypeToGo ty = case ty of
     T.TType _ "Task" [e, a] ->
         "rt.SkyTask[" ++ solvedTypeToGo e ++ ", " ++ solvedTypeToGo a ++ "]"
     T.TType _ "Task" _ -> "rt.SkyTask[any, any]"
-    T.TType _ "Dict" [_, v] ->
-        "map[string]" ++ solvedTypeToGo v
+    -- Dict values stay `any` for the same reason List elements do:
+    -- the runtime represents all Dict v-positions as any, so a typed
+    -- value Go type would fail type assertions at the boundary.
     T.TType _ "Dict" _ -> "map[string]any"
     T.TType _ "Set" _ -> "map[any]bool"
     T.TType home name _ ->

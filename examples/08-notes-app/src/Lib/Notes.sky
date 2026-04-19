@@ -30,7 +30,7 @@ deleteNote noteId userId =
 
 -- getNotes : Result Error (List Row). DB errors bubble; the caller
 -- can render a "failed to load notes" page rather than showing empty.
-getNotes : String -> Result Error List (Dict String String)
+getNotes : String -> Result Error (List (Dict String String))
 getNotes userId =
     Db.query
         "SELECT id, title, content, created_at, updated_at FROM notes WHERE user_id = ? ORDER BY updated_at DESC"
@@ -39,7 +39,7 @@ getNotes userId =
 
 -- getNote : Result Error (Maybe Row). Outer for DB failure, inner for
 -- not-found (a normal state, not an error).
-getNote : String -> String -> Result Error Maybe (Dict String String)
+getNote : String -> String -> Result Error (Maybe (Dict String String))
 getNote noteId userId =
     case Db.query
              "SELECT id, title, content, created_at, updated_at FROM notes WHERE id = ? AND user_id = ? LIMIT 1"

@@ -29,7 +29,7 @@ getInt field row =
             0
 
         else
-            val |> String.toInt |> Result.withDefault 0
+            val |> String.toInt |> Maybe.withDefault 0
 
 
 getBool field row =
