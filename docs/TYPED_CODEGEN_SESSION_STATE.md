@@ -48,6 +48,7 @@ Commits on `feat/typed-codegen`:
 11. `1b61002` — cross-module HM scaffolding (`constrainModuleWithExternals` + `buildCrossModuleExternals`)
 12. `4f960fd` — **enabled** cross-module HM with home fixup: `buildCrossModuleExternalsWithMods` walks all deps to build a global type-name → home map, then `fixupHomes` rewrites empty-home nominal refs in each external annotation (fixes the Chess.Ai-uses-`Model`-without-importing-State pattern). Filter ensures externals only cross for names actually DECLARED in their module (not imported constructors in the solver env).
 13. `6acbb93` — pass-2 dep re-solve with externals: deps that pass-1 failed (e.g. Chess.Move) now succeed because imported helpers' concrete types disambiguate their internal calls. -5 any sigs.
+14. `fce64cc` — **formatter**: multi-line record types with leading commas at the alias body indent (>1 field always breaks). Fixes sky-stdlib/Sky/Test.sky's `Suite String List Test` (parsed as 3-arg ctor, 2 actual uses) to `Suite String (List Test)`.
 
 ## Runtime safety: all 9 live servers return HTTP 200
 
