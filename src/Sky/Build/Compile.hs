@@ -285,6 +285,7 @@ continueCompile config _entryPath outDir moduleOrder srcHash = do
                         | (typeName, union) <- Map.toList (Can._unions depMod)
                         ]
                     , Canonicalise._dep_aliases = Map.keys (Can._aliases depMod)
+                    , Canonicalise._dep_aliasDefs = Can._aliases depMod
                     , Canonicalise._dep_values = Set.toList (collectDeclNames (Can._decls depMod))
                     , Canonicalise._dep_exports = Can._exports depMod
                     })
@@ -302,11 +303,31 @@ continueCompile config _entryPath outDir moduleOrder srcHash = do
         -- If any dep failed to canonicalise, fail the build with the first
         -- error so users see actionable messages (e.g. ambiguous imports)
         -- rather than a downstream "undefined" Go error.
+        -- Re-build depInfoMap from pass 2 results so cross-module alias
+        -- bodies carry the correct home resolutions (pass 1 canonicalises
+        -- with empty deps, so imports that expose types from OTHER dep
+        -- modules resolve with home="" — wrong). Pass 2 has all imports
+        -- visible and produces the correctly-homed bodies. Entry-module
+        -- canonicalisation uses this rebuilt map for alias expansion.
+        let depInfoMap2 = Map.fromList
+                [ (modName, Canonicalise.DepInfo
+                    { Canonicalise._dep_name = Can._name depMod
+                    , Canonicalise._dep_unions =
+                        [ (typeName, Can._u_alts union)
+                        | (typeName, union) <- Map.toList (Can._unions depMod)
+                        ]
+                    , Canonicalise._dep_aliases = Map.keys (Can._aliases depMod)
+                    , Canonicalise._dep_aliasDefs = Can._aliases depMod
+                    , Canonicalise._dep_values = Set.toList (collectDeclNames (Can._decls depMod))
+                    , Canonicalise._dep_exports = Can._exports depMod
+                    })
+                | (modName, depMod) <- validDeps
+                ]
         case depErrors of
          ((n, err):_) ->
             return (Left $ "Canonicalise error in " ++ n ++ ":\n" ++ err)
          [] ->
-          case Canonicalise.canonicaliseWithDeps depInfoMap entrySrcMod of
+          case Canonicalise.canonicaliseWithDeps depInfoMap2 entrySrcMod of
            Left err -> return (Left $ "Canonicalise error: " ++ err)
            Right canMod -> do
             putStrLn "   Names resolved"
@@ -1021,6 +1042,7 @@ typecheckWorkspace config entryPath = do
                     | (typeName, u) <- Map.toList (Can._unions depMod)
                     ]
                 , Canonicalise._dep_aliases = Map.keys (Can._aliases depMod)
+                , Canonicalise._dep_aliasDefs = Can._aliases depMod
                 , Canonicalise._dep_values = Set.toList (collectDeclNames (Can._decls depMod))
                 , Canonicalise._dep_exports = Can._exports depMod
                 })
@@ -2018,8 +2040,47 @@ safeReturnType t = case t of
             _     -> case runtimeTyped of
                 Just goTy -> goTy
                 Nothing   -> if isRuntimeOnly then "any" else base
-    T.TAlias _ _ _ (T.Filled inner)  -> safeReturnType inner
-    T.TAlias _ _ _ (T.Hoisted inner) -> safeReturnType inner
+    -- TAlias emitted by the canonicaliser's alias-expansion pass.
+    -- Resolve using the same record-alias / runtime-type lookup as
+    -- TType so `Profile` → `Main_Profile_R` instead of degenerating
+    -- to `any` via the inner TRecord. Fall through to inner only
+    -- when the alias name isn't registered anywhere.
+    T.TAlias home name _ aliasType ->
+        let modStr = ModuleName.toString home
+            prefix = if null modStr || modStr == "Main"
+                       then ""
+                       else map (\c -> if c == '.' then '_' else c) modStr ++ "_"
+            base = prefix ++ name
+            env = getCgEnv
+            allAliases = Rec._cg_recordAliases env
+            qualifiedCandidates =
+                [ p ++ "_" ++ name
+                | a <- Set.toList allAliases
+                , '_' `elem` a
+                , let p = reverse (drop 1 (dropWhile (/= '_') (reverse a)))
+                , not (null p)
+                ]
+            candidates = if null prefix
+                           then qualifiedCandidates ++ [name]
+                           else base : qualifiedCandidates ++ [name]
+            matches = [ c | c <- candidates, Set.member c allAliases ]
+            isRuntimeOnly = name `elem` runtimeOnlyTypes
+            runtimeTyped = lookup name runtimeTypedMap
+            innerType = case aliasType of
+                T.Filled  inner -> inner
+                T.Hoisted inner -> inner
+        in case matches of
+            (m:_) -> m ++ "_R"
+            _     -> case runtimeTyped of
+                Just goTy -> goTy
+                Nothing
+                    | isRuntimeOnly -> "any"
+                    -- Primitives / containers live inside the alias body
+                    -- (e.g. `type alias Id = String`). Inline them.
+                    | otherwise     -> case innerType of
+                        T.TType _ _ _ -> safeReturnType innerType
+                        T.TRecord{}   -> if null base then "any" else base
+                        _             -> safeReturnType innerType
     _ -> "any"
 
 
@@ -2158,12 +2219,20 @@ safeReturnTypeWith recAliases = go
                                then qualifiedCandidates ++ [name]
                                else base : qualifiedCandidates ++ [name]
                 matches = [ c | c <- candidates, Set.member c recAliases ]
+                isRuntimeOnly = name `elem` runtimeOnlyTypes
+                runtimeTyped = lookup name runtimeTypedMap
                 inner = case aliasType of
                     T.Filled i  -> i
                     T.Hoisted i -> i
             in case matches of
                 (m:_) -> m ++ "_R"
-                _     -> go inner
+                _     -> case runtimeTyped of
+                    Just goTy -> goTy
+                    Nothing
+                        | isRuntimeOnly -> "any"
+                        | otherwise     -> case inner of
+                            T.TRecord{} -> if null base then "any" else base
+                            _           -> go inner
         _ -> "any"
 
 
@@ -2326,8 +2395,36 @@ typeStrWithAliases recAliases tvarMap ty = case ty of
             _     -> case lookup name runtimeTypedMap of
                 Just goTy -> goTy
                 Nothing   -> if isRuntimeOnly then "any" else base
-    T.TAlias _ _ _ (T.Filled inner)  -> go inner
-    T.TAlias _ _ _ (T.Hoisted inner) -> go inner
+    T.TAlias home name _ aliasType ->
+        let modStr = ModuleName.toString home
+            prefix = if null modStr || modStr == "Main"
+                       then ""
+                       else map (\c -> if c == '.' then '_' else c) modStr ++ "_"
+            base = prefix ++ name
+            qualifiedCandidates =
+                [ p ++ "_" ++ name
+                | a <- Set.toList recAliases
+                , '_' `elem` a
+                , let p = reverse (drop 1 (dropWhile (/= '_') (reverse a)))
+                , not (null p)
+                ]
+            candidates = if null prefix
+                           then qualifiedCandidates ++ [name]
+                           else base : qualifiedCandidates ++ [name]
+            matches = [ c | c <- candidates, Set.member c recAliases ]
+            isRuntimeOnly = name `elem` runtimeOnlyTypes
+            inner = case aliasType of
+                T.Filled  i -> i
+                T.Hoisted i -> i
+        in case matches of
+            (m:_) -> m ++ "_R"
+            _     -> case lookup name runtimeTypedMap of
+                Just goTy -> goTy
+                Nothing
+                    | isRuntimeOnly -> "any"
+                    | otherwise     -> case inner of
+                        T.TRecord{} -> if null base then "any" else base
+                        _           -> go inner
     _ -> safeReturnTypePure ty
   where
     go = typeStrWithAliases recAliases tvarMap

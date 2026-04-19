@@ -139,14 +139,14 @@ updateGameStatus gameId status result =
         [ status, result, gameId ]
 
 
-getGames : String -> Result Error List Dict String String
+getGames : String -> Result Error List (Dict String String)
 getGames playerName =
     query
         "SELECT * FROM games WHERE player_name = ? ORDER BY created_at DESC LIMIT 20"
         [playerName]
 
 
-getGameMoves : String -> Result Error List Dict String String
+getGameMoves : String -> Result Error List (Dict String String)
 getGameMoves gameId =
     query
         "SELECT * FROM moves WHERE game_id = ? ORDER BY move_number ASC"
@@ -155,7 +155,7 @@ getGameMoves gameId =
 
 -- getGame : Result Error (Maybe Row). Outer Result = infra failure;
 -- inner Maybe = found/not-found which is normal.
-getGame : String -> Result Error Maybe Dict String String
+getGame : String -> Result Error Maybe (Dict String String)
 getGame gameId =
     case query "SELECT * FROM games WHERE id = ? LIMIT 1" [gameId] of
 

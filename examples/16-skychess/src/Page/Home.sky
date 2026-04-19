@@ -83,7 +83,7 @@ viewStats model =
                 ]
 
 
-countByResult : String -> List Dict String String -> Int
+countByResult : String -> List (Dict String String) -> Int
 countByResult result games =
     List.length (List.filter (\g -> Games.getField "result" g == result) games)
 

@@ -141,18 +141,40 @@ constrain counter env (A.At region expr) expected = case expr of
     Can.Update _ _ _ -> return T.CTrue
 
     Can.Record fields -> do
-        -- Constrain each field's value expression. We don't yet emit a
-        -- TRecord constraint against `expected` because annotation
-        -- references like `: Profile` canonicalise to a nominal TType
-        -- rather than a TAlias/TRecord, and the unifier can't resolve
-        -- TRecord ↔ TType without alias expansion (TODO in the
-        -- canonicaliser). Constraining fields alone still types each
-        -- value expression and is safe everywhere.
-        fieldCons <- mapM (\(_, expr) -> do
-            fname <- freshName counter "_rfld"
-            constrain counter env expr (T.NoExpectation (T.TVar fname)))
+        -- Build a TRecord actualType with fresh TVars per field, constrain
+        -- each field expression to its TVar, then emit CEqual so the solver
+        -- unifies the record literal with whatever the expected type is.
+        -- Thanks to the alias-expansion pass in canonicaliser, a reference
+        -- like `: Profile` on an annotation appears as TAlias, and the
+        -- solver unfolds it to the underlying TRecord for unification.
+        --
+        -- Skip the CEqual when expected is a bare nominal TType (a union
+        -- or non-alias type): unifying TRecord with TType would fail with
+        -- no benefit, so we fall back to per-field constraints only.
+        fieldPairs <- mapM (\(fname, expr) -> do
+            tvName <- freshName counter ("_rfld_" ++ fname)
+            let tv = T.TVar tvName
+            fieldCon <- constrain counter env expr (T.NoExpectation tv)
+            return (fname, tv, fieldCon))
             (Map.toList fields)
-        return $ T.CAnd fieldCons
+        let fieldMap = Map.fromList
+                [ (n, T.FieldType i tv)
+                | (i, (n, tv, _)) <- zip [0..] fieldPairs
+                ]
+            recType = T.TRecord fieldMap Nothing
+            fieldCons = [ c | (_, _, c) <- fieldPairs ]
+            expectedIsUnifiable = case expected of
+                T.NoExpectation t         -> isRecordUnifiable t
+                T.FromContext _ _ t       -> isRecordUnifiable t
+                T.FromAnnotation _ _ _ t  -> isRecordUnifiable t
+            isRecordUnifiable ty = case ty of
+                T.TVar{}    -> True
+                T.TRecord{} -> True
+                T.TAlias _ _ _ _ -> True
+                _           -> False
+        if expectedIsUnifiable
+            then return $ T.CAnd (fieldCons ++ [T.CEqual region T.CRecord recType expected])
+            else return $ T.CAnd fieldCons
 
     Can.Tuple a b rest -> do
         aName <- freshName counter "_t0"
@@ -527,6 +549,12 @@ substTypeVars subst ct = case ct of
     Can.TTuple a b cs -> T.TTuple (substTypeVars subst a) (substTypeVars subst b)
                                   (map (substTypeVars subst) cs)
     Can.TRecord _ _ -> T.TVar "_rec"  -- records at pattern level not supported
+    Can.TAlias h n pairs aliasType ->
+        T.TAlias h n
+            [(k, substTypeVars subst t) | (k, t) <- pairs]
+            (case aliasType of
+                Can.Filled  inner -> T.Filled  (substTypeVars subst inner)
+                Can.Hoisted inner -> T.Hoisted (substTypeVars subst inner))
 
 
 -- ═══════════════════════════════════════════════════════════

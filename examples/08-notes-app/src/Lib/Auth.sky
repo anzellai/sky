@@ -131,7 +131,7 @@ createSession userId =
 
 -- getSessionUser : Result Error (Maybe User). Outer Result is for
 -- DB failures; inner Maybe is "found / not found" which is normal.
-getSessionUser : String -> Result Error Maybe Dict String String
+getSessionUser : String -> Result Error Maybe (Dict String String)
 getSessionUser sessionToken =
     case Db.query
              "SELECT u.id, u.email, u.created_at FROM users u INNER JOIN sessions s ON CAST(u.id AS TEXT) = s.user_id WHERE s.token = ? LIMIT 1"

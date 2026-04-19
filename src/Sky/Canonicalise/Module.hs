@@ -28,6 +28,7 @@ data DepInfo = DepInfo
     { _dep_name    :: !ModuleName.Canonical
     , _dep_unions  :: ![(String, [Can.Ctor])]   -- (type name, constructors)
     , _dep_aliases :: ![String]                 -- exported alias names
+    , _dep_aliasDefs :: !(Map.Map String Can.Alias)  -- alias bodies (for type-expansion)
     , _dep_values  :: ![String]                 -- exported top-level value names
     , _dep_exports :: !Can.Exports              -- dep's own exposing clause (P2)
     }
@@ -45,6 +46,7 @@ filterDepByExports d = case _dep_exports d of
             isExposed n = Map.member n keep
         in d { _dep_unions  = filter (isExposed . fst) (_dep_unions d)
              , _dep_aliases = filter isExposed (_dep_aliases d)
+             , _dep_aliasDefs = Map.filterWithKey (\k _ -> isExposed k) (_dep_aliasDefs d)
              , _dep_values  = filter isExposed (_dep_values d)
              }
 
@@ -131,13 +133,20 @@ canonicaliseWithDeps deps srcMod =
         (err:_, _, _) -> Left err
         (_, Just err, _) -> Left err
         (_, _, err:_) -> Left err
-        _ -> Right $ Can.Module
+        _ -> Right $ expandModuleAliases depAliasMap Can.Module
             { Can._name    = modName
             , Can._exports = exports
             , Can._decls   = decls
             , Can._unions  = unions
             , Can._aliases = aliases
             }
+  where
+    -- Build a cross-module alias map from deps so that when a value
+    -- annotation references an imported record alias (e.g. `State.Model`
+    -- or via `exposing (..)`), we can still expand TType → TAlias at
+    -- canonicalisation time. Only exports-accessible aliases are
+    -- considered — private aliases stay opaque.
+    depAliasMap = collectDepAliases deps
 
 
 -- | Build a map from type-name → home module. Combines:
@@ -1028,6 +1037,114 @@ canonicaliseAliases tmap env aliases =
             vars = map (\(A.At _ v) -> v) (Src._aliasVars a)
             body = case Src._aliasType a of A.At _ t -> CanType.canonicaliseTypeAnnotationWith tmap home t
         in (name, Can.Alias vars body)
+
+
+-- ═══════════════════════════════════════════════════════════
+-- ALIAS EXPANSION (post-canonicalisation)
+-- ═══════════════════════════════════════════════════════════
+--
+-- Type annotations like `update : Msg -> Model -> (Model, Cmd Msg)`
+-- canonicalise the `Model` reference into `Can.TType h "Model" []`,
+-- which is a nominal reference. For HM unification to propagate
+-- record-field types from Model into callers (e.g. Live.app's
+-- model param), the annotation must carry the alias body so the
+-- solver can unfold it on unification.
+--
+-- We post-process the canonical module here: walk every type that
+-- appears in decls/unions/aliases and rewrite `TType h n []` to
+-- `TAlias h n [] (Filled body)` whenever `n` is a known 0-arg
+-- alias. The rewrite is recursive (the alias body itself gets
+-- walked) with a visited-set guard so self-referential aliases
+-- don't cause non-termination.
+--
+-- Parameterised aliases (`type alias Foo a = { x : a }`) are NOT
+-- expanded — applying them requires type-var substitution that we
+-- can add later. Treating them as nominal is correct, just
+-- pessimistic for inference.
+expandModuleAliases :: Map.Map String Can.Alias -> Can.Module -> Can.Module
+expandModuleAliases depAliases m =
+    let localAliases = Can._aliases m
+        -- Merge local and dep aliases; local wins on name collision (unlikely).
+        allAliases = Map.union localAliases depAliases
+        expand = expandTypeAliases allAliases Set.empty
+    in m
+        { Can._decls   = mapDeclsTypes expand (Can._decls m)
+        , Can._unions  = Map.map (mapUnionTypes expand) (Can._unions m)
+        , Can._aliases = Map.map (mapAliasBody expand) (Can._aliases m)
+        }
+
+
+-- | Expand nominal type refs into TAlias nodes when they match an
+-- alias in the alias map. Carries a visited-set so a recursive
+-- alias (unusual but possible) can't loop.
+expandTypeAliases :: Map.Map String Can.Alias -> Set.Set String -> Can.Type -> Can.Type
+expandTypeAliases aliasMap visited ty = case ty of
+    Can.TType home name []
+        | not (Set.member name visited)
+        , Just (Can.Alias vars body) <- Map.lookup name aliasMap
+        , null vars ->
+            let body' = expandTypeAliases aliasMap (Set.insert name visited) body
+            in Can.TAlias home name [] (Can.Filled body')
+    Can.TType home name args ->
+        Can.TType home name (map recur args)
+    Can.TLambda a b ->
+        Can.TLambda (recur a) (recur b)
+    Can.TTuple a b rest ->
+        Can.TTuple (recur a) (recur b) (map recur rest)
+    Can.TRecord fields mExt ->
+        Can.TRecord
+            (Map.map (\(Can.FieldType i t) -> Can.FieldType i (recur t)) fields)
+            mExt
+    Can.TAlias home name pairs aliasType ->
+        Can.TAlias home name
+            [ (n, recur t) | (n, t) <- pairs ]
+            (case aliasType of
+                Can.Filled  inner -> Can.Filled (recur inner)
+                Can.Hoisted inner -> Can.Hoisted (recur inner))
+    Can.TUnit -> Can.TUnit
+    Can.TVar n -> Can.TVar n
+  where
+    recur = expandTypeAliases aliasMap visited
+
+
+mapDeclsTypes :: (Can.Type -> Can.Type) -> Can.Decls -> Can.Decls
+mapDeclsTypes f decls = case decls of
+    Can.SaveTheEnvironment -> Can.SaveTheEnvironment
+    Can.Declare d rest -> Can.Declare (mapDefTypes f d) (mapDeclsTypes f rest)
+    Can.DeclareRec d ds rest ->
+        Can.DeclareRec (mapDefTypes f d) (map (mapDefTypes f) ds) (mapDeclsTypes f rest)
+
+
+mapDefTypes :: (Can.Type -> Can.Type) -> Can.Def -> Can.Def
+mapDefTypes f def = case def of
+    Can.TypedDef name freeVars typedPats body retType ->
+        Can.TypedDef name freeVars
+            [ (p, f t) | (p, t) <- typedPats ]
+            body
+            (f retType)
+    -- Def bodies contain no annotations, so nothing to transform at
+    -- the type level. Their annotations come via TypedDef siblings.
+    other -> other
+
+
+mapUnionTypes :: (Can.Type -> Can.Type) -> Can.Union -> Can.Union
+mapUnionTypes f u = u
+    { Can._u_alts = map (\(Can.Ctor n idx arity argTypes) ->
+        Can.Ctor n idx arity (map f argTypes)) (Can._u_alts u)
+    }
+
+
+mapAliasBody :: (Can.Type -> Can.Type) -> Can.Alias -> Can.Alias
+mapAliasBody f (Can.Alias vars body) = Can.Alias vars (f body)
+
+
+-- | Collect the canonicalised alias bodies from dep modules so a
+-- value annotation can refer to an imported record alias and still
+-- have its body expanded for HM unification. Local aliases win on
+-- collision (unlikely in practice).
+collectDepAliases :: Map.Map String DepInfo -> Map.Map String Can.Alias
+collectDepAliases deps =
+    Map.unions [ _dep_aliasDefs d | d <- Map.elems deps ]
 
 
 -- ═══════════════════════════════════════════════════════════

@@ -109,7 +109,7 @@ authenticateUser email password =
 -- getUserById : Result Error (Maybe User). The outer Result is for
 -- DB failures; the inner Maybe is "found / not found" which is normal
 -- and not an error.
-getUserById : String -> Result Error Maybe Dict String String
+getUserById : String -> Result Error Maybe (Dict String String)
 getUserById userId =
     case Db.query
              "SELECT id, username, email FROM users WHERE id = ? LIMIT 1"
