@@ -141,9 +141,13 @@ constrain counter env (A.At region expr) expected = case expr of
     Can.Update _ _ _ -> return T.CTrue
 
     Can.Record fields -> do
-        -- Constrain each field's value expression. We don't know the
-        -- target record type here, but constraining the values lets
-        -- the solver propagate types from field expressions upward.
+        -- Constrain each field's value expression. We don't yet emit a
+        -- TRecord constraint against `expected` because annotation
+        -- references like `: Profile` canonicalise to a nominal TType
+        -- rather than a TAlias/TRecord, and the unifier can't resolve
+        -- TRecord ↔ TType without alias expansion (TODO in the
+        -- canonicaliser). Constraining fields alone still types each
+        -- value expression and is safe everywhere.
         fieldCons <- mapM (\(_, expr) -> do
             fname <- freshName counter "_rfld"
             constrain counter env expr (T.NoExpectation (T.TVar fname)))
@@ -789,6 +793,409 @@ lookupKernelType modName funcName = case (modName, funcName) of
         Just $ T.Forall ["msg"] (T.TLambda intType (T.TLambda (T.TVar "msg") subType))
     ("Time", "every") ->
         Just $ T.Forall ["msg"] (T.TLambda intType (T.TLambda (T.TVar "msg") subType))
+    -- More Task kernel functions
+    ("Task", "perform") ->
+        Just $ T.Forall ["e", "a"]
+            (T.TLambda
+                (T.TType ModuleName.task "Task" [T.TVar "e", T.TVar "a"])
+                (T.TType ModuleName.result_ "Result" [T.TVar "e", T.TVar "a"]))
+    ("Task", "sequence") ->
+        Just $ T.Forall ["e", "a"]
+            (T.TLambda
+                (T.TType ModuleName.list "List"
+                    [T.TType ModuleName.task "Task" [T.TVar "e", T.TVar "a"]])
+                (T.TType ModuleName.task "Task"
+                    [T.TVar "e", T.TType ModuleName.list "List" [T.TVar "a"]]))
+    ("Task", "parallel") ->
+        Just $ T.Forall ["e", "a"]
+            (T.TLambda
+                (T.TType ModuleName.list "List"
+                    [T.TType ModuleName.task "Task" [T.TVar "e", T.TVar "a"]])
+                (T.TType ModuleName.task "Task"
+                    [T.TVar "e", T.TType ModuleName.list "List" [T.TVar "a"]]))
+    ("Task", "lazy") ->
+        Just $ T.Forall ["e", "a"]
+            (T.TLambda
+                (T.TLambda T.TUnit (T.TVar "a"))
+                (T.TType ModuleName.task "Task" [T.TVar "e", T.TVar "a"]))
+    -- Result kernel
+    ("Result", "traverse") ->
+        Just $ T.Forall ["e", "a", "b"]
+            (T.TLambda (T.TLambda (T.TVar "a")
+                (T.TType ModuleName.result_ "Result" [T.TVar "e", T.TVar "b"]))
+                (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"])
+                    (T.TType ModuleName.result_ "Result"
+                        [T.TVar "e", T.TType ModuleName.list "List" [T.TVar "b"]])))
+    -- Maybe — more kernels
+    ("Maybe", "isJust") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TType ModuleName.maybe_ "Maybe" [T.TVar "a"]) boolType)
+    ("Maybe", "isNothing") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TType ModuleName.maybe_ "Maybe" [T.TVar "a"]) boolType)
+    -- List kernel functions
+    ("List", "head") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"])
+                (T.TType ModuleName.maybe_ "Maybe" [T.TVar "a"]))
+    ("List", "tail") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"])
+                (T.TType ModuleName.maybe_ "Maybe"
+                    [T.TType ModuleName.list "List" [T.TVar "a"]]))
+    ("List", "length") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"]) intType)
+    ("List", "isEmpty") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"]) boolType)
+    ("List", "reverse") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"])
+                (T.TType ModuleName.list "List" [T.TVar "a"]))
+    ("List", "take") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda intType
+                (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"])
+                    (T.TType ModuleName.list "List" [T.TVar "a"])))
+    ("List", "drop") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda intType
+                (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"])
+                    (T.TType ModuleName.list "List" [T.TVar "a"])))
+    ("List", "append") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"])
+                (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"])
+                    (T.TType ModuleName.list "List" [T.TVar "a"])))
+    ("List", "concat") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda
+                (T.TType ModuleName.list "List"
+                    [T.TType ModuleName.list "List" [T.TVar "a"]])
+                (T.TType ModuleName.list "List" [T.TVar "a"]))
+    ("List", "member") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TVar "a")
+                (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"]) boolType))
+    ("List", "any") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TLambda (T.TVar "a") boolType)
+                (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"]) boolType))
+    ("List", "all") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TLambda (T.TVar "a") boolType)
+                (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"]) boolType))
+    ("List", "indexedMap") ->
+        Just $ T.Forall ["a", "b"]
+            (T.TLambda
+                (T.TLambda intType (T.TLambda (T.TVar "a") (T.TVar "b")))
+                (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"])
+                    (T.TType ModuleName.list "List" [T.TVar "b"])))
+    ("List", "filterMap") ->
+        Just $ T.Forall ["a", "b"]
+            (T.TLambda
+                (T.TLambda (T.TVar "a")
+                    (T.TType ModuleName.maybe_ "Maybe" [T.TVar "b"]))
+                (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"])
+                    (T.TType ModuleName.list "List" [T.TVar "b"])))
+    ("List", "range") ->
+        Just $ T.Forall []
+            (T.TLambda intType
+                (T.TLambda intType
+                    (T.TType ModuleName.list "List" [intType])))
+    ("List", "foldr") ->
+        Just $ T.Forall ["a", "b"]
+            (T.TLambda
+                (T.TLambda (T.TVar "a") (T.TLambda (T.TVar "b") (T.TVar "b")))
+                (T.TLambda (T.TVar "b")
+                    (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"])
+                        (T.TVar "b"))))
+    ("List", "sum") ->
+        Just $ T.Forall []
+            (T.TLambda (T.TType ModuleName.list "List" [intType]) intType)
+    ("List", "product") ->
+        Just $ T.Forall []
+            (T.TLambda (T.TType ModuleName.list "List" [intType]) intType)
+    ("List", "sort") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"])
+                (T.TType ModuleName.list "List" [T.TVar "a"]))
+    ("List", "sortBy") ->
+        Just $ T.Forall ["a", "b"]
+            (T.TLambda (T.TLambda (T.TVar "a") (T.TVar "b"))
+                (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"])
+                    (T.TType ModuleName.list "List" [T.TVar "a"])))
+    ("List", "sortWith") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda
+                (T.TLambda (T.TVar "a") (T.TLambda (T.TVar "a") intType))
+                (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"])
+                    (T.TType ModuleName.list "List" [T.TVar "a"])))
+    ("List", "singleton") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TVar "a")
+                (T.TType ModuleName.list "List" [T.TVar "a"]))
+    ("List", "repeat") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda intType
+                (T.TLambda (T.TVar "a")
+                    (T.TType ModuleName.list "List" [T.TVar "a"])))
+    ("List", "zip") ->
+        Just $ T.Forall ["a", "b"]
+            (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"])
+                (T.TLambda (T.TType ModuleName.list "List" [T.TVar "b"])
+                    (T.TType ModuleName.list "List"
+                        [T.TTuple (T.TVar "a") (T.TVar "b") []])))
+    ("List", "unzip") ->
+        Just $ T.Forall ["a", "b"]
+            (T.TLambda
+                (T.TType ModuleName.list "List"
+                    [T.TTuple (T.TVar "a") (T.TVar "b") []])
+                (T.TTuple
+                    (T.TType ModuleName.list "List" [T.TVar "a"])
+                    (T.TType ModuleName.list "List" [T.TVar "b"])
+                    []))
+    ("List", "parallelMap") ->
+        Just $ T.Forall ["a", "b"]
+            (T.TLambda
+                (T.TLambda (T.TVar "a") (T.TVar "b"))
+                (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"])
+                    (T.TType ModuleName.list "List" [T.TVar "b"])))
+    -- Dict kernel functions (keys are always String in Sky's Dict)
+    ("Dict", "empty") ->
+        Just $ T.Forall ["k", "v"]
+            (T.TType ModuleName.dict "Dict" [T.TVar "k", T.TVar "v"])
+    ("Dict", "fromList") ->
+        Just $ T.Forall ["k", "v"]
+            (T.TLambda
+                (T.TType ModuleName.list "List"
+                    [T.TTuple (T.TVar "k") (T.TVar "v") []])
+                (T.TType ModuleName.dict "Dict" [T.TVar "k", T.TVar "v"]))
+    ("Dict", "toList") ->
+        Just $ T.Forall ["k", "v"]
+            (T.TLambda (T.TType ModuleName.dict "Dict" [T.TVar "k", T.TVar "v"])
+                (T.TType ModuleName.list "List"
+                    [T.TTuple (T.TVar "k") (T.TVar "v") []]))
+    ("Dict", "insert") ->
+        Just $ T.Forall ["k", "v"]
+            (T.TLambda (T.TVar "k")
+                (T.TLambda (T.TVar "v")
+                    (T.TLambda (T.TType ModuleName.dict "Dict" [T.TVar "k", T.TVar "v"])
+                        (T.TType ModuleName.dict "Dict" [T.TVar "k", T.TVar "v"]))))
+    ("Dict", "get") ->
+        Just $ T.Forall ["k", "v"]
+            (T.TLambda (T.TVar "k")
+                (T.TLambda (T.TType ModuleName.dict "Dict" [T.TVar "k", T.TVar "v"])
+                    (T.TType ModuleName.maybe_ "Maybe" [T.TVar "v"])))
+    ("Dict", "remove") ->
+        Just $ T.Forall ["k", "v"]
+            (T.TLambda (T.TVar "k")
+                (T.TLambda (T.TType ModuleName.dict "Dict" [T.TVar "k", T.TVar "v"])
+                    (T.TType ModuleName.dict "Dict" [T.TVar "k", T.TVar "v"])))
+    ("Dict", "member") ->
+        Just $ T.Forall ["k", "v"]
+            (T.TLambda (T.TVar "k")
+                (T.TLambda (T.TType ModuleName.dict "Dict" [T.TVar "k", T.TVar "v"]) boolType))
+    ("Dict", "size") ->
+        Just $ T.Forall ["k", "v"]
+            (T.TLambda (T.TType ModuleName.dict "Dict" [T.TVar "k", T.TVar "v"]) intType)
+    ("Dict", "isEmpty") ->
+        Just $ T.Forall ["k", "v"]
+            (T.TLambda (T.TType ModuleName.dict "Dict" [T.TVar "k", T.TVar "v"]) boolType)
+    ("Dict", "keys") ->
+        Just $ T.Forall ["k", "v"]
+            (T.TLambda (T.TType ModuleName.dict "Dict" [T.TVar "k", T.TVar "v"])
+                (T.TType ModuleName.list "List" [T.TVar "k"]))
+    ("Dict", "values") ->
+        Just $ T.Forall ["k", "v"]
+            (T.TLambda (T.TType ModuleName.dict "Dict" [T.TVar "k", T.TVar "v"])
+                (T.TType ModuleName.list "List" [T.TVar "v"]))
+    ("Dict", "map") ->
+        Just $ T.Forall ["k", "a", "b"]
+            (T.TLambda
+                (T.TLambda (T.TVar "k") (T.TLambda (T.TVar "a") (T.TVar "b")))
+                (T.TLambda (T.TType ModuleName.dict "Dict" [T.TVar "k", T.TVar "a"])
+                    (T.TType ModuleName.dict "Dict" [T.TVar "k", T.TVar "b"])))
+    ("Dict", "foldl") ->
+        Just $ T.Forall ["k", "a", "b"]
+            (T.TLambda
+                (T.TLambda (T.TVar "k")
+                    (T.TLambda (T.TVar "a") (T.TLambda (T.TVar "b") (T.TVar "b"))))
+                (T.TLambda (T.TVar "b")
+                    (T.TLambda (T.TType ModuleName.dict "Dict" [T.TVar "k", T.TVar "a"])
+                        (T.TVar "b"))))
+    ("Dict", "union") ->
+        Just $ T.Forall ["k", "v"]
+            (T.TLambda (T.TType ModuleName.dict "Dict" [T.TVar "k", T.TVar "v"])
+                (T.TLambda (T.TType ModuleName.dict "Dict" [T.TVar "k", T.TVar "v"])
+                    (T.TType ModuleName.dict "Dict" [T.TVar "k", T.TVar "v"])))
+    -- Set kernel functions
+    ("Set", "empty") ->
+        Just $ T.Forall ["a"] (T.TType ModuleName.set "Set" [T.TVar "a"])
+    ("Set", "insert") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TVar "a")
+                (T.TLambda (T.TType ModuleName.set "Set" [T.TVar "a"])
+                    (T.TType ModuleName.set "Set" [T.TVar "a"])))
+    ("Set", "member") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TVar "a")
+                (T.TLambda (T.TType ModuleName.set "Set" [T.TVar "a"]) boolType))
+    ("Set", "remove") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TVar "a")
+                (T.TLambda (T.TType ModuleName.set "Set" [T.TVar "a"])
+                    (T.TType ModuleName.set "Set" [T.TVar "a"])))
+    ("Set", "toList") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TType ModuleName.set "Set" [T.TVar "a"])
+                (T.TType ModuleName.list "List" [T.TVar "a"]))
+    ("Set", "fromList") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"])
+                (T.TType ModuleName.set "Set" [T.TVar "a"]))
+    ("Set", "size") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TType ModuleName.set "Set" [T.TVar "a"]) intType)
+    -- Os
+    ("Os", "args") ->
+        Just $ T.Forall []
+            (T.TLambda T.TUnit (T.TType ModuleName.list "List" [stringType]))
+    ("Os", "getenv") ->
+        Just $ T.Forall []
+            (T.TLambda stringType stringType)
+    ("Os", "exit") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda intType (T.TVar "a"))
+    ("Os", "getcwd") ->
+        Just $ T.Forall []
+            (T.TLambda T.TUnit stringType)
+    -- Time.sleep returns Task (used with Task.andThen in 18-job-queue).
+    -- Time.now / Time.unixMillis intentionally NOT registered here —
+    -- they're used as both Result and Task in different examples and
+    -- we don't want to pick one that breaks the other until the Sky
+    -- side unifies Task == Result.
+    ("Time", "sleep") ->
+        Just $ T.Forall ["e"]
+            (T.TLambda intType
+                (T.TType ModuleName.task "Task" [T.TVar "e", T.TUnit]))
+    -- Random — returns a Task in Sky stdlib
+    ("Random", "int") ->
+        Just $ T.Forall ["e"]
+            (T.TLambda intType
+                (T.TLambda intType
+                    (T.TType ModuleName.task "Task" [T.TVar "e", intType])))
+    ("Random", "float") ->
+        Just $ T.Forall ["e"]
+            (T.TLambda floatType
+                (T.TLambda floatType
+                    (T.TType ModuleName.task "Task" [T.TVar "e", floatType])))
+    -- Math
+    ("Math", "abs") ->
+        Just $ T.Forall [] (T.TLambda intType intType)
+    ("Math", "min") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TVar "a") (T.TLambda (T.TVar "a") (T.TVar "a")))
+    ("Math", "max") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TVar "a") (T.TLambda (T.TVar "a") (T.TVar "a")))
+    ("Math", "sqrt") ->
+        Just $ T.Forall [] (T.TLambda floatType floatType)
+    ("Math", "pow") ->
+        Just $ T.Forall [] (T.TLambda floatType (T.TLambda floatType floatType))
+    ("Math", "floor") ->
+        Just $ T.Forall [] (T.TLambda floatType intType)
+    ("Math", "ceil") ->
+        Just $ T.Forall [] (T.TLambda floatType intType)
+    ("Math", "round") ->
+        Just $ T.Forall [] (T.TLambda floatType intType)
+    ("Math", "pi") ->
+        Just $ T.Forall [] floatType
+    -- String — additional
+    ("String", "concat") ->
+        Just $ T.Forall []
+            (T.TLambda (T.TType ModuleName.list "List" [stringType]) stringType)
+    ("String", "words") ->
+        Just $ T.Forall []
+            (T.TLambda stringType (T.TType ModuleName.list "List" [stringType]))
+    ("String", "lines") ->
+        Just $ T.Forall []
+            (T.TLambda stringType (T.TType ModuleName.list "List" [stringType]))
+    ("String", "fromChar") ->
+        Just $ T.Forall [] (T.TLambda charType stringType)
+    ("String", "toList") ->
+        Just $ T.Forall []
+            (T.TLambda stringType (T.TType ModuleName.list "List" [charType]))
+    ("String", "fromList") ->
+        Just $ T.Forall []
+            (T.TLambda (T.TType ModuleName.list "List" [charType]) stringType)
+    ("String", "repeat") ->
+        Just $ T.Forall []
+            (T.TLambda intType (T.TLambda stringType stringType))
+    ("String", "padLeft") ->
+        Just $ T.Forall []
+            (T.TLambda intType (T.TLambda charType (T.TLambda stringType stringType)))
+    ("String", "padRight") ->
+        Just $ T.Forall []
+            (T.TLambda intType (T.TLambda charType (T.TLambda stringType stringType)))
+    -- Basics
+    ("Basics", "compare") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TVar "a")
+                (T.TLambda (T.TVar "a") intType))
+    ("Basics", "fst") ->
+        Just $ T.Forall ["a", "b"]
+            (T.TLambda (T.TTuple (T.TVar "a") (T.TVar "b") []) (T.TVar "a"))
+    ("Basics", "snd") ->
+        Just $ T.Forall ["a", "b"]
+            (T.TLambda (T.TTuple (T.TVar "a") (T.TVar "b") []) (T.TVar "b"))
+    ("Basics", "clamp") ->
+        Just $ T.Forall []
+            (T.TLambda intType
+                (T.TLambda intType
+                    (T.TLambda intType intType)))
+    ("Basics", "modBy") ->
+        Just $ T.Forall []
+            (T.TLambda intType (T.TLambda intType intType))
+    ("Basics", "toFloat") ->
+        Just $ T.Forall [] (T.TLambda intType floatType)
+    ("Basics", "round") ->
+        Just $ T.Forall [] (T.TLambda floatType intType)
+    ("Basics", "floor") ->
+        Just $ T.Forall [] (T.TLambda floatType intType)
+    ("Basics", "ceiling") ->
+        Just $ T.Forall [] (T.TLambda floatType intType)
+    ("Basics", "truncate") ->
+        Just $ T.Forall [] (T.TLambda floatType intType)
+    ("Basics", "identity") ->
+        Just $ T.Forall ["a"] (T.TLambda (T.TVar "a") (T.TVar "a"))
+    ("Basics", "errorToString") ->
+        Just $ T.Forall []
+            (T.TLambda (T.TType (ModuleName.Canonical "") "Error" []) stringType)
+    -- Log
+    ("Log", "printlnT") ->
+        Just $ T.Forall ["a", "e"]
+            (T.TLambda (T.TVar "a")
+                (T.TType ModuleName.task "Task" [T.TVar "e", T.TUnit]))
+    -- Slog — structured logging, first arg is a message, second is a list of
+    -- key-value pairs. We treat the second as List a for flexibility.
+    ("Slog", "info") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda stringType
+                (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"]) T.TUnit))
+    ("Slog", "warn") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda stringType
+                (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"]) T.TUnit))
+    ("Slog", "error") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda stringType
+                (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"]) T.TUnit))
+    ("Slog", "debug") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda stringType
+                (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"]) T.TUnit))
     _ -> Nothing
 
 
