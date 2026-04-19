@@ -2126,6 +2126,17 @@ safeReturnType t = case t of
                         T.TType _ _ _ -> safeReturnType innerType
                         T.TRecord{}   -> if null base then "any" else base
                         _             -> safeReturnType innerType
+    -- Bare TRecord with known fields: match against the codegen env's
+    -- record alias registry (field-set → alias name) and emit `_R`.
+    -- HM often collapses an alias reference down to its underlying
+    -- record (especially after row-polymorphic unification), and
+    -- without this path the type would degrade to `any`.
+    T.TRecord fields _ ->
+        let fieldNames = Map.keys fields
+            env = getCgEnv
+        in case Rec.lookupRecordAlias (Rec._cg_fieldIndex env) fieldNames of
+            Just aliasName -> aliasName ++ "_R"
+            Nothing -> "any"
     _ -> "any"
 
 
