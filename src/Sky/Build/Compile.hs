@@ -1980,6 +1980,8 @@ safeReturnType t = case t of
     -- `Dict String String` actually holds mixed-type values (e.g.
     -- SQL COUNT(*) columns), the annotation is wrong and needs
     -- fixing.
+    T.TType _ "Cmd"    _          -> "rt.SkyCmd"
+    T.TType _ "Sub"    _          -> "rt.SkySub"
     T.TType _ "List"   _          -> "[]any"
     T.TType _ "Dict"   _          -> "map[string]any"
     T.TType _ "Set"    _          -> "map[any]bool"
@@ -2116,6 +2118,8 @@ safeReturnTypeWith recAliases = go
         T.TType _ "Maybe"  [x]        -> "rt.SkyMaybe[" ++ go x ++ "]"
         T.TType _ "Task"   [e, a]     -> "rt.SkyTask[" ++ go e
                                          ++ ", " ++ go a ++ "]"
+        T.TType _ "Cmd"    _          -> "rt.SkyCmd"
+        T.TType _ "Sub"    _          -> "rt.SkySub"
         T.TType _ "List"   _          -> "[]any"
         T.TType _ "Dict"   _          -> "map[string]any"
         T.TType _ "Set"    _          -> "map[any]bool"
@@ -2286,6 +2290,9 @@ typeStrWithAliases recAliases tvarMap ty = case ty of
     T.TType _ "List" _ -> "[]any"
     T.TType _ "Dict" _ -> "map[string]any"
     T.TType _ "Set"  _ -> "map[any]bool"
+    -- Cmd/Sub: opaque Go types (ignore inner type param)
+    T.TType _ "Cmd" _ -> "rt.SkyCmd"
+    T.TType _ "Sub" _ -> "rt.SkySub"
     -- Primitives (must check before the user-type catch-all)
     T.TType _ "Int" []    -> "int"
     T.TType _ "Float" []  -> "float64"
@@ -2374,6 +2381,8 @@ safeReturnTypePure t = case t of
     T.TType _ "Maybe"  [x]        -> "rt.SkyMaybe[" ++ safeReturnTypePure x ++ "]"
     T.TType _ "Task"   [e, a]     -> "rt.SkyTask[" ++ safeReturnTypePure e
                                      ++ ", " ++ safeReturnTypePure a ++ "]"
+    T.TType _ "Cmd"    _          -> "rt.SkyCmd"
+    T.TType _ "Sub"    _          -> "rt.SkySub"
     T.TType _ "List"   _          -> "[]any"
     T.TType _ "Dict"   _          -> "map[string]any"
     T.TType _ "Set"    _          -> "map[any]bool"
@@ -4187,6 +4196,8 @@ solvedTypeToGo ty = case ty of
         let elemGo = solvedTypeToGo elem
         in if elemGo == "any" then "[]any" else "[]" ++ elemGo
     T.TType _ "List" _ -> "[]any"
+    T.TType _ "Cmd" _ -> "rt.SkyCmd"
+    T.TType _ "Sub" _ -> "rt.SkySub"
     T.TType _ "Maybe" [a] ->
         "rt.SkyMaybe[" ++ solvedTypeToGo a ++ "]"
     T.TType _ "Maybe" _ -> "rt.SkyMaybe[any]"
