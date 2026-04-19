@@ -64,7 +64,7 @@ fmtAlias :: Src.Alias -> String
 fmtAlias a =
     let name = A.toValue (Src._aliasName a)
         vars = map A.toValue (Src._aliasVars a)
-        body = fmtType (A.toValue (Src._aliasType a))
+        body = fmtTypeCol 4 (A.toValue (Src._aliasType a))
         varsStr = if null vars then "" else " " ++ unwords vars
     in "type alias " ++ name ++ varsStr ++ " =\n    " ++ body
 
@@ -100,29 +100,62 @@ fmtValue v =
 -- Types
 -- ═══════════════════════════════════════════════════════════
 
+-- | Column-aware type formatter. `col` is the current indent column
+-- at which the rendered type starts; it informs the max-line-width
+-- check and the continuation indent for multi-line records.
 fmtType :: Src.TypeAnnotation -> String
-fmtType t = case t of
-    Src.TLambda a b -> fmtTypeAtom a ++ " -> " ++ fmtType b
-    _ -> fmtTypeAtom t
+fmtType = fmtTypeCol 0
+
+fmtTypeCol :: Int -> Src.TypeAnnotation -> String
+fmtTypeCol col t = case t of
+    Src.TLambda a b -> fmtTypeAtomCol col a ++ " -> " ++ fmtTypeCol col b
+    _ -> fmtTypeAtomCol col t
 
 fmtTypeAtom :: Src.TypeAnnotation -> String
-fmtTypeAtom (Src.TVar n) = n
-fmtTypeAtom (Src.TType _ segs args) =
+fmtTypeAtom = fmtTypeAtomCol 0
+
+fmtTypeAtomCol :: Int -> Src.TypeAnnotation -> String
+fmtTypeAtomCol _ (Src.TVar n) = n
+fmtTypeAtomCol col (Src.TType _ segs args) =
     let n = joinDots segs
-    in if null args then n else n ++ " " ++ unwords (map fmtTypeParens args)
-fmtTypeAtom (Src.TTypeQual m n args) =
+    in if null args then n
+       else n ++ " " ++ unwords (map (fmtTypeParensCol col) args)
+fmtTypeAtomCol col (Src.TTypeQual m n args) =
     let base = m ++ "." ++ n
-    in if null args then base else base ++ " " ++ unwords (map fmtTypeParens args)
-fmtTypeAtom Src.TUnit = "()"
-fmtTypeAtom (Src.TTuple a b cs) = "( " ++ intercalate ", " (map fmtType (a:b:cs)) ++ " )"
-fmtTypeAtom (Src.TRecord fs _) =
-    "{ " ++ intercalate ", " (map (\(A.At _ n, ty) -> n ++ " : " ++ fmtType ty) fs) ++ " }"
-fmtTypeAtom t@(Src.TLambda _ _) = "(" ++ fmtType t ++ ")"
+    in if null args then base
+       else base ++ " " ++ unwords (map (fmtTypeParensCol col) args)
+fmtTypeAtomCol _ Src.TUnit = "()"
+fmtTypeAtomCol col (Src.TTuple a b cs) =
+    "( " ++ intercalate ", " (map (fmtTypeCol col) (a:b:cs)) ++ " )"
+fmtTypeAtomCol col (Src.TRecord fs _) = fmtRecordType col fs
+fmtTypeAtomCol col t@(Src.TLambda _ _) = "(" ++ fmtTypeCol col t ++ ")"
 
 fmtTypeParens :: Src.TypeAnnotation -> String
-fmtTypeParens t@(Src.TType _ _ (_:_)) = "(" ++ fmtTypeAtom t ++ ")"
-fmtTypeParens t@(Src.TTypeQual _ _ (_:_)) = "(" ++ fmtTypeAtom t ++ ")"
-fmtTypeParens t = fmtTypeAtom t
+fmtTypeParens = fmtTypeParensCol 0
+
+fmtTypeParensCol :: Int -> Src.TypeAnnotation -> String
+fmtTypeParensCol col t@(Src.TType _ _ (_:_)) =
+    "(" ++ fmtTypeAtomCol col t ++ ")"
+fmtTypeParensCol col t@(Src.TTypeQual _ _ (_:_)) =
+    "(" ++ fmtTypeAtomCol col t ++ ")"
+fmtTypeParensCol col t = fmtTypeAtomCol col t
+
+
+-- | Record-type formatting with the same "one line or one-per-line"
+-- rule the expression-level record literal formatter uses. Multi-
+-- line breaks to leading commas at column `col`, matching elm-format.
+fmtRecordType :: Int -> [(A.Located String, Src.TypeAnnotation)] -> String
+fmtRecordType col fs =
+    let oneField (A.At _ n, ty) = n ++ " : " ++ fmtTypeCol (col + 6) ty
+        items = map oneField fs
+        oneLine = "{ " ++ intercalate ", " items ++ " }"
+    in if col + length oneLine <= 80 && length items <= 1
+         then oneLine
+         else case items of
+            []     -> "{}"
+            (i:is) -> "{ " ++ i
+                  ++ concatMap (\it -> "\n" ++ ind col ++ ", " ++ it) is
+                  ++ "\n" ++ ind col ++ "}"
 
 
 -- ═══════════════════════════════════════════════════════════
