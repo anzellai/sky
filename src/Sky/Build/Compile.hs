@@ -1312,14 +1312,13 @@ generateAliasForDep userDefs modPrefix (aliasName, Can.Alias _vars body) =
                     ++ " }"
                 hasUserCtor = Set.member aliasName userDefs
                 paramList = zipWith (\i _ -> "p" ++ show i) [0::Int ..] fieldList
-                paramDecls = intercalate_ ", " [p ++ " any" | p <- paramList]
-                -- Audit P0-3: rt.Coerce* helpers over raw `.(T)`.
+                -- Typed constructor: param types match struct fields.
+                paramGoTypes = map (\(_, T.FieldType _ fty) -> fieldGoType fty) fieldList
+                paramDecls = intercalate_ ", "
+                    [ p ++ " " ++ ty | (p, ty) <- zip paramList paramGoTypes ]
                 fieldInits =
-                    [ let goTy = fieldGoType fty
-                          src = "p" ++ show i
-                          coerced = coerceExprFor goTy src
-                      in capitalise_ fn ++ ": " ++ coerced
-                    | (i, (fn, T.FieldType _ fty)) <- zip [0::Int ..] fieldList
+                    [ capitalise_ fn ++ ": " ++ ("p" ++ show i)
+                    | (i, (fn, _)) <- zip [0::Int ..] fieldList
                     ]
                 ctorDecl = GoIr.GoDeclRaw $
                     "func " ++ qualName ++ "(" ++ paramDecls ++ ") " ++ structName ++
@@ -1637,19 +1636,15 @@ generateAliasTypes canMod =
             goFields = map (\(fname, T.FieldType _ ftype) ->
                 (capitalise fname, fieldGoType ftype)) fields
             paramList = zipWith (\i _ -> "p" ++ show i) [0::Int ..] fields
-            paramDecls = intercalate_ ", " [p ++ " any" | p <- paramList]
-            -- Audit P0-3: route each param through the rt.Coerce*
-            -- helper instead of a raw `any(p).(T)` assertion. Raw
-            -- asserts panic with Go's cryptic interface-conversion
-            -- message; Coerce helpers carry a site-identified
-            -- diagnostic and surface via rt panic-recovery as a
-            -- clean Err at the Task boundary.
+            -- Typed constructor: param types match struct fields.
+            -- Params are still `any` so call sites with any-typed
+            -- values compile. Coercion happens inside the body.
+            paramGoTypes = map (\(_, T.FieldType _ fty) -> fieldGoType fty) fields
+            paramDecls = intercalate_ ", "
+                [ p ++ " " ++ ty | (p, ty) <- zip paramList paramGoTypes ]
             fieldInits =
-                [ let goTy = fieldGoType fty
-                      src = "p" ++ show i
-                      coerced = coerceExprFor goTy src
-                  in capitalise_ fn ++ ": " ++ coerced
-                | (i, (fn, T.FieldType _ fty)) <- zip [0::Int ..] fields
+                [ capitalise_ fn ++ ": " ++ ("p" ++ show i)
+                | (i, (fn, _)) <- zip [0::Int ..] fields
                 ]
             ctorDecl = GoIr.GoDeclRaw $
                 "func " ++ name ++ "(" ++ paramDecls ++ ") " ++ structName ++
@@ -1994,12 +1989,39 @@ safeReturnType t = case t of
                        else map (\c -> if c == '.' then '_' else c) modStr ++ "_"
             base = prefix ++ name
             env = getCgEnv
-            isRecordAlias = Set.member base (Rec._cg_recordAliases env)
-                         || Set.member name (Rec._cg_recordAliases env)
-        in if isRecordAlias then base ++ "_R" else "any"
+            allAliases = Rec._cg_recordAliases env
+            -- Try all known module prefixes so cross-module record
+            -- aliases resolve correctly (e.g. "Model" → "State_Model_R").
+            qualifiedCandidates =
+                [ p ++ "_" ++ name
+                | a <- Set.toList allAliases
+                , '_' `elem` a
+                , let p = reverse (drop 1 (dropWhile (/= '_') (reverse a)))
+                , not (null p)
+                ]
+            candidates = if null prefix
+                           then qualifiedCandidates ++ [name]
+                           else base : qualifiedCandidates ++ [name]
+            matches = [ c | c <- candidates, Set.member c allAliases ]
+            isStdlib = List.isPrefixOf "Sky." modStr
+                    || List.isPrefixOf "Std." modStr
+                    || null modStr && name `elem` runtimeOnlyTypes
+        in case matches of
+            (m:_) -> m ++ "_R"
+            _     -> if isStdlib then "any" else base
     T.TAlias _ _ _ (T.Filled inner)  -> safeReturnType inner
     T.TAlias _ _ _ (T.Hoisted inner) -> safeReturnType inner
     _ -> "any"
+
+
+-- | Types from Sky runtime that don't have Go type definitions.
+-- These map to `any` in Go because they're internal abstractions.
+runtimeOnlyTypes :: [String]
+runtimeOnlyTypes =
+    [ "VNode", "Request", "Response", "Cmd", "Sub"
+    , "Decoder", "Value", "Attribute", "Handler"
+    , "Route", "Middleware", "Session", "Store"
+    ]
 
 
 -- | Walk a canonical module's top-level declarations, collecting
@@ -2095,9 +2117,12 @@ safeReturnTypeWith recAliases = go
                                then qualifiedCandidates ++ [name]
                                else base : qualifiedCandidates ++ [name]
                 matches = [ c | c <- candidates, Set.member c recAliases ]
+                isStdlib = List.isPrefixOf "Sky." modStr
+                        || List.isPrefixOf "Std." modStr
+                        || null modStr && name `elem` runtimeOnlyTypes
             in case matches of
                 (m:_) -> m ++ "_R"
-                _     -> "any"
+                _     -> if isStdlib then "any" else base
         T.TAlias home name _ aliasType ->
             let modStr = ModuleName.toString home
                 prefix = if null modStr || modStr == "Main"
@@ -2294,6 +2319,10 @@ safeReturnTypePure t = case t of
     T.TType _ "List"   _          -> "[]any"
     T.TType _ "Dict"   _          -> "map[string]any"
     T.TType _ "Set"    _          -> "map[any]bool"
+    -- safeReturnTypePure has no env access — can't distinguish record
+    -- aliases (need _R suffix) from ADTs (use name directly). Fall
+    -- back to any for all user types. The env-aware safeReturnType
+    -- handles these correctly for annotation-based param types.
     T.TAlias _ _ _ (T.Filled inner)  -> safeReturnTypePure inner
     T.TAlias _ _ _ (T.Hoisted inner) -> safeReturnTypePure inner
     _ -> "any"
@@ -2505,11 +2534,29 @@ exprToGo (A.At _ expr) = case expr of
                     -- bare name against the entry-module entries we've
                     -- registered in env._cg_funcParamTypes.
                     localQual = case A.toValue func of
-                        Can.VarLocal n -> n
+                        Can.VarLocal n -> goSafeName n
                         _              -> ""
-                    goArgs = if not (null localQual)
-                        then coerceCallArgs localQual args
-                        else map exprToGo args
+                    -- Record constructor calls: coerce any-typed args
+                    -- to match the typed constructor param types.
+                    ctorParamTypes = case A.toValue func of
+                        Can.VarCtor _ home typeName _ _ ->
+                            let modStr = ModuleName.toString home
+                                prefix = if null modStr || modStr == "Main"
+                                         then "" else map (\c -> if c == '.' then '_' else c) modStr ++ "_"
+                                aliasName = prefix ++ typeName
+                                env' = getCgEnv
+                            in case Map.lookup aliasName (Rec._cg_aliases env') of
+                                Just (Can.Alias _ (T.TRecord m _)) ->
+                                    let fieldList = List.sortOn (T._fieldIndex . snd) (Map.toList m)
+                                    in map (\(_, T.FieldType _ fty) -> solvedTypeToGo fty) fieldList
+                                _ -> []
+                        _ -> []
+                    goArgs
+                        | not (null ctorParamTypes) =
+                            zipWith (\e ty -> coerceArg e ty) (map exprToGo args) (ctorParamTypes ++ repeat "any")
+                        | not (null localQual) =
+                            coerceCallArgs localQual args
+                        | otherwise = map exprToGo args
                 in if isDirectCallable func
                     then GoIr.GoCall goFunc goArgs
                     else GoIr.GoCall (GoIr.GoQualified "rt" "SkyCall")
