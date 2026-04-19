@@ -79,7 +79,10 @@ solve constraint = do
             -- top-level declarations that _env loses after CLet restore.
             -- Take the first (innermost) type for each name.
             let localFirst = Map.map head (Map.filter (not . null) localTys)
-            let merged = Map.union envTypes localFirst
+            -- _locals has fully-resolved types (UF variables read after
+            -- all constraints solved). Give them priority over _env which
+            -- may have stale/unresolved entries for top-level bindings.
+            let merged = Map.union localFirst envTypes
             return (SolveOk merged)
         Just err -> return (SolveError err)
 
