@@ -1119,11 +1119,81 @@ mapDefTypes :: (Can.Type -> Can.Type) -> Can.Def -> Can.Def
 mapDefTypes f def = case def of
     Can.TypedDef name freeVars typedPats body retType ->
         Can.TypedDef name freeVars
-            [ (p, f t) | (p, t) <- typedPats ]
-            body
+            [ (mapPatternLoc f p, f t) | (p, t) <- typedPats ]
+            (mapExprTypes f body)
             (f retType)
-    -- Def bodies contain no annotations, so nothing to transform at
-    -- the type level. Their annotations come via TypedDef siblings.
+    Can.Def name pats body ->
+        Can.Def name (map (mapPatternLoc f) pats) (mapExprTypes f body)
+    Can.DestructDef pat body ->
+        Can.DestructDef (mapPatternLoc f pat) (mapExprTypes f body)
+
+
+mapPatternLoc :: (Can.Type -> Can.Type) -> Can.Pattern -> Can.Pattern
+mapPatternLoc f (A.At r pat) = A.At r (mapPattern_ f pat)
+
+
+mapPattern_ :: (Can.Type -> Can.Type) -> Can.Pattern_ -> Can.Pattern_
+mapPattern_ f pat = case pat of
+    Can.PAlias inner name -> Can.PAlias (mapPatternLoc f inner) name
+    Can.PTuple a b rest ->
+        Can.PTuple (mapPatternLoc f a) (mapPatternLoc f b) (map (mapPatternLoc f) rest)
+    Can.PList xs -> Can.PList (map (mapPatternLoc f) xs)
+    Can.PCons h t -> Can.PCons (mapPatternLoc f h) (mapPatternLoc f t)
+    Can.PCtor home typeName union ctorName idx args ->
+        Can.PCtor home typeName union ctorName idx
+            (map (\(Can.PatternCtorArg i ty p) ->
+                Can.PatternCtorArg i (f ty) (mapPatternLoc f p)) args)
+    other -> other
+
+
+-- | Walk an expression, rewriting Type references (notably the
+-- constructor annotations carried on Can.VarCtor). Without this, a
+-- constructor like `Error Io (mkInfo msg)` that takes an ErrorInfo
+-- argument keeps its arg-type as `TType ErrorInfo` (nominal), while
+-- mkInfo's HM-inferred return type is `TAlias ErrorInfo` (expanded);
+-- the unifier can't reconcile TRecord-after-alias-unfold with the
+-- nominal TType, so the ctor call fails to type-check.
+mapExprTypes :: (Can.Type -> Can.Type) -> Can.Expr -> Can.Expr
+mapExprTypes f (A.At r e) = A.At r (mapExpr_ f e)
+
+
+mapExpr_ :: (Can.Type -> Can.Type) -> Can.Expr_ -> Can.Expr_
+mapExpr_ f e = case e of
+    Can.VarCtor opts home typeName ctorName (Can.Forall vars ty) ->
+        Can.VarCtor opts home typeName ctorName (Can.Forall vars (f ty))
+    Can.Binop op home name (Can.Forall vars ty) l r ->
+        Can.Binop op home name (Can.Forall vars (f ty))
+            (mapExprTypes f l) (mapExprTypes f r)
+    Can.List xs -> Can.List (map (mapExprTypes f) xs)
+    Can.Negate inner -> Can.Negate (mapExprTypes f inner)
+    Can.Lambda pats body ->
+        Can.Lambda (map (mapPatternLoc f) pats) (mapExprTypes f body)
+    Can.Call fn args ->
+        Can.Call (mapExprTypes f fn) (map (mapExprTypes f) args)
+    Can.If branches elseBr ->
+        Can.If
+            [ (mapExprTypes f c, mapExprTypes f t) | (c, t) <- branches ]
+            (mapExprTypes f elseBr)
+    Can.Let def body ->
+        Can.Let (mapDefTypes f def) (mapExprTypes f body)
+    Can.LetRec defs body ->
+        Can.LetRec (map (mapDefTypes f) defs) (mapExprTypes f body)
+    Can.LetDestruct pat val body ->
+        Can.LetDestruct (mapPatternLoc f pat)
+            (mapExprTypes f val) (mapExprTypes f body)
+    Can.Case subj branches ->
+        Can.Case (mapExprTypes f subj)
+            [ Can.CaseBranch (mapPatternLoc f p) (mapExprTypes f b)
+            | Can.CaseBranch p b <- branches ]
+    Can.Access target field -> Can.Access (mapExprTypes f target) field
+    Can.Update name base fields ->
+        Can.Update name (mapExprTypes f base)
+            (Map.map (\(Can.FieldUpdate reg expr) ->
+                Can.FieldUpdate reg (mapExprTypes f expr)) fields)
+    Can.Record fields ->
+        Can.Record (Map.map (mapExprTypes f) fields)
+    Can.Tuple a b rest ->
+        Can.Tuple (mapExprTypes f a) (mapExprTypes f b) (map (mapExprTypes f) rest)
     other -> other
 
 

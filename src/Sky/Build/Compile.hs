@@ -454,6 +454,7 @@ continueCompile config _entryPath outDir moduleOrder srcHash = do
                     , let prefix = map (\c -> if c == '.' then '_' else c) modName
                     , let depMod = head [ m | (mn, m) <- validDeps, mn == modName ]
                     ]
+            let
                 depInferredParams = Map.map (\(_, ps, _) -> ps) fullSigs
                 depInferredRets   = Map.map (\(_, _, r) -> r)  fullSigs
                 depInferredSigs   = fullSigs
