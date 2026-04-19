@@ -749,6 +749,23 @@ lookupKernelType modName funcName = case (modName, funcName) of
         Just $ T.Forall ["msg"] (T.TLambda (T.TVar "msg") attrType)
     ("Event", "onCheck") ->
         Just $ T.Forall ["msg"] (T.TLambda (T.TLambda boolType (T.TVar "msg")) attrType)
+    -- Cmd kernel functions
+    ("Cmd", "none") ->
+        Just $ T.Forall ["msg"] cmdType
+    ("Cmd", "batch") ->
+        Just $ T.Forall ["msg"] (T.TLambda (T.TType ModuleName.list "List" [cmdType]) cmdType)
+    ("Cmd", "perform") ->
+        Just $ T.Forall ["err", "a", "msg"]
+            (T.TLambda (T.TType ModuleName.task "Task" [T.TVar "err", T.TVar "a"])
+                (T.TLambda (T.TLambda (T.TType ModuleName.result_ "Result" [T.TVar "err", T.TVar "a"]) (T.TVar "msg"))
+                    cmdType))
+    -- Sub kernel functions
+    ("Sub", "none") ->
+        Just $ T.Forall ["msg"] subType
+    ("Sub", "every") ->
+        Just $ T.Forall ["msg"] (T.TLambda intType (T.TLambda (T.TVar "msg") subType))
+    ("Time", "every") ->
+        Just $ T.Forall ["msg"] (T.TLambda intType (T.TLambda (T.TVar "msg") subType))
     _ -> Nothing
 
 
@@ -759,10 +776,12 @@ stringType = T.TType ModuleName.basics "String" []
 boolType = T.TType ModuleName.basics "Bool" []
 charType = T.TType ModuleName.basics "Char" []
 
-vnodeType, attrType, attrListType, vnodeListType :: T.Type
+vnodeType, attrType, attrListType, vnodeListType, cmdType, subType :: T.Type
 -- Use empty Canonical so VNode/Attribute unify with user annotations
 -- that resolve VNode to Canonical "" (implicitly imported).
 vnodeType = T.TType (ModuleName.Canonical "") "VNode" []
 attrType = T.TType (ModuleName.Canonical "") "Attribute" []
 attrListType = T.TType ModuleName.list "List" [attrType]
 vnodeListType = T.TType ModuleName.list "List" [vnodeType]
+cmdType = T.TType ModuleName.cmd "Cmd" [T.TVar "msg"]
+subType = T.TType ModuleName.sub "Sub" [T.TVar "msg"]
