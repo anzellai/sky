@@ -2023,7 +2023,7 @@ runtimeOnlyTypes :: [String]
 runtimeOnlyTypes =
     [ "Decoder", "Value", "Attribute", "Handler"
     , "Route", "Middleware", "Session", "Store"
-    , "Cmd", "Sub", "Request", "Response"
+    , "Cmd", "Sub"
     ]
 
 
@@ -2031,7 +2031,9 @@ runtimeOnlyTypes =
 -- These map to their Go type name (with rt. prefix).
 runtimeTypedMap :: [(String, String)]
 runtimeTypedMap =
-    [ ("VNode", "rt.VNode")
+    [ ("VNode",    "rt.VNode")
+    , ("Request",  "rt.SkyRequest")
+    , ("Response", "rt.SkyResponse")
     ]
 
 
