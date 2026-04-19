@@ -2002,16 +2002,14 @@ safeReturnType t = case t of
                            then qualifiedCandidates ++ [name]
                            else base : qualifiedCandidates ++ [name]
             matches = [ c | c <- candidates, Set.member c allAliases ]
-            isStdlib = List.isPrefixOf "Sky." modStr
-                    || List.isPrefixOf "Std." modStr
-                    || null modStr && name `elem` runtimeOnlyTypes
+            isRuntimeOnly = name `elem` runtimeOnlyTypes
             -- Check runtime typed map for known concrete types
             runtimeTyped = lookup name runtimeTypedMap
         in case matches of
             (m:_) -> m ++ "_R"
             _     -> case runtimeTyped of
                 Just goTy -> goTy
-                Nothing   -> if isStdlib then "any" else base
+                Nothing   -> if isRuntimeOnly then "any" else base
     T.TAlias _ _ _ (T.Filled inner)  -> safeReturnType inner
     T.TAlias _ _ _ (T.Hoisted inner) -> safeReturnType inner
     _ -> "any"
@@ -2130,15 +2128,13 @@ safeReturnTypeWith recAliases = go
                                then qualifiedCandidates ++ [name]
                                else base : qualifiedCandidates ++ [name]
                 matches = [ c | c <- candidates, Set.member c recAliases ]
-                isStdlib = List.isPrefixOf "Sky." modStr
-                        || List.isPrefixOf "Std." modStr
-                        || null modStr && name `elem` runtimeOnlyTypes
+                isRuntimeOnly = name `elem` runtimeOnlyTypes
                 runtimeTyped = lookup name runtimeTypedMap
             in case matches of
                 (m:_) -> m ++ "_R"
                 _     -> case runtimeTyped of
                     Just goTy -> goTy
-                    Nothing   -> if isStdlib then "any" else base
+                    Nothing   -> if isRuntimeOnly then "any" else base
         T.TAlias home name _ aliasType ->
             let modStr = ModuleName.toString home
                 prefix = if null modStr || modStr == "Main"
@@ -4166,13 +4162,11 @@ solvedTypeToGo ty = case ty of
             env = getCgEnv
             isRecordAlias = Set.member base (Rec._cg_recordAliases env)
                          || Set.member name (Rec._cg_recordAliases env)
-            isStdlib = List.isPrefixOf "Sky." modStr
-                    || List.isPrefixOf "Std." modStr
-                    || null modStr && name `elem` runtimeOnlyTypes
+            isRuntimeOnly = name `elem` runtimeOnlyTypes
         in if isRecordAlias then base ++ "_R"
            else case lookup name runtimeTypedMap of
              Just goTy -> goTy
-             Nothing   -> if isStdlib then "any" else base
+             Nothing   -> if isRuntimeOnly then "any" else base
     T.TLambda from to -> "func(" ++ solvedTypeToGo from ++ ") " ++ solvedTypeToGo to
     T.TRecord fields _ ->
         -- P4: records always map to a named Go struct. If the shape
