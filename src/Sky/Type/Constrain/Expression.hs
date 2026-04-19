@@ -702,6 +702,89 @@ lookupKernelType modName funcName = case (modName, funcName) of
                 (T.TLambda (T.TVar "b")
                     (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"])
                         (T.TVar "b"))))
+    -- Html kernel functions
+    ("Html", "text") ->
+        Just $ T.Forall [] (T.TLambda stringType vnodeType)
+    ("Html", "div") ->
+        Just $ T.Forall [] (T.TLambda attrListType (T.TLambda vnodeListType vnodeType))
+    ("Html", "span") ->
+        Just $ T.Forall [] (T.TLambda attrListType (T.TLambda vnodeListType vnodeType))
+    ("Html", "p") ->
+        Just $ T.Forall [] (T.TLambda attrListType (T.TLambda vnodeListType vnodeType))
+    ("Html", "h1") ->
+        Just $ T.Forall [] (T.TLambda attrListType (T.TLambda vnodeListType vnodeType))
+    ("Html", "h2") ->
+        Just $ T.Forall [] (T.TLambda attrListType (T.TLambda vnodeListType vnodeType))
+    ("Html", "h3") ->
+        Just $ T.Forall [] (T.TLambda attrListType (T.TLambda vnodeListType vnodeType))
+    ("Html", "button") ->
+        Just $ T.Forall [] (T.TLambda attrListType (T.TLambda vnodeListType vnodeType))
+    ("Html", "a") ->
+        Just $ T.Forall [] (T.TLambda attrListType (T.TLambda vnodeListType vnodeType))
+    ("Html", "ul") ->
+        Just $ T.Forall [] (T.TLambda attrListType (T.TLambda vnodeListType vnodeType))
+    ("Html", "li") ->
+        Just $ T.Forall [] (T.TLambda attrListType (T.TLambda vnodeListType vnodeType))
+    ("Html", "input") ->
+        Just $ T.Forall [] (T.TLambda attrListType vnodeType)
+    ("Html", "img") ->
+        Just $ T.Forall [] (T.TLambda attrListType vnodeType)
+    ("Html", "form") ->
+        Just $ T.Forall [] (T.TLambda attrListType (T.TLambda vnodeListType vnodeType))
+    ("Html", "nav") ->
+        Just $ T.Forall [] (T.TLambda attrListType (T.TLambda vnodeListType vnodeType))
+    ("Html", "header") ->
+        Just $ T.Forall [] (T.TLambda attrListType (T.TLambda vnodeListType vnodeType))
+    ("Html", "footer") ->
+        Just $ T.Forall [] (T.TLambda attrListType (T.TLambda vnodeListType vnodeType))
+    ("Html", "section") ->
+        Just $ T.Forall [] (T.TLambda attrListType (T.TLambda vnodeListType vnodeType))
+    ("Html", "main_") ->
+        Just $ T.Forall [] (T.TLambda attrListType (T.TLambda vnodeListType vnodeType))
+    ("Html", "label") ->
+        Just $ T.Forall [] (T.TLambda attrListType (T.TLambda vnodeListType vnodeType))
+    ("Html", "textarea") ->
+        Just $ T.Forall [] (T.TLambda attrListType (T.TLambda vnodeListType vnodeType))
+    ("Html", "select") ->
+        Just $ T.Forall [] (T.TLambda attrListType (T.TLambda vnodeListType vnodeType))
+    ("Html", "option") ->
+        Just $ T.Forall [] (T.TLambda attrListType (T.TLambda vnodeListType vnodeType))
+    ("Html", "table") ->
+        Just $ T.Forall [] (T.TLambda attrListType (T.TLambda vnodeListType vnodeType))
+    ("Html", "tr") ->
+        Just $ T.Forall [] (T.TLambda attrListType (T.TLambda vnodeListType vnodeType))
+    ("Html", "td") ->
+        Just $ T.Forall [] (T.TLambda attrListType (T.TLambda vnodeListType vnodeType))
+    ("Html", "th") ->
+        Just $ T.Forall [] (T.TLambda attrListType (T.TLambda vnodeListType vnodeType))
+    ("Html", "node") ->
+        Just $ T.Forall [] (T.TLambda stringType (T.TLambda attrListType (T.TLambda vnodeListType vnodeType)))
+    -- Attr kernel functions
+    ("Attr", "class_") ->
+        Just $ T.Forall [] (T.TLambda stringType attrType)
+    ("Attr", "id") ->
+        Just $ T.Forall [] (T.TLambda stringType attrType)
+    ("Attr", "href") ->
+        Just $ T.Forall [] (T.TLambda stringType attrType)
+    ("Attr", "src") ->
+        Just $ T.Forall [] (T.TLambda stringType attrType)
+    ("Attr", "type_") ->
+        Just $ T.Forall [] (T.TLambda stringType attrType)
+    ("Attr", "value") ->
+        Just $ T.Forall [] (T.TLambda stringType attrType)
+    ("Attr", "placeholder") ->
+        Just $ T.Forall [] (T.TLambda stringType attrType)
+    ("Attr", "style") ->
+        Just $ T.Forall [] (T.TLambda stringType (T.TLambda stringType attrType))
+    ("Attr", "attribute") ->
+        Just $ T.Forall [] (T.TLambda stringType (T.TLambda stringType attrType))
+    -- Event handlers
+    ("Events", "onClick") ->
+        Just $ T.Forall ["msg"] (T.TLambda (T.TVar "msg") attrType)
+    ("Events", "onInput") ->
+        Just $ T.Forall ["msg"] (T.TLambda (T.TLambda stringType (T.TVar "msg")) attrType)
+    ("Events", "onSubmit") ->
+        Just $ T.Forall ["msg"] (T.TLambda (T.TVar "msg") attrType)
     _ -> Nothing
 
 
@@ -711,3 +794,11 @@ floatType = T.TType ModuleName.basics "Float" []
 stringType = T.TType ModuleName.basics "String" []
 boolType = T.TType ModuleName.basics "Bool" []
 charType = T.TType ModuleName.basics "Char" []
+
+vnodeType, attrType, attrListType, vnodeListType :: T.Type
+-- Use empty Canonical so VNode/Attribute unify with user annotations
+-- that resolve VNode to Canonical "" (implicitly imported).
+vnodeType = T.TType (ModuleName.Canonical "") "VNode" []
+attrType = T.TType (ModuleName.Canonical "") "Attribute" []
+attrListType = T.TType ModuleName.list "List" [attrType]
+vnodeListType = T.TType ModuleName.list "List" [vnodeType]

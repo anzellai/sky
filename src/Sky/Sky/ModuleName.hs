@@ -44,7 +44,7 @@ isStdlib m = isSkyCore m || isStd m
 
 
 -- | Built-in module names
-basics, list, string, maybe_, result_, dict, set, task, cmd, sub :: Canonical
+basics, list, string, maybe_, result_, dict, set, task, cmd, sub, html, attr :: Canonical
 basics   = Canonical "Sky.Core.Basics"
 list     = Canonical "Sky.Core.List"
 string   = Canonical "Sky.Core.String"
@@ -55,6 +55,8 @@ set      = Canonical "Sky.Core.Set"
 task     = Canonical "Sky.Core.Task"
 cmd      = Canonical "Std.Cmd"
 sub      = Canonical "Std.Sub"
+html     = Canonical "Sky.Core.Html"
+attr     = Canonical "Sky.Core.Html"
 
 
 -- Utilities
