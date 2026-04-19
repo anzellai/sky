@@ -1208,12 +1208,45 @@ generateDeclsForDep canMod modPrefix =
               qualLookupName = modPrefix ++ "_" ++ name
               -- Typed dep sigs: annotation or HM-inferred types.
               -- wrapTypedReturn coerces the body to match the return type.
+              -- Re-export fallback: if the body is a single Call to another
+              -- top-level value with a known typed signature, inherit its
+              -- return type. Fixes the `foo = Other.foo` pattern where HM
+              -- produced a TVar (cross-module value refs aren't currently
+              -- solved across modules).
+              delegateRetType = case (params, body) of
+                  ([], A.At _ (Can.Call (A.At _ (Can.VarTopLevel calleeHome calleeName)) [])) ->
+                      let calleeModPrefix = map (\c -> if c == '.' then '_' else c)
+                              (ModuleName.toString calleeHome)
+                          calleeKey = calleeModPrefix ++ "_" ++ calleeName
+                          sameNameKey = calleeName
+                      in case Map.lookup calleeKey (Rec._cg_funcInferredSigs env) of
+                          Just (_, _, r) | r /= "any" -> Just r
+                          _ -> case Map.lookup calleeKey (Rec._cg_funcRetType env) of
+                              Just r | r /= "any" -> Just r
+                              _ -> case Map.lookup sameNameKey (Rec._cg_funcRetType env) of
+                                  Just r | r /= "any" -> Just r
+                                  _ -> Nothing
+                  ([], A.At _ (Can.VarTopLevel calleeHome calleeName)) ->
+                      let calleeModPrefix = map (\c -> if c == '.' then '_' else c)
+                              (ModuleName.toString calleeHome)
+                          calleeKey = calleeModPrefix ++ "_" ++ calleeName
+                      in case Map.lookup calleeKey (Rec._cg_funcInferredSigs env) of
+                          Just (_, _, r) | r /= "any" -> Just r
+                          _ -> case Map.lookup calleeKey (Rec._cg_funcRetType env) of
+                              Just r | r /= "any" -> Just r
+                              _ -> Nothing
+                  _ -> Nothing
               (depTypeParams, depParamGoTys, depRetType) = case def of
                   Can.TypedDef _ _ typedPats _ retTy ->
                       ([], map (safeReturnType . snd) typedPats, safeReturnType retTy)
                   _ -> case Map.lookup qualLookupName (Rec._cg_funcInferredSigs env) of
+                      Just (tps, ps, r) | r == "any"
+                                        , Just delegated <- delegateRetType ->
+                          (tps, ps, delegated)
                       Just sig -> sig
-                      Nothing  -> ([], replicate (length params) "any", "any")
+                      Nothing  -> case delegateRetType of
+                          Just r  -> ([], replicate (length params) "any", r)
+                          Nothing -> ([], replicate (length params) "any", "any")
               -- Replace each param's Go type with the typed form
               -- (when not "any"). destructureParams gave us patterns
               -- already; we just rewrite the type slot.
