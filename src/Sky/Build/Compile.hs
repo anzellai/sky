@@ -2005,9 +2005,13 @@ safeReturnType t = case t of
             isStdlib = List.isPrefixOf "Sky." modStr
                     || List.isPrefixOf "Std." modStr
                     || null modStr && name `elem` runtimeOnlyTypes
+            -- Check runtime typed map for known concrete types
+            runtimeTyped = lookup name runtimeTypedMap
         in case matches of
             (m:_) -> m ++ "_R"
-            _     -> if isStdlib then "any" else base
+            _     -> case runtimeTyped of
+                Just goTy -> goTy
+                Nothing   -> if isStdlib then "any" else base
     T.TAlias _ _ _ (T.Filled inner)  -> safeReturnType inner
     T.TAlias _ _ _ (T.Hoisted inner) -> safeReturnType inner
     _ -> "any"
@@ -2017,9 +2021,17 @@ safeReturnType t = case t of
 -- These map to `any` in Go because they're internal abstractions.
 runtimeOnlyTypes :: [String]
 runtimeOnlyTypes =
-    [ "VNode", "Request", "Response", "Cmd", "Sub"
-    , "Decoder", "Value", "Attribute", "Handler"
+    [ "Decoder", "Value", "Attribute", "Handler"
     , "Route", "Middleware", "Session", "Store"
+    , "Cmd", "Sub", "Request", "Response"
+    ]
+
+
+-- | Known runtime types that have concrete Go type definitions.
+-- These map to their Go type name (with rt. prefix).
+runtimeTypedMap :: [(String, String)]
+runtimeTypedMap =
+    [ ("VNode", "rt.VNode")
     ]
 
 
@@ -2119,9 +2131,12 @@ safeReturnTypeWith recAliases = go
                 isStdlib = List.isPrefixOf "Sky." modStr
                         || List.isPrefixOf "Std." modStr
                         || null modStr && name `elem` runtimeOnlyTypes
+                runtimeTyped = lookup name runtimeTypedMap
             in case matches of
                 (m:_) -> m ++ "_R"
-                _     -> if isStdlib then "any" else base
+                _     -> case runtimeTyped of
+                    Just goTy -> goTy
+                    Nothing   -> if isStdlib then "any" else base
         T.TAlias home name _ aliasType ->
             let modStr = ModuleName.toString home
                 prefix = if null modStr || modStr == "Main"
@@ -4145,11 +4160,15 @@ solvedTypeToGo ty = case ty of
                 then name
                 else map (\c -> if c == '.' then '_' else c) modStr ++ "_" ++ name
             env = getCgEnv
-            -- Record aliases live under "<base>_R" in Go (to avoid name
-            -- collision with a user-defined constructor function).
             isRecordAlias = Set.member base (Rec._cg_recordAliases env)
                          || Set.member name (Rec._cg_recordAliases env)
-        in if isRecordAlias then base ++ "_R" else base
+            isStdlib = List.isPrefixOf "Sky." modStr
+                    || List.isPrefixOf "Std." modStr
+                    || null modStr && name `elem` runtimeOnlyTypes
+        in if isRecordAlias then base ++ "_R"
+           else case lookup name runtimeTypedMap of
+             Just goTy -> goTy
+             Nothing   -> if isStdlib then "any" else base
     T.TLambda from to -> "func(" ++ solvedTypeToGo from ++ ") " ++ solvedTypeToGo to
     T.TRecord fields _ ->
         -- P4: records always map to a named Go struct. If the shape
