@@ -2021,7 +2021,6 @@ runtimeOnlyTypes :: [String]
 runtimeOnlyTypes =
     [ "Decoder", "Value", "Attribute", "Handler"
     , "Route", "Middleware", "Session", "Store"
-    , "Cmd", "Sub"
     ]
 
 
@@ -2032,6 +2031,8 @@ runtimeTypedMap =
     [ ("VNode",    "rt.VNode")
     , ("Request",  "rt.SkyRequest")
     , ("Response", "rt.SkyResponse")
+    , ("Cmd",      "rt.SkyCmd")
+    , ("Sub",      "rt.SkySub")
     ]
 
 

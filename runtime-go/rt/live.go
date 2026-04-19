@@ -930,23 +930,29 @@ type cmdT struct {
 	batch []any
 }
 
+// SkyCmd is the public type for Sky's Cmd msg type.
+type SkyCmd = cmdT
+
 type subT struct {
 	kind   string // "none", "every"
 	ms     int
 	toMsg  any
 }
 
-func Cmd_none() any             { return cmdT{kind: "none"} }
-func Cmd_batch(list any) any    { return cmdT{kind: "batch", batch: asList(list)} }
-func Cmd_perform(task, to any) any { return cmdT{kind: "perform", task: task, toMsg: to} }
+// SkySub is the public type for Sky's Sub msg type.
+type SkySub = subT
 
-func Sub_none() any { return subT{kind: "none"} }
-func Sub_every(ms any, to any) any {
+func Cmd_none() SkyCmd             { return cmdT{kind: "none"} }
+func Cmd_batch(list any) SkyCmd    { return cmdT{kind: "batch", batch: asList(list)} }
+func Cmd_perform(task, to any) SkyCmd { return cmdT{kind: "perform", task: task, toMsg: to} }
+
+func Sub_none() SkySub { return subT{kind: "none"} }
+func Sub_every(ms any, to any) SkySub {
 	return subT{kind: "every", ms: AsInt(ms), toMsg: to}
 }
 
 // Time.every is an alias of Sub.every in Sky code
-func Time_every(ms any, to any) any { return Sub_every(ms, to) }
+func Time_every(ms any, to any) SkySub { return Sub_every(ms, to) }
 
 // ═══════════════════════════════════════════════════════════
 // Std.Live — HTTP-first server-driven UI with TEA architecture
