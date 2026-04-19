@@ -1274,8 +1274,9 @@ generateUnionForDep modPrefix (typeName, Can.Union _vars ctors _numAlts opts) =
                    ++ "}" ]
   where
     -- T1: dep ctor params typed from declared union's arg types.
-    -- All dep ctor params are `any` until monomorphised codegen.
-    ctorArgGoTypeDep _ _ = "any"
+    ctorArgGoTypeDep i argTys
+        | i < length argTys = safeReturnType (argTys !! i)
+        | otherwise = "any"
 
 
 -- | Emit a dep module's type alias. Record aliases become Go named structs
@@ -1586,13 +1587,11 @@ generateUnionTypes canMod =
         | i <- [0 .. arity - 1]
         ]
 
-    -- T1: ctor params are typed from the union's declared arg types,
-    -- degrading to `any` for polymorphic TVars (T4 territory). Call
-    -- sites coerce via the VarCtor branch of exprToGo Can.Call.
-    -- All ctor params are `any` until monomorphised codegen lands.
-    -- Ctors are called from untyped expression contexts (exprToGo
-    -- emits `any`-typed values), so typed params cause mismatches.
-    ctorArgGoType _ _ = "any"
+    -- T1: ctor params are typed from the union's declared arg types.
+    -- Call sites coerce via the VarCtor branch of exprToGo Can.Call.
+    ctorArgGoType i argTys
+        | i < length argTys = safeReturnType (argTys !! i)
+        | otherwise = "any"
 
     hasTVar :: T.Type -> Bool
     hasTVar t = case t of
@@ -2536,10 +2535,10 @@ exprToGo (A.At _ expr) = case expr of
                     localQual = case A.toValue func of
                         Can.VarLocal n -> goSafeName n
                         _              -> ""
-                    -- Record constructor calls: coerce any-typed args
-                    -- to match the typed constructor param types.
+                    -- Constructor calls: coerce any-typed args to match
+                    -- the typed constructor param types (record alias or ADT).
                     ctorParamTypes = case A.toValue func of
-                        Can.VarCtor _ home typeName _ _ ->
+                        Can.VarCtor _ home typeName _ (Can.Forall _ ctorTy) ->
                             let modStr = ModuleName.toString home
                                 prefix = if null modStr || modStr == "Main"
                                          then "" else map (\c -> if c == '.' then '_' else c) modStr ++ "_"
@@ -2549,7 +2548,13 @@ exprToGo (A.At _ expr) = case expr of
                                 Just (Can.Alias _ (T.TRecord m _)) ->
                                     let fieldList = List.sortOn (T._fieldIndex . snd) (Map.toList m)
                                     in map (\(_, T.FieldType _ fty) -> solvedTypeToGo fty) fieldList
-                                _ -> []
+                                _ ->
+                                    -- ADT constructor: extract param types
+                                    -- from the annotation's arrow type.
+                                    let extractParams (T.TLambda from to) =
+                                            safeReturnType from : extractParams to
+                                        extractParams _ = []
+                                    in extractParams ctorTy
                         _ -> []
                     goArgs
                         | not (null ctorParamTypes) =
