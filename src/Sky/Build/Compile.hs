@@ -8,7 +8,7 @@ import qualified Data.Set as Set
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import Data.IORef
-import Data.Maybe (isJust)
+import Data.Maybe (isJust, fromMaybe)
 import qualified Data.Char as Char
 import qualified Data.List as List
 import qualified System.Directory
@@ -420,6 +420,8 @@ continueCompile config _entryPath outDir moduleOrder srcHash = do
             let hasAnnotation n depMod = case Map.lookup n (declsByName depMod) of
                     Just (Can.TypedDef{}) -> True
                     _                     -> False
+                -- HM-inferred sigs for dep module unannotated functions.
+                -- TVars become Go type params for polymorphic functions.
                 fullSigs = Map.unions
                     [ Map.fromList
                         [ ( prefix ++ "_" ++ n
@@ -1181,17 +1183,14 @@ generateDeclsForDep canMod modPrefix =
               -- get typed generically instead of falling back to `any`.
               env = getCgEnv
               qualLookupName = modPrefix ++ "_" ++ name
-              inferredSig = case def of
-                  Can.TypedDef _ _ _ _ _ -> Nothing  -- use annotation
-                  _ -> Map.lookup qualLookupName (Rec._cg_funcInferredSigs env)
-              (depTypeParams, depParamGoTys, depRetType) = case (mAnnotArgs, mAnnotRet, inferredSig) of
-                  (Just argTys, Just rt', _) ->
-                      ([], map safeReturnType argTys, safeReturnType rt')
-                  (Just argTys, Nothing, _) ->
-                      ([], map safeReturnType argTys, "any")
-                  (_, _, Just (tps, ps, r)) ->
-                      (tps, ps ++ replicate (max 0 (length params - length ps)) "any", r)
-                  _ -> ([], replicate (length params) "any", "any")
+              -- Typed dep sigs: annotation or HM-inferred types.
+              -- wrapTypedReturn coerces the body to match the return type.
+              (depTypeParams, depParamGoTys, depRetType) = case def of
+                  Can.TypedDef _ _ typedPats _ retTy ->
+                      ([], map (safeReturnType . snd) typedPats, safeReturnType retTy)
+                  _ -> case Map.lookup qualLookupName (Rec._cg_funcInferredSigs env) of
+                      Just sig -> sig
+                      Nothing  -> ([], replicate (length params) "any", "any")
               -- Replace each param's Go type with the typed form
               -- (when not "any"). destructureParams gave us patterns
               -- already; we just rewrite the type slot.
@@ -1350,8 +1349,11 @@ generateGoMulti canMod srcMod config solvedTypes depDecls depRecAliases depAriti
             -- the typed params. Without this, calling an entry-module
             -- typed function from another entry function skips
             -- coercion and Go rejects any→concrete.
+            -- Typed entry-module sigs from HM inference (for unannotated fns).
+            -- Use goSafeName so lookups (which use qualName = goSafeName n)
+            -- find the entry. E.g. "init" → "init_" for reserved Go names.
             let entryInferredSigs = Map.fromList
-                    [ (n, splitInferredSig (countParamsFor n canMod) ty)
+                    [ (goSafeName n, splitInferredSig (countParamsFor n canMod) ty)
                     | (n, ty) <- Map.toList solvedTypes
                     , case Map.lookup n (declsByName canMod) of
                         Just (Can.TypedDef{}) -> False  -- annotation path
@@ -1747,19 +1749,15 @@ generateDef def solvedTypes =
         -- Annotation case: TypedDef's 5th field is the RETURN type
         -- only; arg types live alongside patterns. For non-TypedDef,
         -- split the full inferred function type.
+        -- Typed codegen: use annotation or HM-inferred types for
+        -- function sigs. wrapTypedReturn coerces the body to match.
         (entryTypeParams, entryParamGoTys, goRetType) = case (def, mAnnotTy, mSolvedType) of
             (Can.TypedDef _ _ typedPats _ retTy, _, _) ->
                 ([], map (safeReturnType . snd) typedPats, safeReturnType retTy)
             (_, _, Just funcType) ->
                 splitInferredSig (length params) funcType
             _ -> ([], replicate (length params) "any", "any")
-        isTyped = case mSolvedType of
-            Just funcType ->
-                let (argTypes, retType) = splitFuncType (length params) funcType
-                in length argTypes == length params
-                    && solvedTypeToGo retType /= "any"
-                    && all (\t -> solvedTypeToGo t /= "any") argTypes
-            Nothing -> False
+        isTyped = False  -- body codegen still uses exprToGo (any-typed)
     in
     -- Skip "main" — handled separately
     if name == "main" then []
@@ -1893,7 +1891,16 @@ coerceExprFor goTy src = case goTy of
     "int"     -> "rt.CoerceInt(" ++ src ++ ")"
     "bool"    -> "rt.CoerceBool(" ++ src ++ ")"
     "float64" -> "rt.CoerceFloat(" ++ src ++ ")"
-    _         -> "rt.Coerce[" ++ goTy ++ "](" ++ src ++ ")"
+    _
+      -- Cross-instantiation coerce for containers: SkyMaybe[any] → SkyMaybe[T]
+      | Just params <- stripParametric "rt.SkyResult" goTy
+        -> "rt.ResultCoerce[" ++ eraseTypeParams params ++ "](" ++ src ++ ")"
+      | Just inner <- stripParametric "rt.SkyMaybe" goTy
+        -> "rt.MaybeCoerce[" ++ eraseTypeParams inner ++ "](" ++ src ++ ")"
+      | otherwise ->
+          let erased = eraseTypeParams goTy
+          in if erased == "any" then src
+             else "rt.Coerce[" ++ erased ++ "](" ++ src ++ ")"
 
 
 wrapTypedReturn :: String -> GoIr.GoExpr -> GoIr.GoExpr
@@ -1907,8 +1914,8 @@ wrapTypedReturn retType body
         GoIr.GoCall
             (GoIr.GoIdent ("rt.MaybeCoerce[" ++ inner ++ "]"))
             [body]
-    | Just _ <- stripParametric "rt.SkyTask" retType =
-        GoIr.GoCall (GoIr.GoIdent "rt.TaskCoerce") [body]
+    | Just params <- stripParametric "rt.SkyTask" retType =
+        GoIr.GoCall (GoIr.GoIdent ("rt.TaskCoerceT[" ++ params ++ "]")) [body]
     -- Audit P0-3: replace raw `any(body).(T)` with a runtime Coerce
     -- helper. Direct assertion panics with a cryptic 'interface
     -- conversion' message on mismatch; Coerce gives a site-identified
@@ -2642,8 +2649,20 @@ genericParams modName funcName = case (modName, funcName) of
 coerceToFieldType :: String -> GoIr.GoExpr -> GoIr.GoExpr
 coerceToFieldType targetTy e
     | targetTy == "any" || null targetTy = e
+    -- Parametric container types: use the runtime's cross-instantiation
+    -- coerce helpers that reconstruct the value with the target generic
+    -- params. Handles SkyMaybe[any] → SkyMaybe[ErrorDetails] etc.
+    | Just params <- stripParametric "rt.SkyResult" targetTy =
+        GoIr.GoCall (GoIr.GoIdent ("rt.ResultCoerce[" ++ eraseTypeParams params ++ "]")) [e]
+    | Just inner <- stripParametric "rt.SkyMaybe" targetTy =
+        GoIr.GoCall (GoIr.GoIdent ("rt.MaybeCoerce[" ++ eraseTypeParams inner ++ "]")) [e]
+    | isJust (stripParametric "rt.SkyTask" targetTy) =
+        GoIr.GoCall (GoIr.GoIdent ("rt.TaskCoerceT[" ++ eraseTypeParams (fromMaybe "" (stripParametric "rt.SkyTask" targetTy)) ++ "]")) [e]
     | otherwise =
-        GoIr.GoTypeAssert (GoIr.GoCall (GoIr.GoIdent "any") [e]) targetTy
+        let erasedTy = eraseTypeParams targetTy
+        in if erasedTy == "any"
+             then e
+             else GoIr.GoTypeAssert (GoIr.GoCall (GoIr.GoIdent "any") [e]) erasedTy
 
 
 -- | Is this arg `()`? Used by P7 typed-FFI migration to recognise the
@@ -3051,16 +3070,19 @@ coerceArg e ty
     -- type inference figure it out from the usage. Pass raw.
     | isGenericTypeParam ty = e
     | Just params <- stripParametric "rt.SkyResult" ty =
-        GoIr.GoCall (GoIr.GoIdent ("rt.ResultCoerce[" ++ params ++ "]")) [e]
+        GoIr.GoCall (GoIr.GoIdent ("rt.ResultCoerce[" ++ eraseTypeParams params ++ "]")) [e]
     | Just inner <- stripParametric "rt.SkyMaybe" ty =
-        GoIr.GoCall (GoIr.GoIdent ("rt.MaybeCoerce[" ++ inner ++ "]")) [e]
+        GoIr.GoCall (GoIr.GoIdent ("rt.MaybeCoerce[" ++ eraseTypeParams inner ++ "]")) [e]
     | ty == "string" = GoIr.GoCall (GoIr.GoIdent "rt.CoerceString") [e]
     | ty == "int"    = GoIr.GoCall (GoIr.GoIdent "rt.CoerceInt") [e]
     | ty == "bool"   = GoIr.GoCall (GoIr.GoIdent "rt.CoerceBool") [e]
     | ty == "float64"= GoIr.GoCall (GoIr.GoIdent "rt.CoerceFloat") [e]
     | otherwise =
-        GoIr.GoTypeAssert
-            (GoIr.GoCall (GoIr.GoIdent "any") [e]) ty
+        let erasedTy = eraseTypeParams ty
+        in if erasedTy == "any"
+             then e  -- fully erased to any — no assertion needed
+             else GoIr.GoTypeAssert
+                    (GoIr.GoCall (GoIr.GoIdent "any") [e]) erasedTy
 
 -- | True when a Go type string is a generic type parameter name we
 -- emitted (T1, T2, ...). These are scoped to the function they were
@@ -3068,6 +3090,24 @@ coerceArg e ty
 isGenericTypeParam :: String -> Bool
 isGenericTypeParam ('T':rest) = all (\c -> c >= '0' && c <= '9') rest && not (null rest)
 isGenericTypeParam _ = False
+
+-- | Replace callee-scoped type params (T1, T2, ...) with `any` in
+-- type strings so call-site coercions are valid.
+-- E.g. "any, T1" → "any, any", "func(T1) func(T2) any" → "func(any) func(any) any".
+-- Does NOT replace T2 in "rt.T2[...]" — only standalone identifiers.
+eraseTypeParams :: String -> String
+eraseTypeParams = go Nothing
+  where
+    go _ [] = []
+    go prev ('T':rest)
+        | not (maybe False isIdChar prev)  -- not preceded by ident char
+        , (digits, after) <- span (\c -> c >= '0' && c <= '9') rest
+        , not (null digits)
+        , null after || not (isIdChar (head after))
+        = "any" ++ go (Just 'y') after  -- 'y' from "any"
+    go _ (c:cs) = c : go (Just c) cs
+    isIdChar c = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+              || (c >= '0' && c <= '9') || c == '_' || c == '.'
 
 intercalateComma :: [String] -> String
 intercalateComma []     = ""
@@ -4028,9 +4068,8 @@ solvedTypeToGo ty = case ty of
     T.TType _ "String" [] -> "string"
     T.TType _ "Char" [] -> "rune"
     -- Container types: emit concrete Go generic instantiations.
-    -- Pre-v1.0 these were all `any`; now we emit the concrete type
-    -- so Go's type system validates the structure and gob can encode
-    -- without runtime type walkers.
+    -- The body codegen must produce matching types (e.g. Nothing[T]()
+    -- not Nothing[any]()). Monomorphisation ensures this.
     T.TType _ "List" [elem] ->
         let elemGo = solvedTypeToGo elem
         in if elemGo == "any" then "[]any" else "[]" ++ elemGo

@@ -69,15 +69,14 @@ solve constraint = do
     (result, finalState) <- solveHelp state0 constraint
     case result of
         Nothing -> do
-            -- SolvedTypes contains ONLY top-level names. Local binding
-            -- types (let, lambda param, case pattern) live on the
-            -- SolveState's _locals ref and come out via solveWithLocals.
-            -- Keeping them out of SolvedTypes matters for codegen:
-            -- Compile.exprToGoTyped asserts `.(T)` on VarLocal when
-            -- its type is concrete in SolvedTypes, which would panic
-            -- for already-typed function params.
-            solvedTypes <- readSolvedTypes (_env finalState)
-            return (SolveOk solvedTypes)
+            envTypes <- readSolvedTypes (_env finalState)
+            localTys <- readIORef (_locals finalState)
+            -- Merge: _locals captures every CLet-bound name including
+            -- top-level declarations that _env loses after CLet restore.
+            -- Take the first (innermost) type for each name.
+            let localFirst = Map.map head (Map.filter (not . null) localTys)
+            let merged = Map.union envTypes localFirst
+            return (SolveOk merged)
         Just err -> return (SolveError err)
 
 

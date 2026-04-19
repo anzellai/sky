@@ -2796,6 +2796,18 @@ func TaskCoerce(v any) SkyTask[any, any] {
 	})
 }
 
+// TaskCoerceT returns a typed SkyTask[E, A] from any task-shaped value.
+// Used when function signatures declare concrete Task return types.
+func TaskCoerceT[E any, A any](v any) SkyTask[E, A] {
+	if t, ok := v.(SkyTask[E, A]); ok {
+		return t
+	}
+	return SkyTask[E, A](func() SkyResult[E, A] {
+		raw := anyTaskInvoke(v)
+		return ResultCoerce[E, A](any(raw))
+	})
+}
+
 // Coerce — audit P0-3. Replaces raw `any(body).(T)` assertions that
 // codegen used to emit at typed-return boundaries. Direct assertion
 // panics with a cryptic `interface conversion: interface {} is …, not
