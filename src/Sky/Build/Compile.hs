@@ -2007,6 +2007,13 @@ safeReturnType t = case t of
     T.TType _ "List"   _          -> "[]any"
     T.TType _ "Dict"   _          -> "map[string]any"
     T.TType _ "Set"    _          -> "map[any]bool"
+    -- Tuples emit as rt.SkyTuple{2,3,N}. V0/V1/V2 remain `any`
+    -- (SkyTuple2 = T2[any, any]) so current body codegen stays
+    -- valid — tuple destructure in patternBindings wraps with any()
+    -- before asserting.
+    T.TTuple _ _ []               -> "rt.SkyTuple2"
+    T.TTuple _ _ [_]              -> "rt.SkyTuple3"
+    T.TTuple _ _ _                -> "rt.SkyTupleN"
     -- User-defined named type: only emit when it's a known record
     -- alias (then use `_R` suffix). Plain ADT unions stay `any` until
     -- we can guarantee every call site produces the exact struct type
@@ -2184,6 +2191,9 @@ safeReturnTypeWith recAliases = go
         T.TType _ "List"   _          -> "[]any"
         T.TType _ "Dict"   _          -> "map[string]any"
         T.TType _ "Set"    _          -> "map[any]bool"
+        T.TTuple _ _ []               -> "rt.SkyTuple2"
+        T.TTuple _ _ [_]              -> "rt.SkyTuple3"
+        T.TTuple _ _ _                -> "rt.SkyTupleN"
         T.TType home name [] ->
             let modStr = ModuleName.toString home
                 prefix = if null modStr || modStr == "Main"
@@ -2362,6 +2372,9 @@ typeStrWithAliases recAliases tvarMap ty = case ty of
     -- Cmd/Sub: opaque Go types (ignore inner type param)
     T.TType _ "Cmd" _ -> "rt.SkyCmd"
     T.TType _ "Sub" _ -> "rt.SkySub"
+    T.TTuple _ _ []   -> "rt.SkyTuple2"
+    T.TTuple _ _ [_]  -> "rt.SkyTuple3"
+    T.TTuple _ _ _    -> "rt.SkyTupleN"
     -- Primitives (must check before the user-type catch-all)
     T.TType _ "Int" []    -> "int"
     T.TType _ "Float" []  -> "float64"
@@ -2483,6 +2496,9 @@ safeReturnTypePure t = case t of
     T.TType _ "List"   _          -> "[]any"
     T.TType _ "Dict"   _          -> "map[string]any"
     T.TType _ "Set"    _          -> "map[any]bool"
+    T.TTuple _ _ []               -> "rt.SkyTuple2"
+    T.TTuple _ _ [_]              -> "rt.SkyTuple3"
+    T.TTuple _ _ _                -> "rt.SkyTupleN"
     -- Known runtime types with concrete Go definitions
     T.TType _ name [] | Just goTy <- lookup name runtimeTypedMap -> goTy
     -- safeReturnTypePure has no env access — can't distinguish record
@@ -3946,7 +3962,14 @@ patternBindings subject pat = case pat of
                 _ -> ("SkyTupleN", \i -> GoIr.GoIndex
                         (GoIr.GoSelector (asTup "SkyTupleN") "Vs")
                         (GoIr.GoIntLit i))
-            asTup k = GoIr.GoTypeAssert (GoIr.GoIdent subject) ("rt." ++ k)
+            -- Wrap subject in `any(...)` before the type assertion so
+            -- it works regardless of whether subject is already
+            -- SkyTuple2 (typed return, concrete struct) or `any`
+            -- (legacy any-path). Go rejects `.(T)` on a non-interface,
+            -- but `any(x).(T)` always compiles.
+            asTup k = GoIr.GoTypeAssert
+                (GoIr.GoCall (GoIr.GoIdent "any") [GoIr.GoIdent subject])
+                ("rt." ++ k)
             _ = tupleKind  -- silences warning; kept for grep-ability
             bindField i (A.At _ p) = case p of
                 Can.PVar name ->
