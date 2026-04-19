@@ -425,7 +425,7 @@ continueCompile config _entryPath outDir moduleOrder srcHash = do
                 fullSigs = Map.unions
                     [ Map.fromList
                         [ ( prefix ++ "_" ++ n
-                          , splitInferredSig (countParamsFor n depMod) ty )
+                          , splitInferredSigWith earlyAllRecAliases (countParamsFor n depMod) ty )
                         | (n, ty) <- Map.toList depTypes
                         , not (hasAnnotation n depMod)
                         ]
@@ -1349,11 +1349,17 @@ generateGoMulti canMod srcMod config solvedTypes depDecls depRecAliases depAriti
             -- the typed params. Without this, calling an entry-module
             -- typed function from another entry function skips
             -- coercion and Go rejects any→concrete.
+            -- Build alias set early so splitInferredSigWith can resolve
+            -- cross-module record aliases in HM-inferred types.
+            prevEnvEarly <- readIORef globalCgEnv
+            let earlyRecAliases = Set.union depRecAliases
+                    (Set.union (Rec.collectRecordAliases (Can._aliases canMod))
+                               (Rec._cg_recordAliases prevEnvEarly))
             -- Typed entry-module sigs from HM inference (for unannotated fns).
             -- Use goSafeName so lookups (which use qualName = goSafeName n)
             -- find the entry. E.g. "init" → "init_" for reserved Go names.
             let entryInferredSigs = Map.fromList
-                    [ (goSafeName n, splitInferredSig (countParamsFor n canMod) ty)
+                    [ (goSafeName n, splitInferredSigWith earlyRecAliases (countParamsFor n canMod) ty)
                     | (n, ty) <- Map.toList solvedTypes
                     , case Map.lookup n (declsByName canMod) of
                         Just (Can.TypedDef{}) -> False  -- annotation path
@@ -1749,7 +1755,7 @@ generateDef def solvedTypes =
             (Can.TypedDef _ _ typedPats _ retTy, _, _) ->
                 ([], map (safeReturnType . snd) typedPats, safeReturnType retTy)
             (_, _, Just funcType) ->
-                splitInferredSig (length params) funcType
+                splitInferredSigWith (Rec._cg_recordAliases getCgEnv) (length params) funcType
             _ -> ([], replicate (length params) "any", "any")
         isTyped = False  -- body codegen still uses exprToGo (any-typed)
     in
@@ -2202,18 +2208,18 @@ countParamsFor name canMod = go (Can._decls canMod)
 -- `getField : String -> TVar -> String` get typed as
 -- `func GetField[T1 any](p0 string, p1 T1) string` instead of all-any.
 splitInferredSig :: Int -> T.Type -> ([String], [String], String)
-splitInferredSig arity funcType =
+splitInferredSig = splitInferredSigWith Set.empty
+
+-- | Variant of splitInferredSig that takes a record alias set
+-- for resolving cross-module record aliases and ADT types.
+splitInferredSigWith :: Set.Set String -> Int -> T.Type -> ([String], [String], String)
+splitInferredSigWith recAliases arity funcType =
     let (paramTys, retTy) = collectParams arity funcType
-        -- Only promote TVars to Go type params if they (1) appear in
-        -- at least one PARAM position so Go can infer them, and (2)
-        -- actually survive to the emitted Go type (container-inner
-        -- TVars get erased to `any`/`[]any` at emission, so declaring
-        -- a type param for them would leave it unused).
         paramTVars = uniq (concatMap tvarsInEmitted paramTys)
         numbered = zip paramTVars ["T" ++ show i | i <- [1::Int ..]]
         typeParams = map snd numbered
-        paramStrs = map (typeStrWith numbered) paramTys
-        retStr = typeStrWith numbered retTy
+        paramStrs = map (typeStrWithAliases recAliases numbered) paramTys
+        retStr = typeStrWithAliases recAliases numbered retTy
     in (typeParams, paramStrs, retStr)
   where
     collectParams 0 ty = ([], ty)
@@ -2261,24 +2267,63 @@ tvarsIn t = case t of
 -- | Convert a Sky type to Go with a TVar → Go type param substitution.
 -- Falls back to safeReturnTypePure for non-TVar nodes.
 typeStrWith :: [(String, String)] -> T.Type -> String
-typeStrWith tvarMap ty = case ty of
+typeStrWith = typeStrWithAliases Set.empty
+
+-- | Variant with record alias set for cross-module resolution.
+typeStrWithAliases :: Set.Set String -> [(String, String)] -> T.Type -> String
+typeStrWithAliases recAliases tvarMap ty = case ty of
     T.TVar name -> case lookup name tvarMap of
         Just gname -> gname
         Nothing    -> "any"
     T.TLambda from to ->
-        "func(" ++ typeStrWith tvarMap from ++ ") " ++ typeStrWith tvarMap to
+        "func(" ++ go from ++ ") " ++ go to
     T.TType _ "Result" [e, a] ->
-        "rt.SkyResult[" ++ typeStrWith tvarMap e ++ ", " ++ typeStrWith tvarMap a ++ "]"
+        "rt.SkyResult[" ++ go e ++ ", " ++ go a ++ "]"
     T.TType _ "Maybe" [x] ->
-        "rt.SkyMaybe[" ++ typeStrWith tvarMap x ++ "]"
+        "rt.SkyMaybe[" ++ go x ++ "]"
     T.TType _ "Task" [e, a] ->
-        "rt.SkyTask[" ++ typeStrWith tvarMap e ++ ", " ++ typeStrWith tvarMap a ++ "]"
+        "rt.SkyTask[" ++ go e ++ ", " ++ go a ++ "]"
     T.TType _ "List" _ -> "[]any"
     T.TType _ "Dict" _ -> "map[string]any"
     T.TType _ "Set"  _ -> "map[any]bool"
-    T.TAlias _ _ _ (T.Filled inner)  -> typeStrWith tvarMap inner
-    T.TAlias _ _ _ (T.Hoisted inner) -> typeStrWith tvarMap inner
+    -- Primitives (must check before the user-type catch-all)
+    T.TType _ "Int" []    -> "int"
+    T.TType _ "Float" []  -> "float64"
+    T.TType _ "Bool" []   -> "bool"
+    T.TType _ "String" [] -> "string"
+    T.TType _ "Char" []   -> "rune"
+    T.TType _ "Bytes" []  -> "[]byte"
+    T.TUnit               -> "struct{}"
+    -- User-defined types: resolve via record alias set + runtime map.
+    T.TType home name [] ->
+        let modStr = ModuleName.toString home
+            prefix = if null modStr || modStr == "Main"
+                       then ""
+                       else map (\c -> if c == '.' then '_' else c) modStr ++ "_"
+            base = prefix ++ name
+            -- Search all module prefixes for record alias match
+            qualifiedCandidates =
+                [ p ++ "_" ++ name
+                | a <- Set.toList recAliases
+                , '_' `elem` a
+                , let p = reverse (drop 1 (dropWhile (/= '_') (reverse a)))
+                , not (null p)
+                ]
+            candidates = if null prefix
+                           then qualifiedCandidates ++ [name]
+                           else base : qualifiedCandidates ++ [name]
+            matches = [ c | c <- candidates, Set.member c recAliases ]
+            isRuntimeOnly = name `elem` runtimeOnlyTypes
+        in case matches of
+            (m:_) -> m ++ "_R"
+            _     -> case lookup name runtimeTypedMap of
+                Just goTy -> goTy
+                Nothing   -> if isRuntimeOnly then "any" else base
+    T.TAlias _ _ _ (T.Filled inner)  -> go inner
+    T.TAlias _ _ _ (T.Hoisted inner) -> go inner
     _ -> safeReturnTypePure ty
+  where
+    go = typeStrWithAliases recAliases tvarMap
 
 
 -- | Collect TVars that survive to the final emitted Go type — i.e. TVars
