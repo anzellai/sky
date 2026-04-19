@@ -405,7 +405,26 @@ continueCompile config _entryPath outDir moduleOrder srcHash = do
                 case r of
                     Solve.SolveOk t -> return (modName, t)
                     Solve.SolveError _ -> return (modName, Map.empty)
-            let depSolved = depSolved0
+            -- Pass 2: re-solve each dep with cross-module externals
+            -- from pass 1. Deps that pass-1 failed (e.g. Chess.Move
+            -- with `dir` type ambiguity) may now succeed because
+            -- imported helpers' concrete types disambiguate their
+            -- internal calls.
+            --
+            -- Serialised (mapM not Async.forConcurrently) because the
+            -- external-ref write is global — parallel writes would
+            -- race. Acceptable cost: dep solves are fast.
+            let pass1Externals = buildCrossModuleExternalsWithMods validDeps depSolved0
+            depSolved <- mapM (\(modName, depMod) -> do
+                cs <- Constrain.constrainModuleWithExternals pass1Externals depMod
+                r  <- Solve.solve cs
+                case r of
+                    Solve.SolveOk t -> return (modName, t)
+                    Solve.SolveError _ ->
+                        -- Fall back to pass-1 result if pass-2 regressed
+                        case lookup modName depSolved0 of
+                            Just p1 -> return (modName, p1)
+                            Nothing -> return (modName, Map.empty)) validDeps
             -- Entry module gets cross-module externals so VarTopLevel
             -- references to dep values emit CForeign with the dep's
             -- solved annotation. Only fully-concrete types (no free
@@ -2065,15 +2084,24 @@ buildCrossModuleExternalsWithMods validDeps depSolved =
     let typeHomeMap = buildGlobalTypeHomeMap validDeps
         fixHomes = fixupHomes typeHomeMap
     in Map.fromList
-        [ ((modName, name), T.Forall [] (fixHomes ty))
+        [ ((modName, name), generaliseToAnnotation (fixHomes ty))
         | (modName, types) <- depSolved
         , (name, ty) <- Map.toList types
-        , null (collectFreeTVars ty)
         , isFunctionType ty
+        , not (hasSolverInternalVars ty)
         ]
   where
     isFunctionType (T.TLambda _ _) = True
     isFunctionType _               = False
+
+    -- Reject types containing solver-internal placeholder TVars
+    -- (names starting with `_` — fresh vars from the constraint
+    -- generator) or multi-character TVars like "t108" that indicate
+    -- an unresolved binding. Only user-level single-letter TVars
+    -- (a, b, c) survive — those are legitimate polymorphic parameters.
+    hasSolverInternalVars t = any isSolverInternal (collectFreeTVars t)
+    isSolverInternal ('_':_) = True
+    isSolverInternal n = length n > 1
 
 
 -- | Backwards-compat: previous buildCrossModuleExternals signature.
