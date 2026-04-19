@@ -41,15 +41,9 @@ constrainModule :: Can.Module -> IO T.Constraint
 constrainModule = constrainModuleWithExternals Map.empty
 
 -- | Constrain a module with a pre-populated external type environment
--- keyed by (home-module, binding-name). Each entry is an already-
--- generalised annotation (Forall free-vars type). VarTopLevel lookups
--- with a non-local home emit CForeign against the external annotation
--- so fresh var instantiations let each call site unify independently.
---
--- This is the cross-module HM channel: when `foo = Other.foo` in
--- module Tailwind and `Other.foo : SkyTuple2` is already solved,
--- the solver sees foo's body type as SkyTuple2 and foo gets
--- typed instead of a free TVar (the old bug).
+-- keyed by (home-module, binding-name). VarTopLevel lookups with a
+-- non-local home emit CForeign against the external annotation so
+-- fresh var instantiations let each call site unify independently.
 constrainModuleWithExternals
     :: Map.Map (String, String) T.Annotation
     -> Can.Module
@@ -60,10 +54,13 @@ constrainModuleWithExternals externals canMod = do
     constrainDecls counter Map.empty (Can._decls canMod)
 
 
--- | Thread the external signature map through a global IORef so
--- deeply-nested constraint generation can see it without an extra
--- parameter on every helper. Written by constrainModuleWithExternals
--- before solving begins; read by Can.VarTopLevel handling.
+-- | Thread the external signature map through a global IORef so the
+-- VarTopLevel handler in constrain can reach it without extending
+-- every helper's signature.
+--
+-- NOT THREAD-SAFE for concurrent calls to constrainModuleWithExternals
+-- with different externals. Compile.hs must either serialise those
+-- calls or ensure all concurrent modules share the same externals.
 globalExternals :: IORef (Map.Map (String, String) T.Annotation)
 {-# NOINLINE globalExternals #-}
 globalExternals = unsafePerformIO (newIORef Map.empty)

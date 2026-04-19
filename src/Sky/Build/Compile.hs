@@ -405,21 +405,33 @@ continueCompile config _entryPath outDir moduleOrder srcHash = do
                 case r of
                     Solve.SolveOk t -> return (modName, t)
                     Solve.SolveError _ -> return (modName, Map.empty)
-            -- Cross-module HM inference (Pass 2) remains on hold —
-            -- the pragmatic re-export delegation in
-            -- generateDeclsForDep captures the common case, and the
-            -- annotation-based external channel occasionally unifies
-            -- user ADTs that happen to share names across modules,
-            -- making inference worse. Keep pass 1 results only.
             let depSolved = depSolved0
-            -- Entry module is solved WITHOUT externals. The delegation-
-            -- based codegen in generateDeclsForDep already handles the
-            -- typed re-export pattern (`foo = Other.foo` inherits
-            -- callee's typed return) for entry bindings that call dep
-            -- functions. Cross-module externals in the entry solve
-            -- can introduce spurious unifications between user ADTs
-            -- that happen to share a constructor name across modules.
-            constraints <- Constrain.constrainModule canMod
+            -- Entry module gets cross-module externals so VarTopLevel
+            -- references to dep values emit CForeign with the dep's
+            -- solved annotation. Only fully-concrete types (no free
+            -- TVars) cross, so call-site fresh instantiation can't
+            -- introduce spurious unifications. Dep-defined user ADTs
+            -- that appear in those types are fine because the entry
+            -- module already imported them via its env.
+            -- Restrict externals to names actually DECLARED as
+            -- top-level values in their home module. Solver env
+            -- entries include every name that flowed through
+            -- (imports, constructors, etc.) — using those as
+            -- cross-module annotations leaks spurious unifications.
+            let depDeclaredNames =
+                    [ (mn, Set.toList (collectDeclNames (Can._decls dm)))
+                    | (mn, dm) <- validDeps
+                    ]
+                rawExternals = Map.filterWithKey
+                    (\(m, n) _ -> case lookup m depDeclaredNames of
+                        Just names -> n `elem` names
+                        Nothing    -> False)
+                    (buildCrossModuleExternalsWithMods validDeps depSolved)
+                -- DEBUG bisect: keep only first N entries
+                depExternals = rawExternals
+            _ <- return depDeclaredNames  -- silence unused warning on release path
+            constraints <- Constrain.constrainModuleWithExternals depExternals canMod
+            putStrLn $ "   cross-module externals: " ++ show (Map.size depExternals)
             solveResult <- Solve.solve constraints
             -- HM type errors are FATAL (promoted from warning). No
             -- silent degradation to `any`. This enforces the
@@ -2026,39 +2038,97 @@ stripParametric prefix s
 
 -- | Decide whether a Sky type can be safely emitted as a Go return
 -- | Build a cross-module external-signature map from per-module
--- solved types. Conservative: only include bindings whose solved
--- type is fully concrete (no free TVars) AND references only
--- kernel / primitive types. This captures the common re-export
--- pattern (Tailwind.foo = Spacing.foo : SkyTuple2) without risking
--- user-ADT name collisions between importer and importee modules.
-buildCrossModuleExternals
-    :: [(String, Map.Map String T.Type)]
+-- solved types. Only fully concrete types (no free TVars at all)
+-- cross — the entry module's solver instantiates each call site
+-- fresh via CForeign, so polymorphic signatures would land with
+-- no constraint on the fresh TVars, which is worse than a local
+-- inference. Concrete types let the entry solver propagate real
+-- information (int, String, SkyTuple2, Maybe SomeAdt, etc.) to
+-- the caller's fresh var.
+--
+-- Also rejects types containing solver-internal placeholder TVars
+-- (names starting with `_` or of length > 1) — those are
+-- unresolved bindings the solver couldn't close; forwarding them
+-- as external annotations masks the underlying inference gap.
+-- | Build an external signature map from per-module solved types.
+-- Takes a list of (modName, Can.Module) to cross-reference type
+-- names against their actual defining module when a solved type
+-- has unresolved (empty) homes. This fixup is necessary because
+-- pass-1 canonicalisation in each dep uses that dep's own tmap,
+-- which misses type names the dep references without importing
+-- (Chess.Ai uses `Model` without `import State`).
+buildCrossModuleExternalsWithMods
+    :: [(String, Can.Module)]
+    -> [(String, Map.Map String T.Type)]
     -> Map.Map (String, String) T.Annotation
-buildCrossModuleExternals depSolved =
-    Map.fromList
-        [ ((modName, name), T.Forall [] ty)
+buildCrossModuleExternalsWithMods validDeps depSolved =
+    let typeHomeMap = buildGlobalTypeHomeMap validDeps
+        fixHomes = fixupHomes typeHomeMap
+    in Map.fromList
+        [ ((modName, name), T.Forall [] (fixHomes ty))
         | (modName, types) <- depSolved
         , (name, ty) <- Map.toList types
         , null (collectFreeTVars ty)
-        , onlyKernelTypes ty
+        , isFunctionType ty
         ]
   where
-    onlyKernelTypes t = case t of
-        T.TVar _ -> False
-        T.TUnit -> True
-        T.TType home _ args ->
-            ModuleName.isStdlib home
-            && all onlyKernelTypes args
-        T.TLambda a b -> onlyKernelTypes a && onlyKernelTypes b
-        T.TTuple a b cs -> all onlyKernelTypes (a : b : cs)
-        T.TRecord fields _ ->
-            all (\(T.FieldType _ fTy) -> onlyKernelTypes fTy) (Map.elems fields)
-        T.TAlias home _ pairs aliasType ->
-            ModuleName.isStdlib home
-            && all (onlyKernelTypes . snd) pairs
-            && case aliasType of
-                T.Filled i -> onlyKernelTypes i
-                T.Hoisted i -> onlyKernelTypes i
+    isFunctionType (T.TLambda _ _) = True
+    isFunctionType _               = False
+
+
+-- | Backwards-compat: previous buildCrossModuleExternals signature.
+buildCrossModuleExternals
+    :: [(String, Map.Map String T.Type)]
+    -> Map.Map (String, String) T.Annotation
+buildCrossModuleExternals = buildCrossModuleExternalsWithMods []
+
+
+-- | Build a global map from type name → defining module by walking
+-- every dep's declared unions and record aliases. When a pass-1
+-- canonicalised annotation references `Model` with home="" (because
+-- the referencing module didn't import State), we look it up here
+-- and fix the home to the actual defining module.
+buildGlobalTypeHomeMap
+    :: [(String, Can.Module)]
+    -> Map.Map String ModuleName.Canonical
+buildGlobalTypeHomeMap validDeps =
+    Map.fromList
+        [ (typeName, Can._name depMod)
+        | (_, depMod) <- validDeps
+        , typeName <- Map.keys (Can._unions depMod)
+                   ++ Map.keys (Can._aliases depMod)
+        ]
+
+
+-- | Walk a Canonical type and replace every empty-home nominal
+-- reference whose name appears in the global type-home map with
+-- its real home. Primitives keep their kernel homes; everything
+-- else gets the resolved dep home.
+fixupHomes :: Map.Map String ModuleName.Canonical -> T.Type -> T.Type
+fixupHomes hmap = go
+  where
+    go ty = case ty of
+        T.TType home name args ->
+            let args' = map go args
+                resolved = case Map.lookup name hmap of
+                    Just h | null (ModuleName.toString home) -> h
+                    _ -> home
+            in T.TType resolved name args'
+        T.TAlias home name pairs aliasType ->
+            let pairs' = [(n, go t) | (n, t) <- pairs]
+                resolved = case Map.lookup name hmap of
+                    Just h | null (ModuleName.toString home) -> h
+                    _ -> home
+                aliasType' = case aliasType of
+                    T.Filled i  -> T.Filled (go i)
+                    T.Hoisted i -> T.Hoisted (go i)
+            in T.TAlias resolved name pairs' aliasType'
+        T.TLambda a b -> T.TLambda (go a) (go b)
+        T.TTuple a b cs -> T.TTuple (go a) (go b) (map go cs)
+        T.TRecord fields mExt ->
+            T.TRecord (Map.map (\(T.FieldType i fTy) -> T.FieldType i (go fTy)) fields) mExt
+        T.TVar n -> T.TVar n
+        T.TUnit -> T.TUnit
 
 
 -- | Generalise a solved type into a polymorphic Annotation by
