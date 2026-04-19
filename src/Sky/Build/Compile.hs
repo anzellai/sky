@@ -2333,6 +2333,8 @@ safeReturnTypePure t = case t of
     T.TType _ "List"   _          -> "[]any"
     T.TType _ "Dict"   _          -> "map[string]any"
     T.TType _ "Set"    _          -> "map[any]bool"
+    -- Known runtime types with concrete Go definitions
+    T.TType _ name [] | Just goTy <- lookup name runtimeTypedMap -> goTy
     -- safeReturnTypePure has no env access — can't distinguish record
     -- aliases (need _R suffix) from ADTs (use name directly). Fall
     -- back to any for all user types. The env-aware safeReturnType
