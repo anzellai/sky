@@ -8,6 +8,7 @@ import Std.Css exposing (..)
 import Std.Live exposing (app, route)
 import Std.Live.Events exposing (onClick)
 import Std.Cmd as Cmd
+import Std.Sub as Sub
 import Counter exposing (Counter)
 
 -- ======================================================
@@ -73,7 +74,7 @@ main =
         { init = init
         , update = update
         , view = view
-        , subscriptions = \_ -> ()
+        , subscriptions = \_ -> Sub.none
         , routes = [route "/" MainPage]
         , notFound = MainPage
         }

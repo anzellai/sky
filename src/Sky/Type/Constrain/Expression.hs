@@ -1206,6 +1206,38 @@ lookupKernelType modName funcName = case (modName, funcName) of
         Just $ T.Forall ["a", "e"]
             (T.TLambda (T.TVar "a")
                 (T.TType ModuleName.task "Task" [T.TVar "e", T.TUnit]))
+    -- Live.app: the signature carries ALL user-code-facing field types
+    -- so the record constraint propagates Model/Msg into user init/update/view/
+    -- subscriptions. This is the big TEA-typing lever.
+    ("Live", "app") ->
+        Just $ T.Forall ["model", "msg", "req", "page", "e"]
+            (T.TLambda
+                (T.TRecord
+                    (Map.fromList
+                        [ ("init", T.FieldType 0
+                            (T.TLambda (T.TVar "req")
+                                (T.TTuple (T.TVar "model") cmdTypeOfMsg [])))
+                        , ("update", T.FieldType 1
+                            (T.TLambda (T.TVar "msg")
+                                (T.TLambda (T.TVar "model")
+                                    (T.TTuple (T.TVar "model") cmdTypeOfMsg []))))
+                        , ("view", T.FieldType 2
+                            (T.TLambda (T.TVar "model") vnodeType))
+                        , ("subscriptions", T.FieldType 3
+                            (T.TLambda (T.TVar "model") subTypeOfMsg))
+                        , ("routes", T.FieldType 4
+                            (T.TType ModuleName.list "List"
+                                [T.TType (ModuleName.Canonical "") "Route" []]))
+                        , ("notFound", T.FieldType 5 (T.TVar "page"))
+                        ])
+                    Nothing)
+                (T.TType ModuleName.task "Task" [T.TVar "e", T.TUnit]))
+    -- Live.route: String -> page -> Route
+    ("Live", "route") ->
+        Just $ T.Forall ["page"]
+            (T.TLambda stringType
+                (T.TLambda (T.TVar "page")
+                    (T.TType (ModuleName.Canonical "") "Route" [])))
     -- Slog — structured logging, first arg is a message, second is a list of
     -- key-value pairs. We treat the second as List a for flexibility.
     ("Slog", "info") ->
@@ -1245,3 +1277,11 @@ vnodeListType = T.TType ModuleName.list "List" [vnodeType]
 -- resolve to empty-home module names (same as VNode/Attribute).
 cmdType = T.TType (ModuleName.Canonical "") "Cmd" [T.TVar "msg"]
 subType = T.TType (ModuleName.Canonical "") "Sub" [T.TVar "msg"]
+
+-- Inside Live.app's record type, the TVar "msg" is shared across
+-- init/update/subscriptions so the three coordinate. cmdTypeOfMsg /
+-- subTypeOfMsg reference the same "msg" var as the top-level Forall
+-- binder does.
+cmdTypeOfMsg, subTypeOfMsg :: T.Type
+cmdTypeOfMsg = T.TType (ModuleName.Canonical "") "Cmd" [T.TVar "msg"]
+subTypeOfMsg = T.TType (ModuleName.Canonical "") "Sub" [T.TVar "msg"]
