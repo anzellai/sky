@@ -139,8 +139,31 @@ constrain counter env (A.At region expr) expected = case expr of
     Can.Accessor _field -> return T.CTrue
     Can.Access _target _ -> return T.CTrue
     Can.Update _ _ _ -> return T.CTrue
-    Can.Record _ -> return T.CTrue
-    Can.Tuple _ _ _ -> return T.CTrue
+
+    Can.Record fields -> do
+        -- Constrain each field's value expression. We don't know the
+        -- target record type here, but constraining the values lets
+        -- the solver propagate types from field expressions upward.
+        fieldCons <- mapM (\(_, expr) -> do
+            fname <- freshName counter "_rfld"
+            constrain counter env expr (T.NoExpectation (T.TVar fname)))
+            (Map.toList fields)
+        return $ T.CAnd fieldCons
+
+    Can.Tuple a b rest -> do
+        aName <- freshName counter "_t0"
+        bName <- freshName counter "_t1"
+        restNames <- mapM (\i -> freshName counter ("_t" ++ show i)) [2 .. length rest + 1]
+        let aType = T.TVar aName
+            bType = T.TVar bName
+            restTypes = map T.TVar restNames
+            tupleType = T.TTuple aType bType restTypes
+        aCon <- constrain counter env a (T.NoExpectation aType)
+        bCon <- constrain counter env b (T.NoExpectation bType)
+        restCons <- zipWithM (\ty expr ->
+            constrain counter env expr (T.NoExpectation ty))
+            restTypes rest
+        return $ T.CAnd (aCon : bCon : restCons ++ [T.CEqual region T.CRecord tupleType expected])
 
 
 -- ═══════════════════════════════════════════════════════════
@@ -783,5 +806,7 @@ vnodeType = T.TType (ModuleName.Canonical "") "VNode" []
 attrType = T.TType (ModuleName.Canonical "") "Attribute" []
 attrListType = T.TType ModuleName.list "List" [attrType]
 vnodeListType = T.TType ModuleName.list "List" [vnodeType]
-cmdType = T.TType ModuleName.cmd "Cmd" [T.TVar "msg"]
-subType = T.TType ModuleName.sub "Sub" [T.TVar "msg"]
+-- Use Canonical "" so Cmd/Sub unify with user annotations that
+-- resolve to empty-home module names (same as VNode/Attribute).
+cmdType = T.TType (ModuleName.Canonical "") "Cmd" [T.TVar "msg"]
+subType = T.TType (ModuleName.Canonical "") "Sub" [T.TVar "msg"]
