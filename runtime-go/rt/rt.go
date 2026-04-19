@@ -1031,6 +1031,73 @@ func AsList(v any) []any {
 	return nil
 }
 
+// AsListAny widens an arbitrary slice (`[]T` or `[]any`) into `[]any`.
+// Called at call-site boundaries where the callee expects `[]any` but
+// the caller has a typed slice (e.g. a record-field access whose
+// field type is `[]State_Monitor_R` flowing into an `any`-typed
+// helper). Uses reflect for unknown element types; fast-paths
+// `[]any` by returning it verbatim.
+func AsListAny(v any) []any {
+	if already, ok := v.([]any); ok {
+		return already
+	}
+	if v == nil {
+		return nil
+	}
+	rv := reflect.ValueOf(v)
+	if rv.Kind() != reflect.Slice {
+		return nil
+	}
+	n := rv.Len()
+	out := make([]any, n)
+	for i := 0; i < n; i++ {
+		out[i] = rv.Index(i).Interface()
+	}
+	return out
+}
+
+// AsListT coerces a Sky-side any value to a typed Go slice. Sky
+// lists are []any at runtime; this walks the list and type-asserts
+// each element to T with a nil-safe fallback. Called by typed
+// codegen at record-constructor and call-site boundaries when a
+// concrete `[]T` is required (the plain `any(v).([]T)` assertion
+// fails because []any and []T are distinct Go types even when T
+// is `any`'s dynamic value).
+func AsListT[T any](v any) []T {
+	if already, ok := v.([]T); ok {
+		return already
+	}
+	if xs, ok := v.([]any); ok {
+		out := make([]T, len(xs))
+		for i, x := range xs {
+			if cast, ok := x.(T); ok {
+				out[i] = cast
+			}
+		}
+		return out
+	}
+	return nil
+}
+
+// AsMapT: typed counterpart to AsMapString. Converts map[string]any
+// to map[string]V, element-by-element. Used where a record's field
+// type is `map[string]V` but the source value is `map[string]any`.
+func AsMapT[V any](v any) map[string]V {
+	if already, ok := v.(map[string]V); ok {
+		return already
+	}
+	if m, ok := v.(map[string]any); ok {
+		out := make(map[string]V, len(m))
+		for k, x := range m {
+			if cast, ok := x.(V); ok {
+				out[k] = cast
+			}
+		}
+		return out
+	}
+	return nil
+}
+
 // AsInt coerces an any-typed value to int. Panics on non-numeric
 // input with a descriptive message. The panic is caught by the Sky
 // runtime panic-recovery layer (SkyFfiRecover, Server_listen,

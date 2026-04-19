@@ -2971,11 +2971,35 @@ coerceToFieldType targetTy e
         GoIr.GoCall (GoIr.GoIdent ("rt.MaybeCoerce[" ++ eraseTypeParams inner ++ "]")) [e]
     | isJust (stripParametric "rt.SkyTask" targetTy) =
         GoIr.GoCall (GoIr.GoIdent ("rt.TaskCoerceT[" ++ eraseTypeParams (fromMaybe "" (stripParametric "rt.SkyTask" targetTy)) ++ "]")) [e]
+    -- Typed slices: runtime produces []any, so walk-and-cast via
+    -- rt.AsListT[T] instead of a hard `any(v).([]T)` assertion.
+    | Just elt <- stripListType targetTy =
+        GoIr.GoCall (GoIr.GoIdent ("rt.AsListT[" ++ elt ++ "]")) [e]
+    -- Typed maps: same pattern for map[string]V.
+    | Just valTy <- stripMapType targetTy =
+        GoIr.GoCall (GoIr.GoIdent ("rt.AsMapT[" ++ valTy ++ "]")) [e]
     | otherwise =
         let erasedTy = eraseTypeParams targetTy
         in if erasedTy == "any"
              then e
              else GoIr.GoTypeAssert (GoIr.GoCall (GoIr.GoIdent "any") [e]) erasedTy
+
+
+-- | If `ty` is a Go slice type `[]T` with T ≠ any, return Just "T".
+stripListType :: String -> Maybe String
+stripListType ty = case ty of
+    '[':']':rest | rest /= "any" -> Just rest
+    _ -> Nothing
+
+
+-- | If `ty` is `map[string]V` with V ≠ any, return Just "V".
+stripMapType :: String -> Maybe String
+stripMapType ty =
+    let prefix = "map[string]"
+    in if take (length prefix) ty == prefix
+        then let v = drop (length prefix) ty
+             in if v /= "any" && not (null v) then Just v else Nothing
+        else Nothing
 
 
 -- | Is this arg `()`? Used by P7 typed-FFI migration to recognise the
@@ -3390,6 +3414,16 @@ coerceArg e ty
     | ty == "int"    = GoIr.GoCall (GoIr.GoIdent "rt.CoerceInt") [e]
     | ty == "bool"   = GoIr.GoCall (GoIr.GoIdent "rt.CoerceBool") [e]
     | ty == "float64"= GoIr.GoCall (GoIr.GoIdent "rt.CoerceFloat") [e]
+    -- Target is []any: accept either `[]any` source or concrete
+    -- `[]T` source via rt.AsListAny which widens.
+    | ty == "[]any" =
+        GoIr.GoCall (GoIr.GoIdent "rt.AsListAny") [e]
+    -- Typed slice `[]T`: runtime may hand us `[]any`, walk-and-cast.
+    | Just elt <- stripListType ty =
+        GoIr.GoCall (GoIr.GoIdent ("rt.AsListT[" ++ elt ++ "]")) [e]
+    -- map[string]V: typed dict.
+    | Just valTy <- stripMapType ty =
+        GoIr.GoCall (GoIr.GoIdent ("rt.AsMapT[" ++ valTy ++ "]")) [e]
     | otherwise =
         let erasedTy = eraseTypeParams ty
         in if erasedTy == "any"
@@ -4390,10 +4424,12 @@ solvedTypeToGo ty = case ty of
     -- Container types: emit concrete Go generic instantiations.
     -- The body codegen must produce matching types (e.g. Nothing[T]()
     -- not Nothing[any]()). Monomorphisation ensures this.
-    -- Lists stay `[]any` universally because the runtime always
-    -- produces `[]any` for Sky list values — a typed `[]map[string]
-    -- string` field would fail the `any(v).(...)` type assertion at
-    -- the record-constructor call site with no conversion path.
+    -- Typed slices: emit `[]T` for known element types. The
+    -- runtime-produced `[]any` gets converted at assignment
+    -- boundaries via `rt.AsListT[T]` in coerceToFieldType.
+    T.TType _ "List" [elem] ->
+        let elemGo = solvedTypeToGo elem
+        in if elemGo == "any" then "[]any" else "[]" ++ elemGo
     T.TType _ "List" _ -> "[]any"
     T.TType _ "Cmd" _ -> "rt.SkyCmd"
     T.TType _ "Sub" _ -> "rt.SkySub"
@@ -4406,9 +4442,10 @@ solvedTypeToGo ty = case ty of
     T.TType _ "Task" [e, a] ->
         "rt.SkyTask[" ++ solvedTypeToGo e ++ ", " ++ solvedTypeToGo a ++ "]"
     T.TType _ "Task" _ -> "rt.SkyTask[any, any]"
-    -- Dict values stay `any` for the same reason List elements do:
-    -- the runtime represents all Dict v-positions as any, so a typed
-    -- value Go type would fail type assertions at the boundary.
+    -- Dict values: emit `map[string]V` for known value types;
+    -- boundary conversion via rt.AsMapT[V] in coerceToFieldType.
+    T.TType _ "Dict" [_, v] ->
+        "map[string]" ++ solvedTypeToGo v
     T.TType _ "Dict" _ -> "map[string]any"
     T.TType _ "Set" _ -> "map[any]bool"
     T.TType home name _ ->
