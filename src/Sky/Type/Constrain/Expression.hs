@@ -4,12 +4,14 @@
 -- TVar cache shares variables WITHIN a definition but not ACROSS definitions.
 module Sky.Type.Constrain.Expression
     ( constrainModule
+    , constrainModuleWithExternals
     , Env
     )
     where
 
 import Data.IORef
 import qualified Data.Map.Strict as Map
+import System.IO.Unsafe (unsafePerformIO)
 import qualified Sky.AST.Canonical as Can
 import qualified Sky.Reporting.Annotation as A
 import qualified Sky.Type.Type as T
@@ -36,9 +38,35 @@ freshName counter prefix = do
 
 -- | Generate constraints for an entire module (IO for fresh names)
 constrainModule :: Can.Module -> IO T.Constraint
-constrainModule canMod = do
+constrainModule = constrainModuleWithExternals Map.empty
+
+-- | Constrain a module with a pre-populated external type environment
+-- keyed by (home-module, binding-name). Each entry is an already-
+-- generalised annotation (Forall free-vars type). VarTopLevel lookups
+-- with a non-local home emit CForeign against the external annotation
+-- so fresh var instantiations let each call site unify independently.
+--
+-- This is the cross-module HM channel: when `foo = Other.foo` in
+-- module Tailwind and `Other.foo : SkyTuple2` is already solved,
+-- the solver sees foo's body type as SkyTuple2 and foo gets
+-- typed instead of a free TVar (the old bug).
+constrainModuleWithExternals
+    :: Map.Map (String, String) T.Annotation
+    -> Can.Module
+    -> IO T.Constraint
+constrainModuleWithExternals externals canMod = do
     counter <- newIORef 0
+    writeIORef globalExternals externals
     constrainDecls counter Map.empty (Can._decls canMod)
+
+
+-- | Thread the external signature map through a global IORef so
+-- deeply-nested constraint generation can see it without an extra
+-- parameter on every helper. Written by constrainModuleWithExternals
+-- before solving begins; read by Can.VarTopLevel handling.
+globalExternals :: IORef (Map.Map (String, String) T.Annotation)
+{-# NOINLINE globalExternals #-}
+globalExternals = unsafePerformIO (newIORef Map.empty)
 
 
 constrainDecls :: Counter -> Env -> Can.Decls -> IO T.Constraint
@@ -80,8 +108,19 @@ constrain counter env (A.At region expr) expected = case expr of
     Can.VarLocal name ->
         return $ T.CLocal region name expected
 
-    Can.VarTopLevel _home name ->
-        return $ T.CLocal region name expected
+    Can.VarTopLevel home name -> do
+        -- Cross-module channel: if we have an externally-solved
+        -- annotation for (home, name), emit CForeign so the solver
+        -- instantiates fresh vars at this call site. Falls back to
+        -- CLocal for same-module references or when no external
+        -- annotation is registered.
+        externals <- readIORef globalExternals
+        let homeStr = ModuleName.toString home
+        case Map.lookup (homeStr, name) externals of
+            Just annot ->
+                return $ T.CForeign region (homeStr ++ "." ++ name) annot expected
+            Nothing ->
+                return $ T.CLocal region name expected
 
     Can.VarKernel modName funcName ->
         case lookupKernelType modName funcName of

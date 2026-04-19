@@ -397,12 +397,28 @@ continueCompile config _entryPath outDir moduleOrder srcHash = do
             -- inferred types for the typed-codegen tables. Errors in a
             -- dep don't block the entry — we degrade to `any` for that
             -- module's bindings.
-            depSolved <- Async.forConcurrently validDeps $ \(modName, depMod) -> do
+            --
+            -- Pass 1: solve each dep in isolation.
+            depSolved0 <- Async.forConcurrently validDeps $ \(modName, depMod) -> do
                 cs <- Constrain.constrainModule depMod
                 r  <- Solve.solve cs
                 case r of
                     Solve.SolveOk t -> return (modName, t)
                     Solve.SolveError _ -> return (modName, Map.empty)
+            -- Cross-module HM inference (Pass 2) remains on hold —
+            -- the pragmatic re-export delegation in
+            -- generateDeclsForDep captures the common case, and the
+            -- annotation-based external channel occasionally unifies
+            -- user ADTs that happen to share names across modules,
+            -- making inference worse. Keep pass 1 results only.
+            let depSolved = depSolved0
+            -- Entry module is solved WITHOUT externals. The delegation-
+            -- based codegen in generateDeclsForDep already handles the
+            -- typed re-export pattern (`foo = Other.foo` inherits
+            -- callee's typed return) for entry bindings that call dep
+            -- functions. Cross-module externals in the entry solve
+            -- can introduce spurious unifications between user ADTs
+            -- that happen to share a constructor name across modules.
             constraints <- Constrain.constrainModule canMod
             solveResult <- Solve.solve constraints
             -- HM type errors are FATAL (promoted from warning). No
@@ -2009,6 +2025,71 @@ stripParametric prefix s
 
 
 -- | Decide whether a Sky type can be safely emitted as a Go return
+-- | Build a cross-module external-signature map from per-module
+-- solved types. Conservative: only include bindings whose solved
+-- type is fully concrete (no free TVars) AND references only
+-- kernel / primitive types. This captures the common re-export
+-- pattern (Tailwind.foo = Spacing.foo : SkyTuple2) without risking
+-- user-ADT name collisions between importer and importee modules.
+buildCrossModuleExternals
+    :: [(String, Map.Map String T.Type)]
+    -> Map.Map (String, String) T.Annotation
+buildCrossModuleExternals depSolved =
+    Map.fromList
+        [ ((modName, name), T.Forall [] ty)
+        | (modName, types) <- depSolved
+        , (name, ty) <- Map.toList types
+        , null (collectFreeTVars ty)
+        , onlyKernelTypes ty
+        ]
+  where
+    onlyKernelTypes t = case t of
+        T.TVar _ -> False
+        T.TUnit -> True
+        T.TType home _ args ->
+            ModuleName.isStdlib home
+            && all onlyKernelTypes args
+        T.TLambda a b -> onlyKernelTypes a && onlyKernelTypes b
+        T.TTuple a b cs -> all onlyKernelTypes (a : b : cs)
+        T.TRecord fields _ ->
+            all (\(T.FieldType _ fTy) -> onlyKernelTypes fTy) (Map.elems fields)
+        T.TAlias home _ pairs aliasType ->
+            ModuleName.isStdlib home
+            && all (onlyKernelTypes . snd) pairs
+            && case aliasType of
+                T.Filled i -> onlyKernelTypes i
+                T.Hoisted i -> onlyKernelTypes i
+
+
+-- | Generalise a solved type into a polymorphic Annotation by
+-- quantifying every free TVar. This is Hindley-Milner's `gen` for
+-- cross-module export: the annotation says "the caller decides
+-- what to plug in for each TVar", which is correct for top-level
+-- bindings that were HM-inferred without user-supplied annotation.
+generaliseToAnnotation :: T.Type -> T.Annotation
+generaliseToAnnotation ty =
+    let vars = collectFreeTVars ty
+    in T.Forall vars ty
+
+
+collectFreeTVars :: T.Type -> [String]
+collectFreeTVars = nubOrd . go
+  where
+    nubOrd [] = []
+    nubOrd (x:xs) = x : nubOrd (filter (/= x) xs)
+    go t = case t of
+        T.TVar n -> [n]
+        T.TLambda a b -> go a ++ go b
+        T.TType _ _ args -> concatMap go args
+        T.TTuple a b cs -> concatMap go (a : b : cs)
+        T.TRecord fields _ -> concatMap (\(T.FieldType _ fTy) -> go fTy) (Map.elems fields)
+        T.TAlias _ _ pairs aliasType ->
+            concatMap (go . snd) pairs ++ case aliasType of
+                T.Filled i -> go i
+                T.Hoisted i -> go i
+        T.TUnit -> []
+
+
 -- type today (T3). Accepts primitives, parametric Sky runtime types
 -- (SkyResult/SkyMaybe/SkyTask), and user-defined ADTs / record
 -- aliases (looking up the record-alias set in the codegen env to
