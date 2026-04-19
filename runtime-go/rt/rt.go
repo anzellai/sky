@@ -1865,6 +1865,20 @@ type SkyTuple3 = T3[any, any, any]
 // access in generated code is `t.Vs[i]`.
 type SkyTupleN struct { Vs []any }
 
+// Opaque Sky-side types with no concrete Go representation. They exist
+// solely so emitted function signatures name the abstraction (e.g.
+// `rt.SkyDecoder`) rather than leak `any`. Aliased — not new types —
+// so legacy any-typed values interop without coercion.
+// SkyRoute is intentionally excluded (defined as a real struct further
+// down); codegen maps Sky's `Route` to that struct directly.
+type SkyDecoder = any
+type SkyValue = any
+type SkyAttribute = any
+type SkyHandler = any
+type SkyMiddleware = any
+type SkySession = any
+type SkyStore = any
+
 // ═══════════════════════════════════════════════════════════
 // FFI — name-based dispatch for user-supplied Go bindings
 // ═══════════════════════════════════════════════════════════

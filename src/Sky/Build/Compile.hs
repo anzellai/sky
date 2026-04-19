@@ -2048,6 +2048,10 @@ safeReturnType t = case t of
     T.TTuple _ _ []               -> "rt.SkyTuple2"
     T.TTuple _ _ [_]              -> "rt.SkyTuple3"
     T.TTuple _ _ _                -> "rt.SkyTupleN"
+    -- Opaque parameterised types whose Go alias is `any` regardless
+    -- of type args (Decoder a, Value a). Match before the []-only
+    -- TType branch so `Decoder String` resolves the same way.
+    T.TType _ name _ | Just goTy <- opaqueParameterisedGoTy name -> goTy
     -- User-defined named type: only emit when it's a known record
     -- alias (then use `_R` suffix). Plain ADT unions stay `any` until
     -- we can guarantee every call site produces the exact struct type
@@ -2136,13 +2140,39 @@ runtimeOnlyTypes =
 
 -- | Known runtime types that have concrete Go type definitions.
 -- These map to their Go type name (with rt. prefix).
+-- | Parameterised opaque types that collapse to a Go alias irrespective
+-- of their type arguments. `Decoder String`, `Decoder Int`, etc. all
+-- emit as `rt.SkyDecoder` because under the hood the runtime uses a
+-- single `type SkyDecoder = any`.
+opaqueParameterisedGoTy :: String -> Maybe String
+opaqueParameterisedGoTy "Decoder" = Just "rt.SkyDecoder"
+opaqueParameterisedGoTy "Value"   = Just "rt.SkyValue"
+opaqueParameterisedGoTy _         = Nothing
+
+
 runtimeTypedMap :: [(String, String)]
 runtimeTypedMap =
-    [ ("VNode",    "rt.VNode")
-    , ("Request",  "rt.SkyRequest")
-    , ("Response", "rt.SkyResponse")
-    , ("Cmd",      "rt.SkyCmd")
-    , ("Sub",      "rt.SkySub")
+    [ ("VNode",      "rt.VNode")
+    , ("Request",    "rt.SkyRequest")
+    , ("Response",   "rt.SkyResponse")
+    , ("Cmd",        "rt.SkyCmd")
+    , ("Sub",        "rt.SkySub")
+    -- Opaque Sky types that are effectively `any` under the hood,
+    -- but have a dedicated Go alias so the emitted signature names
+    -- the abstraction instead of leaking `any`. Each alias is
+    -- declared as `type SkyX = any` in runtime-go/rt so there's
+    -- no boxing/unboxing overhead and legacy any-typed values
+    -- assign/compare transparently. Route is deliberately NOT here:
+    -- there's already an exported SkyRoute STRUCT used by the router,
+    -- and the Sky-side Route value is an unexported liveRoute struct,
+    -- so mapping to SkyRoute would be a lie.
+    , ("Decoder",    "rt.SkyDecoder")
+    , ("Value",      "rt.SkyValue")
+    , ("Attribute",  "rt.SkyAttribute")
+    , ("Handler",    "rt.SkyHandler")
+    , ("Middleware", "rt.SkyMiddleware")
+    , ("Session",    "rt.SkySession")
+    , ("Store",      "rt.SkyStore")
     ]
 
 
@@ -2228,6 +2258,7 @@ safeReturnTypeWith recAliases = go
         T.TTuple _ _ []               -> "rt.SkyTuple2"
         T.TTuple _ _ [_]              -> "rt.SkyTuple3"
         T.TTuple _ _ _                -> "rt.SkyTupleN"
+        T.TType _ name _ | Just goTy <- opaqueParameterisedGoTy name -> goTy
         T.TType home name [] ->
             let modStr = ModuleName.toString home
                 prefix = if null modStr || modStr == "Main"
@@ -2409,6 +2440,7 @@ typeStrWithAliases recAliases tvarMap ty = case ty of
     T.TTuple _ _ []   -> "rt.SkyTuple2"
     T.TTuple _ _ [_]  -> "rt.SkyTuple3"
     T.TTuple _ _ _    -> "rt.SkyTupleN"
+    T.TType _ name _ | Just goTy <- opaqueParameterisedGoTy name -> goTy
     -- Primitives (must check before the user-type catch-all)
     T.TType _ "Int" []    -> "int"
     T.TType _ "Float" []  -> "float64"
@@ -2533,6 +2565,7 @@ safeReturnTypePure t = case t of
     T.TTuple _ _ []               -> "rt.SkyTuple2"
     T.TTuple _ _ [_]              -> "rt.SkyTuple3"
     T.TTuple _ _ _                -> "rt.SkyTupleN"
+    T.TType _ name _ | Just goTy <- opaqueParameterisedGoTy name -> goTy
     -- Known runtime types with concrete Go definitions
     T.TType _ name [] | Just goTy <- lookup name runtimeTypedMap -> goTy
     -- safeReturnTypePure has no env access — can't distinguish record

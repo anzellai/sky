@@ -1238,6 +1238,83 @@ lookupKernelType modName funcName = case (modName, funcName) of
             (T.TLambda stringType
                 (T.TLambda (T.TVar "page")
                     (T.TType (ModuleName.Canonical "") "Route" [])))
+    -- Json.Decode (kernel mod "JsonDec") — signatures carry the
+    -- opaque Sky `Decoder a` as TType "Decoder" [a]; the codegen
+    -- resolves Decoder to rt.SkyDecoder via runtimeTypedMap.
+    ("JsonDec", "string") ->
+        Just $ T.Forall [] (decoderOf stringType)
+    ("JsonDec", "int") ->
+        Just $ T.Forall [] (decoderOf intType)
+    ("JsonDec", "float") ->
+        Just $ T.Forall [] (decoderOf floatType)
+    ("JsonDec", "bool") ->
+        Just $ T.Forall [] (decoderOf boolType)
+    ("JsonDec", "decodeString") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (decoderOf (T.TVar "a"))
+                (T.TLambda stringType
+                    (T.TType ModuleName.result_ "Result"
+                        [T.TType (ModuleName.Canonical "") "Error" [], T.TVar "a"])))
+    ("JsonDec", "field") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda stringType
+                (T.TLambda (decoderOf (T.TVar "a")) (decoderOf (T.TVar "a"))))
+    ("JsonDec", "at") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TType ModuleName.list "List" [stringType])
+                (T.TLambda (decoderOf (T.TVar "a")) (decoderOf (T.TVar "a"))))
+    ("JsonDec", "list") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (decoderOf (T.TVar "a"))
+                (decoderOf (T.TType ModuleName.list "List" [T.TVar "a"])))
+    ("JsonDec", "map") ->
+        Just $ T.Forall ["a", "b"]
+            (T.TLambda (T.TLambda (T.TVar "a") (T.TVar "b"))
+                (T.TLambda (decoderOf (T.TVar "a")) (decoderOf (T.TVar "b"))))
+    ("JsonDec", "andThen") ->
+        Just $ T.Forall ["a", "b"]
+            (T.TLambda (T.TLambda (T.TVar "a") (decoderOf (T.TVar "b")))
+                (T.TLambda (decoderOf (T.TVar "a")) (decoderOf (T.TVar "b"))))
+    ("JsonDec", "succeed") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TVar "a") (decoderOf (T.TVar "a")))
+    ("JsonDec", "fail") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda stringType (decoderOf (T.TVar "a")))
+    ("JsonDec", "oneOf") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda
+                (T.TType ModuleName.list "List" [decoderOf (T.TVar "a")])
+                (decoderOf (T.TVar "a")))
+    ("JsonDec", "map2") ->
+        Just $ T.Forall ["a", "b", "c"]
+            (T.TLambda (T.TLambda (T.TVar "a") (T.TLambda (T.TVar "b") (T.TVar "c")))
+                (T.TLambda (decoderOf (T.TVar "a"))
+                    (T.TLambda (decoderOf (T.TVar "b"))
+                        (decoderOf (T.TVar "c")))))
+    ("JsonDec", "map3") ->
+        Just $ T.Forall ["a", "b", "c", "d"]
+            (T.TLambda (T.TLambda (T.TVar "a")
+                (T.TLambda (T.TVar "b")
+                    (T.TLambda (T.TVar "c") (T.TVar "d"))))
+                (T.TLambda (decoderOf (T.TVar "a"))
+                    (T.TLambda (decoderOf (T.TVar "b"))
+                        (T.TLambda (decoderOf (T.TVar "c"))
+                            (decoderOf (T.TVar "d"))))))
+    -- Json.Decode.Pipeline (kernel mod "JsonDecP")
+    ("JsonDecP", "required") ->
+        Just $ T.Forall ["a", "b"]
+            (T.TLambda stringType
+                (T.TLambda (decoderOf (T.TVar "a"))
+                    (T.TLambda (decoderOf (T.TLambda (T.TVar "a") (T.TVar "b")))
+                        (decoderOf (T.TVar "b")))))
+    ("JsonDecP", "optional") ->
+        Just $ T.Forall ["a", "b"]
+            (T.TLambda stringType
+                (T.TLambda (decoderOf (T.TVar "a"))
+                    (T.TLambda (T.TVar "a")
+                        (T.TLambda (decoderOf (T.TLambda (T.TVar "a") (T.TVar "b")))
+                            (decoderOf (T.TVar "b"))))))
     -- Slog — structured logging, first arg is a message, second is a list of
     -- key-value pairs. We treat the second as List a for flexibility.
     ("Slog", "info") ->
@@ -1285,3 +1362,9 @@ subType = T.TType (ModuleName.Canonical "") "Sub" [T.TVar "msg"]
 cmdTypeOfMsg, subTypeOfMsg :: T.Type
 cmdTypeOfMsg = T.TType (ModuleName.Canonical "") "Cmd" [T.TVar "msg"]
 subTypeOfMsg = T.TType (ModuleName.Canonical "") "Sub" [T.TVar "msg"]
+
+-- Decoder wrapper. Home is empty so it unifies with runtimeTypedMap's
+-- "Decoder" lookup (which picks up rt.SkyDecoder) regardless of where
+-- the user imports from.
+decoderOf :: T.Type -> T.Type
+decoderOf inner = T.TType (ModuleName.Canonical "") "Decoder" [inner]
