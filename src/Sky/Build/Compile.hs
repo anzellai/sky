@@ -2765,9 +2765,11 @@ errorTypeAvailable recAliases =
 -- - error-only → `Sky.Core.Error.Error`
 -- - ok-only   → `rt.SkyValue` (opaque runtime-any alias, matches
 --               the body's untyped Ok-branch value)
--- See splitInferredSigWithReg for why this is safe: a TVar that
--- never leaves the ok slot has no caller that could observe a
--- different concrete type, so any single default is sound.
+-- - return-only (bare TVar in return position only, never in param)
+--   → `rt.SkyValue` for the same reason — the caller can't observe
+--   a specific concrete type for a TVar that never appears in the
+--   params.
+-- See splitInferredSigWithReg for why this is safe.
 defaultErrorTVars :: T.Type -> T.Type
 defaultErrorTVars ty =
     let counts = tvarOccurrences ty
@@ -2775,12 +2777,52 @@ defaultErrorTVars ty =
             [ n | (n, (e, o, x)) <- Map.toList counts, e > 0, o == 0, x == 0 ]
         okOnly =
             [ n | (n, (e, o, x)) <- Map.toList counts, o > 0, e == 0, x == 0 ]
-        errorTy = T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+        -- Return-only TVars: appear only in the "other" bucket (meaning
+        -- not in Result/Task/Maybe slots) but the param-position TVars
+        -- won't get this default because they'd be renamed to T1 etc.
+        -- by splitInferredSigWithReg (they're in `paramTVars`).
+        -- Here we catch TVars whose ONLY occurrence is in the return
+        -- type's non-Result/Task/Maybe position — they're
+        -- passthrough opaque values like `intVal : Int -> a`.
+        returnOnly = returnOnlyTVars ty
         okTy    = T.TType (ModuleName.Canonical "") "Value" []
+        errorTy = T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
         substMap = Map.fromList $
             [(n, errorTy) | n <- errorOnly]
-            ++ [(n, okTy) | n <- okOnly]
+            ++ [(n, okTy) | n <- okOnly ++ returnOnly]
     in substTVarsToTypes substMap ty
+
+
+-- | Walk a function type; find TVars that appear ONLY in the final
+-- return position (bare, no nested Result/Task/Maybe involvement).
+-- Used to default passthrough `T -> a` annotations to `T -> Value`.
+returnOnlyTVars :: T.Type -> [String]
+returnOnlyTVars ty =
+    let (paramTys, retTy) = peel ty
+        paramTVars = Set.fromList (concatMap collectAllTVars paramTys)
+        retTVars   = collectAllTVars retTy
+        -- Only bare TVars in the return position (not wrapped in
+        -- Result/Task/Maybe — those go through ok-slot defaulting).
+        retBare = case retTy of
+            T.TVar n -> [n]
+            _        -> []
+    in [ n | n <- retBare, n `notElem` retTVars_minus_self retTVars n
+           , not (n `Set.member` paramTVars) ]
+  where
+    peel (T.TLambda a b) = let (ps, r) = peel b in (a : ps, r)
+    peel t = ([], t)
+    collectAllTVars t = case t of
+        T.TVar n -> [n]
+        T.TLambda a b -> collectAllTVars a ++ collectAllTVars b
+        T.TType _ _ args -> concatMap collectAllTVars args
+        T.TTuple a b cs -> concatMap collectAllTVars (a : b : cs)
+        T.TAlias _ _ _ (T.Filled inner)  -> collectAllTVars inner
+        T.TAlias _ _ _ (T.Hoisted inner) -> collectAllTVars inner
+        T.TRecord fields _ ->
+            concatMap (\(T.FieldType _ fTy) -> collectAllTVars fTy)
+                      (Map.elems fields)
+        T.TUnit -> []
+    retTVars_minus_self retTVars n = filter (/= n) retTVars
 
 
 -- | Variant of `defaultErrorTVars` that defaults BOTH error-only and
