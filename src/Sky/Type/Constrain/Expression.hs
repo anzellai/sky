@@ -1394,12 +1394,21 @@ lookupKernelType modName funcName = case (modName, funcName) of
     -- so the record constraint propagates Model/Msg into user init/update/view/
     -- subscriptions. This is the big TEA-typing lever.
     ("Live", "app") ->
-        Just $ T.Forall ["model", "msg", "req", "page", "e"]
+        -- init receives the per-request context as `Dict String v` where
+        -- v is the element type chosen by the user's init (skyshop reads
+        -- cookies as Dicts so v unifies with another Dict; most examples
+        -- use `init _ = …` and leave v free, which defaults to the opaque
+        -- `rt.SkyValue` by the ok-slot defaulting rule). Pinning the
+        -- outer Dict/String key keeps the record-field match concrete
+        -- while still letting the value type flow from user code.
+        Just $ T.Forall ["model", "msg", "page", "e", "req"]
             (T.TLambda
                 (T.TRecord
                     (Map.fromList
                         [ ("init", T.FieldType 0
-                            (T.TLambda (T.TVar "req")
+                            (T.TLambda
+                                (T.TType ModuleName.dict "Dict"
+                                    [stringType, T.TVar "req"])
                                 (T.TTuple (T.TVar "model") cmdTypeOfMsg [])))
                         , ("update", T.FieldType 1
                             (T.TLambda (T.TVar "msg")
