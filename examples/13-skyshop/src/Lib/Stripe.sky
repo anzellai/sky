@@ -1,4 +1,4 @@
-module Lib.Stripe exposing (createCheckoutSession, verifyPayment, deductStock)
+module Lib.Stripe exposing (createCheckoutSession, verifyPayment, deductStock, CheckoutInfo)
 
 -- Stripe Go SDK imports
 import Sky.Core.Prelude exposing (..)
@@ -17,6 +17,10 @@ import Github.Com.Stripe.StripeGo.V84.Customer as Customer
 
 type alias PaymentStatus =
     { status : String, paymentStatus : String, customerName : String, customerEmail : String, customerPhone : String, shippingLine1 : String, shippingLine2 : String, shippingCity : String, shippingCountry : String, shippingPostalCode : String }
+
+
+type alias CheckoutInfo =
+    { id : String, url : String }
 
 
 initStripe _ =
@@ -127,6 +131,7 @@ buildLineItem item =
             |> Stripe.checkoutSessionLineItemParamsSetQuantity qty
 
 
+createCheckoutSession : String -> List (Dict String String) -> String -> String -> String -> String -> Result Error CheckoutInfo
 createCheckoutSession cartId items userId userName userEmail remarks =
     if apiKey == "" then
         Err
