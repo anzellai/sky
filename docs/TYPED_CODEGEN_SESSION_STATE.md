@@ -1,8 +1,8 @@
 # Typed Codegen — Session Resume Brief
 
-**Branch**: `feat/typed-codegen` — latest `73d9632`
+**Branch**: `feat/typed-codegen` — latest `fcd1034`
 **Target**: zero `any` in generated Go sigs across all 20 examples
-**Current state**: **~96%** of raw count eliminated (299 total, 120 real anys excluding legit polymorphic `[T1 any]` generics); all 20 examples build; all 9 live servers return HTTP 200; all 77 cabal tests pass
+**Current state**: **~97.5%** of raw count eliminated (81 real anys excluding legit polymorphic `[T1 any]` generics); all 20 examples build; all 9 live servers return HTTP 200; all 77 cabal tests pass
 
 ## Headline numbers
 
@@ -20,14 +20,14 @@
 | 10-live-component | 2 | parentMsg callback param (Go function covariance) |
 | 11-fyne-stopwatch | 0 | ✅ typed |
 | 12-skyvote | 2 | Lib.Db.query return |
-| 13-skyshop | 90 | FFI wrappers (Stripe/Firebase/Lib.Db) + unannotated view helpers |
+| 13-skyshop | 51 | FFI wrappers (Stripe/Firebase/Lib.Db) + unannotated view helpers |
 | 14-task-demo | 0 | ✅ typed |
 | 15-http-server | 0 | ✅ typed |
 | 16-skychess | 9 | Lib.GameLogic unannotated helpers |
 | 17-skymon | 3 | unannotated helpers |
 | 18-job-queue | 8 | unannotated TEA + no Model type alias |
 | simple, test_pkg | 0 | ✅ typed |
-| **Total** | **120 real any** (299 including polymorphic `[T1 any]`) — down from ~3277 = **-96%** | |
+| **Total** | **81 real any** — down from ~3277 = **-97.5%** | |
 
 Of those 421, **~130 are polymorphic type parameters `[T1 any]`** which are legitimately typed generic functions (the Go compiler still type-checks the body). The remaining **~294 are actual `any` returns or params** — almost all from unannotated user helper functions where HM can't specialise across module boundaries.
 
@@ -57,6 +57,8 @@ Commits on `feat/typed-codegen`:
 20. `9705ba8` — allow polymorphic externals: generaliseToAnnotation renames solver-internal TVars (`_carg49`, etc.) to user-level names (a, b, c) before quantifying, so previously-rejected polymorphic dep functions flow as `Forall [a, b, …] ty` cross-module.
 21. `136bed3` — note why TLambda stays as `any` in safeReturnType (Go lacks return-type covariance for function values).
 22. `73d9632` — Db row-accessor kernel sigs (getField/getString/getInt/getBool) + opaque aliases for Stmt/Row/Conn.
+23. `683350f` — Os.getenv returns Result Error String (runtime returns Err(ErrNotFound) on miss). Unblocks 5 dep-module solves in skyshop (-17 real-any).
+24. `fcd1034` — alpha-rename TypedDef free TVars so `a` in one annotation doesn't alias with `a` in the next via the solver's shared TVar cache. Also fixes skyshop Lib.Db.snapshotToDict to unwrap the Result return from Firestore.documentSnapshotData. -22 real-any.
 
 ## Runtime safety: all 9 live servers return HTTP 200
 
