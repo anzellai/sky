@@ -404,9 +404,7 @@ continueCompile config _entryPath outDir moduleOrder srcHash = do
                 r  <- Solve.solve cs
                 case r of
                     Solve.SolveOk t -> return (modName, t)
-                    Solve.SolveError e -> do
-                        putStrLn $ "   [p1 err] " ++ modName ++ ": " ++ take 100 e
-                        return (modName, Map.empty)
+                    Solve.SolveError _ -> return (modName, Map.empty)
             -- Pass 2: re-solve each dep with cross-module externals
             -- from pass 1. Deps that pass-1 failed (e.g. Chess.Move
             -- with `dir` type ambiguity) may now succeed because
@@ -422,8 +420,7 @@ continueCompile config _entryPath outDir moduleOrder srcHash = do
                 r  <- Solve.solve cs
                 case r of
                     Solve.SolveOk t -> return (modName, t)
-                    Solve.SolveError e -> do
-                        putStrLn $ "   [p2 err] " ++ modName ++ ": " ++ take 100 e
+                    Solve.SolveError _ ->
                         case lookup modName depSolved0 of
                             Just p1 -> return (modName, p1)
                             Nothing -> return (modName, Map.empty)) validDeps
@@ -503,13 +500,6 @@ continueCompile config _entryPath outDir moduleOrder srcHash = do
                     , let prefix = map (\c -> if c == '.' then '_' else c) modName
                     , let depMod = head [ m | (mn, m) <- validDeps, mn == modName ]
                     ]
-            putStrLn $ "   depSolved mods: " ++ show (map fst depSolved)
-            case [(mn, Map.size ts) | (mn, ts) <- depSolved, mn == "Chess.Move"] of
-                [(_, n)] -> putStrLn $ "   [Chess.Move solved keys] " ++ show n
-                _ -> putStrLn "   [Chess.Move] not in depSolved"
-            case [(mn, Map.lookup "pawnCaptureLeft" ts) | (mn, ts) <- depSolved, mn == "Chess.Move"] of
-                [(_, Just ty)] -> putStrLn $ "   [pawnCaptureLeft raw] " ++ show ty
-                _ -> putStrLn "   [pawnCaptureLeft raw] missing"
             let
                 depInferredParams = Map.map (\(_, ps, _) -> ps) fullSigs
                 depInferredRets   = Map.map (\(_, _, r) -> r)  fullSigs

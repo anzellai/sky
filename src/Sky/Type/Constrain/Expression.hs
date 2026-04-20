@@ -818,6 +818,45 @@ lookupKernelType modName funcName = case (modName, funcName) of
     ("Html", "render") ->
         -- Html.render : VNode -> String
         Just $ T.Forall [] (T.TLambda vnodeType stringType)
+    ("Html", "doctype") ->
+        -- Html.doctype : () -> String (emits the DOCTYPE prefix)
+        Just $ T.Forall [] (T.TLambda T.TUnit stringType)
+    ("Html", "br") ->
+        -- Html.br : List Attribute -> VNode (void element)
+        Just $ T.Forall [] (T.TLambda attrListType vnodeType)
+    ("Html", "hr") ->
+        -- Html.hr : List Attribute -> VNode
+        Just $ T.Forall [] (T.TLambda attrListType vnodeType)
+    ("Html", "titleNode") ->
+        -- Html.titleNode : String -> VNode
+        Just $ T.Forall [] (T.TLambda stringType vnodeType)
+    ("Html", "script") ->
+        -- Html.script : List Attribute -> a -> VNode
+        -- The body parameter accepts either a String (inline JS) or a
+        -- List VNode (child nodes) — runtime handles both. Leaving it
+        -- polymorphic avoids forcing users to wrap short script text
+        -- in a dummy text VNode.
+        Just $ T.Forall ["a"] (T.TLambda attrListType
+            (T.TLambda (T.TVar "a") vnodeType))
+    -- Void HTML elements (no children): attrs -> VNode
+    ("Html", "meta") ->
+        Just $ T.Forall [] (T.TLambda attrListType vnodeType)
+    ("Html", "link") ->
+        Just $ T.Forall [] (T.TLambda attrListType vnodeType)
+    ("Html", "area") ->
+        Just $ T.Forall [] (T.TLambda attrListType vnodeType)
+    ("Html", "base") ->
+        Just $ T.Forall [] (T.TLambda attrListType vnodeType)
+    ("Html", "col") ->
+        Just $ T.Forall [] (T.TLambda attrListType vnodeType)
+    ("Html", "embed") ->
+        Just $ T.Forall [] (T.TLambda attrListType vnodeType)
+    ("Html", "source") ->
+        Just $ T.Forall [] (T.TLambda attrListType vnodeType)
+    ("Html", "track") ->
+        Just $ T.Forall [] (T.TLambda attrListType vnodeType)
+    ("Html", "wbr") ->
+        Just $ T.Forall [] (T.TLambda attrListType vnodeType)
     -- 3-arg: node (String → attrs → children → VNode)
     ("Html", "node") ->
         Just $ T.Forall [] (T.TLambda stringType (T.TLambda attrListType (T.TLambda vnodeListType vnodeType)))
@@ -845,9 +884,13 @@ lookupKernelType modName funcName = case (modName, funcName) of
         Just $ T.Forall [] (T.TLambda stringType attrType)
     ("Attr", "attribute") ->
         Just $ T.Forall [] (T.TLambda stringType (T.TLambda stringType attrType))
-    -- Catch-all for boolean attrs (checked, disabled, etc.)
+    -- Catch-all for boolean attrs (checked, disabled, required, etc.)
+    -- Runtime helpers ignore the arg (it exists only to let Sky
+    -- callers use `Attr.required ()` or any other value as a
+    -- present/absent marker), so accept any type at the kernel
+    -- level rather than forcing String.
     ("Attr", _) ->
-        Just $ T.Forall [] (T.TLambda stringType attrType)
+        Just $ T.Forall ["a"] (T.TLambda (T.TVar "a") attrType)
     -- Event handlers
     ("Event", "onClick") ->
         Just $ T.Forall ["msg"] (T.TLambda (T.TVar "msg") attrType)
