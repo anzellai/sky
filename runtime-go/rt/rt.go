@@ -899,10 +899,14 @@ func List_cons(head, tail any) any {
 // ═══════════════════════════════════════════════════════════
 
 // Concat is Sky's `++` at runtime. Sky's `++` works on Strings AND Lists, so
-// we dispatch on operand types: two `[]any` → list concat; otherwise stringify
-// and concat. Mixed or unknown operands default to string concat to keep the
-// historical behaviour.
+// we dispatch on operand types: two slices → list concat; otherwise stringify
+// and concat. Before the typed-slice branch was added, `history ++ [newMsg]`
+// in user code panicked once typed codegen started emitting `history` as
+// `[]Lib_Ai_ChatMessage_R` — Concat fell through to AsString and produced
+// a concatenated `fmt.Sprintf("%v")` of both slices, which the caller then
+// tried to coerce back to `[]ChatMessage_R` and crashed.
 func Concat(a, b any) any {
+	// Fast path: both already `[]any`.
 	if la, ok := a.([]any); ok {
 		if lb, ok := b.([]any); ok {
 			out := make([]any, 0, len(la)+len(lb))
@@ -911,7 +915,35 @@ func Concat(a, b any) any {
 			return out
 		}
 	}
+	// Typed-slice path: widen either side via rt.AsList (which handles
+	// both `[]any` and typed slices via reflect) and concat as `[]any`.
+	// Downstream `rt.Coerce[[]T]` at the call site re-narrows element-
+	// wise, so the result is compatible with both Sky list operations
+	// and typed struct assignment.
+	aIsSlice := isSlice(a)
+	bIsSlice := isSlice(b)
+	if aIsSlice && bIsSlice {
+		la := AsList(a)
+		lb := AsList(b)
+		out := make([]any, 0, len(la)+len(lb))
+		out = append(out, la...)
+		out = append(out, lb...)
+		return out
+	}
 	return AsString(a) + AsString(b)
+}
+
+// isSlice: reports whether v is a Go slice (typed or []any). Used by
+// Concat to distinguish list-concat from string-concat without forcing
+// every caller to pre-box its typed list into []any.
+func isSlice(v any) bool {
+	if v == nil {
+		return false
+	}
+	if _, ok := v.([]any); ok {
+		return true
+	}
+	return reflect.ValueOf(v).Kind() == reflect.Slice
 }
 
 // ═══════════════════════════════════════════════════════════

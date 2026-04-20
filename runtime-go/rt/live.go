@@ -59,6 +59,12 @@ func velement(tag string, attrs []any, children []any) VNode {
 	for _, a := range attrs {
 		switch v := a.(type) {
 		case attrPair:
+			// Empty-key attrPair is the "no-op" sentinel returned by
+			// bool-conditional helpers like `disabled False` so
+			// False-valued booleans don't render the attribute.
+			if v.key == "" {
+				continue
+			}
 			node.Attrs[v.key] = v.val
 		case eventPair:
 			node.Events[v.name] = v.msg
@@ -241,11 +247,42 @@ func Attr_name(v any) any           { return attr("name", fmt.Sprintf("%v", v)) 
 func Attr_placeholder(v any) any    { return attr("placeholder", fmt.Sprintf("%v", v)) }
 func Attr_title(v any) any          { return attr("title", fmt.Sprintf("%v", v)) }
 func Attr_for(v any) any            { return attr("for", fmt.Sprintf("%v", v)) }
-func Attr_checked(v any) any        { return attr("checked", "checked") }
-func Attr_disabled(v any) any       { return attr("disabled", "disabled") }
-func Attr_readonly(v any) any       { return attr("readonly", "readonly") }
-func Attr_required(v any) any       { return attr("required", "required") }
-func Attr_autofocus(v any) any      { return attr("autofocus", "autofocus") }
+// Boolean HTML attributes follow Elm's convention: `disabled True`
+// renders the attribute; `disabled False` omits it entirely. Before
+// the bool-check was added these always emitted, so user code like
+// `disabled model.loading` rendered the input as disabled on first
+// load (when loading=False) — a bug that made sky-chat's compose box
+// unusable until the user manually stripped the attribute.
+func Attr_checked(v any) any {
+	if AsBool(v) {
+		return attr("checked", "checked")
+	}
+	return attr("", "")
+}
+func Attr_disabled(v any) any {
+	if AsBool(v) {
+		return attr("disabled", "disabled")
+	}
+	return attr("", "")
+}
+func Attr_readonly(v any) any {
+	if AsBool(v) {
+		return attr("readonly", "readonly")
+	}
+	return attr("", "")
+}
+func Attr_required(v any) any {
+	if AsBool(v) {
+		return attr("required", "required")
+	}
+	return attr("", "")
+}
+func Attr_autofocus(v any) any {
+	if AsBool(v) {
+		return attr("autofocus", "autofocus")
+	}
+	return attr("", "")
+}
 func Attr_rel(v any) any            { return attr("rel", fmt.Sprintf("%v", v)) }
 func Attr_target(v any) any         { return attr("target", fmt.Sprintf("%v", v)) }
 func Attr_method(v any) any         { return attr("method", fmt.Sprintf("%v", v)) }
