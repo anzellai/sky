@@ -59,7 +59,7 @@ mirrorIndex sq =
         row = sq // 8
         col = modBy 8 sq
     in
-        7 - row * 8 + col
+        (7 - row) * 8 + col
 
 
 tableValue : List Int -> Int -> Int

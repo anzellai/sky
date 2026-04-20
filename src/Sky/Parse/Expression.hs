@@ -212,7 +212,14 @@ exprAtom_ mkError =
                              return (Src.Tuple e1 e2 more)
                          Just ')' -> do
                              char mkError ')'
-                             return (A.toValue e1)
+                             -- Wrap in Src.Paren so the canonicaliser's
+                             -- precedence climber treats this as an atomic
+                             -- subtree. Without this, `(a - b) * c` flattens
+                             -- into the outer Binops chain and re-associates
+                             -- as `a - (b * c)` because `*` binds tighter
+                             -- than `-` — silently dropping the user's
+                             -- explicit grouping.
+                             return (Src.Paren e1)
                          _ -> error "Expected , or ) in expression"
 
         , -- List literal: [a, b, c]

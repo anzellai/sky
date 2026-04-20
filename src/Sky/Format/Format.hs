@@ -244,6 +244,11 @@ fmt _ (Src.VarQual m n) = m ++ "." ++ n
 fmt _ Src.Unit = "()"
 fmt _ (Src.Op o) = "(" ++ o ++ ")"
 fmt col (Src.Negate e) = "-" ++ fmt col (A.toValue e)
+-- Paren is the parser's way of keeping `(a - b) * c` grouped properly.
+-- Emit the parens back out when formatting so the round-trip stays
+-- stable. Without this the formatter drops them and subsequent builds
+-- silently re-associate.
+fmt col (Src.Paren e) = "(" ++ fmt col (A.toValue e) ++ ")"
 fmt _ (Src.Accessor f) = "." ++ f
 fmt col (Src.Access e (A.At _ f)) = fmt col (A.toValue e) ++ "." ++ f
 

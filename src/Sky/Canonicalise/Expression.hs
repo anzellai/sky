@@ -56,6 +56,13 @@ canonicaliseExpr_ env region expr = case expr of
     Src.Negate inner ->
         Can.Negate (canonicaliseExpr env inner)
 
+    -- Parens are transparent at the canonical level — same type, same
+    -- value. The wrapping only matters at parse time so the
+    -- precedence-climber in canonicaliseBinops doesn't re-associate
+    -- through a parenthesised sub-chain. See flattenBinops'.
+    Src.Paren inner ->
+        A.toValue (canonicaliseExpr env inner)
+
     Src.Binops pairs final ->
         canonicaliseBinops env pairs final
 
@@ -235,8 +242,14 @@ canonicaliseBinops env pairs final =
 
     -- Same as flattenBinops but recursing on a single operand expression.
     -- If it's itself a Src.Binops, flatten that; otherwise it's a leaf.
+    -- Src.Paren is ALWAYS a leaf — parentheses are the user's explicit
+    -- signal that this sub-chain should not be flattened into the outer
+    -- precedence climb. Without this stop-point, `(a - b) * c` flattens
+    -- as `[a, b, c]` with ops `[-, *]`, then precedence reassociates as
+    -- `a - (b * c)`, silently violating the user's grouping.
     flattenBinops' :: Src.Expr -> (Src.Expr, [(Src.Expr, String)])
     flattenBinops' expr@(A.At _ e) = case e of
+        Src.Paren _     -> (expr, [])
         Src.Binops ps f -> flattenBinops ps f
         _               -> (expr, [])
 
