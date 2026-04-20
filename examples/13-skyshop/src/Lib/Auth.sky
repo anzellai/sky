@@ -37,6 +37,7 @@ adminEmails _ =
             String.split "," envAdmins
 
 
+isAdmin : Dict String String -> Bool
 isAdmin user =
     Db.getBool "is_admin" user
 
