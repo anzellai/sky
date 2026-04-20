@@ -10,6 +10,7 @@ import System.IO (hPutStrLn, stderr)
 
 import qualified System.Directory
 import qualified System.Environment
+import qualified Language.Haskell.TH.Syntax
 import System.Directory (createDirectoryIfMissing, doesFileExist, removeFile)
 import System.IO.Error (catchIOError)
 import qualified Control.Exception
@@ -44,8 +45,9 @@ import qualified Sky.Build.SkyDeps as SkyDeps
 -- scripts/check-forbidden.sh). Returns True iff everything passed.
 --
 -- Stages:
---   1. Forbidden-pattern gate across src/, sky-stdlib/, examples/*/src/
---      (rejects Result String / Task String / Std.IoError / RemoteData).
+--   1. Forbidden-pattern gate across src\/, sky-stdlib\/, and every
+--      examples\/\*\/src\/ tree (rejects Result String, Task String,
+--      Std.IoError, RemoteData).
 --   2. Build + run every example (or the one named via `target`).
 --      Panics in stderr / non-zero exit / non-2xx HTTP → fail.
 runVerify :: Maybe String -> IO Bool
@@ -644,8 +646,32 @@ templateSearchPaths filename = do
     (</>) a b = a ++ "/" ++ b
 
 
+-- | Version string.
+--
+-- * Local / contributor builds: `app/VERSION` contains the literal
+--   "dev" (kept in git), so `sky --version` reports "sky dev (0.9.0)".
+-- * CI release builds: before `cabal install`, CI overwrites
+--   `app/VERSION` with the tagged version (e.g. `1.2.3`) so the
+--   released binary reports "sky v1.2.3".
+--
+-- `qAddDependentFile` registers app/VERSION as a TH dependency so
+-- GHC re-runs this splice (and recompiles Main.hs) whenever the
+-- file contents change — enough to survive cabal's object cache.
+skyBuildVersion :: String
+skyBuildVersion =
+    $(do
+        let versionFile = "app/VERSION"
+            isWs c = c == ' ' || c == '\n' || c == '\r' || c == '\t'
+            trim = reverse . dropWhile isWs . reverse . dropWhile isWs
+        Language.Haskell.TH.Syntax.qAddDependentFile versionFile
+        raw <- Language.Haskell.TH.Syntax.runIO (readFile versionFile)
+        Language.Haskell.TH.Syntax.lift (trim raw))
+
+
 skyVersionString :: String
-skyVersionString = "sky v" ++ Data.Version.showVersion Paths_sky_compiler.version
+skyVersionString
+    | skyBuildVersion == "dev" = "sky dev"
+    | otherwise                = "sky v" ++ skyBuildVersion
 
 
 runCommand :: Command -> IO (Either String ())

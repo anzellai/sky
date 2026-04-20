@@ -2452,7 +2452,11 @@ runtimeTypedMap =
     , ("Middleware", "rt.SkyMiddleware")
     , ("Session",    "rt.SkySession")
     , ("Store",      "rt.SkyStore")
-    , ("Db",         "rt.SkyDb")
+    -- Db is stored as a pointer at runtime — Db_connect/Db_open
+    -- return `&SkyDb{…}`. Typing as `*rt.SkyDb` matches the
+    -- `Ok[any,any](db)` branch so the ResultCoerce type assertion
+    -- on the OkValue succeeds.
+    , ("Db",         "*rt.SkyDb")
     , ("Stmt",       "rt.SkyStmt")
     , ("Row",        "rt.SkyRow")
     , ("Conn",       "rt.SkyConn")
