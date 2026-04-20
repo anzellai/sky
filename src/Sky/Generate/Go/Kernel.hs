@@ -326,7 +326,12 @@ registry = Map.fromList
 
     , (("Http", "get"),           KernelInfo "rt.Http_get" 1 False)
     , (("Http", "post"),          KernelInfo "rt.Http_post" 2 False)
-    , (("Http", "request"),       KernelInfo "rt.Http_request" 4 False)
+    -- Http.request takes a single record argument
+    -- `{ method, url, headers, body }` — the Elm-style API documented
+    -- in templates/CLAUDE.md. The Go runtime helper is variadic so it
+    -- still accepts the legacy 4-positional call shape, but kernel
+    -- arity 1 keeps call-site codegen emitting the record unchanged.
+    , (("Http", "request"),       KernelInfo "rt.Http_request" 1 False)
 
     , (("Path", "join"),          KernelInfo "rt.Path_join" 1 False)
     , (("Path", "dir"),           KernelInfo "rt.Path_dir" 1 False)
@@ -549,6 +554,7 @@ registry = Map.fromList
     , (("JsonDec", "float"),      KernelInfo "rt.JsonDec_float" 0 False)
     , (("JsonDec", "bool"),       KernelInfo "rt.JsonDec_bool" 0 False)
     , (("JsonDec", "field"),      KernelInfo "rt.JsonDec_field" 2 False)
+    , (("JsonDec", "index"),      KernelInfo "rt.JsonDec_index" 2 False)
     , (("JsonDec", "list"),       KernelInfo "rt.JsonDec_list" 1 False)
     , (("JsonDec", "map"),        KernelInfo "rt.JsonDec_map" 2 False)
     , (("JsonDec", "andThen"),    KernelInfo "rt.JsonDec_andThen" 2 False)

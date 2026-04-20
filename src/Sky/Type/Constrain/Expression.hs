@@ -1485,6 +1485,11 @@ lookupKernelType modName funcName = case (modName, funcName) of
         Just $ T.Forall ["a"]
             (T.TLambda (T.TType ModuleName.list "List" [stringType])
                 (T.TLambda (decoderOf (T.TVar "a")) (decoderOf (T.TVar "a"))))
+    -- Decode.index : Int -> Decoder a -> Decoder a
+    ("JsonDec", "index") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda intType
+                (T.TLambda (decoderOf (T.TVar "a")) (decoderOf (T.TVar "a"))))
     ("JsonDec", "list") ->
         Just $ T.Forall ["a"]
             (T.TLambda (decoderOf (T.TVar "a"))

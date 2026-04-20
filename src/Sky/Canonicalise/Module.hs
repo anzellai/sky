@@ -855,9 +855,9 @@ staticKernelFunctions = Map.fromList
     , ("Set",     ["empty", "fromList", "insert", "remove", "member", "toList",
                     "size", "union", "intersect", "diff"])
     , ("JsonEnc", ["string", "int", "float", "bool", "null", "list", "object", "encode"])
-    , ("JsonDec", ["decodeString", "string", "int", "float", "bool", "field", "list",
-                    "map", "andThen", "succeed", "fail", "oneOf",
-                    "at", "map2", "map3", "map4", "map5"])
+    , ("JsonDec", ["decodeString", "string", "int", "float", "bool", "field",
+                    "index", "list", "map", "andThen", "succeed", "fail",
+                    "oneOf", "at", "map2", "map3", "map4", "map5"])
     , ("Sha256",  ["sum256", "sum256String"])
     , ("Hex",     ["encode", "encodeToString", "decode"])
     , ("Os",      ["args", "getenv", "cwd", "exit"])

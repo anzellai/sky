@@ -130,7 +130,12 @@ func Html_h6(a, c any) any     { return htmlElem("h6")(a, c) }
 func Html_a(a, c any) any      { return htmlElem("a")(a, c) }
 func Html_button(a, c any) any { return htmlElem("button")(a, c) }
 // input is void in HTML — no children. Sky API takes attrs only.
-func Html_input(a any) any { return htmlElem("input")(a, nil) }
+// Void HTML elements accept an optional empty `[]` children argument
+// because elm-format convention writes them as `input [attrs] []`.
+// The runtime ignores the children and emits the void tag regardless;
+// the single-arg call site (`input [attrs]`) still works because
+// Sky's variadic FFI dispatch treats the missing arg as implicit nil.
+func Html_input(a any, _ ...any) any { return htmlElem("input")(a, nil) }
 func Html_form(a, c any) any   { return htmlElem("form")(a, c) }
 func Html_label(a, c any) any  { return htmlElem("label")(a, c) }
 func Html_nav(a, c any) any    { return htmlElem("nav")(a, c) }
@@ -145,9 +150,12 @@ func Html_ul(a, c any) any      { return htmlElem("ul")(a, c) }
 func Html_ol(a, c any) any      { return htmlElem("ol")(a, c) }
 func Html_li(a, c any) any      { return htmlElem("li")(a, c) }
 // img is a void element — emit as self-closing, attrs only.
-func Html_img(a any) any        { return htmlElem("img")(a, nil) }
-func Html_br(a any) any         { return htmlElem("br")(a, nil) }
-func Html_hr(a any) any         { return htmlElem("hr")(a, nil) }
+// Void HTML elements — same variadic trick as Html_input so both
+// `img [attrs]` and `img [attrs] []` compile. The second arg is
+// discarded.
+func Html_img(a any, _ ...any) any { return htmlElem("img")(a, nil) }
+func Html_br(a any, _ ...any) any  { return htmlElem("br")(a, nil) }
+func Html_hr(a any, _ ...any) any  { return htmlElem("hr")(a, nil) }
 func Html_table(a, c any) any   { return htmlElem("table")(a, c) }
 func Html_thead(a, c any) any   { return htmlElem("thead")(a, c) }
 func Html_tbody(a, c any) any   { return htmlElem("tbody")(a, c) }
@@ -577,7 +585,7 @@ func Html_htmlNode(a, c any) any { return htmlElem("html")(a, c) }
 func Html_headNode(a, c any) any { return htmlElem("head")(a, c) }
 func Html_body(a, c any) any     { return htmlElem("body")(a, c) }
 func Html_title(a, c any) any    { return htmlElem("title")(a, c) }
-func Html_meta(a any) any        { return htmlElem("meta")(a, nil) }
+func Html_meta(a any, _ ...any) any { return htmlElem("meta")(a, nil) }
 func Html_link(a any) any        { return htmlElem("link")(a, nil) }
 func Html_script(a, c any) any   { return htmlElem("script")(a, c) }
 
