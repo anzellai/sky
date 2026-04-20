@@ -1,8 +1,8 @@
 # Typed Codegen — Session Resume Brief
 
-**Branch**: `feat/typed-codegen` — latest `9953ff7`
+**Branch**: `feat/typed-codegen` — latest `73d9632`
 **Target**: zero `any` in generated Go sigs across all 20 examples
-**Current state**: ~87% of the raw count eliminated; all 20 examples build and all 9 live servers return HTTP 200
+**Current state**: **~96%** of raw count eliminated (299 total, 120 real anys excluding legit polymorphic `[T1 any]` generics); all 20 examples build; all 9 live servers return HTTP 200; all 77 cabal tests pass
 
 ## Headline numbers
 
@@ -12,22 +12,22 @@
 | 02-go-stdlib | 0 | ✅ typed |
 | 03-tea-external | 0 | ✅ typed |
 | 04-local-pkg | 0 | ✅ typed |
-| 05-mux-server | 6 | all polymorphic `[T1 any]` — genuinely generic |
-| 06-json | 1 | `profileFromInputs` returns `Result[any, any]` (user-unannotated) |
-| 07-todo-cli | 10 | Db-opaque wrappers |
-| 08-notes-app | 50 | unannotated `Lib.View/Auth/Db` helpers |
-| 09-live-counter | 5 | polymorphic TEA helpers |
-| 10-live-component | 3 | polymorphic TEA helpers |
-| 11-fyne-stopwatch | 2 | polymorphic `[T1 any]` |
-| 12-skyvote | 58 | unannotated `Lib.Auth/Ideas/Comments` |
-| 13-skyshop | 196 | FFI wrappers (Stripe/Firebase) + unannotated helpers |
+| 05-mux-server | 1 | genuinely-generic [T1 any] wrapper |
+| 06-json | 0 | ✅ typed (excluding polymorphic generics) |
+| 07-todo-cli | 1 | single Db-opaque helper |
+| 08-notes-app | 2 | Lib.Db.conn / Lib.View.cardShadow |
+| 09-live-counter | 2 | unannotated TEA helpers |
+| 10-live-component | 2 | parentMsg callback param (Go function covariance) |
+| 11-fyne-stopwatch | 0 | ✅ typed |
+| 12-skyvote | 2 | Lib.Db.query return |
+| 13-skyshop | 90 | FFI wrappers (Stripe/Firebase/Lib.Db) + unannotated view helpers |
 | 14-task-demo | 0 | ✅ typed |
 | 15-http-server | 0 | ✅ typed |
-| 16-skychess | 61 | unannotated `pawnCaptureLeft`-style helpers |
-| 17-skymon | 12 | unannotated `Lib.Database/SafeQuery` helpers |
-| 18-job-queue | 9 | polymorphic TEA helpers |
+| 16-skychess | 9 | Lib.GameLogic unannotated helpers |
+| 17-skymon | 3 | unannotated helpers |
+| 18-job-queue | 8 | unannotated TEA + no Model type alias |
 | simple, test_pkg | 0 | ✅ typed |
-| **Total** | **413** (down from ~3277 = **-87%**) | |
+| **Total** | **120 real any** (299 including polymorphic `[T1 any]`) — down from ~3277 = **-96%** | |
 
 Of those 421, **~130 are polymorphic type parameters `[T1 any]`** which are legitimately typed generic functions (the Go compiler still type-checks the body). The remaining **~294 are actual `any` returns or params** — almost all from unannotated user helper functions where HM can't specialise across module boundaries.
 
@@ -50,6 +50,13 @@ Commits on `feat/typed-codegen`:
 13. `6acbb93` — pass-2 dep re-solve with externals: deps that pass-1 failed (e.g. Chess.Move) now succeed because imported helpers' concrete types disambiguate their internal calls. -5 any sigs.
 14. `fce64cc` — **formatter**: multi-line record types with leading commas at the alias body indent (>1 field always breaks). Fixes sky-stdlib/Sky/Test.sky's `Suite String List Test` (parsed as 3-arg ctor, 2 actual uses) to `Suite String (List Test)`.
 15. `9953ff7` — apply the new formatter to all example `.sky` files (State/Model records now flow multi-line), plus fixes two more Result arity typos in `authenticateUser` annotations for notes-app and skyvote.
+16. `c05d785` — Css kernel sigs (hex/px/rem/em/pct/stylesheet → String). User helpers wrapping them now type.
+17. `466a2b8` — Html.raw/styleNode/render kernel sigs. Pre-fix the catch-all `(Html, _)` → `attrs → children → VNode` mis-typed 1-arg helpers, which cascaded to whole-dep-module solve failures. Drops 65 real-any sigs.
+18. `f0a8f94` — TypedDef wraps its body in CLet. Annotated functions were skipping the param-binding registration in the solver's _env, so `CLocal "dir"` in an annotated body hit an empty env and fabricated a fresh unconstrained TVar. Fixes Chess.Move (-12 real-any).
+19. `89f331b` — more Html kernel sigs for void elements (meta/link/area/…) and inline-body script/titleNode/doctype; Attr.* catch-all accepts `any` (boolean attrs ignore arg). Drops 67 real-any sigs.
+20. `9705ba8` — allow polymorphic externals: generaliseToAnnotation renames solver-internal TVars (`_carg49`, etc.) to user-level names (a, b, c) before quantifying, so previously-rejected polymorphic dep functions flow as `Forall [a, b, …] ty` cross-module.
+21. `136bed3` — note why TLambda stays as `any` in safeReturnType (Go lacks return-type covariance for function values).
+22. `73d9632` — Db row-accessor kernel sigs (getField/getString/getInt/getBool) + opaque aliases for Stmt/Row/Conn.
 
 ## Runtime safety: all 9 live servers return HTTP 200
 
