@@ -2656,16 +2656,16 @@ splitInferredSigWithReg
     -> ([String], [String], String)
 splitInferredSigWithReg recAliases fieldIdx arity funcType =
     let -- Default TVars that appear ONLY in error positions (Result's
-        -- first arg, Task's first arg) to `Sky.Core.Error.Error` —
-        -- but only when the Error type is reachable in the current
-        -- module's dep graph. Without that guard, examples like
-        -- `simple` (which imports Sky.Core.Task but not Error) emit
-        -- `rt.SkyTask[Sky_Core_Error_Error, int]` without a matching
-        -- type alias, and `go build` breaks.
+        -- first arg, Task's first arg) to `Sky.Core.Error.Error` when
+        -- the Error type is reachable in the current module's dep
+        -- graph, else to the opaque `rt.SkyValue` alias so the sig
+        -- still carries a nominal name (examples that import
+        -- Sky.Core.Task but not Error still link, because SkyValue
+        -- is always in the rt package).
         defaulted =
             if errorTypeAvailable recAliases
                 then defaultErrorTVars funcType
-                else funcType
+                else defaultOpaqueTVars funcType
         (paramTys, retTy) = collectParams arity defaulted
         -- TVars in the params get named T1, T2, …. Return-only
         -- TVars intentionally stay un-named (rendered as `any`)
@@ -2771,6 +2771,25 @@ defaultErrorTVars ty =
         substMap = Map.fromList $
             [(n, errorTy) | n <- errorOnly]
             ++ [(n, okTy) | n <- okOnly]
+    in substTVarsToTypes substMap ty
+
+
+-- | Variant of `defaultErrorTVars` that defaults BOTH error-only and
+-- ok-only TVars to the opaque `rt.SkyValue` alias. Used when the
+-- current module's dep graph doesn't include Sky.Core.Error so the
+-- Error-typed default can't be emitted without a dangling type
+-- reference.
+defaultOpaqueTVars :: T.Type -> T.Type
+defaultOpaqueTVars ty =
+    let counts = tvarOccurrences ty
+        okTy = T.TType (ModuleName.Canonical "") "Value" []
+        candidates =
+            [ n
+            | (n, (e, o, x)) <- Map.toList counts
+            , x == 0
+            , e + o > 0
+            ]
+        substMap = Map.fromList [(n, okTy) | n <- candidates]
     in substTVarsToTypes substMap ty
 
 
