@@ -1872,7 +1872,25 @@ generateDef def solvedTypes =
         -- function sigs. wrapTypedReturn coerces the body to match.
         (entryTypeParams, entryParamGoTys, goRetType) = case (def, mAnnotTy, mSolvedType) of
             (Can.TypedDef _ _ typedPats _ retTy, _, _) ->
-                ([], map (safeReturnType . snd) typedPats, safeReturnType retTy)
+                -- For annotated functions: prefer the HM-solved type
+                -- when available. The user's annotation can leave TVars
+                -- free (`init : a -> (Model, Cmd Msg)`), but HM will
+                -- have unified them against Live.app's typed record
+                -- fields. The solved type is strictly more specific,
+                -- so use it when present. Fall back to annotation-only
+                -- when HM didn't register a type (never happens for
+                -- top-level bindings but safe).
+                let baseTy = case mSolvedType of
+                        Just t  -> t
+                        Nothing -> foldr T.TLambda retTy (map snd typedPats)
+                    defaulted = defaultErrorTVars baseTy
+                    splitAnn 0 ty = ([], ty)
+                    splitAnn n (T.TLambda from to) =
+                        let (rest, r) = splitAnn (n - 1) to
+                        in (from : rest, r)
+                    splitAnn _ ty = ([], ty)
+                    (ps, r) = splitAnn (length typedPats) defaulted
+                in  ([], map safeReturnType ps, safeReturnType r)
             (_, _, Just funcType) ->
                 splitInferredSigWithReg
                     (Rec._cg_recordAliases getCgEnv)
