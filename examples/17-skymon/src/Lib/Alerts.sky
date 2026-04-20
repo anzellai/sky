@@ -296,10 +296,10 @@ escapeJson s =
 
 parseFloat : String -> Float
 parseFloat s =
-    case String.toInt s of
+    case String.toFloat s of
 
-        Just n ->
-            identity n
+        Just f ->
+            f
 
         Nothing ->
             0

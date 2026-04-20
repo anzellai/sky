@@ -1853,6 +1853,15 @@ func String_toFloatT(s string) SkyResult[string, float64] {
 	return Ok[string, float64](f)
 }
 
+// String_toFloat: any-typed counterpart used by the legacy call path.
+// Parses any stringish value and returns Maybe Float at runtime —
+// mirrors String_toInt which also returns Maybe.
+func String_toFloat(s any) any {
+	f, err := strconv.ParseFloat(strings.TrimSpace(fmt.Sprintf("%v", s)), 64)
+	if err != nil { return Nothing[any]() }
+	return Just[any](f)
+}
+
 // ═══════════════════════════════════════════════════════════
 // Record operations
 // ═══════════════════════════════════════════════════════════
