@@ -17,7 +17,7 @@
         # Go 1.26 — matches local dev + CI. nixpkgs 24.11's default `go`
         # attribute tracks the channel's latest; if it trails, bump to the
         # unstable branch or override with an FOD.
-        goToolchain = pkgs.go;
+        goToolchain = pkgs.go_1_26;
 
         # Haskell package set with our pinned GHC.
         hsPkgs = pkgs.haskell.packages.ghc948;
@@ -46,7 +46,7 @@
 
       in {
         # ────────────────────────────────────────────────────────────
-        # `nix develop` — reproducible shell with GHC 9.4.8 + Go 1.23 +
+        # `nix develop` — reproducible shell with GHC 9.4.8 + Go 1.26 +
         # every system lib the Sky compiler needs.
         # ────────────────────────────────────────────────────────────
         devShells.default = pkgs.mkShell {

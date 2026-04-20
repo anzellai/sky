@@ -2087,20 +2087,10 @@ buildCrossModuleExternalsWithMods validDeps depSolved =
         | (modName, types) <- depSolved
         , (name, ty) <- Map.toList types
         , isFunctionType ty
-        , not (hasSolverInternalVars ty)
         ]
   where
     isFunctionType (T.TLambda _ _) = True
     isFunctionType _               = False
-
-    -- Reject types containing solver-internal placeholder TVars
-    -- (names starting with `_` — fresh vars from the constraint
-    -- generator) or multi-character TVars like "t108" that indicate
-    -- an unresolved binding. Only user-level single-letter TVars
-    -- (a, b, c) survive — those are legitimate polymorphic parameters.
-    hasSolverInternalVars t = any isSolverInternal (collectFreeTVars t)
-    isSolverInternal ('_':_) = True
-    isSolverInternal n = length n > 1
 
 
 -- | Backwards-compat: previous buildCrossModuleExternals signature.
@@ -2163,10 +2153,50 @@ fixupHomes hmap = go
 -- cross-module export: the annotation says "the caller decides
 -- what to plug in for each TVar", which is correct for top-level
 -- bindings that were HM-inferred without user-supplied annotation.
+--
+-- Solver-internal TVar names (_cargN, _fooN_res, etc.) are renamed
+-- to plain user-level names (a, b, c, ...) before being quantified.
+-- Without the rename, the annotation would reference names the
+-- external consumer's solver can't produce at fresh instantiation,
+-- and the cross-module channel silently drops those bindings.
 generaliseToAnnotation :: T.Type -> T.Annotation
 generaliseToAnnotation ty =
-    let vars = collectFreeTVars ty
-    in T.Forall vars ty
+    let rawVars = collectFreeTVars ty
+        (renamedTy, renamed) = renameSolverInternals rawVars ty
+    in T.Forall renamed renamedTy
+
+
+-- | Build a rename map from solver-internal TVar names to sequential
+-- user-level names (a, b, c, …), then substitute throughout the type.
+-- Returns (newType, newFreeVarList).
+renameSolverInternals :: [String] -> T.Type -> (T.Type, [String])
+renameSolverInternals rawVars ty =
+    let userNames = [ [c] | c <- ['a' .. 'z'] ]
+                 ++ [ [c] ++ show (i :: Int) | i <- [1..], c <- ['a' .. 'z'] ]
+        rename = Map.fromList (zip rawVars userNames)
+        newVars = map (\v -> Map.findWithDefault v v rename) rawVars
+    in (substTVars rename ty, newVars)
+
+
+-- | Apply a TVar name rename to every TVar in a type.
+substTVars :: Map.Map String String -> T.Type -> T.Type
+substTVars subst = go
+  where
+    go t = case t of
+        T.TVar n -> T.TVar (Map.findWithDefault n n subst)
+        T.TLambda a b -> T.TLambda (go a) (go b)
+        T.TType home n args -> T.TType home n (map go args)
+        T.TTuple a b cs -> T.TTuple (go a) (go b) (map go cs)
+        T.TRecord fields mExt ->
+            T.TRecord
+                (Map.map (\(T.FieldType i fTy) -> T.FieldType i (go fTy)) fields)
+                (fmap (\e -> Map.findWithDefault e e subst) mExt)
+        T.TAlias home n pairs aliasType ->
+            T.TAlias home n [(k, go v) | (k, v) <- pairs]
+                (case aliasType of
+                    T.Filled i -> T.Filled (go i)
+                    T.Hoisted i -> T.Hoisted (go i))
+        T.TUnit -> T.TUnit
 
 
 collectFreeTVars :: T.Type -> [String]
