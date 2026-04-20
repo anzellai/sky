@@ -1296,7 +1296,7 @@ lookupKernelType modName funcName = case (modName, funcName) of
         Just $ T.Forall ["a"] (T.TLambda (T.TVar "a") (T.TVar "a"))
     ("Basics", "errorToString") ->
         Just $ T.Forall []
-            (T.TLambda (T.TType (ModuleName.Canonical "") "Error" []) stringType)
+            (T.TLambda (T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []) stringType)
     -- Log
     -- Css — most helpers return a String (CSS textual fragment).
     -- Opaque rule/property returns stay as `any` via runtimeOnlyTypes.
@@ -1365,7 +1365,7 @@ lookupKernelType modName funcName = case (modName, funcName) of
             (T.TLambda (decoderOf (T.TVar "a"))
                 (T.TLambda stringType
                     (T.TType ModuleName.result_ "Result"
-                        [T.TType (ModuleName.Canonical "") "Error" [], T.TVar "a"])))
+                        [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" [], T.TVar "a"])))
     ("JsonDec", "field") ->
         Just $ T.Forall ["a"]
             (T.TLambda stringType
@@ -1426,6 +1426,28 @@ lookupKernelType modName funcName = case (modName, funcName) of
                     (T.TLambda (T.TVar "a")
                         (T.TLambda (decoderOf (T.TLambda (T.TVar "a") (T.TVar "b")))
                             (decoderOf (T.TVar "b"))))))
+    -- Std.Db kernel types: only light-weight accessors that take a
+    -- row Dict and return a primitive. Heavier functions
+    -- (connect/open/exec/execRaw/query) are intentionally left
+    -- kernel-only because their user wrappers expect slightly
+    -- different shapes (variadic, cross-driver) than any single
+    -- static Sky signature captures.
+    ("Db", "getField") ->
+        Just $ T.Forall ["row"]
+            (T.TLambda stringType
+                (T.TLambda (T.TVar "row") stringType))
+    ("Db", "getString") ->
+        Just $ T.Forall ["row"]
+            (T.TLambda stringType
+                (T.TLambda (T.TVar "row") stringType))
+    ("Db", "getInt") ->
+        Just $ T.Forall ["row"]
+            (T.TLambda stringType
+                (T.TLambda (T.TVar "row") intType))
+    ("Db", "getBool") ->
+        Just $ T.Forall ["row"]
+            (T.TLambda stringType
+                (T.TLambda (T.TVar "row") boolType))
     -- Slog — structured logging, first arg is a message, second is a list of
     -- key-value pairs. We treat the second as List a for flexibility.
     ("Slog", "info") ->

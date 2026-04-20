@@ -2398,6 +2398,10 @@ runtimeTypedMap =
     , ("Middleware", "rt.SkyMiddleware")
     , ("Session",    "rt.SkySession")
     , ("Store",      "rt.SkyStore")
+    , ("Db",         "rt.SkyDb")
+    , ("Stmt",       "rt.SkyStmt")
+    , ("Row",        "rt.SkyRow")
+    , ("Conn",       "rt.SkyConn")
     ]
 
 

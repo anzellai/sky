@@ -1938,6 +1938,8 @@ type SkyTupleN struct { Vs []any }
 // so legacy any-typed values interop without coercion.
 // SkyRoute is intentionally excluded (defined as a real struct further
 // down); codegen maps Sky's `Route` to that struct directly.
+// SkyDb is likewise a real struct (db_auth.go); Conn/Stmt/Row are
+// aliases for any.
 type SkyDecoder = any
 type SkyValue = any
 type SkyAttribute = any
@@ -1945,6 +1947,9 @@ type SkyHandler = any
 type SkyMiddleware = any
 type SkySession = any
 type SkyStore = any
+type SkyStmt = any
+type SkyRow = any
+type SkyConn = any
 
 // ═══════════════════════════════════════════════════════════
 // FFI — name-based dispatch for user-supplied Go bindings
