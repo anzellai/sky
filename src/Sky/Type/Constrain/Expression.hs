@@ -411,18 +411,32 @@ constrainDefWithType counter env def = case def of
             wrappedCon = T.CLet [] [] paramHeader T.CTrue bodyCon
         return (wrappedCon, name, funcType)
 
-    Can.TypedDef (A.At _region name) _freeVars typedPats body retType -> do
-        let paramBindings = concatMap (\(pat, ty) -> patternBindings (pat, ty)) typedPats
+    Can.TypedDef (A.At _region name) freeVars typedPats body retType -> do
+        -- Alpha-rename free TVars in the annotation so the polymorphic
+        -- variable `a` in `boolVal : Bool -> a` doesn't collide with
+        -- the `a` in `intVal : Int -> a` (the solver's TVar cache
+        -- shares vars by name, so same-letter annotations across
+        -- sibling definitions would otherwise unify their `a`s).
+        renameMap <- Map.fromList <$>
+            mapM (\(v, _) -> do
+                fresh <- freshName counter ("_" ++ name ++ "_" ++ v)
+                return (v, fresh)) freeVars
+        let renameT = substTypeVarNames renameMap
+            typedPats' = [ (pat, renameT ty) | (pat, ty) <- typedPats ]
+            retType' = renameT retType
+            paramBindings = concatMap (\(pat, ty) -> patternBindings (pat, ty)) typedPats'
             bodyEnv = foldr (\(n, ann) e -> Map.insert n ann e) env paramBindings
-            funcType = foldr (\(_, ty) acc -> T.TLambda ty acc) retType typedPats
-        bodyCon <- constrain counter bodyEnv body (T.NoExpectation retType)
+            funcType = foldr (\(_, ty) acc -> T.TLambda ty acc) retType' typedPats'
+        bodyCon <- constrain counter bodyEnv body (T.NoExpectation retType')
         -- Wrap body in CLet so param bindings flow into the solver's
         -- _env. Without this, CLocal "param" lookups hit an empty
         -- env, create fresh unconstrained TVars, and downstream
         -- unifications fail even though the annotation gave the
         -- params concrete types. Matches the Can.Def path.
-        let paramHeader = Map.fromList $
-                map (\(pname, T.Forall _ ptype) -> (pname, (A.one, ptype))) paramBindings
+        let paramHeader = Map.fromList
+                [ (pname, (A.one, ptype))
+                | (pname, T.Forall _ ptype) <- paramBindings
+                ]
             wrappedCon = T.CLet [] [] paramHeader T.CTrue bodyCon
         return (wrappedCon, name, funcType)
 
@@ -579,6 +593,31 @@ instantiatePattern counter (A.At reg p) scrutTy = case p of
         return (binds, eq : cons)
   where
     combine xs = (concatMap fst xs, concatMap snd xs)
+
+
+-- | Rename a set of TVar names within a Can.Type without otherwise
+-- changing the structure. Used by TypedDef processing to alpha-
+-- rename the annotation's free TVars so each function's `a`/`b`
+-- binders don't accidentally unify with each other through the
+-- solver's shared TVar cache.
+substTypeVarNames :: Map.Map String String -> Can.Type -> Can.Type
+substTypeVarNames subst = go
+  where
+    go t = case t of
+        Can.TVar n -> Can.TVar (Map.findWithDefault n n subst)
+        Can.TLambda a b -> Can.TLambda (go a) (go b)
+        Can.TType h n args -> Can.TType h n (map go args)
+        Can.TTuple a b cs -> Can.TTuple (go a) (go b) (map go cs)
+        Can.TRecord fields mExt ->
+            Can.TRecord
+                (Map.map (\(Can.FieldType i fTy) -> Can.FieldType i (go fTy)) fields)
+                mExt
+        Can.TAlias h n pairs aliasType ->
+            Can.TAlias h n [(k, go v) | (k, v) <- pairs]
+                (case aliasType of
+                    Can.Filled i -> Can.Filled (go i)
+                    Can.Hoisted i -> Can.Hoisted (go i))
+        Can.TUnit -> Can.TUnit
 
 
 -- | Substitute named type variables in a Canonical.Type.
