@@ -1356,6 +1356,36 @@ lookupKernelType modName funcName = case (modName, funcName) of
     ("Css", "stylesheet") ->
         Just $ T.Forall ["a"]
             (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"]) stringType)
+    -- Css.rule / Css.property / Css.margin / … deliberately un-kernelled.
+    -- The runtime returns opaque `cssRule` / `cssProp` structs (not String),
+    -- so a "returns String" kernel sig would cause `rt.Coerce[[]string]` to
+    -- panic at the list boundary in Tailwind. Only helpers the runtime
+    -- confirms return `string` get kernel entries below.
+    ("Css", "shadow") ->
+        -- Runtime: Sprintf("%v %v %v %v", …) → String.
+        Just $ T.Forall ["a", "b", "c"]
+            (T.TLambda (T.TVar "a")
+                (T.TLambda (T.TVar "b")
+                    (T.TLambda (T.TVar "c")
+                        (T.TLambda stringType stringType))))
+    ("Css", "rgb") ->
+        Just $ T.Forall []
+            (T.TLambda intType
+                (T.TLambda intType (T.TLambda intType stringType)))
+    ("Css", "rgba") ->
+        Just $ T.Forall []
+            (T.TLambda intType
+                (T.TLambda intType
+                    (T.TLambda intType (T.TLambda floatType stringType))))
+    ("Css", "hsl") ->
+        Just $ T.Forall []
+            (T.TLambda intType
+                (T.TLambda intType (T.TLambda intType stringType)))
+    ("Css", "hsla") ->
+        Just $ T.Forall []
+            (T.TLambda intType
+                (T.TLambda intType
+                    (T.TLambda intType (T.TLambda floatType stringType))))
     ("Log", "printlnT") ->
         Just $ T.Forall ["a", "e"]
             (T.TLambda (T.TVar "a")
