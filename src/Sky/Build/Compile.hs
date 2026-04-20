@@ -2712,7 +2712,20 @@ typeStrWithAliasesReg recAliases fieldIdx tvarMap ty = case ty of
         "rt.SkyMaybe[" ++ go x ++ "]"
     T.TType _ "Task" [e, a] ->
         "rt.SkyTask[" ++ go e ++ ", " ++ go a ++ "]"
+    -- List with a known element type: emit `[]T` so sig is specific.
+    -- Body-constructed `[]any{...}` coerces via rt.Coerce[[]T] (reflect-
+    -- based element walk) and rt.AsListT[T] at call boundaries, both of
+    -- which already handle the []any → []T reshape. Element types that
+    -- themselves map to `any` (TVars, runtime-only abstractions) fall
+    -- back to `[]any` to avoid emitting `[]any` inside `[]any`.
+    T.TType _ "List" [elem] ->
+        let inner = go elem
+        in if inner == "any" then "[]any" else "[]" ++ inner
     T.TType _ "List" _ -> "[]any"
+    -- Dict String V similarly emits `map[string]V` when V is concrete.
+    T.TType _ "Dict" [_k, v] ->
+        let inner = go v
+        in if inner == "any" then "map[string]any" else "map[string]" ++ inner
     T.TType _ "Dict" _ -> "map[string]any"
     T.TType _ "Set"  _ -> "map[any]bool"
     -- Cmd/Sub: opaque Go types (ignore inner type param)

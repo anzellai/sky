@@ -1469,12 +1469,26 @@ lookupKernelType modName funcName = case (modName, funcName) of
                     (T.TLambda (T.TVar "a")
                         (T.TLambda (decoderOf (T.TLambda (T.TVar "a") (T.TVar "b")))
                             (decoderOf (T.TVar "b"))))))
-    -- Std.Db kernel types: only light-weight accessors that take a
-    -- row Dict and return a primitive. Heavier functions
-    -- (connect/open/exec/execRaw/query) are intentionally left
-    -- kernel-only because their user wrappers expect slightly
-    -- different shapes (variadic, cross-driver) than any single
-    -- static Sky signature captures.
+    -- Std.Db kernel types: row accessors return primitives; the
+    -- heavier functions (open/exec/execRaw/query) are typed at the
+    -- Sky level even though the runtime takes/returns `any`, because
+    -- user wrappers benefit from HM propagating `String`/`List a`/
+    -- `Result Error …` through the call graph. The kernel carries
+    -- `Db` as an opaque nominal type — mapped to `rt.SkyDb` in
+    -- codegen via runtimeTypedMap — so wrappers that thread `conn`
+    -- through get a non-`any` param in their emitted sig.
+    -- Db.open / Db.connect / Db.exec / Db.query / Db.execRaw are
+    -- deliberately unkernelled. Two prior attempts (97 commits ago
+    -- and again this session) typed them as `Db -> …` but each time
+    -- regressed other dep modules because:
+    --   (a) user wrappers like `conn = case Db.open … of Ok c -> c |
+    --       Err _ -> identity ""` rely on `c` and the fallback
+    --       unifying to a polymorphic TVar, which a typed kernel
+    --       (returning `Db`) correctly rejects;
+    --   (b) Std.Db's user-facing wrappers have slightly different
+    --       arities across examples (variadic args, driver-specific
+    --       options) that no single static kernel captures.
+    -- Row accessors stay typed because their shape is uniform.
     ("Db", "getField") ->
         Just $ T.Forall ["row"]
             (T.TLambda stringType
