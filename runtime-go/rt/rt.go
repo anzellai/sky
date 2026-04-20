@@ -401,10 +401,83 @@ func narrowReflectValue(src reflect.Value, target reflect.Type) reflect.Value {
 	if target.Kind() == reflect.Slice && src.Kind() == reflect.Slice {
 		return coerceSliceValue(src, target)
 	}
+	// Sky generic containers: SkyMaybe[any]/SkyResult[any,any]/SkyTask[any,any]
+	// → SkyMaybe[T]/SkyResult[E,A]/SkyTask[E,A]. Go treats these distinct
+	// generic instantiations as unrelated nominal types, so a record field
+	// typed `SkyMaybe[User_R]` can't receive a `SkyMaybe[any]` value without
+	// narrow reconstruction. This is the path sky-chat / sky-vote hit when
+	// `RecordUpdate model { currentUser = Just user }` quietly dropped the
+	// update because `rt.Just[any](user)` didn't match the struct field type.
+	if target.Kind() == reflect.Struct && src.Kind() == reflect.Struct {
+		if narrowed, ok := narrowSkyContainer(src, target); ok {
+			return narrowed
+		}
+	}
 	if target.Kind() == reflect.String {
 		return reflect.ValueOf(fmt.Sprintf("%v", src.Interface()))
 	}
 	return reflect.Value{}
+}
+
+// narrowSkyContainer reconstructs a Sky-generic container (SkyMaybe,
+// SkyResult, SkyTask, Tuples) across generic instantiations. Works by
+// walking the source's Tag/OkValue/ErrValue/JustValue/V0/V1 fields via
+// reflect and setting them on a freshly-allocated target-typed value
+// (narrowing each inner field per narrowReflectValue rules).
+//
+// Detection: any struct whose first field is named "Tag" and whose
+// remaining fields match a known Sky container shape. Non-Sky structs
+// fall through to the generic fail path.
+func narrowSkyContainer(src reflect.Value, target reflect.Type) (reflect.Value, bool) {
+	tagF := src.FieldByName("Tag")
+	if !tagF.IsValid() {
+		return reflect.Value{}, false
+	}
+	out := reflect.New(target).Elem()
+	outTag := out.FieldByName("Tag")
+	if !outTag.IsValid() || !outTag.CanSet() {
+		return reflect.Value{}, false
+	}
+	outTag.SetInt(tagF.Int())
+
+	// Propagate per-field values, narrowing each. We iterate over the
+	// TARGET's fields so extra source fields (e.g. SkyName) are copied
+	// only when the target has a matching slot.
+	for i := 0; i < target.NumField(); i++ {
+		fName := target.Field(i).Name
+		if fName == "Tag" {
+			continue
+		}
+		srcF := src.FieldByName(fName)
+		if !srcF.IsValid() {
+			continue
+		}
+		outF := out.Field(i)
+		if !outF.CanSet() {
+			continue
+		}
+		// Source field is typed `any` for the polymorphic container;
+		// unwrap the interface then narrow to the target's concrete
+		// field type.
+		if srcF.Kind() == reflect.Interface {
+			if srcF.IsNil() {
+				// Leave the output field at its zero value.
+				continue
+			}
+			inner := srcF.Elem()
+			narrowed := narrowReflectValue(inner, outF.Type())
+			if narrowed.IsValid() {
+				outF.Set(narrowed)
+			}
+			continue
+		}
+		// Same kind on both sides (e.g. both concrete) — recurse.
+		narrowed := narrowReflectValue(srcF, outF.Type())
+		if narrowed.IsValid() {
+			outF.Set(narrowed)
+		}
+	}
+	return out, true
 }
 
 // coerceMapValue rebuilds a map[K]V → map[K2]V2 via reflect. Uses
