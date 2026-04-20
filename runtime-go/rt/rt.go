@@ -1932,11 +1932,21 @@ func List_filterMapAnyT(fn any, xs []any) []any {
 	return out
 }
 
+// concatMap's callback may return ANY slice kind — `[]any` under the
+// legacy any-kernel path, `[]int`/`[]T_R` under typed codegen. The
+// strict `.([]any)` assertion dropped typed results silently, which
+// meant slider piece move generation (bishop/rook/queen in skychess)
+// silently returned zero moves because `List.concatMap (\d ->
+// slideMoves …)` produced `[]int` per direction. Widen via AsList
+// which walks any Go slice via reflect.
 func List_concatMapAnyT(fn any, xs []any) []any {
 	out := []any{}
 	for _, x := range xs {
 		r := SkyCall(fn, x)
-		if sub, ok := r.([]any); ok { out = append(out, sub...) }
+		sub := AsList(r)
+		if sub != nil {
+			out = append(out, sub...)
+		}
 	}
 	return out
 }
