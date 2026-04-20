@@ -1545,18 +1545,50 @@ lookupKernelType modName funcName = case (modName, funcName) of
     -- `Db` as an opaque nominal type — mapped to `rt.SkyDb` in
     -- codegen via runtimeTypedMap — so wrappers that thread `conn`
     -- through get a non-`any` param in their emitted sig.
-    -- Db.open / Db.connect / Db.exec / Db.query / Db.execRaw are
-    -- deliberately unkernelled. Two prior attempts (97 commits ago
-    -- and again this session) typed them as `Db -> …` but each time
-    -- regressed other dep modules because:
-    --   (a) user wrappers like `conn = case Db.open … of Ok c -> c |
-    --       Err _ -> identity ""` rely on `c` and the fallback
-    --       unifying to a polymorphic TVar, which a typed kernel
-    --       (returning `Db`) correctly rejects;
-    --   (b) Std.Db's user-facing wrappers have slightly different
-    --       arities across examples (variadic args, driver-specific
-    --       options) that no single static kernel captures.
-    -- Row accessors stay typed because their shape is uniform.
+    -- Std.Db — user wrappers now use `Os.exit 1` (polymorphic return)
+    -- in the Err branch instead of `identity ""` so typed kernel sigs
+    -- don't reject the fatal fallback.
+    ("Db", "open") ->
+        Just $ T.Forall []
+            (T.TLambda stringType
+                (T.TLambda stringType
+                    (T.TType ModuleName.result_ "Result"
+                        [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                        , T.TType (ModuleName.Canonical "") "Db" []])))
+    ("Db", "connect") ->
+        Just $ T.Forall []
+            (T.TLambda T.TUnit
+                (T.TType ModuleName.result_ "Result"
+                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                    , T.TType (ModuleName.Canonical "") "Db" []]))
+    ("Db", "exec") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TType (ModuleName.Canonical "") "Db" [])
+                (T.TLambda stringType
+                    (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"])
+                        (T.TType ModuleName.result_ "Result"
+                            [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                            , intType]))))
+    ("Db", "execRaw") ->
+        Just $ T.Forall []
+            (T.TLambda (T.TType (ModuleName.Canonical "") "Db" [])
+                (T.TLambda stringType
+                    (T.TType ModuleName.result_ "Result"
+                        [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                        , intType])))
+    ("Db", "query") ->
+        -- Runtime returns List (Dict String any); user code reads
+        -- strings via getField so typing as Dict String String matches
+        -- every example's usage pattern.
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TType (ModuleName.Canonical "") "Db" [])
+                (T.TLambda stringType
+                    (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"])
+                        (T.TType ModuleName.result_ "Result"
+                            [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                            , T.TType ModuleName.list "List"
+                                [T.TType ModuleName.dict "Dict"
+                                    [stringType, stringType]]]))))
     ("Db", "getField") ->
         Just $ T.Forall ["row"]
             (T.TLambda stringType

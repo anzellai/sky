@@ -25,10 +25,12 @@ dbConn =
 
         Err e ->
             let
-                _ = println ("[FATAL] Cannot open skychess.db: " ++ e)
-                _ = Os.exit 1
+                _ =
+                    println
+                        ("[FATAL] Cannot open skychess.db: "
+                             ++ Error.toString e)
             in
-                identity ""
+                Os.exit 1
 
 
 getConn _ =
