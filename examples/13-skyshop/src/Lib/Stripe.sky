@@ -95,6 +95,7 @@ createCustomer userId userName userEmail =
                               ++ errorToString e))
 
 
+buildLineItem : Dict String String -> Result Error Value
 buildLineItem item =
     let
         title = Db.getField "title" item
