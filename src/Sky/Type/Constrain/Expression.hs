@@ -1220,6 +1220,18 @@ lookupKernelType modName funcName = case (modName, funcName) of
     ("Set", "size") ->
         Just $ T.Forall ["a"]
             (T.TLambda (T.TType ModuleName.set "Set" [T.TVar "a"]) intType)
+    -- Context (Go stdlib) — background/todo return an opaque
+    -- context.Context; Sky exposes these as `rt.SkyValue` so user
+    -- wrappers like `ctx = Context.background ()` don't degrade to
+    -- `any` in the emitted Go sig.
+    ("Context", "background") ->
+        Just $ T.Forall []
+            (T.TLambda T.TUnit
+                (T.TType (ModuleName.Canonical "") "Value" []))
+    ("Context", "todo") ->
+        Just $ T.Forall []
+            (T.TLambda T.TUnit
+                (T.TType (ModuleName.Canonical "") "Value" []))
     -- Os
     ("Os", "args") ->
         Just $ T.Forall []
