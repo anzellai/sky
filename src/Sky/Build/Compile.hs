@@ -212,6 +212,12 @@ compile config entryPath outDir = do
         then do
             putStrLn "-- Incremental: source unchanged, reusing cached output"
             copyRuntime outDir
+            -- copyRuntime overwrites sky-out/go.mod with runtime-go/go.mod,
+            -- losing any user-declared Go deps from sky.toml's
+            -- [go.dependencies]. Re-run seedGoDependencies so the rt/
+            -- bindings (mux, stripe, firebase, …) still resolve on the
+            -- incremental rebuild path.
+            seedGoDependencies outDir (Toml._goDeps config)
             return (Right existingMain)
         else continueCompile config entryPath outDir moduleOrder srcHash
 
