@@ -2592,6 +2592,12 @@ splitInferredSig = splitInferredSigWith Set.empty
 splitInferredSigWith :: Set.Set String -> Int -> T.Type -> ([String], [String], String)
 splitInferredSigWith recAliases arity funcType =
     let (paramTys, retTy) = collectParams arity funcType
+        -- TVars in the params get named T1, T2, …. Return-only
+        -- TVars intentionally stay un-named (rendered as `any`)
+        -- because Go's generic type inference only works from
+        -- argument positions — naming them as T_N would force
+        -- callers to instantiate explicitly (`foo[int](x)`)
+        -- which neither Sky nor the FFI emits.
         paramTVars = uniq (concatMap tvarsInEmitted paramTys)
         numbered = zip paramTVars ["T" ++ show i | i <- [1::Int ..]]
         typeParams = map snd numbered
