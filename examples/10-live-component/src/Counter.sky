@@ -19,7 +19,9 @@ import Std.Cmd as Cmd
 -- ============================================================
 -- The component state type (same name as module)
 type alias Counter =
-    { count : Int, label : String }
+    { count : Int
+    , label : String
+    }
 
 -- Internal messages
 type Msg

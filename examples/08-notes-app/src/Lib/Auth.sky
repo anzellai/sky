@@ -88,7 +88,7 @@ checkUserCredentials password user =
 -- authenticateUser : Result Error User. DB errors surface upstream so
 -- callers can show "service unavailable" rather than "bad password".
 -- Wrong email / wrong password both PermissionDenied.
-authenticateUser : String -> String -> Result Error Dict String String
+authenticateUser : String -> String -> Result Error (Dict String String)
 authenticateUser email password =
     case Db.query
              "SELECT id, email, password_hash, verified FROM users WHERE email = ? LIMIT 1"

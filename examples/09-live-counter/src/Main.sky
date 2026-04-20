@@ -15,7 +15,9 @@ import Std.Time as Time
 -- MSG
 -- ======================================================
 type alias Model =
-    { page : Page, count : Int }
+    { page : Page
+    , count : Int
+    }
 
 -- ======================================================
 -- MODEL

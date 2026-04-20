@@ -15,7 +15,10 @@ import Counter exposing (Counter)
 -- MSG -- CounterMsg wraps Counter.Msg (auto-wired!)
 -- ======================================================
 type alias Model =
-    { page : Page, title : String, myCounter : Counter }
+    { page : Page
+    , title : String
+    , myCounter : Counter
+    }
 
 -- ======================================================
 -- MODEL -- unified with component state

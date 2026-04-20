@@ -58,7 +58,7 @@ createUser username email password =
 -- callers can show "DB unavailable" rather than misleading "bad password".
 -- Wrong password / unknown email both return Unauthorised — same UI text,
 -- avoids leaking which one was wrong (security best practice).
-authenticateUser : String -> String -> Result Error Dict String String
+authenticateUser : String -> String -> Result Error (Dict String String)
 authenticateUser email password =
     case Db.query
              "SELECT id, username, email, password_hash FROM users WHERE email = ? LIMIT 1"

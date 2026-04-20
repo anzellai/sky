@@ -75,6 +75,9 @@ runMetric metric =
             runApiMetric metric
 
         else
+        -- runSafeQuery / runSafeQueryWithConn: metric-collector string API.
+        -- Errors are surfaced as "error: <typed-cause>" AND logged so operators
+        -- see the structured IoError form in stderr.
             "error: unknown source type"
 
 
@@ -89,9 +92,6 @@ runSqlMetric metric =
             "error: missing dsn or query in config"
 
         else
--- runSafeQuery / runSafeQueryWithConn: metric-collector string API.
--- Errors are surfaced as "error: <typed-cause>" AND logged so operators
--- see the structured IoError form in stderr.
             runSafeQuery dsn query
 
 

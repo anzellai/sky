@@ -177,8 +177,8 @@ fireAlert alert currentValue =
         _ = println ("[ALERT] " ++ message)
     in
         if notifyType == "webhook" then
--- Centralised delivery logging so every notify variant uses the same
--- "[ALERT ERROR] kind target: typedErr" format.
+        -- Centralised delivery logging so every notify variant uses the same
+        -- "[ALERT ERROR] kind target: typedErr" format.
             logFireResult
                 "webhook"
                 notifyTarget
