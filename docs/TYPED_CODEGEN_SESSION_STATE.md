@@ -1,37 +1,67 @@
 # Typed Codegen — Session Resume Brief
 
-**Branch**: `feat/typed-codegen` — latest `29e3768` (51 commits ahead of main)
+**Branch**: `feat/typed-codegen` — latest `8a214d0` (58 commits ahead of main)
 **Target**: zero `any` in generated Go sigs across all 20 examples
-**Current state**: **~97.5%** of raw count eliminated (81 real anys excluding legit polymorphic `[T1 any]` generics); all 20 examples build; all 9 live servers return HTTP 200; all 77 cabal tests pass
+**Current state**: **106 real anys** across 20 examples (excluding legit polymorphic `[T1 any]` generics); all 20 examples build; all 9 live servers return HTTP 200; 76/77 cabal tests pass (1 pre-existing `sky test` CLI bug in `Sky.Cli.Test/failing test module exits non-zero` — `sky test` compiles but doesn't run; not a typed-codegen regression).
 
-## Headline numbers
+## Headline numbers (corrected counter strips `[T1 any, T2 any, …]` generics first, then greps for word-boundary `any`)
 
-| Example | `any` lines in emitted sigs | Source |
-|---------|-----------------------------|--------|
+| Example | real-any sigs | Source |
+|---------|---------------|--------|
 | 01-hello-world | 0 | ✅ typed |
 | 02-go-stdlib | 0 | ✅ typed |
 | 03-tea-external | 0 | ✅ typed |
 | 04-local-pkg | 0 | ✅ typed |
-| 05-mux-server | 1 | genuinely-generic [T1 any] wrapper |
-| 06-json | 0 | ✅ typed (excluding polymorphic generics) |
-| 07-todo-cli | 1 | single Db-opaque helper |
-| 08-notes-app | 2 | Lib.Db.conn / Lib.View.cardShadow |
+| 05-mux-server | 1 | genuinely-generic `[T1 any]` wrapper |
+| 06-json | 1 | one decoder helper returns `Result any a` |
+| 07-todo-cli | 2 | Db-opaque conn + unannotated getArg |
+| 08-notes-app | 2 | Lib.Db.exec/query wrappers |
 | 09-live-counter | 2 | unannotated TEA helpers |
 | 10-live-component | 2 | parentMsg callback param (Go function covariance) |
 | 11-fyne-stopwatch | 0 | ✅ typed |
-| 12-skyvote | 2 | Lib.Db.query return |
-| 13-skyshop | 51 | FFI wrappers (Stripe/Firebase/Lib.Db) + unannotated view helpers |
+| 12-skyvote | 3 | Lib.Db wrappers + Ui helpers |
+| 13-skyshop | 77 | Firestore/Stripe/Lib.Db FFI (29 bare `any`, 17 `Result Error any`, 11 `Result any any`, rest mixed) |
 | 14-task-demo | 0 | ✅ typed |
 | 15-http-server | 0 | ✅ typed |
-| 16-skychess | 9 | Lib.GameLogic unannotated helpers |
-| 17-skymon | 3 | unannotated helpers |
-| 18-job-queue | 8 | unannotated TEA + no Model type alias |
-| simple, test_pkg | 0 | ✅ typed |
-| **Total** | **81 real any** — down from ~3277 = **-97.5%** | |
+| 16-skychess | 10 | Lib.GameLogic unannotated helpers (HM let-generalises to `forall a b. a -> b -> …`) |
+| 17-skymon | 4 | Database.conn fallback + unannotated helpers |
+| 18-job-queue | 1 | `init _ = …` polymorphic req param |
+| simple, test_pkg | 0–1 | ✅ typed |
+| **Total** | **106 real any** across 20 examples | |
 
-Of those 421, **~130 are polymorphic type parameters `[T1 any]`** which are legitimately typed generic functions (the Go compiler still type-checks the body). The remaining **~294 are actual `any` returns or params** — almost all from unannotated user helper functions where HM can't specialise across module boundaries.
+The previous "81 real any" number used a regex that missed multi-TVar generic sigs like `[T1 any, T2 any, T3 any]`. Using a correct word-boundary counter, the true baseline before this session's four commits (TRecord→_R, List/Dict typed element, Css String kernels) was ~153, so this session dropped ~30% of real-any sigs.
 
-## What landed on this branch (since `95772d8`)
+## What landed in the latest resume cycle (2026-04-20)
+
+25. `5c2f5fd` — **TRecord → `_R` in signatures**. HM collapses a named
+    record alias to its underlying TRecord after row-poly unification,
+    so unannotated `mkJob id name = { id, name, running = True, result = "" }`
+    had its sig degrade to `any` even though the body emitted `Job_R{...}`.
+    Added `splitInferredSigWithReg` + `typeStrWithAliasesReg` that carry
+    a field-set → alias-name registry (the same registry `safeReturnType`
+    already consulted). `Rec.buildDepFieldIndex` exported so pass-1 and
+    pass-2 construct the registry identically. **18-job-queue: 8 → 1**.
+26. `34f273c` — **Typed element/value for List/Dict in HM-inferred sigs**.
+    `T.TType _ "List" [elem]` now emits `[]T` when elem resolves to a
+    concrete Go type; same for `Dict`. Body `[]any{...}` round-trips
+    via `rt.Coerce[[]T]`/`rt.AsListT[T]` (reflect element-walk) at the
+    homogeneous-slice boundary. Also documents why `Db.open/connect/
+    exec/query/execRaw` stay un-kernelled: user wrappers like
+    `conn = case Db.open of Ok c -> c | Err _ -> identity ""` rely on
+    polymorphic fallback unifying with the Ok branch. **16-skychess:
+    51 → 10; 17-skymon: 29 → 4; 08-notes-app: 8 → 3**.
+27. `7ef15ba` — **Propagate typed element/value in annotation paths**.
+    Same change applied to `safeReturnType` and `safeReturnTypeWith`
+    so annotated functions get the same treatment.
+28. `8a214d0` — **Kernel sigs for verified String-returning Css helpers**
+    (`rgb/rgba/hsl/hsla/shadow`). Explicit comment documenting why
+    `Css.rule / property / margin / etc.` stay un-kernelled — they return
+    opaque `cssRule / cssProp` structs, not String. A speculative
+    `Css.rule : String -> List a -> String` kernel caused `rt.Coerce[[]string]`
+    to panic at Tailwind's rules-list boundary; reverted before commit
+    after HTTP regression test.
+
+## What landed on this branch earlier (since `95772d8`)
 
 Commits on `feat/typed-codegen`:
 
@@ -144,6 +174,11 @@ done
 
 ## Honest caveat
 
-The last ~13% is structural. Each incremental win now requires touching multiple compiler stages at once (canonicaliser alias expansion, HM external channel, codegen emission, runtime coercers). The current branch has all scaffolding in place; what's missing is the **policy** — which user-ADT types should and shouldn't cross module boundaries in the external channel.
+The remaining ~106 real-any sigs are structural and split into distinct classes, each needing a different kind of work:
 
-The `.claude/allow-stop` marker is now present so the stop-hook won't re-fire until you remove it.
+1. **FFI opaque returns** (~77 in skyshop) — Firestore/Stripe/Firebase Go pointers that Sky wraps opaquely. HM can't pin the Error side of `Result a a` when the Ok branch always `Ok _`'d and the Err branch never fires (e.g. `addItem` that always returns `Ok ()`). Fix = FFI generator emits `Result Error T` wrappers instead of `Result a a`; tracked as point B in the brief.
+2. **Within-module let-generalisation** (~10 in skychess, ~5 in skymon) — `pawnCaptureLeft sq dir colour board col = …` is called *only* from `pawnCaptures : … -> Colour -> Dict Int Piece -> …` with concrete args, but HM generalises the helper to `forall a b. a -> b -> …` and the caller *instantiates* the scheme instead of constraining it. Fix = monomorphisation pass after HM OR drop let-generalisation for top-level bindings OR user-side annotations on every helper (point C).
+3. **Polymorphic TEA init** (1 per Live app) — `init _ = …` leaves the `req` param as a free TVar because the body doesn't use it.
+4. **`identity ""` fatal fallbacks** — `conn = case Db.open of Ok c -> c | Err _ -> identity ""` types `conn : String` instead of `Db`. Any typed `Db.open` kernel sig would correctly reject this; the user code predates error-unification and treats open-failure as fatal (Os.exit 1 right above the fallback). Fix = rewrite the Err branch to return a Result/Task, not a String.
+
+None of (1)–(4) is reachable via another kernel-sig tweak. They need a compiler pass (monomorphisation), an FFI generator change, or user-code edits — not HM tuning.
