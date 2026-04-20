@@ -1667,48 +1667,55 @@ func Negate(a any) any {
 // List operations
 // ═══════════════════════════════════════════════════════════
 
+// List any-variants now route through `AsList` + `SkyCall` so typed
+// codegen can hand us `[]T_R` / `func(A) B` and we still work. Before
+// this, `List_map (\u -> u.email) users` compiled fine but panicked at
+// runtime with `interface conversion: []main.User_R, not []interface {}`
+// because the `.([]any)` assertion was hard. Same class as the
+// already-fixed `rt.Concat`.
+//
+// `AsList(list)` widens typed slices via reflect (already cyclic-safe).
+// `SkyCall(fn, args...)` handles Sky's `func(any) any` AND Go's typed
+// `func(A) B` via reflect; the extra reflect dispatch per element is
+// the price of compatibility — kernels called from typed codegen
+// bypass this path entirely via the `List_mapT[A,B]` family below.
 func List_map(fn any, list any) any {
-	f := fn.(func(any) any)
-	items := list.([]any)
+	items := AsList(list)
 	result := make([]any, len(items))
-	for i, item := range items { result[i] = f(item) }
+	for i, item := range items { result[i] = SkyCall(fn, item) }
 	return result
 }
 
 func List_filter(fn any, list any) any {
-	f := fn.(func(any) any)
-	items := list.([]any)
+	items := AsList(list)
 	var result []any
 	for _, item := range items {
-		if AsBool(f(item)) { result = append(result, item) }
+		if AsBool(SkyCall(fn, item)) { result = append(result, item) }
 	}
 	return result
 }
 
 func List_foldl(fn any, acc any, list any) any {
-	f := fn.(func(any) any)
-	items := list.([]any)
+	items := AsList(list)
 	result := acc
 	for _, item := range items {
-		step := f(item)
-		result = step.(func(any) any)(result)
+		result = SkyCall(fn, item, result)
 	}
 	return result
 }
 
 func List_length(list any) any {
-	items := list.([]any)
-	return len(items)
+	return len(AsList(list))
 }
 
 func List_head(list any) any {
-	items := list.([]any)
+	items := AsList(list)
 	if len(items) == 0 { return Nothing[any]() }
 	return Just[any](items[0])
 }
 
 func List_reverse(list any) any {
-	items := list.([]any)
+	items := AsList(list)
 	result := make([]any, len(items))
 	for i, item := range items { result[len(items)-1-i] = item }
 	return result
@@ -1716,20 +1723,28 @@ func List_reverse(list any) any {
 
 func List_take(n any, list any) any {
 	count := AsInt(n)
-	items := list.([]any)
+	items := AsList(list)
 	if count > len(items) { count = len(items) }
 	return items[:count]
 }
 
 func List_drop(n any, list any) any {
 	count := AsInt(n)
-	items := list.([]any)
+	items := AsList(list)
 	if count > len(items) { count = len(items) }
 	return items[count:]
 }
 
 func List_append(a any, b any) any {
-	return append(a.([]any), b.([]any)...)
+	// Both sides widened to `[]any`; downstream call-site `rt.Coerce[[]T]`
+	// re-narrows element-wise when a typed slice is expected. Same
+	// shape as the fix in `rt.Concat`.
+	la := AsList(a)
+	lb := AsList(b)
+	out := make([]any, 0, len(la)+len(lb))
+	out = append(out, la...)
+	out = append(out, lb...)
+	return out
 }
 
 // P8/List typed companions — Go generics for the polymorphic ops.
