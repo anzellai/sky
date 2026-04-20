@@ -1,8 +1,8 @@
 # Typed Codegen — Session Resume Brief
 
-**Branch**: `feat/typed-codegen` — latest `8a214d0` (58 commits ahead of main)
+**Branch**: `feat/typed-codegen` — latest `4265c99` (59 commits ahead of main)
 **Target**: zero `any` in generated Go sigs across all 20 examples
-**Current state**: **106 real anys** across 20 examples (excluding legit polymorphic `[T1 any]` generics); all 20 examples build; all 9 live servers return HTTP 200; 76/77 cabal tests pass (1 pre-existing `sky test` CLI bug in `Sky.Cli.Test/failing test module exits non-zero` — `sky test` compiles but doesn't run; not a typed-codegen regression).
+**Current state**: **86 real anys** across 20 examples (excluding legit polymorphic `[T1 any]` generics); all 20 examples build; all 9 live servers return HTTP 200; 76/77 cabal tests pass (1 pre-existing `sky test` CLI bug in `Sky.Cli.Test/failing test module exits non-zero` — `sky test` compiles but doesn't run; not a typed-codegen regression).
 
 ## Headline numbers (corrected counter strips `[T1 any, T2 any, …]` generics first, then greps for word-boundary `any`)
 
@@ -15,21 +15,49 @@
 | 05-mux-server | 1 | genuinely-generic `[T1 any]` wrapper |
 | 06-json | 1 | one decoder helper returns `Result any a` |
 | 07-todo-cli | 2 | Db-opaque conn + unannotated getArg |
-| 08-notes-app | 2 | Lib.Db.exec/query wrappers |
+| 08-notes-app | 1 | View.cardShadow unannotated |
 | 09-live-counter | 2 | unannotated TEA helpers |
 | 10-live-component | 2 | parentMsg callback param (Go function covariance) |
 | 11-fyne-stopwatch | 0 | ✅ typed |
-| 12-skyvote | 3 | Lib.Db wrappers + Ui helpers |
-| 13-skyshop | 77 | Firestore/Stripe/Lib.Db FFI (29 bare `any`, 17 `Result Error any`, 11 `Result any any`, rest mixed) |
+| 12-skyvote | 2 | Lib.Db wrappers |
+| 13-skyshop | 61 | Firestore/Stripe/Lib.Db FFI (29 bare `any`, 28 `Result Error any` — Ok side opaque, rest mixed) |
 | 14-task-demo | 0 | ✅ typed |
 | 15-http-server | 0 | ✅ typed |
-| 16-skychess | 10 | Lib.GameLogic unannotated helpers (HM let-generalises to `forall a b. a -> b -> …`) |
-| 17-skymon | 4 | Database.conn fallback + unannotated helpers |
+| 16-skychess | 9 | Lib.GameLogic unannotated helpers (HM let-generalises to `forall a b. a -> b -> …`) |
+| 17-skymon | 3 | Database.conn fallback + unannotated helpers |
 | 18-job-queue | 1 | `init _ = …` polymorphic req param |
 | simple, test_pkg | 0–1 | ✅ typed |
-| **Total** | **106 real any** across 20 examples | |
+| **Total** | **86 real any** across 20 examples | |
 
-The previous "81 real any" number used a regex that missed multi-TVar generic sigs like `[T1 any, T2 any, T3 any]`. Using a correct word-boundary counter, the true baseline before this session's four commits (TRecord→_R, List/Dict typed element, Css String kernels) was ~153, so this session dropped ~30% of real-any sigs.
+Cycle drops from the corrected 153 baseline:
+
+- TRecord→_R (18-job-queue 8→1)
+- List/Dict typed element (16-skychess 51→10, 17-skymon 29→4, 08-notes-app 8→3)
+- Css String-return kernels (1-2 per view-helper module)
+- Error-position TVar defaulting to Sky.Core.Error.Error (13-skyshop 77→61)
+
+That's 153 → 86 = ~44% reduction this cycle.
+
+## Attempted but reverted this cycle
+
+- **`Db.exec/query/open/connect` kernel sigs** — caused every dep
+  module that wraps Db to degrade from partial-any to all-any. Root
+  cause: `conn = case Db.open … of Ok c -> c ; Err _ -> identity ""`
+  relies on polymorphic fallback unifying with the Ok branch; a typed
+  `Db.open : … -> Result Error Db` correctly rejects the String vs Db
+  mismatch.
+- **`Css.rule / property / margin / …` kernel sigs** — the runtime
+  returns opaque `cssRule / cssProp` structs, not String. A "returns
+  String" kernel sig caused `rt.Coerce[[]string]` to panic at
+  Tailwind's rules-list boundary (caught via HTTP regression test).
+- **`Attribute ↔ (String, String)` unifier alias** — would let
+  Tailwind's tuple-typed helpers flow into Html.div's `List Attribute`
+  slots and kill most pass-2 fallback messages. But the naive
+  implementation (unify components without constraint) broke HM
+  propagation for `state` vs `"ordered"` comparisons in skyshop's
+  Page.Orders — state inferred as T1 but body compares strings,
+  Go compiler rejected. Needs a proper alias/TAlias registration
+  instead; deferred.
 
 ## What landed in the latest resume cycle (2026-04-20)
 
@@ -60,6 +88,18 @@ The previous "81 real any" number used a regex that missed multi-TVar generic si
     `Css.rule : String -> List a -> String` kernel caused `rt.Coerce[[]string]`
     to panic at Tailwind's rules-list boundary; reverted before commit
     after HTTP regression test.
+29. `4265c99` — **Default error-position TVars to `Sky.Core.Error.Error`**.
+    HM leaves the Err slot of `Result a b` polymorphic when a function
+    never constructs a failing value (e.g. `addItem … Ok ()` with no
+    `Err` branch). The sig used to emit `rt.SkyResult[any, struct{}]`
+    even though no caller can observe a different concrete type for
+    the error slot. New `defaultErrorTVars` pre-pass substitutes the
+    concrete `Error` type for every TVar that appears ONLY in
+    Result/Task error slots. Guarded by `errorTypeAvailable` (proxies
+    via `Sky_Core_Error_ErrorInfo` in the record-alias set) so
+    examples like `simple` that don't have Sky.Core.Error in their
+    dep graph keep the legacy `any` sig and still link. **13-skyshop
+    77→61** (-16), total **106→86**.
 
 ## What landed on this branch earlier (since `95772d8`)
 
