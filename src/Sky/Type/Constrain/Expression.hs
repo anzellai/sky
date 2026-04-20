@@ -1187,8 +1187,13 @@ lookupKernelType modName funcName = case (modName, funcName) of
         Just $ T.Forall []
             (T.TLambda T.TUnit (T.TType ModuleName.list "List" [stringType]))
     ("Os", "getenv") ->
+        -- Os.getenv returns Result Error String — Err ErrNotFound
+        -- when the env var isn't set, Ok value otherwise.
         Just $ T.Forall []
-            (T.TLambda stringType stringType)
+            (T.TLambda stringType
+                (T.TType ModuleName.result_ "Result"
+                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                    , stringType]))
     ("Os", "exit") ->
         Just $ T.Forall ["a"]
             (T.TLambda intType (T.TVar "a"))
