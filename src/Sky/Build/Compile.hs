@@ -2345,6 +2345,12 @@ safeReturnType t = case t of
         in case Rec.lookupRecordAlias (Rec._cg_fieldIndex env) fieldNames of
             Just aliasName -> aliasName ++ "_R"
             Nothing -> "any"
+    -- Function types stay `any` rather than emitting
+    -- `func(arg) ret`. Go doesn't allow assigning `func(X) Y` to
+    -- `func(X) any` (no covariance), so even when the HM-inferred
+    -- type is concrete the call site would pass a function with
+    -- a different (more specific) return type and fail to compile.
+    -- Revisit when Sky has proper Go-generic function types.
     _ -> "any"
 
 
