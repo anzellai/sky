@@ -2672,41 +2672,46 @@ splitInferredSigWithReg recAliases fieldIdx arity funcType =
     uniq (x:xs) = x : uniq (filter (/= x) xs)
 
 
--- | Count how many times each TVar name appears in a type, tagging
--- each occurrence as either "error-position" (a TVar in the first
--- slot of Result/Task) or "other". Returns (errorOnly, totalCount)
--- per TVar so callers can decide whether to default or keep
--- polymorphic.
-tvarOccurrences :: T.Type -> Map.Map String (Int, Int)
-tvarOccurrences = go False
+-- | Count how many times each TVar name appears in a type, classified
+-- by slot: error slot of a Result/Task, top of the ok slot of a
+-- Result/Task (i.e. the whole ok arg IS the TVar, not nested), or
+-- anywhere else. Returns `(errorCount, okCount, otherCount)` per TVar.
+tvarOccurrences :: T.Type -> Map.Map String (Int, Int, Int)
+tvarOccurrences = go Other
   where
-    -- `inError` flags whether we're walking inside an error slot;
-    -- if so, a TVar we hit bumps the "error" counter instead of the
-    -- "other" counter.
-    bump name isErr acc =
-        Map.insertWith
-            (\(e1, o1) (e2, o2) -> (e1 + e2, o1 + o2))
-            name
-            (if isErr then (1, 0) else (0, 1))
-            acc
-    go isErr ty = case ty of
-        T.TVar n -> bump n isErr Map.empty
-        T.TLambda a b -> Map.unionWith addP (go isErr a) (go isErr b)
-        T.TType _ "Result" [e, a] -> Map.unionWith addP (go True e) (go isErr a)
-        T.TType _ "Task"   [e, a] -> Map.unionWith addP (go True e) (go isErr a)
-        T.TType _ _ args -> Map.unionsWith addP (map (go isErr) args)
-        T.TTuple a b cs -> Map.unionsWith addP (map (go isErr) (a : b : cs))
+    bumpErr n   = Map.singleton n (1, 0, 0)
+    bumpOk n    = Map.singleton n (0, 1, 0)
+    bumpOther n = Map.singleton n (0, 0, 1)
+    addP (a1, b1, c1) (a2, b2, c2) = (a1 + a2, b1 + b2, c1 + c2)
+    go slot ty = case ty of
+        T.TVar n -> case slot of
+            ErrorSlot -> bumpErr n
+            OkSlot    -> bumpOk n
+            Other     -> bumpOther n
+        T.TLambda a b -> Map.unionWith addP (go Other a) (go Other b)
+        -- Result/Task: error slot and top-of-ok slot both get the
+        -- TVar-only defaulting privilege; nested TVars (e.g. inside
+        -- `Result e (Maybe a)`) stay Other so we don't break the
+        -- Maybe-polymorphic chain.
+        T.TType _ "Result" [e, a] ->
+            Map.unionWith addP (go ErrorSlot e) (go OkSlot a)
+        T.TType _ "Task"   [e, a] ->
+            Map.unionWith addP (go ErrorSlot e) (go OkSlot a)
+        T.TType _ _ args -> Map.unionsWith addP (map (go Other) args)
+        T.TTuple a b cs -> Map.unionsWith addP (map (go Other) (a : b : cs))
         T.TAlias _ _ pairs aliasType ->
             Map.unionsWith addP $
-                [go isErr v | (_, v) <- pairs]
+                [go Other v | (_, v) <- pairs]
                 ++ [case aliasType of
-                        T.Filled i  -> go isErr i
-                        T.Hoisted i -> go isErr i]
+                        T.Filled i  -> go Other i
+                        T.Hoisted i -> go Other i]
         T.TRecord fields _ ->
             Map.unionsWith addP
-                [go isErr fTy | T.FieldType _ fTy <- Map.elems fields]
+                [go Other fTy | T.FieldType _ fTy <- Map.elems fields]
         T.TUnit -> Map.empty
-    addP (a, b) (c, d) = (a + c, b + d)
+
+
+data Slot = ErrorSlot | OkSlot | Other
 
 
 -- | True when Sky.Core.Error is reachable via the current module's
@@ -2720,20 +2725,26 @@ errorTypeAvailable recAliases =
     || Set.member "ErrorInfo" recAliases
 
 
--- | Default every TVar that appears ONLY in Result/Task error
--- positions to `Sky.Core.Error.Error`. See splitInferredSigWithReg
--- for why this is safe.
+-- | Default TVars that appear only in Result/Task error or ok
+-- positions to concrete types:
+-- - error-only → `Sky.Core.Error.Error`
+-- - ok-only   → `rt.SkyValue` (opaque runtime-any alias, matches
+--               the body's untyped Ok-branch value)
+-- See splitInferredSigWithReg for why this is safe: a TVar that
+-- never leaves the ok slot has no caller that could observe a
+-- different concrete type, so any single default is sound.
 defaultErrorTVars :: T.Type -> T.Type
 defaultErrorTVars ty =
     let counts = tvarOccurrences ty
         errorOnly =
-            [ n
-            | (n, (e, o)) <- Map.toList counts
-            , e > 0
-            , o == 0
-            ]
+            [ n | (n, (e, o, x)) <- Map.toList counts, e > 0, o == 0, x == 0 ]
+        okOnly =
+            [ n | (n, (e, o, x)) <- Map.toList counts, o > 0, e == 0, x == 0 ]
         errorTy = T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
-        substMap = Map.fromList [(n, errorTy) | n <- errorOnly]
+        okTy    = T.TType (ModuleName.Canonical "") "Value" []
+        substMap = Map.fromList $
+            [(n, errorTy) | n <- errorOnly]
+            ++ [(n, okTy) | n <- okOnly]
     in substTVarsToTypes substMap ty
 
 
