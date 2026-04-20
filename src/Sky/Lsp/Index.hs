@@ -3,7 +3,7 @@
 --
 -- Built by parsing + canonicalising + type-checking every .sky file in
 -- the project (including embedded stdlib Std.* materialised under
--- <projectRoot>/sky-out/.sky-stdlib/) and indexing every binding by
+-- <projectRoot>/.skycache/stdlib/) and indexing every binding by
 -- qualified name. Hover, goto-definition, references and completion
 -- consult this index instead of the per-file lookup used previously.
 module Sky.Lsp.Index

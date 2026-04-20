@@ -4,6 +4,8 @@ This is a [Sky](https://github.com/anzellai/sky) project. Sky is a pure function
 
 **Core principle: if it compiles, it works.** Verified at v0.9 against 23-item adversarial soundness audit (soundness + security + cleanup + tooling). All side effects flow through `Task`. `sky check` invokes `go build` on the emitted output, so any shape mismatch surfaces at check time. No runtime panics from well-typed Sky code, no nil leakage, no silent numeric coercion.
 
+**Typed Go output.** Since v0.9, generated Go functions have concrete signatures (`func f(name string, age int) rt.SkyResult[Error, Profile]`) rather than the old `any`-boxed shape. Type annotations on your functions are load-bearing — if you write `f : String -> Int -> Result Error Profile` and the body would otherwise infer to something wider, the compiler rejects the body; if inference is narrower, the annotation still wins at the call site. Inline records in function annotations are not supported — use a `type alias` for any record you want in a signature.
+
 ## Quick Reference
 
 ```bash
@@ -1524,24 +1526,34 @@ case Auth.register email password of
 
 For apps with custom user fields (username, avatar), use `Auth.hashPassword`/`Auth.verifyPassword` for the crypto while keeping your own users table.
 
-## Known Limitations (v0.7.x)
+## Known Limitations (v0.9)
 
-- **No nested `case...of`** — FIXED in v0.7.21. Nested cases now generate unique variable names per depth
-- **No anonymous records in type annotations** — use `type alias` for record types in signatures
-- **No higher-kinded types** — no `Functor`, `Monad`, etc.
-- **No `where` clauses** — use `let...in` instead
-- **No custom operators** — only built-in (`|>`, `<|`, `++`, `::`, etc.)
-- **Negative literal arguments need parentheses** — `f (-1)` not `f -1`
-- **`import M as A exposing (Type(..))`** — combining `as` alias with `exposing` for ADT constructors breaks module loading; use `import M exposing (..)` without `as` instead
-- **`Dict.toList` returns string keys** — use `Dict.get` with explicit key ranges instead of `Dict.toList` for `Dict Int v`
-- **`sky check` doesn't understand Go interfaces** — concrete types can't unify with Go interfaces; code compiles and runs fine
-- **`sky check` doesn't understand Go callback types** — FFI callback params can't unify with Sky functions; runtime wrapping works
-- **Zero-arg FFI functions need no `()`** — call `Uuid.newString` not `Uuid.newString ()`
+- **No anonymous records in type annotations** — use `type alias` for record types in signatures. Typed codegen needs a name for the struct shape; inline `{ field : Type }` in an annotation is rejected.
+- **No higher-kinded types** — no `Functor`, `Monad`, etc. Use concrete types.
+- **No `where` clauses** — use `let...in` instead.
+- **No custom operators** — only built-in (`|>`, `<|`, `++`, `::`, etc.).
+- **Negative literal arguments need parentheses** — `f (-1)` not `f -1` (`f -1` parses as subtraction).
+- **`import M as A exposing (Type(..))`** — combining `as` alias with `exposing` for ADT constructors breaks module loading; use `import M exposing (..)` without `as` instead, or qualify constructors.
+- **`Dict.toList` returns string keys** — `Dict` is `map[string]any` at runtime, so `Dict.toList` on `Dict Int v` gives string keys. Iterate via `Dict.get` over known ranges.
+- **`sky check` doesn't fully model Go interfaces** — concrete types can't unify with Go interfaces (`Fyne.CanvasObject`), but the code compiles and runs fine.
+- **Zero-arg FFI functions need no `()`** — call `Uuid.newString` (the return value), not `Uuid.newString ()`.
+- **Zero-arity functions reading env vars** — zero-arity functions are memoised; when they read `Os.getenv` they evaluate during Go `init()`, before `.env` is loaded. **Workaround**: add a dummy `_` parameter: `getConfig _ = Os.getenv "KEY"`.
+- **Let bindings with parameters after multi-line case** — `mark j = expr` directly after a `case ... of` in the same `let` can be reparsed as a new top-level declaration. Use a lambda (`\j -> expr`) or extract to a top-level function.
+- **`exposing (Type(..))` doesn't expose user-module constructors** — only stdlib/kernel modules resolve `MyType(..)` fully. For a user-defined `MyModule`, import `exposing (..)` or qualify constructors (`MyModule.MyConstructor`).
 
-### Fixed in v0.7.20
-- **Cross-module type alias unification** — `type alias Piece = { kind : Kind }` in module A now unifies correctly in module B's type annotations
-- **Cross-module ADT exhaustiveness** — missing case branches for imported ADTs are caught at compile time
-- **`exposing (Constructor(..))` qualified call issue** — resolved; use `import M exposing (..)` for unqualified constructors
+### Fixed in v0.9-dev (feat/typed-codegen)
+- **Typed-map round-trips at the FFI boundary** — `[]any` containing `map[string]any` now narrows into `[]map[string]string` correctly across `rt.Coerce`, `AsListT`, `AsMapT`, `AsDict`. `List.isEmpty` / `List.map` on annotated DB result slices no longer wrongly report empty.
+- **Curried lambdas passed to Go-typed callbacks** — `rt.Coerce[func(X) func(Y) Z]` over a Sky `func(any) any { return func(any) any {...} }` now wraps the inner func too; requireAuth → route-handler style no longer panics.
+- **Server-rendered form events** — `Html_render` for a form with `onSubmit="..."` no longer panics on `assignment to entry in nil map`.
+- **Signin on annotated auth rows** — `Db.getField` accepts both `map[string]string` (typed) and `map[string]any` (raw) sources.
+- **Pattern literal inference** — `case foo of "idle" -> _` now forces `foo : String` at check time.
+
+### Fixed earlier (historical)
+- **Nested `case...of`** — fixed v0.7.21; cases at any depth compile.
+- **Cross-module type alias unification** — record aliases defined in module A unify correctly in module B's type annotations.
+- **Cross-module ADT exhaustiveness** — missing case branches for imported ADTs are caught at compile time.
+- **`exposing (Constructor(..))` qualified call issue** — resolved; use `import M exposing (..)` for unqualified constructors on stdlib/kernel modules.
+- **Type annotations are load-bearing** — since v0.7.28, the annotation wins when the body would infer a wider type.
 
 ## Coding Conventions
 

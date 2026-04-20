@@ -6,7 +6,7 @@
 -- "one line or each on its own line" — never mix.
 module Sky.Format.Format (formatModule) where
 
-import Data.List (intercalate)
+import Data.List (intercalate, sortOn)
 import qualified Sky.AST.Source as Src
 import qualified Sky.Reporting.Annotation as A
 
@@ -15,6 +15,32 @@ import qualified Sky.Reporting.Annotation as A
 -- Module
 -- ═══════════════════════════════════════════════════════════
 
+-- | Tagged top-level declaration, keyed by original source position.
+-- Tagging lets us merge aliases / unions / values into one list and
+-- sort by line number so formatted output preserves the order the
+-- user wrote — without this, the formatter always groups "all aliases,
+-- then all unions, then all values", which silently rewrites files
+-- like `type Page / type Msg / type alias Job / type alias Model`
+-- into `type alias Job / type alias Model / type Page / type Msg`.
+data TopDecl
+    = DAlias (A.Located Src.Alias)
+    | DUnion (A.Located Src.Union)
+    | DValue (A.Located Src.Value)
+
+topDeclLine :: TopDecl -> Int
+topDeclLine (DAlias (A.At r _)) = A._line (A._start r)
+topDeclLine (DUnion (A.At r _)) = A._line (A._start r)
+topDeclLine (DValue (A.At r _)) = A._line (A._start r)
+
+-- Values are separated by two blank lines in elm-format; type decls
+-- (aliases + unions) by one. We emit a leading blank line per decl
+-- that matches the *kind* of that decl, which is why each variant
+-- carries its own leading-separator string.
+fmtTopDecl :: TopDecl -> String
+fmtTopDecl (DAlias a) = "\n" ++ fmtAlias (A.toValue a)
+fmtTopDecl (DUnion u) = "\n" ++ fmtUnion (A.toValue u)
+fmtTopDecl (DValue v) = "\n\n" ++ fmtValue (A.toValue v)
+
 formatModule :: Src.Module -> String
 formatModule m =
     let header = case Src._name m of
@@ -22,14 +48,13 @@ formatModule m =
                 "module " ++ joinDots segs ++ " exposing " ++ fmtExposing (A.toValue (Src._exports m))
             Nothing -> ""
         imports = map fmtImport (Src._imports m)
-        aliases = map (fmtAlias . A.toValue) (Src._aliases m)
-        unions = map (fmtUnion . A.toValue) (Src._unions m)
-        values = map (fmtValue . A.toValue) (Src._values m)
+        tagged = map DAlias (Src._aliases m)
+              ++ map DUnion (Src._unions m)
+              ++ map DValue (Src._values m)
+        orderedDecls = map fmtTopDecl (sortOn topDeclLine tagged)
         sections = filter (not . null) [header] ++
                    (if null imports then [] else ["\n" ++ intercalate "\n" imports]) ++
-                   map (\a -> "\n" ++ a) aliases ++
-                   map (\u -> "\n" ++ u) unions ++
-                   map (\v -> "\n\n" ++ v) values
+                   orderedDecls
         _ = Src._comments m
     in intercalate "\n" sections ++ "\n"
 

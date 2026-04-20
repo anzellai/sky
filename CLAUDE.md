@@ -165,8 +165,10 @@ sky update                        # Update deps to latest
 sky upgrade                       # Self-upgrade binary
 sky lsp                           # Language Server (JSON-RPC/stdio)
 sky clean                         # Remove sky-out/ dist/
-sky --version                     # sky v0.7.7
+sky --version                     # `sky dev` on local builds; CI injects the release version
 ```
+
+Local builds read the compiler version from `app/VERSION` (literal `dev`). Release CI overwrites that file with the git tag before `cabal install`. Don't bump `sky-compiler.cabal`'s `version:` field — it's pinned to `0.0.0` by design so local and CI artefacts stay distinguishable.
 
 ## Code Formatting (`sky fmt`)
 
@@ -453,11 +455,11 @@ All issues below are FIXED — listed for context if debugging regressions:
 - **Lexer** — `alias` removed from keywords (contextual only)
 - **Type safety audit** — 33 gaps fixed: case fallthrough panics, FFI panic recovery, float-aware arithmetic, rune-based strings, numeric sorting, typed FFI boundaries, session ADT rebuilding, exhaustiveness checking
 
-### Known Limitations (v0.7.x)
+### Known Limitations (v0.9-dev)
 
 These are current compiler limitations users must work around:
 
-1. **No anonymous records in function signatures** — Record types must be defined as type aliases; inline `{ field : Type }` in annotations is not supported.
+1. **No anonymous records in function signatures** — Record types must be defined as type aliases; inline `{ field : Type }` in annotations is not supported. Typed codegen cannot name an un-aliased record for struct emission.
 2. **No higher-kinded types** — No `Functor`, `Monad`, etc. Use concrete types. (Intentional — Hindley-Milner only.)
 3. **No `where` clauses** — Use `let...in` instead. (Intentional.)
 4. **No custom operators** — Only built-in operators (`|>`, `<|`, `++`, `::`, etc.). (Intentional.)
@@ -468,6 +470,7 @@ These are current compiler limitations users must work around:
 9. **Let bindings with parameters after multi-line case** — A let binding like `mark j = expr` after a `case ... of` in the same let block causes the parser to misinterpret it as a new top-level declaration. **Workaround**: use lambdas (`\j -> expr`) or extract to a top-level function.
 10. **Zero-arity functions reading env vars** — Zero-arity functions are memoised and their import aliases evaluate at Go init time (before `.env` is loaded). If a zero-arity function reads `Os.getenv`, the value is cached as empty. **Workaround**: add a dummy `_` parameter: `getConfig _ = Os.getenv "KEY"`.
 11. **`exposing (Type(..))` doesn't expose ADT constructors for user modules** — `import MyModule exposing (MyType(..))` does not bring `MyType`'s constructors into scope for user-defined modules. The canonicaliser only resolves constructors when full dep info is available (kernel modules work). **Workaround**: use `import MyModule exposing (..)` to expose everything, or qualify constructors: `MyModule.MyConstructor`.
+12. **Typed codegen keeps `any` inside runtime kernels.** The typed surface is zero-`any`, but the v1.0-era reflection dispatch lives on inside `Dict_*`, `List_map`, `Html_render`. User code never sees it; observable cost is ~5% CPU vs. a hypothetical fully-generic runtime. Scheduled for the post-v1.0 runtime port (see the Typed Codegen TODO section).
 
 ### Recently Fixed (v0.7.x — listed for regression context)
 
@@ -500,6 +503,16 @@ These are current compiler limitations users must work around:
 - **Formatter elm-style improvements** — FIXED in v0.8.0. Tuples break vertically with leading commas. Function args indent 4 spaces (not aligned to callee column). Parenthesised expressions stay compact on one line.
 - **Skyshop env var race condition** — FIXED in v0.8.0. Zero-arity functions reading `Os.getenv` were memoised and evaluated at Go init time (before `.env` loaded). Fix: add `_` parameter to prevent memoisation.
 
+- **Nested typed-map narrowing at the FFI boundary** — FIXED in v0.9-dev (feat/typed-codegen). `rt.Coerce[T]` / `coerceInner` / `AsListT` / `AsDict` now delegate to recursive `narrowReflectValue` / `coerceMapValue` / `coerceSliceValue` helpers so `[]any` → `[]map[string]string` (each element being a `map[string]any` from a SQL row) converts correctly. Before this, 08-notes-app login and 13-skyshop product listing both showed empty results even though the DB returned rows.
+- **Curried lambda adapter recursion** — FIXED in v0.9-dev. `adaptFuncValue` (the MakeFunc worker behind `makeFuncAdapter`) wraps each inner `func(any) any` returned by a Sky curried lambda. Without this, `rt.Coerce[func(map[string]string) func(string) rt.SkyResponse]` lost the inner function and call sites panicked with `reflect.Value.Call: call of nil function`.
+- **`rt.AsList` accepts typed slices** — FIXED in v0.9-dev. It used to only handle `[]any`; typed slices (`[]map[string]string` from annotated `Lib_Notes_getNotes`) went to `nil` and downstream `List.isEmpty` wrongly reported empty, rendering "No notes yet" where data existed.
+- **`Html_render` with server-rendered form events** — FIXED in v0.9-dev. `renderVNode` was called with `nil` handlers; a form with `onSubmit="return confirm(...)"` panicked on `handlers[id] = msg`. Now `Html_render` always provides an empty `map[string]any{}`.
+- **`Db_getField` on typed session rows** — FIXED in v0.9-dev. The runtime helper only handled `map[string]any`; annotated `authenticateUser` returned `map[string]string` and every getField silently returned `""`, so signin always said "invalid email or password". Now accepts both.
+- **Literal patterns constrain scrutinee** — FIXED in v0.9-dev. `PStr`/`PInt`/`PBool`/`PChr`/`PUnit` in `instantiatePattern` emit a `CEqual` constraint on the scrutinee, so `case foo of "idle" -> _ ; "ready" -> _` now forces `foo : String` and later `foo == "other"` is type-checked. Before this, the string-literal patterns left the scrutinee polymorphic and the wrongly-typed `==` surfaced as a runtime panic once typed codegen stopped boxing everything.
+- **Incremental Go dep re-seeding** — FIXED in v0.9-dev. `copyRuntime` overwrites `sky-out/go.mod` on every incremental build, wiping the project's transitive Go deps and making `go build` fail with "missing module". Fix: re-run `seedGoDependencies` after `copyRuntime` on the incremental path too.
+- **Entry-module TypedDef generic instantiation** — FIXED in v0.9-dev. Entry-module `entryInferredSigs` now includes TypedDefs with their annotation type (not just the solved type), so call sites emit the right generic instantiation and `init_` / `update_` are never emitted as "cannot use generic function without instantiation".
+- **Cross-module HM with polymorphic externals** — FIXED in v0.9-dev. A second dep-solve pass after external annotation resolution lets imports that depend on stdlib generics (`Result.map2`, `Dict.get`) type-check in a consistent order.
+
 **Coding constraints**: none active. (The "no nested case" rule is no longer required as of v0.7.21.)
 
 ### Techniques from TS Compiler (to port)
@@ -518,21 +531,99 @@ These are current compiler limitations users must work around:
 | **skyshop** | 43+14 FFI | **1:30** | **0:59** |
 | compiler | 28 | 5.6s | 5.6s |
 
-### TODO (v1.0 — fully typed codegen)
+### Typed Codegen (v0.9 / `feat/typed-codegen`)
 
-Current v0.7.x uses `any` for params/returns with `sky_call(f, arg)`. v1.0 goal: eliminate `any` entirely.
+Typed Go emission is LIVE. The goal of v1.0 — "zero `any` in generated
+Go signatures" — is met on the branch. Every example in
+`examples/*` emits typed `func Foo(a int, b string) rt.SkyResult[Error, T]`
+rather than `func f(a any) any`. Entry-level invariant: **0 real-`any`
+sigs** across the 20-project sweep.
 
-**Why**: Go compiler as second type checker; no map allocations/type assertions; direct Go interop.
+What landed to make this work — keep in mind when editing the compiler
+or runtime:
 
-**v0.7.x achievements**: ADT structs (no map alloc), integer tag matching (O(1)), type info flows checker→lowerer.
+1. **HM infer is authoritative.** `Sky/Type/Constrain/Expression.hs`
+   resolves annotations against cross-module type aliases before
+   registering the scheme, so `f : Dict String String -> Result Error T`
+   in module A reaches module B's call site with the record inlined.
+   Annotations survive into codegen via `typeStrWithAliasesReg` /
+   `splitInferredSigWithReg` in `Sky/Build/Compile.hs`.
+2. **TVar defaulting.** Unresolved type variables default by position:
+   error-slot → `Sky.Core.Error.Error`; ok-slot (Result) and
+   return-only → `rt.SkyValue` (a named `any` alias used to mean
+   "runtime-tagged value"). Anything still polymorphic at emission
+   time is monomorphised at the call site via `rt.Coerce[T]`.
+3. **`lookupKernelType` feeds runtime kernel sigs.** Db.open,
+   Db.query, Db.exec, Db.execRaw, Db.connect, Context.background/todo,
+   Fmt.sprint*, Css.rgb/rgba/hsl/hsla/shadow are typed at the
+   inference layer so callers know the real Go signature.
+4. **Runtime coercion helpers** (runtime-go/rt/rt.go) bridge the
+   typed surface to the (still any-heavy) runtime: `rt.Coerce[T]`,
+   `rt.AsListT[T]`, `rt.AsMapT[V]`, `rt.AsDict`, plus the recursive
+   trio `narrowReflectValue` / `coerceMapValue` / `coerceSliceValue`.
+   They handle the chain SQL row → `map[string]any` → typed
+   `map[string]string` including the list-of-maps case that 08/13
+   exercise. String targets stringify heterogeneous values so mixed
+   SQL columns (int `verified`, int64 `id`, []byte `hash`) collapse
+   to a uniform map.
+5. **Curried Sky lambdas wrap recursively.** `adaptFuncValue` in
+   `runtime-go/rt/rt.go` is the MakeFunc worker behind
+   `makeFuncAdapter`. It recurses: when a Sky-returned inner func
+   doesn't match the target's next arrow, it wraps again. Without
+   this, `Coerce[func(map[string]string) func(string) rt.SkyResponse]`
+   over a Sky `func(any) any { return func(any) any {...} }` zero'd
+   the inner func and every call-site like requireAuth → route
+   handler blew up with `reflect.Value.Call: call of nil function`.
+6. **Literal patterns constrain scrutinee.** `PStr`, `PInt`, `PBool`,
+   `PChr`, `PUnit` in `instantiatePattern` now emit
+   `CEqual reg CString stringType` etc. Before this, a case branch
+   `case foo of "ready" -> _` left `foo` polymorphic and downstream
+   `foo == "idle"` compared against `any` at runtime, surfacing as a
+   panic once typed codegen stopped boxing.
+7. **`Html_render` + `Unify.Server_renderResponse` never pass nil
+   handlers.** VNode trees with `onSubmit` events (plain HTML forms
+   on server-rendered pages) would panic with
+   `assignment to entry in nil map` otherwise.
 
-**v1.0 requires** (calling-convention rewrite — all callers/callees change simultaneously):
-1. Direct function calls replacing `sky_call(f, arg)`
-2. Concrete typed signatures replacing `func f(a any) any`
-3. Polymorphism via Go generics or monomorphisation
-4. Go structs for records (`{ name : String, age : Int }` → named struct)
-5. Parameterised core types: `SkyMaybe[T]`, `SkyResult[E, T]`, `SkyTuple2[A, B]`
+#### Things we tried that didn't work (don't re-attempt without reading
+these first)
 
-**Remaining TODO items**:
-- Smarter cache invalidation (hash source content per-module)
-- Selective import emission
+- **Narrowing `Live.app.init`'s request-record type.** Making
+  `init : Dict String String -> (Model, Cmd Msg)` looks nice, but HM
+  then narrows the record type to whatever the first app uses
+  (Firestore nested maps in 13-skyshop), breaking every other app.
+  Kept `init`'s request argument as a polymorphic TVar — callers
+  plug in whatever shape their framework supplies.
+- **Attempting full Go-struct records.** `{ name : String, age : Int }`
+  → named Go struct (`State_R`, `Model_R`) works for annotated record
+  aliases, but anonymous records in function signatures still can't
+  be named because HM can't backfill a struct name. We emit the
+  typed struct only when the user writes a `type alias` for the
+  shape; inline records in signatures stay any-boxed.
+- **Monomorphisation over Go generics.** Rolled back after Stripe's
+  SDK blew the emit size up ~5× because every call site reinstantiated
+  opaque wrappers. Using Go generics (e.g. `SkyResult[E, A]`) is
+  cheaper and GHC-free.
+- **Zero-arity env lookups at init time.** Memoised zero-arity
+  declarations reading `Os.getenv` evaluate at Go `init()` — before
+  `.env` is loaded. Workaround is an explicit `_` param; still the
+  guidance in the Known Limitations section.
+
+#### Typed-codegen TODO (carry into v1.0)
+
+- **Eliminate the `any` return in runtime kernels.** Helpers like
+  `rt.Dict_get`, `rt.List_map`, `rt.Html_render` still return `any`
+  internally; the typed surface calls `rt.Coerce[T]` on the result.
+  Porting them to generics (`Dict_getT[V]`, `List_mapT[A, B]`) drops
+  the reflect dance.
+- **Record struct for `update` / `view` signatures.** TEA apps still
+  return `(Model, Cmd Msg)` via `any` tuple; emitting a named
+  `State_R` tuple shape would let Go catch Msg/Model misalignment.
+- **Smarter cache invalidation.** `.skycache/lowered/` is hashed per
+  module source, but the hash doesn't cover imported module
+  annotations, so a downstream annotation edit doesn't always
+  invalidate dependent modules.
+- **Selective import emission.** Generated Go still imports all 18
+  Sky runtime subpackages even when the example only uses two.
+- **Sky-test harness in typed codegen.** `sky test` currently uses
+  the any-heavy path; port to typed once stdlib matches.

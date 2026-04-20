@@ -1068,12 +1068,18 @@ typecheckWorkspace config entryPath = do
         sourceRoot = if Toml._sourceRoot config == "src"
             then entryDir
             else Toml._sourceRoot config
+        -- Project root = parent of src/. Covers both absolute and
+        -- relative entry paths (`src/Main.sky` → ".", common LSP case).
+        projectRoot = case takeDirectory entryDir of
+            "" -> "."
+            d  -> d
     loadAndSeedFfiRegistry
     depRoots <- SkyDeps.installDeps (Toml._skyDeps config)
-    -- Materialise stdlib into a temp side-dir so we don't disturb the
-    -- user's sky-out/. We use the source root parent so the path stays
-    -- predictable for goto-definition jumps.
-    let stdlibSideDir = entryDir </> ".sky-stdlib"
+    -- Materialise stdlib inside `.skycache/` so it lives in the already-
+    -- gitignored cache dir instead of polluting `src/`. LSP goto-def can
+    -- still jump here — the path is stable per project — but nothing
+    -- shows up under the user's source tree in `git status`.
+    let stdlibSideDir = projectRoot </> ".skycache" </> "stdlib"
     stdlibRoot <- writeStdlibTo stdlibSideDir
     testsRootExists2 <- doesDirectoryExist "tests"
     let extraTestsRoot2 = if testsRootExists2 then ["tests"] else []
@@ -2361,8 +2367,12 @@ safeReturnType t = case t of
                            else base : qualifiedCandidates ++ [name]
             matches = [ c | c <- candidates, Set.member c allAliases ]
             isRuntimeOnly = name `elem` runtimeOnlyTypes
-            -- Check runtime typed map for known concrete types
-            runtimeTyped = lookup name runtimeTypedMap
+            -- Check runtime typed map for known concrete types. Qualified
+            -- overrides (e.g. Sky.Core.Http.Response → rt.HttpResponse)
+            -- win over the short-name default.
+            runtimeTyped = case lookup (modStr, name) qualifiedRuntimeTypedMap of
+                Just goTy -> Just goTy
+                Nothing   -> lookup name runtimeTypedMap
         in case matches of
             (m:_) -> m ++ "_R"
             _     -> case runtimeTyped of
@@ -2393,7 +2403,9 @@ safeReturnType t = case t of
                            else base : qualifiedCandidates ++ [name]
             matches = [ c | c <- candidates, Set.member c allAliases ]
             isRuntimeOnly = name `elem` runtimeOnlyTypes
-            runtimeTyped = lookup name runtimeTypedMap
+            runtimeTyped = case lookup (modStr, name) qualifiedRuntimeTypedMap of
+                Just goTy -> Just goTy
+                Nothing   -> lookup name runtimeTypedMap
             innerType = case aliasType of
                 T.Filled  inner -> inner
                 T.Hoisted inner -> inner
@@ -2448,6 +2460,29 @@ opaqueParameterisedGoTy :: String -> Maybe String
 opaqueParameterisedGoTy "Decoder" = Just "rt.SkyDecoder"
 opaqueParameterisedGoTy "Value"   = Just "rt.SkyValue"
 opaqueParameterisedGoTy _         = Nothing
+
+
+-- | Module-qualified overrides that win over the bare-name mapping.
+-- Needed when the same short type name lives in two stdlib modules
+-- with distinct Go representations — e.g. `Sky.Core.Http.Response`
+-- (HTTP client response struct) vs `Sky.Http.Server.Response`
+-- (server response struct). Without this, the bare-name lookup
+-- below wrongly collapses them onto the same Go type and user code
+-- panics with `interface conversion: interface {} is rt.HttpResponse,
+-- not rt.SkyResponse` (or vice versa).
+--
+-- We list both the full module path (e.g. "Sky.Core.Http") and the
+-- common import alias (e.g. "Http") because the canonicaliser's
+-- resolveTypeQual preserves the user-written qualifier for non-
+-- builtin modules — so `Http.Response` lands in the solved type
+-- with home = "Http", not "Sky.Core.Http".
+qualifiedRuntimeTypedMap :: [((String, String), String)]
+qualifiedRuntimeTypedMap =
+    [ (("Sky.Core.Http",   "Response"), "rt.HttpResponse")
+    , (("Http",            "Response"), "rt.HttpResponse")
+    , (("Sky.Http.Server", "Response"), "rt.SkyResponse")
+    , (("Server",          "Response"), "rt.SkyResponse")
+    ]
 
 
 runtimeTypedMap :: [(String, String)]
@@ -2590,7 +2625,9 @@ safeReturnTypeWith recAliases = go
                                else base : qualifiedCandidates ++ [name]
                 matches = [ c | c <- candidates, Set.member c recAliases ]
                 isRuntimeOnly = name `elem` runtimeOnlyTypes
-                runtimeTyped = lookup name runtimeTypedMap
+                runtimeTyped = case lookup (modStr, name) qualifiedRuntimeTypedMap of
+                    Just goTy -> Just goTy
+                    Nothing   -> lookup name runtimeTypedMap
             in case matches of
                 (m:_) -> m ++ "_R"
                 _     -> case runtimeTyped of
@@ -2609,7 +2646,9 @@ safeReturnTypeWith recAliases = go
                                else base : qualifiedCandidates ++ [name]
                 matches = [ c | c <- candidates, Set.member c recAliases ]
                 isRuntimeOnly = name `elem` runtimeOnlyTypes
-                runtimeTyped = lookup name runtimeTypedMap
+                runtimeTyped = case lookup (modStr, name) qualifiedRuntimeTypedMap of
+                    Just goTy -> Just goTy
+                    Nothing   -> lookup name runtimeTypedMap
                 inner = case aliasType of
                     T.Filled i  -> i
                     T.Hoisted i -> i
@@ -3005,9 +3044,12 @@ typeStrWithAliasesReg recAliases fieldIdx tvarMap ty = case ty of
                            else base : qualifiedCandidates ++ [name]
             matches = [ c | c <- candidates, Set.member c recAliases ]
             isRuntimeOnly = name `elem` runtimeOnlyTypes
+            runtimeTyped = case lookup (modStr, name) qualifiedRuntimeTypedMap of
+                Just goTy -> Just goTy
+                Nothing   -> lookup name runtimeTypedMap
         in case matches of
             (m:_) -> m ++ "_R"
-            _     -> case lookup name runtimeTypedMap of
+            _     -> case runtimeTyped of
                 Just goTy -> goTy
                 Nothing   -> if isRuntimeOnly then "any" else base
     T.TAlias home name _ aliasType ->
@@ -3028,12 +3070,15 @@ typeStrWithAliasesReg recAliases fieldIdx tvarMap ty = case ty of
                            else base : qualifiedCandidates ++ [name]
             matches = [ c | c <- candidates, Set.member c recAliases ]
             isRuntimeOnly = name `elem` runtimeOnlyTypes
+            runtimeTyped = case lookup (modStr, name) qualifiedRuntimeTypedMap of
+                Just goTy -> Just goTy
+                Nothing   -> lookup name runtimeTypedMap
             inner = case aliasType of
                 T.Filled  i -> i
                 T.Hoisted i -> i
         in case matches of
             (m:_) -> m ++ "_R"
-            _     -> case lookup name runtimeTypedMap of
+            _     -> case runtimeTyped of
                 Just goTy -> goTy
                 Nothing
                     | isRuntimeOnly -> "any"
@@ -3122,7 +3167,12 @@ safeReturnTypePure t = case t of
     T.TTuple _ _ [_]              -> "rt.SkyTuple3"
     T.TTuple _ _ _                -> "rt.SkyTupleN"
     T.TType _ name _ | Just goTy <- opaqueParameterisedGoTy name -> goTy
-    -- Known runtime types with concrete Go definitions
+    -- Known runtime types with concrete Go definitions. Qualified
+    -- overrides (e.g. Sky.Core.Http.Response -> rt.HttpResponse) win
+    -- over the short-name lookup so the two `Response` types stay
+    -- distinct at codegen.
+    T.TType home name []
+        | Just goTy <- lookup (ModuleName.toString home, name) qualifiedRuntimeTypedMap -> goTy
     T.TType _ name [] | Just goTy <- lookup name runtimeTypedMap -> goTy
     -- safeReturnTypePure has no env access — can't distinguish record
     -- aliases (need _R suffix) from ADTs (use name directly). Fall
@@ -5011,8 +5061,11 @@ solvedTypeToGo ty = case ty of
             isRecordAlias = Set.member base (Rec._cg_recordAliases env)
                          || Set.member name (Rec._cg_recordAliases env)
             isRuntimeOnly = name `elem` runtimeOnlyTypes
+            runtimeTyped = case lookup (modStr, name) qualifiedRuntimeTypedMap of
+                Just goTy -> Just goTy
+                Nothing   -> lookup name runtimeTypedMap
         in if isRecordAlias then base ++ "_R"
-           else case lookup name runtimeTypedMap of
+           else case runtimeTyped of
              Just goTy -> goTy
              Nothing   -> if isRuntimeOnly then "any" else base
     T.TLambda from to -> "func(" ++ solvedTypeToGo from ++ ") " ++ solvedTypeToGo to
