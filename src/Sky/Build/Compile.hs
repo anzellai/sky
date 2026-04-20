@@ -1293,7 +1293,19 @@ generateDeclsForDep canMod modPrefix =
                   _ -> Nothing
               (depTypeParams, depParamGoTys, depRetType) = case def of
                   Can.TypedDef _ _ typedPats _ retTy ->
-                      ([], map (safeReturnType . snd) typedPats, safeReturnType retTy)
+                      -- Mirror the entry-module path: use the solved
+                      -- type (when available) or the reconstructed
+                      -- annotation via splitInferredSigWithReg so
+                      -- function-type params become `[T1 any](f
+                      -- func(…) T1)` instead of `f any`. That keeps
+                      -- Counter.view callable with `func(CMsg) Msg`
+                      -- despite Go's no-covariance rule.
+                      let baseTy = foldr T.TLambda retTy (map snd typedPats)
+                      in  splitInferredSigWithReg
+                              (Rec._cg_recordAliases env)
+                              (Rec._cg_fieldIndex env)
+                              (length typedPats)
+                              baseTy
                   _ -> case Map.lookup qualLookupName (Rec._cg_funcInferredSigs env) of
                       Just (tps, ps, r) | r == "any"
                                         , Just delegated <- delegateRetType ->
@@ -1873,30 +1885,21 @@ generateDef def solvedTypes =
         (entryTypeParams, entryParamGoTys, goRetType) = case (def, mAnnotTy, mSolvedType) of
             (Can.TypedDef _ _ typedPats _ retTy, _, _) ->
                 -- For annotated functions: prefer the HM-solved type
-                -- when available. The user's annotation can leave TVars
-                -- free (`init : a -> (Model, Cmd Msg)`), but HM will
-                -- have unified them against Live.app's typed record
-                -- fields. The solved type is strictly more specific,
-                -- so use it when present. Fall back to annotation-only
-                -- when HM didn't register a type.
-                --
-                -- Keep TLambda in params as `any` (via safeReturnType)
-                -- rather than emitting `func(X) Y` — Go doesn't have
-                -- function covariance and callers often pass a
-                -- `func(X) ConcreteMsg` where the sig expects
-                -- `func(X) ParentMsg`; the typed signature would
-                -- force every call site to emit a closure wrapper.
+                -- when available. Route through splitInferredSigWithReg
+                -- so function-type params emit as `func(…) T1` with a
+                -- generic type param instead of degrading to `any`
+                -- (which would reject `func(X) ConcreteMsg` callers
+                -- at the call site — Go doesn't co-vary function
+                -- return types, but generic inference from the arg
+                -- does work).
                 let baseTy = case mSolvedType of
                         Just t  -> t
                         Nothing -> foldr T.TLambda retTy (map snd typedPats)
-                    defaulted = defaultErrorTVars baseTy
-                    splitAnn 0 ty = ([], ty)
-                    splitAnn n (T.TLambda from to) =
-                        let (rest, r) = splitAnn (n - 1) to
-                        in (from : rest, r)
-                    splitAnn _ ty = ([], ty)
-                    (ps, r) = splitAnn (length typedPats) defaulted
-                in  ([], map safeReturnType ps, safeReturnType r)
+                in  splitInferredSigWithReg
+                        (Rec._cg_recordAliases getCgEnv)
+                        (Rec._cg_fieldIndex getCgEnv)
+                        (length typedPats)
+                        baseTy
             (_, _, Just funcType) ->
                 splitInferredSigWithReg
                     (Rec._cg_recordAliases getCgEnv)
@@ -2988,11 +2991,15 @@ typeStrWithAliasesReg recAliases fieldIdx tvarMap ty = case ty of
 -- | Collect TVars that survive to the final emitted Go type — i.e. TVars
 -- that aren't inside a container type we erase to `any`/`[]any`. Used
 -- so we don't declare `[T1 any]` when T1 never appears in the sig.
+-- Accepts both single-char solver names (a, b, c) and user-level
+-- annotation TVars (parentMsg, row, …) so `view : (Msg -> parentMsg)
+-- -> Counter -> VNode` gets a concrete `[T1 any](toMsg func(...) T1)`
+-- sig instead of `toMsg any` (which fails Go's function-covariance
+-- check at the call site).
 tvarsInEmitted :: T.Type -> [String]
 tvarsInEmitted ty = case ty of
     T.TVar n
         | take 1 n == "_" -> [n]
-        | length n > 1    -> []
         | otherwise       -> [n]
     T.TLambda a b -> tvarsInEmitted a ++ tvarsInEmitted b
     -- Container types erase their inner TVars (they become []any etc.)
