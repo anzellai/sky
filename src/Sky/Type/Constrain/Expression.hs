@@ -1238,6 +1238,21 @@ lookupKernelType modName funcName = case (modName, funcName) of
         Just $ T.Forall []
             (T.TLambda (T.TType (ModuleName.Canonical "") "Error" []) stringType)
     -- Log
+    -- Css — most helpers return a String (CSS textual fragment).
+    -- Opaque rule/property returns stay as `any` via runtimeOnlyTypes.
+    ("Css", "hex") ->
+        Just $ T.Forall [] (T.TLambda stringType stringType)
+    ("Css", "px") ->
+        Just $ T.Forall ["a"] (T.TLambda (T.TVar "a") stringType)
+    ("Css", "rem") ->
+        Just $ T.Forall ["a"] (T.TLambda (T.TVar "a") stringType)
+    ("Css", "em") ->
+        Just $ T.Forall ["a"] (T.TLambda (T.TVar "a") stringType)
+    ("Css", "pct") ->
+        Just $ T.Forall ["a"] (T.TLambda (T.TVar "a") stringType)
+    ("Css", "stylesheet") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"]) stringType)
     ("Log", "printlnT") ->
         Just $ T.Forall ["a", "e"]
             (T.TLambda (T.TVar "a")
