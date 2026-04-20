@@ -487,12 +487,21 @@ continueCompile config _entryPath outDir moduleOrder srcHash = do
             let hasAnnotation n depMod = case Map.lookup n (declsByName depMod) of
                     Just (Can.TypedDef{}) -> True
                     _                     -> False
+                -- Field-set → alias-name registry covering the entry
+                -- module + every dep module (prefixed form) so HM-inferred
+                -- record returns resolve to their `_R` struct name here too.
+                earlyAllFieldIdx = Map.union
+                    (Rec.buildRegistry (Can._aliases canMod))
+                    (Rec.buildDepFieldIndex
+                        [ (map (\c -> if c == '.' then '_' else c) mn, Can._aliases depMod)
+                        | (mn, depMod) <- validDeps
+                        ])
                 -- HM-inferred sigs for dep module unannotated functions.
                 -- TVars become Go type params for polymorphic functions.
                 fullSigs = Map.unions
                     [ Map.fromList
                         [ ( prefix ++ "_" ++ n
-                          , splitInferredSigWith earlyAllRecAliases (countParamsFor n depMod) ty )
+                          , splitInferredSigWithReg earlyAllRecAliases earlyAllFieldIdx (countParamsFor n depMod) ty )
                         | (n, ty) <- Map.toList depTypes
                         , not (hasAnnotation n depMod)
                         ]
@@ -1457,11 +1466,19 @@ generateGoMulti canMod srcMod config solvedTypes depDecls depRecAliases depAriti
             let earlyRecAliases = Set.union depRecAliases
                     (Set.union (Rec.collectRecordAliases (Can._aliases canMod))
                                (Rec._cg_recordAliases prevEnvEarly))
+                -- Build the full field-set → alias-name registry early
+                -- so `splitInferredSigWithReg` can resolve TRecord nodes
+                -- to their `_R` Go struct names in emitted signatures.
+                earlyFieldIdx = Map.unions
+                    [ Rec.buildRegistry (Can._aliases canMod)
+                    , Rec.buildDepFieldIndex depAliasPairs
+                    , Rec._cg_fieldIndex prevEnvEarly
+                    ]
             -- Typed entry-module sigs from HM inference (for unannotated fns).
             -- Use goSafeName so lookups (which use qualName = goSafeName n)
             -- find the entry. E.g. "init" → "init_" for reserved Go names.
             let entryInferredSigs = Map.fromList
-                    [ (goSafeName n, splitInferredSigWith earlyRecAliases (countParamsFor n canMod) ty)
+                    [ (goSafeName n, splitInferredSigWithReg earlyRecAliases earlyFieldIdx (countParamsFor n canMod) ty)
                     | (n, ty) <- Map.toList solvedTypes
                     , case Map.lookup n (declsByName canMod) of
                         Just (Can.TypedDef{}) -> False  -- annotation path
@@ -1857,7 +1874,11 @@ generateDef def solvedTypes =
             (Can.TypedDef _ _ typedPats _ retTy, _, _) ->
                 ([], map (safeReturnType . snd) typedPats, safeReturnType retTy)
             (_, _, Just funcType) ->
-                splitInferredSigWith (Rec._cg_recordAliases getCgEnv) (length params) funcType
+                splitInferredSigWithReg
+                    (Rec._cg_recordAliases getCgEnv)
+                    (Rec._cg_fieldIndex getCgEnv)
+                    (length params)
+                    funcType
             _ -> ([], replicate (length params) "any", "any")
         isTyped = False  -- body codegen still uses exprToGo (any-typed)
     in
@@ -2590,7 +2611,20 @@ splitInferredSig = splitInferredSigWith Set.empty
 -- | Variant of splitInferredSig that takes a record alias set
 -- for resolving cross-module record aliases and ADT types.
 splitInferredSigWith :: Set.Set String -> Int -> T.Type -> ([String], [String], String)
-splitInferredSigWith recAliases arity funcType =
+splitInferredSigWith recAliases = splitInferredSigWithReg recAliases Map.empty
+
+-- | Richer variant that also carries a field-set → alias-name
+-- registry so anonymous record types (TRecord) can resolve to their
+-- `_R` Go struct name in emitted signatures. Without this, HM-inferred
+-- record returns degraded to `any` — the body would still construct a
+-- `Foo_R{...}` literal, but the signature wouldn't match.
+splitInferredSigWithReg
+    :: Set.Set String
+    -> Rec.RecordRegistry
+    -> Int
+    -> T.Type
+    -> ([String], [String], String)
+splitInferredSigWithReg recAliases fieldIdx arity funcType =
     let (paramTys, retTy) = collectParams arity funcType
         -- TVars in the params get named T1, T2, …. Return-only
         -- TVars intentionally stay un-named (rendered as `any`)
@@ -2601,8 +2635,8 @@ splitInferredSigWith recAliases arity funcType =
         paramTVars = uniq (concatMap tvarsInEmitted paramTys)
         numbered = zip paramTVars ["T" ++ show i | i <- [1::Int ..]]
         typeParams = map snd numbered
-        paramStrs = map (typeStrWithAliases recAliases numbered) paramTys
-        retStr = typeStrWithAliases recAliases numbered retTy
+        paramStrs = map (typeStrWithAliasesReg recAliases fieldIdx numbered) paramTys
+        retStr = typeStrWithAliasesReg recAliases fieldIdx numbered retTy
     in (typeParams, paramStrs, retStr)
   where
     collectParams 0 ty = ([], ty)
@@ -2654,7 +2688,19 @@ typeStrWith = typeStrWithAliases Set.empty
 
 -- | Variant with record alias set for cross-module resolution.
 typeStrWithAliases :: Set.Set String -> [(String, String)] -> T.Type -> String
-typeStrWithAliases recAliases tvarMap ty = case ty of
+typeStrWithAliases recAliases = typeStrWithAliasesReg recAliases Map.empty
+
+-- | Like `typeStrWithAliases` but additionally consults a field-set →
+-- alias-name registry so bare `T.TRecord` nodes (emitted by HM after
+-- row-polymorphic unification) resolve to their `_R` Go struct name
+-- instead of degrading to `any`.
+typeStrWithAliasesReg
+    :: Set.Set String
+    -> Rec.RecordRegistry
+    -> [(String, String)]
+    -> T.Type
+    -> String
+typeStrWithAliasesReg recAliases fieldIdx tvarMap ty = case ty of
     T.TVar name -> case lookup name tvarMap of
         Just gname -> gname
         Nothing    -> "any"
@@ -2739,9 +2785,19 @@ typeStrWithAliases recAliases tvarMap ty = case ty of
                     | otherwise     -> case inner of
                         T.TRecord{} -> if null base then "any" else base
                         _           -> go inner
+    -- Bare anonymous record (HM collapses alias-of-record after row
+    -- unification): match its field set against the codegen field-index
+    -- registry. Without this, `mkJob id name = { id = ..., name = ... }`
+    -- gets type `{id:Int, name:String, ...}` and the sig would degrade
+    -- to `any` even though the body emits `Job_R{...}`.
+    T.TRecord fields _ ->
+        let fieldNames = Map.keys fields
+        in case Rec.lookupRecordAlias fieldIdx fieldNames of
+            Just aliasName -> aliasName ++ "_R"
+            Nothing -> "any"
     _ -> safeReturnTypePure ty
   where
-    go = typeStrWithAliases recAliases tvarMap
+    go = typeStrWithAliasesReg recAliases fieldIdx tvarMap
 
 
 -- | Collect TVars that survive to the final emitted Go type — i.e. TVars

@@ -6,6 +6,7 @@ module Sky.Generate.Go.Record
     , CodegenEnv(..)
     , AliasKind(..)
     , buildRegistry
+    , buildDepFieldIndex
     , lookupRecordAlias
     , classifyAlias
     , buildCodegenEnv
@@ -75,6 +76,19 @@ buildRegistry aliases =
     Map.fromList
         [ (Set.fromList fieldNames, aliasName)
         | (aliasName, Can.Alias _ body) <- Map.toList aliases
+        , Just fieldNames <- [recordFieldNames body]
+        ]
+
+
+-- | Build a dep-module field-index registry keyed by the prefixed alias
+-- name (e.g. "Lib_Db" + "Config" → "Lib_Db_Config") so signature codegen
+-- can resolve record literals from imported modules to their `_R` struct.
+buildDepFieldIndex :: [(String, Map.Map String Can.Alias)] -> RecordRegistry
+buildDepFieldIndex pairs =
+    Map.fromList
+        [ (Set.fromList fieldNames, prefix ++ "_" ++ aliasName)
+        | (prefix, aliases) <- pairs
+        , (aliasName, Can.Alias _ body) <- Map.toList aliases
         , Just fieldNames <- [recordFieldNames body]
         ]
 

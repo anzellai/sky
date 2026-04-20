@@ -25,6 +25,21 @@ type Msg
     | JobDone Int (Result Error String)
     | ClearDone
 
+type alias Job =
+    { id : Int
+    , name : String
+    , running : Bool
+    , result : String
+    }
+
+type alias Model =
+    { page : Page
+    , jobs : List Job
+    , nextId : Int
+    , ok : Int
+    , fail : Int
+    }
+
 
 init _ =
     ( { page = DashboardPage, jobs = [], nextId = 1, ok = 0, fail = 0 }
