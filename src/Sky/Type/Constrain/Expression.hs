@@ -411,12 +411,20 @@ constrainDefWithType counter env def = case def of
             wrappedCon = T.CLet [] [] paramHeader T.CTrue bodyCon
         return (wrappedCon, name, funcType)
 
-    Can.TypedDef (A.At region name) _freeVars typedPats body retType -> do
+    Can.TypedDef (A.At _region name) _freeVars typedPats body retType -> do
         let paramBindings = concatMap (\(pat, ty) -> patternBindings (pat, ty)) typedPats
             bodyEnv = foldr (\(n, ann) e -> Map.insert n ann e) env paramBindings
             funcType = foldr (\(_, ty) acc -> T.TLambda ty acc) retType typedPats
         bodyCon <- constrain counter bodyEnv body (T.NoExpectation retType)
-        return (bodyCon, name, funcType)
+        -- Wrap body in CLet so param bindings flow into the solver's
+        -- _env. Without this, CLocal "param" lookups hit an empty
+        -- env, create fresh unconstrained TVars, and downstream
+        -- unifications fail even though the annotation gave the
+        -- params concrete types. Matches the Can.Def path.
+        let paramHeader = Map.fromList $
+                map (\(pname, T.Forall _ ptype) -> (pname, (A.one, ptype))) paramBindings
+            wrappedCon = T.CLet [] [] paramHeader T.CTrue bodyCon
+        return (wrappedCon, name, funcType)
 
     -- Destructure binding — collect type-vars from the pattern so the body
     -- sees each bound name. We synthesise a placeholder "name" matching the
