@@ -953,18 +953,31 @@ func Basics_snd(t any) any {
 	return nil
 }
 
+// List_cons: Sky's `::` at runtime. Prepends head to tail. Tail can
+// arrive as either `[]any` (legacy any-kernel) or a typed slice
+// (`[]int`, `[]Piece_R`, …) under typed codegen. Previously the typed-
+// slice case fell through the type switch and dropped the entire tail
+// — so `target :: filterLegalMoves ... rest` returned `[target]`
+// instead of `[target, rest...]`. Same silent-drop class as the
+// already-fixed `rt.Concat` / `rt.AsList` — route through `AsList`
+// so typed slices are widened element-wise.
 func List_cons(head, tail any) any {
 	if tail == nil {
 		return []any{head}
 	}
-	switch xs := tail.(type) {
-	case []any:
+	if xs, ok := tail.([]any); ok {
 		out := make([]any, 0, len(xs)+1)
 		out = append(out, head)
 		out = append(out, xs...)
 		return out
 	}
-	return []any{head}
+	// Typed-slice fallback: widen via AsList (handles any Go slice
+	// kind via reflect) and then prepend.
+	xs := AsList(tail)
+	out := make([]any, 0, len(xs)+1)
+	out = append(out, head)
+	out = append(out, xs...)
+	return out
 }
 
 // ═══════════════════════════════════════════════════════════

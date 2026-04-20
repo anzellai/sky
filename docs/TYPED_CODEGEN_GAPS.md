@@ -213,6 +213,7 @@ Current state of runtime narrowing primitives (after v0.9-dev):
 - `rt.AsDict`                   ✓ reflect-based
 - `rt.AsList`                   ✓ reflect-based (typed-slice-safe)
 - `rt.Concat`                   ✓ typed-slice-safe (after v0.9-dev)
+- `rt.List_cons` (`::` at runtime) ✓ typed-slice-safe (after v0.9-dev)
 - `rt.RecordUpdate`             ✓ with narrowReflectValue fallback
 - `rt.adaptFuncValue`           ✓ recursive
 - `rt.walkGob`                  ✓ depth-bounded + cyclic-safe
