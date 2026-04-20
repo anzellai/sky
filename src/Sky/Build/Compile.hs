@@ -2267,7 +2267,13 @@ safeReturnType t = case t of
     -- fixing.
     T.TType _ "Cmd"    _          -> "rt.SkyCmd"
     T.TType _ "Sub"    _          -> "rt.SkySub"
+    T.TType _ "List"   [elem]     ->
+        let inner = safeReturnType elem
+        in if inner == "any" then "[]any" else "[]" ++ inner
     T.TType _ "List"   _          -> "[]any"
+    T.TType _ "Dict"   [_, v]     ->
+        let inner = safeReturnType v
+        in if inner == "any" then "map[string]any" else "map[string]" ++ inner
     T.TType _ "Dict"   _          -> "map[string]any"
     T.TType _ "Set"    _          -> "map[any]bool"
     -- Tuples emit as rt.SkyTuple{2,3,N}. V0/V1/V2 remain `any`
@@ -2502,7 +2508,13 @@ safeReturnTypeWith recAliases = go
                                          ++ ", " ++ go a ++ "]"
         T.TType _ "Cmd"    _          -> "rt.SkyCmd"
         T.TType _ "Sub"    _          -> "rt.SkySub"
+        T.TType _ "List"   [elem]     ->
+            let inner = go elem
+            in if inner == "any" then "[]any" else "[]" ++ inner
         T.TType _ "List"   _          -> "[]any"
+        T.TType _ "Dict"   [_, v]     ->
+            let inner = go v
+            in if inner == "any" then "map[string]any" else "map[string]" ++ inner
         T.TType _ "Dict"   _          -> "map[string]any"
         T.TType _ "Set"    _          -> "map[any]bool"
         T.TTuple _ _ []               -> "rt.SkyTuple2"
@@ -2863,7 +2875,13 @@ safeReturnTypePure t = case t of
                                      ++ ", " ++ safeReturnTypePure a ++ "]"
     T.TType _ "Cmd"    _          -> "rt.SkyCmd"
     T.TType _ "Sub"    _          -> "rt.SkySub"
+    T.TType _ "List"   [elem]     ->
+        let inner = safeReturnTypePure elem
+        in if inner == "any" then "[]any" else "[]" ++ inner
     T.TType _ "List"   _          -> "[]any"
+    T.TType _ "Dict"   [_, v]     ->
+        let inner = safeReturnTypePure v
+        in if inner == "any" then "map[string]any" else "map[string]" ++ inner
     T.TType _ "Dict"   _          -> "map[string]any"
     T.TType _ "Set"    _          -> "map[any]bool"
     T.TTuple _ _ []               -> "rt.SkyTuple2"
