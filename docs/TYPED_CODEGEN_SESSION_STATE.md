@@ -1,6 +1,6 @@
 # Typed Codegen — Session Resume Brief
 
-**Branch**: `feat/typed-codegen` — latest `6acbb93`
+**Branch**: `feat/typed-codegen` — latest `9953ff7`
 **Target**: zero `any` in generated Go sigs across all 20 examples
 **Current state**: ~87% of the raw count eliminated; all 20 examples build and all 9 live servers return HTTP 200
 
@@ -15,11 +15,11 @@
 | 05-mux-server | 6 | all polymorphic `[T1 any]` — genuinely generic |
 | 06-json | 1 | `profileFromInputs` returns `Result[any, any]` (user-unannotated) |
 | 07-todo-cli | 10 | Db-opaque wrappers |
-| 08-notes-app | 51 | unannotated `Lib.View/Auth/Db` helpers |
+| 08-notes-app | 50 | unannotated `Lib.View/Auth/Db` helpers |
 | 09-live-counter | 5 | polymorphic TEA helpers |
 | 10-live-component | 3 | polymorphic TEA helpers |
 | 11-fyne-stopwatch | 2 | polymorphic `[T1 any]` |
-| 12-skyvote | 59 | unannotated `Lib.Auth/Ideas/Comments` |
+| 12-skyvote | 58 | unannotated `Lib.Auth/Ideas/Comments` |
 | 13-skyshop | 196 | FFI wrappers (Stripe/Firebase) + unannotated helpers |
 | 14-task-demo | 0 | ✅ typed |
 | 15-http-server | 0 | ✅ typed |
@@ -27,7 +27,7 @@
 | 17-skymon | 12 | unannotated `Lib.Database/SafeQuery` helpers |
 | 18-job-queue | 9 | polymorphic TEA helpers |
 | simple, test_pkg | 0 | ✅ typed |
-| **Total** | **415** (down from ~3277 = **-87%**) | |
+| **Total** | **413** (down from ~3277 = **-87%**) | |
 
 Of those 421, **~130 are polymorphic type parameters `[T1 any]`** which are legitimately typed generic functions (the Go compiler still type-checks the body). The remaining **~294 are actual `any` returns or params** — almost all from unannotated user helper functions where HM can't specialise across module boundaries.
 
@@ -49,6 +49,7 @@ Commits on `feat/typed-codegen`:
 12. `4f960fd` — **enabled** cross-module HM with home fixup: `buildCrossModuleExternalsWithMods` walks all deps to build a global type-name → home map, then `fixupHomes` rewrites empty-home nominal refs in each external annotation (fixes the Chess.Ai-uses-`Model`-without-importing-State pattern). Filter ensures externals only cross for names actually DECLARED in their module (not imported constructors in the solver env).
 13. `6acbb93` — pass-2 dep re-solve with externals: deps that pass-1 failed (e.g. Chess.Move) now succeed because imported helpers' concrete types disambiguate their internal calls. -5 any sigs.
 14. `fce64cc` — **formatter**: multi-line record types with leading commas at the alias body indent (>1 field always breaks). Fixes sky-stdlib/Sky/Test.sky's `Suite String List Test` (parsed as 3-arg ctor, 2 actual uses) to `Suite String (List Test)`.
+15. `9953ff7` — apply the new formatter to all example `.sky` files (State/Model records now flow multi-line), plus fixes two more Result arity typos in `authenticateUser` annotations for notes-app and skyvote.
 
 ## Runtime safety: all 9 live servers return HTTP 200
 
