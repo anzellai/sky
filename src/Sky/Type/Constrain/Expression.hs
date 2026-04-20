@@ -526,11 +526,16 @@ instantiatePattern
 instantiatePattern counter (A.At reg p) scrutTy = case p of
     Can.PVar name        -> return ([(name, T.Forall [] scrutTy)], [])
     Can.PAnything        -> return ([], [])
-    Can.PUnit            -> return ([], [])
-    Can.PBool _          -> return ([], [])
-    Can.PChr _           -> return ([], [])
-    Can.PStr _           -> return ([], [])
-    Can.PInt _           -> return ([], [])
+    Can.PUnit            ->
+        return ([], [T.CEqual reg T.CRecord T.TUnit (T.NoExpectation scrutTy)])
+    Can.PBool _          ->
+        return ([], [T.CEqual reg (T.CCustom "bool pattern") boolType (T.NoExpectation scrutTy)])
+    Can.PChr _           ->
+        return ([], [T.CEqual reg T.CChar charType (T.NoExpectation scrutTy)])
+    Can.PStr _           ->
+        return ([], [T.CEqual reg T.CString stringType (T.NoExpectation scrutTy)])
+    Can.PInt _           ->
+        return ([], [T.CEqual reg T.CNumber intType (T.NoExpectation scrutTy)])
 
     Can.PAlias inner name -> do
         (innerBinds, innerCons) <- instantiatePattern counter inner scrutTy
@@ -1600,7 +1605,11 @@ vnodeType, attrType, attrListType, vnodeListType, cmdType, subType :: T.Type
 -- Use empty Canonical so VNode/Attribute unify with user annotations
 -- that resolve VNode to Canonical "" (implicitly imported).
 vnodeType = T.TType (ModuleName.Canonical "") "VNode" []
-attrType = T.TType (ModuleName.Canonical "") "Attribute" []
+-- Attribute is a transparent alias for (String, String). See
+-- actuallyUnify's Alias case.
+attrType =
+    T.TAlias (ModuleName.Canonical "") "Attribute" []
+        (T.Filled (T.TTuple stringType stringType []))
 attrListType = T.TType ModuleName.list "List" [attrType]
 vnodeListType = T.TType ModuleName.list "List" [vnodeType]
 -- Use Canonical "" so Cmd/Sub unify with user annotations that

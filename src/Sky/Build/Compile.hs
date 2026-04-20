@@ -1878,8 +1878,14 @@ generateDef def solvedTypes =
                 -- have unified them against Live.app's typed record
                 -- fields. The solved type is strictly more specific,
                 -- so use it when present. Fall back to annotation-only
-                -- when HM didn't register a type (never happens for
-                -- top-level bindings but safe).
+                -- when HM didn't register a type.
+                --
+                -- Keep TLambda in params as `any` (via safeReturnType)
+                -- rather than emitting `func(X) Y` — Go doesn't have
+                -- function covariance and callers often pass a
+                -- `func(X) ConcreteMsg` where the sig expects
+                -- `func(X) ParentMsg`; the typed signature would
+                -- force every call site to emit a closure wrapper.
                 let baseTy = case mSolvedType of
                         Just t  -> t
                         Nothing -> foldr T.TLambda retTy (map snd typedPats)
