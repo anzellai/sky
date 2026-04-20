@@ -302,4 +302,4 @@ parseFloat s =
             f
 
         Nothing ->
-            0
+            0.0
