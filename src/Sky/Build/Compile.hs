@@ -404,9 +404,7 @@ continueCompile config _entryPath outDir moduleOrder srcHash = do
                 r  <- Solve.solve cs
                 case r of
                     Solve.SolveOk t -> return (modName, t)
-                    Solve.SolveError e -> do
-                        putStrLn $ "   [p1 err] " ++ modName ++ ": " ++ take 150 e
-                        return (modName, Map.empty)
+                    Solve.SolveError _ -> return (modName, Map.empty)
             -- Pass 2: re-solve each dep with cross-module externals
             -- from pass 1. Deps that pass-1 failed (e.g. Chess.Move
             -- with `dir` type ambiguity) may now succeed because

@@ -870,13 +870,12 @@ lookupKernelType modName funcName = case (modName, funcName) of
         -- Html.titleNode : String -> VNode
         Just $ T.Forall [] (T.TLambda stringType vnodeType)
     ("Html", "script") ->
-        -- Html.script : List Attribute -> a -> VNode
-        -- The body parameter accepts either a String (inline JS) or a
-        -- List VNode (child nodes) — runtime handles both. Leaving it
-        -- polymorphic avoids forcing users to wrap short script text
-        -- in a dummy text VNode.
-        Just $ T.Forall ["a"] (T.TLambda attrListType
-            (T.TLambda (T.TVar "a") vnodeType))
+        -- Html.script : List Attribute -> body -> VNode
+        -- The body parameter stays polymorphic so callers can pass
+        -- either a String (inline JS) or a List VNode (child nodes).
+        Just $ T.Forall ["b"]
+            (T.TLambda attrListType
+                (T.TLambda (T.TVar "b") vnodeType))
     -- Void HTML elements (no children): attrs -> VNode
     ("Html", "meta") ->
         Just $ T.Forall [] (T.TLambda attrListType vnodeType)
