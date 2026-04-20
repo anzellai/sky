@@ -1,6 +1,6 @@
 # Typed Codegen — Session Resume Brief
 
-**Branch**: `feat/typed-codegen` — latest `bd8a1a4`
+**Branch**: `feat/typed-codegen` — latest `69d6a70` (48 commits ahead of main)
 **Target**: zero `any` in generated Go sigs across all 20 examples
 **Current state**: **~97.5%** of raw count eliminated (81 real anys excluding legit polymorphic `[T1 any]` generics); all 20 examples build; all 9 live servers return HTTP 200; all 77 cabal tests pass
 
