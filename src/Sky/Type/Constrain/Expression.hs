@@ -801,6 +801,15 @@ lookupKernelType modName funcName = case (modName, funcName) of
         Just $ T.Forall [] (T.TLambda attrListType vnodeType)
     ("Html", "input") ->
         Just $ T.Forall [] (T.TLambda attrListType vnodeType)
+    ("Html", "raw") ->
+        -- Html.raw : String → VNode (embed raw HTML)
+        Just $ T.Forall [] (T.TLambda stringType vnodeType)
+    ("Html", "styleNode") ->
+        -- styleNode : List Attribute -> String -> VNode (CSS body is a String)
+        Just $ T.Forall [] (T.TLambda attrListType (T.TLambda stringType vnodeType))
+    ("Html", "render") ->
+        -- Html.render : VNode -> String
+        Just $ T.Forall [] (T.TLambda vnodeType stringType)
     -- 3-arg: node (String → attrs → children → VNode)
     ("Html", "node") ->
         Just $ T.Forall [] (T.TLambda stringType (T.TLambda attrListType (T.TLambda vnodeListType vnodeType)))

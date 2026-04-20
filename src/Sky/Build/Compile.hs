@@ -421,7 +421,6 @@ continueCompile config _entryPath outDir moduleOrder srcHash = do
                 case r of
                     Solve.SolveOk t -> return (modName, t)
                     Solve.SolveError _ ->
-                        -- Fall back to pass-1 result if pass-2 regressed
                         case lookup modName depSolved0 of
                             Just p1 -> return (modName, p1)
                             Nothing -> return (modName, Map.empty)) validDeps
