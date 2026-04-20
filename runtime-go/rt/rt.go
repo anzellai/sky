@@ -99,20 +99,20 @@ func Nothing[A any]() SkyMaybe[A] {
 //
 // Used inside Coerce to bridge the Sky-handler → Go-typed-callback
 // gap (mux.HandleFunc, http.Handle, fyne callbacks, etc.).
-func makeFuncAdapter[T any](skyFn reflect.Value, targetTy reflect.Type) any {
-	wrapped := reflect.MakeFunc(targetTy, func(inArgs []reflect.Value) []reflect.Value {
-		// Box each arg to `any` for the Sky func.
+// adaptFuncValue is the non-generic worker behind makeFuncAdapter. It
+// returns a reflect.Value of type targetTy that, when called, boxes its
+// args to `any`, calls skyFn, and unwraps/adapts the return. Recursive
+// for curried lambdas: if the target's return type is another func type
+// and the Sky return is an `any`-shaped func, wrap again at call time.
+func adaptFuncValue(skyFn reflect.Value, targetTy reflect.Type) reflect.Value {
+	return reflect.MakeFunc(targetTy, func(inArgs []reflect.Value) []reflect.Value {
 		boxedArgs := make([]reflect.Value, len(inArgs))
 		for i, a := range inArgs {
 			boxedArgs[i] = reflect.ValueOf(a.Interface())
 		}
-		// If Sky func is `func(any, ..., any) any` (variadic-like),
-		// match in-arity. If it has different arity, pad/truncate
-		// silently — the Sky type checker should have caught this.
 		skyTy := skyFn.Type()
 		nin := skyTy.NumIn()
 		if nin != len(boxedArgs) && !skyTy.IsVariadic() {
-			// Best-effort: pad with zero values or truncate.
 			if nin > len(boxedArgs) {
 				for i := len(boxedArgs); i < nin; i++ {
 					boxedArgs = append(boxedArgs, reflect.Zero(skyTy.In(i)))
@@ -122,7 +122,6 @@ func makeFuncAdapter[T any](skyFn reflect.Value, targetTy reflect.Type) any {
 			}
 		}
 		out := skyFn.Call(boxedArgs)
-		// Build return values for the target signature.
 		nOut := targetTy.NumOut()
 		results := make([]reflect.Value, nOut)
 		for i := 0; i < nOut; i++ {
@@ -135,9 +134,13 @@ func makeFuncAdapter[T any](skyFn reflect.Value, targetTy reflect.Type) any {
 					inner := v.Elem()
 					if inner.Type().AssignableTo(outTy) {
 						results[i] = inner
+					} else if inner.Kind() == reflect.Func && outTy.Kind() == reflect.Func {
+						results[i] = adaptFuncValue(inner, outTy)
 					} else {
 						results[i] = reflect.Zero(outTy)
 					}
+				} else if v.IsValid() && v.Kind() == reflect.Func && outTy.Kind() == reflect.Func {
+					results[i] = adaptFuncValue(v, outTy)
 				} else {
 					results[i] = reflect.Zero(outTy)
 				}
@@ -147,7 +150,10 @@ func makeFuncAdapter[T any](skyFn reflect.Value, targetTy reflect.Type) any {
 		}
 		return results
 	})
-	return wrapped.Interface()
+}
+
+func makeFuncAdapter[T any](skyFn reflect.Value, targetTy reflect.Type) any {
+	return adaptFuncValue(skyFn, targetTy).Interface()
 }
 
 
@@ -348,12 +354,9 @@ func coerceInner[T any](v any) T {
 					continue
 				}
 				srcVal := reflect.ValueOf(src)
-				if elemT.Kind() == reflect.Interface {
-					out.Index(i).Set(srcVal)
-				} else if srcVal.Type().AssignableTo(elemT) {
-					out.Index(i).Set(srcVal)
-				} else if srcVal.Type().ConvertibleTo(elemT) {
-					out.Index(i).Set(srcVal.Convert(elemT))
+				narrowed := narrowReflectValue(srcVal, elemT)
+				if narrowed.IsValid() {
+					out.Index(i).Set(narrowed)
 				}
 			}
 			return out.Interface().(T)
@@ -364,39 +367,96 @@ func coerceInner[T any](v any) T {
 		var zero T
 		zt := reflect.TypeOf(zero)
 		if zt != nil && zt.Kind() == reflect.Map {
-			keyT := zt.Key()
-			valT := zt.Elem()
-			out := reflect.MakeMapWithSize(zt, rv.Len())
-			iter := rv.MapRange()
-			for iter.Next() {
-				k := iter.Key()
-				vv := iter.Value().Interface()
-				if !k.Type().AssignableTo(keyT) {
-					if k.Type().ConvertibleTo(keyT) {
-						k = k.Convert(keyT)
-					} else {
-						continue
-					}
-				}
-				if vv == nil {
-					out.SetMapIndex(k, reflect.Zero(valT))
-					continue
-				}
-				vvV := reflect.ValueOf(vv)
-				if valT.Kind() == reflect.Interface {
-					out.SetMapIndex(k, vvV)
-				} else if vvV.Type().AssignableTo(valT) {
-					out.SetMapIndex(k, vvV)
-				} else if vvV.Type().ConvertibleTo(valT) {
-					out.SetMapIndex(k, vvV.Convert(valT))
-				}
-			}
+			out := coerceMapValue(rv, zt)
 			return out.Interface().(T)
 		}
 	}
 	// Final fallback: Go will panic on invalid assertion; let it.
 	// The panic is the correct "type mismatch at boundary" signal.
 	return v.(T)
+}
+
+
+// narrowReflectValue converts `src` to a value of type `target`, handling:
+//   - identity / interface target
+//   - assignable / numerically-convertible types
+//   - map[K]any → map[K]X (recurses into coerceMapValue)
+//   - []any → []X (recurses via the same rules)
+//   - any → string (via fmt.Sprintf "%v")
+// Returns an invalid reflect.Value when the conversion isn't supported;
+// the caller decides whether to skip the entry or panic.
+func narrowReflectValue(src reflect.Value, target reflect.Type) reflect.Value {
+	if target.Kind() == reflect.Interface {
+		return src
+	}
+	if src.Type().AssignableTo(target) {
+		return src
+	}
+	if src.Type().ConvertibleTo(target) && safeReflectConvert(src.Kind(), target.Kind()) {
+		return src.Convert(target)
+	}
+	if target.Kind() == reflect.Map && src.Kind() == reflect.Map {
+		return coerceMapValue(src, target)
+	}
+	if target.Kind() == reflect.Slice && src.Kind() == reflect.Slice {
+		return coerceSliceValue(src, target)
+	}
+	if target.Kind() == reflect.String {
+		return reflect.ValueOf(fmt.Sprintf("%v", src.Interface()))
+	}
+	return reflect.Value{}
+}
+
+// coerceMapValue rebuilds a map[K]V → map[K2]V2 via reflect. Uses
+// narrowReflectValue per entry so deeply-nested Sky lists/dicts from
+// SQL rows, Firestore snapshots and Sky.Live sessions narrow
+// correctly.
+func coerceMapValue(src reflect.Value, target reflect.Type) reflect.Value {
+	keyT := target.Key()
+	valT := target.Elem()
+	out := reflect.MakeMapWithSize(target, src.Len())
+	iter := src.MapRange()
+	for iter.Next() {
+		k := iter.Key()
+		if !k.Type().AssignableTo(keyT) {
+			if k.Type().ConvertibleTo(keyT) && safeReflectConvert(k.Kind(), keyT.Kind()) {
+				k = k.Convert(keyT)
+			} else {
+				continue
+			}
+		}
+		v := iter.Value()
+		vi := v.Interface()
+		if vi == nil {
+			out.SetMapIndex(k, reflect.Zero(valT))
+			continue
+		}
+		narrowed := narrowReflectValue(reflect.ValueOf(vi), valT)
+		if narrowed.IsValid() {
+			out.SetMapIndex(k, narrowed)
+		}
+	}
+	return out
+}
+
+// coerceSliceValue rebuilds a []V → []V2 via reflect, using
+// narrowReflectValue per element.
+func coerceSliceValue(src reflect.Value, target reflect.Type) reflect.Value {
+	elemT := target.Elem()
+	n := src.Len()
+	out := reflect.MakeSlice(target, n, n)
+	for i := 0; i < n; i++ {
+		v := src.Index(i)
+		vi := v.Interface()
+		if vi == nil {
+			continue
+		}
+		narrowed := narrowReflectValue(reflect.ValueOf(vi), elemT)
+		if narrowed.IsValid() {
+			out.Index(i).Set(narrowed)
+		}
+	}
+	return out
 }
 
 
@@ -866,7 +926,7 @@ func AsString(v any) string {
 		return s
 	}
 	if vn, ok := v.(VNode); ok {
-		return renderVNode(vn, nil)
+		return renderVNode(vn, map[string]any{})
 	}
 	if bs, ok := v.([]byte); ok {
 		return string(bs)
@@ -1028,6 +1088,24 @@ func AsList(v any) []any {
 	if xs, ok := v.([]any); ok {
 		return xs
 	}
+	// Typed codegen widens lists to `[]any` at runtime-kernel
+	// boundaries via AsList. Accept any Go slice (including []T from
+	// typed FFI results like []map[string]string) by boxing element-
+	// wise. Without this, List.isEmpty / List.length / List.map on a
+	// typed slice wrongly report empty and downstream rendering shows
+	// empty-state where data exists.
+	if v == nil {
+		return nil
+	}
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Slice {
+		n := rv.Len()
+		out := make([]any, n)
+		for i := 0; i < n; i++ {
+			out[i] = rv.Index(i).Interface()
+		}
+		return out
+	}
 	return nil
 }
 
@@ -1069,9 +1147,23 @@ func AsListT[T any](v any) []T {
 	}
 	if xs, ok := v.([]any); ok {
 		out := make([]T, len(xs))
+		var zero T
+		targetTy := reflect.TypeOf(zero)
 		for i, x := range xs {
 			if cast, ok := x.(T); ok {
 				out[i] = cast
+				continue
+			}
+			// Narrow heterogeneous element (e.g. map[string]any when
+			// target is []map[string]string). Walk via reflect with the
+			// same recursion that rt.Coerce uses so nested dicts/lists
+			// round-trip correctly.
+			if targetTy != nil && x != nil {
+				sv := reflect.ValueOf(x)
+				narrowed := narrowReflectValue(sv, targetTy)
+				if narrowed.IsValid() {
+					out[i] = narrowed.Interface().(T)
+				}
 			}
 		}
 		return out
@@ -1088,9 +1180,41 @@ func AsMapT[V any](v any) map[string]V {
 	}
 	if m, ok := v.(map[string]any); ok {
 		out := make(map[string]V, len(m))
+		var zero V
+		zeroTy := reflect.TypeOf(zero)
+		isString := zeroTy != nil && zeroTy.Kind() == reflect.String
 		for k, x := range m {
 			if cast, ok := x.(V); ok {
 				out[k] = cast
+				continue
+			}
+			// Widen for string-valued targets so mixed-type SQL/Firestore
+			// rows (int verified, int64 id, []byte hash) become a
+			// homogeneous map[string]string. Without this, non-string
+			// columns are silently dropped and getField looks like it
+			// returned "".
+			if isString {
+				out[k] = reflect.ValueOf(fmt.Sprintf("%v", x)).Interface().(V)
+			}
+		}
+		return out
+	}
+	// Reflect fallback for other typed maps (map[string]Foo_R, …):
+	// walk via reflect and narrow each value to V where assignable.
+	rv := reflect.ValueOf(v)
+	if rv.IsValid() && rv.Kind() == reflect.Map && rv.Type().Key().Kind() == reflect.String {
+		out := make(map[string]V, rv.Len())
+		var zero V
+		valTy := reflect.TypeOf(zero)
+		for _, k := range rv.MapKeys() {
+			ev := rv.MapIndex(k)
+			iv := ev.Interface()
+			if cast, ok := iv.(V); ok {
+				out[k.String()] = cast
+				continue
+			}
+			if valTy != nil && valTy.Kind() == reflect.String {
+				out[k.String()] = reflect.ValueOf(fmt.Sprintf("%v", iv)).Interface().(V)
 			}
 		}
 		return out
@@ -2732,6 +2856,20 @@ func AsDict(v any) map[string]any {
 	if m, ok := v.(map[string]any); ok {
 		return m
 	}
+	// Typed codegen sometimes passes a narrower map (map[string]string,
+	// map[string]int, map[string]V_R, …) via AsMapT[V]. Reflect across
+	// string-keyed maps so Dict.get / Dict.member / Dict.toList all
+	// keep working on the typed variants — without this, every lookup
+	// returns Nothing and user code silently receives empty strings
+	// from getField, breaking auth/verify/etc.
+	rv := reflect.ValueOf(v)
+	if rv.IsValid() && rv.Kind() == reflect.Map && rv.Type().Key().Kind() == reflect.String {
+		out := make(map[string]any, rv.Len())
+		for _, k := range rv.MapKeys() {
+			out[k.String()] = rv.MapIndex(k).Interface()
+		}
+		return out
+	}
 	return map[string]any{}
 }
 
@@ -2980,18 +3118,52 @@ func Coerce[T any](v any) T {
 				// values (from typed T-suffix wrappers). Unwrap Ok
 				// values before coercing to the target element type.
 				elem = unwrapResultOk(elem)
-				ev := reflect.ValueOf(elem)
-				if ev.IsValid() && ev.Type().ConvertibleTo(elemTy) {
-					out.Index(i).Set(ev.Convert(elemTy))
-				} else if ev.IsValid() && ev.Type().AssignableTo(elemTy) {
-					out.Index(i).Set(ev)
-				} else if elemTy.Kind() == reflect.Interface {
-					out.Index(i).Set(ev)
-				} else {
-					panic(fmt.Sprintf(
-						"rt.Coerce: slice element [%d]: cannot convert %T to %v",
-						i, elem, elemTy))
+				if elem == nil {
+					continue
 				}
+				ev := reflect.ValueOf(elem)
+				// Delegate through narrowReflectValue so nested
+				// map/slice targets recurse (e.g. []map[string]any →
+				// []map[string]string needs per-value string coercion
+				// inside each map entry, which the naive ConvertibleTo
+				// check above misses).
+				narrowed := narrowReflectValue(ev, elemTy)
+				if narrowed.IsValid() {
+					out.Index(i).Set(narrowed)
+					continue
+				}
+				panic(fmt.Sprintf(
+					"rt.Coerce: slice element [%d]: cannot convert %T to %v",
+					i, elem, elemTy))
+			}
+			return out.Interface().(T)
+		}
+		// Map coercion: map[string]any → map[string]V. Walk values
+		// element-by-element, converting each via the same rules as
+		// slices. This lets typed codegen say `map[string]string` at
+		// the Sky level while the runtime still stores `map[string]any`
+		// (SQL row dicts, Firestore snapshots, Sky.Live session maps).
+		if rv.Kind() == reflect.Map && targetTy.Kind() == reflect.Map &&
+			rv.Type().Key().Kind() == reflect.String &&
+			targetTy.Key().Kind() == reflect.String {
+			out := reflect.MakeMapWithSize(targetTy, rv.Len())
+			valTy := targetTy.Elem()
+			for _, k := range rv.MapKeys() {
+				elem := rv.MapIndex(k).Interface()
+				elem = unwrapResultOk(elem)
+				if elem == nil {
+					out.SetMapIndex(k, reflect.Zero(valTy))
+					continue
+				}
+				ev := reflect.ValueOf(elem)
+				narrowed := narrowReflectValue(ev, valTy)
+				if narrowed.IsValid() {
+					out.SetMapIndex(k, narrowed)
+					continue
+				}
+				panic(fmt.Sprintf(
+					"rt.Coerce: map value [%v]: cannot convert %T to %v",
+					k.Interface(), elem, valTy))
 			}
 			return out.Interface().(T)
 		}

@@ -880,8 +880,20 @@ func Auth_setRole(db any, userId any, role any) any {
 // Db.getFieldOr with a sentinel default, or the dedicated
 // getString/getInt/getBool helpers (which still return Result).
 func Db_getField(fname any, row any) string {
+	key := fmt.Sprintf("%v", fname)
+	// Typed codegen passes map[string]string when the Sky-side row
+	// type is Dict String String (the Db.query kernel sig). Runtime
+	// still produces map[string]any inside Db_query before coercion,
+	// but at this call site the argument may already be the typed
+	// variant — handle both.
+	if m, ok := row.(map[string]string); ok {
+		if v, exists := m[key]; exists {
+			return v
+		}
+		return ""
+	}
 	if m, ok := row.(map[string]any); ok {
-		if v, exists := m[fmt.Sprintf("%v", fname)]; exists {
+		if v, exists := m[key]; exists {
 			if s, isStr := v.(string); isStr {
 				return s
 			}

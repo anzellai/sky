@@ -1492,15 +1492,26 @@ generateGoMulti canMod srcMod config solvedTypes depDecls depRecAliases depAriti
                     , Rec.buildDepFieldIndex depAliasPairs
                     , Rec._cg_fieldIndex prevEnvEarly
                     ]
-            -- Typed entry-module sigs from HM inference (for unannotated fns).
-            -- Use goSafeName so lookups (which use qualName = goSafeName n)
-            -- find the entry. E.g. "init" → "init_" for reserved Go names.
-            let entryInferredSigs = Map.fromList
+            -- Entry-module sigs visible to call-site codegen. For each
+            -- top-level function we pick the same type the declaration
+            -- will emit:
+            --   TypedDef: the annotation (`a -> Foo` — may carry user
+            --             TVars that become Go generics)
+            --   Def:      the HM-solved type
+            -- Using the solved type for TypedDef would confuse call sites
+            -- when the solved type's TVars differ from the annotation's
+            -- (e.g. `init : a -> …` where the body narrows `a` to a
+            -- concrete Dict — call sites would omit the `[any]`
+            -- instantiation that the declaration still needs).
+            let sigTypeFor n =
+                    case Map.lookup n (declsByName canMod) of
+                        Just (Can.TypedDef _ _ typedPats _ retTy) ->
+                            Just (foldr T.TLambda retTy (map snd typedPats))
+                        _ -> Map.lookup n solvedTypes
+                entryInferredSigs = Map.fromList
                     [ (goSafeName n, splitInferredSigWithReg earlyRecAliases earlyFieldIdx (countParamsFor n canMod) ty)
-                    | (n, ty) <- Map.toList solvedTypes
-                    , case Map.lookup n (declsByName canMod) of
-                        Just (Can.TypedDef{}) -> False  -- annotation path
-                        _                     -> True
+                    | (n, _) <- Map.toList solvedTypes
+                    , Just ty <- [sigTypeFor n]
                     ]
                 entryInferredParams = Map.map (\(_, ps, _) -> ps) entryInferredSigs
                 entryInferredRets   = Map.map (\(_, _, r) -> r) entryInferredSigs
@@ -1890,17 +1901,21 @@ generateDef def solvedTypes =
         -- function sigs. wrapTypedReturn coerces the body to match.
         (entryTypeParams, entryParamGoTys, goRetType) = case (def, mAnnotTy, mSolvedType) of
             (Can.TypedDef _ _ typedPats _ retTy, _, _) ->
-                -- For annotated functions: prefer the HM-solved type
-                -- when available. Route through splitInferredSigWithReg
-                -- so function-type params emit as `func(…) T1` with a
-                -- generic type param instead of degrading to `any`
-                -- (which would reject `func(X) ConcreteMsg` callers
-                -- at the call site — Go doesn't co-vary function
-                -- return types, but generic inference from the arg
-                -- does work).
-                let baseTy = case mSolvedType of
-                        Just t  -> t
-                        Nothing -> foldr T.TLambda retTy (map snd typedPats)
+                -- For annotated functions: use the user's ANNOTATION as
+                -- the authoritative contract. HM's solved type can be
+                -- strictly more specific than the annotation (body
+                -- constraints narrow free TVars), but that extra
+                -- specificity may not match the runtime's actual
+                -- calling convention. Example: `init : a -> (Model,
+                -- Cmd Msg)` with a body that does `Dict.get "cookies"
+                -- req` solves to `Dict String (Dict …) -> …`, but
+                -- Sky.Live's runtime passes a plain `map[string]any`
+                -- — the emitted Go sig must accept that generic shape.
+                --
+                -- Route through splitInferredSigWithReg so function-
+                -- type params emit as `func(…) T1` (callback
+                -- covariance via generic inference).
+                let baseTy = foldr T.TLambda retTy (map snd typedPats)
                 in  splitInferredSigWithReg
                         (Rec._cg_recordAliases getCgEnv)
                         (Rec._cg_fieldIndex getCgEnv)
@@ -3958,8 +3973,17 @@ coerceArg e ty
         let erasedTy = eraseTypeParams ty
         in if erasedTy == "any"
              then e  -- fully erased to any — no assertion needed
-             else GoIr.GoTypeAssert
-                    (GoIr.GoCall (GoIr.GoIdent "any") [e]) erasedTy
+             -- Function-type targets: Go doesn't allow type-asserting
+             -- between two concrete function types (func(any) any vs
+             -- func(X) Y are unrelated nominal types). Route through
+             -- rt.Coerce which detects the Func kind and builds a
+             -- reflect-based adapter (makeFuncAdapter) that boxes
+             -- the callback's params and unwraps its return.
+             else if take 5 erasedTy == "func("
+                  then GoIr.GoCall
+                        (GoIr.GoIdent ("rt.Coerce[" ++ erasedTy ++ "]")) [e]
+                  else GoIr.GoTypeAssert
+                        (GoIr.GoCall (GoIr.GoIdent "any") [e]) erasedTy
 
 -- | True when a Go type string is a generic type parameter name we
 -- emitted (T1, T2, ...). These are scoped to the function they were

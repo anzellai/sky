@@ -589,7 +589,7 @@ func Html_titleNode(s any) any {
 // Html_render: serialise a VNode to HTML string (for server-side rendering).
 func Html_render(node any) any {
 	if vn, ok := node.(VNode); ok {
-		return renderVNode(vn, nil)
+		return renderVNode(vn, map[string]any{})
 	}
 	return ""
 }
