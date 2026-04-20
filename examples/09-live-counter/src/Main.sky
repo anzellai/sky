@@ -114,6 +114,7 @@ view model =
         ]
 
 
+viewPage : Model -> VNode
 viewPage model =
     case model.page of
 
