@@ -2690,13 +2690,21 @@ tvarOccurrences = go Other
             Other     -> bumpOther n
         T.TLambda a b -> Map.unionWith addP (go Other a) (go Other b)
         -- Result/Task: error slot and top-of-ok slot both get the
-        -- TVar-only defaulting privilege; nested TVars (e.g. inside
-        -- `Result e (Maybe a)`) stay Other so we don't break the
-        -- Maybe-polymorphic chain.
+        -- TVar-only defaulting privilege. Nested TVars inside a
+        -- container under ok (e.g. `Result e (Maybe a)`) also count
+        -- as OkSlot because defaulting them to SkyValue is still
+        -- sound — the outer Maybe shape is preserved.
         T.TType _ "Result" [e, a] ->
             Map.unionWith addP (go ErrorSlot e) (go OkSlot a)
         T.TType _ "Task"   [e, a] ->
             Map.unionWith addP (go ErrorSlot e) (go OkSlot a)
+        -- Maybe's single arg is always treated as OkSlot so a
+        -- `f : … -> Maybe a` with `a` used nowhere else collapses to
+        -- `rt.SkyMaybe[rt.SkyValue]` instead of leaking the `any`.
+        -- This is still safe under the tvarOccurrences rule: a TVar
+        -- that appears only in Maybe positions is never constrained
+        -- by a caller, so defaulting to the opaque SkyValue is sound.
+        T.TType _ "Maybe" [a] -> go OkSlot a
         T.TType _ _ args -> Map.unionsWith addP (map (go Other) args)
         T.TTuple a b cs -> Map.unionsWith addP (map (go Other) (a : b : cs))
         T.TAlias _ _ pairs aliasType ->
