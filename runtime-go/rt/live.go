@@ -247,38 +247,61 @@ func Attr_name(v any) any           { return attr("name", fmt.Sprintf("%v", v)) 
 func Attr_placeholder(v any) any    { return attr("placeholder", fmt.Sprintf("%v", v)) }
 func Attr_title(v any) any          { return attr("title", fmt.Sprintf("%v", v)) }
 func Attr_for(v any) any            { return attr("for", fmt.Sprintf("%v", v)) }
-// Boolean HTML attributes follow Elm's convention: `disabled True`
-// renders the attribute; `disabled False` omits it entirely. Before
-// the bool-check was added these always emitted, so user code like
-// `disabled model.loading` rendered the input as disabled on first
-// load (when loading=False) — a bug that made sky-chat's compose box
-// unusable until the user manually stripped the attribute.
+// Boolean HTML attributes honour two calling conventions:
+//
+//   * `disabled model.loading` — typed bool, Elm-style. True renders,
+//     False omits. sky-chat's compose form needs this.
+//   * `Attr.required ()` / `Attr.checked ()` — unit-arg presence style
+//     used by many Sky projects (notes-app, skyvote, skyshop) where
+//     the user just wants the attribute present. Anything non-bool
+//     is treated as True.
+//
+// Before this logic was added, every call emitted the attribute
+// regardless of value, so `disabled False` still disabled the input;
+// the first fix made them strict-bool, which crashed any call-site
+// that passed `()`. This lenient form accepts both.
+func boolAttrPresent(v any) bool {
+	if v == nil {
+		return false
+	}
+	if b, ok := v.(bool); ok {
+		return b
+	}
+	// Unit `()` → struct{}{} in Go. Treat as "present".
+	if _, ok := v.(struct{}); ok {
+		return true
+	}
+	// Any other non-nil value: treat as present (True-ish). This
+	// covers Sky's `Bool`-alias case where the runtime hands us an
+	// `any` carrying a bool through a typed slot.
+	return true
+}
 func Attr_checked(v any) any {
-	if AsBool(v) {
+	if boolAttrPresent(v) {
 		return attr("checked", "checked")
 	}
 	return attr("", "")
 }
 func Attr_disabled(v any) any {
-	if AsBool(v) {
+	if boolAttrPresent(v) {
 		return attr("disabled", "disabled")
 	}
 	return attr("", "")
 }
 func Attr_readonly(v any) any {
-	if AsBool(v) {
+	if boolAttrPresent(v) {
 		return attr("readonly", "readonly")
 	}
 	return attr("", "")
 }
 func Attr_required(v any) any {
-	if AsBool(v) {
+	if boolAttrPresent(v) {
 		return attr("required", "required")
 	}
 	return attr("", "")
 }
 func Attr_autofocus(v any) any {
-	if AsBool(v) {
+	if boolAttrPresent(v) {
 		return attr("autofocus", "autofocus")
 	}
 	return attr("", "")
