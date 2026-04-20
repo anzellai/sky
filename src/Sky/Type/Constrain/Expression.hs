@@ -1232,6 +1232,18 @@ lookupKernelType modName funcName = case (modName, funcName) of
         Just $ T.Forall []
             (T.TLambda T.TUnit
                 (T.TType (ModuleName.Canonical "") "Value" []))
+    -- Fmt.sprint / Fmt.sprintln (Go stdlib fmt) both take a list of
+    -- values and return the formatted String.
+    ("Fmt", "sprint") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"]) stringType)
+    ("Fmt", "sprintln") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"]) stringType)
+    ("Fmt", "sprintf") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda stringType
+                (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"]) stringType))
     -- Os
     ("Os", "args") ->
         Just $ T.Forall []
