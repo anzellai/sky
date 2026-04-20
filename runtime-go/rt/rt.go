@@ -2029,6 +2029,18 @@ func RecordUpdate(base any, updates map[string]any) any {
 			f.Set(nv)
 		} else if nv.Type().ConvertibleTo(f.Type()) {
 			f.Set(nv.Convert(f.Type()))
+		} else {
+			// Narrow via the same recursive coercion helpers `rt.Coerce`
+			// uses, so a `{ record | endpoints = loaded }` update where
+			// the field is typed `[]Endpoint_R` but the replacement is
+			// `[]any` (from `List.map`) still lands in the struct. Before
+			// this, the silently-dropped assignment made Sky.Live `update`
+			// return the "new" model with the OLD collection — so added
+			// rows never appeared on the page.
+			narrowed := narrowReflectValue(nv, f.Type())
+			if narrowed.IsValid() {
+				f.Set(narrowed)
+			}
 		}
 	}
 	return copyVal.Interface()

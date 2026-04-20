@@ -4479,11 +4479,17 @@ patternCondition subject pat = case pat of
 
     Can.PUnit -> Nothing  -- always matches
 
-    -- Cons: match non-empty list, len(subject.([]any)) >= 1
+    -- Cons: match non-empty list, len(rt.AsList(subject)) >= 1.
+    -- `rt.AsList` accepts both `[]any` (legacy runtime shape) and any
+    -- typed Go slice (typed codegen: `[]Error`, `[]Endpoint_R`, …) via
+    -- reflect, so list patterns fire regardless of how the scrutinee
+    -- was typed upstream. Before this, `case errs of [] -> ...` over
+    -- a typed `[]Error` panicked with
+    -- `interface {} is []Error, not []interface {}`.
     Can.PCons _ _ ->
         Just $ GoIr.GoBinary ">="
             (GoIr.GoCall (GoIr.GoIdent "len")
-                [ GoIr.GoTypeAssert (GoIr.GoCall (GoIr.GoIdent "any") [GoIr.GoIdent subject]) "[]any" ])
+                [ GoIr.GoCall (GoIr.GoIdent "rt.AsList") [GoIr.GoIdent subject] ])
             (GoIr.GoIntLit 1)
 
     -- Fixed-length list: match exact length; element conditions handled in
@@ -4492,7 +4498,7 @@ patternCondition subject pat = case pat of
     Can.PList xs ->
         Just $ GoIr.GoBinary "=="
             (GoIr.GoCall (GoIr.GoIdent "len")
-                [ GoIr.GoTypeAssert (GoIr.GoCall (GoIr.GoIdent "any") [GoIr.GoIdent subject]) "[]any" ])
+                [ GoIr.GoCall (GoIr.GoIdent "rt.AsList") [GoIr.GoIdent subject] ])
             (GoIr.GoIntLit (length xs))
 
     -- Tuples, records, aliases: structure is guaranteed by HM — bindings carry the work.
@@ -4613,17 +4619,21 @@ patternBindings subject pat = case pat of
         -- Bind constructor arguments
         concatMap (bindCtorArg subject ctorName) args
 
-    -- head :: tail  →  h := subject.([]any)[0]; t := subject.([]any)[1:]
+    -- head :: tail  →  h := rt.AsList(subject)[0]; t := rt.AsList(subject)[1:]
+    -- `rt.AsList` widens any Go slice (typed or `[]any`) to `[]any`
+    -- so list patterns bind correctly whether the scrutinee came
+    -- from typed codegen (`[]Endpoint_R`) or the legacy `[]any` path.
     Can.PCons h t ->
-        let asSlice = GoIr.GoTypeAssert (GoIr.GoCall (GoIr.GoIdent "any") [GoIr.GoIdent subject]) "[]any"
+        let asSlice = GoIr.GoCall (GoIr.GoIdent "rt.AsList") [GoIr.GoIdent subject]
             (A.At _ hPat) = h
             (A.At _ tPat) = t
             headExpr = GoIr.GoIndex asSlice (GoIr.GoIntLit 0)
-            -- Wrap in any() so nested patternBindings can re-assert `.([]any)`.
+            -- Wrap in any() so nested patternBindings can re-slice.
             -- Without this, the recursive case `1 :: 2 :: _` tries
-            -- `__tail.([]any)[0]` on something already typed `[]any`, failing
-            -- Go's "is not an interface" check.
-            tailExpr = GoIr.GoRaw ("any(any(" ++ subject ++ ").([]any)[1:])")
+            -- `rt.AsList(__tail)[0]` where __tail is the shape returned
+            -- by `rt.AsList(subject)[1:]` — already `[]any`. `rt.AsList`
+            -- handles both shapes idempotently so re-wrapping is safe.
+            tailExpr = GoIr.GoRaw ("any(rt.AsList(" ++ subject ++ ")[1:])")
             headName = "__sky_h_" ++ subject
             tailName = "__sky_t_" ++ subject
             headStmts = case hPat of
@@ -4652,7 +4662,7 @@ patternBindings subject pat = case pat of
 
     -- [a, b, c]  →  bind each element by index
     Can.PList xs ->
-        let asSlice suf = GoIr.GoRaw ("any(" ++ subject ++ ").([]any)[" ++ show suf ++ "]")
+        let asSlice suf = GoIr.GoRaw ("rt.AsList(" ++ subject ++ ")[" ++ show suf ++ "]")
             bindEl i (A.At _ p) = case p of
                 Can.PVar name ->
                     if isDiscardName name
