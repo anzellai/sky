@@ -2637,7 +2637,18 @@ splitInferredSigWithReg
     -> T.Type
     -> ([String], [String], String)
 splitInferredSigWithReg recAliases fieldIdx arity funcType =
-    let (paramTys, retTy) = collectParams arity funcType
+    let -- Default TVars that appear ONLY in error positions (Result's
+        -- first arg, Task's first arg) to `Sky.Core.Error.Error` —
+        -- but only when the Error type is reachable in the current
+        -- module's dep graph. Without that guard, examples like
+        -- `simple` (which imports Sky.Core.Task but not Error) emit
+        -- `rt.SkyTask[Sky_Core_Error_Error, int]` without a matching
+        -- type alias, and `go build` breaks.
+        defaulted =
+            if errorTypeAvailable recAliases
+                then defaultErrorTVars funcType
+                else funcType
+        (paramTys, retTy) = collectParams arity defaulted
         -- TVars in the params get named T1, T2, …. Return-only
         -- TVars intentionally stay un-named (rendered as `any`)
         -- because Go's generic type inference only works from
@@ -2659,6 +2670,93 @@ splitInferredSigWithReg recAliases fieldIdx arity funcType =
 
     uniq [] = []
     uniq (x:xs) = x : uniq (filter (/= x) xs)
+
+
+-- | Count how many times each TVar name appears in a type, tagging
+-- each occurrence as either "error-position" (a TVar in the first
+-- slot of Result/Task) or "other". Returns (errorOnly, totalCount)
+-- per TVar so callers can decide whether to default or keep
+-- polymorphic.
+tvarOccurrences :: T.Type -> Map.Map String (Int, Int)
+tvarOccurrences = go False
+  where
+    -- `inError` flags whether we're walking inside an error slot;
+    -- if so, a TVar we hit bumps the "error" counter instead of the
+    -- "other" counter.
+    bump name isErr acc =
+        Map.insertWith
+            (\(e1, o1) (e2, o2) -> (e1 + e2, o1 + o2))
+            name
+            (if isErr then (1, 0) else (0, 1))
+            acc
+    go isErr ty = case ty of
+        T.TVar n -> bump n isErr Map.empty
+        T.TLambda a b -> Map.unionWith addP (go isErr a) (go isErr b)
+        T.TType _ "Result" [e, a] -> Map.unionWith addP (go True e) (go isErr a)
+        T.TType _ "Task"   [e, a] -> Map.unionWith addP (go True e) (go isErr a)
+        T.TType _ _ args -> Map.unionsWith addP (map (go isErr) args)
+        T.TTuple a b cs -> Map.unionsWith addP (map (go isErr) (a : b : cs))
+        T.TAlias _ _ pairs aliasType ->
+            Map.unionsWith addP $
+                [go isErr v | (_, v) <- pairs]
+                ++ [case aliasType of
+                        T.Filled i  -> go isErr i
+                        T.Hoisted i -> go isErr i]
+        T.TRecord fields _ ->
+            Map.unionsWith addP
+                [go isErr fTy | T.FieldType _ fTy <- Map.elems fields]
+        T.TUnit -> Map.empty
+    addP (a, b) (c, d) = (a + c, b + d)
+
+
+-- | True when Sky.Core.Error is reachable via the current module's
+-- dep graph (proxy: its `ErrorInfo` record alias appears in the
+-- record-alias registry). Without this guard, defaulting would emit
+-- `Sky_Core_Error_Error` references in examples that don't import
+-- Error, breaking `go build`.
+errorTypeAvailable :: Set.Set String -> Bool
+errorTypeAvailable recAliases =
+    Set.member "Sky_Core_Error_ErrorInfo" recAliases
+    || Set.member "ErrorInfo" recAliases
+
+
+-- | Default every TVar that appears ONLY in Result/Task error
+-- positions to `Sky.Core.Error.Error`. See splitInferredSigWithReg
+-- for why this is safe.
+defaultErrorTVars :: T.Type -> T.Type
+defaultErrorTVars ty =
+    let counts = tvarOccurrences ty
+        errorOnly =
+            [ n
+            | (n, (e, o)) <- Map.toList counts
+            , e > 0
+            , o == 0
+            ]
+        errorTy = T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+        substMap = Map.fromList [(n, errorTy) | n <- errorOnly]
+    in substTVarsToTypes substMap ty
+
+
+-- | TVar-to-Type substitution (more general than substTVars which
+-- only renames).
+substTVarsToTypes :: Map.Map String T.Type -> T.Type -> T.Type
+substTVarsToTypes subst = go
+  where
+    go t = case t of
+        T.TVar n -> Map.findWithDefault t n subst
+        T.TLambda a b -> T.TLambda (go a) (go b)
+        T.TType home n args -> T.TType home n (map go args)
+        T.TTuple a b cs -> T.TTuple (go a) (go b) (map go cs)
+        T.TRecord fields mExt ->
+            T.TRecord
+                (Map.map (\(T.FieldType i fTy) -> T.FieldType i (go fTy)) fields)
+                mExt
+        T.TAlias home n pairs aliasType ->
+            T.TAlias home n [(k, go v) | (k, v) <- pairs]
+                (case aliasType of
+                    T.Filled i -> T.Filled (go i)
+                    T.Hoisted i -> T.Hoisted (go i))
+        T.TUnit -> T.TUnit
 
 
 -- | Extract Go param types (legacy API, kept for annotation path).
