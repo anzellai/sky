@@ -1,8 +1,8 @@
 # Typed Codegen — Session Resume Brief
 
-**Branch**: `feat/typed-codegen` — latest `4265c99` (59 commits ahead of main)
+**Branch**: `feat/typed-codegen` — latest `472b1e9` (64 commits ahead of main)
 **Target**: zero `any` in generated Go sigs across all 20 examples
-**Current state**: **86 real anys** across 20 examples (excluding legit polymorphic `[T1 any]` generics); all 20 examples build; all 9 live servers return HTTP 200; 76/77 cabal tests pass (1 pre-existing `sky test` CLI bug in `Sky.Cli.Test/failing test module exits non-zero` — `sky test` compiles but doesn't run; not a typed-codegen regression).
+**Current state**: **44 real anys** across 20 examples (excluding legit polymorphic `[T1 any]` generics); all 20 examples build; all 9 live servers return HTTP 200. 12-skyvote and 18-job-queue now hit zero real-any sigs alongside the primitive examples (01-04, 06, 11, 14, 15).
 
 ## Headline numbers (corrected counter strips `[T1 any, T2 any, …]` generics first, then greps for word-boundary `any`)
 
@@ -13,30 +13,36 @@
 | 03-tea-external | 0 | ✅ typed |
 | 04-local-pkg | 0 | ✅ typed |
 | 05-mux-server | 1 | genuinely-generic `[T1 any]` wrapper |
-| 06-json | 1 | one decoder helper returns `Result any a` |
-| 07-todo-cli | 2 | Db-opaque conn + unannotated getArg |
-| 08-notes-app | 1 | View.cardShadow unannotated |
-| 09-live-counter | 2 | unannotated TEA helpers |
-| 10-live-component | 2 | parentMsg callback param (Go function covariance) |
+| 06-json | 0 | ✅ typed |
+| 07-todo-cli | 1 | one Db-opaque helper |
+| 08-notes-app | 0 | ✅ typed |
+| 09-live-counter | 1 | `viewPage` polymorphic through Layout.page pass-2 fallback |
+| 10-live-component | 1 | parentMsg callback param (Go function covariance) |
 | 11-fyne-stopwatch | 0 | ✅ typed |
-| 12-skyvote | 2 | Lib.Db wrappers |
-| 13-skyshop | 61 | Firestore/Stripe/Lib.Db FFI (29 bare `any`, 28 `Result Error any` — Ok side opaque, rest mixed) |
+| 12-skyvote | 0 | ✅ typed |
+| 13-skyshop | 31 | Firestore/Stripe FFI opaque returns (29 bare `any`) + 2 view helpers stuck in pass-2 fallback |
 | 14-task-demo | 0 | ✅ typed |
 | 15-http-server | 0 | ✅ typed |
-| 16-skychess | 9 | Lib.GameLogic unannotated helpers (HM let-generalises to `forall a b. a -> b -> …`) |
-| 17-skymon | 3 | Database.conn fallback + unannotated helpers |
-| 18-job-queue | 1 | `init _ = …` polymorphic req param |
-| simple, test_pkg | 0–1 | ✅ typed |
-| **Total** | **86 real any** across 20 examples | |
+| 16-skychess | 7 | Lib.GameLogic unannotated helpers (HM let-generalises to `forall a b. a -> b -> …`) |
+| 17-skymon | 1 | Database.conn fallback |
+| 18-job-queue | 0 | ✅ typed |
+| simple | 1 | one FFI helper (`expensiveTask`) without Sky.Core.Error in scope |
+| test_pkg | 0 | ✅ typed |
+| **Total** | **44 real any** across 20 examples | 11/20 examples at zero. |
 
 Cycle drops from the corrected 153 baseline:
 
-- TRecord→_R (18-job-queue 8→1)
-- List/Dict typed element (16-skychess 51→10, 17-skymon 29→4, 08-notes-app 8→3)
-- Css String-return kernels (1-2 per view-helper module)
-- Error-position TVar defaulting to Sky.Core.Error.Error (13-skyshop 77→61)
+1. TRecord→_R (18-job-queue 8→1)
+2. List/Dict typed element (16-skychess 51→10, 17-skymon 29→4, 08-notes-app 8→3)
+3. Css String-return kernels (1-2 per view-helper module)
+4. Error-position TVar defaulting to Sky.Core.Error.Error (13-skyshop 77→61)
+5. Ok-slot + Maybe-slot TVar defaulting to rt.SkyValue (13-skyshop 61→34)
+6. `Live.app.init` typed as `Dict String v` instead of `forall req. req` (18-job-queue 1→0)
+7. TypedDef path prefers HM-solved type + runs the same defaulting
+   (12-skyvote 1→0; eliminates annotated-TVar leaks like
+   `init : a -> (Model, Cmd Msg)`).
 
-That's 153 → 86 = ~44% reduction this cycle.
+That's 153 → 44 = ~71% reduction this cycle, with 11/20 examples at zero real-any.
 
 ## Attempted but reverted this cycle
 
@@ -90,16 +96,35 @@ That's 153 → 86 = ~44% reduction this cycle.
     after HTTP regression test.
 29. `4265c99` — **Default error-position TVars to `Sky.Core.Error.Error`**.
     HM leaves the Err slot of `Result a b` polymorphic when a function
-    never constructs a failing value (e.g. `addItem … Ok ()` with no
-    `Err` branch). The sig used to emit `rt.SkyResult[any, struct{}]`
-    even though no caller can observe a different concrete type for
-    the error slot. New `defaultErrorTVars` pre-pass substitutes the
-    concrete `Error` type for every TVar that appears ONLY in
-    Result/Task error slots. Guarded by `errorTypeAvailable` (proxies
-    via `Sky_Core_Error_ErrorInfo` in the record-alias set) so
-    examples like `simple` that don't have Sky.Core.Error in their
-    dep graph keep the legacy `any` sig and still link. **13-skyshop
-    77→61** (-16), total **106→86**.
+    never constructs a failing value. New `defaultErrorTVars` pre-pass
+    substitutes the concrete `Error` type for every TVar that appears
+    ONLY in Result/Task error slots. Guarded by `errorTypeAvailable`.
+    **13-skyshop 77→61**.
+30. `080a3e8` — **Default ok-only TVars to `rt.SkyValue`**. Extends
+    `defaultErrorTVars` to also substitute `rt.SkyValue` for every
+    TVar that appears only in Result/Task Ok positions. Matches the
+    "opaque FFI pointer" semantic the code actually has and lets
+    `rt.SkyResult[Error, any]` collapse to `rt.SkyResult[Error,
+    rt.SkyValue]`. `tvarOccurrences` now returns
+    `(errorCount, okCount, otherCount)` per TVar. **86→53**.
+31. `339bcdc` — **Maybe-only TVars also default to `rt.SkyValue`**.
+    `T.TType _ "Maybe" [a]` is treated as `OkSlot` in the walker so
+    `Maybe a` with `a` unused elsewhere becomes
+    `rt.SkyMaybe[rt.SkyValue]`. **53→51**.
+32. `e32b407` — **Type `Live.app.init` as `Dict String v`**. Runtime
+    passes `map[string]any{"path": …}` to init, so the kernel sig's
+    `forall req. req` was leaking `any` through every `init _ = …`.
+    `Dict String v` pins the outer shape while leaving `v` polymorphic
+    for user code that reads cookies or other extensions. **51→50;
+    18-job-queue hits zero.**
+33. `472b1e9` — **Annotation path prefers HM-solved type + runs
+    defaulting**. Previously the Go-sig for `Can.TypedDef` ignored
+    HM's more-specific inferred type when an annotation was present,
+    so `init : a -> (Model, Cmd Msg)` emitted `any` for the `a`
+    param even though HM had unified it with `Dict String v` via the
+    `Live.app` record field. Now the codegen uses the HM-solved type
+    when available and applies `defaultErrorTVars` to it. **50→44;
+    12-skyvote hits zero.**
 
 ## What landed on this branch earlier (since `95772d8`)
 
@@ -214,11 +239,12 @@ done
 
 ## Honest caveat
 
-The remaining ~106 real-any sigs are structural and split into distinct classes, each needing a different kind of work:
+The remaining 44 real-any sigs are structural and split into distinct classes, each needing a different kind of work:
 
-1. **FFI opaque returns** (~77 in skyshop) — Firestore/Stripe/Firebase Go pointers that Sky wraps opaquely. HM can't pin the Error side of `Result a a` when the Ok branch always `Ok _`'d and the Err branch never fires (e.g. `addItem` that always returns `Ok ()`). Fix = FFI generator emits `Result Error T` wrappers instead of `Result a a`; tracked as point B in the brief.
-2. **Within-module let-generalisation** (~10 in skychess, ~5 in skymon) — `pawnCaptureLeft sq dir colour board col = …` is called *only* from `pawnCaptures : … -> Colour -> Dict Int Piece -> …` with concrete args, but HM generalises the helper to `forall a b. a -> b -> …` and the caller *instantiates* the scheme instead of constraining it. Fix = monomorphisation pass after HM OR drop let-generalisation for top-level bindings OR user-side annotations on every helper (point C).
-3. **Polymorphic TEA init** (1 per Live app) — `init _ = …` leaves the `req` param as a free TVar because the body doesn't use it.
-4. **`identity ""` fatal fallbacks** — `conn = case Db.open of Ok c -> c | Err _ -> identity ""` types `conn : String` instead of `Db`. Any typed `Db.open` kernel sig would correctly reject this; the user code predates error-unification and treats open-failure as fatal (Os.exit 1 right above the fallback). Fix = rewrite the Err branch to return a Result/Task, not a String.
+1. **FFI opaque returns** (29 bare-`any` in skyshop) — Firestore/Stripe/Firebase Go pointers that Sky wraps opaquely. Fix = FFI generator emits typed wrappers using the scanned Go signatures rather than `any`.
+2. **Pass-2 dep fallback chains** (Page.Home `viewHome`, Page.Product `viewProduct`, etc.) — the Attribute-vs-(String,String) nominal mismatch makes Ui.Layout's pass-2 fail for skyshop, so downstream dep modules that depend on Layout.page's typed return fall back to pass-1 polymorphic types. Fix = transparent `Attribute` ≡ `(String, String)` unification (attempted as a TAlias; breaks some string-equality flows in Page.Orders; needs a deeper unifier patch).
+3. **Within-module let-generalisation** (7 in skychess) — `pawnCaptureLeft sq dir colour board col = …` is called *only* from `pawnCaptures : … -> Colour -> Dict Int Piece -> …` with concrete args, but HM generalises the helper to `forall a b. a -> b -> …` and the caller *instantiates* the scheme instead of constraining it. Fix = monomorphisation pass after HM.
+4. **`identity ""` fatal fallbacks** (17-skymon Database.conn) — `conn = case Db.open of Ok c -> c | Err _ -> identity ""` types `conn : String` instead of `Db`. Any typed `Db.open` kernel sig would correctly reject this; the user code predates error-unification. Fix = rewrite the Err branch to return a Result/Task.
+5. **Go function covariance** (10-live-component Counter.view's `toMsg`) — a callback parameter `toMsg : CMsg -> Msg` must be assignable to the wider `func(any) any` that Go typed-codegen accepts.
 
-None of (1)–(4) is reachable via another kernel-sig tweak. They need a compiler pass (monomorphisation), an FFI generator change, or user-code edits — not HM tuning.
+None of (1)–(5) is reachable via another kernel-sig tweak. They need a compiler pass (monomorphisation), a unifier extension (transparent alias), an FFI generator change, or user-code edits.
