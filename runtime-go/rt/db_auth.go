@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -913,29 +914,76 @@ func Db_getFieldOr(defaultVal any, row any, fname any) any {
 	return defaultVal
 }
 
-func Db_getString(row any, fname any) any {
+// Sky type: Db.getString : String -> row -> String
+// Returns "" when the field is missing. Matches Db_getField semantics
+// so the Sky-side type signature (String, not Result) holds.
+func Db_getString(fname any, row any) string {
+	key := fmt.Sprintf("%v", fname)
+	if m, ok := row.(map[string]string); ok {
+		if v, exists := m[key]; exists {
+			return v
+		}
+		return ""
+	}
 	if m, ok := row.(map[string]any); ok {
-		if v, exists := m[fmt.Sprintf("%v", fname)]; exists {
-			return Ok[any, any](fmt.Sprintf("%v", v))
+		if v, exists := m[key]; exists {
+			return fmt.Sprintf("%v", v)
 		}
 	}
-	return Err[any, any](ErrInvalidInput("getString: no field '" + fmt.Sprintf("%v", fname) + "'"))
+	return ""
 }
 
-func Db_getInt(row any, fname any) any {
+// Sky type: Db.getInt : String -> row -> Int
+// Returns 0 when the field is missing or not numeric. String-map values
+// go through strconv; any-map values through AsIntOrZero.
+func Db_getInt(fname any, row any) int {
+	key := fmt.Sprintf("%v", fname)
+	if m, ok := row.(map[string]string); ok {
+		if v, exists := m[key]; exists {
+			n, err := strconv.Atoi(v)
+			if err != nil {
+				return 0
+			}
+			return n
+		}
+		return 0
+	}
 	if m, ok := row.(map[string]any); ok {
-		if v, exists := m[fmt.Sprintf("%v", fname)]; exists {
-			return Ok[any, any](AsInt(v))
+		if v, exists := m[key]; exists {
+			if s, isStr := v.(string); isStr {
+				n, err := strconv.Atoi(s)
+				if err != nil {
+					return 0
+				}
+				return n
+			}
+			return AsIntOrZero(v)
 		}
 	}
-	return Err[any, any](ErrInvalidInput("getInt: no field '" + fmt.Sprintf("%v", fname) + "'"))
+	return 0
 }
 
-func Db_getBool(row any, fname any) any {
+// Sky type: Db.getBool : String -> row -> Bool
+// Returns false when the field is missing. SQLite stores booleans as
+// 0/1 strings; "1" / "true" map to true.
+func Db_getBool(fname any, row any) bool {
+	key := fmt.Sprintf("%v", fname)
+	if m, ok := row.(map[string]string); ok {
+		if v, exists := m[key]; exists {
+			return v == "1" || v == "true"
+		}
+		return false
+	}
 	if m, ok := row.(map[string]any); ok {
-		if v, exists := m[fmt.Sprintf("%v", fname)]; exists {
-			return Ok[any, any](AsBool(v))
+		if v, exists := m[key]; exists {
+			if s, isStr := v.(string); isStr {
+				return s == "1" || s == "true"
+			}
+			if b, isBool := v.(bool); isBool {
+				return b
+			}
+			return AsIntOrZero(v) != 0
 		}
 	}
-	return Err[any, any](ErrInvalidInput("getBool: no field '" + fmt.Sprintf("%v", fname) + "'"))
+	return false
 }

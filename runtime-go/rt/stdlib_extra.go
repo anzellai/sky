@@ -45,8 +45,24 @@ func Set_fromList(list any) any {
 	return s
 }
 
+// toSkySet accepts either a SkySet or a typed-codegen slice (`[]A`) and
+// returns a SkySet view. Typed codegen's `Set.fromList [1,2,3]` produces
+// `[]int`; downstream any-variant kernels (Set_insert, Set_member) must
+// accept both shapes instead of hard-asserting `.(SkySet)`. Matches the
+// AsList widening pattern used by list kernels.
+func toSkySet(v any) SkySet {
+	if s, ok := v.(SkySet); ok {
+		return s
+	}
+	items := map[string]any{}
+	for _, x := range asList(v) {
+		items[fmt.Sprintf("%v", x)] = x
+	}
+	return SkySet{items: items}
+}
+
 func Set_insert(v any, set any) any {
-	s := set.(SkySet)
+	s := toSkySet(set)
 	out := SkySet{items: map[string]any{}}
 	for k, v2 := range s.items {
 		out.items[k] = v2
@@ -56,7 +72,7 @@ func Set_insert(v any, set any) any {
 }
 
 func Set_remove(v any, set any) any {
-	s := set.(SkySet)
+	s := toSkySet(set)
 	out := SkySet{items: map[string]any{}}
 	k := fmt.Sprintf("%v", v)
 	for k2, v2 := range s.items {
@@ -68,13 +84,13 @@ func Set_remove(v any, set any) any {
 }
 
 func Set_member(v any, set any) any {
-	s := set.(SkySet)
+	s := toSkySet(set)
 	_, ok := s.items[fmt.Sprintf("%v", v)]
 	return ok
 }
 
 func Set_toList(set any) any {
-	s := set.(SkySet)
+	s := toSkySet(set)
 	out := make([]any, 0, len(s.items))
 	for _, v := range s.items {
 		out = append(out, v)
@@ -83,15 +99,15 @@ func Set_toList(set any) any {
 }
 
 func Set_size(set any) any {
-	return len(set.(SkySet).items)
+	return len(toSkySet(set).items)
 }
 
 func Set_union(a any, b any) any {
 	out := SkySet{items: map[string]any{}}
-	for k, v := range a.(SkySet).items {
+	for k, v := range toSkySet(a).items {
 		out.items[k] = v
 	}
-	for k, v := range b.(SkySet).items {
+	for k, v := range toSkySet(b).items {
 		out.items[k] = v
 	}
 	return out
@@ -99,8 +115,8 @@ func Set_union(a any, b any) any {
 
 func Set_intersect(a any, b any) any {
 	out := SkySet{items: map[string]any{}}
-	bi := b.(SkySet).items
-	for k, v := range a.(SkySet).items {
+	bi := toSkySet(b).items
+	for k, v := range toSkySet(a).items {
 		if _, ok := bi[k]; ok {
 			out.items[k] = v
 		}
@@ -110,8 +126,8 @@ func Set_intersect(a any, b any) any {
 
 func Set_diff(a any, b any) any {
 	out := SkySet{items: map[string]any{}}
-	bi := b.(SkySet).items
-	for k, v := range a.(SkySet).items {
+	bi := toSkySet(b).items
+	for k, v := range toSkySet(a).items {
 		if _, ok := bi[k]; !ok {
 			out.items[k] = v
 		}
