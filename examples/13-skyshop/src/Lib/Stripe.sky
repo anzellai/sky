@@ -237,8 +237,15 @@ verifyStripeSession cartId sessionId =
 
         Ok sess ->
             let
-                status = Stripe.checkoutSessionStatus sess
-                paymentStatus = Stripe.checkoutSessionPaymentStatus sess
+                -- FFI trust boundary: every Stripe getter returns
+                -- Result Error T so a nil receiver / unexpected
+                -- Go panic surfaces as Err rather than corrupting
+                -- downstream logic. Unwrap with sensible defaults
+                -- at the call site since Stripe rarely fails on a
+                -- completed session.
+                rd = \d r -> Result.withDefault d r
+                status = rd "" (Stripe.checkoutSessionStatus sess)
+                paymentStatus = rd "" (Stripe.checkoutSessionPaymentStatus sess)
             in
                 if status == Stripe.checkoutSessionStatusComplete && paymentStatus
                     == Stripe.checkoutSessionPaymentStatusPaid then
@@ -247,28 +254,40 @@ verifyStripeSession cartId sessionId =
                             println
                                 ("[STRIPE] Payment verified for cart: "
                                      ++ cartId)
-                        customerDetails =
+                        customerDetailsR =
                             Stripe.checkoutSessionCustomerDetails sess
                         custName =
-                            Stripe.checkoutSessionCustomerDetailsName
-                                customerDetails
+                            rd
+                                ""
+                                (customerDetailsR
+                                     |> Result.andThen
+                                            Stripe.checkoutSessionCustomerDetailsName)
                         custEmail =
-                            Stripe.checkoutSessionCustomerDetailsEmail
-                                customerDetails
+                            rd
+                                ""
+                                (customerDetailsR
+                                     |> Result.andThen
+                                            Stripe.checkoutSessionCustomerDetailsEmail)
                         custPhone =
-                            Stripe.checkoutSessionCustomerDetailsPhone
-                                customerDetails
-                        collectedInfo =
+                            rd
+                                ""
+                                (customerDetailsR
+                                     |> Result.andThen
+                                            Stripe.checkoutSessionCustomerDetailsPhone)
+                        shippingDetailsR =
                             Stripe.checkoutSessionCollectedInformation sess
-                        shippingDetails =
-                            Stripe.checkoutSessionCollectedInformationShippingDetails
-                                collectedInfo
+                                |> Result.andThen
+                                       Stripe.checkoutSessionCollectedInformationShippingDetails
                         shippingName =
-                            Stripe.checkoutSessionCollectedInformationShippingDetailsName
-                                shippingDetails
-                        shippingAddr =
-                            Stripe.checkoutSessionCollectedInformationShippingDetailsAddress
-                                shippingDetails
+                            rd
+                                ""
+                                (shippingDetailsR
+                                     |> Result.andThen
+                                            Stripe.checkoutSessionCollectedInformationShippingDetailsName)
+                        shippingAddrR =
+                            shippingDetailsR
+                                |> Result.andThen
+                                       Stripe.checkoutSessionCollectedInformationShippingDetailsAddress
                     in
                         Ok
                             { status = status
@@ -280,11 +299,31 @@ verifyStripeSession cartId sessionId =
                                   shippingName
                             , customerEmail = custEmail
                             , customerPhone = custPhone
-                            , shippingLine1 = Stripe.addressLine1 shippingAddr
-                            , shippingLine2 = Stripe.addressLine2 shippingAddr
-                            , shippingCity = Stripe.addressCity shippingAddr
-                            , shippingCountry = Stripe.addressCountry shippingAddr
-                            , shippingPostalCode = Stripe.addressPostalCode shippingAddr
+                            , shippingLine1 =
+                                  rd
+                                      ""
+                                      (shippingAddrR
+                                           |> Result.andThen Stripe.addressLine1)
+                            , shippingLine2 =
+                                  rd
+                                      ""
+                                      (shippingAddrR
+                                           |> Result.andThen Stripe.addressLine2)
+                            , shippingCity =
+                                  rd
+                                      ""
+                                      (shippingAddrR
+                                           |> Result.andThen Stripe.addressCity)
+                            , shippingCountry =
+                                  rd
+                                      ""
+                                      (shippingAddrR
+                                           |> Result.andThen Stripe.addressCountry)
+                            , shippingPostalCode =
+                                  rd
+                                      ""
+                                      (shippingAddrR
+                                           |> Result.andThen Stripe.addressPostalCode)
                             }
 
                 else

@@ -270,6 +270,17 @@ Pipeline: `sky add pkg` → inspector extracts types → compiler classifies fun
 **Every FFI call returns `Result Error T`.** The boundary is a trust
 boundary (Elm-ports analogy). See `docs/ffi/boundary-philosophy.md`.
 
+This applies UNIFORMLY: method calls, constructors (`newX`), field
+getters, field setters, and package-level var reads all return
+`Result Error T`. No exceptions — an infallible getter still needs to
+survive nil receivers and concurrent data races, and we don't want
+callers checking "is this the kind of FFI that can fail?". Runtime
+wrappers: `SkyFfiFieldGet` / `SkyFfiFieldSet` wrap in `Ok(value)` on
+success, `Err(ErrFfi _)` on nil / missing field. Generated T-variants
+(`Go_Pkg_fieldT`) return `SkyResult[any, T]` so static callers and
+`|> Result.andThen` chains see the same shape. Generated any-variants
+(`Go_Pkg_field`) delegate to the reflect helpers.
+
 | Go return | Sky type |
 |---|---|
 | `string` / `int`/`int64` / `float64` / `bool` (element types) | `String` / `Int` / `Float` / `Bool` |
@@ -471,6 +482,9 @@ These are current compiler limitations users must work around:
 10. **Zero-arity functions reading env vars** — Zero-arity functions are memoised and their import aliases evaluate at Go init time (before `.env` is loaded). If a zero-arity function reads `Os.getenv`, the value is cached as empty. **Workaround**: add a dummy `_` parameter: `getConfig _ = Os.getenv "KEY"`.
 11. **`exposing (Type(..))` doesn't expose ADT constructors for user modules** — `import MyModule exposing (MyType(..))` does not bring `MyType`'s constructors into scope for user-defined modules. The canonicaliser only resolves constructors when full dep info is available (kernel modules work). **Workaround**: use `import MyModule exposing (..)` to expose everything, or qualify constructors: `MyModule.MyConstructor`.
 12. **Typed codegen keeps `any` inside runtime kernels.** The typed surface is zero-`any`, but the v1.0-era reflection dispatch lives on inside `Dict_*`, `List_map`, `Html_render`. User code never sees it; observable cost is ~5% CPU vs. a hypothetical fully-generic runtime. Scheduled for the post-v1.0 runtime port (see the Typed Codegen TODO section).
+13. **Zero-arg `Css.*` constants require `()`** — `Css.zero`, `Css.auto`, `Css.none`, `Css.transparent`, `Css.inherit`, `Css.initial`, `Css.borderBox`, `Css.systemFont`, `Css.monoFont`, `Css.userSelectNone` are kernel bindings exposed as `() -> String` to sidestep zero-arity memoisation (which would interact badly with Go's `init()` ordering). Write `Css.margin (Css.zero ())` not `Css.margin Css.zero` — the latter serialises the function pointer (e.g. `0xc00001c0a0`) into the stylesheet. Sky's type checker doesn't flag the miss today because the `() -> String` surface unifies with any String slot via HM's let-polymorphism default. **Pattern**: any `Css.X` that names a CSS keyword (not a value constructor like `px`/`rem`/`hex`) takes `()`.
+14. **Partial application of auto-generated FFI setters is not callable** — `|> Result.andThen (OpenAi.chatCompletionMessageSetRole m.role)` emits a call to a non-existent non-`T` variant of the setter. Wrap in an explicit lambda: `\msg -> OpenAi.chatCompletionMessageSetRole m.role msg`. Same class as the "pipeline operator" opaque-setter idiom — FFI setters always need the full argument list at the call site.
+15. **`import X as Alias` leaks the alias into codegen for exposed record/ADT types** — `import Lib.Db as Chat` causes `Message` to be emitted as `Chat_Message_R` instead of the module-prefixed `Lib_Db_Message_R`, breaking cross-module resolution when another module imports it unaliased. **Workaround**: use `import Lib.Db exposing (Message, …)` (or qualify without alias). Aliases on modules that only expose functions (no types) are unaffected.
 
 ### Recently Fixed (v0.7.x — listed for regression context)
 

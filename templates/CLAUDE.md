@@ -152,15 +152,38 @@ distance p = Math.sqrt (toFloat (p.x * p.x + p.y * p.y))
 distance : { x : Int, y : Int } -> Float
 ```
 
-**7. Every FFI call returns `Result Error T`.** The FFI boundary is a trust
-boundary — Go can panic, return nil, or fail in ways HM can't see. The
-generated wrappers recover panics and surface them as `Err(ErrFfi _)`.
+**7. Every FFI call returns `Result Error T`.** The FFI boundary is a
+trust boundary — Go can panic, return nil, or fail in ways HM can't see.
+This applies UNIFORMLY to every FFI shape: method calls, constructors,
+field getters, field setters, and package-level var reads. The generated
+wrappers recover panics and surface them as `Err(ErrFfi _)`.
 
 ```elm
 -- ✓ Every Go call is a Result
 case Uuid.newString of
     Ok id  -> useId id
     Err _  -> fallbackId
+
+-- ✓ Field getters return Result too — unwrap explicitly
+custName =
+    Result.withDefault ""
+        (Stripe.checkoutSessionCustomerDetails sess
+             |> Result.andThen Stripe.checkoutSessionCustomerDetailsName)
+
+-- ✗ Don't treat getter output as bare T — will fail type check
+customerDetails = Stripe.checkoutSessionCustomerDetails sess
+name = Stripe.checkoutSessionCustomerDetailsName customerDetails  -- Result, not String
+if name != "" then ...  -- type error
+```
+
+Pipeline-friendly setters compose naturally because each stage is a
+Result and `Result.andThen` threads the receiver through:
+
+```elm
+-- ✓ Setter pipeline — each stage wraps/passes Result
+OpenAi.newChatCompletionMessage ()
+    |> Result.andThen (\msg -> OpenAi.chatCompletionMessageSetRole "user" msg)
+    |> Result.andThen (\msg -> OpenAi.chatCompletionMessageSetContent body msg)
 ```
 
 **8. Zero-arg FFI functions are values, not calls.** `Uuid.newString` is a
@@ -2696,6 +2719,9 @@ Session store memory grows with inactive sessions. Set a TTL:
 - **`Dict.toList` returns string keys** — `Dict` is `map[string]any` at runtime, so `Dict.toList` on `Dict Int v` gives string keys. Iterate via `Dict.get` over known ranges.
 - **`sky check` doesn't fully model Go interfaces** — concrete types can't unify with Go interfaces (`Fyne.CanvasObject`), but the code compiles and runs fine.
 - **Zero-arg FFI functions need no `()`** — call `Uuid.newString` (the return value), not `Uuid.newString ()`.
+- **Zero-arg `Css.*` constants DO need `()`** — `Css.zero`, `Css.auto`, `Css.none`, `Css.transparent`, `Css.inherit`, `Css.initial`, `Css.borderBox`, `Css.systemFont`, `Css.monoFont`, `Css.userSelectNone`. These are exposed as `() -> String` kernels (not zero-arity values) so they don't interact with Go's `init()` ordering. Write `Css.padding (Css.zero ())`, not `Css.padding Css.zero` — the latter serialises a function pointer like `0xc00001c0a0` into the stylesheet. Pattern: any `Css.X` that names a literal CSS keyword takes `()`; value constructors like `px`, `rem`, `em`, `hex`, `rgba` take their arguments directly.
+- **FFI setters in pipelines need an explicit lambda** — `|> Result.andThen (OpenAi.chatCompletionMessageSetRole m.role)` emits a call to the non-existent non-T variant and fails codegen. Wrap: `|> Result.andThen (\msg -> OpenAi.chatCompletionMessageSetRole m.role msg)`.
+- **`import Lib.X as Alias` leaks the alias into codegen for exposed types** — `import Lib.Db as Chat` emits `Chat_Message_R` instead of the canonical `Lib_Db_Message_R`, breaking cross-module record sharing. **Workaround**: import types without the alias — `import Lib.Db exposing (Message, ...)`. Aliases are fine for modules that only expose functions.
 - **Zero-arity functions reading env vars** — zero-arity functions are memoised; when they read `Os.getenv` they evaluate during Go `init()`, before `.env` is loaded. **Workaround**: add a dummy `_` parameter: `getConfig _ = Os.getenv "KEY"`.
 - **Let bindings with parameters after multi-line case** — `mark j = expr` directly after a `case ... of` in the same `let` can be reparsed as a new top-level declaration. Use a lambda (`\j -> expr`) or extract to a top-level function.
 - **`exposing (Type(..))` doesn't expose user-module constructors** — only stdlib/kernel modules resolve `MyType(..)` fully. For a user-defined `MyModule`, import `exposing (..)` or qualify constructors (`MyModule.MyConstructor`).
