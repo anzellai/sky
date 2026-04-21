@@ -178,7 +178,19 @@ readLine = go BS.empty
     go acc = do
         c <- BS.hGet stdin 1
         if BS.null c
-            then return acc
+            then if BS.null acc
+                -- Empty read on an empty accumulator = client closed
+                -- stdin at a message boundary. Exit the server
+                -- immediately rather than propagating empty bytes up
+                -- through readMessage (which used to loop forever in
+                -- `forever handleOne`, leaking a `sky lsp` process
+                -- per LSP test spec and deadlocking the hspec harness).
+                -- `exitWith (ExitFailure 1)` matches the LSP spec
+                -- contract for "connection dropped without shutdown".
+                then exitWith (ExitFailure 1)
+                -- Partial line then EOF: treat as terminator, let the
+                -- caller process what we have.
+                else return acc
             else if c == BC.pack "\n"
                 then return (stripCR acc)
                 else go (acc `BS.append` c)
