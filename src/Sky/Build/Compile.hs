@@ -2749,7 +2749,7 @@ splitInferredSigWithReg recAliases fieldIdx arity funcType =
         paramTVars = uniq (concatMap tvarsInEmitted paramTys)
         numbered = zip paramTVars ["T" ++ show i | i <- [1::Int ..]]
         typeParams = map snd numbered
-        paramStrs = map (typeStrWithAliasesReg recAliases fieldIdx numbered) paramTys
+        paramStrs = map (renderHofParamTy recAliases fieldIdx numbered) paramTys
         retStr = typeStrWithAliasesReg recAliases fieldIdx numbered retTy
     in (typeParams, paramStrs, retStr)
   where
@@ -2970,6 +2970,51 @@ typeStrWith = typeStrWithAliases Set.empty
 -- | Variant with record alias set for cross-module resolution.
 typeStrWithAliases :: Set.Set String -> [(String, String)] -> T.Type -> String
 typeStrWithAliases recAliases = typeStrWithAliasesReg recAliases Map.empty
+
+
+-- | Render a user-HOF parameter type. Params that are themselves
+-- function types (callback/continuation params) have their innermost
+-- return type rewritten to `any` when the inferred return is a
+-- concrete parametric shape (SkyResult, SkyMaybe, SkyTask, a user
+-- record, …). Sky lambdas lower to `func(p any) any` regardless of
+-- their inferred return, so a specific Go return like
+-- `rt.SkyResult[E, rt.SkyValue]` at the param sig makes the call-site
+-- lambda un-assignable: Go has no function-type covariance, and even
+-- though `rt.SkyValue = any`, the wrapper `SkyResult[E, any]` is a
+-- distinct named generic instantiation, not `any`. Keeping input
+-- types concrete lets Go generic inference still flow from the first
+-- arg to later params. Non-function param types are unaffected.
+--
+-- Exception: when the innermost return is a bare TVar (e.g.
+-- `(Msg -> parentMsg) -> VNode` from component views), it stays as
+-- the TVar. Go uses call-site inference — passing a named
+-- `func(Msg) Msg` fixes `T1 = Msg` through that position. Rewriting
+-- to `any` would leave `T1` unused in the sig, and Go rejects with
+-- "cannot infer T1".
+--
+-- This only affects the SIGNATURE shape of the enclosing HOF; the body
+-- routes its function-typed params through the `*AnyT` kernel helpers
+-- (which take and return `any`) so dropping the inner return's
+-- specificity doesn't change runtime semantics.
+renderHofParamTy
+    :: Set.Set String
+    -> Rec.RecordRegistry
+    -> [(String, String)]
+    -> T.Type
+    -> String
+renderHofParamTy recAliases fieldIdx tvarMap ty = case ty of
+    T.TLambda _ _ -> renderLambdaInner ty
+    _             -> go ty
+  where
+    go = typeStrWithAliasesReg recAliases fieldIdx tvarMap
+    renderLambdaInner (T.TLambda from to@T.TLambda{}) =
+        "func(" ++ go from ++ ") " ++ renderLambdaInner to
+    renderLambdaInner (T.TLambda from to@(T.TVar _)) =
+        -- Bare TVar return: keep typed so Go can infer via call site.
+        "func(" ++ go from ++ ") " ++ go to
+    renderLambdaInner (T.TLambda from _to) =
+        "func(" ++ go from ++ ") any"
+    renderLambdaInner other = go other
 
 -- | Like `typeStrWithAliases` but additionally consults a field-set →
 -- alias-name registry so bare `T.TRecord` nodes (emitted by HM after
@@ -3379,7 +3424,19 @@ exprToGo (A.At _ expr) = case expr of
                     -- T2/T6: when the callee has typed params (recorded
                     -- in env._cg_funcParamTypes), coerce each `any`-arg
                     -- expression to the expected param type.
-                    else GoIr.GoCall (exprToGo func)
+                    --
+                    -- For generic functions (type params recorded in
+                    -- funcInferredSigs), we skip the `exprToGo`-path
+                    -- `[any]` instantiation and emit the bare qualName.
+                    -- Go infers type params from call args — e.g.
+                    -- `lift Wrap A` → `lift(Wrap, A)` lets Go pick
+                    -- T1=Outer from Wrap's return. The previous `[any]`
+                    -- forced T1=any, which broke call sites whose args
+                    -- had a concrete return type in a TVar-return
+                    -- function-typed param position (bare-TVar HOF bug).
+                    -- Bare references (function as value) still emit
+                    -- `[any]` via `Can.VarTopLevel` in `exprToGo`.
+                    else GoIr.GoCall (GoIr.GoIdent qualName)
                                      (coerceCallArgs qualName args)
             _ ->
                 let goFunc = exprToGo func

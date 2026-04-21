@@ -148,3 +148,62 @@ spec = do
                         Just payload -> do
                             let msgs = diagnosticMessages payload
                             msgs `shouldBe` []
+
+        it "user-defined monadic-do chain on Result produces no diagnostics" $ do
+            -- Regression for Bug #1: previously `sky check` passed but
+            -- `go build` failed on this pattern. LSP piggy-backs on the
+            -- sky-check pipeline (Parse → Canonicalise → Constrain →
+            -- Solve → Exhaustiveness), so a false-positive LSP
+            -- diagnostic here would mean the type solver was spuriously
+            -- rejecting a valid user-HOF chain. Empty diagnostics =>
+            -- LSP agrees with the fixed codegen.
+            sky <- findSky
+            let src = unlines
+                    [ "module Main exposing (main)"
+                    , ""
+                    , "import Sky.Core.Prelude exposing (..)"
+                    , "import Sky.Core.Result as Result"
+                    , "import Sky.Core.Error as Error exposing (Error)"
+                    , "import Std.Log exposing (println)"
+                    , ""
+                    , "do : Result Error a -> (a -> Result Error b) -> Result Error b"
+                    , "do result fn ="
+                    , "    Result.andThen fn result"
+                    , ""
+                    , "pipeline : String -> Result Error (String, String)"
+                    , "pipeline key ="
+                    , "    do (firstStep key) (\\a ->"
+                    , "    do (secondStep a) (\\b ->"
+                    , "    Ok (a, b)))"
+                    , ""
+                    , "firstStep : String -> Result Error String"
+                    , "firstStep key ="
+                    , "    if key == \"\" then"
+                    , "        Err (Error.invalidInput \"empty key\")"
+                    , "    else"
+                    , "        Ok (\"first:\" ++ key)"
+                    , ""
+                    , "secondStep : String -> Result Error String"
+                    , "secondStep a ="
+                    , "    Ok (\"second:\" ++ a)"
+                    , ""
+                    , "main ="
+                    , "    case pipeline \"hello\" of"
+                    , "        Ok (a, b) ->"
+                    , "            println (\"ok \" ++ a ++ \" \" ++ b)"
+                    , ""
+                    , "        Err e ->"
+                    , "            println (errorToString e)"
+                    ]
+            withSystemTempDirectory "sky-lsp-diag-user-hof" $ \dir -> do
+                fixture <- setupProject dir src
+                withLsp sky $ \hin hout -> do
+                    initializeLsp hin hout
+                    didOpen hin fixture src
+                    result <- awaitNotification hout "textDocument/publishDiagnostics"
+                    case result of
+                        Nothing -> expectationFailure
+                            "no publishDiagnostics on user-HOF chain"
+                        Just payload -> do
+                            let msgs = diagnosticMessages payload
+                            msgs `shouldBe` []
