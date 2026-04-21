@@ -26,4 +26,4 @@ main =
                 println "decoded person"
 
             Err e ->
-                println e
+                println (errorToString e)

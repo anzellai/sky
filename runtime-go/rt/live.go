@@ -59,6 +59,12 @@ func velement(tag string, attrs []any, children []any) VNode {
 	for _, a := range attrs {
 		switch v := a.(type) {
 		case attrPair:
+			// Empty-key attrPair is the "no-op" sentinel returned by
+			// bool-conditional helpers like `disabled False` so
+			// False-valued booleans don't render the attribute.
+			if v.key == "" {
+				continue
+			}
 			node.Attrs[v.key] = v.val
 		case eventPair:
 			node.Events[v.name] = v.msg
@@ -130,7 +136,12 @@ func Html_h6(a, c any) any     { return htmlElem("h6")(a, c) }
 func Html_a(a, c any) any      { return htmlElem("a")(a, c) }
 func Html_button(a, c any) any { return htmlElem("button")(a, c) }
 // input is void in HTML — no children. Sky API takes attrs only.
-func Html_input(a any) any { return htmlElem("input")(a, nil) }
+// Void HTML elements accept an optional empty `[]` children argument
+// because elm-format convention writes them as `input [attrs] []`.
+// The runtime ignores the children and emits the void tag regardless;
+// the single-arg call site (`input [attrs]`) still works because
+// Sky's variadic FFI dispatch treats the missing arg as implicit nil.
+func Html_input(a any, _ ...any) any { return htmlElem("input")(a, nil) }
 func Html_form(a, c any) any   { return htmlElem("form")(a, c) }
 func Html_label(a, c any) any  { return htmlElem("label")(a, c) }
 func Html_nav(a, c any) any    { return htmlElem("nav")(a, c) }
@@ -145,9 +156,12 @@ func Html_ul(a, c any) any      { return htmlElem("ul")(a, c) }
 func Html_ol(a, c any) any      { return htmlElem("ol")(a, c) }
 func Html_li(a, c any) any      { return htmlElem("li")(a, c) }
 // img is a void element — emit as self-closing, attrs only.
-func Html_img(a any) any        { return htmlElem("img")(a, nil) }
-func Html_br(a any) any         { return htmlElem("br")(a, nil) }
-func Html_hr(a any) any         { return htmlElem("hr")(a, nil) }
+// Void HTML elements — same variadic trick as Html_input so both
+// `img [attrs]` and `img [attrs] []` compile. The second arg is
+// discarded.
+func Html_img(a any, _ ...any) any { return htmlElem("img")(a, nil) }
+func Html_br(a any, _ ...any) any  { return htmlElem("br")(a, nil) }
+func Html_hr(a any, _ ...any) any  { return htmlElem("hr")(a, nil) }
 func Html_table(a, c any) any   { return htmlElem("table")(a, c) }
 func Html_thead(a, c any) any   { return htmlElem("thead")(a, c) }
 func Html_tbody(a, c any) any   { return htmlElem("tbody")(a, c) }
@@ -233,11 +247,65 @@ func Attr_name(v any) any           { return attr("name", fmt.Sprintf("%v", v)) 
 func Attr_placeholder(v any) any    { return attr("placeholder", fmt.Sprintf("%v", v)) }
 func Attr_title(v any) any          { return attr("title", fmt.Sprintf("%v", v)) }
 func Attr_for(v any) any            { return attr("for", fmt.Sprintf("%v", v)) }
-func Attr_checked(v any) any        { return attr("checked", "checked") }
-func Attr_disabled(v any) any       { return attr("disabled", "disabled") }
-func Attr_readonly(v any) any       { return attr("readonly", "readonly") }
-func Attr_required(v any) any       { return attr("required", "required") }
-func Attr_autofocus(v any) any      { return attr("autofocus", "autofocus") }
+// Boolean HTML attributes honour two calling conventions:
+//
+//   * `disabled model.loading` — typed bool, Elm-style. True renders,
+//     False omits. sky-chat's compose form needs this.
+//   * `Attr.required ()` / `Attr.checked ()` — unit-arg presence style
+//     used by many Sky projects (notes-app, skyvote, skyshop) where
+//     the user just wants the attribute present. Anything non-bool
+//     is treated as True.
+//
+// Before this logic was added, every call emitted the attribute
+// regardless of value, so `disabled False` still disabled the input;
+// the first fix made them strict-bool, which crashed any call-site
+// that passed `()`. This lenient form accepts both.
+func boolAttrPresent(v any) bool {
+	if v == nil {
+		return false
+	}
+	if b, ok := v.(bool); ok {
+		return b
+	}
+	// Unit `()` → struct{}{} in Go. Treat as "present".
+	if _, ok := v.(struct{}); ok {
+		return true
+	}
+	// Any other non-nil value: treat as present (True-ish). This
+	// covers Sky's `Bool`-alias case where the runtime hands us an
+	// `any` carrying a bool through a typed slot.
+	return true
+}
+func Attr_checked(v any) any {
+	if boolAttrPresent(v) {
+		return attr("checked", "checked")
+	}
+	return attr("", "")
+}
+func Attr_disabled(v any) any {
+	if boolAttrPresent(v) {
+		return attr("disabled", "disabled")
+	}
+	return attr("", "")
+}
+func Attr_readonly(v any) any {
+	if boolAttrPresent(v) {
+		return attr("readonly", "readonly")
+	}
+	return attr("", "")
+}
+func Attr_required(v any) any {
+	if boolAttrPresent(v) {
+		return attr("required", "required")
+	}
+	return attr("", "")
+}
+func Attr_autofocus(v any) any {
+	if boolAttrPresent(v) {
+		return attr("autofocus", "autofocus")
+	}
+	return attr("", "")
+}
 func Attr_rel(v any) any            { return attr("rel", fmt.Sprintf("%v", v)) }
 func Attr_target(v any) any         { return attr("target", fmt.Sprintf("%v", v)) }
 func Attr_method(v any) any         { return attr("method", fmt.Sprintf("%v", v)) }
@@ -387,8 +455,24 @@ func Css_remT(n float64) string {
 }
 func Css_em(n any) any  { return fmt.Sprintf("%vem", n) }
 func Css_pct(n any) any { return fmt.Sprintf("%v%%", n) }
-func Css_hex(s any) any { return fmt.Sprintf("#%v", s) }
-func Css_hexT(s string) string { return "#" + s }
+// Css.hex accepts both "#fff" and "fff" forms — the leading '#' is
+// idempotent so users can paste palette values either way without
+// accidentally emitting ##fff which browsers treat as an unknown
+// colour and silently ignore.
+func Css_hex(s any) any {
+	str := fmt.Sprintf("%v", s)
+	if strings.HasPrefix(str, "#") {
+		return str
+	}
+	return "#" + str
+}
+
+func Css_hexT(s string) string {
+	if strings.HasPrefix(s, "#") {
+		return s
+	}
+	return "#" + s
+}
 
 // Common property shortcuts (name in Sky = lowerCamel → Css_<name>)
 func cssP(k string) func(any) any {
@@ -577,7 +661,7 @@ func Html_htmlNode(a, c any) any { return htmlElem("html")(a, c) }
 func Html_headNode(a, c any) any { return htmlElem("head")(a, c) }
 func Html_body(a, c any) any     { return htmlElem("body")(a, c) }
 func Html_title(a, c any) any    { return htmlElem("title")(a, c) }
-func Html_meta(a any) any        { return htmlElem("meta")(a, nil) }
+func Html_meta(a any, _ ...any) any { return htmlElem("meta")(a, nil) }
 func Html_link(a any) any        { return htmlElem("link")(a, nil) }
 func Html_script(a, c any) any   { return htmlElem("script")(a, c) }
 
@@ -589,7 +673,7 @@ func Html_titleNode(s any) any {
 // Html_render: serialise a VNode to HTML string (for server-side rendering).
 func Html_render(node any) any {
 	if vn, ok := node.(VNode); ok {
-		return renderVNode(vn, nil)
+		return renderVNode(vn, map[string]any{})
 	}
 	return ""
 }
@@ -673,8 +757,20 @@ func renderVNode(n VNode, handlers map[string]any) string {
 		return sb.String()
 	}
 	sb.WriteString(">")
+	// <script> and <style> bodies are raw text in HTML (CDATA-like):
+	// escaping `'` to `&#39;` breaks the JS at parse time. Sky users
+	// pass the body as a plain string (`script [] "code here"`), which
+	// becomes a text VNode. Emit text children verbatim under these
+	// tags; sub-elements still render normally (rare but valid for
+	// <style> @import chains). Matches html/template's behaviour for
+	// JSStr / CSSText contexts.
+	rawBody := n.Tag == "script" || n.Tag == "style"
 	for _, c := range n.Children {
-		sb.WriteString(renderVNode(c, handlers))
+		if rawBody && c.Kind == "text" {
+			sb.WriteString(c.Text)
+		} else {
+			sb.WriteString(renderVNode(c, handlers))
+		}
 	}
 	sb.WriteString("</")
 	sb.WriteString(n.Tag)
@@ -930,23 +1026,29 @@ type cmdT struct {
 	batch []any
 }
 
+// SkyCmd is the public type for Sky's Cmd msg type.
+type SkyCmd = cmdT
+
 type subT struct {
 	kind   string // "none", "every"
 	ms     int
 	toMsg  any
 }
 
-func Cmd_none() any             { return cmdT{kind: "none"} }
-func Cmd_batch(list any) any    { return cmdT{kind: "batch", batch: asList(list)} }
-func Cmd_perform(task, to any) any { return cmdT{kind: "perform", task: task, toMsg: to} }
+// SkySub is the public type for Sky's Sub msg type.
+type SkySub = subT
 
-func Sub_none() any { return subT{kind: "none"} }
-func Sub_every(ms any, to any) any {
+func Cmd_none() SkyCmd             { return cmdT{kind: "none"} }
+func Cmd_batch(list any) SkyCmd    { return cmdT{kind: "batch", batch: asList(list)} }
+func Cmd_perform(task, to any) SkyCmd { return cmdT{kind: "perform", task: task, toMsg: to} }
+
+func Sub_none() SkySub { return subT{kind: "none"} }
+func Sub_every(ms any, to any) SkySub {
 	return subT{kind: "every", ms: AsInt(ms), toMsg: to}
 }
 
 // Time.every is an alias of Sub.every in Sky code
-func Time_every(ms any, to any) any { return Sub_every(ms, to) }
+func Time_every(ms any, to any) SkySub { return Sub_every(ms, to) }
 
 // ═══════════════════════════════════════════════════════════
 // Std.Live — HTTP-first server-driven UI with TEA architecture

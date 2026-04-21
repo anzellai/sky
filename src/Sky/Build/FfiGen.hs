@@ -767,14 +767,17 @@ emitTypedWrapper kernelName aliases fn =
         _ | isIdentityPointer -> emitIdentityPointerTyped wrapperName
 
         _ | _fnIsField fn ->
-            -- P7: emit a typed accessor `func Go_X_yT(p0 *pkg.Recv) FieldT`
-            -- using direct field access — no reflect, no any boxing.
+            -- P7: emit a typed accessor `func Go_X_yT(p0 *pkg.Recv)
+            -- SkyResult[any, FieldT]` using direct field access — no
+            -- reflect, no any boxing on the element. Per the Sky FFI
+            -- trust boundary rule every FFI call returns
+            -- `Result Error T`; infallible getters wrap the field in
+            -- Ok so `Result.andThen` / `Result.traverse` see the shape
+            -- they expect without any bare-value promotion hacks.
             -- When the receiver type is expressible but the field type
             -- is not (typical for func-typed fields like
-            -- http.Server.ConnContext: func(ctx, c) ctx), emit
-            -- `func Go_X_yT(p0 *pkg.Recv) any { return p0.Field }` —
-            -- still drops the receiver from the (p0 any) gate even
-            -- though the field flows through any.
+            -- http.Server.ConnContext), emit
+            -- `func Go_X_yT(p0 *pkg.Recv) SkyResult[any, any]`.
             let fieldName = _fnMethodName fn
                 knownAliasesField = Set.fromList (Map.elems aliases)
                 receiverType = case rewrittenParams of
@@ -789,20 +792,29 @@ emitTypedWrapper kernelName aliases fn =
                 fieldExpressible = isSimpleTypedType fieldType
                                 && allPackagesKnown knownAliasesField fieldType
                                 && not (null fieldType)
-                returnTypeStr   = if fieldExpressible then fieldType else "any"
+                okType          = if fieldExpressible then fieldType else "any"
                 typedAlias =
                     [ "type FfiT_" ++ wrapperName ++ "_P0 = " ++ receiverType
                     | needsAlias receiverType ] ++
                     [ "type FfiT_" ++ wrapperName ++ "_R = " ++ fieldType
                     | fieldExpressible && needsAlias fieldType ]
                 typedDecl =
-                    "func " ++ wrapperName ++ "T(arg0 " ++ receiverType ++ ") " ++
-                    returnTypeStr ++ " { return arg0." ++ fieldName ++ " }\n"
+                    "func " ++ wrapperName ++ "T(arg0 " ++ receiverType ++
+                    ") SkyResult[any, " ++ okType ++ "] { " ++
+                    "return Ok[any, " ++ okType ++ "](arg0." ++ fieldName ++ ") }\n"
                 anyDecl =
                     "func " ++ wrapperName ++ "(arg0 any) any { return SkyFfiFieldGet(arg0, " ++
                     quote fieldName ++ ") }\n"
+            -- Emit BOTH variants when the typed path is available:
+            -- call-site codegen dispatches to the T-suffixed wrapper
+            -- when the full argument list is statically known, but
+            -- falls back to the any-wrapper when the getter is used
+            -- as a value (partial application passed to
+            -- `Result.andThen`, etc.). Without the any-form emitted,
+            -- cross-module references to a T-only getter hit
+            -- `undefined: Go_X_YField` at Go link time.
             in if receiverOk
-                then unlines typedAlias ++ typedDecl
+                then unlines typedAlias ++ typedDecl ++ anyDecl
                 else anyDecl
 
         _ | _fnIsFieldSet fn ->
@@ -810,6 +822,9 @@ emitTypedWrapper kernelName aliases fn =
             -- For `*X` value types, the typed signature accepts `X`
             -- and assigns via `&v` so callers pass plain values per
             -- CLAUDE.md §FFI. For non-pointer types, direct assign.
+            -- Returns `SkyResult[any, Recv]` — every FFI call respects
+            -- the Sky trust boundary rule, so `|> Result.andThen` can
+            -- pipeline setters without any bare-value fallback.
             -- Falls back to the SkyFfiFieldSet reflect helper when
             -- types aren't expressible.
             let fieldName = _fnMethodName fn
@@ -836,21 +851,31 @@ emitTypedWrapper kernelName aliases fn =
                     | needsAlias receiverType ]
                 typedDeclSet =
                     "func " ++ wrapperName ++ "T(value " ++ skySideValue ++
-                    ", recv " ++ receiverType ++ ") " ++ receiverType ++
-                    " { recv." ++ fieldName ++ " = " ++ assignExpr ++ "; return recv }\n"
+                    ", recv " ++ receiverType ++ ") SkyResult[any, " ++ receiverType ++ "] { " ++
+                    "recv." ++ fieldName ++ " = " ++ assignExpr ++ "; " ++
+                    "return Ok[any, " ++ receiverType ++ "](recv) }\n"
                 anyDeclSet =
                     "func " ++ wrapperName ++ "(value any, recv any) any { return SkyFfiFieldSet(value, recv, " ++
                     quote fieldName ++ ") }\n"
+            -- Emit both variants: call sites may dispatch to either
+            -- the T-suffixed direct wrapper or the any-form depending
+            -- on whether all args are statically known at that site.
             in if paramsOk
-                then unlines typedAliasSet ++ typedDeclSet
+                then unlines typedAliasSet ++ typedDeclSet ++ anyDeclSet
                 else anyDeclSet
 
         _ | _fnIsPkgVar fn ->
+            -- Every pkg-var accessor wraps in Ok per the Sky FFI trust
+            -- boundary rule. Infallible `new X` / read `pkg.N` / set
+            -- `pkg.N = v` all surface as `Result Error T` so downstream
+            -- `|> Result.andThen` pipelines work without bare-value
+            -- promotion. The any-return comes from the any-gate on
+            -- FFI wrappers; the Ok-wrap is the Sky-visible shape.
             case (_fnRecvType fn, _fnMethodName fn) of
                 -- Zero-value struct constructor: New<TypeName>() -> *TypeName.
                 (typeName, "") | not (null typeName) ->
-                    "func " ++ wrapperName ++ "(_ any) any { return new(pkg." ++
-                    typeName ++ ") }\n"
+                    "func " ++ wrapperName ++ "(_ any) any { return Ok[any, any](new(pkg." ++
+                    typeName ++ ")) }\n"
                 -- Setter for a pkg-level var: SetName(value) → pkg.Name = value.
                 -- Use reflect to assign through any — no compile-time type
                 -- reference needed, handles any Sky-any value generically.
@@ -858,11 +883,11 @@ emitTypedWrapper kernelName aliases fn =
                     "func " ++ wrapperName ++ "(value any) any { " ++
                     "reflect.ValueOf(&pkg." ++ varName ++ ").Elem().Set(" ++
                     "reflect.ValueOf(value).Convert(reflect.TypeOf(pkg." ++ varName ++ "))); " ++
-                    "return struct{}{} }\n"
+                    "return Ok[any, any](struct{}{}) }\n"
                 -- Plain pkg-level var/const read: return pkg.Name.
                 _ ->
-                    "func " ++ wrapperName ++ "(_ any) any { return pkg." ++
-                    _fnName fn ++ " }\n"
+                    "func " ++ wrapperName ++ "(_ any) any { return Ok[any, any](pkg." ++
+                    _fnName fn ++ ") }\n"
 
         DirectCall ->
             let anyAnyWrapper =

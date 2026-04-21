@@ -27,7 +27,7 @@ queryAll db =
             printRows rows
 
         Err e ->
-            println e
+            println (errorToString e)
 
 
 printRows rows =
@@ -39,10 +39,10 @@ printRows rows =
 
 
 main =
-    case Db.connect ":memory:" of
+    case Db.open "sqlite" ":memory:" of
 
         Ok db ->
             runDb db
 
         Err e ->
-            println e
+            println (errorToString e)

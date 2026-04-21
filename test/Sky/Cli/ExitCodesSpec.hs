@@ -36,11 +36,13 @@ spec :: Spec
 spec = do
     describe "sky CLI exit code contracts" $ do
 
-        it "sky --version exits 0 with v0.9.0 banner" $ do
+        it "sky --version exits 0 with sky banner" $ do
             sky <- findSky
             (ec, out, _) <- readCreateProcessWithExitCode (proc sky ["--version"]) ""
             ec `shouldBe` ExitSuccess
-            ("v0.9" `isInfixOf` out) `shouldBe` True
+            -- Local dev builds print "sky dev"; CI-built binaries inject a
+            -- real version via app/VERSION. Either form starts with "sky ".
+            ("sky " `isInfixOf` out) `shouldBe` True
 
         it "sky build of a well-typed program exits 0" $ do
             sky <- findSky

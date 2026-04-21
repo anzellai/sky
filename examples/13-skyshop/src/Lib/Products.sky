@@ -12,6 +12,7 @@ import Github.Com.Google.Uuid as Uuid
 import Lib.Db as Db
 
 
+listProducts : List (Dict String String)
 listProducts =
     Db.queryWhereOrLog "Products.listProducts" "products" "published" "==" True
 
@@ -37,10 +38,12 @@ listAllProducts =
 -- getProduct returns Result Error (Maybe Product). update converts
 -- Err to a notification (db down → "We can't load products right now,
 -- try again"); Ok Nothing → "Product not found"; Ok (Just p) → render.
+getProduct : String -> Result Error (Maybe (Dict String String))
 getProduct productId =
     Db.getDoc "products" productId
 
 
+searchProducts : String -> String -> String -> String -> List (Dict String String)
 searchProducts query category sortBy sortDir =
     let
         allProducts = listProducts

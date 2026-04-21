@@ -21,10 +21,12 @@ dbConn =
 
         Err e ->
             let
-                _ = println ("[FATAL] Cannot open skyvote.db: " ++ e)
-                _ = Os.exit 1
+                _ =
+                    println
+                        ("[FATAL] Cannot open skyvote.db: "
+                             ++ Error.toString e)
             in
-                identity ""
+                Os.exit 1
 
 
 -- exec : returns Result Error () — DB write at the typed boundary.

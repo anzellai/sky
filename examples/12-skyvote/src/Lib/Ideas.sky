@@ -31,7 +31,7 @@ createIdea title description category authorId =
                 Err e
 
 
-getIdeas : String -> String -> String -> Result Error List Dict String String
+getIdeas : String -> String -> String -> Result Error (List (Dict String String))
 getIdeas sortBy filterCategory searchQuery =
     let
         baseQuery =
@@ -72,7 +72,7 @@ getIdeas sortBy filterCategory searchQuery =
 
 
 -- getIdea: outer Result is for DB failure, inner Maybe is "found / not".
-getIdea : String -> Result Error Maybe Dict String String
+getIdea : String -> Result Error (Maybe (Dict String String))
 getIdea ideaId =
     case Db.query
              "SELECT i.id, i.title, i.description, i.category, i.status, i.author_id, i.created_at, u.username as author_name, (SELECT COUNT(*) FROM votes v WHERE v.idea_id = i.id) as vote_count, (SELECT COUNT(*) FROM comments c WHERE c.idea_id = i.id) as comment_count FROM ideas i LEFT JOIN users u ON i.author_id = u.id WHERE i.id = ? LIMIT 1"
@@ -85,7 +85,7 @@ getIdea ideaId =
             Ok (List.head rows)
 
 
-getIdeasByStatus : String -> Result Error List Dict String String
+getIdeasByStatus : String -> Result Error (List (Dict String String))
 getIdeasByStatus status =
     Db.query
         "SELECT i.id, i.title, i.description, i.category, i.status, i.author_id, i.created_at, u.username as author_name, (SELECT COUNT(*) FROM votes v WHERE v.idea_id = i.id) as vote_count FROM ideas i LEFT JOIN users u ON i.author_id = u.id WHERE i.status = ? ORDER BY vote_count DESC"

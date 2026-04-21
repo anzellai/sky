@@ -139,11 +139,26 @@ typedVariantCountOrZero fp = do
 
 
 -- | Count occurrences of a needle in a haystack (non-overlapping).
+--
+-- Previous version used `length s < n` as the termination guard, which
+-- made each step O(n) on a linked-list `String` and the whole function
+-- O(n²). On skyshop's 800 kB main.go that turned cabal test's TypedFfi
+-- stage into a 10+ min hang. Rewritten to walk once without measuring
+-- remaining length.
 substrings :: String -> String -> [()]
-substrings needle = go
+substrings needle
+  | null needle = const []
+  | otherwise   = go
   where
-    n = length needle
-    go s
-        | length s < n = []
-        | take n s == needle = () : go (drop n s)
-        | otherwise          = go (drop 1 s)
+    go s = case matchAt needle s of
+        Just rest -> () : go rest
+        Nothing   -> case s of
+            []     -> []
+            _ : xs -> go xs
+
+    matchAt :: String -> String -> Maybe String
+    matchAt [] rest         = Just rest
+    matchAt _  []           = Nothing
+    matchAt (n':ns) (c:cs)
+        | n' == c   = matchAt ns cs
+        | otherwise = Nothing

@@ -1,8 +1,238 @@
 # CLAUDE.md — Sky Language Project
 
-This is a [Sky](https://github.com/anzellai/sky) project. Sky is a pure functional language inspired by Elm, compiling to Go. The compiler is written in Haskell (GHC 9.4+) and ships as a single `sky` binary. Users only need the `sky` binary and Go 1.21+ — no Haskell toolchain required to use Sky.
+This is a [Sky](https://github.com/anzellai/sky) project. Sky is a pure
+functional language inspired by Elm, compiling to Go. The compiler is
+written in Haskell (GHC 9.4+) and ships as a single `sky` binary. Users
+only need the `sky` binary and Go 1.21+ — no Haskell toolchain required
+to use Sky.
 
-**Core principle: if it compiles, it works.** Verified at v0.9 against 23-item adversarial soundness audit (soundness + security + cleanup + tooling). All side effects flow through `Task`. `sky check` invokes `go build` on the emitted output, so any shape mismatch surfaces at check time. No runtime panics from well-typed Sky code, no nil leakage, no silent numeric coercion.
+**Core principle: if it compiles, it works.** Every side effect flows
+through `Task`, every fallible value returns `Result Error a`, and
+`sky check` invokes `go build` on the emitted Go so any shape mismatch
+surfaces at check time. No runtime panics from well-typed Sky code, no
+nil leakage, no silent numeric coercion.
+
+**Typed Go output.** Since v0.9, generated Go functions have concrete
+signatures (`func f(name string, age int) rt.SkyResult[Error, Profile]`)
+rather than the old `any`-boxed shape. Type annotations on your functions
+are load-bearing — if you write `f : String -> Int -> Result Error Profile`
+and the body would otherwise infer to something wider, the compiler rejects
+the body; if inference is narrower, the annotation still wins at the call
+site. Inline records in function annotations are not supported — use a
+`type alias` for any record you want in a signature.
+
+## Reading order for AI assistants
+
+If you're an AI code assistant building Sky applications on behalf of a
+user, read the following sections IN ORDER before producing any code.
+Skipping ahead leads to code that type-checks but panics at runtime —
+the "if it compiles it works" guarantee depends on you respecting a
+handful of idioms the Elm-derived syntax makes non-obvious.
+
+1. **Cardinal Rules** (below) — 10 rules that, if you follow them, keep
+   you out of 90% of the pitfalls real Sky projects have hit.
+2. **Common Pitfalls & Fixes** — error → cause → fix table. Skim this so
+   the messages users report are instantly mappable to action.
+3. **Real-World App Skeletons** — complete runnable starter code for the
+   most common app shapes (CRUD, auth, chat/LLM, dashboard, REST API).
+   Copy + adapt; do not invent from scratch.
+4. **Standard Library — Complete API** — authoritative signatures. If a
+   claim here conflicts with something you saw elsewhere, the stdlib
+   section wins.
+5. **Troubleshooting Cookbook** — when the user reports a specific error
+   message, start here.
+6. **Known Limitations** — work-arounds for things the compiler can't do.
+
+Everything else (FFI details, sky.toml, formatter rules) is reference,
+consult on-demand.
+
+---
+
+## Cardinal Rules (AI assistants: internalise before writing code)
+
+These are non-negotiable. Violating them either fails to compile, panics at
+runtime, or silently breaks a user-visible feature. Each rule has a concrete
+"do this, not that" pattern to follow.
+
+**1. Every fallible value returns `Result Error a` — never `Result String a`,
+never a bare `a` that panics on error.** Sky's `Error` ADT
+(from `Sky.Core.Error`) carries a structured kind (`Io`, `Network`, `Ffi`,
+`InvalidInput`, `NotFound`, `PermissionDenied`, etc.) plus a message. Handlers
+pattern-match on kind to decide retry behaviour and UI severity. Stringy error
+types are forbidden at public surfaces and enforced by `sky verify`.
+
+```elm
+-- ✓ Do this
+readConfig : String -> Result Error Config
+readConfig path =
+    case File.readFile path of
+        Ok contents -> parseConfig contents
+        Err e -> Err e   -- propagate the typed Error unchanged
+
+-- ✗ Not this — stringy error loses the kind, breaks pattern-matching upstream
+readConfig : String -> Result String Config
+readConfig path = ...
+```
+
+**2. Match the annotation to the body.** When you annotate a function, the
+annotation becomes the function's scheme — the body must produce that exact
+type. `initSchema : Db -> Result Error ()` over a body that actually returns
+`Result Error Int` (because `Db.exec` returns affected-row count) compiles
+but panics at runtime when the `Int` is coerced to `()`. Either remove the
+annotation (and let HM infer) or change it to match:
+
+```elm
+-- ✓ Correct
+initSchema : Db -> Result Error Int    -- execRaw returns affected rows
+initSchema db = Db.execRaw db "CREATE TABLE ..."
+
+-- Or discard the count deliberately:
+initSchema : Db -> Result Error ()
+initSchema db =
+    Db.execRaw db "CREATE TABLE ..." |> Result.map (\_ -> ())
+```
+
+**3. `Sky.Core.Prelude exposing (..)` does NOT re-export `Error`.** You must
+explicitly import it. A project using `Result Error _` anywhere needs:
+
+```elm
+import Sky.Core.Error as Error exposing (Error(..), ErrorKind(..))
+```
+
+The `Error(..)` form exposes the constructor, `ErrorKind(..)` exposes the
+eleven error kinds you pattern-match on (see Cardinal Rule 1).
+
+**4. Store DB connections at the top level, not in `Model`.** Sky.Live
+persists the Model to the session store (memory, SQLite, Redis, Postgres).
+`*sql.DB` and similar opaque FFI handles have internal pointer cycles that
+break gob serialization and add dead weight to every session blob.
+
+```elm
+-- ✓ Do this
+openDb = Db.connect ()
+
+init _ = ({ messages = [], input = "" }, Cmd.none)
+
+update msg model =
+    case openDb of
+        Err e -> ({ model | notice = dbError e }, Cmd.none)
+        Ok db -> updateWithDb db msg model
+
+-- ✗ Not this — Model can't serialise a live DB handle
+type alias Model = { db : Maybe Db, messages : List Msg }
+```
+
+**5. Each record type alias auto-generates a constructor.** Writing
+`type alias Profile = { name : String, age : Int }` gives you
+`Profile : String -> Int -> Profile` for free. Field declaration order is
+positional argument order. Use it in `Result.map3` / `Decode.succeed`
+pipelines without a `makeProfile` wrapper:
+
+```elm
+type alias Profile = { name : String, age : Int, email : String }
+
+decodeProfile =
+    Decode.succeed Profile
+        |> Pipeline.required "name"  Decode.string
+        |> Pipeline.required "age"   Decode.int
+        |> Pipeline.required "email" Decode.string
+```
+
+**6. Records inside function annotations must be named.** Typed codegen
+needs a struct name for emission. `f : { x : Int } -> Int` is rejected
+because HM can't backfill a name. Always use a `type alias`:
+
+```elm
+-- ✓ Do this
+type alias Point = { x : Int, y : Int }
+distance : Point -> Float
+distance p = Math.sqrt (toFloat (p.x * p.x + p.y * p.y))
+
+-- ✗ Not this — anonymous inline record type in annotation
+distance : { x : Int, y : Int } -> Float
+```
+
+**7. Every FFI call returns `Result Error T`.** The FFI boundary is a
+trust boundary — Go can panic, return nil, or fail in ways HM can't see.
+This applies UNIFORMLY to every FFI shape: method calls, constructors,
+field getters, field setters, and package-level var reads. The generated
+wrappers recover panics and surface them as `Err(ErrFfi _)`.
+
+```elm
+-- ✓ Every Go call is a Result
+case Uuid.newString of
+    Ok id  -> useId id
+    Err _  -> fallbackId
+
+-- ✓ Field getters return Result too — unwrap explicitly
+custName =
+    Result.withDefault ""
+        (Stripe.checkoutSessionCustomerDetails sess
+             |> Result.andThen Stripe.checkoutSessionCustomerDetailsName)
+
+-- ✗ Don't treat getter output as bare T — will fail type check
+customerDetails = Stripe.checkoutSessionCustomerDetails sess
+name = Stripe.checkoutSessionCustomerDetailsName customerDetails  -- Result, not String
+if name != "" then ...  -- type error
+```
+
+Pipeline-friendly setters compose naturally because each stage is a
+Result and `Result.andThen` threads the receiver through:
+
+```elm
+-- ✓ Setter pipeline — each stage wraps/passes Result
+OpenAi.newChatCompletionMessage ()
+    |> Result.andThen (\msg -> OpenAi.chatCompletionMessageSetRole "user" msg)
+    |> Result.andThen (\msg -> OpenAi.chatCompletionMessageSetContent body msg)
+```
+
+**8. Zero-arg FFI functions are values, not calls.** `Uuid.newString` is a
+value (a `Result Error String`), not a function to call. Calling it as
+`Uuid.newString ()` is a type error.
+
+**9. Zero-arity Sky top-level declarations are memoised — add a `_` arg if
+they read env vars.** `openDb = Db.connect ()` evaluates ONCE at first access
+and caches forever. That's fine for DB handles. But a zero-arity function
+reading `Os.getenv` evaluates at Go `init()` time — BEFORE `.env` is loaded.
+Workaround: add a dummy `_` parameter to defer the evaluation.
+
+```elm
+-- ✓ Reads env vars at each call (correct)
+apiKey _ = Os.getenv "OPENAI_API_KEY" |> Result.withDefault ""
+
+-- ✗ Evaluates at init time, before .env loads
+apiKey = Os.getenv "OPENAI_API_KEY" |> Result.withDefault ""
+```
+
+**10. Never write FFI code by hand.** `sky add <package>` generates all
+bindings with panic recovery and typed wrappers. Hand-written FFI loses the
+safety net.
+
+---
+
+## Common Pitfalls & Fixes
+
+Reference table for the specific errors real Sky projects hit. Scan this
+before writing non-trivial code.
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `TYPE ERROR: Type mismatch: ( { ... }, Cmd Msg ) vs ( Model, Cmd Msg )` | `init` returns an anonymous record but annotation expects named alias | Make sure field set matches `Model` exactly; if it does and still fails, annotate `init : a -> ( Model, Cmd Msg )` to force the expectation |
+| `interface conversion: interface {} is int, not struct {}` at runtime | Annotation says `Result Error ()` but body returns `Result Error Int` | Change annotation to match actual return type, or use `Result.map (\_ -> ())` to discard |
+| `undefined: Error` in generated Go | Missing `import Sky.Core.Error as Error exposing (Error)` | Add the import — Prelude does not re-export it |
+| Input/button renders as always-disabled | (fixed in v0.9-dev) boolean attrs now honour their value — regenerate sky-out after `sky upgrade` | — |
+| `case xs of [] -> _` panics with `[]main.T, not []interface {}` | (fixed in v0.9-dev) typed list patterns | — |
+| Add-a-row updates DB but page doesn't refresh | (fixed in v0.9-dev) `rt.RecordUpdate` now narrows `[]any → []T` | — |
+| `stack overflow` in `walkGob` at server start | Model stores an opaque FFI handle (DB, HTTP client, Firestore client) with internal pointer cycles | Move the handle out of Model — keep it at top level (Cardinal Rule 4) |
+| `not enough arguments in call to rt.Http_request` | (fixed in v0.9-dev) `Http.request` now takes a single record arg | Regenerate sky-out; use `Http.request { method, url, headers, body }` |
+| `cannot use generic function init_ without instantiation` | Entry-module TypedDef referenced before its generic params were resolved | (fixed in v0.9-dev) — regenerate sky-out |
+| `undefined: Sky_Core_Json_Decode_index` | (fixed in v0.9-dev) `Decode.index` now registered as a kernel function | — |
+| `(\row -> { role = ..., content = ... })` parse error | Parser misaligns a multi-line lambda at a tight column | Hoist the lambda body to a top-level function, or use `\row -> { role = field row "role", content = field row "content" }` on ONE line |
+| Endpoint card doesn't show when added | Model's list field typed via alias but `loadEndpoints` returns `[]any`; record-update drops the new list | (fixed in v0.9-dev) — regenerate sky-out; if still broken, check the field type matches exactly |
+| `Http.request` expects 4 args instead of record | Using an old sky binary from before v0.9 record-style fix | `sky upgrade` and rebuild |
+| Compiler silently accepts wrong annotation then panics at runtime | HM edge case — annotation says `Result Error ()` but body returns typed other | Remove the annotation to get the real inferred type in an error, or run with stricter annotations |
+
+---
 
 ## Quick Reference
 
@@ -631,19 +861,39 @@ indexedMap : (Int -> a -> b) -> Array a -> Array b
 
 ### Sky.Core.File
 
+All fallible IO lives in `Task`. Execute with `Task.run` for a synchronous
+`Result Error a`, or pass through `Cmd.perform` in a Sky.Live app.
+
 ```elm
-readFile : String -> Result Error String
-writeFile : String -> String -> Result Error Unit
-append : String -> String -> Result Error Unit       -- creates file if missing, appends otherwise
-exists : String -> Bool
-remove : String -> Result Error Unit
-mkdirAll : String -> Result Error Unit
-readDir : String -> Result Error (List String)
-isDir : String -> Bool
-tempFile : String -> Result Error String             -- create temp file with prefix, returns path
-tempDir : String -> Result Error String              -- create temp dir with prefix, returns path
-copy : String -> String -> Result Error Unit
-rename : String -> String -> Result Error Unit
+readFile : String -> Task Error String
+readFileLimit : String -> Int -> Task Error String       -- bounded read (default 100 MiB)
+readFileBytes : String -> Task Error Bytes               -- binary
+writeFile : String -> String -> Task Error ()
+append : String -> String -> Task Error ()               -- creates if missing
+exists : String -> Bool                                  -- pure, no Task wrapping
+isDir : String -> Bool                                   -- pure
+remove : String -> Task Error ()
+mkdirAll : String -> Task Error ()
+readDir : String -> Task Error (List String)
+tempFile : String -> Task Error String                   -- returns path
+tempDir : String -> Task Error String                    -- returns path
+copy : String -> String -> Task Error ()
+rename : String -> String -> Task Error ()
+```
+
+Usage:
+```elm
+loadConfig : Task Error Config
+loadConfig =
+    File.readFile "config.toml"
+        |> Task.andThen parseConfig
+
+-- Synchronous extraction (at a main-ish boundary, or when you know
+-- you can block):
+main =
+    case Task.run loadConfig of
+        Ok config -> runApp config
+        Err e -> println ("Failed to load config: " ++ Error.toString e)
 ```
 
 ### Sky.Core.Args
@@ -655,13 +905,19 @@ getArgs : () -> List String                          -- os.Args[1:] (all args ex
 
 ### Sky.Core.Process
 
+Effectful operations — all Task-wrapped except `loadEnv` which is called
+synchronously before app startup.
+
 ```elm
-run : String -> List String -> Result Error String
-exit : Int -> Unit
-getEnv : String -> Maybe String
-getCwd : Result Error String
-loadEnv : String -> Result Error ()     -- load .env file (pass "" for default ".env")
+run : String -> List String -> Task Error String      -- combined stdout+stderr
+exit : Int -> Task Error ()                           -- terminates the process
+getEnv : String -> Task Error String                  -- Err if unset (prefer Std.Env)
+getCwd : Task Error String
+loadEnv : String -> Result Error ()                   -- sync, main-startup only
 ```
+
+Prefer `Std.Env` over `Process.getEnv` for config reads — `Env.get` returns
+a `Maybe String` which distinguishes "unset" from "empty".
 
 ### Sky.Core.Debug
 
@@ -1204,27 +1460,807 @@ Use when: interactive web UIs, real-time dashboards, forms, admin panels.
 
 ### 4. Database App
 
-Wrap `database/sql` in a `Lib.Db` helper module for cleaner API:
+Prefer `Std.Db` (ships with Sky) over raw `database/sql` FFI — it already
+handles connection pooling, parameterised queries, identifier quoting, and
+transactions.
 
 ```elm
--- Lib/Db.sky
-module Lib.Db exposing (open, close, exec, queryRows, getField)
-import Database.Sql as Sql
-import Modernc.Org.Sqlite as _    -- side-effect: loads SQLite driver
+import Std.Db as Db
 
-open path = Sql.open "sqlite" path
-close db = Sql.dBClose db
-exec db query args = Sql.dBExecResult db query args
-queryRows db query args = Sql.dBQueryToMaps db query args
-getField field row = Maybe.withDefault "" (Dict.get field row)
+-- Top-level: open once, memoised for the lifetime of the process.
+openDb = Db.connect ()
+
+main =
+    case openDb of
+        Err e -> println ("Database unavailable: " ++ Error.toString e)
+        Ok db ->
+            case Db.execRaw db "CREATE TABLE IF NOT EXISTS ..." of
+                Ok _  -> serve db
+                Err e -> println ("Schema init failed: " ++ Error.toString e)
 ```
 
+sky.toml:
 ```toml
-# sky.toml
-["go.dependencies"]
-"database/sql" = "latest"
-"modernc.org/sqlite" = "latest"
+[database]
+driver = "sqlite"
+path   = "app.db"
+
+# OR
+# url  = "postgres://user:pass@host/db?sslmode=disable"
 ```
+
+---
+
+## Real-World App Skeletons
+
+Every skeleton in this section is a complete, working starting point. Copy
+it into `src/Main.sky`, adjust the types, and `sky run`. Each one is tested
+against the v0.9 Sky compiler.
+
+### Recipe 1: Todo CRUD with Sky.Live
+
+The canonical "interactive web app with database" flow. Covers: open DB
+once at top level, Model holds only serialisable state, update handlers
+reload from DB after mutations, VNode diff pushes changes via SSE.
+
+```elm
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.Dict as Dict
+import Sky.Core.Maybe as Maybe
+import Sky.Core.Error as Error exposing (Error)
+import Std.Html exposing (..)
+import Std.Html.Attributes exposing (..)
+import Std.Css exposing (..)
+import Std.Live exposing (app, route)
+import Std.Live.Events exposing (onClick, onInput, onSubmit)
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Db as Db
+import Std.Log exposing (println)
+
+
+type Page = HomePage
+
+type alias Todo =
+    { id : String
+    , title : String
+    , done : Bool
+    }
+
+type alias Model =
+    { page : Page
+    , todos : List Todo
+    , draft : String
+    , notice : String
+    }
+
+type Msg
+    = AddTodo
+    | ToggleDone String
+    | RemoveTodo String
+    | DraftChanged String
+
+
+-- Top-level: memoised, shared by every request handler.
+openDb = Db.connect ()
+
+
+initSchema db =
+    Db.execRaw db
+        """CREATE TABLE IF NOT EXISTS todos (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            done INTEGER NOT NULL DEFAULT 0
+        )"""
+
+
+getTodos db =
+    case Db.query db "SELECT id, title, done FROM todos ORDER BY id" [] of
+        Err _  -> []
+        Ok rows -> List.map rowToTodo rows
+
+
+rowToTodo row =
+    { id = Db.getField "id" row
+    , title = Db.getField "title" row
+    , done = Db.getField "done" row == "1"
+    }
+
+
+init _ =
+    case openDb of
+        Err e ->
+            ( errorModel ("DB unavailable: " ++ Error.toString e), Cmd.none )
+
+        Ok db ->
+            case initSchema db of
+                Err e ->
+                    ( errorModel ("Schema: " ++ Error.toString e), Cmd.none )
+
+                Ok _ ->
+                    ( { page = HomePage
+                      , todos = getTodos db
+                      , draft = ""
+                      , notice = ""
+                      }
+                    , Cmd.none
+                    )
+
+
+errorModel msg =
+    { page = HomePage, todos = [], draft = "", notice = msg }
+
+
+update msg model =
+    case openDb of
+        Err _ -> ( model, Cmd.none )
+        Ok db -> updateWithDb db msg model
+
+
+updateWithDb db msg model =
+    case msg of
+        DraftChanged v ->
+            ( { model | draft = v }, Cmd.none )
+
+        AddTodo ->
+            if String.trim model.draft == "" then
+                ( model, Cmd.none )
+
+            else
+                let
+                    id = Result.withDefault "" (Uuid.newString)
+                    _ =
+                        Db.exec db
+                            "INSERT INTO todos (id, title, done) VALUES (?, ?, 0)"
+                            [ id, model.draft ]
+                in
+                    ( { model
+                        | todos = getTodos db
+                        , draft = ""
+                        , notice = "Added."
+                      }
+                    , Cmd.none
+                    )
+
+        ToggleDone id ->
+            let
+                _ = Db.exec db
+                    "UPDATE todos SET done = 1 - done WHERE id = ?"
+                    [id]
+            in
+                ( { model | todos = getTodos db }, Cmd.none )
+
+        RemoveTodo id ->
+            let
+                _ = Db.exec db "DELETE FROM todos WHERE id = ?" [id]
+            in
+                ( { model | todos = getTodos db }, Cmd.none )
+
+
+view model =
+    div [ class "app" ]
+        [ h1 [] [ text "Todos" ]
+        , form [ onSubmit AddTodo, class "row" ]
+            [ input
+                [ type_ "text"
+                , placeholder "What needs doing?"
+                , value model.draft
+                , onInput DraftChanged
+                ]
+                []
+            , button [ type_ "submit" ] [ text "Add" ]
+            ]
+        , div [ class "list" ] (List.map viewTodo model.todos)
+        , if model.notice == "" then text "" else p [ class "notice" ] [ text model.notice ]
+        ]
+
+
+viewTodo todo =
+    div [ class (if todo.done then "todo done" else "todo") ]
+        [ input
+            [ type_ "checkbox"
+            , checked todo.done
+            , onClick (ToggleDone todo.id)
+            ]
+            []
+        , span [] [ text todo.title ]
+        , button [ onClick (RemoveTodo todo.id) ] [ text "×" ]
+        ]
+
+
+main =
+    app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = \_ -> Sub.none
+        , routes = [ route "/" HomePage ]
+        , notFound = HomePage
+        }
+```
+
+Key idioms demonstrated:
+- DB connection at top level (`openDb = Db.connect ()`), not in Model.
+- `update` wraps with `case openDb of` so handler code is always holding a
+  live DB — no `Maybe Db` in Model.
+- After any mutation, reload the relevant list (`todos = getTodos db`)
+  rather than trying to patch the Model manually.
+- Boolean attribute (`checked todo.done`) now correctly renders only when
+  `True` (v0.9-dev fix).
+
+sky.toml:
+```toml
+name = "todo-app"
+entry = "src/Main.sky"
+
+[live]
+port = 3000
+
+[database]
+driver = "sqlite"
+path = "todos.db"
+
+["go.dependencies"]
+"github.com/google/uuid" = "latest"
+```
+
+### Recipe 2: Auth'd Web App (Std.Auth + Sky.Live)
+
+Sign up → email verify → sign in → protected pages. Std.Auth handles
+bcrypt, sessions, and email verification tokens.
+
+```elm
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error as Error exposing (Error, ErrorKind(..))
+import Std.Html exposing (..)
+import Std.Html.Attributes exposing (..)
+import Std.Live exposing (app, route)
+import Std.Live.Events exposing (onClick, onInput, onSubmit)
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Auth as Auth
+import Std.Log exposing (println)
+
+
+type Page = HomePage | SignInPage | SignUpPage | DashboardPage
+
+
+type alias Session = { token : String, email : String, role : String }
+
+type alias Model =
+    { page : Page
+    , session : Maybe Session
+    , signInEmail : String
+    , signInPassword : String
+    , signUpEmail : String
+    , signUpPassword : String
+    , notice : String
+    }
+
+
+type Msg
+    = Navigate Page
+    | SignInEmail String
+    | SignInPassword String
+    | SignUpEmail String
+    | SignUpPassword String
+    | SubmitSignIn
+    | SubmitSignUp
+    | SignOut
+
+
+init _ =
+    ( { page = HomePage
+      , session = Nothing
+      , signInEmail = ""
+      , signInPassword = ""
+      , signUpEmail = ""
+      , signUpPassword = ""
+      , notice = ""
+      }
+    , Cmd.none
+    )
+
+
+update msg model =
+    case msg of
+        Navigate p ->
+            ( { model | page = p, notice = "" }, Cmd.none )
+
+        SignInEmail v -> ( { model | signInEmail = v }, Cmd.none )
+        SignInPassword v -> ( { model | signInPassword = v }, Cmd.none )
+        SignUpEmail v -> ( { model | signUpEmail = v }, Cmd.none )
+        SignUpPassword v -> ( { model | signUpPassword = v }, Cmd.none )
+
+        SubmitSignIn ->
+            case Auth.login model.signInEmail model.signInPassword of
+                Ok record ->
+                    let
+                        token = Maybe.withDefault "" (Dict.get "token" record)
+                        user = Maybe.withDefault Dict.empty (Dict.get "user" record)
+                        email = Maybe.withDefault "" (Dict.get "email" user)
+                        role = Maybe.withDefault "user" (Dict.get "role" user)
+                    in
+                        ( { model
+                            | session = Just { token = token, email = email, role = role }
+                            , page = DashboardPage
+                            , signInPassword = ""
+                          }
+                        , Cmd.none
+                        )
+
+                Err (Error kind info) ->
+                    let
+                        userMsg =
+                            case kind of
+                                PermissionDenied -> "Wrong email or password."
+                                InvalidInput -> info.message
+                                _ -> "Sign-in unavailable right now."
+
+                        _ = println ("[AUTH] sign-in: " ++ info.message)
+                    in
+                        ( { model | notice = userMsg, signInPassword = "" }
+                        , Cmd.none
+                        )
+
+        SubmitSignUp ->
+            case Auth.register model.signUpEmail model.signUpPassword of
+                Ok _ ->
+                    ( { model
+                        | notice = "Check your email for the verification link."
+                        , page = SignInPage
+                        , signUpEmail = ""
+                        , signUpPassword = ""
+                      }
+                    , Cmd.none
+                    )
+
+                Err e ->
+                    ( { model | notice = Error.toString e }, Cmd.none )
+
+        SignOut ->
+            ( { model | session = Nothing, page = HomePage }, Cmd.none )
+
+
+view model =
+    case model.session of
+        Just sess ->
+            viewAuthenticated sess model
+
+        Nothing ->
+            case model.page of
+                SignInPage -> viewSignIn model
+                SignUpPage -> viewSignUp model
+                _ -> viewLanding model
+
+
+viewLanding model =
+    div []
+        [ h1 [] [ text "Welcome" ]
+        , button [ onClick (Navigate SignInPage) ] [ text "Sign in" ]
+        , button [ onClick (Navigate SignUpPage) ] [ text "Sign up" ]
+        , if model.notice == "" then text "" else p [] [ text model.notice ]
+        ]
+
+
+viewSignIn model =
+    form [ onSubmit SubmitSignIn ]
+        [ h2 [] [ text "Sign in" ]
+        , input [ type_ "email", placeholder "Email", onInput SignInEmail, value model.signInEmail ] []
+        , input [ type_ "password", placeholder "Password", onInput SignInPassword, value model.signInPassword ] []
+        , button [ type_ "submit" ] [ text "Sign in" ]
+        , if model.notice == "" then text "" else p [ class "err" ] [ text model.notice ]
+        ]
+
+
+viewSignUp model =
+    form [ onSubmit SubmitSignUp ]
+        [ h2 [] [ text "Sign up" ]
+        , input [ type_ "email", placeholder "Email", onInput SignUpEmail, value model.signUpEmail ] []
+        , input [ type_ "password", placeholder "Password", onInput SignUpPassword, value model.signUpPassword ] []
+        , button [ type_ "submit" ] [ text "Create account" ]
+        ]
+
+
+viewAuthenticated sess model =
+    div []
+        [ h1 [] [ text ("Hello, " ++ sess.email) ]
+        , button [ onClick SignOut ] [ text "Sign out" ]
+        -- ...protected content here...
+        ]
+
+
+main =
+    app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = \_ -> Sub.none
+        , routes =
+            [ route "/" HomePage
+            , route "/signin" SignInPage
+            , route "/signup" SignUpPage
+            , route "/dashboard" DashboardPage
+            ]
+        , notFound = HomePage
+        }
+```
+
+sky.toml:
+```toml
+[auth]
+method = "password"
+secret = "change-me-to-a-32-byte-hex-string"
+session_ttl = "24h"
+email_verification = true
+```
+
+Key idioms:
+- Session stored in Model as `Maybe Session` — NOT the bcrypt hash or raw
+  credentials (those live only in Std.Auth's table).
+- Pattern-match on `ErrorKind` (`PermissionDenied`, `InvalidInput`) to
+  render specific UI copy while logging the real error message for ops.
+- `signInPassword` / `signUpPassword` are cleared from the Model once the
+  form is submitted — don't persist credentials across SSE patches.
+
+### Recipe 3: LLM Chat App
+
+Calls an external LLM API via `Http.request`, streams results into the UI
+via `Cmd.perform`. Mirrors the sky-chat structure.
+
+```elm
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.Task as Task
+import Sky.Core.Http as Http
+import Sky.Core.Json.Encode as Encode
+import Sky.Core.Json.Decode as Decode
+import Sky.Core.Error as Error exposing (Error)
+import Std.Env as Env
+import Std.Html exposing (..)
+import Std.Html.Attributes exposing (..)
+import Std.Live exposing (app, route)
+import Std.Live.Events exposing (onClick, onInput, onSubmit)
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+
+
+type Page = ChatPage
+
+type alias ChatMessage =
+    { role : String    -- "user" | "assistant" | "system"
+    , content : String
+    }
+
+type alias Model =
+    { page : Page
+    , messages : List ChatMessage
+    , draft : String
+    , loading : Bool
+    , error : String
+    }
+
+type Msg
+    = DraftChanged String
+    | SendMessage
+    | AiResponseReceived (Result Error String)
+
+
+init _ =
+    ( { page = ChatPage
+      , messages = []
+      , draft = ""
+      , loading = False
+      , error = ""
+      }
+    , Cmd.none
+    )
+
+
+-- Zero-arity with `_` param — forces Os.getenv to evaluate per call,
+-- AFTER .env loads (Cardinal Rule 9).
+apiKey _ = Env.getOrDefault "OPENAI_API_KEY" ""
+
+
+callOpenAi : List ChatMessage -> Task Error String
+callOpenAi history =
+    let
+        body =
+            Encode.object
+                [ ( "model", Encode.string "gpt-4o-mini" )
+                , ( "messages", Encode.list encodeMessage history )
+                , ( "max_tokens", Encode.int 1024 )
+                ]
+    in
+        Http.request
+            { method = "POST"
+            , url = "https://api.openai.com/v1/chat/completions"
+            , headers =
+                [ ( "Authorization", "Bearer " ++ apiKey () )
+                , ( "Content-Type", "application/json" )
+                ]
+            , body = Encode.encode 0 body
+            }
+            |> Task.andThen parseResponse
+
+
+encodeMessage m =
+    Encode.object
+        [ ( "role", Encode.string m.role )
+        , ( "content", Encode.string m.content )
+        ]
+
+
+parseResponse resp =
+    if resp.status >= 400 then
+        Task.fail (Error.network ("HTTP " ++ String.fromInt resp.status))
+
+    else
+        let
+            decoder =
+                Decode.field "choices"
+                    (Decode.index 0
+                        (Decode.field "message"
+                            (Decode.field "content" Decode.string)))
+        in
+            case Decode.decodeString decoder resp.body of
+                Ok content -> Task.succeed content
+                Err e -> Task.fail (Error.decode (Error.toString e))
+
+
+update msg model =
+    case msg of
+        DraftChanged v ->
+            ( { model | draft = v }, Cmd.none )
+
+        SendMessage ->
+            if String.trim model.draft == "" || model.loading then
+                ( model, Cmd.none )
+
+            else
+                let
+                    userMsg = { role = "user", content = model.draft }
+                    newHistory = model.messages ++ [ userMsg ]
+                in
+                    ( { model
+                        | messages = newHistory
+                        , draft = ""
+                        , loading = True
+                        , error = ""
+                      }
+                    , Cmd.perform (callOpenAi newHistory) AiResponseReceived
+                    )
+
+        AiResponseReceived (Ok content) ->
+            let
+                assistantMsg = { role = "assistant", content = content }
+            in
+                ( { model
+                    | messages = model.messages ++ [ assistantMsg ]
+                    , loading = False
+                  }
+                , Cmd.none
+                )
+
+        AiResponseReceived (Err e) ->
+            ( { model | loading = False, error = Error.toString e }, Cmd.none )
+
+
+view model =
+    div [ class "chat" ]
+        [ div [ class "messages" ] (List.map viewMessage model.messages)
+        , viewComposer model
+        , if model.error == "" then text "" else p [ class "err" ] [ text model.error ]
+        ]
+
+
+viewMessage m =
+    div [ class ("msg " ++ m.role) ]
+        [ text m.content ]
+
+
+viewComposer model =
+    form [ onSubmit SendMessage, class "composer" ]
+        [ input
+            [ type_ "text"
+            , placeholder "Say something..."
+            , value model.draft
+            , onInput DraftChanged
+            , disabled model.loading
+            ]
+            []
+        , button
+            [ type_ "submit"
+            , disabled (model.loading || String.trim model.draft == "")
+            ]
+            [ text (if model.loading then "..." else "Send") ]
+        ]
+
+
+main =
+    app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = \_ -> Sub.none
+        , routes = [ route "/" ChatPage ]
+        , notFound = ChatPage
+        }
+```
+
+Key idioms:
+- `Cmd.perform task toMsg` dispatches a background task and delivers its
+  result as a Msg — UI stays responsive during the API call.
+- `Http.request { ... }` takes a single record argument with
+  `method`, `url`, `headers`, `body` fields.
+- JSON decoder uses `Decode.index 0` to pull the first element from the
+  `choices` array.
+- `disabled` attributes honour their bool value: the input disables only
+  while `loading`, the button disables when loading OR draft is empty.
+
+### Recipe 4: Real-Time Dashboard (SSE subscriptions)
+
+Pulls metrics every N seconds via `Time.every` and renders them live
+without the user having to click anything.
+
+```elm
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.Error as Error exposing (Error)
+import Std.Html exposing (..)
+import Std.Html.Attributes exposing (..)
+import Std.Live exposing (app, route)
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Time as Time
+import Std.Db as Db
+
+
+type Page = DashboardPage
+
+type alias Metric = { name : String, value : Int, checkedAt : String }
+
+type alias Model =
+    { page : Page
+    , metrics : List Metric
+    , paused : Bool
+    }
+
+type Msg = Tick | TogglePause
+
+
+openDb = Db.connect ()
+
+
+loadMetrics db =
+    case Db.query db "SELECT name, value, checked_at FROM metrics ORDER BY name" [] of
+        Err _ -> []
+        Ok rows -> List.map rowToMetric rows
+
+
+rowToMetric row =
+    { name = Db.getField "name" row
+    , value = Db.getInt "value" row
+    , checkedAt = Db.getField "checked_at" row
+    }
+
+
+init _ =
+    case openDb of
+        Err _ -> ( { page = DashboardPage, metrics = [], paused = False }, Cmd.none )
+        Ok db -> ( { page = DashboardPage, metrics = loadMetrics db, paused = False }, Cmd.none )
+
+
+update msg model =
+    case msg of
+        TogglePause ->
+            ( { model | paused = not model.paused }, Cmd.none )
+
+        Tick ->
+            case openDb of
+                Err _ -> ( model, Cmd.none )
+                Ok db -> ( { model | metrics = loadMetrics db }, Cmd.none )
+
+
+subscriptions model =
+    if model.paused then
+        Sub.none
+
+    else
+        Time.every 5000 Tick   -- fire Tick every 5s via SSE
+
+
+view model =
+    div [ class "dash" ]
+        [ h1 [] [ text "Dashboard" ]
+        , button [ onClick TogglePause ] [ text (if model.paused then "Resume" else "Pause") ]
+        , ul [] (List.map viewMetric model.metrics)
+        ]
+
+
+viewMetric m =
+    li []
+        [ strong [] [ text m.name ]
+        , text (": " ++ String.fromInt m.value ++ " (" ++ m.checkedAt ++ ")")
+        ]
+
+
+main =
+    app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        , routes = [ route "/" DashboardPage ]
+        , notFound = DashboardPage
+        }
+```
+
+Key idioms:
+- Subscriptions are CONDITIONAL — turn `Time.every` off when the user
+  pauses. Returning `Sub.none` cancels the timer.
+- `Tick` handler reloads the whole list, not incremental diffs. The
+  VNode diff + SSE patch path sends only the changed rows to the client.
+
+### Recipe 5: JSON API Server (Sky.Http.Server, no TEA)
+
+For REST endpoints you don't need TEA — use `Sky.Http.Server` directly.
+
+```elm
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Json.Encode as Encode
+import Sky.Core.Json.Decode as Decode
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Http.Server as Server
+
+
+type alias User = { id : Int, name : String, email : String }
+
+
+getUser : Server.Request -> Task Error Server.Response
+getUser req =
+    let
+        id = Server.param "id" req |> Maybe.withDefault "0" |> String.toInt |> Result.withDefault 0
+        user = { id = id, name = "Demo", email = "demo@example.com" }
+
+        json =
+            Encode.object
+                [ ( "id", Encode.int user.id )
+                , ( "name", Encode.string user.name )
+                , ( "email", Encode.string user.email )
+                ]
+    in
+        Task.succeed (Server.json (Encode.encode 2 json))
+
+
+health _ = Task.succeed (Server.text "ok")
+
+
+main =
+    Server.listen 8000
+        [ Server.get "/health" health
+        , Server.get "/api/users/:id" getUser
+        ]
+```
+
+Use when: you need a classic JSON API with routing and no server-driven UI.
+
+---
 
 ## Go FFI — Detailed Semantics
 
@@ -1524,24 +2560,185 @@ case Auth.register email password of
 
 For apps with custom user fields (username, avatar), use `Auth.hashPassword`/`Auth.verifyPassword` for the crypto while keeping your own users table.
 
-## Known Limitations (v0.7.x)
+---
 
-- **No nested `case...of`** — FIXED in v0.7.21. Nested cases now generate unique variable names per depth
-- **No anonymous records in type annotations** — use `type alias` for record types in signatures
-- **No higher-kinded types** — no `Functor`, `Monad`, etc.
-- **No `where` clauses** — use `let...in` instead
-- **No custom operators** — only built-in (`|>`, `<|`, `++`, `::`, etc.)
-- **Negative literal arguments need parentheses** — `f (-1)` not `f -1`
-- **`import M as A exposing (Type(..))`** — combining `as` alias with `exposing` for ADT constructors breaks module loading; use `import M exposing (..)` without `as` instead
-- **`Dict.toList` returns string keys** — use `Dict.get` with explicit key ranges instead of `Dict.toList` for `Dict Int v`
-- **`sky check` doesn't understand Go interfaces** — concrete types can't unify with Go interfaces; code compiles and runs fine
-- **`sky check` doesn't understand Go callback types** — FFI callback params can't unify with Sky functions; runtime wrapping works
-- **Zero-arg FFI functions need no `()`** — call `Uuid.newString` not `Uuid.newString ()`
+## Troubleshooting Cookbook
 
-### Fixed in v0.7.20
-- **Cross-module type alias unification** — `type alias Piece = { kind : Kind }` in module A now unifies correctly in module B's type annotations
-- **Cross-module ADT exhaustiveness** — missing case branches for imported ADTs are caught at compile time
-- **`exposing (Constructor(..))` qualified call issue** — resolved; use `import M exposing (..)` for unqualified constructors
+Error-message → root cause → fix. This is the single-file reference for
+"my code won't compile / my app crashed at runtime". Check here before
+spelunking through the runtime or compiler source.
+
+### Compile errors (`sky build` / `sky check`)
+
+**`TYPE ERROR: Type mismatch: ( { ... }, Cmd Msg ) vs ( Model, Cmd Msg ) (from: a vs ( Model, Cmd Msg ))`**
+
+Your `init` or `update` returns an anonymous record literal, and HM can't
+unify it with the `Model` alias. Usually means:
+
+- A field name is misspelled (`tokensUsed` vs `tokenUsed`).
+- A field has the wrong type (`Nothing` vs `Just 0` when the alias says `Int`).
+- `db : Maybe Db.Db` is in the Model and you're on an old Sky binary — run
+  `sky upgrade`.
+
+Make the expectation explicit by annotating:
+`init : a -> ( Model, Cmd Msg )`. The error will then pinpoint which field
+differs.
+
+**`Type mismatch: Int vs ()` at a function call**
+
+Annotation promises one return type, body returns another. Common cause:
+`initSchema : Db -> Result Error ()` over a body that's just `Db.execRaw ...`
+— `execRaw` returns `Result Error Int`. Fix either the annotation or map
+the body: `|> Result.map (\_ -> ())`.
+
+**`Import error: module M does not expose X`**
+
+Either the symbol isn't exported from `M`, or `M` hasn't generated an
+interface file yet. Run `sky install` to regenerate FFI bindings. For Sky
+modules, check the module's `module X exposing (..)` line.
+
+**`DeclarationError <line> <col>` during parsing**
+
+Parser got confused by a lambda / record layout at a tight column. Most
+often: a multi-line lambda inside `List.map` that starts with an open
+paren. Hoist the lambda to a top-level function, or fit the whole lambda
+on ONE line. Annotations do not affect this — it's a pure parser issue.
+
+**`Names resolved` but then no further output and a non-zero exit**
+
+Canonicaliser failed silently — usually a name you used isn't in scope.
+Add `-v` style logging isn't available; easiest fix is to bisect your
+imports (comment half, re-run, narrow).
+
+### Runtime panics
+
+**`interface conversion: interface {} is X, not Y`**
+
+Somewhere the typed runtime got an X but expected a Y. Common culprits:
+
+- `int` vs `struct{}` — wrong annotation (Cardinal Rule 2).
+- `rt.HttpResponse` vs `rt.SkyResponse` — usually a stale build; run
+  `sky clean && sky build` (v0.9 fixed the mapping).
+- `string` vs `[]map[string]string` — `rt.Concat` fell through to
+  string-concat on typed slices (fixed v0.9-dev — `sky upgrade`).
+
+**`rt.Coerce: expected []main.T_R, got string`**
+
+`++` on a list produced a stringified blob because Concat didn't recognise
+the typed slice. Fixed v0.9-dev — upgrade.
+
+**`assignment to entry in nil map` inside `renderVNode`**
+
+A form with `onSubmit`/`onClick` is being rendered through
+`Html_render` with a nil handler map. Fixed v0.9-dev — upgrade.
+
+**`reflect.Value.Call: call of nil function`**
+
+A curried lambda passed to a Go-typed callback slot got its inner function
+zero'd. Fixed v0.9-dev — upgrade.
+
+**`stack overflow` in `walkGob` at server startup**
+
+Your Model stores an opaque FFI handle (DB connection, HTTP client,
+Firestore client) with internal pointer cycles. Fix: move the handle to a
+top-level value, not in Model (Cardinal Rule 4).
+
+**`Invalid email or password` on every sign-in even though the user exists**
+
+`Db.getField` was reading from a `map[string]any` instead of the typed
+`map[string]string` HM narrowed it to. Fixed v0.9-dev — upgrade.
+
+**`No notes yet` / empty list rendered after a successful insert**
+
+The record-update path silently dropped the `[]any → []T` widening.
+Fixed v0.9-dev — upgrade.
+
+**Chat input / button renders as permanently disabled**
+
+Boolean HTML attrs (`disabled`, `checked`, etc.) always emitted regardless
+of their value. Fixed v0.9-dev — upgrade.
+
+**`session not found` on every event**
+
+Either the client sent the wrong `sessionId`, or the server just restarted
+and the memory store lost its sessions. For production, use a persistent
+store:
+
+```toml
+[live.session]
+store = "sqlite"
+path = "sessions.db"
+```
+
+**`stack overflow` when subscribing to Time.every + handler does expensive work**
+
+A Tick handler that triggers another Tick (via Cmd.perform + a Msg that
+triggers the subscription's model) can loop. Add a `paused` flag or check
+the model before firing.
+
+### Deployment & production issues
+
+**`OPENAI_API_KEY not set` but `.env` has it**
+
+A zero-arity function reading `Os.getenv` evaluated at Go `init()` time,
+before `godotenv` ran. Add a dummy `_` parameter (Cardinal Rule 9).
+
+**`sky-out/go.mod` got wiped after `sky run`**
+
+Fixed v0.9-dev — incremental builds now re-seed Go deps. Upgrade.
+
+**CSS not applying in Sky.Live app**
+
+Make sure you call `styleNode [] (stylesheet [...])` at the TOP of your
+view, not inside the body. The diff protocol needs the `<style>` block
+to be a top-level VNode to stay stable across renders.
+
+### Performance issues
+
+**First request hangs for 5-30s**
+
+Sky.Live does index-building on first request for the session store. If
+using SQLite: set `busy_timeout` in your schema init. If using Postgres:
+make sure `prepare_threshold` is sensible.
+
+**Memory usage climbing linearly in a long-running app**
+
+Session store memory grows with inactive sessions. Set a TTL:
+`SKY_LIVE_TTL=30m`. For high-traffic apps, switch to SQLite or Redis.
+
+---
+
+## Known Limitations (v0.9)
+
+- **No anonymous records in type annotations** — use `type alias` for record types in signatures. Typed codegen needs a name for the struct shape; inline `{ field : Type }` in an annotation is rejected.
+- **No higher-kinded types** — no `Functor`, `Monad`, etc. Use concrete types.
+- **No `where` clauses** — use `let...in` instead.
+- **No custom operators** — only built-in (`|>`, `<|`, `++`, `::`, etc.).
+- **Negative literal arguments need parentheses** — `f (-1)` not `f -1` (`f -1` parses as subtraction).
+- **`import M as A exposing (Type(..))`** — combining `as` alias with `exposing` for ADT constructors breaks module loading; use `import M exposing (..)` without `as` instead, or qualify constructors.
+- **`Dict.toList` returns string keys** — `Dict` is `map[string]any` at runtime, so `Dict.toList` on `Dict Int v` gives string keys. Iterate via `Dict.get` over known ranges.
+- **`sky check` doesn't fully model Go interfaces** — concrete types can't unify with Go interfaces (`Fyne.CanvasObject`), but the code compiles and runs fine.
+- **Zero-arg FFI functions need no `()`** — call `Uuid.newString` (the return value), not `Uuid.newString ()`.
+- **Zero-arg `Css.*` constants DO need `()`** — `Css.zero`, `Css.auto`, `Css.none`, `Css.transparent`, `Css.inherit`, `Css.initial`, `Css.borderBox`, `Css.systemFont`, `Css.monoFont`, `Css.userSelectNone`. These are exposed as `() -> String` kernels (not zero-arity values) so they don't interact with Go's `init()` ordering. Write `Css.padding (Css.zero ())`, not `Css.padding Css.zero` — the latter serialises a function pointer like `0xc00001c0a0` into the stylesheet. Pattern: any `Css.X` that names a literal CSS keyword takes `()`; value constructors like `px`, `rem`, `em`, `hex`, `rgba` take their arguments directly.
+- **FFI setters in pipelines need an explicit lambda** — `|> Result.andThen (OpenAi.chatCompletionMessageSetRole m.role)` emits a call to the non-existent non-T variant and fails codegen. Wrap: `|> Result.andThen (\msg -> OpenAi.chatCompletionMessageSetRole m.role msg)`.
+- **`import Lib.X as Alias` leaks the alias into codegen for exposed types** — `import Lib.Db as Chat` emits `Chat_Message_R` instead of the canonical `Lib_Db_Message_R`, breaking cross-module record sharing. **Workaround**: import types without the alias — `import Lib.Db exposing (Message, ...)`. Aliases are fine for modules that only expose functions.
+- **Zero-arity functions reading env vars** — zero-arity functions are memoised; when they read `Os.getenv` they evaluate during Go `init()`, before `.env` is loaded. **Workaround**: add a dummy `_` parameter: `getConfig _ = Os.getenv "KEY"`.
+- **Let bindings with parameters after multi-line case** — `mark j = expr` directly after a `case ... of` in the same `let` can be reparsed as a new top-level declaration. Use a lambda (`\j -> expr`) or extract to a top-level function.
+- **`exposing (Type(..))` doesn't expose user-module constructors** — only stdlib/kernel modules resolve `MyType(..)` fully. For a user-defined `MyModule`, import `exposing (..)` or qualify constructors (`MyModule.MyConstructor`).
+
+### Fixed in v0.9-dev (feat/typed-codegen)
+- **Typed-map round-trips at the FFI boundary** — `[]any` containing `map[string]any` now narrows into `[]map[string]string` correctly across `rt.Coerce`, `AsListT`, `AsMapT`, `AsDict`. `List.isEmpty` / `List.map` on annotated DB result slices no longer wrongly report empty.
+- **Curried lambdas passed to Go-typed callbacks** — `rt.Coerce[func(X) func(Y) Z]` over a Sky `func(any) any { return func(any) any {...} }` now wraps the inner func too; requireAuth → route-handler style no longer panics.
+- **Server-rendered form events** — `Html_render` for a form with `onSubmit="..."` no longer panics on `assignment to entry in nil map`.
+- **Signin on annotated auth rows** — `Db.getField` accepts both `map[string]string` (typed) and `map[string]any` (raw) sources.
+- **Pattern literal inference** — `case foo of "idle" -> _` now forces `foo : String` at check time.
+
+### Fixed earlier (historical)
+- **Nested `case...of`** — fixed v0.7.21; cases at any depth compile.
+- **Cross-module type alias unification** — record aliases defined in module A unify correctly in module B's type annotations.
+- **Cross-module ADT exhaustiveness** — missing case branches for imported ADTs are caught at compile time.
+- **`exposing (Constructor(..))` qualified call issue** — resolved; use `import M exposing (..)` for unqualified constructors on stdlib/kernel modules.
+- **Type annotations are load-bearing** — since v0.7.28, the annotation wins when the body would infer a wider type.
 
 ## Coding Conventions
 

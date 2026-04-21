@@ -21,10 +21,11 @@ conn =
 
         Err e ->
             let
-                _ = println ("[FATAL] Cannot open skymon.db: " ++ e)
-                _ = Os.exit 1
+                _ =
+                    println
+                        ("[FATAL] Cannot open skymon.db: " ++ Error.toString e)
             in
-                identity ""
+                Os.exit 1
 
 
 getField field row =

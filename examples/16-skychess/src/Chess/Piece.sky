@@ -3,7 +3,9 @@ module Chess.Piece exposing (..)
 import Sky.Core.Prelude exposing (..)
 
 type alias Piece =
-    { kind : Kind, colour : Colour }
+    { kind : Kind
+    , colour : Colour
+    }
 
 type Colour
     = White

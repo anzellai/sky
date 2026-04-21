@@ -1,10 +1,14 @@
 name = "skyshop"
 version = "0.1.0"
 entry = "src/Main.sky"
-port = 8000
 
 [source]
 root = "src"
+
+[live]
+port = 8000
+store = "sqlite"
+storePath = "skyshop_sessions.db"
 
 [dependencies]
 "github.com/anzellai/sky-tailwind" = "latest"

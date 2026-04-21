@@ -47,7 +47,7 @@ data SolverState = SolverState
     { _env      :: !(Map.Map String T.Variable)  -- variable name → UF variable
     , _varCache :: !(IORef (Map.Map String T.Variable))  -- TVar name → shared UF variable
     , _rank     :: !Int
-    , _locals   :: !(IORef (Map.Map String [T.Type]))
+    , _locals   :: !(IORef (Map.Map String [T.Variable]))
       -- Audit P2-2: store the FULL list of resolved types per
       -- binding name (one entry per CLet-capture firing). Inner
       -- scopes fire first (their body-solve completes while outer
@@ -69,15 +69,18 @@ solve constraint = do
     (result, finalState) <- solveHelp state0 constraint
     case result of
         Nothing -> do
-            -- SolvedTypes contains ONLY top-level names. Local binding
-            -- types (let, lambda param, case pattern) live on the
-            -- SolveState's _locals ref and come out via solveWithLocals.
-            -- Keeping them out of SolvedTypes matters for codegen:
-            -- Compile.exprToGoTyped asserts `.(T)` on VarLocal when
-            -- its type is concrete in SolvedTypes, which would panic
-            -- for already-typed function params.
-            solvedTypes <- readSolvedTypes (_env finalState)
-            return (SolveOk solvedTypes)
+            envTypes <- readSolvedTypes (_env finalState)
+            localVars <- readIORef (_locals finalState)
+            -- Resolve the stored UF variables NOW — all constraints
+            -- have been solved, so vars should be fully determined.
+            localTys <- Map.traverseWithKey (\_ vars ->
+                mapM variableToType (filter (const True) vars)) localVars
+            -- Merge: _locals captures every CLet-bound name including
+            -- top-level declarations that _env loses after CLet restore.
+            -- Take the first (innermost) type for each name.
+            let localFirst = Map.map head (Map.filter (not . null) localTys)
+            let merged = Map.union localFirst envTypes
+            return (SolveOk merged)
         Just err -> return (SolveError err)
 
 
@@ -92,7 +95,9 @@ solveWithLocals constraint = do
     locals <- newIORef Map.empty
     let state0 = SolverState Map.empty cache 0 locals
     (result, finalState) <- solveHelp state0 constraint
-    localTypes <- readIORef (_locals finalState)
+    localVars <- readIORef (_locals finalState)
+    localTypes <- Map.traverseWithKey (\_ vars ->
+        mapM variableToType vars) localVars
     case result of
         Nothing -> do
             solvedTypes <- readSolvedTypes (_env finalState)
@@ -265,15 +270,14 @@ solveHelp state constraint = case constraint of
                 -- restore the outer env. This is the only hook where
                 -- local-binding types are known to the solver; LSP
                 -- hover relies on this for let / lambda param hovers.
-                mapM_ (\(name, var) -> do
-                    ty <- variableToType var
-                    -- Prepend so innermost captures sit at index 0.
-                    -- LSP's lookupLocal pairs this with its own
-                    -- smallest-enclosing-scope match on source
-                    -- positions, so both agree on "pick [0]" for a
-                    -- shadowed name.
+                -- Store the UF variables (not resolved types) so they
+                -- can be re-read at the end of solving when all
+                -- constraints have been processed and vars are fully
+                -- resolved. Storing types eagerly here loses solutions
+                -- from constraints solved after the CLet scope exits.
+                mapM_ (\(name, var) ->
                     modifyIORef' (_locals state3)
-                        (Map.insertWith (\new old -> new ++ old) name [ty]))
+                        (Map.insertWith (\new old -> new ++ old) name [var]))
                     headerVars
                 -- Restore outer scope's env for the shadowed names.
                 let restoredEnv = foldr restoreBinding (_env state3) savedBindings

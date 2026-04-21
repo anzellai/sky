@@ -10,7 +10,7 @@ import Std.Db as Db
 
 -- Run a query ONLY if it is a SELECT/WITH statement.
 -- Rejects INSERT, UPDATE, DELETE, DROP, ALTER, CREATE, TRUNCATE etc.
-runReadOnly : a -> String -> List String -> Result Error (List (Dict String String))
+runReadOnly : Db -> String -> List String -> Result Error (List (Dict String String))
 runReadOnly dbConn query params =
     if isSelectOnly query then
         case Db.query dbConn query params of

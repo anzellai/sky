@@ -99,20 +99,20 @@ func Nothing[A any]() SkyMaybe[A] {
 //
 // Used inside Coerce to bridge the Sky-handler → Go-typed-callback
 // gap (mux.HandleFunc, http.Handle, fyne callbacks, etc.).
-func makeFuncAdapter[T any](skyFn reflect.Value, targetTy reflect.Type) any {
-	wrapped := reflect.MakeFunc(targetTy, func(inArgs []reflect.Value) []reflect.Value {
-		// Box each arg to `any` for the Sky func.
+// adaptFuncValue is the non-generic worker behind makeFuncAdapter. It
+// returns a reflect.Value of type targetTy that, when called, boxes its
+// args to `any`, calls skyFn, and unwraps/adapts the return. Recursive
+// for curried lambdas: if the target's return type is another func type
+// and the Sky return is an `any`-shaped func, wrap again at call time.
+func adaptFuncValue(skyFn reflect.Value, targetTy reflect.Type) reflect.Value {
+	return reflect.MakeFunc(targetTy, func(inArgs []reflect.Value) []reflect.Value {
 		boxedArgs := make([]reflect.Value, len(inArgs))
 		for i, a := range inArgs {
 			boxedArgs[i] = reflect.ValueOf(a.Interface())
 		}
-		// If Sky func is `func(any, ..., any) any` (variadic-like),
-		// match in-arity. If it has different arity, pad/truncate
-		// silently — the Sky type checker should have caught this.
 		skyTy := skyFn.Type()
 		nin := skyTy.NumIn()
 		if nin != len(boxedArgs) && !skyTy.IsVariadic() {
-			// Best-effort: pad with zero values or truncate.
 			if nin > len(boxedArgs) {
 				for i := len(boxedArgs); i < nin; i++ {
 					boxedArgs = append(boxedArgs, reflect.Zero(skyTy.In(i)))
@@ -122,7 +122,6 @@ func makeFuncAdapter[T any](skyFn reflect.Value, targetTy reflect.Type) any {
 			}
 		}
 		out := skyFn.Call(boxedArgs)
-		// Build return values for the target signature.
 		nOut := targetTy.NumOut()
 		results := make([]reflect.Value, nOut)
 		for i := 0; i < nOut; i++ {
@@ -135,9 +134,13 @@ func makeFuncAdapter[T any](skyFn reflect.Value, targetTy reflect.Type) any {
 					inner := v.Elem()
 					if inner.Type().AssignableTo(outTy) {
 						results[i] = inner
+					} else if inner.Kind() == reflect.Func && outTy.Kind() == reflect.Func {
+						results[i] = adaptFuncValue(inner, outTy)
 					} else {
 						results[i] = reflect.Zero(outTy)
 					}
+				} else if v.IsValid() && v.Kind() == reflect.Func && outTy.Kind() == reflect.Func {
+					results[i] = adaptFuncValue(v, outTy)
 				} else {
 					results[i] = reflect.Zero(outTy)
 				}
@@ -147,7 +150,10 @@ func makeFuncAdapter[T any](skyFn reflect.Value, targetTy reflect.Type) any {
 		}
 		return results
 	})
-	return wrapped.Interface()
+}
+
+func makeFuncAdapter[T any](skyFn reflect.Value, targetTy reflect.Type) any {
+	return adaptFuncValue(skyFn, targetTy).Interface()
 }
 
 
@@ -348,12 +354,9 @@ func coerceInner[T any](v any) T {
 					continue
 				}
 				srcVal := reflect.ValueOf(src)
-				if elemT.Kind() == reflect.Interface {
-					out.Index(i).Set(srcVal)
-				} else if srcVal.Type().AssignableTo(elemT) {
-					out.Index(i).Set(srcVal)
-				} else if srcVal.Type().ConvertibleTo(elemT) {
-					out.Index(i).Set(srcVal.Convert(elemT))
+				narrowed := narrowReflectValue(srcVal, elemT)
+				if narrowed.IsValid() {
+					out.Index(i).Set(narrowed)
 				}
 			}
 			return out.Interface().(T)
@@ -364,39 +367,190 @@ func coerceInner[T any](v any) T {
 		var zero T
 		zt := reflect.TypeOf(zero)
 		if zt != nil && zt.Kind() == reflect.Map {
-			keyT := zt.Key()
-			valT := zt.Elem()
-			out := reflect.MakeMapWithSize(zt, rv.Len())
-			iter := rv.MapRange()
-			for iter.Next() {
-				k := iter.Key()
-				vv := iter.Value().Interface()
-				if !k.Type().AssignableTo(keyT) {
-					if k.Type().ConvertibleTo(keyT) {
-						k = k.Convert(keyT)
-					} else {
-						continue
-					}
-				}
-				if vv == nil {
-					out.SetMapIndex(k, reflect.Zero(valT))
-					continue
-				}
-				vvV := reflect.ValueOf(vv)
-				if valT.Kind() == reflect.Interface {
-					out.SetMapIndex(k, vvV)
-				} else if vvV.Type().AssignableTo(valT) {
-					out.SetMapIndex(k, vvV)
-				} else if vvV.Type().ConvertibleTo(valT) {
-					out.SetMapIndex(k, vvV.Convert(valT))
-				}
-			}
+			out := coerceMapValue(rv, zt)
 			return out.Interface().(T)
 		}
 	}
 	// Final fallback: Go will panic on invalid assertion; let it.
 	// The panic is the correct "type mismatch at boundary" signal.
 	return v.(T)
+}
+
+
+// narrowReflectValue converts `src` to a value of type `target`, handling:
+//   - identity / interface target
+//   - assignable / numerically-convertible types
+//   - map[K]any → map[K]X (recurses into coerceMapValue)
+//   - []any → []X (recurses via the same rules)
+//   - any → string (via fmt.Sprintf "%v")
+// Returns an invalid reflect.Value when the conversion isn't supported;
+// the caller decides whether to skip the entry or panic.
+func narrowReflectValue(src reflect.Value, target reflect.Type) reflect.Value {
+	if target.Kind() == reflect.Interface {
+		return src
+	}
+	if src.Type().AssignableTo(target) {
+		return src
+	}
+	if src.Type().ConvertibleTo(target) && safeReflectConvert(src.Kind(), target.Kind()) {
+		return src.Convert(target)
+	}
+	if target.Kind() == reflect.Map && src.Kind() == reflect.Map {
+		return coerceMapValue(src, target)
+	}
+	if target.Kind() == reflect.Slice && src.Kind() == reflect.Slice {
+		return coerceSliceValue(src, target)
+	}
+	// Pointer → value dereference: FFI constructors return `*T` (via
+	// `new(pkg.T)`) for builder-pattern chaining, but the consuming
+	// setter often takes `T` (e.g. `[]ChatCompletionMessage` not
+	// `[]*ChatCompletionMessage`). Auto-dereference so the pipeline
+	// flows without the user having to synthesise a deref in Sky.
+	if src.Kind() == reflect.Ptr && !src.IsNil() {
+		elem := src.Elem()
+		if elem.Type().AssignableTo(target) {
+			return elem
+		}
+		if narrowed := narrowReflectValue(elem, target); narrowed.IsValid() {
+			return narrowed
+		}
+	}
+	// Value → pointer wrap: the inverse case, also a common FFI shape
+	// mismatch when a method expects `*T` but we have a `T` value.
+	if target.Kind() == reflect.Ptr && src.Type().AssignableTo(target.Elem()) {
+		p := reflect.New(target.Elem())
+		p.Elem().Set(src)
+		return p
+	}
+	// Sky generic containers: SkyMaybe[any]/SkyResult[any,any]/SkyTask[any,any]
+	// → SkyMaybe[T]/SkyResult[E,A]/SkyTask[E,A]. Go treats these distinct
+	// generic instantiations as unrelated nominal types, so a record field
+	// typed `SkyMaybe[User_R]` can't receive a `SkyMaybe[any]` value without
+	// narrow reconstruction. This is the path sky-chat / sky-vote hit when
+	// `RecordUpdate model { currentUser = Just user }` quietly dropped the
+	// update because `rt.Just[any](user)` didn't match the struct field type.
+	if target.Kind() == reflect.Struct && src.Kind() == reflect.Struct {
+		if narrowed, ok := narrowSkyContainer(src, target); ok {
+			return narrowed
+		}
+	}
+	if target.Kind() == reflect.String {
+		return reflect.ValueOf(fmt.Sprintf("%v", src.Interface()))
+	}
+	return reflect.Value{}
+}
+
+// narrowSkyContainer reconstructs a Sky-generic container (SkyMaybe,
+// SkyResult, SkyTask, Tuples) across generic instantiations. Works by
+// walking the source's Tag/OkValue/ErrValue/JustValue/V0/V1 fields via
+// reflect and setting them on a freshly-allocated target-typed value
+// (narrowing each inner field per narrowReflectValue rules).
+//
+// Detection: any struct whose first field is named "Tag" and whose
+// remaining fields match a known Sky container shape. Non-Sky structs
+// fall through to the generic fail path.
+func narrowSkyContainer(src reflect.Value, target reflect.Type) (reflect.Value, bool) {
+	tagF := src.FieldByName("Tag")
+	if !tagF.IsValid() {
+		return reflect.Value{}, false
+	}
+	out := reflect.New(target).Elem()
+	outTag := out.FieldByName("Tag")
+	if !outTag.IsValid() || !outTag.CanSet() {
+		return reflect.Value{}, false
+	}
+	outTag.SetInt(tagF.Int())
+
+	// Propagate per-field values, narrowing each. We iterate over the
+	// TARGET's fields so extra source fields (e.g. SkyName) are copied
+	// only when the target has a matching slot.
+	for i := 0; i < target.NumField(); i++ {
+		fName := target.Field(i).Name
+		if fName == "Tag" {
+			continue
+		}
+		srcF := src.FieldByName(fName)
+		if !srcF.IsValid() {
+			continue
+		}
+		outF := out.Field(i)
+		if !outF.CanSet() {
+			continue
+		}
+		// Source field is typed `any` for the polymorphic container;
+		// unwrap the interface then narrow to the target's concrete
+		// field type.
+		if srcF.Kind() == reflect.Interface {
+			if srcF.IsNil() {
+				// Leave the output field at its zero value.
+				continue
+			}
+			inner := srcF.Elem()
+			narrowed := narrowReflectValue(inner, outF.Type())
+			if narrowed.IsValid() {
+				outF.Set(narrowed)
+			}
+			continue
+		}
+		// Same kind on both sides (e.g. both concrete) — recurse.
+		narrowed := narrowReflectValue(srcF, outF.Type())
+		if narrowed.IsValid() {
+			outF.Set(narrowed)
+		}
+	}
+	return out, true
+}
+
+// coerceMapValue rebuilds a map[K]V → map[K2]V2 via reflect. Uses
+// narrowReflectValue per entry so deeply-nested Sky lists/dicts from
+// SQL rows, Firestore snapshots and Sky.Live sessions narrow
+// correctly.
+func coerceMapValue(src reflect.Value, target reflect.Type) reflect.Value {
+	keyT := target.Key()
+	valT := target.Elem()
+	out := reflect.MakeMapWithSize(target, src.Len())
+	iter := src.MapRange()
+	for iter.Next() {
+		k := iter.Key()
+		if !k.Type().AssignableTo(keyT) {
+			if k.Type().ConvertibleTo(keyT) && safeReflectConvert(k.Kind(), keyT.Kind()) {
+				k = k.Convert(keyT)
+			} else {
+				continue
+			}
+		}
+		v := iter.Value()
+		vi := v.Interface()
+		if vi == nil {
+			out.SetMapIndex(k, reflect.Zero(valT))
+			continue
+		}
+		narrowed := narrowReflectValue(reflect.ValueOf(vi), valT)
+		if narrowed.IsValid() {
+			out.SetMapIndex(k, narrowed)
+		}
+	}
+	return out
+}
+
+// coerceSliceValue rebuilds a []V → []V2 via reflect, using
+// narrowReflectValue per element.
+func coerceSliceValue(src reflect.Value, target reflect.Type) reflect.Value {
+	elemT := target.Elem()
+	n := src.Len()
+	out := reflect.MakeSlice(target, n, n)
+	for i := 0; i < n; i++ {
+		v := src.Index(i)
+		vi := v.Interface()
+		if vi == nil {
+			continue
+		}
+		narrowed := narrowReflectValue(reflect.ValueOf(vi), elemT)
+		if narrowed.IsValid() {
+			out.Index(i).Set(narrowed)
+		}
+	}
+	return out
 }
 
 
@@ -820,18 +974,31 @@ func Basics_snd(t any) any {
 	return nil
 }
 
+// List_cons: Sky's `::` at runtime. Prepends head to tail. Tail can
+// arrive as either `[]any` (legacy any-kernel) or a typed slice
+// (`[]int`, `[]Piece_R`, …) under typed codegen. Previously the typed-
+// slice case fell through the type switch and dropped the entire tail
+// — so `target :: filterLegalMoves ... rest` returned `[target]`
+// instead of `[target, rest...]`. Same silent-drop class as the
+// already-fixed `rt.Concat` / `rt.AsList` — route through `AsList`
+// so typed slices are widened element-wise.
 func List_cons(head, tail any) any {
 	if tail == nil {
 		return []any{head}
 	}
-	switch xs := tail.(type) {
-	case []any:
+	if xs, ok := tail.([]any); ok {
 		out := make([]any, 0, len(xs)+1)
 		out = append(out, head)
 		out = append(out, xs...)
 		return out
 	}
-	return []any{head}
+	// Typed-slice fallback: widen via AsList (handles any Go slice
+	// kind via reflect) and then prepend.
+	xs := AsList(tail)
+	out := make([]any, 0, len(xs)+1)
+	out = append(out, head)
+	out = append(out, xs...)
+	return out
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -839,10 +1006,14 @@ func List_cons(head, tail any) any {
 // ═══════════════════════════════════════════════════════════
 
 // Concat is Sky's `++` at runtime. Sky's `++` works on Strings AND Lists, so
-// we dispatch on operand types: two `[]any` → list concat; otherwise stringify
-// and concat. Mixed or unknown operands default to string concat to keep the
-// historical behaviour.
+// we dispatch on operand types: two slices → list concat; otherwise stringify
+// and concat. Before the typed-slice branch was added, `history ++ [newMsg]`
+// in user code panicked once typed codegen started emitting `history` as
+// `[]Lib_Ai_ChatMessage_R` — Concat fell through to AsString and produced
+// a concatenated `fmt.Sprintf("%v")` of both slices, which the caller then
+// tried to coerce back to `[]ChatMessage_R` and crashed.
 func Concat(a, b any) any {
+	// Fast path: both already `[]any`.
 	if la, ok := a.([]any); ok {
 		if lb, ok := b.([]any); ok {
 			out := make([]any, 0, len(la)+len(lb))
@@ -851,7 +1022,35 @@ func Concat(a, b any) any {
 			return out
 		}
 	}
+	// Typed-slice path: widen either side via rt.AsList (which handles
+	// both `[]any` and typed slices via reflect) and concat as `[]any`.
+	// Downstream `rt.Coerce[[]T]` at the call site re-narrows element-
+	// wise, so the result is compatible with both Sky list operations
+	// and typed struct assignment.
+	aIsSlice := isSlice(a)
+	bIsSlice := isSlice(b)
+	if aIsSlice && bIsSlice {
+		la := AsList(a)
+		lb := AsList(b)
+		out := make([]any, 0, len(la)+len(lb))
+		out = append(out, la...)
+		out = append(out, lb...)
+		return out
+	}
 	return AsString(a) + AsString(b)
+}
+
+// isSlice: reports whether v is a Go slice (typed or []any). Used by
+// Concat to distinguish list-concat from string-concat without forcing
+// every caller to pre-box its typed list into []any.
+func isSlice(v any) bool {
+	if v == nil {
+		return false
+	}
+	if _, ok := v.([]any); ok {
+		return true
+	}
+	return reflect.ValueOf(v).Kind() == reflect.Slice
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -866,7 +1065,7 @@ func AsString(v any) string {
 		return s
 	}
 	if vn, ok := v.(VNode); ok {
-		return renderVNode(vn, nil)
+		return renderVNode(vn, map[string]any{})
 	}
 	if bs, ok := v.([]byte); ok {
 		return string(bs)
@@ -1027,6 +1226,137 @@ func AdtField(v any, idx int) any {
 func AsList(v any) []any {
 	if xs, ok := v.([]any); ok {
 		return xs
+	}
+	// Typed codegen widens lists to `[]any` at runtime-kernel
+	// boundaries via AsList. Accept any Go slice (including []T from
+	// typed FFI results like []map[string]string) by boxing element-
+	// wise. Without this, List.isEmpty / List.length / List.map on a
+	// typed slice wrongly report empty and downstream rendering shows
+	// empty-state where data exists.
+	if v == nil {
+		return nil
+	}
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Slice {
+		n := rv.Len()
+		out := make([]any, n)
+		for i := 0; i < n; i++ {
+			out[i] = rv.Index(i).Interface()
+		}
+		return out
+	}
+	return nil
+}
+
+// AsListAny widens an arbitrary slice (`[]T` or `[]any`) into `[]any`.
+// Called at call-site boundaries where the callee expects `[]any` but
+// the caller has a typed slice (e.g. a record-field access whose
+// field type is `[]State_Monitor_R` flowing into an `any`-typed
+// helper). Uses reflect for unknown element types; fast-paths
+// `[]any` by returning it verbatim.
+func AsListAny(v any) []any {
+	if already, ok := v.([]any); ok {
+		return already
+	}
+	if v == nil {
+		return nil
+	}
+	rv := reflect.ValueOf(v)
+	if rv.Kind() != reflect.Slice {
+		return nil
+	}
+	n := rv.Len()
+	out := make([]any, n)
+	for i := 0; i < n; i++ {
+		out[i] = rv.Index(i).Interface()
+	}
+	return out
+}
+
+// AsListT coerces a Sky-side any value to a typed Go slice. Sky
+// lists are []any at runtime; this walks the list and type-asserts
+// each element to T with a nil-safe fallback. Called by typed
+// codegen at record-constructor and call-site boundaries when a
+// concrete `[]T` is required (the plain `any(v).([]T)` assertion
+// fails because []any and []T are distinct Go types even when T
+// is `any`'s dynamic value).
+func AsListT[T any](v any) []T {
+	if already, ok := v.([]T); ok {
+		return already
+	}
+	if xs, ok := v.([]any); ok {
+		out := make([]T, len(xs))
+		var zero T
+		targetTy := reflect.TypeOf(zero)
+		for i, x := range xs {
+			if cast, ok := x.(T); ok {
+				out[i] = cast
+				continue
+			}
+			// Narrow heterogeneous element (e.g. map[string]any when
+			// target is []map[string]string). Walk via reflect with the
+			// same recursion that rt.Coerce uses so nested dicts/lists
+			// round-trip correctly.
+			if targetTy != nil && x != nil {
+				sv := reflect.ValueOf(x)
+				narrowed := narrowReflectValue(sv, targetTy)
+				if narrowed.IsValid() {
+					out[i] = narrowed.Interface().(T)
+				}
+			}
+		}
+		return out
+	}
+	return nil
+}
+
+// AsMapT: typed counterpart to AsMapString. Converts map[string]any
+// to map[string]V, element-by-element. Used where a record's field
+// type is `map[string]V` but the source value is `map[string]any`.
+func AsMapT[V any](v any) map[string]V {
+	if already, ok := v.(map[string]V); ok {
+		return already
+	}
+	if m, ok := v.(map[string]any); ok {
+		out := make(map[string]V, len(m))
+		var zero V
+		zeroTy := reflect.TypeOf(zero)
+		isString := zeroTy != nil && zeroTy.Kind() == reflect.String
+		for k, x := range m {
+			if cast, ok := x.(V); ok {
+				out[k] = cast
+				continue
+			}
+			// Widen for string-valued targets so mixed-type SQL/Firestore
+			// rows (int verified, int64 id, []byte hash) become a
+			// homogeneous map[string]string. Without this, non-string
+			// columns are silently dropped and getField looks like it
+			// returned "".
+			if isString {
+				out[k] = reflect.ValueOf(fmt.Sprintf("%v", x)).Interface().(V)
+			}
+		}
+		return out
+	}
+	// Reflect fallback for other typed maps (map[string]Foo_R, …):
+	// walk via reflect and narrow each value to V where assignable.
+	rv := reflect.ValueOf(v)
+	if rv.IsValid() && rv.Kind() == reflect.Map && rv.Type().Key().Kind() == reflect.String {
+		out := make(map[string]V, rv.Len())
+		var zero V
+		valTy := reflect.TypeOf(zero)
+		for _, k := range rv.MapKeys() {
+			ev := rv.MapIndex(k)
+			iv := ev.Interface()
+			if cast, ok := iv.(V); ok {
+				out[k.String()] = cast
+				continue
+			}
+			if valTy != nil && valTy.Kind() == reflect.String {
+				out[k.String()] = reflect.ValueOf(fmt.Sprintf("%v", iv)).Interface().(V)
+			}
+		}
+		return out
 	}
 	return nil
 }
@@ -1444,48 +1774,55 @@ func Negate(a any) any {
 // List operations
 // ═══════════════════════════════════════════════════════════
 
+// List any-variants now route through `AsList` + `SkyCall` so typed
+// codegen can hand us `[]T_R` / `func(A) B` and we still work. Before
+// this, `List_map (\u -> u.email) users` compiled fine but panicked at
+// runtime with `interface conversion: []main.User_R, not []interface {}`
+// because the `.([]any)` assertion was hard. Same class as the
+// already-fixed `rt.Concat`.
+//
+// `AsList(list)` widens typed slices via reflect (already cyclic-safe).
+// `SkyCall(fn, args...)` handles Sky's `func(any) any` AND Go's typed
+// `func(A) B` via reflect; the extra reflect dispatch per element is
+// the price of compatibility — kernels called from typed codegen
+// bypass this path entirely via the `List_mapT[A,B]` family below.
 func List_map(fn any, list any) any {
-	f := fn.(func(any) any)
-	items := list.([]any)
+	items := AsList(list)
 	result := make([]any, len(items))
-	for i, item := range items { result[i] = f(item) }
+	for i, item := range items { result[i] = SkyCall(fn, item) }
 	return result
 }
 
 func List_filter(fn any, list any) any {
-	f := fn.(func(any) any)
-	items := list.([]any)
+	items := AsList(list)
 	var result []any
 	for _, item := range items {
-		if AsBool(f(item)) { result = append(result, item) }
+		if AsBool(SkyCall(fn, item)) { result = append(result, item) }
 	}
 	return result
 }
 
 func List_foldl(fn any, acc any, list any) any {
-	f := fn.(func(any) any)
-	items := list.([]any)
+	items := AsList(list)
 	result := acc
 	for _, item := range items {
-		step := f(item)
-		result = step.(func(any) any)(result)
+		result = SkyCall(fn, item, result)
 	}
 	return result
 }
 
 func List_length(list any) any {
-	items := list.([]any)
-	return len(items)
+	return len(AsList(list))
 }
 
 func List_head(list any) any {
-	items := list.([]any)
+	items := AsList(list)
 	if len(items) == 0 { return Nothing[any]() }
 	return Just[any](items[0])
 }
 
 func List_reverse(list any) any {
-	items := list.([]any)
+	items := AsList(list)
 	result := make([]any, len(items))
 	for i, item := range items { result[len(items)-1-i] = item }
 	return result
@@ -1493,20 +1830,28 @@ func List_reverse(list any) any {
 
 func List_take(n any, list any) any {
 	count := AsInt(n)
-	items := list.([]any)
+	items := AsList(list)
 	if count > len(items) { count = len(items) }
 	return items[:count]
 }
 
 func List_drop(n any, list any) any {
 	count := AsInt(n)
-	items := list.([]any)
+	items := AsList(list)
 	if count > len(items) { count = len(items) }
 	return items[count:]
 }
 
 func List_append(a any, b any) any {
-	return append(a.([]any), b.([]any)...)
+	// Both sides widened to `[]any`; downstream call-site `rt.Coerce[[]T]`
+	// re-narrows element-wise when a typed slice is expected. Same
+	// shape as the fix in `rt.Concat`.
+	la := AsList(a)
+	lb := AsList(b)
+	out := make([]any, 0, len(la)+len(lb))
+	out = append(out, la...)
+	out = append(out, lb...)
+	return out
 }
 
 // P8/List typed companions — Go generics for the polymorphic ops.
@@ -1608,11 +1953,21 @@ func List_filterMapAnyT(fn any, xs []any) []any {
 	return out
 }
 
+// concatMap's callback may return ANY slice kind — `[]any` under the
+// legacy any-kernel path, `[]int`/`[]T_R` under typed codegen. The
+// strict `.([]any)` assertion dropped typed results silently, which
+// meant slider piece move generation (bishop/rook/queen in skychess)
+// silently returned zero moves because `List.concatMap (\d ->
+// slideMoves …)` produced `[]int` per direction. Widen via AsList
+// which walks any Go slice via reflect.
 func List_concatMapAnyT(fn any, xs []any) []any {
 	out := []any{}
 	for _, x := range xs {
 		r := SkyCall(fn, x)
-		if sub, ok := r.([]any); ok { out = append(out, sub...) }
+		sub := AsList(r)
+		if sub != nil {
+			out = append(out, sub...)
+		}
 	}
 	return out
 }
@@ -1786,6 +2141,15 @@ func String_toFloatT(s string) SkyResult[string, float64] {
 	return Ok[string, float64](f)
 }
 
+// String_toFloat: any-typed counterpart used by the legacy call path.
+// Parses any stringish value and returns Maybe Float at runtime —
+// mirrors String_toInt which also returns Maybe.
+func String_toFloat(s any) any {
+	f, err := strconv.ParseFloat(strings.TrimSpace(fmt.Sprintf("%v", s)), 64)
+	if err != nil { return Nothing[any]() }
+	return Just[any](f)
+}
+
 // ═══════════════════════════════════════════════════════════
 // Record operations
 // ═══════════════════════════════════════════════════════════
@@ -1829,6 +2193,18 @@ func RecordUpdate(base any, updates map[string]any) any {
 			f.Set(nv)
 		} else if nv.Type().ConvertibleTo(f.Type()) {
 			f.Set(nv.Convert(f.Type()))
+		} else {
+			// Narrow via the same recursive coercion helpers `rt.Coerce`
+			// uses, so a `{ record | endpoints = loaded }` update where
+			// the field is typed `[]Endpoint_R` but the replacement is
+			// `[]any` (from `List.map`) still lands in the struct. Before
+			// this, the silently-dropped assignment made Sky.Live `update`
+			// return the "new" model with the OLD collection — so added
+			// rows never appeared on the page.
+			narrowed := narrowReflectValue(nv, f.Type())
+			if narrowed.IsValid() {
+				f.Set(narrowed)
+			}
 		}
 	}
 	return copyVal.Interface()
@@ -1864,6 +2240,25 @@ type SkyTuple3 = T3[any, any, any]
 // SkyTupleN: arity ≥ 6 tuples use a uniform slice-backed struct. Element
 // access in generated code is `t.Vs[i]`.
 type SkyTupleN struct { Vs []any }
+
+// Opaque Sky-side types with no concrete Go representation. They exist
+// solely so emitted function signatures name the abstraction (e.g.
+// `rt.SkyDecoder`) rather than leak `any`. Aliased — not new types —
+// so legacy any-typed values interop without coercion.
+// SkyRoute is intentionally excluded (defined as a real struct further
+// down); codegen maps Sky's `Route` to that struct directly.
+// SkyDb is likewise a real struct (db_auth.go); Conn/Stmt/Row are
+// aliases for any.
+type SkyDecoder = any
+type SkyValue = any
+type SkyAttribute = any
+type SkyHandler = any
+type SkyMiddleware = any
+type SkySession = any
+type SkyStore = any
+type SkyStmt = any
+type SkyRow = any
+type SkyConn = any
 
 // ═══════════════════════════════════════════════════════════
 // FFI — name-based dispatch for user-supplied Go bindings
@@ -2129,7 +2524,13 @@ func skyMaybeNothing() any {
 //   6=PermissionDenied, 7=InvalidInput, 8=Conflict, 9=Unavailable,
 //   10=Unexpected
 func errorKindAdt(tag int, name string) any {
-	return skyErrorAdt{Tag: tag, SkyName: name, Fields: []any{}}
+	// Typed codegen maps Sky's pure-enum `ErrorKind` to a Go `int`
+	// (via iota). We return the raw tag so `AdtField(err, 0)` yields
+	// an int that type-asserts to `Sky_Core_Error_ErrorKind` without
+	// panicking. Name is retained in telemetry via skyErrorAdt.Fields
+	// reconstruction where needed.
+	_ = name
+	return tag
 }
 
 func makeError(kindTag int, kindName, msg string) any {
@@ -2176,7 +2577,15 @@ func Result_map(fn any, result any) any {
 func Result_andThen(fn any, result any) any {
 	tag, ok, err := anyResultView(result)
 	if tag < 0 {
-		return Ok[any, any](SkyCall(fn, result))
+		// Should not happen now that every FFI call returns a typed
+		// Result per the Sky trust-boundary rule — but tolerate it
+		// defensively: treat the bare value as an already-unwrapped Ok
+		// and trust fn to return the next Result. Raising Err here
+		// would turn an FFI-wrapper regression into a user-visible
+		// runtime error with no useful stack; better to keep the
+		// pipeline flowing and let the coercion at the Task boundary
+		// surface a cleaner message if the shape is genuinely wrong.
+		return SkyCall(fn, result)
 	}
 	if tag == 0 {
 		return SkyCall(fn, ok)
@@ -2196,9 +2605,18 @@ func Result_mapAnyT(fn any, result any) any {
 	return Err[any, any](err)
 }
 
+// Result.andThen for the any-typed path. Semantics:
+//   - Ok(x) → fn(x); trust fn's output (expected to be a Result)
+//   - Err(e) → Err(e)
+//   - bare value (shouldn't happen after the FFI trust-boundary fix
+//     but kept defensive) → treat as already-unwrapped Ok and trust
+//     fn to return the next Result.
+// Previously the bare-value branch wrapped fn's result in Ok, which
+// double-wrapped whenever fn itself returned a Result and surfaced
+// `SkyResult(SkyResult(...))` that panicked at the Task boundary.
 func Result_andThenAnyT(fn any, result any) any {
 	tag, ok, err := anyResultView(result)
-	if tag < 0 { return Ok[any, any](SkyCall(fn, result)) }
+	if tag < 0 { return SkyCall(fn, result) }
 	if tag == 0 { return SkyCall(fn, ok) }
 	return Err[any, any](err)
 }
@@ -2631,6 +3049,20 @@ func AsDict(v any) map[string]any {
 	if m, ok := v.(map[string]any); ok {
 		return m
 	}
+	// Typed codegen sometimes passes a narrower map (map[string]string,
+	// map[string]int, map[string]V_R, …) via AsMapT[V]. Reflect across
+	// string-keyed maps so Dict.get / Dict.member / Dict.toList all
+	// keep working on the typed variants — without this, every lookup
+	// returns Nothing and user code silently receives empty strings
+	// from getField, breaking auth/verify/etc.
+	rv := reflect.ValueOf(v)
+	if rv.IsValid() && rv.Kind() == reflect.Map && rv.Type().Key().Kind() == reflect.String {
+		out := make(map[string]any, rv.Len())
+		for _, k := range rv.MapKeys() {
+			out[k.String()] = rv.MapIndex(k).Interface()
+		}
+		return out
+	}
 	return map[string]any{}
 }
 
@@ -2796,6 +3228,18 @@ func TaskCoerce(v any) SkyTask[any, any] {
 	})
 }
 
+// TaskCoerceT returns a typed SkyTask[E, A] from any task-shaped value.
+// Used when function signatures declare concrete Task return types.
+func TaskCoerceT[E any, A any](v any) SkyTask[E, A] {
+	if t, ok := v.(SkyTask[E, A]); ok {
+		return t
+	}
+	return SkyTask[E, A](func() SkyResult[E, A] {
+		raw := anyTaskInvoke(v)
+		return ResultCoerce[E, A](any(raw))
+	})
+}
+
 // Coerce — audit P0-3. Replaces raw `any(body).(T)` assertions that
 // codegen used to emit at typed-return boundaries. Direct assertion
 // panics with a cryptic `interface conversion: interface {} is …, not
@@ -2867,20 +3311,77 @@ func Coerce[T any](v any) T {
 				// values (from typed T-suffix wrappers). Unwrap Ok
 				// values before coercing to the target element type.
 				elem = unwrapResultOk(elem)
-				ev := reflect.ValueOf(elem)
-				if ev.IsValid() && ev.Type().ConvertibleTo(elemTy) {
-					out.Index(i).Set(ev.Convert(elemTy))
-				} else if ev.IsValid() && ev.Type().AssignableTo(elemTy) {
-					out.Index(i).Set(ev)
-				} else if elemTy.Kind() == reflect.Interface {
-					out.Index(i).Set(ev)
-				} else {
-					panic(fmt.Sprintf(
-						"rt.Coerce: slice element [%d]: cannot convert %T to %v",
-						i, elem, elemTy))
+				if elem == nil {
+					continue
 				}
+				ev := reflect.ValueOf(elem)
+				// Delegate through narrowReflectValue so nested
+				// map/slice targets recurse (e.g. []map[string]any →
+				// []map[string]string needs per-value string coercion
+				// inside each map entry, which the naive ConvertibleTo
+				// check above misses).
+				narrowed := narrowReflectValue(ev, elemTy)
+				if narrowed.IsValid() {
+					out.Index(i).Set(narrowed)
+					continue
+				}
+				panic(fmt.Sprintf(
+					"rt.Coerce: slice element [%d]: cannot convert %T to %v",
+					i, elem, elemTy))
 			}
 			return out.Interface().(T)
+		}
+		// Map coercion: map[string]any → map[string]V. Walk values
+		// element-by-element, converting each via the same rules as
+		// slices. This lets typed codegen say `map[string]string` at
+		// the Sky level while the runtime still stores `map[string]any`
+		// (SQL row dicts, Firestore snapshots, Sky.Live session maps).
+		if rv.Kind() == reflect.Map && targetTy.Kind() == reflect.Map &&
+			rv.Type().Key().Kind() == reflect.String &&
+			targetTy.Key().Kind() == reflect.String {
+			out := reflect.MakeMapWithSize(targetTy, rv.Len())
+			valTy := targetTy.Elem()
+			for _, k := range rv.MapKeys() {
+				elem := rv.MapIndex(k).Interface()
+				elem = unwrapResultOk(elem)
+				if elem == nil {
+					out.SetMapIndex(k, reflect.Zero(valTy))
+					continue
+				}
+				ev := reflect.ValueOf(elem)
+				narrowed := narrowReflectValue(ev, valTy)
+				if narrowed.IsValid() {
+					out.SetMapIndex(k, narrowed)
+					continue
+				}
+				panic(fmt.Sprintf(
+					"rt.Coerce: map value [%v]: cannot convert %T to %v",
+					k.Interface(), elem, valTy))
+			}
+			return out.Interface().(T)
+		}
+		// Pointer ↔ value auto-adapt. FFI constructors return `*T` via
+		// `new(pkg.T)` (builder chain-friendly), but consuming APIs may
+		// expect `T` by value (common with OpenAI / Stripe / Firestore
+		// SDKs whose request structs use `[]Foo` not `[]*Foo`). The
+		// reverse — `T` → `*T` — covers methods that take a pointer
+		// receiver and the user has a value in hand. These auto-adapts
+		// are zero-cost and symmetric so Sky pipeline code doesn't
+		// need to sprinkle explicit deref/addr operators the language
+		// doesn't expose.
+		if rv.Kind() == reflect.Ptr && !rv.IsNil() {
+			elem := rv.Elem()
+			if elem.Type().AssignableTo(targetTy) {
+				return elem.Interface().(T)
+			}
+			if elem.Type().ConvertibleTo(targetTy) && safeReflectConvert(elem.Kind(), targetTy.Kind()) {
+				return elem.Convert(targetTy).Interface().(T)
+			}
+		}
+		if targetTy.Kind() == reflect.Ptr && rv.Type().AssignableTo(targetTy.Elem()) {
+			p := reflect.New(targetTy.Elem())
+			p.Elem().Set(rv)
+			return p.Interface().(T)
 		}
 	}
 	panic(fmt.Sprintf("rt.Coerce: expected %T, got %T (%v)", zero, v, v))
@@ -2992,6 +3493,34 @@ func anyTaskInvoke(task any) SkyResult[any, any] {
 		}
 		return Ok[any, any](r)
 	}
+	// Typed codegen may produce `SkyTask[E, A]` with concrete E/A that
+	// Go's type switch can't case on generically. Reflect into the
+	// task: if it's a `func() SkyResult[E, A]`, call it and convert
+	// the result to SkyResult[any, any] via the Tag/OkValue/ErrValue
+	// field extraction pattern used elsewhere in this file.
+	rv := reflect.ValueOf(task)
+	if rv.IsValid() && rv.Kind() == reflect.Func && rv.Type().NumIn() == 0 && rv.Type().NumOut() == 1 {
+		out := rv.Call(nil)
+		if len(out) == 1 {
+			resv := out[0]
+			if resv.Kind() == reflect.Struct {
+				tagF := resv.FieldByName("Tag")
+				okF := resv.FieldByName("OkValue")
+				errF := resv.FieldByName("ErrValue")
+				if tagF.IsValid() && okF.IsValid() && errF.IsValid() {
+					return SkyResult[any, any]{
+						Tag:      int(tagF.Int()),
+						OkValue:  okF.Interface(),
+						ErrValue: errF.Interface(),
+					}
+				}
+			}
+			if res, ok := resv.Interface().(SkyResult[any, any]); ok {
+				return res
+			}
+			return Ok[any, any](resv.Interface())
+		}
+	}
 	// Already-resolved value (rare): treat as Ok.
 	if res, ok := task.(SkyResult[any, any]); ok {
 		return res
@@ -3011,19 +3540,21 @@ func AnyTaskAndThen(fn any, task any) any {
 
 // Task_sequence: run tasks in order, collect results as a list.
 // First error short-circuits.
+//
+// Uses anyResultView to accept both `SkyResult[any, any]` and any
+// concretely-parameterised `SkyResult[E, A]` — typed codegen emits the
+// latter (e.g. `SkyResult[any, int]` for `Task.succeed (n*n)`) and the
+// old `.(SkyResult[any, any])` assertion panicked at every call site.
 func Task_sequence(tasks any) any {
 	return func() any {
-		var xs []any
-		if tl, ok := tasks.([]any); ok {
-			xs = tl
-		}
+		xs := AsList(tasks)
 		out := make([]any, 0, len(xs))
 		for _, t := range xs {
-			r := SkyCall(t).(SkyResult[any, any])
-			if r.Tag != 0 {
-				return r
+			tag, okV, errV := anyResultView(SkyCall(t))
+			if tag != 0 {
+				return Err[any, any](errV)
 			}
-			out = append(out, r.OkValue)
+			out = append(out, okV)
 		}
 		return Ok[any, any](out)
 	}
@@ -3032,10 +3563,7 @@ func Task_sequence(tasks any) any {
 // Task_parallel: goroutine-backed fan-out; preserves input order; first err wins.
 func Task_parallel(tasks any) any {
 	return func() any {
-		var xs []any
-		if tl, ok := tasks.([]any); ok {
-			xs = tl
-		}
+		xs := AsList(tasks)
 		n := len(xs)
 		results := make([]any, n)
 		errs := make([]any, n)
@@ -3044,11 +3572,11 @@ func Task_parallel(tasks any) any {
 			wg.Add(1)
 			go func(i int, t any) {
 				defer wg.Done()
-				r := SkyCall(t).(SkyResult[any, any])
-				if r.Tag == 0 {
-					results[i] = r.OkValue
+				tag, okV, errV := anyResultView(SkyCall(t))
+				if tag == 0 {
+					results[i] = okV
 				} else {
-					errs[i] = r.ErrValue
+					errs[i] = errV
 				}
 			}(i, t)
 		}
@@ -3064,11 +3592,11 @@ func Task_parallel(tasks any) any {
 
 func Task_map(fn any, task any) any {
 	return func() any {
-		r := SkyCall(task).(SkyResult[any, any])
-		if r.Tag != 0 {
-			return r
+		tag, okV, errV := anyResultView(SkyCall(task))
+		if tag != 0 {
+			return Err[any, any](errV)
 		}
-		return Ok[any, any](SkyCall(fn, r.OkValue))
+		return Ok[any, any](SkyCall(fn, okV))
 	}
 }
 
@@ -3093,22 +3621,36 @@ func Task_sequenceT[E, A any](ts []SkyTask[E, A]) SkyTask[E, []A] {
 	}
 }
 
+// AnyTaskRun returns a `SkyResult[any, any]` regardless of what shape
+// the caller provided. Accepts:
+//   - Task thunk (`SkyTask[any,any]` / `func() SkyResult[any,any]` /
+//     `func() any`) — invoked and the result normalised via
+//     `anyTaskInvoke` so a `func() any` returning a bare value gets
+//     wrapped in Ok (Sky's FFI trust boundary).
+//   - Already-resolved SkyResult — returned as-is (Sky.Http.Server's
+//     `listen` returns `Ok ()` / `Err msg` directly rather than a
+//     deferred thunk).
+//   - Bare value — wrapped in Ok defensively.
+// The unified shape means every caller of AnyTaskRun sees the same
+// `SkyResult[any, any]` contract and can case on Tag without a
+// `tag < 0` escape hatch.
 func AnyTaskRun(task any) any {
-	// Accept either a Task thunk (`func() any` or the typed
-	// `SkyTask[any,any]`), which we invoke, or a value that's
-	// already the result of running the task (SkyResult /
-	// SkyTask). Sky.Http.Server's `listen` is an example that
-	// returns `Ok (()) / Err msg` directly rather than a deferred
-	// thunk — we treat that as "task already done".
-	switch t := task.(type) {
-	case SkyTask[any, any]:
-		return t()
-	case func() SkyResult[any, any]:
-		return t()
-	case func() any:
-		return t()
+	if r, ok := task.(SkyResult[any, any]); ok {
+		return r
 	}
-	return task
+	rv := reflect.ValueOf(task)
+	if rv.IsValid() && rv.Kind() == reflect.Func {
+		return anyTaskInvoke(task)
+	}
+	// Non-task, non-Result input (rare, shouldn't happen from typed
+	// Sky code): if it already looks like a SkyResult shape, pass it
+	// through; otherwise wrap as Ok so downstream case-on-Tag logic
+	// still works. This entry point guarantees a SkyResult-shaped
+	// output so callers never see a tag < 0 escape hatch.
+	if tag, _, _ := anyResultView(task); tag >= 0 {
+		return task
+	}
+	return Ok[any, any](task)
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -5265,40 +5807,47 @@ func SkyFfiRet_maybeString(p *string) any {
 // generated <TypeName><FieldName> getter wrapper so the per-field
 // emission stays a one-liner (keeps stripe_bindings.go & friends
 // manageable in size).
+// SkyFfiFieldGet — reflect-based struct-field read, returning a
+// typed `SkyResult[any, any]`. Every FFI call is a Sky trust boundary
+// and must return `Result Error T` per CLAUDE.md §FFI — infallible
+// getters wrap in Ok, so downstream `Result.andThen` / `Result.traverse`
+// see the shape they expect.
 func SkyFfiFieldGet(recv any, field string) any {
 	if recv == nil {
-		return Err[any, any](field + ": nil receiver")
+		return Err[any, any](ErrFfi(field + ": nil receiver"))
 	}
 	v := reflect.ValueOf(recv)
 	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
 		if v.IsNil() {
-			return Err[any, any](field + ": nil receiver")
+			return Err[any, any](ErrFfi(field + ": nil receiver"))
 		}
 		v = v.Elem()
 	}
 	if v.Kind() != reflect.Struct {
-		return Err[any, any](field + ": receiver is not a struct")
+		return Err[any, any](ErrFfi(field + ": receiver is not a struct"))
 	}
 	f := v.FieldByName(field)
 	if !f.IsValid() {
-		return Err[any, any](field + ": no such field")
+		return Err[any, any](ErrFfi(field + ": no such field"))
 	}
-	return f.Interface()
+	return Ok[any, any](f.Interface())
 }
 
 // SkyFfiFieldSet — reflect-based struct-field write, returning the
-// (mutated or copied) receiver for pipeline-friendly |> composition.
-// value is Sky-any; assignable or convertible types coerce automatically.
+// (mutated or copied) receiver as `Ok(receiver)` for pipeline-friendly
+// |> composition. value is Sky-any; assignable or convertible types
+// coerce automatically. All FFI helpers return `SkyResult[any, any]`
+// per the Sky trust boundary rule.
 func SkyFfiFieldSet(value any, recv any, field string) any {
 	if recv == nil {
-		return Err[any, any](field + ": nil receiver")
+		return Err[any, any](ErrFfi(field + ": nil receiver"))
 	}
 	rv := reflect.ValueOf(recv)
 	var addrable reflect.Value
 	switch rv.Kind() {
 	case reflect.Ptr:
 		if rv.IsNil() {
-			return Err[any, any](field + ": nil receiver")
+			return Err[any, any](ErrFfi(field + ": nil receiver"))
 		}
 		addrable = rv.Elem()
 	case reflect.Struct:
@@ -5307,17 +5856,17 @@ func SkyFfiFieldSet(value any, recv any, field string) any {
 		addrable = tmp.Elem()
 		rv = tmp
 	default:
-		return Err[any, any](field + ": receiver is not a struct or pointer")
+		return Err[any, any](ErrFfi(field + ": receiver is not a struct or pointer"))
 	}
 	if addrable.Kind() != reflect.Struct {
-		return Err[any, any](field + ": receiver is not a struct")
+		return Err[any, any](ErrFfi(field + ": receiver is not a struct"))
 	}
 	f := addrable.FieldByName(field)
 	if !f.IsValid() {
-		return Err[any, any](field + ": no such field")
+		return Err[any, any](ErrFfi(field + ": no such field"))
 	}
 	if !f.CanSet() {
-		return Err[any, any](field + ": field is not settable")
+		return Err[any, any](ErrFfi(field + ": field is not settable"))
 	}
 	if value == nil {
 		f.Set(reflect.Zero(f.Type()))
@@ -5328,10 +5877,10 @@ func SkyFfiFieldSet(value any, recv any, field string) any {
 		} else if vv.Type().ConvertibleTo(f.Type()) {
 			f.Set(vv.Convert(f.Type()))
 		} else {
-			return Err[any, any](field + ": value type incompatible with field")
+			return Err[any, any](ErrFfi(field + ": value type incompatible with field"))
 		}
 	}
-	return rv.Interface()
+	return Ok[any, any](rv.Interface())
 }
 
 // SkyFfiReflectCall invokes a reflect.Value of a function with Sky-side args.
@@ -5388,6 +5937,14 @@ func SkyFfiReflectCall(fn reflect.Value, hasError bool, args []any) any {
 	return unpackReflectResults(results, hasError)
 }
 
+// unpackReflectResults — reflect-call result adapter. Per the Sky FFI
+// trust-boundary rule, every FFI call returns `SkyResult[any, any]` —
+// infallible single-return wraps in Ok, multi-return packs into a
+// SkyTuple2/N and wraps in Ok, void returns produce Ok(struct{}{}).
+// Previously the infallible single-return path surfaced the bare value
+// which forced downstream `|> Result.andThen` pipelines to defensively
+// promote, breaking on round-trips through Task.andThen / the Task
+// boundary coercion.
 func unpackReflectResults(results []reflect.Value, hasError bool) any {
 	n := len(results)
 	switch {
@@ -5400,7 +5957,7 @@ func unpackReflectResults(results []reflect.Value, hasError bool) any {
 		}
 		return Ok[any, any](struct{}{})
 	case n == 1:
-		return results[0].Interface()
+		return Ok[any, any](results[0].Interface())
 	case hasError:
 		err, _ := results[n-1].Interface().(error)
 		if err != nil {
@@ -5419,7 +5976,7 @@ func unpackReflectResults(results []reflect.Value, hasError bool) any {
 		for i := 0; i < n; i++ {
 			out[i] = results[i].Interface()
 		}
-		return out
+		return Ok[any, any](out)
 	}
 }
 

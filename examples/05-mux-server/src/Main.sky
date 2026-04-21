@@ -2,6 +2,7 @@ module Main exposing (main)
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Result as Result
+import Sky.Core.Error exposing (Error)
 import Std.Log exposing (println)
 import Net.Http as Http
 import Github.Com.Gorilla.Mux as Mux
@@ -36,6 +37,7 @@ setupRoutes router =
         router
 
 
+startServer : Value -> Result Error ()
 startServer router =
     let
         _ = println "Server starting on port 8000"

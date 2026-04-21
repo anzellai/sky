@@ -120,34 +120,47 @@ func init() {
 }
 
 func walkGob(v reflect.Value) {
-	if !v.IsValid() {
+	walkGobSeen(v, make(map[reflect.Type]bool, 16), 0)
+}
+
+// walkGobSeen: depth-bounded + type-set guarded. Sky-side Model values
+// sometimes carry opaque FFI handles (`*sql.DB`, `*SkyDb`, Stripe
+// customers, Firestore clients). Their internal fields form pointer
+// cycles — `*sql.DB.connector → *pool → *DB` and so on — so a naïve
+// recursive walk overflows the goroutine stack. Skip types we've
+// already visited and cap recursion at 64 levels so adversarial or
+// accidental cycles can't crash the server during session persistence.
+func walkGobSeen(v reflect.Value, seenTypes map[reflect.Type]bool, depth int) {
+	if !v.IsValid() || depth > 64 {
 		return
 	}
 	switch v.Kind() {
 	case reflect.Interface, reflect.Ptr:
 		if !v.IsNil() {
-			walkGob(v.Elem())
+			walkGobSeen(v.Elem(), seenTypes, depth+1)
 		}
 	case reflect.Struct:
 		t := v.Type()
+		if seenTypes[t] {
+			return
+		}
+		seenTypes[t] = true
 		if t.PkgPath() != "" && !gobRegistered[t] {
 			gobRegistered[t] = true
-			// Register by the actual fully-qualified type name; safe to
-			// call repeatedly for the same name-type pair.
 			defer func() { recover() }()
 			gob.Register(reflect.New(t).Elem().Interface())
 		}
 		for i := 0; i < v.NumField(); i++ {
-			walkGob(v.Field(i))
+			walkGobSeen(v.Field(i), seenTypes, depth+1)
 		}
 	case reflect.Slice, reflect.Array:
 		for i := 0; i < v.Len(); i++ {
-			walkGob(v.Index(i))
+			walkGobSeen(v.Index(i), seenTypes, depth+1)
 		}
 	case reflect.Map:
 		it := v.MapRange()
 		for it.Next() {
-			walkGob(it.Value())
+			walkGobSeen(it.Value(), seenTypes, depth+1)
 		}
 	}
 }

@@ -19,10 +19,12 @@ conn =
 
         Err e ->
             let
-                _ = println ("[FATAL] Cannot open skynotes.db: " ++ e)
-                _ = Os.exit 1
+                _ =
+                    println
+                        ("[FATAL] Cannot open skynotes.db: "
+                             ++ Error.toString e)
             in
-                identity ""
+                Os.exit 1
 
 
 -- exec : Result Error () — typed-error DB write. Callers in `update`

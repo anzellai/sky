@@ -49,6 +49,9 @@ See [docs/compiler/journey.md](docs/compiler/journey.md) for the full compiler h
 # macOS / Linux — single-binary install
 curl -fsSL https://raw.githubusercontent.com/anzellai/sky/main/install.sh | sh
 
+# custom installation path
+curl -fsSL https://raw.githubusercontent.com/anzellai/sky/main/install.sh | sh -s -- --dir ~/.local/bin
+
 # Or with Docker
 docker run --rm -v $(pwd):/app -w /app anzel/sky sky --help
 ```
@@ -84,33 +87,33 @@ nix develop            # GHC 9.4.8 + Go + every system dep, sandboxed
 
 ## Documentation
 
-| Area | Link |
-|------|------|
-| Getting started | [docs/getting-started.md](docs/getting-started.md) |
-| Language syntax | [docs/language/syntax.md](docs/language/syntax.md) |
-| Types | [docs/language/types.md](docs/language/types.md) |
-| Pattern matching | [docs/language/pattern-matching.md](docs/language/pattern-matching.md) |
-| Modules | [docs/language/modules.md](docs/language/modules.md) |
-| Go FFI interop | [docs/ffi/go-interop.md](docs/ffi/go-interop.md) |
-| FFI design | [docs/ffi/ffi-design.md](docs/ffi/ffi-design.md) |
-| Error system | [docs/errors/error-system.md](docs/errors/error-system.md) |
-| Sky.Live overview | [docs/skylive/overview.md](docs/skylive/overview.md) |
-| Sky.Live architecture | [docs/skylive/architecture.md](docs/skylive/architecture.md) |
-| Compiler architecture | [docs/compiler/architecture.md](docs/compiler/architecture.md) |
-| Compiler pipeline | [docs/compiler/pipeline.md](docs/compiler/pipeline.md) |
-| Compiler journey (TS→Go→Sky→Haskell) | [docs/compiler/journey.md](docs/compiler/journey.md) |
-| Version history | [docs/compiler/versions.md](docs/compiler/versions.md) |
-| CLI reference | [docs/tooling/cli.md](docs/tooling/cli.md) |
-| Testing (`sky test`) | [docs/tooling/testing.md](docs/tooling/testing.md) |
-| LSP | [docs/tooling/lsp.md](docs/tooling/lsp.md) |
-| Development & contributing | [docs/development.md](docs/development.md) |
+| Area                                 | Link                                                                   |
+| ------------------------------------ | ---------------------------------------------------------------------- |
+| Getting started                      | [docs/getting-started.md](docs/getting-started.md)                     |
+| Language syntax                      | [docs/language/syntax.md](docs/language/syntax.md)                     |
+| Types                                | [docs/language/types.md](docs/language/types.md)                       |
+| Pattern matching                     | [docs/language/pattern-matching.md](docs/language/pattern-matching.md) |
+| Modules                              | [docs/language/modules.md](docs/language/modules.md)                   |
+| Go FFI interop                       | [docs/ffi/go-interop.md](docs/ffi/go-interop.md)                       |
+| FFI design                           | [docs/ffi/ffi-design.md](docs/ffi/ffi-design.md)                       |
+| Error system                         | [docs/errors/error-system.md](docs/errors/error-system.md)             |
+| Sky.Live overview                    | [docs/skylive/overview.md](docs/skylive/overview.md)                   |
+| Sky.Live architecture                | [docs/skylive/architecture.md](docs/skylive/architecture.md)           |
+| Compiler architecture                | [docs/compiler/architecture.md](docs/compiler/architecture.md)         |
+| Compiler pipeline                    | [docs/compiler/pipeline.md](docs/compiler/pipeline.md)                 |
+| Compiler journey (TS→Go→Sky→Haskell) | [docs/compiler/journey.md](docs/compiler/journey.md)                   |
+| Version history                      | [docs/compiler/versions.md](docs/compiler/versions.md)                 |
+| CLI reference                        | [docs/tooling/cli.md](docs/tooling/cli.md)                             |
+| Testing (`sky test`)                 | [docs/tooling/testing.md](docs/tooling/testing.md)                     |
+| LSP                                  | [docs/tooling/lsp.md](docs/tooling/lsp.md)                             |
+| Development & contributing           | [docs/development.md](docs/development.md)                             |
 
 ## Status
 
 - **v0.9 — adversarial audit remediation complete (2026-04-16).** All 23 P0–P3 items across soundness, security, cleanup, and tooling landed with regression tests. See [docs/AUDIT_REMEDIATION.md](docs/AUDIT_REMEDIATION.md) for the per-item tracker and [docs/compiler/v1-soundness-audit.md](docs/compiler/v1-soundness-audit.md) for the soundness audit findings.
 - **Core principle — "if it compiles, it works"** — aspirational. Now holds for every path in `cabal test`, the example sweep, and the runtime Go test matrix. v1.0 requires production usage and bug-fixes to earn the label. Residual future-work (fully-typed emitted Go, Sky-test harness) tracked in [docs/PRODUCTION_READINESS.md](docs/PRODUCTION_READINESS.md) as P4.
 - **18 example projects** under `examples/` covering CLI, HTTP servers, full-stack Sky.Live apps, databases (SQLite, PostgreSQL, Firestore), payments (Stripe), auth, and GUI (Fyne).
-- **`sky verify`** is the canonical runtime check: builds *and* runs every example, hits HTTP endpoints, honours per-example `verify.json` scenarios (status code + body substring assertions). CI runs `sky verify` across the full example set.
+- **`sky verify`** is the canonical runtime check: builds _and_ runs every example, hits HTTP endpoints, honours per-example `verify.json` scenarios (status code + body substring assertions). CI runs `sky verify` across the full example set.
 - **Test matrix:** 47-example hspec suite + ~20 runtime Go tests + 67-file `test-files/*.sky` self-test loop + format idempotency across every example source file.
 - **FFI generation:** Stripe SDK (8,896 types), Firestore, Fyne, and others auto-bind.
 

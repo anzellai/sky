@@ -3,19 +3,55 @@ module State exposing (..)
 import Sky.Core.Maybe exposing (..)
 
 type alias Monitor =
-    { id : String, name : String, url : String, interval : Int, status : MonitorStatus, responseTime : Int, lastChecked : String, visibility : Visibility }
+    { id : String
+    , name : String
+    , url : String
+    , interval : Int
+    , status : MonitorStatus
+    , responseTime : Int
+    , lastChecked : String
+    , visibility : Visibility
+    }
 
 type alias Metric =
-    { id : String, name : String, sourceType : String, config : Dict String String, lastValue : String, lastUpdated : String, visibility : Visibility, history : List ( String, String ) }
+    { id : String
+    , name : String
+    , sourceType : String
+    , config : Dict String String
+    , lastValue : String
+    , lastUpdated : String
+    , visibility : Visibility
+    , history : List ( String, String )
+    }
 
 type alias AlertRule =
-    { id : String, metricId : String, condition : String, threshold : String, notifyType : String, notifyTarget : String, enabled : Bool }
+    { id : String
+    , metricId : String
+    , condition : String
+    , threshold : String
+    , notifyType : String
+    , notifyTarget : String
+    , enabled : Bool
+    }
 
 type alias UserSession =
-    { username : String, avatarUrl : String, role : Role }
+    { username : String
+    , avatarUrl : String
+    , role : Role
+    }
 
 type alias Model =
-    { page : Page, session : Maybe UserSession, monitors : List Monitor, metrics : List Metric, alerts : List AlertRule, notification : String, errorMessage : String, editingMonitor : Maybe Monitor, editingMetric : Maybe Metric, configInput : Dict String String }
+    { page : Page
+    , session : Maybe UserSession
+    , monitors : List Monitor
+    , metrics : List Metric
+    , alerts : List AlertRule
+    , notification : String
+    , errorMessage : String
+    , editingMonitor : Maybe Monitor
+    , editingMetric : Maybe Metric
+    , configInput : Dict String String
+    }
 
 type Page
     = DashboardPage

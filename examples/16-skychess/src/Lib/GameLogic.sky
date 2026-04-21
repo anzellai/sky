@@ -48,6 +48,7 @@ executeWhiteMove from to model =
         executeWhitePart2 from to algebraic newBoard captured model
 
 
+executeWhitePart2 : Int -> Int -> String -> Dict Int Piece -> Maybe String -> Model -> ( Model, Cmd Msg )
 executeWhitePart2 from to algebraic newBoard captured model =
     let
         newEp = Move.newEnPassantSquare from to model.board
@@ -62,6 +63,7 @@ executeWhitePart2 from to algebraic newBoard captured model =
         buildWhiteUpdate from to newBoard newEp newCaptured newHistory model
 
 
+buildWhiteUpdate : Int -> Int -> Dict Int Piece -> Int -> List String -> List String -> Model -> ( Model, Cmd Msg )
 buildWhiteUpdate from to newBoard newEp newCaptured newHistory model =
     afterWhiteMove
         { model | board = newBoard
@@ -81,6 +83,7 @@ buildWhiteUpdate from to newBoard newEp newCaptured newHistory model =
         }
 
 
+afterWhiteMove : Model -> ( Model, Cmd Msg )
 afterWhiteMove updated =
     let
         blackCanMove = Move.hasLegalMoves Black updated.board updated
@@ -140,6 +143,7 @@ applyBlackOr from to model =
         doBlackMove from to model
 
 
+doBlackMove : Int -> Int -> Model -> ( Model, Cmd Msg )
 doBlackMove from to model =
     let
         algebraic = Move.moveToAlgebraic from to model.board model
@@ -150,6 +154,7 @@ doBlackMove from to model =
         doBlackPart2 from to algebraic newBoard captured model
 
 
+doBlackPart2 : Int -> Int -> String -> Dict Int Piece -> Maybe String -> Model -> ( Model, Cmd Msg )
 doBlackPart2 from to algebraic newBoard captured model =
     let
         newEp = Move.newEnPassantSquare from to model.board
@@ -164,6 +169,7 @@ doBlackPart2 from to algebraic newBoard captured model =
         buildBlackUpdate from to newBoard newEp newCaptured newHistory model
 
 
+buildBlackUpdate : Int -> Int -> Dict Int Piece -> Int -> List String -> List String -> Model -> ( Model, Cmd Msg )
 buildBlackUpdate from to newBoard newEp newCaptured newHistory model =
     afterBlackMove
         { model | board = newBoard
@@ -182,6 +188,7 @@ buildBlackUpdate from to newBoard newEp newCaptured newHistory model =
         }
 
 
+afterBlackMove : Model -> ( Model, Cmd Msg )
 afterBlackMove updated =
     let
         whiteCanMove = Move.hasLegalMoves White updated.board updated

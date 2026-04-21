@@ -88,7 +88,7 @@ checkUserCredentials password user =
 -- authenticateUser : Result Error User. DB errors surface upstream so
 -- callers can show "service unavailable" rather than "bad password".
 -- Wrong email / wrong password both PermissionDenied.
-authenticateUser : String -> String -> Result Error Dict String String
+authenticateUser : String -> String -> Result Error (Dict String String)
 authenticateUser email password =
     case Db.query
              "SELECT id, email, password_hash, verified FROM users WHERE email = ? LIMIT 1"
@@ -131,7 +131,7 @@ createSession userId =
 
 -- getSessionUser : Result Error (Maybe User). Outer Result is for
 -- DB failures; inner Maybe is "found / not found" which is normal.
-getSessionUser : String -> Result Error Maybe Dict String String
+getSessionUser : String -> Result Error (Maybe (Dict String String))
 getSessionUser sessionToken =
     case Db.query
              "SELECT u.id, u.email, u.created_at FROM users u INNER JOIN sessions s ON CAST(u.id AS TEXT) = s.user_id WHERE s.token = ? LIMIT 1"

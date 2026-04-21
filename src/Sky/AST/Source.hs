@@ -129,6 +129,10 @@ data Expr_
     | List [Expr]
     | Op String
     | Negate Expr
+    | Paren Expr                       -- (e) — explicit grouping, prevents
+                                       -- precedence-climbing from flattening
+                                       -- a nested Binops subtree. Canonicalises
+                                       -- transparently as the inner expression.
     | Binops [(Expr, A.Located String)] Expr
     | Lambda [Pattern] Expr
     | Call Expr [Expr]

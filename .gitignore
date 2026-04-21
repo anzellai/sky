@@ -96,3 +96,11 @@ legacy-ts-compiler/node_modules/
 
 # Claude Code loop-pause marker (never commit; local-only pause signal)
 .claude/allow-stop
+
+# Nix build outputs
+/result
+/result-*
+
+# direnv / nix-direnv cache
+/.direnv/
+/.envrc.local

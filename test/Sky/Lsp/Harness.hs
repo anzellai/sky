@@ -46,7 +46,9 @@ import qualified Data.Text as T
 import System.Directory (getCurrentDirectory, doesFileExist)
 import System.FilePath ((</>))
 import System.IO (Handle, hClose, hFlush, hSetBuffering, BufferMode(..))
+import qualified System.Process
 import System.Process
+import System.Timeout (timeout)
 import Control.Concurrent (threadDelay)
 import Control.Exception (bracket, SomeException, try)
 
@@ -63,6 +65,19 @@ findSky = do
 
 -- | Spawn `sky lsp`, hand the action the stdin/stdout handles,
 -- terminate on exit (regardless of exception path).
+--
+-- Cleanup order:
+--   1. Close hin — LSP's `readLine` / `readMessage` returns empty
+--      and `runLsp`'s hangup path hits `exitWith (ExitFailure 1)`.
+--   2. Close hout — release our read side.
+--   3. terminateProcess (SIGTERM) as a belt-and-braces — fine if
+--      the server already self-exited.
+--   4. Race `waitForProcess` against a 5-second timeout; if the
+--      process is still alive after the timeout, SIGKILL it so the
+--      hspec harness doesn't hang indefinitely when an LSP spec
+--      leaks a child (surfaced before the readMessage EOF fix as
+--      "Capabilities spec done, Diagnostics spec hangs with orphan
+--      sky lsp at 100% CPU").
 withLsp :: FilePath -> (Handle -> Handle -> IO a) -> IO a
 withLsp sky action =
     bracket
@@ -79,8 +94,19 @@ withLsp sky action =
           (_ :: Either SomeException ()) <- try (hClose hin)
           (_ :: Either SomeException ()) <- try (hClose hout)
           terminateProcess ph
-          _ <- waitForProcess ph
-          return ())
+          mec <- timeout 5000000 (waitForProcess ph)
+          case mec of
+              Just _  -> return ()
+              Nothing -> do
+                  -- Process ignored SIGTERM; escalate via shell `kill -9`.
+                  mpid <- System.Process.getPid ph
+                  case mpid of
+                      Just p  -> do
+                          (_ :: Either SomeException ()) <- try
+                              (callCommand ("kill -9 " ++ show p))
+                          _ <- waitForProcess ph
+                          return ()
+                      Nothing -> return ())
       (\(hin, hout, _) -> action hin hout)
 
 

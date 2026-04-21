@@ -6,6 +6,7 @@ import Std.Html.Attributes exposing (..)
 import Std.Live exposing (app, route)
 import Std.Live.Events exposing (onClick)
 import Std.Cmd as Cmd
+import Std.Sub as Sub
 
 type Msg
     = Inc
@@ -31,7 +32,7 @@ view model =
 
 
 subs _m =
-    Cmd.none
+    Sub.none
 
 
 main =

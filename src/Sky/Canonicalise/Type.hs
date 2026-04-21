@@ -89,6 +89,8 @@ resolveTypeName tmap modStr segments
         ["Maybe"]  -> ModuleName.maybe_
         ["Result"] -> ModuleName.result_
         ["Task"]   -> ModuleName.task
+        ["Dict"]   -> ModuleName.dict
+        ["Set"]    -> ModuleName.set
         [name]     -> Map.findWithDefault (ModuleName.Canonical "") name tmap
         _          -> ModuleName.Canonical ""
     | otherwise = ModuleName.Canonical modStr

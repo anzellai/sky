@@ -237,8 +237,8 @@ parseIntOr0 : String -> Int
 parseIntOr0 s =
     case String.toInt s of
 
-        Ok n ->
+        Just n ->
             n
 
-        Err _ ->
+        Nothing ->
             0

@@ -29,7 +29,7 @@ getInt field row =
             0
 
         else
-            val |> String.toInt |> Result.withDefault 0
+            val |> String.toInt |> Maybe.withDefault 0
 
 
 getBool field row =
@@ -140,7 +140,10 @@ anyToString val =
 
 snapshotToDict snapshot =
     let
-        rawData = Firestore.documentSnapshotData snapshot
+        rawData =
+            Result.withDefault
+                Dict.empty
+                (Firestore.documentSnapshotData snapshot)
         docId =
             Firestore.documentRefID (Firestore.documentSnapshotRef snapshot)
     in

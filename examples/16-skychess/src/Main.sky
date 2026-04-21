@@ -285,7 +285,7 @@ handleLoadGame gameId model =
         )
 
 
-replayMoves : List Dict String String -> Dict Int Piece -> ( Dict Int Piece, List String )
+replayMoves : List (Dict String String) -> Dict Int Piece -> ( Dict Int Piece, List String )
 replayMoves moves board =
     replayMovesLoop moves board []
 

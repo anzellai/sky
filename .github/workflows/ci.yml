@@ -42,6 +42,22 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cabal-
 
+      # Cache example FFI bindings — `sky-ffi-inspect` on Stripe +
+      # Firebase takes 15+ min cold. Restoring `.skycache/ffi/` (typed
+      # .skyi + kernel JSON) and `.skydeps/` (Sky package lockfile)
+      # between CI runs drops the sweep from ~25 min to ~3 min when
+      # the upstream Go modules haven't moved. The key includes sky.toml
+      # hashes so a dependency bump busts the cache.
+      - name: Cache example FFI bindings
+        uses: actions/cache@v4
+        with:
+          path: |
+            examples/*/.skycache/ffi
+            examples/*/.skydeps
+          key: ${{ runner.os }}-ffi-${{ hashFiles('examples/*/sky.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-ffi-
+
       # Single-command local/CI parity: scripts/build.sh does everything
       # the manual steps below used to — compile sky, build sky-ffi-inspect,
       # install to sky-out/ + bin/. Adds self-test + example sweep when flagged.

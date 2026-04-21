@@ -6,7 +6,7 @@
 -- "one line or each on its own line" — never mix.
 module Sky.Format.Format (formatModule) where
 
-import Data.List (intercalate)
+import Data.List (intercalate, sortOn)
 import qualified Sky.AST.Source as Src
 import qualified Sky.Reporting.Annotation as A
 
@@ -15,6 +15,32 @@ import qualified Sky.Reporting.Annotation as A
 -- Module
 -- ═══════════════════════════════════════════════════════════
 
+-- | Tagged top-level declaration, keyed by original source position.
+-- Tagging lets us merge aliases / unions / values into one list and
+-- sort by line number so formatted output preserves the order the
+-- user wrote — without this, the formatter always groups "all aliases,
+-- then all unions, then all values", which silently rewrites files
+-- like `type Page / type Msg / type alias Job / type alias Model`
+-- into `type alias Job / type alias Model / type Page / type Msg`.
+data TopDecl
+    = DAlias (A.Located Src.Alias)
+    | DUnion (A.Located Src.Union)
+    | DValue (A.Located Src.Value)
+
+topDeclLine :: TopDecl -> Int
+topDeclLine (DAlias (A.At r _)) = A._line (A._start r)
+topDeclLine (DUnion (A.At r _)) = A._line (A._start r)
+topDeclLine (DValue (A.At r _)) = A._line (A._start r)
+
+-- Values are separated by two blank lines in elm-format; type decls
+-- (aliases + unions) by one. We emit a leading blank line per decl
+-- that matches the *kind* of that decl, which is why each variant
+-- carries its own leading-separator string.
+fmtTopDecl :: TopDecl -> String
+fmtTopDecl (DAlias a) = "\n" ++ fmtAlias (A.toValue a)
+fmtTopDecl (DUnion u) = "\n" ++ fmtUnion (A.toValue u)
+fmtTopDecl (DValue v) = "\n\n" ++ fmtValue (A.toValue v)
+
 formatModule :: Src.Module -> String
 formatModule m =
     let header = case Src._name m of
@@ -22,14 +48,13 @@ formatModule m =
                 "module " ++ joinDots segs ++ " exposing " ++ fmtExposing (A.toValue (Src._exports m))
             Nothing -> ""
         imports = map fmtImport (Src._imports m)
-        aliases = map (fmtAlias . A.toValue) (Src._aliases m)
-        unions = map (fmtUnion . A.toValue) (Src._unions m)
-        values = map (fmtValue . A.toValue) (Src._values m)
+        tagged = map DAlias (Src._aliases m)
+              ++ map DUnion (Src._unions m)
+              ++ map DValue (Src._values m)
+        orderedDecls = map fmtTopDecl (sortOn topDeclLine tagged)
         sections = filter (not . null) [header] ++
                    (if null imports then [] else ["\n" ++ intercalate "\n" imports]) ++
-                   map (\a -> "\n" ++ a) aliases ++
-                   map (\u -> "\n" ++ u) unions ++
-                   map (\v -> "\n\n" ++ v) values
+                   orderedDecls
         _ = Src._comments m
     in intercalate "\n" sections ++ "\n"
 
@@ -64,7 +89,7 @@ fmtAlias :: Src.Alias -> String
 fmtAlias a =
     let name = A.toValue (Src._aliasName a)
         vars = map A.toValue (Src._aliasVars a)
-        body = fmtType (A.toValue (Src._aliasType a))
+        body = fmtTypeCol 4 (A.toValue (Src._aliasType a))
         varsStr = if null vars then "" else " " ++ unwords vars
     in "type alias " ++ name ++ varsStr ++ " =\n    " ++ body
 
@@ -100,29 +125,62 @@ fmtValue v =
 -- Types
 -- ═══════════════════════════════════════════════════════════
 
+-- | Column-aware type formatter. `col` is the current indent column
+-- at which the rendered type starts; it informs the max-line-width
+-- check and the continuation indent for multi-line records.
 fmtType :: Src.TypeAnnotation -> String
-fmtType t = case t of
-    Src.TLambda a b -> fmtTypeAtom a ++ " -> " ++ fmtType b
-    _ -> fmtTypeAtom t
+fmtType = fmtTypeCol 0
+
+fmtTypeCol :: Int -> Src.TypeAnnotation -> String
+fmtTypeCol col t = case t of
+    Src.TLambda a b -> fmtTypeAtomCol col a ++ " -> " ++ fmtTypeCol col b
+    _ -> fmtTypeAtomCol col t
 
 fmtTypeAtom :: Src.TypeAnnotation -> String
-fmtTypeAtom (Src.TVar n) = n
-fmtTypeAtom (Src.TType _ segs args) =
+fmtTypeAtom = fmtTypeAtomCol 0
+
+fmtTypeAtomCol :: Int -> Src.TypeAnnotation -> String
+fmtTypeAtomCol _ (Src.TVar n) = n
+fmtTypeAtomCol col (Src.TType _ segs args) =
     let n = joinDots segs
-    in if null args then n else n ++ " " ++ unwords (map fmtTypeParens args)
-fmtTypeAtom (Src.TTypeQual m n args) =
+    in if null args then n
+       else n ++ " " ++ unwords (map (fmtTypeParensCol col) args)
+fmtTypeAtomCol col (Src.TTypeQual m n args) =
     let base = m ++ "." ++ n
-    in if null args then base else base ++ " " ++ unwords (map fmtTypeParens args)
-fmtTypeAtom Src.TUnit = "()"
-fmtTypeAtom (Src.TTuple a b cs) = "( " ++ intercalate ", " (map fmtType (a:b:cs)) ++ " )"
-fmtTypeAtom (Src.TRecord fs _) =
-    "{ " ++ intercalate ", " (map (\(A.At _ n, ty) -> n ++ " : " ++ fmtType ty) fs) ++ " }"
-fmtTypeAtom t@(Src.TLambda _ _) = "(" ++ fmtType t ++ ")"
+    in if null args then base
+       else base ++ " " ++ unwords (map (fmtTypeParensCol col) args)
+fmtTypeAtomCol _ Src.TUnit = "()"
+fmtTypeAtomCol col (Src.TTuple a b cs) =
+    "( " ++ intercalate ", " (map (fmtTypeCol col) (a:b:cs)) ++ " )"
+fmtTypeAtomCol col (Src.TRecord fs _) = fmtRecordType col fs
+fmtTypeAtomCol col t@(Src.TLambda _ _) = "(" ++ fmtTypeCol col t ++ ")"
 
 fmtTypeParens :: Src.TypeAnnotation -> String
-fmtTypeParens t@(Src.TType _ _ (_:_)) = "(" ++ fmtTypeAtom t ++ ")"
-fmtTypeParens t@(Src.TTypeQual _ _ (_:_)) = "(" ++ fmtTypeAtom t ++ ")"
-fmtTypeParens t = fmtTypeAtom t
+fmtTypeParens = fmtTypeParensCol 0
+
+fmtTypeParensCol :: Int -> Src.TypeAnnotation -> String
+fmtTypeParensCol col t@(Src.TType _ _ (_:_)) =
+    "(" ++ fmtTypeAtomCol col t ++ ")"
+fmtTypeParensCol col t@(Src.TTypeQual _ _ (_:_)) =
+    "(" ++ fmtTypeAtomCol col t ++ ")"
+fmtTypeParensCol col t = fmtTypeAtomCol col t
+
+
+-- | Record-type formatting with the same "one line or one-per-line"
+-- rule the expression-level record literal formatter uses. Multi-
+-- line breaks to leading commas at column `col`, matching elm-format.
+fmtRecordType :: Int -> [(A.Located String, Src.TypeAnnotation)] -> String
+fmtRecordType col fs =
+    let oneField (A.At _ n, ty) = n ++ " : " ++ fmtTypeCol (col + 6) ty
+        items = map oneField fs
+        oneLine = "{ " ++ intercalate ", " items ++ " }"
+    in if col + length oneLine <= 80 && length items <= 1
+         then oneLine
+         else case items of
+            []     -> "{}"
+            (i:is) -> "{ " ++ i
+                  ++ concatMap (\it -> "\n" ++ ind col ++ ", " ++ it) is
+                  ++ "\n" ++ ind col ++ "}"
 
 
 -- ═══════════════════════════════════════════════════════════
@@ -186,6 +244,11 @@ fmt _ (Src.VarQual m n) = m ++ "." ++ n
 fmt _ Src.Unit = "()"
 fmt _ (Src.Op o) = "(" ++ o ++ ")"
 fmt col (Src.Negate e) = "-" ++ fmt col (A.toValue e)
+-- Paren is the parser's way of keeping `(a - b) * c` grouped properly.
+-- Emit the parens back out when formatting so the round-trip stays
+-- stable. Without this the formatter drops them and subsequent builds
+-- silently re-associate.
+fmt col (Src.Paren e) = "(" ++ fmt col (A.toValue e) ++ ")"
 fmt _ (Src.Accessor f) = "." ++ f
 fmt col (Src.Access e (A.At _ f)) = fmt col (A.toValue e) ++ "." ++ f
 

@@ -45,8 +45,24 @@ func Set_fromList(list any) any {
 	return s
 }
 
+// toSkySet accepts either a SkySet or a typed-codegen slice (`[]A`) and
+// returns a SkySet view. Typed codegen's `Set.fromList [1,2,3]` produces
+// `[]int`; downstream any-variant kernels (Set_insert, Set_member) must
+// accept both shapes instead of hard-asserting `.(SkySet)`. Matches the
+// AsList widening pattern used by list kernels.
+func toSkySet(v any) SkySet {
+	if s, ok := v.(SkySet); ok {
+		return s
+	}
+	items := map[string]any{}
+	for _, x := range asList(v) {
+		items[fmt.Sprintf("%v", x)] = x
+	}
+	return SkySet{items: items}
+}
+
 func Set_insert(v any, set any) any {
-	s := set.(SkySet)
+	s := toSkySet(set)
 	out := SkySet{items: map[string]any{}}
 	for k, v2 := range s.items {
 		out.items[k] = v2
@@ -56,7 +72,7 @@ func Set_insert(v any, set any) any {
 }
 
 func Set_remove(v any, set any) any {
-	s := set.(SkySet)
+	s := toSkySet(set)
 	out := SkySet{items: map[string]any{}}
 	k := fmt.Sprintf("%v", v)
 	for k2, v2 := range s.items {
@@ -68,13 +84,13 @@ func Set_remove(v any, set any) any {
 }
 
 func Set_member(v any, set any) any {
-	s := set.(SkySet)
+	s := toSkySet(set)
 	_, ok := s.items[fmt.Sprintf("%v", v)]
 	return ok
 }
 
 func Set_toList(set any) any {
-	s := set.(SkySet)
+	s := toSkySet(set)
 	out := make([]any, 0, len(s.items))
 	for _, v := range s.items {
 		out = append(out, v)
@@ -83,15 +99,15 @@ func Set_toList(set any) any {
 }
 
 func Set_size(set any) any {
-	return len(set.(SkySet).items)
+	return len(toSkySet(set).items)
 }
 
 func Set_union(a any, b any) any {
 	out := SkySet{items: map[string]any{}}
-	for k, v := range a.(SkySet).items {
+	for k, v := range toSkySet(a).items {
 		out.items[k] = v
 	}
-	for k, v := range b.(SkySet).items {
+	for k, v := range toSkySet(b).items {
 		out.items[k] = v
 	}
 	return out
@@ -99,8 +115,8 @@ func Set_union(a any, b any) any {
 
 func Set_intersect(a any, b any) any {
 	out := SkySet{items: map[string]any{}}
-	bi := b.(SkySet).items
-	for k, v := range a.(SkySet).items {
+	bi := toSkySet(b).items
+	for k, v := range toSkySet(a).items {
 		if _, ok := bi[k]; ok {
 			out.items[k] = v
 		}
@@ -110,8 +126,8 @@ func Set_intersect(a any, b any) any {
 
 func Set_diff(a any, b any) any {
 	out := SkySet{items: map[string]any{}}
-	bi := b.(SkySet).items
-	for k, v := range a.(SkySet).items {
+	bi := toSkySet(b).items
+	for k, v := range toSkySet(a).items {
 		if _, ok := bi[k]; !ok {
 			out.items[k] = v
 		}
@@ -339,6 +355,28 @@ func JsonDec_field(name any, inner any) any {
 			return d.run(fv)
 		}
 		return Ok[any, any](fv)
+	}}
+}
+
+// JsonDec_index : Int -> Decoder a -> Decoder a
+// Pulls the Nth element of a JSON array and feeds it to inner.
+// Elm-compatible surface (Decode.index 0 decoder). Returns Err when
+// the value is not an array, or when the index is out of range.
+func JsonDec_index(idx any, inner any) any {
+	i := AsInt(idx)
+	return JsonDecoder{run: func(v any) any {
+		arr, ok := v.([]any)
+		if !ok {
+			return Err[any, any](ErrDecode("expected array"))
+		}
+		if i < 0 || i >= len(arr) {
+			return Err[any, any](ErrDecode(
+				fmt.Sprintf("index %d out of range (len %d)", i, len(arr))))
+		}
+		if d, ok := inner.(JsonDecoder); ok {
+			return d.run(arr[i])
+		}
+		return Ok[any, any](arr[i])
 	}}
 }
 
@@ -888,22 +926,44 @@ func Http_post(url any, body any) any {
 	}
 }
 
-// Http.request : String -> String -> String -> Dict String String -> Task String HttpResponse
-// (method, url, body, headers)
-func Http_request(method any, url any, body any, headers any) any {
-	m := fmt.Sprintf("%v", method)
-	u := fmt.Sprintf("%v", url)
-	b := fmt.Sprintf("%v", body)
+// Http.request supports two calling shapes:
+//
+//   * Positional (legacy): `Http.request method url body headers` →
+//     `Http_request(method, url, body, headers)`
+//   * Record (Elm-style): `Http.request { method, url, headers, body }`
+//     — single Sky record argument. This is the documented form in
+//     templates/CLAUDE.md and matches Elm's `Http.request` API.
+//
+// The codegen emits a single-arg call when the user passes a record,
+// so the first-arg typeswitch below picks up the record and ignores
+// the variadic tail. The positional four-arg form falls through to
+// the variadic path.
+func Http_request(firstArg any, rest ...any) any {
+	var method, url, body string
+	var headers any
+	if isRecordArg(firstArg) {
+		method = fmt.Sprintf("%v", recordField(firstArg, "Method", "method"))
+		url = fmt.Sprintf("%v", recordField(firstArg, "Url", "url"))
+		body = fmt.Sprintf("%v", recordField(firstArg, "Body", "body"))
+		headers = recordField(firstArg, "Headers", "headers")
+	} else {
+		method = fmt.Sprintf("%v", firstArg)
+		if len(rest) >= 1 {
+			url = fmt.Sprintf("%v", rest[0])
+		}
+		if len(rest) >= 2 {
+			body = fmt.Sprintf("%v", rest[1])
+		}
+		if len(rest) >= 3 {
+			headers = rest[2]
+		}
+	}
 	return func() any {
-		req, err := http.NewRequest(m, u, strings.NewReader(b))
+		req, err := http.NewRequest(method, url, strings.NewReader(body))
 		if err != nil {
 			return Err[any, any](ErrNetwork("http.request: " + err.Error()))
 		}
-		if hm, ok := headers.(map[string]any); ok {
-			for k, v := range hm {
-				req.Header.Set(k, fmt.Sprintf("%v", v))
-			}
-		}
+		applyHttpHeaders(req, headers)
 		resp, err := skyHttpClient.Do(req)
 		if err != nil {
 			return Err[any, any](ErrNetwork("http.request do: " + err.Error()))
@@ -923,6 +983,79 @@ func Http_request(method any, url any, body any, headers any) any {
 			Body:    rb,
 			Headers: hdrs,
 		})
+	}
+}
+
+// isRecordArg reports whether v is a Sky record (map-based or struct-
+// based) rather than a positional scalar. Typed codegen emits
+// anonymous structs for record literals, so check struct kind too.
+func isRecordArg(v any) bool {
+	if v == nil {
+		return false
+	}
+	if _, ok := v.(map[string]any); ok {
+		return true
+	}
+	rv := reflect.ValueOf(v)
+	return rv.Kind() == reflect.Struct
+}
+
+// recordField reads a field from a Sky record. Accepts either the
+// PascalCase Go name (from typed struct emission) or the camelCase
+// Sky name (from map-based records) so both call shapes work.
+func recordField(v any, goName, skyName string) any {
+	if v == nil {
+		return nil
+	}
+	if m, ok := v.(map[string]any); ok {
+		if val, ok := m[skyName]; ok {
+			return val
+		}
+		if val, ok := m[goName]; ok {
+			return val
+		}
+		return nil
+	}
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Struct {
+		f := rv.FieldByName(goName)
+		if f.IsValid() {
+			return f.Interface()
+		}
+	}
+	return nil
+}
+
+// applyHttpHeaders: Sky-side headers can arrive as `[(k, v), ...]`
+// (list of tuples — the Elm convention, what users write in the
+// record literal), `map[string]any` (legacy), or nil.
+func applyHttpHeaders(req *http.Request, headers any) {
+	if headers == nil {
+		return
+	}
+	if hm, ok := headers.(map[string]any); ok {
+		for k, v := range hm {
+			req.Header.Set(k, fmt.Sprintf("%v", v))
+		}
+		return
+	}
+	rv := reflect.ValueOf(headers)
+	if rv.Kind() == reflect.Slice {
+		for i := 0; i < rv.Len(); i++ {
+			item := rv.Index(i).Interface()
+			iv := reflect.ValueOf(item)
+			if iv.Kind() != reflect.Struct {
+				continue
+			}
+			v0 := iv.FieldByName("V0")
+			v1 := iv.FieldByName("V1")
+			if v0.IsValid() && v1.IsValid() {
+				req.Header.Set(
+					fmt.Sprintf("%v", v0.Interface()),
+					fmt.Sprintf("%v", v1.Interface()),
+				)
+			}
+		}
 	}
 }
 

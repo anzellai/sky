@@ -88,7 +88,19 @@ unifyStructure :: T.Variable -> T.Variable -> T.FlatType -> T.FlatType -> IO Boo
 unifyStructure v1 v2 flat1 flat2 = case (flat1, flat2) of
 
     (T.App1 home1 name1 args1, T.App1 home2 name2 args2) ->
-        if home1 == home2 && name1 == name2 && length args1 == length args2
+        -- Homes agree when they match exactly, OR when either side is
+        -- the sentinel `Canonical ""`. The empty-home form is used by
+        -- kernel type signatures for types that have no real Sky module
+        -- (e.g. `Db.Db`, `VNode`, `Route`) — the canonicaliser resolves
+        -- the user's short alias (`Db.Db` under `import Std.Db as Db`)
+        -- to `Canonical "Db"` via `resolveTypeQual`, so without this
+        -- relaxation a `Maybe Db.Db` field fails to unify with the
+        -- `Db` that `Db.connect` actually returns (empty home).
+        -- Same-name short-circuit: if the name already equals a kernel
+        -- type name, prefer compatibility over strict equality.
+        let emptyCan = ModuleName.Canonical ""
+            homesAgree = home1 == home2 || home1 == emptyCan || home2 == emptyCan
+        in if homesAgree && name1 == name2 && length args1 == length args2
             then do
                 results <- mapM (uncurry unify) (zip args1 args2)
                 if and results

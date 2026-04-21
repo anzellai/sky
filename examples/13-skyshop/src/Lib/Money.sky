@@ -1,9 +1,13 @@
-module Lib.Money exposing (formatPrice, formatPriceFromRow, currencySymbol)
+module Lib.Money exposing (formatPrice, formatPriceFromRow, currencySymbol, Price)
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.String as String
 import Sky.Core.Maybe as Maybe
 import Lib.Db as Db
+
+
+type alias Price =
+    { original : String, discounted : String, hasDiscount : Bool }
 
 
 currencySymbol currency =
@@ -40,6 +44,7 @@ formatPrice amount currency =
     currencySymbol currency ++ formatAmount amount
 
 
+formatPriceFromRow : Dict String String -> Price
 formatPriceFromRow row =
     let
         amount = Db.getInt "price_amount" row

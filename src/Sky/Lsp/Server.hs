@@ -26,7 +26,7 @@
 -- exception machinery and invalid Sky produces diagnostics, not aborts.
 module Sky.Lsp.Server (runLsp) where
 
-import Control.Exception (SomeException, try)
+import Control.Exception (SomeException, fromException, throwIO, try)
 import Control.Monad (forever, when)
 import Data.List (isPrefixOf, sortBy)
 import Data.Ord (comparing)
@@ -43,6 +43,7 @@ import Data.Maybe (fromMaybe, mapMaybe)
 import qualified Data.Text as T
 
 import System.IO
+import System.Exit (exitSuccess, exitWith, ExitCode(..))
 
 import qualified Sky.Parse.Module as Parse
 import qualified Sky.Canonicalise.Module as Canonicalise
@@ -67,9 +68,15 @@ type Docs = Map.Map T.Text (Int, T.Text)
 -- | Mutable LSP state: open docs + lazily built workspace index per
 -- project root. The index is keyed by absolute project root path so
 -- editors with multi-root workspaces work too.
+--
+-- `ssShutdown` tracks whether the client sent a `shutdown` request
+-- before the `exit` notification. LSP spec: exit-after-shutdown
+-- terminates with code 0; exit-without-shutdown terminates with
+-- code 1 so editors can detect protocol misuse.
 data ServerState = ServerState
-    { ssDocs  :: !(IORef.IORef Docs)
-    , ssIndex :: !(IORef.IORef (Map.Map FilePath Idx.Index))
+    { ssDocs     :: !(IORef.IORef Docs)
+    , ssIndex    :: !(IORef.IORef (Map.Map FilePath Idx.Index))
+    , ssShutdown :: !(IORef.IORef Bool)
     }
 
 
@@ -81,13 +88,21 @@ runLsp = do
     hSetBuffering stdin NoBuffering
     hSetBinaryMode stdout True
     hSetBinaryMode stdin True
-    docs <- IORef.newIORef (Map.empty :: Docs)
-    idx  <- IORef.newIORef (Map.empty :: Map.Map FilePath Idx.Index)
-    let st = ServerState { ssDocs = docs, ssIndex = idx }
+    docs     <- IORef.newIORef (Map.empty :: Docs)
+    idx      <- IORef.newIORef (Map.empty :: Map.Map FilePath Idx.Index)
+    shutdown <- IORef.newIORef False
+    let st = ServerState { ssDocs = docs, ssIndex = idx, ssShutdown = shutdown }
     forever $ do
         r <- try (handleOne st) :: IO (Either SomeException ())
         case r of
-            Left _  -> return ()  -- keep serving; never die on a single bad request
+            Left e -> case fromException e :: Maybe ExitCode of
+                -- `exitSuccess`/`exitWith` throws ExitCode as an exception.
+                -- Propagate so the LSP `exit` notification actually
+                -- terminates the process. All other exceptions are
+                -- swallowed — LSP servers must survive malformed
+                -- per-request input.
+                Just code -> throwIO code
+                Nothing   -> return ()
             Right _ -> return ()
 
 
@@ -167,8 +182,16 @@ dispatch st req = do
     case method of
         "initialize"                  -> sendReply reqId initializeResult
         "initialized"                 -> return ()
-        "shutdown"                    -> sendReply reqId A.Null
-        "exit"                        -> return ()
+        "shutdown"                    -> do
+            IORef.writeIORef (ssShutdown st) True
+            sendReply reqId A.Null
+        "exit"                        -> do
+            -- LSP spec: exit terminates the server process. Code 0
+            -- iff shutdown was received first; otherwise 1.
+            wasShutdown <- IORef.readIORef (ssShutdown st)
+            if wasShutdown
+                then exitSuccess
+                else exitWith (ExitFailure 1)
         "textDocument/didOpen"        -> handleDidOpen docs req
         "textDocument/didChange"      -> handleDidChange docs req
         "textDocument/didSave"        -> handleDidSaveSt st req
@@ -794,6 +817,7 @@ collectIdents srcMod =
         Src.Tuple a b cs    -> exprIdents a ++ exprIdents b ++ concatMap exprIdents cs
         Src.List xs         -> concatMap exprIdents xs
         Src.Negate inner    -> exprIdents inner
+        Src.Paren inner     -> exprIdents inner
         _                   -> []
 
     defIdents (A.At _ d) = case d of
@@ -1009,6 +1033,16 @@ collectSemTokens srcMod =
             exprTokens locals a ++ exprTokens locals b ++ concatMap (exprTokens locals) cs
         Src.List xs -> concatMap (exprTokens locals) xs
         Src.Negate i -> exprTokens locals i
+        -- `Src.Paren (Expr)` wraps a grouped sub-expression introduced
+        -- to survive Binops precedence-climbing (added in 85ef8d1).
+        -- Recurse transparently — the parens don't emit tokens themselves
+        -- but the inner expression does. Missing match here would make
+        -- the case non-exhaustive → pattern-match exception → swallowed
+        -- by runLsp's `try`, so `handleSemanticTokens` would never send
+        -- its reply and every LSP client that requested semantic tokens
+        -- would hang waiting. Was the cause of LSP.CapabilitiesSpec's
+        -- 7th test blocking cabal test indefinitely.
+        Src.Paren e'   -> exprTokens locals e'
         Src.Accessor _ -> []
         Src.Op _       -> []
         Src.Unit       -> []
@@ -1157,6 +1191,7 @@ unusedImportActions uri rawText srcMod =
         Src.Tuple a b cs -> exprAllRefs a ++ exprAllRefs b ++ concatMap exprAllRefs cs
         Src.List xs -> concatMap exprAllRefs xs
         Src.Negate i -> exprAllRefs i
+        Src.Paren e' -> exprAllRefs e'
         _ -> []
 
     importIsUsed imp refs =
@@ -1497,6 +1532,12 @@ refsInExpr target shadowed (A.At reg e) = case e of
         ++ concatMap (refsInExpr target shadowed) cs
     Src.List xs       -> concatMap (refsInExpr target shadowed) xs
     Src.Negate inner  -> refsInExpr target shadowed inner
+    -- Recurse transparently into grouped sub-expressions. Without
+    -- this, `println (greet "world")` hid the `greet` reference
+    -- behind the `Paren` node and textDocument/definition/rename/
+    -- references all failed silently — fixture-defined by the
+    -- skychess parser-paren-preservation commit (85ef8d1).
+    Src.Paren inner   -> refsInExpr target shadowed inner
     _ -> []
   where
     letDefNames (A.At _ d) = case d of

@@ -4,12 +4,14 @@
 -- TVar cache shares variables WITHIN a definition but not ACROSS definitions.
 module Sky.Type.Constrain.Expression
     ( constrainModule
+    , constrainModuleWithExternals
     , Env
     )
     where
 
 import Data.IORef
 import qualified Data.Map.Strict as Map
+import System.IO.Unsafe (unsafePerformIO)
 import qualified Sky.AST.Canonical as Can
 import qualified Sky.Reporting.Annotation as A
 import qualified Sky.Type.Type as T
@@ -36,9 +38,32 @@ freshName counter prefix = do
 
 -- | Generate constraints for an entire module (IO for fresh names)
 constrainModule :: Can.Module -> IO T.Constraint
-constrainModule canMod = do
+constrainModule = constrainModuleWithExternals Map.empty
+
+-- | Constrain a module with a pre-populated external type environment
+-- keyed by (home-module, binding-name). VarTopLevel lookups with a
+-- non-local home emit CForeign against the external annotation so
+-- fresh var instantiations let each call site unify independently.
+constrainModuleWithExternals
+    :: Map.Map (String, String) T.Annotation
+    -> Can.Module
+    -> IO T.Constraint
+constrainModuleWithExternals externals canMod = do
     counter <- newIORef 0
+    writeIORef globalExternals externals
     constrainDecls counter Map.empty (Can._decls canMod)
+
+
+-- | Thread the external signature map through a global IORef so the
+-- VarTopLevel handler in constrain can reach it without extending
+-- every helper's signature.
+--
+-- NOT THREAD-SAFE for concurrent calls to constrainModuleWithExternals
+-- with different externals. Compile.hs must either serialise those
+-- calls or ensure all concurrent modules share the same externals.
+globalExternals :: IORef (Map.Map (String, String) T.Annotation)
+{-# NOINLINE globalExternals #-}
+globalExternals = unsafePerformIO (newIORef Map.empty)
 
 
 constrainDecls :: Counter -> Env -> Can.Decls -> IO T.Constraint
@@ -80,8 +105,19 @@ constrain counter env (A.At region expr) expected = case expr of
     Can.VarLocal name ->
         return $ T.CLocal region name expected
 
-    Can.VarTopLevel _home name ->
-        return $ T.CLocal region name expected
+    Can.VarTopLevel home name -> do
+        -- Cross-module channel: if we have an externally-solved
+        -- annotation for (home, name), emit CForeign so the solver
+        -- instantiates fresh vars at this call site. Falls back to
+        -- CLocal for same-module references or when no external
+        -- annotation is registered.
+        externals <- readIORef globalExternals
+        let homeStr = ModuleName.toString home
+        case Map.lookup (homeStr, name) externals of
+            Just annot ->
+                return $ T.CForeign region (homeStr ++ "." ++ name) annot expected
+            Nothing ->
+                return $ T.CLocal region name expected
 
     Can.VarKernel modName funcName ->
         case lookupKernelType modName funcName of
@@ -139,8 +175,57 @@ constrain counter env (A.At region expr) expected = case expr of
     Can.Accessor _field -> return T.CTrue
     Can.Access _target _ -> return T.CTrue
     Can.Update _ _ _ -> return T.CTrue
-    Can.Record _ -> return T.CTrue
-    Can.Tuple _ _ _ -> return T.CTrue
+
+    Can.Record fields -> do
+        -- Build a TRecord actualType with fresh TVars per field, constrain
+        -- each field expression to its TVar, then emit CEqual so the solver
+        -- unifies the record literal with whatever the expected type is.
+        -- Thanks to the alias-expansion pass in canonicaliser, a reference
+        -- like `: Profile` on an annotation appears as TAlias, and the
+        -- solver unfolds it to the underlying TRecord for unification.
+        --
+        -- Skip the CEqual when expected is a bare nominal TType (a union
+        -- or non-alias type): unifying TRecord with TType would fail with
+        -- no benefit, so we fall back to per-field constraints only.
+        fieldPairs <- mapM (\(fname, expr) -> do
+            tvName <- freshName counter ("_rfld_" ++ fname)
+            let tv = T.TVar tvName
+            fieldCon <- constrain counter env expr (T.NoExpectation tv)
+            return (fname, tv, fieldCon))
+            (Map.toList fields)
+        let fieldMap = Map.fromList
+                [ (n, T.FieldType i tv)
+                | (i, (n, tv, _)) <- zip [0..] fieldPairs
+                ]
+            recType = T.TRecord fieldMap Nothing
+            fieldCons = [ c | (_, _, c) <- fieldPairs ]
+            expectedIsUnifiable = case expected of
+                T.NoExpectation t         -> isRecordUnifiable t
+                T.FromContext _ _ t       -> isRecordUnifiable t
+                T.FromAnnotation _ _ _ t  -> isRecordUnifiable t
+            isRecordUnifiable ty = case ty of
+                T.TVar{}    -> True
+                T.TRecord{} -> True
+                T.TAlias _ _ _ _ -> True
+                _           -> False
+        if expectedIsUnifiable
+            then return $ T.CAnd (fieldCons ++ [T.CEqual region T.CRecord recType expected])
+            else return $ T.CAnd fieldCons
+
+    Can.Tuple a b rest -> do
+        aName <- freshName counter "_t0"
+        bName <- freshName counter "_t1"
+        restNames <- mapM (\i -> freshName counter ("_t" ++ show i)) [2 .. length rest + 1]
+        let aType = T.TVar aName
+            bType = T.TVar bName
+            restTypes = map T.TVar restNames
+            tupleType = T.TTuple aType bType restTypes
+        aCon <- constrain counter env a (T.NoExpectation aType)
+        bCon <- constrain counter env b (T.NoExpectation bType)
+        restCons <- zipWithM (\ty expr ->
+            constrain counter env expr (T.NoExpectation ty))
+            restTypes rest
+        return $ T.CAnd (aCon : bCon : restCons ++ [T.CEqual region T.CRecord tupleType expected])
 
 
 -- ═══════════════════════════════════════════════════════════
@@ -326,12 +411,34 @@ constrainDefWithType counter env def = case def of
             wrappedCon = T.CLet [] [] paramHeader T.CTrue bodyCon
         return (wrappedCon, name, funcType)
 
-    Can.TypedDef (A.At region name) _freeVars typedPats body retType -> do
-        let paramBindings = concatMap (\(pat, ty) -> patternBindings (pat, ty)) typedPats
+    Can.TypedDef (A.At _region name) freeVars typedPats body retType -> do
+        -- Alpha-rename free TVars in the annotation so the polymorphic
+        -- variable `a` in `boolVal : Bool -> a` doesn't collide with
+        -- the `a` in `intVal : Int -> a` (the solver's TVar cache
+        -- shares vars by name, so same-letter annotations across
+        -- sibling definitions would otherwise unify their `a`s).
+        renameMap <- Map.fromList <$>
+            mapM (\(v, _) -> do
+                fresh <- freshName counter ("_" ++ name ++ "_" ++ v)
+                return (v, fresh)) freeVars
+        let renameT = substTypeVarNames renameMap
+            typedPats' = [ (pat, renameT ty) | (pat, ty) <- typedPats ]
+            retType' = renameT retType
+            paramBindings = concatMap (\(pat, ty) -> patternBindings (pat, ty)) typedPats'
             bodyEnv = foldr (\(n, ann) e -> Map.insert n ann e) env paramBindings
-            funcType = foldr (\(_, ty) acc -> T.TLambda ty acc) retType typedPats
-        bodyCon <- constrain counter bodyEnv body (T.NoExpectation retType)
-        return (bodyCon, name, funcType)
+            funcType = foldr (\(_, ty) acc -> T.TLambda ty acc) retType' typedPats'
+        bodyCon <- constrain counter bodyEnv body (T.NoExpectation retType')
+        -- Wrap body in CLet so param bindings flow into the solver's
+        -- _env. Without this, CLocal "param" lookups hit an empty
+        -- env, create fresh unconstrained TVars, and downstream
+        -- unifications fail even though the annotation gave the
+        -- params concrete types. Matches the Can.Def path.
+        let paramHeader = Map.fromList
+                [ (pname, (A.one, ptype))
+                | (pname, T.Forall _ ptype) <- paramBindings
+                ]
+            wrappedCon = T.CLet [] [] paramHeader T.CTrue bodyCon
+        return (wrappedCon, name, funcType)
 
     -- Destructure binding — collect type-vars from the pattern so the body
     -- sees each bound name. We synthesise a placeholder "name" matching the
@@ -419,11 +526,16 @@ instantiatePattern
 instantiatePattern counter (A.At reg p) scrutTy = case p of
     Can.PVar name        -> return ([(name, T.Forall [] scrutTy)], [])
     Can.PAnything        -> return ([], [])
-    Can.PUnit            -> return ([], [])
-    Can.PBool _          -> return ([], [])
-    Can.PChr _           -> return ([], [])
-    Can.PStr _           -> return ([], [])
-    Can.PInt _           -> return ([], [])
+    Can.PUnit            ->
+        return ([], [T.CEqual reg T.CRecord T.TUnit (T.NoExpectation scrutTy)])
+    Can.PBool _          ->
+        return ([], [T.CEqual reg (T.CCustom "bool pattern") boolType (T.NoExpectation scrutTy)])
+    Can.PChr _           ->
+        return ([], [T.CEqual reg T.CChar charType (T.NoExpectation scrutTy)])
+    Can.PStr _           ->
+        return ([], [T.CEqual reg T.CString stringType (T.NoExpectation scrutTy)])
+    Can.PInt _           ->
+        return ([], [T.CEqual reg T.CNumber intType (T.NoExpectation scrutTy)])
 
     Can.PAlias inner name -> do
         (innerBinds, innerCons) <- instantiatePattern counter inner scrutTy
@@ -488,6 +600,31 @@ instantiatePattern counter (A.At reg p) scrutTy = case p of
     combine xs = (concatMap fst xs, concatMap snd xs)
 
 
+-- | Rename a set of TVar names within a Can.Type without otherwise
+-- changing the structure. Used by TypedDef processing to alpha-
+-- rename the annotation's free TVars so each function's `a`/`b`
+-- binders don't accidentally unify with each other through the
+-- solver's shared TVar cache.
+substTypeVarNames :: Map.Map String String -> Can.Type -> Can.Type
+substTypeVarNames subst = go
+  where
+    go t = case t of
+        Can.TVar n -> Can.TVar (Map.findWithDefault n n subst)
+        Can.TLambda a b -> Can.TLambda (go a) (go b)
+        Can.TType h n args -> Can.TType h n (map go args)
+        Can.TTuple a b cs -> Can.TTuple (go a) (go b) (map go cs)
+        Can.TRecord fields mExt ->
+            Can.TRecord
+                (Map.map (\(Can.FieldType i fTy) -> Can.FieldType i (go fTy)) fields)
+                mExt
+        Can.TAlias h n pairs aliasType ->
+            Can.TAlias h n [(k, go v) | (k, v) <- pairs]
+                (case aliasType of
+                    Can.Filled i -> Can.Filled (go i)
+                    Can.Hoisted i -> Can.Hoisted (go i))
+        Can.TUnit -> Can.TUnit
+
+
 -- | Substitute named type variables in a Canonical.Type.
 substTypeVars :: Map.Map String T.Type -> Can.Type -> T.Type
 substTypeVars subst ct = case ct of
@@ -500,6 +637,12 @@ substTypeVars subst ct = case ct of
     Can.TTuple a b cs -> T.TTuple (substTypeVars subst a) (substTypeVars subst b)
                                   (map (substTypeVars subst) cs)
     Can.TRecord _ _ -> T.TVar "_rec"  -- records at pattern level not supported
+    Can.TAlias h n pairs aliasType ->
+        T.TAlias h n
+            [(k, substTypeVars subst t) | (k, t) <- pairs]
+            (case aliasType of
+                Can.Filled  inner -> T.Filled  (substTypeVars subst inner)
+                Can.Hoisted inner -> T.Hoisted (substTypeVars subst inner))
 
 
 -- ═══════════════════════════════════════════════════════════
@@ -702,6 +845,789 @@ lookupKernelType modName funcName = case (modName, funcName) of
                 (T.TLambda (T.TVar "b")
                     (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"])
                         (T.TVar "b"))))
+    -- Html kernel functions — catch-all for all element builders.
+    -- 1-arg elements: text (String → VNode), img/input (attrs → VNode)
+    ("Html", "text") ->
+        Just $ T.Forall [] (T.TLambda stringType vnodeType)
+    ("Html", "img") ->
+        Just $ T.Forall [] (T.TLambda attrListType vnodeType)
+    ("Html", "input") ->
+        Just $ T.Forall [] (T.TLambda attrListType vnodeType)
+    ("Html", "raw") ->
+        -- Html.raw : String → VNode (embed raw HTML)
+        Just $ T.Forall [] (T.TLambda stringType vnodeType)
+    ("Html", "styleNode") ->
+        -- styleNode : List Attribute -> String -> VNode (CSS body is a String)
+        Just $ T.Forall [] (T.TLambda attrListType (T.TLambda stringType vnodeType))
+    ("Html", "render") ->
+        -- Html.render : VNode -> String
+        Just $ T.Forall [] (T.TLambda vnodeType stringType)
+    ("Html", "doctype") ->
+        -- Html.doctype : () -> String (emits the DOCTYPE prefix)
+        Just $ T.Forall [] (T.TLambda T.TUnit stringType)
+    ("Html", "br") ->
+        -- Html.br : List Attribute -> VNode (void element)
+        Just $ T.Forall [] (T.TLambda attrListType vnodeType)
+    ("Html", "hr") ->
+        -- Html.hr : List Attribute -> VNode
+        Just $ T.Forall [] (T.TLambda attrListType vnodeType)
+    ("Html", "titleNode") ->
+        -- Html.titleNode : String -> VNode
+        Just $ T.Forall [] (T.TLambda stringType vnodeType)
+    ("Html", "script") ->
+        -- Html.script : List Attribute -> body -> VNode
+        -- The body parameter stays polymorphic so callers can pass
+        -- either a String (inline JS) or a List VNode (child nodes).
+        Just $ T.Forall ["b"]
+            (T.TLambda attrListType
+                (T.TLambda (T.TVar "b") vnodeType))
+    -- Void HTML elements (no children): attrs -> VNode
+    ("Html", "meta") ->
+        Just $ T.Forall [] (T.TLambda attrListType vnodeType)
+    ("Html", "link") ->
+        Just $ T.Forall [] (T.TLambda attrListType vnodeType)
+    ("Html", "area") ->
+        Just $ T.Forall [] (T.TLambda attrListType vnodeType)
+    ("Html", "base") ->
+        Just $ T.Forall [] (T.TLambda attrListType vnodeType)
+    ("Html", "col") ->
+        Just $ T.Forall [] (T.TLambda attrListType vnodeType)
+    ("Html", "embed") ->
+        Just $ T.Forall [] (T.TLambda attrListType vnodeType)
+    ("Html", "source") ->
+        Just $ T.Forall [] (T.TLambda attrListType vnodeType)
+    ("Html", "track") ->
+        Just $ T.Forall [] (T.TLambda attrListType vnodeType)
+    ("Html", "wbr") ->
+        Just $ T.Forall [] (T.TLambda attrListType vnodeType)
+    -- 3-arg: node (String → attrs → children → VNode)
+    ("Html", "node") ->
+        Just $ T.Forall [] (T.TLambda stringType (T.TLambda attrListType (T.TLambda vnodeListType vnodeType)))
+    -- All other Html.* functions: 2-arg (attrs → children → VNode)
+    ("Html", _) ->
+        Just $ T.Forall [] (T.TLambda attrListType (T.TLambda vnodeListType vnodeType))
+    -- Attr kernel functions
+    ("Attr", "class") ->
+        Just $ T.Forall [] (T.TLambda stringType attrType)
+    ("Attr", "id") ->
+        Just $ T.Forall [] (T.TLambda stringType attrType)
+    ("Attr", "href") ->
+        Just $ T.Forall [] (T.TLambda stringType attrType)
+    ("Attr", "src") ->
+        Just $ T.Forall [] (T.TLambda stringType attrType)
+    ("Attr", "type_") ->
+        Just $ T.Forall [] (T.TLambda stringType attrType)
+    ("Attr", "type") ->
+        Just $ T.Forall [] (T.TLambda stringType attrType)
+    ("Attr", "value") ->
+        Just $ T.Forall [] (T.TLambda stringType attrType)
+    ("Attr", "placeholder") ->
+        Just $ T.Forall [] (T.TLambda stringType attrType)
+    ("Attr", "style") ->
+        Just $ T.Forall [] (T.TLambda stringType attrType)
+    ("Attr", "attribute") ->
+        Just $ T.Forall [] (T.TLambda stringType (T.TLambda stringType attrType))
+    -- Catch-all for boolean attrs (checked, disabled, required, etc.)
+    -- Runtime helpers ignore the arg (it exists only to let Sky
+    -- callers use `Attr.required ()` or any other value as a
+    -- present/absent marker), so accept any type at the kernel
+    -- level rather than forcing String.
+    ("Attr", _) ->
+        Just $ T.Forall ["a"] (T.TLambda (T.TVar "a") attrType)
+    -- Event handlers
+    ("Event", "onClick") ->
+        Just $ T.Forall ["msg"] (T.TLambda (T.TVar "msg") attrType)
+    ("Event", "onInput") ->
+        Just $ T.Forall ["msg"] (T.TLambda (T.TLambda stringType (T.TVar "msg")) attrType)
+    ("Event", "onSubmit") ->
+        Just $ T.Forall ["msg"] (T.TLambda (T.TVar "msg") attrType)
+    ("Event", "onCheck") ->
+        Just $ T.Forall ["msg"] (T.TLambda (T.TLambda boolType (T.TVar "msg")) attrType)
+    -- Cmd kernel functions
+    ("Cmd", "none") ->
+        Just $ T.Forall ["msg"] cmdType
+    ("Cmd", "batch") ->
+        Just $ T.Forall ["msg"] (T.TLambda (T.TType ModuleName.list "List" [cmdType]) cmdType)
+    ("Cmd", "perform") ->
+        Just $ T.Forall ["err", "a", "msg"]
+            (T.TLambda (T.TType ModuleName.task "Task" [T.TVar "err", T.TVar "a"])
+                (T.TLambda (T.TLambda (T.TType ModuleName.result_ "Result" [T.TVar "err", T.TVar "a"]) (T.TVar "msg"))
+                    cmdType))
+    -- Sub kernel functions
+    ("Sub", "none") ->
+        Just $ T.Forall ["msg"] subType
+    ("Sub", "every") ->
+        Just $ T.Forall ["msg"] (T.TLambda intType (T.TLambda (T.TVar "msg") subType))
+    ("Time", "every") ->
+        Just $ T.Forall ["msg"] (T.TLambda intType (T.TLambda (T.TVar "msg") subType))
+    -- More Task kernel functions
+    ("Task", "perform") ->
+        Just $ T.Forall ["e", "a"]
+            (T.TLambda
+                (T.TType ModuleName.task "Task" [T.TVar "e", T.TVar "a"])
+                (T.TType ModuleName.result_ "Result" [T.TVar "e", T.TVar "a"]))
+    ("Task", "sequence") ->
+        Just $ T.Forall ["e", "a"]
+            (T.TLambda
+                (T.TType ModuleName.list "List"
+                    [T.TType ModuleName.task "Task" [T.TVar "e", T.TVar "a"]])
+                (T.TType ModuleName.task "Task"
+                    [T.TVar "e", T.TType ModuleName.list "List" [T.TVar "a"]]))
+    ("Task", "parallel") ->
+        Just $ T.Forall ["e", "a"]
+            (T.TLambda
+                (T.TType ModuleName.list "List"
+                    [T.TType ModuleName.task "Task" [T.TVar "e", T.TVar "a"]])
+                (T.TType ModuleName.task "Task"
+                    [T.TVar "e", T.TType ModuleName.list "List" [T.TVar "a"]]))
+    ("Task", "lazy") ->
+        Just $ T.Forall ["e", "a"]
+            (T.TLambda
+                (T.TLambda T.TUnit (T.TVar "a"))
+                (T.TType ModuleName.task "Task" [T.TVar "e", T.TVar "a"]))
+    -- Result kernel
+    ("Result", "traverse") ->
+        Just $ T.Forall ["e", "a", "b"]
+            (T.TLambda (T.TLambda (T.TVar "a")
+                (T.TType ModuleName.result_ "Result" [T.TVar "e", T.TVar "b"]))
+                (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"])
+                    (T.TType ModuleName.result_ "Result"
+                        [T.TVar "e", T.TType ModuleName.list "List" [T.TVar "b"]])))
+    -- Maybe — more kernels
+    ("Maybe", "isJust") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TType ModuleName.maybe_ "Maybe" [T.TVar "a"]) boolType)
+    ("Maybe", "isNothing") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TType ModuleName.maybe_ "Maybe" [T.TVar "a"]) boolType)
+    -- List kernel functions
+    ("List", "head") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"])
+                (T.TType ModuleName.maybe_ "Maybe" [T.TVar "a"]))
+    ("List", "tail") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"])
+                (T.TType ModuleName.maybe_ "Maybe"
+                    [T.TType ModuleName.list "List" [T.TVar "a"]]))
+    ("List", "length") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"]) intType)
+    ("List", "isEmpty") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"]) boolType)
+    ("List", "reverse") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"])
+                (T.TType ModuleName.list "List" [T.TVar "a"]))
+    ("List", "take") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda intType
+                (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"])
+                    (T.TType ModuleName.list "List" [T.TVar "a"])))
+    ("List", "drop") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda intType
+                (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"])
+                    (T.TType ModuleName.list "List" [T.TVar "a"])))
+    ("List", "append") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"])
+                (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"])
+                    (T.TType ModuleName.list "List" [T.TVar "a"])))
+    ("List", "concat") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda
+                (T.TType ModuleName.list "List"
+                    [T.TType ModuleName.list "List" [T.TVar "a"]])
+                (T.TType ModuleName.list "List" [T.TVar "a"]))
+    ("List", "member") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TVar "a")
+                (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"]) boolType))
+    ("List", "any") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TLambda (T.TVar "a") boolType)
+                (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"]) boolType))
+    ("List", "all") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TLambda (T.TVar "a") boolType)
+                (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"]) boolType))
+    ("List", "indexedMap") ->
+        Just $ T.Forall ["a", "b"]
+            (T.TLambda
+                (T.TLambda intType (T.TLambda (T.TVar "a") (T.TVar "b")))
+                (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"])
+                    (T.TType ModuleName.list "List" [T.TVar "b"])))
+    ("List", "filterMap") ->
+        Just $ T.Forall ["a", "b"]
+            (T.TLambda
+                (T.TLambda (T.TVar "a")
+                    (T.TType ModuleName.maybe_ "Maybe" [T.TVar "b"]))
+                (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"])
+                    (T.TType ModuleName.list "List" [T.TVar "b"])))
+    ("List", "range") ->
+        Just $ T.Forall []
+            (T.TLambda intType
+                (T.TLambda intType
+                    (T.TType ModuleName.list "List" [intType])))
+    ("List", "foldr") ->
+        Just $ T.Forall ["a", "b"]
+            (T.TLambda
+                (T.TLambda (T.TVar "a") (T.TLambda (T.TVar "b") (T.TVar "b")))
+                (T.TLambda (T.TVar "b")
+                    (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"])
+                        (T.TVar "b"))))
+    ("List", "sum") ->
+        Just $ T.Forall []
+            (T.TLambda (T.TType ModuleName.list "List" [intType]) intType)
+    ("List", "product") ->
+        Just $ T.Forall []
+            (T.TLambda (T.TType ModuleName.list "List" [intType]) intType)
+    ("List", "sort") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"])
+                (T.TType ModuleName.list "List" [T.TVar "a"]))
+    ("List", "sortBy") ->
+        Just $ T.Forall ["a", "b"]
+            (T.TLambda (T.TLambda (T.TVar "a") (T.TVar "b"))
+                (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"])
+                    (T.TType ModuleName.list "List" [T.TVar "a"])))
+    ("List", "sortWith") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda
+                (T.TLambda (T.TVar "a") (T.TLambda (T.TVar "a") intType))
+                (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"])
+                    (T.TType ModuleName.list "List" [T.TVar "a"])))
+    ("List", "singleton") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TVar "a")
+                (T.TType ModuleName.list "List" [T.TVar "a"]))
+    ("List", "repeat") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda intType
+                (T.TLambda (T.TVar "a")
+                    (T.TType ModuleName.list "List" [T.TVar "a"])))
+    ("List", "zip") ->
+        Just $ T.Forall ["a", "b"]
+            (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"])
+                (T.TLambda (T.TType ModuleName.list "List" [T.TVar "b"])
+                    (T.TType ModuleName.list "List"
+                        [T.TTuple (T.TVar "a") (T.TVar "b") []])))
+    ("List", "unzip") ->
+        Just $ T.Forall ["a", "b"]
+            (T.TLambda
+                (T.TType ModuleName.list "List"
+                    [T.TTuple (T.TVar "a") (T.TVar "b") []])
+                (T.TTuple
+                    (T.TType ModuleName.list "List" [T.TVar "a"])
+                    (T.TType ModuleName.list "List" [T.TVar "b"])
+                    []))
+    ("List", "parallelMap") ->
+        Just $ T.Forall ["a", "b"]
+            (T.TLambda
+                (T.TLambda (T.TVar "a") (T.TVar "b"))
+                (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"])
+                    (T.TType ModuleName.list "List" [T.TVar "b"])))
+    -- Dict kernel functions (keys are always String in Sky's Dict)
+    ("Dict", "empty") ->
+        Just $ T.Forall ["k", "v"]
+            (T.TType ModuleName.dict "Dict" [T.TVar "k", T.TVar "v"])
+    ("Dict", "fromList") ->
+        Just $ T.Forall ["k", "v"]
+            (T.TLambda
+                (T.TType ModuleName.list "List"
+                    [T.TTuple (T.TVar "k") (T.TVar "v") []])
+                (T.TType ModuleName.dict "Dict" [T.TVar "k", T.TVar "v"]))
+    ("Dict", "toList") ->
+        Just $ T.Forall ["k", "v"]
+            (T.TLambda (T.TType ModuleName.dict "Dict" [T.TVar "k", T.TVar "v"])
+                (T.TType ModuleName.list "List"
+                    [T.TTuple (T.TVar "k") (T.TVar "v") []]))
+    ("Dict", "insert") ->
+        Just $ T.Forall ["k", "v"]
+            (T.TLambda (T.TVar "k")
+                (T.TLambda (T.TVar "v")
+                    (T.TLambda (T.TType ModuleName.dict "Dict" [T.TVar "k", T.TVar "v"])
+                        (T.TType ModuleName.dict "Dict" [T.TVar "k", T.TVar "v"]))))
+    ("Dict", "get") ->
+        Just $ T.Forall ["k", "v"]
+            (T.TLambda (T.TVar "k")
+                (T.TLambda (T.TType ModuleName.dict "Dict" [T.TVar "k", T.TVar "v"])
+                    (T.TType ModuleName.maybe_ "Maybe" [T.TVar "v"])))
+    ("Dict", "remove") ->
+        Just $ T.Forall ["k", "v"]
+            (T.TLambda (T.TVar "k")
+                (T.TLambda (T.TType ModuleName.dict "Dict" [T.TVar "k", T.TVar "v"])
+                    (T.TType ModuleName.dict "Dict" [T.TVar "k", T.TVar "v"])))
+    ("Dict", "member") ->
+        Just $ T.Forall ["k", "v"]
+            (T.TLambda (T.TVar "k")
+                (T.TLambda (T.TType ModuleName.dict "Dict" [T.TVar "k", T.TVar "v"]) boolType))
+    ("Dict", "size") ->
+        Just $ T.Forall ["k", "v"]
+            (T.TLambda (T.TType ModuleName.dict "Dict" [T.TVar "k", T.TVar "v"]) intType)
+    ("Dict", "isEmpty") ->
+        Just $ T.Forall ["k", "v"]
+            (T.TLambda (T.TType ModuleName.dict "Dict" [T.TVar "k", T.TVar "v"]) boolType)
+    ("Dict", "keys") ->
+        Just $ T.Forall ["k", "v"]
+            (T.TLambda (T.TType ModuleName.dict "Dict" [T.TVar "k", T.TVar "v"])
+                (T.TType ModuleName.list "List" [T.TVar "k"]))
+    ("Dict", "values") ->
+        Just $ T.Forall ["k", "v"]
+            (T.TLambda (T.TType ModuleName.dict "Dict" [T.TVar "k", T.TVar "v"])
+                (T.TType ModuleName.list "List" [T.TVar "v"]))
+    ("Dict", "map") ->
+        Just $ T.Forall ["k", "a", "b"]
+            (T.TLambda
+                (T.TLambda (T.TVar "k") (T.TLambda (T.TVar "a") (T.TVar "b")))
+                (T.TLambda (T.TType ModuleName.dict "Dict" [T.TVar "k", T.TVar "a"])
+                    (T.TType ModuleName.dict "Dict" [T.TVar "k", T.TVar "b"])))
+    ("Dict", "foldl") ->
+        Just $ T.Forall ["k", "a", "b"]
+            (T.TLambda
+                (T.TLambda (T.TVar "k")
+                    (T.TLambda (T.TVar "a") (T.TLambda (T.TVar "b") (T.TVar "b"))))
+                (T.TLambda (T.TVar "b")
+                    (T.TLambda (T.TType ModuleName.dict "Dict" [T.TVar "k", T.TVar "a"])
+                        (T.TVar "b"))))
+    ("Dict", "union") ->
+        Just $ T.Forall ["k", "v"]
+            (T.TLambda (T.TType ModuleName.dict "Dict" [T.TVar "k", T.TVar "v"])
+                (T.TLambda (T.TType ModuleName.dict "Dict" [T.TVar "k", T.TVar "v"])
+                    (T.TType ModuleName.dict "Dict" [T.TVar "k", T.TVar "v"])))
+    -- Set kernel functions
+    ("Set", "empty") ->
+        Just $ T.Forall ["a"] (T.TType ModuleName.set "Set" [T.TVar "a"])
+    ("Set", "insert") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TVar "a")
+                (T.TLambda (T.TType ModuleName.set "Set" [T.TVar "a"])
+                    (T.TType ModuleName.set "Set" [T.TVar "a"])))
+    ("Set", "member") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TVar "a")
+                (T.TLambda (T.TType ModuleName.set "Set" [T.TVar "a"]) boolType))
+    ("Set", "remove") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TVar "a")
+                (T.TLambda (T.TType ModuleName.set "Set" [T.TVar "a"])
+                    (T.TType ModuleName.set "Set" [T.TVar "a"])))
+    ("Set", "toList") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TType ModuleName.set "Set" [T.TVar "a"])
+                (T.TType ModuleName.list "List" [T.TVar "a"]))
+    ("Set", "fromList") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"])
+                (T.TType ModuleName.set "Set" [T.TVar "a"]))
+    ("Set", "size") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TType ModuleName.set "Set" [T.TVar "a"]) intType)
+    -- Context (Go stdlib) — background/todo return an opaque
+    -- context.Context; Sky exposes these as `rt.SkyValue` so user
+    -- wrappers like `ctx = Context.background ()` don't degrade to
+    -- `any` in the emitted Go sig.
+    ("Context", "background") ->
+        Just $ T.Forall []
+            (T.TLambda T.TUnit
+                (T.TType (ModuleName.Canonical "") "Value" []))
+    ("Context", "todo") ->
+        Just $ T.Forall []
+            (T.TLambda T.TUnit
+                (T.TType (ModuleName.Canonical "") "Value" []))
+    -- Fmt.sprint / Fmt.sprintln (Go stdlib fmt) both take a list of
+    -- values and return the formatted String.
+    ("Fmt", "sprint") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"]) stringType)
+    ("Fmt", "sprintln") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"]) stringType)
+    ("Fmt", "sprintf") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda stringType
+                (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"]) stringType))
+    -- Os
+    ("Os", "args") ->
+        Just $ T.Forall []
+            (T.TLambda T.TUnit (T.TType ModuleName.list "List" [stringType]))
+    ("Os", "getenv") ->
+        -- Os.getenv returns Result Error String — Err ErrNotFound
+        -- when the env var isn't set, Ok value otherwise.
+        Just $ T.Forall []
+            (T.TLambda stringType
+                (T.TType ModuleName.result_ "Result"
+                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                    , stringType]))
+    ("Os", "exit") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda intType (T.TVar "a"))
+    ("Os", "getcwd") ->
+        Just $ T.Forall []
+            (T.TLambda T.TUnit stringType)
+    -- Time.sleep returns Task (used with Task.andThen in 18-job-queue).
+    -- Time.now / Time.unixMillis intentionally NOT registered here —
+    -- they're used as both Result and Task in different examples and
+    -- we don't want to pick one that breaks the other until the Sky
+    -- side unifies Task == Result.
+    ("Time", "sleep") ->
+        Just $ T.Forall ["e"]
+            (T.TLambda intType
+                (T.TType ModuleName.task "Task" [T.TVar "e", T.TUnit]))
+    -- Random — returns a Task in Sky stdlib
+    ("Random", "int") ->
+        Just $ T.Forall ["e"]
+            (T.TLambda intType
+                (T.TLambda intType
+                    (T.TType ModuleName.task "Task" [T.TVar "e", intType])))
+    ("Random", "float") ->
+        Just $ T.Forall ["e"]
+            (T.TLambda floatType
+                (T.TLambda floatType
+                    (T.TType ModuleName.task "Task" [T.TVar "e", floatType])))
+    -- Math
+    ("Math", "abs") ->
+        Just $ T.Forall [] (T.TLambda intType intType)
+    ("Math", "min") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TVar "a") (T.TLambda (T.TVar "a") (T.TVar "a")))
+    ("Math", "max") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TVar "a") (T.TLambda (T.TVar "a") (T.TVar "a")))
+    ("Math", "sqrt") ->
+        Just $ T.Forall [] (T.TLambda floatType floatType)
+    ("Math", "pow") ->
+        Just $ T.Forall [] (T.TLambda floatType (T.TLambda floatType floatType))
+    ("Math", "floor") ->
+        Just $ T.Forall [] (T.TLambda floatType intType)
+    ("Math", "ceil") ->
+        Just $ T.Forall [] (T.TLambda floatType intType)
+    ("Math", "round") ->
+        Just $ T.Forall [] (T.TLambda floatType intType)
+    ("Math", "pi") ->
+        Just $ T.Forall [] floatType
+    -- String — additional
+    ("String", "concat") ->
+        Just $ T.Forall []
+            (T.TLambda (T.TType ModuleName.list "List" [stringType]) stringType)
+    ("String", "words") ->
+        Just $ T.Forall []
+            (T.TLambda stringType (T.TType ModuleName.list "List" [stringType]))
+    ("String", "lines") ->
+        Just $ T.Forall []
+            (T.TLambda stringType (T.TType ModuleName.list "List" [stringType]))
+    ("String", "fromChar") ->
+        Just $ T.Forall [] (T.TLambda charType stringType)
+    ("String", "toList") ->
+        Just $ T.Forall []
+            (T.TLambda stringType (T.TType ModuleName.list "List" [charType]))
+    ("String", "fromList") ->
+        Just $ T.Forall []
+            (T.TLambda (T.TType ModuleName.list "List" [charType]) stringType)
+    ("String", "repeat") ->
+        Just $ T.Forall []
+            (T.TLambda intType (T.TLambda stringType stringType))
+    ("String", "padLeft") ->
+        Just $ T.Forall []
+            (T.TLambda intType (T.TLambda charType (T.TLambda stringType stringType)))
+    ("String", "padRight") ->
+        Just $ T.Forall []
+            (T.TLambda intType (T.TLambda charType (T.TLambda stringType stringType)))
+    -- Basics
+    ("Basics", "compare") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TVar "a")
+                (T.TLambda (T.TVar "a") intType))
+    ("Basics", "fst") ->
+        Just $ T.Forall ["a", "b"]
+            (T.TLambda (T.TTuple (T.TVar "a") (T.TVar "b") []) (T.TVar "a"))
+    ("Basics", "snd") ->
+        Just $ T.Forall ["a", "b"]
+            (T.TLambda (T.TTuple (T.TVar "a") (T.TVar "b") []) (T.TVar "b"))
+    ("Basics", "clamp") ->
+        Just $ T.Forall []
+            (T.TLambda intType
+                (T.TLambda intType
+                    (T.TLambda intType intType)))
+    ("Basics", "modBy") ->
+        Just $ T.Forall []
+            (T.TLambda intType (T.TLambda intType intType))
+    ("Basics", "toFloat") ->
+        Just $ T.Forall [] (T.TLambda intType floatType)
+    ("Basics", "round") ->
+        Just $ T.Forall [] (T.TLambda floatType intType)
+    ("Basics", "floor") ->
+        Just $ T.Forall [] (T.TLambda floatType intType)
+    ("Basics", "ceiling") ->
+        Just $ T.Forall [] (T.TLambda floatType intType)
+    ("Basics", "truncate") ->
+        Just $ T.Forall [] (T.TLambda floatType intType)
+    ("Basics", "identity") ->
+        Just $ T.Forall ["a"] (T.TLambda (T.TVar "a") (T.TVar "a"))
+    ("Basics", "errorToString") ->
+        Just $ T.Forall []
+            (T.TLambda (T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []) stringType)
+    -- Log
+    -- Css — most helpers return a String (CSS textual fragment).
+    -- Opaque rule/property returns stay as `any` via runtimeOnlyTypes.
+    ("Css", "hex") ->
+        Just $ T.Forall [] (T.TLambda stringType stringType)
+    ("Css", "px") ->
+        Just $ T.Forall ["a"] (T.TLambda (T.TVar "a") stringType)
+    ("Css", "rem") ->
+        Just $ T.Forall ["a"] (T.TLambda (T.TVar "a") stringType)
+    ("Css", "em") ->
+        Just $ T.Forall ["a"] (T.TLambda (T.TVar "a") stringType)
+    ("Css", "pct") ->
+        Just $ T.Forall ["a"] (T.TLambda (T.TVar "a") stringType)
+    ("Css", "stylesheet") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"]) stringType)
+    -- Css.rule / Css.property / Css.margin / … deliberately un-kernelled.
+    -- The runtime returns opaque `cssRule` / `cssProp` structs (not String),
+    -- so a "returns String" kernel sig would cause `rt.Coerce[[]string]` to
+    -- panic at the list boundary in Tailwind. Only helpers the runtime
+    -- confirms return `string` get kernel entries below.
+    ("Css", "shadow") ->
+        -- Runtime: Sprintf("%v %v %v %v", …) → String.
+        Just $ T.Forall ["a", "b", "c"]
+            (T.TLambda (T.TVar "a")
+                (T.TLambda (T.TVar "b")
+                    (T.TLambda (T.TVar "c")
+                        (T.TLambda stringType stringType))))
+    ("Css", "rgb") ->
+        Just $ T.Forall []
+            (T.TLambda intType
+                (T.TLambda intType (T.TLambda intType stringType)))
+    ("Css", "rgba") ->
+        Just $ T.Forall []
+            (T.TLambda intType
+                (T.TLambda intType
+                    (T.TLambda intType (T.TLambda floatType stringType))))
+    ("Css", "hsl") ->
+        Just $ T.Forall []
+            (T.TLambda intType
+                (T.TLambda intType (T.TLambda intType stringType)))
+    ("Css", "hsla") ->
+        Just $ T.Forall []
+            (T.TLambda intType
+                (T.TLambda intType
+                    (T.TLambda intType (T.TLambda floatType stringType))))
+    ("Log", "printlnT") ->
+        Just $ T.Forall ["a", "e"]
+            (T.TLambda (T.TVar "a")
+                (T.TType ModuleName.task "Task" [T.TVar "e", T.TUnit]))
+    -- Live.app: the signature carries ALL user-code-facing field types
+    -- so the record constraint propagates Model/Msg into user init/update/view/
+    -- subscriptions. This is the big TEA-typing lever.
+    ("Live", "app") ->
+        -- init receives the per-request context as a plain polymorphic
+        -- `req`. Earlier this slot was typed `Dict String v` to pin
+        -- the outer shape, but user init bodies (skyshop) narrow `v`
+        -- via nested Dict.get so HM reached `Dict String (Dict ? ?)`
+        -- and the runtime's `map[string]any{"path":…}` fails the
+        -- reflect Call at init time. Leaving req free keeps the
+        -- runtime's generic map compatible with any inferred shape;
+        -- return-only TVar defaulting collapses it to `rt.SkyValue`
+        -- in the emitted sig for examples that don't touch req.
+        Just $ T.Forall ["model", "msg", "page", "e", "req"]
+            (T.TLambda
+                (T.TRecord
+                    (Map.fromList
+                        [ ("init", T.FieldType 0
+                            (T.TLambda (T.TVar "req")
+                                (T.TTuple (T.TVar "model") cmdTypeOfMsg [])))
+                        , ("update", T.FieldType 1
+                            (T.TLambda (T.TVar "msg")
+                                (T.TLambda (T.TVar "model")
+                                    (T.TTuple (T.TVar "model") cmdTypeOfMsg []))))
+                        , ("view", T.FieldType 2
+                            (T.TLambda (T.TVar "model") vnodeType))
+                        , ("subscriptions", T.FieldType 3
+                            (T.TLambda (T.TVar "model") subTypeOfMsg))
+                        , ("routes", T.FieldType 4
+                            (T.TType ModuleName.list "List"
+                                [T.TType (ModuleName.Canonical "") "Route" []]))
+                        , ("notFound", T.FieldType 5 (T.TVar "page"))
+                        ])
+                    Nothing)
+                (T.TType ModuleName.task "Task" [T.TVar "e", T.TUnit]))
+    -- Live.route: String -> page -> Route
+    ("Live", "route") ->
+        Just $ T.Forall ["page"]
+            (T.TLambda stringType
+                (T.TLambda (T.TVar "page")
+                    (T.TType (ModuleName.Canonical "") "Route" [])))
+    -- Json.Decode (kernel mod "JsonDec") — signatures carry the
+    -- opaque Sky `Decoder a` as TType "Decoder" [a]; the codegen
+    -- resolves Decoder to rt.SkyDecoder via runtimeTypedMap.
+    ("JsonDec", "string") ->
+        Just $ T.Forall [] (decoderOf stringType)
+    ("JsonDec", "int") ->
+        Just $ T.Forall [] (decoderOf intType)
+    ("JsonDec", "float") ->
+        Just $ T.Forall [] (decoderOf floatType)
+    ("JsonDec", "bool") ->
+        Just $ T.Forall [] (decoderOf boolType)
+    ("JsonDec", "decodeString") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (decoderOf (T.TVar "a"))
+                (T.TLambda stringType
+                    (T.TType ModuleName.result_ "Result"
+                        [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" [], T.TVar "a"])))
+    ("JsonDec", "field") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda stringType
+                (T.TLambda (decoderOf (T.TVar "a")) (decoderOf (T.TVar "a"))))
+    ("JsonDec", "at") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TType ModuleName.list "List" [stringType])
+                (T.TLambda (decoderOf (T.TVar "a")) (decoderOf (T.TVar "a"))))
+    -- Decode.index : Int -> Decoder a -> Decoder a
+    ("JsonDec", "index") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda intType
+                (T.TLambda (decoderOf (T.TVar "a")) (decoderOf (T.TVar "a"))))
+    ("JsonDec", "list") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (decoderOf (T.TVar "a"))
+                (decoderOf (T.TType ModuleName.list "List" [T.TVar "a"])))
+    ("JsonDec", "map") ->
+        Just $ T.Forall ["a", "b"]
+            (T.TLambda (T.TLambda (T.TVar "a") (T.TVar "b"))
+                (T.TLambda (decoderOf (T.TVar "a")) (decoderOf (T.TVar "b"))))
+    ("JsonDec", "andThen") ->
+        Just $ T.Forall ["a", "b"]
+            (T.TLambda (T.TLambda (T.TVar "a") (decoderOf (T.TVar "b")))
+                (T.TLambda (decoderOf (T.TVar "a")) (decoderOf (T.TVar "b"))))
+    ("JsonDec", "succeed") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TVar "a") (decoderOf (T.TVar "a")))
+    ("JsonDec", "fail") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda stringType (decoderOf (T.TVar "a")))
+    ("JsonDec", "oneOf") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda
+                (T.TType ModuleName.list "List" [decoderOf (T.TVar "a")])
+                (decoderOf (T.TVar "a")))
+    ("JsonDec", "map2") ->
+        Just $ T.Forall ["a", "b", "c"]
+            (T.TLambda (T.TLambda (T.TVar "a") (T.TLambda (T.TVar "b") (T.TVar "c")))
+                (T.TLambda (decoderOf (T.TVar "a"))
+                    (T.TLambda (decoderOf (T.TVar "b"))
+                        (decoderOf (T.TVar "c")))))
+    ("JsonDec", "map3") ->
+        Just $ T.Forall ["a", "b", "c", "d"]
+            (T.TLambda (T.TLambda (T.TVar "a")
+                (T.TLambda (T.TVar "b")
+                    (T.TLambda (T.TVar "c") (T.TVar "d"))))
+                (T.TLambda (decoderOf (T.TVar "a"))
+                    (T.TLambda (decoderOf (T.TVar "b"))
+                        (T.TLambda (decoderOf (T.TVar "c"))
+                            (decoderOf (T.TVar "d"))))))
+    -- Json.Decode.Pipeline (kernel mod "JsonDecP")
+    ("JsonDecP", "required") ->
+        Just $ T.Forall ["a", "b"]
+            (T.TLambda stringType
+                (T.TLambda (decoderOf (T.TVar "a"))
+                    (T.TLambda (decoderOf (T.TLambda (T.TVar "a") (T.TVar "b")))
+                        (decoderOf (T.TVar "b")))))
+    ("JsonDecP", "optional") ->
+        Just $ T.Forall ["a", "b"]
+            (T.TLambda stringType
+                (T.TLambda (decoderOf (T.TVar "a"))
+                    (T.TLambda (T.TVar "a")
+                        (T.TLambda (decoderOf (T.TLambda (T.TVar "a") (T.TVar "b")))
+                            (decoderOf (T.TVar "b"))))))
+    -- Std.Db kernel types: row accessors return primitives; the
+    -- heavier functions (open/exec/execRaw/query) are typed at the
+    -- Sky level even though the runtime takes/returns `any`, because
+    -- user wrappers benefit from HM propagating `String`/`List a`/
+    -- `Result Error …` through the call graph. The kernel carries
+    -- `Db` as an opaque nominal type — mapped to `rt.SkyDb` in
+    -- codegen via runtimeTypedMap — so wrappers that thread `conn`
+    -- through get a non-`any` param in their emitted sig.
+    -- Std.Db — user wrappers now use `Os.exit 1` (polymorphic return)
+    -- in the Err branch instead of `identity ""` so typed kernel sigs
+    -- don't reject the fatal fallback.
+    ("Db", "open") ->
+        Just $ T.Forall []
+            (T.TLambda stringType
+                (T.TLambda stringType
+                    (T.TType ModuleName.result_ "Result"
+                        [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                        , T.TType (ModuleName.Canonical "") "Db" []])))
+    ("Db", "connect") ->
+        Just $ T.Forall []
+            (T.TLambda T.TUnit
+                (T.TType ModuleName.result_ "Result"
+                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                    , T.TType (ModuleName.Canonical "") "Db" []]))
+    ("Db", "exec") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TType (ModuleName.Canonical "") "Db" [])
+                (T.TLambda stringType
+                    (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"])
+                        (T.TType ModuleName.result_ "Result"
+                            [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                            , intType]))))
+    ("Db", "execRaw") ->
+        Just $ T.Forall []
+            (T.TLambda (T.TType (ModuleName.Canonical "") "Db" [])
+                (T.TLambda stringType
+                    (T.TType ModuleName.result_ "Result"
+                        [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                        , intType])))
+    ("Db", "query") ->
+        -- Runtime returns List (Dict String any); user code reads
+        -- strings via getField so typing as Dict String String matches
+        -- every example's usage pattern.
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TType (ModuleName.Canonical "") "Db" [])
+                (T.TLambda stringType
+                    (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"])
+                        (T.TType ModuleName.result_ "Result"
+                            [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                            , T.TType ModuleName.list "List"
+                                [T.TType ModuleName.dict "Dict"
+                                    [stringType, stringType]]]))))
+    ("Db", "getField") ->
+        Just $ T.Forall ["row"]
+            (T.TLambda stringType
+                (T.TLambda (T.TVar "row") stringType))
+    ("Db", "getString") ->
+        Just $ T.Forall ["row"]
+            (T.TLambda stringType
+                (T.TLambda (T.TVar "row") stringType))
+    ("Db", "getInt") ->
+        Just $ T.Forall ["row"]
+            (T.TLambda stringType
+                (T.TLambda (T.TVar "row") intType))
+    ("Db", "getBool") ->
+        Just $ T.Forall ["row"]
+            (T.TLambda stringType
+                (T.TLambda (T.TVar "row") boolType))
+    -- Slog — structured logging, first arg is a message, second is a list of
+    -- key-value pairs. We treat the second as List a for flexibility.
+    ("Slog", "info") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda stringType
+                (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"]) T.TUnit))
+    ("Slog", "warn") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda stringType
+                (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"]) T.TUnit))
+    ("Slog", "error") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda stringType
+                (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"]) T.TUnit))
+    ("Slog", "debug") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda stringType
+                (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"]) T.TUnit))
     _ -> Nothing
 
 
@@ -711,3 +1637,33 @@ floatType = T.TType ModuleName.basics "Float" []
 stringType = T.TType ModuleName.basics "String" []
 boolType = T.TType ModuleName.basics "Bool" []
 charType = T.TType ModuleName.basics "Char" []
+
+vnodeType, attrType, attrListType, vnodeListType, cmdType, subType :: T.Type
+-- Use empty Canonical so VNode/Attribute unify with user annotations
+-- that resolve VNode to Canonical "" (implicitly imported).
+vnodeType = T.TType (ModuleName.Canonical "") "VNode" []
+-- Attribute is a transparent alias for (String, String). See
+-- actuallyUnify's Alias case.
+attrType =
+    T.TAlias (ModuleName.Canonical "") "Attribute" []
+        (T.Filled (T.TTuple stringType stringType []))
+attrListType = T.TType ModuleName.list "List" [attrType]
+vnodeListType = T.TType ModuleName.list "List" [vnodeType]
+-- Use Canonical "" so Cmd/Sub unify with user annotations that
+-- resolve to empty-home module names (same as VNode/Attribute).
+cmdType = T.TType (ModuleName.Canonical "") "Cmd" [T.TVar "msg"]
+subType = T.TType (ModuleName.Canonical "") "Sub" [T.TVar "msg"]
+
+-- Inside Live.app's record type, the TVar "msg" is shared across
+-- init/update/subscriptions so the three coordinate. cmdTypeOfMsg /
+-- subTypeOfMsg reference the same "msg" var as the top-level Forall
+-- binder does.
+cmdTypeOfMsg, subTypeOfMsg :: T.Type
+cmdTypeOfMsg = T.TType (ModuleName.Canonical "") "Cmd" [T.TVar "msg"]
+subTypeOfMsg = T.TType (ModuleName.Canonical "") "Sub" [T.TVar "msg"]
+
+-- Decoder wrapper. Home is empty so it unifies with runtimeTypedMap's
+-- "Decoder" lookup (which picks up rt.SkyDecoder) regardless of where
+-- the user imports from.
+decoderOf :: T.Type -> T.Type
+decoderOf inner = T.TType (ModuleName.Canonical "") "Decoder" [inner]

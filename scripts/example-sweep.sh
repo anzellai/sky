@@ -81,9 +81,16 @@ run_example() {
     (
         cd "$dir"
         if [[ $CLEAN -eq 1 ]]; then
-            rm -rf sky-out .skycache
+            # Clean the generated output and the source-hashed lowered
+            # cache, but keep `.skycache/ffi/` (FFI bindings — regenerating
+            # these for skyshop costs 15+ min of Stripe+Firebase
+            # introspection each sweep) and `.skydeps/` (Sky-package
+            # lockfile). The compiler invalidates `ffi/` entries on
+            # upstream Go module change via content hash, so keeping
+            # them between sweeps is safe.
+            rm -rf sky-out .skycache/lowered .skycache/go
         fi
-        if [[ -f sky.toml ]] && grep -q '^\[go\.dependencies\]' sky.toml; then
+        if [[ -f sky.toml ]] && grep -qE '^\["?go\.dependencies"?\]' sky.toml; then
             "$SKY" install >/tmp/sky-install-"$name".log 2>&1 || { echo "install failed"; exit 2; }
         fi
         "$SKY" build src/Main.sky >/tmp/sky-build-"$name".log 2>&1

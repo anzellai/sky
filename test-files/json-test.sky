@@ -21,4 +21,4 @@ main =
                 println s
 
             Err e ->
-                println e
+                println (errorToString e)

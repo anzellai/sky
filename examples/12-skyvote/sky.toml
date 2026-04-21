@@ -7,6 +7,8 @@ root = "src"
 
 [live]
 port = 8000
+store = "sqlite"
+storePath = "skyvote.db"
 
 [database]
 driver = "sqlite"

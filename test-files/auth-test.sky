@@ -13,7 +13,7 @@ doTest db =
             afterRegister db uid
 
         Err e ->
-            println e
+            println (errorToString e)
 
 
 afterRegister db uid =
@@ -23,7 +23,7 @@ afterRegister db uid =
             tryToken
 
         Err e ->
-            println e
+            println (errorToString e)
 
 
 tryToken =
@@ -33,7 +33,7 @@ tryToken =
             verifyTok tok
 
         Err e ->
-            println e
+            println (errorToString e)
 
 
 verifyTok tok =
@@ -43,14 +43,14 @@ verifyTok tok =
             println "auth ok"
 
         Err e ->
-            println e
+            println (errorToString e)
 
 
 main =
-    case Db.connect ":memory:" of
+    case Db.open "sqlite" ":memory:" of
 
         Ok db ->
             doTest db
 
         Err e ->
-            println e
+            println (errorToString e)

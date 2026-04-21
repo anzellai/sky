@@ -43,7 +43,7 @@ import Os
 -- label.
 type Test
     = Leaf String (() -> TestResult)
-    | Suite String List Test
+    | Suite String (List Test)
 
 type TestResult
     = Passed

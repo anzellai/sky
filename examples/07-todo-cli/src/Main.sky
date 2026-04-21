@@ -16,6 +16,7 @@ import Sky.Core.String as String
 import Sky.Core.Result as Result
 import Sky.Core.Maybe as Maybe
 import Std.Db as Db
+import Sky.Core.Error as Error
 import Os
 import Log.Slog as Slog
 import Std.Log exposing (println)
@@ -175,7 +176,7 @@ main =
     case db of
 
         Err e ->
-            println ("Database error: " ++ e)
+            println ("Database error: " ++ Error.toString e)
 
         Ok conn ->
             let
