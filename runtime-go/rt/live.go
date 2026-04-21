@@ -455,8 +455,24 @@ func Css_remT(n float64) string {
 }
 func Css_em(n any) any  { return fmt.Sprintf("%vem", n) }
 func Css_pct(n any) any { return fmt.Sprintf("%v%%", n) }
-func Css_hex(s any) any { return fmt.Sprintf("#%v", s) }
-func Css_hexT(s string) string { return "#" + s }
+// Css.hex accepts both "#fff" and "fff" forms — the leading '#' is
+// idempotent so users can paste palette values either way without
+// accidentally emitting ##fff which browsers treat as an unknown
+// colour and silently ignore.
+func Css_hex(s any) any {
+	str := fmt.Sprintf("%v", s)
+	if strings.HasPrefix(str, "#") {
+		return str
+	}
+	return "#" + str
+}
+
+func Css_hexT(s string) string {
+	if strings.HasPrefix(s, "#") {
+		return s
+	}
+	return "#" + s
+}
 
 // Common property shortcuts (name in Sky = lowerCamel → Css_<name>)
 func cssP(k string) func(any) any {

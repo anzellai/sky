@@ -401,6 +401,27 @@ func narrowReflectValue(src reflect.Value, target reflect.Type) reflect.Value {
 	if target.Kind() == reflect.Slice && src.Kind() == reflect.Slice {
 		return coerceSliceValue(src, target)
 	}
+	// Pointer → value dereference: FFI constructors return `*T` (via
+	// `new(pkg.T)`) for builder-pattern chaining, but the consuming
+	// setter often takes `T` (e.g. `[]ChatCompletionMessage` not
+	// `[]*ChatCompletionMessage`). Auto-dereference so the pipeline
+	// flows without the user having to synthesise a deref in Sky.
+	if src.Kind() == reflect.Ptr && !src.IsNil() {
+		elem := src.Elem()
+		if elem.Type().AssignableTo(target) {
+			return elem
+		}
+		if narrowed := narrowReflectValue(elem, target); narrowed.IsValid() {
+			return narrowed
+		}
+	}
+	// Value → pointer wrap: the inverse case, also a common FFI shape
+	// mismatch when a method expects `*T` but we have a `T` value.
+	if target.Kind() == reflect.Ptr && src.Type().AssignableTo(target.Elem()) {
+		p := reflect.New(target.Elem())
+		p.Elem().Set(src)
+		return p
+	}
 	// Sky generic containers: SkyMaybe[any]/SkyResult[any,any]/SkyTask[any,any]
 	// → SkyMaybe[T]/SkyResult[E,A]/SkyTask[E,A]. Go treats these distinct
 	// generic instantiations as unrelated nominal types, so a record field
@@ -2556,7 +2577,15 @@ func Result_map(fn any, result any) any {
 func Result_andThen(fn any, result any) any {
 	tag, ok, err := anyResultView(result)
 	if tag < 0 {
-		return Ok[any, any](SkyCall(fn, result))
+		// Should not happen now that every FFI call returns a typed
+		// Result per the Sky trust-boundary rule — but tolerate it
+		// defensively: treat the bare value as an already-unwrapped Ok
+		// and trust fn to return the next Result. Raising Err here
+		// would turn an FFI-wrapper regression into a user-visible
+		// runtime error with no useful stack; better to keep the
+		// pipeline flowing and let the coercion at the Task boundary
+		// surface a cleaner message if the shape is genuinely wrong.
+		return SkyCall(fn, result)
 	}
 	if tag == 0 {
 		return SkyCall(fn, ok)
@@ -2576,9 +2605,18 @@ func Result_mapAnyT(fn any, result any) any {
 	return Err[any, any](err)
 }
 
+// Result.andThen for the any-typed path. Semantics:
+//   - Ok(x) → fn(x); trust fn's output (expected to be a Result)
+//   - Err(e) → Err(e)
+//   - bare value (shouldn't happen after the FFI trust-boundary fix
+//     but kept defensive) → treat as already-unwrapped Ok and trust
+//     fn to return the next Result.
+// Previously the bare-value branch wrapped fn's result in Ok, which
+// double-wrapped whenever fn itself returned a Result and surfaced
+// `SkyResult(SkyResult(...))` that panicked at the Task boundary.
 func Result_andThenAnyT(fn any, result any) any {
 	tag, ok, err := anyResultView(result)
-	if tag < 0 { return Ok[any, any](SkyCall(fn, result)) }
+	if tag < 0 { return SkyCall(fn, result) }
 	if tag == 0 { return SkyCall(fn, ok) }
 	return Err[any, any](err)
 }
@@ -3322,6 +3360,29 @@ func Coerce[T any](v any) T {
 			}
 			return out.Interface().(T)
 		}
+		// Pointer ↔ value auto-adapt. FFI constructors return `*T` via
+		// `new(pkg.T)` (builder chain-friendly), but consuming APIs may
+		// expect `T` by value (common with OpenAI / Stripe / Firestore
+		// SDKs whose request structs use `[]Foo` not `[]*Foo`). The
+		// reverse — `T` → `*T` — covers methods that take a pointer
+		// receiver and the user has a value in hand. These auto-adapts
+		// are zero-cost and symmetric so Sky pipeline code doesn't
+		// need to sprinkle explicit deref/addr operators the language
+		// doesn't expose.
+		if rv.Kind() == reflect.Ptr && !rv.IsNil() {
+			elem := rv.Elem()
+			if elem.Type().AssignableTo(targetTy) {
+				return elem.Interface().(T)
+			}
+			if elem.Type().ConvertibleTo(targetTy) && safeReflectConvert(elem.Kind(), targetTy.Kind()) {
+				return elem.Convert(targetTy).Interface().(T)
+			}
+		}
+		if targetTy.Kind() == reflect.Ptr && rv.Type().AssignableTo(targetTy.Elem()) {
+			p := reflect.New(targetTy.Elem())
+			p.Elem().Set(rv)
+			return p.Interface().(T)
+		}
 	}
 	panic(fmt.Sprintf("rt.Coerce: expected %T, got %T (%v)", zero, v, v))
 }
@@ -3560,22 +3621,36 @@ func Task_sequenceT[E, A any](ts []SkyTask[E, A]) SkyTask[E, []A] {
 	}
 }
 
+// AnyTaskRun returns a `SkyResult[any, any]` regardless of what shape
+// the caller provided. Accepts:
+//   - Task thunk (`SkyTask[any,any]` / `func() SkyResult[any,any]` /
+//     `func() any`) — invoked and the result normalised via
+//     `anyTaskInvoke` so a `func() any` returning a bare value gets
+//     wrapped in Ok (Sky's FFI trust boundary).
+//   - Already-resolved SkyResult — returned as-is (Sky.Http.Server's
+//     `listen` returns `Ok ()` / `Err msg` directly rather than a
+//     deferred thunk).
+//   - Bare value — wrapped in Ok defensively.
+// The unified shape means every caller of AnyTaskRun sees the same
+// `SkyResult[any, any]` contract and can case on Tag without a
+// `tag < 0` escape hatch.
 func AnyTaskRun(task any) any {
-	// Accept either a Task thunk (`func() any` or the typed
-	// `SkyTask[any,any]`), which we invoke, or a value that's
-	// already the result of running the task (SkyResult /
-	// SkyTask). Sky.Http.Server's `listen` is an example that
-	// returns `Ok (()) / Err msg` directly rather than a deferred
-	// thunk — we treat that as "task already done".
-	switch t := task.(type) {
-	case SkyTask[any, any]:
-		return t()
-	case func() SkyResult[any, any]:
-		return t()
-	case func() any:
-		return t()
+	if r, ok := task.(SkyResult[any, any]); ok {
+		return r
 	}
-	return task
+	rv := reflect.ValueOf(task)
+	if rv.IsValid() && rv.Kind() == reflect.Func {
+		return anyTaskInvoke(task)
+	}
+	// Non-task, non-Result input (rare, shouldn't happen from typed
+	// Sky code): if it already looks like a SkyResult shape, pass it
+	// through; otherwise wrap as Ok so downstream case-on-Tag logic
+	// still works. This entry point guarantees a SkyResult-shaped
+	// output so callers never see a tag < 0 escape hatch.
+	if tag, _, _ := anyResultView(task); tag >= 0 {
+		return task
+	}
+	return Ok[any, any](task)
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -5732,40 +5807,47 @@ func SkyFfiRet_maybeString(p *string) any {
 // generated <TypeName><FieldName> getter wrapper so the per-field
 // emission stays a one-liner (keeps stripe_bindings.go & friends
 // manageable in size).
+// SkyFfiFieldGet — reflect-based struct-field read, returning a
+// typed `SkyResult[any, any]`. Every FFI call is a Sky trust boundary
+// and must return `Result Error T` per CLAUDE.md §FFI — infallible
+// getters wrap in Ok, so downstream `Result.andThen` / `Result.traverse`
+// see the shape they expect.
 func SkyFfiFieldGet(recv any, field string) any {
 	if recv == nil {
-		return Err[any, any](field + ": nil receiver")
+		return Err[any, any](ErrFfi(field + ": nil receiver"))
 	}
 	v := reflect.ValueOf(recv)
 	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
 		if v.IsNil() {
-			return Err[any, any](field + ": nil receiver")
+			return Err[any, any](ErrFfi(field + ": nil receiver"))
 		}
 		v = v.Elem()
 	}
 	if v.Kind() != reflect.Struct {
-		return Err[any, any](field + ": receiver is not a struct")
+		return Err[any, any](ErrFfi(field + ": receiver is not a struct"))
 	}
 	f := v.FieldByName(field)
 	if !f.IsValid() {
-		return Err[any, any](field + ": no such field")
+		return Err[any, any](ErrFfi(field + ": no such field"))
 	}
-	return f.Interface()
+	return Ok[any, any](f.Interface())
 }
 
 // SkyFfiFieldSet — reflect-based struct-field write, returning the
-// (mutated or copied) receiver for pipeline-friendly |> composition.
-// value is Sky-any; assignable or convertible types coerce automatically.
+// (mutated or copied) receiver as `Ok(receiver)` for pipeline-friendly
+// |> composition. value is Sky-any; assignable or convertible types
+// coerce automatically. All FFI helpers return `SkyResult[any, any]`
+// per the Sky trust boundary rule.
 func SkyFfiFieldSet(value any, recv any, field string) any {
 	if recv == nil {
-		return Err[any, any](field + ": nil receiver")
+		return Err[any, any](ErrFfi(field + ": nil receiver"))
 	}
 	rv := reflect.ValueOf(recv)
 	var addrable reflect.Value
 	switch rv.Kind() {
 	case reflect.Ptr:
 		if rv.IsNil() {
-			return Err[any, any](field + ": nil receiver")
+			return Err[any, any](ErrFfi(field + ": nil receiver"))
 		}
 		addrable = rv.Elem()
 	case reflect.Struct:
@@ -5774,17 +5856,17 @@ func SkyFfiFieldSet(value any, recv any, field string) any {
 		addrable = tmp.Elem()
 		rv = tmp
 	default:
-		return Err[any, any](field + ": receiver is not a struct or pointer")
+		return Err[any, any](ErrFfi(field + ": receiver is not a struct or pointer"))
 	}
 	if addrable.Kind() != reflect.Struct {
-		return Err[any, any](field + ": receiver is not a struct")
+		return Err[any, any](ErrFfi(field + ": receiver is not a struct"))
 	}
 	f := addrable.FieldByName(field)
 	if !f.IsValid() {
-		return Err[any, any](field + ": no such field")
+		return Err[any, any](ErrFfi(field + ": no such field"))
 	}
 	if !f.CanSet() {
-		return Err[any, any](field + ": field is not settable")
+		return Err[any, any](ErrFfi(field + ": field is not settable"))
 	}
 	if value == nil {
 		f.Set(reflect.Zero(f.Type()))
@@ -5795,10 +5877,10 @@ func SkyFfiFieldSet(value any, recv any, field string) any {
 		} else if vv.Type().ConvertibleTo(f.Type()) {
 			f.Set(vv.Convert(f.Type()))
 		} else {
-			return Err[any, any](field + ": value type incompatible with field")
+			return Err[any, any](ErrFfi(field + ": value type incompatible with field"))
 		}
 	}
-	return rv.Interface()
+	return Ok[any, any](rv.Interface())
 }
 
 // SkyFfiReflectCall invokes a reflect.Value of a function with Sky-side args.
@@ -5855,6 +5937,14 @@ func SkyFfiReflectCall(fn reflect.Value, hasError bool, args []any) any {
 	return unpackReflectResults(results, hasError)
 }
 
+// unpackReflectResults — reflect-call result adapter. Per the Sky FFI
+// trust-boundary rule, every FFI call returns `SkyResult[any, any]` —
+// infallible single-return wraps in Ok, multi-return packs into a
+// SkyTuple2/N and wraps in Ok, void returns produce Ok(struct{}{}).
+// Previously the infallible single-return path surfaced the bare value
+// which forced downstream `|> Result.andThen` pipelines to defensively
+// promote, breaking on round-trips through Task.andThen / the Task
+// boundary coercion.
 func unpackReflectResults(results []reflect.Value, hasError bool) any {
 	n := len(results)
 	switch {
@@ -5867,7 +5957,7 @@ func unpackReflectResults(results []reflect.Value, hasError bool) any {
 		}
 		return Ok[any, any](struct{}{})
 	case n == 1:
-		return results[0].Interface()
+		return Ok[any, any](results[0].Interface())
 	case hasError:
 		err, _ := results[n-1].Interface().(error)
 		if err != nil {
@@ -5886,7 +5976,7 @@ func unpackReflectResults(results []reflect.Value, hasError bool) any {
 		for i := 0; i < n; i++ {
 			out[i] = results[i].Interface()
 		}
-		return out
+		return Ok[any, any](out)
 	}
 }
 
