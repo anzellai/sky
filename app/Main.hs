@@ -152,12 +152,17 @@ verifyOne cwd dir = do
         if skipGui
             then putStrLn $ "  [skip] " ++ name ++ ": GUI example on Linux (set SKY_SKIP_GUI=0 to run)"
             else do
-                -- Clean build.
+                -- Clean build. Preserve `.skycache/ffi/` (FFI bindings —
+                -- regenerating skyshop's Stripe + Firebase takes 15+ min
+                -- of `sky-ffi-inspect` per run) and `.skydeps/` (Sky
+                -- package lockfile). Compiler invalidates `ffi/`
+                -- entries on upstream Go module change via content hash,
+                -- so keeping them between sweeps is safe.
                 _ <- System.Process.readProcessWithExitCode "sh"
                     [ "-c"
                     , unwords
                         [ "cd", shellQuote dir, "&&"
-                        , "rm -rf sky-out .skycache", "&&"
+                        , "rm -rf sky-out .skycache/lowered .skycache/go", "&&"
                         , shellQuote (cwd ++ "/sky-out/sky"), "build src/Main.sky"
                         , ">", shellQuote logPath, "2>&1"
                         ]

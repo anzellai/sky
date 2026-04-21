@@ -27,7 +27,7 @@
 module Sky.Lsp.Server (runLsp) where
 
 import Control.Exception (SomeException, fromException, throwIO, try)
-import Control.Monad (forever, when)
+import Control.Monad (when)
 import Data.List (isPrefixOf, sortBy)
 import Data.Ord (comparing)
 import qualified Data.Aeson as A
@@ -43,6 +43,7 @@ import Data.Maybe (fromMaybe, mapMaybe)
 import qualified Data.Text as T
 
 import System.IO
+import qualified System.IO as IO
 import System.Exit (exitSuccess, exitWith, ExitCode(..))
 
 import qualified Sky.Parse.Module as Parse
@@ -92,26 +93,50 @@ runLsp = do
     idx      <- IORef.newIORef (Map.empty :: Map.Map FilePath Idx.Index)
     shutdown <- IORef.newIORef False
     let st = ServerState { ssDocs = docs, ssIndex = idx, ssShutdown = shutdown }
-    forever $ do
-        r <- try (handleOne st) :: IO (Either SomeException ())
-        case r of
-            Left e -> case fromException e :: Maybe ExitCode of
-                -- `exitSuccess`/`exitWith` throws ExitCode as an exception.
-                -- Propagate so the LSP `exit` notification actually
-                -- terminates the process. All other exceptions are
-                -- swallowed — LSP servers must survive malformed
-                -- per-request input.
-                Just code -> throwIO code
-                Nothing   -> return ()
-            Right _ -> return ()
+        loop = do
+            r <- try (handleOne st) :: IO (Either SomeException Bool)
+            case r of
+                Left e -> case fromException e :: Maybe ExitCode of
+                    -- `exitSuccess`/`exitWith` throws ExitCode as an
+                    -- exception. Propagate so the LSP `exit`
+                    -- notification actually terminates the process.
+                    -- All other exceptions are swallowed — LSP
+                    -- servers must survive malformed per-request
+                    -- input.
+                    Just code -> throwIO code
+                    Nothing   -> loop
+                Right continue -> if continue then loop else clientHangup st
+    loop
 
 
-handleOne :: ServerState -> IO ()
+-- | Treat client-closed stdin as graceful shutdown so the process
+-- actually terminates instead of spinning on empty readMessage
+-- forever (was the cause of LSP test specs leaking child processes
+-- and deadlocking the test harness when cabal test's hspec harness
+-- closed hin before calling terminateProcess).
+clientHangup :: ServerState -> IO ()
+clientHangup st = do
+    wasShutdown <- IORef.readIORef (ssShutdown st)
+    if wasShutdown then exitSuccess else exitWith (ExitFailure 1)
+
+
+-- | Process one LSP message. Returns True to continue the loop,
+-- False to indicate the client closed stdin (caller exits).
+handleOne :: ServerState -> IO Bool
 handleOne st = do
     msg <- readMessage
-    case A.decode (BL.fromStrict msg) of
-        Nothing  -> return ()
-        Just val -> dispatch st val
+    if BS.null msg
+        then do
+            -- readMessage returned empty: either a zero-length payload
+            -- (malformed, keep looping) OR stdin was closed. Disambiguate
+            -- via hIsEOF which inspects the underlying handle state.
+            eof <- IO.hIsEOF stdin
+            return (not eof)
+        else do
+            case A.decode (BL.fromStrict msg) of
+                Nothing  -> return ()
+                Just val -> dispatch st val
+            return True
 
 
 -- ─── Framing ───────────────────────────────────────────────────────────
