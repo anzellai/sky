@@ -741,8 +741,20 @@ func renderVNode(n VNode, handlers map[string]any) string {
 		return sb.String()
 	}
 	sb.WriteString(">")
+	// <script> and <style> bodies are raw text in HTML (CDATA-like):
+	// escaping `'` to `&#39;` breaks the JS at parse time. Sky users
+	// pass the body as a plain string (`script [] "code here"`), which
+	// becomes a text VNode. Emit text children verbatim under these
+	// tags; sub-elements still render normally (rare but valid for
+	// <style> @import chains). Matches html/template's behaviour for
+	// JSStr / CSSText contexts.
+	rawBody := n.Tag == "script" || n.Tag == "style"
 	for _, c := range n.Children {
-		sb.WriteString(renderVNode(c, handlers))
+		if rawBody && c.Kind == "text" {
+			sb.WriteString(c.Text)
+		} else {
+			sb.WriteString(renderVNode(c, handlers))
+		}
 	}
 	sb.WriteString("</")
 	sb.WriteString(n.Tag)
