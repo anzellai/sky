@@ -4,7 +4,7 @@
 
 > **Experimental · v0.9** — Sky is under active development. APIs and internals may change between minor versions.
 
-Sky is an experimental fullstack programming language that combines **Go's pragmatism** with **Elm's elegance**. You write functional, strongly-typed code and ship a single portable binary.
+Sky is an experimental fullstack programming language that combines **Go's pragmatism** with **Elm's elegance**. You write functional, strongly-typed code with a batteries-included stdlib — `Sky.Live` for server-driven UI, `Std.Db` for SQL persistence, `Std.Auth` for sessions, `Sky.Core.Error` for unified error handling — import any Go package with auto-generated FFI bindings (no hand-written glue), and ship a single portable binary. Sky's explicit types, exhaustive pattern matching, and strict `Task` effect boundary make it **AI-friendly by design**: both humans and LLMs tend to write code that compiles the first time.
 
 ```elm
 module Main exposing (main)
