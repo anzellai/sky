@@ -27,7 +27,7 @@
 module Sky.Lsp.Server (runLsp) where
 
 import Control.Exception (SomeException, fromException, throwIO, try)
-import Control.Monad (when)
+import Control.Monad (forever, when)
 import Data.List (isPrefixOf, sortBy)
 import Data.Ord (comparing)
 import qualified Data.Aeson as A
@@ -43,7 +43,6 @@ import Data.Maybe (fromMaybe, mapMaybe)
 import qualified Data.Text as T
 
 import System.IO
-import qualified System.IO as IO
 import System.Exit (exitSuccess, exitWith, ExitCode(..))
 
 import qualified Sky.Parse.Module as Parse
@@ -93,50 +92,26 @@ runLsp = do
     idx      <- IORef.newIORef (Map.empty :: Map.Map FilePath Idx.Index)
     shutdown <- IORef.newIORef False
     let st = ServerState { ssDocs = docs, ssIndex = idx, ssShutdown = shutdown }
-        loop = do
-            r <- try (handleOne st) :: IO (Either SomeException Bool)
-            case r of
-                Left e -> case fromException e :: Maybe ExitCode of
-                    -- `exitSuccess`/`exitWith` throws ExitCode as an
-                    -- exception. Propagate so the LSP `exit`
-                    -- notification actually terminates the process.
-                    -- All other exceptions are swallowed — LSP
-                    -- servers must survive malformed per-request
-                    -- input.
-                    Just code -> throwIO code
-                    Nothing   -> loop
-                Right continue -> if continue then loop else clientHangup st
-    loop
+    forever $ do
+        r <- try (handleOne st) :: IO (Either SomeException ())
+        case r of
+            Left e -> case fromException e :: Maybe ExitCode of
+                -- `exitSuccess`/`exitWith` throws ExitCode as an exception.
+                -- Propagate so the LSP `exit` notification actually
+                -- terminates the process. All other exceptions are
+                -- swallowed — LSP servers must survive malformed
+                -- per-request input.
+                Just code -> throwIO code
+                Nothing   -> return ()
+            Right _ -> return ()
 
 
--- | Treat client-closed stdin as graceful shutdown so the process
--- actually terminates instead of spinning on empty readMessage
--- forever (was the cause of LSP test specs leaking child processes
--- and deadlocking the test harness when cabal test's hspec harness
--- closed hin before calling terminateProcess).
-clientHangup :: ServerState -> IO ()
-clientHangup st = do
-    wasShutdown <- IORef.readIORef (ssShutdown st)
-    if wasShutdown then exitSuccess else exitWith (ExitFailure 1)
-
-
--- | Process one LSP message. Returns True to continue the loop,
--- False to indicate the client closed stdin (caller exits).
-handleOne :: ServerState -> IO Bool
+handleOne :: ServerState -> IO ()
 handleOne st = do
     msg <- readMessage
-    if BS.null msg
-        then do
-            -- readMessage returned empty: either a zero-length payload
-            -- (malformed, keep looping) OR stdin was closed. Disambiguate
-            -- via hIsEOF which inspects the underlying handle state.
-            eof <- IO.hIsEOF stdin
-            return (not eof)
-        else do
-            case A.decode (BL.fromStrict msg) of
-                Nothing  -> return ()
-                Just val -> dispatch st val
-            return True
+    case A.decode (BL.fromStrict msg) of
+        Nothing  -> return ()
+        Just val -> dispatch st val
 
 
 -- ─── Framing ───────────────────────────────────────────────────────────
@@ -178,19 +153,7 @@ readLine = go BS.empty
     go acc = do
         c <- BS.hGet stdin 1
         if BS.null c
-            then if BS.null acc
-                -- Empty read on an empty accumulator = client closed
-                -- stdin at a message boundary. Exit the server
-                -- immediately rather than propagating empty bytes up
-                -- through readMessage (which used to loop forever in
-                -- `forever handleOne`, leaking a `sky lsp` process
-                -- per LSP test spec and deadlocking the hspec harness).
-                -- `exitWith (ExitFailure 1)` matches the LSP spec
-                -- contract for "connection dropped without shutdown".
-                then exitWith (ExitFailure 1)
-                -- Partial line then EOF: treat as terminator, let the
-                -- caller process what we have.
-                else return acc
+            then return acc
             else if c == BC.pack "\n"
                 then return (stripCR acc)
                 else go (acc `BS.append` c)
@@ -854,6 +817,7 @@ collectIdents srcMod =
         Src.Tuple a b cs    -> exprIdents a ++ exprIdents b ++ concatMap exprIdents cs
         Src.List xs         -> concatMap exprIdents xs
         Src.Negate inner    -> exprIdents inner
+        Src.Paren inner     -> exprIdents inner
         _                   -> []
 
     defIdents (A.At _ d) = case d of
@@ -1069,6 +1033,16 @@ collectSemTokens srcMod =
             exprTokens locals a ++ exprTokens locals b ++ concatMap (exprTokens locals) cs
         Src.List xs -> concatMap (exprTokens locals) xs
         Src.Negate i -> exprTokens locals i
+        -- `Src.Paren (Expr)` wraps a grouped sub-expression introduced
+        -- to survive Binops precedence-climbing (added in 85ef8d1).
+        -- Recurse transparently — the parens don't emit tokens themselves
+        -- but the inner expression does. Missing match here would make
+        -- the case non-exhaustive → pattern-match exception → swallowed
+        -- by runLsp's `try`, so `handleSemanticTokens` would never send
+        -- its reply and every LSP client that requested semantic tokens
+        -- would hang waiting. Was the cause of LSP.CapabilitiesSpec's
+        -- 7th test blocking cabal test indefinitely.
+        Src.Paren e'   -> exprTokens locals e'
         Src.Accessor _ -> []
         Src.Op _       -> []
         Src.Unit       -> []
@@ -1217,6 +1191,7 @@ unusedImportActions uri rawText srcMod =
         Src.Tuple a b cs -> exprAllRefs a ++ exprAllRefs b ++ concatMap exprAllRefs cs
         Src.List xs -> concatMap exprAllRefs xs
         Src.Negate i -> exprAllRefs i
+        Src.Paren e' -> exprAllRefs e'
         _ -> []
 
     importIsUsed imp refs =
@@ -1557,6 +1532,12 @@ refsInExpr target shadowed (A.At reg e) = case e of
         ++ concatMap (refsInExpr target shadowed) cs
     Src.List xs       -> concatMap (refsInExpr target shadowed) xs
     Src.Negate inner  -> refsInExpr target shadowed inner
+    -- Recurse transparently into grouped sub-expressions. Without
+    -- this, `println (greet "world")` hid the `greet` reference
+    -- behind the `Paren` node and textDocument/definition/rename/
+    -- references all failed silently — fixture-defined by the
+    -- skychess parser-paren-preservation commit (85ef8d1).
+    Src.Paren inner   -> refsInExpr target shadowed inner
     _ -> []
   where
     letDefNames (A.At _ d) = case d of
