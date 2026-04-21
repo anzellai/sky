@@ -3479,19 +3479,21 @@ func AnyTaskAndThen(fn any, task any) any {
 
 // Task_sequence: run tasks in order, collect results as a list.
 // First error short-circuits.
+//
+// Uses anyResultView to accept both `SkyResult[any, any]` and any
+// concretely-parameterised `SkyResult[E, A]` — typed codegen emits the
+// latter (e.g. `SkyResult[any, int]` for `Task.succeed (n*n)`) and the
+// old `.(SkyResult[any, any])` assertion panicked at every call site.
 func Task_sequence(tasks any) any {
 	return func() any {
-		var xs []any
-		if tl, ok := tasks.([]any); ok {
-			xs = tl
-		}
+		xs := AsList(tasks)
 		out := make([]any, 0, len(xs))
 		for _, t := range xs {
-			r := SkyCall(t).(SkyResult[any, any])
-			if r.Tag != 0 {
-				return r
+			tag, okV, errV := anyResultView(SkyCall(t))
+			if tag != 0 {
+				return Err[any, any](errV)
 			}
-			out = append(out, r.OkValue)
+			out = append(out, okV)
 		}
 		return Ok[any, any](out)
 	}
@@ -3500,10 +3502,7 @@ func Task_sequence(tasks any) any {
 // Task_parallel: goroutine-backed fan-out; preserves input order; first err wins.
 func Task_parallel(tasks any) any {
 	return func() any {
-		var xs []any
-		if tl, ok := tasks.([]any); ok {
-			xs = tl
-		}
+		xs := AsList(tasks)
 		n := len(xs)
 		results := make([]any, n)
 		errs := make([]any, n)
@@ -3512,11 +3511,11 @@ func Task_parallel(tasks any) any {
 			wg.Add(1)
 			go func(i int, t any) {
 				defer wg.Done()
-				r := SkyCall(t).(SkyResult[any, any])
-				if r.Tag == 0 {
-					results[i] = r.OkValue
+				tag, okV, errV := anyResultView(SkyCall(t))
+				if tag == 0 {
+					results[i] = okV
 				} else {
-					errs[i] = r.ErrValue
+					errs[i] = errV
 				}
 			}(i, t)
 		}
@@ -3532,11 +3531,11 @@ func Task_parallel(tasks any) any {
 
 func Task_map(fn any, task any) any {
 	return func() any {
-		r := SkyCall(task).(SkyResult[any, any])
-		if r.Tag != 0 {
-			return r
+		tag, okV, errV := anyResultView(SkyCall(task))
+		if tag != 0 {
+			return Err[any, any](errV)
 		}
-		return Ok[any, any](SkyCall(fn, r.OkValue))
+		return Ok[any, any](SkyCall(fn, okV))
 	}
 }
 
