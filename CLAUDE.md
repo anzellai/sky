@@ -35,6 +35,15 @@ These constraints are enforced by `sky verify`, `test/Sky/ErrorUnificationSpec.h
 - **Record field enumeration sorts by `_fieldIndex`.** Any `Map.toList fields` in codegen that feeds field order (struct decl, auto-ctor, destructure) sorts by declaration index before emission. Violating this swaps auto-ctor parameters (P0-4).
 - **Secrets are typed.** `Auth.signToken` / `Auth.verifyToken` take `String`, not `any`. `fmt.Sprintf("%v", secret)` is forbidden — explicit `.(string)` assertion on a typed boundary, with minimum-length validation (P1-4).
 - **`sky check` is a superset of `sky build`.** `sky check` runs the Go emitter and invokes `go build` on the output. If `sky build` would fail, `sky check` fails (P0-1). Regression test: for every fixture in `test-files/`, both commands agree on accept/reject.
+- **New AST nodes must be matched explicitly in every walker.** When you add a constructor to `Src.Expr_` / `Src.Pattern_` / `Src.TypeAnnotation_` in `src/Sky/AST/Source.hs`, grep for EVERY case-on-AST in these modules and add an explicit arm:
+  - `src/Sky/Canonicalise/Expression.hs`, `Pattern.hs`, `Type.hs`
+  - `src/Sky/Type/Constrain/Expression.hs`, `Pattern.hs`
+  - `src/Sky/Type/Exhaustiveness.hs`
+  - `src/Sky/Format/Format.hs`
+  - `src/Sky/Build/Compile.hs` (lowerer)
+  - `src/Sky/Lsp/Server.hs` — `exprTokens`, `exprIdents`, `exprAllRefs`, `refsInExpr`, `collectSemTokens`, `collectReferences`, plus anything that walks expressions for hover / definition / rename
+
+  **Do NOT rely on `_ -> []` catchalls** — they silently drop the new node and surface as bugs that look nothing like "missing AST case" (semanticTokens hangs, definition jump fails, rename misses references). If a walker genuinely has no token/reference to emit for the new node, write `Src.MyNode inner -> walker inner` (transparent recurse) or `Src.MyNode _ -> []` (explicit no-op) — never leave it to the catchall. Regression artefact: the `Src.Paren` node landed in 85ef8d1 but wasn't wired into `Sky/Lsp/Server.hs`'s four walkers until v0.9.2 — broke `textDocument/definition` for every identifier inside parens AND hung `handleSemanticTokens` (pattern-match exception swallowed by the outer `try` loop).
 
 ## Testing Rules
 
