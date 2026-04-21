@@ -14,7 +14,7 @@ type alias Model =
     { count : Int }
 
 type Msg
-    = Tick Int
+    = Tick
     | Reset
 
 
@@ -25,7 +25,7 @@ init _r =
 update msg model =
     case msg of
 
-        Tick _ ->
+        Tick ->
             ( { model | count = model.count + 1 }, Cmd.none )
 
         Reset ->
