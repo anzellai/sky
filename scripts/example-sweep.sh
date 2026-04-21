@@ -83,7 +83,7 @@ run_example() {
         if [[ $CLEAN -eq 1 ]]; then
             rm -rf sky-out .skycache
         fi
-        if [[ -f sky.toml ]] && grep -q '^\[go\.dependencies\]' sky.toml; then
+        if [[ -f sky.toml ]] && grep -qE '^\["?go\.dependencies"?\]' sky.toml; then
             "$SKY" install >/tmp/sky-install-"$name".log 2>&1 || { echo "install failed"; exit 2; }
         fi
         "$SKY" build src/Main.sky >/tmp/sky-build-"$name".log 2>&1

@@ -7,6 +7,8 @@ root = "src"
 
 [live]
 port = 8000
+store = "sqlite"
+storePath = "skymon.db"
 
 [database]
 driver = "sqlite"
