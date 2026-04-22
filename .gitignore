@@ -104,3 +104,4 @@ legacy-ts-compiler/node_modules/
 # direnv / nix-direnv cache
 /.direnv/
 /.envrc.local
+sky.zip

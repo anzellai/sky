@@ -2479,92 +2479,147 @@ function __skyHandleResponse(seq, ackInputs, applyFn) {
   applyFn();
 }
 
-// ── Focus preservation ───────────────────────────────────────
-// Sky.Live renders whole subtrees via innerHTML replacement (both on
-// JSON patches that carry p.html and on full-HTML navigations). The
-// browser's innerHTML parser is atomic and correct — there's no
-// visibly intermediate state — but it destroys descendants, which
-// loses focus + caret position on any focused input.
+// ── Focus preservation via node identity ────────────────────
+// Sky.Live renders subtrees via innerHTML replacement (both on JSON
+// patches that carry p.html and on full-HTML navigations). Plain
+// innerHTML DESTROYS the focused input element — even though JS is
+// single-threaded, the browser's internal input-method editor (IME),
+// autofill popover, undo stack, composition state, pointer-cursor
+// blink, password manager affordances, and native caret are all
+// tied to the live DOM NODE. Destroying it and recreating a clone
+// with the same .value loses every one of those.
 //
-// Snapshot BEFORE the replacement, restore AFTER: walk back to the
-// same input in the new DOM using its stable identifier (priority:
-// id > sky-id > tag+name), then re-focus and restore selection.
-// When the focused input had in-flight typed text (i.e. is still
-// "dirty" by the authority check), the user's value wins over
-// whatever the server rendered.
+// The correct fix is to preserve node identity through the swap:
+// before the replacement, locate the focused INPUT / TEXTAREA /
+// SELECT, find its placeholder in the new HTML (by sky-id → name),
+// then SPLICE the live node into the new tree in place of the
+// placeholder. Server-side attrs (class, type, placeholder, ...)
+// get copied onto the live node, EXCEPT value/checked/selected —
+// those stay under user authority.
 //
-// This is the same pattern morphdom / Idiomorph use; it's simpler
-// and categorically correct compared to ad-hoc tree walking, which
-// cannot reliably handle structural shifts (e.g. a nav click that
-// changes the whole page) without producing duplicate or orphaned
-// nodes.
-function __skyFocusSnapshot() {
-  var el = document.activeElement;
-  if (!el || el === document.body || el === document.documentElement) return null;
-  var tag = el.tagName;
-  if (tag !== "INPUT" && tag !== "TEXTAREA" && tag !== "SELECT") return null;
-  var snap = {
-    id:             el.id || "",
-    sid:            (el.getAttribute && el.getAttribute("sky-id")) || "",
-    name:           (el.getAttribute && el.getAttribute("name")) || "",
-    tag:            tag,
-    value:          ("value" in el) ? el.value : "",
-    selectionStart: null,
-    selectionEnd:   null,
-    scrollTop:      el.scrollTop || 0,
-  };
+// The live node never gets "destroyed" — it only moves between
+// parents. .value, .selectionStart, IME state, composition buffer,
+// autofill state all survive. Keystrokes in flight land on the
+// same node regardless of where the browser has currently attached
+// it in the DOM tree.
+//
+// Re-focus at the end because replaceChild on a focused element
+// temporarily blurs it (focus isn't a property of the node, it's
+// a property of the document). Selection is lost and must be
+// restored too.
+
+// __skyReplaceHTMLPreservingFocus — the authoritative swap.
+// Drop-in for plain innerHTML assignment that keeps focused input
+// state across the replacement. Used by both __skyPatch (full body)
+// and __skyApplyPatches (p.html patches).
+function __skyReplaceHTMLPreservingFocus(container, newHTML) {
+  // Find the focused input inside this container (if any).
+  var focused = document.activeElement;
+  var focusedInside = focused && focused !== document.body &&
+      container.contains(focused) &&
+      (focused.tagName === "INPUT" ||
+       focused.tagName === "TEXTAREA" ||
+       focused.tagName === "SELECT");
+  if (!focusedInside) {
+    // Fast path — no live input to preserve.
+    container.innerHTML = newHTML;
+    return;
+  }
+
+  // Capture selection + scroll on the LIVE node before any swap
+  // (selection read throws on some input types, so catch it).
+  var selStart = null, selEnd = null;
   try {
-    snap.selectionStart = el.selectionStart;
-    snap.selectionEnd   = el.selectionEnd;
-  } catch (_) { /* some input types (number, email) throw on selection read */ }
-  return snap;
+    selStart = focused.selectionStart;
+    selEnd   = focused.selectionEnd;
+  } catch (_) {}
+  var scrollTop = focused.scrollTop;
+  var focusSid  = focused.getAttribute && focused.getAttribute("sky-id");
+  var focusName = focused.getAttribute && focused.getAttribute("name");
+  var focusTag  = focused.tagName.toLowerCase();
+
+  // Parse the new HTML into a detached element so we can surgery
+  // its tree before attaching it to the DOM.
+  var tmp = document.createElement("div");
+  tmp.innerHTML = newHTML;
+
+  // Locate the placeholder for the live focused input in the new
+  // tree. sky-id first (structural + keyed, uniquely stable), fall
+  // back to tag+name if the structure shifted but the named form
+  // field is still present.
+  var placeholder = null;
+  if (focusSid) {
+    placeholder = tmp.querySelector('[sky-id="' + focusSid.replace(/"/g, '\\"') + '"]');
+  }
+  if (!placeholder && focusName) {
+    placeholder = tmp.querySelector(focusTag + '[name="' + focusName + '"]');
+  }
+
+  if (!placeholder) {
+    // The server's new view unmounts this input. User's typed value
+    // and focus are legitimately gone — honour the server. Fast path.
+    container.innerHTML = newHTML;
+    return;
+  }
+
+  // Copy server-side attrs onto the live input, except the three
+  // the user owns (value / checked / selected). class, type,
+  // placeholder, disabled, aria-*, etc. all propagate.
+  __skyCopyAttrsExceptAuthority(placeholder, focused);
+
+  // Splice: move the live node into the new tree in the placeholder's
+  // slot. replaceChild detaches focused from container (implicit)
+  // and attaches it to tmp.
+  placeholder.parentNode.replaceChild(focused, placeholder);
+
+  // Commit: container's current children (minus the focused input,
+  // which we already moved into tmp) are thrown away; tmp's children
+  // (which include the focused input in its new position) become
+  // container's children.
+  while (container.firstChild) container.removeChild(container.firstChild);
+  while (tmp.firstChild) container.appendChild(tmp.firstChild);
+
+  // Focus was lost during the move (replaceChild + removeChild +
+  // appendChild all drop focus). Restore it on the SAME node — so
+  // .value, IME state, composition buffer, etc. are still the ones
+  // the user was interacting with.
+  try { focused.focus({preventScroll: true}); } catch (_) { focused.focus(); }
+  if (typeof focused.setSelectionRange === "function" &&
+      selStart !== null && selEnd !== null) {
+    try { focused.setSelectionRange(selStart, selEnd); } catch (_) {}
+  }
+  if (scrollTop) focused.scrollTop = scrollTop;
 }
 
-function __skyFocusLocate(snap, scope) {
-  if (!snap) return null;
-  scope = scope || document;
-  var el = null;
-  if (snap.id) {
-    el = document.getElementById(snap.id);
-    if (el) return el;
+// __skyCopyAttrsExceptAuthority — mirror attrs from src onto dst,
+// skipping the three the user drives directly. Removes attrs on
+// dst that aren't in src (same "skip" rule). Used when splicing a
+// live focused input into a server-rendered placeholder.
+function __skyCopyAttrsExceptAuthority(src, dst) {
+  if (!src || !dst || !src.attributes || !dst.attributes) return;
+  var isAuthority = function(n) {
+    return n === "value" || n === "checked" || n === "selected";
+  };
+  // Drop attrs that aren't present in src.
+  var toRemove = [];
+  for (var i = 0; i < dst.attributes.length; i++) {
+    var n = dst.attributes[i].name;
+    if (isAuthority(n)) continue;
+    if (!src.hasAttribute(n)) toRemove.push(n);
   }
-  if (snap.sid) {
-    el = scope.querySelector('[sky-id="' + snap.sid.replace(/"/g, '\\"') + '"]');
-    if (el) return el;
+  for (var r = 0; r < toRemove.length; r++) dst.removeAttribute(toRemove[r]);
+  // Add / update attrs from src.
+  for (var j = 0; j < src.attributes.length; j++) {
+    var a = src.attributes[j];
+    if (isAuthority(a.name)) continue;
+    if (dst.getAttribute(a.name) !== a.value) dst.setAttribute(a.name, a.value);
   }
-  if (snap.name) {
-    el = scope.querySelector(snap.tag.toLowerCase() + '[name="' + snap.name + '"]');
-    if (el) return el;
-  }
-  return null;
 }
 
-function __skyFocusRestore(snap, scope) {
-  if (!snap) return;
-  var el = __skyFocusLocate(snap, scope);
-  if (!el) return;
-  // Preserve the user's in-flight typing: if the snapshot value
-  // differs from what the server just rendered, the user was in
-  // the middle of editing and their DOM wins. Without this, a
-  // concurrent server patch carrying a stale value would clobber
-  // keystrokes the user typed between the patch being generated
-  // and it landing.
-  if (snap.value !== undefined && ("value" in el) && el.value !== snap.value) {
-    el.value = snap.value;
-  }
-  try { el.focus({preventScroll: true}); } catch (_) { el.focus(); }
-  if (typeof el.setSelectionRange === "function" &&
-      snap.selectionStart !== null && snap.selectionEnd !== null) {
-    try { el.setSelectionRange(snap.selectionStart, snap.selectionEnd); } catch (_) {}
-  }
-  if (snap.scrollTop) el.scrollTop = snap.scrollTop;
-}
-
-// __skyPatch: atomic innerHTML replacement for full-body responses
-// (sky-nav click, popstate, full-HTML fallback). The browser's
-// innerHTML parser handles the swap correctly in one step — no
-// intermediate state, no duplicate/orphan nodes from ad-hoc tree
-// walks. Focus + selection are preserved via snapshot/restore.
+// __skyPatch: full-body replacement for sky-nav clicks, popstate,
+// and the server's full-HTML fallback path. Routes through the
+// node-preservation splicer so keystrokes never land on a destroyed
+// DOM node.
 function __skyPatch(t) {
   var root = document.getElementById("sky-root");
   if (!root) return;
@@ -2574,12 +2629,10 @@ function __skyPatch(t) {
   var m = t.match(/<div id="sky-root">([\s\S]*?)<\/div><script>/);
   if (m) t = m[1];
   var scrollX = window.scrollX, scrollY = window.scrollY;
-  var snap = __skyFocusSnapshot();
-  root.innerHTML = t;
+  __skyReplaceHTMLPreservingFocus(root, t);
   window.scrollTo(scrollX, scrollY);
   __skyBindEvents(document);
   __skyRunEvals(root);
-  __skyFocusRestore(snap, root);
 }
 
 // ── Loading indicator ────────────────────────────────────────
@@ -2782,31 +2835,29 @@ function __skySend(msgName, args, handlerId, opts) {
 
 // Apply a list of sky-id addressed patches with input authority (I1):
 // value/checked/selected attrs on dirty inputs are dropped so the
-// user's DOM wins; innerHTML patches use the browser's atomic
-// innerHTML parser (not an ad-hoc tree walk) and focus + selection
-// are preserved via snapshot/restore on either side of the mutation.
-//
-// A single focus snapshot covers the whole batch — if a patch wipes
-// the subtree containing the focused input, the restore locates it
-// by sky-id/name/id in the new DOM and puts the user's typed value
-// back. Between patches the DOM is intermediate but never visibly
-// so (applyPatches runs to completion synchronously before the
-// browser paints).
+// user's DOM wins; innerHTML patches route through
+// __skyReplaceHTMLPreservingFocus which splices the live focused
+// input (same DOM node, same .value, same IME/composition state)
+// through the new HTML so it's never destroyed. Per-attr and
+// textContent updates are fine as-is — they don't regenerate nodes.
 function __skyApplyPatches(patches) {
   if (!patches || patches.length === 0) return;
-  var snap = __skyFocusSnapshot();
   for (var i = 0; i < patches.length; i++) {
     var p = patches[i];
     var el = document.querySelector('[sky-id="' + p.id.replace(/"/g, '\\"') + '"]');
     if (!el) continue;
     if (p.text !== undefined && p.text !== null) {
-      el.textContent = p.text;
+      // textContent on a container that contains the focused input
+      // would also wipe the input (replaces all children with one
+      // text node). Guard the same way as innerHTML.
+      if (__skyContainsFocusedInput(el)) {
+        __skyReplaceHTMLPreservingFocus(el, __skyEscapeHTML(p.text));
+      } else {
+        el.textContent = p.text;
+      }
     }
     if (p.html !== undefined && p.html !== null) {
-      // Atomic innerHTML replacement. Focus/keystroke preservation
-      // handled globally by the surrounding snapshot/restore — no
-      // ad-hoc tree walk required.
-      el.innerHTML = p.html;
+      __skyReplaceHTMLPreservingFocus(el, p.html);
     }
     if (p.attrs) {
       var dirty = __skyIsDirty(el);
@@ -2835,7 +2886,20 @@ function __skyApplyPatches(patches) {
   }
   // Any new sky-* attribute in the patched DOM needs a listener.
   __skyBindEvents(document);
-  __skyFocusRestore(snap);
+}
+
+function __skyContainsFocusedInput(el) {
+  var a = document.activeElement;
+  if (!a || a === document.body) return false;
+  var tag = a.tagName;
+  if (tag !== "INPUT" && tag !== "TEXTAREA" && tag !== "SELECT") return false;
+  return el === a || el.contains(a);
+}
+
+function __skyEscapeHTML(s) {
+  var d = document.createElement("div");
+  d.textContent = s == null ? "" : String(s);
+  return d.innerHTML;
 }
 
 // ── TEA event binding ────────────────────────────────────────
