@@ -2450,21 +2450,6 @@ function __skyIsDirty(el) {
   return false;
 }
 
-// __skyContainsDirty — true when el or any descendant form field
-// is dirty. Used before innerHTML replacement to decide whether the
-// safe path (raw innerHTML) or the protecting path (morph) applies.
-// Only walks input-like descendants: the scope mirrors __skyIsDirty.
-function __skyContainsDirty(el) {
-  if (!el) return false;
-  if (__skyIsDirty(el)) return true;
-  if (!el.querySelectorAll) return false;
-  var nodes = el.querySelectorAll("input, textarea, select");
-  for (var i = 0; i < nodes.length; i++) {
-    if (__skyIsDirty(nodes[i])) return true;
-  }
-  return false;
-}
-
 function __skyIngestSeq(seq, ackInputs) {
   if (typeof seq === "number" && seq > __skyLastAppliedSeq) {
     __skyLastAppliedSeq = seq;
@@ -2494,50 +2479,107 @@ function __skyHandleResponse(seq, ackInputs, applyFn) {
   applyFn();
 }
 
-// __skyPatch: replace sky-root's content with the fragment in `+"`"+`t`+"`"+`,
-// preserving the active element (focus + caret/selection) and scroll
-// position across the swap. Without this, typing in an input that
-// triggers onInput would lose focus on every keystroke.
+// ── Focus preservation ───────────────────────────────────────
+// Sky.Live renders whole subtrees via innerHTML replacement (both on
+// JSON patches that carry p.html and on full-HTML navigations). The
+// browser's innerHTML parser is atomic and correct — there's no
+// visibly intermediate state — but it destroys descendants, which
+// loses focus + caret position on any focused input.
+//
+// Snapshot BEFORE the replacement, restore AFTER: walk back to the
+// same input in the new DOM using its stable identifier (priority:
+// id > sky-id > tag+name), then re-focus and restore selection.
+// When the focused input had in-flight typed text (i.e. is still
+// "dirty" by the authority check), the user's value wins over
+// whatever the server rendered.
+//
+// This is the same pattern morphdom / Idiomorph use; it's simpler
+// and categorically correct compared to ad-hoc tree walking, which
+// cannot reliably handle structural shifts (e.g. a nav click that
+// changes the whole page) without producing duplicate or orphaned
+// nodes.
+function __skyFocusSnapshot() {
+  var el = document.activeElement;
+  if (!el || el === document.body || el === document.documentElement) return null;
+  var tag = el.tagName;
+  if (tag !== "INPUT" && tag !== "TEXTAREA" && tag !== "SELECT") return null;
+  var snap = {
+    id:             el.id || "",
+    sid:            (el.getAttribute && el.getAttribute("sky-id")) || "",
+    name:           (el.getAttribute && el.getAttribute("name")) || "",
+    tag:            tag,
+    value:          ("value" in el) ? el.value : "",
+    selectionStart: null,
+    selectionEnd:   null,
+    scrollTop:      el.scrollTop || 0,
+  };
+  try {
+    snap.selectionStart = el.selectionStart;
+    snap.selectionEnd   = el.selectionEnd;
+  } catch (_) { /* some input types (number, email) throw on selection read */ }
+  return snap;
+}
+
+function __skyFocusLocate(snap, scope) {
+  if (!snap) return null;
+  scope = scope || document;
+  var el = null;
+  if (snap.id) {
+    el = document.getElementById(snap.id);
+    if (el) return el;
+  }
+  if (snap.sid) {
+    el = scope.querySelector('[sky-id="' + snap.sid.replace(/"/g, '\\"') + '"]');
+    if (el) return el;
+  }
+  if (snap.name) {
+    el = scope.querySelector(snap.tag.toLowerCase() + '[name="' + snap.name + '"]');
+    if (el) return el;
+  }
+  return null;
+}
+
+function __skyFocusRestore(snap, scope) {
+  if (!snap) return;
+  var el = __skyFocusLocate(snap, scope);
+  if (!el) return;
+  // Preserve the user's in-flight typing: if the snapshot value
+  // differs from what the server just rendered, the user was in
+  // the middle of editing and their DOM wins. Without this, a
+  // concurrent server patch carrying a stale value would clobber
+  // keystrokes the user typed between the patch being generated
+  // and it landing.
+  if (snap.value !== undefined && ("value" in el) && el.value !== snap.value) {
+    el.value = snap.value;
+  }
+  try { el.focus({preventScroll: true}); } catch (_) { el.focus(); }
+  if (typeof el.setSelectionRange === "function" &&
+      snap.selectionStart !== null && snap.selectionEnd !== null) {
+    try { el.setSelectionRange(snap.selectionStart, snap.selectionEnd); } catch (_) {}
+  }
+  if (snap.scrollTop) el.scrollTop = snap.scrollTop;
+}
+
+// __skyPatch: atomic innerHTML replacement for full-body responses
+// (sky-nav click, popstate, full-HTML fallback). The browser's
+// innerHTML parser handles the swap correctly in one step — no
+// intermediate state, no duplicate/orphan nodes from ad-hoc tree
+// walks. Focus + selection are preserved via snapshot/restore.
 function __skyPatch(t) {
   var root = document.getElementById("sky-root");
   if (!root) return;
+  // Strip the full-document envelope when present (sky-nav fetches
+  // return <!doctype><html>...</html>). The regex captures exactly
+  // the rendered body, same as before.
   var m = t.match(/<div id="sky-root">([\s\S]*?)<\/div><script>/);
   if (m) t = m[1];
   var scrollX = window.scrollX, scrollY = window.scrollY;
-  // Morphdom-lite: parse new HTML, walk by sky-id, patch in-place.
-  // Input elements that are focused or have pending debounces are
-  // NEVER touched — the user's live value is the source of truth.
-  var tmp = document.createElement("div");
-  tmp.innerHTML = t;
-  __skyMorph(root, tmp);
+  var snap = __skyFocusSnapshot();
+  root.innerHTML = t;
   window.scrollTo(scrollX, scrollY);
-  // Re-bind sky-* events for the fresh DOM subtree.
   __skyBindEvents(document);
-  // Process data-sky-eval attributes (e.g. skySignOut() on sign-out).
   __skyRunEvals(root);
-}
-
-// __skyElementKey: stable key used to re-locate the focused element in
-// the patched DOM. Priority: id > name > sky-id (runtime-assigned).
-// sky-id is the critical fallback — inputs without id/name (the common
-// case for form fields) would otherwise lose focus on every patch.
-function __skyElementKey(el) {
-  if (!el || el === document.body) return null;
-  if (el.id) return {kind: "id", v: el.id};
-  if (el.name) return {kind: "name", v: el.name, tag: el.tagName};
-  var skyId = el.getAttribute && el.getAttribute("sky-id");
-  if (skyId) return {kind: "sky-id", v: skyId};
-  return null;
-}
-function __skyFindByKey(scope, key) {
-  if (key.kind === "id") return document.getElementById(key.v);
-  if (key.kind === "name") {
-    return scope.querySelector(key.tag.toLowerCase() + '[name="' + key.v + '"]');
-  }
-  if (key.kind === "sky-id") {
-    return scope.querySelector('[sky-id="' + key.v.replace(/"/g, '\\"') + '"]');
-  }
-  return null;
+  __skyFocusRestore(snap, root);
 }
 
 // ── Loading indicator ────────────────────────────────────────
@@ -2738,29 +2780,33 @@ function __skySend(msgName, args, handlerId, opts) {
   }).catch(function() { __skyLoaderEnd(); });
 }
 
-// Apply a list of sky-id addressed patches with the input authority
-// filter (I1): value/checked/selected attrs on dirty inputs are
-// dropped so the user's live DOM wins, and innerHTML replacements
-// that would wipe a dirty subtree are re-routed through the morph
-// algorithm (which preserves focused / pending inputs).
+// Apply a list of sky-id addressed patches with input authority (I1):
+// value/checked/selected attrs on dirty inputs are dropped so the
+// user's DOM wins; innerHTML patches use the browser's atomic
+// innerHTML parser (not an ad-hoc tree walk) and focus + selection
+// are preserved via snapshot/restore on either side of the mutation.
+//
+// A single focus snapshot covers the whole batch — if a patch wipes
+// the subtree containing the focused input, the restore locates it
+// by sky-id/name/id in the new DOM and puts the user's typed value
+// back. Between patches the DOM is intermediate but never visibly
+// so (applyPatches runs to completion synchronously before the
+// browser paints).
 function __skyApplyPatches(patches) {
+  if (!patches || patches.length === 0) return;
+  var snap = __skyFocusSnapshot();
   for (var i = 0; i < patches.length; i++) {
     var p = patches[i];
     var el = document.querySelector('[sky-id="' + p.id.replace(/"/g, '\\"') + '"]');
     if (!el) continue;
-    if (p.text !== undefined && p.text !== null) el.textContent = p.text;
+    if (p.text !== undefined && p.text !== null) {
+      el.textContent = p.text;
+    }
     if (p.html !== undefined && p.html !== null) {
-      // If any dirty input lives inside this subtree, route the
-      // replacement through __skyMorph — it knows to skip focused /
-      // pending inputs rather than wipe them. Otherwise take the
-      // fast path (native innerHTML assignment).
-      if (__skyContainsDirty(el)) {
-        var tmp = document.createElement("div");
-        tmp.innerHTML = p.html;
-        __skyMorph(el, tmp);
-      } else {
-        el.innerHTML = p.html;
-      }
+      // Atomic innerHTML replacement. Focus/keystroke preservation
+      // handled globally by the surrounding snapshot/restore — no
+      // ad-hoc tree walk required.
+      el.innerHTML = p.html;
     }
     if (p.attrs) {
       var dirty = __skyIsDirty(el);
@@ -2789,6 +2835,7 @@ function __skyApplyPatches(patches) {
   }
   // Any new sky-* attribute in the patched DOM needs a listener.
   __skyBindEvents(document);
+  __skyFocusRestore(snap);
 }
 
 // ── TEA event binding ────────────────────────────────────────
@@ -2802,103 +2849,6 @@ function __skyBindEvents(root) {
                 "mousedown", "mouseup"];
   for (var i = 0; i < events.length; i++) {
     __skyBindOne(root, events[i]);
-  }
-}
-
-// ── Morphdom-lite ────────────────────────────────────────────
-// Walk old and new DOM trees by sky-id. Patch in-place instead of
-// innerHTML replacement. Focused/pending inputs are never touched.
-function __skyMorph(oldParent, newParent) {
-  var oldKids = oldParent.childNodes;
-  var newKids = newParent.childNodes;
-  // Build sky-id index for old children
-  var oldById = {};
-  for (var i = 0; i < oldKids.length; i++) {
-    var sid = oldKids[i].getAttribute ? oldKids[i].getAttribute("sky-id") : null;
-    if (sid) oldById[sid] = oldKids[i];
-  }
-  // Walk new children
-  for (var j = 0; j < newKids.length; j++) {
-    var newNode = newKids[j];
-    var newSid = newNode.getAttribute ? newNode.getAttribute("sky-id") : null;
-    var oldNode = newSid ? oldById[newSid] : (j < oldKids.length ? oldKids[j] : null);
-    if (!oldNode) {
-      // New node — append
-      oldParent.appendChild(newNode.cloneNode(true));
-      continue;
-    }
-    if (oldNode.nodeType === 3 && newNode.nodeType === 3) {
-      // Text nodes — update if different
-      if (oldNode.textContent !== newNode.textContent) {
-        oldNode.textContent = newNode.textContent;
-      }
-      continue;
-    }
-    if (oldNode.nodeType !== newNode.nodeType || oldNode.tagName !== (newNode.tagName || "")) {
-      // Different node type — replace entirely UNLESS the old subtree
-      // contains dirty state (focused input, pending debounce, unacked
-      // keystrokes). Stomping it would lose the user's typing; skip
-      // this node and let the next event round-trip reconcile.
-      if (oldNode.nodeType === 1 && __skyContainsDirty(oldNode)) {
-        continue;
-      }
-      oldParent.replaceChild(newNode.cloneNode(true), oldNode);
-      continue;
-    }
-    // Same element type — check if it's a protected input. Fold the
-    // __skyIsDirty signals (focus, pending debounce, unacked seq) so
-    // the "don't touch value" skip also fires for inputs the user
-    // edited but hasn't yet blurred.
-    var tag = (oldNode.tagName || "").toUpperCase();
-    var isInput = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
-    if (isInput && __skyIsDirty(oldNode)) {
-      // SKIP — user is typing here. Don't touch value/checked/selected.
-      __skyPatchAttrs(oldNode, newNode, true);
-      continue;
-    }
-    // Patch attributes
-    __skyPatchAttrs(oldNode, newNode, false);
-    // Recurse into children
-    if (newNode.childNodes.length > 0 || oldNode.childNodes.length > 0) {
-      __skyMorph(oldNode, newNode);
-    }
-  }
-  // Remove excess old children
-  while (oldParent.childNodes.length > newKids.length) {
-    oldParent.removeChild(oldParent.lastChild);
-  }
-}
-
-function __skyPatchAttrs(oldEl, newEl, skipValue) {
-  if (!oldEl.attributes || !newEl.attributes) return;
-  // Remove attrs not in new. skipValue is the "protected input"
-  // signal — it means don't touch the user-driven attrs on this
-  // element (value, checked, selected all in one bucket).
-  var isUserAuthorityAttr = function(n) {
-    return skipValue && (n === "value" || n === "checked" || n === "selected");
-  };
-  var toRemove = [];
-  for (var i = 0; i < oldEl.attributes.length; i++) {
-    var name = oldEl.attributes[i].name;
-    if (isUserAuthorityAttr(name)) continue;
-    if (!newEl.hasAttribute(name)) toRemove.push(name);
-  }
-  for (var r = 0; r < toRemove.length; r++) oldEl.removeAttribute(toRemove[r]);
-  // Set/update attrs from new
-  for (var j = 0; j < newEl.attributes.length; j++) {
-    var attr = newEl.attributes[j];
-    if (isUserAuthorityAttr(attr.name)) continue;
-    if (oldEl.getAttribute(attr.name) !== attr.value) {
-      oldEl.setAttribute(attr.name, attr.value);
-    }
-  }
-  // For non-protected inputs, sync .value from attribute
-  if (!skipValue) {
-    var t = (oldEl.tagName || "").toUpperCase();
-    if (t === "INPUT" || t === "TEXTAREA" || t === "SELECT") {
-      var newVal = newEl.getAttribute("value") || newEl.value || "";
-      if (oldEl.value !== newVal) oldEl.value = newVal;
-    }
   }
 }
 
