@@ -505,16 +505,50 @@ function __skyFlushAllPendingSync() {
 
 ### Step 6 — Adversarial test matrix
 
-**Go tests** in `runtime-go/rt/live_test.go`:
+**Go tests landed alongside Steps 1–5** (exhaustive per-step coverage
+was written as each step landed rather than deferred to a single
+catch-up step):
 
-- `TestSkyIDStructural` — two VNode trees with same positional layout but different tags; `assignSkyIDs` gives different ids.
-- `TestSkyIDStableAcrossRenders` — same tree rendered twice produces same ids.
-- `TestSkyIDKeyedList` — keyed list reorder: ids follow items, not positions.
-- `TestEventSeqMonotonic` — `eventSeq` increments per event, survives marshalling round-trip.
-- `TestInputStateReconciliation` — `alignPrevTreeValue` merges client inputState into prev tree.
-- `TestAckInputsEmitted` — response echoes server's view of every dirty input.
+Step 1 — `runtime-go/rt/live_skyid_test.go`:
+- `TestSkyIDCollisionFree` — the signIn/signUp repro.
+- `TestSkyIDStableAcrossRenders` — identical trees → identical ids.
+- `TestSkyIDNameBasedKey` — inputs with `name` keep identity across reorder.
+- `TestSkyIDExplicitKey` — `sky-key` attr wins over name.
+- `TestSkyIDKeySanitisation` — hostile keys can't escape grammar.
+- `TestSkyIDTextChildrenDontGetIDs` — positional index preserved.
 
-**Browser tests** via Playwright (new dep) or an example-driven manual matrix (`examples/19-reliability`):
+Step 2 — `runtime-go/rt/live_protocol_test.go`:
+- `TestOutSeqMonotonic` — nextOutSeq strictly increments.
+- `TestIngestInputStateKeepsMaxSeq` — per-id monotone seq.
+- `TestAckInputsEvictsUnmounted` — removes ids not in prevTree.
+- `TestEncodeSSEFrameShape` — valid JSON envelope.
+- `TestWriteEventJSONEnvelope` / `...NoPatchesEmitsEmptyArray` — envelope shape.
+- `TestWriteEventHTMLSetsProtocolHeaders` / `...OmitsEmptyAck` — header shape.
+- `TestHandleEventRoundTripsSeq` — full handler round-trip.
+- `TestHandleEventBatch` — sendBeacon batch path → 204.
+
+Step 3 — `runtime-go/rt/live_authority_test.go`:
+- `TestDiffAlignsToClientValue` — server matches client → no patch.
+- `TestDiffOverridesClientWhenServerDisagrees` — patch still emitted on genuine override.
+- `TestDiffLegacyCallerNilClientState` — legacy behaviour preserved.
+- `TestDiffNonInputTagIgnoresClientState` — only form fields aligned.
+- `TestDiffAuthorityAttrsChecked` — `checked` attr alignment works.
+
+Step 6 — `runtime-go/rt/live_adversarial_test.go`:
+- `TestConcurrentEventsSerialise` — 20 concurrent POSTs → 20 distinct seqs.
+- `TestSeqCountsCoverEveryOutgoingFrame` — SSE frame + event reply interleave on one counter.
+- `TestDiffAlignsInsideNestedForm` — deep-tree alignment.
+- `TestLegacyFieldsPreserved` — pre-upgrade clients keep working.
+
+**Browser tests deferred to a follow-up branch** — adding Playwright
+(or `chromedp`) to this repo is a non-trivial tooling commitment and
+keeps this PR focused on the runtime contract. The JS logic (patch
+filter, stale-drop, beacon flush) is small and mechanically derived
+from the Go-side invariants that *are* tested; Step 7 validates
+end-to-end against a real app (sendcrafts) for the regression the
+protocol was designed to fix.
+
+Manual smoke checklist (for the follow-up automation):
 
 1. Type "hello" with 500ms server latency — all 5 characters appear.
 2. Type + click `<a href>` mid-keystroke — server logs show final value.
