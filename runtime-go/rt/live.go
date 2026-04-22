@@ -2472,6 +2472,20 @@ function __skyIngestSeq(seq, ackInputs) {
   }
 }
 
+// __skyHandleResponse — gate DOM-mutating work behind the monotonic
+// seq check (Step 4 / I2). An out-of-order or replayed frame with
+// seq ≤ __skyLastAppliedSeq is dropped entirely: a newer frame has
+// already landed with a later view, and applying the stale payload
+// would regress the DOM. Legacy frames that omit seq (or report 0)
+// always apply — pre-upgrade servers keep working.
+function __skyHandleResponse(seq, ackInputs, applyFn) {
+  if (typeof seq === "number" && seq > 0 && seq <= __skyLastAppliedSeq) {
+    return; // stale — a newer frame already landed
+  }
+  __skyIngestSeq(seq, ackInputs);
+  applyFn();
+}
+
 // __skyPatch: replace sky-root's content with the fragment in `+"`"+`t`+"`"+`,
 // preserving the active element (focus + caret/selection) and scroll
 // position across the swap. Without this, typing in an input that
@@ -2607,8 +2621,9 @@ function __skySend(msgName, args, handlerId, opts) {
       return r.json().then(function(data) {
         __skyLoaderEnd();
         if (!data) return;
-        __skyIngestSeq(data.seq, data.ackInputs);
-        if (data.patches) __skyApplyPatches(data.patches);
+        __skyHandleResponse(data.seq, data.ackInputs, function() {
+          if (data.patches) __skyApplyPatches(data.patches);
+        });
       });
     }
     return r.text().then(function(t) {
@@ -2618,8 +2633,7 @@ function __skySend(msgName, args, handlerId, opts) {
       var ackRaw = r.headers.get("X-Sky-Ack-Inputs");
       var ack = null;
       if (ackRaw) { try { ack = JSON.parse(ackRaw); } catch(_) {} }
-      __skyIngestSeq(seq, ack);
-      __skyPatch(t);
+      __skyHandleResponse(seq, ack, function() { __skyPatch(t); });
     });
   }).catch(function() { __skyLoaderEnd(); });
 }
@@ -2951,11 +2965,13 @@ var __skySSE = new EventSource("/_sky/sse");
 __skySSE.addEventListener("patch", function(e) {
   var frame;
   try { frame = JSON.parse(e.data); } catch (_) {
+    // Legacy frame (pre-v0.9.3 server) — raw HTML, no seq to gate on.
     return __skyPatch(e.data.replace(/\\n/g, "\n"));
   }
   if (frame && typeof frame === "object") {
-    __skyIngestSeq(frame.seq, frame.ackInputs);
-    if (frame.body) __skyPatch(frame.body.replace(/\\n/g, "\n"));
+    __skyHandleResponse(frame.seq, frame.ackInputs, function() {
+      if (frame.body) __skyPatch(frame.body.replace(/\\n/g, "\n"));
+    });
   }
 });
 
