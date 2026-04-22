@@ -1,0 +1,85 @@
+# ─────────────────────────────────────────────────────────────
+# Sky Language — LOCAL source build
+#
+# Unlike Dockerfile (which downloads a released binary), this image
+# builds sky from the current source tree. Used when sendcrafts or
+# another consumer needs fixes on an unmerged branch without waiting
+# for a release cut.
+#
+# Usage:
+#   docker build -f Dockerfile.local -t anzel/sky:local .
+#   docker run --rm -v $(pwd):/app -w /app anzel/sky:local build src/Main.sky
+#
+# docker-compose:
+#   services:
+#     app:
+#       image: anzel/sky:local
+#       volumes: [.:/src]
+# ─────────────────────────────────────────────────────────────
+
+# ── Stage 1: build the sky compiler from source ─────────────
+FROM haskell:9.4 AS builder
+
+# Same UTF-8 locale rationale as the release Dockerfile — GHC's
+# text IO honours the system locale when reading the embedded
+# .sky templates + runtime-go files via Template Haskell.
+ENV LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8
+
+WORKDIR /build
+
+# Cache cabal metadata before copying the full tree so edits to
+# runtime/stdlib don't invalidate the 'cabal update' layer.
+RUN cabal update
+
+# Copy cabal descriptor first so dependency resolution caches
+# independently of source edits.
+COPY sky-compiler.cabal ./
+RUN cabal build --dependencies-only exe:sky
+
+# Copy the rest of the source tree (runtime-go, sky-stdlib,
+# templates, app/, src/ — everything the cabal build needs via
+# Template Haskell embedding).
+COPY . ./
+
+# Stamp the version so `sky --version` reports something
+# identifiable inside this image. The release CI normally
+# overwrites app/VERSION with the git tag; for a local build we
+# take the branch + short SHA as --build-args (git is excluded
+# from the build context via .dockerignore so we can't read it
+# in-container). Falls back to a generic "local" when the caller
+# doesn't pass the args.
+ARG SKY_GIT_BRANCH=unknown
+ARG SKY_GIT_SHA=unknown
+RUN printf 'local-%s-%s' "${SKY_GIT_BRANCH}" "${SKY_GIT_SHA}" > app/VERSION; \
+    cat app/VERSION
+
+# Build + install the sky binary. --install-method=copy drops
+# it into /build/bin/sky ready to ship to the runtime stage.
+RUN cabal install --overwrite-policy=always \
+        --installdir=./bin --install-method=copy exe:sky \
+ && ./bin/sky --version
+
+
+# ── Stage 2: runtime image (matches Dockerfile structure) ────
+FROM golang:1.26-bookworm
+
+ENV LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates git \
+ && rm -rf /var/lib/apt/lists/*
+
+# Haskell binaries link against libgmp + libtinfo (ncurses) at
+# runtime. GHC compiles with dynamic linking by default; copy the
+# minimum runtime libs alongside glibc to keep the image lean.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends libgmp10 libtinfo6 libnuma1 \
+ && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /build/bin/sky /usr/local/bin/sky
+RUN chmod +x /usr/local/bin/sky && sky --version
+
+WORKDIR /app
+ENTRYPOINT ["sky"]

@@ -729,7 +729,26 @@ func renderVNode(n VNode, handlers map[string]any) string {
 		sb.WriteString(html.EscapeString(n.SkyID))
 		sb.WriteString(`"`)
 	}
+	// <textarea> has no `value` attribute in the HTML spec — its
+	// displayed value is the TEXT CONTENT between the tags. Emitting
+	// `<textarea value="...">` renders empty in every browser, which
+	// means any server re-render (full-body fallback or innerHTML
+	// patch at an ancestor) wipes the user's text out of the DOM.
+	// Strip the value attr here and splice it in as child content
+	// further down. A redundant `value="..."` kept on <select>
+	// similarly has no effect (selection lives on <option selected>),
+	// so strip there too.
+	textareaValue := ""
+	isTextarea := n.Tag == "textarea"
+	if isTextarea || n.Tag == "select" {
+		if v, ok := n.Attrs["value"]; ok {
+			textareaValue = v
+		}
+	}
 	for k, v := range n.Attrs {
+		if (isTextarea || n.Tag == "select") && k == "value" {
+			continue
+		}
 		sb.WriteString(" ")
 		sb.WriteString(k)
 		sb.WriteString(`="`)
@@ -758,6 +777,13 @@ func renderVNode(n VNode, handlers map[string]any) string {
 		return sb.String()
 	}
 	sb.WriteString(">")
+	// Textarea special-case: write the captured value as text content.
+	// If the VNode already has text children (user wrote `textarea []
+	// [ text "hi" ]`), those take precedence and the attr-derived
+	// value is ignored — preserves existing behaviour.
+	if isTextarea && textareaValue != "" && len(n.Children) == 0 {
+		sb.WriteString(html.EscapeString(textareaValue))
+	}
 	// <script> and <style> bodies are raw text in HTML (CDATA-like):
 	// escaping `'` to `&#39;` breaks the JS at parse time. Sky users
 	// pass the body as a plain string (`script [] "code here"`), which
@@ -766,9 +792,27 @@ func renderVNode(n VNode, handlers map[string]any) string {
 	// <style> @import chains). Matches html/template's behaviour for
 	// JSStr / CSSText contexts.
 	rawBody := n.Tag == "script" || n.Tag == "style"
+	// <select> uses child <option selected> to indicate the chosen
+	// value. Mark the matching option inline — less invasive than
+	// rebuilding the children tree.
+	selectValue := ""
+	if n.Tag == "select" && textareaValue != "" {
+		selectValue = textareaValue
+	}
 	for _, c := range n.Children {
 		if rawBody && c.Kind == "text" {
 			sb.WriteString(c.Text)
+		} else if selectValue != "" && c.Kind == "element" && c.Tag == "option" {
+			// Copy the option, flipping `selected` on the matching value.
+			// Shallow copy of Attrs so we don't mutate the caller's VNode.
+			picked := c
+			picked.Attrs = copyAttrs(c.Attrs)
+			if picked.Attrs["value"] == selectValue {
+				picked.Attrs["selected"] = "selected"
+			} else {
+				delete(picked.Attrs, "selected")
+			}
+			sb.WriteString(renderVNode(picked, handlers))
 		} else {
 			sb.WriteString(renderVNode(c, handlers))
 		}
@@ -777,6 +821,17 @@ func renderVNode(n VNode, handlers map[string]any) string {
 	sb.WriteString(n.Tag)
 	sb.WriteString(">")
 	return sb.String()
+}
+
+func copyAttrs(src map[string]string) map[string]string {
+	if src == nil {
+		return map[string]string{}
+	}
+	dst := make(map[string]string, len(src))
+	for k, v := range src {
+		dst[k] = v
+	}
+	return dst
 }
 
 // msgDisplayName extracts a Sky Msg constructor name from its runtime
