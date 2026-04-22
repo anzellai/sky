@@ -2426,13 +2426,19 @@ function __skyInputsSnapshot() {
 // into client state. seq advances __skyLastAppliedSeq monotonically;
 // ackInputs retires per-input dirty flags so the next snapshot omits
 // caught-up fields.
-// __skyIsDirty — element is "dirty" (user-authoritative) when it is
-// currently focused, has a pending debounced send keyed by its
-// data-sky-hid, or the client has typed past the server's last ack
-// for its sky-id. The patch filter reads this to decide whether to
-// apply value/checked/selected attrs or innerHTML replacements.
+// __skyIsDirty — a typable form field (input / textarea / select)
+// whose DOM state is authoritative over the server's view. The check
+// is scoped to those tags ONLY: buttons, anchors, divs and other
+// focused-but-non-typable elements have no keystrokes to preserve,
+// so treating them as dirty would wrongly block patches that wipe
+// their containing subtree (e.g. navigating from a "new game"
+// screen into a board view, where the focused button legitimately
+// disappears). Scope signals: focus, pending debounce keyed by
+// data-sky-hid, or an unacked typed value at the input's sky-id.
 function __skyIsDirty(el) {
   if (!el || el.nodeType !== 1) return false;
+  var tag = el.tagName;
+  if (tag !== "INPUT" && tag !== "TEXTAREA" && tag !== "SELECT") return false;
   if (el === document.activeElement) return true;
   var hid = el.getAttribute && el.getAttribute("data-sky-hid");
   if (hid && __skyInputPending[hid]) return true;
@@ -2447,9 +2453,11 @@ function __skyIsDirty(el) {
 // __skyContainsDirty — true when el or any descendant form field
 // is dirty. Used before innerHTML replacement to decide whether the
 // safe path (raw innerHTML) or the protecting path (morph) applies.
+// Only walks input-like descendants: the scope mirrors __skyIsDirty.
 function __skyContainsDirty(el) {
+  if (!el) return false;
   if (__skyIsDirty(el)) return true;
-  if (!el || !el.querySelectorAll) return false;
+  if (!el.querySelectorAll) return false;
   var nodes = el.querySelectorAll("input, textarea, select");
   for (var i = 0; i < nodes.length; i++) {
     if (__skyIsDirty(nodes[i])) return true;
