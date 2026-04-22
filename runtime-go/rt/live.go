@@ -950,6 +950,28 @@ type Patch struct {
 	Remove bool              `json:"remove,omitempty"`
 }
 
+// inputStateEntry carries the client's current idea of a dirty input.
+// Sent inside eventRequest.InputState so the server can reconcile the
+// rendered tree against the actual DOM before diffing. See
+// docs/skylive/input-authority-protocol.md §Wire format.
+type inputStateEntry struct {
+	Value string `json:"value"`
+	Seq   int64  `json:"seq"`
+}
+
+// batchedEvent is one entry inside eventRequest.Batch (set by
+// navigator.sendBeacon on tab unload). Shape mirrors the top-level
+// single-event fields minus SessionID / InputState, both of which
+// live on the outer envelope so the server ingests them once before
+// processing the batch.
+type batchedEvent struct {
+	Seq       int64             `json:"seq,omitempty"`
+	Msg       string            `json:"msg"`
+	Args      []json.RawMessage `json:"args"`
+	HandlerID string            `json:"handlerId,omitempty"`
+	Value     string            `json:"value,omitempty"`
+}
+
 
 // diffTrees: produce patches to transform `old` into `new_`. If either
 // tree is missing (first render) the caller should fall back to a full
@@ -1195,10 +1217,118 @@ type liveSession struct {
 	prevBody string
 	lastSeen time.Time
 	mu       sync.Mutex
-	// SSE outbound channel: any writer goroutine may push an HTML patch
+	// SSE outbound channel: any writer goroutine may push a frame.
+	// Frame contents are JSON envelopes produced by encodeSSEFrame
+	// (carry seq + ackInputs alongside the body), not raw HTML.
 	sseCh chan string
 	// Cancel function for any active subscription ticker
 	cancelSub chan struct{}
+
+	// Single session-wide monotonic counter for EVERY outgoing frame
+	// (event reply OR SSE patch). Bumped under sess.mu so the value
+	// reflects this session's true mutation order. The client keys its
+	// stale-drop / cross-channel ordering off this number.
+	outSeq int64
+	// Per input sky-id → largest req.InputState[id].Seq observed. Used
+	// to populate response.ackInputs so the client can retire "dirty"
+	// flags once the server has caught up. Stale ids (not present in
+	// prevTree) are evicted on each ack build; see ackInputsForPrevTree.
+	inputSeqs map[string]int64
+}
+
+// nextOutSeq advances and returns the session-wide outgoing seq.
+// MUST be called with sess.mu held.
+func (s *liveSession) nextOutSeq() int64 {
+	s.outSeq++
+	return s.outSeq
+}
+
+// ingestInputState absorbs the client's dirty-input snapshot into
+// sess.inputSeqs, retaining the larger seq per id. No state is lost
+// on concurrent events because every caller holds sess.mu.
+func (s *liveSession) ingestInputState(state map[string]inputStateEntry) {
+	if len(state) == 0 {
+		return
+	}
+	if s.inputSeqs == nil {
+		s.inputSeqs = make(map[string]int64, len(state))
+	}
+	for id, e := range state {
+		if e.Seq > s.inputSeqs[id] {
+			s.inputSeqs[id] = e.Seq
+		}
+	}
+}
+
+// clientStateFromRequest projects inputStateEntry.Value only, for
+// feeding into diffNodes (Step 3 consumer). Step 2 only builds this
+// projection for forward compatibility — no caller uses it yet.
+func clientStateFromRequest(state map[string]inputStateEntry) map[string]string {
+	if len(state) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(state))
+	for id, e := range state {
+		out[id] = e.Value
+	}
+	return out
+}
+
+// ackInputsForPrevTree returns the subset of sess.inputSeqs whose ids
+// still appear in prevTree. Entries whose element has unmounted are
+// evicted as a side effect so the map doesn't accumulate dead ids.
+// Returns nil if nothing to ack (client's __skyInputs map reads nil as
+// "no updates"). MUST be called with sess.mu held.
+func ackInputsForPrevTree(s *liveSession) map[string]int64 {
+	if len(s.inputSeqs) == 0 {
+		return nil
+	}
+	present := map[string]struct{}{}
+	if s.prevTree != nil {
+		var walk func(*VNode)
+		walk = func(n *VNode) {
+			if n.Kind == "element" && n.SkyID != "" {
+				present[n.SkyID] = struct{}{}
+			}
+			for i := range n.Children {
+				walk(&n.Children[i])
+			}
+		}
+		walk(s.prevTree)
+	}
+	out := make(map[string]int64, len(s.inputSeqs))
+	for id, seq := range s.inputSeqs {
+		if _, ok := present[id]; ok {
+			out[id] = seq
+		} else {
+			delete(s.inputSeqs, id)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// encodeSSEFrame serialises a body plus the session-wide seq + ack
+// inputs into a JSON envelope. The consumer-side EventSource listener
+// parses it back out. MUST be called with sess.mu held.
+func encodeSSEFrame(sess *liveSession, body string) string {
+	frame := map[string]any{
+		"seq":  sess.nextOutSeq(),
+		"body": body,
+	}
+	if ack := ackInputsForPrevTree(sess); ack != nil {
+		frame["ackInputs"] = ack
+	}
+	b, err := json.Marshal(frame)
+	if err != nil {
+		// Marshalling a map of primitives can't fail in practice, but
+		// fall back to a bare seq+body frame just in case so the
+		// channel never carries a garbage string.
+		return fmt.Sprintf(`{"seq":%d,"body":%q}`, sess.outSeq, body)
+	}
+	return string(b)
 }
 
 type liveApp struct {
@@ -1706,21 +1836,22 @@ func (app *liveApp) handleConfig(w http.ResponseWriter, r *http.Request) {
 
 
 func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
-	// TEA wire format (legacy-compatible):
-	//   * msg       — constructor name (e.g. "Increment", "UpdateEmail")
-	//   * args      — positional args for the constructor (strings, bools,
-	//                 numbers, JSON-encoded record for form submits)
-	//   * handlerId — <sky-id>.<event> fallback used when msg is "" or
-	//                 the constructor can't be found by name
-	//   * sessionId — per-client session key
+	// TEA wire format — see docs/skylive/input-authority-protocol.md
+	// §Wire format. Fields added in the v0.9.3+ protocol upgrade are
+	// all optional: old clients keep working, new clients opt into
+	// sequenced authority by populating seq + inputState + batch.
 	var req struct {
-		SessionID string            `json:"sessionId"`
-		Msg       string            `json:"msg"`
-		Args      []json.RawMessage `json:"args"`
-		HandlerID string            `json:"handlerId"`
-		Value     string            `json:"value"` // legacy fallback
+		SessionID  string                     `json:"sessionId"`
+		Msg        string                     `json:"msg"`
+		Args       []json.RawMessage          `json:"args"`
+		HandlerID  string                     `json:"handlerId"`
+		Value      string                     `json:"value"` // legacy fallback
+		Seq        int64                      `json:"seq,omitempty"`
+		InputState map[string]inputStateEntry `json:"inputState,omitempty"`
+		Batch      []batchedEvent             `json:"batch,omitempty"`
 	}
 	// Bound event payload to 1 MiB — these are tiny JSON envelopes.
+	// Batch events under sendBeacon are equally small (one per input).
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -1741,6 +1872,23 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 	// Different sessions proceed in parallel.
 	app.locker.Lock(req.SessionID)
 	defer app.locker.Unlock(req.SessionID)
+
+	// Batch path — sendBeacon flushes a sequence of pending-debounce
+	// events on tab unload. Each entry is processed as if it had
+	// arrived on its own, under the single sess.mu held by each
+	// dispatch. The outer InputState is ingested once before the
+	// batch runs so all dispatches see the final DOM values.
+	if len(req.Batch) > 0 {
+		sess.mu.Lock()
+		sess.ingestInputState(req.InputState)
+		sess.mu.Unlock()
+		for _, ev := range req.Batch {
+			app.dispatchBatched(sess, ev)
+		}
+		// sendBeacon can't read the response — 204 just signals OK.
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 
 	sess.mu.Lock()
 	// Handler maps aren't persisted across encode/decode (closures don't
@@ -1798,10 +1946,21 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 	if _, isSkyAdt := msg.(SkyADT); !isSkyAdt {
 		msg = applyMsgArgs(msg, req.Args, req.Value)
 	}
+	// Reconcile the client's view of dirty inputs into sess.inputSeqs
+	// before dispatch. Step 3 activates the diff-level client-value
+	// alignment that uses this state; Step 2 only records it so the
+	// ackInputs response field reflects what the server has observed.
+	sess.ingestInputState(req.InputState)
 	// Keep a reference to the previous tree BEFORE dispatch mutates it.
 	prev := sess.prevTree
 	body2 := app.dispatch(sess, msg)
 	newTree := sess.prevTree
+	// Capture outgoing protocol metadata before releasing the lock so
+	// the seq reflects this session's true mutation order. Bumped once
+	// per reply (including no-op replies) so the client's cross-channel
+	// ordering works uniformly.
+	respSeq := sess.nextOutSeq()
+	respAck := ackInputsForPrevTree(sess)
 	sess.mu.Unlock()
 	// Persist the mutated session so DB-backed stores see the new
 	// state. Memory store is a no-op on Set for an already-tracked sid.
@@ -1812,8 +1971,7 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 	// client acknowledges the event without the server shipping a
 	// redundant HTML frame.
 	if body2 == "" {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"patches": []any{}})
+		writeEventJSON(w, respSeq, req.Seq, respAck, nil)
 		return
 	}
 	// When we have a prior tree we can reply with a minimal patch set
@@ -1824,13 +1982,113 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 	if prev != nil && newTree != nil {
 		patches := diffTrees(prev, newTree)
 		if len(patches) > 0 && !patchesAreFullReplace(patches) {
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]any{"patches": patches})
+			writeEventJSON(w, respSeq, req.Seq, respAck, patches)
 			return
 		}
 	}
-	w.Header().Set("Content-Type", "text/html")
-	w.Write([]byte(body2))
+	writeEventHTML(w, respSeq, respAck, body2)
+}
+
+// writeEventJSON emits the structured /_sky/event response envelope:
+// {seq, respondingTo, ackInputs, patches}. patches may be nil/empty.
+// The three protocol fields survive alongside the legacy `patches` key
+// so pre-upgrade clients continue to deserialise cleanly.
+func writeEventJSON(w http.ResponseWriter, seq, respondingTo int64, ackInputs map[string]int64, patches []Patch) {
+	w.Header().Set("Content-Type", "application/json")
+	payload := map[string]any{
+		"seq":     seq,
+		"patches": patches,
+	}
+	if patches == nil {
+		payload["patches"] = []any{}
+	}
+	if respondingTo > 0 {
+		payload["respondingTo"] = respondingTo
+	}
+	if ackInputs != nil {
+		payload["ackInputs"] = ackInputs
+	}
+	_ = json.NewEncoder(w).Encode(payload)
+}
+
+// writeEventHTML emits the full-body fallback. Protocol metadata rides
+// in headers so the client can update its seq bookkeeping without
+// parsing the HTML — X-Sky-Seq (single counter) and X-Sky-Ack-Inputs
+// (JSON-encoded map, absent when empty).
+func writeEventHTML(w http.ResponseWriter, seq int64, ackInputs map[string]int64, body string) {
+	h := w.Header()
+	h.Set("Content-Type", "text/html")
+	h.Set("X-Sky-Seq", strconv.FormatInt(seq, 10))
+	if ackInputs != nil {
+		if b, err := json.Marshal(ackInputs); err == nil {
+			h.Set("X-Sky-Ack-Inputs", string(b))
+		}
+	}
+	_, _ = w.Write([]byte(body))
+}
+
+// dispatchBatched processes one entry from eventRequest.Batch. The
+// locking discipline and handler-lookup rules mirror the single-event
+// path; the only difference is no response is produced (sendBeacon
+// discards it), and any SSE side effects flow through sess.sseCh.
+// Failures are swallowed — a batch arrives on tab-unload so there's
+// no user-visible place to surface them.
+func (app *liveApp) dispatchBatched(sess *liveSession, ev batchedEvent) {
+	sess.mu.Lock()
+	if len(sess.handlers) == 0 && sess.model != nil {
+		sess.handlers = map[string]any{}
+		vn := sky_call(app.view, sess.model).(VNode)
+		assignSkyIDs(&vn, "r")
+		_ = renderVNode(vn, sess.handlers)
+		sess.prevTree = &vn
+	}
+	msg, ok := sess.handlers[ev.HandlerID]
+	if !ok && ev.Msg != "" && ev.HandlerID == "" {
+		tag := -1
+		if t, found := LookupAdtTag(ev.Msg); found {
+			tag = t
+		} else {
+			app.msgTagsMu.Lock()
+			if t2, ok2 := app.msgTags[ev.Msg]; ok2 {
+				tag = t2
+			}
+			app.msgTagsMu.Unlock()
+		}
+		var fields []any
+		for _, raw := range ev.Args {
+			var v any
+			if err := json.Unmarshal(raw, &v); err == nil {
+				fields = append(fields, v)
+			}
+		}
+		msg = SkyADT{Tag: tag, SkyName: ev.Msg, Fields: fields}
+		ok = true
+	}
+	if !ok {
+		sess.mu.Unlock()
+		return
+	}
+	if _, isSkyAdt := msg.(SkyADT); !isSkyAdt {
+		msg = applyMsgArgs(msg, ev.Args, ev.Value)
+	}
+	body2 := app.dispatch(sess, msg)
+	// Bump outSeq once per batched entry so any SSE frame pushed as a
+	// side effect carries a unique seq. Each dispatch that mutates the
+	// view is its own observable event.
+	var frame string
+	if body2 != "" {
+		frame = encodeSSEFrame(sess, body2)
+	}
+	sess.mu.Unlock()
+	// Push to other subscribers (other tabs, SSE listeners). The
+	// originating tab has already unloaded so the frame is for anyone
+	// else observing the session.
+	if frame != "" {
+		select {
+		case sess.sseCh <- frame:
+		default:
+		}
+	}
 }
 
 
@@ -1958,17 +2216,22 @@ func (app *liveApp) runPerform(sess *liveSession, task any, toMsg any) {
 	result := sky_call(task, nil)
 	// toMsg : Result err a -> Msg — convert result to Msg
 	msg := sky_call(toMsg, result)
-	// Push update through locked dispatch
+	// Push update through locked dispatch, then emit an SSE frame
+	// carrying the session-wide seq. Keeping frame construction under
+	// the same lock as dispatch means the seq reflects the actual
+	// mutation order even when other goroutines dispatch concurrently.
 	sess.mu.Lock()
 	body := app.dispatch(sess, msg)
+	var frame string
+	if body != "" {
+		frame = encodeSSEFrame(sess, body)
+	}
 	sess.mu.Unlock()
-	// Empty body = dispatch determined the view is unchanged.
-	if body == "" {
+	if frame == "" {
 		return
 	}
-	// Notify SSE listeners
 	select {
-	case sess.sseCh <- body:
+	case sess.sseCh <- frame:
 	default:
 		// channel full, drop
 	}
@@ -2009,15 +2272,19 @@ func (app *liveApp) setupSubscriptions(sess *liveSession) {
 					msg = sky_call(toMsg, t.UnixMilli())
 				}
 				body := app.dispatch(sess, msg)
+				var frame string
+				if body != "" {
+					frame = encodeSSEFrame(sess, body)
+				}
 				sess.mu.Unlock()
 				// Suppress SSE write when the tick didn't change
 				// the view — prevents Time.every from pushing an
 				// identical HTML frame every interval.
-				if body == "" {
+				if frame == "" {
 					continue
 				}
 				select {
-				case sess.sseCh <- body:
+				case sess.sseCh <- frame:
 				default:
 				}
 			}
@@ -2081,6 +2348,61 @@ func sessionID(r *http.Request, w http.ResponseWriter) string {
 func liveJS(sid string) string {
 	return fmt.Sprintf(`
 var __skySid = %q;
+
+// ── Input authority protocol state ───────────────────────────
+// See docs/skylive/input-authority-protocol.md §Client state.
+// Step 2 populates these counters + per-input table on every send
+// and response; Step 3 activates the patch filter that reads them;
+// Step 4 activates the stale-drop test against __skyLastAppliedSeq.
+var __skyClientSeq = 0;       // monotonic, client-owned; bumped on every __skySend
+var __skyLastAppliedSeq = 0;  // server-owned; largest seq already applied
+var __skyInputs = {};         // sky-id → InputEntry (populated by __skyBindOne)
+
+function __skyInputEntry(sid) {
+  var e = __skyInputs[sid];
+  if (!e) {
+    e = __skyInputs[sid] = {
+      liveValue: "", lastSentSeq: 0, lastAckedSeq: 0,
+      pendingDebounceId: null, pendingSend: null
+    };
+  }
+  return e;
+}
+
+// __skyInputsSnapshot — dirty-input projection bundled into every
+// outgoing event. Only entries whose user-typed value is newer than
+// the server's latest ack are included, so the wire stays compact
+// when the client and server agree.
+function __skyInputsSnapshot() {
+  var out = null;
+  var ids = Object.keys(__skyInputs);
+  for (var i = 0; i < ids.length; i++) {
+    var e = __skyInputs[ids[i]];
+    if (e.lastSentSeq <= e.lastAckedSeq) continue;
+    if (!out) out = {};
+    out[ids[i]] = {value: e.liveValue, seq: e.lastSentSeq};
+  }
+  return out;
+}
+
+// __skyIngestSeq — fold a response or SSE frame's {seq, ackInputs}
+// into client state. seq advances __skyLastAppliedSeq monotonically;
+// ackInputs retires per-input dirty flags so the next snapshot omits
+// caught-up fields.
+function __skyIngestSeq(seq, ackInputs) {
+  if (typeof seq === "number" && seq > __skyLastAppliedSeq) {
+    __skyLastAppliedSeq = seq;
+  }
+  if (ackInputs) {
+    var ids = Object.keys(ackInputs);
+    for (var i = 0; i < ids.length; i++) {
+      var e = __skyInputs[ids[i]];
+      if (!e) continue;
+      var n = ackInputs[ids[i]];
+      if (n > e.lastAckedSeq) e.lastAckedSeq = n;
+    }
+  }
+}
 
 // __skyPatch: replace sky-root's content with the fragment in `+"`"+`t`+"`"+`,
 // preserving the active element (focus + caret/selection) and scroll
@@ -2176,33 +2498,59 @@ document.addEventListener("focusout", function(ev) {
 }, true);
 
 // ── Core send ────────────────────────────────────────────────
-// Wire format: {sid, msg: "MsgName", args: [...], handlerId: "..."}.
-//   * msg + args drive the server's TEA update — the legacy protocol.
-//   * handlerId is a stable-by-render tag used as a fallback when the
-//     server can't locate the Msg constructor by name (anonymous ADTs).
+// Wire format (see docs/skylive/input-authority-protocol.md §Request):
+//   {sessionId, seq, msg, args, handlerId, inputState?}
+//   * seq is client-monotonic — server uses it to match responses to
+//     the inputState snapshot that produced them.
+//   * inputState carries the user's current DOM values for every
+//     dirty input so the server's diff can align against reality
+//     before emitting patches.
 function __skySend(msgName, args, handlerId, opts) {
   opts = opts || {};
   if (!opts.noLoader) __skyLoaderStart();
+  __skyClientSeq++;
+  var mySeq = __skyClientSeq;
+  // Stamp every currently-dirty input with this seq. The server's
+  // ack (for a future response) will clear them back to parity.
+  var dirtyIds = Object.keys(__skyInputs);
+  for (var di = 0; di < dirtyIds.length; di++) {
+    var de = __skyInputs[dirtyIds[di]];
+    if (de.liveValue !== "" || de.pendingDebounceId !== null) {
+      de.lastSentSeq = mySeq;
+    }
+  }
+  var snapshot = __skyInputsSnapshot();
+  var body = {
+    sessionId: __skySid,
+    seq: mySeq,
+    msg: msgName || "",
+    args: args || [],
+    handlerId: handlerId || ""
+  };
+  if (snapshot) body.inputState = snapshot;
   fetch("/_sky/event", {
     method: "POST",
     headers: {"Content-Type":"application/json"},
-    body: JSON.stringify({
-      sessionId: __skySid,
-      msg: msgName || "",
-      args: args || [],
-      handlerId: handlerId || ""
-    }),
+    body: JSON.stringify(body),
     credentials: "same-origin"
   }).then(function(r){
     var ct = r.headers.get("Content-Type") || "";
     if (ct.indexOf("application/json") >= 0) {
       return r.json().then(function(data) {
         __skyLoaderEnd();
-        if (data && data.patches) __skyApplyPatches(data.patches);
+        if (!data) return;
+        __skyIngestSeq(data.seq, data.ackInputs);
+        if (data.patches) __skyApplyPatches(data.patches);
       });
     }
     return r.text().then(function(t) {
       __skyLoaderEnd();
+      var seqStr = r.headers.get("X-Sky-Seq");
+      var seq = seqStr ? parseInt(seqStr, 10) : 0;
+      var ackRaw = r.headers.get("X-Sky-Ack-Inputs");
+      var ack = null;
+      if (ackRaw) { try { ack = JSON.parse(ackRaw); } catch(_) {} }
+      __skyIngestSeq(seq, ack);
       __skyPatch(t);
     });
   }).catch(function() { __skyLoaderEnd(); });
@@ -2362,6 +2710,14 @@ function __skyBindOne(root, eventName) {
       if (ev.type === "submit") ev.preventDefault();
       var args = __skyExtractArgs(ev);
       if (ev.type === "input") {
+        // Track live value against sky-id so the snapshot bundled in
+        // the next __skySend reflects the user's actual DOM state,
+        // and so Step 3's patch filter can recognise dirty inputs.
+        var sid = target.getAttribute("sky-id");
+        if (sid) {
+          var e = __skyInputEntry(sid);
+          e.liveValue = args && args.length > 0 ? String(args[0]) : "";
+        }
         __skyDebouncedSend(msgName, args, hid, 150);
         return;
       }
@@ -2487,11 +2843,20 @@ window.addEventListener("popstate", function() {
     .then(function(r) { return r.text(); })
     .then(__skyPatch);
 });
-// Server-Sent Events: push updates from server (subscriptions, Cmd.perform results)
+// Server-Sent Events: push updates from server (subscriptions, Cmd.perform results).
+// Frame envelope since v0.9.3+: {seq, body, ackInputs?}. Falls back to
+// treating e.data as a raw HTML body when JSON parsing fails, so a
+// mixed-version rollout doesn't break the open-SSE connection.
 var __skySSE = new EventSource("/_sky/sse");
 __skySSE.addEventListener("patch", function(e) {
-  var html = e.data.replace(/\\n/g, "\n");
-  __skyPatch(html);
+  var frame;
+  try { frame = JSON.parse(e.data); } catch (_) {
+    return __skyPatch(e.data.replace(/\\n/g, "\n"));
+  }
+  if (frame && typeof frame === "object") {
+    __skyIngestSeq(frame.seq, frame.ackInputs);
+    if (frame.body) __skyPatch(frame.body.replace(/\\n/g, "\n"));
+  }
 });
 
 // ── Init ─────────────────────────────────────────────────────
