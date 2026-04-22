@@ -977,14 +977,23 @@ type batchedEvent struct {
 // tree is missing (first render) the caller should fall back to a full
 // innerHTML replace — diffTrees returns a single patch with the full
 // new HTML.
-func diffTrees(old, new_ *VNode) []Patch {
+//
+// clientState is an optional per-sky-id map of "what the DOM actually
+// shows right now" reported by the client in its last inputState
+// snapshot. When present and a new_ element is a form field (input /
+// textarea / select) whose value/checked/selected matches the client-
+// reported value, we skip emitting the attr patch — the server
+// re-deriving the user's own typing and shipping it back to them
+// would otherwise race against ongoing keystrokes. See
+// docs/skylive/input-authority-protocol.md §I5.
+func diffTrees(old, new_ *VNode, clientState map[string]string) []Patch {
 	var out []Patch
-	diffNodes(old, new_, &out)
+	diffNodes(old, new_, clientState, &out)
 	return out
 }
 
 
-func diffNodes(old, new_ *VNode, out *[]Patch) {
+func diffNodes(old, new_ *VNode, clientState map[string]string, out *[]Patch) {
 	if old == nil || new_ == nil {
 		return
 	}
@@ -994,10 +1003,22 @@ func diffNodes(old, new_ *VNode, out *[]Patch) {
 		*out = append(*out, Patch{ID: old.SkyID, HTML: &html})
 		return
 	}
-	// Attrs diff
+	// Attrs diff — with client-value alignment for form fields so the
+	// diff can't emit a value attr that reverts the user's typing.
 	var attrChanges map[string]string
+	inputTag := isFormInputTag(new_.Tag)
+	clientVal, hasClient := "", false
+	if inputTag && clientState != nil && new_.SkyID != "" {
+		clientVal, hasClient = clientState[new_.SkyID]
+	}
 	for k, nv := range new_.Attrs {
 		if ov, ok := old.Attrs[k]; !ok || ov != nv {
+			if hasClient && isAuthorityControlledAttr(k) && nv == clientVal {
+				// Server's intended value matches what the DOM actually
+				// shows — no patch needed. Any keystrokes in flight stay
+				// unclobbered; the client already has this value.
+				continue
+			}
 			if attrChanges == nil {
 				attrChanges = map[string]string{}
 			}
@@ -1071,8 +1092,24 @@ func diffNodes(old, new_ *VNode, out *[]Patch) {
 			}
 			return
 		}
-		diffNodes(oc, nc, out)
+		diffNodes(oc, nc, clientState, out)
 	}
+}
+
+// isFormInputTag — tags whose value/checked/selected attrs are
+// directly driven by the user rather than the server's model. A
+// diff targeting these must defer to the client's in-flight typing
+// (client-value alignment in diffNodes).
+func isFormInputTag(t string) bool {
+	return t == "input" || t == "textarea" || t == "select"
+}
+
+// isAuthorityControlledAttr — attrs the user drives directly on
+// input/textarea/select. These get filtered through the client-
+// value alignment check; everything else (class, style, aria-*,
+// disabled, placeholder) diffs normally.
+func isAuthorityControlledAttr(k string) bool {
+	return k == "value" || k == "checked" || k == "selected"
 }
 
 
@@ -1980,7 +2017,7 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 	// every patch is a full-HTML replace anyway, fall back to the full
 	// innerHTML body.
 	if prev != nil && newTree != nil {
-		patches := diffTrees(prev, newTree)
+		patches := diffTrees(prev, newTree, clientStateFromRequest(req.InputState))
 		if len(patches) > 0 && !patchesAreFullReplace(patches) {
 			writeEventJSON(w, respSeq, req.Seq, respAck, patches)
 			return
@@ -2389,6 +2426,37 @@ function __skyInputsSnapshot() {
 // into client state. seq advances __skyLastAppliedSeq monotonically;
 // ackInputs retires per-input dirty flags so the next snapshot omits
 // caught-up fields.
+// __skyIsDirty — element is "dirty" (user-authoritative) when it is
+// currently focused, has a pending debounced send keyed by its
+// data-sky-hid, or the client has typed past the server's last ack
+// for its sky-id. The patch filter reads this to decide whether to
+// apply value/checked/selected attrs or innerHTML replacements.
+function __skyIsDirty(el) {
+  if (!el || el.nodeType !== 1) return false;
+  if (el === document.activeElement) return true;
+  var hid = el.getAttribute && el.getAttribute("data-sky-hid");
+  if (hid && __skyInputPending[hid]) return true;
+  var sid = el.getAttribute && el.getAttribute("sky-id");
+  if (sid) {
+    var e = __skyInputs[sid];
+    if (e && e.lastSentSeq > e.lastAckedSeq) return true;
+  }
+  return false;
+}
+
+// __skyContainsDirty — true when el or any descendant form field
+// is dirty. Used before innerHTML replacement to decide whether the
+// safe path (raw innerHTML) or the protecting path (morph) applies.
+function __skyContainsDirty(el) {
+  if (__skyIsDirty(el)) return true;
+  if (!el || !el.querySelectorAll) return false;
+  var nodes = el.querySelectorAll("input, textarea, select");
+  for (var i = 0; i < nodes.length; i++) {
+    if (__skyIsDirty(nodes[i])) return true;
+  }
+  return false;
+}
+
 function __skyIngestSeq(seq, ackInputs) {
   if (typeof seq === "number" && seq > __skyLastAppliedSeq) {
     __skyLastAppliedSeq = seq;
@@ -2556,20 +2624,42 @@ function __skySend(msgName, args, handlerId, opts) {
   }).catch(function() { __skyLoaderEnd(); });
 }
 
-// Apply a list of sky-id addressed patches without reflowing the whole
-// document. Preserves input focus + caret naturally, so typing keeps
-// its state through any number of updates.
+// Apply a list of sky-id addressed patches with the input authority
+// filter (I1): value/checked/selected attrs on dirty inputs are
+// dropped so the user's live DOM wins, and innerHTML replacements
+// that would wipe a dirty subtree are re-routed through the morph
+// algorithm (which preserves focused / pending inputs).
 function __skyApplyPatches(patches) {
   for (var i = 0; i < patches.length; i++) {
     var p = patches[i];
     var el = document.querySelector('[sky-id="' + p.id.replace(/"/g, '\\"') + '"]');
     if (!el) continue;
     if (p.text !== undefined && p.text !== null) el.textContent = p.text;
-    if (p.html !== undefined && p.html !== null) el.innerHTML = p.html;
+    if (p.html !== undefined && p.html !== null) {
+      // If any dirty input lives inside this subtree, route the
+      // replacement through __skyMorph — it knows to skip focused /
+      // pending inputs rather than wipe them. Otherwise take the
+      // fast path (native innerHTML assignment).
+      if (__skyContainsDirty(el)) {
+        var tmp = document.createElement("div");
+        tmp.innerHTML = p.html;
+        __skyMorph(el, tmp);
+      } else {
+        el.innerHTML = p.html;
+      }
+    }
     if (p.attrs) {
+      var dirty = __skyIsDirty(el);
       var keys = Object.keys(p.attrs);
       for (var j = 0; j < keys.length; j++) {
         var k = keys[j], v = p.attrs[k];
+        // Authority filter: the user is currently editing this
+        // field, so the server's proposed value/checked/selected
+        // would stomp in-flight keystrokes. Drop them and let the
+        // next event round-trip settle the state.
+        if (dirty && (k === "value" || k === "checked" || k === "selected")) {
+          continue;
+        }
         if (v === "") { el.removeAttribute(k); }
         else {
           el.setAttribute(k, v);
@@ -2631,19 +2721,24 @@ function __skyMorph(oldParent, newParent) {
       continue;
     }
     if (oldNode.nodeType !== newNode.nodeType || oldNode.tagName !== (newNode.tagName || "")) {
-      // Different node type — replace entirely
+      // Different node type — replace entirely UNLESS the old subtree
+      // contains dirty state (focused input, pending debounce, unacked
+      // keystrokes). Stomping it would lose the user's typing; skip
+      // this node and let the next event round-trip reconcile.
+      if (oldNode.nodeType === 1 && __skyContainsDirty(oldNode)) {
+        continue;
+      }
       oldParent.replaceChild(newNode.cloneNode(true), oldNode);
       continue;
     }
-    // Same element type — check if it's a protected input
+    // Same element type — check if it's a protected input. Fold the
+    // __skyIsDirty signals (focus, pending debounce, unacked seq) so
+    // the "don't touch value" skip also fires for inputs the user
+    // edited but hasn't yet blurred.
     var tag = (oldNode.tagName || "").toUpperCase();
     var isInput = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
-    var isFocused = oldNode === document.activeElement;
-    var hid = oldNode.getAttribute ? oldNode.getAttribute("data-sky-hid") : null;
-    var hasPending = hid && __skyInputPending[hid];
-    if (isInput && (isFocused || hasPending)) {
-      // SKIP — user is typing here. Don't touch value or attributes.
-      // Update non-value attributes only (class, style, etc.)
+    if (isInput && __skyIsDirty(oldNode)) {
+      // SKIP — user is typing here. Don't touch value/checked/selected.
       __skyPatchAttrs(oldNode, newNode, true);
       continue;
     }
@@ -2662,18 +2757,23 @@ function __skyMorph(oldParent, newParent) {
 
 function __skyPatchAttrs(oldEl, newEl, skipValue) {
   if (!oldEl.attributes || !newEl.attributes) return;
-  // Remove attrs not in new
+  // Remove attrs not in new. skipValue is the "protected input"
+  // signal — it means don't touch the user-driven attrs on this
+  // element (value, checked, selected all in one bucket).
+  var isUserAuthorityAttr = function(n) {
+    return skipValue && (n === "value" || n === "checked" || n === "selected");
+  };
   var toRemove = [];
   for (var i = 0; i < oldEl.attributes.length; i++) {
     var name = oldEl.attributes[i].name;
-    if (skipValue && name === "value") continue;
+    if (isUserAuthorityAttr(name)) continue;
     if (!newEl.hasAttribute(name)) toRemove.push(name);
   }
   for (var r = 0; r < toRemove.length; r++) oldEl.removeAttribute(toRemove[r]);
   // Set/update attrs from new
   for (var j = 0; j < newEl.attributes.length; j++) {
     var attr = newEl.attributes[j];
-    if (skipValue && attr.name === "value") continue;
+    if (isUserAuthorityAttr(attr.name)) continue;
     if (oldEl.getAttribute(attr.name) !== attr.value) {
       oldEl.setAttribute(attr.name, attr.value);
     }
