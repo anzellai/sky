@@ -23,6 +23,7 @@ import (
 	"os"
 	"reflect"
 	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -1214,8 +1215,15 @@ func (s *sessionLocker) Unlock(sid string) {
 // applyMsgArgs consumes a resolved Msg-handler value from the handler map
 // and, when it's a curried constructor (onInput: \s -> GotInput s), applies
 // each wire-supplied argument in order to produce a concrete Msg ADT.
-// Falls back to the legacy single-value form (`sky_call(msg, value)`) when
+// Falls back to the legacy single-value form (sky_call(msg, value)) when
 // the client didn't supply structured args — keeps older inputs working.
+//
+// A type-mismatch between the argument the client sent and the constructor's
+// declared parameter type (e.g. a radio's onInput sending [true] into a
+// String -> Msg constructor) used to panic deep inside reflect.Call. The
+// guard below detects the mismatch before the call, logs a useful message
+// with the msg/tag/expected-type/actual-type, and returns (msgDecodeError)
+// so dispatch can drop the event without mutating model state.
 func applyMsgArgs(msg any, args []json.RawMessage, fallbackValue string) any {
 	if msg == nil {
 		return msg
@@ -1226,7 +1234,7 @@ func applyMsgArgs(msg any, args []json.RawMessage, fallbackValue string) any {
 		return msg
 	}
 	if len(args) == 0 {
-		return sky_call(msg, fallbackValue)
+		return safeSkyCall(msg, fallbackValue)
 	}
 	cur := msg
 	for _, raw := range args {
@@ -1234,12 +1242,103 @@ func applyMsgArgs(msg any, args []json.RawMessage, fallbackValue string) any {
 		if err := json.Unmarshal(raw, &v); err != nil {
 			v = string(raw)
 		}
-		cur = sky_call(cur, v)
+		if !argAssignableToFunc(cur, v) {
+			logMsgDecodeError(cur, v, raw)
+			return msgDecodeError{}
+		}
+		cur = safeSkyCall(cur, v)
+		if _, ok := cur.(msgDecodeError); ok {
+			return cur
+		}
 		if reflect.ValueOf(cur).Kind() != reflect.Func {
 			break
 		}
 	}
 	return cur
+}
+
+// msgDecodeError — sentinel value returned from applyMsgArgs when the
+// client's wire-level arguments can't be coerced onto the Msg
+// constructor's parameters. dispatch() recognises it and drops the
+// event cleanly (no model mutation, no view re-render). Not a Go
+// error because it flows through the Msg pipeline and has to be
+// distinguished from legitimate Msg ADT values.
+type msgDecodeError struct{}
+
+// argAssignableToFunc — reports whether the first parameter of `fn`
+// will accept `arg` via reflect.Call. Returns true for interface
+// params (the common Sky case — most curried constructors take
+// `any`) and for exact-type matches. The check is intentionally
+// conservative: we'd rather let a near-miss through to reflect's own
+// error handling than reject legitimate dispatches.
+func argAssignableToFunc(fn any, arg any) bool {
+	rv := reflect.ValueOf(fn)
+	if rv.Kind() != reflect.Func {
+		return true
+	}
+	ft := rv.Type()
+	if ft.NumIn() == 0 {
+		return true
+	}
+	paramT := ft.In(0)
+	if paramT.Kind() == reflect.Interface {
+		// `any` (or any interface type the arg satisfies) — defer to
+		// runtime. Nearly every Sky lambda lands here.
+		if arg == nil {
+			return true
+		}
+		return reflect.TypeOf(arg).Implements(paramT)
+	}
+	if arg == nil {
+		// Typed param can't accept a nil for most kinds; let reflect
+		// surface the specific error if we're wrong.
+		switch paramT.Kind() {
+		case reflect.Ptr, reflect.Interface, reflect.Map, reflect.Slice, reflect.Chan, reflect.Func:
+			return true
+		}
+		return false
+	}
+	argT := reflect.TypeOf(arg)
+	return argT.AssignableTo(paramT)
+}
+
+// safeSkyCall wraps sky_call with a panic recover so a reflect-level
+// type mismatch that slips past argAssignableToFunc (custom func shapes,
+// variadics, etc.) still surfaces as a logged msgDecodeError rather than
+// crashing the dispatch goroutine. The outer panic-recover in /_sky/event
+// would otherwise catch it too, but with less context.
+func safeSkyCall(fn any, arg any) (result any) {
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintf(os.Stderr,
+				"[sky.live] Msg dispatch recovered from panic: %v "+
+					"(fn kind=%s, arg=%T %v)\n",
+				r, reflect.ValueOf(fn).Kind(), arg, arg)
+			result = msgDecodeError{}
+		}
+	}()
+	return sky_call(fn, arg)
+}
+
+// logMsgDecodeError — structured message to stderr when a client-sent
+// argument doesn't fit the Msg constructor's parameter. Gives the
+// developer enough to find the mis-bound handler in their view.
+func logMsgDecodeError(fn any, arg any, raw json.RawMessage) {
+	rv := reflect.ValueOf(fn)
+	expected := "<unknown>"
+	if rv.Kind() == reflect.Func && rv.Type().NumIn() > 0 {
+		expected = rv.Type().In(0).String()
+	}
+	fnName := ""
+	if rv.Kind() == reflect.Func {
+		fnName = runtime.FuncForPC(rv.Pointer()).Name()
+	}
+	fmt.Fprintf(os.Stderr,
+		"[sky.live] Msg decode error: %s expected %s but got %T (%v); "+
+			"raw=%s. Likely fix: check the view binding — e.g. onInput on a "+
+			"radio sends [checked:bool], not the value. Use onClick with a "+
+			"fully-applied Msg per radio instead.\n",
+		fnName, expected, arg, arg, string(raw))
 }
 
 type liveSession struct {
@@ -2143,7 +2242,31 @@ func patchesAreFullReplace(patches []Patch) bool {
 // function, we run it BEFORE update. An `Err reason` short-circuits the
 // update and surfaces `reason` on model.Notification so the user sees
 // why their action was rejected. `Ok ()` proceeds normally.
-func (app *liveApp) dispatch(sess *liveSession, msg any) string {
+//
+// A msgDecodeError value arriving here (from applyMsgArgs rejecting a
+// wire-level type mismatch, e.g. a radio's onInput sending a boolean
+// into a String -> Msg constructor) drops the event: no update runs,
+// no model mutation, no re-render. The error has already been logged
+// with useful context at the dispatch boundary.
+//
+// update/view/guard panics are recovered here as a last-line defence
+// so one malformed handler can't crash the session; the view simply
+// falls back to its last rendered body.
+func (app *liveApp) dispatch(sess *liveSession, msg any) (body string) {
+	if _, bad := msg.(msgDecodeError); bad {
+		// applyMsgArgs already logged the specific mismatch. Return "" so
+		// the client sees an empty patch list (no visible change) and
+		// session state stays consistent.
+		return ""
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintf(os.Stderr,
+				"[sky.live] dispatch panic recovered, dropping event: %v\n%s\n",
+				r, debug.Stack())
+			body = ""
+		}
+	}()
 	if app.guard != nil && isFunc(app.guard) {
 		g := sky_call2(app.guard, msg, sess.model)
 		// guard returns Result: Ok _ (allow) or Err "reason" (reject).
@@ -2171,7 +2294,7 @@ func (app *liveApp) dispatch(sess *liveSession, msg any) string {
 	sess.handlers = map[string]any{}
 	vn := sky_call(app.view, sess.model).(VNode)
 	assignSkyIDs(&vn, "r")
-	body := renderVNode(vn, sess.handlers)
+	body = renderVNode(vn, sess.handlers)
 	sess.prevTree = &vn
 	// Process Cmds (may spawn goroutines)
 	app.runCmd(sess, cmd)
