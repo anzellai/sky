@@ -830,17 +830,71 @@ func isDOMEventName(ev string) bool {
 
 
 // assignSkyIDs walks a tree and stamps every element (not text/raw) with
-// a deterministic structural path id. Having stable IDs means the diff
-// algorithm can address a specific element between renders without us
-// having to rely on React-style key props.
+// a deterministic structural path id. Each non-root segment is
+// `.<index>#<tag>[:<key>]` — the embedded tag means two structurally
+// different subtrees never share an id at the same positional depth
+// (e.g. a signIn `<input>` and a signUp `<fieldset>` at index 3 get
+// different ids), so the diff walker cannot accidentally merge them.
+// When an element carries a stable key (explicit `sky-key` attribute,
+// or implicit from `name` on form-bearing tags), it's appended so
+// keyed list items and named form fields keep identity across reorder.
+// See docs/skylive/input-authority-protocol.md §Sky-id grammar.
 func assignSkyIDs(n *VNode, path string) {
 	if n.Kind != "element" {
 		return
 	}
 	n.SkyID = path
 	for i := range n.Children {
-		assignSkyIDs(&n.Children[i], path+"."+itoa(i))
+		child := &n.Children[i]
+		if child.Kind != "element" {
+			// Text/raw children don't get sky-ids; skip the tag lookup but
+			// keep their positional index as-is so element siblings get the
+			// same index they'd have had under the old scheme.
+			continue
+		}
+		seg := path + "." + itoa(i) + "#" + child.Tag
+		if k := skyIDKey(child); k != "" {
+			seg += ":" + k
+		}
+		assignSkyIDs(child, seg)
 	}
+}
+
+// skyIDKey returns a stable disambiguator for `n`, or "" if none applies.
+// Priority: explicit `sky-key` attribute (set by `Html.keyed`) first,
+// then `name` on form-bearing tags. Any matched value is sanitised to
+// `[A-Za-z0-9_-]+` so it can't corrupt the sky-id grammar.
+func skyIDKey(n *VNode) string {
+	if k, ok := n.Attrs["sky-key"]; ok && k != "" {
+		return sanitiseSkyIDKey(k)
+	}
+	switch n.Tag {
+	case "input", "textarea", "select", "form", "button", "fieldset":
+		if k, ok := n.Attrs["name"]; ok && k != "" {
+			return sanitiseSkyIDKey(k)
+		}
+	}
+	return ""
+}
+
+// sanitiseSkyIDKey replaces anything outside `[A-Za-z0-9_-]` with `_`.
+// Prevents the key from breaking sky-id parsing, CSS selector escaping,
+// or HTML attribute quoting.
+func sanitiseSkyIDKey(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z',
+			r >= 'A' && r <= 'Z',
+			r >= '0' && r <= '9',
+			r == '-', r == '_':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('_')
+		}
+	}
+	return b.String()
 }
 
 
