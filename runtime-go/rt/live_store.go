@@ -1,6 +1,6 @@
-// live_store.go — SessionStore abstraction + memory / SQLite / Postgres
-// implementations. The store persists the raw Go `any` model + rendered
-// VNode tree between HTTP requests for the same session id.
+// live_store.go — SessionStore abstraction + memory / SQLite / Postgres /
+// Redis implementations. The store persists the raw Go `any` model +
+// rendered VNode tree between HTTP requests for the same session id.
 //
 // Wire protocol: every Session is encoded with encoding/gob. Gob handles
 // arbitrary Go values without needing a schema, including the compiled
@@ -9,19 +9,22 @@
 // the type descriptors on first encode.
 //
 // Selected via sky.toml (or Live.app config):
-//   store     = "memory" | "sqlite" | "postgres"
-//   storePath = "sessions.db"         (sqlite)
-//            = "postgres://user:pass@host/db"  (postgres)
-//   ttl       = 1800                   (seconds; default 30m)
+//   store     = "memory" | "sqlite" | "postgres" | "redis"
+//   storePath = "sessions.db"                    (sqlite)
+//            = "postgres://user:pass@host/db"    (postgres)
+//            = "redis://:password@host:6379/0"   (redis; or bare "host:6379")
+//   ttl       = 1800                             (seconds; default 30m)
 
 package rt
 
 import (
 	"bytes"
+	"context"
 	crand "crypto/rand"
 	"database/sql"
 	"encoding/base64"
 	"encoding/gob"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -31,6 +34,7 @@ import (
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/redis/go-redis/v9"
 	_ "modernc.org/sqlite"
 )
 
@@ -524,6 +528,123 @@ func (s *postgresStore) cleanupLoop() {
 
 
 // ═════════════════════════════════════════════════════════════════════
+// Redis store — multi-instance deployments (Cloud Run, ECS, k8s). Uses
+// native Redis TTL for expiry, so there's no cleanup goroutine. Sessions
+// are stored under key "sky:sess:<sid>" as a gob-encoded blob, the same
+// wire format as SQLite/Postgres.
+// ═════════════════════════════════════════════════════════════════════
+
+type redisStore struct {
+	client   *redis.Client
+	ttl      time.Duration
+	ctx      context.Context
+	cancel   context.CancelFunc
+	memMu    sync.RWMutex
+	memCache map[string]*liveSession
+}
+
+// redisKey: namespace session ids under a fixed prefix so the Redis
+// instance can be shared with other workloads.
+func redisKey(sid string) string { return "sky:sess:" + sid }
+
+// newRedisStore: accepts either a full Redis URL
+// ("redis://:password@host:6379/0") or a bare "host:port" address.
+// Pings before returning so a misconfigured URL surfaces as a startup
+// error rather than silently falling back to memory on first write.
+func newRedisStore(addr string, ttl time.Duration) (*redisStore, error) {
+	var opt *redis.Options
+	if strings.Contains(addr, "://") {
+		parsed, err := redis.ParseURL(addr)
+		if err != nil {
+			return nil, fmt.Errorf("redis: parse URL: %w", err)
+		}
+		opt = parsed
+	} else {
+		opt = &redis.Options{Addr: addr}
+	}
+	client := redis.NewClient(opt)
+	ctx, cancel := context.WithCancel(context.Background())
+	pingCtx, pingCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer pingCancel()
+	if err := client.Ping(pingCtx).Err(); err != nil {
+		cancel()
+		_ = client.Close()
+		return nil, fmt.Errorf("redis: ping: %w", err)
+	}
+	return &redisStore{
+		client:   client,
+		ttl:      ttl,
+		ctx:      ctx,
+		cancel:   cancel,
+		memCache: map[string]*liveSession{},
+	}, nil
+}
+
+func (s *redisStore) Get(sid string) (*liveSession, bool) {
+	s.memMu.RLock()
+	if sess, ok := s.memCache[sid]; ok {
+		s.memMu.RUnlock()
+		return sess, true
+	}
+	s.memMu.RUnlock()
+	blob, err := s.client.Get(s.ctx, redisKey(sid)).Bytes()
+	if err != nil {
+		if !errors.Is(err, redis.Nil) {
+			log.Printf("[sky.live] redis: get session %s: %v", sid, err)
+		}
+		return nil, false
+	}
+	sess, err := decodeSession(blob)
+	if err != nil {
+		log.Printf("[sky.live] redis: failed to decode session %s: %v", sid, err)
+		return nil, false
+	}
+	// Touch TTL so an active session doesn't expire mid-conversation.
+	if err := s.client.Expire(s.ctx, redisKey(sid), s.ttl).Err(); err != nil {
+		log.Printf("[sky.live] redis: refresh TTL for %s: %v", sid, err)
+	}
+	return sess, true
+}
+
+func (s *redisStore) Set(sid string, sess *liveSession) {
+	sess.lastSeen = time.Now()
+	// Keep an in-process pointer so values that fail gob encoding
+	// (closures, channels) still work within this instance. They won't
+	// survive a restart or cross-instance routing, which is the same
+	// trade-off SQLite/Postgres make.
+	s.memMu.Lock()
+	s.memCache[sid] = sess
+	s.memMu.Unlock()
+	blob, err := encodeSession(sess)
+	if err != nil {
+		logOnce("redis-encode-"+sid, func() {
+			log.Printf("[sky.live] redis: session %s not persistable (%v); using in-memory fallback", sid, err)
+		})
+		return
+	}
+	if err := s.client.Set(s.ctx, redisKey(sid), blob, s.ttl).Err(); err != nil {
+		log.Printf("[sky.live] redis: failed to save session %s: %v", sid, err)
+	}
+}
+
+func (s *redisStore) Delete(sid string) {
+	s.memMu.Lock()
+	delete(s.memCache, sid)
+	s.memMu.Unlock()
+	if err := s.client.Del(s.ctx, redisKey(sid)).Err(); err != nil {
+		log.Printf("[sky.live] redis: delete session %s: %v", sid, err)
+	}
+}
+
+func (s *redisStore) NewID() string { return generateSkySessionID() }
+
+func (s *redisStore) Close() error {
+	s.cancel()
+	return s.client.Close()
+}
+
+
+// ═════════════════════════════════════════════════════════════════════
 // Helpers
 // ═════════════════════════════════════════════════════════════════════
 
@@ -693,6 +814,20 @@ func chooseStore(kind, path string, ttl time.Duration) SessionStore {
 			return newMemoryStore(ttl)
 		}
 		log.Printf("[sky.live] session store: postgres (ttl=%s)", ttl)
+		return store
+	case "redis", "valkey":
+		if path == "" {
+			path = os.Getenv("REDIS_URL")
+		}
+		if path == "" {
+			path = "localhost:6379"
+		}
+		store, err := newRedisStore(path, ttl)
+		if err != nil {
+			log.Printf("[sky.live] redis store unavailable (%v); falling back to memory", err)
+			return newMemoryStore(ttl)
+		}
+		log.Printf("[sky.live] session store: redis @ %s (ttl=%s)", path, ttl)
 		return store
 	default:
 		log.Printf("[sky.live] session store: memory (ttl=%s)", ttl)
