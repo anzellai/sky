@@ -2579,6 +2579,98 @@ document.addEventListener("focusout", function(ev) {
   }
 }, true);
 
+// ── I3: flush on unmount ─────────────────────────────────────
+// Any pending debounce that hasn't fired by the time the user
+// navigates or closes the tab would normally be discarded — the
+// setTimeout is torn down with the page. These handlers flush
+// synchronously so the final keystroke always reaches the server.
+// See docs/skylive/input-authority-protocol.md §I3.
+
+// __skyCollectPendingBatch — snapshot every pending-debounce entry
+// into a batch array, bumping __skyClientSeq per entry so each gets
+// its own order in the batch processed server-side. Clears the
+// pending map as a side effect so the regular debounce callback
+// can't double-fire after a beacon.
+function __skyCollectPendingBatch() {
+  var keys = Object.keys(__skyInputPending);
+  if (keys.length === 0) return null;
+  var batch = [];
+  for (var i = 0; i < keys.length; i++) {
+    var k = keys[i];
+    clearTimeout(__skyInputTimers[k]);
+    var p = __skyInputPending[k];
+    delete __skyInputPending[k];
+    __skyClientSeq++;
+    batch.push({
+      seq: __skyClientSeq,
+      msg: p.msgName || "",
+      args: p.args || [],
+      handlerId: p.hid || ""
+    });
+  }
+  return batch;
+}
+
+// __skyFlushPendingBeacon — POST pending debounces via sendBeacon so
+// the request survives page unload. Single beacon carries the whole
+// batch + the latest inputState snapshot so the server ingests the
+// final DOM values before dispatching. Silent no-op when there's
+// nothing pending or the browser lacks sendBeacon support.
+function __skyFlushPendingBeacon() {
+  if (!navigator || typeof navigator.sendBeacon !== "function") return;
+  var batch = __skyCollectPendingBatch();
+  var snapshot = __skyInputsSnapshot();
+  if (!batch && !snapshot) return;
+  var body = { sessionId: __skySid };
+  if (batch)    body.batch = batch;
+  if (snapshot) body.inputState = snapshot;
+  try {
+    var blob = new Blob([JSON.stringify(body)], {type: "application/json"});
+    navigator.sendBeacon("/_sky/event", blob);
+  } catch (_) {}
+}
+
+// __skyFlushPendingSync — synchronous variant for same-page
+// transitions where sendBeacon is overkill. Calls __skySend for
+// each pending entry; the fetch requests are fire-and-forget and
+// the browser keeps them alive across same-origin navigation.
+function __skyFlushPendingSync() {
+  var batch = __skyCollectPendingBatch();
+  if (!batch) return;
+  for (var i = 0; i < batch.length; i++) {
+    var b = batch[i];
+    __skySend(b.msg, b.args, b.handlerId, {noLoader: true});
+  }
+}
+
+// Capture-phase click listener inside sky-root: before a link click
+// leaves the current page, drain any pending debounce so the final
+// typed value reaches the server in the same origin as the
+// outgoing navigation. Beacon path handles cross-page; sync path
+// handles SPA-style internal routing.
+document.addEventListener("click", function(ev) {
+  var a = ev.target && ev.target.closest && ev.target.closest("a[href]");
+  if (!a) return;
+  var root = document.getElementById("sky-root");
+  if (!root || !root.contains(a)) return;
+  var href = a.getAttribute("href") || "";
+  // External or cross-origin → beacon (browser will tear down the
+  // page, fetch would be cancelled). Same-origin navigation inside
+  // SPA-style routing → sync flush (fetch survives).
+  var isExternal = /^(https?:)?\/\//.test(href) && a.host !== location.host;
+  if (isExternal || href === "") {
+    __skyFlushPendingBeacon();
+  } else {
+    __skyFlushPendingSync();
+  }
+}, true);
+
+// Tab close / navigate away: sendBeacon is the only path that
+// survives the teardown. Listen on both events because iOS Safari
+// + bfcache fire pagehide instead of beforeunload.
+window.addEventListener("beforeunload", __skyFlushPendingBeacon);
+window.addEventListener("pagehide", __skyFlushPendingBeacon);
+
 // ── Core send ────────────────────────────────────────────────
 // Wire format (see docs/skylive/input-authority-protocol.md §Request):
 //   {sessionId, seq, msg, args, handlerId, inputState?}
