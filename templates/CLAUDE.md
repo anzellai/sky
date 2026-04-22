@@ -1318,6 +1318,27 @@ main =
 **Navigation**: `a [ href "/about", attribute "sky-nav" "" ] [ text "About" ]`
 **Styling**: Use `Std.Css` with `stylesheet`/`rule` — not inline style strings.
 
+### Event binding — radio groups
+
+Sky.Live's `input`/`change` event on a `<input type="radio">` reports the radio's `checked` state (always `True` at selection), NOT its `value`. Binding a typed constructor like `UpdateRole : String -> Msg` to `onInput` gets a `Bool` at runtime, which the server drops as a Msg decode error.
+
+**Use `onClick` with a fully-applied Msg per radio** (same pattern for per-choice checkboxes):
+
+```elm
+-- One <label> per choice, each carrying a zero-arg Msg.
+choiceRow =
+    label [ for "role-guardian", onClick (UpdateRole "guardian") ]
+        [ input [ type "radio", name "role", value "guardian", id "role-guardian" ] []
+        , text "Guardian"
+        ]
+```
+
+The browser toggles the radio natively via the `for`/`id` pairing; the Msg ADT arrives on the server already applied (no wire-level type coercion). This is the recommended TEA pattern for radio groups.
+
+### Dispatch error handling
+
+Sky.Live's dispatcher is wrapped in `defer/recover`. If your `update`/`view`/`guard` panics — or a wire-level Msg decode mismatches a constructor type — the event is dropped cleanly, the session model is NOT mutated, and a diagnostic is written to stderr (`[sky.live] dispatch panic recovered …` or `[sky.live] Msg decode error …`). The client sees an empty patch list and the DOM stays as-is. Check server logs when an event appears to "do nothing".
+
 ### Sky.Live Component Protocol
 
 Components are separate modules with their own `Model`/`Msg`/`update`/`view`. The compiler auto-wires message routing.

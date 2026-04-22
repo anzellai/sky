@@ -369,6 +369,42 @@ update msg model =
 
 Concurrency: commands run in goroutines with session locking (same as subscriptions). Model is read fresh from the session store on completion — safe for multi-instance deployments.
 
+### View-event bindings: radio groups + checkboxes
+
+Wire-level events dispatch these args (see `__skyExtractArgs`):
+
+| Event | Element | Args sent |
+|---|---|---|
+| `click`, `focus`, `blur`, `mouseover`/`mouseout`, `mousedown`/`mouseup` | any | `[]` (just the Msg) |
+| `input`, `change` | `<input type="checkbox">` | `[checked : Bool]` |
+| `input`, `change` | `<input type="radio">` | `[checked : Bool]` (always `True` at selection — usually not what you want) |
+| `input`, `change` | `<input type="number">`/`range` | `[value : Float]` |
+| `input`, `change` | text inputs, `<textarea>`, `<select>` | `[value : String]` |
+| `submit` | `<form>` | `[formData : Dict String String]` |
+| `keydown`/`keyup`/`keypress` | any | `[key : String]` |
+
+**Radio convention: use `onClick` on each label/input, not `onInput`.** A radio's `input` event fires on selection but reports `[checked=True]` (a boolean), not the chosen `value`. Binding a typed constructor like `UpdateRole : String -> Msg` to `onInput` would get a `Bool` at runtime and the dispatch drops the event with a `Msg decode error` in the log.
+
+```elm
+-- Preferred: one fully-applied Msg per radio, dispatched on click.
+choiceRow =
+    label [ for "role-guardian", onClick (UpdateRole "guardian") ]
+        [ input [ type "radio", name "role", value "guardian", id "role-guardian" ] []
+        , text "Guardian"
+        ]
+```
+
+The `for`/`id` pairing lets the browser toggle the radio natively on label click; the `onClick` on the label carries the fully-applied Msg (zero wire args) so no type coercion happens server-side. Same pattern works for checkbox groups when you want per-choice Msg variants.
+
+### Dispatch error handling
+
+`dispatch()` is wrapped in `defer/recover`. Two classes are handled cleanly:
+
+1. **Msg decode errors** — client's wire args don't fit the Msg constructor's parameter types (e.g. radio `onInput` bound to `String -> Msg`). `applyMsgArgs` detects the mismatch before `reflect.Call`, logs a targeted message (constructor name, expected type, actual arg), and drops the event. No model mutation.
+2. **User-code panics** — anything inside `update`/`view`/`guard` that panics (typed-FFI boundary mismatches, nil deref in user code, etc.) is caught, stack-traced to stderr, and the event is dropped. Session state stays consistent so the next event dispatches normally.
+
+Both paths return an empty body; the client sees an empty patch list and the DOM is unchanged. Check server logs for `[sky.live] dispatch panic recovered` or `[sky.live] Msg decode error` when debugging an event that "does nothing".
+
 ### Sky.Http.Server
 ```elm
 main =

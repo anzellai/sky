@@ -6020,6 +6020,30 @@ func SkyCall(f any, args ...any) any {
 	return result
 }
 
+// isStructuralNarrowCandidate — whitelist for the skyCallDirect
+// fallback. Restricts narrowReflectValue-backed conversion to the
+// kinds where the typed codegen's AsListT / AsMapT / Coerce helpers
+// already do the same walk, so kernels dispatching through
+// reflection stay consistent with direct call sites. Excludes the
+// "primitive → string" fmt.Sprintf path — we want that to remain
+// a panic so a radio onInput bug surfaces cleanly rather than
+// silently becoming the string "true".
+func isStructuralNarrowCandidate(src, target reflect.Kind) bool {
+	if target == reflect.Map && src == reflect.Map {
+		return true
+	}
+	if target == reflect.Slice && src == reflect.Slice {
+		return true
+	}
+	if target == reflect.Struct && src == reflect.Struct {
+		return true
+	}
+	if target == reflect.Ptr || src == reflect.Ptr {
+		return true
+	}
+	return false
+}
+
 func skyCallDirect(rv reflect.Value, args []any) any {
 	vals := make([]reflect.Value, len(args))
 	fnType := rv.Type()
@@ -6044,6 +6068,29 @@ func skyCallDirect(rv reflect.Value, args []any) any {
 			// (See rt.Coerce for the same rule.)
 			vals[i] = av.Convert(pt)
 		default:
+			// Structural narrowing ONLY: the typed codegen inserts
+			// rt.AsListT / rt.AsMapT coercions at direct call sites, but
+			// List_foldlAnyT (and any other reflection-based higher-order
+			// kernel) routes elements through here without that
+			// narrowing. When the param is a concrete map[K]V / []V / *T
+			// / named-struct and the arg is the corresponding any-shaped
+			// runtime value, walk the recursive narrower the boundary
+			// helpers already use.
+			//
+			// Gated on matching-kind containers + pointer (de)ref — we
+			// deliberately do NOT use narrowReflectValue's
+			// any-to-string fmt.Sprintf fallback here, because that
+			// would silently coerce a radio's Bool into a "true" string
+			// when the Msg expected a real chosen value. Silent
+			// primitive-kind coercion is a worse bug than a panic; keep
+			// it a panic so the Msg decode layer or the outer
+			// dispatch recover can surface it as a clean diagnostic.
+			if isStructuralNarrowCandidate(av.Kind(), pt.Kind()) {
+				if narrowed := narrowReflectValue(av, pt); narrowed.IsValid() {
+					vals[i] = narrowed
+					break
+				}
+			}
 			// Audit P0-6: pre-fix this branch silently passed `av` into
 			// reflect.Call with a wrong type, which then panicked inside
 			// reflect with a cryptic "reflect: Call using X as Y" message.
