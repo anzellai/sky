@@ -1246,7 +1246,55 @@ fileMaxSize : Int -> (String, String)          -- max bytes hint (server-side va
 --           , onImage UpdateImage, fileMaxWidth 1200 ] []
 ```
 
-**Use `onChange` for `<input type="password">` fields** (not `onInput`). `onInput` fires every keystroke → SSE patch → password-manager browser extensions (1Password, Bitwarden, LastPass, browser autofill) react mid-typing and disrupt the user (focus juddering, autofill prompts mid-word, selection lost). `onChange` fires on blur, so the value commits when the user tabs / clicks away — extensions only see the final value, no per-keystroke chatter. Form submit still carries the up-to-date value via formData (and modern browsers fire blur before submit, so the model.password update lands first). Other text fields (username, email) keep `onInput` because they benefit from per-keystroke server-side validation and don't trigger the password-manager class. See `examples/12-skyvote/src/Page/AuthPage.sky` and `examples/17-skymon/src/Page/AuthPage.sky` for the canonical pattern.
+**Sensitive inputs (passwords, API keys, card details): collect via `onSubmit` form data, not `onInput` per keystroke.** This is the recommended pattern as of v0.9.8:
+
+```elm
+type alias AuthCreds =
+    { email : String, password : String }
+
+type Msg
+    = UpdateEmail String
+    | DoSignIn AuthCreds
+
+view model =
+    form [ onSubmit DoSignIn ]
+        [ input
+            [ type_ "email"
+            , name "email"            -- required: name is the formData key
+            , value model.email       -- email is fine to round-trip via Model
+            , onInput UpdateEmail
+            ] []
+        , input
+            [ type_ "password"
+            , name "password"
+            -- no `value` attr (don't round-trip the secret through DOM)
+            -- no `onInput`     (don't dispatch per keystroke)
+            ] []
+        , button [ type_ "submit" ] [ text "Sign in" ]
+        ]
+
+update msg model =
+    case msg of
+        UpdateEmail e ->
+            ( { model | email = e }, Cmd.none )
+
+        DoSignIn creds ->
+            -- creds.email and creds.password come straight from a typed
+            -- record decode at the dispatch boundary (v0.9.8+).
+            ( model, Cmd.perform (signIn creds) GotAuth )
+```
+
+Why:
+
+1. **No password-manager extension churn.** 1Password / Bitwarden / browser autofill watch DOM mutations on password inputs. Every server-driven re-render that includes `value="…"` on the password input looks like the form changed and triggers a re-prompt / re-fill cycle (focus juddering, autofill mid-word, selection lost). With no `value` attr and no `onInput`, the password input's DOM stays untouched between user keystrokes and submit.
+
+2. **Secret never lives in Model.** Without a `UpdateAuthPassword` Msg you can't store the password in your Model, so it's never serialised into the session store (Redis, Postgres, etc.). It exists only in the browser DOM until form submit, then briefly in the `DoSignIn` Msg's record argument until `update` consumes it. Per-keystroke handlers carry a partial password through every store round-trip — avoid them for secrets.
+
+3. **Race-free submit.** Per-keystroke `onInput` debounces (150ms) can drop the last keystroke if the user hits Enter before the debounce settles — the auth attempt then sees the wrong password and the user retries blind. Form submit reads the live DOM value, so whatever's in the input at submit time is what gets sent.
+
+The `DoSignIn AuthCreds` constructor takes a typed record alias — the dispatch boundary in v0.9.8+ JSON-decodes the wire form data directly into `State_AuthCreds_R{Email, Password}` via Go's case-insensitive struct field matching. No runtime guessing, no per-Msg decoder boilerplate. Same pattern works for any sensitive multi-field form (API keys, addresses, card details).
+
+The older `onChange` pattern (fires on blur) is still acceptable when you need the password in Model for validation feedback before submit, but prefer `onSubmit` + typed record for normal sign-in / sign-up flows.
 
 ### Escape Hatch & View Types
 

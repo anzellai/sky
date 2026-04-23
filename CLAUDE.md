@@ -437,7 +437,7 @@ Wire-level events dispatch these args (see `__skyExtractArgs`):
 | `input`, `change` | `<input type="radio">` | `[checked : Bool]` (always `True` at selection — usually not what you want) |
 | `input`, `change` | `<input type="number">`/`range` | `[value : Float]` |
 | `input`, `change` | text inputs, `<textarea>`, `<select>` | `[value : String]` |
-| `submit` | `<form>` | `[formData : Dict String String]` |
+| `submit` | `<form>` | `[formData]` — accepts `Dict String String` OR a typed record alias (v0.9.8+) |
 | `keydown`/`keyup`/`keypress` | any | `[key : String]` |
 
 **Radio convention: use `onClick` on each label/input, not `onInput`.** A radio's `input` event fires on selection but reports `[checked=True]` (a boolean), not the chosen `value`. Binding a typed constructor like `UpdateRole : String -> Msg` to `onInput` would get a `Bool` at runtime and the dispatch drops the event with a `Msg decode error` in the log.
@@ -452,6 +452,56 @@ choiceRow =
 ```
 
 The `for`/`id` pairing lets the browser toggle the radio natively on label click; the `onClick` on the label carries the fully-applied Msg (zero wire args) so no type coercion happens server-side. Same pattern works for checkbox groups when you want per-choice Msg variants.
+
+### Forms with passwords (and other sensitive inputs)
+
+**Use `onSubmit` with form data, not `onInput` per keystroke.** The pattern:
+
+```elm
+type alias AuthCreds =
+    { email : String, password : String }
+
+type Msg
+    = UpdateEmail String
+    | DoSignIn AuthCreds
+
+view model =
+    form [ onSubmit DoSignIn ]
+        [ input
+            [ type "email"
+            , name "email"            -- required: name is the formData key
+            , value model.email       -- email is fine to round-trip via Model
+            , onInput UpdateEmail
+            ] []
+        , input
+            [ type "password"
+            , name "password"
+            -- no `value` attr (don't round-trip the secret through DOM)
+            -- no `onInput`     (don't dispatch per keystroke)
+            ] []
+        , button [ type "submit" ] [ text "Sign in" ]
+        ]
+
+update msg model =
+    case msg of
+        UpdateEmail e ->
+            ( { model | email = e }, Cmd.none )
+
+        DoSignIn creds ->
+            -- creds.email and creds.password come straight from the typed
+            -- record decode at the dispatch boundary (v0.9.8+).
+            ( model, Cmd.perform (signIn creds) GotAuth )
+```
+
+**Why this matters**:
+
+1. **Password manager extensions** (1Password, Bitwarden, browser autofill) watch DOM mutations on password inputs. Every server-driven re-render with `value=…` looks like the form changed and triggers a re-prompt / re-fill cycle. Submitting only on form submit eliminates that churn — the input's DOM stays untouched between user keystrokes and submit.
+
+2. **Secret never lives in Model.** Without an `onInput UpdateAuthPassword` Msg, there's no Model field to populate, so the password never gets serialised into the session store (Redis, Postgres, etc.). It exists only in the browser DOM until the form submits, then briefly in the `DoSignIn` Msg's record argument until `update` consumes it. Compare to per-keystroke handlers where every Sky.Live session carries a partial password through every store round-trip.
+
+3. **Race-free submit.** Per-keystroke onInput debounces (~150 ms) can drop the last keystroke if the user hits Enter before the debounce settles — the auth attempt then sees the wrong password and the user retries blind. Form submit reads the live DOM value, so whatever is in the input at submit time is what gets sent.
+
+The `DoSignIn AuthCreds` constructor takes a typed record — v0.9.8's typed Msg dispatch decodes the wire form data directly into `State_AuthCreds_R{Email, Password}` via `json.Unmarshal`'s case-insensitive field matching. No runtime guessing, no per-Msg decoder boilerplate. Same pattern applies to API keys, credit-card details, anything you don't want resident in the session store.
 
 ### Dispatch error handling
 
