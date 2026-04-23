@@ -3,10 +3,14 @@ module Main exposing (main)
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.List as List
 import Sky.Core.String as String
+import Sky.Core.Maybe as Maybe
+import Sky.Core.Dict as Dict
+import Sky.Core.Result as Result
 import Sky.Core.Task as Task
 import Sky.Core.Time as Time
 import Sky.Core.Random as Random
 import Sky.Core.Error as Error exposing (Error)
+import Std.Db as Db
 import Std.Live as Live exposing (app, route)
 import Std.Html exposing (..)
 import Std.Live.Events exposing (onClick)
@@ -24,6 +28,9 @@ type Msg
     | RunBatch
     | JobDone Int (Result Error String)
     | ClearDone
+    | SaveSnapshot
+    | LoadHistory
+    | HistoryLoaded (Result Error (List Snapshot))
 
 type alias Job =
     { id : Int
@@ -32,17 +39,44 @@ type alias Job =
     , result : String
     }
 
+type alias Snapshot =
+    { ok : Int
+    , failed : Int
+    , total : Int
+    , ts : Int
+    }
+
 type alias Model =
     { page : Page
     , jobs : List Job
     , nextId : Int
     , ok : Int
     , fail : Int
+    , history : List Snapshot
+    , historyError : String
     }
 
 
+dbPath : String
+dbPath =
+    "jobs.db"
+
+
+createSnapshotTable : String
+createSnapshotTable =
+    "CREATE TABLE IF NOT EXISTS snapshots ("
+        ++ "ok INTEGER, failed INTEGER, total INTEGER, ts INTEGER)"
+
+
 init _ =
-    ( { page = DashboardPage, jobs = [], nextId = 1, ok = 0, fail = 0 }
+    ( { page = DashboardPage
+      , jobs = []
+      , nextId = 1
+      , ok = 0
+      , fail = 0
+      , history = []
+      , historyError = ""
+      }
     , Cmd.none
     )
 
@@ -70,8 +104,7 @@ sleepThenRandom ms lo hi =
     Time.sleep ms |> Task.andThen (\_ -> Random.int lo hi)
         |> Task.andThen
                (\n ->
-                    Task.succeed
-                        ("Processed " ++ String.fromInt n ++ " records"))
+                   Task.succeed ("Processed " ++ String.fromInt n ++ " records"))
 
 
 sleepThenFail ms msg =
@@ -98,6 +131,76 @@ doBatch model =
         ( { model | jobs = List.append model.jobs jobs, nextId = i3 + 1 }, cmd )
 
 
+-- Persistence: a five-link pipeline that shows every Result/Task bridge.
+--
+--   Db.connect       → Result Error Db
+--   Result.andThenTask → switch the pipeline into Task once we have a Db
+--   Db.execRaw       → Result Error Int   (DDL — create table if missing)
+--   Task.fromResult  → lift it into the Task chain
+--   Time.now         → Task Error Int     (real effect inside the chain)
+--   Task.andThenResult → chain the Db.exec INSERT, which is sync Result
+--   Task.map         → format the success message for the dashboard
+--
+-- Because every step participates in the same Task, the overall return
+-- type is `Task Error String` and the entire chain dispatches through
+-- one Cmd.perform. Without the bridges this would be ~30 lines of
+-- nested case-on-Result inside Task.andThen lambdas.
+saveSnapshot : Int -> Int -> Int -> Task Error String
+saveSnapshot okCount failCount total =
+    Db.open "sqlite" dbPath
+        |> Result.andThenTask
+               (\db ->
+                   Db.execRaw db createSnapshotTable |> Task.fromResult
+                       |> Task.andThen (\_ -> Time.now)
+                       |> Task.andThenResult
+                              (\ts ->
+                                  Db.exec
+                                      db
+                                      "INSERT INTO snapshots (ok, failed, total, ts) VALUES (?, ?, ?, ?)"
+                                      [ okCount, failCount, total, ts ])
+                       |> Task.map
+                              (\_ ->
+                                  "Snapshot saved (ok="
+                                      ++ String.fromInt okCount
+                                      ++ " fail="
+                                      ++ String.fromInt failCount
+                                      ++ ")"))
+
+
+-- Reads back the five most recent snapshots. Same shape as
+-- saveSnapshot but the final step is a Result-returning Db.query
+-- chained via Task.andThenResult, then mapped into a typed list of
+-- Snapshot records via Task.map. Returning `Task Error (List Snapshot)`
+-- lets the update branch destructure cleanly without touching Dict.
+loadHistory : Task Error (List Snapshot)
+loadHistory =
+    Db.open "sqlite" dbPath
+        |> Result.andThenTask
+               (\db ->
+                   Db.execRaw db createSnapshotTable |> Task.fromResult
+                       |> Task.andThenResult
+                              (\_ ->
+                                  Db.query
+                                      db
+                                      "SELECT ok, failed, total, ts FROM snapshots ORDER BY ts DESC LIMIT 5"
+                                      [])
+                       |> Task.map (\rows -> List.map parseSnapshot rows))
+
+
+parseSnapshot : Dict String String -> Snapshot
+parseSnapshot row =
+    let
+        readInt key =
+            Dict.get key row |> Maybe.andThen String.toInt
+                |> Maybe.withDefault 0
+    in
+        { ok = readInt "ok"
+        , failed = readInt "failed"
+        , total = readInt "total"
+        , ts = readInt "ts"
+        }
+
+
 resolveResult result =
     case result of
 
@@ -114,11 +217,11 @@ handleDone jid result model =
         newJobs =
             List.map
                 (\j ->
-                     if j.id == jid then
-                         { j | running = False, result = r }
+                    if j.id == jid then
+                        { j | running = False, result = r }
 
-                     else
-                         j)
+                    else
+                        j)
                 model.jobs
         addOk =
             case result of
@@ -174,6 +277,34 @@ update msg model =
             , Cmd.none
             )
 
+        SaveSnapshot ->
+        -- Reuse the JobDone framing so the snapshot appears in the
+        -- jobs list with a "[running]" indicator and then flips to
+        -- the success/error message. No new dispatch path needed —
+        -- saveSnapshot already returns Task Error String.
+            addJob
+                model
+                "Save snapshot"
+                (saveSnapshot model.ok model.fail (List.length model.jobs))
+
+        LoadHistory ->
+            ( model, Cmd.perform loadHistory HistoryLoaded )
+
+        HistoryLoaded result ->
+            case result of
+
+                Ok snapshots ->
+                    ( { model | history = snapshots, historyError = "" }
+                    , Cmd.none
+                    )
+
+                Err e ->
+                    ( { model | history = []
+                      , historyError = "Load failed: " ++ Error.toString e
+                      }
+                    , Cmd.none
+                    )
+
 
 subscriptions model =
     Sub.none
@@ -191,6 +322,30 @@ viewJob job =
         jname = job.name
     in
         div [] [text """#{{jid}} {{jname}} - {{status}}"""]
+
+
+viewSnapshot snap =
+    let
+        okStr = String.fromInt snap.ok
+        failStr = String.fromInt snap.failed
+        totalStr = String.fromInt snap.total
+        tsStr = String.fromInt snap.ts
+    in
+        li
+            []
+            [text
+                """[{{tsStr}}] ok={{okStr}} fail={{failStr}} total={{totalStr}}"""]
+
+
+viewHistory model =
+    if model.historyError /= "" then
+        p [] [text model.historyError]
+
+    else if List.isEmpty model.history then
+        p [] [text "No snapshots yet — click Save then Load."]
+
+    else
+        ul [] (List.map viewSnapshot model.history)
 
 
 view model =
@@ -219,6 +374,17 @@ view model =
                   , button [onClick ClearDone] [text "Clear Finished"]
                   ]
             , div [] (List.map viewJob (List.reverse model.jobs))
+            , h2 [] [text "Persistence (Result/Task bridges)"]
+            , p
+                  []
+                  [text
+                      "Save persists the current counters to SQLite. Load reads them back. Both flows mix Result-returning Db calls with Task-returning effects via the bridge helpers."]
+            , div
+                  []
+                  [ button [onClick SaveSnapshot] [text "Save Snapshot"]
+                  , button [onClick LoadHistory] [text "Load History"]
+                  ]
+            , viewHistory model
             ]
 
 
