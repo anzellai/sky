@@ -121,7 +121,7 @@ preludeQualifiers =
     , ("Sub",    ["none", "every"])
     , ("Task",   ["succeed", "fail", "map", "andThen", "perform", "sequence",
                     "parallel", "lazy", "run", "map2", "map3", "map4", "map5", "andMap",
-                    "fromResult", "andThenResult"])
+                    "fromResult", "andThenResult", "mapError", "onError"])
     ]
 
 

@@ -4,17 +4,20 @@ import Sky.Core.Prelude exposing (..)
 import Sky.Core.Maybe as Maybe
 import Sky.Core.Dict as Dict
 import Sky.Core.Os as Os
+import Sky.Core.Task as Task
 import Std.Db as Db
 import Std.Log exposing (println)
 import Sky.Core.Error as Error exposing (Error(..), ErrorKind(..))
 
 
--- Open the database once at startup. We deliberately exit on failure:
--- a degraded "fake connection" would silently break every subsequent
--- query — strictly better to surface the problem now than to ship
--- empty data to users.
+-- Db.* now returns Task Error a per the effect-boundary doctrine.
+-- This Lib layer bridges through Task.run inside each wrapper so the
+-- rest of skymon's update / view code keeps its existing Result
+-- contracts unchanged. For long-running batched writes or background
+-- reads, factor into a top-level Task and dispatch via Cmd.perform —
+-- see 18-job-queue/src/Main.sky for the canonical async pattern.
 conn =
-    case Db.open "sqlite" "skymon.db" of
+    case Task.run (Db.open "sqlite" "skymon.db") of
 
         Ok c ->
             c
@@ -43,7 +46,7 @@ getBool field row =
 -- Typed boundary: returns Result Error (). Callers in `update` MUST
 -- pattern-match and decide what to do (log, notification, retry).
 exec queryStr args =
-    case Db.exec conn queryStr args of
+    case Task.run (Db.exec conn queryStr args) of
 
         Ok _ ->
             Ok ()
@@ -54,13 +57,7 @@ exec queryStr args =
 
 -- Typed boundary: returns Result Error (List Row).
 query queryStr args =
-    case Db.query conn queryStr args of
-
-        Ok rows ->
-            Ok rows
-
-        Err e ->
-            Err e
+    Task.run (Db.query conn queryStr args)
 
 
 -- Legacy logging fallback helpers. Prefer `query` / `exec` at update

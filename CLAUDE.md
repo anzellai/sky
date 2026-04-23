@@ -58,15 +58,42 @@ These constraints are enforced by `sky verify`, `test/Sky/ErrorUnificationSpec.h
 - **LSP capabilities must match `docs/tooling/lsp.md`.** If you add a capability, document it. If a feature is incomplete, narrow the claim — don't lie in docs.
 - **Formatter must be idempotent.** Two passes produce byte-identical output. Fixtures in `test/Sky/Format/FormatSpec.hs` guard this.
 
-## Effect Boundary: Task
+## Effect Boundary: Task — two-tier in practice
 
-ALL effectful operations flow through `Task`:
-- **Pure** (`String.length`, `List.map`) — no wrapping
-- **Fallible** (`String.toInt`, `Dict.get`) — `Result` or `Maybe`
-- **Effectful** (`File.readFile`, `Http.get`, `println`) — `Task Error a`
-- **Entry** (`main`) — may return `Task`; runtime auto-executes
+Sky's stated doctrine is "all effectful operations flow through `Task`". In practice, the codebase splits "effectful" into two tiers — and the split is intentional, not an accident worth fixing. The `feat/effect-boundary-audit` branch made this explicit at the kernel layer.
 
-FFI boundary mapping: Go `(T, error)` → `Result Error T` | Go `error` → `Result Error ()` | panics → `Err` | nil → `Maybe`/`Result`
+| Tier | Type | Examples | Why this tier |
+|---|---|---|---|
+| **Pure** | bare `a` | `String.length`, `List.map`, `Dict.get` returning Maybe | Referentially transparent, no effects. |
+| **Fallible** | `Result e a` / `Maybe a` | `String.toInt`, JSON decoders, validators | Pure but can fail — Result is a value, not an effect. |
+| **Real I/O (deferred)** | `Task Error a` | `File.*`, `Http.*`, `Process.*`, `Io.*`, `Db.*`, `Auth.register/login`, `Crypto.randomBytes/randomToken`, `Time.sleep`, `Random.int/float/choice/shuffle` | Disk / network / DB / child process / external entropy. Can take time, can fail meaningfully, composes with `Task.parallel` / `Cmd.perform` / `Task.andThen`. Runtime helpers wrap in thunks so Sky.Live's `update()` doesn't block — the I/O actually runs in the goroutine spawned by Cmd.perform. |
+| **Sync convenience effects (eager)** | bare `()` / `Result e a` | `println`, `Slog.*`, `Os.getenv` / `getcwd`, `Time.now` / `unixMillis` | Theoretically effectful but observably "fire and return immediately". Kept sync because the Task ceremony buys nothing real here and forcing it would break the `let _ = println …` debug-output pattern that's pervasive in CLI examples and makes 06-json's main one-liner-per-step. |
+
+### Why theory ≠ practical here
+
+The `feat/effect-boundary-audit` branch considered migrating every effectful op to Task (Steps 2–5 of the original audit) and concluded:
+
+- **`println` / `Slog` → Task is a regression.** `let _ = println "step 1" ; _ = println "step 2"` discards the resulting Task without forcing — the side effect silently doesn't fire. Sky has no `do`-notation, so the only ergonomic alternative is a `Task.andThen` chain or `Task.sequence` ceremony, which is much noisier than the current pattern. Nobody composes `println` with `Task.parallel` or short-circuits on it. Theoretical purity wins, real ergonomics lose.
+- **`Os.getenv` / `Os.getcwd` → Task is a regression.** ~99% of usage is `apiKey = Os.getenv "X" |> Result.withDefault ""` at module top level (Limitation #10 territory). Forcing Task there means either a `Task.run` hack at module level (defeats the point) or refactoring every config-loading site to read in `init` and thread through Model — huge churn for an async hazard that isn't real for env reads in practice.
+- **`Time.now` / `Time.unixMillis` → Task is a regression.** Same shape: technically non-deterministic, practically used as one-shot timestamp read at the call site (e.g. `ts = Time.unixMillis ()` in a record-update branch). Elm types it as Task, but Elm's TEA gives you a natural binding into Task chains; Sky has many "stamp this row" use sites where eager Int read is the right shape.
+
+The Haskell-purist position is "everything I/O is `IO`". Sky picks the Elm-pragmatic position: real I/O that benefits from composition (Task.parallel, Cmd.perform, Task.andThen chains) goes through Task; sync convenience effects that don't benefit stay sync. The line is fuzzy at the edges (`Os.getenv` vs `File.readFile`?) but the test is "does composition with other Tasks earn its keep at the call site" — for File/Http/Db it does; for println/getenv/time-stamp it doesn't.
+
+### Two-level error handling pattern
+
+When a Task fails inside an effectful op, the canonical pattern (demonstrated in `examples/18-job-queue/src/Main.sky`'s `withErrorReporting` and `examples/07-todo-cli/src/Main.sky`'s `reportError`) is:
+
+1. **Generate a short correlation ID** (`Crypto.randomToken 4`) — typically 4 bytes hex.
+2. **Server-side: structured log** via `Slog.error opName [ "errId", errId, "error", Error.toString e ]` — ops can grep their logs by the ID.
+3. **Client-side: user-friendly message** via `Task.fail (Error.unexpected ("Operation failed (ref " ++ errId ++ ")"))` — a user complaining "save failed ref a3f9" maps directly to the log line.
+
+Per app shape:
+- **CLI** (`07-todo-cli`): `main = Task.run (chain |> Task.onError reportError)` where `reportError` Slogs + prints to stderr + `Os.exit 1`.
+- **Sky.Http.Server** (`08-notes-app`): handlers return `Task Error Response`; `Task.onError` recovers errors to a 4xx/5xx Response with Slog'd errId in the body.
+- **REST API**: same as Http.Server, but the recovered Response is `Server.json (errorJson errId)` instead of HTML.
+- **Sky.Live** (`18-job-queue`, `12-skyvote`, `13-skyshop`, etc.): `Cmd.perform task ResultMsg` dispatches; the `ResultMsg` handler updates a `notification` / `historyError` field in Model that the `view` renders as a banner.
+
+FFI boundary mapping: Go `(T, error)` → `Result Error T` (the FFI trust boundary is Result; user wrappers / kernel sigs lift to Task where appropriate) | Go `error` → `Result Error ()` | panics → `Err` | nil → `Maybe` / `Result`.
 
 ### Result/Task bridges
 
@@ -276,7 +303,7 @@ Safety: formatter refuses to write if output loses >1/3 of code lines (prevents 
 ### Task-Wrapped Effects
 | Module | Key Functions | Returns |
 |--------|--------------|---------|
-| `Sky.Core.Task` | succeed, fail, map, andThen, perform, sequence, parallel, lazy, **map2/3/4/5, andMap**, **fromResult, andThenResult** | Task err a |
+| `Sky.Core.Task` | succeed, fail, map, andThen, perform, sequence, parallel, lazy, **map2/3/4/5, andMap**, **fromResult, andThenResult, mapError, onError** | Task err a |
 | `Sky.Core.File` | readFile, writeFile, append, mkdirAll, readDir, exists, remove, isDir, tempFile, tempDir, copy, rename | Task Error a |
 | `Sky.Core.Process` | run, exit, getEnv, getCwd, loadEnv | Task Error a |
 | `Sky.Core.Io` | readLine, readBytes, writeStdout, writeStderr | Task Error a |
@@ -285,7 +312,7 @@ Safety: formatter refuses to write if output loses >1/3 of code lines (prevents 
 | `Sky.Core.Http` | get, post, request | Task Error Response |
 | `Sky.Core.Random` | int, float, choice, shuffle | Task Error a |
 | `Sky.Http.Server` | listen, get/post/put/delete routes, middleware | Task Error () |
-| `Std.Db` | connect, open, exec, query, queryDecode, insertRow, getById, updateById, deleteById, findWhere, withTransaction | Result Error a |
+| `Std.Db` | connect, open, exec, execRaw, query, queryDecode, insertRow, getById, updateById, deleteById, findWhere, withTransaction | **Task Error a** (effect-boundary-audit branch — was Result) |
 | `Std.Auth` | register, login, verify, logout, verifyEmail, hashPassword, verifyPassword, setRole, signToken, verifyToken | Result Error a |
 
 ### Prelude (implicitly imported)
@@ -560,6 +587,9 @@ These are current compiler limitations users must work around:
 13. **Zero-arg `Css.*` constants require `()`** — `Css.zero`, `Css.auto`, `Css.none`, `Css.transparent`, `Css.inherit`, `Css.initial`, `Css.borderBox`, `Css.systemFont`, `Css.monoFont`, `Css.userSelectNone` are kernel bindings exposed as `() -> String` to sidestep zero-arity memoisation (which would interact badly with Go's `init()` ordering). Write `Css.margin (Css.zero ())` not `Css.margin Css.zero` — the latter serialises the function pointer (e.g. `0xc00001c0a0`) into the stylesheet. Sky's type checker doesn't flag the miss today because the `() -> String` surface unifies with any String slot via HM's let-polymorphism default. **Pattern**: any `Css.X` that names a CSS keyword (not a value constructor like `px`/`rem`/`hex`) takes `()`.
 14. **Partial application of auto-generated FFI setters is not callable** — `|> Result.andThen (OpenAi.chatCompletionMessageSetRole m.role)` emits a call to a non-existent non-`T` variant of the setter. Wrap in an explicit lambda: `\msg -> OpenAi.chatCompletionMessageSetRole m.role msg`. Same class as the "pipeline operator" opaque-setter idiom — FFI setters always need the full argument list at the call site.
 15. **`import X as Alias` leaks the alias into codegen for exposed record/ADT types** — `import Lib.Db as Chat` causes `Message` to be emitted as `Chat_Message_R` instead of the module-prefixed `Lib_Db_Message_R`, breaking cross-module resolution when another module imports it unaliased. **Workaround**: use `import Lib.Db exposing (Message, …)` (or qualify without alias). Aliases on modules that only expose functions (no types) are unaffected.
+16. **`let` bindings don't support forward references** — Helpers inside a `let` block must be defined *before* their consumers in source order. `let writeAll db = … insertRow db ts …; insertRow db ts = …` fails `go build` with `undefined: insertRow` even though both are visible at the let-block scope. **Workaround**: reorder so dependencies come first. Surfaced when refactoring 18-job-queue/saveSnapshot's nested-andThen chain into named helpers; the lowerer emits each let binding sequentially without the let-as-mutually-recursive-rec semantics that Haskell `where` (and Sky's own top-level decls) provides. Worth a future fix — the canonicaliser already knows the full set of let names in the block.
+17. **Partial application of let-bound multi-arg functions panics at runtime** — `Task.andThen (insertRow db)` where `insertRow db ts = …` is defined in an enclosing `let` panics with `reflect: Call with too few input arguments` when the resulting one-arg function is invoked. **Workaround**: wrap in an explicit lambda — `Task.andThen (\ts -> insertRow db ts)`. Same class as Limitation #14 (partial-apply of FFI setters) but for ordinary user-defined let-bound functions: the lowerer doesn't emit a properly curried multi-arg form when a let-bound function is referenced as a value rather than fully applied.
+18. **Some kernel functions still missing HM type signatures** — The `feat/effect-boundary-audit` branch added 57 of 66 dangerous-class sigs (kernels returning `Maybe` / `Result` / `Task` where users pattern-match the wrapper). The remaining ~9 dangerous gaps (`Server.static`, `Middleware.*`, `JsonDec.map4`, `JsonDecP.custom/requiredAt`, `Http.get/post`, `Os.cwd`, `Ffi.callTask`, `Process.exit`) involve opaque FFI types (Decoder, Route, Handler, HttpResponse) that need careful per-case analysis — tracked for the follow-up branch. **Bare-type returns (~172 entries: most of `Html.*`, `Attr.*`, `Css.*`, `Event.*`, `Char.*`, `Path.*`, pure `String.*`, `Basics.*` arithmetic) are also missing sigs** but lower risk: they return `String`/`Int`/`Bool`/`VNode`/`Attribute` with no wrapper to pattern-match wrong against. Tracked for completeness pass. **Symptom of a Bucket-A regression** (kernel sig disagreeing with runtime return shape) is a runtime panic like `rt.AsInt: expected numeric value, got rt.SkyMaybe[interface{}]` — when you see this, check `lookupKernelType` (`src/Sky/Type/Constrain/Expression.hs`) against the matching `runtime-go/rt/*.go` helper.
 
 ### Recently Fixed (v0.7.x — listed for regression context)
 

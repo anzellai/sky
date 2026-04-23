@@ -76,20 +76,20 @@ readConfig path = ...
 
 **2. Match the annotation to the body.** When you annotate a function, the
 annotation becomes the function's scheme — the body must produce that exact
-type. `initSchema : Db -> Result Error ()` over a body that actually returns
-`Result Error Int` (because `Db.exec` returns affected-row count) compiles
+type. `initSchema : Db -> Task Error ()` over a body that actually returns
+`Task Error Int` (because `Db.exec` returns affected-row count) compiles
 but panics at runtime when the `Int` is coerced to `()`. Either remove the
 annotation (and let HM infer) or change it to match:
 
 ```elm
 -- ✓ Correct
-initSchema : Db -> Result Error Int    -- execRaw returns affected rows
+initSchema : Db -> Task Error Int    -- execRaw returns affected rows
 initSchema db = Db.execRaw db "CREATE TABLE ..."
 
 -- Or discard the count deliberately:
-initSchema : Db -> Result Error ()
+initSchema : Db -> Task Error ()
 initSchema db =
-    Db.execRaw db "CREATE TABLE ..." |> Result.map (\_ -> ())
+    Db.execRaw db "CREATE TABLE ..." |> Task.map (\_ -> ())
 ```
 
 **3. `Sky.Core.Prelude exposing (..)` does NOT re-export `Error`.** You must
@@ -105,22 +105,36 @@ eleven error kinds you pattern-match on (see Cardinal Rule 1).
 **4. Store DB connections at the top level, not in `Model`.** Sky.Live
 persists the Model to the session store (memory, SQLite, Redis, Postgres).
 `*sql.DB` and similar opaque FFI handles have internal pointer cycles that
-break gob serialization and add dead weight to every session blob.
+break gob serialization and add dead weight to every session blob. Open
+once at module load via `Task.run`, fail-fast on error.
 
 ```elm
--- ✓ Do this
-openDb = Db.connect ()
+-- ✓ Do this — singleton conn forced eagerly at module init
+dbConn =
+    case Task.run (Db.open "sqlite" "app.db") of
+        Ok conn -> conn
+        Err e ->
+            let _ = println ("[FATAL] " ++ Error.toString e) in
+            Os.exit 1
 
 init _ = ({ messages = [], input = "" }, Cmd.none)
 
 update msg model =
-    case openDb of
-        Err e -> ({ model | notice = dbError e }, Cmd.none)
-        Ok db -> updateWithDb db msg model
+    case msg of
+        SaveStuff payload ->
+            ( model
+            , Cmd.perform (Db.exec dbConn "INSERT ..." [payload]) Saved
+            )
+        Saved (Ok _) -> ({ model | notice = "Saved" }, Cmd.none)
+        Saved (Err e) -> ({ model | notice = errMsg e }, Cmd.none)
 
 -- ✗ Not this — Model can't serialise a live DB handle
 type alias Model = { db : Maybe Db, messages : List Msg }
 ```
+
+For long-running queries inside `update`, do not call `Db.query` directly
+(it returns Task — you'd discard it). Instead `Cmd.perform (Db.query …) ResultMsg`
+and handle `ResultMsg (Ok rows)` / `ResultMsg (Err e)` in the next branch.
 
 **5. Each record type alias auto-generates a constructor.** Writing
 `type alias Profile = { name : String, age : Int }` gives you
@@ -410,27 +424,69 @@ result = Task.perform pipeline
 - `Task.fromResult : Result e a -> Task e a` -- lift a Result-returning step (FFI call, parser) into a Task pipeline
 - `Task.andThenResult : (a -> Result e b) -> Task e a -> Task e b` -- chain a Result-returning step after a Task
 - `Result.andThenTask : (a -> Task e b) -> Result e a -> Task e b` -- chain a Task-returning step after a Result
+- `Task.mapError : (e -> e2) -> Task e a -> Task e2 a` -- transform error type without touching the success path
+- `Task.onError : (e -> Task e2 a) -> Task e a -> Task e2 a` -- recover from error to a new Task (HTTP error response, retry, fall back to default)
 
-**Result/Task bridges (flat pipelines instead of nested case):**
+**Db.* now returns Task** (effect-boundary-audit). `Db.connect` / `Db.open` / `Db.exec` / `Db.execRaw` / `Db.query` return `Task Error a` and compose directly with `Task.andThen` / `Task.parallel` / `Cmd.perform`. The runtime helpers wrap their bodies in thunks so the actual SQL defers to the goroutine, not the caller.
+
+**Db chain (clean Task composition):**
 
 ```elm
--- Without bridges
-case Db.connect dbUrl of
-    Ok db ->
-        case Db.query db "SELECT ..." of
-            Ok rows -> Http.post url (encode rows) |> Task.andThen handleResponse
-            Err e -> Task.fail e
-    Err e -> Task.fail e
-
--- With bridges
-Db.connect dbUrl
-    |> Task.fromResult
-    |> Task.andThenResult (\db -> Db.query db "SELECT ...")
-    |> Task.andThen (\rows -> Http.post url (encode rows))
-    |> Task.andThen handleResponse
+loadUserNotes : String -> Task Error (List Note)
+loadUserNotes userId =
+    Db.open "sqlite" "app.db"
+        |> Task.andThen (\db ->
+            Db.query db "SELECT id, title, body FROM notes WHERE user_id = ?" [userId])
+        |> Task.map (List.map parseNote)
 ```
 
-There is no `Result.fromTask` / `Task -> Result` bridge by design. `Task.run` (formerly `Task.perform`) exists for the runtime entry boundary, but user code should keep effectful pipelines in `Task` and let the boundary (`main`, `Cmd.perform`, HTTP handler return) execute it.
+**Two-level error handling (canonical pattern for production):**
+
+```elm
+import Sky.Core.Crypto as Crypto
+import Log.Slog as Slog
+
+-- Server-side: Slog with errId for ops to grep.
+-- Client-side: Task.fail with same errId in user-friendly message.
+withErrorReporting : String -> Task Error a -> Task Error a
+withErrorReporting opName task =
+    task |> Task.onError (\e ->
+        Crypto.randomToken 4
+            |> Task.andThen (\errId ->
+                let _ = Slog.error opName [ "errId", errId, "error", Error.toString e ]
+                in  Task.fail (Error.unexpected
+                        ("Operation failed (ref " ++ errId ++ ")"))))
+
+-- Apply at the source of effectful pipelines:
+saveOrder : Order -> Task Error String
+saveOrder order =
+    Db.exec ... |> withErrorReporting "order.save"
+```
+
+**Bridges (when you mix Result-returning FFI with Task pipelines):**
+
+The bridges still earn their keep for genuinely Result-returning FFI (Stripe builder pattern, JSON parsers, validators) — they're no longer needed for Db (which is now Task) but still useful when:
+
+```elm
+-- Stripe builder returns Result through |> Result.andThen chains.
+-- Lift the final Result into a Task pipeline that does HTTP afterwards.
+createCheckout : String -> Task Error CheckoutSession
+createCheckout url =
+    Stripe.newCheckoutSessionParams ()
+        |> Result.andThen (Stripe.checkoutSessionParamsSetMode "payment")
+        |> Result.andThen (Stripe.checkoutSessionParamsSetSuccessURL url)
+        |> Result.andThenTask (\params ->
+            Stripe.newCheckoutSession params       -- Result Error CheckoutSession
+                |> Task.fromResult
+                |> Task.andThen registerWebhook)   -- Task Error CheckoutSession
+```
+
+There is no `Result.fromTask` / `Task -> Result` bridge by design. `Task.run` exists for the runtime entry boundary (CLI `main`, test fixtures, Lib wrappers that need a sync result for `case`-pattern matching), but user code should keep effectful pipelines in `Task` and let the boundary (`Cmd.perform`, HTTP handler return) execute them.
+
+**Per-app shape error handling:**
+- **CLI** (`07-todo-cli`): `main = let _ = Task.run (chain |> Task.onError reportError) in ()` where `reportError` Slogs + prints to stderr + `Os.exit 1`.
+- **Sky.Http.Server**: handler returns `Task Error Response`; `|> Task.onError (\e -> Task.succeed (Server.withStatus 500 (Server.json (errorJson errId))))` recovers errors to a Response.
+- **Sky.Live** (`18-job-queue`, etc.): `Cmd.perform task ResultMsg` dispatches; the `ResultMsg` handler updates a `notification` / `error` field in Model that the `view` renders as a banner. The errId surfaces in the banner so users can quote it in support requests.
 
 **Concurrency:**
 
@@ -751,8 +807,8 @@ parallelMap : (a -> b) -> List a -> List b  -- goroutine-backed concurrent map
 ```elm
 fromInt : Int -> String
 fromFloat : Float -> String
-toInt : String -> Result Error Int
-toFloat : String -> Result Error Float
+toInt : String -> Maybe Int        -- Just n on success, Nothing on parse fail
+toFloat : String -> Maybe Float    -- Just f on success, Nothing on parse fail
 split : String -> String -> List String   -- split sep str
 join : String -> List String -> String    -- join sep parts
 contains : String -> String -> Bool       -- contains sub str
@@ -1189,6 +1245,8 @@ fileMaxSize : Int -> (String, String)          -- max bytes hint (server-side va
 --     input [ type_ "file", attribute "accept" "image/*"
 --           , onImage UpdateImage, fileMaxWidth 1200 ] []
 ```
+
+**Use `onChange` for `<input type="password">` fields** (not `onInput`). `onInput` fires every keystroke → SSE patch → password-manager browser extensions (1Password, Bitwarden, LastPass, browser autofill) react mid-typing and disrupt the user (focus juddering, autofill prompts mid-word, selection lost). `onChange` fires on blur, so the value commits when the user tabs / clicks away — extensions only see the final value, no per-keystroke chatter. Form submit still carries the up-to-date value via formData (and modern browsers fire blur before submit, so the model.password update lands first). Other text fields (username, email) keep `onInput` because they benefit from per-keystroke server-side validation and don't trigger the password-manager class. See `examples/12-skyvote/src/Page/AuthPage.sky` and `examples/17-skymon/src/Page/AuthPage.sky` for the canonical pattern.
 
 ### Escape Hatch & View Types
 
@@ -2770,6 +2828,8 @@ Session store memory grows with inactive sessions. Set a TTL:
 - **Zero-arity functions reading env vars** — zero-arity functions are memoised; when they read `Os.getenv` they evaluate during Go `init()`, before `.env` is loaded. **Workaround**: add a dummy `_` parameter: `getConfig _ = Os.getenv "KEY"`.
 - **Let bindings with parameters after multi-line case** — `mark j = expr` directly after a `case ... of` in the same `let` can be reparsed as a new top-level declaration. Use a lambda (`\j -> expr`) or extract to a top-level function.
 - **`exposing (Type(..))` doesn't expose user-module constructors** — only stdlib/kernel modules resolve `MyType(..)` fully. For a user-defined `MyModule`, import `exposing (..)` or qualify constructors (`MyModule.MyConstructor`).
+- **`let` bindings don't support forward references** — Helpers inside a `let` block must be defined *before* their consumers in source order. `let writeAll db = … insertRow db ts …; insertRow db ts = …` fails `go build` with `undefined: insertRow`. **Workaround**: reorder so dependencies come first. (Future fix — the canonicaliser already knows the full set of let names.)
+- **Partial application of let-bound multi-arg functions panics at runtime** — `Task.andThen (insertRow db)` where `insertRow db ts = …` is defined in an enclosing `let` panics with `reflect: Call with too few input arguments` when invoked. **Workaround**: explicit lambda — `Task.andThen (\ts -> insertRow db ts)`. Same class as the FFI-setter limitation but for ordinary user-defined let-bound functions.
 
 ### Fixed in v0.9-dev (feat/typed-codegen)
 - **Typed-map round-trips at the FFI boundary** — `[]any` containing `map[string]any` now narrows into `[]map[string]string` correctly across `rt.Coerce`, `AsListT`, `AsMapT`, `AsDict`. `List.isEmpty` / `List.map` on annotated DB result slices no longer wrongly report empty.

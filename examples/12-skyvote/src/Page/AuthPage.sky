@@ -3,7 +3,7 @@ module Page.AuthPage exposing (viewSignIn, viewSignUp)
 import Sky.Core.Prelude exposing (..)
 import Std.Html exposing (..)
 import Std.Html.Attributes exposing (..)
-import Std.Live.Events exposing (onClick, onInput, onSubmit)
+import Std.Live.Events exposing (onClick, onInput, onChange, onSubmit)
 import State exposing (..)
 import Ui.Layout as Layout
 
@@ -61,7 +61,11 @@ signUpContent model =
                               , class "form-input"
                               , placeholder "At least 8 characters"
                               , value model.authPassword
-                              , onInput UpdatePassword
+                              -- onChange (fires on blur) instead of onInput
+                              -- (fires per-keystroke) so password-manager
+                              -- browser extensions don't kick in mid-typing
+                              -- on every SSE patch.
+                              , onChange UpdatePassword
                               ]
                         ]
                   , button
@@ -116,7 +120,9 @@ signInContent model =
                               , class "form-input"
                               , placeholder "Your password"
                               , value model.authPassword
-                              , onInput UpdatePassword
+                              -- onChange to avoid per-keystroke SSE patches
+                              -- triggering password-manager extensions.
+                              , onChange UpdatePassword
                               ]
                         ]
                   , button

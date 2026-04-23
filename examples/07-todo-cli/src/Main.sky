@@ -1,6 +1,6 @@
 module Main exposing (main)
 
--- 07-todo-cli: A TODO app with SQLite persistence using Sky.Db.
+-- 07-todo-cli: A TODO app with SQLite persistence using Std.Db.
 --
 -- Usage:
 --   ./app add "Buy groceries"     Add a new todo
@@ -9,19 +9,77 @@ module Main exposing (main)
 --   ./app undone 1                Mark todo #1 as not done
 --   ./app remove 1                Delete todo #1
 --   ./app clear                   Remove all completed todos
+--
+-- This example demonstrates the canonical CLI error-propagation
+-- pattern under Sky's effect-boundary doctrine: every Db.* op returns
+-- `Task Error a`, the entire main loop is a single Task chain, and
+-- failures propagate via `Task.onError` to the top-level reporter
+-- which prints to stderr and `Os.exit 1`s. No silent `let _ = …`
+-- discard pattern — every effect either runs to completion via the
+-- chain or surfaces its error through the reporter.
+
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.List as List
-import Sky.Core.Dict as Dict
-import Sky.Core.String as String
-import Sky.Core.Result as Result
 import Sky.Core.Maybe as Maybe
+import Sky.Core.Task as Task
 import Std.Db as Db
-import Sky.Core.Error as Error
+import Sky.Core.Error as Error exposing (Error)
 import Os
 import Log.Slog as Slog
 import Std.Log exposing (println)
 
 
+-- Top-level pipeline:
+--   1. Open the DB (Task Error Db).
+--   2. Hand the conn to runApp which runs the user's chosen command.
+--   3. Anything that fails along the way lands in reportError, which
+--      writes a human-readable message and exits non-zero.
+--
+-- We force the chain with Task.run at the entry point — runtime's
+-- main-auto-run only fires for top-level `main : Task` exports, but
+-- the codegen for that path is fragile under the current effect-
+-- boundary migration; explicit Task.run is the reliable form for
+-- CLI entry points.
+main =
+    let
+        pipeline =
+            Db.connect ()
+                |> Task.andThen runApp
+                |> Task.onError reportError
+        _ = Task.run pipeline
+    in
+        ()
+
+
+runApp : Db -> Task Error ()
+runApp conn =
+    initDb conn
+        |> Task.andThen
+               (\_ ->
+                   let
+                       -- Os.args already returns user args only (Go's
+                       -- os.Args[1:]); don't drop another element.
+                       userArgs = Os.args ()
+                       cmd = getArg userArgs
+                       cmdArg = getArg (List.drop 1 userArgs)
+                   in
+                       runCommand conn cmd cmdArg)
+
+
+-- Top-level error reporter for the CLI. Prints the user-facing
+-- message to stderr (via Slog so it's structured for log scrapers
+-- too) then exits non-zero so shell wrappers (`./app foo && next`)
+-- see the failure.
+reportError : Error -> Task Error ()
+reportError e =
+    let
+        _ = Slog.error "todo-cli" [ "error", Error.toString e ]
+        _ = println ("Error: " ++ Error.toString e)
+    in
+        Os.exit 1
+
+
+initDb : Db -> Task Error ()
 initDb conn =
     Db.execRaw
         conn
@@ -30,36 +88,40 @@ initDb conn =
             title TEXT NOT NULL,
             done INTEGER DEFAULT 0
         )"""
+        |> Task.map (\_ -> ())
 
 
+addTodo : Db -> String -> Task Error ()
 addTodo conn todoTitle =
-    let
-        _ =
-            Db.insertRow conn "todos" (Dict.fromList [( "title", todoTitle )])
-        _ = Slog.info "Action" [ "Added:", todoTitle ]
-    in
-        println ("Added: " ++ todoTitle)
+    Db.exec conn "INSERT INTO todos (title) VALUES (?)" [todoTitle]
+        |> Task.map
+               (\_ ->
+                   let
+                       _ = Slog.info "Action" [ "Added:", todoTitle ]
+                       _ = println ("Added: " ++ todoTitle)
+                   in
+                       ())
 
 
+listTodos : Db -> Task Error ()
 listTodos conn =
-    let
-        rows =
-            Result.withDefault
-                []
-                (Db.query
-                     conn
-                     "SELECT id, title, done FROM todos ORDER BY id"
-                     [])
-    in
-        if List.isEmpty rows then
-            println "No todos yet. Add one with: ./app add \"My task\""
-
-        else
-            let
-                _ = println "Your TODOs:"
-                _ = List.map (\row -> println (formatTodo row)) rows
-            in
-                println ""
+    Db.query conn "SELECT id, title, done FROM todos ORDER BY id" []
+        |> Task.map
+               (\rows ->
+                   if List.isEmpty rows then
+                       let
+                           _ =
+                               println
+                                   "No todos yet. Add one with: ./app add \"My task\""
+                       in
+                           ()
+                   else
+                       let
+                           _ = println "Your TODOs:"
+                           _ = List.map (\row -> println (formatTodo row)) rows
+                           _ = println ""
+                       in
+                           ())
 
 
 formatTodo row =
@@ -70,42 +132,50 @@ formatTodo row =
         status =
             if todoDone == "1" then
                 "[x]"
-
             else
                 "[ ]"
     in
         "  " ++ todoId ++ ". " ++ status ++ " " ++ todoName
 
 
+markDone : Db -> String -> Task Error ()
 markDone conn idStr =
-    let
-        _ = Db.exec conn "UPDATE todos SET done = 1 WHERE id = ?" [idStr]
-    in
-        println ("Marked as done: " ++ idStr)
+    Db.exec conn "UPDATE todos SET done = 1 WHERE id = ?" [idStr]
+        |> Task.map
+               (\_ ->
+                   let _ = println ("Marked as done: " ++ idStr) in
+                   ())
 
 
+markUndone : Db -> String -> Task Error ()
 markUndone conn idStr =
-    let
-        _ = Db.exec conn "UPDATE todos SET done = 0 WHERE id = ?" [idStr]
-    in
-        println ("Marked as not done: " ++ idStr)
+    Db.exec conn "UPDATE todos SET done = 0 WHERE id = ?" [idStr]
+        |> Task.map
+               (\_ ->
+                   let _ = println ("Marked as not done: " ++ idStr) in
+                   ())
 
 
+removeTodo : Db -> String -> Task Error ()
 removeTodo conn idStr =
-    let
-        _ = Db.exec conn "DELETE FROM todos WHERE id = ?" [idStr]
-    in
-        println ("Removed todo: " ++ idStr)
+    Db.exec conn "DELETE FROM todos WHERE id = ?" [idStr]
+        |> Task.map
+               (\_ ->
+                   let _ = println ("Removed todo: " ++ idStr) in
+                   ())
 
 
+clearDone : Db -> Task Error ()
 clearDone conn =
-    let
-        _ = Db.exec conn "DELETE FROM todos WHERE done = 1" []
-    in
-        println "Cleared completed todos"
+    Db.exec conn "DELETE FROM todos WHERE done = 1" []
+        |> Task.map
+               (\_ ->
+                   let _ = println "Cleared completed todos" in
+                   ())
 
 
-showUsage _ =
+showUsage : Task Error ()
+showUsage =
     let
         _ = Slog.info "Sky TODO - A simple todo manager" []
         _ = println ""
@@ -116,21 +186,23 @@ showUsage _ =
         _ = println "  ./app undone <id>     Mark a todo as not done"
         _ = println "  ./app remove <id>     Delete a todo"
         _ = println "  ./app clear           Remove all completed todos"
+        _ = println ""
     in
-        println ""
+        Task.succeed ()
 
 
 getArg argList =
     Maybe.withDefault "" (List.head argList)
 
 
+runCommand : Db -> String -> String -> Task Error ()
 runCommand conn cmd cmdArg =
     case cmd of
 
         "add" ->
             if cmdArg == "" then
-                println "Usage: ./app add <title>"
-
+                let _ = println "Usage: ./app add <title>" in
+                Task.succeed ()
             else
                 addTodo conn cmdArg
 
@@ -139,22 +211,22 @@ runCommand conn cmd cmdArg =
 
         "done" ->
             if cmdArg == "" then
-                println "Usage: ./app done <id>"
-
+                let _ = println "Usage: ./app done <id>" in
+                Task.succeed ()
             else
                 markDone conn cmdArg
 
         "undone" ->
             if cmdArg == "" then
-                println "Usage: ./app undone <id>"
-
+                let _ = println "Usage: ./app undone <id>" in
+                Task.succeed ()
             else
                 markUndone conn cmdArg
 
         "remove" ->
             if cmdArg == "" then
-                println "Usage: ./app remove <id>"
-
+                let _ = println "Usage: ./app remove <id>" in
+                Task.succeed ()
             else
                 removeTodo conn cmdArg
 
@@ -162,29 +234,7 @@ runCommand conn cmd cmdArg =
             clearDone conn
 
         "help" ->
-            showUsage ()
+            showUsage
 
         _ ->
-            showUsage ()
-
-
-db =
-    Db.connect ()
-
-
-main =
-    case db of
-
-        Err e ->
-            println ("Database error: " ++ Error.toString e)
-
-        Ok conn ->
-            let
-                _ = initDb conn
-                -- Os.args already returns user args only (Go's os.Args[1:]);
-                -- don't drop another element.
-                userArgs = Os.args ()
-                cmd = getArg userArgs
-                cmdArg = getArg (List.drop 1 userArgs)
-            in
-                identity (runCommand conn cmd cmdArg)
+            showUsage

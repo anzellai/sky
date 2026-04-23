@@ -206,6 +206,8 @@ registry = Map.fromList
     , (("Task", "run"),           KernelInfo "rt.AnyTaskRun" 1 False)
     , (("Task", "fromResult"),    KernelInfo "rt.Task_fromResult" 1 False)
     , (("Task", "andThenResult"), KernelInfo "rt.Task_andThenResult" 2 False)
+    , (("Task", "mapError"),      KernelInfo "rt.Task_mapError" 2 False)
+    , (("Task", "onError"),       KernelInfo "rt.Task_onError" 2 False)
 
     -- ═══════════════════════════════════════════════════════
     -- Cmd

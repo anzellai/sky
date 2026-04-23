@@ -1,93 +1,107 @@
 module Lib.Schema exposing (initDb)
 
 import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
 import Std.Db as Db
 import Lib.Database exposing (conn)
 
 
+-- DDL is a one-shot at startup. Db.execRaw is now Task — we force
+-- each Task.run inside the let so the side effect actually fires
+-- (a discarded Task does nothing). Errors here are silently dropped
+-- because IF NOT EXISTS DDL is idempotent in practice; if a table
+-- genuinely can't be created the next query against it surfaces a
+-- clear "no such table" error at the boundary.
 initDb =
     let
         _ =
-            Db.execRaw
-                conn
-                """CREATE TABLE IF NOT EXISTS monitors (
-                    id TEXT PRIMARY KEY,
-                    name TEXT NOT NULL,
-                    url TEXT NOT NULL,
-                    interval_secs INTEGER DEFAULT 30,
-                    status TEXT DEFAULT 'unknown',
-                    response_time INTEGER DEFAULT 0,
-                    last_checked TEXT DEFAULT '',
-                    visibility TEXT DEFAULT 'user',
-                    created_at TEXT DEFAULT (datetime('now'))
-                )"""
+            Task.run
+                (Db.execRaw
+                    conn
+                    """CREATE TABLE IF NOT EXISTS monitors (
+                        id TEXT PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        url TEXT NOT NULL,
+                        interval_secs INTEGER DEFAULT 30,
+                        status TEXT DEFAULT 'unknown',
+                        response_time INTEGER DEFAULT 0,
+                        last_checked TEXT DEFAULT '',
+                        visibility TEXT DEFAULT 'user',
+                        created_at TEXT DEFAULT (datetime('now'))
+                    )""")
         _ =
-            Db.execRaw
-                conn
-                """CREATE TABLE IF NOT EXISTS metrics (
-                    id TEXT PRIMARY KEY,
-                    name TEXT NOT NULL,
-                    source_type TEXT NOT NULL,
-                    config_json TEXT DEFAULT '{}',
-                    last_value TEXT DEFAULT '',
-                    last_updated TEXT DEFAULT '',
-                    visibility TEXT DEFAULT 'user',
-                    created_at TEXT DEFAULT (datetime('now'))
-                )"""
+            Task.run
+                (Db.execRaw
+                    conn
+                    """CREATE TABLE IF NOT EXISTS metrics (
+                        id TEXT PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        source_type TEXT NOT NULL,
+                        config_json TEXT DEFAULT '{}',
+                        last_value TEXT DEFAULT '',
+                        last_updated TEXT DEFAULT '',
+                        visibility TEXT DEFAULT 'user',
+                        created_at TEXT DEFAULT (datetime('now'))
+                    )""")
         _ =
-            Db.execRaw
-                conn
-                """CREATE TABLE IF NOT EXISTS metric_history (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    metric_id TEXT NOT NULL,
-                    value TEXT NOT NULL,
-                    recorded_at TEXT DEFAULT (datetime('now'))
-                )"""
+            Task.run
+                (Db.execRaw
+                    conn
+                    """CREATE TABLE IF NOT EXISTS metric_history (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        metric_id TEXT NOT NULL,
+                        value TEXT NOT NULL,
+                        recorded_at TEXT DEFAULT (datetime('now'))
+                    )""")
         _ =
-            Db.execRaw
-                conn
-                """CREATE TABLE IF NOT EXISTS alerts (
-                    id TEXT PRIMARY KEY,
-                    metric_id TEXT NOT NULL,
-                    condition TEXT NOT NULL,
-                    threshold TEXT NOT NULL,
-                    notify_type TEXT DEFAULT 'webhook',
-                    notify_target TEXT DEFAULT '',
-                    enabled INTEGER DEFAULT 1,
-                    created_at TEXT DEFAULT (datetime('now'))
-                )"""
+            Task.run
+                (Db.execRaw
+                    conn
+                    """CREATE TABLE IF NOT EXISTS alerts (
+                        id TEXT PRIMARY KEY,
+                        metric_id TEXT NOT NULL,
+                        condition TEXT NOT NULL,
+                        threshold TEXT NOT NULL,
+                        notify_type TEXT DEFAULT 'webhook',
+                        notify_target TEXT DEFAULT '',
+                        enabled INTEGER DEFAULT 1,
+                        created_at TEXT DEFAULT (datetime('now'))
+                    )""")
         _ =
-            Db.execRaw
-                conn
-                """CREATE TABLE IF NOT EXISTS sessions (
-                    id TEXT PRIMARY KEY,
-                    username TEXT NOT NULL,
-                    avatar_url TEXT DEFAULT '',
-                    role TEXT DEFAULT 'user',
-                    created_at TEXT DEFAULT (datetime('now'))
-                )"""
+            Task.run
+                (Db.execRaw
+                    conn
+                    """CREATE TABLE IF NOT EXISTS sessions (
+                        id TEXT PRIMARY KEY,
+                        username TEXT NOT NULL,
+                        avatar_url TEXT DEFAULT '',
+                        role TEXT DEFAULT 'user',
+                        created_at TEXT DEFAULT (datetime('now'))
+                    )""")
         _ =
-            Db.execRaw
-                conn
-                """CREATE TABLE IF NOT EXISTS monitor_history (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    monitor_id TEXT NOT NULL,
-                    status TEXT NOT NULL,
-                    response_time INTEGER DEFAULT 0,
-                    checked_at TEXT DEFAULT (datetime('now'))
-                )"""
+            Task.run
+                (Db.execRaw
+                    conn
+                    """CREATE TABLE IF NOT EXISTS monitor_history (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        monitor_id TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        response_time INTEGER DEFAULT 0,
+                        checked_at TEXT DEFAULT (datetime('now'))
+                    )""")
         _ =
-            Db.execRaw
-                conn
-                """CREATE TABLE IF NOT EXISTS alert_history (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    alert_id TEXT NOT NULL,
-                    metric_id TEXT NOT NULL,
-                    metric_value TEXT NOT NULL,
-                    condition TEXT NOT NULL,
-                    threshold TEXT NOT NULL,
-                    notify_type TEXT NOT NULL,
-                    fired_at TEXT DEFAULT (datetime('now'))
-                )"""
+            Task.run
+                (Db.execRaw
+                    conn
+                    """CREATE TABLE IF NOT EXISTS alert_history (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        alert_id TEXT NOT NULL,
+                        metric_id TEXT NOT NULL,
+                        metric_value TEXT NOT NULL,
+                        condition TEXT NOT NULL,
+                        threshold TEXT NOT NULL,
+                        notify_type TEXT NOT NULL,
+                        fired_at TEXT DEFAULT (datetime('now'))
+                    )""")
     in
         ()

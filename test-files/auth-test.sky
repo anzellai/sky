@@ -1,13 +1,14 @@
 module Main exposing (main)
 
 import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
 import Std.Db as Db
 import Std.Auth as Auth
 import Std.Log exposing (println)
 
 
 doTest db =
-    case Auth.register db "alice@example.com" "secret123" of
+    case Task.run (Auth.register db "alice@example.com" "secret123") of
 
         Ok uid ->
             afterRegister db uid
@@ -17,7 +18,7 @@ doTest db =
 
 
 afterRegister db uid =
-    case Auth.login db "alice@example.com" "secret123" of
+    case Task.run (Auth.login db "alice@example.com" "secret123") of
 
         Ok _user ->
             tryToken
@@ -47,7 +48,7 @@ verifyTok tok =
 
 
 main =
-    case Db.open "sqlite" ":memory:" of
+    case Task.run (Db.open "sqlite" ":memory:") of
 
         Ok db ->
             doTest db

@@ -28,7 +28,7 @@ main =
                     println ("SHA256 of 'Hello, Sky!': " ++ hashStr)
 
                 Err e ->
-                    println ("Hash error: " ++ e)
+                    println ("Hash error: " ++ errorToString e)
         _ = println "Sending HTTP request..."
         httpResult = Task.run (Http.get "https://httpbin.org/get")
         _ =
@@ -40,6 +40,6 @@ main =
                              ++ String.fromInt (String.length resp.body))
 
                 Err e ->
-                    println ("HTTP error: " ++ e)
+                    println ("HTTP error: " ++ errorToString e)
     in
         ()

@@ -3,18 +3,22 @@ module Lib.Db exposing (exec, query, getField)
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Maybe as Maybe
 import Sky.Core.Dict as Dict
+import Sky.Core.Task as Task
 import Std.Db as Db
 import Std.Log exposing (println)
 import Sky.Core.Os as Os
 import Sky.Core.Error as Error exposing (Error)
 
 
--- Open the database once at startup. We deliberately exit on failure:
--- a degraded "fake connection" would silently break every subsequent
--- query — strictly better to surface the problem now than to ship
--- empty data to users.
+-- Db.* now returns Task Error a per the effect-boundary doctrine.
+-- This Lib layer is consumed from inside `update` branches that need
+-- a synchronous Result for ergonomic case-pattern matching. We bridge
+-- through Task.run inside each wrapper — same eager-evaluation
+-- semantic the example had pre-migration. For long-running batched
+-- writes or background reads, factor into a top-level `Task Error a`
+-- and dispatch via Cmd.perform — see 18-job-queue/src/Main.sky.
 dbConn =
-    case Db.open "sqlite" "skyvote.db" of
+    case Task.run (Db.open "sqlite" "skyvote.db") of
 
         Ok c ->
             c
@@ -32,16 +36,8 @@ dbConn =
 -- exec : returns Result Error () — DB write at the typed boundary.
 -- Callers in `update` MUST pattern-match and decide what to do (log,
 -- bubble to notification, retry).
---
--- NOTE: omitting annotations here intentionally — typing exec's
--- return as `Result Error ()` makes the body's `rt.Ok[any, any]`
--- ctor produce `SkyResult[any, any]` which doesn't match the declared
--- `SkyResult[any, struct{}]` at runtime. Fully typing these needs T4
--- (context-aware ctor instantiation). Keeping `any` here lets the
--- runtime flow through safely; typed args are still validated via
--- coerceCallArgs at call sites.
 exec queryStr args =
-    case Db.exec dbConn queryStr args of
+    case Task.run (Db.exec dbConn queryStr args) of
 
         Ok _ ->
             Ok ()
@@ -51,13 +47,7 @@ exec queryStr args =
 
 
 query queryStr args =
-    case Db.query dbConn queryStr args of
-
-        Ok rows ->
-            Ok rows
-
-        Err e ->
-            Err e
+    Task.run (Db.query dbConn queryStr args)
 
 
 -- Missing columns in a row dict are a Sky-side schema mismatch, not a

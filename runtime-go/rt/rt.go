@@ -3579,6 +3579,35 @@ func Task_andThenResult(fn any, task any) any {
 	})
 }
 
+// Task_mapError transforms a Task's error value without changing the
+// success path. Mirrors Result.mapError. Useful when a downstream
+// pipeline expects a different error type, or when adding context to
+// an error before it propagates.
+func Task_mapError(fn any, task any) any {
+	return SkyTask[any, any](func() SkyResult[any, any] {
+		r := anyTaskInvoke(task)
+		if r.Tag == 0 {
+			return Ok[any, any](r.OkValue)
+		}
+		return Err[any, any](SkyCall(fn, r.ErrValue))
+	})
+}
+
+// Task_onError recovers from a Task error by producing a new Task. The
+// fn is invoked only on Err — Ok values pass through unchanged. Lets
+// HTTP handlers convert DB / parse errors into 4xx/5xx Response Tasks
+// at the handler boundary, and lets Sky.Live update branches recover
+// to a "show error message" Msg without aborting the chain.
+func Task_onError(fn any, task any) any {
+	return SkyTask[any, any](func() SkyResult[any, any] {
+		r := anyTaskInvoke(task)
+		if r.Tag == 0 {
+			return r
+		}
+		return anyTaskInvoke(SkyCall(fn, r.ErrValue))
+	})
+}
+
 // Result_andThenTask chains a Task-returning step after a Result. The
 // fn is invoked lazily — wrapping the dispatch in a SkyTask thunk
 // preserves Task's deferred-effect semantics so the chained Task only

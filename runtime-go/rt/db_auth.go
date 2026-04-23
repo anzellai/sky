@@ -132,37 +132,43 @@ var (
 // caller sees a clear "no path configured" message rather than
 // silently opening a file named `{}` in cwd (the pre-P3-4 bug).
 func Db_connect(path any) any {
-	// Unit (Sky `()`) → look up SKY_DB_PATH. `nil` gets the same
-	// treatment for codegen tolerance.
-	if _, isUnit := path.(struct{}); isUnit || path == nil {
-		env := os.Getenv("SKY_DB_PATH")
-		if env == "" {
-			return Err[any, any](ErrInvalidInput(
-				"db.connect: no path given and SKY_DB_PATH is unset " +
-					"(set [database].path in sky.toml, or pass a path)"))
+	// Returns a Task thunk so the actual sql.Open is deferred until
+	// Cmd.perform / Task.run forces it. Eager evaluation here would
+	// block Sky.Live's update() call instead of running in the
+	// goroutine spawned by Cmd.perform.
+	return func() any {
+		// Unit (Sky `()`) → look up SKY_DB_PATH. `nil` gets the same
+		// treatment for codegen tolerance.
+		if _, isUnit := path.(struct{}); isUnit || path == nil {
+			env := os.Getenv("SKY_DB_PATH")
+			if env == "" {
+				return Err[any, any](ErrInvalidInput(
+					"db.connect: no path given and SKY_DB_PATH is unset " +
+						"(set [database].path in sky.toml, or pass a path)"))
+			}
+			path = env
 		}
-		path = env
+		p, errRes := mustStringTyped(path, "db.connect")
+		if errRes != nil {
+			return errRes
+		}
+		dbRegistryMu.Lock()
+		defer dbRegistryMu.Unlock()
+		if existing, ok := dbRegistry[p]; ok {
+			return Ok[any, any](existing)
+		}
+		driver, dsn := detectDriver(p)
+		conn, err := sql.Open(driver, dsn)
+		if err != nil {
+			return Err[any, any](ErrIo("db connect: " + err.Error()))
+		}
+		if err := conn.Ping(); err != nil {
+			return Err[any, any](ErrIo("db ping: " + err.Error()))
+		}
+		db := &SkyDb{conn: conn, name: p, driver: driver}
+		dbRegistry[p] = db
+		return Ok[any, any](db)
 	}
-	p, errRes := mustStringTyped(path, "db.connect")
-	if errRes != nil {
-		return errRes
-	}
-	dbRegistryMu.Lock()
-	defer dbRegistryMu.Unlock()
-	if existing, ok := dbRegistry[p]; ok {
-		return Ok[any, any](existing)
-	}
-	driver, dsn := detectDriver(p)
-	conn, err := sql.Open(driver, dsn)
-	if err != nil {
-		return Err[any, any](ErrIo("db connect: " + err.Error()))
-	}
-	if err := conn.Ping(); err != nil {
-		return Err[any, any](ErrIo("db ping: " + err.Error()))
-	}
-	db := &SkyDb{conn: conn, name: p, driver: driver}
-	dbRegistry[p] = db
-	return Ok[any, any](db)
 }
 
 // detectDriver returns the (driverName, dsn) pair for a connection string.
@@ -213,73 +219,80 @@ func Db_close(db any) any {
 	return Ok[any, any](struct{}{})
 }
 
-// Db.exec : Db -> String -> List any -> Result String Int
+// Db.exec : Db -> String -> List any -> Task Error Int
 // Runs a statement that doesn't return rows. Returns rows affected.
+// Returns a Task thunk so the actual write defers to the
+// Cmd.perform / Task.run boundary.
 func Db_exec(db any, query any, args any) any {
-	d, ok := db.(*SkyDb)
-	if !ok {
-		return Err[any, any](ErrInvalidInput("db.exec: not a Db"))
+	return func() any {
+		d, ok := db.(*SkyDb)
+		if !ok {
+			return Err[any, any](ErrInvalidInput("db.exec: not a Db"))
+		}
+		argList := asList(args)
+		goArgs := make([]any, len(argList))
+		for i, a := range argList {
+			goArgs[i] = a
+		}
+		q, errRes := mustStringTyped(query, "db.exec")
+		if errRes != nil {
+			return errRes
+		}
+		res, err := d.conn.Exec(q, goArgs...)
+		if err != nil {
+			return Err[any, any](ErrIo("db.exec: " + err.Error()))
+		}
+		n, _ := res.RowsAffected()
+		return Ok[any, any](int(n))
 	}
-	argList := asList(args)
-	goArgs := make([]any, len(argList))
-	for i, a := range argList {
-		goArgs[i] = a
-	}
-	q, errRes := mustStringTyped(query, "db.exec")
-	if errRes != nil {
-		return errRes
-	}
-	res, err := d.conn.Exec(q, goArgs...)
-	if err != nil {
-		return Err[any, any](ErrIo("db.exec: " + err.Error()))
-	}
-	n, _ := res.RowsAffected()
-	return Ok[any, any](int(n))
 }
 
-// Db.query : Db -> String -> List any -> Result String (List (Dict String any))
-// Returns each row as a Dict of column name → value.
+// Db.query : Db -> String -> List any -> Task Error (List (Dict String any))
+// Returns each row as a Dict of column name → value. Wrapped in a Task
+// thunk so the SELECT defers to the Cmd.perform / Task.run boundary.
 func Db_query(db any, query any, args any) any {
-	d, ok := db.(*SkyDb)
-	if !ok {
-		return Err[any, any](ErrInvalidInput("db.query: not a Db"))
-	}
-	argList := asList(args)
-	goArgs := make([]any, len(argList))
-	for i, a := range argList {
-		goArgs[i] = a
-	}
-	q, errRes := mustStringTyped(query, "db.query")
-	if errRes != nil {
-		return errRes
-	}
-	rows, err := d.conn.Query(q, goArgs...)
-	if err != nil {
-		return Err[any, any](ErrIo("db.query: " + err.Error()))
-	}
-	defer rows.Close()
+	return func() any {
+		d, ok := db.(*SkyDb)
+		if !ok {
+			return Err[any, any](ErrInvalidInput("db.query: not a Db"))
+		}
+		argList := asList(args)
+		goArgs := make([]any, len(argList))
+		for i, a := range argList {
+			goArgs[i] = a
+		}
+		q, errRes := mustStringTyped(query, "db.query")
+		if errRes != nil {
+			return errRes
+		}
+		rows, err := d.conn.Query(q, goArgs...)
+		if err != nil {
+			return Err[any, any](ErrIo("db.query: " + err.Error()))
+		}
+		defer rows.Close()
 
-	cols, err := rows.Columns()
-	if err != nil {
-		return Err[any, any](ErrIo("db.query columns: " + err.Error()))
+		cols, err := rows.Columns()
+		if err != nil {
+			return Err[any, any](ErrIo("db.query columns: " + err.Error()))
+		}
+		var out []any
+		for rows.Next() {
+			raw := make([]any, len(cols))
+			ptrs := make([]any, len(cols))
+			for i := range raw {
+				ptrs[i] = &raw[i]
+			}
+			if err := rows.Scan(ptrs...); err != nil {
+				return Err[any, any](ErrIo("db.query scan: " + err.Error()))
+			}
+			rowDict := map[string]any{}
+			for i, c := range cols {
+				rowDict[c] = normaliseSqlValue(raw[i])
+			}
+			out = append(out, rowDict)
+		}
+		return Ok[any, any](out)
 	}
-	var out []any
-	for rows.Next() {
-		raw := make([]any, len(cols))
-		ptrs := make([]any, len(cols))
-		for i := range raw {
-			ptrs[i] = &raw[i]
-		}
-		if err := rows.Scan(ptrs...); err != nil {
-			return Err[any, any](ErrIo("db.query scan: " + err.Error()))
-		}
-		rowDict := map[string]any{}
-		for i, c := range cols {
-			rowDict[c] = normaliseSqlValue(raw[i])
-		}
-		out = append(out, rowDict)
-	}
-	return Ok[any, any](out)
 }
 
 // Db.queryDecode : Db -> String -> List any -> JsonDecoder a -> Result String (List a)

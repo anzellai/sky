@@ -3,6 +3,7 @@ module Main exposing (main)
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.List as List
 import Sky.Core.String as String
+import Sky.Core.Task as Task
 import Std.Db as Db
 import Std.Log exposing (println)
 
@@ -10,18 +11,19 @@ import Std.Log exposing (println)
 runDb db =
     let
         _ =
-            Db.exec
-                db
-                "CREATE TABLE notes (id INTEGER PRIMARY KEY, text TEXT)"
-                []
-        _ = Db.exec db "INSERT INTO notes (text) VALUES (?)" ["hello"]
-        _ = Db.exec db "INSERT INTO notes (text) VALUES (?)" ["world"]
+            Task.run
+                (Db.exec
+                    db
+                    "CREATE TABLE notes (id INTEGER PRIMARY KEY, text TEXT)"
+                    [])
+        _ = Task.run (Db.exec db "INSERT INTO notes (text) VALUES (?)" ["hello"])
+        _ = Task.run (Db.exec db "INSERT INTO notes (text) VALUES (?)" ["world"])
     in
         queryAll db
 
 
 queryAll db =
-    case Db.query db "SELECT text FROM notes ORDER BY id" [] of
+    case Task.run (Db.query db "SELECT text FROM notes ORDER BY id" []) of
 
         Ok rows ->
             printRows rows
@@ -39,7 +41,7 @@ printRows rows =
 
 
 main =
-    case Db.open "sqlite" ":memory:" of
+    case Task.run (Db.open "sqlite" ":memory:") of
 
         Ok db ->
             runDb db

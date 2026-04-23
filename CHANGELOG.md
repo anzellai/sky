@@ -4,6 +4,21 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 ## Unreleased
 
+### Effect boundary (stdlib)
+
+- **Breaking — `Std.Db.*` migrated from `Result Error a` to `Task Error a`.** `Db.connect`, `Db.open`, `Db.exec`, `Db.execRaw`, and `Db.query` now return `Task Error a`. Their runtime helpers (`runtime-go/rt/db_auth.go`) wrap their bodies in `func() any { ... }` thunks so the actual SQL defers to the goroutine spawned by `Cmd.perform` instead of blocking Sky.Live's `update()`.
+  - **Why:** DB ops can take hundreds of milliseconds, can fail meaningfully, and compose naturally with `Task.parallel` / `Task.andThen` / `Cmd.perform`. Typing them as Result was a pre-Sky.Live legacy that forced every effectful pipeline to either bridge through `Task.fromResult` or block the dispatcher.
+  - **Migration in this branch:** every `Lib/Db.sky` (08-notes-app, 12-skyvote, 17-skymon) and `Lib/Games.sky` (16-skychess) wrapper kept its Result-shaped public API by bridging through `Task.run` internally — consumers (Main.sky, Page/*.sky) need no changes. `examples/07-todo-cli/src/Main.sky` was rewritten as a proper Task-chained CLI demonstrating the canonical error-propagation pattern. `examples/18-job-queue/src/Main.sky` was simplified to drop the now-unnecessary bridge helpers in `saveSnapshot`/`loadHistory`. `examples/13-skyshop` is unaffected (it uses Firestore, not Std.Db).
+  - **For new app code:** prefer composing Task-returning Db calls directly (`Db.exec db "INSERT..." [...] |> Task.andThen ...`) and dispatch via `Cmd.perform`. Use the Lib-layer `Task.run` bridge only when wrapping a singleton conn for synchronous case-pattern matching inside an existing update branch.
+
+- **Added — `Task.onError` and `Task.mapError`.** Mirror their Result counterparts. `Task.onError : (e -> Task e2 a) -> Task e a -> Task e2 a` recovers from a Task error by producing a new Task — the canonical primitive for converting DB / FFI errors into 4xx/5xx HTTP responses, Sky.Live notifications, or CLI exit codes. `Task.mapError : (e -> e2) -> Task e a -> Task e2 a` adds context to an error before propagation.
+
+- **Added — kernel sigs for `File.*`, `Process.*`, `Io.*`, `Crypto.randomBytes`, `Crypto.randomToken`** (Bucket A2 of the audit). Type-only addition: the runtime helpers already returned Task thunks, the docs/stdlib tables already promised Task; HM now enforces what the runtime had silently delivered. Net-zero migration.
+
+- **Codegen fix — `coerceArg` now handles `SkyTask` params.** Previously, passing a value to a function expecting a typed `rt.SkyTask[E, A]` param emitted `any(arg).(rt.SkyTask[E, A])` direct assertion, which panicked at runtime against `func() any` from runtime helpers and against `SkyTask[any, any]` from cross-instantiation pass-through (Go generics are nominal). Fixed by routing parametric SkyTask param targets through `rt.TaskCoerceT`, mirroring the existing `SkyResult`/`SkyMaybe` handling. Also extended the same wrap to the `VarLocal` call-result path. This unblocked the entire Db.* migration.
+
+- **Doctrine clarification in CLAUDE.md ("Effect Boundary: Task — two-tier in practice").** The audit considered migrating *every* effectful op to Task (println / Slog / Os.getenv / Os.getcwd / Time.now / Time.unixMillis) and concluded these stay sync. Reasons documented in CLAUDE.md under "Why theory ≠ practical here" — `let _ = println …` discard pattern, module-level `apiKey = Os.getenv "X" |> Result.withDefault ""` config reads, "stamp this row" timestamp use sites. Sky picks the Elm-pragmatic position over the Haskell-purist one: real I/O that benefits from composition goes through Task; sync convenience effects that don't benefit stay sync.
+
 ### Sky.Live
 
 - **Breaking — default HTML template no longer loads Inter from Google Fonts.** The shell document emitted by `Live.app` previously preconnected to `fonts.googleapis.com` / `fonts.gstatic.com`, fetched the Inter family, and forced `font-family: 'Inter' … !important` on `body` and `.font-sans`. All four lines have been removed.

@@ -7,18 +7,29 @@ import Sky.Core.List as List
 import Sky.Core.String as String
 import Sky.Core.Dict as Dict
 import Sky.Core.Crypto as Crypto
+import Sky.Core.Task as Task
 import Std.Db as Db
 import Std.Log exposing (println)
 import Sky.Core.Os as Os
 import Sky.Core.Error as Error exposing (Error(..), ErrorKind(..))
 
 
--- Open the database once at startup. We deliberately exit here on
--- failure: a degraded "fake connection" would silently break every
--- subsequent query — it's strictly better to surface the problem now
--- than to ship empty data to users.
+-- Db.* now returns Task Error a per the effect-boundary doctrine, but
+-- this Lib layer is consumed from inside `update` branches that need
+-- a synchronous answer (the user-input handlers can't yield mid-tick).
+-- We bridge through Task.run inside each wrapper so the rest of the
+-- app keeps its existing Result-shaped contracts and case-pattern
+-- match style. The eager-evaluation cost is the same as before this
+-- branch: DB ops fire synchronously inside update — which has been
+-- the working semantic since the example was written.
+--
+-- For long-running write batches or background reads, factor into a
+-- top-level `Task Error a` returned to update and dispatch via
+-- Cmd.perform (see 18-job-queue's saveSnapshot/loadHistory for the
+-- pattern). The current set of operations is small and bounded so
+-- the synchronous bridge is the lower-friction choice.
 dbConn =
-    case Db.connect () of
+    case Task.run (Db.connect ()) of
 
         Ok conn ->
             conn
@@ -41,7 +52,7 @@ getConn _ =
 -- `update` MUST pattern-match and decide what to do (log, bubble to
 -- notification, retry).
 exec queryStr args =
-    case Db.exec dbConn queryStr args of
+    case Task.run (Db.exec dbConn queryStr args) of
 
         Ok _ ->
             Ok ()
@@ -52,42 +63,38 @@ exec queryStr args =
 
 -- query : Result Error (List Row). Same contract as exec.
 query queryStr args =
-    case Db.query dbConn queryStr args of
-
-        Ok rows ->
-            Ok rows
-
-        Err e ->
-            Err e
+    Task.run (Db.query dbConn queryStr args)
 
 
 initSchema conn =
     let
         _ =
-            Db.execRaw
-                conn
-                """CREATE TABLE IF NOT EXISTS games (
-                    id TEXT PRIMARY KEY,
-                    player_name TEXT NOT NULL,
-                    status TEXT NOT NULL DEFAULT 'playing',
-                    result TEXT NOT NULL DEFAULT '',
-                    move_count INTEGER NOT NULL DEFAULT 0,
-                    created_at TEXT DEFAULT (datetime('now')),
-                    updated_at TEXT DEFAULT (datetime('now'))
-                )"""
+            Task.run
+                (Db.execRaw
+                    conn
+                    """CREATE TABLE IF NOT EXISTS games (
+                        id TEXT PRIMARY KEY,
+                        player_name TEXT NOT NULL,
+                        status TEXT NOT NULL DEFAULT 'playing',
+                        result TEXT NOT NULL DEFAULT '',
+                        move_count INTEGER NOT NULL DEFAULT 0,
+                        created_at TEXT DEFAULT (datetime('now')),
+                        updated_at TEXT DEFAULT (datetime('now'))
+                    )""")
         _ =
-            Db.execRaw
-                conn
-                """CREATE TABLE IF NOT EXISTS moves (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    game_id TEXT NOT NULL,
-                    move_number INTEGER NOT NULL,
-                    from_square INTEGER NOT NULL,
-                    to_square INTEGER NOT NULL,
-                    algebraic TEXT NOT NULL,
-                    colour TEXT NOT NULL,
-                    created_at TEXT DEFAULT (datetime('now'))
-                )"""
+            Task.run
+                (Db.execRaw
+                    conn
+                    """CREATE TABLE IF NOT EXISTS moves (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        game_id TEXT NOT NULL,
+                        move_number INTEGER NOT NULL,
+                        from_square INTEGER NOT NULL,
+                        to_square INTEGER NOT NULL,
+                        algebraic TEXT NOT NULL,
+                        colour TEXT NOT NULL,
+                        created_at TEXT DEFAULT (datetime('now'))
+                    )""")
     in
         ()
 
