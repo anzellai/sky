@@ -6204,12 +6204,24 @@ func skyCallOne(f any, arg any) any {
 	if rv.Kind() != reflect.Func {
 		return f
 	}
-	if rv.Type().NumIn() == 0 {
+	nin := rv.Type().NumIn()
+	if nin == 0 {
 		out := rv.Call(nil)
 		if len(out) == 0 {
 			return nil
 		}
 		return out[0].Interface()
+	}
+	if nin > 1 {
+		// Multi-arg Go function called with a single arg — Sky semantics
+		// say all functions are curried, so this should partially apply
+		// and return a closure waiting for the rest. The previous
+		// reflect.Call with a 1-element slice panicked with "Call with
+		// too few input arguments", which made `List.indexedMap fn xs`
+		// (and any other higher-order combinator that drives the function
+		// one element at a time via skyCallOne) blow up whenever `fn` was
+		// a top-level multi-arg binding emitted as a Go N-ary func.
+		return curryRemainingArgs(rv, []any{arg})
 	}
 	pt := rv.Type().In(0)
 	var av reflect.Value
@@ -6226,4 +6238,31 @@ func skyCallOne(f any, arg any) any {
 		return nil
 	}
 	return out[0].Interface()
+}
+
+// curryRemainingArgs returns a func(any) any closure that captures the
+// args supplied so far, accepts the next, and either invokes the
+// underlying function (when all params are supplied) or recurses to
+// capture more. Used by skyCallOne when a multi-arg Go function is
+// called with fewer args than its arity — Sky semantics curry every
+// function, but the typed codegen emits multi-arg Go funcs directly,
+// so the runtime has to bridge the shape mismatch when the function
+// flows through a higher-order combinator (List.indexedMap,
+// List.foldl, Cmd.perform, etc.) that drives the call one arg at a
+// time via skyCallOne.
+//
+// The returned closure has shape `func(any) any` so subsequent
+// skyCallOne / sky_call invocations see it as a 1-arg function and
+// dispatch normally; the arg-conversion logic in skyCallDirect handles
+// the typed param coercion when we finally have enough args to call
+// the underlying reflect.Value.
+func curryRemainingArgs(rv reflect.Value, captured []any) any {
+	nin := rv.Type().NumIn()
+	return func(next any) any {
+		all := append(append([]any{}, captured...), next)
+		if len(all) >= nin {
+			return skyCallDirect(rv, all)
+		}
+		return curryRemainingArgs(rv, all)
+	}
 }
