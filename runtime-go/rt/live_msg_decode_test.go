@@ -101,6 +101,46 @@ func TestApplyMsgArgs_NarrowsFormDataMap(t *testing.T) {
 	}
 }
 
+// TestApplyMsgArgs_NarrowsFormDataToRecordStruct — `<form onSubmit=...>`
+// can also feed a typed record-alias Msg constructor:
+//
+//   type alias AuthCreds = { email : String, password : String }
+//   type Msg = DoSignIn AuthCreds
+//
+// Sky lowers `AuthCreds` to a Go struct (`State_AuthCreds_R{Email, Password}`)
+// and the constructor expects that struct, but the wire arg is JSON-decoded
+// to `map[string]interface {}`. Field names map case-insensitively
+// ("email" wire → "Email" struct field).
+//
+// Surfaced after the v0.9.8 map→map narrowing landed: sendcrafts had
+// already migrated DoSignIn to take a typed AuthCreds record (cleaner
+// than threading a Dict) and the form submit then hit this gap.
+func TestApplyMsgArgs_NarrowsFormDataToRecordStruct(t *testing.T) {
+	type AuthCreds struct {
+		Email    string
+		Password string
+	}
+	credsMsg := func(c AuthCreds) any {
+		return SkyADT{Tag: 0, SkyName: "DoSignIn", Fields: []any{c}}
+	}
+	raw := json.RawMessage(`{"email":"hello@anzel.me","password":"hunter2"}`)
+	result := applyMsgArgs(any(credsMsg), []json.RawMessage{raw}, "")
+	adt, ok := result.(SkyADT)
+	if !ok {
+		t.Fatalf("expected SkyADT, got %T %v", result, result)
+	}
+	if adt.SkyName != "DoSignIn" || len(adt.Fields) != 1 {
+		t.Fatalf("bad ADT shape: %+v", adt)
+	}
+	got, ok := adt.Fields[0].(AuthCreds)
+	if !ok {
+		t.Fatalf("expected AuthCreds, got %T %v", adt.Fields[0], adt.Fields[0])
+	}
+	if got.Email != "hello@anzel.me" || got.Password != "hunter2" {
+		t.Errorf("narrowed record missing fields: %+v", got)
+	}
+}
+
 // TestDispatch_DropsMsgDecodeError — dispatch() receiving the sentinel
 // must return "" and NOT touch model state.
 func TestDispatch_DropsMsgDecodeError(t *testing.T) {

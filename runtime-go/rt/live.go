@@ -28,6 +28,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 // ═══════════════════════════════════════════════════════════
@@ -1293,20 +1295,7 @@ func applyMsgArgs(msg any, args []json.RawMessage, fallbackValue string) any {
 	}
 	cur := msg
 	for _, raw := range args {
-		var v any
-		if err := json.Unmarshal(raw, &v); err != nil {
-			v = string(raw)
-		}
-		// Narrow the wire-decoded value to the constructor's first
-		// param type if the runtime knows how (map[string]any →
-		// map[string]string for `Dict String String`-typed Msg args,
-		// []any → []T for typed list args, struct narrowing for
-		// SkyMaybe/SkyResult shape mismatches, etc.). Without this
-		// step, a constructor like `OnSubmit : Dict String String -> Msg`
-		// rejects the JSON-decoded form data as `map[string]interface {}`
-		// even though every value happens to be a string. Same narrowing
-		// logic the rest of the runtime uses (rt.Coerce / rt.AsMapT).
-		v = narrowMsgArg(cur, v)
+		v := decodeMsgArg(cur, raw)
 		if !argAssignableToFunc(cur, v) {
 			logMsgDecodeError(cur, v, raw)
 			return msgDecodeError{}
@@ -1320,6 +1309,50 @@ func applyMsgArgs(msg any, args []json.RawMessage, fallbackValue string) any {
 		}
 	}
 	return cur
+}
+
+// decodeMsgArg JSON-decodes a wire arg directly into the concrete Go
+// type the Msg constructor's first parameter declares (looked up
+// via reflect on the function value). When the typed-codegen
+// emits `func StateMsg_DoSignIn(c State_AuthCreds_R) any`, the
+// wire bytes `{"email":"...","password":"..."}` decode straight
+// into `State_AuthCreds_R{Email, Password}` — Go's
+// json.Unmarshal does case-insensitive field matching, so Sky's
+// lowercase source field names land in the PascalCase Go fields
+// without any runtime guesswork.
+//
+// Falls back to the generic `var v any` decode when:
+//   - The function's first param is `interface{}` (untyped Msg ctor —
+//     most curried Sky lambdas land here, since the lowerer emits
+//     `func(any) any` for them and reflect can't see a concrete
+//     param type at the boundary).
+//   - The typed decode fails (wire shape doesn't match the target —
+//     dispatch then surfaces a structured msgDecodeError).
+//
+// Replaces the previous "decode to any then reshape via reflect"
+// strategy: that approach worked but pushed type knowledge into
+// runtime guessing; this one uses the type information that's
+// already in scope at the dispatch boundary.
+func decodeMsgArg(fn any, raw json.RawMessage) any {
+	rv := reflect.ValueOf(fn)
+	if rv.Kind() == reflect.Func && rv.Type().NumIn() > 0 {
+		paramT := rv.Type().In(0)
+		if paramT.Kind() != reflect.Interface {
+			ptr := reflect.New(paramT)
+			if err := json.Unmarshal(raw, ptr.Interface()); err == nil {
+				return ptr.Elem().Interface()
+			}
+			// Typed decode failed — fall through to the any-decode
+			// path; narrowMsgArg handles the cases where the wire
+			// JSON shape needs reshaping (typed slices, Sky generic
+			// container cross-instantiation) before reflect.Call.
+		}
+	}
+	var v any
+	if err := json.Unmarshal(raw, &v); err != nil {
+		v = string(raw)
+	}
+	return narrowMsgArg(fn, v)
 }
 
 // narrowMsgArg attempts to narrow a wire-decoded `arg` to the first
@@ -1354,10 +1387,11 @@ func narrowMsgArg(fn any, arg any) any {
 	if !srcV.IsValid() || srcV.Type().AssignableTo(paramT) {
 		return arg
 	}
-	// Only structural reshapes: map / slice / Sky-container struct.
-	// Skip the fmt.Sprintf-into-string fallback in narrowReflectValue
-	// — that would silently turn a wrong-type radio bool into the
-	// string "true" and pass it to a String-typed Msg constructor.
+	// Only structural reshapes: map / slice / Sky-container struct /
+	// map → record-alias struct. Skip the fmt.Sprintf-into-string
+	// fallback in narrowReflectValue — that would silently turn a
+	// wrong-type radio bool into the string "true" and pass it to a
+	// String-typed Msg constructor.
 	switch {
 	case paramT.Kind() == reflect.Map && srcV.Kind() == reflect.Map:
 		out := coerceMapValue(srcV, paramT)
@@ -1373,8 +1407,103 @@ func narrowMsgArg(fn any, arg any) any {
 		if out, ok := narrowSkyContainer(srcV, paramT); ok {
 			return out.Interface()
 		}
+	case paramT.Kind() == reflect.Struct && srcV.Kind() == reflect.Map:
+		// Record-alias Msg arg fed by form data: the wire payload is
+		// `map[string]any` (JSON-decoded form fields), but the Sky
+		// constructor takes a typed record alias which lowers to a
+		// named Go struct (e.g. `State_AuthCreds_R{Email, Password}`).
+		// Walk the target struct's fields and look up each by lower-
+		// camel name in the source map (Sky's field naming becomes Go
+		// PascalCase via capitaliseFirst on emit, so "email" in the
+		// form maps to the "Email" struct field).
+		if out, ok := mapToRecordStruct(srcV, paramT); ok {
+			return out.Interface()
+		}
 	}
 	return arg
+}
+
+// mapToRecordStruct narrows a map[string]any (or map[string]string)
+// payload to a typed record-alias struct (the Go shape Sky emits
+// for `type alias X = { ... }`). Field lookup is case-insensitive
+// on the first character so Sky's lowercase field names match Go's
+// PascalCase struct field names. Each value is narrowed to its
+// target field type via narrowReflectValue (which handles
+// nested maps / slices / Sky-container struct reshaping).
+//
+// Returns (zero, false) when the source isn't a string-keyed map,
+// when no fields could be populated, or when any required field
+// has an incompatible value type — caller falls back to the
+// existing decode-error path so the user still sees a structured
+// log line.
+func mapToRecordStruct(src reflect.Value, target reflect.Type) (reflect.Value, bool) {
+	if src.Kind() != reflect.Map || src.Type().Key().Kind() != reflect.String {
+		return reflect.Value{}, false
+	}
+	out := reflect.New(target).Elem()
+	matched := 0
+	for i := 0; i < target.NumField(); i++ {
+		fname := target.Field(i).Name
+		// Lookup variants: PascalCase (struct field), lowercase
+		// first letter (Sky source convention), exact match.
+		var srcField reflect.Value
+		for _, k := range []string{fname, lowerFirst(fname)} {
+			if v := src.MapIndex(reflect.ValueOf(k)); v.IsValid() {
+				srcField = v
+				break
+			}
+		}
+		if !srcField.IsValid() {
+			continue
+		}
+		// Map values come out as reflect.Value wrapping `any`;
+		// unwrap before narrowing to the target field type.
+		if srcField.Kind() == reflect.Interface {
+			if srcField.IsNil() {
+				continue
+			}
+			srcField = srcField.Elem()
+		}
+		outF := out.Field(i)
+		if !outF.CanSet() {
+			continue
+		}
+		if srcField.Type().AssignableTo(outF.Type()) {
+			outF.Set(srcField)
+			matched++
+			continue
+		}
+		narrowed := narrowReflectValue(srcField, outF.Type())
+		if narrowed.IsValid() {
+			outF.Set(narrowed)
+			matched++
+		}
+	}
+	if matched == 0 {
+		return reflect.Value{}, false
+	}
+	return out, true
+}
+
+// lowerFirst lowercases the first rune of s using Unicode rules,
+// preserving the rest of the string unchanged. Used to map Go's
+// PascalCase struct field names back to Sky's lowerCamelCase source
+// convention so map-decoded form data finds the right struct field
+// regardless of script (Latin, Greek, Cyrillic, etc.). ASCII char
+// comparison would have silently mishandled non-Latin field names.
+func lowerFirst(s string) string {
+	if s == "" {
+		return s
+	}
+	first, size := utf8.DecodeRuneInString(s)
+	if first == utf8.RuneError {
+		return s
+	}
+	lo := unicode.ToLower(first)
+	if lo == first {
+		return s
+	}
+	return string(lo) + s[size:]
 }
 
 // msgDecodeError — sentinel value returned from applyMsgArgs when the
