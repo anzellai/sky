@@ -135,7 +135,7 @@ Configuration values resolve in this order (highest priority first):
 
 This follows the standard convention (godotenv, Docker): system env vars always win so production deployments can override `.env` defaults without editing files. The `.env` file is for local development convenience.
 
-Sky.Live-specific env vars: `SKY_LIVE_PORT`, `SKY_LIVE_TTL`, `SKY_LIVE_STORE`, `SKY_AUTH_TOKEN_TTL`, `SKY_AUTH_COOKIE`.
+Sky.Live-specific env vars: `SKY_LIVE_PORT`, `SKY_LIVE_TTL`, `SKY_LIVE_STORE`, `SKY_AUTH_TOKEN_TTL`, `SKY_AUTH_COOKIE`. Connection-status banner (v0.9.9+): `SKY_LIVE_BANNER` (default `on`; `off` / `0` / `false` to disable the chrome but keep the POST retry queue active), `SKY_LIVE_RETRY_BASE_MS` (default `500`), `SKY_LIVE_RETRY_MAX_MS` (default `16000`), `SKY_LIVE_RETRY_MAX_ATTEMPTS` (default `10`), `SKY_LIVE_QUEUE_MAX` (default `50`).
 
 ## Project Overview
 
@@ -502,6 +502,20 @@ update msg model =
 3. **Race-free submit.** Per-keystroke onInput debounces (~150 ms) can drop the last keystroke if the user hits Enter before the debounce settles — the auth attempt then sees the wrong password and the user retries blind. Form submit reads the live DOM value, so whatever is in the input at submit time is what gets sent.
 
 The `DoSignIn AuthCreds` constructor takes a typed record — v0.9.8's typed Msg dispatch decodes the wire form data directly into `State_AuthCreds_R{Email, Password}` via `json.Unmarshal`'s case-insensitive field matching. No runtime guessing, no per-Msg decoder boilerplate. Same pattern applies to API keys, credit-card details, anything you don't want resident in the session store.
+
+### Connection status banner (v0.9.9+)
+
+Sky.Live's runtime injects a bottom-pinned status banner separate from the user's `view`. Three states:
+
+- **connected** — `display:none`, no chrome.
+- **reconnecting** — amber bar `Reconnecting…`. Shown when the SSE connection drops or a POST `/_sky/event` fails (network blip, deploy in progress, transient 5xx). 500ms grace period before painting so a one-off blip doesn't flicker.
+- **offline** — red bar `Connection lost — refresh to retry`. Reached after `SKY_LIVE_RETRY_MAX_ATTEMPTS` failed retries (default 10, ≈ 2 min of exponential backoff).
+
+POST failures while reconnecting land in `__skyEventQueue` (FIFO, capped at `SKY_LIVE_QUEUE_MAX`); the SSE `open` handler drains the queue eagerly when the server comes back, so a click during the outage replays once the connection re-establishes. Server-side seq ordering tolerates the late delivery.
+
+**What users see during a deploy / restart**: the page pauses, banner shows `Reconnecting…` for the duration of the cutover, then clears and any in-flight clicks replay. With a persistent session store (Redis / Postgres / Firestore / SQLite) the user's Model rides through unchanged. With the memory store, the cookie still resolves but the session is gone — the user re-inits to `init`'s output. **For production deployments with restart/deploy expected, use a persistent session store**.
+
+Opt-out via `SKY_LIVE_BANNER=off` (or `0` / `false`) keeps the retry queue active but suppresses the chrome — useful when an app renders its own connection UI in the user's view. Override the styling via `#__sky-status { ... !important }` in the user's stylesheet; the runtime uses inline styles + max z-index so user CSS wins on conflict.
 
 ### Dispatch error handling
 

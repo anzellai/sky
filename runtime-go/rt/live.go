@@ -2759,9 +2759,67 @@ func sessionID(r *http.Request, w http.ResponseWriter) string {
 	return sid
 }
 
+// liveBannerConfig collects the SKY_LIVE_* env vars that influence
+// the connection-status banner so they can be templated into the
+// init script. Each var has a sensible default; users override via
+// shell env or .env.
+type liveBannerConfig struct {
+	Enabled     bool
+	BaseMs      int
+	MaxMs       int
+	MaxAttempts int
+	QueueMax    int
+}
+
+func loadLiveBannerConfig() liveBannerConfig {
+	cfg := liveBannerConfig{
+		Enabled:     true,
+		BaseMs:      500,
+		MaxMs:       16000,
+		MaxAttempts: 10,
+		QueueMax:    50,
+	}
+	// SKY_LIVE_BANNER=off disables the banner entirely (still queues
+	// + retries POSTs — just no chrome). Useful when an app wants to
+	// render its own connection UI in the user's view.
+	if v := os.Getenv("SKY_LIVE_BANNER"); v == "off" || v == "0" || v == "false" {
+		cfg.Enabled = false
+	}
+	if n, ok := parsePositiveInt(os.Getenv("SKY_LIVE_RETRY_BASE_MS")); ok {
+		cfg.BaseMs = n
+	}
+	if n, ok := parsePositiveInt(os.Getenv("SKY_LIVE_RETRY_MAX_MS")); ok {
+		cfg.MaxMs = n
+	}
+	if n, ok := parsePositiveInt(os.Getenv("SKY_LIVE_RETRY_MAX_ATTEMPTS")); ok {
+		cfg.MaxAttempts = n
+	}
+	if n, ok := parsePositiveInt(os.Getenv("SKY_LIVE_QUEUE_MAX")); ok {
+		cfg.QueueMax = n
+	}
+	return cfg
+}
+
+func parsePositiveInt(s string) (int, bool) {
+	if s == "" {
+		return 0, false
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil || n <= 0 {
+		return 0, false
+	}
+	return n, true
+}
+
 func liveJS(sid string) string {
+	cfg := loadLiveBannerConfig()
 	return fmt.Sprintf(`
 var __skySid = %q;
+var __skyBannerEnabled = %t;
+var __skyRetryBaseMs = %d;
+var __skyRetryMaxMs = %d;
+var __skyRetryMaxAttempts = %d;
+var __skyEventQueueMax = %d;
 
 // ── Input authority protocol state ───────────────────────────
 // See docs/skylive/input-authority-protocol.md §Client state.
@@ -3197,10 +3255,10 @@ function __skySend(msgName, args, handlerId, opts) {
 var __skyEventQueue = [];
 var __skyRetryTimer = null;
 var __skyRetryAttempts = 0;
-var __skyRetryBaseMs = 500;
-var __skyRetryMaxMs = 16000;
-var __skyRetryMaxAttempts = 10;
-var __skyEventQueueMax = 50;
+// __skyRetryBaseMs / __skyRetryMaxMs / __skyRetryMaxAttempts /
+// __skyEventQueueMax are templated at the top of this script from
+// the SKY_LIVE_RETRY_* / SKY_LIVE_QUEUE_MAX env vars (see
+// loadLiveBannerConfig).
 function __skyPostEvent(body) {
   fetch("/_sky/event", {
     method: "POST",
@@ -3566,6 +3624,7 @@ function __skySetStatus(state, msg) {
 }
 function __skyInjectStatusBanner() {
   if (__skyStatusEl) return;            // idempotent
+  if (!__skyBannerEnabled) return;      // SKY_LIVE_BANNER=off
   var el = document.createElement("div");
   el.id = "__sky-status";
   el.className = "sky-status sky-status--connected";
@@ -3576,9 +3635,9 @@ function __skyInjectStatusBanner() {
   // bottom-center; transitions for fade in/out feel less jarring.
   el.style.cssText = [
     "position:fixed",
-    "left:50%",
+    "left:50%%",
     "bottom:16px",
-    "transform:translateX(-50%)",
+    "transform:translateX(-50%%)",
     "padding:8px 16px",
     "border-radius:6px",
     "font:13px/1.4 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif",
@@ -3680,7 +3739,7 @@ if (document.readyState === "loading") {
 } else {
   __skyInit();
 }
-`, sid)
+`, sid, cfg.Enabled, cfg.BaseMs, cfg.MaxMs, cfg.MaxAttempts, cfg.QueueMax)
 }
 
 // ═══════════════════════════════════════════════════════════
