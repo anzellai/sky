@@ -2112,6 +2112,212 @@ lookupKernelType modName funcName = case (modName, funcName) of
                         [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
                         , T.TVar "a"])))
 
+    -- Db query helpers (composed wrappers around Db.query).
+    ("Db", "findOneByField") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TType (ModuleName.Canonical "") "Db" [])
+                (T.TLambda stringType
+                    (T.TLambda stringType
+                        (T.TLambda (T.TVar "a")
+                            (T.TType ModuleName.task "Task"
+                                [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                                , T.TType ModuleName.maybe_ "Maybe"
+                                    [T.TType ModuleName.dict "Dict"
+                                        [stringType, stringType]]])))))
+    ("Db", "findManyByField") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TType (ModuleName.Canonical "") "Db" [])
+                (T.TLambda stringType
+                    (T.TLambda stringType
+                        (T.TLambda (T.TVar "a")
+                            (T.TType ModuleName.task "Task"
+                                [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                                , T.TType ModuleName.list "List"
+                                    [T.TType ModuleName.dict "Dict"
+                                        [stringType, stringType]]])))))
+    ("Db", "findByConditions") ->
+        Just $ T.Forall []
+            (T.TLambda (T.TType (ModuleName.Canonical "") "Db" [])
+                (T.TLambda stringType
+                    (T.TLambda
+                        (T.TType ModuleName.dict "Dict" [stringType, stringType])
+                        (T.TType ModuleName.task "Task"
+                            [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                            , T.TType ModuleName.list "List"
+                                [T.TType ModuleName.dict "Dict"
+                                    [stringType, stringType]]]))))
+    ("Db", "unsafeFindWhere") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TType (ModuleName.Canonical "") "Db" [])
+                (T.TLambda stringType
+                    (T.TLambda stringType
+                        (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"])
+                            (T.TType ModuleName.task "Task"
+                                [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                                , T.TType ModuleName.list "List"
+                                    [T.TType ModuleName.dict "Dict"
+                                        [stringType, stringType]]])))))
+    ("Db", "queryDecode") ->
+        Just $ T.Forall ["a", "b"]
+            (T.TLambda (T.TType (ModuleName.Canonical "") "Db" [])
+                (T.TLambda stringType
+                    (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"])
+                        (T.TLambda (T.TVar "b")
+                            (T.TType ModuleName.task "Task"
+                                [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                                , T.TType ModuleName.list "List" [T.TVar "b"]])))))
+    ("Db", "withTransaction") ->
+        -- withTransaction : Db -> (Db -> Task Error a) -> Task Error a
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TType (ModuleName.Canonical "") "Db" [])
+                (T.TLambda
+                    (T.TLambda (T.TType (ModuleName.Canonical "") "Db" [])
+                        (T.TType ModuleName.task "Task"
+                            [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                            , T.TVar "a"]))
+                    (T.TType ModuleName.task "Task"
+                        [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                        , T.TVar "a"])))
+
+    -- List.find — Maybe-returning lookup.
+    ("List", "find") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TLambda (T.TVar "a") boolType)
+                (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"])
+                    (T.TType ModuleName.maybe_ "Maybe" [T.TVar "a"])))
+
+    -- Args.getArg : Int -> Maybe String — process arg by index.
+    ("Args", "getArg") ->
+        Just $ T.Forall []
+            (T.TLambda intType
+                (T.TType ModuleName.maybe_ "Maybe" [stringType]))
+
+    -- Env: Sky.Std.Env (.env file lookup, distinct from Os.getenv).
+    ("Env", "get") ->
+        Just $ T.Forall []
+            (T.TLambda stringType
+                (T.TType ModuleName.maybe_ "Maybe" [stringType]))
+    ("Env", "require") ->
+        -- Task because it can fail with a typed Error if the var is unset.
+        Just $ T.Forall []
+            (T.TLambda stringType
+                (T.TType ModuleName.task "Task"
+                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                    , stringType]))
+
+    -- Encoding: all return Result Error String (decode failures).
+    ("Encoding", "base64Encode") ->
+        Just $ T.Forall []
+            (T.TLambda stringType
+                (T.TType ModuleName.result_ "Result"
+                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                    , stringType]))
+    ("Encoding", "base64Decode") ->
+        Just $ T.Forall []
+            (T.TLambda stringType
+                (T.TType ModuleName.result_ "Result"
+                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                    , stringType]))
+    ("Encoding", "urlEncode") ->
+        Just $ T.Forall []
+            (T.TLambda stringType
+                (T.TType ModuleName.result_ "Result"
+                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                    , stringType]))
+    ("Encoding", "urlDecode") ->
+        Just $ T.Forall []
+            (T.TLambda stringType
+                (T.TType ModuleName.result_ "Result"
+                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                    , stringType]))
+    ("Encoding", "hexEncode") ->
+        Just $ T.Forall []
+            (T.TLambda stringType
+                (T.TType ModuleName.result_ "Result"
+                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                    , stringType]))
+    ("Encoding", "hexDecode") ->
+        Just $ T.Forall []
+            (T.TLambda stringType
+                (T.TType ModuleName.result_ "Result"
+                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                    , stringType]))
+
+    -- Hex.encodeToString / Hex.decode return Result Error String.
+    -- (Hex.encode delegates to encodeToString so same shape.)
+    ("Hex", "encodeToString") ->
+        Just $ T.Forall []
+            (T.TLambda stringType
+                (T.TType ModuleName.result_ "Result"
+                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                    , stringType]))
+    ("Hex", "decode") ->
+        Just $ T.Forall []
+            (T.TLambda stringType
+                (T.TType ModuleName.result_ "Result"
+                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                    , stringType]))
+
+    -- Time eager-Result reads. Per the doctrine carve-out (CLAUDE.md
+    -- "Effect Boundary: Task — two-tier in practice"), Time.now /
+    -- Time.unixMillis / Time.timeString / Time.parse stay sync — they
+    -- read the clock but don't compose with parallel/andThen pipelines
+    -- in any meaningful way at the call site.
+    ("Time", "now") ->
+        Just $ T.Forall []
+            (T.TLambda T.TUnit
+                (T.TType ModuleName.result_ "Result"
+                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                    , intType]))
+    ("Time", "timeString") ->
+        Just $ T.Forall []
+            (T.TLambda intType
+                (T.TType ModuleName.result_ "Result"
+                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                    , stringType]))
+    ("Time", "parse") ->
+        -- parse : layout -> input -> Result Error unix-millis
+        Just $ T.Forall []
+            (T.TLambda stringType
+                (T.TLambda stringType
+                    (T.TType ModuleName.result_ "Result"
+                        [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                        , intType])))
+
+    -- Random.choice / shuffle — runtime returns thunks → Task.
+    ("Random", "choice") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"])
+                (T.TType ModuleName.task "Task"
+                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                    , T.TVar "a"]))
+    ("Random", "shuffle") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"])
+                (T.TType ModuleName.task "Task"
+                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                    , T.TType ModuleName.list "List" [T.TVar "a"]]))
+
+    -- Uuid: v4/v7 are entropy-consuming Tasks; parse is sync Result.
+    ("Uuid", "v4") ->
+        Just $ T.Forall []
+            (T.TLambda T.TUnit
+                (T.TType ModuleName.task "Task"
+                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                    , stringType]))
+    ("Uuid", "v7") ->
+        Just $ T.Forall []
+            (T.TLambda T.TUnit
+                (T.TType ModuleName.task "Task"
+                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                    , stringType]))
+    ("Uuid", "parse") ->
+        Just $ T.Forall []
+            (T.TLambda stringType
+                (T.TType ModuleName.result_ "Result"
+                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                    , stringType]))
+
     -- Server: extractors return Maybe String for things that may be
     -- absent (cookies, query params, headers, route params).
     ("Server", "param") ->
