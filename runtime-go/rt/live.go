@@ -3182,16 +3182,43 @@ function __skySend(msgName, args, handlerId, opts) {
     handlerId: handlerId || ""
   };
   if (snapshot) body.inputState = snapshot;
+  __skyPostEvent(body);
+}
+
+// ── POST retry queue ─────────────────────────────────────────
+// Wire-protocol POSTs are cheap (small JSON, idempotent on the
+// server's seq-ordered state machine), so a transient network blip
+// shouldn't lose the click. Failures push the body onto __skyEventQueue;
+// retries fire on exponential backoff (500ms, 1s, 2s, … cap 16s);
+// the SSE 'open' handler drains the queue eagerly when the server
+// comes back. Cap at 50 entries — beyond that the user has been
+// offline so long that replay isn't useful, drop oldest with a
+// console warn so the page doesn't accumulate megabytes of state.
+var __skyEventQueue = [];
+var __skyRetryTimer = null;
+var __skyRetryAttempts = 0;
+var __skyRetryBaseMs = 500;
+var __skyRetryMaxMs = 16000;
+var __skyRetryMaxAttempts = 10;
+var __skyEventQueueMax = 50;
+function __skyPostEvent(body) {
   fetch("/_sky/event", {
     method: "POST",
     headers: {"Content-Type":"application/json"},
     body: JSON.stringify(body),
     credentials: "same-origin"
   }).then(function(r){
+    if (!r.ok && r.status >= 500) {
+      // Server is up but rejecting (502/503/504 from a deploying LB,
+      // or 500 from a panic that survived the recover guard). Treat
+      // as transient — same retry path as a network failure.
+      throw new Error("server " + r.status);
+    }
     var ct = r.headers.get("Content-Type") || "";
     if (ct.indexOf("application/json") >= 0) {
       return r.json().then(function(data) {
         __skyLoaderEnd();
+        __skyOnPostSuccess();
         if (!data) return;
         __skyHandleResponse(data.seq, data.ackInputs, function() {
           if (data.patches) __skyApplyPatches(data.patches);
@@ -3200,6 +3227,7 @@ function __skySend(msgName, args, handlerId, opts) {
     }
     return r.text().then(function(t) {
       __skyLoaderEnd();
+      __skyOnPostSuccess();
       var seqStr = r.headers.get("X-Sky-Seq");
       var seq = seqStr ? parseInt(seqStr, 10) : 0;
       var ackRaw = r.headers.get("X-Sky-Ack-Inputs");
@@ -3207,7 +3235,68 @@ function __skySend(msgName, args, handlerId, opts) {
       if (ackRaw) { try { ack = JSON.parse(ackRaw); } catch(_) {} }
       __skyHandleResponse(seq, ack, function() { __skyPatch(t); });
     });
-  }).catch(function() { __skyLoaderEnd(); });
+  }).catch(function() {
+    __skyLoaderEnd();
+    __skyOnPostFailure(body);
+  });
+}
+function __skyOnPostSuccess() {
+  // A successful POST proves the server reachable — clear any
+  // backoff state and drain queued events behind this one. If the
+  // SSE was the trigger that drained the queue, this is a no-op.
+  __skyRetryAttempts = 0;
+  if (__skyRetryTimer !== null) {
+    clearTimeout(__skyRetryTimer);
+    __skyRetryTimer = null;
+  }
+  if (__skyStatus !== "connected") {
+    __skySetStatus("connected", "");
+  }
+  __skyDrainQueue();
+}
+function __skyOnPostFailure(body) {
+  // FIFO drop when the queue is at the cap — bail on the oldest
+  // pending event rather than the new one, so the user's most
+  // recent intent is preserved.
+  if (__skyEventQueue.length >= __skyEventQueueMax) {
+    var dropped = __skyEventQueue.shift();
+    if (window.console && console.warn) {
+      console.warn("[sky.live] event queue at cap; dropped oldest", dropped);
+    }
+  }
+  __skyEventQueue.push(body);
+  __skyShowReconnecting();
+  __skyScheduleRetry();
+}
+function __skyShowReconnecting() {
+  if (__skyStatus === "offline") return;
+  if (__skyStatus === "connected") {
+    __skySetStatus("reconnecting", "Reconnecting…");
+  }
+}
+function __skyScheduleRetry() {
+  if (__skyRetryTimer !== null) return;  // already pending
+  if (__skyRetryAttempts >= __skyRetryMaxAttempts) {
+    __skySetStatus("offline", "Connection lost — refresh to retry");
+    return;
+  }
+  __skyRetryAttempts++;
+  // 500, 1000, 2000, 4000, 8000, 16000, 16000, … (capped)
+  var delay = Math.min(__skyRetryBaseMs * Math.pow(2, __skyRetryAttempts - 1), __skyRetryMaxMs);
+  __skyRetryTimer = setTimeout(function() {
+    __skyRetryTimer = null;
+    __skyDrainQueue();
+  }, delay);
+}
+function __skyDrainQueue() {
+  if (__skyEventQueue.length === 0) return;
+  // Send the head of the queue. If it succeeds, __skyOnPostSuccess
+  // recurses into __skyDrainQueue to send the next one. If it
+  // fails, the body re-enters the queue and the retry loop kicks
+  // back in. Order is preserved (FIFO) — the server's seq matching
+  // tolerates late deliveries via __skyHandleResponse.
+  var head = __skyEventQueue.shift();
+  __skyPostEvent(head);
 }
 
 // Apply a list of sky-id addressed patches with input authority (I1):
@@ -3553,6 +3642,16 @@ __skySSE.addEventListener("open", function() {
   if (__skyStatus !== "connected") {
     __skySetStatus("connected", "");
   }
+  // Server is reachable again — drain any POSTs that failed during
+  // the outage. Successful drains will recurse via __skyOnPostSuccess.
+  // Reset the backoff counter so a fresh failure starts at 500ms not
+  // 16s.
+  __skyRetryAttempts = 0;
+  if (__skyRetryTimer !== null) {
+    clearTimeout(__skyRetryTimer);
+    __skyRetryTimer = null;
+  }
+  if (__skyEventQueue.length > 0) __skyDrainQueue();
 });
 __skySSE.addEventListener("error", function() {
   // Don't flip state if we're already showing a banner — repeated
