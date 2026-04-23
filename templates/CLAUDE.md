@@ -1246,6 +1246,8 @@ fileMaxSize : Int -> (String, String)          -- max bytes hint (server-side va
 --           , onImage UpdateImage, fileMaxWidth 1200 ] []
 ```
 
+**Use `onChange` for `<input type="password">` fields** (not `onInput`). `onInput` fires every keystroke → SSE patch → password-manager browser extensions (1Password, Bitwarden, LastPass, browser autofill) react mid-typing and disrupt the user (focus juddering, autofill prompts mid-word, selection lost). `onChange` fires on blur, so the value commits when the user tabs / clicks away — extensions only see the final value, no per-keystroke chatter. Form submit still carries the up-to-date value via formData (and modern browsers fire blur before submit, so the model.password update lands first). Other text fields (username, email) keep `onInput` because they benefit from per-keystroke server-side validation and don't trigger the password-manager class. See `examples/12-skyvote/src/Page/AuthPage.sky` and `examples/17-skymon/src/Page/AuthPage.sky` for the canonical pattern.
+
 ### Escape Hatch & View Types
 
 ```elm
