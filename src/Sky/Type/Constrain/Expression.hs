@@ -787,6 +787,28 @@ lookupKernelType modName funcName = case (modName, funcName) of
                 (T.TLambda
                     (T.TType ModuleName.task "Task" [T.TVar "e", T.TVar "a"])
                     (T.TType ModuleName.task "Task" [T.TVar "e", T.TVar "b"])))
+    ("Task", "mapError") ->
+        -- Task.mapError : (e -> e2) -> Task e a -> Task e2 a
+        -- Mirrors Result.mapError. Useful for adding context to an
+        -- error before it propagates further up the chain.
+        Just $ T.Forall ["e", "e2", "a"]
+            (T.TLambda
+                (T.TLambda (T.TVar "e") (T.TVar "e2"))
+                (T.TLambda
+                    (T.TType ModuleName.task "Task" [T.TVar "e", T.TVar "a"])
+                    (T.TType ModuleName.task "Task" [T.TVar "e2", T.TVar "a"])))
+    ("Task", "onError") ->
+        -- Task.onError : (e -> Task e2 a) -> Task e a -> Task e2 a
+        -- Recover from a Task error by producing a new Task. The
+        -- canonical "convert error to graceful response" pattern at
+        -- HTTP handler boundaries and Sky.Live update branches.
+        Just $ T.Forall ["e", "e2", "a"]
+            (T.TLambda
+                (T.TLambda (T.TVar "e")
+                    (T.TType ModuleName.task "Task" [T.TVar "e2", T.TVar "a"]))
+                (T.TLambda
+                    (T.TType ModuleName.task "Task" [T.TVar "e", T.TVar "a"])
+                    (T.TType ModuleName.task "Task" [T.TVar "e2", T.TVar "a"])))
     ("Task", "map") ->
         Just $ T.Forall ["e", "a", "b"]
             (T.TLambda
@@ -1583,17 +1605,30 @@ lookupKernelType modName funcName = case (modName, funcName) of
     -- Std.Db — user wrappers now use `Os.exit 1` (polymorphic return)
     -- in the Err branch instead of `identity ""` so typed kernel sigs
     -- don't reject the fatal fallback.
+    -- Db kernel sigs migrated to Task per the effect-boundary-audit
+    -- branch: every call touches the database (disk + maybe network),
+    -- has observable side effects, and must compose with Cmd.perform
+    -- without blocking Sky.Live's update() call. Runtime helpers
+    -- (Db_connect, Db_exec, Db_query in db_auth.go) wrap their bodies
+    -- in `func() any { ... }` thunks so the I/O actually defers.
+    --
+    -- Migration impact: every Lib/Db.sky wrapper changes from
+    -- `... -> Result Error a` to `... -> Task Error a`, and consumers
+    -- chain via Task.andThen / Task.map / Task.onError instead of
+    -- case-on-Result. See examples/{07-todo-cli, 08-notes-app, 12-skyvote,
+    -- 13-skyshop, 16-skychess, 17-skymon, 18-job-queue} for the
+    -- canonical migrations per app shape (CLI / HTTP / Sky.Live).
     ("Db", "open") ->
         Just $ T.Forall []
             (T.TLambda stringType
                 (T.TLambda stringType
-                    (T.TType ModuleName.result_ "Result"
+                    (T.TType ModuleName.task "Task"
                         [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
                         , T.TType (ModuleName.Canonical "") "Db" []])))
     ("Db", "connect") ->
         Just $ T.Forall []
             (T.TLambda T.TUnit
-                (T.TType ModuleName.result_ "Result"
+                (T.TType ModuleName.task "Task"
                     [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
                     , T.TType (ModuleName.Canonical "") "Db" []]))
     ("Db", "exec") ->
@@ -1601,14 +1636,14 @@ lookupKernelType modName funcName = case (modName, funcName) of
             (T.TLambda (T.TType (ModuleName.Canonical "") "Db" [])
                 (T.TLambda stringType
                     (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"])
-                        (T.TType ModuleName.result_ "Result"
+                        (T.TType ModuleName.task "Task"
                             [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
                             , intType]))))
     ("Db", "execRaw") ->
         Just $ T.Forall []
             (T.TLambda (T.TType (ModuleName.Canonical "") "Db" [])
                 (T.TLambda stringType
-                    (T.TType ModuleName.result_ "Result"
+                    (T.TType ModuleName.task "Task"
                         [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
                         , intType])))
     ("Db", "query") ->
@@ -1619,7 +1654,7 @@ lookupKernelType modName funcName = case (modName, funcName) of
             (T.TLambda (T.TType (ModuleName.Canonical "") "Db" [])
                 (T.TLambda stringType
                     (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"])
-                        (T.TType ModuleName.result_ "Result"
+                        (T.TType ModuleName.task "Task"
                             [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
                             , T.TType ModuleName.list "List"
                                 [T.TType ModuleName.dict "Dict"
@@ -1658,6 +1693,176 @@ lookupKernelType modName funcName = case (modName, funcName) of
         Just $ T.Forall ["a"]
             (T.TLambda stringType
                 (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"]) T.TUnit))
+
+    -- ═══════════════════════════════════════════════════════════
+    -- Effect Boundary additions (effect-boundary-audit branch).
+    --
+    -- Per CLAUDE.md "Effect Boundary: Task" doctrine, every operation
+    -- that touches the filesystem, network, process state, or external
+    -- entropy returns Task Error a. The runtime helpers for these
+    -- already wrap their bodies in `func() any { ... }` thunks so the
+    -- I/O is deferred until Task.run / Cmd.perform / Task.perform
+    -- forces the chain. Adding the kernel sigs lets HM enforce what
+    -- the runtime + docs + stdlib tables already promise.
+    --
+    -- Result-typed wrappers in user code (e.g. `Lib.Db.exec : ... -> Result Error ()`)
+    -- are migrated separately in the Db / Auth / Os / Time steps of
+    -- this branch.
+    -- ═══════════════════════════════════════════════════════════
+
+    -- File: Sky.Core.File. All paths I/O.
+    ("File", "readFile") ->
+        Just $ T.Forall []
+            (T.TLambda stringType
+                (T.TType ModuleName.task "Task"
+                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                    , stringType]))
+    ("File", "readFileLimit") ->
+        Just $ T.Forall []
+            (T.TLambda stringType
+                (T.TLambda intType
+                    (T.TType ModuleName.task "Task"
+                        [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                        , stringType])))
+    ("File", "readFileBytes") ->
+        Just $ T.Forall []
+            (T.TLambda stringType
+                (T.TType ModuleName.task "Task"
+                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                    , T.TType ModuleName.list "List" [intType]]))
+    ("File", "writeFile") ->
+        Just $ T.Forall []
+            (T.TLambda stringType
+                (T.TLambda stringType
+                    (T.TType ModuleName.task "Task"
+                        [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                        , T.TUnit])))
+    ("File", "append") ->
+        Just $ T.Forall []
+            (T.TLambda stringType
+                (T.TLambda stringType
+                    (T.TType ModuleName.task "Task"
+                        [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                        , T.TUnit])))
+    ("File", "exists") ->
+        Just $ T.Forall []
+            (T.TLambda stringType
+                (T.TType ModuleName.task "Task"
+                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                    , boolType]))
+    ("File", "remove") ->
+        Just $ T.Forall []
+            (T.TLambda stringType
+                (T.TType ModuleName.task "Task"
+                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                    , T.TUnit]))
+    ("File", "mkdirAll") ->
+        Just $ T.Forall []
+            (T.TLambda stringType
+                (T.TType ModuleName.task "Task"
+                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                    , T.TUnit]))
+    ("File", "readDir") ->
+        Just $ T.Forall []
+            (T.TLambda stringType
+                (T.TType ModuleName.task "Task"
+                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                    , T.TType ModuleName.list "List" [stringType]]))
+    ("File", "isDir") ->
+        Just $ T.Forall []
+            (T.TLambda stringType
+                (T.TType ModuleName.task "Task"
+                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                    , boolType]))
+    ("File", "tempFile") ->
+        Just $ T.Forall []
+            (T.TLambda stringType
+                (T.TType ModuleName.task "Task"
+                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                    , stringType]))
+    ("File", "copy") ->
+        Just $ T.Forall []
+            (T.TLambda stringType
+                (T.TLambda stringType
+                    (T.TType ModuleName.task "Task"
+                        [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                        , T.TUnit])))
+    ("File", "rename") ->
+        Just $ T.Forall []
+            (T.TLambda stringType
+                (T.TLambda stringType
+                    (T.TType ModuleName.task "Task"
+                        [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                        , T.TUnit])))
+
+    -- Process: Sky.Core.Process. Process state + child execution.
+    ("Process", "run") ->
+        Just $ T.Forall []
+            (T.TLambda stringType
+                (T.TLambda (T.TType ModuleName.list "List" [stringType])
+                    (T.TType ModuleName.task "Task"
+                        [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                        , stringType])))
+    ("Process", "getEnv") ->
+        Just $ T.Forall []
+            (T.TLambda stringType
+                (T.TType ModuleName.task "Task"
+                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                    , stringType]))
+    ("Process", "getCwd") ->
+        Just $ T.Forall []
+            (T.TLambda T.TUnit
+                (T.TType ModuleName.task "Task"
+                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                    , stringType]))
+    ("Process", "loadEnv") ->
+        Just $ T.Forall []
+            (T.TLambda stringType
+                (T.TType ModuleName.task "Task"
+                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                    , T.TUnit]))
+
+    -- Io: Sky.Core.Io. Standard I/O.
+    ("Io", "readLine") ->
+        Just $ T.Forall []
+            (T.TLambda T.TUnit
+                (T.TType ModuleName.task "Task"
+                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                    , stringType]))
+    ("Io", "writeStdout") ->
+        Just $ T.Forall []
+            (T.TLambda stringType
+                (T.TType ModuleName.task "Task"
+                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                    , T.TUnit]))
+    ("Io", "writeStderr") ->
+        Just $ T.Forall []
+            (T.TLambda stringType
+                (T.TType ModuleName.task "Task"
+                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                    , T.TUnit]))
+    ("Io", "writeString") ->
+        Just $ T.Forall []
+            (T.TLambda stringType
+                (T.TType ModuleName.task "Task"
+                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                    , T.TUnit]))
+
+    -- Crypto: Sky.Core.Crypto. The two entropy-consuming helpers.
+    -- sha256/sha512/md5/hmacSha256/constantTimeEqual stay pure.
+    ("Crypto", "randomBytes") ->
+        Just $ T.Forall []
+            (T.TLambda intType
+                (T.TType ModuleName.task "Task"
+                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                    , T.TType ModuleName.list "List" [intType]]))
+    ("Crypto", "randomToken") ->
+        Just $ T.Forall []
+            (T.TLambda intType
+                (T.TType ModuleName.task "Task"
+                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                    , stringType]))
+
     _ -> Nothing
 
 

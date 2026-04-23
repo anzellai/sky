@@ -4062,6 +4062,14 @@ coerceArg e ty
         GoIr.GoCall (GoIr.GoIdent ("rt.ResultCoerce[" ++ eraseTypeParams params ++ "]")) [e]
     | Just inner <- stripParametric "rt.SkyMaybe" ty =
         GoIr.GoCall (GoIr.GoIdent ("rt.MaybeCoerce[" ++ eraseTypeParams inner ++ "]")) [e]
+    -- Audit: parametric SkyTask param targets need TaskCoerceT for the
+    -- same nominal-typing reason — `func() any` from the runtime helpers
+    -- and `SkyTask[any, any]` from typed call sites are unrelated to
+    -- `SkyTask[Error, A]` under Go's generic-instantiation rules. Without
+    -- this branch the codegen emits `any(arg).(rt.SkyTask[Error, A])`
+    -- which panics at runtime on any cross-instantiation pass-through.
+    | Just params <- stripParametric "rt.SkyTask" ty =
+        GoIr.GoCall (GoIr.GoIdent ("rt.TaskCoerceT[" ++ eraseTypeParams params ++ "]")) [e]
     | ty == "string" = GoIr.GoCall (GoIr.GoIdent "rt.CoerceString") [e]
     | ty == "int"    = GoIr.GoCall (GoIr.GoIdent "rt.CoerceInt") [e]
     | ty == "bool"   = GoIr.GoCall (GoIr.GoIdent "rt.CoerceBool") [e]
@@ -5032,7 +5040,15 @@ exprToGoTyped types retType (A.At _ expr) = case expr of
         in case calleeInfo of
             Just (_, True) -> callExpr  -- typed-emitted callee returns concrete directly
             Just (rt, False) | isConcreteType rt ->
-                GoIr.GoTypeAssert callExpr (solvedTypeToGo rt)
+                -- Audit: parametric Sky containers (Task / Result / Maybe)
+                -- need TaskCoerceT / ResultCoerce / MaybeCoerce instead of
+                -- a direct .(rt.SkyTask[E,A]) assertion. Direct assertion
+                -- panics with `interface {} is func() interface {}, not
+                -- rt.SkyTask[Error, A]` when the runtime returned an
+                -- untyped thunk (typical of the Db.* / Time.* helpers).
+                -- wrapTypedReturn already encapsulates the Coerce-vs-assert
+                -- choice for every parametric shape.
+                wrapTypedReturn (solvedTypeToGo rt) callExpr
             _ -> callExpr
 
     Can.Negate inner -> GoIr.GoUnary "-" (exprToGoTyped types retType inner)
