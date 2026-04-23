@@ -245,6 +245,8 @@ before writing non-trivial code.
 | Endpoint card doesn't show when added | Model's list field typed via alias but `loadEndpoints` returns `[]any`; record-update drops the new list | (fixed in v0.9-dev) — regenerate sky-out; if still broken, check the field type matches exactly |
 | `Http.request` expects 4 args instead of record | Using an old sky binary from before v0.9 record-style fix | `sky upgrade` and rebuild |
 | Compiler silently accepts wrong annotation then panics at runtime | HM edge case — annotation says `Result Error ()` but body returns typed other | Remove the annotation to get the real inferred type in an error, or run with stricter annotations |
+| `reflect: Call with too few input arguments` from `List.indexedMap` / `List.foldl` / `Task.andThen` | (fixed in v0.9.10) higher-order combinators now curry top-level multi-arg functions correctly. Same fix covers `Task.andThen (insertRow db)` (let-bound partial app) and `\|> Result.andThen (Stripe.checkoutSessionParamsSetMode "payment")` (FFI-setter pipeline) — no more inline-lambda workaround needed | — |
+| `data-sky-ev-sky-image` / `data-sky-ev-sky-file` events do nothing | (fixed in v0.9.10) `onImage` / `onFile` now wire end-to-end: server emits `data-sky-ev-…`, JS file driver wraps the data URL in `[…]` to match the wire `Args` shape, `Event_onFile` runtime kernel + `fileMaxSize` attribute helper added | — |
 
 ---
 
