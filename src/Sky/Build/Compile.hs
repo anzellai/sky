@@ -1588,7 +1588,7 @@ generateGoMulti canMod srcMod config solvedTypes depDecls depRecAliases depUnion
                 ++ tomlLiveEnv "SKY_LIVE_STORE"      (Toml._liveStore     config)
                 ++ tomlLiveEnv "SKY_LIVE_STORE_PATH" (Toml._liveStorePath config)
                 ++ tomlLiveEnv "SKY_LIVE_TTL"        (intString           (Toml._liveTtl config))
-                ++ tomlLiveEnv "SKY_STATIC_DIR"      (Toml._liveStatic    config)
+                ++ tomlLiveEnv "SKY_LIVE_STATIC_DIR" (Toml._liveStatic    config)
                 ++ tomlLiveEnv "SKY_AUTH_SECRET"     (Toml._authSecret    config)
                 ++ tomlLiveEnv "SKY_AUTH_TOKEN_TTL"  (intString (Toml._authTokenTtl config))
                 ++ tomlLiveEnv "SKY_AUTH_COOKIE"     (Toml._authCookie    config)

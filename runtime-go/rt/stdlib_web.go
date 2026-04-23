@@ -253,6 +253,7 @@ func Event_onImage(msg any) any {
 }
 func Event_fileMaxWidth(v any) any  { return attr("sky-file-max-width", fmt.Sprintf("%v", v)) }
 func Event_fileMaxHeight(v any) any { return attr("sky-file-max-height", fmt.Sprintf("%v", v)) }
+func Event_fileMaxSize(v any) any   { return attr("sky-file-max-size", fmt.Sprintf("%v", v)) }
 
 // ═══════════════════════════════════════════════════════════
 // HTML escaping helpers (shared)

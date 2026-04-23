@@ -1991,6 +1991,12 @@ func Live_app(cfg any) any {
 	// `staticUrl = "/assets"`.
 	if sd := Field(cfg, "Static"); sd != nil {
 		app.staticDir = fmt.Sprintf("%v", sd)
+	} else if v := os.Getenv("SKY_LIVE_STATIC_DIR"); v != "" {
+		// SKY_LIVE_STATIC_DIR is the documented name (matches the
+		// SKY_LIVE_* env var convention). SKY_STATIC_DIR is kept as
+		// a backward-compat alias so existing deployments don't
+		// break — read it only when the canonical name is unset.
+		app.staticDir = v
 	} else if v := os.Getenv("SKY_STATIC_DIR"); v != "" {
 		app.staticDir = v
 	}
@@ -3529,6 +3535,22 @@ document.addEventListener("change", function(ev) {
   var imageId = el.getAttribute("data-sky-ev-sky-image");
   var f = el.files && el.files[0];
   if (!f) return;
+  // Client-side size guard via fileMaxSize. Saves the round-trip when
+  // the user picks a 100MB file: drop with a console.warn rather than
+  // streaming the bytes server-side just to reject them. Server-side
+  // validation should still happen — this is a UX nicety, not a
+  // security boundary.
+  var maxSize = parseInt(el.getAttribute("data-sky-ev-sky-file-max-size") || "0");
+  if (maxSize > 0 && f.size > maxSize) {
+    if (window.console && console.warn) {
+      console.warn(
+        "[sky.live] file " + f.name + " (" + f.size +
+        " bytes) exceeds fileMaxSize " + maxSize + "; dispatch dropped"
+      );
+    }
+    el.value = "";  // clear the input so the user can pick another
+    return;
+  }
   if (fileId) {
     var r = new FileReader();
     r.onload = function(e) { __skySend(fileId, e.target.result); };

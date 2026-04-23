@@ -1236,7 +1236,7 @@ onImage : (String -> msg) -> (String, String)  -- image input: resize + compress
 onFile : (String -> msg) -> (String, String)   -- file input: base64 data URL (no compress)
 fileMaxWidth : Int -> (String, String)         -- max image width in px (onImage, default 1200)
 fileMaxHeight : Int -> (String, String)        -- max image height in px (onImage, default 1200)
-fileMaxSize : Int -> (String, String)          -- max bytes hint (server-side validation)
+fileMaxSize : Int -> (String, String)          -- max file size in bytes; over-limit files are dropped client-side (no dispatch) + console.warn
 
 -- Usage:
 --     button [ onClick Increment ] [ text "+" ]
