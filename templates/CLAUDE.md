@@ -807,8 +807,8 @@ parallelMap : (a -> b) -> List a -> List b  -- goroutine-backed concurrent map
 ```elm
 fromInt : Int -> String
 fromFloat : Float -> String
-toInt : String -> Result Error Int
-toFloat : String -> Result Error Float
+toInt : String -> Maybe Int        -- Just n on success, Nothing on parse fail
+toFloat : String -> Maybe Float    -- Just f on success, Nothing on parse fail
 split : String -> String -> List String   -- split sep str
 join : String -> List String -> String    -- join sep parts
 contains : String -> String -> Bool       -- contains sub str
