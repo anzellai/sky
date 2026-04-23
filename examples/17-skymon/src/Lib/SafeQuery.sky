@@ -4,22 +4,19 @@ import Sky.Core.Prelude exposing (..)
 import Sky.Core.String as String
 import Sky.Core.Result as Result
 import Sky.Core.Dict as Dict
+import Sky.Core.Task as Task
 import Sky.Core.Error as Error exposing (Error)
 import Std.Db as Db
 
 
 -- Run a query ONLY if it is a SELECT/WITH statement.
 -- Rejects INSERT, UPDATE, DELETE, DROP, ALTER, CREATE, TRUNCATE etc.
+-- Db.query is now Task — we force with Task.run because the caller
+-- uses the result synchronously inside the safe-query gate.
 runReadOnly : Db -> String -> List String -> Result Error (List (Dict String String))
 runReadOnly dbConn query params =
     if isSelectOnly query then
-        case Db.query dbConn query params of
-
-            Ok rows ->
-                Ok rows
-
-            Err e ->
-                Err e
+        Task.run (Db.query dbConn query params)
 
     else
         let

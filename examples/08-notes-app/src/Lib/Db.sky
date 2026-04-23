@@ -4,15 +4,23 @@ import Sky.Core.Prelude exposing (..)
 import Sky.Core.Maybe as Maybe
 import Sky.Core.Dict as Dict
 import Sky.Core.Os as Os
+import Sky.Core.Task as Task
 import Sky.Core.Error as Error exposing (Error)
 import Std.Log exposing (println)
 import Std.Db as Db
 
 
--- Open the database once at startup. Fail fast on error — a degraded
--- "fake connection" would silently break every subsequent query.
+-- Db.* now returns Task Error a per the effect-boundary doctrine.
+-- This Lib layer is consumed from inside HTTP handlers + update
+-- branches that need a synchronous Result for ergonomic case-pattern
+-- matching. We bridge through Task.run inside each wrapper so the
+-- rest of the app keeps its existing Result contracts unchanged.
+--
+-- For Sky.Live update branches with long-running queries, factor the
+-- Task into a top-level helper and dispatch via Cmd.perform — see
+-- 18-job-queue/src/Main.sky for the canonical async pattern.
 conn =
-    case Db.open "sqlite" "skynotes.db" of
+    case Task.run (Db.open "sqlite" "skynotes.db") of
 
         Ok c ->
             c
@@ -30,7 +38,7 @@ conn =
 -- exec : Result Error () — typed-error DB write. Callers in `update`
 -- MUST pattern-match and decide what to do.
 exec queryStr args =
-    case Db.exec conn queryStr args of
+    case Task.run (Db.exec conn queryStr args) of
 
         Ok _ ->
             Ok ()
@@ -41,13 +49,7 @@ exec queryStr args =
 
 -- query : Result Error (List Row). Same contract as exec.
 query queryStr args =
-    case Db.query conn queryStr args of
-
-        Ok rows ->
-            Ok rows
-
-        Err e ->
-            Err e
+    Task.run (Db.query conn queryStr args)
 
 
 -- Missing columns are a Sky-side schema mismatch, not a runtime error.
