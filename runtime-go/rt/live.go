@@ -3448,6 +3448,78 @@ window.addEventListener("popstate", function() {
     .then(function(r) { return r.text(); })
     .then(__skyPatch);
 });
+// ── Status banner (connection state) ─────────────────────────
+// Single bottom-pinned element rendered by the runtime (NOT by the
+// user's view) showing connection health. State machine:
+//   "connected"     → invisible
+//   "reconnecting"  → amber bar, "Reconnecting…" + attempt counter
+//   "offline"       → red bar, "Connection lost — refresh to retry"
+// State transitions land in commits 2 + 3; this commit just wires
+// the DOM + setter so the rest of the JS can flip states without
+// touching the HTML directly. Hidden via display:none until a real
+// reconnect attempt fires (no flicker on initial page load).
+var __skyStatus = "connected";          // current state
+var __skyStatusEl = null;               // banner root, set on DOMContentLoaded
+var __skyStatusMsgEl = null;            // text node child
+var __skyStatusGraceTimer = null;       // 500ms anti-flicker timer
+function __skySetStatus(state, msg) {
+  __skyStatus = state;
+  if (!__skyStatusEl) return;           // banner not yet injected
+  // Strip the previous state class, add the current one.
+  var classes = __skyStatusEl.className.split(" ").filter(function(c) {
+    return c.indexOf("sky-status--") !== 0;
+  });
+  classes.push("sky-status--" + state);
+  __skyStatusEl.className = classes.join(" ");
+  if (__skyStatusMsgEl && msg !== undefined) {
+    __skyStatusMsgEl.textContent = msg;
+  }
+}
+function __skyInjectStatusBanner() {
+  if (__skyStatusEl) return;            // idempotent
+  var el = document.createElement("div");
+  el.id = "__sky-status";
+  el.className = "sky-status sky-status--connected";
+  el.setAttribute("role", "status");
+  el.setAttribute("aria-live", "polite");
+  // Inline styles — no global stylesheet leak. Max z-index puts the
+  // banner above any user fixed-position element. Fixed position
+  // bottom-center; transitions for fade in/out feel less jarring.
+  el.style.cssText = [
+    "position:fixed",
+    "left:50%",
+    "bottom:16px",
+    "transform:translateX(-50%)",
+    "padding:8px 16px",
+    "border-radius:6px",
+    "font:13px/1.4 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif",
+    "color:#fff",
+    "box-shadow:0 2px 8px rgba(0,0,0,0.25)",
+    "z-index:2147483647",
+    "pointer-events:none",            // never intercept clicks
+    "transition:opacity 200ms",
+    "opacity:1"
+  ].join(";");
+  // State-specific styles applied via inline style overrides on
+  // each setStatus call would be cleaner, but overriding via class
+  // on a <style> tag keeps the inline cssText readable. Append a
+  // tiny <style> with the variant rules.
+  var style = document.createElement("style");
+  style.textContent = "" +
+    "#__sky-status.sky-status--connected{display:none}" +
+    "#__sky-status.sky-status--reconnecting{background:#b45309}" +
+    "#__sky-status.sky-status--offline{background:#b91c1c}";
+  document.head.appendChild(style);
+  var msgEl = document.createElement("span");
+  msgEl.className = "sky-status__msg";
+  el.appendChild(msgEl);
+  document.body.appendChild(el);
+  __skyStatusEl = el;
+  __skyStatusMsgEl = msgEl;
+  // Replay current state in case it changed before DOM was ready.
+  __skySetStatus(__skyStatus, "");
+}
+
 // Server-Sent Events: push updates from server (subscriptions, Cmd.perform results).
 // Frame envelope since v0.9.3+: {seq, body, ackInputs?}. Falls back to
 // treating e.data as a raw HTML body when JSON parsing fails, so a
@@ -3467,11 +3539,17 @@ __skySSE.addEventListener("patch", function(e) {
 });
 
 // ── Init ─────────────────────────────────────────────────────
-// Bind initial DOM event listeners once the HTML is parsed.
-if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", function() { __skyBindEvents(document); });
-} else {
+// Bind initial DOM event listeners + inject the status banner once
+// the HTML is parsed. Banner needs document.body to exist, so it
+// goes through the same gate as event binding.
+function __skyInit() {
   __skyBindEvents(document);
+  __skyInjectStatusBanner();
+}
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", __skyInit);
+} else {
+  __skyInit();
 }
 `, sid)
 }
