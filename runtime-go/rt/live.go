@@ -1297,6 +1297,16 @@ func applyMsgArgs(msg any, args []json.RawMessage, fallbackValue string) any {
 		if err := json.Unmarshal(raw, &v); err != nil {
 			v = string(raw)
 		}
+		// Narrow the wire-decoded value to the constructor's first
+		// param type if the runtime knows how (map[string]any →
+		// map[string]string for `Dict String String`-typed Msg args,
+		// []any → []T for typed list args, struct narrowing for
+		// SkyMaybe/SkyResult shape mismatches, etc.). Without this
+		// step, a constructor like `OnSubmit : Dict String String -> Msg`
+		// rejects the JSON-decoded form data as `map[string]interface {}`
+		// even though every value happens to be a string. Same narrowing
+		// logic the rest of the runtime uses (rt.Coerce / rt.AsMapT).
+		v = narrowMsgArg(cur, v)
 		if !argAssignableToFunc(cur, v) {
 			logMsgDecodeError(cur, v, raw)
 			return msgDecodeError{}
@@ -1310,6 +1320,61 @@ func applyMsgArgs(msg any, args []json.RawMessage, fallbackValue string) any {
 		}
 	}
 	return cur
+}
+
+// narrowMsgArg attempts to narrow a wire-decoded `arg` to the first
+// parameter type of `fn` for structural reshapes only (map[K]any →
+// map[K]X, []any → []X, SkyResult/Maybe/Tuple cross-instantiation).
+// Lossy any-to-primitive conversions (the `target.Kind() == String`
+// fmt.Sprintf path inside narrowReflectValue) are intentionally NOT
+// applied here — a radio's onInput sending [true] into a
+// `String -> Msg` constructor must still return msgDecodeError, not
+// silently coerce to "true".
+//
+// The shape this fixes: `<form onSubmit=...>` extracts formData and
+// JSON-decodes the wire arg as `map[string]interface {}`, but the
+// user's Msg constructor is typed `Dict String String -> Msg` so
+// the typed-codegen lowers it to `map[string]string`. The plain
+// reflect AssignableTo check rejects the assignment without this
+// narrowing; same map-narrowing logic the rest of the runtime uses
+// at FFI / record-update boundaries (rt.AsMapT, narrowReflectValue).
+func narrowMsgArg(fn any, arg any) any {
+	if arg == nil {
+		return arg
+	}
+	rv := reflect.ValueOf(fn)
+	if rv.Kind() != reflect.Func || rv.Type().NumIn() == 0 {
+		return arg
+	}
+	paramT := rv.Type().In(0)
+	if paramT.Kind() == reflect.Interface {
+		return arg
+	}
+	srcV := reflect.ValueOf(arg)
+	if !srcV.IsValid() || srcV.Type().AssignableTo(paramT) {
+		return arg
+	}
+	// Only structural reshapes: map / slice / Sky-container struct.
+	// Skip the fmt.Sprintf-into-string fallback in narrowReflectValue
+	// — that would silently turn a wrong-type radio bool into the
+	// string "true" and pass it to a String-typed Msg constructor.
+	switch {
+	case paramT.Kind() == reflect.Map && srcV.Kind() == reflect.Map:
+		out := coerceMapValue(srcV, paramT)
+		if out.IsValid() {
+			return out.Interface()
+		}
+	case paramT.Kind() == reflect.Slice && srcV.Kind() == reflect.Slice:
+		out := coerceSliceValue(srcV, paramT)
+		if out.IsValid() {
+			return out.Interface()
+		}
+	case paramT.Kind() == reflect.Struct && srcV.Kind() == reflect.Struct:
+		if out, ok := narrowSkyContainer(srcV, paramT); ok {
+			return out.Interface()
+		}
+	}
+	return arg
 }
 
 // msgDecodeError — sentinel value returned from applyMsgArgs when the

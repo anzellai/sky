@@ -66,6 +66,41 @@ func TestApplyMsgArgs_AnyParamAccepts(t *testing.T) {
 	}
 }
 
+// TestApplyMsgArgs_NarrowsFormDataMap — `<form onSubmit=...>` extracts
+// formData and JSON-encodes it as an object; json.Unmarshal returns
+// `map[string]interface {}`. Sky-side Msg constructors are typed
+// `Dict String String -> Msg` and the typed-codegen lowers them to
+// `map[string]string`. Without map narrowing, applyMsgArgs would
+// reject the wire arg and the form submit would silently drop.
+//
+// Surfaced by the sendcrafts auth-form refactor: switching password
+// inputs from per-keystroke onInput to per-submit onSubmit (to avoid
+// password-manager extension churn) ran into this gap.
+func TestApplyMsgArgs_NarrowsFormDataMap(t *testing.T) {
+	// Constructor expects `map[string]string`, what typed-codegen emits
+	// for a Sky `Dict String String -> Msg` constructor.
+	dictMsg := func(d map[string]string) any {
+		return SkyADT{Tag: 0, SkyName: "Submitted", Fields: []any{d}}
+	}
+	// Wire payload: form-encoded JSON object.
+	raw := json.RawMessage(`{"email":"alice@example.com","password":"hunter2"}`)
+	result := applyMsgArgs(any(dictMsg), []json.RawMessage{raw}, "")
+	adt, ok := result.(SkyADT)
+	if !ok {
+		t.Fatalf("expected SkyADT, got %T %v", result, result)
+	}
+	if adt.SkyName != "Submitted" || len(adt.Fields) != 1 {
+		t.Fatalf("bad ADT shape: %+v", adt)
+	}
+	got, ok := adt.Fields[0].(map[string]string)
+	if !ok {
+		t.Fatalf("expected map[string]string after narrowing, got %T %v", adt.Fields[0], adt.Fields[0])
+	}
+	if got["email"] != "alice@example.com" || got["password"] != "hunter2" {
+		t.Errorf("narrowed map missing fields: %+v", got)
+	}
+}
+
 // TestDispatch_DropsMsgDecodeError — dispatch() receiving the sentinel
 // must return "" and NOT touch model state.
 func TestDispatch_DropsMsgDecodeError(t *testing.T) {
