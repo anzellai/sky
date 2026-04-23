@@ -770,7 +770,19 @@ func renderVNode(n VNode, handlers map[string]any) string {
 		id := n.SkyID + "." + ev
 		handlers[id] = msg
 		msgName := msgDisplayName(msg)
-		attr := "sky-" + ev
+		// Event names starting with `sky-` are side-channel meta-events
+		// (onImage, onFile) — not real DOM events that __skyBindOne
+		// would addEventListener on. Render them as `data-sky-ev-<name>`
+		// so the file/image driver can pick them up via the standard
+		// HTML5 data-attribute convention. Plain DOM events (click,
+		// input, change, …) keep the legacy `sky-<eventName>` naming
+		// since __skyBindOne queries by that selector.
+		var attr string
+		if strings.HasPrefix(ev, "sky-") {
+			attr = "data-sky-ev-" + ev
+		} else {
+			attr = "sky-" + ev
+		}
 		sb.WriteString(fmt.Sprintf(` %s="%s" data-sky-hid="%s"`,
 			attr, html.EscapeString(msgName), id))
 	}
@@ -3553,14 +3565,19 @@ document.addEventListener("change", function(ev) {
   }
   if (fileId) {
     var r = new FileReader();
-    r.onload = function(e) { __skySend(fileId, e.target.result); };
+    // __skySend's args param is List a on the wire (server expects
+    // []json.RawMessage); a bare string would unmarshal-fail. Wrap
+    // the data URL in a single-element array — the Sky-side Msg
+    // constructor declared as 'String -> Msg' reads args[0].
+    r.onload = function(e) { __skySend(fileId, [e.target.result]); };
     r.readAsDataURL(f);
   }
   if (imageId) {
     var maxW = parseInt(el.getAttribute("data-sky-ev-sky-file-max-width")  || "1200");
     var maxH = parseInt(el.getAttribute("data-sky-ev-sky-file-max-height") || "1200");
     __skyResizeImage(f, maxW, maxH, function(dataUrl) {
-      __skySend(imageId, dataUrl);
+      // Same wire-format reason as the onFile branch — wrap in array.
+      __skySend(imageId, [dataUrl]);
     });
   }
 });

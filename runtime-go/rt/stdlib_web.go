@@ -245,15 +245,31 @@ func Event_onScroll(msg any) any      { return eventPair{name: "scroll", msg: ms
 func Event_onSelect(msg any) any      { return eventPair{name: "select", msg: msg} }
 
 // File-input helpers used by Sky.Live JS driver. The runtime just captures
-// them as attribute pairs; the browser-side driver interprets `sky-on-image`
-// / `sky-file-max-width` / `sky-file-max-height` to run client-side image
-// resizing before dispatching the msg.
+// them as attribute pairs; the browser-side driver interprets the
+// `data-sky-ev-sky-image` / `data-sky-ev-sky-file` event hooks (registered
+// via the eventPair handler-table path so dispatch knows the Msg) and the
+// `data-sky-ev-sky-file-max-*` plain-attribute hints (read at upload time
+// for client-side resize / size cap).
+//
+// The `sky-` prefix on the eventPair name is the marker that tells
+// renderVNode "this is a side-channel meta-event, not a real DOM event".
+// Render path: eventPair{name: "sky-image"} → data-sky-ev-sky-image="…"
+// (see live.go renderVNode).
 func Event_onImage(msg any) any {
 	return eventPair{name: "sky-image", msg: msg}
 }
-func Event_fileMaxWidth(v any) any  { return attr("sky-file-max-width", fmt.Sprintf("%v", v)) }
-func Event_fileMaxHeight(v any) any { return attr("sky-file-max-height", fmt.Sprintf("%v", v)) }
-func Event_fileMaxSize(v any) any   { return attr("sky-file-max-size", fmt.Sprintf("%v", v)) }
+func Event_onFile(msg any) any {
+	return eventPair{name: "sky-file", msg: msg}
+}
+func Event_fileMaxWidth(v any) any {
+	return attr("data-sky-ev-sky-file-max-width", fmt.Sprintf("%v", v))
+}
+func Event_fileMaxHeight(v any) any {
+	return attr("data-sky-ev-sky-file-max-height", fmt.Sprintf("%v", v))
+}
+func Event_fileMaxSize(v any) any {
+	return attr("data-sky-ev-sky-file-max-size", fmt.Sprintf("%v", v))
+}
 
 // ═══════════════════════════════════════════════════════════
 // HTML escaping helpers (shared)

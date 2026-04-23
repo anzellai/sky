@@ -851,7 +851,8 @@ staticKernelFunctions = Map.fromList
                     "onFocus", "onBlur",
                     "on", "onContextMenu", "onError", "onKeyPress", "onLoad",
                     "onMouseDown", "onMouseUp", "onReset", "onResize", "onScroll",
-                    "onSelect", "onImage", "fileMaxWidth", "fileMaxHeight", "fileMaxSize"])
+                    "onSelect", "onImage", "onFile",
+                    "fileMaxWidth", "fileMaxHeight", "fileMaxSize"])
     , ("Sub",     ["none", "every"])
     , ("Set",     ["empty", "fromList", "insert", "remove", "member", "toList",
                     "size", "union", "intersect", "diff"])
