@@ -132,18 +132,15 @@ doBatch model =
         ( { model | jobs = List.append model.jobs jobs, nextId = i3 + 1 }, cmd )
 
 
--- Persistence: a four-link Task pipeline. Every Db.* returns
--- Task Error a (effect-boundary-audit branch), so chaining is
--- straight Task.andThen / Task.map.
+-- Persistence: each Db.* returns Task Error a (effect-boundary-audit
+-- branch), so chaining is straight Task.andThen / Task.map. Inner
+-- helpers live in `let` so the main pipeline is one readable expression
+-- at the bottom — the captured outer params (okCount, failCount,
+-- total) flow into `insertRow` / `successMsg` via closure, no
+-- arg-threading needed.
 --
---   Db.open "sqlite" path           → Task Error Db
---   |> Task.andThen   (\db -> ...   → Db.execRaw ... → Task Error Int)
---   |> Task.andThen   (\_  -> Time.now)               → Task Error Int
---   |> Task.andThen   (\ts -> Db.exec INSERT ...)     → Task Error Int
---   |> Task.map       (\_  -> "Snapshot saved …")     → Task Error String
---
--- Error handling lives at the *source* of the Task via withErrorReporting
--- (defined below). The pattern is:
+-- Error handling lives at the *source* of the Task via
+-- withErrorReporting (defined below). The pattern is:
 --   1. Generate a short errId via Crypto.randomToken
 --   2. Slog the original error to the server console with the errId
 --      keyed in the structured log (ops can grep for it)
@@ -151,43 +148,42 @@ doBatch model =
 --      errId so support requests can correlate to server logs
 saveSnapshot : Int -> Int -> Int -> Task Error String
 saveSnapshot okCount failCount total =
-    Db.open "sqlite" dbPath
-        |> Task.andThen
-               (\db ->
-                   Db.execRaw db createSnapshotTable
-                       |> Task.andThen (\_ -> Time.now)
-                       |> Task.andThen
-                              (\ts ->
-                                  Db.exec
-                                      db
-                                      "INSERT INTO snapshots (ok, failed, total, ts) VALUES (?, ?, ?, ?)"
-                                      [ okCount, failCount, total, ts ]))
-        |> Task.map
-               (\_ ->
-                   "Snapshot saved (ok="
-                       ++ String.fromInt okCount
-                       ++ " fail="
-                       ++ String.fromInt failCount
-                       ++ ")")
-        |> withErrorReporting "snapshot.save"
+    let
+        insertRow db ts =
+            Db.exec
+                db
+                "INSERT INTO snapshots (ok, failed, total, ts) VALUES (?, ?, ?, ?)"
+                [ okCount, failCount, total, ts ]
+        writeAll db =
+            Db.execRaw db createSnapshotTable |> Task.andThen (\_ -> Time.now)
+                |> Task.andThen (\ts -> insertRow db ts)
+        successMsg =
+            "Snapshot saved (ok=" ++ String.fromInt okCount ++ " fail="
+                ++ String.fromInt failCount
+                ++ ")"
+    in
+        Db.open "sqlite" dbPath |> Task.andThen writeAll
+            |> Task.map (\_ -> successMsg)
+            |> withErrorReporting "snapshot.save"
 
 
 -- Reads the five most recent snapshots, decoding each row into a
 -- typed Snapshot record so the view doesn't touch Dict.
 loadHistory : Task Error (List Snapshot)
 loadHistory =
-    Db.open "sqlite" dbPath
-        |> Task.andThen
-               (\db ->
-                   Db.execRaw db createSnapshotTable
-                       |> Task.andThen
-                              (\_ ->
-                                  Db.query
-                                      db
-                                      "SELECT ok, failed, total, ts FROM snapshots ORDER BY ts DESC LIMIT 5"
-                                      []))
-        |> Task.map (\rows -> List.map parseSnapshot rows)
-        |> withErrorReporting "snapshot.load"
+    let
+        selectRecent db =
+            Db.query
+                db
+                "SELECT ok, failed, total, ts FROM snapshots ORDER BY ts DESC LIMIT 5"
+                []
+        readAll db =
+            Db.execRaw db createSnapshotTable
+                |> Task.andThen (\_ -> selectRecent db)
+    in
+        Db.open "sqlite" dbPath |> Task.andThen readAll
+            |> Task.map (\rows -> List.map parseSnapshot rows)
+            |> withErrorReporting "snapshot.load"
 
 
 -- Two-level error handling helper. Take a Task that may fail with
@@ -202,23 +198,20 @@ loadHistory =
 -- duplication.
 withErrorReporting : String -> Task Error a -> Task Error a
 withErrorReporting opName task =
-    task
-        |> Task.onError
-               (\e ->
-                   Crypto.randomToken 4
-                       |> Task.andThen
-                              (\errId ->
-                                  let
-                                      _ =
-                                          Slog.error
-                                              opName
-                                              [ "errId", errId
-                                              , "error", Error.toString e
-                                              ]
-                                  in
-                                      Task.fail
-                                          (Error.unexpected
-                                               ("Operation failed (ref " ++ errId ++ ")"))))
+    let
+        logAndFail e errId =
+            let
+                _ =
+                    Slog.error
+                        opName
+                        [ "errId", errId, "error", Error.toString e ]
+            in
+                Task.fail
+                    (Error.unexpected ("Operation failed (ref " ++ errId ++ ")"))
+        report e =
+            Crypto.randomToken 4 |> Task.andThen (\errId -> logAndFail e errId)
+    in
+        task |> Task.onError report
 
 
 parseSnapshot : Dict String String -> Snapshot
