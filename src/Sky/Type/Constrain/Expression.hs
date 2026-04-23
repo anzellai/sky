@@ -2318,6 +2318,16 @@ lookupKernelType modName funcName = case (modName, funcName) of
                     [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
                     , stringType]))
 
+    -- Os.cwd : () -> Result Error String (sibling of Os.getcwd which
+    -- is bare-typed). The Result wrap surfaces filesystem errors at
+    -- the call site rather than panicking on a Go syscall failure.
+    ("Os", "cwd") ->
+        Just $ T.Forall []
+            (T.TLambda T.TUnit
+                (T.TType ModuleName.result_ "Result"
+                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                    , stringType]))
+
     -- Server: extractors return Maybe String for things that may be
     -- absent (cookies, query params, headers, route params).
     ("Server", "param") ->
