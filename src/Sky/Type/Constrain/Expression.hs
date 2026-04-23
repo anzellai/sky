@@ -2258,65 +2258,27 @@ lookupKernelType modName funcName = case (modName, funcName) of
                     [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
                     , stringType]))
 
-    -- Time eager-Result reads. Per the doctrine carve-out (CLAUDE.md
-    -- "Effect Boundary: Task — two-tier in practice"), Time.now /
-    -- Time.unixMillis / Time.timeString / Time.parse stay sync — they
-    -- read the clock but don't compose with parallel/andThen pipelines
-    -- in any meaningful way at the call site.
-    ("Time", "now") ->
-        Just $ T.Forall []
-            (T.TLambda T.TUnit
-                (T.TType ModuleName.result_ "Result"
-                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
-                    , intType]))
-    ("Time", "timeString") ->
-        Just $ T.Forall []
-            (T.TLambda intType
-                (T.TType ModuleName.result_ "Result"
-                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
-                    , stringType]))
-    ("Time", "parse") ->
-        -- parse : layout -> input -> Result Error unix-millis
-        Just $ T.Forall []
-            (T.TLambda stringType
-                (T.TLambda stringType
-                    (T.TType ModuleName.result_ "Result"
-                        [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
-                        , intType])))
+    -- Time.now / Time.unixMillis / Time.timeString / Time.parse:
+    -- intentionally NOT registered. Runtime returns SkyResult eagerly,
+    -- but existing user code relies on context-dependent unification
+    -- (used as both `ts = Time.now ()` for an eager Int and
+    -- `Task.andThen (\_ -> Time.now)` inside a Task chain). Pinning a
+    -- single sig — Result Error Int OR Task Error Int — breaks the
+    -- other call shape. See Limitation #18 + doctrine carve-out for
+    -- the broader "sync convenience effects stay polymorphic" position.
 
-    -- Random.choice / shuffle — runtime returns thunks → Task.
-    ("Random", "choice") ->
-        Just $ T.Forall ["a"]
-            (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"])
-                (T.TType ModuleName.task "Task"
-                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
-                    , T.TVar "a"]))
-    ("Random", "shuffle") ->
-        Just $ T.Forall ["a"]
-            (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"])
-                (T.TType ModuleName.task "Task"
-                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
-                    , T.TType ModuleName.list "List" [T.TVar "a"]]))
+    -- Uuid.v4 / v7 / parse: also intentionally NOT registered.
+    -- v4/v7 runtime returns a thunk (Task-shaped) but is commonly
+    -- called eagerly as `id = Uuid.v4 ()` and expected to bind a
+    -- String directly. Polymorphic-defaulted lets both shapes work.
+    -- parse is eager Result-returning but kept polymorphic for the
+    -- same reason — wrappers that then thread it into a Task chain.
 
-    -- Uuid: v4/v7 are entropy-consuming Tasks; parse is sync Result.
-    ("Uuid", "v4") ->
-        Just $ T.Forall []
-            (T.TLambda T.TUnit
-                (T.TType ModuleName.task "Task"
-                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
-                    , stringType]))
-    ("Uuid", "v7") ->
-        Just $ T.Forall []
-            (T.TLambda T.TUnit
-                (T.TType ModuleName.task "Task"
-                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
-                    , stringType]))
-    ("Uuid", "parse") ->
-        Just $ T.Forall []
-            (T.TLambda stringType
-                (T.TType ModuleName.result_ "Result"
-                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
-                    , stringType]))
+    -- Random.choice / shuffle: runtime returns thunks (Task) but
+    -- existing examples use them context-dependently. Same reason
+    -- as Time / Uuid above. Random.int / Random.float ARE typed Task
+    -- (added earlier) because their explicit-arg form forces the
+    -- caller to commit to a shape.
 
     -- Os.cwd : () -> Result Error String (sibling of Os.getcwd which
     -- is bare-typed). The Result wrap surfaces filesystem errors at
