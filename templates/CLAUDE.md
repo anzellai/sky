@@ -2590,12 +2590,27 @@ email_verification = false      # optional (default false)
 [live]                          # only for Sky.Live apps
 port = 8000
 input = "debounce"              # "debounce" | "blur"
-
-[live.session]
-store = "memory"                # memory | sqlite | redis | postgresql | firestore
+store = "memory"                # memory | sqlite | redis | postgres
+# storePath = "./sessions.db"   # sqlite file
+# storePath = "localhost:6379"  # redis host:port (or "redis://…")
+# storePath = "postgres://user:pass@host/db"
 ```
 
-Sky.Live config is embedded at compile time but can be overridden at runtime. Env var names mirror sky.toml: `SKY_LIVE_PORT`, `SKY_LIVE_INPUT`, `SKY_LIVE_POLL_INTERVAL`, `SKY_LIVE_SESSION_STORE`, `SKY_LIVE_SESSION_PATH`, `SKY_LIVE_SESSION_URL`, `SKY_LIVE_STATIC_DIR`, `SKY_LIVE_TTL`. Connection-status banner (v0.9.9+): `SKY_LIVE_BANNER` (default `on`; `off` / `0` / `false` to suppress the chrome but keep the retry queue active), `SKY_LIVE_RETRY_BASE_MS` (default `500`), `SKY_LIVE_RETRY_MAX_MS` (default `16000`), `SKY_LIVE_RETRY_MAX_ATTEMPTS` (default `10`), `SKY_LIVE_QUEUE_MAX` (default `50`).
+Sky.Live config is embedded at compile time but can be overridden at runtime. Env vars and the corresponding `sky.toml` keys (under the single `[live]` table — there is NO `[live.session]` section):
+
+| Env var | sky.toml `[live]` key | Notes |
+|---|---|---|
+| `SKY_LIVE_PORT` | `port` | Server port (default 8000) |
+| `SKY_LIVE_INPUT` | `input` | `debounce` or `blur` |
+| `SKY_LIVE_POLL_INTERVAL` | `poll_interval` | ms (0 = SSE only) |
+| `SKY_LIVE_STORE` | `store` | Session store: `memory` (default), `sqlite`, `redis` / `valkey`, `postgres` |
+| `SKY_LIVE_STORE_PATH` | `storePath` | sqlite file path, or redis `host:port` / `redis://…`, or postgres URL |
+| `DATABASE_URL` | -- | Postgres URL fallback if `SKY_LIVE_STORE_PATH` is unset |
+| `REDIS_URL` | -- | Redis URL fallback if `SKY_LIVE_STORE_PATH` is unset (defaults to `localhost:6379`) |
+| `SKY_LIVE_STATIC_DIR` | `static` | Path to static assets |
+| `SKY_LIVE_TTL` | `ttl` | Session TTL (Go duration format, e.g. `30m`) |
+
+Connection-status banner (v0.9.9+): `SKY_LIVE_BANNER` (default `on`; `off` / `0` / `false` to suppress the chrome but keep the retry queue active), `SKY_LIVE_RETRY_BASE_MS` (default `500`), `SKY_LIVE_RETRY_MAX_MS` (default `16000`), `SKY_LIVE_RETRY_MAX_ATTEMPTS` (default `10`), `SKY_LIVE_QUEUE_MAX` (default `50`).
 
 **Connection status banner**: the runtime injects a bottom-pinned banner that shows `Reconnecting…` (amber) when the SSE connection drops or a POST `/_sky/event` fails, and `Connection lost — refresh to retry` (red) after the retry attempts are exhausted. POST failures during the outage land in a FIFO queue; the SSE re-open or a successful retry drains them, so clicks during a brief outage replay automatically. Use a persistent session store (Redis / Postgres / SQLite / Firestore) for production deployments — the memory store loses Model state on every server restart, so reconnect re-initialises from `init`. The banner is opt-out via `SKY_LIVE_BANNER=off`; styling can be overridden by `#__sky-status { ... !important }` in the user's stylesheet.
 
@@ -2818,9 +2833,9 @@ and the memory store lost its sessions. For production, use a persistent
 store:
 
 ```toml
-[live.session]
+[live]
 store = "sqlite"
-path = "sessions.db"
+storePath = "sessions.db"
 ```
 
 **`stack overflow` when subscribing to Time.every + handler does expensive work**

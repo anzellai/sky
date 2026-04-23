@@ -47,12 +47,9 @@ version = "0.1.0"
 [live]
 port = 4000
 ttl = "30m"
-
-[live.session]
-store = "memory"
-
-[live.static]
-dir = "static"            # served at /static/*
+store = "memory"          # memory | sqlite | redis | postgres
+# storePath = "..."       # sqlite file or redis/postgres connection string
+static = "static"         # served at /static/*
 ```
 
 ---
@@ -794,26 +791,22 @@ model.Count += delta
 
 ## 12. Session Store
 
-Default is in-memory. Swap the store in sky.toml — zero code changes.
+Default is in-memory. Swap the store in sky.toml — zero code changes. Both keys live directly under `[live]` (there is no `[live.session]` section).
 
 ```toml
-[live.session]
+[live]
 store = "memory"         # default
+# storePath = "..."      # path or URL when store ≠ memory
 ```
 
-| Store        | Config                           | Best For                           |
-|--------------|----------------------------------|------------------------------------|
-| `memory`     | `store = "memory"`               | Development, single instance. Zero deps. **Default.** |
-| `sqlite`     | `store = "sqlite"`               | Single-server production. Persistent, no external deps. |
-|              | `path = "./data/sessions.db"`    |                                    |
-| `postgresql` | `store = "postgresql"`           | Multi-instance. Horizontal scaling. |
-|              | `url = "$DATABASE_URL"`          |                                    |
-| `redis`      | `store = "redis"`                | Low-latency. Cloud Run / ECS.     |
-|              | `url = "$REDIS_URL"`             |                                    |
-| `valkey`     | `store = "valkey"`               | Open-source Redis. Wire-compatible. |
-|              | `url = "$VALKEY_URL"`            |                                    |
-| `dynamodb`   | `store = "dynamodb"`             | AWS serverless. Scales to zero.    |
-|              | `table = "sky_sessions"`         |                                    |
+Or via env: `SKY_LIVE_STORE=redis SKY_LIVE_STORE_PATH=localhost:6379 ./app`.
+
+| Store      | sky.toml                                | Env                                       | Best For                           |
+|------------|-----------------------------------------|-------------------------------------------|------------------------------------|
+| `memory`   | `store = "memory"`                      | `SKY_LIVE_STORE=memory`                   | Dev, single instance. Zero deps. **Default.** |
+| `sqlite`   | `store = "sqlite"` + `storePath = "./data/sessions.db"` | `SKY_LIVE_STORE=sqlite SKY_LIVE_STORE_PATH=./data/sessions.db` | Single-server prod. Persistent, no external deps. |
+| `postgres` | `store = "postgres"` + `storePath = "postgres://…"` | `SKY_LIVE_STORE=postgres SKY_LIVE_STORE_PATH=postgres://…` (or `DATABASE_URL` fallback) | Multi-instance. Horizontal scaling. |
+| `redis` / `valkey` | `store = "redis"` + `storePath = "localhost:6379"` (or `redis://…`) | `SKY_LIVE_STORE=redis SKY_LIVE_STORE_PATH=…` (or `REDIS_URL` fallback; default `localhost:6379`) | Low-latency. Cloud Run / Compute Engine. |
 
 All stores implement:
 

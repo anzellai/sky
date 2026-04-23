@@ -916,13 +916,9 @@ This avoids circular dependencies and gives all modules access to typed Msg cons
 port = 8000
 input = "blur"            # "debounce" | "blur"
 poll_interval = 5000      # ms (0 = SSE only; >0 enables polling fallback for serverless)
-
-[live.session]
-store = "redis"           # memory | sqlite | redis | postgresql
-url = "redis://localhost:6379"
-
-[live.static]
-dir = "static"
+store = "redis"           # memory | sqlite | redis | postgres
+storePath = "redis://localhost:6379"
+static = "static"
 ```
 
 #### Runtime Environment Overrides
@@ -934,10 +930,11 @@ Sky.Live config values from `sky.toml` are embedded at compile time, but can be 
 | `SKY_LIVE_PORT` | `live.port` | `8000` | Server port |
 | `SKY_LIVE_INPUT` | `live.input` | `debounce` | Input handling: `debounce` or `blur` |
 | `SKY_LIVE_POLL_INTERVAL` | `live.poll_interval` | `0` | Polling interval in ms (0 = SSE only) |
-| `SKY_LIVE_SESSION_STORE` | `live.session.store` | `memory` | Session store: `memory`, `sqlite`, `redis`, `postgresql` |
-| `SKY_LIVE_SESSION_PATH` | `live.session.path` | _(empty)_ | Store file path (sqlite) |
-| `SKY_LIVE_SESSION_URL` | `live.session.url` | _(empty)_ | Store connection URL (redis, postgresql) |
-| `SKY_LIVE_STATIC_DIR` | `live.static.dir` | _(empty)_ | Path to static assets |
+| `SKY_LIVE_STORE` | `live.store` | `memory` | Session store: `memory`, `sqlite`, `redis`, `postgres` |
+| `SKY_LIVE_STORE_PATH` | `live.storePath` | _(empty)_ | Store path (sqlite file) or connection string (redis `host:port` / `redis://…`, postgres URL) |
+| `DATABASE_URL` | -- | _(empty)_ | Postgres URL fallback when `SKY_LIVE_STORE_PATH` is unset |
+| `REDIS_URL` | -- | _(empty)_ | Redis URL fallback when `SKY_LIVE_STORE_PATH` is unset (defaults to `localhost:6379` if both unset) |
+| `SKY_LIVE_STATIC_DIR` | `live.static` | _(empty)_ | Path to static assets |
 | `SKY_LIVE_TTL` | -- | `30m` | Session TTL (Go duration format) |
 
 ```bash
@@ -1018,14 +1015,12 @@ port = 8000                        # HTTP server port
 input = "debounce"                 # "debounce" (send on pause) | "blur" (send on blur/enter)
 poll_interval = 0                  # polling fallback interval in ms (0 = SSE only)
 
-[live.session]
-store = "memory"                   # memory | sqlite | redis | postgresql
-path = "./data/sessions.db"        # for sqlite
-url = "redis://localhost:6379"     # for redis
-# url = "postgres://user:pass@host/db" # for postgresql
-
-[live.static]
-dir = "static"                     # static file directory, served at /static/*
+store = "memory"                   # memory | sqlite | redis | postgres
+storePath = "./data/sessions.db"   # sqlite file
+# storePath = "localhost:6379"     # redis host:port
+# storePath = "redis://localhost:6379" # redis URL form
+# storePath = "postgres://user:pass@host/db" # postgres URL
+static = "static"                  # static file directory, served at /static/*
 ```
 
 ### Project Types

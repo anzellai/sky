@@ -721,15 +721,12 @@ version = "0.1.0"
 [live]
 port = 4000
 ttl = "30m"
-
-[live.session]
 store = "memory"
 # store = "sqlite"
-# path = "./data/sessions.db"
-# snapshot_interval = 50
-
-[live.static]
-dir = "static"           # served at /static/*
+# storePath = "./data/sessions.db"
+# store = "redis"
+# storePath = "localhost:6379"
+static = "static"        # served at /static/*
 ```
 
 ---
