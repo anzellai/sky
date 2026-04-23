@@ -3538,6 +3538,36 @@ __skySSE.addEventListener("patch", function(e) {
   }
 });
 
+// ── SSE → status state transitions ───────────────────────────
+// Browser EventSource auto-reconnects with its own backoff; we just
+// observe the open/error events to flip __skyStatus and surface a
+// banner. 500ms grace timer avoids flicker on transient blips:
+// a quick error+reopen burst (e.g. wifi handoff) shouldn't paint the
+// banner. Only show "reconnecting" if disconnect persists past the
+// grace window.
+__skySSE.addEventListener("open", function() {
+  if (__skyStatusGraceTimer !== null) {
+    clearTimeout(__skyStatusGraceTimer);
+    __skyStatusGraceTimer = null;
+  }
+  if (__skyStatus !== "connected") {
+    __skySetStatus("connected", "");
+  }
+});
+__skySSE.addEventListener("error", function() {
+  // Don't flip state if we're already showing a banner — repeated
+  // error events fire during the browser's reconnect loop.
+  if (__skyStatus !== "connected") return;
+  if (__skyStatusGraceTimer !== null) return;
+  __skyStatusGraceTimer = setTimeout(function() {
+    __skyStatusGraceTimer = null;
+    // Re-check the EventSource state in case it reopened during
+    // the grace window — readyState OPEN(1) means we're back.
+    if (__skySSE.readyState === 1) return;
+    __skySetStatus("reconnecting", "Reconnecting…");
+  }, 500);
+});
+
 // ── Init ─────────────────────────────────────────────────────
 // Bind initial DOM event listeners + inject the status banner once
 // the HTML is parsed. Banner needs document.body to exist, so it
