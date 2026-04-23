@@ -769,6 +769,24 @@ lookupKernelType modName funcName = case (modName, funcName) of
             (T.TLambda
                 (T.TType ModuleName.task "Task" [T.TVar "e", T.TVar "a"])
                 (T.TType ModuleName.result_ "Result" [T.TVar "e", T.TVar "a"]))
+    ("Task", "fromResult") ->
+        -- Task.fromResult : Result e a -> Task e a
+        -- Bridge helper so a Result-returning FFI call can be lifted
+        -- into a Task pipeline without `case` boilerplate.
+        Just $ T.Forall ["e", "a"]
+            (T.TLambda
+                (T.TType ModuleName.result_ "Result" [T.TVar "e", T.TVar "a"])
+                (T.TType ModuleName.task "Task" [T.TVar "e", T.TVar "a"]))
+    ("Task", "andThenResult") ->
+        -- Task.andThenResult : (a -> Result e b) -> Task e a -> Task e b
+        -- Chain a Result-returning step after a Task; flattens what
+        -- would otherwise be Task.andThen (\a -> Task.fromResult (f a)).
+        Just $ T.Forall ["e", "a", "b"]
+            (T.TLambda
+                (T.TLambda (T.TVar "a") (T.TType ModuleName.result_ "Result" [T.TVar "e", T.TVar "b"]))
+                (T.TLambda
+                    (T.TType ModuleName.task "Task" [T.TVar "e", T.TVar "a"])
+                    (T.TType ModuleName.task "Task" [T.TVar "e", T.TVar "b"])))
     ("Task", "map") ->
         Just $ T.Forall ["e", "a", "b"]
             (T.TLambda
@@ -820,6 +838,18 @@ lookupKernelType modName funcName = case (modName, funcName) of
                 (T.TLambda
                     (T.TType ModuleName.result_ "Result" [T.TVar "e", T.TVar "a"])
                     (T.TType ModuleName.result_ "Result" [T.TVar "e", T.TVar "b"])))
+    ("Result", "andThenTask") ->
+        -- Result.andThenTask : (a -> Task e b) -> Result e a -> Task e b
+        -- Chain a Task-returning step after a Result. The Result→Task
+        -- bridge that lets sync FFI feed into effectful pipelines
+        -- without an intermediate `case` on the Result.
+        Just $ T.Forall ["e", "a", "b"]
+            (T.TLambda
+                (T.TLambda (T.TVar "a")
+                    (T.TType ModuleName.task "Task" [T.TVar "e", T.TVar "b"]))
+                (T.TLambda
+                    (T.TType ModuleName.result_ "Result" [T.TVar "e", T.TVar "a"])
+                    (T.TType ModuleName.task "Task" [T.TVar "e", T.TVar "b"])))
     ("Result", "mapError") ->
         Just $ T.Forall ["e", "e2", "a"]
             (T.TLambda (T.TLambda (T.TVar "e") (T.TVar "e2"))

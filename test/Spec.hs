@@ -11,6 +11,7 @@ import qualified Sky.Canonicalise.UnboundSpec
 import qualified Sky.Type.ExhaustivenessSpec
 import qualified Sky.Format.FormatSpec
 import qualified Sky.Build.NestedPatternSpec
+import qualified Sky.Build.TaskResultBridgesSpec
 import qualified Sky.Build.CheckIsBuildSpec
 import qualified Sky.Build.RecordFieldOrderSpec
 import qualified Sky.Build.UnreachableGateSpec
@@ -41,6 +42,9 @@ main = hspec $ do
     describe "Sky.Type.Exhaustiveness"   Sky.Type.ExhaustivenessSpec.spec
     describe "Sky.Format.Format"         Sky.Format.FormatSpec.spec
     describe "Sky.Build.NestedPattern"   Sky.Build.NestedPatternSpec.spec
+    -- Result/Task bridge helpers (Task.fromResult, Task.andThenResult,
+    -- Result.andThenTask) — runtime + canonicaliser + kernel sigs gate.
+    describe "Sky.Build.TaskResultBridges" Sky.Build.TaskResultBridgesSpec.spec
     describe "Sky.ErrorUnification"      Sky.ErrorUnificationSpec.spec
     -- ExampleSweep must run before TypedFfi: the typed-FFI checks
     -- read `examples/*/sky-out/main.go` and `.skycache/go/*` which

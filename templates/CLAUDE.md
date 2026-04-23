@@ -407,6 +407,30 @@ result = Task.perform pipeline
 - `Task.lazy : (() -> a) -> Task err a` -- defer computation until executed
 - `Task.map2/3/4/5` -- combine N independent Tasks (sequential, like Result.mapN) (v0.7.25+)
 - `Task.andMap : Task e a -> Task e (a -> b) -> Task e b` -- pipeline-style applicative (v0.7.25+)
+- `Task.fromResult : Result e a -> Task e a` -- lift a Result-returning step (FFI call, parser) into a Task pipeline
+- `Task.andThenResult : (a -> Result e b) -> Task e a -> Task e b` -- chain a Result-returning step after a Task
+- `Result.andThenTask : (a -> Task e b) -> Result e a -> Task e b` -- chain a Task-returning step after a Result
+
+**Result/Task bridges (flat pipelines instead of nested case):**
+
+```elm
+-- Without bridges
+case Db.connect dbUrl of
+    Ok db ->
+        case Db.query db "SELECT ..." of
+            Ok rows -> Http.post url (encode rows) |> Task.andThen handleResponse
+            Err e -> Task.fail e
+    Err e -> Task.fail e
+
+-- With bridges
+Db.connect dbUrl
+    |> Task.fromResult
+    |> Task.andThenResult (\db -> Db.query db "SELECT ...")
+    |> Task.andThen (\rows -> Http.post url (encode rows))
+    |> Task.andThen handleResponse
+```
+
+There is no `Result.fromTask` / `Task -> Result` bridge by design. `Task.run` (formerly `Task.perform`) exists for the runtime entry boundary, but user code should keep effectful pipelines in `Task` and let the boundary (`main`, `Cmd.perform`, HTTP handler return) execute it.
 
 **Concurrency:**
 

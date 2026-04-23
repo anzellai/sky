@@ -3538,6 +3538,64 @@ func AnyTaskAndThen(fn any, task any) any {
 	})
 }
 
+// Task_fromResult lifts a Result into a Task. The pure-bridge case of
+// the FFI flattening story: every FFI call returns Result, but a
+// downstream pipeline may want Task semantics so the value can be
+// composed with effectful steps via Task.andThen / Cmd.perform / a
+// Sky.Http handler return. Bare values fall through as Ok defensively
+// (matches Result_andThen's tag<0 branch — should not arise once typed
+// codegen is in place but worth tolerating).
+func Task_fromResult(result any) any {
+	return SkyTask[any, any](func() SkyResult[any, any] {
+		tag, okV, errV := anyResultView(result)
+		if tag < 0 {
+			return Ok[any, any](result)
+		}
+		if tag == 0 {
+			return Ok[any, any](okV)
+		}
+		return Err[any, any](errV)
+	})
+}
+
+// Task_andThenResult chains a Result-returning step after a Task. The
+// fn returns a Result; we normalise its shape so downstream Task code
+// always sees Tag/OkValue/ErrValue without a tag<0 escape hatch.
+func Task_andThenResult(fn any, task any) any {
+	return SkyTask[any, any](func() SkyResult[any, any] {
+		r := anyTaskInvoke(task)
+		if r.Tag != 0 {
+			return Err[any, any](r.ErrValue)
+		}
+		res := SkyCall(fn, r.OkValue)
+		tag, okV, errV := anyResultView(res)
+		if tag < 0 {
+			return Ok[any, any](res)
+		}
+		if tag == 0 {
+			return Ok[any, any](okV)
+		}
+		return Err[any, any](errV)
+	})
+}
+
+// Result_andThenTask chains a Task-returning step after a Result. The
+// fn is invoked lazily — wrapping the dispatch in a SkyTask thunk
+// preserves Task's deferred-effect semantics so the chained Task only
+// runs when the outer Task is forced (Cmd.perform, main, handler boundary).
+func Result_andThenTask(fn any, result any) any {
+	return SkyTask[any, any](func() SkyResult[any, any] {
+		tag, okV, errV := anyResultView(result)
+		if tag < 0 {
+			return anyTaskInvoke(SkyCall(fn, result))
+		}
+		if tag == 0 {
+			return anyTaskInvoke(SkyCall(fn, okV))
+		}
+		return Err[any, any](errV)
+	})
+}
+
 // Task_sequence: run tasks in order, collect results as a list.
 // First error short-circuits.
 //

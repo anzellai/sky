@@ -189,6 +189,7 @@ registry = Map.fromList
     , (("Result", "andMap"),      KernelInfo "rt.Result_andMap" 2 False)
     , (("Result", "combine"),     KernelInfo "rt.Result_combine" 1 False)
     , (("Result", "traverse"),    KernelInfo "rt.Result_traverse" 2 False)
+    , (("Result", "andThenTask"), KernelInfo "rt.Result_andThenTask" 2 False)
 
     -- ═══════════════════════════════════════════════════════
     -- Task
@@ -203,6 +204,8 @@ registry = Map.fromList
     , (("Task", "parallel"),      KernelInfo "rt.Task_parallel" 1 True)
     , (("Task", "lazy"),          KernelInfo "rt.Task_lazy" 1 True)
     , (("Task", "run"),           KernelInfo "rt.AnyTaskRun" 1 False)
+    , (("Task", "fromResult"),    KernelInfo "rt.Task_fromResult" 1 False)
+    , (("Task", "andThenResult"), KernelInfo "rt.Task_andThenResult" 2 False)
 
     -- ═══════════════════════════════════════════════════════
     -- Cmd

@@ -113,13 +113,15 @@ preludeQualifiers =
     , ("Set",    ["empty", "insert", "remove", "member", "union", "diff", "intersect", "fromList"])
     , ("Maybe",  ["withDefault", "map", "andThen"])
     , ("Result", ["withDefault", "map", "andThen", "mapError",
-                    "map2", "map3", "map4", "map5", "andMap", "combine", "traverse"])
+                    "map2", "map3", "map4", "map5", "andMap", "combine", "traverse",
+                    "andThenTask"])
     , ("Basics", ["identity", "always", "not", "toString", "modBy", "clamp",
                     "fst", "snd", "compare", "negate", "abs", "sqrt", "min", "max"])
     , ("Cmd",    ["none", "batch", "perform"])
     , ("Sub",    ["none", "every"])
     , ("Task",   ["succeed", "fail", "map", "andThen", "perform", "sequence",
-                    "parallel", "lazy", "run", "map2", "map3", "map4", "map5", "andMap"])
+                    "parallel", "lazy", "run", "map2", "map3", "map4", "map5", "andMap",
+                    "fromResult", "andThenResult"])
     ]
 
 

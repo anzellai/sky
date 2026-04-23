@@ -68,6 +68,36 @@ ALL effectful operations flow through `Task`:
 
 FFI boundary mapping: Go `(T, error)` → `Result Error T` | Go `error` → `Result Error ()` | panics → `Err` | nil → `Maybe`/`Result`
 
+### Result/Task bridges
+
+Every Go FFI call returns `Result Error T` (the synchronous trust boundary). When the surrounding pipeline is a `Task` (Sky.Http handler, Sky.Live `Cmd.perform`, `main` returning `Task`), three bridge helpers flatten what would otherwise be nested `case`-on-Result inside `Task.andThen` lambdas:
+
+| Helper | Type | When to reach for it |
+|---|---|---|
+| `Task.fromResult` | `Result e a -> Task e a` | Lift a Result-returning step (FFI call, parser) into a Task pipeline |
+| `Task.andThenResult` | `(a -> Result e b) -> Task e a -> Task e b` | Chain a Result-returning step after a Task |
+| `Result.andThenTask` | `(a -> Task e b) -> Result e a -> Task e b` | Chain a Task-returning step after a Result |
+
+```elm
+-- Without bridges (nested case inside Task.andThen)
+case Db.connect dbUrl of
+    Ok db ->
+        case Db.query db "SELECT ..." of
+            Ok rows ->
+                Http.post url (encode rows) |> Task.andThen handleResponse
+            Err e -> Task.fail e
+    Err e -> Task.fail e
+
+-- With bridges (flat pipeline)
+Db.connect dbUrl
+    |> Task.fromResult
+    |> Task.andThenResult (\db -> Db.query db "SELECT ...")
+    |> Task.andThen (\rows -> Http.post url (encode rows))
+    |> Task.andThen handleResponse
+```
+
+There is **no** `Result.fromTask` / `Task -> Result` bridge. `Task.run` exists in the kernel for the runtime entry boundary, but user code should keep effectful pipelines in `Task` and let the boundary (CLI `main`, `Cmd.perform`, HTTP handler return) execute it. Collapsing a Task to a Result blocks the caller and erases effect tracking from the type — usually a sign the surrounding function should return `Task` itself.
+
 ## Environment Variable Precedence
 
 Configuration values resolve in this order (highest priority first):
@@ -233,7 +263,7 @@ Safety: formatter refuses to write if output loses >1/3 of code lines (prevents 
 | `Sky.Core.Dict` | empty, insert, get, remove, keys, values, map, foldl, union, member |
 | `Sky.Core.Set` | empty, insert, remove, member, union, diff, intersect, fromList |
 | `Sky.Core.Maybe` | withDefault, map, andThen |
-| `Sky.Core.Result` | withDefault, map, andThen, mapError, **map2/3/4/5, andMap, combine, traverse** |
+| `Sky.Core.Result` | withDefault, map, andThen, mapError, **map2/3/4/5, andMap, combine, traverse**, **andThenTask** |
 | `Sky.Core.Math` | sqrt, pow, abs, floor, ceil, round, sin, cos, pi, min, max |
 | `Sky.Core.Regex` | match, find, findAll, replace, split |
 | `Sky.Core.Crypto` | sha256, sha512, md5, hmacSha256 |
@@ -246,7 +276,7 @@ Safety: formatter refuses to write if output loses >1/3 of code lines (prevents 
 ### Task-Wrapped Effects
 | Module | Key Functions | Returns |
 |--------|--------------|---------|
-| `Sky.Core.Task` | succeed, fail, map, andThen, perform, sequence, parallel, lazy, **map2/3/4/5, andMap** | Task err a |
+| `Sky.Core.Task` | succeed, fail, map, andThen, perform, sequence, parallel, lazy, **map2/3/4/5, andMap**, **fromResult, andThenResult** | Task err a |
 | `Sky.Core.File` | readFile, writeFile, append, mkdirAll, readDir, exists, remove, isDir, tempFile, tempDir, copy, rename | Task Error a |
 | `Sky.Core.Process` | run, exit, getEnv, getCwd, loadEnv | Task Error a |
 | `Sky.Core.Io` | readLine, readBytes, writeStdout, writeStderr | Task Error a |

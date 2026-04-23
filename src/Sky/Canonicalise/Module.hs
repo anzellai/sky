@@ -750,9 +750,10 @@ staticKernelFunctions = Map.fromList
     , ("Maybe",   ["withDefault", "map", "andThen", "map2", "map3", "map4", "map5",
                     "andMap", "combine", "traverse"])
     , ("Result",  ["withDefault", "map", "andThen", "mapError", "map2", "map3", "map4", "map5",
-                    "andMap", "combine", "traverse"])
+                    "andMap", "combine", "traverse", "andThenTask"])
     , ("Task",    ["succeed", "fail", "map", "andThen", "perform", "sequence", "parallel",
-                    "lazy", "run", "map2", "map3", "map4", "map5", "andMap"])
+                    "lazy", "run", "map2", "map3", "map4", "map5", "andMap",
+                    "fromResult", "andThenResult"])
     , ("Log",     ["println", "debug", "info", "warn", "error", "with", "errorWith"])
     , ("Cmd",     ["none", "batch", "perform"])
     , ("Time",    ["now", "sleep", "every", "unixMillis", "timeString",

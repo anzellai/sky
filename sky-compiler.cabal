@@ -168,6 +168,7 @@ test-suite sky-tests
       Sky.Type.ExhaustivenessSpec
       Sky.Format.FormatSpec
       Sky.Build.NestedPatternSpec
+      Sky.Build.TaskResultBridgesSpec
       Sky.Build.CheckIsBuildSpec
       Sky.Build.RecordFieldOrderSpec
       Sky.Build.UnreachableGateSpec
