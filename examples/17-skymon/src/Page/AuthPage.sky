@@ -5,7 +5,7 @@ import Sky.Core.Dict as Dict
 import Sky.Core.Maybe as Maybe
 import Std.Html exposing (..)
 import Std.Html.Attributes exposing (..)
-import Std.Live.Events exposing (onClick, onInput)
+import Std.Live.Events exposing (onClick, onInput, onChange)
 import State exposing (..)
 import Ui.Layout as Layout
 
@@ -92,7 +92,10 @@ viewLoginForm model =
                           (Maybe.withDefault
                                ""
                                (Dict.get "auth_password" model.configInput))
-                    , onInput InputAuthPassword
+                    -- onChange (fires on blur) instead of onInput so
+                    -- password-manager browser extensions don't kick in
+                    -- on every keystroke's SSE patch.
+                    , onChange InputAuthPassword
                     ]
               ]
         , button
