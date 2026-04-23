@@ -5,12 +5,13 @@ import Sky.Core.List as List
 import Sky.Core.String as String
 import Sky.Core.Maybe as Maybe
 import Sky.Core.Dict as Dict
-import Sky.Core.Result as Result
 import Sky.Core.Task as Task
 import Sky.Core.Time as Time
 import Sky.Core.Random as Random
+import Sky.Core.Crypto as Crypto
 import Sky.Core.Error as Error exposing (Error)
 import Std.Db as Db
+import Log.Slog as Slog
 import Std.Live as Live exposing (app, route)
 import Std.Html exposing (..)
 import Std.Live.Events exposing (onClick)
@@ -131,60 +132,93 @@ doBatch model =
         ( { model | jobs = List.append model.jobs jobs, nextId = i3 + 1 }, cmd )
 
 
--- Persistence: a five-link pipeline that shows every Result/Task bridge.
+-- Persistence: a four-link Task pipeline. Every Db.* returns
+-- Task Error a (effect-boundary-audit branch), so chaining is
+-- straight Task.andThen / Task.map.
 --
---   Db.connect       → Result Error Db
---   Result.andThenTask → switch the pipeline into Task once we have a Db
---   Db.execRaw       → Result Error Int   (DDL — create table if missing)
---   Task.fromResult  → lift it into the Task chain
---   Time.now         → Task Error Int     (real effect inside the chain)
---   Task.andThenResult → chain the Db.exec INSERT, which is sync Result
---   Task.map         → format the success message for the dashboard
+--   Db.open "sqlite" path           → Task Error Db
+--   |> Task.andThen   (\db -> ...   → Db.execRaw ... → Task Error Int)
+--   |> Task.andThen   (\_  -> Time.now)               → Task Error Int
+--   |> Task.andThen   (\ts -> Db.exec INSERT ...)     → Task Error Int
+--   |> Task.map       (\_  -> "Snapshot saved …")     → Task Error String
 --
--- Because every step participates in the same Task, the overall return
--- type is `Task Error String` and the entire chain dispatches through
--- one Cmd.perform. Without the bridges this would be ~30 lines of
--- nested case-on-Result inside Task.andThen lambdas.
+-- Error handling lives at the *source* of the Task via withErrorReporting
+-- (defined below). The pattern is:
+--   1. Generate a short errId via Crypto.randomToken
+--   2. Slog the original error to the server console with the errId
+--      keyed in the structured log (ops can grep for it)
+--   3. Replace the error with a user-friendly message that quotes the
+--      errId so support requests can correlate to server logs
 saveSnapshot : Int -> Int -> Int -> Task Error String
 saveSnapshot okCount failCount total =
     Db.open "sqlite" dbPath
-        |> Result.andThenTask
+        |> Task.andThen
                (\db ->
-                   Db.execRaw db createSnapshotTable |> Task.fromResult
+                   Db.execRaw db createSnapshotTable
                        |> Task.andThen (\_ -> Time.now)
-                       |> Task.andThenResult
+                       |> Task.andThen
                               (\ts ->
                                   Db.exec
                                       db
                                       "INSERT INTO snapshots (ok, failed, total, ts) VALUES (?, ?, ?, ?)"
-                                      [ okCount, failCount, total, ts ])
-                       |> Task.map
-                              (\_ ->
-                                  "Snapshot saved (ok="
-                                      ++ String.fromInt okCount
-                                      ++ " fail="
-                                      ++ String.fromInt failCount
-                                      ++ ")"))
+                                      [ okCount, failCount, total, ts ]))
+        |> Task.map
+               (\_ ->
+                   "Snapshot saved (ok="
+                       ++ String.fromInt okCount
+                       ++ " fail="
+                       ++ String.fromInt failCount
+                       ++ ")")
+        |> withErrorReporting "snapshot.save"
 
 
--- Reads back the five most recent snapshots. Same shape as
--- saveSnapshot but the final step is a Result-returning Db.query
--- chained via Task.andThenResult, then mapped into a typed list of
--- Snapshot records via Task.map. Returning `Task Error (List Snapshot)`
--- lets the update branch destructure cleanly without touching Dict.
+-- Reads the five most recent snapshots, decoding each row into a
+-- typed Snapshot record so the view doesn't touch Dict.
 loadHistory : Task Error (List Snapshot)
 loadHistory =
     Db.open "sqlite" dbPath
-        |> Result.andThenTask
+        |> Task.andThen
                (\db ->
-                   Db.execRaw db createSnapshotTable |> Task.fromResult
-                       |> Task.andThenResult
+                   Db.execRaw db createSnapshotTable
+                       |> Task.andThen
                               (\_ ->
                                   Db.query
                                       db
                                       "SELECT ok, failed, total, ts FROM snapshots ORDER BY ts DESC LIMIT 5"
-                                      [])
-                       |> Task.map (\rows -> List.map parseSnapshot rows))
+                                      []))
+        |> Task.map (\rows -> List.map parseSnapshot rows)
+        |> withErrorReporting "snapshot.load"
+
+
+-- Two-level error handling helper. Take a Task that may fail with
+-- Error; on failure: generate a short correlation ID, log the original
+-- error to the server console keyed by that ID (so ops can grep), and
+-- replace the error with a user-friendly message that quotes the ID
+-- (so a user complaining "snapshot save failed ref a3f9" maps to the
+-- exact log line server-side). On success: pass through unchanged.
+--
+-- The polymorphic `a` lets one helper cover saveSnapshot (Task Error
+-- String) and loadHistory (Task Error (List Snapshot)) without
+-- duplication.
+withErrorReporting : String -> Task Error a -> Task Error a
+withErrorReporting opName task =
+    task
+        |> Task.onError
+               (\e ->
+                   Crypto.randomToken 4
+                       |> Task.andThen
+                              (\errId ->
+                                  let
+                                      _ =
+                                          Slog.error
+                                              opName
+                                              [ "errId", errId
+                                              , "error", Error.toString e
+                                              ]
+                                  in
+                                      Task.fail
+                                          (Error.unexpected
+                                               ("Operation failed (ref " ++ errId ++ ")"))))
 
 
 parseSnapshot : Dict String String -> Snapshot
