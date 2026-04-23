@@ -1,6 +1,7 @@
 module Main exposing (main)
 
 import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
 import Std.Db as Db
 import Std.Auth as Auth
 import Std.Log exposing (println)
@@ -47,7 +48,7 @@ verifyTok tok =
 
 
 main =
-    case Db.open "sqlite" ":memory:" of
+    case Task.run (Db.open "sqlite" ":memory:") of
 
         Ok db ->
             doTest db

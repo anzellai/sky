@@ -35,4 +35,4 @@ main =
                 afterToken tok
 
             Err e ->
-                println e
+                println (errorToString e)
