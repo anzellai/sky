@@ -51,7 +51,7 @@ import qualified System.Environment
 -- | Global codegen environment (set once per compilation, read during codegen)
 {-# NOINLINE globalCgEnv #-}
 globalCgEnv :: IORef Rec.CodegenEnv
-globalCgEnv = unsafePerformIO $ newIORef (Rec.CodegenEnv Map.empty Map.empty Map.empty Set.empty Set.empty Map.empty Map.empty Map.empty Map.empty)
+globalCgEnv = unsafePerformIO $ newIORef (Rec.CodegenEnv Map.empty Map.empty Map.empty Set.empty Set.empty Set.empty Map.empty Map.empty Map.empty Map.empty)
 
 -- | Read the global codegen env (for use in pure codegen functions)
 getCgEnv :: Rec.CodegenEnv
@@ -377,6 +377,18 @@ continueCompile config _entryPath outDir moduleOrder srcHash = do
                     | (modName, depMod) <- validDeps
                     , let prefix = map (\c -> if c == '.' then '_' else c) modName
                     ]
+                -- All Sky-defined ADT/union names with the dep's module
+                -- prefix. safeReturnType uses this set to distinguish
+                -- "type Sky_Core_Error_Error = rt.SkyADT" (alias is
+                -- emitted, name is safe to use as a Go type) from
+                -- "Bufio_Scanner" (FFI-opaque, no Go alias exists, must
+                -- fall back to `any` so Go compilation succeeds).
+                depUnionNames = Set.unions
+                    [ Set.map (\n -> prefix ++ "_" ++ n)
+                             (Set.fromList (Map.keys (Can._unions depMod)))
+                    | (modName, depMod) <- validDeps
+                    , let prefix = map (\c -> if c == '.' then '_' else c) modName
+                    ]
                 depArities = Map.unions
                     [ Map.mapKeys (\n -> prefix ++ "_" ++ n)
                                   (Rec.collectFuncArities (Can._decls depMod))
@@ -532,7 +544,7 @@ continueCompile config _entryPath outDir moduleOrder srcHash = do
             putStrLn "-- Generating Go"
             let depAliasPairs = [ (map (\c -> if c == '.' then '_' else c) mn, Can._aliases depMod)
                                 | (mn, depMod) <- validDeps ]
-                goCode = generateGoMulti canMod entrySrcMod config types depDecls depRecAliases depArities depParamTypes depRetTypes depInferredParams depInferredRets depInferredSigs depAliasPairs
+                goCode = generateGoMulti canMod entrySrcMod config types depDecls depRecAliases depUnionNames depArities depParamTypes depRetTypes depInferredParams depInferredRets depInferredSigs depAliasPairs
             createDirectoryIfMissing True outDir
             let mainGoPath = outDir </> "main.go"
             case (solverError, exhaustErr) of
@@ -1467,8 +1479,8 @@ generateAliasForDep userDefs modPrefix (aliasName, Can.Alias _vars body) =
 
 
 -- | Generate Go with merged dependency declarations
-generateGoMulti :: Can.Module -> Src.Module -> Toml.SkyConfig -> Solve.SolvedTypes -> [GoIr.GoDecl] -> Set.Set String -> Map.Map String Int -> Map.Map String [String] -> Map.Map String String -> Map.Map String [String] -> Map.Map String String -> Map.Map String ([String], [String], String) -> [(String, Map.Map String Can.Alias)] -> String
-generateGoMulti canMod srcMod config solvedTypes depDecls depRecAliases depArities depParamTypes depRetTypes extraInferredParamTypes extraInferredRetTypes extraInferredSigs depAliasPairs =
+generateGoMulti :: Can.Module -> Src.Module -> Toml.SkyConfig -> Solve.SolvedTypes -> [GoIr.GoDecl] -> Set.Set String -> Set.Set String -> Map.Map String Int -> Map.Map String [String] -> Map.Map String String -> Map.Map String [String] -> Map.Map String String -> Map.Map String ([String], [String], String) -> [(String, Map.Map String Can.Alias)] -> String
+generateGoMulti canMod srcMod config solvedTypes depDecls depRecAliases depUnionNames depArities depParamTypes depRetTypes extraInferredParamTypes extraInferredRetTypes extraInferredSigs depAliasPairs =
     let
         imports = unsafePerformIO $ do
             -- T2/T6: register entry-module + dep-module typed function
@@ -1542,6 +1554,7 @@ generateGoMulti canMod srcMod config solvedTypes depDecls depRecAliases depAriti
                       $ Rec.withFuncTypes allParamTys allRetTys
                       $ Rec.withDepArities depArities
                       $ Rec.withRecordAliases depRecAliases
+                      $ Rec.withUnionNames depUnionNames
                       $ Rec.withDepFieldIndex depAliasPairs
                       $ Rec.buildCodegenEnv solvedTypes canMod
             writeIORef globalCgEnv cgEnv
@@ -2373,11 +2386,23 @@ safeReturnType t = case t of
             runtimeTyped = case lookup (modStr, name) qualifiedRuntimeTypedMap of
                 Just goTy -> Just goTy
                 Nothing   -> lookup name runtimeTypedMap
+            knownUnions = Rec._cg_unionNames env
+            -- A name is "safe to emit as a Go type" only if we proved
+            -- that an alias was emitted for it: it's a Sky union (then
+            -- `type X = rt.SkyADT` is in main.go) or it's prefixed by
+            -- the local module so the local-module union pass owned it.
+            -- Otherwise (typical: FFI-opaque types like Bufio.Scanner),
+            -- emitting `Bufio_Scanner` would dangle — fall back to any.
+            isKnownUnion = Set.member base knownUnions
+                        || Set.member name knownUnions
         in case matches of
             (m:_) -> m ++ "_R"
             _     -> case runtimeTyped of
                 Just goTy -> goTy
-                Nothing   -> if isRuntimeOnly then "any" else base
+                Nothing
+                    | isRuntimeOnly -> "any"
+                    | isKnownUnion  -> base
+                    | otherwise     -> "any"
     -- TAlias emitted by the canonicaliser's alias-expansion pass.
     -- Resolve using the same record-alias / runtime-type lookup as
     -- TType so `Profile` → `Main_Profile_R` instead of degenerating
@@ -5144,13 +5169,22 @@ solvedTypeToGo ty = case ty of
             isRecordAlias = Set.member base (Rec._cg_recordAliases env)
                          || Set.member name (Rec._cg_recordAliases env)
             isRuntimeOnly = name `elem` runtimeOnlyTypes
+            -- Sky-defined unions get a `type X = rt.SkyADT` alias
+            -- emitted in main.go; FFI-opaque types do not. Without
+            -- this gate we'd emit a dangling `Bufio_Scanner` Go type
+            -- reference for a field of type Bufio.Scanner.
+            isKnownUnion = Set.member base (Rec._cg_unionNames env)
+                        || Set.member name (Rec._cg_unionNames env)
             runtimeTyped = case lookup (modStr, name) qualifiedRuntimeTypedMap of
                 Just goTy -> Just goTy
                 Nothing   -> lookup name runtimeTypedMap
         in if isRecordAlias then base ++ "_R"
            else case runtimeTyped of
              Just goTy -> goTy
-             Nothing   -> if isRuntimeOnly then "any" else base
+             Nothing
+                | isRuntimeOnly -> "any"
+                | isKnownUnion  -> base
+                | otherwise     -> "any"
     T.TLambda from to -> "func(" ++ solvedTypeToGo from ++ ") " ++ solvedTypeToGo to
     T.TRecord fields _ ->
         -- P4: records always map to a named Go struct. If the shape

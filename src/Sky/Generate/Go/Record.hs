@@ -14,6 +14,7 @@ module Sky.Generate.Go.Record
     , withInferredSigs
     , withDepFieldIndex
     , withRecordAliases
+    , withUnionNames
     , collectRecordAliases
     , withDepArities
     , collectFuncArities
@@ -42,6 +43,13 @@ data CodegenEnv = CodegenEnv
     , _cg_recordAliases :: !(Set.Set String)  -- names of all known record aliases
                                               --   (current module + deps) so
                                               --   solvedTypeToGo can suffix "_R"
+    , _cg_unionNames    :: !(Set.Set String)  -- module-prefixed union/ADT names
+                                              --   that have a `type X = rt.SkyADT`
+                                              --   alias emitted somewhere. Used
+                                              --   by safeReturnType to fall back
+                                              --   to `any` for FFI-opaque type
+                                              --   refs that don't correspond to
+                                              --   any emitted Go type alias.
     , _cg_funcArities :: !(Map.Map String Int)  -- top-level function arities
                                                 -- used for partial-application
                                                 -- closure synthesis
@@ -101,6 +109,7 @@ buildCodegenEnv solvedTypes canMod = CodegenEnv
     , _cg_fieldIndex = buildRegistry (Can._aliases canMod)
     , _cg_zeroArgs = collectZeroArgs (Can._decls canMod)
     , _cg_recordAliases = collectRecordAliases (Can._aliases canMod)
+    , _cg_unionNames = Set.fromList (Map.keys (Can._unions canMod))
     , _cg_funcArities = collectFuncArities (Can._decls canMod)
     , _cg_funcParamTypes = Map.empty
     , _cg_funcRetType = Map.empty
@@ -131,6 +140,15 @@ collectFuncArities = go Map.empty
 withRecordAliases :: Set.Set String -> CodegenEnv -> CodegenEnv
 withRecordAliases extra env =
     env { _cg_recordAliases = Set.union extra (_cg_recordAliases env) }
+
+
+-- | Extend the union-name set with dep-module qualified union names.
+-- Used so safeReturnType can recognise types like "Sky_Core_Error_Error"
+-- as Sky-defined ADTs (which have `type X = rt.SkyADT` aliases emitted)
+-- vs FFI-opaque names like "Bufio_Scanner" (no Go alias, falls back to any).
+withUnionNames :: Set.Set String -> CodegenEnv -> CodegenEnv
+withUnionNames extra env =
+    env { _cg_unionNames = Set.union extra (_cg_unionNames env) }
 
 
 -- | Extend the function-arity map with dep-module qualified names.
