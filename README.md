@@ -43,6 +43,63 @@ The compiler is written in **Haskell** (GHC 9.4+). It handles parsing, Hindley-M
 
 See [docs/compiler/journey.md](docs/compiler/journey.md) for the full compiler history.
 
+## What's in the box
+
+Sky is **batteries-included**. Three killer modules cover the common needs of any modern web app — no plugins, no separate services, no `npm install`:
+
+### Sky.Live — server-driven UI
+
+The Elm Architecture, but the server is authoritative. No client framework, no JSON API contracts, no bundler. Browser runs ~2 KB of JS for DOM diffing + SSE — that's it.
+
+```elm
+type Msg = Increment | Decrement
+
+update msg model =
+    case msg of
+        Increment -> ( { model | count = model.count + 1 }, Cmd.none )
+        Decrement -> ( { model | count = model.count - 1 }, Cmd.none )
+
+view model =
+    div []
+        [ button [ onClick Increment ] [ text "+" ]
+        , span [] [ text (String.fromInt model.count) ]
+        , button [ onClick Decrement ] [ text "-" ]
+        ]
+```
+
+Full TEA loop with `init / update / view / subscriptions`, async work via `Cmd.perform`, persistent sessions across deploys (memory / SQLite / Redis / Postgres / Firestore). See [Sky.Live overview](docs/skylive/overview.md).
+
+### Std.Auth — authentication, in the box
+
+bcrypt password hashing, HMAC-SHA256 JWTs, plus optional DB-backed `register` / `login` that creates the users table for you. No `passport`, no `bcryptjs`, no auth microservice.
+
+```elm
+Auth.register db "alice@example.com" password
+    |> Task.andThen (\uid -> Auth.signToken secret { sub = uid } 86400)
+    |> Task.fromResult
+```
+
+Production-grade defaults: minimum-32-byte secret enforcement, constant-time password compare, configurable bcrypt cost, rate-limit-friendly. See [Sky.Auth overview](docs/skyauth/overview.md).
+
+### Std.Db — one API for SQLite + Postgres
+
+Parameter-safe queries, transactions, conventional CRUD helpers (`insertRow` / `getById` / `updateById` / `deleteById`), row decoders. Switch driver in `sky.toml`; never touch it again in your code.
+
+```elm
+Db.withTransaction db (\tx ->
+    Db.exec tx "UPDATE accounts SET balance = balance - ? WHERE id = ?" [ amount, fromId ]
+        |> Task.andThen (\_ ->
+            Db.exec tx "UPDATE accounts SET balance = balance + ? WHERE id = ?" [ amount, toId ]
+        )
+)
+```
+
+See [Std.Db overview](docs/skydb/overview.md).
+
+### Plus the rest of the stdlib
+
+Crypto, JSON, HTTP client/server, file I/O, time, regex, encoding (base64 / hex / URL), structured logging, UUIDs, async tasks, parallel execution. See [Standard library reference](docs/stdlib.md) for the full surface.
+
 ## Quick start
 
 ```bash
@@ -97,6 +154,9 @@ nix develop            # GHC 9.4.8 + Go + every system dep, sandboxed
 | Go FFI interop                       | [docs/ffi/go-interop.md](docs/ffi/go-interop.md)                       |
 | FFI design                           | [docs/ffi/ffi-design.md](docs/ffi/ffi-design.md)                       |
 | Error system                         | [docs/errors/error-system.md](docs/errors/error-system.md)             |
+| **Standard library reference**       | [docs/stdlib.md](docs/stdlib.md)                                       |
+| **Sky.Auth overview**                | [docs/skyauth/overview.md](docs/skyauth/overview.md)                   |
+| **Std.Db overview**                  | [docs/skydb/overview.md](docs/skydb/overview.md)                       |
 | Sky.Live overview                    | [docs/skylive/overview.md](docs/skylive/overview.md)                   |
 | Sky.Live architecture                | [docs/skylive/architecture.md](docs/skylive/architecture.md)           |
 | Compiler architecture                | [docs/compiler/architecture.md](docs/compiler/architecture.md)         |

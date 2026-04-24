@@ -702,6 +702,8 @@ See `examples/12-skyvote` for the canonical end-to-end reference.
 
 ## Standard Library — Complete API
 
+> User-facing reference (with examples and explanations) lives in the upstream project at [github.com/anzellai/sky/blob/main/docs/stdlib.md](https://github.com/anzellai/sky/blob/main/docs/stdlib.md). The tables below are the dense AI-targeted version — same surface, no narrative.
+
 ### Sky.Core.Prelude (auto-imported)
 
 ```elm
@@ -2687,6 +2689,8 @@ Resolution precedence: local `src/` > `.skydeps/` > stdlib. Local modules shadow
 
 ## Std.Db — Database Abstraction
 
+> User-facing overview (with worked CRUD + transaction examples) at [docs/skydb/overview.md](https://github.com/anzellai/sky/blob/main/docs/skydb/overview.md).
+
 ```elm
 import Std.Db as Db
 import Modernc.Org.Sqlite as _   -- driver import needed for SQLite
@@ -2725,6 +2729,8 @@ Db.withTransaction conn (\tx ->
 ```
 
 ## Std.Auth — Authentication
+
+> User-facing overview (with register / login / protected-route walkthrough + production checklist) at [docs/skyauth/overview.md](https://github.com/anzellai/sky/blob/main/docs/skyauth/overview.md).
 
 ```elm
 import Std.Auth as Auth

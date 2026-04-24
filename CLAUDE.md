@@ -235,6 +235,16 @@ See `docs/compiler/journey.md` for the TS → Go → Sky → Haskell history.
 
 When stdlib, syntax, Sky.Live APIs, or CLI commands change, **`templates/CLAUDE.md` MUST be updated**. AI assistants use this template to write Sky code in user projects.
 
+**User-facing doc sync** — these files mirror the same surface from a user (not AI) perspective and MUST be updated in the same commit when the underlying API changes:
+
+- **`docs/stdlib.md`** — comprehensive user-facing stdlib reference. When you add / rename / remove a function in any kernel module, update the matching table here.
+- **`docs/skyauth/overview.md`** — when `Std.Auth` surface or config changes (`hashPassword`, `signToken`, `register`, `login`, `setRole`, `[auth]` keys, env vars).
+- **`docs/skydb/overview.md`** — when `Std.Db` surface or config changes (`open`, `query`, `withTransaction`, CRUD helpers, `[database]` keys, env vars).
+- **`docs/skylive/overview.md`** + **`docs/skylive/architecture.md`** — when Sky.Live runtime, `Live.app` shape, session-store options, or `[live]` env vars change.
+- **`README.md` "What's in the box" section** — if you add a brand-new killer module (top-level `Std.Foo`), add a callout there.
+
+The dense reference inside CLAUDE.md (this file, "Standard Library" section) and `templates/CLAUDE.md` is for AI; the `docs/*` files are for humans. Keep both in lockstep.
+
 ## Building Examples
 
 **NEVER run `sky build` for examples from the repo root** — it overwrites the compiler binary in `sky-out/`. Always `cd` into the example directory first:
