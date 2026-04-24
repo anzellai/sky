@@ -45,28 +45,33 @@ func init() {
 	_ = loadDotEnvFile(".env", false)
 }
 
-// Process_loadEnv: explicit loader. Returns Ok(()) on success, Err(msg) on I/O
+// Process_loadEnv: explicit loader. Task-shaped per the
+// Task-everywhere doctrine — file I/O thunked so it defers to
+// Cmd.perform / Task.run. Returns Ok(()) on success, Err on I/O
 // failure. `override = false` by default (matches godotenv semantics).
 func Process_loadEnv(path any) any {
-	// Audit P3-4: path must be a String. Non-string input is a
-	// caller bug, not a display value — return typed Err rather
-	// than %v-stringifying a Maybe/Dict/Int into a filename.
-	p := ""
-	if path != nil {
-		s, ok := path.(string)
-		if !ok {
-			return Err[any, any](ErrInvalidInput(
-				fmt.Sprintf("loadEnv: path must be a String, got %T", path)))
+	captured := path
+	return func() any {
+		// Audit P3-4: path must be a String. Non-string input is a
+		// caller bug, not a display value — return typed Err rather
+		// than %v-stringifying a Maybe/Dict/Int into a filename.
+		p := ""
+		if captured != nil {
+			s, ok := captured.(string)
+			if !ok {
+				return Err[any, any](ErrInvalidInput(
+					fmt.Sprintf("loadEnv: path must be a String, got %T", captured)))
+			}
+			p = s
 		}
-		p = s
+		if p == "" {
+			p = ".env"
+		}
+		if err := loadDotEnvFile(p, false); err != nil {
+			return Err[any, any](ErrFfi(err.Error()))
+		}
+		return Ok[any, any](nil)
 	}
-	if p == "" {
-		p = ".env"
-	}
-	if err := loadDotEnvFile(p, false); err != nil {
-		return Err[any, any](ErrFfi(err.Error()))
-	}
-	return Ok[any, any](nil)
 }
 
 func loadDotEnvFile(path string, override bool) error {

@@ -59,7 +59,10 @@ func asOkList(t *testing.T, v any) []any {
 func TestFindOneByField_HonestQueryReturnsJust(t *testing.T) {
 	db := openTestDb(t)
 	defer db.conn.Close()
-	res := Db_findOneByField(db, "users", "email", "alice@example.com")
+	// Db_findOneByField is Task-shaped post-Task-everywhere migration —
+	// returns a `func() any` thunk; force via AnyTaskRun to get the
+	// SkyResult the test asserts on.
+	res := AnyTaskRun(Db_findOneByField(db, "users", "email", "alice@example.com"))
 	sr := res.(SkyResult[any, any])
 	if sr.Tag != 0 {
 		t.Fatalf("unexpected Err: %v", sr.ErrValue)
@@ -76,7 +79,7 @@ func TestFindOneByField_HonestQueryReturnsJust(t *testing.T) {
 func TestFindOneByField_MissingReturnsNothing(t *testing.T) {
 	db := openTestDb(t)
 	defer db.conn.Close()
-	res := Db_findOneByField(db, "users", "email", "ghost@example.com")
+	res := AnyTaskRun(Db_findOneByField(db, "users", "email", "ghost@example.com"))
 	sr := res.(SkyResult[any, any])
 	if sr.Tag != 0 {
 		t.Fatalf("unexpected Err: %v", sr.ErrValue)
@@ -96,7 +99,7 @@ func TestFindOneByField_SqliValueIsParameterised(t *testing.T) {
 	db := openTestDb(t)
 	defer db.conn.Close()
 	payload := "alice@example.com' OR 1=1 -- "
-	res := Db_findOneByField(db, "users", "email", payload)
+	res := AnyTaskRun(Db_findOneByField(db, "users", "email", payload))
 	sr := res.(SkyResult[any, any])
 	if sr.Tag != 0 {
 		t.Fatalf("SQLi payload in value: should succeed with Nothing, got Err %v", sr.ErrValue)
@@ -113,7 +116,7 @@ func TestFindOneByField_RejectsMaliciousColumnName(t *testing.T) {
 	// not a successful injection.
 	db := openTestDb(t)
 	defer db.conn.Close()
-	res := Db_findOneByField(db, "users", "email; DROP TABLE users--", "x")
+	res := AnyTaskRun(Db_findOneByField(db, "users", "email; DROP TABLE users--", "x"))
 	sr := res.(SkyResult[any, any])
 	if sr.Tag != 1 {
 		t.Fatal("malicious column name should produce Err, not silent success")
@@ -123,7 +126,7 @@ func TestFindOneByField_RejectsMaliciousColumnName(t *testing.T) {
 func TestFindManyByField_ReturnsMatchingRows(t *testing.T) {
 	db := openTestDb(t)
 	defer db.conn.Close()
-	res := Db_findManyByField(db, "users", "role", "member")
+	res := AnyTaskRun(Db_findManyByField(db, "users", "role", "member"))
 	xs := asOkList(t, res)
 	if len(xs) != 2 {
 		t.Fatalf("expected 2 members, got %d", len(xs))
@@ -133,8 +136,8 @@ func TestFindManyByField_ReturnsMatchingRows(t *testing.T) {
 func TestFindByConditions_MultipleFieldsAnded(t *testing.T) {
 	db := openTestDb(t)
 	defer db.conn.Close()
-	res := Db_findByConditions(db, "users",
-		map[string]any{"email": "bob@example.com", "role": "member"})
+	res := AnyTaskRun(Db_findByConditions(db, "users",
+		map[string]any{"email": "bob@example.com", "role": "member"}))
 	xs := asOkList(t, res)
 	if len(xs) != 1 {
 		t.Fatalf("expected 1 row for (bob + member), got %d", len(xs))
@@ -144,7 +147,7 @@ func TestFindByConditions_MultipleFieldsAnded(t *testing.T) {
 func TestFindByConditions_EmptyMeansSelectAll(t *testing.T) {
 	db := openTestDb(t)
 	defer db.conn.Close()
-	res := Db_findByConditions(db, "users", map[string]any{})
+	res := AnyTaskRun(Db_findByConditions(db, "users", map[string]any{}))
 	xs := asOkList(t, res)
 	if len(xs) != 3 {
 		t.Fatalf("empty conditions should return all rows, got %d", len(xs))
@@ -154,8 +157,8 @@ func TestFindByConditions_EmptyMeansSelectAll(t *testing.T) {
 func TestFindByConditions_RejectsMaliciousColumn(t *testing.T) {
 	db := openTestDb(t)
 	defer db.conn.Close()
-	res := Db_findByConditions(db, "users",
-		map[string]any{"role; DROP TABLE users--": "any"})
+	res := AnyTaskRun(Db_findByConditions(db, "users",
+		map[string]any{"role; DROP TABLE users--": "any"}))
 	sr := res.(SkyResult[any, any])
 	if sr.Tag != 1 {
 		t.Fatal("malicious column name in conditions should produce Err")

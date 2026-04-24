@@ -207,16 +207,22 @@ func Db_execRaw(db any, query any) any {
 	return Db_exec(db, query, []any{})
 }
 
-// Db.close : Db -> Result String ()
+// Db.close : Db -> Task Error ()
+// Task-shaped per the Task-everywhere doctrine. Body wrapped in
+// `func() any` thunk so the .Close() call defers to the
+// Cmd.perform / Task.run boundary like the rest of Db.*.
 func Db_close(db any) any {
-	d, ok := db.(*SkyDb)
-	if !ok {
-		return Err[any, any](ErrInvalidInput("db.close: not a Db"))
+	captured := db
+	return func() any {
+		d, ok := captured.(*SkyDb)
+		if !ok {
+			return Err[any, any](ErrInvalidInput("db.close: not a Db"))
+		}
+		if err := d.conn.Close(); err != nil {
+			return Err[any, any](ErrFfi(err.Error()))
+		}
+		return Ok[any, any](struct{}{})
 	}
-	if err := d.conn.Close(); err != nil {
-		return Err[any, any](ErrFfi(err.Error()))
-	}
-	return Ok[any, any](struct{}{})
 }
 
 // Db.exec : Db -> String -> List any -> Task Error Int
@@ -295,156 +301,178 @@ func Db_query(db any, query any, args any) any {
 	}
 }
 
-// Db.queryDecode : Db -> String -> List any -> JsonDecoder a -> Result String (List a)
-// Runs a query then decodes each row as a JSON-ish object.
+// Db.queryDecode : Db -> String -> List any -> JsonDecoder a -> Task Error (List a)
+// Runs a query then decodes each row as a JSON-ish object. Task-shaped
+// per the Task-everywhere doctrine; forces the inner Db_query thunk
+// inside the outer thunk so the SELECT and the decode happen
+// together at the Cmd.perform / Task.run boundary.
 func Db_queryDecode(db any, query any, args any, decoder any) any {
-	resp := Db_query(db, query, args)
-	r, ok := resp.(SkyResult[any, any])
-	if !ok || r.Tag != 0 {
-		return resp
-	}
-	rows := r.OkValue.([]any)
-	d, isDec := decoder.(JsonDecoder)
-	if !isDec {
-		return Ok[any, any](rows)
-	}
-	out := make([]any, 0, len(rows))
-	for _, row := range rows {
-		result := d.run(row)
-		sr, ok := result.(SkyResult[any, any])
-		if !ok {
-			return Err[any, any](ErrDecode("decode error"))
+	capDb, capQ, capArgs, capDec := db, query, args, decoder
+	return func() any {
+		resp := AnyTaskRun(Db_query(capDb, capQ, capArgs))
+		r, ok := resp.(SkyResult[any, any])
+		if !ok || r.Tag != 0 {
+			return resp
 		}
-		if sr.Tag != 0 {
-			return result
+		rows := r.OkValue.([]any)
+		d, isDec := capDec.(JsonDecoder)
+		if !isDec {
+			return Ok[any, any](rows)
 		}
-		out = append(out, sr.OkValue)
+		out := make([]any, 0, len(rows))
+		for _, row := range rows {
+			result := d.run(row)
+			sr, ok := result.(SkyResult[any, any])
+			if !ok {
+				return Err[any, any](ErrDecode("decode error"))
+			}
+			if sr.Tag != 0 {
+				return result
+			}
+			out = append(out, sr.OkValue)
+		}
+		return Ok[any, any](out)
 	}
-	return Ok[any, any](out)
 }
 
-// Db.insertRow : Db -> String -> Dict String any -> Result String Int
-// Returns the last-insert id.
+// Db.insertRow : Db -> String -> Dict String any -> Task Error Int
+// Returns the last-insert id. Task-shaped per the Task-everywhere
+// doctrine; thunk defers the INSERT to Cmd.perform / Task.run.
 // Table and column names are validated as plain identifiers then quoted;
 // values go through parameter placeholders. No unvalidated string interpolation.
 func Db_insertRow(db any, table any, row any) any {
-	d, ok := db.(*SkyDb)
-	if !ok {
-		return Err[any, any](ErrInvalidInput("db.insertRow: not a Db"))
-	}
-	m, ok := row.(map[string]any)
-	if !ok {
-		return Err[any, any](ErrInvalidInput("db.insertRow: row must be a Dict"))
-	}
-	qTable := safeTable(table)
-	if qTable == "" {
-		return Err[any, any](ErrInvalidInput("db.insertRow: invalid table name"))
-	}
-	var cols []string
-	var vals []any
-	for k, v := range m {
-		qc := quoteIdent(k)
-		if qc == "" {
-			return Err[any, any](ErrInvalidInput("db.insertRow: invalid column name: " + k))
+	capDb, capTable, capRow := db, table, row
+	return func() any {
+		d, ok := capDb.(*SkyDb)
+		if !ok {
+			return Err[any, any](ErrInvalidInput("db.insertRow: not a Db"))
 		}
-		cols = append(cols, qc)
-		vals = append(vals, v)
-	}
-	q := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
-		qTable, strings.Join(cols, ","), d.placeholders(len(cols)))
-	if d.driver == "pgx" {
-		// Postgres doesn't support LastInsertId — use RETURNING id
-		q += " RETURNING id"
-		var id int64
-		if err := d.conn.QueryRow(q, vals...).Scan(&id); err != nil {
+		m, ok := capRow.(map[string]any)
+		if !ok {
+			return Err[any, any](ErrInvalidInput("db.insertRow: row must be a Dict"))
+		}
+		qTable := safeTable(capTable)
+		if qTable == "" {
+			return Err[any, any](ErrInvalidInput("db.insertRow: invalid table name"))
+		}
+		var cols []string
+		var vals []any
+		for k, v := range m {
+			qc := quoteIdent(k)
+			if qc == "" {
+				return Err[any, any](ErrInvalidInput("db.insertRow: invalid column name: " + k))
+			}
+			cols = append(cols, qc)
+			vals = append(vals, v)
+		}
+		q := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
+			qTable, strings.Join(cols, ","), d.placeholders(len(cols)))
+		if d.driver == "pgx" {
+			// Postgres doesn't support LastInsertId — use RETURNING id
+			q += " RETURNING id"
+			var id int64
+			if err := d.conn.QueryRow(q, vals...).Scan(&id); err != nil {
+				return Err[any, any](ErrIo("db.insertRow: " + err.Error()))
+			}
+			return Ok[any, any](int(id))
+		}
+		res, err := d.conn.Exec(q, vals...)
+		if err != nil {
 			return Err[any, any](ErrIo("db.insertRow: " + err.Error()))
 		}
+		id, _ := res.LastInsertId()
 		return Ok[any, any](int(id))
 	}
-	res, err := d.conn.Exec(q, vals...)
-	if err != nil {
-		return Err[any, any](ErrIo("db.insertRow: " + err.Error()))
-	}
-	id, _ := res.LastInsertId()
-	return Ok[any, any](int(id))
 }
 
-// Db.getById : Db -> String -> Int -> Result String (Dict String any)
+// Db.getById : Db -> String -> Int -> Task Error (Dict String any)
+// Task-shaped; thunk wraps the SELECT + the inner Db_query forcing.
 func Db_getById(db any, table any, id any) any {
-	d, ok := db.(*SkyDb)
-	if !ok {
-		return Err[any, any](ErrInvalidInput("db.getById: not a Db"))
-	}
-	qTable := safeTable(table)
-	if qTable == "" {
-		return Err[any, any](ErrInvalidInput("db.getById: invalid table name"))
-	}
-	q := fmt.Sprintf("SELECT * FROM %s WHERE id = %s LIMIT 1", qTable, d.placeholder(1))
-	result := Db_query(db, q, []any{AsInt(id)})
-	r, ok := result.(SkyResult[any, any])
-	if !ok || r.Tag != 0 {
-		return result
-	}
-	rows := r.OkValue.([]any)
-	if len(rows) == 0 {
-		return Err[any, any](ErrNotFound())
-	}
-	return Ok[any, any](rows[0])
-}
-
-// Db.updateById : Db -> String -> Int -> Dict String any -> Result String Int
-func Db_updateById(db any, table any, id any, row any) any {
-	d, ok := db.(*SkyDb)
-	if !ok {
-		return Err[any, any](ErrInvalidInput("db.updateById: not a Db"))
-	}
-	m, ok := row.(map[string]any)
-	if !ok {
-		return Err[any, any](ErrInvalidInput("db.updateById: row must be a Dict"))
-	}
-	qTable := safeTable(table)
-	if qTable == "" {
-		return Err[any, any](ErrInvalidInput("db.updateById: invalid table name"))
-	}
-	var sets []string
-	var vals []any
-	i := 1
-	for k, v := range m {
-		qc := quoteIdent(k)
-		if qc == "" {
-			return Err[any, any](ErrInvalidInput("db.updateById: invalid column name: " + k))
+	capDb, capTable, capId := db, table, id
+	return func() any {
+		d, ok := capDb.(*SkyDb)
+		if !ok {
+			return Err[any, any](ErrInvalidInput("db.getById: not a Db"))
 		}
-		sets = append(sets, qc+" = "+d.placeholder(i))
-		vals = append(vals, v)
-		i++
+		qTable := safeTable(capTable)
+		if qTable == "" {
+			return Err[any, any](ErrInvalidInput("db.getById: invalid table name"))
+		}
+		q := fmt.Sprintf("SELECT * FROM %s WHERE id = %s LIMIT 1", qTable, d.placeholder(1))
+		result := AnyTaskRun(Db_query(capDb, q, []any{AsInt(capId)}))
+		r, ok := result.(SkyResult[any, any])
+		if !ok || r.Tag != 0 {
+			return result
+		}
+		rows := r.OkValue.([]any)
+		if len(rows) == 0 {
+			return Err[any, any](ErrNotFound())
+		}
+		return Ok[any, any](rows[0])
 	}
-	vals = append(vals, AsInt(id))
-	q := fmt.Sprintf("UPDATE %s SET %s WHERE id = %s", qTable, strings.Join(sets, ","), d.placeholder(i))
-	res, err := d.conn.Exec(q, vals...)
-	if err != nil {
-		return Err[any, any](ErrIo("db.updateById: " + err.Error()))
-	}
-	n, _ := res.RowsAffected()
-	return Ok[any, any](int(n))
 }
 
-// Db.deleteById : Db -> String -> Int -> Result String Int
+// Db.updateById : Db -> String -> Int -> Dict String any -> Task Error Int
+// Task-shaped; thunk defers the UPDATE to the Cmd.perform boundary.
+func Db_updateById(db any, table any, id any, row any) any {
+	capDb, capTable, capId, capRow := db, table, id, row
+	return func() any {
+		d, ok := capDb.(*SkyDb)
+		if !ok {
+			return Err[any, any](ErrInvalidInput("db.updateById: not a Db"))
+		}
+		m, ok := capRow.(map[string]any)
+		if !ok {
+			return Err[any, any](ErrInvalidInput("db.updateById: row must be a Dict"))
+		}
+		qTable := safeTable(capTable)
+		if qTable == "" {
+			return Err[any, any](ErrInvalidInput("db.updateById: invalid table name"))
+		}
+		var sets []string
+		var vals []any
+		i := 1
+		for k, v := range m {
+			qc := quoteIdent(k)
+			if qc == "" {
+				return Err[any, any](ErrInvalidInput("db.updateById: invalid column name: " + k))
+			}
+			sets = append(sets, qc+" = "+d.placeholder(i))
+			vals = append(vals, v)
+			i++
+		}
+		vals = append(vals, AsInt(capId))
+		q := fmt.Sprintf("UPDATE %s SET %s WHERE id = %s", qTable, strings.Join(sets, ","), d.placeholder(i))
+		res, err := d.conn.Exec(q, vals...)
+		if err != nil {
+			return Err[any, any](ErrIo("db.updateById: " + err.Error()))
+		}
+		n, _ := res.RowsAffected()
+		return Ok[any, any](int(n))
+	}
+}
+
+// Db.deleteById : Db -> String -> Int -> Task Error Int
+// Task-shaped; thunk defers the DELETE to the Cmd.perform boundary.
 func Db_deleteById(db any, table any, id any) any {
-	d, ok := db.(*SkyDb)
-	if !ok {
-		return Err[any, any](ErrInvalidInput("db.deleteById: not a Db"))
+	capDb, capTable, capId := db, table, id
+	return func() any {
+		d, ok := capDb.(*SkyDb)
+		if !ok {
+			return Err[any, any](ErrInvalidInput("db.deleteById: not a Db"))
+		}
+		qTable := safeTable(capTable)
+		if qTable == "" {
+			return Err[any, any](ErrInvalidInput("db.deleteById: invalid table name"))
+		}
+		q := fmt.Sprintf("DELETE FROM %s WHERE id = %s", qTable, d.placeholder(1))
+		res, err := d.conn.Exec(q, AsInt(capId))
+		if err != nil {
+			return Err[any, any](ErrIo("db.deleteById: " + err.Error()))
+		}
+		n, _ := res.RowsAffected()
+		return Ok[any, any](int(n))
 	}
-	qTable := safeTable(table)
-	if qTable == "" {
-		return Err[any, any](ErrInvalidInput("db.deleteById: invalid table name"))
-	}
-	q := fmt.Sprintf("DELETE FROM %s WHERE id = %s", qTable, d.placeholder(1))
-	res, err := d.conn.Exec(q, AsInt(id))
-	if err != nil {
-		return Err[any, any](ErrIo("db.deleteById: " + err.Error()))
-	}
-	n, _ := res.RowsAffected()
-	return Ok[any, any](int(n))
 }
 
 // Db.findWhere — audit P1-3: renamed to Db_unsafeFindWhere at the Sky
@@ -473,37 +501,42 @@ func Db_unsafeFindWhere(db any, table any, whereClause any, args any) any {
 	return Db_query(db, q, args)
 }
 
-// Db.findOneByField : Db -> String -> String -> any -> Result Error (Maybe Row)
+// Db.findOneByField : Db -> String -> String -> any -> Task Error (Maybe Row)
 // Returns the first row where `field = value`. Table and column names
 // go through safeTable / quoteIdent — unsafe characters reject; the
 // value is always bound as a SQL parameter. Audit P1-3.
+// Task-shaped per the Task-everywhere doctrine; thunk wraps the
+// SELECT + the inner Db_query forcing.
 func Db_findOneByField(db any, table any, field any, value any) any {
-	d, ok := db.(*SkyDb)
-	if !ok {
-		return Err[any, any](ErrInvalidInput("db.findOneByField: not a Db"))
+	capDb, capTable, capField, capValue := db, table, field, value
+	return func() any {
+		d, ok := capDb.(*SkyDb)
+		if !ok {
+			return Err[any, any](ErrInvalidInput("db.findOneByField: not a Db"))
+		}
+		qTable := safeTable(capTable)
+		if qTable == "" {
+			return Err[any, any](ErrInvalidInput("db.findOneByField: invalid table name"))
+		}
+		qField := quoteIdent(fmt.Sprintf("%v", capField))
+		if qField == "" {
+			return Err[any, any](ErrInvalidInput("db.findOneByField: invalid column name"))
+		}
+		q := fmt.Sprintf("SELECT * FROM %s WHERE %s = %s LIMIT 1", qTable, qField, d.placeholder(1))
+		res := AnyTaskRun(Db_query(capDb, q, []any{capValue}))
+		sr, ok := res.(SkyResult[any, any])
+		if !ok || sr.Tag != 0 {
+			return res
+		}
+		rows, ok := sr.OkValue.([]any)
+		if !ok {
+			return Err[any, any](ErrIo("db.findOneByField: unexpected result shape"))
+		}
+		if len(rows) == 0 {
+			return Ok[any, any](Nothing[any]())
+		}
+		return Ok[any, any](Just[any](rows[0]))
 	}
-	qTable := safeTable(table)
-	if qTable == "" {
-		return Err[any, any](ErrInvalidInput("db.findOneByField: invalid table name"))
-	}
-	qField := quoteIdent(fmt.Sprintf("%v", field))
-	if qField == "" {
-		return Err[any, any](ErrInvalidInput("db.findOneByField: invalid column name"))
-	}
-	q := fmt.Sprintf("SELECT * FROM %s WHERE %s = %s LIMIT 1", qTable, qField, d.placeholder(1))
-	res := Db_query(db, q, []any{value})
-	sr, ok := res.(SkyResult[any, any])
-	if !ok || sr.Tag != 0 {
-		return res
-	}
-	rows, ok := sr.OkValue.([]any)
-	if !ok {
-		return Err[any, any](ErrIo("db.findOneByField: unexpected result shape"))
-	}
-	if len(rows) == 0 {
-		return Ok[any, any](Nothing[any]())
-	}
-	return Ok[any, any](Just[any](rows[0]))
 }
 
 // Db.findManyByField : Db -> String -> String -> any -> Result Error (List Row)
@@ -565,32 +598,39 @@ func Db_findByConditions(db any, table any, conditions any) any {
 	return Db_query(db, q, args)
 }
 
-// Db.withTransaction : Db -> (Db -> Result String a) -> Result String a
+// Db.withTransaction : Db -> (Db -> Task Error a) -> Task Error a
+// Task-shaped per the Task-everywhere doctrine. The body callback
+// is now Task-typed (was Result-typed pre-migration); we force its
+// thunk inside the outer thunk via AnyTaskRun, then commit on Ok or
+// roll back on Err.
 func Db_withTransaction(db any, body any) any {
-	d, ok := db.(*SkyDb)
-	if !ok {
-		return Err[any, any](ErrInvalidInput("db.withTransaction: not a Db"))
-	}
-	tx, err := d.conn.Begin()
-	if err != nil {
-		return Err[any, any](ErrFfi("tx begin: " + err.Error()))
-	}
-	// We don't have a separate tx handle type yet — pass the db. The semantics
-	// are conservative: if body returns Err, roll back. Otherwise commit.
-	fn, ok := body.(func(any) any)
-	if !ok {
-		tx.Rollback()
-		return Err[any, any](ErrInvalidInput("withTransaction: body is not a function"))
-	}
-	result := fn(db)
-	if sr, ok := result.(SkyResult[any, any]); ok && sr.Tag == 0 {
-		if err := tx.Commit(); err != nil {
-			return Err[any, any](ErrFfi("tx commit: " + err.Error()))
+	capDb, capBody := db, body
+	return func() any {
+		d, ok := capDb.(*SkyDb)
+		if !ok {
+			return Err[any, any](ErrInvalidInput("db.withTransaction: not a Db"))
 		}
+		tx, err := d.conn.Begin()
+		if err != nil {
+			return Err[any, any](ErrFfi("tx begin: " + err.Error()))
+		}
+		// We don't have a separate tx handle type yet — pass the db. The semantics
+		// are conservative: if body returns Err, roll back. Otherwise commit.
+		fn, ok := capBody.(func(any) any)
+		if !ok {
+			tx.Rollback()
+			return Err[any, any](ErrInvalidInput("withTransaction: body is not a function"))
+		}
+		result := AnyTaskRun(fn(capDb))
+		if sr, ok := result.(SkyResult[any, any]); ok && sr.Tag == 0 {
+			if err := tx.Commit(); err != nil {
+				return Err[any, any](ErrFfi("tx commit: " + err.Error()))
+			}
+			return result
+		}
+		tx.Rollback()
 		return result
 	}
-	tx.Rollback()
-	return result
 }
 
 // normaliseSqlValue unwraps driver values like []byte → string, etc.
@@ -791,56 +831,62 @@ func Auth_verifyToken(secret any, token any) any {
 	return Ok[any, any](out)
 }
 
-// Auth.register : Db -> String -> String -> Result String Int
-// Creates a users table if missing, hashes password, inserts user. Returns new user id.
+// Auth.register : Db -> String -> String -> Task Error Int
+// Creates a users table if missing, hashes password, inserts user.
+// Returns new user id. Task-shaped per the Task-everywhere doctrine
+// — wraps the whole "schema + hash + insert" atomic operation in
+// a thunk for Cmd.perform / Task.run dispatch.
 func Auth_register(db any, email any, password any) any {
-	d, ok := db.(*SkyDb)
-	if !ok {
-		return Err[any, any](ErrInvalidInput("auth.register: not a Db"))
-	}
-	// Use portable schema — `SERIAL`/`AUTOINCREMENT` varies, so use lowest
-	// common denominator and let each DB handle sequence.
-	schema := `CREATE TABLE IF NOT EXISTS users (
-		id ` + autoIdColumn(d.driver) + `,
-		email TEXT UNIQUE NOT NULL,
-		password_hash TEXT NOT NULL,
-		role TEXT DEFAULT 'user',
-		created_at BIGINT NOT NULL
-	)`
-	if _, err := d.conn.Exec(schema); err != nil {
-		return Err[any, any](ErrFfi("auth.register create: " + err.Error()))
-	}
-	hashResult := Auth_hashPassword(password)
-	hr, ok := hashResult.(SkyResult[any, any])
-	if !ok || hr.Tag != 0 {
-		return hashResult
-	}
-	q := fmt.Sprintf(
-		"INSERT INTO users (email, password_hash, created_at) VALUES (%s, %s, %s)",
-		d.placeholder(1), d.placeholder(2), d.placeholder(3),
-	)
-	if d.driver == "pgx" {
-		q += " RETURNING id"
-		var id int64
-		if err := d.conn.QueryRow(q,
-			fmt.Sprintf("%v", email),
+	capDb, capEmail, capPw := db, email, password
+	return func() any {
+		d, ok := capDb.(*SkyDb)
+		if !ok {
+			return Err[any, any](ErrInvalidInput("auth.register: not a Db"))
+		}
+		// Use portable schema — `SERIAL`/`AUTOINCREMENT` varies, so use lowest
+		// common denominator and let each DB handle sequence.
+		schema := `CREATE TABLE IF NOT EXISTS users (
+			id ` + autoIdColumn(d.driver) + `,
+			email TEXT UNIQUE NOT NULL,
+			password_hash TEXT NOT NULL,
+			role TEXT DEFAULT 'user',
+			created_at BIGINT NOT NULL
+		)`
+		if _, err := d.conn.Exec(schema); err != nil {
+			return Err[any, any](ErrFfi("auth.register create: " + err.Error()))
+		}
+		hashResult := Auth_hashPassword(capPw)
+		hr, ok := hashResult.(SkyResult[any, any])
+		if !ok || hr.Tag != 0 {
+			return hashResult
+		}
+		q := fmt.Sprintf(
+			"INSERT INTO users (email, password_hash, created_at) VALUES (%s, %s, %s)",
+			d.placeholder(1), d.placeholder(2), d.placeholder(3),
+		)
+		if d.driver == "pgx" {
+			q += " RETURNING id"
+			var id int64
+			if err := d.conn.QueryRow(q,
+				fmt.Sprintf("%v", capEmail),
+				hr.OkValue,
+				time.Now().Unix(),
+			).Scan(&id); err != nil {
+				return Err[any, any](ErrFfi("auth.register: " + err.Error()))
+			}
+			return Ok[any, any](int(id))
+		}
+		res, err := d.conn.Exec(q,
+			fmt.Sprintf("%v", capEmail),
 			hr.OkValue,
 			time.Now().Unix(),
-		).Scan(&id); err != nil {
+		)
+		if err != nil {
 			return Err[any, any](ErrFfi("auth.register: " + err.Error()))
 		}
+		id, _ := res.LastInsertId()
 		return Ok[any, any](int(id))
 	}
-	res, err := d.conn.Exec(q,
-		fmt.Sprintf("%v", email),
-		hr.OkValue,
-		time.Now().Unix(),
-	)
-	if err != nil {
-		return Err[any, any](ErrFfi("auth.register: " + err.Error()))
-	}
-	id, _ := res.LastInsertId()
-	return Ok[any, any](int(id))
 }
 
 func autoIdColumn(driver string) string {
@@ -850,34 +896,40 @@ func autoIdColumn(driver string) string {
 	return "INTEGER PRIMARY KEY AUTOINCREMENT"
 }
 
-// Auth.login : Db -> String -> String -> Result String (Dict String any)
-// Returns user row on success.
+// Auth.login : Db -> String -> String -> Task Error (Dict String any)
+// Returns user row on success. Task-shaped per the Task-everywhere
+// doctrine.
 func Auth_login(db any, email any, password any) any {
-	d, ok := db.(*SkyDb)
-	if !ok {
-		return Err[any, any](ErrInvalidInput("auth.login: not a Db"))
+	capDb, capEmail, capPw := db, email, password
+	return func() any {
+		d, ok := capDb.(*SkyDb)
+		if !ok {
+			return Err[any, any](ErrInvalidInput("auth.login: not a Db"))
+		}
+		row := d.conn.QueryRow(
+			fmt.Sprintf("SELECT id, email, password_hash, role FROM users WHERE email = %s", d.placeholder(1)),
+			fmt.Sprintf("%v", capEmail),
+		)
+		var id int
+		var em, hash, role string
+		if err := row.Scan(&id, &em, &hash, &role); err != nil {
+			return Err[any, any](ErrFfi("auth.login: " + err.Error()))
+		}
+		ok2 := Auth_verifyPassword(capPw, hash)
+		if b, isB := ok2.(bool); !isB || !b {
+			return Err[any, any](ErrPermissionDenied("auth.login: invalid credentials"))
+		}
+		return Ok[any, any](map[string]any{
+			"id":    id,
+			"email": em,
+			"role":  role,
+		})
 	}
-	row := d.conn.QueryRow(
-		fmt.Sprintf("SELECT id, email, password_hash, role FROM users WHERE email = %s", d.placeholder(1)),
-		fmt.Sprintf("%v", email),
-	)
-	var id int
-	var em, hash, role string
-	if err := row.Scan(&id, &em, &hash, &role); err != nil {
-		return Err[any, any](ErrFfi("auth.login: " + err.Error()))
-	}
-	ok2 := Auth_verifyPassword(password, hash)
-	if b, isB := ok2.(bool); !isB || !b {
-		return Err[any, any](ErrPermissionDenied("auth.login: invalid credentials"))
-	}
-	return Ok[any, any](map[string]any{
-		"id":    id,
-		"email": em,
-		"role":  role,
-	})
 }
 
-// Auth.setRole : Db -> Int -> String -> Result String Int
+// Auth.setRole : Db -> Int -> String -> Task Error Int
+// Just delegates to the now-thunked Db_updateById, so this returns a
+// Task thunk by transitivity.
 func Auth_setRole(db any, userId any, role any) any {
 	return Db_updateById(db, "users", userId, map[string]any{"role": fmt.Sprintf("%v", role)})
 }

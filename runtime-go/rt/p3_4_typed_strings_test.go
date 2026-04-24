@@ -13,13 +13,16 @@ import (
 )
 
 
+// p34IsErr / okValue handle both legacy eager Result returns and the
+// new Task-everywhere thunk returns by routing through AnyTaskRun
+// (which forces thunks and passes Results through).
 func p34IsErr(r any) bool {
-	sr, ok := r.(SkyResult[any, any])
+	sr, ok := AnyTaskRun(r).(SkyResult[any, any])
 	return ok && sr.Tag == 1
 }
 
 func okValue(r any) any {
-	sr, _ := r.(SkyResult[any, any])
+	sr, _ := AnyTaskRun(r).(SkyResult[any, any])
 	return sr.OkValue
 }
 

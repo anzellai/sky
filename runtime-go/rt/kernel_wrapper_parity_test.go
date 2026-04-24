@@ -191,20 +191,21 @@ func TestParity_ServerExtractors_Maybe(t *testing.T) {
 
 // ── Result-returning kernels ────────────────────────────────────────
 
-func TestParity_OsGetenv_Result(t *testing.T) {
-	// Os.getenv : String -> Result Error String
-	if !isResultShape(Os_getenv("PATH")) {
-		t.Errorf("Os_getenv(set): kernel says Result Error String")
+func TestParity_OsGetenv_Task(t *testing.T) {
+	// Os.getenv : String -> Task Error String (Task-everywhere
+	// migration 2026-04-24+). Returns a `func() any` thunk.
+	if !isTaskShape(Os_getenv("PATH")) {
+		t.Errorf("Os_getenv(set): kernel says Task Error String")
 	}
-	if !isResultShape(Os_getenv("___SKY_NEVER_SET___")) {
-		t.Errorf("Os_getenv(unset): kernel says Result Error String")
+	if !isTaskShape(Os_getenv("___SKY_NEVER_SET___")) {
+		t.Errorf("Os_getenv(unset): kernel says Task Error String")
 	}
 }
 
-func TestParity_OsCwd_Result(t *testing.T) {
-	// Os.cwd : () -> Result Error String
-	if !isResultShape(Os_cwd(nil)) {
-		t.Errorf("Os_cwd: kernel says Result Error String")
+func TestParity_OsCwd_Task(t *testing.T) {
+	// Os.cwd : () -> Task Error String
+	if !isTaskShape(Os_cwd(nil)) {
+		t.Errorf("Os_cwd: kernel says Task Error String")
 	}
 }
 
