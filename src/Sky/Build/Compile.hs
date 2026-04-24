@@ -1595,6 +1595,11 @@ generateGoMulti canMod srcMod config solvedTypes depDecls depRecAliases depUnion
                 ++ tomlLiveEnv "SKY_AUTH_DRIVER"     (Toml._authDriver    config)
                 ++ tomlLiveEnv "SKY_DB_DRIVER"       (Toml._dbDriver      config)
                 ++ tomlLiveEnv "SKY_DB_PATH"         (Toml._dbPath        config)
+                -- [log] defaults: format (plain/json) + level
+                -- (debug/info/warn/error). SKY_LOG_FORMAT and
+                -- SKY_LOG_LEVEL still override at runtime.
+                ++ tomlLiveEnv "SKY_LOG_FORMAT"      (Toml._logFormat     config)
+                ++ tomlLiveEnv "SKY_LOG_LEVEL"       (Toml._logLevel      config)
                 ++ "}"
             ]
         portDefault = liveDefaults  -- preserve historical name for downstream splices
@@ -3626,6 +3631,12 @@ genericParams modName funcName = case (modName, funcName) of
     ("List", "map")      -> "[any, any]"
     ("List", "filter")   -> "[any]"
     ("List", "foldl")    -> "[any, any]"
+    -- Basics.identity is `func[T any](x T) T` in the runtime — when
+    -- referenced as a value (e.g. passed to `List.filterMap identity`)
+    -- Go demands an explicit type param. `[any]` works for every
+    -- call shape because the runtime helper is parametric over a
+    -- single type variable.
+    ("Basics", "identity") -> "[any]"
     _                    -> ""
 
 
@@ -4988,14 +4999,29 @@ exprToMainStmtsTyped types (A.At _ expr) = case expr of
     Can.LetDestruct _pat valExpr body ->
         [GoIr.GoExprStmt (exprToGoMain types valExpr)] ++ exprToMainStmtsTyped types body
 
-    -- Calls are valid Go expression statements, emit bare
+    -- Calls are valid Go expression statements. Wrap in
+    -- `rt.AnyTaskRun` so a Task-returning call (the new normal under
+    -- Task-everywhere — `main = println X` returns Task Error ())
+    -- has its thunk forced and the side effect actually fires.
+    -- AnyTaskRun is defensively shaped: it forces `func() any` thunks
+    -- and passes bare values through wrapped in `Ok`, so applying it
+    -- to a non-Task call is a no-op modulo the discard. Discard via
+    -- blank assignment (Go forbids bare expression statements that
+    -- aren't calls; a wrapped AnyTaskRun call is itself a call so
+    -- either form is legal, but `_ =` keeps both branches uniform).
     Can.Call _ _ ->
-        [GoIr.GoExprStmt (exprToGoMain types (A.At A.one expr))]
+        [GoIr.GoAssign "_"
+            (GoIr.GoCall
+                (GoIr.GoQualified "rt" "AnyTaskRun")
+                [exprToGoMain types (A.At A.one expr)])]
 
-    -- Non-call values (e.g. literals, vars): Go rejects bare expression
-    -- statements that aren't calls, so discard via blank assignment.
+    -- Non-call values (e.g. literals, vars): same AnyTaskRun wrap so
+    -- `main = someTask` (a Task-typed value reference) also fires.
     _ ->
-        [GoIr.GoAssign "_" (exprToGoMain types (A.At A.one expr))]
+        [GoIr.GoAssign "_"
+            (GoIr.GoCall
+                (GoIr.GoQualified "rt" "AnyTaskRun")
+                [exprToGoMain types (A.At A.one expr)])]
 
 
 -- | Generate Go for main body expressions. Delegates to the standard

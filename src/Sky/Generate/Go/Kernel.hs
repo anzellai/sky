@@ -250,9 +250,10 @@ registry = Map.fromList
     , (("Random", "shuffle"),     KernelInfo "rt.Random_shuffle" 1 False)
 
     , (("Process", "run"),        KernelInfo "rt.Process_run" 2 False)
-    , (("Process", "exit"),       KernelInfo "rt.Process_exit" 1 False)
-    , (("Process", "getEnv"),     KernelInfo "rt.Process_getEnv" 1 False)
-    , (("Process", "getCwd"),     KernelInfo "rt.Process_getCwd" 0 False)
+    -- Process.exit / getEnv / getCwd / loadEnv all moved to System
+    -- in v0.10.0. Process keeps only `run` (subprocess execution).
+    -- Migration: rewrite as System.exit / System.getenv / System.cwd /
+    -- System.loadEnv.
 
     , (("File", "readFile"),      KernelInfo "rt.File_readFile" 1 False)
     , (("File", "readFileLimit"), KernelInfo "rt.File_readFileLimit" 2 False)
@@ -268,8 +269,9 @@ registry = Map.fromList
     , (("File", "copy"),         KernelInfo "rt.File_copy" 2 False)
     , (("File", "rename"),       KernelInfo "rt.File_rename" 2 False)
 
-    , (("Args", "getArg"),       KernelInfo "rt.Args_getArg" 1 False)
-    , (("Args", "getArgs"),      KernelInfo "rt.Args_getArgs" 0 False)
+    -- `Args.*` deprecated 2026-04-24: `Args.getArgs ()` and
+    -- `System.args ()` did the same job. Use `System.args ()` instead.
+    -- For Args.getArg n, use `List.head (List.drop n (System.args ()))`.
 
     , (("Io", "readLine"),        KernelInfo "rt.Io_readLine" 1 False)
     , (("Io", "writeStdout"),     KernelInfo "rt.Io_writeStdout" 1 False)
@@ -357,16 +359,24 @@ registry = Map.fromList
     , (("Debug", "log"),          KernelInfo "rt.Debug_log" 2 True)
     , (("Debug", "toString"),     KernelInfo "rt.Debug_toString" 1 True)
     , (("Log", "println"),        KernelInfo "rt.Log_println" 1 False)
+    -- v0.10.0: Log.{debug,info,warn,error} stay single-arg
+    -- (msg only) so existing call sites keep compiling. The
+    -- (msg, attrs) shape from the dropped Slog kernel landed on
+    -- the new Log.{debugWith,infoWith,warnWith,errorWith} variants
+    -- — same convention as the previously-existing Log.with /
+    -- Log.errorWith helpers, generalised to all four levels.
     , (("Log", "debug"),          KernelInfo "rt.Log_debug" 1 False)
     , (("Log", "info"),           KernelInfo "rt.Log_info" 1 False)
     , (("Log", "warn"),           KernelInfo "rt.Log_warn" 1 False)
     , (("Log", "error"),          KernelInfo "rt.Log_error" 1 False)
-    , (("Log", "with"),           KernelInfo "rt.Log_with" 2 False)
+    , (("Log", "debugWith"),      KernelInfo "rt.Log_debugWith" 2 False)
+    , (("Log", "infoWith"),       KernelInfo "rt.Log_infoWith" 2 False)
+    , (("Log", "warnWith"),       KernelInfo "rt.Log_warnWith" 2 False)
     , (("Log", "errorWith"),      KernelInfo "rt.Log_errorWith" 2 False)
-    , (("Slog", "info"),          KernelInfo "rt.Slog_info" 1 False)
-    , (("Slog", "warn"),          KernelInfo "rt.Slog_warn" 1 False)
-    , (("Slog", "error"),         KernelInfo "rt.Slog_error" 1 False)
-    , (("Slog", "debug"),         KernelInfo "rt.Slog_debug" 1 False)
+    , (("Log", "with"),           KernelInfo "rt.Log_with" 2 False)
+    -- Slog.{info,warn,error,debug} dropped in v0.10.0 — use Log.*
+    -- equivalents directly. Slog was just a name-alias for Log
+    -- with the same arity/shape; runtime delegated through.
     , (("Context", "background"), KernelInfo "rt.Context_background" 1 False)
     , (("Context", "todo"),       KernelInfo "rt.Context_todo" 1 False)
     , (("Context", "withValue"),  KernelInfo "rt.Context_withValue" 3 False)
@@ -377,15 +387,24 @@ registry = Map.fromList
     , (("Fmt", "errorf"),         KernelInfo "rt.Fmt_errorf" 2 False)
     , (("Basics", "errorToString"), KernelInfo "rt.Basics_errorToString" 1 False)
     , (("Basics", "js"),          KernelInfo "rt.Basics_js" 1 False)
-    , (("Sha256", "sum256"),      KernelInfo "rt.Sha256_sum256" 1 False)
-    , (("Sha256", "sum256String"),KernelInfo "rt.Sha256_sum256String" 1 False)
-    , (("Hex", "encode"),         KernelInfo "rt.Hex_encode" 1 False)
-    , (("Hex", "encodeToString"), KernelInfo "rt.Hex_encodeToString" 1 False)
-    , (("Hex", "decode"),         KernelInfo "rt.Hex_decode" 1 False)
-    , (("Os", "args"),            KernelInfo "rt.Os_args" 1 False)
-    , (("Os", "getenv"),          KernelInfo "rt.Os_getenv" 1 False)
-    , (("Os", "cwd"),             KernelInfo "rt.Os_cwd" 1 False)
-    , (("Os", "exit"),            KernelInfo "rt.Os_exit" 1 False)
+    -- Sha256.* / Hex.* dropped in v0.10.0 — Crypto.sha256 and
+    -- Encoding.hexEncode/Decode are the consolidated surface.
+    -- Migration: `Sha256.sum256 (String.toBytes s)
+    --              |> Result.andThen Hex.encodeToString`
+    -- collapses to `Crypto.sha256 s`.
+    -- Sky kernel `Os` was renamed to `System` in 2026-04-24 to free
+    -- the `Os` qualifier for the Go FFI `os` package (sky-log et al.
+    -- need stdin / stderr / fileWriteString from Go's std library).
+    -- Use `System.exit`, `System.getenv`, `System.cwd`, `System.args`.
+    , (("System", "args"),        KernelInfo "rt.System_args" 1 False)
+    , (("System", "getArg"),      KernelInfo "rt.System_getArg" 1 False)
+    , (("System", "getenv"),      KernelInfo "rt.System_getenv" 1 False)
+    , (("System", "getenvOr"),    KernelInfo "rt.System_getenvOr" 2 False)
+    , (("System", "getenvInt"),   KernelInfo "rt.System_getenvInt" 1 False)
+    , (("System", "getenvBool"),  KernelInfo "rt.System_getenvBool" 1 False)
+    , (("System", "cwd"),         KernelInfo "rt.System_cwd" 1 False)
+    , (("System", "exit"),        KernelInfo "rt.System_exit" 1 False)
+    , (("System", "loadEnv"),     KernelInfo "rt.System_loadEnv" 1 False)
     , (("Time", "timeString"),    KernelInfo "rt.Time_timeString" 1 False)
     , (("String", "toBytes"),     KernelInfo "rt.String_toBytes" 1 False)
     , (("String", "fromBytes"),   KernelInfo "rt.String_fromBytes" 1 False)

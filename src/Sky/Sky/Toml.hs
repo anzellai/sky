@@ -27,6 +27,8 @@ data SkyConfig = SkyConfig
     , _authTokenTtl  :: !Int              -- [auth] tokenTtl: JWT lifetime seconds
     , _authCookie    :: !String           -- [auth] cookieName: session cookie
     , _authDriver    :: !String           -- [auth] driver: jwt / session / oauth
+    , _logFormat     :: !String           -- [log] format: plain (default) | json
+    , _logLevel      :: !String           -- [log] level: debug | info (default) | warn | error
     }
     deriving (Show)
 
@@ -52,6 +54,8 @@ defaultConfig = SkyConfig
     , _authTokenTtl  = 86400
     , _authCookie    = "sky_auth"
     , _authDriver    = "jwt"
+    , _logFormat     = ""
+    , _logLevel      = ""
     }
 
 
@@ -110,6 +114,16 @@ applyKeyValue section config key value = case section of
         "cookieName" -> config { _authCookie   = value }
         "driver"     -> config { _authDriver   = value }
         _            -> config
+    -- [log] section: Std.Log defaults. Values seed SKY_LOG_FORMAT
+    -- / SKY_LOG_LEVEL via SetEnvDefault at init time so env vars
+    -- still win in production. Three-layer precedence (top wins):
+    --   1. SKY_LOG_FORMAT / SKY_LOG_LEVEL (process env, .env file)
+    --   2. sky.toml [log] format / level
+    --   3. runtime defaults (plain / info)
+    "log" -> case key of
+        "format" -> config { _logFormat = value }
+        "level"  -> config { _logLevel  = value }
+        _        -> config
     -- Top-level / [source] / [project] — project metadata.
     _ -> case key of
         "name"    -> config { _name = value }

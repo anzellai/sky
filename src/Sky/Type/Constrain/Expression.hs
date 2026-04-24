@@ -1310,32 +1310,38 @@ lookupKernelType modName funcName = case (modName, funcName) of
         Just $ T.Forall ["a"]
             (T.TLambda stringType
                 (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"]) stringType))
-    -- Os.* — all wrap real I/O (process state reads, env reads,
-    -- termination). Task-everywhere doctrine: every observable side
-    -- effect returns Task Error a. Lowerer's auto-force on `let _ =`
-    -- discards keeps the eager pattern usable.
-    ("Os", "args") ->
+    -- System.* — process-level I/O (CLI args, environment reads,
+    -- cwd, termination). Task-everywhere doctrine: every observable
+    -- side effect returns Task Error a. Lowerer's auto-force on
+    -- `let _ =` discards keeps the eager pattern usable.
+    --
+    -- Renamed from Sky kernel `Os` (2026-04-24) so the `Os`
+    -- qualifier is free for the Go FFI `os` package — sky-log et al.
+    -- need stdin / stderr / fileWriteString from Go's std library
+    -- and previously hit a kernel-vs-FFI namespace collision.
+    ("System", "args") ->
         Just $ T.Forall []
             (T.TLambda T.TUnit
                 (T.TType ModuleName.task "Task"
                     [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
                     , T.TType ModuleName.list "List" [stringType]]))
-    ("Os", "getenv") ->
+    ("System", "getenv") ->
         Just $ T.Forall []
             (T.TLambda stringType
                 (T.TType ModuleName.task "Task"
                     [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
                     , stringType]))
-    -- Os.exit: stays polymorphic `Int -> a` rather than migrating to
-    -- Task. The function never returns (process terminates), so it's
-    -- naturally polymorphic in the return type; Task-wrapping it
-    -- would force every case branch that uses Os.exit as a fatal-
-    -- error escape to also return Task, which is invasive without
-    -- adding type information (the Task would never actually flow).
-    ("Os", "exit") ->
+    -- System.exit: stays polymorphic `Int -> a` rather than
+    -- migrating to Task. The function never returns (process
+    -- terminates), so it's naturally polymorphic in the return type;
+    -- Task-wrapping it would force every case branch that uses
+    -- System.exit as a fatal-error escape to also return Task, which
+    -- is invasive without adding type information (the Task would
+    -- never actually flow).
+    ("System", "exit") ->
         Just $ T.Forall ["a"]
             (T.TLambda intType (T.TVar "a"))
-    ("Os", "getcwd") ->
+    ("System", "getcwd") ->
         Just $ T.Forall []
             (T.TLambda T.TUnit
                 (T.TType ModuleName.task "Task"
@@ -1716,32 +1722,57 @@ lookupKernelType modName funcName = case (modName, funcName) of
         Just $ T.Forall ["row"]
             (T.TLambda stringType
                 (T.TLambda (T.TVar "row") boolType))
-    -- Slog.{info,warn,error,debug} : String -> List a -> Task Error ()
-    -- Same Task-everywhere migration as Log.println — observable
-    -- side effect, auto-forced via `let _ = Slog.info …` at call
-    -- sites.
-    ("Slog", "info") ->
+    -- Log.{info,warn,error,debug} : String -> Task Error ()
+    -- (single-arg, plain msg). Slog's (msg, attrs) shape lives on
+    -- the new Log.{infoWith,warnWith,errorWith,debugWith} variants
+    -- below. Slog itself dropped — migrate `Slog.info msg attrs`
+    -- to `Log.infoWith msg attrs`.
+    ("Log", "info") ->
+        Just $ T.Forall []
+            (T.TLambda stringType
+                (T.TType ModuleName.task "Task"
+                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                    , T.TUnit]))
+    ("Log", "warn") ->
+        Just $ T.Forall []
+            (T.TLambda stringType
+                (T.TType ModuleName.task "Task"
+                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                    , T.TUnit]))
+    ("Log", "error") ->
+        Just $ T.Forall []
+            (T.TLambda stringType
+                (T.TType ModuleName.task "Task"
+                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                    , T.TUnit]))
+    ("Log", "debug") ->
+        Just $ T.Forall []
+            (T.TLambda stringType
+                (T.TType ModuleName.task "Task"
+                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                    , T.TUnit]))
+    ("Log", "infoWith") ->
         Just $ T.Forall ["a"]
             (T.TLambda stringType
                 (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"])
                     (T.TType ModuleName.task "Task"
                         [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
                         , T.TUnit])))
-    ("Slog", "warn") ->
+    ("Log", "warnWith") ->
         Just $ T.Forall ["a"]
             (T.TLambda stringType
                 (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"])
                     (T.TType ModuleName.task "Task"
                         [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
                         , T.TUnit])))
-    ("Slog", "error") ->
+    ("Log", "errorWith") ->
         Just $ T.Forall ["a"]
             (T.TLambda stringType
                 (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"])
                     (T.TType ModuleName.task "Task"
                         [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
                         , T.TUnit])))
-    ("Slog", "debug") ->
+    ("Log", "debugWith") ->
         Just $ T.Forall ["a"]
             (T.TLambda stringType
                 (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"])
@@ -2247,24 +2278,46 @@ lookupKernelType modName funcName = case (modName, funcName) of
                 (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"])
                     (T.TType ModuleName.maybe_ "Maybe" [T.TVar "a"])))
 
-    -- Args.getArg : Int -> Maybe String — process arg by index.
-    ("Args", "getArg") ->
+    -- Args.* and Env.* dropped in v0.10.0 — folded into System.*.
+    -- New System sigs:
+    --   System.getArg     : Int -> Task Error (Maybe String)
+    --   System.getenvOr   : String -> String -> Task Error String
+    --   System.getenvInt  : String -> Task Error Int
+    --   System.getenvBool : String -> Task Error Bool
+    --   System.loadEnv    : () -> Task Error ()
+    -- (System.args / getenv / cwd / exit are declared above with
+    -- the rest of the System block.)
+    ("System", "getArg") ->
         Just $ T.Forall []
             (T.TLambda intType
-                (T.TType ModuleName.maybe_ "Maybe" [stringType]))
-
-    -- Env: Sky.Std.Env (.env file lookup, distinct from Os.getenv).
-    ("Env", "get") ->
+                (T.TType ModuleName.task "Task"
+                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                    , T.TType ModuleName.maybe_ "Maybe" [stringType]]))
+    ("System", "getenvOr") ->
         Just $ T.Forall []
             (T.TLambda stringType
-                (T.TType ModuleName.maybe_ "Maybe" [stringType]))
-    ("Env", "require") ->
-        -- Task because it can fail with a typed Error if the var is unset.
+                (T.TLambda stringType
+                    (T.TType ModuleName.task "Task"
+                        [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                        , stringType])))
+    ("System", "getenvInt") ->
         Just $ T.Forall []
             (T.TLambda stringType
                 (T.TType ModuleName.task "Task"
                     [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
-                    , stringType]))
+                    , intType]))
+    ("System", "getenvBool") ->
+        Just $ T.Forall []
+            (T.TLambda stringType
+                (T.TType ModuleName.task "Task"
+                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                    , boolType]))
+    ("System", "loadEnv") ->
+        Just $ T.Forall []
+            (T.TLambda T.TUnit
+                (T.TType ModuleName.task "Task"
+                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                    , T.TUnit]))
 
     -- Encoding encoders never fail — base64 / URL-encode / hex-encode
     -- are total functions over any input string. Kernel sig is
@@ -2300,20 +2353,9 @@ lookupKernelType modName funcName = case (modName, funcName) of
                     [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
                     , stringType]))
 
-    -- Hex.encodeToString / Hex.decode return Result Error String.
-    -- (Hex.encode delegates to encodeToString so same shape.)
-    ("Hex", "encodeToString") ->
-        Just $ T.Forall []
-            (T.TLambda stringType
-                (T.TType ModuleName.result_ "Result"
-                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
-                    , stringType]))
-    ("Hex", "decode") ->
-        Just $ T.Forall []
-            (T.TLambda stringType
-                (T.TType ModuleName.result_ "Result"
-                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
-                    , stringType]))
+    -- Hex.* dropped in v0.10.0 — Encoding.hexEncode (bare String)
+    -- and Encoding.hexDecode (Result Error String) are the
+    -- consolidated surface, declared above.
 
     -- Time.now / Time.unixMillis / Time.timeString / Time.parse:
     -- intentionally NOT registered. Runtime returns SkyResult eagerly,
@@ -2337,10 +2379,11 @@ lookupKernelType modName funcName = case (modName, funcName) of
     -- (added earlier) because their explicit-arg form forces the
     -- caller to commit to a shape.
 
-    -- Os.cwd : () -> Result Error String (sibling of Os.getcwd which
-    -- is bare-typed). The Result wrap surfaces filesystem errors at
-    -- the call site rather than panicking on a Go syscall failure.
-    ("Os", "cwd") ->
+    -- System.cwd : () -> Result Error String (sibling of
+    -- System.getcwd which is bare-typed). The Result wrap surfaces
+    -- filesystem errors at the call site rather than panicking on a
+    -- Go syscall failure. (Renamed from Os.cwd 2026-04-24.)
+    ("System", "cwd") ->
         Just $ T.Forall []
             (T.TLambda T.TUnit
                 (T.TType ModuleName.result_ "Result"

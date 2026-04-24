@@ -260,15 +260,41 @@ processImportWith deps _home env imp =
             Just alias -> alias
             Nothing -> last importSegs
 
+        -- FFI-over-kernel precedence (2026-04-24): when an import
+        -- path matches BOTH a Sky kernel module and a Go FFI dep,
+        -- the explicit FFI binding wins. The motivating case is
+        -- `import Os` — Sky's kernel claims `Os` (env/cwd/exit) and
+        -- Go's `os` package also auto-bindings under the alias `Os`
+        -- (stdin/stderr/fileWriteString/…). Without this rule the
+        -- kernel intercepts unconditionally and the user's intent
+        -- for the FFI is silently lost. Same shape protects future
+        -- conflicts with Crypto / Encoding / Time / Math / Hex /
+        -- Json / Log / Io / Http / Path / Slog / Regex (any Sky
+        -- kernel name that overlaps a Go std-package alias). Bare
+        -- unqualified use of a kernel qualifier (`Crypto.sha256`
+        -- with no `import`) still resolves to the kernel via
+        -- `resolveQualVar`'s fallback in `Canonicalise.Expression`,
+        -- so this is purely the explicit-import disambiguator.
+        depHere = fmap filterDepByExports (Map.lookup importPath deps)
+        hasDepBindings = case depHere of
+            Just dep -> not (null (_dep_values dep))
+                     || not (null (_dep_aliases dep))
+                     || not (null (_dep_unions dep))
+            Nothing  -> False
+
         isKernel = Map.member importPath Env.kernelModules
         kernelName = Map.findWithDefault "" importPath Env.kernelModules
 
-        qualCtors = kernelCtorsFor kernelName
+        -- Effective binding source: FFI/dep if it exists, else kernel
+        -- (if registered), else nothing. This collapses the prior
+        -- "isKernel branch vs depVars branch" choice to one site.
+        useDep = hasDepBindings
+        useKernel = isKernel && not useDep
 
-        -- For non-kernel imports we look up the dep's unions to build
-        -- cross-module constructor entries.
-        depCtors = case fmap filterDepByExports (Map.lookup importPath deps) of
-            Just dep ->
+        qualCtors = if useKernel then kernelCtorsFor kernelName else []
+
+        depCtors = case depHere of
+            Just dep | useDep ->
                 [ (ctorName, Env.CtorHome importMod typeName ctorName
                     (fromIntegral idx) (fromIntegral nArgs) union annot)
                 | (typeName, ctors) <- _dep_unions dep
@@ -277,31 +303,40 @@ processImportWith deps _home env imp =
                 , let Can.Ctor ctorName _ nArgs argTys = ctor
                       annot = makeCtorAnnot importMod typeName ctorName argTys
                 ]
-            Nothing -> []
+            _ -> []
 
         -- Dep values: forward record-alias auto-constructors so that
         -- `import OtherMod exposing (..)` or `exposing (AliasName)` makes
         -- `AliasName x y z` resolve to OtherMod.AliasName at use sites.
         depVars :: [(String, Env.VarHome)]
-        depVars = case fmap filterDepByExports (Map.lookup importPath deps) of
-            Just dep ->
+        depVars = case depHere of
+            Just dep | useDep ->
                 [ (n, Env.VarTopLevel importMod)
                 | n <- _dep_aliases dep ++ _dep_values dep
                 ]
-            Nothing -> []
+            _ -> []
 
         envWithQual = Env.addQualifiedImport qualifier importMod
-            (if isKernel then kernelVarsFor kernelName else depVars)
+            (if useKernel then kernelVarsFor kernelName else depVars)
             (qualCtors ++ depCtors)
             env
 
         -- P2: the dep's own `exposing` list limits what an importer may
         -- pull in. Build the exported-name set (kernels export everything
         -- since their surface is controlled by the kernel registry).
+        -- Same FFI-over-kernel precedence: when an FFI dep exists for
+        -- this import path, the dep's exported set governs (so `import
+        -- Os exposing (..)` pulls FFI symbols, not Sky kernel ones).
         depExportedNames :: String -> Bool
         depExportedNames =
-            if isKernel then const True
-            else case fmap filterDepByExports (Map.lookup importPath deps) of
+            if useDep then case depHere of
+                Nothing  -> const True  -- shouldn't happen given useDep
+                Just d   -> \n ->
+                    n `elem` _dep_values d
+                    || n `elem` _dep_aliases d
+                    || n `elem` map fst (_dep_unions d)
+            else if useKernel then const True
+            else case depHere of
                 Nothing  -> const True  -- unknown dep → trust the import
                 Just d   -> \n ->
                     n `elem` _dep_values d
@@ -310,13 +345,13 @@ processImportWith deps _home env imp =
 
         envWithExposed = case Src._importExposing imp of
             A.At _ Src.ExposingAll ->
-                if isKernel
+                if useKernel
                 then Env.addExposed (kernelVarsFor kernelName) qualCtors envWithQual
                 else Env.addExposed depVars depCtors envWithQual
             A.At _ (Src.ExposingList exposed) ->
                 let
-                    exposedVars = concatMap (resolveExposedVar isKernel kernelName importMod) exposed
-                    exposedCtorsFromKernel = concatMap (resolveExposedCtor isKernel kernelName) exposed
+                    exposedVars = concatMap (resolveExposedVar useKernel kernelName importMod) exposed
+                    exposedCtorsFromKernel = concatMap (resolveExposedCtor useKernel kernelName) exposed
                     -- Also allow `exposing (Type(..))` to pull in user-module ctors
                     exposedDepCtors = concatMap (resolveDepCtors depCtors) exposed
                     -- Record-alias auto-ctors exposed via `exposing (AliasName)`
@@ -754,7 +789,9 @@ staticKernelFunctions = Map.fromList
     , ("Task",    ["succeed", "fail", "map", "andThen", "perform", "sequence", "parallel",
                     "lazy", "run", "map2", "map3", "map4", "map5", "andMap",
                     "fromResult", "andThenResult", "mapError", "onError"])
-    , ("Log",     ["println", "debug", "info", "warn", "error", "with", "errorWith"])
+    , ("Log",     ["println", "debug", "info", "warn", "error",
+                    "debugWith", "infoWith", "warnWith", "errorWith",
+                    "with"])
     , ("Cmd",     ["none", "batch", "perform"])
     , ("Time",    ["now", "sleep", "every", "unixMillis", "timeString",
                     "formatISO8601", "formatRFC3339", "formatHTTP", "format",
@@ -765,8 +802,16 @@ staticKernelFunctions = Map.fromList
     , ("File",    ["readFile", "readFileLimit", "readFileBytes",
                     "writeFile", "append", "mkdirAll", "readDir", "exists", "remove", "isDir",
                     "tempFile", "copy", "rename"])
-    , ("Args",    ["getArg", "getArgs"])
-    , ("Process", ["run", "exit", "getEnv", "getCwd", "loadEnv"])
+    -- `Args.*` is deprecated (2026-04-24) — `Args.getArgs ()` and
+    -- `System.args ()` were redundant. New code should use
+    -- `System.args ()` (returns Task Error (List String)).
+    -- `Args.getArg n` is dropped — use `List.head (List.drop n …)`
+    -- on the list returned by `System.args ()`. The kernel registry
+    -- entries are removed in this same change.
+    -- (Was: `("Args", ["getArg", "getArgs"])`.)
+    -- Process keeps only `run` in v0.10.0 — exit / getEnv / getCwd /
+    -- loadEnv all moved to System (sibling kernel for OS interaction).
+    , ("Process", ["run"])
     , ("Http",    ["get", "post", "request"])
     , ("Server",  ["listen", "get", "post", "put", "delete", "static", "text", "json", "html",
                     "withStatus", "redirect", "param", "queryParam", "header",
@@ -780,7 +825,10 @@ staticKernelFunctions = Map.fromList
     , ("Path",    ["join", "dir", "base", "ext", "isAbsolute", "safeJoin"])
     , ("Uuid",    ["v4", "v7", "parse"])
     , ("RateLimit", ["allow"])
-    , ("Env",     ["get", "getOrDefault", "require", "getInt", "getBool"])
+    -- Env dropped in v0.10.0 — folded into System.{getenv,getenvOr,
+    -- getenvInt,getenvBool}. `Env.require` is `System.getenv` (already
+    -- errors on missing). `Env.get`'s Maybe-shape is dropped — use
+    -- `System.getenvOr "" key` for the optional-default pattern.
     , ("Middleware", ["withCors", "withLogging", "withBasicAuth", "withRateLimit"])
     , ("Ffi",     ["call", "callPure", "callTask", "has", "isPure"])
     , ("Html",    ["text", "div", "span", "p", "h1", "h2", "h3", "h4", "h5", "h6",
@@ -860,10 +908,15 @@ staticKernelFunctions = Map.fromList
     , ("JsonDec", ["decodeString", "string", "int", "float", "bool", "field",
                     "index", "list", "map", "andThen", "succeed", "fail",
                     "oneOf", "at", "map2", "map3", "map4", "map5"])
-    , ("Sha256",  ["sum256", "sum256String"])
-    , ("Hex",     ["encode", "encodeToString", "decode"])
-    , ("Os",      ["args", "getenv", "cwd", "exit"])
-    , ("Slog",    ["info", "warn", "error", "debug"])
+    -- Sha256 / Hex dropped in v0.10.0 — use Crypto.sha256 and
+    -- Encoding.hexEncode/Decode.
+    -- Sky kernel `Os` was renamed to `System` (2026-04-24); the bare
+    -- `Os` qualifier is now reserved for the Go FFI `os` package
+    -- (sky-log et al.). Prior entry kept as comment for archaeology:
+    -- (was: `("Os", ["args", "getenv", "cwd", "exit"])`)
+    , ("System",  ["args", "getArg", "getenv", "getenvOr", "getenvInt",
+                    "getenvBool", "cwd", "exit", "loadEnv"])
+    -- Slog dropped in v0.10.0 — use Log.{info,warn,error,debug}.
     , ("Context", ["background", "todo", "withValue", "withCancel"])
     , ("Fmt",     ["sprint", "sprintf", "sprintln", "errorf"])
     , ("Db",      ["connect", "open", "close", "exec", "execRaw", "query", "queryDecode",

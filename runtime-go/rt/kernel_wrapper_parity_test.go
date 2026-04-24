@@ -134,26 +134,22 @@ func TestParity_DictGet_Maybe(t *testing.T) {
 	}
 }
 
-func TestParity_ArgsGetArg_Maybe(t *testing.T) {
-	// Args.getArg : Int -> Maybe String. Whatever idx we pass, the
-	// shape must be Maybe.
-	if !isMaybeShape(Args_getArg(0)) {
-		t.Errorf("Args_getArg(0): kernel says Maybe String")
+func TestParity_SystemGetArg_Task(t *testing.T) {
+	// System.getArg : Int -> Task Error (Maybe String). Migration
+	// target for the dropped Args.getArg (v0.10.0). Whatever idx we
+	// pass, the outer shape is a Task thunk.
+	if !isTaskShape(System_getArg(0)) {
+		t.Errorf("System_getArg(0): kernel says Task Error (Maybe String)")
 	}
-	if !isMaybeShape(Args_getArg(99999)) {
-		t.Errorf("Args_getArg(99999): kernel says Maybe String")
+	if !isTaskShape(System_getArg(99999)) {
+		t.Errorf("System_getArg(99999): kernel says Task Error (Maybe String)")
 	}
 }
 
-func TestParity_EnvGet_Maybe(t *testing.T) {
-	// Env.get : String -> Maybe String
-	if !isMaybeShape(Env_get("PATH")) {
-		t.Errorf("Env_get(PATH): kernel says Maybe String")
-	}
-	if !isMaybeShape(Env_get("___SKY_NEVER_SET___")) {
-		t.Errorf("Env_get(missing): kernel says Maybe String")
-	}
-}
+// Env.get / getOrDefault / getInt / getBool dropped in v0.10.0 — the
+// surface lives on as System_getenv / System_getenvOr / System_getenvInt
+// / System_getenvBool. The Maybe-shaped Env_get is gone; the Task-
+// shaped System_getenv is covered by TestParity_SystemGetenv_Task.
 
 func TestParity_ServerExtractors_Maybe(t *testing.T) {
 	// Server.{param,queryParam,header,getCookie} : String -> Request -> Maybe String
@@ -191,21 +187,22 @@ func TestParity_ServerExtractors_Maybe(t *testing.T) {
 
 // ── Result-returning kernels ────────────────────────────────────────
 
-func TestParity_OsGetenv_Task(t *testing.T) {
-	// Os.getenv : String -> Task Error String (Task-everywhere
+func TestParity_SystemGetenv_Task(t *testing.T) {
+	// System.getenv : String -> Task Error String (Task-everywhere
 	// migration 2026-04-24+). Returns a `func() any` thunk.
-	if !isTaskShape(Os_getenv("PATH")) {
-		t.Errorf("Os_getenv(set): kernel says Task Error String")
+	// Renamed from Os.getenv to free the `Os` qualifier for Go FFI.
+	if !isTaskShape(System_getenv("PATH")) {
+		t.Errorf("System_getenv(set): kernel says Task Error String")
 	}
-	if !isTaskShape(Os_getenv("___SKY_NEVER_SET___")) {
-		t.Errorf("Os_getenv(unset): kernel says Task Error String")
+	if !isTaskShape(System_getenv("___SKY_NEVER_SET___")) {
+		t.Errorf("System_getenv(unset): kernel says Task Error String")
 	}
 }
 
-func TestParity_OsCwd_Task(t *testing.T) {
-	// Os.cwd : () -> Task Error String
-	if !isTaskShape(Os_cwd(nil)) {
-		t.Errorf("Os_cwd: kernel says Task Error String")
+func TestParity_SystemCwd_Task(t *testing.T) {
+	// System.cwd : () -> Task Error String
+	if !isTaskShape(System_cwd(nil)) {
+		t.Errorf("System_cwd: kernel says Task Error String")
 	}
 }
 
@@ -240,28 +237,9 @@ func TestParity_EncodingDecode_Result(t *testing.T) {
 	}
 }
 
-func TestParity_HexEncodeDecode_Result(t *testing.T) {
-	// Hex.encodeToString : String -> Result Error String
-	// Hex.decode         : String -> Result Error String  (inner type
-	//                                                       is List Int
-	//                                                       at runtime —
-	//                                                       inner-type
-	//                                                       mismatch
-	//                                                       tracked
-	//                                                       separately)
-	if !isResultShape(Hex_encodeToString([]any{0x68, 0x69})) {
-		t.Errorf("Hex_encodeToString: kernel says Result Error String")
-	}
-	if !isResultShape(Hex_encode([]any{0x68, 0x69})) {
-		t.Errorf("Hex_encode: kernel says Result Error String")
-	}
-	if !isResultShape(Hex_decode("6869")) {
-		t.Errorf("Hex_decode: kernel says Result Error String")
-	}
-	if !isResultShape(Hex_decode("zz")) {
-		t.Errorf("Hex_decode (bad): kernel says Result Error String")
-	}
-}
+// Hex.* dropped in v0.10.0 — Encoding.hexEncode / Encoding.hexDecode
+// are the consolidated surface, covered by TestParity_EncodingDecode_Result
+// (decode side) and the bare-string Encoding_hexEncode codegen path.
 
 func TestParity_AuthCrypto_Result(t *testing.T) {
 	// Auth.hashPassword       : String -> Result Error String
@@ -362,15 +340,12 @@ func TestParity_FileIo_Task(t *testing.T) {
 }
 
 func TestParity_Process_Task(t *testing.T) {
-	// Process.{run,getEnv,getCwd,loadEnv} : ... -> Task Error _
+	// Process.run : String -> List String -> Task Error String
+	// (getEnv / getCwd / exit / loadEnv all moved to System.* in
+	// v0.10.0; their Task-shape parity is covered by the System
+	// tests above.)
 	if !isTaskShape(Process_run("true", []any{})) {
 		t.Errorf("Process_run: kernel says Task Error String")
-	}
-	if !isTaskShape(Process_getEnv("PATH")) {
-		t.Errorf("Process_getEnv: kernel says Task Error String")
-	}
-	if !isTaskShape(Process_getCwd()) {
-		t.Errorf("Process_getCwd: kernel says Task Error String")
 	}
 }
 
