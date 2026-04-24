@@ -5,6 +5,7 @@ import Sky.Core.Json.Decode as Decode
 import Sky.Core.Json.Decode.Pipeline as Pipeline
 import Sky.Core.Json.Encode as Encode
 import Std.Log exposing (println)
+import Sky.Core.Error as Error exposing (Error)
 
 
 makePerson name age =

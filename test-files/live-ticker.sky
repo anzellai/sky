@@ -9,6 +9,7 @@ import Std.Live.Events exposing (onClick)
 import Std.Cmd as Cmd
 import Std.Sub as Sub
 import Std.Time as Time
+import Sky.Core.Error as Error exposing (Error)
 
 type alias Model =
     { count : Int }

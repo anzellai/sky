@@ -3,6 +3,7 @@ module Main exposing (main)
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Dict as Dict
 import Std.Log as Log
+import Sky.Core.Error as Error exposing (Error)
 
 
 main =

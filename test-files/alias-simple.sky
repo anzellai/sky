@@ -1,6 +1,7 @@
 module Main exposing (main)
 
 import Std.Log exposing (println)
+import Sky.Core.Error as Error exposing (Error)
 
 type alias Name =
     String

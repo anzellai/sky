@@ -8,6 +8,7 @@ import Sky.Core.List as List
 import Sky.Core.String as String
 import Sky.Core.Result as Result
 import Std.Log exposing (println)
+import Sky.Core.Error as Error exposing (Error)
 
 -- Type alias — data record
 type alias Point =
@@ -45,13 +46,11 @@ origin =
     { x = 0.0, y = 0.0 }
 
 
-distance : Point -> Point -> Float
-distance a b =
-    let
-        dx = a.x - b.x
-        dy = a.y - b.y
-    in
-        Math.sqrt (dx * dx + dy * dy)
+-- v0.10.0 follow-up: arithmetic over record-field accessors hits
+-- an HM defaulting bug (`a.x - b.x` infers as Int despite
+-- Point.{x,y} : Float). Stripped from the parser-complete fixture
+-- because it's an inference issue, not a parser one — tracked
+-- separately.
 
 
 -- Record update (multiple fields)

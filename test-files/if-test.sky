@@ -2,6 +2,7 @@ module Main exposing (main)
 
 import Sky.Core.Prelude exposing (..)
 import Std.Log exposing (println)
+import Sky.Core.Error as Error exposing (Error)
 
 
 classify n =

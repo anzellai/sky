@@ -5,6 +5,7 @@ import Sky.Core.String as String
 import Sky.Core.List as List
 import Sky.Core.Result as Result
 import Std.Log exposing (println)
+import Sky.Core.Error as Error exposing (Error)
 
 
 parseAndDouble s =
