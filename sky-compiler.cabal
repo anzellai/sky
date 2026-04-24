@@ -159,6 +159,7 @@ test-suite sky-tests
 
   other-modules:
       Sky.Build.CompileSpec
+      Sky.Build.DepHmFatalSpec
       Sky.Build.ExampleSweepSpec
       Sky.Build.TypedFfiSpec
       Sky.ErrorUnificationSpec

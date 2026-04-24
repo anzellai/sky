@@ -2,6 +2,7 @@ module Main (main) where
 
 import Test.Hspec
 import qualified Sky.Build.CompileSpec
+import qualified Sky.Build.DepHmFatalSpec
 import qualified Sky.Build.ExampleSweepSpec
 import qualified Sky.Build.TypedFfiSpec
 import qualified Sky.ErrorUnificationSpec
@@ -37,6 +38,10 @@ import qualified Sky.Cli.TestSpec
 main :: IO ()
 main = hspec $ do
     describe "Sky.Build.Compile"         Sky.Build.CompileSpec.spec
+    -- v0.10.0: dep module HM errors must abort the build (used to
+    -- silently degrade to `any`-typed bindings, hiding real type
+    -- bugs that surfaced as func-pointer-as-string at runtime).
+    describe "Sky.Build.DepHmFatal"      Sky.Build.DepHmFatalSpec.spec
     describe "Sky.Parse.Pattern"         Sky.Parse.PatternSpec.spec
     describe "Sky.Canonicalise.Exposing" Sky.Canonicalise.ExposingSpec.spec
     -- Regression: kernel qualifiers (Crypto, Encoding, Hex, …) used

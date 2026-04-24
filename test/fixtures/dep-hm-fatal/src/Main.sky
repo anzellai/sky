@@ -1,0 +1,10 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.System as System
+import Lib.Config as Config
+
+
+main =
+    let _ = Config.admins ()
+    in System.exit 0
