@@ -2,6 +2,7 @@ module Main exposing (main)
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error)
 import Std.Log exposing (println)
 
 

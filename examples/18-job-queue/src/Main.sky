@@ -155,7 +155,8 @@ saveSnapshot okCount failCount total =
                 "INSERT INTO snapshots (ok, failed, total, ts) VALUES (?, ?, ?, ?)"
                 [ okCount, failCount, total, ts ]
         writeAll db =
-            Db.execRaw db createSnapshotTable |> Task.andThen (\_ -> Time.now)
+            Db.execRaw db createSnapshotTable
+                |> Task.andThen (\_ -> Time.now ())
                 |> Task.andThen (\ts -> insertRow db ts)
         successMsg =
             "Snapshot saved (ok=" ++ String.fromInt okCount ++ " fail="

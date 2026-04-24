@@ -615,17 +615,31 @@ func Debug_toString(v any) any {
 	return fmt.Sprintf("%v", v)
 }
 
+// Log_println / Log_printlnT match the Task-everywhere kernel sig
+// `String -> Task Error ()` (2026-04-24+). The body is wrapped in
+// a `func() any` thunk so the auto-force discard
+// (lowerer emits `_ = rt.AnyTaskRun(rt.Log_println(x))`) actually
+// fires the side effect when used as `let _ = println "step"`.
+//
+// Pre-migration these were eager — the doctrine had two-tiered
+// println as a sync convenience effect specifically because the
+// `let _ = println …` pattern silently dropped Task thunks. The
+// auto-force in defToStmts (Sky.Build.Compile) now closes that
+// footgun, freeing println to be Task-shaped like every other
+// observable side effect in the kernel.
 func Log_println(args ...any) any {
-	fmt.Println(args...)
-	return struct{}{}
+	captured := append([]any(nil), args...)
+	return func() any {
+		fmt.Println(captured...)
+		return Ok[any, any](struct{}{})
+	}
 }
 
-// Log_printlnT: typed single-arg companion. Sky's `println` surface
-// takes exactly one value (the Log.println stdlib function), so we
-// don't lose generality by binding the typed variant to one arg.
-func Log_printlnT(arg any) struct{} {
-	fmt.Println(arg)
-	return struct{}{}
+func Log_printlnT(arg any) any {
+	return func() any {
+		fmt.Println(arg)
+		return Ok[any, any](struct{}{})
+	}
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -704,42 +718,65 @@ func logEmit(level int, levelName string, msg string, ctx any) {
 	}
 }
 
-// Log.debug : String -> ()
+// Log.{debug,info,warn,error,with,errorWith}: per Task-everywhere
+// (2026-04-24+) all observable side effects return Task Error ().
+// Bodies wrapped in `func() any` thunks so the lowerer's
+// auto-force discard fires the side effect at the call site.
+
+// Log.debug : String -> Task Error ()
 func Log_debug(msg any) any {
-	logEmit(logLevelDebug, "debug", fmt.Sprintf("%v", msg), nil)
-	return struct{}{}
+	captured := msg
+	return func() any {
+		logEmit(logLevelDebug, "debug", fmt.Sprintf("%v", captured), nil)
+		return Ok[any, any](struct{}{})
+	}
 }
 
-// Log.info : String -> ()
+// Log.info : String -> Task Error ()
 func Log_info(msg any) any {
-	logEmit(logLevelInfo, "info", fmt.Sprintf("%v", msg), nil)
-	return struct{}{}
+	captured := msg
+	return func() any {
+		logEmit(logLevelInfo, "info", fmt.Sprintf("%v", captured), nil)
+		return Ok[any, any](struct{}{})
+	}
 }
 
-// Log.warn : String -> ()
+// Log.warn : String -> Task Error ()
 func Log_warn(msg any) any {
-	logEmit(logLevelWarn, "warn", fmt.Sprintf("%v", msg), nil)
-	return struct{}{}
+	captured := msg
+	return func() any {
+		logEmit(logLevelWarn, "warn", fmt.Sprintf("%v", captured), nil)
+		return Ok[any, any](struct{}{})
+	}
 }
 
-// Log.error : String -> ()
+// Log.error : String -> Task Error ()
 func Log_error(msg any) any {
-	logEmit(logLevelError, "error", fmt.Sprintf("%v", msg), nil)
-	return struct{}{}
+	captured := msg
+	return func() any {
+		logEmit(logLevelError, "error", fmt.Sprintf("%v", captured), nil)
+		return Ok[any, any](struct{}{})
+	}
 }
 
-// Log.with : String -> Dict String any -> ()
+// Log.with : String -> Dict String any -> Task Error ()
 // Structured log with additional context fields. E.g.
 //   Log.with "request completed" (Dict.fromList [("method","GET"), ("status",200)])
 func Log_with(msg any, ctx any) any {
-	logEmit(logLevelInfo, "info", fmt.Sprintf("%v", msg), ctx)
-	return struct{}{}
+	capturedMsg, capturedCtx := msg, ctx
+	return func() any {
+		logEmit(logLevelInfo, "info", fmt.Sprintf("%v", capturedMsg), capturedCtx)
+		return Ok[any, any](struct{}{})
+	}
 }
 
-// Log.errorWith : String -> Dict String any -> ()
+// Log.errorWith : String -> Dict String any -> Task Error ()
 func Log_errorWith(msg any, ctx any) any {
-	logEmit(logLevelError, "error", fmt.Sprintf("%v", msg), ctx)
-	return struct{}{}
+	capturedMsg, capturedCtx := msg, ctx
+	return func() any {
+		logEmit(logLevelError, "error", fmt.Sprintf("%v", capturedMsg), capturedCtx)
+		return Ok[any, any](struct{}{})
+	}
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -3760,24 +3797,42 @@ func AnyTaskRun(task any) any {
 // Time
 // ═══════════════════════════════════════════════════════════
 
-func Time_now() any {
-	return Ok[any, any](time.Now().UnixMilli())
+// Time.now / Time.unixMillis / Time.timeString — Task-everywhere
+// doctrine (2026-04-24+):
+//   * Time.now / Time.unixMillis: clock reads are non-deterministic
+//     real-world I/O. Kernel sig `() -> Task Error Int`. Runtime
+//     wraps in `func() any` thunk so the lowerer's auto-force on
+//     `let _ = Time.now ()` discard fires the side effect. Inside
+//     a Task chain, the thunk is lifted via Task.andThen/Cmd.perform
+//     in the usual way.
+//   * Time.timeString: pure deterministic formatter (Int -> String,
+//     just strftime-equivalent). No wrapper — bare String.
+func Time_now(_ any) any {
+	return func() any {
+		return Ok[any, any](time.Now().UnixMilli())
+	}
 }
 
-// Time_timeString: format unixMillis as "HH:MM:SS"
 func Time_timeString(ms any) any {
-	return Ok[any, any](time.Unix(int64(AsInt(ms))/1000, 0).Format("15:04:05"))
+	return time.Unix(int64(AsInt(ms))/1000, 0).Format("15:04:05")
 }
 
-// P8/Time typed companions — direct int ms, no any boxing.
-func Time_nowT() SkyResult[string, int] {
-	return Ok[string, int](int(time.Now().UnixMilli()))
+// Typed companions — same shape as the any-path. Task-shaped helpers
+// return `func() SkyResult[any, T]` (= SkyTask[any, T]) so the
+// typed-codegen path can dispatch directly. Time_timeStringT is
+// pure, returns bare string.
+func Time_nowT(_ struct{}) SkyTask[any, int] {
+	return func() SkyResult[any, int] {
+		return Ok[any, int](int(time.Now().UnixMilli()))
+	}
 }
-func Time_timeStringT(ms int) SkyResult[string, string] {
-	return Ok[string, string](time.Unix(int64(ms)/1000, 0).Format("15:04:05"))
+func Time_timeStringT(ms int) string {
+	return time.Unix(int64(ms)/1000, 0).Format("15:04:05")
 }
-func Time_unixMillisT() SkyResult[string, int] {
-	return Ok[string, int](int(time.Now().UnixMilli()))
+func Time_unixMillisT(_ struct{}) SkyTask[any, int] {
+	return func() SkyResult[any, int] {
+		return Ok[any, int](int(time.Now().UnixMilli()))
+	}
 }
 
 // Sha256, Hex, String.toBytes wrappers matching the Sky.Core namespace split.
@@ -3910,8 +3965,13 @@ func Time_sleep(ms any) any {
 	}
 }
 
-func Time_unixMillis() any {
-	return time.Now().UnixMilli()
+// Time_unixMillis: see Time_now header for the doctrine note.
+// Task-shaped thunk; lowered call site `rt.Time_unixMillis(struct{}{})`
+// returns the thunk for auto-force discard or Task chain consumption.
+func Time_unixMillis(_ any) any {
+	return func() any {
+		return Ok[any, any](time.Now().UnixMilli())
+	}
 }
 
 // Time.formatISO8601 : Int -> String

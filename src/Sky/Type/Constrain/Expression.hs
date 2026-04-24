@@ -702,8 +702,17 @@ zipWithM f xs ys = sequence (zipWith f xs ys)
 
 lookupKernelType :: String -> String -> Maybe T.Annotation
 lookupKernelType modName funcName = case (modName, funcName) of
+    -- Log.println : String -> Task Error () — observable side
+    -- effect (writes to stdout). Task-shaped per the Task-everywhere
+    -- doctrine (2026-04-24+); the lowerer's auto-force on `let _ =`
+    -- discards keeps the pervasive `let _ = println "step"` debug-
+    -- trace pattern working unchanged.
     ("Log", "println") ->
-        Just $ T.Forall [] (T.TLambda stringType T.TUnit)
+        Just $ T.Forall []
+            (T.TLambda stringType
+                (T.TType ModuleName.task "Task"
+                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                    , T.TUnit]))
     ("Basics", "identity") ->
         Just $ T.Forall ["a"] (T.TLambda (T.TVar "a") (T.TVar "a"))
     ("Basics", "always") ->
@@ -1319,15 +1328,34 @@ lookupKernelType modName funcName = case (modName, funcName) of
     ("Os", "getcwd") ->
         Just $ T.Forall []
             (T.TLambda T.TUnit stringType)
-    -- Time.sleep returns Task (used with Task.andThen in 18-job-queue).
-    -- Time.now / Time.unixMillis intentionally NOT registered here —
-    -- they're used as both Result and Task in different examples and
-    -- we don't want to pick one that breaks the other until the Sky
-    -- side unifies Task == Result.
+    -- Time.sleep / Time.now / Time.unixMillis return Task Error <T>
+    -- per the Task-everywhere doctrine: clock reads observe a non-
+    -- deterministic real-world resource so they get the same Task
+    -- treatment as File / Http / Db. The lowerer's auto-force on
+    -- `let _ = Time.now ()` discard sites means the user-facing
+    -- ergonomics stay close to the eager pattern.
+    --
+    -- Time.timeString is the exception: it's a pure deterministic
+    -- formatter (Int -> String, just calls strftime equivalent).
+    -- Demoted to bare String — no wrapper buys anything.
     ("Time", "sleep") ->
         Just $ T.Forall ["e"]
             (T.TLambda intType
                 (T.TType ModuleName.task "Task" [T.TVar "e", T.TUnit]))
+    ("Time", "now") ->
+        Just $ T.Forall []
+            (T.TLambda T.TUnit
+                (T.TType ModuleName.task "Task"
+                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                    , intType]))
+    ("Time", "unixMillis") ->
+        Just $ T.Forall []
+            (T.TLambda T.TUnit
+                (T.TType ModuleName.task "Task"
+                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                    , intType]))
+    ("Time", "timeString") ->
+        Just $ T.Forall [] (T.TLambda intType stringType)
     -- Random — returns a Task in Sky stdlib
     ("Random", "int") ->
         Just $ T.Forall ["e"]
@@ -1675,24 +1703,38 @@ lookupKernelType modName funcName = case (modName, funcName) of
         Just $ T.Forall ["row"]
             (T.TLambda stringType
                 (T.TLambda (T.TVar "row") boolType))
-    -- Slog — structured logging, first arg is a message, second is a list of
-    -- key-value pairs. We treat the second as List a for flexibility.
+    -- Slog.{info,warn,error,debug} : String -> List a -> Task Error ()
+    -- Same Task-everywhere migration as Log.println — observable
+    -- side effect, auto-forced via `let _ = Slog.info …` at call
+    -- sites.
     ("Slog", "info") ->
         Just $ T.Forall ["a"]
             (T.TLambda stringType
-                (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"]) T.TUnit))
+                (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"])
+                    (T.TType ModuleName.task "Task"
+                        [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                        , T.TUnit])))
     ("Slog", "warn") ->
         Just $ T.Forall ["a"]
             (T.TLambda stringType
-                (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"]) T.TUnit))
+                (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"])
+                    (T.TType ModuleName.task "Task"
+                        [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                        , T.TUnit])))
     ("Slog", "error") ->
         Just $ T.Forall ["a"]
             (T.TLambda stringType
-                (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"]) T.TUnit))
+                (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"])
+                    (T.TType ModuleName.task "Task"
+                        [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                        , T.TUnit])))
     ("Slog", "debug") ->
         Just $ T.Forall ["a"]
             (T.TLambda stringType
-                (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"]) T.TUnit))
+                (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"])
+                    (T.TType ModuleName.task "Task"
+                        [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                        , T.TUnit])))
 
     -- ═══════════════════════════════════════════════════════════
     -- Effect Boundary additions (effect-boundary-audit branch).

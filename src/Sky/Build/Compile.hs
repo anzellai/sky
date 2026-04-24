@@ -4328,7 +4328,23 @@ defToStmts def = case def of
 
     Can.Def (A.At _ name) [] body ->
         if name == "_"
-        then [GoIr.GoAssign "_" (exprToGo body)]
+        then
+            -- Auto-force `let _ = X` so when X is a Task thunk
+            -- (`func() any` per Sky's v0.9.6 effect-boundary audit)
+            -- the side effect actually fires. Without this, the
+            -- discard binding would silently skip the Task — the
+            -- exact footgun the two-tier doctrine was designed to
+            -- avoid for println / Slog. With this in place, we can
+            -- migrate println / Slog / Time / Os.* to Task and the
+            -- pervasive `let _ = println "step"` debug-trace pattern
+            -- keeps working unchanged.
+            --
+            -- rt.AnyTaskRun gracefully handles non-Task input too
+            -- (passes through as Ok-wrapped value), so wrapping at
+            -- every discard site is safe even when the body is a
+            -- pure expression. Negligible runtime cost (one
+            -- type-assertion).
+            [GoIr.GoAssign "_" (GoIr.GoCall (GoIr.GoQualified "rt" "AnyTaskRun") [exprToGo body])]
         else [ GoIr.GoShortDecl name (exprToGo body)
              , GoIr.GoAssign "_" (GoIr.GoIdent name)  -- suppress unused errors
              ]

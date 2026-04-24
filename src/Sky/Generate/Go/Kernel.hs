@@ -219,10 +219,19 @@ registry = Map.fromList
     -- ═══════════════════════════════════════════════════════
     -- Time
     -- ═══════════════════════════════════════════════════════
-    , (("Time", "now"),           KernelInfo "rt.Time_now" 0 False)
+    -- Time.now / Time.unixMillis arity 1: kernel sig is
+    -- `() -> Result Error Int`. Pre-2026-04-24 these were arity 0 +
+    -- the runtime was a `func() any` — the codegen happily emitted
+    -- `rt.Time_now()` for `Time.now` (no args). Adding the kernel sig
+    -- + bumping arity here means `Time.now ()` lowers to
+    -- `rt.Time_now(struct{}{})` (the right shape) and bare `Time.now`
+    -- as a value reference becomes a type error (was previously a
+    -- silent eager call). Two-tier doctrine: clock reads are sync
+    -- convenience effects, Result-flavoured for panic-recover only.
+    , (("Time", "now"),           KernelInfo "rt.Time_now" 1 False)
     , (("Time", "sleep"),         KernelInfo "rt.Time_sleep" 1 False)
     , (("Time", "every"),         KernelInfo "rt.Time_every" 2 True)
-    , (("Time", "unixMillis"),    KernelInfo "rt.Time_unixMillis" 0 False)
+    , (("Time", "unixMillis"),    KernelInfo "rt.Time_unixMillis" 1 False)
     , (("Time", "formatISO8601"), KernelInfo "rt.Time_formatISO8601" 1 False)
     , (("Time", "formatRFC3339"), KernelInfo "rt.Time_formatRFC3339" 1 False)
     , (("Time", "formatHTTP"),    KernelInfo "rt.Time_formatHTTP" 1 False)
