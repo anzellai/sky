@@ -39,8 +39,8 @@ The standard library was deduplicated. Old modules with overlapping surface have
 - `Process.*` keeps only `run` (subprocess execution). `Process.exit` / `getEnv` / `getCwd` / `loadEnv` all moved to `System.*`.
 
 **New:**
-- `System.getenvOr key default` — no-error env read with fallback.
-- `System.getenvInt key` / `System.getenvBool key` — typed env reads.
+- `System.getenvOr key default` — no-error env read with fallback. **Bare `String` return** (not `Task Error String`) — see "default-supplied helpers stay bare" rule below the Effect Boundary table. Module-top-level usage stays sync: `apiKey _ = System.getenvOr "OPENAI_KEY" ""`.
+- `System.getenvInt key` / `System.getenvBool key` — typed env reads, `Task Error Int|Bool` (CAN fail on missing or unparseable, hence Task).
 - `System.getArg n` — single-arg lookup as `Task Error (Maybe String)`.
 - `System.loadEnv ()` — load `.env` file (was `Process.loadEnv`).
 - `Log.infoWith msg attrs` / `warnWith` / `errorWith` / `debugWith` — structured-log variants with key/value list (replaces `Slog.*`).
@@ -97,10 +97,12 @@ Single rule: **every observable side effect returns `Task Error a`.** No two-tie
 
 | Tier | Type | Examples | Why |
 |---|---|---|---|
-| **Pure** | bare `a` | `String.length`, `List.map`, `Crypto.{sha256,sha512,md5,hmacSha256}`, `Encoding.{base64,url,hex}Encode`, `Time.timeString` | Referentially transparent, deterministic. |
+| **Pure** | bare `a` | `String.length`, `List.map`, `Crypto.{sha256,sha512,md5,hmacSha256}`, `Encoding.{base64,url,hex}Encode`, `Time.timeString`, `System.getenvOr` (default supplied → can't fail) | Referentially transparent, deterministic. |
 | **Fallible-pure** | `Result e a` / `Maybe a` | `String.toInt`, JSON decoders, `Encoding.{base64,url,hex}Decode`, `Auth.{hashPassword, verifyPassword, signToken, verifyToken}` | Pure CPU work that can fail on malformed input. Result is a value, not an effect. |
-| **Effects** | `Task Error a` | `File.*`, `Http.*`, `Process.run`, `Io.*`, `Db.*`, `Auth.{register, login, setRole}`, `Crypto.{randomBytes, randomToken}`, `Time.{sleep, now, unixMillis}`, `Random.*`, `Log.{println, info, warn, error, debug, infoWith, warnWith, errorWith, debugWith}`, `System.{getenv, getenvOr, getenvInt, getenvBool, cwd, args, getArg, loadEnv}`, `Live.app` | Anything that touches the outside world (clock, env, stdout, disk, network, DB, entropy). Composes uniformly with `Task.parallel` / `Cmd.perform` / `Task.andThen`. |
+| **Effects** | `Task Error a` | `File.*`, `Http.*`, `Process.run`, `Io.*`, `Db.*`, `Auth.{register, login, setRole}`, `Crypto.{randomBytes, randomToken}`, `Time.{sleep, now, unixMillis}`, `Random.*`, `Log.{println, info, warn, error, debug, infoWith, warnWith, errorWith, debugWith}`, `System.{getenv, getenvInt, getenvBool, cwd, args, getArg, loadEnv}`, `Live.app` | Anything that touches the outside world (clock, env, stdout, disk, network, DB, entropy). Composes uniformly with `Task.parallel` / `Cmd.perform` / `Task.andThen`. |
 | **Diverging** | polymorphic `Int -> a` | `System.exit` | Function never returns (process terminates). Polymorphic return makes it usable as the last expression in any case branch without forcing every branch to be Task-shaped. |
+
+**Default-supplied helpers stay bare.** `System.getenvOr key def : String`, `Maybe.withDefault def m : a`, `Result.withDefault def r : a`, `Db.getFieldOr def row k : any`, `Db.get{String,Int,Bool} k row : String|Int|Bool` — none of these can fail because the default plugs the failure case at the call site. Wrapping them in `Task` / `Result` / `Maybe` would force every call into `Task.run … |> Result.withDefault def` boilerplate — the exact pattern the helper exists to avoid. Reserve the wrap for genuinely fallible operations (no default supplied, parse may reject input, I/O may error).
 
 ### Auto-force `let _ = TaskExpr`
 

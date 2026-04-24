@@ -2293,13 +2293,16 @@ lookupKernelType modName funcName = case (modName, funcName) of
                 (T.TType ModuleName.task "Task"
                     [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
                     , T.TType ModuleName.maybe_ "Maybe" [stringType]]))
+    -- System.getenvOr key default : String
+    -- Bare-String return — when a default is supplied the call CAN'T
+    -- fail, so Task-wrapping it would force every config helper at
+    -- module top-level into the `Task.run … |> Result.withDefault def`
+    -- pattern this helper exists to avoid. Fallible variants
+    -- (getenv / getenvInt / getenvBool) stay Task.
     ("System", "getenvOr") ->
         Just $ T.Forall []
             (T.TLambda stringType
-                (T.TLambda stringType
-                    (T.TType ModuleName.task "Task"
-                        [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
-                        , stringType])))
+                (T.TLambda stringType stringType))
     ("System", "getenvInt") ->
         Just $ T.Forall []
             (T.TLambda stringType

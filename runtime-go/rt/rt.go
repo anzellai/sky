@@ -3999,20 +3999,21 @@ func System_getArg(n any) any {
 	}
 }
 
-// System.getenvOr : String -> String -> Task Error String
+// System.getenvOr : String -> String -> String
 // `System.getenvOr key default` — returns the env var if set, else
-// the supplied default. Never errors. Migration target for the
-// dropped `Env.getOrDefault key default` (same argument order).
+// the supplied default. Bare-String return because the call CAN'T
+// fail when a default is supplied (Task-wrapping it would mean
+// every config helper at module top-level needs `Task.run …
+// |> Result.withDefault default`, which is the exact boilerplate
+// the helper exists to avoid). The fallible variants — getenv (Err
+// on missing), getenvInt (Err on parse), getenvBool (Err on parse)
+// — stay Task. Same argument order as the dropped Env.getOrDefault.
 func System_getenvOr(name, def any) any {
-	capName := name
-	capDef := def
-	return func() any {
-		k := fmt.Sprintf("%v", capName)
-		if v, ok := os.LookupEnv(k); ok {
-			return Ok[any, any](v)
-		}
-		return Ok[any, any](fmt.Sprintf("%v", capDef))
+	k := fmt.Sprintf("%v", name)
+	if v, ok := os.LookupEnv(k); ok {
+		return v
 	}
+	return fmt.Sprintf("%v", def)
 }
 
 // System.getenvInt : String -> Task Error Int
