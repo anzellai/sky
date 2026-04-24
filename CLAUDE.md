@@ -21,6 +21,39 @@ All documentation, comments, variable names, function names, and user-facing str
 3. **Root-cause fixes only.** Fix at the correct abstraction layer. **Never suppress type errors or warnings.**
 4. **Production-grade architecture.** Must scale to large Go packages (Stripe SDK). Must remain maintainable.
 
+## v0.10.0 Stdlib Consolidation (BREAKING)
+
+The standard library was deduplicated. Old modules with overlapping surface have been dropped or renamed. This is a one-shot migration — there are **no compat shims**, by design.
+
+**Renamed:**
+- Sky kernel `Os` → `System`. Frees the `Os` qualifier for the Go FFI `os` package (sky-log et al. need stdin / stderr / fileWriteString from Go's std library and previously hit a kernel-vs-FFI namespace collision). Migration: `Os.exit` → `System.exit`, `Os.getenv` → `System.getenv`, `Os.cwd` → `System.cwd`, `Os.args` → `System.args`. `import Sky.Core.Os as Os` → `import Sky.Core.System as System`.
+
+**Dropped (folded into other modules):**
+- `Args.*` → `System.{args, getArg}`. `Args.getArgs ()` is now `System.args ()`. `Args.getArg n` is `System.getArg n` (now returns `Task Error (Maybe String)` per Task-everywhere — see migration helper in sky-env's Main.sky).
+- `Env.*` → `System.{getenv, getenvOr, getenvInt, getenvBool}`. `Env.getOrDefault key def` → `System.getenvOr key def`, `Env.getInt key` → `System.getenvInt key`, `Env.require key` → `System.getenv key` (already errors on missing).
+- `Slog.*` → `Log.*With`. `Slog.info msg attrs` → `Log.infoWith msg attrs` (same for warn/error/debug). The plain-message `Log.info msg` form keeps working — the `With`-suffix variants take the structured `(msg, [k,v,k,v,…])` shape Slog had.
+- `Sha256.*` → `Crypto.sha256`. The chain `Sha256.sum256 (String.toBytes s) |> Result.andThen Hex.encodeToString` collapses to `Crypto.sha256 s` (returns the hex digest directly).
+- `Hex.*` → `Encoding.hexEncode` / `Encoding.hexDecode`.
+
+**Shrunk:**
+- `Process.*` keeps only `run` (subprocess execution). `Process.exit` / `getEnv` / `getCwd` / `loadEnv` all moved to `System.*`.
+
+**New:**
+- `System.getenvOr key default` — no-error env read with fallback.
+- `System.getenvInt key` / `System.getenvBool key` — typed env reads.
+- `System.getArg n` — single-arg lookup as `Task Error (Maybe String)`.
+- `System.loadEnv ()` — load `.env` file (was `Process.loadEnv`).
+- `Log.infoWith msg attrs` / `warnWith` / `errorWith` / `debugWith` — structured-log variants with key/value list (replaces `Slog.*`).
+- sky.toml `[log] format = "plain" | "json"` and `[log] level = "debug" | "info" | "warn" | "error"`. Seeds `SKY_LOG_FORMAT` / `SKY_LOG_LEVEL` defaults at compile time. Env vars still override at runtime — same precedence as `[live]`.
+
+**Compiler infrastructure:**
+- Bare-name aliases for every kernel module added to `staticKernelModules`. `Log.error` resolves without `import Std.Log` because `Log` is in the kernel registry.
+- Auto-force `let _ = TaskExpr` discard semantics (already in v1.0+ doctrine, formalised here): the lowerer wraps the discarded expression in `rt.AnyTaskRun` so the side effect fires.
+- `main`'s body is wrapped in `rt.AnyTaskRun` too — `main = println X` actually prints under Task-everywhere (regression discovered when migrating examples).
+- Canonicaliser falls back to the kernel registry for unimported qualifiers — `Crypto.sha256` works without `import Sky.Core.Crypto`. Bug fixed: previously emitted bare `Crypto_sha256(arg)` (no `rt.` prefix), failing `go build`.
+
+The migration script at `/tmp/migrate-v0.10.sh` (see git history of this commit) handles the bulk rewrites in any external repo. Manual touch-ups needed for: `case Args.getArg n of Just/Nothing` patterns (now wrap with `Task.run |> Result.withDefault Nothing`), and `Sha256.sum256 + Hex.encodeToString` chains (collapse to `Crypto.sha256`).
+
 ## Non-Regression Rules
 
 These constraints are enforced by `sky verify`, `test/Sky/ErrorUnificationSpec.hs`, and the audit-remediation specs under `test/Sky/**`. Violating them breaks the repo:
@@ -58,16 +91,16 @@ These constraints are enforced by `sky verify`, `test/Sky/ErrorUnificationSpec.h
 - **LSP capabilities must match `docs/tooling/lsp.md`.** If you add a capability, document it. If a feature is incomplete, narrow the claim — don't lie in docs.
 - **Formatter must be idempotent.** Two passes produce byte-identical output. Fixtures in `test/Sky/Format/FormatSpec.hs` guard this.
 
-## Effect Boundary: Task-everywhere (v1.0+, the `feat/task-everywhere` branch)
+## Effect Boundary: Task-everywhere (v0.10.0+)
 
-Single rule: **every observable side effect returns `Task Error a`.** No two-tier split, no per-function decision overhead. The `feat/effect-boundary-audit` branch (v0.9.6) had a two-tier doctrine carving out `println` / `Slog` / `Os.getenv` / `Time.now` as "sync convenience effects" because of the `let _ = println "step"` discard footgun (Sky has no `do`-notation, so the discarded Task silently dropped the side effect). The `feat/task-everywhere` branch closes that loophole with a tiny lowerer change — see "Auto-force `let _ = TaskExpr`" below — and migrates the previously-eager kernels to Task.
+Single rule: **every observable side effect returns `Task Error a`.** No two-tier split, no per-function decision overhead. (Previously the v0.9.6 doctrine carved out `println` / `Slog` / `Os.getenv` / `Time.now` as "sync convenience effects" — that's gone; the lowerer's `let _ = TaskExpr` auto-force makes the Task-everywhere shape ergonomic without `do`-notation.)
 
 | Tier | Type | Examples | Why |
 |---|---|---|---|
-| **Pure** | bare `a` | `String.length`, `List.map`, hash functions (`sha256`, `hmacSha256`), `Encoding.{base64,url,hex}Encode`, `Time.timeString` | Referentially transparent, deterministic. |
-| **Fallible-pure** | `Result e a` / `Maybe a` | `String.toInt`, JSON decoders, `Encoding.{base64,url,hex}Decode`, `Hex.decode`, `Auth.{hashPassword, verifyPassword, signToken, verifyToken}` | Pure CPU work that can fail on malformed input. Result is a value, not an effect. |
-| **Effects** | `Task Error a` | `File.*`, `Http.*`, `Process.*`, `Io.*`, `Db.*`, `Auth.{register, login, setRole}`, `Crypto.{randomBytes, randomToken}`, `Time.{sleep, now, unixMillis}`, `Random.*`, `println`, `Slog.*`, `Os.{getenv, cwd, args}`, `Live.app`, `Process.loadEnv` | Anything that touches the outside world (clock, env, stdout, disk, network, DB, entropy). Composes uniformly with `Task.parallel` / `Cmd.perform` / `Task.andThen`. |
-| **Diverging** | polymorphic `Int -> a` | `Os.exit` | Function never returns (process terminates). Polymorphic return makes it usable as the last expression in any case branch without forcing every branch to be Task-shaped. |
+| **Pure** | bare `a` | `String.length`, `List.map`, `Crypto.{sha256,sha512,md5,hmacSha256}`, `Encoding.{base64,url,hex}Encode`, `Time.timeString` | Referentially transparent, deterministic. |
+| **Fallible-pure** | `Result e a` / `Maybe a` | `String.toInt`, JSON decoders, `Encoding.{base64,url,hex}Decode`, `Auth.{hashPassword, verifyPassword, signToken, verifyToken}` | Pure CPU work that can fail on malformed input. Result is a value, not an effect. |
+| **Effects** | `Task Error a` | `File.*`, `Http.*`, `Process.run`, `Io.*`, `Db.*`, `Auth.{register, login, setRole}`, `Crypto.{randomBytes, randomToken}`, `Time.{sleep, now, unixMillis}`, `Random.*`, `Log.{println, info, warn, error, debug, infoWith, warnWith, errorWith, debugWith}`, `System.{getenv, getenvOr, getenvInt, getenvBool, cwd, args, getArg, loadEnv}`, `Live.app` | Anything that touches the outside world (clock, env, stdout, disk, network, DB, entropy). Composes uniformly with `Task.parallel` / `Cmd.perform` / `Task.andThen`. |
+| **Diverging** | polymorphic `Int -> a` | `System.exit` | Function never returns (process terminates). Polymorphic return makes it usable as the last expression in any case branch without forcing every branch to be Task-shaped. |
 
 ### Auto-force `let _ = TaskExpr`
 
@@ -75,9 +108,9 @@ The lowerer special-cases `let _ = X in Y` discards: when X has type `Task e a`,
 
 ```elm
 let
-    _ = println "step 1"        -- Task auto-forced; print fires
-    _ = println "step 2"        -- same
-    _ = Slog.info "saving" [...]
+    _ = println "step 1"            -- Task auto-forced; print fires
+    _ = println "step 2"            -- same
+    _ = Log.infoWith "saving" [...]
 in
     continue
 ```
@@ -95,7 +128,7 @@ The auto-force magic applies **only** to `let _ = X` discards. Top-level module 
 ```elm
 -- Module top-level
 apiKey =
-    Os.getenv "OPENAI_KEY"
+    System.getenv "OPENAI_KEY"
         |> Task.run
         |> Result.withDefault ""
 ```
@@ -107,12 +140,12 @@ This is the deliberate single-rule trade-off: one piece of compiler magic (`let 
 When a Task fails inside an effectful op, the canonical pattern (demonstrated in `examples/18-job-queue/src/Main.sky`'s `withErrorReporting` and `examples/07-todo-cli/src/Main.sky`'s `reportError`) is:
 
 1. **Generate a short correlation ID** (`Crypto.randomToken 4`) — typically 4 bytes hex.
-2. **Server-side: structured log** via `Slog.error opName [ "errId", errId, "error", Error.toString e ]` — ops can grep their logs by the ID.
+2. **Server-side: structured log** via `Log.errorWith opName [ "errId", errId, "error", Error.toString e ]` — ops can grep their logs by the ID.
 3. **Client-side: user-friendly message** via `Task.fail (Error.unexpected ("Operation failed (ref " ++ errId ++ ")"))` — a user complaining "save failed ref a3f9" maps directly to the log line.
 
 Per app shape:
-- **CLI** (`07-todo-cli`): `main = Task.run (chain |> Task.onError reportError)` where `reportError` Slogs + prints to stderr + `Os.exit 1`.
-- **Sky.Http.Server** (`08-notes-app`): handlers return `Task Error Response`; `Task.onError` recovers errors to a 4xx/5xx Response with Slog'd errId in the body.
+- **CLI** (`07-todo-cli`): `main = Task.run (chain |> Task.onError reportError)` where `reportError` logs + prints to stderr + `System.exit 1`.
+- **Sky.Http.Server** (`08-notes-app`): handlers return `Task Error Response`; `Task.onError` recovers errors to a 4xx/5xx Response with the logged errId in the body.
 - **REST API**: same as Http.Server, but the recovered Response is `Server.json (errorJson errId)` instead of HTML.
 - **Sky.Live** (`18-job-queue`, `12-skyvote`, `13-skyshop`, etc.): `Cmd.perform task ResultMsg` dispatches; the `ResultMsg` handler updates a `notification` / `historyError` field in Model that the `view` renders as a banner.
 
@@ -158,7 +191,9 @@ Configuration values resolve in this order (highest priority first):
 
 This follows the standard convention (godotenv, Docker): system env vars always win so production deployments can override `.env` defaults without editing files. The `.env` file is for local development convenience.
 
-Sky.Live env vars (sky.toml keys live under `[live]` — there is no `[live.session]` section): `SKY_LIVE_PORT` (`port`), `SKY_LIVE_TTL` (`ttl`), `SKY_LIVE_STORE` (`store` — `memory` / `sqlite` / `redis` / `postgres`), `SKY_LIVE_STORE_PATH` (`storePath` — sqlite file or `host:port` / `redis://…` / `postgres://…` URL), `SKY_LIVE_STATIC_DIR` (`static`), `SKY_LIVE_INPUT` (`input`), `SKY_LIVE_POLL_INTERVAL` (`poll_interval`). Postgres falls back to `DATABASE_URL` and Redis to `REDIS_URL` when `SKY_LIVE_STORE_PATH` is unset (Redis defaults further to `localhost:6379`). Auth: `SKY_AUTH_TOKEN_TTL`, `SKY_AUTH_COOKIE`. Connection-status banner (v0.9.9+): `SKY_LIVE_BANNER` (default `on`; `off` / `0` / `false` to disable the chrome but keep the POST retry queue active), `SKY_LIVE_RETRY_BASE_MS` (default `500`), `SKY_LIVE_RETRY_MAX_MS` (default `16000`), `SKY_LIVE_RETRY_MAX_ATTEMPTS` (default `10`), `SKY_LIVE_QUEUE_MAX` (default `50`).
+Sky.Live env vars (sky.toml keys live under `[live]` — there is no `[live.session]` section): `SKY_LIVE_PORT` (`port`), `SKY_LIVE_TTL` (`ttl`), `SKY_LIVE_STORE` (`store` — `memory` / `sqlite` / `redis` / `postgres`), `SKY_LIVE_STORE_PATH` (`storePath` — sqlite file or `host:port` / `redis://…` / `postgres://…` URL), `SKY_LIVE_STATIC_DIR` (`static`), `SKY_LIVE_INPUT` (`input`), `SKY_LIVE_POLL_INTERVAL` (`poll_interval`). Postgres falls back to `DATABASE_URL` and Redis to `REDIS_URL` when `SKY_LIVE_STORE_PATH` is unset (Redis defaults further to `localhost:6379`). Auth: `SKY_AUTH_TOKEN_TTL`, `SKY_AUTH_COOKIE`. Connection-status banner: `SKY_LIVE_BANNER` (default `on`; `off` / `0` / `false` to disable the chrome but keep the POST retry queue active), `SKY_LIVE_RETRY_BASE_MS` (default `500`), `SKY_LIVE_RETRY_MAX_MS` (default `16000`), `SKY_LIVE_RETRY_MAX_ATTEMPTS` (default `10`), `SKY_LIVE_QUEUE_MAX` (default `50`).
+
+**Logging (v0.10.0+)**: `SKY_LOG_FORMAT` (`plain` default | `json`) and `SKY_LOG_LEVEL` (`debug` | `info` default | `warn` | `error`) control `Log.*` output. Project-level defaults via sky.toml `[log] format = "json" / level = "info"` — same three-layer precedence (env > `.env` > `sky.toml`). Switch to JSON in production by setting `SKY_LOG_FORMAT=json` in the deployment env; no rebuild required.
 
 ## Project Overview
 
@@ -305,41 +340,70 @@ Safety: formatter refuses to write if output loses >1/3 of code lines (prevents 
 
 ## Standard Library
 
-### Pure Functions (no Task)
-| Module | Key Functions |
-|--------|--------------|
-| `Sky.Core.String` | split, join, replace, trim, contains, startsWith, toInt, fromInt, slice, length |
-| `Sky.Core.List` | map, filter, foldl, foldr, head, take, drop, sort, zip, concat, filterMap, parallelMap |
-| `Sky.Core.Dict` | empty, insert, get, remove, keys, values, map, foldl, union, member |
-| `Sky.Core.Set` | empty, insert, remove, member, union, diff, intersect, fromList |
-| `Sky.Core.Maybe` | withDefault, map, andThen |
-| `Sky.Core.Result` | withDefault, map, andThen, mapError, **map2/3/4/5, andMap, combine, traverse**, **andThenTask** |
-| `Sky.Core.Math` | sqrt, pow, abs, floor, ceil, round, sin, cos, pi, min, max |
-| `Sky.Core.Regex` | match, find, findAll, replace, split |
-| `Sky.Core.Crypto` | sha256, sha512, md5, hmacSha256 |
-| `Sky.Core.Encoding` | base64Encode/Decode, urlEncode/Decode, hexEncode/Decode |
-| `Sky.Core.Char` | isUpper, isLower, isDigit, isAlpha, toUpper, toLower |
-| `Sky.Core.Path` | join, dir, base, ext, isAbsolute |
-| `Sky.Core.Json.Decode` | decodeString, string, int, float, bool, list, field, map, andThen |
-| `Sky.Core.Json.Encode` | encode, string, int, float, bool, list, object |
+Single canonical module per concern after the v0.10.0 consolidation. Every kernel module is reachable via its bare name (e.g. `import Log` is the same as `import Std.Log as Log`); the `Sky.Core.X` / `Std.X` long paths are kept for cross-language familiarity but you can usually drop them.
 
-### Task-Wrapped Effects
-| Module | Key Functions | Returns |
-|--------|--------------|---------|
-| `Sky.Core.Task` | succeed, fail, map, andThen, perform, sequence, parallel, lazy, **map2/3/4/5, andMap**, **fromResult, andThenResult, mapError, onError** | Task err a |
-| `Sky.Core.File` | readFile, writeFile, append, mkdirAll, readDir, exists, remove, isDir, tempFile, tempDir, copy, rename | Task Error a |
-| `Sky.Core.Process` | run, exit, getEnv, getCwd, loadEnv | Task Error a |
-| `Sky.Core.Io` | readLine, readBytes, writeStdout, writeStderr | Task Error a |
-| `Sky.Core.Args` | getArg, getArgs | Maybe String / List String |
-| `Sky.Core.Time` | now, unixMillis, sleep | Task Error Int |
-| `Sky.Core.Http` | get, post, request | Task Error Response |
-| `Sky.Core.Random` | int, float, choice, shuffle | Task Error a |
-| `Sky.Http.Server` | listen, get/post/put/delete routes, middleware | Task Error () |
-| `Std.Db` | connect, open, exec, execRaw, query, queryDecode, insertRow, getById, updateById, deleteById, findWhere, withTransaction | **Task Error a** (effect-boundary-audit branch — was Result) |
-| `Std.Auth` | register, login, verify, logout, verifyEmail, hashPassword, verifyPassword, setRole, signToken, verifyToken | Result Error a |
+### Pure (no I/O, no Task wrap)
+| Module | Path | Key functions |
+|---|---|---|
+| `Basics` | `Sky.Core.Basics`, autoloaded via `Sky.Core.Prelude` | identity, always, not, toString, modBy, clamp, fst, snd, compare, negate, abs, sqrt, min, max |
+| `String` | `Sky.Core.String` | length, reverse, append, split, join, contains, startsWith, endsWith, toInt, fromInt, toFloat, fromFloat, toUpper, toLower, trim, trimStart, trimEnd, replace, slice, isEmpty, toBytes, fromBytes, fromChar, toChar, left, right, padLeft, padRight, repeat, lines, words, isValid, normalize, normalizeNFD, casefold, equalFold, graphemes, isEmail, isUrl, slugify, htmlEscape, truncate, ellipsize |
+| `List` | `Sky.Core.List` | map, filter, foldl, foldr, length, head, tail, take, drop, append, concat, concatMap, reverse, sort, sortBy, member, any, all, range, zip, filterMap, parallelMap, isEmpty, indexedMap, find, cons |
+| `Dict` | `Sky.Core.Dict` | empty, insert, get, remove, member, keys, values, toList, fromList, map, foldl, union |
+| `Set` | `Sky.Core.Set` | empty, insert, remove, member, union, diff, intersect, fromList, toList, size |
+| `Maybe` | `Sky.Core.Maybe` | withDefault, map, andThen, map2..5, andMap, combine, traverse |
+| `Result` | `Sky.Core.Result` | withDefault, map, andThen, mapError, map2..5, andMap, combine, traverse, andThenTask |
+| `Math` | `Sky.Core.Math` | sqrt, pow, abs, floor, ceil, round, sin, cos, tan, pi, e, log, min, max |
+| `Regex` | `Sky.Core.Regex` | match, find, findAll, replace, split |
+| `Char` | `Sky.Core.Char` | isUpper, isLower, isDigit, isAlpha, toUpper, toLower |
+| `Path` | `Sky.Core.Path` | join, dir, base, ext, isAbsolute, safeJoin |
+| `Crypto` | `Sky.Core.Crypto` | sha256, sha512, md5, hmacSha256, constantTimeEqual, randomBytes, randomToken (random* return Task — entropy) |
+| `Encoding` | `Sky.Core.Encoding` | base64Encode/Decode, urlEncode/Decode, hexEncode/Decode |
+| `Json.Encode` (alias `JsonEnc`) | `Sky.Core.Json.Encode` | string, int, float, bool, null, list, object, encode |
+| `Json.Decode` (alias `JsonDec`) | `Sky.Core.Json.Decode` | decodeString, string, int, float, bool, field, index, list, map, andThen, succeed, fail, oneOf, at, map2..5 |
+| `Json.Decode.Pipeline` (alias `JsonDecP`) | `Sky.Core.Json.Decode.Pipeline` | required, optional, custom, requiredAt |
+| `Uuid` | `Sky.Core.Uuid` | v4, v7, parse |
 
-### Prelude (implicitly imported)
-`Result (Ok/Err)`, `identity`, `not`, `always`, `fst`, `snd`, `clamp`, `modBy`, `errorToString`
+### Effects (`Task Error a`)
+| Module | Path | Key functions |
+|---|---|---|
+| `Task` | `Sky.Core.Task` | succeed, fail, map, andThen, perform, sequence, parallel, lazy, run, map2..5, andMap, fromResult, andThenResult, mapError, onError |
+| `Cmd` | `Std.Cmd` | none, batch, perform |
+| `Sub` | `Std.Sub` | none, every |
+| `Time` | `Sky.Core.Time` | now, sleep, every, unixMillis, formatISO8601, formatRFC3339, formatHTTP, format, parseISO8601, parse, addMillis, diffMillis, timeString |
+| `Random` | `Sky.Core.Random` | int, float, choice, shuffle |
+| `Http` | `Sky.Core.Http` | get, post, request |
+| `File` | `Sky.Core.File` | readFile, readFileLimit, readFileBytes, writeFile, append, mkdirAll, readDir, exists, remove, isDir, tempFile, copy, rename |
+| `Io` | `Sky.Core.Io` | readLine, readBytes, writeStdout, writeStderr, writeString |
+| **`System`** | `Sky.Core.System` | args, getArg, getenv, getenvOr, getenvInt, getenvBool, cwd, exit, loadEnv |
+| `Process` | `Sky.Core.Process` | run (subprocess execution only) |
+| `Db` | `Std.Db` | connect, open, close, exec, execRaw, query, queryDecode, insertRow, getById, updateById, deleteById, findWhere, withTransaction, getField, getFieldOr, getString, getInt, getBool |
+| `Auth` | `Std.Auth` | hashPassword, verifyPassword, signToken, verifyToken, register, login, setRole, hashPasswordCost, passwordStrength |
+| **`Log`** | `Std.Log` | println, debug, info, warn, error, debugWith, infoWith, warnWith, errorWith, with |
+
+### Web / Live / UI
+| Module | Path | Key functions |
+|---|---|---|
+| `Server` | `Sky.Http.Server` | listen, get/post/put/delete/any, static, text/json/html, withStatus, redirect, param, queryParam, header, getCookie, cookie, withCookie, withHeader, method, formValue, body, path, group, use |
+| `Live` | `Std.Live` | app, route, api |
+| `Event` | `Std.Live.Events` / `Std.Html.Events` | onClick, onInput, onChange, onSubmit, on*, onImage, onFile, fileMaxWidth/Height/Size |
+| `Html` | `Std.Html` | text, div, span, p, h1..h6, a, button, input, form, … (~70 elements + render/escape helpers) |
+| `Attr` | `Std.Html.Attributes` | class, id, style, type/value/href/src, checked/disabled/required, … (~60 attrs + boolAttribute/dataAttribute) |
+| `Css` | `Std.Css` | stylesheet, rule, property, px/rem/em/pct/hex/rgba, color/background/padding/margin/font*, transition, grid*, flex*, … (~120) |
+| `RateLimit` | `Sky.Http.RateLimit` | allow |
+| `Middleware` | `Sky.Http.Middleware` | withCors, withLogging, withBasicAuth, withRateLimit |
+
+### Low-level FFI proxies
+| Module | Path | Key functions |
+|---|---|---|
+| `Context` | `Context` (Go context) | background, todo, withValue, withCancel |
+| `Fmt` | `Fmt` (Go fmt) | sprint, sprintf, sprintln, errorf |
+| `Ffi` | `Sky.Ffi` | call, callPure, callTask, has, isPure |
+
+### Diverging
+- `System.exit : Int -> a` — process termination, polymorphic return.
+
+### Prelude (implicitly imported via `Sky.Core.Prelude exposing (..)`)
+`Result (Ok/Err)`, `Maybe (Just/Nothing)`, `identity`, `not`, `always`, `fst`, `snd`, `clamp`, `modBy`, `errorToString`
 
 ### Concurrency
 ```elm
