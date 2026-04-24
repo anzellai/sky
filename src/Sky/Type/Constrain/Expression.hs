@@ -1910,12 +1910,18 @@ lookupKernelType modName funcName = case (modName, funcName) of
 
     -- Crypto: Sky.Core.Crypto. The two entropy-consuming helpers.
     -- sha256/sha512/md5/hmacSha256/constantTimeEqual stay pure.
+    --
+    -- Crypto.randomBytes : Int -> Task Error String
+    -- Returns n cryptographically-secure random bytes hex-encoded
+    -- (matches the runtime's actual return + the docstring; the
+    -- pre-2026-04-24 sig declared `List Int` but no caller ever got
+    -- a list — runtime always returned hex strings).
     ("Crypto", "randomBytes") ->
         Just $ T.Forall []
             (T.TLambda intType
                 (T.TType ModuleName.task "Task"
                     [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
-                    , T.TType ModuleName.list "List" [intType]]))
+                    , stringType]))
     ("Crypto", "randomToken") ->
         Just $ T.Forall []
             (T.TLambda intType

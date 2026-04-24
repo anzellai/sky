@@ -3873,16 +3873,18 @@ func Hex_encodeToString(bytes any) any {
 
 func Hex_encode(bytes any) any { return Hex_encodeToString(bytes) }
 
+// Hex.decode : String -> Result Error String
+// Aligned to the kernel sig — was previously returning Ok []int (raw
+// bytes as List Int) which mismatched the declared Result Error String.
+// Bytes are interpreted as a Sky String (which can carry arbitrary
+// byte values; for typed-binary handling use String_toBytes after
+// decoding if needed).
 func Hex_decode(s any) any {
 	b, err := hex.DecodeString(fmt.Sprintf("%v", s))
 	if err != nil {
 		return Err[any, any](ErrFfi(err.Error()))
 	}
-	out := make([]any, len(b))
-	for i, v := range b {
-		out[i] = int(v)
-	}
-	return Ok[any, any](out)
+	return Ok[any, any](string(b))
 }
 
 func String_toBytes(s any) any {
@@ -4104,33 +4106,37 @@ func Random_shuffle(list any) any {
 	}
 }
 
-// P8/Random typed companions — Task-shaped.
-func Random_intT(lo, hi int) func() SkyResult[string, int] {
-	return func() SkyResult[string, int] {
-		if hi <= lo { return Ok[string, int](lo) }
-		return Ok[string, int](lo + mrand.Intn(hi-lo+1))
+// P8/Random typed companions — Task-shaped. Error type is `any` to
+// match the canonical Sky.Core.Error.Error in the kernel sig (was
+// `string` pre-2026-04-24, the legacy pre-v0.9.6 Error-as-String
+// pattern). Err arms use ErrInvalidInput / ErrFfi typed builders for
+// consistency with the rest of the runtime.
+func Random_intT(lo, hi int) SkyTask[any, int] {
+	return func() SkyResult[any, int] {
+		if hi <= lo { return Ok[any, int](lo) }
+		return Ok[any, int](lo + mrand.Intn(hi-lo+1))
 	}
 }
 
-func Random_floatT(lo, hi float64) func() SkyResult[string, float64] {
-	return func() SkyResult[string, float64] {
-		return Ok[string, float64](lo + mrand.Float64()*(hi-lo))
+func Random_floatT(lo, hi float64) SkyTask[any, float64] {
+	return func() SkyResult[any, float64] {
+		return Ok[any, float64](lo + mrand.Float64()*(hi-lo))
 	}
 }
 
-func Random_choiceT[A any](xs []A) func() SkyResult[string, A] {
-	return func() SkyResult[string, A] {
-		if len(xs) == 0 { return Err[string, A]("empty list") }
-		return Ok[string, A](xs[mrand.Intn(len(xs))])
+func Random_choiceT[A any](xs []A) SkyTask[any, A] {
+	return func() SkyResult[any, A] {
+		if len(xs) == 0 { return Err[any, A](ErrInvalidInput("empty list")) }
+		return Ok[any, A](xs[mrand.Intn(len(xs))])
 	}
 }
 
-func Random_shuffleT[A any](xs []A) func() SkyResult[string, []A] {
-	return func() SkyResult[string, []A] {
+func Random_shuffleT[A any](xs []A) SkyTask[any, []A] {
+	return func() SkyResult[any, []A] {
 		out := make([]A, len(xs))
 		copy(out, xs)
 		mrand.Shuffle(len(out), func(i, j int) { out[i], out[j] = out[j], out[i] })
-		return Ok[string, []A](out)
+		return Ok[any, []A](out)
 	}
 }
 
