@@ -5,6 +5,7 @@ import Std.Log exposing (println)
 import Sky.Core.Crypto as Crypto
 import Sky.Core.String as String
 import Sky.Core.Time as Time
+import Sky.Core.Task as Task
 import Sky.Core.Result as Result
 import Lib.Db as Db
 import Sky.Core.Error as Error exposing (Error)
@@ -18,7 +19,7 @@ createComment ideaId authorId content =
     -- on the PRIMARY KEY. Pre-fix, re-submitting the same text
     -- returned a UNIQUE/PK constraint error even though the user's
     -- action was legitimate.
-        nowMs = Result.withDefault 0 Time.unixMillis
+        nowMs = Result.withDefault 0 (Task.run (Time.unixMillis ()))
         id =
             String.slice
                 0

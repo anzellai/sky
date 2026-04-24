@@ -2,11 +2,14 @@ module Main (main) where
 
 import Test.Hspec
 import qualified Sky.Build.CompileSpec
+import qualified Sky.Build.DepHmFatalSpec
 import qualified Sky.Build.ExampleSweepSpec
+import qualified Sky.Build.ForeignFatalSpec
 import qualified Sky.Build.TypedFfiSpec
 import qualified Sky.ErrorUnificationSpec
 import qualified Sky.Parse.PatternSpec
 import qualified Sky.Canonicalise.ExposingSpec
+import qualified Sky.Canonicalise.KernelFallbackSpec
 import qualified Sky.Canonicalise.UnboundSpec
 import qualified Sky.Type.ExhaustivenessSpec
 import qualified Sky.Format.FormatSpec
@@ -36,8 +39,21 @@ import qualified Sky.Cli.TestSpec
 main :: IO ()
 main = hspec $ do
     describe "Sky.Build.Compile"         Sky.Build.CompileSpec.spec
+    -- v0.10.0: dep module HM errors must abort the build (used to
+    -- silently degrade to `any`-typed bindings, hiding real type
+    -- bugs that surfaced as func-pointer-as-string at runtime).
+    describe "Sky.Build.DepHmFatal"      Sky.Build.DepHmFatalSpec.spec
+    -- v0.10.0: foreign-call mismatches at the constraint solver are
+    -- fatal (was silently swallowed). Surfaced as runtime panics
+    -- like rt.AsBool: expected bool, got rt.SkyResult[…].
+    describe "Sky.Build.ForeignFatal"    Sky.Build.ForeignFatalSpec.spec
     describe "Sky.Parse.Pattern"         Sky.Parse.PatternSpec.spec
     describe "Sky.Canonicalise.Exposing" Sky.Canonicalise.ExposingSpec.spec
+    -- Regression: kernel qualifiers (Crypto, Encoding, Hex, …) used
+    -- without an explicit `import Sky.Core.<Mod>` must resolve as
+    -- VarKernel, not VarTopLevel — otherwise the lowerer ships
+    -- `Crypto_sha256(arg)` (no `rt.` prefix) and `go build` fails.
+    describe "Sky.Canonicalise.KernelFallback" Sky.Canonicalise.KernelFallbackSpec.spec
     describe "Sky.Canonicalise.Unbound"  Sky.Canonicalise.UnboundSpec.spec
     describe "Sky.Type.Exhaustiveness"   Sky.Type.ExhaustivenessSpec.spec
     describe "Sky.Format.Format"         Sky.Format.FormatSpec.spec

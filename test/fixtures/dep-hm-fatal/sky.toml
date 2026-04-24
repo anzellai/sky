@@ -1,0 +1,6 @@
+name = "dep-hm-fatal"
+version = "0.0.0"
+entry = "src/Main.sky"
+
+[source]
+root = "src"

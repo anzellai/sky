@@ -1,34 +1,27 @@
 module Main exposing (main)
 
+import Sky.Core.Crypto as Crypto
+import Sky.Core.Http as Http
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Result as Result
 import Sky.Core.String as String
-import Std.Log exposing (println)
-import Time
-import Crypto.Sha256 as Sha256
-import Encoding.Hex as Hex
-import Sky.Core.Http as Http
 import Sky.Core.Task as Task
+import Sky.Core.Time as Time
+import Std.Log exposing (println)
 
 
 main =
     let
         nowStr =
-            Time.now |> Result.andThen (\t -> Time.timeString t)
+            Time.now ()
+                |> Task.run
+                |> Result.map Time.timeString
                 |> Result.withDefault "unknown"
         _ = println ("Current time: " ++ nowStr)
         data = "Hello, Sky!"
-        hashResult =
-            Sha256.sum256 (String.toBytes data)
-                |> Result.andThen (\hash -> Hex.encodeToString hash)
-        _ =
-            case hashResult of
-
-                Ok hashStr ->
-                    println ("SHA256 of 'Hello, Sky!': " ++ hashStr)
-
-                Err e ->
-                    println ("Hash error: " ++ errorToString e)
+        -- v0.10.0: Crypto.sha256 returns the hex digest directly
+        -- (was: Sha256.sum256 + Hex.encodeToString chain).
+        _ = println ("SHA256 of 'Hello, Sky!': " ++ Crypto.sha256 data)
         _ = println "Sending HTTP request..."
         httpResult = Task.run (Http.get "https://httpbin.org/get")
         _ =

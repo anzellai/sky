@@ -321,7 +321,16 @@ viewProductForm model =
                               , input
                                     [ type_ "number"
                                     , value (String.fromInt model.editPrice)
-                                    , onInput UpdateEditPrice
+                                    -- onInput passes a String; parse to
+                                    -- Int and fall back to current value
+                                    -- on a non-numeric edit.
+                                    , onInput
+                                          (\s ->
+                                              UpdateEditPrice
+                                                  (Maybe.withDefault
+                                                      model.editPrice
+                                                      (String.toInt s))
+                                          )
                                     , Layout.formInput
                                     , placeholder "0"
                                     , required ()
@@ -336,7 +345,13 @@ viewProductForm model =
                               , input
                                     [ type_ "number"
                                     , value (String.fromInt model.editDiscount)
-                                    , onInput UpdateEditDiscount
+                                    , onInput
+                                          (\s ->
+                                              UpdateEditDiscount
+                                                  (Maybe.withDefault
+                                                      model.editDiscount
+                                                      (String.toInt s))
+                                          )
                                     , Layout.formInput
                                     , placeholder "0"
                                     , Attr.min "0"
@@ -350,7 +365,13 @@ viewProductForm model =
                               , input
                                     [ type_ "number"
                                     , value (String.fromInt model.editStock)
-                                    , onInput UpdateEditStock
+                                    , onInput
+                                          (\s ->
+                                              UpdateEditStock
+                                                  (Maybe.withDefault
+                                                      model.editStock
+                                                      (String.toInt s))
+                                          )
                                     , Layout.formInput
                                     , placeholder "-1"
                                     , Attr.min "-1"

@@ -3,7 +3,7 @@ module Lib.Database exposing (conn, getField, getInt, getBool, exec, query, quer
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Maybe as Maybe
 import Sky.Core.Dict as Dict
-import Sky.Core.Os as Os
+import Sky.Core.System as System
 import Sky.Core.Task as Task
 import Std.Db as Db
 import Std.Log exposing (println)
@@ -28,7 +28,7 @@ conn =
                     println
                         ("[FATAL] Cannot open skymon.db: " ++ Error.toString e)
             in
-                Os.exit 1
+                System.exit 1
 
 
 getField field row =

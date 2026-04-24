@@ -11,7 +11,6 @@ import Sky.Core.Random as Random
 import Sky.Core.Crypto as Crypto
 import Sky.Core.Error as Error exposing (Error)
 import Std.Db as Db
-import Log.Slog as Slog
 import Std.Live as Live exposing (app, route)
 import Std.Html exposing (..)
 import Std.Live.Events exposing (onClick)
@@ -155,7 +154,8 @@ saveSnapshot okCount failCount total =
                 "INSERT INTO snapshots (ok, failed, total, ts) VALUES (?, ?, ?, ?)"
                 [ okCount, failCount, total, ts ]
         writeAll db =
-            Db.execRaw db createSnapshotTable |> Task.andThen (\_ -> Time.now)
+            Db.execRaw db createSnapshotTable
+                |> Task.andThen (\_ -> Time.now ())
                 |> Task.andThen (\ts -> insertRow db ts)
         successMsg =
             "Snapshot saved (ok=" ++ String.fromInt okCount ++ " fail="
@@ -202,7 +202,7 @@ withErrorReporting opName task =
         logAndFail e errId =
             let
                 _ =
-                    Slog.error
+                    Log.errorWith
                         opName
                         [ "errId", errId, "error", Error.toString e ]
             in

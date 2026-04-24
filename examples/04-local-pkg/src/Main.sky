@@ -12,4 +12,6 @@ main =
         sum = Utils.add a b
         message = Utils.formatMessage "Current" sum
     in
-        println "Calculation result:" message
+        -- println takes a single String; concat the prefix and the
+        -- formatted message before passing.
+        println ("Calculation result: " ++ message)

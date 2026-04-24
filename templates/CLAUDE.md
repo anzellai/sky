@@ -115,7 +115,7 @@ dbConn =
         Ok conn -> conn
         Err e ->
             let _ = println ("[FATAL] " ++ Error.toString e) in
-            Os.exit 1
+            System.exit 1
 
 init _ = ({ messages = [], input = "" }, Cmd.none)
 
@@ -207,15 +207,15 @@ value (a `Result Error String`), not a function to call. Calling it as
 **9. Zero-arity Sky top-level declarations are memoised — add a `_` arg if
 they read env vars.** `openDb = Db.connect ()` evaluates ONCE at first access
 and caches forever. That's fine for DB handles. But a zero-arity function
-reading `Os.getenv` evaluates at Go `init()` time — BEFORE `.env` is loaded.
+reading `System.getenv` evaluates at Go `init()` time — BEFORE `.env` is loaded.
 Workaround: add a dummy `_` parameter to defer the evaluation.
 
 ```elm
 -- ✓ Reads env vars at each call (correct)
-apiKey _ = Os.getenv "OPENAI_API_KEY" |> Result.withDefault ""
+apiKey _ = System.getenv "OPENAI_API_KEY" |> Result.withDefault ""
 
 -- ✗ Evaluates at init time, before .env loads
-apiKey = Os.getenv "OPENAI_API_KEY" |> Result.withDefault ""
+apiKey = System.getenv "OPENAI_API_KEY" |> Result.withDefault ""
 ```
 
 **10. Never write FFI code by hand.** `sky add <package>` generates all
@@ -396,7 +396,11 @@ let { x, y } = point in x + y
 
 ## Task — Effect Boundary
 
-All side effects (IO, HTTP, file access) flow through `Task`. Tasks are lazy — they only execute when `perform` is called. Panics are caught and converted to `Err`.
+**Single rule (v1.0+):** every observable side effect returns `Task Error a`. That includes the previously-eager kernels: `println`, `Slog.*`, `Time.now`, `Time.unixMillis`, `System.getenv`, `System.cwd`, `System.args`. The previous "two-tier" doctrine that carved them out as sync convenience effects is gone — see "Auto-force `let _ = TaskExpr`" below for why this is now ergonomic.
+
+Tasks are lazy — they only execute when `Task.run` / `Task.perform` is called, when consumed by `Cmd.perform`, or auto-forced via `let _ =` discard.
+
+The narrow exception is **`System.exit`** which stays `Int -> a` (polymorphic) because it never returns — Task-wrapping it would force every case branch using it as a fatal-error escape to also be Task, with no compensating type information.
 
 ```elm
 import Sky.Core.Task as Task
@@ -429,7 +433,28 @@ result = Task.perform pipeline
 - `Task.mapError : (e -> e2) -> Task e a -> Task e2 a` -- transform error type without touching the success path
 - `Task.onError : (e -> Task e2 a) -> Task e a -> Task e2 a` -- recover from error to a new Task (HTTP error response, retry, fall back to default)
 
-**Db.* now returns Task** (effect-boundary-audit). `Db.connect` / `Db.open` / `Db.exec` / `Db.execRaw` / `Db.query` return `Task Error a` and compose directly with `Task.andThen` / `Task.parallel` / `Cmd.perform`. The runtime helpers wrap their bodies in thunks so the actual SQL defers to the goroutine, not the caller.
+**Auto-force `let _ = TaskExpr`** (v1.0+). The compiler special-cases `let _ = X in Y` discards: when X has type `Task e a`, the lowerer emits `_ = rt.AnyTaskRun(X)` so the Task thunk is forced and the side effect fires. Without this, every kernel-Task call would silently no-op when discarded. With this, the pervasive debug-trace pattern keeps working unchanged:
+
+```elm
+let
+    _ = println "step 1"        -- Task auto-forced, print fires
+    _ = println "step 2"        -- same
+    _ = Log.infoWith "saving" [ "id", id ]
+in
+    continue
+```
+
+**Top-level bindings stay explicit.** Auto-force only applies to `let _ =` discards. Reading a Task-typed value at module scope requires explicit `Task.run`:
+
+```elm
+-- Module top-level
+apiKey =
+    System.getenv "OPENAI_KEY"
+        |> Task.run
+        |> Result.withDefault ""
+```
+
+**Db.* returns Task.** `Db.connect` / `Db.open` / `Db.exec` / `Db.execRaw` / `Db.query` / `Db.queryDecode` / `Db.insertRow` / `Db.{getById, updateById, deleteById}` / `Db.{findOneByField, findManyByField, findByConditions, withTransaction}` all return `Task Error a` and compose directly with `Task.andThen` / `Task.parallel` / `Cmd.perform`. Pure dict accessors (`Db.getField` / `getString` / `getInt` / `getBool`) stay bare — they read from a row dict, no I/O. Auth side effects (`Auth.register` / `login` / `setRole`) are Task; pure CPU ones (`Auth.hashPassword` / `verifyPassword` / `signToken` / `verifyToken`) are Result.
 
 **Db chain (clean Task composition):**
 
@@ -446,7 +471,7 @@ loadUserNotes userId =
 
 ```elm
 import Sky.Core.Crypto as Crypto
-import Log.Slog as Slog
+import Std.Log as Log
 
 -- Server-side: Slog with errId for ops to grep.
 -- Client-side: Task.fail with same errId in user-friendly message.
@@ -455,7 +480,7 @@ withErrorReporting opName task =
     task |> Task.onError (\e ->
         Crypto.randomToken 4
             |> Task.andThen (\errId ->
-                let _ = Slog.error opName [ "errId", errId, "error", Error.toString e ]
+                let _ = Log.errorWith opName [ "errId", errId, "error", Error.toString e ]
                 in  Task.fail (Error.unexpected
                         ("Operation failed (ref " ++ errId ++ ")"))))
 
@@ -486,7 +511,7 @@ createCheckout url =
 There is no `Result.fromTask` / `Task -> Result` bridge by design. `Task.run` exists for the runtime entry boundary (CLI `main`, test fixtures, Lib wrappers that need a sync result for `case`-pattern matching), but user code should keep effectful pipelines in `Task` and let the boundary (`Cmd.perform`, HTTP handler return) execute them.
 
 **Per-app shape error handling:**
-- **CLI** (`07-todo-cli`): `main = let _ = Task.run (chain |> Task.onError reportError) in ()` where `reportError` Slogs + prints to stderr + `Os.exit 1`.
+- **CLI** (`07-todo-cli`): `main = let _ = Task.run (chain |> Task.onError reportError) in ()` where `reportError` Slogs + prints to stderr + `System.exit 1`.
 - **Sky.Http.Server**: handler returns `Task Error Response`; `|> Task.onError (\e -> Task.succeed (Server.withStatus 500 (Server.json (errorJson errId))))` recovers errors to a Response.
 - **Sky.Live** (`18-job-queue`, etc.): `Cmd.perform task ResultMsg` dispatches; the `ResultMsg` handler updates a `notification` / `error` field in Model that the `view` renders as a banner. The errId surfaces in the banner so users can quote it in support requests.
 
@@ -978,40 +1003,42 @@ main =
         Err e -> println ("Failed to load config: " ++ Error.toString e)
 ```
 
-### Sky.Core.Args
+### Sky.Core.System
+
+The single OS-interaction kernel (v0.10.0+ — replaces `Os`, `Args`,
+`Std.Env`, and the env/exit/cwd half of `Process`). All Task-wrapped
+per the Task-everywhere doctrine; `let _ = …` discards auto-force.
 
 ```elm
-getArg : Int -> Maybe String                         -- os.Args[n] (0 = program name, 1 = first arg)
-getArgs : () -> List String                          -- os.Args[1:] (all args except program name)
+args        : ()  -> Task Error (List String)         -- os.Args[1:] minus program name
+getArg      : Int -> Task Error (Maybe String)        -- nth element of os.Args (0-indexed)
+getenv      : String -> Task Error String             -- Err if unset
+getenvOr    : String -> String -> Task Error String   -- env var or default; never errs
+getenvInt   : String -> Task Error Int                -- typed; Err on missing or unparseable
+getenvBool  : String -> Task Error Bool               -- accepts true/yes/1/on or false/no/0/off
+cwd         : ()  -> Task Error String                -- current working directory
+exit        : Int -> a                                -- diverging — process terminates
+loadEnv     : ()  -> Task Error ()                    -- load .env from cwd into the process env
 ```
+
+Production deployments override env via the process environment (Docker
+`ENV`, k8s, CI vars). `loadEnv ()` is for local dev — never overrides
+existing vars.
 
 ### Sky.Core.Process
 
-Effectful operations — all Task-wrapped except `loadEnv` which is called
-synchronously before app startup.
-
 ```elm
-run : String -> List String -> Task Error String      -- combined stdout+stderr
-exit : Int -> Task Error ()                           -- terminates the process
-getEnv : String -> Task Error String                  -- Err if unset (prefer Std.Env)
-getCwd : Task Error String
-loadEnv : String -> Result Error ()                   -- sync, main-startup only
+run : String -> List String -> Task Error String      -- subprocess: combined stdout+stderr
 ```
 
-Prefer `Std.Env` over `Process.getEnv` for config reads — `Env.get` returns
-a `Maybe String` which distinguishes "unset" from "empty".
+That's the whole module. `exit` / `getEnv` / `getCwd` / `loadEnv`
+moved to `System.*` in v0.10.0 — there's no longer a `Process.exit`.
 
 ### Sky.Core.Debug
 
 ```elm
 log : String -> a -> a          -- prints tag + value, returns value unchanged
 toString : a -> String          -- convert any value to string representation
-```
-
-### Sky.Core.Platform
-
-```elm
-getArgs : () -> List String     -- command-line arguments
 ```
 
 ### Sky.Core.Json.Encode
@@ -1069,9 +1096,25 @@ custom : Decoder a -> Decoder (a -> b) -> Decoder b
 
 ### Std.Log
 
+The single logging surface (v0.10.0+ — absorbed `Slog`).
+
 ```elm
-println : a -> a -> ()     -- println tag value (variadic, uses Go fmt.Println)
+println : String -> Task Error ()
+debug   : String -> Task Error ()
+info    : String -> Task Error ()
+warn    : String -> Task Error ()
+error   : String -> Task Error ()
+
+-- structured variants — second arg is `[ "k1", "v1", "k2", "v2", … ]`
+debugWith : String -> List a -> Task Error ()
+infoWith  : String -> List a -> Task Error ()
+warnWith  : String -> List a -> Task Error ()
+errorWith : String -> List a -> Task Error ()
 ```
+
+Configure at runtime via env vars (or sky.toml `[log]` defaults):
+- `SKY_LOG_FORMAT` = `plain` (default) | `json`
+- `SKY_LOG_LEVEL`  = `debug` | `info` (default) | `warn` | `error`
 
 ### Std.Cmd
 
@@ -1572,7 +1615,7 @@ main =
 
 ### 2. HTTP Server (non-Live, Go-style)
 
-Uses gorilla/mux or net/http directly. Server renders HTML with `Std.Html.render`. Use `Process.loadEnv` to load `.env` files for configuration.
+Uses gorilla/mux or net/http directly. Server renders HTML with `Std.Html.render`. Use `System.loadEnv` to load `.env` files for configuration.
 
 ```elm
 import Net.Http as Http
@@ -2078,7 +2121,7 @@ import Sky.Core.Http as Http
 import Sky.Core.Json.Encode as Encode
 import Sky.Core.Json.Decode as Decode
 import Sky.Core.Error as Error exposing (Error)
-import Std.Env as Env
+import Sky.Core.System as System
 import Std.Html exposing (..)
 import Std.Html.Attributes exposing (..)
 import Std.Live exposing (app, route)
@@ -2119,9 +2162,9 @@ init _ =
     )
 
 
--- Zero-arity with `_` param — forces Os.getenv to evaluate per call,
+-- Zero-arity with `_` param — forces System.getenv to evaluate per call,
 -- AFTER .env loads (Cardinal Rule 9).
-apiKey _ = Env.getOrDefault "OPENAI_API_KEY" ""
+apiKey _ = System.getenvOr "OPENAI_API_KEY" ""
 
 
 callOpenAi : List ChatMessage -> Task Error String
@@ -2431,18 +2474,24 @@ This auto-generates `.skycache/go/<package>/bindings.skyi` with type-safe Sky bi
 
 ### Import Path Mapping
 
-Go package paths map to PascalCase Sky module names:
+Go package paths map to PascalCase Sky module names. **The Sky kernel
+already covers the common cases — only reach for the Go FFI binding
+when you need a Go-only API the kernel doesn't surface.** For example,
+`Crypto.sha256 s` (kernel) returns the hex digest directly; you only
+need `import Crypto.Sha256 as Sha256` if you want raw bytes for
+further processing.
 
-| Go Package | Sky Import |
-|-----------|-----------|
-| `net/http` | `import Net.Http as Http` |
-| `database/sql` | `import Database.Sql as Sql` |
-| `crypto/sha256` | `import Crypto.Sha256 as Sha256` |
-| `encoding/hex` | `import Encoding.Hex as Hex` |
-| `os` | `import Os` |
-| `os/exec` | `import Os.Exec as Exec` |
-| `bufio` | `import Bufio` |
-| `io` | `import Io` |
+| Go Package | Sky Import | Notes |
+|-----------|-----------|-------|
+| `net/http` | `import Net.Http as Http` | for HTTP client beyond `Sky.Core.Http`'s `get`/`post`/`request` |
+| `database/sql` | `import Database.Sql as Sql` | for raw `sql.DB` access; `Std.Db` covers most usage |
+| `crypto/sha256` | `import Crypto.Sha256 as Sha256` | kernel `Crypto.sha256 s` returns hex string directly — use this for plain hashing |
+| `encoding/hex` | `import Encoding.Hex as Hex` | kernel `Encoding.hexEncode s` / `Encoding.hexDecode s` cover string ↔ hex |
+| `os` | `import Os` | Go's process-state package (stdin/stderr/file ops). Sky kernel is `System.*` (no collision since v0.10.0) |
+| `os/exec` | `import Os.Exec as Exec` | for richer subprocess control than `Process.run` |
+| `log/slog` | `import Log.Slog as Slog` | Go's structured logger. Sky kernel `Log.*With` is the preferred surface |
+| `bufio` | `import Bufio` | line/byte scanning, e.g. for stdin pipelines |
+| `io` | `import Io` | low-level Reader/Writer; kernel `Sky.Core.Io` covers stdin/stdout/stderr |
 | `github.com/google/uuid` | `import Github.Com.Google.Uuid as Uuid` |
 | `github.com/gorilla/mux` | `import Github.Com.Gorilla.Mux as Mux` |
 | `modernc.org/sqlite` | `import Modernc.Org.Sqlite as _` |
@@ -2850,7 +2899,7 @@ the model before firing.
 
 **`OPENAI_API_KEY not set` but `.env` has it**
 
-A zero-arity function reading `Os.getenv` evaluated at Go `init()` time,
+A zero-arity function reading `System.getenv` evaluated at Go `init()` time,
 before `godotenv` ran. Add a dummy `_` parameter (Cardinal Rule 9).
 
 **`sky-out/go.mod` got wiped after `sky run`**
@@ -2892,7 +2941,7 @@ Session store memory grows with inactive sessions. Set a TTL:
 - **Zero-arg `Css.*` constants DO need `()`** — `Css.zero`, `Css.auto`, `Css.none`, `Css.transparent`, `Css.inherit`, `Css.initial`, `Css.borderBox`, `Css.systemFont`, `Css.monoFont`, `Css.userSelectNone`. These are exposed as `() -> String` kernels (not zero-arity values) so they don't interact with Go's `init()` ordering. Write `Css.padding (Css.zero ())`, not `Css.padding Css.zero` — the latter serialises a function pointer like `0xc00001c0a0` into the stylesheet. Pattern: any `Css.X` that names a literal CSS keyword takes `()`; value constructors like `px`, `rem`, `em`, `hex`, `rgba` take their arguments directly.
 - **FFI setters in pipelines need an explicit lambda** — `|> Result.andThen (OpenAi.chatCompletionMessageSetRole m.role)` emits a call to the non-existent non-T variant and fails codegen. Wrap: `|> Result.andThen (\msg -> OpenAi.chatCompletionMessageSetRole m.role msg)`.
 - **`import Lib.X as Alias` leaks the alias into codegen for exposed types** — `import Lib.Db as Chat` emits `Chat_Message_R` instead of the canonical `Lib_Db_Message_R`, breaking cross-module record sharing. **Workaround**: import types without the alias — `import Lib.Db exposing (Message, ...)`. Aliases are fine for modules that only expose functions.
-- **Zero-arity functions reading env vars** — zero-arity functions are memoised; when they read `Os.getenv` they evaluate during Go `init()`, before `.env` is loaded. **Workaround**: add a dummy `_` parameter: `getConfig _ = Os.getenv "KEY"`.
+- **Zero-arity functions reading env vars** — zero-arity functions are memoised; when they read `System.getenv` they evaluate during Go `init()`, before `.env` is loaded. **Workaround**: add a dummy `_` parameter: `getConfig _ = System.getenv "KEY"`.
 - **Let bindings with parameters after multi-line case** — `mark j = expr` directly after a `case ... of` in the same `let` can be reparsed as a new top-level declaration. Use a lambda (`\j -> expr`) or extract to a top-level function.
 - **`exposing (Type(..))` doesn't expose user-module constructors** — only stdlib/kernel modules resolve `MyType(..)` fully. For a user-defined `MyModule`, import `exposing (..)` or qualify constructors (`MyModule.MyConstructor`).
 - **`let` bindings don't support forward references** — Helpers inside a `let` block must be defined *before* their consumers in source order. `let writeAll db = … insertRow db ts …; insertRow db ts = …` fails `go build` with `undefined: insertRow`. **Workaround**: reorder so dependencies come first. (Future fix — the canonicaliser already knows the full set of let names.)
@@ -3125,20 +3174,29 @@ Log.with "request completed"           -- with key-value context
     (Dict.fromList [("method", "GET"), ("status", 200)])
 ```
 
-Configure via env vars:
-- `SKY_LOG_LEVEL` = `debug|info|warn|error` (default info)
-- `SKY_LOG_FORMAT` = `json` to emit one-line JSON per record
+Configure via env vars (or sky.toml `[log] format = "json" / level = "info"`):
+- `SKY_LOG_LEVEL` = `debug | info | warn | error` (default `info`)
+- `SKY_LOG_FORMAT` = `plain` (default) or `json`
 
-#### `Std.Env` — type-safe environment access
+Three-layer precedence: env > `.env` > `sky.toml`. Set `SKY_LOG_FORMAT=json` in production to flip on JSON without a rebuild.
+
+#### `Sky.Core.System` — typed environment + process state access
 
 ```elm
-import Std.Env as Env
+import Sky.Core.System as System
 
-Env.get "SECRET_KEY"                   -- Maybe String (distinguishes unset vs empty)
-Env.getOrDefault "PORT" "8080"         -- String with fallback
-Env.getInt "PORT" 8080                 -- Int with fallback (parses)
-Env.getBool "DEBUG" False              -- accepts true/yes/1/on vs false/no/0/off
-Env.require "DATABASE_URL"             -- Task Error String — fail-fast at startup
+System.getenv     "DATABASE_URL"              -- Task Error String — Err on missing
+System.getenvOr   "PORT"   "8080"             -- Task Error String — never errs
+System.getenvInt  "WORKERS"                   -- Task Error Int    — Err on missing/parse
+System.getenvBool "DEBUG"                     -- Task Error Bool   — true/yes/1/on or false/no/0/off
+System.requireEnv -- removed; `getenv` already errors on missing
+```
+
+Pattern at module top-level (Task collapses with `Task.run`):
+```elm
+port _ =
+    Task.run (System.getenvOr "PORT" "8080")
+        |> Result.withDefault "8080"
 ```
 
 #### `Sky.Core.Uuid`

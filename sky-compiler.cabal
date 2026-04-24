@@ -159,11 +159,14 @@ test-suite sky-tests
 
   other-modules:
       Sky.Build.CompileSpec
+      Sky.Build.DepHmFatalSpec
       Sky.Build.ExampleSweepSpec
+      Sky.Build.ForeignFatalSpec
       Sky.Build.TypedFfiSpec
       Sky.ErrorUnificationSpec
       Sky.Parse.PatternSpec
       Sky.Canonicalise.ExposingSpec
+      Sky.Canonicalise.KernelFallbackSpec
       Sky.Canonicalise.UnboundSpec
       Sky.Type.ExhaustivenessSpec
       Sky.Format.FormatSpec

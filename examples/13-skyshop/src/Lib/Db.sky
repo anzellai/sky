@@ -8,12 +8,13 @@ import Sky.Core.Maybe as Maybe
 import Sky.Core.Dict as Dict
 import Sky.Core.List as List
 import Sky.Core.Result as Result
+import Sky.Core.Task as Task
 import Sky.Core.String as String
 import Std.Log exposing (println)
 import Cloud.Google.Com.Go.Firestore as Firestore
 import Context
 import Fmt
-import Os
+import System
 import Sky.Core.Error as Error exposing (Error(..), ErrorKind(..))
 
 
@@ -118,7 +119,7 @@ ctx =
 
 getProjectId _ =
     let
-        env = Result.withDefault "" (Os.getenv "GOOGLE_CLOUD_PROJECT")
+        env = Result.withDefault "" (Task.run (System.getenv "GOOGLE_CLOUD_PROJECT"))
     in
         if env == "" then
             "skyshop"
@@ -144,8 +145,16 @@ snapshotToDict snapshot =
             Result.withDefault
                 Dict.empty
                 (Firestore.documentSnapshotData snapshot)
+        -- v0.10.0: every Go FFI call returns Result Error T per the
+        -- doctrine. Pre-fix, the typed-codegen tolerated direct
+        -- composition; foreign-fatal now requires explicit
+        -- unwrapping at each boundary.
         docId =
-            Firestore.documentRefID (Firestore.documentSnapshotRef snapshot)
+            case Firestore.documentSnapshotRef snapshot of
+                Ok ref ->
+                    Result.withDefault "" (Firestore.documentRefID ref)
+                Err _ ->
+                    ""
     in
         Dict.insert "id" docId (mapToStringDict rawData)
 

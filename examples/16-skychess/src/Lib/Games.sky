@@ -10,7 +10,7 @@ import Sky.Core.Crypto as Crypto
 import Sky.Core.Task as Task
 import Std.Db as Db
 import Std.Log exposing (println)
-import Sky.Core.Os as Os
+import Sky.Core.System as System
 import Sky.Core.Error as Error exposing (Error(..), ErrorKind(..))
 
 
@@ -41,7 +41,7 @@ dbConn =
                         ("[FATAL] Cannot open skychess.db: "
                              ++ Error.toString e)
             in
-                Os.exit 1
+                System.exit 1
 
 
 getConn _ =

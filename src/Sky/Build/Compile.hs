@@ -15,7 +15,7 @@ import qualified System.Directory
 import qualified System.FilePath
 import qualified System.Process
 import qualified System.Exit
-import Control.Monad (when)
+import Control.Monad (when, unless)
 import System.Directory (createDirectoryIfMissing, doesDirectoryExist, doesFileExist, copyFile, listDirectory)
 import System.IO (hFlush, stdout, readFile', stderr, hPutStrLn)
 import System.IO.Unsafe (unsafePerformIO)
@@ -73,8 +73,14 @@ loadAndSeedFfiRegistry = do
                    map FfiReg._ffn_name (FfiReg._fm_functions m))
                 | m <- mods
                 ]
+    let arityMap = Map.fromList
+            [ ((FfiReg._fm_kernelName m, FfiReg._ffn_name f),
+                FfiReg._ffn_arity f)
+            | m <- mods, f <- FfiReg._fm_functions m
+            ]
     writeIORef Env.ffiKernelModulesRef moduleMap
     writeIORef Env.ffiKernelFunctionsRef functionMap
+    writeIORef Env.ffiKernelArityRef arityMap
     seedTypedFfiNames
     if null mods
         then return ()
@@ -412,10 +418,23 @@ continueCompile config _entryPath outDir moduleOrder srcHash = do
                     ]
             putStrLn "-- Type Checking"
             -- Run HM on each dep module so unannotated functions get
-            -- inferred types for the typed-codegen tables. Errors in a
-            -- dep don't block the entry — we degrade to `any` for that
-            -- module's bindings.
+            -- inferred types for the typed-codegen tables.
             --
+            -- Two-pass: pass 1 solves each dep in isolation; pass 2
+            -- re-solves with cross-module externals from pass 1
+            -- (some deps need pass 2 to disambiguate via imported
+            -- helpers' concrete types). Pass 1 errors are TOLERATED
+            -- because pass 2 may fix them via cross-module info.
+            --
+            -- v0.10.0 (dep-HM-fatal): if BOTH passes fail for a dep,
+            -- that's a real type error in the dep's body — surface
+            -- as a fatal `TYPE ERROR (Mod): …` and abort the build.
+            -- Previously we silently degraded to `any` typing for
+            -- such deps, which let real type bugs ship and produced
+            -- runtime symptoms like `[AUTH] Admin ensured: 0x102…`
+            -- (an unforced Task thunk's func-pointer being string-
+            -- split because the dep's HM error was hidden).
+
             -- Pass 1: solve each dep in isolation.
             depSolved0 <- Async.forConcurrently validDeps $ \(modName, depMod) -> do
                 cs <- Constrain.constrainModule depMod
@@ -424,24 +443,32 @@ continueCompile config _entryPath outDir moduleOrder srcHash = do
                     Solve.SolveOk t -> return (modName, t)
                     Solve.SolveError _ -> return (modName, Map.empty)
             -- Pass 2: re-solve each dep with cross-module externals
-            -- from pass 1. Deps that pass-1 failed (e.g. Chess.Move
-            -- with `dir` type ambiguity) may now succeed because
-            -- imported helpers' concrete types disambiguate their
-            -- internal calls.
-            --
-            -- Serialised (mapM not Async.forConcurrently) because the
-            -- external-ref write is global — parallel writes would
-            -- race. Acceptable cost: dep solves are fast.
+            -- from pass 1. Serialised (mapM not Async.forConcurrently)
+            -- because the external-ref write is global — parallel
+            -- writes would race. Acceptable cost: dep solves are fast.
             let pass1Externals = buildCrossModuleExternalsWithMods validDeps depSolved0
-            depSolved <- mapM (\(modName, depMod) -> do
+            depResults <- mapM (\(modName, depMod) -> do
                 cs <- Constrain.constrainModuleWithExternals pass1Externals depMod
                 r  <- Solve.solve cs
                 case r of
-                    Solve.SolveOk t -> return (modName, t)
-                    Solve.SolveError _ ->
+                    Solve.SolveOk t -> return (modName, Right t)
+                    Solve.SolveError err2 ->
+                        -- Fall back to pass 1 ONLY if pass 1 actually
+                        -- produced types (non-empty solve). Empty pass-1
+                        -- means both passes failed → real type error.
                         case lookup modName depSolved0 of
-                            Just p1 -> return (modName, p1)
-                            Nothing -> return (modName, Map.empty)) validDeps
+                            Just p1 | not (Map.null p1) ->
+                                return (modName, Right p1)
+                            _ -> return (modName, Left err2)) validDeps
+            let depErrors = [(mn, e) | (mn, Left e)  <- depResults]
+                depSolved = [(mn, t) | (mn, Right t) <- depResults]
+            unless (null depErrors) $ do
+                mapM_ (\(mn, e) ->
+                        putStrLn ("   TYPE ERROR (" ++ mn ++ "): " ++ e))
+                    depErrors
+                error ("fatal: type errors in "
+                        ++ show (length depErrors)
+                        ++ " dep module(s)")
             -- Entry module gets cross-module externals so VarTopLevel
             -- references to dep values emit CForeign with the dep's
             -- solved annotation. Only fully-concrete types (no free
@@ -1595,6 +1622,11 @@ generateGoMulti canMod srcMod config solvedTypes depDecls depRecAliases depUnion
                 ++ tomlLiveEnv "SKY_AUTH_DRIVER"     (Toml._authDriver    config)
                 ++ tomlLiveEnv "SKY_DB_DRIVER"       (Toml._dbDriver      config)
                 ++ tomlLiveEnv "SKY_DB_PATH"         (Toml._dbPath        config)
+                -- [log] defaults: format (plain/json) + level
+                -- (debug/info/warn/error). SKY_LOG_FORMAT and
+                -- SKY_LOG_LEVEL still override at runtime.
+                ++ tomlLiveEnv "SKY_LOG_FORMAT"      (Toml._logFormat     config)
+                ++ tomlLiveEnv "SKY_LOG_LEVEL"       (Toml._logLevel      config)
                 ++ "}"
             ]
         portDefault = liveDefaults  -- preserve historical name for downstream splices
@@ -3626,6 +3658,12 @@ genericParams modName funcName = case (modName, funcName) of
     ("List", "map")      -> "[any, any]"
     ("List", "filter")   -> "[any]"
     ("List", "foldl")    -> "[any, any]"
+    -- Basics.identity is `func[T any](x T) T` in the runtime — when
+    -- referenced as a value (e.g. passed to `List.filterMap identity`)
+    -- Go demands an explicit type param. `[any]` works for every
+    -- call shape because the runtime helper is parametric over a
+    -- single type variable.
+    ("Basics", "identity") -> "[any]"
     _                    -> ""
 
 
@@ -4328,7 +4366,23 @@ defToStmts def = case def of
 
     Can.Def (A.At _ name) [] body ->
         if name == "_"
-        then [GoIr.GoAssign "_" (exprToGo body)]
+        then
+            -- Auto-force `let _ = X` so when X is a Task thunk
+            -- (`func() any` per Sky's v0.9.6 effect-boundary audit)
+            -- the side effect actually fires. Without this, the
+            -- discard binding would silently skip the Task — the
+            -- exact footgun the two-tier doctrine was designed to
+            -- avoid for println / Slog. With this in place, we can
+            -- migrate println / Slog / Time / Os.* to Task and the
+            -- pervasive `let _ = println "step"` debug-trace pattern
+            -- keeps working unchanged.
+            --
+            -- rt.AnyTaskRun gracefully handles non-Task input too
+            -- (passes through as Ok-wrapped value), so wrapping at
+            -- every discard site is safe even when the body is a
+            -- pure expression. Negligible runtime cost (one
+            -- type-assertion).
+            [GoIr.GoAssign "_" (GoIr.GoCall (GoIr.GoQualified "rt" "AnyTaskRun") [exprToGo body])]
         else [ GoIr.GoShortDecl name (exprToGo body)
              , GoIr.GoAssign "_" (GoIr.GoIdent name)  -- suppress unused errors
              ]
@@ -4972,14 +5026,29 @@ exprToMainStmtsTyped types (A.At _ expr) = case expr of
     Can.LetDestruct _pat valExpr body ->
         [GoIr.GoExprStmt (exprToGoMain types valExpr)] ++ exprToMainStmtsTyped types body
 
-    -- Calls are valid Go expression statements, emit bare
+    -- Calls are valid Go expression statements. Wrap in
+    -- `rt.AnyTaskRun` so a Task-returning call (the new normal under
+    -- Task-everywhere — `main = println X` returns Task Error ())
+    -- has its thunk forced and the side effect actually fires.
+    -- AnyTaskRun is defensively shaped: it forces `func() any` thunks
+    -- and passes bare values through wrapped in `Ok`, so applying it
+    -- to a non-Task call is a no-op modulo the discard. Discard via
+    -- blank assignment (Go forbids bare expression statements that
+    -- aren't calls; a wrapped AnyTaskRun call is itself a call so
+    -- either form is legal, but `_ =` keeps both branches uniform).
     Can.Call _ _ ->
-        [GoIr.GoExprStmt (exprToGoMain types (A.At A.one expr))]
+        [GoIr.GoAssign "_"
+            (GoIr.GoCall
+                (GoIr.GoQualified "rt" "AnyTaskRun")
+                [exprToGoMain types (A.At A.one expr)])]
 
-    -- Non-call values (e.g. literals, vars): Go rejects bare expression
-    -- statements that aren't calls, so discard via blank assignment.
+    -- Non-call values (e.g. literals, vars): same AnyTaskRun wrap so
+    -- `main = someTask` (a Task-typed value reference) also fires.
     _ ->
-        [GoIr.GoAssign "_" (exprToGoMain types (A.At A.one expr))]
+        [GoIr.GoAssign "_"
+            (GoIr.GoCall
+                (GoIr.GoQualified "rt" "AnyTaskRun")
+                [exprToGoMain types (A.At A.one expr)])]
 
 
 -- | Generate Go for main body expressions. Delegates to the standard

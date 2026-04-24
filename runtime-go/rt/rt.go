@@ -615,17 +615,31 @@ func Debug_toString(v any) any {
 	return fmt.Sprintf("%v", v)
 }
 
+// Log_println / Log_printlnT match the Task-everywhere kernel sig
+// `String -> Task Error ()` (2026-04-24+). The body is wrapped in
+// a `func() any` thunk so the auto-force discard
+// (lowerer emits `_ = rt.AnyTaskRun(rt.Log_println(x))`) actually
+// fires the side effect when used as `let _ = println "step"`.
+//
+// Pre-migration these were eager — the doctrine had two-tiered
+// println as a sync convenience effect specifically because the
+// `let _ = println …` pattern silently dropped Task thunks. The
+// auto-force in defToStmts (Sky.Build.Compile) now closes that
+// footgun, freeing println to be Task-shaped like every other
+// observable side effect in the kernel.
 func Log_println(args ...any) any {
-	fmt.Println(args...)
-	return struct{}{}
+	captured := append([]any(nil), args...)
+	return func() any {
+		fmt.Println(captured...)
+		return Ok[any, any](struct{}{})
+	}
 }
 
-// Log_printlnT: typed single-arg companion. Sky's `println` surface
-// takes exactly one value (the Log.println stdlib function), so we
-// don't lose generality by binding the typed variant to one arg.
-func Log_printlnT(arg any) struct{} {
-	fmt.Println(arg)
-	return struct{}{}
+func Log_printlnT(arg any) any {
+	return func() any {
+		fmt.Println(arg)
+		return Ok[any, any](struct{}{})
+	}
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -704,42 +718,119 @@ func logEmit(level int, levelName string, msg string, ctx any) {
 	}
 }
 
-// Log.debug : String -> ()
+// Log.{debug,info,warn,error,with,errorWith}: per Task-everywhere
+// (2026-04-24+) all observable side effects return Task Error ().
+// Bodies wrapped in `func() any` thunks so the lowerer's
+// auto-force discard fires the side effect at the call site.
+
+// Log.debug : String -> Task Error ()
+// Log.{debug,info,warn,error} : String -> Task Error ()
+// Plain single-arg level-tagged log. The (msg, attrs) structured
+// shape lives on the With variants below — that's where Slog's
+// (msg, [k1,v1,k2,v2…]) callers land in the v0.10.0 migration.
 func Log_debug(msg any) any {
-	logEmit(logLevelDebug, "debug", fmt.Sprintf("%v", msg), nil)
-	return struct{}{}
+	captured := msg
+	return func() any {
+		logEmit(logLevelDebug, "debug", fmt.Sprintf("%v", captured), nil)
+		return Ok[any, any](struct{}{})
+	}
 }
 
-// Log.info : String -> ()
 func Log_info(msg any) any {
-	logEmit(logLevelInfo, "info", fmt.Sprintf("%v", msg), nil)
-	return struct{}{}
+	captured := msg
+	return func() any {
+		logEmit(logLevelInfo, "info", fmt.Sprintf("%v", captured), nil)
+		return Ok[any, any](struct{}{})
+	}
 }
 
-// Log.warn : String -> ()
 func Log_warn(msg any) any {
-	logEmit(logLevelWarn, "warn", fmt.Sprintf("%v", msg), nil)
-	return struct{}{}
+	captured := msg
+	return func() any {
+		logEmit(logLevelWarn, "warn", fmt.Sprintf("%v", captured), nil)
+		return Ok[any, any](struct{}{})
+	}
 }
 
-// Log.error : String -> ()
 func Log_error(msg any) any {
-	logEmit(logLevelError, "error", fmt.Sprintf("%v", msg), nil)
-	return struct{}{}
+	captured := msg
+	return func() any {
+		logEmit(logLevelError, "error", fmt.Sprintf("%v", captured), nil)
+		return Ok[any, any](struct{}{})
+	}
 }
 
-// Log.with : String -> Dict String any -> ()
+// Log.{debugWith,infoWith,warnWith,errorWith}
+//   : String -> List a -> Task Error ()
+// Structured variants — second arg is a `List a` of alternating
+// key/value pairs (the Slog convention). Flattened into the
+// message string for the plain driver; JSON driver wraps as
+// {msg, key=value, …}. Empty attrs (`[]`) is allowed but the
+// non-With variants are the more natural call shape there.
+func Log_debugWith(msg any, attrs any) any {
+	capturedMsg, capturedAttrs := msg, attrs
+	return func() any {
+		logEmit(logLevelDebug, "debug",
+			renderLogMsgWithAttrs(capturedMsg, capturedAttrs), nil)
+		return Ok[any, any](struct{}{})
+	}
+}
+
+func Log_infoWith(msg any, attrs any) any {
+	capturedMsg, capturedAttrs := msg, attrs
+	return func() any {
+		logEmit(logLevelInfo, "info",
+			renderLogMsgWithAttrs(capturedMsg, capturedAttrs), nil)
+		return Ok[any, any](struct{}{})
+	}
+}
+
+func Log_warnWith(msg any, attrs any) any {
+	capturedMsg, capturedAttrs := msg, attrs
+	return func() any {
+		logEmit(logLevelWarn, "warn",
+			renderLogMsgWithAttrs(capturedMsg, capturedAttrs), nil)
+		return Ok[any, any](struct{}{})
+	}
+}
+
+// renderLogMsgWithAttrs flattens (msg, [k1,v1,k2,v2,...]) into a
+// single text string the existing logEmit pipeline can ship. The
+// JSON driver path (logEmit branch on SKY_LOG_FORMAT=json) sees the
+// same string today; structured-fields-as-JSON-object is a v0.11+
+// improvement.
+func renderLogMsgWithAttrs(msg any, attrs any) string {
+	out := fmt.Sprintf("%v", msg)
+	if xs, ok := attrs.([]any); ok && len(xs) > 0 {
+		var sb strings.Builder
+		sb.WriteString(out)
+		for _, a := range xs {
+			sb.WriteString(" ")
+			sb.WriteString(fmt.Sprintf("%v", a))
+		}
+		return sb.String()
+	}
+	return out
+}
+
+// Log.with : String -> Dict String any -> Task Error ()
 // Structured log with additional context fields. E.g.
 //   Log.with "request completed" (Dict.fromList [("method","GET"), ("status",200)])
 func Log_with(msg any, ctx any) any {
-	logEmit(logLevelInfo, "info", fmt.Sprintf("%v", msg), ctx)
-	return struct{}{}
+	capturedMsg, capturedCtx := msg, ctx
+	return func() any {
+		logEmit(logLevelInfo, "info", fmt.Sprintf("%v", capturedMsg), capturedCtx)
+		return Ok[any, any](struct{}{})
+	}
 }
 
-// Log.errorWith : String -> Dict String any -> ()
+// Log.errorWith : String -> Dict String any -> Task Error ()
 func Log_errorWith(msg any, ctx any) any {
-	logEmit(logLevelError, "error", fmt.Sprintf("%v", msg), ctx)
-	return struct{}{}
+	capturedMsg, capturedCtx := msg, ctx
+	return func() any {
+		logEmit(logLevelError, "error", fmt.Sprintf("%v", capturedMsg), capturedCtx)
+		return Ok[any, any](struct{}{})
+	}
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -2848,12 +2939,10 @@ func Result_traverse(fn, items any) any {
 	return Ok[any, any](out)
 }
 
-// Log.Slog.info / warn / error / debug — aliases for existing Log functions
-// for code that was written against Go's slog-style names.
-func Slog_info(args ...any)  any { return Log_info(stringifyLogArgs(args)) }
-func Slog_warn(args ...any)  any { return Log_warn(stringifyLogArgs(args)) }
-func Slog_error(args ...any) any { return Log_error(stringifyLogArgs(args)) }
-func Slog_debug(args ...any) any { return Log_debug(stringifyLogArgs(args)) }
+// Slog.* dropped in v0.10.0 — these were straight aliases for the
+// equivalent Log_* functions. Migration: rewrite `Slog.info "msg" […]`
+// as `Log.info "msg" […]`. The runtime + kernel registry no longer
+// expose them.
 
 func stringifyLogArgs(args []any) any {
 	if len(args) == 0 {
@@ -3760,75 +3849,48 @@ func AnyTaskRun(task any) any {
 // Time
 // ═══════════════════════════════════════════════════════════
 
-func Time_now() any {
-	return Ok[any, any](time.Now().UnixMilli())
+// Time.now / Time.unixMillis / Time.timeString — Task-everywhere
+// doctrine (2026-04-24+):
+//   * Time.now / Time.unixMillis: clock reads are non-deterministic
+//     real-world I/O. Kernel sig `() -> Task Error Int`. Runtime
+//     wraps in `func() any` thunk so the lowerer's auto-force on
+//     `let _ = Time.now ()` discard fires the side effect. Inside
+//     a Task chain, the thunk is lifted via Task.andThen/Cmd.perform
+//     in the usual way.
+//   * Time.timeString: pure deterministic formatter (Int -> String,
+//     just strftime-equivalent). No wrapper — bare String.
+func Time_now(_ any) any {
+	return func() any {
+		return Ok[any, any](time.Now().UnixMilli())
+	}
 }
 
-// Time_timeString: format unixMillis as "HH:MM:SS"
 func Time_timeString(ms any) any {
-	return Ok[any, any](time.Unix(int64(AsInt(ms))/1000, 0).Format("15:04:05"))
+	return time.Unix(int64(AsInt(ms))/1000, 0).Format("15:04:05")
 }
 
-// P8/Time typed companions — direct int ms, no any boxing.
-func Time_nowT() SkyResult[string, int] {
-	return Ok[string, int](int(time.Now().UnixMilli()))
-}
-func Time_timeStringT(ms int) SkyResult[string, string] {
-	return Ok[string, string](time.Unix(int64(ms)/1000, 0).Format("15:04:05"))
-}
-func Time_unixMillisT() SkyResult[string, int] {
-	return Ok[string, int](int(time.Now().UnixMilli()))
-}
-
-// Sha256, Hex, String.toBytes wrappers matching the Sky.Core namespace split.
-// sum256: (List Int of UTF-8 bytes) -> Result String (List Int of hash bytes)
-func Sha256_sum256(bytes any) any {
-	var b []byte
-	if xs, ok := bytes.([]any); ok {
-		b = make([]byte, len(xs))
-		for i, v := range xs {
-			b[i] = byte(AsInt(v))
-		}
-	} else {
-		b = []byte(fmt.Sprintf("%v", bytes))
+// Typed companions — same shape as the any-path. Task-shaped helpers
+// return `func() SkyResult[any, T]` (= SkyTask[any, T]) so the
+// typed-codegen path can dispatch directly. Time_timeStringT is
+// pure, returns bare string.
+func Time_nowT(_ struct{}) SkyTask[any, int] {
+	return func() SkyResult[any, int] {
+		return Ok[any, int](int(time.Now().UnixMilli()))
 	}
-	h := sha256.Sum256(b)
-	out := make([]any, len(h))
-	for i, v := range h {
-		out[i] = int(v)
+}
+func Time_timeStringT(ms int) string {
+	return time.Unix(int64(ms)/1000, 0).Format("15:04:05")
+}
+func Time_unixMillisT(_ struct{}) SkyTask[any, int] {
+	return func() SkyResult[any, int] {
+		return Ok[any, int](int(time.Now().UnixMilli()))
 	}
-	return Ok[any, any](out)
 }
 
-func Sha256_sum256String(s any) any {
-	h := sha256.Sum256([]byte(fmt.Sprintf("%v", s)))
-	return Ok[any, any](hex.EncodeToString(h[:]))
-}
-
-func Hex_encodeToString(bytes any) any {
-	if xs, ok := bytes.([]any); ok {
-		b := make([]byte, len(xs))
-		for i, v := range xs {
-			b[i] = byte(AsInt(v))
-		}
-		return Ok[any, any](hex.EncodeToString(b))
-	}
-	return Ok[any, any](hex.EncodeToString([]byte(fmt.Sprintf("%v", bytes))))
-}
-
-func Hex_encode(bytes any) any { return Hex_encodeToString(bytes) }
-
-func Hex_decode(s any) any {
-	b, err := hex.DecodeString(fmt.Sprintf("%v", s))
-	if err != nil {
-		return Err[any, any](ErrFfi(err.Error()))
-	}
-	out := make([]any, len(b))
-	for i, v := range b {
-		out[i] = int(v)
-	}
-	return Ok[any, any](out)
-}
+// Sha256.* / Hex.* dropped in v0.10.0 — Sha256.sum256(String.toBytes s)
+// + Hex.encodeToString hash collapses to `Crypto.sha256 s`. Likewise
+// Hex.encode / Hex.decode are subsumed by Encoding.hexEncode /
+// Encoding.hexDecode. Migration done with the consolidation.
 
 func String_toBytes(s any) any {
 	b := []byte(fmt.Sprintf("%v", s))
@@ -3868,39 +3930,144 @@ func String_toChar(s any) any {
 	return rune(0)
 }
 
-// Os — CLI args, environment, cwd, exit.
-// Zero-arg Sky funcs take a unit param at runtime so the call-site form
-// `Os.args ()` emits `rt.Os_args(struct{}{})` and works uniformly with C2.
-func Os_args(_ any) any {
-	out := make([]any, 0, len(os.Args))
-	if len(os.Args) > 1 {
-		for _, a := range os.Args[1:] {
-			out = append(out, a)
+// System — CLI args, environment, cwd, exit. Task-everywhere
+// doctrine (2026-04-24+): all observable side effects return
+// Task Error a. Bodies wrapped in `func() any` thunks; the
+// lowerer's auto-force on `let _ = System.exit 1` discards keeps
+// the eager pattern usable.
+//
+// Renamed from Sky kernel `Os` (2026-04-24) to free the `Os`
+// qualifier for the Go FFI `os` package — sky-log et al. need
+// stdin / stderr / fileWriteString from Go's std library and
+// previously hit a kernel-vs-FFI namespace collision.
+//
+// Zero-arg Sky funcs take a unit param at runtime so the call-site
+// form `System.args ()` emits `rt.System_args(struct{}{})` and
+// works uniformly with C2.
+func System_args(_ any) any {
+	return func() any {
+		out := make([]any, 0, len(os.Args))
+		if len(os.Args) > 1 {
+			for _, a := range os.Args[1:] {
+				out = append(out, a)
+			}
 		}
+		return Ok[any, any](out)
 	}
-	return out
 }
 
-func Os_getenv(name any) any {
-	k := fmt.Sprintf("%v", name)
-	v, ok := os.LookupEnv(k)
-	if !ok {
-		return Err[any, any](ErrNotFound())
+func System_getenv(name any) any {
+	captured := name
+	return func() any {
+		k := fmt.Sprintf("%v", captured)
+		v, ok := os.LookupEnv(k)
+		if !ok {
+			return Err[any, any](ErrNotFound())
+		}
+		return Ok[any, any](v)
 	}
-	return Ok[any, any](v)
 }
 
-func Os_cwd(_ any) any {
-	wd, err := os.Getwd()
-	if err != nil {
-		return Err[any, any](ErrFfi(err.Error()))
+func System_cwd(_ any) any {
+	return func() any {
+		wd, err := os.Getwd()
+		if err != nil {
+			return Err[any, any](ErrFfi(err.Error()))
+		}
+		return Ok[any, any](wd)
 	}
-	return Ok[any, any](wd)
 }
 
-func Os_exit(code any) any {
+// System_exit: never returns (process terminates) — kept eager and
+// polymorphic per the rationale in lookupKernelType.
+func System_exit(code any) any {
 	os.Exit(AsInt(code))
 	return struct{}{}
+}
+
+// System.getArg : Int -> Task Error (Maybe String)
+// Returns the nth element of os.Args (0-indexed) as Just s, or
+// Nothing when the index is out of range. Migration target for
+// the dropped `Args.getArg` (v0.10.0 stdlib consolidation).
+func System_getArg(n any) any {
+	captured := AsInt(n)
+	return func() any {
+		if captured < 0 || captured >= len(os.Args) {
+			return Ok[any, any](Nothing[any]())
+		}
+		return Ok[any, any](Just[any](os.Args[captured]))
+	}
+}
+
+// System.getenvOr : String -> String -> String
+// `System.getenvOr key default` — returns the env var if set, else
+// the supplied default. Bare-String return because the call CAN'T
+// fail when a default is supplied (Task-wrapping it would mean
+// every config helper at module top-level needs `Task.run …
+// |> Result.withDefault default`, which is the exact boilerplate
+// the helper exists to avoid). The fallible variants — getenv (Err
+// on missing), getenvInt (Err on parse), getenvBool (Err on parse)
+// — stay Task. Same argument order as the dropped Env.getOrDefault.
+func System_getenvOr(name, def any) any {
+	k := fmt.Sprintf("%v", name)
+	if v, ok := os.LookupEnv(k); ok {
+		return v
+	}
+	return fmt.Sprintf("%v", def)
+}
+
+// System.getenvInt : String -> Task Error Int
+// Returns the env var parsed as an Int, or Err on missing /
+// unparseable. Migration target for the dropped `Env.getInt`.
+func System_getenvInt(name any) any {
+	captured := name
+	return func() any {
+		k := fmt.Sprintf("%v", captured)
+		v, ok := os.LookupEnv(k)
+		if !ok {
+			return Err[any, any](ErrNotFound())
+		}
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return Err[any, any](ErrFfi("env " + k + ": not an int: " + v))
+		}
+		return Ok[any, any](n)
+	}
+}
+
+// System.getenvBool : String -> Task Error Bool
+// Accepts true/yes/1/on (case-insensitive) as true, false/no/0/off
+// as false; anything else is Err. Missing env var → Err.
+// Migration target for the dropped `Env.getBool`.
+func System_getenvBool(name any) any {
+	captured := name
+	return func() any {
+		k := fmt.Sprintf("%v", captured)
+		v, ok := os.LookupEnv(k)
+		if !ok {
+			return Err[any, any](ErrNotFound())
+		}
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "true", "yes", "1", "on", "y", "t":
+			return Ok[any, any](true)
+		case "false", "no", "0", "off", "n", "f", "":
+			return Ok[any, any](false)
+		}
+		return Err[any, any](ErrFfi("env " + k + ": not a bool: " + v))
+	}
+}
+
+// System.loadEnv : () -> Task Error ()
+// Loads .env (and .env.local if present) into the process env via
+// godotenv. Does not override existing env vars (12-factor: env
+// always wins). Migration target for the dropped `Process.loadEnv`.
+func System_loadEnv(_ any) any {
+	return func() any {
+		// Delegate to the existing Process_loadEnv runtime which
+		// already implements the godotenv-based load. The thunk
+		// shape is preserved either way.
+		return AnyTaskRun(Process_loadEnv(""))
+	}
 }
 
 func Time_sleep(ms any) any {
@@ -3910,8 +4077,13 @@ func Time_sleep(ms any) any {
 	}
 }
 
-func Time_unixMillis() any {
-	return time.Now().UnixMilli()
+// Time_unixMillis: see Time_now header for the doctrine note.
+// Task-shaped thunk; lowered call site `rt.Time_unixMillis(struct{}{})`
+// returns the thunk for auto-force discard or Task chain consumption.
+func Time_unixMillis(_ any) any {
+	return func() any {
+		return Ok[any, any](time.Now().UnixMilli())
+	}
 }
 
 // Time.formatISO8601 : Int -> String
@@ -4030,33 +4202,37 @@ func Random_shuffle(list any) any {
 	}
 }
 
-// P8/Random typed companions — Task-shaped.
-func Random_intT(lo, hi int) func() SkyResult[string, int] {
-	return func() SkyResult[string, int] {
-		if hi <= lo { return Ok[string, int](lo) }
-		return Ok[string, int](lo + mrand.Intn(hi-lo+1))
+// P8/Random typed companions — Task-shaped. Error type is `any` to
+// match the canonical Sky.Core.Error.Error in the kernel sig (was
+// `string` pre-2026-04-24, the legacy pre-v0.9.6 Error-as-String
+// pattern). Err arms use ErrInvalidInput / ErrFfi typed builders for
+// consistency with the rest of the runtime.
+func Random_intT(lo, hi int) SkyTask[any, int] {
+	return func() SkyResult[any, int] {
+		if hi <= lo { return Ok[any, int](lo) }
+		return Ok[any, int](lo + mrand.Intn(hi-lo+1))
 	}
 }
 
-func Random_floatT(lo, hi float64) func() SkyResult[string, float64] {
-	return func() SkyResult[string, float64] {
-		return Ok[string, float64](lo + mrand.Float64()*(hi-lo))
+func Random_floatT(lo, hi float64) SkyTask[any, float64] {
+	return func() SkyResult[any, float64] {
+		return Ok[any, float64](lo + mrand.Float64()*(hi-lo))
 	}
 }
 
-func Random_choiceT[A any](xs []A) func() SkyResult[string, A] {
-	return func() SkyResult[string, A] {
-		if len(xs) == 0 { return Err[string, A]("empty list") }
-		return Ok[string, A](xs[mrand.Intn(len(xs))])
+func Random_choiceT[A any](xs []A) SkyTask[any, A] {
+	return func() SkyResult[any, A] {
+		if len(xs) == 0 { return Err[any, A](ErrInvalidInput("empty list")) }
+		return Ok[any, A](xs[mrand.Intn(len(xs))])
 	}
 }
 
-func Random_shuffleT[A any](xs []A) func() SkyResult[string, []A] {
-	return func() SkyResult[string, []A] {
+func Random_shuffleT[A any](xs []A) SkyTask[any, []A] {
+	return func() SkyResult[any, []A] {
 		out := make([]A, len(xs))
 		copy(out, xs)
 		mrand.Shuffle(len(out), func(i, j int) { out[i], out[j] = out[j], out[i] })
-		return Ok[string, []A](out)
+		return Ok[any, []A](out)
 	}
 }
 
@@ -4077,86 +4253,15 @@ func Process_run(cmd any, args any) any {
 	}
 }
 
-func Process_exit(code any) any {
-	return func() any {
-		os.Exit(AsInt(code))
-		return Ok[any, any](struct{}{})
-	}
-}
+// Process.exit / getEnv / getCwd / loadEnv all migrated to System.*
+// in v0.10.0. Process now keeps only `run` (subprocess execution).
+// Typed companions (Process_*T) likewise dropped — only Process_runT
+// stays. Process_loadEnv lives on as the godotenv impl that
+// System_loadEnv delegates to (defined in dotenv.go).
 
-func Process_getEnv(key any) any {
-	return func() any {
-		val := os.Getenv(fmt.Sprintf("%v", key))
-		if val == "" { return Err[any, any](ErrNotFound()) }
-		return Ok[any, any](val)
-	}
-}
-
-func Process_getCwd() any {
-	return func() any {
-		dir, err := os.Getwd()
-		if err != nil { return Err[any, any](ErrFfi(err.Error())) }
-		return Ok[any, any](dir)
-	}
-}
-
-// P8/Process typed companions — Task-shaped.
-func Process_runT(cmd string, args []string) func() SkyResult[string, string] {
-	return func() SkyResult[string, string] {
-		c := exec.Command(cmd, args...)
-		out, err := c.CombinedOutput()
-		if err != nil {
-			return Err[string, string](fmt.Sprintf("%s: %v", string(out), err))
-		}
-		return Ok[string, string](string(out))
-	}
-}
-
-func Process_exitT(code int) func() SkyResult[string, struct{}] {
-	return func() SkyResult[string, struct{}] {
-		os.Exit(code)
-		return Ok[string, struct{}](struct{}{})
-	}
-}
-
-func Process_getEnvT(key string) func() SkyResult[string, string] {
-	return func() SkyResult[string, string] {
-		val := os.Getenv(key)
-		if val == "" { return Err[string, string]("env var not set: " + key) }
-		return Ok[string, string](val)
-	}
-}
-
-func Process_getCwdT() func() SkyResult[string, string] {
-	return func() SkyResult[string, string] {
-		dir, err := os.Getwd()
-		if err != nil { return Err[string, string](err.Error()) }
-		return Ok[string, string](dir)
-	}
-}
-
-// ═══════════════════════════════════════════════════════════
-// Args (command-line arguments)
-// ═══════════════════════════════════════════════════════════
-
-func Args_getArg(n any) any {
-	idx := AsInt(n)
-	if idx < 0 || idx >= len(os.Args) {
-		return Nothing[any]()
-	}
-	return Just[any](os.Args[idx])
-}
-
-func Args_getArgs(args ...any) any {
-	if len(os.Args) <= 1 {
-		return []any{}
-	}
-	result := make([]any, len(os.Args)-1)
-	for i, a := range os.Args[1:] {
-		result[i] = a
-	}
-	return result
-}
+// Args.* dropped in v0.10.0 — `Args.getArgs ()` and `Args.getArg n`
+// were duplicates of `System.args` and a missing `System.getArg`.
+// Both now live on System (System_args / System_getArg above).
 
 
 // ═══════════════════════════════════════════════════════════
@@ -4552,18 +4657,12 @@ func Encoding_hexDecode(s any) any {
 	return Ok[any, any](string(data))
 }
 
-// NOTE (audit, 2026-04-23): the kernel sig in lookupKernelType
-// declares Encoding.{base64,url,hex}Encode as
-// `String -> Result Error String`, but the typed-codegen path in
-// Sky.Build.Compile (typedKernelLiterals) emits these calls with the
-// result consumed as a bare string (e.g. `rt.Concat("…", rt.Encoding_urlEncodeT(x))`)
-// rather than destructured via case-on-Ok. That's a kernel↔codegen
-// mismatch, not a kernel↔runtime one — both runtime variants currently
-// return bare string to match what the codegen actually emits. If/when
-// the codegen learns to unwrap the Result for the *Encode call sites,
-// the kernel sig and these helpers should be migrated together
-// (kernel canonical: encoders never fail so they'd always be Ok).
-// Tracked alongside the Bucket A2 sweep notes in Expression.hs.
+// NOTE (audit, 2026-04-24, resolved): the kernel sig was
+// `String -> Result Error String` for encoders despite the runtime
+// returning bare strings — well-typed user `Ok/Err` patterns were
+// silently impossible to trigger. Kernel sig now `String -> String`
+// (encoders are total functions; decoders correctly stay Result).
+// Both runtime variants below already match this sig.
 
 // P8/Encoding typed companions — direct string in, string/SkyResult out.
 func Encoding_base64EncodeT(s string) string { return base64.StdEncoding.EncodeToString([]byte(s)) }

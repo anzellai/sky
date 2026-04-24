@@ -168,10 +168,20 @@ resolveQualVar env qualifier name =
                 Just Env.VarLocal ->
                     Can.VarLocal name
                 Nothing ->
-                    -- Unknown qualified name — resolve alias to full module name
-                    case Env.lookupImportAlias qualifier env of
-                        Just fullMod -> Can.VarTopLevel fullMod name
-                        Nothing -> Can.VarTopLevel (ModuleName.Canonical qualifier) name
+                    -- Unknown qualified name. First check the kernel
+                    -- module registry so e.g. `Crypto.sha256` resolves
+                    -- as `VarKernel "Crypto" "sha256"` even when the
+                    -- user hasn't written `import Sky.Core.Crypto`.
+                    -- Without this, the canonicaliser emits
+                    -- `VarTopLevel "Crypto" "sha256"` and the lowerer
+                    -- ships `Crypto_sha256(arg)` (no `rt.` prefix) —
+                    -- failing `go build` with "undefined: Crypto_sha256".
+                    case Map.lookup qualifier Env.kernelModules of
+                        Just kernelMod -> Can.VarKernel kernelMod name
+                        Nothing ->
+                            case Env.lookupImportAlias qualifier env of
+                                Just fullMod -> Can.VarTopLevel fullMod name
+                                Nothing -> Can.VarTopLevel (ModuleName.Canonical qualifier) name
 
 
 -- | Resolve an operator to its canonical form

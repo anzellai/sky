@@ -7,5 +7,6 @@ import Std.Log exposing (println)
 main =
     let
         list = [ 1, 2, 3 ]
+        _ = list
     in
-        println "List" list
+        println "List ready"

@@ -14,7 +14,7 @@ module Main exposing (main)
 -- pattern under Sky's effect-boundary doctrine: every Db.* op returns
 -- `Task Error a`, the entire main loop is a single Task chain, and
 -- failures propagate via `Task.onError` to the top-level reporter
--- which prints to stderr and `Os.exit 1`s. No silent `let _ = …`
+-- which prints to stderr and `System.exit 1`s. No silent `let _ = …`
 -- discard pattern — every effect either runs to completion via the
 -- chain or surfaces its error through the reporter.
 
@@ -24,8 +24,7 @@ import Sky.Core.Maybe as Maybe
 import Sky.Core.Task as Task
 import Std.Db as Db
 import Sky.Core.Error as Error exposing (Error)
-import Os
-import Log.Slog as Slog
+import System
 import Std.Log exposing (println)
 
 
@@ -57,9 +56,13 @@ runApp conn =
         |> Task.andThen
                (\_ ->
                    let
-                       -- Os.args already returns user args only (Go's
-                       -- os.Args[1:]); don't drop another element.
-                       userArgs = Os.args ()
+                       -- System.args is Task Error (List String) after the
+                       -- v1.0 Task-everywhere migration. Force at the
+                       -- read site for ergonomic let-binding access.
+                       userArgs =
+                           System.args ()
+                               |> Task.run
+                               |> Result.withDefault []
                        cmd = getArg userArgs
                        cmdArg = getArg (List.drop 1 userArgs)
                    in
@@ -73,10 +76,10 @@ runApp conn =
 reportError : Error -> Task Error ()
 reportError e =
     let
-        _ = Slog.error "todo-cli" [ "error", Error.toString e ]
+        _ = Log.errorWith "todo-cli" [ "error", Error.toString e ]
         _ = println ("Error: " ++ Error.toString e)
     in
-        Os.exit 1
+        System.exit 1
 
 
 initDb : Db -> Task Error ()
@@ -97,7 +100,7 @@ addTodo conn todoTitle =
         |> Task.map
                (\_ ->
                    let
-                       _ = Slog.info "Action" [ "Added:", todoTitle ]
+                       _ = Log.infoWith "Action" [ "Added:", todoTitle ]
                        _ = println ("Added: " ++ todoTitle)
                    in
                        ())
@@ -118,7 +121,13 @@ listTodos conn =
                    else
                        let
                            _ = println "Your TODOs:"
-                           _ = List.map (\row -> println (formatTodo row)) rows
+                           -- v0.10.0: List.map over a Task discards
+                           -- the resulting list of thunks unforced.
+                           -- Fold the prints into a single String so a
+                           -- single `println` call fires the side
+                           -- effect.
+                           lines = List.map formatTodo rows
+                           _ = println (String.join "\n" lines)
                            _ = println ""
                        in
                            ())
@@ -177,7 +186,7 @@ clearDone conn =
 showUsage : Task Error ()
 showUsage =
     let
-        _ = Slog.info "Sky TODO - A simple todo manager" []
+        _ = Log.info "Sky TODO - A simple todo manager"
         _ = println ""
         _ = println "Usage:"
         _ = println "  ./app add <title>     Add a new todo"

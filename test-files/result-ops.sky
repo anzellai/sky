@@ -5,6 +5,7 @@ import Sky.Core.String as String
 import Sky.Core.Result as Result
 import Sky.Core.Maybe as Maybe
 import Std.Log exposing (println)
+import Sky.Core.Error as Error exposing (Error)
 
 
 parseInt s =

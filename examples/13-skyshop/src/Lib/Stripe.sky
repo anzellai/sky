@@ -4,11 +4,12 @@ module Lib.Stripe exposing (createCheckoutSession, verifyPayment, deductStock, C
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Maybe exposing (..)
 import Sky.Core.Result as Result
+import Sky.Core.Task as Task
 import Sky.Core.List as List
 import Sky.Core.Dict as Dict
 import Sky.Core.String as String
 import Std.Log exposing (println)
-import Os
+import System
 import Lib.Db as Db
 import Sky.Core.Error as Error exposing (Error(..), ErrorKind(..))
 import Github.Com.Stripe.StripeGo.V84 as Stripe
@@ -25,7 +26,7 @@ type alias CheckoutInfo =
 
 initStripe _ =
     let
-        key = Result.withDefault "" (Os.getenv "STRIPE_API_KEY")
+        key = Result.withDefault "" (Task.run (System.getenv "STRIPE_API_KEY"))
         _ = Stripe.setKey key
     in
         key
@@ -37,8 +38,8 @@ apiKey =
 
 domainUrl _ =
     let
-        domain = Result.withDefault "" (Os.getenv "DOMAIN")
-        port_ = Result.withDefault "" (Os.getenv "SKY_LIVE_PORT")
+        domain = Result.withDefault "" (Task.run (System.getenv "DOMAIN"))
+        port_ = Result.withDefault "" (Task.run (System.getenv "SKY_LIVE_PORT"))
     in
         if domain != "" then
             domain

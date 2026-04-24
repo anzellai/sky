@@ -1,0 +1,23 @@
+module Lib.Config exposing (admins)
+
+{-|
+Regression for "dep HM errors silently degrade to any" (v0.10.0).
+
+Pre-fix: this body type-errored under HM (System.getenv returns
+Task Error String, not String — so `|> String.split` was wrong),
+but the dep was tolerated and `admins` was inferred as `any`-typed.
+The entry module then silently consumed the broken value.
+
+Post-fix: pass-2 dep HM error is fatal. `sky build` aborts with
+`TYPE ERROR (Lib.Config): …`.
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.System as System
+
+
+admins : () -> List String
+admins _ =
+    System.getenv "ADMINS"
+        |> String.split ","

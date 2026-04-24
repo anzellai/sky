@@ -6,6 +6,7 @@ import Sky.Core.Uuid as Uuid
 import Sky.Core.Task as Task
 import Sky.Http.RateLimit as RateLimit
 import Std.Log exposing (println)
+import Sky.Core.Error as Error exposing (Error)
 
 
 showUuid label t =

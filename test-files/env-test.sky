@@ -2,27 +2,30 @@ module Main exposing (main)
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.String as String
-import Std.Env as Env
+import Sky.Core.Result as Result
+import Sky.Core.System as System
+import Sky.Core.Task as Task
 import Std.Log exposing (println)
+import Sky.Core.Error as Error exposing (Error)
 
 
 main =
     let
-        _ = println (Env.getOrDefault "UNSET_VAR" "default-value")
-        _ = println (String.fromInt (Env.getInt "PORT" 8080))
+        _ = println (System.getenvOr "UNSET_VAR" "default-value")
+        _ = println (String.fromInt (Result.withDefault 8080 (Task.run (System.getenvInt "PORT"))))
         _ =
-            if Env.getBool "DEBUG" False then
+            if Result.withDefault False (Task.run (System.getenvBool "DEBUG")) then
                 println "debug on"
 
             else
                 println "debug off"
         _ =
-            case Env.get "HOME" of
+            case Task.run (System.getenv "HOME") of
 
-                Just v ->
+                Ok v ->
                     println (String.append "HOME=" v)
 
-                Nothing ->
+                Err _ ->
                     println "no HOME"
     in
         println "env ok"

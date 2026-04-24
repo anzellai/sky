@@ -1976,7 +1976,19 @@ func fillRoutePage(page any, params []string) any {
 
 // Live.app — reads a record-shaped config and starts the HTTP server.
 // Blocks until the server exits.
+// Live_app: Task-shaped per Task-everywhere (2026-04-24+). The
+// whole "set up routes + handlers + sessions + bind port" sequence
+// is wrapped in a thunk so the server start defers to the entry-
+// point Task.run boundary. Calling `Live_app(cfg)` returns the
+// thunk; Task.run forces it and then http.Server.ListenAndServe
+// blocks (or returns Err on bind failure).
 func Live_app(cfg any) any {
+	return func() any {
+		return liveAppRun(cfg)
+	}
+}
+
+func liveAppRun(cfg any) any {
 	app := &liveApp{
 		init:          Field(cfg, "Init"),
 		update:        Field(cfg, "Update"),

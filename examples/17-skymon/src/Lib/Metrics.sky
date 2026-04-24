@@ -97,7 +97,9 @@ runSqlMetric metric =
 
 runSafeQuery : String -> String -> String
 runSafeQuery dsn query =
-    case Db.open "postgres" dsn of
+    -- v0.9.6+: Db.open returns Task Error Db (was Result). Collapse
+    -- with Task.run at this sync call site.
+    case Task.run (Db.open "postgres" dsn) of
 
         Err e ->
             let
@@ -114,7 +116,7 @@ runSafeQuery dsn query =
 
 
 runSafeQueryWithConn extConn query =
-    case SafeQuery.runReadOnly extConn query [] of
+    case Task.run (SafeQuery.runReadOnly extConn query []) of
 
         Err e ->
             let

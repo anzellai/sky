@@ -269,6 +269,18 @@ ffiKernelFunctionsRef :: IORef (Map.Map String [String])
 ffiKernelFunctionsRef = unsafePerformIO (newIORef Map.empty)
 
 
+-- | Per-FFI-function arity, keyed by `(kernelName, funcName)`. Lets
+-- the type checker synthesise a default sig
+-- `(t0 -> ... -> tN-1 -> Result Error r)` for unknown Go_* kernels
+-- so FFI return-shape mismatches at call sites become HM errors
+-- (instead of silently degrading to `any` and panicking at runtime
+-- with `rt.AsBool: expected bool, got rt.SkyResult[…]`). Populated
+-- from FfiRegistry in `Sky.Build.Compile.loadAndSeedFfiRegistry`.
+{-# NOINLINE ffiKernelArityRef #-}
+ffiKernelArityRef :: IORef (Map.Map (String, String) Int)
+ffiKernelArityRef = unsafePerformIO (newIORef Map.empty)
+
+
 -- | P7: names of FFI kernel functions (in the <Kernel>_<func> shape,
 -- e.g. "Go_Uuid_newString") for which a typed T-suffix wrapper has
 -- been emitted by FfiGen. Call-site codegen consults this set to
@@ -296,6 +308,18 @@ ffiTypedWrapperParamsRef = unsafePerformIO (newIORef Map.empty)
 -- | Kernel module mappings: Sky import path → kernel module name.
 -- Merged on every read so FFI-registered modules resolve the same way as
 -- stdlib kernel modules (Sky.Core.String etc.).
+--
+-- Precedence: `Map.union` is left-biased, so static Sky kernels
+-- still win on key collision. The disambiguation strategy for the
+-- sky-log shape (user wants Go FFI `os` package, not Sky kernel
+-- `Os`) is to rename the Sky kernel into a non-colliding namespace
+-- — `Os` was renamed to `System` in 2026-04-24, and the bare `Os`
+-- alias was dropped from `staticKernelModules` so the FFI binding
+-- has uncontested ownership. Same pattern applies to any future
+-- name collision: rename the Sky kernel rather than flipping the
+-- union direction (which broke `import Log.Slog` for projects that
+-- also added the `log/slog` FFI — the kernel API was the documented
+-- one and the flip silently hijacked them onto FFI bindings).
 {-# NOINLINE kernelModules #-}
 kernelModules :: Map.Map String String
 kernelModules = Map.union staticKernelModules (unsafePerformIO (readIORef ffiKernelModulesRef))
@@ -324,8 +348,10 @@ staticKernelModules = Map.fromList
     , ("Std.Auth",         "Auth")
     , ("Sky.Core.Io",      "Io")
     , ("Io",               "Io")
-    , ("Sky.Core.Args",    "Args")
-    , ("Args",             "Args")
+    -- `Args` kernel deprecated 2026-04-24 — collapse onto `System.args ()`.
+    -- Aliases removed so `import Sky.Core.Args` / `import Args` are
+    -- unbound. Migration: rewrite as `System.args ()` (returns
+    -- `Task Error (List String)`).
     , ("Sky.Core.File",    "File")
     , ("Sky.Core.Process", "Process")
     , ("Sky.Core.Time",    "Time")
@@ -343,26 +369,83 @@ staticKernelModules = Map.fromList
     , ("Sky.Core.Json.Decode", "JsonDec")
     , ("Sky.Core.Json.Decode.Pipeline", "JsonDecP")
     , ("Sky.Core.Uuid",        "Uuid")
-    , ("Sky.Core.Crypto.Sha256", "Sha256")
-    , ("Crypto.Sha256",          "Sha256")
-    , ("Sky.Core.Encoding.Hex",  "Hex")
-    , ("Encoding.Hex",           "Hex")
-    , ("Sky.Core.Os",            "Os")
-    , ("Std.Os",                 "Os")
-    , ("Os",                     "Os")
-    , ("Sky.Core.Slog",          "Slog")
-    , ("Std.Slog",               "Slog")
-    , ("Std.Log.Slog",           "Slog")
-    , ("Log.Slog",               "Slog")
-    , ("Slog",                   "Slog")
+    -- `Sha256` and `Hex` modules dropped in v0.10.0 — surface
+    -- collapsed onto `Crypto.sha256` and `Encoding.hexEncode/Decode`.
+    -- Aliases removed so `import Sky.Core.Crypto.Sha256` is unbound.
+    -- Migration: replace `Sha256.sum256 (String.toBytes s) |>
+    -- Result.andThen Hex.encodeToString` with `Crypto.sha256 s`.
+    -- Sky kernel `Os` was renamed to `System` (2026-04-24) so the
+    -- bare `Os` qualifier is free for the Go FFI `os` package
+    -- (sky-log et al.). Clean break — no compat alias. Users on
+    -- `import Sky.Core.Os` get an unbound-name error and must
+    -- migrate to `System.exit` / `System.getenv` / `System.cwd` /
+    -- `System.args`.
+    , ("Sky.Core.System",        "System")
+    , ("Std.System",             "System")
+    , ("System",                 "System")
+    -- `Slog` module dropped in v0.10.0 — was a straight alias for
+    -- `Log` (runtime delegated `Slog_info` → `Log_info` etc.).
+    -- Migration: replace `Slog.info "msg" […]` with `Log.info "msg" […]`.
+    -- Note: the `Log.Slog` import path is now free for the Go FFI
+    -- `log/slog` package — bound automatically when the user adds
+    -- `log/slog = "latest"` to their sky.toml `[go.dependencies]`.
     , ("Context",                "Context")
     , ("Fmt",                    "Fmt")
     , ("Time",                   "Time")
     , ("Crypto",                 "Crypto")
     , ("Encoding",               "Encoding")
     , ("Sky.Http.RateLimit",   "RateLimit")
-    , ("Std.Env",              "Env")
+    -- `Env` module dropped in v0.10.0 — folded into `System.*`
+    -- (getenv / getenvOr / getenvInt / getenvBool). Migration:
+    -- `Env.getOrDefault key def` → `System.getenvOr def key`,
+    -- `Env.getInt key` → `System.getenvInt key`, `Env.require key`
+    -- → `System.getenv key` (already errors on missing).
     , ("Sky.Http.Middleware",  "Middleware")
     , ("Sky.Ffi",              "Ffi")
     , ("Sky.Core.Prelude", "Basics")  -- Prelude maps to Basics
+
+    -- Bare-name aliases (v0.10.0): every kernel module is reachable
+    -- via its short name without an explicit import. The
+    -- canonicaliser fallback in `resolveQualVar` checks this map for
+    -- unresolved qualifiers — the bare entries make `Log.error`,
+    -- `File.readFile`, `System.exit`, etc. resolve to VarKernel
+    -- without writing `import Std.Log` / `import Sky.Core.File`.
+    -- Bare aliases that would COLLIDE with a Go FFI package alias
+    -- (e.g. `Os`, `Log.Slog`) are intentionally OMITTED so the FFI
+    -- binding has uncontested ownership when the user opts in via
+    -- sky.toml `[go.dependencies]`.
+    , ("Log",        "Log")
+    , ("Cmd",        "Cmd")
+    , ("Sub",        "Sub")
+    , ("Db",         "Db")
+    , ("Auth",       "Auth")
+    , ("File",       "File")
+    , ("Process",    "Process")
+    , ("Random",     "Random")
+    , ("Http",       "Http")
+    , ("Server",     "Server")
+    , ("Html",       "Html")
+    , ("Attr",       "Attr")
+    , ("Css",        "Css")
+    , ("Live",       "Live")
+    , ("Event",      "Event")
+    , ("JsonEnc",    "JsonEnc")
+    , ("JsonDec",    "JsonDec")
+    , ("JsonDecP",   "JsonDecP")
+    , ("Uuid",       "Uuid")
+    , ("RateLimit",  "RateLimit")
+    , ("Middleware", "Middleware")
+    , ("Ffi",        "Ffi")
+    , ("Basics",     "Basics")
+    , ("String",     "String")
+    , ("List",       "List")
+    , ("Dict",       "Dict")
+    , ("Set",        "Set")
+    , ("Maybe",      "Maybe")
+    , ("Result",     "Result")
+    , ("Task",       "Task")
+    , ("Math",       "Math")
+    , ("Regex",      "Regex")
+    , ("Char",       "Char")
+    , ("Path",       "Path")
     ]

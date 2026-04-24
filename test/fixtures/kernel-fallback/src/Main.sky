@@ -1,0 +1,34 @@
+module Main exposing (main)
+
+{-|
+Regression for the canonicaliser fallback that ships kernel calls
+without their `rt.` prefix when the user hasn't written an explicit
+`import Sky.Core.<Mod> as <Mod>`.
+
+Bug shape: `Crypto.sha256 raw` resolves via `resolveQualVar`'s
+fallback to `VarTopLevel "Crypto" "sha256"`, the lowerer emits
+`Crypto_sha256(arg)` (no `rt.` prefix), and `go build` fails with
+`undefined: Crypto_sha256`.
+
+Fix: `resolveQualVar` consults `kernelModules` on fallback so any
+registered kernel qualifier resolves as `VarKernel`, matching the
+explicit-import path. Same shape applies to Encoding, Hex, Time,
+Slog, Char, Path, Math, Regex etc. — pick the ones that actually
+chain through `typedKernelArgCoerce` so the deeply-nested call
+shape (the one that surfaced the bug originally) is exercised.
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Std.Log as Log
+
+
+main =
+    -- Crypto.sha256 nested inside String.slice (typedKernelArgCoerce
+    -- arg coercion path) — the original failure mode in
+    -- sendcrafts/Services/Stripe.sky webhook logging.
+    let
+        digest = String.slice 0 12 (Crypto.sha256 "hello")
+        encoded = Encoding.base64Encode "secret"
+    in
+        Task.run (Log.println (digest ++ " " ++ encoded))

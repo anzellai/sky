@@ -3,6 +3,7 @@ module Lib.Auth exposing (hashPassword, verifyPassword, createUser, authenticate
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Maybe exposing (..)
 import Sky.Core.List as List
+import Sky.Core.Result as Result
 import Sky.Core.String as String
 import Std.Log exposing (println)
 import Sky.Core.Crypto as Crypto
@@ -24,7 +25,9 @@ hashPassword password =
 
 verifyPassword : String -> String -> Bool
 verifyPassword password storedHash =
-    Auth.verifyPassword password storedHash
+    -- Auth.verifyPassword returns Result Error Bool — collapse with
+    -- withDefault False (auth-deny on internal error, not auth-grant).
+    Result.withDefault False (Auth.verifyPassword password storedHash)
 
 
 -- createUser : returns Result Error UserId. Surfaces unique-key /

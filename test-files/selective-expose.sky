@@ -1,6 +1,7 @@
 module Main exposing (main, Colour(Red, Green))
 
 import Std.Log exposing (println)
+import Sky.Core.Error as Error exposing (Error)
 
 type Colour
     = Red

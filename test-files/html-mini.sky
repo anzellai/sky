@@ -4,6 +4,7 @@ import Sky.Core.Prelude exposing (..)
 import Std.Html exposing (..)
 import Std.Html.Attributes exposing (..)
 import Std.Log exposing (println)
+import Sky.Core.Error as Error exposing (Error)
 
 
 main =

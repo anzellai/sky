@@ -25,7 +25,9 @@ hashPassword password =
 
 verifyPassword : String -> String -> Bool
 verifyPassword password storedHash =
-    Auth.verifyPassword password storedHash
+    -- Auth.verifyPassword returns Result Error Bool — collapse with
+    -- withDefault False (auth-deny on internal error, not auth-grant).
+    Result.withDefault False (Auth.verifyPassword password storedHash)
 
 
 generateToken _ =

@@ -7,6 +7,7 @@ import Std.Live exposing (app, route)
 import Std.Live.Events exposing (onClick)
 import Std.Cmd as Cmd
 import Std.Sub as Sub
+import Sky.Core.Error as Error exposing (Error)
 
 type Msg
     = Inc
