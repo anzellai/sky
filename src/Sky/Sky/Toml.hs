@@ -21,6 +21,7 @@ data SkyConfig = SkyConfig
     , _liveStorePath :: !String           -- [live] storePath: file or connection string
     , _liveTtl       :: !Int              -- [live] ttl: session TTL in seconds
     , _liveStatic    :: !String           -- [live] static: static asset directory
+    , _liveMaxBody   :: !Int              -- [live] maxBodyBytes: cap for /_sky/event POST body
     , _dbDriver      :: !String           -- [database] driver (sqlite/postgres)
     , _dbPath        :: !String           -- [database] path
     , _authSecret    :: !String           -- [auth] secret: JWT signing key
@@ -48,6 +49,7 @@ defaultConfig = SkyConfig
     , _liveStorePath = ""
     , _liveTtl       = 1800
     , _liveStatic    = ""
+    , _liveMaxBody   = 0
     , _dbDriver      = ""
     , _dbPath        = ""
     , _authSecret    = ""
@@ -99,7 +101,12 @@ applyKeyValue section config key value = case section of
         "storePath" -> config { _liveStorePath = value }
         "ttl"       -> config { _liveTtl = safeReadInt value (_liveTtl config) }
         "static"    -> config { _liveStatic = value }
-        _           -> config
+        -- maxBodyBytes: cap for the `/_sky/event` POST body. Default
+        -- in the runtime is 5 MiB; bump higher if your app uses
+        -- `Event.onFile` / `Event.onImage` with larger uploads.
+        -- Seeded as SKY_LIVE_MAX_BODY_BYTES so process env still wins.
+        "maxBodyBytes" -> config { _liveMaxBody = safeReadInt value (_liveMaxBody config) }
+        _              -> config
     -- [database] section
     "database" -> case key of
         "driver" -> config { _dbDriver = value }

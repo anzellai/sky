@@ -2270,9 +2270,21 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 		InputState map[string]inputStateEntry `json:"inputState,omitempty"`
 		Batch      []batchedEvent             `json:"batch,omitempty"`
 	}
-	// Bound event payload to 1 MiB — these are tiny JSON envelopes.
-	// Batch events under sendBeacon are equally small (one per input).
-	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	// Bound event payload. Default 5 MiB (was 1 MiB hardcoded) —
+	// tiny JSON envelopes need almost nothing, but `Event.onFile` /
+	// `Event.onImage` ship the file as a base64 data URL through
+	// this same channel, so a 4 MiB image (~5.4 MiB base64) needs
+	// the bigger headroom. Override via SKY_LIVE_MAX_BODY_BYTES (or
+	// sky.toml [live] maxBodyBytes) — the fileMaxSize attr on the
+	// input is the client-side guard but isn't load-bearing for the
+	// server cap. Server-side validation in `update` is the
+	// authoritative check; this is the upper bound on what reaches
+	// the runtime at all.
+	maxBody := int64(5 << 20)
+	if n, ok := parsePositiveInt(os.Getenv("SKY_LIVE_MAX_BODY_BYTES")); ok {
+		maxBody = int64(n)
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxBody)
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, "payload too large", 413)

@@ -2,7 +2,7 @@
 
 [sky-lang.org](https://sky-lang.org) · [Examples](examples/) · [Docs](docs/)
 
-> **Experimental · v0.9** — Sky is under active development. APIs and internals may change between minor versions.
+> **Experimental · v0.10** — Sky is under active development. APIs and internals may change between minor versions.
 
 Sky is an experimental fullstack programming language that combines **Go's pragmatism** with **Elm's elegance**. You write functional, strongly-typed code with a batteries-included stdlib — `Sky.Live` for server-driven UI, `Std.Db` for SQL persistence, `Std.Auth` for sessions, `Sky.Core.Error` for unified error handling — import any Go package with auto-generated FFI bindings (no hand-written glue), and ship a single portable binary. Sky's explicit types, exhaustive pattern matching, and strict `Task` effect boundary make it **AI-friendly by design**: both humans and LLMs tend to write code that compiles the first time.
 
@@ -110,6 +110,7 @@ nix develop            # GHC 9.4.8 + Go + every system dep, sandboxed
 
 ## Status
 
+- **v0.10 — stdlib consolidation + soundness gaps closed (2026-04-25, BREAKING).** Single canonical module per concern (drop `Args` / `Env` / `Sha256` / `Hex` / `Slog`; rename `Os` → `System`; shrink `Process` to `run`); type errors in dep modules and FFI / kernel return shapes now abort the build instead of silently degrading to `any`-typing. See [docs/V0.10.0_PR_SUMMARY.md](docs/V0.10.0_PR_SUMMARY.md) for the full migration guide.
 - **v0.9 — adversarial audit remediation complete (2026-04-16).** All 23 P0–P3 items across soundness, security, cleanup, and tooling landed with regression tests. See [docs/AUDIT_REMEDIATION.md](docs/AUDIT_REMEDIATION.md) for the per-item tracker and [docs/compiler/v1-soundness-audit.md](docs/compiler/v1-soundness-audit.md) for the soundness audit findings.
 - **Core principle — "if it compiles, it works"** — aspirational. Now holds for every path in `cabal test`, the example sweep, and the runtime Go test matrix. v1.0 requires production usage and bug-fixes to earn the label. Residual future-work (fully-typed emitted Go, Sky-test harness) tracked in [docs/PRODUCTION_READINESS.md](docs/PRODUCTION_READINESS.md) as P4.
 - **18 example projects** under `examples/` covering CLI, HTTP servers, full-stack Sky.Live apps, databases (SQLite, PostgreSQL, Firestore), payments (Stripe), auth, and GUI (Fyne).

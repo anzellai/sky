@@ -2660,6 +2660,7 @@ Sky.Live config is embedded at compile time but can be overridden at runtime. En
 | `REDIS_URL` | -- | Redis URL fallback if `SKY_LIVE_STORE_PATH` is unset (defaults to `localhost:6379`) |
 | `SKY_LIVE_STATIC_DIR` | `static` | Path to static assets |
 | `SKY_LIVE_TTL` | `ttl` | Session TTL (Go duration format, e.g. `30m`) |
+| `SKY_LIVE_MAX_BODY_BYTES` | `maxBodyBytes` | Cap for `/_sky/event` POST body (default `5242880` = 5 MiB; bump for `Event.onFile` / `Event.onImage` uploads larger than 5 MiB) |
 
 Connection-status banner (v0.9.9+): `SKY_LIVE_BANNER` (default `on`; `off` / `0` / `false` to suppress the chrome but keep the retry queue active), `SKY_LIVE_RETRY_BASE_MS` (default `500`), `SKY_LIVE_RETRY_MAX_MS` (default `16000`), `SKY_LIVE_RETRY_MAX_ATTEMPTS` (default `10`), `SKY_LIVE_QUEUE_MAX` (default `50`).
 
