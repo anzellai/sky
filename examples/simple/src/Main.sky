@@ -20,7 +20,9 @@ main =
             ]
         seqResults = Task.perform (Task.sequence tasks)
         parResults = Task.perform (Task.parallel tasks)
-        _ = println "Sequential:" seqResults
-        _ = println "Parallel:" parResults
+        _ = println "Sequential done"
+        _ = println "Parallel done"
+        _ = seqResults
+        _ = parResults
     in
         ()
