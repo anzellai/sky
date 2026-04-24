@@ -55,7 +55,7 @@ sky add github.com/google/uuid
 
 `sky add` fetches the Go module, inspects its public API, and generates typed bindings under `.skycache/`. You can then `import Github.Com.Google.Uuid as Uuid` in your Sky source.
 
-See [../ffi/go-interop.md](ffi/go-interop.md) for the full FFI story.
+See [ffi/go-interop.md](ffi/go-interop.md) for the full FFI story.
 
 ## A minimal Elm-style TEA app
 

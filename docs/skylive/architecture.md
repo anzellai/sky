@@ -29,7 +29,7 @@ Technical reference for how Sky.Live dispatches events, renders, and diffs. For 
 
 ## Session lifecycle
 
-1. **Page load** — server renders `init ()`. The resulting model + view are cached under a session id (cookie or query param). A `session_id` cookie is set with `HttpOnly; SameSite=Strict`.
+1. **Page load** — server renders `init ()`. The resulting model + view are cached under a session id (cookie or query param). A `session_id` cookie is set with `HttpOnly; SameSite=Lax` (the CSRF cookie is separately `SameSite=Strict`).
 2. **SSE open** — client connects to `/_sky/subscribe?session=<id>`. Server locks the session and emits a `hello` event.
 3. **Event post** — client sends `POST /_sky/event` with `{ session, msg }`. Server decodes `msg`, locks the session, runs `update`, diffs, emits patch over SSE.
 4. **Cmd dispatch** — if `update` returned a non-none `cmd`, server spawns a goroutine per command. Each goroutine holds the session lock only to apply the resulting `Msg`, not while the task runs — so long-running HTTP requests don't block other events.
@@ -111,10 +111,10 @@ Commands (`Cmd.perform`) run their `Task` outside the session lock, then re-acqu
 
 ## Security defaults
 
-- Cookies: `HttpOnly`, `SameSite=Strict`, `Secure` (when served over HTTPS).
+- Cookies: `HttpOnly`, `Secure` (when served over HTTPS); session cookie is `SameSite=Lax`, CSRF cookie is `SameSite=Strict`.
 - Rate limit: per-IP + per-session token bucket; configurable via `[live]`.
 - CORS: off by default. Turn on by configuring allowed origins explicitly.
-- Event payload size cap: 1 MB. Larger payloads are rejected with HTTP 413.
+- Event payload size cap: configurable via `[live] maxBodyBytes` / `SKY_LIVE_MAX_BODY_BYTES` (default `5242880` = 5 MiB; bump for `Event.onFile` / `Event.onImage` uploads). Larger payloads are rejected with HTTP 413.
 
 ## Client-side runtime
 

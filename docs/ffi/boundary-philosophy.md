@@ -34,7 +34,7 @@ or hold it lazily), they can wrap it explicitly:
 deferred : Task Error String
 deferred =
     Task.lazy (\_ ->
-        case Uuid.newString of
+        case Uuid.newString () of
             Ok id -> Task.succeed id
             Err e -> Task.fail e
     )
@@ -99,7 +99,7 @@ Synchronous calls fit Go's model. The other Elm-port properties
 
 | Task | Sky stdlib (no Result tax for pure ops) | Go FFI fallback |
 |---|---|---|
-| Generate UUID | (none — use FFI) | `Uuid.newString` |
+| Generate UUID | `Sky.Core.Uuid.v4` / `v7` | `Uuid.newString` (`github.com/google/uuid`) |
 | HTTP request | `Sky.Core.Http.get` | `Http.get` (net/http) |
 | File read | `Sky.Core.File.readFile` | `Os.readFile` |
 | SQL query | `Std.Db.query` | `Sql.dbQuery` (database/sql) |
@@ -112,21 +112,21 @@ Synchronous calls fit Go's model. The other Elm-port properties
 
 ```elm
 -- Bad — ignores the boundary
-let id = Uuid.newString in ...   -- type error: id : Result Error String
+let id = Uuid.newString () in ...   -- type error: id : Result Error String
 
 -- Good — pattern match
-case Uuid.newString of
+case Uuid.newString () of
     Ok id ->
         ...
     Err e ->
         ...
 
 -- Good — bail to a default
-let id = Result.withDefault "anonymous" Uuid.newString in ...
+let id = Result.withDefault "anonymous" (Uuid.newString ()) in ...
 
 -- Good — chain across multiple FFI calls
 result =
-    Uuid.newString
+    Uuid.newString ()
         |> Result.andThen (\id -> Db.insertUser id email)
         |> Result.andThen Session.create
 ```

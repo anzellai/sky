@@ -30,7 +30,7 @@ increment c =
 
 - Primitives: `Int`, `Float`, `String`, `Bool`, `Char`, `Bytes`.
 - Records: `{ name : String, age : Int }` (must be aliased; inline record types in annotations are not supported).
-- Tuples: `( Int, String )` — arities 2-5 are typed structs; larger are `SkyTupleN`.
+- Tuples: `( Int, String )` — 2-tuples emit `rt.SkyTuple2`, 3-tuples emit `rt.SkyTuple3`, 4+ emit the slice-backed `rt.SkyTupleN`.
 - Lists: `List a`.
 - Dicts: `Dict k v` (runtime `map[string]any`; see [types.md](types.md) for caveats).
 - ADTs: `type Shape = Circle Float | Rect Float Float`.

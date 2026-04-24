@@ -38,7 +38,7 @@ import Std.Log exposing (println)
 main =
     -- Every FFI call returns Result Error T — pattern match or
     -- use Result.withDefault to get the value out.
-    case Uuid.newString of
+    case Uuid.newString () of
         Ok id ->
             println id
 
@@ -46,7 +46,7 @@ main =
             println ("uuid failed: " ++ Error.toString e)
 ```
 
-Zero-arg Go functions take no `()` argument in Sky.
+Zero-arg Go FFI functions are called with `()` in Sky — the inspector emits a `() -> R` Sky signature for every zero-param Go function so the call site stays explicit. (Sky-side **kernel** zero-arity bindings like `Uuid.v4` are different — those are kernel-registered and called as bare values; the `()` rule is only for FFI-generated wrappers.)
 
 Module name mapping:
 
@@ -117,23 +117,23 @@ Notes:
 
 ## Opaque struct pattern (Sky's builder convention)
 
-Go structs are opaque — you build them via generated constructors and pipeline setters:
+Go structs are opaque — you build them via generated constructors and pipeline setters. **Every step returns `Result Error T`** (constructor, every setter, every getter), so chains use `Result.andThen`:
 
 ```elm
 params =
     Stripe.newCheckoutSessionParams ()
-        |> Stripe.checkoutSessionParamsSetMode "payment"
-        |> Stripe.checkoutSessionParamsSetSuccessURL "https://example.com/success"
-        |> Stripe.checkoutSessionParamsSetLineItems [ lineItem ]
+        |> Result.andThen (Stripe.checkoutSessionParamsSetMode "payment")
+        |> Result.andThen (Stripe.checkoutSessionParamsSetSuccessURL "https://example.com/success")
+        |> Result.andThen (Stripe.checkoutSessionParamsSetLineItems [ lineItem ])
 ```
 
 Naming rules:
 
-- Constructor: `new<TypeName> : () -> TypeName`
-- Getter: `<typeName><FieldName> : TypeName -> FieldType`
-- Setter: `<typeName>Set<FieldName> : FieldType -> TypeName -> TypeName`
+- Constructor: `new<TypeName> : () -> Result Error TypeName`
+- Getter: `<typeName><FieldName> : TypeName -> Result Error FieldType`
+- Setter: `<typeName>Set<FieldName> : FieldType -> TypeName -> Result Error TypeName`
 
-Setters take the value first and the struct second — so they pipe naturally via `|>`.
+Setters take the value first and the struct second — so they pipe naturally via `|>` + `Result.andThen`. The Result wrap covers the boundary failure modes (nil receiver, panic, type mismatch); a successful chain returns `Ok params`.
 
 Pointer fields are auto-wrapped. For `Mode *string`, you pass a plain `String` and Sky wraps `&v` on the Go side.
 

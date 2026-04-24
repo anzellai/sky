@@ -45,8 +45,8 @@ Every operation that touches the disk returns `Task Error a` (per the [Task-ever
 |---|---|---|
 | `Db.exec` | `Db -> String -> List any -> Task Error Int` | Parameterised insert / update / delete; returns affected rows |
 | `Db.execRaw` | `Db -> String -> Task Error ()` | DDL only — no parameters. Use for `CREATE TABLE`, `CREATE INDEX`. |
-| `Db.query` | `Db -> String -> List any -> Task Error (List Row)` | Returns rows as `Dict String any` |
-| `Db.queryDecode` | `Db -> String -> List any -> (Row -> Result Error a) -> Task Error (List a)` | Decodes each row through your function; failures abort the whole query |
+| `Db.query` | `Db -> String -> List any -> Task Error (List (Dict String any))` | Returns rows as `Dict String any` |
+| `Db.queryDecode` | `Db -> String -> List any -> (Dict String any -> Result Error a) -> Task Error (List a)` | Decodes each row through your function; failures abort the whole query |
 
 ### Conventional CRUD (auto-generated SQL)
 
@@ -58,8 +58,8 @@ For any table with an `id` column, these save you from hand-writing SELECT/UPDAT
 | `Db.getById` | `Db -> String -> Int -> Task Error (Dict String any)` | Single row by primary key |
 | `Db.updateById` | `Db -> String -> Int -> Dict String any -> Task Error Int` | Returns affected rows |
 | `Db.deleteById` | `Db -> String -> Int -> Task Error Int` | Returns affected rows |
-| `Db.findWhere` | `Db -> String -> String -> List any -> Task Error (List Row)` | Parameterised WHERE; never string-concatenate user input into the clause |
-| `Db.findOneByField` | `Db -> String -> String -> any -> Task Error (Maybe Row)` | Single-row lookup by indexed column |
+| `Db.findWhere` | `Db -> String -> String -> List any -> Task Error (List (Dict String any))` | Parameterised WHERE; never string-concatenate user input into the clause |
+| `Db.findOneByField` | `Db -> String -> String -> any -> Task Error (Maybe (Dict String any))` | Single-row lookup by indexed column |
 
 ### Transactions
 
@@ -71,11 +71,11 @@ For any table with an `id` column, these save you from hand-writing SELECT/UPDAT
 
 | Function | Type | Notes |
 |---|---|---|
-| `Db.getField` | `String -> Row -> String` | Stringifies any value at the field |
-| `Db.getFieldOr` | `any -> Row -> String -> any` | Default value when field missing |
-| `Db.getString` | `String -> Row -> String` | Type-aware; empty string when missing |
-| `Db.getInt` | `String -> Row -> Int` | Type-aware; 0 when missing |
-| `Db.getBool` | `String -> Row -> Bool` | Type-aware; False when missing |
+| `Db.getField` | `String -> Dict String any -> String` | Stringifies any value at the field |
+| `Db.getFieldOr` | `any -> Dict String any -> String -> any` | Default value when field missing |
+| `Db.getString` | `String -> Dict String any -> String` | Type-aware; empty string when missing |
+| `Db.getInt` | `String -> Dict String any -> Int` | Type-aware; 0 when missing |
+| `Db.getBool` | `String -> Dict String any -> Bool` | Type-aware; False when missing |
 
 These return bare values — see [default-supplied helpers stay bare](../../CLAUDE.md#effect-boundary-task-everywhere-v0100). Reach for a typed decoder via `Db.queryDecode` when "missing" needs to fail loud.
 
@@ -101,8 +101,11 @@ type alias Todo =
     }
 
 
--- Decode one row into a Todo (or fail loudly)
-decodeTodo : Db.Row -> Result Error Todo
+-- Decode one row into a Todo (or fail loudly).
+-- Row shape from the runtime is `Dict String any` — the typed
+-- accessors (`Db.getInt` / `Db.getString` / `Db.getBool`) read
+-- through the dict and apply the default-supplied fallback.
+decodeTodo : Dict String any -> Result Error Todo
 decodeTodo row =
     Ok
         (Todo
@@ -199,7 +202,7 @@ For anything beyond a debug log, decode rows into a typed record at the query si
 Db.queryDecode db
     "SELECT id, email, role FROM users WHERE active = 1"
     []
-    decodeUser  -- Row -> Result Error User
+    decodeUser  -- Dict String any -> Result Error User
 ```
 
 ### Group with transactions

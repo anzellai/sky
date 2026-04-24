@@ -2,6 +2,18 @@
 
 This is a feature-level changelog covering major architectural shifts. For the line-level history see `git log`.
 
+## v0.10 — stdlib consolidation + soundness gaps closed (April 2026, BREAKING)
+
+- Single canonical module per concern. Dropped `Args`, `Env`, `Sha256`, `Hex`, `Slog` (folded into `System`, `Crypto`, `Encoding`, `Log.*With`); renamed `Os` → `System` to free the `Os` qualifier for the Go FFI `os` package; shrank `Process` to `run` only.
+- `System.getenvOr` returns bare `String` (default supplied → can't fail).
+- New `Log.{debugWith, infoWith, warnWith, errorWith}` for structured logging; `sky.toml [log] format / level` configures defaults (`SKY_LOG_FORMAT` / `SKY_LOG_LEVEL` env vars override).
+- Auto-force `let _ = TaskExpr` discard semantics formalised in the lowerer; `main`'s body wrapped in `rt.AnyTaskRun` so `main = println X` actually prints under Task-everywhere.
+- Foreign-call mismatches (Go arity / type errors at FFI call sites) and dep-module HM errors are FATAL — silent degradation to `any`-typed bindings is gone. Regression test: `test/Sky/Build/DepHmFatalSpec.hs`.
+- Bare-name aliases for every kernel module (`Log.error`, `Crypto.sha256`, `Encoding.base64Encode` work without explicit `import Std.X`).
+- Sky.Live: configurable `/_sky/event` body cap via `[live] maxBodyBytes` / `SKY_LIVE_MAX_BODY_BYTES` (default 5 MiB; previously hardcoded 1 MiB).
+
+See [V0.10.0_PR_SUMMARY.md](../V0.10.0_PR_SUMMARY.md) for the full migration guide.
+
 ## v0.9 — Haskell compiler rewrite (April 2026)
 
 **Branch:** `feat/sky-haskell-compiler` (pre-merge).
@@ -13,7 +25,7 @@ Production readiness plan (P0-P13) fully complete:
 - **P2** — `exposing` clause enforcement; imports of unexposed names are rejected.
 - **P3** — pattern exhaustiveness checker. Missing ADT ctors / missing True/False / literal-without-wildcard are build errors.
 - **P4** — typed record codegen. `TRecord` no longer falls through to `any`.
-- **P5** — typed tuples (`rt.T2[A, B]` / `rt.T3[A, B, C]` / `rt.T4` / `rt.T5`).
+- **P5** — typed tuples (`rt.SkyTuple2` / `rt.SkyTuple3` / `rt.SkyTupleN`; arity 2 → struct with `V0,V1`, arity 3 → `V0,V1,V2`, arity ≥ 4 → slice-backed).
 - **P6** — typed unresolved type variables via Go generics.
 - **P7** — typed FFI wrappers. 35,775 → 0 `(p0 any)` residuals across examples.
 - **P8** — typed kernel stdlib dispatch. ~900 new typed call sites. `ResultCoerce`/`MaybeCoerce` sites 213 → 58 (72.8% drop).

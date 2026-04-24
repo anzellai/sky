@@ -75,8 +75,10 @@ bcrypt password hashing, HMAC-SHA256 JWTs, plus optional DB-backed `register` / 
 
 ```elm
 Auth.register db "alice@example.com" password
-    |> Task.andThen (\uid -> Auth.signToken secret { sub = uid } 86400)
-    |> Task.fromResult
+    |> Task.andThenResult
+        (\uid ->
+            Auth.signToken secret (Dict.fromList [ ( "sub", String.fromInt uid ) ]) 86400
+        )
 ```
 
 Production-grade defaults: minimum-32-byte secret enforcement, constant-time password compare, configurable bcrypt cost, rate-limit-friendly. See [Sky.Auth overview](docs/skyauth/overview.md).

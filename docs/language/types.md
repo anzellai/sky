@@ -60,7 +60,7 @@ Pattern matches are exhaustive — missing variants are build errors.
 
 ## Tuples
 
-Fixed-arity product types. Arities 2-5 compile to typed Go structs (`rt.T2[A, B]`, `rt.T3[A, B, C]`, ...). Larger tuples fall back to `SkyTupleN`.
+Fixed-arity product types. Arity 2 emits `rt.SkyTuple2` (`{V0, V1}`); arity 3 emits `rt.SkyTuple3` (`{V0, V1, V2}`); arity 4+ falls back to the slice-backed `rt.SkyTupleN`. The mapping is performed in `Sky.Generate.Go.Type.typeToGo` and is invisible at the source level — destructuring patterns work the same way at every arity.
 
 ```elm
 pair : ( Int, String )
@@ -135,4 +135,10 @@ func Identity[T1 any](x T1) T1 { return x }
 
 ## Type variables with constraints
 
-Intentionally unsupported. Sky's HM is unconstrained; typeclass-style operations (`Eq`, `Ord`, `Show`) are provided as concrete module-level functions instead (`Basics.eqT`, `Basics.ordT`, `Debug.toString`).
+Intentionally unsupported. Sky's HM is unconstrained; typeclass-style operations are provided implicitly via runtime helpers:
+
+- **Equality** — the `==` and `/=` operators dispatch through `rt.sky_equal`, which type-switches on the runtime tag and recurses into ADTs / records / lists / dicts. Works for any value without a constraint.
+- **Ordering** — `<`, `>`, `<=`, `>=`, and `Basics.compare` dispatch through `rt.sky_compare` for primitives and lexicographic ordering on collections.
+- **Display / debug** — `Basics.toString` (alias `Debug.toString`) renders any value to a readable string for debugging. For production formatting use the typed helpers (`String.fromInt`, `String.fromFloat`).
+
+There are no `Eq` / `Ord` / `Show` constraints to opt into — every operator just works on every type.

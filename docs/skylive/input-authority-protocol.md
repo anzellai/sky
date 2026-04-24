@@ -2,7 +2,7 @@
 
 Design spec for the reliability layer that guarantees **no keystroke is ever lost**, regardless of latency, race conditions, dropped requests, out-of-order responses, page navigation, or server restarts. Supersedes the purely-positional morph algorithm documented in [architecture.md](architecture.md).
 
-Status: **design — not yet implemented**. Approval gate before code lands.
+Status: **partially implemented (in progress).** Recent commits on `main` have landed `__skyMorph` retirement (atomic innerHTML + focus snapshot/restore), DOM-node preservation through innerHTML swap, dirty-input scoping to typable form fields only, and dispatch-error narrowing. The full sky-id grammar / monotonic seq protocol below is still partially open work — check `git log -- runtime-go/rt/live.go` for current status.
 
 ## Motivation
 

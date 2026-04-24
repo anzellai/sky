@@ -66,19 +66,26 @@ Sky's `Error` ADT carries the panic message with an `FfiPanic` detail.
 
 ## Multi-return mapping
 
-| Go signature | Sky return |
-|--------------|------------|
-| `func F() T` | `T` |
-| `func F() error` | `Result Error ()` |
-| `func F() (T, error)` | `Result Error T` |
-| `func F() (T, U)` | `SkyTuple2[T, U]` |
-| `func F() (T, U, error)` | `Result Error (SkyTuple2[T, U])` |
-| `func F() (T, U, V)` | `SkyTuple3[T, U, V]` |
-| `func F() (T, U, V, error)` | `Result Error (SkyTuple3[T, U, V])` |
+**Every FFI call returns `Result Error <unpacked>`** — there are no carve-outs for "infallible" Go signatures (Go can panic anywhere, see [boundary-philosophy.md](boundary-philosophy.md)). The first column below is the Sky-side type the user writes / pattern-matches on. The second is the runtime Go shape `FfiGen.classifyTypedResult` emits in the wrapper signature.
+
+| Go signature | Sky-side type | Go runtime emission |
+|--------------|---------------|----------------------|
+| `func F() T` | `Result Error T` | `SkyResult[any, T]` |
+| `func F() error` | `Result Error ()` | `SkyResult[any, struct{}]` (Ok holds `struct{}{}`) |
+| `func F() (T, error)` | `Result Error T` | `SkyResult[any, T]` (error extracted to Err) |
+| `func F() (T, *NamedErr)` where `NamedErr` implements `error` | `Result Error T` | `SkyResult[any, T]` (named error stringified into Err) |
+| `func F() (T, bool)` (comma-ok) | `Result Error (Maybe T)` | `SkyResult[any, SkyMaybe[T]]` |
+| `func F() (T, U)` | `Result Error (T, U)` | `SkyResult[any, SkyTuple2]` (`{V0: any, V1: any}`) |
+| `func F() (T, U, error)` | `Result Error (T, U)` | `SkyResult[any, SkyTuple2]` (error extracted) |
+| `func F() (T, U, V)` | `Result Error (T, U, V)` | `SkyResult[any, SkyTuple3]` (`{V0, V1, V2}`) |
+| `func F() (T, U, V, error)` | `Result Error (T, U, V)` | `SkyResult[any, SkyTuple3]` (error extracted) |
+| `func F() (T0, T1, ..., Tn)` for n≥4 | `Result Error (T0, T1, ..., Tn)` | `SkyResult[any, SkyTupleN]` (slice-backed) |
+
+`SkyTuple2` / `SkyTuple3` / `SkyTupleN` are runtime structs in `runtime-go/rt/rt.go`. Sky users access tuple slots via destructuring patterns (`( a, b ) = ...`); the tuple-shape mapping (Sky 2-tuple → SkyTuple2, Sky 3-tuple → SkyTuple3, ≥4-tuple → SkyTupleN) is performed by `Sky.Generate.Go.Type.typeToGo` and is invisible at the source level.
 
 ## Variadic
 
-`func F(x ...T)` → Sky-side takes a `[]T`, spread with `...` in the wrapper body:
+`func F(x ...T) R` → Sky-side takes a `List T` argument; wrapper spreads with `...` and returns `Result Error R`:
 
 ```go
 func Go_Pkg_F(arg0 []T) (out SkyResult[any, R]) {
@@ -87,6 +94,8 @@ func Go_Pkg_F(arg0 []T) (out SkyResult[any, R]) {
     return
 }
 ```
+
+Like every other call shape, the return is wrapped in `SkyResult` so Go panics are caught by `SkyFfiRecoverT` and surfaced as `Err(ErrFfi(...))`.
 
 ## Build-time dead-code elimination
 

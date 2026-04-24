@@ -72,9 +72,9 @@ isRetryable : Error -> Bool
 import Sky.Core.Error as Error exposing (Error(..), ErrorKind(..))
 
 
-loadUser : String -> Task Error User
-loadUser id =
-    Db.queryDecode userDecoder "SELECT * FROM users WHERE id = ?" [ id ]
+loadUser : Db -> String -> Task Error (List User)
+loadUser db id =
+    Db.queryDecode db "SELECT * FROM users WHERE id = ?" [ id ] userDecoder
         |> Task.mapError classifyError
 
 

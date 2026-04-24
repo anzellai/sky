@@ -81,7 +81,7 @@ Key runtime pieces:
 
 - `SkyResult[E, A]`, `SkyMaybe[A]`, `SkyTask[E, A]` — the three effect types.
 - `SkyADT` — untyped ADT carrier (tag + named constructor + field slice).
-- `SkyTuple2/3/4/5` — generic tuple structs (aliased from `T2[A, B]` etc.).
+- `SkyTuple2` (`{V0, V1}`), `SkyTuple3` (`{V0, V1, V2}`), `SkyTupleN` (slice-backed, arity ≥ 4) — the three tuple runtime structs `Sky.Generate.Go.Type.typeToGo` lowers to.
 - `SkyFfiRecover` / `SkyFfiRecoverT` — panic recovery at the FFI boundary.
 - `SkyCall`, `sky_call2/3/4/5` — apply closures with variable arity.
 - `ResultCoerce` / `MaybeCoerce` — reflect-fallback type conversion (used only when a case subject's concrete type can't be determined at lower time).
