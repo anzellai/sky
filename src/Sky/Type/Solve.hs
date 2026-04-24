@@ -233,11 +233,19 @@ solveHelp state constraint = case constraint of
         if ok
             then return (Nothing, state)
             else do
-                -- Debug: show what failed to unify
                 instType <- variableToType instVar
                 expType <- variableToType expectedVar
-                return (Nothing, state)  -- Continue past foreign mismatch for now
-                -- return (Just $ "Foreign '" ++ name ++ "': " ++ showType instType ++ " vs " ++ showType expType, state)
+                -- v0.10.0: foreign mismatches are now FATAL. Was
+                -- silently swallowed (`Continue past foreign mismatch
+                -- for now`) which let FFI return-shape bugs through —
+                -- e.g. `Regexp.regexpMatchString re s : Result Error
+                -- Bool` being used as bare Bool ran fine at HM time
+                -- and panicked at runtime with `rt.AsBool: expected
+                -- bool, got rt.SkyResult[interface {},bool]`. Same
+                -- pattern as the dep-HM-fatal change.
+                return (Just $ "Foreign '" ++ name ++ "': "
+                        ++ showType instType ++ " vs " ++ showType expType
+                       , state)
 
     T.CPattern _region _category _actualType _expected ->
         return (Nothing, state)

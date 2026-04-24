@@ -1347,6 +1347,17 @@ lookupKernelType modName funcName = case (modName, funcName) of
                 (T.TType ModuleName.task "Task"
                     [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
                     , stringType]))
+    -- System.cwd : () -> Task Error String — runtime returns a Task
+    -- thunk per the v0.10.0 Task-everywhere migration. Pre-fix this
+    -- sig was Result Error String (declared duplicate further down)
+    -- and the mismatch was silently swallowed at the foreign-unify
+    -- step.
+    ("System", "cwd") ->
+        Just $ T.Forall []
+            (T.TLambda T.TUnit
+                (T.TType ModuleName.task "Task"
+                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                    , stringType]))
     -- Time.sleep / Time.now / Time.unixMillis return Task Error <T>
     -- per the Task-everywhere doctrine: clock reads observe a non-
     -- deterministic real-world resource so they get the same Task
@@ -2382,16 +2393,12 @@ lookupKernelType modName funcName = case (modName, funcName) of
     -- (added earlier) because their explicit-arg form forces the
     -- caller to commit to a shape.
 
-    -- System.cwd : () -> Result Error String (sibling of
-    -- System.getcwd which is bare-typed). The Result wrap surfaces
-    -- filesystem errors at the call site rather than panicking on a
-    -- Go syscall failure. (Renamed from Os.cwd 2026-04-24.)
-    ("System", "cwd") ->
-        Just $ T.Forall []
-            (T.TLambda T.TUnit
-                (T.TType ModuleName.result_ "Result"
-                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
-                    , stringType]))
+    -- System.cwd duplicate sig — the canonical Task version is
+    -- declared higher up in the System block (line ~1349). Leaving
+    -- a no-op here because the registry is first-match-wins; an
+    -- earlier Result-shape declaration silently shipped before
+    -- foreign-fatal landed (v0.10.0). The runtime returns a Task
+    -- thunk and the upper sig matches.
 
     -- Server: extractors return Maybe String for things that may be
     -- absent (cookies, query params, headers, route params).

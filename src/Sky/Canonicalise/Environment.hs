@@ -269,6 +269,18 @@ ffiKernelFunctionsRef :: IORef (Map.Map String [String])
 ffiKernelFunctionsRef = unsafePerformIO (newIORef Map.empty)
 
 
+-- | Per-FFI-function arity, keyed by `(kernelName, funcName)`. Lets
+-- the type checker synthesise a default sig
+-- `(t0 -> ... -> tN-1 -> Result Error r)` for unknown Go_* kernels
+-- so FFI return-shape mismatches at call sites become HM errors
+-- (instead of silently degrading to `any` and panicking at runtime
+-- with `rt.AsBool: expected bool, got rt.SkyResult[…]`). Populated
+-- from FfiRegistry in `Sky.Build.Compile.loadAndSeedFfiRegistry`.
+{-# NOINLINE ffiKernelArityRef #-}
+ffiKernelArityRef :: IORef (Map.Map (String, String) Int)
+ffiKernelArityRef = unsafePerformIO (newIORef Map.empty)
+
+
 -- | P7: names of FFI kernel functions (in the <Kernel>_<func> shape,
 -- e.g. "Go_Uuid_newString") for which a typed T-suffix wrapper has
 -- been emitted by FfiGen. Call-site codegen consults this set to

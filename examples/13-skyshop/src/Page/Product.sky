@@ -290,7 +290,17 @@ viewAddToCart model product stock =
                                 , input
                                       [ type_ "number"
                                       , value (String.fromInt model.quantity)
-                                      , onInput UpdateQuantity
+                                      -- onInput passes a String; parse to
+                                      -- Int with `String.toInt` (Maybe)
+                                      -- and fall back to current quantity
+                                      -- on a non-numeric edit.
+                                      , onInput
+                                            (\s ->
+                                                UpdateQuantity
+                                                    (Maybe.withDefault
+                                                        model.quantity
+                                                        (String.toInt s))
+                                            )
                                       , Attr.min "1"
                                       , Attr.max
                                             (if stock > 0 then

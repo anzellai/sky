@@ -1,0 +1,36 @@
+module Main exposing (main)
+
+{-|
+Regression for "Foreign mismatches silently swallowed at HM time"
+(v0.10.0 fix). Pre-fix, calling a kernel/FFI function with a
+return-shape that didn't unify with the call-site's expected type
+was permitted by the constraint solver — the error report was
+commented out. The bug surfaced as a runtime panic like
+
+    rt.AsBool: expected bool, got rt.SkyResult[interface {}, bool]
+
+(sky-log's `Webhook.matchesFilter` shape) or worse, silent data
+corruption.
+
+This fixture asks for `String.length : String -> Int` to be used as
+`Bool`. The CForeign unification fails — and now that's a fatal
+build error rather than a silently-swallowed mismatch.
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.System as System
+
+
+-- System.cwd : () -> Task Error String — annotation here forces the
+-- consumer's expectation. Pre-fix this body type-errored at the
+-- foreign-unify step (`Task` returned by System.cwd vs `String`
+-- demanded by the annotation), but the solver swallowed the error.
+-- The function then shipped with broken types and the runtime
+-- panicked when callers tried to use the value.
+fetch : () -> String
+fetch _ =
+    System.cwd ()
+
+
+main =
+    System.exit 0

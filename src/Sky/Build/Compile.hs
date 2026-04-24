@@ -73,8 +73,14 @@ loadAndSeedFfiRegistry = do
                    map FfiReg._ffn_name (FfiReg._fm_functions m))
                 | m <- mods
                 ]
+    let arityMap = Map.fromList
+            [ ((FfiReg._fm_kernelName m, FfiReg._ffn_name f),
+                FfiReg._ffn_arity f)
+            | m <- mods, f <- FfiReg._fm_functions m
+            ]
     writeIORef Env.ffiKernelModulesRef moduleMap
     writeIORef Env.ffiKernelFunctionsRef functionMap
+    writeIORef Env.ffiKernelArityRef arityMap
     seedTypedFfiNames
     if null mods
         then return ()
