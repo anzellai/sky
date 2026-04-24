@@ -4382,11 +4382,26 @@ func File_rename(src any, dst any) any {
 
 var stdinReader *bufio.Reader
 
+// Io_readLine: kernel sig is `Io.readLine : () -> Task Error String`
+// (lookupKernelType in src/Sky/Type/Constrain/Expression.hs). Task in
+// Sky is a `func() any` thunk per the v0.9.6 effect-boundary audit
+// (deferred so Cmd.perform / Task.run controls when the syscall fires).
+//
+// Pre-fix this returned an eager SkyResult — the typed companion
+// `Io_readLineT` was already a thunk, but the any-typed dispatch
+// path was eager. That meant `let prompt = Io.readLine ()` blocked
+// at module init time inside Sky.Live's update goroutine instead of
+// running on the Cmd.perform-spawned worker. Same wrapper-shape
+// regression class as the v0.9.10 String_toIntT / Maybe-vs-Result
+// fix, applied to Task-vs-eager-Result. Surfaced by the
+// kernel_wrapper_parity_test.go audit on 2026-04-23.
 func Io_readLine(args ...any) any {
-	if stdinReader == nil { stdinReader = bufio.NewReader(os.Stdin) }
-	line, err := stdinReader.ReadString('\n')
-	if err != nil && err != io.EOF { return Err[any, any](ErrFfi(err.Error())) }
-	return Ok[any, any](strings.TrimRight(line, "\n\r"))
+	return func() any {
+		if stdinReader == nil { stdinReader = bufio.NewReader(os.Stdin) }
+		line, err := stdinReader.ReadString('\n')
+		if err != nil && err != io.EOF { return Err[any, any](ErrFfi(err.Error())) }
+		return Ok[any, any](strings.TrimRight(line, "\n\r"))
+	}
 }
 
 func Io_writeStdout(s any) any {
@@ -4536,6 +4551,19 @@ func Encoding_hexDecode(s any) any {
 	if err != nil { return Err[any, any](ErrFfi(err.Error())) }
 	return Ok[any, any](string(data))
 }
+
+// NOTE (audit, 2026-04-23): the kernel sig in lookupKernelType
+// declares Encoding.{base64,url,hex}Encode as
+// `String -> Result Error String`, but the typed-codegen path in
+// Sky.Build.Compile (typedKernelLiterals) emits these calls with the
+// result consumed as a bare string (e.g. `rt.Concat("…", rt.Encoding_urlEncodeT(x))`)
+// rather than destructured via case-on-Ok. That's a kernel↔codegen
+// mismatch, not a kernel↔runtime one — both runtime variants currently
+// return bare string to match what the codegen actually emits. If/when
+// the codegen learns to unwrap the Result for the *Encode call sites,
+// the kernel sig and these helpers should be migrated together
+// (kernel canonical: encoders never fail so they'd always be Ok).
+// Tracked alongside the Bucket A2 sweep notes in Expression.hs.
 
 // P8/Encoding typed companions — direct string in, string/SkyResult out.
 func Encoding_base64EncodeT(s string) string { return base64.StdEncoding.EncodeToString([]byte(s)) }
