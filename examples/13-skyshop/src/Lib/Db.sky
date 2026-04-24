@@ -8,6 +8,7 @@ import Sky.Core.Maybe as Maybe
 import Sky.Core.Dict as Dict
 import Sky.Core.List as List
 import Sky.Core.Result as Result
+import Sky.Core.Task as Task
 import Sky.Core.String as String
 import Std.Log exposing (println)
 import Cloud.Google.Com.Go.Firestore as Firestore
@@ -118,7 +119,7 @@ ctx =
 
 getProjectId _ =
     let
-        env = Result.withDefault "" (Os.getenv "GOOGLE_CLOUD_PROJECT")
+        env = Result.withDefault "" (Task.run (Os.getenv "GOOGLE_CLOUD_PROJECT"))
     in
         if env == "" then
             "skyshop"

@@ -3923,36 +3923,50 @@ func String_toChar(s any) any {
 	return rune(0)
 }
 
-// Os — CLI args, environment, cwd, exit.
-// Zero-arg Sky funcs take a unit param at runtime so the call-site form
-// `Os.args ()` emits `rt.Os_args(struct{}{})` and works uniformly with C2.
+// Os — CLI args, environment, cwd, exit. Task-everywhere doctrine
+// (2026-04-24+): all observable side effects return Task Error a.
+// Bodies wrapped in `func() any` thunks; the lowerer's auto-force
+// on `let _ = Os.exit 1` discards keeps the eager pattern usable.
+//
+// Zero-arg Sky funcs take a unit param at runtime so the call-site
+// form `Os.args ()` emits `rt.Os_args(struct{}{})` and works
+// uniformly with C2.
 func Os_args(_ any) any {
-	out := make([]any, 0, len(os.Args))
-	if len(os.Args) > 1 {
-		for _, a := range os.Args[1:] {
-			out = append(out, a)
+	return func() any {
+		out := make([]any, 0, len(os.Args))
+		if len(os.Args) > 1 {
+			for _, a := range os.Args[1:] {
+				out = append(out, a)
+			}
 		}
+		return Ok[any, any](out)
 	}
-	return out
 }
 
 func Os_getenv(name any) any {
-	k := fmt.Sprintf("%v", name)
-	v, ok := os.LookupEnv(k)
-	if !ok {
-		return Err[any, any](ErrNotFound())
+	captured := name
+	return func() any {
+		k := fmt.Sprintf("%v", captured)
+		v, ok := os.LookupEnv(k)
+		if !ok {
+			return Err[any, any](ErrNotFound())
+		}
+		return Ok[any, any](v)
 	}
-	return Ok[any, any](v)
 }
 
 func Os_cwd(_ any) any {
-	wd, err := os.Getwd()
-	if err != nil {
-		return Err[any, any](ErrFfi(err.Error()))
+	return func() any {
+		wd, err := os.Getwd()
+		if err != nil {
+			return Err[any, any](ErrFfi(err.Error()))
+		}
+		return Ok[any, any](wd)
 	}
-	return Ok[any, any](wd)
 }
 
+// Os_exit: never returns (process terminates) — kept eager and
+// polymorphic per the rationale in lookupKernelType.
 func Os_exit(code any) any {
 	os.Exit(AsInt(code))
 	return struct{}{}

@@ -57,9 +57,13 @@ runApp conn =
         |> Task.andThen
                (\_ ->
                    let
-                       -- Os.args already returns user args only (Go's
-                       -- os.Args[1:]); don't drop another element.
-                       userArgs = Os.args ()
+                       -- Os.args is Task Error (List String) after the
+                       -- v1.0 Task-everywhere migration. Force at the
+                       -- read site for ergonomic let-binding access.
+                       userArgs =
+                           Os.args ()
+                               |> Task.run
+                               |> Result.withDefault []
                        cmd = getArg userArgs
                        cmdArg = getArg (List.drop 1 userArgs)
                    in

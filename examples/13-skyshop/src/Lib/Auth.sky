@@ -3,6 +3,7 @@ module Lib.Auth exposing (verifyToken, signOut, getUserById, isAdmin, getSession
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Maybe exposing (..)
 import Sky.Core.Result as Result
+import Sky.Core.Task as Task
 import Sky.Core.List as List
 import Sky.Core.Dict as Dict
 import Sky.Core.String as String
@@ -24,7 +25,7 @@ ctx =
 
 adminEmails _ =
     let
-        envAdmins = Result.withDefault "" (Os.getenv "ADMIN_EMAILS")
+        envAdmins = Result.withDefault "" (Task.run (Os.getenv "ADMIN_EMAILS"))
     in
     -- Idempotent upsert using firebase_uid as document ID.
     -- Concurrent calls from onAuthStateChanged can never create duplicates
@@ -49,7 +50,7 @@ isAdmin user =
 getAuthClient _ =
     let
         credFile =
-            Result.withDefault "" (Os.getenv "GOOGLE_APPLICATION_CREDENTIALS")
+            Result.withDefault "" (Task.run (Os.getenv "GOOGLE_APPLICATION_CREDENTIALS"))
         opts =
             if credFile == "" then
                 []

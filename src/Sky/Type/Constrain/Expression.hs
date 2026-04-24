@@ -1310,24 +1310,37 @@ lookupKernelType modName funcName = case (modName, funcName) of
         Just $ T.Forall ["a"]
             (T.TLambda stringType
                 (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"]) stringType))
-    -- Os
+    -- Os.* — all wrap real I/O (process state reads, env reads,
+    -- termination). Task-everywhere doctrine: every observable side
+    -- effect returns Task Error a. Lowerer's auto-force on `let _ =`
+    -- discards keeps the eager pattern usable.
     ("Os", "args") ->
         Just $ T.Forall []
-            (T.TLambda T.TUnit (T.TType ModuleName.list "List" [stringType]))
+            (T.TLambda T.TUnit
+                (T.TType ModuleName.task "Task"
+                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                    , T.TType ModuleName.list "List" [stringType]]))
     ("Os", "getenv") ->
-        -- Os.getenv returns Result Error String — Err ErrNotFound
-        -- when the env var isn't set, Ok value otherwise.
         Just $ T.Forall []
             (T.TLambda stringType
-                (T.TType ModuleName.result_ "Result"
+                (T.TType ModuleName.task "Task"
                     [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
                     , stringType]))
+    -- Os.exit: stays polymorphic `Int -> a` rather than migrating to
+    -- Task. The function never returns (process terminates), so it's
+    -- naturally polymorphic in the return type; Task-wrapping it
+    -- would force every case branch that uses Os.exit as a fatal-
+    -- error escape to also return Task, which is invasive without
+    -- adding type information (the Task would never actually flow).
     ("Os", "exit") ->
         Just $ T.Forall ["a"]
             (T.TLambda intType (T.TVar "a"))
     ("Os", "getcwd") ->
         Just $ T.Forall []
-            (T.TLambda T.TUnit stringType)
+            (T.TLambda T.TUnit
+                (T.TType ModuleName.task "Task"
+                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                    , stringType]))
     -- Time.sleep / Time.now / Time.unixMillis return Task Error <T>
     -- per the Task-everywhere doctrine: clock reads observe a non-
     -- deterministic real-world resource so they get the same Task

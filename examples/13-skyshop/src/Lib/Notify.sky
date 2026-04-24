@@ -2,6 +2,7 @@ module Lib.Notify exposing (notifyOrderPlaced)
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Result as Result
+import Sky.Core.Task as Task
 import Sky.Core.Maybe exposing (..)
 import Sky.Core.List as List
 import Sky.Core.Dict as Dict
@@ -17,7 +18,7 @@ import Io as Io
 
 notifyOrderPlaced cart items userName userEmail =
     let
-        env = Result.withDefault "" (Os.getenv "ENV")
+        env = Result.withDefault "" (Task.run (Os.getenv "ENV"))
         cartId = Db.getField "id" cart
         totalAmount = Db.getField "total_amount" cart
         totalCurrency = Db.getField "total_currency" cart
@@ -63,8 +64,8 @@ ignoreResult result =
 
 sendEmailNotification notificationId subject body =
     let
-        smtpHost = Result.withDefault "" (Os.getenv "SMTP_HOST")
-        notifyTo = Result.withDefault "" (Os.getenv "NOTIFY_TO")
+        smtpHost = Result.withDefault "" (Task.run (Os.getenv "SMTP_HOST"))
+        notifyTo = Result.withDefault "" (Task.run (Os.getenv "NOTIFY_TO"))
     in
         if smtpHost == "" || notifyTo == "" then
             let
