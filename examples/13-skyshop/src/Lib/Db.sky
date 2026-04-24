@@ -145,8 +145,16 @@ snapshotToDict snapshot =
             Result.withDefault
                 Dict.empty
                 (Firestore.documentSnapshotData snapshot)
+        -- v0.10.0: every Go FFI call returns Result Error T per the
+        -- doctrine. Pre-fix, the typed-codegen tolerated direct
+        -- composition; foreign-fatal now requires explicit
+        -- unwrapping at each boundary.
         docId =
-            Firestore.documentRefID (Firestore.documentSnapshotRef snapshot)
+            case Firestore.documentSnapshotRef snapshot of
+                Ok ref ->
+                    Result.withDefault "" (Firestore.documentRefID ref)
+                Err _ ->
+                    ""
     in
         Dict.insert "id" docId (mapToStringDict rawData)
 

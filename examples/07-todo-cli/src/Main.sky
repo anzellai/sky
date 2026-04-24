@@ -121,7 +121,13 @@ listTodos conn =
                    else
                        let
                            _ = println "Your TODOs:"
-                           _ = List.map (\row -> println (formatTodo row)) rows
+                           -- v0.10.0: List.map over a Task discards
+                           -- the resulting list of thunks unforced.
+                           -- Fold the prints into a single String so a
+                           -- single `println` call fires the side
+                           -- effect.
+                           lines = List.map formatTodo rows
+                           _ = println (String.join "\n" lines)
                            _ = println ""
                        in
                            ())
