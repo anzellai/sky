@@ -396,7 +396,11 @@ let { x, y } = point in x + y
 
 ## Task — Effect Boundary
 
-All side effects (IO, HTTP, file access) flow through `Task`. Tasks are lazy — they only execute when `perform` is called. Panics are caught and converted to `Err`.
+**Single rule (v1.0+):** every observable side effect returns `Task Error a`. That includes the previously-eager kernels: `println`, `Slog.*`, `Time.now`, `Time.unixMillis`, `Os.getenv`, `Os.cwd`, `Os.args`. The previous "two-tier" doctrine that carved them out as sync convenience effects is gone — see "Auto-force `let _ = TaskExpr`" below for why this is now ergonomic.
+
+Tasks are lazy — they only execute when `Task.run` / `Task.perform` is called, when consumed by `Cmd.perform`, or auto-forced via `let _ =` discard.
+
+The narrow exception is **`Os.exit`** which stays `Int -> a` (polymorphic) because it never returns — Task-wrapping it would force every case branch using it as a fatal-error escape to also be Task, with no compensating type information.
 
 ```elm
 import Sky.Core.Task as Task
@@ -429,7 +433,28 @@ result = Task.perform pipeline
 - `Task.mapError : (e -> e2) -> Task e a -> Task e2 a` -- transform error type without touching the success path
 - `Task.onError : (e -> Task e2 a) -> Task e a -> Task e2 a` -- recover from error to a new Task (HTTP error response, retry, fall back to default)
 
-**Db.* now returns Task** (effect-boundary-audit). `Db.connect` / `Db.open` / `Db.exec` / `Db.execRaw` / `Db.query` return `Task Error a` and compose directly with `Task.andThen` / `Task.parallel` / `Cmd.perform`. The runtime helpers wrap their bodies in thunks so the actual SQL defers to the goroutine, not the caller.
+**Auto-force `let _ = TaskExpr`** (v1.0+). The compiler special-cases `let _ = X in Y` discards: when X has type `Task e a`, the lowerer emits `_ = rt.AnyTaskRun(X)` so the Task thunk is forced and the side effect fires. Without this, every kernel-Task call would silently no-op when discarded. With this, the pervasive debug-trace pattern keeps working unchanged:
+
+```elm
+let
+    _ = println "step 1"        -- Task auto-forced, print fires
+    _ = println "step 2"        -- same
+    _ = Slog.info "saving" [ "id", id ]
+in
+    continue
+```
+
+**Top-level bindings stay explicit.** Auto-force only applies to `let _ =` discards. Reading a Task-typed value at module scope requires explicit `Task.run`:
+
+```elm
+-- Module top-level
+apiKey =
+    Os.getenv "OPENAI_KEY"
+        |> Task.run
+        |> Result.withDefault ""
+```
+
+**Db.* returns Task.** `Db.connect` / `Db.open` / `Db.exec` / `Db.execRaw` / `Db.query` / `Db.queryDecode` / `Db.insertRow` / `Db.{getById, updateById, deleteById}` / `Db.{findOneByField, findManyByField, findByConditions, withTransaction}` all return `Task Error a` and compose directly with `Task.andThen` / `Task.parallel` / `Cmd.perform`. Pure dict accessors (`Db.getField` / `getString` / `getInt` / `getBool`) stay bare — they read from a row dict, no I/O. Auth side effects (`Auth.register` / `login` / `setRole`) are Task; pure CPU ones (`Auth.hashPassword` / `verifyPassword` / `signToken` / `verifyToken`) are Result.
 
 **Db chain (clean Task composition):**
 

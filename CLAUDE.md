@@ -58,26 +58,49 @@ These constraints are enforced by `sky verify`, `test/Sky/ErrorUnificationSpec.h
 - **LSP capabilities must match `docs/tooling/lsp.md`.** If you add a capability, document it. If a feature is incomplete, narrow the claim — don't lie in docs.
 - **Formatter must be idempotent.** Two passes produce byte-identical output. Fixtures in `test/Sky/Format/FormatSpec.hs` guard this.
 
-## Effect Boundary: Task — two-tier in practice
+## Effect Boundary: Task-everywhere (v1.0+, the `feat/task-everywhere` branch)
 
-Sky's stated doctrine is "all effectful operations flow through `Task`". In practice, the codebase splits "effectful" into two tiers — and the split is intentional, not an accident worth fixing. The `feat/effect-boundary-audit` branch made this explicit at the kernel layer.
+Single rule: **every observable side effect returns `Task Error a`.** No two-tier split, no per-function decision overhead. The `feat/effect-boundary-audit` branch (v0.9.6) had a two-tier doctrine carving out `println` / `Slog` / `Os.getenv` / `Time.now` as "sync convenience effects" because of the `let _ = println "step"` discard footgun (Sky has no `do`-notation, so the discarded Task silently dropped the side effect). The `feat/task-everywhere` branch closes that loophole with a tiny lowerer change — see "Auto-force `let _ = TaskExpr`" below — and migrates the previously-eager kernels to Task.
 
-| Tier | Type | Examples | Why this tier |
+| Tier | Type | Examples | Why |
 |---|---|---|---|
-| **Pure** | bare `a` | `String.length`, `List.map`, `Dict.get` returning Maybe | Referentially transparent, no effects. |
-| **Fallible** | `Result e a` / `Maybe a` | `String.toInt`, JSON decoders, validators | Pure but can fail — Result is a value, not an effect. |
-| **Real I/O (deferred)** | `Task Error a` | `File.*`, `Http.*`, `Process.*`, `Io.*`, `Db.*`, `Auth.register/login`, `Crypto.randomBytes/randomToken`, `Time.sleep`, `Random.int/float/choice/shuffle` | Disk / network / DB / child process / external entropy. Can take time, can fail meaningfully, composes with `Task.parallel` / `Cmd.perform` / `Task.andThen`. Runtime helpers wrap in thunks so Sky.Live's `update()` doesn't block — the I/O actually runs in the goroutine spawned by Cmd.perform. |
-| **Sync convenience effects (eager)** | bare `()` / `Result e a` | `println`, `Slog.*`, `Os.getenv` / `getcwd`, `Time.now` / `unixMillis` | Theoretically effectful but observably "fire and return immediately". Kept sync because the Task ceremony buys nothing real here and forcing it would break the `let _ = println …` debug-output pattern that's pervasive in CLI examples and makes 06-json's main one-liner-per-step. |
+| **Pure** | bare `a` | `String.length`, `List.map`, hash functions (`sha256`, `hmacSha256`), `Encoding.{base64,url,hex}Encode`, `Time.timeString` | Referentially transparent, deterministic. |
+| **Fallible-pure** | `Result e a` / `Maybe a` | `String.toInt`, JSON decoders, `Encoding.{base64,url,hex}Decode`, `Hex.decode`, `Auth.{hashPassword, verifyPassword, signToken, verifyToken}` | Pure CPU work that can fail on malformed input. Result is a value, not an effect. |
+| **Effects** | `Task Error a` | `File.*`, `Http.*`, `Process.*`, `Io.*`, `Db.*`, `Auth.{register, login, setRole}`, `Crypto.{randomBytes, randomToken}`, `Time.{sleep, now, unixMillis}`, `Random.*`, `println`, `Slog.*`, `Os.{getenv, cwd, args}`, `Live.app`, `Process.loadEnv` | Anything that touches the outside world (clock, env, stdout, disk, network, DB, entropy). Composes uniformly with `Task.parallel` / `Cmd.perform` / `Task.andThen`. |
+| **Diverging** | polymorphic `Int -> a` | `Os.exit` | Function never returns (process terminates). Polymorphic return makes it usable as the last expression in any case branch without forcing every branch to be Task-shaped. |
 
-### Why theory ≠ practical here
+### Auto-force `let _ = TaskExpr`
 
-The `feat/effect-boundary-audit` branch considered migrating every effectful op to Task (Steps 2–5 of the original audit) and concluded:
+The lowerer special-cases `let _ = X in Y` discards: when X has type `Task e a`, it emits `_ = rt.AnyTaskRun(X)` instead of bare `_ = X`. The Task thunk is forced and its Result discarded — the side effect fires, the user gets the same eager-discard ergonomics they always had:
 
-- **`println` / `Slog` → Task is a regression.** `let _ = println "step 1" ; _ = println "step 2"` discards the resulting Task without forcing — the side effect silently doesn't fire. Sky has no `do`-notation, so the only ergonomic alternative is a `Task.andThen` chain or `Task.sequence` ceremony, which is much noisier than the current pattern. Nobody composes `println` with `Task.parallel` or short-circuits on it. Theoretical purity wins, real ergonomics lose.
-- **`Os.getenv` / `Os.getcwd` → Task is a regression.** ~99% of usage is `apiKey = Os.getenv "X" |> Result.withDefault ""` at module top level (Limitation #10 territory). Forcing Task there means either a `Task.run` hack at module level (defeats the point) or refactoring every config-loading site to read in `init` and thread through Model — huge churn for an async hazard that isn't real for env reads in practice.
-- **`Time.now` / `Time.unixMillis` → Task is a regression.** Same shape: technically non-deterministic, practically used as one-shot timestamp read at the call site (e.g. `ts = Time.unixMillis ()` in a record-update branch). Elm types it as Task, but Elm's TEA gives you a natural binding into Task chains; Sky has many "stamp this row" use sites where eager Int read is the right shape.
+```elm
+let
+    _ = println "step 1"        -- Task auto-forced; print fires
+    _ = println "step 2"        -- same
+    _ = Slog.info "saving" [...]
+in
+    continue
+```
 
-The Haskell-purist position is "everything I/O is `IO`". Sky picks the Elm-pragmatic position: real I/O that benefits from composition (Task.parallel, Cmd.perform, Task.andThen chains) goes through Task; sync convenience effects that don't benefit stay sync. The line is fuzzy at the edges (`Os.getenv` vs `File.readFile`?) but the test is "does composition with other Tasks earn its keep at the call site" — for File/Http/Db it does; for println/getenv/time-stamp it doesn't.
+This is the entire reason Task-everywhere is viable in Sky despite no `do`-notation. Without auto-force, every kernel-Task call would need explicit `Task.run` wrapping at the discard site, and forgetting would silently drop the side effect.
+
+`rt.AnyTaskRun` handles both shapes defensively: forces `func() any` thunks, passes bare values through wrapped in Ok. Auto-force at non-Task discard sites is therefore safe (negligible runtime cost: one type-assertion).
+
+**Rule that complements auto-force:** `let _ = X in Y` is the canonical "fire-and-forget" idiom. Don't manually wrap in `Task.run` for the discard case — write `let _ = task` and let the lowerer DTRT. Use `Task.run` explicitly when you need the `Result` for further inspection.
+
+### Top-level bindings stay explicit
+
+The auto-force magic applies **only** to `let _ = X` discards. Top-level module bindings of `Task`-typed values still require explicit `Task.run`:
+
+```elm
+-- Module top-level
+apiKey =
+    Os.getenv "OPENAI_KEY"
+        |> Task.run
+        |> Result.withDefault ""
+```
+
+This is the deliberate single-rule trade-off: one piece of compiler magic (`let _ =` auto-force) covers the pervasive debug-trace pattern; everything else is explicit Task plumbing. No surprises about whether your value is wrapped or not.
 
 ### Two-level error handling pattern
 
