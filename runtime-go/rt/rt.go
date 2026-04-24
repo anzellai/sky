@@ -2130,15 +2130,31 @@ func String_sliceT(start, end int, s string) string {
 }
 func String_fromIntT(n int) string                     { return strconv.Itoa(n) }
 func String_fromFloatT(f float64) string               { return strconv.FormatFloat(f, 'g', -1, 64) }
-func String_toIntT(s string) SkyResult[string, int] {
+// String_toIntT / String_toFloatT — typed companions for the typed-
+// codegen path. Return SkyMaybe to match the kernel's declared type
+// `String -> Maybe Int` / `String -> Maybe Float` (see lookupKernelType
+// in src/Sky/Type/Constrain/Expression.hs). Previously these returned
+// SkyResult, so user code patterns like
+//     case String.toInt s of
+//         Nothing -> _
+//         Just n  -> _
+// failed at runtime when the typed-codegen path dispatched here —
+// the SkyResult{Tag:1, ErrValue:"…"} value couldn't pattern-match
+// against Nothing. The any-typed String_toInt above was always
+// SkyMaybe; the two paths now agree.
+func String_toIntT(s string) SkyMaybe[int] {
 	n, err := strconv.Atoi(strings.TrimSpace(s))
-	if err != nil { return Err[string, int](err.Error()) }
-	return Ok[string, int](n)
+	if err != nil {
+		return Nothing[int]()
+	}
+	return Just[int](n)
 }
-func String_toFloatT(s string) SkyResult[string, float64] {
+func String_toFloatT(s string) SkyMaybe[float64] {
 	f, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
-	if err != nil { return Err[string, float64](err.Error()) }
-	return Ok[string, float64](f)
+	if err != nil {
+		return Nothing[float64]()
+	}
+	return Just[float64](f)
 }
 
 // String_toFloat: any-typed counterpart used by the legacy call path.
