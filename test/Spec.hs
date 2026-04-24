@@ -7,6 +7,7 @@ import qualified Sky.Build.TypedFfiSpec
 import qualified Sky.ErrorUnificationSpec
 import qualified Sky.Parse.PatternSpec
 import qualified Sky.Canonicalise.ExposingSpec
+import qualified Sky.Canonicalise.KernelFallbackSpec
 import qualified Sky.Canonicalise.UnboundSpec
 import qualified Sky.Type.ExhaustivenessSpec
 import qualified Sky.Format.FormatSpec
@@ -38,6 +39,11 @@ main = hspec $ do
     describe "Sky.Build.Compile"         Sky.Build.CompileSpec.spec
     describe "Sky.Parse.Pattern"         Sky.Parse.PatternSpec.spec
     describe "Sky.Canonicalise.Exposing" Sky.Canonicalise.ExposingSpec.spec
+    -- Regression: kernel qualifiers (Crypto, Encoding, Hex, …) used
+    -- without an explicit `import Sky.Core.<Mod>` must resolve as
+    -- VarKernel, not VarTopLevel — otherwise the lowerer ships
+    -- `Crypto_sha256(arg)` (no `rt.` prefix) and `go build` fails.
+    describe "Sky.Canonicalise.KernelFallback" Sky.Canonicalise.KernelFallbackSpec.spec
     describe "Sky.Canonicalise.Unbound"  Sky.Canonicalise.UnboundSpec.spec
     describe "Sky.Type.Exhaustiveness"   Sky.Type.ExhaustivenessSpec.spec
     describe "Sky.Format.Format"         Sky.Format.FormatSpec.spec

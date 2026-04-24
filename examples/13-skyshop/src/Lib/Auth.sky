@@ -16,7 +16,7 @@ import Context
 import Fmt
 import Lib.Db as Db
 import Sky.Core.Error as Error exposing (Error(..), ErrorKind(..))
-import Os
+import System
 
 
 ctx =
@@ -25,7 +25,7 @@ ctx =
 
 adminEmails _ =
     let
-        envAdmins = Result.withDefault "" (Task.run (Os.getenv "ADMIN_EMAILS"))
+        envAdmins = Result.withDefault "" (Task.run (System.getenv "ADMIN_EMAILS"))
     in
     -- Idempotent upsert using firebase_uid as document ID.
     -- Concurrent calls from onAuthStateChanged can never create duplicates
@@ -50,7 +50,7 @@ isAdmin user =
 getAuthClient _ =
     let
         credFile =
-            Result.withDefault "" (Task.run (Os.getenv "GOOGLE_APPLICATION_CREDENTIALS"))
+            Result.withDefault "" (Task.run (System.getenv "GOOGLE_APPLICATION_CREDENTIALS"))
         opts =
             if credFile == "" then
                 []

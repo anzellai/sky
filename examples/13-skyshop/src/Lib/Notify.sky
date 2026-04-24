@@ -9,7 +9,7 @@ import Sky.Core.Dict as Dict
 import Sky.Core.String as String
 import Std.Log exposing (println)
 import Lib.Db as Db
-import Os
+import System
 import Github.Com.Google.Uuid as Uuid
 import Net.Http as Http
 import Strings as GoStrings
@@ -18,7 +18,7 @@ import Io as Io
 
 notifyOrderPlaced cart items userName userEmail =
     let
-        env = Result.withDefault "" (Task.run (Os.getenv "ENV"))
+        env = Result.withDefault "" (Task.run (System.getenv "ENV"))
         cartId = Db.getField "id" cart
         totalAmount = Db.getField "total_amount" cart
         totalCurrency = Db.getField "total_currency" cart
@@ -64,8 +64,8 @@ ignoreResult result =
 
 sendEmailNotification notificationId subject body =
     let
-        smtpHost = Result.withDefault "" (Task.run (Os.getenv "SMTP_HOST"))
-        notifyTo = Result.withDefault "" (Task.run (Os.getenv "NOTIFY_TO"))
+        smtpHost = Result.withDefault "" (Task.run (System.getenv "SMTP_HOST"))
+        notifyTo = Result.withDefault "" (Task.run (System.getenv "NOTIFY_TO"))
     in
         if smtpHost == "" || notifyTo == "" then
             let

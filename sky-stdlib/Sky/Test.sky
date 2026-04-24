@@ -35,7 +35,7 @@ import Sky.Core.List as List
 import Sky.Core.String as String
 import Sky.Core.Error exposing (Error(..), ErrorKind(..))
 import Std.Log exposing (println)
-import Os
+import System
 
 -- | A named assertion thunk. The thunk is evaluated lazily by `run`
 -- so a panic in one assertion can't prevent later assertions from
@@ -306,7 +306,7 @@ runMain tests =
         allPassed = summarise results
     in
         if allPassed then
-            Os.exit 0
+            System.exit 0
 
         else
-            Os.exit 1
+            System.exit 1

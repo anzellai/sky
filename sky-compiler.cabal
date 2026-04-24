@@ -164,6 +164,7 @@ test-suite sky-tests
       Sky.ErrorUnificationSpec
       Sky.Parse.PatternSpec
       Sky.Canonicalise.ExposingSpec
+      Sky.Canonicalise.KernelFallbackSpec
       Sky.Canonicalise.UnboundSpec
       Sky.Type.ExhaustivenessSpec
       Sky.Format.FormatSpec

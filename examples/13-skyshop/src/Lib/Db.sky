@@ -14,7 +14,7 @@ import Std.Log exposing (println)
 import Cloud.Google.Com.Go.Firestore as Firestore
 import Context
 import Fmt
-import Os
+import System
 import Sky.Core.Error as Error exposing (Error(..), ErrorKind(..))
 
 
@@ -119,7 +119,7 @@ ctx =
 
 getProjectId _ =
     let
-        env = Result.withDefault "" (Task.run (Os.getenv "GOOGLE_CLOUD_PROJECT"))
+        env = Result.withDefault "" (Task.run (System.getenv "GOOGLE_CLOUD_PROJECT"))
     in
         if env == "" then
             "skyshop"

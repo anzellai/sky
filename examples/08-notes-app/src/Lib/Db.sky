@@ -3,7 +3,7 @@ module Lib.Db exposing (conn, exec, query, getField)
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Maybe as Maybe
 import Sky.Core.Dict as Dict
-import Sky.Core.Os as Os
+import Sky.Core.System as System
 import Sky.Core.Task as Task
 import Sky.Core.Error as Error exposing (Error)
 import Std.Log exposing (println)
@@ -32,7 +32,7 @@ conn =
                         ("[FATAL] Cannot open skynotes.db: "
                              ++ Error.toString e)
             in
-                Os.exit 1
+                System.exit 1
 
 
 -- exec : Result Error () — typed-error DB write. Callers in `update`
