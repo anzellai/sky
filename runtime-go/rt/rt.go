@@ -4552,18 +4552,12 @@ func Encoding_hexDecode(s any) any {
 	return Ok[any, any](string(data))
 }
 
-// NOTE (audit, 2026-04-23): the kernel sig in lookupKernelType
-// declares Encoding.{base64,url,hex}Encode as
-// `String -> Result Error String`, but the typed-codegen path in
-// Sky.Build.Compile (typedKernelLiterals) emits these calls with the
-// result consumed as a bare string (e.g. `rt.Concat("…", rt.Encoding_urlEncodeT(x))`)
-// rather than destructured via case-on-Ok. That's a kernel↔codegen
-// mismatch, not a kernel↔runtime one — both runtime variants currently
-// return bare string to match what the codegen actually emits. If/when
-// the codegen learns to unwrap the Result for the *Encode call sites,
-// the kernel sig and these helpers should be migrated together
-// (kernel canonical: encoders never fail so they'd always be Ok).
-// Tracked alongside the Bucket A2 sweep notes in Expression.hs.
+// NOTE (audit, 2026-04-24, resolved): the kernel sig was
+// `String -> Result Error String` for encoders despite the runtime
+// returning bare strings — well-typed user `Ok/Err` patterns were
+// silently impossible to trigger. Kernel sig now `String -> String`
+// (encoders are total functions; decoders correctly stay Result).
+// Both runtime variants below already match this sig.
 
 // P8/Encoding typed companions — direct string in, string/SkyResult out.
 func Encoding_base64EncodeT(s string) string { return base64.StdEncoding.EncodeToString([]byte(s)) }

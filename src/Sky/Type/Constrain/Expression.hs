@@ -2205,13 +2205,17 @@ lookupKernelType modName funcName = case (modName, funcName) of
                     [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
                     , stringType]))
 
-    -- Encoding: all return Result Error String (decode failures).
+    -- Encoding encoders never fail — base64 / URL-encode / hex-encode
+    -- are total functions over any input string. Kernel sig is
+    -- `String -> String` to match the runtime + typed companion which
+    -- have always returned a bare string (the codegen consumes them
+    -- as bare strings via `rt.Concat("…", rt.Encoding_urlEncodeT(x))`).
+    -- Pre-2026-04-24 the kernel sig wrapped these in Result Error String
+    -- which never fired the Err arm — broken pattern matches were
+    -- silently impossible to trigger. Decoders correctly stay Result
+    -- (they CAN fail on malformed input).
     ("Encoding", "base64Encode") ->
-        Just $ T.Forall []
-            (T.TLambda stringType
-                (T.TType ModuleName.result_ "Result"
-                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
-                    , stringType]))
+        Just $ T.Forall [] (T.TLambda stringType stringType)
     ("Encoding", "base64Decode") ->
         Just $ T.Forall []
             (T.TLambda stringType
@@ -2219,11 +2223,7 @@ lookupKernelType modName funcName = case (modName, funcName) of
                     [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
                     , stringType]))
     ("Encoding", "urlEncode") ->
-        Just $ T.Forall []
-            (T.TLambda stringType
-                (T.TType ModuleName.result_ "Result"
-                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
-                    , stringType]))
+        Just $ T.Forall [] (T.TLambda stringType stringType)
     ("Encoding", "urlDecode") ->
         Just $ T.Forall []
             (T.TLambda stringType
@@ -2231,11 +2231,7 @@ lookupKernelType modName funcName = case (modName, funcName) of
                     [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
                     , stringType]))
     ("Encoding", "hexEncode") ->
-        Just $ T.Forall []
-            (T.TLambda stringType
-                (T.TType ModuleName.result_ "Result"
-                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
-                    , stringType]))
+        Just $ T.Forall [] (T.TLambda stringType stringType)
     ("Encoding", "hexDecode") ->
         Just $ T.Forall []
             (T.TLambda stringType
