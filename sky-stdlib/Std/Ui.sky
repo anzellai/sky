@@ -1,0 +1,19 @@
+module Std.Ui exposing (Element)
+
+-- Std.Ui — typed layout DSL inspired by mdgriffith/elm-ui (1.x).
+--
+-- Public API will land in tiers; this file currently exposes only
+-- the `Element` type so the module is importable while the rest of
+-- the surface (el / row / column / paragraph / layout / Background /
+-- Border / Font / Input / etc.) is being built up.
+--
+-- See docs/skyui/overview.md once the port lands.
+
+import Sky.Core.Prelude exposing (..)
+
+
+-- Forward-declared opaque so the public type name is valid at import
+-- time. Real definition lives in Std.Ui.Internal.Model and will be
+-- re-exported here once the model is in place.
+type Element msg
+    = Element_Placeholder
