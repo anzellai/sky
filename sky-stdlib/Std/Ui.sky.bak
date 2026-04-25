@@ -325,10 +325,10 @@ collectStyle parentCtx myCtx attr acc =
     case attr of
         NoAttribute ->
             acc
-        AttrWidth lng ->
-            acc ++ " " ++ widthCss lng
-        AttrHeight lng ->
-            acc ++ " " ++ heightCss lng
+        AttrWidth len ->
+            acc ++ " " ++ widthCss len
+        AttrHeight len ->
+            acc ++ " " ++ heightCss len
         AttrPadding t r b l ->
             acc ++ " padding: " ++ String.fromInt t ++ "px " ++ String.fromInt r ++ "px " ++ String.fromInt b ++ "px " ++ String.fromInt l ++ "px;"
         AttrSpacing n ->
@@ -352,12 +352,9 @@ collectStyle parentCtx myCtx attr acc =
             acc
 
 
--- `len` would shadow Go's built-in `len` in the emitted code (Sky's
--- name-mangler renames the parameter but doesn't rewrite uses inside
--- the function body), so we use `lng` as the param name throughout.
 widthCss : Length -> String
-widthCss lng =
-    case lng of
+widthCss len =
+    case len of
         Px n        -> "width: " ++ String.fromInt n ++ "px;"
         Content     -> "width: max-content;"
         Fill _      -> "flex-grow: 1; align-self: stretch;"
@@ -366,8 +363,8 @@ widthCss lng =
 
 
 heightCss : Length -> String
-heightCss lng =
-    case lng of
+heightCss len =
+    case len of
         Px n        -> "height: " ++ String.fromInt n ++ "px;"
         Content     -> "height: max-content;"
         Fill _      -> "flex-grow: 1; align-self: stretch;"
