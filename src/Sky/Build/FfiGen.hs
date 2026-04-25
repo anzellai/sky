@@ -1553,9 +1553,30 @@ goResultsToSky [(_, t)] = goTypeToSky t
 goResultsToSky rs = "(" ++ intercalate ", " (map (goTypeToSky . snd) rs) ++ ")"
 
 
+-- Map a Go type expression to its Sky-side surface name. The .skyi
+-- inspector emits these in the documentation comment so users (and
+-- `sky check`) see accurate shapes — `[]*pkg.X` becomes `List X`,
+-- `map[string]V` becomes `Dict String V`, etc. Pointers are
+-- transparent (opaque on the Sky side); `[]byte` is the special-cased
+-- byte sequence.
+--
+-- Without this, a setter taking `[]*pkg.LineItemParams` was declared
+-- on the .skyi as taking a single `LineItemParams`, hiding from the
+-- type checker that callers must pass a `List`. The runtime wrapper
+-- itself was always correct; only the surface signature was lying.
 goTypeToSky :: String -> String
 goTypeToSky t
     | take 5 t == "func(" = formatFuncType (drop 5 t)
+    | t == "[]byte"        = "Bytes"
+    | take 2 t == "[]"     = "List " ++ wrapIfComposite (goTypeToSky (drop 2 t))
+    | take 1 t == "*"      = goTypeToSky (drop 1 t)
+    | take 11 t == "map[string]" = "Dict String " ++ wrapIfComposite (goTypeToSky (drop 11 t))
+    | take 4 t == "map["   =
+        -- map[K]V where K isn't string — Sky's Dict is string-keyed,
+        -- so surface it as `Dict String V` and let the runtime
+        -- coercion stringify keys (consistent with rt.AsDict).
+        let (_keyPart, valPart) = splitMapBracket (drop 4 t)
+        in "Dict String " ++ wrapIfComposite (goTypeToSky (trim' valPart))
     | otherwise = case t of
         "string"  -> "String"
         "int"     -> "Int"
@@ -1568,6 +1589,24 @@ goTypeToSky t
         _         -> stripPkg t
   where
     stripPkg = reverse . takeWhile (/= '.') . reverse
+
+    -- Multi-word Sky types (`List X`, `Dict String V`) need parens
+    -- when nested inside another constructor: `List (List X)`,
+    -- `List (Dict String V)`, etc.
+    wrapIfComposite s
+        | ' ' `elem` s = "(" ++ s ++ ")"
+        | otherwise    = s
+
+    -- For `map[K]V`, find the matching `]` for the opening `[` to
+    -- correctly split when K itself contains brackets (rare but
+    -- possible: `map[[2]string]V`).
+    splitMapBracket s = goB 1 [] s
+      where
+        goB _ acc [] = (reverse acc, "")
+        goB 1 acc (']':rest) = (reverse acc, rest)
+        goB n acc ('[':rest) = goB (n+1) ('[':acc) rest
+        goB n acc (']':rest) = goB (n-1) (']':acc) rest
+        goB n acc (c:rest)   = goB n (c:acc) rest
 
     formatFuncType body =
         let (argPart, retPart) = splitAtCloseParen body
