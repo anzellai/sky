@@ -1905,11 +1905,21 @@ func unpackResponse(v any) (int, map[string]string, string) {
 // Used by handleInitial to distinguish real navigations from browser
 // noise (favicons, devtools prefetch). Doesn't run the route — just
 // answers "is this a known page?".
+//
+// Single-page apps (`routes = []`) treat "/" as the implicit root.
+// Without this, an existing-session refresh on "/" hits the
+// not-routed-AND-existing 404 guard in handleInitial — every refresh
+// returns 404 even though "/" is the only page the app has. Other
+// paths still 404 (browser noise like /favicon.ico shouldn't render
+// the SPA), so handler-state protection survives.
 func matchAnyRoute(app *liveApp, urlPath string) ([]string, bool) {
 	for _, rt := range app.routes {
 		if params, ok := matchRoute(rt.path, urlPath); ok {
 			return params, true
 		}
+	}
+	if len(app.routes) == 0 && urlPath == "/" {
+		return nil, true
 	}
 	return nil, false
 }
