@@ -1019,3 +1019,26 @@ these first)
   Sky runtime subpackages even when the example only uses two.
 - **Sky-test harness in typed codegen.** `sky test` currently uses
   the any-heavy path; port to typed once stdlib matches.
+- **Lambda lowering preserves types** (scoped 2026-04-27). Sky
+  lambdas always lower to `func(any) any` regardless of their
+  HM-inferred input/output types. This forces `rt.Coerce[func(X)
+  Y]` adapters at every call site that passes a typed function
+  (Msg constructor or sky-lambda) to a typed-callback helper
+  param. Limitation #18's fix made the adapter path correct, but
+  it's reflect.MakeFunc — not "fully typed" in the strict sense.
+  **Current cost is small**: across the 19-example sweep there
+  are only **11 such adapters** total (5 in 19-skyforum, 5 in
+  08-notes-app, 1 in 10-live-component) — measured 2026-04-27.
+  At that scale the runtime cost (~100 ns × 11 call sites) is
+  negligible vs. the cost of the architectural rewrite. Proper
+  fix needs: (1) the lowerer to thread HM-inferred types into
+  lambda emission, (2) `curryLambdaPat` to optionally take a
+  typed Go signature, (3) lambda body to coerce `any`-typed
+  param uses to the typed shape, (4) every callback shape across
+  the codebase to handle the typed/untyped split. Multi-week
+  scope — deferred until either the adapter count climbs into
+  the hundreds OR a dedicated session is set aside for this
+  specific architectural change. Tracked separately because
+  doing it half-way leaves the old behaviour intact for
+  unhandled cases — which IS a workaround, against the
+  no-workarounds principle.
