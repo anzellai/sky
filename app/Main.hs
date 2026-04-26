@@ -466,6 +466,63 @@ moduleNameFromPathWithRoots roots cwd absPath
                 in Just (foldr (\a b -> if null b then a else a ++ "." ++ b) "" rewritten)
 
 
+-- | Append a Go dependency to sky.toml's `[go.dependencies]` table
+-- so subsequent `sky build` / `sky install` round-trips see it.
+-- Idempotent: if the package is already listed under any key, the
+-- file is left untouched (we don't bump versions).
+--
+-- Hand-rolled because Sky.Sky.Toml only has a parser, not a writer
+-- (the v0.7 self-hosted compiler used a Sky-side toml writer that
+-- never made it across to the Haskell rewrite). Keeps the manifest
+-- formatting friendly: appends to the existing `[go.dependencies]`
+-- section if present, otherwise creates one at the end of the file.
+appendGoDependency :: String -> IO ()
+appendGoDependency pkg = do
+    hasToml <- doesFileExist "sky.toml"
+    if not hasToml
+        then putStrLn "   (no sky.toml — skipping dep registration; create one with `sky init`)"
+        else do
+            content <- readFile "sky.toml"
+            length content `seq` return ()  -- force read so writeFile is safe
+            let lns = lines content
+                quoted = "\"" ++ pkg ++ "\""
+                alreadyListed = any (\l ->
+                        let trimmed = dropWhile (== ' ') l
+                        in startsWith quoted trimmed
+                            || startsWith ("\"" ++ pkg ++ "\"") trimmed)
+                    lns
+            if alreadyListed
+                then putStrLn $ "   (already listed in sky.toml — left as-is)"
+                else do
+                    let entry = quoted ++ " = \"latest\""
+                        sectionHeader = "[\"go.dependencies\"]"
+                        legacyHeader  = "[go.dependencies]"
+                        hasSection = any (\l ->
+                                let t = dropWhile (== ' ') l
+                                in t == sectionHeader || t == legacyHeader)
+                            lns
+                        newLines =
+                            if hasSection
+                                then insertAfterSection lns
+                                else lns ++ ["", sectionHeader, entry]
+                    writeFile "sky.toml" (unlines newLines)
+                    putStrLn $ "   Added to sky.toml [go.dependencies]"
+  where
+    startsWith p s = take (length p) s == p
+    -- Append `entry` immediately after the `[go.dependencies]` (or
+    -- legacy `["go.dependencies"]`) section header so deps cluster
+    -- together in source order. If the section is the last thing in
+    -- the file, append to the end.
+    insertAfterSection ls =
+        let isHeader l =
+                let t = dropWhile (== ' ') l
+                in t == "[\"go.dependencies\"]" || t == "[go.dependencies]"
+            (before, rest) = break isHeader ls
+        in case rest of
+            (header:after) -> before ++ [header, "\"" ++ pkg ++ "\" = \"latest\""] ++ after
+            []             -> ls  -- shouldn't reach (hasSection was True)
+
+
 -- | For each declared go dep, regenerate the FFI bindings when its
 -- `.skycache/ffi/<slug>.kernel.json` file is absent. Used by `sky
 -- install` and the `sky build` auto-regen fallback. Silently skips
@@ -1013,6 +1070,11 @@ runCommand cmd = case cmd of
                         if length names > 10
                             then putStrLn $ "   ... and " ++ show (length names - 10) ++ " more"
                             else return ()
+                        -- Persist the dep into sky.toml so subsequent
+                        -- `sky build` / `sky install` round-trips see it.
+                        -- Idempotent: if the package is already present
+                        -- (any version), the file is left untouched.
+                        appendGoDependency pkg
                         putStrLn "Call from Sky via: Ffi.callPure \"<name>\" [args]  (or callTask for effectful)"
                         return (Right ())
 

@@ -197,8 +197,19 @@ compile config entryPath outDir = do
     let moduleOrder = Graph.compilationOrder modules
     putStrLn $ "   Found " ++ show (length moduleOrder) ++ " module(s)"
 
-    -- Incremental build: if source hash matches cached, reuse output
-    srcHash <- computeSourceHash (map Graph._mi_path moduleOrder)
+    -- Incremental build: if source hash matches cached, reuse output.
+    --
+    -- The hash mixes in not just the .sky source files but also
+    -- sky.toml + every .skycache/ffi/*.kernel.json. Without that, a
+    -- fresh `sky add <pkg>` would generate new FFI bindings, the user's
+    -- source would be unchanged, and the incremental build would reuse
+    -- the stale main.go that still references the wrong (path-based)
+    -- name for the new module — surfacing as "undefined: <Path>_<fn>"
+    -- at go-build time. Including the FFI registry + manifest in the
+    -- hash makes any FFI / dep-config change invalidate the cache.
+    extraHashInputs <- collectIncrementalHashInputs
+    srcHash <- computeSourceHash
+        (map Graph._mi_path moduleOrder ++ extraHashInputs)
     let cacheDir = ".skycache"
         hashFile = cacheDir </> "source.hash"
         existingMain = outDir </> "main.go"
@@ -231,10 +242,41 @@ compile config entryPath outDir = do
 -- | Compute a stable hash of all source file contents
 computeSourceHash :: [FilePath] -> IO String
 computeSourceHash paths = do
-    contents <- mapM readFile paths
+    contents <- mapM (\p -> doesFileExist p >>= \ok -> if ok then readFile p else return "")
+        paths
     -- Simple, not cryptographic: sum of SDBM-ish hashes keyed by path
     let combined = concat (zipWith (\p c -> p ++ ":" ++ c ++ "\n") paths contents)
     return (show (length combined) ++ "-" ++ show (foldl (\acc c -> acc * 31 + fromEnum c) (0 :: Int) combined))
+
+
+-- | Files outside the Sky source tree whose contents must contribute
+-- to the incremental-build hash so changes invalidate the lowered-
+-- main.go cache. Currently:
+--
+--   - sky.toml — `[go.dependencies]` / `[dependencies]` / runtime config
+--     all influence codegen behaviour. Adding a Go dep (`sky add`) +
+--     reusing cached output otherwise produces calls to functions
+--     whose wrappers don't exist yet.
+--   - .skycache/ffi/*.kernel.json — the FFI registry. Each kernel.json
+--     records a moduleName→kernelName mapping that the canonicaliser
+--     consults when lowering FFI calls. A new file (or a regenerated
+--     one with a different shape) MUST invalidate the lowered cache.
+--
+-- Files that don't exist contribute the empty string — safe for fresh
+-- projects that don't yet have a .skycache/.
+collectIncrementalHashInputs :: IO [FilePath]
+collectIncrementalHashInputs = do
+    let tomlPath = "sky.toml"
+    ffiDir <- doesDirectoryExist ".skycache/ffi"
+    ffiFiles <- if ffiDir
+        then do
+            entries <- listDirectory ".skycache/ffi"
+            return [ ".skycache/ffi" </> e
+                   | e <- entries
+                   , takeExtension e == ".json"
+                   ]
+        else return []
+    return (tomlPath : ffiFiles)
 
 
 continueCompile :: Toml.SkyConfig -> FilePath -> FilePath -> [Graph.ModuleInfo] -> String -> IO (Either String FilePath)
