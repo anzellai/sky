@@ -1,0 +1,36 @@
+module Main exposing (main)
+
+{-|
+Regression for "auto-generated record constructor's typed-slice
+param doesn't get coerced at the call site" (Limitation #18 fix).
+
+Pre-fix: `Item 1 "first" []` emitted `Item(1, "first", []any{})`,
+which `go build` rejected with `cannot use []any{} as []string`.
+The empty-list literal was passed without the runtime coercion
+because `collectFuncTypesWith` only registered param types for
+`Can.TypedDef` bindings — auto-generated record ctors are
+unannotated `Can.Def`s, so the lookup in `_cg_funcParamTypes`
+returned the empty list and `coerceCallArgs` skipped coercion.
+
+Post-fix: `collectFuncTypesWith` also walks `Can._aliases` for
+record aliases and registers `(qualName, fieldGoTys, qualName ++ "_R")`
+for each. The `[]string` slot now coerces via `rt.AsListT[string]`.
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+
+type alias Item =
+    { id : Int
+    , name : String
+    , tags : List String
+    }
+
+
+main =
+    let
+        a = Item 1 "first" []
+        b = Item 2 "second" [ "x" ]
+    in
+        println (a.name ++ " / " ++ b.name)

@@ -17,6 +17,8 @@ import qualified Sky.Build.NestedPatternSpec
 import qualified Sky.Build.TaskResultBridgesSpec
 import qualified Sky.Build.CheckIsBuildSpec
 import qualified Sky.Build.RecordFieldOrderSpec
+import qualified Sky.Build.RecordCtorEmptyListSpec
+import qualified Sky.Build.HofTypedMsgSpec
 import qualified Sky.Build.UnreachableGateSpec
 import qualified Sky.Parse.CommentsSpec
 import qualified Sky.Lsp.HoverShadowingSpec
@@ -71,6 +73,14 @@ main = hspec $ do
     describe "Sky.Build.CheckIsBuild"    Sky.Build.CheckIsBuildSpec.spec
     -- Audit P0-4: record auto-ctor respects declaration order.
     describe "Sky.Build.RecordFieldOrder" Sky.Build.RecordFieldOrderSpec.spec
+    -- Limitation #18: auto-ctor's typed-slice param coerces empty-list
+    -- arg via rt.AsListT[T]. Pre-fix, `Item 1 "first" []` shipped
+    -- `Item(1, "first", []any{})` and go build rejected.
+    describe "Sky.Build.RecordCtorEmptyList" Sky.Build.RecordCtorEmptyListSpec.spec
+    -- Limitation #18 (other half): renderHofParamTy used to hardcode
+    -- the inner-function return as `any`, breaking helpers with typed
+    -- (String -> Msg) callbacks. Now routes via typeStrWithAliasesReg.
+    describe "Sky.Build.HofTypedMsg"        Sky.Build.HofTypedMsgSpec.spec
     -- Audit P0-5: no raw `panic("sky: internal…)` in emitted Go.
     -- Runs AFTER ExampleSweep so the sky-out/main.go files are fresh.
     describe "Sky.Build.UnreachableGate"  Sky.Build.UnreachableGateSpec.spec

@@ -1,0 +1,39 @@
+module Main exposing (main)
+
+{-|
+Regression for the OTHER half of Limitation #18: helper functions
+with `(String -> Msg)` typed-callback params used to emit
+`func(string) any` in their Go signature. Call sites passing a
+typed Msg constructor `Msg_X : func(string) Msg` were rejected by
+`go build` with "cannot use Msg_X as func(string) any" (Go has no
+function-type covariance).
+
+Pre-fix: `renderHofParamTy`'s third branch hardcoded the return
+type to `any` for any non-TLambda non-TVar return. Concrete
+returns like `Msg`, `Element Msg`, etc. all degraded to `any`.
+
+Post-fix: route the inner-function return through the same
+`typeStrWithAliasesReg` path everything else uses. Concrete returns
+render to their real Go type; opaque shapes still fall back to
+`any` via the renderer's existing logic.
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+
+type Msg = UserChanged String | PassChanged String
+
+
+-- The helper that pre-fix wouldn't compile from typed call sites.
+field : String -> (String -> Msg) -> Msg
+field initial cb = cb initial
+
+
+main =
+    let
+        m = field "alice" UserChanged
+    in
+        case m of
+            UserChanged s -> println ("user: " ++ s)
+            PassChanged s -> println ("pass: " ++ s)

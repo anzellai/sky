@@ -2663,8 +2663,26 @@ collectFuncTypesWith extraRecAliases prefix canMod =
             _ -> Nothing
         bindings = goDecls (Can._decls canMod)
         results = mapMaybe extract bindings
-        paramMap = Map.fromList [ (qual, ps) | (qual, ps, _) <- results ]
-        retMap   = Map.fromList [ (qual, r)  | (qual, _, r) <- results ]
+        -- Auto-generated record constructors. `type alias Item = { id :
+        -- Int, name : String, tags : List String }` synthesises an
+        -- `Item : Int -> String -> List String -> Item_R` constructor at
+        -- elaboration time. The synthetic def is unannotated (a plain
+        -- Can.Def, not Can.TypedDef), so the typed-def loop above misses
+        -- it and `_cg_funcParamTypes[Item]` ends up empty — call sites
+        -- then skip coerceArg and ship `[]any{}` into a `[]string` slot,
+        -- breaking go build (Limitation #18 reproducer). Fix: emit the
+        -- ctor's param types directly from the alias's record body, in
+        -- declaration order (sorted by _fieldIndex per the auto-ctor's
+        -- positional API).
+        ctorResults =
+            [ (qualName aliasName, paramTys, qualName aliasName ++ "_R")
+            | (aliasName, alias) <- Map.toList (Can._aliases canMod)
+            , Rec.DataRecord fieldList <- [Rec.classifyAlias alias]
+            , let paramTys = map (safeReturnTypeWith knownRecAliases . snd) fieldList
+            ]
+        allResults = results ++ ctorResults
+        paramMap = Map.fromList [ (qual, ps) | (qual, ps, _) <- allResults ]
+        retMap   = Map.fromList [ (qual, r)  | (qual, _, r) <- allResults ]
     in (paramMap, retMap)
 
 
@@ -2765,7 +2783,27 @@ safeReturnTypeWith recAliases = go
                         | otherwise     -> case inner of
                             T.TRecord{} -> if null base then "any" else base
                             _           -> go inner
+        -- Function-typed slots (HOF params): render as `func(X) any`
+        -- to match what renderHofParamTy emits at signature time. The
+        -- tail return is always `any` for the same reason — see
+        -- renderHofParamTy's third branch (Sky lambdas can't preserve
+        -- a concrete return type, so the param shape stays widened).
+        -- Crucially, registering the param as `func(X) any` (rather
+        -- than the bare `any` fallback) gives `coerceArg` the func
+        -- prefix it needs to route typed call-site args (e.g. a
+        -- `Msg_X : func(string) Msg` constructor) through
+        -- `rt.Coerce[func(X) any]` — Go's function-type-no-covariance
+        -- rule otherwise rejects the assignment.
+        T.TLambda _ _ -> renderFuncTy t
         _ -> "any"
+      where
+        -- Curried multi-arg → nested `func(A) func(B) ...`. Tail
+        -- return widens to `any` regardless of the actual Sky type.
+        renderFuncTy (T.TLambda from to@T.TLambda{}) =
+            "func(" ++ go from ++ ") " ++ renderFuncTy to
+        renderFuncTy (T.TLambda from _to) =
+            "func(" ++ go from ++ ") any"
+        renderFuncTy other = go other
 
 
 -- | Index module decls by binding name so we can check annotations
@@ -3179,6 +3217,18 @@ renderHofParamTy recAliases fieldIdx tvarMap ty = case ty of
         -- Bare TVar return: keep typed so Go can infer via call site.
         "func(" ++ go from ++ ") " ++ go to
     renderLambdaInner (T.TLambda from _to) =
+        -- Concrete-return HOF param sig stays `func(X) any` even when
+        -- the return is a real type like Msg or Result Error a. Reason:
+        -- Sky-side lambdas always lower to `func(any) any` (the lowerer
+        -- doesn't specialise lambda input/output types). A helper sig
+        -- of `func(X) Msg` would reject sky lambdas, and a sig of
+        -- `func(X) Result Error a` would reject typed Msg constructors
+        -- — Go has no function-type covariance. Keeping the sig at
+        -- `func(X) any` lets coerceArg's func branch route both shapes
+        -- through `rt.Coerce[func(X) any]`, which adapts via reflect.
+        -- See test/Sky/Build/CompileSpec.hs's "user-defined polymorphic
+        -- HOFs with Result-typed lambda params" test for the
+        -- regression that pinned this.
         "func(" ++ go from ++ ") any"
     renderLambdaInner other = go other
 

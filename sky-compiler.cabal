@@ -177,6 +177,8 @@ test-suite sky-tests
       Sky.Build.TaskResultBridgesSpec
       Sky.Build.CheckIsBuildSpec
       Sky.Build.RecordFieldOrderSpec
+      Sky.Build.RecordCtorEmptyListSpec
+      Sky.Build.HofTypedMsgSpec
       Sky.Build.UnreachableGateSpec
       Sky.Parse.CommentsSpec
       Sky.Lsp.Harness
