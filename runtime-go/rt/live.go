@@ -330,6 +330,12 @@ func Event_onKeyUp(f any) any       { return eventPair{name: "keyup", msg: f} }
 func Event_onFocus(msg any) any     { return eventPair{name: "focus", msg: msg} }
 func Event_onBlur(msg any) any      { return eventPair{name: "blur", msg: msg} }
 
+// Event_onFile / Event_onImage / Event_fileMax{Width,Height,Size}
+// live in stdlib_web.go — kept there next to the JS-side file
+// driver code for locality. The kernel registry entries point at
+// those `rt.Event_*` symbols and resolve cross-file just fine
+// because the package is one Go package.
+
 // Attr_attribute: generic attribute builder for tags with non-standard attrs
 // (e.g. SVG viewBox).
 func Attr_attribute(k any, v any) any {

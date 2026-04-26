@@ -548,6 +548,8 @@ registry = Map.fromList
     , (("Event", "onKeyUp"),      KernelInfo "rt.Event_onKeyUp" 1 False)
     , (("Event", "onFocus"),      KernelInfo "rt.Event_onFocus" 1 False)
     , (("Event", "onBlur"),       KernelInfo "rt.Event_onBlur" 1 False)
+    , (("Event", "onFile"),       KernelInfo "rt.Event_onFile" 1 False)
+    , (("Event", "onImage"),      KernelInfo "rt.Event_onImage" 1 False)
 
     -- ═══════════════════════════════════════════════════════
     -- Std.Sub
