@@ -5,6 +5,9 @@ module View.Login exposing (..)
 -- with `(String -> Msg)` params to `(String -> any)`, which `go build`
 -- rejects. Inlining the input element at the call site routes the Msg
 -- constructor directly through Ui.onInput's typed surface.
+--
+-- Inputs use `Ui.input` (renders as <input>) — `Ui.el` would render
+-- as <div> and the browser would never fire input events.
 
 import Sky.Core.Prelude exposing (..)
 import Std.Ui as Ui
@@ -13,7 +16,7 @@ import Std.Ui.Background as Background
 import Std.Ui.Border as Border
 import Std.Ui.Font as Font
 import Std.Ui.Region as Region
-import Domain exposing (..)
+import State exposing (..)
 
 
 loginView : Model -> Element Msg
@@ -31,7 +34,7 @@ loginView model =
             (Ui.text "Any non-empty username works — this demo doesn't really authenticate.")
         , Ui.column [ Ui.spacing 4 ]
             [ Ui.el [ Font.size 12 ] (Ui.text "Username")
-            , Ui.el
+            , Ui.input
                 [ Ui.htmlAttribute "type" "text"
                 , Ui.htmlAttribute "value" model.loginUser
                 , Ui.onInput LoginUsernameChanged
@@ -41,11 +44,10 @@ loginView model =
                 , Ui.padding 6
                 , Background.color (Ui.rgb 255 255 255)
                 ]
-                (Ui.text "")
             ]
         , Ui.column [ Ui.spacing 4 ]
             [ Ui.el [ Font.size 12 ] (Ui.text "Password")
-            , Ui.el
+            , Ui.input
                 [ Ui.htmlAttribute "type" "password"
                 , Ui.htmlAttribute "value" model.loginPass
                 , Ui.onInput LoginPasswordChanged
@@ -55,7 +57,6 @@ loginView model =
                 , Ui.padding 6
                 , Background.color (Ui.rgb 255 255 255)
                 ]
-                (Ui.text "")
             ]
         , if model.loginError == "" then
             Ui.text ""

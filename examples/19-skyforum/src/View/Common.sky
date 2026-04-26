@@ -11,7 +11,7 @@ import Std.Ui.Background as Background
 import Std.Ui.Border as Border
 import Std.Ui.Font as Font
 import Std.Ui.Region as Region
-import Domain exposing (..)
+import State exposing (..)
 
 
 -- A clickable wrapper that doesn't render as a <button>. Useful for

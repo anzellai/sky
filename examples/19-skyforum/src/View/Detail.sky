@@ -8,7 +8,7 @@ import Std.Ui exposing (Element)
 import Std.Ui.Background as Background
 import Std.Ui.Border as Border
 import Std.Ui.Font as Font
-import Domain exposing (..)
+import State exposing (..)
 import View.Posts exposing (postRow)
 import View.Compose exposing (composeArea)
 

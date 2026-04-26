@@ -4,7 +4,7 @@ import Sky.Core.Prelude exposing (..)
 import Sky.Core.List as List
 import Sky.Core.String as String
 import Std.Cmd as Cmd
-import Domain exposing (..)
+import State exposing (..)
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -14,10 +14,22 @@ update msg model =
             ( { model | currentPage = page, composeBody = "", replyTo = 0 }, Cmd.none )
 
         UpvotePost postId ->
-            ( { model | posts = List.map (bumpPost postId) model.posts }, Cmd.none )
+            -- Anonymous users redirect to login (mirrors SubmitComment).
+            -- The page reroute is the user-visible signal "sign in to vote".
+            case model.session of
+                Nothing ->
+                    ( { model | currentPage = LoginPage }, Cmd.none )
+
+                Just _ ->
+                    ( { model | posts = List.map (bumpPost postId) model.posts }, Cmd.none )
 
         UpvoteComment commentId ->
-            ( { model | comments = List.map (bumpComment commentId) model.comments }, Cmd.none )
+            case model.session of
+                Nothing ->
+                    ( { model | currentPage = LoginPage }, Cmd.none )
+
+                Just _ ->
+                    ( { model | comments = List.map (bumpComment commentId) model.comments }, Cmd.none )
 
         LoginUsernameChanged u ->
             ( { model | loginUser = u }, Cmd.none )

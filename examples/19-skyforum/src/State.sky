@@ -1,4 +1,4 @@
-module Domain exposing (..)
+module State exposing (..)
 
 -- Pure types + same-shape helpers. No Std.Ui imports here, so the
 -- type-checker stays well below the heap-exhaustion limit (CLAUDE.md
@@ -11,7 +11,7 @@ import Sky.Core.Maybe as Maybe
 import Sky.Core.String as String
 
 
--- ─── Domain types ────────────────────────────────────────────────
+-- ─── State types ─────────────────────────────────────────────────
 
 type alias Post =
     { id : Int

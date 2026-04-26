@@ -2,7 +2,7 @@ module Main exposing (main)
 
 -- skyforum — a Reddit/HackerNews-style demo built with Sky.Live and
 -- Std.Ui. The view layer is split across multiple modules
--- (Domain / Update / View.Common / View.Posts / View.Detail /
+-- (State / Update / View.Common / View.Posts / View.Detail /
 -- View.Compose / View.Login) so each per-module type-check stays
 -- well below the heap-exhaustion limit (CLAUDE.md Limitation #17).
 -- A single monolithic Main with the same surface OOMs the type-checker
@@ -19,7 +19,7 @@ import Std.Ui exposing (Element)
 import Std.Ui.Background as Background
 import Std.Ui.Font as Font
 
-import Domain exposing (..)
+import State exposing (..)
 import Update exposing (update)
 import View.Common exposing (topNav, pageFooter)
 import View.Posts exposing (postsListView)

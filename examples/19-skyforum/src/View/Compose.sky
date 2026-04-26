@@ -7,7 +7,7 @@ import Std.Ui exposing (Element)
 import Std.Ui.Background as Background
 import Std.Ui.Border as Border
 import Std.Ui.Font as Font
-import Domain exposing (..)
+import State exposing (..)
 import View.Common exposing (clickable)
 
 
@@ -51,9 +51,11 @@ replyContext replyTo =
 -- Inline input — no helper indirection (CLAUDE.md Limitation #18:
 -- typed (String -> Msg) helper params get monomorphised to
 -- (String -> any) by the typed codegen, breaking go build).
+-- Uses `Ui.input` (real <input>) — `Ui.el` would render as <div>
+-- and the browser wouldn't fire input events on it.
 composeInput : String -> Element Msg
 composeInput current =
-    Ui.el
+    Ui.input
         [ Ui.htmlAttribute "type" "text"
         , Ui.htmlAttribute "value" current
         , Ui.htmlAttribute "placeholder" "Write your comment..."
@@ -64,7 +66,6 @@ composeInput current =
         , Border.rounded 3
         , Ui.padding 6
         ]
-        (Ui.text "")
 
 
 composeActions : Int -> Int -> Element Msg
