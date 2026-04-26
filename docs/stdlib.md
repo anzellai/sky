@@ -470,6 +470,48 @@ myStyles =
 
 > Zero-arg CSS keywords (`Css.zero`, `Css.auto`, `Css.none`, `Css.transparent`) take `()` to sidestep zero-arity memoisation. Write `Css.margin (Css.zero ())`, not `Css.margin Css.zero` — see [Limitation #13](../CLAUDE.md#known-limitations-v09-dev).
 
+### `Ui` — typed elm-ui-style layout DSL
+
+A typed layout DSL modelled on [mdgriffith/elm-ui](https://package.elm-lang.org/packages/mdgriffith/elm-ui/latest/). Build a UI from typed primitives and typed attributes — Sky.Ui renders to inline-styled HTML on the server side and Sky.Live's wire ferries diffs to the browser. **No CSS files**, no template languages, no client framework.
+
+```elm
+import Std.Ui as Ui
+import Std.Ui.Background as Background
+import Std.Ui.Border as Border
+import Std.Ui.Font as Font
+
+view model =
+    Ui.layout []
+        (Ui.row
+            [ Ui.spacing 12, Ui.padding 16
+            , Background.color (Ui.rgb 255 102 0)
+            , Font.color (Ui.rgb 255 255 255)
+            , Border.rounded 4
+            ]
+            [ Ui.button [] { onPress = Just Decrement, label = Ui.text "−" }
+            , Ui.el [ Font.size 24, Font.bold ] (Ui.text (String.fromInt model.count))
+            , Ui.button [] { onPress = Just Increment, label = Ui.text "+" }
+            ])
+```
+
+Layout primitives: `el / row / column / paragraph / textColumn / text / none / button / input / form / link / image / html / layout`. Length: `px / fill / content / min / max`. Attributes: `padding / spacing / width / height / centerX / centerY / alignLeft / alignRight / pointer / style / htmlAttribute / name`. Events: `onClick / onSubmit / onInput (typed String→msg) / onChange / onFocus / onMouseOver / onMouseOut / onKeyDown / onFile / onImage`. File hints: `fileMaxSize / fileMaxWidth / fileMaxHeight`. Colour: `rgb / rgba / white / black / transparent`.
+
+Sub-modules:
+- **`Std.Ui.Background`** — `color`
+- **`Std.Ui.Border`** — `color / width / rounded`
+- **`Std.Ui.Font`** — `color / family / size / bold`
+- **`Std.Ui.Region`** — `heading n / footer` (semantic landmarks for screen readers)
+- **`Std.Ui.Input`** — typed form controls: `button / text / multiline / checkbox` + `labelAbove / labelBelow / labelLeft / labelRight / labelHidden / placeholder`
+- **`Std.Ui.Lazy`** — `lazy / lazy2..lazy5` (no-op wrappers today; runtime memo deferred)
+- **`Std.Ui.Keyed`** — `keyed` (emits `sky-key` for diff identity)
+- **`Std.Ui.Responsive`** — `classifyDevice / adapt {phone, tablet, desktop}`
+
+**Best-practice for forms with sensitive inputs (passwords, API keys):** wrap inputs in `Ui.form` and dispatch on `onSubmit DoSignIn` with a typed record. Do NOT wire `onInput` on the password field — that would dispatch the secret on every keystroke into Model and through every session-store write. See [Sky.Ui overview](skyui/overview.md#forms--the-password-best-practice-pattern) for the full pattern.
+
+**File / image upload:** `Ui.onImage` auto-resizes to `fileMaxWidth × fileMaxHeight` (default 1200×1200) and re-encodes as JPEG @ 0.85 quality before sending; `Ui.onFile` ships the raw data URL. Both honour `fileMaxSize` for client-side caps. See [Sky.Ui overview](skyui/overview.md#file--image-upload).
+
+Full reference, side-by-side comparison vs elm-ui, known limitations: [Sky.Ui overview](skyui/overview.md).
+
 ### `RateLimit` — request throttling
 
 ```elm

@@ -98,6 +98,27 @@ Db.withTransaction db (\tx ->
 
 See [Std.Db overview](docs/skydb/overview.md).
 
+### Std.Ui — typed elm-ui-style layout DSL (no CSS files)
+
+Build a UI from typed primitives (`row`, `column`, `el`) and typed attributes (`Background.color`, `Border.rounded`, `Font.size`, `Region.heading`). Renders to inline-styled HTML on the server side, Sky.Live ferries diffs to the browser. Modelled on [mdgriffith/elm-ui](https://package.elm-lang.org/packages/mdgriffith/elm-ui/latest/) — same mental model (no CSS, no class names, no flexbox quirks), tuned for Sky.Live's wire shape.
+
+```elm
+import Std.Ui as Ui
+import Std.Ui.Background as Background
+import Std.Ui.Font as Font
+
+view model =
+    Ui.layout []
+        (Ui.row
+            [ Ui.spacing 12, Ui.padding 16, Background.color (Ui.rgb 255 102 0) ]
+            [ Ui.button [] { onPress = Just Decrement, label = Ui.text "−" }
+            , Ui.el [ Font.size 24, Font.bold ] (Ui.text (String.fromInt model.count))
+            , Ui.button [] { onPress = Just Increment, label = Ui.text "+" }
+            ])
+```
+
+Plus typed events (`onClick / onSubmit / onInput`), forms with the password best-practice pattern (`Ui.form` + `onSubmit DoSignIn` decoding wire formData into a typed record — secret never enters Model), and file/image upload with browser-side resize hints (`Ui.onImage AvatarSelected, Ui.fileMaxWidth 800`). See [Sky.Ui overview](docs/skyui/overview.md).
+
 ### Plus the rest of the stdlib
 
 Crypto, JSON, HTTP client/server, file I/O, time, regex, encoding (base64 / hex / URL), structured logging, UUIDs, async tasks, parallel execution. See [Standard library reference](docs/stdlib.md) for the full surface.
@@ -161,6 +182,7 @@ nix develop            # GHC 9.4.8 + Go + every system dep, sandboxed
 | **Std.Db overview**                  | [docs/skydb/overview.md](docs/skydb/overview.md)                       |
 | Sky.Live overview                    | [docs/skylive/overview.md](docs/skylive/overview.md)                   |
 | Sky.Live architecture                | [docs/skylive/architecture.md](docs/skylive/architecture.md)           |
+| **Std.Ui overview** (typed elm-ui port) | [docs/skyui/overview.md](docs/skyui/overview.md)                    |
 | Compiler architecture                | [docs/compiler/architecture.md](docs/compiler/architecture.md)         |
 | Compiler pipeline                    | [docs/compiler/pipeline.md](docs/compiler/pipeline.md)                 |
 | Compiler journey (TS→Go→Sky→Haskell) | [docs/compiler/journey.md](docs/compiler/journey.md)                   |
@@ -175,7 +197,7 @@ nix develop            # GHC 9.4.8 + Go + every system dep, sandboxed
 - **v0.10 — stdlib consolidation + soundness gaps closed (2026-04-25, BREAKING).** Single canonical module per concern (drop `Args` / `Env` / `Sha256` / `Hex` / `Slog`; rename `Os` → `System`; shrink `Process` to `run`); type errors in dep modules and FFI / kernel return shapes now abort the build instead of silently degrading to `any`-typing. See [docs/V0.10.0_PR_SUMMARY.md](docs/V0.10.0_PR_SUMMARY.md) for the full migration guide.
 - **v0.9 — adversarial audit remediation complete (2026-04-16).** All 23 P0–P3 items across soundness, security, cleanup, and tooling landed with regression tests. See [docs/AUDIT_REMEDIATION.md](docs/AUDIT_REMEDIATION.md) for the per-item tracker and [docs/compiler/v1-soundness-audit.md](docs/compiler/v1-soundness-audit.md) for the soundness audit findings.
 - **Core principle — "if it compiles, it works"** — aspirational. Now holds for every path in `cabal test`, the example sweep, and the runtime Go test matrix. v1.0 requires production usage and bug-fixes to earn the label. Residual future-work (fully-typed emitted Go, Sky-test harness) tracked in [docs/PRODUCTION_READINESS.md](docs/PRODUCTION_READINESS.md) as P4.
-- **18 example projects** under `examples/` covering CLI, HTTP servers, full-stack Sky.Live apps, databases (SQLite, PostgreSQL, Firestore), payments (Stripe), auth, and GUI (Fyne).
+- **19 example projects** under `examples/` covering CLI, HTTP servers, full-stack Sky.Live apps, databases (SQLite, PostgreSQL, Firestore), payments (Stripe), auth, GUI (Fyne), and a Reddit/HackerNews-style forum on Std.Ui (`19-skyforum`).
 - **`sky verify`** is the canonical runtime check: builds _and_ runs every example, hits HTTP endpoints, honours per-example `verify.json` scenarios (status code + body substring assertions). CI runs `sky verify` across the full example set.
 - **Test matrix:** 47-example hspec suite + ~20 runtime Go tests + 67-file `test-files/*.sky` self-test loop + format idempotency across every example source file.
 - **FFI generation:** Stripe SDK (8,896 types), Firestore, Fyne, and others auto-bind.

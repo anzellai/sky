@@ -266,6 +266,7 @@ When stdlib, syntax, Sky.Live APIs, or CLI commands change, **`templates/CLAUDE.
 - **`docs/skyauth/overview.md`** — when `Std.Auth` surface or config changes (`hashPassword`, `signToken`, `register`, `login`, `setRole`, `[auth]` keys, env vars).
 - **`docs/skydb/overview.md`** — when `Std.Db` surface or config changes (`open`, `query`, `withTransaction`, CRUD helpers, `[database]` keys, env vars).
 - **`docs/skylive/overview.md`** + **`docs/skylive/architecture.md`** — when Sky.Live runtime, `Live.app` shape, session-store options, or `[live]` env vars change.
+- **`docs/skyui/overview.md`** — when `Std.Ui` surface or sub-modules change (`Std.Ui.{Background, Border, Font, Region, Input, Lazy, Keyed, Responsive}`), or when an idiom like the form/onSubmit pattern or file/image upload shape evolves.
 - **`README.md` "What's in the box" section** — if you add a brand-new killer module (top-level `Std.Foo`), add a callout there.
 
 The dense reference inside CLAUDE.md (this file, "Standard Library" section) and `templates/CLAUDE.md` is for AI; the `docs/*` files are for humans. Keep both in lockstep.
@@ -427,6 +428,7 @@ Single canonical module per concern after the v0.10.0 consolidation. Every kerne
 | `Html` | `Std.Html` | text, div, span, p, h1..h6, a, button, input, form, … (~70 elements + render/escape helpers) |
 | `Attr` | `Std.Html.Attributes` | class, id, style, type/value/href/src, checked/disabled/required, … (~60 attrs + boolAttribute/dataAttribute) |
 | `Css` | `Std.Css` | stylesheet, rule, property, px/rem/em/pct/hex/rgba, color/background/padding/margin/font*, transition, grid*, flex*, … (~120) |
+| `Ui` | `Std.Ui` | Typed elm-ui-style layout DSL: el/row/column/paragraph/textColumn/text/none/button/input/form/link/image/html, layout, padding/spacing/width/height (px/fill/content/min/max), align*, centerX/Y, pointer, htmlAttribute, name, onClick/onSubmit/onInput/onChange/onFocus/onMouseOver/onMouseOut/onKeyDown/onFile/onImage, fileMaxSize/Width/Height, rgb/rgba/white/black/transparent. Sub-modules: `Std.Ui.Background` (color), `Std.Ui.Border` (color/width/rounded), `Std.Ui.Font` (color/family/size/bold), `Std.Ui.Region` (heading/footer), `Std.Ui.Input` (button/text/multiline/checkbox + label*), `Std.Ui.Lazy` (lazy/lazy2..lazy5), `Std.Ui.Keyed` (keyed), `Std.Ui.Responsive` (classifyDevice/adapt). Renders to inline-styled HTML via Std.Html — no CSS files. Full reference: docs/skyui/overview.md. |
 | `RateLimit` | `Sky.Http.RateLimit` | allow |
 | `Middleware` | `Sky.Http.Middleware` | withCors, withLogging, withBasicAuth, withRateLimit |
 
@@ -663,6 +665,75 @@ main =
 ```
 Routes: `get/post/put/delete/any` | Groups with prefix | Cookies (HttpOnly, Secure, SameSite) | Extractors: `param`, `queryParam`, `header`, `getCookie` | Responses: `text`, `json`, `html`, `withStatus`, `redirect` | Middleware: `Handler -> Handler`
 
+## Std.Ui — typed elm-ui-style layout DSL
+
+Layered above `Std.Html`; renders to inline-styled HTML on the server side and Sky.Live's wire ferries diffs to the browser. Modelled on [mdgriffith/elm-ui](https://package.elm-lang.org/packages/mdgriffith/elm-ui/latest/) — pick `row` / `column` / `el` for layout, attach typed attributes from `Background` / `Border` / `Font` / `Region` sub-modules, never write CSS. Full user-facing reference: `docs/skyui/overview.md`.
+
+```elm
+import Std.Ui as Ui
+import Std.Ui exposing (Element)
+import Std.Ui.Background as Background
+import Std.Ui.Border as Border
+import Std.Ui.Font as Font
+
+view : Model -> any
+view model =
+    Ui.layout []
+        (Ui.row
+            [ Ui.spacing 12, Ui.padding 16
+            , Background.color (Ui.rgb 255 102 0)
+            , Font.color (Ui.rgb 255 255 255)
+            , Border.rounded 4
+            ]
+            [ Ui.button [] { onPress = Just Decrement, label = Ui.text "−" }
+            , Ui.el [ Font.size 24, Font.bold ] (Ui.text (String.fromInt model.count))
+            , Ui.button [] { onPress = Just Increment, label = Ui.text "+" }
+            ])
+```
+
+**Three idioms AI tooling MUST get right when writing Sky.Ui code:**
+
+1. **Forms with sensitive inputs use `Ui.form` + `Ui.onSubmit DoSignIn`, NOT `onInput` per keystroke on password fields.** The wire driver decodes formData `{"username":"...","password":"..."}` into a typed `LoginForm` record via case-insensitive `json.Unmarshal`. Three wins: password manager extensions stop seeing DOM mutations on every render, the secret never enters Model so never serialises into Redis/Postgres/Firestore session stores, race-free submit reads live DOM not a debounced keystroke. The username field MAY round-trip via `value` + `onInput`; the password field MUST NOT. See `examples/19-skyforum/src/View/Login.sky` for the canonical shape.
+
+2. **For real `<input>` elements, use `Ui.input`, NOT `Ui.el [ htmlAttribute "type" "text" ]`.** `Ui.el` builds `Node` which renders as `<div>` — browsers ignore `type=`/`value=` on non-input elements and never fire input events on a div. `Ui.input` builds `TaggedNode "input"` which the renderer routes to a real `<input>` with self-closing void emission.
+
+3. **For Std.Ui-heavy modules (~25+ polymorphic `Element Msg` helpers + many nested calls), split the view layer across multiple modules.** A single monolithic Main.sky can blow the HM type-checker heap (CLAUDE.md Limitation #17 — "HM type-checker heap exhaustion on Std.Ui-heavy modules"). The canonical split is `State.sky` (types + pure helpers, no Std.Ui imports) / `Update.sky` / `View/Common.sky` / one View module per page / `Main.sky` dispatcher. `examples/19-skyforum`'s 8-module form delivers the full Reddit-style feature surface and type-checks in 1.11 s / 369 MB; the equivalent monolithic `Main.sky.bak` allocates 2.6 GB/s and OOMs the dev machine.
+
+**Surface highlights** (full table in `docs/skyui/overview.md` includes Std.Ui-vs-elm-ui parity comparison):
+- Layout: `el` / `row` / `column` / `paragraph` / `textColumn` / `text` / `none`
+- Sized elements: `button` (with `{onPress, label}` cfg), `input` (real `<input>` element), `form` (with `onSubmit msg`)
+- Length: `px` / `fill` / `content` / `min` / `max`
+- Attributes: `padding` / `spacing` / `width` / `height` / `centerX` / `centerY` / `alignLeft` / `alignRight` / `pointer` / `style` / `htmlAttribute` / `name`
+- Events: `onClick msg` / `onSubmit msg` / `onInput (String -> msg)` / `onChange (String -> msg)` / `onFocus msg` / `onMouseOver msg` / `onMouseOut msg` / `onKeyDown msg` / `onFile (String -> msg)` / `onImage (String -> msg)`
+- File/image hints: `fileMaxSize Int` (bytes) / `fileMaxWidth Int` / `fileMaxHeight Int` (resize before upload)
+- Colour: `rgb Int Int Int` / `rgba Int Int Int Float` / `white` / `black` / `transparent`
+- Sub-modules:
+  - `Std.Ui.Background` — `color`
+  - `Std.Ui.Border` — `color` / `width` / `rounded`
+  - `Std.Ui.Font` — `color` / `family` / `size` / `bold`
+  - `Std.Ui.Region` — `heading n` / `footer` / etc. (semantic markup for screen readers)
+  - `Std.Ui.Input` — typed form controls: `button` / `text` / `multiline` / `checkbox` + `labelAbove` / `labelBelow` / `labelLeft` / `labelRight` / `labelHidden` / `placeholder`
+  - `Std.Ui.Lazy` — `lazy` / `lazy2` … `lazy5` (no-op wrappers today; runtime memo deferred)
+  - `Std.Ui.Keyed` — `keyed` (emits `sky-key` for diff identity)
+  - `Std.Ui.Responsive` — `classifyDevice` / `adapt {phone, tablet, desktop}`
+
+**File / image upload pattern:**
+```elm
+type Msg = ... | AvatarSelected String | ...
+
+Ui.input
+    [ Ui.htmlAttribute "type" "file"
+    , Ui.htmlAttribute "accept" "image/*"
+    , Ui.onImage AvatarSelected           -- AvatarSelected : String -> Msg
+    , Ui.fileMaxSize   2_000_000          -- 2MB browser-side cap (not security)
+    , Ui.fileMaxWidth  800                -- auto-resize + JPEG @ 0.85 before upload
+    , Ui.fileMaxHeight 800
+    ]
+```
+Callback receives the data URL (`data:image/jpeg;base64,...`) as a single `String`. Decode with `Std.Encoding.base64Decode` → upload via `Http.post`. Server-side, ensure `[live] maxBodyBytes` in `sky.toml` is ≥ your `fileMaxSize` (default 5 MiB).
+
+**`Ui.none` workaround:** the canonicaliser strips the type parameter from cross-module references to `Std.Ui.none` today — use `Ui.text ""` where you'd want `Ui.none`. An empty Text node renders identically (just an empty inline span).
+
 ## Language Syntax (Elm-compatible)
 
 ```elm
@@ -721,6 +792,7 @@ Single braces `{` are literal — safe for JavaScript, CSS, JSON, SQL. Interpola
 | 16 | skychess | Sky.Live chess game with AI, SQLite persistence |
 | 17 | skymon | Sky.Live monitoring dashboard with metrics, alerts |
 | 18 | job-queue | Async Cmd.perform demo with Time.sleep, Random.int, Cmd.batch |
+| 19 | skyforum | Reddit/HN-style forum on Std.Ui — 8 modules, per-user vote tracking + downvote, threaded comments, form-driven password sign-in |
 
 ## Compiler Optimisation Strategy (keep up to date)
 

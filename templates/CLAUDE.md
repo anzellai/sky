@@ -1343,6 +1343,71 @@ The `DoSignIn AuthCreds` constructor takes a typed record alias — the dispatch
 
 The older `onChange` pattern (fires on blur) is still acceptable when you need the password in Model for validation feedback before submit, but prefer `onSubmit` + typed record for normal sign-in / sign-up flows.
 
+### Std.Ui — typed elm-ui-style layout DSL (recommended for new view code)
+
+A typed layout DSL modelled on [mdgriffith/elm-ui](https://package.elm-lang.org/packages/mdgriffith/elm-ui/latest/). Build a UI from typed primitives (`row`, `column`, `el`) and typed attributes (`Background.color`, `Border.rounded`, `Font.size`, `Region.heading`) — no CSS files. Renders to inline-styled HTML via Std.Html.
+
+```elm
+import Std.Ui as Ui
+import Std.Ui exposing (Element)
+import Std.Ui.Background as Background
+import Std.Ui.Border as Border
+import Std.Ui.Font as Font
+
+view : Model -> any
+view model =
+    Ui.layout []
+        (Ui.row
+            [ Ui.spacing 12, Ui.padding 16
+            , Background.color (Ui.rgb 255 102 0)
+            , Font.color (Ui.rgb 255 255 255)
+            , Border.rounded 4
+            ]
+            [ Ui.button [] { onPress = Just Decrement, label = Ui.text "−" }
+            , Ui.el [ Font.size 24, Font.bold ] (Ui.text (String.fromInt model.count))
+            , Ui.button [] { onPress = Just Increment, label = Ui.text "+" }
+            ])
+```
+
+**Surface (full reference: `docs/skyui/overview.md`):**
+
+| Area | Helpers |
+|---|---|
+| Layout | `el / row / column / paragraph / textColumn / text / none` |
+| Sized elements | `button` (`{onPress, label}`), `input` (real `<input>`), `form` (`<form>` + `onSubmit msg`), `link`, `image`, `html` |
+| Length | `px Int` / `fill Int` / `content` / `min` / `max` |
+| Alignment & padding | `centerX` / `centerY` / `alignLeft` / `alignRight` / `padding Int` / `spacing Int` / `width` / `height` / `pointer` |
+| Events (typed) | `onClick msg` / `onSubmit msg` / `onInput (String -> msg)` / `onChange (String -> msg)` / `onFocus msg` / `onMouseOver` / `onMouseOut` / `onKeyDown` / `onFile (String -> msg)` / `onImage (String -> msg)` |
+| File / image hints | `fileMaxSize Int` (bytes) / `fileMaxWidth Int` / `fileMaxHeight Int` |
+| Colour | `rgb Int Int Int` / `rgba Int Int Int Float` / `white` / `black` / `transparent` |
+| Form / attribute helpers | `htmlAttribute key val` / `name "field"` |
+| Sub-modules | `Std.Ui.Background` (color), `Std.Ui.Border` (color/width/rounded), `Std.Ui.Font` (color/family/size/bold), `Std.Ui.Region` (heading/footer + screen-reader landmarks), `Std.Ui.Input` (button/text/multiline/checkbox + label* positions), `Std.Ui.Lazy` (lazy/lazy2..lazy5 — no-op wrappers today), `Std.Ui.Keyed` (sky-key for diff identity), `Std.Ui.Responsive` (classifyDevice/adapt) |
+
+**Three idioms when writing Sky.Ui:**
+
+1. **Forms with sensitive inputs use `Ui.form` + `Ui.onSubmit DoSignIn`, NOT `onInput` per keystroke on the password field.** The wire driver decodes formData `{"username":"...","password":"..."}` into a typed `LoginForm` record via case-insensitive `json.Unmarshal`. Three wins: password manager extensions stop seeing DOM mutations on every render, the secret never enters Model so never serialises into Redis/Postgres/Firestore session stores, race-free submit reads live DOM not a debounced keystroke. The username MAY round-trip via `value` + `onInput`; the password MUST NOT.
+
+2. **For real `<input>` elements use `Ui.input`, NOT `Ui.el [ htmlAttribute "type" "text" ]`.** `Ui.el` builds `Node` which renders as `<div>` — browsers ignore `type=`/`value=` on non-input elements and never fire input events on a div. `Ui.input` builds `TaggedNode "input"` for void emission.
+
+3. **For Std.Ui-heavy views (~25+ polymorphic `Element Msg` helpers), split the view layer across multiple modules.** Single monolithic Main.sky can blow the HM type-checker heap (Limitation #17). Canonical split: `State.sky` (types + pure helpers, no Std.Ui) / `Update.sky` / `View/Common.sky` / one View module per page / `Main.sky` dispatcher. See `examples/19-skyforum`.
+
+**File / image upload pattern:**
+```elm
+type Msg = ... | AvatarSelected String | ...
+
+Ui.input
+    [ Ui.htmlAttribute "type" "file"
+    , Ui.htmlAttribute "accept" "image/*"
+    , Ui.onImage AvatarSelected           -- AvatarSelected : String -> Msg
+    , Ui.fileMaxSize   2_000_000          -- 2MB browser-side cap (UX, not security)
+    , Ui.fileMaxWidth  800                -- auto-resize + JPEG @ 0.85 before upload
+    , Ui.fileMaxHeight 800
+    ]
+```
+Callback receives a data URL (`data:image/jpeg;base64,...`). Decode with `Std.Encoding.base64Decode` → `Http.post` to upload. Server `[live] maxBodyBytes` in `sky.toml` should be ≥ your `fileMaxSize` (default 5 MiB).
+
+**Workarounds for current bugs:** Use `Ui.text ""` instead of `Ui.none` for cross-module references (canonicaliser strips type-param). For empty `List String` fields in seed data, use record-literal syntax (`{ id = 1, ..., upvoters = [], ... }`) not positional constructor — the field's type alias gives the typed codegen the target type.
+
 ### Escape Hatch & View Types
 
 ```elm
