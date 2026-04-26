@@ -179,6 +179,7 @@ test-suite sky-tests
       Sky.Build.RecordFieldOrderSpec
       Sky.Build.RecordCtorEmptyListSpec
       Sky.Build.HofTypedMsgSpec
+      Sky.Build.KernelSigCoverageSpec
       Sky.Build.UnreachableGateSpec
       Sky.Parse.CommentsSpec
       Sky.Lsp.Harness

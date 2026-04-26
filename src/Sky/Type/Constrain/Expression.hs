@@ -2429,6 +2429,103 @@ lookupKernelType modName funcName = case (modName, funcName) of
                 (T.TLambda (T.TType (ModuleName.Canonical "") "Request" [])
                     (T.TType ModuleName.maybe_ "Maybe" [stringType])))
 
+    -- ─── Limitation #16 dangerous-class kernel sigs ───────────────
+    -- Closing the 9 (now 10 after v0.10.0 renames) gaps from
+    -- CLAUDE.md "Some kernel functions still missing HM type
+    -- signatures". These return Maybe/Result/Task wrappers OR
+    -- opaque FFI types (Route, Handler, HttpResponse, Decoder); the
+    -- gap caused user code that pattern-matched the wrapper to
+    -- silently degrade to `any`, which downstream surfaced as
+    -- runtime panics like `rt.AsBool: expected bool, got
+    -- rt.SkyResult[…]`. Each entry below mirrors the exact return
+    -- shape of the matching `runtime-go/rt/*.go` helper.
+
+    -- Server.static : String -> String -> Route
+    -- Runtime: returns SkyRoute (struct). Same opaque-Route encoding
+    -- as Server.get / Live.route.
+    ("Server", "static") ->
+        Just $ T.Forall []
+            (T.TLambda stringType
+                (T.TLambda stringType
+                    (T.TType (ModuleName.Canonical "") "Route" [])))
+
+    -- Sky.Http.Middleware.* — all take a Handler and decorate it
+    -- with extra behaviour (CORS preflight, request logging, basic
+    -- auth, rate limit). All return Handler so they compose via
+    -- `withCors origins (withLogging baseHandler)`.
+    ("Middleware", "withCors") ->
+        Just $ T.Forall []
+            (T.TLambda (T.TType ModuleName.list "List" [stringType])
+                (T.TLambda (T.TType (ModuleName.Canonical "") "Handler" [])
+                    (T.TType (ModuleName.Canonical "") "Handler" [])))
+    ("Middleware", "withLogging") ->
+        Just $ T.Forall []
+            (T.TLambda (T.TType (ModuleName.Canonical "") "Handler" [])
+                (T.TType (ModuleName.Canonical "") "Handler" []))
+    ("Middleware", "withBasicAuth") ->
+        Just $ T.Forall []
+            (T.TLambda stringType
+                (T.TLambda stringType
+                    (T.TLambda (T.TType (ModuleName.Canonical "") "Handler" [])
+                        (T.TType (ModuleName.Canonical "") "Handler" []))))
+    ("Middleware", "withRateLimit") ->
+        Just $ T.Forall []
+            (T.TLambda stringType
+                (T.TLambda intType
+                    (T.TLambda intType
+                        (T.TLambda (T.TType (ModuleName.Canonical "") "Handler" [])
+                            (T.TType (ModuleName.Canonical "") "Handler" [])))))
+
+    -- Sky.Http (kernel mod "Http") — both return Task Error
+    -- HttpResponse (Task-everywhere doctrine since v0.10.0).
+    -- HttpResponse is opaque; users read its fields via Std.Http
+    -- helpers (statusCode/body/header) — those land in #26 batch.
+    ("Http", "get") ->
+        Just $ T.Forall []
+            (T.TLambda stringType
+                (T.TType ModuleName.task "Task"
+                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                    , T.TType (ModuleName.Canonical "") "HttpResponse" []]))
+    ("Http", "post") ->
+        Just $ T.Forall []
+            (T.TLambda stringType
+                (T.TLambda stringType
+                    (T.TType ModuleName.task "Task"
+                        [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                        , T.TType (ModuleName.Canonical "") "HttpResponse" []])))
+
+    -- Json.Decode.map4 extends the existing map2/map3 series.
+    ("JsonDec", "map4") ->
+        Just $ T.Forall ["a", "b", "c", "d", "e"]
+            (T.TLambda (T.TLambda (T.TVar "a")
+                (T.TLambda (T.TVar "b")
+                    (T.TLambda (T.TVar "c")
+                        (T.TLambda (T.TVar "d") (T.TVar "e")))))
+                (T.TLambda (decoderOf (T.TVar "a"))
+                    (T.TLambda (decoderOf (T.TVar "b"))
+                        (T.TLambda (decoderOf (T.TVar "c"))
+                            (T.TLambda (decoderOf (T.TVar "d"))
+                                (decoderOf (T.TVar "e")))))))
+
+    -- Json.Decode.Pipeline.custom : JsonDecoder a -> JsonDecoder
+    -- (a -> b) -> JsonDecoder b. Same shape as JsonDecP.required
+    -- but the first arg is a Decoder rather than a field name.
+    ("JsonDecP", "custom") ->
+        Just $ T.Forall ["a", "b"]
+            (T.TLambda (decoderOf (T.TVar "a"))
+                (T.TLambda (decoderOf (T.TLambda (T.TVar "a") (T.TVar "b")))
+                    (decoderOf (T.TVar "b"))))
+
+    -- Json.Decode.Pipeline.requiredAt : List String -> JsonDecoder
+    -- a -> JsonDecoder (a -> b) -> JsonDecoder b. Like `required`
+    -- but takes a path (list of nested keys).
+    ("JsonDecP", "requiredAt") ->
+        Just $ T.Forall ["a", "b"]
+            (T.TLambda (T.TType ModuleName.list "List" [stringType])
+                (T.TLambda (decoderOf (T.TVar "a"))
+                    (T.TLambda (decoderOf (T.TLambda (T.TVar "a") (T.TVar "b")))
+                        (decoderOf (T.TVar "b")))))
+
     _ -> Nothing
 
 

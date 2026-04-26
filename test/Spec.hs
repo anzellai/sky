@@ -19,6 +19,7 @@ import qualified Sky.Build.CheckIsBuildSpec
 import qualified Sky.Build.RecordFieldOrderSpec
 import qualified Sky.Build.RecordCtorEmptyListSpec
 import qualified Sky.Build.HofTypedMsgSpec
+import qualified Sky.Build.KernelSigCoverageSpec
 import qualified Sky.Build.UnreachableGateSpec
 import qualified Sky.Parse.CommentsSpec
 import qualified Sky.Lsp.HoverShadowingSpec
@@ -81,6 +82,11 @@ main = hspec $ do
     -- the inner-function return as `any`, breaking helpers with typed
     -- (String -> Msg) callbacks. Now routes via typeStrWithAliasesReg.
     describe "Sky.Build.HofTypedMsg"        Sky.Build.HofTypedMsgSpec.spec
+    -- Limitation #16: kernel-sig coverage for the dangerous-class
+    -- gaps (returns Maybe/Result/Task wrappers OR opaque FFI types).
+    -- Without HM sigs, user pattern-matching against the wrapper
+    -- silently degrades to `any` and surfaces as runtime panics.
+    describe "Sky.Build.KernelSigCoverage" Sky.Build.KernelSigCoverageSpec.spec
     -- Audit P0-5: no raw `panic("sky: internal…)` in emitted Go.
     -- Runs AFTER ExampleSweep so the sky-out/main.go files are fresh.
     describe "Sky.Build.UnreachableGate"  Sky.Build.UnreachableGateSpec.spec
