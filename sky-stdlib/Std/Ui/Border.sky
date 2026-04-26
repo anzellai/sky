@@ -1,0 +1,21 @@
+module Std.Ui.Border exposing (color, width, rounded)
+
+-- Std.Ui.Border — border colour / width / rounded-corner helpers.
+--
+-- Tier 1 ships color/width/rounded; shadow + per-side widths land
+-- when the inline-style renderer adds the matching CSS shape.
+
+import Sky.Core.Prelude exposing (..)
+import Std.Ui exposing (Color, Attribute, borderColor, borderWidth, borderRounded)
+
+
+color : Color -> Attribute msg
+color c = borderColor c
+
+
+width : Int -> Attribute msg
+width n = borderWidth n
+
+
+rounded : Int -> Attribute msg
+rounded n = borderRounded n

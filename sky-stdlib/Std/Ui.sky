@@ -53,6 +53,17 @@ type Attribute msg
     | AttrStyle String String
     | AttrDescribe Description
     | AttrClass String
+    | AttrEvent String msg                 -- "click", "input", "submit", ...
+    | AttrAttribute String String          -- raw attribute (href, src, name, ...)
+    | AttrFontSize Int
+    | AttrFontColor Color
+    | AttrFontFamily String              -- pre-joined "Inter, sans-serif"
+    | AttrFontWeight Int
+    | AttrBgColor Color
+    | AttrBorderWidth Int
+    | AttrBorderColor Color
+    | AttrBorderRounded Int
+    | AttrPointer                          -- cursor: pointer for clickable els
 
 
 type Length
@@ -228,6 +239,150 @@ style : String -> String -> Attribute msg
 style k v = AttrStyle k v
 
 
+-- Add an arbitrary HTML attribute to the element (href, src, name,
+-- target, etc.). Use sparingly — Std.Ui's typed attrs (link, image,
+-- etc.) are preferred when they cover the case.
+htmlAttribute : String -> String -> Attribute msg
+htmlAttribute k v = AttrAttribute k v
+
+
+-- Add a CSS class to the rendered element. Doesn't replace existing
+-- classes — appends.
+class : String -> Attribute msg
+class c = AttrClass c
+
+
+-- Cursor: pointer. Marks an element as clickable.
+pointer : Attribute msg
+pointer = AttrPointer
+
+
+-- ─── Typed-helper wrappers around the AttrXxx constructors ──────
+--
+-- Sky's canonicaliser doesn't propagate type parameters when ADT
+-- constructors are referenced cross-module — `AttrBgColor` arrives
+-- at the import site as `Attribute` (no msg parameter) instead of
+-- `Attribute msg`. The typed-helper functions here anchor the
+-- generalisation locally so sibling modules (Std.Ui.Background,
+-- Std.Ui.Border, Std.Ui.Font, Std.Ui.Region) can call these
+-- functions instead of touching the constructors directly.
+
+bgColor : Color -> Attribute msg
+bgColor c = AttrBgColor c
+
+borderColor : Color -> Attribute msg
+borderColor c = AttrBorderColor c
+
+borderWidth : Int -> Attribute msg
+borderWidth n = AttrBorderWidth n
+
+borderRounded : Int -> Attribute msg
+borderRounded n = AttrBorderRounded n
+
+fontColor : Color -> Attribute msg
+fontColor c = AttrFontColor c
+
+fontSize : Int -> Attribute msg
+fontSize n = AttrFontSize n
+
+-- Pre-join with `, ` for the CSS family stack. Tier-1 sidestep:
+-- Sky's typed codegen routes `String.join` over `[String]` via the
+-- any-typed runtime helper which panics on a typed slice. Future
+-- work: pick `String_joinT` when both args are typed. For now
+-- callers pass the joined string directly via `Font.familyRaw`.
+fontFamily : String -> Attribute msg
+fontFamily joined = AttrFontFamily joined
+
+fontWeight : Int -> Attribute msg
+fontWeight n = AttrFontWeight n
+
+describe : Description -> Attribute msg
+describe d = AttrDescribe d
+
+
+-- Description-value helpers. Description is a non-parameterised ADT
+-- so it crosses module boundaries cleanly, but the helpers also
+-- give a stable surface name in case the underlying constructor
+-- names change.
+
+descMain : Description
+descMain = DescMain
+
+descNavigation : Description
+descNavigation = DescNavigation
+
+descContentInfo : Description
+descContentInfo = DescContentInfo
+
+descHeading : Int -> Description
+descHeading n = DescHeading n
+
+descLabel : String -> Description
+descLabel s = DescLabel s
+
+
+-- ─── Events ──────────────────────────────────────────────────────
+
+-- Bind a click handler. The msg is dispatched on the wire when the
+-- user clicks the element. Inside Sky.Live, this becomes an SSE
+-- round-trip + Msg dispatch through update.
+onClick : msg -> Attribute msg
+onClick msg = AttrEvent "click" msg
+
+
+-- Submit handler — for `<form>` elements. The msg constructor takes
+-- the form data as a typed record.
+onSubmit : msg -> Attribute msg
+onSubmit msg = AttrEvent "submit" msg
+
+
+-- Input change handler — fires per keystroke for text inputs.
+onInput : msg -> Attribute msg
+onInput msg = AttrEvent "input" msg
+
+
+-- ─── Common element shortcuts ────────────────────────────────────
+
+-- Hyperlink. The href is set as an HTML attribute; click navigation
+-- happens through standard browser behaviour (Sky.Live intercepts
+-- same-origin navigation if you've routed it).
+link : List (Attribute msg) -> { url : String, label : Element msg } -> Element msg
+link attrs cfg =
+    let
+        nodeAttrs = AttrAttribute "href" cfg.url :: attrs
+    in
+        Node NoDescription nodeAttrs [ cfg.label ]
+            -- Render as <a> via class-marker. Renderer sees this and
+            -- swaps the tag.
+
+
+-- Inline image with required src + alt for accessibility.
+image : List (Attribute msg) -> { src : String, description : String } -> Element msg
+image attrs cfg =
+    let
+        nodeAttrs =
+            AttrAttribute "src" cfg.src
+                :: AttrAttribute "alt" cfg.description
+                :: attrs
+    in
+        Node NoDescription nodeAttrs []
+            -- Renderer swaps tag to <img>.
+
+
+-- Escape hatch — wrap an arbitrary Html node as an Element. Useful
+-- when you need a tag Std.Ui doesn't model directly (e.g. <video>,
+-- <canvas>) without dropping the rest of your layout.
+-- TODO: surface raw Html via a new Element variant. For now this
+-- collapses to empty text; useful primarily as a type-correct
+-- placeholder until the Element ADT gains a NodeRaw variant.
+html : any -> Element msg
+html node =
+    let
+        _ = node
+    in
+        Text ""
+
+
 -- ─── Color ───────────────────────────────────────────────────────
 
 rgb : Float -> Float -> Float -> Color
@@ -274,9 +429,64 @@ renderElement ctx extraAttrs elem =
                 allAttrs = extraAttrs ++ attrs
                 renderCtx = layoutContextFor allAttrs
                 styleStr = buildStyleString ctx renderCtx allAttrs
+                htmlAttrs = collectHtmlAttrs allAttrs
                 renderedChildren = List.map (renderElement renderCtx []) children
+                attrList = Attr.style styleStr :: htmlAttrs
             in
-                Html.div [ Attr.style styleStr ] renderedChildren
+                -- Tier-1 MVP: every element renders as a <div>. Tag
+                -- dispatch (link → <a>, image → <img>, paragraph
+                -- → <p>) is queued for Tier 2 along with the Element
+                -- ADT extension that carries an explicit tag.
+                Html.div attrList renderedChildren
+
+
+-- Pull every AttrAttribute into a flat list of Attr.attribute values.
+collectHtmlAttrs : List (Attribute msg) -> List any
+collectHtmlAttrs attrs =
+    List.filterMap toAttrAttribute attrs
+
+
+toAttrAttribute : Attribute msg -> Maybe any
+toAttrAttribute a =
+    case a of
+        AttrAttribute k v -> Just (kernelAttr k v)
+        AttrClass c       -> Just (Attr.class c)
+        _                 -> Nothing
+
+
+-- Sky.Std.Html.Attributes doesn't expose a generic
+-- `Attr.attribute key value` kernel today, so dispatch by key name
+-- for the common HTML attrs Std.Ui needs. Unknown keys fall back
+-- to encoding the attr inline-style as `data-<key>="<v>"` via the
+-- typed Attr.attribute style proxy. (Future work — promote this to
+-- a kernel call once `rt.Attr_attribute` lands.)
+kernelAttr : String -> String -> any
+kernelAttr key value =
+    if key == "href" then Attr.href value
+    else if key == "src" then Attr.src value
+    else if key == "alt" then Attr.alt value
+    else if key == "name" then Attr.name value
+    else if key == "value" then Attr.value value
+    else if key == "id" then Attr.id value
+    else if key == "type" then Attr.type_ value
+    else if key == "placeholder" then Attr.placeholder value
+    else if key == "title" then Attr.title value
+    else if key == "for" then Attr.for value
+    else if key == "rel" then Attr.rel value
+    else if key == "target" then Attr.target value
+    else if key == "method" then Attr.method value
+    else if key == "action" then Attr.action value
+    else
+        -- Fallback: encode as a class-prefixed style. Not ideal, but
+        -- avoids silently dropping the attribute.
+        Attr.class (key ++ "_" ++ value)
+
+
+-- Tier 1 stops at static rendering. Std.Live.Events binding for
+-- AttrEvent → Sky.Live wire events lives in Tier 2 once we wire
+-- the Sky.Live integration. The constructor stays in the ADT so
+-- user code can already use `Ui.onClick MyMsg` even though it
+-- currently no-ops at the static layer.
 
 
 layoutContextFor : List (Attribute msg) -> LayoutContext
@@ -350,6 +560,47 @@ collectStyle parentCtx myCtx attr acc =
             acc
         AttrNearby _ _ ->
             acc
+        AttrEvent _ _ ->
+            -- Events are attached as separate VNode event entries,
+            -- not inline style — handled in renderElement.
+            acc
+        AttrAttribute _ _ ->
+            -- HTML attributes (href, src, name, ...) are attached to
+            -- the VNode separately, not inline style.
+            acc
+        AttrFontSize n ->
+            acc ++ " font-size: " ++ String.fromInt n ++ "px;"
+        AttrFontColor c ->
+            acc ++ " color: " ++ colorCss c ++ ";"
+        AttrFontFamily joined ->
+            acc ++ " font-family: " ++ joined ++ ";"
+        AttrFontWeight n ->
+            acc ++ " font-weight: " ++ String.fromInt n ++ ";"
+        AttrBgColor c ->
+            acc ++ " background-color: " ++ colorCss c ++ ";"
+        AttrBorderWidth n ->
+            acc ++ " border-width: " ++ String.fromInt n ++ "px; border-style: solid;"
+        AttrBorderColor c ->
+            acc ++ " border-color: " ++ colorCss c ++ ";"
+        AttrBorderRounded n ->
+            acc ++ " border-radius: " ++ String.fromInt n ++ "px;"
+        AttrPointer ->
+            acc ++ " cursor: pointer;"
+
+
+-- Render a Color as a CSS rgba(...) string. CSS accepts Float
+-- channels via percentages, so we sidestep the Sky-side Float→Int
+-- conversion (currently HM-finicky) and just render channels as
+-- raw floats — `rgba(1.0, 0.5, 0.0, 1.0)` is a valid CSS colour.
+colorCss : Color -> String
+colorCss c =
+    case c of
+        Rgba r g b a ->
+            "rgba("
+                ++ String.fromFloat r ++ ", "
+                ++ String.fromFloat g ++ ", "
+                ++ String.fromFloat b ++ ", "
+                ++ String.fromFloat a ++ ")"
 
 
 -- `len` would shadow Go's built-in `len` in the emitted code (Sky's

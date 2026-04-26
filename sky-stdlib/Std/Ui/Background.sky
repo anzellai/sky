@@ -1,12 +1,21 @@
 module Std.Ui.Background exposing (color)
 
--- Std.Ui.Background — Std.Ui sub-module placeholder.
--- Real surface (color / gradient / image / uncropped / tiled) lands
--- with Tier 1 of the elm-ui port.
+-- Std.Ui.Background — background colour / image / gradient helpers.
+--
+-- Tier 1 ships only `color`; gradient + image follow when the
+-- inline-style renderer learns the matching CSS shape.
 
 import Sky.Core.Prelude exposing (..)
+-- Bring Color + Attribute (and the Std.Ui helper functions) into
+-- scope unqualified. `import Std.Ui as Ui` alone doesn't make
+-- `Ui.Color` unify cleanly with the bare Color type at user call
+-- sites — Sky's canonicaliser treats the qualified name as a
+-- distinct type-of-type.
+import Std.Ui exposing (Color, Attribute, bgColor)
 
 
--- Placeholder so the module is importable while Tier 1 is in flight.
-color : a -> a
-color x = x
+-- Solid background colour. Equivalent to elm-ui's
+-- `Element.Background.color`. Composes with width/height/padding.
+color : Color -> Attribute msg
+color c =
+    bgColor c

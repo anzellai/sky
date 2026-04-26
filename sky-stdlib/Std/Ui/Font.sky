@@ -1,0 +1,48 @@
+module Std.Ui.Font exposing (color, size, family, weight, sansSerif, serif, monospace, typeface, bold, light, regular)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Ui exposing (Color, Attribute, fontColor, fontSize, fontFamily, fontWeight)
+
+
+color : Color -> Attribute msg
+color c = fontColor c
+
+
+size : Int -> Attribute msg
+size n = fontSize n
+
+
+-- Pass a comma-separated CSS font-family string. Tier 1 takes the
+-- raw form ("Inter, sans-serif"); Tier 2 swaps in `List String`
+-- once Sky's typed codegen routes `String.join` correctly over
+-- `List String`.
+family : String -> Attribute msg
+family joined = fontFamily joined
+
+
+weight : Int -> Attribute msg
+weight n = fontWeight n
+
+
+bold : Attribute msg
+bold = fontWeight 700
+
+regular : Attribute msg
+regular = fontWeight 400
+
+light : Attribute msg
+light = fontWeight 300
+
+
+sansSerif : String
+sansSerif = "sans-serif"
+
+serif : String
+serif = "serif"
+
+monospace : String
+monospace = "monospace"
+
+
+typeface : String -> String
+typeface s = s

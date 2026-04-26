@@ -1,0 +1,24 @@
+module Std.Ui.Region exposing (mainContent, navigation, footer, heading, label)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Ui exposing (Description, Attribute, describe, descMain, descNavigation, descContentInfo, descHeading, descLabel)
+
+
+mainContent : Attribute msg
+mainContent = describe descMain
+
+
+navigation : Attribute msg
+navigation = describe descNavigation
+
+
+footer : Attribute msg
+footer = describe descContentInfo
+
+
+heading : Int -> Attribute msg
+heading n = describe (descHeading n)
+
+
+label : String -> Attribute msg
+label text = describe (descLabel text)

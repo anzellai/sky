@@ -1,0 +1,24 @@
+module Std.Ui.Events exposing (onClick, onSubmit, onInput)
+
+-- Std.Ui.Events — re-exports of the event helpers that live on
+-- Std.Ui itself, grouped here for API parity with elm-ui.
+--
+-- Tier 1 ships static rendering only — the AttrEvent constructor
+-- is recorded on the Element but the inline-style renderer drops
+-- it. Tier 2 wires AttrEvent through Std.Live.Events for actual
+-- Sky.Live event dispatch.
+
+import Sky.Core.Prelude exposing (..)
+import Std.Ui as Ui
+
+
+onClick : msg -> Ui.Attribute msg
+onClick m = Ui.onClick m
+
+
+onSubmit : msg -> Ui.Attribute msg
+onSubmit m = Ui.onSubmit m
+
+
+onInput : msg -> Ui.Attribute msg
+onInput m = Ui.onInput m
