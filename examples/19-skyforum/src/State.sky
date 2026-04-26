@@ -37,6 +37,18 @@ type alias Session =
     { username : String }
 
 
+-- Form data for sign-in. Decoded from the wire `<form>` submit
+-- payload directly into this typed record (Sky.Live's case-
+-- insensitive json.Unmarshal). Field names MUST match the form's
+-- input `name` attributes (lowercase here, matching `Ui.name`).
+-- The password lives only in this record while DoSignIn is
+-- in flight — never gets serialised into the session store.
+type alias LoginForm =
+    { username : String
+    , password : String
+    }
+
+
 type Page
     = HomePage
     | PostPage Int
@@ -48,8 +60,6 @@ type alias Model =
     , comments : List Comment
     , currentPage : Page
     , session : Maybe Session
-    , loginUser : String
-    , loginPass : String
     , loginError : String
     , composeBody : String
     , replyTo : Int            -- parentId for the next compose; 0 = top-level
@@ -61,9 +71,7 @@ type Msg
     = Navigate Page
     | UpvotePost Int
     | UpvoteComment Int
-    | LoginUsernameChanged String
-    | LoginPasswordChanged String
-    | LoginSubmit
+    | DoSignIn LoginForm
     | LogoutClicked
     | ComposeBodyChanged String
     | StartReplyTo Int

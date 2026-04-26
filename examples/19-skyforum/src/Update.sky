@@ -31,20 +31,19 @@ update msg model =
                 Just _ ->
                     ( { model | comments = List.map (bumpComment commentId) model.comments }, Cmd.none )
 
-        LoginUsernameChanged u ->
-            ( { model | loginUser = u }, Cmd.none )
-
-        LoginPasswordChanged p ->
-            ( { model | loginPass = p }, Cmd.none )
-
-        LoginSubmit ->
-            if String.isEmpty (String.trim model.loginUser) then
+        DoSignIn creds ->
+            -- Form-submit handler. `creds.username` and `creds.password`
+            -- come straight from the wire `<form>` data — case-
+            -- insensitive json.Unmarshal decoded the formData
+            -- {"username":"...","password":"..."} into LoginForm.
+            -- The password lives only in this Msg's record arg until
+            -- the update consumes it; never enters Model so never
+            -- serialises into the session store.
+            if String.isEmpty (String.trim creds.username) then
                 ( { model | loginError = "Username is required." }, Cmd.none )
             else
                 ( { model
-                    | session = Just { username = String.trim model.loginUser }
-                    , loginUser = ""
-                    , loginPass = ""
+                    | session = Just { username = String.trim creds.username }
                     , loginError = ""
                     , currentPage = HomePage
                   }
