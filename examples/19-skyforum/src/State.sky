@@ -13,6 +13,11 @@ import Sky.Core.String as String
 
 -- ─── State types ─────────────────────────────────────────────────
 
+-- `votes` is the BASE score (from seed/import) — what the post would
+-- be worth before any logged-in user's vote. The displayed score is
+-- derived: `votes + length upvoters - length downvoters`. This way
+-- `votes` stays stable at the seed value and the per-user toggles
+-- naturally undo themselves when a user un-votes.
 type alias Post =
     { id : Int
     , title : String
@@ -20,16 +25,20 @@ type alias Post =
     , author : String
     , votes : Int
     , commentCount : Int
+    , upvoters : List String       -- usernames who upvoted (1 vote per user)
+    , downvoters : List String     -- usernames who downvoted (1 vote per user)
     }
 
 
 type alias Comment =
     { id : Int
     , postId : Int
-    , parentId : Int      -- 0 = top-level (root) comment under the post
+    , parentId : Int               -- 0 = top-level (root) comment under the post
     , author : String
     , body : String
-    , votes : Int
+    , votes : Int                  -- base score (see Post.votes for shape)
+    , upvoters : List String
+    , downvoters : List String
     }
 
 
@@ -70,7 +79,9 @@ type alias Model =
 type Msg
     = Navigate Page
     | UpvotePost Int
+    | DownvotePost Int
     | UpvoteComment Int
+    | DownvoteComment Int
     | DoSignIn LoginForm
     | LogoutClicked
     | ComposeBodyChanged String
@@ -81,20 +92,83 @@ type Msg
 
 -- ─── Pure helpers (no Std.Ui dependency) ─────────────────────────
 
-bumpPost : Int -> Post -> Post
-bumpPost targetId post =
-    if post.id == targetId then
-        { post | votes = post.votes + 1 }
-    else
+-- ─── Vote scoring ────────────────────────────────────────────────
+
+postScore : Post -> Int
+postScore p =
+    p.votes + List.length p.upvoters - List.length p.downvoters
+
+
+commentScore : Comment -> Int
+commentScore c =
+    c.votes + List.length c.upvoters - List.length c.downvoters
+
+
+-- ─── Vote toggles (1 vote per user, click again to undo) ─────────
+--
+-- Three states for any user × target pair:
+--   1. user in upvoters    → upvote click removes them; downvote click swaps to downvoters
+--   2. user in downvoters  → downvote click removes them; upvote click swaps to upvoters
+--   3. user in neither     → either click adds to the matching list
+--
+-- Score is derived (postScore / commentScore), so swapping naturally
+-- moves the displayed total by ±2 without any extra arithmetic here.
+
+togglePostUpvote : String -> Int -> Post -> Post
+togglePostUpvote username targetId post =
+    if post.id /= targetId then
         post
-
-
-bumpComment : Int -> Comment -> Comment
-bumpComment targetId comment =
-    if comment.id == targetId then
-        { comment | votes = comment.votes + 1 }
+    else if List.member username post.upvoters then
+        { post | upvoters = removeMember username post.upvoters }
     else
+        { post
+            | upvoters = username :: post.upvoters
+            , downvoters = removeMember username post.downvoters
+        }
+
+
+togglePostDownvote : String -> Int -> Post -> Post
+togglePostDownvote username targetId post =
+    if post.id /= targetId then
+        post
+    else if List.member username post.downvoters then
+        { post | downvoters = removeMember username post.downvoters }
+    else
+        { post
+            | downvoters = username :: post.downvoters
+            , upvoters = removeMember username post.upvoters
+        }
+
+
+toggleCommentUpvote : String -> Int -> Comment -> Comment
+toggleCommentUpvote username targetId comment =
+    if comment.id /= targetId then
         comment
+    else if List.member username comment.upvoters then
+        { comment | upvoters = removeMember username comment.upvoters }
+    else
+        { comment
+            | upvoters = username :: comment.upvoters
+            , downvoters = removeMember username comment.downvoters
+        }
+
+
+toggleCommentDownvote : String -> Int -> Comment -> Comment
+toggleCommentDownvote username targetId comment =
+    if comment.id /= targetId then
+        comment
+    else if List.member username comment.downvoters then
+        { comment | downvoters = removeMember username comment.downvoters }
+    else
+        { comment
+            | downvoters = username :: comment.downvoters
+            , upvoters = removeMember username comment.upvoters
+        }
+
+
+removeMember : String -> List String -> List String
+removeMember target xs =
+    List.filter (\x -> x /= target) xs
 
 
 bumpPostComments : Int -> Post -> Post

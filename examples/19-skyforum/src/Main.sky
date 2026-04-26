@@ -32,22 +32,28 @@ import View.Login exposing (loginView)
 init : a -> ( Model, Cmd Msg )
 init _req =
     let
+        -- Seeds use record syntax (not positional Post/Comment ctors)
+        -- because Sky's typed codegen can't yet infer that a bare `[]`
+        -- in a constructor's typed-slice arg position should emit as
+        -- `[]string{}` instead of `[]any{}` — record-literal syntax
+        -- gives the codegen enough context (the field's type alias
+        -- declares `upvoters : List String`) to pick the right shape.
         seedPosts =
-            [ Post 1 "Show SF: Sky.Ui — a typed elm-ui port for Sky.Live" "https://github.com/anzellai/sky" "alice" 142 5
-            , Post 2 "Tiny CRDT primitives in 200 lines" "https://example.com/crdt" "bob" 87 1
-            , Post 3 "Ask SF: Best resources for learning Hindley-Milner?" "https://example.com/hm" "carol" 56 2
-            , Post 4 "Why server-driven UIs are having a moment" "https://example.com/server-ui" "dave" 41 0
-            , Post 5 "Postgres tips that actually matter in production" "https://example.com/pg-tips" "eve" 38 0
+            [ { id = 1, title = "Show SF: Sky.Ui — a typed elm-ui port for Sky.Live", url = "https://github.com/anzellai/sky", author = "alice", votes = 142, commentCount = 5, upvoters = [], downvoters = [] }
+            , { id = 2, title = "Tiny CRDT primitives in 200 lines", url = "https://example.com/crdt", author = "bob", votes = 87, commentCount = 1, upvoters = [], downvoters = [] }
+            , { id = 3, title = "Ask SF: Best resources for learning Hindley-Milner?", url = "https://example.com/hm", author = "carol", votes = 56, commentCount = 2, upvoters = [], downvoters = [] }
+            , { id = 4, title = "Why server-driven UIs are having a moment", url = "https://example.com/server-ui", author = "dave", votes = 41, commentCount = 0, upvoters = [], downvoters = [] }
+            , { id = 5, title = "Postgres tips that actually matter in production", url = "https://example.com/pg-tips", author = "eve", votes = 38, commentCount = 0, upvoters = [], downvoters = [] }
             ]
         seedComments =
-            [ Comment 101 1 0 "bob" "This looks great — does it support keyed children for diffing?" 12
-            , Comment 102 1 101 "alice" "Yes, Std.Ui.Keyed handles that via the sky-key attribute." 9
-            , Comment 103 1 102 "bob" "Nice. Any plans for an actual stylesheet pass?" 4
-            , Comment 104 1 0 "carol" "How does it compare to Phoenix LiveView?" 7
-            , Comment 105 1 104 "alice" "Same idea: server holds state, browser is dumb." 11
-            , Comment 201 2 0 "alice" "Love seeing CRDT explanations that fit on one page." 5
-            , Comment 301 3 0 "dave" "Read 'Types and Programming Languages' (TAPL). Canonical reference." 18
-            , Comment 302 3 301 "carol" "Thanks. Anything shorter for a primer?" 3
+            [ { id = 101, postId = 1, parentId = 0, author = "bob", body = "This looks great — does it support keyed children for diffing?", votes = 12, upvoters = [], downvoters = [] }
+            , { id = 102, postId = 1, parentId = 101, author = "alice", body = "Yes, Std.Ui.Keyed handles that via the sky-key attribute.", votes = 9, upvoters = [], downvoters = [] }
+            , { id = 103, postId = 1, parentId = 102, author = "bob", body = "Nice. Any plans for an actual stylesheet pass?", votes = 4, upvoters = [], downvoters = [] }
+            , { id = 104, postId = 1, parentId = 0, author = "carol", body = "How does it compare to Phoenix LiveView?", votes = 7, upvoters = [], downvoters = [] }
+            , { id = 105, postId = 1, parentId = 104, author = "alice", body = "Same idea: server holds state, browser is dumb.", votes = 11, upvoters = [], downvoters = [] }
+            , { id = 201, postId = 2, parentId = 0, author = "alice", body = "Love seeing CRDT explanations that fit on one page.", votes = 5, upvoters = [], downvoters = [] }
+            , { id = 301, postId = 3, parentId = 0, author = "dave", body = "Read 'Types and Programming Languages' (TAPL). Canonical reference.", votes = 18, upvoters = [], downvoters = [] }
+            , { id = 302, postId = 3, parentId = 301, author = "carol", body = "Thanks. Anything shorter for a primer?", votes = 3, upvoters = [], downvoters = [] }
             ]
     in
         ( { posts = seedPosts
@@ -86,7 +92,7 @@ pageBody : Model -> Element Msg
 pageBody model =
     case model.currentPage of
         HomePage ->
-            postsListView model.posts
+            postsListView model.session model.posts
 
         PostPage postId ->
             postDetailView model postId

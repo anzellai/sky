@@ -16,20 +16,46 @@ update msg model =
         UpvotePost postId ->
             -- Anonymous users redirect to login (mirrors SubmitComment).
             -- The page reroute is the user-visible signal "sign in to vote".
+            -- Toggle semantics: clicking again removes the vote (see
+            -- State.togglePostUpvote).
             case model.session of
                 Nothing ->
                     ( { model | currentPage = LoginPage }, Cmd.none )
 
-                Just _ ->
-                    ( { model | posts = List.map (bumpPost postId) model.posts }, Cmd.none )
+                Just sess ->
+                    ( { model | posts = List.map (togglePostUpvote sess.username postId) model.posts }
+                    , Cmd.none
+                    )
+
+        DownvotePost postId ->
+            case model.session of
+                Nothing ->
+                    ( { model | currentPage = LoginPage }, Cmd.none )
+
+                Just sess ->
+                    ( { model | posts = List.map (togglePostDownvote sess.username postId) model.posts }
+                    , Cmd.none
+                    )
 
         UpvoteComment commentId ->
             case model.session of
                 Nothing ->
                     ( { model | currentPage = LoginPage }, Cmd.none )
 
-                Just _ ->
-                    ( { model | comments = List.map (bumpComment commentId) model.comments }, Cmd.none )
+                Just sess ->
+                    ( { model | comments = List.map (toggleCommentUpvote sess.username commentId) model.comments }
+                    , Cmd.none
+                    )
+
+        DownvoteComment commentId ->
+            case model.session of
+                Nothing ->
+                    ( { model | currentPage = LoginPage }, Cmd.none )
+
+                Just sess ->
+                    ( { model | comments = List.map (toggleCommentDownvote sess.username commentId) model.comments }
+                    , Cmd.none
+                    )
 
         DoSignIn creds ->
             -- Form-submit handler. `creds.username` and `creds.password`
@@ -84,10 +110,15 @@ update msg model =
 
 newComment : Model -> Session -> Int -> Comment
 newComment model sess postId =
+    -- Author auto-upvotes their own comment (Reddit convention) — sets
+    -- the seed score to 0 and adds them to upvoters so the displayed
+    -- score is 1. Clicking "upvoted" later removes themselves cleanly.
     { id = model.nextCommentId
     , postId = postId
     , parentId = model.replyTo
     , author = sess.username
     , body = String.trim model.composeBody
-    , votes = 1
+    , votes = 0
+    , upvoters = [ sess.username ]
+    , downvoters = []
     }

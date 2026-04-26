@@ -12,13 +12,13 @@ import State exposing (..)
 import View.Common exposing (clickable)
 
 
-postsListView : List Post -> Element Msg
-postsListView posts =
-    Ui.column [ Ui.spacing 12 ] (List.indexedMap postRow posts)
+postsListView : Maybe Session -> List Post -> Element Msg
+postsListView maybeSession posts =
+    Ui.column [ Ui.spacing 12 ] (List.indexedMap (postRow maybeSession) posts)
 
 
-postRow : Int -> Post -> Element Msg
-postRow index post =
+postRow : Maybe Session -> Int -> Post -> Element Msg
+postRow maybeSession index post =
     Ui.row
         [ Ui.spacing 12
         , Ui.padding 8
@@ -28,7 +28,7 @@ postRow index post =
         , Border.color (Ui.rgb 230 230 230)
         ]
         [ rankNumber (index + 1)
-        , postUpvoteButton post
+        , postVoteButtons maybeSession post
         , postBody post
         ]
 
@@ -43,27 +43,52 @@ rankNumber n =
         (Ui.text (String.fromInt n ++ "."))
 
 
-postUpvoteButton : Post -> Element Msg
-postUpvoteButton post =
-    Ui.column
-        [ Ui.width (Ui.px 40)
-        , Ui.spacing 2
-        , Ui.centerY
-        ]
-        [ Ui.button
-            [ Background.color (Ui.rgb 240 240 240)
-            , Border.rounded 3
-            , Border.width 0
-            , Font.color (Ui.rgb 130 130 130)
-            , Ui.padding 2
-            , Ui.centerX
+-- Stacked ▲ score ▼. Active state colours the button orange (upvote)
+-- or blue (downvote) so the user can see what they've voted.
+-- Anonymous users get the default-grey shape; clicking either button
+-- redirects to login (handled in Update).
+postVoteButtons : Maybe Session -> Post -> Element Msg
+postVoteButtons maybeSession post =
+    let
+        username = currentUsername maybeSession
+        upActive = List.member username post.upvoters
+        downActive = List.member username post.downvoters
+    in
+        Ui.column
+            [ Ui.width (Ui.px 40)
+            , Ui.spacing 2
+            , Ui.centerY
             ]
-            { onPress = Just (UpvotePost post.id)
-            , label = Ui.text "▲"
-            }
-        , Ui.el [ Ui.centerX, Font.size 11, Font.color (Ui.rgb 130 130 130) ]
-            (Ui.text (String.fromInt post.votes))
-        ]
+            [ Ui.button
+                [ Background.color (if upActive then Ui.rgb 255 102 0 else Ui.rgb 240 240 240)
+                , Font.color (if upActive then Ui.rgb 255 255 255 else Ui.rgb 130 130 130)
+                , Border.rounded 3
+                , Border.width 0
+                , Ui.padding 2
+                , Ui.centerX
+                ]
+                { onPress = Just (UpvotePost post.id), label = Ui.text "▲" }
+            , Ui.el [ Ui.centerX, Font.size 11, Font.color (Ui.rgb 130 130 130) ]
+                (Ui.text (String.fromInt (postScore post)))
+            , Ui.button
+                [ Background.color (if downActive then Ui.rgb 100 130 220 else Ui.rgb 240 240 240)
+                , Font.color (if downActive then Ui.rgb 255 255 255 else Ui.rgb 130 130 130)
+                , Border.rounded 3
+                , Border.width 0
+                , Ui.padding 2
+                , Ui.centerX
+                ]
+                { onPress = Just (DownvotePost post.id), label = Ui.text "▼" }
+            ]
+
+
+-- Empty string when anonymous — matches no entry in upvoters/downvoters,
+-- so anon users see the default-grey vote buttons.
+currentUsername : Maybe Session -> String
+currentUsername maybeSession =
+    case maybeSession of
+        Just sess -> sess.username
+        Nothing -> ""
 
 
 postBody : Post -> Element Msg
