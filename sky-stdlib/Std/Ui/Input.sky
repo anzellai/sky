@@ -137,6 +137,9 @@ checkbox attrs cfg =
 -- ─── Internals ───────────────────────────────────────────────────
 
 -- Build the bare input element with type, change handler, value.
+-- Renders as a real <input> via `Ui.input` (Ui.el would render
+-- as <div> and the browser would ignore the type/value attrs and
+-- never fire input events).
 inputBase : String -> List (Attribute msg) -> { onChange : String -> msg, text : String, placeholder : Maybe (Placeholder msg), label : Label msg } -> Element msg
 inputBase inputType attrs cfg =
     let
@@ -149,23 +152,24 @@ inputBase inputType attrs cfg =
         baseAttrs =
             Ui.htmlAttribute "type" inputType
                 :: Ui.htmlAttribute "value" cfg.text
-                :: Ui.onInput (cfg.onChange cfg.text)
+                :: Ui.onInput cfg.onChange
                 :: placeholderAttr
                 ++ attrs
-        inputEl = Ui.el baseAttrs Ui.none
+        inputEl = Ui.input baseAttrs
     in
         wrapWithLabel cfg.label [] inputEl
 
 
--- Internal: build a bare input element by tag.
+-- Internal: build a bare input element by tag for fixed-msg controls
+-- like checkbox toggle (the change handler is `msg`, not (String -> msg),
+-- because the user clicked rather than typed).
 inputElement : String -> msg -> String -> Element msg
 inputElement inputType msg val =
-    Ui.el
+    Ui.input
         [ Ui.htmlAttribute "type" inputType
         , Ui.htmlAttribute "value" val
-        , Ui.onInput msg
+        , Ui.onClick msg
         ]
-        Ui.none
 
 
 -- Wrap a control in its label according to LabelPosition.

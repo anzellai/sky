@@ -446,6 +446,18 @@ button attrs cfg =
         TaggedNode "button" NoDescription allAttrs [ cfg.label ]
 
 
+-- A `<input>`. The browser fires `input` and `change` events
+-- natively, so wire `Ui.onInput`/`Ui.onChange` for keystroke /
+-- commit semantics. Set `type` (text / password / email / number /
+-- checkbox / radio / ...) and other native attrs via
+-- `Ui.htmlAttribute "type" "..."` / `htmlAttribute "value" "..."`.
+-- Renders to a void `<input>` element (no children) — Std.Ui's
+-- renderNodeAs special-cases the `input` tag for void emission.
+input : List (Attribute msg) -> Element msg
+input attrs =
+    TaggedNode "input" NoDescription attrs []
+
+
 -- Escape hatch — wrap an arbitrary Html node as an Element. Useful
 -- when you need a tag Std.Ui doesn't model directly (e.g. <video>,
 -- <canvas>) without dropping the rest of your layout.
