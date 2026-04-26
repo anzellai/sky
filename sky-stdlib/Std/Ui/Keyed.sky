@@ -1,0 +1,44 @@
+module Std.Ui.Keyed exposing (el, row, column)
+
+-- Std.Ui.Keyed — keyed children for stable diffing across reorders.
+--
+-- Sky.Live's diff already supports `sky-key` as a stable identity
+-- attribute (`runtime-go/rt/live.go:908+`); these wrappers attach
+-- that attribute so the diff matches keyed children by key rather
+-- than positional index. Use when rendering a list whose elements
+-- can be reordered, inserted, or removed (TODO lists, chat
+-- messages, sortable rows).
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Std.Ui as Ui
+import Std.Ui exposing (Element, Attribute)
+
+
+el : List (Attribute msg) -> ( String, Element msg ) -> Element msg
+el attrs ( key, child ) =
+    Ui.el (keyAttr key :: attrs) child
+
+
+row : List (Attribute msg) -> List ( String, Element msg ) -> Element msg
+row attrs keyedChildren =
+    Ui.row attrs (List.map applyKey keyedChildren)
+
+
+column : List (Attribute msg) -> List ( String, Element msg ) -> Element msg
+column attrs keyedChildren =
+    Ui.column attrs (List.map applyKey keyedChildren)
+
+
+-- Wrap a keyed child by injecting the `sky-key` attribute via an
+-- outer `el`. Slight nesting overhead vs elm-ui's direct keyed
+-- VirtualDom.node, but Sky.Live's diff matches identity by the
+-- attribute regardless of the wrapper level.
+applyKey : ( String, Element msg ) -> Element msg
+applyKey ( key, child ) =
+    Ui.el [ keyAttr key ] child
+
+
+keyAttr : String -> Attribute msg
+keyAttr key =
+    Ui.htmlAttribute "sky-key" key

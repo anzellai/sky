@@ -39,6 +39,11 @@ type Element msg
     = Empty
     | Text String
     | Node Description (List (Attribute msg)) (List (Element msg))
+    -- TaggedNode carries an explicit HTML tag override so `link`
+    -- → <a>, `image` → <img>, `paragraph` → <p>, `heading 1` → <h1>
+    -- dispatch to semantically-correct tags. Plain Node still
+    -- defaults to <div>.
+    | TaggedNode String Description (List (Attribute msg)) (List (Element msg))
 
 
 type Attribute msg
@@ -343,20 +348,20 @@ onInput msg = AttrEvent "input" msg
 
 -- ─── Common element shortcuts ────────────────────────────────────
 
--- Hyperlink. The href is set as an HTML attribute; click navigation
--- happens through standard browser behaviour (Sky.Live intercepts
--- same-origin navigation if you've routed it).
+-- Hyperlink. Renders as `<a href=…>…</a>`. The href is set as an
+-- HTML attribute; click navigation happens through standard browser
+-- behaviour (Sky.Live intercepts same-origin navigation if you've
+-- routed it).
 link : List (Attribute msg) -> { url : String, label : Element msg } -> Element msg
 link attrs cfg =
     let
         nodeAttrs = AttrAttribute "href" cfg.url :: attrs
     in
-        Node NoDescription nodeAttrs [ cfg.label ]
-            -- Render as <a> via class-marker. Renderer sees this and
-            -- swaps the tag.
+        TaggedNode "a" NoDescription nodeAttrs [ cfg.label ]
 
 
--- Inline image with required src + alt for accessibility.
+-- Inline image with required src + alt for accessibility. Renders
+-- as `<img src=… alt=…>` (a void element — no children).
 image : List (Attribute msg) -> { src : String, description : String } -> Element msg
 image attrs cfg =
     let
@@ -365,8 +370,47 @@ image attrs cfg =
                 :: AttrAttribute "alt" cfg.description
                 :: attrs
     in
-        Node NoDescription nodeAttrs []
-            -- Renderer swaps tag to <img>.
+        TaggedNode "img" NoDescription nodeAttrs []
+
+
+-- A `<p>` block. Children flow as inline text (no flex layout); use
+-- `el` inside paragraph to highlight a word/phrase. elm-ui's
+-- paragraph does clever child-rewriting to coordinate margins
+-- inside the wrap; Tier 2 ships the basic block-level shape and the
+-- coordination lands in a follow-up.
+paragraph : List (Attribute msg) -> List (Element msg) -> Element msg
+paragraph attrs children =
+    TaggedNode "p" DescParagraph (paragraphMarker :: attrs) children
+
+
+paragraphMarker : Attribute msg
+paragraphMarker = AttrStyle "__paragraph" "true"
+
+
+-- Stack of paragraph-style children. Renders as a block-level
+-- container (`<section>`) so each paragraph stays on its own line
+-- with normal text flow.
+textColumn : List (Attribute msg) -> List (Element msg) -> Element msg
+textColumn attrs children =
+    TaggedNode "section" NoDescription (textColumnMarker :: attrs) children
+
+
+textColumnMarker : Attribute msg
+textColumnMarker = AttrStyle "__textcolumn" "true"
+
+
+-- A `<button>`. Use `Ui.onClick` to attach a handler. The default
+-- styling is sparse; users layer Background/Border/Font/Padding to
+-- match their design.
+button : List (Attribute msg) -> { onPress : Maybe msg, label : Element msg } -> Element msg
+button attrs cfg =
+    let
+        clickAttr = case cfg.onPress of
+            Just msg -> [ onClick msg ]
+            Nothing  -> [ AttrAttribute "disabled" "true" ]
+        allAttrs = clickAttr ++ pointer :: attrs
+    in
+        TaggedNode "button" NoDescription allAttrs [ cfg.label ]
 
 
 -- Escape hatch — wrap an arbitrary Html node as an Element. Useful
@@ -425,19 +469,69 @@ renderElement ctx extraAttrs elem =
             Html.text s
 
         Node desc attrs children ->
-            let
-                allAttrs = extraAttrs ++ attrs
-                renderCtx = layoutContextFor allAttrs
-                styleStr = buildStyleString ctx renderCtx allAttrs
-                htmlAttrs = collectHtmlAttrs allAttrs
-                renderedChildren = List.map (renderElement renderCtx []) children
-                attrList = Attr.style styleStr :: htmlAttrs
-            in
-                -- Tier-1 MVP: every element renders as a <div>. Tag
-                -- dispatch (link → <a>, image → <img>, paragraph
-                -- → <p>) is queued for Tier 2 along with the Element
-                -- ADT extension that carries an explicit tag.
-                Html.div attrList renderedChildren
+            renderNodeAs "div" ctx extraAttrs attrs children
+
+        TaggedNode tag desc attrs children ->
+            renderNodeAs tag ctx extraAttrs attrs children
+
+
+-- Render a Node-shaped element under a given parent context with an
+-- explicit HTML tag. Used both for the default <div> path and for
+-- TaggedNode dispatch.
+renderNodeAs : String -> LayoutContext -> List (Attribute msg) -> List (Attribute msg) -> List (Element msg) -> any
+renderNodeAs tag ctx extraAttrs attrs children =
+    let
+        allAttrs = extraAttrs ++ attrs
+        renderCtx = layoutContextFor allAttrs
+        styleStr = buildStyleString ctx renderCtx allAttrs
+        htmlAttrs = collectHtmlAttrs allAttrs
+        renderedChildren = List.map (renderElement renderCtx []) children
+        attrList = Attr.style styleStr :: htmlAttrs
+    in
+        dispatchTag tag attrList renderedChildren
+
+
+-- Dispatch to the right Std.Html constructor by tag name. <img>
+-- is void (no children); other tags take children unchanged.
+-- Unknown tags fall back to <div>.
+dispatchTag tag attrs children =
+    if tag == "a" then
+        Html.a attrs children
+    else if tag == "p" then
+        Html.p attrs children
+    else if tag == "h1" then
+        Html.h1 attrs children
+    else if tag == "h2" then
+        Html.h2 attrs children
+    else if tag == "h3" then
+        Html.h3 attrs children
+    else if tag == "h4" then
+        Html.h4 attrs children
+    else if tag == "h5" then
+        Html.h5 attrs children
+    else if tag == "h6" then
+        Html.h6 attrs children
+    else if tag == "button" then
+        Html.button attrs children
+    else if tag == "form" then
+        Html.form attrs children
+    else if tag == "label" then
+        Html.label attrs children
+    else if tag == "section" then
+        Html.section attrs children
+    else if tag == "nav" then
+        Html.nav attrs children
+    else if tag == "footer" then
+        Html.footer attrs children
+    else if tag == "header" then
+        Html.header attrs children
+    else if tag == "img" then
+        -- <img> is void in HTML; Sky's Html.img takes attrs only.
+        let _ = children in Html.img attrs
+    else if tag == "input" then
+        let _ = children in Html.input attrs
+    else
+        Html.div attrs children
 
 
 -- Pull every AttrAttribute into a flat list of Attr.attribute values.
@@ -477,9 +571,9 @@ kernelAttr key value =
     else if key == "method" then Attr.method value
     else if key == "action" then Attr.action value
     else
-        -- Fallback: encode as a class-prefixed style. Not ideal, but
-        -- avoids silently dropping the attribute.
-        Attr.class (key ++ "_" ++ value)
+        -- Generic fallback for arbitrary attribute names (sky-key,
+        -- aria-*, custom data-*, etc.).
+        Attr.attribute key value
 
 
 -- Tier 1 stops at static rendering. Std.Live.Events binding for
@@ -495,6 +589,10 @@ layoutContextFor attrs =
         AsRow
     else if hasMarker "__col" attrs then
         AsColumn
+    else if hasMarker "__paragraph" attrs then
+        AsParagraph
+    else if hasMarker "__textcolumn" attrs then
+        AsTextColumn
     else
         AsEl
 
@@ -551,6 +649,10 @@ collectStyle parentCtx myCtx attr acc =
             if k == "__row" then
                 acc
             else if k == "__col" then
+                acc
+            else if k == "__paragraph" then
+                acc
+            else if k == "__textcolumn" then
                 acc
             else
                 acc ++ " " ++ k ++ ": " ++ v ++ ";"

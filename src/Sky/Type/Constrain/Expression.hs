@@ -970,6 +970,12 @@ lookupKernelType modName funcName = case (modName, funcName) of
     -- Attr kernel functions
     ("Attr", "class") ->
         Just $ T.Forall [] (T.TLambda stringType attrType)
+    ("Attr", "attribute") ->
+        Just $ T.Forall [] (T.TLambda stringType (T.TLambda stringType attrType))
+    ("Attr", "dataAttribute") ->
+        Just $ T.Forall [] (T.TLambda stringType (T.TLambda stringType attrType))
+    ("Attr", "boolAttribute") ->
+        Just $ T.Forall [] (T.TLambda stringType attrType)
     ("Attr", "id") ->
         Just $ T.Forall [] (T.TLambda stringType attrType)
     ("Attr", "href") ->

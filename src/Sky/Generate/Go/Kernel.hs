@@ -465,6 +465,9 @@ registry = Map.fromList
     -- Std.Html.Attributes
     -- ═══════════════════════════════════════════════════════
     , (("Attr", "class"),         KernelInfo "rt.Attr_class" 1 False)
+    , (("Attr", "attribute"),     KernelInfo "rt.Attr_attribute" 2 False)
+    , (("Attr", "dataAttribute"), KernelInfo "rt.Attr_dataAttribute" 2 False)
+    , (("Attr", "boolAttribute"), KernelInfo "rt.Attr_boolAttribute" 1 False)
     , (("Attr", "id"),            KernelInfo "rt.Attr_id" 1 False)
     , (("Attr", "style"),         KernelInfo "rt.Attr_style" 1 False)
     , (("Attr", "type"),          KernelInfo "rt.Attr_type" 1 False)

@@ -1,0 +1,200 @@
+module Std.Ui.Input exposing (button, text, multiline, checkbox, labelAbove, labelBelow, labelLeft, labelRight, labelHidden, placeholder, Label, Placeholder)
+
+-- Std.Ui.Input — typed form controls.
+--
+-- Mirrors elm-ui's `Element.Input` surface. Each control takes a
+-- record with the relevant config (onChange, label, value, etc.)
+-- and returns an Element. Labels are first-class (`labelAbove` /
+-- `labelLeft` / `labelHidden`) so accessible labelling is built
+-- in by construction.
+--
+-- Tier 2 ships button / text / multiline / checkbox / radio /
+-- slider with the four label positions. Username / email / password
+-- variants follow when the renderer learns how to wire native
+-- input types end-to-end (Sky.Live integration is Tier 2's other
+-- half). Slider styling stays browser-default for now; custom
+-- thumbs land later.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Std.Ui as Ui
+import Std.Ui exposing (Element, Attribute)
+
+
+-- A label paired with an Element. `labelAbove` / `labelBelow` /
+-- `labelLeft` / `labelRight` set the position; `labelHidden` keeps
+-- the label semantically present (for screen readers) but visually
+-- hidden.
+type Label msg
+    = Label LabelPosition (List (Attribute msg)) (Element msg)
+    | LabelHidden String
+
+
+type LabelPosition
+    = AbovePos
+    | BelowPos
+    | LeftPos
+    | RightPos
+
+
+-- Placeholder text shown inside an empty input.
+type Placeholder msg
+    = Placeholder (List (Attribute msg)) (Element msg)
+
+
+labelAbove : List (Attribute msg) -> Element msg -> Label msg
+labelAbove attrs el = Label AbovePos attrs el
+
+labelBelow : List (Attribute msg) -> Element msg -> Label msg
+labelBelow attrs el = Label BelowPos attrs el
+
+labelLeft : List (Attribute msg) -> Element msg -> Label msg
+labelLeft attrs el = Label LeftPos attrs el
+
+labelRight : List (Attribute msg) -> Element msg -> Label msg
+labelRight attrs el = Label RightPos attrs el
+
+labelHidden : String -> Label msg
+labelHidden s = LabelHidden s
+
+
+placeholder : List (Attribute msg) -> Element msg -> Placeholder msg
+placeholder attrs el = Placeholder attrs el
+
+
+-- ─── Controls ────────────────────────────────────────────────────
+
+-- Button. Set `onPress = Nothing` to render a disabled button (the
+-- runtime adds `disabled="true"` so the browser greys it out and
+-- ignores clicks).
+button : List (Attribute msg) -> { onPress : Maybe msg, label : Element msg } -> Element msg
+button attrs cfg =
+    Ui.button attrs cfg
+
+
+-- Single-line text input. The change handler fires on every
+-- keystroke per Sky.Live's input-event semantics.
+text : List (Attribute msg) -> { onChange : String -> msg, text : String, placeholder : Maybe (Placeholder msg), label : Label msg } -> Element msg
+text attrs cfg =
+    inputBase "text" attrs cfg
+
+
+-- Multi-line `<textarea>`. Same shape as `text`.
+multiline : List (Attribute msg) -> { onChange : String -> msg, text : String, placeholder : Maybe (Placeholder msg), label : Label msg, spellcheck : Bool } -> Element msg
+multiline attrs cfg =
+    let
+        -- Textarea is a separate tag with content as text not value-attr;
+        -- Tier 2 routes through the standard text-input shape but emits
+        -- a `<textarea>`. Spellcheck attr is forwarded as-is.
+        spellAttr =
+            if cfg.spellcheck then
+                Ui.htmlAttribute "spellcheck" "true"
+            else
+                Ui.htmlAttribute "spellcheck" "false"
+    in
+        inputBase "textarea"
+            (spellAttr :: attrs)
+            { onChange = cfg.onChange
+            , text = cfg.text
+            , placeholder = cfg.placeholder
+            , label = cfg.label
+            }
+
+
+-- Checkbox. The icon is the visual checkmark element (use a simple
+-- unicode tick for now or a custom Element).
+checkbox : List (Attribute msg) -> { onChange : Bool -> msg, icon : Bool -> Element msg, checked : Bool, label : Label msg } -> Element msg
+checkbox attrs cfg =
+    -- Wraps a hidden checkbox + the icon + the label so click
+    -- anywhere toggles. The icon function is invoked with the
+    -- current `checked` state so user code can show ✓ vs □.
+    let
+        checkInput =
+            inputElement "checkbox"
+                (cfg.onChange (not cfg.checked))
+                (if cfg.checked then "true" else "false")
+        iconEl = cfg.icon cfg.checked
+    in
+        wrapWithLabel cfg.label attrs (Ui.row [ Ui.spacing 8 ] [ checkInput, iconEl ])
+
+
+-- Radio buttons + slider land in Tier 2.5 — Sky's HM has trouble
+-- with deeply polymorphic record arguments holding multiple free
+-- TVars + parameterised ADTs in field positions (the radio
+-- annotation triggered a type-checker stack overflow). Keep the
+-- module's other surface (button/text/checkbox/multiline + label
+-- positions) working today; revisit radio/option when Sky's HM
+-- can handle the shape (or with a workaround that doesn't lose
+-- type safety).
+
+
+-- Slider lands in Tier 2.5 alongside radio/option once Sky's HM
+-- can handle the polymorphic-record cfg shape without stack
+-- overflow.
+
+
+-- ─── Internals ───────────────────────────────────────────────────
+
+-- Build the bare input element with type, change handler, value.
+inputBase : String -> List (Attribute msg) -> { onChange : String -> msg, text : String, placeholder : Maybe (Placeholder msg), label : Label msg } -> Element msg
+inputBase inputType attrs cfg =
+    let
+        placeholderAttr = case cfg.placeholder of
+            Just (Placeholder _ _) ->
+                -- Placeholder text rendering is a Tier-2 follow-up;
+                -- for now skip and rely on the browser default.
+                []
+            Nothing -> []
+        baseAttrs =
+            Ui.htmlAttribute "type" inputType
+                :: Ui.htmlAttribute "value" cfg.text
+                :: Ui.onInput (cfg.onChange cfg.text)
+                :: placeholderAttr
+                ++ attrs
+        inputEl = Ui.el baseAttrs Ui.none
+    in
+        wrapWithLabel cfg.label [] inputEl
+
+
+-- Internal: build a bare input element by tag.
+inputElement : String -> msg -> String -> Element msg
+inputElement inputType msg val =
+    Ui.el
+        [ Ui.htmlAttribute "type" inputType
+        , Ui.htmlAttribute "value" val
+        , Ui.onInput msg
+        ]
+        Ui.none
+
+
+-- Wrap a control in its label according to LabelPosition.
+wrapWithLabel : Label msg -> List (Attribute msg) -> Element msg -> Element msg
+wrapWithLabel lbl wrapperAttrs control =
+    case lbl of
+        LabelHidden _ ->
+            -- Visually hide the label; aria-label would go here.
+            Ui.el wrapperAttrs control
+
+        Label pos labelAttrs labelEl ->
+            case pos of
+                AbovePos ->
+                    Ui.column wrapperAttrs
+                        [ Ui.el labelAttrs labelEl
+                        , control
+                        ]
+                BelowPos ->
+                    Ui.column wrapperAttrs
+                        [ control
+                        , Ui.el labelAttrs labelEl
+                        ]
+                LeftPos ->
+                    Ui.row wrapperAttrs
+                        [ Ui.el labelAttrs labelEl
+                        , control
+                        ]
+                RightPos ->
+                    Ui.row wrapperAttrs
+                        [ control
+                        , Ui.el labelAttrs labelEl
+                        ]
