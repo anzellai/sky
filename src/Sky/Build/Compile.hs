@@ -2852,10 +2852,33 @@ splitInferredSigWithReg recAliases fieldIdx arity funcType =
         -- which neither Sky nor the FFI emits.
         paramTVars = uniq (concatMap tvarsInEmitted paramTys)
         numbered = zip paramTVars ["T" ++ show i | i <- [1::Int ..]]
-        typeParams = map snd numbered
-        paramStrs = map (renderHofParamTy recAliases fieldIdx numbered) paramTys
-        retStr = typeStrWithAliasesReg recAliases fieldIdx numbered retTy
-    in (typeParams, paramStrs, retStr)
+        paramStrsRaw = map (renderHofParamTy recAliases fieldIdx numbered) paramTys
+        retStrRaw = typeStrWithAliasesReg recAliases fieldIdx numbered retTy
+        -- A TVar that `tvarsInEmitted` flagged but never actually
+        -- appears in the rendered Go param/return strings produces
+        -- a phantom `[T1 any]` declaration that Go can't infer at
+        -- the call site (`cannot infer T1`). This happens for Sky-
+        -- defined ADTs whose emitted form is `Mod_Adt` regardless
+        -- of their type params (e.g. `Element msg` emits as
+        -- `Std_Ui_Element`). Keep only the TVars that survive
+        -- rendering.
+        renderedSig = unwords (retStrRaw : paramStrsRaw)
+        usedTypeParams =
+            [ goName
+            | (_, goName) <- numbered
+            , goName `appearsAsToken` renderedSig
+            ]
+        -- Re-render with only the surviving TVars in the numbered
+        -- map so unused-TVar slots fall back to `any` instead of a
+        -- phantom T_n that confuses Go's inference.
+        keptNumbered =
+            [ (skyName, goName)
+            | (skyName, goName) <- numbered
+            , goName `elem` usedTypeParams
+            ]
+        paramStrs = map (renderHofParamTy recAliases fieldIdx keptNumbered) paramTys
+        retStr = typeStrWithAliasesReg recAliases fieldIdx keptNumbered retTy
+    in (usedTypeParams, paramStrs, retStr)
   where
     collectParams 0 ty = ([], ty)
     collectParams n (T.TLambda from to) =
@@ -2865,6 +2888,45 @@ splitInferredSigWithReg recAliases fieldIdx arity funcType =
 
     uniq [] = []
     uniq (x:xs) = x : uniq (filter (/= x) xs)
+
+    -- A TVar token like "T1" must appear as a whole-word match (not
+    -- as a substring of, say, "T11" or "Sky_T1_helper"), so we check
+    -- for non-identifier characters on both sides.
+    appearsAsToken t s = goAppearsAsToken t s
+
+
+-- | Whole-token match: returns True iff `tok` appears in `s` not
+-- as a substring of a longer identifier. Used by
+-- `splitInferredSigWithReg` to decide whether a numbered type
+-- parameter (e.g. "T1") is actually referenced in the rendered Go
+-- signature — phantom params must be dropped because Go's generic
+-- inference can't pin them at the call site.
+--
+-- Implementation: walk position-by-position, checking that the char
+-- immediately before the match (or start-of-string) and the char
+-- immediately after the match (or end-of-string) are both non-
+-- identifier characters. Catches overlap like "T1" inside "T11" and
+-- "Sky_T1_helper".
+goAppearsAsToken :: String -> String -> Bool
+goAppearsAsToken tok s = go 0 s
+  where
+    n = length tok
+    sLen = length s
+    go _ [] = False
+    go i input
+        | i + n > sLen = False
+        | take n input == tok
+            && (i == 0 || not (isIdChar (s !! (i - 1))))
+            && (i + n == sLen || not (isIdChar (s !! (i + n))))
+            = True
+        | otherwise = case input of
+            []      -> False
+            (_:rest) -> go (i + 1) rest
+
+    isIdChar ch = ch == '_'
+                || (ch >= 'a' && ch <= 'z')
+                || (ch >= 'A' && ch <= 'Z')
+                || (ch >= '0' && ch <= '9')
 
 
 -- | Count how many times each TVar name appears in a type, classified
