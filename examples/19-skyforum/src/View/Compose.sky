@@ -1,0 +1,89 @@
+module View.Compose exposing (..)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Std.Ui as Ui
+import Std.Ui exposing (Element)
+import Std.Ui.Background as Background
+import Std.Ui.Border as Border
+import Std.Ui.Font as Font
+import Domain exposing (..)
+import View.Common exposing (clickable)
+
+
+composeArea : Model -> Post -> Element Msg
+composeArea model post =
+    case model.session of
+        Nothing ->
+            Ui.el [ Font.color (Ui.rgb 130 130 130), Font.size 12 ]
+                (clickable (Navigate LoginPage)
+                    (Ui.text "Sign in to comment"))
+
+        Just _sess ->
+            composeForm model post
+
+
+composeForm : Model -> Post -> Element Msg
+composeForm model post =
+    Ui.column
+        [ Ui.spacing 8
+        , Ui.padding 8
+        , Background.color (Ui.rgb 252 252 245)
+        , Border.rounded 4
+        , Border.width 1
+        , Border.color (Ui.rgb 220 220 200)
+        ]
+        [ Ui.el [ Font.size 12, Font.color (Ui.rgb 100 100 100) ]
+            (Ui.text (replyContext model.replyTo))
+        , composeInput model.composeBody
+        , composeActions post.id model.replyTo
+        ]
+
+
+replyContext : Int -> String
+replyContext replyTo =
+    if replyTo == 0 then
+        "Comment on this post"
+    else
+        "Replying to comment #" ++ String.fromInt replyTo
+
+
+-- Inline input — no helper indirection (CLAUDE.md Limitation #18:
+-- typed (String -> Msg) helper params get monomorphised to
+-- (String -> any) by the typed codegen, breaking go build).
+composeInput : String -> Element Msg
+composeInput current =
+    Ui.el
+        [ Ui.htmlAttribute "type" "text"
+        , Ui.htmlAttribute "value" current
+        , Ui.htmlAttribute "placeholder" "Write your comment..."
+        , Ui.onInput ComposeBodyChanged
+        , Background.color (Ui.rgb 255 255 255)
+        , Border.width 1
+        , Border.color (Ui.rgb 200 200 200)
+        , Border.rounded 3
+        , Ui.padding 6
+        ]
+        (Ui.text "")
+
+
+composeActions : Int -> Int -> Element Msg
+composeActions postId replyTo =
+    Ui.row [ Ui.spacing 6 ]
+        [ Ui.button
+            [ Background.color (Ui.rgb 255 102 0)
+            , Font.color (Ui.rgb 255 255 255)
+            , Border.rounded 3
+            , Ui.padding 4
+            ]
+            { onPress = Just (SubmitComment postId), label = Ui.text "post" }
+        , if replyTo == 0 then
+            Ui.text ""
+          else
+            Ui.button
+                [ Background.color (Ui.rgb 230 230 230)
+                , Border.rounded 3
+                , Ui.padding 4
+                ]
+                { onPress = Just CancelReply, label = Ui.text "cancel" }
+        ]

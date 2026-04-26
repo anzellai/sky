@@ -1,0 +1,88 @@
+module View.Posts exposing (postsListView, postRow)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Std.Ui as Ui
+import Std.Ui exposing (Element)
+import Std.Ui.Background as Background
+import Std.Ui.Border as Border
+import Std.Ui.Font as Font
+import Domain exposing (..)
+import View.Common exposing (clickable)
+
+
+postsListView : List Post -> Element Msg
+postsListView posts =
+    Ui.column [ Ui.spacing 12 ] (List.indexedMap postRow posts)
+
+
+postRow : Int -> Post -> Element Msg
+postRow index post =
+    Ui.row
+        [ Ui.spacing 12
+        , Ui.padding 8
+        , Background.color (Ui.rgb 255 255 255)
+        , Border.rounded 4
+        , Border.width 1
+        , Border.color (Ui.rgb 230 230 230)
+        ]
+        [ rankNumber (index + 1)
+        , postUpvoteButton post
+        , postBody post
+        ]
+
+
+rankNumber : Int -> Element Msg
+rankNumber n =
+    Ui.el
+        [ Ui.width (Ui.px 28)
+        , Ui.centerY
+        , Font.color (Ui.rgb 130 130 130)
+        ]
+        (Ui.text (String.fromInt n ++ "."))
+
+
+postUpvoteButton : Post -> Element Msg
+postUpvoteButton post =
+    Ui.column
+        [ Ui.width (Ui.px 40)
+        , Ui.spacing 2
+        , Ui.centerY
+        ]
+        [ Ui.button
+            [ Background.color (Ui.rgb 240 240 240)
+            , Border.rounded 3
+            , Border.width 0
+            , Font.color (Ui.rgb 130 130 130)
+            , Ui.padding 2
+            , Ui.centerX
+            ]
+            { onPress = Just (UpvotePost post.id)
+            , label = Ui.text "▲"
+            }
+        , Ui.el [ Ui.centerX, Font.size 11, Font.color (Ui.rgb 130 130 130) ]
+            (Ui.text (String.fromInt post.votes))
+        ]
+
+
+postBody : Post -> Element Msg
+postBody post =
+    Ui.column
+        [ Ui.spacing 4 ]
+        [ Ui.row [ Ui.spacing 8 ]
+            [ Ui.el [ Font.size 14, Font.color (Ui.rgb 0 0 0) ]
+                (clickable (Navigate (PostPage post.id)) (Ui.text post.title))
+            , Ui.el [ Font.size 11, Font.color (Ui.rgb 130 130 130) ]
+                (Ui.text ("(" ++ shortenUrl post.url ++ ")"))
+            ]
+        , Ui.row [ Ui.spacing 6 ]
+            [ Ui.el [ Font.size 11, Font.color (Ui.rgb 130 130 130) ]
+                (Ui.text ("by " ++ post.author))
+            , Ui.el [ Font.size 11, Font.color (Ui.rgb 130 130 130) ]
+                (Ui.text "|")
+            , Ui.el [ Font.size 11, Font.color (Ui.rgb 130 130 130) ]
+                (clickable (Navigate (PostPage post.id))
+                    (Ui.text (String.fromInt post.commentCount ++ " comments")))
+            ]
+        ]

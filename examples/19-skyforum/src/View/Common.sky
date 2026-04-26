@@ -1,0 +1,74 @@
+module View.Common exposing (..)
+
+-- App chrome shared across pages: top nav, session widget, footer,
+-- plus two low-level click helpers (clickable for inline links,
+-- navButton for chrome buttons).
+
+import Sky.Core.Prelude exposing (..)
+import Std.Ui as Ui
+import Std.Ui exposing (Element)
+import Std.Ui.Background as Background
+import Std.Ui.Border as Border
+import Std.Ui.Font as Font
+import Std.Ui.Region as Region
+import Domain exposing (..)
+
+
+-- A clickable wrapper that doesn't render as a <button>. Useful for
+-- inline link-style navigation where you don't want default button
+-- chrome but still want a click handler.
+clickable : Msg -> Element Msg -> Element Msg
+clickable msg child =
+    Ui.el [ Ui.onClick msg, Ui.pointer ] child
+
+
+navButton : Msg -> String -> Element Msg
+navButton msg label =
+    Ui.button
+        [ Background.color (Ui.rgb 255 153 51)
+        , Font.color (Ui.rgb 255 255 255)
+        , Border.rounded 3
+        , Ui.padding 4
+        ]
+        { onPress = Just msg, label = Ui.text label }
+
+
+topNav : Model -> Element Msg
+topNav model =
+    Ui.row
+        [ Ui.spacing 12
+        , Ui.padding 12
+        , Background.color (Ui.rgb 255 102 0)
+        , Border.rounded 4
+        ]
+        [ Ui.el [ Font.bold, Font.color (Ui.rgb 255 255 255) ]
+            (clickable (Navigate HomePage) (Ui.text "skyforum"))
+        , Ui.el [ Font.color (Ui.rgb 255 255 255) ]
+            (clickable (Navigate HomePage) (Ui.text "top"))
+        , Ui.el [ Ui.alignRight ] (sessionWidget model.session)
+        ]
+
+
+sessionWidget : Maybe Session -> Element Msg
+sessionWidget maybeSession =
+    case maybeSession of
+        Just sess ->
+            Ui.row [ Ui.spacing 8 ]
+                [ Ui.el [ Font.color (Ui.rgb 255 255 255) ]
+                    (Ui.text ("hi, " ++ sess.username))
+                , navButton LogoutClicked "logout"
+                ]
+
+        Nothing ->
+            navButton (Navigate LoginPage) "sign in"
+
+
+pageFooter : Element Msg
+pageFooter =
+    Ui.el
+        [ Ui.centerX
+        , Font.size 11
+        , Font.color (Ui.rgb 130 130 130)
+        , Region.footer
+        ]
+        (Ui.text "skyforum — Sky.Live + Std.Ui demo, see examples/19-skyforum/")

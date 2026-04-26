@@ -1,0 +1,72 @@
+module View.Login exposing (..)
+
+-- Inline form inputs only — no typed (String -> Msg) helper functions.
+-- See CLAUDE.md Limitation #18: typed codegen monomorphises a helper
+-- with `(String -> Msg)` params to `(String -> any)`, which `go build`
+-- rejects. Inlining the input element at the call site routes the Msg
+-- constructor directly through Ui.onInput's typed surface.
+
+import Sky.Core.Prelude exposing (..)
+import Std.Ui as Ui
+import Std.Ui exposing (Element)
+import Std.Ui.Background as Background
+import Std.Ui.Border as Border
+import Std.Ui.Font as Font
+import Std.Ui.Region as Region
+import Domain exposing (..)
+
+
+loginView : Model -> Element Msg
+loginView model =
+    Ui.column
+        [ Ui.spacing 16
+        , Ui.padding 16
+        , Background.color (Ui.rgb 255 255 255)
+        , Border.rounded 4
+        , Ui.width (Ui.px 320)
+        ]
+        [ Ui.el [ Region.heading 2, Font.size 18, Font.bold ]
+            (Ui.text "Sign in")
+        , Ui.el [ Font.size 12, Font.color (Ui.rgb 100 100 100) ]
+            (Ui.text "Any non-empty username works — this demo doesn't really authenticate.")
+        , Ui.column [ Ui.spacing 4 ]
+            [ Ui.el [ Font.size 12 ] (Ui.text "Username")
+            , Ui.el
+                [ Ui.htmlAttribute "type" "text"
+                , Ui.htmlAttribute "value" model.loginUser
+                , Ui.onInput LoginUsernameChanged
+                , Border.width 1
+                , Border.color (Ui.rgb 200 200 200)
+                , Border.rounded 3
+                , Ui.padding 6
+                , Background.color (Ui.rgb 255 255 255)
+                ]
+                (Ui.text "")
+            ]
+        , Ui.column [ Ui.spacing 4 ]
+            [ Ui.el [ Font.size 12 ] (Ui.text "Password")
+            , Ui.el
+                [ Ui.htmlAttribute "type" "password"
+                , Ui.htmlAttribute "value" model.loginPass
+                , Ui.onInput LoginPasswordChanged
+                , Border.width 1
+                , Border.color (Ui.rgb 200 200 200)
+                , Border.rounded 3
+                , Ui.padding 6
+                , Background.color (Ui.rgb 255 255 255)
+                ]
+                (Ui.text "")
+            ]
+        , if model.loginError == "" then
+            Ui.text ""
+          else
+            Ui.el [ Font.color (Ui.rgb 200 60 60), Font.size 12 ]
+                (Ui.text model.loginError)
+        , Ui.button
+            [ Background.color (Ui.rgb 255 102 0)
+            , Font.color (Ui.rgb 255 255 255)
+            , Border.rounded 3
+            , Ui.padding 6
+            ]
+            { onPress = Just LoginSubmit, label = Ui.text "sign in" }
+        ]

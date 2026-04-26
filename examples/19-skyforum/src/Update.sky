@@ -1,0 +1,82 @@
+module Update exposing (update)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Std.Cmd as Cmd
+import Domain exposing (..)
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        Navigate page ->
+            ( { model | currentPage = page, composeBody = "", replyTo = 0 }, Cmd.none )
+
+        UpvotePost postId ->
+            ( { model | posts = List.map (bumpPost postId) model.posts }, Cmd.none )
+
+        UpvoteComment commentId ->
+            ( { model | comments = List.map (bumpComment commentId) model.comments }, Cmd.none )
+
+        LoginUsernameChanged u ->
+            ( { model | loginUser = u }, Cmd.none )
+
+        LoginPasswordChanged p ->
+            ( { model | loginPass = p }, Cmd.none )
+
+        LoginSubmit ->
+            if String.isEmpty (String.trim model.loginUser) then
+                ( { model | loginError = "Username is required." }, Cmd.none )
+            else
+                ( { model
+                    | session = Just { username = String.trim model.loginUser }
+                    , loginUser = ""
+                    , loginPass = ""
+                    , loginError = ""
+                    , currentPage = HomePage
+                  }
+                , Cmd.none
+                )
+
+        LogoutClicked ->
+            ( { model | session = Nothing, currentPage = HomePage }, Cmd.none )
+
+        ComposeBodyChanged body ->
+            ( { model | composeBody = body }, Cmd.none )
+
+        StartReplyTo parentId ->
+            ( { model | replyTo = parentId, composeBody = "" }, Cmd.none )
+
+        CancelReply ->
+            ( { model | replyTo = 0, composeBody = "" }, Cmd.none )
+
+        SubmitComment postId ->
+            case model.session of
+                Nothing ->
+                    ( { model | currentPage = LoginPage }, Cmd.none )
+
+                Just sess ->
+                    if String.isEmpty (String.trim model.composeBody) then
+                        ( model, Cmd.none )
+                    else
+                        ( { model
+                            | comments = model.comments ++ [ newComment model sess postId ]
+                            , posts = List.map (bumpPostComments postId) model.posts
+                            , composeBody = ""
+                            , replyTo = 0
+                            , nextCommentId = model.nextCommentId + 1
+                          }
+                        , Cmd.none
+                        )
+
+
+newComment : Model -> Session -> Int -> Comment
+newComment model sess postId =
+    { id = model.nextCommentId
+    , postId = postId
+    , parentId = model.replyTo
+    , author = sess.username
+    , body = String.trim model.composeBody
+    , votes = 1
+    }

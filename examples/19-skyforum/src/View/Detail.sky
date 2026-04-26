@@ -1,0 +1,103 @@
+module View.Detail exposing (..)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Std.Ui as Ui
+import Std.Ui exposing (Element)
+import Std.Ui.Background as Background
+import Std.Ui.Border as Border
+import Std.Ui.Font as Font
+import Domain exposing (..)
+import View.Posts exposing (postRow)
+import View.Compose exposing (composeArea)
+
+
+postDetailView : Model -> Int -> Element Msg
+postDetailView model postId =
+    case findPost postId model.posts of
+        Nothing ->
+            Ui.el [ Font.color (Ui.rgb 200 60 60) ] (Ui.text "Post not found.")
+
+        Just post ->
+            Ui.column
+                [ Ui.spacing 16 ]
+                [ postRow 0 post
+                , composeArea model post
+                , Ui.column
+                    [ Ui.spacing 8 ]
+                    [ Ui.el [ Font.size 14, Font.bold ]
+                        (Ui.text (String.fromInt post.commentCount ++ " comments"))
+                    , commentTreeView model.comments post.id 0 0
+                    ]
+                ]
+
+
+-- Render the comment tree under a given parent (parentId = 0 for
+-- top-level). Recurses on children, indenting each level by `depth`
+-- pixels. `depth` is the actual pixel indent so we don't re-multiply
+-- inside the tree.
+commentTreeView : List Comment -> Int -> Int -> Int -> Element Msg
+commentTreeView allComments postId parentId depth =
+    let
+        children = List.filter (matchesParent postId parentId) allComments
+        renderedChildren = List.map (\c -> commentNode allComments c depth) children
+    in
+        if List.isEmpty children then
+            Ui.text ""
+        else
+            Ui.column [ Ui.spacing 8 ] renderedChildren
+
+
+commentNode : List Comment -> Comment -> Int -> Element Msg
+commentNode allComments c parentDepth =
+    let
+        myDepth = parentDepth + 24
+    in
+        Ui.column
+            [ Ui.spacing 6
+            , Ui.padding 6
+            , Background.color (Ui.rgb 255 255 255)
+            , Border.rounded 3
+            ]
+            [ commentHeader c
+            , Ui.el [] (Ui.text c.body)
+            , commentActions c
+            , Ui.el
+                [ Ui.style "padding-left" (String.fromInt myDepth ++ "px") ]
+                (commentTreeView allComments c.postId c.id myDepth)
+            ]
+
+
+commentHeader : Comment -> Element Msg
+commentHeader c =
+    Ui.row
+        [ Ui.spacing 6
+        , Font.size 11
+        , Font.color (Ui.rgb 130 130 130)
+        ]
+        [ Ui.el [ Font.bold ] (Ui.text c.author)
+        , Ui.text "•"
+        , Ui.text (String.fromInt c.votes ++ " points")
+        ]
+
+
+commentActions : Comment -> Element Msg
+commentActions c =
+    Ui.row
+        [ Ui.spacing 8
+        , Font.size 11
+        ]
+        [ Ui.el
+            [ Font.color (Ui.rgb 100 130 220)
+            , Ui.onClick (UpvoteComment c.id)
+            , Ui.pointer
+            ]
+            (Ui.text "upvote")
+        , Ui.el
+            [ Font.color (Ui.rgb 100 130 220)
+            , Ui.onClick (StartReplyTo c.id)
+            , Ui.pointer
+            ]
+            (Ui.text "reply")
+        ]

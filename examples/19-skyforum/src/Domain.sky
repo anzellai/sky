@@ -1,0 +1,115 @@
+module Domain exposing (..)
+
+-- Pure types + same-shape helpers. No Std.Ui imports here, so the
+-- type-checker stays well below the heap-exhaustion limit (CLAUDE.md
+-- Limitation #17): the heavy unification load is in the per-View
+-- modules.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.Maybe as Maybe
+import Sky.Core.String as String
+
+
+-- ─── Domain types ────────────────────────────────────────────────
+
+type alias Post =
+    { id : Int
+    , title : String
+    , url : String
+    , author : String
+    , votes : Int
+    , commentCount : Int
+    }
+
+
+type alias Comment =
+    { id : Int
+    , postId : Int
+    , parentId : Int      -- 0 = top-level (root) comment under the post
+    , author : String
+    , body : String
+    , votes : Int
+    }
+
+
+type alias Session =
+    { username : String }
+
+
+type Page
+    = HomePage
+    | PostPage Int
+    | LoginPage
+
+
+type alias Model =
+    { posts : List Post
+    , comments : List Comment
+    , currentPage : Page
+    , session : Maybe Session
+    , loginUser : String
+    , loginPass : String
+    , loginError : String
+    , composeBody : String
+    , replyTo : Int            -- parentId for the next compose; 0 = top-level
+    , nextCommentId : Int
+    }
+
+
+type Msg
+    = Navigate Page
+    | UpvotePost Int
+    | UpvoteComment Int
+    | LoginUsernameChanged String
+    | LoginPasswordChanged String
+    | LoginSubmit
+    | LogoutClicked
+    | ComposeBodyChanged String
+    | StartReplyTo Int
+    | CancelReply
+    | SubmitComment Int
+
+
+-- ─── Pure helpers (no Std.Ui dependency) ─────────────────────────
+
+bumpPost : Int -> Post -> Post
+bumpPost targetId post =
+    if post.id == targetId then
+        { post | votes = post.votes + 1 }
+    else
+        post
+
+
+bumpComment : Int -> Comment -> Comment
+bumpComment targetId comment =
+    if comment.id == targetId then
+        { comment | votes = comment.votes + 1 }
+    else
+        comment
+
+
+bumpPostComments : Int -> Post -> Post
+bumpPostComments targetId post =
+    if post.id == targetId then
+        { post | commentCount = post.commentCount + 1 }
+    else
+        post
+
+
+findPost : Int -> List Post -> Maybe Post
+findPost target posts = List.find (\p -> p.id == target) posts
+
+
+matchesParent : Int -> Int -> Comment -> Bool
+matchesParent postId parentId c =
+    c.postId == postId && c.parentId == parentId
+
+
+shortenUrl : String -> String
+shortenUrl url =
+    let
+        afterScheme = String.replace "https://" "" (String.replace "http://" "" url)
+        slash = String.split "/" afterScheme
+    in
+        Maybe.withDefault afterScheme (List.head slash)
