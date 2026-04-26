@@ -29,6 +29,7 @@ module Std.Ui exposing (..)
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.List as List
 import Sky.Core.String as String
+import Sky.Core.Math as Math
 import Std.Html as Html
 import Std.Html.Attributes as Attr
 
@@ -101,7 +102,12 @@ type Location
 
 
 type Color
-    = Rgba Float Float Float Float
+    = Rgba Int Int Int Float
+      -- R G B as 0-255 ints (elm-ui compat layer below in
+      -- `rgb` / `rgb255` accepts both 0-1 floats and 0-255 ints
+      -- with separate constructors). Alpha stays Float in [0,1].
+      -- Storing ints sidesteps Sky's HM friction with Float
+      -- arithmetic during CSS rendering.
 
 
 type Description
@@ -429,24 +435,35 @@ html node =
 
 -- ─── Color ───────────────────────────────────────────────────────
 
-rgb : Float -> Float -> Float -> Color
+-- 0-255 integer channels. Recommended for predictable colours.
+-- (Sky's HM doesn't currently round-trip [0,1] floats through the
+-- CSS render path correctly, so for now `rgb` only models the
+-- 0-255 int range.)
+rgb : Int -> Int -> Int -> Color
 rgb r g b = Rgba r g b 1.0
 
 
-rgba : Float -> Float -> Float -> Float -> Color
+rgb255 : Int -> Int -> Int -> Color
+rgb255 r g b = Rgba r g b 1.0
+
+
+-- 0-255 RGB + 0-1 alpha. Alpha stays Float for transparency
+-- precision; the RGB channels are integer 0-255 for a clean CSS
+-- render.
+rgba : Int -> Int -> Int -> Float -> Color
 rgba r g b a = Rgba r g b a
 
 
 white : Color
-white = Rgba 1.0 1.0 1.0 1.0
+white = Rgba 255 255 255 1.0
 
 
 black : Color
-black = Rgba 0.0 0.0 0.0 1.0
+black = Rgba 0 0 0 1.0
 
 
 transparent : Color
-transparent = Rgba 0.0 0.0 0.0 0.0
+transparent = Rgba 0 0 0 0.0
 
 
 -- ─── Render ──────────────────────────────────────────────────────
@@ -690,18 +707,24 @@ collectStyle parentCtx myCtx attr acc =
             acc ++ " cursor: pointer;"
 
 
--- Render a Color as a CSS rgba(...) string. CSS accepts Float
--- channels via percentages, so we sidestep the Sky-side Float→Int
--- conversion (currently HM-finicky) and just render channels as
--- raw floats — `rgba(1.0, 0.5, 0.0, 1.0)` is a valid CSS colour.
+-- Render a Color as a CSS rgba(...) string using percentage
+-- channels. The legacy comma-separated rgba() form requires
+-- 0–255 integer channels — passing floats like rgba(0.97, …)
+-- silently parses as black in every browser. Percentages
+-- (rgba(97%, …, 1)) are universally accepted and let us keep
+-- the float channel representation Sky users wrote.
+-- Render a Color as a CSS rgba(...) string. Channels are already
+-- 0-255 integers (Sky's HM doesn't currently round-trip [0,1]
+-- floats through Float arithmetic in destructured contexts), so
+-- we just stringify and emit.
 colorCss : Color -> String
 colorCss c =
     case c of
         Rgba r g b a ->
             "rgba("
-                ++ String.fromFloat r ++ ", "
-                ++ String.fromFloat g ++ ", "
-                ++ String.fromFloat b ++ ", "
+                ++ String.fromInt r ++ ", "
+                ++ String.fromInt g ++ ", "
+                ++ String.fromInt b ++ ", "
                 ++ String.fromFloat a ++ ")"
 
 
