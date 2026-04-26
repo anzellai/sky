@@ -379,6 +379,53 @@ onKeyDown : msg -> Attribute msg
 onKeyDown msg = AttrEvent (Event.onKeyDown msg)
 
 
+-- File-input change handler. Wire this on `<input type="file">`
+-- (use `Ui.input [ Ui.htmlAttribute "type" "file", Ui.onFile FileSelected ]`).
+-- The browser-side driver reads the chosen file, base64-encodes it as
+-- a data URL, and dispatches `[dataUrl]` as the args. The Sky-side
+-- callback receives the data URL as a single String — store it in
+-- Model and decode/upload as needed (the Std.Encoding module's
+-- base64Decode helps here).
+--
+-- For images, prefer `onImage` instead — it auto-resizes to the
+-- `fileMaxWidth` / `fileMaxHeight` hints before sending, saving
+-- bandwidth on large camera-roll uploads.
+onFile : (String -> msg) -> Attribute msg
+onFile cb = AttrEvent (Event.onFile cb)
+
+
+-- Image-input change handler — same as onFile but the browser-side
+-- driver scales the image to `Ui.fileMaxWidth` / `fileMaxHeight`
+-- (default 1200×1200) and re-encodes as JPEG @ 0.85 quality before
+-- sending. Output is still a `data:image/jpeg;base64,...` URL.
+onImage : (String -> msg) -> Attribute msg
+onImage cb = AttrEvent (Event.onImage cb)
+
+
+-- Client-side file-size cap in bytes. Files exceeding this are
+-- dropped on the browser side with a console.warn before any data is
+-- sent. UX guard, not a security boundary — server-side validation
+-- still required (Sky.Live also caps the POST body via the
+-- sky.toml [live] maxBodyBytes setting, default 5 MiB).
+fileMaxSize : Int -> Attribute msg
+fileMaxSize bytes =
+    AttrAttribute "data-sky-ev-sky-file-max-size" (String.fromInt bytes)
+
+
+-- Image resize hint — width in pixels. The image is scaled to fit
+-- `fileMaxWidth` × `fileMaxHeight` (default 1200×1200) on the
+-- browser side before being sent. Only applies to `Ui.onImage`.
+fileMaxWidth : Int -> Attribute msg
+fileMaxWidth px =
+    AttrAttribute "data-sky-ev-sky-file-max-width" (String.fromInt px)
+
+
+-- Image resize hint — height in pixels. Pair with `fileMaxWidth`.
+fileMaxHeight : Int -> Attribute msg
+fileMaxHeight px =
+    AttrAttribute "data-sky-ev-sky-file-max-height" (String.fromInt px)
+
+
 -- ─── Common element shortcuts ────────────────────────────────────
 
 -- Hyperlink. Renders as `<a href=…>…</a>`. The href is set as an
