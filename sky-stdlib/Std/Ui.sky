@@ -458,6 +458,37 @@ input attrs =
     TaggedNode "input" NoDescription attrs []
 
 
+-- A `<form>`. Wrap inputs to use the `<form onSubmit=...>` pattern
+-- — recommended for sensitive inputs (password, API key, credit
+-- card) per Sky.Live's "Forms with passwords" doctrine in CLAUDE.md.
+-- Three reasons to prefer form-submit over per-keystroke onInput
+-- on password fields: (1) password manager extensions stop seeing
+-- DOM mutation re-prompts on every render, (2) the secret never
+-- lives in Model so it never gets serialised into Redis/Postgres
+-- session stores, (3) race-free submit reads the live DOM value
+-- not a debounced keystroke.
+--
+-- Use with `Ui.onSubmit DoSignIn` where `DoSignIn` takes a typed
+-- record matching the form's named inputs (e.g.
+-- `type alias Creds = { username : String, password : String }`).
+-- Sky.Live's typed Msg dispatch decodes the wire form data into
+-- the record via case-insensitive json.Unmarshal — Sky's
+-- lowercase field names land in the matching Go fields without
+-- per-Msg decoder boilerplate.
+form : List (Attribute msg) -> List (Element msg) -> Element msg
+form attrs children =
+    TaggedNode "form" NoDescription attrs children
+
+
+-- Convenience for the `name` attribute on form inputs. Sky.Live's
+-- form-submit dispatch uses each input's `name` as the key in the
+-- record decoded into the Msg constructor's typed-record param.
+-- Equivalent to `Ui.htmlAttribute "name" value` — the typed wrapper
+-- just reads better in form definitions.
+name : String -> Attribute msg
+name value = AttrAttribute "name" value
+
+
 -- Escape hatch — wrap an arbitrary Html node as an Element. Useful
 -- when you need a tag Std.Ui doesn't model directly (e.g. <video>,
 -- <canvas>) without dropping the rest of your layout.
