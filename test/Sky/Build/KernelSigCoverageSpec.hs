@@ -21,11 +21,15 @@ import Data.List (isInfixOf)
 -- drops one, the spec fails before the silent runtime panic ships.
 
 
+-- Source file all assertions read from. Lifted to top-level so
+-- multiple `describe` blocks share the same binding.
+sigsFile :: FilePath
+sigsFile = "src/Sky/Type/Constrain/Expression.hs"
+
+
 spec :: Spec
 spec = do
     describe "Limitation #16 — dangerous-class kernel sigs registered" $ do
-        -- Read the source file once for all assertions.
-        let sigsFile = "src/Sky/Type/Constrain/Expression.hs"
 
         it "Server.static is registered (returns opaque Route)" $ do
             body <- BS8.unpack <$> BS.readFile sigsFile
@@ -56,3 +60,61 @@ spec = do
             body <- BS8.unpack <$> BS.readFile sigsFile
             ("(\"System\", \"cwd\")" `isInfixOf` body) `shouldBe` True
             ("(\"System\", \"exit\")" `isInfixOf` body) `shouldBe` True
+
+    describe "Limitation #16 mechanical sweep — bare-type kernel sigs registered" $ do
+        -- Char predicates and case helpers (returns Bool / String).
+        it "Char predicates: isAlpha / isDigit / isLower / isUpper" $ do
+            body <- BS8.unpack <$> BS.readFile sigsFile
+            mapM_ (\name -> do
+                let key = "(\"Char\", \"" ++ name ++ "\")"
+                (key `isInfixOf` body) `shouldBe` True)
+              [ "isAlpha", "isDigit", "isLower", "isUpper", "toLower", "toUpper" ]
+
+        it "Crypto pure helpers: sha256 / sha512 / md5 / hmacSha256 / constantTimeEqual" $ do
+            body <- BS8.unpack <$> BS.readFile sigsFile
+            mapM_ (\name -> do
+                let key = "(\"Crypto\", \"" ++ name ++ "\")"
+                (key `isInfixOf` body) `shouldBe` True)
+              [ "sha256", "sha512", "md5", "hmacSha256", "constantTimeEqual" ]
+
+        it "Path manipulation: base / dir / ext / isAbsolute" $ do
+            body <- BS8.unpack <$> BS.readFile sigsFile
+            mapM_ (\name -> do
+                let key = "(\"Path\", \"" ++ name ++ "\")"
+                (key `isInfixOf` body) `shouldBe` True)
+              [ "base", "dir", "ext", "isAbsolute" ]
+
+        it "Math constants and trig: e / sin / cos / tan / log" $ do
+            body <- BS8.unpack <$> BS.readFile sigsFile
+            mapM_ (\name -> do
+                let key = "(\"Math\", \"" ++ name ++ "\")"
+                (key `isInfixOf` body) `shouldBe` True)
+              [ "e", "sin", "cos", "tan", "log" ]
+
+        it "Time format helpers + arithmetic" $ do
+            body <- BS8.unpack <$> BS.readFile sigsFile
+            mapM_ (\name -> do
+                let key = "(\"Time\", \"" ++ name ++ "\")"
+                (key `isInfixOf` body) `shouldBe` True)
+              [ "format", "formatHTTP", "formatISO8601", "formatRFC3339"
+              , "addMillis", "diffMillis"
+              ]
+
+        it "String pure helpers: casefold / equalFold / isEmail / isUrl / trimEnd / trimStart" $ do
+            body <- BS8.unpack <$> BS.readFile sigsFile
+            mapM_ (\name -> do
+                let key = "(\"String\", \"" ++ name ++ "\")"
+                (key `isInfixOf` body) `shouldBe` True)
+              [ "casefold", "equalFold", "isEmail", "isUrl", "trimEnd", "trimStart" ]
+
+        it "Css length / transform / value helpers (Sprintf-returning)" $ do
+            body <- BS8.unpack <$> BS.readFile sigsFile
+            mapM_ (\name -> do
+                let key = "(\"Css\", \"" ++ name ++ "\")"
+                (key `isInfixOf` body) `shouldBe` True)
+              [ "vh", "vw", "ch", "fr", "deg", "ms", "sec"
+              , "rotate", "scale", "translateX", "translateY"
+              , "calc", "minmax", "repeat"
+              , "cssVar", "cssVarOr"
+              , "zero", "borderBox", "systemFont"
+              ]

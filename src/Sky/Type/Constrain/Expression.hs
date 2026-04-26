@@ -1424,6 +1424,155 @@ lookupKernelType modName funcName = case (modName, funcName) of
         Just $ T.Forall [] (T.TLambda floatType intType)
     ("Math", "pi") ->
         Just $ T.Forall [] floatType
+    -- Math (additional bare-type sigs landed 2026-04-27 — Limitation
+    -- #16 mechanical sweep). All return Float; runtime wraps math.X
+    -- with AsFloat coercion of the input.
+    ("Math", "e") ->
+        Just $ T.Forall [] floatType
+    ("Math", "log") ->
+        Just $ T.Forall [] (T.TLambda floatType floatType)
+    ("Math", "sin") ->
+        Just $ T.Forall [] (T.TLambda floatType floatType)
+    ("Math", "cos") ->
+        Just $ T.Forall [] (T.TLambda floatType floatType)
+    ("Math", "tan") ->
+        Just $ T.Forall [] (T.TLambda floatType floatType)
+
+    -- Char — pure character predicates and case helpers. Char arg
+    -- in, Bool / String out per the runtime's `unicode.Is*` and
+    -- `string(unicode.To*(...))` shapes.
+    ("Char", "isAlpha") ->
+        Just $ T.Forall [] (T.TLambda charType boolType)
+    ("Char", "isDigit") ->
+        Just $ T.Forall [] (T.TLambda charType boolType)
+    ("Char", "isLower") ->
+        Just $ T.Forall [] (T.TLambda charType boolType)
+    ("Char", "isUpper") ->
+        Just $ T.Forall [] (T.TLambda charType boolType)
+    ("Char", "toLower") ->
+        -- Runtime returns `string(unicode.ToLower(...))` (a 1-rune
+        -- Go string). Sig as `Char -> String` to match exactly.
+        Just $ T.Forall [] (T.TLambda charType stringType)
+    ("Char", "toUpper") ->
+        Just $ T.Forall [] (T.TLambda charType stringType)
+
+    -- Crypto — pure hash + MAC helpers. All return hex-encoded
+    -- String at runtime (`hex.EncodeToString(...)`).
+    ("Crypto", "sha256") ->
+        Just $ T.Forall [] (T.TLambda stringType stringType)
+    ("Crypto", "sha512") ->
+        Just $ T.Forall [] (T.TLambda stringType stringType)
+    ("Crypto", "md5") ->
+        Just $ T.Forall [] (T.TLambda stringType stringType)
+    ("Crypto", "hmacSha256") ->
+        Just $ T.Forall []
+            (T.TLambda stringType (T.TLambda stringType stringType))
+    ("Crypto", "constantTimeEqual") ->
+        Just $ T.Forall []
+            (T.TLambda stringType (T.TLambda stringType boolType))
+
+    -- Path — pure filesystem-path manipulation. All operate on
+    -- String paths.
+    ("Path", "base") ->
+        Just $ T.Forall [] (T.TLambda stringType stringType)
+    ("Path", "dir") ->
+        Just $ T.Forall [] (T.TLambda stringType stringType)
+    ("Path", "ext") ->
+        Just $ T.Forall [] (T.TLambda stringType stringType)
+    ("Path", "isAbsolute") ->
+        Just $ T.Forall [] (T.TLambda stringType boolType)
+
+    -- Time — format helpers (parsing helpers stay un-kernelled
+    -- because they return Result Error Time, which intersects
+    -- with the dangerous-class sigs already covered).
+    ("Time", "format") ->
+        Just $ T.Forall []
+            (T.TLambda stringType (T.TLambda intType stringType))
+    ("Time", "formatHTTP") ->
+        Just $ T.Forall [] (T.TLambda intType stringType)
+    ("Time", "formatISO8601") ->
+        Just $ T.Forall [] (T.TLambda intType stringType)
+    ("Time", "formatRFC3339") ->
+        Just $ T.Forall [] (T.TLambda intType stringType)
+    ("Time", "addMillis") ->
+        Just $ T.Forall []
+            (T.TLambda intType (T.TLambda intType intType))
+    ("Time", "diffMillis") ->
+        Just $ T.Forall []
+            (T.TLambda intType (T.TLambda intType intType))
+
+    -- Css — additional length / transform / value helpers. All
+    -- return String (Sprintf-formatted CSS values). Skip helpers
+    -- that return opaque `cssRule` / `cssProp` / `cssMediaRule`
+    -- structs (those need the typed-codegen runtime port — see
+    -- "Typed Codegen TODO" in CLAUDE.md). Polymorphic `a` arg
+    -- mirrors the existing Css.px / Css.rem convention.
+    ("Css", "vh") ->
+        Just $ T.Forall ["a"] (T.TLambda (T.TVar "a") stringType)
+    ("Css", "vw") ->
+        Just $ T.Forall ["a"] (T.TLambda (T.TVar "a") stringType)
+    ("Css", "ch") ->
+        Just $ T.Forall ["a"] (T.TLambda (T.TVar "a") stringType)
+    ("Css", "fr") ->
+        Just $ T.Forall ["a"] (T.TLambda (T.TVar "a") stringType)
+    ("Css", "deg") ->
+        Just $ T.Forall ["a"] (T.TLambda (T.TVar "a") stringType)
+    ("Css", "ms") ->
+        Just $ T.Forall ["a"] (T.TLambda (T.TVar "a") stringType)
+    ("Css", "sec") ->
+        Just $ T.Forall ["a"] (T.TLambda (T.TVar "a") stringType)
+    ("Css", "rotate") ->
+        Just $ T.Forall ["a"] (T.TLambda (T.TVar "a") stringType)
+    ("Css", "scale") ->
+        Just $ T.Forall ["a"] (T.TLambda (T.TVar "a") stringType)
+    ("Css", "translateX") ->
+        Just $ T.Forall ["a"] (T.TLambda (T.TVar "a") stringType)
+    ("Css", "translateY") ->
+        Just $ T.Forall ["a"] (T.TLambda (T.TVar "a") stringType)
+    ("Css", "calc") ->
+        -- calc(a op b) — three string-printable args.
+        Just $ T.Forall ["a", "b", "c"]
+            (T.TLambda (T.TVar "a")
+                (T.TLambda (T.TVar "b")
+                    (T.TLambda (T.TVar "c") stringType)))
+    ("Css", "minmax") ->
+        Just $ T.Forall ["a", "b"]
+            (T.TLambda (T.TVar "a")
+                (T.TLambda (T.TVar "b") stringType))
+    ("Css", "repeat") ->
+        Just $ T.Forall ["a", "b"]
+            (T.TLambda (T.TVar "a")
+                (T.TLambda (T.TVar "b") stringType))
+    ("Css", "cssVar") ->
+        Just $ T.Forall [] (T.TLambda stringType stringType)
+    ("Css", "cssVarOr") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda stringType (T.TLambda (T.TVar "a") stringType))
+    -- Css zero-arg constants — per CLAUDE.md Limitation #13 these
+    -- take `()` from Sky to sidestep zero-arity memoisation. Sig
+    -- as `() -> String` so the codegen sees the right shape.
+    ("Css", "zero") ->
+        Just $ T.Forall [] (T.TLambda T.TUnit stringType)
+    ("Css", "borderBox") ->
+        Just $ T.Forall [] (T.TLambda T.TUnit stringType)
+    ("Css", "systemFont") ->
+        Just $ T.Forall [] (T.TLambda T.TUnit stringType)
+
+    -- String — additional pure helpers
+    ("String", "casefold") ->
+        Just $ T.Forall [] (T.TLambda stringType stringType)
+    ("String", "equalFold") ->
+        Just $ T.Forall []
+            (T.TLambda stringType (T.TLambda stringType boolType))
+    ("String", "isEmail") ->
+        Just $ T.Forall [] (T.TLambda stringType boolType)
+    ("String", "isUrl") ->
+        Just $ T.Forall [] (T.TLambda stringType boolType)
+    ("String", "trimEnd") ->
+        Just $ T.Forall [] (T.TLambda stringType stringType)
+    ("String", "trimStart") ->
+        Just $ T.Forall [] (T.TLambda stringType stringType)
+
     -- String — additional
     ("String", "concat") ->
         Just $ T.Forall []
