@@ -181,6 +181,7 @@ test-suite sky-tests
       Sky.Build.HofTypedMsgSpec
       Sky.Build.KernelSigCoverageSpec
       Sky.Build.HeapBoundedHmSpec
+      Sky.Build.SolverBudgetSpec
       Sky.Build.UnreachableGateSpec
       Sky.Parse.CommentsSpec
       Sky.Lsp.Harness

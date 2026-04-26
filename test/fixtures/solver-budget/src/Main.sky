@@ -1,0 +1,19 @@
+module Main exposing (main)
+
+-- Tiny well-typed program. The defensive-bound test runs `sky check`
+-- on this fixture under SKY_SOLVER_BUDGET=2 (an unreasonably tight
+-- cap that ANY real program will trip), and asserts the error
+-- message is the expected TYPE ERROR: budget-exceeded shape rather
+-- than an OOM / panic / silent success.
+--
+-- The fixture itself is well-typed; the test forces the budget low
+-- so the bound trips on legitimate work. The complementary test in
+-- HeapBoundedHmSpec exercises the bound with a REAL pathological
+-- input (Main.sky.bak under reverted Std.Ui.Input).
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+
+main =
+    println "ok"

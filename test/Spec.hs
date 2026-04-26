@@ -21,6 +21,7 @@ import qualified Sky.Build.RecordCtorEmptyListSpec
 import qualified Sky.Build.HofTypedMsgSpec
 import qualified Sky.Build.KernelSigCoverageSpec
 import qualified Sky.Build.HeapBoundedHmSpec
+import qualified Sky.Build.SolverBudgetSpec
 import qualified Sky.Build.UnreachableGateSpec
 import qualified Sky.Parse.CommentsSpec
 import qualified Sky.Lsp.HoverShadowingSpec
@@ -92,6 +93,12 @@ main = hspec $ do
     -- pre-fix OOMed at 4-5 GB. Spec re-runs sky check on the bak
     -- reproducer under a tight heap cap.
     describe "Sky.Build.HeapBoundedHm"      Sky.Build.HeapBoundedHmSpec.spec
+    -- Limitation #17 hardening: defensive bound on the HM solver.
+    -- Caps total solveHelp invocations per `solve` call; trips
+    -- with TYPE ERROR before unbounded heap consumption can OOM
+    -- the host. See SolverBudgetSpec for the env-var override
+    -- (SKY_SOLVER_BUDGET) and the escape-hatch behaviour.
+    describe "Sky.Build.SolverBudget"       Sky.Build.SolverBudgetSpec.spec
     -- Audit P0-5: no raw `panic("sky: internal…)` in emitted Go.
     -- Runs AFTER ExampleSweep so the sky-out/main.go files are fresh.
     describe "Sky.Build.UnreachableGate"  Sky.Build.UnreachableGateSpec.spec
