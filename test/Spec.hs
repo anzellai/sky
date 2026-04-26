@@ -20,6 +20,7 @@ import qualified Sky.Build.RecordFieldOrderSpec
 import qualified Sky.Build.RecordCtorEmptyListSpec
 import qualified Sky.Build.HofTypedMsgSpec
 import qualified Sky.Build.KernelSigCoverageSpec
+import qualified Sky.Build.HeapBoundedHmSpec
 import qualified Sky.Build.UnreachableGateSpec
 import qualified Sky.Parse.CommentsSpec
 import qualified Sky.Lsp.HoverShadowingSpec
@@ -87,6 +88,10 @@ main = hspec $ do
     -- Without HM sigs, user pattern-matching against the wrapper
     -- silently degrades to `any` and surfaces as runtime panics.
     describe "Sky.Build.KernelSigCoverage" Sky.Build.KernelSigCoverageSpec.spec
+    -- Limitation #17: Std.Ui-cascading HM constraint pathology that
+    -- pre-fix OOMed at 4-5 GB. Spec re-runs sky check on the bak
+    -- reproducer under a tight heap cap.
+    describe "Sky.Build.HeapBoundedHm"      Sky.Build.HeapBoundedHmSpec.spec
     -- Audit P0-5: no raw `panic("sky: internal…)` in emitted Go.
     -- Runs AFTER ExampleSweep so the sky-out/main.go files are fresh.
     describe "Sky.Build.UnreachableGate"  Sky.Build.UnreachableGateSpec.spec
