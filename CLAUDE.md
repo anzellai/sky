@@ -21,6 +21,31 @@ All documentation, comments, variable names, function names, and user-facing str
 3. **Root-cause fixes only.** Fix at the correct abstraction layer. **Never suppress type errors or warnings.**
 4. **Production-grade architecture.** Must scale to large Go packages (Stripe SDK). Must remain maintainable.
 
+## Memory Safety (Non-Negotiable)
+
+**The mem-guard kill-switch MUST be running during any Sky compiler dev session, example build sweep, or LSP-heavy editing on macOS.** A runaway `sky build` / `sky lsp` / `cabal` / `ghc` / `haskell-language-server` process has previously pinned the entire Mac to swap and forced a hard power-off — losing unsaved work in every app, not just the offending terminal. This is a recurring risk class, not a one-off. Treat it like a missing `set -e`: the absence is the bug.
+
+Start it once at the top of the session and leave it running:
+
+```bash
+nohup ./scripts/mem-guard.sh > /tmp/mem-guard.out 2>&1 &
+disown        # so it survives if the host shell exits
+tail -f /tmp/mem-guard.log    # optional, watch what it does
+```
+
+Defaults (16GB Mac):
+- Per-process kill at **6 GB RSS** for `sky` / `sky-ffi-inspect` / `cabal` / `ghc` / `ghc-iserv` / `cc1` / `ld` / `haskell-language-server` / `hls-wrapper` / `gopls`.
+- Per-process kill at **10 GB RSS** (panic tier) for `claude` / `node` / `ghostty` — these are the *host* of the dev session, so the threshold is higher and the system-pressure rule additionally requires the host itself to already be over 4 GB before sacrificing it.
+- System-pressure floor: when free + inactive + speculative memory drops below **1.2 GB**, kill the heaviest watched process immediately. macOS swap thrashing escalates to lock-up within seconds once free memory falls past this point — the 2-second poll interval is sized to act inside that window.
+
+Tune via env vars: `MEM_GUARD_PROC_MB`, `MEM_GUARD_PANIC_MB`, `MEM_GUARD_SYS_FLOOR_MB`, `MEM_GUARD_INTERVAL`. `MEM_GUARD_DRY=1` runs in log-only mode for verification. The script never touches kernel processes, WindowServer, launchd, or anything outside its watch list.
+
+**Workflow rules:**
+- **Before** kicking off `cabal test` or the full `for d in examples/*/; do … done` clean-slate sweep, confirm `pgrep -f mem-guard.sh` returns a PID. If it doesn't, start it first.
+- **When extending the watch list** (new compiler tool, new dev binary), add the regex to both `ALWAYS_KILL_RE` / `PANIC_KILL_RE` in `scripts/mem-guard.sh` AND mention the addition here so future sessions don't accidentally shrink the safety net.
+- **If the guard fires**, log the full kill line (`grep KILL /tmp/mem-guard.log`) into the related issue or commit message — repeated kills on the same binary are a real compiler/LSP bug, not just an unlucky build.
+- **Never disable the guard to silence a kill.** A kill means the offending process was on a path to OOM the machine; the fix is in the compiler/LSP, not in raising the threshold past available RAM.
+
 ## v0.10.0 Stdlib Consolidation (BREAKING)
 
 The standard library was deduplicated. Old modules with overlapping surface have been dropped or renamed. This is a one-shot migration — there are **no compat shims**, by design.
