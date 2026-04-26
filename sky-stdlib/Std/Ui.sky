@@ -32,6 +32,7 @@ import Sky.Core.String as String
 import Sky.Core.Math as Math
 import Std.Html as Html
 import Std.Html.Attributes as Attr
+import Std.Live.Events as Event
 
 
 -- ─── Core types ──────────────────────────────────────────────────
@@ -59,7 +60,7 @@ type Attribute msg
     | AttrStyle String String
     | AttrDescribe Description
     | AttrClass String
-    | AttrEvent String msg                 -- "click", "input", "submit", ...
+    | AttrEvent any                        -- pre-constructed Std.Live.Events.* value (eventPair)
     | AttrAttribute String String          -- raw attribute (href, src, name, ...)
     | AttrFontSize Int
     | AttrFontColor Color
@@ -336,20 +337,46 @@ descLabel s = DescLabel s
 
 -- Bind a click handler. The msg is dispatched on the wire when the
 -- user clicks the element. Inside Sky.Live, this becomes an SSE
--- round-trip + Msg dispatch through update.
+-- round-trip + Msg dispatch through update. The Std.Live.Events
+-- helper is invoked here at construction time so msg's concrete
+-- type is preserved through the AttrEvent carrier (any-typed).
 onClick : msg -> Attribute msg
-onClick msg = AttrEvent "click" msg
+onClick msg = AttrEvent (Event.onClick msg)
 
 
--- Submit handler — for `<form>` elements. The msg constructor takes
--- the form data as a typed record.
+-- Submit handler — for <form> elements. msg should accept a
+-- record matching the form's named inputs (Sky.Live decodes form
+-- data into the constructor's typed record param).
 onSubmit : msg -> Attribute msg
-onSubmit msg = AttrEvent "submit" msg
+onSubmit msg = AttrEvent (Event.onSubmit msg)
 
 
 -- Input change handler — fires per keystroke for text inputs.
-onInput : msg -> Attribute msg
-onInput msg = AttrEvent "input" msg
+-- The callback receives the input's current value as a String;
+-- the typed signature lets Sky's HM verify the wrapper at the
+-- call site.
+onInput : (String -> msg) -> Attribute msg
+onInput cb = AttrEvent (Event.onInput cb)
+
+
+onChange : (String -> msg) -> Attribute msg
+onChange cb = AttrEvent (Event.onChange cb)
+
+
+onFocus : msg -> Attribute msg
+onFocus msg = AttrEvent (Event.onFocus msg)
+
+
+onMouseOver : msg -> Attribute msg
+onMouseOver msg = AttrEvent (Event.onMouseOver msg)
+
+
+onMouseOut : msg -> Attribute msg
+onMouseOut msg = AttrEvent (Event.onMouseOut msg)
+
+
+onKeyDown : msg -> Attribute msg
+onKeyDown msg = AttrEvent (Event.onKeyDown msg)
 
 
 -- ─── Common element shortcuts ────────────────────────────────────
@@ -562,6 +589,7 @@ toAttrAttribute a =
     case a of
         AttrAttribute k v -> Just (kernelAttr k v)
         AttrClass c       -> Just (Attr.class c)
+        AttrEvent ev      -> Just ev
         _                 -> Nothing
 
 

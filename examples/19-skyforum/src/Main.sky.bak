@@ -1,0 +1,690 @@
+module Main exposing (main)
+
+-- skynews — a HackerNews/Reddit-style demo built with Sky.Live and
+-- Std.Ui. Demonstrates the layout DSL on a real interactive shape:
+--
+--   - Posts list (homepage) with up-vote per post
+--   - Post detail page with nested comment thread (parent/child
+--     relationships rendered with indentation)
+--   - Comment up-vote
+--   - Reply-to-comment compose
+--   - Basic in-memory auth (sign in with any username/password
+--     to exercise the form pattern; no DB)
+--
+-- All state lives in the Sky.Live session model — no DB, no
+-- external services. This keeps the example focused on the view
+-- layer (Std.Ui) and the TEA wiring (init/update/view), not on
+-- persistence or auth correctness.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.Maybe as Maybe
+import Sky.Core.String as String
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Live exposing (app, route)
+import Std.Ui as Ui
+import Std.Ui exposing (Element)
+import Std.Ui.Background as Background
+import Std.Ui.Border as Border
+import Std.Ui.Font as Font
+import Std.Ui.Region as Region
+import Std.Ui.Input as Input
+
+
+-- Local typed-anchor for Std.Ui's `none` — Sky's canonicaliser
+-- currently strips the type parameter when re-exporting it
+-- cross-module, so we re-define it locally.
+noneEl : Element msg
+noneEl = Ui.none
+
+
+-- ─── Domain types ────────────────────────────────────────────────
+
+type alias Post =
+    { id : Int
+    , title : String
+    , url : String
+    , author : String
+    , votes : Int
+    , commentCount : Int
+    }
+
+
+type alias Comment =
+    { id : Int
+    , postId : Int
+    , parentId : Int      -- 0 = top-level (root) comment under the post
+    , author : String
+    , body : String
+    , votes : Int
+    }
+
+
+type alias Session =
+    { username : String
+    }
+
+
+type Page
+    = HomePage
+    | PostPage Int
+    | LoginPage
+
+
+type alias Model =
+    { posts : List Post
+    , comments : List Comment
+    , currentPage : Page
+    , session : Maybe Session
+    , loginUser : String
+    , loginPass : String
+    , loginError : String
+    , composeBody : String
+    , replyTo : Int            -- parentId for the next compose; 0 = top-level
+    , nextCommentId : Int
+    }
+
+
+-- ─── Init ───────────────────────────────────────────────────────
+
+init : a -> ( Model, Cmd Msg )
+init _req =
+    let
+        seedPosts =
+            [ Post 1 "Show SN: Sky.Ui — a typed elm-ui port for Sky.Live" "https://github.com/anzellai/sky" "alice" 142 8
+            , Post 2 "Tiny CRDT primitives in 200 lines" "https://example.com/crdt" "bob" 87 12
+            , Post 3 "Ask SN: Best resources for learning Hindley-Milner?" "https://example.com/hm" "carol" 56 23
+            , Post 4 "Why server-driven UIs are having a moment" "https://example.com/server-ui" "dave" 41 5
+            , Post 5 "Postgres tips that actually matter in production" "https://example.com/pg-tips" "eve" 38 4
+            ]
+        seedComments =
+            [ Comment 101 1 0 "bob" "This looks great — does it support keyed children for diffing?" 12
+            , Comment 102 1 101 "alice" "Yes, Std.Ui.Keyed handles that via the sky-key attribute." 9
+            , Comment 103 1 102 "bob" "Nice. Any plans for an actual stylesheet pass?" 4
+            , Comment 104 1 0 "carol" "How does it compare to Phoenix LiveView?" 7
+            , Comment 105 1 104 "alice" "Same idea: server holds state, browser is dumb. Ours emits flexbox inline-style instead of class-keyed CSS." 11
+            , Comment 201 2 0 "alice" "Love seeing CRDT explanations that fit on one page." 5
+            , Comment 301 3 0 "dave" "Read 'Types and Programming Languages' (TAPL). It's the canonical reference." 18
+            , Comment 302 3 301 "carol" "Thanks! Anything shorter for a primer?" 3
+            ]
+        m =
+            { posts = seedPosts
+            , comments = seedComments
+            , currentPage = HomePage
+            , session = Nothing
+            , loginUser = ""
+            , loginPass = ""
+            , loginError = ""
+            , composeBody = ""
+            , replyTo = 0
+            , nextCommentId = 400
+            }
+    in
+        ( m, Cmd.none )
+
+
+-- ─── Update ─────────────────────────────────────────────────────
+
+type Msg
+    = Navigate Page
+    | UpvotePost Int
+    | UpvoteComment Int
+    | LoginUsernameChanged String
+    | LoginPasswordChanged String
+    | LoginSubmit
+    | LogoutClicked
+    | ComposeBodyChanged String
+    | StartReplyTo Int
+    | CancelReply
+    | SubmitComment Int
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        Navigate page ->
+            ( { model | currentPage = page, composeBody = "", replyTo = 0 }, Cmd.none )
+
+        UpvotePost postId ->
+            ( { model | posts = List.map (bumpPost postId) model.posts }, Cmd.none )
+
+        UpvoteComment commentId ->
+            ( { model | comments = List.map (bumpComment commentId) model.comments }, Cmd.none )
+
+        LoginUsernameChanged u ->
+            ( { model | loginUser = u }, Cmd.none )
+
+        LoginPasswordChanged p ->
+            ( { model | loginPass = p }, Cmd.none )
+
+        LoginSubmit ->
+            if String.isEmpty (String.trim model.loginUser) then
+                ( { model | loginError = "Username is required." }, Cmd.none )
+            else
+                let
+                    sess = { username = String.trim model.loginUser }
+                in
+                    ( { model
+                        | session = Just sess
+                        , loginUser = ""
+                        , loginPass = ""
+                        , loginError = ""
+                        , currentPage = HomePage
+                      }
+                    , Cmd.none
+                    )
+
+        LogoutClicked ->
+            ( { model | session = Nothing, currentPage = HomePage }, Cmd.none )
+
+        ComposeBodyChanged body ->
+            ( { model | composeBody = body }, Cmd.none )
+
+        StartReplyTo parentId ->
+            ( { model | replyTo = parentId, composeBody = "" }, Cmd.none )
+
+        CancelReply ->
+            ( { model | replyTo = 0, composeBody = "" }, Cmd.none )
+
+        SubmitComment postId ->
+            case model.session of
+                Nothing ->
+                    ( { model | currentPage = LoginPage }, Cmd.none )
+
+                Just sess ->
+                    if String.isEmpty (String.trim model.composeBody) then
+                        ( model, Cmd.none )
+                    else
+                        let
+                            newComment =
+                                { id = model.nextCommentId
+                                , postId = postId
+                                , parentId = model.replyTo
+                                , author = sess.username
+                                , body = String.trim model.composeBody
+                                , votes = 1
+                                }
+                            updatedPosts = List.map (bumpPostComments postId) model.posts
+                        in
+                            ( { model
+                                | comments = model.comments ++ [ newComment ]
+                                , posts = updatedPosts
+                                , composeBody = ""
+                                , replyTo = 0
+                                , nextCommentId = model.nextCommentId + 1
+                              }
+                            , Cmd.none
+                            )
+
+
+bumpPost : Int -> Post -> Post
+bumpPost targetId post =
+    if post.id == targetId then
+        { post | votes = post.votes + 1 }
+    else
+        post
+
+
+bumpComment : Int -> Comment -> Comment
+bumpComment targetId comment =
+    if comment.id == targetId then
+        { comment | votes = comment.votes + 1 }
+    else
+        comment
+
+
+bumpPostComments : Int -> Post -> Post
+bumpPostComments targetId post =
+    if post.id == targetId then
+        { post | commentCount = post.commentCount + 1 }
+    else
+        post
+
+
+-- ─── View ───────────────────────────────────────────────────────
+
+view : Model -> any
+view model =
+    let
+        page =
+            Ui.column
+                [ Ui.padding 24
+                , Ui.spacing 24
+                , Background.color (Ui.rgb 246 246 240)
+                , Font.family "Verdana, Geneva, sans-serif"
+                , Font.size 14
+                , Font.color (Ui.rgb 33 33 33)
+                ]
+                [ topNav model
+                , pageBody model
+                , pageFooter
+                ]
+    in
+        Ui.layout [] page
+
+
+topNav : Model -> Element Msg
+topNav model =
+    Ui.row
+        [ Ui.spacing 12
+        , Ui.padding 12
+        , Background.color (Ui.rgb 255 102 0)
+        , Border.rounded 4
+        ]
+        [ Ui.el [ Font.bold, Font.color (Ui.rgb 255 255 255) ]
+            (clickable (Navigate HomePage) (Ui.text "skynews"))
+        , Ui.el [ Font.color (Ui.rgb 255 255 255) ]
+            (clickable (Navigate HomePage) (Ui.text "top"))
+        , Ui.el [ Ui.alignRight ] (sessionWidget model.session)
+        ]
+
+
+sessionWidget : Maybe Session -> Element Msg
+sessionWidget maybeSession =
+    case maybeSession of
+        Just sess ->
+            Ui.row [ Ui.spacing 8 ]
+                [ Ui.el [ Font.color (Ui.rgb 255 255 255) ]
+                    (Ui.text ("hi, " ++ sess.username))
+                , navButton LogoutClicked "logout"
+                ]
+
+        Nothing ->
+            navButton (Navigate LoginPage) "sign in"
+
+
+navButton : Msg -> String -> Element Msg
+navButton msg label =
+    Ui.button
+        [ Background.color (Ui.rgb 255 153 51)
+        , Font.color (Ui.rgb 255 255 255)
+        , Border.rounded 3
+        , Ui.padding 4
+        ]
+        { onPress = Just msg
+        , label = Ui.text label
+        }
+
+
+-- A clickable wrapper that doesn't render as a <button>. Useful for
+-- inline link-style navigation where you don't want default button
+-- chrome but still want a click handler.
+clickable : Msg -> Element Msg -> Element Msg
+clickable msg child =
+    Ui.el
+        [ Ui.onClick msg
+        , Ui.pointer
+        ]
+        child
+
+
+pageBody : Model -> Element Msg
+pageBody model =
+    case model.currentPage of
+        HomePage ->
+            postsListView model.posts
+
+        PostPage postId ->
+            postDetailView model postId
+
+        LoginPage ->
+            loginView model
+
+
+-- ─── Posts list ─────────────────────────────────────────────────
+
+postsListView : List Post -> Element Msg
+postsListView posts =
+    Ui.column
+        [ Ui.spacing 12 ]
+        (List.indexedMap postRow posts)
+
+
+postRow : Int -> Post -> Element Msg
+postRow index post =
+    Ui.row
+        [ Ui.spacing 12
+        , Ui.padding 8
+        , Background.color (Ui.rgb 255 255 255)
+        , Border.rounded 4
+        , Border.width 1
+        , Border.color (Ui.rgb 230 230 230)
+        ]
+        [ rankNumber (index + 1)
+        , postUpvoteButton post
+        , postBody post
+        ]
+
+
+rankNumber : Int -> Element Msg
+rankNumber n =
+    Ui.el
+        [ Ui.width (Ui.px 28)
+        , Ui.centerY
+        , Font.color (Ui.rgb 130 130 130)
+        ]
+        (Ui.text (String.fromInt n ++ "."))
+
+
+postUpvoteButton : Post -> Element Msg
+postUpvoteButton post =
+    Ui.column
+        [ Ui.width (Ui.px 40)
+        , Ui.spacing 2
+        , Ui.centerY
+        ]
+        [ Ui.button
+            [ Background.color (Ui.rgb 240 240 240)
+            , Border.rounded 3
+            , Border.width 0
+            , Font.color (Ui.rgb 130 130 130)
+            , Ui.padding 2
+            , Ui.centerX
+            ]
+            { onPress = Just (UpvotePost post.id)
+            , label = Ui.text "▲"
+            }
+        , Ui.el [ Ui.centerX, Font.size 11, Font.color (Ui.rgb 130 130 130) ]
+            (Ui.text (String.fromInt post.votes))
+        ]
+
+
+postBody : Post -> Element Msg
+postBody post =
+    Ui.column
+        [ Ui.spacing 4 ]
+        [ Ui.row [ Ui.spacing 8 ]
+            [ Ui.el [ Font.size 14, Font.color (Ui.rgb 0 0 0) ]
+                (clickable (Navigate (PostPage post.id)) (Ui.text post.title))
+            , Ui.el [ Font.size 11, Font.color (Ui.rgb 130 130 130) ]
+                (Ui.text ("(" ++ shortenUrl post.url ++ ")"))
+            ]
+        , Ui.row [ Ui.spacing 6 ]
+            [ Ui.el [ Font.size 11, Font.color (Ui.rgb 130 130 130) ]
+                (Ui.text ("by " ++ post.author))
+            , Ui.el [ Font.size 11, Font.color (Ui.rgb 130 130 130) ]
+                (Ui.text "|")
+            , Ui.el [ Font.size 11, Font.color (Ui.rgb 130 130 130) ]
+                (clickable (Navigate (PostPage post.id))
+                    (Ui.text (String.fromInt post.commentCount ++ " comments")))
+            ]
+        ]
+
+
+shortenUrl : String -> String
+shortenUrl url =
+    let
+        afterScheme = String.replace "https://" "" (String.replace "http://" "" url)
+        slash = String.split "/" afterScheme
+    in
+        Maybe.withDefault afterScheme (List.head slash)
+
+
+-- ─── Post detail ────────────────────────────────────────────────
+
+postDetailView : Model -> Int -> Element Msg
+postDetailView model postId =
+    case findPost postId model.posts of
+        Nothing ->
+            Ui.el [ Font.color (Ui.rgb 200 60 60) ] (Ui.text "Post not found.")
+
+        Just post ->
+            Ui.column
+                [ Ui.spacing 16 ]
+                [ postRow 0 post
+                , composeArea model post
+                , Ui.column
+                    [ Ui.spacing 8 ]
+                    [ Ui.el [ Font.size 14, Font.bold ]
+                        (Ui.text (String.fromInt post.commentCount ++ " comments"))
+                    , commentTreeView model.comments post.id 0 0
+                    ]
+                ]
+
+
+findPost : Int -> List Post -> Maybe Post
+findPost target posts = List.find (\p -> p.id == target) posts
+
+
+-- Render the comment tree under a given parent (parentId = 0 for
+-- top-level). Recurses on children, indenting each level by `depth`
+-- pixels. `depth` is the actual pixel indent so we don't re-multiply
+-- inside the tree (sidesteps Sky's HM friction with int arithmetic
+-- across recursive calls).
+commentTreeView : List Comment -> Int -> Int -> Int -> Element Msg
+commentTreeView allComments postId parentId depth =
+    let
+        children = List.filter (matchesParent postId parentId) allComments
+        renderedChildren = List.map (\c -> commentNode allComments c depth) children
+    in
+        if List.isEmpty children then
+            noneEl
+        else
+            Ui.column [ Ui.spacing 8 ] renderedChildren
+
+
+matchesParent : Int -> Int -> Comment -> Bool
+matchesParent postId parentId c =
+    c.postId == postId && c.parentId == parentId
+
+
+commentNode : List Comment -> Comment -> Int -> Element Msg
+commentNode allComments c parentDepth =
+    let
+        myDepth = parentDepth + 24
+    in
+        Ui.column
+            [ Ui.spacing 6
+            , Ui.padding 6
+            , Background.color (Ui.rgb 255 255 255)
+            , Border.rounded 3
+            ]
+            [ commentHeader c
+            , Ui.el [] (Ui.text c.body)
+            , commentActions c
+            , Ui.el
+                [ Ui.style "padding-left" (String.fromInt myDepth ++ "px") ]
+                (commentTreeView allComments c.postId c.id myDepth)
+            ]
+
+
+commentHeader : Comment -> Element Msg
+commentHeader c =
+    Ui.row
+        [ Ui.spacing 6
+        , Font.size 11
+        , Font.color (Ui.rgb 130 130 130)
+        ]
+        [ Ui.el [ Font.bold ] (Ui.text c.author)
+        , Ui.text "•"
+        , Ui.text (String.fromInt c.votes ++ " points")
+        ]
+
+
+commentActions : Comment -> Element Msg
+commentActions c =
+    Ui.row
+        [ Ui.spacing 8
+        , Font.size 11
+        ]
+        [ Ui.el
+            [ Font.color (Ui.rgb 100 130 220)
+            , Ui.onClick (UpvoteComment c.id)
+            , Ui.pointer
+            ]
+            (Ui.text "upvote")
+        , Ui.el
+            [ Font.color (Ui.rgb 100 130 220)
+            , Ui.onClick (StartReplyTo c.id)
+            , Ui.pointer
+            ]
+            (Ui.text "reply")
+        ]
+
+
+-- ─── Compose ────────────────────────────────────────────────────
+
+composeArea : Model -> Post -> Element Msg
+composeArea model post =
+    case model.session of
+        Nothing ->
+            Ui.el [ Font.color (Ui.rgb 130 130 130), Font.size 12 ]
+                (clickable (Navigate LoginPage)
+                    (Ui.text "Sign in to comment"))
+
+        Just _sess ->
+            let
+                replyContext = if model.replyTo == 0 then "Comment on this post" else "Replying to comment #" ++ String.fromInt model.replyTo
+            in
+                Ui.column
+                    [ Ui.spacing 8
+                    , Ui.padding 8
+                    , Background.color (Ui.rgb 252 252 245)
+                    , Border.rounded 4
+                    , Border.width 1
+                    , Border.color (Ui.rgb 220 220 200)
+                    ]
+                    [ Ui.el [ Font.size 12, Font.color (Ui.rgb 100 100 100) ]
+                        (Ui.text replyContext)
+                    , composeInput model.composeBody
+                    , Ui.row [ Ui.spacing 6 ]
+                        [ Ui.button
+                            [ Background.color (Ui.rgb 255 102 0)
+                            , Font.color (Ui.rgb 255 255 255)
+                            , Border.rounded 3
+                            , Ui.padding 4
+                            ]
+                            { onPress = Just (SubmitComment post.id)
+                            , label = Ui.text "post"
+                            }
+                        , if model.replyTo == 0 then
+                            noneEl
+                          else
+                            Ui.button
+                                [ Background.color (Ui.rgb 230 230 230)
+                                , Border.rounded 3
+                                , Ui.padding 4
+                                ]
+                                { onPress = Just CancelReply
+                                , label = Ui.text "cancel"
+                                }
+                        ]
+                    ]
+
+
+composeInput : String -> Element Msg
+composeInput current =
+    -- A simple text input wired to ComposeBodyChanged.
+    Ui.el
+        [ Ui.htmlAttribute "type" "text"
+        , Ui.htmlAttribute "value" current
+        , Ui.htmlAttribute "placeholder" "Write your comment..."
+        , Ui.onInput ComposeBodyChanged
+        , Background.color (Ui.rgb 255 255 255)
+        , Border.width 1
+        , Border.color (Ui.rgb 200 200 200)
+        , Border.rounded 3
+        , Ui.padding 6
+        ]
+        noneEl
+
+
+-- ─── Login ──────────────────────────────────────────────────────
+
+loginView : Model -> Element Msg
+loginView model =
+    Ui.column
+        [ Ui.spacing 16
+        , Ui.padding 16
+        , Background.color (Ui.rgb 255 255 255)
+        , Border.rounded 4
+        , Ui.width (Ui.px 320)
+        ]
+        [ Ui.el [ Region.heading 2, Font.size 18, Font.bold ]
+            (Ui.text "Sign in")
+        , Ui.el [ Font.size 12, Font.color (Ui.rgb 100 100 100) ]
+            (Ui.text "Any username works — this demo doesn't really authenticate.")
+        , textField "Username" model.loginUser LoginUsernameChanged
+        , passwordField "Password" model.loginPass LoginPasswordChanged
+        , if model.loginError == "" then
+            noneEl
+          else
+            Ui.el [ Font.color (Ui.rgb 200 60 60), Font.size 12 ]
+                (Ui.text model.loginError)
+        , Ui.button
+            [ Background.color (Ui.rgb 255 102 0)
+            , Font.color (Ui.rgb 255 255 255)
+            , Border.rounded 3
+            , Ui.padding 6
+            ]
+            { onPress = Just LoginSubmit
+            , label = Ui.text "sign in"
+            }
+        ]
+
+
+textField : String -> String -> (String -> Msg) -> Element Msg
+textField label_ value onChange =
+    Ui.column [ Ui.spacing 4 ]
+        [ Ui.el [ Font.size 12 ] (Ui.text label_)
+        , Ui.el
+            [ Ui.htmlAttribute "type" "text"
+            , Ui.htmlAttribute "value" value
+            , Ui.onInput onChange
+            , Border.width 1
+            , Border.color (Ui.rgb 200 200 200)
+            , Border.rounded 3
+            , Ui.padding 6
+            , Background.color (Ui.rgb 255 255 255)
+            ]
+            noneEl
+        ]
+
+
+passwordField : String -> String -> (String -> Msg) -> Element Msg
+passwordField label_ value onChange =
+    Ui.column [ Ui.spacing 4 ]
+        [ Ui.el [ Font.size 12 ] (Ui.text label_)
+        , Ui.el
+            [ Ui.htmlAttribute "type" "password"
+            , Ui.htmlAttribute "value" value
+            , Ui.onInput onChange
+            , Border.width 1
+            , Border.color (Ui.rgb 200 200 200)
+            , Border.rounded 3
+            , Ui.padding 6
+            , Background.color (Ui.rgb 255 255 255)
+            ]
+            noneEl
+        ]
+
+
+-- ─── Footer ─────────────────────────────────────────────────────
+
+pageFooter : Element Msg
+pageFooter =
+    Ui.el
+        [ Ui.centerX
+        , Font.size 11
+        , Font.color (Ui.rgb 130 130 130)
+        , Region.footer
+        ]
+        (Ui.text "skynews — Sky.Live + Std.Ui demo, see examples/19-skynews/")
+
+
+-- ─── App wiring ─────────────────────────────────────────────────
+
+subscriptions : Model -> Sub.Sub Msg
+subscriptions _ = Sub.none
+
+
+main =
+    app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        , routes = []
+        , notFound = ()
+        }

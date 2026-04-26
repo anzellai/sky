@@ -1,0 +1,431 @@
+module Main exposing (main)
+
+-- skyforum — a Reddit/HackerNews-style demo built with Sky.Live and
+-- Std.Ui. Read-side feature surface:
+--
+--   - Posts list (homepage) with up-vote per post
+--   - Post detail page with a flat comment list + per-comment upvote
+--   - Sign in / sign out (any non-empty username works — demo only)
+--   - Top nav with session widget
+--
+-- Everything lives in the Sky.Live session model — no DB, no auth
+-- store. Threaded replies + the in-page reply compose are deferred:
+-- the current HM type-checker hits heap exhaustion when this module
+-- grows to include composeArea + the recursive commentTreeView /
+-- commentNode pair on top of the rest of the surface (see CLAUDE.md
+-- "Known Limitations" → Std.Ui-heavy modules). When that lands we
+-- can wire Submit/Reply/Cancel back in.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Live exposing (app, route)
+import Std.Ui as Ui
+import Std.Ui exposing (Element)
+import Std.Ui.Background as Background
+import Std.Ui.Border as Border
+import Std.Ui.Font as Font
+import Std.Ui.Region as Region
+
+
+-- ─── Domain types ────────────────────────────────────────────────
+
+type alias Post =
+    { id : Int
+    , title : String
+    , url : String
+    , author : String
+    , votes : Int
+    , commentCount : Int
+    }
+
+
+type alias Comment =
+    { id : Int
+    , postId : Int
+    , author : String
+    , body : String
+    , votes : Int
+    }
+
+
+type alias Session =
+    { username : String }
+
+
+type Page
+    = HomePage
+    | PostPage Int
+    | LoginPage
+
+
+type alias Model =
+    { posts : List Post
+    , comments : List Comment
+    , currentPage : Page
+    , session : Maybe Session
+    , loginUser : String
+    , loginPass : String
+    , loginError : String
+    }
+
+
+-- ─── Init ────────────────────────────────────────────────────────
+
+init : a -> ( Model, Cmd Msg )
+init _req =
+    let
+        seedPosts =
+            [ Post 1 "Show SF: Sky.Ui — a typed elm-ui port for Sky.Live" "https://github.com/anzellai/sky" "alice" 142 3
+            , Post 2 "Tiny CRDT primitives in 200 lines" "https://example.com/crdt" "bob" 87 1
+            , Post 3 "Ask SF: Best resources for learning Hindley-Milner?" "https://example.com/hm" "carol" 56 2
+            , Post 4 "Why server-driven UIs are having a moment" "https://example.com/server-ui" "dave" 41 0
+            , Post 5 "Postgres tips that actually matter in production" "https://example.com/pg-tips" "eve" 38 0
+            ]
+        seedComments =
+            [ Comment 101 1 "bob" "This looks great — does it support keyed children for diffing?" 12
+            , Comment 102 1 "alice" "Yes, Std.Ui.Keyed handles that via the sky-key attribute." 9
+            , Comment 103 1 "carol" "How does it compare to Phoenix LiveView?" 7
+            , Comment 201 2 "alice" "Love seeing CRDT explanations that fit on one page." 5
+            , Comment 301 3 "dave" "Read 'Types and Programming Languages' (TAPL). Canonical reference." 18
+            , Comment 302 3 "carol" "Thanks. Anything shorter for a primer?" 3
+            ]
+    in
+        ( { posts = seedPosts
+          , comments = seedComments
+          , currentPage = HomePage
+          , session = Nothing
+          , loginUser = ""
+          , loginPass = ""
+          , loginError = ""
+          }
+        , Cmd.none
+        )
+
+
+-- ─── Update ──────────────────────────────────────────────────────
+
+type Msg
+    = Navigate Page
+    | UpvotePost Int
+    | UpvoteComment Int
+    | LoginUsernameChanged String
+    | LoginPasswordChanged String
+    | LoginSubmit
+    | LogoutClicked
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        Navigate page ->
+            ( { model | currentPage = page }, Cmd.none )
+
+        UpvotePost postId ->
+            ( { model | posts = List.map (bumpPost postId) model.posts }, Cmd.none )
+
+        UpvoteComment commentId ->
+            ( { model | comments = List.map (bumpComment commentId) model.comments }, Cmd.none )
+
+        LoginUsernameChanged u ->
+            ( { model | loginUser = u }, Cmd.none )
+
+        LoginPasswordChanged p ->
+            ( { model | loginPass = p }, Cmd.none )
+
+        LoginSubmit ->
+            if String.isEmpty (String.trim model.loginUser) then
+                ( { model | loginError = "Username is required." }, Cmd.none )
+            else
+                ( { model
+                    | session = Just { username = String.trim model.loginUser }
+                    , loginUser = ""
+                    , loginPass = ""
+                    , loginError = ""
+                    , currentPage = HomePage
+                  }
+                , Cmd.none
+                )
+
+        LogoutClicked ->
+            ( { model | session = Nothing, currentPage = HomePage }, Cmd.none )
+
+
+bumpPost : Int -> Post -> Post
+bumpPost targetId post =
+    if post.id == targetId then
+        { post | votes = post.votes + 1 }
+    else
+        post
+
+
+bumpComment : Int -> Comment -> Comment
+bumpComment targetId comment =
+    if comment.id == targetId then
+        { comment | votes = comment.votes + 1 }
+    else
+        comment
+
+
+-- ─── View ────────────────────────────────────────────────────────
+
+view : Model -> any
+view model =
+    Ui.layout []
+        (Ui.column
+            [ Ui.padding 24
+            , Ui.spacing 24
+            , Background.color (Ui.rgb 246 246 240)
+            , Font.family "Verdana, Geneva, sans-serif"
+            , Font.size 14
+            , Font.color (Ui.rgb 33 33 33)
+            ]
+            [ topNav model
+            , pageBody model
+            , pageFooter
+            ])
+
+
+topNav : Model -> Element Msg
+topNav model =
+    Ui.row
+        [ Ui.spacing 12
+        , Ui.padding 12
+        , Background.color (Ui.rgb 255 102 0)
+        , Border.rounded 4
+        ]
+        [ Ui.el [ Font.bold, Font.color (Ui.rgb 255 255 255) ]
+            (clickable (Navigate HomePage) (Ui.text "skyforum"))
+        , Ui.el [ Ui.alignRight ] (sessionWidget model.session)
+        ]
+
+
+sessionWidget : Maybe Session -> Element Msg
+sessionWidget maybeSession =
+    case maybeSession of
+        Just sess ->
+            Ui.row [ Ui.spacing 8 ]
+                [ Ui.el [ Font.color (Ui.rgb 255 255 255) ]
+                    (Ui.text ("hi, " ++ sess.username))
+                , Ui.button
+                    [ Background.color (Ui.rgb 255 153 51)
+                    , Font.color (Ui.rgb 255 255 255)
+                    , Border.rounded 3
+                    , Ui.padding 4
+                    ]
+                    { onPress = Just LogoutClicked, label = Ui.text "logout" }
+                ]
+
+        Nothing ->
+            Ui.button
+                [ Background.color (Ui.rgb 255 153 51)
+                , Font.color (Ui.rgb 255 255 255)
+                , Border.rounded 3
+                , Ui.padding 4
+                ]
+                { onPress = Just (Navigate LoginPage), label = Ui.text "sign in" }
+
+
+-- A clickable wrapper that doesn't render as a <button>. Useful for
+-- inline link-style navigation where you don't want default button
+-- chrome but still want a click handler.
+clickable : Msg -> Element Msg -> Element Msg
+clickable msg child =
+    Ui.el [ Ui.onClick msg, Ui.pointer ] child
+
+
+pageBody : Model -> Element Msg
+pageBody model =
+    case model.currentPage of
+        HomePage ->
+            postsListView model.posts
+
+        PostPage postId ->
+            postDetailView model postId
+
+        LoginPage ->
+            loginView model
+
+
+-- ─── Posts list ──────────────────────────────────────────────────
+
+postsListView : List Post -> Element Msg
+postsListView posts =
+    Ui.column [ Ui.spacing 12 ] (List.indexedMap postRow posts)
+
+
+postRow : Int -> Post -> Element Msg
+postRow index post =
+    Ui.row
+        [ Ui.spacing 12
+        , Ui.padding 8
+        , Background.color (Ui.rgb 255 255 255)
+        , Border.rounded 4
+        , Border.width 1
+        , Border.color (Ui.rgb 230 230 230)
+        ]
+        [ Ui.el
+            [ Ui.width (Ui.px 28)
+            , Ui.centerY
+            , Font.color (Ui.rgb 130 130 130)
+            ]
+            (Ui.text (String.fromInt (index + 1) ++ "."))
+        , Ui.button
+            [ Background.color (Ui.rgb 240 240 240)
+            , Border.rounded 3
+            , Font.color (Ui.rgb 130 130 130)
+            , Ui.padding 2
+            , Ui.width (Ui.px 32)
+            ]
+            { onPress = Just (UpvotePost post.id), label = Ui.text "▲" }
+        , Ui.column [ Ui.spacing 4 ]
+            [ Ui.row [ Ui.spacing 8 ]
+                [ Ui.el [ Font.color (Ui.rgb 0 0 0) ]
+                    (clickable (Navigate (PostPage post.id)) (Ui.text post.title))
+                , Ui.el [ Font.size 11, Font.color (Ui.rgb 130 130 130) ]
+                    (Ui.text "")
+                ]
+            , Ui.el [ Font.size 11, Font.color (Ui.rgb 130 130 130) ]
+                (Ui.text (String.fromInt post.votes ++ " points · by " ++ post.author ++ " · " ++ String.fromInt post.commentCount ++ " comments"))
+            ]
+        ]
+
+
+-- ─── Post detail (flat comments) ─────────────────────────────────
+
+postDetailView : Model -> Int -> Element Msg
+postDetailView model postId =
+    case findPost postId model.posts of
+        Nothing ->
+            Ui.el [ Font.color (Ui.rgb 200 60 60) ] (Ui.text "Post not found.")
+
+        Just post ->
+            Ui.column [ Ui.spacing 16 ]
+                [ postRow 0 post
+                , Ui.el [ Font.size 14, Font.bold ]
+                    (Ui.text (String.fromInt post.commentCount ++ " comments"))
+                , Ui.column [ Ui.spacing 8 ]
+                    (List.map commentRow (commentsForPost model.comments postId))
+                ]
+
+
+findPost : Int -> List Post -> Maybe Post
+findPost target posts = List.find (\p -> p.id == target) posts
+
+
+commentsForPost : List Comment -> Int -> List Comment
+commentsForPost all postId = List.filter (\c -> c.postId == postId) all
+
+
+commentRow : Comment -> Element Msg
+commentRow c =
+    Ui.column
+        [ Ui.spacing 6
+        , Ui.padding 8
+        , Background.color (Ui.rgb 255 255 255)
+        , Border.rounded 3
+        ]
+        [ Ui.row [ Ui.spacing 6, Font.size 11, Font.color (Ui.rgb 130 130 130) ]
+            [ Ui.el [ Font.bold ] (Ui.text c.author)
+            , Ui.text "•"
+            , Ui.text (String.fromInt c.votes ++ " points")
+            ]
+        , Ui.text c.body
+        , Ui.el
+            [ Font.size 11
+            , Font.color (Ui.rgb 100 130 220)
+            , Ui.onClick (UpvoteComment c.id)
+            , Ui.pointer
+            ]
+            (Ui.text "upvote")
+        ]
+
+
+-- ─── Login (inline inputs — no helper functions, see file header) ─
+
+loginView : Model -> Element Msg
+loginView model =
+    Ui.column
+        [ Ui.spacing 16
+        , Ui.padding 16
+        , Background.color (Ui.rgb 255 255 255)
+        , Border.rounded 4
+        , Ui.width (Ui.px 320)
+        ]
+        [ Ui.el [ Region.heading 2, Font.size 18, Font.bold ]
+            (Ui.text "Sign in")
+        , Ui.el [ Font.size 12, Font.color (Ui.rgb 100 100 100) ]
+            (Ui.text "Any non-empty username works — this demo doesn't really authenticate.")
+        , Ui.column [ Ui.spacing 4 ]
+            [ Ui.el [ Font.size 12 ] (Ui.text "Username")
+            , Ui.el
+                [ Ui.htmlAttribute "type" "text"
+                , Ui.htmlAttribute "value" model.loginUser
+                , Ui.onInput LoginUsernameChanged
+                , Border.width 1
+                , Border.color (Ui.rgb 200 200 200)
+                , Border.rounded 3
+                , Ui.padding 6
+                , Background.color (Ui.rgb 255 255 255)
+                ]
+                (Ui.text "")
+            ]
+        , Ui.column [ Ui.spacing 4 ]
+            [ Ui.el [ Font.size 12 ] (Ui.text "Password")
+            , Ui.el
+                [ Ui.htmlAttribute "type" "password"
+                , Ui.htmlAttribute "value" model.loginPass
+                , Ui.onInput LoginPasswordChanged
+                , Border.width 1
+                , Border.color (Ui.rgb 200 200 200)
+                , Border.rounded 3
+                , Ui.padding 6
+                , Background.color (Ui.rgb 255 255 255)
+                ]
+                (Ui.text "")
+            ]
+        , if model.loginError == "" then
+            Ui.text ""
+          else
+            Ui.el [ Font.color (Ui.rgb 200 60 60), Font.size 12 ]
+                (Ui.text model.loginError)
+        , Ui.button
+            [ Background.color (Ui.rgb 255 102 0)
+            , Font.color (Ui.rgb 255 255 255)
+            , Border.rounded 3
+            , Ui.padding 6
+            ]
+            { onPress = Just LoginSubmit, label = Ui.text "sign in" }
+        ]
+
+
+-- ─── Footer ──────────────────────────────────────────────────────
+
+pageFooter : Element Msg
+pageFooter =
+    Ui.el
+        [ Ui.centerX
+        , Font.size 11
+        , Font.color (Ui.rgb 130 130 130)
+        , Region.footer
+        ]
+        (Ui.text "skyforum — Sky.Live + Std.Ui demo, see examples/19-skyforum/")
+
+
+-- ─── App wiring ──────────────────────────────────────────────────
+
+subscriptions : Model -> Sub.Sub Msg
+subscriptions _ = Sub.none
+
+
+main =
+    app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        , routes = []
+        , notFound = ()
+        }
