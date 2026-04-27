@@ -440,6 +440,7 @@ registry = Map.fromList
     , (("Html", "header"),        KernelInfo "rt.Html_header" 2 False)
     , (("Html", "footer"),        KernelInfo "rt.Html_footer" 2 False)
     , (("Html", "main"),          KernelInfo "rt.Html_main" 2 False)
+    , (("Html", "aside"),         KernelInfo "rt.Html_aside" 2 False)
     , (("Html", "ul"),            KernelInfo "rt.Html_ul" 2 False)
     , (("Html", "ol"),            KernelInfo "rt.Html_ol" 2 False)
     , (("Html", "li"),            KernelInfo "rt.Html_li" 2 False)

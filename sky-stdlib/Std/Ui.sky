@@ -358,6 +358,32 @@ borderInsetShadow ox oy blur spread c = AttrBorderInsetShadow ox oy blur spread 
 overflow : String -> String -> Attribute msg
 overflow x y = AttrOverflow x y
 
+
+-- ─── Nearby positioning helpers ──────────────────────────────────
+--
+-- Attach an Element as an absolutely-positioned overlay relative to
+-- its parent. The parent gets `position: relative` automatically;
+-- the child gets `position: absolute` plus the matching offset.
+-- Use for tooltips, popovers, dropdown menus, badges, etc.
+
+above : Element msg -> Attribute msg
+above el = AttrNearby Above el
+
+below : Element msg -> Attribute msg
+below el = AttrNearby Below el
+
+onLeft : Element msg -> Attribute msg
+onLeft el = AttrNearby OnLeft el
+
+onRight : Element msg -> Attribute msg
+onRight el = AttrNearby OnRight el
+
+inFront : Element msg -> Attribute msg
+inFront el = AttrNearby InFront el
+
+behind : Element msg -> Attribute msg
+behind el = AttrNearby Behind el
+
 describe : Description -> Attribute msg
 describe d = AttrDescribe d
 
@@ -381,6 +407,15 @@ descHeading n = DescHeading n
 
 descLabel : String -> Description
 descLabel s = DescLabel s
+
+descComplementary : Description
+descComplementary = DescComplementary
+
+descLivePolite : Description
+descLivePolite = DescLivePolite
+
+descLiveAssertive : Description
+descLiveAssertive = DescLiveAssertive
 
 
 -- ─── Events ──────────────────────────────────────────────────────
@@ -678,7 +713,13 @@ renderElement ctx extraAttrs elem =
             Html.text s
 
         Node desc attrs children ->
-            renderNodeAs "div" ctx extraAttrs attrs children
+            -- Pick a semantic HTML tag from the Description (see
+            -- `tagForDescription`) — falls back to <div> when the
+            -- element has no Description attached. Region.* helpers
+            -- attach AttrDescribe to control this; we honour the
+            -- *first* AttrDescribe encountered.
+            let chosenTag = pickSemanticTag "div" attrs
+            in renderNodeAs chosenTag ctx extraAttrs attrs children
 
         TaggedNode tag desc attrs children ->
             renderNodeAs tag ctx extraAttrs attrs children
@@ -691,6 +732,51 @@ renderElement ctx extraAttrs elem =
             node
 
 
+-- Resolve the HTML tag for a generic Node by inspecting its attribute
+-- list for an AttrDescribe entry. The first one wins; if none, the
+-- default tag passed in is returned.
+--
+-- Implementation note: the cons + nested-case shape (rather than the
+-- combined `(AttrDescribe d) :: _ ->` constructor-on-cons pattern)
+-- is deliberate — Sky's pattern lowering currently doesn't check
+-- the head's constructor tag in the cons-with-constructor pattern,
+-- which surfaced as a runtime panic when the list head was a
+-- non-AttrDescribe variant (e.g. AttrStyle "__row" ...). The
+-- two-step destructure makes the constructor check explicit.
+pickSemanticTag : String -> List (Attribute msg) -> String
+pickSemanticTag defaultTag attrs =
+    case attrs of
+        [] -> defaultTag
+        head :: rest ->
+            case head of
+                AttrDescribe d -> tagForDescription defaultTag d
+                _              -> pickSemanticTag defaultTag rest
+
+
+-- Map a Description to the semantically-correct HTML element name.
+-- Any Description not associated with a tag (DescLabel, the live-region
+-- ones, NoDescription) returns the default unchanged.
+tagForDescription : String -> Description -> String
+tagForDescription defaultTag d =
+    case d of
+        NoDescription      -> defaultTag
+        DescMain           -> "main"
+        DescNavigation     -> "nav"
+        DescContentInfo    -> "footer"
+        DescComplementary  -> "aside"
+        DescHeading 1      -> "h1"
+        DescHeading 2      -> "h2"
+        DescHeading 3      -> "h3"
+        DescHeading 4      -> "h4"
+        DescHeading 5      -> "h5"
+        DescHeading _      -> "h6"
+        DescLabel _        -> defaultTag
+        DescLivePolite     -> defaultTag
+        DescLiveAssertive  -> defaultTag
+        DescButton         -> "button"
+        DescParagraph      -> "p"
+
+
 -- Render a Node-shaped element under a given parent context with an
 -- explicit HTML tag. Used both for the default <div> path and for
 -- TaggedNode dispatch.
@@ -699,12 +785,61 @@ renderNodeAs tag ctx extraAttrs attrs children =
     let
         allAttrs = extraAttrs ++ attrs
         renderCtx = layoutContextFor allAttrs
-        styleStr = buildStyleString ctx renderCtx allAttrs
+        nearbyChildren = collectNearby allAttrs
+        positionPrefix =
+            if List.isEmpty nearbyChildren then
+                ""
+            else
+                "position: relative; "
+        styleStr = positionPrefix ++ buildStyleString ctx renderCtx allAttrs
         htmlAttrs = collectHtmlAttrs allAttrs
-        renderedChildren = List.map (renderElement renderCtx []) children
+        renderedMain = List.map (renderElement renderCtx []) children
+        renderedNearby = List.map renderNearby nearbyChildren
+        renderedChildren = renderedMain ++ renderedNearby
         attrList = Attr.style styleStr :: htmlAttrs
     in
         dispatchTag tag attrList renderedChildren
+
+
+-- Pull each (Location, Element) pair out of an AttrNearby attribute
+-- so the renderer can wrap them with absolute-positioning styles.
+collectNearby : List (Attribute msg) -> List ( Location, Element msg )
+collectNearby attrs =
+    List.filterMap toNearbyPair attrs
+
+
+toNearbyPair : Attribute msg -> Maybe ( Location, Element msg )
+toNearbyPair a =
+    case a of
+        AttrNearby loc el -> Just ( loc, el )
+        _                 -> Nothing
+
+
+-- Render a single nearby element with the position styles for its
+-- Location. The child is rendered first, then wrapped in a thin div
+-- carrying the absolute-positioning styles.
+renderNearby : ( Location, Element msg ) -> any
+renderNearby ( loc, el ) =
+    let
+        positionStyle = "position: absolute; " ++ locationCss loc
+        rendered = renderElement AsEl [] el
+    in
+        Html.div [ Attr.style positionStyle ] [ rendered ]
+
+
+-- Map a Location to the CSS offsets that pin the absolute child to
+-- the matching side of its position-relative parent. `inFront` and
+-- `behind` use z-index (positive vs negative) to stack above /
+-- below the main content.
+locationCss : Location -> String
+locationCss loc =
+    case loc of
+        Above   -> "left: 0; right: 0; bottom: 100%;"
+        Below   -> "left: 0; right: 0; top: 100%;"
+        OnLeft  -> "top: 0; bottom: 0; right: 100%;"
+        OnRight -> "top: 0; bottom: 0; left: 100%;"
+        InFront -> "left: 0; right: 0; top: 0; bottom: 0; z-index: 1;"
+        Behind  -> "left: 0; right: 0; top: 0; bottom: 0; z-index: -1;"
 
 
 -- Dispatch to the right Std.Html constructor by tag name. <img>
@@ -741,6 +876,10 @@ dispatchTag tag attrs children =
         Html.footer attrs children
     else if tag == "header" then
         Html.header attrs children
+    else if tag == "main" then
+        Html.main attrs children
+    else if tag == "aside" then
+        Html.aside attrs children
     else if tag == "img" then
         -- <img> is void in HTML; Sky's Html.img takes attrs only.
         let _ = children in Html.img attrs
@@ -762,7 +901,21 @@ toAttrAttribute a =
         AttrAttribute k v -> Just (kernelAttr k v)
         AttrClass c       -> Just (Attr.class c)
         AttrEvent ev      -> wrapEvent ev
+        AttrDescribe d    -> ariaForDescription d
         _                 -> Nothing
+
+
+-- Map a Description that requires an aria-* attribute to the
+-- attribute-emitting form. Returns Nothing for descriptions whose
+-- semantics are encoded purely in the chosen HTML tag (no extra
+-- aria-* attribute needed).
+ariaForDescription : Description -> Maybe any
+ariaForDescription d =
+    case d of
+        DescLabel s        -> Just (kernelAttr "aria-label" s)
+        DescLivePolite     -> Just (kernelAttr "aria-live" "polite")
+        DescLiveAssertive  -> Just (kernelAttr "aria-live" "assertive")
+        _                  -> Nothing
 
 
 -- Wrap an event-payload value into Maybe with an explicit `any`

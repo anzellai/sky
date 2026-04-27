@@ -1,4 +1,4 @@
-module Std.Ui.Input exposing (button, text, multiline, checkbox, labelAbove, labelBelow, labelLeft, labelRight, labelHidden, placeholder, Label, Placeholder)
+module Std.Ui.Input exposing (button, text, multiline, email, username, search, currentPassword, newPassword, checkbox, radio, radioRow, slider, option, labelAbove, labelBelow, labelLeft, labelRight, labelHidden, placeholder, Label, Placeholder, RadioOption)
 
 -- Std.Ui.Input — typed form controls.
 --
@@ -7,12 +7,14 @@ module Std.Ui.Input exposing (button, text, multiline, checkbox, labelAbove, lab
 -- (`labelAbove` / `labelLeft` / `labelHidden`) so accessible
 -- labelling is built in by construction.
 --
--- Tier 2 ships button / text / multiline / checkbox / radio /
--- slider with the four label positions. Username / email / password
--- variants follow when the renderer learns how to wire native
--- input types end-to-end (Sky.Live integration is Tier 2's other
--- half). Slider styling stays browser-default for now; custom
--- thumbs land later.
+-- The radio surface uses string-valued options (`RadioOption msg =
+-- RadioOption String (Element msg)`) rather than a fully polymorphic
+-- option type. This is a deliberate trade-off: a polymorphic
+-- `RadioOption option msg` triggers Sky's HM cross-branch friction
+-- (deeply nested polymorphic record arguments holding parameterised
+-- ADTs in field positions), and the string-keyed shape works with
+-- the typed-Msg dispatch boundary that Sky.Live's `update` function
+-- already uses for form data.
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.String as String
@@ -37,9 +39,18 @@ type LabelPosition
     | RightPos
 
 
--- Placeholder text shown inside an empty input.
+-- Placeholder text shown inside an empty input. Wrap a `Ui.text "..."`
+-- to set the placeholder string; non-`Text` placeholders are
+-- silently ignored (HTML's `placeholder` attr is text-only).
 type Placeholder msg
     = Placeholder (List (Attribute msg)) (Element msg)
+
+
+-- A single choice in a `radio` / `radioRow` group: a string value
+-- (sent back via the typed onChange callback when this option is
+-- selected) and a visible label Element.
+type RadioOption msg
+    = RadioOption String (Element msg)
 
 
 labelAbove : List (Attribute msg) -> Element msg -> Label msg
@@ -62,6 +73,12 @@ placeholder : List (Attribute msg) -> Element msg -> Placeholder msg
 placeholder attrs el = Placeholder attrs el
 
 
+-- Construct a single radio option from its string value + label
+-- Element.
+option : String -> Element msg -> RadioOption msg
+option value labelEl = RadioOption value labelEl
+
+
 -- ─── Controls ────────────────────────────────────────────────────
 
 -- Button. Set `onPress = Nothing` to render a disabled button (the
@@ -79,13 +96,68 @@ text attrs cfg =
     inputBase "text" attrs cfg
 
 
+-- Email-typed text input. Renders as `<input type="email">` so
+-- mobile browsers show the @-aware keyboard and HTML5 form
+-- validation kicks in.
+email : List (Attribute msg) -> { onChange : String -> msg, text : String, placeholder : Maybe (Placeholder msg), label : Label msg } -> Element msg
+email attrs cfg =
+    inputBase "email" attrs cfg
+
+
+-- Username-typed text input — identical to `text` plus
+-- `autocomplete="username"` so password managers recognise it as a
+-- sign-in field.
+username : List (Attribute msg) -> { onChange : String -> msg, text : String, placeholder : Maybe (Placeholder msg), label : Label msg } -> Element msg
+username attrs cfg =
+    inputBase "text" (Ui.htmlAttribute "autocomplete" "username" :: attrs) cfg
+
+
+-- Search input. Renders as `<input type="search">` (mobile clear
+-- button + dedicated search keyboard on some platforms).
+search : List (Attribute msg) -> { onChange : String -> msg, text : String, placeholder : Maybe (Placeholder msg), label : Label msg } -> Element msg
+search attrs cfg =
+    inputBase "search" attrs cfg
+
+
+-- Password input — current-password autocomplete (sign-in flows).
+-- Per Sky.Live's "Forms with passwords" doctrine in CLAUDE.md you
+-- normally want `Ui.form` + `onSubmit` rather than wiring `onChange`
+-- on every keystroke; this control is here for cases where you do
+-- need per-keystroke updates (validation feedback, strength meters).
+currentPassword : List (Attribute msg) -> { onChange : String -> msg, text : String, placeholder : Maybe (Placeholder msg), label : Label msg, show : Bool } -> Element msg
+currentPassword attrs cfg =
+    let
+        passType = if cfg.show then "text" else "password"
+        baseAttrs = Ui.htmlAttribute "autocomplete" "current-password" :: attrs
+    in
+        inputBase passType baseAttrs
+            { onChange = cfg.onChange
+            , text = cfg.text
+            , placeholder = cfg.placeholder
+            , label = cfg.label
+            }
+
+
+-- Password input — new-password autocomplete (sign-up / change-password
+-- flows). Same `show` toggle as `currentPassword`.
+newPassword : List (Attribute msg) -> { onChange : String -> msg, text : String, placeholder : Maybe (Placeholder msg), label : Label msg, show : Bool } -> Element msg
+newPassword attrs cfg =
+    let
+        passType = if cfg.show then "text" else "password"
+        baseAttrs = Ui.htmlAttribute "autocomplete" "new-password" :: attrs
+    in
+        inputBase passType baseAttrs
+            { onChange = cfg.onChange
+            , text = cfg.text
+            , placeholder = cfg.placeholder
+            , label = cfg.label
+            }
+
+
 -- Multi-line `<textarea>`. Same shape as `text`.
 multiline : List (Attribute msg) -> { onChange : String -> msg, text : String, placeholder : Maybe (Placeholder msg), label : Label msg, spellcheck : Bool } -> Element msg
 multiline attrs cfg =
     let
-        -- Textarea is a separate tag with content as text not value-attr;
-        -- Tier 2 routes through the standard text-input shape but emits
-        -- a `<textarea>`. Spellcheck attr is forwarded as-is.
         spellAttr =
             if cfg.spellcheck then
                 Ui.htmlAttribute "spellcheck" "true"
@@ -105,9 +177,6 @@ multiline attrs cfg =
 -- unicode tick for now or a custom Element).
 checkbox : List (Attribute msg) -> { onChange : Bool -> msg, icon : Bool -> Element msg, checked : Bool, label : Label msg } -> Element msg
 checkbox attrs cfg =
-    -- Wraps a hidden checkbox + the icon + the label so click
-    -- anywhere toggles. The icon function is invoked with the
-    -- current `checked` state so user code can show ✓ vs □.
     let
         checkInput =
             inputElement "checkbox"
@@ -118,19 +187,45 @@ checkbox attrs cfg =
         wrapWithLabel cfg.label attrs (Ui.row [ Ui.spacing 8 ] [ checkInput, iconEl ])
 
 
--- Radio buttons + slider land in Tier 2.5 — Sky's HM has trouble
--- with deeply polymorphic record arguments holding multiple free
--- TVars + parameterised ADTs in field positions (the radio
--- annotation triggered a type-checker stack overflow). Keep the
--- module's other surface (button/text/checkbox/multiline + label
--- positions) working today; revisit radio/option when Sky's HM
--- can handle the shape (or with a workaround that doesn't lose
--- type safety).
+-- Radio button group — vertical layout. Each `RadioOption value
+-- labelEl` becomes one selectable choice; clicking dispatches
+-- `onChange value`. `selected` is the currently-active value.
+radio : List (Attribute msg) -> { onChange : String -> msg, options : List (RadioOption msg), selected : String, label : Label msg } -> Element msg
+radio attrs cfg =
+    let
+        renderedOptions = List.map (renderRadioOption cfg.onChange cfg.selected) cfg.options
+    in
+        wrapWithLabel cfg.label attrs (Ui.column [ Ui.spacing 6 ] renderedOptions)
 
 
--- Slider lands in Tier 2.5 alongside radio/option once Sky's HM
--- can handle the polymorphic-record cfg shape without stack
--- overflow.
+-- Radio button group — horizontal layout. Same args as `radio`,
+-- children flow left-to-right.
+radioRow : List (Attribute msg) -> { onChange : String -> msg, options : List (RadioOption msg), selected : String, label : Label msg } -> Element msg
+radioRow attrs cfg =
+    let
+        renderedOptions = List.map (renderRadioOption cfg.onChange cfg.selected) cfg.options
+    in
+        wrapWithLabel cfg.label attrs (Ui.row [ Ui.spacing 12 ] renderedOptions)
+
+
+-- Range slider — `<input type="range">`. The change handler receives
+-- the slider's value as a String (it round-trips through the DOM as
+-- text); use `String.toFloat` or `String.toInt` to parse. `min`,
+-- `max`, `step`, and `value` are pre-rendered as Strings so the
+-- handler can stay String-typed.
+slider : List (Attribute msg) -> { onChange : String -> msg, value : String, min : String, max : String, step : String, label : Label msg } -> Element msg
+slider attrs cfg =
+    let
+        baseAttrs =
+            Ui.htmlAttribute "type" "range"
+                :: Ui.htmlAttribute "value" cfg.value
+                :: Ui.htmlAttribute "min" cfg.min
+                :: Ui.htmlAttribute "max" cfg.max
+                :: Ui.htmlAttribute "step" cfg.step
+                :: Ui.onInput cfg.onChange
+                :: attrs
+    in
+        wrapWithLabel cfg.label [] (Ui.input baseAttrs)
 
 
 -- ─── Internals ───────────────────────────────────────────────────
@@ -142,12 +237,12 @@ checkbox attrs cfg =
 inputBase : String -> List (Attribute msg) -> { onChange : String -> msg, text : String, placeholder : Maybe (Placeholder msg), label : Label msg } -> Element msg
 inputBase inputType attrs cfg =
     let
-        placeholderAttr = case cfg.placeholder of
-            Just (Placeholder _ _) ->
-                -- Placeholder text rendering is a Tier-2 follow-up;
-                -- for now skip and rely on the browser default.
-                []
-            Nothing -> []
+        placeholderAttr =
+            case cfg.placeholder of
+                Just (Placeholder _ el) ->
+                    placeholderTextOf el
+                Nothing ->
+                    []
         baseAttrs =
             Ui.htmlAttribute "type" inputType
                 :: Ui.htmlAttribute "value" cfg.text
@@ -157,6 +252,49 @@ inputBase inputType attrs cfg =
         inputEl = Ui.input baseAttrs
     in
         wrapWithLabel cfg.label [] inputEl
+
+
+-- Render a single radio option — a clickable `<input type="radio">`
+-- + its visible label, wrapped in a `<label>` element so clicking
+-- the text also activates the radio.
+renderRadioOption : (String -> msg) -> String -> RadioOption msg -> Element msg
+renderRadioOption onChange selected (RadioOption value labelEl) =
+    let
+        isChecked = value == selected
+        checkedAttr =
+            if isChecked then
+                [ Ui.htmlAttribute "checked" "checked" ]
+            else
+                []
+        radioInput =
+            Ui.input
+                ([ Ui.htmlAttribute "type" "radio"
+                 , Ui.htmlAttribute "value" value
+                 , Ui.onClick (onChange value)
+                 ] ++ checkedAttr)
+    in
+        Ui.row [ Ui.spacing 6, Ui.pointer ] [ radioInput, labelEl ]
+
+
+-- Internal: extract a single placeholder string from the Element
+-- inside a `Placeholder` value. HTML's `placeholder` attribute is
+-- text-only, so non-`Text` Elements are silently ignored.
+placeholderTextOf : Element msg -> List (Attribute msg)
+placeholderTextOf el =
+    let
+        s = extractText el
+    in
+        if String.isEmpty s then
+            []
+        else
+            [ Ui.htmlAttribute "placeholder" s ]
+
+
+extractText : Element msg -> String
+extractText el =
+    case el of
+        Ui.Text s -> s
+        _         -> ""
 
 
 -- Internal: build a bare input element by tag for fixed-msg controls
@@ -171,13 +309,13 @@ inputElement inputType msg val =
         ]
 
 
--- Wrap a control in its label according to LabelPosition.
+-- Wrap a control in its label according to LabelPosition. Hidden
+-- labels emit aria-label on the wrapper for screen-reader access.
 wrapWithLabel : Label msg -> List (Attribute msg) -> Element msg -> Element msg
 wrapWithLabel lbl wrapperAttrs control =
     case lbl of
-        LabelHidden _ ->
-            -- Visually hide the label; aria-label would go here.
-            Ui.el wrapperAttrs control
+        LabelHidden text ->
+            Ui.el (Ui.htmlAttribute "aria-label" text :: wrapperAttrs) control
 
         Label pos labelAttrs labelEl ->
             case pos of
