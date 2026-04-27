@@ -4,6 +4,19 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 ## Unreleased
 
+### Std.Ui — surface complete
+
+- **Background**: `image url`, `linearGradient angle stops`, `gradient css` (raw CSS escape).
+- **Border**: `widthEach { top, right, bottom, left }`, `solid` / `dashed` / `dotted`, `shadow { offsetX, offsetY, blur, spread, color }`, `glow blur color`, `innerShadow {…}` (rendered with CSS `inset`).
+- **Font**: `italic`, `underline`, `letterSpacing em`, `wordSpacing em`, plus weight helpers `semiBold` / `extraBold` / `black`.
+- **Region** (new + wired through): semantic landmarks now route to real HTML tags via the renderer — `mainContent` → `<main>`, `navigation` → `<nav>`, `footer` → `<footer>`, `aside` → `<aside>`, `heading n` → `<h1>`..`<h6>`. Plus `label text` → `aria-label="..."`, `announce` → `aria-live="polite"`, `announceUrgently` → `aria-live="assertive"`. Previously these helpers existed but the renderer didn't dispatch — they all rendered as `<div>`.
+- **Nearby positioning**: `above` / `below` / `onLeft` / `onRight` / `inFront` / `behind` — wraps the parent with `position: relative` and the nearby element with `position: absolute` + matching offsets. Use for tooltips, popovers, dropdown menus, badges.
+- **Input**: typed wrappers for `email`, `username`, `search`, `currentPassword {show: Bool}`, `newPassword {show: Bool}`. New `radio` / `radioRow` / `slider` controls (radio uses string-valued `RadioOption` to sidestep deeply-polymorphic-record HM friction). `placeholder` text now actually renders as the HTML `placeholder=` attribute. `LabelHidden` emits `aria-label` for screen-reader access.
+- **Overflow** (new): `clip` / `clipX` / `clipY` / `scrollbars` / `scrollbarX` / `scrollbarY`.
+- **`Ui.html` escape hatch**: now wraps an arbitrary Std.Html VNode via the new `Raw any` Element variant. Previously collapsed to `Text ""` (placeholder).
+- **Compiler-side**: `Html.aside` registered in the kernel registry so the renderer's `<aside>` dispatch resolves to `rt.Html_aside`. `Html.main` was already registered.
+- **Limitation #14 doc clarification**: the documented "use `Ui.text ""` instead of `Ui.none`" workaround was misleading. `Ui.none` works fine when annotations use bare `Element Msg` (via `import Std.Ui exposing (Element)`) rather than the qualified `Ui.Element Msg`. Updated `docs/skyui/overview.md` accordingly.
+
 ### Licence + attribution
 
 - **Relicensed to Apache License 2.0** (was MIT). Existing MIT releases (v0.10.0 and earlier) keep their original MIT terms; v0.10.1 onwards ships under Apache 2.0. The relicense brings:

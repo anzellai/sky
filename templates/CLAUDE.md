@@ -1373,15 +1373,18 @@ view model =
 
 | Area | Helpers |
 |---|---|
-| Layout | `el / row / column / paragraph / textColumn / text / none` |
-| Sized elements | `button` (`{onPress, label}`), `input` (real `<input>`), `form` (`<form>` + `onSubmit msg`), `link`, `image`, `html` |
-| Length | `px Int` / `fill Int` / `content` / `min` / `max` |
-| Alignment & padding | `centerX` / `centerY` / `alignLeft` / `alignRight` / `padding Int` / `spacing Int` / `width` / `height` / `pointer` |
+| Layout | `el / row / column / paragraph / textColumn / text / none / html` (`html` is the escape hatch wrapping a Std.Html VNode) |
+| Sized elements | `button` (`{onPress, label}`), `input` (real `<input>`), `form` (`<form>` + `onSubmit msg`), `link` (`{url, label}`), `image` (`{src, description}`) |
+| Length | `px Int` / `fill Int` / `fillPortion Int` / `content` / `shrink` / `min` / `max` |
+| Padding | `padding Int` / `paddingXY x y` / `paddingEach top right bottom left` / `spacing Int` |
+| Alignment | `centerX` / `centerY` / `alignLeft` / `alignRight` / `alignTop` / `alignBottom` / `pointer` |
+| Overflow | `clip` / `clipX` / `clipY` / `scrollbars` / `scrollbarX` / `scrollbarY` |
+| Nearby (overlays) | `above el` / `below el` / `onLeft el` / `onRight el` / `inFront el` / `behind el` |
 | Events (typed) | `onClick msg` / `onSubmit msg` / `onInput (String -> msg)` / `onChange (String -> msg)` / `onFocus msg` / `onMouseOver` / `onMouseOut` / `onKeyDown` / `onFile (String -> msg)` / `onImage (String -> msg)` |
 | File / image hints | `fileMaxSize Int` (bytes) / `fileMaxWidth Int` / `fileMaxHeight Int` |
 | Colour | `rgb Int Int Int` / `rgba Int Int Int Float` / `white` / `black` / `transparent` |
-| Form / attribute helpers | `htmlAttribute key val` / `name "field"` |
-| Sub-modules | `Std.Ui.Background` (color), `Std.Ui.Border` (color/width/rounded), `Std.Ui.Font` (color/family/size/bold), `Std.Ui.Region` (heading/footer + screen-reader landmarks), `Std.Ui.Input` (button/text/multiline/checkbox + label* positions), `Std.Ui.Lazy` (lazy/lazy2..lazy5 — no-op wrappers today), `Std.Ui.Keyed` (sky-key for diff identity), `Std.Ui.Responsive` (classifyDevice/adapt) |
+| Form / attribute helpers | `htmlAttribute key val` / `name "field"` / `style "css-prop" "value"` / `class "name"` |
+| Sub-modules | `Std.Ui.Background` (color/image/linearGradient/gradient), `Std.Ui.Border` (color/width/widthEach/rounded/solid/dashed/dotted/shadow/glow/innerShadow), `Std.Ui.Font` (color/family/size/weight/bold/semiBold/regular/light/extraBold/black/italic/underline/letterSpacing/wordSpacing), `Std.Ui.Region` (heading n/mainContent/navigation/footer/aside/label/announce/announceUrgently — renderer dispatches real semantic tags `<h1..h6>`/`<main>`/`<nav>`/`<footer>`/`<aside>` + aria-label/aria-live), `Std.Ui.Input` (button/text/multiline/email/username/search/currentPassword/newPassword/checkbox/radio/radioRow/slider + option + label*/placeholder), `Std.Ui.Lazy` (lazy/lazy2..lazy5 — no-op wrappers today), `Std.Ui.Keyed` (sky-key for diff identity), `Std.Ui.Responsive` (classifyDevice/adapt) |
 
 **Three idioms when writing Sky.Ui:**
 

@@ -494,14 +494,14 @@ view model =
             ])
 ```
 
-Layout primitives: `el / row / column / paragraph / textColumn / text / none / button / input / form / link / image / html / layout`. Length: `px / fill / content / min / max`. Attributes: `padding / spacing / width / height / centerX / centerY / alignLeft / alignRight / pointer / style / htmlAttribute / name`. Events: `onClick / onSubmit / onInput (typed String→msg) / onChange / onFocus / onMouseOver / onMouseOut / onKeyDown / onFile / onImage`. File hints: `fileMaxSize / fileMaxWidth / fileMaxHeight`. Colour: `rgb / rgba / white / black / transparent`.
+Layout primitives: `el / row / column / paragraph / textColumn / text / none / button / input / form / link / image / html / layout`. Length: `px / fill / fillPortion / content / shrink / min / max`. Padding: `padding / paddingXY / paddingEach / spacing`. Alignment: `centerX / centerY / alignLeft / alignRight / alignTop / alignBottom / pointer`. Overflow: `clip / clipX / clipY / scrollbars / scrollbarX / scrollbarY`. Nearby (overlays): `above / below / onLeft / onRight / inFront / behind`. Attributes: `width / height / style / class / htmlAttribute / name`. Events: `onClick / onSubmit / onInput (typed String→msg) / onChange / onFocus / onMouseOver / onMouseOut / onKeyDown / onFile / onImage`. File hints: `fileMaxSize / fileMaxWidth / fileMaxHeight`. Colour: `rgb / rgba / white / black / transparent`.
 
 Sub-modules:
-- **`Std.Ui.Background`** — `color`
-- **`Std.Ui.Border`** — `color / width / rounded`
-- **`Std.Ui.Font`** — `color / family / size / bold`
-- **`Std.Ui.Region`** — `heading n / footer` (semantic landmarks for screen readers)
-- **`Std.Ui.Input`** — typed form controls: `button / text / multiline / checkbox` + `labelAbove / labelBelow / labelLeft / labelRight / labelHidden / placeholder`
+- **`Std.Ui.Background`** — `color / image url / linearGradient angle stops / gradient css`
+- **`Std.Ui.Border`** — `color / width / widthEach {top, right, bottom, left} / rounded / solid / dashed / dotted / shadow {offsetX, offsetY, blur, spread, color} / glow blur color / innerShadow {…}`
+- **`Std.Ui.Font`** — `color / family / size / weight / bold / semiBold / regular / light / extraBold / black / italic / underline / letterSpacing em / wordSpacing em / sansSerif / serif / monospace`
+- **`Std.Ui.Region`** — `heading n` / `mainContent` / `navigation` / `footer` / `aside` / `label text` / `announce` / `announceUrgently` (the renderer dispatches `<h1>`..`<h6>` / `<main>` / `<nav>` / `<footer>` / `<aside>` from the Description, and emits `aria-label` / `aria-live` for the rest)
+- **`Std.Ui.Input`** — typed form controls: `button / text / multiline / email / username / search / currentPassword {show: Bool} / newPassword {show: Bool} / checkbox / radio {options, selected, …} / radioRow {…} / slider {min, max, step, value, …}` + `option value labelEl` (RadioOption ctor) + `labelAbove / labelBelow / labelLeft / labelRight / labelHidden / placeholder`
 - **`Std.Ui.Lazy`** — `lazy / lazy2..lazy5` (no-op wrappers today; runtime memo deferred)
 - **`Std.Ui.Keyed`** — `keyed` (emits `sky-key` for diff identity)
 - **`Std.Ui.Responsive`** — `classifyDevice / adapt {phone, tablet, desktop}`

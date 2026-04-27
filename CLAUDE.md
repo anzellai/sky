@@ -430,7 +430,7 @@ Single canonical module per concern after the v0.10.0 consolidation. Every kerne
 | `Html` | `Std.Html` | text, div, span, p, h1..h6, a, button, input, form, … (~70 elements + render/escape helpers) |
 | `Attr` | `Std.Html.Attributes` | class, id, style, type/value/href/src, checked/disabled/required, … (~60 attrs + boolAttribute/dataAttribute) |
 | `Css` | `Std.Css` | stylesheet, rule, property, px/rem/em/pct/hex/rgba, color/background/padding/margin/font*, transition, grid*, flex*, … (~120) |
-| `Ui` | `Std.Ui` | Typed no-CSS layout DSL: el/row/column/paragraph/textColumn/text/none/button/input/form/link/image/html, layout, padding/spacing/width/height (px/fill/content/min/max), align*, centerX/Y, pointer, htmlAttribute, name, onClick/onSubmit/onInput/onChange/onFocus/onMouseOver/onMouseOut/onKeyDown/onFile/onImage, fileMaxSize/Width/Height, rgb/rgba/white/black/transparent. Sub-modules: `Std.Ui.Background` (color), `Std.Ui.Border` (color/width/rounded), `Std.Ui.Font` (color/family/size/bold), `Std.Ui.Region` (heading/footer), `Std.Ui.Input` (button/text/multiline/checkbox + label*), `Std.Ui.Lazy` (lazy/lazy2..lazy5), `Std.Ui.Keyed` (keyed), `Std.Ui.Responsive` (classifyDevice/adapt). Renders to inline-styled HTML via Std.Html — no CSS files. Full reference: docs/skyui/overview.md. Prior-art attribution: NOTICE.md. |
+| `Ui` | `Std.Ui` | Typed no-CSS layout DSL. **Layout**: el/row/column/paragraph/textColumn/text/none/button/input/form/link/image/html, layout. **Length**: px/fill/fillPortion/content/shrink/min/max. **Padding**: padding/paddingXY/paddingEach/spacing. **Align**: centerX/Y/alignLeft/Right/Top/Bottom/pointer. **Overflow**: clip/clipX/clipY/scrollbars/scrollbarX/scrollbarY. **Nearby**: above/below/onLeft/onRight/inFront/behind. **Color**: rgb/rgba/white/black/transparent. **Events**: onClick/onSubmit/onInput/onChange/onFocus/onMouseOver/onMouseOut/onKeyDown/onFile/onImage, fileMaxSize/Width/Height. **Attrs**: htmlAttribute/style/class/name. Sub-modules: `Std.Ui.Background` (color/image/linearGradient/gradient), `Std.Ui.Border` (color/width/widthEach/rounded/solid/dashed/dotted/shadow/glow/innerShadow), `Std.Ui.Font` (color/family/size/weight/bold/semiBold/regular/light/extraBold/black/italic/underline/letterSpacing/wordSpacing/sansSerif/serif/monospace), `Std.Ui.Region` (heading/mainContent/navigation/footer/aside/label/announce/announceUrgently — renderer dispatches `<h1..h6>`/`<main>`/`<nav>`/`<footer>`/`<aside>` + aria-label/aria-live), `Std.Ui.Input` (button/text/multiline/checkbox/email/username/search/currentPassword/newPassword/radio/radioRow/slider + labelAbove/Below/Left/Right/Hidden + placeholder + option), `Std.Ui.Lazy` (lazy/lazy2..lazy5 — currently no-op wrappers), `Std.Ui.Keyed` (keyed), `Std.Ui.Responsive` (classifyDevice/adapt). Renders to inline-styled HTML via Std.Html — no CSS files. Full reference: docs/skyui/overview.md. Prior-art attribution: NOTICE.md. |
 | `RateLimit` | `Sky.Http.RateLimit` | allow |
 | `Middleware` | `Sky.Http.Middleware` | withCors, withLogging, withBasicAuth, withRateLimit |
 
@@ -702,19 +702,22 @@ view model =
 3. **For Std.Ui-heavy modules (~25+ polymorphic `Element Msg` helpers + many nested calls), split the view layer across multiple modules.** A single monolithic Main.sky can blow the HM type-checker heap (CLAUDE.md Limitation #17 — "HM type-checker heap exhaustion on Std.Ui-heavy modules"). The canonical split is `State.sky` (types + pure helpers, no Std.Ui imports) / `Update.sky` / `View/Common.sky` / one View module per page / `Main.sky` dispatcher. `examples/19-skyforum`'s 8-module form delivers the full Reddit-style feature surface and type-checks in 1.11 s / 369 MB; the equivalent monolithic `Main.sky.bak` allocates 2.6 GB/s and OOMs the dev machine.
 
 **Surface highlights** (full table in `docs/skyui/overview.md`):
-- Layout: `el` / `row` / `column` / `paragraph` / `textColumn` / `text` / `none`
-- Sized elements: `button` (with `{onPress, label}` cfg), `input` (real `<input>` element), `form` (with `onSubmit msg`)
-- Length: `px` / `fill` / `content` / `min` / `max`
-- Attributes: `padding` / `spacing` / `width` / `height` / `centerX` / `centerY` / `alignLeft` / `alignRight` / `pointer` / `style` / `htmlAttribute` / `name`
+- Layout: `el` / `row` / `column` / `paragraph` / `textColumn` / `text` / `none` / `html` (escape hatch wrapping a Std.Html VNode)
+- Sized elements: `link` (with `{url, label}` cfg), `image` (with `{src, description}` cfg), `button` (with `{onPress, label}` cfg), `input` (real `<input>` element), `form` (with `onSubmit msg`)
+- Length: `px` / `fill` / `fillPortion` / `content` / `shrink` / `min` / `max`
+- Padding: `padding` / `paddingXY` / `paddingEach` / `spacing`
+- Attributes: `width` / `height` / `centerX` / `centerY` / `alignLeft` / `alignRight` / `alignTop` / `alignBottom` / `pointer` / `style` / `class` / `htmlAttribute` / `name`
+- Overflow: `clip` / `clipX` / `clipY` / `scrollbars` / `scrollbarX` / `scrollbarY`
+- Nearby: `above` / `below` / `onLeft` / `onRight` / `inFront` / `behind` (absolute-positioned overlays for tooltips, popovers, badges; renderer wraps parent with `position: relative`)
 - Events: `onClick msg` / `onSubmit msg` / `onInput (String -> msg)` / `onChange (String -> msg)` / `onFocus msg` / `onMouseOver msg` / `onMouseOut msg` / `onKeyDown msg` / `onFile (String -> msg)` / `onImage (String -> msg)`
 - File/image hints: `fileMaxSize Int` (bytes) / `fileMaxWidth Int` / `fileMaxHeight Int` (resize before upload)
 - Colour: `rgb Int Int Int` / `rgba Int Int Int Float` / `white` / `black` / `transparent`
 - Sub-modules:
-  - `Std.Ui.Background` — `color`
-  - `Std.Ui.Border` — `color` / `width` / `rounded`
-  - `Std.Ui.Font` — `color` / `family` / `size` / `bold`
-  - `Std.Ui.Region` — `heading n` / `footer` / etc. (semantic markup for screen readers)
-  - `Std.Ui.Input` — typed form controls: `button` / `text` / `multiline` / `checkbox` + `labelAbove` / `labelBelow` / `labelLeft` / `labelRight` / `labelHidden` / `placeholder`
+  - `Std.Ui.Background` — `color` / `image url` / `linearGradient angle stops` / `gradient css`
+  - `Std.Ui.Border` — `color` / `width` / `widthEach {top,right,bottom,left}` / `rounded` / `solid` / `dashed` / `dotted` / `shadow {offsetX,offsetY,blur,spread,color}` / `glow blur color` / `innerShadow {…}`
+  - `Std.Ui.Font` — `color` / `family` / `size` / `weight` / `bold` / `semiBold` / `regular` / `light` / `extraBold` / `black` / `italic` / `underline` / `letterSpacing em` / `wordSpacing em` / `sansSerif` / `serif` / `monospace`
+  - `Std.Ui.Region` — semantic landmarks routed to real HTML tags by the renderer: `heading n` (`<h1>`..`<h6>`) / `mainContent` (`<main>`) / `navigation` (`<nav>`) / `footer` (`<footer>`) / `aside` (`<aside>`) / `label text` (`aria-label`) / `announce` (`aria-live="polite"`) / `announceUrgently` (`aria-live="assertive"`)
+  - `Std.Ui.Input` — typed form controls: `button` / `text` / `multiline` / `email` / `username` / `search` / `currentPassword {show: Bool}` / `newPassword {show: Bool}` / `checkbox` / `radio {options, selected, …}` / `radioRow {…}` / `slider {min, max, step, value, …}` + `option value labelEl` (RadioOption ctor) + `labelAbove` / `labelBelow` / `labelLeft` / `labelRight` / `labelHidden` / `placeholder`
   - `Std.Ui.Lazy` — `lazy` / `lazy2` … `lazy5` (no-op wrappers today; runtime memo deferred)
   - `Std.Ui.Keyed` — `keyed` (emits `sky-key` for diff identity)
   - `Std.Ui.Responsive` — `classifyDevice` / `adapt {phone, tablet, desktop}`

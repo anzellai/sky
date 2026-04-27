@@ -338,45 +338,39 @@ The 8-module split (`State.sky` / `Update.sky` / `View/{Common,Posts,Detail,Comp
 | Surface | Status | Notes |
 |---|:---:|---|
 | **Layout**: `el / row / column / paragraph / textColumn` | ✅ | |
-| Layout: `none` | ⚠️ | Cross-module type-param strip — workaround `Ui.text ""` |
+| Layout: `none` | ✅ | Use `import Std.Ui exposing (Element)` and bare `Element Msg` in annotations (not `Ui.Element Msg`) |
 | Layout: `link / image / button` | ✅ | |
 | Layout: `input` (real `<input>`) | ✅ | `Ui.el` renders as `<div>`, so a dedicated helper exists |
 | Layout: `form` (with `onSubmit`-into-typed-record) | ✅ | Wire driver decodes formData into a typed record |
-| Layout: `html` escape hatch | ⚠️ | Collapses to `Text ""` today |
-| **Length**: `px / content / fill / min / max` | ✅ | |
-| Length: `fillPortion / shrink` | ❌ | Planned |
+| Layout: `html` escape hatch | ✅ | `Ui.html node : any -> Element msg` wraps a Std.Html VNode |
+| **Length**: `px / content / fill / fillPortion / min / max / shrink` | ✅ | |
 | **Alignment**: `centerX/Y / align*` | ✅ | |
-| **Padding**: uniform / `spacing` | ✅ | |
-| Padding: `paddingXY / paddingEach` | ⚠️ | `AttrPadding` takes 4 ints, no helper yet |
-| **Background**: `color` | ✅ | |
-| Background: gradient / image | ❌ | Planned |
-| **Border**: `color / width / rounded` | ✅ | |
-| Border: `widthEach / dashed / dotted / shadow` | ❌ | Planned |
-| **Font**: `color / family / size / bold` | ✅ | |
-| Font: `italic / underline / letterSpacing / wordSpacing` | ❌ | Planned |
-| **Color**: `rgb / rgba` | ✅ | Sky stores 0-255 ints; HM friction with 0-1 floats |
-| **Region**: `heading / footer` | ✅ | |
-| Region: `navigation / mainContent / aside / announce` | ⚠️ | ADT variants exist; user-facing helpers partial |
+| **Padding**: `padding / paddingXY / paddingEach` / `spacing` | ✅ | |
+| **Background**: `color / image / linearGradient / gradient` | ✅ | `Std.Ui.Background` |
+| **Border**: `color / width / widthEach / rounded / solid / dashed / dotted / shadow / glow / innerShadow` | ✅ | `Std.Ui.Border` |
+| **Font**: `color / family / size / bold / semiBold / regular / light / extraBold / black / italic / underline / letterSpacing / wordSpacing / sansSerif / serif / monospace` | ✅ | `Std.Ui.Font` |
+| **Color**: `rgb / rgba / white / black / transparent` | ✅ | Sky stores 0-255 ints; HM friction with 0-1 floats |
+| **Region**: `heading n / mainContent / navigation / footer / aside / label / announce / announceUrgently` | ✅ | Renderer dispatches `<h1>`..`<h6>` / `<main>` / `<nav>` / `<footer>` / `<aside>` from the Description; aria-label / aria-live for the rest |
 | **Events**: `onClick / onMouseOver/Out / onFocus` | ✅ | |
 | Events: `onInput` (text input) | ✅ | Typed `(String -> msg)` |
 | Events: `onChange / onKeyDown / onSubmit` | ✅ | Sky.Live wire events |
 | Events: `onFile / onImage` (with browser-side resize) | ✅ | Base64 data URL + `fileMaxSize/Width/Height` |
-| **Input controls**: `button / text / multiline / checkbox` | ✅ | (`Std.Ui.Input`) |
-| Input: `radio / radioRow / slider` | ❌ | HM friction — deferred |
-| Input: `username / email / newPassword / search` | ❌ | Use generic `Ui.input` with `type="..."` |
-| Input: `placeholder` | ⚠️ | Constructor exists, render is TODO |
-| Input: `labelAbove/Below/Left/Right/Hidden` | ✅ | |
-| **Lazy**: `lazy / lazy2..lazy5` | ⚠️ | No-op wrappers; runtime memo deferred |
+| **Input controls**: `button / text / multiline / checkbox` | ✅ | `Std.Ui.Input` |
+| Input: `email / username / search / currentPassword / newPassword` | ✅ | Typed wrappers with the matching HTML5 input type + `autocomplete=` for password-manager UX |
+| Input: `radio / radioRow / slider` | ✅ | `RadioOption` uses string values (Sky-side trade-off vs elm-ui's polymorphic option type to sidestep deeply-nested-polymorphic-record HM friction) |
+| Input: `placeholder` | ✅ | Renders as the HTML `placeholder=` attribute on the input |
+| Input: `labelAbove/Below/Left/Right/Hidden` | ✅ | LabelHidden emits `aria-label` on the wrapper |
+| **Lazy**: `lazy / lazy2..lazy5` | ⚠️ | No-op wrappers (type-correct passthrough); runtime memoisation deferred — needs a runtime VNode cache keyed on function-pointer + serialised args |
 | **Keyed**: `keyed` | ✅ | `sky-key` attribute |
-| **Nearby**: `above / below / onLeft / onRight / inFront / behind` | ⚠️ | `Location` ctors exist; user-facing helpers TBD |
+| **Nearby**: `above / below / onLeft / onRight / inFront / behind` | ✅ | Renderer wraps the parent with `position: relative` and the nearby Element with `position: absolute` + matching offsets |
 | **Cursor**: `pointer` | ✅ | |
-| **Misc**: `transparent` / `htmlAttribute` | ✅ | |
-| Misc: `clip / scrollbars / focusStyle` | ❌ | Planned |
+| **Overflow**: `clip / clipX / clipY / scrollbars / scrollbarX / scrollbarY` | ✅ | `overflow-x` / `overflow-y` |
+| **Misc**: `transparent` / `htmlAttribute` / `style` / `class` / `name` | ✅ | |
 | Misc: `classifyDevice` | ✅ | Via `Std.Ui.Responsive` |
 | **Render target** | — | Server-side Sky.Live + ~2 KB browser JS |
 | **Style emission** | — | Inline styles per element |
 
-Legend: ✅ ships · ⚠️ partial · ❌ planned
+Legend: ✅ ships · ⚠️ partial
 
 ## Known limitations
 
@@ -388,7 +382,17 @@ When iterating on Std.Ui-heavy code on macOS, run `scripts/mem-guard.sh` in the 
 
 Same bug class also turns up as: empty list `[]` in a positional constructor's typed-slice arg position emits as `[]any{}` instead of `[]string{}`. Workaround: switch seed data from positional `Post 1 "..." ... [] []` form to record-literal `{ id = 1, ..., upvoters = [], ... }` — the field's type alias gives the codegen the target type.
 
-**Cross-module type-parameter stripping.** `import Std.Ui exposing (Element)` gets the type alias but the canonicaliser may strip type parameters from cross-module references to certain values (notably `Std.Ui.none`). Workaround: use `Ui.text ""` instead of `Ui.none` when referencing across module boundaries.
+**Cross-module qualified type references.** Annotations using a *qualified-with-alias* type reference (`view : ... -> Ui.Element Msg`) can fail with `Type mismatch: Element a vs Element Msg` because Sky's canonicaliser strips type parameters from qualified-alias references. **Workaround**: import the type unqualified and use the bare name in annotations. The canonical pattern (used by every Sky.Ui example) is:
+
+```elm
+import Std.Ui as Ui
+import Std.Ui exposing (Element)        -- bring the bare type name in scope
+
+view : Model -> Element Msg              -- bare `Element`, not `Ui.Element`
+view model = Ui.row [...] [...]          -- bare `Element` lets `Ui.row` instantiate cleanly
+```
+
+With this pattern, `Ui.none`, `Ui.text`, `Ui.row`, `Ui.column` and the rest unify against `Element Msg` correctly. The compiler-side fix (proper qualified-alias type-param resolution) is tracked separately and is not specific to Std.Ui.
 
 ## See also
 

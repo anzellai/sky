@@ -102,7 +102,7 @@ See [Std.Db overview](docs/skydb/overview.md).
 
 ### Std.Ui — typed layout DSL (no CSS files)
 
-Build a UI from typed primitives (`row`, `column`, `el`) and typed attributes (`Background.color`, `Border.rounded`, `Font.size`, `Region.heading`). Renders to inline-styled HTML on the server side, Sky.Live ferries diffs to the browser. Same mental model as Sky's stdlib elsewhere — no CSS, no class names, no flexbox quirks — tuned for Sky.Live's wire shape. (Prior-art attribution: see [NOTICE.md](NOTICE.md).)
+Build a UI from typed primitives (`row`, `column`, `el`, `paragraph`, `textColumn`, `link`, `image`, `button`, `input`, `form`, `html`) and typed attributes from focused sub-modules (`Background.color`, `Border.rounded`, `Border.shadow`, `Font.size`, `Font.italic`, `Region.heading`, `Region.mainContent`, …). Renders to inline-styled HTML on the server side with semantic tags (`<main>`, `<nav>`, `<aside>`, `<footer>`, `<h1>`..`<h6>`) dispatched from `Region.*`; Sky.Live ferries diffs to the browser. Form controls (`Input.email`/`Input.newPassword`/`Input.radio`/`Input.slider`/…), nearby positioning (`Ui.above`/`Ui.below`/`Ui.inFront`/…), and overflow control (`Ui.clip`/`Ui.scrollbars`) all on the same flat surface. Same mental model as Sky's stdlib elsewhere — no CSS, no class names, no flexbox quirks. (Prior-art attribution: see [NOTICE.md](NOTICE.md).)
 
 ```elm
 import Std.Ui as Ui
