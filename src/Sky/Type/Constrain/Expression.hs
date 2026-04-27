@@ -297,9 +297,21 @@ constrainLambda counter env region params body expected = do
     paramTypes <- mapM (\_ -> do n <- freshName counter "_larg"; return (T.TVar n)) params
     resultName <- freshName counter "_lres"
     let resultType = T.TVar resultName
-        paramBindings = concatMap patternBindings (zip params paramTypes)
-        bodyEnv = foldr (\(n, ann) e -> Map.insert n ann e) env paramBindings
         funcType = foldr T.TLambda resultType paramTypes
+    -- Generate per-pattern bindings AND structural constraints in IO
+    -- so we can mint fresh element-type names for tuple/cons/list
+    -- patterns. Pre-fix this used a non-IO `patternBindings` that bound
+    -- tuple elements to static names (`_tup_0`, `_tup_1`, ...). Those
+    -- names collapsed via the solver's `_varCache` so multiple tuple
+    -- destructures in the same definition shared element types,
+    -- breaking expressions like
+    --     List.filterMap (\(name, r) -> ...)
+    --         |> List.map (\(name, msg) -> ...)
+    -- with `Type mismatch: String vs R`.
+    perParam <- mapM (uncurry (patternBindingsIO counter)) (zip params paramTypes)
+    let paramBindings = concatMap fst perParam
+        structuralCons = concatMap snd perParam
+        bodyEnv = foldr (\(n, ann) e -> Map.insert n ann e) env paramBindings
     bodyCon <- constrain counter bodyEnv body (T.NoExpectation resultType)
     -- Wrap body in CLet so param names are scoped. Without this the solver's
     -- runtime _env leaks lambda params (or pattern names) into whatever
@@ -309,7 +321,7 @@ constrainLambda counter env region params body expected = do
             [ (pname, (A.one, ptype))
             | (pname, T.Forall _ ptype) <- paramBindings
             ]
-        bodyScoped = T.CLet [] [] paramHeader T.CTrue bodyCon
+        bodyScoped = T.CLet [] [] paramHeader (T.CAnd structuralCons) bodyCon
     return $ T.CAnd [bodyScoped, T.CEqual region T.CLambda funcType expected]
 
 
@@ -675,6 +687,89 @@ patternBindings (A.At _ pat, ty) = case pat of
     Can.PCtor _home _typeName _union ctorName _idx args ->
         concatMap (\(Can.PatternCtorArg _ argType argPat) ->
             patternBindings (argPat, argType)) args
+
+
+-- | IO variant of `patternBindings` that mints FRESH unification-
+-- variable names for structural patterns (tuple, cons, list) rather
+-- than reusing static names (`_tup_0`, `_tup_1`). The static-name
+-- form was buggy: multiple tuple destructures in the same
+-- definition collapsed via the solver's `_varCache`, so `(name, r)`
+-- and `(name, msg)` from sibling lambdas would share element type
+-- variables. Returns both the bindings AND the structural
+-- constraints that tie the outer `ty` to the structure of the
+-- pattern (so HM unifies tuple-pattern elements with the outer
+-- tuple type's element vars).
+--
+-- Used by `constrainLambda` for lambda parameters; the case-pattern
+-- path uses `instantiatePattern` instead which already takes the
+-- counter and emits constraints inline.
+patternBindingsIO :: Counter -> Can.Pattern -> T.Type -> IO ([(String, T.Annotation)], [T.Constraint])
+patternBindingsIO counter (A.At region pat) ty = case pat of
+    Can.PVar name ->
+        return ([(name, T.Forall [] ty)], [])
+
+    Can.PAnything ->
+        return ([], [])
+
+    Can.PAlias inner name -> do
+        (bs, cs) <- patternBindingsIO counter inner ty
+        return ((name, T.Forall [] ty) : bs, cs)
+
+    Can.PRecord fields ->
+        -- Records still use static field-name vars; not in the
+        -- collapse path because the names are field-derived not
+        -- positional. (Matching field names IS the discriminator.)
+        return (map (\f -> (f, T.Forall [] (T.TVar ("_rec_" ++ f)))) fields, [])
+
+    Can.PUnit ->
+        return ([], [])
+
+    Can.PTuple a b more -> do
+        -- Mint a fresh element-type name per tuple element. The
+        -- structural constraint `ty == TTuple v0 v1 [v2..]` ties
+        -- the outer ty to the freshly-built tuple shape, so the
+        -- solver fills in v0..vN from whatever ty resolves to.
+        v0 <- T.TVar <$> freshName counter "_tup"
+        v1 <- T.TVar <$> freshName counter "_tup"
+        vs <- mapM (\_ -> T.TVar <$> freshName counter "_tup") more
+        let outerCon = T.CEqual region T.CRecord (T.TTuple v0 v1 vs) (T.NoExpectation ty)
+        (bsA, csA) <- patternBindingsIO counter a v0
+        (bsB, csB) <- patternBindingsIO counter b v1
+        innerPairs <- mapM (\(p, t) -> patternBindingsIO counter p t) (zip more vs)
+        let innerBs = concatMap fst innerPairs
+            innerCs = concatMap snd innerPairs
+        return (bsA ++ bsB ++ innerBs, outerCon : csA ++ csB ++ innerCs)
+
+    Can.PList items -> do
+        -- Mint a fresh element-type name and tie ty to List elem.
+        elemTy <- T.TVar <$> freshName counter "_list_elem"
+        let listTy = T.TType ModuleName.list "List" [elemTy]
+            outerCon = T.CEqual region T.CList listTy (T.NoExpectation ty)
+        innerPairs <- mapM (\item -> patternBindingsIO counter item elemTy) items
+        let innerBs = concatMap fst innerPairs
+            innerCs = concatMap snd innerPairs
+        return (innerBs, outerCon : innerCs)
+
+    Can.PCons h t -> do
+        elemTy <- T.TVar <$> freshName counter "_cons_elem"
+        let listTy = T.TType ModuleName.list "List" [elemTy]
+            outerCon = T.CEqual region T.CList listTy (T.NoExpectation ty)
+        (bsH, csH) <- patternBindingsIO counter h elemTy
+        (bsT, csT) <- patternBindingsIO counter t listTy
+        return (bsH ++ bsT, outerCon : csH ++ csT)
+
+    Can.PBool _ -> return ([], [])
+    Can.PChr _  -> return ([], [])
+    Can.PStr _  -> return ([], [])
+    Can.PInt _  -> return ([], [])
+
+    Can.PCtor _home _typeName _union ctorName _idx args -> do
+        -- The constructor's arg types come from the canonicaliser
+        -- (already concrete), so no fresh-name minting needed —
+        -- just recurse.
+        argPairs <- mapM (\(Can.PatternCtorArg _ argType argPat) ->
+            patternBindingsIO counter argPat argType) args
+        return (concatMap fst argPairs, concatMap snd argPairs)
 
 
 -- ═══════════════════════════════════════════════════════════

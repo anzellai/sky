@@ -1637,6 +1637,14 @@ func Eq(a, b any) any {
 	return deepEq(a, b)
 }
 
+// NotEq is the runtime helper for Sky's `/=` operator. Mirrors `Eq`
+// shape so the lowerer can route both `==` and `/=` through runtime
+// helpers — Go's native `!=` doesn't work on `any`-typed values
+// (Go generics with `T any` don't satisfy `comparable`).
+func NotEq(a, b any) any {
+	return !deepEq(a, b)
+}
+
 // isSkyADT reports whether v is a Sky-canonical ADT struct
 // (SkyMaybe[T], SkyResult[E, A], SkyTuple2/3[…]). Detected by the
 // presence of an int Tag field plus at least one of the named

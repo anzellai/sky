@@ -179,6 +179,7 @@ test-suite sky-tests
       Sky.Canonicalise.UnboundSpec
       Sky.Type.ExhaustivenessSpec
       Sky.Type.AnyWildcardSpec
+      Sky.Type.TupleLambdaSpec
       Sky.Format.FormatSpec
       Sky.Build.NestedPatternSpec
       Sky.Build.ConsCtorPatternSpec

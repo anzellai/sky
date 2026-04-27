@@ -4435,8 +4435,11 @@ binopToGo op left right = case op of
     -- Cons operator
     "::" -> GoIr.GoCall (GoIr.GoQualified "rt" "List_cons") [exprToGo left, exprToGo right]
 
-    -- Not-equal
-    "/=" -> GoIr.GoBinary "!=" (exprToGo left) (exprToGo right)
+    -- Not-equal — runtime helper (Go's native `!=` doesn't work on
+    -- `any`-typed generic params; pre-fix this caused
+    -- `expected != actual (incomparable types in type set)` for
+    -- polymorphic helpers like Sky.Test.notEqual).
+    "/=" -> GoIr.GoCall (GoIr.GoQualified "rt" "NotEq") [exprToGo left, exprToGo right]
 
     -- Arithmetic operators — use runtime helpers for any-typed values
     "+"  -> GoIr.GoCall (GoIr.GoQualified "rt" "Add") [exprToGo left, exprToGo right]
@@ -5448,7 +5451,7 @@ typedBinop types retType op left right = case op of
             in if retType == "string"
                then GoIr.GoTypeAssert concatExpr "string"
                else concatExpr
-    "/=" -> GoIr.GoBinary "!=" (exprToGoTyped types retType left) (exprToGoTyped types retType right)
+    "/=" -> GoIr.GoCall (GoIr.GoQualified "rt" "NotEq") [exprToGoTyped types retType left, exprToGoTyped types retType right]
     _ -> GoIr.GoBinary op (exprToGoTyped types retType left) (exprToGoTyped types retType right)
 
 

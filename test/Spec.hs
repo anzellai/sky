@@ -14,6 +14,7 @@ import qualified Sky.Canonicalise.KernelFallbackSpec
 import qualified Sky.Canonicalise.UnboundSpec
 import qualified Sky.Type.ExhaustivenessSpec
 import qualified Sky.Type.AnyWildcardSpec
+import qualified Sky.Type.TupleLambdaSpec
 import qualified Sky.Format.FormatSpec
 import qualified Sky.Build.NestedPatternSpec
 import qualified Sky.Build.ConsCtorPatternSpec
@@ -71,6 +72,10 @@ main = hspec $ do
     -- occurrences of `any` in source types must NOT share a single
     -- unification variable; each gets its own fresh var.
     describe "Sky.Type.AnyWildcard"      Sky.Type.AnyWildcardSpec.spec
+    -- Tuple-pattern in lambda arg fix + `/=` operator codegen fix.
+    -- Surfaced together when investigating why `sky test` for a
+    -- passing module was xfailing.
+    describe "Sky.Type.TupleLambda"      Sky.Type.TupleLambdaSpec.spec
     describe "Sky.Format.Format"         Sky.Format.FormatSpec.spec
     describe "Sky.Build.NestedPattern"   Sky.Build.NestedPatternSpec.spec
     -- Cons-with-constructor pattern fix (compiler bug #2). The

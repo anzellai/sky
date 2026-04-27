@@ -46,7 +46,8 @@ formatModule :: Src.Module -> String
 formatModule m =
     let header = case Src._name m of
             Just (A.At _ segs) ->
-                "module " ++ joinDots segs ++ " exposing " ++ fmtExposing (A.toValue (Src._exports m))
+                let lhs = "module " ++ joinDots segs ++ " exposing"
+                in lhs ++ fmtExposingClause (length lhs) (A.toValue (Src._exports m))
             Nothing -> ""
         imports = map fmtImport (Src._imports m)
         tagged = map DAlias (Src._aliases m)
@@ -63,10 +64,56 @@ formatModule m =
 joinDots :: [String] -> String
 joinDots = intercalate "."
 
+
+-- | Maximum single-line width before `fmtExposingAt` breaks the
+-- exposing list across multiple lines. Matches the elm-format
+-- convention (~100 chars). Anything past this threshold renders as
+-- one-export-per-line with leading commas, indented 4 spaces.
+maxLineWidth :: Int
+maxLineWidth = 100
+
+
+-- | Render the FULL exposing clause including the leading separator
+-- (a single space for single-line, a newline + 4-space indent for
+-- multi-line), choosing automatically based on the rendered length.
+--
+-- `lhsLen` is the column at which the "exposing" keyword ends —
+-- i.e. `length "module Main exposing"` for module headers, or
+-- `length "import Std.Log exposing"` for imports. The threshold is
+-- `maxLineWidth`; if the single-line form (lhs + " " + "(...)")
+-- would exceed it, switch to one-per-line with leading commas.
+--
+-- Multi-line shape (matches `sky fmt` convention for records/lists):
+--
+--     exposing
+--         ( first
+--         , second
+--         , third
+--         )
+fmtExposingClause :: Int -> Src.Exposing -> String
+fmtExposingClause _ Src.ExposingAll = " (..)"
+fmtExposingClause lhsLen (Src.ExposingList items) =
+    let rendered = map (fmtExposed . A.toValue) items
+        single = "(" ++ intercalate ", " rendered ++ ")"
+        totalLen = lhsLen + 1 + length single   -- +1 for the leading space
+    in
+        if totalLen <= maxLineWidth || length items <= 1 then
+            " " ++ single
+        else
+            -- Multi-line: newline + 4-space indent, then one entry
+            -- per line with leading commas. The opening "exposing"
+            -- keyword stays on its own line above this output.
+            "\n    ( " ++ intercalate "\n    , " rendered ++ "\n    )"
+
+
+-- Single-line shim for the `formatTypeAnnotation`-style callers
+-- that need the bare `(item, item)` form without leading space or
+-- multi-line decision.
 fmtExposing :: Src.Exposing -> String
 fmtExposing Src.ExposingAll = "(..)"
 fmtExposing (Src.ExposingList items) =
     "(" ++ intercalate ", " (map (fmtExposed . A.toValue) items) ++ ")"
+
 
 fmtExposed :: Src.Exposed -> String
 fmtExposed (Src.ExposedValue n) = n
@@ -81,10 +128,17 @@ fmtImport imp =
         aliasPart = case Src._importAlias imp of
             Just a  -> " as " ++ a
             Nothing -> ""
+        prefix = "import " ++ name ++ aliasPart
         exposingPart = case A.toValue (Src._importExposing imp) of
             Src.ExposingList [] -> ""
-            exp_ -> " exposing " ++ fmtExposing exp_
-    in "import " ++ name ++ aliasPart ++ exposingPart
+            exp_ ->
+                let lhs = " exposing"
+                    -- lhsLen is the column where "exposing" ENDS,
+                    -- starting from column 0 (since each import is
+                    -- on its own line, no outer indent).
+                    lhsLen = length prefix + length lhs
+                in lhs ++ fmtExposingClause lhsLen exp_
+    in prefix ++ exposingPart
 
 fmtAlias :: Src.Alias -> String
 fmtAlias a =
