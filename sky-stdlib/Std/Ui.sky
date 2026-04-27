@@ -76,6 +76,7 @@ type Attribute msg
     | AttrFontWeight Int
     | AttrFontItalic                       -- font-style: italic
     | AttrFontUnderline                    -- text-decoration: underline
+    | AttrFontDecoration String            -- text-decoration: <value> (none / line-through / overline / …)
     | AttrFontLetterSpacing Float          -- letter-spacing in em
     | AttrFontWordSpacing Float            -- word-spacing in em
     | AttrFontAlign String                 -- text-align: left | right | center | justify
@@ -99,6 +100,8 @@ type Length
     | Fill Int
     | Min Int Length
     | Max Int Length
+    | Vh Int                   -- viewport-height percent (1..100)
+    | Vw Int                   -- viewport-width percent  (1..100)
 
 
 type HAlign
@@ -179,6 +182,27 @@ column attrs children =
     Node NoDescription (colMarker :: attrs) children
 
 
+-- Like `row`, but children that overflow the parent's width wrap to
+-- a new line instead of overflowing or shrinking. Compiles to
+-- `display: flex; flex-direction: row; flex-wrap: wrap`. Use this
+-- for product grids, tag clouds, dashboards, and anything where the
+-- child count is data-driven and the column count should adapt to
+-- available width.
+--
+-- Children keep their own intrinsic widths (e.g. `Ui.width (Ui.px
+-- 240)` cards), so combine with `Ui.spacing` for the gutter:
+--
+--     wrappedRow [ Ui.spacing 16 ]
+--         (List.map productCard products)
+--
+-- For true CSS-Grid `repeat(auto-fill, minmax(...))` behaviour
+-- (where children stretch to fill available width per row) — that's
+-- a separate `Ui.grid` primitive, not yet shipped.
+wrappedRow : List (Attribute msg) -> List (Element msg) -> Element msg
+wrappedRow attrs children =
+    Node NoDescription (rowMarker :: wrapMarker :: attrs) children
+
+
 -- Internal markers — encoded as inline AttrStyle entries at the
 -- start of the attribute list so user attrs can override.
 rowMarker : Attribute msg
@@ -187,6 +211,14 @@ rowMarker = AttrStyle "__row" "true"
 
 colMarker : Attribute msg
 colMarker = AttrStyle "__col" "true"
+
+
+-- Wrap-flag marker. Renderer adds `flex-wrap: wrap` when present;
+-- stripped from the emitted style string just like the row/col
+-- markers. Currently only emitted by `wrappedRow`, but the marker
+-- is reusable if `wrappedColumn` ever lands.
+wrapMarker : Attribute msg
+wrapMarker = AttrStyle "__wrap" "true"
 
 
 -- ─── Length constructors ─────────────────────────────────────────
@@ -213,6 +245,21 @@ minimum n l = Min n l
 
 maximum : Int -> Length -> Length
 maximum n l = Max n l
+
+
+-- Viewport-relative length: `vh n` = `n%` of the viewport height,
+-- `vw n` = `n%` of the viewport width. Useful for full-page shells
+-- (`Ui.height (Ui.vh 100)` = `min-height: 100vh`-style behaviour),
+-- hero sections, and modals that want to fill the visible area
+-- regardless of parent size. Pair with `Ui.minimum` / `Ui.maximum`
+-- if you need bounded viewport sizing
+-- (e.g. `Ui.maximum 800 (Ui.vh 80)`).
+vh : Int -> Length
+vh n = Vh n
+
+
+vw : Int -> Length
+vw n = Vw n
 
 
 -- ─── Attribute constructors ─────────────────────────────────────
@@ -331,6 +378,13 @@ fontItalic = AttrFontItalic
 
 fontUnderline : Attribute msg
 fontUnderline = AttrFontUnderline
+
+-- Generic text-decoration kernel — `value` is the raw CSS keyword
+-- (e.g. "none", "line-through", "overline"). Std.Ui.Font wraps the
+-- common cases (`noDecoration` / `underline` / etc.) so user code
+-- doesn't type the string.
+fontDecoration : String -> Attribute msg
+fontDecoration value = AttrFontDecoration value
 
 -- text-align kernel — `value` is the raw CSS keyword
 -- ("left" / "right" / "center" / "justify"). Std.Ui.Font wraps each
@@ -1008,9 +1062,16 @@ buildStyleString : LayoutContext -> LayoutContext -> List (Attribute msg) -> Str
 buildStyleString parentCtx myCtx attrs =
     let
         baseDisplay = displayFor myCtx
+        -- `wrappedRow` carries a `__wrap` marker that asks for
+        -- `flex-wrap: wrap`. The marker itself is stripped by the
+        -- AttrStyle case in `collectStyle`; we just check for its
+        -- presence here and append the corresponding CSS.
+        wrapPart = if hasMarker "__wrap" attrs
+            then " flex-wrap: wrap;"
+            else ""
         attrParts = List.foldl (collectStyle parentCtx myCtx) "" attrs
     in
-        baseDisplay ++ attrParts
+        baseDisplay ++ wrapPart ++ attrParts
 
 
 displayFor : LayoutContext -> String
@@ -1049,6 +1110,12 @@ collectStyle parentCtx myCtx attr acc =
                 acc
             else if k == "__textcolumn" then
                 acc
+            else if k == "__wrap" then
+                -- Wrap marker is consumed by `displayFor` (which
+                -- appends `flex-wrap: wrap` to the row's display
+                -- block); stripped here so it doesn't leak as a
+                -- literal CSS property.
+                acc
             else
                 acc ++ " " ++ k ++ ": " ++ v ++ ";"
         AttrDescribe _ ->
@@ -1080,6 +1147,8 @@ collectStyle parentCtx myCtx attr acc =
             acc ++ " font-style: italic;"
         AttrFontUnderline ->
             acc ++ " text-decoration: underline;"
+        AttrFontDecoration value ->
+            acc ++ " text-decoration: " ++ value ++ ";"
         AttrFontAlign value ->
             acc ++ " text-align: " ++ value ++ ";"
         AttrFontLetterSpacing em ->
@@ -1144,6 +1213,8 @@ widthCss lng =
         Fill _      -> "flex-grow: 1; align-self: stretch;"
         Min n inner -> widthCss inner ++ " min-width: " ++ String.fromInt n ++ "px;"
         Max n inner -> widthCss inner ++ " max-width: " ++ String.fromInt n ++ "px;"
+        Vh n        -> "width: " ++ String.fromInt n ++ "vh;"
+        Vw n        -> "width: " ++ String.fromInt n ++ "vw;"
 
 
 heightCss : Length -> String
@@ -1154,6 +1225,8 @@ heightCss lng =
         Fill _      -> "flex-grow: 1; align-self: stretch;"
         Min n inner -> heightCss inner ++ " min-height: " ++ String.fromInt n ++ "px;"
         Max n inner -> heightCss inner ++ " max-height: " ++ String.fromInt n ++ "px;"
+        Vh n        -> "height: " ++ String.fromInt n ++ "vh;"
+        Vw n        -> "height: " ++ String.fromInt n ++ "vw;"
 
 
 alignXCss : LayoutContext -> HAlign -> String

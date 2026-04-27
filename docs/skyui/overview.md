@@ -81,6 +81,9 @@ The `Ui.layout` function takes the root element and produces an `any` that Sky.L
 Ui.el      [Attr] (Element)            -- single element (renders as <div>)
 Ui.row     [Attr] [Element]            -- horizontal flex container
 Ui.column  [Attr] [Element]            -- vertical flex container
+Ui.wrappedRow [Attr] [Element]         -- like row, but children that don't
+                                       --   fit wrap to a new line
+                                       --   (CSS flex-wrap: wrap)
 Ui.paragraph [Attr] [Element]          -- inline text flow with wrapping
 Ui.textColumn [Attr] [Element]         -- vertical text-flow column
 Ui.text   String                       -- bare text (no wrapping element)
@@ -110,6 +113,8 @@ Ui.content : Length                     -- shrink-to-fit
 Ui.shrink : Length                      -- shrink to content size
 Ui.minimum : Int -> Length -> Length    -- minimum constraint on a length
 Ui.maximum : Int -> Length -> Length    -- maximum constraint on a length
+Ui.vh : Int -> Length                   -- viewport-height percent (1..100)
+Ui.vw : Int -> Length                   -- viewport-width percent  (1..100)
 ```
 
 Use with `Ui.width` / `Ui.height`:
@@ -121,6 +126,16 @@ Ui.row [ Ui.spacing 8 ]
     , Ui.el [ Ui.width (Ui.fillPortion 2) ] (Ui.text "double")   -- 2× fillPortion sibling
     , Ui.el [ Ui.width (Ui.maximum 320 Ui.fill) ] (Ui.text "capped")
     , Ui.el [ Ui.width (Ui.px 32) ] (Ui.text "✓")
+    ]
+
+-- Viewport-relative: full-page shells, hero sections, modals
+Ui.column
+    [ Ui.height (Ui.vh 100)             -- min-height: 100vh shell
+    , Ui.width (Ui.vw 100)
+    ]
+    [ heroSection
+    , content
+    , footer
     ]
 ```
 
@@ -342,18 +357,18 @@ The 8-module split (`State.sky` / `Update.sky` / `View/{Common,Posts,Detail,Comp
 
 | Surface | Status | Notes |
 |---|:---:|---|
-| **Layout**: `el / row / column / paragraph / textColumn` | ✅ | |
+| **Layout**: `el / row / column / wrappedRow / paragraph / textColumn` | ✅ | `wrappedRow` adds `flex-wrap: wrap` so children wrap to a new line |
 | Layout: `none` | ✅ | Use `import Std.Ui exposing (Element)` and bare `Element Msg` in annotations (not `Ui.Element Msg`) |
 | Layout: `link / image / button` | ✅ | |
 | Layout: `input` (real `<input>`) | ✅ | `Ui.el` renders as `<div>`, so a dedicated helper exists |
 | Layout: `form` (with `onSubmit`-into-typed-record) | ✅ | Wire driver decodes formData into a typed record |
 | Layout: `html` escape hatch | ✅ | `Ui.html node : any -> Element msg` wraps a Std.Html VNode |
-| **Length**: `px / content / fill / fillPortion / minimum / maximum / shrink` | ✅ | `fill : Length` is bare; use `fillPortion n` for proportional weights |
+| **Length**: `px / content / fill / fillPortion / minimum / maximum / shrink / vh / vw` | ✅ | `fill : Length` is bare; use `fillPortion n` for proportional weights; `vh n` / `vw n` are viewport-relative |
 | **Alignment**: `centerX/Y / align*` | ✅ | |
 | **Padding**: `padding / paddingXY / paddingEach` / `spacing` | ✅ | |
 | **Background**: `color / image / linearGradient / gradient` | ✅ | `Std.Ui.Background` |
 | **Border**: `color / width / widthEach / rounded / solid / dashed / dotted / shadow / glow / innerShadow` | ✅ | `Std.Ui.Border` |
-| **Font**: `color / family / size / weight / bold / semiBold / regular / light / extraBold / black / italic / underline / letterSpacing / wordSpacing / alignLeft / alignRight / alignCenter / center / justify / sansSerif / serif / monospace` | ✅ | `Std.Ui.Font` |
+| **Font**: `color / family / size / weight / bold / semiBold / regular / light / extraBold / black / italic / underline / noDecoration / lineThrough / overline / letterSpacing / wordSpacing / alignLeft / alignRight / alignCenter / center / justify / sansSerif / serif / monospace` | ✅ | `Std.Ui.Font` |
 | **Color**: `rgb / rgba / white / black / transparent` | ✅ | Sky stores 0-255 ints; HM friction with 0-1 floats |
 | **Region**: `heading n / mainContent / navigation / footer / aside / label / announce / announceUrgently` | ✅ | Renderer dispatches `<h1>`..`<h6>` / `<main>` / `<nav>` / `<footer>` / `<aside>` from the Description; aria-label / aria-live for the rest |
 | **Events**: `onClick / onMouseOver/Out / onFocus` | ✅ | |

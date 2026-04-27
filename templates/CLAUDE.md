@@ -1373,9 +1373,9 @@ view model =
 
 | Area | Helpers |
 |---|---|
-| Layout | `el / row / column / paragraph / textColumn / text / none / html` (`html` is the escape hatch wrapping a Std.Html VNode) |
+| Layout | `el / row / column / wrappedRow (children wrap to next line) / paragraph / textColumn / text / none / html` (`html` is the escape hatch wrapping a Std.Html VNode) |
 | Sized elements | `button` (`{onPress, label}`), `input` (real `<input>`), `form` (`<form>` + `onSubmit msg`), `link` (`{url, label}`), `image` (`{src, description}`) |
-| Length | `px Int` / `fill` (bare, no arg) / `fillPortion Int` / `content` / `shrink` / `minimum Int Length` / `maximum Int Length` |
+| Length | `px Int` / `fill` (bare, no arg) / `fillPortion Int` / `content` / `shrink` / `minimum Int Length` / `maximum Int Length` / `vh Int` (viewport-height %) / `vw Int` (viewport-width %) |
 | Padding | `padding Int` / `paddingXY x y` / `paddingEach top right bottom left` / `spacing Int` |
 | Alignment | `centerX` / `centerY` / `alignLeft` / `alignRight` / `alignTop` / `alignBottom` / `pointer` |
 | Overflow | `clip` / `clipX` / `clipY` / `scrollbars` / `scrollbarX` / `scrollbarY` |
@@ -1384,7 +1384,7 @@ view model =
 | File / image hints | `fileMaxSize Int` (bytes) / `fileMaxWidth Int` / `fileMaxHeight Int` |
 | Colour | `rgb Int Int Int` / `rgba Int Int Int Float` / `white` / `black` / `transparent` |
 | Form / attribute helpers | `htmlAttribute key val` / `name "field"` / `style "css-prop" "value"` / `class "name"` |
-| Sub-modules | `Std.Ui.Background` (color/image/linearGradient/gradient), `Std.Ui.Border` (color/width/widthEach/rounded/solid/dashed/dotted/shadow/glow/innerShadow), `Std.Ui.Font` (color/family/size/weight/bold/semiBold/regular/light/extraBold/black/italic/underline/letterSpacing/wordSpacing/alignLeft/alignRight/alignCenter/center/justify), `Std.Ui.Region` (heading n/mainContent/navigation/footer/aside/label/announce/announceUrgently — renderer dispatches real semantic tags `<h1..h6>`/`<main>`/`<nav>`/`<footer>`/`<aside>` + aria-label/aria-live), `Std.Ui.Input` (button/text/multiline/email/username/search/currentPassword/newPassword/checkbox/radio/radioRow/slider + option + label*/placeholder), `Std.Ui.Lazy` (lazy/lazy2..lazy5 — no-op wrappers today), `Std.Ui.Keyed` (sky-key for diff identity), `Std.Ui.Responsive` (classifyDevice/adapt) |
+| Sub-modules | `Std.Ui.Background` (color/image/linearGradient/gradient), `Std.Ui.Border` (color/width/widthEach/rounded/solid/dashed/dotted/shadow/glow/innerShadow), `Std.Ui.Font` (color/family/size/weight/bold/semiBold/regular/light/extraBold/black/italic/underline/noDecoration/lineThrough/overline/letterSpacing/wordSpacing/alignLeft/alignRight/alignCenter/center/justify), `Std.Ui.Region` (heading n/mainContent/navigation/footer/aside/label/announce/announceUrgently — renderer dispatches real semantic tags `<h1..h6>`/`<main>`/`<nav>`/`<footer>`/`<aside>` + aria-label/aria-live), `Std.Ui.Input` (button/text/multiline/email/username/search/currentPassword/newPassword/checkbox/radio/radioRow/slider + option + label*/placeholder), `Std.Ui.Lazy` (lazy/lazy2..lazy5 — no-op wrappers today), `Std.Ui.Keyed` (sky-key for diff identity), `Std.Ui.Responsive` (classifyDevice/adapt) |
 
 **Three idioms when writing Sky.Ui:**
 

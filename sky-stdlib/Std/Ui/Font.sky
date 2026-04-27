@@ -2,7 +2,7 @@ module Std.Ui.Font exposing
     ( color, size, family, weight
     , sansSerif, serif, monospace, typeface
     , bold, light, regular, semiBold, extraBold, black
-    , italic, underline
+    , italic, underline, noDecoration, lineThrough, overline
     , letterSpacing, wordSpacing
     , alignLeft, alignRight, alignCenter, center, justify
     )
@@ -12,7 +12,7 @@ import Sky.Core.Prelude exposing (..)
 import Std.Ui exposing
     ( Color, Attribute
     , fontColor, fontSize, fontFamily, fontWeight
-    , fontItalic, fontUnderline, fontAlign
+    , fontItalic, fontUnderline, fontDecoration, fontAlign
     , fontLetterSpacing, fontWordSpacing
     )
 
@@ -63,6 +63,31 @@ italic = fontItalic
 -- Underlined text.
 underline : Attribute msg
 underline = fontUnderline
+
+
+-- Strip default text decoration. Most useful for `Ui.link` — browsers
+-- underline `<a>` by default, and Sky.Ui inherits that. Pair with
+-- `Background.color` / `Font.color` for "looks like a button" links:
+--
+--     Ui.link
+--         [ Font.noDecoration
+--         , Background.color (Ui.rgb 255 102 0)
+--         , Font.color (Ui.rgb 255 255 255)
+--         , Ui.padding 8, Border.rounded 4
+--         ]
+--         { url = "/start", label = Ui.text "Get started" }
+noDecoration : Attribute msg
+noDecoration = fontDecoration "none"
+
+
+-- Strikethrough text. CSS `text-decoration: line-through`.
+lineThrough : Attribute msg
+lineThrough = fontDecoration "line-through"
+
+
+-- Overlined text. CSS `text-decoration: overline`.
+overline : Attribute msg
+overline = fontDecoration "overline"
 
 
 -- Letter-spacing (tracking) in em.
