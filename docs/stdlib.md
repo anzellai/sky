@@ -252,7 +252,7 @@ main =
 | `Task.run` | `Task e a -> Result e a` | Force at the boundary |
 | `Task.fromResult` | `Result e a -> Task e a` | Bridge from Result |
 | `Task.andThenResult` | `(a -> Result e b) -> Task e a -> Task e b` | Chain Result step after Task |
-| `Task.map2`...`Task.map5`, `Task.andMap` | combinators | |
+| `Task.map2`...`Task.map5`, `Task.andMap` | combinators | NOT YET IMPLEMENTED — use `Task.parallel [...] \|> Task.map ...` or `Result.map2..5` for the Result counterparts |
 
 ### `Cmd` / `Sub` — Sky.Live commands and subscriptions
 

@@ -425,8 +425,7 @@ result = Task.perform pipeline
 - `Task.sequence : List (Task err a) -> Task err (List a)` -- run sequentially
 - `Task.parallel : List (Task err a) -> Task err (List a)` -- run concurrently (goroutines)
 - `Task.lazy : (() -> a) -> Task err a` -- defer computation until executed
-- `Task.map2/3/4/5` -- combine N independent Tasks (sequential, like Result.mapN) (v0.7.25+)
-- `Task.andMap : Task e a -> Task e (a -> b) -> Task e b` -- pipeline-style applicative (v0.7.25+)
+- For combining N independent Tasks, use `Task.parallel [ta, tb, tc] |> Task.map (\[a, b, c] -> fn a b c)` or chain via `Task.andThen`. (`Task.map2..5` / `Task.andMap` are PLANNED but not yet implemented; use `Result.map2..5` / `Result.andMap` for the Result counterparts which DO exist.)
 - `Task.fromResult : Result e a -> Task e a` -- lift a Result-returning step (FFI call, parser) into a Task pipeline
 - `Task.andThenResult : (a -> Result e b) -> Task e a -> Task e b` -- chain a Result-returning step after a Task
 - `Result.andThenTask : (a -> Task e b) -> Result e a -> Task e b` -- chain a Task-returning step after a Result
@@ -1409,7 +1408,9 @@ Ui.input
 ```
 Callback receives a data URL (`data:image/jpeg;base64,...`). Decode with `Std.Encoding.base64Decode` → `Http.post` to upload. Server `[live] maxBodyBytes` in `sky.toml` should be ≥ your `fileMaxSize` (default 5 MiB).
 
-**Workarounds for current bugs:** Use `Ui.text ""` instead of `Ui.none` for cross-module references (canonicaliser strips type-param). For empty `List String` fields in seed data, use record-literal syntax (`{ id = 1, ..., upvoters = [], ... }`) not positional constructor — the field's type alias gives the typed codegen the target type.
+**Style + workaround tips:**
+- **Annotations**: when annotating a top-level returning `Element`, use `import Std.Ui exposing (Element)` and write the bare `Element Msg` form, NOT the qualified `Ui.Element Msg`. Sky's canonicaliser strips type parameters from qualified-alias type references (separate compiler bug, tracked), so `Ui.Element Msg` resolves as `Element` (no parameter) and unification fails. The bare-name pattern works correctly and is what every example uses. Note: `Ui.none` itself is fine — the workaround is on the annotation shape, not the value.
+- **Empty list in seed data**: use record-literal syntax (`{ id = 1, ..., tags = [], ... }`) rather than positional constructor (`Item 1 ... []`) when an `[]` field needs typed-slice coercion. The field's type alias gives the typed codegen the target type.
 
 ### Escape Hatch & View Types
 
