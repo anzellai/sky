@@ -78,13 +78,109 @@ OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ---
 
-## Sky language — `src/`, `runtime-go/`, `app/`
+## elm/compiler — adapted source files in `src/Sky/`
 
-Sky's syntax draws on the Elm language (Evan Czaplicki and
-contributors; BSD-3-Clause). Sky is an independent compiler written
-in Haskell that emits Go; it shares no source code with the Elm
-compiler.
+Several files in Sky's compiler are derivative works adapted from
+the elm/compiler source tree (Copyright © 2012–present Evan
+Czaplicki, BSD-3-Clause). They are kept here in modified form and
+each file's header notes the upstream module it was adapted from.
+
+The complete list of adapted files:
+
+| Sky file                            | Adapted from                  | Relation                               |
+| ---                                 | ---                           | ---                                    |
+| `src/Sky/Type/UnionFind.hs`         | `Type/UnionFind.hs`           | Near-direct port; same exports + algorithm |
+| `src/Sky/Type/Unify.hs`             | `Type/Unify.hs`               | Adapted (CPS-based unifier)            |
+| `src/Sky/Type/Solve.hs`             | `Type/Solve.hs`               | Adapted (constraint solver loop)       |
+| `src/Sky/Type/Type.hs`              | `Type/Type.hs`                | Adapted (`Variable`/`Descriptor`/`Content`/`Constraint` shape) |
+| `src/Sky/Type/Occurs.hs`            | `Type/Occurs.hs`              | Adapted (occurs-check)                 |
+| `src/Sky/Type/Instantiate.hs`       | `Type/Instantiate.hs`         | Adapted (scheme instantiation)         |
+| `src/Sky/AST/Canonical.hs`          | `AST/Canonical.hs`            | Adapted (canonical AST shape)          |
+| `src/Sky/AST/Source.hs`             | `AST/Source.hs`               | Adapted (source AST + Sky extensions)  |
+| `src/Sky/Reporting/Annotation.hs`   | `Reporting/Annotation.hs`     | Adapted (region/located helpers)       |
+| `src/Sky/Parse/Primitives.hs`       | `Parse/Primitives.hs`         | Inspired (uses `Text` not `ByteString`) |
+
+For these files specifically, Sky redistributes derivative work
+under the terms of the BSD-3-Clause licence below (this NOTICE
+satisfies clause 1's requirement to retain the copyright notice +
+list of conditions + disclaimer in source-form distribution; the
+compiled `sky` binary's documentation reproduces the same in
+fulfilment of clause 2).
+
+Per clause 3 (the endorsement clause), the names "Elm" and "Evan
+Czaplicki" are not used in Sky's user-facing materials to endorse
+or promote Sky. Where the names appear in this repository they are
+either:
+
+- Per-file attribution required by clause 1 (in the headers of the
+  adapted files listed above), or
+- Factual technical references (e.g. "Sky's surface syntax is
+  Elm-compatible"), which are descriptive statements about
+  interoperability, not promotional comparisons.
+
+Apart from the files listed above, the rest of Sky's compiler
+(`src/Sky/Build/*`, `src/Sky/Canonicalise/*`, `src/Sky/Format/*`,
+`src/Sky/Generate/*`, `src/Sky/Lsp/*`, `src/Sky/Parse/*` other than
+`Primitives.hs`, `src/Sky/Sky/*`), the runtime (`runtime-go/`),
+the standard library (`sky-stdlib/`), the FFI generator
+(`tools/sky-ffi-inspect/`), and the CLI (`app/`) are independent
+work and share no source code with elm/compiler.
 
 The legacy bootstrap compilers in `legacy-ts-compiler/` and
-`legacy-sky-compiler/` are kept in-tree as historical reference; they
-are not part of the released `sky` binary.
+`legacy-sky-compiler/` are kept in-tree as historical reference;
+they are not part of the released `sky` binary and themselves do
+not include elm/compiler source code.
+
+The full BSD-3-Clause licence under which elm/compiler is released
+is reproduced below for completeness.
+
+```
+Copyright 2012-present Evan Czaplicki
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+
+1. Redistributions of source code must retain the above copyright
+   notice, this list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above
+   copyright notice, this list of conditions and the following
+   disclaimer in the documentation and/or other materials provided
+   with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its
+   contributors may be used to endorse or promote products derived
+   from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
+FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
+COPYRIGHT HOLDERS OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
+INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+OF THE POSSIBILITY OF SUCH DAMAGE.
+```
+
+---
+
+## Surface syntax compatibility
+
+Sky's surface syntax (module declarations, `case`/`let`/`if`,
+record literals, ADT declarations, `|>`/`<|` pipelines, type-alias
+auto-constructors, exposing lists, `where`-less let-blocks) was
+designed to be Elm-compatible so that Elm code can be ported with
+mechanical edits. Programming-language syntax is not itself
+copyrightable in the jurisdictions Sky targets (cf. *Google v.
+Oracle*, 593 U.S. ___ (2021) for the analogous API/declaration
+question). This statement is descriptive, not endorsement-seeking.
+
+Sky's lexer, parser (other than `Parse/Primitives.hs`, listed
+above), canonicaliser, and formatter are independent
+implementations that emit and accept Elm-compatible syntax; they
+share no source with elm/compiler.

@@ -252,7 +252,8 @@ func Attr_title(v any) any          { return attr("title", fmt.Sprintf("%v", v))
 func Attr_for(v any) any            { return attr("for", fmt.Sprintf("%v", v)) }
 // Boolean HTML attributes honour two calling conventions:
 //
-//   * `disabled model.loading` — typed bool, Elm-style. True renders,
+//   * `disabled model.loading` — typed bool (same convention as
+//     Elm's `Html.Attributes` boolean attrs). True renders,
 //     False omits. sky-chat's compose form needs this.
 //   * `Attr.required ()` / `Attr.checked ()` — unit-arg presence style
 //     used by many Sky projects (notes-app, skyvote, skyshop) where

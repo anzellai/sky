@@ -1,6 +1,6 @@
 # Live Counter
 
-Interactive counter using Sky.Live with server-sent events (SSE). Demonstrates the Elm Architecture (model/update/view) running server-side with live UI updates.
+Interactive counter using Sky.Live with server-sent events (SSE). Demonstrates the TEA pattern (model / update / view) running server-side with live UI updates.
 
 ## Build & Run
 

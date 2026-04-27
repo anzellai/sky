@@ -875,7 +875,7 @@ update msg model =
 ```
 
 The Msg type stays in Main.sky. Helper update functions live in domain modules.
-This is exactly how large Elm apps work — and it scales fine.
+This is the same shape large TEA apps converge on — and it scales fine.
 
 ### Memory: unused page state
 
@@ -923,7 +923,7 @@ The developer decides per-page whether to keep or clear state.
 | Event sourcing        | Session churn           | One continuous log           |
 | Code organization     | Forced split by page    | Split views, unify state    |
 | 50+ pages             | Natural isolation       | Need update helpers          |
-| Dev onboarding        | Familiar (Next.js-like) | Familiar (Elm SPA-like)     |
+| Dev onboarding        | Familiar (Next.js-like) | Familiar (TEA / SPA-like)   |
 
 **Recommendation: Unified model is the right default for Sky.Live.**
 

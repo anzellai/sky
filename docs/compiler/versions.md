@@ -45,7 +45,7 @@ Post-v1 cleanup:
 - Async `Cmd.perform` for Sky.Live. `update` returns `(Model, Cmd Msg)`.
 - `Cmd.batch` runs commands concurrently.
 - Multiline strings (`"""..."""`) with `{{expr}}` interpolation. Preserves newlines and indentation.
-- Formatter elm-style improvements (leading commas, 4-space args, tuple vertical break).
+- Formatter style improvements (leading commas, 4-space args, tuple vertical break).
 - Constructor partial application via `checkPartialIdent`.
 - `MultilineStringExpr` AST node (previously desugared at parse time).
 
@@ -65,7 +65,7 @@ Post-v1 cleanup:
 
 ## v0.7.26 — auto record constructors
 
-- Every `type alias Foo = { ... }` declaration auto-generates a constructor function matching Elm's convention.
+- Every `type alias Foo = { ... }` declaration auto-generates a positional constructor function (factually: matches Elm's convention for the same construct).
 - Eliminates `makeFoo` boilerplate.
 - `Result.map3 Foo (parseA ...) (parseB ...) (parseC ...)` works directly.
 
@@ -104,7 +104,7 @@ Post-v1 cleanup:
 ## v0.1 — initial release
 
 - TypeScript bootstrap compiler.
-- Elm-style syntax.
+- Elm-compatible surface syntax.
 - Go backend.
 - Basic Sky.Live prototype.
 

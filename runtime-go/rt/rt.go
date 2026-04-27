@@ -944,7 +944,8 @@ func Basics_toString(v any) string {
 	return fmt.Sprintf("%v", derefPointer(unwrapAny(v)))
 }
 
-// Basics_errorToString — Elm-compat extractor for Result errors. Preserves
+// Basics_errorToString — Prelude extractor for Result errors (the
+// Elm Prelude exposes a function with the same name and shape). Preserves
 // String/error values verbatim, stringifies anything else. Registered as a
 // Prelude builtin (`errorToString`) so Sky programs can write:
 //   Result.mapError errorToString someResult

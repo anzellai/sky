@@ -1,7 +1,7 @@
 # CLAUDE.md — Sky Language Project
 
 This is a [Sky](https://github.com/anzellai/sky) project. Sky is a pure
-functional language inspired by Elm, compiling to Go. The compiler is
+functional, ML-family language compiling to Go (with surface syntax that is Elm-compatible). The compiler is
 written in Haskell (GHC 9.4+) and ships as a single `sky` binary. Users
 only need the `sky` binary and Go 1.21+ — no Haskell toolchain required
 to use Sky.
@@ -27,7 +27,7 @@ If you're an AI code assistant building Sky applications on behalf of a
 user, read the following sections IN ORDER before producing any code.
 Skipping ahead leads to code that type-checks but panics at runtime —
 the "if it compiles it works" guarantee depends on you respecting a
-handful of idioms the Elm-derived syntax makes non-obvious.
+handful of idioms the ML-family / Elm-compatible syntax makes non-obvious.
 
 1. **Cardinal Rules** (below) — 10 rules that, if you follow them, keep
    you out of 90% of the pitfalls real Sky projects have hit.
@@ -257,7 +257,7 @@ sky init [name]           # Create a new Sky project (sky.toml, src/Main.sky, .g
 sky build src/Main.sky    # Compile to Go binary (output: sky-out/app)
 sky run src/Main.sky      # Build and run
 sky check src/Main.sky    # Type-check without compiling (cross-module ADT + alias resolution)
-sky fmt src/Main.sky      # Format code (Elm-style: 4-space indent, leading commas)
+sky fmt src/Main.sky      # Format code (opinionated: 4-space indent, leading commas)
 sky test tests/MyTest.sky # Run a test module (exposes `tests : List Test`)
 sky add <package>         # Add dependency + generate bindings + update sky.toml
 sky remove <package>      # Remove dependency from sky.toml + clean cache
@@ -785,11 +785,11 @@ result =
         (parseBool "active" formData.active)
 ```
 
-This is exactly Elm's behavior. Notes:
+This matches Elm's behaviour for the same construct. Notes:
 
 - Only **record** type aliases generate constructors. Aliases like `type alias Name = String` don't.
 - If you define a function with the same name as the type alias, **your definition wins** — Sky skips the auto-generation. This lets you provide a custom constructor with validation, defaults, etc.
-- Adding a field in the middle of a type alias is a **breaking change** for any code that uses the constructor positionally. Same trade-off Elm made.
+- Adding a field in the middle of a type alias is a **breaking change** for any code that uses the constructor positionally — same trade-off the wider ML-family / Elm tradition makes.
 - Constructors are exported from a module the same way the type alias is. `module Foo exposing (Profile)` exposes both the type and the constructor.
 
 ### Sky.Core.List
@@ -3036,7 +3036,7 @@ Session store memory grows with inactive sessions. Set a TTL:
 ## Coding Conventions
 
 - **Module names** are PascalCase, match file paths: `Lib.Utils` → `src/Lib/Utils.sky`
-- **No semicolons**, no curly braces — indentation-sensitive like Elm/Haskell
+- **No semicolons**, no curly braces — indentation-sensitive (same surface convention as Elm / Haskell)
 - Use **`Std.Css`** for styling (not inline style strings)
 - Use **`errorToString`** to convert Go errors to strings
 - Pattern match on **`Result`** (`Ok val` / `Err e`) for Go functions returning errors
@@ -3044,11 +3044,11 @@ Session store memory grows with inactive sessions. Set a TTL:
 - **Nested patterns work**: `Ok (Just x)` and `Ok Nothing` are fully supported in case expressions
 - **Import conventions**: Use `exposing (..)` sparingly — when two modules export the same name (e.g., `Std.Html` and `Tailwind` both export `hidden`, `h2`, etc.), the first import wins. Prefer qualified imports (`import Foo as F`) to avoid collisions. If using `Tailwind exposing (..)` alongside `Std.Html exposing (..)`, use `hidden_` (with underscore) for the Tailwind version, and `headerNode`/`footerNode` for HTML5 semantic elements
 - **`exposing (Type(..))` limitation**: `import MyModule exposing (MyType(..))` does NOT expose ADT constructors for user-defined modules. Use `import MyModule exposing (..)` instead, or qualify constructors: `MyModule.MyConstructor`
-- **`//` for integer division**: Use `//` (Elm-style) or regular `/` — both work. `//` always returns `Int`, `modBy divisor n` returns `n % divisor`
+- **`//` for integer division**: Use `//` or regular `/` — both work. `//` always returns `Int` (same operator as Elm), `modBy divisor n` returns `n % divisor`
 
 ## Code Formatting (`sky fmt`)
 
-**Always run `sky fmt <file>.sky` after changes.** The formatter follows **elm-format** style — opinionated, deterministic, no configuration options.
+**Always run `sky fmt <file>.sky` after changes.** The formatter is opinionated, deterministic, no configuration options (output is Elm-compatible: 4-space indent, leading commas).
 
 ### Rules
 

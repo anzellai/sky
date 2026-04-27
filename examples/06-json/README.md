@@ -1,6 +1,6 @@
 # JSON, Result Combinators & Auto Record Constructors
 
-JSON encoding and decoding using `Sky.Core.Json.Encode` and `Sky.Core.Json.Decode`, following the same API style as Elm. Also demonstrates `Sky.Core.Result` applicative combinators (`map2`/`map3`, `combine`, `traverse`) added in v0.7.25, and **auto-generated record constructors** from type aliases (v0.7.26+).
+JSON encoding and decoding using `Sky.Core.Json.Encode` and `Sky.Core.Json.Decode` (combinator-style decoders, same API shape as Elm's `Json.Decode`). Also demonstrates `Sky.Core.Result` applicative combinators (`map2`/`map3`, `combine`, `traverse`) added in v0.7.25, and **auto-generated record constructors** from type aliases (v0.7.26+).
 
 ## Build & Run
 
@@ -26,4 +26,4 @@ sky build src/Main.sky
 
 Sections 10–12 demonstrate the **applicative combinators** added in v0.7.25 — useful for form validation, multi-field parsing, and any case where you have several Results to combine without writing nested case expressions.
 
-Section 10 also showcases v0.7.26's **auto record constructors**: every `type alias Foo = { ... }` automatically generates a constructor function `Foo : ... -> Foo` (just like Elm), so you can pass the type alias name directly into `Result.map3` instead of writing a `makeFoo` helper.
+Section 10 also showcases v0.7.26's **auto record constructors**: every `type alias Foo = { ... }` automatically generates a positional constructor function `Foo : ... -> Foo` (matches the convention Elm uses for the same construct), so you can pass the type alias name directly into `Result.map3` instead of writing a `makeFoo` helper.

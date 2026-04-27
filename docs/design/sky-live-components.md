@@ -3,8 +3,9 @@
 ## The Core Idea
 
 Every embeddable component exposes a type with **the same name as the module**.
-This is standard Elm convention (`Html.Html`, `Json.Decoder`, `Task.Task`).
-When that type appears in your Model, the compiler knows it's a component.
+This is the standard ML-family convention also used by Elm (`Html.Html`,
+`Json.Decoder`, `Task.Task`). When that type appears in your Model, the
+compiler knows it's a component.
 
 ```elm
 -- Package:
@@ -17,7 +18,7 @@ type alias Model =
     }
 ```
 
-Clear. Explicit. Elm-compatible. No new keywords.
+Clear. Explicit. Compatible with the wider ML-family idiom. No new keywords.
 
 ---
 
@@ -370,7 +371,7 @@ setValue val ac = { ac | query = val, selected = Just val }
 
 ## 3. The Pattern: Module Name = Type Name
 
-This is already idiomatic Elm:
+This is already idiomatic in ML-family languages (Elm uses it too):
 
 ```
 Module              Type                In Model

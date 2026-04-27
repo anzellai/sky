@@ -27,7 +27,7 @@ Implicitly available everywhere via `Sky.Core.Prelude exposing (..)`. Nothing to
 | `always` | `a -> b -> a` | Const; ignores second arg |
 | `not` | `Bool -> Bool` | Logical not |
 | `toString` | `a -> String` | Debug-formatted string of any value |
-| `modBy` | `Int -> Int -> Int` | Math modulo (Elm-style argument order) |
+| `modBy` | `Int -> Int -> Int` | Math modulo (divisor-first argument order, matches Elm) |
 | `clamp` | `comparable -> comparable -> comparable -> comparable` | Constrain to range |
 | `fst`, `snd` | `(a, b) -> a` / `(a, b) -> b` | Tuple accessors |
 | `compare` | `comparable -> comparable -> Order` | LT / EQ / GT |

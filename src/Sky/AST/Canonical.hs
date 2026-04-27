@@ -1,6 +1,12 @@
 -- | Canonical AST — name-resolved, ready for type checking.
--- All variables are fully qualified. Imports resolved. No syntactic sugar.
--- Adapted from Elm's AST.Canonical with Sky module names.
+--
+-- Derivative work adapted from elm/compiler's @AST.Canonical@
+-- (Copyright © 2012–present Evan Czaplicki, BSD-3-Clause). See
+-- NOTICE.md at the repo root for the full attribution and licence
+-- text.
+--
+-- All variables are fully qualified. Imports resolved. No
+-- syntactic sugar. Adapted with Sky module names.
 module Sky.AST.Canonical where
 
 import qualified Data.Map.Strict as Map

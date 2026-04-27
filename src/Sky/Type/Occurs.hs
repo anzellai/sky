@@ -1,6 +1,11 @@
 -- | Occurs check for type inference.
+--
+-- Derivative work adapted from elm/compiler's @Type.Occurs@
+-- (Copyright © 2012–present Evan Czaplicki, BSD-3-Clause). See
+-- NOTICE.md at the repo root for the full attribution and licence
+-- text.
+--
 -- Prevents infinite types like `a = List a` by detecting cycles.
--- Adapted from Elm's Type.Occurs.
 module Sky.Type.Occurs
     ( occurs
     )

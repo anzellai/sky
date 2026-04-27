@@ -1,4 +1,5 @@
--- | Elm-format-style pretty printer for Sky source code.
+-- | Opinionated, deterministic pretty printer for Sky source code
+-- (output is Elm-format-compatible).
 --
 -- Uses absolute column tracking: every function takes `col :: Int`
 -- (the current indentation column) and produces strings with

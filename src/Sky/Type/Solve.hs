@@ -1,7 +1,14 @@
 -- | Constraint solver for Sky's Hindley-Milner type inference.
--- Walks the constraint tree, unifying types via UnionFind.
--- Uses a TVar name cache to share UF variables for the same type variable name.
--- Adapted from Elm's Type.Solve.
+--
+-- Derivative work adapted from elm/compiler's @Type.Solve@
+-- (Copyright © 2012–present Evan Czaplicki, BSD-3-Clause). See
+-- NOTICE.md at the repo root for the full attribution and licence
+-- text.
+--
+-- Walks the constraint tree, unifying types via UnionFind. Uses a
+-- TVar name cache to share UF variables for the same type variable
+-- name. The defensive solver-step bound (`SKY_SOLVER_BUDGET`) is a
+-- Sky-specific addition not present upstream.
 module Sky.Type.Solve
     ( solve
     , solveWithLocals

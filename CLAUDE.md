@@ -227,7 +227,7 @@ Sky.Live env vars (sky.toml keys live under `[live]` — there is no `[live.sess
 
 ## Project Overview
 
-Sky is a pure functional language (Elm-inspired) compiling to Go. The compiler is written in Haskell (GHC 9.4+) and ships as a single `sky` binary. Runtime binaries are Go output — single-file, statically-linked, no external runtime needed. See `docs/compiler/journey.md` for why the compiler moved TS → Go → Sky → Haskell.
+Sky is a pure functional, ML-family language compiling to Go. The compiler is written in Haskell (GHC 9.4+) and ships as a single `sky` binary. Runtime binaries are Go output — single-file, statically-linked, no external runtime needed. See `docs/compiler/journey.md` for why the compiler moved TS → Go → Sky → Haskell. (Surface syntax is Elm-compatible; several files in `src/Sky/Type/`, `src/Sky/AST/`, `src/Sky/Reporting/`, `src/Sky/Parse/Primitives.hs` are derivative works adapted from elm/compiler under BSD-3-Clause — see `NOTICE.md`.)
 
 ## Architecture
 
@@ -243,7 +243,7 @@ src/                              -- Sky compiler (Haskell, GHC 9.4+)
   Sky/Build/                      -- orchestration + FFI generator
   Sky/Generate/Go/                -- Go IR + printer
   Sky/Lsp/                        -- language server
-  Sky/Format/                     -- elm-format-style formatter
+  Sky/Format/                     -- opinionated formatter (Elm-compatible output)
 app/Main.hs                       -- CLI entry point
 runtime-go/rt/                    -- Go runtime (embedded via Template Haskell)
 sky-stdlib/                       -- Sky-side stdlib (embedded)
@@ -321,7 +321,7 @@ sky init [name]                   # Create new project
 sky build src/Main.sky            # Compile → sky-out/app
 sky run src/Main.sky              # Build and run
 sky check src/Main.sky            # Type-check only
-sky fmt src/Main.sky              # Format (Elm-style)
+sky fmt src/Main.sky              # Format (opinionated, Elm-compatible)
 sky test tests/MyTest.sky         # Run a Sky test module (exposing `tests : List Test`)
 sky add github.com/some/package   # Add dependency + generate bindings
 sky remove <package>              # Remove dependency
@@ -337,7 +337,7 @@ Local builds read the compiler version from `app/VERSION` (literal `dev`). Relea
 
 ## Code Formatting (`sky fmt`)
 
-Opinionated elm-format style, no configuration:
+Opinionated formatter, no configuration. Output is Elm-compatible (4-space indent, leading commas, "one line or each on its own line"):
 - 4-space indentation (never tabs)
 - No max line width — short on one line, long ones break
 - "One line or each on its own line" for args, list items, record fields
@@ -463,7 +463,7 @@ Pipeline: `sky add pkg` → inspector extracts types → compiler classifies fun
 ### Type Mapping
 
 **Every FFI call returns `Result Error T`.** The boundary is a trust
-boundary (Elm-ports analogy). See `docs/ffi/boundary-philosophy.md`.
+boundary — same trust-boundary discipline as a typed FFI port. See `docs/ffi/boundary-philosophy.md`.
 
 This applies UNIFORMLY: method calls, constructors (`newX`), field
 getters, field setters, and package-level var reads all return
@@ -518,7 +518,7 @@ Pointer fields auto-wrapped — pass plain values. For nested structs, build inn
 
 ## Sky.Live
 
-Server-driven UI with Elm TEA architecture:
+Server-driven UI with the TEA architecture (model / update / view / subscriptions):
 ```elm
 main =
     Live.app
@@ -736,7 +736,9 @@ Callback receives the data URL (`data:image/jpeg;base64,...`) as a single `Strin
 
 **`Ui.none` workaround:** the canonicaliser strips the type parameter from cross-module references to `Std.Ui.none` today — use `Ui.text ""` where you'd want `Ui.none`. An empty Text node renders identically (just an empty inline span).
 
-## Language Syntax (Elm-compatible)
+## Language Syntax
+
+Sky's surface syntax is deliberately Elm-compatible — modules, `case`/`let`/`if`, record literals, ADTs, `|>` pipelines port over with mechanical edits. See `NOTICE.md` for prior-art attribution.
 
 ```elm
 module Main exposing (main)
@@ -823,7 +825,7 @@ Single braces `{` are literal — safe for JavaScript, CSS, JSON, SQL. Interpola
 
 All issues below are FIXED — listed for context if debugging regressions:
 
-- **Formatter** — 7 fixes for elm-format compat; all 32 modules format+compile; idempotent output
+- **Formatter** — 7 fixes for output compatibility; all 32 modules format+compile; idempotent output
 - **Parser** — `(expr).field` support, `parseCaseBranches` nesting fix (`branchCol` tracking), long-line splits, `getLexemeAt1` field access
 - **Lowerer** — nested case IIFEs, ADT sub-pattern matching, cons pattern `len == N`, string pattern double-quoting, local variable shadowing by `exposedStdlib` (check `paramNames` first), hardcoded `Css.` prefix vs import aliases, let-binding hoisting (3-round bootstrap)
 - **Type checker** — working since v0.7.2; inner case extraction across Types/Unify/Infer/Adt modules
@@ -891,7 +893,7 @@ These are current compiler limitations users must work around:
 - **Time.sleep + Random.int lowerer mappings** — ADDED in v0.8.0. `Time.sleep : Int -> Task Error ()` and `Random.int/float/choice/shuffle` now have Go implementations and lowerer mappings. Type signatures in Resolver for compile-time checking.
 - **Constructor partial application** — FIXED in v0.8.0. `checkPartialIdent` now checks `importedConstructors` for ADT constructor arities, not just `localFunctionArity`. Fixes `JobDone jid` (partial apply of 2-arg constructor) generating invalid Go.
 - **MultilineStringExpr AST node** — ADDED in v0.8.0. The parser creates `MultilineStringExpr` for `"""..."""` strings instead of desugaring at parse time. The formatter preserves triple-quoted strings. The lowerer desugars at codegen time with `{{expr}}` interpolation handling.
-- **Formatter elm-style improvements** — FIXED in v0.8.0. Tuples break vertically with leading commas. Function args indent 4 spaces (not aligned to callee column). Parenthesised expressions stay compact on one line.
+- **Formatter style improvements** — FIXED in v0.8.0. Tuples break vertically with leading commas. Function args indent 4 spaces (not aligned to callee column). Parenthesised expressions stay compact on one line.
 - **Skyshop env var race condition** — FIXED in v0.8.0. Zero-arity functions reading `Os.getenv` were memoised and evaluated at Go init time (before `.env` loaded). Fix: add `_` parameter to prevent memoisation.
 
 - **Nested typed-map narrowing at the FFI boundary** — FIXED in v0.9-dev (feat/typed-codegen). `rt.Coerce[T]` / `coerceInner` / `AsListT` / `AsDict` now delegate to recursive `narrowReflectValue` / `coerceMapValue` / `coerceSliceValue` helpers so `[]any` → `[]map[string]string` (each element being a `map[string]any` from a SQL row) converts correctly. Before this, 08-notes-app login and 13-skyshop product listing both showed empty results even though the DB returned rows.

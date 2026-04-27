@@ -4,7 +4,7 @@
 
 > **Experimental · v0.10** — Sky is under active development. APIs and internals may change between minor versions.
 
-Sky is an experimental fullstack programming language that combines **Go's pragmatism** with **Elm's elegance**. You write functional, strongly-typed code with a batteries-included stdlib — `Sky.Live` for server-driven UI, `Std.Db` for SQL persistence, `Std.Auth` for sessions, `Sky.Core.Error` for unified error handling — import any Go package with auto-generated FFI bindings (no hand-written glue), and ship a single portable binary. Sky's explicit types, exhaustive pattern matching, and strict `Task` effect boundary make it **AI-friendly by design**: both humans and LLMs tend to write code that compiles the first time.
+Sky is an experimental fullstack programming language that combines **Go's pragmatism** with the **elegance of pure-functional, ML-family languages**. You write functional, strongly-typed code with a batteries-included stdlib — `Sky.Live` for server-driven UI, `Std.Db` for SQL persistence, `Std.Auth` for sessions, `Sky.Core.Error` for unified error handling — import any Go package with auto-generated FFI bindings (no hand-written glue), and ship a single portable binary. Sky's explicit types, exhaustive pattern matching, and strict `Task` effect boundary make it **AI-friendly by design**: both humans and LLMs tend to write code that compiles the first time.
 
 ```elm
 module Main exposing (main)
@@ -17,11 +17,13 @@ main =
 
 ## What Sky brings together
 
-- **Go** — fast compilation, single static binary, access to the full Go ecosystem (databases, HTTP servers, cloud SDKs).
-- **Elm** — Hindley-Milner type inference, algebraic data types, exhaustive pattern matching, pure functions, The Elm Architecture.
-- **Phoenix LiveView** — server-driven UI with DOM diffing, SSE subscriptions, session management. No client-side framework required.
+- **A Go compilation target** — fast compilation, single static binary, access to the full Go ecosystem (databases, HTTP servers, cloud SDKs).
+- **A pure-functional, ML-family front-end** — Hindley-Milner type inference, algebraic data types, exhaustive pattern matching, pure functions, model/update/view/subscriptions architecture (TEA).
+- **Server-driven UI** in the Phoenix LiveView mould — DOM diffing, SSE subscriptions, session management. No client-side framework required.
 
 Sky compiles to Go. One binary runs your API, DB access, and server-rendered interactive UI — one codebase, one language, one deployment artifact.
+
+> Sky's surface syntax is deliberately compatible with the Elm language (BSD-3-Clause, © Evan Czaplicki and contributors) and several files in the type-inference core are derivative works adapted from elm/compiler. Full attribution and licence text in [NOTICE.md](NOTICE.md).
 
 ## Why Sky exists
 
@@ -29,9 +31,9 @@ I've worked professionally with Go, Elm, TypeScript, Python, Dart, Java, and oth
 
 The pain point that kept coming back: startups and scale-ups building React/TypeScript frontends talking to a separate backend, creating friction at every boundary — different type systems, duplicated models, complex build pipelines, and the constant uncertainty of "does this actually work?" that comes with the JS ecosystem. Maintenance becomes the real cost, not the initial build.
 
-I always wanted to combine Go's tooling (fast builds, single binary, real concurrency, massive ecosystem) with Elm's developer experience (if it compiles, it works; refactoring is fearless; the architecture scales). Then, inspired by Phoenix LiveView, I saw how a server-driven UI could eliminate the frontend/backend split entirely — one language, one model, one deployment.
+I always wanted to combine Go's tooling (fast builds, single binary, real concurrency, massive ecosystem) with the developer experience that strong static types and pure functions give you (if it compiles, it works; refactoring is fearless; the architecture scales). Then, inspired by Phoenix LiveView, I saw how a server-driven UI could eliminate the frontend/backend split entirely — one language, one model, one deployment.
 
-The first attempt compiled Sky to JavaScript with the React ecosystem as the runtime. It worked, but Sky would have inherited all the problems I was trying to escape — npm dependency chaos, bundle configuration, and the fundamental uncertainty of a dynamically-typed runtime. So I started over with Go as the compilation target: Elm's syntax and type system on the frontend, Go's ecosystem and binary output on the backend, with auto-generated FFI bindings that let you `import` any Go package and use it with full type safety.
+The first attempt compiled Sky to JavaScript with the React ecosystem as the runtime. It worked, but Sky would have inherited all the problems I was trying to escape — npm dependency chaos, bundle configuration, and the fundamental uncertainty of a dynamically-typed runtime. So I started over with Go as the compilation target: a Hindley-Milner type system + ML-family syntax on the frontend, Go's ecosystem and binary output on the backend, with auto-generated FFI bindings that let you `import` any Go package and use it with full type safety.
 
 Building a programming language is typically a years-long effort. What made Sky possible in weeks was AI-assisted development — first with Gemini CLI, then settling on Claude Code, which fits my workflow and let me iterate on the compiler architecture rapidly. I designed the language semantics, the pipeline, the FFI strategy, and the Live architecture; AI tooling helped me execute at a pace that would have been impossible alone.
 
@@ -49,7 +51,7 @@ Sky is **batteries-included**. Three killer modules cover the common needs of an
 
 ### Sky.Live — server-driven UI
 
-The Elm Architecture, but the server is authoritative. No client framework, no JSON API contracts, no bundler. Browser runs ~2 KB of JS for DOM diffing + SSE — that's it.
+The TEA pattern (model / update / view / subscriptions), but the server is authoritative. No client framework, no JSON API contracts, no bundler. Browser runs ~2 KB of JS for DOM diffing + SSE — that's it.
 
 ```elm
 type Msg = Increment | Decrement

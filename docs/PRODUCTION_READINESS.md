@@ -105,8 +105,9 @@ soundness audit have landed on `feat/sky-haskell-compiler`.
 ### Explicitly OUT OF SCOPE
 
 - **Type classes, HKT, row polymorphism.** Per CLAUDE.md these are
-  intentional Elm-style omissions. Do not add them. If a stdlib design feels
-  like it needs them, the stdlib API is wrong.
+  intentional omissions (Sky stays in plain Hindley-Milner, the same
+  cut Elm makes for the same reasons). Do not add them. If a stdlib
+  design feels like it needs them, the stdlib API is wrong.
 - **`where` clauses.** Intentional.
 - **Custom operators.** Intentional.
 - **Anonymous records in function signatures.** Intentional (CLAUDE.md known
@@ -323,8 +324,8 @@ Matching", 2007):
 2. For each case arm, subtract its pattern's covered subset.
 3. If residual set is non-empty after all arms, it yields concrete missing
    patterns (e.g. `Just (Ok _)`, `Nothing`).
-4. Formatter produces the Elm-style "This `case` does not cover: …" error
-   with minimal witnessing examples.
+4. Formatter produces a witnessing-example error in the same shape as Elm's
+   "This `case` does not cover: …" exhaustiveness diagnostic.
 
 **Acceptance.**
 - `case Just 1 of Nothing -> 0` is a compile error with message listing

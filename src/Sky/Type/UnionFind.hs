@@ -1,6 +1,12 @@
 -- | Union-Find data structure for type inference.
--- Copied from Elm's Type.UnionFind with minimal adaptation.
--- Uses weighted union + path compression for near-constant-time operations.
+--
+-- Derivative work adapted from elm/compiler's @Type.UnionFind@
+-- (Copyright © 2012–present Evan Czaplicki, BSD-3-Clause). See
+-- NOTICE.md at the repo root for the full attribution and licence
+-- text.
+--
+-- Uses weighted union + path compression for near-constant-time
+-- operations.
 module Sky.Type.UnionFind
     ( Point
     , fresh

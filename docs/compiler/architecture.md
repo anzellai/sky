@@ -37,7 +37,7 @@ src/
             Server.hs
             Index.hs
             Handlers.hs
-        Format/             -- elm-format-style formatter
+        Format/             -- opinionated formatter (Elm-compatible output)
             Format.hs
 app/
     Main.hs                 -- CLI entry point

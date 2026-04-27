@@ -1,7 +1,12 @@
 -- | Type instantiation — creates fresh copies of quantified types.
+--
+-- Derivative work adapted from elm/compiler's @Type.Instantiate@
+-- (Copyright © 2012–present Evan Czaplicki, BSD-3-Clause). See
+-- NOTICE.md at the repo root for the full attribution and licence
+-- text.
+--
 -- When using a polymorphic value, its type variables are replaced
 -- with fresh unification variables.
--- Adapted from Elm's Type.Instantiate.
 module Sky.Type.Instantiate
     ( fromCanType
     , fromAnnotation

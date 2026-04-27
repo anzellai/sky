@@ -1,8 +1,14 @@
 -- | Core type representation for Sky's type inference.
--- Adapted from Elm's Type.Type with Sky module names and no Elm.Package.
 --
--- Uses Union-Find variables for efficient unification.
--- Two levels: Variable (mutable, for inference) and Type (immutable, canonical).
+-- Derivative work adapted from elm/compiler's @Type.Type@
+-- (Copyright © 2012–present Evan Czaplicki, BSD-3-Clause). See
+-- NOTICE.md at the repo root for the full attribution and licence
+-- text.
+--
+-- Adapted with Sky module names and without elm/compiler's
+-- `Elm.Package` qualification. Uses Union-Find variables for
+-- efficient unification. Two levels: Variable (mutable, for
+-- inference) and Type (immutable, canonical).
 module Sky.Type.Type
     ( -- Re-exported from Canonical
       Type(..), FieldType(..), AliasType(..), Annotation(..)

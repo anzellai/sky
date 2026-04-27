@@ -1,5 +1,9 @@
 -- | Source code positions and regions.
--- Adapted from Elm's Reporting.Annotation.
+--
+-- Derivative work adapted from elm/compiler's
+-- @Reporting.Annotation@ (Copyright © 2012–present Evan Czaplicki,
+-- BSD-3-Clause). See NOTICE.md at the repo root for the full
+-- attribution and licence text.
 module Sky.Reporting.Annotation where
 
 
