@@ -264,6 +264,7 @@ sky remove <package>      # Remove dependency from sky.toml + clean cache
 sky install               # Install all deps + auto-generate missing bindings
 sky update                # Update sky.toml dependencies to latest
 sky upgrade               # Self-upgrade Sky compiler to latest release
+sky upgrade-claude        # Refresh ./CLAUDE.md from the binary's embedded template
 sky lsp                   # Start Language Server
 sky clean                 # Remove build artifacts
 sky --version             # Show version

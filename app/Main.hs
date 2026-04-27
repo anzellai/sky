@@ -11,7 +11,7 @@ import System.IO (hPutStrLn, stderr)
 import qualified System.Directory
 import qualified System.Environment
 import qualified Language.Haskell.TH.Syntax
-import System.Directory (createDirectoryIfMissing, doesFileExist, removeFile)
+import System.Directory (createDirectoryIfMissing, doesFileExist, removeFile, renameFile)
 import System.IO.Error (catchIOError)
 import qualified Control.Exception
 import System.FilePath ((</>), takeExtension, takeDirectory, takeFileName, dropExtension, splitDirectories)
@@ -591,6 +591,7 @@ data Command
     | Clean
     | Lsp
     | Upgrade
+    | UpgradeClaude              -- refresh ./CLAUDE.md from embedded template
     | Version
     deriving (Show)
 
@@ -636,6 +637,9 @@ commandParser = subparser
         (info (pure Lsp) (progDesc "Start language server"))
     <> command "upgrade"
         (info (pure Upgrade) (progDesc "Self-upgrade"))
+    <> command "upgrade-claude"
+        (info (pure UpgradeClaude)
+            (progDesc "Refresh ./CLAUDE.md from this binary's embedded template"))
     <> command "version"
         (info (pure Version) (progDesc "Show version"))
     )
@@ -1144,6 +1148,8 @@ runCommand cmd = case cmd of
 
     Upgrade -> runUpgrade
 
+    UpgradeClaude -> runUpgradeClaude
+
 
 -- | P11a: `sky upgrade` — fetch latest release from GitHub and swap the
 -- running binary in place. Shells out to `curl` + `tar` so we pull in no
@@ -1212,6 +1218,46 @@ runUpgrade = do
                                         "chmod" ["+x", currentBin] ""
                                     putStrLn $ "sky upgrade: upgraded to " ++ tag
                                     return (Right ())
+
+
+-- | `sky upgrade-claude` — refresh the cwd's CLAUDE.md from the
+-- template embedded in this binary at build time. Solves the
+-- staleness problem when a user upgrades the sky compiler but
+-- their existing project's CLAUDE.md (a snapshot taken at
+-- `sky init` time) still references old API names like `Ui.max`
+-- (now `Ui.maximum`) or missing surface that landed since.
+--
+-- Behaviour:
+--   * Always overwrites ./CLAUDE.md (the template is what AI
+--     assistants consume; users shouldn't be hand-editing it).
+--   * Backs up any existing file to CLAUDE.md.bak so accidental
+--     local edits aren't lost.
+--   * Prints the bytes-changed delta so the user can tell at a
+--     glance whether the template actually moved.
+runUpgradeClaude :: IO (Either String ())
+runUpgradeClaude = do
+    let target = "CLAUDE.md"
+    existed <- doesFileExist target
+    oldSize <- if existed
+        then do
+            old <- readFile target
+            -- Force the read so the rename below sees a consistent file.
+            length old `seq` return (length old)
+        else return 0
+    when existed $ do
+        -- Backup. Overwrite any prior .bak so repeated invocations
+        -- don't accumulate cruft. The user can recover from a single
+        -- mistake; older history belongs in git.
+        renameFile target (target ++ ".bak")
+    writeFile target embeddedClaudeMd
+    let newSize = length embeddedClaudeMd
+        verb    = if existed then "Refreshed" else "Created"
+    putStrLn $ verb ++ " " ++ target
+        ++ " (" ++ show oldSize ++ " → " ++ show newSize ++ " bytes"
+        ++ ", from " ++ skyVersionString ++ ")"
+    when existed $
+        putStrLn $ "  previous version saved as " ++ target ++ ".bak"
+    return (Right ())
 
 
 -- | Pull the `"tag_name"` field out of a GitHub release JSON blob. We

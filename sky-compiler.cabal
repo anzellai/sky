@@ -215,3 +215,4 @@ test-suite sky-tests
     , Sky.Cli.FmtSpec
     , Sky.Cli.CleanSpec
     , Sky.Cli.TestSpec
+    , Sky.Cli.UpgradeClaudeSpec

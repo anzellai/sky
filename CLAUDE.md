@@ -328,6 +328,7 @@ sky remove <package>              # Remove dependency
 sky install                       # Install deps + generate missing bindings
 sky update                        # Update deps to latest
 sky upgrade                       # Self-upgrade binary
+sky upgrade-claude                # Refresh ./CLAUDE.md from this binary's embedded template
 sky lsp                           # Language Server (JSON-RPC/stdio)
 sky clean                         # Remove sky-out/ dist/
 sky --version                     # `sky dev` on local builds; CI injects the release version
@@ -862,6 +863,10 @@ These are current compiler limitations users must work around. Items marked ~~st
     - **`(String -> Msg)` helper callback param**: a helper `textField : String -> String -> (String -> Msg) -> Element Msg` got `cb func(string) any` in its emitted Go sig (load-bearing widening — Sky lambdas always lower to `func(any) any` and Go has no function-type covariance, so the helper sig must accept the widest shape). But the call-site `textField "u" "" Msg_X` shipped the typed `Msg_X : func(string) Msg` raw — `go build` rejected. Root cause: `safeReturnTypeWith` returned bare `"any"` for `T.TLambda`, so `_cg_funcParamTypes[textField]` knew the param was "any" and `coerceArg` short-circuited. Fix: `safeReturnTypeWith` now renders `T.TLambda` as `func(X) any` (matching what `renderHofParamTy` emits at sig time) — this gives `coerceArg` the `func(` prefix it needs to route call-site args through `rt.Coerce[func(X) any]`. The reflect.MakeFunc adapter handles both Sky lambdas (`func(any) any`) and typed Msg ctors (`func(string) Msg`) uniformly. Pragmatic — not "fully typed" in the strict sense (the `any` tail return is a structural compromise) but unblocks user code today; truly fully-typed HOFs need lambda lowering to preserve types (post-v1 work in "Typed Codegen TODO"). Regression test: `test/Sky/Build/HofTypedMsgSpec.hs`. The pre-existing `CompileSpec` "Result-typed lambda params" test (line 80-97) is the regression fence — `renderHofParamTy` is unchanged so Bug #1 from sky-chat ep07 stays fixed.
 
 ### Recently Fixed (listed for regression context)
+
+#### v0.11.x (post-v0.11.0 — `sky upgrade-claude` CLI, 2026-04-27)
+
+- **`sky upgrade-claude` — refresh project's CLAUDE.md from the binary's embedded template** — ADDED. Solves the staleness problem where a user upgrades the `sky` compiler (`sky upgrade`) but their project's `CLAUDE.md` (a snapshot taken at `sky init` time) keeps referencing old API names (`Ui.max` vs `Ui.maximum`) or doesn't mention surface that landed since the snapshot. The new command writes the current binary's embedded `templates/CLAUDE.md` to `./CLAUDE.md`, backs up any existing copy to `./CLAUDE.md.bak`, and prints a one-line byte-delta summary including the `sky` version that produced the new template. Implementation: new `UpgradeClaude` Command variant + `runUpgradeClaude` handler in `app/Main.hs` (next to `runUpgrade`). Uses the existing `embeddedClaudeMd` Template Haskell splice — no new build deps.
 
 #### v0.11.x (post-v0.11.0 — real-world Std.Ui port findings round 3, 2026-04-27)
 

@@ -49,6 +49,7 @@ import qualified Sky.Cli.RunSpec
 import qualified Sky.Cli.FmtSpec
 import qualified Sky.Cli.CleanSpec
 import qualified Sky.Cli.TestSpec
+import qualified Sky.Cli.UpgradeClaudeSpec
 
 main :: IO ()
 main = hspec $ do
@@ -199,3 +200,8 @@ main = hspec $ do
     describe "Sky.Cli.Fmt"                 Sky.Cli.FmtSpec.spec
     describe "Sky.Cli.Clean"               Sky.Cli.CleanSpec.spec
     describe "Sky.Cli.Test"                Sky.Cli.TestSpec.spec
+    -- `sky upgrade-claude` refreshes the cwd's CLAUDE.md from the
+    -- binary's embedded template. Solves the staleness gap between
+    -- compiler self-upgrade and project doc, which used to leave
+    -- AI assistants reading deprecated API names (e.g. `Ui.max`).
+    describe "Sky.Cli.UpgradeClaude"       Sky.Cli.UpgradeClaudeSpec.spec

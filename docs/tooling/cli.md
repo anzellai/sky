@@ -111,6 +111,31 @@ Bumps all `[go.dependencies]` to their latest versions.
 
 Self-upgrades the `sky` binary from the latest GitHub release.
 
+### `sky upgrade-claude`
+
+Refreshes the cwd's `CLAUDE.md` from the template embedded in the
+running `sky` binary at build time. Useful after `sky upgrade` —
+the binary's embedded template moves with new releases (new stdlib
+APIs, deprecation notes, current limitations) but a project's
+`CLAUDE.md` is a snapshot taken at `sky init` time and won't auto-
+update.
+
+Behaviour:
+
+- Always overwrites `./CLAUDE.md` (the file is AI-context, not
+  hand-edited project source).
+- Backs the prior file up to `./CLAUDE.md.bak` so an accidental run
+  on a project that customised the file is recoverable.
+- Prints a one-line summary including the byte-count delta and the
+  `sky` version that produced the new template, so you can see at a
+  glance whether the template actually changed.
+
+```bash
+$ sky upgrade-claude
+Refreshed CLAUDE.md (118432 → 132422 bytes, from sky v0.11.1)
+  previous version saved as CLAUDE.md.bak
+```
+
 ## Formatting
 
 ### `sky fmt <file>`
