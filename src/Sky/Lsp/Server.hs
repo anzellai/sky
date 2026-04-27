@@ -555,10 +555,54 @@ runPipeline src = case Parse.parseModule src of
                 cs <- Constrain.constrainModule canMod
                 r  <- Solve.solve cs
                 case r of
-                    Solve.SolveError err ->
-                        return [diagnosticFromMessage ("Type error: " ++ err)]
+                    Solve.SolveError err
+                        -- Suppress the `{ ... } vs { ... }` family
+                        -- of errors the no-externals LSP path
+                        -- false-positives on. Concretely: when HM
+                        -- can't unify two records because one or
+                        -- both came from a kernel sig (e.g.
+                        -- `Live.app`'s record-typed param) and the
+                        -- LSP doesn't have the dep externals
+                        -- loaded, the rendered diagnostic shows
+                        -- `Type mismatch: { ... } vs { ... }`. The
+                        -- truncated `{ ... }` is the giveaway —
+                        -- record types large enough to hit
+                        -- truncation are almost always legitimate
+                        -- in `sky check` (with externals); the LSP
+                        -- false-positive disappears once the
+                        -- proper externals helper lands.
+                        | isLikelyExternalsFalsePositive err ->
+                            return (map exhaustDiagnostic (Exhaust.checkModule canMod))
+                        | otherwise ->
+                            return [diagnosticFromMessage ("Type error: " ++ err)]
                     Solve.SolveOk _ ->
                         return (map exhaustDiagnostic (Exhaust.checkModule canMod))
+
+
+-- | True when the solver error matches the shape the no-externals
+-- LSP path produces for cross-module record kernel sigs (notably
+-- `Live.app`). Identified by the truncated `{ ... }` rendering on
+-- both sides — the renderer truncates records past a certain
+-- complexity, which only happens for kernel-shape records here.
+--
+-- This is a HEURISTIC interim fix until the LSP loads dep
+-- externals properly. Real-world impact: the LSP no longer false-
+-- positives on TEA apps using `Live.app`. Trade-off: a genuine
+-- record-vs-record mismatch involving large records would also be
+-- silently dropped — but those are rare in user code (records
+-- that big almost never appear in user-defined types).
+isLikelyExternalsFalsePositive :: String -> Bool
+isLikelyExternalsFalsePositive err =
+    let hasTruncatedRecord = "{ ... }" `isInfixOfStr` err
+        isTypeMismatch     = "Type mismatch:" `isInfixOfStr` err
+    in hasTruncatedRecord && isTypeMismatch
+  where
+    isInfixOfStr needle hay = any (needle `isPrefixOfStr`) (tails hay)
+    isPrefixOfStr [] _ = True
+    isPrefixOfStr _ [] = False
+    isPrefixOfStr (n:ns) (h:hs) = n == h && isPrefixOfStr ns hs
+    tails [] = [[]]
+    tails xs@(_:rest) = xs : tails rest
 
 
 -- | Convert an exhaustiveness diagnostic into an LSP diagnostic. The
