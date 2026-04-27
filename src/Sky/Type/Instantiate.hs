@@ -29,20 +29,48 @@ fromCanType rank canType = do
 
 -- | Instantiate an annotation (Forall vars type) into a solver variable.
 -- Each quantified variable gets a fresh flex variable.
+--
+-- Wildcard handling: "any" is Sky's wildcard type variable. Even if
+-- the annotation's freeVars list contains "any" (it shouldn't, but
+-- generaliseToAnnotation might pick it up), we deliberately leave
+-- it out of the shared env so each `T.TVar "any"` occurrence gets
+-- its own fresh variable from typeToVariable. See `buildEnv` for
+-- the matching wildcard case.
 fromAnnotation :: Int -> T.Annotation -> IO (T.Variable, [T.Variable])
 fromAnnotation rank (T.Forall freeVars canType) = do
-    -- Create fresh flex variables for each quantified variable
+    -- Create fresh flex variables for each quantified variable EXCEPT
+    -- "any" which is wildcard.
+    let realVars = filter (/= "any") freeVars
     freshVars <- mapM (\name -> do
         v <- UF.fresh (T.Descriptor (T.FlexVar (Just name)) rank T.noMark Nothing)
-        return (name, v)) freeVars
+        return (name, v)) realVars
     let env = Map.fromList freshVars
     var <- typeToVariable rank env canType
     return (var, map snd freshVars)
 
 
--- | Build an environment of fresh variables for all free type vars in a type
+-- | Build an environment of fresh variables for all free type vars in a type.
+--
+-- Special case: `any` is Sky's wildcard type. Each occurrence in the
+-- source is independent — never share the env entry across occurrences.
+-- This means `Maybe any` in a function return and `Ctor any` in a
+-- constructor argument get DIFFERENT fresh variables, so destructuring
+-- one doesn't constrain the other.
+--
+-- Without this, `T.TVar "any"` was treated like a normal type variable
+-- — first occurrence creates a fresh var that all subsequent `any`
+-- references share. So in `case (x : MyAttr) of AttrA s -> Just s |
+-- AttrB v -> Just v` (where AttrA holds String and AttrB holds any),
+-- the cross-branch unification of `Just s` and `Just v` would set
+-- the shared `any` to String, then `AttrB 42` at a construction site
+-- would fail with `Int vs String`. The wildcard semantics fix this.
 buildEnv :: Int -> T.Type -> Map.Map String T.Variable -> IO (Map.Map String T.Variable)
 buildEnv rank canType env = case canType of
+    T.TVar "any" ->
+        -- Wildcard: don't add to env. typeToVariable will create a
+        -- fresh var for each occurrence.
+        return env
+
     T.TVar name ->
         case Map.lookup name env of
             Just _ -> return env

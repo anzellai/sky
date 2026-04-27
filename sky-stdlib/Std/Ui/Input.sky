@@ -291,10 +291,7 @@ placeholderTextOf el =
 
 
 extractText : Element msg -> String
-extractText el =
-    case el of
-        Ui.Text s -> s
-        _         -> ""
+extractText el = Ui.elementText el
 
 
 -- Internal: build a bare input element by tag for fixed-msg controls

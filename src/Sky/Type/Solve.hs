@@ -200,6 +200,20 @@ solveWithLocals constraint = do
 -- they get the SAME UF variable, so unification propagates between them.
 typeToVar :: SolverState -> T.Type -> IO T.Variable
 typeToVar state ty = case ty of
+    T.TVar "any" ->
+        -- Wildcard semantics: every occurrence of `any` in source
+        -- types gets its OWN fresh unification variable, never shared
+        -- via the cache. Without this, distinct `any` occurrences
+        -- in the same definition collapse to a single variable —
+        -- so `case x of AttrA s -> Just s | AttrB v -> Just v` (where
+        -- AttrA holds String and AttrB holds `any`) unifies `String`
+        -- through the AttrA branch into the shared `any` slot, then
+        -- the construction site `AttrB 42` rejects the Int because
+        -- the slot is already pinned to String. The wildcard split
+        -- restores the "any unifies with anything, independently"
+        -- semantics users expect.
+        UF.fresh (T.Descriptor (T.FlexVar (Just "any")) (_rank state) T.noMark Nothing)
+
     T.TVar name -> do
         -- Share UF variables for the same TVar name via cache.
         -- With unique names per call site (from IO-based constraint generation),

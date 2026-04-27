@@ -4789,11 +4789,25 @@ patternCondition subject pat = case pat of
     -- was typed upstream. Before this, `case errs of [] -> ...` over
     -- a typed `[]Error` panicked with
     -- `interface {} is []Error, not []interface {}`.
-    Can.PCons _ _ ->
-        Just $ GoIr.GoBinary ">="
-            (GoIr.GoCall (GoIr.GoIdent "len")
-                [ GoIr.GoCall (GoIr.GoIdent "rt.AsList") [GoIr.GoIdent subject] ])
-            (GoIr.GoIntLit 1)
+    --
+    -- Plus: when the head pattern is a constructor or literal, we
+    -- ALSO emit a head-discriminator condition so the case arm only
+    -- fires when the head matches. Pre-fix, `(AttrDescribe d) :: _`
+    -- would fire for ANY non-empty list and then panic inside the
+    -- body when it tried to extract field 0 from a head that wasn't
+    -- AttrDescribe. The head-discriminator now joins the length
+    -- check via `&&`.
+    Can.PCons h t ->
+        let lenCond = GoIr.GoBinary ">="
+                (GoIr.GoCall (GoIr.GoIdent "len")
+                    [ GoIr.GoCall (GoIr.GoIdent "rt.AsList") [GoIr.GoIdent subject] ])
+                (GoIr.GoIntLit 1)
+            (A.At _ hPat) = h
+            (A.At _ tPat) = t
+            headCond = consHeadCondition subject hPat
+            tailCond = consTailCondition subject tPat
+            extras = [ c | Just c <- [headCond, tailCond] ]
+        in Just $ foldl (GoIr.GoBinary "&&") lenCond extras
 
     -- Fixed-length list: match exact length; element conditions handled in
     -- bindings below (codegen over-matches conservatively — strict element
@@ -4899,6 +4913,119 @@ argPatternCondition subject ctorName idx pat = case pat of
             Can.PBool b  -> Just (GoIr.GoBinary "==" (tagCast "bool")   (GoIr.GoBoolLit b))
             Can.PChr c   -> Just (GoIr.GoBinary "==" (tagCast "rune")   (GoIr.GoRuneLit c))
             _            -> Nothing
+
+
+-- | Discriminator condition for the head pattern of a `(h :: t)` cons.
+-- The cons-pattern itself only checks `len >= 1`; this function adds
+-- the head's narrowing condition so that, e.g., `(AttrDescribe d) ::
+-- _` only fires when the head's actual constructor is AttrDescribe.
+--
+-- Without this, the case body's bindings (which assume the head IS
+-- the matched constructor) would extract field 0 from a head that
+-- might be ANY value of the ADT — a `interface conversion: …` panic
+-- at runtime. Returns Nothing for catch-all heads (PVar, PAnything,
+-- PUnit) which don't narrow the match.
+consHeadCondition :: String -> Can.Pattern_ -> Maybe GoIr.GoExpr
+consHeadCondition subject pat =
+    let headRaw = "rt.AsList(" ++ subject ++ ")[0]"
+    in patternConditionForExpr headRaw pat
+
+
+-- | Same shape for the tail of a cons. Tail patterns are usually a
+-- variable or `_`, but `(_ :: y :: _)` etc would benefit. Returns
+-- Nothing for var/anything tails. The tail expression as a Go raw
+-- string is `any(rt.AsList(subject)[1:])` (matching the binding
+-- code's tail extraction).
+consTailCondition :: String -> Can.Pattern_ -> Maybe GoIr.GoExpr
+consTailCondition subject pat =
+    let tailRaw = "any(rt.AsList(" ++ subject ++ ")[1:])"
+    in patternConditionForExpr tailRaw pat
+
+
+-- | Build a discriminator condition where the subject is an arbitrary
+-- Go expression (raw string), not a bound variable. Mirrors the
+-- shape of `patternCondition` for the cases where the head/tail of
+-- a cons can carry a narrowing pattern. Used by `consHeadCondition`
+-- and `consTailCondition`.
+--
+-- Only handles the patterns that act as discriminators when nested
+-- inside a cons pattern: PCtor, PInt, PStr, PBool, PChr, and another
+-- PCons. PVar / PAnything / PUnit always match (Nothing). PTuple /
+-- PRecord / PList structure is guaranteed by HM (Nothing).
+patternConditionForExpr :: String -> Can.Pattern_ -> Maybe GoIr.GoExpr
+patternConditionForExpr subjectRaw pat = case pat of
+    Can.PAnything -> Nothing
+    Can.PVar _    -> Nothing
+    Can.PUnit     -> Nothing
+    Can.PTuple{}  -> Nothing
+    Can.PRecord _ -> Nothing
+
+    Can.PInt n ->
+        Just $ GoIr.GoBinary "=="
+            (GoIr.GoCall (GoIr.GoQualified "rt" "AsInt")
+                [GoIr.GoRaw subjectRaw])
+            (GoIr.GoIntLit n)
+
+    Can.PStr s ->
+        Just $ GoIr.GoBinary "=="
+            (GoIr.GoCall (GoIr.GoQualified "rt" "AsString")
+                [GoIr.GoRaw subjectRaw])
+            (GoIr.GoStringLit s)
+
+    Can.PBool b ->
+        Just $ GoIr.GoBinary "=="
+            (GoIr.GoCall (GoIr.GoQualified "rt" "AsBool")
+                [GoIr.GoRaw subjectRaw])
+            (GoIr.GoBoolLit b)
+
+    Can.PChr c ->
+        Just $ GoIr.GoBinary "=="
+            (GoIr.GoTypeAssert
+                (GoIr.GoCall (GoIr.GoIdent "any") [GoIr.GoRaw subjectRaw])
+                "rune")
+            (GoIr.GoRuneLit c)
+
+    Can.PCtor _home _typeName union _ctorName ctorIdx _args ->
+        case Can._u_opts union of
+            Can.Enum ->
+                -- Enum (zero-arg ADT): use rt.EnumTagIs which tolerates
+                -- both Sky-side typed-int and rt.SkyADT-shaped values.
+                Just $ GoIr.GoCall
+                    (GoIr.GoQualified "rt" "EnumTagIs")
+                    [ GoIr.GoRaw subjectRaw
+                    , GoIr.GoIntLit ctorIdx
+                    ]
+            _ ->
+                -- Tagged ADT: read .Tag via the rt.AdtTag helper which
+                -- accepts any-typed inputs and routes through
+                -- reflection if needed (so this works whether the head
+                -- value is Sky-side typed or any-boxed at runtime).
+                Just $ GoIr.GoBinary "=="
+                    (GoIr.GoCall (GoIr.GoQualified "rt" "AdtTag")
+                        [GoIr.GoCall (GoIr.GoIdent "any") [GoIr.GoRaw subjectRaw]])
+                    (GoIr.GoIntLit ctorIdx)
+
+    Can.PCons _ _ ->
+        -- Nested cons (e.g. `(_ :: _) :: _`): the inner needs at
+        -- least one element of its own. Only emit the length check —
+        -- deeper recursion would need more plumbing and the common
+        -- pattern is single-level.
+        Just $ GoIr.GoBinary ">="
+            (GoIr.GoCall (GoIr.GoIdent "len")
+                [ GoIr.GoCall (GoIr.GoQualified "rt" "AsList")
+                    [GoIr.GoRaw subjectRaw] ])
+            (GoIr.GoIntLit 1)
+
+    Can.PList xs ->
+        Just $ GoIr.GoBinary "=="
+            (GoIr.GoCall (GoIr.GoIdent "len")
+                [ GoIr.GoCall (GoIr.GoQualified "rt" "AsList")
+                    [GoIr.GoRaw subjectRaw] ])
+            (GoIr.GoIntLit (length xs))
+
+    Can.PAlias inner _ ->
+        let (A.At _ innerPat) = inner
+        in patternConditionForExpr subjectRaw innerPat
 
 
 -- | Generate Go variable bindings from a pattern

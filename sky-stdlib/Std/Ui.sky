@@ -630,6 +630,18 @@ html node =
     Raw node
 
 
+-- Extract a plain string from a `Text s` element, or "" for any
+-- other shape. Used by Std.Ui.Input.placeholder rendering to pull
+-- the placeholder text out of the user-supplied Element wrapper.
+-- Lives here (not in Std.Ui.Input) because the Element ctors aren't
+-- conveniently destructurable cross-module today.
+elementText : Element msg -> String
+elementText el =
+    case el of
+        Text s -> s
+        _      -> ""
+
+
 -- ─── Overflow / clip / scrollbars ────────────────────────────────
 
 -- Clip overflow on both axes (overflow: hidden). Use when an
@@ -735,22 +747,12 @@ renderElement ctx extraAttrs elem =
 -- Resolve the HTML tag for a generic Node by inspecting its attribute
 -- list for an AttrDescribe entry. The first one wins; if none, the
 -- default tag passed in is returned.
---
--- Implementation note: the cons + nested-case shape (rather than the
--- combined `(AttrDescribe d) :: _ ->` constructor-on-cons pattern)
--- is deliberate — Sky's pattern lowering currently doesn't check
--- the head's constructor tag in the cons-with-constructor pattern,
--- which surfaced as a runtime panic when the list head was a
--- non-AttrDescribe variant (e.g. AttrStyle "__row" ...). The
--- two-step destructure makes the constructor check explicit.
 pickSemanticTag : String -> List (Attribute msg) -> String
 pickSemanticTag defaultTag attrs =
     case attrs of
         [] -> defaultTag
-        head :: rest ->
-            case head of
-                AttrDescribe d -> tagForDescription defaultTag d
-                _              -> pickSemanticTag defaultTag rest
+        (AttrDescribe d) :: _ -> tagForDescription defaultTag d
+        _ :: rest -> pickSemanticTag defaultTag rest
 
 
 -- Map a Description to the semantically-correct HTML element name.
@@ -900,7 +902,7 @@ toAttrAttribute a =
     case a of
         AttrAttribute k v -> Just (kernelAttr k v)
         AttrClass c       -> Just (Attr.class c)
-        AttrEvent ev      -> wrapEvent ev
+        AttrEvent ev      -> Just ev
         AttrDescribe d    -> ariaForDescription d
         _                 -> Nothing
 
@@ -916,16 +918,6 @@ ariaForDescription d =
         DescLivePolite     -> Just (kernelAttr "aria-live" "polite")
         DescLiveAssertive  -> Just (kernelAttr "aria-live" "assertive")
         _                  -> Nothing
-
-
--- Wrap an event-payload value into Maybe with an explicit `any`
--- signature. Without this indirection, Sky's HM unifies the three
--- branches of `toAttrAttribute` and resolves `any` to whichever
--- concrete type appears first (typically `Attribute` from
--- `Attr.class c`), then rejects the destructured `ev` because its
--- inferred type from the construction sites doesn't match.
-wrapEvent : any -> Maybe any
-wrapEvent ev = Just ev
 
 
 -- Sky.Std.Html.Attributes doesn't expose a generic

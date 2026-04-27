@@ -8,12 +8,15 @@ import qualified Sky.Build.ForeignFatalSpec
 import qualified Sky.Build.TypedFfiSpec
 import qualified Sky.ErrorUnificationSpec
 import qualified Sky.Parse.PatternSpec
+import qualified Sky.Parse.MultiLineExposingSpec
 import qualified Sky.Canonicalise.ExposingSpec
 import qualified Sky.Canonicalise.KernelFallbackSpec
 import qualified Sky.Canonicalise.UnboundSpec
 import qualified Sky.Type.ExhaustivenessSpec
+import qualified Sky.Type.AnyWildcardSpec
 import qualified Sky.Format.FormatSpec
 import qualified Sky.Build.NestedPatternSpec
+import qualified Sky.Build.ConsCtorPatternSpec
 import qualified Sky.Build.TaskResultBridgesSpec
 import qualified Sky.Build.CheckIsBuildSpec
 import qualified Sky.Build.RecordFieldOrderSpec
@@ -53,6 +56,9 @@ main = hspec $ do
     -- like rt.AsBool: expected bool, got rt.SkyResult[…].
     describe "Sky.Build.ForeignFatal"    Sky.Build.ForeignFatalSpec.spec
     describe "Sky.Parse.Pattern"         Sky.Parse.PatternSpec.spec
+    -- Multi-line `module/import ... exposing (…)` parser fix +
+    -- parse-error-is-fatal regression fence (compiler bug #1).
+    describe "Sky.Parse.MultiLineExposing" Sky.Parse.MultiLineExposingSpec.spec
     describe "Sky.Canonicalise.Exposing" Sky.Canonicalise.ExposingSpec.spec
     -- Regression: kernel qualifiers (Crypto, Encoding, Hex, …) used
     -- without an explicit `import Sky.Core.<Mod>` must resolve as
@@ -61,8 +67,16 @@ main = hspec $ do
     describe "Sky.Canonicalise.KernelFallback" Sky.Canonicalise.KernelFallbackSpec.spec
     describe "Sky.Canonicalise.Unbound"  Sky.Canonicalise.UnboundSpec.spec
     describe "Sky.Type.Exhaustiveness"   Sky.Type.ExhaustivenessSpec.spec
+    -- Cross-branch HM `any` wildcard fix (compiler bug #3). Distinct
+    -- occurrences of `any` in source types must NOT share a single
+    -- unification variable; each gets its own fresh var.
+    describe "Sky.Type.AnyWildcard"      Sky.Type.AnyWildcardSpec.spec
     describe "Sky.Format.Format"         Sky.Format.FormatSpec.spec
     describe "Sky.Build.NestedPattern"   Sky.Build.NestedPatternSpec.spec
+    -- Cons-with-constructor pattern fix (compiler bug #2). The
+    -- lowerer now emits a head-discriminator check on `(Ctor x) :: rest`
+    -- so the body only fires when the head's actual ctor matches.
+    describe "Sky.Build.ConsCtorPattern" Sky.Build.ConsCtorPatternSpec.spec
     -- Result/Task bridge helpers (Task.fromResult, Task.andThenResult,
     -- Result.andThenTask) — runtime + canonicaliser + kernel sigs gate.
     describe "Sky.Build.TaskResultBridges" Sky.Build.TaskResultBridgesSpec.spec

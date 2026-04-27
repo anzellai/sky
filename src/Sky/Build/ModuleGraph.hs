@@ -59,9 +59,18 @@ discoverModulesMulti roots entryPath = do
             else do
                 source <- TIO.readFile path
                 case Parse.parseModule source of
-                    Left err -> do
-                        putStrLn $ "   Warning: could not parse " ++ path ++ ": " ++ show err
-                        go visited rest
+                    Left err ->
+                        -- Parse errors are FATAL, not warnings. Previously
+                        -- this was a `putStrLn "Warning: …"` + skip, which
+                        -- silently dropped the unparseable module from the
+                        -- build graph and let the build proceed with the
+                        -- remaining modules — leading to downstream
+                        -- "undefined: Foo_bar" Go errors that gave the user
+                        -- no clue the real issue was a parse failure on
+                        -- their .sky source. Same class as the dep-HM-fatal
+                        -- fix in CLAUDE.md Limitation #16: silent degradation
+                        -- of compiler errors is a soundness gap.
+                        error $ "PARSE ERROR: " ++ path ++ ": " ++ show err
                     Right srcMod -> do
                         let declaredName = case Src._name srcMod of
                                 Just (A.At _ segs) -> joinDots segs

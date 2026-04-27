@@ -173,12 +173,15 @@ test-suite sky-tests
       Sky.Build.TypedFfiSpec
       Sky.ErrorUnificationSpec
       Sky.Parse.PatternSpec
+      Sky.Parse.MultiLineExposingSpec
       Sky.Canonicalise.ExposingSpec
       Sky.Canonicalise.KernelFallbackSpec
       Sky.Canonicalise.UnboundSpec
       Sky.Type.ExhaustivenessSpec
+      Sky.Type.AnyWildcardSpec
       Sky.Format.FormatSpec
       Sky.Build.NestedPatternSpec
+      Sky.Build.ConsCtorPatternSpec
       Sky.Build.TaskResultBridgesSpec
       Sky.Build.CheckIsBuildSpec
       Sky.Build.RecordFieldOrderSpec

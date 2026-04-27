@@ -1,8 +1,19 @@
-module Std.Ui.Font exposing (color, size, family, weight, sansSerif, serif, monospace, typeface, bold, light, regular, semiBold, extraBold, black, italic, underline, letterSpacing, wordSpacing)
+module Std.Ui.Font exposing
+    ( color, size, family, weight
+    , sansSerif, serif, monospace, typeface
+    , bold, light, regular, semiBold, extraBold, black
+    , italic, underline
+    , letterSpacing, wordSpacing
+    )
 
 
 import Sky.Core.Prelude exposing (..)
-import Std.Ui exposing (Color, Attribute, fontColor, fontSize, fontFamily, fontWeight, fontItalic, fontUnderline, fontLetterSpacing, fontWordSpacing)
+import Std.Ui exposing
+    ( Color, Attribute
+    , fontColor, fontSize, fontFamily, fontWeight
+    , fontItalic, fontUnderline
+    , fontLetterSpacing, fontWordSpacing
+    )
 
 
 color : Color -> Attribute msg
