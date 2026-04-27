@@ -68,7 +68,7 @@ Std.Ui takes a different cut: model layout in terms the user actually wants (`ro
 |---|---|---|
 | **Element** | `Element msg` | `Ui.text "hi"`, `Ui.row [...] [...]`, `Ui.button [...] cfg` |
 | **Attribute** | `Attribute msg` | `Ui.padding 16`, `Background.color (Ui.rgb 0 0 0)`, `Ui.onClick MyMsg` |
-| **Length** | `Length` | `Ui.px 200`, `Ui.fill 1`, `Ui.content`, `Ui.min 100 (Ui.fill 1)` |
+| **Length** | `Length` | `Ui.px 200`, `Ui.fill`, `Ui.fillPortion 2`, `Ui.content`, `Ui.minimum 100 Ui.fill`, `Ui.maximum 600 Ui.fill` |
 | **Color** | `Color` | `Ui.rgb 255 102 0`, `Ui.rgba 0 0 0 0.5`, `Ui.white`, `Ui.black` |
 
 Every `Element msg` has a `msg` parameter — the same `msg` you've defined for your TEA app. Attributes that carry events (`onClick`, `onSubmit`, `onInput`) tie into the same `msg` so the type checker catches mismatches at compile time.
@@ -103,11 +103,13 @@ Ui.column [ Ui.spacing 16, Ui.padding 24 ]
 ## Length
 
 ```elm
-Ui.px : Int -> Length          -- absolute pixels
-Ui.fill : Int -> Length        -- flex-grow weight (1 = single growing slot)
-Ui.content                     -- shrink-to-fit
-Ui.min : Int -> Length -> Length    -- minimum constraint on a length
-Ui.max : Int -> Length -> Length    -- maximum constraint
+Ui.px : Int -> Length                   -- absolute pixels
+Ui.fill : Length                        -- single growing slot (no arg)
+Ui.fillPortion : Int -> Length          -- proportional flex-grow weight
+Ui.content : Length                     -- shrink-to-fit
+Ui.shrink : Length                      -- shrink to content size
+Ui.minimum : Int -> Length -> Length    -- minimum constraint on a length
+Ui.maximum : Int -> Length -> Length    -- maximum constraint on a length
 ```
 
 Use with `Ui.width` / `Ui.height`:
@@ -115,7 +117,9 @@ Use with `Ui.width` / `Ui.height`:
 ```elm
 Ui.row [ Ui.spacing 8 ]
     [ Ui.el [ Ui.width (Ui.px 80) ] (Ui.text "Label:")
-    , Ui.el [ Ui.width (Ui.fill 1) ] (Ui.text fieldValue)   -- fills remaining
+    , Ui.el [ Ui.width Ui.fill ] (Ui.text fieldValue)            -- fills remaining
+    , Ui.el [ Ui.width (Ui.fillPortion 2) ] (Ui.text "double")   -- 2× fillPortion sibling
+    , Ui.el [ Ui.width (Ui.maximum 320 Ui.fill) ] (Ui.text "capped")
     , Ui.el [ Ui.width (Ui.px 32) ] (Ui.text "✓")
     ]
 ```
@@ -159,6 +163,7 @@ Font.color (Ui.rgb 33 33 33)
 Font.family "Verdana, Geneva, sans-serif"
 Font.size 14
 Font.bold
+Font.alignCenter                         -- text-align: center (also Font.center)
 Region.heading 2                         -- semantic <h2> for screen readers
 Region.footer
 ```
@@ -343,12 +348,12 @@ The 8-module split (`State.sky` / `Update.sky` / `View/{Common,Posts,Detail,Comp
 | Layout: `input` (real `<input>`) | ✅ | `Ui.el` renders as `<div>`, so a dedicated helper exists |
 | Layout: `form` (with `onSubmit`-into-typed-record) | ✅ | Wire driver decodes formData into a typed record |
 | Layout: `html` escape hatch | ✅ | `Ui.html node : any -> Element msg` wraps a Std.Html VNode |
-| **Length**: `px / content / fill / fillPortion / min / max / shrink` | ✅ | |
+| **Length**: `px / content / fill / fillPortion / minimum / maximum / shrink` | ✅ | `fill : Length` is bare; use `fillPortion n` for proportional weights |
 | **Alignment**: `centerX/Y / align*` | ✅ | |
 | **Padding**: `padding / paddingXY / paddingEach` / `spacing` | ✅ | |
 | **Background**: `color / image / linearGradient / gradient` | ✅ | `Std.Ui.Background` |
 | **Border**: `color / width / widthEach / rounded / solid / dashed / dotted / shadow / glow / innerShadow` | ✅ | `Std.Ui.Border` |
-| **Font**: `color / family / size / bold / semiBold / regular / light / extraBold / black / italic / underline / letterSpacing / wordSpacing / sansSerif / serif / monospace` | ✅ | `Std.Ui.Font` |
+| **Font**: `color / family / size / weight / bold / semiBold / regular / light / extraBold / black / italic / underline / letterSpacing / wordSpacing / alignLeft / alignRight / alignCenter / center / justify / sansSerif / serif / monospace` | ✅ | `Std.Ui.Font` |
 | **Color**: `rgb / rgba / white / black / transparent` | ✅ | Sky stores 0-255 ints; HM friction with 0-1 floats |
 | **Region**: `heading n / mainContent / navigation / footer / aside / label / announce / announceUrgently` | ✅ | Renderer dispatches `<h1>`..`<h6>` / `<main>` / `<nav>` / `<footer>` / `<aside>` from the Description; aria-label / aria-live for the rest |
 | **Events**: `onClick / onMouseOver/Out / onFocus` | ✅ | |

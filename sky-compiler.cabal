@@ -180,7 +180,9 @@ test-suite sky-tests
       Sky.Type.ExhaustivenessSpec
       Sky.Type.AnyWildcardSpec
       Sky.Type.TupleLambdaSpec
+      Sky.Type.UiOnSubmitTypedRecordSpec
       Sky.Format.FormatSpec
+      Sky.Build.GoKeywordCollisionSpec
       Sky.Build.NestedPatternSpec
       Sky.Build.ConsCtorPatternSpec
       Sky.Build.TaskResultBridgesSpec

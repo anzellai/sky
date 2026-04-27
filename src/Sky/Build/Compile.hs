@@ -3630,9 +3630,16 @@ exprToGo (A.At _ expr) = case expr of
                 -- must yield a closure capturing session.
                 let env = getCgEnv
                     modStr = ModuleName.toString home
+                    -- goSafeName escapes Sky function names that collide
+                    -- with Go reserved words / built-ins (e.g. `go`,
+                    -- `defer`, `chan`, `make`, `len`). Definition site
+                    -- already does this (see emitFunctionDecl ~line 2048);
+                    -- this call-site path used to emit the raw name and
+                    -- generate `go(...)` instead of `go_(...)`, which
+                    -- the Go parser interprets as a goroutine launch.
                     qualName = if null modStr || modStr == "Main"
-                        then name
-                        else map (\c -> if c == '.' then '_' else c) modStr ++ "_" ++ name
+                        then goSafeName name
+                        else map (\c -> if c == '.' then '_' else c) modStr ++ "_" ++ goSafeName name
                     declared = Map.findWithDefault (length args) qualName (Rec._cg_funcArities env)
                     got = length args
                 in if got < declared && declared > 0

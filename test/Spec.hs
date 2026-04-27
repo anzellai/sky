@@ -15,7 +15,9 @@ import qualified Sky.Canonicalise.UnboundSpec
 import qualified Sky.Type.ExhaustivenessSpec
 import qualified Sky.Type.AnyWildcardSpec
 import qualified Sky.Type.TupleLambdaSpec
+import qualified Sky.Type.UiOnSubmitTypedRecordSpec
 import qualified Sky.Format.FormatSpec
+import qualified Sky.Build.GoKeywordCollisionSpec
 import qualified Sky.Build.NestedPatternSpec
 import qualified Sky.Build.ConsCtorPatternSpec
 import qualified Sky.Build.TaskResultBridgesSpec
@@ -76,7 +78,22 @@ main = hspec $ do
     -- Surfaced together when investigating why `sky test` for a
     -- passing module was xfailing.
     describe "Sky.Type.TupleLambda"      Sky.Type.TupleLambdaSpec.spec
+    -- Std.Ui.onSubmit widening: in-module typed-record-arg case
+    -- (`Ui.onSubmit DoSignIn` where `DoSignIn : LoginForm -> Msg`).
+    -- Pre-fix the kernel sig forced `msg = (record -> msg)` and the
+    -- enclosing `Element Msg` annotation rejected it; post-fix the
+    -- wrapper is `(a -> Attribute b)`.
+    describe "Sky.Type.UiOnSubmitTypedRecord"
+                                         Sky.Type.UiOnSubmitTypedRecordSpec.spec
     describe "Sky.Format.Format"         Sky.Format.FormatSpec.spec
+    -- Sky function names that match Go reserved words must sanitise
+    -- at the CALL site too, not only at the definition site (see
+    -- comment in Sky.Build.Compile near the Can.Call/VarTopLevel
+    -- branch). Pre-fix `go` defined in Main emitted `func go_(...)`
+    -- but the call site emitted `go(...)` — Go's parser interpreted
+    -- it as a goroutine launch and rejected the build.
+    describe "Sky.Build.GoKeywordCollision"
+                                         Sky.Build.GoKeywordCollisionSpec.spec
     describe "Sky.Build.NestedPattern"   Sky.Build.NestedPatternSpec.spec
     -- Cons-with-constructor pattern fix (compiler bug #2). The
     -- lowerer now emits a head-discriminator check on `(Ctor x) :: rest`

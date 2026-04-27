@@ -4,6 +4,7 @@ module Std.Ui.Font exposing
     , bold, light, regular, semiBold, extraBold, black
     , italic, underline
     , letterSpacing, wordSpacing
+    , alignLeft, alignRight, alignCenter, center, justify
     )
 
 
@@ -11,7 +12,7 @@ import Sky.Core.Prelude exposing (..)
 import Std.Ui exposing
     ( Color, Attribute
     , fontColor, fontSize, fontFamily, fontWeight
-    , fontItalic, fontUnderline
+    , fontItalic, fontUnderline, fontAlign
     , fontLetterSpacing, fontWordSpacing
     )
 
@@ -72,6 +73,27 @@ letterSpacing em = fontLetterSpacing em
 -- Word-spacing in em.
 wordSpacing : Float -> Attribute msg
 wordSpacing em = fontWordSpacing em
+
+
+-- Text alignment within the element. These compile to `text-align`,
+-- so they affect inline content (text + inline elements) rather than
+-- the element's own placement in its parent (use `Ui.centerX` /
+-- `Ui.alignLeft` etc. for that). `center` is an alias for
+-- `alignCenter`, matching the elm-ui convention.
+alignLeft : Attribute msg
+alignLeft = fontAlign "left"
+
+alignRight : Attribute msg
+alignRight = fontAlign "right"
+
+alignCenter : Attribute msg
+alignCenter = fontAlign "center"
+
+center : Attribute msg
+center = alignCenter
+
+justify : Attribute msg
+justify = fontAlign "justify"
 
 
 sansSerif : String

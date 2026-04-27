@@ -78,6 +78,7 @@ type Attribute msg
     | AttrFontUnderline                    -- text-decoration: underline
     | AttrFontLetterSpacing Float          -- letter-spacing in em
     | AttrFontWordSpacing Float            -- word-spacing in em
+    | AttrFontAlign String                 -- text-align: left | right | center | justify
     | AttrBgColor Color
     | AttrBgImage String                   -- background-image: url(<url>)
     | AttrBgGradient String                -- pre-built CSS gradient string (linear-gradient(...) etc)
@@ -331,6 +332,12 @@ fontItalic = AttrFontItalic
 fontUnderline : Attribute msg
 fontUnderline = AttrFontUnderline
 
+-- text-align kernel — `value` is the raw CSS keyword
+-- ("left" / "right" / "center" / "justify"). Std.Ui.Font wraps each
+-- keyword in a typed helper so user code never types the string.
+fontAlign : String -> Attribute msg
+fontAlign value = AttrFontAlign value
+
 fontLetterSpacing : Float -> Attribute msg
 fontLetterSpacing em = AttrFontLetterSpacing em
 
@@ -429,10 +436,26 @@ onClick : msg -> Attribute msg
 onClick msg = AttrEvent (Event.onClick msg)
 
 
--- Submit handler — for <form> elements. msg should accept a
--- record matching the form's named inputs (Sky.Live decodes form
--- data into the constructor's typed record param).
-onSubmit : msg -> Attribute msg
+-- Form-submit handler — fires when the form is submitted (Enter
+-- in any field, or click on a submit button inside the form).
+-- The argument can be either:
+--   * a plain Msg constructor (no formData decode) — e.g.
+--     `Ui.onSubmit DoSignOut`
+--   * a typed-record-arg constructor — e.g.
+--     `Ui.onSubmit DoSignIn` where `DoSignIn : LoginForm -> Msg`.
+--     Sky.Live decodes the wire formData (`{name: value, ...}`)
+--     into the typed record at dispatch time via case-insensitive
+--     `json.Unmarshal` — input `name` attributes map to record
+--     fields by name.
+--
+-- The signature `(a -> Attribute b)` is intentionally permissive
+-- in `a` (the runtime accepts both plain Msg values and Msg
+-- constructors that take a record arg) and independent in `b` (the
+-- surrounding context picks the Attribute's msg type). A stricter
+-- `(msg -> Attribute msg)` shape would block the in-module case
+-- where the Msg constructor takes a record param — sky check
+-- otherwise rejects the type-equation `msg = (record -> msg)`.
+onSubmit : a -> Attribute b
 onSubmit msg = AttrEvent (Event.onSubmit msg)
 
 
@@ -1057,6 +1080,8 @@ collectStyle parentCtx myCtx attr acc =
             acc ++ " font-style: italic;"
         AttrFontUnderline ->
             acc ++ " text-decoration: underline;"
+        AttrFontAlign value ->
+            acc ++ " text-align: " ++ value ++ ";"
         AttrFontLetterSpacing em ->
             acc ++ " letter-spacing: " ++ String.fromFloat em ++ "em;"
         AttrFontWordSpacing em ->
