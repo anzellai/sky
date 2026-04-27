@@ -430,7 +430,7 @@ Single canonical module per concern after the v0.10.0 consolidation. Every kerne
 | `Html` | `Std.Html` | text, div, span, p, h1..h6, a, button, input, form, … (~70 elements + render/escape helpers) |
 | `Attr` | `Std.Html.Attributes` | class, id, style, type/value/href/src, checked/disabled/required, … (~60 attrs + boolAttribute/dataAttribute) |
 | `Css` | `Std.Css` | stylesheet, rule, property, px/rem/em/pct/hex/rgba, color/background/padding/margin/font*, transition, grid*, flex*, … (~120) |
-| `Ui` | `Std.Ui` | Typed elm-ui-style layout DSL: el/row/column/paragraph/textColumn/text/none/button/input/form/link/image/html, layout, padding/spacing/width/height (px/fill/content/min/max), align*, centerX/Y, pointer, htmlAttribute, name, onClick/onSubmit/onInput/onChange/onFocus/onMouseOver/onMouseOut/onKeyDown/onFile/onImage, fileMaxSize/Width/Height, rgb/rgba/white/black/transparent. Sub-modules: `Std.Ui.Background` (color), `Std.Ui.Border` (color/width/rounded), `Std.Ui.Font` (color/family/size/bold), `Std.Ui.Region` (heading/footer), `Std.Ui.Input` (button/text/multiline/checkbox + label*), `Std.Ui.Lazy` (lazy/lazy2..lazy5), `Std.Ui.Keyed` (keyed), `Std.Ui.Responsive` (classifyDevice/adapt). Renders to inline-styled HTML via Std.Html — no CSS files. Full reference: docs/skyui/overview.md. |
+| `Ui` | `Std.Ui` | Typed no-CSS layout DSL: el/row/column/paragraph/textColumn/text/none/button/input/form/link/image/html, layout, padding/spacing/width/height (px/fill/content/min/max), align*, centerX/Y, pointer, htmlAttribute, name, onClick/onSubmit/onInput/onChange/onFocus/onMouseOver/onMouseOut/onKeyDown/onFile/onImage, fileMaxSize/Width/Height, rgb/rgba/white/black/transparent. Sub-modules: `Std.Ui.Background` (color), `Std.Ui.Border` (color/width/rounded), `Std.Ui.Font` (color/family/size/bold), `Std.Ui.Region` (heading/footer), `Std.Ui.Input` (button/text/multiline/checkbox + label*), `Std.Ui.Lazy` (lazy/lazy2..lazy5), `Std.Ui.Keyed` (keyed), `Std.Ui.Responsive` (classifyDevice/adapt). Renders to inline-styled HTML via Std.Html — no CSS files. Full reference: docs/skyui/overview.md. Prior-art attribution: NOTICE.md. |
 | `RateLimit` | `Sky.Http.RateLimit` | allow |
 | `Middleware` | `Sky.Http.Middleware` | withCors, withLogging, withBasicAuth, withRateLimit |
 
@@ -667,9 +667,9 @@ main =
 ```
 Routes: `get/post/put/delete/any` | Groups with prefix | Cookies (HttpOnly, Secure, SameSite) | Extractors: `param`, `queryParam`, `header`, `getCookie` | Responses: `text`, `json`, `html`, `withStatus`, `redirect` | Middleware: `Handler -> Handler`
 
-## Std.Ui — typed elm-ui-style layout DSL
+## Std.Ui — typed no-CSS layout DSL
 
-Layered above `Std.Html`; renders to inline-styled HTML on the server side and Sky.Live's wire ferries diffs to the browser. Modelled on [mdgriffith/elm-ui](https://package.elm-lang.org/packages/mdgriffith/elm-ui/latest/) — pick `row` / `column` / `el` for layout, attach typed attributes from `Background` / `Border` / `Font` / `Region` sub-modules, never write CSS. Full user-facing reference: `docs/skyui/overview.md`.
+Layered above `Std.Html`; renders to inline-styled HTML on the server side and Sky.Live's wire ferries diffs to the browser. Pick `row` / `column` / `el` for layout, attach typed attributes from `Background` / `Border` / `Font` / `Region` sub-modules, never write CSS. Full user-facing reference: `docs/skyui/overview.md`. Prior-art attribution: `NOTICE.md`.
 
 ```elm
 import Std.Ui as Ui
@@ -701,7 +701,7 @@ view model =
 
 3. **For Std.Ui-heavy modules (~25+ polymorphic `Element Msg` helpers + many nested calls), split the view layer across multiple modules.** A single monolithic Main.sky can blow the HM type-checker heap (CLAUDE.md Limitation #17 — "HM type-checker heap exhaustion on Std.Ui-heavy modules"). The canonical split is `State.sky` (types + pure helpers, no Std.Ui imports) / `Update.sky` / `View/Common.sky` / one View module per page / `Main.sky` dispatcher. `examples/19-skyforum`'s 8-module form delivers the full Reddit-style feature surface and type-checks in 1.11 s / 369 MB; the equivalent monolithic `Main.sky.bak` allocates 2.6 GB/s and OOMs the dev machine.
 
-**Surface highlights** (full table in `docs/skyui/overview.md` includes Std.Ui-vs-elm-ui parity comparison):
+**Surface highlights** (full table in `docs/skyui/overview.md`):
 - Layout: `el` / `row` / `column` / `paragraph` / `textColumn` / `text` / `none`
 - Sized elements: `button` (with `{onPress, label}` cfg), `input` (real `<input>` element), `form` (with `onSubmit msg`)
 - Length: `px` / `fill` / `content` / `min` / `max`

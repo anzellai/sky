@@ -3,7 +3,7 @@ module Std.Ui.Lazy exposing (lazy, lazy2, lazy3, lazy4, lazy5)
 -- Std.Ui.Lazy — memoised Element trees.
 --
 -- Tier 3 ships type-correct wrappers that pass through (no
--- memoisation). User code reads exactly like elm-ui:
+-- memoisation):
 --
 --     view model =
 --         Lazy.lazy renderRow model.row

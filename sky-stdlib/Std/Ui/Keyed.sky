@@ -31,8 +31,8 @@ column attrs keyedChildren =
 
 
 -- Wrap a keyed child by injecting the `sky-key` attribute via an
--- outer `el`. Slight nesting overhead vs elm-ui's direct keyed
--- VirtualDom.node, but Sky.Live's diff matches identity by the
+-- outer `el`. Slight nesting overhead vs a hypothetical direct
+-- keyed VNode, but Sky.Live's diff matches identity by the
 -- attribute regardless of the wrapper level.
 applyKey : ( String, Element msg ) -> Element msg
 applyKey ( key, child ) =

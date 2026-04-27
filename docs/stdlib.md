@@ -470,9 +470,9 @@ myStyles =
 
 > Zero-arg CSS keywords (`Css.zero`, `Css.auto`, `Css.none`, `Css.transparent`) take `()` to sidestep zero-arity memoisation. Write `Css.margin (Css.zero ())`, not `Css.margin Css.zero` — see [Limitation #13](../CLAUDE.md#known-limitations-v09-dev).
 
-### `Ui` — typed elm-ui-style layout DSL
+### `Ui` — typed no-CSS layout DSL
 
-A typed layout DSL modelled on [mdgriffith/elm-ui](https://package.elm-lang.org/packages/mdgriffith/elm-ui/latest/). Build a UI from typed primitives and typed attributes — Sky.Ui renders to inline-styled HTML on the server side and Sky.Live's wire ferries diffs to the browser. **No CSS files**, no template languages, no client framework.
+A typed layout DSL. Build a UI from typed primitives and typed attributes — Sky.Ui renders to inline-styled HTML on the server side and Sky.Live's wire ferries diffs to the browser. **No CSS files**, no template languages, no client framework.
 
 ```elm
 import Std.Ui as Ui
@@ -510,7 +510,7 @@ Sub-modules:
 
 **File / image upload:** `Ui.onImage` auto-resizes to `fileMaxWidth × fileMaxHeight` (default 1200×1200) and re-encodes as JPEG @ 0.85 quality before sending; `Ui.onFile` ships the raw data URL. Both honour `fileMaxSize` for client-side caps. See [Sky.Ui overview](skyui/overview.md#file--image-upload).
 
-Full reference, side-by-side comparison vs elm-ui, known limitations: [Sky.Ui overview](skyui/overview.md).
+Full reference, surface-coverage table, known limitations: [Sky.Ui overview](skyui/overview.md).
 
 ### `RateLimit` — request throttling
 

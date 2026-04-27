@@ -1343,9 +1343,9 @@ The `DoSignIn AuthCreds` constructor takes a typed record alias — the dispatch
 
 The older `onChange` pattern (fires on blur) is still acceptable when you need the password in Model for validation feedback before submit, but prefer `onSubmit` + typed record for normal sign-in / sign-up flows.
 
-### Std.Ui — typed elm-ui-style layout DSL (recommended for new view code)
+### Std.Ui — typed no-CSS layout DSL (recommended for new view code)
 
-A typed layout DSL modelled on [mdgriffith/elm-ui](https://package.elm-lang.org/packages/mdgriffith/elm-ui/latest/). Build a UI from typed primitives (`row`, `column`, `el`) and typed attributes (`Background.color`, `Border.rounded`, `Font.size`, `Region.heading`) — no CSS files. Renders to inline-styled HTML via Std.Html.
+A typed layout DSL. Build a UI from typed primitives (`row`, `column`, `el`) and typed attributes (`Background.color`, `Border.rounded`, `Font.size`, `Region.heading`) — no CSS files. Renders to inline-styled HTML via Std.Html.
 
 ```elm
 import Std.Ui as Ui

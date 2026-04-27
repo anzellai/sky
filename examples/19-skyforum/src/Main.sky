@@ -33,7 +33,7 @@ init : a -> ( Model, Cmd Msg )
 init _req =
     let
         seedPosts =
-            [ Post 1 "Show SF: Sky.Ui — a typed elm-ui port for Sky.Live" "https://github.com/anzellai/sky" "alice" 142 5 [] []
+            [ Post 1 "Show SF: Sky.Ui — a typed no-CSS layout DSL for Sky.Live" "https://github.com/anzellai/sky" "alice" 142 5 [] []
             , Post 2 "Tiny CRDT primitives in 200 lines" "https://example.com/crdt" "bob" 87 1 [] []
             , Post 3 "Ask SF: Best resources for learning Hindley-Milner?" "https://example.com/hm" "carol" 56 2 [] []
             , Post 4 "Why server-driven UIs are having a moment" "https://example.com/server-ui" "dave" 41 0 [] []

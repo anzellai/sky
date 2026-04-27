@@ -1,6 +1,8 @@
 # Std.Ui overview
 
-**A typed layout DSL for Sky.Live, modelled on [mdgriffith/elm-ui](https://package.elm-lang.org/packages/mdgriffith/elm-ui/latest/).** Build a UI from typed primitives (`el`, `row`, `column`, `paragraph`, `textColumn`) and typed attributes (`Background.color`, `Border.rounded`, `Font.size`, `Region.heading`) — Std.Ui renders to inline-styled HTML on the server side and Sky.Live's wire ferries diffs to the browser. No CSS files. No template languages. No client framework.
+**A typed, no-CSS layout DSL for Sky.Live.** Build a UI from typed primitives (`el`, `row`, `column`, `paragraph`, `textColumn`) and typed attributes (`Background.color`, `Border.rounded`, `Font.size`, `Region.heading`) — Std.Ui renders to inline-styled HTML on the server side and Sky.Live's wire ferries diffs to the browser. No CSS files. No template languages. No client framework.
+
+> Std.Ui's API surface adopts conventions from prior typed-layout DSLs in the Elm community. Implementation, runtime, and code generator are independent Sky / Haskell work — see [NOTICE.md](../../NOTICE.md) for full attribution.
 
 ```elm
 module Main exposing (main)
@@ -58,7 +60,7 @@ That's the whole picture: every visual element is an `Element msg`, every stylin
 
 The default Sky.Live view layer (`Std.Html` + `Std.Css`) is a near-1:1 binding to HTML elements and CSS properties. That's the right primitive — but most apps don't *want* to think about HTML semantics, BFC quirks, flexbox direction inheritance, or whether a particular tag is block/inline by default. They want to say "two things side by side with 12px gap" and have it work.
 
-Std.Ui borrows elm-ui's insight: model layout in terms the user actually wants (`row`, `column`, `el`, `padding`, `spacing`, alignment), and emit the right HTML+CSS automatically. No more "why is my flex child not centering" — `centerY` does centering and the underlying `align-self: center` is an implementation detail.
+Std.Ui takes a different cut: model layout in terms the user actually wants (`row`, `column`, `el`, `padding`, `spacing`, alignment), and emit the right HTML+CSS automatically. No more "why is my flex child not centering" — `centerY` does centering and the underlying `align-self: center` is an implementation detail.
 
 ## The mental model
 
@@ -296,7 +298,7 @@ The data URL carries the MIME type (`data:image/jpeg;base64,...` or `data:applic
 import Std.Ui.Lazy as Lazy
 import Std.Ui.Keyed as Keyed
 
-Lazy.lazy renderItem item               -- elm-ui-style memo wrapper
+Lazy.lazy renderItem item               -- memo wrapper (no-op today; see Limitations)
 Lazy.lazy2 renderRow username item      -- 2-arg variant; lazy3..lazy5 too
 Keyed.column [ Ui.spacing 8 ]
     [ ( "row-" ++ String.fromInt item.id, renderRow item )
@@ -331,50 +333,50 @@ Responsive.adapt viewport
 
 The 8-module split (`State.sky` / `Update.sky` / `View/{Common,Posts,Detail,Compose,Login}.sky` / `Main.sky`) is the canonical workaround for [Limitation #17](#known-limitations) — see below.
 
-## Std.Ui vs elm-ui — surface coverage
+## Surface coverage
 
-| Surface | elm-ui | Std.Ui | Notes |
-|---|:---:|:---:|---|
-| **Layout**: `el / row / column / paragraph / textColumn` | ✅ | ✅ | |
-| Layout: `none` | ✅ | ⚠️ | Cross-module type-param strip — workaround `Ui.text ""` |
-| Layout: `link / image / button` | ✅ | ✅ | |
-| Layout: `input` (real `<input>`) | n/a | ➕ | Sky-only — `Ui.el` renders as `<div>` so a dedicated helper exists |
-| Layout: `form` (with `onSubmit`-into-typed-record) | n/a | ➕ | Sky-only — wire driver decodes formData into typed record |
-| Layout: `html` escape hatch | ✅ | ⚠️ | Collapses to `Text ""` today |
-| **Length**: `px / content / fill / min / max` | ✅ | ✅ | |
-| Length: `fillPortion / shrink` | ✅ | ❌ | |
-| **Alignment**: `centerX/Y / align*` | ✅ | ✅ | |
-| **Padding**: uniform / `spacing` | ✅ | ✅ | |
-| Padding: `paddingXY / paddingEach` | ✅ | ⚠️ | `AttrPadding` takes 4 ints, no helper yet |
-| **Background**: `color` | ✅ | ✅ | |
-| Background: gradient / image | ✅ | ❌ | |
-| **Border**: `color / width / rounded` | ✅ | ✅ | |
-| Border: `widthEach / dashed / dotted / shadow` | ✅ | ❌ | |
-| **Font**: `color / family / size / bold` | ✅ | ✅ | |
-| Font: `italic / underline / letterSpacing / wordSpacing` | ✅ | ❌ | |
-| **Color**: `rgb / rgba / rgb255` | ✅ | ✅ | Sky stores 0-255 ints; HM friction with 0-1 floats |
-| **Region**: `heading / footer` | ✅ | ✅ | |
-| Region: `navigation / mainContent / aside / announce` | ✅ | ⚠️ | ADT variants exist; user-facing helpers partial |
-| **Events**: `onClick / onMouseEnter/Leave / onFocus` | ✅ | ✅ | |
-| Events: `onInput` (text input) | n/a | ➕ | Sky-only — typed `(String -> msg)` |
-| Events: `onChange / onKeyDown / onSubmit` | n/a | ➕ | Sky.Live wire events |
-| Events: `onFile / onImage` (with browser-side resize) | n/a | ➕ | Sky-only — base64 data URL + `fileMaxSize/Width/Height` |
-| **Input controls**: `button / text / multiline / checkbox` | ✅ | ✅ | (`Std.Ui.Input`) |
-| Input: `radio / radioRow / slider` | ✅ | ❌ | HM friction — deferred |
-| Input: `username / email / newPassword / search` | ✅ | ❌ | Use generic `Ui.input` with `type="..."` |
-| Input: `placeholder` | ✅ | ⚠️ | Constructor exists, render is TODO |
-| Input: `labelAbove/Below/Left/Right/Hidden` | ✅ | ✅ | |
-| **Lazy**: `lazy / lazy2..lazy5` | ✅ | ⚠️ | No-op wrappers; runtime memo deferred |
-| **Keyed**: `keyed` | ✅ | ✅ | `sky-key` attribute |
-| **Nearby**: `above / below / onLeft / onRight / inFront / behind` | ✅ | ⚠️ | `Location` ctors exist; user-facing helpers TBD |
-| **Cursor**: `pointer` | ✅ | ✅ | |
-| **Misc**: `transparent` / `htmlAttribute` | ✅ | ✅ | |
-| Misc: `clip / scrollbars / focusStyle` | ✅ | ❌ | |
-| Misc: `classifyDevice` | ✅ | ➕ | Via `Std.Ui.Responsive` |
-| **Render target** | Browser-side Elm runtime | Server-side Sky.Live + ~2 KB browser JS | Different shape, same DSL |
-| **Style emission** | CSS classes (memoised) | Inline styles | Sky's path is simpler, slightly heavier wire |
+| Surface | Status | Notes |
+|---|:---:|---|
+| **Layout**: `el / row / column / paragraph / textColumn` | ✅ | |
+| Layout: `none` | ⚠️ | Cross-module type-param strip — workaround `Ui.text ""` |
+| Layout: `link / image / button` | ✅ | |
+| Layout: `input` (real `<input>`) | ✅ | `Ui.el` renders as `<div>`, so a dedicated helper exists |
+| Layout: `form` (with `onSubmit`-into-typed-record) | ✅ | Wire driver decodes formData into a typed record |
+| Layout: `html` escape hatch | ⚠️ | Collapses to `Text ""` today |
+| **Length**: `px / content / fill / min / max` | ✅ | |
+| Length: `fillPortion / shrink` | ❌ | Planned |
+| **Alignment**: `centerX/Y / align*` | ✅ | |
+| **Padding**: uniform / `spacing` | ✅ | |
+| Padding: `paddingXY / paddingEach` | ⚠️ | `AttrPadding` takes 4 ints, no helper yet |
+| **Background**: `color` | ✅ | |
+| Background: gradient / image | ❌ | Planned |
+| **Border**: `color / width / rounded` | ✅ | |
+| Border: `widthEach / dashed / dotted / shadow` | ❌ | Planned |
+| **Font**: `color / family / size / bold` | ✅ | |
+| Font: `italic / underline / letterSpacing / wordSpacing` | ❌ | Planned |
+| **Color**: `rgb / rgba` | ✅ | Sky stores 0-255 ints; HM friction with 0-1 floats |
+| **Region**: `heading / footer` | ✅ | |
+| Region: `navigation / mainContent / aside / announce` | ⚠️ | ADT variants exist; user-facing helpers partial |
+| **Events**: `onClick / onMouseOver/Out / onFocus` | ✅ | |
+| Events: `onInput` (text input) | ✅ | Typed `(String -> msg)` |
+| Events: `onChange / onKeyDown / onSubmit` | ✅ | Sky.Live wire events |
+| Events: `onFile / onImage` (with browser-side resize) | ✅ | Base64 data URL + `fileMaxSize/Width/Height` |
+| **Input controls**: `button / text / multiline / checkbox` | ✅ | (`Std.Ui.Input`) |
+| Input: `radio / radioRow / slider` | ❌ | HM friction — deferred |
+| Input: `username / email / newPassword / search` | ❌ | Use generic `Ui.input` with `type="..."` |
+| Input: `placeholder` | ⚠️ | Constructor exists, render is TODO |
+| Input: `labelAbove/Below/Left/Right/Hidden` | ✅ | |
+| **Lazy**: `lazy / lazy2..lazy5` | ⚠️ | No-op wrappers; runtime memo deferred |
+| **Keyed**: `keyed` | ✅ | `sky-key` attribute |
+| **Nearby**: `above / below / onLeft / onRight / inFront / behind` | ⚠️ | `Location` ctors exist; user-facing helpers TBD |
+| **Cursor**: `pointer` | ✅ | |
+| **Misc**: `transparent` / `htmlAttribute` | ✅ | |
+| Misc: `clip / scrollbars / focusStyle` | ❌ | Planned |
+| Misc: `classifyDevice` | ✅ | Via `Std.Ui.Responsive` |
+| **Render target** | — | Server-side Sky.Live + ~2 KB browser JS |
+| **Style emission** | — | Inline styles per element |
 
-Legend: ✅ at parity · ⚠️ partial · ❌ not yet · ➕ Sky-only
+Legend: ✅ ships · ⚠️ partial · ❌ planned
 
 ## Known limitations
 
@@ -393,4 +395,4 @@ Same bug class also turns up as: empty list `[]` in a positional constructor's t
 * [`examples/19-skyforum`](../../examples/19-skyforum/) — the full demo
 * [Sky.Live overview](../skylive/overview.md) — the runtime Std.Ui sits on top of
 * [Standard library reference](../stdlib.md) — the rest of Sky's surface
-* [mdgriffith/elm-ui](https://package.elm-lang.org/packages/mdgriffith/elm-ui/latest/) — the Elm package this is modelled on
+* [NOTICE.md](../../NOTICE.md) — prior-art attribution for Std.Ui's API conventions

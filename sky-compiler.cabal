@@ -22,7 +22,6 @@ extra-source-files:
     sky-stdlib/Sky/*.sky
     sky-stdlib/Std/*.sky
     sky-stdlib/Std/Ui/*.sky
-    sky-stdlib/Std/Ui/Internal/*.sky
     tools/sky-ffi-inspect/main.go
     tools/sky-ffi-inspect/go.mod
     tools/sky-ffi-inspect/go.sum

@@ -14,8 +14,7 @@ import Sky.Core.Prelude exposing (..)
 import Std.Ui exposing (Color, Attribute, bgColor)
 
 
--- Solid background colour. Equivalent to elm-ui's
--- `Element.Background.color`. Composes with width/height/padding.
+-- Solid background colour. Composes with width/height/padding.
 color : Color -> Attribute msg
 color c =
     bgColor c

@@ -2,11 +2,10 @@ module Std.Ui.Responsive exposing (DeviceClass, classifyDevice, deviceClassToStr
 
 -- Std.Ui.Responsive — device-class detection + breakpoint helpers.
 --
--- Mirrors elm-ui's `Element.classifyDevice` shape: pass the
--- viewport width + height, get back a DeviceClass that user code
--- branches on to pick the right layout.
+-- Pass the viewport width + height, get back a DeviceClass that
+-- user code branches on to pick the right layout.
 --
--- Breakpoints match elm-ui's defaults:
+-- Default breakpoints (industry-standard CSS media-query cuts):
 --   width <  600   → Phone        (mobile)
 --   width <  1200  → Tablet
 --   width <  1920  → Desktop
@@ -51,9 +50,8 @@ deviceClassToString d =
         BigDesktop -> "big-desktop"
 
 
--- Bare-value constants — same names elm-ui exposes as `Phone`,
--- `Tablet` etc. — for shorter call sites when comparing against a
--- known class without a full case.
+-- Bare-value constants — for shorter call sites when comparing
+-- against a known class without a full case.
 mobile : DeviceClass
 mobile = Phone
 

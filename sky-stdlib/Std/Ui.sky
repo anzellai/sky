@@ -1,22 +1,24 @@
 module Std.Ui exposing (..)
 
--- Std.Ui — typed layout DSL inspired by mdgriffith/elm-ui (1.x).
+-- Std.Ui — typed, no-CSS layout DSL for Sky.Live.
 --
 -- Build a UI from typed layout primitives (`el`, `row`, `column`,
 -- `text`) plus typed attributes (`width`, `padding`, `spacing`,
 -- `centerX`, ...) then call `layout` to render to plain Sky.Html.
 --
--- Why not use Std.Html directly? elm-ui replaces "make a div, write
+-- Why not use Std.Html directly? Std.Ui replaces "make a div, write
 -- CSS, hope alignment works" with "say what you mean, get the
 -- alignment right by construction." `centerX` always centres
 -- horizontally; `width fill` always fills available space; spacing
 -- between siblings is a property of the parent, not a per-child
 -- margin.
 --
--- The MVP uses inline styles per element instead of elm-ui's
--- static-stylesheet + class scheme. Same public API; simpler
--- internals; can swap to the stylesheet emit later as an internal
--- optimisation without breaking user code.
+-- The MVP uses inline styles per element. Same public API; simpler
+-- internals; can swap to a static-stylesheet + class emit later as
+-- an internal optimisation without breaking user code.
+--
+-- Prior-art attribution for the API conventions adopted here lives
+-- in NOTICE.md at the repo root.
 --
 -- Implementation note — single file: Sky's canonicaliser doesn't
 -- propagate type parameters for cross-module ADT constructors today
@@ -104,11 +106,9 @@ type Location
 
 type Color
     = Rgba Int Int Int Float
-      -- R G B as 0-255 ints (elm-ui compat layer below in
-      -- `rgb` / `rgb255` accepts both 0-1 floats and 0-255 ints
-      -- with separate constructors). Alpha stays Float in [0,1].
-      -- Storing ints sidesteps Sky's HM friction with Float
-      -- arithmetic during CSS rendering.
+      -- R G B as 0-255 ints. Alpha stays Float in [0,1]. Storing
+      -- ints sidesteps Sky's HM friction with Float arithmetic
+      -- during CSS rendering.
 
 
 type Description
@@ -125,9 +125,9 @@ type Description
     | DescParagraph
 
 
--- Layout direction the parent imposes on its children. elm-ui uses
--- this to inject extra wrapper divs when alignment requirements
--- conflict with the parent's flex-direction.
+-- Layout direction the parent imposes on its children. Used to
+-- inject extra wrapper divs when alignment requirements conflict
+-- with the parent's flex-direction.
 type LayoutContext
     = AsRow
     | AsColumn
@@ -454,10 +454,9 @@ image attrs cfg =
 
 
 -- A `<p>` block. Children flow as inline text (no flex layout); use
--- `el` inside paragraph to highlight a word/phrase. elm-ui's
--- paragraph does clever child-rewriting to coordinate margins
--- inside the wrap; Tier 2 ships the basic block-level shape and the
--- coordination lands in a follow-up.
+-- `el` inside paragraph to highlight a word/phrase. Tier 2 ships the
+-- basic block-level shape; richer child-rewriting (coordinating
+-- margins inside the wrap) lands in a follow-up.
 paragraph : List (Attribute msg) -> List (Element msg) -> Element msg
 paragraph attrs children =
     TaggedNode "p" DescParagraph (paragraphMarker :: attrs) children

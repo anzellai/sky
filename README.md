@@ -98,9 +98,9 @@ Db.withTransaction db (\tx ->
 
 See [Std.Db overview](docs/skydb/overview.md).
 
-### Std.Ui — typed elm-ui-style layout DSL (no CSS files)
+### Std.Ui — typed layout DSL (no CSS files)
 
-Build a UI from typed primitives (`row`, `column`, `el`) and typed attributes (`Background.color`, `Border.rounded`, `Font.size`, `Region.heading`). Renders to inline-styled HTML on the server side, Sky.Live ferries diffs to the browser. Modelled on [mdgriffith/elm-ui](https://package.elm-lang.org/packages/mdgriffith/elm-ui/latest/) — same mental model (no CSS, no class names, no flexbox quirks), tuned for Sky.Live's wire shape.
+Build a UI from typed primitives (`row`, `column`, `el`) and typed attributes (`Background.color`, `Border.rounded`, `Font.size`, `Region.heading`). Renders to inline-styled HTML on the server side, Sky.Live ferries diffs to the browser. Same mental model as Sky's stdlib elsewhere — no CSS, no class names, no flexbox quirks — tuned for Sky.Live's wire shape. (Prior-art attribution: see [NOTICE.md](NOTICE.md).)
 
 ```elm
 import Std.Ui as Ui
@@ -182,7 +182,7 @@ nix develop            # GHC 9.4.8 + Go + every system dep, sandboxed
 | **Std.Db overview**                  | [docs/skydb/overview.md](docs/skydb/overview.md)                       |
 | Sky.Live overview                    | [docs/skylive/overview.md](docs/skylive/overview.md)                   |
 | Sky.Live architecture                | [docs/skylive/architecture.md](docs/skylive/architecture.md)           |
-| **Std.Ui overview** (typed elm-ui port) | [docs/skyui/overview.md](docs/skyui/overview.md)                    |
+| **Std.Ui overview** (typed layout DSL)  | [docs/skyui/overview.md](docs/skyui/overview.md)                    |
 | Compiler architecture                | [docs/compiler/architecture.md](docs/compiler/architecture.md)         |
 | Compiler pipeline                    | [docs/compiler/pipeline.md](docs/compiler/pipeline.md)                 |
 | Compiler journey (TS→Go→Sky→Haskell) | [docs/compiler/journey.md](docs/compiler/journey.md)                   |

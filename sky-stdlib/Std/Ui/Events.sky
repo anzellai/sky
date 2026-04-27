@@ -1,7 +1,8 @@
 module Std.Ui.Events exposing (onClick, onSubmit, onInput)
 
 -- Std.Ui.Events — re-exports of the event helpers that live on
--- Std.Ui itself, grouped here for API parity with elm-ui.
+-- Std.Ui itself, grouped here for users who prefer importing
+-- events from a dedicated sub-module.
 --
 -- Tier 1 ships static rendering only — the AttrEvent constructor
 -- is recorded on the Element but the inline-style renderer drops

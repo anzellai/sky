@@ -2,11 +2,10 @@ module Std.Ui.Input exposing (button, text, multiline, checkbox, labelAbove, lab
 
 -- Std.Ui.Input — typed form controls.
 --
--- Mirrors elm-ui's `Element.Input` surface. Each control takes a
--- record with the relevant config (onChange, label, value, etc.)
--- and returns an Element. Labels are first-class (`labelAbove` /
--- `labelLeft` / `labelHidden`) so accessible labelling is built
--- in by construction.
+-- Each control takes a record with the relevant config (onChange,
+-- label, value, etc.) and returns an Element. Labels are first-class
+-- (`labelAbove` / `labelLeft` / `labelHidden`) so accessible
+-- labelling is built in by construction.
 --
 -- Tier 2 ships button / text / multiline / checkbox / radio /
 -- slider with the four label positions. Username / email / password
