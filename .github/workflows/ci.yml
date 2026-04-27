@@ -71,7 +71,14 @@ jobs:
         run: sky --version
 
       - name: Run cabal test suite
-        run: cabal test --test-show-details=direct
+        # Skip Sky.Build.VerifyAll: that spec wraps `sky verify`
+        # which we ALSO run as a dedicated step below. Doubling
+        # up has no value AND VerifyAll has been observed to hang
+        # in some CI envs (no per-example timeout in the spec
+        # harness; the dedicated `sky verify` step has timeouts
+        # via scripts/example-sweep.sh). Same skip we use locally
+        # via `--test-options='--skip=Sky.Build.VerifyAll'`.
+        run: cabal test --test-show-details=direct --test-options='--skip=Sky.Build.VerifyAll'
 
       # Audit P3-1: `sky verify` is the canonical runtime check.
       # Covers every example with build + run + panic-check, honours
