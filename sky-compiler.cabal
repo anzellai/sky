@@ -6,20 +6,28 @@ name:          sky-compiler
 -- release builds). `sky --version` reads app/VERSION via Template
 -- Haskell and ignores this field entirely.
 version:       0.0.0
-synopsis:      Sky language compiler — Elm-inspired, compiles to typed Go
-license:       MIT
+synopsis:      Sky language compiler — pure-functional, ML-family, compiles to typed Go
+license:       Apache-2.0
+license-file:  LICENSE
+copyright:     Copyright 2025-2026 Anzel Lai
 author:        Anzel Lai
 build-type:    Simple
 
 -- Embedded templates (via Data.FileEmbed) + runtime sources must be
 -- shipped in the cabal sdist so `cabal install` works from a tarball.
+-- LICENSE + NOTICE travel with the sdist so the binary distribution
+-- carries the licence + attribution required by Apache-2.0 §4(a, c, d).
 extra-source-files:
+    LICENSE
+    NOTICE.md
     templates/CLAUDE.md
     runtime-go/go.mod
     runtime-go/go.sum
     runtime-go/rt/*.go
     sky-stdlib/Sky/Core/*.sky
     sky-stdlib/Sky/*.sky
+    sky-stdlib/Std/*.sky
+    sky-stdlib/Std/Ui/*.sky
     tools/sky-ffi-inspect/main.go
     tools/sky-ffi-inspect/go.mod
     tools/sky-ffi-inspect/go.sum
@@ -165,15 +173,24 @@ test-suite sky-tests
       Sky.Build.TypedFfiSpec
       Sky.ErrorUnificationSpec
       Sky.Parse.PatternSpec
+      Sky.Parse.MultiLineExposingSpec
       Sky.Canonicalise.ExposingSpec
       Sky.Canonicalise.KernelFallbackSpec
       Sky.Canonicalise.UnboundSpec
       Sky.Type.ExhaustivenessSpec
+      Sky.Type.AnyWildcardSpec
+      Sky.Type.TupleLambdaSpec
       Sky.Format.FormatSpec
       Sky.Build.NestedPatternSpec
+      Sky.Build.ConsCtorPatternSpec
       Sky.Build.TaskResultBridgesSpec
       Sky.Build.CheckIsBuildSpec
       Sky.Build.RecordFieldOrderSpec
+      Sky.Build.RecordCtorEmptyListSpec
+      Sky.Build.HofTypedMsgSpec
+      Sky.Build.KernelSigCoverageSpec
+      Sky.Build.HeapBoundedHmSpec
+      Sky.Build.SolverBudgetSpec
       Sky.Build.UnreachableGateSpec
       Sky.Parse.CommentsSpec
       Sky.Lsp.Harness

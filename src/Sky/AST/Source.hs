@@ -1,6 +1,12 @@
 {-# LANGUAGE PatternSynonyms #-}
 -- | Source AST — the raw parse tree before name resolution.
--- Adapted from Elm's AST.Source with Sky extensions:
+--
+-- Derivative work adapted from elm/compiler's @AST.Source@
+-- (Copyright © 2012–present Evan Czaplicki, BSD-3-Clause). See
+-- NOTICE.md at the repo root for the full attribution and licence
+-- text.
+--
+-- Sky extensions over the upstream shape:
 -- - MultilineStr for """...""" strings
 -- - FfiImport for Go FFI declarations
 -- - No Shader, Port, or Effect declarations

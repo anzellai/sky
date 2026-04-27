@@ -1,0 +1,112 @@
+module Main exposing (main)
+
+-- skyforum — a Reddit/HackerNews-style demo built with Sky.Live and
+-- Std.Ui. The view layer is split across multiple modules
+-- (State / Update / View.Common / View.Posts / View.Detail /
+-- View.Compose / View.Login) so each per-module type-check stays
+-- well below the heap-exhaustion limit (CLAUDE.md Limitation #17).
+-- A single monolithic Main with the same surface OOMs the type-checker
+-- and locked the Mac that birthed scripts/mem-guard.sh — the split
+-- form gives us the full feature surface at zero ergonomics cost
+-- pending compiler fix.
+
+import Sky.Core.Prelude exposing (..)
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Live exposing (app, route)
+import Std.Ui as Ui
+import Std.Ui exposing (Element)
+import Std.Ui.Background as Background
+import Std.Ui.Font as Font
+
+import State exposing (..)
+import Update exposing (update)
+import View.Common exposing (topNav, pageFooter)
+import View.Posts exposing (postsListView)
+import View.Detail exposing (postDetailView)
+import View.Login exposing (loginView)
+
+
+-- ─── Init ────────────────────────────────────────────────────────
+
+init : a -> ( Model, Cmd Msg )
+init _req =
+    let
+        seedPosts =
+            [ Post 1 "Show SF: Sky.Ui — a typed no-CSS layout DSL for Sky.Live" "https://github.com/anzellai/sky" "alice" 142 5 [] []
+            , Post 2 "Tiny CRDT primitives in 200 lines" "https://example.com/crdt" "bob" 87 1 [] []
+            , Post 3 "Ask SF: Best resources for learning Hindley-Milner?" "https://example.com/hm" "carol" 56 2 [] []
+            , Post 4 "Why server-driven UIs are having a moment" "https://example.com/server-ui" "dave" 41 0 [] []
+            , Post 5 "Postgres tips that actually matter in production" "https://example.com/pg-tips" "eve" 38 0 [] []
+            ]
+        seedComments =
+            [ Comment 101 1 0 "bob" "This looks great — does it support keyed children for diffing?" 12 [] []
+            , Comment 102 1 101 "alice" "Yes, Std.Ui.Keyed handles that via the sky-key attribute." 9 [] []
+            , Comment 103 1 102 "bob" "Nice. Any plans for an actual stylesheet pass?" 4 [] []
+            , Comment 104 1 0 "carol" "How does it compare to other server-driven UI frameworks?" 7 [] []
+            , Comment 105 1 104 "alice" "Same idea: server holds state, browser is dumb." 11 [] []
+            , Comment 201 2 0 "alice" "Love seeing CRDT explanations that fit on one page." 5 [] []
+            , Comment 301 3 0 "dave" "Read 'Types and Programming Languages' (TAPL). Canonical reference." 18 [] []
+            , Comment 302 3 301 "carol" "Thanks. Anything shorter for a primer?" 3 [] []
+            ]
+    in
+        ( { posts = seedPosts
+          , comments = seedComments
+          , currentPage = HomePage
+          , session = Nothing
+          , loginError = ""
+          , composeBody = ""
+          , replyTo = 0
+          , nextCommentId = 400
+          }
+        , Cmd.none
+        )
+
+
+-- ─── View dispatcher ─────────────────────────────────────────────
+
+view : Model -> any
+view model =
+    Ui.layout []
+        (Ui.column
+            [ Ui.padding 24
+            , Ui.spacing 24
+            , Background.color (Ui.rgb 246 246 240)
+            , Font.family "Verdana, Geneva, sans-serif"
+            , Font.size 14
+            , Font.color (Ui.rgb 33 33 33)
+            ]
+            [ topNav model
+            , pageBody model
+            , pageFooter
+            ])
+
+
+pageBody : Model -> Element Msg
+pageBody model =
+    case model.currentPage of
+        HomePage ->
+            postsListView model.session model.posts
+
+        PostPage postId ->
+            postDetailView model postId
+
+        LoginPage ->
+            loginView model
+
+
+-- ─── App wiring ──────────────────────────────────────────────────
+
+subscriptions : Model -> Sub.Sub Msg
+subscriptions _ = Sub.none
+
+
+main =
+    app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        , routes = []
+        , notFound = ()
+        }

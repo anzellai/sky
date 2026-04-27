@@ -1,6 +1,12 @@
 -- | Type unification for Sky's Hindley-Milner type inference.
--- CPS-based unifier adapted from Elm's Type.Unify.
--- Handles: type variables, structures, records, aliases, super types.
+--
+-- Derivative work adapted from elm/compiler's @Type.Unify@
+-- (Copyright © 2012–present Evan Czaplicki, BSD-3-Clause). See
+-- NOTICE.md at the repo root for the full attribution and licence
+-- text.
+--
+-- CPS-based unifier; handles type variables, structures, records,
+-- aliases, super types.
 module Sky.Type.Unify
     ( unify
     )

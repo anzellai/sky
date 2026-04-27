@@ -1,0 +1,1161 @@
+module Std.Ui exposing (..)
+
+-- Std.Ui — typed, no-CSS layout DSL for Sky.Live.
+--
+-- Build a UI from typed layout primitives (`el`, `row`, `column`,
+-- `text`) plus typed attributes (`width`, `padding`, `spacing`,
+-- `centerX`, ...) then call `layout` to render to plain Sky.Html.
+--
+-- Why not use Std.Html directly? Std.Ui replaces "make a div, write
+-- CSS, hope alignment works" with "say what you mean, get the
+-- alignment right by construction." `centerX` always centres
+-- horizontally; `width fill` always fills available space; spacing
+-- between siblings is a property of the parent, not a per-child
+-- margin.
+--
+-- The MVP uses inline styles per element. Same public API; simpler
+-- internals; can swap to a static-stylesheet + class emit later as
+-- an internal optimisation without breaking user code.
+--
+-- Prior-art attribution for the API conventions adopted here lives
+-- in NOTICE.md at the repo root.
+--
+-- Implementation note — single file: Sky's canonicaliser doesn't
+-- propagate type parameters for cross-module ADT constructors today
+-- (parameterised constructors arrive at the import site stripped of
+-- their type variable). Until that's fixed in the compiler, all the
+-- parameterised types (`Element msg`, `Attribute msg`) and their
+-- constructors live in this single module rather than splitting them
+-- into Std.Ui.Internal.Model.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.Math as Math
+import Std.Html as Html
+import Std.Html.Attributes as Attr
+import Std.Live.Events as Event
+
+
+-- ─── Core types ──────────────────────────────────────────────────
+
+type Element msg
+    = Empty
+    | Text String
+    | Node Description (List (Attribute msg)) (List (Element msg))
+    -- TaggedNode carries an explicit HTML tag override so `link`
+    -- → <a>, `image` → <img>, `paragraph` → <p>, `heading 1` → <h1>
+    -- dispatch to semantically-correct tags. Plain Node still
+    -- defaults to <div>.
+    | TaggedNode String Description (List (Attribute msg)) (List (Element msg))
+    -- Raw escape hatch — wrap an arbitrary Std.Html node so user
+    -- code can drop into native HTML (<video>, <canvas>, <table>,
+    -- third-party widgets) without leaving the Std.Ui tree. The
+    -- `any` payload is the Std.Html VNode (kernel type opaque to
+    -- Sky's HM); the renderer passes it through unchanged.
+    | Raw any
+
+
+type Attribute msg
+    = NoAttribute
+    | AttrWidth Length
+    | AttrHeight Length
+    | AttrAlignX HAlign
+    | AttrAlignY VAlign
+    | AttrNearby Location (Element msg)
+    | AttrPadding Int Int Int Int
+    | AttrSpacing Int
+    | AttrStyle String String
+    | AttrDescribe Description
+    | AttrClass String
+    | AttrEvent any                        -- pre-constructed Std.Live.Events.* value (eventPair)
+    | AttrAttribute String String          -- raw attribute (href, src, name, ...)
+    | AttrFontSize Int
+    | AttrFontColor Color
+    | AttrFontFamily String                -- pre-joined "Inter, sans-serif"
+    | AttrFontWeight Int
+    | AttrFontItalic                       -- font-style: italic
+    | AttrFontUnderline                    -- text-decoration: underline
+    | AttrFontLetterSpacing Float          -- letter-spacing in em
+    | AttrFontWordSpacing Float            -- word-spacing in em
+    | AttrBgColor Color
+    | AttrBgImage String                   -- background-image: url(<url>)
+    | AttrBgGradient String                -- pre-built CSS gradient string (linear-gradient(...) etc)
+    | AttrBorderWidth Int
+    | AttrBorderWidthEach Int Int Int Int  -- top right bottom left
+    | AttrBorderColor Color
+    | AttrBorderRounded Int
+    | AttrBorderStyle String               -- "solid" / "dashed" / "dotted"
+    | AttrBorderShadow Int Int Int Int Color       -- offsetX offsetY blur spread color
+    | AttrBorderInsetShadow Int Int Int Int Color  -- same shape, but rendered with `inset` keyword
+    | AttrPointer                          -- cursor: pointer for clickable els
+    | AttrOverflow String String           -- overflow-x value, overflow-y value (clip/scrollbars/etc)
+
+
+type Length
+    = Px Int
+    | Content
+    | Fill Int
+    | Min Int Length
+    | Max Int Length
+
+
+type HAlign
+    = AlignLeft
+    | CenterX
+    | AlignRight
+
+
+type VAlign
+    = AlignTop
+    | CenterY
+    | AlignBottom
+
+
+type Location
+    = Above
+    | Below
+    | OnRight
+    | OnLeft
+    | InFront
+    | Behind
+
+
+type Color
+    = Rgba Int Int Int Float
+      -- R G B as 0-255 ints. Alpha stays Float in [0,1]. Storing
+      -- ints sidesteps Sky's HM friction with Float arithmetic
+      -- during CSS rendering.
+
+
+type Description
+    = NoDescription
+    | DescMain
+    | DescNavigation
+    | DescContentInfo
+    | DescComplementary
+    | DescHeading Int
+    | DescLabel String
+    | DescLivePolite
+    | DescLiveAssertive
+    | DescButton
+    | DescParagraph
+
+
+-- Layout direction the parent imposes on its children. Used to
+-- inject extra wrapper divs when alignment requirements conflict
+-- with the parent's flex-direction.
+type LayoutContext
+    = AsRow
+    | AsColumn
+    | AsEl
+    | AsParagraph
+    | AsTextColumn
+
+
+-- ─── Building elements ───────────────────────────────────────────
+
+none : Element msg
+none = Empty
+
+
+text : String -> Element msg
+text s = Text s
+
+
+el : List (Attribute msg) -> Element msg -> Element msg
+el attrs child =
+    Node NoDescription attrs [ child ]
+
+
+row : List (Attribute msg) -> List (Element msg) -> Element msg
+row attrs children =
+    Node NoDescription (rowMarker :: attrs) children
+
+
+column : List (Attribute msg) -> List (Element msg) -> Element msg
+column attrs children =
+    Node NoDescription (colMarker :: attrs) children
+
+
+-- Internal markers — encoded as inline AttrStyle entries at the
+-- start of the attribute list so user attrs can override.
+rowMarker : Attribute msg
+rowMarker = AttrStyle "__row" "true"
+
+
+colMarker : Attribute msg
+colMarker = AttrStyle "__col" "true"
+
+
+-- ─── Length constructors ─────────────────────────────────────────
+
+px : Int -> Length
+px n = Px n
+
+
+shrink : Length
+shrink = Content
+
+
+fill : Length
+fill = Fill 1
+
+
+fillPortion : Int -> Length
+fillPortion n = Fill n
+
+
+minimum : Int -> Length -> Length
+minimum n l = Min n l
+
+
+maximum : Int -> Length -> Length
+maximum n l = Max n l
+
+
+-- ─── Attribute constructors ─────────────────────────────────────
+
+width : Length -> Attribute msg
+width l = AttrWidth l
+
+
+height : Length -> Attribute msg
+height l = AttrHeight l
+
+
+-- Uniform padding on all four sides.
+padding : Int -> Attribute msg
+padding n = AttrPadding n n n n
+
+
+-- (vertical, horizontal) padding.
+paddingXY : Int -> Int -> Attribute msg
+paddingXY v h = AttrPadding v h v h
+
+
+-- Per-side padding: (top, right, bottom, left).
+paddingEach : Int -> Int -> Int -> Int -> Attribute msg
+paddingEach t r b l = AttrPadding t r b l
+
+
+-- Gap between children of a row / column container.
+spacing : Int -> Attribute msg
+spacing n = AttrSpacing n
+
+
+centerX : Attribute msg
+centerX = AttrAlignX CenterX
+
+centerY : Attribute msg
+centerY = AttrAlignY CenterY
+
+alignLeft : Attribute msg
+alignLeft = AttrAlignX AlignLeft
+
+alignRight : Attribute msg
+alignRight = AttrAlignX AlignRight
+
+alignTop : Attribute msg
+alignTop = AttrAlignY AlignTop
+
+alignBottom : Attribute msg
+alignBottom = AttrAlignY AlignBottom
+
+
+-- Raw inline-style escape hatch. Prefer the typed attrs above.
+style : String -> String -> Attribute msg
+style k v = AttrStyle k v
+
+
+-- Add an arbitrary HTML attribute to the element (href, src, name,
+-- target, etc.). Use sparingly — Std.Ui's typed attrs (link, image,
+-- etc.) are preferred when they cover the case.
+htmlAttribute : String -> String -> Attribute msg
+htmlAttribute k v = AttrAttribute k v
+
+
+-- Add a CSS class to the rendered element. Doesn't replace existing
+-- classes — appends.
+class : String -> Attribute msg
+class c = AttrClass c
+
+
+-- Cursor: pointer. Marks an element as clickable.
+pointer : Attribute msg
+pointer = AttrPointer
+
+
+-- ─── Typed-helper wrappers around the AttrXxx constructors ──────
+--
+-- Sky's canonicaliser doesn't propagate type parameters when ADT
+-- constructors are referenced cross-module — `AttrBgColor` arrives
+-- at the import site as `Attribute` (no msg parameter) instead of
+-- `Attribute msg`. The typed-helper functions here anchor the
+-- generalisation locally so sibling modules (Std.Ui.Background,
+-- Std.Ui.Border, Std.Ui.Font, Std.Ui.Region) can call these
+-- functions instead of touching the constructors directly.
+
+bgColor : Color -> Attribute msg
+bgColor c = AttrBgColor c
+
+borderColor : Color -> Attribute msg
+borderColor c = AttrBorderColor c
+
+borderWidth : Int -> Attribute msg
+borderWidth n = AttrBorderWidth n
+
+borderRounded : Int -> Attribute msg
+borderRounded n = AttrBorderRounded n
+
+fontColor : Color -> Attribute msg
+fontColor c = AttrFontColor c
+
+fontSize : Int -> Attribute msg
+fontSize n = AttrFontSize n
+
+-- Pre-join with `, ` for the CSS family stack. Tier-1 sidestep:
+-- Sky's typed codegen routes `String.join` over `[String]` via the
+-- any-typed runtime helper which panics on a typed slice. Future
+-- work: pick `String_joinT` when both args are typed. For now
+-- callers pass the joined string directly via `Font.familyRaw`.
+fontFamily : String -> Attribute msg
+fontFamily joined = AttrFontFamily joined
+
+fontWeight : Int -> Attribute msg
+fontWeight n = AttrFontWeight n
+
+fontItalic : Attribute msg
+fontItalic = AttrFontItalic
+
+fontUnderline : Attribute msg
+fontUnderline = AttrFontUnderline
+
+fontLetterSpacing : Float -> Attribute msg
+fontLetterSpacing em = AttrFontLetterSpacing em
+
+fontWordSpacing : Float -> Attribute msg
+fontWordSpacing em = AttrFontWordSpacing em
+
+bgImage : String -> Attribute msg
+bgImage url = AttrBgImage url
+
+bgGradient : String -> Attribute msg
+bgGradient css = AttrBgGradient css
+
+borderWidthEach : Int -> Int -> Int -> Int -> Attribute msg
+borderWidthEach t r b l = AttrBorderWidthEach t r b l
+
+borderStyle : String -> Attribute msg
+borderStyle s = AttrBorderStyle s
+
+borderShadow : Int -> Int -> Int -> Int -> Color -> Attribute msg
+borderShadow ox oy blur spread c = AttrBorderShadow ox oy blur spread c
+
+borderInsetShadow : Int -> Int -> Int -> Int -> Color -> Attribute msg
+borderInsetShadow ox oy blur spread c = AttrBorderInsetShadow ox oy blur spread c
+
+overflow : String -> String -> Attribute msg
+overflow x y = AttrOverflow x y
+
+
+-- ─── Nearby positioning helpers ──────────────────────────────────
+--
+-- Attach an Element as an absolutely-positioned overlay relative to
+-- its parent. The parent gets `position: relative` automatically;
+-- the child gets `position: absolute` plus the matching offset.
+-- Use for tooltips, popovers, dropdown menus, badges, etc.
+
+above : Element msg -> Attribute msg
+above el = AttrNearby Above el
+
+below : Element msg -> Attribute msg
+below el = AttrNearby Below el
+
+onLeft : Element msg -> Attribute msg
+onLeft el = AttrNearby OnLeft el
+
+onRight : Element msg -> Attribute msg
+onRight el = AttrNearby OnRight el
+
+inFront : Element msg -> Attribute msg
+inFront el = AttrNearby InFront el
+
+behind : Element msg -> Attribute msg
+behind el = AttrNearby Behind el
+
+describe : Description -> Attribute msg
+describe d = AttrDescribe d
+
+
+-- Description-value helpers. Description is a non-parameterised ADT
+-- so it crosses module boundaries cleanly, but the helpers also
+-- give a stable surface name in case the underlying constructor
+-- names change.
+
+descMain : Description
+descMain = DescMain
+
+descNavigation : Description
+descNavigation = DescNavigation
+
+descContentInfo : Description
+descContentInfo = DescContentInfo
+
+descHeading : Int -> Description
+descHeading n = DescHeading n
+
+descLabel : String -> Description
+descLabel s = DescLabel s
+
+descComplementary : Description
+descComplementary = DescComplementary
+
+descLivePolite : Description
+descLivePolite = DescLivePolite
+
+descLiveAssertive : Description
+descLiveAssertive = DescLiveAssertive
+
+
+-- ─── Events ──────────────────────────────────────────────────────
+
+-- Bind a click handler. The msg is dispatched on the wire when the
+-- user clicks the element. Inside Sky.Live, this becomes an SSE
+-- round-trip + Msg dispatch through update. The Std.Live.Events
+-- helper is invoked here at construction time so msg's concrete
+-- type is preserved through the AttrEvent carrier (any-typed).
+onClick : msg -> Attribute msg
+onClick msg = AttrEvent (Event.onClick msg)
+
+
+-- Submit handler — for <form> elements. msg should accept a
+-- record matching the form's named inputs (Sky.Live decodes form
+-- data into the constructor's typed record param).
+onSubmit : msg -> Attribute msg
+onSubmit msg = AttrEvent (Event.onSubmit msg)
+
+
+-- Input change handler — fires per keystroke for text inputs.
+-- The callback receives the input's current value as a String;
+-- the typed signature lets Sky's HM verify the wrapper at the
+-- call site.
+onInput : (String -> msg) -> Attribute msg
+onInput cb = AttrEvent (Event.onInput cb)
+
+
+onChange : (String -> msg) -> Attribute msg
+onChange cb = AttrEvent (Event.onChange cb)
+
+
+onFocus : msg -> Attribute msg
+onFocus msg = AttrEvent (Event.onFocus msg)
+
+
+onMouseOver : msg -> Attribute msg
+onMouseOver msg = AttrEvent (Event.onMouseOver msg)
+
+
+onMouseOut : msg -> Attribute msg
+onMouseOut msg = AttrEvent (Event.onMouseOut msg)
+
+
+onKeyDown : msg -> Attribute msg
+onKeyDown msg = AttrEvent (Event.onKeyDown msg)
+
+
+-- File-input change handler. Wire this on `<input type="file">`
+-- (use `Ui.input [ Ui.htmlAttribute "type" "file", Ui.onFile FileSelected ]`).
+-- The browser-side driver reads the chosen file, base64-encodes it as
+-- a data URL, and dispatches `[dataUrl]` as the args. The Sky-side
+-- callback receives the data URL as a single String — store it in
+-- Model and decode/upload as needed (the Std.Encoding module's
+-- base64Decode helps here).
+--
+-- For images, prefer `onImage` instead — it auto-resizes to the
+-- `fileMaxWidth` / `fileMaxHeight` hints before sending, saving
+-- bandwidth on large camera-roll uploads.
+onFile : (String -> msg) -> Attribute msg
+onFile cb = AttrEvent (Event.onFile cb)
+
+
+-- Image-input change handler — same as onFile but the browser-side
+-- driver scales the image to `Ui.fileMaxWidth` / `fileMaxHeight`
+-- (default 1200×1200) and re-encodes as JPEG @ 0.85 quality before
+-- sending. Output is still a `data:image/jpeg;base64,...` URL.
+onImage : (String -> msg) -> Attribute msg
+onImage cb = AttrEvent (Event.onImage cb)
+
+
+-- Client-side file-size cap in bytes. Files exceeding this are
+-- dropped on the browser side with a console.warn before any data is
+-- sent. UX guard, not a security boundary — server-side validation
+-- still required (Sky.Live also caps the POST body via the
+-- sky.toml [live] maxBodyBytes setting, default 5 MiB).
+fileMaxSize : Int -> Attribute msg
+fileMaxSize bytes =
+    AttrAttribute "data-sky-ev-sky-file-max-size" (String.fromInt bytes)
+
+
+-- Image resize hint — width in pixels. The image is scaled to fit
+-- `fileMaxWidth` × `fileMaxHeight` (default 1200×1200) on the
+-- browser side before being sent. Only applies to `Ui.onImage`.
+fileMaxWidth : Int -> Attribute msg
+fileMaxWidth px =
+    AttrAttribute "data-sky-ev-sky-file-max-width" (String.fromInt px)
+
+
+-- Image resize hint — height in pixels. Pair with `fileMaxWidth`.
+fileMaxHeight : Int -> Attribute msg
+fileMaxHeight px =
+    AttrAttribute "data-sky-ev-sky-file-max-height" (String.fromInt px)
+
+
+-- ─── Common element shortcuts ────────────────────────────────────
+
+-- Hyperlink. Renders as `<a href=…>…</a>`. The href is set as an
+-- HTML attribute; click navigation happens through standard browser
+-- behaviour (Sky.Live intercepts same-origin navigation if you've
+-- routed it).
+link : List (Attribute msg) -> { url : String, label : Element msg } -> Element msg
+link attrs cfg =
+    let
+        nodeAttrs = AttrAttribute "href" cfg.url :: attrs
+    in
+        TaggedNode "a" NoDescription nodeAttrs [ cfg.label ]
+
+
+-- Inline image with required src + alt for accessibility. Renders
+-- as `<img src=… alt=…>` (a void element — no children).
+image : List (Attribute msg) -> { src : String, description : String } -> Element msg
+image attrs cfg =
+    let
+        nodeAttrs =
+            AttrAttribute "src" cfg.src
+                :: AttrAttribute "alt" cfg.description
+                :: attrs
+    in
+        TaggedNode "img" NoDescription nodeAttrs []
+
+
+-- A `<p>` block. Children flow as inline text (no flex layout); use
+-- `el` inside paragraph to highlight a word/phrase. Tier 2 ships the
+-- basic block-level shape; richer child-rewriting (coordinating
+-- margins inside the wrap) lands in a follow-up.
+paragraph : List (Attribute msg) -> List (Element msg) -> Element msg
+paragraph attrs children =
+    TaggedNode "p" DescParagraph (paragraphMarker :: attrs) children
+
+
+paragraphMarker : Attribute msg
+paragraphMarker = AttrStyle "__paragraph" "true"
+
+
+-- Stack of paragraph-style children. Renders as a block-level
+-- container (`<section>`) so each paragraph stays on its own line
+-- with normal text flow.
+textColumn : List (Attribute msg) -> List (Element msg) -> Element msg
+textColumn attrs children =
+    TaggedNode "section" NoDescription (textColumnMarker :: attrs) children
+
+
+textColumnMarker : Attribute msg
+textColumnMarker = AttrStyle "__textcolumn" "true"
+
+
+-- A `<button>`. Use `Ui.onClick` to attach a handler. The default
+-- styling is sparse; users layer Background/Border/Font/Padding to
+-- match their design.
+button : List (Attribute msg) -> { onPress : Maybe msg, label : Element msg } -> Element msg
+button attrs cfg =
+    let
+        clickAttr = case cfg.onPress of
+            Just msg -> [ onClick msg ]
+            Nothing  -> [ AttrAttribute "disabled" "true" ]
+        allAttrs = clickAttr ++ pointer :: attrs
+    in
+        TaggedNode "button" NoDescription allAttrs [ cfg.label ]
+
+
+-- A `<input>`. The browser fires `input` and `change` events
+-- natively, so wire `Ui.onInput`/`Ui.onChange` for keystroke /
+-- commit semantics. Set `type` (text / password / email / number /
+-- checkbox / radio / ...) and other native attrs via
+-- `Ui.htmlAttribute "type" "..."` / `htmlAttribute "value" "..."`.
+-- Renders to a void `<input>` element (no children) — Std.Ui's
+-- renderNodeAs special-cases the `input` tag for void emission.
+input : List (Attribute msg) -> Element msg
+input attrs =
+    TaggedNode "input" NoDescription attrs []
+
+
+-- A `<form>`. Wrap inputs to use the `<form onSubmit=...>` pattern
+-- — recommended for sensitive inputs (password, API key, credit
+-- card) per Sky.Live's "Forms with passwords" doctrine in CLAUDE.md.
+-- Three reasons to prefer form-submit over per-keystroke onInput
+-- on password fields: (1) password manager extensions stop seeing
+-- DOM mutation re-prompts on every render, (2) the secret never
+-- lives in Model so it never gets serialised into Redis/Postgres
+-- session stores, (3) race-free submit reads the live DOM value
+-- not a debounced keystroke.
+--
+-- Use with `Ui.onSubmit DoSignIn` where `DoSignIn` takes a typed
+-- record matching the form's named inputs (e.g.
+-- `type alias Creds = { username : String, password : String }`).
+-- Sky.Live's typed Msg dispatch decodes the wire form data into
+-- the record via case-insensitive json.Unmarshal — Sky's
+-- lowercase field names land in the matching Go fields without
+-- per-Msg decoder boilerplate.
+form : List (Attribute msg) -> List (Element msg) -> Element msg
+form attrs children =
+    TaggedNode "form" NoDescription attrs children
+
+
+-- Convenience for the `name` attribute on form inputs. Sky.Live's
+-- form-submit dispatch uses each input's `name` as the key in the
+-- record decoded into the Msg constructor's typed-record param.
+-- Equivalent to `Ui.htmlAttribute "name" value` — the typed wrapper
+-- just reads better in form definitions.
+name : String -> Attribute msg
+name value = AttrAttribute "name" value
+
+
+-- Escape hatch — wrap an arbitrary Std.Html node as an Element.
+-- Useful when you need a tag Std.Ui doesn't model directly
+-- (`<video>`, `<canvas>`, `<table>`, third-party widgets) without
+-- dropping the rest of your layout. The wrapped node is rendered
+-- in place — Std.Ui adds no inline-style wrapper around it.
+html : any -> Element msg
+html node =
+    Raw node
+
+
+-- Extract a plain string from a `Text s` element, or "" for any
+-- other shape. Used by Std.Ui.Input.placeholder rendering to pull
+-- the placeholder text out of the user-supplied Element wrapper.
+-- Lives here (not in Std.Ui.Input) because the Element ctors aren't
+-- conveniently destructurable cross-module today.
+elementText : Element msg -> String
+elementText el =
+    case el of
+        Text s -> s
+        _      -> ""
+
+
+-- ─── Overflow / clip / scrollbars ────────────────────────────────
+
+-- Clip overflow on both axes (overflow: hidden). Use when an
+-- element's content might overflow and you want it cut off rather
+-- than wrapped.
+clip : Attribute msg
+clip = AttrOverflow "hidden" "hidden"
+
+
+clipX : Attribute msg
+clipX = AttrOverflow "hidden" "visible"
+
+
+clipY : Attribute msg
+clipY = AttrOverflow "visible" "hidden"
+
+
+-- Show scrollbars on overflow on both axes.
+scrollbars : Attribute msg
+scrollbars = AttrOverflow "auto" "auto"
+
+
+scrollbarX : Attribute msg
+scrollbarX = AttrOverflow "auto" "visible"
+
+
+scrollbarY : Attribute msg
+scrollbarY = AttrOverflow "visible" "auto"
+
+
+-- ─── Color ───────────────────────────────────────────────────────
+
+-- 0-255 integer channels. Recommended for predictable colours.
+-- (Sky's HM doesn't currently round-trip [0,1] floats through the
+-- CSS render path correctly, so for now `rgb` only models the
+-- 0-255 int range.)
+rgb : Int -> Int -> Int -> Color
+rgb r g b = Rgba r g b 1.0
+
+
+rgb255 : Int -> Int -> Int -> Color
+rgb255 r g b = Rgba r g b 1.0
+
+
+-- 0-255 RGB + 0-1 alpha. Alpha stays Float for transparency
+-- precision; the RGB channels are integer 0-255 for a clean CSS
+-- render.
+rgba : Int -> Int -> Int -> Float -> Color
+rgba r g b a = Rgba r g b a
+
+
+white : Color
+white = Rgba 255 255 255 1.0
+
+
+black : Color
+black = Rgba 0 0 0 1.0
+
+
+transparent : Color
+transparent = Rgba 0 0 0 0.0
+
+
+-- ─── Render ──────────────────────────────────────────────────────
+
+-- Render an Element tree to plain Html. Wrap your top-level view
+-- function with `layout [] view` to produce a Sky.Live or
+-- Sky.Http.Server view value.
+layout : List (Attribute msg) -> Element msg -> any
+layout rootAttrs root =
+    renderElement AsEl rootAttrs root
+
+
+renderElement : LayoutContext -> List (Attribute msg) -> Element msg -> any
+renderElement ctx extraAttrs elem =
+    case elem of
+        Empty ->
+            Html.text ""
+
+        Text s ->
+            Html.text s
+
+        Node desc attrs children ->
+            -- Pick a semantic HTML tag from the Description (see
+            -- `tagForDescription`) — falls back to <div> when the
+            -- element has no Description attached. Region.* helpers
+            -- attach AttrDescribe to control this; we honour the
+            -- *first* AttrDescribe encountered.
+            let chosenTag = pickSemanticTag "div" attrs
+            in renderNodeAs chosenTag ctx extraAttrs attrs children
+
+        TaggedNode tag desc attrs children ->
+            renderNodeAs tag ctx extraAttrs attrs children
+
+        Raw node ->
+            -- Pass the wrapped Std.Html VNode through unchanged.
+            -- `extraAttrs` from the parent are dropped — Raw is an
+            -- escape hatch and the user is responsible for whatever
+            -- attributes they want on the wrapped node.
+            node
+
+
+-- Resolve the HTML tag for a generic Node by inspecting its attribute
+-- list for an AttrDescribe entry. The first one wins; if none, the
+-- default tag passed in is returned.
+pickSemanticTag : String -> List (Attribute msg) -> String
+pickSemanticTag defaultTag attrs =
+    case attrs of
+        [] -> defaultTag
+        (AttrDescribe d) :: _ -> tagForDescription defaultTag d
+        _ :: rest -> pickSemanticTag defaultTag rest
+
+
+-- Map a Description to the semantically-correct HTML element name.
+-- Any Description not associated with a tag (DescLabel, the live-region
+-- ones, NoDescription) returns the default unchanged.
+tagForDescription : String -> Description -> String
+tagForDescription defaultTag d =
+    case d of
+        NoDescription      -> defaultTag
+        DescMain           -> "main"
+        DescNavigation     -> "nav"
+        DescContentInfo    -> "footer"
+        DescComplementary  -> "aside"
+        DescHeading 1      -> "h1"
+        DescHeading 2      -> "h2"
+        DescHeading 3      -> "h3"
+        DescHeading 4      -> "h4"
+        DescHeading 5      -> "h5"
+        DescHeading _      -> "h6"
+        DescLabel _        -> defaultTag
+        DescLivePolite     -> defaultTag
+        DescLiveAssertive  -> defaultTag
+        DescButton         -> "button"
+        DescParagraph      -> "p"
+
+
+-- Render a Node-shaped element under a given parent context with an
+-- explicit HTML tag. Used both for the default <div> path and for
+-- TaggedNode dispatch.
+renderNodeAs : String -> LayoutContext -> List (Attribute msg) -> List (Attribute msg) -> List (Element msg) -> any
+renderNodeAs tag ctx extraAttrs attrs children =
+    let
+        allAttrs = extraAttrs ++ attrs
+        renderCtx = layoutContextFor allAttrs
+        nearbyChildren = collectNearby allAttrs
+        positionPrefix =
+            if List.isEmpty nearbyChildren then
+                ""
+            else
+                "position: relative; "
+        styleStr = positionPrefix ++ buildStyleString ctx renderCtx allAttrs
+        htmlAttrs = collectHtmlAttrs allAttrs
+        renderedMain = List.map (renderElement renderCtx []) children
+        renderedNearby = List.map renderNearby nearbyChildren
+        renderedChildren = renderedMain ++ renderedNearby
+        attrList = Attr.style styleStr :: htmlAttrs
+    in
+        dispatchTag tag attrList renderedChildren
+
+
+-- Pull each (Location, Element) pair out of an AttrNearby attribute
+-- so the renderer can wrap them with absolute-positioning styles.
+collectNearby : List (Attribute msg) -> List ( Location, Element msg )
+collectNearby attrs =
+    List.filterMap toNearbyPair attrs
+
+
+toNearbyPair : Attribute msg -> Maybe ( Location, Element msg )
+toNearbyPair a =
+    case a of
+        AttrNearby loc el -> Just ( loc, el )
+        _                 -> Nothing
+
+
+-- Render a single nearby element with the position styles for its
+-- Location. The child is rendered first, then wrapped in a thin div
+-- carrying the absolute-positioning styles.
+renderNearby : ( Location, Element msg ) -> any
+renderNearby ( loc, el ) =
+    let
+        positionStyle = "position: absolute; " ++ locationCss loc
+        rendered = renderElement AsEl [] el
+    in
+        Html.div [ Attr.style positionStyle ] [ rendered ]
+
+
+-- Map a Location to the CSS offsets that pin the absolute child to
+-- the matching side of its position-relative parent. `inFront` and
+-- `behind` use z-index (positive vs negative) to stack above /
+-- below the main content.
+locationCss : Location -> String
+locationCss loc =
+    case loc of
+        Above   -> "left: 0; right: 0; bottom: 100%;"
+        Below   -> "left: 0; right: 0; top: 100%;"
+        OnLeft  -> "top: 0; bottom: 0; right: 100%;"
+        OnRight -> "top: 0; bottom: 0; left: 100%;"
+        InFront -> "left: 0; right: 0; top: 0; bottom: 0; z-index: 1;"
+        Behind  -> "left: 0; right: 0; top: 0; bottom: 0; z-index: -1;"
+
+
+-- Dispatch to the right Std.Html constructor by tag name. <img>
+-- is void (no children); other tags take children unchanged.
+-- Unknown tags fall back to <div>.
+dispatchTag tag attrs children =
+    if tag == "a" then
+        Html.a attrs children
+    else if tag == "p" then
+        Html.p attrs children
+    else if tag == "h1" then
+        Html.h1 attrs children
+    else if tag == "h2" then
+        Html.h2 attrs children
+    else if tag == "h3" then
+        Html.h3 attrs children
+    else if tag == "h4" then
+        Html.h4 attrs children
+    else if tag == "h5" then
+        Html.h5 attrs children
+    else if tag == "h6" then
+        Html.h6 attrs children
+    else if tag == "button" then
+        Html.button attrs children
+    else if tag == "form" then
+        Html.form attrs children
+    else if tag == "label" then
+        Html.label attrs children
+    else if tag == "section" then
+        Html.section attrs children
+    else if tag == "nav" then
+        Html.nav attrs children
+    else if tag == "footer" then
+        Html.footer attrs children
+    else if tag == "header" then
+        Html.header attrs children
+    else if tag == "main" then
+        Html.main attrs children
+    else if tag == "aside" then
+        Html.aside attrs children
+    else if tag == "img" then
+        -- <img> is void in HTML; Sky's Html.img takes attrs only.
+        let _ = children in Html.img attrs
+    else if tag == "input" then
+        let _ = children in Html.input attrs
+    else
+        Html.div attrs children
+
+
+-- Pull every AttrAttribute into a flat list of Attr.attribute values.
+collectHtmlAttrs : List (Attribute msg) -> List any
+collectHtmlAttrs attrs =
+    List.filterMap toAttrAttribute attrs
+
+
+toAttrAttribute : Attribute msg -> Maybe any
+toAttrAttribute a =
+    case a of
+        AttrAttribute k v -> Just (kernelAttr k v)
+        AttrClass c       -> Just (Attr.class c)
+        AttrEvent ev      -> Just ev
+        AttrDescribe d    -> ariaForDescription d
+        _                 -> Nothing
+
+
+-- Map a Description that requires an aria-* attribute to the
+-- attribute-emitting form. Returns Nothing for descriptions whose
+-- semantics are encoded purely in the chosen HTML tag (no extra
+-- aria-* attribute needed).
+ariaForDescription : Description -> Maybe any
+ariaForDescription d =
+    case d of
+        DescLabel s        -> Just (kernelAttr "aria-label" s)
+        DescLivePolite     -> Just (kernelAttr "aria-live" "polite")
+        DescLiveAssertive  -> Just (kernelAttr "aria-live" "assertive")
+        _                  -> Nothing
+
+
+-- Sky.Std.Html.Attributes doesn't expose a generic
+-- `Attr.attribute key value` kernel today, so dispatch by key name
+-- for the common HTML attrs Std.Ui needs. Unknown keys fall back
+-- to encoding the attr inline-style as `data-<key>="<v>"` via the
+-- typed Attr.attribute style proxy. (Future work — promote this to
+-- a kernel call once `rt.Attr_attribute` lands.)
+kernelAttr : String -> String -> any
+kernelAttr key value =
+    if key == "href" then Attr.href value
+    else if key == "src" then Attr.src value
+    else if key == "alt" then Attr.alt value
+    else if key == "name" then Attr.name value
+    else if key == "value" then Attr.value value
+    else if key == "id" then Attr.id value
+    else if key == "type" then Attr.type_ value
+    else if key == "placeholder" then Attr.placeholder value
+    else if key == "title" then Attr.title value
+    else if key == "for" then Attr.for value
+    else if key == "rel" then Attr.rel value
+    else if key == "target" then Attr.target value
+    else if key == "method" then Attr.method value
+    else if key == "action" then Attr.action value
+    else
+        -- Generic fallback for arbitrary attribute names (sky-key,
+        -- aria-*, custom data-*, etc.).
+        Attr.attribute key value
+
+
+-- Tier 1 stops at static rendering. Std.Live.Events binding for
+-- AttrEvent → Sky.Live wire events lives in Tier 2 once we wire
+-- the Sky.Live integration. The constructor stays in the ADT so
+-- user code can already use `Ui.onClick MyMsg` even though it
+-- currently no-ops at the static layer.
+
+
+layoutContextFor : List (Attribute msg) -> LayoutContext
+layoutContextFor attrs =
+    if hasMarker "__row" attrs then
+        AsRow
+    else if hasMarker "__col" attrs then
+        AsColumn
+    else if hasMarker "__paragraph" attrs then
+        AsParagraph
+    else if hasMarker "__textcolumn" attrs then
+        AsTextColumn
+    else
+        AsEl
+
+
+hasMarker : String -> List (Attribute msg) -> Bool
+hasMarker name attrs =
+    List.any (\a -> isMarker name a) attrs
+
+
+isMarker : String -> Attribute msg -> Bool
+isMarker name a =
+    case a of
+        AttrStyle k _ -> k == name
+        _ -> False
+
+
+buildStyleString : LayoutContext -> LayoutContext -> List (Attribute msg) -> String
+buildStyleString parentCtx myCtx attrs =
+    let
+        baseDisplay = displayFor myCtx
+        attrParts = List.foldl (collectStyle parentCtx myCtx) "" attrs
+    in
+        baseDisplay ++ attrParts
+
+
+displayFor : LayoutContext -> String
+displayFor ctx =
+    case ctx of
+        AsRow         -> "display: flex; flex-direction: row;"
+        AsColumn      -> "display: flex; flex-direction: column;"
+        AsEl          -> "display: flex; flex-direction: column;"
+        AsParagraph   -> "display: block;"
+        AsTextColumn  -> "display: block;"
+
+
+collectStyle : LayoutContext -> LayoutContext -> Attribute msg -> String -> String
+collectStyle parentCtx myCtx attr acc =
+    case attr of
+        NoAttribute ->
+            acc
+        AttrWidth lng ->
+            acc ++ " " ++ widthCss lng
+        AttrHeight lng ->
+            acc ++ " " ++ heightCss lng
+        AttrPadding t r b l ->
+            acc ++ " padding: " ++ String.fromInt t ++ "px " ++ String.fromInt r ++ "px " ++ String.fromInt b ++ "px " ++ String.fromInt l ++ "px;"
+        AttrSpacing n ->
+            acc ++ " gap: " ++ String.fromInt n ++ "px;"
+        AttrAlignX h ->
+            acc ++ " " ++ alignXCss myCtx h
+        AttrAlignY v ->
+            acc ++ " " ++ alignYCss myCtx v
+        AttrStyle k v ->
+            if k == "__row" then
+                acc
+            else if k == "__col" then
+                acc
+            else if k == "__paragraph" then
+                acc
+            else if k == "__textcolumn" then
+                acc
+            else
+                acc ++ " " ++ k ++ ": " ++ v ++ ";"
+        AttrDescribe _ ->
+            acc
+        AttrClass _ ->
+            acc
+        AttrNearby _ _ ->
+            -- Nearby positioning is rendered as an absolute-positioned
+            -- child by renderNodeAs, not as an inline style on the
+            -- parent. Skip here.
+            acc
+        AttrEvent _ ->
+            -- Events are attached as separate VNode event entries,
+            -- not inline style — handled in renderElement.
+            acc
+        AttrAttribute _ _ ->
+            -- HTML attributes (href, src, name, ...) are attached to
+            -- the VNode separately, not inline style.
+            acc
+        AttrFontSize n ->
+            acc ++ " font-size: " ++ String.fromInt n ++ "px;"
+        AttrFontColor c ->
+            acc ++ " color: " ++ colorCss c ++ ";"
+        AttrFontFamily joined ->
+            acc ++ " font-family: " ++ joined ++ ";"
+        AttrFontWeight n ->
+            acc ++ " font-weight: " ++ String.fromInt n ++ ";"
+        AttrFontItalic ->
+            acc ++ " font-style: italic;"
+        AttrFontUnderline ->
+            acc ++ " text-decoration: underline;"
+        AttrFontLetterSpacing em ->
+            acc ++ " letter-spacing: " ++ String.fromFloat em ++ "em;"
+        AttrFontWordSpacing em ->
+            acc ++ " word-spacing: " ++ String.fromFloat em ++ "em;"
+        AttrBgColor c ->
+            acc ++ " background-color: " ++ colorCss c ++ ";"
+        AttrBgImage url ->
+            acc ++ " background-image: url('" ++ url ++ "');"
+        AttrBgGradient css ->
+            acc ++ " background-image: " ++ css ++ ";"
+        AttrBorderWidth n ->
+            acc ++ " border-width: " ++ String.fromInt n ++ "px; border-style: solid;"
+        AttrBorderWidthEach t r b l ->
+            acc ++ " border-width: " ++ String.fromInt t ++ "px " ++ String.fromInt r ++ "px " ++ String.fromInt b ++ "px " ++ String.fromInt l ++ "px; border-style: solid;"
+        AttrBorderColor c ->
+            acc ++ " border-color: " ++ colorCss c ++ ";"
+        AttrBorderRounded n ->
+            acc ++ " border-radius: " ++ String.fromInt n ++ "px;"
+        AttrBorderStyle s ->
+            acc ++ " border-style: " ++ s ++ ";"
+        AttrBorderShadow ox oy blur spread c ->
+            acc ++ " box-shadow: " ++ String.fromInt ox ++ "px " ++ String.fromInt oy ++ "px " ++ String.fromInt blur ++ "px " ++ String.fromInt spread ++ "px " ++ colorCss c ++ ";"
+        AttrBorderInsetShadow ox oy blur spread c ->
+            acc ++ " box-shadow: inset " ++ String.fromInt ox ++ "px " ++ String.fromInt oy ++ "px " ++ String.fromInt blur ++ "px " ++ String.fromInt spread ++ "px " ++ colorCss c ++ ";"
+        AttrPointer ->
+            acc ++ " cursor: pointer;"
+        AttrOverflow x y ->
+            acc ++ " overflow-x: " ++ x ++ "; overflow-y: " ++ y ++ ";"
+
+
+-- Render a Color as a CSS rgba(...) string using percentage
+-- channels. The legacy comma-separated rgba() form requires
+-- 0–255 integer channels — passing floats like rgba(0.97, …)
+-- silently parses as black in every browser. Percentages
+-- (rgba(97%, …, 1)) are universally accepted and let us keep
+-- the float channel representation Sky users wrote.
+-- Render a Color as a CSS rgba(...) string. Channels are already
+-- 0-255 integers (Sky's HM doesn't currently round-trip [0,1]
+-- floats through Float arithmetic in destructured contexts), so
+-- we just stringify and emit.
+colorCss : Color -> String
+colorCss c =
+    case c of
+        Rgba r g b a ->
+            "rgba("
+                ++ String.fromInt r ++ ", "
+                ++ String.fromInt g ++ ", "
+                ++ String.fromInt b ++ ", "
+                ++ String.fromFloat a ++ ")"
+
+
+-- `len` would shadow Go's built-in `len` in the emitted code (Sky's
+-- name-mangler renames the parameter but doesn't rewrite uses inside
+-- the function body), so we use `lng` as the param name throughout.
+widthCss : Length -> String
+widthCss lng =
+    case lng of
+        Px n        -> "width: " ++ String.fromInt n ++ "px;"
+        Content     -> "width: max-content;"
+        Fill _      -> "flex-grow: 1; align-self: stretch;"
+        Min n inner -> widthCss inner ++ " min-width: " ++ String.fromInt n ++ "px;"
+        Max n inner -> widthCss inner ++ " max-width: " ++ String.fromInt n ++ "px;"
+
+
+heightCss : Length -> String
+heightCss lng =
+    case lng of
+        Px n        -> "height: " ++ String.fromInt n ++ "px;"
+        Content     -> "height: max-content;"
+        Fill _      -> "flex-grow: 1; align-self: stretch;"
+        Min n inner -> heightCss inner ++ " min-height: " ++ String.fromInt n ++ "px;"
+        Max n inner -> heightCss inner ++ " max-height: " ++ String.fromInt n ++ "px;"
+
+
+alignXCss : LayoutContext -> HAlign -> String
+alignXCss ctx h =
+    case ctx of
+        AsRow ->
+            case h of
+                AlignLeft   -> "margin-right: auto;"
+                CenterX     -> "margin-left: auto; margin-right: auto;"
+                AlignRight  -> "margin-left: auto;"
+        _ ->
+            case h of
+                AlignLeft   -> "align-self: flex-start;"
+                CenterX     -> "align-self: center;"
+                AlignRight  -> "align-self: flex-end;"
+
+
+alignYCss : LayoutContext -> VAlign -> String
+alignYCss ctx v =
+    case ctx of
+        AsColumn ->
+            case v of
+                AlignTop    -> "margin-bottom: auto;"
+                CenterY     -> "margin-top: auto; margin-bottom: auto;"
+                AlignBottom -> "margin-top: auto;"
+        _ ->
+            case v of
+                AlignTop    -> "align-self: flex-start;"
+                CenterY     -> "align-self: center;"
+                AlignBottom -> "align-self: flex-end;"

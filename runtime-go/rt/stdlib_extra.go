@@ -207,7 +207,7 @@ func JsonEnc_nullT() JsonValue             { return JsonValue{raw: nil} }
 
 // JsonEnc.list may be called as:
 //   Encode.list items                   -- 1-arg form (legacy)
-//   Encode.list Encode.string [...]     -- 2-arg (Elm style: map each item)
+//   Encode.list Encode.string [...]     -- 2-arg (combinator-style: map each item; same shape as Elm's Json.Encode.list)
 // The variadic-args signature accommodates both.
 func JsonEnc_list(args ...any) any {
 	switch len(args) {
@@ -689,7 +689,7 @@ func JsonDecP_requiredAt(path any, inner any, fnDec any) any {
 }
 
 // pipelineApply: apply an accumulator to one more argument.
-// Accumulators in elm-style pipelines start as a multi-arg function and are
+// Accumulators in pipeline-style decoders (e.g. Json.Decode.Pipeline-style) start as a multi-arg function and are
 // progressively applied one field at a time. The function may be a Go
 // func(any) any or func(any, any, ...) any — we dispatch via reflect.
 // Returns either the next partially-applied function or the final value.

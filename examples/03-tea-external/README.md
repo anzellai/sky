@@ -1,6 +1,6 @@
 # TEA with External Packages
 
-Demonstrates The Elm Architecture (TEA) pattern using external Go packages (`github.com/google/uuid` and `github.com/joho/godotenv`).
+Demonstrates the TEA pattern (model / update / view / subscriptions) using external Go packages (`github.com/google/uuid` and `github.com/joho/godotenv`).
 
 ## Build & Run
 

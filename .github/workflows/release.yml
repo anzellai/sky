@@ -66,6 +66,13 @@ jobs:
           cabal update
           TAG_VERSION="${GITHUB_REF_NAME#v}"
           sed -i.bak "s/^version:.*$/version:       ${TAG_VERSION}/" sky-compiler.cabal
+          # Overwrite app/VERSION so the TH-embedded build version
+          # in app/Main.hs reports `sky v${TAG_VERSION}` instead of
+          # the literal `dev` that local builds use. Without this,
+          # released binaries silently report "sky dev" — confirmed
+          # broken on v0.9.9. See the comment block in app/Main.hs
+          # around skyBuildVersion / skyVersionString.
+          printf '%s' "${TAG_VERSION}" > app/VERSION
           cabal build exe:sky -O2
           SKY_BIN="$(cabal list-bin sky -O2)"
           mkdir -p dist
@@ -80,7 +87,15 @@ jobs:
       - name: Smoke-test binary
         shell: bash
         run: |
-          "./dist/${{ matrix.artifact }}${{ matrix.ext }}" --version
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          ACTUAL=$("./dist/${{ matrix.artifact }}${{ matrix.ext }}" --version)
+          echo "$ACTUAL"
+          # Fail loudly if the released binary reports "sky dev" — that
+          # means app/VERSION wasn't overwritten before cabal build, and
+          # the Template Haskell splice baked in the contributor literal.
+          # (Confirmed broken on v0.9.9 — see the matching comment in the
+          # Build step above.)
+          echo "$ACTUAL" | grep -qF "sky v${TAG_VERSION}"
 
       - name: Package
         shell: bash

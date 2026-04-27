@@ -1,0 +1,197 @@
+module State exposing (..)
+
+-- Pure types + same-shape helpers. No Std.Ui imports here, so the
+-- type-checker stays well below the heap-exhaustion limit (CLAUDE.md
+-- Limitation #17): the heavy unification load is in the per-View
+-- modules.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.Maybe as Maybe
+import Sky.Core.String as String
+
+
+-- ─── State types ─────────────────────────────────────────────────
+
+-- `votes` is the BASE score (from seed/import) — what the post would
+-- be worth before any logged-in user's vote. The displayed score is
+-- derived: `votes + length upvoters - length downvoters`. This way
+-- `votes` stays stable at the seed value and the per-user toggles
+-- naturally undo themselves when a user un-votes.
+type alias Post =
+    { id : Int
+    , title : String
+    , url : String
+    , author : String
+    , votes : Int
+    , commentCount : Int
+    , upvoters : List String       -- usernames who upvoted (1 vote per user)
+    , downvoters : List String     -- usernames who downvoted (1 vote per user)
+    }
+
+
+type alias Comment =
+    { id : Int
+    , postId : Int
+    , parentId : Int               -- 0 = top-level (root) comment under the post
+    , author : String
+    , body : String
+    , votes : Int                  -- base score (see Post.votes for shape)
+    , upvoters : List String
+    , downvoters : List String
+    }
+
+
+type alias Session =
+    { username : String }
+
+
+-- Form data for sign-in. Decoded from the wire `<form>` submit
+-- payload directly into this typed record (Sky.Live's case-
+-- insensitive json.Unmarshal). Field names MUST match the form's
+-- input `name` attributes (lowercase here, matching `Ui.name`).
+-- The password lives only in this record while DoSignIn is
+-- in flight — never gets serialised into the session store.
+type alias LoginForm =
+    { username : String
+    , password : String
+    }
+
+
+type Page
+    = HomePage
+    | PostPage Int
+    | LoginPage
+
+
+type alias Model =
+    { posts : List Post
+    , comments : List Comment
+    , currentPage : Page
+    , session : Maybe Session
+    , loginError : String
+    , composeBody : String
+    , replyTo : Int            -- parentId for the next compose; 0 = top-level
+    , nextCommentId : Int
+    }
+
+
+type Msg
+    = Navigate Page
+    | UpvotePost Int
+    | DownvotePost Int
+    | UpvoteComment Int
+    | DownvoteComment Int
+    | DoSignIn LoginForm
+    | LogoutClicked
+    | ComposeBodyChanged String
+    | StartReplyTo Int
+    | CancelReply
+    | SubmitComment Int
+
+
+-- ─── Pure helpers (no Std.Ui dependency) ─────────────────────────
+
+-- ─── Vote scoring ────────────────────────────────────────────────
+
+postScore : Post -> Int
+postScore p =
+    p.votes + List.length p.upvoters - List.length p.downvoters
+
+
+commentScore : Comment -> Int
+commentScore c =
+    c.votes + List.length c.upvoters - List.length c.downvoters
+
+
+-- ─── Vote toggles (1 vote per user, click again to undo) ─────────
+--
+-- Three states for any user × target pair:
+--   1. user in upvoters    → upvote click removes them; downvote click swaps to downvoters
+--   2. user in downvoters  → downvote click removes them; upvote click swaps to upvoters
+--   3. user in neither     → either click adds to the matching list
+--
+-- Score is derived (postScore / commentScore), so swapping naturally
+-- moves the displayed total by ±2 without any extra arithmetic here.
+
+togglePostUpvote : String -> Int -> Post -> Post
+togglePostUpvote username targetId post =
+    if post.id /= targetId then
+        post
+    else if List.member username post.upvoters then
+        { post | upvoters = removeMember username post.upvoters }
+    else
+        { post
+            | upvoters = username :: post.upvoters
+            , downvoters = removeMember username post.downvoters
+        }
+
+
+togglePostDownvote : String -> Int -> Post -> Post
+togglePostDownvote username targetId post =
+    if post.id /= targetId then
+        post
+    else if List.member username post.downvoters then
+        { post | downvoters = removeMember username post.downvoters }
+    else
+        { post
+            | downvoters = username :: post.downvoters
+            , upvoters = removeMember username post.upvoters
+        }
+
+
+toggleCommentUpvote : String -> Int -> Comment -> Comment
+toggleCommentUpvote username targetId comment =
+    if comment.id /= targetId then
+        comment
+    else if List.member username comment.upvoters then
+        { comment | upvoters = removeMember username comment.upvoters }
+    else
+        { comment
+            | upvoters = username :: comment.upvoters
+            , downvoters = removeMember username comment.downvoters
+        }
+
+
+toggleCommentDownvote : String -> Int -> Comment -> Comment
+toggleCommentDownvote username targetId comment =
+    if comment.id /= targetId then
+        comment
+    else if List.member username comment.downvoters then
+        { comment | downvoters = removeMember username comment.downvoters }
+    else
+        { comment
+            | downvoters = username :: comment.downvoters
+            , upvoters = removeMember username comment.upvoters
+        }
+
+
+removeMember : String -> List String -> List String
+removeMember target xs =
+    List.filter (\x -> x /= target) xs
+
+
+bumpPostComments : Int -> Post -> Post
+bumpPostComments targetId post =
+    if post.id == targetId then
+        { post | commentCount = post.commentCount + 1 }
+    else
+        post
+
+
+findPost : Int -> List Post -> Maybe Post
+findPost target posts = List.find (\p -> p.id == target) posts
+
+
+matchesParent : Int -> Int -> Comment -> Bool
+matchesParent postId parentId c =
+    c.postId == postId && c.parentId == parentId
+
+
+shortenUrl : String -> String
+shortenUrl url =
+    let
+        afterScheme = String.replace "https://" "" (String.replace "http://" "" url)
+        slash = String.split "/" afterScheme
+    in
+        Maybe.withDefault afterScheme (List.head slash)

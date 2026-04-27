@@ -27,7 +27,8 @@ type alias UserProfile =
 -- The type alias name `Profile` is also a constructor function
 -- (v0.7.26+), so we don't need a separate `makeProfile` helper.
 -- Sky auto-generates `Profile : String -> Int -> Bool -> Profile`
--- from the field declaration order, just like Elm.
+-- from the field declaration order (same convention Elm uses for
+-- the same construct).
 type alias Profile =
     { name : String
     , age : Int
@@ -36,7 +37,7 @@ type alias Profile =
 
 
 -- ============================================================
--- Encoding Examples (same API as Elm's Json.Encode)
+-- Encoding Examples (combinator-style API, same shape as Elm's Json.Encode)
 -- ============================================================
 -- 1. Simple flat object
 encodeSimple =
@@ -71,7 +72,7 @@ encodeComplex =
 
 
 -- ============================================================
--- Decoding Examples (same API as Elm's Json.Decode)
+-- Decoding Examples (combinator-style API, same shape as Elm's Json.Decode)
 -- ============================================================
 -- 3. Simple field decoding with map2
 simpleDecoder =
@@ -87,7 +88,7 @@ decodeSimpleExample =
         (Decode.decodeString simpleDecoder "{\"name\":\"Charlie\",\"age\":28}")
 
 
--- 4. Pipeline Decoding (same API as Elm's Json.Decode.Pipeline!)
+-- 4. Pipeline Decoding (same API shape as Elm's Json.Decode.Pipeline)
 userDecoder =
     Decode.succeed
         (\name email age verified ->
@@ -318,7 +319,7 @@ traverseExample =
 -- ============================================================
 main =
     let
-        _ = println "=== Sky JSON Examples (Elm-compatible API) ==="
+        _ = println "=== Sky JSON Examples ==="
         _ = println ""
         _ = println "1. Simple encoding:"
         _ = println encodeSimple

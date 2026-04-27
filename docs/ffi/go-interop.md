@@ -62,7 +62,7 @@ Hyphens are dropped, next character upper-cased. Non-alphanumerics become `_`.
 ## Return type mapping
 
 **Every Go FFI call returns `Result Error T`.** This is intentional —
-the FFI boundary is a trust boundary, like Elm's ports. See
+the FFI boundary is a trust boundary — same discipline as a typed-airlock FFI. See
 [boundary-philosophy.md](boundary-philosophy.md) for the full reasoning.
 
 The wrapping shape depends on what the Go function returns:

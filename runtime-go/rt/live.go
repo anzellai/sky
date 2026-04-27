@@ -252,7 +252,8 @@ func Attr_title(v any) any          { return attr("title", fmt.Sprintf("%v", v))
 func Attr_for(v any) any            { return attr("for", fmt.Sprintf("%v", v)) }
 // Boolean HTML attributes honour two calling conventions:
 //
-//   * `disabled model.loading` — typed bool, Elm-style. True renders,
+//   * `disabled model.loading` — typed bool (same convention as
+//     Elm's `Html.Attributes` boolean attrs). True renders,
 //     False omits. sky-chat's compose form needs this.
 //   * `Attr.required ()` / `Attr.checked ()` — unit-arg presence style
 //     used by many Sky projects (notes-app, skyvote, skyshop) where
@@ -329,6 +330,12 @@ func Event_onKeyDown(f any) any     { return eventPair{name: "keydown", msg: f} 
 func Event_onKeyUp(f any) any       { return eventPair{name: "keyup", msg: f} }
 func Event_onFocus(msg any) any     { return eventPair{name: "focus", msg: msg} }
 func Event_onBlur(msg any) any      { return eventPair{name: "blur", msg: msg} }
+
+// Event_onFile / Event_onImage / Event_fileMax{Width,Height,Size}
+// live in stdlib_web.go — kept there next to the JS-side file
+// driver code for locality. The kernel registry entries point at
+// those `rt.Event_*` symbols and resolve cross-file just fine
+// because the package is one Go package.
 
 // Attr_attribute: generic attribute builder for tags with non-standard attrs
 // (e.g. SVG viewBox).
@@ -1905,11 +1912,21 @@ func unpackResponse(v any) (int, map[string]string, string) {
 // Used by handleInitial to distinguish real navigations from browser
 // noise (favicons, devtools prefetch). Doesn't run the route — just
 // answers "is this a known page?".
+//
+// Single-page apps (`routes = []`) treat "/" as the implicit root.
+// Without this, an existing-session refresh on "/" hits the
+// not-routed-AND-existing 404 guard in handleInitial — every refresh
+// returns 404 even though "/" is the only page the app has. Other
+// paths still 404 (browser noise like /favicon.ico shouldn't render
+// the SPA), so handler-state protection survives.
 func matchAnyRoute(app *liveApp, urlPath string) ([]string, bool) {
 	for _, rt := range app.routes {
 		if params, ok := matchRoute(rt.path, urlPath); ok {
 			return params, true
 		}
+	}
+	if len(app.routes) == 0 && urlPath == "/" {
+		return nil, true
 	}
 	return nil, false
 }

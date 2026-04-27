@@ -1,6 +1,6 @@
 # Language syntax
 
-Sky is Elm-compatible at the surface: if an expression parses in `elm-format`, it parses in Sky.
+Sky's surface syntax is Elm-compatible: most expressions that parse in Elm also parse in Sky. (See [NOTICE.md](../../NOTICE.md) for prior-art attribution; programming-language syntax is not itself copyrightable.)
 
 ## A module
 
@@ -155,4 +155,4 @@ Non-reserved identifiers frequently used in Sky but which are *not* keywords: `f
 - No anonymous record types in function signatures. Define a `type alias` first.
 - No higher-kinded types / type classes / row polymorphism — intentional.
 - No custom operators.
-- Negative literal arguments need parentheses: `f (-1)` not `f -1` (Elm behaviour).
+- Negative literal arguments need parentheses: `f (-1)` not `f -1` (matches Elm's parser disambiguation).

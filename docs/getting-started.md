@@ -57,7 +57,7 @@ sky add github.com/google/uuid
 
 See [ffi/go-interop.md](ffi/go-interop.md) for the full FFI story.
 
-## A minimal Elm-style TEA app
+## A minimal TEA-style app
 
 ```elm
 module Main exposing (main)

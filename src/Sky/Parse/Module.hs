@@ -162,20 +162,26 @@ moduleNameParts mkError =
 
 
 -- | Parse exposing clause: (..) or (name1, name2, Type(..))
+--
+-- Inside the parens we use `freshLine` instead of `spaces` between
+-- tokens — Sky-source convention allows the exposing list to span
+-- multiple lines (one item per line, leading commas), which is the
+-- shape `sky fmt` emits and what every Sky example uses for long
+-- imports. Inside the brackets, layout doesn't matter.
 exposingClause :: (Row -> Col -> ModuleError) -> Parser ModuleError Src.Exposing
 exposingClause mkError = do
     char mkError '('
-    spaces
+    freshLine mkError
     mc <- peek
     case mc of
         Just '.' -> do
             string mkError (T.pack "..")
-            spaces
+            freshLine mkError
             char mkError ')'
             return Src.ExposingAll
         _ -> do
             items <- exposedItems mkError
-            spaces
+            freshLine mkError
             char mkError ')'
             return (Src.ExposingList items)
 
@@ -192,9 +198,9 @@ exposedCtorRest :: (Row -> Col -> ModuleError) -> Parser ModuleError [String]
 exposedCtorRest mkError =
     oneOfWithFallback
         [ do
-            spaces
+            freshLine mkError
             char mkError ','
-            spaces
+            freshLine mkError
             c <- upper mkError
             rest <- exposedCtorRest mkError
             return (c : rest)
@@ -206,9 +212,9 @@ moreExposedItems :: (Row -> Col -> ModuleError) -> Parser ModuleError [A.Located
 moreExposedItems mkError =
     oneOfWithFallback
         [ do
-            spaces
+            freshLine mkError
             char mkError ','
-            spaces
+            freshLine mkError
             item <- addLocation (exposedItem mkError)
             rest <- moreExposedItems mkError
             return (item : rest)
@@ -225,19 +231,19 @@ exposedItem mkError =
              case mc of
                  Just '(' -> do
                      char mkError '('
-                     spaces
+                     freshLine mkError
                      -- Either `..)` (all) or comma-separated ctor names.
                      mc2 <- peek
                      privacy <- case mc2 of
                          Just '.' -> do
                              string mkError (T.pack "..")
-                             spaces
+                             freshLine mkError
                              char mkError ')'
                              return Src.Public
                          _ -> do
                              c0 <- upper mkError
                              rest <- exposedCtorRest mkError
-                             spaces
+                             freshLine mkError
                              char mkError ')'
                              return (Src.PublicCtors (c0 : rest))
                      return (Src.ExposedType name privacy)
@@ -318,7 +324,14 @@ importExposing =
     oneOfWithFallback
         [ do
             keyword (\r c -> ImportExpected r c) (T.pack "exposing")
-            spaces
+            -- Allow newline between `exposing` and `(` so multi-line
+            -- import lists in the canonical `sky fmt` shape parse
+            -- correctly:
+            --   import Std.Log exposing
+            --       ( println
+            --       , debug
+            --       )
+            freshLine (\r c -> ImportExpected r c)
             exposingClause (\r c -> ImportExpected r c)
         ]
         (Src.ExposingList [])

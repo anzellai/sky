@@ -1,0 +1,95 @@
+module View.Login exposing (..)
+
+-- Login form using the Sky.Live "form + onSubmit" pattern
+-- (CLAUDE.md "Forms with passwords"). Three wins over per-keystroke
+-- onInput on the password field:
+--
+--   1. Password manager extensions (1Password, Bitwarden, browser
+--      autofill) stop seeing DOM mutation re-prompts on every render.
+--   2. The secret never lives in Model — it only exists in the
+--      browser DOM until form submit, then briefly in DoSignIn's
+--      typed record arg until update consumes it. With per-keystroke
+--      onInput it would round-trip through every Sky.Live session
+--      store write (Redis / Postgres / Firestore).
+--   3. Race-free submit reads the live DOM value not a debounced
+--      keystroke — no possibility of dropping the last character if
+--      the user hits Enter before the 150ms debounce settles.
+--
+-- The form's `onSubmit DoSignIn` decodes wire formData
+-- {"username":"...","password":"..."} directly into the typed
+-- LoginForm record via case-insensitive json.Unmarshal. Field
+-- names in LoginForm MUST match the input `name` attrs.
+
+import Sky.Core.Prelude exposing (..)
+import Std.Ui as Ui
+import Std.Ui exposing (Element)
+import Std.Ui.Background as Background
+import Std.Ui.Border as Border
+import Std.Ui.Font as Font
+import Std.Ui.Region as Region
+import State exposing (..)
+
+
+loginView : Model -> Element Msg
+loginView model =
+    Ui.form
+        [ Ui.onSubmit DoSignIn ]
+        [ Ui.column
+            [ Ui.spacing 16
+            , Ui.padding 16
+            , Background.color (Ui.rgb 255 255 255)
+            , Border.rounded 4
+            , Ui.width (Ui.px 320)
+            ]
+            [ Ui.el [ Region.heading 2, Font.size 18, Font.bold ]
+                (Ui.text "Sign in")
+            , Ui.el [ Font.size 12, Font.color (Ui.rgb 100 100 100) ]
+                (Ui.text "Any non-empty username works — this demo doesn't really authenticate.")
+            , Ui.column [ Ui.spacing 4 ]
+                [ Ui.el [ Font.size 12 ] (Ui.text "Username")
+                , Ui.input
+                    [ Ui.htmlAttribute "type" "text"
+                    , Ui.name "username"
+                    , Border.width 1
+                    , Border.color (Ui.rgb 200 200 200)
+                    , Border.rounded 3
+                    , Ui.padding 6
+                    , Background.color (Ui.rgb 255 255 255)
+                    ]
+                ]
+            , Ui.column [ Ui.spacing 4 ]
+                [ Ui.el [ Font.size 12 ] (Ui.text "Password")
+                , Ui.input
+                    -- No `value` attr (don't round-trip the secret through
+                    -- DOM on re-render — kills password-manager re-prompts).
+                    -- No `onInput` (don't dispatch per keystroke — keeps the
+                    -- secret out of Model and the session store).
+                    [ Ui.htmlAttribute "type" "password"
+                    , Ui.name "password"
+                    , Border.width 1
+                    , Border.color (Ui.rgb 200 200 200)
+                    , Border.rounded 3
+                    , Ui.padding 6
+                    , Background.color (Ui.rgb 255 255 255)
+                    ]
+                ]
+            , if model.loginError == "" then
+                Ui.text ""
+              else
+                Ui.el [ Font.color (Ui.rgb 200 60 60), Font.size 12 ]
+                    (Ui.text model.loginError)
+            , Ui.input
+                -- Submit button rendered as <input type="submit"> so the
+                -- form's submit handler fires on click AND on Enter from
+                -- inside any field. (Plain Ui.button defaults to type=submit
+                -- inside a form too, but it would also trigger Ui.onClick
+                -- if attached — we want the submit pathway only.)
+                [ Ui.htmlAttribute "type" "submit"
+                , Ui.htmlAttribute "value" "sign in"
+                , Background.color (Ui.rgb 255 102 0)
+                , Font.color (Ui.rgb 255 255 255)
+                , Border.rounded 3
+                , Ui.padding 6
+                ]
+            ]
+        ]

@@ -944,7 +944,8 @@ func Basics_toString(v any) string {
 	return fmt.Sprintf("%v", derefPointer(unwrapAny(v)))
 }
 
-// Basics_errorToString — Elm-compat extractor for Result errors. Preserves
+// Basics_errorToString — Prelude extractor for Result errors (the
+// Elm Prelude exposes a function with the same name and shape). Preserves
 // String/error values verbatim, stringifies anything else. Registered as a
 // Prelude builtin (`errorToString`) so Sky programs can write:
 //   Result.mapError errorToString someResult
@@ -1634,6 +1635,14 @@ func Rem(a, b any) any {
 // `List.map id [1,2] == [1,2]`.
 func Eq(a, b any) any {
 	return deepEq(a, b)
+}
+
+// NotEq is the runtime helper for Sky's `/=` operator. Mirrors `Eq`
+// shape so the lowerer can route both `==` and `/=` through runtime
+// helpers — Go's native `!=` doesn't work on `any`-typed values
+// (Go generics with `T any` don't satisfy `comparable`).
+func NotEq(a, b any) any {
+	return !deepEq(a, b)
 }
 
 // isSkyADT reports whether v is a Sky-canonical ADT struct

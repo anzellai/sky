@@ -343,8 +343,9 @@ registry = Map.fromList
     , (("Http", "get"),           KernelInfo "rt.Http_get" 1 False)
     , (("Http", "post"),          KernelInfo "rt.Http_post" 2 False)
     -- Http.request takes a single record argument
-    -- `{ method, url, headers, body }` — the Elm-style API documented
-    -- in templates/CLAUDE.md. The Go runtime helper is variadic so it
+    -- `{ method, url, headers, body }` — record-argument API
+    -- documented in templates/CLAUDE.md (same shape as Elm's
+    -- `Http.request`). The Go runtime helper is variadic so it
     -- still accepts the legacy 4-positional call shape, but kernel
     -- arity 1 keeps call-site codegen emitting the record unchanged.
     , (("Http", "request"),       KernelInfo "rt.Http_request" 1 False)
@@ -439,6 +440,7 @@ registry = Map.fromList
     , (("Html", "header"),        KernelInfo "rt.Html_header" 2 False)
     , (("Html", "footer"),        KernelInfo "rt.Html_footer" 2 False)
     , (("Html", "main"),          KernelInfo "rt.Html_main" 2 False)
+    , (("Html", "aside"),         KernelInfo "rt.Html_aside" 2 False)
     , (("Html", "ul"),            KernelInfo "rt.Html_ul" 2 False)
     , (("Html", "ol"),            KernelInfo "rt.Html_ol" 2 False)
     , (("Html", "li"),            KernelInfo "rt.Html_li" 2 False)
@@ -465,6 +467,9 @@ registry = Map.fromList
     -- Std.Html.Attributes
     -- ═══════════════════════════════════════════════════════
     , (("Attr", "class"),         KernelInfo "rt.Attr_class" 1 False)
+    , (("Attr", "attribute"),     KernelInfo "rt.Attr_attribute" 2 False)
+    , (("Attr", "dataAttribute"), KernelInfo "rt.Attr_dataAttribute" 2 False)
+    , (("Attr", "boolAttribute"), KernelInfo "rt.Attr_boolAttribute" 1 False)
     , (("Attr", "id"),            KernelInfo "rt.Attr_id" 1 False)
     , (("Attr", "style"),         KernelInfo "rt.Attr_style" 1 False)
     , (("Attr", "type"),          KernelInfo "rt.Attr_type" 1 False)
@@ -545,6 +550,8 @@ registry = Map.fromList
     , (("Event", "onKeyUp"),      KernelInfo "rt.Event_onKeyUp" 1 False)
     , (("Event", "onFocus"),      KernelInfo "rt.Event_onFocus" 1 False)
     , (("Event", "onBlur"),       KernelInfo "rt.Event_onBlur" 1 False)
+    , (("Event", "onFile"),       KernelInfo "rt.Event_onFile" 1 False)
+    , (("Event", "onImage"),      KernelInfo "rt.Event_onImage" 1 False)
 
     -- ═══════════════════════════════════════════════════════
     -- Std.Sub

@@ -2,8 +2,8 @@
 
 **Context for the implementing session:** Sky's Go FFI wraps every
 call in `Result Error T` via `SkyFfiRecoverT` panic recovery. This
-is intentional — the FFI boundary is a trust boundary (like Elm's
-ports: you don't trust the other side). But four gaps exist where
+is intentional — the FFI boundary is a trust boundary (typed-airlock
+discipline: you don't trust the other side). But four gaps exist where
 Go's return patterns slip through without proper Sky-side typing.
 This prompt addresses all four, plus the docs that overstate
 coverage.
@@ -188,14 +188,14 @@ After implementing all four, update:
 
 4. `docs/ffi/ffi-design.md` — add a "Trust boundary" section
    explaining why all FFI returns Result: the boundary is untrusted
-   (like Elm ports), and the Result wrapping is intentional friction
-   to discourage unnecessary FFI and surface failures explicitly.
+   (typed-airlock discipline), and the Result wrapping is intentional
+   friction to discourage unnecessary FFI and surface failures explicitly.
 
 5. Add a `docs/ffi/boundary-philosophy.md` explaining:
    - Sky's stdlib is the preferred path (no Result tax)
    - Go FFI is the escape hatch (Result tax)
-   - The analogy: Elm ports (typed airlock to untrusted JS) =
-     Sky FFI (typed airlock to unchecked Go)
+   - The analogy: a typed-airlock FFI (e.g. Elm's ports — typed
+     airlock to untrusted JS) = Sky FFI (typed airlock to unchecked Go)
    - Why this is different from Rust's `unsafe` (Go isn't unsafe,
      it's just untyped from Sky's perspective)
 
@@ -239,7 +239,7 @@ All four items landed in commit `e1faa21` (2026-04-16).
 
 Docs + samples updated in the follow-up commit. New
 `docs/ffi/boundary-philosophy.md` explains the trust-boundary design
-(Elm ports analogy, Result vs Task, when to prefer stdlib).
+(typed-airlock analogy, Result vs Task, when to prefer stdlib).
 
 Verification (run before each commit in this work):
 - `bash scripts/example-sweep.sh --build-only` → 18/18

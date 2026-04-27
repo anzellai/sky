@@ -1,6 +1,12 @@
 {-# LANGUAGE RankNTypes #-}
 -- | Parser combinator library for Sky.
--- Inspired by Elm's Parse.Primitives but using Text for safety.
+--
+-- API shape inspired by elm/compiler's @Parse.Primitives@
+-- (Copyright © 2012–present Evan Czaplicki, BSD-3-Clause), but
+-- reimplemented in this codebase against `Text` rather than
+-- `ByteString`. See NOTICE.md at the repo root for the full
+-- attribution and licence text.
+--
 -- CPS-based for performance with explicit position tracking.
 module Sky.Parse.Primitives
     ( Parser(..)

@@ -2663,8 +2663,26 @@ collectFuncTypesWith extraRecAliases prefix canMod =
             _ -> Nothing
         bindings = goDecls (Can._decls canMod)
         results = mapMaybe extract bindings
-        paramMap = Map.fromList [ (qual, ps) | (qual, ps, _) <- results ]
-        retMap   = Map.fromList [ (qual, r)  | (qual, _, r) <- results ]
+        -- Auto-generated record constructors. `type alias Item = { id :
+        -- Int, name : String, tags : List String }` synthesises an
+        -- `Item : Int -> String -> List String -> Item_R` constructor at
+        -- elaboration time. The synthetic def is unannotated (a plain
+        -- Can.Def, not Can.TypedDef), so the typed-def loop above misses
+        -- it and `_cg_funcParamTypes[Item]` ends up empty — call sites
+        -- then skip coerceArg and ship `[]any{}` into a `[]string` slot,
+        -- breaking go build (Limitation #18 reproducer). Fix: emit the
+        -- ctor's param types directly from the alias's record body, in
+        -- declaration order (sorted by _fieldIndex per the auto-ctor's
+        -- positional API).
+        ctorResults =
+            [ (qualName aliasName, paramTys, qualName aliasName ++ "_R")
+            | (aliasName, alias) <- Map.toList (Can._aliases canMod)
+            , Rec.DataRecord fieldList <- [Rec.classifyAlias alias]
+            , let paramTys = map (safeReturnTypeWith knownRecAliases . snd) fieldList
+            ]
+        allResults = results ++ ctorResults
+        paramMap = Map.fromList [ (qual, ps) | (qual, ps, _) <- allResults ]
+        retMap   = Map.fromList [ (qual, r)  | (qual, _, r) <- allResults ]
     in (paramMap, retMap)
 
 
@@ -2765,7 +2783,27 @@ safeReturnTypeWith recAliases = go
                         | otherwise     -> case inner of
                             T.TRecord{} -> if null base then "any" else base
                             _           -> go inner
+        -- Function-typed slots (HOF params): render as `func(X) any`
+        -- to match what renderHofParamTy emits at signature time. The
+        -- tail return is always `any` for the same reason — see
+        -- renderHofParamTy's third branch (Sky lambdas can't preserve
+        -- a concrete return type, so the param shape stays widened).
+        -- Crucially, registering the param as `func(X) any` (rather
+        -- than the bare `any` fallback) gives `coerceArg` the func
+        -- prefix it needs to route typed call-site args (e.g. a
+        -- `Msg_X : func(string) Msg` constructor) through
+        -- `rt.Coerce[func(X) any]` — Go's function-type-no-covariance
+        -- rule otherwise rejects the assignment.
+        T.TLambda _ _ -> renderFuncTy t
         _ -> "any"
+      where
+        -- Curried multi-arg → nested `func(A) func(B) ...`. Tail
+        -- return widens to `any` regardless of the actual Sky type.
+        renderFuncTy (T.TLambda from to@T.TLambda{}) =
+            "func(" ++ go from ++ ") " ++ renderFuncTy to
+        renderFuncTy (T.TLambda from _to) =
+            "func(" ++ go from ++ ") any"
+        renderFuncTy other = go other
 
 
 -- | Index module decls by binding name so we can check annotations
@@ -2852,10 +2890,33 @@ splitInferredSigWithReg recAliases fieldIdx arity funcType =
         -- which neither Sky nor the FFI emits.
         paramTVars = uniq (concatMap tvarsInEmitted paramTys)
         numbered = zip paramTVars ["T" ++ show i | i <- [1::Int ..]]
-        typeParams = map snd numbered
-        paramStrs = map (renderHofParamTy recAliases fieldIdx numbered) paramTys
-        retStr = typeStrWithAliasesReg recAliases fieldIdx numbered retTy
-    in (typeParams, paramStrs, retStr)
+        paramStrsRaw = map (renderHofParamTy recAliases fieldIdx numbered) paramTys
+        retStrRaw = typeStrWithAliasesReg recAliases fieldIdx numbered retTy
+        -- A TVar that `tvarsInEmitted` flagged but never actually
+        -- appears in the rendered Go param/return strings produces
+        -- a phantom `[T1 any]` declaration that Go can't infer at
+        -- the call site (`cannot infer T1`). This happens for Sky-
+        -- defined ADTs whose emitted form is `Mod_Adt` regardless
+        -- of their type params (e.g. `Element msg` emits as
+        -- `Std_Ui_Element`). Keep only the TVars that survive
+        -- rendering.
+        renderedSig = unwords (retStrRaw : paramStrsRaw)
+        usedTypeParams =
+            [ goName
+            | (_, goName) <- numbered
+            , goName `appearsAsToken` renderedSig
+            ]
+        -- Re-render with only the surviving TVars in the numbered
+        -- map so unused-TVar slots fall back to `any` instead of a
+        -- phantom T_n that confuses Go's inference.
+        keptNumbered =
+            [ (skyName, goName)
+            | (skyName, goName) <- numbered
+            , goName `elem` usedTypeParams
+            ]
+        paramStrs = map (renderHofParamTy recAliases fieldIdx keptNumbered) paramTys
+        retStr = typeStrWithAliasesReg recAliases fieldIdx keptNumbered retTy
+    in (usedTypeParams, paramStrs, retStr)
   where
     collectParams 0 ty = ([], ty)
     collectParams n (T.TLambda from to) =
@@ -2865,6 +2926,45 @@ splitInferredSigWithReg recAliases fieldIdx arity funcType =
 
     uniq [] = []
     uniq (x:xs) = x : uniq (filter (/= x) xs)
+
+    -- A TVar token like "T1" must appear as a whole-word match (not
+    -- as a substring of, say, "T11" or "Sky_T1_helper"), so we check
+    -- for non-identifier characters on both sides.
+    appearsAsToken t s = goAppearsAsToken t s
+
+
+-- | Whole-token match: returns True iff `tok` appears in `s` not
+-- as a substring of a longer identifier. Used by
+-- `splitInferredSigWithReg` to decide whether a numbered type
+-- parameter (e.g. "T1") is actually referenced in the rendered Go
+-- signature — phantom params must be dropped because Go's generic
+-- inference can't pin them at the call site.
+--
+-- Implementation: walk position-by-position, checking that the char
+-- immediately before the match (or start-of-string) and the char
+-- immediately after the match (or end-of-string) are both non-
+-- identifier characters. Catches overlap like "T1" inside "T11" and
+-- "Sky_T1_helper".
+goAppearsAsToken :: String -> String -> Bool
+goAppearsAsToken tok s = go 0 s
+  where
+    n = length tok
+    sLen = length s
+    go _ [] = False
+    go i input
+        | i + n > sLen = False
+        | take n input == tok
+            && (i == 0 || not (isIdChar (s !! (i - 1))))
+            && (i + n == sLen || not (isIdChar (s !! (i + n))))
+            = True
+        | otherwise = case input of
+            []      -> False
+            (_:rest) -> go (i + 1) rest
+
+    isIdChar ch = ch == '_'
+                || (ch >= 'a' && ch <= 'z')
+                || (ch >= 'A' && ch <= 'Z')
+                || (ch >= '0' && ch <= '9')
 
 
 -- | Count how many times each TVar name appears in a type, classified
@@ -3117,6 +3217,18 @@ renderHofParamTy recAliases fieldIdx tvarMap ty = case ty of
         -- Bare TVar return: keep typed so Go can infer via call site.
         "func(" ++ go from ++ ") " ++ go to
     renderLambdaInner (T.TLambda from _to) =
+        -- Concrete-return HOF param sig stays `func(X) any` even when
+        -- the return is a real type like Msg or Result Error a. Reason:
+        -- Sky-side lambdas always lower to `func(any) any` (the lowerer
+        -- doesn't specialise lambda input/output types). A helper sig
+        -- of `func(X) Msg` would reject sky lambdas, and a sig of
+        -- `func(X) Result Error a` would reject typed Msg constructors
+        -- — Go has no function-type covariance. Keeping the sig at
+        -- `func(X) any` lets coerceArg's func branch route both shapes
+        -- through `rt.Coerce[func(X) any]`, which adapts via reflect.
+        -- See test/Sky/Build/CompileSpec.hs's "user-defined polymorphic
+        -- HOFs with Result-typed lambda params" test for the
+        -- regression that pinned this.
         "func(" ++ go from ++ ") any"
     renderLambdaInner other = go other
 
@@ -4323,8 +4435,11 @@ binopToGo op left right = case op of
     -- Cons operator
     "::" -> GoIr.GoCall (GoIr.GoQualified "rt" "List_cons") [exprToGo left, exprToGo right]
 
-    -- Not-equal
-    "/=" -> GoIr.GoBinary "!=" (exprToGo left) (exprToGo right)
+    -- Not-equal — runtime helper (Go's native `!=` doesn't work on
+    -- `any`-typed generic params; pre-fix this caused
+    -- `expected != actual (incomparable types in type set)` for
+    -- polymorphic helpers like Sky.Test.notEqual).
+    "/=" -> GoIr.GoCall (GoIr.GoQualified "rt" "NotEq") [exprToGo left, exprToGo right]
 
     -- Arithmetic operators — use runtime helpers for any-typed values
     "+"  -> GoIr.GoCall (GoIr.GoQualified "rt" "Add") [exprToGo left, exprToGo right]
@@ -4677,11 +4792,25 @@ patternCondition subject pat = case pat of
     -- was typed upstream. Before this, `case errs of [] -> ...` over
     -- a typed `[]Error` panicked with
     -- `interface {} is []Error, not []interface {}`.
-    Can.PCons _ _ ->
-        Just $ GoIr.GoBinary ">="
-            (GoIr.GoCall (GoIr.GoIdent "len")
-                [ GoIr.GoCall (GoIr.GoIdent "rt.AsList") [GoIr.GoIdent subject] ])
-            (GoIr.GoIntLit 1)
+    --
+    -- Plus: when the head pattern is a constructor or literal, we
+    -- ALSO emit a head-discriminator condition so the case arm only
+    -- fires when the head matches. Pre-fix, `(AttrDescribe d) :: _`
+    -- would fire for ANY non-empty list and then panic inside the
+    -- body when it tried to extract field 0 from a head that wasn't
+    -- AttrDescribe. The head-discriminator now joins the length
+    -- check via `&&`.
+    Can.PCons h t ->
+        let lenCond = GoIr.GoBinary ">="
+                (GoIr.GoCall (GoIr.GoIdent "len")
+                    [ GoIr.GoCall (GoIr.GoIdent "rt.AsList") [GoIr.GoIdent subject] ])
+                (GoIr.GoIntLit 1)
+            (A.At _ hPat) = h
+            (A.At _ tPat) = t
+            headCond = consHeadCondition subject hPat
+            tailCond = consTailCondition subject tPat
+            extras = [ c | Just c <- [headCond, tailCond] ]
+        in Just $ foldl (GoIr.GoBinary "&&") lenCond extras
 
     -- Fixed-length list: match exact length; element conditions handled in
     -- bindings below (codegen over-matches conservatively — strict element
@@ -4787,6 +4916,119 @@ argPatternCondition subject ctorName idx pat = case pat of
             Can.PBool b  -> Just (GoIr.GoBinary "==" (tagCast "bool")   (GoIr.GoBoolLit b))
             Can.PChr c   -> Just (GoIr.GoBinary "==" (tagCast "rune")   (GoIr.GoRuneLit c))
             _            -> Nothing
+
+
+-- | Discriminator condition for the head pattern of a `(h :: t)` cons.
+-- The cons-pattern itself only checks `len >= 1`; this function adds
+-- the head's narrowing condition so that, e.g., `(AttrDescribe d) ::
+-- _` only fires when the head's actual constructor is AttrDescribe.
+--
+-- Without this, the case body's bindings (which assume the head IS
+-- the matched constructor) would extract field 0 from a head that
+-- might be ANY value of the ADT — a `interface conversion: …` panic
+-- at runtime. Returns Nothing for catch-all heads (PVar, PAnything,
+-- PUnit) which don't narrow the match.
+consHeadCondition :: String -> Can.Pattern_ -> Maybe GoIr.GoExpr
+consHeadCondition subject pat =
+    let headRaw = "rt.AsList(" ++ subject ++ ")[0]"
+    in patternConditionForExpr headRaw pat
+
+
+-- | Same shape for the tail of a cons. Tail patterns are usually a
+-- variable or `_`, but `(_ :: y :: _)` etc would benefit. Returns
+-- Nothing for var/anything tails. The tail expression as a Go raw
+-- string is `any(rt.AsList(subject)[1:])` (matching the binding
+-- code's tail extraction).
+consTailCondition :: String -> Can.Pattern_ -> Maybe GoIr.GoExpr
+consTailCondition subject pat =
+    let tailRaw = "any(rt.AsList(" ++ subject ++ ")[1:])"
+    in patternConditionForExpr tailRaw pat
+
+
+-- | Build a discriminator condition where the subject is an arbitrary
+-- Go expression (raw string), not a bound variable. Mirrors the
+-- shape of `patternCondition` for the cases where the head/tail of
+-- a cons can carry a narrowing pattern. Used by `consHeadCondition`
+-- and `consTailCondition`.
+--
+-- Only handles the patterns that act as discriminators when nested
+-- inside a cons pattern: PCtor, PInt, PStr, PBool, PChr, and another
+-- PCons. PVar / PAnything / PUnit always match (Nothing). PTuple /
+-- PRecord / PList structure is guaranteed by HM (Nothing).
+patternConditionForExpr :: String -> Can.Pattern_ -> Maybe GoIr.GoExpr
+patternConditionForExpr subjectRaw pat = case pat of
+    Can.PAnything -> Nothing
+    Can.PVar _    -> Nothing
+    Can.PUnit     -> Nothing
+    Can.PTuple{}  -> Nothing
+    Can.PRecord _ -> Nothing
+
+    Can.PInt n ->
+        Just $ GoIr.GoBinary "=="
+            (GoIr.GoCall (GoIr.GoQualified "rt" "AsInt")
+                [GoIr.GoRaw subjectRaw])
+            (GoIr.GoIntLit n)
+
+    Can.PStr s ->
+        Just $ GoIr.GoBinary "=="
+            (GoIr.GoCall (GoIr.GoQualified "rt" "AsString")
+                [GoIr.GoRaw subjectRaw])
+            (GoIr.GoStringLit s)
+
+    Can.PBool b ->
+        Just $ GoIr.GoBinary "=="
+            (GoIr.GoCall (GoIr.GoQualified "rt" "AsBool")
+                [GoIr.GoRaw subjectRaw])
+            (GoIr.GoBoolLit b)
+
+    Can.PChr c ->
+        Just $ GoIr.GoBinary "=="
+            (GoIr.GoTypeAssert
+                (GoIr.GoCall (GoIr.GoIdent "any") [GoIr.GoRaw subjectRaw])
+                "rune")
+            (GoIr.GoRuneLit c)
+
+    Can.PCtor _home _typeName union _ctorName ctorIdx _args ->
+        case Can._u_opts union of
+            Can.Enum ->
+                -- Enum (zero-arg ADT): use rt.EnumTagIs which tolerates
+                -- both Sky-side typed-int and rt.SkyADT-shaped values.
+                Just $ GoIr.GoCall
+                    (GoIr.GoQualified "rt" "EnumTagIs")
+                    [ GoIr.GoRaw subjectRaw
+                    , GoIr.GoIntLit ctorIdx
+                    ]
+            _ ->
+                -- Tagged ADT: read .Tag via the rt.AdtTag helper which
+                -- accepts any-typed inputs and routes through
+                -- reflection if needed (so this works whether the head
+                -- value is Sky-side typed or any-boxed at runtime).
+                Just $ GoIr.GoBinary "=="
+                    (GoIr.GoCall (GoIr.GoQualified "rt" "AdtTag")
+                        [GoIr.GoCall (GoIr.GoIdent "any") [GoIr.GoRaw subjectRaw]])
+                    (GoIr.GoIntLit ctorIdx)
+
+    Can.PCons _ _ ->
+        -- Nested cons (e.g. `(_ :: _) :: _`): the inner needs at
+        -- least one element of its own. Only emit the length check —
+        -- deeper recursion would need more plumbing and the common
+        -- pattern is single-level.
+        Just $ GoIr.GoBinary ">="
+            (GoIr.GoCall (GoIr.GoIdent "len")
+                [ GoIr.GoCall (GoIr.GoQualified "rt" "AsList")
+                    [GoIr.GoRaw subjectRaw] ])
+            (GoIr.GoIntLit 1)
+
+    Can.PList xs ->
+        Just $ GoIr.GoBinary "=="
+            (GoIr.GoCall (GoIr.GoIdent "len")
+                [ GoIr.GoCall (GoIr.GoQualified "rt" "AsList")
+                    [GoIr.GoRaw subjectRaw] ])
+            (GoIr.GoIntLit (length xs))
+
+    Can.PAlias inner _ ->
+        let (A.At _ innerPat) = inner
+        in patternConditionForExpr subjectRaw innerPat
 
 
 -- | Generate Go variable bindings from a pattern
@@ -5209,7 +5451,7 @@ typedBinop types retType op left right = case op of
             in if retType == "string"
                then GoIr.GoTypeAssert concatExpr "string"
                else concatExpr
-    "/=" -> GoIr.GoBinary "!=" (exprToGoTyped types retType left) (exprToGoTyped types retType right)
+    "/=" -> GoIr.GoCall (GoIr.GoQualified "rt" "NotEq") [exprToGoTyped types retType left, exprToGoTyped types retType right]
     _ -> GoIr.GoBinary op (exprToGoTyped types retType left) (exprToGoTyped types retType right)
 
 

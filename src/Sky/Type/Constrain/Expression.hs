@@ -297,9 +297,21 @@ constrainLambda counter env region params body expected = do
     paramTypes <- mapM (\_ -> do n <- freshName counter "_larg"; return (T.TVar n)) params
     resultName <- freshName counter "_lres"
     let resultType = T.TVar resultName
-        paramBindings = concatMap patternBindings (zip params paramTypes)
-        bodyEnv = foldr (\(n, ann) e -> Map.insert n ann e) env paramBindings
         funcType = foldr T.TLambda resultType paramTypes
+    -- Generate per-pattern bindings AND structural constraints in IO
+    -- so we can mint fresh element-type names for tuple/cons/list
+    -- patterns. Pre-fix this used a non-IO `patternBindings` that bound
+    -- tuple elements to static names (`_tup_0`, `_tup_1`, ...). Those
+    -- names collapsed via the solver's `_varCache` so multiple tuple
+    -- destructures in the same definition shared element types,
+    -- breaking expressions like
+    --     List.filterMap (\(name, r) -> ...)
+    --         |> List.map (\(name, msg) -> ...)
+    -- with `Type mismatch: String vs R`.
+    perParam <- mapM (uncurry (patternBindingsIO counter)) (zip params paramTypes)
+    let paramBindings = concatMap fst perParam
+        structuralCons = concatMap snd perParam
+        bodyEnv = foldr (\(n, ann) e -> Map.insert n ann e) env paramBindings
     bodyCon <- constrain counter bodyEnv body (T.NoExpectation resultType)
     -- Wrap body in CLet so param names are scoped. Without this the solver's
     -- runtime _env leaks lambda params (or pattern names) into whatever
@@ -309,7 +321,7 @@ constrainLambda counter env region params body expected = do
             [ (pname, (A.one, ptype))
             | (pname, T.Forall _ ptype) <- paramBindings
             ]
-        bodyScoped = T.CLet [] [] paramHeader T.CTrue bodyCon
+        bodyScoped = T.CLet [] [] paramHeader (T.CAnd structuralCons) bodyCon
     return $ T.CAnd [bodyScoped, T.CEqual region T.CLambda funcType expected]
 
 
@@ -677,6 +689,89 @@ patternBindings (A.At _ pat, ty) = case pat of
             patternBindings (argPat, argType)) args
 
 
+-- | IO variant of `patternBindings` that mints FRESH unification-
+-- variable names for structural patterns (tuple, cons, list) rather
+-- than reusing static names (`_tup_0`, `_tup_1`). The static-name
+-- form was buggy: multiple tuple destructures in the same
+-- definition collapsed via the solver's `_varCache`, so `(name, r)`
+-- and `(name, msg)` from sibling lambdas would share element type
+-- variables. Returns both the bindings AND the structural
+-- constraints that tie the outer `ty` to the structure of the
+-- pattern (so HM unifies tuple-pattern elements with the outer
+-- tuple type's element vars).
+--
+-- Used by `constrainLambda` for lambda parameters; the case-pattern
+-- path uses `instantiatePattern` instead which already takes the
+-- counter and emits constraints inline.
+patternBindingsIO :: Counter -> Can.Pattern -> T.Type -> IO ([(String, T.Annotation)], [T.Constraint])
+patternBindingsIO counter (A.At region pat) ty = case pat of
+    Can.PVar name ->
+        return ([(name, T.Forall [] ty)], [])
+
+    Can.PAnything ->
+        return ([], [])
+
+    Can.PAlias inner name -> do
+        (bs, cs) <- patternBindingsIO counter inner ty
+        return ((name, T.Forall [] ty) : bs, cs)
+
+    Can.PRecord fields ->
+        -- Records still use static field-name vars; not in the
+        -- collapse path because the names are field-derived not
+        -- positional. (Matching field names IS the discriminator.)
+        return (map (\f -> (f, T.Forall [] (T.TVar ("_rec_" ++ f)))) fields, [])
+
+    Can.PUnit ->
+        return ([], [])
+
+    Can.PTuple a b more -> do
+        -- Mint a fresh element-type name per tuple element. The
+        -- structural constraint `ty == TTuple v0 v1 [v2..]` ties
+        -- the outer ty to the freshly-built tuple shape, so the
+        -- solver fills in v0..vN from whatever ty resolves to.
+        v0 <- T.TVar <$> freshName counter "_tup"
+        v1 <- T.TVar <$> freshName counter "_tup"
+        vs <- mapM (\_ -> T.TVar <$> freshName counter "_tup") more
+        let outerCon = T.CEqual region T.CRecord (T.TTuple v0 v1 vs) (T.NoExpectation ty)
+        (bsA, csA) <- patternBindingsIO counter a v0
+        (bsB, csB) <- patternBindingsIO counter b v1
+        innerPairs <- mapM (\(p, t) -> patternBindingsIO counter p t) (zip more vs)
+        let innerBs = concatMap fst innerPairs
+            innerCs = concatMap snd innerPairs
+        return (bsA ++ bsB ++ innerBs, outerCon : csA ++ csB ++ innerCs)
+
+    Can.PList items -> do
+        -- Mint a fresh element-type name and tie ty to List elem.
+        elemTy <- T.TVar <$> freshName counter "_list_elem"
+        let listTy = T.TType ModuleName.list "List" [elemTy]
+            outerCon = T.CEqual region T.CList listTy (T.NoExpectation ty)
+        innerPairs <- mapM (\item -> patternBindingsIO counter item elemTy) items
+        let innerBs = concatMap fst innerPairs
+            innerCs = concatMap snd innerPairs
+        return (innerBs, outerCon : innerCs)
+
+    Can.PCons h t -> do
+        elemTy <- T.TVar <$> freshName counter "_cons_elem"
+        let listTy = T.TType ModuleName.list "List" [elemTy]
+            outerCon = T.CEqual region T.CList listTy (T.NoExpectation ty)
+        (bsH, csH) <- patternBindingsIO counter h elemTy
+        (bsT, csT) <- patternBindingsIO counter t listTy
+        return (bsH ++ bsT, outerCon : csH ++ csT)
+
+    Can.PBool _ -> return ([], [])
+    Can.PChr _  -> return ([], [])
+    Can.PStr _  -> return ([], [])
+    Can.PInt _  -> return ([], [])
+
+    Can.PCtor _home _typeName _union ctorName _idx args -> do
+        -- The constructor's arg types come from the canonicaliser
+        -- (already concrete), so no fresh-name minting needed —
+        -- just recurse.
+        argPairs <- mapM (\(Can.PatternCtorArg _ argType argPat) ->
+            patternBindingsIO counter argPat argType) args
+        return (concatMap fst argPairs, concatMap snd argPairs)
+
+
 -- ═══════════════════════════════════════════════════════════
 -- HELPERS
 -- ═══════════════════════════════════════════════════════════
@@ -969,6 +1064,12 @@ lookupKernelType modName funcName = case (modName, funcName) of
         Just $ T.Forall [] (T.TLambda attrListType (T.TLambda vnodeListType vnodeType))
     -- Attr kernel functions
     ("Attr", "class") ->
+        Just $ T.Forall [] (T.TLambda stringType attrType)
+    ("Attr", "attribute") ->
+        Just $ T.Forall [] (T.TLambda stringType (T.TLambda stringType attrType))
+    ("Attr", "dataAttribute") ->
+        Just $ T.Forall [] (T.TLambda stringType (T.TLambda stringType attrType))
+    ("Attr", "boolAttribute") ->
         Just $ T.Forall [] (T.TLambda stringType attrType)
     ("Attr", "id") ->
         Just $ T.Forall [] (T.TLambda stringType attrType)
@@ -1418,6 +1519,155 @@ lookupKernelType modName funcName = case (modName, funcName) of
         Just $ T.Forall [] (T.TLambda floatType intType)
     ("Math", "pi") ->
         Just $ T.Forall [] floatType
+    -- Math (additional bare-type sigs landed 2026-04-27 — Limitation
+    -- #16 mechanical sweep). All return Float; runtime wraps math.X
+    -- with AsFloat coercion of the input.
+    ("Math", "e") ->
+        Just $ T.Forall [] floatType
+    ("Math", "log") ->
+        Just $ T.Forall [] (T.TLambda floatType floatType)
+    ("Math", "sin") ->
+        Just $ T.Forall [] (T.TLambda floatType floatType)
+    ("Math", "cos") ->
+        Just $ T.Forall [] (T.TLambda floatType floatType)
+    ("Math", "tan") ->
+        Just $ T.Forall [] (T.TLambda floatType floatType)
+
+    -- Char — pure character predicates and case helpers. Char arg
+    -- in, Bool / String out per the runtime's `unicode.Is*` and
+    -- `string(unicode.To*(...))` shapes.
+    ("Char", "isAlpha") ->
+        Just $ T.Forall [] (T.TLambda charType boolType)
+    ("Char", "isDigit") ->
+        Just $ T.Forall [] (T.TLambda charType boolType)
+    ("Char", "isLower") ->
+        Just $ T.Forall [] (T.TLambda charType boolType)
+    ("Char", "isUpper") ->
+        Just $ T.Forall [] (T.TLambda charType boolType)
+    ("Char", "toLower") ->
+        -- Runtime returns `string(unicode.ToLower(...))` (a 1-rune
+        -- Go string). Sig as `Char -> String` to match exactly.
+        Just $ T.Forall [] (T.TLambda charType stringType)
+    ("Char", "toUpper") ->
+        Just $ T.Forall [] (T.TLambda charType stringType)
+
+    -- Crypto — pure hash + MAC helpers. All return hex-encoded
+    -- String at runtime (`hex.EncodeToString(...)`).
+    ("Crypto", "sha256") ->
+        Just $ T.Forall [] (T.TLambda stringType stringType)
+    ("Crypto", "sha512") ->
+        Just $ T.Forall [] (T.TLambda stringType stringType)
+    ("Crypto", "md5") ->
+        Just $ T.Forall [] (T.TLambda stringType stringType)
+    ("Crypto", "hmacSha256") ->
+        Just $ T.Forall []
+            (T.TLambda stringType (T.TLambda stringType stringType))
+    ("Crypto", "constantTimeEqual") ->
+        Just $ T.Forall []
+            (T.TLambda stringType (T.TLambda stringType boolType))
+
+    -- Path — pure filesystem-path manipulation. All operate on
+    -- String paths.
+    ("Path", "base") ->
+        Just $ T.Forall [] (T.TLambda stringType stringType)
+    ("Path", "dir") ->
+        Just $ T.Forall [] (T.TLambda stringType stringType)
+    ("Path", "ext") ->
+        Just $ T.Forall [] (T.TLambda stringType stringType)
+    ("Path", "isAbsolute") ->
+        Just $ T.Forall [] (T.TLambda stringType boolType)
+
+    -- Time — format helpers (parsing helpers stay un-kernelled
+    -- because they return Result Error Time, which intersects
+    -- with the dangerous-class sigs already covered).
+    ("Time", "format") ->
+        Just $ T.Forall []
+            (T.TLambda stringType (T.TLambda intType stringType))
+    ("Time", "formatHTTP") ->
+        Just $ T.Forall [] (T.TLambda intType stringType)
+    ("Time", "formatISO8601") ->
+        Just $ T.Forall [] (T.TLambda intType stringType)
+    ("Time", "formatRFC3339") ->
+        Just $ T.Forall [] (T.TLambda intType stringType)
+    ("Time", "addMillis") ->
+        Just $ T.Forall []
+            (T.TLambda intType (T.TLambda intType intType))
+    ("Time", "diffMillis") ->
+        Just $ T.Forall []
+            (T.TLambda intType (T.TLambda intType intType))
+
+    -- Css — additional length / transform / value helpers. All
+    -- return String (Sprintf-formatted CSS values). Skip helpers
+    -- that return opaque `cssRule` / `cssProp` / `cssMediaRule`
+    -- structs (those need the typed-codegen runtime port — see
+    -- "Typed Codegen TODO" in CLAUDE.md). Polymorphic `a` arg
+    -- mirrors the existing Css.px / Css.rem convention.
+    ("Css", "vh") ->
+        Just $ T.Forall ["a"] (T.TLambda (T.TVar "a") stringType)
+    ("Css", "vw") ->
+        Just $ T.Forall ["a"] (T.TLambda (T.TVar "a") stringType)
+    ("Css", "ch") ->
+        Just $ T.Forall ["a"] (T.TLambda (T.TVar "a") stringType)
+    ("Css", "fr") ->
+        Just $ T.Forall ["a"] (T.TLambda (T.TVar "a") stringType)
+    ("Css", "deg") ->
+        Just $ T.Forall ["a"] (T.TLambda (T.TVar "a") stringType)
+    ("Css", "ms") ->
+        Just $ T.Forall ["a"] (T.TLambda (T.TVar "a") stringType)
+    ("Css", "sec") ->
+        Just $ T.Forall ["a"] (T.TLambda (T.TVar "a") stringType)
+    ("Css", "rotate") ->
+        Just $ T.Forall ["a"] (T.TLambda (T.TVar "a") stringType)
+    ("Css", "scale") ->
+        Just $ T.Forall ["a"] (T.TLambda (T.TVar "a") stringType)
+    ("Css", "translateX") ->
+        Just $ T.Forall ["a"] (T.TLambda (T.TVar "a") stringType)
+    ("Css", "translateY") ->
+        Just $ T.Forall ["a"] (T.TLambda (T.TVar "a") stringType)
+    ("Css", "calc") ->
+        -- calc(a op b) — three string-printable args.
+        Just $ T.Forall ["a", "b", "c"]
+            (T.TLambda (T.TVar "a")
+                (T.TLambda (T.TVar "b")
+                    (T.TLambda (T.TVar "c") stringType)))
+    ("Css", "minmax") ->
+        Just $ T.Forall ["a", "b"]
+            (T.TLambda (T.TVar "a")
+                (T.TLambda (T.TVar "b") stringType))
+    ("Css", "repeat") ->
+        Just $ T.Forall ["a", "b"]
+            (T.TLambda (T.TVar "a")
+                (T.TLambda (T.TVar "b") stringType))
+    ("Css", "cssVar") ->
+        Just $ T.Forall [] (T.TLambda stringType stringType)
+    ("Css", "cssVarOr") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda stringType (T.TLambda (T.TVar "a") stringType))
+    -- Css zero-arg constants — per CLAUDE.md Limitation #13 these
+    -- take `()` from Sky to sidestep zero-arity memoisation. Sig
+    -- as `() -> String` so the codegen sees the right shape.
+    ("Css", "zero") ->
+        Just $ T.Forall [] (T.TLambda T.TUnit stringType)
+    ("Css", "borderBox") ->
+        Just $ T.Forall [] (T.TLambda T.TUnit stringType)
+    ("Css", "systemFont") ->
+        Just $ T.Forall [] (T.TLambda T.TUnit stringType)
+
+    -- String — additional pure helpers
+    ("String", "casefold") ->
+        Just $ T.Forall [] (T.TLambda stringType stringType)
+    ("String", "equalFold") ->
+        Just $ T.Forall []
+            (T.TLambda stringType (T.TLambda stringType boolType))
+    ("String", "isEmail") ->
+        Just $ T.Forall [] (T.TLambda stringType boolType)
+    ("String", "isUrl") ->
+        Just $ T.Forall [] (T.TLambda stringType boolType)
+    ("String", "trimEnd") ->
+        Just $ T.Forall [] (T.TLambda stringType stringType)
+    ("String", "trimStart") ->
+        Just $ T.Forall [] (T.TLambda stringType stringType)
+
     -- String — additional
     ("String", "concat") ->
         Just $ T.Forall []
@@ -2422,6 +2672,103 @@ lookupKernelType modName funcName = case (modName, funcName) of
             (T.TLambda stringType
                 (T.TLambda (T.TType (ModuleName.Canonical "") "Request" [])
                     (T.TType ModuleName.maybe_ "Maybe" [stringType])))
+
+    -- ─── Limitation #16 dangerous-class kernel sigs ───────────────
+    -- Closing the 9 (now 10 after v0.10.0 renames) gaps from
+    -- CLAUDE.md "Some kernel functions still missing HM type
+    -- signatures". These return Maybe/Result/Task wrappers OR
+    -- opaque FFI types (Route, Handler, HttpResponse, Decoder); the
+    -- gap caused user code that pattern-matched the wrapper to
+    -- silently degrade to `any`, which downstream surfaced as
+    -- runtime panics like `rt.AsBool: expected bool, got
+    -- rt.SkyResult[…]`. Each entry below mirrors the exact return
+    -- shape of the matching `runtime-go/rt/*.go` helper.
+
+    -- Server.static : String -> String -> Route
+    -- Runtime: returns SkyRoute (struct). Same opaque-Route encoding
+    -- as Server.get / Live.route.
+    ("Server", "static") ->
+        Just $ T.Forall []
+            (T.TLambda stringType
+                (T.TLambda stringType
+                    (T.TType (ModuleName.Canonical "") "Route" [])))
+
+    -- Sky.Http.Middleware.* — all take a Handler and decorate it
+    -- with extra behaviour (CORS preflight, request logging, basic
+    -- auth, rate limit). All return Handler so they compose via
+    -- `withCors origins (withLogging baseHandler)`.
+    ("Middleware", "withCors") ->
+        Just $ T.Forall []
+            (T.TLambda (T.TType ModuleName.list "List" [stringType])
+                (T.TLambda (T.TType (ModuleName.Canonical "") "Handler" [])
+                    (T.TType (ModuleName.Canonical "") "Handler" [])))
+    ("Middleware", "withLogging") ->
+        Just $ T.Forall []
+            (T.TLambda (T.TType (ModuleName.Canonical "") "Handler" [])
+                (T.TType (ModuleName.Canonical "") "Handler" []))
+    ("Middleware", "withBasicAuth") ->
+        Just $ T.Forall []
+            (T.TLambda stringType
+                (T.TLambda stringType
+                    (T.TLambda (T.TType (ModuleName.Canonical "") "Handler" [])
+                        (T.TType (ModuleName.Canonical "") "Handler" []))))
+    ("Middleware", "withRateLimit") ->
+        Just $ T.Forall []
+            (T.TLambda stringType
+                (T.TLambda intType
+                    (T.TLambda intType
+                        (T.TLambda (T.TType (ModuleName.Canonical "") "Handler" [])
+                            (T.TType (ModuleName.Canonical "") "Handler" [])))))
+
+    -- Sky.Http (kernel mod "Http") — both return Task Error
+    -- HttpResponse (Task-everywhere doctrine since v0.10.0).
+    -- HttpResponse is opaque; users read its fields via Std.Http
+    -- helpers (statusCode/body/header) — those land in #26 batch.
+    ("Http", "get") ->
+        Just $ T.Forall []
+            (T.TLambda stringType
+                (T.TType ModuleName.task "Task"
+                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                    , T.TType (ModuleName.Canonical "") "HttpResponse" []]))
+    ("Http", "post") ->
+        Just $ T.Forall []
+            (T.TLambda stringType
+                (T.TLambda stringType
+                    (T.TType ModuleName.task "Task"
+                        [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                        , T.TType (ModuleName.Canonical "") "HttpResponse" []])))
+
+    -- Json.Decode.map4 extends the existing map2/map3 series.
+    ("JsonDec", "map4") ->
+        Just $ T.Forall ["a", "b", "c", "d", "e"]
+            (T.TLambda (T.TLambda (T.TVar "a")
+                (T.TLambda (T.TVar "b")
+                    (T.TLambda (T.TVar "c")
+                        (T.TLambda (T.TVar "d") (T.TVar "e")))))
+                (T.TLambda (decoderOf (T.TVar "a"))
+                    (T.TLambda (decoderOf (T.TVar "b"))
+                        (T.TLambda (decoderOf (T.TVar "c"))
+                            (T.TLambda (decoderOf (T.TVar "d"))
+                                (decoderOf (T.TVar "e")))))))
+
+    -- Json.Decode.Pipeline.custom : JsonDecoder a -> JsonDecoder
+    -- (a -> b) -> JsonDecoder b. Same shape as JsonDecP.required
+    -- but the first arg is a Decoder rather than a field name.
+    ("JsonDecP", "custom") ->
+        Just $ T.Forall ["a", "b"]
+            (T.TLambda (decoderOf (T.TVar "a"))
+                (T.TLambda (decoderOf (T.TLambda (T.TVar "a") (T.TVar "b")))
+                    (decoderOf (T.TVar "b"))))
+
+    -- Json.Decode.Pipeline.requiredAt : List String -> JsonDecoder
+    -- a -> JsonDecoder (a -> b) -> JsonDecoder b. Like `required`
+    -- but takes a path (list of nested keys).
+    ("JsonDecP", "requiredAt") ->
+        Just $ T.Forall ["a", "b"]
+            (T.TLambda (T.TType ModuleName.list "List" [stringType])
+                (T.TLambda (decoderOf (T.TVar "a"))
+                    (T.TLambda (decoderOf (T.TLambda (T.TVar "a") (T.TVar "b")))
+                        (decoderOf (T.TVar "b")))))
 
     _ -> Nothing
 

@@ -207,3 +207,65 @@ spec = do
                         Just payload -> do
                             let msgs = diagnosticMessages payload
                             msgs `shouldBe` []
+
+        it "TEA with Live.app: LSP suppresses no-externals false-positive" $ do
+            -- The LSP's runPipeline calls the no-externals variant
+            -- of the constraint generator, so cross-module record
+            -- kernel sigs (notably `Live.app`) false-positive with
+            -- `Type mismatch: { ... } vs { ... }`. Until the proper
+            -- externals helper lands, the LSP heuristically
+            -- suppresses these (`isLikelyExternalsFalsePositive`)
+            -- so users editing TEA apps don't see phantom errors
+            -- that `sky check` doesn't report.
+            sky <- findSky
+            let src = unlines
+                    [ "module Main exposing (main)"
+                    , ""
+                    , "import Sky.Core.Prelude exposing (..)"
+                    , "import Std.Cmd as Cmd"
+                    , "import Std.Sub as Sub"
+                    , "import Std.Live exposing (app)"
+                    , "import Std.Log exposing (println)"
+                    , ""
+                    , "type alias Model = { count : Int }"
+                    , "type Msg = Tick"
+                    , ""
+                    , "init : a -> ( Model, Cmd Msg )"
+                    , "init _ ="
+                    , "    ( { count = 0 }, Cmd.none )"
+                    , ""
+                    , "update : Msg -> Model -> ( Model, Cmd Msg )"
+                    , "update msg model ="
+                    , "    ( model, Cmd.none )"
+                    , ""
+                    , "view : Model -> any"
+                    , "view _ = \"hi\""
+                    , ""
+                    , "subscriptions _ = Sub.none"
+                    , ""
+                    , "main ="
+                    , "    app"
+                    , "        { init = init"
+                    , "        , update = update"
+                    , "        , view = view"
+                    , "        , subscriptions = subscriptions"
+                    , "        , routes = []"
+                    , "        , notFound = ()"
+                    , "        }"
+                    ]
+            withSystemTempDirectory "sky-lsp-tea-app" $ \dir -> do
+                fixture <- setupProject dir src
+                withLsp sky $ \hin hout -> do
+                    initializeLsp hin hout
+                    didOpen hin fixture src
+                    result <- awaitNotification hout "textDocument/publishDiagnostics"
+                    case result of
+                        Nothing -> expectationFailure
+                            "no publishDiagnostics on TEA-app file"
+                        Just payload -> do
+                            let msgs = diagnosticMessages payload
+                            -- The `{ ... } vs { ... }` heuristic
+                            -- catches this; LSP shows no errors.
+                            -- (For authoritative diagnostics users
+                            -- should run `sky check` — same as today.)
+                            msgs `shouldBe` []

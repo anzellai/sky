@@ -23,13 +23,13 @@ viewAbout model =
                          "This application is a production-grade example built with "
                    , strong [] [text "Sky"]
                    , text
-                         " -- an Elm-inspired programming language that compiles to Go."
+                         " -- a pure-functional, ML-family programming language that compiles to Go."
                    ]
              , h2 [] [text "Built with Sky"]
              , p
                    []
                    [text
-                       "Sky combines the safety and elegance of Elm's type system with Go's performance and ecosystem. This app demonstrates:"]
+                       "Sky combines the safety of Hindley-Milner type inference with Go's performance and ecosystem. This app demonstrates:"]
              , ul
                    []
                    [ li
@@ -52,7 +52,7 @@ viewAbout model =
                          ]
                    , li
                          []
-                         [ strong [] [text "The Elm Architecture (TEA)"]
+                         [ strong [] [text "TEA — model / update / view / subscriptions"]
                          , text
                                " -- Predictable state management with Model, Msg, init, update, and view."
                          ]

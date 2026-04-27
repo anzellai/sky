@@ -1,0 +1,65 @@
+module Std.Ui.Responsive exposing (DeviceClass, classifyDevice, deviceClassToString, mobile, tablet, desktop, bigDesktop)
+
+-- Std.Ui.Responsive — device-class detection + breakpoint helpers.
+--
+-- Pass the viewport width + height, get back a DeviceClass that
+-- user code branches on to pick the right layout.
+--
+-- Default breakpoints (industry-standard CSS media-query cuts):
+--   width <  600   → Phone        (mobile)
+--   width <  1200  → Tablet
+--   width <  1920  → Desktop
+--   width >= 1920  → BigDesktop
+--
+-- Sky.Live apps typically read the viewport from a window-size
+-- subscription (Sub.windowSize) and stash it in the model; the
+-- view passes width into classifyDevice once and dispatches.
+
+import Sky.Core.Prelude exposing (..)
+
+
+type DeviceClass
+    = Phone
+    | Tablet
+    | Desktop
+    | BigDesktop
+
+
+classifyDevice : { width : Int, height : Int } -> DeviceClass
+classifyDevice viewport =
+    if viewport.width < 600 then
+        Phone
+    else if viewport.width < 1200 then
+        Tablet
+    else if viewport.width < 1920 then
+        Desktop
+    else
+        BigDesktop
+
+
+-- Stable string tags useful for switch-style dispatch in user code
+-- when pattern-matching the ADT directly is awkward (e.g. inside a
+-- record-update where you want to set a `class` based on the
+-- device).
+deviceClassToString : DeviceClass -> String
+deviceClassToString d =
+    case d of
+        Phone      -> "phone"
+        Tablet     -> "tablet"
+        Desktop    -> "desktop"
+        BigDesktop -> "big-desktop"
+
+
+-- Bare-value constants — for shorter call sites when comparing
+-- against a known class without a full case.
+mobile : DeviceClass
+mobile = Phone
+
+tablet : DeviceClass
+tablet = Tablet
+
+desktop : DeviceClass
+desktop = Desktop
+
+bigDesktop : DeviceClass
+bigDesktop = BigDesktop

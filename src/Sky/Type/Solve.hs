@@ -1,7 +1,14 @@
 -- | Constraint solver for Sky's Hindley-Milner type inference.
--- Walks the constraint tree, unifying types via UnionFind.
--- Uses a TVar name cache to share UF variables for the same type variable name.
--- Adapted from Elm's Type.Solve.
+--
+-- Derivative work adapted from elm/compiler's @Type.Solve@
+-- (Copyright © 2012–present Evan Czaplicki, BSD-3-Clause). See
+-- NOTICE.md at the repo root for the full attribution and licence
+-- text.
+--
+-- Walks the constraint tree, unifying types via UnionFind. Uses a
+-- TVar name cache to share UF variables for the same type variable
+-- name. The defensive solver-step bound (`SKY_SOLVER_BUDGET`) is a
+-- Sky-specific addition not present upstream.
 module Sky.Type.Solve
     ( solve
     , solveWithLocals
@@ -20,6 +27,8 @@ import qualified Sky.Type.UnionFind as UF
 import qualified Sky.Type.Unify as Unify
 import qualified Sky.Sky.ModuleName as ModuleName
 import qualified Sky.Reporting.Annotation as A
+import System.Environment (lookupEnv)
+import Text.Read (readMaybe)
 
 
 -- | Emit a "LINE:COL:" prefix for error messages so downstream consumers
@@ -57,7 +66,83 @@ data SolverState = SolverState
       -- which is also innermost; both agree on "index 0" for the
       -- shadowed case. For a single binding (no shadowing) the
       -- list has one element regardless.
+    , _solverSteps :: !(IORef Int)
+      -- Solver-step counter for the defensive bound (Limitation #17
+      -- hardening). Incremented by `bumpSolverStep` at the top of
+      -- every `solveHelp` invocation. When the count exceeds
+      -- `_solverBudget`, the solver short-circuits with a clear
+      -- TYPE ERROR rather than letting the constraint explosion
+      -- consume unbounded heap. The counter is global per `solve`
+      -- call (reset to 0 on each entry); legitimate large modules
+      -- consume well under 100K steps; the explosion path consumes
+      -- millions before OOMing.
+    , _solverBudget :: !Int
+      -- Hard cap on _solverSteps. Defaults to defaultSolverBudget
+      -- (5,000,000), overridable via the `SKY_SOLVER_BUDGET` env
+      -- var. Set to 0 to disable the bound entirely (debug only —
+      -- DO NOT ship without the bound; that's what Limitation #17
+      -- showed can OOM the host).
     }
+
+
+-- | Default cap on solver steps before bailing with a defensive
+-- TYPE ERROR. 5,000,000 is ~50x the largest legitimate Std.Ui-
+-- heavy module measured (heap-bound-fence.sky post-fix uses well under
+-- 100K steps); the broken-stdlib reproducer hit millions before
+-- exhausting 4-5 GB of heap.
+defaultSolverBudget :: Int
+defaultSolverBudget = 5000000
+
+
+-- | Read SKY_SOLVER_BUDGET from the environment, falling back to
+-- the default. Invalid values (non-numeric, negative) silently
+-- fall back; not worth aborting on a misconfigured env var.
+readSolverBudget :: IO Int
+readSolverBudget = do
+    s <- lookupEnv "SKY_SOLVER_BUDGET"
+    return $ case s >>= readMaybe of
+        Just n | n >= 0 -> n
+        _               -> defaultSolverBudget
+
+
+-- | Increment the solver-step counter. Returns Just errMsg when
+-- the budget is exceeded (caller MUST short-circuit and propagate
+-- the error up the constraint tree); returns Nothing when there's
+-- still budget. Bound = 0 disables the check.
+bumpSolverStep :: SolverState -> IO (Maybe String)
+bumpSolverStep state
+    | _solverBudget state == 0 = return Nothing  -- disabled
+    | otherwise = do
+        n <- readIORef (_solverSteps state)
+        let n' = n + 1
+        writeIORef (_solverSteps state) n'
+        if n' > _solverBudget state
+            then return (Just (budgetExceededMsg (_solverBudget state)))
+            else return Nothing
+
+
+budgetExceededMsg :: Int -> String
+budgetExceededMsg budget = unlines
+    [ "TYPE ERROR: constraint solver exceeded budget (" ++ show budget ++ " operations)."
+    , ""
+    , "This usually indicates an ill-typed Sky source — most commonly:"
+    , "  * Passing a value where a function is expected (or vice-versa)"
+    , "    inside a polymorphic helper. The HM type checker tries to"
+    , "    unify the polymorphic type variable with the wrong shape and"
+    , "    propagates the constraint through every call site, hitting"
+    , "    combinatorial explosion."
+    , "  * A recursive type-alias definition that doesn't have a base case."
+    , "  * A pattern that creates an infinite type via the occurs check."
+    , ""
+    , "Look at the most recently edited polymorphic helper (a function"
+    , "with a type variable like `a` or `msg` in its annotation) — the"
+    , "issue is almost certainly there."
+    , ""
+    , "If you're sure the source is well-typed and the cap is too low,"
+    , "set `SKY_SOLVER_BUDGET=N` to a larger value (default 5,000,000)."
+    , "Set to 0 to disable the bound entirely (NOT recommended — risk"
+    , "of unbounded heap consumption)."
+    ]
 
 
 -- | Solve a constraint tree.
@@ -65,7 +150,9 @@ solve :: T.Constraint -> IO SolveResult
 solve constraint = do
     cache <- newIORef Map.empty
     locals <- newIORef Map.empty
-    let state0 = SolverState Map.empty cache 0 locals
+    steps <- newIORef 0
+    budget <- readSolverBudget
+    let state0 = SolverState Map.empty cache 0 locals steps budget
     (result, finalState) <- solveHelp state0 constraint
     case result of
         Nothing -> do
@@ -93,7 +180,9 @@ solveWithLocals :: T.Constraint -> IO (SolveResult, Map.Map String [T.Type])
 solveWithLocals constraint = do
     cache <- newIORef Map.empty
     locals <- newIORef Map.empty
-    let state0 = SolverState Map.empty cache 0 locals
+    steps <- newIORef 0
+    budget <- readSolverBudget
+    let state0 = SolverState Map.empty cache 0 locals steps budget
     (result, finalState) <- solveHelp state0 constraint
     localVars <- readIORef (_locals finalState)
     localTypes <- Map.traverseWithKey (\_ vars ->
@@ -111,6 +200,20 @@ solveWithLocals constraint = do
 -- they get the SAME UF variable, so unification propagates between them.
 typeToVar :: SolverState -> T.Type -> IO T.Variable
 typeToVar state ty = case ty of
+    T.TVar "any" ->
+        -- Wildcard semantics: every occurrence of `any` in source
+        -- types gets its OWN fresh unification variable, never shared
+        -- via the cache. Without this, distinct `any` occurrences
+        -- in the same definition collapse to a single variable —
+        -- so `case x of AttrA s -> Just s | AttrB v -> Just v` (where
+        -- AttrA holds String and AttrB holds `any`) unifies `String`
+        -- through the AttrA branch into the shared `any` slot, then
+        -- the construction site `AttrB 42` rejects the Int because
+        -- the slot is already pinned to String. The wildcard split
+        -- restores the "any unifies with anything, independently"
+        -- semantics users expect.
+        UF.fresh (T.Descriptor (T.FlexVar (Just "any")) (_rank state) T.noMark Nothing)
+
     T.TVar name -> do
         -- Share UF variables for the same TVar name via cache.
         -- With unique names per call site (from IO-based constraint generation),
@@ -189,7 +292,22 @@ instantiateAnnotation state (T.Forall freeVars canType)
 -- ═══════════════════════════════════════════════════════════
 
 solveHelp :: SolverState -> T.Constraint -> IO (Maybe String, SolverState)
-solveHelp state constraint = case constraint of
+solveHelp state constraint = do
+    -- Defensive bound (Limitation #17 hardening). Every solveHelp
+    -- entry costs one budget unit; combinatorial constraint
+    -- explosions trip this and short-circuit with a clear TYPE
+    -- ERROR rather than letting unbounded heap consumption OOM
+    -- the host. CTrue / CSaveTheEnvironment are no-op cases but
+    -- still count — they're cheap and counting them keeps the
+    -- budget logic uniform.
+    bumped <- bumpSolverStep state
+    case bumped of
+        Just errMsg -> return (Just errMsg, state)
+        Nothing     -> solveHelpBody state constraint
+
+
+solveHelpBody :: SolverState -> T.Constraint -> IO (Maybe String, SolverState)
+solveHelpBody state constraint = case constraint of
 
     T.CTrue ->
         return (Nothing, state)

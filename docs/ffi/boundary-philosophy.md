@@ -9,7 +9,7 @@ the only gatekeeper, and Go's type system permits panics, nil
 pointers, interface-nil values, OOM, goroutine leaks, and runtime
 errors that Sky's HM types can't model.
 
-This is the same problem Elm solves with **ports**: typed airlocks to
+This is the same problem typed-airlock FFI designs (such as Elm's **ports** or PureScript's foreign-import boundaries) solve: typed airlocks to
 JavaScript that decode incoming values and reject what doesn't fit.
 Sky applies the same principle to Go: every FFI call returns
 `Result Error T`, forcing the user to acknowledge the boundary at
@@ -78,20 +78,20 @@ boundary is "untyped from Sky's perspective" — Go isn't unsafe in the
 memory-safety sense, but its type system doesn't surface enough
 information for Sky's HM to reason about every failure mode.
 
-## Comparison: Elm ports
+## Comparison: typed-airlock FFI (e.g. Elm's ports)
 
-| Property | Elm ports | Sky FFI |
+| Property | Typed-airlock FFI (Elm ports as a familiar example) | Sky FFI |
 |---|---|---|
 | Typed boundary | Declared types both sides | Sky declares; inspector extracts Go types |
-| Failure containment | Bad JS data → decode error | Bad Go return → `Result Error T` |
-| Async | Yes (Cmd outbound, Sub inbound) | No (synchronous; sky compiles to same Go binary) |
-| Decoder | `Json.Decode` for incoming | `rt.Coerce[T]` for shape mismatches |
-| Crash safety | JS errors can't reach Elm | Go panics caught by `SkyFfiRecoverT` |
+| Failure containment | Bad foreign data → decode error | Bad Go return → `Result Error T` |
+| Async | Often async (Cmd outbound, Sub inbound) | Synchronous (Sky compiles to Go and they share a process) |
+| Decoder | `Json.Decode`-style for incoming | `rt.Coerce[T]` for shape mismatches |
+| Crash safety | Foreign-runtime errors can't reach the host | Go panics caught by `SkyFfiRecoverT` |
 
-Sky doesn't need Elm's async ports because it's not crossing a
-runtime boundary — Sky compiles to Go and they share a process.
-Synchronous calls fit Go's model. The other Elm-port properties
-(typed, contained, decoded, crash-safe) all apply.
+Sky doesn't need a runtime-asynchronous airlock because it's not
+crossing a runtime boundary — Sky compiles to Go and they share a
+process. Synchronous calls fit Go's model. The other airlock
+properties (typed, contained, decoded, crash-safe) all apply.
 
 ## What this means in practice
 

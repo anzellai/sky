@@ -8,15 +8,24 @@ import qualified Sky.Build.ForeignFatalSpec
 import qualified Sky.Build.TypedFfiSpec
 import qualified Sky.ErrorUnificationSpec
 import qualified Sky.Parse.PatternSpec
+import qualified Sky.Parse.MultiLineExposingSpec
 import qualified Sky.Canonicalise.ExposingSpec
 import qualified Sky.Canonicalise.KernelFallbackSpec
 import qualified Sky.Canonicalise.UnboundSpec
 import qualified Sky.Type.ExhaustivenessSpec
+import qualified Sky.Type.AnyWildcardSpec
+import qualified Sky.Type.TupleLambdaSpec
 import qualified Sky.Format.FormatSpec
 import qualified Sky.Build.NestedPatternSpec
+import qualified Sky.Build.ConsCtorPatternSpec
 import qualified Sky.Build.TaskResultBridgesSpec
 import qualified Sky.Build.CheckIsBuildSpec
 import qualified Sky.Build.RecordFieldOrderSpec
+import qualified Sky.Build.RecordCtorEmptyListSpec
+import qualified Sky.Build.HofTypedMsgSpec
+import qualified Sky.Build.KernelSigCoverageSpec
+import qualified Sky.Build.HeapBoundedHmSpec
+import qualified Sky.Build.SolverBudgetSpec
 import qualified Sky.Build.UnreachableGateSpec
 import qualified Sky.Parse.CommentsSpec
 import qualified Sky.Lsp.HoverShadowingSpec
@@ -48,6 +57,9 @@ main = hspec $ do
     -- like rt.AsBool: expected bool, got rt.SkyResult[…].
     describe "Sky.Build.ForeignFatal"    Sky.Build.ForeignFatalSpec.spec
     describe "Sky.Parse.Pattern"         Sky.Parse.PatternSpec.spec
+    -- Multi-line `module/import ... exposing (…)` parser fix +
+    -- parse-error-is-fatal regression fence (compiler bug #1).
+    describe "Sky.Parse.MultiLineExposing" Sky.Parse.MultiLineExposingSpec.spec
     describe "Sky.Canonicalise.Exposing" Sky.Canonicalise.ExposingSpec.spec
     -- Regression: kernel qualifiers (Crypto, Encoding, Hex, …) used
     -- without an explicit `import Sky.Core.<Mod>` must resolve as
@@ -56,8 +68,20 @@ main = hspec $ do
     describe "Sky.Canonicalise.KernelFallback" Sky.Canonicalise.KernelFallbackSpec.spec
     describe "Sky.Canonicalise.Unbound"  Sky.Canonicalise.UnboundSpec.spec
     describe "Sky.Type.Exhaustiveness"   Sky.Type.ExhaustivenessSpec.spec
+    -- Cross-branch HM `any` wildcard fix (compiler bug #3). Distinct
+    -- occurrences of `any` in source types must NOT share a single
+    -- unification variable; each gets its own fresh var.
+    describe "Sky.Type.AnyWildcard"      Sky.Type.AnyWildcardSpec.spec
+    -- Tuple-pattern in lambda arg fix + `/=` operator codegen fix.
+    -- Surfaced together when investigating why `sky test` for a
+    -- passing module was xfailing.
+    describe "Sky.Type.TupleLambda"      Sky.Type.TupleLambdaSpec.spec
     describe "Sky.Format.Format"         Sky.Format.FormatSpec.spec
     describe "Sky.Build.NestedPattern"   Sky.Build.NestedPatternSpec.spec
+    -- Cons-with-constructor pattern fix (compiler bug #2). The
+    -- lowerer now emits a head-discriminator check on `(Ctor x) :: rest`
+    -- so the body only fires when the head's actual ctor matches.
+    describe "Sky.Build.ConsCtorPattern" Sky.Build.ConsCtorPatternSpec.spec
     -- Result/Task bridge helpers (Task.fromResult, Task.andThenResult,
     -- Result.andThenTask) — runtime + canonicaliser + kernel sigs gate.
     describe "Sky.Build.TaskResultBridges" Sky.Build.TaskResultBridgesSpec.spec
@@ -71,6 +95,29 @@ main = hspec $ do
     describe "Sky.Build.CheckIsBuild"    Sky.Build.CheckIsBuildSpec.spec
     -- Audit P0-4: record auto-ctor respects declaration order.
     describe "Sky.Build.RecordFieldOrder" Sky.Build.RecordFieldOrderSpec.spec
+    -- Limitation #18: auto-ctor's typed-slice param coerces empty-list
+    -- arg via rt.AsListT[T]. Pre-fix, `Item 1 "first" []` shipped
+    -- `Item(1, "first", []any{})` and go build rejected.
+    describe "Sky.Build.RecordCtorEmptyList" Sky.Build.RecordCtorEmptyListSpec.spec
+    -- Limitation #18 (other half): renderHofParamTy used to hardcode
+    -- the inner-function return as `any`, breaking helpers with typed
+    -- (String -> Msg) callbacks. Now routes via typeStrWithAliasesReg.
+    describe "Sky.Build.HofTypedMsg"        Sky.Build.HofTypedMsgSpec.spec
+    -- Limitation #16: kernel-sig coverage for the dangerous-class
+    -- gaps (returns Maybe/Result/Task wrappers OR opaque FFI types).
+    -- Without HM sigs, user pattern-matching against the wrapper
+    -- silently degrades to `any` and surfaces as runtime panics.
+    describe "Sky.Build.KernelSigCoverage" Sky.Build.KernelSigCoverageSpec.spec
+    -- Limitation #17: Std.Ui-cascading HM constraint pathology that
+    -- pre-fix OOMed at 4-5 GB. Spec re-runs sky check on the bak
+    -- reproducer under a tight heap cap.
+    describe "Sky.Build.HeapBoundedHm"      Sky.Build.HeapBoundedHmSpec.spec
+    -- Limitation #17 hardening: defensive bound on the HM solver.
+    -- Caps total solveHelp invocations per `solve` call; trips
+    -- with TYPE ERROR before unbounded heap consumption can OOM
+    -- the host. See SolverBudgetSpec for the env-var override
+    -- (SKY_SOLVER_BUDGET) and the escape-hatch behaviour.
+    describe "Sky.Build.SolverBudget"       Sky.Build.SolverBudgetSpec.spec
     -- Audit P0-5: no raw `panic("sky: internal…)` in emitted Go.
     -- Runs AFTER ExampleSweep so the sky-out/main.go files are fresh.
     describe "Sky.Build.UnreachableGate"  Sky.Build.UnreachableGateSpec.spec

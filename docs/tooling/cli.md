@@ -115,7 +115,7 @@ Self-upgrades the `sky` binary from the latest GitHub release.
 
 ### `sky fmt <file>`
 
-Opinionated elm-format style:
+Opinionated, deterministic, no configuration (output is Elm-compatible):
 
 - 4-space indent, no tabs.
 - Leading commas for multi-line lists/records.

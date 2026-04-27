@@ -1,7 +1,7 @@
 # CLAUDE.md — Sky Language Project
 
 This is a [Sky](https://github.com/anzellai/sky) project. Sky is a pure
-functional language inspired by Elm, compiling to Go. The compiler is
+functional, ML-family language compiling to Go (with surface syntax that is Elm-compatible). The compiler is
 written in Haskell (GHC 9.4+) and ships as a single `sky` binary. Users
 only need the `sky` binary and Go 1.21+ — no Haskell toolchain required
 to use Sky.
@@ -27,7 +27,7 @@ If you're an AI code assistant building Sky applications on behalf of a
 user, read the following sections IN ORDER before producing any code.
 Skipping ahead leads to code that type-checks but panics at runtime —
 the "if it compiles it works" guarantee depends on you respecting a
-handful of idioms the Elm-derived syntax makes non-obvious.
+handful of idioms the ML-family / Elm-compatible syntax makes non-obvious.
 
 1. **Cardinal Rules** (below) — 10 rules that, if you follow them, keep
    you out of 90% of the pitfalls real Sky projects have hit.
@@ -257,7 +257,7 @@ sky init [name]           # Create a new Sky project (sky.toml, src/Main.sky, .g
 sky build src/Main.sky    # Compile to Go binary (output: sky-out/app)
 sky run src/Main.sky      # Build and run
 sky check src/Main.sky    # Type-check without compiling (cross-module ADT + alias resolution)
-sky fmt src/Main.sky      # Format code (Elm-style: 4-space indent, leading commas)
+sky fmt src/Main.sky      # Format code (opinionated: 4-space indent, leading commas)
 sky test tests/MyTest.sky # Run a test module (exposes `tests : List Test`)
 sky add <package>         # Add dependency + generate bindings + update sky.toml
 sky remove <package>      # Remove dependency from sky.toml + clean cache
@@ -425,8 +425,7 @@ result = Task.perform pipeline
 - `Task.sequence : List (Task err a) -> Task err (List a)` -- run sequentially
 - `Task.parallel : List (Task err a) -> Task err (List a)` -- run concurrently (goroutines)
 - `Task.lazy : (() -> a) -> Task err a` -- defer computation until executed
-- `Task.map2/3/4/5` -- combine N independent Tasks (sequential, like Result.mapN) (v0.7.25+)
-- `Task.andMap : Task e a -> Task e (a -> b) -> Task e b` -- pipeline-style applicative (v0.7.25+)
+- For combining N independent Tasks, use `Task.parallel [ta, tb, tc] |> Task.map (\[a, b, c] -> fn a b c)` or chain via `Task.andThen`. (`Task.map2..5` / `Task.andMap` are PLANNED but not yet implemented; use `Result.map2..5` / `Result.andMap` for the Result counterparts which DO exist.)
 - `Task.fromResult : Result e a -> Task e a` -- lift a Result-returning step (FFI call, parser) into a Task pipeline
 - `Task.andThenResult : (a -> Result e b) -> Task e a -> Task e b` -- chain a Result-returning step after a Task
 - `Result.andThenTask : (a -> Task e b) -> Result e a -> Task e b` -- chain a Task-returning step after a Result
@@ -785,11 +784,11 @@ result =
         (parseBool "active" formData.active)
 ```
 
-This is exactly Elm's behavior. Notes:
+This matches Elm's behaviour for the same construct. Notes:
 
 - Only **record** type aliases generate constructors. Aliases like `type alias Name = String` don't.
 - If you define a function with the same name as the type alias, **your definition wins** — Sky skips the auto-generation. This lets you provide a custom constructor with validation, defaults, etc.
-- Adding a field in the middle of a type alias is a **breaking change** for any code that uses the constructor positionally. Same trade-off Elm made.
+- Adding a field in the middle of a type alias is a **breaking change** for any code that uses the constructor positionally — same trade-off the wider ML-family / Elm tradition makes.
 - Constructors are exported from a module the same way the type alias is. `module Foo exposing (Profile)` exposes both the type and the constructor.
 
 ### Sky.Core.List
@@ -1343,6 +1342,76 @@ The `DoSignIn AuthCreds` constructor takes a typed record alias — the dispatch
 
 The older `onChange` pattern (fires on blur) is still acceptable when you need the password in Model for validation feedback before submit, but prefer `onSubmit` + typed record for normal sign-in / sign-up flows.
 
+### Std.Ui — typed no-CSS layout DSL (recommended for new view code)
+
+A typed layout DSL. Build a UI from typed primitives (`row`, `column`, `el`) and typed attributes (`Background.color`, `Border.rounded`, `Font.size`, `Region.heading`) — no CSS files. Renders to inline-styled HTML via Std.Html.
+
+```elm
+import Std.Ui as Ui
+import Std.Ui exposing (Element)
+import Std.Ui.Background as Background
+import Std.Ui.Border as Border
+import Std.Ui.Font as Font
+
+view : Model -> any
+view model =
+    Ui.layout []
+        (Ui.row
+            [ Ui.spacing 12, Ui.padding 16
+            , Background.color (Ui.rgb 255 102 0)
+            , Font.color (Ui.rgb 255 255 255)
+            , Border.rounded 4
+            ]
+            [ Ui.button [] { onPress = Just Decrement, label = Ui.text "−" }
+            , Ui.el [ Font.size 24, Font.bold ] (Ui.text (String.fromInt model.count))
+            , Ui.button [] { onPress = Just Increment, label = Ui.text "+" }
+            ])
+```
+
+**Surface (full reference: `docs/skyui/overview.md`):**
+
+| Area | Helpers |
+|---|---|
+| Layout | `el / row / column / paragraph / textColumn / text / none / html` (`html` is the escape hatch wrapping a Std.Html VNode) |
+| Sized elements | `button` (`{onPress, label}`), `input` (real `<input>`), `form` (`<form>` + `onSubmit msg`), `link` (`{url, label}`), `image` (`{src, description}`) |
+| Length | `px Int` / `fill Int` / `fillPortion Int` / `content` / `shrink` / `min` / `max` |
+| Padding | `padding Int` / `paddingXY x y` / `paddingEach top right bottom left` / `spacing Int` |
+| Alignment | `centerX` / `centerY` / `alignLeft` / `alignRight` / `alignTop` / `alignBottom` / `pointer` |
+| Overflow | `clip` / `clipX` / `clipY` / `scrollbars` / `scrollbarX` / `scrollbarY` |
+| Nearby (overlays) | `above el` / `below el` / `onLeft el` / `onRight el` / `inFront el` / `behind el` |
+| Events (typed) | `onClick msg` / `onSubmit msg` / `onInput (String -> msg)` / `onChange (String -> msg)` / `onFocus msg` / `onMouseOver` / `onMouseOut` / `onKeyDown` / `onFile (String -> msg)` / `onImage (String -> msg)` |
+| File / image hints | `fileMaxSize Int` (bytes) / `fileMaxWidth Int` / `fileMaxHeight Int` |
+| Colour | `rgb Int Int Int` / `rgba Int Int Int Float` / `white` / `black` / `transparent` |
+| Form / attribute helpers | `htmlAttribute key val` / `name "field"` / `style "css-prop" "value"` / `class "name"` |
+| Sub-modules | `Std.Ui.Background` (color/image/linearGradient/gradient), `Std.Ui.Border` (color/width/widthEach/rounded/solid/dashed/dotted/shadow/glow/innerShadow), `Std.Ui.Font` (color/family/size/weight/bold/semiBold/regular/light/extraBold/black/italic/underline/letterSpacing/wordSpacing), `Std.Ui.Region` (heading n/mainContent/navigation/footer/aside/label/announce/announceUrgently — renderer dispatches real semantic tags `<h1..h6>`/`<main>`/`<nav>`/`<footer>`/`<aside>` + aria-label/aria-live), `Std.Ui.Input` (button/text/multiline/email/username/search/currentPassword/newPassword/checkbox/radio/radioRow/slider + option + label*/placeholder), `Std.Ui.Lazy` (lazy/lazy2..lazy5 — no-op wrappers today), `Std.Ui.Keyed` (sky-key for diff identity), `Std.Ui.Responsive` (classifyDevice/adapt) |
+
+**Three idioms when writing Sky.Ui:**
+
+1. **Forms with sensitive inputs use `Ui.form` + `Ui.onSubmit DoSignIn`, NOT `onInput` per keystroke on the password field.** The wire driver decodes formData `{"username":"...","password":"..."}` into a typed `LoginForm` record via case-insensitive `json.Unmarshal`. Three wins: password manager extensions stop seeing DOM mutations on every render, the secret never enters Model so never serialises into Redis/Postgres/Firestore session stores, race-free submit reads live DOM not a debounced keystroke. The username MAY round-trip via `value` + `onInput`; the password MUST NOT.
+
+2. **For real `<input>` elements use `Ui.input`, NOT `Ui.el [ htmlAttribute "type" "text" ]`.** `Ui.el` builds `Node` which renders as `<div>` — browsers ignore `type=`/`value=` on non-input elements and never fire input events on a div. `Ui.input` builds `TaggedNode "input"` for void emission.
+
+3. **For Std.Ui-heavy views (~25+ polymorphic `Element Msg` helpers), split the view layer across multiple modules.** Single monolithic Main.sky can blow the HM type-checker heap (Limitation #17). Canonical split: `State.sky` (types + pure helpers, no Std.Ui) / `Update.sky` / `View/Common.sky` / one View module per page / `Main.sky` dispatcher. See `examples/19-skyforum`.
+
+**File / image upload pattern:**
+```elm
+type Msg = ... | AvatarSelected String | ...
+
+Ui.input
+    [ Ui.htmlAttribute "type" "file"
+    , Ui.htmlAttribute "accept" "image/*"
+    , Ui.onImage AvatarSelected           -- AvatarSelected : String -> Msg
+    , Ui.fileMaxSize   2_000_000          -- 2MB browser-side cap (UX, not security)
+    , Ui.fileMaxWidth  800                -- auto-resize + JPEG @ 0.85 before upload
+    , Ui.fileMaxHeight 800
+    ]
+```
+Callback receives a data URL (`data:image/jpeg;base64,...`). Decode with `Std.Encoding.base64Decode` → `Http.post` to upload. Server `[live] maxBodyBytes` in `sky.toml` should be ≥ your `fileMaxSize` (default 5 MiB).
+
+**Style + workaround tips:**
+- **Annotations**: when annotating a top-level returning `Element`, use `import Std.Ui exposing (Element)` and write the bare `Element Msg` form, NOT the qualified `Ui.Element Msg`. Sky's canonicaliser strips type parameters from qualified-alias type references (separate compiler bug, tracked), so `Ui.Element Msg` resolves as `Element` (no parameter) and unification fails. The bare-name pattern works correctly and is what every example uses. Note: `Ui.none` itself is fine — the workaround is on the annotation shape, not the value.
+- **Empty list in seed data**: use record-literal syntax (`{ id = 1, ..., tags = [], ... }`) rather than positional constructor (`Item 1 ... []`) when an `[]` field needs typed-slice coercion. The field's type alias gives the typed codegen the target type.
+
 ### Escape Hatch & View Types
 
 ```elm
@@ -1445,7 +1514,7 @@ main =
 
 ## Sky.Live — Server-Driven UI
 
-For interactive web apps, Sky.Live generates an HTTP server with DOM diffing (like Phoenix LiveView):
+For interactive web apps, Sky.Live generates an HTTP server with server-side DOM diffing (similar architectural style to Phoenix LiveView):
 
 ```elm
 import Std.Html exposing (..)
@@ -2971,7 +3040,7 @@ Session store memory grows with inactive sessions. Set a TTL:
 ## Coding Conventions
 
 - **Module names** are PascalCase, match file paths: `Lib.Utils` → `src/Lib/Utils.sky`
-- **No semicolons**, no curly braces — indentation-sensitive like Elm/Haskell
+- **No semicolons**, no curly braces — indentation-sensitive (same surface convention as Elm / Haskell)
 - Use **`Std.Css`** for styling (not inline style strings)
 - Use **`errorToString`** to convert Go errors to strings
 - Pattern match on **`Result`** (`Ok val` / `Err e`) for Go functions returning errors
@@ -2979,11 +3048,11 @@ Session store memory grows with inactive sessions. Set a TTL:
 - **Nested patterns work**: `Ok (Just x)` and `Ok Nothing` are fully supported in case expressions
 - **Import conventions**: Use `exposing (..)` sparingly — when two modules export the same name (e.g., `Std.Html` and `Tailwind` both export `hidden`, `h2`, etc.), the first import wins. Prefer qualified imports (`import Foo as F`) to avoid collisions. If using `Tailwind exposing (..)` alongside `Std.Html exposing (..)`, use `hidden_` (with underscore) for the Tailwind version, and `headerNode`/`footerNode` for HTML5 semantic elements
 - **`exposing (Type(..))` limitation**: `import MyModule exposing (MyType(..))` does NOT expose ADT constructors for user-defined modules. Use `import MyModule exposing (..)` instead, or qualify constructors: `MyModule.MyConstructor`
-- **`//` for integer division**: Use `//` (Elm-style) or regular `/` — both work. `//` always returns `Int`, `modBy divisor n` returns `n % divisor`
+- **`//` for integer division**: Use `//` or regular `/` — both work. `//` always returns `Int` (same operator as Elm), `modBy divisor n` returns `n % divisor`
 
 ## Code Formatting (`sky fmt`)
 
-**Always run `sky fmt <file>.sky` after changes.** The formatter follows **elm-format** style — opinionated, deterministic, no configuration options.
+**Always run `sky fmt <file>.sky` after changes.** The formatter is opinionated, deterministic, no configuration options (output is Elm-compatible: 4-space indent, leading commas).
 
 ### Rules
 
