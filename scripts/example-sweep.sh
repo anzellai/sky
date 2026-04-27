@@ -58,6 +58,7 @@ declare -a EXAMPLES=(
     "16-skychess:server:8000:/"
     "17-skymon:server:8000:/"
     "18-job-queue:server:8000:/"
+    "19-skyforum:server:8000:/"
 )
 
 pass=0; fail=0
