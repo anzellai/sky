@@ -1,18 +1,34 @@
 # NOTICE
 
-Sky is licensed under the MIT licence (see [LICENSE](LICENSE)). This file
-documents prior art whose design ideas influenced parts of Sky's
-standard library, alongside the licence terms of those projects.
+Sky
+Copyright 2025-2026 Anzel Lai
 
-No source code from any of the projects below is included in this
-repository. Where a Sky module is *inspired by* an external library,
-that influence is limited to the public API shape and naming
-conventions — implementation, runtime, and codegen are independent
-work written in Sky and Haskell.
+This product is licensed under the Apache License, Version 2.0 (see
+[LICENSE](LICENSE)). This NOTICE file is required by clause 4(d) of
+that licence; please retain it in any redistribution.
 
-This NOTICE is intended as good-faith attribution. It is not a
-statement of endorsement by, partnership with, or affiliation with
-any of the projects listed.
+This file documents:
+
+1. The Apache 2.0 copyright + licence summary above (required by the
+   licence's NOTICE-file mechanism).
+2. Prior-art attribution for parts of Sky's standard library where
+   the API surface adopts conventions established by external
+   projects (Std.Ui, below).
+3. Per-file attribution for source files that are *derivative works*
+   of code from another open-source project, along with the full
+   licence text under which that upstream code was originally
+   released (the elm/compiler section, below — required by
+   BSD-3-Clause clauses 1 and 2).
+
+The intent is good-faith attribution. Neither this NOTICE nor any
+file in the Sky repository is a statement of endorsement by,
+partnership with, or affiliation with any of the projects listed.
+
+> **Licence history.** Sky was previously distributed under the MIT
+> licence (releases up to and including v0.10.0). Existing MIT
+> releases keep their original terms — that is how the grant works
+> once issued. Releases from v0.10.1 onwards ship under Apache 2.0.
+> See `CONTRIBUTING.md` for what this means for contributors.
 
 ---
 

@@ -210,4 +210,8 @@ Issues and PRs welcome. See the docs tree for architecture context before openin
 
 ## Licence
 
-MIT.
+[Apache 2.0](LICENSE) — © 2025–2026 Anzel Lai.
+
+This includes a patent grant from contributors and a trademark clause; see the licence text for the full terms. Prior-art attribution for derivative-work files (notably parts of the type-inference core, adapted from elm/compiler under BSD-3-Clause) lives in [NOTICE.md](NOTICE.md). Contributions are accepted under the same Apache 2.0 terms — see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+> Sky was previously distributed under the MIT licence (releases up to and including v0.10.0). Those releases remain available under their original MIT terms; v0.10.1 onwards ships under Apache 2.0.

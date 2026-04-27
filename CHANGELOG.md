@@ -4,6 +4,17 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 ## Unreleased
 
+### Licence + attribution
+
+- **Relicensed to Apache License 2.0** (was MIT). Existing MIT releases (v0.10.0 and earlier) keep their original MIT terms; v0.10.1 onwards ships under Apache 2.0. The relicense brings:
+  - **Patent grant** from contributors (Apache 2.0 §3) — perpetual, irrevocable patent licence for what their contribution covers.
+  - **Patent-retaliation clause** — anyone initiating patent litigation against Sky users for the contribution loses their grant.
+  - **Trademark clause** (§6) — the licence does not grant rights to use the "Sky" name / trademarks.
+  - **NOTICE file mechanism** (§4(d)) — a structured way to propagate prior-art attribution through forks. `NOTICE.md` at the repo root.
+  Same permissive philosophy as MIT (commercial use, modify, fork, sublicense all allowed). See [CONTRIBUTING.md](CONTRIBUTING.md) for what this means for contributors. Same week, the [Std.Ui — Sky.Live polish + 4 compiler reliability fixes](https://github.com/anzellai/sky/pull/36) PR also lands.
+- **Per-file derivative-work attribution** strengthened on the ten files in `src/Sky/` adapted from elm/compiler (BSD-3-Clause, © Evan Czaplicki). Each file's header now names the upstream module + licence + copyright, and `NOTICE.md` lists every adapted file with its origin and reproduces the full BSD-3-Clause licence text. This satisfies BSD-3-Clause clauses 1 + 2 (source-form + binary-form attribution).
+- **Defensive endorsement-clause cleanup**: removed promotional uses of "Elm" (and the prior promotional uses of "elm-ui") from user-facing docs / READMEs / runtime comments. Factual technical references — "Elm-compatible syntax", "matches Elm's behaviour", "Elm convention", per-file derivative-work attribution — stay because they are descriptive, not promotional.
+
 ### Effect boundary (stdlib)
 
 - **Breaking — `Std.Db.*` migrated from `Result Error a` to `Task Error a`.** `Db.connect`, `Db.open`, `Db.exec`, `Db.execRaw`, and `Db.query` now return `Task Error a`. Their runtime helpers (`runtime-go/rt/db_auth.go`) wrap their bodies in `func() any { ... }` thunks so the actual SQL defers to the goroutine spawned by `Cmd.perform` instead of blocking Sky.Live's `update()`.
