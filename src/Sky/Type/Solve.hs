@@ -87,7 +87,7 @@ data SolverState = SolverState
 
 -- | Default cap on solver steps before bailing with a defensive
 -- TYPE ERROR. 5,000,000 is ~50x the largest legitimate Std.Ui-
--- heavy module measured (Main.sky.bak post-fix uses well under
+-- heavy module measured (heap-bound-fence.sky post-fix uses well under
 -- 100K steps); the broken-stdlib reproducer hit millions before
 -- exhausting 4-5 GB of heap.
 defaultSolverBudget :: Int

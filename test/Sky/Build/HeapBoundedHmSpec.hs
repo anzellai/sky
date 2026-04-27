@@ -20,12 +20,18 @@ module Sky.Build.HeapBoundedHmSpec (spec) where
 -- Plus `Ui.input` was added so the helper doesn't fall back to
 -- `Ui.el` (which renders as `<div>`, not `<input>`).
 --
--- This spec re-runs `sky check` on Main.sky.bak under a tight heap
--- cap (-M256M, well above the legitimate ~122 MB allocation but
--- well below the 4-5 GB pre-fix explosion). If a future change
--- re-introduces a similar Std.Ui-cascading constraint pathology,
--- the cap trips and the spec fails BEFORE a developer hits an
--- unbounded OOM in the wild.
+-- This spec re-runs `sky check` on the heap-fence fixture under a
+-- tight heap cap (-M256M, well above the legitimate ~122 MB
+-- allocation but well below the 4-5 GB pre-fix explosion). If a
+-- future change re-introduces a similar Std.Ui-cascading
+-- constraint pathology, the cap trips and the spec fails BEFORE
+-- a developer hits an unbounded OOM in the wild.
+--
+-- The fixture lives at `test-fixtures/heap-bound-fence.sky` (was
+-- `src/Main.sky.bak` pre-rename). The new path keeps it OUT of
+-- the example's `src/` so module discovery doesn't pick it up
+-- alongside the live `Main.sky`, and signals its purpose
+-- explicitly — it's a test fixture, not a backup.
 
 import Test.Hspec
 import System.Directory (getCurrentDirectory, doesFileExist)
@@ -44,8 +50,8 @@ findSky = do
 
 spec :: Spec
 spec = do
-    describe "Limitation #17 — HM heap-bounded type-check on the bak reproducer" $ do
-        it "type-checks examples/19-skyforum/src/Main.sky.bak under +RTS -M256M" $ do
+    describe "Limitation #17 — HM heap-bounded type-check on the heap-fence fixture" $ do
+        it "type-checks examples/19-skyforum/test-fixtures/heap-bound-fence.sky under +RTS -M256M" $ do
             -- Pre-fix this allocated 2.6 GB/s and OOMed at 4-5 GB.
             -- Post-fix it allocates ~122 MB total with 1.6 MB max
             -- residency; 256 MB cap gives 2x headroom over the
@@ -54,18 +60,20 @@ spec = do
             sky <- findSky
             cwd <- getCurrentDirectory
             let exampleDir = cwd </> "examples" </> "19-skyforum"
-                bakPath = exampleDir </> "src" </> "Main.sky.bak"
-            bakExists <- doesFileExist bakPath
-            bakExists `shouldBe` True
-            -- `sky check` works on Main.sky (the live entry) by
-            -- default, but we want to point at the .bak. The .bak
-            -- IS valid Sky source; the only difference vs Main.sky
-            -- is that it's the original 689-line monolithic shape
-            -- (kept specifically as the #17 regression artefact).
-            -- We pass it as the explicit entry.
+                fenceRel  = "test-fixtures" </> "heap-bound-fence.sky"
+                fencePath = exampleDir </> fenceRel
+            fenceExists <- doesFileExist fencePath
+            fenceExists `shouldBe` True
+            -- The fixture IS valid Sky source — same shape as
+            -- examples/19-skyforum/src/Main.sky's pre-split form
+            -- (the original 689-line monolithic Reddit-style
+            -- forum demo). Kept specifically as the #17 regression
+            -- artefact. Passing it as the explicit entry to `sky
+            -- check` exercises the same constraint-solving path
+            -- that OOMed pre-fix.
             let cp = (proc sky
                         [ "+RTS", "-M256M", "-RTS"
-                        , "check", "src/Main.sky.bak"
+                        , "check", fenceRel
                         ])
                         { cwd = Just exampleDir }
             (ec, out, err) <- readCreateProcessWithExitCode cp ""

@@ -9,7 +9,7 @@ module Main exposing (main)
 -- The fixture itself is well-typed; the test forces the budget low
 -- so the bound trips on legitimate work. The complementary test in
 -- HeapBoundedHmSpec exercises the bound with a REAL pathological
--- input (Main.sky.bak under reverted Std.Ui.Input).
+-- input (heap-bound-fence.sky under reverted Std.Ui.Input).
 
 import Sky.Core.Prelude exposing (..)
 import Std.Log exposing (println)
