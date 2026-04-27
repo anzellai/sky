@@ -48,6 +48,12 @@ type Element msg
     -- dispatch to semantically-correct tags. Plain Node still
     -- defaults to <div>.
     | TaggedNode String Description (List (Attribute msg)) (List (Element msg))
+    -- Raw escape hatch — wrap an arbitrary Std.Html node so user
+    -- code can drop into native HTML (<video>, <canvas>, <table>,
+    -- third-party widgets) without leaving the Std.Ui tree. The
+    -- `any` payload is the Std.Html VNode (kernel type opaque to
+    -- Sky's HM); the renderer passes it through unchanged.
+    | Raw any
 
 
 type Attribute msg
@@ -66,13 +72,24 @@ type Attribute msg
     | AttrAttribute String String          -- raw attribute (href, src, name, ...)
     | AttrFontSize Int
     | AttrFontColor Color
-    | AttrFontFamily String              -- pre-joined "Inter, sans-serif"
+    | AttrFontFamily String                -- pre-joined "Inter, sans-serif"
     | AttrFontWeight Int
+    | AttrFontItalic                       -- font-style: italic
+    | AttrFontUnderline                    -- text-decoration: underline
+    | AttrFontLetterSpacing Float          -- letter-spacing in em
+    | AttrFontWordSpacing Float            -- word-spacing in em
     | AttrBgColor Color
+    | AttrBgImage String                   -- background-image: url(<url>)
+    | AttrBgGradient String                -- pre-built CSS gradient string (linear-gradient(...) etc)
     | AttrBorderWidth Int
+    | AttrBorderWidthEach Int Int Int Int  -- top right bottom left
     | AttrBorderColor Color
     | AttrBorderRounded Int
+    | AttrBorderStyle String               -- "solid" / "dashed" / "dotted"
+    | AttrBorderShadow Int Int Int Int Color       -- offsetX offsetY blur spread color
+    | AttrBorderInsetShadow Int Int Int Int Color  -- same shape, but rendered with `inset` keyword
     | AttrPointer                          -- cursor: pointer for clickable els
+    | AttrOverflow String String           -- overflow-x value, overflow-y value (clip/scrollbars/etc)
 
 
 type Length
@@ -308,6 +325,39 @@ fontFamily joined = AttrFontFamily joined
 fontWeight : Int -> Attribute msg
 fontWeight n = AttrFontWeight n
 
+fontItalic : Attribute msg
+fontItalic = AttrFontItalic
+
+fontUnderline : Attribute msg
+fontUnderline = AttrFontUnderline
+
+fontLetterSpacing : Float -> Attribute msg
+fontLetterSpacing em = AttrFontLetterSpacing em
+
+fontWordSpacing : Float -> Attribute msg
+fontWordSpacing em = AttrFontWordSpacing em
+
+bgImage : String -> Attribute msg
+bgImage url = AttrBgImage url
+
+bgGradient : String -> Attribute msg
+bgGradient css = AttrBgGradient css
+
+borderWidthEach : Int -> Int -> Int -> Int -> Attribute msg
+borderWidthEach t r b l = AttrBorderWidthEach t r b l
+
+borderStyle : String -> Attribute msg
+borderStyle s = AttrBorderStyle s
+
+borderShadow : Int -> Int -> Int -> Int -> Color -> Attribute msg
+borderShadow ox oy blur spread c = AttrBorderShadow ox oy blur spread c
+
+borderInsetShadow : Int -> Int -> Int -> Int -> Color -> Attribute msg
+borderInsetShadow ox oy blur spread c = AttrBorderInsetShadow ox oy blur spread c
+
+overflow : String -> String -> Attribute msg
+overflow x y = AttrOverflow x y
+
 describe : Description -> Attribute msg
 describe d = AttrDescribe d
 
@@ -535,18 +585,44 @@ name : String -> Attribute msg
 name value = AttrAttribute "name" value
 
 
--- Escape hatch — wrap an arbitrary Html node as an Element. Useful
--- when you need a tag Std.Ui doesn't model directly (e.g. <video>,
--- <canvas>) without dropping the rest of your layout.
--- TODO: surface raw Html via a new Element variant. For now this
--- collapses to empty text; useful primarily as a type-correct
--- placeholder until the Element ADT gains a NodeRaw variant.
+-- Escape hatch — wrap an arbitrary Std.Html node as an Element.
+-- Useful when you need a tag Std.Ui doesn't model directly
+-- (`<video>`, `<canvas>`, `<table>`, third-party widgets) without
+-- dropping the rest of your layout. The wrapped node is rendered
+-- in place — Std.Ui adds no inline-style wrapper around it.
 html : any -> Element msg
 html node =
-    let
-        _ = node
-    in
-        Text ""
+    Raw node
+
+
+-- ─── Overflow / clip / scrollbars ────────────────────────────────
+
+-- Clip overflow on both axes (overflow: hidden). Use when an
+-- element's content might overflow and you want it cut off rather
+-- than wrapped.
+clip : Attribute msg
+clip = AttrOverflow "hidden" "hidden"
+
+
+clipX : Attribute msg
+clipX = AttrOverflow "hidden" "visible"
+
+
+clipY : Attribute msg
+clipY = AttrOverflow "visible" "hidden"
+
+
+-- Show scrollbars on overflow on both axes.
+scrollbars : Attribute msg
+scrollbars = AttrOverflow "auto" "auto"
+
+
+scrollbarX : Attribute msg
+scrollbarX = AttrOverflow "auto" "visible"
+
+
+scrollbarY : Attribute msg
+scrollbarY = AttrOverflow "visible" "auto"
 
 
 -- ─── Color ───────────────────────────────────────────────────────
@@ -606,6 +682,13 @@ renderElement ctx extraAttrs elem =
 
         TaggedNode tag desc attrs children ->
             renderNodeAs tag ctx extraAttrs attrs children
+
+        Raw node ->
+            -- Pass the wrapped Std.Html VNode through unchanged.
+            -- `extraAttrs` from the parent are dropped — Raw is an
+            -- escape hatch and the user is responsible for whatever
+            -- attributes they want on the wrapped node.
+            node
 
 
 -- Render a Node-shaped element under a given parent context with an
@@ -678,8 +761,18 @@ toAttrAttribute a =
     case a of
         AttrAttribute k v -> Just (kernelAttr k v)
         AttrClass c       -> Just (Attr.class c)
-        AttrEvent ev      -> Just ev
+        AttrEvent ev      -> wrapEvent ev
         _                 -> Nothing
+
+
+-- Wrap an event-payload value into Maybe with an explicit `any`
+-- signature. Without this indirection, Sky's HM unifies the three
+-- branches of `toAttrAttribute` and resolves `any` to whichever
+-- concrete type appears first (typically `Attribute` from
+-- `Attr.class c`), then rejects the destructured `ev` because its
+-- inferred type from the construction sites doesn't match.
+wrapEvent : any -> Maybe any
+wrapEvent ev = Just ev
 
 
 -- Sky.Std.Html.Attributes doesn't expose a generic
@@ -795,8 +888,11 @@ collectStyle parentCtx myCtx attr acc =
         AttrClass _ ->
             acc
         AttrNearby _ _ ->
+            -- Nearby positioning is rendered as an absolute-positioned
+            -- child by renderNodeAs, not as an inline style on the
+            -- parent. Skip here.
             acc
-        AttrEvent _ _ ->
+        AttrEvent _ ->
             -- Events are attached as separate VNode event entries,
             -- not inline style — handled in renderElement.
             acc
@@ -812,16 +908,38 @@ collectStyle parentCtx myCtx attr acc =
             acc ++ " font-family: " ++ joined ++ ";"
         AttrFontWeight n ->
             acc ++ " font-weight: " ++ String.fromInt n ++ ";"
+        AttrFontItalic ->
+            acc ++ " font-style: italic;"
+        AttrFontUnderline ->
+            acc ++ " text-decoration: underline;"
+        AttrFontLetterSpacing em ->
+            acc ++ " letter-spacing: " ++ String.fromFloat em ++ "em;"
+        AttrFontWordSpacing em ->
+            acc ++ " word-spacing: " ++ String.fromFloat em ++ "em;"
         AttrBgColor c ->
             acc ++ " background-color: " ++ colorCss c ++ ";"
+        AttrBgImage url ->
+            acc ++ " background-image: url('" ++ url ++ "');"
+        AttrBgGradient css ->
+            acc ++ " background-image: " ++ css ++ ";"
         AttrBorderWidth n ->
             acc ++ " border-width: " ++ String.fromInt n ++ "px; border-style: solid;"
+        AttrBorderWidthEach t r b l ->
+            acc ++ " border-width: " ++ String.fromInt t ++ "px " ++ String.fromInt r ++ "px " ++ String.fromInt b ++ "px " ++ String.fromInt l ++ "px; border-style: solid;"
         AttrBorderColor c ->
             acc ++ " border-color: " ++ colorCss c ++ ";"
         AttrBorderRounded n ->
             acc ++ " border-radius: " ++ String.fromInt n ++ "px;"
+        AttrBorderStyle s ->
+            acc ++ " border-style: " ++ s ++ ";"
+        AttrBorderShadow ox oy blur spread c ->
+            acc ++ " box-shadow: " ++ String.fromInt ox ++ "px " ++ String.fromInt oy ++ "px " ++ String.fromInt blur ++ "px " ++ String.fromInt spread ++ "px " ++ colorCss c ++ ";"
+        AttrBorderInsetShadow ox oy blur spread c ->
+            acc ++ " box-shadow: inset " ++ String.fromInt ox ++ "px " ++ String.fromInt oy ++ "px " ++ String.fromInt blur ++ "px " ++ String.fromInt spread ++ "px " ++ colorCss c ++ ";"
         AttrPointer ->
             acc ++ " cursor: pointer;"
+        AttrOverflow x y ->
+            acc ++ " overflow-x: " ++ x ++ "; overflow-y: " ++ y ++ ";"
 
 
 -- Render a Color as a CSS rgba(...) string using percentage

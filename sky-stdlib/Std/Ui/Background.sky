@@ -1,20 +1,54 @@
-module Std.Ui.Background exposing (color)
+module Std.Ui.Background exposing (color, image, gradient, linearGradient)
 
 -- Std.Ui.Background — background colour / image / gradient helpers.
---
--- Tier 1 ships only `color`; gradient + image follow when the
--- inline-style renderer learns the matching CSS shape.
 
 import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
 -- Bring Color + Attribute (and the Std.Ui helper functions) into
 -- scope unqualified. `import Std.Ui as Ui` alone doesn't make
 -- `Ui.Color` unify cleanly with the bare Color type at user call
 -- sites — Sky's canonicaliser treats the qualified name as a
 -- distinct type-of-type.
-import Std.Ui exposing (Color, Attribute, bgColor)
+import Std.Ui exposing (Color, Attribute, bgColor, bgImage, bgGradient, colorCss)
 
 
 -- Solid background colour. Composes with width/height/padding.
 color : Color -> Attribute msg
 color c =
     bgColor c
+
+
+-- Background image from a URL. The renderer emits
+-- `background-image: url('<url>');` — pair with a typical
+-- `background-size: cover` via `Ui.style` if you need the
+-- image to fill the element.
+image : String -> Attribute msg
+image url =
+    bgImage url
+
+
+-- Linear gradient with an angle (in degrees) and a list of
+-- (offset-percent, colour) stops. Renders as
+-- `background-image: linear-gradient(<angle>deg, <c1> <p1>%, …);`.
+linearGradient : Float -> List ( Float, Color ) -> Attribute msg
+linearGradient angle stops =
+    let
+        stopParts = List.map renderStop stops
+        joined = String.join ", " stopParts
+        css = "linear-gradient(" ++ String.fromFloat angle ++ "deg, " ++ joined ++ ")"
+    in
+        bgGradient css
+
+
+-- Pre-built CSS gradient string (escape hatch). Pass the full
+-- `linear-gradient(...)` / `radial-gradient(...)` value — the
+-- renderer prefixes with `background-image: `.
+gradient : String -> Attribute msg
+gradient css =
+    bgGradient css
+
+
+renderStop : ( Float, Color ) -> String
+renderStop ( pct, c ) =
+    colorCss c ++ " " ++ String.fromFloat pct ++ "%"

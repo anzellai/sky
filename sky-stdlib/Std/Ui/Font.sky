@@ -1,7 +1,8 @@
-module Std.Ui.Font exposing (color, size, family, weight, sansSerif, serif, monospace, typeface, bold, light, regular)
+module Std.Ui.Font exposing (color, size, family, weight, sansSerif, serif, monospace, typeface, bold, light, regular, semiBold, extraBold, black, italic, underline, letterSpacing, wordSpacing)
+
 
 import Sky.Core.Prelude exposing (..)
-import Std.Ui exposing (Color, Attribute, fontColor, fontSize, fontFamily, fontWeight)
+import Std.Ui exposing (Color, Attribute, fontColor, fontSize, fontFamily, fontWeight, fontItalic, fontUnderline, fontLetterSpacing, fontWordSpacing)
 
 
 color : Color -> Attribute msg
@@ -12,10 +13,9 @@ size : Int -> Attribute msg
 size n = fontSize n
 
 
--- Pass a comma-separated CSS font-family string. Tier 1 takes the
--- raw form ("Inter, sans-serif"); Tier 2 swaps in `List String`
--- once Sky's typed codegen routes `String.join` correctly over
--- `List String`.
+-- Pass a comma-separated CSS font-family string. Sky's typed codegen
+-- doesn't currently route `String.join` cleanly over `List String`,
+-- so the helper takes the pre-joined form (`"Inter, sans-serif"`).
 family : String -> Attribute msg
 family joined = fontFamily joined
 
@@ -27,11 +27,40 @@ weight n = fontWeight n
 bold : Attribute msg
 bold = fontWeight 700
 
+semiBold : Attribute msg
+semiBold = fontWeight 600
+
 regular : Attribute msg
 regular = fontWeight 400
 
 light : Attribute msg
 light = fontWeight 300
+
+extraBold : Attribute msg
+extraBold = fontWeight 800
+
+black : Attribute msg
+black = fontWeight 900
+
+
+-- Italic text.
+italic : Attribute msg
+italic = fontItalic
+
+
+-- Underlined text.
+underline : Attribute msg
+underline = fontUnderline
+
+
+-- Letter-spacing (tracking) in em.
+letterSpacing : Float -> Attribute msg
+letterSpacing em = fontLetterSpacing em
+
+
+-- Word-spacing in em.
+wordSpacing : Float -> Attribute msg
+wordSpacing em = fontWordSpacing em
 
 
 sansSerif : String

@@ -1,21 +1,58 @@
-module Std.Ui.Border exposing (color, width, rounded)
+module Std.Ui.Border exposing (color, width, widthEach, rounded, solid, dashed, dotted, shadow, glow, innerShadow)
 
--- Std.Ui.Border — border colour / width / rounded-corner helpers.
---
--- Tier 1 ships color/width/rounded; shadow + per-side widths land
--- when the inline-style renderer adds the matching CSS shape.
+-- Std.Ui.Border — border colour / width / style / shadow helpers.
 
 import Sky.Core.Prelude exposing (..)
-import Std.Ui exposing (Color, Attribute, borderColor, borderWidth, borderRounded)
+import Std.Ui exposing (Color, Attribute, borderColor, borderWidth, borderWidthEach, borderRounded, borderStyle, borderShadow, borderInsetShadow)
 
 
 color : Color -> Attribute msg
 color c = borderColor c
 
 
+-- Uniform border width (in px).
 width : Int -> Attribute msg
 width n = borderWidth n
 
 
+-- Per-side border width: top, right, bottom, left (in px).
+widthEach : { top : Int, right : Int, bottom : Int, left : Int } -> Attribute msg
+widthEach r = borderWidthEach r.top r.right r.bottom r.left
+
+
+-- Corner radius (in px).
 rounded : Int -> Attribute msg
 rounded n = borderRounded n
+
+
+-- Border line style. Default (when borderWidth is set without an
+-- explicit style) is `solid`; use `dashed` / `dotted` to override.
+solid : Attribute msg
+solid = borderStyle "solid"
+
+
+dashed : Attribute msg
+dashed = borderStyle "dashed"
+
+
+dotted : Attribute msg
+dotted = borderStyle "dotted"
+
+
+-- Box shadow with an offset (px), blur radius (px), spread (px), and
+-- colour. Use 0 for spread when you don't need it. Mirrors the CSS
+-- `box-shadow: <ox>px <oy>px <blur>px <spread>px <colour>;` shape.
+shadow : { offsetX : Int, offsetY : Int, blur : Int, spread : Int, color : Color } -> Attribute msg
+shadow s = borderShadow s.offsetX s.offsetY s.blur s.spread s.color
+
+
+-- Soft outer "glow" shadow — convenience wrapper that fixes
+-- offset to (0,0) and spread to 0; user picks blur radius + colour.
+glow : Int -> Color -> Attribute msg
+glow blur c = borderShadow 0 0 blur 0 c
+
+
+-- Inset (inner) shadow with the same shape as `shadow`. Renders
+-- with the CSS `inset` keyword for an inward shadow.
+innerShadow : { offsetX : Int, offsetY : Int, blur : Int, spread : Int, color : Color } -> Attribute msg
+innerShadow s = borderInsetShadow s.offsetX s.offsetY s.blur s.spread s.color
