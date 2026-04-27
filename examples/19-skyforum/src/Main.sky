@@ -43,7 +43,7 @@ init _req =
             [ Comment 101 1 0 "bob" "This looks great — does it support keyed children for diffing?" 12 [] []
             , Comment 102 1 101 "alice" "Yes, Std.Ui.Keyed handles that via the sky-key attribute." 9 [] []
             , Comment 103 1 102 "bob" "Nice. Any plans for an actual stylesheet pass?" 4 [] []
-            , Comment 104 1 0 "carol" "How does it compare to Phoenix LiveView?" 7 [] []
+            , Comment 104 1 0 "carol" "How does it compare to other server-driven UI frameworks?" 7 [] []
             , Comment 105 1 104 "alice" "Same idea: server holds state, browser is dumb." 11 [] []
             , Comment 201 2 0 "alice" "Love seeing CRDT explanations that fit on one page." 5 [] []
             , Comment 301 3 0 "dave" "Read 'Types and Programming Languages' (TAPL). Canonical reference." 18 [] []

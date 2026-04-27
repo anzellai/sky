@@ -19,7 +19,7 @@ main =
 
 - **A Go compilation target** — fast compilation, single static binary, access to the full Go ecosystem (databases, HTTP servers, cloud SDKs).
 - **A pure-functional, ML-family front-end** — Hindley-Milner type inference, algebraic data types, exhaustive pattern matching, pure functions, model/update/view/subscriptions architecture (TEA).
-- **Server-driven UI** in the Phoenix LiveView mould — DOM diffing, SSE subscriptions, session management. No client-side framework required.
+- **Server-driven UI** — DOM diffing, SSE subscriptions, session management on the server. No client-side framework required. (Same architectural style popularised by Phoenix LiveView; design + implementation independent.)
 
 Sky compiles to Go. One binary runs your API, DB access, and server-rendered interactive UI — one codebase, one language, one deployment artifact.
 
@@ -31,7 +31,7 @@ I've worked professionally with Go, Elm, TypeScript, Python, Dart, Java, and oth
 
 The pain point that kept coming back: startups and scale-ups building React/TypeScript frontends talking to a separate backend, creating friction at every boundary — different type systems, duplicated models, complex build pipelines, and the constant uncertainty of "does this actually work?" that comes with the JS ecosystem. Maintenance becomes the real cost, not the initial build.
 
-I always wanted to combine Go's tooling (fast builds, single binary, real concurrency, massive ecosystem) with the developer experience that strong static types and pure functions give you (if it compiles, it works; refactoring is fearless; the architecture scales). Then, inspired by Phoenix LiveView, I saw how a server-driven UI could eliminate the frontend/backend split entirely — one language, one model, one deployment.
+I always wanted to combine Go's tooling (fast builds, single binary, real concurrency, massive ecosystem) with the developer experience that strong static types and pure functions give you (if it compiles, it works; refactoring is fearless; the architecture scales). After seeing what Phoenix LiveView demonstrated about server-driven UI, I wanted that same architectural style — one language, one model, one deployment, no frontend/backend split.
 
 The first attempt compiled Sky to JavaScript with the React ecosystem as the runtime. It worked, but Sky would have inherited all the problems I was trying to escape — npm dependency chaos, bundle configuration, and the fundamental uncertainty of a dynamically-typed runtime. So I started over with Go as the compilation target: a Hindley-Milner type system + ML-family syntax on the frontend, Go's ecosystem and binary output on the backend, with auto-generated FFI bindings that let you `import` any Go package and use it with full type safety.
 

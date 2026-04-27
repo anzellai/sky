@@ -1510,7 +1510,7 @@ main =
 
 ## Sky.Live — Server-Driven UI
 
-For interactive web apps, Sky.Live generates an HTTP server with DOM diffing (like Phoenix LiveView):
+For interactive web apps, Sky.Live generates an HTTP server with server-side DOM diffing (similar architectural style to Phoenix LiveView):
 
 ```elm
 import Std.Html exposing (..)

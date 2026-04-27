@@ -185,6 +185,27 @@ OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ---
 
+## Sky.Live — `runtime-go/rt/live*.go`, `sky-stdlib/Std/Live.sky`
+
+Sky.Live's architectural model — server-authoritative state, an
+`init` / `update` / `view` / `subscriptions` cycle, server-side DOM
+diff with patches sent over SSE, session-resident state — adopts
+the now-standard "server-driven UI" approach popularised by:
+
+- **Phoenix LiveView** — the Phoenix Framework team. The Elixir
+  library that established this server-driven UI style for
+  production web apps. Licence: MIT. See:
+  <https://github.com/phoenixframework/phoenix_live_view>
+
+No source code from Phoenix LiveView (or any related Elixir / Erlang
+library) is included in Sky. The runtime, wire protocol, diff
+algorithm, session-store implementations, and all server / browser
+code are independent Go and JavaScript work. Where Sky.Live's
+documentation mentions Phoenix LiveView it is for technical context
+or comparison, not endorsement.
+
+---
+
 ## Surface syntax compatibility
 
 Sky's surface syntax (module declarations, `case`/`let`/`if`,
