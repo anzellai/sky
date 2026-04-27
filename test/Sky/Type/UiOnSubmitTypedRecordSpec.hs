@@ -60,7 +60,7 @@ checkOnly src =
         return (ecInt, combined)
 
 
--- The user's failing pattern from sendcrafts (CC port report,
+-- The user's failing pattern from a downstream app (CC port report,
 -- 2026-04-27): Msg + view in the same module, view annotated
 -- `Element Msg`, form's onSubmit binds a record-arg constructor.
 inModuleSrc :: String

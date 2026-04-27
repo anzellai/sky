@@ -2,7 +2,7 @@
 # Sky Language — LOCAL source build
 #
 # Unlike Dockerfile (which downloads a released binary), this image
-# builds sky from the current source tree. Used when sendcrafts or
+# builds sky from the current source tree. Used when a downstream app or
 # another consumer needs fixes on an unmerged branch without waiting
 # for a release cut.
 #

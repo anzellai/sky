@@ -13,6 +13,7 @@ import qualified Sky.Parse.MultiLineParenAppSpec
 import qualified Sky.Canonicalise.ExposingSpec
 import qualified Sky.Canonicalise.KernelFallbackSpec
 import qualified Sky.Canonicalise.UnboundSpec
+import qualified Sky.Canonicalise.QualifiedTypeAliasSpec
 import qualified Sky.Type.ExhaustivenessSpec
 import qualified Sky.Type.AnyWildcardSpec
 import qualified Sky.Type.TupleLambdaSpec
@@ -79,6 +80,13 @@ main = hspec $ do
     -- `Crypto_sha256(arg)` (no `rt.` prefix) and `go build` fails.
     describe "Sky.Canonicalise.KernelFallback" Sky.Canonicalise.KernelFallbackSpec.spec
     describe "Sky.Canonicalise.Unbound"  Sky.Canonicalise.UnboundSpec.spec
+    -- Qualified type annotation under `import M as Alias` must
+    -- resolve through the alias map. Pre-fix `Ui.Color` (under
+    -- `import Std.Ui as Ui`) became `Canonical "Ui"` while bare
+    -- `Color` (via exposing) became `Canonical "Std.Ui"` — HM
+    -- rejected with the cryptic "Color vs Color" message.
+    describe "Sky.Canonicalise.QualifiedTypeAlias"
+                                         Sky.Canonicalise.QualifiedTypeAliasSpec.spec
     describe "Sky.Type.Exhaustiveness"   Sky.Type.ExhaustivenessSpec.spec
     -- Cross-branch HM `any` wildcard fix (compiler bug #3). Distinct
     -- occurrences of `any` in source types must NOT share a single
@@ -105,7 +113,7 @@ main = hspec $ do
     --      bare values like `Ui.fill : Length` were dropped and
     --      `Ui.fill 1` type-checked silently. Now all top-level
     --      decls register.
-    -- Both surfaced from the sendcrafts Std.Ui port (Border.shadow
+    -- Both surfaced from a real-world Std.Ui port (Border.shadow
     -- with wrong record shape passed sky check + sky build then
     -- panicked at runtime; Ui.fill 1 likewise).
     describe "Sky.Type.RecordFieldExactness"

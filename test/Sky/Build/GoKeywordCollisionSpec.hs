@@ -17,7 +17,7 @@ module Sky.Build.GoKeywordCollisionSpec (spec) where
 --   expression in go must not be parenthesized
 -- (Go's parser interprets `go(...)` as a goroutine launch.)
 --
--- Surfaced from the sendcrafts Std.Ui port report (2026-04-27, CC
+-- Surfaced from a real-world Std.Ui port report (2026-04-27, CC
 -- session) where the AI mistakenly attributed the failure to a
 -- parser bug — the source actually parsed and type-checked fine; it
 -- was the emitted Go that broke. See the fix comment at the

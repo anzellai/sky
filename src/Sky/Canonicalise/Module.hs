@@ -72,6 +72,14 @@ canonicaliseWithDeps deps srcMod =
         -- Counter is imported from another module).
         tmap = buildTypeHomeMap modName deps srcMod
 
+        -- Build alias-segment → full module name map so qualified type
+        -- annotations like `Ui.Color` (under `import Std.Ui as Ui`)
+        -- resolve to the dep's full home rather than the literal short
+        -- segment. Without this, qualified and bare references to the
+        -- same type get different homes and HM rejects them as
+        -- different types.
+        aliasMap = buildImportAliasMap srcMod
+
         -- Detect name collisions between exposing-(..) or exposing-(name)
         -- imports. We tolerate collisions as long as the ambiguous name is
         -- never actually used unqualified in this module — that's exactly
@@ -97,19 +105,19 @@ canonicaliseWithDeps deps srcMod =
         env2 = registerTopLevelNames env1 (Src._values srcMod)
 
         -- Register unions and their constructors
-        env3 = registerUnions tmap env2 (Src._unions srcMod)
+        env3 = registerUnions tmap aliasMap env2 (Src._unions srcMod)
 
         -- Register type aliases
-        env4 = registerAliases tmap env3 (Src._aliases srcMod)
+        env4 = registerAliases tmap aliasMap env3 (Src._aliases srcMod)
 
         -- Canonicalise declarations
-        decls = canonicaliseDecls tmap env4 (Src._values srcMod)
+        decls = canonicaliseDecls tmap aliasMap env4 (Src._values srcMod)
 
         -- Canonicalise unions
-        unions = canonicaliseUnions tmap env4 (Src._unions srcMod)
+        unions = canonicaliseUnions tmap aliasMap env4 (Src._unions srcMod)
 
         -- Canonicalise aliases
-        aliases = canonicaliseAliases tmap env4 (Src._aliases srcMod)
+        aliases = canonicaliseAliases tmap aliasMap env4 (Src._aliases srcMod)
 
         -- Exports
         exports = canonicaliseExports (Src._exports srcMod)
@@ -182,6 +190,25 @@ buildTypeHomeMap home deps srcMod =
             ]
     in
     Map.fromList (depEntries ++ localEntries)
+
+
+-- | Build an `alias-segment → full module name` map from a module's
+-- import list. Lets `Ui.Color` (under `import Std.Ui as Ui`) resolve
+-- to `Std.Ui` instead of literal `Canonical "Ui"`. Both the explicit
+-- alias and the import's last segment are registered (Sky lets you
+-- write `Std.Ui.Color` whether or not you aliased the import, so the
+-- last-segment fallback covers the no-alias case too).
+buildImportAliasMap :: Src.Module -> Map.Map String ModuleName.Canonical
+buildImportAliasMap srcMod =
+    Map.fromList
+        [ (qualifier, ModuleName.Canonical importPath)
+        | imp <- Src._imports srcMod
+        , let importSegs = case Src._importName imp of A.At _ s -> s
+              importPath = ModuleName.joinWith "." importSegs
+              qualifier = case Src._importAlias imp of
+                  Just alias -> alias
+                  Nothing    -> last importSegs
+        ]
 
 
 -- ═══════════════════════════════════════════════════════════
@@ -944,8 +971,11 @@ registerTopLevelNames env values =
 
 
 -- | Register union types and their constructors
-registerUnions :: Map.Map String ModuleName.Canonical -> Env.Env -> [A.Located Src.Union] -> Env.Env
-registerUnions tmap env unions =
+registerUnions
+    :: Map.Map String ModuleName.Canonical
+    -> Map.Map String ModuleName.Canonical
+    -> Env.Env -> [A.Located Src.Union] -> Env.Env
+registerUnions tmap aliasMap env unions =
     foldl registerUnion env unions
   where
     registerUnion e (A.At _ u) =
@@ -956,7 +986,8 @@ registerUnions tmap env unions =
             ctorSrcs = Src._unionCtors u
             numAlts = length ctorSrcs
             ctors = zipWith (\(A.At _ (name, args)) i ->
-                Can.Ctor name i (length args) (map (CanType.canonicaliseTypeAnnotationWith tmap home) args))
+                Can.Ctor name i (length args)
+                    (map (CanType.canonicaliseTypeAnnotationWithAliases tmap aliasMap home) args))
                 ctorSrcs [0..]
             opts = if all (\(Can.Ctor _ _ arity _) -> arity == 0) ctors
                    then Can.Enum
@@ -980,8 +1011,11 @@ registerUnions tmap env unions =
 -- `Foo : A -> B -> Foo`). We register the alias name in `_vars` so
 -- `Decode.succeed UserProfile` resolves at canonicalise time instead of
 -- leaking through to Go codegen and tripping the unbound-name check.
-registerAliases :: Map.Map String ModuleName.Canonical -> Env.Env -> [A.Located Src.Alias] -> Env.Env
-registerAliases tmap env aliases =
+registerAliases
+    :: Map.Map String ModuleName.Canonical
+    -> Map.Map String ModuleName.Canonical
+    -> Env.Env -> [A.Located Src.Alias] -> Env.Env
+registerAliases tmap aliasMap env aliases =
     foldl registerAlias env aliases
   where
     registerAlias e (A.At _ a) =
@@ -989,7 +1023,7 @@ registerAliases tmap env aliases =
             home = Env._home e
             name = case Src._aliasName a of A.At _ n -> n
             vars = map (\(A.At _ v) -> v) (Src._aliasVars a)
-            body = case Src._aliasType a of A.At _ t -> CanType.canonicaliseTypeAnnotationWith tmap home t
+            body = case Src._aliasType a of A.At _ t -> CanType.canonicaliseTypeAnnotationWithAliases tmap aliasMap home t
             info = Env.AliasInfo home vars body
             e1 = e { Env._aliases = Map.insert name info (Env._aliases e) }
             -- Record aliases expose their name as an auto-ctor value.
@@ -1008,14 +1042,20 @@ registerAliases tmap env aliases =
 -- ═══════════════════════════════════════════════════════════
 
 -- | Canonicalise all value declarations
-canonicaliseDecls :: Map.Map String ModuleName.Canonical -> Env.Env -> [A.Located Src.Value] -> Can.Decls
-canonicaliseDecls tmap env values =
-    foldr (\v rest -> Can.Declare (canonicaliseValue tmap env v) rest) Can.SaveTheEnvironment values
+canonicaliseDecls
+    :: Map.Map String ModuleName.Canonical
+    -> Map.Map String ModuleName.Canonical
+    -> Env.Env -> [A.Located Src.Value] -> Can.Decls
+canonicaliseDecls tmap aliasMap env values =
+    foldr (\v rest -> Can.Declare (canonicaliseValue tmap aliasMap env v) rest) Can.SaveTheEnvironment values
 
 
 -- | Canonicalise a single value declaration
-canonicaliseValue :: Map.Map String ModuleName.Canonical -> Env.Env -> A.Located Src.Value -> Can.Def
-canonicaliseValue tmap env (A.At _ val) =
+canonicaliseValue
+    :: Map.Map String ModuleName.Canonical
+    -> Map.Map String ModuleName.Canonical
+    -> Env.Env -> A.Located Src.Value -> Can.Def
+canonicaliseValue tmap aliasMap env (A.At _ val) =
     let
         name = Src._valueName val
         params = Src._valuePatterns val
@@ -1037,7 +1077,7 @@ canonicaliseValue tmap env (A.At _ val) =
         Just (A.At _ srcType) ->
             let
                 home = Env._home env
-                canType = CanType.canonicaliseTypeAnnotationWith tmap home srcType
+                canType = CanType.canonicaliseTypeAnnotationWithAliases tmap aliasMap home srcType
                 freeVars = CanType.freeTypeVars srcType
                 typedPatterns = zip canPatterns (arrowArgs canType)
             in
@@ -1060,8 +1100,11 @@ arrowResult t = t
 -- UNIONS & ALIASES
 -- ═══════════════════════════════════════════════════════════
 
-canonicaliseUnions :: Map.Map String ModuleName.Canonical -> Env.Env -> [A.Located Src.Union] -> Map.Map String Can.Union
-canonicaliseUnions tmap env unions =
+canonicaliseUnions
+    :: Map.Map String ModuleName.Canonical
+    -> Map.Map String ModuleName.Canonical
+    -> Env.Env -> [A.Located Src.Union] -> Map.Map String Can.Union
+canonicaliseUnions tmap aliasMap env unions =
     Map.fromList $ map (canonicaliseUnion env) unions
   where
     canonicaliseUnion e (A.At _ u) =
@@ -1073,7 +1116,7 @@ canonicaliseUnions tmap env unions =
             numAlts = length ctorSrcs
             ctors = zipWith (\(A.At _ (cname, args)) i ->
                 Can.Ctor cname i (length args)
-                    (map (CanType.canonicaliseTypeAnnotationWith tmap home) args))
+                    (map (CanType.canonicaliseTypeAnnotationWithAliases tmap aliasMap home) args))
                 ctorSrcs [0..]
             opts = if all (\(Can.Ctor _ _ arity _) -> arity == 0) ctors
                    then Can.Enum
@@ -1081,8 +1124,11 @@ canonicaliseUnions tmap env unions =
         in (name, Can.Union vars ctors numAlts opts)
 
 
-canonicaliseAliases :: Map.Map String ModuleName.Canonical -> Env.Env -> [A.Located Src.Alias] -> Map.Map String Can.Alias
-canonicaliseAliases tmap env aliases =
+canonicaliseAliases
+    :: Map.Map String ModuleName.Canonical
+    -> Map.Map String ModuleName.Canonical
+    -> Env.Env -> [A.Located Src.Alias] -> Map.Map String Can.Alias
+canonicaliseAliases tmap aliasMap env aliases =
     Map.fromList $ map (canonicaliseAlias env) aliases
   where
     canonicaliseAlias e (A.At _ a) =
@@ -1090,7 +1136,7 @@ canonicaliseAliases tmap env aliases =
             home = Env._home e
             name = case Src._aliasName a of A.At _ n -> n
             vars = map (\(A.At _ v) -> v) (Src._aliasVars a)
-            body = case Src._aliasType a of A.At _ t -> CanType.canonicaliseTypeAnnotationWith tmap home t
+            body = case Src._aliasType a of A.At _ t -> CanType.canonicaliseTypeAnnotationWithAliases tmap aliasMap home t
         in (name, Can.Alias vars body)
 
 

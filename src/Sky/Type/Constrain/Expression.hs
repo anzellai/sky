@@ -2235,7 +2235,7 @@ lookupKernelType modName funcName = case (modName, funcName) of
     -- branch. These all return wrapped types (Result/Maybe/Task) so
     -- without explicit kernel sigs the type checker can't enforce
     -- shape on case-pattern matches, leading to runtime panics like
-    -- the sendcrafts `rt.AsInt: got rt.SkyMaybe[interface{}]` class.
+    -- the downstream `rt.AsInt: got rt.SkyMaybe[interface{}]` class.
     --
     -- Bare-type returns (String/Int/Bool/VNode/Attribute) are still
     -- left polymorphic-defaulted — they can't admit bad pattern

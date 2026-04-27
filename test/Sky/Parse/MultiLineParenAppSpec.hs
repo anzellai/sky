@@ -10,7 +10,7 @@ module Sky.Parse.MultiLineParenAppSpec (spec) where
 --     `sky: Expected , or ) in expression`
 -- with a Haskell call stack pointing at Expression.hs:223 (the paren
 -- close-or-comma sentinel that fired because the inner expression's
--- continuation wasn't consumed). Surfaced from the sendcrafts Std.Ui
+-- continuation wasn't consumed). Surfaced from a real-world Std.Ui
 -- port:
 --
 --     Ui.html (renderItems

@@ -17,7 +17,7 @@ import (
 )
 
 // A Msg constructor with a String parameter — the common
-// UpdateAuthRole-style shape from the sendcrafts bug report.
+// UpdateAuthRole-style shape from a downstream bug report.
 func stringMsg(v string) any {
 	return SkyADT{Tag: 1, SkyName: "GotString", Fields: []any{v}}
 }
@@ -73,7 +73,7 @@ func TestApplyMsgArgs_AnyParamAccepts(t *testing.T) {
 // `map[string]string`. Without map narrowing, applyMsgArgs would
 // reject the wire arg and the form submit would silently drop.
 //
-// Surfaced by the sendcrafts auth-form refactor: switching password
+// Surfaced by a real-world auth-form refactor: switching password
 // inputs from per-keystroke onInput to per-submit onSubmit (to avoid
 // password-manager extension churn) ran into this gap.
 func TestApplyMsgArgs_NarrowsFormDataMap(t *testing.T) {
@@ -112,7 +112,7 @@ func TestApplyMsgArgs_NarrowsFormDataMap(t *testing.T) {
 // to `map[string]interface {}`. Field names map case-insensitively
 // ("email" wire → "Email" struct field).
 //
-// Surfaced after the v0.9.8 map→map narrowing landed: sendcrafts had
+// Surfaced after the v0.9.8 map→map narrowing landed: a downstream app had
 // already migrated DoSignIn to take a typed AuthCreds record (cleaner
 // than threading a Dict) and the form submit then hit this gap.
 func TestApplyMsgArgs_NarrowsFormDataToRecordStruct(t *testing.T) {

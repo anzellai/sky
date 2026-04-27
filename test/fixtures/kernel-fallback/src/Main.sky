@@ -26,7 +26,7 @@ import Std.Log as Log
 main =
     -- Crypto.sha256 nested inside String.slice (typedKernelArgCoerce
     -- arg coercion path) — the original failure mode in
-    -- sendcrafts/Services/Stripe.sky webhook logging.
+    -- <downstream>/Services/Stripe.sky webhook logging.
     let
         digest = String.slice 0 12 (Crypto.sha256 "hello")
         encoded = Encoding.base64Encode "secret"

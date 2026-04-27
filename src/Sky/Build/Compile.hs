@@ -2266,7 +2266,7 @@ buildCrossModuleExternalsWithMods validDeps depSolved =
         -- against the call-site's `T1 -> T2` shape and fail cleanly
         -- ("can't unify Length with T1 -> T2") at sky check time.
         -- Sister fix to the closed-record unification gap above
-        -- (#59) — both surfaced from the sendcrafts Std.Ui port.
+        -- (#59) — both surfaced from a real-world Std.Ui port.
         [ ((modName, name), generaliseToAnnotation (fixHomes ty))
         | (modName, types) <- depSolved
         , (name, ty) <- Map.toList types

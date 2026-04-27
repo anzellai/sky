@@ -45,7 +45,7 @@ func TestSkyCallDirect_NarrowsSliceAnyToSliceString(t *testing.T) {
 }
 
 func TestSkyCallDirect_NarrowsNestedSliceOfMaps(t *testing.T) {
-	// The sendcrafts / 08-notes-app shape: DB returns []any where
+	// The 08-notes-app shape: DB returns []any where
 	// each element is map[string]any, but the reducer wants
 	// []map[string]string (each row narrowed). Whole-value narrow
 	// walks nested containers.

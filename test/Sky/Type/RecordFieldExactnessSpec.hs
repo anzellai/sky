@@ -14,7 +14,7 @@ module Sky.Type.RecordFieldExactnessSpec (spec) where
 --
 -- The runtime then panicked with cryptic
 -- `rt.AsInt: expected numeric value, got <nil>` when codegen tried
--- to read the missing field. Surfaced from the sendcrafts Std.Ui
+-- to read the missing field. Surfaced from a real-world Std.Ui
 -- port: `Border.shadow { offset = 1, size = 2, blur = 4, color = ... }`
 -- (wrong field names — actual is `{offsetX, offsetY, blur, spread,
 -- color}`) passed sky check + sky build, then panicked at runtime.

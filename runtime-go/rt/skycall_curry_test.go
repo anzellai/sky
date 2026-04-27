@@ -9,7 +9,7 @@ package rt
 // callee was a top-level multi-arg binding rather than a single-arg
 // curried lambda.
 //
-// Repro from sendcrafts: `List.indexedMap uploadedImageTile xs`
+// Repro from a downstream app: `List.indexedMap uploadedImageTile xs`
 // panicked at runtime; user worked around with `\i u -> uploadedImageTile i u`.
 //
 // Fix: skyCallOne now detects NumIn() > 1 and returns a curried

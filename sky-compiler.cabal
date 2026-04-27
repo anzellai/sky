@@ -178,6 +178,7 @@ test-suite sky-tests
       Sky.Canonicalise.ExposingSpec
       Sky.Canonicalise.KernelFallbackSpec
       Sky.Canonicalise.UnboundSpec
+      Sky.Canonicalise.QualifiedTypeAliasSpec
       Sky.Type.ExhaustivenessSpec
       Sky.Type.AnyWildcardSpec
       Sky.Type.TupleLambdaSpec

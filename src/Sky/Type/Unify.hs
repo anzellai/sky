@@ -164,7 +164,7 @@ unifyStructure v1 v2 flat1 flat2 = case (flat1, flat2) of
 -- The mismatch only surfaced as a runtime panic later
 -- (`rt.AsInt: expected numeric value, got <nil>`) when codegen
 -- emitted field-by-position access against the annotated record
--- shape. Surfaced from the sendcrafts Std.Ui port (Border.shadow
+-- shape. Surfaced from a real-world Std.Ui port (Border.shadow
 -- with the wrong record shape passed sky check + sky build, then
 -- panicked at runtime).
 --

@@ -2,6 +2,7 @@
 module Sky.Canonicalise.Type
     ( canonicaliseTypeAnnotation
     , canonicaliseTypeAnnotationWith
+    , canonicaliseTypeAnnotationWithAliases
     , freeTypeVars
     )
     where
@@ -29,18 +30,36 @@ canonicaliseTypeAnnotationWith
     -> ModuleName.Canonical
     -> Src.TypeAnnotation
     -> Can.Type
-canonicaliseTypeAnnotationWith tmap home srcType = case srcType of
+canonicaliseTypeAnnotationWith tmap home srcType =
+    canonicaliseTypeAnnotationWithAliases tmap Map.empty home srcType
+
+
+-- | Like `canonicaliseTypeAnnotationWith` but also takes an
+-- `aliasMap : alias-segment → full module name` so qualified type
+-- annotations like `Ui.Color` (under `import Std.Ui as Ui`) resolve
+-- to the dep's full home (`Std.Ui`) rather than a literal `Canonical
+-- "Ui"`. Without this, `Ui.Color` and bare `Color` (resolved via the
+-- `tmap` import-exposing path) get different homes and HM rejects
+-- them as different types with the cryptic
+-- `Type mismatch: Color vs Color` (same display, different identity).
+canonicaliseTypeAnnotationWithAliases
+    :: Map.Map String ModuleName.Canonical
+    -> Map.Map String ModuleName.Canonical
+    -> ModuleName.Canonical
+    -> Src.TypeAnnotation
+    -> Can.Type
+canonicaliseTypeAnnotationWithAliases tmap aliasMap home srcType = case srcType of
     Src.TLambda from to ->
         Can.TLambda
-            (canonicaliseTypeAnnotationWith tmap home from)
-            (canonicaliseTypeAnnotationWith tmap home to)
+            (recur from)
+            (recur to)
 
     Src.TVar name ->
         Can.TVar name
 
     Src.TType modStr segments args ->
         let
-            canArgs = map (canonicaliseTypeAnnotationWith tmap home) args
+            canArgs = map recur args
             typeName = last segments
             typeHome = resolveTypeName tmap modStr segments
         in
@@ -48,15 +67,15 @@ canonicaliseTypeAnnotationWith tmap home srcType = case srcType of
 
     Src.TTypeQual qualifier name args ->
         let
-            canArgs = map (canonicaliseTypeAnnotationWith tmap home) args
-            typeHome = resolveTypeQual qualifier
+            canArgs = map recur args
+            typeHome = resolveTypeQualWith aliasMap qualifier
         in
         Can.TType typeHome name canArgs
 
     Src.TRecord fields mExt ->
         let
-            canFields = Map.fromList $ zipWith (\i (A.At _ name, ty) ->
-                (name, Can.FieldType i (canonicaliseTypeAnnotationWith tmap home ty)))
+            canFields = Map.fromList $ zipWith (\i (A.At _ n, ty) ->
+                (n, Can.FieldType i (recur ty)))
                 [0..] fields
         in
         Can.TRecord canFields mExt
@@ -66,9 +85,11 @@ canonicaliseTypeAnnotationWith tmap home srcType = case srcType of
 
     Src.TTuple a b rest ->
         Can.TTuple
-            (canonicaliseTypeAnnotationWith tmap home a)
-            (canonicaliseTypeAnnotationWith tmap home b)
-            (map (canonicaliseTypeAnnotationWith tmap home) rest)
+            (recur a)
+            (recur b)
+            (map recur rest)
+  where
+    recur = canonicaliseTypeAnnotationWithAliases tmap aliasMap home
 
 
 -- | Resolve a type name to its home module.
@@ -98,14 +119,30 @@ resolveTypeName tmap modStr segments
 
 -- | Resolve a qualified type name
 resolveTypeQual :: String -> ModuleName.Canonical
-resolveTypeQual qualifier = case qualifier of
+resolveTypeQual = resolveTypeQualWith Map.empty
+
+
+-- | Resolve a qualified type name, consulting an `import M as Alias`
+-- alias map first. Built-in module qualifiers (List/Maybe/Result/Task/
+-- Dict/Set) keep their hardcoded canonical forms; user `import M as A`
+-- aliases resolve A → M; everything else falls through to the literal
+-- qualifier as a Canonical name (back-compat for kernel modules
+-- referenced via their canonical short name).
+resolveTypeQualWith
+    :: Map.Map String ModuleName.Canonical
+    -> String
+    -> ModuleName.Canonical
+resolveTypeQualWith aliasMap qualifier = case qualifier of
     "List"   -> ModuleName.list
     "Maybe"  -> ModuleName.maybe_
     "Result" -> ModuleName.result_
     "Task"   -> ModuleName.task
     "Dict"   -> ModuleName.dict
     "Set"    -> ModuleName.set
-    _        -> ModuleName.Canonical qualifier
+    _        -> Map.findWithDefault
+                    (ModuleName.Canonical qualifier)
+                    qualifier
+                    aliasMap
 
 
 -- | Extract free type variables from a source type annotation

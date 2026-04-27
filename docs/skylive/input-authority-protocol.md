@@ -14,7 +14,7 @@ The current runtime has three structural weaknesses:
 
 3. **No ordering or replay protection.** Two fetches in flight can return in reversed order; the client applies both in arrival order. The older response clobbers the newer.
 
-Under mild load on sendcrafts, this produces visible input duplication on page navigation and occasional keystroke loss. Under adversarial conditions (slow 3G, tab-switching while typing, concurrent submits) it becomes unusable.
+Under mild load on a downstream app, this produces visible input duplication on page navigation and occasional keystroke loss. Under adversarial conditions (slow 3G, tab-switching while typing, concurrent submits) it becomes unusable.
 
 The fix is a coordinated protocol change: **stable structural identities, monotonic sequence numbers, and client-side authority for dirty DOM state.**
 
@@ -545,7 +545,7 @@ Step 6 — `runtime-go/rt/live_adversarial_test.go`:
 keeps this PR focused on the runtime contract. The JS logic (patch
 filter, stale-drop, beacon flush) is small and mechanically derived
 from the Go-side invariants that *are* tested; Step 7 validates
-end-to-end against a real app (sendcrafts) for the regression the
+end-to-end against a real downstream app for the regression the
 protocol was designed to fix.
 
 Manual smoke checklist (for the follow-up automation):
@@ -559,9 +559,9 @@ Manual smoke checklist (for the follow-up automation):
 7. Kill server mid-fetch — client retries, no silent data loss.
 8. Throttle to slow-3G, type continuously — no character loss.
 
-### Step 7 — Verify on sendcrafts
+### Step 7 — Verify on a downstream app
 
-Rebuild sendcrafts' compiler binary (`cabal install` in sky repo), rebuild sendcrafts (`sky build src/Main.sky`). Manual check:
+Rebuild a downstream app's compiler binary (`cabal install` in sky repo), rebuild the downstream app (`sky build src/Main.sky`). Manual check:
 
 - signIn → signUp transition: no duplicated inputs.
 - Type email, navigate away, come back: server remembers last typed value (via `inputState` flush).

@@ -151,8 +151,8 @@ tryNextLineArgs mkError funcCol = Parser $ \s cok eok cerr eerr ->
         -- where the inner func column (after `outer (`) is greater
         -- than where the user wants to break the continuation. The
         -- block-indent rule still rejects sibling declarations (which
-        -- sit at column == _indent), so it's safe. Surfaced by the
-        -- sendcrafts Std.Ui port: `Ui.html (renderItems\n    [...])`
+        -- sit at column == _indent), so it's safe. Surfaced by a
+        -- real-world Std.Ui port: `Ui.html (renderItems\n    [...])`
         -- failed with "Expected , or ) in expression" pre-fix.
         pastFuncCol  = _col s' > funcCol
         pastBlockInd = _col s' > _indent s' && _col s' >= 1

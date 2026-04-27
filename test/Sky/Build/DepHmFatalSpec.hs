@@ -39,7 +39,7 @@ spec = do
         it "blocks the build with TYPE ERROR (Mod): … when a dep module fails HM in pass 2" $ do
             -- Pre-fix the dep silently degraded to `any`-typed bindings
             -- and the entry consumed broken values at runtime.
-            -- Symptom in sendcrafts: `[AUTH] Admin ensured: 0x102…`
+            -- Symptom in a downstream app: `[AUTH] Admin ensured: 0x102…`
             -- — the func-pointer of an unforced Task thunk being
             -- string-split. This guards the regression.
             sky <- findSky

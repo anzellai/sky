@@ -14,7 +14,7 @@ package rt
 // Pre-v0.9.10 the typed companion returned SkyResult[string, _] —
 // mismatching the declared type — so the same Sky source compiled
 // fine via the any-path but panicked at the case match when typed-
-// codegen lowered the call site. Surfaced by sendcrafts.
+// codegen lowered the call site. Surfaced by a downstream app.
 
 import "testing"
 
