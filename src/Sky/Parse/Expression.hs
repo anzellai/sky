@@ -8,6 +8,7 @@ import qualified Data.Text as T
 import Sky.Parse.Primitives
 import Sky.Parse.Space (spaces, freshLine, checkIndent, skipWhitespace)
 import Sky.Parse.Variable (lower, upper)
+import qualified Sky.Parse.Keyword
 import Sky.Parse.Number (number, Number(..))
 import Sky.Parse.String (stringLiteral, charLiteral, StringResult(..))
 import Sky.Parse.Symbol (operator)
@@ -139,10 +140,25 @@ tryNextLineArgs :: (Row -> Col -> x) -> Col -> Parser x [Src.Expr]
 tryNextLineArgs mkError funcCol = Parser $ \s cok eok cerr eerr ->
     let
         s' = skipWhitespace s
+        -- Continuation rule: accept the next-line content if it's
+        -- indented past EITHER the function's column OR the block's
+        -- minimum indent. The block-indent fallback handles patterns
+        -- like:
+        --
+        --     outer (inner
+        --         "x")
+        --
+        -- where the inner func column (after `outer (`) is greater
+        -- than where the user wants to break the continuation. The
+        -- block-indent rule still rejects sibling declarations (which
+        -- sit at column == _indent), so it's safe. Surfaced by the
+        -- sendcrafts Std.Ui port: `Ui.html (renderItems\n    [...])`
+        -- failed with "Expected , or ) in expression" pre-fix.
+        pastFuncCol  = _col s' > funcCol
+        pastBlockInd = _col s' > _indent s' && _col s' >= 1
+        indented     = pastFuncCol || pastBlockInd
     in
-    -- Only advance if next line is indented past the function column
-    -- AND the next token looks like a valid expression start (not a keyword or operator)
-    if _col s' > funcCol && _row s' > _row s && isExprStart (_src s')
+    if indented && _row s' > _row s && isExprStart (_src s')
         then
             let (Parser p) = do
                     freshLine mkError
@@ -156,13 +172,31 @@ tryNextLineArgs mkError funcCol = Parser $ \s cok eok cerr eerr ->
   where
     isExprStart txt = case T.uncons txt of
         Just (c, _) ->
-            (c >= 'a' && c <= 'z') ||  -- variable
             (c >= 'A' && c <= 'Z') ||  -- constructor
             (c >= '0' && c <= '9') ||  -- number
             c == '(' || c == '[' || c == '{' ||  -- delimited
-            c == '\\' || c == '"' || c == '\''   -- lambda, string, char
+            c == '\\' || c == '"' || c == '\'' ||  -- lambda, string, char
+            -- Lowercase identifiers count as expression start ONLY
+            -- when they're not Sky keywords. Without this guard, the
+            -- relaxed `pastBlockInd` continuation rule above would
+            -- consume `else` / `then` / `in` / `of` as if they were
+            -- application arguments — breaking if/then/else and
+            -- let/in / case/of parses (sister fix to the parser
+            -- relaxation, surfaced when the relaxation regressed
+            -- examples/19-skyforum/src/View/Detail.sky).
+            (isLowerStart txt && not (isKeywordPrefix txt))
             -- Note: `-` omitted — it could be subtraction operator, not expression start
         Nothing -> False
+    isLowerStart txt = case T.uncons txt of
+        Just (c, _) -> c >= 'a' && c <= 'z'
+        Nothing     -> False
+    isKeywordPrefix txt =
+        let leading = T.takeWhile isIdentChar txt
+        in Sky.Parse.Keyword.isKeyword (T.unpack leading)
+    isIdentChar c = (c >= 'a' && c <= 'z')
+                 || (c >= 'A' && c <= 'Z')
+                 || (c >= '0' && c <= '9')
+                 || c == '_'
 
 
 -- | Parse an atomic expression, including postfix .field access

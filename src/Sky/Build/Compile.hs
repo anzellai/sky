@@ -2250,14 +2250,27 @@ buildCrossModuleExternalsWithMods validDeps depSolved =
     let typeHomeMap = buildGlobalTypeHomeMap validDeps
         fixHomes = fixupHomes typeHomeMap
     in Map.fromList
+        -- Register every top-level dep declaration's solved type as a
+        -- cross-module external, not just function-typed ones.
+        --
+        -- Pre-fix bug: an `isFunctionType` filter dropped bare values
+        -- like `Std.Ui.fill : Length`. The constrain path then fell
+        -- through to `T.CLocal` for `Ui.fill`, and the solver treated
+        -- it as a fresh polymorphic variable — letting `Ui.fill 1`
+        -- type-check (silently applying a value as if it were a
+        -- function). Codegen then emitted `Std_Ui_fill(1)` which
+        -- `go build` rejected with a confusing arity error rather
+        -- than a clean Sky-level type error.
+        --
+        -- Registering bare values too lets the solver unify them
+        -- against the call-site's `T1 -> T2` shape and fail cleanly
+        -- ("can't unify Length with T1 -> T2") at sky check time.
+        -- Sister fix to the closed-record unification gap above
+        -- (#59) — both surfaced from the sendcrafts Std.Ui port.
         [ ((modName, name), generaliseToAnnotation (fixHomes ty))
         | (modName, types) <- depSolved
         , (name, ty) <- Map.toList types
-        , isFunctionType ty
         ]
-  where
-    isFunctionType (T.TLambda _ _) = True
-    isFunctionType _               = False
 
 
 -- | Backwards-compat: previous buildCrossModuleExternals signature.

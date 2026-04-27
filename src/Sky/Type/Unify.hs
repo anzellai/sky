@@ -144,7 +144,36 @@ unifyStructure v1 v2 flat1 flat2 = case (flat1, flat2) of
     _ -> return False  -- incompatible structures
 
 
--- | Unify record types
+-- | Unify record types.
+--
+-- Row-polymorphic semantics: a record carries a "row extension"
+-- variable. When the extension is bound to `EmptyRecord1` the record
+-- is CLOSED — it has exactly the fields listed and rejects any extra.
+-- When it's still a FlexVar, the record is OPEN — additional fields
+-- are allowed and absorb into the extension.
+--
+-- Pre-fix bug: the mismatched-fields branch unconditionally merged
+-- both field sets under a fresh extension and returned True, even
+-- when both records were closed. This silently accepted record
+-- literals with completely wrong field names against an explicit
+-- record-typed annotation:
+--
+--     takesRecord : { name : String, count : Int } -> String
+--     takesRecord { id = 1, label = "x" }            -- WAS accepted
+--
+-- The mismatch only surfaced as a runtime panic later
+-- (`rt.AsInt: expected numeric value, got <nil>`) when codegen
+-- emitted field-by-position access against the annotated record
+-- shape. Surfaced from the sendcrafts Std.Ui port (Border.shadow
+-- with the wrong record shape passed sky check + sky build, then
+-- panicked at runtime).
+--
+-- Fix: respect the closed/open status of each side. A closed record
+-- must NOT have extra fields on the other side; if it does, fail.
+-- Both closed → exact field-set match required (already covered by
+-- the `Map.null only1 && Map.null only2` branch). One side closed
+-- → other side's extra fields are illegal. Both open → row-poly
+-- merge as before.
 unifyRecords :: T.Variable -> T.Variable
     -> Map.Map String T.Variable -> T.Variable
     -> Map.Map String T.Variable -> T.Variable
@@ -159,17 +188,37 @@ unifyRecords v1 v2 fields1 ext1 fields2 ext2 = do
     if not (and sharedOk)
         then return False
         else do
-            if Map.null only1 && Map.null only2
-                then do
-                    extOk <- unify ext1 ext2
-                    if extOk
-                        then do merge v1 v2 (T.Structure (T.Record1 fields1 ext1)); return True
-                        else return False
-                else do
-                    -- Create fresh extension and unify
-                    newExt <- UF.fresh (T.Descriptor (T.FlexVar Nothing) 0 T.noMark Nothing)
-                    merge v1 v2 (T.Structure (T.Record1 (Map.union fields1 fields2) newExt))
-                    return True
+            closed1 <- isClosedRecordExt ext1
+            closed2 <- isClosedRecordExt ext2
+            -- Side N closed disallows extras present only on the
+            -- opposite side. Catches `takesRecord { wrong fields }`.
+            let extras1Illegal = closed2 && not (Map.null only1)
+                extras2Illegal = closed1 && not (Map.null only2)
+            if extras1Illegal || extras2Illegal
+                then return False
+                else if Map.null only1 && Map.null only2
+                    then do
+                        extOk <- unify ext1 ext2
+                        if extOk
+                            then do merge v1 v2 (T.Structure (T.Record1 fields1 ext1)); return True
+                            else return False
+                    else do
+                        -- Both open (or one open with extras only on
+                        -- the open side) — row-poly merge under a
+                        -- fresh extension.
+                        newExt <- UF.fresh (T.Descriptor (T.FlexVar Nothing) 0 T.noMark Nothing)
+                        merge v1 v2 (T.Structure (T.Record1 (Map.union fields1 fields2) newExt))
+                        return True
+
+
+-- | Check whether a row-extension variable is bound to EmptyRecord1
+-- (i.e. the record is closed and has no row extension).
+isClosedRecordExt :: T.Variable -> IO Bool
+isClosedRecordExt v = do
+    d <- UF.get v
+    case T._content d of
+        T.Structure T.EmptyRecord1 -> return True
+        _                          -> return False
 
 
 -- ═══════════════════════════════════════════════════════════

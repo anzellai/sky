@@ -1779,9 +1779,18 @@ lookupKernelType modName funcName = case (modName, funcName) of
         Just $ T.Forall ["a", "e"]
             (T.TLambda (T.TVar "a")
                 (T.TType ModuleName.task "Task" [T.TVar "e", T.TUnit]))
-    -- Live.app: the signature carries ALL user-code-facing field types
+    -- Live.app: the signature carries the user-code-facing field types
     -- so the record constraint propagates Model/Msg into user init/update/view/
     -- subscriptions. This is the big TEA-typing lever.
+    --
+    -- The record is OPEN (TVar extension) because the runtime accepts
+    -- additional optional fields like `guard : msg -> model -> Result
+    -- String ()` (skyshop), `auth : ...`, etc. Closing this record would
+    -- reject any app that supplies these extras — and forcing every app
+    -- to enumerate the empty optional fields would be miserable UX. The
+    -- closed-record check (Unify.hs:unifyRecords) still enforces
+    -- exactness for ordinary user-written record types; this is the
+    -- deliberate kernel exception.
     ("Live", "app") ->
         -- init receives the per-request context as a plain polymorphic
         -- `req`. Earlier this slot was typed `Dict String v` to pin
@@ -1792,7 +1801,7 @@ lookupKernelType modName funcName = case (modName, funcName) of
         -- runtime's generic map compatible with any inferred shape;
         -- return-only TVar defaulting collapses it to `rt.SkyValue`
         -- in the emitted sig for examples that don't touch req.
-        Just $ T.Forall ["model", "msg", "page", "e", "req"]
+        Just $ T.Forall ["model", "msg", "page", "e", "req", "appExt"]
             (T.TLambda
                 (T.TRecord
                     (Map.fromList
@@ -1812,7 +1821,7 @@ lookupKernelType modName funcName = case (modName, funcName) of
                                 [T.TType (ModuleName.Canonical "") "Route" []]))
                         , ("notFound", T.FieldType 5 (T.TVar "page"))
                         ])
-                    Nothing)
+                    (Just "appExt"))
                 (T.TType ModuleName.task "Task" [T.TVar "e", T.TUnit]))
     -- Live.route: String -> page -> Route
     ("Live", "route") ->

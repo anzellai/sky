@@ -9,6 +9,7 @@ import qualified Sky.Build.TypedFfiSpec
 import qualified Sky.ErrorUnificationSpec
 import qualified Sky.Parse.PatternSpec
 import qualified Sky.Parse.MultiLineExposingSpec
+import qualified Sky.Parse.MultiLineParenAppSpec
 import qualified Sky.Canonicalise.ExposingSpec
 import qualified Sky.Canonicalise.KernelFallbackSpec
 import qualified Sky.Canonicalise.UnboundSpec
@@ -16,6 +17,7 @@ import qualified Sky.Type.ExhaustivenessSpec
 import qualified Sky.Type.AnyWildcardSpec
 import qualified Sky.Type.TupleLambdaSpec
 import qualified Sky.Type.UiOnSubmitTypedRecordSpec
+import qualified Sky.Type.RecordFieldExactnessSpec
 import qualified Sky.Format.FormatSpec
 import qualified Sky.Build.GoKeywordCollisionSpec
 import qualified Sky.Build.NestedPatternSpec
@@ -62,6 +64,14 @@ main = hspec $ do
     -- Multi-line `module/import ... exposing (…)` parser fix +
     -- parse-error-is-fatal regression fence (compiler bug #1).
     describe "Sky.Parse.MultiLineExposing" Sky.Parse.MultiLineExposingSpec.spec
+    -- Multi-line function application inside grouping parens. Pre-fix
+    -- the next-line continuation check anchored against the inner
+    -- func's column; if the inner func sat far from column 1 (because
+    -- of `outer (`), valid continuations on smaller columns failed
+    -- with "Expected , or )". Sister fix: keyword-aware exprStart so
+    -- the relaxed rule doesn't gobble `else`/`then`/`in`/`of`.
+    describe "Sky.Parse.MultiLineParenApp"
+                                         Sky.Parse.MultiLineParenAppSpec.spec
     describe "Sky.Canonicalise.Exposing" Sky.Canonicalise.ExposingSpec.spec
     -- Regression: kernel qualifiers (Crypto, Encoding, Hex, …) used
     -- without an explicit `import Sky.Core.<Mod>` must resolve as
@@ -85,6 +95,21 @@ main = hspec $ do
     -- wrapper is `(a -> Attribute b)`.
     describe "Sky.Type.UiOnSubmitTypedRecord"
                                          Sky.Type.UiOnSubmitTypedRecordSpec.spec
+    -- Closed-record exactness + cross-module externals registration:
+    --   1. unifyRecords (Sky.Type.Unify) used to silently merge field-
+    --      mismatched closed records under a fresh extension. Now
+    --      rejects when either side is closed and the other has
+    --      extras.
+    --   2. buildCrossModuleExternalsWithMods (Sky.Build.Compile) used
+    --      to filter externals to function-typed names only, so
+    --      bare values like `Ui.fill : Length` were dropped and
+    --      `Ui.fill 1` type-checked silently. Now all top-level
+    --      decls register.
+    -- Both surfaced from the sendcrafts Std.Ui port (Border.shadow
+    -- with wrong record shape passed sky check + sky build then
+    -- panicked at runtime; Ui.fill 1 likewise).
+    describe "Sky.Type.RecordFieldExactness"
+                                         Sky.Type.RecordFieldExactnessSpec.spec
     describe "Sky.Format.Format"         Sky.Format.FormatSpec.spec
     -- Sky function names that match Go reserved words must sanitise
     -- at the CALL site too, not only at the definition site (see
