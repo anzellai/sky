@@ -33,6 +33,52 @@ SKY="$ROOT/sky-out/sky"
 
 export SKY_RUNTIME_DIR="$ROOT/runtime-go"
 
+# Cross-platform `timeout`. macOS doesn't ship GNU coreutils, so the
+# bare `timeout` binary is missing on default GitHub `macos-latest`
+# runners — without this shim the CLI sweep step would fail every
+# example with exit 127 ("command not found") interpreted as a
+# non-zero app exit. Order: GNU `timeout` (Linux + nix Macs) →
+# Homebrew `gtimeout` → portable bg-pid + sleep + kill fallback.
+if command -v timeout >/dev/null 2>&1; then
+    TIMEOUT_CMD="timeout"
+elif command -v gtimeout >/dev/null 2>&1; then
+    TIMEOUT_CMD="gtimeout"
+else
+    TIMEOUT_CMD=""
+fi
+
+run_with_timeout() {
+    # run_with_timeout SECONDS CMD [ARGS...]
+    local secs="$1"; shift
+    if [[ -n "$TIMEOUT_CMD" ]]; then
+        "$TIMEOUT_CMD" "$secs" "$@"
+        return $?
+    fi
+    # No GNU timeout available → portable fallback. Spawn the command
+    # in the background, race a sleeping killer against it, surface
+    # the command's real exit on natural completion or 124 (matching
+    # GNU timeout's convention) on enforced kill.
+    "$@" &
+    local cmd_pid=$!
+    ( sleep "$secs" && kill -KILL "$cmd_pid" 2>/dev/null ) &
+    local killer_pid=$!
+    local rc=0
+    wait "$cmd_pid" 2>/dev/null; rc=$?
+    # If the killer fired, the wait above sees the killed status.
+    # We can't reliably distinguish "killed by us" vs "user killed"
+    # from rc alone, so check whether killer is still alive: if it
+    # has already exited it likely fired (rc=124 convention).
+    if ! kill -0 "$killer_pid" 2>/dev/null; then
+        # killer already exited → either fired (and killed us), or
+        # raced with natural completion. Conservative: report 124
+        # only when rc indicates a kill signal.
+        if [[ $rc -gt 128 ]]; then rc=124; fi
+    fi
+    kill -KILL "$killer_pid" 2>/dev/null
+    wait "$killer_pid" 2>/dev/null
+    return $rc
+}
+
 # Examples are classified by runtime behaviour.
 # server examples: start a listener; probe HTTP; kill after probe.
 # gui examples: require a display; build-only (skip runtime).
@@ -106,9 +152,12 @@ run_example() {
 
     case "$kind" in
         cli)
-            local out
-            out=$( (cd "$dir" && timeout 10 "$bin") 2>&1 ) || {
-                failures+=("$name: cli non-zero exit"); fail=$((fail+1)); return; }
+            local out rc=0
+            out=$( (cd "$dir" && run_with_timeout 10 "$bin") 2>&1 ) || rc=$?
+            if [[ $rc -ne 0 ]]; then
+                failures+=("$name: cli non-zero exit (rc=$rc) — last 20 lines: $(printf '%s' "$out" | tail -20 | tr '\n' ' | ')")
+                fail=$((fail+1)); return
+            fi
             [[ -n "$out" ]] || { failures+=("$name: empty stdout"); fail=$((fail+1)); return; }
             pass=$((pass+1)) ;;
         server)
