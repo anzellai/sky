@@ -431,7 +431,7 @@ Single canonical module per concern after the v0.10.0 consolidation. Every kerne
 | `Html` | `Std.Html` | text, div, span, p, h1..h6, a, button, input, form, … (~70 elements + render/escape helpers) |
 | `Attr` | `Std.Html.Attributes` | class, id, style, type/value/href/src, checked/disabled/required, … (~60 attrs + boolAttribute/dataAttribute) |
 | `Css` | `Std.Css` | stylesheet, rule, property, px/rem/em/pct/hex/rgba, color/background/padding/margin/font*, transition, grid*, flex*, … (~120) |
-| `Ui` | `Std.Ui` | Typed no-CSS layout DSL. **Layout**: el/row/column/wrappedRow/paragraph/textColumn/text/none/button/input/form/link/image/html, layout. **Length**: px/fill/fillPortion/content/shrink/minimum/maximum/vh/vw (`fill : Length` is bare — for proportional fills use `fillPortion n`; `minimum n l` / `maximum n l` constrain a length; `vh n` / `vw n` are viewport-relative `Nvh` / `Nvw`). **Padding**: padding/paddingXY/paddingEach/spacing. **Align**: centerX/Y/alignLeft/Right/Top/Bottom/pointer. **Overflow**: clip/clipX/clipY/scrollbars/scrollbarX/scrollbarY. **Nearby**: above/below/onLeft/onRight/inFront/behind. **Color**: rgb/rgba/white/black/transparent. **Events**: onClick/onSubmit/onInput/onChange/onFocus/onMouseOver/onMouseOut/onKeyDown/onFile/onImage, fileMaxSize/Width/Height. **Attrs**: htmlAttribute/style/class/name. Sub-modules: `Std.Ui.Background` (color/image/linearGradient/gradient), `Std.Ui.Border` (color/width/widthEach/rounded/solid/dashed/dotted/shadow/glow/innerShadow), `Std.Ui.Font` (color/family/size/weight/bold/semiBold/regular/light/extraBold/black/italic/underline/noDecoration/lineThrough/overline/letterSpacing/wordSpacing/sansSerif/serif/monospace/alignLeft/alignRight/alignCenter/center/justify), `Std.Ui.Region` (heading/mainContent/navigation/footer/aside/label/announce/announceUrgently — renderer dispatches `<h1..h6>`/`<main>`/`<nav>`/`<footer>`/`<aside>` + aria-label/aria-live), `Std.Ui.Input` (button/text/multiline/checkbox/email/username/search/currentPassword/newPassword/radio/radioRow/slider + labelAbove/Below/Left/Right/Hidden + placeholder + option), `Std.Ui.Lazy` (lazy/lazy2..lazy5 — currently no-op wrappers), `Std.Ui.Keyed` (keyed), `Std.Ui.Responsive` (classifyDevice/adapt). Renders to inline-styled HTML via Std.Html — no CSS files. Full reference: docs/skyui/overview.md. Prior-art attribution: NOTICE.md. |
+| `Ui` | `Std.Ui` | Typed no-CSS layout DSL. **Layout**: el/row/column/wrappedRow/grid (CSS-Grid auto-fit, set min column width with `Ui.gridColumns N`)/paragraph/textColumn/text/none/button/input/form/link/image/html, layout. **Length**: px/fill/fillPortion/content/shrink/minimum/maximum/vh/vw (`fill : Length` is bare — for proportional fills use `fillPortion n`; `minimum n l` / `maximum n l` constrain a length; `vh n` / `vw n` are viewport-relative `Nvh` / `Nvw`). **Padding**: padding/paddingXY/paddingEach/spacing. **Align**: centerX/Y/alignLeft/Right/Top/Bottom/pointer. **Overflow**: clip/clipX/clipY/scrollbars/scrollbarX/scrollbarY. **Nearby**: above/below/onLeft/onRight/inFront/behind. **Color**: rgb/rgba/white/black/transparent. **Events**: onClick/onSubmit/onInput/onChange/onFocus/onMouseOver/onMouseOut/onKeyDown/onFile/onImage, fileMaxSize/Width/Height. **Attrs**: htmlAttribute/style/class/name. Sub-modules: `Std.Ui.Background` (color/image/linearGradient/gradient), `Std.Ui.Border` (color/width/widthEach/rounded/solid/dashed/dotted/shadow/glow/innerShadow), `Std.Ui.Font` (color/family/size/weight/bold/semiBold/regular/light/extraBold/black/italic/underline/noDecoration/lineThrough/overline/letterSpacing/wordSpacing/sansSerif/serif/monospace/alignLeft/alignRight/alignCenter/center/justify), `Std.Ui.Region` (heading/mainContent/navigation/footer/aside/label/announce/announceUrgently — renderer dispatches `<h1..h6>`/`<main>`/`<nav>`/`<footer>`/`<aside>` + aria-label/aria-live), `Std.Ui.Input` (button/text/multiline/checkbox/email/username/search/currentPassword/newPassword/radio/radioRow/slider + labelAbove/Below/Left/Right/Hidden + placeholder + option), `Std.Ui.Lazy` (lazy/lazy2..lazy5 — currently no-op wrappers), `Std.Ui.Keyed` (keyed), `Std.Ui.Responsive` (classifyDevice/adapt). Renders to inline-styled HTML via Std.Html — no CSS files. Full reference: docs/skyui/overview.md. Prior-art attribution: NOTICE.md. |
 | `RateLimit` | `Sky.Http.RateLimit` | allow |
 | `Middleware` | `Sky.Http.Middleware` | withCors, withLogging, withBasicAuth, withRateLimit |
 
@@ -703,7 +703,7 @@ view model =
 3. **For Std.Ui-heavy modules (~25+ polymorphic `Element Msg` helpers + many nested calls), split the view layer across multiple modules.** A single monolithic Main.sky can blow the HM type-checker heap (CLAUDE.md Limitation #17 — "HM type-checker heap exhaustion on Std.Ui-heavy modules"). The canonical split is `State.sky` (types + pure helpers, no Std.Ui imports) / `Update.sky` / `View/Common.sky` / one View module per page / `Main.sky` dispatcher. `examples/19-skyforum`'s 8-module form delivers the full Reddit-style feature surface and type-checks in 1.11 s / 369 MB; the equivalent monolithic `test-fixtures/heap-bound-fence.sky` (kept as the regression artefact) allocates 2.6 GB/s pre-fix.
 
 **Surface highlights** (full table in `docs/skyui/overview.md`):
-- Layout: `el` / `row` / `column` / `wrappedRow` (children wrap to next line via flex-wrap) / `paragraph` / `textColumn` / `text` / `none` / `html` (escape hatch wrapping a Std.Html VNode)
+- Layout: `el` / `row` / `column` / `wrappedRow` (children wrap to next line via flex-wrap) / `grid` (CSS-Grid auto-fit — set min column width via `Ui.gridColumns N` attr; right primitive for product grids / dashboards / image galleries; immune to flex-vs-image collapse) / `paragraph` / `textColumn` / `text` / `none` / `html` (escape hatch wrapping a Std.Html VNode)
 - Sized elements: `link` (with `{url, label}` cfg), `image` (with `{src, description}` cfg), `button` (with `{onPress, label}` cfg), `input` (real `<input>` element), `form` (with `onSubmit msg`)
 - Length: `px` / `fill` (bare) / `fillPortion Int` / `content` / `shrink` / `minimum Int Length` / `maximum Int Length` / `vh Int` (viewport height %) / `vw Int` (viewport width %)
 - Padding: `padding Int` / `paddingXY v h` / `paddingEach { top, right, bottom, left }` (record-shaped, matches `Border.widthEach` + elm-ui) / `spacing Int`
@@ -863,6 +863,50 @@ These are current compiler limitations users must work around. Items marked ~~st
     - **`(String -> Msg)` helper callback param**: a helper `textField : String -> String -> (String -> Msg) -> Element Msg` got `cb func(string) any` in its emitted Go sig (load-bearing widening — Sky lambdas always lower to `func(any) any` and Go has no function-type covariance, so the helper sig must accept the widest shape). But the call-site `textField "u" "" Msg_X` shipped the typed `Msg_X : func(string) Msg` raw — `go build` rejected. Root cause: `safeReturnTypeWith` returned bare `"any"` for `T.TLambda`, so `_cg_funcParamTypes[textField]` knew the param was "any" and `coerceArg` short-circuited. Fix: `safeReturnTypeWith` now renders `T.TLambda` as `func(X) any` (matching what `renderHofParamTy` emits at sig time) — this gives `coerceArg` the `func(` prefix it needs to route call-site args through `rt.Coerce[func(X) any]`. The reflect.MakeFunc adapter handles both Sky lambdas (`func(any) any`) and typed Msg ctors (`func(string) Msg`) uniformly. Pragmatic — not "fully typed" in the strict sense (the `any` tail return is a structural compromise) but unblocks user code today; truly fully-typed HOFs need lambda lowering to preserve types (post-v1 work in "Typed Codegen TODO"). Regression test: `test/Sky/Build/HofTypedMsgSpec.hs`. The pre-existing `CompileSpec` "Result-typed lambda params" test (line 80-97) is the regression fence — `renderHofParamTy` is unchanged so Bug #1 from sky-chat ep07 stays fixed.
 
 ### Recently Fixed (listed for regression context)
+
+#### v0.11.x (post-v0.11.0 — Ui.grid CSS-Grid auto-fit primitive, 2026-04-28)
+
+- **`Ui.grid` + `Ui.gridColumns`** — proper CSS-Grid auto-fit
+  primitive for product grids, dashboards, image galleries.
+  Compiles to `display: grid; grid-template-columns: repeat(auto-
+  fill, minmax(<col>px, 1fr))`. Closes the deferred-list gap from
+  the v0.11.0 release notes ("True CSS-Grid auto-fit needs a
+  separate `Ui.grid` primitive").
+
+  **Why this is needed even though `wrappedRow` exists**: `Ui.
+  wrappedRow` uses CSS flexbox `flex-wrap: wrap`. With children
+  containing `<img width:100%>` (typical card pattern), CSS's
+  `flex-basis: auto` collapses each child to 100% of the container
+  — every card ends up alone on its row regardless of viewport
+  width. CSS Grid `auto-fit` doesn't suffer this, so it's the
+  correct primitive for "N cards per row, where N adapts to
+  available width".
+
+  ```elm
+  Ui.grid
+      [ Ui.gridColumns 240   -- minmax(240px, 1fr)
+      , Ui.spacing 16        -- gap: 16px (existing Ui.spacing wires through)
+      , Ui.padding 24
+      ]
+      (List.map productCard products)
+  ```
+
+  Children become grid items; drop `Ui.width` from card-style
+  children and let the grid handle sizing. No `Ui.minimum 240`
+  needed on each child — the `minmax(240px, 1fr)` floor handles
+  it once at the container level.
+
+  Implementation: new `__grid` AttrStyle marker + `__gridMin`
+  value attr (set by `gridColumns N`). Renderer's
+  `buildStyleString` checks for `__grid` and overrides the
+  `displayFor` flex output with the grid template. Both markers
+  stripped from emitted style string by the same case that strips
+  `__row`/`__col`/`__wrap`. `Ui.spacing N` already emits
+  `gap: Npx;` which CSS Grid honours natively.
+
+  Default min column width is `240px` if `gridColumns` is
+  omitted (sensible product-card default — prevents totally-broken
+  single-column fallback when user forgets the attribute).
 
 #### v0.11.x (post-v0.11.0 — paddingEach API harmonisation, 2026-04-28, BREAKING)
 

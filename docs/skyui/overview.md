@@ -84,6 +84,14 @@ Ui.column  [Attr] [Element]            -- vertical flex container
 Ui.wrappedRow [Attr] [Element]         -- like row, but children that don't
                                        --   fit wrap to a new line
                                        --   (CSS flex-wrap: wrap)
+Ui.grid       [Attr] [Element]         -- CSS-Grid auto-fit container.
+                                       --   Set min column width with
+                                       --   `Ui.gridColumns N`. Use this
+                                       --   (NOT wrappedRow) for product
+                                       --   grids / image galleries —
+                                       --   wrappedRow's flex-basis: auto
+                                       --   collapses to 1-per-row when
+                                       --   children contain <img>.
 Ui.paragraph [Attr] [Element]          -- inline text flow with wrapping
 Ui.textColumn [Attr] [Element]         -- vertical text-flow column
 Ui.text   String                       -- bare text (no wrapping element)
@@ -102,6 +110,44 @@ Ui.column [ Ui.spacing 16, Ui.padding 24 ]
         [ Ui.text "Score:", Ui.text (String.fromInt score) ]
     ]
 ```
+
+### `Ui.grid` — CSS-Grid auto-fit (product cards, dashboards, galleries)
+
+`Ui.wrappedRow` (CSS flexbox `flex-wrap: wrap`) is fine for flowing
+text-sized children. But for **card-like children that contain `<img
+width:100%>`**, flexbox's `flex-basis: auto` collapses each child to
+100% of the container — every card ends up alone on its row regardless
+of viewport width. That's the classic "flex vs intrinsic-sized image"
+problem.
+
+`Ui.grid` is the right primitive for that shape. It compiles to:
+
+```css
+display: grid;
+grid-template-columns: repeat(auto-fill, minmax(<minWidth>px, 1fr));
+gap: <Ui.spacing>px;
+```
+
+Children become grid items. Drop `Ui.width` from card-style children
+and let the grid handle sizing — `minmax(<minWidth>, 1fr)` guarantees
+each cell is at least `<minWidth>` and at most `1fr` of the remaining
+space, with the row count adapting to viewport width automatically.
+
+```elm
+Ui.grid
+    [ Ui.gridColumns 240   -- minmax(240px, 1fr)
+    , Ui.spacing 16        -- gap: 16px
+    , Ui.padding 24
+    ]
+    (List.map productCard products)
+```
+
+`Ui.gridColumns N` sets the minimum column width in pixels. Defaults
+to `240px` if omitted (sensible product-card default — prevents a
+totally-broken single-column fallback when the attribute is forgotten).
+
+`Ui.spacing N` works as the gap (CSS Grid honours the `gap` property
+natively, same as flexbox).
 
 ## Length
 
@@ -357,7 +403,7 @@ The 8-module split (`State.sky` / `Update.sky` / `View/{Common,Posts,Detail,Comp
 
 | Surface | Status | Notes |
 |---|:---:|---|
-| **Layout**: `el / row / column / wrappedRow / paragraph / textColumn` | ✅ | `wrappedRow` adds `flex-wrap: wrap` so children wrap to a new line |
+| **Layout**: `el / row / column / wrappedRow / grid / paragraph / textColumn` | ✅ | `wrappedRow` adds `flex-wrap: wrap`; `grid` is CSS-Grid auto-fit (`Ui.gridColumns N` for the minmax floor) |
 | Layout: `none` | ✅ | Use `import Std.Ui exposing (Element)` and bare `Element Msg` in annotations (not `Ui.Element Msg`) |
 | Layout: `link / image / button` | ✅ | |
 | Layout: `input` (real `<input>`) | ✅ | `Ui.el` renders as `<div>`, so a dedicated helper exists |

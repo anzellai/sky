@@ -1373,7 +1373,7 @@ view model =
 
 | Area | Helpers |
 |---|---|
-| Layout | `el / row / column / wrappedRow (children wrap to next line) / paragraph / textColumn / text / none / html` (`html` is the escape hatch wrapping a Std.Html VNode) |
+| Layout | `el / row / column / wrappedRow (children wrap to next line) / grid (CSS-Grid auto-fit — set min column width via `Ui.gridColumns N`; right primitive for product grids / dashboards / image galleries; use this NOT `wrappedRow` when card children contain `<img>` because flex-wrap collapses to 1-per-row in that case) / paragraph / textColumn / text / none / html` (`html` is the escape hatch wrapping a Std.Html VNode) |
 | Sized elements | `button` (`{onPress, label}`), `input` (real `<input>`), `form` (`<form>` + `onSubmit msg`), `link` (`{url, label}`), `image` (`{src, description}`) |
 | Length | `px Int` / `fill` (bare, no arg) / `fillPortion Int` / `content` / `shrink` / `minimum Int Length` / `maximum Int Length` / `vh Int` (viewport-height %) / `vw Int` (viewport-width %) |
 | Padding | `padding Int` / `paddingXY x y` / `paddingEach { top, right, bottom, left }` (record-shaped, matches `Border.widthEach` and elm-ui) / `spacing Int` |

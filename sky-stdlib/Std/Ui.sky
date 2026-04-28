@@ -197,10 +197,48 @@ column attrs children =
 --
 -- For true CSS-Grid `repeat(auto-fill, minmax(...))` behaviour
 -- (where children stretch to fill available width per row) — that's
--- a separate `Ui.grid` primitive, not yet shipped.
+-- the `Ui.grid` primitive below.
 wrappedRow : List (Attribute msg) -> List (Element msg) -> Element msg
 wrappedRow attrs children =
     Node NoDescription (rowMarker :: wrapMarker :: attrs) children
+
+
+-- Auto-fit grid container — the right primitive for product cards,
+-- dashboards, image galleries, anything where:
+--   * the child count is data-driven
+--   * each child should claim a fixed minimum width
+--   * available width should distribute evenly
+--   * children should NOT collapse to single-column on narrow viewports
+--
+-- Compiles to CSS Grid `display: grid; grid-template-columns:
+-- repeat(auto-fill, minmax(<col>px, 1fr))`. Use `Ui.gridColumns N`
+-- to set the minimum column width (mandatory for non-trivial use —
+-- without it the grid is a single column).
+--
+-- Unlike `wrappedRow`'s flex-wrap approach, `grid` does NOT suffer
+-- the "intrinsic-sized child collapses to 100% width" CSS quirk
+-- (flex-basis: auto with `<img width:100%>` etc.). Children fill
+-- their grid cell automatically — drop `Ui.width` from card-style
+-- children and let the grid handle sizing.
+--
+-- Example:
+--
+--     Ui.grid
+--         [ Ui.gridColumns 240   -- minmax(240px, 1fr)
+--         , Ui.spacing 16        -- gap: 16px
+--         , Ui.padding 24
+--         ]
+--         (List.map productCard products)
+grid : List (Attribute msg) -> List (Element msg) -> Element msg
+grid attrs children =
+    Node NoDescription (gridMarker :: attrs) children
+
+
+-- Set the minimum column width for a `Ui.grid` container. Compiles
+-- to the `<col>px` argument of `repeat(auto-fill, minmax(<col>px,
+-- 1fr))`. Has no effect outside a `Ui.grid` (silently ignored).
+gridColumns : Int -> Attribute msg
+gridColumns minWidthPx = AttrStyle "__gridMin" (String.fromInt minWidthPx)
 
 
 -- Internal markers — encoded as inline AttrStyle entries at the
@@ -219,6 +257,14 @@ colMarker = AttrStyle "__col" "true"
 -- is reusable if `wrappedColumn` ever lands.
 wrapMarker : Attribute msg
 wrapMarker = AttrStyle "__wrap" "true"
+
+
+-- Grid-flag marker. Renderer switches to `display: grid` and reads
+-- the `__gridMin` value (set by `gridColumns`) to emit the
+-- `grid-template-columns: repeat(auto-fill, minmax(<min>px, 1fr))`
+-- declaration.
+gridMarker : Attribute msg
+gridMarker = AttrStyle "__grid" "true"
 
 
 -- ─── Length constructors ─────────────────────────────────────────
@@ -1070,17 +1116,44 @@ isMarker name a =
 buildStyleString : LayoutContext -> LayoutContext -> List (Attribute msg) -> String
 buildStyleString parentCtx myCtx attrs =
     let
-        baseDisplay = displayFor myCtx
+        -- `Ui.grid` carries a `__grid` marker that switches the
+        -- container to CSS Grid auto-fit. When present, we OVERRIDE
+        -- `displayFor`'s default flex output entirely (grid is not
+        -- compatible with `display: flex`). Otherwise we use the
+        -- ctx-driven display + the optional flex-wrap continuation.
+        gridOn = hasMarker "__grid" attrs
+        baseDisplay =
+            if gridOn then
+                "display: grid; grid-template-columns: repeat(auto-fill, minmax("
+                    ++ findGridMin attrs ++ "px, 1fr));"
+            else
+                displayFor myCtx
         -- `wrappedRow` carries a `__wrap` marker that asks for
         -- `flex-wrap: wrap`. The marker itself is stripped by the
         -- AttrStyle case in `collectStyle`; we just check for its
-        -- presence here and append the corresponding CSS.
-        wrapPart = if hasMarker "__wrap" attrs
-            then " flex-wrap: wrap;"
-            else ""
+        -- presence here and append the corresponding CSS. No-op when
+        -- `__grid` is on (grid wraps natively via auto-fill).
+        wrapPart =
+            if not gridOn && hasMarker "__wrap" attrs
+                then " flex-wrap: wrap;"
+                else ""
         attrParts = List.foldl (collectStyle parentCtx myCtx) "" attrs
     in
         baseDisplay ++ wrapPart ++ attrParts
+
+
+-- Pull the `__gridMin` value (set by `Ui.gridColumns`) out of the
+-- attribute list. Defaults to `240` when the user forgot to set it
+-- — sensible product-card width that prevents a totally-broken
+-- single-column fallback if the user wrote `Ui.grid [] [...]`.
+findGridMin : List (Attribute msg) -> String
+findGridMin attrs =
+    case attrs of
+        [] -> "240"
+        a :: rest ->
+            case a of
+                AttrStyle k v -> if k == "__gridMin" then v else findGridMin rest
+                _ -> findGridMin rest
 
 
 displayFor : LayoutContext -> String
@@ -1124,6 +1197,16 @@ collectStyle parentCtx myCtx attr acc =
                 -- appends `flex-wrap: wrap` to the row's display
                 -- block); stripped here so it doesn't leak as a
                 -- literal CSS property.
+                acc
+            else if k == "__grid" then
+                -- Grid marker is consumed by `buildStyleString`
+                -- (overrides displayFor with `display: grid; ...`);
+                -- stripped here so it doesn't leak.
+                acc
+            else if k == "__gridMin" then
+                -- Grid-minmax-floor value, read out by `findGridMin`
+                -- to build the `repeat(auto-fill, minmax(<v>px,
+                -- 1fr))` declaration. Stripped here.
                 acc
             else
                 acc ++ " " ++ k ++ ": " ++ v ++ ";"
