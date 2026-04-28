@@ -706,7 +706,7 @@ view model =
 - Layout: `el` / `row` / `column` / `wrappedRow` (children wrap to next line via flex-wrap) / `paragraph` / `textColumn` / `text` / `none` / `html` (escape hatch wrapping a Std.Html VNode)
 - Sized elements: `link` (with `{url, label}` cfg), `image` (with `{src, description}` cfg), `button` (with `{onPress, label}` cfg), `input` (real `<input>` element), `form` (with `onSubmit msg`)
 - Length: `px` / `fill` (bare) / `fillPortion Int` / `content` / `shrink` / `minimum Int Length` / `maximum Int Length` / `vh Int` (viewport height %) / `vw Int` (viewport width %)
-- Padding: `padding` / `paddingXY` / `paddingEach` / `spacing`
+- Padding: `padding Int` / `paddingXY v h` / `paddingEach { top, right, bottom, left }` (record-shaped, matches `Border.widthEach` + elm-ui) / `spacing Int`
 - Attributes: `width` / `height` / `centerX` / `centerY` / `alignLeft` / `alignRight` / `alignTop` / `alignBottom` / `pointer` / `style` / `class` / `htmlAttribute` / `name`
 - Overflow: `clip` / `clipX` / `clipY` / `scrollbars` / `scrollbarX` / `scrollbarY`
 - Nearby: `above` / `below` / `onLeft` / `onRight` / `inFront` / `behind` (absolute-positioned overlays for tooltips, popovers, badges; renderer wraps parent with `position: relative`)
@@ -863,6 +863,33 @@ These are current compiler limitations users must work around. Items marked ~~st
     - **`(String -> Msg)` helper callback param**: a helper `textField : String -> String -> (String -> Msg) -> Element Msg` got `cb func(string) any` in its emitted Go sig (load-bearing widening — Sky lambdas always lower to `func(any) any` and Go has no function-type covariance, so the helper sig must accept the widest shape). But the call-site `textField "u" "" Msg_X` shipped the typed `Msg_X : func(string) Msg` raw — `go build` rejected. Root cause: `safeReturnTypeWith` returned bare `"any"` for `T.TLambda`, so `_cg_funcParamTypes[textField]` knew the param was "any" and `coerceArg` short-circuited. Fix: `safeReturnTypeWith` now renders `T.TLambda` as `func(X) any` (matching what `renderHofParamTy` emits at sig time) — this gives `coerceArg` the `func(` prefix it needs to route call-site args through `rt.Coerce[func(X) any]`. The reflect.MakeFunc adapter handles both Sky lambdas (`func(any) any`) and typed Msg ctors (`func(string) Msg`) uniformly. Pragmatic — not "fully typed" in the strict sense (the `any` tail return is a structural compromise) but unblocks user code today; truly fully-typed HOFs need lambda lowering to preserve types (post-v1 work in "Typed Codegen TODO"). Regression test: `test/Sky/Build/HofTypedMsgSpec.hs`. The pre-existing `CompileSpec` "Result-typed lambda params" test (line 80-97) is the regression fence — `renderHofParamTy` is unchanged so Bug #1 from sky-chat ep07 stays fixed.
 
 ### Recently Fixed (listed for regression context)
+
+#### v0.11.x (post-v0.11.0 — paddingEach API harmonisation, 2026-04-28, BREAKING)
+
+- **`Ui.paddingEach` switched from positional to record-shaped** —
+  was `Int -> Int -> Int -> Int -> Attribute msg`, now
+  `{ top : Int, right : Int, bottom : Int, left : Int } -> Attribute msg`.
+  Matches `Std.Ui.Border.widthEach` (which is already record-shaped)
+  and elm-ui's `Element.paddingEach`. The mismatch was an API
+  consistency bug surfaced by a downstream port: developer muscle
+  memory from `widthEach` led them to write
+  `paddingEach { top = 2, right = 4, bottom = 2, left = 4 }`,
+  which under the old positional sig partial-applied to a 3-arg
+  function — a function value then ended up in the attribute list
+  and crashed the render path with
+  `interface conversion: interface {} is func(interface {}) interface {}, not rt.SkyADT`.
+
+  The HM check `Type mismatch: { ... } vs Int` already surfaces the
+  mismatch at sky check time (round-2 closed-record exactness fix
+  in commit 47f3a43 closed the silent-pass gap), so the runtime
+  panic was strictly a "you compiled with an older binary" symptom.
+  The harmonisation removes the foot-gun upstream so muscle memory
+  from `widthEach` works out of the box.
+
+  Migration: `paddingEach t r b l` → `paddingEach { top = t, right
+  = r, bottom = b, left = l }`. No internal callers (stdlib /
+  examples) to update; only downstream Sky projects that used
+  `paddingEach` positionally need migrating.
 
 #### v0.11.x (post-v0.11.0 — Std.Ui surface gaps round 1, 2026-04-27)
 

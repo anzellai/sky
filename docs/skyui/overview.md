@@ -365,7 +365,7 @@ The 8-module split (`State.sky` / `Update.sky` / `View/{Common,Posts,Detail,Comp
 | Layout: `html` escape hatch | ✅ | `Ui.html node : any -> Element msg` wraps a Std.Html VNode |
 | **Length**: `px / content / fill / fillPortion / minimum / maximum / shrink / vh / vw` | ✅ | `fill : Length` is bare; use `fillPortion n` for proportional weights; `vh n` / `vw n` are viewport-relative |
 | **Alignment**: `centerX/Y / align*` | ✅ | |
-| **Padding**: `padding / paddingXY / paddingEach` / `spacing` | ✅ | |
+| **Padding**: `padding / paddingXY / paddingEach` / `spacing` | ✅ | `paddingEach` is record-shaped: `{ top, right, bottom, left }` (matches `Border.widthEach` and elm-ui) |
 | **Background**: `color / image / linearGradient / gradient` | ✅ | `Std.Ui.Background` |
 | **Border**: `color / width / widthEach / rounded / solid / dashed / dotted / shadow / glow / innerShadow` | ✅ | `Std.Ui.Border` |
 | **Font**: `color / family / size / weight / bold / semiBold / regular / light / extraBold / black / italic / underline / noDecoration / lineThrough / overline / letterSpacing / wordSpacing / alignLeft / alignRight / alignCenter / center / justify / sansSerif / serif / monospace` | ✅ | `Std.Ui.Font` |

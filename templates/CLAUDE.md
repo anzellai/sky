@@ -1376,7 +1376,7 @@ view model =
 | Layout | `el / row / column / wrappedRow (children wrap to next line) / paragraph / textColumn / text / none / html` (`html` is the escape hatch wrapping a Std.Html VNode) |
 | Sized elements | `button` (`{onPress, label}`), `input` (real `<input>`), `form` (`<form>` + `onSubmit msg`), `link` (`{url, label}`), `image` (`{src, description}`) |
 | Length | `px Int` / `fill` (bare, no arg) / `fillPortion Int` / `content` / `shrink` / `minimum Int Length` / `maximum Int Length` / `vh Int` (viewport-height %) / `vw Int` (viewport-width %) |
-| Padding | `padding Int` / `paddingXY x y` / `paddingEach top right bottom left` / `spacing Int` |
+| Padding | `padding Int` / `paddingXY x y` / `paddingEach { top, right, bottom, left }` (record-shaped, matches `Border.widthEach` and elm-ui) / `spacing Int` |
 | Alignment | `centerX` / `centerY` / `alignLeft` / `alignRight` / `alignTop` / `alignBottom` / `pointer` |
 | Overflow | `clip` / `clipX` / `clipY` / `scrollbars` / `scrollbarX` / `scrollbarY` |
 | Nearby (overlays) | `above el` / `below el` / `onLeft el` / `onRight el` / `inFront el` / `behind el` |

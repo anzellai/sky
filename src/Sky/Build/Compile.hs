@@ -4628,6 +4628,14 @@ caseToGo subject branches =
             | Just inner <- stripParametric "rt.SkyMaybe" typeName =
                 GoIr.GoCall (GoIr.GoIdent ("rt.MaybeCoerce[" ++ inner ++ "]")) [e]
             | otherwise =
+                -- Strict assertion: case-on-ADT subjects must be the
+                -- expected SkyADT type. If a non-ADT (e.g. a function
+                -- value snuck through an HM gap) reaches here, the
+                -- runtime panic IS the bug-discovery signal — fix
+                -- the HM gap, don't soften the runtime. Sky's
+                -- "if it compiles, it works" promise puts the
+                -- type-soundness floor at HM, not at runtime
+                -- tolerance.
                 GoIr.GoTypeAssert (anyWrapped e) typeName
 
 

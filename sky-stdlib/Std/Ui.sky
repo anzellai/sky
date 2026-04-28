@@ -282,9 +282,18 @@ paddingXY : Int -> Int -> Attribute msg
 paddingXY v h = AttrPadding v h v h
 
 
--- Per-side padding: (top, right, bottom, left).
-paddingEach : Int -> Int -> Int -> Int -> Attribute msg
-paddingEach t r b l = AttrPadding t r b l
+-- Per-side padding. Record-shaped to match `Std.Ui.Border.widthEach`
+-- (consistency within the `*Each` family) and elm-ui's
+-- `Element.paddingEach`. Use `Ui.padding` for uniform padding and
+-- `Ui.paddingXY` for `(vertical, horizontal)` pairs; reach for
+-- `paddingEach` only when you need all four sides distinct.
+--
+-- BREAKING (v0.11.x post-release): the previous signature
+-- `paddingEach : Int -> Int -> Int -> Int -> Attribute msg` is gone.
+-- Migration: `paddingEach t r b l` → `paddingEach { top = t, right = r,
+-- bottom = b, left = l }`.
+paddingEach : { top : Int, right : Int, bottom : Int, left : Int } -> Attribute msg
+paddingEach r = AttrPadding r.top r.right r.bottom r.left
 
 
 -- Gap between children of a row / column container.
