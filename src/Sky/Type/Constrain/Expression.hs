@@ -271,10 +271,18 @@ binopTypes counter op = case op of
               return (ty, ty, ty)
     "==" -> do { n <- freshName counter "_cmp"; return (T.TVar n, T.TVar n, boolType) }
     "/=" -> do { n <- freshName counter "_cmp"; return (T.TVar n, T.TVar n, boolType) }
-    "<"  -> return (intType, intType, boolType)
-    ">"  -> return (intType, intType, boolType)
-    "<=" -> return (intType, intType, boolType)
-    ">=" -> return (intType, intType, boolType)
+    -- Comparison operators are polymorphic — the runtime `rt.Lt` /
+    -- `rt.Gt` / `rt.Lte` / `rt.Gte` use `cmp` which handles ints,
+    -- floats, strings and other comparable values uniformly. The
+    -- previous Int-only typing rejected legitimate `floatA > floatB`
+    -- and `stringA < stringB` comparisons (caught in 17-skymon's
+    -- alert-evaluation when `evaluateCondition`'s `parseFloat`
+    -- thresholds got compared, surfaced when the dep-pass HM
+    -- promoted to fatal — round 6 strict pass-2 fix).
+    "<"  -> do { n <- freshName counter "_cmp"; return (T.TVar n, T.TVar n, boolType) }
+    ">"  -> do { n <- freshName counter "_cmp"; return (T.TVar n, T.TVar n, boolType) }
+    "<=" -> do { n <- freshName counter "_cmp"; return (T.TVar n, T.TVar n, boolType) }
+    ">=" -> do { n <- freshName counter "_cmp"; return (T.TVar n, T.TVar n, boolType) }
     "&&" -> return (boolType, boolType, boolType)
     "||" -> return (boolType, boolType, boolType)
     "|>" -> do { a <- freshName counter "_pa"; b <- freshName counter "_pb"; return (T.TVar a, T.TLambda (T.TVar a) (T.TVar b), T.TVar b) }

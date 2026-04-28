@@ -116,7 +116,11 @@ runSafeQuery dsn query =
 
 
 runSafeQueryWithConn extConn query =
-    case Task.run (SafeQuery.runReadOnly extConn query []) of
+    -- SafeQuery.runReadOnly returns `Result Error (List (Dict ...))`
+    -- directly — no Task wrap. Pre-fix this had `Task.run (...)` which
+    -- only worked while pass-2 dep HM masked Type errors via the
+    -- pass-1 fallback (round 6 fix made pass 2 authoritative).
+    case SafeQuery.runReadOnly extConn query [] of
 
         Err e ->
             let

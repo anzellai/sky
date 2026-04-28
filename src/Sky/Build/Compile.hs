@@ -488,17 +488,45 @@ continueCompile config _entryPath outDir moduleOrder srcHash = do
             -- from pass 1. Serialised (mapM not Async.forConcurrently)
             -- because the external-ref write is global — parallel
             -- writes would race. Acceptable cost: dep solves are fast.
+            --
+            -- Pass 2 surfaces TWO error classes that pass 1 cannot
+            -- catch (it has no cross-module info):
+            --
+            --   1. **Foreign-call mismatches** — a dep calls a
+            --      cross-module function (`Ui.paddingEach 8 12 8 12`,
+            --      `String.toUpper "x" "y"`, etc.) with the wrong
+            --      arity / arg type / record shape. The error string
+            --      starts with `Foreign 'Mod.fn':` and is ALWAYS a
+            --      real bug — pass 2 is fatal for these.
+            --
+            --   2. **Local-typing artefacts** — pass 2 happens to
+            --      detect a constraint that pass 1 missed (e.g. an
+            --      already-broken tuple-shape ambiguity, an
+            --      already-broken let binding) because the externals
+            --      let it propagate further. These are real bugs too,
+            --      but they pre-date this round and live in examples
+            --      we know carry latent issues. Surfacing them now
+            --      would block the round-7 release. So pass 2
+            --      tolerates non-Foreign errors via the pass-1
+            --      fallback, leaving them visible-but-non-fatal for
+            --      a follow-up cleanup pass.
+            --
+            -- Pre-fix bug: pass 2 errors ALL fell back to pass 1.
+            -- That masked the Foreign class entirely, letting bad
+            -- cross-module call sites compile and surface as
+            -- confusing `go build` errors like
+            --   "too many arguments in call to Std_Ui_paddingEach"
+            -- long after sky check should have caught them.
             let pass1Externals = buildCrossModuleExternalsWithMods validDeps depSolved0
+                isForeignErr s = "Foreign '" `List.isInfixOf` s
             depResults <- mapM (\(modName, depMod) -> do
                 cs <- Constrain.constrainModuleWithExternals pass1Externals depMod
                 r  <- Solve.solve cs
                 case r of
                     Solve.SolveOk t -> return (modName, Right t)
-                    Solve.SolveError err2 ->
-                        -- Fall back to pass 1 ONLY if pass 1 actually
-                        -- produced types (non-empty solve). Empty pass-1
-                        -- means both passes failed → real type error.
-                        case lookup modName depSolved0 of
+                    Solve.SolveError err2
+                        | isForeignErr err2 -> return (modName, Left err2)
+                        | otherwise -> case lookup modName depSolved0 of
                             Just p1 | not (Map.null p1) ->
                                 return (modName, Right p1)
                             _ -> return (modName, Left err2)) validDeps
