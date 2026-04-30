@@ -1103,7 +1103,7 @@ runCommand cmd = case cmd of
         -- the old workflow where bindings were checked-in under ffi/.
         let goDeps = Toml._goDeps config
         when (not (null goDeps)) $ do
-            putStrLn $ "Installing " ++ show (length deps) ++ " Go dependency(ies)"
+            putStrLn $ "Installing " ++ show (length goDeps) ++ " Go dependency(ies)"
             createDirectoryIfMissing True "sky-out"
             hasGoMod <- doesFileExist "sky-out/go.mod"
             when (not hasGoMod) $ do
