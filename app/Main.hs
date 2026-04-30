@@ -529,6 +529,7 @@ appendGoDependency pkg = do
 -- inspector failures — user can still run `sky add <pkg>` manually.
 regenMissingBindings :: [(String, String)] -> IO ()
 regenMissingBindings deps = do
+    putStrLn $ "-- Installing " ++ show (length deps) ++ " Go dependency(ies)"
     createDirectoryIfMissing True ".skycache/ffi"
     mapM_ regenOne deps
   where
