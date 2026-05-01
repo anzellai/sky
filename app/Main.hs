@@ -1103,6 +1103,7 @@ runCommand cmd = case cmd of
         -- the old workflow where bindings were checked-in under ffi/.
         let goDeps = Toml._goDeps config
         when (not (null goDeps)) $ do
+            putStrLn $ "Installing " ++ show (length goDeps) ++ " Go dependency(ies)"
             createDirectoryIfMissing True "sky-out"
             hasGoMod <- doesFileExist "sky-out/go.mod"
             when (not hasGoMod) $ do
@@ -1111,6 +1112,7 @@ runCommand cmd = case cmd of
                     then callProcess "cp" ["runtime-go/go.mod", "sky-out/go.mod"]
                     else writeFile "sky-out/go.mod" $ unlines ["module sky-app", "", "go 1.21"]
             regenMissingBindings goDeps
+            putStrLn $ "Go dependencies installed."
         case Toml._skyDeps config of
             [] -> return ()
             _  -> putStrLn "Sky dependencies installed."
