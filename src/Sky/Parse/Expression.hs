@@ -300,9 +300,17 @@ exprAtom_ mkError =
                              char mkError '}'
                              return (Src.Update name fields)
                          Just '=' -> do
-                             -- Record literal starting with name = val
+                             -- Record literal starting with name = val.
+                             -- Use freshLine (not spaces) after `=` so the
+                             -- value may start on the next line, matching
+                             -- the subsequent-field form in `recordField`.
+                             -- Without this, a multi-line first field
+                             --   { system =
+                             --         "..."
+                             --   ,
+                             -- failed at row=line-of-`=`, col=just-past-`=`.
                              char mkError '='
-                             spaces
+                             freshLine mkError
                              val <- expression mkError
                              rest <- recordFieldsRest mkError
                              freshLine mkError

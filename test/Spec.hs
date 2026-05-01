@@ -10,6 +10,7 @@ import qualified Sky.ErrorUnificationSpec
 import qualified Sky.Parse.PatternSpec
 import qualified Sky.Parse.MultiLineExposingSpec
 import qualified Sky.Parse.MultiLineParenAppSpec
+import qualified Sky.Parse.MultiLineRecordFieldSpec
 import qualified Sky.Canonicalise.ExposingSpec
 import qualified Sky.Canonicalise.KernelFallbackSpec
 import qualified Sky.Canonicalise.UnboundSpec
@@ -74,6 +75,22 @@ main = hspec $ do
     -- the relaxed rule doesn't gobble `else`/`then`/`in`/`of`.
     describe "Sky.Parse.MultiLineParenApp"
                                          Sky.Parse.MultiLineParenAppSpec.spec
+    -- First record-literal field's value on a new line. Pre-fix
+    -- the first-field path used `spaces` after the `=` (no newline)
+    -- while subsequent fields used `freshLine` (newline OK), so a
+    -- hand-written shape like
+    --   { system =
+    --         "..."
+    --   , user = "..."
+    --   }
+    -- failed with PARSE ERROR: DeclarationError pointing at the
+    -- `=`. `sky fmt` doesn't produce this shape today (it always
+    -- puts the first field's value on the same line as `{`), but
+    -- humans and other formatters do — and the inconsistency
+    -- between first-field and subsequent-field rules was a real
+    -- foot-gun.
+    describe "Sky.Parse.MultiLineRecordField"
+                                         Sky.Parse.MultiLineRecordFieldSpec.spec
     describe "Sky.Canonicalise.Exposing" Sky.Canonicalise.ExposingSpec.spec
     -- Regression: kernel qualifiers (Crypto, Encoding, Hex, …) used
     -- without an explicit `import Sky.Core.<Mod>` must resolve as

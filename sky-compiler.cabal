@@ -175,6 +175,7 @@ test-suite sky-tests
       Sky.Parse.PatternSpec
       Sky.Parse.MultiLineExposingSpec
       Sky.Parse.MultiLineParenAppSpec
+      Sky.Parse.MultiLineRecordFieldSpec
       Sky.Canonicalise.ExposingSpec
       Sky.Canonicalise.KernelFallbackSpec
       Sky.Canonicalise.UnboundSpec
