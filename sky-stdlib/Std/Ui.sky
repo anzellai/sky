@@ -323,15 +323,25 @@ padding : Int -> Attribute msg
 padding n = AttrPadding n n n n
 
 
--- (vertical, horizontal) padding.
+-- (horizontal, vertical) padding — elm-ui order (X first, Y second).
+-- `paddingXY 24 16` = 24px left/right, 16px top/bottom.
+--
+-- BREAKING (v0.11.x post-release): the previous signature was
+-- `paddingXY vertical horizontal` (Y first), which conflicted with
+-- elm-ui and the wider `*XY` convention (X is the horizontal axis).
+-- Migration: swap the two args at every call site —
+-- `paddingXY 16 24` becomes `paddingXY 24 16`. There is no compat
+-- shim, by design — both shapes type-check identically as
+-- `Int -> Int -> Attribute msg` so a quiet runtime swap of which
+-- axis got which value would have been worse than the loud break.
 paddingXY : Int -> Int -> Attribute msg
-paddingXY v h = AttrPadding v h v h
+paddingXY x y = AttrPadding y x y x
 
 
 -- Per-side padding. Record-shaped to match `Std.Ui.Border.widthEach`
 -- (consistency within the `*Each` family) and elm-ui's
 -- `Element.paddingEach`. Use `Ui.padding` for uniform padding and
--- `Ui.paddingXY` for `(vertical, horizontal)` pairs; reach for
+-- `Ui.paddingXY` for `(horizontal, vertical)` pairs; reach for
 -- `paddingEach` only when you need all four sides distinct.
 --
 -- BREAKING (v0.11.x post-release): the previous signature
