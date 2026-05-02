@@ -27,3 +27,5 @@ sky build src/Main.sky
 Sections 10–12 demonstrate the **applicative combinators** added in v0.7.25 — useful for form validation, multi-field parsing, and any case where you have several Results to combine without writing nested case expressions.
 
 Section 10 also showcases v0.7.26's **auto record constructors**: every `type alias Foo = { ... }` automatically generates a positional constructor function `Foo : ... -> Foo` (matches the convention Elm uses for the same construct), so you can pass the type alias name directly into `Result.map3` instead of writing a `makeFoo` helper.
+
+<img width="463" height="907" alt="06-json" src="https://github.com/user-attachments/assets/bfb18d80-d23d-4ae4-88a8-e7c22aaf9f15" />
