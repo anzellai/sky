@@ -19,3 +19,5 @@ Requires `sky install` first. Usage:
 ./sky-out/app remove 1
 ./sky-out/app clear
 ```
+
+<img width="790" height="912" alt="07-todo-cli" src="https://github.com/user-attachments/assets/82708b12-2ead-4d96-bbaf-f21935a2259b" />

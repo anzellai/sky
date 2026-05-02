@@ -11,3 +11,5 @@ sky build src/Main.sky
 ```
 
 Requires `sky install` first to fetch Go dependencies and generate FFI bindings.
+
+<img width="830" height="227" alt="03-tea-external" src="https://github.com/user-attachments/assets/66871b17-a026-4e24-92b2-6a483729d931" />
