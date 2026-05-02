@@ -189,6 +189,7 @@ test-suite sky-tests
       Sky.Build.GoKeywordCollisionSpec
       Sky.Build.NestedPatternSpec
       Sky.Build.ConsCtorPatternSpec
+      Sky.Build.CtorConsPatternSpec
       Sky.Build.TaskResultBridgesSpec
       Sky.Build.CheckIsBuildSpec
       Sky.Build.RecordFieldOrderSpec

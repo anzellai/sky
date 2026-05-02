@@ -24,6 +24,7 @@ import qualified Sky.Format.FormatSpec
 import qualified Sky.Build.GoKeywordCollisionSpec
 import qualified Sky.Build.NestedPatternSpec
 import qualified Sky.Build.ConsCtorPatternSpec
+import qualified Sky.Build.CtorConsPatternSpec
 import qualified Sky.Build.TaskResultBridgesSpec
 import qualified Sky.Build.CheckIsBuildSpec
 import qualified Sky.Build.RecordFieldOrderSpec
@@ -150,6 +151,14 @@ main = hspec $ do
     -- lowerer now emits a head-discriminator check on `(Ctor x) :: rest`
     -- so the body only fires when the head's actual ctor matches.
     describe "Sky.Build.ConsCtorPattern" Sky.Build.ConsCtorPatternSpec.spec
+    -- Inverse of ConsCtorPattern: cons / fixed-length-list pattern
+    -- INSIDE a ctor arg (`Just (h :: _)`, `Ok [a, b]`). Pre-fix,
+    -- argPatternCondition only narrowed for ctor / literal sub-
+    -- patterns; PCons / PList fell through to no-condition and the
+    -- destructure binding panicked at runtime when the inner list
+    -- was the wrong length. Surfaced from a sendcrafts I18n.regionOf
+    -- panic on `regionOf ["en"]` (List.tail returns Just []).
+    describe "Sky.Build.CtorConsPattern" Sky.Build.CtorConsPatternSpec.spec
     -- Result/Task bridge helpers (Task.fromResult, Task.andThenResult,
     -- Result.andThenTask) — runtime + canonicaliser + kernel sigs gate.
     describe "Sky.Build.TaskResultBridges" Sky.Build.TaskResultBridgesSpec.spec

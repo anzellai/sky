@@ -4971,6 +4971,34 @@ argPatternCondition subject ctorName idx pat = case pat of
             Can.PStr s   -> Just (GoIr.GoBinary "==" (tagCast "string") (GoIr.GoStringLit s))
             Can.PBool b  -> Just (GoIr.GoBinary "==" (tagCast "bool")   (GoIr.GoBoolLit b))
             Can.PChr c   -> Just (GoIr.GoBinary "==" (tagCast "rune")   (GoIr.GoRuneLit c))
+
+            -- Cons-inside-ctor-arg (e.g. `Just (h :: _)`): the outer
+            -- ctor branch must ALSO check that its payload is a
+            -- non-empty list. Without this, `Just (r :: _)` over a
+            -- `Just []` matches the outer Just, then the binding code
+            -- (`rt.AsList(.JustValue)[0]`) panics with
+            -- `index out of range`. Pattern surfaced by I18n.regionOf
+            -- in a sendcrafts port — `case List.tail parts of Just (r
+            -- :: _) -> … | _ -> ""` panicked when parts had length 1
+            -- (List.tail returns Just []).
+            Can.PCons _ _ ->
+                Just $ GoIr.GoBinary ">="
+                    (GoIr.GoCall (GoIr.GoIdent "len")
+                        [ GoIr.GoCall (GoIr.GoQualified "rt" "AsList")
+                            [GoIr.GoCall (GoIr.GoIdent "any") [accessor]] ])
+                    (GoIr.GoIntLit 1)
+
+            -- Fixed-length list inside ctor arg (e.g. `Just [a, b]`):
+            -- same hazard as PCons — without an exact-length check
+            -- the outer ctor branch fires and the destructure panics
+            -- on the wrong element count.
+            Can.PList xs ->
+                Just $ GoIr.GoBinary "=="
+                    (GoIr.GoCall (GoIr.GoIdent "len")
+                        [ GoIr.GoCall (GoIr.GoQualified "rt" "AsList")
+                            [GoIr.GoCall (GoIr.GoIdent "any") [accessor]] ])
+                    (GoIr.GoIntLit (length xs))
+
             _            -> Nothing
 
 
