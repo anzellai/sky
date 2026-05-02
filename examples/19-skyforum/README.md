@@ -1,7 +1,6 @@
 # SkyForum
 
-A Reddit/HackerNews-style demo built with Sky.Live and Std.Ui. The view layer is split across multiple modules (State / Update / View.Common / View.Posts / View.Detail / View.Compose / View.Login) so each per-module type-check stays well below the heap-exhaustion limit (CLAUDE.md Limitation #17).
-A single monolithic Main with the same surface OOMs the type-checker and locked the Mac that birthed scripts/mem-guard.sh — the split form gives us the full feature surface at zero ergonomics cost pending compiler fix.
+A Reddit/HackerNews-style demo built with Sky.Live and Std.Ui. The view layer is split across multiple modules (State / Update / View.Common / View.Posts / View.Detail / View.Compose / View.Login).
 
 ## Build & Run
 
@@ -11,3 +10,5 @@ sky build src/Main.sky
 ```
 
 Open `http://localhost:8000` in your browser.
+
+<img width="1024" height="636" alt="19-skyforum mp4" src="https://github.com/user-attachments/assets/df2c75dc-6e4e-407e-817b-4503c03d01da" />
