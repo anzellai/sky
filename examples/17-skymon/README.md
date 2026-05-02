@@ -11,3 +11,5 @@ sky build src/Main.sky
 ```
 
 Open `http://localhost:8000` in your browser. Configure monitors and alert thresholds from the dashboard.
+
+<img width="1024" height="666" alt="17-skymon mp4" src="https://github.com/user-attachments/assets/add828cf-e94a-4582-9570-57a1f811c53f" />
