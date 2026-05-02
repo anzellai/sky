@@ -11,3 +11,5 @@ sky build src/Main.sky
 ```
 
 Open `http://localhost:8000` in your browser. Play as white against the AI.
+
+<img width="1024" height="666" alt="16-skychess mp4" src="https://github.com/user-attachments/assets/5843c911-cb7b-4d68-8ae4-7b7c4ace7b19" />
