@@ -1678,30 +1678,39 @@ generateGoMulti canMod srcMod config solvedTypes depDecls depRecAliases depUnion
         -- configuration at zero runtime cost. All defaults are only
         -- applied when the corresponding env var is unset — that way
         -- CI / docker can override without a recompile.
+        -- [env] prefix: emitted FIRST so subsequent SetSkyDefault
+        -- calls land under the configured namespace. Runtime
+        -- refresh hooks re-read package-level cached env state
+        -- (logThreshold / logJSON) so they pick up the new
+        -- prefix even though they were initialised earlier.
+        envPrefixLine = case Toml._envPrefix config of
+            "" -> ""
+            p  -> "\trt.SetEnvPrefix(" ++ escapeGoString p ++ ")\n"
         liveDefaults =
             [ GoIr.GoDeclRaw $
                 "func init() {\n"
+                ++ envPrefixLine
                 ++ "\trt.SetPortDefault(\"" ++ show (Toml._livePort config) ++ "\")\n"
-                ++ tomlLiveEnv "SKY_LIVE_STORE"      (Toml._liveStore     config)
-                ++ tomlLiveEnv "SKY_LIVE_STORE_PATH" (Toml._liveStorePath config)
-                ++ tomlLiveEnv "SKY_LIVE_TTL"        (intString           (Toml._liveTtl config))
-                ++ tomlLiveEnv "SKY_LIVE_STATIC_DIR" (Toml._liveStatic    config)
+                ++ tomlSkyEnv "LIVE_STORE"      (Toml._liveStore     config)
+                ++ tomlSkyEnv "LIVE_STORE_PATH" (Toml._liveStorePath config)
+                ++ tomlSkyEnv "LIVE_TTL"        (intString           (Toml._liveTtl config))
+                ++ tomlSkyEnv "LIVE_STATIC_DIR" (Toml._liveStatic    config)
                 -- maxBodyBytes: cap for /_sky/event POST body. Runtime
                 -- defaults to 5 MiB; bump higher when the app uses
                 -- Event.onFile / Event.onImage with larger uploads.
-                ++ tomlLiveEnv "SKY_LIVE_MAX_BODY_BYTES"
+                ++ tomlSkyEnv "LIVE_MAX_BODY_BYTES"
                        (intString (Toml._liveMaxBody config))
-                ++ tomlLiveEnv "SKY_AUTH_SECRET"     (Toml._authSecret    config)
-                ++ tomlLiveEnv "SKY_AUTH_TOKEN_TTL"  (intString (Toml._authTokenTtl config))
-                ++ tomlLiveEnv "SKY_AUTH_COOKIE"     (Toml._authCookie    config)
-                ++ tomlLiveEnv "SKY_AUTH_DRIVER"     (Toml._authDriver    config)
-                ++ tomlLiveEnv "SKY_DB_DRIVER"       (Toml._dbDriver      config)
-                ++ tomlLiveEnv "SKY_DB_PATH"         (Toml._dbPath        config)
+                ++ tomlSkyEnv "AUTH_SECRET"     (Toml._authSecret    config)
+                ++ tomlSkyEnv "AUTH_TOKEN_TTL"  (intString (Toml._authTokenTtl config))
+                ++ tomlSkyEnv "AUTH_COOKIE"     (Toml._authCookie    config)
+                ++ tomlSkyEnv "AUTH_DRIVER"     (Toml._authDriver    config)
+                ++ tomlSkyEnv "DB_DRIVER"       (Toml._dbDriver      config)
+                ++ tomlSkyEnv "DB_PATH"         (Toml._dbPath        config)
                 -- [log] defaults: format (plain/json) + level
-                -- (debug/info/warn/error). SKY_LOG_FORMAT and
-                -- SKY_LOG_LEVEL still override at runtime.
-                ++ tomlLiveEnv "SKY_LOG_FORMAT"      (Toml._logFormat     config)
-                ++ tomlLiveEnv "SKY_LOG_LEVEL"       (Toml._logLevel      config)
+                -- (debug/info/warn/error). <PREFIX>_LOG_FORMAT and
+                -- <PREFIX>_LOG_LEVEL still override at runtime.
+                ++ tomlSkyEnv "LOG_FORMAT"      (Toml._logFormat     config)
+                ++ tomlSkyEnv "LOG_LEVEL"       (Toml._logLevel      config)
                 ++ "}"
             ]
         portDefault = liveDefaults  -- preserve historical name for downstream splices
@@ -1713,13 +1722,16 @@ generateGoMulti canMod srcMod config solvedTypes depDecls depRecAliases depUnion
     in GoBuilder.renderPackage pkg
 
 
--- | Emit a Go if-not-already-set os.Setenv for a sky.toml-derived
--- runtime default. No-op when the value is empty (so we don't unset
--- actual env-var overrides).
-tomlLiveEnv :: String -> String -> String
-tomlLiveEnv _    ""    = ""
-tomlLiveEnv name value =
-       "\trt.SetEnvDefault(\"" ++ name ++ "\", " ++ escapeGoString value ++ ")\n"
+-- | Emit a Go if-not-already-set runtime default for a sky.toml-derived
+-- value, prefixed with the runtime's configured env namespace.
+-- No-op when the value is empty (so we don't unset actual env-var
+-- overrides). The suffix is namespaced ("LIVE_TTL", "AUTH_COOKIE",
+-- …) — the runtime prepends the prefix from `rt.SetEnvPrefix`.
+tomlSkyEnv :: String -> String -> String
+tomlSkyEnv _      ""    = ""
+tomlSkyEnv suffix value =
+       "\trt.SetSkyDefault(" ++ escapeGoString suffix
+       ++ ", " ++ escapeGoString value ++ ")\n"
 
 
 intString :: Int -> String

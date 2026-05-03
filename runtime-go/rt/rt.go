@@ -658,11 +658,21 @@ const (
 
 var (
 	logThreshold = logLevelFromEnv()
-	logJSON      = os.Getenv("SKY_LOG_FORMAT") == "json"
+	logJSON      = skyGetenv("LOG_FORMAT") == "json"
 )
 
+// Re-read log config when the env prefix changes (compiler-emitted
+// rt.SetEnvPrefix runs in main.init(), AFTER these package-level
+// vars were first evaluated against the default "SKY" prefix).
+func init() {
+	onEnvPrefixChange(func() {
+		logThreshold = logLevelFromEnv()
+		logJSON = skyGetenv("LOG_FORMAT") == "json"
+	})
+}
+
 func logLevelFromEnv() int {
-	switch strings.ToLower(os.Getenv("SKY_LOG_LEVEL")) {
+	switch strings.ToLower(skyGetenv("LOG_LEVEL")) {
 	case "debug":
 		return logLevelDebug
 	case "warn", "warning":
@@ -3994,6 +4004,58 @@ func System_exit(code any) any {
 	return struct{}{}
 }
 
+// System.setenv : String -> String -> Task Error ()
+// Sets a process env var. Task-shaped per the Task-everywhere
+// doctrine — env mutation is an observable side effect. Returns
+// Ok(()) on success; Err on the rare OS-level failure (illegal
+// name on some platforms — empty string, embedded `=`, embedded
+// NUL).
+//
+// Useful for the rare case of seeding an env var BEFORE Sky.Live
+// reads it (e.g. inside a custom main() that calls Live.app
+// directly). The same goal is normally better met by the sky.toml
+// `[env] prefix` setting + sky.toml-driven defaults — reach for
+// `setenv` only when the value isn't known until runtime (e.g.
+// derived from a startup config flag).
+func System_setenv(name, value any) any {
+	captured := name
+	capturedV := value
+	return func() any {
+		k, ok := captured.(string)
+		if !ok {
+			return Err[any, any](ErrInvalidInput(
+				fmt.Sprintf("setenv: name must be a String, got %T", captured)))
+		}
+		v, ok := capturedV.(string)
+		if !ok {
+			return Err[any, any](ErrInvalidInput(
+				fmt.Sprintf("setenv: value must be a String, got %T", capturedV)))
+		}
+		if err := os.Setenv(k, v); err != nil {
+			return Err[any, any](ErrFfi("setenv " + k + ": " + err.Error()))
+		}
+		return Ok[any, any](nil)
+	}
+}
+
+// System.unsetenv : String -> Task Error ()
+// Removes a process env var. Returns Ok(()) on success (idempotent
+// — unsetting a missing var succeeds). Same Task shape as setenv.
+func System_unsetenv(name any) any {
+	captured := name
+	return func() any {
+		k, ok := captured.(string)
+		if !ok {
+			return Err[any, any](ErrInvalidInput(
+				fmt.Sprintf("unsetenv: name must be a String, got %T", captured)))
+		}
+		if err := os.Unsetenv(k); err != nil {
+			return Err[any, any](ErrFfi("unsetenv " + k + ": " + err.Error()))
+		}
+		return Ok[any, any](nil)
+	}
+}
+
 // System.getArg : Int -> Task Error (Maybe String)
 // Returns the nth element of os.Args (0-indexed) as Just s, or
 // Nothing when the index is out of range. Migration target for
@@ -5734,10 +5796,10 @@ func setCookieHeader(resp any, name, value, attrs string) any {
 //       stderr plus the full frame to .skylog/panic.log in prod
 //       (no stack-trace leak in aggregated logs).
 
-// isProd reports whether SKY_ENV=prod is set. Kept as a small
+// isProd reports whether <PREFIX>_ENV=prod is set. Kept as a small
 // function so tests can monkey-patch via env var at runtime.
 func isProd() bool {
-	return os.Getenv("SKY_ENV") == "prod"
+	return skyGetenv("ENV") == "prod"
 }
 
 // securifyCookieAttrs appends "; Secure" to an attribute string in

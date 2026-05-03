@@ -55,7 +55,7 @@ The standard library was deduplicated. Old modules with overlapping surface have
 
 **Dropped (folded into other modules):**
 - `Args.*` → `System.{args, getArg}`. `Args.getArgs ()` is now `System.args ()`. `Args.getArg n` is `System.getArg n` (now returns `Task Error (Maybe String)` per Task-everywhere — see migration helper in sky-env's Main.sky).
-- `Env.*` → `System.{getenv, getenvOr, getenvInt, getenvBool}`. `Env.getOrDefault key def` → `System.getenvOr key def`, `Env.getInt key` → `System.getenvInt key`, `Env.require key` → `System.getenv key` (already errors on missing).
+- `Env.*` → `System.{getenv, getenvOr, getenvInt, getenvBool}`. `Env.getOrDefault key def` → `System.getenvOr key def`, `Env.getInt key` → `System.getenvInt key`, `Env.require key` → `System.getenv key` (already errors on missing). `System.setenv` / `System.unsetenv` (v0.11.5+) cover the write side without Go FFI.
 - `Slog.*` → `Log.*With`. `Slog.info msg attrs` → `Log.infoWith msg attrs` (same for warn/error/debug). The plain-message `Log.info msg` form keeps working — the `With`-suffix variants take the structured `(msg, [k,v,k,v,…])` shape Slog had.
 - `Sha256.*` → `Crypto.sha256`. The chain `Sha256.sum256 (String.toBytes s) |> Result.andThen Hex.encodeToString` collapses to `Crypto.sha256 s` (returns the hex digest directly).
 - `Hex.*` → `Encoding.hexEncode` / `Encoding.hexDecode`.
@@ -125,7 +125,7 @@ Single rule: **every observable side effect returns `Task Error a`.** No two-tie
 |---|---|---|---|
 | **Pure** | bare `a` | `String.length`, `List.map`, `Crypto.{sha256,sha512,md5,hmacSha256}`, `Encoding.{base64,url,hex}Encode`, `Time.timeString`, `System.getenvOr` (default supplied → can't fail) | Referentially transparent, deterministic. |
 | **Fallible-pure** | `Result e a` / `Maybe a` | `String.toInt`, JSON decoders, `Encoding.{base64,url,hex}Decode`, `Auth.{hashPassword, verifyPassword, signToken, verifyToken}` | Pure CPU work that can fail on malformed input. Result is a value, not an effect. |
-| **Effects** | `Task Error a` | `File.*`, `Http.*`, `Process.run`, `Io.*`, `Db.*`, `Auth.{register, login, setRole}`, `Crypto.{randomBytes, randomToken}`, `Time.{sleep, now, unixMillis}`, `Random.*`, `Log.{println, info, warn, error, debug, infoWith, warnWith, errorWith, debugWith}`, `System.{getenv, getenvInt, getenvBool, cwd, args, getArg, loadEnv}`, `Live.app` | Anything that touches the outside world (clock, env, stdout, disk, network, DB, entropy). Composes uniformly with `Task.parallel` / `Cmd.perform` / `Task.andThen`. |
+| **Effects** | `Task Error a` | `File.*`, `Http.*`, `Process.run`, `Io.*`, `Db.*`, `Auth.{register, login, setRole}`, `Crypto.{randomBytes, randomToken}`, `Time.{sleep, now, unixMillis}`, `Random.*`, `Log.{println, info, warn, error, debug, infoWith, warnWith, errorWith, debugWith}`, `System.{getenv, getenvInt, getenvBool, cwd, args, getArg, loadEnv, setenv, unsetenv}`, `Live.app` | Anything that touches the outside world (clock, env, stdout, disk, network, DB, entropy). Composes uniformly with `Task.parallel` / `Cmd.perform` / `Task.andThen`. |
 | **Diverging** | polymorphic `Int -> a` | `System.exit` | Function never returns (process terminates). Polymorphic return makes it usable as the last expression in any case branch without forcing every branch to be Task-shaped. |
 
 **Default-supplied helpers stay bare.** `System.getenvOr key def : String`, `Maybe.withDefault def m : a`, `Result.withDefault def r : a`, `Db.getFieldOr def row k : any`, `Db.get{String,Int,Bool} k row : String|Int|Bool` — none of these can fail because the default plugs the failure case at the call site. Wrapping them in `Task` / `Result` / `Maybe` would force every call into `Task.run … |> Result.withDefault def` boilerplate — the exact pattern the helper exists to avoid. Reserve the wrap for genuinely fallible operations (no default supplied, parse may reject input, I/O may error).
@@ -218,6 +218,17 @@ Configuration values resolve in this order (highest priority first):
 3. **`sky.toml`** defaults (compiled into the binary via `init()`, only set when not already present)
 
 This follows the standard convention (godotenv, Docker): system env vars always win so production deployments can override `.env` defaults without editing files. The `.env` file is for local development convenience.
+
+**Env-var namespacing (v0.11.5+)**: every internal runtime read uses the `SKY_` prefix by default (`SKY_LIVE_PORT`, `SKY_AUTH_TOKEN_TTL`, `SKY_LOG_FORMAT`, etc.). Projects that run multiple Sky binaries on the same host can declare a custom prefix in `sky.toml` to avoid collision:
+
+```toml
+[env]
+prefix = "FENCE"
+```
+
+The compiler emits `rt.SetEnvPrefix("FENCE")` at the top of the generated `init()`, and from there the runtime reads `FENCE_LIVE_PORT`, `FENCE_AUTH_TOKEN_TTL`, etc. The prefix is trimmed of any trailing `_` and validated non-empty (empty falls back to `SKY`). Only Sky's INTERNAL namespace is affected — user code calling `System.getenv "DATABASE_URL"` reads the raw name, and the standard fallbacks `DATABASE_URL` / `REDIS_URL` / `PORT` (consulted by Sky.Live's session-store config) stay un-prefixed because they're not in Sky's namespace. Compile-time-only knobs like `SKY_SOLVER_BUDGET` are read by the Haskell compiler itself, not the generated app, so they're unaffected too.
+
+`System.setenv name value : Task Error ()` and `System.unsetenv name : Task Error ()` (also v0.11.5+) let user code mutate process env without Go FFI — useful when the value isn't known until runtime. Reach for `[env] prefix` first; `setenv` is the escape hatch for runtime-derived values.
 
 Sky.Live env vars (sky.toml keys live under `[live]` — there is no `[live.session]` section): `SKY_LIVE_PORT` (`port`), `SKY_LIVE_TTL` (`ttl`), `SKY_LIVE_STORE` (`store` — `memory` / `sqlite` / `redis` / `postgres`), `SKY_LIVE_STORE_PATH` (`storePath` — sqlite file or `host:port` / `redis://…` / `postgres://…` URL), `SKY_LIVE_STATIC_DIR` (`static`), `SKY_LIVE_INPUT` (`input`), `SKY_LIVE_POLL_INTERVAL` (`poll_interval`), `SKY_LIVE_MAX_BODY_BYTES` (`maxBodyBytes` — cap for `/_sky/event` POST body, default `5242880` = 5 MiB; bump for `Event.onFile` / `Event.onImage` uploads larger than that). Postgres falls back to `DATABASE_URL` and Redis to `REDIS_URL` when `SKY_LIVE_STORE_PATH` is unset (Redis defaults further to `localhost:6379`). Auth: `SKY_AUTH_TOKEN_TTL`, `SKY_AUTH_COOKIE`. Connection-status banner: `SKY_LIVE_BANNER` (default `on`; `off` / `0` / `false` to disable the chrome but keep the POST retry queue active), `SKY_LIVE_RETRY_BASE_MS` (default `500`), `SKY_LIVE_RETRY_MAX_MS` (default `16000`), `SKY_LIVE_RETRY_MAX_ATTEMPTS` (default `10`), `SKY_LIVE_QUEUE_MAX` (default `50`).
 

@@ -2032,13 +2032,14 @@ func liveAppRun(cfg any) any {
 	// `staticUrl = "/assets"`.
 	if sd := Field(cfg, "Static"); sd != nil {
 		app.staticDir = fmt.Sprintf("%v", sd)
-	} else if v := os.Getenv("SKY_LIVE_STATIC_DIR"); v != "" {
-		// SKY_LIVE_STATIC_DIR is the documented name (matches the
-		// SKY_LIVE_* env var convention). SKY_STATIC_DIR is kept as
-		// a backward-compat alias so existing deployments don't
-		// break — read it only when the canonical name is unset.
+	} else if v := skyGetenv("LIVE_STATIC_DIR"); v != "" {
+		// <PREFIX>_LIVE_STATIC_DIR is the documented name (matches
+		// the <PREFIX>_LIVE_* env var convention). <PREFIX>_STATIC_DIR
+		// is kept as a backward-compat alias so existing deployments
+		// don't break — read it only when the canonical name is
+		// unset. Both honour the configured env-prefix.
 		app.staticDir = v
-	} else if v := os.Getenv("SKY_STATIC_DIR"); v != "" {
+	} else if v := skyGetenv("STATIC_DIR"); v != "" {
 		app.staticDir = v
 	}
 	app.staticURL = "/static"
@@ -2048,12 +2049,13 @@ func liveAppRun(cfg any) any {
 		}
 	}
 	// Session store selection. Config fields `store` and `storePath`
-	// override the defaults; env vars SKY_LIVE_STORE / SKY_LIVE_STORE_PATH
-	// take precedence over config; final fallback is memory.
+	// override the defaults; env vars <PREFIX>_LIVE_STORE /
+	// <PREFIX>_LIVE_STORE_PATH take precedence over config; final
+	// fallback is memory.
 	storeKind := stringField(cfg, "Store")
 	storePath := stringField(cfg, "StorePath")
 	ttl := 30 * time.Minute
-	if v := os.Getenv("SKY_LIVE_TTL"); v != "" {
+	if v := skyGetenv("LIVE_TTL"); v != "" {
 		if secs, err := strconv.Atoi(v); err == nil && secs > 0 {
 			ttl = time.Duration(secs) * time.Second
 		}
@@ -2099,8 +2101,8 @@ func liveAppRun(cfg any) any {
 	if p := Field(cfg, "Port"); p != nil {
 		port = AsInt(p)
 	}
-	// Allow SKY_LIVE_PORT env var to override (set in .env or shell).
-	if v := os.Getenv("SKY_LIVE_PORT"); v != "" {
+	// Allow <PREFIX>_LIVE_PORT env var to override (set in .env or shell).
+	if v := skyGetenv("LIVE_PORT"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			port = n
 		}
@@ -2291,14 +2293,14 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 	// tiny JSON envelopes need almost nothing, but `Event.onFile` /
 	// `Event.onImage` ship the file as a base64 data URL through
 	// this same channel, so a 4 MiB image (~5.4 MiB base64) needs
-	// the bigger headroom. Override via SKY_LIVE_MAX_BODY_BYTES (or
-	// sky.toml [live] maxBodyBytes) — the fileMaxSize attr on the
-	// input is the client-side guard but isn't load-bearing for the
-	// server cap. Server-side validation in `update` is the
+	// the bigger headroom. Override via <PREFIX>_LIVE_MAX_BODY_BYTES
+	// (or sky.toml [live] maxBodyBytes) — the fileMaxSize attr on
+	// the input is the client-side guard but isn't load-bearing for
+	// the server cap. Server-side validation in `update` is the
 	// authoritative check; this is the upper bound on what reaches
 	// the runtime at all.
 	maxBody := int64(5 << 20)
-	if n, ok := parsePositiveInt(os.Getenv("SKY_LIVE_MAX_BODY_BYTES")); ok {
+	if n, ok := parsePositiveInt(skyGetenv("LIVE_MAX_BODY_BYTES")); ok {
 		maxBody = int64(n)
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxBody)
@@ -2818,10 +2820,10 @@ func sessionID(r *http.Request, w http.ResponseWriter) string {
 	return sid
 }
 
-// liveBannerConfig collects the SKY_LIVE_* env vars that influence
-// the connection-status banner so they can be templated into the
-// init script. Each var has a sensible default; users override via
-// shell env or .env.
+// liveBannerConfig collects the <PREFIX>_LIVE_* env vars that
+// influence the connection-status banner so they can be templated
+// into the init script. Each var has a sensible default; users
+// override via shell env or .env.
 type liveBannerConfig struct {
 	Enabled     bool
 	BaseMs      int
@@ -2838,22 +2840,22 @@ func loadLiveBannerConfig() liveBannerConfig {
 		MaxAttempts: 10,
 		QueueMax:    50,
 	}
-	// SKY_LIVE_BANNER=off disables the banner entirely (still queues
-	// + retries POSTs — just no chrome). Useful when an app wants to
-	// render its own connection UI in the user's view.
-	if v := os.Getenv("SKY_LIVE_BANNER"); v == "off" || v == "0" || v == "false" {
+	// <PREFIX>_LIVE_BANNER=off disables the banner entirely (still
+	// queues + retries POSTs — just no chrome). Useful when an app
+	// wants to render its own connection UI in the user's view.
+	if v := skyGetenv("LIVE_BANNER"); v == "off" || v == "0" || v == "false" {
 		cfg.Enabled = false
 	}
-	if n, ok := parsePositiveInt(os.Getenv("SKY_LIVE_RETRY_BASE_MS")); ok {
+	if n, ok := parsePositiveInt(skyGetenv("LIVE_RETRY_BASE_MS")); ok {
 		cfg.BaseMs = n
 	}
-	if n, ok := parsePositiveInt(os.Getenv("SKY_LIVE_RETRY_MAX_MS")); ok {
+	if n, ok := parsePositiveInt(skyGetenv("LIVE_RETRY_MAX_MS")); ok {
 		cfg.MaxMs = n
 	}
-	if n, ok := parsePositiveInt(os.Getenv("SKY_LIVE_RETRY_MAX_ATTEMPTS")); ok {
+	if n, ok := parsePositiveInt(skyGetenv("LIVE_RETRY_MAX_ATTEMPTS")); ok {
 		cfg.MaxAttempts = n
 	}
-	if n, ok := parsePositiveInt(os.Getenv("SKY_LIVE_QUEUE_MAX")); ok {
+	if n, ok := parsePositiveInt(skyGetenv("LIVE_QUEUE_MAX")); ok {
 		cfg.QueueMax = n
 	}
 	return cfg

@@ -117,3 +117,27 @@ store = "sqlite"
 storePath = "./data.db"
 ttl = 1800
 ```
+
+### Env-var namespace prefix
+
+Sky.Live reads its config from env vars under the `SKY_` prefix by default — `SKY_LIVE_PORT`, `SKY_LIVE_STORE`, `SKY_LIVE_TTL`, etc. Two Sky binaries running on the same host share that namespace, which is fine for most setups but causes collision when each binary needs a different port/store/TTL.
+
+Switch the binary's namespace via `sky.toml`:
+
+```toml
+[env]
+prefix = "FENCE"
+```
+
+The runtime then reads `FENCE_LIVE_PORT`, `FENCE_LIVE_STORE`, `FENCE_AUTH_TOKEN_TTL`, etc. The `.env` file and shell env you supply use the prefixed names too. The prefix is trimmed of any trailing `_` so `prefix = "FENCE"` and `prefix = "FENCE_"` are equivalent.
+
+What's affected:
+- All Sky-internal namespaces: `LIVE_*`, `AUTH_*`, `LOG_*`, `DB_*`, `ENV`, `STATIC_DIR`.
+- The corresponding sky.toml-derived defaults (`SetSkyDefault` calls in the generated `init()`).
+
+What's NOT affected:
+- User-supplied env-var names passed to `System.getenv` / `System.getenvOr` etc. — those read raw.
+- Standard non-Sky fallbacks: `DATABASE_URL`, `REDIS_URL`, `PORT` (consulted by Sky.Live's session-store config when the prefixed override is unset).
+- The compile-time-only `SKY_SOLVER_BUDGET` knob, read by the Haskell compiler itself.
+
+Backwards-compatible: omit `[env] prefix` and behaviour matches every prior Sky version exactly.

@@ -942,7 +942,7 @@ staticKernelFunctions = Map.fromList
     -- (sky-log et al.). Prior entry kept as comment for archaeology:
     -- (was: `("Os", ["args", "getenv", "cwd", "exit"])`)
     , ("System",  ["args", "getArg", "getenv", "getenvOr", "getenvInt",
-                    "getenvBool", "cwd", "exit", "loadEnv"])
+                    "getenvBool", "cwd", "exit", "loadEnv", "setenv", "unsetenv"])
     -- Slog dropped in v0.10.0 — use Log.{info,warn,error,debug}.
     , ("Context", ["background", "todo", "withValue", "withCancel"])
     , ("Fmt",     ["sprint", "sprintf", "sprintln", "errorf"])

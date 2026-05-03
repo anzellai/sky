@@ -776,14 +776,17 @@ func decodeSession(blob []byte) (*liveSession, error) {
 
 
 // chooseStore: honour a sky.toml Live-store override or the
-// SKY_LIVE_STORE / SKY_LIVE_STORE_PATH env variables. Falls back to
-// memory. TTL defaults to 30 minutes.
+// <PREFIX>_LIVE_STORE / <PREFIX>_LIVE_STORE_PATH env variables.
+// Falls back to memory. TTL defaults to 30 minutes. Standard
+// fallbacks DATABASE_URL / REDIS_URL are NOT prefixed (they're not
+// in Sky's namespace) — they're consulted only when the
+// Sky-prefixed override is unset.
 func chooseStore(kind, path string, ttl time.Duration) SessionStore {
 	if kind == "" {
-		kind = os.Getenv("SKY_LIVE_STORE")
+		kind = skyGetenv("LIVE_STORE")
 	}
 	if path == "" {
-		path = os.Getenv("SKY_LIVE_STORE_PATH")
+		path = skyGetenv("LIVE_STORE_PATH")
 	}
 	if ttl == 0 {
 		ttl = 30 * time.Minute

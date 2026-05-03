@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -124,11 +123,12 @@ var (
 //   "postgres://user:pw@host:5432/dbname?sslmode=disable"
 //   "postgresql://..."     — equivalent
 //   "host=... user=... ..." — libpq-style keyword connection string
-//   ()                     — read SKY_DB_PATH (set from sky.toml's
-//                            [database].path at program startup).
+//   ()                     — read <PREFIX>_DB_PATH (set from
+//                            sky.toml's [database].path at program
+//                            startup).
 //
 // The unit-arg form is the idiomatic "use the project default"
-// convenience. If SKY_DB_PATH is unset, it returns Err so the
+// convenience. If <PREFIX>_DB_PATH is unset, it returns Err so the
 // caller sees a clear "no path configured" message rather than
 // silently opening a file named `{}` in cwd (the pre-P3-4 bug).
 func Db_connect(path any) any {
@@ -137,14 +137,14 @@ func Db_connect(path any) any {
 	// block Sky.Live's update() call instead of running in the
 	// goroutine spawned by Cmd.perform.
 	return func() any {
-		// Unit (Sky `()`) → look up SKY_DB_PATH. `nil` gets the same
-		// treatment for codegen tolerance.
+		// Unit (Sky `()`) → look up <PREFIX>_DB_PATH. `nil` gets the
+		// same treatment for codegen tolerance.
 		if _, isUnit := path.(struct{}); isUnit || path == nil {
-			env := os.Getenv("SKY_DB_PATH")
+			env := skyGetenv("DB_PATH")
 			if env == "" {
 				return Err[any, any](ErrInvalidInput(
-					"db.connect: no path given and SKY_DB_PATH is unset " +
-						"(set [database].path in sky.toml, or pass a path)"))
+					"db.connect: no path given and " + skyEnvName("DB_PATH") +
+						" is unset (set [database].path in sky.toml, or pass a path)"))
 			}
 			path = env
 		}

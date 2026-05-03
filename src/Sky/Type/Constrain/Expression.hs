@@ -2599,6 +2599,21 @@ lookupKernelType modName funcName = case (modName, funcName) of
                 (T.TType ModuleName.task "Task"
                     [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
                     , T.TUnit]))
+    ("System", "setenv") ->
+        -- String -> String -> Task Error ()
+        Just $ T.Forall []
+            (T.TLambda stringType
+                (T.TLambda stringType
+                    (T.TType ModuleName.task "Task"
+                        [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                        , T.TUnit])))
+    ("System", "unsetenv") ->
+        -- String -> Task Error ()
+        Just $ T.Forall []
+            (T.TLambda stringType
+                (T.TType ModuleName.task "Task"
+                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                    , T.TUnit]))
 
     -- Encoding encoders never fail — base64 / URL-encode / hex-encode
     -- are total functions over any input string. Kernel sig is

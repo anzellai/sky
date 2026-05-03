@@ -406,6 +406,8 @@ registry = Map.fromList
     , (("System", "cwd"),         KernelInfo "rt.System_cwd" 1 False)
     , (("System", "exit"),        KernelInfo "rt.System_exit" 1 False)
     , (("System", "loadEnv"),     KernelInfo "rt.System_loadEnv" 1 False)
+    , (("System", "setenv"),      KernelInfo "rt.System_setenv" 2 False)
+    , (("System", "unsetenv"),    KernelInfo "rt.System_unsetenv" 1 False)
     , (("Time", "timeString"),    KernelInfo "rt.Time_timeString" 1 False)
     , (("String", "toBytes"),     KernelInfo "rt.String_toBytes" 1 False)
     , (("String", "fromBytes"),   KernelInfo "rt.String_fromBytes" 1 False)

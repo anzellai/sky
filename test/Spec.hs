@@ -25,6 +25,7 @@ import qualified Sky.Build.GoKeywordCollisionSpec
 import qualified Sky.Build.NestedPatternSpec
 import qualified Sky.Build.ConsCtorPatternSpec
 import qualified Sky.Build.CtorConsPatternSpec
+import qualified Sky.Build.EnvPrefixSpec
 import qualified Sky.Build.TaskResultBridgesSpec
 import qualified Sky.Build.CheckIsBuildSpec
 import qualified Sky.Build.RecordFieldOrderSpec
@@ -159,6 +160,13 @@ main = hspec $ do
     -- was the wrong length. Surfaced from a sendcrafts I18n.regionOf
     -- panic on `regionOf ["en"]` (List.tail returns Just []).
     describe "Sky.Build.CtorConsPattern" Sky.Build.CtorConsPatternSpec.spec
+    -- sky.toml [env] prefix: namespacing for runtime SKY_* env-var
+    -- reads. Default unchanged ("SKY"). Setting `[env] prefix = "X"`
+    -- emits rt.SetEnvPrefix at the top of init() and switches every
+    -- internal os.Getenv("SKY_*") to read X_*. Backwards-compat
+    -- when the key is absent. Plus System.setenv / System.unsetenv
+    -- stdlib helpers so users can mutate env without Go FFI.
+    describe "Sky.Build.EnvPrefix"      Sky.Build.EnvPrefixSpec.spec
     -- Result/Task bridge helpers (Task.fromResult, Task.andThenResult,
     -- Result.andThenTask) — runtime + canonicaliser + kernel sigs gate.
     describe "Sky.Build.TaskResultBridges" Sky.Build.TaskResultBridgesSpec.spec

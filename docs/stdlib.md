@@ -348,8 +348,12 @@ main =
 | `System.cwd` | `Task Error String` | Current working directory |
 | `System.exit` | `Int -> a` | **Diverging** — process termination |
 | `System.loadEnv` | `Task Error ()` | Load `.env` file |
+| `System.setenv` | `String -> String -> Task Error ()` | Set a process env var (v0.11.5+) |
+| `System.unsetenv` | `String -> Task Error ()` | Remove a process env var (v0.11.5+, idempotent) |
 
 > `System.exit` has a polymorphic return so it works in any case branch — no need to make every other branch Task-shaped.
+
+**Env-var namespace prefix (v0.11.5+).** Sky's internal runtime reads (Sky.Live, Std.Auth, Std.Log, Std.Db) use the `SKY_` prefix by default — `SKY_LIVE_PORT`, `SKY_AUTH_TOKEN_TTL`, etc. Set `[env] prefix = "FENCE"` in `sky.toml` to switch the binary's namespace to `FENCE_LIVE_PORT`, `FENCE_AUTH_TOKEN_TTL`, etc. Useful when running multiple Sky binaries on the same host. User-supplied env-var names (passed to `System.getenv`) are unaffected — only Sky's internal reads route through the prefix.
 
 ### `Process` — subprocess execution
 

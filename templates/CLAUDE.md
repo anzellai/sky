@@ -1015,17 +1015,38 @@ per the Task-everywhere doctrine; `let _ = …` discards auto-force.
 args        : ()  -> Task Error (List String)         -- os.Args[1:] minus program name
 getArg      : Int -> Task Error (Maybe String)        -- nth element of os.Args (0-indexed)
 getenv      : String -> Task Error String             -- Err if unset
-getenvOr    : String -> String -> Task Error String   -- env var or default; never errs
+getenvOr    : String -> String -> String              -- env var or default; never errs (bare String)
 getenvInt   : String -> Task Error Int                -- typed; Err on missing or unparseable
 getenvBool  : String -> Task Error Bool               -- accepts true/yes/1/on or false/no/0/off
 cwd         : ()  -> Task Error String                -- current working directory
 exit        : Int -> a                                -- diverging — process terminates
 loadEnv     : ()  -> Task Error ()                    -- load .env from cwd into the process env
+setenv      : String -> String -> Task Error ()       -- write a process env var
+unsetenv    : String -> Task Error ()                 -- remove a process env var (idempotent)
 ```
 
 Production deployments override env via the process environment (Docker
 `ENV`, k8s, CI vars). `loadEnv ()` is for local dev — never overrides
 existing vars.
+
+**Env-var namespace prefix (v0.11.5+).** The runtime reads its own
+config (Sky.Live, Std.Auth, Std.Log, Std.Db) under the `SKY_` prefix
+by default — `SKY_LIVE_PORT`, `SKY_AUTH_TOKEN_TTL`, `SKY_LOG_FORMAT`,
+etc. Projects that share a host with other Sky binaries can declare a
+custom prefix in `sky.toml` to keep their config private:
+
+```toml
+[env]
+prefix = "FENCE"
+```
+
+The runtime then reads `FENCE_LIVE_PORT`, `FENCE_AUTH_TOKEN_TTL`, etc.
+User code calling `System.getenv "DATABASE_URL"` reads the raw name
+unchanged — only Sky's internal namespace is prefixed.
+
+`System.setenv` / `System.unsetenv` cover the write side without Go
+FFI for the rare case where the value isn't known until runtime
+(derived from a startup flag, computed from another secret, etc.).
 
 ### Sky.Core.Process
 

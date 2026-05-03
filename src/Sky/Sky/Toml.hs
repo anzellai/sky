@@ -30,6 +30,7 @@ data SkyConfig = SkyConfig
     , _authDriver    :: !String           -- [auth] driver: jwt / session / oauth
     , _logFormat     :: !String           -- [log] format: plain (default) | json
     , _logLevel      :: !String           -- [log] level: debug | info (default) | warn | error
+    , _envPrefix     :: !String           -- [env] prefix: namespace for runtime SKY_* env reads (default "SKY")
     }
     deriving (Show)
 
@@ -58,6 +59,7 @@ defaultConfig = SkyConfig
     , _authDriver    = "jwt"
     , _logFormat     = ""
     , _logLevel      = ""
+    , _envPrefix     = ""
     }
 
 
@@ -130,6 +132,14 @@ applyKeyValue section config key value = case section of
     "log" -> case key of
         "format" -> config { _logFormat = value }
         "level"  -> config { _logLevel  = value }
+        _        -> config
+    -- [env] section: env-var namespace control. `prefix` overrides
+    -- the default "SKY" prefix used by all internal runtime reads
+    -- (LIVE_PORT, AUTH_TOKEN_TTL, LOG_FORMAT, DB_PATH, etc.). Allows
+    -- multiple Sky binaries to run on the same host without env-var
+    -- collision. Default unchanged ("SKY") if unset.
+    "env" -> case key of
+        "prefix" -> config { _envPrefix = value }
         _        -> config
     -- Top-level / [source] / [project] — project metadata.
     _ -> case key of

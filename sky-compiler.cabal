@@ -190,6 +190,7 @@ test-suite sky-tests
       Sky.Build.NestedPatternSpec
       Sky.Build.ConsCtorPatternSpec
       Sky.Build.CtorConsPatternSpec
+      Sky.Build.EnvPrefixSpec
       Sky.Build.TaskResultBridgesSpec
       Sky.Build.CheckIsBuildSpec
       Sky.Build.RecordFieldOrderSpec

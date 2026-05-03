@@ -23,10 +23,11 @@ import (
 func debugStack() string { return string(debug.Stack()) }
 
 // SetPortDefault is called by generated main.go at init time with the
-// sky.toml `port` value. It only seeds SKY_LIVE_PORT when unset — shell
-// env and .env still win.
+// sky.toml `port` value. It only seeds <PREFIX>_LIVE_PORT when unset
+// — shell env and .env still win. The prefix defaults to "SKY"; see
+// env_prefix.go for the namespacing rules.
 func SetPortDefault(port string) {
-	SetEnvDefault("SKY_LIVE_PORT", port)
+	SetSkyDefault("LIVE_PORT", port)
 }
 
 // SetEnvDefault: set an environment variable only when it isn't already
