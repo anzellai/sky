@@ -172,6 +172,7 @@ nix develop            # GHC 9.4.8 + Go + every system dep, sandboxed
 | Area                                 | Link                                                                   |
 | ------------------------------------ | ---------------------------------------------------------------------- |
 | Getting started                      | [docs/getting-started.md](docs/getting-started.md)                     |
+| **`sky.toml` reference**             | [docs/sky-toml.md](docs/sky-toml.md)                                   |
 | Language syntax                      | [docs/language/syntax.md](docs/language/syntax.md)                     |
 | Types                                | [docs/language/types.md](docs/language/types.md)                       |
 | Pattern matching                     | [docs/language/pattern-matching.md](docs/language/pattern-matching.md) |

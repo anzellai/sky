@@ -87,6 +87,7 @@ main =
 
 ## Next steps
 
+- [`sky.toml` reference](sky-toml.md) — every project-config field.
 - [Language syntax](language/syntax.md) — operators, lambdas, let/in, case/of, pipelines.
 - [Pattern matching](language/pattern-matching.md) — destructuring, exhaustiveness.
 - [Modules](language/modules.md) — imports, `exposing`, visibility.
