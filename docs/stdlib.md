@@ -268,6 +268,8 @@ update msg model =
             )
 ```
 
+| Function | Type | Notes |
+|---|---|---|
 | `Cmd.none` | `Cmd msg` | No-op |
 | `Cmd.perform` | `Task err a -> (Result err a -> msg) -> Cmd msg` | Run task, dispatch result as Msg |
 | `Cmd.batch` | `List (Cmd msg) -> Cmd msg` | Concurrent batch |
