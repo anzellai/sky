@@ -92,9 +92,13 @@ name = Maybe.withDefault "Anonymous" maybeName
 ```elm
 import Sky.Core.Result as Result
 
-case String.toInt input of
-    Just n  -> compute n
-    Nothing -> 0
+id = 
+    case fallibleComputation of                                       
+        Ok result ->                                                    
+            println result                                              
+                                                                          
+        Err e ->                                                    
+            println ("computation failed: " ++ Error.toString e) 
 ```
 
 `withDefault`, `map`, `andThen`, `mapError`, `map2`, `map3`, `map4`, `map5`, `andMap`, `combine`, `traverse`, `andThenTask` (bridge — see [Result/Task bridges](../CLAUDE.md#resulttask-bridges)).
