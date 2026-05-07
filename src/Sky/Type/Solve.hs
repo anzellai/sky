@@ -328,7 +328,8 @@ solveHelpBody state constraint = case constraint of
                 -- Debug: read back actual resolved types
                 at <- variableToType actualVar
                 et <- variableToType expectedVar
-                return (Just $ posPrefix region ++ "Type mismatch: " ++ showType at ++ " vs " ++ showType et ++ " (from: " ++ showType actualType ++ " vs " ++ showExpected expected ++ ")", state)
+                let hint = resultMismatchHint at et
+                return (Just $ posPrefix region ++ "Type mismatch: " ++ showType at ++ " vs " ++ showType et ++ " (from: " ++ showType actualType ++ " vs " ++ showExpected expected ++ ")" ++ hint, state)
 
     T.CLocal region name expected -> do
         case Map.lookup name (_env state) of
@@ -337,7 +338,13 @@ solveHelpBody state constraint = case constraint of
                 ok <- Unify.unify var expectedVar
                 if ok
                     then return (Nothing, state)
-                    else return (Just $ posPrefix region ++ "Variable '" ++ name ++ "' type mismatch", state)
+                    else do
+                        vt <- variableToType var
+                        et <- variableToType expectedVar
+                        let hint = resultMismatchHint vt et
+                        return (Just $ posPrefix region ++ "Variable '" ++ name
+                                ++ "' type mismatch: " ++ showType vt
+                                ++ " vs " ++ showType et ++ hint, state)
             Nothing -> do
                 -- Unknown variable — create a fresh flex var and add to env
                 freshVar <- UF.fresh (T.Descriptor (T.FlexVar (Just name)) (_rank state) T.noMark Nothing)
@@ -361,8 +368,10 @@ solveHelpBody state constraint = case constraint of
                 -- and panicked at runtime with `rt.AsBool: expected
                 -- bool, got rt.SkyResult[interface {},bool]`. Same
                 -- pattern as the dep-HM-fatal change.
+                let hint = resultMismatchHint instType expType
                 return (Just $ "Foreign '" ++ name ++ "': "
                         ++ showType instType ++ " vs " ++ showType expType
+                        ++ hint
                        , state)
 
     T.CPattern _region _category _actualType _expected ->
@@ -478,6 +487,54 @@ flatTypeToType flat = case flat of
 -- ═══════════════════════════════════════════════════════════
 -- TYPE DISPLAY
 -- ═══════════════════════════════════════════════════════════
+
+
+-- | When a unification failure has @Result Error _@ on one side and
+-- a bare type on the other, append a one-line hint pointing the
+-- user at the trust-boundary unwrap pattern. Per CLAUDE.md "every
+-- FFI call returns Result Error T" — so this mismatch shape
+-- usually means the user forgot to unwrap.
+--
+-- Returns @""@ when the hint isn't applicable (e.g. both sides
+-- are Result-typed, or neither is). Empty string composes
+-- harmlessly with the existing error string.
+--
+-- Detection is structural: look for @TType (Canonical "Sky.Core.
+-- Result") "Result" [_, _]@ at the top of one side. Lambda /
+-- arrow positions are skipped through to the result, since the
+-- common builder shape is @(Builder -> Builder)@ vs
+-- @(Result Error Builder -> Result Error Builder)@ — the
+-- mismatch lives at the param position there.
+resultMismatchHint :: T.Type -> T.Type -> String
+resultMismatchHint a b
+    | isResult a && not (isResult b)
+        = "\nHint: " ++ showType a ++ " is the Sky shape of a "
+       ++ "Go FFI call. Unwrap with `case x of Ok v -> ...` or "
+       ++ "compose via `Result.andThen` / `Result.withDefault`."
+    | not (isResult a) && isResult b
+        = "\nHint: " ++ showType b ++ " is the Sky shape of a "
+       ++ "Go FFI call. Unwrap with `case x of Ok v -> ...` or "
+       ++ "compose via `Result.andThen` / `Result.withDefault`."
+    -- Lambda / arrow pair: chase through the param position. The
+    -- common pattern that surfaces here is a setter being piped
+    -- via |> from a Result-producing builder — e.g.
+    --   Stripe.newX () |> Stripe.xSetMode "..."
+    -- where xSetMode : X -> Result Error X but |> hands it
+    -- Result Error X. Unification then sees X (the param) vs
+    -- Result Error X. We follow the lambdas to find the deepest
+    -- Result vs bare clash.
+    | T.TLambda ap ar <- a, T.TLambda bp br <- b
+        = let pHint = resultMismatchHint ap bp
+              rHint = resultMismatchHint ar br
+          in if not (null pHint) then pHint
+             else rHint
+    | otherwise = ""
+  where
+    isResult :: T.Type -> Bool
+    isResult (T.TType (ModuleName.Canonical mn) "Result" _) =
+        mn == "Sky.Core.Result"
+    isResult _ = False
+
 
 -- | Public entry point: rename fresh type variables to a, b, c, ...
 -- before rendering so hover/error messages don't leak solver-internal
