@@ -112,3 +112,8 @@ legacy-ts-compiler/node_modules/
 /.direnv/
 /.envrc.local
 sky.zip
+
+# Local-only example verification — playwright recordings,
+# screenshots, traces. Not source; per-developer; regenerated
+# whenever scripts/verify-examples.sh is run.
+_verify/

@@ -1,0 +1,9 @@
+{
+  "name": "sky-verify-tooling",
+  "private": true,
+  "type": "module",
+  "description": "Dev-tooling deps for scripts/verify-examples.{sh,mjs}. Not part of the compiler/runtime; node_modules is gitignored.",
+  "devDependencies": {
+    "playwright": "^1.49.0"
+  }
+}
