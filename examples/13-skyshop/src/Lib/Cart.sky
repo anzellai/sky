@@ -1,4 +1,24 @@
-module Lib.Cart exposing (getOrCreateCart, createCart, getCart, getCartItems, getCartWithItems, addItem, updateItemQty, removeItem, recalculateTotal, setCartState, setCheckout, setShipping, getUserCarts, getOrdersByState, getAllOrders, checkoutToOrder, getOrder, getOrderItems, getOrderWithItems)
+module Lib.Cart exposing
+    ( getOrCreateCart
+    , createCart
+    , getCart
+    , getCartItems
+    , getCartWithItems
+    , addItem
+    , updateItemQty
+    , removeItem
+    , recalculateTotal
+    , setCartState
+    , setCheckout
+    , setShipping
+    , getUserCarts
+    , getOrdersByState
+    , getAllOrders
+    , checkoutToOrder
+    , getOrder
+    , getOrderItems
+    , getOrderWithItems
+    )
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Maybe exposing (..)
@@ -99,24 +119,24 @@ enrichCartItem item =
                     "title"
                     (Db.getField "title" product)
                     (Dict.insert
-                         "summary"
-                         (Db.getField "summary" product)
-                         (Dict.insert
-                              "price_amount"
-                              (Db.getField "price_amount" product)
-                              (Dict.insert
-                                   "price_currency"
-                                   (Db.getField "price_currency" product)
-                                   (Dict.insert
-                                        "price_discount"
-                                        (Db.getField "price_discount" product)
+                        "summary"
+                        (Db.getField "summary" product)
+                        (Dict.insert
+                            "price_amount"
+                            (Db.getField "price_amount" product)
+                            (Dict.insert
+                                "price_currency"
+                                (Db.getField "price_currency" product)
+                                (Dict.insert
+                                    "price_discount"
+                                    (Db.getField "price_discount" product)
+                                    (Dict.insert
+                                        "price_tax"
+                                        (Db.getField "price_tax" product)
                                         (Dict.insert
-                                             "price_tax"
-                                             (Db.getField "price_tax" product)
-                                             (Dict.insert
-                                                  "stock"
-                                                  (Db.getField "stock" product)
-                                                  item))))))
+                                            "stock"
+                                            (Db.getField "stock" product)
+                                            item))))))
 
             _ ->
                 item
@@ -226,19 +246,19 @@ recalculateTotal cartId =
         total =
             List.foldl
                 (\item acc ->
-                     let
-                         price = Db.getInt "price_amount" item
-                         discount = Db.getInt "price_discount" item
-                         qty = Db.getInt "quantity" item
-                         effectivePrice = price - discount
-                         itemTotal =
-                             if effectivePrice > 0 then
-                                 effectivePrice * qty
+                    let
+                        price = Db.getInt "price_amount" item
+                        discount = Db.getInt "price_discount" item
+                        qty = Db.getInt "quantity" item
+                        effectivePrice = price - discount
+                        itemTotal =
+                            if effectivePrice > 0 then
+                                effectivePrice * qty
 
-                             else
-                                 0
-                     in
-                         acc + itemTotal)
+                            else
+                                0
+                    in
+                        acc + itemTotal)
                 0
                 items
         currency =
@@ -282,7 +302,7 @@ findDocAndCollection docId =
                 Ok Nothing ->
                     Err
                         (Error.notFound
-                             |> Error.withMessage "Document not found.")
+                            |> Error.withMessage "Document not found.")
 
                 Err e ->
                     Err e
@@ -297,8 +317,7 @@ setCartState docId newState =
                 result = Db.setDoc collection docId updatedDoc
                 _ =
                     println
-                        ("[ORDER] State changed: " ++ docId ++ " -> "
-                             ++ newState)
+                        ("[ORDER] State changed: " ++ docId ++ " -> " ++ newState)
             in
                 case result of
 
@@ -322,9 +341,9 @@ setCheckout docId link reference remarks =
                         "checkout_link"
                         link
                         (Dict.insert
-                             "checkout_reference"
-                             reference
-                             (Dict.insert "checkout_remarks" remarks doc))
+                            "checkout_reference"
+                            reference
+                            (Dict.insert "checkout_remarks" remarks doc))
             in
                 Db.setDoc collection docId updatedDoc
 
@@ -342,27 +361,27 @@ setShipping docId name email phone line1 line2 city country postcode =
                         "shipping_name"
                         name
                         (Dict.insert
-                             "shipping_email"
-                             email
-                             (Dict.insert
-                                  "shipping_phone"
-                                  phone
-                                  (Dict.insert
-                                       "shipping_line1"
-                                       line1
-                                       (Dict.insert
-                                            "shipping_line2"
-                                            line2
+                            "shipping_email"
+                            email
+                            (Dict.insert
+                                "shipping_phone"
+                                phone
+                                (Dict.insert
+                                    "shipping_line1"
+                                    line1
+                                    (Dict.insert
+                                        "shipping_line2"
+                                        line2
+                                        (Dict.insert
+                                            "shipping_city"
+                                            city
                                             (Dict.insert
-                                                 "shipping_city"
-                                                 city
-                                                 (Dict.insert
-                                                      "shipping_country"
-                                                      country
-                                                      (Dict.insert
-                                                           "shipping_postcode"
-                                                           postcode
-                                                           doc)))))))
+                                                "shipping_country"
+                                                country
+                                                (Dict.insert
+                                                    "shipping_postcode"
+                                                    postcode
+                                                    doc)))))))
             in
                 Db.setDoc collection docId updatedDoc
 
@@ -394,31 +413,31 @@ checkoutToOrder cartId =
                     _ =
                         List.map
                             (\item ->
-                                 let
-                                     itemId =
-                                         Result.withDefault
-                                             ""
-                                             (Uuid.newString ())
-                                     enriched = enrichCartItem item
-                                     orderItem =
-                                         Dict.insert
-                                             "id"
-                                             itemId
-                                             (Dict.insert
-                                                  "order_id"
-                                                  orderId
-                                                  (Dict.insert
-                                                       "cart_id"
-                                                       cartId
-                                                       enriched))
-                                 in
-                                     Db.setDoc "order_items" itemId orderItem)
+                                let
+                                    itemId =
+                                        Result.withDefault
+                                            ""
+                                            (Uuid.newString ())
+                                    enriched = enrichCartItem item
+                                    orderItem =
+                                        Dict.insert
+                                            "id"
+                                            itemId
+                                            (Dict.insert
+                                                "order_id"
+                                                orderId
+                                                (Dict.insert
+                                                    "cart_id"
+                                                    cartId
+                                                    enriched))
+                                in
+                                    Db.setDoc "order_items" itemId orderItem)
                             cartItems
                     _ =
                         println
                             ("[CHECKOUT] Created order " ++ orderId
-                                 ++ " from cart "
-                                 ++ cartId)
+                                ++ " from cart "
+                                ++ cartId)
                 in
                     Ok orderId
 

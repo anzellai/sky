@@ -26,11 +26,11 @@ viewHome model =
     Layout.page
         model
         (div
-             []
-             [ viewHero model
-             , viewCategoryBar model
-             , viewFeaturedProducts model
-             ])
+            []
+            [ viewHero model
+            , viewCategoryBar model
+            , viewFeaturedProducts model
+            ])
 
 
 viewHero model =
@@ -104,26 +104,26 @@ viewCategoryBar model =
     div
         [tw [ mb8, flex, flexWrap, gap2, justifyCenter ]]
         (List.map
-             (\cat ->
-                  a
-                      [ href "/products"
-                      , attribute "sky-nav" ""
-                      , onClick (SetCategoryFilter cat)
-                      , tw
-                            [ inlineBlock
-                            , px4
-                            , py2
-                            , roundedFull
-                            , textSm
-                            , fontMedium
-                            , textGray500
-                            , bgGray100
-                            , hover bgGray200
-                            , hover textGray900
-                            ]
-                      ]
-                      [text (Tr.tCategory model.lang cat)])
-             (List.take 6 allCategories))
+            (\cat ->
+                a
+                    [ href "/products"
+                    , attribute "sky-nav" ""
+                    , onClick (SetCategoryFilter cat)
+                    , tw
+                          [ inlineBlock
+                          , px4
+                          , py2
+                          , roundedFull
+                          , textSm
+                          , fontMedium
+                          , textGray500
+                          , bgGray100
+                          , hover bgGray200
+                          , hover textGray900
+                          ]
+                    ]
+                    [text (Tr.tCategory model.lang cat)])
+            (List.take 6 allCategories))
 
 
 viewFeaturedProducts model =
@@ -155,19 +155,19 @@ viewProducts model =
     Layout.page
         model
         (div
-             []
-             [ div
-                   [tw [mb8]]
-                   [ Html.h1
-                         [tw [ text3xl, fontBold, textGray900 ]]
-                         [text (Tr.t model.lang "nav.products")]
-                   , p
-                         [tw [ textGray500, mt1 ]]
-                         [text (Tr.t model.lang "hero.browse")]
-                   ]
-             , viewToolbar model
-             , viewProductGrid model model.products
-             ])
+            []
+            [ div
+                  [tw [mb8]]
+                  [ Html.h1
+                        [tw [ text3xl, fontBold, textGray900 ]]
+                        [text (Tr.t model.lang "nav.products")]
+                  , p
+                        [tw [ textGray500, mt1 ]]
+                        [text (Tr.t model.lang "hero.browse")]
+                  ]
+            , viewToolbar model
+            , viewProductGrid model model.products
+            ])
 
 
 viewToolbar model =
@@ -185,17 +185,14 @@ viewToolbar model =
                   ]
             , div
                   [tw [ flex, flexWrap, gap2 ]]
-                  ([filterBtn
-                       "all"
-                       (Tr.t lang "product.all")
-                       model.categoryFilter]
-                       ++ List.map
-                              (\cat ->
-                                   filterBtn
-                                       cat
-                                       (Tr.tCategory lang cat)
-                                       model.categoryFilter)
-                              allCategories)
+                  ([filterBtn "all" (Tr.t lang "product.all") model.categoryFilter]
+                      ++ List.map
+                             (\cat ->
+                                 filterBtn
+                                     cat
+                                     (Tr.tCategory lang cat)
+                                     model.categoryFilter)
+                             allCategories)
             , div
                   [tw [ flex, gap2, itemsCenter ]]
                   [ span
@@ -217,10 +214,10 @@ viewToolbar model =
                         [ onClick ToggleSortDir, Layout.qtyBtn ]
                         [text
                             (if model.sortDir == "asc" then
-                                 "↑"
+                                "↑"
 
-                             else
-                                 "↓")]
+                            else
+                                "↓")]
                   ]
             ]
 

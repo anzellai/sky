@@ -34,9 +34,14 @@ import Lib.Auth as Auth
 
 firebaseAuthScript _ =
     let
-        apiKey = Result.withDefault "" (Task.run (System.getenv "FIREBASE_API_KEY"))
-        authDomain = Result.withDefault "" (Task.run (System.getenv "AUTH_DOMAIN"))
-        projectId = Result.withDefault "" (Task.run (System.getenv "GOOGLE_CLOUD_PROJECT"))
+        apiKey =
+            Result.withDefault "" (Task.run (System.getenv "FIREBASE_API_KEY"))
+        authDomain =
+            Result.withDefault "" (Task.run (System.getenv "AUTH_DOMAIN"))
+        projectId =
+            Result.withDefault
+                ""
+                (Task.run (System.getenv "GOOGLE_CLOUD_PROJECT"))
     in
         """<script>
 var _fbReady=false,_fbUser=null;

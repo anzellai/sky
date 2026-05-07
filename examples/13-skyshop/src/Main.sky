@@ -332,8 +332,7 @@ handleAddToCart productId model =
                         let
                             _ =
                                 println
-                                    ("[CART ERROR] addItem: "
-                                         ++ Error.toString e)
+                                    ("[CART ERROR] addItem: " ++ Error.toString e)
                         in
                             ( { model | notification = "Failed to add to cart: " ++ Error.toString e
                               , notificationType = "error"
@@ -495,7 +494,7 @@ handleVerifyPayment orderId model =
                             _ =
                                 println
                                     ("[VERIFY] Checking payment for order: "
-                                         ++ orderId)
+                                        ++ orderId)
                         in
                             case Stripe.verifyPayment orderId of
 
@@ -572,9 +571,7 @@ handleVerifyPayment orderId model =
                                                         orderDoc
                                                         items
                                                         (Db.getField "name" user)
-                                                        (Db.getField
-                                                             "email"
-                                                             user)
+                                                        (Db.getField "email" user)
 
                                                 Nothing ->
                                                     ()
@@ -594,8 +591,8 @@ handleVerifyPayment orderId model =
                                                         _ =
                                                             println
                                                                 ("[VERIFY] post-paid lookup failed: "
-                                                                     ++ Error.toString
-                                                                            e)
+                                                                    ++ Error.toString
+                                                                           e)
                                                     in
                                                         Nothing
                                         orderItems =
@@ -616,7 +613,7 @@ handleVerifyPayment orderId model =
                                         _ =
                                             println
                                                 ("[VERIFY] Payment failed: "
-                                                     ++ Error.toString e)
+                                                    ++ Error.toString e)
                                     in
                                         ( { base | notification = Error.toString e
                                           , notificationType = "error"
@@ -736,10 +733,10 @@ handleDeleteProduct productId model =
         Ok _ ->
             ( refreshAdminProducts
                   (clearEditForm
-                       { model | page = AdminProductsPage
-                       , notification = "Product deleted."
-                       , notificationType = "success"
-                       })
+                      { model | page = AdminProductsPage
+                      , notification = "Product deleted."
+                      , notificationType = "success"
+                      })
             , Cmd.none
             )
 
@@ -872,12 +869,12 @@ handleFirebaseAuth token model =
                 updated =
                     refreshProducts
                         (refreshCart
-                             { model | user = Just user
-                             , page = newPage
-                             , notification = "Welcome!"
-                             , notificationType = "success"
-                             , authError = ""
-                             })
+                            { model | user = Just user
+                            , page = newPage
+                            , notification = "Welcome!"
+                            , notificationType = "success"
+                            , authError = ""
+                            })
             in
                 ( updated, Cmd.none )
 
@@ -886,7 +883,7 @@ handleFirebaseAuth token model =
                 _ =
                     println
                         ("[AUTH] Error: " ++ Error.toString e
-                             ++ " — signing out to self-heal")
+                            ++ " — signing out to self-heal")
             in
                 handleSignOut { model | authError = Error.toString e }
 

@@ -17,16 +17,34 @@ import Github.Com.Stripe.StripeGo.V84.Checkout.Session as Session
 import Github.Com.Stripe.StripeGo.V84.Customer as Customer
 
 type alias PaymentStatus =
-    { status : String, paymentStatus : String, customerName : String, customerEmail : String, customerPhone : String, shippingLine1 : String, shippingLine2 : String, shippingCity : String, shippingCountry : String, shippingPostalCode : String }
-
+    { status : String
+    , paymentStatus : String
+    , customerName : String
+    , customerEmail : String
+    , customerPhone : String
+    , shippingLine1 : String
+    , shippingLine2 : String
+    , shippingCity : String
+    , shippingCountry : String
+    , shippingPostalCode : String
+    }
 
 type alias CheckoutInfo =
-    { id : String, url : String }
+    { id : String
+    , url : String
+    }
 
 
 initStripe _ =
     let
-        key = Result.withDefault "" (Task.run (System.getenv "STRIPE_API_KEY"))
+    -- FFI trust boundary: every Stripe getter returns
+    -- Result Error T so a nil receiver / unexpected
+    -- Go panic surfaces as Err rather than corrupting
+    -- downstream logic. Unwrap with sensible defaults
+    -- at the call site since Stripe rarely fails on a
+    -- completed session.
+        key =
+            Result.withDefault "" (Task.run (System.getenv "STRIPE_API_KEY"))
         _ = Stripe.setKey key
     in
         key
@@ -39,7 +57,8 @@ apiKey =
 domainUrl _ =
     let
         domain = Result.withDefault "" (Task.run (System.getenv "DOMAIN"))
-        port_ = Result.withDefault "" (Task.run (System.getenv "SKY_LIVE_PORT"))
+        port_ =
+            Result.withDefault "" (Task.run (System.getenv "SKY_LIVE_PORT"))
     in
         if domain != "" then
             domain
@@ -58,46 +77,110 @@ domainUrl _ =
 
 getOrCreateCustomer userId userName userEmail =
     let
-        listParams =
+        listParamsR =
             Stripe.newCustomerListParams ()
-                |> Stripe.customerListParamsSetEmail userEmail
-        iter = Customer.list listParams
+                |> Result.andThen
+                       (\p -> Stripe.customerListParamsSetEmail userEmail p)
     in
-        if Customer.iterNext iter then
-            let
-                c = Customer.iterCustomer iter
-                customerId = Stripe.customerID c
-                _ =
-                    println ("[STRIPE] Found existing customer: " ++ customerId)
-            in
-                Ok customerId
+        case listParamsR of
 
-        else
-            createCustomer userId userName userEmail
+            Ok listParams ->
+                case Customer.list listParams of
 
+                    Ok iter ->
+                        let
+                            hasNext =
+                                case Customer.iterNext iter of
 
-createCustomer userId userName userEmail =
-    let
-        params =
-            Stripe.newCustomerParams ()
-                |> Stripe.customerParamsSetEmail userEmail
-                |> Stripe.customerParamsSetName userName
-    in
-        case Customer.new params of
+                                    Ok b ->
+                                        b
 
-            Ok c ->
-                let
-                    customerId = Stripe.customerID c
-                    _ =
-                        println ("[STRIPE] Created customer: " ++ customerId)
-                in
-                    Ok customerId
+                                    Err _ ->
+                                        False
+                        in
+                            if hasNext then
+                                case Customer.iterCustomer iter of
+
+                                    Ok c ->
+                                        let
+                                            customerId =
+                                                case Stripe.customerID c of
+
+                                                    Ok cid ->
+                                                        cid
+
+                                                    Err _ ->
+                                                        ""
+                                            _ =
+                                                println
+                                                    ("[STRIPE] Found existing customer: "
+                                                        ++ customerId)
+                                        in
+                                            Ok customerId
+
+                                    Err e ->
+                                        Err
+                                            (Error.network
+                                                ("Stripe Customer.iterCustomer failed: "
+                                                    ++ errorToString e))
+
+                            else
+                                createCustomer userId userName userEmail
+
+                    Err e ->
+                        Err
+                            (Error.network
+                                ("Stripe Customer.list failed: "
+                                    ++ errorToString e))
 
             Err e ->
                 Err
                     (Error.network
-                         ("Failed to create Stripe customer: "
-                              ++ errorToString e))
+                        ("Failed to build Stripe customer-list params: "
+                            ++ errorToString e))
+
+
+createCustomer userId userName userEmail =
+    let
+        paramsR =
+            Stripe.newCustomerParams ()
+                |> Result.andThen
+                       (\p -> Stripe.customerParamsSetEmail userEmail p)
+                |> Result.andThen
+                       (\p -> Stripe.customerParamsSetName userName p)
+    in
+        case paramsR of
+
+            Ok params ->
+                case Customer.new params of
+
+                    Ok c ->
+                        let
+                            customerId =
+                                case Stripe.customerID c of
+
+                                    Ok cid ->
+                                        cid
+
+                                    Err _ ->
+                                        ""
+                            _ =
+                                println
+                                    ("[STRIPE] Created customer: " ++ customerId)
+                        in
+                            Ok customerId
+
+                    Err e ->
+                        Err
+                            (Error.network
+                                ("Failed to create Stripe customer: "
+                                    ++ errorToString e))
+
+            Err e ->
+                Err
+                    (Error.network
+                        ("Failed to build Stripe customer params: "
+                            ++ errorToString e))
 
 
 buildLineItem : Dict String String -> Result Error Value
@@ -114,22 +197,48 @@ buildLineItem item =
                 price
         qty = Db.getInt "quantity" item
         currency = String.toLower (Db.getField "price_currency" item)
-        productData =
+        productDataR =
             Stripe.newCheckoutSessionLineItemPriceDataProductDataParams ()
-                |> Stripe.checkoutSessionLineItemPriceDataProductDataParamsSetName
-                       title
-        priceData =
-            Stripe.newCheckoutSessionLineItemPriceDataParams ()
-                |> Stripe.checkoutSessionLineItemPriceDataParamsSetProductData
-                       productData
-                |> Stripe.checkoutSessionLineItemPriceDataParamsSetUnitAmount
-                       effectivePrice
-                |> Stripe.checkoutSessionLineItemPriceDataParamsSetCurrency
-                       currency
+                |> Result.andThen
+                       (\p ->
+                           Stripe.checkoutSessionLineItemPriceDataProductDataParamsSetName
+                               title
+                               p)
+        priceDataR =
+            productDataR
+                |> Result.andThen
+                       (\productData ->
+                           Stripe.newCheckoutSessionLineItemPriceDataParams ()
+                               |> Result.andThen
+                                      (\p ->
+                                          Stripe.checkoutSessionLineItemPriceDataParamsSetProductData
+                                              productData
+                                              p)
+                               |> Result.andThen
+                                      (\p ->
+                                          Stripe.checkoutSessionLineItemPriceDataParamsSetUnitAmount
+                                              effectivePrice
+                                              p)
+                               |> Result.andThen
+                                      (\p ->
+                                          Stripe.checkoutSessionLineItemPriceDataParamsSetCurrency
+                                              currency
+                                              p))
     in
-        Stripe.newCheckoutSessionLineItemParams ()
-            |> Stripe.checkoutSessionLineItemParamsSetPriceData priceData
-            |> Stripe.checkoutSessionLineItemParamsSetQuantity qty
+        priceDataR
+            |> Result.andThen
+                   (\priceData ->
+                       Stripe.newCheckoutSessionLineItemParams ()
+                           |> Result.andThen
+                                  (\p ->
+                                      Stripe.checkoutSessionLineItemParamsSetPriceData
+                                          priceData
+                                          p)
+                           |> Result.andThen
+                                  (\p ->
+                                      Stripe.checkoutSessionLineItemParamsSetQuantity
+                                          qty
+                                          p))
 
 
 createCheckoutSession : String -> List (Dict String String) -> String -> String -> String -> String -> Result Error CheckoutInfo
@@ -137,7 +246,7 @@ createCheckoutSession cartId items userId userName userEmail remarks =
     if apiKey == "" then
         Err
             (Error.invalidInput
-                 "Stripe API key not configured. Set STRIPE_API_KEY environment variable.")
+                "Stripe API key not configured. Set STRIPE_API_KEY environment variable.")
 
     else
         case getOrCreateCustomer userId userName userEmail of
@@ -150,54 +259,99 @@ createCheckoutSession cartId items userId userName userEmail remarks =
                     successUrl =
                         domainUrl () ++ "/order/" ++ cartId ++ "/success"
                     cancelUrl = domainUrl () ++ "/cart"
-                    lineItems = List.map buildLineItem items
-                    shippingCollection =
+                    -- buildLineItem returns Result Error Value; collect the
+                    -- Oks so the SetLineItems setter sees an unwrapped list.
+                    lineItems =
+                        List.foldr
+                            (\itemR acc ->
+                                case itemR of
+
+                                    Ok v ->
+                                        v :: acc
+
+                                    Err _ ->
+                                        acc)
+                            []
+                            (List.map buildLineItem items)
+                    shippingCollectionR =
                         Stripe.newCheckoutSessionShippingAddressCollectionParams
                             ()
-                    phoneCollection =
+                    phoneCollectionR =
                         Stripe.newCheckoutSessionPhoneNumberCollectionParams ()
-                            |> Stripe.checkoutSessionPhoneNumberCollectionParamsSetEnabled
-                                   True
-                    params =
-                        Stripe.newCheckoutSessionParams ()
-                            |> Stripe.checkoutSessionParamsSetMode "payment"
-                            |> Stripe.checkoutSessionParamsSetSuccessURL
-                                   successUrl
-                            |> Stripe.checkoutSessionParamsSetCancelURL
-                                   cancelUrl
-                            |> Stripe.checkoutSessionParamsSetCustomer
-                                   customerId
-                            |> Stripe.checkoutSessionParamsSetLineItems
-                                   lineItems
-                            |> Stripe.checkoutSessionParamsSetShippingAddressCollection
-                                   shippingCollection
-                            |> Stripe.checkoutSessionParamsSetPhoneNumberCollection
-                                   phoneCollection
+                            |> Result.andThen
+                                   (\p ->
+                                       Stripe.checkoutSessionPhoneNumberCollectionParamsSetEnabled
+                                           True
+                                           p)
+                    paramsR =
+                        case shippingCollectionR of
+
+                            Err e ->
+                                Err e
+
+                            Ok shippingCollection ->
+                                case phoneCollectionR of
+
+                                    Err e ->
+                                        Err e
+
+                                    Ok phoneCollection ->
+                                        Stripe.newCheckoutSessionParams ()
+                                            |> Result.andThen (\p -> Stripe.checkoutSessionParamsSetMode "payment" p)
+                                            |> Result.andThen (\p -> Stripe.checkoutSessionParamsSetSuccessURL successUrl p)
+                                            |> Result.andThen (\p -> Stripe.checkoutSessionParamsSetCancelURL cancelUrl p)
+                                            |> Result.andThen (\p -> Stripe.checkoutSessionParamsSetCustomer customerId p)
+                                            |> Result.andThen (\p -> Stripe.checkoutSessionParamsSetLineItems lineItems p)
+                                            |> Result.andThen (\p -> Stripe.checkoutSessionParamsSetShippingAddressCollection shippingCollection p)
+                                            |> Result.andThen (\p -> Stripe.checkoutSessionParamsSetPhoneNumberCollection phoneCollection p)
                     _ =
                         println
                             ("[STRIPE] Creating checkout session for cart: "
-                                 ++ cartId)
+                                ++ cartId)
                 in
-                    case Session.new params of
+                    case paramsR of
 
-                        Ok sess ->
-                            let
-                                sessionId = Stripe.checkoutSessionID sess
-                                sessionUrl = Stripe.checkoutSessionURL sess
-                            in
-                                Ok { id = sessionId, url = sessionUrl }
+                        Ok params ->
+                            case Session.new params of
+
+                                Ok sess ->
+                                    let
+                                        sessionId =
+                                            case Stripe.checkoutSessionID sess of
+
+                                                Ok sid ->
+                                                    sid
+
+                                                Err _ ->
+                                                    ""
+                                        sessionUrl =
+                                            case Stripe.checkoutSessionURL sess of
+
+                                                Ok url ->
+                                                    url
+
+                                                Err _ ->
+                                                    ""
+                                    in
+                                        Ok { id = sessionId, url = sessionUrl }
+
+                                Err e ->
+                                    let
+                                        _ =
+                                            println
+                                                ("[STRIPE] API error: "
+                                                    ++ errorToString e)
+                                    in
+                                        Err
+                                            (Error.network
+                                                ("Stripe API error: "
+                                                    ++ errorToString e))
 
                         Err e ->
-                            let
-                                _ =
-                                    println
-                                        ("[STRIPE] API error: "
-                                             ++ errorToString e)
-                            in
-                                Err
-                                    (Error.network
-                                         ("Stripe API error: "
-                                              ++ errorToString e))
+                            Err
+                                (Error.network
+                                    ("Failed to build Stripe checkout params: "
+                                        ++ errorToString e))
 
 
 verifyPayment orderId =
@@ -234,47 +388,44 @@ verifyPayment orderId =
 
 
 verifyStripeSession cartId sessionId =
-    case Session.get sessionId Nothing of
+-- Stripe SDK accepts a nil RetrieveParams; bridge via Basics.js
+-- so the FFI sees a Go nil at this typed boundary.
+    case Session.get sessionId (js "nil") of
 
         Ok sess ->
             let
-                -- FFI trust boundary: every Stripe getter returns
-                -- Result Error T so a nil receiver / unexpected
-                -- Go panic surfaces as Err rather than corrupting
-                -- downstream logic. Unwrap with sensible defaults
-                -- at the call site since Stripe rarely fails on a
-                -- completed session.
                 rd = \d r -> Result.withDefault d r
                 status = rd "" (Stripe.checkoutSessionStatus sess)
-                paymentStatus = rd "" (Stripe.checkoutSessionPaymentStatus sess)
+                paymentStatus =
+                    rd "" (Stripe.checkoutSessionPaymentStatus sess)
             in
-                if status == Stripe.checkoutSessionStatusComplete && paymentStatus
-                    == Stripe.checkoutSessionPaymentStatusPaid then
+                if status == rd "" (Stripe.checkoutSessionStatusComplete ())
+                    && paymentStatus
+                    == rd "" (Stripe.checkoutSessionPaymentStatusPaid ()) then
                     let
                         _ =
                             println
-                                ("[STRIPE] Payment verified for cart: "
-                                     ++ cartId)
+                                ("[STRIPE] Payment verified for cart: " ++ cartId)
                         customerDetailsR =
                             Stripe.checkoutSessionCustomerDetails sess
                         custName =
                             rd
                                 ""
                                 (customerDetailsR
-                                     |> Result.andThen
-                                            Stripe.checkoutSessionCustomerDetailsName)
+                                    |> Result.andThen
+                                           Stripe.checkoutSessionCustomerDetailsName)
                         custEmail =
                             rd
                                 ""
                                 (customerDetailsR
-                                     |> Result.andThen
-                                            Stripe.checkoutSessionCustomerDetailsEmail)
+                                    |> Result.andThen
+                                           Stripe.checkoutSessionCustomerDetailsEmail)
                         custPhone =
                             rd
                                 ""
                                 (customerDetailsR
-                                     |> Result.andThen
-                                            Stripe.checkoutSessionCustomerDetailsPhone)
+                                    |> Result.andThen
+                                           Stripe.checkoutSessionCustomerDetailsPhone)
                         shippingDetailsR =
                             Stripe.checkoutSessionCollectedInformation sess
                                 |> Result.andThen
@@ -283,8 +434,8 @@ verifyStripeSession cartId sessionId =
                             rd
                                 ""
                                 (shippingDetailsR
-                                     |> Result.andThen
-                                            Stripe.checkoutSessionCollectedInformationShippingDetailsName)
+                                    |> Result.andThen
+                                           Stripe.checkoutSessionCollectedInformationShippingDetailsName)
                         shippingAddrR =
                             shippingDetailsR
                                 |> Result.andThen
@@ -300,31 +451,26 @@ verifyStripeSession cartId sessionId =
                                   shippingName
                             , customerEmail = custEmail
                             , customerPhone = custPhone
-                            , shippingLine1 =
-                                  rd
-                                      ""
-                                      (shippingAddrR
-                                           |> Result.andThen Stripe.addressLine1)
-                            , shippingLine2 =
-                                  rd
-                                      ""
-                                      (shippingAddrR
-                                           |> Result.andThen Stripe.addressLine2)
-                            , shippingCity =
-                                  rd
-                                      ""
-                                      (shippingAddrR
-                                           |> Result.andThen Stripe.addressCity)
-                            , shippingCountry =
-                                  rd
-                                      ""
-                                      (shippingAddrR
-                                           |> Result.andThen Stripe.addressCountry)
-                            , shippingPostalCode =
-                                  rd
-                                      ""
-                                      (shippingAddrR
-                                           |> Result.andThen Stripe.addressPostalCode)
+                            , shippingLine1 = rd
+                                  ""
+                                  (shippingAddrR
+                                      |> Result.andThen Stripe.addressLine1)
+                            , shippingLine2 = rd
+                                  ""
+                                  (shippingAddrR
+                                      |> Result.andThen Stripe.addressLine2)
+                            , shippingCity = rd
+                                  ""
+                                  (shippingAddrR
+                                      |> Result.andThen Stripe.addressCity)
+                            , shippingCountry = rd
+                                  ""
+                                  (shippingAddrR
+                                      |> Result.andThen Stripe.addressCountry)
+                            , shippingPostalCode = rd
+                                  ""
+                                  (shippingAddrR
+                                      |> Result.andThen Stripe.addressPostalCode)
                             }
 
                 else
@@ -333,7 +479,7 @@ verifyStripeSession cartId sessionId =
         Err e ->
             Err
                 (Error.network
-                     ("Failed to retrieve checkout session: " ++ errorToString e))
+                    ("Failed to retrieve checkout session: " ++ errorToString e))
 
 
 deductStock orderId =

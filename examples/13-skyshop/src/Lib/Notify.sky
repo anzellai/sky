@@ -64,8 +64,10 @@ ignoreResult result =
 
 sendEmailNotification notificationId subject body =
     let
-        smtpHost = Result.withDefault "" (Task.run (System.getenv "SMTP_HOST"))
-        notifyTo = Result.withDefault "" (Task.run (System.getenv "NOTIFY_TO"))
+        smtpHost =
+            Result.withDefault "" (Task.run (System.getenv "SMTP_HOST"))
+        notifyTo =
+            Result.withDefault "" (Task.run (System.getenv "NOTIFY_TO"))
     in
         if smtpHost == "" || notifyTo == "" then
             let
@@ -80,7 +82,7 @@ sendEmailNotification notificationId subject body =
                 _ =
                     println
                         ("[NOTIFY] Would send email to " ++ notifyTo ++ ": "
-                             ++ subject)
+                            ++ subject)
                 _ =
                     case Db.getDoc "notifications" notificationId of
 
@@ -89,9 +91,9 @@ sendEmailNotification notificationId subject body =
                                 "notifications"
                                 notificationId
                                 (Dict.insert
-                                     "sent"
-                                     (Db.boolVal True)
-                                     notification)
+                                    "sent"
+                                    (Db.boolVal True)
+                                    notification)
 
                         _ ->
                             Ok ()

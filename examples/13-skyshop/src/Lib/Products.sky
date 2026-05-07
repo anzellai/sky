@@ -1,4 +1,15 @@
-module Lib.Products exposing (listProducts, listAllProducts, getProduct, createProduct, updateProduct, deleteProduct, listProductImages, addProductImage, deleteProductImage, searchProducts)
+module Lib.Products exposing
+    ( listProducts
+    , listAllProducts
+    , getProduct
+    , createProduct
+    , updateProduct
+    , deleteProduct
+    , listProductImages
+    , addProductImage
+    , deleteProductImage
+    , searchProducts
+    )
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Maybe exposing (..)
@@ -26,8 +37,8 @@ listAllProducts =
                 Ok products ->
                     println
                         ("[PRODUCTS] Loaded "
-                             ++ String.fromInt (List.length products)
-                             ++ " products")
+                            ++ String.fromInt (List.length products)
+                            ++ " products")
 
                 Err e ->
                     println ("[PRODUCTS] ERROR loading products: " ++ e)
@@ -72,12 +83,12 @@ filterBySearch query products =
         in
             List.filter
                 (\p ->
-                     String.contains
-                         lowerQuery
-                         (String.toLower (Db.getField "title" p))
-                         || String.contains
-                                lowerQuery
-                                (String.toLower (Db.getField "summary" p)))
+                    String.contains
+                        lowerQuery
+                        (String.toLower (Db.getField "title" p))
+                        || String.contains
+                               lowerQuery
+                               (String.toLower (Db.getField "summary" p)))
                 products
 
 
@@ -87,8 +98,8 @@ sortProducts sortBy sortDir products =
             if sortBy == "price" then
                 List.sortBy
                     (\p ->
-                         Db.getInt "price_amount" p
-                             - Db.getInt "price_discount" p)
+                        Db.getInt "price_amount" p
+                            - Db.getInt "price_discount" p)
                     products
 
             else if sortBy == "title" then

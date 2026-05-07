@@ -5,9 +5,11 @@ import Sky.Core.String as String
 import Sky.Core.Maybe as Maybe
 import Lib.Db as Db
 
-
 type alias Price =
-    { original : String, discounted : String, hasDiscount : Bool }
+    { original : String
+    , discounted : String
+    , hasDiscount : Bool
+    }
 
 
 currencySymbol currency =

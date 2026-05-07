@@ -25,7 +25,8 @@ ctx =
 
 adminEmails _ =
     let
-        envAdmins = Result.withDefault "" (Task.run (System.getenv "ADMIN_EMAILS"))
+        envAdmins =
+            Result.withDefault "" (Task.run (System.getenv "ADMIN_EMAILS"))
     in
     -- Idempotent upsert using firebase_uid as document ID.
     -- Concurrent calls from onAuthStateChanged can never create duplicates
@@ -50,13 +51,21 @@ isAdmin user =
 getAuthClient _ =
     let
         credFile =
-            Result.withDefault "" (Task.run (System.getenv "GOOGLE_APPLICATION_CREDENTIALS"))
+            Result.withDefault
+                ""
+                (Task.run (System.getenv "GOOGLE_APPLICATION_CREDENTIALS"))
         opts =
             if credFile == "" then
                 []
 
             else
-                [Option.withCredentialsFile credFile]
+                case Option.withCredentialsFile credFile of
+
+                    Ok opt ->
+                        [opt]
+
+                    Err _ ->
+                        []
         appResult = Firebase.newApp ctx (js "nil") opts
     in
         case appResult of
@@ -88,17 +97,33 @@ verifyToken idToken =
             case FirebaseAuth.clientVerifyIDToken client ctx idToken of
 
                 Ok token ->
+                -- tokenUID + tokenClaims are FFI getters returning
+                -- Result Error _; unwrap before downstream use.
                     let
-                        uid = FirebaseAuth.tokenUID token
-                        claims = FirebaseAuth.tokenClaims token
+                        uid =
+                            case FirebaseAuth.tokenUID token of
+
+                                Ok u ->
+                                    u
+
+                                Err _ ->
+                                    ""
+                        claims =
+                            case FirebaseAuth.tokenClaims token of
+
+                                Ok c ->
+                                    c
+
+                                Err _ ->
+                                    Dict.empty
                         email = claimString "email" claims
                         name = claimString "name" claims
                         _ =
                             println
                                 ("[AUTH] Firebase token verified for: " ++ email
-                                     ++ " (uid: "
-                                     ++ uid
-                                     ++ ")")
+                                    ++ " (uid: "
+                                    ++ uid
+                                    ++ ")")
                     in
                         findOrCreateUser uid email name
 
@@ -107,19 +132,18 @@ verifyToken idToken =
                         _ =
                             println
                                 ("[AUTH] Firebase token verification failed: "
-                                     ++ errorToString e)
+                                    ++ errorToString e)
                     in
                         Err
                             (Error.permissionDenied
-                                 |> Error.withMessage
-                                        "Authentication failed. Please try again.")
+                                |> Error.withMessage
+                                       "Authentication failed. Please try again.")
 
         Err e ->
             let
                 _ =
                     println
-                        ("[AUTH] Firebase auth client error: "
-                             ++ errorToString e)
+                        ("[AUTH] Firebase auth client error: " ++ errorToString e)
             in
                 Err (Error.network "Authentication service unavailable.")
 
@@ -156,17 +180,17 @@ findOrCreateUser uid email name =
                         if Db.getBool "suspended" user then
                             Err
                                 (Error.permissionDenied
-                                     |> Error.withMessage
-                                            "Account suspended. Please contact support.")
+                                    |> Error.withMessage
+                                           "Account suspended. Please contact support.")
 
                         else
                             let
                                 _ =
                                     println
                                         ("[AUTH] Signed in: " ++ email
-                                             ++ " (admin: "
-                                             ++ adminStr
-                                             ++ ")")
+                                            ++ " (admin: "
+                                            ++ adminStr
+                                            ++ ")")
                             in
                                 Ok user
 

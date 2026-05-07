@@ -24,11 +24,11 @@ viewCart model =
         model
         (case model.user of
 
-             Nothing ->
-                 viewSignInPrompt model
+            Nothing ->
+                viewSignInPrompt model
 
-             Just _ ->
-                 viewCartContent model)
+            Just _ ->
+                viewCartContent model)
 
 
 viewSignInPrompt model =
@@ -69,7 +69,7 @@ viewCartContent model =
                             [tw [ textGray500, mt1, mb6 ]]
                             [text
                                 (String.fromInt (List.length model.cartItems)
-                                     ++ " items")]
+                                    ++ " items")]
                       , div
                             [tw
                                 [ flex
@@ -178,8 +178,8 @@ viewCartItem model item =
                         [ button
                               [ onClick
                                     (UpdateCartItemQty
-                                         itemId
-                                         (String.fromInt (qty - 1)))
+                                        itemId
+                                        (String.fromInt (qty - 1)))
                               , Layout.qtyBtn
                               ]
                               [text "-"]
@@ -189,8 +189,8 @@ viewCartItem model item =
                         , button
                               [ onClick
                                     (UpdateCartItemQty
-                                         itemId
-                                         (String.fromInt (qty + 1)))
+                                        itemId
+                                        (String.fromInt (qty + 1)))
                               , Layout.qtyBtn
                               ]
                               [text "+"]

@@ -1,7 +1,24 @@
 -- ══════════════════════════════════════════════════════
 -- FIELD ACCESSORS
 -- ══════════════════════════════════════════════════════
-module Lib.Db exposing (getDoc, setDoc, queryDocs, queryWhere, queryWhereOrder, deleteDoc, getField, getInt, getBool, intVal, boolVal, floatVal, initDb, queryWhereOrLog, queryWhereOrderOrLog, queryDocsOrLog)
+module Lib.Db exposing
+    ( getDoc
+    , setDoc
+    , queryDocs
+    , queryWhere
+    , queryWhereOrder
+    , deleteDoc
+    , getField
+    , getInt
+    , getBool
+    , intVal
+    , boolVal
+    , floatVal
+    , initDb
+    , queryWhereOrLog
+    , queryWhereOrderOrLog
+    , queryDocsOrLog
+    )
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Maybe as Maybe
@@ -85,7 +102,7 @@ initDb _ =
                 _ =
                     println
                         ("[DB] ERROR: Failed to initialise Firestore: "
-                             ++ errorToString e)
+                            ++ errorToString e)
             in
                 ()
 
@@ -119,7 +136,10 @@ ctx =
 
 getProjectId _ =
     let
-        env = Result.withDefault "" (Task.run (System.getenv "GOOGLE_CLOUD_PROJECT"))
+        env =
+            Result.withDefault
+                ""
+                (Task.run (System.getenv "GOOGLE_CLOUD_PROJECT"))
     in
         if env == "" then
             "skyshop"
@@ -145,14 +165,16 @@ snapshotToDict snapshot =
             Result.withDefault
                 Dict.empty
                 (Firestore.documentSnapshotData snapshot)
-        -- v0.10.0: every Go FFI call returns Result Error T per the
-        -- doctrine. Pre-fix, the typed-codegen tolerated direct
-        -- composition; foreign-fatal now requires explicit
-        -- unwrapping at each boundary.
+                -- v0.10.0: every Go FFI call returns Result Error T per the
+                -- doctrine. Pre-fix, the typed-codegen tolerated direct
+                -- composition; foreign-fatal now requires explicit
+                -- unwrapping at each boundary.
         docId =
             case Firestore.documentSnapshotRef snapshot of
+
                 Ok ref ->
                     Result.withDefault "" (Firestore.documentRefID ref)
+
                 Err _ ->
                     ""
     in
@@ -223,8 +245,8 @@ getDocInner colRef docId =
         Err e ->
             Err
                 (Error.io
-                     ("Firestore.collectionRefDoc failed for " ++ docId ++ ": "
-                          ++ Error.toString e))
+                    ("Firestore.collectionRefDoc failed for " ++ docId ++ ": "
+                        ++ Error.toString e))
 
         Ok docRef ->
             getDocRef docRef
@@ -239,7 +261,7 @@ getDocRef docRef =
         Err e ->
             Err
                 (Error.io
-                     ("Firestore.documentRefGet failed: " ++ Error.toString e))
+                    ("Firestore.documentRefGet failed: " ++ Error.toString e))
 
 
 getDocSnapshot snapshot =
@@ -253,7 +275,13 @@ getDocSnapshot snapshot =
 
 
 mergeOpts =
-    [Firestore.mergeAll ()]
+    case Firestore.mergeAll () of
+
+        Ok opt ->
+            [opt]
+
+        Err _ ->
+            []
 
 
 setDoc collection docId data =
@@ -401,14 +429,17 @@ queryWhereOrderInner colRef field op value orderField dir =
 
 queryWhereOrderQuery q orderField dir =
     let
-        direction =
+        directionR =
             if dir == "desc" then
-                Firestore.desc
+                Firestore.desc ()
 
             else
-                Firestore.asc
+                Firestore.asc ()
+        orderedR =
+            directionR
+                |> Result.andThen (\d -> Firestore.queryOrderBy q orderField d)
     in
-        case Firestore.queryOrderBy q orderField direction of
+        case orderedR of
 
             Err e ->
                 Err (wrapDbError (errorToString e))

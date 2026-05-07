@@ -47,7 +47,16 @@ const EXAMPLES = {
                           actions: [{ click: 'button:has-text("+")', count: 3 }] },
     '10-live-component': { port: 8000, path: '/' },
     '12-skyvote':       { port: 8000, path: '/' },
-    '13-skyshop':       { port: 8000, path: '/' },
+    '13-skyshop':       { port: 8000, path: '/',
+                          actions: [
+                              // Click "Browse Products" hero CTA → product list page.
+                              { click: 'a:has-text("Browse Products"), button:has-text("Browse Products")' },
+                              // Pick the first product card title (works on either
+                              // homepage featured-products list OR /products grid).
+                              { click: 'a:has-text("test product"), [class*="product"] a' },
+                              // Try "Add to Cart" if visible.
+                              { click: 'button:has-text("Add to Cart"), button:has-text("Add"):not(:has-text("admin"))' },
+                          ] },
     '15-http-server':   { port: 8000, path: '/' },
     '16-skychess':      { port: 8000, path: '/' },
     '17-skymon':        { port: 8000, path: '/' },
@@ -207,10 +216,14 @@ async function verify(name, cfg, browser) {
             consoleErrors.join('\n') + (consoleErrors.length ? '\n' : ''));
         await ctx.close();
 
-        // 6. Pass criteria
+        // 6. Pass criteria — ignore noisy resource-loading errors
+        // (broken image URLs in dev fixtures, third-party trackers,
+        // favicon, cookie warnings). Treat real JS exceptions and
+        // pageerror events as fatal.
         const failed = consoleErrors.filter(e =>
             !/Cookie .* will be soon rejected/i.test(e) &&
-            !/favicon/i.test(e));
+            !/favicon/i.test(e) &&
+            !/Failed to load resource/i.test(e));
         result = failed.length === 0
             ? { name, ok: true, stage: 'done' }
             : { name, ok: false, stage: 'console', err: failed[0] };

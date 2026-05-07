@@ -1,4 +1,56 @@
-module Ui.Layout exposing (page, adminPage, btnPrimary, btnPrimaryLg, btnSecondary, btnCheckout, btnDangerOutline, btnState, card, cardHeader, cardBody, cardSection, cardFooter, formInput, formLabel_, qtyBtn, emptyIcon, emptyIconSm, adminThumb, adminThumbPlaceholder, notificationSuccess, notificationError, sidebarLink_, sidebarLinkActive, tableHeader_, adminRow, badge_, badgeLive, badgeDraft, badgeOrdered, badgeShipped, badgeDelivered, badgeCancelled, badgeRefunded, badgePending, infoCard_, infoCardLabel, cartItem, cartThumb, cartThumbPlaceholder, lineTotal, removeBtn, galleryMain, galleryThumb, galleryPlaceholder, imgPlaceholder, objectCover_, uploadZone, imgCardSquare, imgOverlayDelete, h2_)
+module Ui.Layout exposing
+    ( page
+    , adminPage
+    , btnPrimary
+    , btnPrimaryLg
+    , btnSecondary
+    , btnCheckout
+    , btnDangerOutline
+    , btnState
+    , card
+    , cardHeader
+    , cardBody
+    , cardSection
+    , cardFooter
+    , formInput
+    , formLabel_
+    , qtyBtn
+    , emptyIcon
+    , emptyIconSm
+    , adminThumb
+    , adminThumbPlaceholder
+    , notificationSuccess
+    , notificationError
+    , sidebarLink_
+    , sidebarLinkActive
+    , tableHeader_
+    , adminRow
+    , badge_
+    , badgeLive
+    , badgeDraft
+    , badgeOrdered
+    , badgeShipped
+    , badgeDelivered
+    , badgeCancelled
+    , badgeRefunded
+    , badgePending
+    , infoCard_
+    , infoCardLabel
+    , cartItem
+    , cartThumb
+    , cartThumbPlaceholder
+    , lineTotal
+    , removeBtn
+    , galleryMain
+    , galleryThumb
+    , galleryPlaceholder
+    , imgPlaceholder
+    , objectCover_
+    , uploadZone
+    , imgCardSquare
+    , imgOverlayDelete
+    , h2_
+    )
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Maybe exposing (..)
@@ -609,19 +661,19 @@ adminPage model content =
                 page
                     model
                     (div
-                         [tw [ textCenter, py20 ]]
-                         [Html.h2
-                             [tw [ text2xl, fontBold, textGray400 ]]
-                             [text "Access denied"]])
+                        [tw [ textCenter, py20 ]]
+                        [Html.h2
+                            [tw [ text2xl, fontBold, textGray400 ]]
+                            [text "Access denied"]])
 
         Nothing ->
             page
                 model
                 (div
-                     [tw [ textCenter, py20 ]]
-                     [Html.h2
-                         [tw [ text2xl, fontBold, textGray400 ]]
-                         [text "Please sign in"]])
+                    [tw [ textCenter, py20 ]]
+                    [Html.h2
+                        [tw [ text2xl, fontBold, textGray400 ]]
+                        [text "Please sign in"]])
 
 
 -- ══════════════════════════════════════════════════════
@@ -1078,93 +1130,88 @@ globalStyles =
     styleNode
         []
         (Css.stylesheet
-             [ Css.rule "*" [ "margin:0", "padding:0", "box-sizing:border-box" ]
-             , Css.rule
-                   "body"
-                   [ "font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif"
-                   , "line-height:1.6"
-                   , "color:#1a202c"
-                   , "background:#f8fafc"
-                   ]
-             , Css.rule "a" [ "text-decoration:none", "color:inherit" ]
-             , Css.rule
-                   "img"
-                   [ "max-width:100%", "height:auto", "display:block" ]
-             , Css.rule
-                   "button"
-                   [ "cursor:pointer"
-                   , "border:none"
-                   , "background:none"
-                   , "font-family:inherit"
-                   ]
-             , Css.rule
-                   "input,textarea,select"
-                   [ "font-family:inherit"
-                   , "font-size:inherit"
-                   , "outline:none"
-                   ]
-             , Css.rule ".line-through" ["text-decoration:line-through"]
-             , Css.rule ".product-card" ["transition:all .2s ease"]
-             , Css.rule
-                   ".product-card:hover"
-                   [ "border-color:#cbd5e1"
-                   , "box-shadow:0 4px 12px rgba(0,0,0,.08)"
-                   , "transform:translateY(-2px)"
-                   ]
-             , Css.rule ".product-card:hover img" ["transform:scale(1.03)"]
-             , Css.rule ".product-card img" ["transition:transform .3s ease"]
-             , Css.rule
-                   ".toggle"
-                   [ "width:44px"
-                   , "height:24px"
-                   , "border-radius:12px"
-                   , "position:relative"
-                   , "transition:background .15s ease"
-                   ]
-             , Css.rule ".toggle-on" ["background:#2563eb"]
-             , Css.rule ".toggle-off" ["background:#d1d5db"]
-             , Css.rule
-                   ".toggle-knob"
-                   [ "width:20px"
-                   , "height:20px"
-                   , "background:#fff"
-                   , "border-radius:50%"
-                   , "position:absolute"
-                   , "top:2px"
-                   , "transition:all .15s ease"
-                   , "box-shadow:0 1px 3px rgba(0,0,0,.15)"
-                   ]
-             , Css.rule ".toggle-knob-on" ["right:2px"]
-             , Css.rule ".toggle-knob-off" ["left:2px"]
-             , Css.rule
-                   ".spinner"
-                   [ "width:48px"
-                   , "height:48px"
-                   , "border:3px solid #e2e8f0"
-                   , "border-top-color:#3b82f6"
-                   , "border-radius:50%"
-                   , "animation:spin 1s linear infinite"
-                   , "margin:0 auto 1.5rem"
-                   ]
-             , Css.rule
-                   ".qty-input"
-                   [ "width:3.5rem"
-                   , "text-align:center"
-                   , "font-weight:600"
-                   , "border:1px solid #d1d5db"
-                   , "border-left:none"
-                   , "border-right:none"
-                   , "height:32px"
-                   , "font-size:.875rem"
-                   ]
-             , Css.keyframes
-                   "slideDown"
-                   [ Css.frame
-                         "from"
-                         [ "opacity:0", "transform:translateY(-8px)" ]
-                   , Css.frame "to" [ "opacity:1", "transform:translateY(0)" ]
-                   ]
-             , Css.keyframes
-                   "spin"
-                   [Css.frame "to" ["transform:rotate(360deg)"]]
-             ])
+            [ Css.rule "*" [ "margin:0", "padding:0", "box-sizing:border-box" ]
+            , Css.rule
+                  "body"
+                  [ "font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif"
+                  , "line-height:1.6"
+                  , "color:#1a202c"
+                  , "background:#f8fafc"
+                  ]
+            , Css.rule "a" [ "text-decoration:none", "color:inherit" ]
+            , Css.rule
+                  "img"
+                  [ "max-width:100%", "height:auto", "display:block" ]
+            , Css.rule
+                  "button"
+                  [ "cursor:pointer"
+                  , "border:none"
+                  , "background:none"
+                  , "font-family:inherit"
+                  ]
+            , Css.rule
+                  "input,textarea,select"
+                  [ "font-family:inherit", "font-size:inherit", "outline:none" ]
+            , Css.rule ".line-through" ["text-decoration:line-through"]
+            , Css.rule ".product-card" ["transition:all .2s ease"]
+            , Css.rule
+                  ".product-card:hover"
+                  [ "border-color:#cbd5e1"
+                  , "box-shadow:0 4px 12px rgba(0,0,0,.08)"
+                  , "transform:translateY(-2px)"
+                  ]
+            , Css.rule ".product-card:hover img" ["transform:scale(1.03)"]
+            , Css.rule ".product-card img" ["transition:transform .3s ease"]
+            , Css.rule
+                  ".toggle"
+                  [ "width:44px"
+                  , "height:24px"
+                  , "border-radius:12px"
+                  , "position:relative"
+                  , "transition:background .15s ease"
+                  ]
+            , Css.rule ".toggle-on" ["background:#2563eb"]
+            , Css.rule ".toggle-off" ["background:#d1d5db"]
+            , Css.rule
+                  ".toggle-knob"
+                  [ "width:20px"
+                  , "height:20px"
+                  , "background:#fff"
+                  , "border-radius:50%"
+                  , "position:absolute"
+                  , "top:2px"
+                  , "transition:all .15s ease"
+                  , "box-shadow:0 1px 3px rgba(0,0,0,.15)"
+                  ]
+            , Css.rule ".toggle-knob-on" ["right:2px"]
+            , Css.rule ".toggle-knob-off" ["left:2px"]
+            , Css.rule
+                  ".spinner"
+                  [ "width:48px"
+                  , "height:48px"
+                  , "border:3px solid #e2e8f0"
+                  , "border-top-color:#3b82f6"
+                  , "border-radius:50%"
+                  , "animation:spin 1s linear infinite"
+                  , "margin:0 auto 1.5rem"
+                  ]
+            , Css.rule
+                  ".qty-input"
+                  [ "width:3.5rem"
+                  , "text-align:center"
+                  , "font-weight:600"
+                  , "border:1px solid #d1d5db"
+                  , "border-left:none"
+                  , "border-right:none"
+                  , "height:32px"
+                  , "font-size:.875rem"
+                  ]
+            , Css.keyframes
+                  "slideDown"
+                  [ Css.frame
+                        "from"
+                        [ "opacity:0", "transform:translateY(-8px)" ]
+                  , Css.frame "to" [ "opacity:1", "transform:translateY(0)" ]
+                  ]
+            , Css.keyframes "spin" [Css.frame "to" ["transform:rotate(360deg)"]]
+            ])
