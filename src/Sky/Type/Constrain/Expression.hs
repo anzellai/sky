@@ -11,6 +11,7 @@ module Sky.Type.Constrain.Expression
 
 import Data.IORef
 import qualified Data.Map.Strict as Map
+import qualified System.Environment
 import System.IO.Unsafe (unsafePerformIO)
 import qualified Sky.AST.Canonical as Can
 import qualified Sky.Reporting.Annotation as A
@@ -137,11 +138,25 @@ constrain counter env (A.At region expr) expected = case expr of
                 -- by 'isSkyParseable'), fall through to the legacy
                 -- polymorphic-any path so existing FFI use is not
                 -- broken by an incomplete registry.
-                ffiTypes <- readIORef Env.ffiKernelTypeRef
-                case Map.lookup (modName, funcName) ffiTypes of
-                    Just annot ->
-                        return $ T.CForeign region (modName ++ "." ++ funcName) annot expected
-                    Nothing -> return T.CTrue
+                --
+                -- Behind the SKY_FFI_TYPED env var while the
+                -- migration sweeps in. Default-off means existing
+                -- user code keeps the polymorphic-any FFI surface;
+                -- users opt in to the stricter trust-boundary
+                -- enforcement by setting SKY_FFI_TYPED=1 (in shell
+                -- or sky.toml). Once an example sweep migrates
+                -- every example to the new shape, this gate flips
+                -- to default-on and the env var becomes the
+                -- escape hatch (same shape as SKY_SOLVER_BUDGET).
+                enabled <- ffiTypedEnabled
+                if not enabled
+                    then return T.CTrue
+                    else do
+                        ffiTypes <- readIORef Env.ffiKernelTypeRef
+                        case Map.lookup (modName, funcName) ffiTypes of
+                            Just annot ->
+                                return $ T.CForeign region (modName ++ "." ++ funcName) annot expected
+                            Nothing -> return T.CTrue
 
     Can.VarCtor _opts _home _typeName ctorName annot ->
         return $ T.CForeign region ctorName annot expected
@@ -820,6 +835,36 @@ defTypeInfoIO counter (Can.DestructDef _ _) = do
 
 zipWithM :: Monad m => (a -> b -> m c) -> [a] -> [b] -> m [c]
 zipWithM f xs ys = sequence (zipWith f xs ys)
+
+
+-- | Whether to apply the per-FFI-symbol HM constraint emitted by
+-- Sky.Build.Compile.loadAndSeedFfiRegistry's typeMap. Off by
+-- default while the example sweep migrates to the typed
+-- trust-boundary surface; opt in via the SKY_FFI_TYPED env var.
+--
+-- Memoised in an IORef so 1000s of constrain calls don't each hit
+-- the lookupEnv syscall.
+{-# NOINLINE ffiTypedEnabledRef #-}
+ffiTypedEnabledRef :: IORef (Maybe Bool)
+ffiTypedEnabledRef = unsafePerformIO (newIORef Nothing)
+
+
+ffiTypedEnabled :: IO Bool
+ffiTypedEnabled = do
+    cached <- readIORef ffiTypedEnabledRef
+    case cached of
+        Just b -> return b
+        Nothing -> do
+            v <- lookupEnvIO "SKY_FFI_TYPED"
+            let on = case v of
+                    Just s | s `elem` ["1", "true", "TRUE", "on", "ON", "yes", "YES"] -> True
+                    _ -> False
+            writeIORef ffiTypedEnabledRef (Just on)
+            return on
+
+
+lookupEnvIO :: String -> IO (Maybe String)
+lookupEnvIO = System.Environment.lookupEnv
 
 
 lookupKernelType :: String -> String -> Maybe T.Annotation
