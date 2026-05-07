@@ -16,6 +16,7 @@ import qualified Sky.AST.Canonical as Can
 import qualified Sky.Reporting.Annotation as A
 import qualified Sky.Type.Type as T
 import qualified Sky.Sky.ModuleName as ModuleName
+import qualified Sky.Canonicalise.Environment as Env
 
 
 -- | Type environment: maps variable names to their type schemes
@@ -119,10 +120,28 @@ constrain counter env (A.At region expr) expected = case expr of
             Nothing ->
                 return $ T.CLocal region name expected
 
-    Can.VarKernel modName funcName ->
+    Can.VarKernel modName funcName -> do
+        -- Stdlib kernel sigs (handcoded in lookupKernelType) take
+        -- precedence — they're the most carefully audited surface.
         case lookupKernelType modName funcName of
-            Just annot -> return $ T.CForeign region (modName ++ "." ++ funcName) annot expected
-            Nothing -> return T.CTrue
+            Just annot ->
+                return $ T.CForeign region (modName ++ "." ++ funcName) annot expected
+            Nothing -> do
+                -- Phase C: per-FFI-function Sky-side type seeded by
+                -- 'Sky.Build.Compile.loadAndSeedFfiRegistry' from
+                -- kernel.json's @skyType@ field. When present,
+                -- emits a CForeign so the call site has to match
+                -- the registered shape — including the runtime
+                -- @Result Error _@ wrap. When absent (older
+                -- kernel.json or pathological FFI shapes filtered
+                -- by 'isSkyParseable'), fall through to the legacy
+                -- polymorphic-any path so existing FFI use is not
+                -- broken by an incomplete registry.
+                ffiTypes <- readIORef Env.ffiKernelTypeRef
+                case Map.lookup (modName, funcName) ffiTypes of
+                    Just annot ->
+                        return $ T.CForeign region (modName ++ "." ++ funcName) annot expected
+                    Nothing -> return T.CTrue
 
     Can.VarCtor _opts _home _typeName ctorName annot ->
         return $ T.CForeign region ctorName annot expected

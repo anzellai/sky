@@ -281,6 +281,23 @@ ffiKernelArityRef :: IORef (Map.Map (String, String) Int)
 ffiKernelArityRef = unsafePerformIO (newIORef Map.empty)
 
 
+-- | Phase C: per-FFI-function Sky-side type, populated from the
+-- @skyType@ field in @.skycache/ffi/<slug>.kernel.json@. Keyed by
+-- @(kernelName, funcName)@. Sky.Type.Constrain.Expression's
+-- @Can.VarKernel@ arm consults this when @lookupKernelType@
+-- (the stdlib-kernel sig table) returns Nothing — turning every
+-- typed FFI symbol into a load-bearing constraint at the call
+-- site instead of the previous polymorphic-any fallthrough.
+--
+-- Empty unless seeded by 'Sky.Build.Compile.loadAndSeedFfiRegistry';
+-- the empty map keeps existing behaviour for FFI symbols whose
+-- kernel.json has no @skyType@ field (legacy files / pathological
+-- shapes filtered by 'isSkyParseable' in FfiGen).
+{-# NOINLINE ffiKernelTypeRef #-}
+ffiKernelTypeRef :: IORef (Map.Map (String, String) Can.Annotation)
+ffiKernelTypeRef = unsafePerformIO (newIORef Map.empty)
+
+
 -- | P7: names of FFI kernel functions (in the <Kernel>_<func> shape,
 -- e.g. "Go_Uuid_newString") for which a typed T-suffix wrapper has
 -- been emitted by FfiGen. Call-site codegen consults this set to

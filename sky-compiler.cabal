@@ -145,6 +145,7 @@ executable sky
     Sky.Build.FfiGen
     Sky.Build.FfiRegistry
     Sky.Build.FfiTypeParser
+    Sky.Build.FfiTypeResolve
     Sky.Build.SkyDeps
 
     -- Reporting

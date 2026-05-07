@@ -43,6 +43,7 @@ import qualified Sky.Generate.Go.Record as Rec
 import qualified Sky.Build.ModuleGraph as Graph
 import qualified Sky.Build.Dce as Dce
 import qualified Sky.Build.FfiRegistry as FfiReg
+import qualified Sky.Build.FfiTypeResolve as FfiTy
 import qualified Sky.Build.SkyDeps as SkyDeps
 import qualified Sky.Canonicalise.Environment as Env
 import qualified System.Environment
@@ -78,9 +79,27 @@ loadAndSeedFfiRegistry = do
                 FfiReg._ffn_arity f)
             | m <- mods, f <- FfiReg._fm_functions m
             ]
+        -- Phase C: turn parsed FtyAst into a canonical Annotation
+        -- per (kernelName, fnName). Only entries whose kernel.json
+        -- carried a parseable @skyType@ land here — pathological
+        -- FFI shapes (channels, deeply-nested inline-struct
+        -- callback bundles, missed-by-isSkyParseable Go residue)
+        -- omit @skyType@ at producer side, which decodes to
+        -- _ffn_skyType = Nothing here, which keeps them OUT of the
+        -- typeMap. The canonicaliser/Constrain falls back to the
+        -- legacy "no Sky type known" path for those — their
+        -- callers stay polymorphic-any, exactly as before.
+        typeMap = Map.fromList
+            [ ((FfiReg._fm_kernelName m, FfiReg._ffn_name f),
+                FfiTy.ftyToAnnotation (FfiReg._fm_kernelName m) ast)
+            | m <- mods
+            , f <- FfiReg._fm_functions m
+            , Just ast <- [FfiReg._ffn_skyType f]
+            ]
     writeIORef Env.ffiKernelModulesRef moduleMap
     writeIORef Env.ffiKernelFunctionsRef functionMap
     writeIORef Env.ffiKernelArityRef arityMap
+    writeIORef Env.ffiKernelTypeRef typeMap
     seedTypedFfiNames
     if null mods
         then return ()
