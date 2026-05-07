@@ -336,8 +336,12 @@ emitKernelJson moduleName kernelName pkg =
     let fns = filter (not . shouldSkipFn) (_pkgFns pkg)
         fnEntries = intercalate ",\n" (map emitFnEntry fns)
         emitFnEntry fn =
-            "    {\"name\": " ++ quote (lowerFirst (_fnName fn)) ++
-            ", \"arity\": " ++ show (max 1 (length (_fnParams fn))) ++ "}"
+            let st = wrapperSkyType fn
+                base = "    {\"name\": " ++ quote (lowerFirst (_fnName fn)) ++
+                       ", \"arity\": " ++ show (max 1 (length (_fnParams fn)))
+            in if isSkyParseable st
+                  then base ++ ", \"skyType\": " ++ quote st ++ "}"
+                  else base ++ "}"
     in unlines
         [ "{"
         , "  \"moduleName\": " ++ quote moduleName ++ ","
@@ -348,6 +352,78 @@ emitKernelJson moduleName kernelName pkg =
         , "  ]"
         , "}"
         ]
+
+
+-- | Sky-side type for an FFI wrapper, including the runtime Result
+-- wrap. Mirrors the shape `emitWrapper` actually emits — see
+-- `bodyLines` / `okType` around line 1296. Per the trust-boundary
+-- rule (CLAUDE.md "every FFI call returns Result Error T"), every
+-- wrapper returns SkyResult[any, T] no matter how its Go signature
+-- spells the result.
+--
+-- Mapping (matches the wrapper code):
+--   []                          -> Result Error ()
+--   [(_, T)] non-error          -> Result Error T
+--   [(_, "error")]              -> Result Error ()
+--   (T, error)                  -> Result Error T
+--   (T, bool) comma-ok          -> Result Error (Maybe T)
+--   (T, U) no error/bool        -> Result Error (T, U)   (SkyTuple2)
+--   (T, U, error)               -> Result Error (T, U)
+--   (T, U, V) etc.              -> Result Error (T, U, V) (SkyTuple3+)
+--
+-- Param list flows through goTypeToSky verbatim. Zero-param Go
+-- functions emit `() -> Result Error R` — Sky calls them as
+-- `Pkg.fn ()` (unit applied), matching the existing convention.
+wrapperSkyType :: FnInfo -> String
+wrapperSkyType fn =
+    let paramSig = if null (_fnParams fn)
+            then "()"
+            else intercalate " -> " (map (goTypeToSky . snd) (_fnParams fn))
+        results = _fnResults fn
+        nonErr = [ (n, t) | (n, t) <- results, t /= "error" ]
+        innerOk = case (results, nonErr) of
+            ([], _)               -> "()"
+            ([(_, "error")], _)   -> "()"
+            (_, [])               -> "()"
+            (_, [(_, t)])         ->
+                case results of
+                    [(_, t1), (_, "bool")] | t1 /= "bool" ->
+                        -- comma-ok: (T, bool) -> Maybe T
+                        "Maybe " ++ wrapIfMulti (goTypeToSky t)
+                    _ -> goTypeToSky t
+            (_, multi)            ->
+                -- Multi non-error returns pack into a Sky tuple.
+                "(" ++ intercalate ", " (map (goTypeToSky . snd) multi) ++ ")"
+        okType = case innerOk of
+            -- Result wrap composites need parens to bind tightly.
+            ('(':_) -> "Result Error " ++ innerOk
+            _       -> "Result Error " ++ wrapIfMulti innerOk
+    in paramSig ++ " -> " ++ okType
+  where
+    -- "List X" / "Dict String V" / "Maybe X" etc. need parens when
+    -- nested under another constructor (Result Error here).
+    wrapIfMulti s
+        | ' ' `elem` s && head s /= '(' = "(" ++ s ++ ")"
+        | otherwise                     = s
+
+
+-- | Reject Sky-type strings that still carry Go-side residue. These
+-- typically come from exotic Go shapes the goTypeToSky translator
+-- can't faithfully render (channels, deeply-nested inline-struct
+-- callback bundles, package-leaking generics). When the registry
+-- skyType field is omitted, FfiRegistry falls back to the legacy
+-- "no Sky-side type known" path — the wrapper itself still works,
+-- HM just doesn't constrain its use.
+isSkyParseable :: String -> Bool
+isSkyParseable s = not $ any (`isSubstringOf` s)
+    [ "<-"            -- channel direction
+    , " chan "        -- bare chan
+    , "chan "         -- chan at start
+    , "interface{"    -- residual empty/non-empty interface
+    , "struct{"       -- residual struct literal
+    , "func("         -- Go's func keyword should have been stripped
+    , "{}"            -- any leaked empty-{} (interface{} / struct{} nested)
+    ]
 
 
 -- | Skip functions that can't be realised at the FFI boundary.
@@ -1652,14 +1728,23 @@ goTypeToSky t
         let (_keyPart, valPart) = splitMapBracket (drop 4 t)
         in "Dict String " ++ wrapIfComposite (goTypeToSky (trim' valPart))
     | otherwise = case t of
-        "string"  -> "String"
-        "int"     -> "Int"
-        "int64"   -> "Int"
-        "int32"   -> "Int"
-        "float64" -> "Float"
-        "float32" -> "Float"
-        "bool"    -> "Bool"
-        "error"   -> "String"
+        "string"      -> "String"
+        "int"         -> "Int"
+        "int64"       -> "Int"
+        "int32"       -> "Int"
+        "float64"     -> "Float"
+        "float32"     -> "Float"
+        "bool"        -> "Bool"
+        "error"       -> "String"
+        -- Go's empty interface = "any" in Sky terms. Without this, a
+        -- `Dict String interface{}` ended up as `Dict String interface{}`
+        -- in the registry, which the type parser can't read.
+        "interface{}" -> "any"
+        -- Inspector emits `struct{}` for the synthetic param that makes
+        -- a Go zero-arg constructor look uniform with N-arg ones. From
+        -- the Sky caller's perspective the call is `Pkg.newX ()`, so the
+        -- Sky-side surface is `() -> Result Error X`.
+        "struct{}"    -> "()"
         _         -> stripPkg t
   where
     stripPkg = reverse . takeWhile (/= '.') . reverse
