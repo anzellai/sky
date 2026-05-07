@@ -50,12 +50,33 @@ scope = "source.sky"
 file-types = ["sky"]
 indent = { tab-width = 4, unit = "    " }
 auto-format = true
-formatter = { command = "sky", args = ["fmt"] }
+formatter = { command = "sky", args = ["fmt", "--stdin" ] }
 language-servers = ["sky-lsp"]
 
 [language-server.sky-lsp]
 command = "sky"
 args = ["lsp"]
+
+[[grammar]]
+name = "sky"
+source = { git = "https://github.com/anzellai/tree-sitter-sky", rev = "main" }
+```
+
+Then fetch and build:
+
+```bash
+hx --grammar fetch
+hx --grammar build
+```
+
+Finally copy some needed files:
+
+```bash
+curl --create-dirs --output-dir ~/.config/helix/runtime/queries/sky \
+  -O https://raw.githubusercontent.com/anzellai/tree-sitter-sky/refs/heads/main/queries/highlights.scm \
+  -O https://raw.githubusercontent.com/anzellai/tree-sitter-sky/refs/heads/main/queries/locals.scm \
+  -O https://raw.githubusercontent.com/anzellai/tree-sitter-sky/refs/heads/main/queries/tags.scm
+
 ```
 
 ### Zed
