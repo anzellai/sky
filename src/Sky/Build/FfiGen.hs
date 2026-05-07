@@ -68,6 +68,18 @@ data FnInfo = FnInfo
     , _fnIsField  :: Bool                -- synthetic struct-field getter
     , _fnIsFieldSet :: Bool              -- synthetic struct-field setter
     , _fnIsPkgVar :: Bool                -- synthetic pkg-level var/const getter
+    , _fnParamSkyTypes  :: [String]
+        -- ^ Per-param Sky-side type override. Same length as
+        -- '_fnParams'; entry is "" when no override (use the bare
+        -- Go type via 'goTypeToSky'). Populated from the
+        -- inspector's per-Param skyType field, which collapses
+        -- named-of-basic types (Stripe enums, Firestore Direction,
+        -- etc.) to their underlying primitive so HM treats them
+        -- structurally. Wrapper code generation continues to use
+        -- '_fnParams' so derived Go types stay distinct on the
+        -- wrapper-call side.
+    , _fnResultSkyTypes :: [String]
+        -- ^ Same shape, for results.
     }
     deriving (Show)
 
@@ -82,22 +94,28 @@ data PkgInfo = PkgInfo
 
 
 instance A.FromJSON FnInfo where
-    parseJSON = A.withObject "FnInfo" $ \o -> FnInfo
-        <$> o A..: "name"
-        <*> (o A..: "params" >>= mapM parseParam)
-        <*> (o A..: "results" >>= mapM parseParam)
-        <*> o A..:? "variadic" A..!= False
-        <*> o A..: "effect"
-        <*> o A..:? "recvType" A..!= ""
-        <*> o A..:? "methodName" A..!= ""
-        <*> o A..:? "isField" A..!= False
-        <*> o A..:? "isFieldSet" A..!= False
-        <*> o A..:? "isPkgVar" A..!= False
+    parseJSON = A.withObject "FnInfo" $ \o -> do
+        params <- o A..: "params" >>= mapM parseParamFull
+        results <- o A..: "results" >>= mapM parseParamFull
+        FnInfo
+            <$> o A..: "name"
+            <*> pure (map (\(n, t, _) -> (n, t)) params)
+            <*> pure (map (\(n, t, _) -> (n, t)) results)
+            <*> o A..:? "variadic" A..!= False
+            <*> o A..: "effect"
+            <*> o A..:? "recvType" A..!= ""
+            <*> o A..:? "methodName" A..!= ""
+            <*> o A..:? "isField" A..!= False
+            <*> o A..:? "isFieldSet" A..!= False
+            <*> o A..:? "isPkgVar" A..!= False
+            <*> pure (map (\(_, _, s) -> s) params)
+            <*> pure (map (\(_, _, s) -> s) results)
       where
-        parseParam = A.withObject "param" $ \o -> do
+        parseParamFull = A.withObject "param" $ \o -> do
             n <- o A..:? "name" A..!= ""
             t <- o A..: "type"
-            return (n, t)
+            s <- o A..:? "skyType" A..!= ""
+            return (n, t, s)
 
 
 instance A.FromJSON PkgInfo where
@@ -376,24 +394,38 @@ emitKernelJson moduleName kernelName pkg =
 -- `Pkg.fn ()` (unit applied), matching the existing convention.
 wrapperSkyType :: FnInfo -> String
 wrapperSkyType fn =
-    let paramSig = if null (_fnParams fn)
+    -- Per-param / per-result Sky-side override from the inspector
+    -- (e.g. CheckoutSessionStatus -> string). Length matches
+    -- _fnParams / _fnResults; "" means use the bare Go type.
+    let resolveSky goT skyOverride
+            | null skyOverride = goTypeToSky goT
+            | otherwise        = goTypeToSky skyOverride
+        paramOverrides =
+            _fnParamSkyTypes fn ++ repeat ""
+        resultOverrides =
+            _fnResultSkyTypes fn ++ repeat ""
+        paramSig = if null (_fnParams fn)
             then "()"
-            else intercalate " -> " (map (goTypeToSky . snd) (_fnParams fn))
+            else intercalate " -> "
+                    (zipWith (\(_, t) sk -> resolveSky t sk)
+                        (_fnParams fn) paramOverrides)
         results = _fnResults fn
-        nonErr = [ (n, t) | (n, t) <- results, t /= "error" ]
+        zippedResults = zip results resultOverrides
+        nonErr = [ ((n, t), sk) | ((n, t), sk) <- zippedResults, t /= "error" ]
+        skyOf ((_, t), sk) = resolveSky t sk
         innerOk = case (results, nonErr) of
             ([], _)               -> "()"
             ([(_, "error")], _)   -> "()"
             (_, [])               -> "()"
-            (_, [(_, t)])         ->
+            (_, [single])         ->
                 case results of
                     [(_, t1), (_, "bool")] | t1 /= "bool" ->
                         -- comma-ok: (T, bool) -> Maybe T
-                        "Maybe " ++ wrapIfMulti (goTypeToSky t)
-                    _ -> goTypeToSky t
+                        "Maybe " ++ wrapIfMulti (skyOf single)
+                    _ -> skyOf single
             (_, multi)            ->
                 -- Multi non-error returns pack into a Sky tuple.
-                "(" ++ intercalate ", " (map (goTypeToSky . snd) multi) ++ ")"
+                "(" ++ intercalate ", " (map skyOf multi) ++ ")"
         okType = case innerOk of
             -- Result wrap composites need parens to bind tightly.
             ('(':_) -> "Result Error " ++ innerOk

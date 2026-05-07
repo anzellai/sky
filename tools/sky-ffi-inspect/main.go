@@ -59,9 +59,21 @@ import (
 )
 
 type Param struct {
-	Name   string     `json:"name,omitempty"`
-	Type   string     `json:"type"`
-	GoType types.Type `json:"-"` // unexported; used for interface-implements checks
+	Name string `json:"name,omitempty"`
+	// Type — the canonical Go type string (e.g. `string`,
+	// `*pkg.Foo`, `time.Duration`, `pkg.CheckoutSessionStatus`).
+	// Drives Go-wrapper code generation on the Haskell side, so
+	// derived types stay distinct from their underlying basic so
+	// the generated wrapper can build / cast correctly.
+	Type string `json:"type"`
+	// SkyType — Sky-side surface form. Differs from Type only when
+	// the type is a named alias of a basic type (Stripe's
+	// `type CheckoutSessionStatus string`, Firestore's
+	// `type Direction int`): SkyType collapses to the basic name
+	// so HM treats them as String / Int / Bool. Empty when SkyType
+	// equals Type — Haskell side defaults to Type when empty.
+	SkyType string     `json:"skyType,omitempty"`
+	GoType  types.Type `json:"-"` // unexported; used for interface-implements checks
 }
 
 type Function struct {
@@ -213,14 +225,14 @@ func walkPackage(requestedPath string, pkg *packages.Package) PackageInfo {
 			info.Functions = append(info.Functions, Function{
 				Name:     v.Name(),
 				Params:   []Param{{Name: "_", Type: "struct{}"}},
-				Results:  []Param{{Type: v.Type().String()}},
+				Results:  []Param{paramFor(v.Type())},
 				Effect:   "pure",
 				Exported: true,
 				IsPkgVar: true,
 			})
 			info.Functions = append(info.Functions, Function{
 				Name:       "Set" + v.Name(),
-				Params:     []Param{{Name: "value", Type: v.Type().String()}},
+				Params:     []Param{paramForNamed("value", v.Type())},
 				Results:    []Param{{Type: "struct{}"}},
 				Effect:     "effectful",
 				Exported:   true,
@@ -234,7 +246,7 @@ func walkPackage(requestedPath string, pkg *packages.Package) PackageInfo {
 			info.Functions = append(info.Functions, Function{
 				Name:     c.Name(),
 				Params:   []Param{{Name: "_", Type: "struct{}"}},
-				Results:  []Param{{Type: c.Type().String()}},
+				Results:  []Param{paramFor(c.Type())},
 				Effect:   "pure",
 				Exported: true,
 				IsPkgVar: true,
@@ -371,7 +383,7 @@ func paramsOf(sig *types.Signature) []Param {
 	out := make([]Param, 0, sig.Params().Len())
 	for i := 0; i < sig.Params().Len(); i++ {
 		p := sig.Params().At(i)
-		out = append(out, Param{Name: p.Name(), Type: p.Type().String()})
+		out = append(out, paramForNamed(p.Name(), p.Type()))
 	}
 	return out
 }
@@ -380,9 +392,72 @@ func resultsOf(sig *types.Signature) []Param {
 	out := make([]Param, 0, sig.Results().Len())
 	for i := 0; i < sig.Results().Len(); i++ {
 		r := sig.Results().At(i)
-		out = append(out, Param{Name: r.Name(), Type: r.Type().String(), GoType: r.Type()})
+		out = append(out, withGoType(paramForNamed(r.Name(), r.Type()), r.Type()))
 	}
 	return out
+}
+
+// paramFor / paramForNamed build Param values with both fields
+// populated: Type stays the canonical Go-type rendering (drives
+// wrapper code generation), SkyType collapses derived-of-basic
+// types so HM treats them as their underlying basic.
+func paramFor(t types.Type) Param {
+	gt := t.String()
+	st := skyTypeOf(t)
+	if st == gt {
+		return Param{Type: gt}
+	}
+	return Param{Type: gt, SkyType: st}
+}
+
+func paramForNamed(name string, t types.Type) Param {
+	p := paramFor(t)
+	p.Name = name
+	return p
+}
+
+func withGoType(p Param, gt types.Type) Param {
+	p.GoType = gt
+	return p
+}
+
+
+// skyTypeOf renders a Go type as the string the Sky-side
+// goTypeToSky translator expects, with one important
+// transformation versus the bare types.Type.String() path: a
+// named type whose underlying is a basic type (Stripe's
+// `type CheckoutSessionStatus string`, Firestore's
+// `type Direction int`, etc.) collapses to the underlying
+// basic-type name. Without this, Sky-side HM treats every
+// such enum as an opaque "Value", forcing user code into
+// awkward `case ... of Ok v -> ... ; Err _ -> default` shapes
+// for what is structurally a String / Int / Bool comparison.
+//
+// Pointer / slice / map / chan / func types recurse so
+// `[]CheckoutSessionStatus` becomes `[]string` and
+// `map[string]CheckoutSessionStatus` becomes
+// `map[string]string`. Struct-shaped named types stay
+// opaque (we render them as the package-qualified name) —
+// only the basic-underlying case unwraps.
+func skyTypeOf(t types.Type) string {
+	switch tt := t.(type) {
+	case *types.Pointer:
+		return "*" + skyTypeOf(tt.Elem())
+	case *types.Slice:
+		return "[]" + skyTypeOf(tt.Elem())
+	case *types.Array:
+		return tt.String() // fall back; Sky doesn't see fixed-size arrays separately
+	case *types.Map:
+		return "map[" + skyTypeOf(tt.Key()) + "]" + skyTypeOf(tt.Elem())
+	case *types.Named:
+		// Unwrap derived-from-basic types (Stripe-style enums).
+		if basic, ok := tt.Underlying().(*types.Basic); ok {
+			return basic.Name()
+		}
+		return tt.String()
+	default:
+		return t.String()
+	}
 }
 
 func describeMethod(typeName string, fn *types.Func, sig *types.Signature, recvType types.Type) Function {
@@ -461,7 +536,7 @@ func addFieldGetters(info *PackageInfo, s *types.Struct, typeName string, named 
 			info.Functions = append(info.Functions, Function{
 				Name:       getterName,
 				Params:     []Param{{Name: "recv", Type: recvType}},
-				Results:    []Param{{Type: f.Type().String()}},
+				Results:    []Param{paramFor(f.Type())},
 				Effect:     "pure",
 				Exported:   true,
 				RecvType:   typeName,
@@ -476,7 +551,7 @@ func addFieldGetters(info *PackageInfo, s *types.Struct, typeName string, named 
 				Name: setterName,
 				// value-first, receiver second — matches Sky pipeline idiom.
 				Params: []Param{
-					{Name: "value", Type: f.Type().String()},
+					paramForNamed("value", f.Type()),
 					{Name: "recv", Type: recvType},
 				},
 				Results:    []Param{{Type: recvType}},
@@ -516,7 +591,7 @@ func addInterfaceMethods(info *PackageInfo, iface *types.Interface, typeName str
 		}
 		info.Functions = append(info.Functions, Function{
 			Name:       name,
-			Params:     append([]Param{{Name: "recv", Type: named.Obj().Type().String()}}, paramsOf(sig)...),
+			Params:     append([]Param{paramForNamed("recv", named.Obj().Type())}, paramsOf(sig)...),
 			Results:    resultsOf(sig),
 			Variadic:   sig.Variadic(),
 			Effect:     classifyEffect(resultsOf(sig)),
@@ -543,12 +618,12 @@ func describe(fn *types.Func, sig *types.Signature) Function {
 	params := []Param{}
 	for i := 0; i < sig.Params().Len(); i++ {
 		p := sig.Params().At(i)
-		params = append(params, Param{Name: p.Name(), Type: p.Type().String()})
+		params = append(params, paramForNamed(p.Name(), p.Type()))
 	}
 	results := []Param{}
 	for i := 0; i < sig.Results().Len(); i++ {
 		r := sig.Results().At(i)
-		results = append(results, Param{Name: r.Name(), Type: r.Type().String()})
+		results = append(results, paramForNamed(r.Name(), r.Type()))
 	}
 	return Function{
 		Name:     fn.Name(),
