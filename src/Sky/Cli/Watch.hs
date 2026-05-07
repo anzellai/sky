@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
@@ -42,7 +43,9 @@ import System.FilePath ((</>), takeDirectory, takeExtension, takeFileName)
 import System.IO (hFlush, hPutStrLn, stderr, stdout)
 import qualified System.Process as P
 import System.Process (ProcessHandle, getProcessExitCode, terminateProcess)
+#ifndef mingw32_HOST_OS
 import qualified System.Posix.Signals as Sig
+#endif
 import qualified Data.Time.Clock as Clock
 import qualified Data.Time.Clock.POSIX as POSIX
 
@@ -194,9 +197,12 @@ killChildGraceful timeoutMs ph = do
         | steps <= 0 = do
             -- Escalate. There's no portable Haskell SIGKILL helper so go
             -- through System.Posix.Signals directly. On Windows the
-            -- terminateProcess call above already wins.
+            -- terminateProcess call above is unconditional already
+            -- (TerminateProcess), so there is nothing to escalate to.
+#ifndef mingw32_HOST_OS
             mPid <- P.getPid ph
             forM_ mPid $ \pid -> Sig.signalProcess Sig.sigKILL pid
+#endif
             -- Reap so the handle releases its zombie slot.
             _ <- P.waitForProcess ph
             pure ()
@@ -293,11 +299,15 @@ runWatch opts = do
     childRef <- newIORef (Nothing :: Maybe ProcessHandle)
 
     -- Forward SIGTERM to the main thread as UserInterrupt, joining the
-    -- same clean-exit path Ctrl-C uses.
+    -- same clean-exit path Ctrl-C uses. POSIX-only — Windows has no
+    -- SIGTERM in this sense; Ctrl-C / Ctrl-Break still raise
+    -- UserInterrupt via the GHC RTS on every platform.
+#ifndef mingw32_HOST_OS
     mainTid <- Control.Concurrent.myThreadId
     _ <- Sig.installHandler Sig.sigTERM
             (Sig.CatchOnce (E.throwTo mainTid E.UserInterrupt))
             Nothing
+#endif
 
     let cleanup = do
             mch <- readIORef childRef

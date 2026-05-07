@@ -62,8 +62,16 @@ executable sky
     ansi-terminal >= 0.11,
     file-embed >= 0.0.15,
     template-haskell >= 2.18,
-    temporary >= 1.3,
-    unix >= 2.7
+    temporary >= 1.3
+
+  -- POSIX signals are POSIX-only. Used by Sky.Cli.Watch to forward
+  -- SIGTERM into the same UserInterrupt-based clean-exit path that
+  -- Ctrl-C goes through. Windows has no SIGTERM in the POSIX sense
+  -- (terminateProcess on Windows is unconditional already), so we
+  -- conditionally skip the dependency + the corresponding handler
+  -- via CPP guards inside Sky.Cli.Watch.
+  if !os(windows)
+    build-depends: unix >= 2.7
 
   autogen-modules: Paths_sky_compiler
   other-modules:
