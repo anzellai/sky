@@ -20,10 +20,21 @@ import qualified Data.Map.Strict as Map
 import System.Directory (doesDirectoryExist, listDirectory)
 import System.FilePath ((</>))
 
+import Sky.Build.FfiTypeParser (FtyAst, parseFty)
+
 
 data FfiFunction = FfiFunction
-    { _ffn_name  :: !String  -- Sky-side name, e.g. "newString"
-    , _ffn_arity :: !Int     -- Sky-side arity (unit param for zero-Go-arg)
+    { _ffn_name    :: !String     -- Sky-side name, e.g. "newString"
+    , _ffn_arity   :: !Int        -- Sky-side arity (unit param for zero-Go-arg)
+    , _ffn_skyType :: !(Maybe FtyAst)
+        -- ^ Parsed Sky-side wrapper type, including the runtime
+        -- @Result Error _@ wrap (see Sky.Build.FfiGen.wrapperSkyType).
+        -- 'Nothing' when the JSON entry omits @skyType@ — happens
+        -- for FFI shapes the inspector can't faithfully render
+        -- (channels, deeply-nested inline-struct callback bundles)
+        -- and for older kernel.json files written before this field
+        -- existed. The HM-wire path falls back to the legacy
+        -- "no Sky type known" branch in those cases.
     }
     deriving (Show, Eq)
 
@@ -65,7 +76,9 @@ instance A.FromJSON FfiFunction where
     parseJSON = A.withObject "FfiFunction" $ \o -> do
         n <- o .: "name"
         a <- o .:? "arity" .!= 1
-        return (FfiFunction n a)
+        rawSky <- o .:? "skyType"
+        let parsed = rawSky >>= parseFty
+        return (FfiFunction n a parsed)
 
 
 instance A.FromJSON FfiModule where

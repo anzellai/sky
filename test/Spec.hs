@@ -27,6 +27,7 @@ import qualified Sky.Build.ConsCtorPatternSpec
 import qualified Sky.Build.CtorConsPatternSpec
 import qualified Sky.Build.EnvPrefixSpec
 import qualified Sky.Build.FfiGenMultiSpec
+import qualified Sky.Build.FfiTypeParserSpec
 import qualified Sky.Build.TaskResultBridgesSpec
 import qualified Sky.Build.CheckIsBuildSpec
 import qualified Sky.Build.RecordFieldOrderSpec
@@ -174,6 +175,11 @@ main = hspec $ do
     -- the empty-list fast-path that lets `sky install` skip the
     -- inspector entirely on warm caches.
     describe "Sky.Build.FfiGenMulti"    Sky.Build.FfiGenMultiSpec.spec
+    -- Phase B regression fence for the FFI Sky-type parser used
+    -- by Sky.Build.FfiRegistry to lift kernel.json's `skyType`
+    -- field into a typed AST. Locks the closed grammar against
+    -- producer/consumer drift.
+    describe "Sky.Build.FfiTypeParser"  Sky.Build.FfiTypeParserSpec.spec
     -- Result/Task bridge helpers (Task.fromResult, Task.andThenResult,
     -- Result.andThenTask) — runtime + canonicaliser + kernel sigs gate.
     describe "Sky.Build.TaskResultBridges" Sky.Build.TaskResultBridgesSpec.spec

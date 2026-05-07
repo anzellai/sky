@@ -144,6 +144,7 @@ executable sky
     Sky.Build.EmbeddedInspector
     Sky.Build.FfiGen
     Sky.Build.FfiRegistry
+    Sky.Build.FfiTypeParser
     Sky.Build.SkyDeps
 
     -- Reporting
@@ -160,7 +161,12 @@ executable sky
 test-suite sky-tests
   type:             exitcode-stdio-1.0
   main-is:          Spec.hs
-  hs-source-dirs:   test
+  -- 'src' is here so unit-test specs can import library modules
+  -- directly (today only Sky.Build.FfiTypeParser; bigger surface
+  -- to follow as we phase typed FFI through). Existing specs are
+  -- blackbox — they spawn the `sky` binary and inspect stdout —
+  -- so they don't pay any build-time cost from this addition.
+  hs-source-dirs:   test, src
   default-language: Haskell2010
   ghc-options:      -Wall -Wno-unused-imports -Wno-name-shadowing -threaded
 
@@ -204,6 +210,7 @@ test-suite sky-tests
       Sky.Build.CtorConsPatternSpec
       Sky.Build.EnvPrefixSpec
       Sky.Build.FfiGenMultiSpec
+      Sky.Build.FfiTypeParserSpec
       Sky.Build.TaskResultBridgesSpec
       Sky.Build.CheckIsBuildSpec
       Sky.Build.RecordFieldOrderSpec
