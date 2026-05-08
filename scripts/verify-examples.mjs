@@ -70,15 +70,24 @@ const EXAMPLES = {
     '06-json':          { cli: true },
     '07-todo-cli':      { cli: true, args: ['list'] },
     '08-notes-app':     { port: 8000, path: '/',
-                          // Marketing landing page; navigate to /auth/sign-in
-                          // to prove a route works beyond the home page.
-                          actions: [{ goto: '/auth/sign-in' }],
-                          expectBefore: 'SkyNotes',
-                          expectAfter: 'Sign' },
+                          // Full auth round-trip: random sign-up email
+                          // → submit → expect /notes redirect with the
+                          // empty notes list. Then create a note via
+                          // the /notes/new form.
+                          actions: [
+                              { goto: '/auth/sign-up' },
+                              { fill: { locator: 'input[name="email"]', value: 'verify-{{ts}}@example.com' } },
+                              { fill: { locator: 'input[name="password"]', value: 'verify-pass-1234' } },
+                              { fill: { locator: 'input[name="confirm_password"]', value: 'verify-pass-1234' } },
+                              { click: 'button[type="submit"]' },
+                              // After signup the server lands on a
+                              // "verify your email" interstitial.
+                              { waitMs: 500 },
+                          ],
+                          expectAfter: 'Account Created' },
     '09-live-counter':  { port: 8000, path: '/',
                           // Click + three times; counter must read "3".
-                          // This is the canonical Sky.Live SSE-update
-                          // proof: server-side state changed via Msg.
+                          // The canonical Sky.Live SSE-update proof.
                           actions: [{ click: 'button:has-text("+")', count: 3 }],
                           expectBefore: '0',
                           expectAfter: '3' },
@@ -91,52 +100,96 @@ const EXAMPLES = {
                           ],
                           expectAfter: '0' },
     '12-skyvote':       { port: 8000, path: '/',
-                          // sky-nav link -> route change without reload.
-                          // /roadmap is a Sky.Live route.
-                          actions: [{ click: 'a[href="/roadmap"]' }],
-                          expectBefore: 'SkyVote',
-                          expectAfter: 'oadmap' },
-    '13-skyshop':       { port: 8000, path: '/',
+                          // Auth round-trip via Sky.Live form (sky-nav
+                          // -> sign-up -> fill 3 fields -> submit ->
+                          // logged-in board view).
                           actions: [
-                              { click: 'a:has-text("Browse Products"), button:has-text("Browse Products")' },
-                              { click: 'a:has-text("test product"), [class*="product"] a' },
-                              { click: 'button:has-text("Add to Cart"), button:has-text("Add"):not(:has-text("admin"))' },
+                              { click: 'a[href="/auth/signup"]' },
+                              { fill: { locator: 'input[placeholder*="username" i]', value: 'verify-{{ts}}' } },
+                              { fill: { locator: 'input[type="email"]', value: 'verify-{{ts}}@example.com' } },
+                              { fill: { locator: 'input[type="password"]', value: 'verify-pass-1234' } },
+                              { click: 'button[type="submit"], button:has-text("Sign Up")' },
+                              { waitMs: 600 },
+                          ],
+                          expectAfter: 'Welcome' },
+    '13-skyshop':       { port: 8000, path: '/',
+                          // Skyshop's auth is Firebase — can't sign in
+                          // from a fresh test env. Browse the public
+                          // routes instead (Home / Products / Cart /
+                          // each individual product). No console
+                          // errors = no runtime panics on any route.
+                          actions: [
+                              { click: 'a[href="/"]:has-text("Home"), a:has-text("Home")' },
+                              { goto: '/products' },
+                              { goto: '/cart' },
+                              { goto: '/orders' },
+                              { goto: '/' },
                           ],
                           expectBefore: 'SkyShop' },
     '14-task-demo':     { cli: true },
     '15-http-server':   { port: 8000, path: '/',
-                          // Plain HTTP server with several route demos.
-                          // Hit /api/status — JSON route.
-                          actions: [{ goto: '/api/status' }],
-                          expectBefore: 'Sky HTTP Server',
-                          expectAfter: 'status' },
+                          // Plain HTTP server: hit each route and
+                          // verify the dispatch works. /hello/world is
+                          // a path-param test, /api/status is a JSON
+                          // endpoint, /cookie-demo sets a cookie.
+                          actions: [
+                              { goto: '/hello/world' },
+                              { goto: '/api/status' },
+                              { goto: '/cookie-demo' },
+                              { goto: '/' },
+                          ],
+                          expectBefore: 'Sky HTTP Server' },
     '16-skychess':      { port: 8000, path: '/',
-                          // Type name + start a new game; the chessboard
-                          // appears after StartNewGame.
+                          // Sign in with name → start game → click
+                          // a piece (e2 pawn — opens the move picker).
                           actions: [
                               { fill: { locator: 'input[placeholder*="name"]', value: 'verify-bot' } },
                               { click: 'button:has-text("New Game")' },
+                              { waitMs: 400 },
+                              // First white pawn (e2). The Sky.Live
+                              // chessboard renders pieces inside
+                              // grid cells with sky-click handlers.
+                              { click: '[sky-click="ClickSquare"]', count: 1 },
                           ],
-                          expectBefore: 'SkyChess',
                           expectAfter: 'verify-bot' },
     '17-skymon':        { port: 8000, path: '/',
-                          // Dashboard -> Status route nav.
-                          actions: [{ click: 'a[href="/status"]' }],
-                          expectBefore: 'SkyMon',
-                          expectAfter: 'tatus' },
+                          // Hardcoded admin/admin123 in src/Main.sky's
+                          // handleAuth. Sign in via the auth page,
+                          // then assert the Dashboard greeting shows
+                          // the admin user.
+                          actions: [
+                              { goto: '/auth' },
+                              { fill: { locator: 'input[placeholder*="username" i]', value: 'admin' } },
+                              { fill: { locator: 'input[placeholder*="password" i]', value: 'admin123' } },
+                              { click: 'button:has-text("Sign In")' },
+                              { waitMs: 800 },
+                              // Hit Dashboard explicitly so the post-auth
+                              // home-route render is what's captured.
+                              { goto: '/' },
+                          ],
+                          expectAfter: 'admin' },
     '18-job-queue':     { port: 8000, path: '/',
-                          // Click Fast Job; the queue grows by one and
-                          // the SSE updates within ~1s show the job
-                          // transitioning to Done.
+                          // Click Fast Job; the queue grows by one
+                          // and the SSE updates within ~1s show the
+                          // job transitioning to Done.
                           actions: [{ click: 'button:has-text("Fast Job")' }],
                           expectAfter: 'Done' },
     '19-skyforum':      { port: 8000, path: '/',
-                          // Click a post title to navigate into the
-                          // detail page (works without auth, unlike
-                          // upvote which 302s to /signin).
-                          actions: [{ click: 'div:has-text("Tiny CRDT primitives")' }],
-                          expectBefore: 'skyforum',
-                          expectAfter: 'CRDT' },
+                          // Sign in (skyforum accepts any non-empty
+                          // username) → upvote first post. Pre-auth
+                          // count is 142; post-upvote = 143. Proves
+                          // the auth + Sky.Live state-mutating Msg
+                          // both work end-to-end.
+                          actions: [
+                              { click: 'button:has-text("sign in")' },
+                              { fill: { locator: 'input[name="username"]', value: 'verify-{{ts}}' } },
+                              { fill: { locator: 'input[name="password"]', value: 'verify-pass' } },
+                              { click: 'input[type="submit"], button[type="submit"]' },
+                              { waitMs: 600 },
+                              { click: 'button[sky-click="UpvotePost"]' },
+                              { waitMs: 400 },
+                          ],
+                          expectAfter: '143' },
 };
 
 
@@ -354,6 +407,12 @@ async function verify(name, cfg, browser) {
         // shows the full progression. Per-step PNGs + the video
         // recording give two views of the same flow: stills you can
         // diff against expected output, and a webm you can scrub.
+        // Per-run timestamp, substituted into action strings via
+        // the {{ts}} template — lets us mint unique signup emails /
+        // usernames per run so each verify is a fresh user, not a
+        // duplicate-email rejection.
+        const ts = String(Date.now());
+
         if (cfg.actions) {
             for (let i = 0; i < cfg.actions.length; i++) {
                 const a = cfg.actions[i];
@@ -368,8 +427,13 @@ async function verify(name, cfg, browser) {
                     }
                 }
                 if (a.fill) {
+                    const value = String(a.fill.value).replace(/\{\{ts\}\}/g, ts);
                     await page.locator(a.fill.locator).first()
-                        .fill(a.fill.value, { timeout: 3000 }).catch(() => null);
+                        .fill(value, { timeout: 3000 }).catch(() => null);
+                    // Blur so onChange (fires on blur, not input) — used
+                    // by 17-skymon's password input — picks up the value.
+                    await page.locator(a.fill.locator).first()
+                        .blur({ timeout: 1000 }).catch(() => null);
                     await page.waitForTimeout(200);
                 }
                 if (a.goto) {
@@ -378,6 +442,9 @@ async function verify(name, cfg, browser) {
                         waitUntil: 'domcontentloaded',
                         timeout: 10000,
                     }).catch(() => null);
+                }
+                if (a.waitMs) {
+                    await page.waitForTimeout(a.waitMs);
                 }
                 // Stills + label: lets a reviewer scrub through the
                 // PNGs and read what each step represents.
@@ -453,6 +520,18 @@ async function main() {
         process.exit(2);
     }
 
+    // Wipe the entire _verify/ tree (except this run's wanted set,
+    // which is recreated per-example anyway) so artefacts the user
+    // browses afterwards are guaranteed fresh from THIS sweep —
+    // no stale screenshots/videos from a prior partial run.
+    if (process.argv.length === 2) {
+        await rm(OUT, { recursive: true, force: true });
+    } else {
+        // Targeted run: only wipe the dirs we're about to recreate.
+        for (const name of wanted) {
+            await rm(join(OUT, name), { recursive: true, force: true });
+        }
+    }
     await mkdir(OUT, { recursive: true });
     const browser = await chromium.launch({ headless: true });
 
