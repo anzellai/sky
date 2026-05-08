@@ -539,6 +539,13 @@ registry = Map.fromList
     , (("Live", "api"),           KernelInfo "rt.Live_api"   2 False)
 
     -- ═══════════════════════════════════════════════════════
+    -- Sky.Cli — line-oriented TEA program runner. Returns Task,
+    -- so call sites are `Cli.program cfg` and the caller decides
+    -- when to run via Task.run / discard.
+    -- ═══════════════════════════════════════════════════════
+    , (("Cli", "program"),        KernelInfo "rt.Cli_program" 1 False)
+
+    -- ═══════════════════════════════════════════════════════
     -- Std.Live.Events
     -- ═══════════════════════════════════════════════════════
     , (("Event", "onClick"),      KernelInfo "rt.Event_onClick" 1 False)

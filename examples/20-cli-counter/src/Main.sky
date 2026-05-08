@@ -1,0 +1,103 @@
+module Main exposing (main)
+
+{-|
+20-cli-counter — first end-to-end demo of Sky.Cli, the line-oriented
+TEA backend. Same `init / update / view / subscriptions` shape as
+Sky.Live, plus a CLI-specific `onLine : String -> Msg` that maps
+each stdin line to a Msg.
+
+Run:
+    sky run src/Main.sky
+
+Then type:
+    +     increment
+    -     decrement
+    r     reset to zero
+    q     quit (or Ctrl-D)
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.System as System
+import Sky.Core.Task as Task
+import Std.Cli as Cli
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+
+
+type Msg
+    = Increment
+    | Decrement
+    | Reset
+    | Quit
+    | NoOp
+
+
+type alias Model =
+    { count : Int }
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { count = 0 }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        Increment ->
+            ( { model | count = model.count + 1 }, Cmd.none )
+
+        Decrement ->
+            ( { model | count = model.count - 1 }, Cmd.none )
+
+        Reset ->
+            ( { count = 0 }, Cmd.none )
+
+        Quit ->
+            -- Cmd.perform fires the Task in a goroutine; System.exit 0
+            -- terminates the process before the result comes back.
+            ( model, Cmd.perform (System.exit 0) (\_ -> NoOp) )
+
+        NoOp ->
+            ( model, Cmd.none )
+
+
+view : Model -> String
+view model =
+    "count=" ++ String.fromInt model.count ++ "  (+, -, r, q) > "
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+onLine : String -> Msg
+onLine line =
+    case String.trim line of
+        "+" ->
+            Increment
+
+        "-" ->
+            Decrement
+
+        "r" ->
+            Reset
+
+        "q" ->
+            Quit
+
+        _ ->
+            NoOp
+
+
+main =
+    Cli.program
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        , onLine = onLine
+        }
+        |> Task.run

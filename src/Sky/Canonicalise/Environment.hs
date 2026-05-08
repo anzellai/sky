@@ -382,6 +382,11 @@ staticKernelModules = Map.fromList
     , ("Std.Live",             "Live")
     , ("Std.Live.Events",      "Event")
     , ("Std.Html.Events",      "Event")
+    -- Sky.Cli — line-oriented TEA backend. Same Cmd/Sub/program shape
+    -- as Sky.Live, view returns String (the prompt), onLine maps each
+    -- stdin line to a Msg. See runtime-go/rt/cli.go.
+    , ("Sky.Cli",              "Cli")
+    , ("Std.Cli",              "Cli")
     , ("Sky.Core.Json.Encode", "JsonEnc")
     , ("Sky.Core.Json.Decode", "JsonDec")
     , ("Sky.Core.Json.Decode.Pipeline", "JsonDecP")
@@ -445,6 +450,7 @@ staticKernelModules = Map.fromList
     , ("Attr",       "Attr")
     , ("Css",        "Css")
     , ("Live",       "Live")
+    , ("Cli",        "Cli")
     , ("Event",      "Event")
     , ("JsonEnc",    "JsonEnc")
     , ("JsonDec",    "JsonDec")
