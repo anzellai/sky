@@ -118,7 +118,7 @@ preludeQualifiers =
     , ("Basics", ["identity", "always", "not", "toString", "modBy", "clamp",
                     "fst", "snd", "compare", "negate", "abs", "sqrt", "min", "max"])
     , ("Cmd",    ["none", "batch", "perform"])
-    , ("Sub",    ["none", "every"])
+    , ("Sub",    ["none", "every", "batch"])
     , ("Task",   ["succeed", "fail", "map", "andThen", "perform", "sequence",
                     "parallel", "lazy", "run", "map2", "map3", "map4", "map5", "andMap",
                     "fromResult", "andThenResult", "mapError", "onError"])
@@ -387,6 +387,12 @@ staticKernelModules = Map.fromList
     -- stdin line to a Msg. See runtime-go/rt/cli.go.
     , ("Sky.Cli",              "Cli")
     , ("Std.Cli",              "Cli")
+    -- Sky.Tui — full-screen terminal UI backend. Raw mode + alt-screen
+    -- + ANSI redraw. view : Model -> String renders the whole frame;
+    -- onKey : KeyEvent -> Msg dispatches each keypress as a Msg.
+    -- See runtime-go/rt/tui.go.
+    , ("Sky.Tui",              "Tui")
+    , ("Std.Tui",              "Tui")
     , ("Sky.Core.Json.Encode", "JsonEnc")
     , ("Sky.Core.Json.Decode", "JsonDec")
     , ("Sky.Core.Json.Decode.Pipeline", "JsonDecP")
@@ -451,6 +457,7 @@ staticKernelModules = Map.fromList
     , ("Css",        "Css")
     , ("Live",       "Live")
     , ("Cli",        "Cli")
+    , ("Tui",        "Tui")
     , ("Event",      "Event")
     , ("JsonEnc",    "JsonEnc")
     , ("JsonDec",    "JsonDec")

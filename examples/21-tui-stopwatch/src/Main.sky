@@ -1,0 +1,204 @@
+module Main exposing (main)
+
+{-|
+21-tui-stopwatch — full-screen TUI stopwatch using Sky.Tui.
+
+The same paradigm the original 11-fyne-stopwatch was built around
+(ticking timer + start/stop/reset buttons), expressed in pure Sky
+under the TEA shape:
+
+  - Model holds running/elapsed
+  - update folds Tick / KeyEvent into the model
+  - subscriptions returns Sub.every 100 Tick when running, Sub.none otherwise
+  - view formats the elapsed time as a big banner, full-screen
+
+Keys:
+  space  — start / pause toggle
+  r      — reset
+  q      — quit (or Ctrl-C)
+
+Run:
+  sky run src/Main.sky
+
+(Requires a real TTY — pipe stdin will print a clear error.)
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.System as System
+import Sky.Core.Task as Task
+import Std.Tui as Tui
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+
+
+
+-- ═══════════════════════════════════════════════════════════════════
+-- Model
+-- ═══════════════════════════════════════════════════════════════════
+
+
+type alias Model =
+    { running : Bool
+    , elapsedMs : Int  -- accumulated milliseconds
+    }
+
+
+type alias KeyEvent =
+    { kind : String
+    , value : String
+    }
+
+
+type Msg
+    = Tick
+    | Toggle
+    | Reset
+    | Quit
+    | NoOp
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { running = False, elapsedMs = 0 }, Cmd.none )
+
+
+
+-- ═══════════════════════════════════════════════════════════════════
+-- Update
+-- ═══════════════════════════════════════════════════════════════════
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        Tick ->
+            -- Sub.every fires this every 100 ms while running. Each
+            -- tick adds 100 ms to the accumulated elapsed total. We
+            -- check `running` defensively even though Sub.none stops
+            -- the ticker — there may be one in-flight tick after the
+            -- subscription is torn down (between the user pressing
+            -- pause and the goroutine seeing the cancel signal).
+            if model.running then
+                ( { model | elapsedMs = model.elapsedMs + 100 }, Cmd.none )
+
+            else
+                ( model, Cmd.none )
+
+        Toggle ->
+            ( { model | running = not model.running }, Cmd.none )
+
+        Reset ->
+            ( { running = False, elapsedMs = 0 }, Cmd.none )
+
+        Quit ->
+            ( model, Cmd.perform (System.exit 0) (\_ -> NoOp) )
+
+        NoOp ->
+            ( model, Cmd.none )
+
+
+
+-- ═══════════════════════════════════════════════════════════════════
+-- Subscriptions
+-- ═══════════════════════════════════════════════════════════════════
+
+
+subscriptions : Model -> Sub Msg
+subscriptions model =
+    if model.running then
+        Sub.every 100 Tick
+
+    else
+        Sub.none
+
+
+
+-- ═══════════════════════════════════════════════════════════════════
+-- View
+-- ═══════════════════════════════════════════════════════════════════
+
+
+view : Model -> String
+view model =
+    let
+        time =
+            formatElapsed model.elapsedMs
+
+        status =
+            if model.running then
+                "[ running ]"
+
+            else
+                "[ paused  ]"
+    in
+        "\r\n"
+            ++ "  ╭───────────────────────────────╮\r\n"
+            ++ "  │       Sky TUI Stopwatch       │\r\n"
+            ++ "  ╰───────────────────────────────╯\r\n"
+            ++ "\r\n"
+            ++ "        " ++ time ++ "\r\n"
+            ++ "        " ++ status ++ "\r\n"
+            ++ "\r\n"
+            ++ "    space  start / pause\r\n"
+            ++ "    r      reset\r\n"
+            ++ "    q      quit\r\n"
+
+
+formatElapsed : Int -> String
+formatElapsed totalMs =
+    let
+        totalSec = totalMs // 1000
+        minutes = totalSec // 60
+        seconds = modBy 60 totalSec
+        deciSec = modBy 10 (totalMs // 100)
+    in
+        pad2 minutes ++ ":" ++ pad2 seconds ++ "." ++ String.fromInt deciSec
+
+
+pad2 : Int -> String
+pad2 n =
+    let s = String.fromInt n
+    in
+        if String.length s < 2 then "0" ++ s else s
+
+
+
+-- ═══════════════════════════════════════════════════════════════════
+-- Key dispatch
+-- ═══════════════════════════════════════════════════════════════════
+
+
+onKey : KeyEvent -> Msg
+onKey k =
+    if k.kind == "space" then
+        Toggle
+
+    else if k.kind == "char" && k.value == "r" then
+        Reset
+
+    else if k.kind == "char" && k.value == "q" then
+        Quit
+
+    else if k.kind == "ctrl" && k.value == "c" then
+        Quit
+
+    else
+        NoOp
+
+
+
+-- ═══════════════════════════════════════════════════════════════════
+-- Main
+-- ═══════════════════════════════════════════════════════════════════
+
+
+main =
+    Tui.program
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        , onKey = onKey
+        }
+        |> Task.run

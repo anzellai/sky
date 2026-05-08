@@ -1220,9 +1220,10 @@ type cmdT struct {
 type SkyCmd = cmdT
 
 type subT struct {
-	kind   string // "none", "every"
-	ms     int
-	toMsg  any
+	kind  string // "none", "every", "batch"
+	ms    int
+	toMsg any
+	batch []any
 }
 
 // SkySub is the public type for Sky's Sub msg type.
@@ -1235,6 +1236,18 @@ func Cmd_perform(task, to any) SkyCmd { return cmdT{kind: "perform", task: task,
 func Sub_none() SkySub { return subT{kind: "none"} }
 func Sub_every(ms any, to any) SkySub {
 	return subT{kind: "every", ms: AsInt(ms), toMsg: to}
+}
+
+// Sub_batch combines a list of Sub values into one. Used by Sky.Tui /
+// Sky.Cli when a model needs to subscribe to multiple sources at once
+// (e.g. a stopwatch ticking every 100 ms AND a quit-signal watcher).
+// Sky.Live's setupSubscriptions currently only honours a single Sub.every —
+// calling Sub.batch from a Live program collapses to the first non-none
+// entry. Lifting that is independent work (SSE diff loop needs to handle
+// multiple ticker frames per session); the non-Live backends use
+// tea_subs.go's subManager which iterates over the batch list.
+func Sub_batch(list any) SkySub {
+	return subT{kind: "batch", batch: asList(list)}
 }
 
 // Time.every is an alias of Sub.every in Sky code

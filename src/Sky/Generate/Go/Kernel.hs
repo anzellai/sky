@@ -546,6 +546,13 @@ registry = Map.fromList
     , (("Cli", "program"),        KernelInfo "rt.Cli_program" 1 False)
 
     -- ═══════════════════════════════════════════════════════
+    -- Sky.Tui — full-screen terminal UI program runner. Same
+    -- shape as Cli.program but with onKey instead of onLine and
+    -- a frame-render view shape.
+    -- ═══════════════════════════════════════════════════════
+    , (("Tui", "program"),        KernelInfo "rt.Tui_program" 1 False)
+
+    -- ═══════════════════════════════════════════════════════
     -- Std.Live.Events
     -- ═══════════════════════════════════════════════════════
     , (("Event", "onClick"),      KernelInfo "rt.Event_onClick" 1 False)
@@ -567,6 +574,7 @@ registry = Map.fromList
     -- ═══════════════════════════════════════════════════════
     , (("Sub", "none"),           KernelInfo "rt.Sub_none" 0 False)
     , (("Sub", "every"),          KernelInfo "rt.Sub_every" 2 False)
+    , (("Sub", "batch"),          KernelInfo "rt.Sub_batch" 1 False)
 
     -- ═══════════════════════════════════════════════════════
     -- Set

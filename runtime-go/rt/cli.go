@@ -8,16 +8,18 @@
 //
 // The runtime loop:
 //   1. Call init () → (model, cmd) and fire startup cmd.
-//   2. Print view(model). Read one line from stdin.
-//   3. Dispatch onLine(line) through update; fire any resulting cmd.
-//   4. Loop until stdin EOF (Ctrl-D / closed pipe).
+//   2. Set up subscriptions (Time.every tickers).
+//   3. Print view(model). Read one line from stdin.
+//   4. Dispatch onLine(line) through update; fire any resulting cmd.
+//   5. Re-evaluate subscriptions for the new model.
+//   6. Loop until stdin EOF (Ctrl-D / closed pipe).
 //
 // Concurrency: Cmd.perform runs each Task in its own goroutine, then
-// dispatches the result back into the loop via msgCh. The main loop
-// selects between stdin lines AND msgCh, so async results merge into
-// the same single-threaded update sequence — no shared-state hazards.
-//
-// Subscriptions (Time.every, etc.) are not yet wired. Next iteration.
+// dispatches the result back into the loop via msgCh. Sub.every spawns
+// a ticker goroutine that pushes its Msg into the same channel each
+// interval. The main loop selects between stdin lines AND msgCh, so
+// async results merge into the same single-threaded update sequence —
+// no shared-state hazards.
 
 package rt
 
@@ -53,6 +55,7 @@ func cliProgramRun(cfg any) any {
 	updateFn := Field(cfg, "Update")
 	viewFn := Field(cfg, "View")
 	onLineFn := Field(cfg, "OnLine")
+	subsFn := Field(cfg, "Subscriptions")
 	if initFn == nil || updateFn == nil || viewFn == nil || onLineFn == nil {
 		return Err[any, any](ErrInvalidInput(
 			"Cli.program: cfg must define init / update / view / onLine"))
@@ -90,6 +93,13 @@ func cliProgramRun(cfg any) any {
 		cliRunCmd(cmd, msgCh)
 	}
 
+	// Subscription manager — tracks the active ticker(s) so we can
+	// tear them down when subscriptions(model) returns a different
+	// shape. nil-tolerant: a program without `subscriptions` keyword
+	// in cfg just gets an empty list every tick.
+	subMgr := newSubManager(msgCh)
+	subMgr.update(subsFn, model)
+
 	// Render the initial prompt before waiting for input.
 	cliPrintView(viewFn, model)
 
@@ -103,6 +113,7 @@ func cliProgramRun(cfg any) any {
 		select {
 		case msg := <-msgCh:
 			model = cliApplyUpdate(updateFn, msg, model, msgCh)
+			subMgr.update(subsFn, model)
 			cliPrintView(viewFn, model)
 			continue
 		default:
@@ -110,8 +121,10 @@ func cliProgramRun(cfg any) any {
 		select {
 		case msg := <-msgCh:
 			model = cliApplyUpdate(updateFn, msg, model, msgCh)
+			subMgr.update(subsFn, model)
 			cliPrintView(viewFn, model)
 		case <-doneCh:
+			subMgr.stopAll()
 			fmt.Println()
 			return Ok[any, any](struct{}{})
 		}
