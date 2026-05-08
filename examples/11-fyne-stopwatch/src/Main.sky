@@ -16,7 +16,7 @@ setupWindow myApp =
 
         Err e ->
             let
-                _ = println ("Failed to create window: " ++ e)
+                _ = println ("Failed to create window: " ++ errorToString e)
             in
                 ()
 
@@ -31,7 +31,10 @@ showWindow window =
                     case Fyne.newSize 400.0 200.0 of
 
                         Ok size ->
-                            Fyne.windowResize window size
+                            let
+                                _ = Fyne.windowResize window size
+                            in
+                                ()
 
                         Err _ ->
                             ()
@@ -41,7 +44,7 @@ showWindow window =
 
         Err e ->
             let
-                _ = println ("Failed to create label: " ++ e)
+                _ = println ("Failed to create label: " ++ errorToString e)
             in
                 ()
 
@@ -54,6 +57,6 @@ main =
 
         Err e ->
             let
-                _ = println ("Failed to create Fyne app: " ++ e)
+                _ = println ("Failed to create Fyne app: " ++ errorToString e)
             in
                 ()

@@ -41,7 +41,7 @@ listAllProducts =
                             ++ " products")
 
                 Err e ->
-                    println ("[PRODUCTS] ERROR loading products: " ++ e)
+                    println ("[PRODUCTS] ERROR loading products: " ++ errorToString e)
     in
         Result.withDefault [] result
 

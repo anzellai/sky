@@ -33,4 +33,4 @@ printResult label result =
             println (label ++ ": " ++ val)
 
         Err e ->
-            println (label ++ " error: " ++ e)
+            println (label ++ " error: " ++ errorToString e)
