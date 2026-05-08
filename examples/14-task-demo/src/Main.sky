@@ -20,7 +20,7 @@ main =
         _ = printResult "Success" successResult
         failResult =
             Task.run
-                (Task.fail "intentional"
+                (Task.fail (Error.unexpected "intentional")
                     |> Task.andThen (\_ -> Task.succeed "unreachable"))
     in
         printResult "Fail" failResult
@@ -33,4 +33,4 @@ printResult label result =
             println (label ++ ": " ++ val)
 
         Err e ->
-            println (label ++ " error: " ++ errorToString e)
+            println (label ++ " error: " ++ Error.toString e)
