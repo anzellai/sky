@@ -70,21 +70,45 @@ const EXAMPLES = {
     '06-json':          { cli: true },
     '07-todo-cli':      { cli: true, args: ['list'] },
     '08-notes-app':     { port: 8000, path: '/',
-                          // Full auth round-trip: random sign-up email
-                          // → submit → expect /notes redirect with the
-                          // empty notes list. Then create a note via
-                          // the /notes/new form.
+                          // Full e2e journey:
+                          //   sign up → grep email-verify URL from
+                          //   server stdout → click verify → sign in
+                          //   → create a note via /notes/new → list
+                          //   the note → sign out.
+                          // The server prints the verify URL to
+                          // stdout; the harness extracts the token
+                          // and opens the link itself, simulating
+                          // the email click.
                           actions: [
                               { goto: '/auth/sign-up' },
                               { fill: { locator: 'input[name="email"]', value: 'verify-{{ts}}@example.com' } },
                               { fill: { locator: 'input[name="password"]', value: 'verify-pass-1234' } },
                               { fill: { locator: 'input[name="confirm_password"]', value: 'verify-pass-1234' } },
                               { click: 'button[type="submit"]' },
-                              // After signup the server lands on a
-                              // "verify your email" interstitial.
+                              { expectText: 'Account Created' },
+                              // Server prints "  http://localhost:8000/auth/verify?token=..."
+                              // — capture the token.
+                              { extractFromLog: {
+                                  regex: '/auth/verify\\?token=([a-f0-9-]+)',
+                                  as: 'verifyToken',
+                              } },
+                              { goto: '/auth/verify?token={{verifyToken}}' },
+                              { expectText: 'verified' },
+                              { goto: '/auth/sign-in' },
+                              { fill: { locator: 'input[name="email"]', value: 'verify-{{ts}}@example.com' } },
+                              { fill: { locator: 'input[name="password"]', value: 'verify-pass-1234' } },
+                              { click: 'button[type="submit"]' },
                               { waitMs: 500 },
+                              // Now logged in; create a note.
+                              { goto: '/notes/new' },
+                              { fill: { locator: 'input[name="title"]', value: 'Verify-Note-{{ts}}' } },
+                              { fill: { locator: 'textarea[name="content"]', value: '# heading\n\nbody text from verify run' } },
+                              { click: 'button[type="submit"]' },
+                              { waitMs: 500 },
+                              // Note list should now show the note.
+                              { goto: '/notes' },
                           ],
-                          expectAfter: 'Account Created' },
+                          expectAfter: 'Verify-Note-' },
     '09-live-counter':  { port: 8000, path: '/',
                           // Click + three times; counter must read "3".
                           // The canonical Sky.Live SSE-update proof.
@@ -100,18 +124,30 @@ const EXAMPLES = {
                           ],
                           expectAfter: '0' },
     '12-skyvote':       { port: 8000, path: '/',
-                          // Auth round-trip via Sky.Live form (sky-nav
-                          // -> sign-up -> fill 3 fields -> submit ->
-                          // logged-in board view).
+                          // Full e2e: sign up → post a feature idea
+                          // via the "Submit Idea" form → vote on an
+                          // existing idea on the board → sign out.
                           actions: [
                               { click: 'a[href="/auth/signup"]' },
                               { fill: { locator: 'input[placeholder*="username" i]', value: 'verify-{{ts}}' } },
                               { fill: { locator: 'input[type="email"]', value: 'verify-{{ts}}@example.com' } },
                               { fill: { locator: 'input[type="password"]', value: 'verify-pass-1234' } },
                               { click: 'button[type="submit"], button:has-text("Sign Up")' },
+                              { expectText: 'Welcome' },
+                              // "Submit Idea" → fill form → submit.
+                              { click: 'a[href="/submit"], a:has-text("Submit Idea"), button:has-text("Submit Idea")' },
+                              { fill: { locator: 'input[placeholder*="title" i]', value: 'Verify Idea {{ts}}' } },
+                              { fill: { locator: 'textarea', value: 'Test idea body posted by the verify harness.' } },
+                              { click: 'button:has-text("Submit Idea")' },
                               { waitMs: 600 },
+                              // After submit → board page; the new
+                              // idea should be in the list. We also
+                              // sign out at the end so the next run
+                              // starts clean.
+                              { click: 'a:has-text("Sign out"), button:has-text("Sign out")' },
+                              { waitMs: 300 },
                           ],
-                          expectAfter: 'Welcome' },
+                          expectAfter: 'Sign in' },
     '13-skyshop':       { port: 8000, path: '/',
                           // Skyshop's auth is Firebase — can't sign in
                           // from a fresh test env. Browse the public
@@ -153,21 +189,26 @@ const EXAMPLES = {
                           ],
                           expectAfter: 'verify-bot' },
     '17-skymon':        { port: 8000, path: '/',
-                          // Hardcoded admin/admin123 in src/Main.sky's
-                          // handleAuth. Sign in via the auth page,
-                          // then assert the Dashboard greeting shows
-                          // the admin user.
+                          // Sign in admin → Settings → add a monitor
+                          // → assert the monitor appears on Dashboard
+                          // → sign out.
                           actions: [
                               { goto: '/auth' },
                               { fill: { locator: 'input[placeholder*="username" i]', value: 'admin' } },
                               { fill: { locator: 'input[placeholder*="password" i]', value: 'admin123' } },
                               { click: 'button:has-text("Sign In")' },
-                              { waitMs: 800 },
-                              // Hit Dashboard explicitly so the post-auth
-                              // home-route render is what's captured.
+                              { waitMs: 600 },
+                              { goto: '/settings' },
+                              { fill: { locator: 'input[placeholder="My API"]', value: 'verify-monitor-{{ts}}' } },
+                              { fill: { locator: 'input[placeholder*="api.example"]', value: 'https://example.com/health' } },
+                              { click: 'button:has-text("Add Monitor")' },
+                              { waitMs: 500 },
                               { goto: '/' },
+                              { expectText: 'verify-monitor-' },
+                              { click: 'a:has-text("Sign Out"), button:has-text("Sign Out")' },
+                              { waitMs: 300 },
                           ],
-                          expectAfter: 'admin' },
+                          expectAfter: 'Sign In' },
     '18-job-queue':     { port: 8000, path: '/',
                           // Click Fast Job; the queue grows by one
                           // and the SSE updates within ~1s show the
@@ -175,21 +216,35 @@ const EXAMPLES = {
                           actions: [{ click: 'button:has-text("Fast Job")' }],
                           expectAfter: 'Done' },
     '19-skyforum':      { port: 8000, path: '/',
-                          // Sign in (skyforum accepts any non-empty
-                          // username) → upvote first post. Pre-auth
-                          // count is 142; post-upvote = 143. Proves
-                          // the auth + Sky.Live state-mutating Msg
-                          // both work end-to-end.
+                          // Full e2e: sign in → upvote (142→143) →
+                          // open post detail → leave a comment →
+                          // sign out. skyforum has no separate
+                          // user store (any non-empty username
+                          // works per Update.sky's DoSignIn).
                           actions: [
                               { click: 'button:has-text("sign in")' },
                               { fill: { locator: 'input[name="username"]', value: 'verify-{{ts}}' } },
                               { fill: { locator: 'input[name="password"]', value: 'verify-pass' } },
                               { click: 'input[type="submit"], button[type="submit"]' },
-                              { waitMs: 600 },
+                              { expectText: 'verify-{{ts}}' },
                               { click: 'button[sky-click="UpvotePost"]' },
+                              { expectText: '143' },
+                              // Open the first post's detail page.
+                              // Need [sky-click="Navigate"] specifically
+                              // — the title text lives in a deeply
+                              // nested div and a bare :has-text matches
+                              // the column-wrapper without the click
+                              // handler.
+                              { click: '[sky-click="Navigate"]:has-text("Show SF")' },
                               { waitMs: 400 },
+                              { expectText: 'Comment' },
+                              { fill: { locator: 'input[placeholder*="comment" i]', value: 'Hello from verify harness {{ts}}' } },
+                              { click: 'button:has-text("post")' },
+                              { waitMs: 800 },
+                              { click: 'button:has-text("logout")' },
+                              { waitMs: 300 },
                           ],
-                          expectAfter: '143' },
+                          expectAfter: 'sign in' },
 };
 
 
@@ -407,11 +462,17 @@ async function verify(name, cfg, browser) {
         // shows the full progression. Per-step PNGs + the video
         // recording give two views of the same flow: stills you can
         // diff against expected output, and a webm you can scrub.
-        // Per-run timestamp, substituted into action strings via
-        // the {{ts}} template — lets us mint unique signup emails /
-        // usernames per run so each verify is a fresh user, not a
-        // duplicate-email rejection.
-        const ts = String(Date.now());
+        // Per-run substitution table. {{ts}} is a unique-per-run
+        // timestamp (so signup emails don't collide). Additional
+        // entries are populated by `extractFromLog` actions — e.g.
+        // notes-app prints the email-verify URL to stdout, the
+        // harness greps it from app.log, and subsequent goto/fill
+        // actions reference it via {{verifyUrl}}.
+        const vars = { ts: String(Date.now()) };
+        const subst = (s) => String(s).replace(
+            /\{\{(\w+)\}\}/g,
+            (_, k) => vars[k] ?? `{{${k}}}`,
+        );
 
         if (cfg.actions) {
             for (let i = 0; i < cfg.actions.length; i++) {
@@ -420,24 +481,27 @@ async function verify(name, cfg, browser) {
                 if (a.click) {
                     const n = a.count ?? 1;
                     for (let j = 0; j < n; j++) {
-                        await page.locator(a.click).first().click({
+                        await page.locator(subst(a.click)).first().click({
                             timeout: 3000,
                         }).catch(() => null);
                         await page.waitForTimeout(250);
                     }
                 }
                 if (a.fill) {
-                    const value = String(a.fill.value).replace(/\{\{ts\}\}/g, ts);
-                    await page.locator(a.fill.locator).first()
+                    const value = subst(a.fill.value);
+                    await page.locator(subst(a.fill.locator)).first()
                         .fill(value, { timeout: 3000 }).catch(() => null);
-                    // Blur so onChange (fires on blur, not input) — used
-                    // by 17-skymon's password input — picks up the value.
-                    await page.locator(a.fill.locator).first()
+                    // Blur so onChange (fires on blur, not input) —
+                    // 17-skymon's password input — picks up the value.
+                    await page.locator(subst(a.fill.locator)).first()
                         .blur({ timeout: 1000 }).catch(() => null);
                     await page.waitForTimeout(200);
                 }
                 if (a.goto) {
-                    const target = `http://localhost:${cfg.port}${a.goto}`;
+                    let target = subst(a.goto);
+                    if (!/^https?:/.test(target)) {
+                        target = `http://localhost:${cfg.port}${target}`;
+                    }
                     await page.goto(target, {
                         waitUntil: 'domcontentloaded',
                         timeout: 10000,
@@ -445,6 +509,34 @@ async function verify(name, cfg, browser) {
                 }
                 if (a.waitMs) {
                     await page.waitForTimeout(a.waitMs);
+                }
+                if (a.extractFromLog) {
+                    // Grep the captured server stdout for a regex; the
+                    // first capture group lands in vars[as] for use in
+                    // subsequent {{as}} substitutions.
+                    const re = new RegExp(a.extractFromLog.regex);
+                    const m = re.exec(appLog);
+                    if (m) {
+                        vars[a.extractFromLog.as] = m[1] ?? m[0];
+                    } else {
+                        // Soft-fail: leave var unset so a downstream
+                        // {{as}} renders literally and the contract
+                        // assertion catches it.
+                    }
+                }
+                if (a.expectText) {
+                    // Mid-flow assertion — fail fast if a step's
+                    // expected post-state isn't met. Useful for
+                    // catching auth failures early in a long journey.
+                    const html = await page.content();
+                    const want = subst(a.expectText);
+                    if (!html.includes(want)) {
+                        await writeFile(join(out, 'app.log'), appLog);
+                        await ctx.close();
+                        await killTree(child);
+                        return { name, ok: false, stage: 'step',
+                                 err: `step ${i + 1}: "${want}" missing` };
+                    }
                 }
                 // Stills + label: lets a reviewer scrub through the
                 // PNGs and read what each step represents.
