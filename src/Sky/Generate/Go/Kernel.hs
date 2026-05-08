@@ -551,6 +551,10 @@ registry = Map.fromList
     -- a frame-render view shape.
     -- ═══════════════════════════════════════════════════════
     , (("Tui", "program"),        KernelInfo "rt.Tui_program" 1 False)
+    -- Tui.app — Element-shaped view variant. Same shape as
+    -- Tui.program but view : Model -> Std.Ui.Element Msg, runtime
+    -- handles layout + cell rendering + focus management.
+    , (("Tui", "app"),            KernelInfo "rt.Tui_app" 1 False)
 
     -- ═══════════════════════════════════════════════════════
     -- Std.Live.Events

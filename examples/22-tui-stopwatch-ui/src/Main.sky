@@ -1,0 +1,211 @@
+module Main exposing (main)
+
+{-|
+22-tui-stopwatch-ui — TUI stopwatch with the Element-shape view.
+
+Same Model / update / subscriptions as 21-tui-stopwatch, but the
+view function returns Std.Ui.Element instead of String. The runtime
+walks the typed tree, computes character-cell layout against a
+1280×720 logical canvas, and paints to the terminal.
+
+This is the "write once" proof-of-concept: in principle, the same
+view function would render correctly under Sky.Live (HTML), Sky.Tui
+(this), and a future Sky.Gui (gio). For now we only validate the Tui
+side.
+
+Keys:
+  Tab / Shift-Tab  — focus next / previous button
+  Enter            — activate focused button
+  space            — toggle (global hotkey via onKey)
+  r                — reset
+  q / Ctrl-C       — quit
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.System as System
+import Sky.Core.Task as Task
+import Std.Tui as Tui
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Ui as Ui
+import Std.Ui exposing (Element)
+import Std.Ui.Background as Background
+import Std.Ui.Font as Font
+import Std.Live.Events as Event
+
+
+
+-- ═══════════════════════════════════════════════════════════════════
+-- Model + Msg
+-- ═══════════════════════════════════════════════════════════════════
+
+
+type alias Model =
+    { running : Bool
+    , elapsedMs : Int
+    }
+
+
+type alias KeyEvent =
+    { kind : String
+    , value : String
+    }
+
+
+type Msg
+    = Tick
+    | Toggle
+    | Reset
+    | Quit
+    | NoOp
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { running = False, elapsedMs = 0 }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        Tick ->
+            if model.running then
+                ( { model | elapsedMs = model.elapsedMs + 100 }, Cmd.none )
+
+            else
+                ( model, Cmd.none )
+
+        Toggle ->
+            ( { model | running = not model.running }, Cmd.none )
+
+        Reset ->
+            ( { running = False, elapsedMs = 0 }, Cmd.none )
+
+        Quit ->
+            ( model, Cmd.perform (System.exit 0) (\_ -> NoOp) )
+
+        NoOp ->
+            ( model, Cmd.none )
+
+
+subscriptions : Model -> Sub Msg
+subscriptions model =
+    if model.running then
+        Sub.every 100 Tick
+
+    else
+        Sub.none
+
+
+
+-- ═══════════════════════════════════════════════════════════════════
+-- View — typed Std.Ui Element tree
+-- ═══════════════════════════════════════════════════════════════════
+
+
+view : Model -> Element Msg
+view model =
+    Ui.column
+        [ Ui.padding 32
+        , Ui.spacing 16
+        , Background.color (Ui.rgb 24 28 48)
+        , Font.color (Ui.rgb 220 220 230)
+        ]
+        [ Ui.el [ Font.color (Ui.rgb 142 200 168) ]
+            (Ui.text "Sky TUI Stopwatch — Element view")
+        , Ui.el [ Font.color (Ui.rgb 220 220 230) ]
+            (Ui.text (formatElapsed model.elapsedMs))
+        , Ui.el [ Font.color (Ui.rgb 150 150 170) ]
+            (Ui.text (statusLine model))
+        , Ui.row
+            [ Ui.spacing 16 ]
+            [ Ui.button
+                [ Background.color (Ui.rgb 60 90 70)
+                , Font.color (Ui.rgb 240 240 240)
+                , Ui.paddingXY 16 8
+                ]
+                { onPress = Just Toggle
+                , label = Ui.text (toggleLabel model)
+                }
+            , Ui.button
+                [ Background.color (Ui.rgb 90 60 60)
+                , Font.color (Ui.rgb 240 240 240)
+                , Ui.paddingXY 16 8
+                ]
+                { onPress = Just Reset
+                , label = Ui.text "Reset"
+                }
+            ]
+        , Ui.el [ Font.color (Ui.rgb 120 120 140) ]
+            (Ui.text "Tab to switch buttons · Enter to activate · space toggle · r reset · q quit")
+        ]
+
+
+toggleLabel : Model -> String
+toggleLabel model =
+    if model.running then "Pause" else "Start"
+
+
+statusLine : Model -> String
+statusLine model =
+    if model.running then "[ running ]" else "[ paused  ]"
+
+
+formatElapsed : Int -> String
+formatElapsed totalMs =
+    let
+        totalSec = totalMs // 1000
+        minutes = totalSec // 60
+        seconds = modBy 60 totalSec
+        deciSec = modBy 10 (totalMs // 100)
+    in
+        pad2 minutes ++ ":" ++ pad2 seconds ++ "." ++ String.fromInt deciSec
+
+
+pad2 : Int -> String
+pad2 n =
+    let s = String.fromInt n
+    in
+        if String.length s < 2 then "0" ++ s else s
+
+
+
+-- ═══════════════════════════════════════════════════════════════════
+-- Key dispatch (global hotkeys; in-tree button events come via Tab+Enter)
+-- ═══════════════════════════════════════════════════════════════════
+
+
+onKey : KeyEvent -> Msg
+onKey k =
+    if k.kind == "space" then
+        Toggle
+
+    else if k.kind == "char" && k.value == "r" then
+        Reset
+
+    else if k.kind == "char" && k.value == "q" then
+        Quit
+
+    else if k.kind == "ctrl" && k.value == "c" then
+        Quit
+
+    else
+        NoOp
+
+
+
+-- ═══════════════════════════════════════════════════════════════════
+-- Main
+-- ═══════════════════════════════════════════════════════════════════
+
+
+main =
+    Tui.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        , onKey = onKey
+        }
+        |> Task.run
