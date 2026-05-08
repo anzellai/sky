@@ -4,12 +4,10 @@ module State exposing (..)
 -- type-checker stays well below the heap-exhaustion limit (CLAUDE.md
 -- Limitation #17): the heavy unification load is in the per-View
 -- modules.
-
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.List as List
 import Sky.Core.Maybe as Maybe
 import Sky.Core.String as String
-
 
 -- ─── State types ─────────────────────────────────────────────────
 
@@ -23,28 +21,25 @@ type alias Post =
     , title : String
     , url : String
     , author : String
-    , votes : Int
+    , votes : Int-- base score (see Post.votes for shape)
     , commentCount : Int
-    , upvoters : List String       -- usernames who upvoted (1 vote per user)
-    , downvoters : List String     -- usernames who downvoted (1 vote per user)
+    , upvoters : List String-- usernames who upvoted (1 vote per user)
+    , downvoters : List String-- usernames who downvoted (1 vote per user)
     }
-
 
 type alias Comment =
     { id : Int
     , postId : Int
-    , parentId : Int               -- 0 = top-level (root) comment under the post
+    , parentId : Int-- 0 = top-level (root) comment under the post
     , author : String
     , body : String
-    , votes : Int                  -- base score (see Post.votes for shape)
-    , upvoters : List String
-    , downvoters : List String
+    , votes : Int-- base score (see Post.votes for shape)
+    , upvoters : List String-- usernames who upvoted (1 vote per user)
+    , downvoters : List String-- usernames who downvoted (1 vote per user)
     }
-
 
 type alias Session =
     { username : String }
-
 
 -- Form data for sign-in. Decoded from the wire `<form>` submit
 -- payload directly into this typed record (Sky.Live's case-
@@ -57,12 +52,10 @@ type alias LoginForm =
     , password : String
     }
 
-
 type Page
     = HomePage
     | PostPage Int
     | LoginPage
-
 
 type alias Model =
     { posts : List Post
@@ -71,10 +64,9 @@ type alias Model =
     , session : Maybe Session
     , loginError : String
     , composeBody : String
-    , replyTo : Int            -- parentId for the next compose; 0 = top-level
+    , replyTo : Int-- parentId for the next compose; 0 = top-level
     , nextCommentId : Int
     }
-
 
 type Msg
     = Navigate Page
@@ -93,7 +85,6 @@ type Msg
 -- ─── Pure helpers (no Std.Ui dependency) ─────────────────────────
 
 -- ─── Vote scoring ────────────────────────────────────────────────
-
 postScore : Post -> Int
 postScore p =
     p.votes + List.length p.upvoters - List.length p.downvoters
@@ -113,17 +104,17 @@ commentScore c =
 --
 -- Score is derived (postScore / commentScore), so swapping naturally
 -- moves the displayed total by ±2 without any extra arithmetic here.
-
 togglePostUpvote : String -> Int -> Post -> Post
 togglePostUpvote username targetId post =
     if post.id /= targetId then
         post
+
     else if List.member username post.upvoters then
         { post | upvoters = removeMember username post.upvoters }
+
     else
-        { post
-            | upvoters = username :: post.upvoters
-            , downvoters = removeMember username post.downvoters
+        { post | upvoters = username :: post.upvoters
+        , downvoters = removeMember username post.downvoters
         }
 
 
@@ -131,12 +122,13 @@ togglePostDownvote : String -> Int -> Post -> Post
 togglePostDownvote username targetId post =
     if post.id /= targetId then
         post
+
     else if List.member username post.downvoters then
         { post | downvoters = removeMember username post.downvoters }
+
     else
-        { post
-            | downvoters = username :: post.downvoters
-            , upvoters = removeMember username post.upvoters
+        { post | downvoters = username :: post.downvoters
+        , upvoters = removeMember username post.upvoters
         }
 
 
@@ -144,12 +136,13 @@ toggleCommentUpvote : String -> Int -> Comment -> Comment
 toggleCommentUpvote username targetId comment =
     if comment.id /= targetId then
         comment
+
     else if List.member username comment.upvoters then
         { comment | upvoters = removeMember username comment.upvoters }
+
     else
-        { comment
-            | upvoters = username :: comment.upvoters
-            , downvoters = removeMember username comment.downvoters
+        { comment | upvoters = username :: comment.upvoters
+        , downvoters = removeMember username comment.downvoters
         }
 
 
@@ -157,12 +150,13 @@ toggleCommentDownvote : String -> Int -> Comment -> Comment
 toggleCommentDownvote username targetId comment =
     if comment.id /= targetId then
         comment
+
     else if List.member username comment.downvoters then
         { comment | downvoters = removeMember username comment.downvoters }
+
     else
-        { comment
-            | downvoters = username :: comment.downvoters
-            , upvoters = removeMember username comment.upvoters
+        { comment | downvoters = username :: comment.downvoters
+        , upvoters = removeMember username comment.upvoters
         }
 
 
@@ -175,12 +169,14 @@ bumpPostComments : Int -> Post -> Post
 bumpPostComments targetId post =
     if post.id == targetId then
         { post | commentCount = post.commentCount + 1 }
+
     else
         post
 
 
 findPost : Int -> List Post -> Maybe Post
-findPost target posts = List.find (\p -> p.id == target) posts
+findPost target posts =
+    List.find (\p -> p.id == target) posts
 
 
 matchesParent : Int -> Int -> Comment -> Bool
@@ -191,7 +187,8 @@ matchesParent postId parentId c =
 shortenUrl : String -> String
 shortenUrl url =
     let
-        afterScheme = String.replace "https://" "" (String.replace "http://" "" url)
+        afterScheme =
+            String.replace "https://" "" (String.replace "http://" "" url)
         slash = String.split "/" afterScheme
     in
         Maybe.withDefault afterScheme (List.head slash)

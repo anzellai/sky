@@ -1,4 +1,16 @@
-module Lib.View exposing (landingPage, signInPage, signUpPage, signUpSuccessPage, forgotPasswordPage, forgotPasswordSentPage, verifyResultPage, notesListPage, noteViewPage, noteFormPage, errorPage)
+module Lib.View exposing
+    ( landingPage
+    , signInPage
+    , signUpPage
+    , signUpSuccessPage
+    , forgotPasswordPage
+    , forgotPasswordSentPage
+    , verifyResultPage
+    , notesListPage
+    , noteViewPage
+    , noteFormPage
+    , errorPage
+    )
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Maybe as Maybe
@@ -505,20 +517,20 @@ layout title navEl content =
     doctype ()
         ++ render
                (htmlNode
-                    [Attr.lang "en"]
-                    [ headNode
-                          []
-                          [ meta [Attr.charset "UTF-8"]
-                          , meta
-                                [ Attr.name "viewport"
-                                , Attr.content
-                                      "width=device-width,initial-scale=1.0"
-                                ]
-                          , titleNode (title ++ " - SkyNotes")
-                          , styleNode [] (appStyles ())
-                          ]
-                    , body [] [ navEl, div [Attr.class "container"] [content] ]
-                    ])
+                   [Attr.lang "en"]
+                   [ headNode
+                         []
+                         [ meta [Attr.charset "UTF-8"]
+                         , meta
+                               [ Attr.name "viewport"
+                               , Attr.content
+                                     "width=device-width,initial-scale=1.0"
+                               ]
+                         , titleNode (title ++ " - SkyNotes")
+                         , styleNode [] (appStyles ())
+                         ]
+                   , body [] [ navEl, div [Attr.class "container"] [content] ]
+                   ])
 
 
 -- ============================================================
@@ -549,10 +561,10 @@ navAuth email =
                   [ span
                         [Attr.style
                             (Css.styles
-                                 [ Css.color (Css.rgba 255 255 255 0.7)
-                                 , Css.fontSize (Css.px 14)
-                                 , Css.marginRight (sp 2)
-                                 ])]
+                                [ Css.color (Css.rgba 255 255 255 0.7)
+                                , Css.fontSize (Css.px 14)
+                                , Css.marginRight (sp 2)
+                                ])]
                         [text email]
                   , a [Attr.href "/auth/sign-out"] [text "Sign Out"]
                   ]
@@ -583,52 +595,52 @@ landingPage _ =
         heroBtnStyle =
             Attr.style
                 (Css.styles
-                     [ Css.padding2 (Css.px 14) (sp 8)
-                     , Css.fontSize (Css.px 16)
-                     ])
+                    [ Css.padding2 (Css.px 14) (sp 8)
+                    , Css.fontSize (Css.px 16)
+                    ])
     in
         layout
             "Welcome"
             (navGuest ())
             (div
-                 [Attr.class "hero"]
-                 [ h1 [] [text "SkyNotes"]
-                 , p
-                       []
-                       [text
-                           "A markdown note-taking app built with the Sky language"]
-                 , div
-                       []
-                       [ a
-                             [ Attr.href "/auth/sign-up"
-                             , Attr.class "btn"
-                             , heroBtnStyle
-                             , Attr.style (Css.styles [Css.marginRight (sp 3)])
-                             ]
-                             [text "Get Started"]
-                       , a
-                             [ Attr.href "/auth/sign-in"
-                             , Attr.class "btn btn-outline"
-                             , heroBtnStyle
-                             ]
-                             [text "Sign In"]
-                       ]
-                 , div
-                       [Attr.class "features"]
-                       [ featureCard
-                             "M"
-                             "Markdown"
-                             "Write in Markdown with live preview. Supports headings, code blocks, lists, and more."
-                       , featureCard
-                             "S"
-                             "Secure"
-                             "SHA-256 password hashing with email verification to protect your account."
-                       , featureCard
-                             "F"
-                             "Fast"
-                             "Built with Sky, compiled to native Go. Backed by SQLite for reliable storage."
-                       ]
-                 ])
+                [Attr.class "hero"]
+                [ h1 [] [text "SkyNotes"]
+                , p
+                      []
+                      [text
+                          "A markdown note-taking app built with the Sky language"]
+                , div
+                      []
+                      [ a
+                            [ Attr.href "/auth/sign-up"
+                            , Attr.class "btn"
+                            , heroBtnStyle
+                            , Attr.style (Css.styles [Css.marginRight (sp 3)])
+                            ]
+                            [text "Get Started"]
+                      , a
+                            [ Attr.href "/auth/sign-in"
+                            , Attr.class "btn btn-outline"
+                            , heroBtnStyle
+                            ]
+                            [text "Sign In"]
+                      ]
+                , div
+                      [Attr.class "features"]
+                      [ featureCard
+                            "M"
+                            "Markdown"
+                            "Write in Markdown with live preview. Supports headings, code blocks, lists, and more."
+                      , featureCard
+                            "S"
+                            "Secure"
+                            "SHA-256 password hashing with email verification to protect your account."
+                      , featureCard
+                            "F"
+                            "Fast"
+                            "Built with Sky, compiled to native Go. Backed by SQLite for reliable storage."
+                      ]
+                ])
 
 
 signInPage errorMsg =
@@ -636,40 +648,40 @@ signInPage errorMsg =
         "Sign In"
         (navGuest ())
         (div
-             [Attr.class "card auth-card"]
-             [ h2 [] [text "Sign In"]
-             , errorBanner errorMsg
-             , form
-                   [ Attr.method "POST", Attr.action "/auth/sign-in" ]
-                   [ formGroup
-                         "Email"
-                         (input
-                              [ Attr.type_ "email"
-                              , Attr.name "email"
-                              , Attr.placeholder "you@example.com"
-                              , Attr.required ()
-                              ])
-                   , formGroup
-                         "Password"
-                         (input
-                              [ Attr.type_ "password"
-                              , Attr.name "password"
-                              , Attr.placeholder "Your password"
-                              , Attr.required ()
-                              ])
-                   , button
-                         [ Attr.type_ "submit", Attr.class "btn", fullWidth () ]
-                         [text "Sign In"]
-                   ]
-             , div
-                   [Attr.class "auth-footer"]
-                   [ a
-                         [Attr.href "/auth/forgot-password"]
-                         [text "Forgot password?"]
-                   , span [] [text " | "]
-                   , a [Attr.href "/auth/sign-up"] [text "Create account"]
-                   ]
-             ])
+            [Attr.class "card auth-card"]
+            [ h2 [] [text "Sign In"]
+            , errorBanner errorMsg
+            , form
+                  [ Attr.method "POST", Attr.action "/auth/sign-in" ]
+                  [ formGroup
+                        "Email"
+                        (input
+                            [ Attr.type_ "email"
+                            , Attr.name "email"
+                            , Attr.placeholder "you@example.com"
+                            , Attr.required ()
+                            ])
+                  , formGroup
+                        "Password"
+                        (input
+                            [ Attr.type_ "password"
+                            , Attr.name "password"
+                            , Attr.placeholder "Your password"
+                            , Attr.required ()
+                            ])
+                  , button
+                        [ Attr.type_ "submit", Attr.class "btn", fullWidth () ]
+                        [text "Sign In"]
+                  ]
+            , div
+                  [Attr.class "auth-footer"]
+                  [ a
+                        [Attr.href "/auth/forgot-password"]
+                        [text "Forgot password?"]
+                  , span [] [text " | "]
+                  , a [Attr.href "/auth/sign-up"] [text "Create account"]
+                  ]
+            ])
 
 
 signUpPage errorMsg =
@@ -677,46 +689,46 @@ signUpPage errorMsg =
         "Sign Up"
         (navGuest ())
         (div
-             [Attr.class "card auth-card"]
-             [ h2 [] [text "Create Account"]
-             , errorBanner errorMsg
-             , form
-                   [ Attr.method "POST", Attr.action "/auth/sign-up" ]
-                   [ formGroup
-                         "Email"
-                         (input
-                              [ Attr.type_ "email"
-                              , Attr.name "email"
-                              , Attr.placeholder "you@example.com"
-                              , Attr.required ()
-                              ])
-                   , formGroup
-                         "Password"
-                         (input
-                              [ Attr.type_ "password"
-                              , Attr.name "password"
-                              , Attr.placeholder "Min 8 characters"
-                              , Attr.minlength 8
-                              , Attr.required ()
-                              ])
-                   , formGroup
-                         "Confirm Password"
-                         (input
-                              [ Attr.type_ "password"
-                              , Attr.name "confirm_password"
-                              , Attr.placeholder "Repeat your password"
-                              , Attr.required ()
-                              ])
-                   , button
-                         [ Attr.type_ "submit", Attr.class "btn", fullWidth () ]
-                         [text "Create Account"]
-                   ]
-             , div
-                   [Attr.class "auth-footer"]
-                   [ text "Already have an account? "
-                   , a [Attr.href "/auth/sign-in"] [text "Sign in"]
-                   ]
-             ])
+            [Attr.class "card auth-card"]
+            [ h2 [] [text "Create Account"]
+            , errorBanner errorMsg
+            , form
+                  [ Attr.method "POST", Attr.action "/auth/sign-up" ]
+                  [ formGroup
+                        "Email"
+                        (input
+                            [ Attr.type_ "email"
+                            , Attr.name "email"
+                            , Attr.placeholder "you@example.com"
+                            , Attr.required ()
+                            ])
+                  , formGroup
+                        "Password"
+                        (input
+                            [ Attr.type_ "password"
+                            , Attr.name "password"
+                            , Attr.placeholder "Min 8 characters"
+                            , Attr.minlength 8
+                            , Attr.required ()
+                            ])
+                  , formGroup
+                        "Confirm Password"
+                        (input
+                            [ Attr.type_ "password"
+                            , Attr.name "confirm_password"
+                            , Attr.placeholder "Repeat your password"
+                            , Attr.required ()
+                            ])
+                  , button
+                        [ Attr.type_ "submit", Attr.class "btn", fullWidth () ]
+                        [text "Create Account"]
+                  ]
+            , div
+                  [Attr.class "auth-footer"]
+                  [ text "Already have an account? "
+                  , a [Attr.href "/auth/sign-in"] [text "Sign in"]
+                  ]
+            ])
 
 
 signUpSuccessPage _ =
@@ -724,27 +736,27 @@ signUpSuccessPage _ =
         "Account Created"
         (navGuest ())
         (div
-             [Attr.class "card auth-card"]
-             [ h2 [] [text "Account Created!"]
-             , div
-                   [Attr.class "success"]
-                   [text
-                       "Your account has been created. Check the server console for your email verification link."]
-             , p
-                   [Attr.style
-                       (Css.styles
-                            [ Css.marginTop (sp 4)
-                            , Css.color (textMuted ())
-                            , Css.fontSize (Css.px 14)
-                            ])]
-                   [text "Once verified, you can sign in to start taking notes."]
-             , a
-                   [ Attr.href "/auth/sign-in"
-                   , Attr.class "btn"
-                   , fullWidthBlock ()
-                   ]
-                   [text "Go to Sign In"]
-             ])
+            [Attr.class "card auth-card"]
+            [ h2 [] [text "Account Created!"]
+            , div
+                  [Attr.class "success"]
+                  [text
+                      "Your account has been created. Check the server console for your email verification link."]
+            , p
+                  [Attr.style
+                      (Css.styles
+                          [ Css.marginTop (sp 4)
+                          , Css.color (textMuted ())
+                          , Css.fontSize (Css.px 14)
+                          ])]
+                  [text "Once verified, you can sign in to start taking notes."]
+            , a
+                  [ Attr.href "/auth/sign-in"
+                  , Attr.class "btn"
+                  , fullWidthBlock ()
+                  ]
+                  [text "Go to Sign In"]
+            ])
 
 
 forgotPasswordPage errorMsg =
@@ -752,34 +764,32 @@ forgotPasswordPage errorMsg =
         "Forgot Password"
         (navGuest ())
         (div
-             [Attr.class "card auth-card"]
-             [ h2 [] [text "Forgot Password"]
-             , p
-                   [Attr.style
-                       (Css.styles
-                            [ Css.color (textMuted ())
-                            , Css.marginBottom (sp 5)
-                            ])]
-                   [text "Enter your email and we'll send you a reset link."]
-             , errorBanner errorMsg
-             , form
-                   [ Attr.method "POST", Attr.action "/auth/forgot-password" ]
-                   [ formGroup
-                         "Email"
-                         (input
-                              [ Attr.type_ "email"
-                              , Attr.name "email"
-                              , Attr.placeholder "you@example.com"
-                              , Attr.required ()
-                              ])
-                   , button
-                         [ Attr.type_ "submit", Attr.class "btn", fullWidth () ]
-                         [text "Send Reset Link"]
-                   ]
-             , div
-                   [Attr.class "auth-footer"]
-                   [a [Attr.href "/auth/sign-in"] [text "Back to Sign In"]]
-             ])
+            [Attr.class "card auth-card"]
+            [ h2 [] [text "Forgot Password"]
+            , p
+                  [Attr.style
+                      (Css.styles
+                          [ Css.color (textMuted ()), Css.marginBottom (sp 5) ])]
+                  [text "Enter your email and we'll send you a reset link."]
+            , errorBanner errorMsg
+            , form
+                  [ Attr.method "POST", Attr.action "/auth/forgot-password" ]
+                  [ formGroup
+                        "Email"
+                        (input
+                            [ Attr.type_ "email"
+                            , Attr.name "email"
+                            , Attr.placeholder "you@example.com"
+                            , Attr.required ()
+                            ])
+                  , button
+                        [ Attr.type_ "submit", Attr.class "btn", fullWidth () ]
+                        [text "Send Reset Link"]
+                  ]
+            , div
+                  [Attr.class "auth-footer"]
+                  [a [Attr.href "/auth/sign-in"] [text "Back to Sign In"]]
+            ])
 
 
 forgotPasswordSentPage _ =
@@ -787,28 +797,28 @@ forgotPasswordSentPage _ =
         "Reset Link Sent"
         (navGuest ())
         (div
-             [Attr.class "card auth-card"]
-             [ h2 [] [text "Check Your Console"]
-             , div
-                   [Attr.class "success"]
-                   [text
-                       "If an account exists with that email, a password reset link has been logged to the server console."]
-             , p
-                   [Attr.style
-                       (Css.styles
-                            [ Css.marginTop (sp 4)
-                            , Css.color (textMuted ())
-                            , Css.fontSize (Css.px 14)
-                            ])]
-                   [text
-                       "This is a demo app -- in production, an email would be sent instead."]
-             , a
-                   [ Attr.href "/auth/sign-in"
-                   , Attr.class "btn"
-                   , fullWidthBlock ()
-                   ]
-                   [text "Back to Sign In"]
-             ])
+            [Attr.class "card auth-card"]
+            [ h2 [] [text "Check Your Console"]
+            , div
+                  [Attr.class "success"]
+                  [text
+                      "If an account exists with that email, a password reset link has been logged to the server console."]
+            , p
+                  [Attr.style
+                      (Css.styles
+                          [ Css.marginTop (sp 4)
+                          , Css.color (textMuted ())
+                          , Css.fontSize (Css.px 14)
+                          ])]
+                  [text
+                      "This is a demo app -- in production, an email would be sent instead."]
+            , a
+                  [ Attr.href "/auth/sign-in"
+                  , Attr.class "btn"
+                  , fullWidthBlock ()
+                  ]
+                  [text "Back to Sign In"]
+            ])
 
 
 verifyResultPage isSuccess message =
@@ -824,16 +834,16 @@ verifyResultPage isSuccess message =
             "Email Verification"
             (navGuest ())
             (div
-                 [Attr.class "card auth-card"]
-                 [ h2 [] [text "Email Verification"]
-                 , div [Attr.class msgClass] [text message]
-                 , a
-                       [ Attr.href "/auth/sign-in"
-                       , Attr.class "btn"
-                       , fullWidthBlock ()
-                       ]
-                       [text "Go to Sign In"]
-                 ])
+                [Attr.class "card auth-card"]
+                [ h2 [] [text "Email Verification"]
+                , div [Attr.class msgClass] [text message]
+                , a
+                      [ Attr.href "/auth/sign-in"
+                      , Attr.class "btn"
+                      , fullWidthBlock ()
+                      ]
+                      [text "Go to Sign In"]
+                ])
 
 
 -- ============================================================
@@ -854,15 +864,15 @@ noteCard note =
     in
         render
             (div
-                 [Attr.class "card note-card"]
-                 [a
-                     [Attr.href ("/notes/view?id=" ++ noteId)]
-                     [ h3
-                           [Attr.style (Css.styles [Css.marginBottom (Css.px 4)])]
-                           [text noteTitle]
-                     , p [Attr.class "note-meta"] [text ("Created " ++ date)]
-                     , p [Attr.class "note-preview"] [text preview]
-                     ]])
+                [Attr.class "card note-card"]
+                [a
+                    [Attr.href ("/notes/view?id=" ++ noteId)]
+                    [ h3
+                          [Attr.style (Css.styles [Css.marginBottom (Css.px 4)])]
+                          [text noteTitle]
+                    , p [Attr.class "note-meta"] [text ("Created " ++ date)]
+                    , p [Attr.class "note-preview"] [text preview]
+                    ]])
 
 
 notesListPage email notes =
@@ -871,36 +881,36 @@ notesListPage email notes =
         headerRow =
             render
                 (div
-                     [Attr.class "header-row"]
-                     [ h1 [] [text "My Notes"]
-                     , a
-                           [ Attr.href "/notes/new", Attr.class "btn" ]
-                           [text "+ New Note"]
-                     ])
+                    [Attr.class "header-row"]
+                    [ h1 [] [text "My Notes"]
+                    , a
+                          [ Attr.href "/notes/new", Attr.class "btn" ]
+                          [text "+ New Note"]
+                    ])
         content =
             if List.isEmpty notes then
                 headerRow
                     ++ render
                            (div
-                                [Attr.class "card empty-state"]
-                                [ p
-                                      [Attr.style
-                                          (Css.styles
-                                               [ Css.fontSize (Css.em 1.2)
-                                               , Css.marginBottom (sp 2)
-                                               ])]
-                                      [text "No notes yet"]
-                                , p
-                                      [Attr.style
-                                          (Css.styles [Css.marginBottom (sp 5)])]
-                                      [text
-                                          "Create your first markdown note to get started."]
-                                , a
-                                      [ Attr.href "/notes/new"
-                                      , Attr.class "btn"
-                                      ]
-                                      [text "Create Your First Note"]
-                                ])
+                               [Attr.class "card empty-state"]
+                               [ p
+                                     [Attr.style
+                                         (Css.styles
+                                             [ Css.fontSize (Css.em 1.2)
+                                             , Css.marginBottom (sp 2)
+                                             ])]
+                                     [text "No notes yet"]
+                               , p
+                                     [Attr.style
+                                         (Css.styles [Css.marginBottom (sp 5)])]
+                                     [text
+                                         "Create your first markdown note to get started."]
+                               , a
+                                     [ Attr.href "/notes/new"
+                                     , Attr.class "btn"
+                                     ]
+                                     [text "Create Your First Note"]
+                               ])
 
             else
                 headerRow ++ noteCards
@@ -926,59 +936,59 @@ noteViewPage email note =
             noteTitle
             (navAuth email)
             (div
-                 [Attr.class "card"]
-                 [ div
-                       [Attr.class "header-row"]
-                       [ div
-                             []
-                             [ h1 [] [text noteTitle]
-                             , p [Attr.class "note-meta"] [text dateDisplay]
-                             ]
-                       , div
-                             []
-                             [ a
-                                   [ Attr.href ("/notes/edit?id=" ++ noteId)
-                                   , Attr.class "btn btn-sm"
-                                   , Attr.style
-                                         (Css.styles [Css.marginRight (sp 2)])
-                                   ]
-                                   [text "Edit"]
-                             , form
-                                   [ Attr.method "POST"
-                                   , Attr.action ("/notes/delete?id=" ++ noteId)
-                                   , Attr.style
-                                         (Css.styles [Css.display "inline"])
-                                   , Events.onSubmit
-                                         "return confirm('Delete this note?')"
-                                   ]
-                                   [button
-                                       [ Attr.type_ "submit"
-                                       , Attr.class "btn btn-sm btn-danger"
-                                       ]
-                                       [text "Delete"]]
-                             ]
-                       ]
-                 , hr
-                       [Attr.style
-                           (Css.styles
-                                [ Css.border (Css.none ())
-                                , Css.borderTop ("1px solid " ++ borderColor ())
-                                , Css.margin2 (sp 5) (Css.zero ())
-                                ])]
-                 , textarea
-                       [ Attr.id "raw-md"
-                       , Attr.style (Css.styles [Css.display "none"])
-                       ]
-                       [text content]
-                 , div [ Attr.id "rendered", Attr.class "md" ] []
-                 , script
-                       [Attr.src
-                           "https://cdn.jsdelivr.net/npm/marked/marked.min.js"]
-                       ""
-                 , script
-                       []
-                       "window.addEventListener('DOMContentLoaded',function(){document.getElementById('rendered').innerHTML=marked.parse(document.getElementById('raw-md').value);});"
-                 ])
+                [Attr.class "card"]
+                [ div
+                      [Attr.class "header-row"]
+                      [ div
+                            []
+                            [ h1 [] [text noteTitle]
+                            , p [Attr.class "note-meta"] [text dateDisplay]
+                            ]
+                      , div
+                            []
+                            [ a
+                                  [ Attr.href ("/notes/edit?id=" ++ noteId)
+                                  , Attr.class "btn btn-sm"
+                                  , Attr.style
+                                        (Css.styles [Css.marginRight (sp 2)])
+                                  ]
+                                  [text "Edit"]
+                            , form
+                                  [ Attr.method "POST"
+                                  , Attr.action ("/notes/delete?id=" ++ noteId)
+                                  , Attr.style
+                                        (Css.styles [Css.display "inline"])
+                                  , Events.onSubmit
+                                        "return confirm('Delete this note?')"
+                                  ]
+                                  [button
+                                      [ Attr.type_ "submit"
+                                      , Attr.class "btn btn-sm btn-danger"
+                                      ]
+                                      [text "Delete"]]
+                            ]
+                      ]
+                , hr
+                      [Attr.style
+                          (Css.styles
+                              [ Css.border (Css.none ())
+                              , Css.borderTop ("1px solid " ++ borderColor ())
+                              , Css.margin2 (sp 5) (Css.zero ())
+                              ])]
+                , textarea
+                      [ Attr.id "raw-md"
+                      , Attr.style (Css.styles [Css.display "none"])
+                      ]
+                      [text content]
+                , div [ Attr.id "rendered", Attr.class "md" ] []
+                , script
+                      [Attr.src
+                          "https://cdn.jsdelivr.net/npm/marked/marked.min.js"]
+                      ""
+                , script
+                      []
+                      "window.addEventListener('DOMContentLoaded',function(){document.getElementById('rendered').innerHTML=marked.parse(document.getElementById('raw-md').value);});"
+                ])
 
 
 noteFormPage email noteTitle content noteId isEdit =
@@ -1002,72 +1012,72 @@ noteFormPage email noteTitle content noteId isEdit =
             pageTitle
             (navAuth email)
             (div
-                 [Attr.class "card"]
-                 [ h1
-                       [Attr.style (Css.styles [Css.marginBottom (sp 6)])]
-                       [text pageTitle]
-                 , form
-                       [ Attr.method "POST", Attr.action formAction ]
-                       [ formGroup
-                             "Title"
-                             (input
-                                  [ Attr.type_ "text"
-                                  , Attr.name "title"
-                                  , Attr.value noteTitle
-                                  , Attr.placeholder "Note title"
-                                  , Attr.required ()
-                                  ])
-                       , div
-                             [Attr.class "form-group"]
-                             [ label [] [text "Content (Markdown)"]
-                             , div
-                                   [Attr.class "split-view"]
-                                   [ div
-                                         []
-                                         [textarea
-                                             [ Attr.id "editor"
-                                             , Attr.name "content"
-                                             , Attr.placeholder placeholderText
-                                             , Attr.required ()
-                                             ]
-                                             [text content]]
-                                   , div
-                                         []
-                                         [ div
-                                               [Attr.class "preview-label"]
-                                               [text "Preview"]
-                                         , div
-                                               [ Attr.id "preview"
-                                               , Attr.class "preview-pane md"
-                                               ]
-                                               []
-                                         ]
-                                   ]
-                             ]
-                       , div
-                             [Attr.style (Css.styles [Css.marginTop (sp 5)])]
-                             [ button
-                                   [ Attr.type_ "submit", Attr.class "btn" ]
-                                   [text "Save Note"]
-                             , a
-                                   [ Attr.href "/notes"
-                                   , Attr.style
-                                         (Css.styles
-                                              [ Css.marginLeft (sp 4)
-                                              , Css.color (textMuted ())
-                                              ])
-                                   ]
-                                   [text "Cancel"]
-                             ]
-                       ]
-                 , script
-                       [Attr.src
-                           "https://cdn.jsdelivr.net/npm/marked/marked.min.js"]
-                       ""
-                 , script
-                       []
-                       "window.addEventListener('DOMContentLoaded',function(){var e=document.getElementById('editor'),p=document.getElementById('preview');function u(){p.innerHTML=marked.parse(e.value)}e.addEventListener('input',u);u();});"
-                 ])
+                [Attr.class "card"]
+                [ h1
+                      [Attr.style (Css.styles [Css.marginBottom (sp 6)])]
+                      [text pageTitle]
+                , form
+                      [ Attr.method "POST", Attr.action formAction ]
+                      [ formGroup
+                            "Title"
+                            (input
+                                [ Attr.type_ "text"
+                                , Attr.name "title"
+                                , Attr.value noteTitle
+                                , Attr.placeholder "Note title"
+                                , Attr.required ()
+                                ])
+                      , div
+                            [Attr.class "form-group"]
+                            [ label [] [text "Content (Markdown)"]
+                            , div
+                                  [Attr.class "split-view"]
+                                  [ div
+                                        []
+                                        [textarea
+                                            [ Attr.id "editor"
+                                            , Attr.name "content"
+                                            , Attr.placeholder placeholderText
+                                            , Attr.required ()
+                                            ]
+                                            [text content]]
+                                  , div
+                                        []
+                                        [ div
+                                              [Attr.class "preview-label"]
+                                              [text "Preview"]
+                                        , div
+                                              [ Attr.id "preview"
+                                              , Attr.class "preview-pane md"
+                                              ]
+                                              []
+                                        ]
+                                  ]
+                            ]
+                      , div
+                            [Attr.style (Css.styles [Css.marginTop (sp 5)])]
+                            [ button
+                                  [ Attr.type_ "submit", Attr.class "btn" ]
+                                  [text "Save Note"]
+                            , a
+                                  [ Attr.href "/notes"
+                                  , Attr.style
+                                        (Css.styles
+                                            [ Css.marginLeft (sp 4)
+                                            , Css.color (textMuted ())
+                                            ])
+                                  ]
+                                  [text "Cancel"]
+                            ]
+                      ]
+                , script
+                      [Attr.src
+                          "https://cdn.jsdelivr.net/npm/marked/marked.min.js"]
+                      ""
+                , script
+                      []
+                      "window.addEventListener('DOMContentLoaded',function(){var e=document.getElementById('editor'),p=document.getElementById('preview');function u(){p.innerHTML=marked.parse(e.value)}e.addEventListener('input',u);u();});"
+                ])
 
 
 errorPage message =
@@ -1075,13 +1085,13 @@ errorPage message =
         "Error"
         (navGuest ())
         (div
-             [Attr.class "card auth-card"]
-             [ h2 [] [text "Something Went Wrong"]
-             , div [Attr.class "error"] [text message]
-             , a
-                   [ Attr.href "/"
-                   , Attr.class "btn"
-                   , Attr.style (Css.styles [Css.marginTop (sp 3)])
-                   ]
-                   [text "Go Home"]
-             ])
+            [Attr.class "card auth-card"]
+            [ h2 [] [text "Something Went Wrong"]
+            , div [Attr.class "error"] [text message]
+            , a
+                  [ Attr.href "/"
+                  , Attr.class "btn"
+                  , Attr.style (Css.styles [Css.marginTop (sp 3)])
+                  ]
+                  [text "Go Home"]
+            ])

@@ -72,7 +72,7 @@ getGitHubUser token =
             in
                 Ok
                     (Dict.fromList
-                         [ ( "username", login ), ( "avatar_url", avatar ) ])
+                        [ ( "username", login ), ( "avatar_url", avatar ) ])
 
         Err e ->
             Err e
@@ -120,8 +120,7 @@ getSession sessionId =
                 [] ->
                     Err
                         (Error.permissionDenied
-                             |> Error.withMessage
-                                    "Session not found or expired.")
+                            |> Error.withMessage "Session not found or expired.")
 
 
 deleteSession : String -> ()

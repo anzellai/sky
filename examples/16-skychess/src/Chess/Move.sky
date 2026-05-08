@@ -644,9 +644,9 @@ hasLegalMoves colour board model =
     in
         List.any
             (\pair ->
-                 not
-                     (List.isEmpty
-                          (legalMovesForSquare (fst pair) colour board model)))
+                not
+                    (List.isEmpty
+                        (legalMovesForSquare (fst pair) colour board model)))
             pieces
 
 
@@ -657,11 +657,11 @@ allLegalMoves colour board model =
     in
         List.concatMap
             (\pair ->
-                 let
-                     from = fst pair
-                     targets = legalMovesForSquare from colour board model
-                 in
-                     List.map (\to -> ( from, to )) targets)
+                let
+                    from = fst pair
+                    targets = legalMovesForSquare from colour board model
+                in
+                    List.map (\to -> ( from, to )) targets)
             pieces
 
 

@@ -50,32 +50,32 @@ viewBoard model =
         Layout.page
             model
             (div
-                 []
-                 [ div
-                       [class "board-header"]
-                       [ div
-                             []
-                             [ h1 [class "page-title"] [text "Feature Board"]
-                             , p
-                                   [class "page-subtitle"]
-                                   [text
-                                       "Vote on ideas you care about. The best ones rise to the top."]
-                             ]
-                       , viewSubmitButton model
-                       ]
-                 , viewToolbar model
-                 , viewIdeaList model userId
-                 ])
+                []
+                [ div
+                      [class "board-header"]
+                      [ div
+                            []
+                            [ h1 [class "page-title"] [text "Feature Board"]
+                            , p
+                                  [class "page-subtitle"]
+                                  [text
+                                      "Vote on ideas you care about. The best ones rise to the top."]
+                            ]
+                      , viewSubmitButton model
+                      ]
+                , viewToolbar model
+                , viewIdeaList model userId
+                ])
 
 
 viewIdeaList model userId =
     div
         [class "idea-list"]
         (if List.isEmpty model.ideas then
-             [emptyState "No ideas yet. Be the first to submit one!"]
+            [emptyState "No ideas yet. Be the first to submit one!"]
 
-         else
-             List.map (\idea -> ideaCard idea userId) model.ideas)
+        else
+            List.map (\idea -> ideaCard idea userId) model.ideas)
 
 
 viewToolbar model =
@@ -109,10 +109,10 @@ filterBtn filterValue label activeFilter =
         [ onClick (SetFilter filterValue)
         , class
               (if activeFilter == filterValue then
-                   "filter-btn active"
+                  "filter-btn active"
 
-               else
-                   "filter-btn")
+              else
+                  "filter-btn")
         ]
         [text label]
 
@@ -122,9 +122,9 @@ sortBtn sortValue label activeSort =
         [ onClick (SetSort sortValue)
         , class
               (if activeSort == sortValue then
-                   "filter-btn active"
+                  "filter-btn active"
 
-               else
-                   "filter-btn")
+              else
+                  "filter-btn")
         ]
         [text label]

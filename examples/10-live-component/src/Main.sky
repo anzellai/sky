@@ -103,8 +103,7 @@ view model =
                     [class "total"]
                     [text
                         ("Total: "
-                             ++ String.fromInt
-                                    (Counter.getCount model.myCounter))]
+                            ++ String.fromInt (Counter.getCount model.myCounter))]
               ]
         ]
 

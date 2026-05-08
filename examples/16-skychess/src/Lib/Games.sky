@@ -38,8 +38,7 @@ dbConn =
             let
                 _ =
                     println
-                        ("[FATAL] Cannot open skychess.db: "
-                             ++ Error.toString e)
+                        ("[FATAL] Cannot open skychess.db: " ++ Error.toString e)
             in
                 System.exit 1
 

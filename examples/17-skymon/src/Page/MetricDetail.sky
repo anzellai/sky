@@ -23,11 +23,11 @@ viewMetricDetail metId model =
             model
             (case metric of
 
-                 Just met ->
-                     viewMetricContent met
+                Just met ->
+                    viewMetricContent met
 
-                 Nothing ->
-                     viewNotFound)
+                Nothing ->
+                    viewNotFound)
 
 
 viewMetricContent : Metric -> VNode
@@ -231,7 +231,7 @@ viewAlertRow row =
               [style "color: #a78bfa; font-family: monospace"]
               [text
                   (Database.getField "condition" row ++ " "
-                       ++ Database.getField "threshold" row)]
+                      ++ Database.getField "threshold" row)]
         , td
               [style "color: #64748b"]
               [text (Database.getField "notify_type" row)]

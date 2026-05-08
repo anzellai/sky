@@ -14,13 +14,13 @@ evaluate : Dict Int Piece -> Int
 evaluate board =
     List.foldl
         (\sq acc ->
-             case Dict.get sq board of
+            case Dict.get sq board of
 
-                 Just piece ->
-                     acc + evaluatePieceAt sq piece
+                Just piece ->
+                    acc + evaluatePieceAt sq piece
 
-                 Nothing ->
-                     acc)
+                Nothing ->
+                    acc)
         0
         Board.allSquares
 

@@ -30,18 +30,32 @@ const ROOT = resolve(new URL('..', import.meta.url).pathname);
 const SKY = join(ROOT, 'sky-out', 'sky');
 const OUT = join(ROOT, '_verify');
 
-// Per-example contract — stays small + declarative. Add an entry
-// when you bring a new server example online; CLI examples use
-// `scripts/example-e2e.sh` and aren't covered here.
+// Per-example contract — stays small + declarative. Two shapes:
 //
-// `port`     — what the binary listens on (sky.toml [live] port or
-//              hardcoded for raw http servers).
-// `path`     — page to navigate after the server is up (default '/').
-// `actions`  — optional list of click/type pairs to drive a primary
-//              UI flow before screenshotting. Sky.Live examples
-//              auto-reconcile on event POSTs so a single click is a
-//              meaningful smoke.
+//   server:
+//     `port`     — what the binary listens on (sky.toml [live] port or
+//                  hardcoded for raw http servers).
+//     `path`     — page to navigate after the server is up (default '/').
+//     `actions`  — optional list of click/type pairs to drive a primary
+//                  UI flow before screenshotting.
+//
+//   cli:
+//     `cli: true` — run the binary, capture exit + stdout, no browser.
+//     `args`      — argv to pass (default []).
+//     `stdin`     — optional string fed to the process's stdin.
+//     `expectStdout` — substring that must appear in stdout for pass.
+//     `expectExit`  — exit code to expect (default 0).
+//
+// The 11-fyne-stopwatch entry is omitted — it's a desktop GUI app
+// that needs a windowing system; verified only via build.
 const EXAMPLES = {
+    '01-hello-world':   { cli: true, expectStdout: 'Hello' },
+    '02-go-stdlib':     { cli: true },
+    '03-tea-external':  { cli: true, expectStdout: 'UUID' },
+    '04-local-pkg':     { cli: true },
+    '05-mux-server':    { port: 8000, path: '/' },
+    '06-json':          { cli: true },
+    '07-todo-cli':      { cli: true, args: ['list'] },
     '08-notes-app':     { port: 8000, path: '/' },
     '09-live-counter':  { port: 8000, path: '/',
                           actions: [{ click: 'button:has-text("+")', count: 3 }] },
@@ -49,14 +63,11 @@ const EXAMPLES = {
     '12-skyvote':       { port: 8000, path: '/' },
     '13-skyshop':       { port: 8000, path: '/',
                           actions: [
-                              // Click "Browse Products" hero CTA → product list page.
                               { click: 'a:has-text("Browse Products"), button:has-text("Browse Products")' },
-                              // Pick the first product card title (works on either
-                              // homepage featured-products list OR /products grid).
                               { click: 'a:has-text("test product"), [class*="product"] a' },
-                              // Try "Add to Cart" if visible.
                               { click: 'button:has-text("Add to Cart"), button:has-text("Add"):not(:has-text("admin"))' },
                           ] },
+    '14-task-demo':     { cli: true },
     '15-http-server':   { port: 8000, path: '/' },
     '16-skychess':      { port: 8000, path: '/' },
     '17-skymon':        { port: 8000, path: '/' },
@@ -112,6 +123,43 @@ async function waitForPort(port, timeoutMs = 15000) {
 }
 
 
+// CLI verification — spawn the binary, gather stdout/stderr, check
+// exit code + optional stdout substring. No browser; no port wait.
+async function verifyCli(name, cfg, dir, bin, out) {
+    return new Promise((resolveCli) => {
+        const ps = spawn(bin, cfg.args ?? [], { cwd: dir });
+        let buf = '';
+        ps.stdout.on('data', c => { buf += c.toString(); });
+        ps.stderr.on('data', c => { buf += c.toString(); });
+        if (cfg.stdin !== undefined) {
+            ps.stdin.write(cfg.stdin);
+            ps.stdin.end();
+        }
+        // Cap CLI runtime at 15s — anything that doesn't terminate
+        // by then is treated as a hang. Sky CLI examples all
+        // complete in well under 1s.
+        const killer = setTimeout(() => {
+            try { ps.kill('SIGKILL'); } catch {}
+        }, 15000);
+        ps.on('close', async (code) => {
+            clearTimeout(killer);
+            await writeFile(join(out, 'cli.log'), buf);
+            const expectExit = cfg.expectExit ?? 0;
+            const exitOk = code === expectExit;
+            const substrOk = !cfg.expectStdout || buf.includes(cfg.expectStdout);
+            if (exitOk && substrOk) {
+                resolveCli({ name, ok: true, stage: 'done' });
+            } else {
+                const why = !exitOk
+                    ? `exit ${code} (expected ${expectExit})`
+                    : `stdout missing "${cfg.expectStdout}"`;
+                resolveCli({ name, ok: false, stage: 'cli', err: why });
+            }
+        });
+    });
+}
+
+
 async function killTree(child) {
     if (!child || child.killed) return;
     try { child.kill('SIGTERM'); } catch {}
@@ -139,11 +187,15 @@ async function verify(name, cfg, browser) {
         return { name, ok: false, stage: 'build', err: e.message };
     }
 
-    // 2. Spawn binary
     const bin = join(dir, 'sky-out', 'app');
     if (!(await exists(bin))) {
         await log(`# missing binary: ${bin}\n`);
         return { name, ok: false, stage: 'spawn', err: 'no binary' };
+    }
+
+    // CLI examples: run binary, capture stdout, check exit + substring.
+    if (cfg.cli) {
+        return verifyCli(name, cfg, dir, bin, out);
     }
     const child = spawn(bin, [], {
         cwd: dir,

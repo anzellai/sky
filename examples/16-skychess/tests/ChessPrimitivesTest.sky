@@ -22,21 +22,21 @@ testSetAndGetPiece =
     Test.test
         "setPiece + getPiece round-trip"
         (\_ ->
-             let
-                 piece = { kind = Queen, colour = White }
-                 board = Board.setPiece 27 piece Dict.empty
-             in
-                 case Board.getPiece 27 board of
+            let
+                piece = { kind = Queen, colour = White }
+                board = Board.setPiece 27 piece Dict.empty
+            in
+                case Board.getPiece 27 board of
 
-                     Just p ->
-                         if p.kind == Queen && p.colour == White then
-                             Test.pass
+                    Just p ->
+                        if p.kind == Queen && p.colour == White then
+                            Test.pass
 
-                         else
-                             Test.fail "piece readback has wrong fields"
+                        else
+                            Test.fail "piece readback has wrong fields"
 
-                     Nothing ->
-                         Test.fail "piece disappeared after setPiece")
+                    Nothing ->
+                        Test.fail "piece disappeared after setPiece")
 
 
 -- movePiece: White queen d1 (sq 59) → d4 (sq 35).
@@ -46,33 +46,33 @@ testMovePieceBasic =
     Test.test
         "movePiece relocates the piece"
         (\_ ->
-             let
-                 board =
-                     Board.setPiece
-                         59
-                         { kind = Queen, colour = White }
-                         Dict.empty
-                 after = Board.movePiece 59 35 board
-                 atFrom = Board.getPiece 59 after
-                 atTo = Board.getPiece 35 after
-             in
-                 case atFrom of
+            let
+                board =
+                    Board.setPiece
+                        59
+                        { kind = Queen, colour = White }
+                        Dict.empty
+                after = Board.movePiece 59 35 board
+                atFrom = Board.getPiece 59 after
+                atTo = Board.getPiece 35 after
+            in
+                case atFrom of
 
-                     Just _ ->
-                         Test.fail "source square not cleared after move"
+                    Just _ ->
+                        Test.fail "source square not cleared after move"
 
-                     Nothing ->
-                         case atTo of
+                    Nothing ->
+                        case atTo of
 
-                             Nothing ->
-                                 Test.fail "target square empty after move"
+                            Nothing ->
+                                Test.fail "target square empty after move"
 
-                             Just p ->
-                                 if p.kind == Queen && p.colour == White then
-                                     Test.pass
+                            Just p ->
+                                if p.kind == Queen && p.colour == White then
+                                    Test.pass
 
-                                 else
-                                     Test.fail "moved piece has wrong fields")
+                                else
+                                    Test.fail "moved piece has wrong fields")
 
 
 -- materialValue returns Queen > Rook > Bishop > Knight > Pawn > King.
@@ -83,30 +83,30 @@ testMaterialValues =
     Test.test
         "materialValue returns the expected ranking"
         (\_ ->
-             let
-                 q = materialValue Queen
-                 r = materialValue Rook
-                 b = materialValue Bishop
-                 n = materialValue Knight
-                 p = materialValue Pawn
-                 k = materialValue King
-             in
-                 if q == 900 && r == 500 && b == 330 && n == 320 && p == 100 && k
-                     == 0 then
-                     Test.pass
+            let
+                q = materialValue Queen
+                r = materialValue Rook
+                b = materialValue Bishop
+                n = materialValue Knight
+                p = materialValue Pawn
+                k = materialValue King
+            in
+                if q == 900 && r == 500 && b == 330 && n == 320 && p == 100 && k
+                    == 0 then
+                    Test.pass
 
-                 else
-                     Test.fail
-                         ("unexpected values Q=" ++ String.fromInt q ++ " R="
-                              ++ String.fromInt r
-                              ++ " B="
-                              ++ String.fromInt b
-                              ++ " N="
-                              ++ String.fromInt n
-                              ++ " P="
-                              ++ String.fromInt p
-                              ++ " K="
-                              ++ String.fromInt k))
+                else
+                    Test.fail
+                        ("unexpected values Q=" ++ String.fromInt q ++ " R="
+                            ++ String.fromInt r
+                            ++ " B="
+                            ++ String.fromInt b
+                            ++ " N="
+                            ++ String.fromInt n
+                            ++ " P="
+                            ++ String.fromInt p
+                            ++ " K="
+                            ++ String.fromInt k))
 
 
 -- Eval.evaluate: board with a lone Black knight < 0 (Black has
@@ -118,21 +118,21 @@ testEvalBlackKnightMaterial =
     Test.test
         "eval is negative for lone Black knight"
         (\_ ->
-             let
-                 board =
-                     Board.setPiece
-                         27
-                         { kind = Knight, colour = Black }
-                         Dict.empty
-                 score = Eval.evaluate board
-             in
-                 if score < 0 then
-                     Test.pass
+            let
+                board =
+                    Board.setPiece
+                        27
+                        { kind = Knight, colour = Black }
+                        Dict.empty
+                score = Eval.evaluate board
+            in
+                if score < 0 then
+                    Test.pass
 
-                 else
-                     Test.fail
-                         ("expected negative for Black knight alone, got "
-                              ++ String.fromInt score))
+                else
+                    Test.fail
+                        ("expected negative for Black knight alone, got "
+                            ++ String.fromInt score))
 
 
 -- Symmetric check: White knight alone → positive.
@@ -141,20 +141,20 @@ testEvalWhiteKnightMaterial =
     Test.test
         "eval is positive for lone White knight"
         (\_ ->
-             let
-                 board =
-                     Board.setPiece
-                         27
-                         { kind = Knight, colour = White }
-                         Dict.empty
-                 score = Eval.evaluate board
-             in
-                 if score > 0 then
-                     Test.pass
+            let
+                board =
+                    Board.setPiece
+                        27
+                        { kind = Knight, colour = White }
+                        Dict.empty
+                score = Eval.evaluate board
+            in
+                if score > 0 then
+                    Test.pass
 
-                 else
-                     Test.fail
-                         ("expected positive, got " ++ String.fromInt score))
+                else
+                    Test.fail
+                        ("expected positive, got " ++ String.fromInt score))
 
 
 tests : List Test

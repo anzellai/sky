@@ -14,10 +14,11 @@ import View.Common exposing (clickable)
 composeArea : Model -> Post -> Element Msg
 composeArea model post =
     case model.session of
+
         Nothing ->
-            Ui.el [ Font.color (Ui.rgb 130 130 130), Font.size 12 ]
-                (clickable (Navigate LoginPage)
-                    (Ui.text "Sign in to comment"))
+            Ui.el
+                [ Font.color (Ui.rgb 130 130 130), Font.size 12 ]
+                (clickable (Navigate LoginPage) (Ui.text "Sign in to comment"))
 
         Just _sess ->
             composeForm model post
@@ -33,8 +34,9 @@ composeForm model post =
         , Border.width 1
         , Border.color (Ui.rgb 220 220 200)
         ]
-        [ Ui.el [ Font.size 12, Font.color (Ui.rgb 100 100 100) ]
-            (Ui.text (replyContext model.replyTo))
+        [ Ui.el
+              [ Font.size 12, Font.color (Ui.rgb 100 100 100) ]
+              (Ui.text (replyContext model.replyTo))
         , composeInput model.composeBody
         , composeActions post.id model.replyTo
         ]
@@ -44,6 +46,7 @@ replyContext : Int -> String
 replyContext replyTo =
     if replyTo == 0 then
         "Comment on this post"
+
     else
         "Replying to comment #" ++ String.fromInt replyTo
 
@@ -70,21 +73,23 @@ composeInput current =
 
 composeActions : Int -> Int -> Element Msg
 composeActions postId replyTo =
-    Ui.row [ Ui.spacing 6 ]
+    Ui.row
+        [Ui.spacing 6]
         [ Ui.button
-            [ Background.color (Ui.rgb 255 102 0)
-            , Font.color (Ui.rgb 255 255 255)
-            , Border.rounded 3
-            , Ui.padding 4
-            ]
-            { onPress = Just (SubmitComment postId), label = Ui.text "post" }
+              [ Background.color (Ui.rgb 255 102 0)
+              , Font.color (Ui.rgb 255 255 255)
+              , Border.rounded 3
+              , Ui.padding 4
+              ]
+              { onPress = Just (SubmitComment postId), label = Ui.text "post" }
         , if replyTo == 0 then
-            Ui.text ""
+              Ui.text ""
+
           else
-            Ui.button
-                [ Background.color (Ui.rgb 230 230 230)
-                , Border.rounded 3
-                , Ui.padding 4
-                ]
-                { onPress = Just CancelReply, label = Ui.text "cancel" }
+              Ui.button
+                  [ Background.color (Ui.rgb 230 230 230)
+                  , Border.rounded 3
+                  , Ui.padding 4
+                  ]
+                  { onPress = Just CancelReply, label = Ui.text "cancel" }
         ]

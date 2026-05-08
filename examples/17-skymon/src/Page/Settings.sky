@@ -18,13 +18,13 @@ viewSettings model =
     Layout.page
         model
         (div
-             []
-             [ h2 [class "section-title"] [text "Settings"]
-             , viewAddMonitorForm model
-             , viewMonitorList model
-             , viewAddMetricForm model
-             , viewMetricList model
-             ])
+            []
+            [ h2 [class "section-title"] [text "Settings"]
+            , viewAddMonitorForm model
+            , viewMonitorList model
+            , viewAddMetricForm model
+            , viewMetricList model
+            ])
 
 
 viewAddMonitorForm : Model -> VNode
@@ -43,8 +43,8 @@ viewAddMonitorForm model =
                     , placeholder "My API"
                     , value
                           (Maybe.withDefault
-                               ""
-                               (Dict.get "monitor_name" model.configInput))
+                              ""
+                              (Dict.get "monitor_name" model.configInput))
                     , onInput InputMonitorName
                     ]
               ]
@@ -57,8 +57,8 @@ viewAddMonitorForm model =
                     , placeholder "https://api.example.com/health"
                     , value
                           (Maybe.withDefault
-                               ""
-                               (Dict.get "monitor_url" model.configInput))
+                              ""
+                              (Dict.get "monitor_url" model.configInput))
                     , onInput InputMonitorUrl
                     ]
               ]
@@ -71,8 +71,8 @@ viewAddMonitorForm model =
                     , placeholder "public, user, or admin"
                     , value
                           (Maybe.withDefault
-                               "user"
-                               (Dict.get "monitor_visibility" model.configInput))
+                              "user"
+                              (Dict.get "monitor_visibility" model.configInput))
                     , onInput InputMonitorVis
                     ]
               ]
@@ -153,8 +153,8 @@ viewAddMetricForm model =
                     , placeholder "Orders/Hour"
                     , value
                           (Maybe.withDefault
-                               ""
-                               (Dict.get "metric_name" model.configInput))
+                              ""
+                              (Dict.get "metric_name" model.configInput))
                     , onInput InputMetricName
                     ]
               ]
@@ -167,8 +167,8 @@ viewAddMetricForm model =
                     , placeholder "http"
                     , value
                           (Maybe.withDefault
-                               ""
-                               (Dict.get "metric_type" model.configInput))
+                              ""
+                              (Dict.get "metric_type" model.configInput))
                     , onInput InputMetricType
                     ]
               ]
@@ -182,8 +182,8 @@ viewAddMetricForm model =
                           "https://api.example.com/stats or postgres://..."
                     , value
                           (Maybe.withDefault
-                               ""
-                               (Dict.get "metric_url" model.configInput))
+                              ""
+                              (Dict.get "metric_url" model.configInput))
                     , onInput InputMetricUrl
                     ]
               ]
@@ -199,8 +199,8 @@ viewAddMetricForm model =
                     ]
                     [text
                         (Maybe.withDefault
-                             ""
-                             (Dict.get "metric_query" model.configInput))]
+                            ""
+                            (Dict.get "metric_query" model.configInput))]
               ]
         , div
               [class "form-group"]
@@ -211,8 +211,8 @@ viewAddMetricForm model =
                     , placeholder "public, user, or admin"
                     , value
                           (Maybe.withDefault
-                               "user"
-                               (Dict.get "metric_visibility" model.configInput))
+                              "user"
+                              (Dict.get "metric_visibility" model.configInput))
                     , onInput InputMetricVis
                     ]
               ]
@@ -227,8 +227,8 @@ viewAddMetricForm model =
                     , placeholder "data.count or result.0.value"
                     , value
                           (Maybe.withDefault
-                               ""
-                               (Dict.get "metric_field" model.configInput))
+                              ""
+                              (Dict.get "metric_field" model.configInput))
                     , onInput InputMetricField
                     ]
               ]

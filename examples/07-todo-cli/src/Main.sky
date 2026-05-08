@@ -17,7 +17,6 @@ module Main exposing (main)
 -- which prints to stderr and `System.exit 1`s. No silent `let _ = …`
 -- discard pattern — every effect either runs to completion via the
 -- chain or surfaces its error through the reporter.
-
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.List as List
 import Sky.Core.Maybe as Maybe
@@ -41,10 +40,11 @@ import Std.Log exposing (println)
 -- CLI entry points.
 main =
     let
+    -- System.args is Task Error (List String) after the
+    -- v1.0 Task-everywhere migration. Force at the
+    -- read site for ergonomic let-binding access.
         pipeline =
-            Db.connect ()
-                |> Task.andThen runApp
-                |> Task.onError reportError
+            Db.connect () |> Task.andThen runApp |> Task.onError reportError
         _ = Task.run pipeline
     in
         ()
@@ -56,13 +56,8 @@ runApp conn =
         |> Task.andThen
                (\_ ->
                    let
-                       -- System.args is Task Error (List String) after the
-                       -- v1.0 Task-everywhere migration. Force at the
-                       -- read site for ergonomic let-binding access.
                        userArgs =
-                           System.args ()
-                               |> Task.run
-                               |> Result.withDefault []
+                           System.args () |> Task.run |> Result.withDefault []
                        cmd = getArg userArgs
                        cmdArg = getArg (List.drop 1 userArgs)
                    in
@@ -118,6 +113,7 @@ listTodos conn =
                                    "No todos yet. Add one with: ./app add \"My task\""
                        in
                            ()
+
                    else
                        let
                            _ = println "Your TODOs:"
@@ -141,6 +137,7 @@ formatTodo row =
         status =
             if todoDone == "1" then
                 "[x]"
+
             else
                 "[ ]"
     in
@@ -152,8 +149,10 @@ markDone conn idStr =
     Db.exec conn "UPDATE todos SET done = 1 WHERE id = ?" [idStr]
         |> Task.map
                (\_ ->
-                   let _ = println ("Marked as done: " ++ idStr) in
-                   ())
+                   let
+                       _ = println ("Marked as done: " ++ idStr)
+                   in
+                       ())
 
 
 markUndone : Db -> String -> Task Error ()
@@ -161,8 +160,10 @@ markUndone conn idStr =
     Db.exec conn "UPDATE todos SET done = 0 WHERE id = ?" [idStr]
         |> Task.map
                (\_ ->
-                   let _ = println ("Marked as not done: " ++ idStr) in
-                   ())
+                   let
+                       _ = println ("Marked as not done: " ++ idStr)
+                   in
+                       ())
 
 
 removeTodo : Db -> String -> Task Error ()
@@ -170,8 +171,10 @@ removeTodo conn idStr =
     Db.exec conn "DELETE FROM todos WHERE id = ?" [idStr]
         |> Task.map
                (\_ ->
-                   let _ = println ("Removed todo: " ++ idStr) in
-                   ())
+                   let
+                       _ = println ("Removed todo: " ++ idStr)
+                   in
+                       ())
 
 
 clearDone : Db -> Task Error ()
@@ -179,8 +182,10 @@ clearDone conn =
     Db.exec conn "DELETE FROM todos WHERE done = 1" []
         |> Task.map
                (\_ ->
-                   let _ = println "Cleared completed todos" in
-                   ())
+                   let
+                       _ = println "Cleared completed todos"
+                   in
+                       ())
 
 
 showUsage : Task Error ()
@@ -210,8 +215,11 @@ runCommand conn cmd cmdArg =
 
         "add" ->
             if cmdArg == "" then
-                let _ = println "Usage: ./app add <title>" in
-                Task.succeed ()
+                let
+                    _ = println "Usage: ./app add <title>"
+                in
+                    Task.succeed ()
+
             else
                 addTodo conn cmdArg
 
@@ -220,22 +228,31 @@ runCommand conn cmd cmdArg =
 
         "done" ->
             if cmdArg == "" then
-                let _ = println "Usage: ./app done <id>" in
-                Task.succeed ()
+                let
+                    _ = println "Usage: ./app done <id>"
+                in
+                    Task.succeed ()
+
             else
                 markDone conn cmdArg
 
         "undone" ->
             if cmdArg == "" then
-                let _ = println "Usage: ./app undone <id>" in
-                Task.succeed ()
+                let
+                    _ = println "Usage: ./app undone <id>"
+                in
+                    Task.succeed ()
+
             else
                 markUndone conn cmdArg
 
         "remove" ->
             if cmdArg == "" then
-                let _ = println "Usage: ./app remove <id>" in
-                Task.succeed ()
+                let
+                    _ = println "Usage: ./app remove <id>"
+                in
+                    Task.succeed ()
+
             else
                 removeTodo conn cmdArg
 

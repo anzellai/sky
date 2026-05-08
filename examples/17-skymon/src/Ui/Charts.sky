@@ -18,11 +18,11 @@ sparkline width height values =
             maxVal =
                 List.foldl
                     (\v acc ->
-                         if v > acc then
-                             v
+                        if v > acc then
+                            v
 
-                         else
-                             acc)
+                        else
+                            acc)
                     1
                     values
             points = buildSparklinePoints width height maxVal values 0
@@ -34,7 +34,7 @@ sparkline width height values =
                 , attribute
                       "viewBox"
                       ("0 0 " ++ String.fromInt width ++ " "
-                           ++ String.fromInt height)
+                          ++ String.fromInt height)
                 , class "sparkline"
                 ]
                 [node

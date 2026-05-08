@@ -297,13 +297,41 @@ createCheckoutSession cartId items userId userName userEmail remarks =
 
                                     Ok phoneCollection ->
                                         Stripe.newCheckoutSessionParams ()
-                                            |> Result.andThen (\p -> Stripe.checkoutSessionParamsSetMode "payment" p)
-                                            |> Result.andThen (\p -> Stripe.checkoutSessionParamsSetSuccessURL successUrl p)
-                                            |> Result.andThen (\p -> Stripe.checkoutSessionParamsSetCancelURL cancelUrl p)
-                                            |> Result.andThen (\p -> Stripe.checkoutSessionParamsSetCustomer customerId p)
-                                            |> Result.andThen (\p -> Stripe.checkoutSessionParamsSetLineItems lineItems p)
-                                            |> Result.andThen (\p -> Stripe.checkoutSessionParamsSetShippingAddressCollection shippingCollection p)
-                                            |> Result.andThen (\p -> Stripe.checkoutSessionParamsSetPhoneNumberCollection phoneCollection p)
+                                            |> Result.andThen
+                                                   (\p ->
+                                                       Stripe.checkoutSessionParamsSetMode
+                                                           "payment"
+                                                           p)
+                                            |> Result.andThen
+                                                   (\p ->
+                                                       Stripe.checkoutSessionParamsSetSuccessURL
+                                                           successUrl
+                                                           p)
+                                            |> Result.andThen
+                                                   (\p ->
+                                                       Stripe.checkoutSessionParamsSetCancelURL
+                                                           cancelUrl
+                                                           p)
+                                            |> Result.andThen
+                                                   (\p ->
+                                                       Stripe.checkoutSessionParamsSetCustomer
+                                                           customerId
+                                                           p)
+                                            |> Result.andThen
+                                                   (\p ->
+                                                       Stripe.checkoutSessionParamsSetLineItems
+                                                           lineItems
+                                                           p)
+                                            |> Result.andThen
+                                                   (\p ->
+                                                       Stripe.checkoutSessionParamsSetShippingAddressCollection
+                                                           shippingCollection
+                                                           p)
+                                            |> Result.andThen
+                                                   (\p ->
+                                                       Stripe.checkoutSessionParamsSetPhoneNumberCollection
+                                                           phoneCollection
+                                                           p)
                     _ =
                         println
                             ("[STRIPE] Creating checkout session for cart: "

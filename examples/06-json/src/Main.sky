@@ -92,7 +92,7 @@ decodeSimpleExample =
 userDecoder =
     Decode.succeed
         (\name email age verified ->
-             { name = name, email = email, age = age, verified = verified })
+            { name = name, email = email, age = age, verified = verified })
         |> Pipeline.required "name" Decode.string
         |> Pipeline.required "email" Decode.string
         |> Pipeline.required "age" Decode.int
@@ -132,10 +132,10 @@ optionalExample =
         Result.withDefault
             "profile error"
             (Result.map
-                 (\p ->
-                      "@" ++ p.username ++ ", bio: " ++ p.bio ++ ", followers: "
-                          ++ String.fromInt p.followers)
-                 result)
+                (\p ->
+                    "@" ++ p.username ++ ", bio: " ++ p.bio ++ ", followers: "
+                        ++ String.fromInt p.followers)
+                result)
 
 
 -- 6. Nested field access
@@ -150,8 +150,8 @@ nestedExample =
     Result.withDefault
         "nested error"
         (Decode.decodeString
-             nestedDecoder
-             "{\"user\":{\"profile\":{\"name\":\"Eve\",\"city\":\"London\"}}}")
+            nestedDecoder
+            "{\"user\":{\"profile\":{\"name\":\"Eve\",\"city\":\"London\"}}}")
 
 
 -- 7. Decoding a list of objects
@@ -176,8 +176,8 @@ listExample =
         Result.withDefault
             "list error"
             (Result.map
-                 (\todos -> String.join ", " (List.map (\t -> t.title) todos))
-                 result)
+                (\todos -> String.join ", " (List.map (\t -> t.title) todos))
+                result)
 
 
 -- 8. Roundtrip: Encode -> JSON String -> Decode
@@ -196,12 +196,12 @@ roundtrip =
         decoder =
             Decode.map2
                 (\c ns ->
-                     "Count: " ++ String.fromInt c ++ ", Names: "
-                         ++ String.join ", " ns)
+                    "Count: " ++ String.fromInt c ++ ", Names: "
+                        ++ String.join ", " ns)
                 (Decode.field "count" Decode.int)
                 (Decode.field
-                     "items"
-                     (Decode.list (Decode.field "name" Decode.string)))
+                    "items"
+                    (Decode.list (Decode.field "name" Decode.string)))
         result = Decode.decodeString decoder jsonStr
     in
         Result.withDefault "roundtrip error" result

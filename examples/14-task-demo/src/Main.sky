@@ -14,14 +14,14 @@ main =
                        (\name -> Task.succeed ("Hello, " ++ name ++ "!"))
                 |> Task.andThen
                        (\greeting ->
-                            Task.succeed
-                                (greeting ++ " Task is the effect boundary."))
+                           Task.succeed
+                               (greeting ++ " Task is the effect boundary."))
         successResult = Task.run pipeline
         _ = printResult "Success" successResult
         failResult =
             Task.run
                 (Task.fail "intentional"
-                     |> Task.andThen (\_ -> Task.succeed "unreachable"))
+                    |> Task.andThen (\_ -> Task.succeed "unreachable"))
     in
         printResult "Fail" failResult
 

@@ -32,7 +32,7 @@ logIfErr tag r =
                 _ =
                     println
                         ("[CHESS][persist-fail] " ++ tag ++ ": "
-                             ++ Error.toString e)
+                            ++ Error.toString e)
             in
                 ()
 
@@ -120,17 +120,17 @@ executeBlackMove model =
         _ =
             println
                 ("[AI] Best: " ++ String.fromInt from ++ "->"
-                     ++ String.fromInt to)
+                    ++ String.fromInt to)
         _ =
             println
                 ("[AI] First 10: "
-                     ++ String.join
-                            " "
-                            (List.map
-                                 (\m ->
-                                      String.fromInt (fst m) ++ "->"
-                                          ++ String.fromInt (snd m))
-                                 (List.take 10 allMoves)))
+                    ++ String.join
+                           " "
+                           (List.map
+                               (\m ->
+                                   String.fromInt (fst m) ++ "->"
+                                       ++ String.fromInt (snd m))
+                               (List.take 10 allMoves)))
     in
         applyBlackOr from to model
 

@@ -1,4 +1,13 @@
-module Lib.Ideas exposing (createIdea, getIdeas, getIdea, getIdeasByStatus, toggleVote, hasVoted, getVoteCount, updateStatus)
+module Lib.Ideas exposing
+    ( createIdea
+    , getIdeas
+    , getIdea
+    , getIdeasByStatus
+    , toggleVote
+    , hasVoted
+    , getVoteCount
+    , updateStatus
+    )
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Maybe exposing (..)
@@ -117,7 +126,7 @@ toggleVote ideaId userId =
                                 _ =
                                     println
                                         ("[VOTE] Removed: " ++ userId ++ " on "
-                                             ++ ideaId)
+                                            ++ ideaId)
                             in
                                 Ok ()
 
@@ -140,9 +149,8 @@ toggleVote ideaId userId =
                                 let
                                     _ =
                                         println
-                                            ("[VOTE] Added: " ++ userId
-                                                 ++ " on "
-                                                 ++ ideaId)
+                                            ("[VOTE] Added: " ++ userId ++ " on "
+                                                ++ ideaId)
                                 in
                                     Ok ()
 
@@ -210,6 +218,6 @@ updateStatus ideaId newStatus =
                 _ =
                     println
                         ("[IDEA] Status changed: " ++ ideaId ++ " -> "
-                             ++ newStatus)
+                            ++ newStatus)
             in
                 Ok ()

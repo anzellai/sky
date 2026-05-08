@@ -15,15 +15,15 @@ viewAuth model =
     Layout.page
         model
         (div
-             [style "max-width: 400px; margin: 48px auto"]
-             [div
-                 [class "card"]
-                 [ h2
-                       [style
-                           "font-size: 20px; color: #f1f5f9; margin-bottom: 24px; text-align: center"]
-                       [text "Sign In to SkyMon"]
-                 , viewAuthBody model
-                 ]])
+            [style "max-width: 400px; margin: 48px auto"]
+            [div
+                [class "card"]
+                [ h2
+                      [style
+                          "font-size: 20px; color: #f1f5f9; margin-bottom: 24px; text-align: center"]
+                      [text "Sign In to SkyMon"]
+                , viewAuthBody model
+                ]])
 
 
 viewAuthBody : Model -> VNode
@@ -76,8 +76,8 @@ viewLoginForm model =
                     , placeholder "Enter username"
                     , value
                           (Maybe.withDefault
-                               ""
-                               (Dict.get "auth_username" model.configInput))
+                              ""
+                              (Dict.get "auth_username" model.configInput))
                     , onInput InputAuthUsername
                     ]
               ]
@@ -90,11 +90,11 @@ viewLoginForm model =
                     , placeholder "Enter password"
                     , value
                           (Maybe.withDefault
-                               ""
-                               (Dict.get "auth_password" model.configInput))
-                    -- onChange (fires on blur) instead of onInput so
-                    -- password-manager browser extensions don't kick in
-                    -- on every keystroke's SSE patch.
+                              ""
+                              (Dict.get "auth_password" model.configInput))
+                              -- onChange (fires on blur) instead of onInput so
+                              -- password-manager browser extensions don't kick in
+                              -- on every keystroke's SSE patch.
                     , onChange InputAuthPassword
                     ]
               ]

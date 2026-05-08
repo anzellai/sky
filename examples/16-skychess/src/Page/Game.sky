@@ -19,21 +19,21 @@ viewGame model =
     Layout.page
         model
         (div
-             []
-             [ viewStatusBar model
-             , div
-                   [class "game-layout"]
-                   [ div
-                         [class "board-section"]
-                         [ viewBoard model, viewGameActions model ]
-                   , div
-                         [class "side-panel"]
-                         [ viewCaptured "White captures" model.capturedByWhite
-                         , viewMoveHistory model
-                         , viewCaptured "Black captures" model.capturedByBlack
-                         ]
-                   ]
-             ])
+            []
+            [ viewStatusBar model
+            , div
+                  [class "game-layout"]
+                  [ div
+                        [class "board-section"]
+                        [ viewBoard model, viewGameActions model ]
+                  , div
+                        [class "side-panel"]
+                        [ viewCaptured "White captures" model.capturedByWhite
+                        , viewMoveHistory model
+                        , viewCaptured "Black captures" model.capturedByBlack
+                        ]
+                  ]
+            ])
 
 
 viewStatusBar model =
@@ -86,8 +86,8 @@ viewRank rank model =
     tr
         []
         (List.map
-             (\file -> viewSquare (rank * 8 + file) model)
-             [ 0, 1, 2, 3, 4, 5, 6, 7 ])
+            (\file -> viewSquare (rank * 8 + file) model)
+            [ 0, 1, 2, 3, 4, 5, 6, 7 ])
 
 
 viewSquare : Int -> Model -> VNode

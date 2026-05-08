@@ -19,12 +19,12 @@ viewAlerts model =
     Layout.page
         model
         (div
-             []
-             [ h2 [class "section-title"] [text "Alert Rules"]
-             , viewAddAlertForm model
-             , viewAlertList model
-             , viewAlertHistory
-             ])
+            []
+            [ h2 [class "section-title"] [text "Alert Rules"]
+            , viewAddAlertForm model
+            , viewAlertList model
+            , viewAlertHistory
+            ])
 
 
 viewAddAlertForm : Model -> VNode
@@ -43,8 +43,8 @@ viewAddAlertForm model =
                     , placeholder "Metric name or ID"
                     , value
                           (Maybe.withDefault
-                               ""
-                               (Dict.get "alert_metric" model.configInput))
+                              ""
+                              (Dict.get "alert_metric" model.configInput))
                     , onInput InputAlertMetric
                     ]
               ]
@@ -59,10 +59,8 @@ viewAddAlertForm model =
                           , placeholder "> < >= <= == != contains down"
                           , value
                                 (Maybe.withDefault
-                                     ""
-                                     (Dict.get
-                                          "alert_condition"
-                                          model.configInput))
+                                    ""
+                                    (Dict.get "alert_condition" model.configInput))
                           , onInput InputAlertCondition
                           ]
                     ]
@@ -75,10 +73,8 @@ viewAddAlertForm model =
                           , placeholder "100"
                           , value
                                 (Maybe.withDefault
-                                     ""
-                                     (Dict.get
-                                          "alert_threshold"
-                                          model.configInput))
+                                    ""
+                                    (Dict.get "alert_threshold" model.configInput))
                           , onInput InputAlertThreshold
                           ]
                     ]
@@ -94,10 +90,10 @@ viewAddAlertForm model =
                           , placeholder "webhook, slack, or log"
                           , value
                                 (Maybe.withDefault
-                                     "log"
-                                     (Dict.get
-                                          "alert_notify_type"
-                                          model.configInput))
+                                    "log"
+                                    (Dict.get
+                                        "alert_notify_type"
+                                        model.configInput))
                           , onInput InputAlertNotifyType
                           ]
                     ]
@@ -110,10 +106,10 @@ viewAddAlertForm model =
                           , placeholder "https://hooks.slack.com/services/..."
                           , value
                                 (Maybe.withDefault
-                                     ""
-                                     (Dict.get
-                                          "alert_notify_target"
-                                          model.configInput))
+                                    ""
+                                    (Dict.get
+                                        "alert_notify_target"
+                                        model.configInput))
                           , onInput InputAlertTarget
                           ]
                     ]
@@ -174,8 +170,7 @@ viewAlertRow model alert =
             , td
                   [style "color: #64748b"]
                   [text
-                      (alert.notifyType ++ ": "
-                           ++ truncate 30 alert.notifyTarget)]
+                      (alert.notifyType ++ ": " ++ truncate 30 alert.notifyTarget)]
             , td
                   []
                   [if alert.enabled then
@@ -278,7 +273,7 @@ viewAlertHistoryRow row =
               [style "color: #a78bfa; font-family: monospace"]
               [text
                   (Database.getField "condition" row ++ " "
-                       ++ Database.getField "threshold" row)]
+                      ++ Database.getField "threshold" row)]
         , td
               [style "color: #64748b"]
               [text (Database.getField "notify_type" row)]

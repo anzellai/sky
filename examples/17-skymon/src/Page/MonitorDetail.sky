@@ -23,11 +23,11 @@ viewMonitorDetail monId model =
             model
             (case monitor of
 
-                 Just mon ->
-                     viewMonitorContent mon
+                Just mon ->
+                    viewMonitorContent mon
 
-                 Nothing ->
-                     viewNotFound)
+                Nothing ->
+                    viewNotFound)
 
 
 viewMonitorContent : Monitor -> VNode
@@ -79,7 +79,7 @@ viewStatusBadge status =
         span
             [style
                 ("padding: 6px 16px; border-radius: 20px; font-weight: 600; font-size: 13px; background: "
-                     ++ color)]
+                    ++ color)]
             [text label]
 
 
@@ -211,8 +211,7 @@ viewHistoryRow row =
               []
               [ span
                     [ class
-                          ("status-dot status-"
-                               ++ Database.getField "status" row)
+                          ("status-dot status-" ++ Database.getField "status" row)
                     , style "margin-right: 6px"
                     ]
                     []

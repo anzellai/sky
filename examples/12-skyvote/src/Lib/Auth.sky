@@ -25,8 +25,8 @@ hashPassword password =
 
 verifyPassword : String -> String -> Bool
 verifyPassword password storedHash =
-    -- Auth.verifyPassword returns Result Error Bool — collapse with
-    -- withDefault False (auth-deny on internal error, not auth-grant).
+-- Auth.verifyPassword returns Result Error Bool — collapse with
+-- withDefault False (auth-deny on internal error, not auth-grant).
     Result.withDefault False (Auth.verifyPassword password storedHash)
 
 
@@ -47,9 +47,8 @@ createUser username email password =
                 let
                     _ =
                         println
-                            ("[AUTH] User created: " ++ username ++ " ("
-                                 ++ email
-                                 ++ ")")
+                            ("[AUTH] User created: " ++ username ++ " (" ++ email
+                                ++ ")")
                 in
                     Ok id
 
@@ -81,8 +80,8 @@ authenticateUser email password =
                     in
                         Err
                             (Error.permissionDenied
-                                 |> Error.withMessage
-                                        "Invalid email or password.")
+                                |> Error.withMessage
+                                       "Invalid email or password.")
 
                 Just user ->
                     let
@@ -101,12 +100,12 @@ authenticateUser email password =
                                 _ =
                                     println
                                         ("[AUTH] Sign-in failed (bad password): "
-                                             ++ email)
+                                            ++ email)
                             in
                                 Err
                                     (Error.permissionDenied
-                                         |> Error.withMessage
-                                                "Invalid email or password.")
+                                        |> Error.withMessage
+                                               "Invalid email or password.")
 
 
 -- getUserById : Result Error (Maybe User). The outer Result is for

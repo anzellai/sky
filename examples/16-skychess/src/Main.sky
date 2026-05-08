@@ -126,7 +126,7 @@ update msg model =
                                 _ =
                                     println
                                         ("[CHESS ERROR] loadGames: "
-                                             ++ Error.toString e)
+                                            ++ Error.toString e)
                             in
                                 Error.toString e
             in
@@ -192,7 +192,7 @@ handleLoadGame gameId model =
                         _ =
                             println
                                 ("[CHESS ERROR] getGameMoves: "
-                                     ++ Error.toString e)
+                                    ++ Error.toString e)
                     in
                         ()
         _ =
@@ -321,7 +321,7 @@ replayMovesLoop moves board history =
                                     _ =
                                         println
                                             ("[REPLAY ERROR] bad to_square: "
-                                                 ++ toStr)
+                                                ++ toStr)
                                 in
                                     replayMovesLoop rest board history
 
@@ -330,7 +330,7 @@ replayMovesLoop moves board history =
                             _ =
                                 println
                                     ("[REPLAY ERROR] bad from_square: "
-                                         ++ fromStr)
+                                        ++ fromStr)
                         in
                             replayMovesLoop rest board history
 
@@ -508,8 +508,7 @@ handleDeleteGame gameId model =
                     let
                         _ =
                             println
-                                ("[CHESS ERROR] deleteGame: "
-                                     ++ Error.toString e)
+                                ("[CHESS ERROR] deleteGame: " ++ Error.toString e)
                     in
                         ()
         gamesResult = Games.getGames model.playerName
@@ -528,7 +527,7 @@ handleDeleteGame gameId model =
                                 _ =
                                     println
                                         ("[CHESS ERROR] getGames: "
-                                             ++ Error.toString e)
+                                            ++ Error.toString e)
                             in
                                 Error.toString e
 

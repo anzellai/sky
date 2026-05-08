@@ -3,7 +3,6 @@ module View.Common exposing (..)
 -- App chrome shared across pages: top nav, session widget, footer,
 -- plus two low-level click helpers (clickable for inline links,
 -- navButton for chrome buttons).
-
 import Sky.Core.Prelude exposing (..)
 import Std.Ui as Ui
 import Std.Ui exposing (Element)
@@ -41,21 +40,26 @@ topNav model =
         , Background.color (Ui.rgb 255 102 0)
         , Border.rounded 4
         ]
-        [ Ui.el [ Font.bold, Font.color (Ui.rgb 255 255 255) ]
-            (clickable (Navigate HomePage) (Ui.text "skyforum"))
-        , Ui.el [ Font.color (Ui.rgb 255 255 255) ]
-            (clickable (Navigate HomePage) (Ui.text "top"))
-        , Ui.el [ Ui.alignRight ] (sessionWidget model.session)
+        [ Ui.el
+              [ Font.bold, Font.color (Ui.rgb 255 255 255) ]
+              (clickable (Navigate HomePage) (Ui.text "skyforum"))
+        , Ui.el
+              [Font.color (Ui.rgb 255 255 255)]
+              (clickable (Navigate HomePage) (Ui.text "top"))
+        , Ui.el [Ui.alignRight] (sessionWidget model.session)
         ]
 
 
 sessionWidget : Maybe Session -> Element Msg
 sessionWidget maybeSession =
     case maybeSession of
+
         Just sess ->
-            Ui.row [ Ui.spacing 8 ]
-                [ Ui.el [ Font.color (Ui.rgb 255 255 255) ]
-                    (Ui.text ("hi, " ++ sess.username))
+            Ui.row
+                [Ui.spacing 8]
+                [ Ui.el
+                      [Font.color (Ui.rgb 255 255 255)]
+                      (Ui.text ("hi, " ++ sess.username))
                 , navButton LogoutClicked "logout"
                 ]
 

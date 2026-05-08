@@ -14,7 +14,7 @@ import View.Common exposing (clickable)
 
 postsListView : Maybe Session -> List Post -> Element Msg
 postsListView maybeSession posts =
-    Ui.column [ Ui.spacing 12 ] (List.indexedMap (postRow maybeSession) posts)
+    Ui.column [Ui.spacing 12] (List.indexedMap (postRow maybeSession) posts)
 
 
 postRow : Maybe Session -> Int -> Post -> Element Msg
@@ -36,10 +36,7 @@ postRow maybeSession index post =
 rankNumber : Int -> Element Msg
 rankNumber n =
     Ui.el
-        [ Ui.width (Ui.px 28)
-        , Ui.centerY
-        , Font.color (Ui.rgb 130 130 130)
-        ]
+        [ Ui.width (Ui.px 28), Ui.centerY, Font.color (Ui.rgb 130 130 130) ]
         (Ui.text (String.fromInt n ++ "."))
 
 
@@ -55,30 +52,48 @@ postVoteButtons maybeSession post =
         downActive = List.member username post.downvoters
     in
         Ui.column
-            [ Ui.width (Ui.px 40)
-            , Ui.spacing 2
-            , Ui.centerY
-            ]
+            [ Ui.width (Ui.px 40), Ui.spacing 2, Ui.centerY ]
             [ Ui.button
-                [ Background.color (if upActive then Ui.rgb 255 102 0 else Ui.rgb 240 240 240)
-                , Font.color (if upActive then Ui.rgb 255 255 255 else Ui.rgb 130 130 130)
-                , Border.rounded 3
-                , Border.width 0
-                , Ui.padding 2
-                , Ui.centerX
-                ]
-                { onPress = Just (UpvotePost post.id), label = Ui.text "▲" }
-            , Ui.el [ Ui.centerX, Font.size 11, Font.color (Ui.rgb 130 130 130) ]
-                (Ui.text (String.fromInt (postScore post)))
+                  [ Background.color
+                        (if upActive then
+                            Ui.rgb 255 102 0
+
+                        else
+                            Ui.rgb 240 240 240)
+                  , Font.color
+                        (if upActive then
+                            Ui.rgb 255 255 255
+
+                        else
+                            Ui.rgb 130 130 130)
+                  , Border.rounded 3
+                  , Border.width 0
+                  , Ui.padding 2
+                  , Ui.centerX
+                  ]
+                  { onPress = Just (UpvotePost post.id), label = Ui.text "▲" }
+            , Ui.el
+                  [ Ui.centerX, Font.size 11, Font.color (Ui.rgb 130 130 130) ]
+                  (Ui.text (String.fromInt (postScore post)))
             , Ui.button
-                [ Background.color (if downActive then Ui.rgb 100 130 220 else Ui.rgb 240 240 240)
-                , Font.color (if downActive then Ui.rgb 255 255 255 else Ui.rgb 130 130 130)
-                , Border.rounded 3
-                , Border.width 0
-                , Ui.padding 2
-                , Ui.centerX
-                ]
-                { onPress = Just (DownvotePost post.id), label = Ui.text "▼" }
+                  [ Background.color
+                        (if downActive then
+                            Ui.rgb 100 130 220
+
+                        else
+                            Ui.rgb 240 240 240)
+                  , Font.color
+                        (if downActive then
+                            Ui.rgb 255 255 255
+
+                        else
+                            Ui.rgb 130 130 130)
+                  , Border.rounded 3
+                  , Border.width 0
+                  , Ui.padding 2
+                  , Ui.centerX
+                  ]
+                  { onPress = Just (DownvotePost post.id), label = Ui.text "▼" }
             ]
 
 
@@ -87,27 +102,40 @@ postVoteButtons maybeSession post =
 currentUsername : Maybe Session -> String
 currentUsername maybeSession =
     case maybeSession of
-        Just sess -> sess.username
-        Nothing -> ""
+
+        Just sess ->
+            sess.username
+
+        Nothing ->
+            ""
 
 
 postBody : Post -> Element Msg
 postBody post =
     Ui.column
-        [ Ui.spacing 4 ]
-        [ Ui.row [ Ui.spacing 8 ]
-            [ Ui.el [ Font.size 14, Font.color (Ui.rgb 0 0 0) ]
-                (clickable (Navigate (PostPage post.id)) (Ui.text post.title))
-            , Ui.el [ Font.size 11, Font.color (Ui.rgb 130 130 130) ]
-                (Ui.text ("(" ++ shortenUrl post.url ++ ")"))
-            ]
-        , Ui.row [ Ui.spacing 6 ]
-            [ Ui.el [ Font.size 11, Font.color (Ui.rgb 130 130 130) ]
-                (Ui.text ("by " ++ post.author))
-            , Ui.el [ Font.size 11, Font.color (Ui.rgb 130 130 130) ]
-                (Ui.text "|")
-            , Ui.el [ Font.size 11, Font.color (Ui.rgb 130 130 130) ]
-                (clickable (Navigate (PostPage post.id))
-                    (Ui.text (String.fromInt post.commentCount ++ " comments")))
-            ]
+        [Ui.spacing 4]
+        [ Ui.row
+              [Ui.spacing 8]
+              [ Ui.el
+                    [ Font.size 14, Font.color (Ui.rgb 0 0 0) ]
+                    (clickable (Navigate (PostPage post.id)) (Ui.text post.title))
+              , Ui.el
+                    [ Font.size 11, Font.color (Ui.rgb 130 130 130) ]
+                    (Ui.text ("(" ++ shortenUrl post.url ++ ")"))
+              ]
+        , Ui.row
+              [Ui.spacing 6]
+              [ Ui.el
+                    [ Font.size 11, Font.color (Ui.rgb 130 130 130) ]
+                    (Ui.text ("by " ++ post.author))
+              , Ui.el
+                    [ Font.size 11, Font.color (Ui.rgb 130 130 130) ]
+                    (Ui.text "|")
+              , Ui.el
+                    [ Font.size 11, Font.color (Ui.rgb 130 130 130) ]
+                    (clickable
+                        (Navigate (PostPage post.id))
+                        (Ui.text
+                            (String.fromInt post.commentCount ++ " comments")))
+              ]
         ]

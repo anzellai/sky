@@ -27,8 +27,7 @@ dbConn =
             let
                 _ =
                     println
-                        ("[FATAL] Cannot open skyvote.db: "
-                             ++ Error.toString e)
+                        ("[FATAL] Cannot open skyvote.db: " ++ Error.toString e)
             in
                 System.exit 1
 

@@ -104,8 +104,8 @@ viewComments model =
               [class "comments-title"]
               [text
                   ("Comments ("
-                       ++ String.fromInt (List.length model.ideaComments)
-                       ++ ")")]
+                      ++ String.fromInt (List.length model.ideaComments)
+                      ++ ")")]
         , viewCommentForm model
         , viewCommentList model
         ]
@@ -115,12 +115,12 @@ viewCommentList model =
     div
         []
         (if List.isEmpty model.ideaComments then
-             [p
-                 [class "text-muted-sm"]
-                 [text "No comments yet. Be the first to share your thoughts!"]]
+            [p
+                [class "text-muted-sm"]
+                [text "No comments yet. Be the first to share your thoughts!"]]
 
-         else
-             List.map viewComment model.ideaComments)
+        else
+            List.map viewComment model.ideaComments)
 
 
 viewComment comment =

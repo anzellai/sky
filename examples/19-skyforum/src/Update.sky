@@ -10,68 +10,87 @@ import State exposing (..)
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+
         Navigate page ->
-            ( { model | currentPage = page, composeBody = "", replyTo = 0 }, Cmd.none )
+            ( { model | currentPage = page, composeBody = "", replyTo = 0 }
+            , Cmd.none
+            )
 
         UpvotePost postId ->
-            -- Anonymous users redirect to login (mirrors SubmitComment).
-            -- The page reroute is the user-visible signal "sign in to vote".
-            -- Toggle semantics: clicking again removes the vote (see
-            -- State.togglePostUpvote).
+        -- Anonymous users redirect to login (mirrors SubmitComment).
+        -- The page reroute is the user-visible signal "sign in to vote".
+        -- Toggle semantics: clicking again removes the vote (see
+        -- State.togglePostUpvote).
             case model.session of
+
                 Nothing ->
                     ( { model | currentPage = LoginPage }, Cmd.none )
 
                 Just sess ->
-                    ( { model | posts = List.map (togglePostUpvote sess.username postId) model.posts }
+                    ( { model | posts = List.map
+                            (togglePostUpvote sess.username postId)
+                            model.posts
+                      }
                     , Cmd.none
                     )
 
         DownvotePost postId ->
             case model.session of
+
                 Nothing ->
                     ( { model | currentPage = LoginPage }, Cmd.none )
 
                 Just sess ->
-                    ( { model | posts = List.map (togglePostDownvote sess.username postId) model.posts }
+                    ( { model | posts = List.map
+                            (togglePostDownvote sess.username postId)
+                            model.posts
+                      }
                     , Cmd.none
                     )
 
         UpvoteComment commentId ->
             case model.session of
+
                 Nothing ->
                     ( { model | currentPage = LoginPage }, Cmd.none )
 
                 Just sess ->
-                    ( { model | comments = List.map (toggleCommentUpvote sess.username commentId) model.comments }
+                    ( { model | comments = List.map
+                            (toggleCommentUpvote sess.username commentId)
+                            model.comments
+                      }
                     , Cmd.none
                     )
 
         DownvoteComment commentId ->
             case model.session of
+
                 Nothing ->
                     ( { model | currentPage = LoginPage }, Cmd.none )
 
                 Just sess ->
-                    ( { model | comments = List.map (toggleCommentDownvote sess.username commentId) model.comments }
+                    ( { model | comments = List.map
+                            (toggleCommentDownvote sess.username commentId)
+                            model.comments
+                      }
                     , Cmd.none
                     )
 
         DoSignIn creds ->
-            -- Form-submit handler. `creds.username` and `creds.password`
-            -- come straight from the wire `<form>` data — case-
-            -- insensitive json.Unmarshal decoded the formData
-            -- {"username":"...","password":"..."} into LoginForm.
-            -- The password lives only in this Msg's record arg until
-            -- the update consumes it; never enters Model so never
-            -- serialises into the session store.
+        -- Form-submit handler. `creds.username` and `creds.password`
+        -- come straight from the wire `<form>` data — case-
+        -- insensitive json.Unmarshal decoded the formData
+        -- {"username":"...","password":"..."} into LoginForm.
+        -- The password lives only in this Msg's record arg until
+        -- the update consumes it; never enters Model so never
+        -- serialises into the session store.
             if String.isEmpty (String.trim creds.username) then
                 ( { model | loginError = "Username is required." }, Cmd.none )
+
             else
-                ( { model
-                    | session = Just { username = String.trim creds.username }
-                    , loginError = ""
-                    , currentPage = HomePage
+                ( { model | session = Just { username = String.trim creds.username }
+                  , loginError = ""
+                  , currentPage = HomePage
                   }
                 , Cmd.none
                 )
@@ -90,19 +109,20 @@ update msg model =
 
         SubmitComment postId ->
             case model.session of
+
                 Nothing ->
                     ( { model | currentPage = LoginPage }, Cmd.none )
 
                 Just sess ->
                     if String.isEmpty (String.trim model.composeBody) then
                         ( model, Cmd.none )
+
                     else
-                        ( { model
-                            | comments = model.comments ++ [ newComment model sess postId ]
-                            , posts = List.map (bumpPostComments postId) model.posts
-                            , composeBody = ""
-                            , replyTo = 0
-                            , nextCommentId = model.nextCommentId + 1
+                        ( { model | comments = model.comments ++ [newComment model sess postId]
+                          , posts = List.map (bumpPostComments postId) model.posts
+                          , composeBody = ""
+                          , replyTo = 0
+                          , nextCommentId = model.nextCommentId + 1
                           }
                         , Cmd.none
                         )
@@ -110,15 +130,15 @@ update msg model =
 
 newComment : Model -> Session -> Int -> Comment
 newComment model sess postId =
-    -- Author auto-upvotes their own comment (Reddit convention) — sets
-    -- the seed score to 0 and adds them to upvoters so the displayed
-    -- score is 1. Clicking "upvoted" later removes themselves cleanly.
+-- Author auto-upvotes their own comment (Reddit convention) — sets
+-- the seed score to 0 and adds them to upvoters so the displayed
+-- score is 1. Clicking "upvoted" later removes themselves cleanly.
     { id = model.nextCommentId
     , postId = postId
     , parentId = model.replyTo
     , author = sess.username
     , body = String.trim model.composeBody
     , votes = 0
-    , upvoters = [ sess.username ]
+    , upvoters = [sess.username]
     , downvoters = []
     }

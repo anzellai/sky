@@ -13,4 +13,4 @@ main =
             println ("Generated UUID: " ++ uuid)
 
         Err e ->
-            println ("Failed to generate UUID: " ++ e)
+            println ("Failed to generate UUID: " ++ errorToString e)

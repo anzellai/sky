@@ -227,7 +227,7 @@ logActivity event targetId userId =
                     _ =
                         println
                             ("[ACTIVITY ERROR] " ++ event ++ ": "
-                                 ++ Error.toString e)
+                                ++ Error.toString e)
                 in
                     ()
 
@@ -242,9 +242,9 @@ refreshCurrentView model =
                     Result.withDefault
                         []
                         (Ideas.getIdeas
-                             model.sortBy
-                             model.filterCategory
-                             model.searchQuery)
+                            model.sortBy
+                            model.filterCategory
+                            model.searchQuery)
             in
                 ( { model | ideas = ideas }, Cmd.none )
 
@@ -424,9 +424,9 @@ handleBackToBoard model =
             Result.withDefault
                 []
                 (Ideas.getIdeas
-                     model.sortBy
-                     model.filterCategory
-                     model.searchQuery)
+                    model.sortBy
+                    model.filterCategory
+                    model.searchQuery)
     in
         ( { model | page = BoardPage
           , ideas = ideas
@@ -471,9 +471,9 @@ doCreateIdea user model =
                         Result.withDefault
                             []
                             (Ideas.getIdeas
-                                 model.sortBy
-                                 model.filterCategory
-                                 model.searchQuery)
+                                model.sortBy
+                                model.filterCategory
+                                model.searchQuery)
                 in
                     ( { model | page = BoardPage
                       , ideas = ideas

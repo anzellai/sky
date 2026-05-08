@@ -29,8 +29,7 @@ conn =
             let
                 _ =
                     println
-                        ("[FATAL] Cannot open skynotes.db: "
-                             ++ Error.toString e)
+                        ("[FATAL] Cannot open skynotes.db: " ++ Error.toString e)
             in
                 System.exit 1
 

@@ -17,16 +17,16 @@ viewHome model =
     Layout.page
         model
         (div
-             [class "home-container"]
-             [ h1 [class "home-title"] [text "♞ SkyChess"]
-             , p
-                   [class "home-subtitle"]
-                   [text "Play chess against the computer. White moves first."]
-             , viewNotification model
-             , viewNameForm model
-             , viewStats model
-             , viewGameList model
-             ])
+            [class "home-container"]
+            [ h1 [class "home-title"] [text "♞ SkyChess"]
+            , p
+                  [class "home-subtitle"]
+                  [text "Play chess against the computer. White moves first."]
+            , viewNotification model
+            , viewNameForm model
+            , viewStats model
+            , viewGameList model
+            ])
 
 
 viewNotification model =

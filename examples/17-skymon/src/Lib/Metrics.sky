@@ -97,8 +97,8 @@ runSqlMetric metric =
 
 runSafeQuery : String -> String -> String
 runSafeQuery dsn query =
-    -- v0.9.6+: Db.open returns Task Error Db (was Result). Collapse
-    -- with Task.run at this sync call site.
+-- v0.9.6+: Db.open returns Task Error Db (was Result). Collapse
+-- with Task.run at this sync call site.
     case Task.run (Db.open "postgres" dsn) of
 
         Err e ->
@@ -107,7 +107,7 @@ runSafeQuery dsn query =
                 _ =
                     println
                         ("[METRIC ERROR] runSafeQuery/open: "
-                             ++ Error.toString typedErr)
+                            ++ Error.toString typedErr)
             in
                 "error: " ++ Error.toString typedErr
 
@@ -116,10 +116,10 @@ runSafeQuery dsn query =
 
 
 runSafeQueryWithConn extConn query =
-    -- SafeQuery.runReadOnly returns `Result Error (List (Dict ...))`
-    -- directly — no Task wrap. Pre-fix this had `Task.run (...)` which
-    -- only worked while pass-2 dep HM masked Type errors via the
-    -- pass-1 fallback (round 6 fix made pass 2 authoritative).
+-- SafeQuery.runReadOnly returns `Result Error (List (Dict ...))`
+-- directly — no Task wrap. Pre-fix this had `Task.run (...)` which
+-- only worked while pass-2 dep HM masked Type errors via the
+-- pass-1 fallback (round 6 fix made pass 2 authoritative).
     case SafeQuery.runReadOnly extConn query [] of
 
         Err e ->
@@ -128,7 +128,7 @@ runSafeQueryWithConn extConn query =
                 _ =
                     println
                         ("[METRIC ERROR] runSafeQuery: "
-                             ++ Error.toString typedErr)
+                            ++ Error.toString typedErr)
             in
                 "error: " ++ Error.toString typedErr
 
@@ -177,7 +177,7 @@ runHttpMetric metric =
                         _ =
                             println
                                 ("[METRIC ERROR] runHttpMetric " ++ url ++ ": "
-                                     ++ Error.toString typedErr)
+                                    ++ Error.toString typedErr)
                     in
                         "error: " ++ Error.toString typedErr
 
@@ -208,7 +208,7 @@ runApiMetric metric =
                         _ =
                             println
                                 ("[METRIC ERROR] runApiMetric " ++ url ++ ": "
-                                     ++ Error.toString typedErr)
+                                    ++ Error.toString typedErr)
                     in
                         "error: " ++ Error.toString typedErr
 

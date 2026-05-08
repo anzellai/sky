@@ -16,20 +16,23 @@ import View.Compose exposing (composeArea)
 postDetailView : Model -> Int -> Element Msg
 postDetailView model postId =
     case findPost postId model.posts of
+
         Nothing ->
-            Ui.el [ Font.color (Ui.rgb 200 60 60) ] (Ui.text "Post not found.")
+            Ui.el [Font.color (Ui.rgb 200 60 60)] (Ui.text "Post not found.")
 
         Just post ->
             Ui.column
-                [ Ui.spacing 16 ]
+                [Ui.spacing 16]
                 [ postRow model.session 0 post
                 , composeArea model post
                 , Ui.column
-                    [ Ui.spacing 8 ]
-                    [ Ui.el [ Font.size 14, Font.bold ]
-                        (Ui.text (String.fromInt post.commentCount ++ " comments"))
-                    , commentTreeView model.session model.comments post.id 0 0
-                    ]
+                      [Ui.spacing 8]
+                      [ Ui.el
+                            [ Font.size 14, Font.bold ]
+                            (Ui.text
+                                (String.fromInt post.commentCount ++ " comments"))
+                      , commentTreeView model.session model.comments post.id 0 0
+                      ]
                 ]
 
 
@@ -42,12 +45,16 @@ commentTreeView : Maybe Session -> List Comment -> Int -> Int -> Int -> Element 
 commentTreeView maybeSession allComments postId parentId depth =
     let
         children = List.filter (matchesParent postId parentId) allComments
-        renderedChildren = List.map (\c -> commentNode maybeSession allComments c depth) children
+        renderedChildren =
+            List.map
+                (\c -> commentNode maybeSession allComments c depth)
+                children
     in
         if List.isEmpty children then
             Ui.text ""
+
         else
-            Ui.column [ Ui.spacing 8 ] renderedChildren
+            Ui.column [Ui.spacing 8] renderedChildren
 
 
 commentNode : Maybe Session -> List Comment -> Comment -> Int -> Element Msg
@@ -65,19 +72,16 @@ commentNode maybeSession allComments c parentDepth =
             , Ui.el [] (Ui.text c.body)
             , commentActions maybeSession c
             , Ui.el
-                [ Ui.style "padding-left" (String.fromInt myDepth ++ "px") ]
-                (commentTreeView maybeSession allComments c.postId c.id myDepth)
+                  [Ui.style "padding-left" (String.fromInt myDepth ++ "px")]
+                  (commentTreeView maybeSession allComments c.postId c.id myDepth)
             ]
 
 
 commentHeader : Comment -> Element Msg
 commentHeader c =
     Ui.row
-        [ Ui.spacing 6
-        , Font.size 11
-        , Font.color (Ui.rgb 130 130 130)
-        ]
-        [ Ui.el [ Font.bold ] (Ui.text c.author)
+        [ Ui.spacing 6, Font.size 11, Font.color (Ui.rgb 130 130 130) ]
+        [ Ui.el [Font.bold] (Ui.text c.author)
         , Ui.text "•"
         , Ui.text (String.fromInt (commentScore c) ++ " points")
         ]
@@ -95,38 +99,60 @@ commentActions maybeSession c =
         username = currentUsername maybeSession
         upActive = List.member username c.upvoters
         downActive = List.member username c.downvoters
-        upLabel = if upActive then "upvoted" else "upvote"
-        downLabel = if downActive then "downvoted" else "downvote"
+        upLabel =
+            if upActive then
+                "upvoted"
+
+            else
+                "upvote"
+        downLabel =
+            if downActive then
+                "downvoted"
+
+            else
+                "downvote"
     in
         Ui.row
-            [ Ui.spacing 8
-            , Font.size 11
-            ]
+            [ Ui.spacing 8, Font.size 11 ]
             [ Ui.el
-                [ Font.color (if upActive then Ui.rgb 255 102 0 else Ui.rgb 100 130 220)
-                , Font.bold
-                , Ui.onClick (UpvoteComment c.id)
-                , Ui.pointer
-                ]
-                (Ui.text upLabel)
+                  [ Font.color
+                        (if upActive then
+                            Ui.rgb 255 102 0
+
+                        else
+                            Ui.rgb 100 130 220)
+                  , Font.bold
+                  , Ui.onClick (UpvoteComment c.id)
+                  , Ui.pointer
+                  ]
+                  (Ui.text upLabel)
             , Ui.el
-                [ Font.color (if downActive then Ui.rgb 100 130 220 else Ui.rgb 130 130 130)
-                , Font.bold
-                , Ui.onClick (DownvoteComment c.id)
-                , Ui.pointer
-                ]
-                (Ui.text downLabel)
+                  [ Font.color
+                        (if downActive then
+                            Ui.rgb 100 130 220
+
+                        else
+                            Ui.rgb 130 130 130)
+                  , Font.bold
+                  , Ui.onClick (DownvoteComment c.id)
+                  , Ui.pointer
+                  ]
+                  (Ui.text downLabel)
             , Ui.el
-                [ Font.color (Ui.rgb 100 130 220)
-                , Ui.onClick (StartReplyTo c.id)
-                , Ui.pointer
-                ]
-                (Ui.text "reply")
+                  [ Font.color (Ui.rgb 100 130 220)
+                  , Ui.onClick (StartReplyTo c.id)
+                  , Ui.pointer
+                  ]
+                  (Ui.text "reply")
             ]
 
 
 currentUsername : Maybe Session -> String
 currentUsername maybeSession =
     case maybeSession of
-        Just sess -> sess.username
-        Nothing -> ""
+
+        Just sess ->
+            sess.username
+
+        Nothing ->
+            ""

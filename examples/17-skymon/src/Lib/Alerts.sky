@@ -21,8 +21,7 @@ createAlert metricId condition threshold notifyType notifyTarget =
             String.slice
                 0
                 12
-                (Crypto.sha256
-                     (metricId ++ ":" ++ condition ++ ":" ++ threshold))
+                (Crypto.sha256 (metricId ++ ":" ++ condition ++ ":" ++ threshold))
         _ =
             Database.execOrLog
                 "Alerts.createAlert"
@@ -203,7 +202,7 @@ logFireResult kind target result =
                 _ =
                     println
                         ("[ALERT ERROR] " ++ kind ++ " " ++ target ++ ": "
-                             ++ Error.toString e)
+                            ++ Error.toString e)
             in
                 ()
 

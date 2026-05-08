@@ -1,4 +1,13 @@
-module Lib.Auth exposing (hashPassword, verifyPassword, generateToken, createUser, authenticateUser, createSession, getSessionUser, verifyEmail)
+module Lib.Auth exposing
+    ( hashPassword
+    , verifyPassword
+    , generateToken
+    , createUser
+    , authenticateUser
+    , createSession
+    , getSessionUser
+    , verifyEmail
+    )
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Maybe exposing (..)
@@ -25,8 +34,8 @@ hashPassword password =
 
 verifyPassword : String -> String -> Bool
 verifyPassword password storedHash =
-    -- Auth.verifyPassword returns Result Error Bool — collapse with
-    -- withDefault False (auth-deny on internal error, not auth-grant).
+-- Auth.verifyPassword returns Result Error Bool — collapse with
+-- withDefault False (auth-deny on internal error, not auth-grant).
     Result.withDefault False (Auth.verifyPassword password storedHash)
 
 
@@ -63,7 +72,7 @@ createUser email password =
             Err _ ->
                 Err
                     (Error.invalidInput
-                         "That email is already registered, or a server error occurred.")
+                        "That email is already registered, or a server error occurred.")
 
 
 checkUserCredentials password user =
@@ -78,13 +87,13 @@ checkUserCredentials password user =
             else
                 Err
                     (Error.permissionDenied
-                         |> Error.withMessage
-                                "Email not verified yet. Please check the server console for your verification link.")
+                        |> Error.withMessage
+                               "Email not verified yet. Please check the server console for your verification link.")
 
         else
             Err
                 (Error.permissionDenied
-                     |> Error.withMessage "Invalid email or password.")
+                    |> Error.withMessage "Invalid email or password.")
 
 
 -- authenticateUser : Result Error User. DB errors surface upstream so
@@ -105,7 +114,7 @@ authenticateUser email password =
                 Nothing ->
                     Err
                         (Error.permissionDenied
-                             |> Error.withMessage "Invalid email or password.")
+                            |> Error.withMessage "Invalid email or password.")
 
                 Just user ->
                     checkUserCredentials password user

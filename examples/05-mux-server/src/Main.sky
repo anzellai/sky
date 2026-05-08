@@ -56,6 +56,6 @@ main =
 
         Err e ->
             let
-                _ = println ("Failed to create router: " ++ e)
+                _ = println ("Failed to create router: " ++ errorToString e)
             in
                 ()

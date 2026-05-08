@@ -72,7 +72,7 @@ checkEndpoint url =
                 _ =
                     println
                         ("[MONITOR ERROR] checkEndpoint " ++ url ++ ": "
-                             ++ Error.toString typedErr)
+                            ++ Error.toString typedErr)
             in
                 ( "down", 0 )
 

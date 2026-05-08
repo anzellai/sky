@@ -70,7 +70,7 @@ viewStatusRow monitor =
                     [style "font-size: 12px; color: #64748b"]
                     [text
                         (String.fromInt monitor.responseTime ++ "ms • "
-                             ++ monitor.lastChecked)]
+                            ++ monitor.lastChecked)]
               ]
         , span
               [class ("status-dot status-" ++ statusToString monitor.status)]

@@ -1,4 +1,11 @@
-module Lib.AuthHandlers exposing (handleSignInSuccess, handleSignIn, handleSignUpSuccess, handleSignUpValidated, handleSignUp, handleSignOut)
+module Lib.AuthHandlers exposing
+    ( handleSignInSuccess
+    , handleSignIn
+    , handleSignUpSuccess
+    , handleSignUpValidated
+    , handleSignUp
+    , handleSignOut
+    )
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Result as Result

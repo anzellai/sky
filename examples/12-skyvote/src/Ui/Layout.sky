@@ -44,19 +44,19 @@ pageWithAuth model content =
             page
                 model
                 (div
-                     [class "auth-container"]
-                     [div
-                         [class "card"]
-                         [p
-                             [class "auth-prompt"]
-                             [ text "Please "
-                             , a
-                                   [ href "/auth/signin"
-                                   , attribute "sky-nav" ""
-                                   ]
-                                   [text "sign in"]
-                             , text " to access this page."
-                             ]]])
+                    [class "auth-container"]
+                    [div
+                        [class "card"]
+                        [p
+                            [class "auth-prompt"]
+                            [ text "Please "
+                            , a
+                                  [ href "/auth/signin"
+                                  , attribute "sky-nav" ""
+                                  ]
+                                  [text "sign in"]
+                            , text " to access this page."
+                            ]]])
 
 
 -- ======================================================

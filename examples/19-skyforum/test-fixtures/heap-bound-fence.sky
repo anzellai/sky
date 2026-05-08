@@ -15,7 +15,6 @@ module Main exposing (main)
 -- external services. This keeps the example focused on the view
 -- layer (Std.Ui) and the TEA wiring (init/update/view), not on
 -- persistence or auth correctness.
-
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.List as List
 import Sky.Core.Maybe as Maybe
@@ -36,11 +35,10 @@ import Std.Ui.Input as Input
 -- currently strips the type parameter when re-exporting it
 -- cross-module, so we re-define it locally.
 noneEl : Element msg
-noneEl = Ui.none
-
+noneEl =
+    Ui.none
 
 -- ─── Domain types ────────────────────────────────────────────────
-
 type alias Post =
     { id : Int
     , title : String
@@ -50,27 +48,22 @@ type alias Post =
     , commentCount : Int
     }
 
-
 type alias Comment =
     { id : Int
     , postId : Int
-    , parentId : Int      -- 0 = top-level (root) comment under the post
+    , parentId : Int-- 0 = top-level (root) comment under the post
     , author : String
     , body : String
     , votes : Int
     }
 
-
 type alias Session =
-    { username : String
-    }
-
+    { username : String }
 
 type Page
     = HomePage
     | PostPage Int
     | LoginPage
-
 
 type alias Model =
     { posts : List Post
@@ -81,32 +74,109 @@ type alias Model =
     , loginPass : String
     , loginError : String
     , composeBody : String
-    , replyTo : Int            -- parentId for the next compose; 0 = top-level
+    , replyTo : Int-- parentId for the next compose; 0 = top-level
     , nextCommentId : Int
     }
 
 
 -- ─── Init ───────────────────────────────────────────────────────
-
 init : a -> ( Model, Cmd Msg )
 init _req =
     let
         seedPosts =
-            [ Post 1 "Show SN: Sky.Ui — a typed elm-ui port for Sky.Live" "https://github.com/anzellai/sky" "alice" 142 8
-            , Post 2 "Tiny CRDT primitives in 200 lines" "https://example.com/crdt" "bob" 87 12
-            , Post 3 "Ask SN: Best resources for learning Hindley-Milner?" "https://example.com/hm" "carol" 56 23
-            , Post 4 "Why server-driven UIs are having a moment" "https://example.com/server-ui" "dave" 41 5
-            , Post 5 "Postgres tips that actually matter in production" "https://example.com/pg-tips" "eve" 38 4
+            [ Post
+                  1
+                  "Show SN: Sky.Ui — a typed elm-ui port for Sky.Live"
+                  "https://github.com/anzellai/sky"
+                  "alice"
+                  142
+                  8
+            , Post
+                  2
+                  "Tiny CRDT primitives in 200 lines"
+                  "https://example.com/crdt"
+                  "bob"
+                  87
+                  12
+            , Post
+                  3
+                  "Ask SN: Best resources for learning Hindley-Milner?"
+                  "https://example.com/hm"
+                  "carol"
+                  56
+                  23
+            , Post
+                  4
+                  "Why server-driven UIs are having a moment"
+                  "https://example.com/server-ui"
+                  "dave"
+                  41
+                  5
+            , Post
+                  5
+                  "Postgres tips that actually matter in production"
+                  "https://example.com/pg-tips"
+                  "eve"
+                  38
+                  4
             ]
         seedComments =
-            [ Comment 101 1 0 "bob" "This looks great — does it support keyed children for diffing?" 12
-            , Comment 102 1 101 "alice" "Yes, Std.Ui.Keyed handles that via the sky-key attribute." 9
-            , Comment 103 1 102 "bob" "Nice. Any plans for an actual stylesheet pass?" 4
-            , Comment 104 1 0 "carol" "How does it compare to Phoenix LiveView?" 7
-            , Comment 105 1 104 "alice" "Same idea: server holds state, browser is dumb. Ours emits flexbox inline-style instead of class-keyed CSS." 11
-            , Comment 201 2 0 "alice" "Love seeing CRDT explanations that fit on one page." 5
-            , Comment 301 3 0 "dave" "Read 'Types and Programming Languages' (TAPL). It's the canonical reference." 18
-            , Comment 302 3 301 "carol" "Thanks! Anything shorter for a primer?" 3
+            [ Comment
+                  101
+                  1
+                  0
+                  "bob"
+                  "This looks great — does it support keyed children for diffing?"
+                  12
+            , Comment
+                  102
+                  1
+                  101
+                  "alice"
+                  "Yes, Std.Ui.Keyed handles that via the sky-key attribute."
+                  9
+            , Comment
+                  103
+                  1
+                  102
+                  "bob"
+                  "Nice. Any plans for an actual stylesheet pass?"
+                  4
+            , Comment
+                  104
+                  1
+                  0
+                  "carol"
+                  "How does it compare to Phoenix LiveView?"
+                  7
+            , Comment
+                  105
+                  1
+                  104
+                  "alice"
+                  "Same idea: server holds state, browser is dumb. Ours emits flexbox inline-style instead of class-keyed CSS."
+                  11
+            , Comment
+                  201
+                  2
+                  0
+                  "alice"
+                  "Love seeing CRDT explanations that fit on one page."
+                  5
+            , Comment
+                  301
+                  3
+                  0
+                  "dave"
+                  "Read 'Types and Programming Languages' (TAPL). It's the canonical reference."
+                  18
+            , Comment
+                  302
+                  3
+                  301
+                  "carol"
+                  "Thanks! Anything shorter for a primer?"
+                  3
             ]
         m =
             { posts = seedPosts
@@ -123,9 +193,7 @@ init _req =
     in
         ( m, Cmd.none )
 
-
 -- ─── Update ─────────────────────────────────────────────────────
-
 type Msg
     = Navigate Page
     | UpvotePost Int
@@ -143,14 +211,22 @@ type Msg
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+
         Navigate page ->
-            ( { model | currentPage = page, composeBody = "", replyTo = 0 }, Cmd.none )
+            ( { model | currentPage = page, composeBody = "", replyTo = 0 }
+            , Cmd.none
+            )
 
         UpvotePost postId ->
-            ( { model | posts = List.map (bumpPost postId) model.posts }, Cmd.none )
+            ( { model | posts = List.map (bumpPost postId) model.posts }
+            , Cmd.none
+            )
 
         UpvoteComment commentId ->
-            ( { model | comments = List.map (bumpComment commentId) model.comments }, Cmd.none )
+            ( { model | comments = List.map (bumpComment commentId) model.comments
+              }
+            , Cmd.none
+            )
 
         LoginUsernameChanged u ->
             ( { model | loginUser = u }, Cmd.none )
@@ -161,16 +237,16 @@ update msg model =
         LoginSubmit ->
             if String.isEmpty (String.trim model.loginUser) then
                 ( { model | loginError = "Username is required." }, Cmd.none )
+
             else
                 let
                     sess = { username = String.trim model.loginUser }
                 in
-                    ( { model
-                        | session = Just sess
-                        , loginUser = ""
-                        , loginPass = ""
-                        , loginError = ""
-                        , currentPage = HomePage
+                    ( { model | session = Just sess
+                      , loginUser = ""
+                      , loginPass = ""
+                      , loginError = ""
+                      , currentPage = HomePage
                       }
                     , Cmd.none
                     )
@@ -189,12 +265,14 @@ update msg model =
 
         SubmitComment postId ->
             case model.session of
+
                 Nothing ->
                     ( { model | currentPage = LoginPage }, Cmd.none )
 
                 Just sess ->
                     if String.isEmpty (String.trim model.composeBody) then
                         ( model, Cmd.none )
+
                     else
                         let
                             newComment =
@@ -205,14 +283,14 @@ update msg model =
                                 , body = String.trim model.composeBody
                                 , votes = 1
                                 }
-                            updatedPosts = List.map (bumpPostComments postId) model.posts
+                            updatedPosts =
+                                List.map (bumpPostComments postId) model.posts
                         in
-                            ( { model
-                                | comments = model.comments ++ [ newComment ]
-                                , posts = updatedPosts
-                                , composeBody = ""
-                                , replyTo = 0
-                                , nextCommentId = model.nextCommentId + 1
+                            ( { model | comments = model.comments ++ [newComment]
+                              , posts = updatedPosts
+                              , composeBody = ""
+                              , replyTo = 0
+                              , nextCommentId = model.nextCommentId + 1
                               }
                             , Cmd.none
                             )
@@ -222,6 +300,7 @@ bumpPost : Int -> Post -> Post
 bumpPost targetId post =
     if post.id == targetId then
         { post | votes = post.votes + 1 }
+
     else
         post
 
@@ -230,6 +309,7 @@ bumpComment : Int -> Comment -> Comment
 bumpComment targetId comment =
     if comment.id == targetId then
         { comment | votes = comment.votes + 1 }
+
     else
         comment
 
@@ -238,12 +318,12 @@ bumpPostComments : Int -> Post -> Post
 bumpPostComments targetId post =
     if post.id == targetId then
         { post | commentCount = post.commentCount + 1 }
+
     else
         post
 
 
 -- ─── View ───────────────────────────────────────────────────────
-
 view : Model -> any
 view model =
     let
@@ -256,10 +336,7 @@ view model =
                 , Font.size 14
                 , Font.color (Ui.rgb 33 33 33)
                 ]
-                [ topNav model
-                , pageBody model
-                , pageFooter
-                ]
+                [ topNav model, pageBody model, pageFooter ]
     in
         Ui.layout [] page
 
@@ -272,21 +349,26 @@ topNav model =
         , Background.color (Ui.rgb 255 102 0)
         , Border.rounded 4
         ]
-        [ Ui.el [ Font.bold, Font.color (Ui.rgb 255 255 255) ]
-            (clickable (Navigate HomePage) (Ui.text "skynews"))
-        , Ui.el [ Font.color (Ui.rgb 255 255 255) ]
-            (clickable (Navigate HomePage) (Ui.text "top"))
-        , Ui.el [ Ui.alignRight ] (sessionWidget model.session)
+        [ Ui.el
+              [ Font.bold, Font.color (Ui.rgb 255 255 255) ]
+              (clickable (Navigate HomePage) (Ui.text "skynews"))
+        , Ui.el
+              [Font.color (Ui.rgb 255 255 255)]
+              (clickable (Navigate HomePage) (Ui.text "top"))
+        , Ui.el [Ui.alignRight] (sessionWidget model.session)
         ]
 
 
 sessionWidget : Maybe Session -> Element Msg
 sessionWidget maybeSession =
     case maybeSession of
+
         Just sess ->
-            Ui.row [ Ui.spacing 8 ]
-                [ Ui.el [ Font.color (Ui.rgb 255 255 255) ]
-                    (Ui.text ("hi, " ++ sess.username))
+            Ui.row
+                [Ui.spacing 8]
+                [ Ui.el
+                      [Font.color (Ui.rgb 255 255 255)]
+                      (Ui.text ("hi, " ++ sess.username))
                 , navButton LogoutClicked "logout"
                 ]
 
@@ -302,9 +384,7 @@ navButton msg label =
         , Border.rounded 3
         , Ui.padding 4
         ]
-        { onPress = Just msg
-        , label = Ui.text label
-        }
+        { onPress = Just msg, label = Ui.text label }
 
 
 -- A clickable wrapper that doesn't render as a <button>. Useful for
@@ -312,33 +392,29 @@ navButton msg label =
 -- chrome but still want a click handler.
 clickable : Msg -> Element Msg -> Element Msg
 clickable msg child =
-    Ui.el
-        [ Ui.onClick msg
-        , Ui.pointer
-        ]
-        child
+    Ui.el [ Ui.onClick msg, Ui.pointer ] child
 
 
 pageBody : Model -> Element Msg
 pageBody model =
     case model.currentPage of
+
         HomePage ->
+-- ─── Posts list ─────────────────────────────────────────────────
             postsListView model.posts
 
         PostPage postId ->
+-- ─── Post detail ────────────────────────────────────────────────
             postDetailView model postId
 
         LoginPage ->
+-- ─── Login ──────────────────────────────────────────────────────
             loginView model
 
 
--- ─── Posts list ─────────────────────────────────────────────────
-
 postsListView : List Post -> Element Msg
 postsListView posts =
-    Ui.column
-        [ Ui.spacing 12 ]
-        (List.indexedMap postRow posts)
+    Ui.column [Ui.spacing 12] (List.indexedMap postRow posts)
 
 
 postRow : Int -> Post -> Element Msg
@@ -351,100 +427,102 @@ postRow index post =
         , Border.width 1
         , Border.color (Ui.rgb 230 230 230)
         ]
-        [ rankNumber (index + 1)
-        , postUpvoteButton post
-        , postBody post
-        ]
+        [ rankNumber (index + 1), postUpvoteButton post, postBody post ]
 
 
 rankNumber : Int -> Element Msg
 rankNumber n =
     Ui.el
-        [ Ui.width (Ui.px 28)
-        , Ui.centerY
-        , Font.color (Ui.rgb 130 130 130)
-        ]
+        [ Ui.width (Ui.px 28), Ui.centerY, Font.color (Ui.rgb 130 130 130) ]
         (Ui.text (String.fromInt n ++ "."))
 
 
 postUpvoteButton : Post -> Element Msg
 postUpvoteButton post =
     Ui.column
-        [ Ui.width (Ui.px 40)
-        , Ui.spacing 2
-        , Ui.centerY
-        ]
+        [ Ui.width (Ui.px 40), Ui.spacing 2, Ui.centerY ]
         [ Ui.button
-            [ Background.color (Ui.rgb 240 240 240)
-            , Border.rounded 3
-            , Border.width 0
-            , Font.color (Ui.rgb 130 130 130)
-            , Ui.padding 2
-            , Ui.centerX
-            ]
-            { onPress = Just (UpvotePost post.id)
-            , label = Ui.text "▲"
-            }
-        , Ui.el [ Ui.centerX, Font.size 11, Font.color (Ui.rgb 130 130 130) ]
-            (Ui.text (String.fromInt post.votes))
+              [ Background.color (Ui.rgb 240 240 240)
+              , Border.rounded 3
+              , Border.width 0
+              , Font.color (Ui.rgb 130 130 130)
+              , Ui.padding 2
+              , Ui.centerX
+              ]
+              { onPress = Just (UpvotePost post.id), label = Ui.text "▲" }
+        , Ui.el
+              [ Ui.centerX, Font.size 11, Font.color (Ui.rgb 130 130 130) ]
+              (Ui.text (String.fromInt post.votes))
         ]
 
 
 postBody : Post -> Element Msg
 postBody post =
     Ui.column
-        [ Ui.spacing 4 ]
-        [ Ui.row [ Ui.spacing 8 ]
-            [ Ui.el [ Font.size 14, Font.color (Ui.rgb 0 0 0) ]
-                (clickable (Navigate (PostPage post.id)) (Ui.text post.title))
-            , Ui.el [ Font.size 11, Font.color (Ui.rgb 130 130 130) ]
-                (Ui.text ("(" ++ shortenUrl post.url ++ ")"))
-            ]
-        , Ui.row [ Ui.spacing 6 ]
-            [ Ui.el [ Font.size 11, Font.color (Ui.rgb 130 130 130) ]
-                (Ui.text ("by " ++ post.author))
-            , Ui.el [ Font.size 11, Font.color (Ui.rgb 130 130 130) ]
-                (Ui.text "|")
-            , Ui.el [ Font.size 11, Font.color (Ui.rgb 130 130 130) ]
-                (clickable (Navigate (PostPage post.id))
-                    (Ui.text (String.fromInt post.commentCount ++ " comments")))
-            ]
+        [Ui.spacing 4]
+        [ Ui.row
+              [Ui.spacing 8]
+              [ Ui.el
+                    [ Font.size 14, Font.color (Ui.rgb 0 0 0) ]
+                    (clickable (Navigate (PostPage post.id)) (Ui.text post.title))
+              , Ui.el
+                    [ Font.size 11, Font.color (Ui.rgb 130 130 130) ]
+                    (Ui.text ("(" ++ shortenUrl post.url ++ ")"))
+              ]
+        , Ui.row
+              [Ui.spacing 6]
+              [ Ui.el
+                    [ Font.size 11, Font.color (Ui.rgb 130 130 130) ]
+                    (Ui.text ("by " ++ post.author))
+              , Ui.el
+                    [ Font.size 11, Font.color (Ui.rgb 130 130 130) ]
+                    (Ui.text "|")
+              , Ui.el
+                    [ Font.size 11, Font.color (Ui.rgb 130 130 130) ]
+                    (clickable
+                        (Navigate (PostPage post.id))
+                        (Ui.text
+                            (String.fromInt post.commentCount ++ " comments")))
+              ]
         ]
 
 
 shortenUrl : String -> String
 shortenUrl url =
     let
-        afterScheme = String.replace "https://" "" (String.replace "http://" "" url)
+        afterScheme =
+            String.replace "https://" "" (String.replace "http://" "" url)
         slash = String.split "/" afterScheme
     in
         Maybe.withDefault afterScheme (List.head slash)
 
 
--- ─── Post detail ────────────────────────────────────────────────
-
 postDetailView : Model -> Int -> Element Msg
 postDetailView model postId =
     case findPost postId model.posts of
+
         Nothing ->
-            Ui.el [ Font.color (Ui.rgb 200 60 60) ] (Ui.text "Post not found.")
+            Ui.el [Font.color (Ui.rgb 200 60 60)] (Ui.text "Post not found.")
 
         Just post ->
             Ui.column
-                [ Ui.spacing 16 ]
+                [Ui.spacing 16]
                 [ postRow 0 post
                 , composeArea model post
                 , Ui.column
-                    [ Ui.spacing 8 ]
-                    [ Ui.el [ Font.size 14, Font.bold ]
-                        (Ui.text (String.fromInt post.commentCount ++ " comments"))
-                    , commentTreeView model.comments post.id 0 0
-                    ]
+                      [Ui.spacing 8]
+                      [ Ui.el
+                            [ Font.size 14, Font.bold ]
+                            (Ui.text
+                                (String.fromInt post.commentCount ++ " comments"))
+                      , commentTreeView model.comments post.id 0 0
+                      ]
                 ]
 
 
 findPost : Int -> List Post -> Maybe Post
-findPost target posts = List.find (\p -> p.id == target) posts
+findPost target posts =
+    List.find (\p -> p.id == target) posts
 
 
 -- Render the comment tree under a given parent (parentId = 0 for
@@ -456,12 +534,14 @@ commentTreeView : List Comment -> Int -> Int -> Int -> Element Msg
 commentTreeView allComments postId parentId depth =
     let
         children = List.filter (matchesParent postId parentId) allComments
-        renderedChildren = List.map (\c -> commentNode allComments c depth) children
+        renderedChildren =
+            List.map (\c -> commentNode allComments c depth) children
     in
         if List.isEmpty children then
             noneEl
+
         else
-            Ui.column [ Ui.spacing 8 ] renderedChildren
+            Ui.column [Ui.spacing 8] renderedChildren
 
 
 matchesParent : Int -> Int -> Comment -> Bool
@@ -484,19 +564,16 @@ commentNode allComments c parentDepth =
             , Ui.el [] (Ui.text c.body)
             , commentActions c
             , Ui.el
-                [ Ui.style "padding-left" (String.fromInt myDepth ++ "px") ]
-                (commentTreeView allComments c.postId c.id myDepth)
+                  [Ui.style "padding-left" (String.fromInt myDepth ++ "px")]
+                  (commentTreeView allComments c.postId c.id myDepth)
             ]
 
 
 commentHeader : Comment -> Element Msg
 commentHeader c =
     Ui.row
-        [ Ui.spacing 6
-        , Font.size 11
-        , Font.color (Ui.rgb 130 130 130)
-        ]
-        [ Ui.el [ Font.bold ] (Ui.text c.author)
+        [ Ui.spacing 6, Font.size 11, Font.color (Ui.rgb 130 130 130) ]
+        [ Ui.el [Font.bold] (Ui.text c.author)
         , Ui.text "•"
         , Ui.text (String.fromInt c.votes ++ " points")
         ]
@@ -505,37 +582,40 @@ commentHeader c =
 commentActions : Comment -> Element Msg
 commentActions c =
     Ui.row
-        [ Ui.spacing 8
-        , Font.size 11
-        ]
+        [ Ui.spacing 8, Font.size 11 ]
         [ Ui.el
-            [ Font.color (Ui.rgb 100 130 220)
-            , Ui.onClick (UpvoteComment c.id)
-            , Ui.pointer
-            ]
-            (Ui.text "upvote")
+              [ Font.color (Ui.rgb 100 130 220)
+              , Ui.onClick (UpvoteComment c.id)
+              , Ui.pointer
+              ]
+              (Ui.text "upvote")
         , Ui.el
-            [ Font.color (Ui.rgb 100 130 220)
-            , Ui.onClick (StartReplyTo c.id)
-            , Ui.pointer
-            ]
-            (Ui.text "reply")
+              [ Font.color (Ui.rgb 100 130 220)
+              , Ui.onClick (StartReplyTo c.id)
+              , Ui.pointer
+              ]
+              (Ui.text "reply")
         ]
 
 
 -- ─── Compose ────────────────────────────────────────────────────
-
 composeArea : Model -> Post -> Element Msg
 composeArea model post =
     case model.session of
+
         Nothing ->
-            Ui.el [ Font.color (Ui.rgb 130 130 130), Font.size 12 ]
-                (clickable (Navigate LoginPage)
-                    (Ui.text "Sign in to comment"))
+            Ui.el
+                [ Font.color (Ui.rgb 130 130 130), Font.size 12 ]
+                (clickable (Navigate LoginPage) (Ui.text "Sign in to comment"))
 
         Just _sess ->
             let
-                replyContext = if model.replyTo == 0 then "Comment on this post" else "Replying to comment #" ++ String.fromInt model.replyTo
+                replyContext =
+                    if model.replyTo == 0 then
+                        "Comment on this post"
+
+                    else
+                        "Replying to comment #" ++ String.fromInt model.replyTo
             in
                 Ui.column
                     [ Ui.spacing 8
@@ -545,37 +625,40 @@ composeArea model post =
                     , Border.width 1
                     , Border.color (Ui.rgb 220 220 200)
                     ]
-                    [ Ui.el [ Font.size 12, Font.color (Ui.rgb 100 100 100) ]
-                        (Ui.text replyContext)
+                    [ Ui.el
+                          [ Font.size 12, Font.color (Ui.rgb 100 100 100) ]
+                          (Ui.text replyContext)
                     , composeInput model.composeBody
-                    , Ui.row [ Ui.spacing 6 ]
-                        [ Ui.button
-                            [ Background.color (Ui.rgb 255 102 0)
-                            , Font.color (Ui.rgb 255 255 255)
-                            , Border.rounded 3
-                            , Ui.padding 4
-                            ]
-                            { onPress = Just (SubmitComment post.id)
-                            , label = Ui.text "post"
-                            }
-                        , if model.replyTo == 0 then
-                            noneEl
-                          else
-                            Ui.button
-                                [ Background.color (Ui.rgb 230 230 230)
+                    , Ui.row
+                          [Ui.spacing 6]
+                          [ Ui.button
+                                [ Background.color (Ui.rgb 255 102 0)
+                                , Font.color (Ui.rgb 255 255 255)
                                 , Border.rounded 3
                                 , Ui.padding 4
                                 ]
-                                { onPress = Just CancelReply
-                                , label = Ui.text "cancel"
+                                { onPress = Just (SubmitComment post.id)
+                                , label = Ui.text "post"
                                 }
-                        ]
+                          , if model.replyTo == 0 then
+                                noneEl
+
+                            else
+                                Ui.button
+                                    [ Background.color (Ui.rgb 230 230 230)
+                                    , Border.rounded 3
+                                    , Ui.padding 4
+                                    ]
+                                    { onPress = Just CancelReply
+                                    , label = Ui.text "cancel"
+                                    }
+                          ]
                     ]
 
 
 composeInput : String -> Element Msg
 composeInput current =
-    -- A simple text input wired to ComposeBodyChanged.
+-- A simple text input wired to ComposeBodyChanged.
     Ui.el
         [ Ui.htmlAttribute "type" "text"
         , Ui.htmlAttribute "value" current
@@ -590,8 +673,6 @@ composeInput current =
         noneEl
 
 
--- ─── Login ──────────────────────────────────────────────────────
-
 loginView : Model -> Element Msg
 loginView model =
     Ui.column
@@ -601,67 +682,71 @@ loginView model =
         , Border.rounded 4
         , Ui.width (Ui.px 320)
         ]
-        [ Ui.el [ Region.heading 2, Font.size 18, Font.bold ]
-            (Ui.text "Sign in")
-        , Ui.el [ Font.size 12, Font.color (Ui.rgb 100 100 100) ]
-            (Ui.text "Any username works — this demo doesn't really authenticate.")
+        [ Ui.el
+              [ Region.heading 2, Font.size 18, Font.bold ]
+              (Ui.text "Sign in")
+        , Ui.el
+              [ Font.size 12, Font.color (Ui.rgb 100 100 100) ]
+              (Ui.text
+                  "Any username works — this demo doesn't really authenticate.")
         , textField "Username" model.loginUser LoginUsernameChanged
         , passwordField "Password" model.loginPass LoginPasswordChanged
         , if model.loginError == "" then
-            noneEl
+              noneEl
+
           else
-            Ui.el [ Font.color (Ui.rgb 200 60 60), Font.size 12 ]
-                (Ui.text model.loginError)
+              Ui.el
+                  [ Font.color (Ui.rgb 200 60 60), Font.size 12 ]
+                  (Ui.text model.loginError)
         , Ui.button
-            [ Background.color (Ui.rgb 255 102 0)
-            , Font.color (Ui.rgb 255 255 255)
-            , Border.rounded 3
-            , Ui.padding 6
-            ]
-            { onPress = Just LoginSubmit
-            , label = Ui.text "sign in"
-            }
+              [ Background.color (Ui.rgb 255 102 0)
+              , Font.color (Ui.rgb 255 255 255)
+              , Border.rounded 3
+              , Ui.padding 6
+              ]
+              { onPress = Just LoginSubmit, label = Ui.text "sign in" }
         ]
 
 
 textField : String -> String -> (String -> Msg) -> Element Msg
 textField label_ value onChange =
-    Ui.column [ Ui.spacing 4 ]
-        [ Ui.el [ Font.size 12 ] (Ui.text label_)
+    Ui.column
+        [Ui.spacing 4]
+        [ Ui.el [Font.size 12] (Ui.text label_)
         , Ui.el
-            [ Ui.htmlAttribute "type" "text"
-            , Ui.htmlAttribute "value" value
-            , Ui.onInput onChange
-            , Border.width 1
-            , Border.color (Ui.rgb 200 200 200)
-            , Border.rounded 3
-            , Ui.padding 6
-            , Background.color (Ui.rgb 255 255 255)
-            ]
-            noneEl
+              [ Ui.htmlAttribute "type" "text"
+              , Ui.htmlAttribute "value" value
+              , Ui.onInput onChange
+              , Border.width 1
+              , Border.color (Ui.rgb 200 200 200)
+              , Border.rounded 3
+              , Ui.padding 6
+              , Background.color (Ui.rgb 255 255 255)
+              ]
+              noneEl
         ]
 
 
 passwordField : String -> String -> (String -> Msg) -> Element Msg
 passwordField label_ value onChange =
-    Ui.column [ Ui.spacing 4 ]
-        [ Ui.el [ Font.size 12 ] (Ui.text label_)
+    Ui.column
+        [Ui.spacing 4]
+        [ Ui.el [Font.size 12] (Ui.text label_)
         , Ui.el
-            [ Ui.htmlAttribute "type" "password"
-            , Ui.htmlAttribute "value" value
-            , Ui.onInput onChange
-            , Border.width 1
-            , Border.color (Ui.rgb 200 200 200)
-            , Border.rounded 3
-            , Ui.padding 6
-            , Background.color (Ui.rgb 255 255 255)
-            ]
-            noneEl
+              [ Ui.htmlAttribute "type" "password"
+              , Ui.htmlAttribute "value" value
+              , Ui.onInput onChange
+              , Border.width 1
+              , Border.color (Ui.rgb 200 200 200)
+              , Border.rounded 3
+              , Ui.padding 6
+              , Background.color (Ui.rgb 255 255 255)
+              ]
+              noneEl
         ]
 
 
 -- ─── Footer ─────────────────────────────────────────────────────
-
 pageFooter : Element Msg
 pageFooter =
     Ui.el
@@ -674,9 +759,9 @@ pageFooter =
 
 
 -- ─── App wiring ─────────────────────────────────────────────────
-
 subscriptions : Model -> Sub.Sub Msg
-subscriptions _ = Sub.none
+subscriptions _ =
+    Sub.none
 
 
 main =

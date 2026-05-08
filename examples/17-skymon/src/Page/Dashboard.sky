@@ -17,11 +17,11 @@ viewDashboard model =
     Layout.page
         model
         (div
-             []
-             [ viewOverview model
-             , viewMonitorsSection model
-             , viewMetricsSection model
-             ])
+            []
+            [ viewOverview model
+            , viewMonitorsSection model
+            , viewMetricsSection model
+            ])
 
 
 viewOverview : Model -> VNode

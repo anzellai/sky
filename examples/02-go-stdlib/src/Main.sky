@@ -13,9 +13,7 @@ import Std.Log exposing (println)
 main =
     let
         nowStr =
-            Time.now ()
-                |> Task.run
-                |> Result.map Time.timeString
+            Time.now () |> Task.run |> Result.map Time.timeString
                 |> Result.withDefault "unknown"
         _ = println ("Current time: " ++ nowStr)
         data = "Hello, Sky!"
@@ -30,7 +28,7 @@ main =
                 Ok resp ->
                     println
                         ("HTTP response received, body length: "
-                             ++ String.fromInt (String.length resp.body))
+                            ++ String.fromInt (String.length resp.body))
 
                 Err e ->
                     println ("HTTP error: " ++ errorToString e)
