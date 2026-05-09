@@ -1,0 +1,298 @@
+module Main exposing (main)
+
+{-|
+23-tui-todo — a working todo-list TUI built with Std.Ui's typed
+view tree. Demonstrates the "write once, render anywhere" claim:
+the view function is plain Std.Ui — no TUI-specific code.
+
+Exercises everything Sky.Tui v1 provides:
+  - Text input editing (type new todo, backspace, cursor keys)
+  - Tab/Shift-Tab focus cycling
+  - Enter on focused button activates onClick
+  - Enter on focused input fires onChange (we treat as Submit)
+  - Mouse click on any focusable element activates it directly
+  - Borders + headings + colours + spacing all from Std.Ui primitives
+  - Sub.every (we don't use it here, but the runtime supports it)
+
+Keys:
+  Tab / Shift-Tab    — cycle focus through input + buttons
+  Enter on input     — submit (add the todo)
+  Enter on button    — activate (toggle / delete)
+  Mouse click        — activate any visible element
+  Ctrl-C             — quit
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.System as System
+import Sky.Core.Task as Task
+import Std.Tui as Tui
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Ui as Ui
+import Std.Ui exposing (Element)
+import Std.Ui.Background as Background
+import Std.Ui.Border as Border
+import Std.Ui.Font as Font
+import Std.Live.Events as Event
+
+
+
+-- ═══════════════════════════════════════════════════════════════════
+-- Model + Msg
+-- ═══════════════════════════════════════════════════════════════════
+
+
+type alias Todo =
+    { id : Int
+    , label : String
+    , done : Bool
+    }
+
+
+type alias Model =
+    { todos : List Todo
+    , draft : String
+    , nextId : Int
+    }
+
+
+type alias KeyEvent =
+    { kind : String
+    , value : String
+    }
+
+
+type Msg
+    = UpdateDraft String
+    | SubmitDraft String
+    | ToggleTodo Int
+    | DeleteTodo Int
+    | ClearCompleted
+    | Quit
+    | NoOp
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { todos = seedTodos, draft = "", nextId = 4 }, Cmd.none )
+
+
+seedTodos : List Todo
+seedTodos =
+    [ { id = 1, label = "Buy groceries", done = False }
+    , { id = 2, label = "Walk the dog", done = True }
+    , { id = 3, label = "Write Sky.Tui demo", done = False }
+    ]
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        UpdateDraft s ->
+            ( { model | draft = s }, Cmd.none )
+
+        SubmitDraft s ->
+            if String.isEmpty (String.trim s) then
+                ( model, Cmd.none )
+
+            else
+                let
+                    newTodo =
+                        { id = model.nextId, label = String.trim s, done = False }
+                in
+                    ( { model
+                        | todos = model.todos ++ [ newTodo ]
+                        , draft = ""
+                        , nextId = model.nextId + 1
+                      }
+                    , Cmd.none
+                    )
+
+        ToggleTodo id ->
+            ( { model | todos = List.map (toggleIfMatch id) model.todos }
+            , Cmd.none
+            )
+
+        DeleteTodo id ->
+            ( { model | todos = List.filter (\t -> t.id /= id) model.todos }
+            , Cmd.none
+            )
+
+        ClearCompleted ->
+            ( { model | todos = List.filter (\t -> not t.done) model.todos }
+            , Cmd.none
+            )
+
+        Quit ->
+            ( model, Cmd.perform (System.exit 0) (\_ -> NoOp) )
+
+        NoOp ->
+            ( model, Cmd.none )
+
+
+toggleIfMatch : Int -> Todo -> Todo
+toggleIfMatch id t =
+    if t.id == id then { t | done = not t.done } else t
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+onKey : KeyEvent -> Msg
+onKey k =
+    if k.kind == "ctrl" && k.value == "c" then Quit
+    else NoOp
+
+
+
+-- ═══════════════════════════════════════════════════════════════════
+-- View — typed Std.Ui Element tree (the same one targets HTML + TUI)
+-- ═══════════════════════════════════════════════════════════════════
+
+
+view : Model -> Element Msg
+view model =
+    Ui.column
+        [ Ui.padding 24
+        , Ui.spacing 16
+        , Background.color (Ui.rgb 18 22 38)
+        , Font.color (Ui.rgb 220 220 230)
+        ]
+        [ heading
+        , inputRow model
+        , todoList model.todos
+        , footerRow model
+        , helpLine
+        ]
+
+
+heading : Element Msg
+heading =
+    Ui.el
+        [ Font.color (Ui.rgb 142 200 168) ]
+        (Ui.text "Todos")
+
+
+inputRow : Model -> Element Msg
+inputRow model =
+    Ui.row
+        [ Ui.spacing 8 ]
+        [ Ui.input
+            [ Ui.width Ui.fill
+            , Background.color (Ui.rgb 30 36 60)
+            , Font.color (Ui.rgb 230 230 240)
+            , Ui.paddingXY 12 4
+            , Border.color (Ui.rgb 80 100 140)
+            , Border.width 1
+            , Ui.htmlAttribute "value" model.draft
+            , Ui.htmlAttribute "placeholder" "What needs doing?"
+            , Ui.onInput UpdateDraft
+            , Ui.onChange SubmitDraft
+            ]
+        , Ui.button
+            [ Background.color (Ui.rgb 60 90 70)
+            , Font.color (Ui.rgb 240 240 240)
+            , Ui.paddingXY 16 4
+            ]
+            { onPress = Just (SubmitDraft model.draft)
+            , label = Ui.text "Add"
+            }
+        ]
+
+
+todoList : List Todo -> Element Msg
+todoList todos =
+    if List.isEmpty todos then
+        Ui.el
+            [ Font.color (Ui.rgb 120 120 140) ]
+            (Ui.text "(no todos — add one above)")
+
+    else
+        Ui.column
+            [ Ui.spacing 4 ]
+            (List.map todoItem todos)
+
+
+todoItem : Todo -> Element Msg
+todoItem t =
+    let
+        checkbox = if t.done then "[x]" else "[ ]"
+        labelColor =
+            if t.done then Ui.rgb 110 120 130 else Ui.rgb 220 220 230
+    in
+        Ui.row
+            [ Ui.spacing 8 ]
+            [ Ui.button
+                [ Background.color (Ui.rgb 40 50 80)
+                , Ui.paddingXY 4 0
+                ]
+                { onPress = Just (ToggleTodo t.id)
+                , label = Ui.text checkbox
+                }
+            , Ui.el
+                [ Font.color labelColor
+                , (if t.done then Font.lineThrough else Font.noDecoration)
+                ]
+                (Ui.text t.label)
+            , Ui.button
+                [ Background.color (Ui.rgb 90 50 50)
+                , Font.color (Ui.rgb 240 240 240)
+                , Ui.paddingXY 4 0
+                ]
+                { onPress = Just (DeleteTodo t.id)
+                , label = Ui.text "×"
+                }
+            ]
+
+
+footerRow : Model -> Element Msg
+footerRow model =
+    let
+        remaining = List.length (List.filter (\t -> not t.done) model.todos)
+        completed = List.length (List.filter (\t -> t.done) model.todos)
+    in
+        Ui.row
+            [ Ui.spacing 16 ]
+            [ Ui.el
+                [ Font.color (Ui.rgb 150 150 170) ]
+                (Ui.text (String.fromInt remaining ++ " remaining · " ++ String.fromInt completed ++ " done"))
+            , if completed > 0 then
+                Ui.button
+                    [ Background.color (Ui.rgb 60 60 80)
+                    , Font.color (Ui.rgb 220 220 230)
+                    , Ui.paddingXY 8 0
+                    ]
+                    { onPress = Just ClearCompleted
+                    , label = Ui.text "Clear completed"
+                    }
+              else
+                Ui.none
+            ]
+
+
+helpLine : Element Msg
+helpLine =
+    Ui.el
+        [ Font.color (Ui.rgb 100 100 120) ]
+        (Ui.text "Tab to cycle · Enter to activate · click items · Ctrl-C to quit")
+
+
+
+-- ═══════════════════════════════════════════════════════════════════
+-- Main
+-- ═══════════════════════════════════════════════════════════════════
+
+
+main =
+    Tui.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        , onKey = onKey
+        }
+        |> Task.run

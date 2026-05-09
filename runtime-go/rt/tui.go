@@ -282,6 +282,56 @@ func tuiDecodeKey(buf []byte) (keyEvent, int) {
 		}
 		// CSI: ESC [
 		if buf[1] == '[' && len(buf) >= 3 {
+			// SGR mouse: ESC [ < button ; col ; row M (press) or m (release)
+			// Encoded as kind="mouse" value="<button>:<col>:<row>:<M|m>".
+			if buf[2] == '<' {
+				end := 3
+				for end < len(buf) {
+					c := buf[end]
+					end++
+					if c == 'M' || c == 'm' {
+						body := string(buf[3 : end-1]) // "button;col;row"
+						kind := byte('M')
+						if c == 'm' {
+							kind = 'm'
+						}
+						return keyEvent{kind: "mouse", value: body + ":" + string(kind)}, end
+					}
+				}
+				return keyEvent{kind: "other", value: string(buf[:end])}, end
+			}
+			// CSI ~ form: ESC [ <num> ~ → Home/End/Insert/Delete/PageUp/PageDown/F-keys.
+			if buf[2] >= '0' && buf[2] <= '9' {
+				end := 3
+				for end < len(buf) {
+					c := buf[end]
+					end++
+					if c == '~' {
+						num := string(buf[2 : end-1])
+						switch num {
+						case "1", "7":
+							return keyEvent{kind: "home"}, end
+						case "4", "8":
+							return keyEvent{kind: "end"}, end
+						case "3":
+							return keyEvent{kind: "delete"}, end
+						case "5":
+							return keyEvent{kind: "pageup"}, end
+						case "6":
+							return keyEvent{kind: "pagedown"}, end
+						case "11", "12", "13", "14", "15":
+							return keyEvent{kind: "fn", value: num}, end
+						case "17", "18", "19", "20", "21", "23", "24":
+							return keyEvent{kind: "fn", value: num}, end
+						}
+						return keyEvent{kind: "other", value: string(buf[:end])}, end
+					}
+					if c >= 0x40 && c <= 0x7e {
+						break
+					}
+				}
+				return keyEvent{kind: "other", value: string(buf[:end])}, end
+			}
 			switch buf[2] {
 			case 'A':
 				return keyEvent{kind: "up"}, 3
@@ -291,6 +341,10 @@ func tuiDecodeKey(buf []byte) (keyEvent, int) {
 				return keyEvent{kind: "right"}, 3
 			case 'D':
 				return keyEvent{kind: "left"}, 3
+			case 'H':
+				return keyEvent{kind: "home"}, 3
+			case 'F':
+				return keyEvent{kind: "end"}, 3
 			}
 			// Unrecognised CSI — consume up to the final byte (in
 			// 0x40..0x7e) so we don't leave dangling bytes for the

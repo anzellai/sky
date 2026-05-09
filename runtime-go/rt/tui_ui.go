@@ -59,12 +59,52 @@ type tuiColor struct {
 	r, g, b uint8
 }
 
-// focusable is one element with a click handler. The runtime tracks
-// these in tab order so Tab/Enter can activate them by index.
+// focusable is one element the user can navigate to with Tab. The
+// runtime tracks them in tab order so Enter activates by index, and
+// editing keys (chars, backspace, etc.) flow into the focused input.
+//
+// `events` holds the full list of AttrEvent payloads on this element
+// (eventPair values produced by Std.Live.Events.on*). We classify by
+// the event's name field at activation time — "click" fires on Enter
+// (and mouse click later), "input" fires per-keystroke for inputs,
+// "change" fires when an input loses focus / receives Enter.
 type focusable struct {
-	clickEvt any // pre-wrapped event payload (Std.Live.Events.onClick value)
-	row, col int // top-left corner of the focused element's box
-	w, h     int
+	events       []any
+	isInput      bool   // tag=="input" — needs editor handling
+	initialValue string // from AttrAttribute "value", first-render only
+	placeholder  string // from AttrAttribute "placeholder", shown on empty buffer
+	row, col     int    // top-left corner of the focused element's box
+	w, h         int
+}
+
+// tuiInput is per-input editor state, persisted across renders so the
+// buffer survives even when the user's view doesn't carry value back
+// (uncontrolled inputs work) and the cursor position survives when
+// the model changes for unrelated reasons.
+type tuiInput struct {
+	buffer string
+	cursor int    // rune index 0..len([]rune(buffer))
+	lastValueAttr string // detect user-driven resets (model.draft = "")
+}
+
+// inputRegistry maps focus index → input state. Keyed by tab-order
+// position, which is stable as long as the user doesn't add/remove
+// focusable elements between renders. For dynamic forms, users should
+// (one day) provide stable IDs via AttrAttribute "id" — for v1 this is
+// good enough for the demo.
+type inputRegistry struct {
+	inputs map[int]*tuiInput
+}
+
+func newInputRegistry() *inputRegistry {
+	return &inputRegistry{inputs: map[int]*tuiInput{}}
+}
+
+func (r *inputRegistry) get(idx int) *tuiInput {
+	if r.inputs[idx] == nil {
+		r.inputs[idx] = &tuiInput{}
+	}
+	return r.inputs[idx]
 }
 
 // ─── Main loop ──────────────────────────────────────────────────────
@@ -106,6 +146,9 @@ func tuiAppRun(cfg any) any {
 		return Err[any, any](ErrIo(msg))
 	}
 	defer func() {
+		// Disable mouse tracking + SGR encoding before restoring TTY
+		// so the user's shell doesn't inherit a stuck mouse mode.
+		fmt.Print("\x1b[?1006l\x1b[?1000l")
 		_ = term.Restore(fd, oldState)
 		fmt.Print(tuiShowCursor)
 		fmt.Print(tuiAltScreenExit)
@@ -113,6 +156,8 @@ func tuiAppRun(cfg any) any {
 
 	fmt.Print(tuiAltScreenEnter)
 	fmt.Print(tuiHideCursor)
+	// Enable SGR mouse mode (button presses + releases, no drag for v1).
+	fmt.Print("\x1b[?1000h\x1b[?1006h")
 
 	msgCh := make(chan any, 32)
 	doneCh := make(chan struct{})
@@ -129,13 +174,14 @@ func tuiAppRun(cfg any) any {
 
 	// Focus state — runtime-managed, hidden from user code.
 	focusIdx := 0
+	inputs := newInputRegistry()
 
 	// First render. Track the cell grid as `prev` so subsequent renders
 	// can diff against it and emit only changed cells. nil prev signals
 	// "first frame, paint everything".
 	cols, rows := tuiTermSize(fd)
 	var prev [][]tuiCell
-	grid, focusables := renderElementFrame(viewFn, model, cols, rows, canvas, focusIdx)
+	grid, focusables := renderElementFrame(viewFn, model, cols, rows, canvas, focusIdx, inputs)
 	tuiPaint(paintDiff(prev, grid))
 	prev = grid
 	focusIdx = clampFocus(focusIdx, len(focusables))
@@ -211,7 +257,7 @@ func tuiAppRun(cfg any) any {
 		if _, ok := msg.(tuiResizeMsg); ok {
 			cols, rows = tuiTermSize(fd)
 			prev = nil
-			grid, focusables = renderElementFrame(viewFn, model, cols, rows, canvas, focusIdx)
+			grid, focusables = renderElementFrame(viewFn, model, cols, rows, canvas, focusIdx, inputs)
 			tuiPaint(paintDiff(prev, grid))
 			prev = grid
 			focusIdx = clampFocus(focusIdx, len(focusables))
@@ -220,8 +266,35 @@ func tuiAppRun(cfg any) any {
 
 		// Intercept tuiKeyMsg before dispatching to update — Tab /
 		// Shift-Tab handle focus locally, Enter activates focused
-		// element, anything else falls through to user's onKey.
+		// element, mouse clicks find a focusable + activate it,
+		// editing keys flow into focused inputs, anything else falls
+		// through to user's onKey.
 		if km, ok := msg.(tuiKeyMsg); ok {
+			// Mouse: SGR encoded as "<button>:<col>:<row>:<M|m>". Only
+			// handle press of left button (button==0) for v1.
+			if km.ev.kind == "mouse" {
+				button, col1, row1, isPress, ok := parseMouseEvent(km.ev.value)
+				if ok && isPress && button == 0 {
+					if hit := hitTestFocusables(focusables, col1-1, row1-1); hit >= 0 {
+						focusIdx = hit
+						if !focusables[hit].isInput {
+							if clickEvt := focusableEvent(focusables[hit], "click"); clickEvt != nil {
+								if clickMsg := tuiExtractClickMsg(clickEvt); clickMsg != nil {
+									msg = clickMsg
+									goto applyMsg
+								}
+							}
+						}
+						// Either focus-changed or input-clicked: re-render.
+						grid, focusables = renderElementFrame(viewFn, model, cols, rows, canvas, focusIdx, inputs)
+						tuiPaint(paintDiff(prev, grid))
+						prev = grid
+					}
+				}
+				continue
+			}
+
+			// Tab navigation always handled locally.
 			handled := false
 			switch km.ev.kind {
 			case "tab":
@@ -230,30 +303,53 @@ func tuiAppRun(cfg any) any {
 					handled = true
 				}
 			case "other":
-				// Shift-Tab arrives as ESC [ Z — tuiDecodeKey emits
-				// it as kind "other" with value "\x1b[Z".
-				if km.ev.value == "\x1b[Z" {
+				if km.ev.value == "\x1b[Z" { // Shift-Tab
 					if len(focusables) > 0 {
 						focusIdx = (focusIdx - 1 + len(focusables)) % len(focusables)
 						handled = true
 					}
 				}
-			case "enter":
-				if focusIdx >= 0 && focusIdx < len(focusables) {
-					if clickMsg := tuiExtractClickMsg(focusables[focusIdx].clickEvt); clickMsg != nil {
-						msg = clickMsg
-						goto applyMsg
-					}
-				}
 			}
 			if handled {
-				// Re-render with new focus, no model change.
-				grid, focusables = renderElementFrame(viewFn, model, cols, rows, canvas, focusIdx)
+				grid, focusables = renderElementFrame(viewFn, model, cols, rows, canvas, focusIdx, inputs)
 				tuiPaint(paintDiff(prev, grid))
 				prev = grid
 				focusIdx = clampFocus(focusIdx, len(focusables))
 				continue
 			}
+
+			// Focused-input editor path.
+			if focusIdx >= 0 && focusIdx < len(focusables) && focusables[focusIdx].isInput {
+				st := inputs.get(focusIdx)
+				editorChanged, dispatchMsg := tuiEditInput(st, km.ev, focusables[focusIdx])
+				if dispatchMsg != nil {
+					msg = dispatchMsg
+					goto applyMsg
+				}
+				if editorChanged {
+					// Sync lastValueAttr so the next render's "did
+					// the model reset?" check doesn't undo the edit.
+					st.lastValueAttr = st.buffer
+					grid, focusables = renderElementFrame(viewFn, model, cols, rows, canvas, focusIdx, inputs)
+					tuiPaint(paintDiff(prev, grid))
+					prev = grid
+					continue
+				}
+				// Editor swallowed but didn't change state — drop the key.
+				continue
+			}
+
+			// Enter on a focusable button activates its onClick.
+			if km.ev.kind == "enter" && focusIdx >= 0 && focusIdx < len(focusables) {
+				if clickEvt := focusableEvent(focusables[focusIdx], "click"); clickEvt != nil {
+					if clickMsg := tuiExtractClickMsg(clickEvt); clickMsg != nil {
+						msg = clickMsg
+						goto applyMsg
+					}
+				}
+			}
+
+			// Otherwise, forward to user's onKey if any.
 			if onKeyFn != nil {
 				key := tuiKeyToSky(onKeyFn, km.ev)
 				if key != nil {
@@ -278,7 +374,7 @@ func tuiAppRun(cfg any) any {
 			prev = nil // trigger full repaint
 		}
 
-		grid, focusables = renderElementFrame(viewFn, model, cols, rows, canvas, focusIdx)
+		grid, focusables = renderElementFrame(viewFn, model, cols, rows, canvas, focusIdx, inputs)
 		tuiPaint(paintDiff(prev, grid))
 		prev = grid
 		focusIdx = clampFocus(focusIdx, len(focusables))
@@ -318,6 +414,175 @@ func tuiTermSize(fd int) (int, int) {
 	return w, h
 }
 
+// parseMouseEvent decodes a mouse keyEvent.value of the form
+// "<button>;<col>;<row>:<M|m>" (set by tuiDecodeKey). Returns
+// (button, col1based, row1based, isPress, ok).
+func parseMouseEvent(s string) (int, int, int, bool, bool) {
+	// Split on ":" — the trailing ":M" or ":m" tells us press/release.
+	last := strings.LastIndex(s, ":")
+	if last < 0 || last == len(s)-1 {
+		return 0, 0, 0, false, false
+	}
+	suffix := s[last+1:]
+	body := s[:last]
+	parts := strings.Split(body, ";")
+	if len(parts) != 3 {
+		return 0, 0, 0, false, false
+	}
+	var bn, cn, rn int
+	if _, err := fmt.Sscanf(parts[0], "%d", &bn); err != nil {
+		return 0, 0, 0, false, false
+	}
+	if _, err := fmt.Sscanf(parts[1], "%d", &cn); err != nil {
+		return 0, 0, 0, false, false
+	}
+	if _, err := fmt.Sscanf(parts[2], "%d", &rn); err != nil {
+		return 0, 0, 0, false, false
+	}
+	return bn, cn, rn, suffix == "M", true
+}
+
+// hitTestFocusables returns the index of the topmost focusable whose
+// bounding box contains (col, row) — both 0-based. Returns -1 if no
+// focusable is hit.
+//
+// "Topmost" = last in tab order, on the assumption that later-rendered
+// focusables overlay earlier ones in nested layouts. For flat layouts
+// (most cases) only one focusable contains a given cell, so the order
+// doesn't matter.
+func hitTestFocusables(focusables []focusable, col, row int) int {
+	for i := len(focusables) - 1; i >= 0; i-- {
+		f := focusables[i]
+		if col >= f.col && col < f.col+f.w && row >= f.row && row < f.row+f.h {
+			return i
+		}
+	}
+	return -1
+}
+
+// focusableEvent returns the eventPair on `f` matching the given name
+// ("click", "input", "change", ...). Sky.Live's Event_onClick et al.
+// produce eventPair{name, msg} values; we filter the focusable's
+// events list by name for activation routing.
+func focusableEvent(f focusable, name string) any {
+	for _, ev := range f.events {
+		if ep, ok := ev.(eventPair); ok && ep.name == name {
+			return ev
+		}
+	}
+	return nil
+}
+
+// tuiEditInput applies a key event to an input's editor state. Returns
+// (editorChanged, dispatchMsg). If editorChanged, the runtime should
+// re-render and (if there's an onInput handler) the dispatchMsg will
+// be set to a Msg representing "user typed; new buffer is X". If the
+// key is Enter and there's an onChange handler, dispatchMsg fires that.
+//
+// v1 supports: chars (insert at cursor), backspace (delete left),
+// delete (delete right), Enter (fire onChange). Cursor movement
+// (Left/Right/Home/End) lands in C3 with extended keys.
+func tuiEditInput(st *tuiInput, ev keyEvent, f focusable) (bool, any) {
+	runes := []rune(st.buffer)
+	changed := false
+	switch ev.kind {
+	case "char":
+		// Insert the (possibly multi-byte) char at cursor. ev.value is
+		// already a single grapheme as decoded by tuiDecodeKey.
+		ins := []rune(ev.value)
+		newRunes := make([]rune, 0, len(runes)+len(ins))
+		newRunes = append(newRunes, runes[:st.cursor]...)
+		newRunes = append(newRunes, ins...)
+		newRunes = append(newRunes, runes[st.cursor:]...)
+		st.buffer = string(newRunes)
+		st.cursor += len(ins)
+		changed = true
+	case "space":
+		newRunes := make([]rune, 0, len(runes)+1)
+		newRunes = append(newRunes, runes[:st.cursor]...)
+		newRunes = append(newRunes, ' ')
+		newRunes = append(newRunes, runes[st.cursor:]...)
+		st.buffer = string(newRunes)
+		st.cursor++
+		changed = true
+	case "backspace":
+		if st.cursor > 0 {
+			newRunes := make([]rune, 0, len(runes)-1)
+			newRunes = append(newRunes, runes[:st.cursor-1]...)
+			newRunes = append(newRunes, runes[st.cursor:]...)
+			st.buffer = string(newRunes)
+			st.cursor--
+			changed = true
+		}
+	case "delete":
+		if st.cursor < len(runes) {
+			newRunes := make([]rune, 0, len(runes)-1)
+			newRunes = append(newRunes, runes[:st.cursor]...)
+			newRunes = append(newRunes, runes[st.cursor+1:]...)
+			st.buffer = string(newRunes)
+			changed = true
+		}
+	case "left":
+		if st.cursor > 0 {
+			st.cursor--
+			return true, nil // cursor-only change; re-render but no Msg
+		}
+	case "right":
+		if st.cursor < len(runes) {
+			st.cursor++
+			return true, nil
+		}
+	case "home":
+		if st.cursor != 0 {
+			st.cursor = 0
+			return true, nil
+		}
+	case "end":
+		if st.cursor != len(runes) {
+			st.cursor = len(runes)
+			return true, nil
+		}
+	case "enter":
+		// Enter on a focused input fires onChange (and onSubmit
+		// semantically — for v1 we surface it as onChange's Msg).
+		if changeEvt := focusableEvent(f, "change"); changeEvt != nil {
+			if msg := tuiExtractInputMsg(changeEvt, st.buffer); msg != nil {
+				return false, msg
+			}
+		}
+		// Fall back: try the parent form's onSubmit by dispatching
+		// any "submit" event we picked up. (Not collecting form-
+		// level events yet — v1 keeps it scoped to the input.)
+		return false, nil
+	}
+	if !changed {
+		return false, nil
+	}
+	// Dispatch onInput Msg with the new buffer.
+	if inputEvt := focusableEvent(f, "input"); inputEvt != nil {
+		if msg := tuiExtractInputMsg(inputEvt, st.buffer); msg != nil {
+			return true, msg
+		}
+	}
+	return true, nil
+}
+
+// tuiExtractInputMsg unwraps an eventPair{name, msg} where msg is a
+// Sky `String -> Msg` constructor, and applies it to the new buffer
+// string to produce the actual Msg to dispatch.
+func tuiExtractInputMsg(evt any, buffer string) any {
+	ep, ok := evt.(eventPair)
+	if !ok {
+		return nil
+	}
+	if ep.msg == nil {
+		return nil
+	}
+	// onInput / onChange in Std.Live.Events take String -> Msg, so
+	// applying the captured fn to the buffer gives us the user's Msg.
+	return sky_call(ep.msg, buffer)
+}
+
 // tuiExtractClickMsg pulls the Msg out of a Std.Live.Events event
 // value. Event_onClick returns an `eventPair{name, msg}` (see live.go);
 // we just read its msg field. We also tolerate tuple-shaped values for
@@ -342,12 +607,14 @@ func tuiExtractClickMsg(evt any) any {
 
 // renderElementFrame is the top-level render. Walks the Element ADT,
 // computes layout for the available terminal size + logical canvas,
-// produces a 2D cell grid + focusable list (in tab order).
+// produces a 2D cell grid + focusable list (in tab order). The input
+// registry persists across renders so editor state (buffer + cursor)
+// survives even when the model doesn't carry it back.
 //
 // Returns the grid (not yet ANSI-encoded) so the caller can diff
 // against the previous frame and emit only changed cells. See
 // paintDiff for the minimal-write emission.
-func renderElementFrame(viewFn, model any, cols, rows int, canvas tuiCanvas, focusIdx int) ([][]tuiCell, []focusable) {
+func renderElementFrame(viewFn, model any, cols, rows int, canvas tuiCanvas, focusIdx int, inputs *inputRegistry) ([][]tuiCell, []focusable) {
 	elem := SkyCall(viewFn, model)
 	pxPerCellX := float64(canvas.width) / float64(cols)
 	pxPerCellY := float64(canvas.height) / float64(rows)
@@ -366,7 +633,7 @@ func renderElementFrame(viewFn, model any, cols, rows int, canvas tuiCanvas, foc
 	grid := newCellGrid(cols, rows)
 	var focusables []focusable
 	box := layoutElement(elem, ctx, cols, rows, layoutAxisColumn)
-	paintBox(grid, box, 0, 0, cols, rows, focusIdx, &focusables, layoutAxisColumn, 0)
+	paintBox(grid, box, 0, 0, cols, rows, focusIdx, &focusables, inputs, layoutAxisColumn, 0)
 	return grid, focusables
 }
 
@@ -397,7 +664,9 @@ type layoutBox struct {
 	bold        bool
 	italic      bool
 	underline   bool
-	clickEvt    any // Std.Live.Events.onClick value, if any
+	events      []any  // for focusables: all AttrEvent payloads
+	valueAttr   string // for inputs: initial value from AttrAttribute "value"
+	placeholder string // for inputs: shown when buffer is empty
 	children    []layoutBox
 	borderWidth [4]int // top, right, bottom, left — 1 cell each if border present
 	borderColor tuiColor
@@ -569,7 +838,9 @@ func layoutNode(tag string, fields []any, ctx tuiLayoutCtx, maxW, maxH int, pare
 		bold:        la.bold,
 		italic:      la.italic,
 		underline:   la.underline,
-		clickEvt:    la.clickEvt,
+		events:      la.events,
+		valueAttr:   la.valueAttr,
+		placeholder: la.placeholder,
 		children:    childBoxes,
 		borderWidth: la.borderWidth,
 		borderColor: la.borderColor,
@@ -749,7 +1020,9 @@ type walkedAttrs struct {
 	italic      bool
 	underline   bool
 	isRow       bool
-	clickEvt    any
+	events      []any  // every AttrEvent payload
+	valueAttr   string // AttrAttribute "value" — initial value for inputs
+	placeholder string // AttrAttribute "placeholder" — shown on empty input
 	borderWidth [4]int // top, right, bottom, left — 1 if border present, 0 otherwise
 	borderColor tuiColor
 	borderStyle string // "solid" (default), "dashed", "dotted"
@@ -799,9 +1072,20 @@ func walkAttrs(attrs []any, ctx tuiLayoutCtx) walkedAttrs {
 					out.isRow = true
 				}
 			}
-		case 11: // AttrEvent — pre-built event payload
+		case 11: // AttrEvent — pre-built event payload (eventPair{name, msg})
 			if len(adt.Fields) > 0 {
-				out.clickEvt = adt.Fields[0]
+				out.events = append(out.events, adt.Fields[0])
+			}
+		case 12: // AttrAttribute "k" "v" — raw HTML attr; we read "value"/"placeholder"
+			if len(adt.Fields) >= 2 {
+				k, _ := adt.Fields[0].(string)
+				v, _ := adt.Fields[1].(string)
+				switch k {
+				case "value":
+					out.valueAttr = v
+				case "placeholder":
+					out.placeholder = v
+				}
 			}
 		case 13: // AttrFontSize — IGNORED in TUI
 		case 14: // AttrFontColor Color
@@ -989,8 +1273,10 @@ func newCellGrid(cols, rows int) [][]tuiCell {
 
 // paintBox writes a layoutBox into the grid starting at (col0, row0).
 // Recurses through children, applying axis + spacing for sibling
-// placement. Collects focusable elements in tab order.
-func paintBox(grid [][]tuiCell, box layoutBox, col0, row0, maxW, maxH, focusIdx int, focusables *[]focusable, parentAxis layoutAxis, idxInParent int) {
+// placement. Collects focusable elements in tab order. Inputs read
+// their buffer from the persistent inputRegistry so typing carries
+// across re-renders.
+func paintBox(grid [][]tuiCell, box layoutBox, col0, row0, maxW, maxH, focusIdx int, focusables *[]focusable, inputs *inputRegistry, parentAxis layoutAxis, idxInParent int) {
 	w := box.width
 	if w > maxW {
 		w = maxW
@@ -1010,23 +1296,21 @@ func paintBox(grid [][]tuiCell, box layoutBox, col0, row0, maxW, maxH, focusIdx 
 		drawBorder(grid, col0, row0, w, h, box.borderWidth, box.borderColor, box.borderStyle)
 	}
 
-	// If this box is focusable, register it.
-	if box.clickEvt != nil {
-		focIdx := len(*focusables)
+	// If this box is focusable (has any event handler) OR it's an input
+	// (which is always focusable for editing), register it. The focus
+	// indicator is applied AFTER children paint (further down) so the
+	// markers don't get overwritten by the label.
+	isInput := box.tag == "input"
+	thisFocusIdx := -1
+	if len(box.events) > 0 || isInput {
+		thisFocusIdx = len(*focusables)
 		*focusables = append(*focusables, focusable{
-			clickEvt: box.clickEvt,
-			row:      row0, col: col0, w: w, h: h,
+			events:       box.events,
+			isInput:      isInput,
+			initialValue: box.valueAttr,
+			placeholder:  box.placeholder,
+			row:          row0, col: col0, w: w, h: h,
 		})
-		// Visual focus cue. Per-element-kind:
-		//   - button: bracket framing — ▸ leading, ◂ trailing — visible
-		//     against any bg; doesn't fight with the button's own colours
-		//   - link (TaggedNode "a"): underline (already a typical link cue)
-		//   - input: cursor visible (handled in the input editor pass)
-		//   - default: subtle reverse-video on the leading + trailing
-		//     cell only (the original blanket reverse was too intrusive)
-		if focIdx == focusIdx {
-			applyFocusIndicator(grid, box, col0, row0, w, h)
-		}
 	}
 
 	// Recurse into content area (after padding + border).
@@ -1045,15 +1329,31 @@ func paintBox(grid [][]tuiCell, box layoutBox, col0, row0, maxW, maxH, focusIdx 
 	case "text":
 		paintText(grid, box.text, innerCol, innerRow, innerW, box.fg, box.bg, box.bold, box.italic, box.underline)
 	case "node":
-		// Tag-specific framing (button: bracket the label).
-		// Skipped for v0 to keep the spike honest about scope.
+		// Inputs render their persistent buffer + cursor instead of
+		// recursing into children (Std.Ui's input creates a TaggedNode
+		// with no children).
+		if box.tag == "input" {
+			focIdx := len(*focusables) - 1 // input was just registered above
+			st := inputs.get(focIdx)
+			// First-render initialisation: if user supplied a value
+			// attribute and the buffer is empty, seed the buffer.
+			// Subsequent renders: detect a user-driven reset (value
+			// attr changed since last frame) and resync buffer.
+			if box.valueAttr != st.lastValueAttr {
+				st.buffer = box.valueAttr
+				st.cursor = runeLen(st.buffer)
+				st.lastValueAttr = box.valueAttr
+			}
+			paintInputBuffer(grid, st, innerCol, innerRow, innerW, box.fg, box.bg, box.placeholder, focIdx == focusIdx)
+			break
+		}
 		if box.axis == layoutAxisRow {
 			x := innerCol
 			for i, c := range box.children {
 				if i > 0 {
 					x += box.spacing
 				}
-				paintBox(grid, c, x, innerRow, innerW-(x-innerCol), innerH, focusIdx, focusables, layoutAxisRow, i)
+				paintBox(grid, c, x, innerRow, innerW-(x-innerCol), innerH, focusIdx, focusables, inputs, layoutAxisRow, i)
 				x += c.width
 			}
 		} else {
@@ -1062,7 +1362,7 @@ func paintBox(grid [][]tuiCell, box layoutBox, col0, row0, maxW, maxH, focusIdx 
 				if i > 0 {
 					y += box.spacing
 				}
-				paintBox(grid, c, innerCol, y, innerW, innerH-(y-innerRow), focusIdx, focusables, layoutAxisColumn, i)
+				paintBox(grid, c, innerCol, y, innerW, innerH-(y-innerRow), focusIdx, focusables, inputs, layoutAxisColumn, i)
 				y += c.height
 			}
 		}
@@ -1077,9 +1377,74 @@ func paintBox(grid [][]tuiCell, box layoutBox, col0, row0, maxW, maxH, focusIdx 
 		paintHeadingUnderline(grid, innerCol, innerRow+1, innerW, "─", box.fg)
 	}
 
+	// Focus indicator AFTER children so markers (e.g. ▸ ◂ for
+	// buttons) aren't overwritten by the label paint.
+	if thisFocusIdx == focusIdx && thisFocusIdx >= 0 && !isInput {
+		applyFocusIndicator(grid, box, col0, row0, w, h)
+	}
+
 	// Inherit fg/bold/italic/underline to children would be done by
 	// passing them through layoutCtx — for v0, the Std.Ui pattern is
 	// "set the style on the leaf" so we don't propagate.
+}
+
+// paintInputBuffer renders an input's text + cursor into a single
+// row. When the buffer is empty AND the input isn't focused, the
+// placeholder text is shown in a muted style. The cursor renders as
+// reverse-video on the cell at st.cursor (or the trailing cell when
+// at end-of-buffer).
+func paintInputBuffer(grid [][]tuiCell, st *tuiInput, col, row, w int, fg, bg tuiColor, placeholder string, focused bool) {
+	if row < 0 || row >= len(grid) || w <= 0 {
+		return
+	}
+	rowCells := grid[row]
+	// Buffer to render; placeholder if empty + unfocused.
+	display := st.buffer
+	usePlaceholder := false
+	if display == "" && placeholder != "" && !focused {
+		display = placeholder
+		usePlaceholder = true
+	}
+	// Convert to runes so cursor index is character-aligned.
+	runes := []rune(display)
+	x := col
+	for i, r := range runes {
+		if x >= col+w || x >= len(rowCells) {
+			break
+		}
+		if x < 0 {
+			x++
+			continue
+		}
+		c := &rowCells[x]
+		c.ch = string(r)
+		if fg.set {
+			c.fg = fg
+		}
+		if bg.set {
+			c.bg = bg
+		}
+		if usePlaceholder {
+			c.italic = true // visual cue: placeholder
+		}
+		// Cursor cell: reverse-video while focused.
+		if focused && !usePlaceholder && i == st.cursor {
+			c.reverse = true
+		}
+		x++
+	}
+	// Cursor at end-of-buffer (past last char): paint a trailing
+	// reverse-video space so the user can see where they're typing.
+	if focused && !usePlaceholder && st.cursor == len(runes) {
+		x := col + len(runes)
+		if x < col+w && x >= 0 && x < len(rowCells) {
+			rowCells[x].ch = " "
+			rowCells[x].reverse = true
+			if bg.set {
+				rowCells[x].bg = bg
+			}
+		}
+	}
 }
 
 func paintHeadingUnderline(grid [][]tuiCell, col, row, w int, ch string, fg tuiColor) {
