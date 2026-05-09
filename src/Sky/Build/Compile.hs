@@ -1250,8 +1250,21 @@ typecheckWorkspace config entryPath = do
     extraTestFiles <- if testsRootExists2
                       then Graph.listSkyFiles "tests"
                       else return []
+    -- Also seed stdlib + dep roots so their modules end up in the
+    -- index regardless of whether the entry imports them. Critical
+    -- when the entry has a parse error — skipping it loses its
+    -- import graph, which used to mean stdlib symbols disappeared
+    -- from the index for the duration of the broken state.
+    stdlibFiles <- Graph.listSkyFiles stdlibRoot
+    depFiles <- concat <$> mapM Graph.listSkyFiles depRoots
     let allSeeds = entryPath : extraSrcFiles ++ extraTestFiles
-    modules <- Graph.discoverModulesFromSeeds
+                              ++ stdlibFiles ++ depFiles
+    -- Tolerant discovery: skip files with parse errors instead of
+    -- aborting the whole workspace pass. Critical for the LSP path
+    -- where the user may be editing a broken file at any time —
+    -- the broken file should NOT kill hover/completion/diagnostics
+    -- on every other file in the project.
+    modules <- Graph.discoverModulesFromSeedsTolerant
         (sourceRoot : depRoots ++ extraTestsRoot2 ++ [stdlibRoot]) allSeeds
     let moduleOrder = Graph.compilationOrder modules
 

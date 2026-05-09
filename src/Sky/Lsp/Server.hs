@@ -2549,7 +2549,17 @@ handleCompletionSt st req reqId = do
         Nothing -> return stdlibCompletions
         Just (_, text) -> do
             let ctx    = prefixAt text line col
-                module_ = either (const Nothing) Just (Parse.parseModule text)
+                -- Parse recovery: the user typing `model.<cursor>`
+                -- produces a trailing-dot expression that's a parse
+                -- error. We fall back to a recovered text where the
+                -- trailing `.` is filled with a placeholder field
+                -- name so the parser succeeds and we can walk the
+                -- AST. The recovered text is ONLY used for AST-based
+                -- completion paths; the original text is what the
+                -- user sees in their editor.
+                module_ = case Parse.parseModule text of
+                    Right m'  -> Just m'
+                    Left _    -> tryParseWithRecovery text line col
                 locals = maybe [] localCompletions module_
             -- Import-statement completion: when the current LINE starts
             -- with `import `, suggest module names from the workspace
@@ -2589,6 +2599,62 @@ handleCompletionSt st req reqId = do
         [ "isIncomplete" A..= False
         , "items"        A..= items
         ])
+
+
+-- | Replace the cursor's line with a parse-recoverable variant so
+-- common completion contexts that fail full-text parse (`model.`,
+-- `Ui.`, `case x of`) still produce a usable AST.
+--
+-- Recovery rules (applied in order):
+--   1. Trailing `<ident>.` → append `__sky_lsp_placeholder` so the
+--      Access expression parses cleanly. The walker then sees a
+--      legitimate Access node we can use for field completion.
+--   2. Bare `import <prefix>` line stays as-is (already parses or
+--      doesn't matter since import-line completion uses line text).
+--   3. Other contexts: replace the line with a stub `_ = 0` so the
+--      rest of the file parses. We lose the cursor's local AST but
+--      preserve workspace context.
+tryParseWithRecovery :: T.Text -> Int -> Int -> Maybe Src.Module
+tryParseWithRecovery text line col =
+    let recovered = recoverText text line col
+    in case Parse.parseModule recovered of
+        Right m -> Just m
+        Left _  ->
+            -- Last-resort: replace the offending line entirely.
+            let stubbed = stubLine text line
+            in case Parse.parseModule stubbed of
+                Right m -> Just m
+                Left _  -> Nothing
+
+
+-- | Recover a Sky source whose cursor line ends in a dot or
+-- otherwise breaks the parser. Returns text with a placeholder
+-- field name appended after a trailing dot.
+recoverText :: T.Text -> Int -> Int -> T.Text
+recoverText text line _col =
+    let ls = T.lines text
+    in if line < 0 || line >= length ls
+        then text
+        else
+            let cur = ls !! line
+                cur' = if T.isSuffixOf "." (T.stripEnd cur)
+                       then cur `T.append` "__sky_lsp_placeholder"
+                       else cur
+                ls' = take line ls ++ [cur'] ++ drop (line + 1) ls
+            in T.unlines ls'
+
+
+-- | Replace the cursor line with a stub binding `__sky_lsp_stub__ = 0`.
+-- Used when finer-grained recovery doesn't restore parseability.
+stubLine :: T.Text -> Int -> T.Text
+stubLine text line =
+    let ls = T.lines text
+    in if line < 0 || line >= length ls
+        then text
+        else
+            let stub = T.pack "__sky_lsp_stub__ = 0"
+                ls' = take line ls ++ [stub] ++ drop (line + 1) ls
+            in T.unlines ls'
 
 
 -- | Decide whether the cursor is inside an `import ` statement based
@@ -2805,20 +2871,24 @@ resolveQualifiedCompletion st path mModule ctx = do
                         [aliasOrName, localPrefix] -> do
                             let alias = T.unpack aliasOrName
                                 lp    = T.unpack localPrefix
-                                -- Resolve `alias` to its real module
-                                -- name via the file's imports.
                                 realModule = resolveImportAlias srcMod alias
-                            return (matchingExports idx realModule lp)
+                            -- Use the user's alias as the label
+                            -- prefix — matching what they actually
+                            -- typed. If the file has `import Std.Ui
+                            -- as Ui`, completion shows `Ui.layout`
+                            -- not `Std.Ui.layout`. Cleaner DX +
+                            -- editors apply the completion as-is.
+                            return (matchingExports idx realModule lp alias)
                         _ -> return []
   where
-    matchingExports idx modName lp =
+    matchingExports idx modName lp displayPrefix =
         let qualPrefix = modName ++ "."
             symMatches =
                 [ s | (q, s) <- Map.toList (Idx.idxByQual idx)
                     , qualPrefix `isPrefixOf` q
                     , lp `isPrefixOf` Idx.symLocalName s ]
         in [ A.object
-                [ "label"  A..= (modName ++ "." ++ Idx.symLocalName s)
+                [ "label"  A..= (displayPrefix ++ "." ++ Idx.symLocalName s)
                 , "kind"   A..= symKindToLsp (Idx.symKind s)
                 , "detail" A..= maybe "" id (Idx.symTypeSig s)
                 ]

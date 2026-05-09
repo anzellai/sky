@@ -6,6 +6,7 @@ module Sky.Build.ModuleGraph
     , discoverModules
     , discoverModulesMulti
     , discoverModulesFromSeeds
+    , discoverModulesFromSeedsTolerant
     , listSkyFiles
     , compilationOrder
     )
@@ -52,10 +53,11 @@ discoverModulesMulti roots entryPath = discoverModulesFromSeeds roots [entryPath
 -- ends up in the index — not just modules transitively reachable from
 -- the project's main entry.
 --
--- Without this, opening a helper module that's never imported from
--- Main.sky produced no LSP context (no hover, no go-to-def, no
--- diagnostics) — surfacing as "many modules show no signatures"
--- on multi-file projects (sendcrafts, etc.).
+-- Parse errors in seeds are FATAL (matches the build path). The LSP
+-- should use `discoverModulesFromSeedsTolerant` instead, which skips
+-- unparseable files and continues — the user is constantly editing
+-- mid-parse code and an unrelated file's broken state shouldn't kill
+-- the whole workspace index.
 discoverModulesFromSeeds :: [String] -> [FilePath] -> IO (Map.Map String ModuleInfo)
 discoverModulesFromSeeds roots seeds = do
     go Map.empty seeds
@@ -76,16 +78,6 @@ discoverModulesFromSeeds roots seeds = do
                 source <- TIO.readFile path
                 case Parse.parseModule source of
                     Left err ->
-                        -- Parse errors are FATAL, not warnings. Previously
-                        -- this was a `putStrLn "Warning: …"` + skip, which
-                        -- silently dropped the unparseable module from the
-                        -- build graph and let the build proceed with the
-                        -- remaining modules — leading to downstream
-                        -- "undefined: Foo_bar" Go errors that gave the user
-                        -- no clue the real issue was a parse failure on
-                        -- their .sky source. Same class as the dep-HM-fatal
-                        -- fix in CLAUDE.md Limitation #16: silent degradation
-                        -- of compiler errors is a soundness gap.
                         error $ "PARSE ERROR: " ++ path ++ ": " ++ show err
                     Right srcMod -> do
                         let declaredName = case Src._name srcMod of
@@ -103,15 +95,71 @@ discoverModulesFromSeeds roots seeds = do
                         go (Map.insert declaredName info visited)
                            (catMaybe localPaths ++ rest)
 
-    -- Choose the best root for naming a given file path.
     rootFor path =
         case filter (\r -> take (length r) path == r) roots of
             (r:_) -> r
             []    -> primaryRoot
 
-    -- Probe each root in order; return the first existing candidate path,
-    -- falling back to the primary root (so a missing-module error still
-    -- reports a sensible path).
+    resolveImport :: String -> IO (Maybe FilePath)
+    resolveImport modName = do
+        let candidates = map (\r -> moduleNameToPath r modName) roots
+        firstExisting candidates
+
+    firstExisting [] = return Nothing
+    firstExisting (p:ps) = do
+        ok <- doesFileExist p
+        if ok then return (Just p) else firstExisting ps
+
+    catMaybe = foldr (\m acc -> case m of Just x -> x:acc; Nothing -> acc) []
+
+
+-- | Tolerant variant: parse errors are SKIPPED, not fatal. Returns
+-- only the modules that successfully parsed. Use this for the LSP
+-- workspace pass so an unrelated file's broken state doesn't kill
+-- diagnostics, hover, completion etc. across the entire project.
+discoverModulesFromSeedsTolerant :: [String] -> [FilePath] -> IO (Map.Map String ModuleInfo)
+discoverModulesFromSeedsTolerant roots seeds = do
+    goTolerant Map.empty seeds
+  where
+    primaryRoot = case roots of
+        (r:_) -> r
+        []    -> "."
+
+    goTolerant visited [] = return visited
+    goTolerant visited (path:rest) = do
+        exists <- doesFileExist path
+        let alreadyByPath = any (\v -> _mi_path v == path) (Map.elems visited)
+            modNameGuess = pathToModuleName (rootFor path) path
+            alreadyByName = Map.member modNameGuess visited
+        if not exists || alreadyByPath || alreadyByName
+            then goTolerant visited rest
+            else do
+                source <- TIO.readFile path
+                case Parse.parseModule source of
+                    Left _ ->
+                        -- Skip parse-failed module and continue.
+                        goTolerant visited rest
+                    Right srcMod -> do
+                        let declaredName = case Src._name srcMod of
+                                Just (A.At _ segs) -> joinDots segs
+                                Nothing -> modNameGuess
+                            importNames = map getImportName (Src._imports srcMod)
+                            localImports = filter isLocalImport importNames
+                        localPaths <- mapM resolveImport localImports
+                        let info = ModuleInfo
+                                { _mi_name = declaredName
+                                , _mi_path = path
+                                , _mi_imports = importNames
+                                , _mi_isLocal = True
+                                }
+                        goTolerant (Map.insert declaredName info visited)
+                                   (catMaybe localPaths ++ rest)
+
+    rootFor path =
+        case filter (\r -> take (length r) path == r) roots of
+            (r:_) -> r
+            []    -> primaryRoot
+
     resolveImport :: String -> IO (Maybe FilePath)
     resolveImport modName = do
         let candidates = map (\r -> moduleNameToPath r modName) roots
