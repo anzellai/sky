@@ -13,6 +13,7 @@
 package rt
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -21,12 +22,14 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/signal"
 	"reflect"
 	"runtime"
 	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -2149,8 +2152,28 @@ func liveAppRun(cfg any) any {
 		IdleTimeout:    120 * time.Second,
 		MaxHeaderBytes: 1 << 20,
 	}
+	// Clean shutdown on SIGINT / SIGTERM / SIGHUP. Without explicit
+	// signal handling here, Ctrl-C in some environments (mosh, tmux,
+	// nested shells) doesn't reliably terminate a Go HTTP server —
+	// the SSE keep-alive goroutines hold open file descriptors and
+	// the runtime's default signal disposition behaves inconsistently
+	// across stacks. Trapping signals + calling srv.Shutdown gives a
+	// crisp 5-second graceful close, then a definitive exit. Active
+	// SSE connections receive a final flush + close, so reconnecting
+	// clients see http.ErrServerClosed via the EventSource error
+	// path and the in-page banner flips to "Reconnecting…" cleanly.
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+	go func() {
+		<-sigCh
+		fmt.Println("\nSky.Live shutting down…")
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(ctx)
+	}()
 	fmt.Printf("Sky.Live listening on :%d\n", port)
 	err := srv.ListenAndServe()
+	signal.Stop(sigCh)
 	if err != nil && err != http.ErrServerClosed {
 		return Err[any, any](ErrFfi(err.Error()))
 	}
@@ -2274,8 +2297,45 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	// styleNode in their view, or static-served self-hosted webfonts).
 	// Privacy: no Google Fonts request. Accessibility: no !important
 	// override fighting app-level type choices.
-	fmt.Fprintf(w, "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"></head><body><div id=\"sky-root\">%s</div><script>%s</script></body></html>", body, liveJSWithCfg(sid, app.bannerCfg))
+	//
+	// Minimal CSS reset (`liveBaseCSS` below) zeroes out the worst
+	// browser-default offenders that interact badly with Std.Ui's
+	// flex-based layout: <p>/<h1>-<h6>/<button>/<input>/<a> default
+	// margins + font sizes that would push everything out of position
+	// otherwise. The reset is deliberately minimal — it does NOT
+	// impose font choice, line-height, or colour scheme. Apps that
+	// need a "designed" look still attach their own typography via
+	// view-level style attrs or a styleNode at the top of view.
+	fmt.Fprintf(w, "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><style>%s</style></head><body><div id=\"sky-root\">%s</div><script>%s</script></body></html>", liveBaseCSS, body, liveJSWithCfg(sid, app.bannerCfg))
 }
+
+// liveBaseCSS is the minimal reset injected into every Sky.Live page.
+// Goals:
+//   1. Zero out browser-default margins on <p>, <h1>-<h6>, <ul>, <ol>,
+//      <li>, <body>, <html> so flex layout from Std.Ui isn't fighting
+//      legacy editorial CSS that wants 1em vertical spacing.
+//   2. Inherit font on form controls — <button> / <input> / <select>
+//      / <textarea> default to a smaller browser font, which makes
+//      Std.Ui buttons look out of place next to surrounding text.
+//   3. box-sizing: border-box so padding adds to the slot's content
+//      area rather than expanding the box. Std.Ui generates explicit
+//      width/height in cells; border-box keeps that math correct.
+//   4. min-height: 100vh on body so a dark-themed view fills the
+//      viewport instead of leaving a white strip below the content.
+//   5. Sensible default font-family (system stack, no web fetch) so
+//      apps that don't set their own typography don't get Times New
+//      Roman.
+//
+// The reset is ~600 bytes — negligible compared to the typical page
+// body. NO !important is used; user view styles always win.
+const liveBaseCSS = `*,*::before,*::after{box-sizing:border-box}` +
+	`html,body{margin:0;padding:0;min-height:100%}` +
+	`body{min-height:100vh;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;line-height:1.4}` +
+	`h1,h2,h3,h4,h5,h6,p,ul,ol,li,figure,blockquote,pre,dl,dd{margin:0;padding:0;font-weight:inherit;font-size:inherit}` +
+	`button,input,select,textarea{font:inherit;color:inherit}` +
+	`button{background:none;border:0;padding:0;cursor:pointer;text-align:inherit}` +
+	`a{color:inherit;text-decoration:none}` +
+	`img,video,canvas,svg{display:block;max-width:100%}`
 
 // handleConfig exposes client-facing runtime config (no secrets) so the
 // JS driver can adjust behaviour without recompilation. Served at
