@@ -93,6 +93,47 @@ func TestPaintInputTrack_AdaptsToBgColor(t *testing.T) {
 	}
 }
 
+// Checkbox renders a single ☐ / ☑ glyph (not the legacy `[ ]`).
+// Focus state inverts via `reverse` rather than a leading arrow.
+func TestPaintCheckbox_GlyphAndFocus(t *testing.T) {
+	grid := makeTestGrid(10, 1)
+	box := layoutBox{tag: "input", inputType: "checkbox", valueAttr: "false"}
+	paintCheckbox(grid, box, 3, 0, 1, textStyle{}, false)
+	if grid[0][3].ch != "☐" {
+		t.Errorf("unchecked: ch=%q want ☐", grid[0][3].ch)
+	}
+	if grid[0][3].reverse {
+		t.Error("unchecked unfocused should NOT be reversed")
+	}
+	// Now checked + focused.
+	box2 := layoutBox{tag: "input", inputType: "checkbox", valueAttr: "true"}
+	paintCheckbox(grid, box2, 3, 0, 1, textStyle{}, true)
+	if grid[0][3].ch != "☑" {
+		t.Errorf("checked: ch=%q want ☑", grid[0][3].ch)
+	}
+	if !grid[0][3].reverse {
+		t.Error("focused checked should be reversed")
+	}
+}
+
+// Radio: ○ / ●, focus inverts.
+func TestPaintRadio_GlyphAndFocus(t *testing.T) {
+	grid := makeTestGrid(10, 1)
+	box := layoutBox{tag: "input", inputType: "radio", valueAttr: ""}
+	paintRadio(grid, box, 0, 0, 1, textStyle{}, false)
+	if grid[0][0].ch != "○" {
+		t.Errorf("unselected: ch=%q want ○", grid[0][0].ch)
+	}
+	box2 := layoutBox{tag: "input", inputType: "radio", valueAttr: "green"}
+	paintRadio(grid, box2, 0, 0, 1, textStyle{}, true)
+	if grid[0][0].ch != "●" {
+		t.Errorf("selected: ch=%q want ●", grid[0][0].ch)
+	}
+	if !grid[0][0].reverse {
+		t.Error("focused selected radio should be reversed")
+	}
+}
+
 func makeTestGrid(cols, rows int) [][]tuiCell {
 	g := make([][]tuiCell, rows)
 	for r := range g {

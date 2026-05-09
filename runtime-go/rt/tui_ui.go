@@ -841,6 +841,15 @@ func tuiEditInput(st *tuiInput, ev keyEvent, f focusable) (bool, any) {
 	if !changed {
 		return false, nil
 	}
+	// Sync lastValueAttr to the new buffer so the next render's
+	// "did the model reset?" check (in paintInputBufferAdvanced)
+	// doesn't undo the local edit by snapping the cursor to the end
+	// of buffer. Without this sync, mid-string edits (eg typing
+	// between two existing lines of a multiline input) get
+	// reset every keystroke because the dispatch Msg path bypasses
+	// the post-edit sync that the editorChanged-no-dispatch path
+	// already does.
+	st.lastValueAttr = st.buffer
 	// Dispatch onInput Msg with the new buffer.
 	if inputEvt := focusableEvent(f, "input"); inputEvt != nil {
 		if msg := tuiExtractInputMsg(inputEvt, st.buffer); msg != nil {
@@ -1288,6 +1297,28 @@ func layoutNode(tag string, fields []any, ctx tuiLayoutCtx, maxW, maxH int, pare
 				}
 			}
 		}
+		// Inputs have no children, so the intrinsic-from-children
+		// pass collapses them to width=0. Give each input type a
+		// sensible default that fits its rendered glyph(s) plus a
+		// pad. Without this, a `Ui.input` with no explicit width
+		// renders as 0 cells and the checkbox / radio glyph is
+		// invisible.
+		if tag == "input" {
+			switch la.inputType {
+			case "checkbox", "radio":
+				if intrinsic < 1 { // single-glyph render: ☐/☑/○/●
+					intrinsic = 1
+				}
+			case "range":
+				if intrinsic < 12 { // "├──●──────┤"
+					intrinsic = 12
+				}
+			default:
+				if intrinsic < 16 { // text/password/email/etc.
+					intrinsic = 16
+				}
+			}
+		}
 		if intrinsic < width {
 			width = intrinsic
 		}
@@ -1306,6 +1337,17 @@ func layoutNode(tag string, fields []any, ctx tuiLayoutCtx, maxW, maxH int, pare
 				if c.height > intrinsic {
 					intrinsic = c.height
 				}
+			}
+		}
+		// Inputs need at least 1 cell of height to render their
+		// glyph; textarea defaults to 3 rows for a useful editor.
+		if tag == "input" {
+			if la.inputType == "textarea" {
+				if intrinsic < 3 {
+					intrinsic = 3
+				}
+			} else if intrinsic < 1 {
+				intrinsic = 1
 			}
 		}
 		if intrinsic < height {
@@ -1996,7 +2038,12 @@ func paintBox(grid [][]tuiCell, box layoutBox, col0, row0, maxW, maxH, focusIdx 
 	}
 
 	// Border draw (under children/text but over background fill).
-	if box.borderWidth[0]+box.borderWidth[1]+box.borderWidth[2]+box.borderWidth[3] > 0 {
+	// Inputs deliberately suppress border rendering — Unicode
+	// box-drawing on a 1-row input looks chunky and misaligns
+	// against neighbouring text. The track shading inside the
+	// input (paintInputBufferAdvanced) communicates bounds; the
+	// reverse-cursor + ☑ / ● glyphs communicate state.
+	if box.tag != "input" && box.borderWidth[0]+box.borderWidth[1]+box.borderWidth[2]+box.borderWidth[3] > 0 {
 		drawBorder(grid, col0, row0, w, h, box.borderWidth, box.borderColor, box.borderStyle)
 	}
 
@@ -2018,11 +2065,19 @@ func paintBox(grid [][]tuiCell, box layoutBox, col0, row0, maxW, maxH, focusIdx 
 		})
 	}
 
-	// Recurse into content area (after padding + border).
-	innerCol := col0 + box.padding[3] + box.borderWidth[3]
-	innerRow := row0 + box.padding[0] + box.borderWidth[0]
-	innerW := w - box.padding[1] - box.padding[3] - box.borderWidth[1] - box.borderWidth[3]
-	innerH := h - box.padding[0] - box.padding[2] - box.borderWidth[0] - box.borderWidth[2]
+	// Recurse into content area (after padding + border). Inputs
+	// suppress border rendering (see drawBorder skip above), so
+	// the inner area for inputs is also computed without the
+	// border inset — otherwise an input with `Border.width 1`
+	// would still consume cells for an invisible border.
+	bw := box.borderWidth
+	if box.tag == "input" {
+		bw = [4]int{}
+	}
+	innerCol := col0 + box.padding[3] + bw[3]
+	innerRow := row0 + box.padding[0] + bw[0]
+	innerW := w - box.padding[1] - box.padding[3] - bw[1] - bw[3]
+	innerH := h - box.padding[0] - box.padding[2] - bw[0] - bw[2]
 	if innerW < 0 {
 		innerW = 0
 	}
@@ -2372,33 +2427,35 @@ func cursorLocate(text string, cursor int) (int, int) {
 	return line, cursor - colStart
 }
 
-// paintCheckbox renders [✓] when value attr is "true", [ ] otherwise.
-// Focused state shows [▸✓] / [▸ ] with the leading focus marker.
+// paintCheckbox renders a single-cell ☐ / ☑ glyph based on the
+// element's value attr. Focused state inverts fg/bg via the
+// reverse SGR — keeps the visual minimal (one cell) and aligns
+// cleanly with neighbouring text rather than a chunky `[ ]`.
 func paintCheckbox(grid [][]tuiCell, box layoutBox, col, row, w int, style textStyle, focused bool) {
 	checked := box.valueAttr == "true"
-	mark := " "
+	glyph := "☐"
 	if checked {
-		mark = "✓"
+		glyph = "☑"
 	}
-	prefix := "[ "
-	if focused {
-		prefix = "[▸"
+	paintInputLine(grid, glyph, col, row, w, style, false)
+	if focused && row >= 0 && row < len(grid) && col >= 0 && col < len(grid[row]) {
+		grid[row][col].reverse = true
 	}
-	render := prefix + mark + "]"
-	paintInputLine(grid, render, col, row, w, style, false)
 }
 
-// paintRadio renders ◉ when selected, ○ otherwise.
+// paintRadio renders ○ / ● for unselected / selected. Focus is
+// shown via the reverse SGR (inverts fg/bg) so the focused radio
+// stands out without consuming an extra cell for a focus arrow.
 func paintRadio(grid [][]tuiCell, box layoutBox, col, row, w int, style textStyle, focused bool) {
 	selected := box.valueAttr != "" && box.valueAttr != "false"
-	mark := "○"
+	glyph := "○"
 	if selected {
-		mark = "◉"
+		glyph = "●"
 	}
-	if focused {
-		mark = "▸" + mark
+	paintInputLine(grid, glyph, col, row, w, style, false)
+	if focused && row >= 0 && row < len(grid) && col >= 0 && col < len(grid[row]) {
+		grid[row][col].reverse = true
 	}
-	paintInputLine(grid, mark, col, row, w, style, false)
 }
 
 // paintSlider renders ──●── with the thumb (●) positioned proportional
