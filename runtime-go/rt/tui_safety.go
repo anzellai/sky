@@ -154,38 +154,60 @@ func tuiTeardown() {
 		tuiTornDown = true
 		return
 	}
-	// Step 1: disable mouse + bracketed paste while in raw + alt-screen.
-	if s.mouseEnabled {
-		_, _ = os.Stdout.WriteString("\x1b[?1006l\x1b[?1000l")
-	}
-	if s.bracketedPaste {
-		_, _ = os.Stdout.WriteString("\x1b[?2004l")
-	}
-	// Step 2: reset SGR so no sticky styling.
-	_, _ = os.Stdout.WriteString("\x1b[m")
-	// Step 3: show cursor before screen swap so it appears immediately.
-	if s.cursorHidden {
-		_, _ = os.Stdout.WriteString(tuiShowCursor)
-	}
-	// Step 4: exit alt-screen → user's primary shell screen returns.
-	if s.altScreen {
-		_, _ = os.Stdout.WriteString(tuiAltScreenExit)
-	}
-	// Step 5: NOW reset terminal modes that affect the user's primary
-	// screen. mosh and several terminals don't propagate per-mode
-	// state across alt-screen exit, so this MUST happen after.
+	// Step 1: disable every input-tracking mode while still in raw +
+	// alt-screen. We deliberately disable ALL mouse-tracking modes
+	// (1000/1002/1003/1004/1005/1006/1015) regardless of which we
+	// enabled — some terminals remember earlier modes that other
+	// software set. Same for paste mode.
 	_, _ = os.Stdout.WriteString(
-		"\x1b[m" + // SGR reset (again, on primary screen)
-			"\x0f" + // SI — back to G0
+		"\x1b[?1006l" + // SGR mouse off
+			"\x1b[?1015l" + // urxvt mouse off
+			"\x1b[?1005l" + // UTF-8 mouse off
+			"\x1b[?1003l" + // any-event mouse off
+			"\x1b[?1002l" + // button-event mouse off
+			"\x1b[?1001l" + // hilite-tracking off
+			"\x1b[?1000l" + // normal mouse off
+			"\x1b[?1004l" + // focus events off
+			"\x1b[?2004l" + // bracketed paste off
+			"\x1b[m" + // SGR reset
+			"\x1b[?25h") // show cursor
+	// Step 2: exit alt-screen. User's primary shell screen returns,
+	// with whatever modes that screen had before alt-screen entry.
+	_, _ = os.Stdout.WriteString(tuiAltScreenExit)
+	// Step 3: reset terminal modes that the alt-screen exit doesn't
+	// propagate. mosh in particular keeps a synthetic emulator state
+	// that needs each mode reset emitted explicitly on the primary
+	// screen. Order matters here too — DECSTR last so prior mode-
+	// resets aren't overwritten by anything DECSTR's own state
+	// machine does.
+	_, _ = os.Stdout.WriteString(
+		"\x1b[m" + // SGR reset (primary screen)
+			"\x0f" + // SI — back to G0 charset
 			"\x1b(B" + // G0 = ASCII
-			"\x1b[?1l" + // DECCKM normal (fixes arrow-key history recall)
-			"\x1b>" + // DECPAM normal (fixes keypad / number-row)
+			"\x1b)B" + // G1 = ASCII (in case it was switched)
+			"\x1b[?1l" + // DECCKM normal: arrow keys send CSI A/B/C/D
+			"\x1b[?7h" + // DECAWM autowrap on (default)
+			"\x1b>" + // DECPAM normal: keypad sends digits
 			"\x1b[!p" + // DECSTR soft reset
-			"\x1b[r") // reset scroll region
-	// Step 6: restore TTY to cooked mode.
+			"\x1b[r" + // reset scroll region (full screen)
+			"\x1b[?25h") // show cursor again (DECSTR may toggle)
+	// Step 4: force-flush stdout. macOS terminal drivers buffer
+	// stdout in line-discipline mode (and even in raw mode some
+	// terminals batch). Without an explicit flush, a fast process
+	// exit can race the shell's prompt redraw and the resets land
+	// AFTER the new prompt is rendered — defeating the whole reset.
+	_ = os.Stdout.Sync()
+	// Step 5: restore TTY to cooked mode.
 	if s.raw && s.oldState != nil {
 		_ = term.Restore(s.fd, s.oldState)
 	}
+	// Step 6: one more SGR reset + newline AFTER cooked-mode
+	// restore. This pushes any buffered prediction state in mosh
+	// past the stale-mode boundary so the next prompt renders
+	// cleanly. The newline ensures the shell's prompt starts on a
+	// fresh row even if the alt-screen exit landed mid-line.
+	_, _ = os.Stdout.WriteString("\x1b[m\r\n")
+	_ = os.Stdout.Sync()
 	tuiTornDown = true
 }
 
