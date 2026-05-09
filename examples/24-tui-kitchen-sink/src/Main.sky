@@ -30,7 +30,7 @@ import Sky.Core.String as String
 import Sky.Core.System as System
 import Sky.Core.Task as Task
 import Std.Tui as Tui
-import Std.Cli as Cli
+import Std.Live as Live
 import Std.Cmd as Cmd
 import Std.Sub as Sub
 import Std.Ui as Ui
@@ -80,7 +80,11 @@ type Msg
     | NoOp
 
 
-init : () -> ( Model, Cmd Msg )
+{- Polymorphic input — Tui calls with `()`, Live calls with the
+   request record (a `Dict String String`). Either way we ignore
+   the argument and return the seed model.
+-}
+init : a -> ( Model, Cmd Msg )
 init _ =
     ( { textValue = ""
       , passwordValue = ""
@@ -130,8 +134,13 @@ onKey k =
 -- ═══════════════════════════════════════════════════════════════════
 
 
-view : Model -> Element Msg
-view model =
+{- Element-shaped body shared by Tui (consumes directly) and Live
+   (wraps with Ui.layout in viewLive). Single source of truth for
+   the rendered scene — backend differences live only at the entry
+   shim, not in the view itself.
+-}
+viewBody : Model -> Element Msg
+viewBody model =
     Ui.column
         [ Ui.padding 16
         , Ui.spacing 8
@@ -148,6 +157,21 @@ view model =
         , nearbySection
         , footerSection
         ]
+
+
+view : Model -> Element Msg
+view model =
+    viewBody model
+
+
+{- Sky.Live renders Std.Ui via `Ui.layout [] body`, which wraps the
+   element in the host HTML scaffolding (head / body / inline style
+   block). Tui doesn't need this — it paints directly into cells.
+   Same `viewBody` feeds both.
+-}
+viewLive : Model -> any
+viewLive model =
+    Ui.layout [] (viewBody model)
 
 
 headerSection : Element Msg
@@ -441,18 +465,20 @@ footerSection =
 -- ═══════════════════════════════════════════════════════════════════
 
 
-{- Backend dispatch via argv — same Model / Msg / update / view
-   compiled against multiple TEA-shaped runtimes. Pick one:
+{- Backend dispatch via argv — same Model / Msg / update / viewBody
+   compiled against multiple TEA-shaped runtimes:
 
-       ./sky-out/app          (default: Sky.Tui — full-screen terminal)
-       ./sky-out/app cli      (Sky.Cli: line-mode, useful for headless
-                              CI / smoke tests + automation)
+       ./sky-out/app          Sky.Tui (default, full-screen terminal)
+       ./sky-out/app live     Sky.Live (HTTP at :8000, browser preview)
 
-   Sky.Live is intentionally NOT wired in v1 — Live's view returns
-   `any` (HTML + Std.Ui via `Ui.layout`) while Tui takes
-   `Element Msg` directly. Adding a `live` branch would just need
-   a `view` adapter that wraps the Tui view in `Ui.layout []`. Same
-   pattern works for Webview / GUI backends as they land.
+   The view function is shared — viewBody returns Element Msg.
+   Tui consumes it directly; Live wraps with `Ui.layout []` via
+   viewLive. Webview / GUI backends slot in here as further argv
+   branches once those runtimes ship.
+
+   Sky.Cli is deliberately omitted — it's line-oriented and can't
+   meaningfully render a Std.Ui scene. Use Sky.Cli for line-driven
+   programs (REPLs, scripts), not for UI showcases.
 -}
 argsList : List String
 argsList =
@@ -461,15 +487,20 @@ argsList =
         |> Result.withDefault []
 
 
+type Page
+    = KitchenSink
+
+
 main =
     case List.head argsList of
-        Just "cli" ->
-            Cli.program
+        Just "live" ->
+            Live.app
                 { init = init
                 , update = update
-                , view = \_ -> "kitchen sink (cli mode) — Ctrl-D to quit\n> "
+                , view = viewLive
                 , subscriptions = subscriptions
-                , onLine = \_ -> NoOp
+                , routes = [ Live.route "/" KitchenSink ]
+                , notFound = KitchenSink
                 }
                 |> Task.run
 
