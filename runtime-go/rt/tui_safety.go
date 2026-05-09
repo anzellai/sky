@@ -97,19 +97,45 @@ func tuiUninstallState() {
 // tuiTeardown is idempotent. It restores the terminal to a usable
 // state regardless of whether it's called from the main goroutine's
 // deferred cleanup, a goroutine's recover() block, or the signal
-// handler. Sequence matters: mouse tracking and bracketed paste
-// must be disabled BEFORE raw mode is restored (otherwise the
-// disable-codes go to the wrong sink), and the cursor / alt-screen
-// codes go AFTER restore so they reach the user's shell directly.
+// handler.
 //
-// We also emit a charset reset (`\x0f\x1b(B`) and DECSTR soft reset
-// (`\x1b[!p`) before exiting the alt-screen. Without these, common
-// readline corruption symptoms appear after a Sky.Tui run on some
-// terminals (notably mosh): "multi-tab looking" lines (alternate
-// charset stuck on G0), Backspace echoing wrong (insert mode left
-// on), arrow keys printing escape codes (application cursor keys
-// left on). DECSTR resets all of those without clearing the screen
-// the user just exited to.
+// Order matters — and the ordering here is the result of debugging
+// "readline messed up after exiting a Sky.Tui app on mosh":
+//
+//   1. (raw mode, alt-screen)  Disable mouse + bracketed paste —
+//      the codes need raw mode so the terminal driver consumes
+//      them rather than echoing them to the user.
+//   2. (raw mode, alt-screen)  SGR reset (\x1b[m) so any sticky
+//      colour / bold / underline doesn't carry across the screen
+//      transition.
+//   3. (raw mode, alt-screen)  Show cursor — must be before alt-
+//      screen exit so the cursor is visible the moment the user's
+//      primary screen comes back.
+//   4. (raw mode, alt-screen)  Exit alt-screen → user's primary
+//      screen content + cursor position are restored.
+//   5. (raw mode, PRIMARY screen)  NOW send DECSTR + charset reset
+//      + DECCKM/DECPAM resets. These reset state the user's actual
+//      shell will inherit. Sending them in step 1-3 instead would
+//      affect the alt-screen (which we're about to discard) AND
+//      the alt-screen exit on some terminals (notably mosh) does
+//      not propagate the resets to the primary screen.
+//   6. Restore TTY → cooked mode.
+//
+// The codes in step 5:
+//   \x1b[m       — reset SGR (belt-and-braces)
+//   \x0f         — Shift-In: select G0 character set (cancels any
+//                  prior \x0e Shift-Out that left G1 active — DEC
+//                  special graphics for box drawing)
+//   \x1b(B       — Designate G0 = ASCII
+//   \x1b[?1l     — DECCKM normal (cursor keys send CSI A/B/C/D, not
+//                  SS3 OA/OB/OC/OD which break shell history recall)
+//   \x1b>        — DECPAM normal (numeric keypad mode — application
+//                  keypad mode breaks number-row in some shells)
+//   \x1b[!p      — DECSTR soft reset (insert mode, origin mode,
+//                  scroll region, ~12 other modes. Does NOT clear
+//                  screen, so user's primary screen content stays.)
+//   \x1b[r       — Reset scroll region to full screen (belt-and-
+//                  braces — DECSTR should cover this)
 //
 // Writes go to os.Stdout via WriteString (not fmt.Print which routes
 // through a Println-aware buffered formatter that may not flush
@@ -128,37 +154,37 @@ func tuiTeardown() {
 		tuiTornDown = true
 		return
 	}
-	// Order: ANSI mode-disables while raw mode is still active so the
-	// codes reach the terminal driver, not the cooked-mode line buffer.
+	// Step 1: disable mouse + bracketed paste while in raw + alt-screen.
 	if s.mouseEnabled {
 		_, _ = os.Stdout.WriteString("\x1b[?1006l\x1b[?1000l")
 	}
 	if s.bracketedPaste {
 		_, _ = os.Stdout.WriteString("\x1b[?2004l")
 	}
-	// Character set + soft reset. Issued before raw mode is restored
-	// so the bytes reach the terminal driver directly. Sequence:
-	//   \x0f       — Shift-In: select G0 character set (cancels
-	//                any prior \x0e Shift-Out that left G1 active)
-	//   \x1b(B     — Designate G0 = ASCII (cancels DEC special
-	//                graphics that some apps switch to for borders)
-	//   \x1b[!p    — DECSTR: soft terminal reset. Resets insert
-	//                mode, application cursor keys, origin mode,
-	//                scrolling region, and ~12 other modes that
-	//                user apps commonly leave dirty. Doesn't clear
-	//                the screen.
-	//   \x1b[r     — Reset scroll region to full screen (belt-and-
-	//                braces — DECSTR should cover this but some
-	//                terminals are quirky)
-	_, _ = os.Stdout.WriteString("\x0f\x1b(B\x1b[!p\x1b[r")
-	if s.raw && s.oldState != nil {
-		_ = term.Restore(s.fd, s.oldState)
-	}
+	// Step 2: reset SGR so no sticky styling.
+	_, _ = os.Stdout.WriteString("\x1b[m")
+	// Step 3: show cursor before screen swap so it appears immediately.
 	if s.cursorHidden {
 		_, _ = os.Stdout.WriteString(tuiShowCursor)
 	}
+	// Step 4: exit alt-screen → user's primary shell screen returns.
 	if s.altScreen {
 		_, _ = os.Stdout.WriteString(tuiAltScreenExit)
+	}
+	// Step 5: NOW reset terminal modes that affect the user's primary
+	// screen. mosh and several terminals don't propagate per-mode
+	// state across alt-screen exit, so this MUST happen after.
+	_, _ = os.Stdout.WriteString(
+		"\x1b[m" + // SGR reset (again, on primary screen)
+			"\x0f" + // SI — back to G0
+			"\x1b(B" + // G0 = ASCII
+			"\x1b[?1l" + // DECCKM normal (fixes arrow-key history recall)
+			"\x1b>" + // DECPAM normal (fixes keypad / number-row)
+			"\x1b[!p" + // DECSTR soft reset
+			"\x1b[r") // reset scroll region
+	// Step 6: restore TTY to cooked mode.
+	if s.raw && s.oldState != nil {
+		_ = term.Restore(s.fd, s.oldState)
 	}
 	tuiTornDown = true
 }
