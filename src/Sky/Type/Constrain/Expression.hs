@@ -1863,6 +1863,100 @@ lookupKernelType modName funcName = case (modName, funcName) of
                         ])
                     (Just "appExt"))
                 (T.TType ModuleName.task "Task" [T.TVar "e", T.TUnit]))
+    -- Tui.app: same TEA shape as Live.app but for the terminal
+    -- backend. Required fields: init / update / view / subscriptions.
+    -- Optional fields (onKey, guard, canvasWidth, canvasHeight) are
+    -- absorbed by the row variable `appExt` — they don't have to be
+    -- supplied. View returns Element-shaped output (Std.Ui's tree)
+    -- which the renderer paints to ANSI cells; we type the field
+    -- as `model -> any` so the user is free to use either Element
+    -- or a Std.Html VNode wrapper.
+    --
+    -- Issue #52: with this closed-record sig the HM checker now
+    -- rejects Tui.app calls missing required fields at compile
+    -- time, and the LSP shows a red squiggle. Pre-fix the sig
+    -- was `a -> Task ...` (polymorphic), so the runtime's
+    -- `Field(cfg, "View") == nil` panic was the only feedback.
+    ("Tui", "app") ->
+        Just $ T.Forall ["model", "msg", "appExt"]
+            (T.TLambda
+                (T.TRecord
+                    (Map.fromList
+                        [ ("init", T.FieldType 0
+                            (T.TLambda T.TUnit
+                                (T.TTuple (T.TVar "model") cmdTypeOfMsg [])))
+                        , ("update", T.FieldType 1
+                            (T.TLambda (T.TVar "msg")
+                                (T.TLambda (T.TVar "model")
+                                    (T.TTuple (T.TVar "model") cmdTypeOfMsg []))))
+                        , ("view", T.FieldType 2
+                            (T.TLambda (T.TVar "model") (T.TVar "any")))
+                        , ("subscriptions", T.FieldType 3
+                            (T.TLambda (T.TVar "model") subTypeOfMsg))
+                        ])
+                    (Just "appExt"))
+                (T.TType ModuleName.task "Task"
+                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" [], T.TUnit]))
+    -- Tui.program: legacy entry that takes onKey as required (no
+    -- focus management, raw key dispatch). Required: init / update /
+    -- view / subscriptions / onKey. KeyEvent is the open record
+    -- shape `{kind, value, shift?, alt?, ctrl?}` — typed as `any`
+    -- so user code can pattern-match on whatever fields they need.
+    ("Tui", "program") ->
+        Just $ T.Forall ["model", "msg", "appExt"]
+            (T.TLambda
+                (T.TRecord
+                    (Map.fromList
+                        [ ("init", T.FieldType 0
+                            (T.TLambda T.TUnit
+                                (T.TTuple (T.TVar "model") cmdTypeOfMsg [])))
+                        , ("update", T.FieldType 1
+                            (T.TLambda (T.TVar "msg")
+                                (T.TLambda (T.TVar "model")
+                                    (T.TTuple (T.TVar "model") cmdTypeOfMsg []))))
+                        , ("view", T.FieldType 2
+                            (T.TLambda (T.TVar "model") stringType))
+                        , ("subscriptions", T.FieldType 3
+                            (T.TLambda (T.TVar "model") subTypeOfMsg))
+                        , ("onKey", T.FieldType 4
+                            (T.TLambda (T.TVar "any") (T.TVar "msg")))
+                        ])
+                    (Just "appExt"))
+                (T.TType ModuleName.task "Task"
+                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" [], T.TUnit]))
+    -- Cli.program: line-oriented TEA. Required: init / update /
+    -- view / subscriptions / onLine. view returns String (the
+    -- prompt printed before each line read). onLine receives the
+    -- raw stdin line as String. guard / onSignal optional via
+    -- appExt extension.
+    ("Cli", "program") ->
+        Just $ T.Forall ["model", "msg", "appExt"]
+            (T.TLambda
+                (T.TRecord
+                    (Map.fromList
+                        [ ("init", T.FieldType 0
+                            (T.TLambda T.TUnit
+                                (T.TTuple (T.TVar "model") cmdTypeOfMsg [])))
+                        , ("update", T.FieldType 1
+                            (T.TLambda (T.TVar "msg")
+                                (T.TLambda (T.TVar "model")
+                                    (T.TTuple (T.TVar "model") cmdTypeOfMsg []))))
+                        , ("view", T.FieldType 2
+                            (T.TLambda (T.TVar "model") stringType))
+                        , ("subscriptions", T.FieldType 3
+                            (T.TLambda (T.TVar "model") subTypeOfMsg))
+                        , ("onLine", T.FieldType 4
+                            (T.TLambda stringType (T.TVar "msg")))
+                        ])
+                    (Just "appExt"))
+                (T.TType ModuleName.task "Task"
+                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" [], T.TUnit]))
+    -- Cli.readPassword: () -> Task Error String. echo-off line read.
+    ("Cli", "readPassword") ->
+        Just $ T.Forall []
+            (T.TLambda T.TUnit
+                (T.TType ModuleName.task "Task"
+                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" [], stringType]))
     -- Live.route: String -> page -> Route
     ("Live", "route") ->
         Just $ T.Forall ["page"]

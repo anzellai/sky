@@ -173,6 +173,64 @@ spec = do
                             anyMatch "codeSection" msgs `shouldBe` True
                             anyMatch "Element" msgs `shouldBe` True
 
+        it "Limitation #19 — Tui.app missing required field surfaces a diagnostic" $ do
+            -- Closed-record HM kernel sig (commit follows this test)
+            -- enforces presence of init / update / view / subscriptions
+            -- on Tui.app's cfg. A missing field used to compile silently
+            -- and panic at runtime — now both `sky check` and the LSP
+            -- flag it at type-check time. This test omits
+            -- `subscriptions` to assert the diagnostic surfaces.
+            sky <- findSky
+            let src = unlines
+                    [ "module Main exposing (main)"
+                    , ""
+                    , "import Sky.Core.Prelude exposing (..)"
+                    , "import Sky.Core.Task as Task"
+                    , "import Std.Cmd as Cmd"
+                    , "import Std.Tui as Tui"
+                    , "import Std.Ui as Ui"
+                    , "import Std.Ui exposing (Element)"
+                    , ""
+                    , "type alias Model = { count : Int }"
+                    , "type Msg = NoOp"
+                    , ""
+                    , "init : a -> ( Model, Cmd Msg )"
+                    , "init _ = ( { count = 0 }, Cmd.none )"
+                    , ""
+                    , "update : Msg -> Model -> ( Model, Cmd Msg )"
+                    , "update _ model = ( model, Cmd.none )"
+                    , ""
+                    , "view : Model -> Element Msg"
+                    , "view _ = Ui.text \"hi\""
+                    , ""
+                    , "main ="
+                    , "    Tui.app"
+                    , "        { init = init"
+                    , "        , update = update"
+                    , "        , view = view"
+                    , "        }"
+                    , "        |> Task.run"
+                    ]
+            withSystemTempDirectory "sky-lsp-tui-missing" $ \dir -> do
+                fixture <- setupProject dir src
+                withLsp sky $ \hin hout -> do
+                    initializeLsp hin hout
+                    didOpen hin fixture src
+                    result <- awaitNotification hout "textDocument/publishDiagnostics"
+                    case result of
+                        Nothing -> expectationFailure
+                            "no publishDiagnostics on missing-field file"
+                        Just payload -> do
+                            let msgs = diagnosticMessages payload
+                            -- Diagnostic should mention the missing
+                            -- field explicitly. Sky's record-mismatch
+                            -- renderer lists every field the user
+                            -- gave AND every field expected, so
+                            -- "subscriptions" appears in the
+                            -- expected-shape list.
+                            anyMatch "Type" msgs `shouldBe` True
+                            anyMatch "subscriptions" msgs `shouldBe` True
+
         it "issue #52 corrected — applying the missing arg clears the diagnostic" $ do
             -- Positive control for the fix above: change `codeSection`
             -- to `codeSection model` and the LSP should report empty
@@ -298,15 +356,19 @@ spec = do
                             let msgs = diagnosticMessages payload
                             msgs `shouldBe` []
 
-        it "TEA with Live.app: LSP suppresses no-externals false-positive" $ do
-            -- The LSP's runPipeline calls the no-externals variant
-            -- of the constraint generator, so cross-module record
-            -- kernel sigs (notably `Live.app`) false-positive with
-            -- `Type mismatch: { ... } vs { ... }`. Until the proper
-            -- externals helper lands, the LSP heuristically
-            -- suppresses these (`isLikelyExternalsFalsePositive`)
-            -- so users editing TEA apps don't see phantom errors
-            -- that `sky check` doesn't report.
+        it "TEA with Live.app: wrong view return type surfaces as a real diagnostic" $ do
+            -- Pre-Limitation-#19-fix this was a "the LSP suppresses
+            -- false positives" test. With the closed-record HM kernel
+            -- sigs landed (Live.app / Tui.app / Cli.program) PLUS
+            -- the field-name-aware error rendering, a wrong-typed
+            -- view function is now both:
+            --   1. Rejected by `sky check` (always was — the user
+            --      kernel sig had this; the LSP was hiding it).
+            --   2. Rejected by the LSP with the SAME informative
+            --      diagnostic, listing the expected view return
+            --      type (VNode) vs what the user wrote (String).
+            -- This test fixture deliberately writes `view _ = "hi"`
+            -- to assert the diagnostic surfaces.
             sky <- findSky
             let src = unlines
                     [ "module Main exposing (main)"
@@ -354,8 +416,9 @@ spec = do
                             "no publishDiagnostics on TEA-app file"
                         Just payload -> do
                             let msgs = diagnosticMessages payload
-                            -- The `{ ... } vs { ... }` heuristic
-                            -- catches this; LSP shows no errors.
-                            -- (For authoritative diagnostics users
-                            -- should run `sky check` — same as today.)
-                            msgs `shouldBe` []
+                            -- The diagnostic surfaces with field-
+                            -- aware rendering — `view : (Model) ->
+                            -- String` vs `view : (Model) -> VNode`.
+                            anyMatch "Type" msgs `shouldBe` True
+                            anyMatch "view" msgs `shouldBe` True
+                            anyMatch "VNode" msgs `shouldBe` True

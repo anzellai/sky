@@ -574,9 +574,40 @@ showTypeR ty = case ty of
     T.TType _ name [] -> name
     T.TType _ name args -> name ++ " " ++ unwords (map showTypeAtomR args)
     T.TLambda from to -> showTypeAtomR from ++ " -> " ++ showTypeR to
-    T.TRecord _ _ -> "{ ... }"
+    -- Render records with their field names + types up to a sane
+    -- limit. Pre-fix this was `{ ... }`, which made every record-
+    -- vs-record mismatch indistinguishable in error messages —
+    -- particularly painful for TEA cfg shapes (Live.app, Tui.app,
+    -- Cli.program) where the closed-record kernel sigs surface
+    -- exactly this kind of error when a required field is missing
+    -- or wrong-shaped. Limitation #19. Caps fields at 6 to keep
+    -- diagnostics readable; longer records get a trailing ", ...".
+    T.TRecord fields ext -> showRecord fields ext
     T.TTuple a b _ -> "( " ++ showTypeR a ++ ", " ++ showTypeR b ++ " )"
     T.TAlias _ name _ _ -> name
+
+
+-- Render the fields of a record. Extension marker (`| r`) shown
+-- when the record is row-polymorphic.
+showRecord :: Map.Map String T.FieldType -> Maybe String -> String
+showRecord fields ext =
+    let pairs = Map.toAscList fields
+        renderField (n, T.FieldType _ t) = n ++ " : " ++ showTypeR t
+        keep   = take 6 pairs
+        more   = length pairs - length keep
+        body   = if null pairs
+                 then ""
+                 else " " ++ unwords (intersperseCommas (map renderField keep))
+                       ++ (if more > 0 then ", ..." else "")
+                       ++ " "
+        extStr = case ext of
+                   Just _  -> "| ..."
+                   Nothing -> ""
+    in "{" ++ body ++ extStr ++ "}"
+  where
+    intersperseCommas []     = []
+    intersperseCommas [x]    = [x]
+    intersperseCommas (x:xs) = (x ++ ",") : intersperseCommas xs
 
 
 showTypeAtomR :: T.Type -> String

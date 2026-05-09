@@ -622,15 +622,8 @@ runPipeline src = case Parse.parseModule src of
                 cs <- Constrain.constrainModule canMod
                 r  <- Solve.solve cs
                 case r of
-                    Solve.SolveError err
-                        -- Legacy heuristic — only kicks in for callers
-                        -- still on the no-externals path. Production
-                        -- callers go through `runPipelineSt` which
-                        -- doesn't need this.
-                        | isLikelyExternalsFalsePositive err ->
-                            return (map exhaustDiagnostic (Exhaust.checkModule canMod))
-                        | otherwise ->
-                            return [diagnosticFromMessage ("Type error: " ++ err)]
+                    Solve.SolveError err ->
+                        return [diagnosticFromMessage ("Type error: " ++ err)]
                     Solve.SolveOk _ ->
                         return (map exhaustDiagnostic (Exhaust.checkModule canMod))
 
@@ -665,21 +658,13 @@ runPipelineSt st path src = case Parse.parseModule src of
                 cs <- Constrain.constrainModuleWithExternals externals canMod
                 r  <- Solve.solve cs
                 case r of
-                    Solve.SolveError err
-                        -- Even with externals on, a class of false-
-                        -- positives survives: polymorphic kernel sigs
-                        -- like `Live.app : a -> Task ...` produce
-                        -- `Type mismatch: { ... } vs { ... }` errors
-                        -- when their cfg-record param's type variable
-                        -- is solved against an external. `sky check`
-                        -- doesn't report these (its constraint flow
-                        -- differs slightly). Keep the heuristic until
-                        -- the closed-record kernel-sig work (Limit-
-                        -- ation #19) closes the underlying gap.
-                        | isLikelyExternalsFalsePositive err ->
-                            return (map exhaustDiagnostic (Exhaust.checkModule canMod))
-                        | otherwise ->
-                            return [diagnosticFromMessage ("Type error: " ++ err)]
+                    Solve.SolveError err ->
+                        -- No suppression: with closed-record kernel
+                        -- sigs for Live.app / Tui.app / Cli.program
+                        -- AND field-name-aware error rendering, the
+                        -- LSP's diagnostic now matches `sky check`'s
+                        -- exactly. Limitation #19 closed.
+                        return [diagnosticFromMessage ("Type error: " ++ err)]
                     Solve.SolveOk _ ->
                         return (map exhaustDiagnostic (Exhaust.checkModule canMod))
 
