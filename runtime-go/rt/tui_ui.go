@@ -26,7 +26,9 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 
 	"golang.org/x/term"
 )
@@ -128,10 +130,14 @@ func tuiAppRun(cfg any) any {
 	// Focus state — runtime-managed, hidden from user code.
 	focusIdx := 0
 
-	// First render.
+	// First render. Track the cell grid as `prev` so subsequent renders
+	// can diff against it and emit only changed cells. nil prev signals
+	// "first frame, paint everything".
 	cols, rows := tuiTermSize(fd)
-	frame, focusables := renderElementFrame(viewFn, model, cols, rows, canvas, focusIdx)
-	tuiPaint(frame)
+	var prev [][]tuiCell
+	grid, focusables := renderElementFrame(viewFn, model, cols, rows, canvas, focusIdx)
+	tuiPaint(paintDiff(prev, grid))
+	prev = grid
 	focusIdx = clampFocus(focusIdx, len(focusables))
 
 	// Key reader goroutine. Three categories of keys:
@@ -165,6 +171,30 @@ func tuiAppRun(cfg any) any {
 		}
 	}()
 
+	// SIGWINCH watcher — push a tuiResizeMsg into the same Msg pipe so
+	// the main loop sees it serialised with everything else (no race
+	// with in-flight key/Tick handling). On non-Unix platforms where
+	// SIGWINCH isn't a thing, signal.Notify silently never fires —
+	// the main loop's per-render tuiTermSize() catches resize on the
+	// NEXT Msg that comes through.
+	winchCh := make(chan os.Signal, 1)
+	signal.Notify(winchCh, syscall.SIGWINCH)
+	go func() {
+		for {
+			select {
+			case <-doneCh:
+				signal.Stop(winchCh)
+				return
+			case <-winchCh:
+				select {
+				case msgCh <- tuiResizeMsg{}:
+				case <-doneCh:
+					return
+				}
+			}
+		}
+	}()
+
 	for {
 		var msg any
 		select {
@@ -172,6 +202,20 @@ func tuiAppRun(cfg any) any {
 		case <-doneCh:
 			subMgr.stopAll()
 			return Ok[any, any](struct{}{})
+		}
+
+		// Intercept tuiResizeMsg — terminal was resized. Re-query the
+		// terminal size, invalidate prev so paintDiff does a full
+		// paint at the new dims, re-render. Doesn't go through the
+		// user's update — pure runtime concern.
+		if _, ok := msg.(tuiResizeMsg); ok {
+			cols, rows = tuiTermSize(fd)
+			prev = nil
+			grid, focusables = renderElementFrame(viewFn, model, cols, rows, canvas, focusIdx)
+			tuiPaint(paintDiff(prev, grid))
+			prev = grid
+			focusIdx = clampFocus(focusIdx, len(focusables))
+			continue
 		}
 
 		// Intercept tuiKeyMsg before dispatching to update — Tab /
@@ -204,8 +248,9 @@ func tuiAppRun(cfg any) any {
 			}
 			if handled {
 				// Re-render with new focus, no model change.
-				frame, focusables = renderElementFrame(viewFn, model, cols, rows, canvas, focusIdx)
-				tuiPaint(frame)
+				grid, focusables = renderElementFrame(viewFn, model, cols, rows, canvas, focusIdx)
+				tuiPaint(paintDiff(prev, grid))
+				prev = grid
 				focusIdx = clampFocus(focusIdx, len(focusables))
 				continue
 			}
@@ -225,14 +270,17 @@ func tuiAppRun(cfg any) any {
 		model = cliApplyUpdate(updateFn, msg, model, msgCh)
 		subMgr.update(subsFn, model)
 
-		// On resize, recompute terminal dims.
+		// On resize, recompute terminal dims; the grid-size mismatch
+		// against prev forces a full repaint inside paintDiff.
 		newCols, newRows := tuiTermSize(fd)
 		if newCols != cols || newRows != rows {
 			cols, rows = newCols, newRows
+			prev = nil // trigger full repaint
 		}
 
-		frame, focusables = renderElementFrame(viewFn, model, cols, rows, canvas, focusIdx)
-		tuiPaint(frame)
+		grid, focusables = renderElementFrame(viewFn, model, cols, rows, canvas, focusIdx)
+		tuiPaint(paintDiff(prev, grid))
+		prev = grid
 		focusIdx = clampFocus(focusIdx, len(focusables))
 	}
 }
@@ -243,6 +291,11 @@ func tuiAppRun(cfg any) any {
 type tuiKeyMsg struct {
 	ev keyEvent
 }
+
+// tuiResizeMsg signals that the terminal was resized (SIGWINCH). The
+// main loop responds by re-querying terminal dims, invalidating prev
+// (full repaint), and re-rendering.
+type tuiResizeMsg struct{}
 
 func clampFocus(idx, n int) int {
 	if n == 0 {
@@ -290,7 +343,11 @@ func tuiExtractClickMsg(evt any) any {
 // renderElementFrame is the top-level render. Walks the Element ADT,
 // computes layout for the available terminal size + logical canvas,
 // produces a 2D cell grid + focusable list (in tab order).
-func renderElementFrame(viewFn, model any, cols, rows int, canvas tuiCanvas, focusIdx int) (string, []focusable) {
+//
+// Returns the grid (not yet ANSI-encoded) so the caller can diff
+// against the previous frame and emit only changed cells. See
+// paintDiff for the minimal-write emission.
+func renderElementFrame(viewFn, model any, cols, rows int, canvas tuiCanvas, focusIdx int) ([][]tuiCell, []focusable) {
 	elem := SkyCall(viewFn, model)
 	pxPerCellX := float64(canvas.width) / float64(cols)
 	pxPerCellY := float64(canvas.height) / float64(rows)
@@ -310,7 +367,7 @@ func renderElementFrame(viewFn, model any, cols, rows int, canvas tuiCanvas, foc
 	var focusables []focusable
 	box := layoutElement(elem, ctx, cols, rows, layoutAxisColumn)
 	paintBox(grid, box, 0, 0, cols, rows, focusIdx, &focusables, layoutAxisColumn, 0)
-	return cellsToANSI(grid), focusables
+	return grid, focusables
 }
 
 type tuiLayoutCtx struct {
@@ -328,20 +385,23 @@ const (
 // layoutBox is the result of measuring an Element. It carries enough
 // information for the paint pass to actually emit cells.
 type layoutBox struct {
-	kind     string // "empty" | "text" | "node"
-	text     string // for "text"
-	tag      string // for tagged nodes ("h1", "button", "a", "input"…) — empty for default
-	width    int
-	height   int
-	axis     layoutAxis // for "node" — children are laid out in this direction
-	padding  [4]int     // top, right, bottom, left in cells
-	spacing  int        // cells between siblings
-	fg, bg   tuiColor
-	bold     bool
-	italic   bool
-	underline bool
-	clickEvt any // Std.Live.Events.onClick value, if any
-	children []layoutBox
+	kind        string // "empty" | "text" | "node"
+	text        string // for "text"
+	tag         string // for tagged nodes ("h1", "button", "a", "input"…) — empty for default
+	width       int
+	height      int
+	axis        layoutAxis // for "node" — children are laid out in this direction
+	padding     [4]int     // top, right, bottom, left in cells
+	spacing     int        // cells between siblings
+	fg, bg      tuiColor
+	bold        bool
+	italic      bool
+	underline   bool
+	clickEvt    any // Std.Live.Events.onClick value, if any
+	children    []layoutBox
+	borderWidth [4]int // top, right, bottom, left — 1 cell each if border present
+	borderColor tuiColor
+	borderStyle string // "solid" | "dashed" | "dotted"
 }
 
 // layoutElement walks one Element node + computes its box for the
@@ -400,19 +460,26 @@ func layoutNode(tag string, fields []any, ctx tuiLayoutCtx, maxW, maxH int, pare
 		axis = layoutAxisRow
 	}
 
-	// Apply tag-specific styling defaults.
+	// Apply tag-specific styling defaults. Headings get bold + a
+	// trailing underline row in the paint pass; the height bump here
+	// reserves space for the underline.
+	headingUnderline := false
 	switch tag {
 	case "h1":
 		la.bold = true
-	case "h2", "h3", "h4", "h5", "h6":
+		headingUnderline = true
+	case "h2":
 		la.bold = true
-	case "button":
-		// Buttons get bracket framing in the paint pass.
+		headingUnderline = true
+	case "h3", "h4", "h5", "h6":
+		la.bold = true
 	}
 
-	// Compute available space inside padding.
-	innerMaxW := maxW - la.padding[1] - la.padding[3]
-	innerMaxH := maxH - la.padding[0] - la.padding[2]
+	// Compute available space inside padding + border. Border eats
+	// 1 cell per side that has it (TUI cells are atomic; CSS Npx
+	// becomes a single Unicode box-drawing cell).
+	innerMaxW := maxW - la.padding[1] - la.padding[3] - la.borderWidth[1] - la.borderWidth[3]
+	innerMaxH := maxH - la.padding[0] - la.padding[2] - la.borderWidth[0] - la.borderWidth[2]
 	if innerMaxW < 0 {
 		innerMaxW = 0
 	}
@@ -476,9 +543,12 @@ func layoutNode(tag string, fields []any, ctx tuiLayoutCtx, maxW, maxH int, pare
 		}
 	}
 
-	// Final box dimensions include padding.
-	finalW := width + la.padding[1] + la.padding[3]
-	finalH := height + la.padding[0] + la.padding[2]
+	// Final box dimensions include padding + border.
+	finalW := width + la.padding[1] + la.padding[3] + la.borderWidth[1] + la.borderWidth[3]
+	finalH := height + la.padding[0] + la.padding[2] + la.borderWidth[0] + la.borderWidth[2]
+	if headingUnderline {
+		finalH++ // reserve a row for the heading's underline
+	}
 	if finalW > maxW {
 		finalW = maxW
 	}
@@ -487,20 +557,23 @@ func layoutNode(tag string, fields []any, ctx tuiLayoutCtx, maxW, maxH int, pare
 	}
 
 	return layoutBox{
-		kind:      "node",
-		tag:       tag,
-		width:     finalW,
-		height:    finalH,
-		axis:      axis,
-		padding:   la.padding,
-		spacing:   la.spacing,
-		fg:        la.fg,
-		bg:        la.bg,
-		bold:      la.bold,
-		italic:    la.italic,
-		underline: la.underline,
-		clickEvt:  la.clickEvt,
-		children:  childBoxes,
+		kind:        "node",
+		tag:         tag,
+		width:       finalW,
+		height:      finalH,
+		axis:        axis,
+		padding:     la.padding,
+		spacing:     la.spacing,
+		fg:          la.fg,
+		bg:          la.bg,
+		bold:        la.bold,
+		italic:      la.italic,
+		underline:   la.underline,
+		clickEvt:    la.clickEvt,
+		children:    childBoxes,
+		borderWidth: la.borderWidth,
+		borderColor: la.borderColor,
+		borderStyle: la.borderStyle,
 	}
 }
 
@@ -667,16 +740,19 @@ func lengthFillPortion(fields []any) int {
 
 // walkAttrs extracts layout-relevant values from a Std.Ui attribute list.
 type walkedAttrs struct {
-	width      any // raw Length value
-	height     any
-	padding    [4]int // top, right, bottom, left in cells
-	spacing    int
-	fg, bg     tuiColor
-	bold       bool
-	italic     bool
-	underline  bool
-	isRow      bool
-	clickEvt   any
+	width       any    // raw Length value
+	height      any
+	padding     [4]int // top, right, bottom, left in cells
+	spacing     int
+	fg, bg      tuiColor
+	bold        bool
+	italic      bool
+	underline   bool
+	isRow       bool
+	clickEvt    any
+	borderWidth [4]int // top, right, bottom, left — 1 if border present, 0 otherwise
+	borderColor tuiColor
+	borderStyle string // "solid" (default), "dashed", "dotted"
 }
 
 func walkAttrs(attrs []any, ctx tuiLayoutCtx) walkedAttrs {
@@ -746,11 +822,35 @@ func walkAttrs(attrs []any, ctx tuiLayoutCtx) walkedAttrs {
 			if len(adt.Fields) > 0 {
 				out.bg = colorOf(adt.Fields[0])
 			}
+		case 26: // AttrBorderWidth Int — uniform border on all sides
+			if len(adt.Fields) > 0 {
+				if w, ok := adt.Fields[0].(int); ok && w > 0 {
+					// TUI cells are atomic; any non-zero CSS width is 1 cell.
+					out.borderWidth = [4]int{1, 1, 1, 1}
+				}
+			}
+		case 27: // AttrBorderWidthEach T R B L
+			if len(adt.Fields) >= 4 {
+				for i := 0; i < 4; i++ {
+					if w, ok := adt.Fields[i].(int); ok && w > 0 {
+						out.borderWidth[i] = 1
+					}
+				}
+			}
+		case 28: // AttrBorderColor Color
+			if len(adt.Fields) > 0 {
+				out.borderColor = colorOf(adt.Fields[0])
+			}
+		case 29: // AttrBorderRounded — IGNORED in TUI (no rounded box-drawing chars in standard Unicode)
+		case 30: // AttrBorderStyle String — "solid" | "dashed" | "dotted"
+			if len(adt.Fields) > 0 {
+				if s, ok := adt.Fields[0].(string); ok {
+					out.borderStyle = s
+				}
+			}
 			// Other attrs (BgImage, BgGradient, BorderShadow, font family
 			// etc.) are explicitly IGNORED in TUI per the cross-platform
-			// mapping doc. A v1 polish pass adds Border-* support
-			// (unicode box drawing) when the spike validates the
-			// architecture.
+			// mapping doc.
 		}
 	}
 	return out
@@ -905,6 +1005,11 @@ func paintBox(grid [][]tuiCell, box layoutBox, col0, row0, maxW, maxH, focusIdx 
 		fillRect(grid, col0, row0, w, h, box.bg)
 	}
 
+	// Border draw (under children/text but over background fill).
+	if box.borderWidth[0]+box.borderWidth[1]+box.borderWidth[2]+box.borderWidth[3] > 0 {
+		drawBorder(grid, col0, row0, w, h, box.borderWidth, box.borderColor, box.borderStyle)
+	}
+
 	// If this box is focusable, register it.
 	if box.clickEvt != nil {
 		focIdx := len(*focusables)
@@ -912,17 +1017,23 @@ func paintBox(grid [][]tuiCell, box layoutBox, col0, row0, maxW, maxH, focusIdx 
 			clickEvt: box.clickEvt,
 			row:      row0, col: col0, w: w, h: h,
 		})
-		// Visual cue when focused: reverse video over the whole box.
+		// Visual focus cue. Per-element-kind:
+		//   - button: bracket framing — ▸ leading, ◂ trailing — visible
+		//     against any bg; doesn't fight with the button's own colours
+		//   - link (TaggedNode "a"): underline (already a typical link cue)
+		//   - input: cursor visible (handled in the input editor pass)
+		//   - default: subtle reverse-video on the leading + trailing
+		//     cell only (the original blanket reverse was too intrusive)
 		if focIdx == focusIdx {
-			applyReverse(grid, col0, row0, w, h)
+			applyFocusIndicator(grid, box, col0, row0, w, h)
 		}
 	}
 
-	// Recurse into content area (after padding).
-	innerCol := col0 + box.padding[3]
-	innerRow := row0 + box.padding[0]
-	innerW := w - box.padding[1] - box.padding[3]
-	innerH := h - box.padding[0] - box.padding[2]
+	// Recurse into content area (after padding + border).
+	innerCol := col0 + box.padding[3] + box.borderWidth[3]
+	innerRow := row0 + box.padding[0] + box.borderWidth[0]
+	innerW := w - box.padding[1] - box.padding[3] - box.borderWidth[1] - box.borderWidth[3]
+	innerH := h - box.padding[0] - box.padding[2] - box.borderWidth[0] - box.borderWidth[2]
 	if innerW < 0 {
 		innerW = 0
 	}
@@ -957,9 +1068,34 @@ func paintBox(grid [][]tuiCell, box layoutBox, col0, row0, maxW, maxH, focusIdx 
 		}
 	}
 
+	// Heading underline rows. Paint AFTER children so the underline
+	// can sit below the heading's text. h1 gets ═══, h2 gets ───.
+	switch box.tag {
+	case "h1":
+		paintHeadingUnderline(grid, innerCol, innerRow+1, innerW, "═", box.fg)
+	case "h2":
+		paintHeadingUnderline(grid, innerCol, innerRow+1, innerW, "─", box.fg)
+	}
+
 	// Inherit fg/bold/italic/underline to children would be done by
 	// passing them through layoutCtx — for v0, the Std.Ui pattern is
 	// "set the style on the leaf" so we don't propagate.
+}
+
+func paintHeadingUnderline(grid [][]tuiCell, col, row, w int, ch string, fg tuiColor) {
+	if row < 0 || row >= len(grid) || w <= 0 {
+		return
+	}
+	rowCells := grid[row]
+	for c := col; c < col+w && c < len(rowCells); c++ {
+		if c < 0 {
+			continue
+		}
+		rowCells[c].ch = ch
+		if fg.set {
+			rowCells[c].fg = fg
+		}
+	}
 }
 
 func paintText(grid [][]tuiCell, text string, col, row, maxW int, fg, bg tuiColor, bold, italic, underline bool) {
@@ -1012,6 +1148,136 @@ func fillRect(grid [][]tuiCell, col, row, w, h int, bg tuiColor) {
 	}
 }
 
+// drawBorder paints Unicode box-drawing characters around a box.
+// `width` is [top, right, bottom, left]; non-zero entries get drawn.
+// Corners only render when their two adjoining sides are both present.
+//
+// v1: solid (─│┌┐└┘), dashed (┄┆), dotted (┈┊). Rounded is documented
+// as ignored (no rounded box-drawing chars in standard Unicode without
+// pulling in extended sets that aren't universally rendered).
+func drawBorder(grid [][]tuiCell, col, row, w, h int, width [4]int, color tuiColor, style string) {
+	if w < 2 || h < 2 {
+		return
+	}
+	hor, vert, tl, tr, bl, br := borderGlyphs(style)
+	put := func(c, r int, ch string) {
+		if r < 0 || r >= len(grid) || c < 0 || c >= len(grid[r]) {
+			return
+		}
+		cell := &grid[r][c]
+		cell.ch = ch
+		if color.set {
+			cell.fg = color
+		}
+	}
+	// Top edge.
+	if width[0] > 0 {
+		for c := col + 1; c < col+w-1; c++ {
+			put(c, row, hor)
+		}
+	}
+	// Bottom edge.
+	if width[2] > 0 {
+		for c := col + 1; c < col+w-1; c++ {
+			put(c, row+h-1, hor)
+		}
+	}
+	// Left edge.
+	if width[3] > 0 {
+		for r := row + 1; r < row+h-1; r++ {
+			put(col, r, vert)
+		}
+	}
+	// Right edge.
+	if width[1] > 0 {
+		for r := row + 1; r < row+h-1; r++ {
+			put(col+w-1, r, vert)
+		}
+	}
+	// Corners — only draw where both adjoining sides exist.
+	if width[0] > 0 && width[3] > 0 {
+		put(col, row, tl)
+	}
+	if width[0] > 0 && width[1] > 0 {
+		put(col+w-1, row, tr)
+	}
+	if width[2] > 0 && width[3] > 0 {
+		put(col, row+h-1, bl)
+	}
+	if width[2] > 0 && width[1] > 0 {
+		put(col+w-1, row+h-1, br)
+	}
+}
+
+// borderGlyphs returns the (horizontal, vertical, topLeft, topRight,
+// bottomLeft, bottomRight) box-drawing chars for the requested style.
+// Defaults to "solid".
+func borderGlyphs(style string) (string, string, string, string, string, string) {
+	switch style {
+	case "dashed":
+		return "┄", "┆", "┌", "┐", "└", "┘"
+	case "dotted":
+		return "┈", "┊", "┌", "┐", "└", "┘"
+	default:
+		// solid (and unknown styles fall back here)
+		return "─", "│", "┌", "┐", "└", "┘"
+	}
+}
+
+// applyFocusIndicator draws a per-element-kind focus cue.
+//
+// Buttons get triangular markers (▸ ... ◂) framing the label so the
+// indicator is legible against any button background. Links get a
+// full-text underline. Other focusables fall back to a thin reverse-
+// video band on top + bottom edges.
+func applyFocusIndicator(grid [][]tuiCell, box layoutBox, col, row, w, h int) {
+	if w <= 0 || h <= 0 {
+		return
+	}
+	switch box.tag {
+	case "button":
+		// Place ▸ at the first inner column, ◂ at the last inner column.
+		// Inner area is offset by padding + border.
+		innerCol := col + box.padding[3] + box.borderWidth[3]
+		innerRow := row + box.padding[0] + box.borderWidth[0]
+		innerW := w - box.padding[1] - box.padding[3] - box.borderWidth[1] - box.borderWidth[3]
+		if innerW < 2 || innerRow < 0 || innerRow >= len(grid) {
+			applyReverse(grid, col, row, w, h)
+			return
+		}
+		rowCells := grid[innerRow]
+		if innerCol >= 0 && innerCol < len(rowCells) {
+			rowCells[innerCol].ch = "▸"
+			rowCells[innerCol].bold = true
+		}
+		if innerCol+innerW-1 >= 0 && innerCol+innerW-1 < len(rowCells) {
+			rowCells[innerCol+innerW-1].ch = "◂"
+			rowCells[innerCol+innerW-1].bold = true
+		}
+	case "a":
+		// Underline the entire content row (links already use underline
+		// semantically, this just makes focus state extra-clear).
+		applyUnderline(grid, col, row, w, h)
+	default:
+		applyReverse(grid, col, row, w, h)
+	}
+}
+
+func applyUnderline(grid [][]tuiCell, col, row, w, h int) {
+	for r := row; r < row+h && r < len(grid); r++ {
+		if r < 0 {
+			continue
+		}
+		rowCells := grid[r]
+		for c := col; c < col+w && c < len(rowCells); c++ {
+			if c < 0 {
+				continue
+			}
+			rowCells[c].underline = true
+		}
+	}
+}
+
 func applyReverse(grid [][]tuiCell, col, row, w, h int) {
 	for r := row; r < row+h && r < len(grid); r++ {
 		if r < 0 {
@@ -1029,36 +1295,80 @@ func applyReverse(grid [][]tuiCell, col, row, w, h int) {
 
 // ─── ANSI emission ───────────────────────────────────────────────────
 
-// cellsToANSI walks a 2D cell grid and produces an ANSI-encoded string.
-// v0 emits naively — every cell is preceded by its style's SGR
-// sequence. A diff-based emitter is the obvious follow-up perf win.
-func cellsToANSI(grid [][]tuiCell) string {
+// cellEqual returns true iff two cells render identically. The diff
+// emitter uses this to decide whether a cell needs to be repainted.
+func cellEqual(a, b tuiCell) bool {
+	return a.ch == b.ch &&
+		a.fg == b.fg && a.bg == b.bg &&
+		a.bold == b.bold && a.italic == b.italic &&
+		a.underline == b.underline && a.reverse == b.reverse
+}
+
+// paintDiff emits the minimum ANSI sequence to transform `prev` into
+// `next`. First frame (prev == nil) does a full paint. Resize (size
+// mismatch) also triggers a full paint plus a leading clear so the
+// terminal state can't show stale cells around the new frame's edges.
+//
+// Algorithm: walk row by row, find runs of consecutive changed cells,
+// emit `\e[r;cH<sgr>cells\e[0m` per run. Adjacent unchanged cells
+// don't get repainted. Cursor positioning is 1-based per ANSI spec.
+//
+// The returned string is meant to be fmt.Print'd.
+func paintDiff(prev, next [][]tuiCell) string {
 	var sb strings.Builder
-	sb.WriteString(tuiCursorHome)
-	sb.WriteString(tuiClearScreen)
-	sb.WriteString(tuiCursorHome)
-	for r, row := range grid {
-		if r > 0 {
-			sb.WriteString("\r\n")
+	full := prev == nil ||
+		len(prev) != len(next) ||
+		(len(prev) > 0 && len(prev[0]) != len(next[0]))
+	if full {
+		sb.WriteString(tuiClearScreen)
+		sb.WriteString(tuiCursorHome)
+	}
+	for r := 0; r < len(next); r++ {
+		row := next[r]
+		var prevRow []tuiCell
+		if !full && r < len(prev) {
+			prevRow = prev[r]
 		}
-		var lastStyle string
-		for _, c := range row {
-			s := cellStyleSGR(c)
-			if s != lastStyle {
-				sb.WriteString("\x1b[0m")
-				if s != "" {
-					sb.WriteString(s)
-				}
-				lastStyle = s
+		c := 0
+		for c < len(row) {
+			// Skip unchanged cells when we have a prev to compare.
+			if !full && c < len(prevRow) && cellEqual(prevRow[c], row[c]) {
+				c++
+				continue
 			}
-			sb.WriteString(c.ch)
+			// Start of a changed run — find its end.
+			runStart := c
+			for c < len(row) {
+				if !full && c < len(prevRow) && cellEqual(prevRow[c], row[c]) {
+					break
+				}
+				c++
+			}
+			runEnd := c // exclusive
+			// Emit cursor positioning + the run.
+			fmt.Fprintf(&sb, "\x1b[%d;%dH", r+1, runStart+1)
+			lastStyle := ""
+			for i := runStart; i < runEnd; i++ {
+				s := cellStyleSGR(row[i])
+				if s != lastStyle {
+					sb.WriteString("\x1b[0m")
+					if s != "" {
+						sb.WriteString(s)
+					}
+					lastStyle = s
+				}
+				sb.WriteString(row[i].ch)
+			}
+			sb.WriteString("\x1b[0m")
 		}
 	}
-	sb.WriteString("\x1b[0m")
 	return sb.String()
 }
 
 func cellStyleSGR(c tuiCell) string {
+	if c.ch == " " && !c.fg.set && !c.bg.set && !c.bold && !c.italic && !c.underline && !c.reverse {
+		return ""
+	}
 	var parts []string
 	if c.bold {
 		parts = append(parts, "1")
