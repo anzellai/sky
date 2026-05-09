@@ -198,7 +198,7 @@ dispatch st req = do
         "textDocument/didSave"        -> handleDidSaveSt st req
         "textDocument/didClose"       -> handleDidClose docs req
         "textDocument/hover"          -> handleHoverIdx st req reqId
-        "textDocument/completion"     -> handleCompletion docs req reqId
+        "textDocument/completion"     -> handleCompletionSt st req reqId
         "textDocument/definition"     -> handleDefinitionIdx st req reqId
         "textDocument/declaration"    -> handleDefinitionIdx st req reqId
         "textDocument/documentSymbol" -> handleDocumentSymbol docs req reqId
@@ -2220,24 +2220,134 @@ handleFormatting docs req reqId = do
 
 -- ─── Completion ────────────────────────────────────────────────────────
 
-handleCompletion :: IORef.IORef Docs -> A.Value -> Maybe A.Value -> IO ()
-handleCompletion docs req reqId = do
+handleCompletionSt :: ServerState -> A.Value -> Maybe A.Value -> IO ()
+handleCompletionSt st req reqId = do
     let uri = jsonStrAt ["params", "textDocument", "uri"] req
         line = jsonIntAt ["params", "position", "line"] req
         col  = jsonIntAt ["params", "position", "character"] req
-    m <- IORef.readIORef docs
-    let (items, isIncomplete) = case Map.lookup uri m of
-            Nothing -> (stdlibCompletions, False)
-            Just (_, text) ->
-                let ctx    = prefixAt text line col
-                    module_ = either (const Nothing) Just (Parse.parseModule text)
-                    locals = maybe [] localCompletions module_
-                    all_   = locals ++ stdlibCompletions
-                in (filterCompletions ctx all_, False)
+        path = uriToPath uri
+    m <- IORef.readIORef (ssDocs st)
+    items <- case Map.lookup uri m of
+        Nothing -> return stdlibCompletions
+        Just (_, text) -> do
+            let ctx    = prefixAt text line col
+                module_ = either (const Nothing) Just (Parse.parseModule text)
+                locals = maybe [] localCompletions module_
+            -- Module-qualified prefix (`Ui.layout`, `String.toUpp`)?
+            -- Resolve via the workspace index — pulls in every export
+            -- of the qualified module, including stdlib functions
+            -- the hardcoded list misses (Std.Ui has 130+ symbols).
+            qualMatches <- if '.' `T.elem` ctx
+                then resolveQualifiedCompletion st path module_ ctx
+                else return []
+            -- For unqualified prefixes, also include workspace index
+            -- symbols (top-level + exposed names from the file's
+            -- explicit imports).
+            unqualIdx <- if not ('.' `T.elem` ctx)
+                then resolveUnqualifiedCompletion st path module_ ctx
+                else return []
+            let all_ = locals ++ qualMatches ++ unqualIdx ++ stdlibCompletions
+            return (filterCompletions ctx all_)
     sendReply reqId (A.object
-        [ "isIncomplete" A..= isIncomplete
+        [ "isIncomplete" A..= False
         , "items"        A..= items
         ])
+
+
+-- | Build completion items by resolving a qualified prefix against
+-- the workspace index. e.g. `Ui.lay` → look up `Ui` in the file's
+-- imports → "Std.Ui" → enumerate every Sym whose qualName starts
+-- with "Std.Ui." and whose local name starts with "lay".
+resolveQualifiedCompletion :: ServerState -> FilePath -> Maybe Src.Module -> T.Text -> IO [A.Value]
+resolveQualifiedCompletion st path mModule ctx = do
+    case mModule of
+        Nothing -> return []
+        Just srcMod -> do
+            eidx <- try (getIndex st path) :: IO (Either SomeException Idx.Index)
+            case eidx of
+                Left _    -> return []
+                Right idx -> do
+                    let parts = T.splitOn "." ctx
+                    case parts of
+                        [aliasOrName, localPrefix] -> do
+                            let alias = T.unpack aliasOrName
+                                lp    = T.unpack localPrefix
+                                -- Resolve `alias` to its real module
+                                -- name via the file's imports.
+                                realModule = resolveImportAlias srcMod alias
+                            return (matchingExports idx realModule lp)
+                        _ -> return []
+  where
+    matchingExports idx modName lp =
+        let qualPrefix = modName ++ "."
+            symMatches =
+                [ s | (q, s) <- Map.toList (Idx.idxByQual idx)
+                    , qualPrefix `isPrefixOf` q
+                    , lp `isPrefixOf` Idx.symLocalName s ]
+        in [ A.object
+                [ "label"  A..= (modName ++ "." ++ Idx.symLocalName s)
+                , "kind"   A..= symKindToLsp (Idx.symKind s)
+                , "detail" A..= maybe "" id (Idx.symTypeSig s)
+                ]
+           | s <- symMatches ]
+
+
+-- | Resolve a module alias used in the user's file to its true name.
+-- `import Sky.Core.String as String` → alias "String" → "Sky.Core.String".
+-- `import Std.Ui as Ui` → "Ui" → "Std.Ui".
+-- If the alias matches no import, return it as-is (might be a real
+-- module name).
+resolveImportAlias :: Src.Module -> String -> String
+resolveImportAlias srcMod alias =
+    let imports = Src._imports srcMod
+        match = listToMaybeFirst
+            [ joinDots origName
+            | imp <- imports
+            , let A.At _ origName = Src._importName imp
+            , let aliasName = case Src._importAlias imp of
+                    Just a -> a
+                    Nothing -> joinDots origName
+            , aliasName == alias
+            ]
+    in case match of
+        Just real -> real
+        Nothing   -> alias
+  where
+    joinDots :: [String] -> String
+    joinDots = foldr (\a b -> if null b then a else a ++ "." ++ b) ""
+    listToMaybeFirst []    = Nothing
+    listToMaybeFirst (x:_) = Just x
+
+
+-- | Build unqualified completions from the index — top-level names
+-- in the current file's project, AND names exposed by `exposing(..)`
+-- imports. Doesn't include qualified names so the qualified path
+-- handles those.
+resolveUnqualifiedCompletion :: ServerState -> FilePath -> Maybe Src.Module -> T.Text -> IO [A.Value]
+resolveUnqualifiedCompletion st path _mModule prefix = do
+    eidx <- try (getIndex st path) :: IO (Either SomeException Idx.Index)
+    case eidx of
+        Left _    -> return []
+        Right idx -> do
+            let lp = T.unpack prefix
+                -- Names in the same file, by local name.
+                fileSyms = fromMaybe [] (Map.lookup path (Idx.idxByFile idx))
+            return [ A.object
+                        [ "label"  A..= Idx.symLocalName s
+                        , "kind"   A..= symKindToLsp (Idx.symKind s)
+                        , "detail" A..= maybe "" id (Idx.symTypeSig s)
+                        ]
+                   | s <- fileSyms
+                   , null lp || lp `isPrefixOf` Idx.symLocalName s ]
+
+
+symKindToLsp :: Idx.SymKind -> Int
+symKindToLsp k = case k of
+    Idx.SymFunction -> 3   -- LSP CompletionItemKind.Function
+    Idx.SymCtor     -> 21  -- LSP CompletionItemKind.EnumMember
+    Idx.SymType     -> 7   -- LSP CompletionItemKind.Class
+    Idx.SymLocal    -> 6   -- LSP CompletionItemKind.Variable
+    Idx.SymParam    -> 6   -- Variable
 
 
 -- | The word immediately left of the cursor. Supports `String.foo`.

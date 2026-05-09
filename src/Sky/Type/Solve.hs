@@ -636,6 +636,16 @@ collectVarNames = nubOrdered . go
     go (T.TLambda a b) = go a ++ go b
     go (T.TTuple a b cs) = concatMap go (a : b : cs)
     go (T.TAlias _ _ subs b) = concatMap (go . snd) subs ++ goAlias b
+    -- TRecord previously fell through `_ -> []` so record field
+    -- types' TVars (notably the solver-generated `_rfld_*` names
+    -- that emerge from constraintRecord) were never collected for
+    -- renaming. Result: error messages and hover signatures that
+    -- showed `{ count : _rfld_count12 }` instead of `{ count : Int }`
+    -- (or `{ count : a }` for legitimately polymorphic fields).
+    -- Walk into every field's type AND the row-extension variable.
+    go (T.TRecord fields ext) =
+        concatMap (\(_, T.FieldType _ t) -> go t) (Map.toList fields)
+        ++ maybe [] (\n -> [n]) ext
     go _ = []
     goAlias (T.Hoisted t) = go t
     goAlias (T.Filled t)  = go t
@@ -649,6 +659,12 @@ substVar f ty = case ty of
     T.TTuple a b cs -> T.TTuple (substVar f a) (substVar f b) (map (substVar f) cs)
     T.TAlias m n subs body ->
         T.TAlias m n [(k, substVar f v) | (k, v) <- subs] (substAlias f body)
+    -- TRecord — substitute into every field's type AND the row-
+    -- extension variable. Same bug as collectVarNames above.
+    T.TRecord fields ext ->
+        let fields' = Map.map (\(T.FieldType i t) -> T.FieldType i (substVar f t)) fields
+            ext' = fmap f ext
+        in T.TRecord fields' ext'
     other -> other
   where
     substAlias g (T.Hoisted t) = T.Hoisted (substVar g t)
