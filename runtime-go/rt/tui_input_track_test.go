@@ -134,6 +134,62 @@ func TestPaintRadio_GlyphAndFocus(t *testing.T) {
 	}
 }
 
+// `<a>` links must join the focus order even without explicit
+// event handlers — `Ui.link` builds a TaggedNode "a" with just an
+// `href` attribute, but it should still be reachable by Tab and
+// arrow navigation, matching HTML's intrinsic link tab-stop.
+func TestPaintBox_LinkIsFocusable(t *testing.T) {
+	grid := makeTestGrid(20, 1)
+	link := layoutBox{
+		kind:   "node",
+		tag:    "a",
+		width:  10, height: 1,
+		axis: layoutAxisRow,
+		// Note: empty events slice — Ui.link sets href but no onClick.
+		children: []layoutBox{
+			{kind: "text", text: "click me", width: 8, height: 1},
+		},
+	}
+	var focusables []focusable
+	inputs := newInputRegistry()
+	paintBox(grid, link, 0, 0, 20, 1, -1, &focusables, inputs, textStyle{}, layoutAxisColumn, 0)
+	if len(focusables) != 1 {
+		t.Fatalf("link with no events should still be focusable; got %d focusables", len(focusables))
+	}
+	if focusables[0].isInput {
+		t.Error("link should not be marked as isInput")
+	}
+}
+
+// When the link is focused, applyFocusIndicator should underline
+// the entire content row so users see the focus state at a glance.
+func TestPaintBox_FocusedLinkUnderlines(t *testing.T) {
+	grid := makeTestGrid(20, 1)
+	link := layoutBox{
+		kind:   "node",
+		tag:    "a",
+		width:  10, height: 1,
+		axis: layoutAxisRow,
+		children: []layoutBox{
+			{kind: "text", text: "go", width: 2, height: 1},
+		},
+	}
+	var focusables []focusable
+	inputs := newInputRegistry()
+	// focusIdx = 0 → this link IS the focused element.
+	paintBox(grid, link, 0, 0, 20, 1, 0, &focusables, inputs, textStyle{}, layoutAxisColumn, 0)
+	// Some cell in the link's bounding box should have underline=true.
+	underlined := 0
+	for c := 0; c < 10; c++ {
+		if grid[0][c].underline {
+			underlined++
+		}
+	}
+	if underlined == 0 {
+		t.Error("focused link should apply underline to its content row")
+	}
+}
+
 func makeTestGrid(cols, rows int) [][]tuiCell {
 	g := make([][]tuiCell, rows)
 	for r := range g {

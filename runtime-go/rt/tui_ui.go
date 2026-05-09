@@ -362,13 +362,37 @@ func tuiAppRun(cfg any) any {
 				continue
 			}
 
-			// Tab navigation always handled locally.
+			// Tab navigation always handled locally. Arrow keys on a
+			// non-input focus also navigate the focus order — Down is
+			// Tab semantics, Up is Shift-Tab. This makes the keyboard
+			// feel native: you can walk the focusables with the arrow
+			// keys without first reaching for Tab. ensureFocusVisible
+			// (called below) auto-scrolls to keep the new focus on
+			// screen, so a long page just scrolls naturally as you
+			// navigate. PgUp / PgDn / Home / End remain pure viewport
+			// scrolls (handled by the viewport block below) for
+			// reading content with no focusable in reach.
+			//
+			// On an input we let arrows fall through to the editor
+			// (cursor movement, multi-line up/down) — focus only
+			// changes via Tab / Shift-Tab there.
+			focusedInputForArrow := focusIdx >= 0 && focusIdx < len(focusables) && focusables[focusIdx].isInput
 			handled := false
 			oldFocus := focusIdx
 			switch km.ev.kind {
 			case "tab":
 				if len(focusables) > 0 {
 					focusIdx = (focusIdx + 1) % len(focusables)
+					handled = true
+				}
+			case "down":
+				if !focusedInputForArrow && len(focusables) > 0 {
+					focusIdx = (focusIdx + 1) % len(focusables)
+					handled = true
+				}
+			case "up":
+				if !focusedInputForArrow && len(focusables) > 0 {
+					focusIdx = (focusIdx - 1 + len(focusables)) % len(focusables)
 					handled = true
 				}
 			case "other":
@@ -2047,13 +2071,15 @@ func paintBox(grid [][]tuiCell, box layoutBox, col0, row0, maxW, maxH, focusIdx 
 		drawBorder(grid, col0, row0, w, h, box.borderWidth, box.borderColor, box.borderStyle)
 	}
 
-	// If this box is focusable (has any event handler) OR it's an input
-	// (which is always focusable for editing), register it. The focus
-	// indicator is applied AFTER children paint (further down) so the
-	// markers don't get overwritten by the label.
+	// If this box is focusable (has any event handler), is an input
+	// (always focusable for editing), or is an `<a>` link (matches
+	// HTML's intrinsic tab-stop behaviour — `Ui.link` carries no
+	// events but should still join the focus order so users can
+	// reach it by arrow / Tab and see the focused-link underline).
 	isInput := box.tag == "input"
+	isLink := box.tag == "a"
 	thisFocusIdx := -1
-	if len(box.events) > 0 || isInput {
+	if len(box.events) > 0 || isInput || isLink {
 		thisFocusIdx = len(*focusables)
 		*focusables = append(*focusables, focusable{
 			events:       box.events,
