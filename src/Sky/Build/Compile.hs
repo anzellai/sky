@@ -16,7 +16,7 @@ import qualified System.FilePath
 import qualified System.Process
 import qualified System.Exit
 import Control.Monad (when, unless)
-import System.Directory (createDirectoryIfMissing, doesDirectoryExist, doesFileExist, copyFile, listDirectory)
+import System.Directory (createDirectoryIfMissing, doesDirectoryExist, doesFileExist, copyFile, listDirectory, removeFile)
 import System.IO (hFlush, stdout, readFile', stderr, hPutStrLn)
 import System.IO.Unsafe (unsafePerformIO)
 import System.FilePath (takeDirectory, takeExtension, (</>))
@@ -657,16 +657,26 @@ continueCompile config _entryPath outDir moduleOrder srcHash = do
                 , Rec._cg_funcInferredSigs =
                     Map.union (Rec._cg_funcInferredSigs e) depInferredSigs
                 }
-            putStrLn "-- Generating Go"
-            let depAliasPairs = [ (map (\c -> if c == '.' then '_' else c) mn, Can._aliases depMod)
-                                | (mn, depMod) <- validDeps ]
-                goCode = generateGoMulti canMod entrySrcMod config types depDecls depRecAliases depUnionNames depArities depParamTypes depRetTypes depInferredParams depInferredRets depInferredSigs depAliasPairs
-            createDirectoryIfMissing True outDir
-            let mainGoPath = outDir </> "main.go"
+            -- Bail BEFORE codegen if HM rejected the program. Previously
+            -- "-- Generating Go" printed unconditionally, which made the
+            -- "TYPE ERROR" buried two lines up easy to miss + suggested
+            -- the build was succeeding. We also delete any stale main.go
+            -- and binary from a previous successful build so the user
+            -- can't accidentally run an outdated executable. Issue #52.
             case (solverError, exhaustErr) of
-              (Just err, _) -> return (Left ("Type error: " ++ err))
-              (_, Just err) -> return (Left ("Non-exhaustive patterns: " ++ err))
+              (Just err, _) -> do
+                  removeStaleBuildOutput outDir (Toml._binName config)
+                  return (Left ("Type error: " ++ err))
+              (_, Just err) -> do
+                  removeStaleBuildOutput outDir (Toml._binName config)
+                  return (Left ("Non-exhaustive patterns: " ++ err))
               _ -> do
+                putStrLn "-- Generating Go"
+                let depAliasPairs = [ (map (\c -> if c == '.' then '_' else c) mn, Can._aliases depMod)
+                                    | (mn, depMod) <- validDeps ]
+                    goCode = generateGoMulti canMod entrySrcMod config types depDecls depRecAliases depUnionNames depArities depParamTypes depRetTypes depInferredParams depInferredRets depInferredSigs depAliasPairs
+                createDirectoryIfMissing True outDir
+                let mainGoPath = outDir </> "main.go"
                 writeFile mainGoPath goCode
                 putStrLn $ "   Wrote " ++ mainGoPath
                 -- copyRuntime also copies runtime-go/go.mod + go.sum into outDir
@@ -762,6 +772,21 @@ parseSingle config entryPath outDir = do
 -- | Copy user FFI files from ./ffi/*.go into sky-out/rt/ so they compile into
 -- the same Go package as the runtime. Users call `rt.Register` from init() in
 -- these files to expose Go functions to Sky via Ffi.call "name" args.
+-- | Delete any main.go and binary from a previous successful build so
+-- a user who runs `sky run` after a failed `sky build` doesn't
+-- accidentally execute outdated code. Issue #52: a build that hits
+-- a TYPE ERROR used to leave the previous successful binary in place,
+-- which let users miss the error and run stale output.
+removeStaleBuildOutput :: FilePath -> String -> IO ()
+removeStaleBuildOutput outDir binName = do
+    let mainPath = outDir </> "main.go"
+        binPath  = outDir </> binName
+    mainExists <- doesFileExist mainPath
+    when mainExists $ removeFile mainPath
+    binExists <- doesFileExist binPath
+    when binExists $ removeFile binPath
+
+
 -- | Run `go get <pkg>[@<ver>]` for each Go dependency declared in sky.toml.
 -- Runs after runtime + ffi copy so imports in generated ffi/*_bindings.go
 -- resolve before the final `go build`. Skipped stdlib pkgs (no slash).
