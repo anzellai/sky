@@ -1236,8 +1236,23 @@ typecheckWorkspace config entryPath = do
     stdlibRoot <- writeStdlibTo stdlibSideDir
     testsRootExists2 <- doesDirectoryExist "tests"
     let extraTestsRoot2 = if testsRootExists2 then ["tests"] else []
-    modules <- Graph.discoverModulesMulti
-        (sourceRoot : depRoots ++ extraTestsRoot2 ++ [stdlibRoot]) entryPath
+    -- Workspace discovery: seed module discovery with EVERY .sky file
+    -- in the source roots + tests, not just the entry point. Without
+    -- this, helper modules (Lib/Helper.sky, src/Foo/Bar.sky) that
+    -- aren't transitively imported from Main.sky are invisible to
+    -- the LSP — opening them gives no hover, no go-to-def, no
+    -- diagnostics. Multi-file projects (sendcrafts and similar) hit
+    -- this immediately. The compiler's own `compile` path keeps
+    -- discoverModulesMulti (entry-only) since it builds the entry's
+    -- transitive closure for codegen; the LSP's workspace index
+    -- needs the broader view.
+    extraSrcFiles <- Graph.listSkyFiles sourceRoot
+    extraTestFiles <- if testsRootExists2
+                      then Graph.listSkyFiles "tests"
+                      else return []
+    let allSeeds = entryPath : extraSrcFiles ++ extraTestFiles
+    modules <- Graph.discoverModulesFromSeeds
+        (sourceRoot : depRoots ++ extraTestsRoot2 ++ [stdlibRoot]) allSeeds
     let moduleOrder = Graph.compilationOrder modules
 
     -- Parse all

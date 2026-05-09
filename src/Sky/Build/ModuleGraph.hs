@@ -5,16 +5,19 @@ module Sky.Build.ModuleGraph
     ( ModuleInfo(..)
     , discoverModules
     , discoverModulesMulti
+    , discoverModulesFromSeeds
+    , listSkyFiles
     , compilationOrder
     )
     where
 
+import Control.Exception (try, SomeException)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
-import System.Directory (doesFileExist)
-import System.FilePath ((</>), takeDirectory, dropExtension, makeRelative)
+import System.Directory (doesFileExist, doesDirectoryExist, listDirectory)
+import System.FilePath ((</>), takeDirectory, dropExtension, makeRelative, takeExtension)
 
 import qualified Sky.AST.Source as Src
 import qualified Sky.Reporting.Annotation as A
@@ -41,8 +44,21 @@ discoverModules sourceRoot = discoverModulesMulti [sourceRoot]
 -- determines the primary module name via the first root it is relative to;
 -- imports are resolved by probing each root in order (first match wins).
 discoverModulesMulti :: [String] -> FilePath -> IO (Map.Map String ModuleInfo)
-discoverModulesMulti roots entryPath = do
-    go Map.empty [entryPath]
+discoverModulesMulti roots entryPath = discoverModulesFromSeeds roots [entryPath]
+
+
+-- | Like discoverModulesMulti but takes MULTIPLE entry seeds. Used by
+-- the LSP's workspace typecheck so every .sky file in src/ + tests/
+-- ends up in the index — not just modules transitively reachable from
+-- the project's main entry.
+--
+-- Without this, opening a helper module that's never imported from
+-- Main.sky produced no LSP context (no hover, no go-to-def, no
+-- diagnostics) — surfacing as "many modules show no signatures"
+-- on multi-file projects (sendcrafts, etc.).
+discoverModulesFromSeeds :: [String] -> [FilePath] -> IO (Map.Map String ModuleInfo)
+discoverModulesFromSeeds roots seeds = do
+    go Map.empty seeds
   where
     primaryRoot = case roots of
         (r:_) -> r
@@ -172,3 +188,36 @@ joinDots :: [String] -> String
 joinDots [] = ""
 joinDots [x] = x
 joinDots (x:xs) = x ++ "." ++ joinDots xs
+
+
+-- | Recursively list every .sky file under a directory. Used by the
+-- LSP workspace pass to discover ALL source files, not just those
+-- transitively imported from the project's main entry. Returns paths
+-- relative to the cwd (or absolute, depending on input). Skips
+-- common cache + build dirs.
+listSkyFiles :: FilePath -> IO [FilePath]
+listSkyFiles root = do
+    isDir <- doesDirectoryExist root
+    if not isDir
+        then return []
+        else do
+            r <- try (listDirectory root) :: IO (Either SomeException [FilePath])
+            case r of
+                Left _ -> return []
+                Right entries -> concat <$> mapM each entries
+  where
+    each name
+        | name == ".skycache" = return []
+        | name == "sky-out" = return []
+        | name == "dist-newstyle" = return []
+        | name == ".git" = return []
+        | name == "node_modules" = return []
+        | name == ".sky-stdlib" = return []
+        | otherwise = do
+            let path = root </> name
+            isD <- doesDirectoryExist path
+            if isD
+                then listSkyFiles path
+                else if takeExtension path == ".sky"
+                    then return [path]
+                    else return []
