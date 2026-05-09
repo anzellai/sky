@@ -896,6 +896,40 @@ Single braces `{` are literal — safe for JavaScript, CSS, JSON, SQL. Interpola
 | 17 | skymon | Sky.Live monitoring dashboard with metrics, alerts |
 | 18 | job-queue | Async Cmd.perform demo with Time.sleep, Random.int, Cmd.batch |
 | 19 | skyforum | Reddit/HN-style forum on Std.Ui — 8 modules, per-user vote tracking + downvote, threaded comments, form-driven password sign-in |
+| 20 | cli-counter | (exp/tea-core) Sky.Cli — TEA on stdin lines |
+| 21 | tui-stopwatch | (exp/tea-core) Sky.Tui — bubbletea-backed stopwatch |
+| 22 | tui-stopwatch-ui | (exp/tea-core) Sky.Tui — Std.Ui-driven stopwatch |
+| 23 | tui-todo | (exp/tea-core) Sky.Tui — todo CRUD demo |
+| 24 | tui-kitchen-sink | (exp/tea-core) Sky.Tui v1 — every supported Std.Ui primitive in one screen |
+
+## Sky.Tui v1 (branch: `exp/tea-core`)
+
+**Status (2026-05-09):** v1 milestone complete on `exp/tea-core`, NOT yet merged to main.
+
+A TEA backend that renders `Std.Ui` to ANSI cells in a terminal. Same `init`/`update`/`view` shape as `Sky.Live`, no HTML, no SSE. Entry point: `Tui_app` in `runtime-go/rt/tui_ui.go` (~2200 lines).
+
+**Coverage:** ~95%+ of Std.Ui primitives. Unsupported attributes (gradients, fine letter-spacing, etc.) emit a deduped warning via `tuiWarn(category, detail)`; the warning summary prints on exit AFTER the terminal is restored. `SKY_TUI_QUIET=1` suppresses, `SKY_TUI_LOG=1` writes a ledger file.
+
+**Supported:**
+- Layout: row, column, wrappedRow, paragraph (word-wrap), textColumn, grid + gridColumns, el
+- Text styling: bold, italic, underline, lineThrough, fg/bg colour (truecolour SGR)
+- Headings h1-h6 with distinct visual markers (`═ ─ ▌ ▎ ▏ ·`)
+- Borders: solid, dashed, dotted with widthEach
+- Inputs: text, password (masked), checkbox, radio (3-up), slider, multiline textarea
+- Events: onClick, onInput, onFocus, onSubmit (form record-decode), mouse press (SGR 1006)
+- Nearby overlays: above / below / onLeft / onRight / inFront / behind
+- Alignment: alignX/alignY (left/center/right, top/center/bottom)
+- Padding (incl. paddingXY, paddingEach), spacing
+- Focus ring with Tab cycling, focus indicator (`▸ ◂` for buttons, underline for links)
+- Resize via SIGWINCH
+
+**Logical-pixel canvas:** 1280×720 by default. `pxToCellsX/Y` round positive px values smaller than half a cell UP to 1 (rather than 0) so `Ui.spacing 4` stays visible in 80-col terminals.
+
+**Tests:** `runtime-go/rt/tui_{wrap,decode,editor}_test.go` — ~70 cases. `go test ./rt/...` passes.
+
+**Kitchen sink:** `examples/24-tui-kitchen-sink` exercises every supported primitive. `sky run src/Main.sky` to see it.
+
+**Next milestone:** Sky.Webview (after Sky.Tui v1 ships to users for feedback). Branch will likely stay open until then.
 
 ## Compiler Optimisation Strategy (keep up to date)
 
