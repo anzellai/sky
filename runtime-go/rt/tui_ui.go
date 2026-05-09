@@ -174,12 +174,49 @@ func (r *scrollRegistry) get(idx int) *tuiScroll {
 
 // ─── Main loop ──────────────────────────────────────────────────────
 
+// tuiApplyUpdate runs the user's guard (if defined) before dispatch.
+// Mirrors Sky.Live's guard semantics so the same auth-check function
+// works under both runtimes:
+//
+//   guard : Msg -> Model -> Result Error ()
+//
+//   Ok ()       → dispatch the msg through update normally
+//   Err reason  → SKIP update and stamp model.Notification = reason
+//                 + model.NotificationType = "error" (if those
+//                 fields exist on the user's record). The view
+//                 inspects the notification field to render an
+//                 in-app banner / toast / status line.
+//
+// Use case: auth-gated screens. e.g. user model has session field,
+// guard rejects every Msg except Login until session is Just _.
+//
+// If guard isn't defined, the msg goes straight to update — zero
+// overhead for the common case.
+func tuiApplyUpdate(guardFn, updateFn, msg, model any, msgCh chan<- any) any {
+	if guardFn != nil && isFunc(guardFn) {
+		g := sky_call2(guardFn, msg, model)
+		if isErrResult(g) {
+			reason := extractErrResultValue(g)
+			// RecordUpdate is a no-op when the field doesn't exist on
+			// the model (graceful degradation — user opts in by adding
+			// notification fields). When the user model lacks both,
+			// guard rejection just silently drops the msg.
+			return RecordUpdate(model, map[string]any{
+				"Notification":     reason,
+				"NotificationType": "error",
+			})
+		}
+	}
+	return cliApplyUpdate(updateFn, msg, model, msgCh)
+}
+
 func tuiAppRun(cfg any) any {
 	initFn := Field(cfg, "Init")
 	updateFn := Field(cfg, "Update")
 	viewFn := Field(cfg, "View")
 	subsFn := Field(cfg, "Subscriptions")
 	onKeyFn := Field(cfg, "OnKey") // optional — for global hotkeys
+	guardFn := Field(cfg, "Guard") // optional — Msg -> Model -> Result Error ()
 	if initFn == nil || updateFn == nil || viewFn == nil {
 		return Err[any, any](ErrInvalidInput(
 			"Tui.app: cfg must define init / update / view"))
@@ -652,7 +689,7 @@ func tuiAppRun(cfg any) any {
 		}
 
 	applyMsg:
-		model = cliApplyUpdate(updateFn, msg, model, msgCh)
+		model = tuiApplyUpdate(guardFn, updateFn, msg, model, msgCh)
 		subMgr.update(subsFn, model)
 
 		// On resize, recompute terminal dims; the grid-size mismatch

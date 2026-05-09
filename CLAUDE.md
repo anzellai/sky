@@ -916,9 +916,10 @@ type alias Cfg model msg =
     , update        : msg -> model -> (model, Cmd msg)
     , view          : model -> Element msg
     , subscriptions : model -> Sub msg
-    , onKey         : KeyEvent -> msg     -- optional; runtime hard-exits on Ctrl-C if absent
-    , canvasWidth   : Int                 -- optional; default 1280 logical px
-    , canvasHeight  : Int                 -- optional; default 720
+    , onKey         : KeyEvent -> msg            -- optional; runtime hard-exits on Ctrl-C if absent
+    , guard         : msg -> model -> Result Error ()  -- optional; same shape + semantics as Live.app's guard
+    , canvasWidth   : Int                        -- optional; default 1280 logical px
+    , canvasHeight  : Int                        -- optional; default 720
     }
 
 type alias KeyEvent =
@@ -982,6 +983,34 @@ These are enforced runtime invariants — every panic / signal / malformed input
 **Tests:** `runtime-go/rt/tui_{wrap,decode,editor,sanitize,scroll,width}_test.go` — ~90+ cases. `go test ./rt/...` passes.
 
 **Kitchen sink:** `examples/24-tui-kitchen-sink` exercises every supported primitive. `sky run src/Main.sky` to see it. To preview the same UI as Sky.Live: `sky run src/Main.sky live` (when the unified-backend dispatch lands — task #48).
+
+### Auth guard
+
+`Tui.app`'s `guard` field has the same shape + semantics as `Live.app`'s — `Msg -> Model -> Result Error ()`. The runtime invokes it BEFORE every `update`. `Ok ()` allows the msg through. `Err reason` skips update and (if the user's model has `notification` / `notificationType` fields) writes the rejection reason there for the view to render.
+
+```elm
+type alias Model =
+    { session       : Maybe Session
+    , notification  : String        -- runtime stamps guard rejections here
+    , notificationType : String     -- runtime stamps "error" alongside
+    , ...
+    }
+
+guard : Msg -> Model -> Result Error ()
+guard msg model =
+    case msg of
+        Logout       -> Ok ()                    -- always allowed
+        ViewSecret   -> requireAuth model        -- gated
+        _            -> Ok ()                    -- public
+
+requireAuth : Model -> Result Error ()
+requireAuth model =
+    case model.session of
+        Just _  -> Ok ()
+        Nothing -> Err (Error.unexpected "Login required")
+```
+
+When the user's model doesn't have those fields, guard rejection silently drops the msg (RecordUpdate is a graceful no-op on missing fields). The same `guard` function works under both `Tui.app` and `Live.app` — auth logic is portable across backends.
 
 ### Sky.Cli password mode (v1.x post-release)
 
