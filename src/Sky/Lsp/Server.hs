@@ -204,11 +204,12 @@ dispatch st req = do
         "textDocument/documentSymbol" -> handleDocumentSymbol docs req reqId
         "textDocument/formatting"     -> handleFormatting docs req reqId
         "textDocument/references"     -> handleReferencesIdx st req reqId
-        "textDocument/rename"         -> handleRename docs req reqId
+        "textDocument/rename"         -> handleRenameSt st req reqId
         "textDocument/prepareRename"  -> handlePrepareRename docs req reqId
         "textDocument/signatureHelp"  -> handleSignatureHelp docs req reqId
         "textDocument/codeAction"          -> handleCodeAction docs req reqId
         "textDocument/semanticTokens/full" -> handleSemanticTokens docs req reqId
+        "textDocument/inlayHint"           -> handleInlayHint st req reqId
         _ -> case reqId of
             Just _  -> sendReply reqId A.Null
             Nothing -> return ()
@@ -734,6 +735,9 @@ initializeResult = A.object
             ]
         , "completionProvider" A..= A.object
             [ "triggerCharacters" A..= (["."] :: [T.Text])
+            ]
+        , "inlayHintProvider" A..= A.object
+            [ "resolveProvider" A..= False
             ]
         ]
     , "serverInfo" A..= A.object
@@ -1498,6 +1502,124 @@ collectSemTokens srcMod =
     isUpper c = c >= 'A' && c <= 'Z'
 
 
+-- ─── Inlay Hints ──────────────────────────────────────────────────────
+
+-- | textDocument/inlayHint — show inferred types next to let-bindings
+-- and function parameters that lack explicit annotations. Editors
+-- render these as faded inline labels (`x: Int = 42` style).
+--
+-- For now we emit:
+--   * Inferred types after `let x =` when the binder has no
+--     annotation. Reads from the workspace index's idxLocalTypes
+--     map populated by Solve.solveWithLocals.
+--   * Inferred types after a top-level `name args =` when the
+--     value has no annotation — gives users free type confirmation
+--     while writing.
+handleInlayHint :: ServerState -> A.Value -> Maybe A.Value -> IO ()
+handleInlayHint st req reqId = do
+    let uri = jsonStrAt ["params", "textDocument", "uri"] req
+        path = uriToPath uri
+    docs <- IORef.readIORef (ssDocs st)
+    case Map.lookup uri docs of
+        Nothing -> sendReply reqId (A.toJSON ([] :: [A.Value]))
+        Just (_, text) -> do
+            r <- try (computeInlayHints st path text) :: IO (Either SomeException [A.Value])
+            case r of
+                Right hs -> sendReply reqId (A.toJSON hs)
+                Left _   -> sendReply reqId (A.toJSON ([] :: [A.Value]))
+
+
+computeInlayHints :: ServerState -> FilePath -> T.Text -> IO [A.Value]
+computeInlayHints st path text = case Parse.parseModule text of
+    Left _ -> return []
+    Right srcMod -> do
+        eidx <- try (getIndex st path) :: IO (Either SomeException Idx.Index)
+        case eidx of
+            Left _    -> return []
+            Right idx -> do
+                let rename = fromMaybe Map.empty
+                                (Map.lookup path (Idx.idxRenaming idx))
+                    localTypes = fromMaybe Map.empty
+                                    (Map.lookup path (Idx.idxLocalTypes idx))
+                    -- Top-level values without explicit annotation.
+                    topHints =
+                        [ topLevelHint name reg t rename
+                        | A.At _ v <- Src._values srcMod
+                        , let A.At reg name = Src._valueName v
+                        , Nothing <- [Src._valueType v]
+                        , Just (t:_) <- [Map.lookup name localTypes]
+                        ]
+                    -- Local let-bindings: walk every value's body
+                    -- collecting Defines without annotations.
+                    localHints = concatMap (letHints rename localTypes) (Src._values srcMod)
+                return (topHints ++ localHints)
+
+
+-- | Hint after a top-level binder name `foo` → ` : Int -> String`.
+-- Position is the END of the binder name; LSP renders the label
+-- inline at that column.
+topLevelHint :: String -> A.Region -> Ty.Type -> Map.Map String String -> A.Value
+topLevelHint _ (A.Region _ end) ty rename =
+    let label = " : " ++ Solve.showTypeWith rename ty
+    in A.object
+        [ "position" A..= A.object
+            [ "line"      A..= (max 0 (A._line end - 1) :: Int)
+            , "character" A..= (max 0 (A._col end - 1)  :: Int)
+            ]
+        , "label"  A..= label
+        , "kind"   A..= (1 :: Int)        -- LSP InlayHintKind.Type
+        , "paddingLeft" A..= False
+        ]
+
+
+-- | Walk a top-level value's body for let-Defines without
+-- annotations and emit a type hint after each binder name.
+letHints :: Map.Map String String -> Map.Map String [Ty.Type] -> A.Located Src.Value -> [A.Value]
+letHints rename localTypes (A.At _ v) =
+    let body = Src._valueBody v
+    in walkExpr body
+  where
+    walkExpr :: Src.Expr -> [A.Value]
+    walkExpr (A.At _ e) = case e of
+        Src.Let defs body -> concatMap goDef defs ++ walkExpr body
+        Src.Lambda _ inner -> walkExpr inner
+        Src.Call f xs -> walkExpr f ++ concatMap walkExpr xs
+        Src.Binops pairs end ->
+            concatMap (walkExpr . fst) pairs ++ walkExpr end
+        Src.If arms els ->
+            concatMap (\(c, b) -> walkExpr c ++ walkExpr b) arms ++ walkExpr els
+        Src.Case s arms -> walkExpr s ++ concatMap (walkExpr . snd) arms
+        Src.Tuple a b cs -> walkExpr a ++ walkExpr b ++ concatMap walkExpr cs
+        Src.List xs -> concatMap walkExpr xs
+        Src.Negate inner -> walkExpr inner
+        Src.Paren inner -> walkExpr inner
+        Src.Access t _ -> walkExpr t
+        Src.Update _ fs -> concatMap (walkExpr . snd) fs
+        Src.Record fs -> concatMap (walkExpr . snd) fs
+        _ -> []
+
+    goDef (A.At _ d) = case d of
+        -- Skip Defines that already have an annotation.
+        Src.Define (A.At reg n) _ body (Just _) -> walkExpr body
+        Src.Define (A.At reg n) _ body Nothing ->
+            case Map.lookup n localTypes of
+                Just (t:_) ->
+                    [ A.object
+                        [ "position" A..= A.object
+                            [ "line"      A..= (max 0 (A._line (regEnd reg) - 1) :: Int)
+                            , "character" A..= (max 0 (A._col (regEnd reg) - 1)  :: Int)
+                            ]
+                        , "label"  A..= (" : " ++ Solve.showTypeWith rename t)
+                        , "kind"   A..= (1 :: Int)
+                        , "paddingLeft" A..= False
+                        ]
+                    ] ++ walkExpr body
+                _ -> walkExpr body
+        Src.Destruct _ body -> walkExpr body
+
+    regEnd (A.Region _ e) = e
+
+
 -- ─── Code Actions ─────────────────────────────────────────────────────
 
 handleCodeAction :: IORef.IORef Docs -> A.Value -> Maybe A.Value -> IO ()
@@ -1858,6 +1980,94 @@ handleRename docs req reqId = do
                             ]
                     sendReply reqId $ A.object
                         [ "changes" A..= A.object [ AK.fromText uri A..= edits ] ]
+
+
+-- | Workspace-wide rename. Walks every file in the index for
+-- references to `name` and produces a WorkspaceEdit.
+--
+-- Strategy:
+--   1. Identify the symbol being renamed via the workspace index.
+--   2. If it's a LOCAL binding, rename only in the current file
+--      (locals can't escape the file they're declared in).
+--   3. If it's a TOP-LEVEL symbol (function, type, ctor), walk
+--      every file's parsed module for references — both unqualified
+--      uses (after `exposing`) and module-qualified uses
+--      (`Mod.name`, accounting for the file's import alias).
+handleRenameSt :: ServerState -> A.Value -> Maybe A.Value -> IO ()
+handleRenameSt st req reqId = do
+    let uri  = jsonStrAt ["params", "textDocument", "uri"] req
+        line = jsonIntAt ["params", "position", "line"] req
+        col  = jsonIntAt ["params", "position", "character"] req
+        newName = jsonStrAt ["params", "newName"] req
+        path = uriToPath uri
+    docs <- IORef.readIORef (ssDocs st)
+    case Map.lookup uri docs of
+        Nothing -> sendReply reqId A.Null
+        Just (_, text) -> case Parse.parseModule text of
+            Left _       -> sendReply reqId A.Null
+            Right srcMod -> case identAtPosition srcMod (line + 1) (col + 1) of
+                Nothing -> sendReply reqId A.Null
+                Just name -> do
+                    let short = simpleName name
+                    eidx <- try (getIndex st path) :: IO (Either SomeException Idx.Index)
+                    case eidx of
+                        -- Index unavailable → fall back to file-only.
+                        Left _    -> sendFileOnlyRename uri text short newName reqId
+                        Right idx -> do
+                            -- Is this a top-level symbol the workspace
+                            -- knows about? lookupAtCursor returns Just
+                            -- when it is.
+                            let mSym = Idx.lookupAtCursor idx path (line + 1) (col + 1) name
+                                isTopLevel = case mSym of
+                                    Just s -> Idx.symKind s `elem`
+                                                [Idx.SymFunction, Idx.SymCtor, Idx.SymType]
+                                    Nothing -> False
+                            if isTopLevel
+                                then sendWorkspaceRename idx short newName reqId
+                                else sendFileOnlyRename uri text short newName reqId
+
+
+-- File-only fallback for locals + cases where the workspace index
+-- can't be built.
+sendFileOnlyRename :: T.Text -> T.Text -> String -> T.Text -> Maybe A.Value -> IO ()
+sendFileOnlyRename uri text short newName reqId = case Parse.parseModule text of
+    Left _ -> sendReply reqId A.Null
+    Right srcMod -> do
+        let nameLen = length short
+            refs   = collectReferences srcMod short
+            edits  = [ A.object
+                          [ "range"   A..= clampRangeWidth r nameLen
+                          , "newText" A..= newName
+                          ]
+                     | r <- refs
+                     ]
+        sendReply reqId $ A.object
+            [ "changes" A..= A.object [ AK.fromText uri A..= edits ] ]
+
+
+-- Walk every file in the workspace for references and build a
+-- WorkspaceEdit covering all of them.
+sendWorkspaceRename :: Idx.Index -> String -> T.Text -> Maybe A.Value -> IO ()
+sendWorkspaceRename idx short newName reqId = do
+    let nameLen = length short
+        files = Map.toList (Idx.idxFileSrc idx)
+        perFileEdits =
+            [ (filePath, edits)
+            | (filePath, src) <- files
+            , Right srcMod <- [Parse.parseModule src]
+            , let refs = collectReferences srcMod short
+            , not (null refs)
+            , let edits = [ A.object
+                              [ "range"   A..= clampRangeWidth r nameLen
+                              , "newText" A..= newName
+                              ]
+                          | r <- refs ]
+            ]
+        changes = A.object
+            [ AK.fromText (T.pack ("file://" ++ p)) A..= eds
+            | (p, eds) <- perFileEdits
+            ]
+    sendReply reqId $ A.object [ "changes" A..= changes ]
 
 
 -- | Guarantee a rename edit's end column equals `startCol + nameLength`.

@@ -411,10 +411,19 @@ fromImports = map go
 collectLocalBindings :: Src.Module -> [LocalBinding]
 collectLocalBindings srcMod = concatMap valueLocals (Src._values srcMod)
   where
-    valueLocals (A.At valReg v) =
+    -- valReg is the value's outer region — but the parser sets that
+    -- to JUST the name's region (e.g. line 10:1-10:10 for
+    -- `stringify`), not the body. Using valReg as the scope for
+    -- parameter binders means lookupLocal's regionContains check
+    -- fails for any cursor inside the body. Use the body's region
+    -- as the scope so parameters are visible exactly where they're
+    -- usable. Same root cause as the field-hover regionContains
+    -- bug fixed in Server.hs:findParamType.
+    valueLocals (A.At _ v) =
         let body = Src._valueBody v
-            paramBinders = concatMap (patBinders valReg) (Src._valuePatterns v)
-        in paramBinders ++ exprLocals valReg body
+            A.At bodyReg _ = body
+            paramBinders = concatMap (patBinders bodyReg) (Src._valuePatterns v)
+        in paramBinders ++ exprLocals bodyReg body
 
     -- Every name introduced by a pattern, with the given enclosing scope.
     patBinders :: A.Region -> Src.Pattern -> [LocalBinding]
