@@ -13,7 +13,6 @@
 package rt
 
 import (
-	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -2152,24 +2151,35 @@ func liveAppRun(cfg any) any {
 		IdleTimeout:    120 * time.Second,
 		MaxHeaderBytes: 1 << 20,
 	}
-	// Clean shutdown on SIGINT / SIGTERM / SIGHUP. Without explicit
-	// signal handling here, Ctrl-C in some environments (mosh, tmux,
-	// nested shells) doesn't reliably terminate a Go HTTP server —
-	// the SSE keep-alive goroutines hold open file descriptors and
-	// the runtime's default signal disposition behaves inconsistently
-	// across stacks. Trapping signals + calling srv.Shutdown gives a
-	// crisp 5-second graceful close, then a definitive exit. Active
-	// SSE connections receive a final flush + close, so reconnecting
-	// clients see http.ErrServerClosed via the EventSource error
-	// path and the in-page banner flips to "Reconnecting…" cleanly.
-	sigCh := make(chan os.Signal, 1)
+	// Shutdown on SIGINT / SIGTERM / SIGHUP. SSE connections are
+	// long-lived (heartbeat every 15 s, otherwise idle) so the
+	// graceful `srv.Shutdown` would block forever waiting for them
+	// to return to idle — even with a context timeout it returns
+	// ctx.DeadlineExceeded WITHOUT actually closing the connections,
+	// leaving the goroutines alive and the process unable to exit.
+	// `srv.Close` forcibly closes the listener and every active
+	// connection; SSE writers see ErrConnClosed on their next Write
+	// and exit. Browsers see the dropped EventSource and the in-
+	// page banner flips to "Reconnecting…" — same UX as a deploy.
+	//
+	// Two-press escalation: a second SIGINT triggers os.Exit(130),
+	// which kills the process immediately even if something inside
+	// srv.Close is wedged. Familiar Ctrl-C-twice idiom.
+	sigCh := make(chan os.Signal, 2)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 	go func() {
 		<-sigCh
 		fmt.Println("\nSky.Live shutting down…")
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = srv.Shutdown(ctx)
+		_ = srv.Close()
+		// If srv.Close completes the listener teardown, ListenAndServe
+		// returns and the function exits naturally. If something hangs,
+		// a second Ctrl-C escapes via os.Exit. Without this watchdog,
+		// a wedged goroutine could leave the user stuck.
+		go func() {
+			<-sigCh
+			fmt.Fprintln(os.Stderr, "Sky.Live: forcing exit (second SIGINT)")
+			os.Exit(130) // 128 + SIGINT(2)
+		}()
 	}()
 	fmt.Printf("Sky.Live listening on :%d\n", port)
 	err := srv.ListenAndServe()
