@@ -52,6 +52,93 @@ func TestTuiDecodeKey_ArrowKeys(t *testing.T) {
 	}
 }
 
+func TestTuiDecodeKey_ModifiedArrows(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     string
+		wantKind  string
+		wantCtrl  bool
+		wantShift bool
+		wantAlt   bool
+	}{
+		{"Ctrl-Right", "\x1b[1;5C", "right", true, false, false},
+		{"Ctrl-Left", "\x1b[1;5D", "left", true, false, false},
+		{"Shift-Right", "\x1b[1;2C", "right", false, true, false},
+		{"Alt-Up", "\x1b[1;3A", "up", false, false, true},
+		{"Ctrl-Shift-Left", "\x1b[1;6D", "left", true, true, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ev, n := tuiDecodeKey([]byte(tt.input))
+			if ev.kind != tt.wantKind {
+				t.Errorf("kind=%q want %q", ev.kind, tt.wantKind)
+			}
+			if ev.ctrl != tt.wantCtrl || ev.shift != tt.wantShift || ev.alt != tt.wantAlt {
+				t.Errorf("mods=(c=%v,s=%v,a=%v) want (c=%v,s=%v,a=%v)",
+					ev.ctrl, ev.shift, ev.alt, tt.wantCtrl, tt.wantShift, tt.wantAlt)
+			}
+			if n != 6 {
+				t.Errorf("consumed %d bytes, want 6", n)
+			}
+		})
+	}
+}
+
+func TestTuiDecodeKey_FunctionKeys(t *testing.T) {
+	// CSI ~ form: F5..F12 land on numeric codes.
+	csiCases := []struct {
+		input string
+		want  string
+	}{
+		// CSI ~ codes are passed through as-is in the value field;
+		// the decoder is intentionally agnostic to the F-number
+		// labelling (different terminals disagree about whether
+		// "15" is F5 or F6 — the user gets the raw code and maps).
+		{"\x1b[11~", "11"}, // canonical F1 code
+		{"\x1b[15~", "15"}, // F5 / F6 depending on terminal
+		{"\x1b[17~", "17"}, // F6 / F7
+		{"\x1b[20~", "20"}, // F9
+	}
+	for _, tc := range csiCases {
+		ev, _ := tuiDecodeKey([]byte(tc.input))
+		if ev.kind != "fn" || ev.value != tc.want {
+			t.Errorf("input=%q got kind=%q value=%q, want kind=fn value=%q",
+				tc.input, ev.kind, ev.value, tc.want)
+		}
+	}
+	// SS3 form: F1..F4 from `\x1b O P/Q/R/S`.
+	ss3Cases := []struct {
+		input string
+		want  string
+	}{
+		{"\x1bOP", "1"},
+		{"\x1bOQ", "2"},
+		{"\x1bOR", "3"},
+		{"\x1bOS", "4"},
+	}
+	for _, tc := range ss3Cases {
+		ev, n := tuiDecodeKey([]byte(tc.input))
+		if ev.kind != "fn" || ev.value != tc.want {
+			t.Errorf("input=%q got kind=%q value=%q, want fn %q",
+				tc.input, ev.kind, ev.value, tc.want)
+		}
+		if n != 3 {
+			t.Errorf("input=%q consumed %d bytes, want 3", tc.input, n)
+		}
+	}
+}
+
+func TestTuiDecodeKey_BracketedPasteMarkers(t *testing.T) {
+	start, ns := tuiDecodeKey([]byte("\x1b[200~"))
+	if start.kind != "paste-start" || ns != 6 {
+		t.Errorf("paste-start: got kind=%q n=%d, want paste-start n=6", start.kind, ns)
+	}
+	end, ne := tuiDecodeKey([]byte("\x1b[201~"))
+	if end.kind != "paste-end" || ne != 6 {
+		t.Errorf("paste-end: got kind=%q n=%d, want paste-end n=6", end.kind, ne)
+	}
+}
+
 func TestTuiDecodeKey_CsiTilde(t *testing.T) {
 	tests := []struct {
 		name  string

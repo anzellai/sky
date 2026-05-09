@@ -89,9 +89,17 @@ const (
 
 // keyEvent is the Go-side representation of a decoded keypress.
 // It maps to a Sky Key value via tuiKeyToSky.
+//
+// Modifier bits are populated by the decoder for sequences that
+// carry them (CSI 1;<mod><letter> for modified arrows / F-keys,
+// CSI <num>;<mod>~ for modified Home/End/etc.). For unmodified
+// keys all three modifier flags are false.
 type keyEvent struct {
-	kind    string // "char", "enter", "escape", "backspace", ...
-	value   string // KeyChar string, KeyCtrl letter, KeyOther escape seq
+	kind  string // "char", "enter", "escape", "backspace", ...
+	value string // KeyChar string, KeyCtrl letter, KeyOther escape seq
+	shift bool
+	alt   bool
+	ctrl  bool
 }
 
 // Tui_program is the Task-shaped entry point. Calling it returns a
@@ -308,6 +316,66 @@ func tuiDecodeKey(buf []byte) (keyEvent, int) {
 				}
 				return keyEvent{kind: "other", value: string(buf[:end])}, end
 			}
+			// CSI 1;<mod><letter> form: modifier-prefixed arrow / Home /
+			// End / F-keys. e.g. `\x1b[1;5C` = Ctrl-Right (used for
+			// word-jump in input editors), `\x1b[1;2H` = Shift-Home.
+			// The modifier byte's bits encode: 1=base, +1=Shift,
+			// +2=Alt, +4=Ctrl, +8=Meta. We map the common cases.
+			if buf[2] == '1' && len(buf) >= 6 && buf[3] == ';' {
+				mod := buf[4]
+				final := buf[5]
+				ev := keyEvent{}
+				switch final {
+				case 'A':
+					ev.kind = "up"
+				case 'B':
+					ev.kind = "down"
+				case 'C':
+					ev.kind = "right"
+				case 'D':
+					ev.kind = "left"
+				case 'H':
+					ev.kind = "home"
+				case 'F':
+					ev.kind = "end"
+				case 'P':
+					ev.kind = "fn"
+					ev.value = "1"
+				case 'Q':
+					ev.kind = "fn"
+					ev.value = "2"
+				case 'R':
+					ev.kind = "fn"
+					ev.value = "3"
+				case 'S':
+					ev.kind = "fn"
+					ev.value = "4"
+				}
+				if ev.kind != "" {
+					switch mod {
+					case '2':
+						ev.shift = true
+					case '3':
+						ev.alt = true
+					case '4':
+						ev.shift = true
+						ev.alt = true
+					case '5':
+						ev.ctrl = true
+					case '6':
+						ev.shift = true
+						ev.ctrl = true
+					case '7':
+						ev.alt = true
+						ev.ctrl = true
+					case '8':
+						ev.shift = true
+						ev.alt = true
+						ev.ctrl = true
+					}
+					return ev, 6
+				}
+			}
 			// CSI ~ form: ESC [ <num> ~ → Home/End/Insert/Delete/PageUp/PageDown/F-keys.
 			if buf[2] >= '0' && buf[2] <= '9' {
 				end := 3
@@ -331,6 +399,15 @@ func tuiDecodeKey(buf []byte) (keyEvent, int) {
 							return keyEvent{kind: "fn", value: num}, end
 						case "17", "18", "19", "20", "21", "23", "24":
 							return keyEvent{kind: "fn", value: num}, end
+						case "200":
+							// Bracketed paste START. The reader-goroutine
+							// state-machine in tui_ui.go aggregates bytes
+							// until the matching 201~ end marker. We
+							// emit a marker event here so the goroutine
+							// can switch into paste-aggregation mode.
+							return keyEvent{kind: "paste-start"}, end
+						case "201":
+							return keyEvent{kind: "paste-end"}, end
 						}
 						return keyEvent{kind: "other", value: string(buf[:end])}, end
 					}
@@ -367,8 +444,20 @@ func tuiDecodeKey(buf []byte) (keyEvent, int) {
 			}
 			return keyEvent{kind: "other", value: string(buf[:end])}, end
 		}
-		// SS3: ESC O — F-keys on some terminals
+		// SS3: ESC O — F-keys on some terminals (xterm-style F1-F4).
+		// Maps the 4 main function keys; everything else stays
+		// "other" for the user's onKey to pattern-match if needed.
 		if buf[1] == 'O' && len(buf) >= 3 {
+			switch buf[2] {
+			case 'P':
+				return keyEvent{kind: "fn", value: "1"}, 3
+			case 'Q':
+				return keyEvent{kind: "fn", value: "2"}, 3
+			case 'R':
+				return keyEvent{kind: "fn", value: "3"}, 3
+			case 'S':
+				return keyEvent{kind: "fn", value: "4"}, 3
+			}
 			return keyEvent{kind: "other", value: string(buf[:3])}, 3
 		}
 		// Just an Esc with stray bytes — treat as solo Esc, leave
@@ -405,9 +494,12 @@ func tuiDecodeKey(buf []byte) (keyEvent, int) {
 // lambda — happens when the user inlines `\\k -> ...` without a type
 // alias), we pass a `map[string]any` with both casings.
 func tuiKeyToSky(onKeyFn any, ev keyEvent) any {
-	payload, _ := json.Marshal(map[string]string{
+	payload, _ := json.Marshal(map[string]any{
 		"kind":  ev.kind,
 		"value": ev.value,
+		"shift": ev.shift,
+		"alt":   ev.alt,
+		"ctrl":  ev.ctrl,
 	})
 
 	rv := reflect.ValueOf(onKeyFn)
@@ -423,7 +515,13 @@ func tuiKeyToSky(onKeyFn any, ev keyEvent) any {
 	return map[string]any{
 		"Kind":  ev.kind,
 		"Value": ev.value,
+		"Shift": ev.shift,
+		"Alt":   ev.alt,
+		"Ctrl":  ev.ctrl,
 		"kind":  ev.kind,
 		"value": ev.value,
+		"shift": ev.shift,
+		"alt":   ev.alt,
+		"ctrl":  ev.ctrl,
 	}
 }

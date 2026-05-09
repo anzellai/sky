@@ -33,6 +33,31 @@ import (
 	"golang.org/x/term"
 )
 
+// Resource caps protect the host from runaway views.
+//
+//   - tuiMaxCanvas{Width,Height}: cap user-supplied logical-pixel
+//     canvas dimensions. Anything larger is silently clamped — the
+//     ratios that matter are the cell-per-px ratios, and a 1M ×
+//     1M canvas is just bad input.
+//   - tuiMaxContentH: hard cap on the laid-out view height. The
+//     paint-grid allocation is cols × contentH cells (each ~64
+//     bytes), so 50,000 rows × 200 cols ≈ 640 MB worst case.
+//     Beyond this the view is truncated and a tuiWarn fires.
+//   - tuiSoftWarnH: warn at 10,000 rows so users notice they're
+//     building a pathological view long before they hit the cap.
+const (
+	tuiMaxCanvasWidth  = 100_000
+	tuiMaxCanvasHeight = 100_000
+	tuiMaxContentH     = 50_000
+	tuiSoftWarnH       = 10_000
+)
+
+// tuiNoColor is set at app entry from $NO_COLOR. cellStyleSGR reads
+// it when emitting SGR sequences and skips the fg/bg colour codes
+// while keeping bold / underline / reverse so the user can still
+// distinguish focus + emphasis on monochrome output.
+var tuiNoColor bool
+
 // ─── Public entry point ──────────────────────────────────────────────
 
 func Tui_app(cfg any) any {
@@ -163,11 +188,19 @@ func tuiAppRun(cfg any) any {
 	canvas := tuiCanvas{width: 1280, height: 720}
 	if cw := Field(cfg, "CanvasWidth"); cw != nil {
 		if v := AsInt(cw); v > 0 {
+			if v > tuiMaxCanvasWidth {
+				tuiWarn("canvas", fmt.Sprintf("width capped at %d (was %d)", tuiMaxCanvasWidth, v))
+				v = tuiMaxCanvasWidth
+			}
 			canvas.width = v
 		}
 	}
 	if ch := Field(cfg, "CanvasHeight"); ch != nil {
 		if v := AsInt(ch); v > 0 {
+			if v > tuiMaxCanvasHeight {
+				tuiWarn("canvas", fmt.Sprintf("height capped at %d (was %d)", tuiMaxCanvasHeight, v))
+				v = tuiMaxCanvasHeight
+			}
 			canvas.height = v
 		}
 	}
@@ -178,6 +211,24 @@ func tuiAppRun(cfg any) any {
 		msg := "Tui.app: stdin is not a terminal — use a real TTY"
 		fmt.Fprintln(os.Stderr, msg)
 		return Err[any, any](ErrIo(msg))
+	}
+	// Refuse to enter raw mode on TERM=dumb — we'd just emit ANSI
+	// codes the terminal can't interpret, leaving garbage on screen.
+	// Same goes for empty TERM (some CI environments). Better to
+	// fail loudly with a useful message than render incoherent output.
+	if termEnv := os.Getenv("TERM"); termEnv == "dumb" || termEnv == "" {
+		msg := "Tui.app: terminal does not support ANSI rendering (TERM=" + termEnv + ") — use a modern terminal emulator (TERM=xterm-256color or similar)"
+		fmt.Fprintln(os.Stderr, msg)
+		return Err[any, any](ErrIo(msg))
+	}
+	// NO_COLOR (https://no-color.org) — honour by suppressing fg/bg
+	// SGR colour codes during emission. We still apply bold /
+	// underline / reverse so focus + emphasis are legible. See
+	// cellStyleSGR for the application.
+	if os.Getenv("NO_COLOR") != "" {
+		tuiNoColor = true
+	} else {
+		tuiNoColor = false
 	}
 	oldState, err := term.MakeRaw(fd)
 	if err != nil {
@@ -245,12 +296,18 @@ func tuiAppRun(cfg any) any {
 	focusIdx = clampFocus(focusIdx, len(focusables))
 	scrollY = ensureFocusVisible(focusables, focusIdx, scrollY, rows, contentH)
 
-	// Key reader goroutine. Three categories of keys:
+	// Key reader goroutine. Categories of keys:
 	//   - Tab / Shift-Tab    → focus navigation (handled by runtime)
 	//   - Enter on focused   → dispatch focused element's onClick
+	//   - paste-start..end   → aggregated into a single "paste" event
+	//                          so multi-line paste into a single-line
+	//                          input doesn't fire N spurious submits
 	//   - Anything else      → forward to user's onKey if defined
 	safeGo("Tui key reader", func() {
-		buf := make([]byte, 64)
+		buf := make([]byte, 4096) // larger buffer — bracketed paste of
+		// large text snippets fits in fewer reads
+		var pasting bool
+		var pasteBuf []rune
 		for {
 			n, err := stdin.Read(buf)
 			if err != nil {
@@ -267,6 +324,54 @@ func tuiAppRun(cfg any) any {
 					break
 				}
 				i += consumed
+				// Bracketed paste aggregation. While in paste mode every
+				// decoded char goes into pasteBuf; on paste-end we flush
+				// as a single event. \r and \n inside paste become
+				// literal characters (not Enter keypresses) so a
+				// multi-line paste into a text input lands as text,
+				// not as N submits.
+				if pasting {
+					if ev.kind == "paste-end" {
+						pasting = false
+						msg := tuiKeyMsg{ev: keyEvent{kind: "paste", value: string(pasteBuf)}}
+						pasteBuf = pasteBuf[:0]
+						select {
+						case msgCh <- msg:
+						case <-doneCh:
+							return
+						}
+						continue
+					}
+					switch ev.kind {
+					case "char":
+						for _, r := range ev.value {
+							pasteBuf = append(pasteBuf, r)
+						}
+					case "enter":
+						pasteBuf = append(pasteBuf, '\n')
+					case "tab":
+						pasteBuf = append(pasteBuf, '\t')
+					case "space":
+						pasteBuf = append(pasteBuf, ' ')
+					}
+					// Cap paste size to prevent memory exhaustion from a
+					// runaway paste (a malicious or accidental flood).
+					if len(pasteBuf) > 1<<20 { // 1 MiB of runes
+						pasting = false
+						msg := tuiKeyMsg{ev: keyEvent{kind: "paste", value: string(pasteBuf)}}
+						pasteBuf = pasteBuf[:0]
+						select {
+						case msgCh <- msg:
+						case <-doneCh:
+							return
+						}
+					}
+					continue
+				}
+				if ev.kind == "paste-start" {
+					pasting = true
+					continue
+				}
 				select {
 				case msgCh <- tuiKeyMsg{ev: ev}:
 				case <-doneCh:
@@ -735,6 +840,21 @@ func focusableEvent(f focusable, name string) any {
 // v1 supports: chars (insert at cursor), backspace (delete left),
 // delete (delete right), Enter (fire onChange). Cursor movement
 // (Left/Right/Home/End) lands in C3 with extended keys.
+// isSpaceRune classifies a rune as a "word boundary" for cursor
+// word-jump (Ctrl-Left / Ctrl-Right). Includes whitespace and the
+// common punctuation that splits words in editors. Wide / CJK runes
+// are NOT word-boundaries — they belong to the same word as the
+// surrounding text in the absence of an explicit space.
+func isSpaceRune(r rune) bool {
+	switch r {
+	case ' ', '\t', '\n', '\r', '.', ',', ';', ':', '!', '?',
+		'(', ')', '[', ']', '{', '}', '<', '>', '/', '\\', '|',
+		'"', '\'', '`', '@', '#', '$', '%', '^', '&', '*', '+', '=', '-':
+		return true
+	}
+	return false
+}
+
 func tuiEditInput(st *tuiInput, ev keyEvent, f focusable) (bool, any) {
 	runes := []rune(st.buffer)
 	changed := false
@@ -758,6 +878,33 @@ func tuiEditInput(st *tuiInput, ev keyEvent, f focusable) (bool, any) {
 		st.buffer = string(newRunes)
 		st.cursor++
 		changed = true
+	case "paste":
+		// Bracketed-paste payload — insert the entire buffer at the
+		// cursor as one operation. For single-line inputs we strip
+		// embedded newlines so a paste of "user@example.com\n" doesn't
+		// fire a phantom Enter (= submit) at the end. For multi-line
+		// inputs (textarea) the newlines are preserved as line breaks.
+		body := ev.value
+		if !isMultilineInput(f) {
+			// Replace \r\n and \n with space so the paste stays on
+			// one line. Tab also becomes space — single-line inputs
+			// shouldn't render tab anyway.
+			body = strings.ReplaceAll(body, "\r\n", " ")
+			body = strings.ReplaceAll(body, "\n", " ")
+			body = strings.ReplaceAll(body, "\t", " ")
+		} else {
+			body = strings.ReplaceAll(body, "\r\n", "\n")
+		}
+		// Sanitise control bytes — paste content is untrusted.
+		body = sanitiseString(body)
+		ins := []rune(body)
+		newRunes := make([]rune, 0, len(runes)+len(ins))
+		newRunes = append(newRunes, runes[:st.cursor]...)
+		newRunes = append(newRunes, ins...)
+		newRunes = append(newRunes, runes[st.cursor:]...)
+		st.buffer = string(newRunes)
+		st.cursor += len(ins)
+		changed = true
 	case "backspace":
 		if st.cursor > 0 {
 			newRunes := make([]rune, 0, len(runes)-1)
@@ -776,12 +923,41 @@ func tuiEditInput(st *tuiInput, ev keyEvent, f focusable) (bool, any) {
 			changed = true
 		}
 	case "left":
-		if st.cursor > 0 {
+		if ev.ctrl {
+			// Word jump: skip back over whitespace then back over a
+			// run of non-whitespace, landing the cursor at the start
+			// of the word to the left.
+			pos := st.cursor
+			for pos > 0 && isSpaceRune(runes[pos-1]) {
+				pos--
+			}
+			for pos > 0 && !isSpaceRune(runes[pos-1]) {
+				pos--
+			}
+			if pos != st.cursor {
+				st.cursor = pos
+				return true, nil
+			}
+		} else if st.cursor > 0 {
 			st.cursor--
 			return true, nil // cursor-only change; re-render but no Msg
 		}
 	case "right":
-		if st.cursor < len(runes) {
+		if ev.ctrl {
+			// Word jump forward: skip current word, then skip
+			// whitespace, landing at start of next word.
+			pos := st.cursor
+			for pos < len(runes) && !isSpaceRune(runes[pos]) {
+				pos++
+			}
+			for pos < len(runes) && isSpaceRune(runes[pos]) {
+				pos++
+			}
+			if pos != st.cursor {
+				st.cursor = pos
+				return true, nil
+			}
+		} else if st.cursor < len(runes) {
 			st.cursor++
 			return true, nil
 		}
@@ -976,11 +1152,25 @@ func renderElementFrameScroll(viewFn, model any, cols, rows int, canvas tuiCanva
 	// Layout with generous maxH so content can grow taller than the
 	// terminal viewport. We discover the actual content height via
 	// the root box's height field afterwards.
-	const generousH = 1 << 20
-	box := layoutElement(elem, ctx, cols, generousH, layoutAxisColumn)
+	//
+	// Hard cap on generousH AND the post-layout contentH protects
+	// the host from `List.repeat 1_000_000 _ |> Ui.column` style
+	// misuse — without a cap, a runaway view allocates a 1000×N
+	// cell grid with no upper bound. tuiMaxContentH = 50,000 rows
+	// is ~10× more than any realistic user-facing screen and still
+	// caps the worst-case cell-grid allocation at ~1 GB. Beyond this
+	// the grid is truncated and a once-per-session warning surfaces
+	// on exit so the developer knows their view is over-tall.
+	box := layoutElement(elem, ctx, cols, tuiMaxContentH, layoutAxisColumn)
 	contentH := box.height
 	if contentH < rows {
 		contentH = rows
+	}
+	if contentH > tuiMaxContentH {
+		tuiWarn("layout", fmt.Sprintf("view height capped at %d rows (was %d)", tuiMaxContentH, contentH))
+		contentH = tuiMaxContentH
+	} else if contentH > tuiSoftWarnH {
+		tuiWarn("layout", fmt.Sprintf("very tall view: %d rows (consider Std.Ui.Lazy / pagination)", contentH))
 	}
 	fullGrid := newCellGrid(cols, contentH)
 	var focusables []focusable
@@ -3122,11 +3312,18 @@ func cellStyleSGR(c tuiCell) string {
 	if c.overline {
 		parts = append(parts, "53")
 	}
-	if c.fg.set {
-		parts = append(parts, fmt.Sprintf("38;2;%d;%d;%d", c.fg.r, c.fg.g, c.fg.b))
-	}
-	if c.bg.set {
-		parts = append(parts, fmt.Sprintf("48;2;%d;%d;%d", c.bg.r, c.bg.g, c.bg.b))
+	// NO_COLOR support (https://no-color.org). When enabled by env
+	// var, suppress fg/bg colour codes but keep bold / underline /
+	// reverse / italic / strike — those convey emphasis and focus
+	// state, which the spec explicitly considers separate from
+	// "colour" output.
+	if !tuiNoColor {
+		if c.fg.set {
+			parts = append(parts, fmt.Sprintf("38;2;%d;%d;%d", c.fg.r, c.fg.g, c.fg.b))
+		}
+		if c.bg.set {
+			parts = append(parts, fmt.Sprintf("48;2;%d;%d;%d", c.bg.r, c.bg.g, c.bg.b))
+		}
 	}
 	if len(parts) == 0 {
 		return ""
