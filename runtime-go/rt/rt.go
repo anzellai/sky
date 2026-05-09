@@ -3999,7 +3999,20 @@ func System_cwd(_ any) any {
 
 // System_exit: never returns (process terminates) — kept eager and
 // polymorphic per the rationale in lookupKernelType.
+//
+// IMPORTANT: os.Exit BYPASSES all `defer` blocks, including the
+// terminal teardown deferred by Sky.Tui's tuiAppRun. If the user
+// code calls System.exit from inside a Tui app, the terminal would
+// be left in raw mode + alt-screen + dirty modes — readline broken
+// for the rest of the shell session. Run tuiTeardown explicitly
+// before os.Exit so the user's terminal is restored regardless of
+// how the app exits.
+//
+// tuiTeardown is idempotent (deferred path will no-op when it
+// already ran via this fast path). On non-Tui programs the active
+// state is nil and the call returns immediately.
 func System_exit(code any) any {
+	tuiTeardown()
 	os.Exit(AsInt(code))
 	return struct{}{}
 }
