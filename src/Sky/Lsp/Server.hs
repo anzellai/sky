@@ -598,6 +598,20 @@ handleDefinitionIdx st req reqId = do
             Left _ -> sendReply reqId A.Null
             Right srcMod -> case identAtPosition srcMod (line + 1) (col + 1) of
                 Nothing -> sendReply reqId A.Null
+                -- Field access (`.field`) → jump to the field's
+                -- declaration in the parent record type. Resolves
+                -- via the same path as field hover (find target,
+                -- look up its annotation, find the alias body, find
+                -- the field's declared region).
+                Just ('.':fieldName) -> do
+                    case findFieldDefRegion srcMod (line + 1) (col + 1) fieldName of
+                        Just (_, reg) -> sendReply reqId $ A.object
+                            -- Same-file lookup for now; future work
+                            -- may chase imports for cross-file aliases.
+                            [ "uri"   A..= uri
+                            , "range" A..= regionToLspRange reg
+                            ]
+                        Nothing -> sendReply reqId A.Null
                 Just name -> do
                     idx <- getIndex st path
                     case Idx.lookupAtCursor idx path (line + 1) (col + 1) name of
@@ -606,6 +620,32 @@ handleDefinitionIdx st req reqId = do
                             , "range" A..= regionToLspRange (Idx.symRegion s)
                             ]
                         Nothing -> sendReply reqId A.Null
+
+
+-- | Find the source region where a field is declared in its
+-- parent record type alias. Returns (filePath, region) so the LSP
+-- can produce a Location.
+--
+-- Only handles same-file aliases for now — cross-file alias chains
+-- would need to walk the workspace index too.
+findFieldDefRegion :: Src.Module -> Int -> Int -> String -> Maybe (FilePath, A.Region)
+findFieldDefRegion srcMod line col fieldName = do
+    targetName <- findRecordContextAtPos srcMod line col fieldName
+    typeExpr   <- findTargetType srcMod line col targetName
+    typeName   <- extractTypeName typeExpr
+    let aliases =
+            [ (a, body)
+            | A.At _ a <- Src._aliases srcMod
+            , let A.At _ n = Src._aliasName a
+            , n == typeName
+            , let A.At _ body = Src._aliasType a
+            ]
+    case aliases of
+        ((_, Src.TRecord fields _):_) ->
+            case [ fr | (A.At fr fn, _) <- fields, fn == fieldName ] of
+                (fr:_) -> Just ("", fr)  -- same-file; uri set by caller
+                []     -> Nothing
+        _ -> Nothing
 
 
 -- ─── didSave with index invalidation (Stage 5) ────────────────────────
