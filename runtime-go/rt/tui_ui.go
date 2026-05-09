@@ -225,10 +225,12 @@ func tuiAppRun(cfg any) any {
 	// "first frame, paint everything".
 	cols, rows := tuiTermSize(fd)
 	var prev [][]tuiCell
-	grid, focusables := renderElementFrame(viewFn, model, cols, rows, canvas, focusIdx, inputs)
+	scrollY := 0
+	grid, focusables, contentH := renderElementFrameScroll(viewFn, model, cols, rows, canvas, focusIdx, inputs, scrollY)
 	tuiPaint(paintDiff(prev, grid))
 	prev = grid
 	focusIdx = clampFocus(focusIdx, len(focusables))
+	scrollY = ensureFocusVisible(focusables, focusIdx, scrollY, rows, contentH)
 
 	// Key reader goroutine. Three categories of keys:
 	//   - Tab / Shift-Tab    → focus navigation (handled by runtime)
@@ -301,10 +303,11 @@ func tuiAppRun(cfg any) any {
 		if _, ok := msg.(tuiResizeMsg); ok {
 			cols, rows = tuiTermSize(fd)
 			prev = nil
-			grid, focusables = renderElementFrame(viewFn, model, cols, rows, canvas, focusIdx, inputs)
+			grid, focusables, contentH = renderElementFrameScroll(viewFn, model, cols, rows, canvas, focusIdx, inputs, scrollY)
 			tuiPaint(paintDiff(prev, grid))
 			prev = grid
 			focusIdx = clampFocus(focusIdx, len(focusables))
+			scrollY = ensureFocusVisible(focusables, focusIdx, scrollY, rows, contentH)
 			continue
 		}
 
@@ -349,7 +352,9 @@ func tuiAppRun(cfg any) any {
 							}
 						}
 						// Either focus-changed or input-clicked: re-render.
-						grid, focusables = renderElementFrame(viewFn, model, cols, rows, canvas, focusIdx, inputs)
+						grid, focusables, contentH = renderElementFrameScroll(viewFn, model, cols, rows, canvas, focusIdx, inputs, scrollY)
+						scrollY = ensureFocusVisible(focusables, focusIdx, scrollY, rows, contentH)
+						grid, focusables, contentH = renderElementFrameScroll(viewFn, model, cols, rows, canvas, focusIdx, inputs, scrollY)
 						tuiPaint(paintDiff(prev, grid))
 						prev = grid
 					}
@@ -378,11 +383,67 @@ func tuiAppRun(cfg any) any {
 				tuiDispatchFocusChange(focusables, oldFocus, focusIdx, msgCh)
 			}
 			if handled {
-				grid, focusables = renderElementFrame(viewFn, model, cols, rows, canvas, focusIdx, inputs)
+				grid, focusables, contentH = renderElementFrameScroll(viewFn, model, cols, rows, canvas, focusIdx, inputs, scrollY)
+				focusIdx = clampFocus(focusIdx, len(focusables))
+				scrollY = ensureFocusVisible(focusables, focusIdx, scrollY, rows, contentH)
+				grid, focusables, contentH = renderElementFrameScroll(viewFn, model, cols, rows, canvas, focusIdx, inputs, scrollY)
 				tuiPaint(paintDiff(prev, grid))
 				prev = grid
-				focusIdx = clampFocus(focusIdx, len(focusables))
 				continue
+			}
+
+			// Viewport scroll keys when focus is NOT on an input. Lets
+			// users navigate content taller than the terminal viewport
+			// (the kitchen sink hits this — many sections, mosh / SSH
+			// has no native scrollback). Up / Down move by one row,
+			// PgUp / PgDn by a viewport, Home / End jump to extremes.
+			focusedInput := focusIdx >= 0 && focusIdx < len(focusables) && focusables[focusIdx].isInput
+			if !focusedInput {
+				maxScroll := contentH - rows
+				if maxScroll < 0 {
+					maxScroll = 0
+				}
+				scrolled := false
+				switch km.ev.kind {
+				case "up":
+					if scrollY > 0 {
+						scrollY--
+						scrolled = true
+					}
+				case "down":
+					if scrollY < maxScroll {
+						scrollY++
+						scrolled = true
+					}
+				case "pageup":
+					scrollY -= rows
+					if scrollY < 0 {
+						scrollY = 0
+					}
+					scrolled = true
+				case "pagedown":
+					scrollY += rows
+					if scrollY > maxScroll {
+						scrollY = maxScroll
+					}
+					scrolled = true
+				case "home":
+					if scrollY != 0 {
+						scrollY = 0
+						scrolled = true
+					}
+				case "end":
+					if scrollY != maxScroll {
+						scrollY = maxScroll
+						scrolled = true
+					}
+				}
+				if scrolled {
+					grid, focusables, contentH = renderElementFrameScroll(viewFn, model, cols, rows, canvas, focusIdx, inputs, scrollY)
+					tuiPaint(paintDiff(prev, grid))
+					prev = grid
+					continue
+				}
 			}
 
 			// Focused-input editor path. Checkbox / radio respond to
@@ -416,7 +477,7 @@ func tuiAppRun(cfg any) any {
 					// Sync lastValueAttr so the next render's "did
 					// the model reset?" check doesn't undo the edit.
 					st.lastValueAttr = st.buffer
-					grid, focusables = renderElementFrame(viewFn, model, cols, rows, canvas, focusIdx, inputs)
+					grid, focusables, contentH = renderElementFrameScroll(viewFn, model, cols, rows, canvas, focusIdx, inputs, scrollY)
 					tuiPaint(paintDiff(prev, grid))
 					prev = grid
 					continue
@@ -460,11 +521,51 @@ func tuiAppRun(cfg any) any {
 			prev = nil // trigger full repaint
 		}
 
-		grid, focusables = renderElementFrame(viewFn, model, cols, rows, canvas, focusIdx, inputs)
+		grid, focusables, contentH = renderElementFrameScroll(viewFn, model, cols, rows, canvas, focusIdx, inputs, scrollY)
+		focusIdx = clampFocus(focusIdx, len(focusables))
+		scrollY = ensureFocusVisible(focusables, focusIdx, scrollY, rows, contentH)
+		grid, focusables, contentH = renderElementFrameScroll(viewFn, model, cols, rows, canvas, focusIdx, inputs, scrollY)
 		tuiPaint(paintDiff(prev, grid))
 		prev = grid
-		focusIdx = clampFocus(focusIdx, len(focusables))
 	}
+}
+
+
+// ensureFocusVisible adjusts scrollY so the focused element is within
+// the visible viewport [scrollY .. scrollY+rows). Called after Tab /
+// Shift-Tab so the user sees the just-focused element even when it
+// was below the fold; also after focus-changes from mouse clicks.
+//
+// Returns the (possibly clamped) new scrollY. Doesn't move the
+// viewport when the focused element is already in view — preserves
+// the user's manual scroll position if they were already looking at
+// the right area.
+func ensureFocusVisible(focusables []focusable, focusIdx, scrollY, rows, contentH int) int {
+	if focusIdx < 0 || focusIdx >= len(focusables) {
+		return scrollY
+	}
+	maxScroll := contentH - rows
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	f := focusables[focusIdx]
+	top := f.row
+	bottom := f.row + f.h - 1
+	if top < scrollY {
+		scrollY = top
+	} else if bottom >= scrollY+rows {
+		// Snap so bottom of element is at the bottom row of viewport,
+		// with a small padding so it's not literally clipped at the
+		// edge.
+		scrollY = bottom - rows + 1
+	}
+	if scrollY < 0 {
+		scrollY = 0
+	}
+	if scrollY > maxScroll {
+		scrollY = maxScroll
+	}
+	return scrollY
 }
 
 // tuiKeyMsg is a private message type the runtime uses to ferry
@@ -797,6 +898,20 @@ func tuiExtractClickMsg(evt any) any {
 // against the previous frame and emit only changed cells. See
 // paintDiff for the minimal-write emission.
 func renderElementFrame(viewFn, model any, cols, rows int, canvas tuiCanvas, focusIdx int, inputs *inputRegistry) ([][]tuiCell, []focusable) {
+	grid, focusables, _ := renderElementFrameScroll(viewFn, model, cols, rows, canvas, focusIdx, inputs, 0)
+	return grid, focusables
+}
+
+// renderElementFrameScroll lays out the view at its natural full height
+// (uncapped by terminal rows), paints the full content into a virtual
+// grid, then returns the windowed slice [scrollY .. scrollY+rows]. Lets
+// the user scroll content taller than the terminal viewport via
+// Up/Down/PgUp/PgDn arrow keys when no input has focus.
+//
+// The third return value (contentH) is the total laid-out height in
+// terminal-cell rows; the caller uses it to clamp scrollY to
+// [0, max(0, contentH-rows)].
+func renderElementFrameScroll(viewFn, model any, cols, rows int, canvas tuiCanvas, focusIdx int, inputs *inputRegistry, scrollY int) ([][]tuiCell, []focusable, int) {
 	elem := SkyCall(viewFn, model)
 	pxPerCellX := float64(canvas.width) / float64(cols)
 	pxPerCellY := float64(canvas.height) / float64(rows)
@@ -812,11 +927,36 @@ func renderElementFrame(viewFn, model any, cols, rows int, canvas tuiCanvas, foc
 		pxPerCellX: pxPerCellX,
 		pxPerCellY: pxPerCellY,
 	}
-	grid := newCellGrid(cols, rows)
+	// Layout with generous maxH so content can grow taller than the
+	// terminal viewport. We discover the actual content height via
+	// the root box's height field afterwards.
+	const generousH = 1 << 20
+	box := layoutElement(elem, ctx, cols, generousH, layoutAxisColumn)
+	contentH := box.height
+	if contentH < rows {
+		contentH = rows
+	}
+	fullGrid := newCellGrid(cols, contentH)
 	var focusables []focusable
-	box := layoutElement(elem, ctx, cols, rows, layoutAxisColumn)
-	paintBox(grid, box, 0, 0, cols, rows, focusIdx, &focusables, inputs, textStyle{}, layoutAxisColumn, 0)
-	return grid, focusables
+	paintBox(fullGrid, box, 0, 0, cols, contentH, focusIdx, &focusables, inputs, textStyle{}, layoutAxisColumn, 0)
+
+	// Window the full grid down to the visible viewport. When
+	// scrollY+rows > contentH the trailing rows are blank.
+	if scrollY < 0 {
+		scrollY = 0
+	}
+	max := contentH - rows
+	if max < 0 {
+		max = 0
+	}
+	if scrollY > max {
+		scrollY = max
+	}
+	visible := newCellGrid(cols, rows)
+	for r := 0; r < rows && r+scrollY < contentH; r++ {
+		copy(visible[r], fullGrid[r+scrollY])
+	}
+	return visible, focusables, contentH
 }
 
 type tuiLayoutCtx struct {
