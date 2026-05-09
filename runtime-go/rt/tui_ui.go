@@ -1748,18 +1748,32 @@ func resolveLengthCells(v any, axis string, available int, ctx tuiLayoutCtx) (in
 }
 
 // pxToCellsX / pxToCellsY — logical-pixel canvas conversion.
+//
+// Round-half-to-even by default, but POSITIVE px values smaller than
+// half a cell round UP to 1 (rather than down to 0) so user intent
+// like `Ui.spacing 4` produces visible separation in a typical 80-col
+// terminal where pxPerCellX is ~16. Without this, every paddingXY/
+// spacing under half a cell width silently disappears.
 func pxToCellsX(px int, ctx tuiLayoutCtx) int {
 	if ctx.pxPerCellX <= 0 {
 		return px
 	}
-	return int(math.Round(float64(px) / ctx.pxPerCellX))
+	cells := math.Round(float64(px) / ctx.pxPerCellX)
+	if cells == 0 && px > 0 {
+		return 1
+	}
+	return int(cells)
 }
 
 func pxToCellsY(px int, ctx tuiLayoutCtx) int {
 	if ctx.pxPerCellY <= 0 {
 		return px
 	}
-	return int(math.Round(float64(px) / ctx.pxPerCellY))
+	cells := math.Round(float64(px) / ctx.pxPerCellY)
+	if cells == 0 && px > 0 {
+		return 1
+	}
+	return int(cells)
 }
 
 // runeLen counts visible characters in a UTF-8 string. For v0 we use

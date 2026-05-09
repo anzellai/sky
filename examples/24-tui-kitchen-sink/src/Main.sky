@@ -1,0 +1,450 @@
+module Main exposing (main)
+
+{-|
+24-tui-kitchen-sink — exercises every Std.Ui primitive Sky.Tui v1
+supports. Useful for visual verification of the renderer + as a
+reference for what does (and doesn't) render under TUI.
+
+Sections (cycle with Tab — each is a focusable region):
+  1. Layout (row, column, wrappedRow, grid, paragraph, textColumn)
+  2. Lengths (Px, Fill, Content, Vh, Vw, Min/Max)
+  3. Alignment (centerX, centerY, alignLeft, alignRight, etc.)
+  4. Colour + borders (every Border.* + Background.color)
+  5. Typography (font weight, italic, underline, strike, overline)
+  6. Headings (h1..h6)
+  7. Inputs (text, password, checkbox, radio, multiline, slider)
+  8. Events (onClick, onInput, onChange, onFocus, onBlur)
+  9. Nearby overlays (above/below/onLeft/onRight/inFront/behind)
+
+Keys: Tab/Shift-Tab to cycle, Enter to activate, type into inputs,
+arrow keys for cursor movement, Ctrl-C to quit.
+
+This is a TUI program but the SAME view function would render under
+Sky.Live too — typed Std.Ui primitives are the only thing the view
+uses. Run under both to compare.
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.System as System
+import Sky.Core.Task as Task
+import Std.Tui as Tui
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Ui as Ui
+import Std.Ui exposing (Element)
+import Std.Ui.Background as Background
+import Std.Ui.Border as Border
+import Std.Ui.Font as Font
+
+
+
+-- ═══════════════════════════════════════════════════════════════════
+-- Model
+-- ═══════════════════════════════════════════════════════════════════
+
+
+type alias Model =
+    { textValue : String
+    , passwordValue : String
+    , multilineValue : String
+    , checkbox1 : Bool
+    , checkbox2 : Bool
+    , radioValue : String
+    , sliderValue : String
+    , focusEvents : Int
+    , clicks : Int
+    }
+
+
+type alias KeyEvent =
+    { kind : String
+    , value : String
+    }
+
+
+type Msg
+    = UpdateText String
+    | UpdatePassword String
+    | UpdateMultiline String
+    | ToggleCheckbox1
+    | ToggleCheckbox2
+    | SelectRadio String
+    | UpdateSlider String
+    | InputFocused
+    | InputBlurred
+    | ButtonClicked String
+    | Quit
+    | NoOp
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { textValue = ""
+      , passwordValue = ""
+      , multilineValue = "First line\nsecond line"
+      , checkbox1 = False
+      , checkbox2 = True
+      , radioValue = "blue"
+      , sliderValue = "50"
+      , focusEvents = 0
+      , clicks = 0
+      }
+    , Cmd.none
+    )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        UpdateText s -> ( { model | textValue = s }, Cmd.none )
+        UpdatePassword s -> ( { model | passwordValue = s }, Cmd.none )
+        UpdateMultiline s -> ( { model | multilineValue = s }, Cmd.none )
+        ToggleCheckbox1 -> ( { model | checkbox1 = not model.checkbox1 }, Cmd.none )
+        ToggleCheckbox2 -> ( { model | checkbox2 = not model.checkbox2 }, Cmd.none )
+        SelectRadio v -> ( { model | radioValue = v }, Cmd.none )
+        UpdateSlider s -> ( { model | sliderValue = s }, Cmd.none )
+        InputFocused -> ( { model | focusEvents = model.focusEvents + 1 }, Cmd.none )
+        InputBlurred -> ( model, Cmd.none )
+        ButtonClicked _ -> ( { model | clicks = model.clicks + 1 }, Cmd.none )
+        Quit -> ( model, Cmd.perform (System.exit 0) (\_ -> NoOp) )
+        NoOp -> ( model, Cmd.none )
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+onKey : KeyEvent -> Msg
+onKey k =
+    if k.kind == "ctrl" && k.value == "c" then Quit
+    else NoOp
+
+
+
+-- ═══════════════════════════════════════════════════════════════════
+-- View
+-- ═══════════════════════════════════════════════════════════════════
+
+
+view : Model -> Element Msg
+view model =
+    Ui.column
+        [ Ui.padding 16
+        , Ui.spacing 8
+        , Background.color (Ui.rgb 18 22 38)
+        , Font.color (Ui.rgb 220 220 230)
+        ]
+        [ headerSection
+        , layoutSection
+        , typographySection
+        , headingsSection
+        , bordersSection
+        , inputsSection model
+        , eventsSection model
+        , nearbySection
+        , footerSection
+        ]
+
+
+headerSection : Element Msg
+headerSection =
+    Ui.column
+        [ Ui.spacing 4
+        , Ui.padding 8
+        , Background.color (Ui.rgb 30 36 60)
+        , Border.width 1
+        , Border.color (Ui.rgb 100 130 180)
+        ]
+        [ Ui.el [ Font.color (Ui.rgb 142 200 168), Font.bold ]
+            (Ui.text "Sky.Tui Kitchen Sink — every Std.Ui primitive")
+        , Ui.el [ Font.color (Ui.rgb 150 150 170) ]
+            (Ui.text "Tab to cycle focus · type into inputs · Ctrl-C to quit")
+        ]
+
+
+layoutSection : Element Msg
+layoutSection =
+    Ui.column [ Ui.spacing 4 ]
+        [ Ui.el [ Font.bold ] (Ui.text "1. Layout")
+        , Ui.row [ Ui.spacing 4 ]
+            [ tag "row item 1"
+            , tag "row item 2"
+            , tag "row item 3"
+            ]
+        , Ui.column [ Ui.spacing 2 ]
+            [ tag "column item 1"
+            , tag "column item 2"
+            ]
+        , Ui.wrappedRow [ Ui.spacing 4 ]
+            [ tag "wrapped 1"
+            , tag "wrapped 2"
+            , tag "wrapped 3"
+            , tag "wrapped 4"
+            , tag "wrapped 5"
+            , tag "wrapped 6"
+            ]
+        , Ui.paragraph
+            [ Ui.padding 4
+            , Background.color (Ui.rgb 35 40 55)
+            ]
+            [ Ui.text "This is a paragraph that should word-wrap when it gets longer than the available width. The wrap engine breaks at whitespace, falling back to character-break for very long words."
+            ]
+        , Ui.grid
+            [ Ui.gridColumns 80
+            , Ui.spacing 2
+            ]
+            [ gridCell "G1"
+            , gridCell "G2"
+            , gridCell "G3"
+            , gridCell "G4"
+            , gridCell "G5"
+            , gridCell "G6"
+            ]
+        ]
+
+
+tag : String -> Element Msg
+tag s =
+    Ui.el
+        [ Ui.paddingXY 6 0
+        , Background.color (Ui.rgb 50 60 90)
+        , Font.color (Ui.rgb 220 220 230)
+        ]
+        (Ui.text s)
+
+
+gridCell : String -> Element Msg
+gridCell s =
+    Ui.el
+        [ Ui.padding 2
+        , Background.color (Ui.rgb 60 50 80)
+        , Font.color (Ui.rgb 230 220 240)
+        ]
+        (Ui.text s)
+
+
+typographySection : Element Msg
+typographySection =
+    Ui.column [ Ui.spacing 2 ]
+        [ Ui.el [ Font.bold ] (Ui.text "2. Typography")
+        , Ui.row [ Ui.spacing 4 ]
+            [ Ui.el [ Font.bold ] (Ui.text "bold")
+            , Ui.el [ Font.italic ] (Ui.text "italic")
+            , Ui.el [ Font.underline ] (Ui.text "underlined")
+            , Ui.el [ Font.lineThrough ] (Ui.text "strike")
+            , Ui.el [ Font.color (Ui.rgb 220 100 100) ] (Ui.text "red")
+            , Ui.el [ Font.color (Ui.rgb 100 200 100) ] (Ui.text "green")
+            , Ui.el [ Font.color (Ui.rgb 100 150 220) ] (Ui.text "blue")
+            ]
+        ]
+
+
+headingsSection : Element Msg
+headingsSection =
+    Ui.column [ Ui.spacing 2 ]
+        [ Ui.el [ Font.bold ] (Ui.text "3. Headings (h1..h6 with distinct visual cues)")
+        , Ui.el [ Ui.describe Ui.descMain ] (Ui.text "(main region — semantic only)")
+        , Ui.row [ Ui.spacing 4 ]
+            [ heading 1 "Heading 1"
+            , heading 2 "Heading 2"
+            ]
+        , Ui.row [ Ui.spacing 4 ]
+            [ heading 3 "Heading 3"
+            , heading 4 "Heading 4"
+            , heading 5 "Heading 5"
+            , heading 6 "Heading 6"
+            ]
+        ]
+
+
+heading : Int -> String -> Element Msg
+heading level text =
+    Ui.el [ Ui.describe (Ui.descHeading level), Font.bold ] (Ui.text text)
+
+
+bordersSection : Element Msg
+bordersSection =
+    Ui.column [ Ui.spacing 2 ]
+        [ Ui.el [ Font.bold ] (Ui.text "4. Borders + colours")
+        , Ui.row [ Ui.spacing 4 ]
+            [ borderBox "solid" "solid"
+            , borderBox "dashed" "dashed"
+            , borderBox "dotted" "dotted"
+            ]
+        ]
+
+
+borderBox : String -> String -> Element Msg
+borderBox label style =
+    -- Border style ("solid" / "dashed" / "dotted") is passed as a
+    -- raw attr because Std.Ui exposes Border.solid/dashed/dotted as
+    -- separate attrs; using a string keeps this list-driven.
+    Ui.el
+        [ Ui.paddingXY 8 0
+        , Border.width 1
+        , Border.color (Ui.rgb 150 180 220)
+        , Ui.style "border-style" style
+        ]
+        (Ui.text label)
+
+
+inputsSection : Model -> Element Msg
+inputsSection model =
+    Ui.column [ Ui.spacing 2 ]
+        [ Ui.el [ Font.bold ] (Ui.text "5. Inputs")
+        , Ui.row [ Ui.spacing 4 ]
+            [ Ui.el [] (Ui.text "Text:")
+            , Ui.input
+                [ Ui.width (Ui.px 240)
+                , Background.color (Ui.rgb 30 36 60)
+                , Border.width 1
+                , Border.color (Ui.rgb 80 100 140)
+                , Ui.htmlAttribute "value" model.textValue
+                , Ui.htmlAttribute "placeholder" "type here…"
+                , Ui.onInput UpdateText
+                , Ui.onFocus InputFocused
+                ]
+            ]
+        , Ui.row [ Ui.spacing 4 ]
+            [ Ui.el [] (Ui.text "Password:")
+            , Ui.input
+                [ Ui.width (Ui.px 200)
+                , Ui.htmlAttribute "type" "password"
+                , Background.color (Ui.rgb 30 36 60)
+                , Border.width 1
+                , Border.color (Ui.rgb 140 100 100)
+                , Ui.htmlAttribute "value" model.passwordValue
+                , Ui.onInput UpdatePassword
+                ]
+            ]
+        , Ui.row [ Ui.spacing 4 ]
+            [ Ui.el [] (Ui.text "Checkbox:")
+            , Ui.input
+                [ Ui.htmlAttribute "type" "checkbox"
+                , Ui.htmlAttribute "value" (boolToString model.checkbox1)
+                , Ui.onClick ToggleCheckbox1
+                ]
+            , Ui.text "newsletter"
+            , Ui.input
+                [ Ui.htmlAttribute "type" "checkbox"
+                , Ui.htmlAttribute "value" (boolToString model.checkbox2)
+                , Ui.onClick ToggleCheckbox2
+                ]
+            , Ui.text "marketing"
+            ]
+        , Ui.row [ Ui.spacing 4 ]
+            [ Ui.el [] (Ui.text "Radio:")
+            , radioOption model "red" "Red"
+            , radioOption model "green" "Green"
+            , radioOption model "blue" "Blue"
+            ]
+        , Ui.row [ Ui.spacing 4 ]
+            [ Ui.el [] (Ui.text "Slider:")
+            , Ui.input
+                [ Ui.width (Ui.px 200)
+                , Ui.htmlAttribute "type" "range"
+                , Ui.htmlAttribute "value" model.sliderValue
+                , Ui.htmlAttribute "min" "0"
+                , Ui.htmlAttribute "max" "100"
+                , Ui.onInput UpdateSlider
+                ]
+            , Ui.text ("(value: " ++ model.sliderValue ++ ")")
+            ]
+        , Ui.row [ Ui.spacing 4 ]
+            [ Ui.el [] (Ui.text "Multi-line:")
+            , Ui.input
+                [ Ui.width (Ui.px 320)
+                , Ui.height (Ui.px 80)
+                , Ui.htmlAttribute "type" "textarea"
+                , Background.color (Ui.rgb 30 36 60)
+                , Border.width 1
+                , Border.color (Ui.rgb 80 100 140)
+                , Ui.htmlAttribute "value" model.multilineValue
+                , Ui.onInput UpdateMultiline
+                ]
+            ]
+        ]
+
+
+radioOption : Model -> String -> String -> Element Msg
+radioOption model val label =
+    Ui.row [ Ui.spacing 2 ]
+        [ Ui.input
+            [ Ui.htmlAttribute "type" "radio"
+            , Ui.htmlAttribute "value" (if model.radioValue == val then val else "")
+            , Ui.onClick (SelectRadio val)
+            ]
+        , Ui.text label
+        ]
+
+
+boolToString : Bool -> String
+boolToString b =
+    if b then "true" else "false"
+
+
+eventsSection : Model -> Element Msg
+eventsSection model =
+    Ui.column [ Ui.spacing 2 ]
+        [ Ui.el [ Font.bold ] (Ui.text "6. Events")
+        , Ui.row [ Ui.spacing 4 ]
+            [ Ui.button
+                [ Background.color (Ui.rgb 60 90 70)
+                , Font.color (Ui.rgb 240 240 240)
+                , Ui.paddingXY 8 0
+                ]
+                { onPress = Just (ButtonClicked "primary")
+                , label = Ui.text "Click me"
+                }
+            , Ui.el [ Font.color (Ui.rgb 150 150 170) ]
+                (Ui.text ("clicks: " ++ String.fromInt model.clicks))
+            , Ui.el [ Font.color (Ui.rgb 150 150 170) ]
+                (Ui.text ("focus events: " ++ String.fromInt model.focusEvents))
+            ]
+        , Ui.link
+            [ Font.color (Ui.rgb 100 180 250) ]
+            { url = "/about"
+            , label = Ui.text "← a link (focusable, underlines on focus)"
+            }
+        ]
+
+
+nearbySection : Element Msg
+nearbySection =
+    Ui.column [ Ui.spacing 2 ]
+        [ Ui.el [ Font.bold ] (Ui.text "7. Nearby overlays")
+        , Ui.el
+            [ Ui.paddingXY 8 0
+            , Background.color (Ui.rgb 50 60 90)
+            , Ui.below (Ui.el [ Font.color (Ui.rgb 150 200 150) ] (Ui.text "↑ a `below` overlay attached to this element"))
+            ]
+            (Ui.text "Hover-style anchor (with .below)")
+        ]
+
+
+footerSection : Element Msg
+footerSection =
+    Ui.el
+        [ Font.color (Ui.rgb 100 100 120)
+        , Ui.paddingXY 0 4
+        ]
+        (Ui.text "End of kitchen sink — verify each section renders as expected.")
+
+
+
+-- ═══════════════════════════════════════════════════════════════════
+-- Main
+-- ═══════════════════════════════════════════════════════════════════
+
+
+main =
+    Tui.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        , onKey = onKey
+        }
+        |> Task.run
