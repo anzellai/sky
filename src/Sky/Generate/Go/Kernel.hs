@@ -544,6 +544,12 @@ registry = Map.fromList
     -- when to run via Task.run / discard.
     -- ═══════════════════════════════════════════════════════
     , (("Cli", "program"),        KernelInfo "rt.Cli_program" 1 False)
+    -- Cli.readPassword — read one line from stdin with terminal
+    -- echo disabled. Returns Task Error String. Used for auth
+    -- flows where the password mustn't show on screen or land
+    -- in scrollback. Falls back to a noisy line read if stdin
+    -- isn't a TTY (piped input).
+    , (("Cli", "readPassword"),   KernelInfo "rt.Cli_readPassword" 1 False)
 
     -- ═══════════════════════════════════════════════════════
     -- Sky.Tui — full-screen terminal UI program runner. Same

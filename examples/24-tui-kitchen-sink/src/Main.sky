@@ -25,10 +25,12 @@ uses. Run under both to compare.
 -}
 
 import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
 import Sky.Core.String as String
 import Sky.Core.System as System
 import Sky.Core.Task as Task
 import Std.Tui as Tui
+import Std.Cli as Cli
 import Std.Cmd as Cmd
 import Std.Sub as Sub
 import Std.Ui as Ui
@@ -439,12 +441,44 @@ footerSection =
 -- ═══════════════════════════════════════════════════════════════════
 
 
-main =
-    Tui.app
-        { init = init
-        , update = update
-        , view = view
-        , subscriptions = subscriptions
-        , onKey = onKey
-        }
+{- Backend dispatch via argv — same Model / Msg / update / view
+   compiled against multiple TEA-shaped runtimes. Pick one:
+
+       ./sky-out/app          (default: Sky.Tui — full-screen terminal)
+       ./sky-out/app cli      (Sky.Cli: line-mode, useful for headless
+                              CI / smoke tests + automation)
+
+   Sky.Live is intentionally NOT wired in v1 — Live's view returns
+   `any` (HTML + Std.Ui via `Ui.layout`) while Tui takes
+   `Element Msg` directly. Adding a `live` branch would just need
+   a `view` adapter that wraps the Tui view in `Ui.layout []`. Same
+   pattern works for Webview / GUI backends as they land.
+-}
+argsList : List String
+argsList =
+    System.args ()
         |> Task.run
+        |> Result.withDefault []
+
+
+main =
+    case List.head argsList of
+        Just "cli" ->
+            Cli.program
+                { init = init
+                , update = update
+                , view = \_ -> "kitchen sink (cli mode) — Ctrl-D to quit\n> "
+                , subscriptions = subscriptions
+                , onLine = \_ -> NoOp
+                }
+                |> Task.run
+
+        _ ->
+            Tui.app
+                { init = init
+                , update = update
+                , view = view
+                , subscriptions = subscriptions
+                , onKey = onKey
+                }
+                |> Task.run

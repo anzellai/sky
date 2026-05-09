@@ -28,6 +28,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"golang.org/x/term"
 )
 
 // Cli_program is the Task-shaped entry point. Calling it returns a thunk;
@@ -164,6 +166,44 @@ func cliPrintView(viewFn, model any) {
 		fmt.Print(s)
 	} else if out != nil {
 		fmt.Print(out)
+	}
+}
+
+// Cli_readPassword reads one line from stdin with terminal echo
+// disabled. Wraps `golang.org/x/term`'s ReadPassword (already a
+// dep). Returns a Task that produces the typed password (without
+// the trailing newline) on success, or ErrIo on read failure.
+//
+// Use this for auth flows — the password is NEVER echoed on the
+// user's screen and never lands in their terminal scrollback. The
+// runtime momentarily flips the tty into raw mode for the duration
+// of the read and restores it after.
+//
+// If stdin isn't a TTY (piped input, CI), we fall back to a normal
+// line read so scripts that pipe a password through stdin still
+// work — they just don't get the echo-suppression UX.
+func Cli_readPassword(_ any) any {
+	return func() any {
+		fd := int(os.Stdin.Fd())
+		if !term.IsTerminal(fd) {
+			// Piped stdin — fall back to bufio line read. No echo
+			// suppression, but we never controlled the tty anyway.
+			reader := bufio.NewReader(os.Stdin)
+			line, err := reader.ReadString('\n')
+			if err != nil && line == "" {
+				return Err[any, any](ErrIo("readPassword: " + err.Error()))
+			}
+			return Ok[any, any](strings.TrimRight(line, "\r\n"))
+		}
+		bytes, err := term.ReadPassword(fd)
+		// term.ReadPassword does NOT echo a newline on Enter — the
+		// prompt and the next output would otherwise glue together.
+		// Print one explicit newline so the user's screen advances.
+		fmt.Println()
+		if err != nil {
+			return Err[any, any](ErrIo("readPassword: " + err.Error()))
+		}
+		return Ok[any, any](string(bytes))
 	}
 }
 

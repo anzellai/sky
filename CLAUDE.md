@@ -904,30 +904,102 @@ Single braces `{` are literal — safe for JavaScript, CSS, JSON, SQL. Interpola
 
 ## Sky.Tui v1 (branch: `exp/tea-core`)
 
-**Status (2026-05-09):** v1 milestone complete on `exp/tea-core`, NOT yet merged to main.
+**Status (2026-05-09):** v1 hardened for public experimental release on `exp/tea-core`, NOT yet merged to main.
 
-A TEA backend that renders `Std.Ui` to ANSI cells in a terminal. Same `init`/`update`/`view` shape as `Sky.Live`, no HTML, no SSE. Entry point: `Tui_app` in `runtime-go/rt/tui_ui.go` (~2200 lines).
+A TEA backend that renders `Std.Ui` to ANSI cells in a terminal. Same `init`/`update`/`view`/`subscriptions` shape as `Sky.Live`, no HTML, no SSE. Entry point: `Tui_app` in `runtime-go/rt/tui_ui.go` (~2400 lines).
 
-**Coverage:** ~95%+ of Std.Ui primitives. Unsupported attributes (gradients, fine letter-spacing, etc.) emit a deduped warning via `tuiWarn(category, detail)`; the warning summary prints on exit AFTER the terminal is restored. `SKY_TUI_QUIET=1` suppresses, `SKY_TUI_LOG=1` writes a ledger file.
+### `Tui.app` config surface
+
+```elm
+type alias Cfg model msg =
+    { init          : () -> (model, Cmd msg)
+    , update        : msg -> model -> (model, Cmd msg)
+    , view          : model -> Element msg
+    , subscriptions : model -> Sub msg
+    , onKey         : KeyEvent -> msg     -- optional; runtime hard-exits on Ctrl-C if absent
+    , canvasWidth   : Int                 -- optional; default 1280 logical px
+    , canvasHeight  : Int                 -- optional; default 720
+    }
+
+type alias KeyEvent =
+    { kind  : String   -- "char" | "enter" | "tab" | "space" | "backspace"
+                        --   | "escape" | "up" | "down" | "left" | "right"
+                        --   | "home" | "end" | "delete" | "pageup" | "pagedown"
+                        --   | "ctrl" | "fn" | "paste" | "mouse" | "other"
+    , value : String   -- char body, ctrl letter, fn number, paste body, etc.
+    , shift : Bool     -- modifier flags (set when terminal sends CSI 1;<mod>X)
+    , alt   : Bool
+    , ctrl  : Bool
+    }
+
+main = Tui.app cfg |> Task.run
+```
+
+### Logical-pixel canvas
+
+`canvasWidth × canvasHeight` defines the design surface in logical pixels. The runtime computes `pxPerCellX = canvasWidth / cols` and `pxPerCellY = canvasHeight / rows` from the live terminal size, then converts every `Ui.padding 8`, `Ui.spacing 4`, `Ui.px N` to cells via `pxToCells*`. Default 1280×720 matches a typical web canvas — Std.Ui apps written for the browser look right in the terminal without re-tuning. Override via `canvasWidth = 800` if you want denser layout.
+
+Hard cap at 100,000 in either dimension; overshoot triggers a `tuiWarn`.
+
+### Coverage
+
+~95%+ of Std.Ui primitives. Unsupported attributes (gradients, fine letter-spacing, image fills) emit a deduped warning via `tuiWarn(category, detail)`; the warning summary prints on exit AFTER the terminal is restored. `SKY_TUI_QUIET=1` suppresses, `SKY_TUI_LOG=1` writes a ledger file.
 
 **Supported:**
 - Layout: row, column, wrappedRow, paragraph (word-wrap), textColumn, grid + gridColumns, el
-- Text styling: bold, italic, underline, lineThrough, fg/bg colour (truecolour SGR)
+- Text styling: bold, italic, underline, lineThrough, fg/bg colour (truecolour SGR; suppressed under `NO_COLOR`)
 - Headings h1-h6 with distinct visual markers (`═ ─ ▌ ▎ ▏ ·`)
 - Borders: solid, dashed, dotted with widthEach
-- Inputs: text, password (masked), checkbox, radio (3-up), slider, multiline textarea
+- Inputs: text, password (masked), checkbox (☐/☑), radio (○/●), slider, multiline textarea
 - Events: onClick, onInput, onFocus, onSubmit (form record-decode), mouse press (SGR 1006)
 - Nearby overlays: above / below / onLeft / onRight / inFront / behind
 - Alignment: alignX/alignY (left/center/right, top/center/bottom)
 - Padding (incl. paddingXY, paddingEach), spacing
-- Focus ring with Tab cycling, focus indicator (`▸ ◂` for buttons, underline for links)
+- Focus ring with Tab + arrow-key cycling, focus indicator (`▸ ◂` for buttons, underline for links)
 - Resize via SIGWINCH
+- **Wide chars (CJK + emoji + ZWJ family)** — proper grapheme cluster + display-width measurement via `github.com/rivo/uniseg` (MIT, see NOTICE.md)
+- **Bracketed paste** — multi-line paste into a single-line input no longer fires phantom Enter; pastes capped at 1 MiB
+- **Modified arrows** — Ctrl-Left/Right do word-jump in inputs; Shift/Alt/Ctrl flags pass through to user `onKey`
+
+### Reliability + security floor
+
+These are enforced runtime invariants — every panic / signal / malformed input path was audited before the experimental tag.
+
+| Concern | Floor |
+|---|---|
+| Goroutine panic (Cmd.perform, key reader, SIGWINCH, Sub.every) | `safeGo` wrapper restores TTY before exiting |
+| External SIGTERM / SIGHUP / SIGQUIT / SIGINT-from-outside | trapped → tuiTeardown → exit 128+signum |
+| Panic on main goroutine | deferred tuiTeardown + DECSTR soft reset on exit |
+| ANSI injection via user text | `sanitiseRune` strips control bytes (0x00-0x1F, 0x7F); all paint paths route through it |
+| Wide-char column drift | `displayWidth`/`iterGraphemes` from uniseg; continuation cell marker `ch=""` keeps paintDiff in sync |
+| Resource exhaustion (runaway view height) | hard cap `tuiMaxContentH = 50,000`; soft warn at 10,000 |
+| `TERM=dumb` / non-TTY stdin | refused with friendly error before raw mode |
+| `NO_COLOR` env | colour SGR suppressed; bold/underline/reverse retained |
+| Readline corruption after exit (mosh) | DECSTR (`\x1b[!p`) + charset reset (`\x0f\x1b(B`) + scroll-region reset (`\x1b[r`) on every teardown path |
 
 **Logical-pixel canvas:** 1280×720 by default. `pxToCellsX/Y` round positive px values smaller than half a cell UP to 1 (rather than 0) so `Ui.spacing 4` stays visible in 80-col terminals.
 
-**Tests:** `runtime-go/rt/tui_{wrap,decode,editor}_test.go` — ~70 cases. `go test ./rt/...` passes.
+**Tests:** `runtime-go/rt/tui_{wrap,decode,editor,sanitize,scroll,width}_test.go` — ~90+ cases. `go test ./rt/...` passes.
 
-**Kitchen sink:** `examples/24-tui-kitchen-sink` exercises every supported primitive. `sky run src/Main.sky` to see it.
+**Kitchen sink:** `examples/24-tui-kitchen-sink` exercises every supported primitive. `sky run src/Main.sky` to see it. To preview the same UI as Sky.Live: `sky run src/Main.sky live` (when the unified-backend dispatch lands — task #48).
+
+### Sky.Cli password mode (v1.x post-release)
+
+`Cli.readPassword : () -> Task Error String` reads one line from stdin with terminal echo disabled. Wraps `golang.org/x/term`'s `ReadPassword`. Use from a `Cmd.perform` task in auth flows — the password never echoes to screen and never lands in scrollback. Falls back to a normal line read if stdin isn't a TTY (so piped scripts still work, just without echo suppression).
+
+```elm
+type Msg = AskPassword | GotPassword (Result Error String) | ...
+
+update msg model =
+    case msg of
+        AskPassword ->
+            ( model
+            , Cmd.perform (Cli.readPassword ()) GotPassword
+            )
+        GotPassword (Ok pw) ->
+            -- pw is the typed password; never echoed to screen
+            ...
+```
 
 **Next milestone:** Sky.Webview (after Sky.Tui v1 ships to users for feedback). Branch will likely stay open until then.
 
