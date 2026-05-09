@@ -304,29 +304,39 @@ computeHoverIdx st file text line col =
                     Nothing  -> return (Just (mkHover ("." ++ fieldName)))
             Just name -> do
                 idx <- getIndex st file
-                let mSym = Idx.lookupAtCursor idx file (line + 1) (col + 1) name
-                case mSym of
-                    Just s | hasType s -> return (Just (mkHover (renderSym s)))
-                    _ -> do
-                        -- Fallback: run the single-file solve pipeline so
-                        -- identifiers not in the index (stdlib kernels,
-                        -- prelude builtins) or indexed without a type
-                        -- (inferred functions) still get a type on hover.
-                        solvedType <- solveForName srcMod name
-                        case solvedType of
-                            Just t  ->
-                                let sig = name ++ " : " ++ Solve.showType t
-                                    modLine = case mSym of
-                                        Just s | Idx.symModule s /= "" ->
-                                            "\n-- defined in " ++ Idx.symModule s
-                                        _ -> ""
-                                in return (Just (mkHover (sig ++ modLine)))
-                            Nothing ->
-                                case kernelTypeSig name of
-                                    Just sig -> return (Just (mkHover (name ++ " : " ++ sig)))
-                                    Nothing  -> case mSym of
-                                        Just s  -> return (Just (mkHover (renderSym s)))
-                                        Nothing -> return (Just (mkHover name))
+                -- Module-name hover: if the name matches an indexed
+                -- module, show a one-line summary (symbol count +
+                -- exposed-via if there's an alias). Detected by an
+                -- exact match in idxModules.
+                case Map.lookup name (Idx.idxModules idx) of
+                    Just modPath ->
+                        let symsCount = length (fromMaybe [] (Map.lookup modPath (Idx.idxByFile idx)))
+                            descr = "module " ++ name
+                                  ++ " — " ++ show symsCount ++ " symbol(s)"
+                        in return (Just (mkHover descr))
+                    Nothing -> do
+                        let mSym = Idx.lookupAtCursor idx file (line + 1) (col + 1) name
+                        case mSym of
+                            Just s | hasType s -> return (Just (mkHover (renderSym s)))
+                            _ -> do
+                                -- Fallback: single-file solve for stdlib /
+                                -- prelude / inferred names not in the
+                                -- index.
+                                solvedType <- solveForName srcMod name
+                                case solvedType of
+                                    Just t  ->
+                                        let sig = name ++ " : " ++ Solve.showType t
+                                            modLine = case mSym of
+                                                Just s | Idx.symModule s /= "" ->
+                                                    "\n-- defined in " ++ Idx.symModule s
+                                                _ -> ""
+                                        in return (Just (mkHover (sig ++ modLine)))
+                                    Nothing ->
+                                        case kernelTypeSig name of
+                                            Just sig -> return (Just (mkHover (name ++ " : " ++ sig)))
+                                            Nothing  -> case mSym of
+                                                Just s  -> return (Just (mkHover (renderSym s)))
+                                                Nothing -> return (Just (mkHover name))
 
 
 -- | Resolve a field name's type by finding the enclosing record
@@ -346,13 +356,59 @@ computeHoverIdx st file text line col =
 -- on `.count` shows `Int` even when the solver hasn't typed the
 -- access expression directly.
 resolveFieldType :: ServerState -> FilePath -> T.Text -> Src.Module -> Int -> Int -> String -> IO (Maybe String)
-resolveFieldType _st _file _text srcMod line col fieldName = do
+resolveFieldType st path _text srcMod line col fieldName = do
     let l = line + 1
         c = col + 1
     case findRecordContextAtPos srcMod l c fieldName of
-        Just targetName ->
-            return (findFieldOnAlias srcMod l c targetName fieldName)
         Nothing -> return Nothing
+        Just targetName ->
+            -- Try same-file first (cheap, no index lookup).
+            case findFieldOnAlias srcMod l c targetName fieldName of
+                Just sig -> return (Just sig)
+                Nothing  ->
+                    -- Cross-file: walk to find target's type, look
+                    -- up the alias body in workspace index.
+                    case findTargetType srcMod l c targetName of
+                        Nothing -> return Nothing
+                        Just typeExpr ->
+                            case extractTypeName typeExpr of
+                                Nothing -> return Nothing
+                                Just typeName -> do
+                                    -- Search the workspace index for an
+                                    -- alias declaration with this name.
+                                    eidx <- try (getIndex st path)
+                                        :: IO (Either SomeException Idx.Index)
+                                    case eidx of
+                                        Left _    -> return Nothing
+                                        Right idx ->
+                                            return (lookupAliasFieldInIndex
+                                                        idx typeName fieldName)
+
+
+-- | Search the workspace index for a type alias named `typeName` and
+-- return the rendered type of `fieldName` from its body. Walks
+-- `idxFileSrc` re-parsing each file to find the alias declaration —
+-- the index doesn't currently store alias bodies directly. Cost is
+-- one re-parse per project file in the worst case; the alias name
+-- match short-circuits.
+lookupAliasFieldInIndex :: Idx.Index -> String -> String -> Maybe String
+lookupAliasFieldInIndex idx typeName fieldName =
+    let files = Map.toList (Idx.idxFileSrc idx)
+        candidates = concatMap go files
+    in case candidates of
+        (s:_) -> Just s
+        []    -> Nothing
+  where
+    go (_, src) = case Parse.parseModule src of
+        Left _ -> []
+        Right m ->
+            [ resolved
+            | A.At _ a <- Src._aliases m
+            , let A.At _ n = Src._aliasName a
+            , n == typeName
+            , let A.At _ body = Src._aliasType a
+            , Just resolved <- [findFieldInTypeExpr fieldName body]
+            ]
 
 
 -- | Walk the expression tree to find the access target whose
@@ -1241,7 +1297,19 @@ collectIdents srcMod =
        , let ln = Src._valueName v, let A.At _ n = ln
        ]
     ++ concatMap valueIdents (Src._values srcMod)
+    -- Module path in `import X` lines — emit the full path as a
+    -- hoverable ident so cursor anywhere in `import Std.Ui as Ui`'s
+    -- module name resolves to the workspace module info. The path's
+    -- region covers all the dot-separated segments.
+    ++ [ (A.toRegion ln, joinDotsList segs)
+       | imp <- Src._imports srcMod
+       , let ln = Src._importName imp
+       , let A.At _ segs = ln
+       ]
   where
+    joinDotsList :: [String] -> String
+    joinDotsList = foldr (\a b -> if null b then a else a ++ "." ++ b) ""
+
     valueIdents (A.At _ v) =
         let pats = Src._valuePatterns v
             body = Src._valueBody v
@@ -2483,25 +2551,240 @@ handleCompletionSt st req reqId = do
             let ctx    = prefixAt text line col
                 module_ = either (const Nothing) Just (Parse.parseModule text)
                 locals = maybe [] localCompletions module_
-            -- Module-qualified prefix (`Ui.layout`, `String.toUpp`)?
-            -- Resolve via the workspace index — pulls in every export
-            -- of the qualified module, including stdlib functions
-            -- the hardcoded list misses (Std.Ui has 130+ symbols).
-            qualMatches <- if '.' `T.elem` ctx
-                then resolveQualifiedCompletion st path module_ ctx
+            -- Import-statement completion: when the current LINE starts
+            -- with `import `, suggest module names from the workspace
+            -- index. Cheap to detect (line text only, no AST), and
+            -- doesn't conflict with regular expression completion
+            -- because import lines never contain expression syntax.
+            inImport <- detectImportLine text line col
+            importMatches <- if inImport
+                then resolveImportCompletion st path ctx
+                else return []
+            -- Pattern position in `case ... of` arms: suggest
+            -- constructors of the scrutinee's type.
+            patternMatches <- case module_ of
+                Just sm -> resolvePatternCompletion st path sm line col ctx
+                Nothing -> return []
+            -- Qualified prefix paths. Two flavours:
+            --   * `<lowercase>.partial` → record field access on a
+            --     value (model.count). Look up the value's type,
+            --     enumerate its alias's fields.
+            --   * `<UpperCase>.partial` → module-qualified call
+            --     (Ui.layout, String.toUpp).
+            qualMatches <- if '.' `T.elem` ctx && not inImport
+                then resolveDotCompletion st path module_ line col ctx
                 else return []
             -- For unqualified prefixes, also include workspace index
             -- symbols (top-level + exposed names from the file's
             -- explicit imports).
-            unqualIdx <- if not ('.' `T.elem` ctx)
+            unqualIdx <- if not ('.' `T.elem` ctx) && not inImport
                 then resolveUnqualifiedCompletion st path module_ ctx
                 else return []
-            let all_ = locals ++ qualMatches ++ unqualIdx ++ stdlibCompletions
+            let all_ = if inImport
+                    then importMatches  -- only show modules in import lines
+                    else patternMatches ++ locals ++ qualMatches
+                            ++ unqualIdx ++ stdlibCompletions
             return (filterCompletions ctx all_)
     sendReply reqId (A.object
         [ "isIncomplete" A..= False
         , "items"        A..= items
         ])
+
+
+-- | Decide whether the cursor is inside an `import ` statement based
+-- only on the text of the current line. Cheap (no AST walk). True
+-- iff the line's first non-whitespace word is `import` and the
+-- cursor is past it.
+detectImportLine :: T.Text -> Int -> Int -> IO Bool
+detectImportLine text line col = do
+    let ls = T.lines text
+    if line < 0 || line >= length ls
+        then return False
+        else do
+            let cur = ls !! line
+                stripped = T.stripStart cur
+            return (T.isPrefixOf "import " stripped
+                    && col >= T.length (T.takeWhile (== ' ') cur) + 7)
+
+
+-- | Disambiguate dot-prefix completion based on case of the LHS:
+-- lowercase first letter → record field access on a value; uppercase
+-- → module-qualified call.
+resolveDotCompletion :: ServerState -> FilePath -> Maybe Src.Module -> Int -> Int -> T.Text -> IO [A.Value]
+resolveDotCompletion st path mModule line col ctx =
+    case mModule of
+        Nothing -> return []
+        Just srcMod -> do
+            let parts = T.splitOn "." ctx
+            case parts of
+                xs@(_:_:_) ->
+                    let lhs = T.intercalate "." (init xs)
+                        partial = last xs
+                    in case T.uncons lhs of
+                        Just (h, _)
+                            | h >= 'a' && h <= 'z' ->
+                                resolveRecordFieldCompletion srcMod (line + 1) (col + 1)
+                                    (T.unpack lhs) (T.unpack partial)
+                            | otherwise ->
+                                resolveQualifiedCompletion st path mModule ctx
+                        Nothing -> return []
+                _ -> return []
+
+
+-- | Enumerate the fields of a record-typed value for completion at
+-- `model.<Tab>` style. Uses the same alias-chain resolution as
+-- field hover: target type → alias body → field list.
+resolveRecordFieldCompletion :: Src.Module -> Int -> Int -> String -> String -> IO [A.Value]
+resolveRecordFieldCompletion srcMod line col target partial = do
+    case findTargetType srcMod line col target of
+        Nothing -> return []
+        Just typeExpr -> do
+            -- Walk through alias chain (same-file). Cross-file aliases
+            -- are resolved separately (task #65).
+            case typeExpr of
+                Src.TRecord fields _ ->
+                    return (fieldsToCompletions target partial fields)
+                _ ->
+                    case extractTypeName typeExpr of
+                        Just typeName ->
+                            let aliasBodies =
+                                    [ body
+                                    | A.At _ a <- Src._aliases srcMod
+                                    , let A.At _ n = Src._aliasName a
+                                    , n == typeName
+                                    , let A.At _ body = Src._aliasType a
+                                    ]
+                            in case aliasBodies of
+                                (Src.TRecord fields _ : _) ->
+                                    return (fieldsToCompletions target partial fields)
+                                _ -> return []
+                        Nothing -> return []
+  where
+    fieldsToCompletions baseName lp fields =
+        [ A.object
+            [ "label"  A..= (baseName ++ "." ++ fname)
+            , "kind"   A..= (5 :: Int)  -- LSP CompletionItemKind.Field
+            , "detail" A..= renderTypeAnnotation ftype
+            ]
+        | (A.At _ fname, ftype) <- fields
+        , null lp || lp `isPrefixOf` fname
+        ]
+
+
+-- | Constructor completion in pattern position. When the cursor is
+-- inside a `case ... of` arm's pattern slot, look up the scrutinee's
+-- type — if it's a known ADT, suggest its constructors.
+--
+-- v1: handles top-level case scrutinees that are simple Vars whose
+-- type can be resolved via findTargetType (top-level annotation OR
+-- function parameter). Nested cases / complex scrutinees fall
+-- through with no false-positive completions.
+resolvePatternCompletion :: ServerState -> FilePath -> Src.Module -> Int -> Int -> T.Text -> IO [A.Value]
+resolvePatternCompletion st path srcMod line col partial = do
+    let l = line + 1
+        c = col + 1
+    case findCasePatternContext srcMod l c of
+        Nothing -> return []
+        Just scrutVar -> do
+            -- Find scrutinee's type; expect it to name an ADT.
+            case findTargetType srcMod l c scrutVar of
+                Nothing -> return []
+                Just typeExpr -> case extractTypeName typeExpr of
+                    Just adtName -> do
+                        eidx <- try (getIndex st path)
+                                :: IO (Either SomeException Idx.Index)
+                        case eidx of
+                            Left _    -> return []
+                            Right idx -> return (ctorCompletionsFor idx adtName partial)
+                    Nothing -> return []
+
+
+-- | Walk the source for the smallest enclosing `Case` whose pattern
+-- region contains the cursor — that's the position where we'd want
+-- ctor suggestions. Returns the scrutinee's variable name (only
+-- handles `case x of ...` v1; `case (foo y) of ...` not yet).
+findCasePatternContext :: Src.Module -> Int -> Int -> Maybe String
+findCasePatternContext srcMod line col =
+    let hits = concatMap (walkValue . extractValueExpr) (Src._values srcMod)
+    in case hits of
+        (n:_) -> Just n
+        []    -> Nothing
+  where
+    extractValueExpr (A.At _ v) = Src._valueBody v
+
+    walkExpr :: Src.Expr -> [String]
+    walkExpr (A.At _ e) = case e of
+        Src.Case (A.At _ (Src.Var scrut)) arms ->
+            -- Cursor in any pattern of an arm? Use pat region.
+            let inPattern = any (\(A.At pr _, _) -> regionContains pr line col) arms
+            in if inPattern then [scrut] else concatMap (walkExpr . snd) arms
+        Src.Case scrut arms ->
+            walkExpr scrut ++ concatMap (walkExpr . snd) arms
+        Src.Lambda _ body  -> walkExpr body
+        Src.Let _ body     -> walkExpr body
+        Src.Call f xs      -> walkExpr f ++ concatMap walkExpr xs
+        Src.Binops pairs x -> concatMap (walkExpr . fst) pairs ++ walkExpr x
+        Src.If arms els    -> concatMap (\(c', b) -> walkExpr c' ++ walkExpr b) arms ++ walkExpr els
+        Src.Tuple a b cs   -> walkExpr a ++ walkExpr b ++ concatMap walkExpr cs
+        Src.List xs        -> concatMap walkExpr xs
+        Src.Negate inner   -> walkExpr inner
+        Src.Paren inner    -> walkExpr inner
+        Src.Access t _     -> walkExpr t
+        Src.Update _ fs    -> concatMap (walkExpr . snd) fs
+        Src.Record fs      -> concatMap (walkExpr . snd) fs
+        _ -> []
+
+    walkValue :: Src.Expr -> [String]
+    walkValue = walkExpr
+
+
+-- | Enumerate constructors of an ADT from the workspace index.
+ctorCompletionsFor :: Idx.Index -> String -> T.Text -> [A.Value]
+ctorCompletionsFor idx adtName partial =
+    let lp = T.unpack partial
+        allCtors = [ s | s <- concat (Map.elems (Idx.idxByLocal idx))
+                       , Idx.symKind s == Idx.SymCtor ]
+        -- Filter ctors by membership in the named ADT — heuristic:
+        -- ctor sigs like "Red : Colour" or "Just : a -> Maybe a".
+        belongsTo s =
+            case Idx.symTypeSig s of
+                Just sig ->
+                    -- Match ": Adt" or "-> Adt" anywhere
+                    (": " ++ adtName) `isInfixOf` sig
+                    || ("-> " ++ adtName) `isInfixOf` sig
+                Nothing -> False
+        matching = [ s | s <- allCtors
+                       , belongsTo s
+                       , null lp || lp `isPrefixOf` Idx.symLocalName s ]
+    in [ A.object
+            [ "label"  A..= Idx.symLocalName s
+            , "kind"   A..= (21 :: Int)  -- EnumMember
+            , "detail" A..= maybe "" id (Idx.symTypeSig s)
+            ]
+       | s <- matching ]
+  where
+    isInfixOf needle hay = any (needle `isPrefixOf`) (tails hay)
+    tails [] = [[]]
+    tails xs@(_:rest) = xs : tails rest
+
+
+-- | Module-name completion in `import <prefix>`. Pulls from
+-- idxModules — every module the workspace has discovered.
+resolveImportCompletion :: ServerState -> FilePath -> T.Text -> IO [A.Value]
+resolveImportCompletion st path prefix = do
+    eidx <- try (getIndex st path) :: IO (Either SomeException Idx.Index)
+    case eidx of
+        Left _    -> return []
+        Right idx -> do
+            let lp = T.unpack prefix
+                modules = Map.keys (Idx.idxModules idx)
+            return [ A.object
+                        [ "label"  A..= modName
+                        , "kind"   A..= (9 :: Int)  -- Module
+                        , "detail" A..= ("module " ++ modName)
+                        ]
+                   | modName <- modules
+                   , null lp || lp `isPrefixOf` modName ]
 
 
 -- | Build completion items by resolving a qualified prefix against
