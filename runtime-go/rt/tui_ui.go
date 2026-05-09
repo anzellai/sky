@@ -314,6 +314,21 @@ func tuiAppRun(cfg any) any {
 		// editing keys flow into focused inputs, anything else falls
 		// through to user's onKey.
 		if km, ok := msg.(tuiKeyMsg); ok {
+			// Hard exit on Ctrl-C if the user hasn't wired an onKey
+			// handler. Without this, an app that doesn't define
+			// onKey leaves the user stuck — raw mode swallows the
+			// terminal's normal SIGINT delivery, so Ctrl-C is just
+			// a 0x03 byte the runtime has to act on. With onKey
+			// defined, fall through and let user code handle it
+			// (the focused-input editor used to swallow ctrl keys
+			// before this fix; the bypass below ensures onKey
+			// always sees them).
+			if km.ev.kind == "ctrl" && km.ev.value == "c" && onKeyFn == nil {
+				close(doneCh)
+				subMgr.stopAll()
+				// defer in Tui_app restores TTY + alt-screen.
+				return Ok[any, any](struct{}{})
+			}
 			// Mouse: SGR encoded as "<button>:<col>:<row>:<M|m>". Only
 			// handle press of left button (button==0) for v1.
 			if km.ev.kind == "mouse" {
@@ -374,7 +389,14 @@ func tuiAppRun(cfg any) any {
 			// Space and Enter by firing their onClick (same Msg the
 			// HTML side dispatches when the box is clicked) instead
 			// of acting as a text editor.
-			if focusIdx >= 0 && focusIdx < len(focusables) && focusables[focusIdx].isInput {
+			//
+			// Ctrl-<letter> events bypass the editor entirely so an
+			// app's global hotkeys (Ctrl-C / Ctrl-D / Ctrl-Q to quit,
+			// Ctrl-S to save, etc.) reach the user's onKey even
+			// when an input has focus. Without this bypass,
+			// tuiEditInput's switch silently swallows ctrl events
+			// and apps look "frozen" while editing a field.
+			if km.ev.kind != "ctrl" && focusIdx >= 0 && focusIdx < len(focusables) && focusables[focusIdx].isInput {
 				if isCheckboxOrRadio(focusables[focusIdx]) && (km.ev.kind == "space" || km.ev.kind == "enter") {
 					if clickEvt := focusableEvent(focusables[focusIdx], "click"); clickEvt != nil {
 						if clickMsg := tuiExtractClickMsg(clickEvt); clickMsg != nil {
@@ -2024,10 +2046,34 @@ func paintBox(grid [][]tuiCell, box layoutBox, col0, row0, maxW, maxH, focusIdx 
 	}
 }
 
+// lighten clamps a single 8-bit colour channel + delta to [0, 255].
+// Used by paintInputBufferAdvanced to derive a track-shade colour
+// from the input's bg colour without dragging in a colour-space
+// library.
+func lighten(c uint8, delta int) uint8 {
+	v := int(c) + delta
+	if v < 0 {
+		return 0
+	}
+	if v > 255 {
+		return 255
+	}
+	return uint8(v)
+}
+
+
 // paintInputBufferAdvanced renders an input's buffer + cursor.
 // `masked` (password type) replaces each char with ● in the visual
 // rendering (the underlying buffer keeps real chars). `multiline`
 // flows the buffer's embedded \n into separate rows.
+//
+// Empty cells in the input range get a light shaded "track" (░)
+// painted first so the user can see the input's bounds even before
+// typing. Real characters paint over the track. The track uses a
+// dim grey foreground so it's visibly subordinate to typed text;
+// when the parent has set an explicit background colour, the track
+// inherits the parent's bg without the dim fg overlay (the bg
+// already defines the field shape).
 func paintInputBufferAdvanced(grid [][]tuiCell, st *tuiInput, col, row, w, h int, style textStyle, placeholder string, focused, masked, multiline bool) {
 	if row < 0 || row >= len(grid) || w <= 0 {
 		return
@@ -2037,6 +2083,48 @@ func paintInputBufferAdvanced(grid [][]tuiCell, st *tuiInput, col, row, w, h int
 	if display == "" && placeholder != "" && !focused {
 		display = placeholder
 		usePlaceholder = true
+	}
+
+	// Paint the input track first — every cell in the input's range
+	// gets a light shaded ░ so the field shape is visible even when
+	// the buffer is empty. Real characters paint over the track in
+	// paintInputLine. Two shading rules:
+	//
+	//   * No bg colour set on the input: track is dim grey ░ on the
+	//     terminal's default bg. Gives the input a visible "groove"
+	//     even when it has no explicit styling.
+	//   * Bg colour set: track is a 15%-lighter shade of the bg, so
+	//     the input has a subtle textured fill that differs from
+	//     the surrounding solid bg fill. Lets the user see input
+	//     bounds + cursor location without harsh contrast.
+	rowsToPaint := h
+	if !multiline {
+		rowsToPaint = 1
+	}
+	trackFg := tuiColor{set: true, r: 110, g: 110, b: 110}
+	if style.bg.set {
+		// Lighten the bg by 15% (clamped) for the track fg.
+		trackFg = tuiColor{set: true,
+			r: lighten(style.bg.r, 38),
+			g: lighten(style.bg.g, 38),
+			b: lighten(style.bg.b, 38)}
+	}
+	for li := 0; li < rowsToPaint; li++ {
+		rr := row + li
+		if rr < 0 || rr >= len(grid) {
+			continue
+		}
+		rowCells := grid[rr]
+		for cx := col; cx < col+w && cx >= 0 && cx < len(rowCells); cx++ {
+			cell := &rowCells[cx]
+			if cell.ch == "" || cell.ch == " " {
+				cell.ch = "░"
+				cell.fg = trackFg
+				if style.bg.set {
+					cell.bg = style.bg
+				}
+			}
+		}
 	}
 
 	// Multi-line: split into lines + place each on consecutive rows.
@@ -2089,6 +2177,10 @@ func paintInputBufferAdvanced(grid [][]tuiCell, st *tuiInput, col, row, w, h int
 }
 
 // paintInputLine paints one line of input text into the grid.
+// Resets fg per-cell when style.fg is unset so the parent's track
+// colour (set by paintInputBufferAdvanced's pre-pass) doesn't leak
+// through onto the typed character — without this clear, real text
+// inherits the dim track colour and looks identical to the track.
 func paintInputLine(grid [][]tuiCell, text string, col, row, w int, style textStyle, isPlaceholder bool) {
 	if row < 0 || row >= len(grid) {
 		return
@@ -2107,6 +2199,10 @@ func paintInputLine(grid [][]tuiCell, text string, col, row, w int, style textSt
 		c.ch = string(r)
 		if style.fg.set {
 			c.fg = style.fg
+		} else {
+			// Promote to default fg (terminal's text colour) so the
+			// dim ░ track colour painted underneath doesn't leak.
+			c.fg = tuiColor{}
 		}
 		if style.bg.set {
 			c.bg = style.bg
