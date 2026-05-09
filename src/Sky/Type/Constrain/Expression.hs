@@ -5,6 +5,7 @@
 module Sky.Type.Constrain.Expression
     ( constrainModule
     , constrainModuleWithExternals
+    , lookupKernelType
     , Env
     )
     where

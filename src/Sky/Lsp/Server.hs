@@ -48,6 +48,7 @@ import System.Exit (exitSuccess, exitWith, ExitCode(..))
 import qualified Sky.Parse.Module as Parse
 import qualified Sky.Canonicalise.Module as Canonicalise
 import qualified Sky.Type.Constrain.Module as Constrain
+import qualified Sky.Type.Constrain.Expression as ConstrainExpr
 import qualified Sky.Type.Solve as Solve
 import qualified Sky.Type.Type as Ty
 import qualified Sky.Type.Exhaustiveness as Exhaust
@@ -291,7 +292,7 @@ computeHoverIdx :: ServerState -> FilePath -> T.Text -> Int -> Int -> IO (Maybe 
 computeHoverIdx st file text line col =
     case Parse.parseModule text of
         Left _ -> return Nothing
-        Right srcMod -> case identAtPosition srcMod (line + 1) (col + 1) of
+        Right srcMod -> case identAtPositionWithText srcMod text (line + 1) (col + 1) of
             Nothing   -> return Nothing
             -- Field access (`model.count`) — the ident extracted from
             -- exprIdents has a leading `.`. We resolve it by finding
@@ -332,11 +333,45 @@ computeHoverIdx st file text line col =
                                                 _ -> ""
                                         in return (Just (mkHover (sig ++ modLine)))
                                     Nothing ->
-                                        case kernelTypeSig name of
+                                        -- Kernel-only symbols: Task.run,
+                                        -- Cmd.perform, etc. These have
+                                        -- no source .sky file, so they
+                                        -- don't appear in the workspace
+                                        -- index. Their HM types live in
+                                        -- lookupKernelType — same source
+                                        -- the type-checker uses. Hovering
+                                        -- now shows e.g. `Task.run :
+                                        -- Task e a -> Result e a`.
+                                        case kernelLookupForHover name of
                                             Just sig -> return (Just (mkHover (name ++ " : " ++ sig)))
-                                            Nothing  -> case mSym of
-                                                Just s  -> return (Just (mkHover (renderSym s)))
-                                                Nothing -> return (Just (mkHover name))
+                                            Nothing ->
+                                                case kernelTypeSig name of
+                                                    Just sig -> return (Just (mkHover (name ++ " : " ++ sig)))
+                                                    Nothing  -> case mSym of
+                                                        Just s  -> return (Just (mkHover (renderSym s)))
+                                                        Nothing -> return (Just (mkHover name))
+
+
+-- | Look up a qualified or bare name in the runtime kernel registry
+-- (Sky.Type.Constrain.Expression.lookupKernelType). Used by hover so
+-- kernel-only symbols (Task.run, Cmd.perform, JsonDec.string, etc.)
+-- show their real type signatures instead of just the name.
+kernelLookupForHover :: String -> Maybe String
+kernelLookupForHover name =
+    -- Split `Mod.fn` (and `Mod.Sub.fn` chains — Sky qualified names
+    -- can have multiple segments, but kernel registry uses last-
+    -- segment-as-name shape).
+    let parts = splitOnDots name
+    in case parts of
+        [m, f] -> renderAnnotation <$> ConstrainExpr.lookupKernelType m f
+        _ -> Nothing
+  where
+    splitOnDots s = case break (== '.') s of
+        (before, '.':after) -> before : splitOnDots after
+        (before, _)         -> [before]
+
+    renderAnnotation :: Ty.Annotation -> String
+    renderAnnotation (Ty.Forall _ ty) = Solve.showType ty
 
 
 -- | Resolve a field name's type by finding the enclosing record
@@ -652,7 +687,7 @@ handleDefinitionIdx st req reqId = do
         Nothing -> sendReply reqId A.Null
         Just (_, text) -> case Parse.parseModule text of
             Left _ -> sendReply reqId A.Null
-            Right srcMod -> case identAtPosition srcMod (line + 1) (col + 1) of
+            Right srcMod -> case identAtPositionWithText srcMod text (line + 1) (col + 1) of
                 Nothing -> sendReply reqId A.Null
                 -- Field access (`.field`) → jump to the field's
                 -- declaration in the parent record type. Resolves
@@ -1277,6 +1312,40 @@ identAtPosition srcMod line col =
     in case sortBy (comparing (regionWidth . fst)) matches of
         ((_, n):_) -> Just n
         []         -> Nothing
+
+
+-- | Like identAtPosition but falls back to a line-text scan when the
+-- AST has no ident at the cursor. Used by hover + go-to-def so users
+-- can hover on type names inside annotations (`view : Model -> ...`),
+-- which the AST doesn't track per-name regions for.
+identAtPositionWithText :: Src.Module -> T.Text -> Int -> Int -> Maybe String
+identAtPositionWithText srcMod text line col =
+    case identAtPosition srcMod line col of
+        Just n  -> Just n
+        Nothing -> identInLineText text (line - 1) (col - 1)
+
+
+-- | Extract the identifier (alphanumeric + dot) word at a 0-based
+-- (line, col) cursor position from raw text. Used as the fallback
+-- for identAtPositionWithText when the AST walker misses it.
+identInLineText :: T.Text -> Int -> Int -> Maybe String
+identInLineText text line col =
+    let ls = T.lines text
+    in if line < 0 || line >= length ls
+        then Nothing
+        else
+            let cur = ls !! line
+                upto = T.take col cur
+                rest = T.drop col cur
+                lhs = T.reverse (T.takeWhile isIdentChar (T.reverse upto))
+                rhs = T.takeWhile isIdentChar rest
+                word = T.unpack (lhs `T.append` rhs)
+            in if null word then Nothing else Just word
+  where
+    isIdentChar c = c == '.' || c == '_'
+                  || (c >= 'a' && c <= 'z')
+                  || (c >= 'A' && c <= 'Z')
+                  || (c >= '0' && c <= '9')
 
 
 regionWidth :: A.Region -> Int
@@ -2586,9 +2655,11 @@ handleCompletionSt st req reqId = do
                 else return []
             -- For unqualified prefixes, also include workspace index
             -- symbols (top-level + exposed names from the file's
-            -- explicit imports).
+            -- explicit imports) AND let-bound names whose scope
+            -- contains the cursor.
             unqualIdx <- if not ('.' `T.elem` ctx) && not inImport
-                then resolveUnqualifiedCompletion st path module_ ctx
+                then resolveUnqualifiedCompletionAt (line + 1) (col + 1)
+                            st path module_ ctx
                 else return []
             let all_ = if inImport
                     then importMatches  -- only show modules in import lines
@@ -2728,9 +2799,13 @@ resolveRecordFieldCompletion srcMod line col target partial = do
   where
     fieldsToCompletions baseName lp fields =
         [ A.object
-            [ "label"  A..= (baseName ++ "." ++ fname)
-            , "kind"   A..= (5 :: Int)  -- LSP CompletionItemKind.Field
-            , "detail" A..= renderTypeAnnotation ftype
+            -- Same insertText-vs-label split as resolveQualifiedCompletion:
+            -- `model.<accept>` should yield `model.count`, not
+            -- `model.model.count`.
+            [ "label"      A..= (baseName ++ "." ++ fname)
+            , "insertText" A..= fname
+            , "kind"       A..= (5 :: Int)  -- LSP CompletionItemKind.Field
+            , "detail"     A..= renderTypeAnnotation ftype
             ]
         | (A.At _ fname, ftype) <- fields
         , null lp || lp `isPrefixOf` fname
@@ -2888,9 +2963,17 @@ resolveQualifiedCompletion st path mModule ctx = do
                     , qualPrefix `isPrefixOf` q
                     , lp `isPrefixOf` Idx.symLocalName s ]
         in [ A.object
-                [ "label"  A..= (displayPrefix ++ "." ++ Idx.symLocalName s)
-                , "kind"   A..= symKindToLsp (Idx.symKind s)
-                , "detail" A..= maybe "" id (Idx.symTypeSig s)
+                -- `label` is what the user sees in the dropdown
+                -- (`Ui.layout`). `insertText` is what the editor
+                -- actually inserts when the item is accepted —
+                -- ONLY the local name (`layout`), since the user
+                -- has already typed `Ui.`. Without `insertText`
+                -- the editor inserts the label, producing
+                -- `Ui.Ui.layout`.
+                [ "label"      A..= (displayPrefix ++ "." ++ Idx.symLocalName s)
+                , "insertText" A..= Idx.symLocalName s
+                , "kind"       A..= symKindToLsp (Idx.symKind s)
+                , "detail"     A..= maybe "" id (Idx.symTypeSig s)
                 ]
            | s <- symMatches ]
 
@@ -2923,25 +3006,66 @@ resolveImportAlias srcMod alias =
 
 
 -- | Build unqualified completions from the index — top-level names
--- in the current file's project, AND names exposed by `exposing(..)`
--- imports. Doesn't include qualified names so the qualified path
--- handles those.
+-- in the current file's project, AND let-bound names whose scope
+-- contains the cursor. The cursor parameters are 1-based.
 resolveUnqualifiedCompletion :: ServerState -> FilePath -> Maybe Src.Module -> T.Text -> IO [A.Value]
-resolveUnqualifiedCompletion st path _mModule prefix = do
+resolveUnqualifiedCompletion = resolveUnqualifiedCompletionAt 0 0
+
+
+resolveUnqualifiedCompletionAt :: Int -> Int -> ServerState -> FilePath -> Maybe Src.Module -> T.Text -> IO [A.Value]
+resolveUnqualifiedCompletionAt line col st path _mModule prefix = do
     eidx <- try (getIndex st path) :: IO (Either SomeException Idx.Index)
     case eidx of
         Left _    -> return []
         Right idx -> do
             let lp = T.unpack prefix
-                -- Names in the same file, by local name.
+                -- Top-level + ctor + alias names in the same file.
                 fileSyms = fromMaybe [] (Map.lookup path (Idx.idxByFile idx))
-            return [ A.object
+                topLevelItems =
+                    [ A.object
                         [ "label"  A..= Idx.symLocalName s
                         , "kind"   A..= symKindToLsp (Idx.symKind s)
                         , "detail" A..= maybe "" id (Idx.symTypeSig s)
                         ]
-                   | s <- fileSyms
-                   , null lp || lp `isPrefixOf` Idx.symLocalName s ]
+                    | s <- fileSyms
+                    , null lp || lp `isPrefixOf` Idx.symLocalName s ]
+                -- Let-bound + lambda-param + case-binder names whose
+                -- scope contains the cursor — the user typing
+                -- `let abc = 123 in ab|` should get `abc` suggested.
+                localItems
+                    | line <= 0 || col <= 0 = []
+                    | otherwise = localBindingsAtCursor idx path line col lp
+            return (localItems ++ topLevelItems)
+
+
+-- | All let-/lambda-/case-bound names whose scope contains the
+-- 1-based (line, col) cursor. Pulled from idxLocals; type rendered
+-- via idxLocalTypes when the solver populated them.
+localBindingsAtCursor :: Idx.Index -> FilePath -> Int -> Int -> String -> [A.Value]
+localBindingsAtCursor idx path line col lp =
+    let bs = fromMaybe [] (Map.lookup path (Idx.idxLocals idx))
+        localTypes = fromMaybe Map.empty (Map.lookup path (Idx.idxLocalTypes idx))
+        rename = fromMaybe Map.empty (Map.lookup path (Idx.idxRenaming idx))
+        inScope =
+            [ b | b <- bs
+                , scopeContains (Idx.lbScope b) line col
+                , null lp || lp `isPrefixOf` Idx.lbName b ]
+        seen = foldr (\b acc -> Idx.lbName b : acc) [] inScope
+        deduped = nubOrdered seen
+    in [ A.object
+            [ "label" A..= name
+            , "kind"  A..= (6 :: Int)  -- Variable
+            , "detail" A..= renderLocalType name
+            ]
+       | name <- deduped ]
+  where
+    scopeContains (A.Region s e) ln cl =
+        let afterStart = (A._line s < ln) || (A._line s == ln && A._col s <= cl)
+            beforeEnd  = (A._line e > ln) || (A._line e == ln && A._col e >= cl)
+        in afterStart && beforeEnd
+    nubOrdered = foldr (\x acc -> if x `elem` acc then acc else x : acc) []
+    renderLocalType :: String -> String
+    renderLocalType _name = ""  -- TODO: lookup in idxLocalTypes; need rename merge
 
 
 symKindToLsp :: Idx.SymKind -> Int
