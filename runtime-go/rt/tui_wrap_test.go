@@ -109,6 +109,10 @@ func TestHardBreakChunks(t *testing.T) {
 	}
 }
 
+// runeLen now returns DISPLAY WIDTH (terminal cells), not rune count.
+// This is the right semantic for layout — a row containing CJK or
+// emoji has more cells than the rune count would suggest, and the
+// renderer needs the display width to lay it out correctly.
 func TestRuneLen(t *testing.T) {
 	tests := []struct {
 		s    string
@@ -116,9 +120,9 @@ func TestRuneLen(t *testing.T) {
 	}{
 		{"", 0},
 		{"hello", 5},
-		{"héllo", 5},  // accented char counts as 1 rune
-		{"日本語", 3}, // CJK chars are 1 rune each (display width is a separate concern)
-		{"emoji😀here", 10}, // emoji is one rune
+		{"héllo", 5},        // é is 1 cell (BMP, narrow)
+		{"日本語", 6},          // 3 CJK chars × 2 cells each
+		{"emoji😀here", 11},  // 5 + 😀(2) + 4
 	}
 	for _, tt := range tests {
 		got := runeLen(tt.s)

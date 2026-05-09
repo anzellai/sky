@@ -67,8 +67,20 @@ func cliProgramRun(cfg any) any {
 	msgCh := make(chan any, 16)
 	doneCh := make(chan struct{})
 
+	// Sky.Cli doesn't modify terminal state (no raw mode, no alt-
+	// screen) so there's nothing to teardown — but we still install
+	// the empty state + signal handler so a SIGTERM / SIGHUP runs
+	// our normal cleanup path (subMgr.stopAll, stdout flush) instead
+	// of crashing without running any defer at all.
+	tuiInstallState(&tuiState{})
+	cleanShutdown := installCleanShutdown()
+	defer func() {
+		tuiUninstallState()
+		close(cleanShutdown)
+	}()
+
 	// Stdin reader goroutine. EOF closes doneCh which terminates the loop.
-	go func() {
+	safeGo("Cli stdin reader", func() {
 		reader := bufio.NewReader(os.Stdin)
 		for {
 			line, err := reader.ReadString('\n')
@@ -84,7 +96,7 @@ func cliProgramRun(cfg any) any {
 				return
 			}
 		}
-	}()
+	})
 
 	// Initial state — call init () and fire startup cmd if any.
 	initRes := SkyCall(initFn, struct{}{})
@@ -171,12 +183,23 @@ func cliRunCmd(cmd any, msgCh chan<- any) {
 			cliRunCmd(sub, msgCh)
 		}
 	case "perform":
-		go func() {
+		// safeGo: a panic inside the user's Task or its toMsg handler
+		// won't bypass the deferred terminal restore. Without this,
+		// any Cmd.perform that crashes leaves Tui's terminal stuck
+		// in raw mode + alt-screen forever. Sky.Cli has no such
+		// state to undo, but the recover still gives users a useful
+		// error message instead of a bare goroutine stack-dump.
+		safeGo("Cmd.perform task", func() {
 			result := sky_call(c.task, nil)
 			msg := sky_call(c.toMsg, result)
 			if msg != nil {
+				// Defensive: msgCh may be closed if the main loop
+				// exited between the task spawning and finishing.
+				// recover-on-closed-send catches the panic via
+				// safeGo's wrapper.
+				defer func() { _ = recover() }()
 				msgCh <- msg
 			}
-		}()
+		})
 	}
 }

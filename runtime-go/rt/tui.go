@@ -130,15 +130,21 @@ func tuiProgramRun(cfg any) any {
 		fmt.Fprintln(os.Stderr, msg)
 		return Err[any, any](ErrIo(msg))
 	}
-	// Restore terminal on any exit path — including Sky-side panics.
+
+	// Publish state for safeGo's panic recovery + the signal handler.
+	state := &tuiState{fd: fd, raw: true, oldState: oldState}
+	tuiInstallState(state)
+	cleanShutdown := installCleanShutdown()
 	defer func() {
-		_ = term.Restore(fd, oldState)
-		fmt.Print(tuiShowCursor)
-		fmt.Print(tuiAltScreenExit)
+		tuiTeardown()
+		tuiUninstallState()
+		close(cleanShutdown)
 	}()
 
 	fmt.Print(tuiAltScreenEnter)
+	state.altScreen = true
 	fmt.Print(tuiHideCursor)
+	state.cursorHidden = true
 	fmt.Print(tuiClearScreen)
 	fmt.Print(tuiCursorHome)
 
@@ -149,7 +155,9 @@ func tuiProgramRun(cfg any) any {
 
 	// Key reader goroutine. Reads bytes, decodes into keyEvents, and
 	// translates to Sky Key values pushed to msgCh via onKey.
-	go tuiReadKeys(stdin, onKeyFn, msgCh, doneCh)
+	safeGo("Tui.program key reader", func() {
+		tuiReadKeys(stdin, onKeyFn, msgCh, doneCh)
+	})
 
 	// Initial state.
 	initRes := SkyCall(initFn, struct{}{})

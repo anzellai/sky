@@ -221,3 +221,53 @@ Sky's lexer, parser (other than `Parse/Primitives.hs`, listed
 above), canonicaliser, and formatter are independent
 implementations that emit and accept Elm-compatible syntax; they
 share no source with elm/compiler.
+
+
+## Third-party Go runtime dependencies
+
+The Go runtime in `runtime-go/` links the following permissively-
+licensed libraries. Each is retained in modified form only by
+inclusion at link time; we make no source-level modifications. The
+copyright notices of each library are reproduced in their respective
+`LICENSE` files inside `~/go/pkg/mod/`.
+
+- **`github.com/rivo/uniseg`** — Unicode grapheme cluster + display
+  width algorithm. Used by `Std.String.graphemes` (kernel) and by
+  `Sky.Tui` (display-width measurement for cells, cursor positions,
+  wrap). MIT licence. Copyright (c) 2019 Oliver Kuederle.
+
+- **`golang.org/x/text`** — Unicode normalisation and width data.
+  Used by `Std.String.normalize` / `casefold`. BSD-3-Clause.
+  Copyright (c) 2009 The Go Authors.
+
+- **`golang.org/x/term`** — terminal raw-mode + winsize syscalls.
+  Used by `Sky.Tui` and `Sky.Cli`. BSD-3-Clause. Copyright (c) 2009
+  The Go Authors.
+
+- **`golang.org/x/crypto`** — bcrypt + scrypt for `Std.Auth`. BSD-
+  3-Clause. Copyright (c) 2009 The Go Authors.
+
+- **`github.com/golang-jwt/jwt/v5`** — JWT signing for
+  `Std.Auth.signToken` / `verifyToken`. MIT. Copyright (c) 2012
+  Dave Grijalva.
+
+- **`github.com/google/uuid`** — UUID v4/v7 generation for
+  `Std.Uuid`. BSD-3-Clause. Copyright (c) 2009,2014 Google Inc.
+
+- **`github.com/jackc/pgx/v5`** — PostgreSQL driver for `Std.Db`.
+  MIT. Copyright (c) 2013-2024 Jack Christensen.
+
+- **`github.com/redis/go-redis/v9`** — Redis client for the
+  `Sky.Live` Redis session store. BSD-2-Clause. Copyright (c) 2013
+  The github.com/redis/go-redis Authors.
+
+- **`modernc.org/sqlite`** — pure-Go SQLite. BSD-3-Clause-compatible
+  (modernc compatible-licence per modernc.org). Copyright (c) 2017
+  The Sqlite Authors.
+
+- **`github.com/alicebob/miniredis/v2`** — in-memory Redis stub used
+  in tests. MIT. Copyright (c) 2014 Harmen.
+
+If you replace any of these dependencies in a fork, please update
+this section accordingly. Removal of these packages is allowed
+without changing Sky's licence — they're consumed at link time only.

@@ -185,13 +185,19 @@ func tuiAppRun(cfg any) any {
 		fmt.Fprintln(os.Stderr, msg)
 		return Err[any, any](ErrIo(msg))
 	}
+
+	// Publish the modification state so safeGo's panic recovery and
+	// the signal handler can restore the terminal from any goroutine.
+	// Without this, a panic in a Cmd.perform task or a SIGTERM from
+	// outside would leave the user's shell stuck in raw mode.
+	state := &tuiState{fd: fd, raw: true, oldState: oldState}
+	tuiInstallState(state)
+	cleanShutdown := installCleanShutdown()
+
 	defer func() {
-		// Disable mouse tracking + SGR encoding before restoring TTY
-		// so the user's shell doesn't inherit a stuck mouse mode.
-		fmt.Print("\x1b[?1006l\x1b[?1000l")
-		_ = term.Restore(fd, oldState)
-		fmt.Print(tuiShowCursor)
-		fmt.Print(tuiAltScreenExit)
+		tuiTeardown()
+		tuiUninstallState()
+		close(cleanShutdown)
 		// After terminal state is fully restored, surface the warning
 		// summary (if any) so users know what Std.Ui features were
 		// skipped under TUI rendering.
@@ -199,9 +205,16 @@ func tuiAppRun(cfg any) any {
 	}()
 
 	fmt.Print(tuiAltScreenEnter)
+	state.altScreen = true
 	fmt.Print(tuiHideCursor)
-	// Enable SGR mouse mode (button presses + releases, no drag for v1).
+	state.cursorHidden = true
+	// Enable SGR mouse mode (button presses + releases, no drag for v1)
+	// + bracketed paste so multi-line paste arrives as a single event
+	// instead of N separate Enter keystrokes.
 	fmt.Print("\x1b[?1000h\x1b[?1006h")
+	state.mouseEnabled = true
+	fmt.Print("\x1b[?2004h")
+	state.bracketedPaste = true
 
 	msgCh := make(chan any, 32)
 	doneCh := make(chan struct{})
@@ -236,7 +249,7 @@ func tuiAppRun(cfg any) any {
 	//   - Tab / Shift-Tab    → focus navigation (handled by runtime)
 	//   - Enter on focused   → dispatch focused element's onClick
 	//   - Anything else      → forward to user's onKey if defined
-	go func() {
+	safeGo("Tui key reader", func() {
 		buf := make([]byte, 64)
 		for {
 			n, err := stdin.Read(buf)
@@ -261,7 +274,7 @@ func tuiAppRun(cfg any) any {
 				}
 			}
 		}
-	}()
+	})
 
 	// SIGWINCH watcher — push a tuiResizeMsg into the same Msg pipe so
 	// the main loop sees it serialised with everything else (no race
@@ -271,7 +284,7 @@ func tuiAppRun(cfg any) any {
 	// NEXT Msg that comes through.
 	winchCh := make(chan os.Signal, 1)
 	signal.Notify(winchCh, syscall.SIGWINCH)
-	go func() {
+	safeGo("SIGWINCH watcher", func() {
 		for {
 			select {
 			case <-doneCh:
@@ -285,7 +298,7 @@ func tuiAppRun(cfg any) any {
 				}
 			}
 		}
-	}()
+	})
 
 	for {
 		var msg any
@@ -2004,15 +2017,17 @@ func pxToCellsY(px int, ctx tuiLayoutCtx) int {
 	return int(cells)
 }
 
-// runeLen counts visible characters in a UTF-8 string. For v0 we use
-// rune count; uniseg (already a runtime dep) gives proper grapheme
-// clusters when polish lands.
+// runeLen returns the DISPLAY WIDTH of s in terminal cells — not the
+// rune count. CJK / emoji / wide chars each contribute 2; combining
+// marks contribute 0; printable ASCII contributes 1. Used by layout
+// to size text-shaped boxes correctly so a row containing "日本"
+// reserves 4 cells, not 2.
+//
+// The function name is a historical artefact (it used to count
+// runes). All callers want display width; renaming is mechanical
+// and tracked separately to keep this commit minimal.
 func runeLen(s string) int {
-	n := 0
-	for range s {
-		n++
-	}
-	return n
+	return displayWidth(s)
 }
 
 // ─── Paint pass ──────────────────────────────────────────────────────
@@ -2407,17 +2422,30 @@ func paintInputLine(grid [][]tuiCell, text string, col, row, w int, style textSt
 		return
 	}
 	rowCells := grid[row]
+	clean := sanitiseString(text)
 	x := col
-	for _, r := range []rune(text) {
+	iterGraphemes(clean, func(cluster string, gw int) bool {
 		if x >= col+w || x >= len(rowCells) {
-			break
+			return false
+		}
+		// Wide cluster at the right edge → substitute space.
+		if gw >= 2 && (x+1 >= col+w || x+1 >= len(rowCells)) {
+			cluster = " "
+			gw = 1
+		}
+		if gw <= 0 {
+			// Combining mark — attach to the cell on the left.
+			if x > 0 && x-1 < len(rowCells) {
+				rowCells[x-1].ch += cluster
+			}
+			return true
 		}
 		if x < 0 {
-			x++
-			continue
+			x += gw
+			return true
 		}
 		c := &rowCells[x]
-		c.ch = string(r)
+		c.ch = cluster
 		if style.fg.set {
 			c.fg = style.fg
 		} else {
@@ -2431,26 +2459,47 @@ func paintInputLine(grid [][]tuiCell, text string, col, row, w int, style textSt
 		if isPlaceholder {
 			c.italic = true
 		}
-		x++
-	}
+		// Wide cluster: continuation cell stays empty so paintDiff
+		// doesn't double-emit. Inherit style so overlays like the
+		// reverse-cursor render evenly across both halves.
+		if gw >= 2 && x+1 < len(rowCells) {
+			next := &rowCells[x+1]
+			next.ch = ""
+			next.fg = c.fg
+			next.bg = c.bg
+			next.italic = c.italic
+		}
+		x += gw
+		return true
+	})
 }
 
 // cursorLocate returns (lineIdx, colInLine) for a cursor rune index
-// within text containing embedded \n.
+// within text containing embedded \n. `colInLine` is in DISPLAY
+// COLUMNS — for ASCII the same as the rune offset, for CJK / emoji
+// each wide char counts 2 cells. Painters use the column as a cell
+// position in the grid, so a cursor sitting after `日` lands on
+// cell 2, not cell 1.
 func cursorLocate(text string, cursor int) (int, int) {
 	runes := []rune(text)
 	if cursor > len(runes) {
 		cursor = len(runes)
 	}
 	line := 0
-	colStart := 0
+	colStart := 0 // rune index where current line starts
 	for i := 0; i < cursor; i++ {
 		if runes[i] == '\n' {
 			line++
 			colStart = i + 1
 		}
 	}
-	return line, cursor - colStart
+	// Convert the rune-offset (cursor - colStart) into a display
+	// column by summing widths of the preceding runes ON THIS LINE.
+	col := 0
+	for i := colStart; i < cursor && i < len(runes); i++ {
+		col += displayWidthRune(runes[i])
+	}
+	return line, col
 }
 
 // paintCheckbox renders a single-cell ☐ / ☑ glyph based on the
@@ -2718,11 +2767,17 @@ func paintText(grid [][]tuiCell, text string, col, row, maxW int, st textStyle) 
 		return
 	}
 	rowCells := grid[row]
-	// Compute starting column based on text alignment within the slot.
-	runes := []rune(text)
+	// Sanitise control bytes BEFORE clustering — escape codes between
+	// graphemes would otherwise corrupt cluster boundaries.
+	clean := sanitiseString(text)
+	// Compute starting column based on display-width alignment within
+	// the slot. CJK / emoji push the alignment maths through display
+	// width, not rune count, so a centred "日本" lands centred not
+	// shifted half-a-character left.
+	textW := displayWidth(clean)
 	startCol := col
-	if st.align != "" && len(runes) < maxW {
-		slack := maxW - len(runes)
+	if st.align != "" && textW < maxW {
+		slack := maxW - textW
 		switch st.align {
 		case "center":
 			startCol = col + slack/2
@@ -2731,16 +2786,32 @@ func paintText(grid [][]tuiCell, text string, col, row, maxW int, st textStyle) 
 		}
 	}
 	x := startCol
-	for _, r := range runes {
+	iterGraphemes(clean, func(cluster string, w int) bool {
 		if x >= col+maxW || x >= len(rowCells) {
-			break
+			return false
+		}
+		// A wide cluster (w==2) needs both the current cell AND the
+		// next cell to render correctly. If the next cell would be
+		// past our slot (x+1 >= col+maxW), substitute a single
+		// space rather than truncating mid-glyph.
+		if w >= 2 && (x+1 >= col+maxW || x+1 >= len(rowCells)) {
+			cluster = " "
+			w = 1
+		}
+		if w <= 0 {
+			// Combining mark / zero-width — attach to the previous
+			// cell's content rather than allocating its own cell.
+			if x > 0 && x-1 < len(rowCells) {
+				rowCells[x-1].ch += cluster
+			}
+			return true
 		}
 		if x < 0 {
-			x++
-			continue
+			x += w
+			return true
 		}
 		c := &rowCells[x]
-		c.ch = string(r)
+		c.ch = cluster
 		if st.fg.set {
 			c.fg = st.fg
 		}
@@ -2762,8 +2833,26 @@ func paintText(grid [][]tuiCell, text string, col, row, maxW int, st textStyle) 
 		if st.overline {
 			c.overline = true
 		}
-		x++
-	}
+		// For wide clusters, mark the next cell as a continuation.
+		// Leaving ch="" tells paintDiff "don't emit anything for this
+		// cell — the wide glyph in the previous cell already covered
+		// it on the terminal side". Style fields are inherited so a
+		// later overlay (e.g. focus reverse) stays consistent across
+		// both cells of the wide character.
+		if w >= 2 && x+1 < len(rowCells) {
+			next := &rowCells[x+1]
+			next.ch = ""
+			next.fg = c.fg
+			next.bg = c.bg
+			next.bold = c.bold
+			next.italic = c.italic
+			next.underline = c.underline
+			next.strike = c.strike
+			next.overline = c.overline
+		}
+		x += w
+		return true
+	})
 }
 
 func fillRect(grid [][]tuiCell, col, row, w, h int, bg tuiColor) {
@@ -2983,6 +3072,16 @@ func paintDiff(prev, next [][]tuiCell) string {
 			fmt.Fprintf(&sb, "\x1b[%d;%dH", r+1, runStart+1)
 			lastStyle := ""
 			for i := runStart; i < runEnd; i++ {
+				// Continuation cell from a wide character (paintText /
+				// paintInputLine set ch="" for the second half of CJK /
+				// emoji glyphs). The terminal's cursor was advanced
+				// 2 columns by the wide char, so we must NOT emit
+				// anything for the next cell — emitting even an
+				// empty SGR or the prior cell's style would re-trigger
+				// cursor activity and desync the row layout.
+				if row[i].ch == "" {
+					continue
+				}
 				s := cellStyleSGR(row[i])
 				if s != lastStyle {
 					sb.WriteString("\x1b[0m")

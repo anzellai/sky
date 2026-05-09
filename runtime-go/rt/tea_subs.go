@@ -73,7 +73,11 @@ func (m *subManager) spawnEvery(s subT) {
 	toMsg := s.toMsg
 	interval := time.Duration(s.ms) * time.Millisecond
 	msgCh := m.msgCh
-	go func() {
+	// safeGo: a panic in the user's toMsg lambda (e.g. an unforced
+	// Result mis-extracted) on a Sub.every tick would otherwise crash
+	// silently and leave the Tui terminal stuck. With recovery the
+	// user sees the actual error and the shell is restored.
+	safeGo("Sub.every ticker", func() {
 		for {
 			select {
 			case <-cancel:
@@ -90,6 +94,6 @@ func (m *subManager) spawnEvery(s subT) {
 				return
 			}
 		}
-	}()
+	})
 	m.active = append(m.active, subEntry{cancel: cancel})
 }
