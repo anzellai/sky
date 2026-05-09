@@ -292,6 +292,15 @@ computeHoverIdx st file text line col =
         Left _ -> return Nothing
         Right srcMod -> case identAtPosition srcMod (line + 1) (col + 1) of
             Nothing   -> return Nothing
+            -- Field access (`model.count`) — the ident extracted from
+            -- exprIdents has a leading `.`. We resolve it by finding
+            -- the parent record's solved type and reading the field.
+            -- Handles record literals + accessors too.
+            Just ('.':fieldName) -> do
+                fieldType <- resolveFieldType st file text srcMod line col fieldName
+                case fieldType of
+                    Just sig -> return (Just (mkHover ("." ++ fieldName ++ " : " ++ sig)))
+                    Nothing  -> return (Just (mkHover ("." ++ fieldName)))
             Just name -> do
                 idx <- getIndex st file
                 let mSym = Idx.lookupAtCursor idx file (line + 1) (col + 1) name
@@ -317,6 +326,235 @@ computeHoverIdx st file text line col =
                                     Nothing  -> case mSym of
                                         Just s  -> return (Just (mkHover (renderSym s)))
                                         Nothing -> return (Just (mkHover name))
+
+
+-- | Resolve a field name's type by finding the enclosing record
+-- expression and looking up the field in its solved type. Returns
+-- a rendered type string (e.g. "Int") or Nothing if the parent's
+-- type isn't known or doesn't have the field.
+--
+-- Strategy:
+--   1. Find the parent expression at the cursor that's an Access
+--      or Record literal.
+--   2. Look up the parent's expression type via the workspace's
+--      solver-tracked types.
+--   3. If the parent is a record type, read the field's type.
+--
+-- Falls back to scanning user record-type aliases declared in the
+-- module — when `model : Model` and Model is `{count : Int}`, hover
+-- on `.count` shows `Int` even when the solver hasn't typed the
+-- access expression directly.
+resolveFieldType :: ServerState -> FilePath -> T.Text -> Src.Module -> Int -> Int -> String -> IO (Maybe String)
+resolveFieldType _st _file _text srcMod line col fieldName = do
+    let l = line + 1
+        c = col + 1
+    case findRecordContextAtPos srcMod l c fieldName of
+        Just targetName ->
+            return (findFieldOnAlias srcMod l c targetName fieldName)
+        Nothing -> return Nothing
+
+
+-- | Walk the expression tree to find the access target whose
+-- expression contains the cursor at the field name. Returns the
+-- target identifier name (e.g. "model" in `model.count`).
+findRecordContextAtPos :: Src.Module -> Int -> Int -> String -> Maybe String
+findRecordContextAtPos srcMod line col _fieldName =
+    let allValues = [v | A.At _ v <- Src._values srcMod]
+        candidates = concatMap walkValue allValues
+        hits = [n | (reg, n) <- candidates, regionContains reg line col]
+    in case hits of
+        (n:_) -> Just n
+        []    -> Nothing
+  where
+    walkValue (Src.Value _ _ body _) = walkExpr body
+
+    walkExpr :: Src.Expr -> [(A.Region, String)]
+    walkExpr (A.At _ e) = case e of
+        -- Cursor on the field name → record (fieldRegion, targetName)
+        -- only if target is a simple Var. (Chained access like
+        -- `model.user.name` would need recursion; keep simple for v1.)
+        Src.Access (A.At _ (Src.Var n)) (A.At fr _) -> [(fr, n)]
+        Src.Access target _ -> walkExpr target
+        Src.Call f xs        -> walkExpr f ++ concatMap walkExpr xs
+        Src.Binops pairs x   -> concatMap (walkExpr . fst) pairs ++ walkExpr x
+        Src.Lambda _ body    -> walkExpr body
+        Src.If arms e'       -> concatMap (\(c,b) -> walkExpr c ++ walkExpr b) arms ++ walkExpr e'
+        Src.Let _ body       -> walkExpr body
+        Src.Case s arms      -> walkExpr s ++ concatMap (walkExpr . snd) arms
+        Src.Tuple a b cs     -> walkExpr a ++ walkExpr b ++ concatMap walkExpr cs
+        Src.List xs          -> concatMap walkExpr xs
+        Src.Negate inner     -> walkExpr inner
+        Src.Paren inner      -> walkExpr inner
+        Src.Record fs        -> concatMap (walkExpr . snd) fs
+        Src.Update _ fs      -> concatMap (walkExpr . snd) fs
+        _ -> []
+
+
+-- | Find the rendered type of `fieldName` on `target` by:
+--   1. Finding `target`'s type from any of these sources:
+--      - top-level value annotation `target : SomeType`
+--      - enclosing function's parameter annotation: if the cursor
+--        is inside `f model = ...` and `f : Model -> Int`, then
+--        target=model has type Model.
+--   2. Resolving SomeType via type aliases (`Model = { count : Int }`).
+--   3. Looking up the field in the resolved record body.
+findFieldOnAlias :: Src.Module -> Int -> Int -> String -> String -> Maybe String
+findFieldOnAlias srcMod line col target fieldName =
+    let mTargetType = findTargetType srcMod line col target
+    in case mTargetType of
+        Just typeExpr -> resolveFieldThroughAlias srcMod typeExpr fieldName
+        Nothing       -> Nothing
+
+
+-- | Resolve a type expression through alias chains, then look up
+-- `fieldName` in the resulting record. e.g. `Model` → `{count :
+-- Int}` → `Int`.
+resolveFieldThroughAlias :: Src.Module -> Src.TypeAnnotation -> String -> Maybe String
+resolveFieldThroughAlias srcMod typeExpr fieldName =
+    case extractTypeName typeExpr of
+        Just typeName ->
+            let aliasBodies =
+                    [ body
+                    | A.At _ a <- Src._aliases srcMod
+                    , let A.At _ n = Src._aliasName a
+                    , n == typeName
+                    , let A.At _ body = Src._aliasType a
+                    ]
+            in case aliasBodies of
+                (body:_) -> findFieldInTypeExpr fieldName body
+                []       -> findFieldInTypeExpr fieldName typeExpr
+        Nothing -> findFieldInTypeExpr fieldName typeExpr
+
+
+-- | Find the type expression for `target` by checking:
+--   1. Top-level value annotations (target = some annotated value)
+--   2. The enclosing function's parameter list — if `target` is the
+--      Nth parameter of function `f : T1 -> T2 -> ... -> R`, return
+--      Tn.
+findTargetType :: Src.Module -> Int -> Int -> String -> Maybe Src.TypeAnnotation
+findTargetType srcMod line col target =
+    -- Try top-level annotation first.
+    let topLevel = [ ann | A.At _ v <- Src._values srcMod
+                         , let A.At _ n = Src._valueName v
+                         , n == target
+                         , Just (A.At _ ann) <- [Src._valueType v]
+                         ]
+    in case topLevel of
+        (a:_) -> Just a
+        []    -> findParamType srcMod line col target
+
+
+-- | Look at the enclosing top-level function's annotation and
+-- parameter list. If `target` is a PVar in position N of the param
+-- list, return the Nth argument type from the annotation.
+--
+-- The Value's outer region is just the name's region (parser quirk),
+-- so we check the BODY's region instead — `_valueBody`'s `A.At` is
+-- the full body including any sub-expressions, which is what we
+-- need to detect "cursor inside this function".
+findParamType :: Src.Module -> Int -> Int -> String -> Maybe Src.TypeAnnotation
+findParamType srcMod line col target =
+    let candidates = [ v
+                     | A.At _ v <- Src._values srcMod
+                     , let A.At bodyReg _ = Src._valueBody v
+                     , regionContains bodyReg line col
+                     ]
+    in case candidates of
+        (v:_) -> case Src._valueType v of
+            Just (A.At _ typeExpr) ->
+                let pats = Src._valuePatterns v
+                    paramIdx = findParamIndex target pats
+                in case paramIdx of
+                    Just i  -> nthArgType i typeExpr
+                    Nothing -> Nothing
+            Nothing -> Nothing
+        [] -> Nothing
+
+
+-- | Find the index of the parameter whose pattern binds `name`.
+findParamIndex :: String -> [Src.Pattern] -> Maybe Int
+findParamIndex name pats = go 0 pats
+  where
+    go _ [] = Nothing
+    go i (p:rest)
+        | patHasName p name = Just i
+        | otherwise         = go (i + 1) rest
+
+    patHasName (A.At _ p) n = case p of
+        Src.PVar v          -> v == n
+        Src.PAlias inner (A.At _ v) -> v == n || patHasName inner n
+        _                   -> False
+
+
+-- | Walk an annotated function type and return the i-th argument
+-- type. e.g. `Model -> String -> Int` index 0 = Model, index 1 = String.
+-- Returns Nothing if i is past the arrow chain length.
+nthArgType :: Int -> Src.TypeAnnotation -> Maybe Src.TypeAnnotation
+nthArgType 0 (Src.TLambda from _) = Just from
+nthArgType i (Src.TLambda _ rest) = nthArgType (i - 1) rest
+nthArgType _ _ = Nothing
+
+
+-- | Extract the head type name from a type expression like
+-- `TypeName a b` or just `TypeName`.
+-- Src.TType has shape `TType module [nameSegs] args` so we read
+-- the LAST segment of the second slot.
+extractTypeName :: Src.TypeAnnotation -> Maybe String
+extractTypeName (Src.TType _ segs _) = case reverse segs of
+    (n:_) -> Just n
+    []    -> Nothing
+extractTypeName (Src.TTypeQual _ n _) = Just n
+extractTypeName _ = Nothing
+
+
+-- | Search a record-type expression for a field and render its
+-- type. Returns Nothing if the type expression isn't a record or
+-- the field is missing.
+findFieldInTypeExpr :: String -> Src.TypeAnnotation -> Maybe String
+findFieldInTypeExpr fieldName (Src.TRecord fields _) =
+    case [ ft | (A.At _ fn, ft) <- fields, fn == fieldName ] of
+        (ft:_) -> Just (renderTypeAnnotation ft)
+        []     -> Nothing
+findFieldInTypeExpr _ _ = Nothing
+
+
+-- | Lossy renderer for a Src.TypeAnnotation. Used for hover only —
+-- the canonical type machinery would be more precise but requires
+-- the canonicalised module.
+renderTypeAnnotation :: Src.TypeAnnotation -> String
+renderTypeAnnotation t = case t of
+    Src.TLambda a b      ->
+        renderTypeAnnotationParen a ++ " -> " ++ renderTypeAnnotation b
+    Src.TVar n           -> n
+    Src.TType _ segs args ->
+        let name = case reverse segs of (n:_) -> n; [] -> "?"
+        in name ++ if null args then ""
+             else " " ++ unwords (map renderTypeAnnotationAtom args)
+    Src.TTypeQual _ n args ->
+        n ++ if null args then ""
+             else " " ++ unwords (map renderTypeAnnotationAtom args)
+    Src.TUnit            -> "()"
+    Src.TTuple a b cs    ->
+        "( " ++ renderTypeAnnotation a ++ ", " ++ renderTypeAnnotation b
+            ++ concatMap ((", " ++) . renderTypeAnnotation) cs ++ " )"
+    Src.TRecord fs _     ->
+        "{ " ++ commaSep (map (\(A.At _ fn, ft) -> fn ++ " : " ++ renderTypeAnnotation ft) fs)
+             ++ " }"
+  where
+    commaSep []     = ""
+    commaSep [x]    = x
+    commaSep (x:xs) = x ++ ", " ++ commaSep xs
+
+renderTypeAnnotationAtom :: Src.TypeAnnotation -> String
+renderTypeAnnotationAtom inner = case inner of
+    Src.TLambda{} -> "(" ++ renderTypeAnnotation inner ++ ")"
+    Src.TType _ _ (_:_) -> "(" ++ renderTypeAnnotation inner ++ ")"
+    _ -> renderTypeAnnotation inner
+
+renderTypeAnnotationParen :: Src.TypeAnnotation -> String
+renderTypeAnnotationParen inner = case inner of
+    Src.TLambda{} -> "(" ++ renderTypeAnnotation inner ++ ")"
+    _ -> renderTypeAnnotation inner
 
 
 -- | Does this Sym carry a real type signature?
@@ -862,6 +1100,7 @@ kernelTypeSig :: String -> Maybe String
 kernelTypeSig name = Map.lookup name kernelSigs
   where
     kernelSigs = Map.fromList
+        -- Prelude / Basics
         [ ("println",      "a -> Task Error ()")
         , ("identity",     "a -> a")
         , ("always",       "a -> b -> a")
@@ -872,6 +1111,28 @@ kernelTypeSig name = Map.lookup name kernelSigs
         , ("fst",          "( a, b ) -> a")
         , ("snd",          "( a, b ) -> b")
         , ("errorToString","Error -> String")
+        -- Operators — hover on `|>`, `++`, etc. now shows the
+        -- operator's signature instead of returning empty.
+        , ("|>",           "a -> (a -> b) -> b")          -- forward pipe
+        , ("<|",           "(a -> b) -> a -> b")          -- backward pipe
+        , (">>",           "(a -> b) -> (b -> c) -> a -> c")  -- function composition
+        , ("<<",           "(b -> c) -> (a -> b) -> a -> c")
+        , ("++",           "appendable -> appendable -> appendable")
+        , ("::",           "a -> List a -> List a")
+        , ("==",           "a -> a -> Bool")
+        , ("/=",           "a -> a -> Bool")
+        , ("<",            "comparable -> comparable -> Bool")
+        , (">",            "comparable -> comparable -> Bool")
+        , ("<=",           "comparable -> comparable -> Bool")
+        , (">=",           "comparable -> comparable -> Bool")
+        , ("&&",           "Bool -> Bool -> Bool")
+        , ("||",           "Bool -> Bool -> Bool")
+        , ("+",            "number -> number -> number")
+        , ("-",            "number -> number -> number")
+        , ("*",            "number -> number -> number")
+        , ("/",            "Float -> Float -> Float")
+        , ("//",           "Int -> Int -> Int")
+        , ("^",            "number -> number -> number")
         ]
 
 
@@ -960,14 +1221,34 @@ collectIdents srcMod =
         Src.Var n           -> [(reg, n)]
         Src.VarQual q n     -> [(reg, q ++ "." ++ n)]
         Src.Call f xs       -> exprIdents f ++ concatMap exprIdents xs
-        Src.Binops pairs x  -> concatMap (\(e',_) -> exprIdents e') pairs ++ exprIdents x
+        -- Binops: walk both expressions AND emit each operator as a
+        -- hoverable ident (so the user can hover `|>` and see its
+        -- type signature). The operator's region is the located
+        -- string's region.
+        Src.Binops pairs x  ->
+            concatMap (\(e', A.At opR op) -> exprIdents e' ++ [(opR, op)]) pairs
+                ++ exprIdents x
         Src.Lambda ps body  -> concatMap patIdents ps ++ exprIdents body
         Src.If arms e'      -> concatMap (\(c,b) -> exprIdents c ++ exprIdents b) arms ++ exprIdents e'
         Src.Let defs body   -> concatMap defIdents defs ++ exprIdents body
         Src.Case s arms     -> exprIdents s ++ concatMap (\(p, b) -> patIdents p ++ exprIdents b) arms
-        Src.Access t _      -> exprIdents t
-        Src.Update _ fs     -> concatMap (exprIdents . snd) fs
-        Src.Record fs       -> concatMap (exprIdents . snd) fs
+        -- Access: walk the target AND emit the field name as a
+        -- hoverable ident. The ident name is `.field` (with leading
+        -- dot) so the hover lookup can distinguish field access
+        -- from a regular variable named "field".
+        Src.Access t (A.At fr fn) -> exprIdents t ++ [(fr, "." ++ fn)]
+        -- Standalone accessor `.field` (point-free record getter):
+        -- expose the field name as a hoverable ident too.
+        Src.Accessor fn     -> [(reg, "." ++ fn)]
+        -- Record update `{ base | a = ..., b = ... }`: walk the
+        -- record-base name AND each field-update value. The field
+        -- names ARE syntactic locations the user would hover; emit
+        -- them as `.field` idents.
+        Src.Update (A.At br bn) fs ->
+            (br, bn) : concatMap (\(A.At fr fn, v) -> (fr, "." ++ fn) : exprIdents v) fs
+        -- Record literal: emit each field name as `.field` ident.
+        Src.Record fs ->
+            concatMap (\(A.At fr fn, v) -> (fr, "." ++ fn) : exprIdents v) fs
         Src.Tuple a b cs    -> exprIdents a ++ exprIdents b ++ concatMap exprIdents cs
         Src.List xs         -> concatMap exprIdents xs
         Src.Negate inner    -> exprIdents inner

@@ -161,3 +161,53 @@ spec = do
                                 T.isInfixOf "Red" t
                                 && T.isInfixOf "Colour" t
                         Nothing -> expectationFailure "hover returned no content for Red"
+
+        it "field access (model.count) shows the field's type" $ do
+            -- Hover on `.count` in `model.count`. New walker emits the
+            -- field name as a `.field` ident; computeHoverIdx routes
+            -- it through resolveFieldType which reads model's
+            -- annotation, finds the Model alias, and returns Int.
+            sky <- findSky
+            let src = unlines
+                    [ "module Main exposing (main)"
+                    , ""
+                    , "import Sky.Core.Prelude exposing (..)"
+                    , "import Sky.Core.String as String"
+                    , "import Std.Log exposing (println)"
+                    , ""
+                    , "type alias Model = { count : Int, label : String }"
+                    , ""
+                    , "stringify : Model -> String"
+                    , "stringify model ="
+                    , "    String.fromInt model.count"
+                    , ""
+                    , "main = println (stringify { count = 42, label = \"x\" })"
+                    ]
+            withSystemTempDirectory "sky-lsp-hover-field" $ \dir -> do
+                fixture <- setupProject dir src
+                content <- hoverAt (T.pack sky) fixture 10 26
+                case content of
+                    Just txt -> do
+                        T.isInfixOf "count" txt `shouldBe` True
+                        T.isInfixOf "Int" txt `shouldBe` True
+                    Nothing  -> expectationFailure "no hover content for .count"
+
+        it "binop operator (|>) shows its signature" $ do
+            -- Hover on `|>` between two expressions.
+            sky <- findSky
+            let src = unlines
+                    [ "module Main exposing (main)"
+                    , ""
+                    , "import Sky.Core.Prelude exposing (..)"
+                    , "import Sky.Core.String as String"
+                    , "import Std.Log exposing (println)"
+                    , ""
+                    , "main = println (\"x\" |> String.toUpper)"
+                    ]
+            withSystemTempDirectory "sky-lsp-hover-pipe" $ \dir -> do
+                fixture <- setupProject dir src
+                content <- hoverAt (T.pack sky) fixture 6 21
+                case content of
+                    Just txt ->
+                        (T.isInfixOf "|>" txt || T.isInfixOf "->" txt) `shouldBe` True
+                    Nothing  -> expectationFailure "no hover content for |>"
