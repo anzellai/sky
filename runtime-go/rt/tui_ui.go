@@ -51,6 +51,8 @@ type tuiCell struct {
 	bold      bool
 	italic    bool
 	underline bool
+	strike    bool // text-decoration: line-through
+	overline  bool // text-decoration: overline (SGR 53)
 	reverse   bool
 }
 
@@ -71,10 +73,25 @@ type tuiColor struct {
 type focusable struct {
 	events       []any
 	isInput      bool   // tag=="input" — needs editor handling
+	inputType    string // "text" | "password" | "checkbox" | "radio" | "range" | "textarea" | …
 	initialValue string // from AttrAttribute "value", first-render only
 	placeholder  string // from AttrAttribute "placeholder", shown on empty buffer
 	row, col     int    // top-left corner of the focused element's box
 	w, h         int
+}
+
+// isMultilineInput returns true if this focusable is a textarea-typed
+// input. Used by the editor to decide whether Enter inserts a newline
+// (multiline) or fires onChange (single-line submit).
+func isMultilineInput(f focusable) bool {
+	return f.isInput && f.inputType == "textarea"
+}
+
+// isCheckboxOrRadio returns true if this focusable is a checkbox or
+// radio. Used by the main loop to translate Space presses into
+// toggle/select Msgs (vs char insertion in text inputs).
+func isCheckboxOrRadio(f focusable) bool {
+	return f.isInput && (f.inputType == "checkbox" || f.inputType == "radio")
 }
 
 // tuiInput is per-input editor state, persisted across renders so the
@@ -105,6 +122,29 @@ func (r *inputRegistry) get(idx int) *tuiInput {
 		r.inputs[idx] = &tuiInput{}
 	}
 	return r.inputs[idx]
+}
+
+// tuiScroll is per-scroll-region offset state, persisted across renders.
+type tuiScroll struct {
+	offsetY int // rows scrolled down
+	offsetX int // cols scrolled right
+}
+
+// scrollRegistry: same key strategy as inputRegistry (focus index in
+// the tab order). Persistent so scrollY survives re-renders.
+type scrollRegistry struct {
+	regions map[int]*tuiScroll
+}
+
+func newScrollRegistry() *scrollRegistry {
+	return &scrollRegistry{regions: map[int]*tuiScroll{}}
+}
+
+func (r *scrollRegistry) get(idx int) *tuiScroll {
+	if r.regions[idx] == nil {
+		r.regions[idx] = &tuiScroll{}
+	}
+	return r.regions[idx]
 }
 
 // ─── Main loop ──────────────────────────────────────────────────────
@@ -152,6 +192,10 @@ func tuiAppRun(cfg any) any {
 		_ = term.Restore(fd, oldState)
 		fmt.Print(tuiShowCursor)
 		fmt.Print(tuiAltScreenExit)
+		// After terminal state is fully restored, surface the warning
+		// summary (if any) so users know what Std.Ui features were
+		// skipped under TUI rendering.
+		tuiFlushWarnings()
 	}()
 
 	fmt.Print(tuiAltScreenEnter)
@@ -276,7 +320,11 @@ func tuiAppRun(cfg any) any {
 				button, col1, row1, isPress, ok := parseMouseEvent(km.ev.value)
 				if ok && isPress && button == 0 {
 					if hit := hitTestFocusables(focusables, col1-1, row1-1); hit >= 0 {
+						oldFocus := focusIdx
 						focusIdx = hit
+						if oldFocus != focusIdx {
+							tuiDispatchFocusChange(focusables, oldFocus, focusIdx, msgCh)
+						}
 						if !focusables[hit].isInput {
 							if clickEvt := focusableEvent(focusables[hit], "click"); clickEvt != nil {
 								if clickMsg := tuiExtractClickMsg(clickEvt); clickMsg != nil {
@@ -296,6 +344,7 @@ func tuiAppRun(cfg any) any {
 
 			// Tab navigation always handled locally.
 			handled := false
+			oldFocus := focusIdx
 			switch km.ev.kind {
 			case "tab":
 				if len(focusables) > 0 {
@@ -310,6 +359,9 @@ func tuiAppRun(cfg any) any {
 					}
 				}
 			}
+			if handled && oldFocus != focusIdx {
+				tuiDispatchFocusChange(focusables, oldFocus, focusIdx, msgCh)
+			}
 			if handled {
 				grid, focusables = renderElementFrame(viewFn, model, cols, rows, canvas, focusIdx, inputs)
 				tuiPaint(paintDiff(prev, grid))
@@ -318,8 +370,20 @@ func tuiAppRun(cfg any) any {
 				continue
 			}
 
-			// Focused-input editor path.
+			// Focused-input editor path. Checkbox / radio respond to
+			// Space and Enter by firing their onClick (same Msg the
+			// HTML side dispatches when the box is clicked) instead
+			// of acting as a text editor.
 			if focusIdx >= 0 && focusIdx < len(focusables) && focusables[focusIdx].isInput {
+				if isCheckboxOrRadio(focusables[focusIdx]) && (km.ev.kind == "space" || km.ev.kind == "enter") {
+					if clickEvt := focusableEvent(focusables[focusIdx], "click"); clickEvt != nil {
+						if clickMsg := tuiExtractClickMsg(clickEvt); clickMsg != nil {
+							msg = clickMsg
+							goto applyMsg
+						}
+					}
+					continue
+				}
 				st := inputs.get(focusIdx)
 				editorChanged, dispatchMsg := tuiEditInput(st, km.ev, focusables[focusIdx])
 				if dispatchMsg != nil {
@@ -460,6 +524,35 @@ func hitTestFocusables(focusables []focusable, col, row int) int {
 	return -1
 }
 
+// tuiDispatchFocusChange fires onBlur for the old focused element + onFocus
+// for the new one (when those events are bound). Both Msgs land on msgCh
+// so they flow through the same update sequence as everything else.
+func tuiDispatchFocusChange(focusables []focusable, oldIdx, newIdx int, msgCh chan<- any) {
+	if oldIdx == newIdx {
+		return
+	}
+	if oldIdx >= 0 && oldIdx < len(focusables) {
+		if blurEvt := focusableEvent(focusables[oldIdx], "blur"); blurEvt != nil {
+			if msg := tuiExtractClickMsg(blurEvt); msg != nil {
+				select {
+				case msgCh <- msg:
+				default: // channel full — drop rather than block the focus path
+				}
+			}
+		}
+	}
+	if newIdx >= 0 && newIdx < len(focusables) {
+		if focusEvt := focusableEvent(focusables[newIdx], "focus"); focusEvt != nil {
+			if msg := tuiExtractClickMsg(focusEvt); msg != nil {
+				select {
+				case msgCh <- msg:
+				default:
+				}
+			}
+		}
+	}
+}
+
 // focusableEvent returns the eventPair on `f` matching the given name
 // ("click", "input", "change", ...). Sky.Live's Event_onClick et al.
 // produce eventPair{name, msg} values; we filter the focusable's
@@ -543,17 +636,84 @@ func tuiEditInput(st *tuiInput, ev keyEvent, f focusable) (bool, any) {
 			return true, nil
 		}
 	case "enter":
-		// Enter on a focused input fires onChange (and onSubmit
-		// semantically — for v1 we surface it as onChange's Msg).
-		if changeEvt := focusableEvent(f, "change"); changeEvt != nil {
-			if msg := tuiExtractInputMsg(changeEvt, st.buffer); msg != nil {
-				return false, msg
+		if isMultilineInput(f) {
+			// Insert newline at cursor.
+			runes := []rune(st.buffer)
+			newRunes := make([]rune, 0, len(runes)+1)
+			newRunes = append(newRunes, runes[:st.cursor]...)
+			newRunes = append(newRunes, '\n')
+			newRunes = append(newRunes, runes[st.cursor:]...)
+			st.buffer = string(newRunes)
+			st.cursor++
+			changed = true
+		} else {
+			// Fire onChange (and any "submit" event the form bound).
+			if changeEvt := focusableEvent(f, "change"); changeEvt != nil {
+				if msg := tuiExtractInputMsg(changeEvt, st.buffer); msg != nil {
+					return false, msg
+				}
+			}
+			return false, nil
+		}
+	case "up":
+		// Multiline: move cursor up one line preserving column.
+		if !isMultilineInput(f) {
+			return false, nil
+		}
+		runes := []rune(st.buffer)
+		line, col := cursorLocate(st.buffer, st.cursor)
+		if line == 0 {
+			return false, nil
+		}
+		// Find line start of previous line.
+		prevStart := 0
+		curLine := 0
+		for i := 0; i < len(runes); i++ {
+			if curLine == line-1 {
+				prevStart = i
+				break
+			}
+			if runes[i] == '\n' {
+				curLine++
+				prevStart = i + 1
 			}
 		}
-		// Fall back: try the parent form's onSubmit by dispatching
-		// any "submit" event we picked up. (Not collecting form-
-		// level events yet — v1 keeps it scoped to the input.)
-		return false, nil
+		// Find length of previous line.
+		prevEnd := prevStart
+		for prevEnd < len(runes) && runes[prevEnd] != '\n' {
+			prevEnd++
+		}
+		newCol := col
+		if newCol > prevEnd-prevStart {
+			newCol = prevEnd - prevStart
+		}
+		st.cursor = prevStart + newCol
+		return true, nil
+	case "down":
+		if !isMultilineInput(f) {
+			return false, nil
+		}
+		runes := []rune(st.buffer)
+		_, col := cursorLocate(st.buffer, st.cursor)
+		// Find next line's start.
+		i := st.cursor
+		for i < len(runes) && runes[i] != '\n' {
+			i++
+		}
+		if i >= len(runes) {
+			return false, nil // already on last line
+		}
+		nextStart := i + 1
+		nextEnd := nextStart
+		for nextEnd < len(runes) && runes[nextEnd] != '\n' {
+			nextEnd++
+		}
+		newCol := col
+		if newCol > nextEnd-nextStart {
+			newCol = nextEnd - nextStart
+		}
+		st.cursor = nextStart + newCol
+		return true, nil
 	}
 	if !changed {
 		return false, nil
@@ -633,7 +793,7 @@ func renderElementFrame(viewFn, model any, cols, rows int, canvas tuiCanvas, foc
 	grid := newCellGrid(cols, rows)
 	var focusables []focusable
 	box := layoutElement(elem, ctx, cols, rows, layoutAxisColumn)
-	paintBox(grid, box, 0, 0, cols, rows, focusIdx, &focusables, inputs, layoutAxisColumn, 0)
+	paintBox(grid, box, 0, 0, cols, rows, focusIdx, &focusables, inputs, textStyle{}, layoutAxisColumn, 0)
 	return grid, focusables
 }
 
@@ -664,10 +824,25 @@ type layoutBox struct {
 	bold        bool
 	italic      bool
 	underline   bool
+	strike      bool
+	overline    bool
+	textAlign   string // "left" | "center" | "right" — text painting alignment
+	alignX      string
+	alignY      string
 	events      []any  // for focusables: all AttrEvent payloads
 	valueAttr   string // for inputs: initial value from AttrAttribute "value"
 	placeholder string // for inputs: shown when buffer is empty
+	nameAttr    string // for inputs in forms: form field name
+	inputType   string // "text" | "password" | "checkbox" | "radio" | "range" | "textarea" | …
 	children    []layoutBox
+	wrapped     bool   // wrappedRow flag — children break into rows
+	paragraph   bool   // paragraph flag — text children word-wrap
+	textColumn  bool   // textColumn flag — reading-width column
+	gridLayout  bool   // grid flag — children flow into auto NxM grid
+	gridColumns int    // columns for grid (0 = auto)
+	clip        [2]bool // [clipX, clipY]
+	overflow    [2]string // [x, y] — "clip", "scrollbars", ""
+	nearby      []nearbyEntry
 	borderWidth [4]int // top, right, bottom, left — 1 cell each if border present
 	borderColor tuiColor
 	borderStyle string // "solid" | "dashed" | "dotted"
@@ -766,6 +941,170 @@ func layoutNode(tag string, fields []any, ctx tuiLayoutCtx, maxW, maxH int, pare
 		height = innerMaxH
 	}
 
+	// Paragraph / textColumn: collapse children's text content into
+	// word-wrapped text lines fitting `width`. v1 simplification: we
+	// flatten all child text into a single buffer, lose inline styled
+	// spans (each child becomes plain text). Inline styling is a
+	// future polish pass.
+	if la.isParagraph || la.isTextColumn {
+		// Determine wrap width — fall back to innerMaxW when width is
+		// unspecified at this node.
+		wrapW := width
+		if !hasExplicitW || wrapW <= 0 {
+			wrapW = innerMaxW
+		}
+		if wrapW <= 0 {
+			wrapW = ctx.cols
+		}
+		texts := []string{}
+		for _, c := range childrenList {
+			texts = append(texts, extractTextContent(c))
+		}
+		joined := strings.Join(texts, " ")
+		// textColumn handles paragraph BOUNDARIES — each child is a
+		// separate paragraph (own line break). For paragraph itself,
+		// we wrap the joined text continuously.
+		var lines []string
+		if la.isTextColumn {
+			for i, t := range texts {
+				if i > 0 {
+					lines = append(lines, "")
+				}
+				lines = append(lines, wrapText(t, wrapW)...)
+			}
+		} else {
+			lines = wrapText(joined, wrapW)
+		}
+		// Replace children with one Text box per line.
+		var paraBoxes []layoutBox
+		for _, line := range lines {
+			paraBoxes = append(paraBoxes, layoutBox{kind: "text", text: line, width: runeLen(line), height: 1})
+		}
+		childBoxes := paraBoxes
+		// Force vertical stack inside a paragraph/textColumn.
+		axis = layoutAxisColumn
+		// Box dimensions: width = wrapW (or content), height = line count.
+		finalW := wrapW + la.padding[1] + la.padding[3] + la.borderWidth[1] + la.borderWidth[3]
+		finalH := len(lines) + la.padding[0] + la.padding[2] + la.borderWidth[0] + la.borderWidth[2]
+		if finalW > maxW {
+			finalW = maxW
+		}
+		if finalH > maxH {
+			finalH = maxH
+		}
+		return layoutBox{
+			kind:        "node",
+			tag:         tag,
+			width:       finalW,
+			height:      finalH,
+			axis:        axis,
+			padding:     la.padding,
+			spacing:     0, // line spacing handled by stacking text boxes directly
+			fg:          la.fg,
+			bg:          la.bg,
+			bold:        la.bold,
+			italic:      la.italic,
+			underline:   la.underline,
+			strike:      la.strike,
+			overline:    la.overline,
+			textAlign:   la.textAlign,
+			alignX:      la.alignX,
+			alignY:      la.alignY,
+			events:      la.events,
+			nameAttr:    la.nameAttr,
+		inputType:   la.inputType,
+			paragraph:   la.isParagraph,
+			textColumn:  la.isTextColumn,
+			clip:        la.clip,
+			overflow:    la.overflow,
+			nearby:      la.nearby,
+			children:    childBoxes,
+			borderWidth: la.borderWidth,
+			borderColor: la.borderColor,
+			borderStyle: la.borderStyle,
+		}
+	}
+
+	// Grid layout: distribute children into auto-flow columns based
+	// on minColumnPx (gridColumns attr → __gridMin). Children flow
+	// row-major; each row's height is the max of its children.
+	if la.isGrid {
+		minColCells := pxToCellsX(la.gridColumns, ctx)
+		if minColCells <= 0 {
+			minColCells = 10 // sensible default if user didn't specify
+		}
+		availW := innerMaxW
+		if hasExplicitW && width > 0 {
+			availW = width
+		}
+		numCols := availW / minColCells
+		if numCols < 1 {
+			numCols = 1
+		}
+		colWidth := availW / numCols
+		// Lay out each child within colWidth.
+		var childBoxes []layoutBox
+		for _, c := range childrenList {
+			cb := layoutElement(c, ctx, colWidth, innerMaxH, layoutAxisColumn)
+			cb.width = colWidth
+			childBoxes = append(childBoxes, cb)
+		}
+		// Compute total height: sum of row max heights + spacing.
+		nRows := (len(childBoxes) + numCols - 1) / numCols
+		rowHeights := make([]int, nRows)
+		for i, c := range childBoxes {
+			r := i / numCols
+			if c.height > rowHeights[r] {
+				rowHeights[r] = c.height
+			}
+		}
+		totalH := 0
+		for _, rh := range rowHeights {
+			totalH += rh
+		}
+		if nRows > 1 {
+			totalH += la.spacing * (nRows - 1)
+		}
+		finalW := availW + la.padding[1] + la.padding[3] + la.borderWidth[1] + la.borderWidth[3]
+		finalH := totalH + la.padding[0] + la.padding[2] + la.borderWidth[0] + la.borderWidth[2]
+		if finalW > maxW {
+			finalW = maxW
+		}
+		if finalH > maxH {
+			finalH = maxH
+		}
+		return layoutBox{
+			kind:        "node",
+			tag:         tag,
+			width:       finalW,
+			height:      finalH,
+			padding:     la.padding,
+			spacing:     la.spacing,
+			fg:          la.fg,
+			bg:          la.bg,
+			bold:        la.bold,
+			italic:      la.italic,
+			underline:   la.underline,
+			strike:      la.strike,
+			overline:    la.overline,
+			textAlign:   la.textAlign,
+			alignX:      la.alignX,
+			alignY:      la.alignY,
+			events:      la.events,
+			nameAttr:    la.nameAttr,
+		inputType:   la.inputType,
+			gridLayout:  true,
+			gridColumns: numCols,
+			clip:        la.clip,
+			overflow:    la.overflow,
+			nearby:      la.nearby,
+			children:    childBoxes,
+			borderWidth: la.borderWidth,
+			borderColor: la.borderColor,
+			borderStyle: la.borderStyle,
+		}
+	}
+
 	// Lay out children.
 	childBoxes := layoutChildren(childrenList, ctx, width, height, axis, la.spacing)
 
@@ -838,9 +1177,24 @@ func layoutNode(tag string, fields []any, ctx tuiLayoutCtx, maxW, maxH int, pare
 		bold:        la.bold,
 		italic:      la.italic,
 		underline:   la.underline,
+		strike:      la.strike,
+		overline:    la.overline,
+		textAlign:   la.textAlign,
+		alignX:      la.alignX,
+		alignY:      la.alignY,
 		events:      la.events,
 		valueAttr:   la.valueAttr,
 		placeholder: la.placeholder,
+		nameAttr:    la.nameAttr,
+		inputType:   la.inputType,
+		wrapped:     la.isWrappedRow,
+		paragraph:   la.isParagraph,
+		textColumn:  la.isTextColumn,
+		gridLayout:  la.isGrid,
+		gridColumns: la.gridColumns,
+		clip:        la.clip,
+		overflow:    la.overflow,
+		nearby:      la.nearby,
 		children:    childBoxes,
 		borderWidth: la.borderWidth,
 		borderColor: la.borderColor,
@@ -1010,6 +1364,15 @@ func lengthFillPortion(fields []any) int {
 }
 
 // walkAttrs extracts layout-relevant values from a Std.Ui attribute list.
+// isInternalMarker — Std.Ui uses AttrStyle keys prefixed with __ as
+// sentinels that the renderer interprets specially (see Std.Ui's
+// rowMarker / colMarker / wrapMarker / gridMarker / paragraphMarker /
+// textColumnMarker definitions). Non-prefixed style keys are user-
+// supplied raw CSS, which we can't render.
+func isInternalMarker(k string) bool {
+	return len(k) >= 2 && k[0] == '_' && k[1] == '_'
+}
+
 type walkedAttrs struct {
 	width       any    // raw Length value
 	height      any
@@ -1019,13 +1382,36 @@ type walkedAttrs struct {
 	bold        bool
 	italic      bool
 	underline   bool
+	strike      bool   // text-decoration: line-through
+	overline    bool   // text-decoration: overline (SGR 53)
+	textAlign   string // "left" | "center" | "right" — for text painting within box
+	alignX       string // "" (unset, default left/main-axis), "left", "center", "right"
+	alignY       string // "" (unset), "top", "center", "bottom"
 	isRow       bool
-	events      []any  // every AttrEvent payload
-	valueAttr   string // AttrAttribute "value" — initial value for inputs
-	placeholder string // AttrAttribute "placeholder" — shown on empty input
-	borderWidth [4]int // top, right, bottom, left — 1 if border present, 0 otherwise
-	borderColor tuiColor
-	borderStyle string // "solid" (default), "dashed", "dotted"
+	isWrappedRow bool
+	isParagraph bool
+	isTextColumn bool
+	isGrid       bool
+	gridColumns  int
+	clip         [2]bool // [clipX, clipY]
+	overflow     [2]string // [x, y] — "", "clip", "scrollbars"
+	nameAttr     string  // AttrAttribute "name" — for form-submit collection
+	inputType    string  // AttrAttribute "type" — text/password/checkbox/radio/range/textarea/etc.
+	nearby       []nearbyEntry // captured AttrNearby items
+	events       []any  // every AttrEvent payload
+	valueAttr    string // AttrAttribute "value" — initial value for inputs
+	placeholder  string // AttrAttribute "placeholder" — shown on empty input
+	borderWidth  [4]int // top, right, bottom, left — 1 if border present, 0 otherwise
+	borderColor  tuiColor
+	borderStyle  string // "solid" (default), "dashed", "dotted"
+}
+
+// nearbyEntry pairs a Location with the Element to render at that
+// offset relative to its host. The renderer realises these AFTER
+// painting the host so they sit on top.
+type nearbyEntry struct {
+	location int // 0=Above 1=Below 2=OnRight 3=OnLeft 4=InFront 5=Behind
+	elem     any
 }
 
 func walkAttrs(attrs []any, ctx tuiLayoutCtx) walkedAttrs {
@@ -1042,7 +1428,10 @@ func walkAttrs(attrs []any, ctx tuiLayoutCtx) walkedAttrs {
 		// 12:Attribute 13:FontSize 14:FontColor 15:FontFamily
 		// 16:FontWeight 17:FontItalic 18:FontUnderline 19:FontDecoration
 		// 20:FontLetterSpacing 21:FontWordSpacing 22:FontAlign
-		// 23:BgColor 24:BgImage 25:BgGradient 26:BorderWidth …
+		// 23:BgColor 24:BgImage 25:BgGradient 26:BorderWidth
+		// 27:BorderWidthEach 28:BorderColor 29:BorderRounded
+		// 30:BorderStyle 31:BorderShadow 32:BorderInsetShadow
+		// 33:Pointer 34:Overflow
 		switch adt.Tag {
 		case 0: // NoAttribute
 			continue
@@ -1053,6 +1442,38 @@ func walkAttrs(attrs []any, ctx tuiLayoutCtx) walkedAttrs {
 		case 2: // AttrHeight Length
 			if len(adt.Fields) > 0 {
 				out.height = adt.Fields[0]
+			}
+		case 3: // AttrAlignX HAlign — HAlign tags: 0=Left, 1=CenterX, 2=Right
+			if len(adt.Fields) > 0 {
+				if ah, ok := adt.Fields[0].(SkyADT); ok {
+					switch ah.Tag {
+					case 0:
+						out.alignX = "left"
+					case 1:
+						out.alignX = "center"
+					case 2:
+						out.alignX = "right"
+					}
+				}
+			}
+		case 4: // AttrAlignY VAlign — VAlign tags: 0=Top, 1=CenterY, 2=Bottom
+			if len(adt.Fields) > 0 {
+				if av, ok := adt.Fields[0].(SkyADT); ok {
+					switch av.Tag {
+					case 0:
+						out.alignY = "top"
+					case 1:
+						out.alignY = "center"
+					case 2:
+						out.alignY = "bottom"
+					}
+				}
+			}
+		case 5: // AttrNearby Location (Element msg) — Location tags: 0=Above 1=Below 2=OnRight 3=OnLeft 4=InFront 5=Behind
+			if len(adt.Fields) >= 2 {
+				if loc, ok := adt.Fields[0].(SkyADT); ok {
+					out.nearby = append(out.nearby, nearbyEntry{location: loc.Tag, elem: adt.Fields[1]})
+				}
 			}
 		case 6: // AttrPadding T R B L
 			if len(adt.Fields) >= 4 {
@@ -1065,18 +1486,44 @@ func walkAttrs(attrs []any, ctx tuiLayoutCtx) walkedAttrs {
 			if len(adt.Fields) > 0 {
 				out.spacing = pxToCellsX(intOf(adt.Fields[0]), ctx)
 			}
-		case 8: // AttrStyle "k" "v" — sentinel for row/col detection
+		case 8: // AttrStyle "k" "v" — sentinel for row/col/wrap/grid + raw CSS escape
 			if len(adt.Fields) >= 2 {
 				k, _ := adt.Fields[0].(string)
-				if k == "__row" {
+				switch k {
+				case "__row":
 					out.isRow = true
+				case "__col":
+					// default (column); no flag needed
+				case "__wrap":
+					out.isWrappedRow = true
+				case "__grid":
+					out.isGrid = true
+				case "__paragraph":
+					out.isParagraph = true
+				case "__textcolumn":
+					out.isTextColumn = true
+				case "__gridMin":
+					// gridColumns N → AttrStyle "__gridMin" (encoded value)
+					if v, ok := adt.Fields[1].(string); ok {
+						fmt.Sscanf(v, "%d", &out.gridColumns)
+					}
+				default:
+					// User-supplied raw CSS — TUI can't render, warn once.
+					if !isInternalMarker(k) {
+						tuiWarn("style", "raw CSS attribute "+k)
+					}
 				}
 			}
+		case 9: // AttrDescribe Description — accessibility hints; tag-specific styling handled in layoutNode
+			// Description content is consumed by tagForDescription / pickSemanticTag
+			// at layoutElement time. No attr-level work here.
+		case 10: // AttrClass — CSS class, ignored in TUI by design
+			tuiWarn("style", "AttrClass (CSS classes don't apply in terminal)")
 		case 11: // AttrEvent — pre-built event payload (eventPair{name, msg})
 			if len(adt.Fields) > 0 {
 				out.events = append(out.events, adt.Fields[0])
 			}
-		case 12: // AttrAttribute "k" "v" — raw HTML attr; we read "value"/"placeholder"
+		case 12: // AttrAttribute "k" "v" — raw HTML attr; we read "value"/"placeholder"/"name"
 			if len(adt.Fields) >= 2 {
 				k, _ := adt.Fields[0].(string)
 				v, _ := adt.Fields[1].(string)
@@ -1085,13 +1532,28 @@ func walkAttrs(attrs []any, ctx tuiLayoutCtx) walkedAttrs {
 					out.valueAttr = v
 				case "placeholder":
 					out.placeholder = v
+				case "name":
+					out.nameAttr = v
+				case "type":
+					out.inputType = v
+				case "id", "for", "rows", "cols", "min", "max", "step",
+					"required", "disabled", "checked", "readonly", "autofocus",
+					"autocomplete", "minlength", "maxlength", "pattern",
+					"href", "target", "src", "alt", "accept", "multiple", "selected",
+					"sky-nav":
+					// Known HTML attrs that don't need TUI rendering — silent skip.
+				default:
+					tuiWarn("attribute", "raw HTML attribute "+k)
 				}
 			}
-		case 13: // AttrFontSize — IGNORED in TUI
+		case 13: // AttrFontSize — terminal has one cell size
+			tuiWarn("font", "size (terminal cells are uniform)")
 		case 14: // AttrFontColor Color
 			if len(adt.Fields) > 0 {
 				out.fg = colorOf(adt.Fields[0])
 			}
+		case 15: // AttrFontFamily — terminal font is set by emulator
+			tuiWarn("font", "family (terminal font is fixed)")
 		case 16: // AttrFontWeight
 			if len(adt.Fields) > 0 {
 				if w, ok := adt.Fields[0].(int); ok && w >= 600 {
@@ -1102,14 +1564,46 @@ func walkAttrs(attrs []any, ctx tuiLayoutCtx) walkedAttrs {
 			out.italic = true
 		case 18: // AttrFontUnderline
 			out.underline = true
+		case 19: // AttrFontDecoration String
+			if len(adt.Fields) > 0 {
+				if s, ok := adt.Fields[0].(string); ok {
+					switch s {
+					case "underline":
+						out.underline = true
+					case "line-through":
+						out.strike = true
+					case "overline":
+						out.overline = true
+					case "none":
+						out.underline = false
+						out.strike = false
+						out.overline = false
+					default:
+						tuiWarn("font", "decoration "+s)
+					}
+				}
+			}
+		case 20: // AttrFontLetterSpacing
+			tuiWarn("font", "letter-spacing (terminal cells are atomic)")
+		case 21: // AttrFontWordSpacing
+			tuiWarn("font", "word-spacing (terminal cells are atomic)")
+		case 22: // AttrFontAlign
+			if len(adt.Fields) > 0 {
+				if s, ok := adt.Fields[0].(string); ok {
+					out.textAlign = s
+				}
+			}
 		case 23: // AttrBgColor Color
 			if len(adt.Fields) > 0 {
 				out.bg = colorOf(adt.Fields[0])
 			}
+		case 24: // AttrBgImage
+			tuiWarn("background", "image (terminals can't render image fills)")
+		case 25: // AttrBgGradient
+			tuiWarn("background", "gradient (terminals can't render gradient fills)")
 		case 26: // AttrBorderWidth Int — uniform border on all sides
 			if len(adt.Fields) > 0 {
 				if w, ok := adt.Fields[0].(int); ok && w > 0 {
-					// TUI cells are atomic; any non-zero CSS width is 1 cell.
 					out.borderWidth = [4]int{1, 1, 1, 1}
 				}
 			}
@@ -1125,16 +1619,38 @@ func walkAttrs(attrs []any, ctx tuiLayoutCtx) walkedAttrs {
 			if len(adt.Fields) > 0 {
 				out.borderColor = colorOf(adt.Fields[0])
 			}
-		case 29: // AttrBorderRounded — IGNORED in TUI (no rounded box-drawing chars in standard Unicode)
+		case 29: // AttrBorderRounded — no rounded box-drawing in standard Unicode
+			tuiWarn("border", "rounded corners (Unicode box-drawing has no rounded chars)")
 		case 30: // AttrBorderStyle String — "solid" | "dashed" | "dotted"
 			if len(adt.Fields) > 0 {
 				if s, ok := adt.Fields[0].(string); ok {
 					out.borderStyle = s
 				}
 			}
-			// Other attrs (BgImage, BgGradient, BorderShadow, font family
-			// etc.) are explicitly IGNORED in TUI per the cross-platform
-			// mapping doc.
+		case 31: // AttrBorderShadow
+			tuiWarn("border", "shadow (terminals can't render drop shadows)")
+		case 32: // AttrBorderInsetShadow
+			tuiWarn("border", "inner shadow (terminals can't render shadows)")
+		case 33: // AttrPointer — cursor: pointer; TUI has no cursor concept
+			// Silent skip — pointer is purely a mouse cursor hint, the
+			// focus indicator already telegraphs interactivity.
+		case 34: // AttrOverflow String String — overflow-x, overflow-y
+			if len(adt.Fields) >= 2 {
+				x, _ := adt.Fields[0].(string)
+				y, _ := adt.Fields[1].(string)
+				out.overflow[0] = x
+				out.overflow[1] = y
+				if x == "clip" {
+					out.clip[0] = true
+				}
+				if y == "clip" {
+					out.clip[1] = true
+				}
+			}
+		default:
+			// Unknown tag — likely a Std.Ui addition we haven't ported.
+			// Warn so users see a hint rather than silent breakage.
+			tuiWarn("attribute", fmt.Sprintf("unknown attribute tag %d (%s)", adt.Tag, adt.SkyName))
 		}
 	}
 	return out
@@ -1276,7 +1792,12 @@ func newCellGrid(cols, rows int) [][]tuiCell {
 // placement. Collects focusable elements in tab order. Inputs read
 // their buffer from the persistent inputRegistry so typing carries
 // across re-renders.
-func paintBox(grid [][]tuiCell, box layoutBox, col0, row0, maxW, maxH, focusIdx int, focusables *[]focusable, inputs *inputRegistry, parentAxis layoutAxis, idxInParent int) {
+//
+// inherited carries the parent chain's effective text style so font
+// attributes (color, bold, italic, etc.) cascade to text leaves the
+// way CSS inheritance does on the web side. Each Node merges its own
+// style on top, and propagates the merged style down.
+func paintBox(grid [][]tuiCell, box layoutBox, col0, row0, maxW, maxH, focusIdx int, focusables *[]focusable, inputs *inputRegistry, inherited textStyle, parentAxis layoutAxis, idxInParent int) {
 	w := box.width
 	if w > maxW {
 		w = maxW
@@ -1289,6 +1810,13 @@ func paintBox(grid [][]tuiCell, box layoutBox, col0, row0, maxW, maxH, focusIdx 
 	// Background fill.
 	if box.bg.set {
 		fillRect(grid, col0, row0, w, h, box.bg)
+	}
+
+	// Behind overlays — paint before children so they sit underneath.
+	for _, n := range box.nearby {
+		if n.location == 5 { // Behind
+			paintNearby(grid, n, col0, row0, w, h, focusIdx, focusables, inputs, inherited)
+		}
 	}
 
 	// Border draw (under children/text but over background fill).
@@ -1307,6 +1835,7 @@ func paintBox(grid [][]tuiCell, box layoutBox, col0, row0, maxW, maxH, focusIdx 
 		*focusables = append(*focusables, focusable{
 			events:       box.events,
 			isInput:      isInput,
+			inputType:    box.inputType,
 			initialValue: box.valueAttr,
 			placeholder:  box.placeholder,
 			row:          row0, col: col0, w: w, h: h,
@@ -1325,35 +1854,105 @@ func paintBox(grid [][]tuiCell, box layoutBox, col0, row0, maxW, maxH, focusIdx 
 		innerH = 0
 	}
 
+	// Effective style for this node = parent inherited + own.
+	style := mergeStyle(inherited, boxOwnStyle(box))
+
 	switch box.kind {
 	case "text":
-		paintText(grid, box.text, innerCol, innerRow, innerW, box.fg, box.bg, box.bold, box.italic, box.underline)
+		paintText(grid, box.text, innerCol, innerRow, innerW, style)
 	case "node":
 		// Inputs render their persistent buffer + cursor instead of
 		// recursing into children (Std.Ui's input creates a TaggedNode
-		// with no children).
+		// with no children). The render varies by inputType:
+		//   text / email / search / "" → standard text editor
+		//   password → buffer rendered as ●●●
+		//   checkbox → [✓] when value=="true", [ ] otherwise
+		//   radio    → ◉ / ○  same way
+		//   range    → ──●── slider
+		//   textarea → multi-line editor
 		if box.tag == "input" {
-			focIdx := len(*focusables) - 1 // input was just registered above
-			st := inputs.get(focIdx)
-			// First-render initialisation: if user supplied a value
-			// attribute and the buffer is empty, seed the buffer.
-			// Subsequent renders: detect a user-driven reset (value
-			// attr changed since last frame) and resync buffer.
-			if box.valueAttr != st.lastValueAttr {
-				st.buffer = box.valueAttr
-				st.cursor = runeLen(st.buffer)
-				st.lastValueAttr = box.valueAttr
+			focIdx := len(*focusables) - 1
+			focused := focIdx == focusIdx
+			switch box.inputType {
+			case "checkbox":
+				paintCheckbox(grid, box, innerCol, innerRow, innerW, style, focused)
+			case "radio":
+				paintRadio(grid, box, innerCol, innerRow, innerW, style, focused)
+			case "range":
+				paintSlider(grid, box, innerCol, innerRow, innerW, style, focused)
+			default:
+				st := inputs.get(focIdx)
+				if box.valueAttr != st.lastValueAttr {
+					st.buffer = box.valueAttr
+					st.cursor = runeLen(st.buffer)
+					st.lastValueAttr = box.valueAttr
+				}
+				masked := box.inputType == "password"
+				multiline := box.inputType == "textarea"
+				paintInputBufferAdvanced(grid, st, innerCol, innerRow, innerW, innerH, style, box.placeholder, focused, masked, multiline)
 			}
-			paintInputBuffer(grid, st, innerCol, innerRow, innerW, box.fg, box.bg, box.placeholder, focIdx == focusIdx)
 			break
 		}
-		if box.axis == layoutAxisRow {
+		if box.gridLayout && box.gridColumns > 0 {
+			// Flow children row-major into NxM cells.
+			ncols := box.gridColumns
+			colWidth := 0
+			if ncols > 0 {
+				colWidth = innerW / ncols
+			}
+			// Compute row heights.
+			nrows := (len(box.children) + ncols - 1) / ncols
+			rowHeights := make([]int, nrows)
+			for i, c := range box.children {
+				r := i / ncols
+				if c.height > rowHeights[r] {
+					rowHeights[r] = c.height
+				}
+			}
+			y := innerRow
+			for r := 0; r < nrows; r++ {
+				if r > 0 {
+					y += box.spacing
+				}
+				for col := 0; col < ncols; col++ {
+					i := r*ncols + col
+					if i >= len(box.children) {
+						break
+					}
+					c := box.children[i]
+					x := innerCol + col*colWidth
+					paintBox(grid, c, x, y, colWidth, rowHeights[r], focusIdx, focusables, inputs, style, layoutAxisRow, i)
+				}
+				y += rowHeights[r]
+			}
+		} else if box.wrapped && box.axis == layoutAxisRow {
+			// wrappedRow: lay children in horizontal rows; when next
+			// child wouldn't fit, break to a new row beneath.
+			x := innerCol
+			y := innerRow
+			rowHeight := 0
+			for _, c := range box.children {
+				if x+c.width > innerCol+innerW && x > innerCol {
+					// Wrap to next "row".
+					x = innerCol
+					y += rowHeight + box.spacing
+					rowHeight = 0
+				}
+				paintBox(grid, c, x, y, innerW, innerH-(y-innerRow), focusIdx, focusables, inputs, style, layoutAxisRow, 0)
+				x += c.width + box.spacing
+				if c.height > rowHeight {
+					rowHeight = c.height
+				}
+			}
+		} else if box.axis == layoutAxisRow {
 			x := innerCol
 			for i, c := range box.children {
 				if i > 0 {
 					x += box.spacing
 				}
-				paintBox(grid, c, x, innerRow, innerW-(x-innerCol), innerH, focusIdx, focusables, inputs, layoutAxisRow, i)
+				// Cross-axis (vertical) alignment per child.
+				yOffset := alignOffset(c.alignY, innerH-c.height, false)
+				paintBox(grid, c, x, innerRow+yOffset, innerW-(x-innerCol), innerH, focusIdx, focusables, inputs, style, layoutAxisRow, i)
 				x += c.width
 			}
 		} else {
@@ -1362,19 +1961,37 @@ func paintBox(grid [][]tuiCell, box layoutBox, col0, row0, maxW, maxH, focusIdx 
 				if i > 0 {
 					y += box.spacing
 				}
-				paintBox(grid, c, innerCol, y, innerW, innerH-(y-innerRow), focusIdx, focusables, inputs, layoutAxisColumn, i)
+				// Cross-axis (horizontal) alignment per child.
+				xOffset := alignOffset(c.alignX, innerW-c.width, true)
+				paintBox(grid, c, innerCol+xOffset, y, innerW, innerH-(y-innerRow), focusIdx, focusables, inputs, style, layoutAxisColumn, i)
 				y += c.height
 			}
 		}
 	}
 
-	// Heading underline rows. Paint AFTER children so the underline
-	// can sit below the heading's text. h1 gets ═══, h2 gets ───.
+	// Heading underline rows + level markers. Paint AFTER children so
+	// the underline sits below the heading's text. Each level gets a
+	// distinct visual treatment so users can distinguish hierarchy at
+	// a glance even without font-size differences:
+	//   h1: ═══ double-line under title
+	//   h2: ─── single-line under title
+	//   h3: ▌ heavy left bar prefix
+	//   h4: ▎ medium left bar
+	//   h5: ▏ thin left bar
+	//   h6: · dot prefix
 	switch box.tag {
 	case "h1":
-		paintHeadingUnderline(grid, innerCol, innerRow+1, innerW, "═", box.fg)
+		paintHeadingUnderline(grid, innerCol, innerRow+1, innerW, "═", style.fg)
 	case "h2":
-		paintHeadingUnderline(grid, innerCol, innerRow+1, innerW, "─", box.fg)
+		paintHeadingUnderline(grid, innerCol, innerRow+1, innerW, "─", style.fg)
+	case "h3":
+		paintHeadingMarker(grid, col0, row0, "▌", style.fg)
+	case "h4":
+		paintHeadingMarker(grid, col0, row0, "▎", style.fg)
+	case "h5":
+		paintHeadingMarker(grid, col0, row0, "▏", style.fg)
+	case "h6":
+		paintHeadingMarker(grid, col0, row0, "·", style.fg)
 	}
 
 	// Focus indicator AFTER children so markers (e.g. ▸ ◂ for
@@ -1383,32 +2000,88 @@ func paintBox(grid [][]tuiCell, box layoutBox, col0, row0, maxW, maxH, focusIdx 
 		applyFocusIndicator(grid, box, col0, row0, w, h)
 	}
 
-	// Inherit fg/bold/italic/underline to children would be done by
-	// passing them through layoutCtx — for v0, the Std.Ui pattern is
-	// "set the style on the leaf" so we don't propagate.
+	// Above / Below / OnLeft / OnRight / InFront overlays.
+	// Behind was already painted before children at the top of paintBox.
+	for _, n := range box.nearby {
+		if n.location == 5 { // Behind already handled
+			continue
+		}
+		paintNearby(grid, n, col0, row0, w, h, focusIdx, focusables, inputs, style)
+	}
 }
 
-// paintInputBuffer renders an input's text + cursor into a single
-// row. When the buffer is empty AND the input isn't focused, the
-// placeholder text is shown in a muted style. The cursor renders as
-// reverse-video on the cell at st.cursor (or the trailing cell when
-// at end-of-buffer).
-func paintInputBuffer(grid [][]tuiCell, st *tuiInput, col, row, w int, fg, bg tuiColor, placeholder string, focused bool) {
+// paintInputBufferAdvanced renders an input's buffer + cursor.
+// `masked` (password type) replaces each char with ● in the visual
+// rendering (the underlying buffer keeps real chars). `multiline`
+// flows the buffer's embedded \n into separate rows.
+func paintInputBufferAdvanced(grid [][]tuiCell, st *tuiInput, col, row, w, h int, style textStyle, placeholder string, focused, masked, multiline bool) {
 	if row < 0 || row >= len(grid) || w <= 0 {
 		return
 	}
-	rowCells := grid[row]
-	// Buffer to render; placeholder if empty + unfocused.
 	display := st.buffer
 	usePlaceholder := false
 	if display == "" && placeholder != "" && !focused {
 		display = placeholder
 		usePlaceholder = true
 	}
-	// Convert to runes so cursor index is character-aligned.
-	runes := []rune(display)
+
+	// Multi-line: split into lines + place each on consecutive rows.
+	if multiline {
+		lines := strings.Split(display, "\n")
+		// Place each line.
+		for li, line := range lines {
+			if row+li >= len(grid) || row+li-row >= h {
+				break
+			}
+			paintInputLine(grid, line, col, row+li, w, style, usePlaceholder)
+		}
+		// Cursor: locate (lineIdx, colInLine) from cursor rune index.
+		if focused && !usePlaceholder {
+			lineIdx, colInLine := cursorLocate(display, st.cursor)
+			cy := row + lineIdx
+			cx := col + colInLine
+			if cy >= 0 && cy < len(grid) && cy-row < h && cx >= 0 && cx < col+w && cx < len(grid[cy]) {
+				grid[cy][cx].reverse = true
+				if grid[cy][cx].ch == "" {
+					grid[cy][cx].ch = " "
+				}
+			}
+		}
+		return
+	}
+
+	// Single-line path. mask if password.
+	rendered := display
+	if masked && !usePlaceholder {
+		rendered = strings.Repeat("●", runeLen(display))
+	}
+	paintInputLine(grid, rendered, col, row, w, style, usePlaceholder)
+
+	// Cursor (single-line): position st.cursor (rune index) within the
+	// rendered string. Mask doesn't change cursor positioning since
+	// rune count is preserved.
+	if focused && !usePlaceholder {
+		cursorCol := col + st.cursor
+		if cursorCol >= col+w {
+			cursorCol = col + w - 1
+		}
+		if cursorCol >= 0 && cursorCol < col+w && row < len(grid) && cursorCol < len(grid[row]) {
+			grid[row][cursorCol].reverse = true
+			if grid[row][cursorCol].ch == " " || grid[row][cursorCol].ch == "" {
+				grid[row][cursorCol].ch = " "
+			}
+		}
+	}
+}
+
+// paintInputLine paints one line of input text into the grid.
+func paintInputLine(grid [][]tuiCell, text string, col, row, w int, style textStyle, isPlaceholder bool) {
+	if row < 0 || row >= len(grid) {
+		return
+	}
+	rowCells := grid[row]
 	x := col
-	for i, r := range runes {
+	for _, r := range []rune(text) {
 		if x >= col+w || x >= len(rowCells) {
 			break
 		}
@@ -1418,33 +2091,265 @@ func paintInputBuffer(grid [][]tuiCell, st *tuiInput, col, row, w int, fg, bg tu
 		}
 		c := &rowCells[x]
 		c.ch = string(r)
-		if fg.set {
-			c.fg = fg
+		if style.fg.set {
+			c.fg = style.fg
 		}
-		if bg.set {
-			c.bg = bg
+		if style.bg.set {
+			c.bg = style.bg
 		}
-		if usePlaceholder {
-			c.italic = true // visual cue: placeholder
-		}
-		// Cursor cell: reverse-video while focused.
-		if focused && !usePlaceholder && i == st.cursor {
-			c.reverse = true
+		if isPlaceholder {
+			c.italic = true
 		}
 		x++
 	}
-	// Cursor at end-of-buffer (past last char): paint a trailing
-	// reverse-video space so the user can see where they're typing.
-	if focused && !usePlaceholder && st.cursor == len(runes) {
-		x := col + len(runes)
-		if x < col+w && x >= 0 && x < len(rowCells) {
-			rowCells[x].ch = " "
-			rowCells[x].reverse = true
-			if bg.set {
-				rowCells[x].bg = bg
-			}
+}
+
+// cursorLocate returns (lineIdx, colInLine) for a cursor rune index
+// within text containing embedded \n.
+func cursorLocate(text string, cursor int) (int, int) {
+	runes := []rune(text)
+	if cursor > len(runes) {
+		cursor = len(runes)
+	}
+	line := 0
+	colStart := 0
+	for i := 0; i < cursor; i++ {
+		if runes[i] == '\n' {
+			line++
+			colStart = i + 1
 		}
 	}
+	return line, cursor - colStart
+}
+
+// paintCheckbox renders [✓] when value attr is "true", [ ] otherwise.
+// Focused state shows [▸✓] / [▸ ] with the leading focus marker.
+func paintCheckbox(grid [][]tuiCell, box layoutBox, col, row, w int, style textStyle, focused bool) {
+	checked := box.valueAttr == "true"
+	mark := " "
+	if checked {
+		mark = "✓"
+	}
+	prefix := "[ "
+	if focused {
+		prefix = "[▸"
+	}
+	render := prefix + mark + "]"
+	paintInputLine(grid, render, col, row, w, style, false)
+}
+
+// paintRadio renders ◉ when selected, ○ otherwise.
+func paintRadio(grid [][]tuiCell, box layoutBox, col, row, w int, style textStyle, focused bool) {
+	selected := box.valueAttr != "" && box.valueAttr != "false"
+	mark := "○"
+	if selected {
+		mark = "◉"
+	}
+	if focused {
+		mark = "▸" + mark
+	}
+	paintInputLine(grid, mark, col, row, w, style, false)
+}
+
+// paintSlider renders ──●── with the thumb (●) positioned proportional
+// to value within [min, max]. Min/max/step are in box.* (read from
+// AttrAttribute "min"/"max"/"step"; not yet wired — for v1 the slider
+// renders at midpoint).
+func paintSlider(grid [][]tuiCell, box layoutBox, col, row, w int, style textStyle, focused bool) {
+	// v1: render a fixed midpoint thumb. min/max parsing is a polish
+	// pass; the user sees a slider widget that responds to focus and
+	// arrow keys (handled in main loop) without precise value mapping.
+	if w < 3 {
+		paintInputLine(grid, "●", col, row, w, style, false)
+		return
+	}
+	thumb := w / 2
+	for i := 0; i < w; i++ {
+		ch := "─"
+		if i == thumb {
+			ch = "●"
+		}
+		if i == 0 {
+			ch = "├"
+		} else if i == w-1 {
+			ch = "┤"
+		}
+		paintInputLine(grid, ch, col+i, row, 1, style, false)
+	}
+	if focused {
+		paintInputLine(grid, "▸", col, row, 1, style, false)
+	}
+}
+
+// mergeStyle layers a node's own style on top of inherited parent style.
+// CSS-like cascading: child's explicit style wins, otherwise inherits.
+// `align` and `bg` don't inherit (they're per-element); fg, bold, italic,
+// underline, strike, overline DO inherit.
+func mergeStyle(parent, own textStyle) textStyle {
+	out := own
+	if !out.fg.set {
+		out.fg = parent.fg
+	}
+	if !out.bold {
+		out.bold = parent.bold
+	}
+	if !out.italic {
+		out.italic = parent.italic
+	}
+	if !out.underline {
+		out.underline = parent.underline
+	}
+	if !out.strike {
+		out.strike = parent.strike
+	}
+	if !out.overline {
+		out.overline = parent.overline
+	}
+	// align doesn't inherit by default in CSS; leave own.
+	// bg doesn't inherit (transparent is the default).
+	return out
+}
+
+// boxOwnStyle extracts just the style fields from a layoutBox.
+func boxOwnStyle(box layoutBox) textStyle {
+	return textStyle{
+		fg:        box.fg,
+		bg:        box.bg,
+		bold:      box.bold,
+		italic:    box.italic,
+		underline: box.underline,
+		strike:    box.strike,
+		overline:  box.overline,
+		align:     box.textAlign,
+	}
+}
+
+// paintNearby places a nearby Element relative to the host box's
+// bounds. Location tags (from Std.Ui.Location):
+//   0 Above   row = hostRow - childHeight
+//   1 Below   row = hostRow + hostHeight
+//   2 OnRight col = hostCol + hostWidth
+//   3 OnLeft  col = hostCol - childWidth
+//   4 InFront same coords as host (overlay)
+//   5 Behind  same coords (handled in caller before children paint)
+//
+// The renderer measures the child against a generous bound (host's
+// own size in the relevant axis) then offsets accordingly.
+func paintNearby(grid [][]tuiCell, n nearbyEntry, hostCol, hostRow, hostW, hostH, focusIdx int, focusables *[]focusable, inputs *inputRegistry, inherited textStyle) {
+	if len(grid) == 0 {
+		return
+	}
+	maxCols := len(grid[0])
+	maxRows := len(grid)
+	// Choose layout context based on host's size — gives the child
+	// generous bounds so it can size itself naturally.
+	ctx := tuiLayoutCtx{
+		cols:       maxCols,
+		rows:       maxRows,
+		pxPerCellX: 1, // pixels-per-cell mostly irrelevant for nearby; child uses its own attrs
+		pxPerCellY: 1,
+	}
+	childBox := layoutElement(n.elem, ctx, hostW, hostH, layoutAxisColumn)
+	col := hostCol
+	row := hostRow
+	switch n.location {
+	case 0: // Above
+		row = hostRow - childBox.height
+	case 1: // Below
+		row = hostRow + hostH
+	case 2: // OnRight
+		col = hostCol + hostW
+	case 3: // OnLeft
+		col = hostCol - childBox.width
+	case 4, 5: // InFront / Behind — same coords as host
+		col = hostCol
+		row = hostRow
+	}
+	// Bounds-clip — don't paint past grid edges.
+	if row < 0 {
+		row = 0
+	}
+	if col < 0 {
+		col = 0
+	}
+	maxW := maxCols - col
+	maxH := maxRows - row
+	if maxW <= 0 || maxH <= 0 {
+		return
+	}
+	paintBox(grid, childBox, col, row, maxW, maxH, focusIdx, focusables, inputs, inherited, layoutAxisColumn, 0)
+}
+
+// extractTextContent walks an Element ADT and returns the plain text
+// content (concatenated). Used by paragraph / textColumn to flatten
+// styled inline children for word-wrap.
+func extractTextContent(elem any) string {
+	adt, ok := elem.(SkyADT)
+	if !ok {
+		return ""
+	}
+	switch adt.Tag {
+	case 0: // Empty
+		return ""
+	case 1: // Text s
+		if len(adt.Fields) > 0 {
+			if s, ok := adt.Fields[0].(string); ok {
+				return s
+			}
+		}
+	case 2, 3: // Node / TaggedNode — recurse into children
+		var fields []any = adt.Fields
+		if adt.Tag == 3 && len(fields) > 0 {
+			fields = fields[1:] // skip tag
+		}
+		if len(fields) >= 3 {
+			children := asList(fields[2])
+			parts := make([]string, 0, len(children))
+			for _, c := range children {
+				parts = append(parts, extractTextContent(c))
+			}
+			return strings.Join(parts, " ")
+		}
+	}
+	return ""
+}
+
+// alignOffset returns the cell offset for a child along its cross axis
+// given (align, slack). Slack = parent_size - child_size; negative
+// slack means the child is bigger than the parent and we just place
+// at zero offset. axisX flag exists for symmetry with future hooks
+// (handed to readers for clarity even though current logic is the
+// same for both axes).
+func alignOffset(align string, slack int, axisX bool) int {
+	if slack <= 0 {
+		return 0
+	}
+	switch align {
+	case "center":
+		return slack / 2
+	case "right", "bottom":
+		return slack
+	default:
+		// "left", "top", or "" (unset) → no offset.
+		return 0
+	}
+}
+
+// paintHeadingMarker writes a single character at (col, row) with the
+// given foreground colour. Used for h3-h6 level indicators.
+func paintHeadingMarker(grid [][]tuiCell, col, row int, ch string, fg tuiColor) {
+	if row < 0 || row >= len(grid) {
+		return
+	}
+	rowCells := grid[row]
+	if col < 0 || col >= len(rowCells) {
+		return
+	}
+	rowCells[col].ch = ch
+	if fg.set {
+		rowCells[col].fg = fg
+	}
+	rowCells[col].bold = true
 }
 
 func paintHeadingUnderline(grid [][]tuiCell, col, row, w int, ch string, fg tuiColor) {
@@ -1463,13 +2368,37 @@ func paintHeadingUnderline(grid [][]tuiCell, col, row, w int, ch string, fg tuiC
 	}
 }
 
-func paintText(grid [][]tuiCell, text string, col, row, maxW int, fg, bg tuiColor, bold, italic, underline bool) {
-	if row < 0 || row >= len(grid) {
+// textStyle bundles all the typographic flags so paintText callers
+// don't pass ten booleans positionally. Keep zero-valued for "no style".
+type textStyle struct {
+	fg, bg    tuiColor
+	bold      bool
+	italic    bool
+	underline bool
+	strike    bool
+	overline  bool
+	align     string // "" | "left" | "center" | "right"
+}
+
+func paintText(grid [][]tuiCell, text string, col, row, maxW int, st textStyle) {
+	if row < 0 || row >= len(grid) || maxW <= 0 {
 		return
 	}
 	rowCells := grid[row]
-	x := col
-	for _, r := range text {
+	// Compute starting column based on text alignment within the slot.
+	runes := []rune(text)
+	startCol := col
+	if st.align != "" && len(runes) < maxW {
+		slack := maxW - len(runes)
+		switch st.align {
+		case "center":
+			startCol = col + slack/2
+		case "right":
+			startCol = col + slack
+		}
+	}
+	x := startCol
+	for _, r := range runes {
 		if x >= col+maxW || x >= len(rowCells) {
 			break
 		}
@@ -1479,20 +2408,26 @@ func paintText(grid [][]tuiCell, text string, col, row, maxW int, fg, bg tuiColo
 		}
 		c := &rowCells[x]
 		c.ch = string(r)
-		if fg.set {
-			c.fg = fg
+		if st.fg.set {
+			c.fg = st.fg
 		}
-		if bg.set {
-			c.bg = bg
+		if st.bg.set {
+			c.bg = st.bg
 		}
-		if bold {
+		if st.bold {
 			c.bold = true
 		}
-		if italic {
+		if st.italic {
 			c.italic = true
 		}
-		if underline {
+		if st.underline {
 			c.underline = true
+		}
+		if st.strike {
+			c.strike = true
+		}
+		if st.overline {
+			c.overline = true
 		}
 		x++
 	}
@@ -1666,7 +2601,8 @@ func cellEqual(a, b tuiCell) bool {
 	return a.ch == b.ch &&
 		a.fg == b.fg && a.bg == b.bg &&
 		a.bold == b.bold && a.italic == b.italic &&
-		a.underline == b.underline && a.reverse == b.reverse
+		a.underline == b.underline && a.strike == b.strike &&
+		a.overline == b.overline && a.reverse == b.reverse
 }
 
 // paintDiff emits the minimum ANSI sequence to transform `prev` into
@@ -1731,7 +2667,8 @@ func paintDiff(prev, next [][]tuiCell) string {
 }
 
 func cellStyleSGR(c tuiCell) string {
-	if c.ch == " " && !c.fg.set && !c.bg.set && !c.bold && !c.italic && !c.underline && !c.reverse {
+	if c.ch == " " && !c.fg.set && !c.bg.set && !c.bold && !c.italic &&
+		!c.underline && !c.strike && !c.overline && !c.reverse {
 		return ""
 	}
 	var parts []string
@@ -1746,6 +2683,12 @@ func cellStyleSGR(c tuiCell) string {
 	}
 	if c.reverse {
 		parts = append(parts, "7")
+	}
+	if c.strike {
+		parts = append(parts, "9")
+	}
+	if c.overline {
+		parts = append(parts, "53")
 	}
 	if c.fg.set {
 		parts = append(parts, fmt.Sprintf("38;2;%d;%d;%d", c.fg.r, c.fg.g, c.fg.b))
