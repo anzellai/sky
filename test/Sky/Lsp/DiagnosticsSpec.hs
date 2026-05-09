@@ -123,6 +123,96 @@ spec = do
                             anyMatch "Undefined name" msgs `shouldBe` True
                             anyMatch "messgae" msgs `shouldBe` True
 
+        it "issue #52 — partial application at stdlib boundary produces a diagnostic" $ do
+            -- Regression for issue #52
+            -- (https://github.com/anzellai/sky/issues/52): a Sky.Live
+            -- view function calling `Ui.layout [] (codeSection)` —
+            -- where codeSection : Model -> Element — should be flagged
+            -- by the LSP. Pre-fix, this compiled (and crashed at
+            -- runtime) AND the LSP showed no red squiggles. The fix
+            -- (cross-module externals threaded into runPipelineSt)
+            -- makes HM see Ui.layout's signature, so the partial
+            -- application surfaces as a real type-error diagnostic.
+            sky <- findSky
+            let src = unlines
+                    [ "module Main exposing (main)"
+                    , ""
+                    , "import Sky.Core.Prelude exposing (..)"
+                    , "import Sky.Core.String as String"
+                    , "import Std.Log exposing (println)"
+                    , "import Std.Ui as Ui"
+                    , "import Std.Ui exposing (Element)"
+                    , ""
+                    , "type alias Model = { count : Int }"
+                    , ""
+                    , "codeSection : Model -> Element msg"
+                    , "codeSection model ="
+                    , "    Ui.text (String.fromInt model.count)"
+                    , ""
+                    , "viewBuggy : Model -> any"
+                    , "viewBuggy model ="
+                    , "    Ui.layout [] codeSection"
+                    , ""
+                    , "main = println (toString (viewBuggy { count = 0 }))"
+                    ]
+            withSystemTempDirectory "sky-lsp-issue52" $ \dir -> do
+                fixture <- setupProject dir src
+                withLsp sky $ \hin hout -> do
+                    initializeLsp hin hout
+                    didOpen hin fixture src
+                    result <- awaitNotification hout "textDocument/publishDiagnostics"
+                    case result of
+                        Nothing -> expectationFailure
+                            "no publishDiagnostics notification within budget"
+                        Just payload -> do
+                            let msgs = diagnosticMessages payload
+                            -- The diagnostic should mention the
+                            -- mis-applied identifier and the type
+                            -- mismatch. Phrasing: "Foreign 'Main.codeSection':
+                            -- (Model) -> Element a vs Element a"
+                            anyMatch "codeSection" msgs `shouldBe` True
+                            anyMatch "Element" msgs `shouldBe` True
+
+        it "issue #52 corrected — applying the missing arg clears the diagnostic" $ do
+            -- Positive control for the fix above: change `codeSection`
+            -- to `codeSection model` and the LSP should report empty
+            -- diagnostics. Without this, a false-positive could leave
+            -- the squiggle on every save indefinitely.
+            sky <- findSky
+            let src = unlines
+                    [ "module Main exposing (main)"
+                    , ""
+                    , "import Sky.Core.Prelude exposing (..)"
+                    , "import Sky.Core.String as String"
+                    , "import Std.Log exposing (println)"
+                    , "import Std.Ui as Ui"
+                    , "import Std.Ui exposing (Element)"
+                    , ""
+                    , "type alias Model = { count : Int }"
+                    , ""
+                    , "codeSection : Model -> Element msg"
+                    , "codeSection model ="
+                    , "    Ui.text (String.fromInt model.count)"
+                    , ""
+                    , "viewCorrect : Model -> any"
+                    , "viewCorrect model ="
+                    , "    Ui.layout [] (codeSection model)"
+                    , ""
+                    , "main = println (toString (viewCorrect { count = 0 }))"
+                    ]
+            withSystemTempDirectory "sky-lsp-issue52-fix" $ \dir -> do
+                fixture <- setupProject dir src
+                withLsp sky $ \hin hout -> do
+                    initializeLsp hin hout
+                    didOpen hin fixture src
+                    result <- awaitNotification hout "textDocument/publishDiagnostics"
+                    case result of
+                        Nothing -> expectationFailure
+                            "no publishDiagnostics notification within budget"
+                        Just payload -> do
+                            let msgs = diagnosticMessages payload
+                            msgs `shouldBe` []
+
         it "clean file produces a diagnostics notification with an empty array" $ do
             -- Positive control: a valid file should still trigger
             -- publishDiagnostics (empty), so editors that cache

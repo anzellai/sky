@@ -18,6 +18,7 @@ module Sky.Lsp.Index
     , lookupAtCursor
     , collectLocalBindings
     , symFromTopLevel
+    , externalsForLsp
     ) where
 
 import qualified Data.Map.Strict as Map
@@ -105,6 +106,15 @@ data Index = Index
       -- rely on lookupLocal's smallest-scope selection on top of this.
     , idxFileSrc   :: !(Map FilePath T.Text)
     , idxRoot      :: !(Maybe FilePath)
+    , idxExternals :: !(Map (String, String) Ty.Annotation)
+      -- Pre-built cross-module externals map. Populated from the
+      -- workspace typecheck so the LSP's runPipeline can constrain
+      -- the open file with externals (see Server.hs:runPipelineSt
+      -- + Server.hs:getExternalsForFile). Without these, type errors
+      -- involving stdlib functions (`Ui.layout`, `Http.get`, etc.)
+      -- never surface as red squiggles in the editor — the
+      -- root-cause of issue #52's LSP-side gap. Built once at index
+      -- time; refreshed when the index is refreshed.
     } deriving (Show)
 
 
@@ -120,6 +130,7 @@ emptyIndex = Index
     , idxRenaming  = Map.empty
     , idxFileSrc = Map.empty
     , idxRoot = Nothing
+    , idxExternals = Map.empty
     }
 
 
@@ -183,6 +194,32 @@ fromTypecheck root wt =
             in Solve.moduleRenaming (topTys ++ localTys)
         renamings = Map.fromList
             [ (p, renamingFor p) | (_, p) <- modPaths ]
+        -- Build cross-module externals once, at index time. The LSP's
+        -- diagnostics path consults idxExternals (via getExternalsForFile)
+        -- to constrain each open file against the same dep signatures
+        -- `sky check` sees. Issue #52: this is what the LSP was missing.
+        --
+        -- The build needs to MATCH `compile`'s extra filter (Compile.hs
+        -- line ~575): only keep externals whose `name` is a top-level
+        -- declaration in the home module. Without the filter, externals
+        -- include every name HM saw flowing through that module
+        -- (cross-module references, imports, constructors, etc.) —
+        -- producing wrong-home entries like ("Main","layout") that
+        -- would mis-type subsequent solves.
+        validForExternals = [ (n, Compile._wm_canon wm)
+                            | (n, wm) <- modList ]
+        depSolved = [ (n, Compile._wm_types wm) | (n, wm) <- modList ]
+        depDeclaredNames =
+            [ (n, Compile.collectDeclNames (Can._decls (Compile._wm_canon wm)))
+            | (n, wm) <- modList
+            ]
+        rawExternals = Compile.buildCrossModuleExternalsWithMods
+                        validForExternals depSolved
+        externals = Map.filterWithKey
+            (\(m, n) _ -> case lookup m depDeclaredNames of
+                Just names -> n `Set.member` names
+                Nothing    -> False)
+            rawExternals
     in Index
         { idxByQual    = byQual
         , idxByLocal   = byLocal
@@ -194,6 +231,7 @@ fromTypecheck root wt =
         , idxRenaming  = renamings
         , idxFileSrc   = Map.fromList allFileSrc
         , idxRoot      = root
+        , idxExternals = externals
         }
   where
     step (modName, wmod) (tops, locals, imps, srcs, mods, ltypes) =
@@ -459,6 +497,14 @@ docCommentBefore src (A.Region s _) =
 -- | Look up a fully-qualified symbol like "Sky.Core.Error.io".
 lookupQualified :: Index -> String -> Maybe Sym
 lookupQualified idx q = Map.lookup q (idxByQual idx)
+
+
+-- | Return the cross-module externals map the LSP's runPipelineSt
+-- should pass to `Constrain.constrainModuleWithExternals` when type-
+-- checking an open file. Stored on the Index so we don't rebuild it
+-- per keystroke. See Server.hs:getExternalsForFile.
+externalsForLsp :: Index -> Map (String, String) Ty.Annotation
+externalsForLsp = idxExternals
 
 
 -- | Look up the symbol referenced at (file, line, col) for hover/jump.

@@ -51,6 +51,7 @@ import qualified Sky.Type.Constrain.Module as Constrain
 import qualified Sky.Type.Solve as Solve
 import qualified Sky.Type.Type as Ty
 import qualified Sky.Type.Exhaustiveness as Exhaust
+import qualified Sky.AST.Canonical as Can
 import qualified Sky.AST.Source as Src
 import qualified Sky.Reporting.Annotation as A
 import qualified Sky.Format.Format as Fmt
@@ -192,8 +193,8 @@ dispatch st req = do
             if wasShutdown
                 then exitSuccess
                 else exitWith (ExitFailure 1)
-        "textDocument/didOpen"        -> handleDidOpen docs req
-        "textDocument/didChange"      -> handleDidChange docs req
+        "textDocument/didOpen"        -> handleDidOpenSt st req
+        "textDocument/didChange"      -> handleDidChangeSt st req
         "textDocument/didSave"        -> handleDidSaveSt st req
         "textDocument/didClose"       -> handleDidClose docs req
         "textDocument/hover"          -> handleHoverIdx st req reqId
@@ -415,14 +416,51 @@ handleDidSaveSt :: ServerState -> A.Value -> IO ()
 handleDidSaveSt st req = do
     let uri  = jsonStrAt ["params", "textDocument", "uri"] req
         path = uriToPath uri
+    -- IMPORTANT: refresh the workspace index BEFORE running diagnostics.
+    -- The new file content is now on disk; the externals map needs to
+    -- reflect it so any cross-file impact (a new top-level binding,
+    -- a renamed export, a fixed type error in another file) is
+    -- visible to the diagnostics pass that follows. Best effort —
+    -- failures don't break the server.
+    _ <- try (refreshIndex st path) :: IO (Either SomeException Idx.Index)
     docs <- IORef.readIORef (ssDocs st)
     case Map.lookup uri docs of
-        Just (_, text) -> publishDiagnostics uri text
+        Just (_, text) -> publishDiagnosticsSt (Just st) uri text
         Nothing -> return ()
-    -- Rebuild the workspace index so cross-file lookups see the change.
-    -- Best effort — failures don't break the server.
-    _ <- try (refreshIndex st path) :: IO (Either SomeException Idx.Index)
     return ()
+
+
+-- | handleDidOpenSt: same as handleDidOpen but routes diagnostics
+-- through the workspace-aware pipeline so cross-module type errors
+-- (issue #52) surface immediately on file open.
+handleDidOpenSt :: ServerState -> A.Value -> IO ()
+handleDidOpenSt st req = do
+    let uri = jsonStrAt ["params", "textDocument", "uri"] req
+        text = jsonStrAt ["params", "textDocument", "text"] req
+        version = jsonIntAt ["params", "textDocument", "version"] req
+    IORef.modifyIORef (ssDocs st) (Map.insert uri (version, text))
+    publishDiagnosticsSt (Just st) uri text
+
+
+-- | handleDidChangeSt: same as handleDidChange but workspace-aware.
+-- Note we do NOT refresh the index on every keystroke — that would
+-- be prohibitively expensive on large projects. The index reflects
+-- the on-disk state; the open file's diagnostics use the in-memory
+-- text + the on-disk-derived externals. This is the right trade-off
+-- for editor latency: the user's current file is precise; cross-file
+-- effects are visible after save (which DOES rebuild the index).
+handleDidChangeSt :: ServerState -> A.Value -> IO ()
+handleDidChangeSt st req = do
+    let uri = jsonStrAt ["params", "textDocument", "uri"] req
+        version = jsonIntAt ["params", "textDocument", "version"] req
+        changes = fromMaybe [] (jsonArrAt ["params", "contentChanges"] req)
+    case changes of
+        (c:_) ->
+            let text = jsonStrAt ["text"] c
+            in do
+                IORef.modifyIORef (ssDocs st) (Map.insert uri (version, text))
+                publishDiagnosticsSt (Just st) uri text
+        [] -> return ()
 
 
 -- ─── Initialize ────────────────────────────────────────────────────────
@@ -514,8 +552,25 @@ handleDidClose docs req = do
 -- ─── Diagnostics ───────────────────────────────────────────────────────
 
 publishDiagnostics :: T.Text -> T.Text -> IO ()
-publishDiagnostics uri text = do
-    diags <- computeDiagnostics text
+publishDiagnostics uri text = publishDiagnosticsSt Nothing uri text
+
+
+-- | publishDiagnosticsSt: when given a ServerState, use the workspace
+-- index to populate cross-module externals so type errors involving
+-- stdlib / dep modules (issue #52 — `Ui.layout codeSection` where
+-- codeSection is partially-applied) actually surface as red squiggles.
+-- Without externals, HM treats imported names as fresh polymorphic
+-- variables and rejects nothing.
+--
+-- The Nothing case (legacy `publishDiagnostics`) falls back to the
+-- old in-isolation behaviour for callers that pre-date ServerState
+-- threading. Tests use this; production paths now go through the
+-- ServerState variant.
+publishDiagnosticsSt :: Maybe ServerState -> T.Text -> T.Text -> IO ()
+publishDiagnosticsSt mst uri text = do
+    diags <- case mst of
+        Just st -> computeDiagnosticsSt st (uriToPath uri) text
+        Nothing -> computeDiagnostics text
     sendNotification "textDocument/publishDiagnostics" $ A.object
         [ "uri"         A..= uri
         , "diagnostics" A..= diags
@@ -525,6 +580,18 @@ publishDiagnostics uri text = do
 computeDiagnostics :: T.Text -> IO [A.Value]
 computeDiagnostics src = do
     r <- try (runPipeline src) :: IO (Either SomeException [A.Value])
+    case r of
+        Left _   -> return []
+        Right ds -> return ds
+
+
+-- | Like computeDiagnostics but uses the workspace index to populate
+-- cross-module externals before solving. This is the path that closes
+-- issue #52: type errors involving imported / stdlib functions surface
+-- as proper diagnostics instead of being silently accepted.
+computeDiagnosticsSt :: ServerState -> FilePath -> T.Text -> IO [A.Value]
+computeDiagnosticsSt st path src = do
+    r <- try (runPipelineSt st path src) :: IO (Either SomeException [A.Value])
     case r of
         Left _   -> return []
         Right ds -> return ds
@@ -556,27 +623,85 @@ runPipeline src = case Parse.parseModule src of
                 r  <- Solve.solve cs
                 case r of
                     Solve.SolveError err
-                        -- Suppress the `{ ... } vs { ... }` family
-                        -- of errors the no-externals LSP path
-                        -- false-positives on. Concretely: when HM
-                        -- can't unify two records because one or
-                        -- both came from a kernel sig (e.g.
-                        -- `Live.app`'s record-typed param) and the
-                        -- LSP doesn't have the dep externals
-                        -- loaded, the rendered diagnostic shows
-                        -- `Type mismatch: { ... } vs { ... }`. The
-                        -- truncated `{ ... }` is the giveaway —
-                        -- record types large enough to hit
-                        -- truncation are almost always legitimate
-                        -- in `sky check` (with externals); the LSP
-                        -- false-positive disappears once the
-                        -- proper externals helper lands.
+                        -- Legacy heuristic — only kicks in for callers
+                        -- still on the no-externals path. Production
+                        -- callers go through `runPipelineSt` which
+                        -- doesn't need this.
                         | isLikelyExternalsFalsePositive err ->
                             return (map exhaustDiagnostic (Exhaust.checkModule canMod))
                         | otherwise ->
                             return [diagnosticFromMessage ("Type error: " ++ err)]
                     Solve.SolveOk _ ->
                         return (map exhaustDiagnostic (Exhaust.checkModule canMod))
+
+
+-- | runPipelineSt: cross-module-aware diagnostics. Builds externals
+-- from the workspace index so the open file is type-checked against
+-- the actual signatures of imported stdlib / dep functions.
+--
+-- This is what closes issue #52 in the editor: typing
+--   view : Model -> any
+--   view model = Ui.layout [] codeSection   -- partial app
+-- now produces the same red-squiggle "Type mismatch: (Model) ->
+-- Element a vs Element a" that `sky check` produces, instead of
+-- silently passing.
+--
+-- Falls back to runPipeline (no externals) when the workspace index
+-- can't be built (no sky.toml, no project root, transient build error).
+-- That keeps the editor responsive on standalone files outside a
+-- project at the cost of cross-module checks for those — which is
+-- the right trade-off (the user can't have cross-module errors in a
+-- module they aren't importing anything in).
+runPipelineSt :: ServerState -> FilePath -> T.Text -> IO [A.Value]
+runPipelineSt st path src = case Parse.parseModule src of
+    Left err ->
+        return [mkDiagnosticAtError err ("Parse error: " ++ showParseError err)]
+    Right srcMod ->
+        case Canonicalise.canonicalise srcMod of
+            Left err ->
+                return [diagnosticFromMessage ("Canonicalise: " ++ err)]
+            Right canMod -> do
+                externals <- getExternalsForFile st path canMod
+                cs <- Constrain.constrainModuleWithExternals externals canMod
+                r  <- Solve.solve cs
+                case r of
+                    Solve.SolveError err
+                        -- Even with externals on, a class of false-
+                        -- positives survives: polymorphic kernel sigs
+                        -- like `Live.app : a -> Task ...` produce
+                        -- `Type mismatch: { ... } vs { ... }` errors
+                        -- when their cfg-record param's type variable
+                        -- is solved against an external. `sky check`
+                        -- doesn't report these (its constraint flow
+                        -- differs slightly). Keep the heuristic until
+                        -- the closed-record kernel-sig work (Limit-
+                        -- ation #19) closes the underlying gap.
+                        | isLikelyExternalsFalsePositive err ->
+                            return (map exhaustDiagnostic (Exhaust.checkModule canMod))
+                        | otherwise ->
+                            return [diagnosticFromMessage ("Type error: " ++ err)]
+                    Solve.SolveOk _ ->
+                        return (map exhaustDiagnostic (Exhaust.checkModule canMod))
+
+
+-- | Build the cross-module externals map for a given file's canonical
+-- module by consulting the workspace index. The index already holds
+-- the solved types of every other module in the project (including
+-- stdlib, materialised under .skycache/stdlib). We pull each imported
+-- module's solved types and run them through the same externals
+-- builder the production `compile` pipeline uses.
+--
+-- Empty externals on no-index path (e.g. file outside a project).
+getExternalsForFile
+    :: ServerState
+    -> FilePath
+    -> Can.Module
+    -> IO (Map.Map (String, String) Ty.Annotation)
+getExternalsForFile st path _canMod = do
+    eidx <- try (getIndex st path) :: IO (Either SomeException Idx.Index)
+    case eidx of
+        Left _    -> return Map.empty
+        Right idx -> return (Idx.externalsForLsp idx)
 
 
 -- | True when the solver error matches the shape the no-externals

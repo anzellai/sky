@@ -496,7 +496,7 @@ continueCompile config _entryPath outDir moduleOrder srcHash = do
             -- (an unforced Task thunk's func-pointer being string-
             -- split because the dep's HM error was hidden).
 
-            -- Pass 1: solve each dep in isolation.
+                    -- Pass 1: solve each dep in isolation.
             depSolved0 <- Async.forConcurrently validDeps $ \(modName, depMod) -> do
                 cs <- Constrain.constrainModule depMod
                 r  <- Solve.solve cs
@@ -1270,16 +1270,33 @@ typecheckWorkspace config entryPath = do
             | (modName, depMod) <- firstValid
             ]
 
-    -- Second-pass canonicalise + per-module typecheck
+    -- Single-pass typecheck. The Index built from this gets pass-1
+    -- types (one solver run per module, no cross-module externals).
+    -- The LSP's runPipelineSt re-solves the OPEN file with externals
+    -- derived from these pass-1 types — that's the path that catches
+    -- cross-module mismatches (issue #52).
+    --
+    -- IMPORTANT: solveWithLocals returns ONLY the env-type entries,
+    -- not the full set `solve` produces. `solve` merges innermost
+    -- locals into the envTypes map (Solve.hs:168). We must do the
+    -- same merge here, otherwise the workspace's types maps miss
+    -- top-level decl entries that the solver tracked as let-
+    -- bindings — which left the externals incomplete (Std.Ui's
+    -- `layout`, `text`, `el`, etc. all missing).
     perMod <- Async.forConcurrently okParsed $ \(n, path, src, srcMod) ->
         case Canonicalise.canonicaliseWithDeps depInfoMap srcMod of
             Left err -> return (n, Left err, srcMod, path, src)
             Right canMod -> do
                 cs <- Constrain.constrainModule canMod
                 (r, localTys) <- Solve.solveWithLocals cs
-                let types = case r of
+                let envTypes = case r of
                         Solve.SolveOk t -> t
                         _               -> Map.empty
+                    -- Match Solve.solve's merge: take the innermost
+                    -- (first) type from each local, merge under
+                    -- envTypes (envTypes wins on collision).
+                    localFirst = Map.map head (Map.filter (not . null) localTys)
+                    types = Map.union localFirst envTypes
                 return (n, Right (canMod, types, localTys), srcMod, path, src)
 
     let modMap = Map.fromList
