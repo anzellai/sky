@@ -1610,13 +1610,32 @@ these first)
   `.env` is loaded. Workaround is an explicit `_` param; still the
   guidance in the Known Limitations section.
 
-#### Typed-codegen TODO (carry into v1.0)
+#### Typed-codegen TODO (carry into v1.0; v0.12 review)
+
+The v0.12 overhaul session reviewed both items below and explicitly
+deferred. Foundation work has already landed (typed-generic helpers
+exist in `runtime-go/rt/rt.go`: `List_mapT`, `List_filterT`,
+`List_foldlT`, `List_lengthT`, `List_headT`, etc.). What's left is
+per-kernel migration + codegen routing — multi-release scope, not
+suitable for a single overhaul cycle.
+
+Tracking issues to revisit each release:
+- 11 reflect.MakeFunc adapters across the 19-example sweep (per the
+  2026-04-27 measurement). Re-measure each release; if the count
+  climbs into the hundreds, prioritise lambda-lowering work.
+- Runtime-kernel `any` returns: `rt.Dict_get`, `rt.Html_render`,
+  ~30+ others. Each port adds a typed `*T` variant + codegen
+  routing; runtime cost ~5 % CPU on hot paths until ported.
 
 - **Eliminate the `any` return in runtime kernels.** Helpers like
   `rt.Dict_get`, `rt.List_map`, `rt.Html_render` still return `any`
   internally; the typed surface calls `rt.Coerce[T]` on the result.
   Porting them to generics (`Dict_getT[V]`, `List_mapT[A, B]`) drops
-  the reflect dance.
+  the reflect dance. **v0.12 status**: the typed-generic foundation
+  is in place (List_mapT, List_filterT, List_foldlT, List_lengthT,
+  List_headT, List_dropAnyT, etc. all exist in rt.go); per-kernel
+  migration is per-helper work that can land incrementally. No
+  blocking architectural decisions remain.
 - **Record struct for `update` / `view` signatures.** TEA apps still
   return `(Model, Cmd Msg)` via `any` tuple; emitting a named
   `State_R` tuple shape would let Go catch Msg/Model misalignment.
