@@ -5942,23 +5942,23 @@ kernelTypedCall types modName funcName args goArgs =
             GoIr.GoCall (GoIr.GoIdent ("rt.AsListT[" ++ elemGo ++ "]")) [e]
     in case (modName, funcName, args, goArgs) of
         -- List.map fn xs : (a -> b) -> List a -> List b
-        -- Routes to List_mapTA[A] (typed slice, any-typed function).
-        -- The TA variant accepts the lambda's `func(any) any` shape
-        -- (Gap 4 territory — Sky lambdas don't yet preserve types).
-        -- Win: typed input slice means no AsListT coercion at the
-        -- boundary; iteration is direct on []A. Per-element call
-        -- still flows through SkyCall.
-        --
-        -- The list arg is wrapped with rt.AsListT[A](...) so a
-        -- runtime any-typed value (rt.Field, List_mapAny output,
-        -- etc.) is converted to the typed Go slice the kernel
-        -- expects. AsListT is a no-op on already-typed slices.
+        -- v0.12.x Gap 4: if fn is a literal `Can.Lambda`, re-emit it
+        -- as a TYPED Go func `func(x A) any` (Gap 4 lambda lowering)
+        -- and route to the fully-typed `rt.List_mapT[A, any]` runtime
+        -- variant. Otherwise fall back to the TA variant (typed
+        -- slice, any-typed function).
         ("List", "map", [_, _], [goFn, goList]) ->
             let elemGo = inferListElemGoType types (args !! 1)
             in if elemGo == "any" then Nothing
-               else Just (GoIr.GoCall
-                    (GoIr.GoIdent ("rt.List_mapTA[" ++ elemGo ++ "]"))
-                    [goFn, wrapAsList elemGo goList])
+               else case args !! 0 of
+                    A.At _ (Can.Lambda pats body) ->
+                        let typedFn = curryLambdaPatTyped [elemGo] "any" pats (exprToGo body)
+                        in Just (GoIr.GoCall
+                            (GoIr.GoIdent ("rt.List_mapT[" ++ elemGo ++ ", any]"))
+                            [typedFn, wrapAsList elemGo goList])
+                    _ -> Just (GoIr.GoCall
+                            (GoIr.GoIdent ("rt.List_mapTA[" ++ elemGo ++ "]"))
+                            [goFn, wrapAsList elemGo goList])
         -- List.filter fn xs : (a -> Bool) -> List a -> List a
         ("List", "filter", [_, _], [goFn, goList]) ->
             let elemGo = inferListElemGoType types (args !! 1)
@@ -6283,6 +6283,96 @@ curryLambdaPat pats body =
         _ ->
             let tmp = "_lp" ++ show idx
             in (GoIr.GoParam tmp "any", patternBindings tmp pat)
+
+
+-- | Typed variant of curryLambdaPat: emit a Sky lambda with typed
+-- Go parameters and a typed Go return type. v0.12.x Gap 4 — typed
+-- lambda lowering for passing to typed kernel callbacks.
+--
+-- For each param, the typed Go signature is `func(_lp_N A) B`. The
+-- body still expects the param as `any` (Sky lambdas treat params
+-- as any internally), so we re-bind via `name := any(_lp_N)` at the
+-- start of each lambda's body before the original body runs. This
+-- way the body's existing reflect-based dispatch works unchanged.
+--
+-- The return is coerced from `any` to the expected `B` using
+-- `rt.Coerce[B]` (or `rt.AsX` for primitives). Bypassed when B is
+-- "any" — the body already returns any.
+--
+-- `paramTypes` must have one entry per pattern in `pats`. Use "any"
+-- for params whose type isn't statically known.
+curryLambdaPatTyped :: [String] -> String -> [Can.Pattern] -> GoIr.GoExpr -> GoIr.GoExpr
+curryLambdaPatTyped [] _ pats body = curryLambdaPat pats body
+curryLambdaPatTyped paramTypes retType pats body
+    | length paramTypes /= length pats = curryLambdaPat pats body
+    | otherwise =
+        let -- For each lambda level we know the param's typed Go
+            -- type. The OUTER lambda has retType `B` (the kernel
+            -- expected return). For curried inner lambdas we
+            -- conservatively emit `any` return because intermediate
+            -- types aren't tracked here.
+            zipped = zip paramTypes pats
+            wrapRet retGoTy expr = case retGoTy of
+                "any"     -> expr
+                "string"  -> GoIr.GoCall (GoIr.GoQualified "rt" "AsString") [expr]
+                "int"     -> GoIr.GoCall (GoIr.GoQualified "rt" "AsInt") [expr]
+                "bool"    -> GoIr.GoCall (GoIr.GoQualified "rt" "AsBool") [expr]
+                "float64" -> GoIr.GoCall (GoIr.GoQualified "rt" "AsFloat") [expr]
+                _         -> GoIr.GoCall (GoIr.GoIdent ("rt.Coerce[" ++ retGoTy ++ "]")) [expr]
+            -- Build nested typed lambdas. innermost gets the body
+            -- + return coercion to `retType`; outer ones return
+            -- `any` because there's no way to know their actual
+            -- function-type return at this layer.
+            buildLambdas [] = body
+            buildLambdas [(pTy, pat)] =
+                let (param, rebindStmts, rebindAnyStmts) = typedLambdaParam pTy pat
+                    rebindAll = rebindStmts ++ rebindAnyStmts
+                    finalRetExpr = wrapRet retType body
+                in GoIr.GoFuncLit [param] retType
+                    (rebindAll ++ [GoIr.GoReturn finalRetExpr])
+            buildLambdas ((pTy, pat):rest) =
+                let (param, rebindStmts, rebindAnyStmts) = typedLambdaParam pTy pat
+                    rebindAll = rebindStmts ++ rebindAnyStmts
+                    inner = buildLambdas rest
+                in GoIr.GoFuncLit [param] "any"
+                    (rebindAll ++ [GoIr.GoReturn inner])
+        in buildLambdas zipped
+  where
+    -- Each lambda param emits two things: a typed Go param + any
+    -- statements needed to re-bind the param name as `any` inside
+    -- the body (so the existing reflect-based dispatch works).
+    typedLambdaParam :: String -> Can.Pattern -> (GoIr.GoParam, [GoIr.GoStmt], [GoIr.GoStmt])
+    typedLambdaParam goTy (A.At _ pat) = case pat of
+        Can.PVar name ->
+            if goTy == "any"
+                then (GoIr.GoParam (goSafeName name) "any", [], [])
+                else
+                    -- `_lp_name TY`; body uses `name = any(_lp_name)`.
+                    let tmpName = "_lp_" ++ goSafeName name
+                    in ( GoIr.GoParam tmpName goTy
+                       , [GoIr.GoShortDecl (goSafeName name)
+                           (GoIr.GoCall (GoIr.GoIdent "any") [GoIr.GoIdent tmpName])]
+                       , [] )
+        Can.PAnything ->
+            (GoIr.GoParam "_" (if goTy == "" then "any" else goTy), [], [])
+        Can.PUnit ->
+            (GoIr.GoParam "_" (if goTy == "" then "any" else goTy), [], [])
+        _ ->
+            -- Complex pattern destructure (tuple, record, etc.). The
+            -- Go param must use the typed Go type to satisfy the
+            -- kernel's typed function signature. We then bind to a
+            -- local `_lp_destr_any` (cast to any) so patternBindings
+            -- can destructure via the standard reflect-based path.
+            let tmp = "_lp_destr_typed"
+                tmpAny = "_lp_destr"
+                paramTy = if goTy == "" then "any" else goTy
+                rebind = if paramTy == "any"
+                    then []
+                    else [GoIr.GoShortDecl tmpAny
+                            (GoIr.GoCall (GoIr.GoIdent "any") [GoIr.GoIdent tmp])]
+            in ( GoIr.GoParam tmp paramTy
+               , rebind ++ patternBindings tmpAny pat
+               , [] )
 
 
 -- | Convert a pattern to a Go function parameter
