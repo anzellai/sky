@@ -2062,6 +2062,17 @@ func List_indexedMapTA[A any](fn any, xs []A) []any {
 	return out
 }
 
+// List_findTA: typed slice + any-typed predicate. Returns the typed
+// Maybe[A] for the first matching element, Nothing if none match.
+func List_findTA[A any](fn any, xs []A) SkyMaybe[A] {
+	for _, x := range xs {
+		if AsBool(SkyCall(fn, x)) {
+			return Just[A](x)
+		}
+	}
+	return Nothing[A]()
+}
+
 func List_filterAnyT(fn any, xs []any) []any {
 	out := make([]any, 0, len(xs))
 	for _, x := range xs {

@@ -6031,6 +6031,14 @@ kernelTypedCall types modName funcName args goArgs =
                else Just (GoIr.GoCall
                     (GoIr.GoIdent ("rt.List_indexedMapTA[" ++ elemGo ++ "]"))
                     [goFn, wrapAsList elemGo goList])
+        -- List.find fn xs : (a -> Bool) -> List a -> Maybe a.
+        -- Element type from the list arg; returns Maybe A.
+        ("List", "find", [_, listArg], [goFn, goList]) ->
+            let elemGo = inferListElemGoType types listArg
+            in if elemGo == "any" then Nothing
+               else Just (GoIr.GoCall
+                    (GoIr.GoIdent ("rt.List_findTA[" ++ elemGo ++ "]"))
+                    [goFn, wrapAsList elemGo goList])
 
         -- Dict.* typed routing — Phase 3 batch 2. The same
         -- pattern as List.*: typed value generic for the Dict's
