@@ -5963,10 +5963,22 @@ kernelTypedCall types modName funcName args goArgs =
         ("List", "filter", [_, _], [goFn, goList]) ->
             let elemGo = inferListElemGoType types (args !! 1)
             in if elemGo == "any" then Nothing
-               else Just (GoIr.GoCall
-                    (GoIr.GoIdent ("rt.List_filterTA[" ++ elemGo ++ "]"))
-                    [goFn, wrapAsList elemGo goList])
-        -- List.foldl fn seed xs : (a -> b -> b) -> b -> List a -> b
+               else case args !! 0 of
+                    A.At _ (Can.Lambda pats body) ->
+                        -- List_filterT[A](fn func(A) bool, xs []A) []A
+                        let typedFn = curryLambdaPatTyped [elemGo] "bool" pats (exprToGo body)
+                        in Just (GoIr.GoCall
+                            (GoIr.GoIdent ("rt.List_filterT[" ++ elemGo ++ "]"))
+                            [typedFn, wrapAsList elemGo goList])
+                    _ -> Just (GoIr.GoCall
+                            (GoIr.GoIdent ("rt.List_filterTA[" ++ elemGo ++ "]"))
+                            [goFn, wrapAsList elemGo goList])
+        -- List.foldl fn seed xs : (a -> b -> b) -> b -> List a -> b.
+        -- The 2-arg lambda is curried in Sky; with `b = any` we can
+        -- route to List_foldlT[A, any] taking func(A, any) any (Go's
+        -- 2-arg form). But curryLambdaPatTyped emits a curried fn
+        -- shape (func(A) func(B) any), which doesn't match. Keep TA
+        -- here; revisit when we add an un-curried typed fold helper.
         ("List", "foldl", [_, _, _], [goFn, goSeed, goList]) ->
             let elemGo = inferListElemGoType types (args !! 2)
             in if elemGo == "any" then Nothing
@@ -6032,13 +6044,25 @@ kernelTypedCall types modName funcName args goArgs =
                     (GoIr.GoIdent ("rt.List_indexedMapTA[" ++ elemGo ++ "]"))
                     [goFn, wrapAsList elemGo goList])
         -- List.find fn xs : (a -> Bool) -> List a -> Maybe a.
-        -- Element type from the list arg; returns Maybe A.
-        ("List", "find", [_, listArg], [goFn, goList]) ->
-            let elemGo = inferListElemGoType types listArg
+        ("List", "find", [_, _], [goFn, goList]) ->
+            let elemGo = inferListElemGoType types (args !! 1)
             in if elemGo == "any" then Nothing
-               else Just (GoIr.GoCall
-                    (GoIr.GoIdent ("rt.List_findTA[" ++ elemGo ++ "]"))
-                    [goFn, wrapAsList elemGo goList])
+               else case args !! 0 of
+                    A.At _ (Can.Lambda pats body) ->
+                        -- No fully-typed `List_findT[A]` runtime variant
+                        -- yet; the TA shape (typed slice, any fn) is
+                        -- the best routing here. Reused for find/member
+                        -- so the lambda shape stays the same.
+                        let typedFn = curryLambdaPatTyped [elemGo] "bool" pats (exprToGo body)
+                            -- TA helper expects fn as any; box the
+                            -- typed func.
+                            anyFn = GoIr.GoCall (GoIr.GoIdent "any") [typedFn]
+                        in Just (GoIr.GoCall
+                            (GoIr.GoIdent ("rt.List_findTA[" ++ elemGo ++ "]"))
+                            [anyFn, wrapAsList elemGo goList])
+                    _ -> Just (GoIr.GoCall
+                            (GoIr.GoIdent ("rt.List_findTA[" ++ elemGo ++ "]"))
+                            [goFn, wrapAsList elemGo goList])
 
         -- Dict.* typed routing — Phase 3 batch 2. The same
         -- pattern as List.*: typed value generic for the Dict's
@@ -6102,6 +6126,81 @@ kernelTypedCall types modName funcName args goArgs =
                     Just (GoIr.GoCall
                         (GoIr.GoIdent ("rt.Result_withDefaultT[" ++ eGo ++ ", " ++ aGo ++ "]"))
                         [wrapAsT aGo goDef, wrapResult eGo aGo goResult])
+                Nothing -> Nothing
+
+        -- Maybe.map fn m : (a -> b) -> Maybe a -> Maybe b
+        -- v0.12.x Gap 4: typed lambda routing when fn is literal.
+        -- Maybe_mapT[A, B](fn func(A) B, m SkyMaybe[A]) SkyMaybe[B].
+        -- Without typed body inference we use B = any.
+        ("Maybe", "map", [_, maybeArg], [goFn, goMaybe]) ->
+            let inner = inferMaybeInnerGoType types maybeArg
+            in if inner == "any" then Nothing
+               else case args !! 0 of
+                    A.At _ (Can.Lambda pats body) ->
+                        let typedFn = curryLambdaPatTyped [inner] "any" pats (exprToGo body)
+                        in Just (GoIr.GoCall
+                            (GoIr.GoIdent ("rt.Maybe_mapT[" ++ inner ++ ", any]"))
+                            [typedFn, wrapMaybe inner goMaybe])
+                    _ ->
+                        -- Non-literal fn: use the any-typed variant.
+                        Just (GoIr.GoCall
+                            (GoIr.GoQualified "rt" "Maybe_mapAnyT")
+                            [goFn, goMaybe])
+
+        -- Result.map fn r : (a -> b) -> Result e a -> Result e b
+        ("Result", "map", [_, resultArg], [goFn, goResult]) ->
+            case inferResultGoTypes types resultArg of
+                Just (eGo, aGo) ->
+                    case args !! 0 of
+                        A.At _ (Can.Lambda pats body) ->
+                            let typedFn = curryLambdaPatTyped [aGo] "any" pats (exprToGo body)
+                            in Just (GoIr.GoCall
+                                (GoIr.GoIdent ("rt.Result_mapT[" ++ eGo ++ ", " ++ aGo ++ ", any]"))
+                                [typedFn, wrapResult eGo aGo goResult])
+                        _ ->
+                            Just (GoIr.GoCall
+                                (GoIr.GoQualified "rt" "Result_mapAnyT")
+                                [goFn, goResult])
+                Nothing -> Nothing
+
+        -- Maybe.andThen fn m : (a -> Maybe b) -> Maybe a -> Maybe b
+        -- v0.12.x Gap 4: typed-input lambda; return stays any.
+        ("Maybe", "andThen", [_, maybeArg], [goFn, goMaybe]) ->
+            let inner = inferMaybeInnerGoType types maybeArg
+            in if inner == "any" then Nothing
+               else case args !! 0 of
+                    A.At _ (Can.Lambda pats body) ->
+                        -- Runtime Maybe_andThenT[A, B] wants
+                        -- func(A) SkyMaybe[B]. We need to wrap the
+                        -- body's any-typed Maybe result. Conservative:
+                        -- use Maybe_andThenAnyT which takes any fn,
+                        -- but feed it a typed input lambda for the
+                        -- input-type win.
+                        let typedFn = curryLambdaPatTyped [inner] "any" pats (exprToGo body)
+                            anyFn = GoIr.GoCall (GoIr.GoIdent "any") [typedFn]
+                        in Just (GoIr.GoCall
+                            (GoIr.GoQualified "rt" "Maybe_andThenAnyT")
+                            [anyFn, goMaybe])
+                    _ ->
+                        Just (GoIr.GoCall
+                            (GoIr.GoQualified "rt" "Maybe_andThenAnyT")
+                            [goFn, goMaybe])
+
+        -- Result.andThen fn r : (a -> Result e b) -> Result e a -> Result e b
+        ("Result", "andThen", [_, resultArg], [goFn, goResult]) ->
+            case inferResultGoTypes types resultArg of
+                Just (_, aGo) ->
+                    case args !! 0 of
+                        A.At _ (Can.Lambda pats body) ->
+                            let typedFn = curryLambdaPatTyped [aGo] "any" pats (exprToGo body)
+                                anyFn = GoIr.GoCall (GoIr.GoIdent "any") [typedFn]
+                            in Just (GoIr.GoCall
+                                (GoIr.GoQualified "rt" "Result_andThenAnyT")
+                                [anyFn, goResult])
+                        _ ->
+                            Just (GoIr.GoCall
+                                (GoIr.GoQualified "rt" "Result_andThenAnyT")
+                                [goFn, goResult])
                 Nothing -> Nothing
 
         _ -> Nothing
