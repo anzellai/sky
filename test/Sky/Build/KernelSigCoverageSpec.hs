@@ -118,3 +118,19 @@ spec = do
               , "cssVar", "cssVarOr"
               , "zero", "borderBox", "systemFont"
               ]
+
+        it "Sky.Ffi escape-hatch: callPure / callTask / call / has / isPure (v0.12)" $ do
+            -- v0.12 closes the Ffi.callTask asymmetry (was the residual
+            -- entry on CLAUDE.md Limitation #16's "dangerous-class
+            -- gap"). Both callPure and callTask now have HM sigs that
+            -- take `String -> List any -> R`, with R = `a` for callPure
+            -- and `Task Error a` for callTask. The heterogeneous-list
+            -- shape is by design: Sky.Ffi is the explicit FFI escape
+            -- hatch; users accept that the args list packs values of
+            -- mixed types in exchange for direct access to bindings
+            -- without static sigs.
+            body <- BS8.unpack <$> BS.readFile sigsFile
+            mapM_ (\name -> do
+                let key = "(\"Ffi\", \"" ++ name ++ "\")"
+                (key `isInfixOf` body) `shouldBe` True)
+              [ "call", "callPure", "callTask", "has", "isPure" ]

@@ -112,3 +112,21 @@ spec = do
                     ["build", "src/Main.sky"]
                     tmp
                 ec `shouldBe` ExitSuccess
+
+        it "structural mode (env unset) honours SKY_SOLVER_BUDGET_FACTOR (v0.12)" $ do
+            -- v0.12 introduces structural budget: when
+            -- SKY_SOLVER_BUDGET is UNSET, the cap is computed as
+            -- max(defaultFloor, constraint_count * factor). High
+            -- factor → no false-positive trip, regardless of
+            -- program size. This pins the three-mode design (env
+            -- unset = STRUCTURAL; =0 = DISABLED; =N>0 = ABSOLUTE).
+            sky <- findSky
+            cwd <- getCurrentDirectory
+            let fixtureRoot = cwd </> "test" </> "fixtures" </> "solver-budget"
+            withSystemTempDirectory "sky-sb-structural" $ \tmp -> do
+                copyTree fixtureRoot tmp
+                (ec, _, _) <- runSkyWithEnv sky
+                    [("SKY_SOLVER_BUDGET_FACTOR", "1000000")]
+                    ["build", "src/Main.sky"]
+                    tmp
+                ec `shouldBe` ExitSuccess

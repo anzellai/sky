@@ -94,15 +94,105 @@ defaultSolverBudget :: Int
 defaultSolverBudget = 5000000
 
 
--- | Read SKY_SOLVER_BUDGET from the environment, falling back to
--- the default. Invalid values (non-numeric, negative) silently
--- fall back; not worth aborting on a misconfigured env var.
+-- | Per-constraint multiplier for the structural-budget computation.
+-- Effective budget = max(defaultSolverBudget, constraint_count *
+-- defaultSolverBudgetFactor). The default 200 means: a 100-constraint
+-- module gets the floor (5,000,000); a 1M-constraint module gets
+-- 200M. This scales with input size while still catching pathological
+-- expansion (where N constraints generate >> N×factor solver steps).
+defaultSolverBudgetFactor :: Int
+defaultSolverBudgetFactor = 200
+
+
+-- | Three-mode env var resolution for the solver budget:
+--
+--   * SKY_SOLVER_BUDGET unset  → STRUCTURAL mode (the v0.12+ default).
+--     Effective cap = max(defaultSolverBudget, constraint_count * factor).
+--     Scales with input size, so legitimately-large generated
+--     codebases don't trip a wall-clock-shaped constant cap, while
+--     pathological constraint expansion (which generates >> N×factor
+--     solver steps from N constraints) is still caught.
+--
+--   * SKY_SOLVER_BUDGET=0      → DISABLED (escape hatch).
+--     No cap at all. Debug only — risk of unbounded heap consumption.
+--
+--   * SKY_SOLVER_BUDGET=N (>0) → ABSOLUTE mode (legacy behaviour).
+--     Effective cap is exactly N. Backwards compatible with the
+--     pre-v0.12 wall-clock-shaped budget. Useful for regression
+--     tests that want to deterministically trip the bound.
+--
+-- SKY_SOLVER_BUDGET_FACTOR overrides the structural-mode multiplier
+-- (default 200). Ignored in DISABLED / ABSOLUTE modes.
+data SolverBudgetMode
+    = BudgetStructural  -- env unset
+    | BudgetDisabled    -- SKY_SOLVER_BUDGET=0
+    | BudgetAbsolute !Int  -- SKY_SOLVER_BUDGET=N>0
+
+
+readBudgetMode :: IO SolverBudgetMode
+readBudgetMode = do
+    s <- lookupEnv "SKY_SOLVER_BUDGET"
+    return $ case s of
+        Nothing -> BudgetStructural
+        Just str -> case readMaybe str of
+            Just n | n == 0 -> BudgetDisabled
+                   | n > 0  -> BudgetAbsolute n
+            _               -> BudgetStructural  -- malformed → fallback
+
+
+readSolverBudgetFactor :: IO Int
+readSolverBudgetFactor = do
+    s <- lookupEnv "SKY_SOLVER_BUDGET_FACTOR"
+    return $ case s >>= readMaybe of
+        Just n | n > 0 -> n
+        _              -> defaultSolverBudgetFactor
+
+
+-- | Count constraints in the input tree. Treats every leaf
+-- constraint (CEqual, CLocal, CForeign, CPattern, CTrue,
+-- CSaveTheEnvironment) as a single unit, plus recursively counting
+-- through CAnd / CLet branches. Used to derive a structural budget
+-- that scales with input size — catches pathological cases (which
+-- expand FAR beyond N×factor steps) while letting legitimate
+-- large-codebase compiles run to completion.
+countConstraints :: T.Constraint -> Int
+countConstraints = go
+  where
+    go c = case c of
+        T.CTrue                  -> 1
+        T.CSaveTheEnvironment    -> 1
+        T.CEqual _ _ _ _         -> 1
+        T.CLocal _ _ _           -> 1
+        T.CForeign _ _ _ _       -> 1
+        T.CPattern _ _ _ _       -> 1
+        T.CAnd cs                -> 1 + sum (map go cs)
+        T.CLet { T._headerCon = h, T._bodyCon = b } ->
+            1 + go h + go b
+
+
+effectiveSolverBudget :: T.Constraint -> IO Int
+effectiveSolverBudget root = do
+    mode <- readBudgetMode
+    case mode of
+        BudgetDisabled    -> return 0
+        BudgetAbsolute n  -> return n
+        BudgetStructural  -> do
+            factor <- readSolverBudgetFactor
+            let n = countConstraints root
+            return (max defaultSolverBudget (n * factor))
+
+
+-- Back-compat shim: callers that import readSolverBudget still get
+-- a number out, but the NEW caller path (via solve / solveWithLocals)
+-- routes through effectiveSolverBudget so the structural mode kicks
+-- in by default.
 readSolverBudget :: IO Int
 readSolverBudget = do
-    s <- lookupEnv "SKY_SOLVER_BUDGET"
-    return $ case s >>= readMaybe of
-        Just n | n >= 0 -> n
-        _               -> defaultSolverBudget
+    mode <- readBudgetMode
+    case mode of
+        BudgetDisabled   -> return 0
+        BudgetAbsolute n -> return n
+        BudgetStructural -> return defaultSolverBudget
 
 
 -- | Increment the solver-step counter. Returns Just errMsg when
@@ -151,7 +241,7 @@ solve constraint = do
     cache <- newIORef Map.empty
     locals <- newIORef Map.empty
     steps <- newIORef 0
-    budget <- readSolverBudget
+    budget <- effectiveSolverBudget constraint
     let state0 = SolverState Map.empty cache 0 locals steps budget
     (result, finalState) <- solveHelp state0 constraint
     case result of
@@ -181,7 +271,7 @@ solveWithLocals constraint = do
     cache <- newIORef Map.empty
     locals <- newIORef Map.empty
     steps <- newIORef 0
-    budget <- readSolverBudget
+    budget <- effectiveSolverBudget constraint
     let state0 = SolverState Map.empty cache 0 locals steps budget
     (result, finalState) <- solveHelp state0 constraint
     localVars <- readIORef (_locals finalState)

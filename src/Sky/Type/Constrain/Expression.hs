@@ -840,6 +840,40 @@ lookupKernelType modName funcName = case (modName, funcName) of
                 (T.TType ModuleName.task "Task"
                     [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
                     , T.TUnit]))
+    -- Sky.Ffi — explicit FFI escape hatch. The args list is
+    -- heterogeneous (different types per binding), so we keep
+    -- `List any` and let the runtime unmarshal at the boundary.
+    -- Pure-side and effect-side share the same signature shape;
+    -- only the return type differs (raw value vs Task-wrapped).
+    -- Sky.Ffi is the explicit escape hatch — users who reach for
+    -- it accept the heterogeneous-list trade-off in exchange for
+    -- direct access to bindings that don't have static sigs.
+    ("Ffi", "callPure") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda stringType
+                (T.TLambda
+                    (T.TType ModuleName.list "List" [T.TVar "any"])
+                    (T.TVar "a")))
+    ("Ffi", "callTask") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda stringType
+                (T.TLambda
+                    (T.TType ModuleName.list "List" [T.TVar "any"])
+                    (T.TType ModuleName.task "Task"
+                        [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                        , T.TVar "a"])))
+    ("Ffi", "call") ->
+        -- Deprecated alias of callPure. Same shape; runtime
+        -- delegates to Ffi_callPure.
+        Just $ T.Forall ["a"]
+            (T.TLambda stringType
+                (T.TLambda
+                    (T.TType ModuleName.list "List" [T.TVar "any"])
+                    (T.TVar "a")))
+    ("Ffi", "has") ->
+        Just $ T.Forall [] (T.TLambda stringType boolType)
+    ("Ffi", "isPure") ->
+        Just $ T.Forall [] (T.TLambda stringType boolType)
     ("Basics", "identity") ->
         Just $ T.Forall ["a"] (T.TLambda (T.TVar "a") (T.TVar "a"))
     ("Basics", "always") ->
