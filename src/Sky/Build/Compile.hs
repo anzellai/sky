@@ -5804,6 +5804,17 @@ inferListElemGoType types e = case inferExprType types e of
     _ -> "any"
 
 
+-- | Extract the value type of a Dict-typed expression. Returns "any"
+-- on non-Dict / unresolved / anonymous-record element types. Mirror
+-- of inferListElemGoType for the Dict family.
+inferDictValueGoType :: Solve.SolvedTypes -> Can.Expr -> String
+inferDictValueGoType types e = case inferExprType types e of
+    Just (T.TType _ "Dict" [_, valTy]) ->
+        let go = solvedTypeToGo valTy
+        in if "Anon_R_" `List.isPrefixOf` go then "any" else go
+    _ -> "any"
+
+
 -- | Try to emit a typed kernel call (rt.List_mapT[int, any](...))
 -- instead of the default any-routing (rt.List_mapAny(...)). Returns
 -- Just (typed-call-expr) when ALL of:
@@ -5912,7 +5923,72 @@ kernelTypedCall types modName funcName args goArgs =
                else Just (GoIr.GoCall
                     (GoIr.GoIdent ("rt.List_appendT[" ++ pick ++ "]"))
                     [wrapAsList pick goA, wrapAsList pick goB])
+
+        -- Dict.* typed routing — Phase 3 batch 2. The same
+        -- pattern as List.*: typed value generic for the Dict's
+        -- value type; key is always String in Sky's Dict. The
+        -- runtime AsDict helper converts any-typed values
+        -- (rt.Field on records) to a typed map; no-op on already-
+        -- typed maps so this is regression-safe.
+        ("Dict", "get", [_, dictArg], [goKey, goDict]) ->
+            let valGo = inferDictValueGoType types dictArg
+            in if valGo == "any" then Nothing
+               else Just (GoIr.GoCall
+                    (GoIr.GoIdent ("rt.Dict_getT[" ++ valGo ++ "]"))
+                    [wrapAsString goKey, wrapAsDict valGo goDict])
+        ("Dict", "insert", [_, _, dictArg], [goKey, goVal, goDict]) ->
+            let valGo = inferDictValueGoType types dictArg
+            in if valGo == "any" then Nothing
+               else Just (GoIr.GoCall
+                    (GoIr.GoIdent ("rt.Dict_insertT[" ++ valGo ++ "]"))
+                    [wrapAsString goKey, wrapAsT valGo goVal, wrapAsDict valGo goDict])
+        ("Dict", "remove", [_, dictArg], [goKey, goDict]) ->
+            let valGo = inferDictValueGoType types dictArg
+            in if valGo == "any" then Nothing
+               else Just (GoIr.GoCall
+                    (GoIr.GoIdent ("rt.Dict_removeT[" ++ valGo ++ "]"))
+                    [wrapAsString goKey, wrapAsDict valGo goDict])
+        ("Dict", "member", [_, dictArg], [goKey, goDict]) ->
+            let valGo = inferDictValueGoType types dictArg
+            in if valGo == "any" then Nothing
+               else Just (GoIr.GoCall
+                    (GoIr.GoIdent ("rt.Dict_memberT[" ++ valGo ++ "]"))
+                    [wrapAsString goKey, wrapAsDict valGo goDict])
+        ("Dict", "keys", [dictArg], [goDict]) ->
+            let valGo = inferDictValueGoType types dictArg
+            in if valGo == "any" then Nothing
+               else Just (GoIr.GoCall
+                    (GoIr.GoIdent ("rt.Dict_keysT[" ++ valGo ++ "]"))
+                    [wrapAsDict valGo goDict])
+        ("Dict", "values", [dictArg], [goDict]) ->
+            let valGo = inferDictValueGoType types dictArg
+            in if valGo == "any" then Nothing
+               else Just (GoIr.GoCall
+                    (GoIr.GoIdent ("rt.Dict_valuesT[" ++ valGo ++ "]"))
+                    [wrapAsDict valGo goDict])
         _ -> Nothing
+  where
+    wrapAsDict :: String -> GoIr.GoExpr -> GoIr.GoExpr
+    wrapAsDict valGo e =
+        GoIr.GoCall (GoIr.GoIdent ("rt.AsMapT[" ++ valGo ++ "]")) [e]
+    -- Sky's Dict only has string keys; the typed kernels enforce
+    -- this at the Go signature level. The codegen wraps the key
+    -- arg in rt.AsString which converts any-typed inputs (rt.Field
+    -- on a record) to string. Already-string inputs round-trip.
+    wrapAsString :: GoIr.GoExpr -> GoIr.GoExpr
+    wrapAsString e = GoIr.GoCall (GoIr.GoQualified "rt" "AsString") [e]
+    -- Coerce a Go expression to a target type. For primitives we
+    -- have dedicated helpers (rt.AsInt, rt.AsString, etc.); for
+    -- non-primitives use the generic rt.Coerce[T]. Bypassed when
+    -- the target is "any" (no coercion needed).
+    wrapAsT :: String -> GoIr.GoExpr -> GoIr.GoExpr
+    wrapAsT goTy e = case goTy of
+        "any"     -> e
+        "string"  -> GoIr.GoCall (GoIr.GoQualified "rt" "AsString") [e]
+        "int"     -> GoIr.GoCall (GoIr.GoQualified "rt" "AsInt") [e]
+        "bool"    -> GoIr.GoCall (GoIr.GoQualified "rt" "AsBool") [e]
+        "float64" -> GoIr.GoCall (GoIr.GoQualified "rt" "AsFloat") [e]
+        _         -> GoIr.GoCall (GoIr.GoIdent ("rt.Coerce[" ++ goTy ++ "]")) [e]
 
 
 -- | Convert a solved type to a Go type string.
