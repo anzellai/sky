@@ -5815,6 +5815,31 @@ inferDictValueGoType types e = case inferExprType types e of
     _ -> "any"
 
 
+-- | Extract the inner type of a Maybe-typed expression. e.g.
+-- `Maybe Int` → "int". Returns "any" when the expression isn't a
+-- Maybe or when the inner type isn't statically derivable.
+inferMaybeInnerGoType :: Solve.SolvedTypes -> Can.Expr -> String
+inferMaybeInnerGoType types e = case inferExprType types e of
+    Just (T.TType _ "Maybe" [innerTy]) ->
+        let go = solvedTypeToGo innerTy
+        in if "Anon_R_" `List.isPrefixOf` go then "any" else go
+    _ -> "any"
+
+
+-- | Extract the (E, A) types of a Result-typed expression. Returns
+-- (Just (eGo, aGo)) when both types are concrete (and not Anon_R_),
+-- Nothing otherwise.
+inferResultGoTypes :: Solve.SolvedTypes -> Can.Expr -> Maybe (String, String)
+inferResultGoTypes types e = case inferExprType types e of
+    Just (T.TType _ "Result" [eTy, aTy]) ->
+        let eGo = solvedTypeToGo eTy
+            aGo = solvedTypeToGo aTy
+            isAnon t = "Anon_R_" `List.isPrefixOf` t
+        in if isAnon eGo || isAnon aGo then Nothing
+           else Just (eGo, aGo)
+    _ -> Nothing
+
+
 -- | Try to emit a typed kernel call (rt.List_mapT[int, any](...))
 -- instead of the default any-routing (rt.List_mapAny(...)). Returns
 -- Just (typed-call-expr) when ALL of:
@@ -5966,6 +5991,28 @@ kernelTypedCall types modName funcName args goArgs =
                else Just (GoIr.GoCall
                     (GoIr.GoIdent ("rt.Dict_valuesT[" ++ valGo ++ "]"))
                     [wrapAsDict valGo goDict])
+
+        -- Maybe.withDefault def m : a -> Maybe a -> a
+        -- Routes to Maybe_withDefaultT[A] when A is concrete. The
+        -- runtime variant takes a typed `def : A` and a typed
+        -- `SkyMaybe[A]`, returning typed A. We coerce both.
+        ("Maybe", "withDefault", [_, maybeArg], [goDef, goMaybe]) ->
+            let inner = inferMaybeInnerGoType types maybeArg
+            in if inner == "any" then Nothing
+               else Just (GoIr.GoCall
+                    (GoIr.GoIdent ("rt.Maybe_withDefaultT[" ++ inner ++ "]"))
+                    [wrapAsT inner goDef, wrapMaybe inner goMaybe])
+
+        -- Result.withDefault def r : a -> Result e a -> a
+        -- Routes to Result_withDefaultT[E, A] when both concrete.
+        ("Result", "withDefault", [_, resultArg], [goDef, goResult]) ->
+            case inferResultGoTypes types resultArg of
+                Just (eGo, aGo) ->
+                    Just (GoIr.GoCall
+                        (GoIr.GoIdent ("rt.Result_withDefaultT[" ++ eGo ++ ", " ++ aGo ++ "]"))
+                        [wrapAsT aGo goDef, wrapResult eGo aGo goResult])
+                Nothing -> Nothing
+
         _ -> Nothing
   where
     wrapAsDict :: String -> GoIr.GoExpr -> GoIr.GoExpr
@@ -5989,6 +6036,15 @@ kernelTypedCall types modName funcName args goArgs =
         "bool"    -> GoIr.GoCall (GoIr.GoQualified "rt" "AsBool") [e]
         "float64" -> GoIr.GoCall (GoIr.GoQualified "rt" "AsFloat") [e]
         _         -> GoIr.GoCall (GoIr.GoIdent ("rt.Coerce[" ++ goTy ++ "]")) [e]
+    -- MaybeCoerce[A](src) → SkyMaybe[A]. Used to convert any-typed
+    -- runtime Maybe values to the typed shape the kernel expects.
+    wrapMaybe :: String -> GoIr.GoExpr -> GoIr.GoExpr
+    wrapMaybe innerGo e =
+        GoIr.GoCall (GoIr.GoIdent ("rt.MaybeCoerce[" ++ innerGo ++ "]")) [e]
+    -- ResultCoerce[E, A](src) → SkyResult[E, A].
+    wrapResult :: String -> String -> GoIr.GoExpr -> GoIr.GoExpr
+    wrapResult eGo aGo e =
+        GoIr.GoCall (GoIr.GoIdent ("rt.ResultCoerce[" ++ eGo ++ ", " ++ aGo ++ "]")) [e]
 
 
 -- | Convert a solved type to a Go type string.
