@@ -5733,6 +5733,55 @@ isConcreteType ty = case ty of
 -- to derive call-site argument types so e.g. `List.map fn xs` with
 -- `xs : List Int` routes to `rt.List_mapT[int, any]` instead of
 -- `rt.List_mapAny`. Phase 1 of `docs/v012-typed-codegen-plan.md`.
+-- | Look up a record alias from `_cg_aliases` by its field-set. Returns
+-- the alias body (a TRecord) on match. Used as a fallback when a stored
+-- record type has unresolved TVars in its field types — the alias body
+-- carries the user's declared concrete types.
+matchAliasByFieldSet :: Rec.CodegenEnv -> Set.Set String -> Maybe T.Type
+matchAliasByFieldSet env target =
+    let aliases = Rec._cg_aliases env
+        candidates =
+            [ body
+            | (_aname, Can.Alias _ body) <- Map.toList aliases
+            , case body of
+                T.TRecord fields _
+                    | Set.fromList (Map.keys fields) == target -> True
+                _ -> False
+            ]
+    in case candidates of
+        (b:_) -> Just b
+        _ -> Nothing
+
+
+-- | Recursively substitute internal TVars in a type by looking them up
+-- in solvedTypes. Sky's HM stores record-field types with unresolved
+-- TVars (e.g. `List _elem10`); these vars ARE resolved elsewhere in the
+-- solvedTypes map but never back-substituted into the stored record.
+-- This pass closes that gap so typed-codegen routing can see concrete
+-- element types like `List Job` instead of `List _elem10`.
+substTypeVars :: Solve.SolvedTypes -> T.Type -> T.Type
+substTypeVars types = go Set.empty
+  where
+    go seen ty = case ty of
+        T.TVar name | not (Set.member name seen) ->
+            case Map.lookup name types of
+                Just resolved | resolved /= ty -> go (Set.insert name seen) resolved
+                _ -> ty
+        T.TType home name args -> T.TType home name (map (go seen) args)
+        T.TAlias home name pairs (T.Filled inner) ->
+            T.TAlias home name pairs (T.Filled (go seen inner))
+        T.TAlias home name pairs (T.Hoisted inner) ->
+            T.TAlias home name pairs (T.Hoisted (go seen inner))
+        T.TRecord fields ext ->
+            T.TRecord
+                (Map.map (\(T.FieldType ix ft) ->
+                    T.FieldType ix (go seen ft)) fields)
+                ext
+        T.TLambda a b -> T.TLambda (go seen a) (go seen b)
+        T.TTuple a b cs -> T.TTuple (go seen a) (go seen b) (map (go seen) cs)
+        _ -> ty
+
+
 inferExprType :: Solve.SolvedTypes -> Can.Expr -> Maybe T.Type
 inferExprType types (A.At _ e) = case e of
     Can.Int _    -> Just ConstrainExpr.intType
@@ -5780,7 +5829,23 @@ inferExprType types (A.At _ e) = case e of
         case inferExprType types record of
             Just (T.TRecord fields _) ->
                 case Map.lookup fieldName fields of
-                    Just (T.FieldType _ ft) -> Just ft
+                    Just (T.FieldType _ ft) ->
+                        -- Sky's HM stores record-field types with
+                        -- unresolved internal TVars (`List _elem10`). The
+                        -- TVars never make it into solvedTypes as
+                        -- top-level keys. Fall back to the user's record
+                        -- alias: find an alias whose field-set matches
+                        -- and read the field's concrete type from there.
+                        let env = getCgEnv
+                            fieldSet = Set.fromList (Map.keys fields)
+                            aliasMatch = matchAliasByFieldSet env fieldSet
+                        in case aliasMatch of
+                            Just (T.TRecord aliasFields _) ->
+                                case Map.lookup fieldName aliasFields of
+                                    Just (T.FieldType _ aft) ->
+                                        Just (substTypeVars types aft)
+                                    Nothing -> Just (substTypeVars types ft)
+                            _ -> Just (substTypeVars types ft)
                     Nothing -> Nothing
             -- TAlias is what HM produces for named record aliases.
             -- The Filled/Hoisted inner is the actual unfolded record.
@@ -5892,6 +5957,35 @@ inferMaybeInnerGoType types e = case inferExprType types e of
         let go = solvedTypeToGo innerTy
         in if "Anon_R_" `List.isPrefixOf` go then "any" else go
     _ -> "any"
+
+
+-- | Extract V from a List (String, V) — used by Dict.fromList typed
+-- routing. The HM-side rep of `(String, V)` is `T.TTuple String V []`,
+-- so we look inside the List's element type. Returns "any" when the
+-- list isn't a list of tuples, the tuple isn't (String, V), or V is
+-- itself anonymous/synthetic.
+inferListTupleSecondGoType :: Solve.SolvedTypes -> Can.Expr -> String
+inferListTupleSecondGoType types e = case inferExprType types e of
+    Just (T.TType _ "List" [elemTy]) -> tupleSnd elemTy
+    Just (T.TAlias _ _ _ aliasInner) ->
+        let inner = case aliasInner of
+                T.Filled  i -> i
+                T.Hoisted i -> i
+        in case inner of
+            T.TType _ "List" [elemTy] -> tupleSnd elemTy
+            _ -> "any"
+    _ -> "any"
+  where
+    tupleSnd ty = case ty of
+        T.TTuple _ b _ ->
+            let go = solvedTypeToGo b
+            in if "Anon_R_" `List.isPrefixOf` go then "any" else go
+        T.TAlias _ _ _ aliasInner ->
+            let inner = case aliasInner of
+                    T.Filled  i -> i
+                    T.Hoisted i -> i
+            in tupleSnd inner
+        _ -> "any"
 
 
 -- | Extract the (E, A) types of a Result-typed expression. Returns
@@ -6029,13 +6123,22 @@ kernelTypedCall types modName funcName args goArgs =
                     (GoIr.GoIdent ("rt.List_appendT[" ++ pick ++ "]"))
                     [wrapAsList pick goA, wrapAsList pick goB])
         -- List.member item xs : a -> List a -> Bool. Element type
-        -- from the list arg.
-        ("List", "member", [_, listArg], [goItem, goList]) ->
-            let elemGo = inferListElemGoType types listArg
+        -- typically from the list arg, but List.member's signature
+        -- `a -> List a -> Bool` means the key and list share `a`.
+        -- When the list arg's type is unresolvable (e.g. record
+        -- access on a name shadowed across modules in the merged
+        -- solvedTypes), fall back to inferring `a` from the KEY arg.
+        -- This is sound: HM has already unified the two; the runtime
+        -- AsListT[T] reflect coercion handles the actual any-typed
+        -- slice at the boundary.
+        ("List", "member", [itemArg, listArg], [goItem, goList]) ->
+            let elemFromList = inferListElemGoType types listArg
+                elemFromItem = inferGoType types itemArg
+                elemGo = if elemFromList /= "any" then elemFromList else elemFromItem
             in if elemGo == "any" then Nothing
                else Just (GoIr.GoCall
                     (GoIr.GoIdent ("rt.List_memberT[" ++ elemGo ++ "]"))
-                    [goItem, wrapAsList elemGo goList])
+                    [wrapAsT elemGo goItem, wrapAsList elemGo goList])
         -- List.indexedMap fn xs : (Int -> a -> b) -> List a -> List b.
         ("List", "indexedMap", [_, listArg], [goFn, goList]) ->
             let elemGo = inferListElemGoType types listArg
@@ -6106,6 +6209,29 @@ kernelTypedCall types modName funcName args goArgs =
                else Just (GoIr.GoCall
                     (GoIr.GoIdent ("rt.Dict_valuesT[" ++ valGo ++ "]"))
                     [wrapAsDict valGo goDict])
+
+        -- Dict.fromList list : List (String, V) -> Dict String V
+        -- Routes to Dict_fromListT[V] when V is concrete. Reads V from
+        -- the inferred type of the list's element tuple (second slot).
+        ("Dict", "fromList", [listArg], [goList]) ->
+            let valGo = inferListTupleSecondGoType types listArg
+            in if valGo == "any" then Nothing
+               else Just (GoIr.GoCall
+                    (GoIr.GoIdent ("rt.Dict_fromListT[" ++ valGo ++ "]"))
+                    [wrapAsList "any" goList])
+
+        -- Dict.map fn dict : (String -> V -> W) -> Dict String V -> Dict String W
+        -- Routes to Dict_mapT[V, W] when V is concrete. The user fn is
+        -- Sky-curried (func(K) func(V) W) but the runtime expects a
+        -- single-arg func(V) W — we adapt at the boundary by capturing
+        -- the key from a closure. Conservative: only takes the typed
+        -- path when the user passes a literal lambda we can re-curry.
+        --
+        -- Implementation note: Dict_mapT's `fn func(V) W` discards the
+        -- key. Sky's Dict.map kernel passes both. Until we add a typed
+        -- (K, V) -> W runtime variant, route via Dict_map (any) to
+        -- preserve the key. So this case is INTENTIONALLY not migrated
+        -- here — see Limitation #N in CLAUDE.md.
 
         -- Maybe.withDefault def m : a -> Maybe a -> a
         -- Routes to Maybe_withDefaultT[A] when A is concrete. The

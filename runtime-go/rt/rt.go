@@ -3361,6 +3361,44 @@ func Dict_mapT[V, W any](fn func(V) W, d map[string]V) map[string]W {
 	return out
 }
 
+// Dict_fromListT: build a typed Dict from a list of (String, V) tuples.
+// Mirrors Dict_fromList but with concrete value type V — emitted when the
+// HM-inferred value type is concrete, avoiding the per-element any boxing
+// of the legacy path.
+func Dict_fromListT[V any](list []any) map[string]V {
+	out := make(map[string]V, len(list))
+	for _, item := range list {
+		switch t := item.(type) {
+		case SkyTuple2:
+			key := fmt.Sprintf("%v", t.V0)
+			if v, ok := t.V1.(V); ok {
+				out[key] = v
+			} else {
+				// Fall back via reflect coerce for heterogeneous slices
+				out[key] = Coerce[V](t.V1)
+			}
+		default:
+			// Unexpected shape — leave key absent. Matches Dict_fromList's
+			// silent-on-bad-pair behaviour (would panic in the type assert).
+		}
+	}
+	return out
+}
+
+// Dict_fromListTA: typed-input list version that delegates to the any
+// variant when the value type cannot be specialised. Kept for symmetry
+// with the List_*TA family even though Dict_fromList's any-output is
+// the trivial fallback.
+func Dict_fromListTA(list []any) any {
+	out := make(map[string]any, len(list))
+	for _, item := range list {
+		if t, ok := item.(SkyTuple2); ok {
+			out[fmt.Sprintf("%v", t.V0)] = t.V1
+		}
+	}
+	return out
+}
+
 func Dict_foldl(fn any, acc any, dict any) any {
 	m := AsDict(unwrapAny(dict))
 	result := acc
