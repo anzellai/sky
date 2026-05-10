@@ -7,6 +7,11 @@ module Sky.Type.Constrain.Expression
     , constrainModuleWithExternals
     , lookupKernelType
     , Env
+    , intType
+    , floatType
+    , stringType
+    , boolType
+    , charType
     )
     where
 

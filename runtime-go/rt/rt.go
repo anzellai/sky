@@ -1984,6 +1984,45 @@ func List_mapAnyT(fn any, xs []any) []any {
 	return out
 }
 
+// List_mapTA: typed input slice, any-typed Sky function, any-typed
+// output. v0.12.x typed-codegen routing target — call site has
+// `xs : List A` (concrete A) but the lambda still flows as
+// `func(any) any` (Gap 4 territory, lambda lowering not yet
+// type-preserving). Win: typed input slice means no AsListT
+// coercion at the call boundary; the iteration reads `xs[i]` of
+// type A directly. Per-element call still goes through SkyCall
+// (the lambda's runtime shape is preserved).
+//
+// Naming: `T` = typed slice, `A` = any-typed function. Distinct
+// from List_mapT[A, B] (typed slice + typed function, when both
+// HM types are known).
+func List_mapTA[A any](fn any, xs []A) []any {
+	out := make([]any, len(xs))
+	for i, x := range xs { out[i] = SkyCall(fn, x) }
+	return out
+}
+
+// List_filterTA: typed input slice + any-typed predicate. Returns
+// the input slice's typed shape (filter preserves element type).
+func List_filterTA[A any](fn any, xs []A) []A {
+	out := make([]A, 0, len(xs))
+	for _, x := range xs {
+		if AsBool(SkyCall(fn, x)) { out = append(out, x) }
+	}
+	return out
+}
+
+// List_foldlTA: typed input slice + any-typed reducer + any seed +
+// any output. The reducer receives one typed-A arg per element but
+// accumulates through any.
+func List_foldlTA[A any](fn any, seed any, xs []A) any {
+	acc := seed
+	for _, x := range xs {
+		acc = SkyCall(SkyCall(fn, x), acc)
+	}
+	return acc
+}
+
 func List_filterAnyT(fn any, xs []any) []any {
 	out := make([]any, 0, len(xs))
 	for _, x := range xs {

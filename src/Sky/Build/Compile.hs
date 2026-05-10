@@ -36,6 +36,7 @@ import qualified Sky.Generate.Go.Builder as GoBuilder
 import qualified Sky.Generate.Go.Kernel as Kernel
 import qualified Sky.Sky.Toml as Toml
 import qualified Sky.Type.Constrain.Module as Constrain
+import qualified Sky.Type.Constrain.Expression as ConstrainExpr
 import qualified Sky.Type.Solve as Solve
 import qualified Sky.Type.Type as T
 import qualified Sky.Generate.Go.Type as GoType
@@ -3680,6 +3681,24 @@ exprToGo (A.At _ expr) = case expr of
 
     Can.Call func args ->
         case A.toValue func of
+            -- v0.12.x typed-codegen Phase 3: route List.* kernels with
+            -- typed-T variants when the call-site list arg's element
+            -- type is concrete. `List.map fn (xs : List Int)` becomes
+            -- `rt.List_mapT[int, any](fn, xs)` instead of the default
+            -- `rt.List_mapAny(fn, xs)`. The lambda still flows as
+            -- `func(any) any` (Gap 4 territory) so the runtime helper
+            -- handles the call shape internally; the win is the typed
+            -- slice in/out — drops the AsListT coercion at the
+            -- boundary and lets Go iterate without per-element type
+            -- assertion. Falls back to the default any-routing when
+            -- the list type isn't concrete (polymorphic helpers).
+            Can.VarKernel modName funcName
+                | let typedCall = kernelTypedCall
+                        (Rec._cg_solvedTypes getCgEnv) modName funcName args
+                        (map exprToGo args)
+                , Just expr <- typedCall ->
+                    expr
+
             -- P7 step 5: generalise the zero-arg FFI migration. Any
             -- Sky `KernelMod.fn ()` where (a) the kernel module name
             -- starts with "Go_" (i.e. it's a user-added FFI package,
@@ -5576,13 +5595,23 @@ exprToGoTyped types retType (A.At _ expr) = case expr of
     Can.Call func args ->
         let goFunc = exprToGoTyped types retType func
             goArgs = map (exprToGoTyped types retType) args
-            callExpr = case func of
-                A.At _ (Can.VarLocal name) ->
-                    case Map.lookup name types of
-                        Just (T.TLambda _ _) ->
-                            GoIr.GoCall (GoIr.GoRaw (name ++ ".(func(any) any)")) goArgs
-                        _ -> GoIr.GoCall goFunc goArgs
-                _ -> GoIr.GoCall goFunc goArgs
+            -- Try typed kernel routing first. When func is a kernel
+            -- with a typed *T variant AND we can derive concrete
+            -- arg types, emit `rt.List_mapT[int, any](...)` instead
+            -- of `rt.List_mapAny(...)`. v0.12.x typed-codegen Phase 3.
+            typedKernelCall = case func of
+                A.At _ (Can.VarKernel m f) ->
+                    kernelTypedCall types m f args goArgs
+                _ -> Nothing
+            callExpr = case typedKernelCall of
+                Just expr -> expr
+                Nothing -> case func of
+                    A.At _ (Can.VarLocal name) ->
+                        case Map.lookup name types of
+                            Just (T.TLambda _ _) ->
+                                GoIr.GoCall (GoIr.GoRaw (name ++ ".(func(any) any)")) goArgs
+                            _ -> GoIr.GoCall goFunc goArgs
+                    _ -> GoIr.GoCall goFunc goArgs
             -- If the called function has a known return type and we need a primitive,
             -- assert the result. This handles: n * factorial(n-1) where factorial returns any.
             -- BUT: if the callee is itself emitted with a fully-typed Go signature
@@ -5661,6 +5690,229 @@ isConcreteType ty = case ty of
     T.TType _ name _ -> name `elem` ["Int", "Float", "Bool", "String", "Char"]
     T.TUnit -> True
     _ -> False  -- Functions, containers, etc. stay as any
+
+
+-- | Infer the Sky Type of an arbitrary Can.Expr from the solver's
+-- per-name types map. Returns Nothing when the expression can't be
+-- statically typed from the available info (lambda body without
+-- enough context, polymorphic constraint, missing entry).
+--
+-- v0.12.x typed-codegen plumbing — used by the typed kernel routing
+-- to derive call-site argument types so e.g. `List.map fn xs` with
+-- `xs : List Int` routes to `rt.List_mapT[int, any]` instead of
+-- `rt.List_mapAny`. Phase 1 of `docs/v012-typed-codegen-plan.md`.
+inferExprType :: Solve.SolvedTypes -> Can.Expr -> Maybe T.Type
+inferExprType types (A.At _ e) = case e of
+    Can.Int _    -> Just ConstrainExpr.intType
+    Can.Float _  -> Just ConstrainExpr.floatType
+    Can.Str _    -> Just ConstrainExpr.stringType
+    Can.Chr _    -> Just ConstrainExpr.charType
+    Can.Unit     -> Just T.TUnit
+    Can.VarLocal name    -> Map.lookup name types
+    Can.VarTopLevel _ n  -> Map.lookup n types
+    -- VarKernel: instantiate the kernel's HM annotation. Strips the
+    -- Forall wrapper (kernel sigs are universally quantified) so the
+    -- result is the raw type with TVars left in place.
+    Can.VarKernel modName funcName ->
+        case ConstrainExpr.lookupKernelType modName funcName of
+            Just (T.Forall _ ty) -> Just ty
+            Nothing -> Nothing
+    -- Constructor: build a function type from its arg types to the
+    -- result type. Annotations carry it directly.
+    Can.VarCtor _ _ _ _ (T.Forall _ ty) -> Just ty
+    -- A fully-applied call's result is the callee's return type.
+    -- Walk splitFuncType to peel off the consumed arrows.
+    Can.Call func args ->
+        case inferExprType types func of
+            Just ft -> Just (snd (splitFuncType (length args) ft))
+            Nothing -> Nothing
+    -- A list literal's type is `List <element>`. Use the first
+    -- element's type when inferable; otherwise leave as any-list.
+    Can.List items ->
+        case items of
+            (x:_) -> case inferExprType types x of
+                Just elemTy -> Just (mkListType elemTy)
+                Nothing -> Just (mkListType (T.TVar "_lit"))
+            [] -> Just (mkListType (T.TVar "_empty"))
+    -- Conditional / case branches: take the type of the first arm
+    -- if available. The HM solver already unified all arms, so any
+    -- arm's type is representative.
+    Can.If [] elseExpr -> inferExprType types elseExpr
+    Can.If ((_, b):_) _ -> inferExprType types b
+    Can.Case _ ((Can.CaseBranch _ b):_) -> inferExprType types b
+    -- Field access: requires knowing the parent record's type.
+    -- The TRecord type stores the field types directly.
+    Can.Access record (A.At _ fieldName) ->
+        case inferExprType types record of
+            Just (T.TRecord fields _) ->
+                case Map.lookup fieldName fields of
+                    Just (T.FieldType _ ft) -> Just ft
+                    Nothing -> Nothing
+            _ -> Nothing
+    -- Record literal: build the TRecord type from field types.
+    Can.Record fields ->
+        let entries = Map.toList fields
+            fieldTypes = mapMaybe (\(n, ex) ->
+                case inferExprType types ex of
+                    Just t  -> Just (n, T.FieldType 0 t)
+                    Nothing -> Nothing) entries
+        in if length fieldTypes == length entries
+            then Just (T.TRecord (Map.fromList fieldTypes) Nothing)
+            else Nothing
+    -- Tuple: easy if all components type.
+    Can.Tuple a b cs ->
+        case (inferExprType types a, inferExprType types b, mapM (inferExprType types) cs) of
+            (Just ta, Just tb, Just tcs) -> Just (T.TTuple ta tb tcs)
+            _ -> Nothing
+    -- Lambda: requires walking the body. v0.12.x scope stops here —
+    -- lambda type inference is Gap 4's responsibility.
+    Can.Lambda _ _ -> Nothing
+    -- Negate inherits its operand's type.
+    Can.Negate inner -> inferExprType types inner
+    -- Binop / Let / Update / others — out of v0.12.x scope; safe
+    -- fallback returns Nothing (caller falls back to any-routing).
+    _ -> Nothing
+  where
+    mkListType elemTy = T.TType ModuleName.list "List" [elemTy]
+
+
+-- | Compute the Go-type string for an arbitrary Can.Expr by combining
+-- inferExprType + solvedTypeToGo. Returns "any" when the expression
+-- can't be typed — keeps the kernel routing safe-by-default.
+inferGoType :: Solve.SolvedTypes -> Can.Expr -> String
+inferGoType types e = case inferExprType types e of
+    Just t  -> solvedTypeToGo t
+    Nothing -> "any"
+
+
+-- | Extract the element type of a list-typed expression, as a Go
+-- type string. Returns "any" when the expression isn't a list type
+-- or when the element type can't be derived. Used by kernel routing
+-- for List.* helpers that need the list element type as a generic.
+--
+-- Defensive: rejects "Anon_R_..." synthesised record names. Those
+-- come from HM's anonymous-record handling and don't have Go type
+-- alias counterparts emitted by the codegen — passing them to a
+-- typed kernel would generate `undefined: Anon_R_xxx` errors.
+-- Falling back to "any" forces the default any-routing path which
+-- handles anonymous records correctly via reflect.
+inferListElemGoType :: Solve.SolvedTypes -> Can.Expr -> String
+inferListElemGoType types e = case inferExprType types e of
+    Just (T.TType _ "List" [elemTy]) ->
+        let go = solvedTypeToGo elemTy
+        in if "Anon_R_" `List.isPrefixOf` go then "any" else go
+    _ -> "any"
+
+
+-- | Try to emit a typed kernel call (rt.List_mapT[int, any](...))
+-- instead of the default any-routing (rt.List_mapAny(...)). Returns
+-- Just (typed-call-expr) when ALL of:
+--
+--   * The kernel has a typed runtime variant in our routing table.
+--   * The relevant call-site arg types are derivable.
+--
+-- Returns Nothing in every other case → caller falls back to the
+-- default kernelToGo path. v0.12.x typed-codegen — Phase 3 of the
+-- staged plan in `docs/v012-typed-codegen-plan.md`.
+--
+-- The decision to route typed vs any-typed is conservative: when in
+-- doubt, default to any. The any-routed kernels still work; typed
+-- routing is an additive optimisation. This keeps the change
+-- regression-safe — every example that currently builds keeps
+-- building.
+kernelTypedCall
+    :: Solve.SolvedTypes
+    -> String       -- ^ module name
+    -> String       -- ^ function name
+    -> [Can.Expr]   -- ^ call-site args
+    -> [GoIr.GoExpr] -- ^ pre-lowered Go args
+    -> Maybe GoIr.GoExpr
+kernelTypedCall types modName funcName args goArgs =
+    -- Helper: wrap an arg with rt.AsListT[ElemType] so a runtime
+    -- any-typed value (e.g. from rt.Field or List_mapAny) is
+    -- converted to the typed Go slice []ElemType the typed kernel
+    -- expects. Without this wrapper the Go compiler rejects the
+    -- call: "cannot use any value as []T value in argument".
+    let wrapAsList :: String -> GoIr.GoExpr -> GoIr.GoExpr
+        wrapAsList elemGo e =
+            GoIr.GoCall (GoIr.GoIdent ("rt.AsListT[" ++ elemGo ++ "]")) [e]
+    in case (modName, funcName, args, goArgs) of
+        -- List.map fn xs : (a -> b) -> List a -> List b
+        -- Routes to List_mapTA[A] (typed slice, any-typed function).
+        -- The TA variant accepts the lambda's `func(any) any` shape
+        -- (Gap 4 territory — Sky lambdas don't yet preserve types).
+        -- Win: typed input slice means no AsListT coercion at the
+        -- boundary; iteration is direct on []A. Per-element call
+        -- still flows through SkyCall.
+        --
+        -- The list arg is wrapped with rt.AsListT[A](...) so a
+        -- runtime any-typed value (rt.Field, List_mapAny output,
+        -- etc.) is converted to the typed Go slice the kernel
+        -- expects. AsListT is a no-op on already-typed slices.
+        ("List", "map", [_, _], [goFn, goList]) ->
+            let elemGo = inferListElemGoType types (args !! 1)
+            in if elemGo == "any" then Nothing
+               else Just (GoIr.GoCall
+                    (GoIr.GoIdent ("rt.List_mapTA[" ++ elemGo ++ "]"))
+                    [goFn, wrapAsList elemGo goList])
+        -- List.filter fn xs : (a -> Bool) -> List a -> List a
+        ("List", "filter", [_, _], [goFn, goList]) ->
+            let elemGo = inferListElemGoType types (args !! 1)
+            in if elemGo == "any" then Nothing
+               else Just (GoIr.GoCall
+                    (GoIr.GoIdent ("rt.List_filterTA[" ++ elemGo ++ "]"))
+                    [goFn, wrapAsList elemGo goList])
+        -- List.foldl fn seed xs : (a -> b -> b) -> b -> List a -> b
+        ("List", "foldl", [_, _, _], [goFn, goSeed, goList]) ->
+            let elemGo = inferListElemGoType types (args !! 2)
+            in if elemGo == "any" then Nothing
+               else Just (GoIr.GoCall
+                    (GoIr.GoIdent ("rt.List_foldlTA[" ++ elemGo ++ "]"))
+                    [goFn, goSeed, wrapAsList elemGo goList])
+        -- List.length xs : List a -> Int.
+        ("List", "length", [_], [goList]) ->
+            let elemGo = inferListElemGoType types (args !! 0)
+            in if elemGo == "any" then Nothing
+               else Just (GoIr.GoCall
+                    (GoIr.GoIdent ("rt.List_lengthT[" ++ elemGo ++ "]"))
+                    [wrapAsList elemGo goList])
+        -- List.head xs : List a -> Maybe a.
+        ("List", "head", [_], [goList]) ->
+            let elemGo = inferListElemGoType types (args !! 0)
+            in if elemGo == "any" then Nothing
+               else Just (GoIr.GoCall
+                    (GoIr.GoIdent ("rt.List_headT[" ++ elemGo ++ "]"))
+                    [wrapAsList elemGo goList])
+        -- List.reverse xs : List a -> List a.
+        ("List", "reverse", [_], [goList]) ->
+            let elemGo = inferListElemGoType types (args !! 0)
+            in if elemGo == "any" then Nothing
+               else Just (GoIr.GoCall
+                    (GoIr.GoIdent ("rt.List_reverseT[" ++ elemGo ++ "]"))
+                    [wrapAsList elemGo goList])
+        -- List.take n xs / List.drop n xs : Int -> List a -> List a.
+        ("List", "take", [_, _], [goN, goList]) ->
+            let elemGo = inferListElemGoType types (args !! 1)
+            in if elemGo == "any" then Nothing
+               else Just (GoIr.GoCall
+                    (GoIr.GoIdent ("rt.List_takeT[" ++ elemGo ++ "]"))
+                    [goN, wrapAsList elemGo goList])
+        ("List", "drop", [_, _], [goN, goList]) ->
+            let elemGo = inferListElemGoType types (args !! 1)
+            in if elemGo == "any" then Nothing
+               else Just (GoIr.GoCall
+                    (GoIr.GoIdent ("rt.List_dropT[" ++ elemGo ++ "]"))
+                    [goN, wrapAsList elemGo goList])
+        -- List.append a b : List x -> List x -> List x.
+        ("List", "append", [_, _], [goA, goB]) ->
+            let aElem = inferListElemGoType types (args !! 0)
+                bElem = inferListElemGoType types (args !! 1)
+                pick = if aElem /= "any" then aElem else bElem
+            in if pick == "any" then Nothing
+               else Just (GoIr.GoCall
+                    (GoIr.GoIdent ("rt.List_appendT[" ++ pick ++ "]"))
+                    [wrapAsList pick goA, wrapAsList pick goB])
+        _ -> Nothing
 
 
 -- | Convert a solved type to a Go type string.
