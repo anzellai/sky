@@ -487,11 +487,49 @@ func tuiAppRun(cfg any) any {
 				// defer in Tui_app restores TTY + alt-screen.
 				return Ok[any, any](struct{}{})
 			}
-			// Mouse: SGR encoded as "<button>:<col>:<row>:<M|m>". Only
-			// handle press of left button (button==0) for v1.
+			// Mouse: SGR encoded as "<button>;<col>;<row>:<M|m>".
+			//
+			// v0.12 surface:
+			//   * Left press (button==0, isPress=true) → focus
+			//     change + onClick dispatch (the v1 path).
+			//   * Wheel up   (button==64) → scroll viewport up.
+			//   * Wheel down (button==65) → scroll viewport down.
+			//
+			// Deliberately NOT yet wired:
+			//   * Release events (`m` suffix) — v1 callers only care
+			//     about press; release would require splitting
+			//     onMouseDown / onMouseUp surface area, which we
+			//     don't expose.
+			//   * Drag (button>=32 with `M` suffix) — slider drag
+			//     is on the roadmap; for now sliders take values
+			//     via keyboard arrows.
+			//   * Middle / right click (button==1 / 2) — uncommon
+			//     in TUI; user `onKey` can still dispatch on them
+			//     via `kind == "mouse"` if they extend this code.
 			if km.ev.kind == "mouse" {
 				button, col1, row1, isPress, ok := parseMouseEvent(km.ev.value)
-				if ok && isPress && button == 0 {
+				if !ok {
+					continue
+				}
+				// Wheel events: SGR 1006 encodes scroll-up as
+				// button 64, scroll-down as 65 (with the `M`
+				// suffix; SGR doesn't emit a release for wheel).
+				// Scroll the viewport by 3 lines per notch — same
+				// step PgUp / PgDn use, feels natural with a
+				// trackpad's two-finger scroll.
+				if isPress && (button == 64 || button == 65) {
+					step := 3
+					if button == 64 {
+						scrollY = max(0, scrollY-step)
+					} else {
+						scrollY = min(max(0, contentH-rows), scrollY+step)
+					}
+					grid, focusables, contentH = renderElementFrameScroll(viewFn, model, cols, rows, canvas, focusIdx, inputs, scrollY)
+					tuiPaint(paintDiff(prev, grid))
+					prev = grid
+					continue
+				}
+				if isPress && button == 0 {
 					if hit := hitTestFocusables(focusables, col1-1, row1-1); hit >= 0 {
 						oldFocus := focusIdx
 						focusIdx = hit

@@ -243,6 +243,22 @@ func TestTuiDecodeKey_SgrMouse(t *testing.T) {
 			wantKind:  "mouse",
 			wantValue: "2;100;40:M",
 		},
+		// SGR 1006 wheel events: button 64 = scroll up, 65 = down.
+		// Both ship with the `M` (press) suffix; SGR doesn't emit a
+		// release for wheel events. v0.12 wires these up to scroll
+		// the viewport (3 cells per notch).
+		{
+			name:      "wheel up at 10,5",
+			input:     "\x1b[<64;10;5M",
+			wantKind:  "mouse",
+			wantValue: "64;10;5:M",
+		},
+		{
+			name:      "wheel down at 10,5",
+			input:     "\x1b[<65;10;5M",
+			wantKind:  "mouse",
+			wantValue: "65;10;5:M",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -144,3 +144,39 @@ spec = describe "LSP completion" $ do
             -- Should suggest at least one Std.* or Sky.* module.
             any (\l -> T.isPrefixOf "Std." l || T.isPrefixOf "Sky." l) labels
                 `shouldBe` True
+
+    it "qualified completion works on an imported-but-unreferenced module (gap 11)" $ do
+        -- Regression for the externals-scope union: a file that just
+        -- typed `import Std.Ui as Ui` and nothing else MUST still get
+        -- `Ui.<Tab>` completion before any reference exists. Pre-fix,
+        -- `collectImportNames` walked only `Can.VarTopLevel` references
+        -- so Ui's symbols were absent until the user wrote a usage —
+        -- a chicken-and-egg problem since the user's about to write
+        -- the first reference VIA completion.
+        --
+        -- Note: completion uses idxByQual (always populated) so even
+        -- the pre-fix LSP would have served this path; the EXTERNALS
+        -- side (used for diagnostics) is what gap 11 closed. Proving
+        -- the completion path stays green here pins the contract that
+        -- the union-scope didn't accidentally break the simpler
+        -- code path. See `collectImportNames` in Sky.Lsp.Server.
+        sky <- findSky
+        let src = unlines
+                [ "module Main exposing (main)"
+                , ""
+                , "import Sky.Core.Prelude exposing (..)"
+                , "import Std.Log exposing (println)"
+                , "import Std.Ui as Ui"
+                , ""
+                , "-- Note: no reference to `Ui` anywhere in the body."
+                , "x = Ui."
+                , ""
+                , "main = println (toString x)"
+                ]
+        withSystemTempDirectory "sky-lsp-cmp-import-only" $ \dir -> do
+            fixture <- setupProject dir src
+            -- Line 7 0-based = `x = Ui.`
+            --                   012345678
+            --                         ^7 right after the dot
+            labels <- completionAt sky fixture src 7 7
+            any (T.isPrefixOf "Ui.") labels `shouldBe` True

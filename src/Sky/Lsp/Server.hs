@@ -83,6 +83,12 @@ data ServerState = ServerState
     { ssDocs     :: !(IORef.IORef Docs)
     , ssIndex    :: !(IORef.IORef (Map.Map FilePath Idx.Index))
     , ssShutdown :: !(IORef.IORef Bool)
+    , ssTimedOutFiles :: !(IORef.IORef (Set.Set FilePath))
+      -- Files whose externals computation has tripped the LSP
+      -- timeout. Used to ensure we only emit ONE
+      -- `window/showMessage` per file per session — without this
+      -- the editor would get a popup on every keystroke after the
+      -- first timeout, which would be obnoxious.
     }
 
 
@@ -97,7 +103,13 @@ runLsp = do
     docs     <- IORef.newIORef (Map.empty :: Docs)
     idx      <- IORef.newIORef (Map.empty :: Map.Map FilePath Idx.Index)
     shutdown <- IORef.newIORef False
-    let st = ServerState { ssDocs = docs, ssIndex = idx, ssShutdown = shutdown }
+    timedOut <- IORef.newIORef (Set.empty :: Set.Set FilePath)
+    let st = ServerState
+            { ssDocs = docs
+            , ssIndex = idx
+            , ssShutdown = shutdown
+            , ssTimedOutFiles = timedOut
+            }
     forever $ do
         r <- try (handleOne st) :: IO (Either SomeException ())
         case r of
@@ -1073,7 +1085,7 @@ getExternalsForFile st path srcMod canMod = do
     eidx <- try (getIndex st path) :: IO (Either SomeException Idx.Index)
     case eidx of
         Left _    -> return Map.empty
-        Right idx -> buildScopedExternals path idx srcMod canMod
+        Right idx -> buildScopedExternals st path idx srcMod canMod
 
 
 -- | Compute the scoped externals for an open file: walk the file's
@@ -1089,12 +1101,13 @@ getExternalsForFile st path srcMod canMod = do
 -- inside the timeout, instead of later when the constraint solver
 -- traverses the lazy thunk.
 buildScopedExternals
-    :: FilePath
+    :: ServerState
+    -> FilePath
     -> Idx.Index
     -> Src.Module
     -> Can.Module
     -> IO (Map.Map (String, String) Ty.Annotation)
-buildScopedExternals path idx srcMod canMod = do
+buildScopedExternals st path idx srcMod canMod = do
     -- Build externals scoped to (imports ∪ references). Without
     -- this scope the LSP attempts to feed the entire workspace's
     -- externals (~1800 entries on skyshop) into every per-file
@@ -1118,6 +1131,27 @@ buildScopedExternals path idx srcMod canMod = do
     case r of
         Just ext -> return ext
         Nothing -> do
+            -- Surface the timeout to the editor as a one-shot
+            -- info notification. Without this the user just sees
+            -- red squiggles silently disappear from one file
+            -- while every other file in the workspace works fine
+            -- — confusing. Dedup per file: the timeout is sticky
+            -- for the LSP-server lifetime so a single keystroke
+            -- doesn't generate a cascade of popups.
+            already <- IORef.atomicModifyIORef' (ssTimedOutFiles st) $
+                \s -> if Set.member path s
+                    then (s, True)
+                    else (Set.insert path s, False)
+            when (not already) $
+                sendNotification "window/showMessage" $ A.object
+                    [ "type"    A..= (3 :: Int) -- 3 = Info
+                    , "message" A..=
+                        ("Sky LSP: cross-module type checks degraded "
+                         ++ "for this file — externals computation "
+                         ++ "exceeded the 3 s budget. Hover, "
+                         ++ "completion and goto-def still work; "
+                         ++ "`sky check` is unaffected.")
+                    ]
             Diag.logRaw_uri (T.pack ("file://" ++ path))
                 "LSP: scoped-externals computation exceeded 3s budget"
             return Map.empty

@@ -952,7 +952,7 @@ Hard cap at 100,000 in either dimension; overshoot triggers a `tuiWarn`.
 - Headings h1-h6 with distinct visual markers (`═ ─ ▌ ▎ ▏ ·`)
 - Borders: solid, dashed, dotted with widthEach
 - Inputs: text, password (masked), checkbox (☐/☑), radio (○/●), slider, multiline textarea
-- Events: onClick, onInput, onFocus, onSubmit (form record-decode), mouse press (SGR 1006)
+- Events: onClick, onInput, onFocus, onSubmit (form record-decode), mouse left-press (SGR 1006), scroll wheel (3 cells/notch). Release / drag / middle / right-click are deliberately deferred — the v0.12 surface is press + wheel; sliders take values via keyboard arrows.
 - Nearby overlays: above / below / onLeft / onRight / inFront / behind
 - Alignment: alignX/alignY (left/center/right, top/center/bottom)
 - Padding (incl. paddingXY, paddingEach), spacing

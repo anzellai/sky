@@ -184,6 +184,7 @@ test-suite sky-tests
     , temporary >= 1.3
     , aeson >= 2.0
     , vector >= 0.12
+    , time >= 1.9
 
   other-modules:
       Sky.Build.CompileSpec
@@ -232,6 +233,8 @@ test-suite sky-tests
       Sky.Build.VerifyAllSpec
       Sky.Lsp.ProtocolSpec
     , Sky.Lsp.CapabilitiesSpec
+    , Sky.Lsp.CompletionSpec
+    , Sky.Lsp.ScaleSpec
     , Sky.Build.EmbeddedRuntimeSpec
     , Sky.Build.EmbeddedInspectorSpec
     , Sky.Cli.ExitCodesSpec
