@@ -261,6 +261,14 @@ classifyAndRun _cwd name dir bin logPath
 -- identified as M6.
 runScenario :: String -> FilePath -> FilePath -> Int -> FilePath -> IO ()
 runScenario name dir logPath port scenarioPath = do
+    -- Pre-flight: kill any process holding our port. Without this,
+    -- a stale `sky-out/app` from a prior session (or another
+    -- example running in the background) silently steals the
+    -- bind, our spawn no-ops, and the scenario probes hit the
+    -- WRONG server's responses. Verify reports "FAIL scenario:
+    -- body missing X" while the actual app under test never
+    -- started. (See CLAUDE.md "verify port-collision hardening".)
+    killPortHolder port
     raw <- B.readFile scenarioPath
     case Aeson.eitherDecode (BL.fromStrict raw) of
         Left err -> do
@@ -311,6 +319,8 @@ runScenario name dir logPath port scenarioPath = do
 
 runDefaultProbe :: String -> FilePath -> FilePath -> Int -> IO ()
 runDefaultProbe name dir logPath port = do
+    -- Same port-collision pre-flight as runScenario.
+    killPortHolder port
     (_, stdoutTxt, _) <- System.Process.readProcessWithExitCode "sh"
         [ "-c"
         , unwords
@@ -333,6 +343,25 @@ runDefaultProbe name dir logPath port = do
             ]
         ] ""
     putStr stdoutTxt
+
+
+-- | Kill anything listening on `port`, then briefly wait for the
+-- socket to drain. Used by `sky verify` before launching the
+-- example's server so a stale process from a prior session can't
+-- steal the port and serve unrelated responses to our probes.
+-- macOS uses `lsof -ti :PORT`; Linux uses the same with
+-- `-w` to suppress warnings. Either way: best-effort, silent.
+killPortHolder :: Int -> IO ()
+killPortHolder port = do
+    let cmd = "pids=$(lsof -ti :" ++ show port ++ " 2>/dev/null);"
+           ++ " if [ -n \"$pids\" ]; then"
+           ++ "   kill $pids 2>/dev/null; sleep 0.3;"
+           ++ "   pids=$(lsof -ti :" ++ show port ++ " 2>/dev/null);"
+           ++ "   [ -n \"$pids\" ] && kill -9 $pids 2>/dev/null;"
+           ++ "   sleep 0.2;"
+           ++ " fi; true"
+    _ <- System.Process.readProcessWithExitCode "sh" ["-c", cmd] ""
+    return ()
 
 
 -- One scenario request; returns [] on success, [reason] on failure.

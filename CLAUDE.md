@@ -1139,6 +1139,105 @@ These are current compiler limitations users must work around. Items marked ~~st
 
 ### Recently Fixed (listed for regression context)
 
+#### exp/tea-core (LSP works on huge FFI surfaces — skyshop / Stripe SDK, 2026-05-10)
+
+**Root cause** for the LSP-pegged-at-100%-CPU symptom on
+`examples/13-skyshop` (Stripe SDK ~12MB FFI catalogue, 76,141 generated
+symbols):
+
+1. `loadFfiSymbols` in `src/Sky/Lsp/Index.hs` did O(n×m) scans —
+   per-symbol `findSkyiLine` linearly searched the whole skyi for a
+   matching catalogue line. For Stripe that's 76K symbols × ~500K
+   lines ≈ 38 billion text comparisons. The cost was paid lazily: the
+   first reader of `idxByQual` triggered the entire chain, hanging the
+   LSP for tens of seconds. A timed-out reader would leave a half-
+   forced thunk that subsequent readers re-entered, deadlocking
+   permanently.
+2. `idxExternals` was an eagerly-built map over ALL workspace modules.
+   For pathological FFI types, `generaliseToAnnotation` blew the
+   solver budget. The same lazy-thunk class fired here too.
+
+**Fixes landed**:
+
+- **`buildSkyiNameIndex`** — pre-index the .skyi by capitalised symbol
+  name in a single linear pass, then O(log n) lookup per symbol. Drop
+  total cost from ~10 minutes to <1 second.
+- **Strict force inside `buildIndex`** — `let !merged = mergeFfi ... ;
+  !_ = Map.size (idxByQual merged)` (and siblings) before returning.
+  Plus `IORef.atomicModifyIORef'` for the index cache update so
+  subsequent readers see WHNF. Kills the half-forced-thunk class
+  entirely.
+- **`Idx.externalsForFile imports idx`** — replaces the eager
+  workspace-wide externals map with a per-file scoped builder that
+  takes the open file's qualified module references (extracted via
+  `collectImportNames`) and only generalises those modules' types.
+  Skyshop typically scopes to ~14 modules out of 64, with ~17
+  externals computed in 2.5s. Pathological modules (>400 declared
+  names) are skipped automatically — they still resolve via the FFI
+  catalogue + workspace symbol index, just without HM cross-file
+  type checks.
+- **3-second timeout** on the externals computation (`System.Timeout
+  .timeout`). If it ever exceeds, the LSP falls back to empty
+  externals and logs to `<projectRoot>/.skycache/lsp-error.log`.
+  Cross-module diagnostics on that one file are temporarily lost; the
+  editor stays responsive.
+
+**Result on skyshop** (76,141 FFI symbols, 64 user/stdlib modules):
+- One-time index build: ~3 seconds
+- Per-hover request: <100ms
+- Hover on Stripe FFI calls (`Stripe.newCustomerListParams`,
+  `Stripe.setKey`) returns full type signatures with `defined in`
+  module attribution
+- Qualified completion (`Stripe.<Tab>`) lists Stripe FFI surface
+
+**Test fixtures**: `scripts/lsp-test-skyshop.lua` is a headless-
+Neovim driver that probes existing project files (no fixture
+rewrites). Runs hover-stripe-newparams, hover-stripe-setkey, and
+completion-stripe-prefix end-to-end. Pair it with the synthetic
+fixture suite (`scripts/lsp-test-nvim.sh`) for regression coverage:
+small + medium + huge-FFI projects all green.
+
+**Diagnostic log**: `<projectRoot>/.skycache/lsp-error.log` — the
+LSP appends a timestamped line on `buildIndex` exceptions and on
+externals-timeout fallback. `Sky.Lsp.Diag` provides the helpers;
+silently swallows IO errors so logging itself never breaks the LSP.
+
+**Note on `sky build`**: cross-module type errors continue to fire
+correctly during `sky check` / `sky build` — the LSP fallback to
+empty externals only affects the editor's red-squiggle layer.
+Compile-time guarantees are unchanged.
+
+**Note on autocompletion**: completion is unaffected by this work
+because it consults `idxByQual` (which holds every workspace
+module + every FFI symbol from `loadFfiSymbols`), not the
+externals map. So `Stripe.<Tab>` returns the full Stripe surface
+the moment the LSP starts, regardless of whether the file has
+referenced anything yet. The externals scope (used only for type-
+check diagnostics) is unioned over (a) every `import M` statement
+in the source AST and (b) every `Can.VarTopLevel`-derived
+reference in the canonicalised expressions — so a file that just
+typed `import Stripe as S` already gets Stripe externals before
+any usage exists, ready for type-check the moment a reference
+appears.
+
+#### exp/tea-core (`sky verify` port-collision hardening, 2026-05-10)
+
+Background: `cabal test` running `sky verify` for the
+HTTP-server examples used to occasionally fail with
+`FAIL scenario: 15-http-server: GET /: body missing substring "Sky HTTP Server"`.
+Diagnosis: a stale `sky-out/app` from a prior session (or a
+parallel example's server) was holding port 8000. The new
+`sky verify` spawn silently failed to bind, but `curl` to the
+same port still got responses — from the wrong server. The
+scenario then "saw" some other example's HTML and reported a
+spurious body-substring failure.
+
+Fix: `runScenario` and `runDefaultProbe` in `app/Main.hs` now call
+`killPortHolder port` as a pre-flight. The helper does
+`lsof -ti :PORT` → `kill` (SIGTERM, then SIGKILL after 0.3s if
+still alive). Best-effort; silent on no-holder. Pure environmental
+hygiene — no behaviour change when the port is already free.
+
 #### exp/tea-core (LSP completeness + Sky.Tui button activation, 2026-05-10)
 
 - **LSP completion: field labels are bare, filterText carries the

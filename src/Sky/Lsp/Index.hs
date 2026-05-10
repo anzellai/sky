@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE BangPatterns #-}
 -- | Workspace symbol index for the Sky LSP.
 --
 -- Built by parsing + canonicalising + type-checking every .sky file in
@@ -19,13 +20,14 @@ module Sky.Lsp.Index
     , collectLocalBindings
     , symFromTopLevel
     , externalsForLsp
+    , externalsForFile
     ) where
 
 import qualified Data.Map.Strict as Map
 import Data.Map.Strict (Map)
 import qualified Data.Set as Set
 import Data.Maybe (mapMaybe, fromMaybe, listToMaybe)
-import Data.List (sortOn, isPrefixOf, isSuffixOf)
+import Data.List (sortOn, isPrefixOf, isSuffixOf, foldl')
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import qualified System.Directory as Dir
@@ -41,6 +43,9 @@ import qualified Sky.Build.Compile as Compile
 import qualified Sky.Sky.Toml as Toml
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as BL
+import qualified Data.Time.Clock as Clock
+import qualified Data.Time.Format as Tfmt
+import System.IO (IOMode(AppendMode), hPutStrLn, hClose, openFile)
 
 
 -- ─── Types ─────────────────────────────────────────────────────────────
@@ -106,15 +111,24 @@ data Index = Index
       -- rely on lookupLocal's smallest-scope selection on top of this.
     , idxFileSrc   :: !(Map FilePath T.Text)
     , idxRoot      :: !(Maybe FilePath)
-    , idxExternals :: !(Map (String, String) Ty.Annotation)
-      -- Pre-built cross-module externals map. Populated from the
-      -- workspace typecheck so the LSP's runPipeline can constrain
-      -- the open file with externals (see Server.hs:runPipelineSt
-      -- + Server.hs:getExternalsForFile). Without these, type errors
-      -- involving stdlib functions (`Ui.layout`, `Http.get`, etc.)
-      -- never surface as red squiggles in the editor — the
-      -- root-cause of issue #52's LSP-side gap. Built once at index
-      -- time; refreshed when the index is refreshed.
+    , idxModTypes  :: !(Map String (Map String Ty.Type))
+      -- Per-module solved types (raw, NOT generalised). Cross-module
+      -- externals are computed on-demand from a SUBSET of these (only
+      -- the modules the open file actually imports), keyed in
+      -- `getExternalsForFile`. This avoids paying the
+      -- generalise-the-world cost during buildIndex — critical for
+      -- projects with very-large FFI deps (skyshop's Stripe SDK has
+      -- ~1800 types whose deeply-nested Annotation generalisation
+      -- pegged a CPU at 100% indefinitely on the eager path).
+    , idxModCanons :: ![(String, Can.Module)]
+      -- Kept for `buildGlobalTypeHomeMap` which needs every module's
+      -- aliases + unions to fix unqualified type references during
+      -- externals construction.
+    , idxModDecls  :: !(Map String (Set.Set String))
+      -- Per-module set of top-level declared names. Used by
+      -- `getExternalsForFile` to filter out non-declarations the
+      -- pass-1 solver may have dragged into _wm_types (constructors,
+      -- imported names re-flowing through the module).
     } deriving (Show)
 
 
@@ -130,7 +144,9 @@ emptyIndex = Index
     , idxRenaming  = Map.empty
     , idxFileSrc = Map.empty
     , idxRoot = Nothing
-    , idxExternals = Map.empty
+    , idxModTypes = Map.empty
+    , idxModCanons = []
+    , idxModDecls = Map.empty
     }
 
 
@@ -140,6 +156,32 @@ emptyIndex = Index
 -- sky.toml in projectRoot to find the entry path, then runs the full
 -- typecheck pipeline (which materialises stdlib + dep roots), and
 -- transforms the per-module canonical+typed result into a flat lookup.
+-- | Append a free-form info line to the per-project LSP debug log.
+-- Used by both the success and the failure paths in buildIndex so
+-- "did indexing run at all?" is observable from the log alone.
+logBuildIndexInfo :: FilePath -> String -> IO ()
+logBuildIndexInfo projectRoot msg = do
+    let logDir = projectRoot </> ".skycache"
+    Dir.createDirectoryIfMissing True logDir
+    let logPath = logDir </> "lsp-error.log"
+    now <- Clock.getCurrentTime
+    let stamp = Tfmt.formatTime Tfmt.defaultTimeLocale "%Y-%m-%d %H:%M:%S" now
+    h <- openFile logPath AppendMode
+    hPutStrLn h ("[" ++ stamp ++ "] " ++ msg)
+    hClose h
+
+
+-- | Append an exception from buildIndex to a per-project debug log.
+-- Without this, exceptions in `Compile.typecheckWorkspace` (parse
+-- error in some module, solver budget overrun, OOM, etc.) cause the
+-- LSP to silently fall through to an empty index — the LSP "works"
+-- but every hover returns nil. The log lives in the project's
+-- .skycache/ directory so it sits next to other build artefacts.
+logBuildIndexError :: FilePath -> SomeException -> IO ()
+logBuildIndexError projectRoot e =
+    logBuildIndexInfo projectRoot ("buildIndex exception: " ++ show e)
+
+
 buildIndex :: FilePath -> IO Index
 buildIndex projectRoot = do
     let tomlPath = projectRoot </> "sky.toml"
@@ -156,12 +198,38 @@ buildIndex projectRoot = do
                 r <- try (Compile.typecheckWorkspace config entryPath)
                         :: IO (Either SomeException Compile.WorkspaceTypecheck)
                 case r of
-                    Left _   -> return emptyIndex { idxRoot = Just projectRoot }
-                    Right wt -> return (fromTypecheck (Just projectRoot) wt)
+                    Left e   -> do
+                        logBuildIndexError projectRoot e
+                        return emptyIndex { idxRoot = Just projectRoot }
+                    Right wt -> do
+                        let !idx = fromTypecheck (Just projectRoot) wt
+                        -- Force the spine of every Map-valued field so
+                        -- subsequent accesses (during hover / completion /
+                        -- diagnostics) never have to chase a lazy thunk.
+                        -- Without this, an IO-timed-out externals
+                        -- computation could leave a blackhole that hangs
+                        -- the next reader. See CLAUDE.md "LSP indexing
+                        -- on large FFI surfaces".
+                        let !_ = Map.size (idxByQual idx)
+                            !_ = Map.size (idxByLocal idx)
+                            !_ = Map.size (idxByFile idx)
+                            !_ = Map.size (idxModules idx)
+                            !_ = Map.size (idxImports idx)
+                            !_ = Map.size (idxLocals idx)
+                            !_ = Map.size (idxModTypes idx)
+                            !_ = Map.size (idxModDecls idx)
+                            !_ = length (idxModCanons idx)
+                        return idx
     -- Merge in FFI catalogue symbols so hover/definition work for
-    -- auto-generated bindings as well.
+    -- auto-generated bindings as well. Force strictly to avoid
+    -- thunked Maps that blow up in subsequent readers (skyshop's
+    -- 76,141-symbol Stripe FFI symptom).
     ffiSyms <- loadFfiSymbols projectRoot
-    return (mergeFfi ffiSyms baseIdx)
+    let !merged = mergeFfi ffiSyms baseIdx
+        !_ = Map.size (idxByQual merged)
+        !_ = Map.size (idxByLocal merged)
+        !_ = Map.size (idxByFile merged)
+    return merged
 
 
 -- | Convert a WorkspaceTypecheck into an Index. Pure — testable.
@@ -194,32 +262,23 @@ fromTypecheck root wt =
             in Solve.moduleRenaming (topTys ++ localTys)
         renamings = Map.fromList
             [ (p, renamingFor p) | (_, p) <- modPaths ]
-        -- Build cross-module externals once, at index time. The LSP's
-        -- diagnostics path consults idxExternals (via getExternalsForFile)
-        -- to constrain each open file against the same dep signatures
-        -- `sky check` sees. Issue #52: this is what the LSP was missing.
-        --
-        -- The build needs to MATCH `compile`'s extra filter (Compile.hs
-        -- line ~575): only keep externals whose `name` is a top-level
-        -- declaration in the home module. Without the filter, externals
-        -- include every name HM saw flowing through that module
-        -- (cross-module references, imports, constructors, etc.) —
-        -- producing wrong-home entries like ("Main","layout") that
-        -- would mis-type subsequent solves.
-        validForExternals = [ (n, Compile._wm_canon wm)
-                            | (n, wm) <- modList ]
-        depSolved = [ (n, Compile._wm_types wm) | (n, wm) <- modList ]
-        depDeclaredNames =
+        -- Per-module storage for on-demand externals. Building the
+        -- full cross-module externals map eagerly at index time hung
+        -- the LSP for projects with very-large FFI deps (skyshop's
+        -- Stripe SDK has ~1800 types whose deep-Annotation
+        -- generalisation took an unbounded amount of CPU). Instead
+        -- we keep the raw per-module data here and let
+        -- `Server.getExternalsForFile` build a SCOPED externals map
+        -- from only the modules the open file imports — typically
+        -- 5-15 modules instead of 64. Same correctness, dramatically
+        -- less work per request.
+        modTypesMap = Map.fromList
+            [ (n, Compile._wm_types wm) | (n, wm) <- modList ]
+        modCanons = [ (n, Compile._wm_canon wm) | (n, wm) <- modList ]
+        modDecls = Map.fromList
             [ (n, Compile.collectDeclNames (Can._decls (Compile._wm_canon wm)))
             | (n, wm) <- modList
             ]
-        rawExternals = Compile.buildCrossModuleExternalsWithMods
-                        validForExternals depSolved
-        externals = Map.filterWithKey
-            (\(m, n) _ -> case lookup m depDeclaredNames of
-                Just names -> n `Set.member` names
-                Nothing    -> False)
-            rawExternals
     in Index
         { idxByQual    = byQual
         , idxByLocal   = byLocal
@@ -231,7 +290,9 @@ fromTypecheck root wt =
         , idxRenaming  = renamings
         , idxFileSrc   = Map.fromList allFileSrc
         , idxRoot      = root
-        , idxExternals = externals
+        , idxModTypes  = modTypesMap
+        , idxModCanons = modCanons
+        , idxModDecls  = modDecls
         }
   where
     step (modName, wmod) (tops, locals, imps, srcs, mods, ltypes) =
@@ -508,12 +569,53 @@ lookupQualified :: Index -> String -> Maybe Sym
 lookupQualified idx q = Map.lookup q (idxByQual idx)
 
 
--- | Return the cross-module externals map the LSP's runPipelineSt
--- should pass to `Constrain.constrainModuleWithExternals` when type-
--- checking an open file. Stored on the Index so we don't rebuild it
--- per keystroke. See Server.hs:getExternalsForFile.
+-- | Build a SCOPED cross-module externals map for the open file.
+-- Only includes externals from modules the open file actually
+-- imports AND keeps only modules whose declaration count is below
+-- the LSP-externals cap (default 400 — generous for stdlib /
+-- Std.Ui, while still cutting off pathological FFI re-exports).
+-- The cap exists because `buildCrossModuleExternalsWithMods` calls
+-- `generaliseToAnnotation` on every type, and deeply-nested FFI
+-- types (Stripe SDK, Firebase) generalise into structures that take
+-- minutes of CPU to force. A skipped module just means the LSP
+-- can't surface cross-module type errors involving it; symbols
+-- still resolve via the FFI catalogue + workspace symbol index.
+--
+-- `imports` should be the qualified module names extracted from the
+-- open file's import list (e.g. ["Sky.Core.Prelude",
+-- "Github.Com.Stripe.StripeGo.V84", ...]).
+externalsForFile
+    :: [String]
+    -> Index
+    -> Map (String, String) Ty.Annotation
+externalsForFile imports idx =
+    let needed = Set.fromList imports
+        cap = 400 :: Int
+        depSolvedAll = Map.toList (idxModTypes idx)
+        smallEnough name =
+            case Map.lookup name (idxModDecls idx) of
+                Just names -> Set.size names <= cap
+                Nothing    -> True
+        keep n = Set.member n needed && smallEnough n
+        validDeps =
+            [ (n, m) | (n, m) <- idxModCanons idx, keep n ]
+        depSolved =
+            [ (n, ts) | (n, ts) <- depSolvedAll, keep n ]
+        rawExternals = Compile.buildCrossModuleExternalsWithMods
+                        validDeps depSolved
+        decls = idxModDecls idx
+    in Map.filterWithKey
+        (\(m, n) _ -> case Map.lookup m decls of
+            Just names -> n `Set.member` names
+            Nothing    -> False)
+        rawExternals
+
+
+-- | Backwards-compat alias: callers that pre-date the per-file
+-- scoping pass `[]` (no imports) and get an empty map. The LSP's
+-- production path uses externalsForFile directly.
 externalsForLsp :: Index -> Map (String, String) Ty.Annotation
-externalsForLsp = idxExternals
+externalsForLsp _ = Map.empty
 
 
 -- | Look up the symbol referenced at (file, line, col) for hover/jump.
@@ -593,17 +695,46 @@ loadFfiSymbols projectRoot = do
         jbs <- BL.readFile jsonPath
         hasSkyi <- Dir.doesFileExist skyiPath
         skyiText <- if hasSkyi then TIO.readFile skyiPath else return T.empty
-        let skyiLines = zip [1..] (T.lines skyiText)
+        -- Pre-index the .skyi by capitalised-name in a single linear
+        -- pass over the file, instead of scanning the whole file
+        -- per-symbol. For Stripe SDK (~8000 symbols × ~500K lines)
+        -- this drops the cost of `findSkyiLine` from
+        -- O(n×m) ≈ 4 × 10⁹ ops to O(n+m) ≈ 5 × 10⁵.
+        let !skyiIndex = buildSkyiNameIndex skyiText
         case Aeson.eitherDecode jbs of
             Left _ -> return []
             Right reg ->
-                return [ mkFfiSym skyiPath skyiLines (ffiModule reg) fn
+                return [ mkFfiSym skyiPath skyiIndex (ffiModule reg) fn
                        | fn <- ffiFunctions reg
                        ]
 
-    mkFfiSym skyiPath skyiLines modName fn =
+    -- Index .skyi lines by capitalised symbol name (the convention
+    -- the catalogue uses: `-- [effect] FnName : Type`). Lines
+    -- without that shape are skipped.
+    buildSkyiNameIndex :: T.Text -> Map String (Int, T.Text)
+    buildSkyiNameIndex content =
+        let numbered = zip [1..] (T.lines content)
+            entries = mapMaybe extractEntry numbered
+        in Map.fromListWith (\_ kept -> kept) entries
+      where
+        extractEntry (lineNo, ln) =
+            -- We're looking for `-- [effect] FnName : Type ...`
+            -- (catalogue) OR fallback: `[effect] FnName : Type`.
+            let stripped = T.stripStart ln
+                afterBracket = T.dropWhile (/= ']') stripped
+                rest = T.dropWhile (`elem` ("] " :: String)) afterBracket
+                (nameTok, afterName) = T.break (== ' ') rest
+                nameStr = T.unpack nameTok
+            in if T.null nameTok
+                || ":" `T.isPrefixOf` T.stripStart afterName
+                then Nothing
+                else if " : " `T.isInfixOf` afterName
+                    then Just (nameStr, (lineNo, ln))
+                    else Nothing
+
+    mkFfiSym skyiPath skyiIndex modName fn =
         let nm = funcName fn
-            (sigLine, sigText) = findSkyiLine skyiLines nm
+            (sigLine, sigText) = findSkyiLine skyiIndex nm
         in Sym
             { symQualName = modName ++ "." ++ nm
             , symLocalName = nm
@@ -618,16 +749,12 @@ loadFfiSymbols projectRoot = do
                              "-arg) — generated from " ++ modName)
             }
 
-    -- Find the .skyi line whose PascalCase name matches our camelCase
-    -- binding. Catalogue uses `-- [effect] FnName : Type` so we match
-    -- `" " ++ capitalised n ++ " :"` against a trimmed line.
-    findSkyiLine ls nm =
+    -- O(log n) lookup against the pre-built index. Falls back to
+    -- (0, "") when the name is missing — the LSP renders that as a
+    -- bare `nm : (FFI binding)` placeholder, same as before.
+    findSkyiLine skyiIndex nm =
         let cap = capitalise nm
-            needle = " " ++ cap ++ " : "
-            matches = [ (i, l) | (i, l) <- ls, T.isInfixOf (T.pack needle) l ]
-        in case matches of
-            ((i, l):_) -> (i, l)
-            []         -> (0, T.empty)
+        in fromMaybe (0, T.empty) (Map.lookup cap skyiIndex)
 
     -- Parse "-- [effect] FnName : Type Signature   -- runtime wrap: Task Error"
     -- into "name : Type Signature" (dropping the `-- runtime wrap` suffix).
@@ -682,12 +809,18 @@ instance Aeson.FromJSON FfiFuncJson where
 -- with the same qualified name win (so a user override shadows FFI).
 mergeFfi :: [Sym] -> Index -> Index
 mergeFfi syms idx =
-    let newByQual  = foldr (\s m -> Map.insertWith (\_ old -> old) (symQualName s) s m)
-                           (idxByQual idx) syms
-        newByLocal = foldr (\s m -> Map.insertWith (++) (symLocalName s) [s] m)
-                           (idxByLocal idx) syms
-        newByFile  = foldr (\s m -> Map.insertWith (++) (symFile s) [s] m)
-                           (idxByFile idx) syms
+    -- Strict foldl' avoids a deep thunk chain on big FFI catalogues
+    -- (Stripe SDK ships ~8000 symbols). The original `foldr`-built
+    -- Map looked fine to read at WHNF but forced into a 8000-deep
+    -- thunk evaluation the first time anything traversed the result
+    -- (e.g. atomicModifyIORef' storing the index). On skyshop this
+    -- pegged the LSP at 100% CPU for 30+ seconds per hover request.
+    let !newByQual  = foldl' (\m s -> Map.insertWith (\_ old -> old) (symQualName s) s m)
+                             (idxByQual idx) syms
+        !newByLocal = foldl' (\m s -> Map.insertWith (++) (symLocalName s) [s] m)
+                             (idxByLocal idx) syms
+        !newByFile  = foldl' (\m s -> Map.insertWith (++) (symFile s) [s] m)
+                             (idxByFile idx) syms
     in idx
         { idxByQual = newByQual
         , idxByLocal = newByLocal

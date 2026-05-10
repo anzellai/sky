@@ -97,9 +97,11 @@ spec = describe "LSP completion" $ do
             --  0123456789012345678901234567
             --                            ^25 (right after `.`)
             labels <- completionAt sky fixture src 10 25
-            -- Expect both fields.
-            hasItem "model.count" labels `shouldBe` True
-            hasItem "model.label" labels `shouldBe` True
+            -- Field completion items now use bare-name labels (the
+            -- qualified form lives in `filterText`). See
+            -- Sky.Lsp.Server.fieldsToCompletions.
+            hasItem "count" labels `shouldBe` True
+            hasItem "label" labels `shouldBe` True
 
     it "module-qualified completion (Ui.<Tab>) finds Std.Ui exports" $ do
         sky <- findSky

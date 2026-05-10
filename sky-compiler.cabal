@@ -133,6 +133,7 @@ executable sky
     Sky.Format.Doc
 
     -- LSP
+    Sky.Lsp.Diag
     Sky.Lsp.Index
     Sky.Lsp.Server
 

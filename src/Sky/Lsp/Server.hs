@@ -41,6 +41,7 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Maybe (fromMaybe, mapMaybe)
 import qualified Data.Text as T
+import qualified Data.Time.Clock as Clock
 
 import System.IO
 import System.Exit (exitSuccess, exitWith, ExitCode(..))
@@ -54,9 +55,12 @@ import qualified Sky.Type.Type as Ty
 import qualified Sky.Type.Exhaustiveness as Exhaust
 import qualified Sky.AST.Canonical as Can
 import qualified Sky.AST.Source as Src
+import qualified Sky.Sky.ModuleName as ModuleName
+import System.Timeout (timeout)
 import qualified Sky.Reporting.Annotation as A
 import qualified Sky.Format.Format as Fmt
 import qualified Sky.Lsp.Index as Idx
+import qualified Sky.Lsp.Diag as Diag
 import qualified System.Directory as Dir
 import System.FilePath (takeDirectory, (</>))
 
@@ -257,7 +261,11 @@ getIndex st file = do
         Just idx -> return idx
         Nothing  -> do
             idx <- Idx.buildIndex root
-            IORef.modifyIORef (ssIndex st) (Map.insert root idx)
+            -- atomicModifyIORef' (the prime variant) forces the
+            -- new map value strictly so subsequent readers can never
+            -- observe a half-evaluated thunk.
+            IORef.atomicModifyIORef' (ssIndex st) $ \m ->
+                (Map.insert root idx m, ())
             return idx
 
 -- | Force a fresh index for `file`'s project.
@@ -285,71 +293,76 @@ handleHoverIdx st req reqId = do
                     :: IO (Either SomeException (Maybe A.Value))
             case r of
                 Right (Just h) -> sendReply reqId h
-                _              -> sendReply reqId A.Null
+                _ -> sendReply reqId A.Null
 
 
 computeHoverIdx :: ServerState -> FilePath -> T.Text -> Int -> Int -> IO (Maybe A.Value)
 computeHoverIdx st file text line col =
     case Parse.parseModule text of
         Left _ -> return Nothing
-        Right srcMod -> case identAtPositionWithText srcMod text (line + 1) (col + 1) of
-            Nothing   -> return Nothing
-            -- Field access (`model.count`) — the ident extracted from
-            -- exprIdents has a leading `.`. We resolve it by finding
-            -- the parent record's solved type and reading the field.
-            -- Handles record literals + accessors too.
-            Just ('.':fieldName) -> do
-                fieldType <- resolveFieldType st file text srcMod line col fieldName
-                case fieldType of
-                    Just sig -> return (Just (mkHover ("." ++ fieldName ++ " : " ++ sig)))
-                    Nothing  -> return (Just (mkHover ("." ++ fieldName)))
-            Just name -> do
-                idx <- getIndex st file
-                -- Module-name hover: if the name matches an indexed
-                -- module, show a one-line summary (symbol count +
-                -- exposed-via if there's an alias). Detected by an
-                -- exact match in idxModules.
-                case Map.lookup name (Idx.idxModules idx) of
-                    Just modPath ->
-                        let symsCount = length (fromMaybe [] (Map.lookup modPath (Idx.idxByFile idx)))
-                            descr = "module " ++ name
-                                  ++ " — " ++ show symsCount ++ " symbol(s)"
-                        in return (Just (mkHover descr))
-                    Nothing -> do
-                        let mSym = Idx.lookupAtCursor idx file (line + 1) (col + 1) name
-                        case mSym of
-                            Just s | hasType s -> return (Just (mkHover (renderSym s)))
-                            _ -> do
-                                -- Fallback: single-file solve for stdlib /
-                                -- prelude / inferred names not in the
-                                -- index.
-                                solvedType <- solveForName srcMod name
-                                case solvedType of
-                                    Just t  ->
-                                        let sig = name ++ " : " ++ Solve.showType t
-                                            modLine = case mSym of
-                                                Just s | Idx.symModule s /= "" ->
-                                                    "\n-- defined in " ++ Idx.symModule s
-                                                _ -> ""
-                                        in return (Just (mkHover (sig ++ modLine)))
-                                    Nothing ->
-                                        -- Kernel-only symbols: Task.run,
-                                        -- Cmd.perform, etc. These have
-                                        -- no source .sky file, so they
-                                        -- don't appear in the workspace
-                                        -- index. Their HM types live in
-                                        -- lookupKernelType — same source
-                                        -- the type-checker uses. Hovering
-                                        -- now shows e.g. `Task.run :
-                                        -- Task e a -> Result e a`.
-                                        case kernelLookupForHover name of
-                                            Just sig -> return (Just (mkHover (name ++ " : " ++ sig)))
-                                            Nothing ->
-                                                case kernelTypeSig name of
-                                                    Just sig -> return (Just (mkHover (name ++ " : " ++ sig)))
-                                                    Nothing  -> case mSym of
-                                                        Just s  -> return (Just (mkHover (renderSym s)))
-                                                        Nothing -> return (Just (mkHover name))
+        Right srcMod ->
+            case identAtPositionWithText srcMod text (line + 1) (col + 1) of
+                Nothing -> return Nothing
+                -- Field access (`model.count`) — the ident extracted from
+                -- exprIdents has a leading `.`. We resolve it by finding
+                -- the parent record's solved type and reading the field.
+                -- Handles record literals + accessors too.
+                Just ('.':fieldName) -> do
+                    fieldType <- resolveFieldType st file text srcMod line col fieldName
+                    case fieldType of
+                        Just sig -> return (Just (mkHover ("." ++ fieldName ++ " : " ++ sig)))
+                        Nothing  -> return (Just (mkHover ("." ++ fieldName)))
+                Just name -> do
+                    idx <- getIndex st file
+                    -- Module-name hover: if the name matches an indexed
+                    -- module, show a one-line summary (symbol count +
+                    -- exposed-via if there's an alias). Detected by an
+                    -- exact match in idxModules.
+                    case Map.lookup name (Idx.idxModules idx) of
+                        Just modPath ->
+                            let symsCount = length (fromMaybe [] (Map.lookup modPath (Idx.idxByFile idx)))
+                                descr = "module " ++ name
+                                      ++ " — " ++ show symsCount ++ " symbol(s)"
+                            in return (Just (mkHover descr))
+                        Nothing -> do
+                            let mSym = Idx.lookupAtCursor idx file (line + 1) (col + 1) name
+                            case mSym of
+                                Just s | hasType s ->
+                                    return (Just (mkHover (renderSym s)))
+                                _ -> do
+                                    -- Fallback: single-file solve for stdlib /
+                                    -- prelude / inferred names not in the
+                                    -- index. Bounded by a 2s timeout so a
+                                    -- pathological file can't pin the LSP.
+                                    solvedType <- fromMaybe Nothing <$>
+                                        timeout (2 * 1000 * 1000)
+                                            (solveForName srcMod name)
+                                    case solvedType of
+                                        Just t  ->
+                                            let sig = name ++ " : " ++ Solve.showType t
+                                                modLine = case mSym of
+                                                    Just s | Idx.symModule s /= "" ->
+                                                        "\n-- defined in " ++ Idx.symModule s
+                                                    _ -> ""
+                                            in return (Just (mkHover (sig ++ modLine)))
+                                        Nothing ->
+                                            -- Kernel-only symbols: Task.run,
+                                            -- Cmd.perform, etc. These have
+                                            -- no source .sky file, so they
+                                            -- don't appear in the workspace
+                                            -- index. Their HM types live in
+                                            -- lookupKernelType — same source
+                                            -- the type-checker uses. Hovering
+                                            -- now shows e.g. `Task.run :
+                                            -- Task e a -> Result e a`.
+                                            case kernelLookupForHover name of
+                                                Just sig -> return (Just (mkHover (name ++ " : " ++ sig)))
+                                                Nothing ->
+                                                    case kernelTypeSig name of
+                                                        Just sig -> return (Just (mkHover (name ++ " : " ++ sig)))
+                                                        Nothing  -> case mSym of
+                                                            Just s  -> return (Just (mkHover (renderSym s)))
+                                                            Nothing -> return (Just (mkHover name))
 
 
 -- | Look up a qualified or bare name in the runtime kernel registry
@@ -1027,7 +1040,7 @@ runPipelineSt st path src = case Parse.parseModule src of
             Left err ->
                 return [diagnosticFromMessage ("Canonicalise: " ++ err)]
             Right canMod -> do
-                externals <- getExternalsForFile st path canMod
+                externals <- getExternalsForFile st path srcMod canMod
                 cs <- Constrain.constrainModuleWithExternals externals canMod
                 r  <- Solve.solve cs
                 case r of
@@ -1053,13 +1066,130 @@ runPipelineSt st path src = case Parse.parseModule src of
 getExternalsForFile
     :: ServerState
     -> FilePath
+    -> Src.Module
     -> Can.Module
     -> IO (Map.Map (String, String) Ty.Annotation)
-getExternalsForFile st path _canMod = do
+getExternalsForFile st path srcMod canMod = do
     eidx <- try (getIndex st path) :: IO (Either SomeException Idx.Index)
     case eidx of
         Left _    -> return Map.empty
-        Right idx -> return (Idx.externalsForLsp idx)
+        Right idx -> buildScopedExternals path idx srcMod canMod
+
+
+-- | Compute the scoped externals for an open file: walk the file's
+-- imports, fetch ONLY the imported modules' types from the index,
+-- run them through `Idx.externalsForFile` to generate the externals
+-- map. Bounded by a 3-second wall-clock timeout — if the
+-- computation takes longer (a pathological dep generates an
+-- unbounded type), we fall back to empty externals so the editor
+-- stays responsive. Cross-module diagnostics on that file are
+-- temporarily lost but hover / completion / goto-def still work.
+--
+-- Forces the result strictly (`!ext, !sz`) so the cost is paid here,
+-- inside the timeout, instead of later when the constraint solver
+-- traverses the lazy thunk.
+buildScopedExternals
+    :: FilePath
+    -> Idx.Index
+    -> Src.Module
+    -> Can.Module
+    -> IO (Map.Map (String, String) Ty.Annotation)
+buildScopedExternals path idx srcMod canMod = do
+    -- Build externals scoped to (imports ∪ references). Without
+    -- this scope the LSP attempts to feed the entire workspace's
+    -- externals (~1800 entries on skyshop) into every per-file
+    -- solve, hanging on pathological FFI types (Stripe SDK,
+    -- Firebase). The 3s timeout is a safety net for projects that
+    -- still trigger a runaway generaliseToAnnotation despite the
+    -- scoping; the editor stays responsive at the cost of cross-
+    -- module diagnostics on that one file.
+    --
+    -- We union explicit `import M` statements (from the source AST)
+    -- with `Can.VarTopLevel`-derived references (from the
+    -- canonicalised expressions). Importing without referencing
+    -- would otherwise give the LSP an empty scope until the user
+    -- actually wrote a usage.
+    let compute = do
+            let !imports = collectImportNames srcMod canMod
+                !ext = Idx.externalsForFile imports idx
+                _ = Map.size ext   -- force spine
+            return ext
+    r <- timeout (3 * 1000 * 1000) compute
+    case r of
+        Just ext -> return ext
+        Nothing -> do
+            Diag.logRaw_uri (T.pack ("file://" ++ path))
+                "LSP: scoped-externals computation exceeded 3s budget"
+            return Map.empty
+
+
+-- | Compute the externals scope for an open file: union of
+-- (a) every `import M` statement in the source AST and
+-- (b) every cross-module reference observed in the canonicalised
+-- expressions (`Can.VarTopLevel`, `Can.VarCtor`, etc.).
+--
+-- Why both? An `import` alone tells us the user opted in to that
+-- module's surface — even if they haven't written a reference yet,
+-- the LSP should treat its symbols as candidates so that the moment
+-- they DO write a reference, type-check fires correctly.
+-- References (without imports) catch implicit re-exports / Prelude
+-- and any other path we'd otherwise miss.
+collectImportNames :: Src.Module -> Can.Module -> [String]
+collectImportNames srcMod canMod =
+    let homeName = ModuleName.toString (Can._name canMod)
+        srcImports = [ joinDots segs
+                     | imp <- Src._imports srcMod
+                     , let A.At _ segs = Src._importName imp
+                     ]
+        usage = collectDeclModNames (Can._decls canMod)
+        union = Set.fromList (srcImports ++ usage)
+    in Set.toList (Set.delete homeName union)
+  where
+    joinDots = foldr (\a b -> if null b then a else a ++ "." ++ b) ""
+
+collectDeclModNames :: Can.Decls -> [String]
+collectDeclModNames decls = case decls of
+    Can.Declare def rest -> defModNames def ++ collectDeclModNames rest
+    Can.DeclareRec d ds rest ->
+        defModNames d ++ concatMap defModNames ds ++ collectDeclModNames rest
+    Can.SaveTheEnvironment -> []
+
+defModNames :: Can.Def -> [String]
+defModNames d = case d of
+    Can.Def _ _ body -> exprModNames body
+    Can.TypedDef _ _ _ body _ -> exprModNames body
+    Can.DestructDef _ body -> exprModNames body
+
+exprModNames :: Can.Expr -> [String]
+exprModNames (A.At _ e) = case e of
+    Can.VarTopLevel home _ -> [ModuleName.toString home]
+    Can.VarCtor _ home _ _ _ -> [ModuleName.toString home]
+    Can.Call f xs -> exprModNames f ++ concatMap exprModNames xs
+    Can.Lambda _ body -> exprModNames body
+    Can.Let def body -> defModNames def ++ exprModNames body
+    Can.LetDestruct _ rhs body -> exprModNames rhs ++ exprModNames body
+    Can.LetRec defs body ->
+        concatMap defModNames defs ++ exprModNames body
+    Can.If arms el ->
+        concatMap (\(c, b) -> exprModNames c ++ exprModNames b) arms
+        ++ exprModNames el
+    Can.Case sub arms ->
+        exprModNames sub ++ concatMap caseArmModNames arms
+    Can.Access r _ -> exprModNames r
+    Can.Update _ _ fields ->
+        concatMap (\(_, Can.FieldUpdate _ ex) -> exprModNames ex)
+                  (Map.toList fields)
+    Can.Record fields ->
+        concatMap (exprModNames . snd) (Map.toList fields)
+    Can.Tuple a b cs ->
+        exprModNames a ++ exprModNames b ++ concatMap exprModNames cs
+    Can.List xs -> concatMap exprModNames xs
+    Can.Negate inner -> exprModNames inner
+    Can.Binop _ home _ _ a b ->
+        ModuleName.toString home : exprModNames a ++ exprModNames b
+    _ -> []
+  where
+    caseArmModNames (Can.CaseBranch _ body) = exprModNames body
 
 
 -- | True when the solver error matches the shape the no-externals
