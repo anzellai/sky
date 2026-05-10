@@ -15,8 +15,7 @@ side.
 
 Keys:
   Tab / Shift-Tab  — focus next / previous button
-  Enter            — activate focused button
-  space            — toggle (global hotkey via onKey)
+  Enter / space    — activate focused button (consumed by runtime)
   r                — reset
   q / Ctrl-C       — quit
 -}
@@ -138,7 +137,7 @@ view model =
                 }
             ]
         , Ui.el [ Font.color (Ui.rgb 120 120 140) ]
-            (Ui.text "Tab to switch buttons · Enter to activate · space toggle · r reset · q quit")
+            (Ui.text "Tab to switch buttons · Enter / space to activate · r reset · q quit")
         ]
 
 

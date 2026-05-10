@@ -2798,12 +2798,18 @@ resolveRecordFieldCompletion srcMod line col target partial = do
                         Nothing -> return []
   where
     fieldsToCompletions baseName lp fields =
+        -- Three fields, each doing one job:
+        --   * label     = bare field name (clean dropdown)
+        --   * insertText = bare field name (cursor is after the dot;
+        --                  inserting "count" yields "m.count")
+        --   * filterText = qualified form (so the server's '.'-aware
+        --                  filterCompletions still keeps the item, and
+        --                  editor-side fuzzy matchers see the prefix the
+        --                  user actually typed).
         [ A.object
-            -- Same insertText-vs-label split as resolveQualifiedCompletion:
-            -- `model.<accept>` should yield `model.count`, not
-            -- `model.model.count`.
-            [ "label"      A..= (baseName ++ "." ++ fname)
+            [ "label"      A..= fname
             , "insertText" A..= fname
+            , "filterText" A..= (baseName ++ "." ++ fname)
             , "kind"       A..= (5 :: Int)  -- LSP CompletionItemKind.Field
             , "detail"     A..= renderTypeAnnotation ftype
             ]
@@ -3099,20 +3105,29 @@ filterCompletions :: T.Text -> [A.Value] -> [A.Value]
 filterCompletions prefix items
     | T.null prefix   = items
     | '.' `T.elem` prefix =
-        -- Qualified prefix (`String.`) → strict prefix matching only.
+        -- Qualified prefix (`String.`) → strict prefix matching against
+        -- whichever string the editor will use to match the user's
+        -- input. LSP says: editor matches against `filterText` if
+        -- present, else `label`. We follow the same rule on the server.
         let p = T.unpack prefix
-        in [ v | v <- items, p `isPrefixOf` T.unpack (jsonStr "label" v) ]
+        in [ v | v <- items, p `isPrefixOf` matchKey v ]
     | otherwise =
         let p  = T.unpack prefix
             ms = mapMaybe (scored p) items
         in map snd (sortBy (comparing fst) ms)
   where
+    matchKey :: A.Value -> String
+    matchKey v =
+        let ft = T.unpack (jsonStr "filterText" v)
+            lb = T.unpack (jsonStr "label" v)
+        in if null ft then lb else ft
+
     scored :: String -> A.Value -> Maybe (Int, A.Value)
     scored p v =
-        let lbl = T.unpack (jsonStr "label" v)
-        in if p `isPrefixOf` lbl
+        let key = matchKey v
+        in if p `isPrefixOf` key
                then Just (0, v)
-               else if T.toLower (T.pack p) `T.isInfixOf` T.toLower (T.pack lbl)
+               else if T.toLower (T.pack p) `T.isInfixOf` T.toLower (T.pack key)
                    then Just (1, v)
                    else Nothing
 

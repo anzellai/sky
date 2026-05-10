@@ -956,7 +956,7 @@ Hard cap at 100,000 in either dimension; overshoot triggers a `tuiWarn`.
 - Nearby overlays: above / below / onLeft / onRight / inFront / behind
 - Alignment: alignX/alignY (left/center/right, top/center/bottom)
 - Padding (incl. paddingXY, paddingEach), spacing
-- Focus ring with Tab + arrow-key cycling, focus indicator (`▸ ◂` for buttons, underline for links)
+- Focus ring with Tab + arrow-key cycling, focus indicator (`▸ ◂` for buttons, underline for links). Enter **and** Space activate the focused button (browser convention) before the keypress reaches user `onKey`.
 - Resize via SIGWINCH
 - **Wide chars (CJK + emoji + ZWJ family)** — proper grapheme cluster + display-width measurement via `github.com/rivo/uniseg` (MIT, see NOTICE.md)
 - **Bracketed paste** — multi-line paste into a single-line input no longer fires phantom Enter; pastes capped at 1 MiB
@@ -1138,6 +1138,62 @@ These are current compiler limitations users must work around. Items marked ~~st
     - **`(String -> Msg)` helper callback param**: a helper `textField : String -> String -> (String -> Msg) -> Element Msg` got `cb func(string) any` in its emitted Go sig (load-bearing widening — Sky lambdas always lower to `func(any) any` and Go has no function-type covariance, so the helper sig must accept the widest shape). But the call-site `textField "u" "" Msg_X` shipped the typed `Msg_X : func(string) Msg` raw — `go build` rejected. Root cause: `safeReturnTypeWith` returned bare `"any"` for `T.TLambda`, so `_cg_funcParamTypes[textField]` knew the param was "any" and `coerceArg` short-circuited. Fix: `safeReturnTypeWith` now renders `T.TLambda` as `func(X) any` (matching what `renderHofParamTy` emits at sig time) — this gives `coerceArg` the `func(` prefix it needs to route call-site args through `rt.Coerce[func(X) any]`. The reflect.MakeFunc adapter handles both Sky lambdas (`func(any) any`) and typed Msg ctors (`func(string) Msg`) uniformly. Pragmatic — not "fully typed" in the strict sense (the `any` tail return is a structural compromise) but unblocks user code today; truly fully-typed HOFs need lambda lowering to preserve types (post-v1 work in "Typed Codegen TODO"). Regression test: `test/Sky/Build/HofTypedMsgSpec.hs`. The pre-existing `CompileSpec` "Result-typed lambda params" test (line 80-97) is the regression fence — `renderHofParamTy` is unchanged so Bug #1 from sky-chat ep07 stays fixed.
 
 ### Recently Fixed (listed for regression context)
+
+#### exp/tea-core (LSP completeness + Sky.Tui button activation, 2026-05-10)
+
+- **LSP completion: field labels are bare, filterText carries the
+  qualified form.** When the user types `model.<Tab>`, the LSP now
+  returns items with `label: "count"` (clean dropdown), `insertText:
+  "count"` (cursor is after the dot — inserts to give `model.count`),
+  and `filterText: "model.count"` (so the server-side
+  `filterCompletions` and editor-side fuzzy matchers still see the
+  qualified prefix the user typed). Previously the label was
+  `"model.count"` (ugly dropdown), and accepting the suggestion gave
+  `model.model.count` in editors that defaulted insertText to label.
+  Server-side filter (`filterCompletions` in
+  `src/Sky/Lsp/Server.hs`) now honours `filterText` on every
+  completion item — matching LSP spec semantics. Symmetric path for
+  qualified completions (`Ui.<Tab>` → `label: "Ui.layout"`,
+  `insertText: "layout"`) was already correct from earlier work.
+
+- **Sky.Tui buttons activate on Space, not just Enter.** Previously
+  only Enter on a focused button fired its onPress; Space fell
+  through to user `onKey`, which meant a global `space → Toggle`
+  hotkey misfired when focus was on a different button (Reset,
+  Cancel, etc.). Runtime fix in `runtime-go/rt/tui_ui.go` so
+  `(km.ev.kind == "enter" || km.ev.kind == "space")` consumes the
+  keypress at the focused-button layer before reaching `onKey`.
+  Matches browser convention (`<button>` activates on both keys).
+  Examples/22-tui-stopwatch-ui's help text updated to reflect the
+  new behaviour.
+
+- **LSP test driver (`scripts/lsp-test-nvim.{lua,sh}`)** that
+  exercises hover/completion/goto-def end-to-end through Neovim's
+  real LSP client. Catches editor-level bugs that synthetic
+  JSON-RPC tests miss — the field-label and filterText bugs above
+  were both surfaced by this driver, not by the existing cabal test
+  suite. 7 tests cover: hover on Task.run, hover on a record field
+  (`model.count` → Int), hover on a type name in annotation
+  (`Model`), qualified completion's insertText handling
+  (`Ui.layout`), field completion (`m.<Tab>` → bare `count` /
+  `label`), let-binding completion (let-bound names show up), and
+  goto-definition for a type name (jumps to alias decl). All seven
+  pass against the freshly-built binary. Run with:
+  `scripts/lsp-test-nvim.sh` (uses `/tmp/lsp-real-test` by default;
+  override via `LSP_NVIM_PROJECT=...`).
+
+  Companion driver `scripts/lsp-test-skyshop.lua` probes existing
+  project files (no fixture rewrites). Confirmed working on
+  examples/12-skyvote (Db.exec hover returns full kernel sig).
+  **Known gap:** examples/13-skyshop's hover returns nil for every
+  symbol — pre-existing limitation when the LSP's
+  `typecheckWorkspace` hits memory/budget limits on very-large FFI
+  surfaces (the Stripe SDK kernel.json is ~12MB). The catch is in
+  `src/Sky/Lsp/Index.hs:156` — `try`-swallowed exceptions cause the
+  index to silently fall through to empty. **Symptom matches** the
+  user-reported sendcrafts gap; not a regression from this
+  session's work. Investigation deferred — likely needs streaming
+  index build or budget partitioning per FFI dep.
 
 #### v0.11.x (post-v0.11.0 — Ui.grid CSS-Grid auto-fit primitive, 2026-04-28)
 

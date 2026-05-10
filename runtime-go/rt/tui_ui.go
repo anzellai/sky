@@ -665,8 +665,13 @@ func tuiAppRun(cfg any) any {
 				continue
 			}
 
-			// Enter on a focusable button activates its onClick.
-			if km.ev.kind == "enter" && focusIdx >= 0 && focusIdx < len(focusables) {
+			// Enter or Space on a focusable button activates its
+			// onClick. Matches the browser convention (<button>
+			// activates on both keys) and prevents a global "space →
+			// toggle" hotkey from firing the wrong msg when focus is
+			// on a different button — the keypress is consumed here
+			// before reaching the user's onKey.
+			if (km.ev.kind == "enter" || km.ev.kind == "space") && focusIdx >= 0 && focusIdx < len(focusables) {
 				if clickEvt := focusableEvent(focusables[focusIdx], "click"); clickEvt != nil {
 					if clickMsg := tuiExtractClickMsg(clickEvt); clickMsg != nil {
 						msg = clickMsg
