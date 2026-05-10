@@ -2023,6 +2023,45 @@ func List_foldlTA[A any](fn any, seed any, xs []A) any {
 	return acc
 }
 
+// List_memberT: typed slice membership check. Returns true if item
+// equals any element. Comparable[A] would be tighter but generics
+// over `any` keeps the surface uniform with the rest of the *T
+// family. Internal eq uses sky_equal which handles deep equality
+// for ADTs / records / primitives uniformly.
+func List_memberT[A any](item any, xs []A) bool {
+	for _, x := range xs {
+		if AsBool(Eq(item, x)) {
+			return true
+		}
+	}
+	return false
+}
+
+// List_concatTA: flatten a typed slice of slices to a flat typed
+// slice. Used by List.concat when the outer list's element type is
+// itself a known list type.
+func List_concatTA[A any](xss []A) []any {
+	// xss is []A where A is itself meant to be a list — but Go's
+	// type system doesn't let us express that without HKT. Iterate
+	// reflectively via AsList per item; same as List_concat.
+	var out []any
+	for _, xs := range xss {
+		out = append(out, AsList(xs)...)
+	}
+	return out
+}
+
+// List_indexedMapTA: typed input slice + any-typed (Int -> A -> B)
+// callback + any output. Used by List.indexedMap which carries the
+// element index as an extra arg.
+func List_indexedMapTA[A any](fn any, xs []A) []any {
+	out := make([]any, len(xs))
+	for i, x := range xs {
+		out[i] = SkyCall(SkyCall(fn, i), x)
+	}
+	return out
+}
+
 func List_filterAnyT(fn any, xs []any) []any {
 	out := make([]any, 0, len(xs))
 	for _, x := range xs {

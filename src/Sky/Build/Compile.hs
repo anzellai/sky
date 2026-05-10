@@ -5740,14 +5740,30 @@ inferExprType types (A.At _ e) = case e of
     Can.If [] elseExpr -> inferExprType types elseExpr
     Can.If ((_, b):_) _ -> inferExprType types b
     Can.Case _ ((Can.CaseBranch _ b):_) -> inferExprType types b
-    -- Field access: requires knowing the parent record's type.
-    -- The TRecord type stores the field types directly.
+    -- Field access: requires knowing the parent record's type. The
+    -- TRecord type stores field types directly. For named record
+    -- aliases (the common case — `post : State_Post_R`), we also
+    -- unfold via _cg_aliases so the field's type is recoverable.
     Can.Access record (A.At _ fieldName) ->
         case inferExprType types record of
             Just (T.TRecord fields _) ->
                 case Map.lookup fieldName fields of
                     Just (T.FieldType _ ft) -> Just ft
                     Nothing -> Nothing
+            Just (T.TType _ aliasName _) ->
+                -- Look up the alias body in the codegen environment.
+                -- If the alias body is a TRecord, extract the field
+                -- type. This handles `post.upvoters` where `post`
+                -- has type `State.Post` (an alias for {upvoters :
+                -- List String, …}).
+                let env = getCgEnv
+                    matchAlias = Map.lookup aliasName (Rec._cg_aliases env)
+                in case matchAlias of
+                    Just (Can.Alias _ (T.TRecord fields _)) ->
+                        case Map.lookup fieldName fields of
+                            Just (T.FieldType _ ft) -> Just ft
+                            Nothing -> Nothing
+                    _ -> Nothing
             _ -> Nothing
     -- Record literal: build the TRecord type from field types.
     Can.Record fields ->
@@ -5948,6 +5964,21 @@ kernelTypedCall types modName funcName args goArgs =
                else Just (GoIr.GoCall
                     (GoIr.GoIdent ("rt.List_appendT[" ++ pick ++ "]"))
                     [wrapAsList pick goA, wrapAsList pick goB])
+        -- List.member item xs : a -> List a -> Bool. Element type
+        -- from the list arg.
+        ("List", "member", [_, listArg], [goItem, goList]) ->
+            let elemGo = inferListElemGoType types listArg
+            in if elemGo == "any" then Nothing
+               else Just (GoIr.GoCall
+                    (GoIr.GoIdent ("rt.List_memberT[" ++ elemGo ++ "]"))
+                    [goItem, wrapAsList elemGo goList])
+        -- List.indexedMap fn xs : (Int -> a -> b) -> List a -> List b.
+        ("List", "indexedMap", [_, listArg], [goFn, goList]) ->
+            let elemGo = inferListElemGoType types listArg
+            in if elemGo == "any" then Nothing
+               else Just (GoIr.GoCall
+                    (GoIr.GoIdent ("rt.List_indexedMapTA[" ++ elemGo ++ "]"))
+                    [goFn, wrapAsList elemGo goList])
 
         -- Dict.* typed routing — Phase 3 batch 2. The same
         -- pattern as List.*: typed value generic for the Dict's
