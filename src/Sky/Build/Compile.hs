@@ -55,7 +55,15 @@ import qualified System.Environment
 globalCgEnv :: IORef Rec.CodegenEnv
 globalCgEnv = unsafePerformIO $ newIORef (Rec.CodegenEnv Map.empty Map.empty Map.empty Set.empty Set.empty Set.empty Map.empty Map.empty Map.empty Map.empty)
 
--- | Read the global codegen env (for use in pure codegen functions)
+-- | Read the global codegen env (for use in pure codegen functions).
+-- NOINLINE so GHC doesn't CSE the IORef read across call sites —
+-- each `getCgEnv` invocation must see the LATEST mutation. Without
+-- this, a `modifyIORef globalCgEnv …` followed by `getCgEnv` in
+-- downstream codegen would still observe the pre-modify value (the
+-- read was lifted to the top level as a pure constant). v0.12.x
+-- typed-codegen close-out diagnosed this when dep-module solved
+-- types failed to propagate post-merge.
+{-# NOINLINE getCgEnv #-}
 getCgEnv :: Rec.CodegenEnv
 getCgEnv = unsafePerformIO $ readIORef globalCgEnv
 
@@ -650,6 +658,22 @@ continueCompile config _entryPath outDir moduleOrder srcHash = do
                 depInferredSigs   = fullSigs
             putStrLn $ "   HM infer (deps): "
                 ++ show (Map.size depInferredParams) ++ " functions typed"
+            -- Merge each dep module's solvedTypes into the global
+            -- _cg_solvedTypes so dep-body codegen sees per-function
+            -- locals (params, let-binders, case-binders) for typed-
+            -- kernel routing. v0.12.x Gap 3 close-out: without this,
+            -- `togglePostUpvote post` looks up `post` in the entry
+            -- module's solvedTypes and finds nothing, falling back
+            -- to any-routing.
+            --
+            -- Name collisions: if multiple deps have a same-named
+            -- local, Map.union takes the first; the typed-routing
+            -- check `if elemGo == "any" then Nothing` then gracefully
+            -- falls back when the wrong type causes a mismatch. Safe.
+            -- (Per-dep types are merged via the caller's
+            -- `typesWithDeps` pass-through; see line ~722. The
+            -- modifyIORef here only registers per-function sig data
+            -- that subsequent codegen passes consult.)
             modifyIORef globalCgEnv $ \e -> e
                 { Rec._cg_funcParamTypes =
                     Map.union (Rec._cg_funcParamTypes e) depInferredParams
@@ -675,7 +699,15 @@ continueCompile config _entryPath outDir moduleOrder srcHash = do
                 putStrLn "-- Generating Go"
                 let depAliasPairs = [ (map (\c -> if c == '.' then '_' else c) mn, Can._aliases depMod)
                                     | (mn, depMod) <- validDeps ]
-                    goCode = generateGoMulti canMod entrySrcMod config types depDecls depRecAliases depUnionNames depArities depParamTypes depRetTypes depInferredParams depInferredRets depInferredSigs depAliasPairs
+                    -- v0.12.x Gap 3 close-out: union the entry's
+                    -- solvedTypes with every dep module's solvedTypes
+                    -- so dep-body codegen has the per-function locals
+                    -- (params, let-binders, case-binders) needed by
+                    -- inferExprType to drive typed kernel routing.
+                    -- Entry takes precedence on key collisions.
+                    typesWithDeps = Map.union types
+                        (Map.unions [ts | (_, ts) <- depSolved])
+                    goCode = generateGoMulti canMod entrySrcMod config typesWithDeps depDecls depRecAliases depUnionNames depArities depParamTypes depRetTypes depInferredParams depInferredRets depInferredSigs depAliasPairs
                 createDirectoryIfMissing True outDir
                 let mainGoPath = outDir </> "main.go"
                 writeFile mainGoPath goCode
@@ -5750,12 +5782,23 @@ inferExprType types (A.At _ e) = case e of
                 case Map.lookup fieldName fields of
                     Just (T.FieldType _ ft) -> Just ft
                     Nothing -> Nothing
+            -- TAlias is what HM produces for named record aliases.
+            -- The Filled/Hoisted inner is the actual unfolded record.
+            -- Recurse into the inner type to find the field.
+            Just (T.TAlias _ _ _ aliasInner) ->
+                let inner = case aliasInner of
+                        T.Filled  i -> i
+                        T.Hoisted i -> i
+                in case inner of
+                    T.TRecord fields _ ->
+                        case Map.lookup fieldName fields of
+                            Just (T.FieldType _ ft) -> Just ft
+                            Nothing -> Nothing
+                    _ -> Nothing
+            -- TType: a non-aliased named type. Check the codegen env's
+            -- alias map in case the alias body wasn't unfolded into
+            -- TAlias form (older HM paths).
             Just (T.TType _ aliasName _) ->
-                -- Look up the alias body in the codegen environment.
-                -- If the alias body is a TRecord, extract the field
-                -- type. This handles `post.upvoters` where `post`
-                -- has type `State.Post` (an alias for {upvoters :
-                -- List String, …}).
                 let env = getCgEnv
                     matchAlias = Map.lookup aliasName (Rec._cg_aliases env)
                 in case matchAlias of
@@ -5817,6 +5860,15 @@ inferListElemGoType types e = case inferExprType types e of
     Just (T.TType _ "List" [elemTy]) ->
         let go = solvedTypeToGo elemTy
         in if "Anon_R_" `List.isPrefixOf` go then "any" else go
+    Just (T.TAlias _ _ _ aliasInner) ->
+        let inner = case aliasInner of
+                T.Filled  i -> i
+                T.Hoisted i -> i
+        in case inner of
+            T.TType _ "List" [elemTy] ->
+                let go = solvedTypeToGo elemTy
+                in if "Anon_R_" `List.isPrefixOf` go then "any" else go
+            _ -> "any"
     _ -> "any"
 
 
