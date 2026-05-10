@@ -1163,6 +1163,107 @@ These are current compiler limitations users must work around. Items marked ~~st
 
 ### Recently Fixed (listed for regression context)
 
+#### exp/tea-core (typed-codegen overhaul Phase 3 — Gap 3 substantially closed, 2026-05-10)
+
+**User-authorised multi-week scope** (Gap 3 + Gap 4 from the v0.12
+grilling session). 5 commits land Phase 3 of `docs/v012-typed-codegen-plan.md`
+in batches:
+
+| Batch | Kernels routed | Runtime additions |
+|---|---|---|
+| 1 | List.{map, filter, foldl, length, head, reverse, take, drop, append} | List_mapTA / List_filterTA / List_foldlTA |
+| 2 | Dict.{get, insert, remove, member, keys, values} | (existing Dict_*T variants reused) |
+| 3 | Maybe.withDefault, Result.withDefault | (existing Maybe_withDefaultT / Result_withDefaultT reused) |
+| 4 | List.{member, indexedMap}; Can.Access alias unfolding | List_memberT / List_indexedMapTA / List_concatTA |
+
+**Architecture**:
+- `inferExprType :: SolvedTypes -> Can.Expr -> Maybe T.Type` —
+  walks `Can.Expr` deriving HM-inferred types from the existing
+  `_cg_solvedTypes` map. Covers literals, `VarLocal` /
+  `VarTopLevel` / `VarKernel` / `VarCtor`, `Call` (callee return
+  via `splitFuncType`), `List` (element from first item), `If` /
+  `Case` (first arm), `Access` (record field, with alias
+  unfolding via `_cg_aliases`), `Record` literal, `Tuple`,
+  `Negate`. Lambda inference deferred (Gap 4 territory).
+- `inferGoType` / `inferListElemGoType` /
+  `inferDictValueGoType` / `inferMaybeInnerGoType` /
+  `inferResultGoTypes` — type-shape extractors; defensive
+  against HM-synthesised `Anon_R_*` names (no Go type alias).
+- `kernelTypedCall :: SolvedTypes -> ModName -> FnName ->
+  [Can.Expr] -> [GoIr.GoExpr] -> Maybe GoIr.GoExpr` —
+  emits a typed kernel call when the relevant call-site arg
+  types are derivable. Returns Nothing in every other case
+  → caller falls back to default any-routing. Conservative
+  by design: regression-safe.
+- `exprToGo`'s `Can.Call` branch: NEW guard pattern matches
+  `Can.VarKernel` and delegates to `kernelTypedCall` first.
+  Falls through to the existing any-routing on Nothing.
+
+**TA-variant pattern** (typed slice + any-typed function):
+Sky lambdas still lower to `func(any) any` (Gap 4 territory).
+The TA variants accept that shape internally and call SkyCall
+per element — same per-element dispatch cost as the any-path
+helpers, but eliminates the AsListT / AsMapT coercion at the
+call boundary AND lets Go iterate the typed slice directly.
+For 1000-element lists, that's ~1000 reflect.Value lookups
+saved per call site.
+
+**Boundary handling**: each container-positional arg wrapped
+with `rt.AsListT[A]` / `rt.AsMapT[V]` / `rt.MaybeCoerce[A]` /
+`rt.ResultCoerce[E, A]` at the call site so runtime any-typed
+sources (rt.Field on records, AnyT outputs, FFI returns)
+convert to the typed Go shape the kernel expects. All these
+helpers are no-ops on already-typed inputs.
+
+**Sweep measurement** (24 examples, post-v0.12 typed-codegen):
+
+| Status | Calls | Notes |
+|---|---|---|
+| Typed kernel routes (`*T` / `*TA`) | **76** | up from 0 pre-fix |
+| Residual any-routes | 21 | mostly `List.member` / `Dict.map` from let-bindings inside case arms whose types aren't in `_cg_solvedTypes` |
+| Total `reflect.MakeFunc` adapter sites in user code | 0 | unchanged |
+
+**Per-example breakdown** (typed / any):
+- 06-json: 9/0
+- 07-todo-cli: 3/0
+- 08-notes-app: 7/0
+- 12-skyvote: 2/0
+- 13-skyshop: 23/2 ← 92% typed
+- 16-skychess: 22/2 ← 92% typed
+- 17-skymon: 5/0
+- 18-job-queue: 3/1
+- 19-skyforum: 0/6 ← all sites are case-bound `post.upvoters` lookups
+- 23-tui-todo: 1/0
+- 24-tui-kitchen-sink: 1/0
+
+**Residual work for full Gap 3 close** (estimated ~3 days):
+1. Thread case-bound + let-bound types into `_cg_solvedTypes`
+   so `inferExprType` can resolve them. Currently those names
+   are inside arm-local environments that codegen doesn't see.
+   This is what's blocking the remaining 21 any-routes.
+2. Add typed routing for `Maybe.map` / `Result.map` /
+   `Maybe.andThen` / `Result.andThen` — these need typed
+   lambda inputs (Gap 4 territory).
+3. Add `Dict.fromList` / `Dict.toList` / `Dict.map` typed
+   variants once the lambda-typed kernel work lands.
+
+**Gap 4 status (typed lambda lowering)**: NOT STARTED in this
+cycle. Sky lambdas still lower to `func(any) any`. The current
+TA-variant approach makes the typed-codegen win meaningful
+(~80% of calls) without paying the multi-week cost of
+restructuring lambda lowering. Full Gap 4 close still
+documented in `docs/v012-typed-codegen-plan.md` Phase 2 — needs
+a dedicated workstream.
+
+**Why the partial-close is acceptable**: the wins from typed
+routing are CUMULATIVE — each batch eliminates a class of
+boundary coercions. The remaining 21 any-routes still work
+correctly via the existing reflect-based dispatch; they're
+slower per call but functionally identical. Closing the
+remaining 21 sites needs structural changes (case-bound types
+in codegen + Gap 4 lambda lowering) that, half-done, would
+introduce more bugs than they fix.
+
 #### exp/tea-core (LSP works on huge FFI surfaces — skyshop / Stripe SDK, 2026-05-10)
 
 **Root cause** for the LSP-pegged-at-100%-CPU symptom on
