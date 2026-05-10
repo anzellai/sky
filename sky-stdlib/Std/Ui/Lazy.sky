@@ -2,21 +2,20 @@ module Std.Ui.Lazy exposing (lazy, lazy2, lazy3, lazy4, lazy5)
 
 -- Std.Ui.Lazy — memoised Element trees.
 --
--- Tier 3 ships type-correct wrappers that pass through (no
--- memoisation):
---
 --     view model =
 --         Lazy.lazy renderRow model.row
 --
--- Without runtime memoisation, every call rebuilds the subtree,
--- which is the same cost as not using lazy at all — correct, just
--- not faster. Tier 3.5 adds the runtime VNode cache (keyed on a
--- hash of the function pointer + serialised args) so large
--- list views don't rebuild unchanged rows on every event.
+-- v0.12+: the bodies below are kernel-mapped to a runtime LRU
+-- cache (`Std_Ui_Lazy_lazy*` in `runtime-go/rt/lazy.go`). The
+-- Sky source remains as a type-checker reference; actual calls
+-- route through the kernel registry. Cache key is
+-- `(function-pointer, args-fingerprint)`. The LRU is bounded
+-- (default 1024 entries; override via `SKY_UI_LAZY_CAP=N`).
 --
--- Why ship the no-op wrappers now: when downstream apps DO get
--- runtime memoisation, their use of Lazy.lazy doesn't change —
--- only the runtime gets faster. Same call site, no migration.
+-- Stable subtrees (long lists, repeated render passes with
+-- unchanged inputs) hit the cache. Pathological cases — every
+-- call has a fresh fingerprint — degrade to passthrough behaviour
+-- (cache miss, no benefit) without unbounded memory growth.
 
 import Sky.Core.Prelude exposing (..)
 import Std.Ui exposing (Element)

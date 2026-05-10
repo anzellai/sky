@@ -838,7 +838,7 @@ view model =
   - `Std.Ui.Font` — `color` / `family` / `size` / `weight` / `bold` / `semiBold` / `regular` / `light` / `extraBold` / `black` / `italic` / `underline` / `noDecoration` / `lineThrough` / `overline` / `letterSpacing em` / `wordSpacing em` / `alignLeft` / `alignRight` / `alignCenter` / `center` / `justify` / `sansSerif` / `serif` / `monospace`
   - `Std.Ui.Region` — semantic landmarks routed to real HTML tags by the renderer: `heading n` (`<h1>`..`<h6>`) / `mainContent` (`<main>`) / `navigation` (`<nav>`) / `footer` (`<footer>`) / `aside` (`<aside>`) / `label text` (`aria-label`) / `announce` (`aria-live="polite"`) / `announceUrgently` (`aria-live="assertive"`)
   - `Std.Ui.Input` — typed form controls: `button` / `text` / `multiline` / `email` / `username` / `search` / `currentPassword {show: Bool}` / `newPassword {show: Bool}` / `checkbox` / `radio {options, selected, …}` / `radioRow {…}` / `slider {min, max, step, value, …}` + `option value labelEl` (RadioOption ctor) + `labelAbove` / `labelBelow` / `labelLeft` / `labelRight` / `labelHidden` / `placeholder`
-  - `Std.Ui.Lazy` — `lazy` / `lazy2` … `lazy5` (no-op wrappers today; runtime memo deferred)
+  - `Std.Ui.Lazy` — `lazy` / `lazy2` … `lazy5`. v0.12+: kernel-mapped to a runtime LRU cache (default 1024 entries; `SKY_UI_LAZY_CAP=N` to override). Cache key = function-pointer + args fingerprint. Stable subtrees (long lists, repeated render passes) hit the cache; pathological cases fall back gracefully (cache miss, no benefit).
   - `Std.Ui.Keyed` — `keyed` (emits `sky-key` for diff identity)
   - `Std.Ui.Responsive` — `classifyDevice` / `adapt {phone, tablet, desktop}`
 

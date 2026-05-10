@@ -681,4 +681,20 @@ registry = Map.fromList
     , (("JsonDecP", "optional"),   KernelInfo "rt.JsonDecP_optional" 4 False)
     , (("JsonDecP", "custom"),     KernelInfo "rt.JsonDecP_custom" 2 False)
     , (("JsonDecP", "requiredAt"), KernelInfo "rt.JsonDecP_requiredAt" 3 False)
+
+    -- ═══════════════════════════════════════════════════════
+    -- Std.Ui.Lazy (v0.12 — runtime memoisation)
+    --
+    -- Maps the Sky-side passthrough wrappers to Go runtime helpers
+    -- that memoise on (function-pointer, args fingerprint) with an
+    -- LRU bound (default 1024 entries; SKY_UI_LAZY_CAP override).
+    -- The Sky source in `sky-stdlib/Std/Ui/Lazy.sky` is now a
+    -- type-checker reference only — actual calls route through
+    -- the kernel registry below.
+    -- ═══════════════════════════════════════════════════════
+    , (("Lazy", "lazy"),  KernelInfo "rt.Std_Ui_Lazy_lazy"  2 False)
+    , (("Lazy", "lazy2"), KernelInfo "rt.Std_Ui_Lazy_lazy2" 3 False)
+    , (("Lazy", "lazy3"), KernelInfo "rt.Std_Ui_Lazy_lazy3" 4 False)
+    , (("Lazy", "lazy4"), KernelInfo "rt.Std_Ui_Lazy_lazy4" 5 False)
+    , (("Lazy", "lazy5"), KernelInfo "rt.Std_Ui_Lazy_lazy5" 6 False)
     ]
