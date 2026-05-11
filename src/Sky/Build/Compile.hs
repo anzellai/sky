@@ -6272,17 +6272,42 @@ kernelTypedCall types modName funcName args goArgs =
                     [wrapAsList "any" goList])
 
         -- Dict.map fn dict : (String -> V -> W) -> Dict String V -> Dict String W
-        -- Routes to Dict_mapT[V, W] when V is concrete. The user fn is
-        -- Sky-curried (func(K) func(V) W) but the runtime expects a
-        -- single-arg func(V) W — we adapt at the boundary by capturing
-        -- the key from a closure. Conservative: only takes the typed
-        -- path when the user passes a literal lambda we can re-curry.
-        --
-        -- Implementation note: Dict_mapT's `fn func(V) W` discards the
-        -- key. Sky's Dict.map kernel passes both. Until we add a typed
-        -- (K, V) -> W runtime variant, route via Dict_map (any) to
-        -- preserve the key. So this case is INTENTIONALLY not migrated
-        -- here — see Limitation #N in CLAUDE.md.
+        -- Sky's Dict.map is 2-arg curried (K -> V -> W). The single-arg
+        -- runtime Dict_mapT[V,W] (which discards the key) doesn't match
+        -- this shape. Use Dict_map2T[V,W] which calls the curried fn as
+        -- fn(k)(v). Both input and OUTPUT types must be concrete since
+        -- the result map is `map[string]W`; we infer V from the dict arg
+        -- and W from the call's expected type via _cg_funcRetType or
+        -- via the lambda's body. For literal lambdas we re-emit with
+        -- the typed body's return type. Conservative — only routes when
+        -- both V and W are concrete.
+        ("Dict", "map", [fnArg, dictArg], [goFn, goDict]) ->
+            let valGo = inferDictValueGoType types dictArg
+                -- Infer output type from the lambda's innermost body.
+                -- For `\_ v -> anyToString v`, the body is the
+                -- Can.Call. inferExprType handles Can.Call by walking
+                -- the callee's return type via splitFuncType.
+                -- peelLambda walks past nested Can.Lambda layers
+                -- (Sky-curried form) to reach the expression whose
+                -- HM type IS W.
+                peelLambda outer@(A.At _ e) = case e of
+                    Can.Lambda _ innerBody -> peelLambda innerBody
+                    _ -> outer
+                outGo = case fnArg of
+                    A.At _ (Can.Lambda _ body) ->
+                        let innermost = peelLambda body
+                        in case inferExprType types innermost of
+                            Just bodyTy -> sanitiseTypedElem (solvedTypeToGo bodyTy)
+                            Nothing -> "any"
+                    _ -> "any"
+                -- Route as long as the OUTPUT type is concrete. Even
+                -- when V is opaque (e.g. FFI rawMap with Dict String any
+                -- values), Dict_map2T[any, W] still wins via typed
+                -- output (callers get map[string]W, no further coerce).
+            in if outGo == "any" then Nothing
+               else Just (GoIr.GoCall
+                    (GoIr.GoIdent ("rt.Dict_map2T[" ++ valGo ++ ", " ++ outGo ++ "]"))
+                    [goFn, wrapAsDict valGo goDict])
 
         -- Maybe.withDefault def m : a -> Maybe a -> a
         -- Routes to Maybe_withDefaultT[A] when A is concrete. The

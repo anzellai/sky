@@ -3382,6 +3382,30 @@ func Dict_mapT[V, W any](fn func(V) W, d map[string]V) map[string]W {
 	return out
 }
 
+// Dict_map2T: Sky's Dict.map signature is `(K -> V -> W) -> Dict K V -> Dict K W`
+// (curried 2-arg fn). The single-arg Dict_mapT (above) is the runtime
+// counterpart for the elided-key variant where the user writes `\_ v -> ...`,
+// but the natural Sky shape passes the key too. This variant accepts an
+// any-typed curried fn (the shape Sky lambdas always lower to) and calls
+// it as fn(k)(v), matching the lowered curry pattern. Used by typed
+// routing when the lambda input/output types are concrete.
+func Dict_map2T[V, W any](fn any, d map[string]V) map[string]W {
+	out := make(map[string]W, len(d))
+	for k, v := range d {
+		// fn is `func(K) func(V) W` shape (Sky-curried 2-arg). Call once
+		// with k to get the inner closure, then with v to get the result.
+		// Both SkyCall and direct invocation are tried for robustness.
+		step := SkyCall(fn, k)
+		result := SkyCall(step, v)
+		if cast, ok := result.(W); ok {
+			out[k] = cast
+		} else {
+			out[k] = Coerce[W](result)
+		}
+	}
+	return out
+}
+
 // Dict_fromListT: build a typed Dict from a list of (String, V) tuples.
 // Mirrors Dict_fromList but with concrete value type V — emitted when the
 // HM-inferred value type is concrete, avoiding the per-element any boxing
