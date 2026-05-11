@@ -240,7 +240,8 @@ func ResultCoerce[E any, A any](src any) SkyResult[E, A] {
 		tagField := rv.FieldByName("Tag")
 		okField := rv.FieldByName("OkValue")
 		errField := rv.FieldByName("ErrValue")
-		if tagField.IsValid() && okField.IsValid() && errField.IsValid() {
+		if tagField.IsValid() && okField.IsValid() && errField.IsValid() &&
+			(tagField.Kind() == reflect.Int || tagField.Kind() == reflect.Int64) {
 			if tagField.Int() == 0 {
 				return Ok[E, A](coerceInner[A](okField.Interface()))
 			}
@@ -266,7 +267,8 @@ func MaybeCoerce[A any](src any) SkyMaybe[A] {
 	if rv.Kind() == reflect.Struct {
 		tagField := rv.FieldByName("Tag")
 		justField := rv.FieldByName("JustValue")
-		if tagField.IsValid() && justField.IsValid() {
+		if tagField.IsValid() && justField.IsValid() &&
+			(tagField.Kind() == reflect.Int || tagField.Kind() == reflect.Int64) {
 			if tagField.Int() == 0 {
 				return Just[A](coerceInner[A](justField.Interface()))
 			}
@@ -296,7 +298,8 @@ func coerceInner[T any](v any) T {
 	rv := reflect.ValueOf(v)
 	if rv.Kind() == reflect.Struct {
 		tagField := rv.FieldByName("Tag")
-		if tagField.IsValid() {
+		if tagField.IsValid() &&
+			(tagField.Kind() == reflect.Int || tagField.Kind() == reflect.Int64) {
 			var zero T
 			zt := reflect.TypeOf(zero)
 			if zt != nil && zt.Kind() == reflect.Struct {

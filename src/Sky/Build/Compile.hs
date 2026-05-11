@@ -705,8 +705,42 @@ continueCompile config _entryPath outDir moduleOrder srcHash = do
                     -- (params, let-binders, case-binders) needed by
                     -- inferExprType to drive typed kernel routing.
                     -- Entry takes precedence on key collisions.
-                    typesWithDeps = Map.union types
-                        (Map.unions [ts | (_, ts) <- depSolved])
+                    --
+                    -- 2026-05-11 hardening: detect cross-module type
+                    -- conflicts. When a binder name (e.g. `children`)
+                    -- has DIFFERENT concrete types in two modules
+                    -- (Std.Ui's `List (Element msg)` vs Std.Html's
+                    -- `List VNode`), the merge can't pick one without
+                    -- causing wrong typed routing in the OTHER module's
+                    -- emission context. Conflicts → drop the key so
+                    -- typed routing falls back to any-routing for that
+                    -- name (safe). Replaces the post-conversion `rt.*`
+                    -- rejection in sanitiseTypedElem, which was a
+                    -- workaround for this same root cause.
+                    typesWithDeps =
+                        let entryKeys = Map.keysSet types
+                            -- Per-key, collect all type assignments
+                            -- across modules. Keys in entry get entry's
+                            -- type (entry wins on ties).
+                            allMaps = types : [t | (_, t) <- depSolved]
+                            keyToTypes = Map.unionsWith (++)
+                                [ Map.map (:[]) m | m <- allMaps ]
+                            isResolved (T.TVar _) = False
+                            isResolved _ = True
+                            -- Per key, pick the type. If entry has it,
+                            -- use entry's. Else if all dep assignments
+                            -- agree (structurally), use that. Else
+                            -- replace with `TVar "_ambig"` so
+                            -- solvedTypeToGo returns "any" and typed
+                            -- routing falls back.
+                            resolveKey k tys
+                                | k `Set.member` entryKeys =
+                                    Map.findWithDefault (T.TVar "_unbound") k types
+                                | otherwise = case List.nub (filter isResolved tys) of
+                                    [t] -> t
+                                    []  -> T.TVar "_unresolved"
+                                    _   -> T.TVar "_ambig"
+                        in Map.mapWithKey resolveKey keyToTypes
                     goCode = generateGoMulti canMod entrySrcMod config typesWithDeps depDecls depRecAliases depUnionNames depArities depParamTypes depRetTypes depInferredParams depInferredRets depInferredSigs depAliasPairs
                 createDirectoryIfMissing True outDir
                 let mainGoPath = outDir </> "main.go"
@@ -5935,21 +5969,22 @@ inferListElemGoType types e = case inferExprType types e of
 
 -- | Reject element types that aren't safe to use in AsListT[T] coercion.
 --
--- Two classes are forbidden:
---   1. Anon_R_xxx synthesised record names — no Go type alias is
---      emitted for these, would produce `undefined: Anon_R_xxx`.
---   2. Runtime-typed names like `rt.VNode`, `rt.SkyAttribute` etc.
---      These are opaque kernel-runtime types. User code is rarely
---      truly homogeneous on these — e.g. Std.Ui's `children` is
---      formally `List (Element msg)` but the merged dep-module
---      solvedTypes can shadow that with another module's
---      `children : List rt.VNode` param. AsListT[rt.VNode] on
---      heterogeneous data panics ("interface conversion"). Safer
---      to fall back to any-routing.
+-- Anon_R_xxx synthesised record names — no Go type alias is emitted
+-- for these, would produce `undefined: Anon_R_xxx`. Falling back to
+-- "any" routes through the legacy non-generic helper.
+--
+-- The earlier `rt.*` rejection was a workaround for cross-module
+-- name shadowing in the merged solvedTypes (e.g. `children` resolving
+-- to `List rt.VNode` from Std.Html when emitting Std.Ui code, where
+-- the right type was `List (Element msg)`). That root cause is now
+-- handled at MERGE time: `typesWithDeps` in Compile.hs detects when
+-- two modules assign different concrete types to the same binder
+-- name and replaces the key with a TVar (resolves to "any" in
+-- solvedTypeToGo). With the conflict-detection merge, this filter
+-- is no longer load-bearing for the `rt.*` class.
 sanitiseTypedElem :: String -> String
 sanitiseTypedElem go
     | "Anon_R_" `List.isPrefixOf` go = "any"
-    | "rt." `List.isPrefixOf` go = "any"
     | otherwise = go
 
 
