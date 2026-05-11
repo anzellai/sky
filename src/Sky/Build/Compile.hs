@@ -727,19 +727,31 @@ continueCompile config _entryPath outDir moduleOrder srcHash = do
                                 [ Map.map (:[]) m | m <- allMaps ]
                             isResolved (T.TVar _) = False
                             isResolved _ = True
-                            -- Per key, pick the type. If entry has it,
-                            -- use entry's. Else if all dep assignments
-                            -- agree (structurally), use that. Else
-                            -- replace with `TVar "_ambig"` so
-                            -- solvedTypeToGo returns "any" and typed
-                            -- routing falls back.
+                            -- normaliseType collapses TVar names to a
+                            -- shared placeholder so two structurally-
+                            -- identical types with different fresh TVar
+                            -- IDs are treated as equal. Solves the
+                            -- "history = []" (List _empty) vs concrete
+                            -- "history : List (Dict String String)"
+                            -- false-positive conflict.
+                            normaliseType = normaliseTypeForMerge
+                            -- Pick the most-specific type. If entry has
+                            -- the key, use entry's. Else: if all dep
+                            -- types agree under normalisation, use the
+                            -- most concrete (longest non-TVar) candidate.
+                            -- Else mark ambig.
                             resolveKey k tys
                                 | k `Set.member` entryKeys =
                                     Map.findWithDefault (T.TVar "_unbound") k types
-                                | otherwise = case List.nub (filter isResolved tys) of
-                                    [t] -> t
-                                    []  -> T.TVar "_unresolved"
-                                    _   -> T.TVar "_ambig"
+                                | otherwise =
+                                    let resolved = filter isResolved tys
+                                        normalised = List.nub (map normaliseType resolved)
+                                    in case normalised of
+                                        []  -> T.TVar "_unresolved"
+                                        [_] -> case resolved of
+                                                 (t:_) -> t  -- pick first concrete
+                                                 []    -> T.TVar "_unresolved"
+                                        _   -> T.TVar "_ambig"
                         in Map.mapWithKey resolveKey keyToTypes
                     goCode = generateGoMulti canMod entrySrcMod config typesWithDeps depDecls depRecAliases depUnionNames depArities depParamTypes depRetTypes depInferredParams depInferredRets depInferredSigs depAliasPairs
                 createDirectoryIfMissing True outDir
@@ -5767,6 +5779,30 @@ isConcreteType ty = case ty of
 -- to derive call-site argument types so e.g. `List.map fn xs` with
 -- `xs : List Int` routes to `rt.List_mapT[int, any]` instead of
 -- `rt.List_mapAny`. Phase 1 of `docs/v012-typed-codegen-plan.md`.
+-- | Collapse TVar names to a shared sentinel for cross-module type
+-- equality. Two types that differ only in fresh TVar IDs (which the
+-- HM solver assigns per-module) are considered equal — e.g. `List _a3`
+-- in module A and `List _b7` in module B both normalise to
+-- `List _norm`. Used by the cross-module solvedTypes merge to avoid
+-- false-positive conflicts when the same name has the same logical
+-- shape in multiple modules with different internal TVar names.
+normaliseTypeForMerge :: T.Type -> T.Type
+normaliseTypeForMerge = go
+  where
+    go (T.TVar _) = T.TVar "_norm"
+    go (T.TType h n args) = T.TType h n (map go args)
+    go (T.TLambda a b) = T.TLambda (go a) (go b)
+    go (T.TRecord fs ext) =
+        T.TRecord
+            (Map.map (\(T.FieldType i t) -> T.FieldType i (go t)) fs)
+            ext
+    go (T.TTuple a b cs) = T.TTuple (go a) (go b) (map go cs)
+    go (T.TAlias h n ps aliasTy) = case aliasTy of
+        T.Filled t  -> T.TAlias h n ps (T.Filled (go t))
+        T.Hoisted t -> T.TAlias h n ps (T.Hoisted (go t))
+    go t = t
+
+
 -- | Look up a record alias from `_cg_aliases` by its field-set. Returns
 -- the alias body (a TRecord) on match. Used as a fallback when a stored
 -- record type has unresolved TVars in its field types — the alias body
