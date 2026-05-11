@@ -1215,54 +1215,81 @@ sources (rt.Field on records, AnyT outputs, FFI returns)
 convert to the typed Go shape the kernel expects. All these
 helpers are no-ops on already-typed inputs.
 
-**Sweep measurement** (24 examples, post-v0.12 typed-codegen):
+**Sweep measurement** (24 examples, post-2026-05-11 finalisation):
 
 | Status | Calls | Notes |
 |---|---|---|
-| Typed kernel routes (`*T` / `*TA`) | **76** | up from 0 pre-fix |
-| Residual any-routes | 21 | mostly `List.member` / `Dict.map` from let-bindings inside case arms whose types aren't in `_cg_solvedTypes` |
+| Typed kernel routes (`*T` / `*TA`) | **~200** | up from 0 pre-fix |
+| Residual any-routes | **2** | both in 13-skyshop, both legitimate (V truly ambiguous) |
 | Total `reflect.MakeFunc` adapter sites in user code | 0 | unchanged |
 
-**Per-example breakdown** (typed / any):
-- 06-json: 9/0
-- 07-todo-cli: 3/0
-- 08-notes-app: 7/0
-- 12-skyvote: 2/0
-- 13-skyshop: 23/2 ← 92% typed
-- 16-skychess: 22/2 ← 92% typed
-- 17-skymon: 5/0
-- 18-job-queue: 3/1
-- 19-skyforum: 0/6 ← all sites are case-bound `post.upvoters` lookups
-- 23-tui-todo: 1/0
-- 24-tui-kitchen-sink: 1/0
+**Residual any-routes (2/200+ total typed call sites)**:
+- 13-skyshop: 1 Dict_fromList — heterogeneous-value tuple list
+  (mixed String + boolVal returning any), V genuinely
+  unresolvable → legitimate fallback.
+- 13-skyshop: 1 Dict.map — Sky's `Dict.map : (K -> V -> W) -> Dict K V -> Dict K W`
+  is 2-arg curried; runtime `Dict_mapT[V,W]` is 1-arg. Bridging
+  needs a `Dict_map2T[K,V,W]` runtime variant; not added because
+  it's a single legitimate site and the any-route works correctly.
 
-**Residual work for full Gap 3 close** (estimated ~3 days):
-1. Thread case-bound + let-bound types into `_cg_solvedTypes`
-   so `inferExprType` can resolve them. Currently those names
-   are inside arm-local environments that codegen doesn't see.
-   This is what's blocking the remaining 21 any-routes.
-2. Add typed routing for `Maybe.map` / `Result.map` /
-   `Maybe.andThen` / `Result.andThen` — these need typed
-   lambda inputs (Gap 4 territory).
-3. Add `Dict.fromList` / `Dict.toList` / `Dict.map` typed
-   variants once the lambda-typed kernel work lands.
+**Gap 4 status (typed lambda lowering)**: SUBSTANTIALLY CLOSED
+(2026-05-10/11). The `curryLambdaPatTyped` helper emits typed Go
+function signatures for literal `\x -> ...` lambdas passed to
+kernels that need a typed-input fn. Active for List.map / filter /
+find / Maybe.map / Result.map / Maybe.andThen / Result.andThen.
+Output type stays `any` (lambda body's HM type not threaded yet)
+but the input type is fully typed — eliminates the per-element
+reflect.MakeFunc adapter at the input boundary.
 
-**Gap 4 status (typed lambda lowering)**: NOT STARTED in this
-cycle. Sky lambdas still lower to `func(any) any`. The current
-TA-variant approach makes the typed-codegen win meaningful
-(~80% of calls) without paying the multi-week cost of
-restructuring lambda lowering. Full Gap 4 close still
-documented in `docs/v012-typed-codegen-plan.md` Phase 2 — needs
-a dedicated workstream.
+**Three coordinated 2026-05-11 fixes closed the long-tail**:
+1. `Dict_fromListT[V]` runtime variant + routing via the new
+   `inferListTupleSecondGoType` helper. Eliminates 8/9 Dict.fromList
+   any-routes in skyshop.
+2. Record-alias fallback in `inferExprType`'s `Can.Access` path:
+   Sky's HM stores record-field types with unresolved internal
+   TVars (`List _elem10`). The new `matchAliasByFieldSet` helper
+   looks up the user's record alias by field-set and pulls the
+   concrete declared type from there. Eliminates a class of
+   record-field-access any-routes.
+3. `List.member` key-type fallback: when the list arg's type is
+   unresolvable, infer the element type from the KEY arg
+   (`List.member`'s `a -> List a -> Bool` shape forces them to
+   share). Eliminates the skyforum residual.
 
-**Why the partial-close is acceptable**: the wins from typed
-routing are CUMULATIVE — each batch eliminates a class of
-boundary coercions. The remaining 21 any-routes still work
-correctly via the existing reflect-based dispatch; they're
-slower per call but functionally identical. Closing the
-remaining 21 sites needs structural changes (case-bound types
-in codegen + Gap 4 lambda lowering) that, half-done, would
-introduce more bugs than they fix.
+**Defensive runtime hardening (2026-05-11)**:
+- `narrowSkyContainer` now gates on `Tag.Kind() == Int(64)` for
+  both source AND target. Previously called `outTag.SetInt(...)`
+  unconditionally, which panicked with "SetInt on string Value"
+  when narrow target was a non-Sky struct with a non-int "Tag"
+  field (e.g. rt.VNode where Tag is the HTML tag string). The
+  bug was latent — only exposed when typed routing on
+  heterogeneous data reached this path.
+- `sanitiseTypedElem`: `inferListElemGoType` rejects `rt.*`
+  runtime-typed names (rt.VNode, rt.SkyAttribute etc.) AS WELL
+  as Anon_R_xxx synthesised names. These types are
+  often-heterogeneous at the user-code level even when HM's
+  merged solvedTypes says otherwise (per-module shadowing).
+  Belt + braces with the runtime gate above.
+
+**Per-example status**: all 24 examples build clean, 6 Live apps
+verified serving HTTP 200 with intact rendered content (no
+silent data loss from the fallback path).
+
+**What's not closed (post-v1 work)**:
+1. Lambda OUTPUT type. The typed routing for `List.map`/`Maybe.map`
+   uses `rt.List_mapT[A, any]` — input typed, output `any`. To get
+   `rt.List_mapT[A, B]` with concrete B, we'd need to infer the
+   lambda body's HM type, which means walking the body in HM-aware
+   form. Currently 49 sites would benefit; needs the rest of Gap 4.
+2. Per-module scoped solvedTypes. The current `Map.union` merge
+   collapses same-named binders across modules. When `children`
+   means `List (Element msg)` in Std.Ui and `List VNode` in
+   Std.Html, the merge picks one. The runtime gate + sanitiseTypedElem
+   make this safe, but typed routing could be more aggressive with
+   per-module scoping. Estimated ~1 week to refactor codegen to
+   thread module context through the IORef-based env.
+3. Dict.map with 2-arg fn shape needs a new `Dict_map2T[K,V,W]`
+   runtime variant; 1 site, deferred.
 
 #### exp/tea-core (LSP works on huge FFI surfaces — skyshop / Stripe SDK, 2026-05-10)
 
