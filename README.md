@@ -2,9 +2,17 @@
 
 [sky-lang.org](https://sky-lang.org) · [Examples](examples/) · [Docs](docs/)
 
-> **Experimental · v0.11** — Sky is under active development. APIs and internals may change between minor versions.
+> **Experimental · v0.12** — Sky is under active development. APIs and internals may change between minor versions.
 
-Sky is an experimental fullstack programming language that combines **Go's pragmatism** with the **elegance of pure-functional, ML-family languages**. You write functional, strongly-typed code with a batteries-included stdlib — `Sky.Live` for server-driven UI, `Std.Db` for SQL persistence, `Std.Auth` for sessions, `Sky.Core.Error` for unified error handling — import any Go package with auto-generated FFI bindings (no hand-written glue), and ship a single portable binary. Sky's explicit types, exhaustive pattern matching, and strict `Task` effect boundary make it **AI-friendly by design**: both humans and LLMs tend to write code that compiles the first time.
+Sky is an experimental fullstack programming language that combines **Go's pragmatism** with the **elegance of pure-functional, ML-family languages**. You write functional, strongly-typed code with a batteries-included stdlib — `Sky.Live` for server-driven UI, `Sky.Tui` for terminal UI (sharing the same Std.Ui code), `Std.Db` for SQL persistence, `Std.Auth` for sessions, `Sky.Core.Error` for unified error handling — import any Go package with auto-generated FFI bindings (no hand-written glue), and ship a single portable binary. Sky's explicit types, exhaustive pattern matching, and strict `Task` effect boundary make it **AI-friendly by design**: both humans and LLMs tend to write code that compiles the first time.
+
+### What's new in v0.12
+
+- **Sky.Tui** — TEA architecture for the terminal. Same `init / update / view / subscriptions` shape as Sky.Live, but renders `Std.Ui` to ANSI cells. Cross-backend code: one Std.Ui view runs in the browser via Sky.Live AND in the terminal via Sky.Tui without changes. See [Sky.Tui v1](docs/skytui/overview.md) and [examples/24-tui-kitchen-sink](examples/24-tui-kitchen-sink).
+- **Typed codegen overhaul** — ~200 typed kernel call sites across the 24-example sweep (was 0). Lambda-input-derived element typing guarantees typed routing produces only correct types (HM enforces fn input == list element). Strict `coerceInner` panic surfaces any compiler-bug-introduced type mismatch loudly — no silent zero-T fallback.
+- **Compiler hardening** — every `tagField.Int()` reflect site in the runtime now int-kind-gated. `narrowSkyContainer` rejects non-Sky structs (e.g. `rt.VNode` with `Tag string`). Cross-call inference for `List.{take,drop,filter,find,...}` propagates element types through the call chain.
+- **LSP at scale** — works on huge FFI surfaces (skyshop's 76 141-symbol Stripe SDK catalogue). Hover, autocompletion, goto-definition, real-time diagnostics on every example.
+- **Per-example HTTP-200 verification** — `sky verify` now boots every Live example, hits it with curl, and confirms intact rendered content. Run in `cabal test`'s 180-case sweep — zero failures, zero panics.
 
 ```elm
 module Main exposing (main)
@@ -47,7 +55,7 @@ See [docs/compiler/journey.md](docs/compiler/journey.md) for the full compiler h
 
 ## What's in the box
 
-Sky is **batteries-included**. Three killer modules cover the common needs of any modern web app — no plugins, no separate services, no `npm install`:
+Sky is **batteries-included**. Five killer modules cover the common needs of any modern web app — no plugins, no separate services, no `npm install`:
 
 ### Sky.Live — server-driven UI
 
@@ -118,6 +126,68 @@ view model =
             , Ui.button [] { onPress = Just Increment, label = Ui.text "+" }
             ])
 ```
+
+### Sky.Tui — terminal UI with the same Std.Ui code
+
+TEA in the terminal. Same `init / update / view / subscriptions` shape as Sky.Live. The `view` returns a `Std.Ui.Element msg` — the same `view` function runs in the browser via `Live.app` AND in the terminal via `Tui.app`. No code duplication.
+
+```elm
+-- shared.sky — both Live and Tui share this view + update
+module App exposing (init, update, view, subscriptions)
+
+import Std.Ui as Ui
+import Std.Ui.Font as Font
+
+type Msg = Increment | Decrement
+
+init _ = ( { count = 0 }, Cmd.none )
+
+update msg model =
+    case msg of
+        Increment -> ( { model | count = model.count + 1 }, Cmd.none )
+        Decrement -> ( { model | count = model.count - 1 }, Cmd.none )
+
+view model =
+    Ui.column
+        [ Ui.spacing 8, Ui.padding 16 ]
+        [ Ui.el [ Font.bold, Font.size 24 ] (Ui.text (String.fromInt model.count))
+        , Ui.row [ Ui.spacing 4 ]
+            [ Ui.button [] { onPress = Just Decrement, label = Ui.text "−" }
+            , Ui.button [] { onPress = Just Increment, label = Ui.text "+" }
+            ]
+        ]
+
+subscriptions _ = Sub.none
+```
+
+Then run the same code on either backend:
+
+```elm
+-- Main.sky (web — serves at localhost:8000)
+import Std.Live as Live
+import App
+main = Live.app
+    { init = App.init, update = App.update, view = App.view
+    , subscriptions = App.subscriptions
+    , routes = [ Live.route "/" () ], notFound = ()
+    }
+```
+
+```elm
+-- MainTui.sky (terminal — renders ANSI cells)
+import Std.Tui as Tui
+import App
+main =
+    Tui.app
+        { init = App.init, update = App.update, view = App.view
+        , subscriptions = App.subscriptions
+        , onKey = \k -> if k.value == "+" then App.Increment else App.Decrement
+        }
+        |> Task.run
+```
+
+Same `update` semantics, same `view` widgets, two completely different output targets. Sky.Tui handles bracketed paste, wide chars (CJK + emoji), focus rings, scroll wheel, mouse press, viewport pixel canvas (1280×720 logical px maps to cell sizes), and resize via SIGWINCH. See [Sky.Tui v1](docs/skytui/overview.md) and [examples/22-tui-stopwatch-ui](examples/22-tui-stopwatch-ui) for a stopwatch in <100 lines that runs in both backends.
+
 
 Plus typed events (`onClick / onSubmit / onInput`), forms with the password best-practice pattern (`Ui.form` + `onSubmit DoSignIn` decoding wire formData into a typed record — secret never enters Model), and file/image upload with browser-side resize hints (`Ui.onImage AvatarSelected, Ui.fileMaxWidth 800`). See [Sky.Ui overview](docs/skyui/overview.md).
 

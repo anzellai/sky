@@ -105,6 +105,48 @@ Not a new compiler — a pipeline rework on top of the Haskell implementation. W
 
 The 20-example sweep reports **0 real-`any` sigs**. The helper `rt.SkyValue` is a named alias over `any` used in exactly those slots where runtime polymorphism is intentional (return-only slots, explicit boxing). `sky-out/main.go` files contain no `any(body).(T)` patterns outside the `rt.Coerce*` helpers — the P0-3 grep gate stays green.
 
+## v0.12 — typed routing soundness floor
+
+v0.12 closed the Gap 3 + Gap 4 long tail from v0.9's typed-codegen work and added Sky.Tui (TEA in the terminal sharing `view` code with Sky.Live).
+
+### Typed kernel routing
+
+The kernel-by-kernel routing table now has typed call sites across the 24-example sweep: List/Dict/Maybe/Result helpers all route through `rt.X_T[A, B]` or `rt.X_TA[A]` (typed-slice + any-fn) variants instead of `rt.X_Any`. Concrete benefit: ~200 typed call sites where v0.9 had 0.
+
+### What unblocked v0.12
+
+- **Lambda-input-derived element typing.** Previously, `inferListElemGoType` looked up the LIST argument's type in `solvedTypes`. But Sky's HM stores let-bound names with a single (innermost-wins) type per module — when one function bound `visible : List Monitor` and another bound `visible : List Metric` in the same module, only one survived. Wrong typed routes (`rt.List_mapTA[State_Metric_R]` for a list of Monitors) emitted silently, producing zero-valued elements at runtime via the narrow fallback. **Fix**: derive the element type from the LAMBDA's INPUT TYPE via `_cg_funcParamTypes` lookup. HM enforces the lambda's input matches the list's element, so this is guaranteed correct — immune to intra/cross-module shadowing.
+- **Conflict-detection merge with TVar normalisation.** `typesWithDeps` now collects per-key type assignments across all modules, normalises TVar names to a shared sentinel (so structurally-equal types from different modules match), and replaces genuinely conflicting names with `_ambig` (resolves to `any` in `solvedTypeToGo`). Cross-module shadowing of names like `children` (Std.Ui's `List Element` vs Std.Html's `List VNode`) used to produce wrong typed routes; now they fall back to any-routing safely.
+- **`Dict_fromListT[V]` + `Dict_map2T[V, W]` runtime variants.** Closed the `Dict.fromList` 8-site any-route in skyshop and `Dict.map`'s curried-fn / runtime single-arg shape mismatch.
+- **Cross-call inference for `List.take/drop/filter/find/reverse/...`.** When a kernel's result element type ties to its input arg's element type (the "identity-on-element-type" family), `inferExprType.Can.Call` now substitutes correctly so downstream `List.map` sees the concrete element type through a chain like `List.map f (List.take 10 xs)`.
+
+### Soundness floor: strict `coerceInner`
+
+Earlier in v0.12 development the runtime `coerceInner[T]` quietly fell back to zero `T` on type-assertion failure — silencing what would otherwise have been compiler bugs. **Reverted**: the fallback is now a strict panic with a descriptive message ("rt.coerceInner: type mismatch — source X cannot be cast to target Y. This is a compiler bug in typed-codegen routing."). The conflict-detection merge + lambda-input-derived typing ensure no wrong-typed route is ever emitted; if a panic ever fires it's a real compiler-side bug to investigate. All 6 Live apps now serve HTTP 200 with the strict panic active — empirical confirmation that current typed routing is correct end-to-end.
+
+### Runtime hardening (defense-in-depth)
+
+Every reflect-based `tagField.Int()` site in `rt.go` now gates on `tagField.Kind() == reflect.Int(64)` BEFORE calling `.Int()`:
+
+- `narrowSkyContainer` (the main offender — rt.VNode has `Tag string`, used to panic with "SetInt on string Value")
+- `coerceInner`'s Sky-container reconstruction path
+- `ResultCoerce` / `MaybeCoerce` reflect fallback paths
+- `anyResultView` / `anyMaybeView` / `Result_withDefault` / `unwrapAny` / SkyMaybe slice-appendJust
+
+Each `if tagField.IsValid()` guard now also includes the int-kind check. Closes the latent "non-Sky struct with `Tag` field" panic class permanently.
+
+### Sky.Tui v1
+
+TEA in the terminal. Same `init / update / view / subscriptions` shape as Sky.Live; same `Std.Ui` widgets render to ANSI cells instead of HTML. Cross-backend code shares the entire `view` + `update` layer — only `main` differs (`Live.app` vs `Tui.app`). Runtime entry: `Tui_app` in `runtime-go/rt/tui_ui.go` (~2400 lines).
+
+Coverage of `Std.Ui` primitives: ~95%+. Layout (`row/column/wrappedRow/grid/paragraph/textColumn`), text styling (truecolour fg/bg, bold, italic, underline), borders, inputs (text/password/checkbox/radio/slider/multiline), events (`onClick/onInput/onSubmit/onKeyDown` + mouse press/scroll), nearby overlays (`above/below/inFront/...`), focus ring with Tab cycling, wide chars (CJK + emoji + ZWJ via `uniseg`), bracketed paste, SIGWINCH resize, signal-safe teardown.
+
+Reliability floor (enforced runtime invariants): goroutine panics (Cmd.perform, key reader) wrap through `safeGo` which restores the TTY; SIGTERM/SIGHUP/SIGQUIT/SIGINT-from-outside trapped and routed to `tuiTeardown`; main-goroutine panics fall through `tuiTeardown + DECSTR soft reset`; ANSI injection via user text sanitised at every paint path; hard cap at `tuiMaxContentH = 50 000` rows; `TERM=dumb` / non-TTY stdin refused before raw mode.
+
+### What's left
+
+The remaining 10 `List_mapAny` residuals across the 24-example sweep are all FFI-opaque element types (Firestore returns, JSON-decoded list types) or unresolved HM types that genuinely can't be typed at codegen without rewriting Sky's curry semantics. These any-routed call sites use SkyCall reflect dispatch — functionally correct, ~100 ns/element slower than typed routes. The strict `coerceInner` panic guarantees no wrong-typed route can fire silently.
+
 ## What's next
 
 No compiler rewrite is planned. The Haskell implementation is the long-term home. Future work is:
@@ -114,5 +156,6 @@ No compiler rewrite is planned. The Haskell implementation is the long-term home
 - Formal exhaustiveness for nested patterns.
 - Smarter cache invalidation (source-hash that covers transitive annotations).
 - Selective import emission (currently emits all 18 runtime subpackages).
+- Rewrite Sky's curry semantics so partial-application closures emit typed `func(A) B` Go signatures — would unlock the remaining 10 typed routes. Estimated multi-week scope.
 
 See [versions.md](versions.md) for the feature-level changelog.
