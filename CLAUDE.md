@@ -1256,40 +1256,87 @@ reflect.MakeFunc adapter at the input boundary.
    (`List.member`'s `a -> List a -> Bool` shape forces them to
    share). Eliminates the skyforum residual.
 
-**Defensive runtime hardening (2026-05-11)**:
-- `narrowSkyContainer` now gates on `Tag.Kind() == Int(64)` for
-  both source AND target. Previously called `outTag.SetInt(...)`
+**Defensive runtime hardening (2026-05-11, second pass)**:
+- `narrowSkyContainer` gates on `Tag.Kind() == Int(64)` for both
+  source AND target. Previously called `outTag.SetInt(...)`
   unconditionally, which panicked with "SetInt on string Value"
   when narrow target was a non-Sky struct with a non-int "Tag"
-  field (e.g. rt.VNode where Tag is the HTML tag string). The
-  bug was latent — only exposed when typed routing on
-  heterogeneous data reached this path.
-- `sanitiseTypedElem`: `inferListElemGoType` rejects `rt.*`
-  runtime-typed names (rt.VNode, rt.SkyAttribute etc.) AS WELL
-  as Anon_R_xxx synthesised names. These types are
-  often-heterogeneous at the user-code level even when HM's
-  merged solvedTypes says otherwise (per-module shadowing).
-  Belt + braces with the runtime gate above.
+  field (e.g. rt.VNode where Tag is the HTML tag string).
+- Same int-kind gate added to every other `tagField.Int()` site
+  in rt.go: `ResultCoerce`, `MaybeCoerce`, `coerceInner`,
+  `anyResultView`, `anyMaybeView`, `Result_withDefault`,
+  `unwrapAny`, and the SkyMaybe slice-appendJust path. Defense
+  in depth — no `tagField.Int()` call in rt.go can fire on a
+  non-Sky-container struct without first verifying the Tag is
+  actually an int.
+- `coerceInner` no longer panics on type-assertion failure.
+  Previously `return v.(T)` was the final fallback. Now uses
+  comma-ok and falls back to zero-T. Consistent with the rest
+  of the runtime's panic-free contract.
+
+**Architectural fix replacing the `sanitiseTypedElem rt.*`
+workaround (2026-05-11, commit 63c01c0 + a2ff8e9)**: The earlier
+post-conversion `rt.*` rejection in `sanitiseTypedElem` was a
+WORKAROUND for the symptom. Root cause: cross-module solvedTypes
+merge collapses same-named binders. The fix lives at the merge
+step (`typesWithDeps` in Compile.hs):
+
+  1. Collect per-key type assignments across all modules.
+  2. If entry has the key → use entry's type.
+  3. Else: normalise all dep candidates (collapse TVar names to a
+     shared sentinel `_norm` so structurally-identical types from
+     different modules match). If they all agree under
+     normalisation → use the first concrete candidate.
+  4. Else (genuine conflict) → replace with `TVar "_ambig"` so
+     `solvedTypeToGo` returns "any" and typed routing falls
+     back safely.
+
+This is a soundness-preserving merge. `sanitiseTypedElem` still
+filters `Anon_R_xxx` synthetic record names (no Go alias is
+emitted for those), but no longer needs the `rt.*` filter.
 
 **Per-example status**: all 24 examples build clean, 6 Live apps
-verified serving HTTP 200 with intact rendered content (no
-silent data loss from the fallback path).
+verified serving HTTP 200 with intact rendered content. No silent
+data loss observed in the integration tests.
 
 **What's not closed (post-v1 work)**:
 1. Lambda OUTPUT type. The typed routing for `List.map`/`Maybe.map`
    uses `rt.List_mapT[A, any]` — input typed, output `any`. To get
    `rt.List_mapT[A, B]` with concrete B, we'd need to infer the
    lambda body's HM type, which means walking the body in HM-aware
-   form. Currently 49 sites would benefit; needs the rest of Gap 4.
+   form. Currently ~49 sites would benefit; needs the rest of Gap 4.
 2. Per-module scoped solvedTypes. The current `Map.union` merge
-   collapses same-named binders across modules. When `children`
-   means `List (Element msg)` in Std.Ui and `List VNode` in
-   Std.Html, the merge picks one. The runtime gate + sanitiseTypedElem
-   make this safe, but typed routing could be more aggressive with
-   per-module scoping. Estimated ~1 week to refactor codegen to
+   with conflict-detection is sound but loses some typed routes
+   for shadowed names (e.g. user's local `children = filter ...`
+   with type `List Comment` conflicts with Std.Ui's `children :
+   List (Element msg)` and both fall back to any). True per-module
+   scoping would let each module's binders win in their own
+   emission context. Estimated ~1 week to refactor codegen to
    thread module context through the IORef-based env.
-3. Dict.map with 2-arg fn shape needs a new `Dict_map2T[K,V,W]`
-   runtime variant; 1 site, deferred.
+3. Cross-call type inference. When `List.take 10 allMoves` returns
+   `List X` with X tied to allMoves's element type, the typed
+   routing currently sees `List a` (unresolved). Reimplementing a
+   subset of HM-style unification at codegen time would fix this.
+   ~20 sites benefit; moderate complexity.
+
+**Residual any-routes (post-2026-05-11)**:
+| Example | List_mapAny | Notes |
+|---|---|---|
+| 06-json | 1 | JSON-decoded list type unresolved |
+| 12-skyvote | 1 | Cmd.batch with heterogeneous Cmds |
+| 13-skyshop | 11 | FFI-opaque Firestore returns + Cmd.batch |
+| 16-skychess | 2 | List.take + List.map composition (cross-call) |
+| 17-skymon | 2 | Inferred from FFI return |
+| 18-job-queue | 1 | Cmd.batch |
+| 19-skyforum | 2 | Local `children`/`renderNodeAs` shadowing |
+
+Plus residual Dict-specific:
+| Example | kind | Notes |
+|---|---|---|
+| 13-skyshop | Dict_fromList=1 | Heterogeneous-value tuple list |
+
+All sites are functionally correct (any-routed via reflect) and
+preserve runtime semantics. No panic surface remains.
 
 #### exp/tea-core (LSP works on huge FFI surfaces — skyshop / Stripe SDK, 2026-05-10)
 
