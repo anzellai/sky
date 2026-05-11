@@ -15,7 +15,8 @@ import qualified System.Directory
 import qualified System.FilePath
 import qualified System.Process
 import qualified System.Exit
-import Control.Monad (when, unless)
+import Control.Monad (when, unless, forM)
+import Control.Exception (evaluate)
 import System.Directory (createDirectoryIfMissing, doesDirectoryExist, doesFileExist, copyFile, listDirectory, removeFile)
 import System.IO (hFlush, stdout, readFile', stderr, hPutStrLn)
 import System.IO.Unsafe (unsafePerformIO)
@@ -699,47 +700,16 @@ continueCompile config _entryPath outDir moduleOrder srcHash = do
                 putStrLn "-- Generating Go"
                 let depAliasPairs = [ (map (\c -> if c == '.' then '_' else c) mn, Can._aliases depMod)
                                     | (mn, depMod) <- validDeps ]
-                    -- v0.12.x Gap 3 close-out: union the entry's
-                    -- solvedTypes with every dep module's solvedTypes
-                    -- so dep-body codegen has the per-function locals
-                    -- (params, let-binders, case-binders) needed by
-                    -- inferExprType to drive typed kernel routing.
-                    -- Entry takes precedence on key collisions.
-                    --
-                    -- 2026-05-11 hardening: detect cross-module type
-                    -- conflicts. When a binder name (e.g. `children`)
-                    -- has DIFFERENT concrete types in two modules
-                    -- (Std.Ui's `List (Element msg)` vs Std.Html's
-                    -- `List VNode`), the merge can't pick one without
-                    -- causing wrong typed routing in the OTHER module's
-                    -- emission context. Conflicts → drop the key so
-                    -- typed routing falls back to any-routing for that
-                    -- name (safe). Replaces the post-conversion `rt.*`
-                    -- rejection in sanitiseTypedElem, which was a
-                    -- workaround for this same root cause.
+                    -- Conflict-detection merge with TVar normalisation.
+                    -- See typesWithDepsBuilder below for the algorithm.
                     typesWithDeps =
                         let entryKeys = Map.keysSet types
-                            -- Per-key, collect all type assignments
-                            -- across modules. Keys in entry get entry's
-                            -- type (entry wins on ties).
                             allMaps = types : [t | (_, t) <- depSolved]
                             keyToTypes = Map.unionsWith (++)
                                 [ Map.map (:[]) m | m <- allMaps ]
                             isResolved (T.TVar _) = False
                             isResolved _ = True
-                            -- normaliseType collapses TVar names to a
-                            -- shared placeholder so two structurally-
-                            -- identical types with different fresh TVar
-                            -- IDs are treated as equal. Solves the
-                            -- "history = []" (List _empty) vs concrete
-                            -- "history : List (Dict String String)"
-                            -- false-positive conflict.
                             normaliseType = normaliseTypeForMerge
-                            -- Pick the most-specific type. If entry has
-                            -- the key, use entry's. Else: if all dep
-                            -- types agree under normalisation, use the
-                            -- most concrete (longest non-TVar) candidate.
-                            -- Else mark ambig.
                             resolveKey k tys
                                 | k `Set.member` entryKeys =
                                     Map.findWithDefault (T.TVar "_unbound") k types
@@ -749,7 +719,7 @@ continueCompile config _entryPath outDir moduleOrder srcHash = do
                                     in case normalised of
                                         []  -> T.TVar "_unresolved"
                                         [_] -> case resolved of
-                                                 (t:_) -> t  -- pick first concrete
+                                                 (t:_) -> t
                                                  []    -> T.TVar "_unresolved"
                                         _   -> T.TVar "_ambig"
                         in Map.mapWithKey resolveKey keyToTypes
