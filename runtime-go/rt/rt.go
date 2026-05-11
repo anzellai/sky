@@ -454,9 +454,22 @@ func narrowSkyContainer(src reflect.Value, target reflect.Type) (reflect.Value, 
 	if !tagF.IsValid() {
 		return reflect.Value{}, false
 	}
+	// Sky containers (SkyMaybe / SkyResult / SkyTask / Tuples / ADTs)
+	// always carry an INT Tag. Some non-Sky Go structs (rt.VNode has
+	// `Tag string`) also have a "Tag" field — we MUST exclude those
+	// here, otherwise outTag.SetInt(tagF.Int()) panics with
+	// "SetInt on string Value". The bug surfaces when typed routing
+	// (e.g. AsListT[rt.VNode]) reaches a heterogeneous any-typed slice
+	// where the element value isn't actually a VNode.
+	if tagF.Kind() != reflect.Int && tagF.Kind() != reflect.Int64 {
+		return reflect.Value{}, false
+	}
 	out := reflect.New(target).Elem()
 	outTag := out.FieldByName("Tag")
 	if !outTag.IsValid() || !outTag.CanSet() {
+		return reflect.Value{}, false
+	}
+	if outTag.Kind() != reflect.Int && outTag.Kind() != reflect.Int64 {
 		return reflect.Value{}, false
 	}
 	outTag.SetInt(tagF.Int())
