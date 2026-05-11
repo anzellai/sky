@@ -1754,6 +1754,91 @@ Run `sky run src/Main.sky` for examples 20-24:
 
 Full reference: `docs/skytui/overview.md`.
 
+### Cross-backend: same `view` + `update` for Sky.Live AND Sky.Tui
+
+Split into `App.sky` (shared business logic + view) and per-backend
+entry modules (`Main.sky` for web, `MainTui.sky` for terminal).
+
+`App.sky` — written once, runs on both:
+```elm
+module App exposing (Model, Msg, init, update, view, subscriptions)
+
+import Std.Ui as Ui
+import Std.Ui exposing (Element)
+import Std.Ui.Font as Font
+
+type alias Model = { count : Int }
+type Msg = Increment | Decrement
+
+init : () -> ( Model, Cmd Msg )
+init _ = ( { count = 0 }, Cmd.none )
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        Increment -> ( { model | count = model.count + 1 }, Cmd.none )
+        Decrement -> ( { model | count = model.count - 1 }, Cmd.none )
+
+view : Model -> Element Msg
+view model =
+    Ui.column
+        [ Ui.spacing 8, Ui.padding 16 ]
+        [ Ui.el [ Font.bold, Font.size 24 ]
+              (Ui.text ("Count: " ++ String.fromInt model.count))
+        , Ui.row [ Ui.spacing 4 ]
+            [ Ui.button [] { onPress = Just Decrement, label = Ui.text "−" }
+            , Ui.button [] { onPress = Just Increment, label = Ui.text "+" }
+            ]
+        ]
+
+subscriptions : Model -> Sub Msg
+subscriptions _ = Sub.none
+```
+
+`Main.sky` (web entry — `sky run` serves at localhost:8000):
+```elm
+module Main exposing (main)
+import Std.Live as Live
+import App
+main =
+    Live.app
+        { init = App.init, update = App.update, view = App.view
+        , subscriptions = App.subscriptions
+        , routes = [ Live.route "/" () ], notFound = ()
+        }
+```
+
+`MainTui.sky` (terminal entry — `sky run MainTui.sky` renders ANSI cells):
+```elm
+module MainTui exposing (main)
+import Std.Tui as Tui
+import App
+main =
+    Tui.app
+        { init = App.init, update = App.update, view = App.view
+        , subscriptions = App.subscriptions
+        , onKey =
+            \k -> if k.value == "+" then App.Increment
+                  else if k.value == "-" then App.Decrement
+                  else App.Increment
+        }
+        |> Task.run
+```
+
+Same Std.Ui widgets, same Msg dispatch, two completely different
+outputs. The `view` function is portable because Std.Ui's `Element
+msg` is backend-agnostic — Live renders to HTML, Tui renders to
+ANSI cells via `runtime-go/rt/tui_ui.go`.
+
+Limits of portability:
+- Sky.Live-only: file uploads (`Event.onFile`), routing, session
+  stores. Tui has no equivalents.
+- Sky.Tui-only: keyboard event with modifiers, mouse press, scroll
+  wheel. Live receives DOM events with different shapes.
+- Where backends share: layout (row/column/grid/wrappedRow), text
+  styling, borders, padding/spacing, inputs (text/checkbox/radio/
+  slider), `onClick`/`onSubmit`/`onInput` events, focus management.
+
 ## Application Patterns — When to Use What
 
 ### 1. Simple CLI App
