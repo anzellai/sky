@@ -2160,7 +2160,9 @@ func List_filterMapAnyT(fn any, xs []any) []any {
 		if rv.Kind() == reflect.Struct {
 			tag := rv.FieldByName("Tag")
 			val := rv.FieldByName("JustValue")
-			if tag.IsValid() && val.IsValid() && tag.Int() == 0 {
+			if tag.IsValid() && val.IsValid() &&
+				(tag.Kind() == reflect.Int || tag.Kind() == reflect.Int64) &&
+				tag.Int() == 0 {
 				out = append(out, val.Interface())
 			}
 		}
@@ -2928,7 +2930,8 @@ func anyResultView(result any) (int, any, any) {
 		tagField := rv.FieldByName("Tag")
 		okField  := rv.FieldByName("OkValue")
 		errField := rv.FieldByName("ErrValue")
-		if tagField.IsValid() && okField.IsValid() && errField.IsValid() {
+		if tagField.IsValid() && okField.IsValid() && errField.IsValid() &&
+			(tagField.Kind() == reflect.Int || tagField.Kind() == reflect.Int64) {
 			return int(tagField.Int()), okField.Interface(), errField.Interface()
 		}
 	}
@@ -2952,7 +2955,8 @@ func Result_withDefault(def any, result any) any {
 	if rv.Kind() == reflect.Struct {
 		tagField := rv.FieldByName("Tag")
 		okField  := rv.FieldByName("OkValue")
-		if tagField.IsValid() && okField.IsValid() {
+		if tagField.IsValid() && okField.IsValid() &&
+			(tagField.Kind() == reflect.Int || tagField.Kind() == reflect.Int64) {
 			if tagField.Int() == 0 {
 				return okField.Interface()
 			}
@@ -3141,7 +3145,8 @@ func anyMaybeView(maybe any) (int, any) {
 	if rv.Kind() == reflect.Struct {
 		tagField  := rv.FieldByName("Tag")
 		justField := rv.FieldByName("JustValue")
-		if tagField.IsValid() && justField.IsValid() {
+		if tagField.IsValid() && justField.IsValid() &&
+			(tagField.Kind() == reflect.Int || tagField.Kind() == reflect.Int64) {
 			return int(tagField.Int()), justField.Interface()
 		}
 	}
@@ -3670,6 +3675,10 @@ func unwrapAny(v any) any {
 	}
 	tagF := rv.FieldByName("Tag")
 	if !tagF.IsValid() {
+		return v
+	}
+	// Non-int Tag (e.g. rt.VNode's HTML tag string) — not a Sky container.
+	if tagF.Kind() != reflect.Int && tagF.Kind() != reflect.Int64 {
 		return v
 	}
 	// SkyResult: unwrap Ok (Tag==0 → OkValue)
