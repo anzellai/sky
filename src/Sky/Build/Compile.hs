@@ -5922,19 +5922,35 @@ inferGoType types e = case inferExprType types e of
 -- handles anonymous records correctly via reflect.
 inferListElemGoType :: Solve.SolvedTypes -> Can.Expr -> String
 inferListElemGoType types e = case inferExprType types e of
-    Just (T.TType _ "List" [elemTy]) ->
-        let go = solvedTypeToGo elemTy
-        in if "Anon_R_" `List.isPrefixOf` go then "any" else go
+    Just (T.TType _ "List" [elemTy]) -> sanitiseTypedElem (solvedTypeToGo elemTy)
     Just (T.TAlias _ _ _ aliasInner) ->
         let inner = case aliasInner of
                 T.Filled  i -> i
                 T.Hoisted i -> i
         in case inner of
-            T.TType _ "List" [elemTy] ->
-                let go = solvedTypeToGo elemTy
-                in if "Anon_R_" `List.isPrefixOf` go then "any" else go
+            T.TType _ "List" [elemTy] -> sanitiseTypedElem (solvedTypeToGo elemTy)
             _ -> "any"
     _ -> "any"
+
+
+-- | Reject element types that aren't safe to use in AsListT[T] coercion.
+--
+-- Two classes are forbidden:
+--   1. Anon_R_xxx synthesised record names — no Go type alias is
+--      emitted for these, would produce `undefined: Anon_R_xxx`.
+--   2. Runtime-typed names like `rt.VNode`, `rt.SkyAttribute` etc.
+--      These are opaque kernel-runtime types. User code is rarely
+--      truly homogeneous on these — e.g. Std.Ui's `children` is
+--      formally `List (Element msg)` but the merged dep-module
+--      solvedTypes can shadow that with another module's
+--      `children : List rt.VNode` param. AsListT[rt.VNode] on
+--      heterogeneous data panics ("interface conversion"). Safer
+--      to fall back to any-routing.
+sanitiseTypedElem :: String -> String
+sanitiseTypedElem go
+    | "Anon_R_" `List.isPrefixOf` go = "any"
+    | "rt." `List.isPrefixOf` go = "any"
+    | otherwise = go
 
 
 -- | Extract the value type of a Dict-typed expression. Returns "any"
