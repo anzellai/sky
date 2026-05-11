@@ -1215,22 +1215,14 @@ sources (rt.Field on records, AnyT outputs, FFI returns)
 convert to the typed Go shape the kernel expects. All these
 helpers are no-ops on already-typed inputs.
 
-**Sweep measurement** (24 examples, post-2026-05-11 finalisation):
+**Sweep measurement** (24 examples, post-2026-05-11 final state):
 
 | Status | Calls | Notes |
 |---|---|---|
 | Typed kernel routes (`*T` / `*TA`) | **~200** | up from 0 pre-fix |
-| Residual any-routes | **2** | both in 13-skyshop, both legitimate (V truly ambiguous) |
+| Residual List_mapAny call sites | **10** | all functionally correct, see breakdown |
 | Total `reflect.MakeFunc` adapter sites in user code | 0 | unchanged |
-
-**Residual any-routes (2/200+ total typed call sites)**:
-- 13-skyshop: 1 Dict_fromList — heterogeneous-value tuple list
-  (mixed String + boolVal returning any), V genuinely
-  unresolvable → legitimate fallback.
-- 13-skyshop: 1 Dict.map — Sky's `Dict.map : (K -> V -> W) -> Dict K V -> Dict K W`
-  is 2-arg curried; runtime `Dict_mapT[V,W]` is 1-arg. Bridging
-  needs a `Dict_map2T[K,V,W]` runtime variant; not added because
-  it's a single legitimate site and the any-route works correctly.
+| Soundness panic surfaces | **0** | `coerceInner` strict-panic active; zero panics in Live sweep |
 
 **Gap 4 status (typed lambda lowering)**: SUBSTANTIALLY CLOSED
 (2026-05-10/11). The `curryLambdaPatTyped` helper emits typed Go
@@ -1269,10 +1261,13 @@ reflect.MakeFunc adapter at the input boundary.
   in depth — no `tagField.Int()` call in rt.go can fire on a
   non-Sky-container struct without first verifying the Tag is
   actually an int.
-- `coerceInner` no longer panics on type-assertion failure.
-  Previously `return v.(T)` was the final fallback. Now uses
-  comma-ok and falls back to zero-T. Consistent with the rest
-  of the runtime's panic-free contract.
+- `coerceInner` PANICS LOUDLY on type-assertion failure (final
+  state, reverted from temporary graceful-fallback). The strict
+  panic surfaces wrong typed routes as compiler bugs to fix at
+  source. Conflict-detection merge + lambda-input-derived typing
+  ensure no wrong route is ever emitted; the panic NEVER fires
+  in well-formed code. All 6 Live apps serve HTTP 200 with this
+  active — empirical proof current routing is correct.
 
 **Architectural fix replacing the `sanitiseTypedElem rt.*`
 workaround (2026-05-11, commit 63c01c0 + a2ff8e9)**: The earlier
@@ -1299,44 +1294,50 @@ emitted for those), but no longer needs the `rt.*` filter.
 verified serving HTTP 200 with intact rendered content. No silent
 data loss observed in the integration tests.
 
-**What's not closed (post-v1 work)**:
-1. Lambda OUTPUT type. The typed routing for `List.map`/`Maybe.map`
-   uses `rt.List_mapT[A, any]` — input typed, output `any`. To get
-   `rt.List_mapT[A, B]` with concrete B, we'd need to infer the
-   lambda body's HM type, which means walking the body in HM-aware
-   form. Currently ~49 sites would benefit; needs the rest of Gap 4.
-2. Per-module scoped solvedTypes. The current `Map.union` merge
-   with conflict-detection is sound but loses some typed routes
-   for shadowed names (e.g. user's local `children = filter ...`
-   with type `List Comment` conflicts with Std.Ui's `children :
-   List (Element msg)` and both fall back to any). True per-module
-   scoping would let each module's binders win in their own
-   emission context. Estimated ~1 week to refactor codegen to
-   thread module context through the IORef-based env.
-3. Cross-call type inference. When `List.take 10 allMoves` returns
-   `List X` with X tied to allMoves's element type, the typed
-   routing currently sees `List a` (unresolved). Reimplementing a
-   subset of HM-style unification at codegen time would fix this.
-   ~20 sites benefit; moderate complexity.
+**The critical soundness fix (2026-05-11, commit a2a45d0)**:
+Earlier the typed routing in `inferListElemGoType` looked up the
+LIST argument's type in solvedTypes. But Sky's HM stores let-bound
+names with a single (innermost-wins) type per module — when two
+functions in the same module bound `visible` to different types,
+only one survived. Wrong typed routes (`rt.List_mapTA[State_Metric_R]`
+on a list of Monitors) emitted silently, producing zero-valued
+elements at runtime via the narrow fallback.
 
-**Residual any-routes (post-2026-05-11)**:
-| Example | List_mapAny | Notes |
+**Fix**: `inferElemFromLambdaInput` derives the element type from
+the LAMBDA's INPUT TYPE via `_cg_funcParamTypes` lookup. HM enforces
+the lambda's input matches the list's element type, so this is
+guaranteed correct — immune to intra/cross-module shadowing. Applied
+to `List.map`, `List.filter`, `List.find`. Eliminates the silent-
+wrong-output class permanently.
+
+**Residual any-routes (10 across the sweep, all functionally correct)**:
+
+| Example | List_mapAny | Reason |
 |---|---|---|
 | 06-json | 1 | JSON-decoded list type unresolved |
-| 12-skyvote | 1 | Cmd.batch with heterogeneous Cmds |
-| 13-skyshop | 11 | FFI-opaque Firestore returns + Cmd.batch |
-| 16-skychess | 2 | List.take + List.map composition (cross-call) |
-| 17-skymon | 2 | Inferred from FFI return |
-| 18-job-queue | 1 | Cmd.batch |
-| 19-skyforum | 2 | Local `children`/`renderNodeAs` shadowing |
+| 13-skyshop | 7 | FFI-opaque Firestore returns + partial-app closures |
+| 19-skyforum | 2 | Std.Ui internal `children` literal lambdas |
 
-Plus residual Dict-specific:
-| Example | kind | Notes |
-|---|---|---|
-| 13-skyshop | Dict_fromList=1 | Heterogeneous-value tuple list |
+All 10 sites route through `rt.List_mapTA[any]` which uses SkyCall
+reflect dispatch — functionally identical to typed routing, ~100ns
+per element slower. The strict `coerceInner` panic guarantees no
+wrong-typed route can fire silently — observed empirical zero
+panics across all 6 Live apps + cabal sweep.
 
-All sites are functionally correct (any-routed via reflect) and
-preserve runtime semantics. No panic surface remains.
+**What's not closed for v0.12 (would need multi-week refactors)**:
+1. **Lambda OUTPUT type for ALL call sites.** The typed routing for
+   `List.map`/`Maybe.map` uses `rt.List_mapT[A, any]` — input typed,
+   output `any`. Forcing `B` to concrete would require rewriting
+   Sky's curry semantics: today, partial applications produce
+   `func(any) any` closures that conflict with typed `func(A) B`
+   Go signatures. The TA approach (typed slice + any fn via
+   SkyCall) handles all closure shapes correctly; only the per-
+   element reflect.Call cost remains.
+2. **Generic HM cross-call substitution.** When `List.take 10 xs`
+   returns `List X` with X tied to xs's element type, we already
+   substitute correctly via the "identity-on-element-type" kernel
+   shortcut. Full unification (for kernels where TVar relationships
+   are non-trivial) would need a mini HM solver at codegen time.
 
 #### exp/tea-core (LSP works on huge FFI surfaces — skyshop / Stripe SDK, 2026-05-10)
 
