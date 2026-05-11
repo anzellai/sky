@@ -374,9 +374,18 @@ func coerceInner[T any](v any) T {
 			return out.Interface().(T)
 		}
 	}
-	// Final fallback: Go will panic on invalid assertion; let it.
-	// The panic is the correct "type mismatch at boundary" signal.
-	return v.(T)
+	// Final fallback: graceful zero-on-mismatch. Previously this was
+	// `return v.(T)` which panics on type mismatch — that bubbles up
+	// to runtime panics at the call site (e.g. AsListT[VNode] feeding
+	// coerceInner with a string element). Now we use the comma-ok
+	// form so a stale typed-codegen wrong-elemtype call site doesn't
+	// crash the program. Matches the panic-free philosophy of the
+	// rest of the runtime.
+	if cast, ok := v.(T); ok {
+		return cast
+	}
+	var zero T
+	return zero
 }
 
 
