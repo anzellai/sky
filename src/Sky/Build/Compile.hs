@@ -6120,6 +6120,38 @@ kernelTypedCall types modName funcName args goArgs =
     let wrapAsList :: String -> GoIr.GoExpr -> GoIr.GoExpr
         wrapAsList elemGo e =
             GoIr.GoCall (GoIr.GoIdent ("rt.AsListT[" ++ elemGo ++ "]")) [e]
+        -- v0.12 SAFE element-type inference. Derive the list
+        -- element type from the LAMBDA's input type rather than
+        -- from the list arg. This is SAFER because HM enforces
+        -- the list's element matches the lambda's input — so
+        -- typed routing can never produce a wrong type. The
+        -- list arg's stored type may be polluted by intra-module
+        -- shadowing (same `visible` bound twice with different
+        -- types in different functions); the lambda's input is
+        -- annotation-driven and immune to that class of bug.
+        inferElemFromLambdaInput :: Can.Expr -> Maybe String
+        inferElemFromLambdaInput fn = case fn of
+            A.At _ (Can.VarTopLevel home name) ->
+                let env = getCgEnv
+                    qualKey = map (\c -> if c == '.' then '_' else c)
+                        (ModuleName.toString home) ++ "_" ++ name
+                    -- Look up the function's param types in the global
+                    -- function-types map. Returns just the first input
+                    -- type (the one List.map's `a` binds to).
+                in case Map.lookup qualKey (Rec._cg_funcParamTypes env) of
+                    Just (p:_) ->
+                        let s = sanitiseTypedElem p
+                        in if s == "any" then Nothing else Just s
+                    _ -> Nothing
+            _ -> Nothing
+        -- Prefer the lambda-input-derived element type; fall back
+        -- to the list-arg-derived type only if the function isn't
+        -- a known top-level binding.
+        elemTypeFromFnOrList :: Can.Expr -> Can.Expr -> String
+        elemTypeFromFnOrList fnArg listArg =
+            case inferElemFromLambdaInput fnArg of
+                Just s  -> s
+                Nothing -> inferListElemGoType types listArg
     in case (modName, funcName, args, goArgs) of
         -- List.map fn xs : (a -> b) -> List a -> List b
         -- v0.12.x Gap 4: if fn is a literal `Can.Lambda`, re-emit it
@@ -6128,7 +6160,7 @@ kernelTypedCall types modName funcName args goArgs =
         -- variant. Otherwise fall back to the TA variant (typed
         -- slice, any-typed function).
         ("List", "map", [_, _], [goFn, goList]) ->
-            let elemGo = inferListElemGoType types (args !! 1)
+            let elemGo = elemTypeFromFnOrList (args !! 0) (args !! 1)
             in if elemGo == "any" then Nothing
                else case args !! 0 of
                     A.At _ (Can.Lambda pats body) ->
@@ -6141,7 +6173,7 @@ kernelTypedCall types modName funcName args goArgs =
                             [goFn, wrapAsList elemGo goList])
         -- List.filter fn xs : (a -> Bool) -> List a -> List a
         ("List", "filter", [_, _], [goFn, goList]) ->
-            let elemGo = inferListElemGoType types (args !! 1)
+            let elemGo = elemTypeFromFnOrList (args !! 0) (args !! 1)
             in if elemGo == "any" then Nothing
                else case args !! 0 of
                     A.At _ (Can.Lambda pats body) ->
