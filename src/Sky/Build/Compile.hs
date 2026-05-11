@@ -6144,6 +6144,21 @@ kernelTypedCall types modName funcName args goArgs =
                         in if s == "any" then Nothing else Just s
                     _ -> Nothing
             _ -> Nothing
+        -- Derive the lambda's RETURN type (B in `a -> b`) from a
+        -- top-level function's annotated return type. Used to drive
+        -- full `rt.List_mapT[A, B]` instead of `rt.List_mapT[A, any]`.
+        inferRetFromTopLevel :: Can.Expr -> Maybe String
+        inferRetFromTopLevel fn = case fn of
+            A.At _ (Can.VarTopLevel home name) ->
+                let env = getCgEnv
+                    qualKey = map (\c -> if c == '.' then '_' else c)
+                        (ModuleName.toString home) ++ "_" ++ name
+                in case Map.lookup qualKey (Rec._cg_funcRetType env) of
+                    Just r ->
+                        let s = sanitiseTypedElem r
+                        in if s == "any" then Nothing else Just s
+                    _ -> Nothing
+            _ -> Nothing
         -- Prefer the lambda-input-derived element type; fall back
         -- to the list-arg-derived type only if the function isn't
         -- a known top-level binding.
@@ -6168,6 +6183,13 @@ kernelTypedCall types modName funcName args goArgs =
                         in Just (GoIr.GoCall
                             (GoIr.GoIdent ("rt.List_mapT[" ++ elemGo ++ ", any]"))
                             [typedFn, wrapAsList elemGo goList])
+                    -- Non-lambda fn: use the typed-input-any-fn
+                    -- variant. The fn might be a partial-app
+                    -- closure with `func(any) any` shape (Sky's
+                    -- curry semantics) — passing to a typed
+                    -- `func(A) B` rejects at go-build. TA handles
+                    -- this via reflect-call dispatch (slower but
+                    -- correct on all fn shapes).
                     _ -> Just (GoIr.GoCall
                             (GoIr.GoIdent ("rt.List_mapTA[" ++ elemGo ++ "]"))
                             [goFn, wrapAsList elemGo goList])
@@ -6266,7 +6288,7 @@ kernelTypedCall types modName funcName args goArgs =
                     [goFn, wrapAsList elemGo goList])
         -- List.find fn xs : (a -> Bool) -> List a -> Maybe a.
         ("List", "find", [_, _], [goFn, goList]) ->
-            let elemGo = inferListElemGoType types (args !! 1)
+            let elemGo = elemTypeFromFnOrList (args !! 0) (args !! 1)
             in if elemGo == "any" then Nothing
                else case args !! 0 of
                     A.At _ (Can.Lambda pats body) ->
