@@ -374,18 +374,31 @@ func coerceInner[T any](v any) T {
 			return out.Interface().(T)
 		}
 	}
-	// Final fallback: graceful zero-on-mismatch. Previously this was
-	// `return v.(T)` which panics on type mismatch — that bubbles up
-	// to runtime panics at the call site (e.g. AsListT[VNode] feeding
-	// coerceInner with a string element). Now we use the comma-ok
-	// form so a stale typed-codegen wrong-elemtype call site doesn't
-	// crash the program. Matches the panic-free philosophy of the
-	// rest of the runtime.
+	// Final fallback: strict type assertion. If this panics, it
+	// means typed-codegen emitted a CALL with a wrong element type —
+	// a compiler bug, NOT a runtime input bug. Surfacing the panic
+	// loudly (rather than silently returning zero T) makes such
+	// bugs visible at the earliest test cycle, where they can be
+	// fixed at the source. The conflict-detection merge in
+	// typesWithDeps and sanitiseTypedElem should prevent wrong-
+	// typed routes from being emitted in the first place; if a
+	// panic fires here, that's a soundness gap to investigate.
 	if cast, ok := v.(T); ok {
 		return cast
 	}
+	// Construct a descriptive panic so the bug is easy to track
+	// down. Includes both source kind (rv) and target type (zt)
+	// when reflect can determine them.
 	var zero T
-	return zero
+	srcDesc := "<nil>"
+	if v != nil {
+		srcDesc = reflect.TypeOf(v).String()
+	}
+	targetDesc := reflect.TypeOf(zero).String()
+	if targetDesc == "" {
+		targetDesc = "<unknown>"
+	}
+	panic(fmt.Sprintf("rt.coerceInner: type mismatch — source %s cannot be cast to target %s. This is a compiler bug in typed-codegen routing. Reproduce, then investigate kernelTypedCall (Compile.hs) and the relevant inferXType helper.", srcDesc, targetDesc))
 }
 
 
