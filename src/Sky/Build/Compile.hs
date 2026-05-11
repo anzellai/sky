@@ -5873,8 +5873,37 @@ inferExprType types (A.At _ e) = case e of
     Can.VarCtor _ _ _ _ (T.Forall _ ty) -> Just ty
     -- A fully-applied call's result is the callee's return type.
     -- Walk splitFuncType to peel off the consumed arrows.
+    --
+    -- Special cases: for kernels whose result element type ties to
+    -- an INPUT arg's element type (List.take/drop/reverse/filter/
+    -- concat, etc.), the polymorphic `a` in the callee's type stays
+    -- unresolved through splitFuncType. Substitute from the actual
+    -- arg type so downstream callers (List.map, Dict.fromList, etc.)
+    -- see the concrete result element type.
     Can.Call func args ->
-        case inferExprType types func of
+        case func of
+            A.At _ (Can.VarKernel "List" name)
+                | name `elem` ["take", "drop", "reverse", "filter", "filterMap",
+                               "find", "indexedMap", "concat", "concatMap",
+                               "append", "cons", "sort", "sortBy"]
+                , let listArgIdx = case name of
+                          "take" -> 1
+                          "drop" -> 1
+                          "filter" -> 1
+                          "filterMap" -> 1
+                          "find" -> 1
+                          "indexedMap" -> 1
+                          "sortBy" -> 1
+                          "append" -> 0
+                          "cons" -> 1
+                          _ -> 0
+                , listArgIdx < length args ->
+                    case inferExprType types (args !! listArgIdx) of
+                        Just listTy@(T.TType _ "List" _) -> Just listTy
+                        _ -> defaultCallResult
+            _ -> defaultCallResult
+      where
+        defaultCallResult = case inferExprType types func of
             Just ft -> Just (snd (splitFuncType (length args) ft))
             Nothing -> Nothing
     -- A list literal's type is `List <element>`. Use the first
