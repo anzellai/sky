@@ -1,0 +1,104 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Std.Ui as Ui
+import Std.Ui.Background as Background
+import Std.Ui.Font as Font
+import Std.Ui.Input as Input
+import Std.Gui as Gui
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+
+
+-- ======================================================
+-- MODEL
+-- ======================================================
+type alias Model =
+    { count : Int }
+
+
+type Msg
+    = Increment
+    | Decrement
+    | Reset
+
+
+init _ =
+    ( { count = 0 }, Cmd.none )
+
+
+-- ======================================================
+-- UPDATE
+-- ======================================================
+update msg model =
+    case msg of
+
+        Increment ->
+            ( { model | count = model.count + 1 }, Cmd.none )
+
+        Decrement ->
+            ( { model | count = model.count - 1 }, Cmd.none )
+
+        Reset ->
+            ( { model | count = 0 }, Cmd.none )
+
+
+-- ======================================================
+-- SUBSCRIPTIONS
+-- ======================================================
+subscriptions _ =
+    Sub.none
+
+
+-- ======================================================
+-- VIEW (Std.Ui — cross-backend; same code can drive
+-- Sky.Live / Sky.Tui / Sky.Gui)
+-- ======================================================
+view model =
+    Ui.column
+        [ Ui.padding 40
+        , Ui.spacing 20
+        , Ui.centerX
+        , Background.color (Ui.rgb 245 245 247)
+        ]
+        [ Ui.el
+            [ Font.size 28
+            , Font.color (Ui.rgb 30 41 59)
+            , Ui.centerX
+            ]
+            (Ui.text "Sky.Gui Counter")
+        , Ui.el
+            [ Font.size 64
+            , Font.color (Ui.rgb 37 99 235)
+            , Ui.centerX
+            ]
+            (Ui.text (String.fromInt model.count))
+        , Ui.row
+            [ Ui.spacing 12, Ui.centerX ]
+            [ Input.button
+                [ Ui.padding 16, Background.color (Ui.rgb 37 99 235) ]
+                { onPress = Just Decrement, label = Ui.text "-" }
+            , Input.button
+                [ Ui.padding 16, Background.color (Ui.rgb 107 114 128) ]
+                { onPress = Just Reset, label = Ui.text "Reset" }
+            , Input.button
+                [ Ui.padding 16, Background.color (Ui.rgb 37 99 235) ]
+                { onPress = Just Increment, label = Ui.text "+" }
+            ]
+        ]
+
+
+-- ======================================================
+-- ENTRY
+-- ======================================================
+main =
+    Gui.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        , title = "Sky.Gui Counter"
+        , width = 480
+        , height = 360
+        }

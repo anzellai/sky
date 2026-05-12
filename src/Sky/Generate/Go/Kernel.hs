@@ -563,6 +563,11 @@ registry = Map.fromList
     , (("Tui", "app"),            KernelInfo "rt.Tui_app" 1 False)
 
     -- ═══════════════════════════════════════════════════════
+    -- Sky.Gui (gio-based native window) — v0.13 milestone
+    -- ═══════════════════════════════════════════════════════
+    , (("Gui", "app"),            KernelInfo "rt.Gui_app" 1 False)
+
+    -- ═══════════════════════════════════════════════════════
     -- Std.Live.Events
     -- ═══════════════════════════════════════════════════════
     , (("Event", "onClick"),      KernelInfo "rt.Event_onClick" 1 False)

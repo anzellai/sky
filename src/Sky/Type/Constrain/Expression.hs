@@ -1937,6 +1937,32 @@ lookupKernelType modName funcName = case (modName, funcName) of
                     (Just "appExt"))
                 (T.TType ModuleName.task "Task"
                     [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" [], T.TUnit]))
+    -- Gui.app: native-window backend (gio). Same TEA shape as
+    -- Tui.app / Live.app. Required: init / update / view /
+    -- subscriptions. Optional: title (String), width (Int),
+    -- height (Int) — absorbed by the appExt row variable.
+    -- view returns `any` (the Std.Ui Element tree). The runtime
+    -- interprets it onto gio's layout/paint ops per frame.
+    ("Gui", "app") ->
+        Just $ T.Forall ["model", "msg", "appExt"]
+            (T.TLambda
+                (T.TRecord
+                    (Map.fromList
+                        [ ("init", T.FieldType 0
+                            (T.TLambda T.TUnit
+                                (T.TTuple (T.TVar "model") cmdTypeOfMsg [])))
+                        , ("update", T.FieldType 1
+                            (T.TLambda (T.TVar "msg")
+                                (T.TLambda (T.TVar "model")
+                                    (T.TTuple (T.TVar "model") cmdTypeOfMsg []))))
+                        , ("view", T.FieldType 2
+                            (T.TLambda (T.TVar "model") (T.TVar "any")))
+                        , ("subscriptions", T.FieldType 3
+                            (T.TLambda (T.TVar "model") subTypeOfMsg))
+                        ])
+                    (Just "appExt"))
+                (T.TType ModuleName.task "Task"
+                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" [], T.TUnit]))
     -- Tui.program: legacy entry that takes onKey as required (no
     -- focus management, raw key dispatch). Required: init / update /
     -- view / subscriptions / onKey. KeyEvent is the open record

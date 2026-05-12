@@ -393,6 +393,13 @@ staticKernelModules = Map.fromList
     -- See runtime-go/rt/tui.go.
     , ("Sky.Tui",              "Tui")
     , ("Std.Tui",              "Tui")
+    -- Sky.Gui — gio-based native window backend (v0.13 milestone).
+    -- Same TEA shape as Live/Tui. The runtime opens a native window
+    -- via gio and interprets the user's Std.Ui view tree to gio's
+    -- layout/paint ops. See runtime-go/rt/gui.go and
+    -- docs/design/sky-gui-gio-plan.md.
+    , ("Sky.Gui",              "Gui")
+    , ("Std.Gui",              "Gui")
     , ("Sky.Core.Json.Encode", "JsonEnc")
     , ("Sky.Core.Json.Decode", "JsonDec")
     , ("Sky.Core.Json.Decode.Pipeline", "JsonDecP")
@@ -458,6 +465,7 @@ staticKernelModules = Map.fromList
     , ("Live",       "Live")
     , ("Cli",        "Cli")
     , ("Tui",        "Tui")
+    , ("Gui",        "Gui")
     , ("Event",      "Event")
     , ("JsonEnc",    "JsonEnc")
     , ("JsonDec",    "JsonDec")
