@@ -46,6 +46,38 @@ Tune via env vars: `MEM_GUARD_PROC_MB`, `MEM_GUARD_PANIC_MB`, `MEM_GUARD_SYS_FLO
 - **If the guard fires**, log the full kill line (`grep KILL /tmp/mem-guard.log`) into the related issue or commit message — repeated kills on the same binary are a real compiler/LSP bug, not just an unlucky build.
 - **Never disable the guard to silence a kill.** A kill means the offending process was on a path to OOM the machine; the fix is in the compiler/LSP, not in raising the threshold past available RAM.
 
+## Background-Task Hygiene (Non-Negotiable)
+
+**After completing ANY long-running mission (multi-step build sweep, CI monitoring, parallel-agent run, Playwright verification, etc.), audit and clean up all background tasks before declaring the work done.** Leftover `run_in_background` zsh wait-loops (`while pgrep ...; do sleep N; done`) accumulate silently — each `Bash(run_in_background=true)` that polls leaves a dormant `/bin/zsh -c` parent + `sleep` child alive until the polled condition clears. Across a session this can balloon into hundreds of orphan processes, exhausting the user's per-uid process table (RLIMIT_NPROC). Symptoms: `fork: retry: Resource temporarily unavailable` in shell output, `mem-guard.sh` unable to fork its `sleep` calls (silently dies), the user's `sky` binary getting killed instantly on launch because the OS cannot allocate a new process slot for it.
+
+This bit the user on 2026-05-11/12 (post-v0.12 verification session) — `467` total user processes, ~30+ orphan `while pgrep` zsh wait-loops, mem-guard log frozen at `fork: retry: Resource temporarily unavailable`.
+
+**End-of-mission checklist (run before reporting completion to the user):**
+
+```bash
+# 1. Kill orphan polling loops spawned by run_in_background polling patterns
+ps -u $USER -o pid,command | awk '/while pgrep|until ! pgrep/ && /\/bin\/zsh -c/ {print $1}' | xargs -n1 kill -9 2>/dev/null
+
+# 2. Kill stray sleep processes (only mine; never -9 a user-launched sleep)
+ps -u $USER -o pid,ppid,command | awk '$3 == "sleep" && $2 != 1 {print $1}' | xargs -n1 kill -9 2>/dev/null
+
+# 3. Kill stragglers from this session's verification work
+pkill -f "playwright" 2>/dev/null; pkill -f "chromium" 2>/dev/null
+pkill -f "examples/.*/sky-out/app" 2>/dev/null   # any app server still bound to :8000
+
+# 4. Verify mem-guard is alive (restart if dead)
+pgrep -f mem-guard.sh >/dev/null || (rm -f /tmp/mem-guard.out && nohup ./scripts/mem-guard.sh > /tmp/mem-guard.out 2>&1 & disown)
+
+# 5. Sanity-check the user's binary still launches
+sky --version
+```
+
+**Workflow rules:**
+- **Prefer `Monitor`** over `run_in_background` + polling whenever possible — Monitor delivers events without spawning a wait-loop subprocess. Reserve `run_in_background` for tasks that genuinely produce final output and aren't being polled.
+- **Avoid `until ! pgrep ...; do sleep N; done` patterns** in foreground Bash calls. The shell-snapshot wrapper means every Bash invocation forks a fresh zsh; long polling loops here are equivalent to `run_in_background` waitloops but worse (block the agent on top of leaking the process).
+- **Audit before claiming "done"** — `ps -u $USER -o pid,command | grep -c "while pgrep\|until ! pgrep"` should return ≤ 1 (your audit grep itself). If it returns 5+, kill the rest before responding to the user.
+- **Watch for `Resource temporarily unavailable`** in any tool output. This is the canary — the moment it appears, abandon whatever started the loop and run the checklist above before continuing.
+
 ## v0.10.0 Stdlib Consolidation (BREAKING)
 
 The standard library was deduplicated. Old modules with overlapping surface have been dropped or renamed. This is a one-shot migration — there are **no compat shims**, by design.

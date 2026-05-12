@@ -2377,6 +2377,15 @@ wrapTypedReturn retType body
         GoIr.GoCall (GoIr.GoIdent "rt.CoerceBool") [body]
     | retType == "float64" =
         GoIr.GoCall (GoIr.GoIdent "rt.CoerceFloat") [body]
+    -- Typed slice / typed string-keyed map: route through AsListT /
+    -- AsMapT so a body returning []any{} (the polymorphic empty
+    -- shape) converts losslessly to the typed slice/map. The strict
+    -- rt.Coerce[[]T] / rt.Coerce[map[string]V] would panic on the
+    -- `[]any{}` → typed-slice/map case.
+    | Just elemGo <- stripSlice retType =
+        GoIr.GoCall (GoIr.GoIdent ("rt.AsListT[" ++ elemGo ++ "]")) [body]
+    | Just valGo <- stripStringMap retType =
+        GoIr.GoCall (GoIr.GoIdent ("rt.AsMapT[" ++ valGo ++ "]")) [body]
     | otherwise =
         GoIr.GoCall (GoIr.GoIdent ("rt.Coerce[" ++ retType ++ "]")) [body]
 
@@ -4405,13 +4414,29 @@ coerceFfiArgViaAlias anyWrapperName idx goType arg
 -- types) so typed FFI boundaries handle representation mismatches
 -- ([]any → []ConcreteT, struct reinterpret, numeric widening)
 -- instead of panicking on a raw `.(T)` assertion.
+--
+-- For Sky-side container shapes (SkyMaybe / SkyResult / typed slice
+-- / typed string-keyed map) we route through the lossless
+-- reconstructor helpers (MaybeCoerce / ResultCoerce / AsListT /
+-- AsMapT). They re-wrap the source losslessly across any source
+-- shape — including a polymorphic Nothing[any]() or empty
+-- []any{} — so the strict rt.Coerce panic can't fire on a
+-- structurally-compatible source.
 coerceVia :: String -> GoIr.GoExpr -> GoIr.GoExpr
 coerceVia goType goArg = case goType of
     "string"  -> GoIr.GoCall (GoIr.GoIdent "rt.CoerceString") [goArg]
     "int"     -> GoIr.GoCall (GoIr.GoIdent "rt.CoerceInt") [goArg]
     "bool"    -> GoIr.GoCall (GoIr.GoIdent "rt.CoerceBool") [goArg]
     "float64" -> GoIr.GoCall (GoIr.GoIdent "rt.CoerceFloat") [goArg]
-    _         -> GoIr.GoCall (GoIr.GoIdent ("rt.Coerce[" ++ goType ++ "]")) [goArg]
+    _ -> case stripSkyMaybe goType of
+        Just inner -> GoIr.GoCall (GoIr.GoIdent ("rt.MaybeCoerce[" ++ inner ++ "]")) [goArg]
+        Nothing -> case stripSkyResult goType of
+            Just (eGo, aGo) -> GoIr.GoCall (GoIr.GoIdent ("rt.ResultCoerce[" ++ eGo ++ ", " ++ aGo ++ "]")) [goArg]
+            Nothing -> case stripSlice goType of
+                Just elemGo -> GoIr.GoCall (GoIr.GoIdent ("rt.AsListT[" ++ elemGo ++ "]")) [goArg]
+                Nothing -> case stripStringMap goType of
+                    Just valGo -> GoIr.GoCall (GoIr.GoIdent ("rt.AsMapT[" ++ valGo ++ "]")) [goArg]
+                    Nothing -> GoIr.GoCall (GoIr.GoIdent ("rt.Coerce[" ++ goType ++ "]")) [goArg]
 
 
 -- | Can we emit a direct Go call for this callee expression?
@@ -5878,8 +5903,21 @@ inferExprType types (A.At _ e) = case e of
             Nothing -> Nothing
     -- A list literal's type is `List <element>`. Use the first
     -- element's type when inferable; otherwise leave as any-list.
-    Can.List items ->
-        case items of
+    --
+    -- Soundness guard: scan all elements for a polymorphic-return
+    -- call (the `forall a. T -> a` escape-hatch shape that HM
+    -- unifies blindly). HM would have unified those call sites'
+    -- return TVar against the first element's concrete type, but
+    -- the runtime value carries its actual type — typed codegen
+    -- monomorphising the list to that concrete type then panics at
+    -- runtime when the polymorphic-call's value lands in a typed
+    -- slot. Treat the list as polymorphic (TVar "_lit") so
+    -- downstream consumers route through the any-typed helpers.
+    Can.List items
+        | any (callReturnsFreeTVar types) items
+          || any (tupleSecondCallsPolymorphic types) items ->
+            Just (mkListType (T.TVar "_lit"))
+        | otherwise -> case items of
             (x:_) -> case inferExprType types x of
                 Just elemTy -> Just (mkListType elemTy)
                 Nothing -> Just (mkListType (T.TVar "_lit"))
@@ -5990,16 +6028,32 @@ inferGoType types e = case inferExprType types e of
 -- Falling back to "any" forces the default any-routing path which
 -- handles anonymous records correctly via reflect.
 inferListElemGoType :: Solve.SolvedTypes -> Can.Expr -> String
-inferListElemGoType types e = case inferExprType types e of
-    Just (T.TType _ "List" [elemTy]) -> sanitiseTypedElem (solvedTypeToGo elemTy)
-    Just (T.TAlias _ _ _ aliasInner) ->
-        let inner = case aliasInner of
-                T.Filled  i -> i
-                T.Hoisted i -> i
-        in case inner of
-            T.TType _ "List" [elemTy] -> sanitiseTypedElem (solvedTypeToGo elemTy)
-            _ -> "any"
-    _ -> "any"
+inferListElemGoType types e
+    -- Same soundness guard as inferListTupleSecondGoType: a list
+    -- literal containing a polymorphic-return call (`forall a. T -> a`
+    -- escape hatch) cannot be typed-routed safely. HM unifies `a` to
+    -- whatever the caller asks, but the runtime value carries its
+    -- actual type. Detected by walking the AST element-by-element.
+    | literalListElementsPolymorphic types e = "any"
+    | otherwise = case inferExprType types e of
+        Just (T.TType _ "List" [elemTy]) -> sanitiseTypedElem (solvedTypeToGo elemTy)
+        Just (T.TAlias _ _ _ aliasInner) ->
+            let inner = case aliasInner of
+                    T.Filled  i -> i
+                    T.Hoisted i -> i
+            in case inner of
+                T.TType _ "List" [elemTy] -> sanitiseTypedElem (solvedTypeToGo elemTy)
+                _ -> "any"
+        _ -> "any"
+
+
+-- | Like literalListHasPolymorphicReturn but checks raw element
+-- expressions (not nested tuples). Used by inferListElemGoType for
+-- typed-routing of List.map / List.filter / etc.
+literalListElementsPolymorphic :: Solve.SolvedTypes -> Can.Expr -> Bool
+literalListElementsPolymorphic types (A.At _ (Can.List items)) =
+    any (callReturnsFreeTVar types) items
+literalListElementsPolymorphic _ _ = False
 
 
 -- | Reject element types that aren't safe to use in AsListT[T] coercion.
@@ -6021,6 +6075,78 @@ sanitiseTypedElem :: String -> String
 sanitiseTypedElem go
     | "Anon_R_" `List.isPrefixOf` go = "any"
     | otherwise = go
+
+
+-- | Strip a Go type string of the form `rt.SkyMaybe[INNER]` returning
+-- INNER. Returns Nothing for any other shape. Used by wrapAsT to
+-- route SkyMaybe targets through MaybeCoerce (lossless across
+-- arbitrary source SkyMaybe[X] including Nothing[any]).
+stripSkyMaybe :: String -> Maybe String
+stripSkyMaybe s = stripWrapper "rt.SkyMaybe[" s
+
+
+-- | Strip a Go type string of the form `rt.SkyResult[E, A]` returning
+-- (E, A). Splits on the first top-level comma (respecting nested
+-- brackets) so generic-parameterised E / A round-trip correctly.
+stripSkyResult :: String -> Maybe (String, String)
+stripSkyResult s = case stripWrapper "rt.SkyResult[" s of
+    Just inner -> splitGenericArgs inner
+    Nothing    -> Nothing
+
+
+-- | Strip a Go slice type `[]ELEM` returning ELEM, with two
+-- restrictions: ELEM is non-empty and ELEM /= "any" (already-typed
+-- AsListT is needed only for concrete element types; `[]any` is
+-- fine as-is). Returns Nothing for non-slice shapes.
+stripSlice :: String -> Maybe String
+stripSlice s = case s of
+    '[' : ']' : rest
+        | null rest        -> Nothing
+        | rest == "any"    -> Nothing
+        | otherwise        -> Just rest
+    _ -> Nothing
+
+
+-- | Strip a Go map type `map[string]VAL` returning VAL. Restricted to
+-- string-keyed maps because that's the only shape Sky's Dict
+-- produces. Returns Nothing for non-string-keyed shapes and for
+-- `map[string]any` (already polymorphic, no coercion needed).
+-- Note: the value type may itself contain brackets (e.g. nested
+-- `map[string]map[string]int`) so we DON'T require the input to
+-- end with `]`.
+stripStringMap :: String -> Maybe String
+stripStringMap s
+    | prefix `List.isPrefixOf` s =
+        let inner = drop (length prefix) s
+        in if inner /= "any" && not (null inner) then Just inner else Nothing
+    | otherwise = Nothing
+  where prefix = "map[string]"
+
+
+-- | Strip a `prefix[INNER]` wrapper, ensuring the closing bracket is
+-- the very last char. Returns INNER on success.
+stripWrapper :: String -> String -> Maybe String
+stripWrapper prefix s
+    | prefix `List.isPrefixOf` s
+    , not (null s)
+    , last s == ']'
+    = Just (drop (length prefix) (init s))
+    | otherwise = Nothing
+
+
+-- | Split a generic-arg list "E, A" into ("E", "A") at the first
+-- top-level comma (depth 0 — respecting nested brackets so that
+-- `Foo[X, Y], Bar` still splits on the outer comma).
+splitGenericArgs :: String -> Maybe (String, String)
+splitGenericArgs = go 0 ""
+  where
+    go _     _   ""           = Nothing
+    go depth acc (c:rest)
+        | c == '[' || c == '(' = go (depth + 1) (acc ++ [c]) rest
+        | c == ']' || c == ')' = go (depth - 1) (acc ++ [c]) rest
+        | c == ',' && depth == 0 = case dropWhile (== ' ') rest of
+            r' -> Just (acc, r')
+        | otherwise            = go depth (acc ++ [c]) rest
 
 
 -- | Extract the value type of a Dict-typed expression. Returns "any"
@@ -6051,16 +6177,28 @@ inferMaybeInnerGoType types e = case inferExprType types e of
 -- list isn't a list of tuples, the tuple isn't (String, V), or V is
 -- itself anonymous/synthetic.
 inferListTupleSecondGoType :: Solve.SolvedTypes -> Can.Expr -> String
-inferListTupleSecondGoType types e = case inferExprType types e of
-    Just (T.TType _ "List" [elemTy]) -> tupleSnd elemTy
-    Just (T.TAlias _ _ _ aliasInner) ->
-        let inner = case aliasInner of
-                T.Filled  i -> i
-                T.Hoisted i -> i
-        in case inner of
-            T.TType _ "List" [elemTy] -> tupleSnd elemTy
-            _ -> "any"
-    _ -> "any"
+inferListTupleSecondGoType types e =
+    -- Soundness guard: if the list expression is a literal whose
+    -- elements include a value-position call to a function whose
+    -- DECLARED return type is a free TVar (the `forall a. ... -> a`
+    -- escape-hatch shape), the typed-codegen monomorphisation would
+    -- be unsound — HM unifies the TVar to whatever the caller wants,
+    -- but the runtime value's actual type is whatever the function
+    -- chose to return. Bail to "any" routing so the runtime helper
+    -- keeps the heterogeneous values as-is rather than tripping a
+    -- typed-Coerce panic. See `examples/13-skyshop/src/Lib/Db.sky`'s
+    -- `boolVal : Bool -> a` for the canonical case.
+    if literalListHasPolymorphicReturn types e then "any"
+    else case inferExprType types e of
+        Just (T.TType _ "List" [elemTy]) -> tupleSnd elemTy
+        Just (T.TAlias _ _ _ aliasInner) ->
+            let inner = case aliasInner of
+                    T.Filled  i -> i
+                    T.Hoisted i -> i
+            in case inner of
+                T.TType _ "List" [elemTy] -> tupleSnd elemTy
+                _ -> "any"
+        _ -> "any"
   where
     tupleSnd ty = case ty of
         T.TTuple _ b _ ->
@@ -6072,6 +6210,53 @@ inferListTupleSecondGoType types e = case inferExprType types e of
                     T.Hoisted i -> i
             in tupleSnd inner
         _ -> "any"
+
+
+-- | Does the expression evaluate to a `[]any` whose element comes
+-- from a call to a function whose declared return type is a free
+-- type variable (the unsound `forall a. T -> a` escape hatch)?
+--
+-- Walks the AST for `Can.List items` and inspects each item — if
+-- any item's value-position is a `Can.Call` to such a function,
+-- returns True. False on non-list-literal expressions (caller
+-- handles those by reading the inferred type directly).
+literalListHasPolymorphicReturn :: Solve.SolvedTypes -> Can.Expr -> Bool
+literalListHasPolymorphicReturn types (A.At _ (Can.List items)) =
+    any (tupleSecondCallsPolymorphic types) items
+literalListHasPolymorphicReturn _ _ = False
+
+
+-- | Returns True when the expression is a tuple whose SECOND element
+-- (the dict value-position) is a call to a polymorphic-return
+-- function. Falls back across simple ADT/Tuple wrappers.
+tupleSecondCallsPolymorphic :: Solve.SolvedTypes -> Can.Expr -> Bool
+tupleSecondCallsPolymorphic types (A.At _ e) = case e of
+    Can.Tuple _ v _ -> callReturnsFreeTVar types v
+    _ -> False
+
+
+-- | Returns True when the expression is a call (full application or
+-- partial — we walk through the lambda spine) whose declared return
+-- type is a free TVar. Conservatively returns False on shapes we
+-- can't introspect — we'd rather miss a soundness check than emit
+-- a false-positive any-routing.
+callReturnsFreeTVar :: Solve.SolvedTypes -> Can.Expr -> Bool
+callReturnsFreeTVar types (A.At _ e) = case e of
+    Can.Call callee args ->
+        case inferExprType types callee of
+            Just calleeTy ->
+                let (_, retTy) = splitFuncType (length args) calleeTy
+                in isFreeTVar retTy
+            Nothing -> False
+    _ -> False
+
+
+-- | True when this is a bare type variable. Doesn't care which
+-- letter — `a`, `b`, `msg`, `_e23` all qualify. Concrete types
+-- (Int, String, List, etc.) all return False.
+isFreeTVar :: T.Type -> Bool
+isFreeTVar (T.TVar _) = True
+isFreeTVar _ = False
 
 
 -- | Extract the (E, A) types of a Result-typed expression. Returns
@@ -6196,18 +6381,28 @@ kernelTypedCall types modName funcName args goArgs =
             let elemGo = elemTypeFromFnOrList (args !! 0) (args !! 1)
             in if elemGo == "any" then Nothing
                else case args !! 0 of
-                    A.At _ (Can.Lambda pats body) ->
+                    -- Lambda with simple var pattern: typed-T route is
+                    -- safe — patternBindings doesn't need to destructure.
+                    A.At _ (Can.Lambda pats body)
+                      | all isSimpleVarPattern pats ->
                         let typedFn = curryLambdaPatTyped [elemGo] "any" pats (exprToGo body)
                         in Just (GoIr.GoCall
                             (GoIr.GoIdent ("rt.List_mapT[" ++ elemGo ++ ", any]"))
                             [typedFn, wrapAsList elemGo goList])
-                    -- Non-lambda fn: use the typed-input-any-fn
-                    -- variant. The fn might be a partial-app
-                    -- closure with `func(any) any` shape (Sky's
-                    -- curry semantics) — passing to a typed
-                    -- `func(A) B` rejects at go-build. TA handles
-                    -- this via reflect-call dispatch (slower but
-                    -- correct on all fn shapes).
+                    -- Lambda with complex pattern (tuple/record/ctor
+                    -- destructure): fall back to fully-any routing.
+                    -- The body's `.(SkyTuple2)` style assertions assume
+                    -- any-typed input; if the slice is typed, elements
+                    -- are typed-instantiated (e.g. T2[string,string])
+                    -- and the assertion fails. List_map keeps the slice
+                    -- and elements as `any` so destructure works.
+                    A.At _ (Can.Lambda _ _) ->
+                        Just (GoIr.GoCall
+                            (GoIr.GoQualified "rt" "List_map")
+                            [goFn, goList])
+                    -- Non-lambda fn (top-level func ref, partial-app):
+                    -- TA variant works fine — fn dispatches via SkyCall
+                    -- which handles boxing.
                     _ -> Just (GoIr.GoCall
                             (GoIr.GoIdent ("rt.List_mapTA[" ++ elemGo ++ "]"))
                             [goFn, wrapAsList elemGo goList])
@@ -6216,12 +6411,19 @@ kernelTypedCall types modName funcName args goArgs =
             let elemGo = elemTypeFromFnOrList (args !! 0) (args !! 1)
             in if elemGo == "any" then Nothing
                else case args !! 0 of
-                    A.At _ (Can.Lambda pats body) ->
+                    A.At _ (Can.Lambda pats body)
+                      | all isSimpleVarPattern pats ->
                         -- List_filterT[A](fn func(A) bool, xs []A) []A
                         let typedFn = curryLambdaPatTyped [elemGo] "bool" pats (exprToGo body)
                         in Just (GoIr.GoCall
                             (GoIr.GoIdent ("rt.List_filterT[" ++ elemGo ++ "]"))
                             [typedFn, wrapAsList elemGo goList])
+                    -- Lambda with complex pattern: fall back to
+                    -- fully-any routing — same reasoning as List.map.
+                    A.At _ (Can.Lambda _ _) ->
+                        Just (GoIr.GoCall
+                            (GoIr.GoQualified "rt" "List_filter")
+                            [goFn, goList])
                     _ -> Just (GoIr.GoCall
                             (GoIr.GoIdent ("rt.List_filterTA[" ++ elemGo ++ "]"))
                             [goFn, wrapAsList elemGo goList])
@@ -6309,7 +6511,8 @@ kernelTypedCall types modName funcName args goArgs =
             let elemGo = elemTypeFromFnOrList (args !! 0) (args !! 1)
             in if elemGo == "any" then Nothing
                else case args !! 0 of
-                    A.At _ (Can.Lambda pats body) ->
+                    A.At _ (Can.Lambda pats body)
+                      | all isSimpleVarPattern pats ->
                         -- No fully-typed `List_findT[A]` runtime variant
                         -- yet; the TA shape (typed slice, any fn) is
                         -- the best routing here. Reused for find/member
@@ -6457,11 +6660,14 @@ kernelTypedCall types modName funcName args goArgs =
                         (GoIr.GoQualified "rt" "Maybe_mapAnyT")
                         [goFn, goMaybe])
                else case args !! 0 of
-                    A.At _ (Can.Lambda pats body) ->
+                    A.At _ (Can.Lambda pats body)
+                      | all isSimpleVarPattern pats ->
                         let typedFn = curryLambdaPatTyped [inner] "any" pats (exprToGo body)
                         in Just (GoIr.GoCall
                             (GoIr.GoIdent ("rt.Maybe_mapT[" ++ inner ++ ", any]"))
                             [typedFn, wrapMaybe inner goMaybe])
+                    -- Destructure pattern OR non-lambda: keep AnyT
+                    -- so body's `.(SkyTuple2)` assertions match.
                     _ ->
                         Just (GoIr.GoCall
                             (GoIr.GoQualified "rt" "Maybe_mapAnyT")
@@ -6472,7 +6678,8 @@ kernelTypedCall types modName funcName args goArgs =
             case inferResultGoTypes types resultArg of
                 Just (eGo, aGo) ->
                     case args !! 0 of
-                        A.At _ (Can.Lambda pats body) ->
+                        A.At _ (Can.Lambda pats body)
+                          | all isSimpleVarPattern pats ->
                             let typedFn = curryLambdaPatTyped [aGo] "any" pats (exprToGo body)
                             in Just (GoIr.GoCall
                                 (GoIr.GoIdent ("rt.Result_mapT[" ++ eGo ++ ", " ++ aGo ++ ", any]"))
@@ -6539,8 +6746,12 @@ kernelTypedCall types modName funcName args goArgs =
     wrapAsString e = GoIr.GoCall (GoIr.GoQualified "rt" "AsString") [e]
     -- Coerce a Go expression to a target type. For primitives we
     -- have dedicated helpers (rt.AsInt, rt.AsString, etc.); for
-    -- non-primitives use the generic rt.Coerce[T]. Bypassed when
-    -- the target is "any" (no coercion needed).
+    -- typed Sky container shapes (SkyMaybe / SkyResult / typed slice
+    -- / typed map) route through the lossless reconstructor helpers
+    -- so a polymorphic source (e.g. rt.Nothing[any]()) converts into
+    -- the typed target without tripping the strict rt.Coerce panic.
+    -- For other non-primitive targets fall back to rt.Coerce[T].
+    -- Bypassed when the target is "any" (no coercion needed).
     wrapAsT :: String -> GoIr.GoExpr -> GoIr.GoExpr
     wrapAsT goTy e = case goTy of
         "any"     -> e
@@ -6548,7 +6759,15 @@ kernelTypedCall types modName funcName args goArgs =
         "int"     -> GoIr.GoCall (GoIr.GoQualified "rt" "AsInt") [e]
         "bool"    -> GoIr.GoCall (GoIr.GoQualified "rt" "AsBool") [e]
         "float64" -> GoIr.GoCall (GoIr.GoQualified "rt" "AsFloat") [e]
-        _         -> GoIr.GoCall (GoIr.GoIdent ("rt.Coerce[" ++ goTy ++ "]")) [e]
+        _ -> case stripSkyMaybe goTy of
+            Just inner -> GoIr.GoCall (GoIr.GoIdent ("rt.MaybeCoerce[" ++ inner ++ "]")) [e]
+            Nothing    -> case stripSkyResult goTy of
+                Just (eGo, aGo) -> GoIr.GoCall (GoIr.GoIdent ("rt.ResultCoerce[" ++ eGo ++ ", " ++ aGo ++ "]")) [e]
+                Nothing -> case stripSlice goTy of
+                    Just innerSlice -> GoIr.GoCall (GoIr.GoIdent ("rt.AsListT[" ++ innerSlice ++ "]")) [e]
+                    Nothing -> case stripStringMap goTy of
+                        Just valGo -> GoIr.GoCall (GoIr.GoIdent ("rt.AsMapT[" ++ valGo ++ "]")) [e]
+                        Nothing -> GoIr.GoCall (GoIr.GoIdent ("rt.Coerce[" ++ goTy ++ "]")) [e]
     -- MaybeCoerce[A](src) → SkyMaybe[A]. Used to convert any-typed
     -- runtime Maybe values to the typed shape the kernel expects.
     wrapMaybe :: String -> GoIr.GoExpr -> GoIr.GoExpr
@@ -6740,7 +6959,15 @@ curryLambdaPatTyped paramTypes retType pats body
                 "int"     -> GoIr.GoCall (GoIr.GoQualified "rt" "AsInt") [expr]
                 "bool"    -> GoIr.GoCall (GoIr.GoQualified "rt" "AsBool") [expr]
                 "float64" -> GoIr.GoCall (GoIr.GoQualified "rt" "AsFloat") [expr]
-                _         -> GoIr.GoCall (GoIr.GoIdent ("rt.Coerce[" ++ retGoTy ++ "]")) [expr]
+                _ -> case stripSkyMaybe retGoTy of
+                    Just inner -> GoIr.GoCall (GoIr.GoIdent ("rt.MaybeCoerce[" ++ inner ++ "]")) [expr]
+                    Nothing -> case stripSkyResult retGoTy of
+                        Just (eGo, aGo) -> GoIr.GoCall (GoIr.GoIdent ("rt.ResultCoerce[" ++ eGo ++ ", " ++ aGo ++ "]")) [expr]
+                        Nothing -> case stripSlice retGoTy of
+                            Just elemGo -> GoIr.GoCall (GoIr.GoIdent ("rt.AsListT[" ++ elemGo ++ "]")) [expr]
+                            Nothing -> case stripStringMap retGoTy of
+                                Just valGo -> GoIr.GoCall (GoIr.GoIdent ("rt.AsMapT[" ++ valGo ++ "]")) [expr]
+                                Nothing -> GoIr.GoCall (GoIr.GoIdent ("rt.Coerce[" ++ retGoTy ++ "]")) [expr]
             -- Build nested typed lambdas. innermost gets the body
             -- + return coercion to `retType`; outer ones return
             -- `any` because there's no way to know their actual
@@ -6802,6 +7029,20 @@ patternToParam :: Can.Pattern -> GoIr.GoParam
 patternToParam (A.At _ pat) = case pat of
     Can.PVar name -> GoIr.GoParam name "any"
     _ -> GoIr.GoParam "_" "any"
+
+
+-- | True if the pattern is a simple variable binding (PVar/PAnything/
+-- PUnit) — no destructure required. Used by typed-routing helpers to
+-- decide whether the typed-T or typed-slice+any-fn (TA) variant of a
+-- kernel is appropriate: destructuring patterns require any-typed
+-- input because patternBindings uses `.(SkyTuple2)` style assertions
+-- that don't match typed generic instantiations.
+isSimpleVarPattern :: Can.Pattern -> Bool
+isSimpleVarPattern (A.At _ pat) = case pat of
+    Can.PVar _    -> True
+    Can.PAnything -> True
+    Can.PUnit     -> True
+    _             -> False
 
 
 -- | Extract a single name from a pattern (for destructuring)

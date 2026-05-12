@@ -190,18 +190,23 @@ dictToMap dict =
 
 
 -- Typed value wrappers for storing native types in Firestore Dicts.
--- These pass values through as-is (identity at runtime).
-intVal : Int -> a
+-- These pass values through as-is (identity at runtime). Return type
+-- is `any` (not the unsound `forall a. T -> a` shape) so the value's
+-- actual runtime type doesn't get monomorphised based on HM
+-- unification at the call site — a `Dict.fromList [...]` mixing
+-- strings and booleans then routes through the any-typed Dict helper
+-- instead of tripping a typed Coerce panic.
+intVal : Int -> any
 intVal n =
     identity n
 
 
-boolVal : Bool -> a
+boolVal : Bool -> any
 boolVal b =
     identity b
 
 
-floatVal : Float -> a
+floatVal : Float -> any
 floatVal f =
     identity f
 

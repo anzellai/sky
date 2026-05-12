@@ -458,11 +458,76 @@ func narrowReflectValue(src reflect.Value, target reflect.Type) reflect.Value {
 		if narrowed, ok := narrowSkyContainer(src, target); ok {
 			return narrowed
 		}
+		// Tuple cross-instantiation (T2[any,any] → T2[string,string],
+		// or any other element-type permutation across T2/T3/T4/T5).
+		// Detection: source and target are both structs with the same
+		// V0..Vn field set. Reconstruct field-by-field with element
+		// narrowing.
+		if narrowed, ok := narrowTupleStruct(src, target); ok {
+			return narrowed
+		}
 	}
 	if target.Kind() == reflect.String {
 		return reflect.ValueOf(fmt.Sprintf("%v", src.Interface()))
 	}
 	return reflect.Value{}
+}
+
+
+// narrowTupleStruct reconstructs an rt.T2/T3/T4/T5 across generic
+// instantiations. Sky's tuple structs use `V0..Vn` field names with
+// no Tag — distinguishes from ADT-shaped containers that
+// narrowSkyContainer handles. Each field is narrowed via
+// narrowReflectValue so nested mismatches (e.g. T2[any,any] holding
+// a SkyTuple2 inside a typed T2[string, SomeRecord]) round-trip.
+func narrowTupleStruct(src reflect.Value, target reflect.Type) (reflect.Value, bool) {
+	if src.FieldByName("Tag").IsValid() {
+		return reflect.Value{}, false // ADT shape — let narrowSkyContainer handle
+	}
+	if !src.FieldByName("V0").IsValid() || !src.FieldByName("V1").IsValid() {
+		return reflect.Value{}, false
+	}
+	out := reflect.New(target).Elem()
+	for i := 0; ; i++ {
+		fname := "V" + strconv.Itoa(i)
+		srcF := src.FieldByName(fname)
+		dstF := out.FieldByName(fname)
+		if !srcF.IsValid() || !dstF.IsValid() {
+			if i == 0 {
+				return reflect.Value{}, false
+			}
+			break // Reached end of common V-fields.
+		}
+		if !dstF.CanSet() {
+			return reflect.Value{}, false
+		}
+		// Element narrow: handle T2[any,any] → T2[string,string] by
+		// converting each V_i. If src field is already assignable to
+		// the target field, skip the reflect dance.
+		if srcF.Type().AssignableTo(dstF.Type()) {
+			dstF.Set(srcF)
+			continue
+		}
+		// Source V_i is `any` — unwrap to its concrete value first.
+		var sub reflect.Value
+		if srcF.Kind() == reflect.Interface {
+			sub = srcF.Elem()
+		} else {
+			sub = srcF
+		}
+		if !sub.IsValid() {
+			continue // leave the destination at its zero value
+		}
+		if sub.Type().AssignableTo(dstF.Type()) {
+			dstF.Set(sub)
+			continue
+		}
+		narrowed := narrowReflectValue(sub, dstF.Type())
+		if narrowed.IsValid() {
+			dstF.Set(narrowed)
+		}
+	}
+	return out, true
 }
 
 // narrowSkyContainer reconstructs a Sky-generic container (SkyMaybe,
@@ -1443,6 +1508,39 @@ func AsListT[T any](v any) []T {
 				if narrowed.IsValid() {
 					out[i] = narrowed.Interface().(T)
 				}
+			}
+		}
+		return out
+	}
+	// Typed-slice cross-instantiation: source is `[]SourceT` where
+	// SourceT != T. Common case: `[]SkyTuple2` → `[]T2[string,string]`
+	// when the typed-codegen monomorphises a lambda's tuple param to
+	// a typed instantiation but the runtime values are the legacy
+	// any-typed tuple. Walks each element through narrowReflectValue
+	// so the same struct/dict/list recursion applies element-by-
+	// element.
+	//
+	// Skip when T is itself `any` — `reflect.TypeOf(zero)` returns nil
+	// and AssignableTo(nil) panics. The any-typed source case is
+	// already handled by the `[]any` fast-path above.
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Slice {
+		var zero T
+		targetTy := reflect.TypeOf(zero)
+		if targetTy == nil {
+			return nil
+		}
+		n := rv.Len()
+		out := make([]T, n)
+		for i := 0; i < n; i++ {
+			elem := rv.Index(i)
+			if elem.Type().AssignableTo(targetTy) {
+				out[i] = elem.Interface().(T)
+				continue
+			}
+			narrowed := narrowReflectValue(elem, targetTy)
+			if narrowed.IsValid() {
+				out[i] = narrowed.Interface().(T)
 			}
 		}
 		return out

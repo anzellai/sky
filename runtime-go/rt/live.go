@@ -2468,6 +2468,25 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 			}
 			app.msgTagsMu.Unlock()
 		}
+		// Unknown Msg name: refuse to dispatch instead of building a
+		// SkyADT with Tag=-1 and letting the user's `case` fall
+		// through to the exhaustiveness `Unreachable`. Caller gets a
+		// clear error; the user's update never sees a malformed Msg.
+		// Internal `__sky*` sentinels (e.g. `__skySessionPing` —
+		// liveness probe sent by the client) are silently accepted as
+		// no-ops so they don't pollute the log; the client only cares
+		// about session-existence (404 vs anything else).
+		if tag < 0 {
+			sess.mu.Unlock()
+			w.Header().Set("X-Sky-Live", "1")
+			if strings.HasPrefix(req.Msg, "__sky") {
+				w.WriteHeader(200)
+				return
+			}
+			fmt.Fprintf(os.Stderr, "[sky.live] unknown Msg constructor %q (direct-send); dropping event\n", req.Msg)
+			http.Error(w, "unknown Msg constructor: "+req.Msg, 400)
+			return
+		}
 		var fields []any
 		for _, raw := range req.Args {
 			var v any
@@ -2612,6 +2631,17 @@ func (app *liveApp) dispatchBatched(sess *liveSession, ev batchedEvent) {
 				tag = t2
 			}
 			app.msgTagsMu.Unlock()
+		}
+		// Unknown Msg name — same defence as the single-event path
+		// above. Silently drop (this is the batched/tab-unload path
+		// so there's no response channel to surface the error).
+		// `__sky*` sentinels are silently accepted as no-ops too.
+		if tag < 0 {
+			sess.mu.Unlock()
+			if !strings.HasPrefix(ev.Msg, "__sky") {
+				fmt.Fprintf(os.Stderr, "[sky.live] unknown Msg constructor %q (batched); dropping event\n", ev.Msg)
+			}
+			return
 		}
 		var fields []any
 		for _, raw := range ev.Args {
