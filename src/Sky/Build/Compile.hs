@@ -6132,18 +6132,24 @@ kernelTypedCall types modName funcName args goArgs =
         inferElemFromLambdaInput :: Can.Expr -> Maybe String
         inferElemFromLambdaInput fn = case fn of
             A.At _ (Can.VarTopLevel home name) ->
-                let env = getCgEnv
-                    qualKey = map (\c -> if c == '.' then '_' else c)
-                        (ModuleName.toString home) ++ "_" ++ name
-                    -- Look up the function's param types in the global
-                    -- function-types map. Returns just the first input
-                    -- type (the one List.map's `a` binds to).
-                in case Map.lookup qualKey (Rec._cg_funcParamTypes env) of
-                    Just (p:_) ->
-                        let s = sanitiseTypedElem p
-                        in if s == "any" then Nothing else Just s
-                    _ -> Nothing
+                lookupFnInputAt home name 0
+            -- Partial application: Can.Call (Can.VarTopLevel _ _) [args].
+            -- The remaining first param is at index `length args` in the
+            -- full param list. E.g. `renderElement renderCtx []` is the
+            -- THIRD-param position of renderElement (after 2 args).
+            A.At _ (Can.Call (A.At _ (Can.VarTopLevel home name)) appliedArgs) ->
+                lookupFnInputAt home name (length appliedArgs)
             _ -> Nothing
+        lookupFnInputAt :: ModuleName.Canonical -> String -> Int -> Maybe String
+        lookupFnInputAt home name idx =
+            let env = getCgEnv
+                qualKey = map (\c -> if c == '.' then '_' else c)
+                    (ModuleName.toString home) ++ "_" ++ name
+            in case Map.lookup qualKey (Rec._cg_funcParamTypes env) of
+                Just params | length params > idx ->
+                    let s = sanitiseTypedElem (params !! idx)
+                    in if s == "any" then Nothing else Just s
+                _ -> Nothing
         -- Derive the lambda's RETURN type (B in `a -> b`) from a
         -- top-level function's annotated return type. Used to drive
         -- full `rt.List_mapT[A, B]` instead of `rt.List_mapT[A, any]`.
@@ -6166,7 +6172,19 @@ kernelTypedCall types modName funcName args goArgs =
         elemTypeFromFnOrList fnArg listArg =
             case inferElemFromLambdaInput fnArg of
                 Just s  -> s
-                Nothing -> inferListElemGoType types listArg
+                Nothing ->
+                    -- If the fn is a top-level function reference (or
+                    -- partial application thereof) and we couldn't get
+                    -- its input type, don't trust the list-arg lookup —
+                    -- it's vulnerable to intra/cross-module shadowing.
+                    -- Return "any" to fall back to safe any-routing.
+                    if isTopLevelFnRef fnArg then "any"
+                    else inferListElemGoType types listArg
+        isTopLevelFnRef :: Can.Expr -> Bool
+        isTopLevelFnRef (A.At _ e) = case e of
+            Can.VarTopLevel _ _ -> True
+            Can.Call (A.At _ (Can.VarTopLevel _ _)) _ -> True
+            _ -> False
     in case (modName, funcName, args, goArgs) of
         -- List.map fn xs : (a -> b) -> List a -> List b
         -- v0.12.x Gap 4: if fn is a literal `Can.Lambda`, re-emit it
@@ -6404,28 +6422,40 @@ kernelTypedCall types modName funcName args goArgs =
         -- `SkyMaybe[A]`, returning typed A. We coerce both.
         ("Maybe", "withDefault", [_, maybeArg], [goDef, goMaybe]) ->
             let inner = inferMaybeInnerGoType types maybeArg
-            in if inner == "any" then Nothing
+            in if inner == "any" then
+                    Just (GoIr.GoCall
+                        (GoIr.GoQualified "rt" "Maybe_withDefaultAnyT")
+                        [goDef, goMaybe])
                else Just (GoIr.GoCall
                     (GoIr.GoIdent ("rt.Maybe_withDefaultT[" ++ inner ++ "]"))
                     [wrapAsT inner goDef, wrapMaybe inner goMaybe])
 
         -- Result.withDefault def r : a -> Result e a -> a
-        -- Routes to Result_withDefaultT[E, A] when both concrete.
         ("Result", "withDefault", [_, resultArg], [goDef, goResult]) ->
             case inferResultGoTypes types resultArg of
                 Just (eGo, aGo) ->
                     Just (GoIr.GoCall
                         (GoIr.GoIdent ("rt.Result_withDefaultT[" ++ eGo ++ ", " ++ aGo ++ "]"))
                         [wrapAsT aGo goDef, wrapResult eGo aGo goResult])
-                Nothing -> Nothing
+                Nothing ->
+                    Just (GoIr.GoCall
+                        (GoIr.GoQualified "rt" "Result_withDefaultAnyT")
+                        [goDef, goResult])
 
         -- Maybe.map fn m : (a -> b) -> Maybe a -> Maybe b
         -- v0.12.x Gap 4: typed lambda routing when fn is literal.
         -- Maybe_mapT[A, B](fn func(A) B, m SkyMaybe[A]) SkyMaybe[B].
         -- Without typed body inference we use B = any.
+        -- The root-cause fix in Solve.hs (mark shadowed bindings as
+        -- TVar "_ambig") ensures inferMaybeInnerGoType returns "any"
+        -- when the binder is ambiguous. So the safe path here is
+        -- simple: try typed routing; fall back to AnyT on "any".
         ("Maybe", "map", [_, maybeArg], [goFn, goMaybe]) ->
             let inner = inferMaybeInnerGoType types maybeArg
-            in if inner == "any" then Nothing
+            in if inner == "any" then
+                    Just (GoIr.GoCall
+                        (GoIr.GoQualified "rt" "Maybe_mapAnyT")
+                        [goFn, goMaybe])
                else case args !! 0 of
                     A.At _ (Can.Lambda pats body) ->
                         let typedFn = curryLambdaPatTyped [inner] "any" pats (exprToGo body)
@@ -6433,7 +6463,6 @@ kernelTypedCall types modName funcName args goArgs =
                             (GoIr.GoIdent ("rt.Maybe_mapT[" ++ inner ++ ", any]"))
                             [typedFn, wrapMaybe inner goMaybe])
                     _ ->
-                        -- Non-literal fn: use the any-typed variant.
                         Just (GoIr.GoCall
                             (GoIr.GoQualified "rt" "Maybe_mapAnyT")
                             [goFn, goMaybe])
@@ -6452,21 +6481,21 @@ kernelTypedCall types modName funcName args goArgs =
                             Just (GoIr.GoCall
                                 (GoIr.GoQualified "rt" "Result_mapAnyT")
                                 [goFn, goResult])
-                Nothing -> Nothing
+                Nothing ->
+                    Just (GoIr.GoCall
+                        (GoIr.GoQualified "rt" "Result_mapAnyT")
+                        [goFn, goResult])
 
         -- Maybe.andThen fn m : (a -> Maybe b) -> Maybe a -> Maybe b
         -- v0.12.x Gap 4: typed-input lambda; return stays any.
         ("Maybe", "andThen", [_, maybeArg], [goFn, goMaybe]) ->
             let inner = inferMaybeInnerGoType types maybeArg
-            in if inner == "any" then Nothing
+            in if inner == "any" then
+                    Just (GoIr.GoCall
+                        (GoIr.GoQualified "rt" "Maybe_andThenAnyT")
+                        [goFn, goMaybe])
                else case args !! 0 of
                     A.At _ (Can.Lambda pats body) ->
-                        -- Runtime Maybe_andThenT[A, B] wants
-                        -- func(A) SkyMaybe[B]. We need to wrap the
-                        -- body's any-typed Maybe result. Conservative:
-                        -- use Maybe_andThenAnyT which takes any fn,
-                        -- but feed it a typed input lambda for the
-                        -- input-type win.
                         let typedFn = curryLambdaPatTyped [inner] "any" pats (exprToGo body)
                             anyFn = GoIr.GoCall (GoIr.GoIdent "any") [typedFn]
                         in Just (GoIr.GoCall
@@ -6492,7 +6521,10 @@ kernelTypedCall types modName funcName args goArgs =
                             Just (GoIr.GoCall
                                 (GoIr.GoQualified "rt" "Result_andThenAnyT")
                                 [goFn, goResult])
-                Nothing -> Nothing
+                Nothing ->
+                    Just (GoIr.GoCall
+                        (GoIr.GoQualified "rt" "Result_andThenAnyT")
+                        [goFn, goResult])
 
         _ -> Nothing
   where

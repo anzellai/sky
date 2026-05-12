@@ -21,6 +21,7 @@ module Sky.Type.Solve
     where
 
 import Data.IORef
+import qualified Data.List as List
 import qualified Data.Map.Strict as Map
 import qualified Sky.Type.Type as T
 import qualified Sky.Type.UnionFind as UF
@@ -254,8 +255,25 @@ solve constraint = do
                 mapM variableToType (filter (const True) vars)) localVars
             -- Merge: _locals captures every CLet-bound name including
             -- top-level declarations that _env loses after CLet restore.
-            -- Take the first (innermost) type for each name.
-            let localFirst = Map.map head (Map.filter (not . null) localTys)
+            -- Take the first (innermost) type for each name — UNLESS
+            -- the name was bound MULTIPLE TIMES with structurally-
+            -- different types (intra-module shadowing). In that case,
+            -- collapse to a sentinel TVar "_ambig" so downstream
+            -- codegen knows the lookup is ambiguous and falls back
+            -- to safe any-routing rather than picking the wrong one.
+            --
+            -- Concrete bug class this fixes: a module with multiple
+            -- `let result = ...` bindings (different types per
+            -- function — see examples/06-json/Main.sky) used to
+            -- collapse to one head-type, breaking typed-codegen at
+            -- the OTHER scopes' lookup sites.
+            let pickType tys = case List.nub (filter (not . isUnboundTVar) tys) of
+                    []  -> head tys  -- all unbound — keep first as-is
+                    [t] -> t          -- all resolved types agree
+                    _   -> T.TVar "_ambig"  -- distinct concrete types — ambiguous
+                isUnboundTVar (T.TVar n) = "_" `List.isPrefixOf` n || null n
+                isUnboundTVar _ = False
+                localFirst = Map.map pickType (Map.filter (not . null) localTys)
             let merged = Map.union localFirst envTypes
             return (SolveOk merged)
         Just err -> return (SolveError err)
