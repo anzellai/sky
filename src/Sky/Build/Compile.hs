@@ -7677,9 +7677,43 @@ defToStmts def = case def of
              ]
 
     Can.Def (A.At _ name) params body ->
-        let goParams = map patternToParam params
+        -- v0.13 Stage 1 — for unannotated multi-pattern let-defs,
+        -- look up the def's HM-inferred type and use it for typed
+        -- params + return. Falls back to all-`any` when HM has no
+        -- entry. Closes the user-code let-bound helper class of
+        -- adapters (e.g. 18-job-queue's `insertRow db ts = …`
+        -- inside saveSnapshot).
+        let solved = Rec._cg_solvedTypes getCgEnv
+            inferredTy = Map.lookup name solved
+            (paramTys, retTy) = case inferredTy of
+                Just ty -> splitTLambda (length params) ty
+                Nothing -> (replicate (length params) Nothing, Nothing)
+            mkParam (pat, mTy) =
+                let raw = patternToParam pat
+                in case mTy of
+                    Just t ->
+                        let goTy = solvedTypeToGo t
+                        in if isEmittableGoType goTy
+                              && not (isGenericTypeParam goTy)
+                            then case raw of
+                                GoIr.GoParam pn _ -> GoIr.GoParam pn goTy
+                            else raw
+                    Nothing -> raw
+            goParams = map mkParam (zip params paramTys)
+            retGoTy = case retTy of
+                Just t ->
+                    let goTy = solvedTypeToGo t
+                    in if isEmittableGoType goTy
+                          && not (isGenericTypeParam goTy)
+                        then goTy
+                        else "any"
+                Nothing -> "any"
+            bodyExpr = if retGoTy == "any"
+                then exprToGo body
+                else exprToGoExpectGo retGoTy body
         in [ GoIr.GoShortDecl name
-                (GoIr.GoFuncLit goParams "any" [GoIr.GoReturn (exprToGo body)])
+                (GoIr.GoFuncLit goParams retGoTy
+                    [GoIr.GoReturn bodyExpr])
            , GoIr.GoAssign "_" (GoIr.GoIdent name)
            ]
 
@@ -7688,10 +7722,24 @@ defToStmts def = case def of
         , GoIr.GoAssign "_" (GoIr.GoIdent name)
         ]
 
-    Can.TypedDef (A.At _ name) _ typedPats body _ ->
-        let goParams = map (patternToParam . fst) typedPats
+    Can.TypedDef (A.At _ name) _ typedPats body retType ->
+        -- v0.13 Stage 1 — multi-pattern annotated let-def: use the
+        -- typed annotation per-pattern + the return type instead of
+        -- the all-`any` default. Critical for let-bound helpers in
+        -- user code (e.g. 18-job-queue's `insertRow db ts = …` in
+        -- saveSnapshot) whose call sites benefit from typed flow.
+        let typedGoParams = map typedPatToParam typedPats
+            retGoTy = solvedTypeToGo retType
+            -- isEmittableGoType is the same gate `exprToGoExpectGo`
+            -- uses; fall back to "any" return + plain `exprToGo`
+            -- body when return can't be safely typed.
+            (effectiveRet, bodyExpr) =
+                if isEmittableGoType retGoTy
+                    then (retGoTy, exprToGoExpectGo retGoTy body)
+                    else ("any", exprToGo body)
         in [ GoIr.GoShortDecl name
-                (GoIr.GoFuncLit goParams "any" [GoIr.GoReturn (exprToGo body)])
+                (GoIr.GoFuncLit typedGoParams effectiveRet
+                    [GoIr.GoReturn bodyExpr])
            , GoIr.GoAssign "_" (GoIr.GoIdent name)
            ]
 
@@ -10284,6 +10332,35 @@ patternToParam :: Can.Pattern -> GoIr.GoParam
 patternToParam (A.At _ pat) = case pat of
     Can.PVar name -> GoIr.GoParam name "any"
     _ -> GoIr.GoParam "_" "any"
+
+
+-- | v0.13 Stage 1 — variant of patternToParam that uses the
+-- pattern's annotated Sky type to produce a typed Go param.
+-- Falls back to "any" when the Sky type can't render to a safely-
+-- usable Go type (TVars in non-emittable positions, etc.).
+typedPatToParam :: (Can.Pattern, T.Type) -> GoIr.GoParam
+typedPatToParam (A.At _ pat, skyTy) =
+    let goTy = solvedTypeToGo skyTy
+        useTy = if isEmittableGoType goTy && not (isGenericTypeParam goTy)
+                  then goTy
+                  else "any"
+        name = case pat of
+            Can.PVar n -> n
+            _          -> "_"
+    in GoIr.GoParam name useTy
+
+
+-- | v0.13 Stage 1 — split a Sky TLambda chain into (param types,
+-- return type), peeling N TLambda layers. Used by `Can.Def` let-
+-- emission to extract typed param sigs from HM-inferred types.
+-- Returns (Just-typed param + Just return) when N layers were
+-- consumed; partial chains return Nothing for any unconsumed slots.
+splitTLambda :: Int -> T.Type -> ([Maybe T.Type], Maybe T.Type)
+splitTLambda 0 t = ([], Just t)
+splitTLambda n (T.TLambda from to) =
+    let (rest, ret) = splitTLambda (n - 1) to
+    in (Just from : rest, ret)
+splitTLambda n _ = (replicate n Nothing, Nothing)
 
 
 -- | True if the pattern is a simple variable binding (PVar/PAnything/
