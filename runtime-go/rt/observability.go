@@ -171,17 +171,26 @@ func HandleReadyz(w http.ResponseWriter, r *http.Request) {
 // HandleMetrics serves /_sky/metrics in Prometheus text exposition
 // format. Production-gated per RFC §"Resolved question 1":
 //
-//   - When the binary detects production mode (env=production OR
-//     binding to 0.0.0.0 — set by the caller via SetProductionMode)
-//     AND no Std.Auth admin session is present, returns 401.
-//   - In dev mode (default) the endpoint is open.
+//   - Serverless mode (Cloud Run / Lambda / Vercel / etc.): the
+//     pull model is structurally wrong — containers evict between
+//     scrapes, so the scraper sees empty data or fails to connect.
+//     We return 503 + a hint pointing at the OTLP push path the
+//     user should configure instead.
+//   - VM mode + production (env=production OR binding to 0.0.0.0):
+//     gated behind admin auth (admin role or SKY_METRICS_TOKEN
+//     bearer). Returns 401 otherwise.
+//   - Dev mode (default): open.
 //
 // The 401 path uses Basic Auth challenge for orchestrator-side
 // scrapers that DO want to push credentials (k8s service-account
-// JWT, fly.io static token). Sky doesn't currently provide a
-// metrics-specific token mechanism in v1.0 — orchestrators
-// typically auth at the network layer instead.
+// JWT, fly.io static token).
 func HandleMetrics(w http.ResponseWriter, r *http.Request) {
+	if IsServerless() {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		w.Write([]byte(`{"status":"unavailable","hint":"pull-based metrics are incompatible with request-billed serverless; configure OTEL_EXPORTER_OTLP_ENDPOINT for push-based delivery"}`))
+		return
+	}
 	if isProductionMode() && !hasAdminAuth(r) {
 		w.Header().Set("WWW-Authenticate", `Basic realm="sky-metrics"`)
 		w.WriteHeader(http.StatusUnauthorized)

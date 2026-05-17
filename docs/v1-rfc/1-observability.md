@@ -537,6 +537,155 @@ depends on 1.3).
 
 ---
 
+## Serverless / edge runtime mode
+
+Phase 1.1a-bis. Added 2026-05-17 after the design review surfaced
+the Cloud Run / Lambda / Vercel / Azure Functions / Netlify case.
+
+### The problem
+
+Long-running-VM assumptions don't hold on request-billed serverless:
+
+| Assumption | Reality on Cloud Run / Lambda / Vercel |
+|---|---|
+| Process lives for hours-days | Container evicts seconds after the last request |
+| Background goroutines run between requests | CPU only allocated DURING request handling (1st-gen Cloud Run, Lambda, Vercel) |
+| In-memory ring buffers retain ~10-30 min of data | Buffer wiped on every cold start (dozens per hour) |
+| 30s batched OTel flush | Container dies in 5s of idle — flush never fires |
+| Prometheus scrape model (pull) | No long-running endpoint to scrape; metrics need PUSH |
+| SIGTERM grace of 30s | Cloud Run gives 10s default; Lambda gives <1s |
+| `Sub.every 100ms Tick` fires forever | No CPU when no request → Ticks never fire |
+| Sky.Live SSE streams indefinitely | Connection cost dominates (CPU billed during stream) |
+
+If we ship Phase 1.1a with VM-shaped defaults, serverless users
+either (a) lose all telemetry to container eviction, or (b) pay
+extra for CPU time the background goroutines burn between requests.
+
+### Detection
+
+Auto-detect via well-known env vars (no config needed for AI-deployed
+apps):
+
+```go
+// runtime-go/rt/serverless.go
+func IsServerless() bool {
+    // Explicit override wins.
+    if v := os.Getenv("SKY_RUNTIME_MODE"); v == "serverless" {
+        return true
+    }
+    if v := os.Getenv("SKY_RUNTIME_MODE"); v == "vm" || v == "longlived" {
+        return false
+    }
+    // Platform fingerprints — same set kubectl uses for the
+    // "is this a function-as-a-service" heuristic.
+    for _, env := range []string{
+        "K_SERVICE",                  // Google Cloud Run
+        "K_REVISION",                 // Google Cloud Run (variant)
+        "FUNCTION_TARGET",            // Google Cloud Functions
+        "AWS_LAMBDA_FUNCTION_NAME",   // AWS Lambda
+        "FUNCTIONS_WORKER_RUNTIME",   // Azure Functions
+        "VERCEL",                     // Vercel
+        "NETLIFY",                    // Netlify Functions
+        "FLY_APP_NAME",               // fly.io (NOT serverless but
+                                       // billed similarly when scaled-to-zero)
+    } {
+        if os.Getenv(env) != "" {
+            return true
+        }
+    }
+    return false
+}
+```
+
+`SKY_RUNTIME_MODE=serverless|vm|longlived` is the explicit override
+for cases the heuristic misses (custom container platforms,
+Knative-not-on-Cloud-Run, etc.).
+
+### Mode-aware defaults
+
+When `IsServerless()` returns true, runtime defaults flip:
+
+| Default | VM mode | Serverless mode | Why |
+|---|---|---|---|
+| Hot-tier ring buffer size | 10k / 1k entries | DISABLED (zero buffer) | Container dies before any reader gets value out of them |
+| OTel batch interval | 30s | per-request (sync flush) | 30s flush never fires on a 5s-idle container |
+| OTel exporter mode | batched-async | synchronous-end-of-request | Block briefly at request end to ensure delivery before eviction |
+| Metrics endpoint | `/_sky/metrics` (pull) | + OTLP push at SIGTERM | Scrapers can't reach a cold container |
+| Default trace sample rate | 1% | 100% | Volume is bounded by per-request CPU billing; sample rate matters less |
+| SIGTERM grace | 30s | 1s | Cloud Run/Lambda kill quickly; long drain steals from billing window |
+| `/_sky/console` dashboard | mounted | returns 503 + "use logs/traces" | No point — dashboard polls every 1s, no CPU when no request |
+| `Sub.every` Ticks | run forever | warn at startup | They will not fire when CPU stops; recommend Std.Jobs for periodic work |
+| Sky.Live SSE | supported | warn at startup | Streams cost CPU; recommend stateless Sky.Http.Server for serverless |
+| `process_start_time_seconds` metric | computed once | re-emitted per scrape | Container restart = new process; no point caching |
+| Readyz drain detection | full pool warm-up | best-effort | Cold start budget is tight |
+
+### Implementation impact on Phase 1.1a steps
+
+- **Step 1 (storage)**: add `IsServerless()` gate at `NewStore()` —
+  returns a no-op store in serverless mode (writes are dropped at
+  the API boundary; the OTLP exporter from Step 7 handles real
+  delivery).
+- **Step 3 (middleware)**: synchronous OTLP push at end of request
+  in serverless mode; access-log line emitted to stderr (Cloud Run
+  / Lambda capture stderr for free) instead of the ring buffer.
+- **Step 4 (endpoints)**: `/_sky/metrics` returns "use OTLP push
+  endpoint" in serverless mode; `/_sky/console` returns 503.
+- **Step 7 (OTel)**: synchronous exporter mode + per-request flush.
+  W3C trace context propagation still works (in-flight requests
+  carry the context regardless of process lifecycle).
+
+### What we DO NOT do
+
+- **Recommend serverless for SSE / Std.Live**: We document clearly
+  that Sky.Live's SSE-driven UI needs an always-on CPU (Cloud Run
+  2nd-gen "instance-based billing", a VM, Fly.io machine, Render
+  service, etc.). Trying to run Sky.Live on request-billed serverless
+  is a foot-gun we won't paper over.
+- **Replace Hot-tier with disk-backed in serverless**: Cloud Run /
+  Lambda filesystems are ephemeral (writes lost on eviction).
+  Synchronous OTLP push is the only correct answer.
+- **Support per-invocation log file path**: Lambda layers / extensions
+  handle this better than our runtime can — let users wire their
+  preferred collector via `OTEL_EXPORTER_OTLP_ENDPOINT`.
+
+### Cost analysis
+
+For a Cloud Run service handling 100 req/sec at 100 ms each:
+
+- **VM mode**: 7 MB Hot-tier + background goroutines = ~20 ms/sec
+  steady background CPU = ~2% of one core = $0 incremental on a
+  2-core service.
+- **Serverless mode**: zero background CPU. Per-request overhead:
+  ~50 μs telemetry bumps + ~200 μs synchronous OTLP push = ~250 μs
+  per 100-ms request = 0.25% overhead. At $0.00002400/vCPU-sec
+  pricing this is ~$0.50/month for a 100 req/sec workload —
+  negligible.
+
+The synchronous OTLP push DOES add latency to every request. We
+batch within a single request (one push covers all spans + logs +
+metric increments from that request), so the cost is one round trip
+to the collector. Collector in same region: ~5 ms. Cross-region:
+50-100 ms — users with cross-region setups should disable the
+sync push via `[observability] exporter = "fire-and-forget"` (data
+loss tolerated for latency).
+
+### Acceptance for serverless mode
+
+- [ ] `IsServerless()` returns true on Cloud Run / Lambda /
+      Vercel / Azure / Netlify (detected via env vars).
+- [ ] `SKY_RUNTIME_MODE` env var overrides the heuristic in both
+      directions.
+- [ ] Hot-tier store skips allocation in serverless mode (NewStore
+      returns no-op).
+- [ ] SIGTERM grace defaults to 1s in serverless mode.
+- [ ] `/_sky/console` returns 503 with explanatory body when
+      `IsServerless()` is true.
+- [ ] Sub.every warns at startup when serverless detected.
+- [ ] Documented in `docs/observability.md` §"Deploying on Cloud
+      Run / Lambda / Vercel".
+
+---
+
 ## Resolved questions
 
 1. **Metrics auth in production**: GATED. `/_sky/metrics` requires
