@@ -164,6 +164,7 @@ executable sky
 
     -- CLI helpers
     Sky.Cli.Watch
+    Sky.Cli.Doctor
 
 
 test-suite sky-tests
@@ -267,3 +268,4 @@ test-suite sky-tests
     , Sky.Cli.TestSpec
     , Sky.Cli.UpgradeClaudeSpec
     , Sky.Cli.WatchSpec
+    , Sky.Cli.DoctorSpec

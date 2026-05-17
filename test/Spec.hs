@@ -72,6 +72,7 @@ import qualified Sky.Cli.CleanSpec
 import qualified Sky.Cli.TestSpec
 import qualified Sky.Cli.UpgradeClaudeSpec
 import qualified Sky.Cli.WatchSpec
+import qualified Sky.Cli.DoctorSpec
 
 main :: IO ()
 main = hspec $ do
@@ -345,3 +346,4 @@ main = hspec $ do
     -- edit-triggers-rebuild, broken-save keeps previous binary
     -- running (the most user-visible policy).
     describe "Sky.Cli.Watch"               Sky.Cli.WatchSpec.spec
+    describe "Sky.Cli.Doctor"              Sky.Cli.DoctorSpec.spec

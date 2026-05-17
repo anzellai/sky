@@ -43,6 +43,7 @@ import qualified Sky.Build.SkyDeps as SkyDeps
 import qualified Sky.Build.Validator as Validator
 import qualified Sky.Reporting.Render as Render
 import qualified Sky.Cli.Watch as Watch
+import qualified Sky.Cli.Doctor as Doctor
 
 import qualified Control.Concurrent.Async as Async
 import qualified Control.Concurrent.QSem as QSem
@@ -846,6 +847,7 @@ data Command
     | Lsp
     | Upgrade
     | UpgradeClaude              -- refresh ./CLAUDE.md from embedded template
+    | Doctor Doctor.DoctorOpts   -- diagnose project / runtime issues
     | Version
     deriving (Show)
 
@@ -897,6 +899,9 @@ commandParser = subparser
     <> command "upgrade-claude"
         (info (pure UpgradeClaude)
             (progDesc "Refresh ./CLAUDE.md from this binary's embedded template"))
+    <> command "doctor"
+        (info (Doctor <$> doctorOptsParser)
+            (progDesc "Diagnose common project / runtime stuck-states (stale cache, port in use, missing FFI)"))
     <> command "version"
         (info (pure Version) (progDesc "Show version"))
     )
@@ -909,6 +914,20 @@ commandParser = subparser
 
 fileArg :: Parser FilePath
 fileArg = argument str (metavar "FILE" <> value "src/Main.sky")
+
+
+-- Parser for `sky doctor` flags.
+doctorOptsParser :: Parser Doctor.DoctorOpts
+doctorOptsParser = Doctor.DoctorOpts
+    <$> switch
+        ( long "fix"
+       <> help "Auto-apply safe remediations (delete stale caches, kill port holder)"
+        )
+    <*> switch
+        ( long "verbose"
+       <> short 'v'
+       <> help "Print check ids alongside each finding"
+        )
 
 
 -- Parser for `sky watch` flags. Defaults match
@@ -1454,6 +1473,13 @@ runCommand cmd = case cmd of
     Upgrade -> runUpgrade
 
     UpgradeClaude -> runUpgradeClaude
+
+    Doctor opts -> do
+        Doctor.runDoctor opts
+        -- runDoctor exits the process directly with the proper
+        -- code; the Right () here is only reached when no exit
+        -- happens (shouldn't, but keeps the return-type happy).
+        pure (Right ())
 
 
 -- | P11a: `sky upgrade` — fetch latest release from GitHub and swap the
