@@ -5631,6 +5631,59 @@ exprToGo (A.At _ expr) = case expr of
                         (GoIr.GoQualified "rt" (modName ++ "_" ++ altSuffix))
                         (zipWith coerceTypedKernelArg coercers args)
 
+            -- v0.13 Stage 1 — kernel call fallback with recovery σ.
+            -- Reads the kernel's HM signature via `lookupKernelType`,
+            -- renders param types as Go strings, then applies the
+            -- same recovery-σ + structural-unification pattern used
+            -- by `coerceCallArgsAt`. Pins kernel-generic TVars
+            -- (e.g. Cmd.perform's `e, a, msg`) from typed args so
+            -- the callback lambda emits typed instead of
+            -- `func(any) any`. Closes a major class of adapters in
+            -- Sky.Live apps (Cmd.perform, Task.andThen, etc.).
+            Can.VarKernel modName funcName
+                | Just (T.Forall _ kernelTy) <-
+                    ConstrainExpr.lookupKernelType modName funcName
+                , let kernelParamGoTys =
+                        kernelParamGoTypes kernelTy (length args)
+                , length kernelParamGoTys == length args
+                , any (\t -> containsGenericTypeParam t
+                          || take 5 t == "func(")
+                      kernelParamGoTys ->
+                    let goFunc = exprToGo func
+                        goArgs0 = map exprToGo args
+                        bareRecovered = Map.fromList
+                            [ (pty, cgo)
+                            | (pty, ga) <- zip kernelParamGoTys goArgs0
+                            , isGenericTypeParam pty
+                            , Just cgo <- [goExprGoType ga]
+                            , cgo /= "any"
+                            , not (isGenericTypeParam cgo)
+                            ]
+                        structuralRecovered = Map.unions
+                            [ unifyGoTypes pty cgo
+                            | (pty, ga) <- zip kernelParamGoTys goArgs0
+                            , not (isGenericTypeParam pty)
+                            , containsGenericTypeParam pty
+                            , Just cgo <- [goExprGoType ga]
+                            , cgo /= "any"
+                            ]
+                        recovered = Map.union bareRecovered structuralRecovered
+                        substituteOnly pty =
+                            let subbed = substTVarsInGoType recovered pty
+                            in if containsGenericTypeParam subbed
+                                 then eraseTypeParams subbed
+                                 else subbed
+                        substitutedParams = map substituteOnly kernelParamGoTys
+                        -- Route each arg through the typed-aware
+                        -- fallback (handles Can.Lambda → typed
+                        -- emission, regular args → coerceArg).
+                        goArgs = zipWith3
+                            (kernelCoerceArg substitutedParams)
+                            [0 :: Int ..]
+                            substitutedParams
+                            args
+                    in GoIr.GoCall goFunc goArgs
+
             Can.VarCtor _opts _home _typeName _ctorName annot ->
                 -- ADT constructor partial app: JobDone : Int -> Result -> Msg
                 -- applied to just `jid` must close over jid.
@@ -6922,6 +6975,78 @@ coerceArg e ty
 
 isGenericTypeParam ('T':rest) = all (\c -> c >= '0' && c <= '9') rest && not (null rest)
 isGenericTypeParam _ = False
+
+
+-- | v0.13 Stage 1 — extract Go-string param types from a kernel's
+-- HM type, taking N param positions. Returns empty list if the
+-- type isn't a function (the Forall body was a bare value).
+--
+-- Renames the kernel's Sky-side TVars (e.g. "err", "a", "msg") to
+-- fresh Go-side T1/T2/T3 identifiers so the recovery σ's
+-- `containsGenericTypeParam` check can detect them and pin types
+-- from typed args. Without the rename, solvedTypeToGo renders
+-- TVar "err" as "any" and the recovery σ skips the param.
+kernelParamGoTypes :: T.Type -> Int -> [String]
+kernelParamGoTypes ty n =
+    let tvars = uniqueOrdered (collectTVars ty)
+        sub = Map.fromList (zip tvars ["T" ++ show i | i <- [1 :: Int ..]])
+        renamed = substTVars sub ty
+    in take n (go renamed)
+  where
+    go (T.TLambda from to) = solvedTypeToGo from : go to
+    go _                   = []
+    collectTVars (T.TVar n) = [n]
+    collectTVars (T.TLambda a b) = collectTVars a ++ collectTVars b
+    collectTVars (T.TType _ _ args) = concatMap collectTVars args
+    collectTVars (T.TTuple a b cs) =
+        collectTVars a ++ collectTVars b ++ concatMap collectTVars cs
+    collectTVars (T.TRecord fields _) =
+        concatMap (\(T.FieldType _ fty) -> collectTVars fty) (Map.elems fields)
+    collectTVars (T.TAlias _ _ _ inner) = case inner of
+        T.Filled  i -> collectTVars i
+        T.Hoisted i -> collectTVars i
+    collectTVars T.TUnit = []
+    uniqueOrdered xs = go' [] xs
+      where
+        go' acc [] = reverse acc
+        go' acc (y:ys) | y `elem` acc = go' acc ys
+                       | otherwise = go' (y:acc) ys
+
+
+-- | v0.13 Stage 1 — coerce an arg at a kernel call site. Handles
+-- the Can.Lambda → typed-emission path (mirroring coerceFallback in
+-- coerceCallArgsAt) so kernel callbacks like Cmd.perform's
+-- `(Result e a -> msg)` arg emit as `func(__p State_Msg) any`
+-- instead of `func(__p any) any`.
+kernelCoerceArg :: [String] -> Int -> String -> Can.Expr -> GoIr.GoExpr
+kernelCoerceArg _allSubbed _idx subbed e@(A.At _ inner) =
+    case inner of
+        Can.Lambda pats body
+            | all isSimpleVarPattern pats
+            , (inputTypes, finalRet0) <-
+                splitCurriedFuncTypeStr (length pats) subbed
+            , length inputTypes == length pats
+            , length inputTypes > 0 ->
+                let finalRet =
+                        if finalRet0 == "any"
+                            then case inferGoType
+                                    (Rec._cg_solvedTypes getCgEnv)
+                                    body of
+                                "any" -> "any"
+                                concrete -> concrete
+                            else finalRet0
+                    skyTys = map goTypeStrToSkyType inputTypes
+                    bindings = patVarTypes pats skyTys
+                    bodyPreTyped = isEmittableGoType finalRet
+                    rawBody =
+                        if bodyPreTyped
+                            then exprToGoExpectGo finalRet body
+                            else exprToGo body
+                    body' = withScopedLambdaTypes bindings rawBody
+                in if bodyPreTyped
+                    then curryLambdaPatTypedPre inputTypes finalRet pats body'
+                    else curryLambdaPatTyped inputTypes finalRet pats body'
+        _ -> coerceArg (exprToGo e) subbed
 
 
 -- | v0.13 Stage 1 — does a Go-type string contain any generic-param
