@@ -248,6 +248,40 @@ lookupLambdaType k = unsafePerformIO $ do
     return (Map.lookup k m)
 
 
+-- | v0.13 Stage 1 (task #189) — Go-type-string registry for typed
+-- function parameters in scope. When a dep function emits as
+-- `func [T1, T2 any](fn func(T1) T2, list []T1) …`, the `fn` param
+-- is registered here as `"func(T1) T2"`. Lets `goExprGoType` resolve
+-- bare ident `fn` to its typed sig at recursive call sites without
+-- needing a round-trip through `T.Type` (which the standard Sky
+-- TVar machinery erases to `any`). Sister of `globalLambdaTypes`.
+{-# NOINLINE globalLambdaGoStrings #-}
+globalLambdaGoStrings :: IORef (Map.Map String String)
+globalLambdaGoStrings = unsafePerformIO $ newIORef Map.empty
+
+
+-- | Like `withScopedLambdaTypes` but stores Go-type strings directly.
+withScopedLambdaGoStrings :: Map.Map String String -> GoIr.GoExpr -> GoIr.GoExpr
+withScopedLambdaGoStrings additions x = unsafePerformIO $ do
+    prev <- readIORef globalLambdaGoStrings
+    writeIORef globalLambdaGoStrings (Map.union additions prev)
+    let rendered = GoBuilder.renderExpr x
+        forced = length rendered
+    forced `seq` writeIORef globalLambdaGoStrings prev
+    return (GoIr.GoRaw rendered)
+
+
+-- | Lookup a Go-type string for a variable in the current lambda-
+-- types scope. Returns the registered string verbatim — used by
+-- `goExprGoType` for function-typed parameters in scope inside
+-- a generic body (where the Sky-type Render path can't recover
+-- Go-side TVar names like `T1`, `T2`).
+lookupLambdaGoStr :: String -> Maybe String
+lookupLambdaGoStr k = unsafePerformIO $ do
+    m <- readIORef globalLambdaGoStrings
+    return (Map.lookup k m)
+
+
 -- | Membership-only sister of `lookupLambdaType`.
 memberLambdaType :: String -> Bool
 memberLambdaType k = unsafePerformIO $ do
@@ -690,10 +724,15 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                 , Rec._cg_funcUltimateRetType =
                     Map.union earlyEntryUltRet earlyDepUltRetTypes
                 }
-            let depDecls = concatMap (\(modName, depMod) ->
-                    let prefix = map (\c -> if c == '.' then '_' else c) modName
-                    in generateDeclsForDep depMod prefix) validDeps
-                depRecAliases = Set.unions
+            -- v0.13 Stage 1 (task #189) — depDecls computation moved
+            -- LATER in the pipeline (just before generateGoMulti) so
+            -- the dep-emit-time `getCgEnv` sees `funcSkyToGoTVars`
+            -- populated by typecheck. Earlier emission baked empty σ
+            -- into the paramTypeBindings rewrite, leaving recursive
+            -- calls in Sky-source kernel bodies emitting
+            -- `Sky_Core_List_map_(rt.Coerce[func(any) any](fn), …)`
+            -- adapters with bare TVars. See plan doc.
+            let depRecAliases = Set.unions
                     [ Set.map (\n -> prefix ++ "_" ++ n)
                              (Rec.collectRecordAliases (Can._aliases depMod))
                     | (modName, depMod) <- validDeps
@@ -1275,6 +1314,18 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                   return (Left ("Non-exhaustive patterns: " ++ entryPath))
               _ -> do
                 putStrLn "-- Generating Go"
+                -- v0.13 Stage 1 (task #189) — emit dep-module decls
+                -- AFTER typecheck has populated `funcSkyToGoTVars`.
+                -- This is the critical point: dep bodies use
+                -- `withScopedLambdaTypes` to register typed func-
+                -- param names, which `goExprGoType` then resolves
+                -- via `solvedTypeToGo` with Go-side TVar names
+                -- (T1, T2, ...). Without the env populated, the
+                -- skyToGo rename produces empty σ and func types
+                -- render as `func(any) any`.
+                let depDecls = concatMap (\(modName, depMod) ->
+                        let prefix = map (\c -> if c == '.' then '_' else c) modName
+                        in generateDeclsForDep depMod prefix) validDeps
                 let depAliasPairs = [ (map (\c -> if c == '.' then '_' else c) mn, Can._aliases depMod)
                                     | (mn, depMod) <- validDeps ]
                     -- Conflict-detection merge with TVar normalisation.
@@ -2509,21 +2560,53 @@ generateDeclsForDep canMod modPrefix =
               isGoTypedDecl gty =
                   (gty /= "any" && gty /= "" && not (isGenericTypeParam gty))
                   || take 5 gty == "func("
-              -- v0.13 Stage 1 NOTE: a TVar-rewrite attempt landed
-              -- here and was reverted — the funcSkyToGoTVars map is
-              -- populated AFTER dep-decl emission (in the typecheck
-              -- phase), so reading it at dep-emit time returned
-              -- empty σ. Closing the recursive-call adapter wraps
-              -- requires reordering the dep-typecheck to run before
-              -- dep-decl emission, OR a two-pass dep emission. See
-              -- docs/V1_TYPED_CODEGEN_FINISH.md Stage 1 follow-up.
-              paramTypeBindings = case mAnnotArgs of
-                  Just argTys ->
+              -- v0.13 Stage 1 (task #189 — pipeline reorder applied):
+              -- dep-decl emission now runs AFTER typecheck has
+              -- populated funcSkyToGoTVars. Rewrite each typed param's
+              -- Sky type to use Go-side TVar names so
+              -- `solvedTypeToGo` renders the lambda-types map entry
+              -- with `func(T1) T2` (matching the function's emitted
+              -- Go sig) instead of `func(any) any`. Then call-site
+              -- `goExprGoType (GoIdent "fn")` returns the typed sig
+              -- and the recovery σ pins TVars at recursive call
+              -- sites inside Sky-source kernel bodies.
+              skyToGoMap = Map.fromList
+                  (Map.findWithDefault [] goName
+                      (Rec._cg_funcSkyToGoTVars env))
+              rewriteTVars t = substTVars skyToGoMap t
+              -- For Can.TypedDef (annotated) use the annotation.
+              -- For Can.Def (unannotated, like Sky.Core.List's `map`),
+              -- pull param types from the inferred sig in
+              -- `_cg_funcInferredSigs[goName]`. The inferred sig was
+              -- populated by typecheck which now runs BEFORE dep-decl
+              -- emission.
+              inferredArgTys = case Map.lookup goName (Rec._cg_funcInferredSigs env) of
+                  Just (_, ps, _) ->
+                      -- inferred sig has Go-string param types; we need
+                      -- Sky types to register in lambdaTypes. The
+                      -- inferred-sig path doesn't carry Sky types
+                      -- directly, but we have depParamGoTys which is
+                      -- Go-string. We can synthesise a Sky TLambda from
+                      -- Go-type-strings using `goTypeStrToSkyType`.
+                      [ goTypeStrToSkyType gty
+                      | gty <- ps
+                      , gty /= "any"
+                      , take 5 gty == "func("
+                      ]
+                  Nothing -> []
+              annotArgs = case mAnnotArgs of
+                  Just argTys -> Just (zip params argTys)
+                  Nothing
+                      | not (null inferredArgTys)
+                      , length inferredArgTys == length params ->
+                          Just (zip params inferredArgTys)
+                      | otherwise -> Nothing
+              paramTypeBindings = case annotArgs of
+                  Just pairs ->
                       Map.fromList
-                          [ (n, t)
+                          [ (n, rewriteTVars t)
                           | ((A.At _ (Can.PVar n), t), gty)
-                              <- zip (zip params argTys)
-                                     (depParamGoTys ++ repeat "any")
+                              <- zip pairs (depParamGoTys ++ repeat "any")
                           , isGoTypedDecl gty
                           ]
                   Nothing -> Map.empty
@@ -2548,9 +2631,26 @@ generateDeclsForDep canMod modPrefix =
               -- `func() <depRetType>` IIFE.  Idempotent on an
               -- already-typed `GoTypedBlock` (no redundant re-wrap).
               typedBody = typeIIFE depRetType (lowerDepBody body)
-              bodyExpr = if Map.null paramTypeBindings
+              -- v0.13 Stage 1 (task #189) — register func-typed
+              -- params in the Go-string registry too, so the
+              -- recursive call-site `goExprGoType` resolves
+              -- `fn` to `func(T1) T2` (the emitted Go sig) and
+              -- coerceArg short-circuits without wrapping.
+              -- Filters the param list to only func-typed Go decls.
+              goStringBindings = Map.fromList
+                  [ (pname, pgo)
+                  | (GoIr.GoParam pname pgo) <- typedGoParams'
+                  , take 5 pgo == "func("
+                  ]
+              -- Go-strings INNER, Sky-types OUTER so both bindings are
+              -- active during typedBody's render (which is forced
+              -- eagerly inside the innermost withScoped wrapper).
+              bodyExpr1 = if Map.null goStringBindings
                   then typedBody
-                  else withScopedLambdaTypes paramTypeBindings typedBody
+                  else withScopedLambdaGoStrings goStringBindings typedBody
+              bodyExpr = if Map.null paramTypeBindings
+                  then bodyExpr1
+                  else withScopedLambdaTypes paramTypeBindings bodyExpr1
           in [ GoIr.GoDeclFunc GoIr.GoFuncDecl
                 { GoIr._gf_name = goName
                 , GoIr._gf_typeParams = [ (tp, "any") | tp <- depTypeParams ]
@@ -3835,10 +3935,18 @@ goExprGoType e = case e of
         -- typed sig so it can pass raw instead of wrapping with
         -- `rt.Coerce[func(any) any]`).
         Just t@(T.TLambda _ _) ->
-            let goTy = solvedTypeToGo t
+            -- v0.13 Stage 1 (task #189) — use TVar-preserving render
+            -- so identifiers like T1/T2 (Go-side generic type
+            -- parameters in scope inside the enclosing function)
+            -- survive instead of being erased to `any`. Solves
+            -- recursive-call adapters in Sky-source kernel bodies
+            -- where `fn : func(T1) T2` should flow raw into the
+            -- recursive call without `rt.Coerce[func(any) any]`.
+            let goTy = solvedTypeToGoPreserveTVars t
             in if take 5 goTy == "func("
                  then Just goTy
                  else Nothing
+        _ | Just goTy <- lookupLambdaGoStr name -> Just goTy
         _ ->
             -- v0.13 Stage 1 — top-level Sky function passed as a
             -- HOF arg: look up its Go param + return types from
@@ -5705,9 +5813,14 @@ exprToGo (A.At _ expr) = case expr of
                         recovered = Map.union bareRecovered structuralRecovered
                         substituteOnly pty =
                             let subbed = substTVarsInGoType recovered pty
-                            in if containsGenericTypeParam subbed
-                                 then eraseTypeParams subbed
-                                 else subbed
+                                unboundTVars =
+                                    [ t | t <- tvarsInGoTypeStr subbed
+                                        , not (Map.member t recovered) ]
+                            in if null unboundTVars
+                                 then subbed
+                                 else if containsGenericTypeParam subbed
+                                        then eraseTypeParams subbed
+                                        else subbed
                         substitutedParams = map substituteOnly kernelParamGoTys
                         -- Route each arg through the typed-aware
                         -- fallback (handles Can.Lambda → typed
@@ -6485,9 +6598,14 @@ coerceCallArgs qualName args =
                  recovered = Map.union bareRecovered structuralRecovered
                  substituteOnly pty =
                      let subbed = substTVarsInGoType recovered pty
-                     in if containsGenericTypeParam subbed
-                          then eraseTypeParams subbed
-                          else subbed
+                         unboundTVars =
+                             [ t | t <- tvarsInGoTypeStr subbed
+                                 , not (Map.member t recovered) ]
+                     in if null unboundTVars
+                          then subbed
+                          else if containsGenericTypeParam subbed
+                                 then eraseTypeParams subbed
+                                 else subbed
                  substituted = map substituteOnly paramTypes
              in zipWithDefault coerceArg exprToGo substituted args
 
@@ -6783,9 +6901,14 @@ coerceCallArgsAt region qualName args =
                 -- (visible in the enclosing generic function scope).
                 substituteOnly pty =
                     let subbed = substTVarsInGoType recovered pty
-                    in if containsGenericTypeParam subbed
-                         then eraseTypeParams subbed
-                         else subbed
+                        unboundTVars =
+                            [ t | t <- tvarsInGoTypeStr subbed
+                                , not (Map.member t recovered) ]
+                    in if null unboundTVars
+                         then subbed
+                         else if containsGenericTypeParam subbed
+                                then eraseTypeParams subbed
+                                else subbed
                 substituted = map substituteOnly paramTypes
                 -- v0.13 D-Lambda-Lowerer: when an arg is a literal
                 -- `Can.Lambda` at a func-typed param slot, route
@@ -6890,6 +7013,23 @@ substTVarsInGoType σ s = goSubst s
     -- and apply σ-substitution to the ASCII prefix only.
     isIdentStart = isGoIdentStart
     isIdentChar = isGoIdentChar
+
+-- | v0.13 Stage 1 — collect every Go-type TVar token (T1, T2, …) in a
+-- Go-type string. Used to detect when σ pins every TVar in a
+-- substitution result so the typed sig can survive without
+-- `eraseTypeParams` widening (which would otherwise widen
+-- `func(T1) T2` to `func(any) any` and kill typed routing).
+tvarsInGoTypeStr :: String -> [String]
+tvarsInGoTypeStr s = go s
+  where
+    go [] = []
+    go rest@(c:cs)
+        | isGoIdentStart c =
+            let (word, after) = span isGoIdentChar rest
+            in if isGenericTypeParam word
+                 then word : go after
+                 else go after
+        | otherwise = go cs
 
 -- | v0.13 Phase A4: peel up to N curried function arrows from a Go
 -- type string `func(X1) func(X2) … func(Xn) R`, returning the list
@@ -10001,6 +10141,39 @@ kernelTypedCall types modName funcName args goArgs =
 
 -- | Convert a solved type to a Go type string.
 -- Falls back to "any" for unresolved type variables.
+-- | v0.13 Stage 1 (task #189) — variant of `solvedTypeToGo` that
+-- preserves Go-side generic type parameter names (T1, T2, …) in
+-- the output instead of erasing them to "any". Used by the
+-- lambda-types-context lookup in `goExprGoType` so func types
+-- registered inside a generic dep function render with the
+-- function's actual TVar names (matching the emitted Go sig).
+--
+-- Distinction from the default `solvedTypeToGo`:
+--   * default: TVar _ -> "any"
+--   * this:    TVar n where isGenericTypeParam n -> n (kept as-is)
+solvedTypeToGoPreserveTVars :: T.Type -> String
+solvedTypeToGoPreserveTVars = go
+  where
+    go ty = case ty of
+        T.TVar name
+            | isGenericTypeParam name -> name
+            | otherwise -> "any"
+        T.TLambda from to ->
+            "func(" ++ go from ++ ") " ++ go to
+        T.TType _ "List" [elem_] ->
+            let elemGo = go elem_
+            in if elemGo == "any" then "[]any" else "[]" ++ elemGo
+        T.TType _ "Maybe" [a] ->
+            "rt.SkyMaybe[" ++ go a ++ "]"
+        T.TType _ "Result" [e, a] ->
+            "rt.SkyResult[" ++ go e ++ ", " ++ go a ++ "]"
+        T.TType _ "Task" [e, a] ->
+            "rt.SkyTask[" ++ go e ++ ", " ++ go a ++ "]"
+        T.TType _ "Dict" [_, v] ->
+            "map[string]" ++ go v
+        _ -> solvedTypeToGo ty
+
+
 solvedTypeToGo :: T.Type -> String
 solvedTypeToGo ty = case ty of
     T.TVar name
