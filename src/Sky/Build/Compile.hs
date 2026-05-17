@@ -2499,10 +2499,16 @@ generateDeclsForDep canMod modPrefix =
                   (depParamGoTys ++ repeat "any")
               -- v0.13 typed lowerer: scope function params via
               -- `withScopedLambdaTypes` so bindings don't leak into
-              -- sibling functions.  Only register params whose Go-
-              -- side declaration is concrete (not "any" / not T_N).
+              -- sibling functions.  Register params whose Go-side
+              -- declaration is concrete (not "any" / not T_N) OR
+              -- whose Go declaration is a function type (which CAN
+              -- contain TVars — we want fn-typed params usable at
+              -- recursive call sites within the generic body, e.g.
+              -- `Sky_Core_List_map_`'s `fn func(T1) T2` flows raw
+              -- into the recursive `Sky_Core_List_map_(fn, …)`).
               isGoTypedDecl gty =
-                  gty /= "any" && gty /= "" && not (isGenericTypeParam gty)
+                  (gty /= "any" && gty /= "" && not (isGenericTypeParam gty))
+                  || take 5 gty == "func("
               paramTypeBindings = case mAnnotArgs of
                   Just argTys ->
                       Map.fromList
@@ -3800,6 +3806,19 @@ goExprGoType e = case e of
     -- identically everywhere, so they're safe.
     GoIr.GoIdent name -> case lookupLambdaType name of
         Just t | isTypedPrimitive t -> Just (solvedTypeToGo t)
+        -- v0.13 Stage 1 — typed function-typed param: recover its
+        -- Go sig from the Sky annotation so call-site recovery σ
+        -- can pin the kernel's TVars. Critical for recursive Sky-
+        -- source kernel calls (`map fn xs` inside the body of
+        -- `Sky_Core_List_map_` passes `fn : func(T1) T2` to the
+        -- recursive call; the call-site coerceArg must see fn's
+        -- typed sig so it can pass raw instead of wrapping with
+        -- `rt.Coerce[func(any) any]`).
+        Just t@(T.TLambda _ _) ->
+            let goTy = solvedTypeToGo t
+            in if take 5 goTy == "func("
+                 then Just goTy
+                 else Nothing
         _                           -> Nothing
     -- v0.13 Stage 1 — typed function literal carries its full Go
     -- signature. Used by the call-site recovery σ to deduce TVar
@@ -6631,9 +6650,17 @@ coerceCallArgsAt region qualName args =
                     , cgo /= "any"
                     ]
                 recovered = Map.union bareRecovered structuralRecovered
-                substituted =
-                    map (eraseTypeParams . substTVarsInGoType recovered)
-                        paramTypes
+                -- v0.13 Stage 1 — when σ pins EVERY TVar in a paramType,
+                -- skip the `eraseTypeParams` widening. Identity
+                -- mappings (T1 → T1) count as "pinned" because the
+                -- substituted type already uses the right TVar names
+                -- (visible in the enclosing generic function scope).
+                substituteOnly pty =
+                    let subbed = substTVarsInGoType recovered pty
+                    in if containsGenericTypeParam subbed
+                         then eraseTypeParams subbed
+                         else subbed
+                substituted = map substituteOnly paramTypes
                 -- v0.13 D-Lambda-Lowerer: when an arg is a literal
                 -- `Can.Lambda` at a func-typed param slot, route
                 -- through `curryLambdaPatTyped` instead of
@@ -6899,8 +6926,14 @@ containsGenericTypeParam =
 unifyGoTypes :: String -> String -> Map.Map String String
 unifyGoTypes pty argTy
     | isGenericTypeParam pty =
-        if argTy == "any" || isGenericTypeParam argTy
+        if argTy == "any"
             then Map.empty
+            -- v0.13 Stage 1 — identity TVar mapping (T1 → T1) is
+            -- valid when the arg's GoType comes from a typed param
+            -- in the SAME generic scope. Preserves the type so
+            -- substituted paramType stays `func(T1) T2` and the
+            -- coerceArg short-circuit `goExprGoType e == Just ty`
+            -- fires (passing the arg raw, no `func(any) any` wrap).
             else Map.singleton pty argTy
     | take 2 pty == "[]" && take 2 argTy == "[]" =
         unifyGoTypes (drop 2 pty) (drop 2 argTy)
