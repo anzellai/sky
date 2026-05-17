@@ -2509,6 +2509,14 @@ generateDeclsForDep canMod modPrefix =
               isGoTypedDecl gty =
                   (gty /= "any" && gty /= "" && not (isGenericTypeParam gty))
                   || take 5 gty == "func("
+              -- v0.13 Stage 1 NOTE: a TVar-rewrite attempt landed
+              -- here and was reverted — the funcSkyToGoTVars map is
+              -- populated AFTER dep-decl emission (in the typecheck
+              -- phase), so reading it at dep-emit time returned
+              -- empty σ. Closing the recursive-call adapter wraps
+              -- requires reordering the dep-typecheck to run before
+              -- dep-decl emission, OR a two-pass dep emission. See
+              -- docs/V1_TYPED_CODEGEN_FINISH.md Stage 1 follow-up.
               paramTypeBindings = case mAnnotArgs of
                   Just argTys ->
                       Map.fromList
