@@ -483,10 +483,10 @@ template-specific Playwright smoke test under `examples/templates/`.
 
 | Phase | Item | Status |
 |---|---|---|
-| 1.1a | Telemetry primitives | in progress |
+| 1.1a | Telemetry primitives (incl. serverless detection + OTel) | **shipped** on `feat/v1-roadmap` |
 | 1.1b | `/_sky/console` dashboard | not started |
-| 1.2 | CSRF default-on | not started |
-| 1.3 | Std.Jobs | not started |
+| 1.2 | CSRF default-on | **shipped** on `feat/v1-roadmap` |
+| 1.3 | Std.Jobs (memory backend; SQLite/Postgres deferred to 1.3.x) | **shipped** on `feat/v1-roadmap` |
 | 2.1 | Typed lambda lowering | partial (Limitation #18) |
 | 2.2 | LSP code actions | not started |
 | 2.3 | `sky doctor` | not started |
