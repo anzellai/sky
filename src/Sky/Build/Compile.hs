@@ -6843,6 +6843,19 @@ emitPartialUserCall func suppliedArgs missing =
         finalCall = GoIr.GoCall (exprToGo func) (suppliedGo ++ extraIdents)
     in foldr wrapLambda finalCall extraNames
   where
+    -- v0.13 contract Stage 2 NOTE (2026-05-17): a typed-wrapper
+    -- attempt landed and was reverted in this same session — the
+    -- `_cg_funcRetType` map for Sky-source functions stores the
+    -- "after-one-arg-applied" curried type (via `safeReturnType` /
+    -- single TLambda strip), NOT the scalar ultimate return. A
+    -- correct typed partial-app wrapper needs the scalar return
+    -- (after ALL remaining args apply) plus the param types of the
+    -- residual wrappers chained from inside out. The right fix is
+    -- to add `_cg_funcUltimateReturnType` (strips ALL TLambda
+    -- levels) and use it for `chainedReturnTy 0`. Leaving the
+    -- `func(any) any` shape for now to preserve the contract
+    -- floor (no regression). See docs/V1_TYPED_CODEGEN_FINISH.md
+    -- Stage 2 for the full plan.
     wrapLambda name body =
         GoIr.GoFuncLit [GoIr.GoParam name "any"] "any"
             [GoIr.GoReturn body]

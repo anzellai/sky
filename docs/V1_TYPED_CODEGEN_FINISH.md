@@ -75,6 +75,31 @@ func(x int) int { return x * 2 }
 `func(any) any` (Sky's default curry shape) even when types are
 fully concrete.
 
+**Session 2026-05-17 finding (recorded for the next session):** a
+typed-wrapper attempt landed in `emitPartialUserCall` and was
+reverted because `_cg_funcRetType` for Sky-source functions stores
+the "after-one-arg-applied" curried type (via `safeReturnType` —
+single TLambda strip), NOT the scalar ultimate return. Generated
+output had `func(string) func(any) func(any) string` where
+`func(string) string` was expected.
+
+**The correct fix** needs a `_cg_funcUltimateReturnType` map that
+strips ALL TLambda levels (recursively peels every `T.TLambda _ rest`
+until `rest` isn't a TLambda). The `_cg_funcRetType` semantics stay
+as-is because other call paths depend on the after-one-strip shape.
+
+Implementation hint:
+```haskell
+ultimateReturnType :: T.Type -> T.Type
+ultimateReturnType (T.TLambda _ rest) = ultimateReturnType rest
+ultimateReturnType t                  = t
+```
+
+Populate `_cg_funcUltimateReturnType` everywhere `_cg_funcRetType`
+is populated. Then `emitPartialUserCall` reads from
+`_cg_funcUltimateReturnType` instead of `_cg_funcRetType` and the
+chained wrapper logic from the reverted attempt works correctly.
+
 **Target:**
 ```elm
 let inc = Decimal.add (Decimal.fromInt 1)
