@@ -6739,19 +6739,55 @@ emitPartialCtor func suppliedArgs missing =
         paramTys = case A.toValue func of
             Can.VarCtor _ _ _ _ annot -> ctorParamTypes annot
             _                         -> []
+        -- v0.13 Stage 1 — ctor's final return type (the ADT/record
+        -- name) — used as the typed lambda return so partial-app
+        -- closures carry the right Go shape at HOF slots.
+        ctorRetTy = case A.toValue func of
+            Can.VarCtor _ _ typeName _ annot ->
+                let (_, r) = peelArgs (skyAnnotType annot)
+                in case r of
+                    _ | safeReturnType r /= "any" -> safeReturnType r
+                    _ -> typeName
+            _ -> "any"
         suppliedTys = take (length suppliedArgs) paramTys
         extraTys    = drop (length suppliedArgs) paramTys
                    ++ replicate missing "any"
+        -- Sanitise: ctor decls erase TVars/anonymous-record names —
+        -- use "any" for any slot whose Go-type string would contain
+        -- a generic placeholder or synthesised anon name (which has
+        -- no Go alias).
+        sanitisedExtras = map (\t -> if containsGenericTypeParam t
+                                        then "any" else t) extraTys
+        sanitisedRet = if containsGenericTypeParam ctorRetTy
+                          then "any" else ctorRetTy
         suppliedGo  = zipWithDefault coerceArg exprToGo suppliedTys suppliedArgs
         extraNames  = [ "__p" ++ show i | i <- [0 .. missing - 1] ]
         extraIdents = zipWith (\n ty -> coerceArg (GoIr.GoIdent n) ty)
-                              extraNames extraTys
+                              extraNames sanitisedExtras
         finalCall = GoIr.GoCall (exprToGo func) (suppliedGo ++ extraIdents)
-    in foldr wrapLambda finalCall extraNames
+        -- Wrap outer-first (last extra wrapped first) so the chain is
+        -- func(extraN-1) func(...) ... func(extra0) Ret.
+        -- Build from innermost up. innermost return type = ctorRetTy.
+        -- Each wrap goes from `Ret` to `func(Tn) Ret` to
+        -- `func(Tn-1) func(Tn) Ret` etc.
+        wrapTyped :: GoIr.GoExpr -> String -> [(String, String)] -> GoIr.GoExpr
+        wrapTyped innerBody _ [] = innerBody
+        wrapTyped innerBody innerRet ((n, ty):rest) =
+            let lam = GoIr.GoFuncLit
+                        [GoIr.GoParam n ty]
+                        innerRet
+                        [GoIr.GoReturn innerBody]
+                outerRet = "func(" ++ ty ++ ") " ++ innerRet
+            in wrapTyped lam outerRet rest
+        -- Pair each lambda param name with its typed shape, reversed
+        -- so wrapTyped builds inner-to-outer.
+        nameTypePairs = reverse (zip extraNames sanitisedExtras)
+    in wrapTyped finalCall sanitisedRet nameTypePairs
   where
-    wrapLambda name body =
-        GoIr.GoFuncLit [GoIr.GoParam name "any"] "any"
-            [GoIr.GoReturn body]
+    skyAnnotType (Can.Forall _ t) = t
+    peelArgs (T.TLambda a r) =
+        let (as, ret) = peelArgs r in (a : as, ret)
+    peelArgs t = ([], t)
 
 
 -- | Partial application of a user-defined top-level function: wrap the
