@@ -487,8 +487,18 @@ template-specific Playwright smoke test under `examples/templates/`.
 | 1.1b | `/_sky/console` dashboard (5-tab MVP — overview/metrics/logs/traces/errors) | **shipped** on `feat/v1-roadmap` |
 | 1.2 | CSRF default-on | **shipped** on `feat/v1-roadmap` |
 | 1.3 | Std.Jobs (memory backend + SQLite + Postgres) | **shipped** on `feat/v1-roadmap` |
+| 2.3 | `sky doctor` command | **shipped** on `feat/v1-roadmap` |
+| 2.5 | Limitations sweep (Lim 10 already fixed; Lim 11 + 15 closed) | **shipped** on `feat/v1-roadmap` |
+| 2.6 | JSON path-aware decode errors | **shipped** on `feat/v1-roadmap` |
+| 2.1 | Typed lambda lowering (multi-week scope) | deferred |
+| 2.2 | LSP code actions | deferred |
+| 2.4 | Time zones + Decimal | deferred |
+| 2.7 | Std.Ui Playwright snapshot suite | deferred |
 
-**Phase 1 COMPLETE.** Ready for testing pass before any Phase 2 (AI-quality moat) work.
+**Phases 1 + most of 2 COMPLETE.** Remaining Phase 2 items (typed
+lambda lowering, LSP code actions, time-zones + Decimal,
+Std.Ui snapshot suite) are bigger-scope or lower-leverage —
+deferred until the v1.x cadence settles.
 | 2.1 | Typed lambda lowering | partial (Limitation #18) |
 | 2.2 | LSP code actions | not started |
 | 2.3 | `sky doctor` | not started |
