@@ -248,13 +248,52 @@ verified by example sweep + cabal test before moving to the next.
 - [x] Phase 2.4 Std.Decimal + Std.Money + Std.Time landed via current
       `Ffi.callPure` route (e6039ab) — proof-of-concept Layer 3
       modules. Will route through `Ffi.kernel` once Stage 4 lands.
-- [ ] **Stage 1 — Typed lambda lowering** (v0.13 contract — current
-      priority)
-- [ ] Stage 2 — Typed partial application (v0.13 contract)
-- [ ] Stage 3 — Per-ADT-ctor typed Go structs (v0.13 contract)
+- [~] **Stage 1 — Typed lambda lowering** (v0.13 contract — current
+      priority). In progress; foundation landed. Lambda input types
+      flow via `curryLambdaPatTyped` AND lambda OUTPUT types now flow
+      via the same path. Remaining adapter count in 19-skyforum: 9
+      (down from baseline 11).
+- [~] **Stage 2 — Typed partial application** (43791e2). First concrete
+      drop landed: `_cg_funcUltimateRetType` map + typed wrapper in
+      `emitPartialUserCall`. Still TO DO: the recovered-σ at HOF call
+      sites needs to handle typed list args + typed lambda args
+      TOGETHER (passing only one widened to `any` while the other
+      stays typed makes Go inference reject). Tried in this session
+      and reverted because dropping `rt.Coerce[func(any) any]` alone
+      while leaving `rt.AsListAny` widening on list args breaks Go's
+      `[]T1` inference. The COORDINATED fix is needed.
+- [ ] Stage 3 — Per-ADT-ctor typed Go structs (v0.13 contract).
+      Design agreed: per-ADT `Msg_Struct { V0_t1, V0_t2, … }` with
+      unified slot-by-type. ADT wrapper carries Tag + Name + typed
+      Fields struct. Implementation: per-ADT generate the struct
+      with union of all ctors' positional-typed slots; ctor functions
+      populate the right slots; pattern-match reads typed slots based
+      on Tag.
 - [ ] Stage 4 — Ffi.kernel mechanism (v0.14.x)
 - [ ] Stage 5 — Full stdlib migration (v0.14.x)
 - [ ] Stage 6 — Documentation sync (v0.14.x)
+
+## Stage 1 + 2 coordinated fix — concrete next-session work
+
+Two changes must land together in `coerceArg` and `coerceCallArgs`:
+
+1. When target is `func(any) any` (came from generic-erased `func(T1)
+   T2`) AND `e` is a typed function literal, pass `e` raw (no
+   `rt.Coerce[func(any) any]` wrap). Go's generic inference picks
+   T1, T2 from the typed lambda's sig.
+2. When target is `[]any` (came from generic-erased `[]T1`) AND `e`
+   is a typed slice expression (`model.Posts : []State_Post_R`),
+   pass `e` raw (no `rt.AsListAny` widen). Same generic inference
+   rationale.
+
+Both args of `Sky_Core_List_map_(typedLambda, typedList)` need to be
+unwidened for Go to infer T1, T2 correctly. ONE widened arg + ONE
+unwidened arg leads to "type mismatch with inferred T1" Go errors —
+which is what the in-session attempt produced when only doing fix 1.
+
+The two fixes are TIGHTLY coupled. They must land in a single commit
+with the same condition check (target is generic-erased + source has
+its non-widened type expressible in Go's inferrable shape).
 
 ## What's blocked on this work
 
