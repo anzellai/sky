@@ -37,6 +37,7 @@ package rt
 
 import (
 	"fmt"
+	"os"
 	"strconv"
 	"sync"
 	"time"
@@ -61,6 +62,21 @@ var (
 )
 
 // jobsBoot starts the default worker on first use. Idempotent.
+//
+// Backend selection (Phase 1.3.x):
+//   * sky.toml [jobs] store = "memory" (default) → in-process
+//   * sky.toml [jobs] store = "sqlite" → SQLite at
+//     [jobs] store_path (default "./_sky/jobs.db")
+//   * sky.toml [jobs] store = "postgres" → Postgres at
+//     [jobs] store_path (a postgres:// URL) OR DATABASE_URL env
+//
+// All three implement the same Store interface — the worker code
+// doesn't care. Choose at startup based on the user's deploy
+// shape (single-host file-backed → sqlite, multi-host → postgres).
+//
+// Env-var overrides (read via skyGetenv with the [env] prefix):
+//   SKY_JOBS_STORE       — store kind ("memory" | "sqlite" | "postgres")
+//   SKY_JOBS_STORE_PATH  — file path (sqlite) or URL (postgres)
 func jobsBoot() {
 	jobsRuntimeMu.Lock()
 	defer jobsRuntimeMu.Unlock()
@@ -69,9 +85,7 @@ func jobsBoot() {
 	}
 	jobsRuntimeStarted = true
 
-	// MVP: in-memory backend. SQLite / Postgres backends land in
-	// 1.3.x via sky.toml [jobs] store = "...".
-	jobsStore = jobs.NewMemoryStore()
+	jobsStore = chooseJobsStore()
 	jobsWorker = jobs.NewWorker(jobsStore, jobsDefaultQueue)
 
 	// Wire metrics into Phase 1.1a observability. The worker
@@ -247,15 +261,55 @@ func makeTaskThunk(fn func() any) any {
 
 // ─── Metrics: queue-depth gauge (polled) ──────────────────────
 
-// jobsMetricsTicker — periodic refresh of sky_jobs_queue_depth.
-// Started by jobsBoot's worker init path. Polls every 5s; under
-// a queue draining at 100 jobs/sec the gauge lags by at most 500
-// jobs, fine for ops dashboards.
-//
-// Started inline within jobsBoot's lock so we don't spawn a
-// duplicate ticker on a hot enqueue race.
-func init() {
-	// No-op; the ticker is started from jobsBoot to keep
-	// "binaries that don't use jobs spawn zero goroutines"
-	// invariant. Init function placeholder for future setup.
+// chooseJobsStore picks the backend implementation per the sky.toml
+// [jobs] config (env-overridable via SKY_JOBS_STORE +
+// SKY_JOBS_STORE_PATH). Falls back to in-memory on any error so a
+// misconfigured Postgres URL doesn't block the runtime from
+// booting — it logs + degrades to memory, surfacing the issue in
+// the logs / dashboard but keeping the app alive.
+func chooseJobsStore() jobs.Store {
+	kind := skyGetenv("JOBS_STORE")
+	if kind == "" {
+		kind = "memory"
+	}
+	switch kind {
+	case "memory":
+		return jobs.NewMemoryStore()
+	case "sqlite":
+		path := skyGetenv("JOBS_STORE_PATH")
+		if path == "" {
+			path = "./_sky/jobs.db"
+		}
+		s, err := jobs.NewSQLiteStore(path)
+		if err != nil {
+			fmt.Fprintf(os.Stderr,
+				"[sky.jobs] SQLite backend init failed (%q): %v — falling back to memory store\n",
+				path, err)
+			return jobs.NewMemoryStore()
+		}
+		return s
+	case "postgres":
+		url := skyGetenv("JOBS_STORE_PATH")
+		if url == "" {
+			url = os.Getenv("DATABASE_URL")
+		}
+		if url == "" {
+			fmt.Fprintf(os.Stderr,
+				"[sky.jobs] Postgres backend requested but no URL configured "+
+					"(set sky.toml [jobs] store_path or DATABASE_URL) — "+
+					"falling back to memory store\n")
+			return jobs.NewMemoryStore()
+		}
+		s, err := jobs.NewPostgresStore(url)
+		if err != nil {
+			fmt.Fprintf(os.Stderr,
+				"[sky.jobs] Postgres backend init failed: %v — falling back to memory store\n", err)
+			return jobs.NewMemoryStore()
+		}
+		return s
+	default:
+		fmt.Fprintf(os.Stderr,
+			"[sky.jobs] unknown store kind %q — falling back to memory store\n", kind)
+		return jobs.NewMemoryStore()
+	}
 }
