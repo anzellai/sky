@@ -60,7 +60,7 @@ import qualified Debug.Trace
 -- | Global codegen environment (set once per compilation, read during codegen)
 {-# NOINLINE globalCgEnv #-}
 globalCgEnv :: IORef Rec.CodegenEnv
-globalCgEnv = unsafePerformIO $ newIORef (Rec.CodegenEnv Map.empty Map.empty Map.empty Set.empty Set.empty Set.empty Set.empty Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty)
+globalCgEnv = unsafePerformIO $ newIORef (Rec.CodegenEnv Map.empty Map.empty Map.empty Set.empty Set.empty Set.empty Set.empty Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty)
 
 
 -- | v0.13 A2 follow-up: dedicated, eagerly-populated union-name
@@ -669,23 +669,26 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                     , let p = map (\c -> if c == '.' then '_' else c) mn
                     ] `Set.union`
                     Rec.collectRecordAliases (Can._aliases canMod)
+                earlyDepTriples =
+                    [ collectFuncTypesWith earlyAllRecAliases prefix depMod
+                    | (modName, depMod) <- validDeps
+                    , let prefix = map (\c -> if c == '.' then '_' else c) modName
+                    ]
                 earlyDepParamTypes = Map.unions
-                    [ fst (collectFuncTypesWith earlyAllRecAliases prefix depMod)
-                    | (modName, depMod) <- validDeps
-                    , let prefix = map (\c -> if c == '.' then '_' else c) modName
-                    ]
+                    [ p | (p, _, _) <- earlyDepTriples ]
                 earlyDepRetTypes = Map.unions
-                    [ snd (collectFuncTypesWith earlyAllRecAliases prefix depMod)
-                    | (modName, depMod) <- validDeps
-                    , let prefix = map (\c -> if c == '.' then '_' else c) modName
-                    ]
-                (earlyEntryParams, earlyEntryRet) =
+                    [ r | (_, r, _) <- earlyDepTriples ]
+                earlyDepUltRetTypes = Map.unions
+                    [ u | (_, _, u) <- earlyDepTriples ]
+                (earlyEntryParams, earlyEntryRet, earlyEntryUltRet) =
                     collectFuncTypesWith earlyAllRecAliases "" canMod
             modifyIORef globalCgEnv $ \e -> e
                 { Rec._cg_funcParamTypes =
                     Map.union earlyEntryParams earlyDepParamTypes
                 , Rec._cg_funcRetType =
                     Map.union earlyEntryRet earlyDepRetTypes
+                , Rec._cg_funcUltimateRetType =
+                    Map.union earlyEntryUltRet earlyDepUltRetTypes
                 }
             let depDecls = concatMap (\(modName, depMod) ->
                     let prefix = map (\c -> if c == '.' then '_' else c) modName
@@ -734,16 +737,14 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                 -- module-prefixed (Lib_Db_exec) to match the call-site
                 -- emission convention. Uses the merged record-alias
                 -- set so cross-module record types resolve.
-                depParamTypes = Map.unions
-                    [ fst (collectFuncTypesWith earlyAllRecAliases prefix depMod)
+                depTriples =
+                    [ collectFuncTypesWith earlyAllRecAliases prefix depMod
                     | (modName, depMod) <- validDeps
                     , let prefix = map (\c -> if c == '.' then '_' else c) modName
                     ]
-                depRetTypes = Map.unions
-                    [ snd (collectFuncTypesWith earlyAllRecAliases prefix depMod)
-                    | (modName, depMod) <- validDeps
-                    , let prefix = map (\c -> if c == '.' then '_' else c) modName
-                    ]
+                depParamTypes = Map.unions [ p | (p, _, _) <- depTriples ]
+                depRetTypes = Map.unions [ r | (_, r, _) <- depTriples ]
+                depUltRetTypes = Map.unions [ u | (_, _, u) <- depTriples ]
             putStrLn "-- Type Checking"
             -- Run HM on each dep module so unannotated functions get
             -- inferred types for the typed-codegen tables.
@@ -1299,7 +1300,7 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                                                  []    -> T.TVar "_unresolved"
                                         _   -> T.TVar "_ambig"
                         in Map.mapWithKey resolveKey keyToTypes
-                    goCodeRaw = generateGoMulti canMod entrySrcMod config typesWithDeps depDecls depRecAliases depUnionNames depEnumNames depArities depParamTypes depRetTypes depInferredParams depInferredRets depInferredSigs depAliasPairs
+                    goCodeRaw = generateGoMulti canMod entrySrcMod config typesWithDeps depDecls depRecAliases depUnionNames depEnumNames depArities depParamTypes depRetTypes depUltRetTypes depInferredParams depInferredRets depInferredSigs depAliasPairs
                     -- v0.13 Layer 2: collect Sky-name → source-region
                     -- for every top-level declaration so the post-emit
                     -- pass can inject `// SKY-ORIGIN: <path>:<line>:<col>`
@@ -2668,8 +2669,8 @@ generateAliasForDep userDefs modPrefix (aliasName, Can.Alias _vars body) =
 
 
 -- | Generate Go with merged dependency declarations
-generateGoMulti :: Can.Module -> Src.Module -> Toml.SkyConfig -> Solve.SolvedTypes -> [GoIr.GoDecl] -> Set.Set String -> Set.Set String -> Set.Set String -> Map.Map String Int -> Map.Map String [String] -> Map.Map String String -> Map.Map String [String] -> Map.Map String String -> Map.Map String ([String], [String], String) -> [(String, Map.Map String Can.Alias)] -> String
-generateGoMulti canMod srcMod config solvedTypes depDecls depRecAliases depUnionNames depEnumNames depArities depParamTypes depRetTypes extraInferredParamTypes extraInferredRetTypes extraInferredSigs depAliasPairs =
+generateGoMulti :: Can.Module -> Src.Module -> Toml.SkyConfig -> Solve.SolvedTypes -> [GoIr.GoDecl] -> Set.Set String -> Set.Set String -> Set.Set String -> Map.Map String Int -> Map.Map String [String] -> Map.Map String String -> Map.Map String String -> Map.Map String [String] -> Map.Map String String -> Map.Map String ([String], [String], String) -> [(String, Map.Map String Can.Alias)] -> String
+generateGoMulti canMod srcMod config solvedTypes depDecls depRecAliases depUnionNames depEnumNames depArities depParamTypes depRetTypes depUltRetTypes extraInferredParamTypes extraInferredRetTypes extraInferredSigs depAliasPairs =
     let
         imports = unsafePerformIO $ do
             -- T2/T6: register entry-module + dep-module typed function
@@ -2753,13 +2754,26 @@ generateGoMulti canMod srcMod config solvedTypes depDecls depRecAliases depUnion
             let allRecAliases = Set.union depRecAliases
                     (Set.union (Rec.collectRecordAliases (Can._aliases canMod))
                                (Rec._cg_recordAliases prevEnv))
-                (entryParamTys, entryRetTys) = collectFuncTypesWith allRecAliases "" canMod
+                (entryParamTys, entryRetTys, entryUltRetTys) =
+                    collectFuncTypesWith allRecAliases "" canMod
                 allParamTys = Map.unions
                     [ entryParamTys, entryInferredParams
                     , depParamTypes, extraInferredParamTypes ]
                 allRetTys   = Map.unions
                     [ entryRetTys, entryInferredRets
                     , depRetTypes, extraInferredRetTypes ]
+                -- v0.13 Stage 2 — ultimate return types (after all
+                -- args applied). ONLY merge entries computed with
+                -- `ultimateReturnType` (recursive TLambda strip).
+                -- Do NOT include `entryInferredRets` / `extraInferredRetTypes`
+                -- here — those have after-one-strip semantics and
+                -- would corrupt the typed-partial-app wrapper output
+                -- (caller would get `func(T1) func(any) func(any) X`
+                -- instead of `func(T1) X`). Consumers fall back to
+                -- "any" for unannotated functions, which produces
+                -- `func(T1) any` — strictly safer than the wrong
+                -- multi-level shape.
+                allUltRetTys = Map.union entryUltRetTys depUltRetTypes
                 -- v0.13 Phase A5: preserve the call-site instance
                 -- registry from prevEnv (installed by continueCompile
                 -- after solveWithInstances).  The rest of the cgEnv
@@ -2772,6 +2786,7 @@ generateGoMulti canMod srcMod config solvedTypes depDecls depRecAliases depUnion
                               (Rec._cg_funcSkyToGoTVars prevEnv))
                       $ Rec.withInferredSigs
                           (Map.union extraInferredSigs entryInferredSigs)
+                      $ Rec.withFuncUltimateRetTypes allUltRetTys
                       $ Rec.withFuncTypes allParamTys allRetTys
                       $ Rec.withDepArities depArities
                       $ Rec.withRecordAliases depRecAliases
@@ -2802,6 +2817,22 @@ generateGoMulti canMod srcMod config solvedTypes depDecls depRecAliases depUnion
         -- when the user's program doesn't happen to reference rt.* directly
         -- (e.g. main = 42). The blank var reference is zero-cost at runtime.
         rtPin = [GoIr.GoDeclRaw "var _ = rt.AsInt"]
+        -- v0.13 contract: always-available type alias for the
+        -- canonical Sky.Core.Error.Error. The runtimeTypedMap
+        -- entry "Error" → "Sky_Core_Error_Error" resolves to this
+        -- name; ensure the alias exists even when Sky.Core.Error
+        -- isn't a transitive dep (examples that use kernel funcs
+        -- returning Result Error a without explicit Sky.Core.Error
+        -- import).
+        --
+        -- Skip when Sky.Core.Error IS a dep — the dep compilation
+        -- emits its own `type Sky_Core_Error_Error = rt.SkyADT`
+        -- alias (alongside the ErrorKind / ErrorInfo types) and a
+        -- redeclaration would be a `go build` error.
+        errorAliasStub =
+            if Set.member "Sky_Core_Error_Error" depUnionNames
+                then []
+                else [ GoIr.GoDeclRaw "type Sky_Core_Error_Error = rt.SkyADT" ]
         -- Emit sky.toml's `port` as a SKY_LIVE_PORT default so Sky.Live /
         -- Sky.Http.Server pick it up. Shell env and .env still take
         -- precedence (we only Setenv when unset).
@@ -2930,7 +2961,7 @@ generateGoMulti canMod srcMod config solvedTypes depDecls depRecAliases depUnion
         pkg = GoIr.GoPackage
             { GoIr._pkg_name = "main"
             , GoIr._pkg_imports = imports
-            , GoIr._pkg_decls = rtPin ++ portDefault ++ depDecls ++ unionDecls ++ aliasDecls ++ decls ++ anonRecordDecls ++ specDecls ++ mainDecl
+            , GoIr._pkg_decls = rtPin ++ errorAliasStub ++ portDefault ++ depDecls ++ unionDecls ++ aliasDecls ++ decls ++ anonRecordDecls ++ specDecls ++ mainDecl
             }
     in GoBuilder.renderPackage pkg
 
@@ -4340,12 +4371,13 @@ runtimeTypedMap =
     , ("Middleware", "rt.SkyMiddleware")
     , ("Session",    "rt.SkySession")
     , ("Store",      "rt.SkyStore")
-    -- Sky.Core.Error.Error is the canonical Sky error type. When
-    -- HM cross-module propagation drops the home (call sites
-    -- coerced via Result-shape stripping), the type renderer
-    -- otherwise emits bare `Error` which `go build` rejects. Map
-    -- the bare name to the qualified Go alias so the fallback
-    -- path resolves cleanly.
+    -- Sky.Core.Error.Error is the canonical Sky error type.
+    -- Call-site coercion (ResultCoerce / TaskCoerceT) may see
+    -- the type with home stripped — emit the qualified Go alias.
+    -- The alias declaration `type Sky_Core_Error_Error = rt.SkyADT`
+    -- is auto-emitted as part of the Sky.Core.Error dep compilation
+    -- (always reachable via the Std.Error transitive import in the
+    -- v0.10.0 consolidation).
     , ("Error",      "Sky_Core_Error_Error")
     -- v0.13 A2 follow-up: kernel `Http.get`/`Http.post` declare
     -- their return type with empty `home` and name `HttpResponse`.
@@ -4375,7 +4407,8 @@ runtimeTypedMap =
 -- Returns (paramTypes :: Map name [paramType], retType :: Map name retType).
 -- Functions without annotations are absent; callers treat absence as
 -- "fall back to `any`".
-collectFuncTypes :: String -> Can.Module -> (Map.Map String [String], Map.Map String String)
+collectFuncTypes :: String -> Can.Module
+                 -> (Map.Map String [String], Map.Map String String, Map.Map String String)
 collectFuncTypes prefix canMod =
     collectFuncTypesWith Set.empty prefix canMod
 
@@ -4383,7 +4416,8 @@ collectFuncTypes prefix canMod =
 -- names so safeReturnTypePure can promote them to `_R` Go names. The
 -- set should contain BOTH bare alias names and module-prefixed ones
 -- so cross-module record refs resolve too.
-collectFuncTypesWith :: Set.Set String -> String -> Can.Module -> (Map.Map String [String], Map.Map String String)
+collectFuncTypesWith :: Set.Set String -> String -> Can.Module
+                     -> (Map.Map String [String], Map.Map String String, Map.Map String String)
 collectFuncTypesWith extraRecAliases prefix canMod =
     let localRecAliases = Rec.collectRecordAliases (Can._aliases canMod)
         prefixed = if null prefix
@@ -4407,9 +4441,15 @@ collectFuncTypesWith extraRecAliases prefix canMod =
                 let argTypes = map snd typedPats
                     argGoTys = map (safeReturnTypeWith knownRecAliases) argTypes
                     retGoTy  = safeReturnTypeWith knownRecAliases retType
+                    -- v0.13 Stage 2 — ultimate return type strips ALL
+                    -- nested TLambda levels. Used by typed partial-
+                    -- application wrapper codegen which needs the
+                    -- scalar return after every arg applies.
+                    ultRetGoTy = safeReturnTypeWith knownRecAliases
+                                    (ultimateReturnType retType)
                     hasAnyTyped = retGoTy /= "any" || any (/= "any") argGoTys
                 in if hasAnyTyped
-                     then Just (qualName n, argGoTys, retGoTy)
+                     then Just (qualName n, argGoTys, retGoTy, ultRetGoTy)
                      else Nothing
             _ -> Nothing
         bindings = goDecls (Can._decls canMod)
@@ -4417,24 +4457,32 @@ collectFuncTypesWith extraRecAliases prefix canMod =
         -- Auto-generated record constructors. `type alias Item = { id :
         -- Int, name : String, tags : List String }` synthesises an
         -- `Item : Int -> String -> List String -> Item_R` constructor at
-        -- elaboration time. The synthetic def is unannotated (a plain
-        -- Can.Def, not Can.TypedDef), so the typed-def loop above misses
-        -- it and `_cg_funcParamTypes[Item]` ends up empty — call sites
-        -- then skip coerceArg and ship `[]any{}` into a `[]string` slot,
-        -- breaking go build (Limitation #18 reproducer). Fix: emit the
-        -- ctor's param types directly from the alias's record body, in
-        -- declaration order (sorted by _fieldIndex per the auto-ctor's
-        -- positional API).
+        -- elaboration time.  The ULTIMATE return of `Item` is the same
+        -- as its declared return (the record alias) since it's not a
+        -- function-returning function.
         ctorResults =
-            [ (qualName aliasName, paramTys, qualName aliasName ++ "_R")
+            [ (qualName aliasName, paramTys, retTy, retTy)
             | (aliasName, alias) <- Map.toList (Can._aliases canMod)
             , Rec.DataRecord fieldList <- [Rec.classifyAlias alias]
             , let paramTys = map (safeReturnTypeWith knownRecAliases . snd) fieldList
+            , let retTy = qualName aliasName ++ "_R"
             ]
         allResults = results ++ ctorResults
-        paramMap = Map.fromList [ (qual, ps) | (qual, ps, _) <- allResults ]
-        retMap   = Map.fromList [ (qual, r)  | (qual, _, r) <- allResults ]
-    in (paramMap, retMap)
+        paramMap = Map.fromList [ (qual, ps) | (qual, ps, _, _) <- allResults ]
+        retMap   = Map.fromList [ (qual, r)  | (qual, _, r, _) <- allResults ]
+        ultMap   = Map.fromList [ (qual, u)  | (qual, _, _, u) <- allResults ]
+    in (paramMap, retMap, ultMap)
+
+
+-- | v0.13 Stage 2 — strip every TLambda level to get the ultimate
+-- scalar return type of a (possibly multi-arg) function.
+--
+--   ultimateReturnType (A -> B -> C -> D)  =  D
+--   ultimateReturnType (A -> B)            =  B
+--   ultimateReturnType nonFunc             =  nonFunc
+ultimateReturnType :: T.Type -> T.Type
+ultimateReturnType (T.TLambda _ rest) = ultimateReturnType rest
+ultimateReturnType t                  = t
 
 
 -- | safeReturnType variant that takes an explicit record-alias set
@@ -6834,31 +6882,49 @@ emitPartialUserCall func suppliedArgs missing =
         paramTypes = Map.findWithDefault [] qualName
                        (Rec._cg_funcParamTypes env)
         suppliedTypes = take (length suppliedArgs) paramTypes
-        extraTypes    = drop (length suppliedArgs) paramTypes
-                     ++ replicate missing "any"
+        -- Param types for the `missing` slots: pull from the
+        -- registered paramTypes, padding with "any" when paramTypes
+        -- is shorter than declared (function without typed entry in
+        -- the registry). Length must be exactly `missing` so the
+        -- wrapper chain length matches.
+        availableExtras = drop (length suppliedArgs) paramTypes
+        extraTypes    = take missing
+                          (availableExtras ++ repeat "any")
+        -- v0.13 Stage 2 — typed partial-app wrapper. Reads the
+        -- callee's ULTIMATE return type (scalar, after every arg
+        -- applies) from `_cg_funcUltimateRetType`. Falls back to
+        -- "any" when unavailable so we never emit a worse shape
+        -- than the historical `func(any) any` default. See
+        -- docs/V1_TYPED_CODEGEN_FINISH.md Stage 2.
+        ultRetType = Map.findWithDefault "any" qualName
+                       (Rec._cg_funcUltimateRetType env)
         suppliedGo = zipWithDefault coerceArg exprToGo suppliedTypes suppliedArgs
         extraNames = [ "__pp" ++ show i | i <- [0 .. missing - 1] ]
         extraIdents = zipWith (\n ty -> coerceArg (GoIr.GoIdent n) ty)
                               extraNames extraTypes
         finalCall = GoIr.GoCall (exprToGo func) (suppliedGo ++ extraIdents)
-    in foldr wrapLambda finalCall extraNames
-  where
-    -- v0.13 contract Stage 2 NOTE (2026-05-17): a typed-wrapper
-    -- attempt landed and was reverted in this same session — the
-    -- `_cg_funcRetType` map for Sky-source functions stores the
-    -- "after-one-arg-applied" curried type (via `safeReturnType` /
-    -- single TLambda strip), NOT the scalar ultimate return. A
-    -- correct typed partial-app wrapper needs the scalar return
-    -- (after ALL remaining args apply) plus the param types of the
-    -- residual wrappers chained from inside out. The right fix is
-    -- to add `_cg_funcUltimateReturnType` (strips ALL TLambda
-    -- levels) and use it for `chainedReturnTy 0`. Leaving the
-    -- `func(any) any` shape for now to preserve the contract
-    -- floor (no regression). See docs/V1_TYPED_CODEGEN_FINISH.md
-    -- Stage 2 for the full plan.
-    wrapLambda name body =
-        GoIr.GoFuncLit [GoIr.GoParam name "any"] "any"
-            [GoIr.GoReturn body]
+        -- Build the curried wrapper chain from the inside out.
+        -- Innermost wrapper returns `ultRetType`; each outer
+        -- wrapper returns `func(P_inner) <inner_ret>`.
+        wrappedExpr = foldr buildWrapper finalCall (zip [0..] (zip extraNames extraTypes))
+        buildWrapper (i, (name, paramTy)) inner =
+            let retTy = wrapperReturnType (missing - 1 - i)
+            in GoIr.GoFuncLit
+                 [GoIr.GoParam name paramTy]
+                 retTy
+                 [GoIr.GoReturn inner]
+        -- wrapperReturnType n: type of a wrapper that has `n` more
+        -- inner wrappers beneath it. 0 → ultRetType (the innermost
+        -- wrapper returns the callee's scalar return type after all
+        -- args apply). 1 → `func(P_innermost) ultRetType`. 2 →
+        -- `func(P_inner-1) func(P_innermost) ultRetType`. Etc.
+        wrapperReturnType 0 = ultRetType
+        wrapperReturnType n =
+            let innerParamTys = drop (missing - n) extraTypes
+            in foldr (\pt acc -> "func(" ++ pt ++ ") " ++ acc)
+                     ultRetType
+                     innerParamTys
+    in wrappedExpr
 
 
 ctorToGo :: Can.CtorOpts -> ModuleName.Canonical -> String -> String -> Can.Annotation -> GoIr.GoExpr

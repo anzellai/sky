@@ -464,6 +464,7 @@ collectVarRefs (A.At _ expr) = case expr of
         concatMap (\(_, v) -> collectVarRefs v) (Map.toList fields)
     Can.Tuple a b rest ->
         collectVarRefs a ++ collectVarRefs b ++ concatMap collectVarRefs rest
+    Can.Unit -> []
   where
     defRefs d = case d of
         Can.Def _ _ body -> collectVarRefs body

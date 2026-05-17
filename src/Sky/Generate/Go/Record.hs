@@ -11,6 +11,7 @@ module Sky.Generate.Go.Record
     , classifyAlias
     , buildCodegenEnv
     , withFuncTypes
+    , withFuncUltimateRetTypes
     , withInferredSigs
     , withDepFieldIndex
     , withRecordAliases
@@ -73,6 +74,21 @@ data CodegenEnv = CodegenEnv
       -- Per-function Go return type (qualified Go name → retType).
       -- Used by call-site codegen to decide whether further coercion
       -- is needed when the call feeds into a typed context.
+      --
+      -- IMPORTANT semantic: this map stores the AFTER-ONE-ARG-APPLIED
+      -- type (single TLambda strip via `safeReturnType`). For
+      -- partial-app wrapper codegen that needs the ULTIMATE scalar
+      -- return type (after ALL args applied), use
+      -- `_cg_funcUltimateRetType` instead.
+    , _cg_funcUltimateRetType :: !(Map.Map String String)
+      -- v0.13 Stage 2 — typed partial application. Per-function
+      -- Go return type after ALL args applied (recursive TLambda
+      -- strip). Used by `emitPartialUserCall` to type the innermost
+      -- wrapper's return value correctly.
+      --
+      -- Populated everywhere `_cg_funcRetType` is populated, using
+      -- `ultimateReturnType` (strips every nested TLambda level
+      -- before solvedTypeToGo runs).
     , _cg_funcInferredSigs :: !(Map.Map String ([String], [String], String))
       -- T4b: full HM-inferred signature including Go type parameters
       -- for TVars. Value is (typeParams, paramTypes, returnType).
@@ -155,6 +171,7 @@ buildCodegenEnv solvedTypes canMod = CodegenEnv
     , _cg_funcArities = collectFuncArities (Can._decls canMod)
     , _cg_funcParamTypes = Map.empty
     , _cg_funcRetType = Map.empty
+    , _cg_funcUltimateRetType = Map.empty
     , _cg_funcInferredSigs = Map.empty
     , _cg_callSiteInstances = Map.empty
     , _cg_funcSkyToGoTVars = Map.empty
@@ -230,6 +247,12 @@ withFuncTypes paramTys retTys env = env
     { _cg_funcParamTypes = Map.union paramTys (_cg_funcParamTypes env)
     , _cg_funcRetType    = Map.union retTys   (_cg_funcRetType env)
     }
+
+-- | v0.13 Stage 2 — merge the ultimate (after-all-args-applied)
+-- return-type table into the env. Called alongside `withFuncTypes`.
+withFuncUltimateRetTypes :: Map.Map String String -> CodegenEnv -> CodegenEnv
+withFuncUltimateRetTypes m env = env
+    { _cg_funcUltimateRetType = Map.union m (_cg_funcUltimateRetType env) }
 
 -- | Merge per-function inferred signatures (type params + param types
 -- + return type) into the env. Used for T4b Go-generics emission.
