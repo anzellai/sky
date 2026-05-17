@@ -1578,6 +1578,11 @@ func liveAppRun(cfg any) any {
 	mux.HandleFunc("/_sky/event", app.handleEvent)
 	mux.HandleFunc("/_sky/sse", app.handleSSE)
 	mux.HandleFunc("/_sky/config", app.handleConfig)
+	// Observability endpoints — healthz / readyz / metrics / buildinfo.
+	// Default-on (per docs/v1-rfc/1-observability.md); opt-out via
+	// OBSERVABILITY_DISABLED=1. Mounted BEFORE the catch-all "/" route
+	// so the dispatchRoot handler doesn't shadow them.
+	MountObservabilityEndpoints(mux)
 	// Static assets (if configured) mounted first so api/page routing
 	// doesn't shadow them.
 	if app.staticDir != "" {
@@ -1618,6 +1623,25 @@ func liveAppRun(cfg any) any {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			port = n
 		}
+	}
+
+	// Production-mode detection — gates /_sky/metrics auth. Two
+	// signals (RFC §"Resolved question 1"):
+	//   1. Explicit env: SKY_ENV=production (highest priority).
+	//   2. Heuristic: binding to all interfaces (":PORT" form, no
+	//      explicit host, or 0.0.0.0). Containers, fly.io, k8s,
+	//      cloud VMs all bind 0.0.0.0; local dev binds 127.0.0.1.
+	//
+	// Sky.toml [security] env = "production" gets translated to
+	// SKY_ENV by the compiler's emitted init() block, so users
+	// shouldn't typically set the env var directly.
+	listenAddr := fmt.Sprintf(":%d", port)
+	envFlag := strings.ToLower(skyGetenv("ENV"))
+	if envFlag == "" {
+		envFlag = strings.ToLower(os.Getenv("SKY_ENV"))
+	}
+	if envFlag == "production" || detectProductionFromAddr(listenAddr) {
+		SetProductionMode(true)
 	}
 
 	// Wrap the mux with panic recovery so one bad handler can't crash the process.
@@ -1665,6 +1689,11 @@ func liveAppRun(cfg any) any {
 	go func() {
 		<-sigCh
 		fmt.Println("\nSky.Live shutting down…")
+		// Flip readyz to 503 immediately so orchestrators (k8s /
+		// fly.io / ECS) stop routing new traffic while in-flight
+		// requests drain. healthz stays 200 — the process IS still
+		// alive, just refusing new work.
+		SetReady(false)
 		_ = srv.Close()
 		// If srv.Close completes the listener teardown, ListenAndServe
 		// returns and the function exits naturally. If something hangs,

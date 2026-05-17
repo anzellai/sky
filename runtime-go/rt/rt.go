@@ -5850,8 +5850,22 @@ func Server_listen(port any, routes any) any {
 		})
 	}
 
+	// Observability endpoints (Phase 1.1a Step 4). Mount BEFORE
+	// any of the user's routes so the catch-all "/" pattern in
+	// user code doesn't shadow them. Opt-out via
+	// OBSERVABILITY_DISABLED=1.
+	MountObservabilityEndpoints(mux)
+	// Production-mode detection — same heuristic as Sky.Live
+	// (binding to :PORT or 0.0.0.0 implies prod). See
+	// docs/v1-rfc/1-observability.md §"Resolved question 1".
+	listenAddr := fmt.Sprintf(":%d", p)
+	envFlag := strings.ToLower(os.Getenv("SKY_ENV"))
+	if envFlag == "production" || detectProductionFromAddr(listenAddr) {
+		SetProductionMode(true)
+	}
+
 	srv := &http.Server{
-		Addr:              fmt.Sprintf(":%d", p),
+		Addr:              listenAddr,
 		Handler:           mux,
 		ReadHeaderTimeout: serverReadHeaderTimeout,
 		ReadTimeout:       serverReadTimeout,

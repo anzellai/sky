@@ -2,6 +2,7 @@ package telemetry
 
 import (
 	"fmt"
+	"io"
 	"sort"
 	"strconv"
 	"strings"
@@ -31,7 +32,7 @@ import (
 // Help text comes from the helpTexts map below; metrics without an
 // entry get a generic "Sky metric" line so the output stays
 // well-formed for scrapers that require # HELP.
-func (s *Store) WriteProm(w stringWriter) {
+func (s *Store) WriteProm(w io.Writer) {
 	samples := s.Snapshot()
 	// Group by metric name so we emit one HELP+TYPE pair per family.
 	byName := make(map[string][]MetricSample)
@@ -76,12 +77,6 @@ func (s *Store) WriteProm(w stringWriter) {
 		map[string]string{"kind": "trace"}, float64(s.traces.snapshotCount()))
 }
 
-// stringWriter — minimal interface for callers that want to pass
-// `bytes.Buffer` or `http.ResponseWriter` without an io.Writer
-// allocation. Both types satisfy this naturally.
-type stringWriter interface {
-	WriteString(string) (int, error)
-}
 
 // helpTexts — short HELP descriptions for each kernel metric. Loose
 // match: helpTexts[name] looked up, else a default. Keep in sync
@@ -106,31 +101,31 @@ var helpTexts = map[string]string{
 	"process_start_time_seconds":   "Process start time (seconds since epoch)",
 }
 
-func writeHeader(w stringWriter, name, mtype string) {
+func writeHeader(w io.Writer, name, mtype string) {
 	help := helpTexts[name]
 	if help == "" {
 		help = "Sky metric"
 	}
-	w.WriteString("# HELP ")
-	w.WriteString(name)
-	w.WriteString(" ")
-	w.WriteString(help)
-	w.WriteString("\n# TYPE ")
-	w.WriteString(name)
-	w.WriteString(" ")
-	w.WriteString(mtype)
-	w.WriteString("\n")
+	io.WriteString(w, "# HELP ")
+	io.WriteString(w, name)
+	io.WriteString(w, " ")
+	io.WriteString(w, help)
+	io.WriteString(w, "\n# TYPE ")
+	io.WriteString(w, name)
+	io.WriteString(w, " ")
+	io.WriteString(w, mtype)
+	io.WriteString(w, "\n")
 }
 
-func writeLine(w stringWriter, name string, labels map[string]string, v float64) {
-	w.WriteString(name)
+func writeLine(w io.Writer, name string, labels map[string]string, v float64) {
+	io.WriteString(w, name)
 	writeLabels(w, labels, "", "")
-	w.WriteString(" ")
-	w.WriteString(formatFloat(v))
-	w.WriteString("\n")
+	io.WriteString(w, " ")
+	io.WriteString(w, formatFloat(v))
+	io.WriteString(w, "\n")
 }
 
-func writeHistogram(w stringWriter, name string, sm MetricSample) {
+func writeHistogram(w io.Writer, name string, sm MetricSample) {
 	// Emit one _bucket line per boundary, in sorted order. The
 	// snapshot already holds cumulative counts (Observe bumps every
 	// bucket whose `le` >= v), so emit them as-is — no second
@@ -141,33 +136,33 @@ func writeHistogram(w stringWriter, name string, sm MetricSample) {
 	}
 	sort.Float64s(keys)
 	for _, b := range keys {
-		w.WriteString(name)
-		w.WriteString("_bucket")
+		io.WriteString(w, name)
+		io.WriteString(w, "_bucket")
 		writeLabels(w, sm.Labels, "le", formatFloat(b))
-		w.WriteString(" ")
-		w.WriteString(strconv.FormatUint(sm.Buckets[b], 10))
-		w.WriteString("\n")
+		io.WriteString(w, " ")
+		io.WriteString(w, strconv.FormatUint(sm.Buckets[b], 10))
+		io.WriteString(w, "\n")
 	}
 	// +Inf bucket
-	w.WriteString(name)
-	w.WriteString("_bucket")
+	io.WriteString(w, name)
+	io.WriteString(w, "_bucket")
 	writeLabels(w, sm.Labels, "le", "+Inf")
-	w.WriteString(" ")
-	w.WriteString(strconv.FormatUint(sm.Count, 10))
-	w.WriteString("\n")
+	io.WriteString(w, " ")
+	io.WriteString(w, strconv.FormatUint(sm.Count, 10))
+	io.WriteString(w, "\n")
 	// _sum + _count
-	w.WriteString(name)
-	w.WriteString("_sum")
+	io.WriteString(w, name)
+	io.WriteString(w, "_sum")
 	writeLabels(w, sm.Labels, "", "")
-	w.WriteString(" ")
-	w.WriteString(formatFloat(sm.Sum))
-	w.WriteString("\n")
-	w.WriteString(name)
-	w.WriteString("_count")
+	io.WriteString(w, " ")
+	io.WriteString(w, formatFloat(sm.Sum))
+	io.WriteString(w, "\n")
+	io.WriteString(w, name)
+	io.WriteString(w, "_count")
 	writeLabels(w, sm.Labels, "", "")
-	w.WriteString(" ")
-	w.WriteString(strconv.FormatUint(sm.Count, 10))
-	w.WriteString("\n")
+	io.WriteString(w, " ")
+	io.WriteString(w, strconv.FormatUint(sm.Count, 10))
+	io.WriteString(w, "\n")
 }
 
 // writeLabels emits the Prometheus label block — `{k1="v1",k2="v2"}`.
@@ -178,11 +173,11 @@ func writeHistogram(w stringWriter, name string, sm MetricSample) {
 // double-quote, newline. We do NOT escape commas/equals signs in
 // values — those aren't required by the spec and the histogram +Inf
 // path emits a raw "+Inf" deliberately.
-func writeLabels(w stringWriter, labels map[string]string, extraK, extraV string) {
+func writeLabels(w io.Writer, labels map[string]string, extraK, extraV string) {
 	if len(labels) == 0 && extraK == "" {
 		return
 	}
-	w.WriteString("{")
+	io.WriteString(w, "{")
 	keys := make([]string, 0, len(labels))
 	for k := range labels {
 		keys = append(keys, k)
@@ -191,24 +186,24 @@ func writeLabels(w stringWriter, labels map[string]string, extraK, extraV string
 	first := true
 	for _, k := range keys {
 		if !first {
-			w.WriteString(",")
+			io.WriteString(w, ",")
 		}
-		w.WriteString(k)
-		w.WriteString("=\"")
-		w.WriteString(escapePromLabelValue(labels[k]))
-		w.WriteString("\"")
+		io.WriteString(w, k)
+		io.WriteString(w, "=\"")
+		io.WriteString(w, escapePromLabelValue(labels[k]))
+		io.WriteString(w, "\"")
 		first = false
 	}
 	if extraK != "" {
 		if !first {
-			w.WriteString(",")
+			io.WriteString(w, ",")
 		}
-		w.WriteString(extraK)
-		w.WriteString("=\"")
-		w.WriteString(escapePromLabelValue(extraV))
-		w.WriteString("\"")
+		io.WriteString(w, extraK)
+		io.WriteString(w, "=\"")
+		io.WriteString(w, escapePromLabelValue(extraV))
+		io.WriteString(w, "\"")
 	}
-	w.WriteString("}")
+	io.WriteString(w, "}")
 }
 
 func escapePromLabelValue(v string) string {

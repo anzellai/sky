@@ -537,49 +537,69 @@ depends on 1.3).
 
 ---
 
-## Open questions
+## Resolved questions
 
-These need resolution before / during implementation. Capture
-answers as they're decided; flip from `?` to a citation when locked.
+1. **Metrics auth in production**: GATED. `/_sky/metrics` requires
+   `Std.Auth` admin role when `[security] env = "production"` is set
+   OR when no `[security] env` is declared but the binary binds to
+   `0.0.0.0` (rough heuristic that catches container deployments).
+   AI-generated code without `Std.Auth` configured still gets
+   protection because the default Prometheus-scraper convention is
+   service-account auth at the orchestrator layer (k8s, fly.io,
+   ECS) — they handle this transparently. Dev mode (default): open.
 
-1. **? Metrics auth in production**: requires `Std.Auth` admin role
-   to view `/_sky/metrics`? Or open with rate-limiting? Industry
-   norm is auth (k8s scrape uses service-account JWT). Lean YES,
-   but how should AI-generated code without Std.Auth set up handle
-   this?
+2. **Trace context propagation through `Http.get` / `Http.post`**:
+   YES, auto-inject. The runtime adds `traceparent` (and
+   `tracestate` when present) to every outbound HTTP request. Opt
+   out per-call via a new `Http.withoutTracing` modifier (rarely
+   needed — most third parties either ignore the header or actively
+   participate in trace propagation).
 
-2. **? Trace context propagation through `Http.get` / `Http.post`**:
-   should the runtime auto-inject `traceparent` on outbound HTTP?
-   Pros: distributed tracing works out of the box. Cons: leaks the
-   trace context to third parties (Stripe, Firestore) which may
-   surprise users. Lean YES — every modern HTTP lib does this; opt
-   out per-call via `Http.withoutTracing`.
+3. **Console auth dev/prod boundary**: same as #1 — explicit
+   `[security] env = "production"` OR binding to `0.0.0.0`
+   triggers the admin-role check. Dev (default): open.
 
-3. **? Console auth dev/prod boundary**: how do we detect
-   "production" reliably? `[security] env = "production"` is
-   explicit. `NODE_ENV`-style heuristics are fragile. Lean: ONLY
-   explicit `[security] env` flag; default-open in dev; default-on
-   when binding to `0.0.0.0` (rough but useful heuristic).
+4. **`req_id` for SSE events**: PER-EVENT new ID, linked to the
+   connection's parent ID via OTel trace span. Reasoning:
+   - SSE connections live for hours-days; reusing one ID across
+     all events makes "what fired the bad update at 14:35:22"
+     un-debuggable.
+   - Per-event IDs give OTel head-based sampling per-event
+     granularity. Per-connection IDs force all-or-nothing
+     sampling at connection open — errors mid-session would be
+     unsampled.
+   - Cardinality concern (one ID per event) is real but mitigated:
+     req_id is a log/trace field, NOT a metric label. Metrics
+     cardinality cap protects against accidents.
+   - Standard OTel pattern (mirrors HTTP/2 stream semantics —
+     each stream is its own span under the connection).
 
-4. **? `req_id` for SSE events**: an SSE connection is long-lived;
-   each event within it inherits the connection's initial req_id?
-   Or generates a new ID per event? Lean: per-event new ID,
-   linked to the connection's parent ID via trace span.
+5. **Warm tier compression**: gzip log fields when >1 KB; metric
+   snapshot blobs always gzipped. Trace spans stored raw (small
+   individually). DEFERRED to Warm tier impl; doesn't block 1.1a.
 
-5. **? Warm tier compression**: gzip log fields on insert (~5x
-   ratio on JSON), or store raw and gzip on backup? Lean: gzip
-   only when field >1 KB.
+6. **Histogram bucket boundaries**: LOCKED with three named
+   profiles. Users CANNOT customise — consistency across the
+   ecosystem matters more than per-metric tuning, and Grafana
+   dashboards stop working when histograms diverge. Profiles:
+   - `BucketsLatency` — 1ms/5ms/10ms/50ms/100ms/500ms/1s/5s.
+     For web requests, DB queries, Msg dispatch — the hot paths.
+   - `BucketsDuration` — 10ms/50ms/100ms/500ms/1s/5s/30s/1min/5min.
+     For jobs, large queries, file ops — anything that can
+     legitimately take minutes.
+   - `BucketsBytes` — 100B/1KB/10KB/100KB/1MB/10MB/100MB.
+     For payload sizes, file uploads, response bodies.
 
-6. **? Histogram bucket boundaries**: fixed (1ms / 5ms / 10ms / 50ms
-   / 100ms / 500ms / 1s / 5s / +Inf) for consistency across
-   apps, or per-metric? Lean: fixed for v1; per-metric in v1.x if
-   demanded.
+   Per-metric profile assignment lives in
+   `runtime-go/rt/telemetry/buckets.go` as a constant map. Adding
+   a new metric requires picking one of these three or
+   contributing a new named profile (rare; needs cross-version
+   compat thought).
 
-7. **? "No-op detection" cost on every Msg**: 200 ns per dispatch is
-   the budget. If hashing typed records is too slow, fall back to
-   "always log" with a `[observability] log_all_msgs = true` opt-in.
-   Lean: ship with hashing; profile in 1.1a; degrade to always-log
-   if needed.
+7. **"No-op detection" cost**: ship with hashing. Profile during
+   1.1a Step 5 impl; degrade to always-log behind
+   `[observability] log_all_msgs = true` if the budget can't be
+   met. Decision deferred to Step 5 impl session.
 
 ---
 

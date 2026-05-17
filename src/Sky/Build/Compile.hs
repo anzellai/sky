@@ -2037,18 +2037,18 @@ copyRuntime outDir = do
             if mainExists
                 then copyFile mainRt (rtDir </> "rt.go")
                 else writeFile (rtDir </> "rt.go") runtimeGoSource
-            -- Copy every *.go file in runtime-go/rt/ so new runtime modules
-            -- are picked up automatically without hardcoding names.
+            -- Copy every *.go file in runtime-go/rt/ AND every
+            -- subdirectory (telemetry/, otel/, …) so new runtime
+            -- modules are picked up automatically without hardcoding
+            -- names. Subpackages were added in Phase 1.1a — the prior
+            -- flat-listDirectory walk silently dropped them, causing
+            -- `package sky-app/rt/telemetry is not in std` go-build
+            -- failures because the embedded TH path DID copy the
+            -- files but the dev-tree path didn't.
             let rtSourceDir = runtimeDir </> "rt"
             hasRtDir <- doesDirectoryExist rtSourceDir
             if hasRtDir
-                then do
-                    files <- System.Directory.listDirectory rtSourceDir
-                    let goFiles = filter (\f ->
-                            let ext = reverse (take 3 (reverse f))
-                            in ext == ".go" && f /= "rt.go"
-                            ) files
-                    mapM_ (\name -> copyFile (rtSourceDir </> name) (rtDir </> name)) goFiles
+                then copyRuntimeRecursive rtSourceDir rtDir
                 else return ()
             -- Copy go.mod and go.sum to inherit runtime dep versions.
             let srcMod = runtimeDir </> "go.mod"
@@ -2280,6 +2280,37 @@ writeEmbeddedSkyStdlib outDir = do
         let dst = base </> relPath
         createDirectoryIfMissing True (takeDirectory dst)
         BS.writeFile dst bytes
+
+
+-- | Recursively copy every .go file (including subdirectories) from
+-- the runtime-go/rt source dir into the output rt/ dir. Skips the
+-- already-handled `rt.go` at the top level (copied verbatim above
+-- from the canonical source).
+--
+-- Why filter to .go only: the runtime source tree may contain
+-- ancillary files (README.md, _test.go regression artefacts the dev
+-- wants to keep local-only, etc.) that the released binary shouldn't
+-- need. The embedded path (writeEmbeddedRuntime) doesn't have this
+-- problem because embedDir already filters to what TH bundled at
+-- compile time.
+copyRuntimeRecursive :: FilePath -> FilePath -> IO ()
+copyRuntimeRecursive src dst = do
+    createDirectoryIfMissing True dst
+    entries <- System.Directory.listDirectory src
+    mapM_ (copyOne src dst) entries
+  where
+    copyOne s d name = do
+        let srcPath = s </> name
+        let dstPath = d </> name
+        isDir <- doesDirectoryExist srcPath
+        if isDir
+            then copyRuntimeRecursive srcPath dstPath
+            else when (isGoSource name && name /= "rt.go") $
+                copyFile srcPath dstPath
+
+    isGoSource name =
+        let l = length name
+        in l > 3 && drop (l - 3) name == ".go"
 
 
 -- | Write the embedded runtime (bundled into the sky binary at TH-time)

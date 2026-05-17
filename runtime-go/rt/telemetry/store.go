@@ -273,22 +273,21 @@ func (s *Store) gaugeSeries(name string, labels map[string]string) *gaugeSeries 
 // HISTOGRAMS
 // ──────────────────────────────────────────────────────────────────
 
-// defaultBuckets — fixed boundaries used across every Sky histogram.
-// Chosen to span web/database latencies: 1ms → 5s. RFC §"Open
-// question 6" decides whether to allow per-metric buckets in v1.x;
-// for v1.0 we lock the bucket boundaries so cross-app dashboards stay
-// consistent.
-var defaultBuckets = []float64{0.001, 0.005, 0.010, 0.050, 0.100, 0.500, 1.0, 5.0}
-
 // histogramSeries is a fixed-bucket histogram (Prometheus
 // "histogram", not "summary"). Each bucket is an atomic counter; sum
 // + count tracked separately for the `_sum` and `_count` exposition
 // lines.
+//
+// The `boundaries` slice is the BucketProfile this series was
+// constructed against (from `bucketsFor(name)`). Captured per-series
+// so the snapshot + exposition can reflect the right `le` labels
+// regardless of which profile a given metric uses.
 type histogramSeries struct {
-	buckets []atomic.Uint64 // len(defaultBuckets) + 1 (last is +Inf)
-	sumBits atomic.Uint64   // float64 bits of cumulative sum
-	count   atomic.Uint64
-	labels  map[string]string
+	boundaries BucketProfile
+	buckets    []atomic.Uint64 // len(boundaries) + 1 (last is +Inf)
+	sumBits    atomic.Uint64   // float64 bits of cumulative sum
+	count      atomic.Uint64
+	labels     map[string]string
 }
 
 // Observe records a single measurement into the histogram. Bumps
@@ -299,12 +298,12 @@ func (s *Store) Observe(name string, labels map[string]string, v float64) {
 	if ser == nil {
 		return
 	}
-	for i, b := range defaultBuckets {
+	for i, b := range ser.boundaries {
 		if v <= b {
 			ser.buckets[i].Add(1)
 		}
 	}
-	ser.buckets[len(defaultBuckets)].Add(1) // +Inf bucket always bumped
+	ser.buckets[len(ser.boundaries)].Add(1) // +Inf bucket always bumped
 	ser.count.Add(1)
 	for {
 		old := ser.sumBits.Load()
@@ -331,9 +330,11 @@ func (s *Store) histogramSeries(name string, labels map[string]string) *histogra
 	if !s.checkCardinality(name, len(s.hists)) {
 		return nil
 	}
+	bounds := bucketsFor(name)
 	ser = &histogramSeries{
-		buckets: make([]atomic.Uint64, len(defaultBuckets)+1),
-		labels:  copyLabels(labels),
+		boundaries: bounds,
+		buckets:    make([]atomic.Uint64, len(bounds)+1),
+		labels:     copyLabels(labels),
 	}
 	s.hists[key] = ser
 	return ser
@@ -418,8 +419,8 @@ func (s *Store) Snapshot() []MetricSample {
 		})
 	}
 	for k, ser := range s.hists {
-		bs := make(map[float64]uint64, len(defaultBuckets)+1)
-		for i, b := range defaultBuckets {
+		bs := make(map[float64]uint64, len(ser.boundaries)+1)
+		for i, b := range ser.boundaries {
 			bs[b] = ser.buckets[i].Load()
 		}
 		// +Inf bucket
