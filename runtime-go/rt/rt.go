@@ -431,6 +431,22 @@ func coerceInner[T any](v any) T {
 			return out.Interface().(T)
 		}
 	}
+	// v0.13 Stage 1 — function-type conversion via makeFuncAdapter.
+	// When source is a Sky `func(any) any` lambda and target is a
+	// concrete `func(T1) T2`, build a reflect-based adapter that
+	// boxes typed args to any, calls the Sky lambda, and narrows
+	// the return. Closes the `Maybe (Int -> Int)` class — without
+	// this, `Just (\x -> x * 2)` panics at the SkyMaybe[func(int)
+	// int] boundary because the inner func(any) any can't be type-
+	// asserted to func(int) int.
+	if rv.Kind() == reflect.Func {
+		var zero T
+		zt := reflect.TypeOf(zero)
+		if zt != nil && zt.Kind() == reflect.Func {
+			adapted := makeFuncAdapter[T](rv, zt)
+			return adapted.(T)
+		}
+	}
 	// Final fallback: strict type assertion. If this panics, it
 	// means typed-codegen emitted a CALL with a wrong element type —
 	// a compiler bug, NOT a runtime input bug. Surfacing the panic
