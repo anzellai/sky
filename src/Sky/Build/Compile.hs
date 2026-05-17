@@ -3211,11 +3211,17 @@ generateAliasTypes canMod =
             -- Field declaration order (via _fieldIndex) is the auto-ctor's
             -- positional API. Sorting by it keeps `Piece kind colour` the same
             -- on the Go side. See generateAliasForDep for the same note.
+            --
+            -- v0.13 Stage 1 — ALWAYS emit as struct. Previously
+            -- records with function-typed fields went to
+            -- `generateInterface` which produced `type X interface {...}`
+            -- — but the rest of the codegen consistently references
+            -- `X_R` (struct name). The two paths diverged, producing
+            -- `undefined: X_R` go-build errors for any record with a
+            -- function field. Go supports `func(A) B` types in struct
+            -- fields just fine; no reason to go through interfaces.
             let fieldList = List.sortOn (T._fieldIndex . snd) (Map.toList fields)
-                hasMethods = any (\(_, T.FieldType _ ty) -> isFuncType ty) fieldList
-            in if hasMethods
-                then generateInterface name fieldList
-                else generateStruct userDefinedNames name fieldList
+            in generateStruct userDefinedNames name fieldList
         _ ->
             [ GoIr.GoDeclRaw $ "type " ++ name ++ " = " ++ solvedTypeToGo body ]
 
@@ -7278,16 +7284,25 @@ emitPartialUserCall func suppliedArgs missing =
         -- the registry). Length must be exactly `missing` so the
         -- wrapper chain length matches.
         availableExtras = drop (length suppliedArgs) paramTypes
+        -- v0.13 Stage 1 fix — erase any TVar placeholders in the
+        -- extra (missing) param types BEFORE using them as wrapper
+        -- input types. Without this, a partial-app of a generic
+        -- function (e.g. `List.filter pred`) emits a wrapper with
+        -- bare TVars (`func(__pp0 []T1) any`) which Go rejects:
+        -- T1 is only valid inside the kernel's generic body, not
+        -- at the wrapper construction site in user code.
         extraTypes    = take missing
-                          (availableExtras ++ repeat "any")
+                          (map eraseTypeParams availableExtras
+                              ++ repeat "any")
         -- v0.13 Stage 2 — typed partial-app wrapper. Reads the
         -- callee's ULTIMATE return type (scalar, after every arg
         -- applies) from `_cg_funcUltimateRetType`. Falls back to
         -- "any" when unavailable so we never emit a worse shape
-        -- than the historical `func(any) any` default. See
-        -- docs/V1_TYPED_CODEGEN_FINISH.md Stage 2.
-        ultRetType = Map.findWithDefault "any" qualName
-                       (Rec._cg_funcUltimateRetType env)
+        -- than the historical `func(any) any` default. Erase TVars
+        -- for the same reason as extraTypes.
+        ultRetType = eraseTypeParams
+                        (Map.findWithDefault "any" qualName
+                           (Rec._cg_funcUltimateRetType env))
         suppliedGo = zipWithDefault coerceArg exprToGo suppliedTypes suppliedArgs
         extraNames = [ "__pp" ++ show i | i <- [0 .. missing - 1] ]
         extraIdents = zipWith (\n ty -> coerceArg (GoIr.GoIdent n) ty)
