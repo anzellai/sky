@@ -7976,6 +7976,20 @@ letToGo mExpectedGo def body =
                 , operandIsStaticallyTyped valExpr
                 , isTypedPrimitive t ->
                     Map.singleton name t
+            -- v0.13 Stage 1 — annotated let-bound function: register
+            -- its full annotation type so `goExprGoType` at HOF arg
+            -- sites can σ-recover TVars from the typed sig. Critical
+            -- for in-let helpers passed to `Task.andThen` / `Result.
+            -- andThen` — without this, `Task.andThen readAll task`
+            -- couldn't pin the kernel's `a, err, b` TVars from
+            -- `readAll`'s `(*SkyDb -> Task Error …)` annotation,
+            -- forcing a `rt.Coerce[func(any) rt.SkyTask[any, any]]`
+            -- wrap.
+            Can.TypedDef (A.At _ name) _ typedPats _ retTy
+                | not (null typedPats)
+                , name /= "_" ->
+                    let fullTy = foldr T.TLambda retTy (map snd typedPats)
+                    in Map.singleton name fullTy
             _ -> Map.empty
         -- When the expected Go type is known, lower the let-body via
         -- `exprToGoExpectGo` so a nested case/if/let in the body gets
