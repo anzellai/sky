@@ -433,21 +433,33 @@ processImportWith deps _home env imp =
         -- Same FFI-over-kernel precedence: when an FFI dep exists for
         -- this import path, the dep's exported set governs (so `import
         -- Os exposing (..)` pulls FFI symbols, not Sky kernel ones).
+        --
+        -- v1.x — Limitation 11 fix. Pre-fix, the allow-list only
+        -- included _dep_values / _dep_aliases / union NAMES. A
+        -- `Type(..)` exposure named like `import Status exposing
+        -- (Status(..))` collected the union's constructor names
+        -- correctly in `exposedDepCtors`, but then the `keep`
+        -- filter below dropped every ctor because "Active" wasn't
+        -- in any of the three sets (only "Status" was). Now we
+        -- also include each union's constructor names, so the
+        -- canonical case works end-to-end without needing
+        -- `import M exposing (..)` as a workaround.
         depExportedNames :: String -> Bool
         depExportedNames =
-            if useDep then case depHere of
+            let allowed d =
+                    _dep_values d
+                    ++ _dep_aliases d
+                    ++ [un | (un, _, _) <- _dep_unions d]
+                    ++ [ctorName
+                        | (_, _, ctors) <- _dep_unions d
+                        , Can.Ctor ctorName _ _ _ <- ctors]
+            in if useDep then case depHere of
                 Nothing  -> const True  -- shouldn't happen given useDep
-                Just d   -> \n ->
-                    n `elem` _dep_values d
-                    || n `elem` _dep_aliases d
-                    || n `elem` map (\(un, _, _) -> un) (_dep_unions d)
+                Just d   -> (`elem` allowed d)
             else if useKernel then const True
             else case depHere of
                 Nothing  -> const True  -- unknown dep → trust the import
-                Just d   -> \n ->
-                    n `elem` _dep_values d
-                    || n `elem` _dep_aliases d
-                    || n `elem` map (\(un, _, _) -> un) (_dep_unions d)
+                Just d   -> (`elem` allowed d)
 
         envWithExposed = case Src._importExposing imp of
             A.At _ Src.ExposingAll ->

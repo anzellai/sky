@@ -23,6 +23,7 @@ import qualified Sky.Type.UfCycleGuardSpec
 import qualified Sky.Type.RecordFieldExactnessSpec
 import qualified Sky.Build.UiFillCascadeSpec
 import qualified Sky.Build.UiMultilineTextareaSpec
+import qualified Sky.Build.ExposingTypeCtorsSpec
 import qualified Sky.Format.FormatSpec
 import qualified Sky.Build.GoKeywordCollisionSpec
 import qualified Sky.Build.NestedPatternSpec
@@ -163,6 +164,7 @@ main = hspec $ do
     -- routes through a real <textarea> element with the value-attr
     -- → text-content splice the Live runtime already supports.
     describe "Sky.Build.UiMultilineTextarea" Sky.Build.UiMultilineTextareaSpec.spec
+    describe "Sky.Build.ExposingTypeCtors" Sky.Build.ExposingTypeCtorsSpec.spec
     -- Closed-record exactness + cross-module externals registration:
     --   1. unifyRecords (Sky.Type.Unify) used to silently merge field-
     --      mismatched closed records under a fresh extension. Now
