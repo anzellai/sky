@@ -280,32 +280,55 @@ verified by example sweep + cabal test before moving to the next.
 - [x] **Stage 1 follow-up shipped (session 2026-05-17 — 5 commits):**
       pipeline reorder + σ-pinned TVar preservation + ADT-ctor sigs
       + annotation-as-truth + smart sig merge + zero-arg call type
-      + TVar-preserving kernel param sigs. **Net: 43 → 8 adapters
-      across the 24-example sweep (-81%).** Zero example failures;
+      + TVar-preserving kernel param sigs + typed ADT-ctor partial-app
+      closures + register annotated let-bound functions in lambdaTypes.
+      **Net: 43 → 6 adapters per-line (-86%), 43 → 16 per-match
+      (-63%).** Zero example failures;
       cabal test net IMPROVED (6 pre-existing failures → 1 single
       meta-test transient that passes when run standalone). The
       `Msg_UserChanged → rt.Coerce[func(string) Msg]` adapter class
       that dominated the prior count is gone — typed Msg ctors now
       flow raw to typed HOF slots.
 
-      Per-example adapter counts after this work:
+      Per-example adapter counts after this work (per-match):
       * 01, 03-05, 08-12, 14-17, 19-24, simple, test_pkg: **0**
-      * 02-go-stdlib, 07-todo-cli: 1 → **0**
-      * 06-json: 4 → 1 (residual: curried Profile record ctor)
-      * 13-skyshop: 5 → 1 (residual: FFI opaque rt.FfiT_Go_Session_get_P1)
-      * 17-skymon: 4 → 0
-      * 18-job-queue: 7 → 6 (residual: 4 partial-app ADT-ctor closures
-        passing `func(any) any` at Cmd.perform typed slots — needs
-        typed partial-app emission per Stage 3; 2 others from
-        polymorphic-helper-arg cases like `addJob model name task`
-        where `task` is an unannotated polymorphic param)
-      * 19-skyforum: 6 → 0
+      * 02-go-stdlib: 1 → **0** (Time.timeString HOF closed)
+      * 07-todo-cli: 1 → **0** (Task.onError callback closed)
+      * 17-skymon: 4 → **0** (Msg ctor adapters closed)
+      * 12-skyvote: 5 → **0**
+      * 19-skyforum: 6 → **0** (entire dominant `Msg_*Changed →
+        Coerce` class gone)
+      * 23-tui-todo: 3 → **0**
+      * 24-tui-kitchen-sink: 2 → **0**
+      * 16-skychess: 1 → **0**
+      * 10-live-component: 1 → **0**
+      * 06-json: 4 → **1** (residual: curried Profile record ctor at
+        Result.map3; would need typed curry-adapter codegen since
+        auto-record-ctor is Go-uncurried)
+      * 13-skyshop: 5 → **11** when measured per-match (one giant
+        Stripe view line had 11 hidden adapters; pre-fix count was
+        also higher when measured per-match). All 11 are FFI getters
+        (`rt.Go_Stripe_goV84_*`) bridging from `func(any) any` runtime
+        sig to the `func(rt.SkyValue) rt.SkyResult[Error, rt.SkyValue]`
+        Sky surface. Would need typed FFI variants per binding.
+      * 18-job-queue: 7 → **4** (-3, closed 1 via Cmd.perform + 2 via
+        typed ADT-ctor closures). Residual 4: 3 polymorphic Task
+        callback wraps on let-bound helpers (writeAll/readAll/report
+        — unannotated; users annotating would close these via the
+        forward-compat `bindingExtras` path); 1 Maybe.andThen pinning
+        bug where the `b` TVar gets prematurely defaulted to
+        `rt.SkyValue` in OkSlot defaulting (closes if we keep `b` as
+        TVar when it appears in an HOF param's return position,
+        but that exposes a kernel-typed-variant routing gap —
+        documented; deferred).
 
-      Commits: 8c8e2a8 (substituteOnly TVar preservation), 459fc5f
+      Commits: a2d3d26 (substituteOnly TVar preservation), 459fc5f
       (ADT-ctor sigs + annotation type for deps), 1411242 (bare-TVar
       arg coerce + smart sig merge + stale-test refresh), aed8551
       (kernel-fn HOF arg σ-recovery), a566f62 (zero-arg call type +
-      TVar-preserving kernel param sigs).
+      TVar-preserving kernel param sigs), 1d6d2d2 (typed ADT-ctor
+      partial-app closures), 81516dd (register annotated let-bound
+      functions in lambdaTypes — forward-compat, no-op today).
 - [ ] Stage 3 — Per-ADT-ctor typed Go structs (v0.13 contract).
       Design agreed: per-ADT `Msg_Struct { V0_t1, V0_t2, … }` with
       unified slot-by-type. ADT wrapper carries Tag + Name + typed
