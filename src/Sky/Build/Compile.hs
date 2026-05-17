@@ -6652,11 +6652,34 @@ coerceCallArgsAt region qualName args =
                     case inner of
                         Can.Lambda pats body
                             | all isSimpleVarPattern pats
-                            , (inputTypes, finalRet) <-
+                            , (inputTypes, finalRet0) <-
                                 splitCurriedFuncTypeStr (length pats) subbed
                             , length inputTypes == length pats
                             , length inputTypes > 0 ->
-                                let skyTys = map goTypeStrToSkyType inputTypes
+                                let -- v0.13 Stage 1 — when the
+                                    -- substituted return type widened
+                                    -- to "any" (TVars couldn't be
+                                    -- pinned at the call site), try
+                                    -- to recover by HM-inferring the
+                                    -- lambda body's type. The body is
+                                    -- a Can.Expr; if HM has a concrete
+                                    -- type for it (e.g. body returns
+                                    -- a known record / primitive), use
+                                    -- THAT as the lambda's return type
+                                    -- instead of "any". Closes
+                                    -- adapters like
+                                    -- `func(x State_Post_R) State_Post_R`
+                                    -- where the body returns a typed
+                                    -- value and HM knows it.
+                                    finalRet =
+                                        if finalRet0 == "any"
+                                            then case inferGoType
+                                                    (Rec._cg_solvedTypes getCgEnv)
+                                                    body of
+                                                "any" -> "any"
+                                                concrete -> concrete
+                                            else finalRet0
+                                    skyTys = map goTypeStrToSkyType inputTypes
                                     bindings = patVarTypes pats skyTys
                                     bodyPreTyped = isEmittableGoType finalRet
                                     rawBody =
