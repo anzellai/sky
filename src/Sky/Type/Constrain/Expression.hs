@@ -2037,6 +2037,50 @@ lookupKernelType modName funcName = case (modName, funcName) of
     ("Live", "lifecycle") ->
         Just $ T.Forall ["msg"]
             (T.TLambda (T.TVar "msg") (T.TVar "msg"))
+
+    -- ─── Phase 1.3 — Std.Jobs ──────────────────────────────────
+    -- See docs/v1-roadmap.md Phase 1.3, runtime-go/rt/jobs_kernel.go.
+    --
+    -- Jobs.define : String -> (a -> Task Error ()) -> String
+    --   Registers a handler under the given name; returns the name
+    --   as an opaque "job reference" the user passes to enqueue.
+    --   Return type is String (the registered name) at the kernel
+    --   layer; future v1.x may wrap in an opaque newtype if value-
+    --   identity matters more than the convenience of String.
+    ("Jobs", "define") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda stringType
+                (T.TLambda
+                    (T.TLambda (T.TVar "a")
+                        (T.TType ModuleName.task "Task"
+                            [errorType, T.TUnit]))
+                    stringType))
+    -- Jobs.enqueue : String -> a -> Task Error String
+    --   Returns the JobId as a String (decimal representation —
+    --   opaque to user, fed back to Jobs.cancel).
+    ("Jobs", "enqueue") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda stringType
+                (T.TLambda (T.TVar "a")
+                    (T.TType ModuleName.task "Task"
+                        [errorType, stringType])))
+    -- Jobs.enqueueIn : Int -> String -> a -> Task Error String
+    --   Delay first run by N milliseconds.
+    ("Jobs", "enqueueIn") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda intType
+                (T.TLambda stringType
+                    (T.TLambda (T.TVar "a")
+                        (T.TType ModuleName.task "Task"
+                            [errorType, stringType]))))
+    -- Jobs.cancel : String -> Task Error ()
+    --   Removes a pending job by id; Err when already
+    --   started / dead-lettered / unknown.
+    ("Jobs", "cancel") ->
+        Just $ T.Forall []
+            (T.TLambda stringType
+                (T.TType ModuleName.task "Task"
+                    [errorType, T.TUnit]))
     -- Json.Decode (kernel mod "JsonDec") — signatures carry the
     -- opaque Sky `Decoder a` as TType "Decoder" [a]; the codegen
     -- resolves Decoder to rt.SkyDecoder via runtimeTypedMap.
@@ -3005,12 +3049,16 @@ lookupKernelType modName funcName = case (modName, funcName) of
     _ -> Nothing
 
 
-intType, floatType, stringType, boolType, charType :: T.Type
+intType, floatType, stringType, boolType, charType, errorType :: T.Type
 intType = T.TType ModuleName.basics "Int" []
 floatType = T.TType ModuleName.basics "Float" []
 stringType = T.TType ModuleName.basics "String" []
 boolType = T.TType ModuleName.basics "Bool" []
 charType = T.TType ModuleName.basics "Char" []
+-- Sky.Core.Error.Error — the canonical error ADT every Task carries
+-- as its err-channel type. Saves repeating the long form across the
+-- many kernel sigs that build Task Error a.
+errorType = T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
 
 -- v0.13 Layer 3: the Sky-source `Std.Html.Html msg` ADT.  Empty
 -- home so it unifies with a user `Html Msg` annotation the same

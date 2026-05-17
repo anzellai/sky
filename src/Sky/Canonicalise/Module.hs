@@ -1010,6 +1010,9 @@ staticKernelFunctions = Map.fromList
     -- stdlib module now; its exported names come from the parsed
     -- module, not this kernel registry.
     , ("Live",    ["app", "route", "api", "lifecycle"])
+    -- Phase 1.3 — Std.Jobs background-task module. See
+    -- runtime-go/rt/jobs_kernel.go for the wire implementation.
+    , ("Jobs",    ["define", "enqueue", "enqueueIn", "cancel"])
     -- v0.13 Layer 3: Event whitelist removed — Std.Html.Events is a
     -- Sky-source stdlib module now.
     , ("Sub",     ["none", "every"])

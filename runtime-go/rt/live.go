@@ -1717,6 +1717,10 @@ func liveAppRun(cfg any) any {
 		// timeout (2s VM, 500ms serverless) so we don't hang past
 		// the orchestrator grace window.
 		ShutdownTracing()
+		// Stop the Std.Jobs worker (if started) so in-flight jobs
+		// finish + the goroutine exits cleanly. Idempotent —
+		// safe to call when no worker was ever spawned.
+		JobsShutdown()
 		_ = srv.Close()
 		// If srv.Close completes the listener teardown, ListenAndServe
 		// returns and the function exits naturally. If something hangs,

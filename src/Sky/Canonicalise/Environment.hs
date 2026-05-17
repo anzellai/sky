@@ -384,6 +384,10 @@ staticKernelModules = Map.fromList
     -- Std.Css is a Sky-source stdlib module (v0.13 Layer 3) — NOT a
     -- kernel pseudo-module.
     , ("Std.Live",             "Live")
+    -- Phase 1.3 — Std.Jobs (background-task module). Sky source:
+    -- `Jobs.enqueue myJob payload`. Wired to runtime in
+    -- runtime-go/rt/jobs_kernel.go.
+    , ("Std.Jobs",             "Jobs")
     -- Sky.Cli — line-oriented TEA backend. Same Cmd/Sub/program shape
     -- as Sky.Live, view returns String (the prompt), onLine maps each
     -- stdin line to a Msg. See runtime-go/rt/cli.go.
@@ -459,6 +463,7 @@ staticKernelModules = Map.fromList
     -- Css bare alias removed (v0.13 Layer 3) — Sky-source module;
     -- resolve via a real `import Std.Css`.
     , ("Live",       "Live")
+    , ("Jobs",       "Jobs")
     , ("Cli",        "Cli")
     , ("Tui",        "Tui")
     , ("JsonEnc",    "JsonEnc")
