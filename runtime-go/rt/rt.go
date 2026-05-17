@@ -373,6 +373,19 @@ func coerceInner[T any](v any) T {
 								innerField.Set(reflect.ValueOf(innerVal))
 							} else if reflect.TypeOf(innerVal) != nil && reflect.TypeOf(innerVal).AssignableTo(innerField.Type()) {
 								innerField.Set(reflect.ValueOf(innerVal))
+							} else if innerVal != nil {
+								// v0.13 Stage 1 — recursive narrowing
+								// for nested containers + func types.
+								// Closes `Maybe (Maybe (Int -> Int))`
+								// + `Dict K (Int -> Int)` etc.
+								// where the inner generic instantiation
+								// doesn't directly assign across.
+								narrowed := narrowReflectValue(
+									reflect.ValueOf(innerVal),
+									innerField.Type())
+								if narrowed.IsValid() {
+									innerField.Set(narrowed)
+								}
 							}
 						}
 					}
@@ -1747,6 +1760,20 @@ func AsMapT[V any](v any) map[string]V {
 			// returned "".
 			if isString {
 				out[k] = reflect.ValueOf(fmt.Sprintf("%v", x)).Interface().(V)
+				continue
+			}
+			// v0.13 Stage 1 — narrow via reflect for typed targets
+			// (func / SkyMaybe[T] / SkyResult[E, A] / typed structs).
+			// Without this, `Dict.fromList [("k", \x -> ...)]` typed
+			// as `Dict String (Int -> Int)` silently drops every
+			// function value (target V doesn't directly assign from
+			// the any-boxed `func(any) any` source).
+			if zeroTy != nil && x != nil {
+				sv := reflect.ValueOf(x)
+				narrowed := narrowReflectValue(sv, zeroTy)
+				if narrowed.IsValid() {
+					out[k] = narrowed.Interface().(V)
+				}
 			}
 		}
 		return out
