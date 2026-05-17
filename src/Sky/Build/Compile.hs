@@ -3791,6 +3791,12 @@ goExprGoType e = case e of
                   | Just t <- stripParametric "rt.MaybeCoerce" fn'  -> Just ("rt.SkyMaybe[" ++ t ++ "]")
                   | Just t <- stripParametric "rt.ResultCoerce" fn' -> Just ("rt.SkyResult[" ++ t ++ "]")
                   | Just t <- stripParametric "rt.TaskCoerceT" fn'  -> Just ("rt.SkyTask[" ++ t ++ "]")
+                  -- v0.13 Stage 1 — AsListAny/AsMapAny widen to []any
+                  -- structurally; recovery σ uses this to know the
+                  -- shape (and from there, if inner is typed via
+                  -- structural recovery, T1 can be pinned).
+                  | fn == "AsListAny" -> Just "[]any"
+                  | fn == "AsMapAny"  -> Just "map[string]any"
                   | otherwise -> Nothing
     -- Comparison / logical binops are Go-bool.
     GoIr.GoBinary op _ _
