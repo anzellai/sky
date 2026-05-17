@@ -1214,10 +1214,29 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                         -- look it up.  Pre-fix, cross-module calls
                         -- to Sky-source Result.map got no coercion
                         -- and `go build` rejected the call site.
+                        -- v0.13 Stage 1 — INCLUDE annotated functions
+                        -- too. Previously skipped because HM-inferred
+                        -- TVars for annotated functions could be
+                        -- spurious; for annotated functions we use the
+                        -- ANNOTATION TYPE (reconstructed from pats +
+                        -- retType) rather than the HM-solved type
+                        -- because HM may not preserve the full TLambda
+                        -- structure when the annotation grounds the
+                        -- type (e.g. `node` ends up solved as just
+                        -- `Html msg` losing the 3 input arrows).
+                        -- Using the annotation directly yields
+                        -- TVar-preserving sigs like
+                        -- `func(string) T1` that early
+                        -- `collectFuncTypesWith` would have erased to
+                        -- `func(string) any`. Critical for closing the
+                        -- `rt.Coerce[func(string) any](Msg_Ctor)`
+                        -- adapter class.
                         [ ( prefix ++ "_" ++ goSafeName n
-                          , splitInferredSigWithReg earlyAllRecAliases earlyAllFieldIdx (countParamsFor n depMod) ty )
+                          , splitInferredSigWithReg earlyAllRecAliases earlyAllFieldIdx (countParamsFor n depMod) sigTy )
                         | (n, ty) <- Map.toList depTypes
-                        , not (hasAnnotation n depMod)
+                        , let sigTy = case annotationTypeFor n depMod of
+                                Just annTy -> annTy
+                                Nothing -> ty
                         ]
                     | (modName, depTypes) <- depSolved
                     , let prefix = map (\c -> if c == '.' then '_' else c) modName
@@ -1279,10 +1298,19 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
             -- modifyIORef here only registers per-function sig data
             -- that subsequent codegen passes consult.)
             modifyIORef globalCgEnv $ \e -> e
+                -- v0.13 Stage 1 — depInferredParams/Rets are HM-inferred
+                -- AFTER typecheck and preserve TVar names (`func(string)
+                -- T1`). The pre-typecheck `collectFuncTypesWith`
+                -- entries use `safeReturnTypeWith` which ERASES TVars
+                -- to `any` (`func(string) any`). Union order matters:
+                -- the typed (post-HM) entries must WIN over the early
+                -- erased entries so call-site σ-recovery can pin
+                -- TVars from typed args. `Map.union` keeps the LEFT
+                -- side, so put depInferredParams first.
                 { Rec._cg_funcParamTypes =
-                    Map.union (Rec._cg_funcParamTypes e) depInferredParams
+                    Map.union depInferredParams (Rec._cg_funcParamTypes e)
                 , Rec._cg_funcRetType =
-                    Map.union (Rec._cg_funcRetType e) depInferredRets
+                    Map.union depInferredRets (Rec._cg_funcRetType e)
                 , Rec._cg_funcInferredSigs =
                     Map.union (Rec._cg_funcInferredSigs e) depInferredSigs
                 , Rec._cg_funcSkyToGoTVars =
@@ -2870,12 +2898,23 @@ generateGoMulti canMod srcMod config solvedTypes depDecls depRecAliases depUnion
                                (Rec._cg_recordAliases prevEnv))
                 (entryParamTys, entryRetTys, entryUltRetTys) =
                     collectFuncTypesWith allRecAliases "" canMod
+                -- v0.13 Stage 1 — INFERRED (post-typecheck, TVar-
+                -- preserving) entries MUST win over the early
+                -- `collectFuncTypesWith` entries (which use
+                -- `safeReturnTypeWith` that erases TVars to `any`).
+                -- `Map.unions` keeps the LEFTMOST entry, so put the
+                -- *Inferred* maps first. Without this, σ-recovery at
+                -- HOF call sites sees `func(string) any` (erased) as
+                -- the callee's param shape instead of `func(string)
+                -- T1`, and the TVar can never be pinned → forces a
+                -- `rt.Coerce[func(string) any](Msg_Ctor)` wrap that
+                -- dominates the residual adapter count.
                 allParamTys = Map.unions
-                    [ entryParamTys, entryInferredParams
-                    , depParamTypes, extraInferredParamTypes ]
+                    [ entryInferredParams, extraInferredParamTypes
+                    , entryParamTys, depParamTypes ]
                 allRetTys   = Map.unions
-                    [ entryRetTys, entryInferredRets
-                    , depRetTypes, extraInferredRetTypes ]
+                    [ entryInferredRets, extraInferredRetTypes
+                    , entryRetTys, depRetTypes ]
                 -- v0.13 Stage 2 — ultimate return types (after all
                 -- args applied). ONLY merge entries computed with
                 -- `ultimateReturnType` (recursive TLambda strip).
@@ -4647,7 +4686,32 @@ collectFuncTypesWith extraRecAliases prefix canMod =
             , let paramTys = map (safeReturnTypeWith knownRecAliases . snd) fieldList
             , let retTy = qualName aliasName ++ "_R"
             ]
-        allResults = results ++ ctorResults
+        -- v0.13 Stage 1 — ADT constructors (e.g. `State_Msg_InputName`)
+        -- need their typed Go param/return registered so `goExprGoType`
+        -- at HOF call sites can recover the ctor's typed sig. Without
+        -- this, `onInput State_Msg_InputName` (where the kernel sig is
+        -- `(String -> msg) -> Attribute msg`) fails σ-recovery for the
+        -- TVar `msg`, the substituted param type erases to
+        -- `func(string) any`, and a `rt.Coerce[func(string) any]`
+        -- wrap is forced even though the ctor's actual sig is
+        -- `func(string) State_Msg`. Closes the dominant adapter class
+        -- across the sweep (~45 of 50 are this exact shape).
+        --
+        -- Only registers arity > 0 ctors; zero-arity ones are emitted
+        -- as `var` decls, not functions.
+        adtCtorResults =
+            [ ( qualName (typeName ++ "_" ++ cname)
+              , map (safeReturnTypeWith knownRecAliases) argTys
+              , qualName typeName
+              , qualName typeName )
+            | (typeName, Can.Union _vars ctors _numAlts opts)
+                <- Map.toList (Can._unions canMod)
+            , case opts of { Can.Enum -> False; _ -> True }
+            , Can.Ctor cname _idx arity argTys <- ctors
+            , arity > 0
+            , length argTys == arity
+            ]
+        allResults = results ++ ctorResults ++ adtCtorResults
         paramMap = Map.fromList [ (qual, ps) | (qual, ps, _, _) <- allResults ]
         retMap   = Map.fromList [ (qual, r)  | (qual, _, r, _) <- allResults ]
         ultMap   = Map.fromList [ (qual, u)  | (qual, _, _, u) <- allResults ]
@@ -4814,7 +4878,7 @@ countParamsFor name canMod = go (Can._decls canMod)
     go Can.SaveTheEnvironment = 0
     go (Can.Declare d rest) = maybe (go rest) id (matchDef d)
     go (Can.DeclareRec d ds rest) =
-        maybe (firstMatching (d : ds) (go rest)) id (matchDef d)
+        firstMatchInt (d : ds) (go rest)
     matchDef d = case d of
         Can.Def (A.At _ n) pats _
             | n == name -> Just (length pats)
@@ -4823,6 +4887,35 @@ countParamsFor name canMod = go (Can._decls canMod)
             | n == name -> Just (length pats)
             | otherwise -> Nothing
         _ -> Nothing
+    firstMatchInt []     fallback = fallback
+    firstMatchInt (d:ds) fallback = case matchDef d of
+        Just n  -> n
+        Nothing -> firstMatchInt ds fallback
+
+-- | v0.13 Stage 1 — reconstruct the full annotation type for an
+-- annotated TypedDef in a module by folding param types into a
+-- TLambda chain with the return type at the tail. Used by the dep-
+-- sig pipeline to recover sigs that HM's solved type might have
+-- stripped to just the return type.
+annotationTypeFor :: String -> Can.Module -> Maybe T.Type
+annotationTypeFor name canMod = go (Can._decls canMod)
+  where
+    go Can.SaveTheEnvironment = Nothing
+    go (Can.Declare d rest) = case matchDef d of
+        Just t -> Just t
+        Nothing -> go rest
+    go (Can.DeclareRec d ds rest) = case matchDef d of
+        Just t -> Just t
+        Nothing -> firstMatch (d : ds) (go rest)
+    matchDef d = case d of
+        Can.TypedDef (A.At _ n) _ typedPats _ retType
+            | n == name ->
+                Just (foldr T.TLambda retType (map snd typedPats))
+        _ -> Nothing
+    firstMatch [] fallback = fallback
+    firstMatch (d:ds) fallback = case matchDef d of
+        Just t  -> Just t
+        Nothing -> firstMatch ds fallback
     firstMatching [] fallback = fallback
     firstMatching (d:ds) fallback = case matchDef d of
         Just k  -> k
