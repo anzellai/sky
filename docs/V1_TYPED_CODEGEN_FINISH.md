@@ -305,29 +305,38 @@ End-of-session count (post all Stage 1+2 commits):
 |-----------------|--------|-------|------|
 | 02-go-stdlib    |   1    |   1   |   0  |
 | 06-json         |   9    |  10   |  +1  |
-| 07-todo-cli     |   9    |   2   |  -7  |
-| 08-notes-app    |   5    |   5   |   0  |
-| 09-live-counter |   3    |   3   |   0  |
-| 10-live-component|  4    |   4   |   0  |
-| 12-skyvote      |   5    |   5   |   0  |
-| 13-skyshop      |  23    |  22   |  -1  |
+| 07-todo-cli     |   9    |   1   |  -8  |
+| 08-notes-app    |   5    |   1   |  -4  |
+| 09-live-counter |   3    |   1   |  -2  |
+| 10-live-component|  4    |   2   |  -2  |
+| 12-skyvote      |   5    |   1   |  -4  |
+| 13-skyshop      |  23    |  11   | -12  |
 | 14-task-demo    |   2    |   0   |  -2  |
-| 16-skychess     |  10    |  10   |   0  |
-| 17-skymon       |  15    |  15   |   0  |
-| 18-job-queue    |  13    |  10   |  -3  |
-| 19-skyforum     |  11    |   7   |  -4  |
+| 16-skychess     |  10    |   6   |  -4  |
+| 17-skymon       |  15    |   3   | -12  |
+| 18-job-queue    |  13    |   5   |  -8  |
+| 19-skyforum     |  11    |   6   |  -5  |
 | 20-cli-counter  |   1    |   0   |  -1  |
 | 21-tui-stopwatch|   1    |   0   |  -1  |
 | 22-tui-stopwatch-ui |1   |   0   |  -1  |
-| 23-tui-todo     |   3    |   2   |  -1  |
-| 24-tui-kitchen-sink | (new) | 4 | — |
+| 23-tui-todo     |   3    |   1   |  -2  |
+| 24-tui-kitchen-sink | (new) | 3 | — |
 
-**Net session drop: ~21 unjustified `func(any) any` adapters
-eliminated across the 24-example sweep.**
+**Net session drop: ~69 unjustified `func(any) any` adapters
+eliminated across the 24-example sweep (~62% of baseline ~112).**
 
 The 06-json +1 is a single shape side-effect — build runs
 correctly, output identical. Likely a different lambda shape
 emerged from the new path; harmless.
+
+**Remaining ~43 adapters across the sweep break down as:**
+- ~25 in Sky-source kernel body recursive calls (Sky_Core_List_*,
+  Sky_Core_Maybe_*, etc.). Need pipeline reorder (task #189).
+- ~10 in 06-json Json decoder callbacks. Opaque rt.SkyDecoder
+  erases the type variable; would need typed `SkyDecoder[T]`
+  generic shapes — major refactor.
+- ~8 in 13-skyshop Stripe FFI nested code (function-returning-
+  function chains through opaque Stripe types).
 
 ## Remaining work — concrete next-session items
 
