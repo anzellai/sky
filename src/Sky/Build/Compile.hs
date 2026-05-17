@@ -3827,7 +3827,30 @@ goExprGoType e = case e of
             in if take 5 goTy == "func("
                  then Just goTy
                  else Nothing
-        _                           -> Nothing
+        _ ->
+            -- v0.13 Stage 1 — top-level Sky function passed as a
+            -- HOF arg: look up its Go param + return types from
+            -- the codegen env. Critical for the
+            -- `Sky_Core_List_map_(rt.Coerce[func(any) any](TopLevelFn), …)`
+            -- adapter wrap class. Once goExprGoType returns the
+            -- typed sig for `TopLevelFn`, the call-site coerceArg
+            -- short-circuits (target type matches source type) and
+            -- emits no wrap.
+            let env = getCgEnv
+                paramTys = Map.findWithDefault [] name
+                              (Rec._cg_funcParamTypes env)
+                retTy = Map.findWithDefault "any" name
+                              (Rec._cg_funcRetType env)
+            in if not (null paramTys)
+                  && any (/= "any") paramTys
+                  && all (\t -> t /= ""
+                                && not (isGenericTypeParam t))
+                         paramTys
+                  && not (isGenericTypeParam retTy)
+                 then Just ("func("
+                            ++ intercalateComma paramTys
+                            ++ ") " ++ retTy)
+                 else Nothing
     -- v0.13 Stage 1 — typed function literal carries its full Go
     -- signature. Used by the call-site recovery σ to deduce TVar
     -- substitutions from typed lambda args: a literal
