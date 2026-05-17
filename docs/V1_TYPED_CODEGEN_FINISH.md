@@ -255,11 +255,24 @@ verified by example sweep + cabal test before moving to the next.
       for typed lambda/slice args, kernel-call recovery σ with
       typed-lambda emission, top-level function ident lookup in
       `goExprGoType`, typed let-bound multi-pattern functions
-      (both annotated and HM-inferred). Net session: 69 adapters
-      eliminated across the 24-example sweep (~62% of baseline ~112).
-      Final remainders are in 3 distinct classes (kernel-body
-      recursive calls, opaque rt.SkyDecoder, Stripe FFI nested
+      (both annotated and HM-inferred), Records-with-function-field
+      as struct (not interface), runtime container conversions for
+      function values (Maybe/Result/List/Dict of functions). Net
+      session: 69 codegen adapters eliminated across the sweep, plus
+      6 runtime-correctness fixes for typed-function-in-container
+      edge cases. Final remainders are in 3 distinct classes (kernel-
+      body recursive calls, opaque rt.SkyDecoder, Stripe FFI nested
       code) — each needs separate multi-day work.
+
+      Edge-case coverage added this session (test/runtime regressions
+      in `runtime-go/rt/typed_container_func_test.go`):
+        * Maybe (Int -> Int) — `Just (\x -> x*3)` round-trip
+        * Maybe (Maybe (Int -> Int)) — nested Maybe + recursive narrow
+        * List (Int -> Int) — typed-fn slice via AsListT
+        * Dict String (Int -> Int) — typed-fn map via AsMapT
+        * Records with function fields (struct not interface)
+        * ADT ctor holding function (`type T = T (Int -> Int)`)
+        * Result with function inside Ok
 - [~] **Stage 2 — Typed partial application** (43791e2). First concrete
       drop landed: `_cg_funcUltimateRetType` map + typed wrapper in
       `emitPartialUserCall`. The recovery-σ infrastructure in
