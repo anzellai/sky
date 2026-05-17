@@ -1014,7 +1014,7 @@ staticKernelFunctions = Map.fromList
     -- errors on missing). `Env.get`'s Maybe-shape is dropped — use
     -- `System.getenvOr "" key` for the optional-default pattern.
     , ("Middleware", ["withCors", "withLogging", "withBasicAuth", "withRateLimit"])
-    , ("Ffi",     ["call", "callPure", "callTask", "has", "isPure"])
+    , ("Ffi",     ["call", "callPure", "callTask", "has", "isPure", "toAny"])
     -- v0.13 Layer 3: Html / Attr whitelist entries removed — those
     -- are Sky-source stdlib modules now; their exported names come
     -- from the parsed module, not this kernel registry.
@@ -1027,6 +1027,8 @@ staticKernelFunctions = Map.fromList
     , ("Jobs",    ["define", "enqueue", "enqueueIn", "cancel"])
     -- v0.13 Layer 3: Event whitelist removed — Std.Html.Events is a
     -- Sky-source stdlib module now.
+    -- Phase 2.4: Decimal / Money / Std.Time zone helpers removed —
+    -- those are Sky-source stdlib modules now (sky-stdlib/Std/...).
     , ("Sub",     ["none", "every"])
     , ("Set",     ["empty", "fromList", "insert", "remove", "member", "toList",
                     "size", "union", "intersect", "diff"])

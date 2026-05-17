@@ -608,6 +608,8 @@ Single canonical module per concern after the v0.10.0 consolidation. Every kerne
 | `Json.Decode` (alias `JsonDec`) | `Sky.Core.Json.Decode` | decodeString, string, int, float, bool, field, index, list, map, andThen, succeed, fail, oneOf, at, map2..5 |
 | `Json.Decode.Pipeline` (alias `JsonDecP`) | `Sky.Core.Json.Decode.Pipeline` | required, optional, custom, requiredAt |
 | `Uuid` | `Sky.Core.Uuid` | v4, v7, parse |
+| `Decimal` | `Std.Decimal` | Layer 3 Sky-source. Arbitrary-precision arithmetic for money / billing / tax. fromString, fromInt, fromFloat, fromMinor, toString, toStringFixed, toFloat, toInt, toMinor, add, sub, mul, div, mod, neg, abs, round (banker's), roundHalfUp, truncate, floor, ceil, compare, eq/neq/lt/lte/gt/gte, min, max, isZero/isPositive/isNegative, percentOf, addPercent, subPercent, formatWith, sum, zero, one, oneHundred |
+| `Money` | `Std.Money` | Layer 3 Sky-source. Currency-aware Money built on Decimal + ISO 4217 Currency enum (50+ codes + crypto). fromMinor, fromMajor, fromString, zero, zeroOf, amount, currency, currencyCode, add, sub, mul, allocate (fair-split), sumOf, neg, abs, eq/neq/lt/lte/gt/gte, compare, isZero/isPositive/isNegative, format, formatWithCode, toMinor, percentOf, addPercent, subPercent, minorUnits, symbol, currencyName, knownCurrency, parseCurrency, setRate, getRate, hasRate, clearRates, convert |
 
 ### Effects (`Task Error a`)
 | Module | Path | Key functions |
@@ -616,6 +618,7 @@ Single canonical module per concern after the v0.10.0 consolidation. Every kerne
 | `Cmd` | `Std.Cmd` | none, batch, perform |
 | `Sub` | `Std.Sub` | none, every |
 | `Time` | `Sky.Core.Time` | now, sleep, every, unixMillis, formatISO8601, formatRFC3339, formatHTTP, format, parseISO8601, parse, addMillis, diffMillis, timeString |
+| `Std.Time` (zone helpers) | `Std.Time` | Layer 3 Sky-source. IANA-zone helpers complementing the kernel `Sky.Core.Time`. inZone, formatInZone, addMonths/Years (CLAMPED to month-end — Jan 31 + 1 month → Feb 28/29), addDays/Hours/Minutes/Seconds, startOfDay/Week/Month/Year, endOfDay/Month/Year, year/month/day, dayOfWeek (ISO Mon=1..Sun=7), dayOfYear, weekOfYear (ISO 8601), isWeekend, daysInMonth, isLeapYear, diffDays/Hours/Minutes/Seconds, fromParts, zoneOffset, zoneName, utc |
 | `Random` | `Sky.Core.Random` | int, float, choice, shuffle |
 | `Http` | `Sky.Core.Http` | get, post, request |
 | `File` | `Sky.Core.File` | readFile, readFileLimit, readFileBytes, writeFile, append, mkdirAll, readDir, exists, remove, isDir, tempFile, copy, rename |

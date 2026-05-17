@@ -1281,6 +1281,150 @@ choice : List a -> Task Error a          -- random element from list
 shuffle : List a -> Task Error (List a)  -- Fisher-Yates shuffle
 ```
 
+### Std.Decimal — arbitrary-precision arithmetic
+
+For money, billing, tax, invoices — anything where 0.1 + 0.2 must equal
+0.3 exactly. Backed by shopspring/decimal under the hood. `Decimal` is
+opaque; construct via `fromString` / `fromInt` / `fromFloat` / `fromMinor`.
+
+```elm
+import Std.Decimal as Dec exposing (Decimal)
+
+-- Construction
+fromString : String -> Result Error Decimal      -- "3.14" → Decimal
+fromInt    : Int -> Decimal
+fromFloat  : Float -> Decimal
+fromMinor  : Int -> Int -> Decimal               -- fromMinor 2 12345 = 123.45
+
+-- Arithmetic (exact)
+add, sub, mul : Decimal -> Decimal -> Decimal
+div, mod      : Decimal -> Decimal -> Result Error Decimal  -- Err on /0
+neg, abs      : Decimal -> Decimal
+
+-- Rounding modes
+round       : Int -> Decimal -> Decimal    -- banker's (round-half-to-even)
+roundHalfUp : Int -> Decimal -> Decimal    -- schools rounding
+truncate    : Int -> Decimal -> Decimal    -- toward zero
+floor, ceil : Decimal -> Decimal
+
+-- Comparison
+compare : Decimal -> Decimal -> Int   -- -1 / 0 / 1
+eq, neq, lt, lte, gt, gte : Decimal -> Decimal -> Bool
+min, max : Decimal -> Decimal -> Decimal
+isZero, isPositive, isNegative : Decimal -> Bool
+
+-- Percent
+percentOf   : Decimal -> Decimal -> Decimal   -- percentOf 20 100 = 20
+addPercent  : Decimal -> Decimal -> Decimal   -- addPercent 10 100 = 110
+subPercent  : Decimal -> Decimal -> Decimal   -- subPercent 10 100 = 90
+
+-- Formatting
+toString      : Decimal -> String
+toStringFixed : Int -> Decimal -> String       -- always N dp
+formatWith    : String -> String -> Int -> Decimal -> String
+                                               -- thousandsSep decimalSep places d
+                                               -- formatWith "," "." 2 → "1,234,567.89" (US)
+                                               -- formatWith "." "," 2 → "1.234.567,89" (EU)
+
+sum  : List Decimal -> Decimal
+zero, one, oneHundred : Decimal
+```
+
+### Std.Money — currency-aware arithmetic on Decimal
+
+ISO 4217 minor-unit awareness (JPY=0dp, USD=2dp, BHD=3dp).
+Currency-match enforced at add/sub. Built-in fair-split allocator.
+Pluggable FX rate registry.
+
+```elm
+import Std.Money as Money exposing (Money, Currency(..))
+import Std.Decimal as Dec
+
+-- Currency: 50+ codes (USD/EUR/GBP/JPY/CNY/…/BTC/ETH/USDT) + CurrencyRaw String
+
+-- Construction
+Money.fromMajor USD 100       -- $100.00
+Money.fromMinor USD 12345     -- $123.45 (cents)
+Money.fromString USD "99.99"  -- Result Error Money
+
+-- Accessors
+Money.amount, Money.currency, Money.currencyCode
+
+-- Currency metadata (ISO 4217)
+Money.minorUnits   : Currency -> Int     -- USD=2, JPY=0, BHD=3
+Money.symbol       : Currency -> String  -- "$", "¥", "£", …
+Money.currencyName : Currency -> String
+Money.knownCurrency, Money.parseCurrency
+
+-- Arithmetic — currency-checked
+Money.add, Money.sub : Money -> Money -> Money      -- same-currency or no-op
+Money.mul            : Decimal -> Money -> Money    -- scalar multiply
+Money.neg, Money.abs
+
+-- Fair-split: sum-preserving allocation
+Money.allocate 3 ($100)   -- [$33.34, $33.33, $33.33] — sums to $100 exactly
+Money.sumOf USD [..]
+
+-- Comparison, predicates
+Money.eq/neq/lt/lte/gt/gte, Money.compare
+Money.isZero, Money.isPositive, Money.isNegative
+
+-- Percent (returns same currency)
+Money.percentOf, Money.addPercent, Money.subPercent
+
+-- Formatting
+Money.format          -- "$12.34" — symbol-prefix
+Money.formatWithCode  -- "12.34 USD" — ISO suffix (B2B)
+Money.toMinor         -- → integer cents (for DB persistence)
+
+-- FX rate registry (process-local)
+Money.setRate USD EUR (Dec.fromString "0.92" |> okOrZero)   -- inverse auto-set
+Money.getRate, Money.hasRate, Money.clearRates
+Money.convert EUR ($100 USD)   -- Result Error Money
+```
+
+### Std.Time — IANA timezone-aware helpers
+
+Complements kernel `Sky.Core.Time` (UTC-only). Zone strings are IANA
+("UTC", "America/New_York", "Asia/Tokyo"). Embedded `time/tzdata` so
+calls work in container/scratch images without /usr/share/zoneinfo.
+
+```elm
+import Std.Time as Tz
+
+-- Formatting (Go layout strings)
+Tz.inZone : String -> Int -> Result Error String       -- RFC 3339 with offset
+Tz.formatInZone "America/New_York" "2006-01-02 15:04" ms
+
+-- Calendar arithmetic (CLAMPED — Jan 31 + 1 month = Feb 28/29, NOT Mar 3)
+Tz.addMonths, Tz.addYears : Int -> Int -> Int
+Tz.addDays, Tz.addHours, Tz.addMinutes, Tz.addSeconds : Int -> Int -> Int
+
+-- Period boundaries (zone-aware — local midnight, not UTC midnight)
+Tz.startOfDay, Tz.endOfDay
+Tz.startOfWeek                -- Monday (ISO 8601)
+Tz.startOfMonth, Tz.endOfMonth
+Tz.startOfYear, Tz.endOfYear
+
+-- Calendar queries
+Tz.year, Tz.month, Tz.day      : String -> Int -> Result Error Int
+Tz.dayOfWeek                   -- ISO: Monday=1 .. Sunday=7
+Tz.dayOfYear, Tz.weekOfYear    -- ISO 8601 week
+Tz.isWeekend
+Tz.daysInMonth y m             -- pure (no zone)
+Tz.isLeapYear
+
+-- Differences (a - b)
+Tz.diffDays, Tz.diffHours, Tz.diffMinutes, Tz.diffSeconds : Int -> Int -> Int
+
+-- Construction from parts
+Tz.fromParts zone y m d h min s : Result Error Int
+
+-- Zone discovery
+Tz.zoneOffset, Tz.zoneName     -- DST-aware for the given moment
+Tz.utc                          -- shorthand "UTC"
+```
+
 ### Std.Html
 
 v0.13: `Std.Html` / `Std.Html.Attributes` / `Std.Html.Events` are

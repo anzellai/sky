@@ -4340,6 +4340,13 @@ runtimeTypedMap =
     , ("Middleware", "rt.SkyMiddleware")
     , ("Session",    "rt.SkySession")
     , ("Store",      "rt.SkyStore")
+    -- Sky.Core.Error.Error is the canonical Sky error type. When
+    -- HM cross-module propagation drops the home (call sites
+    -- coerced via Result-shape stripping), the type renderer
+    -- otherwise emits bare `Error` which `go build` rejects. Map
+    -- the bare name to the qualified Go alias so the fallback
+    -- path resolves cleanly.
+    , ("Error",      "Sky_Core_Error_Error")
     -- v0.13 A2 follow-up: kernel `Http.get`/`Http.post` declare
     -- their return type with empty `home` and name `HttpResponse`.
     -- Once A2's pre-registration connects forward refs (e.g. an

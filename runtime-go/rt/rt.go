@@ -1542,6 +1542,15 @@ func AsList(v any) []any {
 		}
 		return out
 	}
+	// Result/Maybe unwrap — mirrors AsString/AsInt. Needed for
+	// Sky-source modules that route list returns through
+	// Ffi.callPure (Money.allocate, …) where runWithRecover's
+	// auto-Ok-wrap parks the slice inside a SkyResult.
+	if isSkyContainer(v) {
+		if u := unwrapAny(v); u != nil {
+			return AsList(u)
+		}
+	}
 	return nil
 }
 
@@ -1560,6 +1569,12 @@ func AsListAny(v any) []any {
 	}
 	rv := reflect.ValueOf(v)
 	if rv.Kind() != reflect.Slice {
+		// Result/Maybe unwrap, then retry.
+		if isSkyContainer(v) {
+			if u := unwrapAny(v); u != nil {
+				return AsListAny(u)
+			}
+		}
 		return nil
 	}
 	n := rv.Len()
@@ -1765,6 +1780,14 @@ func AsInt(v any) int {
 	case float32:
 		return int(n)
 	}
+	// Result/Maybe unwrap fallback (mirrors AsString). Only attempt
+	// on Sky container structs to avoid panicking on uncomparable
+	// types (e.g. slices, maps, funcs).
+	if isSkyContainer(v) {
+		if u := unwrapAny(v); u != nil {
+			return AsInt(u)
+		}
+	}
 	panic(fmt.Sprintf("rt.AsInt: expected numeric value, got %T (%v)", v, v))
 }
 
@@ -1811,6 +1834,11 @@ func AsFloat(v any) float64 {
 	case int32:
 		return float64(n)
 	}
+	if isSkyContainer(v) {
+		if u := unwrapAny(v); u != nil {
+			return AsFloat(u)
+		}
+	}
 	panic(fmt.Sprintf("rt.AsFloat: expected numeric value, got %T (%v)", v, v))
 }
 
@@ -1835,6 +1863,11 @@ func AsFloatOrZero(v any) float64 {
 func AsBool(v any) bool {
 	if b, ok := v.(bool); ok {
 		return b
+	}
+	if isSkyContainer(v) {
+		if u := unwrapAny(v); u != nil {
+			return AsBool(u)
+		}
 	}
 	panic(fmt.Sprintf("rt.AsBool: expected bool, got %T (%v)", v, v))
 }
@@ -2845,7 +2878,15 @@ func runWithRecover(name string, args []any, fn func([]any) any) (result any) {
 			result = Err[any, any](fmt.Sprintf("Ffi %q panicked: %v", name, r))
 		}
 	}()
-	return Ok[any, any](fn(args))
+	raw := fn(args)
+	// Handlers that already return a Sky Result (Decimal.fromString,
+	// Money.setRate, Time.inZone, …) shouldn't get double-wrapped —
+	// detect via SkyResult type-assertion and pass through. Plain
+	// return values (htmlRender → String) get the existing Ok-wrap.
+	if _, ok := raw.(SkyResult[any, any]); ok {
+		return raw
+	}
+	return Ok[any, any](raw)
 }
 
 // Ffi.callPure : String -> List any -> Result String a
@@ -2892,6 +2933,11 @@ func Ffi_isPure(name any) any {
 	ffiRegistryMu.RUnlock()
 	return ok
 }
+
+// Ffi.toAny : a -> any — runtime identity; the type-level wrap
+// for building heterogeneous Ffi.callPure arg lists from Sky source.
+// See lookupKernelType "Ffi.toAny" for the type rationale.
+func Ffi_toAny(v any) any { return v }
 
 // SkyADT: runtime type for ADT case-match dispatch.
 // Codegen emits `msg.(rt.SkyADT)` so any local ADT type (with matching Tag/Fields)
@@ -3813,6 +3859,36 @@ func Coerce[T any](v any) T {
 	if t, ok := v.(T); ok {
 		return t
 	}
+	// If the source is a Sky Result/Maybe but the target isn't,
+	// unwrap the Ok/Just first. Fixes the path where Ffi.callPure's
+	// auto-Ok-wrap collides with a typed non-Result Sky surface
+	// (Decimal.zero : Decimal — the handler returns the bare
+	// SkyADT, runWithRecover wraps it in Ok, callers Coerce[SkyADT]).
+	// Source must be a Sky container struct (Result/Maybe) — guarding
+	// on Kind avoids panics from `u != v` on uncomparable types
+	// (e.g. func values).
+	if v != nil {
+		if rvSrc := reflect.ValueOf(v); rvSrc.IsValid() && rvSrc.Kind() == reflect.Struct {
+			if rvSrc.FieldByName("Tag").IsValid() && rvSrc.FieldByName("OkValue").IsValid() ||
+				rvSrc.FieldByName("Tag").IsValid() && rvSrc.FieldByName("JustValue").IsValid() {
+				var zeroT T
+				targetTy := reflect.TypeOf(zeroT)
+				isResultTarget := false
+				if targetTy != nil {
+					tyStr := targetTy.String()
+					isResultTarget = strings.HasPrefix(tyStr, "rt.SkyResult[") ||
+						strings.HasPrefix(tyStr, "rt.SkyMaybe[")
+				}
+				if !isResultTarget {
+					u := unwrapAny(v)
+					if t, ok := u.(T); ok {
+						return t
+					}
+					v = u
+				}
+			}
+		}
+	}
 	var zero T
 	// nil passes through for pointer/interface/slice/map/func targets.
 	// Sky's `js "nil"` produces Go nil; typed FFI wrappers may need to
@@ -3999,6 +4075,29 @@ func Coerce[T any](v any) T {
 // the wrapped value to runtime functions (Dict.map, List.member, etc.)
 // that expect the raw T. Without this, every such site panics with
 // "interface {} is rt.SkyResult[...], not <expected>".
+// isSkyContainer reports whether v is a Sky container struct
+// (SkyResult / SkyMaybe / SkyADT shape) — usable as a precondition
+// for unwrapAny when the caller can't risk an `u != v` comparison
+// on an uncomparable source type (slices, maps, funcs).
+func isSkyContainer(v any) bool {
+	if v == nil {
+		return false
+	}
+	rv := reflect.ValueOf(v)
+	if rv.Kind() != reflect.Struct {
+		return false
+	}
+	tagF := rv.FieldByName("Tag")
+	if !tagF.IsValid() {
+		return false
+	}
+	if tagF.Kind() != reflect.Int && tagF.Kind() != reflect.Int64 {
+		return false
+	}
+	return rv.FieldByName("OkValue").IsValid() ||
+		rv.FieldByName("JustValue").IsValid()
+}
+
 func unwrapAny(v any) any {
 	if v == nil {
 		return v

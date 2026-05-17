@@ -222,6 +222,11 @@ builtinTypes =
     , ("Maybe",  TypeHome ModuleName.maybe_ "Maybe" 1)
     , ("Result", TypeHome ModuleName.result_ "Result" 2)
     , ("Task",   TypeHome ModuleName.task "Task" 2)
+    -- Sky.Core.Error.Error is the canonical Sky error type
+    -- (v0.10.0 consolidation). Auto-imported so every Sky source
+    -- can write `Result Error a` without an explicit
+    -- `import Sky.Core.Error exposing (Error)`.
+    , ("Error",  TypeHome (ModuleName.Canonical "Sky.Core.Error") "Error" 0)
     ]
 
 

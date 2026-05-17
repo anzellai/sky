@@ -17,8 +17,6 @@ module Sky.Cli.DoctorSpec (spec) where
 -- project-root discovery; we wrap calls in `withCurrentDirectory`
 -- so per-test temp directories work without polluting the host.
 
-{-# LANGUAGE ScopedTypeVariables #-}
-
 import Test.Hspec
 import Control.Exception (catch, SomeException)
 import System.Exit (ExitCode(..))

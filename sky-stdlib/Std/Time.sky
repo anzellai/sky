@@ -1,0 +1,214 @@
+module Std.Time exposing
+    ( inZone, formatInZone
+    , addMonths, addYears, addDays, addHours, addMinutes, addSeconds
+    , startOfDay, endOfDay
+    , startOfWeek, startOfMonth, endOfMonth, startOfYear, endOfYear
+    , year, month, day
+    , dayOfWeek, dayOfYear, weekOfYear, isWeekend
+    , daysInMonth, isLeapYear
+    , diffDays, diffHours, diffMinutes, diffSeconds
+    , fromParts, zoneOffset, zoneName
+    , utc
+    )
+
+-- | Std.Time — IANA timezone-aware time helpers.
+--
+-- Real apps need to display timestamps in the user's local zone,
+-- schedule events at "9am London time", do calendar arithmetic
+-- ("invoice due 1 month from issue"), and bucket reports by local
+-- day boundaries.
+--
+-- Zones are IANA strings: "UTC", "America/New_York", "Asia/Tokyo".
+-- Invalid zone names return `Err Error`.
+--
+-- Layer 3 design: thin Sky-source wrappers around the
+-- `Ffi.callPure` boundary into runtime-go/rt/time_zones.go.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error exposing (Error)
+import Sky.Ffi as Ffi
+
+
+-- ─── Shorthand for the UTC zone ─────────────────────────────────
+
+utc : String
+utc =
+    "UTC"
+
+
+-- ─── Formatting ────────────────────────────────────────────────
+
+inZone : String -> Int -> Result Error String
+inZone zone ms =
+    Ffi.callPure "Time_inZone" [ Ffi.toAny zone, Ffi.toAny ms ]
+
+
+formatInZone : String -> String -> Int -> Result Error String
+formatInZone zone layout ms =
+    Ffi.callPure "Time_formatInZone"
+        [ Ffi.toAny zone, Ffi.toAny layout, Ffi.toAny ms ]
+
+
+-- ─── Calendar arithmetic ───────────────────────────────────────
+
+addMonths : Int -> Int -> Int
+addMonths months ms =
+    Ffi.callPure "Time_addMonths" [ months, ms ]
+
+
+addYears : Int -> Int -> Int
+addYears years_ ms =
+    Ffi.callPure "Time_addYears" [ years_, ms ]
+
+
+addDays : Int -> Int -> Int
+addDays days ms =
+    Ffi.callPure "Time_addDays" [ days, ms ]
+
+
+addHours : Int -> Int -> Int
+addHours hours ms =
+    Ffi.callPure "Time_addHours" [ hours, ms ]
+
+
+addMinutes : Int -> Int -> Int
+addMinutes minutes ms =
+    Ffi.callPure "Time_addMinutes" [ minutes, ms ]
+
+
+addSeconds : Int -> Int -> Int
+addSeconds seconds ms =
+    Ffi.callPure "Time_addSeconds" [ seconds, ms ]
+
+
+-- ─── Period boundaries ─────────────────────────────────────────
+
+startOfDay : String -> Int -> Result Error Int
+startOfDay zone ms =
+    Ffi.callPure "Time_startOfDay" [ Ffi.toAny zone, Ffi.toAny ms ]
+
+
+endOfDay : String -> Int -> Result Error Int
+endOfDay zone ms =
+    Ffi.callPure "Time_endOfDay" [ Ffi.toAny zone, Ffi.toAny ms ]
+
+
+startOfWeek : String -> Int -> Result Error Int
+startOfWeek zone ms =
+    Ffi.callPure "Time_startOfWeek" [ Ffi.toAny zone, Ffi.toAny ms ]
+
+
+startOfMonth : String -> Int -> Result Error Int
+startOfMonth zone ms =
+    Ffi.callPure "Time_startOfMonth" [ Ffi.toAny zone, Ffi.toAny ms ]
+
+
+endOfMonth : String -> Int -> Result Error Int
+endOfMonth zone ms =
+    Ffi.callPure "Time_endOfMonth" [ Ffi.toAny zone, Ffi.toAny ms ]
+
+
+startOfYear : String -> Int -> Result Error Int
+startOfYear zone ms =
+    Ffi.callPure "Time_startOfYear" [ Ffi.toAny zone, Ffi.toAny ms ]
+
+
+endOfYear : String -> Int -> Result Error Int
+endOfYear zone ms =
+    Ffi.callPure "Time_endOfYear" [ Ffi.toAny zone, Ffi.toAny ms ]
+
+
+-- ─── Calendar queries ──────────────────────────────────────────
+
+year : String -> Int -> Result Error Int
+year zone ms =
+    Ffi.callPure "Time_year" [ Ffi.toAny zone, Ffi.toAny ms ]
+
+
+month : String -> Int -> Result Error Int
+month zone ms =
+    Ffi.callPure "Time_month" [ Ffi.toAny zone, Ffi.toAny ms ]
+
+
+day : String -> Int -> Result Error Int
+day zone ms =
+    Ffi.callPure "Time_day" [ Ffi.toAny zone, Ffi.toAny ms ]
+
+
+dayOfWeek : String -> Int -> Result Error Int
+dayOfWeek zone ms =
+    Ffi.callPure "Time_dayOfWeek" [ Ffi.toAny zone, Ffi.toAny ms ]
+
+
+dayOfYear : String -> Int -> Result Error Int
+dayOfYear zone ms =
+    Ffi.callPure "Time_dayOfYear" [ Ffi.toAny zone, Ffi.toAny ms ]
+
+
+weekOfYear : String -> Int -> Result Error Int
+weekOfYear zone ms =
+    Ffi.callPure "Time_weekOfYear" [ Ffi.toAny zone, Ffi.toAny ms ]
+
+
+isWeekend : String -> Int -> Result Error Bool
+isWeekend zone ms =
+    Ffi.callPure "Time_isWeekend" [ Ffi.toAny zone, Ffi.toAny ms ]
+
+
+daysInMonth : Int -> Int -> Int
+daysInMonth y m =
+    Ffi.callPure "Time_daysInMonth" [ y, m ]
+
+
+isLeapYear : Int -> Bool
+isLeapYear y =
+    Ffi.callPure "Time_isLeapYear" [ y ]
+
+
+-- ─── Differences ───────────────────────────────────────────────
+
+diffDays : Int -> Int -> Int
+diffDays a b =
+    Ffi.callPure "Time_diffDays" [ a, b ]
+
+
+diffHours : Int -> Int -> Int
+diffHours a b =
+    Ffi.callPure "Time_diffHours" [ a, b ]
+
+
+diffMinutes : Int -> Int -> Int
+diffMinutes a b =
+    Ffi.callPure "Time_diffMinutes" [ a, b ]
+
+
+diffSeconds : Int -> Int -> Int
+diffSeconds a b =
+    Ffi.callPure "Time_diffSeconds" [ a, b ]
+
+
+-- ─── Construction from parts ───────────────────────────────────
+
+fromParts : String -> Int -> Int -> Int -> Int -> Int -> Int -> Result Error Int
+fromParts zone y m d h mins s =
+    Ffi.callPure "Time_fromParts"
+        [ Ffi.toAny zone
+        , Ffi.toAny y
+        , Ffi.toAny m
+        , Ffi.toAny d
+        , Ffi.toAny h
+        , Ffi.toAny mins
+        , Ffi.toAny s
+        ]
+
+
+-- ─── Zone discovery ────────────────────────────────────────────
+
+zoneOffset : String -> Int -> Result Error Int
+zoneOffset zone ms =
+    Ffi.callPure "Time_zoneOffset" [ Ffi.toAny zone, Ffi.toAny ms ]
+
+
+zoneName : String -> Int -> Result Error String
+zoneName zone ms =
+    Ffi.callPure "Time_zoneName" [ Ffi.toAny zone, Ffi.toAny ms ]

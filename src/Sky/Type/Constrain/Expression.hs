@@ -1095,6 +1095,15 @@ lookupKernelType modName funcName = case (modName, funcName) of
         Just $ T.Forall [] (T.TLambda stringType boolType)
     ("Ffi", "isPure") ->
         Just $ T.Forall [] (T.TLambda stringType boolType)
+    -- Ffi.toAny : a -> any — runtime identity, type-level escape
+    -- hatch for building heterogeneous Ffi.callPure arg lists.
+    -- Sky's literal lists are homogeneous; passing mixed types
+    -- through Ffi.callPure's `List any` requires this wrap so the
+    -- list-element TVar resolves to `any` rather than unifying
+    -- conflicting concretes.
+    ("Ffi", "toAny") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TVar "a") (T.TVar "any"))
     ("Basics", "identity") ->
         Just $ T.Forall ["a"] (T.TLambda (T.TVar "a") (T.TVar "a"))
     ("Basics", "always") ->
@@ -2081,6 +2090,14 @@ lookupKernelType modName funcName = case (modName, funcName) of
             (T.TLambda stringType
                 (T.TType ModuleName.task "Task"
                     [errorType, T.TUnit]))
+
+    -- Phase 2.4 — Decimal / Money / Std.Time zone helpers are
+    -- Sky-source stdlib modules (sky-stdlib/Std/...), not kernel.
+    -- Their HM types come from the parsed Sky source. The
+    -- runtime-go primitives they call via Ffi.callPure are
+    -- registered in runtime-go/rt/decimal_kernel.go,
+    -- runtime-go/rt/time_zones.go, runtime-go/rt/money_kernel.go.
+
     -- Json.Decode (kernel mod "JsonDec") — signatures carry the
     -- opaque Sky `Decoder a` as TType "Decoder" [a]; the codegen
     -- resolves Decoder to rt.SkyDecoder via runtimeTypedMap.
