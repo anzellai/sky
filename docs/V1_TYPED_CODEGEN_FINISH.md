@@ -253,8 +253,13 @@ verified by example sweep + cabal test before moving to the next.
       typed lambda emission via `curryLambdaPatTyped` (input + output
       types), HM body-inference recovery, structural TVar unification
       for typed lambda/slice args, kernel-call recovery σ with
-      typed-lambda emission. Significant adapter drops across the
-      24-example sweep (07: 9→2, 14: 2→0, 18: 13→10, 19: 11→7, etc.).
+      typed-lambda emission, top-level function ident lookup in
+      `goExprGoType`, typed let-bound multi-pattern functions
+      (both annotated and HM-inferred). Net session: 69 adapters
+      eliminated across the 24-example sweep (~62% of baseline ~112).
+      Final remainders are in 3 distinct classes (kernel-body
+      recursive calls, opaque rt.SkyDecoder, Stripe FFI nested
+      code) — each needs separate multi-day work.
 - [~] **Stage 2 — Typed partial application** (43791e2). First concrete
       drop landed: `_cg_funcUltimateRetType` map + typed wrapper in
       `emitPartialUserCall`. The recovery-σ infrastructure in
