@@ -2360,11 +2360,27 @@ func (app *liveApp) runCmd(sess *liveSession, cmd any) {
 			app.runCmd(sess, sub)
 		}
 	case "perform":
-		go app.runPerform(sess, c.task, c.toMsg)
+		// Capture the triggering request's id from the CURRENT
+		// goroutine (the dispatch path that's about to spawn the
+		// Task goroutine). Phase 1.1a Step 2 — without this, the
+		// spawned goroutine has no req-id and logs / traces emitted
+		// from inside the Task can't be correlated to the user
+		// action that started them.
+		parentReqID := CurrentRequestID()
+		go app.runPerform(sess, c.task, c.toMsg, parentReqID)
 	}
 }
 
-func (app *liveApp) runPerform(sess *liveSession, task any, toMsg any) {
+func (app *liveApp) runPerform(sess *liveSession, task any, toMsg any, parentReqID string) {
+	// Stamp the parent request's id on this goroutine so kernels
+	// running inside the Task (Db.query, Http.get, Log.info, etc.)
+	// emit logs / traces correlated to the user's request. Cleared
+	// on exit so the sync.Map entry doesn't leak past goroutine
+	// recycling.
+	if parentReqID != "" {
+		SetGoroutineRequestID(parentReqID)
+		defer ClearGoroutineRequestID()
+	}
 	// task is a Sky Task — a zero-arg func() any returning SkyResult
 	result := sky_call(task, nil)
 	// toMsg : Result err a -> Msg — convert result to Msg

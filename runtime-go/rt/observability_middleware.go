@@ -114,8 +114,19 @@ func ObservabilityMiddleware(next http.Handler) http.Handler {
 		}
 		w.Header().Set("X-Request-Id", reqID)
 
-		// Stamp on context so Cmd.perform (Step 2) can read.
+		// Stamp on context so Cmd.perform (Step 2) can read via
+		// either the context (RequestIDFromContext) or the
+		// goroutine-local registry (CurrentRequestID, when context
+		// can't be threaded — e.g. Sky kernels that don't take
+		// context).
 		r = r.WithContext(WithRequestID(r.Context(), reqID))
+		// Stamp the goroutine so runCmd (which doesn't see the
+		// context) can capture the parent req-id at goroutine
+		// spawn time. Cleared on handler exit so the entry doesn't
+		// leak past the underlying net/http worker goroutine being
+		// reused for the next request.
+		SetGoroutineRequestID(reqID)
+		defer ClearGoroutineRequestID()
 
 		// Wrap ResponseWriter to capture status + bytes-written.
 		sw := newStatusCapture(w)

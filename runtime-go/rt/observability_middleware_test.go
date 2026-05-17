@@ -347,3 +347,43 @@ var (
 	_ http.Flusher  = (*statusCapture)(nil)
 	_ http.Hijacker = (*statusCapture)(nil)
 )
+
+// ─── Step 2 — req-id propagation through goroutine context ────
+
+// The middleware stamps both context AND the goroutine-local
+// registry. Verify CurrentRequestID() reads the stamped id from
+// inside the handler — this is the path Cmd.perform's runCmd uses
+// when it captures parentReqID before spawning a Task goroutine.
+func TestMiddleware_StampsGoroutineRequestID(t *testing.T) {
+	resetTelemetry(t)
+	withServerlessEnv(t, nil)
+	var seenFromGoroutine string
+	h := ObservabilityMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// runCmd reads via CurrentRequestID(), not the context —
+		// because Sky kernels don't take context.Context.
+		seenFromGoroutine = CurrentRequestID()
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/foo", nil)
+	req.Header.Set("X-Request-Id", "trace-xyz")
+	h.ServeHTTP(httptest.NewRecorder(), req)
+
+	if seenFromGoroutine != "trace-xyz" {
+		t.Errorf("CurrentRequestID inside handler should equal stamped id; got %q", seenFromGoroutine)
+	}
+}
+
+// Verifies cleanup: after the handler returns, the goroutine's
+// stamp must be cleared so the underlying net/http worker doesn't
+// leak the previous request's id into the next.
+func TestMiddleware_ClearsGoroutineRequestIDOnExit(t *testing.T) {
+	resetTelemetry(t)
+	withServerlessEnv(t, nil)
+	h := ObservabilityMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	req := httptest.NewRequest(http.MethodGet, "/foo", nil)
+	h.ServeHTTP(httptest.NewRecorder(), req)
+	// After ServeHTTP returns, the calling goroutine's stamp from
+	// the middleware should be cleared.
+	if got := CurrentRequestID(); got != "" {
+		t.Errorf("expected goroutine stamp cleared after handler; got %q", got)
+	}
+}
