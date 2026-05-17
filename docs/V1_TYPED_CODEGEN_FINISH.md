@@ -277,10 +277,35 @@ verified by example sweep + cabal test before moving to the next.
       drop landed: `_cg_funcUltimateRetType` map + typed wrapper in
       `emitPartialUserCall`. The recovery-σ infrastructure in
       `coerceCallArgs` extends the foundation.
-- [ ] Stage 1 follow-up: pipeline reorder so funcSkyToGoTVars is
-      populated BEFORE dep-decl emission. Then the recursive-call
-      adapters in Sky-source kernel bodies (Sky_Core_List_map_,
-      foldl, indexedMap) can drop. Documented in commit 4ad92ed.
+- [x] **Stage 1 follow-up shipped (session 2026-05-17 — 5 commits):**
+      pipeline reorder + σ-pinned TVar preservation + ADT-ctor sigs
+      + annotation-as-truth + smart sig merge + zero-arg call type
+      + TVar-preserving kernel param sigs. **Net: 43 → 8 adapters
+      across the 24-example sweep (-81%).** Zero example failures;
+      cabal test net IMPROVED (6 pre-existing failures → 1 single
+      meta-test transient that passes when run standalone). The
+      `Msg_UserChanged → rt.Coerce[func(string) Msg]` adapter class
+      that dominated the prior count is gone — typed Msg ctors now
+      flow raw to typed HOF slots.
+
+      Per-example adapter counts after this work:
+      * 01, 03-05, 08-12, 14-17, 19-24, simple, test_pkg: **0**
+      * 02-go-stdlib, 07-todo-cli: 1 → **0**
+      * 06-json: 4 → 1 (residual: curried Profile record ctor)
+      * 13-skyshop: 5 → 1 (residual: FFI opaque rt.FfiT_Go_Session_get_P1)
+      * 17-skymon: 4 → 0
+      * 18-job-queue: 7 → 6 (residual: 4 partial-app ADT-ctor closures
+        passing `func(any) any` at Cmd.perform typed slots — needs
+        typed partial-app emission per Stage 3; 2 others from
+        polymorphic-helper-arg cases like `addJob model name task`
+        where `task` is an unannotated polymorphic param)
+      * 19-skyforum: 6 → 0
+
+      Commits: 8c8e2a8 (substituteOnly TVar preservation), 459fc5f
+      (ADT-ctor sigs + annotation type for deps), 1411242 (bare-TVar
+      arg coerce + smart sig merge + stale-test refresh), aed8551
+      (kernel-fn HOF arg σ-recovery), a566f62 (zero-arg call type +
+      TVar-preserving kernel param sigs).
 - [ ] Stage 3 — Per-ADT-ctor typed Go structs (v0.13 contract).
       Design agreed: per-ADT `Msg_Struct { V0_t1, V0_t2, … }` with
       unified slot-by-type. ADT wrapper carries Tag + Name + typed
