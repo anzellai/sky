@@ -3955,6 +3955,29 @@ goExprGoType e = case e of
                   | fn == "AsListAny" -> Just "[]any"
                   | fn == "AsMapAny"  -> Just "map[string]any"
                   | otherwise -> Nothing
+    -- v0.13 Stage 1 — zero-arg call to a top-level Sky function.
+    -- `loadHistory()` (`Can.VarTopLevel … "loadHistory"` applied to
+    -- `[]`) returns `loadHistory`'s typed result. Reporting that
+    -- type here lets σ-recovery at the surrounding HOF call pin
+    -- TVars from a typed Task / Result return. Without this, a
+    -- pattern like `Cmd.perform loadHistory HistoryLoaded` had no
+    -- way to derive that `loadHistory` produces `Task Error
+    -- (List Snapshot)` → `Cmd.perform`'s `e, a` TVars stayed
+    -- `any` → callback slot widened to
+    -- `func(SkyResult[any, any]) any` → `HistoryLoaded` (typed
+    -- ctor) got wrapped in `rt.Coerce`.
+    GoIr.GoCall (GoIr.GoIdent name) []
+        | not ("rt." `List.isPrefixOf` name) ->
+            let env = getCgEnv
+                retTy = Map.findWithDefault "any" name
+                          (Rec._cg_funcRetType env)
+                paramTys = Map.findWithDefault [] name
+                          (Rec._cg_funcParamTypes env)
+            in if null paramTys
+                  && retTy /= "any"
+                  && not (isGenericTypeParam retTy)
+               then Just retTy
+               else Nothing
     -- Comparison / logical binops are Go-bool.
     GoIr.GoBinary op _ _
         | op `elem` ["==", "!=", "<", ">", "<=", ">=", "&&", "||"] -> Just "bool"
@@ -7375,9 +7398,16 @@ kernelParamGoTypes ty n =
     let tvars = uniqueOrdered (collectTVars ty)
         sub = Map.fromList (zip tvars ["T" ++ show i | i <- [1 :: Int ..]])
         renamed = substTVars sub ty
+    -- v0.13 Stage 1 — use the TVar-preserving renderer so renamed
+    -- TVars survive as `T1, T2` in the kernel param string. Without
+    -- this, `solvedTypeToGo` erases each TVar to `any` and the
+    -- substituted kernel sig becomes `func(SkyResult[any,any]) any`,
+    -- giving σ-recovery nothing to pin → callback args wrap in
+    -- `rt.Coerce[func(SkyResult[any,any]) any]` even when the typed
+    -- ctor's actual sig is known.
     in take n (go renamed)
   where
-    go (T.TLambda from to) = solvedTypeToGo from : go to
+    go (T.TLambda from to) = solvedTypeToGoPreserveTVars from : go to
     go _                   = []
     collectTVars (T.TVar n) = [n]
     collectTVars (T.TLambda a b) = collectTVars a ++ collectTVars b
