@@ -52,18 +52,16 @@ spec = do
                 ec `shouldBe` ExitSuccess
                 ("Build complete" `isInfixOf` combined) `shouldBe` True
 
-        it "coerces the typed Msg ctor at the call site via rt.Coerce" $ do
-            -- v0.13 D1 update: helper sig emits the typed return
-            -- (`cb func(string) Msg`) — D-Lambda-Lowerer routes
-            -- literal `\x -> ...` lambdas at typed-func slots through
-            -- `curryLambdaPatTyped` so the lowered shape matches the
-            -- sig. Typed ctor args like
-            -- `Msg_UserChanged : func(string) Msg` still pass through
-            -- `rt.Coerce` — but now `rt.Coerce[func(string) Msg]`
-            -- (typed) rather than `rt.Coerce[func(string) any]`
-            -- (pre-D1 widened). The reflect adapter handles both;
-            -- the typed shape unblocks Go's call-site inference at
-            -- user-defined HOF slots.
+        it "passes typed Msg ctor RAW at the call site (post σ-pinning)" $ do
+            -- v0.13 Stage 1 update: with ADT-ctor sigs registered in
+            -- `_cg_funcParamTypes` (so `goExprGoType
+            -- Msg_UserChanged` returns `func(string) Msg`) and
+            -- σ-pinning preserving TVars in the substituteOnly
+            -- path, the typed slot's `func(string) T1` substitutes
+            -- to `func(string) Msg` and matches the ctor's own sig
+            -- directly. coerceArg's short-circuit fires and no
+            -- `rt.Coerce` wrap is emitted — the ctor flows raw,
+            -- which is what closes the dominant adapter class.
             sky <- findSky
             cwd <- getCurrentDirectory
             let fixtureRoot = cwd </> "test" </> "fixtures" </> "hof-typed-msg"
@@ -74,10 +72,9 @@ spec = do
                 body <- readFile (tmp </> "sky-out" </> "main.go")
                 -- Helper sig emits the typed return shape (D1).
                 ("cb func(string) Msg" `isInfixOf` body) `shouldBe` True
-                -- Call site routes the typed Msg ctor through
-                -- `rt.Coerce[func(string) Msg]` (typed coerce).
+                -- Call site passes Msg ctor RAW — no rt.Coerce wrap.
                 ("rt.Coerce[func(string) Msg](Msg_UserChanged)"
-                    `isInfixOf` body) `shouldBe` True
-                -- Bare-pass form (pre-fix shape) must be GONE.
+                    `isInfixOf` body) `shouldBe` False
+                -- The raw form IS what we want now.
                 ("field(\"alice\", Msg_UserChanged)" `isInfixOf` body)
-                    `shouldBe` False
+                    `shouldBe` True

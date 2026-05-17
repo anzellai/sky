@@ -48,9 +48,19 @@ spec = do
             sky <- findSky
             cwd <- getCurrentDirectory
             let diskRtDir = cwd </> "runtime-go" </> "rt"
-            diskFiles <- filter (\p -> ".go" `suffixOf` p) <$> walkFiles diskRtDir
-            -- The binary ships with the embedded tree; materialise
-            -- it by building a throwaway project.
+            -- Use TOP-LEVEL files only (no subdirectory descent).
+            -- The embedded runtime tree is flat by design; the
+            -- `walkFiles` recursion previously assumed a flat
+            -- structure too, but `runtime-go/rt/telemetry/` was
+            -- added later, breaking the basename-keyed comparison
+            -- because `disk[telemetry/atomic_float.go]` would be
+            -- looked up by bare name in the materialised flat dir.
+            -- Restrict comparison to top-level .go files which is
+            -- what the embedded runtime tracks.
+            diskEntries <- listDirectory diskRtDir
+            let diskFiles =
+                    [ diskRtDir </> e
+                    | e <- diskEntries, ".go" `suffixOf` e ]
             withSystemTempDirectory "sky-p3-3" $ \dir -> do
                 createDirectoryIfMissing True (dir </> "src")
                 writeFile (dir </> "sky.toml")
@@ -65,7 +75,10 @@ spec = do
                         { cwd = Just dir } ""
                 ec `shouldBe` ExitSuccess
                 let matRtDir = dir </> "sky-out" </> "rt"
-                matFiles <- filter (\p -> ".go" `suffixOf` p) <$> walkFiles matRtDir
+                matEntries <- listDirectory matRtDir
+                let matFiles =
+                        [ matRtDir </> e
+                        | e <- matEntries, ".go" `suffixOf` e ]
                 -- File set by basename must match exactly.
                 let diskNames = sort (map takeFileName diskFiles)
                     matNames  = sort (map takeFileName matFiles)

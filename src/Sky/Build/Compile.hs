@@ -2898,23 +2898,35 @@ generateGoMulti canMod srcMod config solvedTypes depDecls depRecAliases depUnion
                                (Rec._cg_recordAliases prevEnv))
                 (entryParamTys, entryRetTys, entryUltRetTys) =
                     collectFuncTypesWith allRecAliases "" canMod
-                -- v0.13 Stage 1 — INFERRED (post-typecheck, TVar-
-                -- preserving) entries MUST win over the early
-                -- `collectFuncTypesWith` entries (which use
-                -- `safeReturnTypeWith` that erases TVars to `any`).
-                -- `Map.unions` keeps the LEFTMOST entry, so put the
-                -- *Inferred* maps first. Without this, σ-recovery at
-                -- HOF call sites sees `func(string) any` (erased) as
-                -- the callee's param shape instead of `func(string)
-                -- T1`, and the TVar can never be pinned → forces a
-                -- `rt.Coerce[func(string) any](Msg_Ctor)` wrap that
-                -- dominates the residual adapter count.
-                allParamTys = Map.unions
-                    [ entryInferredParams, extraInferredParamTypes
-                    , entryParamTys, depParamTypes ]
-                allRetTys   = Map.unions
-                    [ entryInferredRets, extraInferredRetTypes
-                    , entryRetTys, depRetTypes ]
+                -- v0.13 Stage 1 — merge per-key, picking the
+                -- BETTER of the inferred (HM-derived) and the
+                -- early-collected (decl-derived) entries:
+                --
+                -- * The HM-inferred entries preserve TVar names in
+                --   COMPOUND types (`func(string) T1`, `[]T1`,
+                --   `rt.SkyMaybe[T1]`) — critical for σ-recovery
+                --   at HOF call sites with typed args.
+                -- * The early-collected entries have concrete types
+                --   for auto-record-ctors (`Item : int -> string
+                --   -> []string -> Item_R`) — HM may solve these as
+                --   bare-polymorphic (`T1 -> T2 -> T3 -> Item_R`)
+                --   which loses the concrete field types and
+                --   prevents call-site coercion.
+                --
+                -- `betterParamTypes` picks per-call between the two
+                -- maps: when the early entry has more concrete
+                -- info (fewer bare TVars), prefer it; otherwise
+                -- use the inferred entry.
+                allParamTys = Map.unionWith betterParamTypes
+                    (Map.unionWith betterParamTypes
+                        entryInferredParams extraInferredParamTypes)
+                    (Map.unionWith betterParamTypes
+                        entryParamTys depParamTypes)
+                allRetTys   = Map.unionWith betterRetType
+                    (Map.unionWith betterRetType
+                        entryInferredRets extraInferredRetTypes)
+                    (Map.unionWith betterRetType
+                        entryRetTys depRetTypes)
                 -- v0.13 Stage 2 — ultimate return types (after all
                 -- args applied). ONLY merge entries computed with
                 -- `ultimateReturnType` (recursive TLambda strip).
@@ -4891,6 +4903,59 @@ countParamsFor name canMod = go (Can._decls canMod)
     firstMatchInt (d:ds) fallback = case matchDef d of
         Just n  -> n
         Nothing -> firstMatchInt ds fallback
+
+-- | v0.13 Stage 1 — pick the BETTER (more-informative) of two
+-- candidate param-type lists for the same callee. "Better" means:
+--
+--   * concrete types beat bare TVars (`int` > `T1`)
+--   * compound types containing TVars beat bare TVars
+--     (`func(string) T1` > `T1`, `[]T1` > `T1`)
+--   * concrete-anywhere beats fully-erased (`func(string) T1` >
+--     `func(string) any` when the surrounding type still mentions
+--     the TVar — preserves σ-recovery)
+--
+-- When neither is strictly better, prefer the LEFT (which is the
+-- HM-inferred entry per the caller's union order).
+--
+-- Operates entry-by-entry: the result has the same arity as the
+-- longer of the two; positions where one side is empty/missing get
+-- the other side's value.
+betterParamTypes :: [String] -> [String] -> [String]
+betterParamTypes l r
+    | null l            = r
+    | null r            = l
+    | length l /= length r =
+        if length l > length r then l else r
+    | otherwise         =
+        zipWith betterTypeStr l r
+
+-- | v0.13 Stage 1 — same picker for a single return-type string.
+betterRetType :: String -> String -> String
+betterRetType = betterTypeStr
+
+-- | v0.13 Stage 1 — per-string picker. Prefers the type carrying
+-- more concrete information.  See `betterParamTypes` for the
+-- ordering rationale.
+betterTypeStr :: String -> String -> String
+betterTypeStr l r
+    -- A bare TVar (`T1`) carries the least info — beaten by anything else.
+    | isGenericTypeParam l && not (isGenericTypeParam r) = r
+    | isGenericTypeParam r && not (isGenericTypeParam l) = l
+    -- Both bare TVars (or both not): prefer the one with NO `any`
+    -- (typed-everywhere) over the one that has `any`.
+    | hasAnyToken l && not (hasAnyToken r) = r
+    | hasAnyToken r && not (hasAnyToken l) = l
+    -- Otherwise tie: keep the left (HM-inferred).
+    | otherwise = l
+  where
+    hasAnyToken s = "any" `elem` tokenise s
+    -- Conservative tokeniser: alphanumeric + underscore runs.
+    tokenise [] = []
+    tokenise (c:cs)
+        | isGoIdentStart c =
+            let (w, rest) = span isGoIdentChar (c:cs)
+            in w : tokenise rest
+        | otherwise = tokenise cs
 
 -- | v0.13 Stage 1 — reconstruct the full annotation type for an
 -- annotated TypedDef in a module by folding param types into a
@@ -7176,10 +7241,22 @@ splitFuncTypeStr s
 coerceArg :: GoIr.GoExpr -> String -> GoIr.GoExpr
 coerceArg e ty
     | ty == "any" || null ty = e
-    -- Generic type parameter (T1, T2, ...) — we can't assert to it
-    -- from the caller side since it's scoped to the callee. Let Go's
-    -- type inference figure it out from the usage. Pass raw.
-    | isGenericTypeParam ty = e
+    -- Generic type parameter (T1, T2, ...) — when the arg's static
+    -- Go type is concrete (`int`, `string`, `[]T1`, `rt.SkyResult
+    -- [...]`), Go's call-site inference pins the TVar from the
+    -- arg and passing raw is correct. When the arg is `any`-typed
+    -- (`rt.SkyCall(...)`, `rt.Field(...)`, an unannotated local)
+    -- Go's inference can't pin the TVar from `any` and the call
+    -- fails with `type any of <arg> does not match inferred type
+    -- T2`. In that case route through `rt.Coerce[T]` so Go sees
+    -- the arg as the target's TVar type. The Coerce helper is a
+    -- thin type-assertion wrapper (no runtime work for primitive
+    -- targets; reflect-backed for funcs).
+    | isGenericTypeParam ty =
+        case goExprGoType e of
+            Just t | t /= "any" -> e
+            _ ->
+                GoIr.GoCall (GoIr.GoIdent ("rt.Coerce[" ++ ty ++ "]")) [e]
     -- v0.13 typed lowerer: `e` is already provably the target type —
     -- skip the coercion entirely (no `rt.CoerceInt(int)` etc.).
     | goExprGoType e == Just ty = e
