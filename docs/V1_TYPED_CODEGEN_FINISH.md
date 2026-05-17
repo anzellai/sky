@@ -1,33 +1,52 @@
-# V1 Typed Codegen Finish + Full Sky-Source Stdlib Migration
+# Typed Codegen Finish + Full Sky-Source Stdlib Migration
 
-> Multi-session plan tracked in repo per the user-feedback rule. Commit
-> checkpoints land on `feat/v1-roadmap` branch.
+> Multi-session plan tracked in repo per the user-feedback rule.
+> Commit checkpoints land on `feat/v1-roadmap` branch.
 
-## Goal — the FINAL contract
+## Scope split — DO NOT CONFLATE
 
-**Every USED Sky function, value, lambda, and partial application
-emits as fully-typed Go.** No `any` in USED code except:
-1. **Genuinely-dynamic FFI returns** (raw JSON, reflect dispatch) — at
-   the immediate boundary only, before the `rt.Coerce[T]` step
-2. **Polymorphic context** — Go generics `[A, B any]` parameters
-   (typed parametric, NOT untyped)
-3. **Multi-arg ADT constructor fields** with HETEROGENEOUS types where
-   no per-ctor typed Go struct exists yet (Stage 3 closes this last gap)
+**Stages 1-3 = v0.13 CONTRACT ENFORCEMENT (not a future feature).**
+The v0.13 contract in CLAUDE.md is explicit and FINAL:
+> **All USED Sky code → fully-typed Go.** No bare `any` for used vars
+> / funcs / lambdas / ADTs.
 
-After this work: every byte of `any` in emitted Go is provably necessary.
+Today's codegen has known gaps (Gap 4 "substantially closed" per the
+CLAUDE.md TODO section — 11 untyped lambda adapters still in the 19-
+example sweep; partial-app emits `func(any) any`; cross-module function
+values may lose type info). **Those gaps are contract violations**, NOT
+deferrable v1 prep. They MUST close before any new feature work that
+relies on the contract.
 
-## Architectural deliverables (in dependency order)
+**Stages 4-5 = v0.14.x ARCHITECTURAL IMPROVEMENT.** Full stdlib
+migration to Sky source using `Ffi.kernel`. This is a DX win
+(user-visible declaration layer, consistent contributor surface) — NOT
+a contract requirement. Cannot start until Stages 1-3 are done; if
+Stage 4 lands on top of un-honoured Stages 1-3 typing, the migrated
+Sky-source stdlib modules would emit WEAKER typing than today's
+kernel-only modules.
 
-### Stage 1 — Typed lambda lowering (Gap 4 complete)
+## Working principle (from the user, this session)
 
-Currently `Gap 4` is "substantially closed" per CLAUDE.md — input types
-flow when `curryLambdaPatTyped` fires, but output types stay `any`.
+> "regardless how many sessions, we MUST do things right, rather than
+> convenience"
+
+No timeline pressure. No "ship it and patch later". The contract holds
+across every commit. If a fix takes 3 weeks, it takes 3 weeks. The
+example sweep, cabal test, and the typed-emission grep gates must stay
+green at every checkpoint.
+
+## Stage 1 — Typed lambda lowering (Gap 4 fully closed)
+
+**v0.13 contract enforcement.** Currently `Gap 4` is "substantially"
+closed — input types flow when `curryLambdaPatTyped` fires, but output
+types stay `any` in some positions, and 11 lambda adapters still emit
+`func(any) any` in the 19-example sweep where types ARE known.
 
 **Target:** for every lambda `\x -> body` where HM has inferred both
 input AND output types:
 
 ```go
-// Today:
+// Today (contract violation):
 func(x any) any { return rt.AsInt(x) * 2 }
 
 // Target:
@@ -38,16 +57,23 @@ func(x int) int { return x * 2 }
 - `curryLambdaPat` in Compile.hs — accept optional output Go type
 - `kernelTypedCall` — pass HM-inferred output type to lambda lowering
 - `coerceCallArgsAt` — same
+- User-defined HOF call paths (D-Lambda-Lowerer fallback) — pass output
 - All HOF kernel signatures in `lookupKernelType` — capture output
   TVar's resolution at call site
 
-**Regression fence:** every example's main.go has zero unjustified
-`func(any) any` shapes. Measure via grep + diff vs baseline.
+**Verification gate:**
+- Grep gate on emitted main.go: zero unjustified `func(any) any` shapes
+  in USED code where HM has the full type
+- Run on every example in the 26-example sweep + a synthetic stress
+  fixture
+- Diff vs baseline measurement (currently 11 adapters in 19-example
+  sweep; target: 0)
 
-### Stage 2 — Typed partial application
+## Stage 2 — Typed partial application
 
-Currently `Decimal.add five` emits `func(any) any` (Sky's curry shape).
-With known types, should emit `func(Decimal) Decimal`.
+**v0.13 contract enforcement.** Currently `Decimal.add five` emits
+`func(any) any` (Sky's default curry shape) even when types are
+fully concrete.
 
 **Target:**
 ```elm
@@ -68,11 +94,17 @@ result := inc(someDecimal)
   closure type from imported module)
 - The let-binding codegen — declare the binding with its full HM type
 
-### Stage 3 — Per-ADT-ctor typed Go structs
+**Verification gate:**
+- Grep gate: no `func(any) any` in let-binding declarations where the
+  HM type is fully concrete
+- Per-shape audit on the largest example (skyshop) and skyforum
 
-Currently all multi-arg constructors use `SkyADT{Tag, SkyName,
-Fields []any}` for uniformity. Heterogeneous fields are stored as
-`[]any` — the last legitimate `any` source in USED code.
+## Stage 3 — Per-ADT-ctor typed Go structs
+
+**v0.13 contract enforcement.** Currently all multi-arg constructors
+use `SkyADT{Tag, SkyName, Fields []any}` — the `[]any` field storage
+is the last legitimate `any` source in USED code. The contract says
+"No bare `any` for used ... ADTs" so this needs to close.
 
 **Target:**
 ```elm
@@ -111,13 +143,24 @@ case; concrete instantiations get typed structs.
 
 **Sites to touch:**
 - `generateCtorFunc` in Compile.hs — emit typed struct + constructor
-- `pattern-match codegen` — emit typed field access for typed ctors
-- Cross-module ctor reference — preserve typed struct name through imports
+- Pattern-match codegen — emit typed field access for typed ctors
+- Cross-module ctor reference — preserve typed struct name through
+  imports
+- ADT-as-Result/Maybe coexistence — SkyResult/SkyMaybe are already
+  typed generics; this stage extends the pattern to user ADTs
 
-### Stage 4 — Ffi.kernel mechanism
+**Verification gate:**
+- Grep gate: no `[]any{...}` ADT field initialisers for USED ADTs with
+  fully-concrete field types
+- Pattern-match emissions don't use `.(T)` assertion for typed-ctor
+  field reads
 
-The Sky-source declaration layer that routes to existing kernel
-dispatch transparently.
+## Stage 4 — Ffi.kernel mechanism (v0.14.x prep)
+
+**Architectural — NOT a contract requirement.** The Sky-source
+declaration layer that routes to existing kernel dispatch
+transparently. Cannot start until Stages 1-3 are done; otherwise
+migrated modules would lose the typing wins those stages introduced.
 
 ```elm
 -- sky-stdlib/Sky/Core/List.sky
@@ -133,24 +176,24 @@ map = Ffi.kernel "List_map"
   Sky-source kernel-alias, rewrite the callee to
   `Can.VarKernel kernelMod kernelName` and fall through to existing
   dispatch (kernelTypedCall, typedKernelLiterals, etc.).
-- For partial app / HOF pass: emit a typed Sky-source trampoline
+- For partial app / HOF pass: emit the typed Sky-source trampoline
   (typed thanks to Stage 1 + 2).
 
 **Sites to touch:**
 - `lookupKernelType` — register `Ffi.kernel : String -> a`
 - `Module.hs` — add `"kernel"` to the `Ffi` whitelist
 - Compile.hs — registry build + call-site rewrite (~50 LOC)
-- rt.go — register `Ffi_kernel` (runtime identity that panics —
-  Ffi.kernel should never reach the runtime; codegen inlines all uses)
+- rt.go — register `Ffi_kernel` panic stub (codegen should never let
+  the runtime body run; the panic is a self-check)
 
-### Stage 5 — Full Sky-source stdlib migration
+## Stage 5 — Full Sky-source stdlib migration (v0.14.x)
 
-Move ALL ~25 kernel-registered modules to Sky source using `Ffi.kernel`.
+**Architectural — NOT a contract requirement.** Move ALL ~25 kernel-
+registered modules to Sky source using `Ffi.kernel`.
 
 Modules to migrate:
-- `Sky.Core.String`, `Sky.Core.List`, `Sky.Core.Dict`, `Sky.Core.Set`
-- `Sky.Core.Char`, `Sky.Core.Math`, `Sky.Core.Regex`, `Sky.Core.Path`
-- `Sky.Core.Crypto`, `Sky.Core.Encoding`, `Sky.Core.Uuid`
+- `Sky.Core.{String, List, Dict, Set, Char, Math, Regex, Path}`
+- `Sky.Core.{Crypto, Encoding, Uuid}`
 - `Sky.Core.Json.{Encode, Decode, Decode.Pipeline}`
 - `Sky.Core.{Time, Random, Http, File, Io, System, Process, Task}`
 - `Std.{Cmd, Sub, Log, Db, Auth, Live, Jobs, Cli, Tui}`
@@ -166,7 +209,7 @@ For each module:
 **Per-module commit cadence:** one commit per module. Each commit
 verified by example sweep + cabal test before moving to the next.
 
-### Stage 6 — Documentation
+## Stage 6 — Documentation (v0.14.x)
 
 - Update `CLAUDE.md` standard-library section to reflect Sky-source
   status of every module
@@ -174,38 +217,35 @@ verified by example sweep + cabal test before moving to the next.
   `Ffi.kernel`-style declarations for new stdlib additions
 - Update `docs/stdlib.md` to point users at the Sky source files as
   the canonical reference
-- Note in the language ref: "every Sky stdlib module is Sky source;
-  Go runtime functions are accessed via the `Ffi.kernel` declaration
-  layer"
 
 ## Progress tracker
 
-- [x] Phase 2.4 Std.Decimal + Std.Money + Std.Time landed (e6039ab)
-- [ ] Stage 1 — Typed lambda lowering (Gap 4 complete)
-- [ ] Stage 2 — Typed partial application
-- [ ] Stage 3 — Per-ADT-ctor typed Go structs
-- [ ] Stage 4 — Ffi.kernel mechanism
-- [ ] Stage 5 — Full stdlib migration (per-module)
-- [ ] Stage 6 — Documentation sync
+- [x] Phase 2.4 Std.Decimal + Std.Money + Std.Time landed via current
+      `Ffi.callPure` route (e6039ab) — proof-of-concept Layer 3
+      modules. Will route through `Ffi.kernel` once Stage 4 lands.
+- [ ] **Stage 1 — Typed lambda lowering** (v0.13 contract — current
+      priority)
+- [ ] Stage 2 — Typed partial application (v0.13 contract)
+- [ ] Stage 3 — Per-ADT-ctor typed Go structs (v0.13 contract)
+- [ ] Stage 4 — Ffi.kernel mechanism (v0.14.x)
+- [ ] Stage 5 — Full stdlib migration (v0.14.x)
+- [ ] Stage 6 — Documentation sync (v0.14.x)
+
+## What's blocked on this work
+
+- v0.14.x stdlib migration (Stages 4-5) — blocked on Stages 1-3
+- Phase 2.2 (LSP code actions), Phase 2.7 (Std.Ui Playwright snapshots)
+  — these were scoped on top of an UN-HONOURED v0.13 contract.
+  Re-scope after Stages 1-3 land, OR ship in a parallel branch only
+  if the work is genuinely orthogonal to the typing contract (LSP code
+  actions probably are; Std.Ui snapshots are because they're
+  black-box runtime tests).
 
 ## Risk management
 
 - Each stage MUST pass cabal test + 26-example sweep before next begins
 - Memory guard (`scripts/mem-guard.sh`) must run during compiler dev
 - Background-task hygiene checklist before every checkpoint commit
-- Per-module migration commits are individually revertable
+- Per-stage commits are individually revertable
 - No `--no-verify` skip of hooks
 - Never tag release without explicit user ask
-
-## Estimated effort
-
-3-4 focused dev weeks total:
-- Stage 1: 5-7 days
-- Stage 2: 3-5 days
-- Stage 3: 5-7 days
-- Stage 4: 1-2 days
-- Stage 5: 3-5 days (mechanical once foundation is solid)
-- Stage 6: 1 day
-
-Single Claude session is ~3-4 hours of focused work. So expect
-8-15 sessions across the work.
