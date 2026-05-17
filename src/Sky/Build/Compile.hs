@@ -3975,6 +3975,21 @@ goExprGoType e = case e of
     -- those would wrongly elide a needed coercion.  Primitives
     -- (`int` / `float64` / `string` / `bool` / `rune`) render
     -- identically everywhere, so they're safe.
+    -- v0.13 Stage 1 — runtime-kernel fn referenced as a HOF arg.
+    -- The kernel-fn IR is `GoIr.GoQualified "rt" "X"` (e.g.
+    -- `rt.Time_timeString` passed to `Result.map`). Look up its
+    -- Sky-level kernel sig and render as a Go function type. Without
+    -- this, σ-recovery at the HOF call site sees `Just "any"` for the
+    -- arg and can't pin the kernel's TVars → emits
+    -- `rt.Coerce[func(any) any](rt.Time_timeString)`.
+    GoIr.GoQualified "rt" fn ->
+        lookupRtKernelFnType fn
+    GoIr.GoIdent name
+        | "rt." `List.isPrefixOf` name ->
+            -- Sky.Generate.Go.Kernel emits kernel-registered fns as
+            -- `GoIr.GoIdent "rt.X"` (single token with the dot embedded).
+            -- Same lookup path as the GoQualified case above.
+            lookupRtKernelFnType (drop 3 name)
     GoIr.GoIdent name -> case lookupLambdaType name of
         Just t | isTypedPrimitive t -> Just (solvedTypeToGo t)
         -- v0.13 Stage 1 — typed function-typed param: recover its
@@ -7171,6 +7186,30 @@ substTVarsInGoType σ s = goSubst s
     -- and apply σ-substitution to the ASCII prefix only.
     isIdentStart = isGoIdentStart
     isIdentChar = isGoIdentChar
+
+-- | v0.13 Stage 1 — look up a runtime-kernel fn's Go signature so
+-- HOF arg coercion at the call site can σ-recover TVars from typed
+-- kernel-fn refs (e.g. `Result.map Time.timeString r` → pin T1=int,
+-- T2=string from `Time.timeString : Int -> String`). Without this,
+-- the arg is `any`-typed and `Sky_Core_Result_map_`'s `(a -> b)`
+-- param widens to `func(any) any`, forcing a
+-- `rt.Coerce[func(any) any]` wrap that we want to close.
+lookupRtKernelFnType :: String -> Maybe String
+lookupRtKernelFnType fn =
+    let bareName = takeWhile (/= '[') fn
+        (modPart, restPart) = break (== '_') bareName
+        funcPart = drop 1 restPart
+        collectArgs (T.TLambda a r) =
+            let (as, ret) = collectArgs r in (a : as, ret)
+        collectArgs t = ([], t)
+    in case ConstrainExpr.lookupKernelType modPart funcPart of
+        Just (T.Forall _ ty)
+            | (paramTys, retTy) <- collectArgs ty
+            , not (null paramTys) ->
+                let paramStrs = map solvedTypeToGo paramTys
+                    retStr = solvedTypeToGo retTy
+                in Just ("func(" ++ intercalateComma paramStrs ++ ") " ++ retStr)
+        _ -> Nothing
 
 -- | v0.13 Stage 1 — collect every Go-type TVar token (T1, T2, …) in a
 -- Go-type string. Used to detect when σ pins every TVar in a
