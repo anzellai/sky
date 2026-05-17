@@ -1645,6 +1645,12 @@ func liveAppRun(cfg any) any {
 	}
 
 	// Wrap the mux with panic recovery so one bad handler can't crash the process.
+	// Observability middleware is layered INSIDE the panic recovery so a
+	// panicking handler still produces an access-log line (the recover
+	// runs, sets 500, the middleware records 500). Observability
+	// endpoints (/_sky/*) skip the middleware internally to avoid
+	// recursive metering of scrapes.
+	observed := ObservabilityMiddleware(mux)
 	wrapped := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if rec := recover(); rec != nil {
@@ -1657,7 +1663,7 @@ func liveAppRun(cfg any) any {
 				fmt.Fprint(w, "Internal Server Error")
 			}
 		}()
-		mux.ServeHTTP(w, r)
+		observed.ServeHTTP(w, r)
 	})
 
 	srv := &http.Server{

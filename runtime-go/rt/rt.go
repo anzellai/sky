@@ -5864,9 +5864,14 @@ func Server_listen(port any, routes any) any {
 		SetProductionMode(true)
 	}
 
+	// Wrap with observability middleware (Phase 1.1a Step 3).
+	// The middleware skips /_sky/* paths internally so the
+	// observability endpoints aren't self-metered.
+	observed := ObservabilityMiddleware(mux)
+
 	srv := &http.Server{
 		Addr:              listenAddr,
-		Handler:           mux,
+		Handler:           observed,
 		ReadHeaderTimeout: serverReadHeaderTimeout,
 		ReadTimeout:       serverReadTimeout,
 		WriteTimeout:      serverWriteTimeout,
