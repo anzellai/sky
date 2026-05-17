@@ -328,7 +328,22 @@ operatorAnnotation _ = Can.Forall [] Can.TUnit  -- placeholder
 -- LET EXPRESSIONS
 -- ═══════════════════════════════════════════════════════════
 
--- | Canonicalise let-in expressions
+-- | Canonicalise let-in expressions.
+--
+-- Limitation 15 fix (v1.x): topologically sort the bindings by
+-- their data-dependency edges BEFORE folding into nested Can.Let.
+-- Pre-fix, `let a = b 1; b n = n * 2 in ...` source-order-emitted
+-- the lowered Go as `a := b(1); b := func(...){...}` — Go's
+-- "declared and not used" / "undefined" check rejected at build
+-- time because `b` was referenced before its `var` was declared.
+--
+-- HM already accepts mutual visibility (line below: `letEnv =
+-- Env.addLocals allNames env`), so the sorting is purely a
+-- codegen-friendliness pass. When the dependency graph has a
+-- cycle (mutual recursion between value bindings), we leave the
+-- source order intact — the existing codegen still emits a
+-- recognisable error, and the user can refactor to top-level
+-- functions which DO support mutual recursion.
 canonicaliseLet :: Env.Env -> [A.Located Src.Def] -> Src.Expr -> Can.Expr_
 canonicaliseLet env defs body =
     let
@@ -342,11 +357,119 @@ canonicaliseLet env defs body =
 
         -- Canonicalise each definition
         canDefs = map (canonicaliseDef letEnv) defs
+
+        -- Limitation 15 — topo-sort canonical defs by data dep.
+        -- See dependencySortDefs comment for the algorithm.
+        sortedDefs = dependencySortDefs canDefs
+
         canBody = canonicaliseExpr letEnv body
     in
     -- Fold defs into nested Can.Let (wrapping each in a Located)
     let wrapLet d bodyExpr = A.At A.one (Can.Let d bodyExpr)
-    in A.toValue (foldr wrapLet canBody canDefs)
+    in A.toValue (foldr wrapLet canBody sortedDefs)
+
+
+-- | Reorder let-bindings so each is emitted AFTER its dependencies
+-- in the source order are emitted. Stable for unrelated bindings
+-- (preserves the user's intended order when there's no dep edge).
+--
+-- Algorithm:
+--   1. Collect each def's bound name(s) — `defBoundNames`.
+--   2. For each def, scan its RHS for references to OTHER def
+--      names — `defReferences`.
+--   3. Run a stable topological sort:
+--        - Track an "emitted" set
+--        - Walk defs in source order
+--        - For each def, if any of its references is unemitted,
+--          recurse to emit that one first
+--        - Add to emitted, append to output
+--   4. Cycle detection: if recursion encounters a def already on
+--      the current stack, we leave the cycle alone — emit in
+--      source order. Mutual-recursion between value bindings is
+--      an existing limitation; the lowerer's resulting error is
+--      a useful nudge to refactor.
+dependencySortDefs :: [Can.Def] -> [Can.Def]
+dependencySortDefs ds =
+    let boundNamesFor :: Can.Def -> [String]
+        boundNamesFor d = case d of
+            Can.Def (A.At _ n) _ _ -> [n]
+            Can.TypedDef (A.At _ n) _ _ _ _ -> [n]
+            Can.DestructDef _ _ -> []  -- destructure: complex, leave alone
+        nameIndex :: Map.Map String Int
+        nameIndex = Map.fromList
+            [(n, i) | (i, d) <- zip [0..] ds, n <- boundNamesFor d]
+        refsOf :: Can.Def -> [Int]
+        refsOf d =
+            let names = case d of
+                    Can.Def _ _ body          -> collectVarRefs body
+                    Can.TypedDef _ _ _ body _ -> collectVarRefs body
+                    Can.DestructDef _ body    -> collectVarRefs body
+                ownNames = boundNamesFor d
+            in [ idx | n <- names
+                     , n `notElem` ownNames
+                     , Just idx <- [Map.lookup n nameIndex]
+               ]
+        -- Stable topological visit. Returns sorted def-indices.
+        visit :: [Int] -> [Int] -> [Int] -> [Int]
+        visit stack visited [] = visited
+        visit stack visited (i:rest)
+            | i `elem` visited = visit stack visited rest
+            | i `elem` stack   = visit stack visited rest -- cycle: leave
+            | otherwise =
+                let deps    = refsOf (ds !! i)
+                    visited' = visit (i:stack) visited deps
+                in visit stack (visited' ++ [i]) rest
+        sortedIdx = visit [] [] [0 .. length ds - 1]
+    in [ ds !! i | i <- sortedIdx ]
+
+
+-- | Free-variable scan over a Can.Expr — returns every unqualified
+-- name referenced via Can.VarLocal. Used by dependencySortDefs to
+-- decide whether one let-binding depends on another by name.
+--
+-- We don't follow Can.VarTopLevel / Can.VarKernel / Can.VarCtor
+-- references — those resolve to other modules, not sibling let-
+-- bindings.
+collectVarRefs :: Can.Expr -> [String]
+collectVarRefs (A.At _ expr) = case expr of
+    Can.VarLocal n -> [n]
+    Can.VarTopLevel _ _ -> []
+    Can.VarKernel _ _ -> []
+    Can.VarCtor _ _ _ _ _ -> []
+    Can.Chr _ -> []
+    Can.Str _ -> []
+    Can.Int _ -> []
+    Can.Float _ -> []
+    Can.List xs -> concatMap collectVarRefs xs
+    Can.Negate x -> collectVarRefs x
+    Can.Binop _ _ _ _ a b -> collectVarRefs a ++ collectVarRefs b
+    Can.Lambda _ body -> collectVarRefs body
+    Can.Call f args -> collectVarRefs f ++ concatMap collectVarRefs args
+    Can.If branches el ->
+        concatMap (\(c, t) -> collectVarRefs c ++ collectVarRefs t) branches
+        ++ collectVarRefs el
+    Can.Let def body -> defRefs def ++ collectVarRefs body
+    Can.LetRec defs body ->
+        concatMap defRefs defs ++ collectVarRefs body
+    Can.LetDestruct _ valExpr body ->
+        collectVarRefs valExpr ++ collectVarRefs body
+    Can.Case subject branches ->
+        collectVarRefs subject ++
+        concatMap (\(Can.CaseBranch _ b) -> collectVarRefs b) branches
+    Can.Accessor _ -> []
+    Can.Access x _ -> collectVarRefs x
+    Can.Update _ rec updates ->
+        collectVarRefs rec ++ concatMap fieldRefs (Map.elems updates)
+    Can.Record fields ->
+        concatMap (\(_, v) -> collectVarRefs v) (Map.toList fields)
+    Can.Tuple a b rest ->
+        collectVarRefs a ++ collectVarRefs b ++ concatMap collectVarRefs rest
+  where
+    defRefs d = case d of
+        Can.Def _ _ body -> collectVarRefs body
+        Can.TypedDef _ _ _ body _ -> collectVarRefs body
+        Can.DestructDef _ body -> collectVarRefs body
+    fieldRefs (Can.FieldUpdate _ v) = collectVarRefs v
 
 
 -- | Canonicalise a let binding. Destructure bindings (`let (a, b) = e`)

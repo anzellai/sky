@@ -219,6 +219,7 @@ test-suite sky-tests
       Sky.Build.UiFillCascadeSpec
       Sky.Build.UiMultilineTextareaSpec
       Sky.Build.ExposingTypeCtorsSpec
+      Sky.Build.LetForwardRefSpec
       Sky.Type.InstanceCaptureSpec
       Sky.Format.FormatSpec
       Sky.Build.GoKeywordCollisionSpec
