@@ -6363,7 +6363,37 @@ coerceCallArgs qualName args =
         paramTypes = Map.findWithDefault [] qualName (Rec._cg_funcParamTypes env)
     in if null paramTypes
          then map exprToGo args
-         else zipWithDefault coerceArg exprToGo paramTypes args
+         else
+             -- v0.13 Stage 1 — same recovery σ pattern as
+             -- `coerceCallArgsAt`: pin TVars from typed arg sides;
+             -- only erase un-pinned TVars. Critical for recursive
+             -- calls in Sky-source kernel bodies (`Sky_Core_List_map_`'s
+             -- `map fn rest` where fn has typed `func(T1) T2` sig).
+             let goArgs = map exprToGo args
+                 bareRecovered = Map.fromList
+                     [ (pty, cgo)
+                     | (pty, ga) <- zip paramTypes goArgs
+                     , isGenericTypeParam pty
+                     , Just cgo <- [goExprGoType ga]
+                     , cgo /= "any"
+                     , not (isGenericTypeParam cgo)
+                     ]
+                 structuralRecovered = Map.unions
+                     [ unifyGoTypes pty cgo
+                     | (pty, ga) <- zip paramTypes goArgs
+                     , not (isGenericTypeParam pty)
+                     , containsGenericTypeParam pty
+                     , Just cgo <- [goExprGoType ga]
+                     , cgo /= "any"
+                     ]
+                 recovered = Map.union bareRecovered structuralRecovered
+                 substituteOnly pty =
+                     let subbed = substTVarsInGoType recovered pty
+                     in if containsGenericTypeParam subbed
+                          then eraseTypeParams subbed
+                          else subbed
+                 substituted = map substituteOnly paramTypes
+             in zipWithDefault coerceArg exprToGo substituted args
 
 
 -- | v0.13 Phase A5 — call-site-aware variant of `coerceCallArgs`.
