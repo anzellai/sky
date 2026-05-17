@@ -5870,10 +5870,11 @@ func Server_listen(port any, routes any) any {
 		fmt.Fprintf(os.Stderr, "[sky.http] OTel init failed (continuing without trace export): %v\n", err)
 	}
 
-	// Wrap with observability middleware (Phase 1.1a Step 3).
-	// The middleware skips /_sky/* paths internally so the
-	// observability endpoints aren't self-metered.
-	observed := ObservabilityMiddleware(mux)
+	// Wrap with CSRF (Phase 1.2) + observability (Phase 1.1a Step 3).
+	// Order: observability is OUTER so CSRF rejections still get
+	// metered as 403 — surfaces attacks / misconfigs in dashboards.
+	csrfed := CSRFMiddleware(mux)
+	observed := ObservabilityMiddleware(csrfed)
 
 	srv := &http.Server{
 		Addr:              listenAddr,

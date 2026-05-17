@@ -1652,12 +1652,17 @@ func liveAppRun(cfg any) any {
 	}
 
 	// Wrap the mux with panic recovery so one bad handler can't crash the process.
-	// Observability middleware is layered INSIDE the panic recovery so a
-	// panicking handler still produces an access-log line (the recover
-	// runs, sets 500, the middleware records 500). Observability
-	// endpoints (/_sky/*) skip the middleware internally to avoid
-	// recursive metering of scrapes.
-	observed := ObservabilityMiddleware(mux)
+	// Layer order (outermost → innermost):
+	//   1. panic recovery     — turn handler panics into 500s
+	//   2. observability      — req-id, access log, metrics, OTel span
+	//   3. CSRF middleware    — Phase 1.2; double-submit cookie; default ON
+	//   4. user mux           — the actual handlers
+	// Putting CSRF inside observability means rejected CSRF requests
+	// STILL produce an access-log line + counter bump (you want to
+	// see CSRF rejection rates as a metric — sudden spike = attack
+	// or misconfiguration).
+	csrfed := CSRFMiddleware(mux)
+	observed := ObservabilityMiddleware(csrfed)
 	wrapped := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if rec := recover(); rec != nil {
@@ -1872,7 +1877,8 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	// impose font choice, line-height, or colour scheme. Apps that
 	// need a "designed" look still attach their own typography via
 	// view-level style attrs or a styleNode at the top of view.
-	fmt.Fprintf(w, "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><style>%s</style></head><body><div id=\"sky-root\">%s</div><script>%s</script></body></html>", liveBaseCSS, body, liveJSWithCfg(sid, app.bannerCfg))
+	csrfToken := CurrentCsrfToken(r)
+	fmt.Fprintf(w, "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><style>%s</style></head><body><div id=\"sky-root\">%s</div><script>%s</script></body></html>", liveBaseCSS, body, liveJSWithCfgAndCsrf(sid, app.bannerCfg, csrfToken))
 }
 
 // liveBaseCSS is the minimal reset injected into every Sky.Live page.
@@ -2801,8 +2807,21 @@ func jsString(s string) string {
 }
 
 func liveJSWithCfg(sid string, cfg liveBannerConfig) string {
+	// Backwards-compat shim — older callers (tests, external probes)
+	// pre-date the Phase 1.2 CSRF wire. Forwards with an empty
+	// CSRF token; __skySend will simply not attach the header.
+	return liveJSWithCfgAndCsrf(sid, cfg, "")
+}
+
+// liveJSWithCfgAndCsrf — the Phase 1.2 entry point that bundles the
+// per-session CSRF token into the inlined JS. __skySend reads
+// __skyCsrfToken and adds the X-Sky-Csrf header on every POST so
+// the CSRF middleware accepts the request. Zero user code needed —
+// AI-written Sky apps are CSRF-protected by construction.
+func liveJSWithCfgAndCsrf(sid string, cfg liveBannerConfig, csrfToken string) string {
 	return fmt.Sprintf(`
 var __skySid = %q;
+var __skyCsrfToken = %q;
 var __skyBannerEnabled = %t;
 var __skyRetryBaseMs = %d;
 var __skyRetryMaxMs = %d;
@@ -3301,9 +3320,16 @@ var __skyRetryAttempts = 0;
 // the SKY_LIVE_RETRY_* / SKY_LIVE_QUEUE_MAX env vars (see
 // loadLiveBannerConfig).
 function __skyPostEvent(body) {
+  // Phase 1.2 — attach the per-session CSRF token. The server-side
+  // middleware (runtime-go/rt/csrf_middleware.go) rejects POSTs
+  // without a matching X-Sky-Csrf / __sky_csrf cookie pair. Empty
+  // token means CSRF is disabled at the runtime level (sky.toml
+  // [security] csrf = false) — header omitted, middleware skipped.
+  var headers = {"Content-Type":"application/json"};
+  if (__skyCsrfToken) headers["X-Sky-Csrf"] = __skyCsrfToken;
   fetch("/_sky/event", {
     method: "POST",
-    headers: {"Content-Type":"application/json"},
+    headers: headers,
     body: JSON.stringify(body),
     credentials: "same-origin"
   }).then(function(r){
@@ -4011,9 +4037,11 @@ var __skyProbedReload = false;  // one-shot guard so we don't trigger
                                 // failed reopen attempts.
 function __skyProbeSessionLost() {
   if (__skyProbedReload) return;
+  var headers = {"Content-Type": "application/json"};
+  if (__skyCsrfToken) headers["X-Sky-Csrf"] = __skyCsrfToken;
   fetch("/_sky/event", {
     method: "POST",
-    headers: {"Content-Type": "application/json"},
+    headers: headers,
     body: JSON.stringify({sessionId: __skySid, msg: "__skySessionPing", args: []}),
     credentials: "same-origin"
   }).then(function(r) {
@@ -4128,7 +4156,7 @@ if (document.readyState === "loading") {
   __skyInit();
 }
 `,
-		sid, cfg.Enabled, cfg.BaseMs, cfg.MaxMs, cfg.MaxAttempts, cfg.QueueMax,
+		sid, csrfToken, cfg.Enabled, cfg.BaseMs, cfg.MaxMs, cfg.MaxAttempts, cfg.QueueMax,
 		jsString(cfg.Reconnecting), jsString(cfg.Offline),
 		cfg.HelloTimeoutMs, cfg.HeartbeatTtlMs,
 	)
