@@ -3801,6 +3801,16 @@ goExprGoType e = case e of
     GoIr.GoIdent name -> case lookupLambdaType name of
         Just t | isTypedPrimitive t -> Just (solvedTypeToGo t)
         _                           -> Nothing
+    -- v0.13 Stage 1 — typed function literal carries its full Go
+    -- signature. Used by the call-site recovery σ to deduce TVar
+    -- substitutions from typed lambda args: a literal
+    -- `func(x State_Post_R) State_Post_R { … }` against a
+    -- callee param of type `func(T1) T2` unifies T1 = State_Post_R,
+    -- T2 = State_Post_R, so the call site can route through the
+    -- typed `[State_Post_R, State_Post_R]` generic instantiation.
+    GoIr.GoFuncLit params retTy _stmts ->
+        let paramTys = [pty | GoIr.GoParam _ pty <- params]
+        in Just ("func(" ++ intercalateComma paramTys ++ ") " ++ retTy)
     _ -> Nothing
   where
     -- Normalise an `rt.*` callee to its bare function name,
@@ -6592,7 +6602,19 @@ coerceCallArgsAt region qualName args =
             let goArgs = map exprToGo args
                 -- partial σ: bare-type-param ↦ concrete Go type, for
                 -- every position whose arg has a known static type.
-                recovered = Map.fromList
+                --
+                -- v0.13 Stage 1+2 — recover from STRUCTURAL matches
+                -- too: `paramType = "[]T1"` against arg type
+                -- `"[]State_Post_R"` deduces T1 = State_Post_R;
+                -- `paramType = "func(T1) T2"` against arg type
+                -- `"func(State_Post_R) State_Post_R"` deduces both.
+                -- Without this, the call site widens the lambda to
+                -- `func(any) any` and the list to `[]any`,
+                -- breaking Go's typed-generic-instantiation path
+                -- (both args must be unwidened for the kernel's
+                -- `Sky_Core_List_map_[T1, T2]` inference to pick
+                -- concrete T1/T2).
+                bareRecovered = Map.fromList
                     [ (pty, cgo)
                     | (pty, ga) <- zip paramTypes goArgs
                     , isGenericTypeParam pty
@@ -6600,6 +6622,15 @@ coerceCallArgsAt region qualName args =
                     , cgo /= "any"
                     , not (isGenericTypeParam cgo)
                     ]
+                structuralRecovered = Map.unions
+                    [ unifyGoTypes pty cgo
+                    | (pty, ga) <- zip paramTypes goArgs
+                    , not (isGenericTypeParam pty)
+                    , containsGenericTypeParam pty
+                    , Just cgo <- [goExprGoType ga]
+                    , cgo /= "any"
+                    ]
+                recovered = Map.union bareRecovered structuralRecovered
                 substituted =
                     map (eraseTypeParams . substTVarsInGoType recovered)
                         paramTypes
@@ -6801,12 +6832,123 @@ coerceArg e ty
                        else GoIr.GoTypeAssert
                             (GoIr.GoCall (GoIr.GoIdent "any") [e]) erasedTy
 
--- | True when a Go type string is a generic type parameter name we
--- emitted (T1, T2, ...). These are scoped to the function they were
--- declared on, so callers can't type-assert against them.
-isGenericTypeParam :: String -> Bool
 isGenericTypeParam ('T':rest) = all (\c -> c >= '0' && c <= '9') rest && not (null rest)
 isGenericTypeParam _ = False
+
+
+-- | v0.13 Stage 1 — does a Go-type string contain any generic-param
+-- placeholders we emitted (T1, T2, ...)?  Used at the call site to
+-- decide whether structural unification is worth trying for an arg
+-- whose param type contains TVars (e.g. `[]T1`, `func(T1) T2`).
+containsGenericTypeParam :: String -> Bool
+containsGenericTypeParam =
+    any isWordGenericParam . tokenise
+  where
+    -- Split into maximal alphanumeric runs (everything else is
+    -- punctuation: brackets, commas, spaces, parens, dots).
+    tokenise [] = [""]
+    tokenise (c:cs)
+        | isIdChar c = let (tok, rest) = span isIdChar (c:cs)
+                       in tok : tokenise rest
+        | otherwise  = tokenise cs
+    isIdChar c = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+              || (c >= '0' && c <= '9') || c == '_'
+    isWordGenericParam ('T':rest) =
+        not (null rest) && all (\c -> c >= '0' && c <= '9') rest
+    isWordGenericParam _ = False
+
+
+-- | v0.13 Stage 1 — structural unification on Go-type strings.
+-- Walks `paramTy` (which may contain TVar placeholders) and `argTy`
+-- in lockstep, collecting `Map paramTVar argSubstring` substitutions.
+-- On any structural mismatch (e.g. param shape `func(T1) T2` vs arg
+-- shape `[]string`), returns an empty map — caller falls back to the
+-- existing erase-to-`any` path so we never make things worse.
+--
+-- Handles the common shapes the v0.13 codegen emits:
+--   * Bare TVar               : "T1"   ↦ argTy verbatim
+--   * Slice                   : "[]T1" + "[]X" → unify "T1" with "X"
+--   * Function                : "func(T1, …) T2" + "func(A, …) B"
+--                                → unify each input pair + return pair
+--   * Parametric generic      : "rt.SkyMaybe[T1]" + "rt.SkyMaybe[X]"
+--                                → unify "T1" with "X"
+--   * Concrete equal          : "string" + "string" → {} (no-op match)
+unifyGoTypes :: String -> String -> Map.Map String String
+unifyGoTypes pty argTy
+    | isGenericTypeParam pty =
+        if argTy == "any" || isGenericTypeParam argTy
+            then Map.empty
+            else Map.singleton pty argTy
+    | take 2 pty == "[]" && take 2 argTy == "[]" =
+        unifyGoTypes (drop 2 pty) (drop 2 argTy)
+    | "func(" `List.isPrefixOf` pty && "func(" `List.isPrefixOf` argTy =
+        case (splitFuncSig pty, splitFuncSig argTy) of
+            (Just (pIns, pOut), Just (aIns, aOut))
+                | length pIns == length aIns ->
+                    Map.unions (unifyGoTypes pOut aOut
+                                : zipWith unifyGoTypes pIns aIns)
+            _ -> Map.empty
+    | otherwise =
+        -- Try parametric-bracket match: `Name[args]` vs `Name[args]`.
+        case (splitParametric pty, splitParametric argTy) of
+            (Just (n1, a1), Just (n2, a2))
+                | n1 == n2 && length a1 == length a2 ->
+                    Map.unions (zipWith unifyGoTypes a1 a2)
+            _ -> Map.empty
+
+
+-- | Split `func(A, B) R` into ([A, B], R). Returns Nothing on shape
+-- mismatch. Respects nested brackets / parens so generic args don't
+-- get sliced wrong.
+splitFuncSig :: String -> Maybe ([String], String)
+splitFuncSig s
+    | Just inside <- List.stripPrefix "func(" s
+    , (argsStr, rest) <- splitToplevelClose 0 inside
+    , not (null rest) = Just (splitToplevelCommas argsStr, dropWhile (== ' ') rest)
+    | otherwise = Nothing
+  where
+    -- Walk until the matching close-paren at depth 0; return
+    -- (text-inside, text-after-close-paren).
+    splitToplevelClose _ []           = ("", "")
+    splitToplevelClose d (')':rest)
+        | d == 0    = ("", rest)
+        | otherwise = let (a, r) = splitToplevelClose (d-1) rest in (')':a, r)
+    splitToplevelClose d (c:rest)
+        | c == '('  = let (a, r) = splitToplevelClose (d+1) rest in (c:a, r)
+        | c == '['  = let (a, r) = splitToplevelClose (d+1) rest in (c:a, r)
+        | c == ']'  = let (a, r) = splitToplevelClose (d-1) rest in (c:a, r)
+        | otherwise = let (a, r) = splitToplevelClose d rest     in (c:a, r)
+
+    splitToplevelCommas = go 0 ""
+      where
+        go _ acc [] = [reverse acc]
+        go d acc (',':cs)
+            | d == 0    = reverse acc : go 0 "" (dropWhile (== ' ') cs)
+        go d acc (c:cs)
+            | c == '(' || c == '['  = go (d+1) (c:acc) cs
+            | c == ')' || c == ']'  = go (d-1) (c:acc) cs
+            | otherwise             = go d (c:acc) cs
+
+
+-- | Split `Name[arg1, arg2]` into ("Name", [arg1, arg2]). Returns
+-- Nothing if the string doesn't have a `[…]` bracket suffix.
+splitParametric :: String -> Maybe (String, [String])
+splitParametric s = case break (== '[') s of
+    (name, '[':rest)
+      | not (null name)
+      , last rest == ']' ->
+          Just (name, splitTopArgs (init rest))
+    _ -> Nothing
+  where
+    splitTopArgs = go 0 ""
+      where
+        go _ acc [] = [reverse acc]
+        go d acc (',':cs)
+            | d == 0    = reverse acc : go 0 "" (dropWhile (== ' ') cs)
+        go d acc (c:cs)
+            | c == '(' || c == '['  = go (d+1) (c:acc) cs
+            | c == ')' || c == ']'  = go (d-1) (c:acc) cs
+            | otherwise             = go d (c:acc) cs
 
 
 -- | v0.13 Phase A5 — does a comma-separated type-param list
