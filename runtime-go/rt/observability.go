@@ -232,6 +232,8 @@ func MountObservabilityEndpoints(mux *http.ServeMux) {
 	safeMount(mux, "/_sky/readyz", HandleReadyz)
 	safeMount(mux, "/_sky/metrics", HandleMetrics)
 	safeMount(mux, "/_sky/buildinfo", HandleBuildInfo)
+	// Phase 1.1b — /_sky/console dashboard + its JSON API.
+	MountConsoleEndpoints(mux)
 }
 
 // safeMount registers a handler unless the pattern is already

@@ -189,9 +189,19 @@ func csrfReject(w http.ResponseWriter, status, reason string) {
 // isObservabilityPath — true for paths the CSRF middleware skips
 // because they're read-only (GET) or are the SSE connection (which
 // runs over GET and is authenticated by session cookie alone).
+//
+// The /_sky/console family is included because the dashboard polls
+// its API endpoints every 1s via plain fetch (no CSRF token to
+// attach — the dashboard is a static HTML shell, not a Sky.Live
+// app). Admin-auth is the production gate for these, layered
+// inside the handlers themselves.
 func isObservabilityPath(path string) bool {
 	if !strings.HasPrefix(path, "/_sky/") {
 		return false
+	}
+	// Console + console API subroutes — match by prefix.
+	if path == "/_sky/console" || strings.HasPrefix(path, "/_sky/console/") {
+		return true
 	}
 	// Specific endpoints that must always pass:
 	switch path {
