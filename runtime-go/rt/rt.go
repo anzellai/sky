@@ -499,6 +499,18 @@ func narrowReflectValue(src reflect.Value, target reflect.Type) reflect.Value {
 	if target.Kind() == reflect.Slice && src.Kind() == reflect.Slice {
 		return coerceSliceValue(src, target)
 	}
+	// v0.13 Stage 1 — function type conversion via reflect-based
+	// adapter. When src is a Sky `func(any) any` lambda and target
+	// is a concrete `func(T1) T2`, build an adapter that boxes
+	// typed args + narrows the return. Closes the "list of typed
+	// functions" panic class: storing `[\x -> x+1, ...]` (each
+	// Sky lambda emits as func(any) any) into a typed slice
+	// `[]func(int) int` previously zero'd each element (nil func)
+	// because narrowReflectValue had no Func case. Reuses the
+	// `adaptFuncValue` helper already used by makeFuncAdapter.
+	if target.Kind() == reflect.Func && src.Kind() == reflect.Func {
+		return adaptFuncValue(src, target)
+	}
 	// Pointer → value dereference: FFI constructors return `*T` (via
 	// `new(pkg.T)`) for builder-pattern chaining, but the consuming
 	// setter often takes `T` (e.g. `[]ChatCompletionMessage` not
