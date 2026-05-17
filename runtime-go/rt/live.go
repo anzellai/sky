@@ -1644,6 +1644,13 @@ func liveAppRun(cfg any) any {
 		SetProductionMode(true)
 	}
 
+	// Step 7 — OTel tracer init. Honours OTEL_EXPORTER_OTLP_ENDPOINT.
+	// Non-fatal: any failure logs + falls back to noop tracer
+	// (every span call becomes a zero-cost no-op).
+	if err := InitTracingFromEnv(); err != nil {
+		fmt.Fprintf(os.Stderr, "[sky.live] OTel init failed (continuing without trace export): %v\n", err)
+	}
+
 	// Wrap the mux with panic recovery so one bad handler can't crash the process.
 	// Observability middleware is layered INSIDE the panic recovery so a
 	// panicking handler still produces an access-log line (the recover
@@ -1700,6 +1707,11 @@ func liveAppRun(cfg any) any {
 		// requests drain. healthz stays 200 — the process IS still
 		// alive, just refusing new work.
 		SetReady(false)
+		// Flush pending OTel spans BEFORE killing the server so
+		// in-flight requests' spans reach the collector. Bounded
+		// timeout (2s VM, 500ms serverless) so we don't hang past
+		// the orchestrator grace window.
+		ShutdownTracing()
 		_ = srv.Close()
 		// If srv.Close completes the listener teardown, ListenAndServe
 		// returns and the function exits naturally. If something hangs,

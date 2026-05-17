@@ -128,9 +128,18 @@ func ObservabilityMiddleware(next http.Handler) http.Handler {
 		SetGoroutineRequestID(reqID)
 		defer ClearGoroutineRequestID()
 
+		// Step 7 — OTel server span. Honours inbound traceparent
+		// when present so distributed traces chain correctly
+		// (browser → CDN → API gateway → Sky → DB shows as one
+		// trace in the UI).  No-op tracer when OTLP endpoint isn't
+		// configured — every span call short-circuits to zero cost.
+		spanCtx, span := StartHTTPServerSpan(r, routeLabelFor(r))
+		r = r.WithContext(spanCtx)
+
 		// Wrap ResponseWriter to capture status + bytes-written.
 		sw := newStatusCapture(w)
 		next.ServeHTTP(sw, r)
+		EndHTTPServerSpan(span, sw.status, sw.bytesWritten)
 
 		elapsed := time.Since(start).Seconds()
 		route := routeLabelFor(r)
