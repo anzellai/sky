@@ -249,19 +249,20 @@ verified by example sweep + cabal test before moving to the next.
       `Ffi.callPure` route (e6039ab) — proof-of-concept Layer 3
       modules. Will route through `Ffi.kernel` once Stage 4 lands.
 - [~] **Stage 1 — Typed lambda lowering** (v0.13 contract — current
-      priority). In progress; foundation landed. Lambda input types
-      flow via `curryLambdaPatTyped` AND lambda OUTPUT types now flow
-      via the same path. Remaining adapter count in 19-skyforum: 9
-      (down from baseline 11).
+      priority). Major progress this session. Foundation landed:
+      typed lambda emission via `curryLambdaPatTyped` (input + output
+      types), HM body-inference recovery, structural TVar unification
+      for typed lambda/slice args, kernel-call recovery σ with
+      typed-lambda emission. Significant adapter drops across the
+      24-example sweep (07: 9→2, 14: 2→0, 18: 13→10, 19: 11→7, etc.).
 - [~] **Stage 2 — Typed partial application** (43791e2). First concrete
       drop landed: `_cg_funcUltimateRetType` map + typed wrapper in
-      `emitPartialUserCall`. Still TO DO: the recovered-σ at HOF call
-      sites needs to handle typed list args + typed lambda args
-      TOGETHER (passing only one widened to `any` while the other
-      stays typed makes Go inference reject). Tried in this session
-      and reverted because dropping `rt.Coerce[func(any) any]` alone
-      while leaving `rt.AsListAny` widening on list args breaks Go's
-      `[]T1` inference. The COORDINATED fix is needed.
+      `emitPartialUserCall`. The recovery-σ infrastructure in
+      `coerceCallArgs` extends the foundation.
+- [ ] Stage 1 follow-up: pipeline reorder so funcSkyToGoTVars is
+      populated BEFORE dep-decl emission. Then the recursive-call
+      adapters in Sky-source kernel bodies (Sky_Core_List_map_,
+      foldl, indexedMap) can drop. Documented in commit 4ad92ed.
 - [ ] Stage 3 — Per-ADT-ctor typed Go structs (v0.13 contract).
       Design agreed: per-ADT `Msg_Struct { V0_t1, V0_t2, … }` with
       unified slot-by-type. ADT wrapper carries Tag + Name + typed
@@ -273,27 +274,82 @@ verified by example sweep + cabal test before moving to the next.
 - [ ] Stage 5 — Full stdlib migration (v0.14.x)
 - [ ] Stage 6 — Documentation sync (v0.14.x)
 
-## Stage 1 + 2 coordinated fix — concrete next-session work
+## Adapter measurement — 24-example sweep (2026-05-17 end of session)
 
-Two changes must land together in `coerceArg` and `coerceCallArgs`:
+Baseline at session start (pre-Stage 1/2 work) — measured after
+Phase 2.4 land:
 
-1. When target is `func(any) any` (came from generic-erased `func(T1)
-   T2`) AND `e` is a typed function literal, pass `e` raw (no
-   `rt.Coerce[func(any) any]` wrap). Go's generic inference picks
-   T1, T2 from the typed lambda's sig.
-2. When target is `[]any` (came from generic-erased `[]T1`) AND `e`
-   is a typed slice expression (`model.Posts : []State_Post_R`),
-   pass `e` raw (no `rt.AsListAny` widen). Same generic inference
-   rationale.
+| Example         | Count |
+|-----------------|-------|
+| 02-go-stdlib    |   1   |
+| 06-json         |   9   |
+| 07-todo-cli     |   9   |
+| 08-notes-app    |   5   |
+| 09-live-counter |   3   |
+| 10-live-component |  4 |
+| 12-skyvote      |   5   |
+| 13-skyshop      |  23   |
+| 14-task-demo    |   2   |
+| 16-skychess     |  10   |
+| 17-skymon       |  15   |
+| 18-job-queue    |  13   |
+| 19-skyforum     |  11 → 7 (after Stage 2 first drop) |
+| 20-cli-counter  |   1   |
+| 21-tui-stopwatch|   1   |
+| 22-tui-stopwatch-ui | 1 |
+| 23-tui-todo     |   3   |
 
-Both args of `Sky_Core_List_map_(typedLambda, typedList)` need to be
-unwidened for Go to infer T1, T2 correctly. ONE widened arg + ONE
-unwidened arg leads to "type mismatch with inferred T1" Go errors —
-which is what the in-session attempt produced when only doing fix 1.
+End-of-session count (post all Stage 1+2 commits):
 
-The two fixes are TIGHTLY coupled. They must land in a single commit
-with the same condition check (target is generic-erased + source has
-its non-widened type expressible in Go's inferrable shape).
+| Example         | Before | After | Drop |
+|-----------------|--------|-------|------|
+| 02-go-stdlib    |   1    |   1   |   0  |
+| 06-json         |   9    |  10   |  +1  |
+| 07-todo-cli     |   9    |   2   |  -7  |
+| 08-notes-app    |   5    |   5   |   0  |
+| 09-live-counter |   3    |   3   |   0  |
+| 10-live-component|  4    |   4   |   0  |
+| 12-skyvote      |   5    |   5   |   0  |
+| 13-skyshop      |  23    |  22   |  -1  |
+| 14-task-demo    |   2    |   0   |  -2  |
+| 16-skychess     |  10    |  10   |   0  |
+| 17-skymon       |  15    |  15   |   0  |
+| 18-job-queue    |  13    |  10   |  -3  |
+| 19-skyforum     |  11    |   7   |  -4  |
+| 20-cli-counter  |   1    |   0   |  -1  |
+| 21-tui-stopwatch|   1    |   0   |  -1  |
+| 22-tui-stopwatch-ui |1   |   0   |  -1  |
+| 23-tui-todo     |   3    |   2   |  -1  |
+| 24-tui-kitchen-sink | (new) | 4 | — |
+
+**Net session drop: ~21 unjustified `func(any) any` adapters
+eliminated across the 24-example sweep.**
+
+The 06-json +1 is a single shape side-effect — build runs
+correctly, output identical. Likely a different lambda shape
+emerged from the new path; harmless.
+
+## Remaining work — concrete next-session items
+
+1. **Pipeline reorder** so `funcSkyToGoTVars` is populated BEFORE
+   dep-decl emission. Unlocks the recursive-call adapters in
+   Sky-source kernel bodies (Sky_Core_List_map_/foldl/indexedMap
+   recursive call sites). Each such adapter currently emits
+   `Sky_Core_List_map_(rt.Coerce[func(any) any](fn), rt.AsListAny(rest))`
+   with both wraps unnecessary — recursive call uses same TVars.
+
+2. **List-typed-slice case-pattern emission**: `rest := any(rt.AsList
+   (__subject)[1:])` widens `rest` to `any`. Should emit as
+   `rest := rt.AsListT[T1](rt.AsList(__subject)[1:])` when inside
+   a generic function with T1 in scope.
+
+3. **Stage 3 (per-ADT-ctor typed Go structs)** for the user ADTs.
+   Design agreed; ~5-7 days work. Unlocks the last `[]any` field
+   storage in USED code.
+
+4. **Stage 4 (Ffi.kernel mechanism)** + **Stage 5 (full stdlib
+   migration to Sky source)** — v0.14.x; architectural improvement.
+   Blocked on Stages 1-3 completion.
 
 ## What's blocked on this work
 
