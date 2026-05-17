@@ -2029,6 +2029,14 @@ lookupKernelType modName funcName = case (modName, funcName) of
             (T.TLambda stringType
                 (T.TLambda (T.TVar "page")
                     (T.TType (ModuleName.Canonical "") "Route" [])))
+    -- Live.lifecycle: msg -> msg  (identity-typed marker that tags
+    -- a Msg as a heartbeat/Tick for the diff-based logger; runtime
+    -- unwraps before invoking update so user code sees raw Msg).
+    -- See docs/v1-rfc/1-observability.md §"Resolved questions" #4
+    -- + runtime-go/rt/msg_logging.go Std_Live_lifecycle.
+    ("Live", "lifecycle") ->
+        Just $ T.Forall ["msg"]
+            (T.TLambda (T.TVar "msg") (T.TVar "msg"))
     -- Json.Decode (kernel mod "JsonDec") — signatures carry the
     -- opaque Sky `Decoder a` as TType "Decoder" [a]; the codegen
     -- resolves Decoder to rt.SkyDecoder via runtimeTypedMap.

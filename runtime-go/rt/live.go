@@ -2254,14 +2254,28 @@ func (app *liveApp) dispatch(sess *liveSession, msg any) (body string) {
 		// session state stays consistent.
 		return ""
 	}
+	// Step 5 — diff-based Msg logging. Snapshot the pre-update
+	// model + start time so ObserveMsgLog (called near the end of
+	// dispatch) can decide whether to emit a log line. Lifecycle
+	// marker (Step 6) detected here too.
+	msgLogCtx := BeginMsgLog(msg, sess.model)
+	// Step 6 — unwrap Std.Live.lifecycle so the user's update
+	// receives the inner Msg, not the wrapper.
+	msg = UnwrapLifecycle(msg)
+
+	var dispatchErr error
+	var finalCmd any
 	defer func() {
 		if r := recover(); r != nil {
 			fmt.Fprintf(os.Stderr,
 				"[sky.live] dispatch panic recovered, dropping event: %v\n%s\n",
 				r, debug.Stack())
 			body = ""
+			dispatchErr = fmt.Errorf("dispatch panic: %v", r)
 		}
+		ObserveMsgLog(msgLogCtx, sess.model, finalCmd, dispatchErr)
 	}()
+
 	if app.guard != nil && isFunc(app.guard) {
 		g := sky_call2(app.guard, msg, sess.model)
 		// guard returns Result: Ok _ (allow) or Err "reason" (reject).
@@ -2271,6 +2285,10 @@ func (app *liveApp) dispatch(sess *liveSession, msg any) (body string) {
 				"Notification":     reason,
 				"NotificationType": "error",
 			})
+			// Mark as error outcome for the Msg log so guard
+			// rejections surface as warnings (caller-visible
+			// auth/permission failures).
+			dispatchErr = fmt.Errorf("guard rejected: %v", reason)
 			return app.renderView(sess)
 		}
 	}
@@ -2286,6 +2304,7 @@ func (app *liveApp) dispatch(sess *liveSession, msg any) (body string) {
 	result := sky_call2(app.update, msg, sess.model)
 	sess.model = tupleFirst(result)
 	cmd := tupleSecond(result)
+	finalCmd = cmd
 	sess.handlers = map[string]any{}
 	vn := HtmlToVNode(sky_call(app.view, sess.model))
 	assignSkyIDs(&vn, "r")

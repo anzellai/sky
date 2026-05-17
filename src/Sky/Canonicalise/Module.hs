@@ -1009,7 +1009,7 @@ staticKernelFunctions = Map.fromList
     -- v0.13 Layer 3: Css whitelist removed — Std.Css is a Sky-source
     -- stdlib module now; its exported names come from the parsed
     -- module, not this kernel registry.
-    , ("Live",    ["app", "route", "api"])
+    , ("Live",    ["app", "route", "api", "lifecycle"])
     -- v0.13 Layer 3: Event whitelist removed — Std.Html.Events is a
     -- Sky-source stdlib module now.
     , ("Sub",     ["none", "every"])
