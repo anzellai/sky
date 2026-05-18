@@ -1292,6 +1292,29 @@ func Basics_modBy(divisor, n any) any {
 	return AsInt(n) % d
 }
 
+// Basics_clamp — any-typed wrapper around Basics_clampT to match the
+// codegen's default `rt.Basics_clamp` call shape. Without this, every
+// `clamp lo hi n` reference where ANY of the args isn't a primitive
+// literal lowered to `rt.Basics_clamp(...)` and Go-build rejected
+// with `undefined: rt.Basics_clamp`. Issue #56.
+//
+// Sky sig: `clamp : comparable -> comparable -> comparable -> comparable`.
+// We narrow to Int here (Sky stdlib documents this as "integer clamp"
+// in 99% of use; float-clamp users can call Basics_clampT directly via
+// the typed-literal path).
+func Basics_clamp(lo, hi, n any) any {
+	loI := AsInt(lo)
+	hiI := AsInt(hi)
+	nI := AsInt(n)
+	if nI < loI {
+		return loI
+	}
+	if nI > hiI {
+		return hiI
+	}
+	return nI
+}
+
 func Basics_fst(t any) any {
 	switch v := t.(type) {
 	case SkyTuple2:

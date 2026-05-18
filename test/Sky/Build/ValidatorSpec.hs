@@ -79,8 +79,53 @@ spec = do
             let goSrc = unlines
                     [ "package main"
                     , "func main() {"
-                    , "    rt.Println(x)"
+                    -- Use REAL runtime functions: rt.Log_println +
+                    -- rt.Eq both exist in runtime-go/rt/. Using
+                    -- fictional names would also trigger the
+                    -- E4005 undefined-kernel detector added later.
+                    , "    rt.Log_println(x)"
                     , "    rt.Eq(a, b)"
+                    , "}"
+                    ]
+            let diags = validateEmittedGo "main.go" Map.empty goSrc
+            diags `shouldBe` []
+
+    describe "validateEmittedGo — undefined-kernel detector (issue #56)" $ do
+
+        it "flags rt.<Name> where the runtime doesn't export <Name>" $ do
+            -- Issue #56: Sky kernel registry maps a name like
+            -- `clamp -> Basics_clamp` but the runtime only has
+            -- Basics_clampT. Pre-fix, the user got a `go build` error
+            -- `undefined: rt.Basics_clamp` and was told to file an
+            -- issue. Post-fix the validator catches it.
+            let goSrc = unlines
+                    [ "package main"
+                    , "// SKY-ORIGIN: src/Main.sky:7:1"
+                    , "func main() {"
+                    , "    _ = rt.Foo_NeverDefinedAnywhere(1, 2, 3)"
+                    , "}"
+                    ]
+            let diags = validateEmittedGo "main.go" Map.empty goSrc
+            length diags `shouldBe` 1
+            case diags of
+                (d:_) -> do
+                    unDiagCodeText (Diag._diag_code d) `shouldBe` "E4005"
+                    Diag._diag_severity d `shouldBe` Diag.SevError
+                    Diag._diag_category d `shouldBe` Diag.CatCodegen
+                [] -> fail "expected one diagnostic"
+
+        it "does NOT flag rt.<Name> where <Name> IS in the runtime" $ do
+            -- Issue #56 fix: Basics_clamp added to runtime-go/rt/rt.go
+            -- in same commit. The validator must NOT flag legitimate
+            -- references. This pins the runtime-exports scan working
+            -- correctly — if the scan misses `Basics_clamp` (e.g.
+            -- regex regression), this test fails.
+            let goSrc = unlines
+                    [ "package main"
+                    , "func main() {"
+                    , "    _ = rt.Basics_clamp(0, 100, 200)"
+                    , "    _ = rt.String_fromInt(42)"
+                    , "    _ = rt.Log_println(\"hi\")"
                     , "}"
                     ]
             let diags = validateEmittedGo "main.go" Map.empty goSrc

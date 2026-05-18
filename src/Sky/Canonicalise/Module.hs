@@ -13,6 +13,7 @@ module Sky.Canonicalise.Module
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.IORef (readIORef)
+import Data.Maybe (isJust)
 import System.IO.Unsafe (unsafePerformIO)
 import qualified Sky.AST.Source as Src
 import qualified Sky.AST.Canonical as Can
@@ -750,8 +751,55 @@ collectUnboundNameErrors env srcMod =
                 ++ ": Undefined name: " ++ n
                 ++ "\n    I cannot find a `" ++ n
                 ++ "` in scope. Check for a typo, or add an import that exposes this name."
+
+        -- v0.13 Stage 1 — extend the unbound-name detector to
+        -- QUALIFIED references too. Pre-fix `Cart.adds_nothing`
+        -- (where `Cart` is imported but the name isn't exported)
+        -- silently fell through to `VarTopLevel "Cart" "adds_nothing"`
+        -- in the canonicaliser, emitting bogus Go that `go build`
+        -- later rejected with `undefined: Cart_adds_nothing`. Now
+        -- caught at Sky check time.
+        --
+        -- Conservative: only flag when the qualifier IS a known
+        -- import alias (so we don't false-positive on aliased
+        -- imports we haven't fully canonicalised yet). When the
+        -- qualifier resolves but the lookup of (qualifier, name)
+        -- fails, the name isn't exported by that module → unbound.
+        collectQ (A.At _ v) =
+            let pats     = Src._valuePatterns v
+                body     = Src._valueBody v
+                shadowed = Set.fromList (concatMap patternNames pats)
+            in collectQualifiedRefs shadowed body
+        allQualRefs = concatMap collectQ (Src._values srcMod)
+        unboundQual =
+            [ (q, n, reg)
+            | (q, n, reg) <- allQualRefs
+            -- Skip kernel modules — their exports aren't tracked in
+            -- _qualVars; they're resolved via `kernelToGo`'s default
+            -- `Mod_Fn` fallback. Missing kernel runtime functions
+            -- get caught by the codegen validator (E4005) instead.
+            , not (Map.member q Env.kernelModules)
+            -- Only check qualifiers that ARE known (imported via
+            -- alias / present in the _qualVars or _qualCtors map).
+            -- Unknown qualifiers are handled by the canonicaliser
+            -- via its kernel-module + import-alias fallback chain.
+            , isJust (Env.lookupImportAlias q env)
+                || Map.member q (Env._qualVars env)
+                || Map.member q (Env._qualCtors env)
+            , case Env.lookupQualVar q n env of
+                Just _ -> False
+                Nothing -> case Env.lookupQualCtor q n env of
+                    Just _ -> False
+                    Nothing -> True
+            ]
+        formatQual (q, n, A.Region (A.Position r c) _) =
+            show r ++ ":" ++ show c
+                ++ ": Undefined name: " ++ q ++ "." ++ n
+                ++ "\n    Module `" ++ q ++ "` is imported but does not export `" ++ n ++ "`."
+                ++ "\n    Check the module's `exposing (...)` list, or check for a typo."
     in
         map formatOne (dedupeByNameTop unbound)
+        ++ map formatQual unboundQual
 
 
 -- | v0.13 Layer 1 migration: collect unbound-name errors as
@@ -781,8 +829,114 @@ collectUnboundDiagnostics path env srcMod =
             & Diag.withHint ("I cannot find a `" ++ n
                           ++ "` in scope. Check for a typo, or add"
                           ++ " an import that exposes this name.")
+
+        -- v0.13 Stage 1 — also detect QUALIFIED references where the
+        -- module exists but the name isn't exported (e.g.
+        -- `Cart.adds_nothing` where Cart is imported but doesn't
+        -- export `adds_nothing`). Pre-fix the canonicaliser silently
+        -- fell through to `VarTopLevel (Canonical qualifier) name`,
+        -- emitting bogus Go that `go build` later rejected. Now
+        -- caught at Sky check time.
+        --
+        -- Conservative — only flag when the qualifier IS resolvable
+        -- (so we don't false-positive on aliased imports we haven't
+        -- canonicalised yet). The lookup goes through
+        -- `Env.lookupQualVar` which mirrors the canonicaliser's own
+        -- resolution path; if it returns Nothing AND the qualifier
+        -- is in known import aliases, the name isn't exported.
+        collectQual (A.At _ v) =
+            let pats     = Src._valuePatterns v
+                body     = Src._valueBody v
+                shadowed = Set.fromList (concatMap patternNames pats)
+            in collectQualifiedRefs shadowed body
+        allQualRefs = concatMap collectQual (Src._values srcMod)
+        isKnownQualifier q =
+               Map.member q Env.kernelModules
+            || isJust (Env.lookupImportAlias q env)
+        -- Flag a qualified ref iff the qualifier IS known (so we know
+        -- the user MEANS this module) BUT the qualified lookup fails.
+        unboundQual =
+            [ (q, n, reg)
+            | (q, n, reg) <- allQualRefs
+            , isKnownQualifier q
+            , case Env.lookupQualVar q n env of
+                Just _ -> False
+                Nothing ->
+                    -- Also check the kernel module fallback the
+                    -- canonicaliser uses (e.g. `Crypto.sha256`).
+                    not (Map.member q Env.kernelModules &&
+                         qualifiedExistsInKernel q n)
+            ]
+        mkQualDiag (q, n, reg) =
+            Diag.mkError path reg Diag.CatCanonical Diag.canonE_UndefinedName
+                ("Undefined name: " ++ q ++ "." ++ n)
+            & Diag.withHint ("Module `" ++ q ++ "` is imported but"
+                          ++ " does not export `" ++ n ++ "`. Check"
+                          ++ " the module's exposing list, or check"
+                          ++ " for a typo.")
     in
         map mkDiag (dedupeByNameTop unbound)
+        ++ map mkQualDiag unboundQual
+
+
+-- | Walk the AST collecting every `Src.VarQual qualifier name`
+-- reference (with source region). Used by `collectUnboundDiagnostics`
+-- to check qualified references against the env.
+collectQualifiedRefs :: Set.Set String -> Src.Expr -> [(String, String, A.Region)]
+collectQualifiedRefs shadowed (A.At reg e) = case e of
+    Src.Var _ -> []
+    Src.VarQual q n -> [(q, n, reg)]
+    Src.Call f xs ->
+        collectQualifiedRefs shadowed f
+        ++ concatMap (collectQualifiedRefs shadowed) xs
+    Src.Binops pairs final ->
+        concat [collectQualifiedRefs shadowed e' | (e', _) <- pairs]
+        ++ collectQualifiedRefs shadowed final
+    Src.Lambda pats body ->
+        let shadowed' = Set.union shadowed (Set.fromList (concatMap patternNames pats))
+        in collectQualifiedRefs shadowed' body
+    Src.If branches elseE ->
+        concat [collectQualifiedRefs shadowed a ++ collectQualifiedRefs shadowed b | (a, b) <- branches]
+        ++ collectQualifiedRefs shadowed elseE
+    Src.Let defs body ->
+        let defNames = Set.fromList (concatMap defBoundNames defs)
+            shadowed' = Set.union shadowed defNames
+        in concatMap (defBodyQualifiedRefs shadowed') defs
+        ++ collectQualifiedRefs shadowed' body
+    Src.Case scrut arms ->
+        collectQualifiedRefs shadowed scrut
+        ++ concatMap (\(p, rhs) ->
+            let shadowed' = Set.union shadowed (Set.fromList (patternNames p))
+            in collectQualifiedRefs shadowed' rhs) arms
+    Src.Access target _ -> collectQualifiedRefs shadowed target
+    Src.Update _ fields -> concat [collectQualifiedRefs shadowed v | (_, v) <- fields]
+    Src.Record fields -> concat [collectQualifiedRefs shadowed v | (_, v) <- fields]
+    Src.Tuple a b cs ->
+        collectQualifiedRefs shadowed a ++ collectQualifiedRefs shadowed b
+        ++ concatMap (collectQualifiedRefs shadowed) cs
+    Src.List xs -> concatMap (collectQualifiedRefs shadowed) xs
+    Src.Negate inner -> collectQualifiedRefs shadowed inner
+    Src.Paren inner -> collectQualifiedRefs shadowed inner
+    _ -> []
+
+defBodyQualifiedRefs :: Set.Set String -> A.Located Src.Def -> [(String, String, A.Region)]
+defBodyQualifiedRefs shadowed (A.At _ d) = case d of
+    Src.Define _ pats body _ ->
+        let shadowed' = Set.union shadowed (Set.fromList (concatMap patternNames pats))
+        in collectQualifiedRefs shadowed' body
+    Src.Destruct _ body -> collectQualifiedRefs shadowed body
+
+-- | Conservative kernel-existence check: does the (kernelMod, name)
+-- pair appear in the static kernel registry? Returns True for any
+-- name that COULD be resolved by `kernelToGo`'s default
+-- `Mod_Fn` fallback — we don't want to false-positive on kernel
+-- functions that have no explicit registry entry but DO have a
+-- runtime function (like `Basics.clamp` post-issue-#56). For now,
+-- accept any name under a known kernel module; the codegen
+-- validator (Sky.Build.Validator's E4005) catches the actual
+-- emit-time absence.
+qualifiedExistsInKernel :: String -> String -> Bool
+qualifiedExistsInKernel _ _ = True
 
 
 -- | Reverse-application operator (`&`), used by the new Diagnostic-

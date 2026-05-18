@@ -56,11 +56,19 @@ module Sky.Build.Validator
     , resolveGoErrorToSky
     ) where
 
+import qualified Data.ByteString as BS
+import qualified Data.ByteString.Char8 as BS8
 import qualified Data.Map.Strict as Map
+import qualified Data.Set as Set
 import qualified Sky.Reporting.Annotation as A
 import qualified Sky.Reporting.Diagnostic as Diag
+import Sky.Build.EmbeddedRuntime (embeddedRuntime)
+import Data.Char (isAlphaNum)
+import Data.IORef
 import Data.List (isPrefixOf, isInfixOf, isSuffixOf, stripPrefix, foldl')
 import Data.Maybe (mapMaybe)
+import qualified System.Environment
+import System.IO.Unsafe (unsafePerformIO)
 
 
 -- ─── public API ──────────────────────────────────────────────────────
@@ -77,8 +85,94 @@ import Data.Maybe (mapMaybe)
 validateEmittedGo :: FilePath -> OriginMap -> String -> [Diag.Diagnostic]
 validateEmittedGo _goPath originMap source =
     let lns = zip [1..] (lines source)
-        diags = concatMap (checkLine originMap) lns
-    in diags
+        exports = runtimeExports
+        diags = concatMap (checkLine originMap exports) lns
+    -- Env-var escape hatch for codegen debugging: SKY_SKIP_VALIDATOR=1
+    -- skips ALL validator patterns so the user can see the raw Go +
+    -- get the raw `go build` error. Used when iterating on a codegen
+    -- change before the validator's patterns are reliable.
+    in if envSkipValidator then [] else diags
+
+{-# NOINLINE envSkipValidator #-}
+envSkipValidator :: Bool
+envSkipValidator = unsafePerformIO $ do
+    v <- System.Environment.lookupEnv "SKY_SKIP_VALIDATOR"
+    return (v == Just "1")
+
+
+-- | v0.13 Stage 1 (issue #56) — set of every exported identifier in
+-- the embedded Go runtime (`runtime-go/rt/*.go`). Populated once from
+-- the embedded source on first access, cached in an IORef. Used by
+-- `patternUndefinedKernel` to catch `rt.X` references where `X` is
+-- not actually defined in the runtime — a class of bugs that previously
+-- type-checked fine in Sky but failed `go build` with `undefined:
+-- rt.X` (the contract violation that motivates this validator).
+--
+-- Scope: top-level `func` declarations, `type` declarations, top-level
+-- `var` declarations. Generic-parameter-bearing fns (`func F[T any](
+-- …)`) are matched on the bare name. Methods (`func (r *T) M(…)`) are
+-- skipped because Sky never references them via `rt.M` (always via
+-- a value of type `T`).
+{-# NOINLINE runtimeExportsRef #-}
+runtimeExportsRef :: IORef (Maybe (Set.Set String))
+runtimeExportsRef = unsafePerformIO (newIORef Nothing)
+
+runtimeExports :: Set.Set String
+runtimeExports = unsafePerformIO $ do
+    cached <- readIORef runtimeExportsRef
+    case cached of
+        Just s  -> return s
+        Nothing -> do
+            let s = scanEmbeddedRuntimeExports
+            writeIORef runtimeExportsRef (Just s)
+            return s
+
+scanEmbeddedRuntimeExports :: Set.Set String
+scanEmbeddedRuntimeExports =
+    let goFiles = [ bs | (path, bs) <- embeddedRuntime
+                       , ".go" `isSuffixOf` path
+                       , "rt/" `isPrefixOf` path
+                       , not (".test.go" `isSuffixOf` path)
+                       , not ("_test.go" `isSuffixOf` path)
+                       ]
+        allLines = concatMap (lines . BS8.unpack) goFiles
+    in Set.fromList (mapMaybe extractTopLevelName allLines)
+  where
+    extractTopLevelName ln
+        -- `func Name(...)` — value-level fn (not a method)
+        | Just rest <- stripPrefix "func " ln
+        , let name = takeWhile isIdentChar rest
+        , not (null name)
+        , takeWhile isIdentChar rest /= ""
+        , let after = drop (length name) rest
+        , beginsWithFuncContinuation after
+        = Just name
+        -- `func Name[T any](...)` — generic fn
+        -- (handled by the same path above since `takeWhile isIdentChar`
+        -- stops at the `[` and `beginsWithFuncContinuation` accepts `[`).
+        --
+        -- `type Name ...`
+        | Just rest <- stripPrefix "type " ln
+        , let name = takeWhile isIdentChar rest
+        , not (null name) = Just name
+        -- `var Name ...`
+        | Just rest <- stripPrefix "var " ln
+        , let name = takeWhile isIdentChar rest
+        , not (null name) = Just name
+        | otherwise = Nothing
+
+    isIdentChar c = isAlphaNum c || c == '_'
+
+    -- After the fn name, accept either `(`, `[`, or whitespace
+    -- (some templates emit `func F  (`). Methods start with `(`
+    -- BEFORE the name (`func (r *T) M(`), so this filter never
+    -- fires on them — they don't match `stripPrefix "func "` +
+    -- name-then-continuation.
+    beginsWithFuncContinuation s =
+        case dropWhile (== ' ') s of
+            '(':_  -> True
+            '[':_  -> True
+            _      -> False
 
 
 -- ─── pattern matchers ────────────────────────────────────────────────
@@ -86,13 +180,107 @@ validateEmittedGo _goPath originMap source =
 
 -- | Run every pattern matcher on a single line.  Each matcher
 -- returns Just Diagnostic if it fires; Nothing otherwise.
-checkLine :: OriginMap -> (Int, String) -> [Diag.Diagnostic]
-checkLine originMap (goLine, line) =
+checkLine :: OriginMap -> Set.Set String -> (Int, String) -> [Diag.Diagnostic]
+checkLine originMap exports (goLine, line) =
     mapMaybe (\m -> m originMap goLine line)
         [ patternTypedKernelAnyArg
         , patternRawTypeAssert
         , patternGenericInstAnyOnly
+        , patternUndefinedKernel exports
         ]
+
+
+-- | v0.13 Stage 1 (issue #56) — emitted `rt.<Name>` reference where
+-- `<Name>` doesn't exist in the runtime. Catches the bug class
+-- where Sky's kernel-name registry knows about a fn (e.g.
+-- `clamp -> Basics_clamp`) but no matching runtime decl exists
+-- (the runtime only has `Basics_clampT`). Pre-fix the user got
+-- a `go build` error `undefined: rt.Basics_clamp` and was told to
+-- file an issue; post-fix the Sky compiler catches it itself.
+--
+-- Scope: matches `rt.<Ident>` references in the body (not in
+-- imports or string literals). Excludes anything that contains a
+-- `.` after the `rt.` prefix (e.g. `rt.Foo.Bar` is field access,
+-- not a kernel ref). Excludes `[` brackets (generic instantiation
+-- is on the bare ident).
+patternUndefinedKernel :: Set.Set String -> OriginMap -> Int -> String -> Maybe Diag.Diagnostic
+patternUndefinedKernel exports originMap goLine line =
+    let refs = extractRtRefs line
+        -- FFI-generated bindings live in `sky-out/rt/<pkg>_bindings.go`
+        -- (not `runtime-go/rt/`), so the embedded-runtime scan can't
+        -- see them. They use the `Go_<pkg>_<fn>` naming convention.
+        -- Skip those — sky-ffi-inspect / FfiGen own their own
+        -- contract check at install time.
+        --
+        -- Also skip refs that look like generic type parameters
+        -- (`rt.T1`, `rt.SkyResult`, `rt.SkyMaybe`, …) — these are
+        -- TYPES not call targets; the type system already validates
+        -- them at usage time, and Set.member would miss e.g.
+        -- `rt.SkyResult[Foo, Bar]` because we extract the bare name
+        -- but the runtime exports the parameterised type.
+        isFfiGenerated n =
+            "Go_" `isPrefixOf` n ||      -- FFI fn wrappers
+            "FfiT_" `isPrefixOf` n       -- FFI type aliases
+        bad  = [ name | name <- refs
+                      , not (isFfiGenerated name)
+                      , not (Set.member name exports) ]
+    in case bad of
+        []       -> Nothing
+        (name:_) -> Just $ buildCodegenDiag originMap goLine
+            Diag.codegenE_UndefinedKernel
+            ("Codegen emitted a reference to `rt." ++ name ++ "`\n"
+          ++ "but the runtime does not export a function or value\n"
+          ++ "named `" ++ name ++ "`. `go build` would reject this\n"
+          ++ "as `undefined: rt." ++ name ++ "`.\n\n"
+          ++ "This is a Sky compiler bug — the kernel-name registry\n"
+          ++ "knows about `" ++ humanise name ++ "` but a matching\n"
+          ++ "runtime declaration is missing. Either add the runtime\n"
+          ++ "function in `runtime-go/rt/` or correct the kernel\n"
+          ++ "name in `src/Sky/Generate/Go/Kernel.hs` /\n"
+          ++ "`src/Sky/Build/Compile.hs`'s `kernelToGo` default.")
+  where
+    humanise n = case break (== '_') n of
+        (modPart, '_':funcPart) -> modPart ++ "." ++ funcPart
+        _ -> n
+
+extractRtRefs :: String -> [String]
+extractRtRefs = go True  -- start-of-string IS a token boundary
+  where
+    go _ [] = []
+    -- Skip string literals (`"...\""`) so that source-line tracing
+    -- strings like `"Cart.addItem"` aren't misparsed as `rt.addItem`
+    -- references when the C of "Cart" lines up. We don't handle
+    -- escaped quotes perfectly; a stray unterminated string would
+    -- just skip the rest of the line. That's fine for the validator's
+    -- conservative-by-design contract.
+    go _ ('"':rest) = go True (skipString rest)
+    -- Skip line comments — `// foo rt.bar` is not a ref.
+    go _ ('/':'/':_) = []
+    -- Match `rt.<Ident>` only at a token boundary (preceded by non-
+    -- identifier char or BOL, indicated by `boundary = True`).
+    go True str@('r':'t':'.':_)
+        | (name, rest) <- span isRtIdentChar (drop 3 str)
+        , not (null name)
+        , not ('.' `elem` take 1 rest) =
+            name : go (nextBoundary (head' rest))
+                      (drop (length name) (drop 3 str))
+    go _ (c:cs) = go (nextBoundary c) cs
+
+    isRtIdentChar c = isAlphaNum c || c == '_'
+
+    -- After consuming a char, the NEXT position is at a token
+    -- boundary iff this char wasn't an identifier char.
+    nextBoundary c = not (isAlphaNum c || c == '_' || c == '.')
+
+    head' [] = ' '
+    head' (h:_) = h
+
+    -- Skip a Go string literal until the matching `"`. Handle `\"`
+    -- as an escape so `"foo\"bar"` reads as one string.
+    skipString [] = []
+    skipString ('\\':_:rest) = skipString rest
+    skipString ('"':rest) = rest
+    skipString (_:rest) = skipString rest
 
 
 -- | Pattern 1: typed-kernel call with a raw any-typed arg.

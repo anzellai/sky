@@ -193,6 +193,7 @@ test-suite sky-tests
     , aeson >= 2.0
     , vector >= 0.12
     , time >= 1.9
+    , file-embed >= 0.0.15
 
   other-modules:
       Sky.Build.Validator
