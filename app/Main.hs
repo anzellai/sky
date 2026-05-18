@@ -1640,7 +1640,12 @@ runConsole opts = do
     -- which prefixes "sky " (a space breaks shell completions later).
     let root = cache </> ("console-" ++ skyBuildVersion)
         srcDir = root </> "src"
-        binPath = root </> "sky-out" </> "app"
+        -- Live and TUI build different binaries from different entry
+        -- points but share the same source tree. Cache them under
+        -- distinct names so once a user has built one, switching to
+        -- the other doesn't accidentally re-run the wrong binary.
+        binName = if _consoleTui opts then "app-tui" else "app-live"
+        binPath = root </> "sky-out" </> binName
     -- 1. Materialise embedded sources (idempotent — overwrites). Cheap
     --    enough to redo every invocation; ensures any local cache
     --    corruption self-heals.
@@ -1671,7 +1676,17 @@ runConsole opts = do
         (_, _, _, ph) <- System.Process.createProcess bp
         bec <- System.Process.waitForProcess ph
         case bec of
-            ExitSuccess -> return ()
+            ExitSuccess -> do
+                -- `sky build` always writes to sky-out/app; rename to
+                -- the backend-specific name so Live + TUI binaries can
+                -- coexist in the same cache dir.
+                let built = root </> "sky-out" </> "app"
+                ok <- doesFileExist built
+                if ok
+                    then renameFile built binPath
+                    else do
+                        hPutStrLn stderr "sky console: build succeeded but sky-out/app is missing"
+                        exitWith (ExitFailure 1)
             ExitFailure n -> do
                 hPutStrLn stderr $ "sky console: build failed (exit " ++ show n ++ ")"
                 exitWith (ExitFailure n)
