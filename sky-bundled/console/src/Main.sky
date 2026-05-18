@@ -38,12 +38,22 @@ overviewDecoder =
         |> Pipeline.optional "skyVersion"      Decode.string "—"
         |> Pipeline.optional "commit"          Decode.string "—"
         |> Pipeline.optional "builtAt"         Decode.string "—"
-        |> Pipeline.optional "uptimeSeconds"   Decode.float 0.0
-        |> Pipeline.optional "requestsTotal"   Decode.float 0.0
+        |> Pipeline.optional "uptimeSeconds"   intFromFloat 0
+        |> Pipeline.optional "requestsTotal"   intFromFloat 0
         |> Pipeline.optional "errorRate5xx"    Decode.float 0.0
-        |> Pipeline.optional "bufferLogUsed"   Decode.float 0.0
-        |> Pipeline.optional "bufferTraceUsed" Decode.float 0.0
+        |> Pipeline.optional "bufferLogUsed"   intFromFloat 0
+        |> Pipeline.optional "bufferTraceUsed" intFromFloat 0
         |> Pipeline.optional "productionMode"  Decode.bool False
+
+
+-- Cast Float → Int at the decode boundary so the Model holds
+-- whole numbers (Go's JSON encoder emits every numeric as a
+-- JSON Number, which Sky's Decode.float reads — but for display
+-- purposes we want Int). Math.round handles the float-to-int
+-- conversion explicitly.
+intFromFloat : Decode.Decoder Int
+intFromFloat =
+    Decode.map (\f -> Math.round f) Decode.float
 
 
 logsDecoder : Decode.Decoder (List LogEntry)

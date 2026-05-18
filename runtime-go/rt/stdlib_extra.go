@@ -226,12 +226,12 @@ func JsonEnc_list(args ...any) any {
 		items := asList(args[1])
 		var out []any
 		for _, v := range items {
-			var mapped any
-			if f, ok := fn.(func(any) any); ok {
-				mapped = f(v)
-			} else {
-				mapped = v
-			}
+			// SkyCall (reflect) so typed-return lambdas from v0.13
+			// codegen work. The pre-fix `func(any) any` checked
+			// assertion silently fell through to identity on every
+			// typed lambda, masking the bug as a "map did nothing"
+			// instead of surfacing a panic.
+			mapped := SkyCall(fn, v)
 			if jv, ok := mapped.(JsonValue); ok {
 				out = append(out, jv.raw)
 			} else {
@@ -530,8 +530,16 @@ func JsonDec_map(fn any, inner any) any {
 				if sr.Tag != 0 {
 					return r
 				}
-				f := fn.(func(any) any)
-				return Ok[any, any](f(sr.OkValue))
+				// Use SkyCall (reflect dispatch) instead of a raw
+				// `fn.(func(any) any)` assertion. v0.13 typed
+				// codegen infers concrete return types for
+				// lambdas where it can — e.g. `\f -> Math.round
+				// f` lowers to `func(any) int`, not `func(any)
+				// any`. The raw assertion panicked on every such
+				// shape. SkyCall handles arbitrary `func(any) T`
+				// shapes by wrapping the typed return back into
+				// `interface{}` via `reflect.Value.Interface()`.
+				return Ok[any, any](SkyCall(fn, sr.OkValue))
 			}
 		}
 		return Err[any, any](ErrDecode("decode error"))
@@ -546,8 +554,11 @@ func JsonDec_andThen(fn any, inner any) any {
 				if sr.Tag != 0 {
 					return r
 				}
-				f := fn.(func(any) any)
-				nextDec := f(sr.OkValue)
+				// SkyCall here too — the callback returns a Decoder
+				// of a concrete type (e.g. `func(any)
+				// JsonDecoder`), which the raw assertion couldn't
+				// match. See JsonDec_map for the full rationale.
+				nextDec := SkyCall(fn, sr.OkValue)
 				if nd, ok := nextDec.(JsonDecoder); ok {
 					return nd.run(v)
 				}

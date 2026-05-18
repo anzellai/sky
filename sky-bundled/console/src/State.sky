@@ -40,20 +40,15 @@ tabLabel tab =
 -- `GET <parent>/_sky/console/api/overview` when running as the
 -- bundled sub-app (SKY_PARENT_URL set). Falls back to a small
 -- mock for standalone `sky console` invocations.
--- All numeric fields are Float to match what Go's JSON encoder
--- emits (json.Marshal serialises every numeric — including int64
--- — as JSON Number which Sky's Json.Decode reads as Float). The
--- view casts to Int at display via Math.round / Math.floor where
--- whole-number display is preferred.
 type alias Overview =
     { skyVersion      : String
     , commit          : String
     , builtAt         : String
-    , uptimeSeconds   : Float
-    , requestsTotal   : Float
+    , uptimeSeconds   : Int
+    , requestsTotal   : Int
     , errorRate5xx    : Float
-    , bufferLogUsed   : Float
-    , bufferTraceUsed : Float
+    , bufferLogUsed   : Int
+    , bufferTraceUsed : Int
     , productionMode  : Bool
     }
 
@@ -121,11 +116,11 @@ emptyOverview =
     { skyVersion      = "—"
     , commit          = "—"
     , builtAt         = "—"
-    , uptimeSeconds   = 0.0
-    , requestsTotal   = 0.0
+    , uptimeSeconds   = 0
+    , requestsTotal   = 0
     , errorRate5xx    = 0.0
-    , bufferLogUsed   = 0.0
-    , bufferTraceUsed = 0.0
+    , bufferLogUsed   = 0
+    , bufferTraceUsed = 0
     , productionMode  = False
     }
 

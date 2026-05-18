@@ -111,7 +111,7 @@ headerMeta o =
     in
     "Sky " ++ o.skyVersion
         ++ " · " ++ mode
-        ++ " · uptime " ++ formatUptime (Math.round o.uptimeSeconds)
+        ++ " · uptime " ++ formatUptime o.uptimeSeconds
 
 
 formatUptime : Int -> String
@@ -190,10 +190,10 @@ kpiRow o =
         , Ui.spacing 12
         , Ui.width Ui.fill
         ]
-        [ kpiCard "Requests total" (String.fromInt (Math.round o.requestsTotal))
+        [ kpiCard "Requests total" (String.fromInt o.requestsTotal)
         , kpiCard "5xx error rate" (formatPercent o.errorRate5xx)
-        , kpiCard "Log buffer" (String.fromInt (Math.round o.bufferLogUsed))
-        , kpiCard "Trace buffer" (String.fromInt (Math.round o.bufferTraceUsed))
+        , kpiCard "Log buffer" (String.fromInt o.bufferLogUsed)
+        , kpiCard "Trace buffer" (String.fromInt o.bufferTraceUsed)
         ]
 
 
@@ -228,7 +228,7 @@ systemPanel o =
         [ infoRow "Sky version"  o.skyVersion
         , infoRow "Commit"       o.commit
         , infoRow "Built at"     o.builtAt
-        , infoRow "Uptime"       (formatUptime (Math.round o.uptimeSeconds))
+        , infoRow "Uptime"       (formatUptime o.uptimeSeconds)
         , infoRow "Production mode"
             (if o.productionMode then "yes" else "no")
         ]

@@ -3629,10 +3629,14 @@ func Maybe_combine(maybes any) any {
 func Maybe_traverse(fn, items any) any {
 	xs := asList(items)
 	out := make([]any, 0, len(xs))
-	f, ok := fn.(func(any) any)
-	if !ok { return Nothing[any]() }
+	// SkyCall dispatches via reflect — accepts typed-return
+	// lambdas (e.g. `func(any) Maybe[T]`) that v0.13 typed-
+	// codegen produces. The pre-fix raw assertion silently
+	// returned Nothing on every typed lambda (wrong result, not
+	// crash) — worse than panicking because callers couldn't
+	// detect the bug.
 	for _, x := range xs {
-		tag, just := anyMaybeView(f(x))
+		tag, just := anyMaybeView(SkyCall(fn, x))
 		if tag < 0 || tag != 0 { return Nothing[any]() }
 		out = append(out, just)
 	}
@@ -6354,7 +6358,7 @@ func Middleware_rateLimit(maxPerMinute any, handler any) any {
 				// No IP → don't rate-limit (the direct-handler path
 				// in unit tests has this shape). Production always
 				// has RemoteAddr set by net/http.
-				task := handler.(func(any) any)(req)
+				task := SkyCall(handler, req)
 				return anyTaskInvoke(task)
 			}
 			if rateLimitHit(key, limit) {
@@ -6368,7 +6372,7 @@ func Middleware_rateLimit(maxPerMinute any, handler any) any {
 				}
 				return Ok[any, any](resp)
 			}
-			task := handler.(func(any) any)(req)
+			task := SkyCall(handler, req)
 			return anyTaskInvoke(task)
 		}
 	}
@@ -6451,7 +6455,7 @@ func Middleware_withCors(origins any, handler any) any {
 				return Ok[any, any](resp)
 			}
 			// Delegate to inner handler, then add CORS headers to response.
-			task := handler.(func(any) any)(req)
+			task := SkyCall(handler, req)
 			res := any(anyTaskInvoke(task))
 			if sr, ok := res.(SkyResult[any, any]); ok && sr.Tag == 0 {
 				if resp, ok := sr.OkValue.(SkyResponse); ok {
@@ -6476,7 +6480,7 @@ func Middleware_withLogging(handler any) any {
 		return func() any {
 			r, _ := req.(SkyRequest)
 			start := time.Now()
-			task := handler.(func(any) any)(req)
+			task := SkyCall(handler, req)
 			res := any(anyTaskInvoke(task))
 			status := 0
 			if sr, ok := res.(SkyResult[any, any]); ok && sr.Tag == 0 {
@@ -6533,7 +6537,7 @@ func Middleware_withBasicAuth(expectedUser any, expectedPass any, handler any) a
 			if !(userOk && passOk) {
 				return Ok[any, any](SkyResponse{Status: 401, Body: "bad credentials"})
 			}
-			task := handler.(func(any) any)(req)
+			task := SkyCall(handler, req)
 			return task.(func() any)()
 		}
 	}
@@ -6571,7 +6575,7 @@ func Middleware_withRateLimit(name any, capacity any, refillPerSec any, handler 
 					Headers: map[string]string{"Retry-After": "1"},
 				})
 			}
-			task := handler.(func(any) any)(req)
+			task := SkyCall(handler, req)
 			return task.(func() any)()
 		}
 	}
