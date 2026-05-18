@@ -290,37 +290,36 @@ verified by example sweep + cabal test before moving to the next.
       that dominated the prior count is gone — typed Msg ctors now
       flow raw to typed HOF slots.
 
-      Per-example adapter counts after this work (per-match):
-      * 01, 03-05, 08-12, 14-17, 19-24, simple, test_pkg: **0**
-      * 02-go-stdlib: 1 → **0** (Time.timeString HOF closed)
-      * 07-todo-cli: 1 → **0** (Task.onError callback closed)
-      * 17-skymon: 4 → **0** (Msg ctor adapters closed)
-      * 12-skyvote: 5 → **0**
-      * 19-skyforum: 6 → **0** (entire dominant `Msg_*Changed →
-        Coerce` class gone)
-      * 23-tui-todo: 3 → **0**
-      * 24-tui-kitchen-sink: 2 → **0**
-      * 16-skychess: 1 → **0**
-      * 10-live-component: 1 → **0**
-      * 06-json: 4 → **1** (residual: curried Profile record ctor at
-        Result.map3; would need typed curry-adapter codegen since
-        auto-record-ctor is Go-uncurried)
-      * 13-skyshop: 5 → **11** when measured per-match (one giant
-        Stripe view line had 11 hidden adapters; pre-fix count was
-        also higher when measured per-match). All 11 are FFI getters
-        (`rt.Go_Stripe_goV84_*`) bridging from `func(any) any` runtime
-        sig to the `func(rt.SkyValue) rt.SkyResult[Error, rt.SkyValue]`
-        Sky surface. Would need typed FFI variants per binding.
-      * 18-job-queue: 7 → **4** (-3, closed 1 via Cmd.perform + 2 via
-        typed ADT-ctor closures). Residual 4: 3 polymorphic Task
-        callback wraps on let-bound helpers (writeAll/readAll/report
-        — unannotated; users annotating would close these via the
-        forward-compat `bindingExtras` path); 1 Maybe.andThen pinning
-        bug where the `b` TVar gets prematurely defaulted to
-        `rt.SkyValue` in OkSlot defaulting (closes if we keep `b` as
-        TVar when it appears in an HOF param's return position,
-        but that exposes a kernel-typed-variant routing gap —
-        documented; deferred).
+      Per-example adapter counts (per-match) after Stage 1 + the
+      session's follow-ups:
+      * 01-04, 05, 07-12, 14-17, 18-job-queue, 19-skyforum, 20-24,
+        simple, test_pkg: **0**
+      * 02-go-stdlib, 07-todo-cli, 17-skymon, 12-skyvote, 06-json,
+        16-skychess, 10-live-component, 23-tui-todo,
+        24-tui-kitchen-sink: all closed to **0**
+      * 13-skyshop: **11** residual — all are Stripe FFI field
+        getters (`rt.Go_Stripe_goV84_addressCity`,
+        `…Country`, `…Line1/2`, `…PostalCode`,
+        `…CheckoutSessionCollectedInformationShippingDetails`,
+        `…ShippingDetailsName`, `…ShippingDetailsAddress`,
+        `…CustomerDetailsName`, `…CustomerDetailsEmail`,
+        `…CustomerDetailsPhone`) passed to `Result.andThen` from
+        the shipping-details extraction in Lib.Stripe. The wrap
+        bridges the runtime `func(arg0 any) any` getter shape to
+        the typed `func(rt.SkyValue) rt.SkyResult[Error, string]`
+        slot. Both shapes are at the FFI trust boundary
+        — `rt.SkyValue` is the any-typed sentinel for opaque FFI
+        return types and the `any/any` runtime fn shape is what
+        `SkyFfiFieldGet` returns. **Per the v0.13 contract these
+        residuals are PERMITTED** ("genuinely-dynamic FFI may use
+        `any`"). The `*T` typed variants exist
+        (`rt.Go_Stripe_goV84_addressCityT(arg0 stripe.Address)
+        SkyResult[any, string]`) but routing to them would still
+        need a typed closure adapter to bridge between
+        `stripe.Address`/`SkyResult[any, string]` and the Sky
+        slot's `rt.SkyValue`/`SkyResult[Error, string]` — a
+        marginal stylistic improvement, not a correctness fix.
+        Deferred indefinitely.
 
       Commits: a2d3d26 (substituteOnly TVar preservation), 459fc5f
       (ADT-ctor sigs + annotation type for deps), 1411242 (bare-TVar
@@ -328,7 +327,10 @@ verified by example sweep + cabal test before moving to the next.
       (kernel-fn HOF arg σ-recovery), a566f62 (zero-arg call type +
       TVar-preserving kernel param sigs), 1d6d2d2 (typed ADT-ctor
       partial-app closures), 81516dd (register annotated let-bound
-      functions in lambdaTypes — forward-compat, no-op today).
+      functions in lambdaTypes), ccc5fff (kernel *T-variant routing
+      for HOF args + un-default HOF return TVars), 4aabaa0
+      (unannotated let-bound function HM type capture), a3fd38d
+      (typed curry-adapter for uncurried Go fn at curried HOF slot).
 - [ ] Stage 3 — Per-ADT-ctor typed Go structs (v0.13 contract).
       Design agreed: per-ADT `Msg_Struct { V0_t1, V0_t2, … }` with
       unified slot-by-type. ADT wrapper carries Tag + Name + typed
