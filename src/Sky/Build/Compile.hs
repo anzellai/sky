@@ -8033,6 +8033,21 @@ letToGo mExpectedGo def body =
                 , name /= "_" ->
                     let fullTy = foldr T.TLambda retTy (map snd typedPats)
                     in Map.singleton name fullTy
+            -- v0.13 Stage 1 — unannotated let-bound function: try
+            -- to recover its full HM-solved type from `solvedTypes`.
+            -- If solvedTypes has an entry under the let-binding's
+            -- name AND the type is a TLambda, register it. Closes
+            -- the polymorphic-helper class for in-let helpers passed
+            -- to HOFs (`Task.andThen writeAll`). When solvedTypes
+            -- doesn't carry the let-binding's type (most cases —
+            -- HM scopes let names locally), this is a no-op fallback
+            -- to the existing wrap-on-call-site behaviour.
+            Can.Def (A.At _ name) pats _
+                | not (null pats)
+                , name /= "_"
+                , Just t <- Map.lookup name solved
+                , case t of { T.TLambda _ _ -> True; _ -> False } ->
+                    Map.singleton name t
             _ -> Map.empty
         -- When the expected Go type is known, lower the let-body via
         -- `exprToGoExpectGo` so a nested case/if/let in the body gets
