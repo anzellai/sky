@@ -89,5 +89,43 @@ spec = do
                         mat  <- BS.readFile (matRtDir </> name)
                         mat `shouldBe` disk)
                     diskNames
+
+        it "rt/jobs/ + rt/telemetry/ subpackages land in sky-out (issue #58)" $ do
+            -- Regression for issue #58: `cabal install`'s sdist only
+            -- bundles files declared in `extra-source-files`. If a
+            -- runtime subdirectory is added (e.g. `rt/jobs/`,
+            -- `rt/telemetry/`) but NOT declared, the binary's
+            -- TH-embedded `embeddedRuntime` silently drops those
+            -- files. User `go build` then fails with
+            -- `package sky-app/rt/jobs is not in std`.
+            --
+            -- This test materialises a trivial app and asserts both
+            -- `sky-out/rt/jobs/jobs.go` and
+            -- `sky-out/rt/telemetry/atomic_float.go` exist post-build.
+            -- Failure means either (a) the cabal file's
+            -- `extra-source-files` is missing the subpackage glob,
+            -- or (b) the embedded-write path lost the subdir
+            -- copy logic.
+            sky <- findSky
+            withSystemTempDirectory "sky-issue-58" $ \dir -> do
+                createDirectoryIfMissing True (dir </> "src")
+                writeFile (dir </> "sky.toml")
+                    "name = \"issue-58\"\nentry = \"src/Main.sky\"\n"
+                writeFile (dir </> "src" </> "Main.sky") $ unlines
+                    [ "module Main exposing (main)"
+                    , "import Std.Log exposing (println)"
+                    , "main = println \"hi\""
+                    ]
+                (ec, _out, _err) <- readCreateProcessWithExitCode
+                    (proc sky ["build", "src/Main.sky"])
+                        { cwd = Just dir } ""
+                ec `shouldBe` ExitSuccess
+                let jobsFile  = dir </> "sky-out" </> "rt" </> "jobs" </> "jobs.go"
+                    telemFile = dir </> "sky-out" </> "rt" </> "telemetry"
+                                    </> "atomic_float.go"
+                jobsExists  <- doesFileExist jobsFile
+                telemExists <- doesFileExist telemFile
+                jobsExists  `shouldBe` True
+                telemExists `shouldBe` True
   where
     suffixOf suf s = drop (length s - length suf) s == suf

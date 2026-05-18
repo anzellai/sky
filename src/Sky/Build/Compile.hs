@@ -16,8 +16,12 @@ import qualified System.Directory
 import qualified System.FilePath
 import qualified System.Process
 import qualified System.Exit
-import Control.Monad (when, unless, forM)
+import Control.Monad (when, unless, forM, forM_)
+import qualified Control.Exception as E
 import Control.Exception (evaluate)
+import qualified System.IO
+import qualified System.Environment
+import Data.List (isSuffixOf)
 import System.Directory (createDirectoryIfMissing, doesDirectoryExist, doesFileExist, copyFile, listDirectory, removeFile)
 import System.IO (hFlush, stdout, readFile', stderr, hPutStrLn)
 import System.IO.Unsafe (unsafePerformIO)
@@ -2400,14 +2404,29 @@ writeEmbeddedRuntime :: FilePath -> IO ()
 writeEmbeddedRuntime outDir = do
     let rtDir = outDir </> "rt"
     createDirectoryIfMissing True rtDir
-    mapM_ (writeOne outDir rtDir) embeddedRuntime
+    debug <- System.Environment.lookupEnv "SKY_DEBUG_RUNTIME"
+    let isDebug = debug == Just "1"
+    when isDebug $
+        putStrLn $ "[SKY_DEBUG_RUNTIME] embedded entries: "
+                ++ show (length embeddedRuntime)
+                ++ "  → outDir=" ++ outDir
+    mapM_ (writeOne isDebug outDir rtDir) embeddedRuntime
   where
-    writeOne base rtBase (relPath, bytes) = do
+    writeOne isDebug base rtBase (relPath, bytes) = do
         let dst = case relPath of
                 'r':'t':'/':rest -> rtBase </> rest
                 _                -> base </> relPath
         createDirectoryIfMissing True (takeDirectory dst)
-        BS.writeFile dst bytes
+        res <- E.try (BS.writeFile dst bytes) :: IO (Either E.SomeException ())
+        case res of
+            Right _  -> return ()
+            Left  ex ->
+                -- Surface write failures even when debug is off — issue
+                -- #58 was missed for ages because failures were silent.
+                System.IO.hPutStrLn System.IO.stderr
+                    ("[sky] WARN: failed to write " ++ dst
+                  ++ ": " ++ show ex)
+        when isDebug $ putStrLn $ "[SKY_DEBUG_RUNTIME] wrote " ++ dst
 
 
 -- | Locate the runtime-go directory by probing known locations.

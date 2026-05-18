@@ -24,6 +24,14 @@ extra-source-files:
     runtime-go/go.mod
     runtime-go/go.sum
     runtime-go/rt/*.go
+    -- Runtime sub-packages — these must be listed explicitly,
+    -- otherwise `cabal install`'s sdist phase silently drops the
+    -- subdir contents and the binary's TH-embedded `embeddedRuntime`
+    -- only contains top-level files. Result: a published binary
+    -- without `rt/jobs/` or `rt/telemetry/`, and user `go build`
+    -- fails with `package sky-app/rt/jobs is not in std`. Issue #58.
+    runtime-go/rt/jobs/*.go
+    runtime-go/rt/telemetry/*.go
     sky-stdlib/Sky/Core/*.sky
     sky-stdlib/Sky/*.sky
     sky-stdlib/Std/*.sky
@@ -142,6 +150,7 @@ executable sky
     Sky.Build.ModuleGraph
     Sky.Build.Compile
     Sky.Build.Dce
+    Sky.Build.EmbedDirTH
     Sky.Build.EmbeddedRuntime
     Sky.Build.EmbeddedInspector
     Sky.Build.FfiGen
@@ -194,6 +203,7 @@ test-suite sky-tests
     , vector >= 0.12
     , time >= 1.9
     , file-embed >= 0.0.15
+    , template-haskell >= 2.16
 
   other-modules:
       Sky.Build.Validator
