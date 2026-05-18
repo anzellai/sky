@@ -163,18 +163,27 @@ init _req =
             }
     in
     -- Fire one immediate fetch so the initial render isn't empty;
-    -- the 2 s Sub.every then keeps it fresh.
-    ( startModel, fetchAll parent startModel.logFilter )
+    -- the 3 s Sub.every then keeps it fresh.
+    ( startModel, fetchForTab parent startModel.tab startModel.logFilter )
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
         SelectTab tab ->
-            ( { model | tab = tab }, Cmd.none )
+            -- Fire a fetch for the newly-active tab IMMEDIATELY
+            -- (otherwise the user sees stale / empty data until the
+            -- next 3 s Sub.every tick). Tab-scoped to keep wire +
+            -- re-render cost bounded — previously fetchAll fired
+            -- 5 endpoints every tick which piled up "context canceled"
+            -- proxy errors when re-renders ran longer than 3 s on
+            -- larger Metrics / Traces datasets.
+            ( { model | tab = tab }
+            , fetchForTab model.parentUrl tab model.logFilter
+            )
 
         Tick ->
-            ( model, fetchAll model.parentUrl model.logFilter )
+            ( model, fetchForTab model.parentUrl model.tab model.logFilter )
 
         GotOverview (Ok ov) ->
             ( { model | overview = ov, lastError = "" }, Cmd.none )
@@ -212,7 +221,7 @@ update msg model =
                 f2 = { f | query = q }
             in
             ( { model | logFilter = f2 }
-            , Cmd.perform (fetchLogs model.parentUrl f2) GotLogs
+            , fetchLogsOnly model.parentUrl f2
             )
 
         LogFilterToggleLevel lvl ->
@@ -227,7 +236,7 @@ update msg model =
                         _       -> f
             in
             ( { model | logFilter = f2 }
-            , Cmd.perform (fetchLogs model.parentUrl f2) GotLogs
+            , fetchLogsOnly model.parentUrl f2
             )
 
         LogFilterPickSession sid ->
@@ -236,27 +245,53 @@ update msg model =
                 f2 = { f | session = sid }
             in
             ( { model | logFilter = f2, tab = LogsTab }
-            , Cmd.perform (fetchLogs model.parentUrl f2) GotLogs
+            , fetchLogsOnly model.parentUrl f2
             )
 
         LogFilterClear ->
             ( { model | logFilter = emptyLogFilter }
-            , Cmd.perform (fetchLogs model.parentUrl emptyLogFilter) GotLogs
+            , fetchLogsOnly model.parentUrl emptyLogFilter
             )
 
 
-fetchAll : String -> LogFilter -> Cmd Msg
-fetchAll parent filter =
+fetchLogsOnly : String -> LogFilter -> Cmd Msg
+fetchLogsOnly parent filter =
+    if parent == "" then
+        Cmd.none
+    else
+        Cmd.perform (fetchLogs parent filter) GotLogs
+
+
+-- Fetch ONLY what the currently-active tab needs (+ overview,
+-- which the header always renders). Pre-2026-05-18 this was
+-- `fetchAll` firing all five endpoints every Tick — at 2 s
+-- interval with a Metrics tab holding 30+ series, the
+-- re-render queue piled up faster than it drained, flooding
+-- the server with "context canceled" proxy errors and hanging
+-- the browser tab.
+--
+-- Now: overview always (cheap; needed for the header's uptime
+-- + request counter), PLUS exactly one of the current tab's
+-- endpoints. Tick interval also bumped to 3 s to give larger
+-- re-renders breathing room.
+fetchForTab : String -> Tab -> LogFilter -> Cmd Msg
+fetchForTab parent tab filter =
     if parent == "" then
         Cmd.none
     else
         Cmd.batch
-            [ Cmd.perform (fetchOverview parent) GotOverview
-            , Cmd.perform (fetchLogs parent filter) GotLogs
-            , Cmd.perform (fetchMetrics parent) GotMetrics
-            , Cmd.perform (fetchTraces parent) GotTraces
-            , Cmd.perform (fetchErrors parent) GotErrors
-            ]
+            (Cmd.perform (fetchOverview parent) GotOverview
+                :: tabFetches parent tab filter)
+
+
+tabFetches : String -> Tab -> LogFilter -> List (Cmd Msg)
+tabFetches parent tab filter =
+    case tab of
+        OverviewTab -> []
+        LogsTab     -> [ Cmd.perform (fetchLogs parent filter) GotLogs ]
+        MetricsTab  -> [ Cmd.perform (fetchMetrics parent) GotMetrics ]
+        TracesTab   -> [ Cmd.perform (fetchTraces parent) GotTraces ]
+        ErrorsTab   -> [ Cmd.perform (fetchErrors parent) GotErrors ]
 
 
 fetchOverview : String -> Task Error Overview
@@ -314,11 +349,13 @@ subscriptions model =
     if model.parentUrl == "" then
         Sub.none
     else
-        -- Refresh every 2 s. The wire echo cost per tick is the JSON
-        -- payload size (overview ~250 B, logs cap 200 entries × ~200 B
-        -- = ~40 KB) plus one HTTP round-trip to the parent (same
-        -- localhost, sub-ms). Easily within budget for a dev console.
-        Sub.every 2000 Tick
+        -- Refresh every 3 s. Each tick fires overview + the active
+        -- tab's endpoint (see `fetchForTab`) — typically 2 fetches.
+        -- The 3 s window gives the dispatcher room to finish the
+        -- previous re-render before the next batch arrives, avoiding
+        -- the "context canceled" proxy-error pile-up seen with the
+        -- pre-fix 5-endpoints-every-2s pattern.
+        Sub.every 3000 Tick
 
 
 viewWrapped : Model -> any

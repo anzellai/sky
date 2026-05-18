@@ -64,4 +64,25 @@ done
 echo ""
 echo "VERIFY: $pass pass / $fail fail (out of ${#TESTS[@]})"
 [ ${#FAILS[@]} -eq 0 ] || echo "FAILED: ${FAILS[*]}"
+
+# Console end-to-end test — spawns parent + console child, drives
+# a real browser through every tab, asserts the wire is clean +
+# logs are differentiated + counters non-zero. Catches the bug
+# class where unit tests pass but the full pipeline (parent +
+# spawned console + reverse-proxy + Sky.Live wire + browser) is
+# broken. See scripts/verify-console-e2e.mjs for the assertion
+# list.
+if [ "${SKY_VERIFY_SKIP_CONSOLE_E2E:-0}" != "1" ]; then
+    echo ""
+    echo "--- console e2e ---"
+    if node "$REPO_ROOT/scripts/verify-console-e2e.mjs" 2>&1 | tail -8; then
+        echo "✓ console-e2e"
+    else
+        echo "✗ console-e2e"
+        fail=$((fail+1))
+        FAILS+=("console-e2e")
+        echo "VERIFY: $pass pass / $fail fail (with console-e2e)"
+    fi
+fi
+
 exit $fail

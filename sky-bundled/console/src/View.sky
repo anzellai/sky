@@ -257,16 +257,24 @@ infoRow label value =
 
 logsView : Model -> List (Element Msg)
 logsView model =
-    let
-        filtered = List.filter (matchFilter model.logFilter) model.logs
-    in
+    -- Inlined `filtered = List.filter …` to avoid a v0.13
+    -- typed-codegen bug where HM mis-infers the let-binding's type
+    -- as the partial-applied function's FIRST arg shape (here
+    -- State_LogFilter_R), generating `rt.Coerce[LogFilter](filter
+    -- result)` that panics at runtime. Filed as a follow-up
+    -- compiler issue; inline call dodges it.
     [ logsFilterPanel model.logFilter
     , panel "Recent log entries"
-        (if List.isEmpty filtered then
-            [ emptyState "No log entries match the current filter." ]
-         else
-            List.map logRow filtered)
+        (logsRowsView (List.filter (matchFilter model.logFilter) model.logs))
     ]
+
+
+logsRowsView : List LogEntry -> List (Element Msg)
+logsRowsView entries =
+    if List.isEmpty entries then
+        [ emptyState "No log entries match the current filter." ]
+    else
+        List.map logRow entries
 
 
 matchFilter : LogFilter -> LogEntry -> Bool
