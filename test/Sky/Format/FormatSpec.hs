@@ -81,6 +81,38 @@ spec = do
                 , "    \"\"\"<h1>Hello {{name}}</h1>\"\"\""
                 ]
 
+        -- Regression for the 2026-05-18 issue: `\test` in a multiline
+        -- string was being doubled to `\\test` by escapeMultilineLit.
+        -- Multiline strings exist EXACTLY to preserve backslashes
+        -- verbatim (JS regex, CSS, JSON, SQL) — the formatter must
+        -- not interpret them.
+        it "round-trips multiline strings with raw backslashes (\\test)" $
+            assertIdempotent sky "multiline-backslash" $ unlines
+                [ "module Test exposing (..)"
+                , ""
+                , ""
+                , "x ="
+                , "    \"\"\"\\test\"\"\""
+                ]
+
+        it "round-trips multiline strings with JS-shaped regex (\\d+)" $
+            assertIdempotent sky "multiline-regex" $ unlines
+                [ "module Test exposing (..)"
+                , ""
+                , ""
+                , "x ="
+                , "    \"\"\"const re = /\\d+/g\"\"\""
+                ]
+
+        it "round-trips multiline strings with JSON escapes (\\n, \\\")" $
+            assertIdempotent sky "multiline-json" $ unlines
+                [ "module Test exposing (..)"
+                , ""
+                , ""
+                , "x ="
+                , "    \"\"\"{\"line\":\"\\nbody\\n\",\"q\":\"\\\"\"}\"\"\""
+                ]
+
         it "round-trips record updates" $
             assertIdempotent sky "record-update" $ unlines
                 [ "module Test exposing (..)"
