@@ -142,6 +142,45 @@ Refreshed CLAUDE.md (118432 → 132422 bytes, from sky v0.11.1)
   previous version saved as CLAUDE.md.bak
 ```
 
+## Dev console
+
+### `sky console [--port N] [--tui]`
+
+Runs the bundled Sky Console mini-app standalone. The console is
+also auto-mounted at `/_sky/console` inside every Sky.Live and
+Sky.Http.Server app in dev mode — the standalone form is for
+ad-hoc inspection when you don't have (or don't want to start)
+a host app.
+
+```bash
+sky console                # Sky.Live in the browser on :8025
+sky console --port 8030    # different port
+sky console --tui          # same UI rendered through Sky.Tui in your terminal
+```
+
+The source lives in `sky-bundled/console/` (embedded into the sky
+binary via Template Haskell). First invocation builds into
+`$XDG_CACHE_HOME/sky/console-<version>/` (~3–10 s); subsequent
+runs are instant. Cache keys include the version string so
+`sky upgrade` auto-invalidates.
+
+Live and TUI variants share the same `State.sky` + `View.sky` —
+only the entry-point module switches between `Live.app` and
+`Tui.app`. Cached binaries are kept side-by-side (`app-live` /
+`app-tui`) so switching backends doesn't trigger a rebuild.
+
+**Env flags** (full reference in CLAUDE.md):
+
+- `SKY_CONSOLE_EMBED=off` — opt-out of the auto-mount inside user
+  apps (the standalone CLI still works).
+- `SKY_DEV_BANNER=off` — opt-out of the floating "🔍 Console"
+  banner without disabling the mount.
+- `SKY_CONSOLE_URL=https://...` — override the banner's href
+  (e.g. to point at a remote shared dashboard).
+- `ENV=production` (or `SKY_ENV=…` outside `{dev, development,
+  local}`) — production-mode gate; suppresses console + banner
+  entirely and gates `/_sky/metrics` behind auth.
+
 ## Formatting
 
 ### `sky fmt <file>`

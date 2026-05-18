@@ -351,6 +351,8 @@ Sky.Live env vars (sky.toml keys live under `[live]` — there is no `[live.sess
 
 **Logging (v0.10.0+)**: `SKY_LOG_FORMAT` (`plain` default | `json`) and `SKY_LOG_LEVEL` (`debug` | `info` default | `warn` | `error`) control `Log.*` output. Project-level defaults via sky.toml `[log] format = "json" / level = "info"` — same three-layer precedence (env > `.env` > `sky.toml`). Switch to JSON in production by setting `SKY_LOG_FORMAT=json` in the deployment env; no rebuild required.
 
+**Console + sub-apps (v0.13.x post-release)**: `SKY_CONSOLE_EMBED` (default `on`; `off` / `0` / `false` skips the dev-mode auto-spawn of the bundled Sky Console at `/_sky/console`), `SKY_DEV_BANNER` (default `on`; `off` suppresses the floating "🔍 Console" link without disabling the console mount), `SKY_CONSOLE_URL` (default `/_sky/console` — relative to same origin; override to point dev users at a remote shared console), `SKY_SUBAPP_VERBOSE` (default `0`; `1` forwards spawned sub-app children's stdout / stderr to the parent's terminal for debugging), `SKY_BIN` (override the `sky` binary path used by `SpawnSkyConsole`), `SKY_LIVE_BASE_PATH` (set automatically by `MountSubApp` — tells the spawned Sky.Live runtime it's running as a sub-app under this URL prefix so its inlined JS prefixes `/_sky/event` etc. correctly and observability + dev banner are suppressed to avoid duplication). `ENV` (then `SKY_ENV` fallback) is the production-mode gate — anything outside `{dev, development, local}` (incl. `production` / `prod` / `staging` / `qa` / `preview`) hides the console + banner and gates `/_sky/metrics` behind auth. Full reference: "Sky Console + sub-app mount" section.
+
 **Compiler internals (v0.12+)**: HM solver budget is now THREE-MODE:
 
   * `SKY_SOLVER_BUDGET` UNSET → **STRUCTURAL** (default).
@@ -482,10 +484,18 @@ sky install                       # Install deps + generate missing bindings
 sky update                        # Update deps to latest
 sky upgrade                       # Self-upgrade binary
 sky upgrade-claude                # Refresh ./CLAUDE.md from this binary's embedded template
+sky console [--port 8025]         # Run the bundled Std.Ui Sky Console standalone
+sky console --tui                 # ... or render the same console via Sky.Tui (terminal)
 sky lsp                           # Language Server (JSON-RPC/stdio)
 sky clean                         # Remove sky-out/ dist/
 sky --version                     # `sky dev` on local builds; CI injects the release version
 ```
+
+`sky console` is the **standalone** launcher for ad-hoc use; every
+Sky.Live + Sky.Http.Server app also auto-mounts the same console at
+`/_sky/console` in dev mode (see "Sky Console + sub-app mount" section
+below for the env-gating + the `rt.MountSubApp` API that lets
+developers add their own sub-apps).
 
 Local builds read the compiler version from `app/VERSION` (literal `dev`). Release CI overwrites that file with the git tag before `cabal install`. Don't bump `sky-compiler.cabal`'s `version:` field — it's pinned to `0.0.0` by design so local and CI artefacts stay distinguishable.
 
@@ -907,6 +917,177 @@ main =
 ```
 Routes: `get/post/put/delete/any` | Groups with prefix | Cookies (HttpOnly, Secure, SameSite) | Extractors: `param`, `queryParam`, `header`, `getCookie` | Responses: `text`, `json`, `html`, `withStatus`, `redirect` | Middleware: `Handler -> Handler`
 
+## Sky Console + sub-app mount (v0.13.x post-release)
+
+Sky.Live and Sky.Http.Server apps auto-mount a Std.Ui-written
+dev console under `/_sky/console/*` in dev mode. The console is a
+**self-contained Sky.Live mini-app** (source in
+`sky-bundled/console/`) reverse-proxied behind a child process —
+no Sky.Live wire collision with the parent, no shared state, no
+extra port for the user (everything on the parent's listener).
+**Same primitive (`rt.MountSubApp`) lets developers mount any
+other Sky app or external HTTP service under any URL prefix** —
+billing widgets, admin panels, mini-apps, docs.
+
+### What ships out-of-the-box
+
+| Surface | Effect |
+|---|---|
+| `🔍 Console` banner | Floating bottom-right anchor injected into every Sky.Live page + every Sky.Http.Server `text/html` response. Same-origin link to `/_sky/console`. Suppressed in production (see `productionFromEnv` rule). |
+| `/_sky/console/*` | Reverse-proxied to a bundled Sky.Live child process running `sky console`. Tab-clicks dispatch through the proxy. Read-only mocked telemetry for now; live data wiring tracked separately. |
+| `sky console` CLI | Standalone launcher (cache in `$XDG_CACHE_HOME/sky/console-<version>/`). Useful for ad-hoc inspection without starting a host app. Defaults to `:8025`; override via `--port N`. |
+| `sky console --tui` | Same `State.sky` + `View.sky` rendered through Sky.Tui (terminal). Proves the cross-backend story end-to-end on a real Std.Ui app. |
+
+### Production-detection gate (single source of truth)
+
+The console auto-mount + dev banner BOTH gate on
+`productionFromEnv()` (in `runtime-go/rt/observability.go`):
+
+  * `ENV` (then `SKY_ENV`) **unset** OR set to `dev` /
+    `development` / `local` → **dev mode** (console mounted,
+    banner shown).
+  * Anything else (`production`, `prod`, `staging`, `qa`,
+    `preview`, …) → **production** (console + banner gone, plus
+    `/_sky/metrics` requires Bearer auth).
+
+This is intentionally bias-to-gate: if you bother setting `ENV` at
+all, you mean it's not a casual dev session. Same gate rules
+out the addr-based heuristic that was unreliable under Docker /
+local DNS proxies.
+
+### `rt.MountSubApp` — mount any Sky app as a sub-app
+
+Public Go API in `runtime-go/rt/subapp.go`:
+
+```go
+// SpawnFn — produces a running HTTP child on a localhost port.
+// basePath is propagated to the child via SKY_LIVE_BASE_PATH so
+// its inlined JS prefixes /_sky/event etc. correctly.
+type SpawnFn func(ctx, basePath) (port int, cmd *exec.Cmd, err error)
+
+func SpawnBinary(binPath string, extraArgs ...string) SpawnFn
+func SpawnSkyConsole() SpawnFn
+
+// Mounts a reverse-proxy at prefix + "/" + a bare-prefix redirect.
+// SSE survives via proxy.FlushInterval = -1. The child is killed
+// when the parent exits (SIGTERM grace then SIGKILL).
+func MountSubApp(mux *http.ServeMux, prefix string, spawn SpawnFn) error
+```
+
+Examples of user-mountable patterns:
+
+```go
+// From a user app's generated init() or a post-build patch:
+rt.MountSubApp(mux, "/billing", rt.SpawnBinary("./billing-app"))
+rt.MountSubApp(mux, "/admin",   rt.SpawnBinary("./admin-app"))
+rt.MountSubApp(mux, "/docs",    rt.SpawnBinary("./hugo-server"))
+```
+
+Each child runs in its own process, has its own session store,
+its own observability namespace — zero shared state to coordinate.
+Cost: ~5 MB RAM + ~5 ms per request hop. Negligible for the
+console / admin class of sub-app.
+
+A Sky-side ergonomic API (`Live.subApp "/admin" "./admin-app"` in
+the app cfg record) is on the v0.14 list; for v0.13.x the Go-side
+API is the contract.
+
+### `SKY_LIVE_BASE_PATH` — sub-app awareness
+
+When a Sky.Live app starts with `SKY_LIVE_BASE_PATH` set in env,
+it knows it's running AS a sub-app under that prefix. Three
+behaviour changes:
+
+  1. `<meta name="sky-base" content="<prefix>">` injected into
+     every page wrap. The inlined JS reads it as `__skyBase` and
+     prefixes every hardcoded `/_sky/event`, `/_sky/sse`,
+     `/_sky/config` URL with it — without this, sub-app fetches
+     would hit the PARENT's wire endpoint and silently drop.
+  2. Dev banner suppressed. The console rendering its own
+     "click for console" banner would be recursive nonsense.
+  3. `MountObservabilityEndpoints` skipped. The parent owns
+     `/_sky/{healthz,readyz,metrics,buildinfo}`; the child
+     doesn't need duplicates at `/_sky/console/_sky/*`.
+  4. `maybeAutoMountConsole` early-returns. Prevents fork-bomb
+     recursion (sub-apps don't spawn sub-apps).
+
+### Env-var knobs (all default-on in dev, default-off in prod)
+
+| Var | Default | Effect |
+|---|---|---|
+| `SKY_CONSOLE_EMBED` | `on` | `off`/`0`/`false` opts out of the auto-spawn. Useful when you've mounted a custom alternative at `/_sky/console`. |
+| `SKY_DEV_BANNER` | `on` | `off`/`0` suppresses the floating banner without disabling the proxy mount. Useful when an app renders its own dev chrome. |
+| `SKY_CONSOLE_URL` | `/_sky/console` | Override the banner's `href`. Use for pointing dev users at a remote shared console (e.g. internal staging dashboard). |
+| `SKY_SUBAPP_VERBOSE` | `0` | `1` forwards every spawned child's stdout / stderr to the parent's terminal. Off by default to keep `sky run` output clean; flip on when debugging an unreachable sub-app. |
+| `SKY_BIN` | (auto) | Override the `sky` binary path used by `SpawnSkyConsole`. Falls back to `exec.LookPath("sky")`. |
+| `SKY_LIVE_BASE_PATH` | (unset) | Tells THIS Sky.Live runtime it's running as a sub-app under this URL prefix. Set automatically by `SpawnSkyConsole` / `SpawnBinary`. Setting it manually is supported for advanced reverse-proxy setups. |
+| `ENV` / `SKY_ENV` | (unset) | Production gate. Anything outside `{dev, development, local}` (including `production`, `prod`, `staging`, etc.) suppresses console + banner + opens metrics auth. |
+
+### Console source layout
+
+`sky-bundled/console/` (NOT under `sky-stdlib/` — it's a
+self-contained app, not a user-importable library):
+
+```
+sky-bundled/console/
+├── sky.toml             — [live] port = 8025
+└── src/
+    ├── State.sky        — Tab enum, Model, Msg, mock data
+    ├── View.sky         — Std.Ui rendering (palette, KPIs, tables)
+    ├── Main.sky         — Sky.Live entry (Live.app)
+    └── MainTui.sky      — Sky.Tui entry (Tui.app); shares State+View
+```
+
+Embedded via TH (`Sky.Build.EmbeddedConsole`) into the sky binary
+at compile time. `sky console` materialises to
+`$XDG_CACHE_HOME/sky/console-<version>/` and shells out to
+`sky build` (recursive — uses the same compile pipeline as user
+projects). Builds are cached per `(version, backend)` so Live and
+TUI binaries coexist as `app-live` and `app-tui`.
+
+When iterating on console source: edit under `sky-bundled/console/src/`,
+then rebuild the sky compiler so the TH splice picks up the new
+bytes, wipe `~/.cache/sky/console-<version>/`, re-run.
+
+### Sub-app observability federation (planned, v0.14)
+
+Today each sub-app's `MountObservabilityEndpoints` is suppressed
+to keep the parent's `/_sky/{healthz,metrics,readyz,buildinfo}`
+namespace clean. **Production use-case**: aggregate every
+sub-app's metrics into the parent's `/_sky/metrics` with a
+namespace prefix so a single Prometheus scrape sees the whole
+process tree.
+
+Planned shape (NOT YET SHIPPED):
+
+```go
+// Opt-in mount variant — registers the sub-app for metrics
+// federation. The namespace string is prepended to every metric
+// name emitted by the sub-app.
+rt.MountSubAppWithMetrics(mux, "/billing", "billing",
+    rt.SpawnBinary("./billing-app"))
+```
+
+Parent's `/_sky/metrics` walks the `subAppChildren` registry,
+scrapes each registered child's `127.0.0.1:<port>/_sky/metrics`
+in parallel (200 ms per-child timeout), concatenates with the
+parent's own output. Sub-app side: a new
+`SKY_LIVE_NAMESPACE=billing` env var (auto-set by the helper)
+re-enables `MountObservabilityEndpoints` and tells the runtime
+to prefix every Counter / Gauge name at write-time.
+
+Federation matches Prometheus's federated-scrape idiom — keeps
+each sub-app's observability local to its own process while
+making the union queryable from a single endpoint. Tradeoff:
+adds ~5 ms × N sub-apps to `/_sky/metrics` latency; acceptable
+for the once-per-15s Prometheus scrape cadence.
+
+Tracking issue: see `docs/v1-rfc/` for the open RFC. Until
+shipped, scrape each sub-app's metrics directly via the proxy
+path (`http://host/_sky/<prefix>/_sky/metrics`) after setting
+`SKY_LIVE_OBSERVABILITY=on` on the child — same data, manual
+aggregation in your scraper.
+
 ## Std.Ui — typed no-CSS layout DSL
 
 Layered above `Std.Html`; renders to inline-styled HTML on the server side and Sky.Live's wire ferries diffs to the browser. Pick `row` / `column` / `el` for layout, attach typed attributes from `Background` / `Border` / `Font` / `Region` sub-modules, never write CSS. Full user-facing reference: `docs/skyui/overview.md`. Prior-art attribution: `NOTICE.md`.
@@ -1045,6 +1226,7 @@ Single braces `{` are literal — safe for JavaScript, CSS, JSON, SQL. Interpola
 | 22 | tui-stopwatch-ui | (exp/tea-core) Sky.Tui — Std.Ui-driven stopwatch |
 | 23 | tui-todo | (exp/tea-core) Sky.Tui — todo CRUD demo |
 | 24 | tui-kitchen-sink | (exp/tea-core) Sky.Tui v1 — every supported Std.Ui primitive in one screen |
+| 25 | sky-console | Std.Ui Sky.Live dashboard used as the bundled `sky console` mini-app; mirrors `sky-bundled/console/`. Same source compiles to both the Live + Tui backends (see `--tui` flag). |
 
 ## Sky.Tui v1 (branch: `exp/tea-core`)
 

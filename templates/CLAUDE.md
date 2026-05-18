@@ -1790,6 +1790,87 @@ main =
 -- Cookie: Server.cookie "name" "value", Server.secureCookie, Server.sessionCookie
 ```
 
+### Sky Console — auto-mounted dev dashboard
+
+Every Sky.Live AND Sky.Http.Server app **automatically gets a
+Std.Ui-rendered dev console at `/_sky/console`** in dev mode.
+Zero user code needed — visit the path or click the floating
+"🔍 Console" link injected bottom-right of every page.
+
+The console is its own self-contained Sky.Live mini-app
+(`sky-bundled/console/`) reverse-proxied from a child process —
+no shared state with your app, no extra port (everything on your
+existing listener). Production-detection auto-suppresses both
+the banner and the mount.
+
+**Production-mode gate** (single source of truth): `ENV` (or
+`SKY_ENV`) **unset** OR one of `{dev, development, local}` →
+console + banner SHOWN. Anything else (`production`, `prod`,
+`staging`, `qa`, `preview`, …) → console + banner HIDDEN and
+`/_sky/metrics` requires Bearer auth.
+
+```bash
+# Local dev — console is at http://localhost:8000/_sky/console
+sky run
+
+# Staging / prod — banner gone, console mount gone, metrics gated
+ENV=production ./sky-out/app
+
+# Ad-hoc standalone — no host app needed
+sky console            # http://localhost:8025
+sky console --tui      # ... or in the terminal via Sky.Tui
+
+# Override the banner's link target (e.g. point at a remote shared console)
+SKY_CONSOLE_URL=https://internal-dash.staging.example.com ./sky-out/app
+
+# Opt out of the auto-spawn (banner stays linkable if you mount your own)
+SKY_CONSOLE_EMBED=off ./sky-out/app
+
+# Opt out of just the banner chrome (mount stays active)
+SKY_DEV_BANNER=off ./sky-out/app
+```
+
+### Sub-app mount — host any Sky app under a URL prefix
+
+The console is the first user of `rt.MountSubApp`. The same
+primitive lets you mount any other Sky app (or arbitrary HTTP
+server) under a path prefix on the parent's mux. Each sub-app
+runs as its OWN child process — independent session store,
+independent observability namespace, zero shared state — but
+**single port for the user, single process tree for supervision**
+(children die when the parent exits).
+
+Use cases: billing widget at `/billing`, admin panel at `/admin`,
+docs site at `/docs`, mini-app per feature team. Each can be
+written + deployed independently and composed at the URL level.
+
+The Go-side API (use from generated code or via a post-build
+patch; Sky-side ergonomic API tracked for v0.14):
+
+```go
+import "sky-app/rt"
+
+// Mount an external Sky binary as a sub-app:
+rt.MountSubApp(mux, "/billing", rt.SpawnBinary("./billing-app"))
+rt.MountSubApp(mux, "/admin",   rt.SpawnBinary("./admin-app"))
+
+// Or any non-Sky HTTP server (gives you `127.0.0.1:port` + a
+// reverse-proxy mount under the prefix):
+rt.MountSubApp(mux, "/docs", rt.SpawnBinary("./hugo-server"))
+```
+
+Each sub-app gets its mount prefix in `SKY_LIVE_BASE_PATH` so its
+inlined JS prefixes `/_sky/event` etc. correctly. SSE survives
+the proxy hop (no buffering). Children spawn in their own process
+group so a Ctrl-C on the parent's terminal doesn't multi-kill;
+the parent's signal handler tears children down cleanly with a
+2 s SIGTERM grace then SIGKILL.
+
+**Not yet shipped** (v0.14 planned): sub-app metrics federation
+into the parent's `/_sky/metrics` with namespace prefix (so
+`billing_requests_total` etc. surface alongside parent metrics
+for a single Prometheus scrape).
+
 ## Sky.Live — Server-Driven UI
 
 For interactive web apps, Sky.Live generates an HTTP server with server-side DOM diffing (similar architectural style to Phoenix LiveView):

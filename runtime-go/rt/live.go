@@ -1690,15 +1690,28 @@ func liveAppRun(cfg any) any {
 	observed := ObservabilityMiddleware(csrfed)
 	wrapped := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
-			if rec := recover(); rec != nil {
-				// Log to stderr so `go run` / tailing the server surfaces
-				// the actual cause. Client still gets a generic 500.
-				fmt.Fprintf(os.Stderr,
-					"[sky.live] panic handling %s %s: %v\n%s\n",
-					r.Method, r.URL.Path, rec, debugStack())
-				w.WriteHeader(500)
-				fmt.Fprint(w, "Internal Server Error")
+			rec := recover()
+			if rec == nil {
+				return
 			}
+			// http.ErrAbortHandler is Go's sentinel panic value
+			// that handlers use to abort cleanly without logging
+			// (httputil.ReverseProxy panics with it when the
+			// client disconnects mid-stream — typical for SSE).
+			// Re-panic so net/http's own handler-recover (which
+			// special-cases this value) finishes the abort
+			// cleanly, instead of us logging it as a 500.
+			if rec == http.ErrAbortHandler {
+				panic(rec)
+			}
+			// Real panic — log to stderr so `go run` / tailing the
+			// server surfaces the cause. Client still gets a
+			// generic 500.
+			fmt.Fprintf(os.Stderr,
+				"[sky.live] panic handling %s %s: %v\n%s\n",
+				r.Method, r.URL.Path, rec, debugStack())
+			w.WriteHeader(500)
+			fmt.Fprint(w, "Internal Server Error")
 		}()
 		observed.ServeHTTP(w, r)
 	})

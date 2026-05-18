@@ -5920,11 +5920,22 @@ func Server_listen(port any, routes any) any {
 			// for post-mortem inspection. Dev mode keeps the full
 			// stack on stderr for fast-feedback debugging.
 			defer func() {
-				if rec := recover(); rec != nil {
-					logPanicFrame(req.Method, req.URL.Path, rec)
-					w.WriteHeader(500)
-					fmt.Fprint(w, "Internal Server Error")
+				rec := recover()
+				if rec == nil {
+					return
 				}
+				// http.ErrAbortHandler is Go's sentinel value
+				// handlers use to abort cleanly (httputil.
+				// ReverseProxy panics with it when a client
+				// disconnects mid-SSE-stream). Re-panic so
+				// net/http's own handler-recover treats it as
+				// the no-op abort it's meant to be.
+				if rec == http.ErrAbortHandler {
+					panic(rec)
+				}
+				logPanicFrame(req.Method, req.URL.Path, rec)
+				w.WriteHeader(500)
+				fmt.Fprint(w, "Internal Server Error")
 			}()
 			// Bound body read to prevent memory exhaustion.
 			req.Body = http.MaxBytesReader(w, req.Body, serverMaxBodyBytes)

@@ -14,6 +14,11 @@ Sky is an experimental fullstack programming language that combines **Go's pragm
 - **Runtime hardening.** Map→struct narrowing in `rt.Coerce[T]` closes the Db.query → typed-record panic class. Reflect-adapter arg narrowing closes the `[]map[string]any` → `map[string]string` typed-callback class. `rt.AsMapAny` widener closes the symmetric `map[string]string` → `map[string]any` polymorphic-callee class. Tuple dispatch fast-path (~40 % faster per TEA update). Static-dir favicon serving from root so browser auto-requests don't 404. All fixes have regression specs in `runtime-go/rt/*_test.go`.
 - **Full end-to-end verification.** All 25 examples build clean from a wiped state; Sky.Live + Sky.Http.Server apps drive sign-up / sign-in / CRUD / sign-out scenarios via Playwright with screen-recording artefacts (`scripts/verify-all-web.sh` with `SKY_RECORD=1`); Sky.Tui + Sky.Cli apps run panic-free.
 
+### Post-v0.13 additions
+
+- **Sky Console + sub-app mount.** Every Sky.Live / Sky.Http.Server app auto-mounts a Std.Ui-written dev console at `/_sky/console` in dev mode — visit the path or click the injected "🔍 Console" floating link. The console is its own self-contained Sky.Live mini-app spawned as a child process and reverse-proxied behind your app: single port, same origin, zero shared state. **Same primitive (`rt.MountSubApp`) generalises**: mount any Sky binary (or any HTTP server) under any URL prefix to host billing widgets, admin panels, mini-apps under the parent's listener. Also runs standalone via `sky console` (Sky.Live in the browser) or `sky console --tui` (Sky.Tui in the terminal — same source, different backend).
+- **Production-mode gate** for dev-only features. `ENV` (or `SKY_ENV`) unset OR set to `dev` / `development` / `local` → dev mode (console + banner shown). Anything else (`production`, `prod`, `staging`, `qa`, `preview`, …) → console + banner hidden, `/_sky/metrics` gated behind Bearer auth. Single source of truth across the runtime.
+
 ```elm
 module Main exposing (main)
 
