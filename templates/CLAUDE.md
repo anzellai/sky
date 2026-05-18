@@ -3399,6 +3399,95 @@ For apps with custom user fields (username, avatar), use `Auth.hashPassword`/`Au
 
 ---
 
+## Going to production — config cheatsheet
+
+Two sources of truth: `sky.toml` (compiled defaults, in repo) and the process environment (deploy-time secrets + per-env overrides). Precedence: **process env > `.env` file > `sky.toml`**. `.env` is auto-loaded at startup but never overrides existing env vars, so `docker run -e ENV=production` always wins.
+
+### Minimum production-ready `sky.toml`
+
+```toml
+name    = "myapp"
+version = "0.1.0"
+entry   = "src/Main.sky"
+
+[source]
+root = "src"
+
+[live]
+port         = 8000
+store        = "postgres"
+ttl          = "24h"
+maxBodyBytes = 5242880          # 5 MiB POST cap; bump for file uploads
+
+[log]
+format = "json"                 # plain | json — pick json for prod stdout aggregators
+level  = "info"
+
+[auth]
+tokenTtl = "24h"
+cookie   = "sky_sid"
+# NEVER put tokenSecret in sky.toml — set SKY_AUTH_TOKEN_SECRET in env.
+```
+
+### Production `.env` template
+
+```dotenv
+# ─── operational gate ──────────────────────────────────────────────
+ENV=production                  # gates console + banner OFF, /_sky/metrics behind auth
+SKY_LIVE_PORT=8080              # (or honour platform PORT)
+
+# ─── persistence ───────────────────────────────────────────────────
+SKY_LIVE_STORE=postgres
+DATABASE_URL=postgres://user:pass@host/db  # fallback if SKY_LIVE_STORE_PATH unset
+
+# ─── observability ─────────────────────────────────────────────────
+SKY_LOG_FORMAT=json
+SKY_LOG_LEVEL=info
+SKY_METRICS_TOKEN=…             # /_sky/metrics requires `Authorization: Bearer <this>`
+# OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318  # optional OTel export
+
+# ─── secrets ───────────────────────────────────────────────────────
+SKY_AUTH_TOKEN_SECRET=…         # ≥32 bytes; Sky errors at startup if shorter
+```
+
+### What flips between dev and prod
+
+`productionFromEnv()` in `runtime-go/rt/observability.go` is the **one** function that drives all dev-only behaviour. It reads `ENV` (then `SKY_ENV`):
+
+| `ENV` value | Mode | Console mount | `🔍 Console` banner | `/_sky/metrics` auth |
+|---|---|---|---|---|
+| unset / `dev` / `development` / `local` | dev | ✓ at `/_sky/console` | ✓ floating link | open (any read) |
+| `production` / `prod` / `staging` / `qa` / `preview` / anything else | prod | hidden | hidden | `Authorization: Bearer $SKY_METRICS_TOKEN` |
+
+Bias-to-gate: if you bother to set `ENV` at all, you mean it's not dev.
+
+### Sub-app mount (multi-binary deployments)
+
+```go
+// In the generated main.go of your PARENT app, after the mux is built:
+import "your-app/rt"
+
+rt.MountSubApp(mux, "/billing", rt.SpawnBinary("./billing-app"))
+rt.MountSubApp(mux, "/admin",   rt.SpawnBinary("./admin-app"))
+```
+
+Each child is its own process — own session store, own update loop, no shared state. Sub-app logs / metrics / spans push to the parent's `/_sky/observability/ingest` labelled `subapp=<namespace>` (derived from the URL prefix). One Prometheus scrape on `/_sky/metrics` covers the whole tree.
+
+A Sky-side ergonomic API (`Live.app { subApps = [...] }`) is on the v0.14 list; the Go-side API is the contract.
+
+### Deployment platform notes
+
+| Platform | What it gives you | What you set |
+|---|---|---|
+| Fly.io / Render / Railway | `PORT`, `DATABASE_URL`, secret manager | `ENV=production`, `SKY_AUTH_TOKEN_SECRET`, `SKY_METRICS_TOKEN` |
+| Cloud Run | `PORT`, secret manager | same + map `PORT` → `SKY_LIVE_PORT` if your code reads SKY_LIVE_PORT explicitly |
+| Kubernetes | ConfigMap + Secret + Service | mount `/_sky/healthz` as liveness probe, `/_sky/readyz` as readiness probe |
+| Docker compose | env_file: `.env.production` | same |
+
+The single static binary works the same on all of them. Health probes hit `/_sky/healthz` (always 200) and `/_sky/readyz` (200 once the session store responds + dep services connected).
+
+---
+
 ## Troubleshooting Cookbook
 
 Error-message → root cause → fix. This is the single-file reference for
