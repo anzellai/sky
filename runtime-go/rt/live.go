@@ -1268,6 +1268,15 @@ type liveApp struct {
 	msgTags       map[string]int // SkyName → Tag cache for direct-send events
 	msgTagsMu     sync.Mutex
 	bannerCfg     liveBannerConfig // resolved env-vars + cfg.status overrides
+	// basePath: URL prefix this app is mounted under when running as
+	// a sub-app (e.g. "/_sky/console" when reverse-proxied behind a
+	// parent Sky.Live runtime). Empty for root-mount (the common
+	// case). Read from SKY_LIVE_BASE_PATH at startup. Surfaced to
+	// the browser via a <meta name="sky-base"> tag in the page wrap
+	// so the inlined JS prefixes its fetch/EventSource URLs
+	// correctly — without this, a sub-app's wire calls would hit
+	// the PARENT mux instead of the sub-app's.
+	basePath string
 }
 
 // apiRoute represents a custom handler mounted outside the TEA cycle.
@@ -1527,6 +1536,7 @@ func liveAppRun(cfg any) any {
 		locker:        newSessionLocker(),
 		msgTags:       make(map[string]int),
 		bannerCfg:     resolveBannerStrings(loadLiveBannerConfig(), cfg),
+		basePath:      normaliseBasePath(skyGetenv("LIVE_BASE_PATH")),
 	}
 	for _, r := range asList(Field(cfg, "Routes")) {
 		if lr, ok := r.(liveRoute); ok {
@@ -1578,11 +1588,24 @@ func liveAppRun(cfg any) any {
 	mux.HandleFunc("/_sky/event", app.handleEvent)
 	mux.HandleFunc("/_sky/sse", app.handleSSE)
 	mux.HandleFunc("/_sky/config", app.handleConfig)
+	// Auto-mount Sky Console sub-app FIRST so MountObservability
+	// Endpoints' legacy /_sky/console fallback can see the flag
+	// and skip its own registration. Dev mode only; no-op in
+	// production / sub-app contexts.
+	maybeAutoMountConsole(mux, app.basePath)
 	// Observability endpoints — healthz / readyz / metrics / buildinfo.
 	// Default-on (per docs/v1-rfc/1-observability.md); opt-out via
 	// OBSERVABILITY_DISABLED=1. Mounted BEFORE the catch-all "/" route
 	// so the dispatchRoot handler doesn't shadow them.
-	MountObservabilityEndpoints(mux)
+	//
+	// Skipped when this app is running AS a sub-app (basePath set)
+	// to avoid polluting the parent's observability namespace with
+	// nested /_sky/console/_sky/{healthz,readyz,metrics,buildinfo}
+	// duplicates. A console DOESN'T need its own metrics — its job
+	// is to read the parent's.
+	if app.basePath == "" {
+		MountObservabilityEndpoints(mux)
+	}
 	// Static assets (if configured) mounted first so api/page routing
 	// doesn't shadow them.
 	if app.staticDir != "" {
@@ -1723,6 +1746,10 @@ func liveAppRun(cfg any) any {
 		// finish + the goroutine exits cleanly. Idempotent —
 		// safe to call when no worker was ever spawned.
 		JobsShutdown()
+		// Tear down any sub-apps spawned via MountSubApp (the dev
+		// console + any user-mounted billing/admin/etc. processes).
+		// Idempotent + bounded (2s SIGTERM grace then SIGKILL).
+		ShutdownSubApps()
 		_ = srv.Close()
 		// If srv.Close completes the listener teardown, ListenAndServe
 		// returns and the function exits naturally. If something hangs,
@@ -1887,8 +1914,24 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	// devBanner is "" in production; injected as a sibling of sky-root
 	// so it survives every diff/patch cycle (root replacement won't
 	// blow it away) and stays pinned bottom-right via position:fixed.
-	devBanner := devBannerHTML()
-	fmt.Fprintf(w, "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><style>%s</style></head><body><div id=\"sky-root\">%s</div>%s<script>%s</script></body></html>", liveBaseCSS, body, devBanner, liveJSWithCfgAndCsrf(sid, app.bannerCfg, csrfToken))
+	// Also suppressed when this app IS itself running as a sub-app
+	// (basePath != "") — the bundled Sky Console is the canonical
+	// case: rendering a "🔍 Console" link inside the console itself
+	// would be recursive and confusing.
+	var devBanner string
+	if app.basePath == "" {
+		devBanner = devBannerHTML()
+	}
+	// When this app is mounted as a sub-app under a URL prefix
+	// (e.g. /_sky/console), the inlined JS needs to know to prefix
+	// its /_sky/event / /_sky/sse / /_sky/config URLs with that
+	// base. We surface the prefix via a <meta> tag rather than a JS
+	// variable so it's also visible to non-JS clients (e.g. SSR
+	// debugging) and survives any future templating layer. Empty
+	// content for root-mounted apps — the JS treats "" as "no
+	// prefix" (the historical default).
+	baseMeta := fmt.Sprintf(`<meta name="sky-base" content=%q>`, app.basePath)
+	fmt.Fprintf(w, "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">%s<style>%s</style></head><body><div id=\"sky-root\">%s</div>%s<script>%s</script></body></html>", baseMeta, liveBaseCSS, body, devBanner, liveJSWithCfgAndCsrfWithBase(sid, app.bannerCfg, csrfToken, app.basePath))
 }
 
 // liveBaseCSS is the minimal reset injected into every Sky.Live page.
@@ -2828,9 +2871,32 @@ func liveJSWithCfg(sid string, cfg liveBannerConfig) string {
 // __skyCsrfToken and adds the X-Sky-Csrf header on every POST so
 // the CSRF middleware accepts the request. Zero user code needed —
 // AI-written Sky apps are CSRF-protected by construction.
+// normaliseBasePath cleans up a SKY_LIVE_BASE_PATH value so the
+// JS / meta-tag / proxy mount agree on a single canonical form.
+// Rules: trim whitespace + trailing slashes, ensure a leading slash
+// if non-empty. Empty input → empty output (root-mount; no prefix).
+func normaliseBasePath(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	s = strings.TrimRight(s, "/")
+	if !strings.HasPrefix(s, "/") {
+		s = "/" + s
+	}
+	return s
+}
+
 func liveJSWithCfgAndCsrf(sid string, cfg liveBannerConfig, csrfToken string) string {
+	// Backwards-compat shim for callers that pre-date base-path
+	// support. Defaults base to "" (root mount).
+	return liveJSWithCfgAndCsrfWithBase(sid, cfg, csrfToken, "")
+}
+
+func liveJSWithCfgAndCsrfWithBase(sid string, cfg liveBannerConfig, csrfToken, basePath string) string {
 	return fmt.Sprintf(`
 var __skySid = %q;
+var __skyBase = %q;
 var __skyCsrfToken = %q;
 var __skyBannerEnabled = %t;
 var __skyRetryBaseMs = %d;
@@ -3234,7 +3300,7 @@ function __skyFlushPendingBeacon() {
   if (snapshot) body.inputState = snapshot;
   try {
     var blob = new Blob([JSON.stringify(body)], {type: "application/json"});
-    navigator.sendBeacon("/_sky/event", blob);
+    navigator.sendBeacon(__skyBase + "/_sky/event", blob);
   } catch (_) {}
 }
 
@@ -3337,7 +3403,7 @@ function __skyPostEvent(body) {
   // [security] csrf = false) — header omitted, middleware skipped.
   var headers = {"Content-Type":"application/json"};
   if (__skyCsrfToken) headers["X-Sky-Csrf"] = __skyCsrfToken;
-  fetch("/_sky/event", {
+  fetch(__skyBase + "/_sky/event", {
     method: "POST",
     headers: headers,
     body: JSON.stringify(body),
@@ -3876,7 +3942,7 @@ function __skyOpenSSE() {
   __skyForcedClose = false;
   __skyHelloOk = false;
   __skyOpenAt = 0;
-  __skySSE = new EventSource("/_sky/sse");
+  __skySSE = new EventSource(__skyBase + "/_sky/sse");
   __skySSE.addEventListener("hello", function(e) {
     // Handshake received — we know we hit a real Sky.Live v2 server,
     // not a proxy that intercepted with a generic 200. Anything
@@ -4049,7 +4115,7 @@ function __skyProbeSessionLost() {
   if (__skyProbedReload) return;
   var headers = {"Content-Type": "application/json"};
   if (__skyCsrfToken) headers["X-Sky-Csrf"] = __skyCsrfToken;
-  fetch("/_sky/event", {
+  fetch(__skyBase + "/_sky/event", {
     method: "POST",
     headers: headers,
     body: JSON.stringify({sessionId: __skySid, msg: "__skySessionPing", args: []}),
@@ -4166,7 +4232,7 @@ if (document.readyState === "loading") {
   __skyInit();
 }
 `,
-		sid, csrfToken, cfg.Enabled, cfg.BaseMs, cfg.MaxMs, cfg.MaxAttempts, cfg.QueueMax,
+		sid, basePath, csrfToken, cfg.Enabled, cfg.BaseMs, cfg.MaxMs, cfg.MaxAttempts, cfg.QueueMax,
 		jsString(cfg.Reconnecting), jsString(cfg.Offline),
 		cfg.HelloTimeoutMs, cfg.HeartbeatTtlMs,
 	)

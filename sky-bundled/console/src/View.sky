@@ -16,6 +16,12 @@ import State exposing (..)
 -- colours, not scattered hex literals. Native dark theme — the
 -- console targets developer eyes in long sessions.
 
+-- Page + raised surfaces share the same dark canvas; panels are
+-- distinguished by border, not by a contrasting block. This avoids
+-- the "empty band below the panel" visual gap when content is
+-- short — the area below a panel reads as page chrome, not as a
+-- missing content tier. Header / tab strip use bgSurface (a hair
+-- lighter) for the chrome separation.
 bgPage : Ui.Color
 bgPage = Ui.rgb 20 23 28
 
@@ -23,7 +29,7 @@ bgSurface : Ui.Color
 bgSurface = Ui.rgb 28 32 39
 
 bgRaised : Ui.Color
-bgRaised = Ui.rgb 33 38 48
+bgRaised = Ui.rgb 20 23 28
 
 bgCode : Ui.Color
 bgCode = Ui.rgb 44 50 60
@@ -77,16 +83,20 @@ header model =
     Ui.row
         [ Ui.width Ui.fill
         , Ui.paddingXY 20 12
+        , Ui.spacing 20
         , Background.color bgSurface
         , Border.widthEach { top = 0, right = 0, bottom = 1, left = 0 }
         , Border.color border_
         ]
+        -- Title takes all available width — naturally pushes the
+        -- meta to the right. Without `width fill` here the two
+        -- siblings collapse to content and the meta crashes into
+        -- the title with no breathing room.
         [ Ui.el
-            [ Font.size 16, Font.bold ]
+            [ Ui.width Ui.fill, Font.size 16, Font.bold ]
             (Ui.text "Sky Console")
         , Ui.el
-            [ Ui.alignRight
-            , Font.color textSecondary
+            [ Font.color textSecondary
             , Font.size 12
             , Font.family "ui-monospace, Menlo, monospace"
             ]

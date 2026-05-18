@@ -18,10 +18,13 @@ import (
 // In prod we return "" so the banner disappears for staging /
 // production deployments — no extra DOM noise, no info leak.
 //
-// The link target is hard-coded to the bundled console at
-// http://127.0.0.1:8025 (default `sky console` port). The link opens
-// in a new tab. Override via SKY_CONSOLE_URL for non-default ports or
-// for pointing at a remote dev console.
+// The link target is `/_sky/console` on the SAME origin — the user
+// app's runtime auto-mounts a reverse-proxy at that path (see
+// maybeAutoMountConsole in subapp.go) to the bundled console child
+// process. Same-origin keeps the banner working through tunnels,
+// HTTPS, ngrok, fly.io, etc. without the user having to think about
+// addressing. SKY_CONSOLE_URL overrides for ad-hoc setups (e.g.
+// pointing at a remote shared console).
 //
 // Pure inline styling, no JS, no external assets — keeps the "walks
 // our talk" promise of the Std.Ui console. The container is
@@ -36,13 +39,17 @@ func devBannerHTML() string {
 	}
 	url := strings.TrimSpace(os.Getenv("SKY_CONSOLE_URL"))
 	if url == "" {
-		url = "http://127.0.0.1:8025"
+		// Same-origin path. The runtime's reverse-proxy mount at
+		// /_sky/console takes the request to the bundled child
+		// console. target="_blank" gives users the dashboard
+		// alongside their app, not replacing it.
+		url = "/_sky/console"
 	}
 	// html.EscapeString defends against a malicious env value
 	// breaking out of the href / title attribute.
 	esc := html.EscapeString(url)
 	return fmt.Sprintf(
-		`<a id="__sky-dev-console" href="%s" target="_blank" rel="noopener" title="Sky Console (dev only; run: sky console)" `+
+		`<a id="__sky-dev-console" href="%s" target="_blank" rel="noopener" title="Sky Console (dev only)" `+
 			`style="position:fixed;right:12px;bottom:12px;z-index:2147483646;`+
 			`font:12px/1.4 ui-monospace,Menlo,monospace;`+
 			`background:#1c2027;color:#7eb6ff;`+

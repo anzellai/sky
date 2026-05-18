@@ -40,12 +40,14 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"os/signal"
 	"reflect"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -6055,6 +6057,15 @@ func Server_listen(port any, routes any) any {
 	// any of the user's routes so the catch-all "/" pattern in
 	// user code doesn't shadow them. Opt-out via
 	// OBSERVABILITY_DISABLED=1.
+	// Auto-mount the bundled Sky Console as a sub-app at
+	// /_sky/console in dev mode. Must run BEFORE
+	// MountObservabilityEndpoints so the legacy console mount inside
+	// it sees the flag and stays out. Same helper Sky.Live uses, same
+	// gates — never spawns in production, never recurses when
+	// SKY_LIVE_BASE_PATH is already set, never blocks startup on
+	// spawn failure. parentBasePath is "" because Sky.Http.Server has
+	// no concept of being itself mounted as a sub-app today.
+	maybeAutoMountConsole(mux, "")
 	MountObservabilityEndpoints(mux)
 	// Production-mode gate — single source of truth in
 	// `productionFromEnv`: any ENV / SKY_ENV value EXCEPT
@@ -6082,8 +6093,23 @@ func Server_listen(port any, routes any) any {
 		IdleTimeout:       serverIdleTimeout,
 		MaxHeaderBytes:    serverMaxHeaderBytes,
 	}
+	// Tear down sub-apps on signal so the dev-console child doesn't
+	// orphan when the user kills `sky run`. Sky.Live has its own
+	// richer shutdown handler (graceful SSE close, OTel flush, etc.);
+	// Sky.Http.Server doesn't, so a minimal handler is added here
+	// specifically for sub-app cleanup. Without this the child
+	// process group would survive parent exit and keep its port
+	// bound, making subsequent runs hit "address already in use".
+	srvSigCh := make(chan os.Signal, 2)
+	signal.Notify(srvSigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+	go func() {
+		<-srvSigCh
+		ShutdownSubApps()
+		_ = srv.Close()
+	}()
 	fmt.Printf("Sky server listening on http://localhost:%d\n", p)
 	err := srv.ListenAndServe()
+	signal.Stop(srvSigCh)
 	if err != nil && err != http.ErrServerClosed {
 		return Err[any, any](ErrFfi(err.Error()))
 	}
