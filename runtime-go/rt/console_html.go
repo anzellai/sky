@@ -28,43 +28,87 @@ const consoleHTML = `<!DOCTYPE html>
 <title>Sky Console</title>
 <style>
 * { box-sizing: border-box; }
+
+/* Light theme (default).
+   Background-step ladder: page < panel-surface (raised). Text-step
+   ladder: muted < secondary < primary. Inline code badges sit on
+   a faint tinted background so they read on both page and panel.
+   Contrast targets: WCAG-AA on every text vs background pair (>= 4.5:1
+   for body text, >= 3:1 for large/badge text). */
+:root {
+    --bg-page:     #f6f7f9;
+    --bg-surface:  #ffffff;
+    --bg-raised:   #ffffff;
+    --bg-muted:    #eef1f5;   /* code badges, hover */
+    --bg-code:     #eef1f5;
+    --border:      #d8dde3;
+    --border-soft: #e8ebef;
+    --text:        #1a1d24;
+    --text-secondary: #4a5260;
+    --text-muted:  #6b7480;
+    --accent:      #2a6fdb;
+    --warn:        #b35a00;
+    --warn-bg:     #fff5e6;
+    --error:       #b81f1f;
+    --error-bg:    #fdecec;
+}
+
+/* Dark theme. Every contrast pair re-checked: kpi-value (#f1f3f7)
+   sits on --bg-raised (#212630), code badges on --bg-code (#2c323c)
+   sit on --bg-surface (#1c2027) — both >= 4.5:1. Active tab uses a
+   brighter blue (#7eb6ff) for 4.5:1 against #14171c. Issue from
+   user screenshot: KPI cards stayed white in dark mode (panel
+   override missed the .kpi rule), value text became invisible.
+   Fixed by routing every surface through CSS variables. */
+@media (prefers-color-scheme: dark) {
+    :root {
+        --bg-page:     #14171c;
+        --bg-surface:  #1c2027;
+        --bg-raised:   #212630;
+        --bg-muted:    #2c323c;
+        --bg-code:     #2c323c;
+        --border:      #353b46;
+        --border-soft: #2a2f38;
+        --text:        #f0f3f7;
+        --text-secondary: #c5cbd4;
+        --text-muted:  #8d96a3;
+        --accent:      #7eb6ff;
+        --warn:        #ffb24d;
+        --warn-bg:     #2f2410;
+        --error:       #ff7575;
+        --error-bg:    #2f1414;
+    }
+}
+
 html, body {
     margin: 0; padding: 0;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-    background: #f6f7f9; color: #1a1d24;
-}
-@media (prefers-color-scheme: dark) {
-    html, body { background: #14171c; color: #e3e6eb; }
-    .panel, .row, header { background: #1c2027 !important; border-color: #2a2f38 !important; }
-    .tab { color: #9aa5b2 !important; }
-    .tab.active { color: #6cb4ff !important; border-bottom-color: #6cb4ff !important; }
-    .kpi-value { color: #f0f3f7 !important; }
-    code { background: #2a2f38 !important; color: #e3e6eb !important; }
-    .err { background: #401a1a !important; }
+    background: var(--bg-page); color: var(--text);
 }
 header {
-    background: white; border-bottom: 1px solid #e2e5ea;
+    background: var(--bg-surface); border-bottom: 1px solid var(--border);
     padding: 12px 20px; display: flex; align-items: center; gap: 20px;
 }
 header h1 {
     font-size: 16px; font-weight: 600; margin: 0;
 }
 header .meta {
-    font-size: 12px; color: #6b7480;
+    font-size: 12px; color: var(--text-secondary);
     margin-left: auto; font-family: ui-monospace, Menlo, monospace;
 }
 nav {
-    background: white; border-bottom: 1px solid #e2e5ea;
+    background: var(--bg-surface); border-bottom: 1px solid var(--border);
     padding: 0 20px;
 }
 .tab {
     display: inline-block; padding: 10px 14px;
-    cursor: pointer; color: #6b7480;
+    cursor: pointer; color: var(--text-secondary);
     border-bottom: 2px solid transparent;
     font-size: 13px; font-weight: 500;
 }
+.tab:hover { color: var(--text); }
 .tab.active {
-    color: #2a6fdb; border-bottom-color: #2a6fdb;
+    color: var(--accent); border-bottom-color: var(--accent);
 }
 main { padding: 20px; }
 .tab-content { display: none; }
@@ -75,25 +119,25 @@ main { padding: 20px; }
     gap: 12px; margin-bottom: 20px;
 }
 .kpi {
-    background: white; border: 1px solid #e2e5ea;
+    background: var(--bg-raised); border: 1px solid var(--border);
     border-radius: 6px; padding: 14px;
 }
 .kpi-label {
     font-size: 11px; text-transform: uppercase;
-    letter-spacing: 0.5px; color: #6b7480; font-weight: 600;
+    letter-spacing: 0.5px; color: var(--text-muted); font-weight: 600;
 }
 .kpi-value {
     font-size: 24px; font-weight: 600;
-    margin-top: 4px; color: #1a1d24;
+    margin-top: 4px; color: var(--text);
     font-variant-numeric: tabular-nums;
 }
 .panel {
-    background: white; border: 1px solid #e2e5ea;
+    background: var(--bg-raised); border: 1px solid var(--border);
     border-radius: 6px; padding: 14px; margin-bottom: 16px;
 }
 .panel h2 {
     font-size: 13px; font-weight: 600;
-    margin: 0 0 10px 0; color: #1a1d24;
+    margin: 0 0 10px 0; color: var(--text);
     text-transform: uppercase; letter-spacing: 0.5px;
 }
 table {
@@ -102,25 +146,27 @@ table {
 }
 th, td {
     text-align: left; padding: 6px 10px;
-    border-bottom: 1px solid #eef0f3;
+    border-bottom: 1px solid var(--border-soft);
+    color: var(--text);
 }
 th {
     font-size: 11px; text-transform: uppercase;
-    letter-spacing: 0.5px; color: #6b7480; font-weight: 600;
+    letter-spacing: 0.5px; color: var(--text-muted); font-weight: 600;
 }
 tr:last-child td { border-bottom: none; }
 code, .mono {
     font-family: ui-monospace, Menlo, monospace;
-    font-size: 12px; background: #f0f3f7;
-    padding: 1px 4px; border-radius: 3px;
+    font-size: 12px; background: var(--bg-code);
+    color: var(--text);
+    padding: 1px 6px; border-radius: 3px;
 }
-.lvl-debug { color: #6b7480; }
-.lvl-info  { color: #1a1d24; }
-.lvl-warn  { color: #c47100; font-weight: 600; }
-.lvl-error { color: #c92020; font-weight: 600; }
-.err { background: #fff3f3; }
+.lvl-debug { color: var(--text-muted); }
+.lvl-info  { color: var(--text); }
+.lvl-warn  { color: var(--warn); font-weight: 600; }
+.lvl-error { color: var(--error); font-weight: 600; }
+.err { background: var(--error-bg); }
 .empty {
-    color: #9aa5b2; font-style: italic;
+    color: var(--text-muted); font-style: italic;
     padding: 20px; text-align: center;
 }
 .toolbar {
@@ -128,8 +174,12 @@ code, .mono {
     margin-bottom: 12px;
 }
 .toolbar input {
-    padding: 5px 8px; border: 1px solid #d0d5dd;
+    padding: 5px 8px; border: 1px solid var(--border);
     border-radius: 4px; font: inherit;
+    background: var(--bg-surface); color: var(--text);
+}
+.toolbar input:focus {
+    outline: 2px solid var(--accent); outline-offset: -1px;
 }
 </style>
 </head>
