@@ -206,7 +206,10 @@ func observeAndCaptureLog(t *testing.T, msg any, oldModel, newModel any, cmd any
 	ObserveMsgLog(ctx, newModel, cmd, err)
 	logs := telemetry.Default().RecentLogs(0)
 	for _, l := range logs {
-		if l.Message == "msg_dispatch" {
+		// emitMsgLog formats Message as "msg_dispatch <MsgName>" so
+		// each entry self-documents — the test matches the prefix
+		// instead of the literal pre-2026-05-18 "msg_dispatch".
+		if strings.HasPrefix(l.Message, "msg_dispatch") {
 			return l.Level, true
 		}
 	}
@@ -384,7 +387,7 @@ func TestObserveMsgLog_PicksUpCurrentRequestID(t *testing.T) {
 
 	logs := telemetry.Default().RecentLogs(0)
 	for _, l := range logs {
-		if l.Message == "msg_dispatch" {
+		if strings.HasPrefix(l.Message, "msg_dispatch") {
 			if l.ReqID != "req-12345" {
 				t.Errorf("expected req-id propagated into Msg log, got %q", l.ReqID)
 			}

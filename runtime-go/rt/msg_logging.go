@@ -48,6 +48,13 @@ type MsgLogContext struct {
 	IsLifecycle  bool    // marked via Std.Live.lifecycle
 	StartTime    time.Time
 	OldModelHash uint64  // hash(model) BEFORE update
+	// SessionID — the Sky.Live session this dispatch belongs to.
+	// Populated by BeginMsgLogForSession (the dispatcher knows the
+	// session; pass it through). Empty for non-Live dispatch sites.
+	// Surfaced in the emitted LogEntry's Fields["session_id"] so the
+	// console Logs tab can correlate every msg_dispatch for one user
+	// into a single timeline.
+	SessionID string
 }
 
 // BeginMsgLog snapshots the dispatch start. Call BEFORE invoking
@@ -64,6 +71,18 @@ func BeginMsgLog(msgValue, model any) MsgLogContext {
 		StartTime:    time.Now(),
 		OldModelHash: hashAny(model),
 	}
+}
+
+// BeginMsgLogForSession is the session-aware variant the Sky.Live
+// dispatcher uses. Pre-2026-05-18 dispatch always called BeginMsgLog
+// — which left SessionID empty and the console Logs tab couldn't
+// correlate entries to a single user. This variant carries the sid
+// through to ObserveMsgLog so the structured log entry's
+// Fields["session_id"] is set.
+func BeginMsgLogForSession(msgValue, model any, sid string) MsgLogContext {
+	ctx := BeginMsgLog(msgValue, model)
+	ctx.SessionID = sid
+	return ctx
 }
 
 // ObserveMsgLog folds the dispatch outcome into metrics + (when
@@ -152,6 +171,11 @@ func emitMsgLog(level string, ctx MsgLogContext, elapsed time.Duration, noop boo
 		"name":      ctx.MsgName,
 		"noop":      strconv.FormatBool(noop),
 		"lifecycle": strconv.FormatBool(ctx.IsLifecycle),
+	}
+	// SessionID, if known, lets the console Logs tab pivot on a
+	// single user's timeline. Empty on non-Live dispatch sites.
+	if ctx.SessionID != "" {
+		fields["session_id"] = ctx.SessionID
 	}
 	errStr := ""
 	if err != nil {

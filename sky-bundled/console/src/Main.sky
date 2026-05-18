@@ -61,13 +61,87 @@ logsDecoder =
     Decode.list logEntryDecoder
 
 
+-- Wire shape: telemetry.LogEntry serialised by Go's JSON encoder.
+-- Field names use PascalCase (Go convention). Numeric fields arrive
+-- as JSON Number (decoded as Float). SessionID lives in
+-- Fields["session_id"] when the entry came from a Sky.Live dispatch.
 logEntryDecoder : Decode.Decoder LogEntry
 logEntryDecoder =
     Decode.succeed LogEntry
-        |> Pipeline.optional "TS"       Decode.string "—"
-        |> Pipeline.optional "Level"    Decode.string "info"
-        |> Pipeline.optional "Message"  Decode.string ""
-        |> Pipeline.optional "Subapp"   Decode.string ""
+        |> Pipeline.optional "TS"        Decode.string "—"
+        |> Pipeline.optional "Level"     Decode.string "info"
+        |> Pipeline.optional "Message"   Decode.string ""
+        |> Pipeline.optional "Subapp"    Decode.string ""
+        |> Pipeline.optional "ReqID"     Decode.string ""
+        |> Pipeline.custom (fieldFromFields "session_id")
+        |> Pipeline.custom (fieldFromFields "user_label")
+        |> Pipeline.optional "Route"     Decode.string ""
+        |> Pipeline.optional "Status"    Decode.float 0.0
+        |> Pipeline.optional "LatencyMS" Decode.float 0.0
+
+
+-- Pluck a single field from the entry's `Fields` object (the
+-- free-form attrs bag the runtime fills with msg name, session id,
+-- user label, etc.). Falls back to "" when the entry doesn't carry
+-- the field — common for HTTP-only access logs and non-Live
+-- emissions.
+fieldFromFields : String -> Decode.Decoder String
+fieldFromFields name =
+    Decode.oneOf
+        [ Decode.at [ "Fields", name ] Decode.string
+        , Decode.succeed ""
+        ]
+
+
+-- ─── Metrics / Traces / Errors decoders ─────────────────────────
+
+metricsDecoder : Decode.Decoder (List MetricRow)
+metricsDecoder =
+    Decode.list metricRowDecoder
+
+
+metricRowDecoder : Decode.Decoder MetricRow
+metricRowDecoder =
+    Decode.succeed MetricRow
+        |> Pipeline.optional "name"   Decode.string ""
+        |> Pipeline.optional "type"   Decode.string ""
+        -- Labels object decoding deferred: Sky's Json.Decode doesn't
+        -- ship a `dict` decoder yet. Use a `custom` slot with
+        -- succeed-constant; cleaner once Pipeline grows `hardcoded`.
+        |> Pipeline.custom (Decode.succeed "")
+        |> Pipeline.optional "value"  Decode.float 0.0
+        |> Pipeline.optional "sum"    Decode.float 0.0
+        |> Pipeline.optional "count"  Decode.float 0.0
+
+
+tracesDecoder : Decode.Decoder (List TraceRow)
+tracesDecoder =
+    Decode.list traceRowDecoder
+
+
+traceRowDecoder : Decode.Decoder TraceRow
+traceRowDecoder =
+    Decode.succeed TraceRow
+        |> Pipeline.optional "traceId"    Decode.string ""
+        |> Pipeline.optional "spanId"     Decode.string ""
+        |> Pipeline.optional "parentId"   Decode.string ""
+        |> Pipeline.optional "name"       Decode.string ""
+        |> Pipeline.optional "kind"       Decode.string ""
+        |> Pipeline.optional "startTime"  Decode.string "—"
+        |> Pipeline.optional "durationMs" Decode.float 0.0
+        |> Pipeline.optional "status"     Decode.string ""
+
+
+errorsDecoder : Decode.Decoder (List ErrorRow)
+errorsDecoder =
+    Decode.list errorRowDecoder
+
+
+errorRowDecoder : Decode.Decoder ErrorRow
+errorRowDecoder =
+    Decode.succeed ErrorRow
+        |> Pipeline.optional "count"   Decode.int 0
+        |> Pipeline.optional "message" Decode.string ""
 
 
 -- ─── Init / update / subscriptions / view ────────────────────────
@@ -85,11 +159,12 @@ init _req =
             , traces    = []
             , errors    = []
             , lastError = ""
+            , logFilter = emptyLogFilter
             }
     in
     -- Fire one immediate fetch so the initial render isn't empty;
     -- the 2 s Sub.every then keeps it fresh.
-    ( startModel, fetchAll parent )
+    ( startModel, fetchAll parent startModel.logFilter )
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -99,7 +174,7 @@ update msg model =
             ( { model | tab = tab }, Cmd.none )
 
         Tick ->
-            ( model, fetchAll model.parentUrl )
+            ( model, fetchAll model.parentUrl model.logFilter )
 
         GotOverview (Ok ov) ->
             ( { model | overview = ov, lastError = "" }, Cmd.none )
@@ -113,15 +188,74 @@ update msg model =
         GotLogs (Err e) ->
             ( { model | lastError = errorToString e }, Cmd.none )
 
+        GotMetrics (Ok ms) ->
+            ( { model | metrics = ms, lastError = "" }, Cmd.none )
 
-fetchAll : String -> Cmd Msg
-fetchAll parent =
+        GotMetrics (Err e) ->
+            ( { model | lastError = errorToString e }, Cmd.none )
+
+        GotTraces (Ok ts) ->
+            ( { model | traces = ts, lastError = "" }, Cmd.none )
+
+        GotTraces (Err e) ->
+            ( { model | lastError = errorToString e }, Cmd.none )
+
+        GotErrors (Ok es) ->
+            ( { model | errors = es, lastError = "" }, Cmd.none )
+
+        GotErrors (Err e) ->
+            ( { model | lastError = errorToString e }, Cmd.none )
+
+        LogFilterQuery q ->
+            let
+                f = model.logFilter
+                f2 = { f | query = q }
+            in
+            ( { model | logFilter = f2 }
+            , Cmd.perform (fetchLogs model.parentUrl f2) GotLogs
+            )
+
+        LogFilterToggleLevel lvl ->
+            let
+                f = model.logFilter
+                f2 =
+                    case lvl of
+                        "debug" -> { f | showDebug = not f.showDebug }
+                        "info"  -> { f | showInfo = not f.showInfo }
+                        "warn"  -> { f | showWarn = not f.showWarn }
+                        "error" -> { f | showError = not f.showError }
+                        _       -> f
+            in
+            ( { model | logFilter = f2 }
+            , Cmd.perform (fetchLogs model.parentUrl f2) GotLogs
+            )
+
+        LogFilterPickSession sid ->
+            let
+                f = model.logFilter
+                f2 = { f | session = sid }
+            in
+            ( { model | logFilter = f2, tab = LogsTab }
+            , Cmd.perform (fetchLogs model.parentUrl f2) GotLogs
+            )
+
+        LogFilterClear ->
+            ( { model | logFilter = emptyLogFilter }
+            , Cmd.perform (fetchLogs model.parentUrl emptyLogFilter) GotLogs
+            )
+
+
+fetchAll : String -> LogFilter -> Cmd Msg
+fetchAll parent filter =
     if parent == "" then
         Cmd.none
     else
         Cmd.batch
             [ Cmd.perform (fetchOverview parent) GotOverview
-            , Cmd.perform (fetchLogs parent) GotLogs
+            , Cmd.perform (fetchLogs parent filter) GotLogs
+            , Cmd.perform (fetchMetrics parent) GotMetrics
+            , Cmd.perform (fetchTraces parent) GotTraces
+            , Cmd.perform (fetchErrors parent) GotErrors
             ]
 
 
@@ -131,10 +265,48 @@ fetchOverview parent =
         |> Task.andThenResult (\resp -> Decode.decodeString overviewDecoder resp.body)
 
 
-fetchLogs : String -> Task Error (List LogEntry)
-fetchLogs parent =
-    Http.get (parent ++ "/_sky/console/api/logs?limit=200")
+fetchLogs : String -> LogFilter -> Task Error (List LogEntry)
+fetchLogs parent filter =
+    Http.get (parent ++ "/_sky/console/api/logs?limit=200" ++ buildLogQuery filter)
         |> Task.andThenResult (\resp -> Decode.decodeString logsDecoder resp.body)
+
+
+-- Build the level= query string from the filter. Server-side filter
+-- on level is precise; query (free-text) and session (pivot) are
+-- applied client-side to avoid widening the API surface.
+buildLogQuery : LogFilter -> String
+buildLogQuery f =
+    let
+        levels =
+            (if f.showDebug then [ "debug" ] else [])
+                ++ (if f.showInfo then [ "info" ] else [])
+                ++ (if f.showWarn then [ "warn" ] else [])
+                ++ (if f.showError then [ "error" ] else [])
+    in
+    -- All four levels selected = no level filter (don't add a query
+    -- param at all so the server returns everything).
+    if List.length levels == 4 then
+        ""
+    else
+        "&level=" ++ String.join "," levels
+
+
+fetchMetrics : String -> Task Error (List MetricRow)
+fetchMetrics parent =
+    Http.get (parent ++ "/_sky/console/api/metrics-summary")
+        |> Task.andThenResult (\resp -> Decode.decodeString metricsDecoder resp.body)
+
+
+fetchTraces : String -> Task Error (List TraceRow)
+fetchTraces parent =
+    Http.get (parent ++ "/_sky/console/api/traces?limit=100")
+        |> Task.andThenResult (\resp -> Decode.decodeString tracesDecoder resp.body)
+
+
+fetchErrors : String -> Task Error (List ErrorRow)
+fetchErrors parent =
+    Http.get (parent ++ "/_sky/console/api/errors")
+        |> Task.andThenResult (\resp -> Decode.decodeString errorsDecoder resp.body)
 
 
 subscriptions : Model -> Sub Msg

@@ -169,7 +169,7 @@ content model =
         (case model.tab of
             OverviewTab -> overviewView model.overview
             MetricsTab  -> metricsView model.metrics
-            LogsTab     -> logsView model.logs
+            LogsTab     -> logsView model
             TracesTab   -> tracesView model.traces
             ErrorsTab   -> errorsView model.errors)
 
@@ -255,14 +255,123 @@ infoRow label value =
 
 -- ─── Logs tab ────────────────────────────────────────────────────
 
-logsView : List LogEntry -> List (Element Msg)
-logsView entries =
-    [ panel "Recent log entries"
-        (if List.isEmpty entries then
-            [ emptyState "No log entries yet." ]
+logsView : Model -> List (Element Msg)
+logsView model =
+    let
+        filtered = List.filter (matchFilter model.logFilter) model.logs
+    in
+    [ logsFilterPanel model.logFilter
+    , panel "Recent log entries"
+        (if List.isEmpty filtered then
+            [ emptyState "No log entries match the current filter." ]
          else
-            List.map logRow entries)
+            List.map logRow filtered)
     ]
+
+
+matchFilter : LogFilter -> LogEntry -> Bool
+matchFilter f e =
+    let
+        levelOk =
+            case e.level of
+                "debug" -> f.showDebug
+                "info"  -> f.showInfo
+                "warn"  -> f.showWarn
+                "error" -> f.showError
+                _       -> True
+        sessionOk = f.session == "" || f.session == e.sessionId
+        queryOk =
+            f.query == ""
+                || String.contains (String.toLower f.query)
+                    (String.toLower (e.message ++ " " ++ e.route ++ " " ++ e.subapp))
+    in
+    levelOk && sessionOk && queryOk
+
+
+logsFilterPanel : LogFilter -> Element Msg
+logsFilterPanel f =
+    Ui.column
+        [ Background.color bgRaised
+        , Border.width 1
+        , Border.color border_
+        , Border.rounded 6
+        , Ui.padding 12
+        , Ui.spacing 8
+        , Ui.width Ui.fill
+        ]
+        [ Ui.row
+            [ Ui.width Ui.fill, Ui.spacing 8 ]
+            [ -- Free-text search input
+              Ui.input
+                [ Ui.htmlAttribute "type" "search"
+                , Ui.htmlAttribute "placeholder" "Search message / route / subapp…"
+                , Ui.htmlAttribute "value" f.query
+                , Ui.onInput LogFilterQuery
+                , Ui.width Ui.fill
+                , Background.color bgCode
+                , Border.width 1
+                , Border.color border_
+                , Border.rounded 4
+                , Ui.paddingXY 8 6
+                , Font.color textPrimary
+                , Font.size 12
+                , Font.family "ui-monospace, Menlo, monospace"
+                ]
+            , -- Level toggle pills
+              levelToggle "debug" f.showDebug
+            , levelToggle "info"  f.showInfo
+            , levelToggle "warn"  f.showWarn
+            , levelToggle "error" f.showError
+            , -- Clear-all button (always visible; cheap)
+              Ui.el
+                [ Ui.paddingXY 8 6
+                , Background.color bgCode
+                , Border.rounded 4
+                , Ui.pointer
+                , Ui.onClick LogFilterClear
+                , Font.color textSecondary
+                , Font.size 11
+                ]
+                (Ui.text "clear")
+            ]
+        , -- Active session pivot (only shown when set)
+          if f.session == "" then
+            Ui.text ""
+          else
+            Ui.row
+                [ Ui.spacing 6
+                , Font.size 11
+                , Font.color textMuted
+                ]
+                [ Ui.text "Filtering by session: "
+                , Ui.el
+                    [ Font.family "ui-monospace, Menlo, monospace"
+                    , Font.color accent
+                    ]
+                    (Ui.text f.session)
+                ]
+        ]
+
+
+levelToggle : String -> Bool -> Element Msg
+levelToggle lvl on =
+    let
+        bg = if on then bgCode else bgSurface
+        fg = if on then levelColor lvl else textMuted
+    in
+    Ui.el
+        [ Background.color bg
+        , Border.width 1
+        , Border.color border_
+        , Border.rounded 4
+        , Ui.paddingXY 8 6
+        , Ui.pointer
+        , Ui.onClick (LogFilterToggleLevel lvl)
+        , Font.color fg
+        , Font.bold
+        , Font.size 11
+        ]
+        (Ui.text (String.toUpper lvl))
 
 
 logRow : LogEntry -> Element Msg
@@ -274,8 +383,7 @@ logRow e =
         , Border.widthEach { top = 0, right = 0, bottom = 1, left = 0 }
         , Border.color borderSoft
         ]
-        [ -- Time: HH:MM:SS only (drop date + nanoseconds + tz so
-          -- the column doesn't wrap to two lines)
+        [ -- Time: HH:MM:SS
           Ui.el
             [ Ui.width (Ui.px 80)
             , Font.color textMuted
@@ -291,10 +399,10 @@ logRow e =
             , Font.size 12
             ]
             (Ui.text (String.toUpper e.level))
-        , -- Subapp badge: only shown when entry was pushed from a
-          -- sub-app (empty for parent-emitted lines). Lets users
-          -- distinguish at a glance whose log line they're seeing.
+        , -- Subapp badge
           subappBadge e.subapp
+        , -- Session id (clickable — sets the session pivot filter)
+          sessionBadge e.sessionId
         , -- Message — fills the rest of the row
           Ui.el
             [ Ui.width Ui.fill
@@ -303,6 +411,30 @@ logRow e =
             ]
             (Ui.text e.message)
         ]
+
+
+sessionBadge : String -> Element Msg
+sessionBadge sid =
+    if sid == "" then
+        -- Same width as the populated badge so message column
+        -- alignment is stable whether session id is present.
+        Ui.el [ Ui.width (Ui.px 80) ] (Ui.text "")
+    else
+        -- Show first 8 chars of the session id (full sids are too
+        -- long for the column). Click → pivot all logs to this
+        -- session via LogFilterPickSession Msg.
+        Ui.el
+            [ Ui.width (Ui.px 80)
+            , Background.color bgCode
+            , Border.rounded 3
+            , Ui.paddingXY 6 2
+            , Ui.pointer
+            , Ui.onClick (LogFilterPickSession sid)
+            , Font.family "ui-monospace, Menlo, monospace"
+            , Font.size 11
+            , Font.color accent
+            ]
+            (Ui.text (String.left 8 sid))
 
 
 subappBadge : String -> Element Msg
@@ -368,6 +500,18 @@ metricsView rows =
 
 metricRowView : MetricRow -> Element Msg
 metricRowView r =
+    let
+        -- Histograms show count + sum/count (avg); counters / gauges
+        -- show the raw value. Picks the most useful single number
+        -- per metric type.
+        valueStr =
+            case r.typ of
+                "histogram" ->
+                    "n=" ++ formatFloat r.count
+                        ++ " avg=" ++ formatAvg r.sum r.count
+                _ ->
+                    formatFloat r.value
+    in
     Ui.row
         [ Ui.width Ui.fill
         , Ui.paddingXY 0 6
@@ -376,19 +520,57 @@ metricRowView r =
         , Border.color borderSoft
         ]
         [ Ui.el
-            [ Ui.width (Ui.px 240)
+            [ Ui.width (Ui.px 60)
+            , Font.size 10
+            , Font.color textMuted
+            , Font.family "ui-monospace, Menlo, monospace"
+            ]
+            (Ui.text (String.toUpper r.typ))
+        , Ui.el
+            [ Ui.width (Ui.px 260)
             , Font.family "ui-monospace, Menlo, monospace"
             , Font.size 12
-            , Font.color textSecondary
+            , Font.color textPrimary
             ]
             (Ui.text r.name)
-        , codeBadge r.value
         , Ui.el
-            [ Font.size 12
+            [ Ui.width (Ui.px 180)
+            , Font.family "ui-monospace, Menlo, monospace"
+            , Font.size 11
             , Font.color textMuted
             ]
-            (Ui.text r.help)
+            (Ui.text r.labels)
+        , codeBadge valueStr
         ]
+
+
+-- Render a Float as a compact human-readable string. Two decimal
+-- places — enough resolution for typical metric values, no
+-- scientific-notation surprises. Sky's `-` binop is Int-only
+-- (binop typing legacy) so we avoid Float subtraction; the
+-- "round-then-divide" idiom below works for both whole + fractional
+-- inputs without needing Float-Int arithmetic.
+formatFloat : Float -> String
+formatFloat f =
+    -- f / 0.01 == f * 100 (Float division — Sky's `/` IS Float-typed
+    -- whereas `*` is Int-only, so we go through the divisor form).
+    let
+        scaled = Math.round (f / 0.01)
+        whole  = scaled // 100
+        frac   = modBy 100 scaled
+        fracS  =
+            if frac < 10 then "0" ++ String.fromInt frac
+            else String.fromInt frac
+    in
+    if frac == 0 then
+        String.fromInt whole
+    else
+        String.fromInt whole ++ "." ++ fracS
+
+
+formatAvg : Float -> Float -> String
+formatAvg sum count =
+    if count == 0.0 then "—" else formatFloat (sum / count)
 
 
 -- ─── Traces tab ──────────────────────────────────────────────────
@@ -405,6 +587,9 @@ tracesView rows =
 
 traceRowView : TraceRow -> Element Msg
 traceRowView r =
+    let
+        statusOk = r.status == "ok" || r.status == ""
+    in
     Ui.row
         [ Ui.width Ui.fill
         , Ui.paddingXY 0 6
@@ -418,26 +603,27 @@ traceRowView r =
             , Font.family "ui-monospace, Menlo, monospace"
             , Font.size 12
             ]
-            (Ui.text r.time)
+            (Ui.text (compactTime r.startTime))
         , Ui.el
-            [ Ui.width (Ui.px 60)
-            , Font.color (if r.statusOk then textMuted else err)
+            [ Ui.width (Ui.px 50)
+            , Font.color (if statusOk then textMuted else err)
             , Font.bold
-            , Font.size 12
+            , Font.size 11
             ]
-            (Ui.text (if r.statusOk then "OK" else "ERR"))
+            (Ui.text (if statusOk then "OK" else "ERR"))
         , Ui.el
-            [ Font.size 13
+            [ Ui.width Ui.fill
+            , Font.size 13
             , Font.color textPrimary
+            , Font.family "ui-monospace, Menlo, monospace"
             ]
             (Ui.text r.name)
         , Ui.el
-            [ Ui.alignRight
-            , Font.color textSecondary
+            [ Font.color textSecondary
             , Font.family "ui-monospace, Menlo, monospace"
             , Font.size 12
             ]
-            (Ui.text (String.fromInt r.durationMs ++ "ms"))
+            (Ui.text (formatFloat r.durationMs ++ "ms"))
         ]
 
 

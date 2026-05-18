@@ -1127,6 +1127,11 @@ func logMsgDecodeError(fn any, arg any, raw json.RawMessage) {
 }
 
 type liveSession struct {
+	// sid: the session id this session belongs to. Stored here so
+	// the dispatch path can include it in observability logs
+	// without having to thread sid through every helper signature.
+	// Populated when the session is loaded/created via getOrInit.
+	sid      string
 	model    any
 	handlers map[string]any
 	prevTree *VNode // Last rendered tree; used by the diff protocol.
@@ -1902,6 +1907,10 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 			cancelSub: make(chan struct{}),
 		}
 	}
+	// Always set sid — both on fresh sessions AND on resumes from
+	// persistent stores (which load `sess` without the sid field
+	// populated). Cheap; idempotent on equal sids.
+	sess.sid = sid
 
 	// Route dispatch: pick the page ADT value for this URL path and
 	// splice it into model.Page via RecordUpdate. Always run so the
@@ -2357,7 +2366,7 @@ func (app *liveApp) dispatch(sess *liveSession, msg any) (body string) {
 	// model + start time so ObserveMsgLog (called near the end of
 	// dispatch) can decide whether to emit a log line. Lifecycle
 	// marker (Step 6) detected here too.
-	msgLogCtx := BeginMsgLog(msg, sess.model)
+	msgLogCtx := BeginMsgLogForSession(msg, sess.model, sess.sid)
 	// Step 6 — unwrap Std.Live.lifecycle so the user's update
 	// receives the inner Msg, not the wrapper.
 	msg = UnwrapLifecycle(msg)
