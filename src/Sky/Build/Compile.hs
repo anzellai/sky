@@ -5204,45 +5204,47 @@ goAppearsAsToken tok s = go 0 s
 -- Result/Task (i.e. the whole ok arg IS the TVar, not nested), or
 -- anywhere else. Returns `(errorCount, okCount, otherCount)` per TVar.
 tvarOccurrences :: T.Type -> Map.Map String (Int, Int, Int)
-tvarOccurrences = go Other
+tvarOccurrences = goRoot
   where
     bumpErr n   = Map.singleton n (1, 0, 0)
     bumpOk n    = Map.singleton n (0, 1, 0)
     bumpOther n = Map.singleton n (0, 0, 1)
     addP (a1, b1, c1) (a2, b2, c2) = (a1 + a2, b1 + b2, c1 + c2)
-    go slot ty = case ty of
+    goRoot ty = go False Other ty
+    -- `inFnArg = True` means we're walking inside a function-typed
+    -- parameter's body. In that context, Maybe / Result / Task TVars
+    -- are NOT eligible for OkSlot defaulting: a typed fn arg passed
+    -- at the call site WILL constrain those TVars via Go generic
+    -- inference, so collapsing them to `rt.SkyValue` here destroys
+    -- the recoverable typing information. Pairs with `lookupRtKernelTypedVariant`
+    -- which routes `rt.String_toInt` → `rt.String_toIntT` at HOF
+    -- sites so the typed sig the call site now expects is actually
+    -- backed by a typed-output runtime function. Closes the
+    -- Maybe.andThen + String.toInt residual in 18-job-queue.
+    go inFnArg slot ty = case ty of
         T.TVar n -> case slot of
             ErrorSlot -> bumpErr n
+            OkSlot | inFnArg -> bumpOther n
             OkSlot    -> bumpOk n
             Other     -> bumpOther n
-        T.TLambda a b -> Map.unionWith addP (go Other a) (go Other b)
-        -- Result/Task: error slot and top-of-ok slot both get the
-        -- TVar-only defaulting privilege. Nested TVars inside a
-        -- container under ok (e.g. `Result e (Maybe a)`) also count
-        -- as OkSlot because defaulting them to SkyValue is still
-        -- sound — the outer Maybe shape is preserved.
+        T.TLambda a b ->
+            Map.unionWith addP (go True Other a) (go inFnArg Other b)
         T.TType _ "Result" [e, a] ->
-            Map.unionWith addP (go ErrorSlot e) (go OkSlot a)
+            Map.unionWith addP (go inFnArg ErrorSlot e) (go inFnArg OkSlot a)
         T.TType _ "Task"   [e, a] ->
-            Map.unionWith addP (go ErrorSlot e) (go OkSlot a)
-        -- Maybe's single arg is always treated as OkSlot so a
-        -- `f : … -> Maybe a` with `a` used nowhere else collapses to
-        -- `rt.SkyMaybe[rt.SkyValue]` instead of leaking the `any`.
-        -- This is still safe under the tvarOccurrences rule: a TVar
-        -- that appears only in Maybe positions is never constrained
-        -- by a caller, so defaulting to the opaque SkyValue is sound.
-        T.TType _ "Maybe" [a] -> go OkSlot a
-        T.TType _ _ args -> Map.unionsWith addP (map (go Other) args)
-        T.TTuple a b cs -> Map.unionsWith addP (map (go Other) (a : b : cs))
+            Map.unionWith addP (go inFnArg ErrorSlot e) (go inFnArg OkSlot a)
+        T.TType _ "Maybe" [a] -> go inFnArg OkSlot a
+        T.TType _ _ args -> Map.unionsWith addP (map (go inFnArg Other) args)
+        T.TTuple a b cs -> Map.unionsWith addP (map (go inFnArg Other) (a : b : cs))
         T.TAlias _ _ pairs aliasType ->
             Map.unionsWith addP $
-                [go Other v | (_, v) <- pairs]
+                [go inFnArg Other v | (_, v) <- pairs]
                 ++ [case aliasType of
-                        T.Filled i  -> go Other i
-                        T.Hoisted i -> go Other i]
+                        T.Filled i  -> go inFnArg Other i
+                        T.Hoisted i -> go inFnArg Other i]
         T.TRecord fields _ ->
             Map.unionsWith addP
-                [go Other fTy | T.FieldType _ fTy <- Map.elems fields]
+                [go inFnArg Other fTy | T.FieldType _ fTy <- Map.elems fields]
         T.TUnit -> Map.empty
 
 
@@ -7246,6 +7248,35 @@ substTVarsInGoType σ s = goSubst s
     isIdentStart = isGoIdentStart
     isIdentChar = isGoIdentChar
 
+-- | v0.13 Stage 1 — check whether a runtime kernel fn has a typed
+-- `*T` variant whose Go signature matches the target slot's typed
+-- shape. Returns the typed-variant name (e.g. `rt.String_toIntT`)
+-- when a routing is safe. Conservative: only fires when the kernel
+-- has a hand-curated mapping AND the typed sig matches the target
+-- string verbatim. Adding new entries requires both a runtime fn
+-- with the right typed sig AND a registry entry below.
+lookupRtKernelTypedVariant :: String -> String -> Maybe String
+lookupRtKernelTypedVariant bareFn targetTy =
+    case Map.lookup bareFn rtKernelTypedVariants of
+        Just (typedName, expectedTy)
+            | expectedTy == targetTy -> Just ("rt." ++ typedName)
+        _ -> Nothing
+
+-- | Registry of (`bareKernelFn`, (`typedVariantName`, `typedGoSig`)).
+-- Keep entries hand-curated so a runtime-side rename can't silently
+-- produce a routing that calls a no-longer-existing function.
+-- Add entries here when the contract calls for closing more
+-- adapters via typed-variant routing.
+rtKernelTypedVariants :: Map.Map String (String, String)
+rtKernelTypedVariants = Map.fromList
+    [ ("String_toInt",   ("String_toIntT",   "func(string) rt.SkyMaybe[int]"))
+    , ("String_fromInt", ("String_fromIntT", "func(int) string"))
+    , ("String_fromFloat", ("String_fromFloatT", "func(float64) string"))
+    , ("String_toUpper", ("String_toUpperT", "func(string) string"))
+    , ("String_toLower", ("String_toLowerT", "func(string) string"))
+    , ("Basics_not",     ("Basics_notT",     "func(bool) bool"))
+    ]
+
 -- | v0.13 Stage 1 — look up a runtime-kernel fn's Go signature so
 -- HOF arg coercion at the call site can σ-recover TVars from typed
 -- kernel-fn refs (e.g. `Result.map Time.timeString r` → pin T1=int,
@@ -7355,6 +7386,18 @@ coerceArg e ty
             Just t | t /= "any" -> e
             _ ->
                 GoIr.GoCall (GoIr.GoIdent ("rt.Coerce[" ++ ty ++ "]")) [e]
+    -- v0.13 Stage 1 — runtime-kernel HOF arg: when the target slot
+    -- expects a typed `func(...) ...` AND the source is a
+    -- `GoIdent "rt.X"` reference to a non-typed kernel whose typed
+    -- `XT` variant has a matching signature, route the call to the
+    -- typed variant directly. This avoids the
+    -- `rt.Coerce[func(string) rt.SkyMaybe[int]](rt.String_toInt)`
+    -- reflect-adapter wrap by using static Go typing throughout.
+    | take 5 ty == "func("
+    , GoIr.GoIdent name <- e
+    , "rt." `List.isPrefixOf` name
+    , Just typedVariant <- lookupRtKernelTypedVariant (drop 3 name) ty =
+        GoIr.GoIdent typedVariant
     -- v0.13 typed lowerer: `e` is already provably the target type —
     -- skip the coercion entirely (no `rt.CoerceInt(int)` etc.).
     | goExprGoType e == Just ty = e
