@@ -235,6 +235,35 @@ Each sub-app runs as its own child process — its own session store, its own up
 
 **Why this matters** — typical "production-ready" web-app setup: pick a backend framework, pick a frontend framework, glue them, pick a logger, pick a metrics library, stand up Prometheus, stand up Grafana, stand up an OTel collector, wire a tracing library, write a dashboard, build an admin panel as a separate service, deploy four containers. Sky gives you the same operational surface with a single `sky build`. Read [Sky.Live overview — Dev console + sub-app mount](docs/skylive/overview.md#dev-console--auto-mounted-at-_skyconsole) for the full mechanism.
 
+### Std.Decimal + Std.Money + Std.Time — production-grade arithmetic + time
+
+For the things every real app gets wrong: floating-point money, banker's rounding, currency-typed arithmetic, IANA timezones.
+
+```elm
+import Std.Decimal as Dec
+import Std.Money as Money exposing (Currency)
+import Std.Time as Stime
+
+-- Exact arithmetic — 0.1 + 0.2 is genuinely 0.3
+total = Dec.add (Dec.fromString "0.1" |> okOr Dec.zero)
+                (Dec.fromString "0.2" |> okOr Dec.zero)
+
+-- Currency-typed Money — add USD to JPY at compile time, not at runtime
+subTotal = Money.fromMajor Money.USD 100
+tax      = Money.percentOf (Dec.fromString "8.875" |> okOr Dec.zero) subTotal
+total    = Money.add subTotal tax       -- "$108.88"
+
+-- Fair-split invoice
+parts = Money.allocate 3 (Money.fromMajor Money.USD 100)
+        -- → [$33.34, $33.33, $33.33] — sums to $100 exactly
+
+-- Timezone-aware date arithmetic (no /usr/share/zoneinfo needed)
+nextMonth = Stime.addMonths 1 today      -- Jan 31 + 1 → Feb 28/29 (clamped)
+weekend   = Stime.isWeekend now
+```
+
+`Decimal` backed by `shopspring/decimal`; `Money` enforces currency-match at the type level; `Time` ships embedded `time/tzdata` so containers without `/usr/share/zoneinfo` still work. ISO 4217 currency enum covers 50+ codes (USD, EUR, GBP, JPY, CHF, …) plus crypto (BTC, ETH, USDT, USDC) plus `CurrencyRaw String` for the long tail. Full surface: [Standard library reference — `Std.Decimal` / `Std.Money` / `Std.Time`](docs/stdlib.md#stddecimal--arbitrary-precision-decimal-arithmetic).
+
 ### Plus the rest of the stdlib
 
 Crypto, JSON, HTTP client/server, file I/O, time, regex, encoding (base64 / hex / URL), structured logging, UUIDs, async tasks, parallel execution. See [Standard library reference](docs/stdlib.md) for the full surface.

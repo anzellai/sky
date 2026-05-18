@@ -231,6 +231,85 @@ myId = Uuid.v4   -- "f47ac10b-58cc-4372-a567-0e02b2c3d479"
 
 `v4` (random), `v7` (time-ordered), `parse` (validate string).
 
+### `Std.Decimal` — arbitrary-precision decimal arithmetic
+
+```elm
+import Std.Decimal as Dec
+```
+
+For money, billing, tax, invoices — anything where exact fractional value matters. `Decimal` is opaque; backed by `shopspring/decimal` at the runtime, so `0.1 + 0.2 == 0.3` exactly.
+
+| Surface | Signature |
+|---|---|
+| `fromString` / `fromInt` / `fromFloat` | `... -> Result Error Decimal` / `Int -> Decimal` / `Float -> Decimal` |
+| `fromMinor places minor` | `Int -> Int -> Decimal` (cents → dollars: `fromMinor 2 12345` → `123.45`) |
+| `zero` / `one` / `oneHundred` | `Decimal` constants |
+| `add` / `sub` / `mul` | `Decimal -> Decimal -> Decimal` |
+| `div` / `mod` | `Decimal -> Decimal -> Result Error Decimal` (Err on /0) |
+| `neg` / `abs` | `Decimal -> Decimal` |
+| `round n` / `roundHalfUp n` / `truncate n` | `Int -> Decimal -> Decimal` (`round` is banker's) |
+| `floor` / `ceil` | `Decimal -> Decimal` |
+| `eq` / `neq` / `lt` / `lte` / `gt` / `gte` / `compare` | `Decimal -> Decimal -> Bool` (or `Int` for compare) |
+| `min` / `max` | `Decimal -> Decimal -> Decimal` |
+| `isZero` / `isPositive` / `isNegative` | `Decimal -> Bool` |
+| `percentOf` / `addPercent` / `subPercent` | `Decimal -> Decimal -> Decimal` (pct as Decimal: `Dec.fromInt 10` = 10%) |
+| `toString` / `toStringFixed n` / `toFloat` / `toInt` / `toMinor n` | `Decimal -> String` (etc.) |
+| `formatWith` | `{thousands, decimal, places} -> Decimal -> String` (US/EU/FR conventions) |
+| `sum` | `List Decimal -> Decimal` |
+
+### `Std.Money` — currency-aware Money built on Decimal
+
+```elm
+import Std.Money as Money exposing (Money, Currency)
+```
+
+ISO 4217 minor-unit awareness (JPY=0dp, USD=2dp, BHD=3dp). `Currency` is a typed enum of 50+ codes (USD, EUR, GBP, JPY, CHF, AUD, CAD, …, BTC, ETH, USDT, USDC) plus `CurrencyRaw String` for the long tail. All arithmetic enforces currency match.
+
+| Surface | Signature |
+|---|---|
+| `fromMajor c n` / `fromMinor c n` / `fromString c s` | `Currency -> ... -> Money` (string is `Result Error Money`) |
+| `zero c` / `zeroOf c` | `Currency -> Money` |
+| `amount` / `currency` / `currencyCode` | `Money -> Decimal` / `Currency` / `String` |
+| `add` / `sub` | `Money -> Money -> Money` (currency-matched; no-op on mismatch) |
+| `mul scalar m` | `Decimal -> Money -> Money` |
+| `neg` / `abs` | `Money -> Money` |
+| `allocate parts m` | `Int -> Money -> List Money` (fair split — `$100/3 → [$33.34, $33.33, $33.33]`, sum-preserving) |
+| `sumOf c xs` | `Currency -> List Money -> Money` |
+| `eq` / `neq` / `lt` / `lte` / `gt` / `gte` / `compare` | `Money -> Money -> Bool` (Int for compare) |
+| `isZero` / `isPositive` / `isNegative` | `Money -> Bool` |
+| `percentOf` / `addPercent` / `subPercent` | `Decimal -> Money -> Money` |
+| `format` / `formatWithCode` | `Money -> String` (`"$108.88"` / `"USD 108.88"`) |
+| `toMinor` | `Money -> Int` |
+| `minorUnits` / `symbol` / `currencyName` | `Currency -> ...` |
+| `knownCurrency` | `Currency -> Bool` (False only for `CurrencyRaw _`) |
+| `isKnownCode` | `String -> Bool` (raw ISO code predicate — use for form input) |
+| `parseCurrency` | `String -> Currency` (falls back to `CurrencyRaw` on unknown) |
+| `setRate from to rate` / `getRate` / `hasRate` / `clearRates` | FX rate registry (process-local) |
+| `convert to m` | `Currency -> Money -> Result Error Money` |
+
+### `Std.Time` — IANA-zone helpers complementing kernel `Time`
+
+```elm
+import Std.Time as Stime
+```
+
+Embedded `time/tzdata` so works in containers without `/usr/share/zoneinfo`. **Note** the import alias `Stime` rather than `Time` — the kernel `Time` already owns that name.
+
+| Surface | Signature |
+|---|---|
+| `inZone` / `formatInZone fmt zone t` | RFC 3339 + custom Go layouts |
+| `addMonths n t` / `addYears n t` | **clamped** (Jan 31 + 1 month → Feb 28/29, NOT Mar 3) |
+| `addDays` / `addHours` / `addMinutes` / `addSeconds` | self-explanatory |
+| `startOfDay` / `startOfWeek` / `startOfMonth` / `startOfYear` | floor helpers |
+| `endOfDay` / `endOfMonth` / `endOfYear` | ceiling helpers |
+| `year` / `month` / `day` / `dayOfWeek` | extract components (ISO Mon=1..Sun=7) |
+| `dayOfYear` / `weekOfYear` | ISO 8601 |
+| `isWeekend` / `isLeapYear` | `Bool` |
+| `daysInMonth y m` | `Int` (handles leap Feb) |
+| `diffDays` / `diffHours` / `diffMinutes` / `diffSeconds` | `Time -> Time -> Int` |
+| `fromParts y m d h mi s ms zone` | construct from components |
+| `zoneOffset` / `zoneName` / `utc` | zone metadata |
+
 ---
 
 ## Effects (`Task Error a`)

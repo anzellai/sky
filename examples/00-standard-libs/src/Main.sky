@@ -511,10 +511,14 @@ moneySuite =
             Test.equal "$" (Money.symbol Money.USD))
         , Test.test "symbol lookup EUR" (\_ ->
             Test.equal "€" (Money.symbol Money.EUR))
-        , Test.test "knownCurrency \"USD\" (lookup by ISO code)" (\_ ->
-            Test.isTrue (Money.knownCurrency "USD"))
-        , Test.test "knownCurrency \"XYZ\" rejects unknown code" (\_ ->
-            Test.isFalse (Money.knownCurrency "XYZ"))
+        , Test.test "knownCurrency USD ctor is True" (\_ ->
+            Test.isTrue (Money.knownCurrency Money.USD))
+        , Test.test "knownCurrency (CurrencyRaw \"XYZ\") is False" (\_ ->
+            Test.isFalse (Money.knownCurrency (Money.CurrencyRaw "XYZ")))
+        , Test.test "isKnownCode \"USD\" (raw-string check)" (\_ ->
+            Test.isTrue (Money.isKnownCode "USD"))
+        , Test.test "isKnownCode \"XYZ\" rejects unknown code" (\_ ->
+            Test.isFalse (Money.isKnownCode "XYZ"))
         , Test.test "currencyCode JPY" (\_ ->
             Test.equal "JPY" (Money.currencyCode Money.JPY))
         , Test.test "isZero on zero USD" (\_ ->

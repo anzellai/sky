@@ -1354,7 +1354,9 @@ Money.amount, Money.currency, Money.currencyCode
 Money.minorUnits   : Currency -> Int     -- USD=2, JPY=0, BHD=3
 Money.symbol       : Currency -> String  -- "$", "¥", "£", …
 Money.currencyName : Currency -> String
-Money.knownCurrency, Money.parseCurrency
+Money.knownCurrency : Currency -> Bool  -- False only for CurrencyRaw _
+Money.isKnownCode   : String   -> Bool  -- raw ISO-code predicate (form input)
+Money.parseCurrency : String   -> Currency
 
 -- Arithmetic — currency-checked
 Money.add, Money.sub : Money -> Money -> Money      -- same-currency or no-op

@@ -8413,6 +8413,22 @@ caseToGo mExpectedGo subject branches =
     let
         goSubject = exprToGo subject
         subjectType = detectSubjectType branches
+        -- v0.13.x: derive the subject's concrete typed shape from
+        -- HM inference when available. The legacy `MaybeCoerce[any]`
+        -- / `ResultCoerce[any, any]` collapse loses the inner type —
+        -- a `Just n` binding then has Go type `any` and downstream
+        -- `Sky_Test_equal[T1](42, n)` cannot pick T1=int because n
+        -- disagrees with the literal int. By coercing through the
+        -- inferred typed shape and routing the subject as `_tFfi`
+        -- (direct field access), `n` becomes `int` and Go's type
+        -- inference works through Test.equal and friends.
+        solvedTypes = Rec._cg_solvedTypes getCgEnv
+        inferredSubjectGoType =
+            case inferExprType solvedTypes subject of
+                Just t ->
+                    let s = solvedTypeToGo t
+                    in if isConcreteResultOrMaybe s then Just s else Nothing
+                Nothing -> Nothing
         -- Wrap in `any(...)` before asserting so the assertion works
         -- whether the expression is already typed (e.g. a typed Sky
         -- function returning SkyResult[IoError, string]) or `any`
@@ -8435,10 +8451,22 @@ caseToGo mExpectedGo subject branches =
                 -- SkyResult[any,any] assertion. Net: zero runtime
                 -- boxing between FFI and case body.
                 e
+            -- v0.13.x: HM inferred a concrete `SkyResult[E, T]` for
+            -- the subject. Coerce through THAT shape (not the
+            -- default `[any, any]`) and let bindCtorArg do direct
+            -- `.OkValue` access via the `_tFfi` subject naming.
+            | Just _ <- stripParametric "rt.SkyResult" typeName
+            , Just inferred <- inferredSubjectGoType
+            , Just params <- stripParametric "rt.SkyResult" inferred =
+                GoIr.GoCall (GoIr.GoIdent ("rt.ResultCoerce[" ++ params ++ "]")) [e]
             | Just params <- stripParametric "rt.SkyResult" typeName =
                 GoIr.GoCall (GoIr.GoIdent ("rt.ResultCoerce[" ++ params ++ "]")) [e]
             | Just _ <- stripParametric "rt.SkyMaybe" typeName, isTypedFfiCall e =
                 e
+            | Just _ <- stripParametric "rt.SkyMaybe" typeName
+            , Just inferred <- inferredSubjectGoType
+            , Just inner <- stripParametric "rt.SkyMaybe" inferred =
+                GoIr.GoCall (GoIr.GoIdent ("rt.MaybeCoerce[" ++ inner ++ "]")) [e]
             | Just inner <- stripParametric "rt.SkyMaybe" typeName =
                 GoIr.GoCall (GoIr.GoIdent ("rt.MaybeCoerce[" ++ inner ++ "]")) [e]
             | otherwise =
@@ -8514,6 +8542,19 @@ caseToGo mExpectedGo subject branches =
                     | isJust (stripParametric "rt.SkyResult" typeName) && isTypedFfiCall goSubject
                     -> "__subject_tFfi"
                     | isJust (stripParametric "rt.SkyMaybe" typeName) && isTypedFfiCall goSubject
+                    -> "__subject_tFfi"
+                    -- v0.13.x: HM-inferred concrete typed Maybe/Result
+                    -- gets the same direct-field-access path. The
+                    -- ResultCoerce/MaybeCoerce step above already
+                    -- gave us a struct-typed `__subject` (e.g.
+                    -- `rt.SkyMaybe[int]`); bindCtorArg's `_tFfi`
+                    -- branch then emits `.JustValue` / `.OkValue`
+                    -- which preserves the typed inner.
+                    | isJust (stripParametric "rt.SkyResult" typeName)
+                    , Just _ <- inferredSubjectGoType
+                    -> "__subject_tFfi"
+                    | isJust (stripParametric "rt.SkyMaybe" typeName)
+                    , Just _ <- inferredSubjectGoType
                     -> "__subject_tFfi"
                     | isNothing (stripParametric "rt.SkyResult" typeName)
                     , isNothing (stripParametric "rt.SkyMaybe" typeName)

@@ -569,7 +569,18 @@ lambdaParams_ mkError =
 exprCase :: (Row -> Col -> x) -> Parser x Src.Expr_
 exprCase mkError = do
     subject <- expression mkError
-    spaces
+    -- Accept `of` either on the same line as the subject end (the
+    -- common single-line form), or after newlines+indent for the
+    -- multi-line subject form:
+    --     case Result.mapError
+    --             (\_ -> ...)
+    --             (...)
+    --     of
+    --         ...
+    -- `of` is a reserved keyword and never starts a top-level
+    -- declaration, so a bare `of` after the subject is
+    -- unambiguous regardless of column.
+    freshLine mkError
     keyword mkError (T.pack "of")
     freshLine mkError  -- skip to first branch (may be on next line)
     branchCol <- getCol

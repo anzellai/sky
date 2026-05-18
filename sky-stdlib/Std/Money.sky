@@ -10,7 +10,7 @@ module Std.Money exposing
     , format, formatWithCode, toMinor
     , percentOf, addPercent, subPercent
     , minorUnits, symbol, currencyName
-    , knownCurrency, parseCurrency
+    , knownCurrency, isKnownCode, parseCurrency
     , setRate, getRate, hasRate, clearRates, convert
     )
 
@@ -198,9 +198,26 @@ currencyName c =
     Ffi.callPure "Money_currencyName" [ currencyCode c ]
 
 
-knownCurrency : String -> Bool
-knownCurrency code =
+-- | Check whether the given ISO 4217 code maps to one of the
+-- named Currency variants. Pass a raw code string from external
+-- input (form field, JSON payload) and route accordingly.
+isKnownCode : String -> Bool
+isKnownCode code =
     Ffi.callPure "Money_isKnownCurrency" [ code ]
+
+
+-- | Currency-typed counterpart: returns False ONLY for
+-- `CurrencyRaw _`, True for every named variant (USD, JPY, BTC,
+-- …). Use when you already have a Currency value and want to
+-- detect the long-tail / unrecognised case.
+knownCurrency : Currency -> Bool
+knownCurrency c =
+    case c of
+        CurrencyRaw _ ->
+            False
+
+        _ ->
+            True
 
 
 parseCurrency : String -> Currency
