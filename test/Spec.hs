@@ -26,6 +26,7 @@ import qualified Sky.Build.UiFillCascadeSpec
 import qualified Sky.Build.UiMultilineTextareaSpec
 import qualified Sky.Build.ExposingTypeCtorsSpec
 import qualified Sky.Build.LetForwardRefSpec
+import qualified Sky.Build.EntryLocalShadowsDepSpec
 import qualified Sky.Format.FormatSpec
 import qualified Sky.Build.GoKeywordCollisionSpec
 import qualified Sky.Build.NestedPatternSpec
@@ -169,6 +170,7 @@ main = hspec $ do
     describe "Sky.Build.UiMultilineTextarea" Sky.Build.UiMultilineTextareaSpec.spec
     describe "Sky.Build.ExposingTypeCtors" Sky.Build.ExposingTypeCtorsSpec.spec
     describe "Sky.Build.LetForwardRef"     Sky.Build.LetForwardRefSpec.spec
+    describe "Sky.Build.EntryLocalShadowsDep" Sky.Build.EntryLocalShadowsDepSpec.spec
     -- Closed-record exactness + cross-module externals registration:
     --   1. unifyRecords (Sky.Type.Unify) used to silently merge field-
     --      mismatched closed records under a fresh extension. Now

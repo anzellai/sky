@@ -1370,9 +1370,39 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                             isResolved (T.TVar _) = False
                             isResolved _ = True
                             normaliseType = normaliseTypeForMerge
+                            -- Bug fix: a key in `entryKeys` may have come
+                            -- from the entry module's `_locals` ledger
+                            -- (lambda params / inner-let bindings) rather
+                            -- than from a real top-level binding. When the
+                            -- same key also exists in a DEP module's
+                            -- solvedTypes — and disagrees structurally —
+                            -- the dep version is the genuine top-level
+                            -- declaration of THAT module; the entry's is
+                            -- pollution from a same-named local.
+                            -- Concrete case: Main.sky has functions like
+                            -- `fetchLogs parent filter = …` whose lambda
+                            -- param `filter : LogFilter` leaks into
+                            -- solvedTypes; Sky.Core.List.filter (the real
+                            -- HOF) gets shadowed and View.sky's
+                            -- `List.filter (...)` then infers as LogFilter.
+                            -- Detect: if entry's type AND any dep's type
+                            -- disagree structurally, run the ambiguity
+                            -- pipeline (treat as cross-scope conflict).
                             resolveKey k tys
                                 | k `Set.member` entryKeys =
-                                    Map.findWithDefault (T.TVar "_unbound") k types
+                                    let entryTy = Map.findWithDefault (T.TVar "_unbound") k types
+                                        depTys  = [ t | (_, m) <- depSolved
+                                                      , Just t <- [Map.lookup k m]
+                                                      , isResolved t ]
+                                        allCands = if isResolved entryTy
+                                                       then entryTy : depTys
+                                                       else depTys
+                                        normalisedAll = List.nub
+                                            (map normaliseType allCands)
+                                    in case normalisedAll of
+                                        []    -> entryTy
+                                        [_]   -> entryTy
+                                        _     -> T.TVar "_ambig"
                                 | otherwise =
                                     let resolved = filter isResolved tys
                                         normalised = List.nub (map normaliseType resolved)
