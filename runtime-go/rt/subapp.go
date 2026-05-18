@@ -2,6 +2,7 @@ package rt
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -77,6 +78,14 @@ func SpawnBinary(parentPort int, binPath string, extraArgs ...string) SpawnFn {
 		}
 		args := append([]string(nil), extraArgs...)
 		cmd := exec.CommandContext(ctx, binPath, args...)
+		// On ctx cancel, send SIGTERM (not the default SIGKILL) so
+		// the child gets a chance to forward to its own grandchildren.
+		// Without this, recursive process trees orphan grandchildren
+		// to PID 1 (see app/Main.hs runConsole signal handlers — the
+		// chain only works if every level receives SIGTERM, not
+		// SIGKILL). WaitDelay then escalates to SIGKILL after 2 s.
+		cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
+		cmd.WaitDelay = 2 * time.Second
 		envExtra := []string{
 			"SKY_LIVE_PORT=" + strconv.Itoa(port),
 			"SKY_LIVE_BASE_PATH=" + basePath,
@@ -150,6 +159,11 @@ func SpawnSkyConsole(parentPort int) SpawnFn {
 		}
 		cmd := exec.CommandContext(ctx, skyBin, "console",
 			"--port", strconv.Itoa(port))
+		// On ctx cancel, send SIGTERM so `sky console`'s signal
+		// handler (app/Main.hs runConsole) can propagate to its own
+		// `app-live` child instead of being SIGKILL'd outright.
+		cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
+		cmd.WaitDelay = 2 * time.Second
 		envExtra := []string{
 			// Tells the bundled console's Sky.Live runtime to emit
 			// URLs prefixed with our mount point.
@@ -162,6 +176,11 @@ func SpawnSkyConsole(parentPort int) SpawnFn {
 			// metric / span the child emits is labelled
 			// `subapp=console` on the parent's store.
 			"SKY_LIVE_NAMESPACE=" + subAppNamespaceFromPath(basePath),
+			// Stop the bundled console from recursively auto-
+			// mounting ANOTHER console under itself. Without this
+			// every spawn fan-out adds an orphaned grandchild every
+			// time the parent restarts.
+			"SKY_CONSOLE_EMBED=off",
 		}
 		// Tell the child where to push observability data when the
 		// parent is reachable. Empty parentPort skips this —
@@ -234,6 +253,21 @@ func MountSubApp(mux *http.ServeMux, prefix string, spawn SpawnFn) error {
 	// (/_sky/sse): without it, httputil buffers chunks and the
 	// browser never sees events arrive.
 	proxy.FlushInterval = -1
+	// Silence the noisy "http: proxy error: context canceled" log
+	// that the default ErrorHandler emits whenever a client
+	// disconnects mid-stream (browser refresh of /_sky/console
+	// drops the in-flight SSE; same on navigation away). The
+	// errors are routine and not actionable. Real errors (child
+	// unreachable, malformed upstream response) still write 502 +
+	// log via the explicit branch.
+	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+		if errors.Is(err, context.Canceled) || errors.Is(err, io.EOF) {
+			return // client gave up; nothing to do, no log noise
+		}
+		fmt.Fprintf(os.Stderr, "[sky.subapp] proxy %s %s -> %s: %v\n",
+			r.Method, r.URL.Path, target.Host, err)
+		w.WriteHeader(http.StatusBadGateway)
+	}
 	// Strip the prefix so the child sees `/_sky/event` instead of
 	// `/_sky/console/_sky/event`. Both Sky.Live and Sky.Http.Server
 	// register their routes at root-relative paths, so prefix-strip

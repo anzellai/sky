@@ -245,6 +245,21 @@ try {
             console.error('[browser console error] ' + msg.text());
         }
     });
+    page.on('pageerror', e => console.error('[page-error] ' + e.message));
+    // Log every failing response so we know WHICH URL 500'd.
+    page.on('response', async r => {
+        const s = r.status();
+        if (s >= 400) {
+            let body = '';
+            try { body = (await r.text()).slice(0, 500); } catch (_) {}
+            console.error('[resp ' + s + '] ' + r.request().method() + ' '
+                          + r.url() + (body ? ' body=' + JSON.stringify(body) : ''));
+        }
+    });
+    page.on('requestfailed', r => {
+        console.error('[req-failed] ' + r.method() + ' ' + r.url()
+                      + ' — ' + r.failure().errorText);
+    });
 
     await page.goto(consoleBase + '/', { waitUntil: 'load', timeout: 15_000 });
     // Wait for initial fetch to settle (overview should be visible).

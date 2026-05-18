@@ -13,7 +13,9 @@ import qualified System.Environment
 import qualified Language.Haskell.TH.Syntax
 import System.Directory (createDirectoryIfMissing, doesFileExist, removeFile, renameFile)
 import System.IO.Error (catchIOError)
+import qualified Control.Concurrent
 import qualified Control.Exception
+import qualified System.Posix.Signals as Signals
 import System.FilePath ((</>), takeExtension, takeDirectory, takeFileName, dropExtension, splitDirectories)
 import System.Exit (exitWith)
 import Data.List (isPrefixOf, isInfixOf, stripPrefix, tails)
@@ -1693,8 +1695,17 @@ runConsole opts = do
     -- 4. Run. Sky.Live binds via SKY_LIVE_PORT (and Sky.Tui ignores
     --    the env var, so the same setup works for both backends).
     env0 <- System.Environment.getEnvironment
-    let env1 = filter (\(k, _) -> k /= "SKY_LIVE_PORT") env0
-              ++ [("SKY_LIVE_PORT", show (_consolePort opts))]
+    let env1 = filter (\(k, _) ->
+                  k /= "SKY_LIVE_PORT" && k /= "SKY_CONSOLE_EMBED") env0
+              ++ [ ("SKY_LIVE_PORT", show (_consolePort opts))
+                 -- Standalone `sky console` IS the console — it must
+                 -- NOT auto-mount another console under itself or we
+                 -- spawn an orphan tree (see runtime-go/rt/subapp.go
+                 -- maybeAutoMountConsole gate). The reverse-proxy
+                 -- mount path sets this too; setting it here covers
+                 -- the standalone case.
+                 , ("SKY_CONSOLE_EMBED", "off")
+                 ]
         rp = (System.Process.proc binPath [])
                 { System.Process.env = Just env1
                 , System.Process.std_out = System.Process.Inherit
@@ -1706,10 +1717,50 @@ runConsole opts = do
         else putStrLn $ "sky console: starting on http://127.0.0.1:" ++ show (_consolePort opts)
                      ++ " (Ctrl-C to stop)"
     (_, _, _, rph) <- System.Process.createProcess rp
-    rec' <- System.Process.waitForProcess rph
+    -- Signal-forwarding: when our parent kills us with SIGTERM /
+    -- SIGHUP (the lifecycle every sub-app mount uses to tear down
+    -- children — see runtime-go/rt/subapp.go ShutdownSubApps),
+    -- Haskell's default handler exits immediately and the spawned
+    -- app-live grandchild gets reparented to PID 1 — process leak.
+    -- Install explicit handlers that terminate the child first.
+    -- SIGINT (Ctrl-C) already works via Haskell's UserInterrupt
+    -- bubbling through bracket, but for symmetry handle it here too.
+    let forwardSignal sig = Signals.installHandler sig
+            (Signals.Catch (do
+                -- terminateProcess sends SIGTERM on POSIX.
+                System.Process.terminateProcess rph
+                -- Brief grace so the child can flush its log buffer,
+                -- then escalate. The parent's outer 2 s grace in
+                -- ShutdownSubApps gives us a window; we want to be
+                -- FASTER than that so the parent doesn't have to
+                -- SIGKILL us via process-group escalation.
+                _ <- Control.Concurrent.forkIO $ do
+                    Control.Concurrent.threadDelay 1000000  -- 1 s
+                    mec <- System.Process.getProcessExitCode rph
+                    case mec of
+                        Just _  -> return ()
+                        Nothing -> do
+                            ph <- System.Process.getPid rph
+                            case ph of
+                                Just pid -> Signals.signalProcess Signals.sigKILL pid
+                                Nothing  -> return ()
+                return ()))
+            Nothing
+    _ <- forwardSignal Signals.sigTERM
+    _ <- forwardSignal Signals.sigHUP
+    _ <- forwardSignal Signals.sigINT
+    rec' <- Control.Exception.bracket_ (return ())
+        -- Even if we exit via uncaught exception, terminate the child.
+        (do
+            mec <- System.Process.getProcessExitCode rph
+            case mec of
+                Just _  -> return ()
+                Nothing -> System.Process.terminateProcess rph)
+        (System.Process.waitForProcess rph)
     case rec' of
         ExitSuccess     -> return (Right ())
         ExitFailure 130 -> return (Right ())   -- Ctrl-C; normal exit
+        ExitFailure 143 -> return (Right ())   -- SIGTERM (128 + 15); normal teardown
         ExitFailure n   -> exitWith (ExitFailure n)
 
 
