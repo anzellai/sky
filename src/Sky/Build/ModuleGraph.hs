@@ -12,7 +12,7 @@ module Sky.Build.ModuleGraph
     )
     where
 
-import Control.Exception (try, SomeException)
+import Control.Exception (try, SomeException, ErrorCall, displayException, evaluate)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import qualified Data.Text as T
@@ -35,6 +35,63 @@ data ModuleInfo = ModuleInfo
     , _mi_isLocal  :: !Bool         -- True if local (not stdlib)
     }
     deriving (Show)
+
+
+-- | Safety wrapper around `Parse.parseModule` that catches any
+-- Haskell-level exception escaping the parser (typically an
+-- `ErrorCall` from a `error "Expected …"` site in
+-- src/Sky/Parse/{Expression,Pattern,Type}.hs) and converts it to a
+-- Sky-shaped `ModuleError` referencing the source file.
+--
+-- This is a SAFETY NET — the parser SHOULD never throw an
+-- ErrorCall; every parse-failure path should return a `Left
+-- ModuleError` with row+col. The pre-2026-05-18 parser had ~6
+-- `error "…"` sites that bypassed the Either path and surfaced
+-- as Haskell stack traces with GHC CallStack noise — terrible
+-- DX. This wrapper guarantees the user sees an Elm-style Sky
+-- error block regardless.
+--
+-- Layer 2 (eventually): migrate every `error` in the parser to
+-- a proper position-tagged ModuleError variant so the catch
+-- here becomes a true safety net (the catch-all message is
+-- generic — a proper Layer 2 message would carry the actual
+-- "expected , or ) here" context).
+safeParseModule
+    :: FilePath
+    -> T.Text
+    -> IO (Either Parse.ModuleError Src.Module)
+safeParseModule path src = do
+    result <- try (evaluate (Parse.parseModule src))
+        :: IO (Either SomeException (Either Parse.ModuleError Src.Module))
+    case result of
+        Right ok -> return ok
+        Left exc -> do
+            -- Best-effort: anchor the error at line 1 col 1 since
+            -- the escaping exception doesn't carry position. The
+            -- diagnostic body includes the underlying message so a
+            -- reader can grep the source.
+            putStrLn ""
+            putStrLn ("-- PARSE ERROR (uncaught) ── " ++ path)
+            putStrLn ""
+            putStrLn "The parser crashed while processing this file."
+            putStrLn ("Underlying error: " ++ stripCallStack (displayException exc))
+            putStrLn ""
+            putStrLn "This is a Sky compiler bug — the parser should produce"
+            putStrLn "a clean Sky error block instead of crashing. Please"
+            putStrLn "report this case so we can improve the diagnostic. As"
+            putStrLn "a workaround: look for unmatched brackets ( [ { in the"
+            putStrLn "source above; that's the most common trigger."
+            -- Fall through with a generic ModuleError so the rest
+            -- of the build path exits cleanly.
+            return (Left (Parse.ModuleExpected 1 1))
+  where
+    -- GHC's displayException for ErrorCall ends with a HasCallStack
+    -- block — strip it for user readability.
+    stripCallStack s =
+        let lns = lines s
+        in case break (\l -> l == "CallStack (from HasCallStack):") lns of
+            (head_, _:_) -> unlines head_
+            _            -> s
 
 
 -- | Discover all modules starting from the entry file.
@@ -78,7 +135,8 @@ discoverModulesFromSeeds roots seeds = do
             then go visited rest
             else do
                 source <- TIO.readFile path
-                case Parse.parseModule source of
+                parsedR <- safeParseModule path source
+                case parsedR of
                     Left err -> do
                         -- v0.13 Layer 1: render the Diagnostic and
                         -- exit cleanly.  The previous `error`-based

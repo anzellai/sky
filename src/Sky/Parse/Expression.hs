@@ -254,7 +254,7 @@ exprAtom_ mkError =
                              -- than `-` — silently dropping the user's
                              -- explicit grouping.
                              return (Src.Paren e1)
-                         _ -> error "Expected , or ) in expression"
+                         _ -> failParse mkError  -- was: error "Expected , or ) in expression"
 
         , -- List literal: [a, b, c]
           do char mkError '['
@@ -363,16 +363,19 @@ exprAtom_ mkError =
 
         , -- String literals (single-line and multiline)
           do s <- stringLiteral mkError
-             return $ case s of
-                 SingleLine str -> Src.Str str
-                 MultiLine str  -> Src.MultilineStr str
-                 CharLit _      -> error "char in string context"
+             case s of
+                 SingleLine str -> return (Src.Str str)
+                 MultiLine str  -> return (Src.MultilineStr str)
+                 -- Lexer returned a char where a string was wanted
+                 -- — surface as a Sky parse error rather than a
+                 -- Haskell ErrorCall.
+                 CharLit _      -> failParse mkError
 
         , -- Char literal
           do s <- charLiteral mkError
-             return $ case s of
-                 CharLit c -> Src.Chr c
-                 _         -> error "expected char"
+             case s of
+                 CharLit c -> return (Src.Chr c)
+                 _         -> failParse mkError
 
         , -- Number
           do n <- number mkError

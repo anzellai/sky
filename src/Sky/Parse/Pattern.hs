@@ -94,7 +94,7 @@ patternAtom mkError =
                          Just ')' -> do
                              char mkError ')'
                              return (A.toValue p1)
-                         _ -> error "Expected , or )"
+                         _ -> failParse mkError
 
         , -- List: [pat, pat, ...]
           do char mkError '['
@@ -147,16 +147,19 @@ patternAtom mkError =
 
         , -- String literal
           do s <- stringLiteral mkError
-             return $ case s of
-                 SingleLine str -> Src.PStr str
-                 MultiLine str  -> Src.PStr str
-                 CharLit _      -> error "char in pattern context"
+             case s of
+                 SingleLine str -> return (Src.PStr str)
+                 MultiLine str  -> return (Src.PStr str)
+                 -- Lexer returned a char literal where a string was
+                 -- requested — surface as a Sky parse error rather
+                 -- than throwing a Haskell ErrorCall.
+                 CharLit _      -> failParse mkError
 
         , -- Char literal
           do s <- charLiteral mkError
-             return $ case s of
-                 CharLit c -> Src.PChr c
-                 _         -> error "expected char"
+             case s of
+                 CharLit c -> return (Src.PChr c)
+                 _         -> failParse mkError
 
         , -- Boolean: True / False
           oneOf mkError
