@@ -5993,10 +5993,26 @@ func Server_listen(port any, routes any) any {
 				if w.Header().Get("Referrer-Policy") == "" {
 					w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
 				}
+				// CSRF auto-injection: for HTML responses, walk every
+				// `<form method="POST">` (case-insensitive on both tag
+				// and attribute) and inject a hidden `__sky_csrf` input
+				// just inside the opening tag. The submitted token will
+				// match the cookie via the `r.FormValue("__sky_csrf")`
+				// fallback in the CSRF middleware. Skip injection when
+				// the form already declares the field (idempotent on
+				// double-render). User code stays clean — no per-form
+				// boilerplate.
+				body := skyResp.Body
+				if strings.HasPrefix(w.Header().Get("Content-Type"), "text/html") {
+					tok := CurrentCsrfToken(req)
+					if tok != "" {
+						body = injectCsrfIntoForms(body, tok)
+					}
+				}
 				if skyResp.Status > 0 {
 					w.WriteHeader(skyResp.Status)
 				}
-				fmt.Fprint(w, skyResp.Body)
+				fmt.Fprint(w, body)
 			} else {
 				w.WriteHeader(500)
 				fmt.Fprint(w, "Internal Server Error")
@@ -6073,6 +6089,76 @@ func Server_json(body any) any {
 
 func Server_html(body any) any {
 	return SkyResponse{Status: 200, Body: fmt.Sprintf("%v", body), ContentType: "text/html"}
+}
+
+// injectCsrfIntoForms walks an HTML body and inserts a hidden
+// `<input type="hidden" name="__sky_csrf" value="...">` immediately
+// after every opening `<form …>` whose method is POST (or absent —
+// HTML defaults to GET but apps that omit the attribute and use a
+// POST handler are rare; we cover only declared POSTs here). Case-
+// insensitive matching on both the tag and the method attribute.
+// Idempotent: if a form already contains `name="__sky_csrf"` in its
+// raw markup we skip injection so a double-render doesn't stack
+// duplicate inputs.
+//
+// Why this lives in the runtime: Sky.Http.Server templates are plain
+// strings produced by user code (typically from `<form method="POST"
+// action="…">…</form>`); rather than force every user to remember the
+// CSRF input, the runtime injects it before the body hits the wire.
+// The middleware's `r.FormValue("__sky_csrf")` fallback (see
+// csrf_middleware.go) reads it back. Net effect: AI-written
+// Sky.Http.Server form apps are CSRF-protected by construction, same
+// as Sky.Live apps.
+func injectCsrfIntoForms(body, token string) string {
+	if token == "" {
+		return body
+	}
+	hidden := `<input type="hidden" name="__sky_csrf" value="` + token + `">`
+	var out strings.Builder
+	out.Grow(len(body) + 128)
+	i := 0
+	lower := strings.ToLower(body)
+	for i < len(body) {
+		fIdx := strings.Index(lower[i:], "<form")
+		if fIdx < 0 {
+			out.WriteString(body[i:])
+			break
+		}
+		fIdx += i
+		// Copy everything up to and including the <form ... > opener.
+		closeIdx := strings.Index(body[fIdx:], ">")
+		if closeIdx < 0 {
+			// Unclosed tag — bail and emit the rest unchanged.
+			out.WriteString(body[i:])
+			break
+		}
+		tagEnd := fIdx + closeIdx + 1
+		formTag := body[fIdx:tagEnd]
+		out.WriteString(body[i:tagEnd])
+		// Find the matching `</form>` so we can scope idempotency
+		// check to this form's body.
+		formCloseRel := strings.Index(lower[tagEnd:], "</form>")
+		var formBodyEnd int
+		if formCloseRel < 0 {
+			formBodyEnd = len(body)
+		} else {
+			formBodyEnd = tagEnd + formCloseRel
+		}
+		// Only inject for POST forms (case-insensitive) that don't
+		// already carry a __sky_csrf input.
+		methodLower := strings.ToLower(formTag)
+		isPost := strings.Contains(methodLower, `method="post"`) ||
+			strings.Contains(methodLower, `method='post'`) ||
+			strings.Contains(methodLower, "method=post")
+		alreadyHas := strings.Contains(
+			strings.ToLower(body[tagEnd:formBodyEnd]),
+			`name="__sky_csrf"`)
+		if isPost && !alreadyHas {
+			out.WriteString(hidden)
+		}
+		i = tagEnd
+	}
+	return out.String()
 }
 func Server_htmlT(body string) SkyResponse {
 	return SkyResponse{Status: 200, Body: body, ContentType: "text/html"}

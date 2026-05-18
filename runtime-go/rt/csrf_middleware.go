@@ -153,6 +153,24 @@ func CSRFMiddleware(next http.Handler) http.Handler {
 				SameSite: http.SameSiteStrictMode,
 				Secure:   r.TLS != nil,
 			})
+			// Also stash the freshly-generated token on the
+			// request so downstream handlers calling
+			// `CurrentCsrfToken(r)` (in particular Sky.Live's
+			// HTML render) can embed it into the page's inlined
+			// JS on the SAME response that ships Set-Cookie.
+			// Without this the very first page load got
+			// `__skyCsrfToken = ""` baked in, every state-
+			// mutating POST had no `X-Sky-Csrf` header, and
+			// the middleware 403'd every click. Silent in
+			// production because a refresh would set the cookie
+			// the next time, but a SPA like Sky.Live never
+			// reloads — every click POSTs through the same JS
+			// instance, so the page-load embed is the only
+			// chance to seed `__skyCsrfToken`.
+			r.AddCookie(&http.Cookie{
+				Name:  SkyCsrfCookieName,
+				Value: cookieToken,
+			})
 		}
 
 		if !isMutating {
@@ -160,17 +178,32 @@ func CSRFMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		// State-mutating: header MUST match cookie.
-		headerToken := r.Header.Get(SkyCsrfHeaderName)
-		if headerToken == "" || cookieToken == "" {
-			csrfReject(w, "csrf_missing", "missing X-Sky-Csrf header or __sky_csrf cookie")
+		// State-mutating: token MUST match cookie. Read from
+		// `X-Sky-Csrf` header first (Sky.Live JS sets this on
+		// every fetch). Fall back to a `__sky_csrf` form field for
+		// traditional Sky.Http.Server HTML-form POSTs that don't
+		// run JS. The form-field path calls `ParseForm` which
+		// caches the parse on the request, so downstream
+		// `r.FormValue("…")` reads still work.
+		submitted := r.Header.Get(SkyCsrfHeaderName)
+		if submitted == "" {
+			ct := r.Header.Get("Content-Type")
+			isFormEncoded := strings.HasPrefix(ct, "application/x-www-form-urlencoded") ||
+				strings.HasPrefix(ct, "multipart/form-data")
+			if isFormEncoded {
+				_ = r.ParseForm()
+				submitted = r.FormValue("__sky_csrf")
+			}
+		}
+		if submitted == "" || cookieToken == "" {
+			csrfReject(w, "csrf_missing", "missing X-Sky-Csrf header / __sky_csrf form field, or __sky_csrf cookie")
 			return
 		}
 		// crypto/subtle.ConstantTimeCompare returns 1 on equal,
 		// 0 on different OR different-length. Defeats timing-attack
 		// token discovery.
-		if subtle.ConstantTimeCompare([]byte(headerToken), []byte(cookieToken)) != 1 {
-			csrfReject(w, "csrf_invalid", "X-Sky-Csrf header does not match cookie")
+		if subtle.ConstantTimeCompare([]byte(submitted), []byte(cookieToken)) != 1 {
+			csrfReject(w, "csrf_invalid", "submitted CSRF token does not match cookie")
 			return
 		}
 		next.ServeHTTP(w, r)

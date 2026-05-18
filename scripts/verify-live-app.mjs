@@ -121,11 +121,20 @@ async function main() {
         if (msg.type() === 'error') {
             const loc = msg.location();
             const where = loc && loc.url ? ` (${loc.url})` : '';
-            consoleErrors.push(msg.text());
-            /* debug removed */
+            consoleErrors.push(msg.text() + where);
         }
     });
     page.on('pageerror', err => consoleErrors.push(`pageerror: ${err.message}`));
+
+    // Track failed network requests to distinguish benign 404s (favicon,
+    // service-worker probes) from real app failures.
+    const networkFailures = [];
+    page.on('response', res => {
+        const status = res.status();
+        if (status >= 400) {
+            networkFailures.push(`${status} ${res.url()}`);
+        }
+    });
 
     // v0.13.2: hard-fail probe to catch the "click is a no-op" class
     // (Std.Ui events stripped at render time → button has no
@@ -187,9 +196,25 @@ async function main() {
                 + 'Std.Ui → []any coercion regression)';
         }
 
-        if (consoleErrors.length > 0) {
+        // Console-error filter — treat 404s on common static-asset paths
+        // (favicon.ico, robots.txt, apple-touch-icon, manifest.json) as
+        // BENIGN. They're browser auto-probes, not app failures. Any
+        // other console error counts.
+        const benignAssetRe = /(favicon\.ico|robots\.txt|apple-touch-icon|manifest\.json|sitemap\.xml)/i;
+        const realConsoleErrors = consoleErrors.filter(e => !benignAssetRe.test(e));
+        if (realConsoleErrors.length > 0) {
             outcome = 'FAIL';
-            detail = `console errors: ${consoleErrors.slice(0, 5).join('; ')}`;
+            detail = `console errors: ${realConsoleErrors.slice(0, 5).join('; ')}`;
+        }
+
+        // Write network log for forensic review (didn't fail on this
+        // alone; the app-level outcome is the structural + console-error
+        // signal).
+        if (networkFailures.length > 0) {
+            fs.writeFileSync(
+                path.join(artefactDir, 'network-failures.log'),
+                networkFailures.join('\n')
+            );
         }
     } catch (err) {
         outcome = 'FAIL';
