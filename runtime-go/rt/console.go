@@ -166,24 +166,26 @@ func HandleConsoleOverview(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, resp)
 }
 
-// countLogs / countTraces — read the buffer-occupancy gauges from
-// the snapshot. Cheaper than calling RecentLogs(0) and counting.
+// countLogs / countTraces — return the in-memory ring occupancy.
+//
+// Pre-2026-05-18 these read from `Snapshot()` for a gauge named
+// `sky_telemetry_buffer_used` — but that gauge is computed at
+// `/_sky/metrics` scrape time and NEVER stored in the metric
+// registry, so Snapshot always returned 0. Result: the console
+// Overview's "Log buffer" / "Trace buffer" KPI cards always
+// showed 0 even when the rings were full of entries. The
+// per-tab Logs / Traces views worked because they call
+// RecentLogs / RecentTraces directly.
+//
+// Cost: O(n) ring walk per scrape. The ring caps at 10K logs /
+// 1K traces by default, well within budget for a 1Hz dashboard
+// tick.
 func countLogs(store *telemetry.Store) uint64 {
-	for _, s := range store.Snapshot() {
-		if s.Name == "sky_telemetry_buffer_used" && s.Labels["kind"] == "log" {
-			return uint64(s.Value)
-		}
-	}
-	return 0
+	return uint64(len(store.RecentLogs(0)))
 }
 
 func countTraces(store *telemetry.Store) uint64 {
-	for _, s := range store.Snapshot() {
-		if s.Name == "sky_telemetry_buffer_used" && s.Labels["kind"] == "trace" {
-			return uint64(s.Value)
-		}
-	}
-	return 0
+	return uint64(len(store.RecentTraces(0)))
 }
 
 // HandleConsoleMetricsSummary returns the metrics snapshot grouped

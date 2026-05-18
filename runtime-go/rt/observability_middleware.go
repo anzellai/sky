@@ -354,10 +354,24 @@ func emitAccessLog(e accessLogEntry) {
 			e.Status, e.LatencyMS, e.BytesWritten)
 		return
 	}
+	// Bake the request shape into the visible Message so the
+	// console Logs tab (which doesn't render Fields) shows
+	// "GET / 200 (3ms)" instead of a wall of identical
+	// "http_request" lines. Status escalates the log level so 4xx
+	// surfaces as warn and 5xx as error — both stand out against
+	// the steady-state INFO stream.
+	level := "info"
+	if e.Status >= 500 {
+		level = "error"
+	} else if e.Status >= 400 {
+		level = "warn"
+	}
+	msg := fmt.Sprintf("%s %s %d (%dms)",
+		e.Method, e.Path, e.Status, int(e.LatencyMS))
 	RecordLog(telemetry.LogEntry{
 		TS:        time.Now(),
-		Level:     "info",
-		Message:   "http_request",
+		Level:     level,
+		Message:   msg,
 		ReqID:     e.ReqID,
 		Route:     e.Route,
 		Status:    e.Status,

@@ -274,26 +274,68 @@ logRow e =
         , Border.widthEach { top = 0, right = 0, bottom = 1, left = 0 }
         , Border.color borderSoft
         ]
-        [ Ui.el
+        [ -- Time: HH:MM:SS only (drop date + nanoseconds + tz so
+          -- the column doesn't wrap to two lines)
+          Ui.el
             [ Ui.width (Ui.px 80)
             , Font.color textMuted
             , Font.family "ui-monospace, Menlo, monospace"
             , Font.size 12
             ]
-            (Ui.text e.time)
-        , Ui.el
-            [ Ui.width (Ui.px 60)
+            (Ui.text (compactTime e.time))
+        , -- Level: fixed width + colour-coded
+          Ui.el
+            [ Ui.width (Ui.px 50)
             , Font.color (levelColor e.level)
             , Font.bold
             , Font.size 12
             ]
             (Ui.text (String.toUpper e.level))
-        , Ui.el
-            [ Font.color (levelTextColor e.level)
+        , -- Subapp badge: only shown when entry was pushed from a
+          -- sub-app (empty for parent-emitted lines). Lets users
+          -- distinguish at a glance whose log line they're seeing.
+          subappBadge e.subapp
+        , -- Message — fills the rest of the row
+          Ui.el
+            [ Ui.width Ui.fill
+            , Font.color (levelTextColor e.level)
             , Font.size 13
             ]
             (Ui.text e.message)
         ]
+
+
+subappBadge : String -> Element Msg
+subappBadge sub =
+    if sub == "" then
+        -- Same width as the populated badge so the message column
+        -- aligns whether the badge is present or not.
+        Ui.el [ Ui.width (Ui.px 70) ] (Ui.text "")
+    else
+        Ui.el
+            [ Ui.width (Ui.px 70)
+            , Background.color bgCode
+            , Border.rounded 3
+            , Ui.paddingXY 6 2
+            , Font.family "ui-monospace, Menlo, monospace"
+            , Font.size 11
+            , Font.color textSecondary
+            ]
+            (Ui.text sub)
+
+
+-- Compact a wire timestamp like "2026-05-18T17:34:55.413+01:00" to
+-- "17:34:55" so the log row stays one line. Falls back to the
+-- input untouched if the string doesn't have the expected ISO
+-- shape (e.g. "—" placeholder before first fetch).
+compactTime : String -> String
+compactTime ts =
+    case String.split "T" ts of
+        [ _date, rest ] ->
+            -- rest is "17:34:55.413+01:00"; take up to ":SS"
+            String.left 8 rest
+        _ ->
+            ts
 
 
 levelColor : String -> Ui.Color

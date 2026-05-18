@@ -157,10 +157,23 @@ func emitMsgLog(level string, ctx MsgLogContext, elapsed time.Duration, noop boo
 	if err != nil {
 		errStr = err.Error()
 	}
+	// Bake the Msg name into the visible Message text. Pre-fix every
+	// entry literally said "msg_dispatch" — the console Logs tab
+	// (which doesn't render Fields) showed dozens of identical-
+	// looking rows with no signal which Msg actually fired. Now
+	// each entry self-documents: `msg_dispatch Tick` /
+	// `msg_dispatch Increment` / etc.
+	msg := "msg_dispatch " + ctx.MsgName
+	if noop {
+		msg += " (noop)"
+	}
+	if err != nil {
+		msg += " ERROR: " + err.Error()
+	}
 	RecordLog(telemetry.LogEntry{
 		TS:        time.Now(),
 		Level:     level,
-		Message:   "msg_dispatch",
+		Message:   msg,
 		ReqID:     reqID,
 		LatencyMS: float64(elapsed.Microseconds()) / 1000.0,
 		ErrorStr:  errStr,
