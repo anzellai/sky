@@ -173,20 +173,50 @@ func TestMetrics_ProductionWithWrongToken_401(t *testing.T) {
 
 // ─── Production-mode detection heuristic ─────────────────────
 
-func TestDetectProductionFromAddr(t *testing.T) {
-	cases := map[string]bool{
-		":8000":           true,  // all interfaces — prod
-		"0.0.0.0:8000":    true,  // explicit all
-		"127.0.0.1:8000":  false, // localhost — dev
-		"localhost:8000":  false,
-		"[::1]:8000":      false, // IPv6 loopback (bracket form required)
-		"192.168.1.5:80":  true,  // non-loopback IP — prod
-		"":                false,
+// TestProductionFromEnv — the rule is "ENV unset OR matching a
+// dev marker → dev; anything else → prod". The previous addr-based
+// detector was removed because Docker / reverse-proxy / sidecar
+// patterns all broke it in both directions.
+func TestProductionFromEnv(t *testing.T) {
+	saveEnv := os.Getenv("ENV")
+	saveSky := os.Getenv("SKY_ENV")
+	t.Cleanup(func() {
+		os.Setenv("ENV", saveEnv)
+		os.Setenv("SKY_ENV", saveSky)
+	})
+
+	cases := []struct {
+		env, skyEnv string
+		want        bool
+	}{
+		// Unset → dev (the bare default for local users).
+		{"", "", false},
+		// Explicit dev markers (case-insensitive) → dev.
+		{"dev", "", false},
+		{"Dev", "", false},
+		{"DEVELOPMENT", "", false},
+		{"local", "", false},
+		// SKY_ENV fallback when ENV is unset.
+		{"", "dev", false},
+		{"", "local", false},
+		// Anything else with ENV set → prod (bias-to-gate).
+		{"production", "", true},
+		{"prod", "", true},
+		{"staging", "", true},
+		{"qa", "", true},
+		{"preview", "", true},
+		{"eu-west-2", "", true},
+		// ENV wins over SKY_ENV when both set.
+		{"dev", "production", false},
+		{"production", "dev", true},
 	}
-	for addr, want := range cases {
-		got := detectProductionFromAddr(addr)
-		if got != want {
-			t.Errorf("detectProductionFromAddr(%q): got %v, want %v", addr, got, want)
+	for _, c := range cases {
+		os.Setenv("ENV", c.env)
+		os.Setenv("SKY_ENV", c.skyEnv)
+		got := productionFromEnv()
+		if got != c.want {
+			t.Errorf("productionFromEnv (ENV=%q SKY_ENV=%q): got %v, want %v",
+				c.env, c.skyEnv, got, c.want)
 		}
 	}
 }

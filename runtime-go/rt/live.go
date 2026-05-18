@@ -1632,17 +1632,19 @@ func liveAppRun(cfg any) any {
 	//      explicit host, or 0.0.0.0). Containers, fly.io, k8s,
 	//      cloud VMs all bind 0.0.0.0; local dev binds 127.0.0.1.
 	//
-	// Sky.toml [security] env = "production" gets translated to
-	// SKY_ENV by the compiler's emitted init() block, so users
-	// shouldn't typically set the env var directly.
-	listenAddr := fmt.Sprintf(":%d", port)
-	envFlag := strings.ToLower(skyGetenv("ENV"))
-	if envFlag == "" {
-		envFlag = strings.ToLower(os.Getenv("SKY_ENV"))
-	}
-	if envFlag == "production" || detectProductionFromAddr(listenAddr) {
-		SetProductionMode(true)
-	}
+	// Production-mode gate for /_sky/console + /_sky/metrics auth.
+	// Rule: ENV (or SKY_ENV) is SET to anything OTHER than the
+	// dev-marker set {"dev", "development", "local"} → gate.
+	// ENV unset OR matching a dev marker → open.
+	//
+	// This is intentionally bias-to-gate: if you bother setting
+	// ENV at all (staging, qa, production, prod, etc.), you mean
+	// it's not a casual dev session and the gate should apply.
+	// Default-open for unset ENV keeps dev workflows friction-free
+	// (Docker / proxy / sidecar deploys all bind to varying
+	// addresses, so the previous addr-based heuristic was
+	// unreliable in both directions and has been removed).
+	SetProductionMode(productionFromEnv())
 
 	// Step 7 — OTel tracer init. Honours OTEL_EXPORTER_OTLP_ENDPOINT.
 	// Non-fatal: any failure logs + falls back to noop tracer

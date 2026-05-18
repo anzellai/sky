@@ -6048,14 +6048,10 @@ func Server_listen(port any, routes any) any {
 	// user code doesn't shadow them. Opt-out via
 	// OBSERVABILITY_DISABLED=1.
 	MountObservabilityEndpoints(mux)
-	// Production-mode detection — same heuristic as Sky.Live
-	// (binding to :PORT or 0.0.0.0 implies prod). See
-	// docs/v1-rfc/1-observability.md §"Resolved question 1".
-	listenAddr := fmt.Sprintf(":%d", p)
-	envFlag := strings.ToLower(os.Getenv("SKY_ENV"))
-	if envFlag == "production" || detectProductionFromAddr(listenAddr) {
-		SetProductionMode(true)
-	}
+	// Production-mode gate — single source of truth in
+	// `productionFromEnv`: any ENV / SKY_ENV value EXCEPT
+	// {"dev", "development", "local"} gates. Unset → open.
+	SetProductionMode(productionFromEnv())
 
 	// Step 7 — OTel tracer init. Same shape as Sky.Live; non-fatal
 	// on failure (logs + continues with noop tracer).
@@ -6070,7 +6066,7 @@ func Server_listen(port any, routes any) any {
 	observed := ObservabilityMiddleware(csrfed)
 
 	srv := &http.Server{
-		Addr:              listenAddr,
+		Addr:              fmt.Sprintf(":%d", p),
 		Handler:           observed,
 		ReadHeaderTimeout: serverReadHeaderTimeout,
 		ReadTimeout:       serverReadTimeout,

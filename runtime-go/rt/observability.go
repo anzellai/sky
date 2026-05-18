@@ -30,7 +30,6 @@ package rt
 import (
 	"encoding/json"
 	"fmt"
-	"net"
 	"net/http"
 	"os"
 	"runtime"
@@ -275,42 +274,43 @@ func isProductionMode() bool {
 	return productionMode.Load()
 }
 
-// detectProductionFromAddr examines the listen address; returns true
-// if it's likely a production deployment (binds all interfaces or
-// non-loopback). Conservative: returns false for explicit localhost
-// binds (`127.0.0.1`, `localhost`, `::1`).
+// productionFromEnv — single source of truth for whether the
+// /_sky/console + /_sky/metrics auth gate should be on.
 //
-// Called by Sky.Live during server startup, AFTER the explicit
-// sky.toml [security] env check. If env is unset, this heuristic
-// decides.
-func detectProductionFromAddr(addr string) bool {
-	if addr == "" {
+// Rule: ENV (or SKY_ENV if ENV is unset) is set to ANY value
+// other than the dev-marker set → return true. ENV unset OR
+// matching a dev marker → return false.
+//
+// Dev markers (case-insensitive): `dev`, `development`, `local`.
+// Everything else (`production`, `prod`, `staging`, `qa`, `test`,
+// `eu-west-2`, anything you care to name) gates.
+//
+// Why bias-to-gate when ENV IS set: bothering to set ENV at all
+// signals a non-casual context. Better to surprise the developer
+// with a 401 (they'll set ENV=dev) than silently expose
+// /_sky/console on a forgotten staging deploy.
+//
+// Why default-open when ENV is unset: dev workflows are by far
+// the common case, and the previous addr-based heuristic broke
+// every Docker / reverse-proxy / sidecar pattern.
+func productionFromEnv() bool {
+	// Plain `ENV` first (the var users actually type), then
+	// `SKY_ENV` fallback (the namespaced variant the compiler
+	// emits from `sky.toml [security] env = ...`).
+	envFlag := strings.ToLower(os.Getenv("ENV"))
+	if envFlag == "" {
+		envFlag = strings.ToLower(os.Getenv("SKY_ENV"))
+	}
+	if envFlag == "" {
 		return false
 	}
-	host, _, err := net.SplitHostPort(addr)
-	if err != nil {
-		// Address like ":8000" — no host part, defaults to all
-		// interfaces. Treat as production.
-		if strings.HasPrefix(addr, ":") {
-			return true
-		}
+	switch envFlag {
+	case "dev", "development", "local":
 		return false
 	}
-	switch host {
-	case "0.0.0.0", "::", "":
-		return true
-	case "127.0.0.1", "localhost", "::1":
-		return false
-	}
-	// Non-loopback host — production (e.g. binding to a specific
-	// interface like the container's eth0).
-	ip := net.ParseIP(host)
-	if ip == nil {
-		// Hostname — assume non-prod for safety.
-		return false
-	}
-	return !ip.IsLoopback()
+	return true
 }
+
 
 // hasAdminAuth checks for a valid Std.Auth admin session on the
 // request. v1.0 implementation: looks for a session cookie holding
