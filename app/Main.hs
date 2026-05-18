@@ -44,6 +44,7 @@ import qualified Sky.Build.Validator as Validator
 import qualified Sky.Reporting.Render as Render
 import qualified Sky.Cli.Watch as Watch
 import qualified Sky.Cli.Doctor as Doctor
+import qualified Sky.Build.EmbeddedConsole
 
 import qualified Control.Concurrent.Async as Async
 import qualified Control.Concurrent.QSem as QSem
@@ -847,9 +848,17 @@ data Command
     | Lsp
     | Upgrade
     | UpgradeClaude              -- refresh ./CLAUDE.md from embedded template
+    | Console ConsoleOpts        -- run bundled Sky Console mini-app
     | Doctor Doctor.DoctorOpts   -- diagnose project / runtime issues
     | Version
     deriving (Show)
+
+
+-- | Options for `sky console`.
+data ConsoleOpts = ConsoleOpts
+    { _consolePort :: Int        -- Sky.Live port (default 8025)
+    , _consoleTui  :: Bool       -- --tui: run via Sky.Tui instead
+    } deriving (Show)
 
 
 data FmtTarget
@@ -899,6 +908,9 @@ commandParser = subparser
     <> command "upgrade-claude"
         (info (pure UpgradeClaude)
             (progDesc "Refresh ./CLAUDE.md from this binary's embedded template"))
+    <> command "console"
+        (info (Console <$> consoleOptsParser)
+            (progDesc "Run the bundled Sky Console dashboard (Std.Ui Sky.Live; --tui for terminal)"))
     <> command "doctor"
         (info (Doctor <$> doctorOptsParser)
             (progDesc "Diagnose common project / runtime stuck-states (stale cache, port in use, missing FFI)"))
@@ -914,6 +926,22 @@ commandParser = subparser
 
 fileArg :: Parser FilePath
 fileArg = argument str (metavar "FILE" <> value "src/Main.sky")
+
+
+-- Parser for `sky console` flags.
+consoleOptsParser :: Parser ConsoleOpts
+consoleOptsParser = ConsoleOpts
+    <$> option auto
+        ( long "port"
+       <> short 'p'
+       <> metavar "PORT"
+       <> value 8025
+       <> help "Listen port for the Sky.Live console (default 8025)"
+        )
+    <*> switch
+        ( long "tui"
+       <> help "Run via Sky.Tui in the terminal instead of the browser"
+        )
 
 
 -- Parser for `sky doctor` flags.
@@ -1474,6 +1502,8 @@ runCommand cmd = case cmd of
 
     UpgradeClaude -> runUpgradeClaude
 
+    Console opts -> runConsole opts
+
     Doctor opts -> do
         Doctor.runDoctor opts
         -- runDoctor exits the process directly with the proper
@@ -1589,6 +1619,83 @@ runUpgradeClaude = do
     when existed $
         putStrLn $ "  previous version saved as " ++ target ++ ".bak"
     return (Right ())
+
+
+-- | `sky console [--port N] [--tui]` — materialise the bundled
+-- Std.Ui console mini-app, build it (cached per-version) and run.
+--
+-- Cache layout: @$XDG_CACHE_HOME/sky/console-<version>/@. We use the
+-- compiler version string in the dir name so `sky upgrade`
+-- auto-invalidates without manual cleanup. Subsequent runs that find
+-- @sky-out/app@ already present skip the rebuild step.
+--
+-- --tui swaps the entrypoint (@src/Main.sky@) for the bundled Tui
+-- variant (@src/MainTui.sky@) before building. Both share the same
+-- @State.sky@ + @View.sky@ — only the app-runner module changes.
+runConsole :: ConsoleOpts -> IO (Either String ())
+runConsole opts = do
+    cache <- System.Directory.getXdgDirectory System.Directory.XdgCache "sky"
+    -- skyBuildVersion is "dev" on local builds, "0.13.4" etc. on
+    -- releases — both are filesystem-safe. Don't use skyVersionString,
+    -- which prefixes "sky " (a space breaks shell completions later).
+    let root = cache </> ("console-" ++ skyBuildVersion)
+        srcDir = root </> "src"
+        binPath = root </> "sky-out" </> "app"
+    -- 1. Materialise embedded sources (idempotent — overwrites). Cheap
+    --    enough to redo every invocation; ensures any local cache
+    --    corruption self-heals.
+    createDirectoryIfMissing True srcDir
+    let writeFileBytes p bytes = do
+            createDirectoryIfMissing True (takeDirectory p)
+            B.writeFile p bytes
+    mapM_ (\(rel, bytes) -> writeFileBytes (root </> rel) bytes)
+          Sky.Build.EmbeddedConsole.embeddedConsoleApp
+    -- 2. Select entry point.
+    let entry  = if _consoleTui opts then "src/MainTui.sky" else "src/Main.sky"
+        haveTui = any (\(p, _) -> p == "src/MainTui.sky")
+                      Sky.Build.EmbeddedConsole.embeddedConsoleApp
+    when (_consoleTui opts && not haveTui) $ do
+        hPutStrLn stderr "sky console --tui: bundled MainTui.sky missing (Phase D not yet shipped in this binary)."
+        exitWith (ExitFailure 1)
+    -- 3. Build if cache miss. Shell out to ourselves so we reuse
+    --    the same compile pipeline as `sky build`.
+    skyBin <- System.Environment.getExecutablePath
+    haveBin <- doesFileExist binPath
+    when (not haveBin) $ do
+        putStrLn $ "sky console: building (one-time per version, into " ++ root ++ ")..."
+        let bp = (System.Process.proc skyBin ["build", entry])
+                    { System.Process.cwd = Just root
+                    , System.Process.std_out = System.Process.Inherit
+                    , System.Process.std_err = System.Process.Inherit
+                    }
+        (_, _, _, ph) <- System.Process.createProcess bp
+        bec <- System.Process.waitForProcess ph
+        case bec of
+            ExitSuccess -> return ()
+            ExitFailure n -> do
+                hPutStrLn stderr $ "sky console: build failed (exit " ++ show n ++ ")"
+                exitWith (ExitFailure n)
+    -- 4. Run. Sky.Live binds via SKY_LIVE_PORT (and Sky.Tui ignores
+    --    the env var, so the same setup works for both backends).
+    env0 <- System.Environment.getEnvironment
+    let env1 = filter (\(k, _) -> k /= "SKY_LIVE_PORT") env0
+              ++ [("SKY_LIVE_PORT", show (_consolePort opts))]
+        rp = (System.Process.proc binPath [])
+                { System.Process.env = Just env1
+                , System.Process.std_out = System.Process.Inherit
+                , System.Process.std_err = System.Process.Inherit
+                , System.Process.std_in  = System.Process.Inherit
+                }
+    if _consoleTui opts
+        then putStrLn   "sky console: starting Sky.Tui (Ctrl-C to exit)..."
+        else putStrLn $ "sky console: starting on http://127.0.0.1:" ++ show (_consolePort opts)
+                     ++ " (Ctrl-C to stop)"
+    (_, _, _, rph) <- System.Process.createProcess rp
+    rec' <- System.Process.waitForProcess rph
+    case rec' of
+        ExitSuccess     -> return (Right ())
+        ExitFailure 130 -> return (Right ())   -- Ctrl-C; normal exit
+        ExitFailure n   -> exitWith (ExitFailure n)
 
 
 -- | Pull the `"tag_name"` field out of a GitHub release JSON blob. We

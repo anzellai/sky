@@ -6031,6 +6031,14 @@ func Server_listen(port any, routes any) any {
 					if tok != "" {
 						body = injectCsrfIntoForms(body, tok)
 					}
+					// Dev-only "🔍 Console" floating link. Injected
+					// just before </body> so it lives outside any
+					// user route container. Returns "" in production
+					// (productionFromEnv() == true), making this a
+					// no-op for staging / prod deployments.
+					if banner := devBannerHTML(); banner != "" {
+						body = injectDevBanner(body, banner)
+					}
 				}
 				if skyResp.Status > 0 {
 					w.WriteHeader(skyResp.Status)

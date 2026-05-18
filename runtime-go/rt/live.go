@@ -1884,7 +1884,11 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	// need a "designed" look still attach their own typography via
 	// view-level style attrs or a styleNode at the top of view.
 	csrfToken := CurrentCsrfToken(r)
-	fmt.Fprintf(w, "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><style>%s</style></head><body><div id=\"sky-root\">%s</div><script>%s</script></body></html>", liveBaseCSS, body, liveJSWithCfgAndCsrf(sid, app.bannerCfg, csrfToken))
+	// devBanner is "" in production; injected as a sibling of sky-root
+	// so it survives every diff/patch cycle (root replacement won't
+	// blow it away) and stays pinned bottom-right via position:fixed.
+	devBanner := devBannerHTML()
+	fmt.Fprintf(w, "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><style>%s</style></head><body><div id=\"sky-root\">%s</div>%s<script>%s</script></body></html>", liveBaseCSS, body, devBanner, liveJSWithCfgAndCsrf(sid, app.bannerCfg, csrfToken))
 }
 
 // liveBaseCSS is the minimal reset injected into every Sky.Live page.

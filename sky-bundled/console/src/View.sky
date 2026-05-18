@@ -1,0 +1,505 @@
+module View exposing (view)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Std.Ui as Ui
+import Std.Ui exposing (Element)
+import Std.Ui.Background as Background
+import Std.Ui.Border as Border
+import Std.Ui.Font as Font
+import State exposing (..)
+
+
+-- ─── Palette ─────────────────────────────────────────────────────
+-- Single palette helper module so every surface flows through named
+-- colours, not scattered hex literals. Native dark theme — the
+-- console targets developer eyes in long sessions.
+
+bgPage : Ui.Color
+bgPage = Ui.rgb 20 23 28
+
+bgSurface : Ui.Color
+bgSurface = Ui.rgb 28 32 39
+
+bgRaised : Ui.Color
+bgRaised = Ui.rgb 33 38 48
+
+bgCode : Ui.Color
+bgCode = Ui.rgb 44 50 60
+
+border_ : Ui.Color
+border_ = Ui.rgb 53 59 70
+
+borderSoft : Ui.Color
+borderSoft = Ui.rgb 42 47 56
+
+textPrimary : Ui.Color
+textPrimary = Ui.rgb 240 243 247
+
+textSecondary : Ui.Color
+textSecondary = Ui.rgb 197 203 212
+
+textMuted : Ui.Color
+textMuted = Ui.rgb 141 150 163
+
+accent : Ui.Color
+accent = Ui.rgb 126 182 255
+
+warn : Ui.Color
+warn = Ui.rgb 255 178 77
+
+err : Ui.Color
+err = Ui.rgb 255 117 117
+
+
+-- ─── Top-level view ──────────────────────────────────────────────
+
+view : Model -> Element Msg
+view model =
+    Ui.column
+        [ Ui.width Ui.fill
+        , Ui.height Ui.fill
+        , Background.color bgPage
+        , Font.color textPrimary
+        , Font.family "system-ui, -apple-system, sans-serif"
+        ]
+        [ header model
+        , tabStrip model.tab
+        , content model
+        ]
+
+
+-- ─── Header ──────────────────────────────────────────────────────
+
+header : Model -> Element Msg
+header model =
+    Ui.row
+        [ Ui.width Ui.fill
+        , Ui.paddingXY 20 12
+        , Background.color bgSurface
+        , Border.widthEach { top = 0, right = 0, bottom = 1, left = 0 }
+        , Border.color border_
+        ]
+        [ Ui.el
+            [ Font.size 16, Font.bold ]
+            (Ui.text "Sky Console")
+        , Ui.el
+            [ Ui.alignRight
+            , Font.color textSecondary
+            , Font.size 12
+            , Font.family "ui-monospace, Menlo, monospace"
+            ]
+            (Ui.text (headerMeta model.overview))
+        ]
+
+
+headerMeta : Overview -> String
+headerMeta o =
+    "Sky " ++ o.skyVersion
+        ++ " · " ++ o.authMode
+        ++ " · uptime " ++ formatUptime o.uptimeSeconds
+
+
+formatUptime : Int -> String
+formatUptime s =
+    if s < 60 then
+        String.fromInt s ++ "s"
+    else if s < 3600 then
+        String.fromInt (s // 60) ++ "m"
+    else
+        String.fromInt (s // 3600) ++ "h"
+
+
+-- ─── Tab strip ───────────────────────────────────────────────────
+
+tabStrip : Tab -> Element Msg
+tabStrip active =
+    Ui.row
+        [ Ui.width Ui.fill
+        , Ui.paddingXY 20 0
+        , Background.color bgSurface
+        , Border.widthEach { top = 0, right = 0, bottom = 1, left = 0 }
+        , Border.color border_
+        ]
+        (List.map (tabButton active)
+            [ Overview, Metrics, Logs, Traces, Errors ])
+
+
+tabButton : Tab -> Tab -> Element Msg
+tabButton active tab =
+    let
+        isActive = active == tab
+        underlineColor =
+            if isActive then accent else bgSurface
+        textColor =
+            if isActive then accent else textSecondary
+    in
+    Ui.el
+        [ Ui.paddingXY 14 10
+        , Font.size 13
+        , Font.color textColor
+        , Border.widthEach { top = 0, right = 0, bottom = 2, left = 0 }
+        , Border.color underlineColor
+        , Ui.pointer
+        , Ui.onClick (SelectTab tab)
+        ]
+        (Ui.text (tabLabel tab))
+
+
+-- ─── Content router ──────────────────────────────────────────────
+
+content : Model -> Element Msg
+content model =
+    Ui.column
+        [ Ui.width Ui.fill, Ui.padding 20, Ui.spacing 16 ]
+        (case model.tab of
+            Overview -> overviewView model.overview
+            Metrics  -> metricsView model.metrics
+            Logs     -> logsView model.logs
+            Traces   -> tracesView model.traces
+            Errors   -> errorsView model.errors)
+
+
+-- ─── Overview tab ────────────────────────────────────────────────
+
+overviewView : Overview -> List (Element Msg)
+overviewView o =
+    [ kpiRow o
+    , systemPanel o
+    ]
+
+
+kpiRow : Overview -> Element Msg
+kpiRow o =
+    Ui.grid
+        [ Ui.gridColumns 220
+        , Ui.spacing 12
+        , Ui.width Ui.fill
+        ]
+        [ kpiCard "Requests total" (String.fromInt o.requestsTotal)
+        , kpiCard "5xx error rate" (formatPercent o.errorRate5xx)
+        , kpiCard "Log buffer" (formatRatio o.logBufferUsed o.logBufferMax)
+        , kpiCard "Trace buffer" (formatRatio o.traceBufferUsed o.traceBufferMax)
+        ]
+
+
+kpiCard : String -> String -> Element Msg
+kpiCard label valueText =
+    Ui.column
+        [ Background.color bgRaised
+        , Border.width 1
+        , Border.color border_
+        , Border.rounded 6
+        , Ui.padding 14
+        , Ui.spacing 4
+        ]
+        [ Ui.el
+            [ Font.size 11
+            , Font.color textMuted
+            , Font.letterSpacing 0.05
+            ]
+            (Ui.text (String.toUpper label))
+        , Ui.el
+            [ Font.size 24
+            , Font.bold
+            , Font.color textPrimary
+            ]
+            (Ui.text valueText)
+        ]
+
+
+systemPanel : Overview -> Element Msg
+systemPanel o =
+    panel "System"
+        [ infoRow "Sky version"  o.skyVersion
+        , infoRow "Commit"       o.commit
+        , infoRow "Built at"     o.builtAt
+        , infoRow "Uptime"       (formatUptime o.uptimeSeconds)
+        , infoRow "Runtime mode" o.runtimeMode
+        , infoRow "Auth mode"    o.authMode
+        ]
+
+
+infoRow : String -> String -> Element Msg
+infoRow label value =
+    Ui.row
+        [ Ui.width Ui.fill
+        , Ui.paddingXY 0 8
+        , Ui.spacing 12
+        , Border.widthEach { top = 0, right = 0, bottom = 1, left = 0 }
+        , Border.color borderSoft
+        ]
+        [ Ui.el
+            [ Ui.width (Ui.px 180)
+            , Font.color textMuted
+            , Font.size 12
+            ]
+            (Ui.text (String.toUpper label))
+        , codeBadge value
+        ]
+
+
+-- ─── Logs tab ────────────────────────────────────────────────────
+
+logsView : List LogEntry -> List (Element Msg)
+logsView entries =
+    [ panel "Recent log entries"
+        (if List.isEmpty entries then
+            [ emptyState "No log entries yet." ]
+         else
+            List.map logRow entries)
+    ]
+
+
+logRow : LogEntry -> Element Msg
+logRow e =
+    Ui.row
+        [ Ui.width Ui.fill
+        , Ui.paddingXY 0 6
+        , Ui.spacing 12
+        , Border.widthEach { top = 0, right = 0, bottom = 1, left = 0 }
+        , Border.color borderSoft
+        ]
+        [ Ui.el
+            [ Ui.width (Ui.px 80)
+            , Font.color textMuted
+            , Font.family "ui-monospace, Menlo, monospace"
+            , Font.size 12
+            ]
+            (Ui.text e.time)
+        , Ui.el
+            [ Ui.width (Ui.px 60)
+            , Font.color (levelColor e.level)
+            , Font.bold
+            , Font.size 12
+            ]
+            (Ui.text (String.toUpper e.level))
+        , Ui.el
+            [ Font.color (levelTextColor e.level)
+            , Font.size 13
+            ]
+            (Ui.text e.message)
+        ]
+
+
+levelColor : String -> Ui.Color
+levelColor level =
+    case level of
+        "warn"  -> warn
+        "error" -> err
+        _       -> textMuted
+
+
+levelTextColor : String -> Ui.Color
+levelTextColor level =
+    case level of
+        "warn"  -> warn
+        "error" -> err
+        _       -> textPrimary
+
+
+-- ─── Metrics tab ─────────────────────────────────────────────────
+
+metricsView : List MetricRow -> List (Element Msg)
+metricsView rows =
+    [ panel "Metrics snapshot"
+        (if List.isEmpty rows then
+            [ emptyState "No metrics collected yet." ]
+         else
+            List.map metricRowView rows)
+    ]
+
+
+metricRowView : MetricRow -> Element Msg
+metricRowView r =
+    Ui.row
+        [ Ui.width Ui.fill
+        , Ui.paddingXY 0 6
+        , Ui.spacing 12
+        , Border.widthEach { top = 0, right = 0, bottom = 1, left = 0 }
+        , Border.color borderSoft
+        ]
+        [ Ui.el
+            [ Ui.width (Ui.px 240)
+            , Font.family "ui-monospace, Menlo, monospace"
+            , Font.size 12
+            , Font.color textSecondary
+            ]
+            (Ui.text r.name)
+        , codeBadge r.value
+        , Ui.el
+            [ Font.size 12
+            , Font.color textMuted
+            ]
+            (Ui.text r.help)
+        ]
+
+
+-- ─── Traces tab ──────────────────────────────────────────────────
+
+tracesView : List TraceRow -> List (Element Msg)
+tracesView rows =
+    [ panel "Recent traces"
+        (if List.isEmpty rows then
+            [ emptyState "No traces captured yet." ]
+         else
+            List.map traceRowView rows)
+    ]
+
+
+traceRowView : TraceRow -> Element Msg
+traceRowView r =
+    Ui.row
+        [ Ui.width Ui.fill
+        , Ui.paddingXY 0 6
+        , Ui.spacing 12
+        , Border.widthEach { top = 0, right = 0, bottom = 1, left = 0 }
+        , Border.color borderSoft
+        ]
+        [ Ui.el
+            [ Ui.width (Ui.px 80)
+            , Font.color textMuted
+            , Font.family "ui-monospace, Menlo, monospace"
+            , Font.size 12
+            ]
+            (Ui.text r.time)
+        , Ui.el
+            [ Ui.width (Ui.px 60)
+            , Font.color (if r.statusOk then textMuted else err)
+            , Font.bold
+            , Font.size 12
+            ]
+            (Ui.text (if r.statusOk then "OK" else "ERR"))
+        , Ui.el
+            [ Font.size 13
+            , Font.color textPrimary
+            ]
+            (Ui.text r.name)
+        , Ui.el
+            [ Ui.alignRight
+            , Font.color textSecondary
+            , Font.family "ui-monospace, Menlo, monospace"
+            , Font.size 12
+            ]
+            (Ui.text (String.fromInt r.durationMs ++ "ms"))
+        ]
+
+
+-- ─── Errors tab ──────────────────────────────────────────────────
+
+errorsView : List ErrorRow -> List (Element Msg)
+errorsView rows =
+    [ panel "Top errors by frequency"
+        (if List.isEmpty rows then
+            [ emptyState "No errors recorded — nice work." ]
+         else
+            List.map errorRowView rows)
+    ]
+
+
+errorRowView : ErrorRow -> Element Msg
+errorRowView r =
+    Ui.row
+        [ Ui.width Ui.fill
+        , Ui.paddingXY 0 6
+        , Ui.spacing 12
+        , Border.widthEach { top = 0, right = 0, bottom = 1, left = 0 }
+        , Border.color borderSoft
+        ]
+        [ Ui.el
+            [ Ui.width (Ui.px 60)
+            , Font.color err
+            , Font.bold
+            , Font.size 13
+            , Font.family "ui-monospace, Menlo, monospace"
+            ]
+            (Ui.text ("×" ++ String.fromInt r.count))
+        , Ui.el
+            [ Font.size 13
+            , Font.color textPrimary
+            ]
+            (Ui.text r.message)
+        ]
+
+
+-- ─── Shared primitives ───────────────────────────────────────────
+
+panel : String -> List (Element Msg) -> Element Msg
+panel title children =
+    Ui.column
+        [ Background.color bgRaised
+        , Border.width 1
+        , Border.color border_
+        , Border.rounded 6
+        , Ui.padding 14
+        , Ui.spacing 6
+        , Ui.width Ui.fill
+        ]
+        ( Ui.el
+            [ Font.size 12
+            , Font.bold
+            , Font.color textMuted
+            , Font.letterSpacing 0.05
+            , Ui.paddingXY 0 4
+            ]
+            (Ui.text (String.toUpper title))
+          :: children
+        )
+
+
+codeBadge : String -> Element Msg
+codeBadge value =
+    Ui.el
+        [ Background.color bgCode
+        , Border.rounded 3
+        , Ui.paddingXY 6 2
+        , Font.family "ui-monospace, Menlo, monospace"
+        , Font.size 12
+        , Font.color textPrimary
+        ]
+        (Ui.text value)
+
+
+emptyState : String -> Element Msg
+emptyState message =
+    Ui.el
+        [ Ui.padding 20
+        , Ui.centerX
+        , Font.color textMuted
+        , Font.italic
+        ]
+        (Ui.text message)
+
+
+-- ─── Format helpers ──────────────────────────────────────────────
+
+formatPercent : Float -> String
+formatPercent f =
+    -- Two decimal places. Sky's `*` is hard-coded Int-only; `/` is
+    -- Float — so we scale via `f / 0.0001` (== f × 10000) to stay
+    -- in Float arithmetic, then Math.round to Int and split into
+    -- whole/fraction strings. Avoids the float-to-string precision
+    -- artefacts that String.fromFloat introduces ("0.012" → "1.20%"
+    -- rather than "1.2000004%").
+    let
+        scaled = Math.round (f / 0.0001)
+        whole  = scaled // 100
+        frac   = modBy 100 scaled
+        fracStr =
+            if frac < 10 then "0" ++ String.fromInt frac
+            else String.fromInt frac
+    in
+    String.fromInt whole ++ "." ++ fracStr ++ "%"
+
+
+formatRatio : Int -> Int -> String
+formatRatio used max_ =
+    let
+        suffix =
+            if max_ >= 1000 then
+                String.fromInt (max_ // 1000) ++ "k"
+            else
+                String.fromInt max_
+    in
+    String.fromInt used ++ "/" ++ suffix
