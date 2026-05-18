@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -146,6 +147,47 @@ func TestHashAny_NilStable(t *testing.T) {
 	// Multiple calls on nil should be deterministic.
 	if hashAny(nil) != hashAny(nil) {
 		t.Errorf("hash(nil) must be deterministic")
+	}
+}
+
+// Regression: walkHash used to call reflect.Value.Pointer() on a
+// float64 Value, which Go's reflect package panics on (only valid
+// for Func / Chan / Map / Slice / Ptr / UnsafePointer kinds). Any
+// dispatch carrying a float through Msg or Model crashed at the
+// dispatch boundary. Surfaced by the Std.Ui console's Overview model
+// carrying `errorRate5xx : Float` — every tab click POSTed a SelectTab
+// Msg whose oldModel snapshot held floats, and the panic killed the
+// goroutine before the SelectTab Msg ever reached `update`.
+func TestHashAny_FloatNoPanic(t *testing.T) {
+	// Bare float — exercises the Float64 branch directly.
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("hashAny(3.14) panicked: %v", r)
+		}
+	}()
+	_ = hashAny(3.14)
+	_ = hashAny(float32(2.5))
+	// Float nested in a map (mirrors the console's Model shape).
+	_ = hashAny(map[string]any{
+		"errorRate":   0.012,
+		"successRate": 0.988,
+		"count":       1287,
+	})
+}
+
+func TestHashAny_FloatBitPatternHashes(t *testing.T) {
+	// +0 and -0 hash distinctly (IEEE bit patterns differ).
+	if hashAny(0.0) == hashAny(math.Copysign(0.0, -1.0)) {
+		t.Error("+0 and -0 should hash distinctly under bit-pattern hashing")
+	}
+	// 1.0 and 1.0000000001 hash distinctly (sanity check).
+	if hashAny(1.0) == hashAny(1.0000000001) {
+		t.Error("nearby floats should hash distinctly")
+	}
+	// Float and int with same numeric value hash distinctly (different
+	// reflect.Kind paths).
+	if hashAny(1.0) == hashAny(1) {
+		t.Error("float 1.0 and int 1 should hash distinctly")
 	}
 }
 

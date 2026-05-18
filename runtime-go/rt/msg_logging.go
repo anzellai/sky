@@ -29,6 +29,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"reflect"
 	"sort"
@@ -350,9 +351,17 @@ func walkHash(h *hashState, rv reflect.Value, depth int, deadline time.Time) {
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
 		h.writeUint(rv.Uint())
 	case reflect.Float32, reflect.Float64:
-		// Float bit-pattern via int conversion — preserves NaN
-		// payloads + signed-zero distinction.
-		h.writeUint(uint64(reflect.ValueOf(rv.Float()).Pointer()))
+		// Hash the IEEE 754 bit pattern so NaN payloads and
+		// +0 / -0 still hash distinctly. The previous
+		// `reflect.ValueOf(rv.Float()).Pointer()` call was
+		// nonsense — `.Pointer()` only works on Func / Chan /
+		// Map / Slice / Ptr / UnsafePointer, so any float-
+		// valued field in Msg / Model crashed dispatch with
+		// "reflect: call of reflect.Value.Pointer on float64
+		// Value". Surfaced by the Std.Ui console's Overview
+		// model carrying `errorRate5xx : Float` — every tab
+		// click sent the float through walkHash.
+		h.writeUint(math.Float64bits(rv.Float()))
 	case reflect.String:
 		h.writeString(rv.String())
 	case reflect.Slice, reflect.Array:
