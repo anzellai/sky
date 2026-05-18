@@ -474,16 +474,13 @@ emptyState message =
 
 -- ─── Format helpers ──────────────────────────────────────────────
 
+-- Render a Float in [0, 1] as a percentage with 2dp — `0.012` →
+-- `1.20%`. Avoids the float-to-string precision artefacts that
+-- String.fromFloat introduces (would emit `1.2000004%`).
 formatPercent : Float -> String
 formatPercent f =
-    -- Two decimal places. Sky's `*` is hard-coded Int-only; `/` is
-    -- Float — so we scale via `f / 0.0001` (== f × 10000) to stay
-    -- in Float arithmetic, then Math.round to Int and split into
-    -- whole/fraction strings. Avoids the float-to-string precision
-    -- artefacts that String.fromFloat introduces ("0.012" → "1.20%"
-    -- rather than "1.2000004%").
     let
-        scaled = Math.round (f / 0.0001)
+        scaled = Math.round (f * 10000.0)
         whole  = scaled // 100
         frac   = modBy 100 scaled
         fracStr =

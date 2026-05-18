@@ -17,6 +17,7 @@ import qualified Sky.Canonicalise.UnboundSpec
 import qualified Sky.Canonicalise.QualifiedTypeAliasSpec
 import qualified Sky.Type.ExhaustivenessSpec
 import qualified Sky.Type.AnyWildcardSpec
+import qualified Sky.Type.NumericBinopSpec
 import qualified Sky.Type.TupleLambdaSpec
 import qualified Sky.Type.UiOnSubmitTypedRecordSpec
 import qualified Sky.Type.UfCycleGuardSpec
@@ -138,6 +139,7 @@ main = hspec $ do
     -- Surfaced together when investigating why `sky test` for a
     -- passing module was xfailing.
     describe "Sky.Type.TupleLambda"      Sky.Type.TupleLambdaSpec.spec
+    describe "Sky.Type.NumericBinop"     Sky.Type.NumericBinopSpec.spec
     -- Std.Ui.onSubmit widening: in-module typed-record-arg case
     -- (`Ui.onSubmit DoSignIn` where `DoSignIn : LoginForm -> Msg`).
     -- Pre-fix the kernel sig forced `msg = (record -> msg)` and the

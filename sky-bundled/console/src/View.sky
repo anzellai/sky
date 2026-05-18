@@ -546,16 +546,11 @@ metricRowView r =
 
 -- Render a Float as a compact human-readable string. Two decimal
 -- places — enough resolution for typical metric values, no
--- scientific-notation surprises. Sky's `-` binop is Int-only
--- (binop typing legacy) so we avoid Float subtraction; the
--- "round-then-divide" idiom below works for both whole + fractional
--- inputs without needing Float-Int arithmetic.
+-- scientific-notation surprises.
 formatFloat : Float -> String
 formatFloat f =
-    -- f / 0.01 == f * 100 (Float division — Sky's `/` IS Float-typed
-    -- whereas `*` is Int-only, so we go through the divisor form).
     let
-        scaled = Math.round (f / 0.01)
+        scaled = Math.round (f * 100.0)
         whole  = scaled // 100
         frac   = modBy 100 scaled
         fracS  =
@@ -715,16 +710,15 @@ emptyState message =
 
 -- ─── Format helpers ──────────────────────────────────────────────
 
+-- Render a Float in [0, 1] as a percentage with 2dp — `0.012` →
+-- `1.20%`. Avoids the float-to-string precision artefacts that
+-- String.fromFloat introduces (would emit `1.2000004%`) by
+-- scaling via `f * 10000`, rounding to Int, then splitting into
+-- whole/fraction parts.
 formatPercent : Float -> String
 formatPercent f =
-    -- Two decimal places. Sky's `*` is hard-coded Int-only; `/` is
-    -- Float — so we scale via `f / 0.0001` (== f × 10000) to stay
-    -- in Float arithmetic, then Math.round to Int and split into
-    -- whole/fraction strings. Avoids the float-to-string precision
-    -- artefacts that String.fromFloat introduces ("0.012" → "1.20%"
-    -- rather than "1.2000004%").
     let
-        scaled = Math.round (f / 0.0001)
+        scaled = Math.round (f * 10000.0)
         whole  = scaled // 100
         frac   = modBy 100 scaled
         fracStr =

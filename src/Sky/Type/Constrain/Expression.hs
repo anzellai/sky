@@ -458,9 +458,24 @@ constrainBinop counter env region op left right expected = do
 
 binopTypes :: Counter -> String -> IO (T.Type, T.Type, T.Type)
 binopTypes counter op = case op of
-    "+"  -> return (intType, intType, intType)
-    "-"  -> return (intType, intType, intType)
-    "*"  -> return (intType, intType, intType)
+    -- Numeric arithmetic operators (`+`, `-`, `*`) are polymorphic
+    -- over a single type variable: `Int -> Int -> Int` OR
+    -- `Float -> Float -> Float` per use site (Elm convention).
+    -- The runtime helpers (`rt.Add`, `rt.Sub`, `rt.Mul`) already
+    -- handle both via reflect dispatch, and the codegen drops to
+    -- native Go binops when both operand types resolve concretely
+    -- (Compile.hs `bothAre intTy || bothAre floatTy` arms).
+    --
+    -- Pre-2026-05-18 these were Int-only (`return (intType,
+    -- intType, intType)`), which forced ugly workarounds in any
+    -- Sky code mixing Float arithmetic — e.g. the console's
+    -- `formatFloat` had to spell `f / 0.01` instead of `f * 100`
+    -- because Float multiplication failed type-check. Fixed
+    -- here by giving `+ - *` the same shape `++` already has:
+    -- `forall a. a -> a -> a`.
+    "+"  -> do { n <- freshName counter "_num"; return (T.TVar n, T.TVar n, T.TVar n) }
+    "-"  -> do { n <- freshName counter "_num"; return (T.TVar n, T.TVar n, T.TVar n) }
+    "*"  -> do { n <- freshName counter "_num"; return (T.TVar n, T.TVar n, T.TVar n) }
     "/"  -> return (floatType, floatType, floatType)
     "//" -> return (intType, intType, intType)
     -- `++` is polymorphic: works on both strings and lists. Emit a fresh

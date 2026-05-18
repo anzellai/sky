@@ -230,6 +230,7 @@ test-suite sky-tests
       Sky.Canonicalise.QualifiedTypeAliasSpec
       Sky.Type.ExhaustivenessSpec
       Sky.Type.AnyWildcardSpec
+      Sky.Type.NumericBinopSpec
       Sky.Type.TupleLambdaSpec
       Sky.Type.UiOnSubmitTypedRecordSpec
       Sky.Type.UfCycleGuardSpec
