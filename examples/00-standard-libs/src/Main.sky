@@ -101,10 +101,11 @@ stringSuite =
 listSuite : Test
 listSuite =
     Test.suite "List"
-        -- Typed-container comparisons go through scalar projections
-        -- (length, head, sum) to avoid hitting the v0.13 typed-codegen
-        -- mono edge where Sky_Test_equal collapses to [any] across
-        -- many call sites with diverse typed shapes.
+        -- Typed-container comparisons use scalar projections
+        -- (length, head, sum) — the more idiomatic test shape AND
+        -- the form that exercises the v0.14 typed case-pattern
+        -- binding (`Just n` binds `n` at the inferred typed shape,
+        -- not `any`, so downstream `Test.equal` mono routes cleanly).
         [ Test.test "length" (\_ ->
             Test.equal 3 (List.length [ 1, 2, 3 ]))
         , Test.test "reverse head" (\_ ->
