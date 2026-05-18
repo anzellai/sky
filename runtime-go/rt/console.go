@@ -58,19 +58,16 @@ func MountConsoleEndpoints(mux *http.ServeMux) {
 	if skyGetenv("CONSOLE_DISABLED") == "1" {
 		return
 	}
-	// When the Std.Ui sub-app console has already been wired onto
-	// this mux (maybeAutoMountConsole succeeded), skip the entire
-	// legacy mount. Two reasons:
-	//   1. /_sky/console would panic-collide with the sub-app's
-	//      bare-prefix redirect.
-	//   2. /_sky/console/api/* would be more-specific patterns than
-	//      the sub-app's catch-all, leading to a mixed dispatch
-	//      where some routes hit the new console and others hit
-	//      the legacy hand-written one — opaque to debug.
-	if ConsoleAutoMounted() {
-		return
+	// When the Std.Ui sub-app console is mounted (the new path),
+	// the HTML root collides with the sub-app's prefix — skip it.
+	// But the /api/* JSON endpoints are MORE SPECIFIC patterns
+	// (Go ServeMux longest-prefix-match) so they coexist with the
+	// sub-app proxy. The new console (running as a child process)
+	// fetches its data from these JSON endpoints — that's how it
+	// renders real telemetry instead of mocked values.
+	if !ConsoleAutoMounted() {
+		safeMount(mux, "/_sky/console", HandleConsole)
 	}
-	safeMount(mux, "/_sky/console", HandleConsole)
 	safeMount(mux, "/_sky/console/api/overview", HandleConsoleOverview)
 	safeMount(mux, "/_sky/console/api/metrics-summary", HandleConsoleMetricsSummary)
 	safeMount(mux, "/_sky/console/api/logs", HandleConsoleLogs)

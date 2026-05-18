@@ -106,9 +106,12 @@ header model =
 
 headerMeta : Overview -> String
 headerMeta o =
+    let
+        mode = if o.productionMode then "prod" else "dev"
+    in
     "Sky " ++ o.skyVersion
-        ++ " · " ++ o.authMode
-        ++ " · uptime " ++ formatUptime o.uptimeSeconds
+        ++ " · " ++ mode
+        ++ " · uptime " ++ formatUptime (Math.round o.uptimeSeconds)
 
 
 formatUptime : Int -> String
@@ -133,7 +136,7 @@ tabStrip active =
         , Border.color border_
         ]
         (List.map (tabButton active)
-            [ Overview, Metrics, Logs, Traces, Errors ])
+            [ OverviewTab, MetricsTab, LogsTab, TracesTab, ErrorsTab ])
 
 
 tabButton : Tab -> Tab -> Element Msg
@@ -164,11 +167,11 @@ content model =
     Ui.column
         [ Ui.width Ui.fill, Ui.padding 20, Ui.spacing 16 ]
         (case model.tab of
-            Overview -> overviewView model.overview
-            Metrics  -> metricsView model.metrics
-            Logs     -> logsView model.logs
-            Traces   -> tracesView model.traces
-            Errors   -> errorsView model.errors)
+            OverviewTab -> overviewView model.overview
+            MetricsTab  -> metricsView model.metrics
+            LogsTab     -> logsView model.logs
+            TracesTab   -> tracesView model.traces
+            ErrorsTab   -> errorsView model.errors)
 
 
 -- ─── Overview tab ────────────────────────────────────────────────
@@ -187,10 +190,10 @@ kpiRow o =
         , Ui.spacing 12
         , Ui.width Ui.fill
         ]
-        [ kpiCard "Requests total" (String.fromInt o.requestsTotal)
+        [ kpiCard "Requests total" (String.fromInt (Math.round o.requestsTotal))
         , kpiCard "5xx error rate" (formatPercent o.errorRate5xx)
-        , kpiCard "Log buffer" (formatRatio o.logBufferUsed o.logBufferMax)
-        , kpiCard "Trace buffer" (formatRatio o.traceBufferUsed o.traceBufferMax)
+        , kpiCard "Log buffer" (String.fromInt (Math.round o.bufferLogUsed))
+        , kpiCard "Trace buffer" (String.fromInt (Math.round o.bufferTraceUsed))
         ]
 
 
@@ -225,9 +228,9 @@ systemPanel o =
         [ infoRow "Sky version"  o.skyVersion
         , infoRow "Commit"       o.commit
         , infoRow "Built at"     o.builtAt
-        , infoRow "Uptime"       (formatUptime o.uptimeSeconds)
-        , infoRow "Runtime mode" o.runtimeMode
-        , infoRow "Auth mode"    o.authMode
+        , infoRow "Uptime"       (formatUptime (Math.round o.uptimeSeconds))
+        , infoRow "Production mode"
+            (if o.productionMode then "yes" else "no")
         ]
 
 

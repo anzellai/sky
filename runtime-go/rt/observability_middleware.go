@@ -144,18 +144,46 @@ func ObservabilityMiddleware(next http.Handler) http.Handler {
 		elapsed := time.Since(start).Seconds()
 		route := routeLabelFor(r)
 		status := strconv.Itoa(sw.status)
-		store := telemetry.Default()
-		store.Inc("sky_live_requests_total", map[string]string{
+		// RecordCounter / RecordHistogram dual-write to local store
+		// + push to parent when running as a sub-app, so sub-app
+		// request counts surface alongside parent metrics on the
+		// parent's /_sky/metrics with `subapp=<ns>` label.
+		RecordCounter("sky_live_requests_total", map[string]string{
 			"method": r.Method,
 			"route":  route,
 			"status": status,
-		})
-		store.Observe("sky_live_request_seconds",
+		}, 1)
+		RecordHistogram("sky_live_request_seconds",
 			map[string]string{"route": route}, elapsed)
 		if sw.bytesWritten > 0 {
-			store.Observe("sky_http_response_bytes",
+			RecordHistogram("sky_http_response_bytes",
 				map[string]string{"route": route}, float64(sw.bytesWritten))
 		}
+
+		// Phase 3: record the request as a span in the local trace
+		// ring (and push to parent if we're a sub-app). The OTel
+		// SDK path (StartHTTPServerSpan above) exports to remote
+		// collectors via OTLP; this in-process write feeds the
+		// console's Traces tab and the parent's aggregated view.
+		// Cheap — one struct alloc + ring append.
+		statusCode := "ok"
+		if sw.status >= 400 {
+			statusCode = "error"
+		}
+		RecordTrace(telemetry.TraceEntry{
+			TraceID:    reqID,
+			SpanID:     reqID, // reqID doubles as root span id
+			Name:       r.Method + " " + route,
+			Kind:       "server",
+			StartTime:  start,
+			EndTime:    time.Now(),
+			StatusCode: statusCode,
+			Attributes: map[string]string{
+				"http.method":      r.Method,
+				"http.route":       route,
+				"http.status_code": status,
+			},
+		})
 
 		emitAccessLog(accessLogEntry{
 			ReqID:        reqID,
@@ -326,7 +354,7 @@ func emitAccessLog(e accessLogEntry) {
 			e.Status, e.LatencyMS, e.BytesWritten)
 		return
 	}
-	telemetry.Default().AppendLog(telemetry.LogEntry{
+	RecordLog(telemetry.LogEntry{
 		TS:        time.Now(),
 		Level:     "info",
 		Message:   "http_request",

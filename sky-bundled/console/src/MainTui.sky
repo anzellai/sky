@@ -23,12 +23,14 @@ import View exposing (view)
 
 init : () -> ( Model, Cmd Msg )
 init _ =
-    ( { tab      = Overview
-      , overview = mockOverview
-      , logs     = mockLogs
-      , metrics  = mockMetrics
-      , traces   = mockTraces
-      , errors   = mockErrors
+    ( { tab       = OverviewTab
+      , parentUrl = ""
+      , overview  = mockOverview
+      , logs      = mockLogs
+      , metrics   = mockMetrics
+      , traces    = mockTraces
+      , errors    = mockErrors
+      , lastError = ""
       }
     , Cmd.none
     )
@@ -41,6 +43,14 @@ update msg model =
             ( { model | tab = tab }, Cmd.none )
 
         Tick ->
+            ( model, Cmd.none )
+
+        -- Tui variant doesn't fetch (no HTTP wire in terminal mode);
+        -- ignore the response Msgs that the Live variant uses.
+        GotOverview _ ->
+            ( model, Cmd.none )
+
+        GotLogs _ ->
             ( model, Cmd.none )
 
 

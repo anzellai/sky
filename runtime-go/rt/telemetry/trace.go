@@ -30,6 +30,11 @@ type TraceEntry struct {
 	Attributes    map[string]string
 	StatusCode    string
 	StatusMessage string
+	// Subapp namespace this span was emitted from. Populated by the
+	// observability ingest endpoint when accepting cross-process
+	// pushes; empty for parent-process spans. Console waterfall can
+	// group / filter by this.
+	Subapp string
 }
 
 // Duration returns the elapsed wall-clock time for a span. Returns

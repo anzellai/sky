@@ -239,7 +239,14 @@ func isObservabilityPath(path string) bool {
 	// Specific endpoints that must always pass:
 	switch path {
 	case "/_sky/healthz", "/_sky/readyz", "/_sky/metrics",
-		"/_sky/buildinfo", "/_sky/sse", "/_sky/config":
+		"/_sky/buildinfo", "/_sky/sse", "/_sky/config",
+		// Sub-app observability ingest — POSTed to by children
+		// via the push exporter. Has its own auth via
+		// X-Sky-Ingest-Token (validated by HandleObservabilityIngest);
+		// CSRF cookies are irrelevant because no browser is involved.
+		// Without this exemption every child push hits 403 and
+		// federation silently breaks.
+		"/_sky/observability/ingest":
 		return true
 	}
 	return false

@@ -51,6 +51,8 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"sky-app/rt/telemetry"
 )
 
 // ═══════════════════════════════════════════════════════════
@@ -891,9 +893,41 @@ func logEmit(level int, levelName string, msg string, ctx any) {
 	if level < logThreshold {
 		return
 	}
-	ts := time.Now().UTC().Format(time.RFC3339Nano)
+	now := time.Now()
+	ts := now.UTC().Format(time.RFC3339Nano)
+	// Stringify ctx for the stdout / stderr writers + the telemetry
+	// ring's Fields map (rings are typed map[string]string).
+	var fields map[string]string
+	if m, ok := ctx.(map[string]any); ok && len(m) > 0 {
+		fields = make(map[string]string, len(m))
+		for k, v := range m {
+			if k == "time" || k == "level" || k == "msg" {
+				continue
+			}
+			fields[k] = fmt.Sprintf("%v", v)
+		}
+	}
+	// Always write to the in-process telemetry ring so the console
+	// Logs tab + /_sky/console/api/logs surface Sky-side Log.* calls
+	// the same as Go-side AppendLog writes. Pre-2026-05-18 gap:
+	// logEmit only wrote stdout/stderr, leaving the ring empty for
+	// Sky-user logs. Fixed here so the new sub-app push exporter
+	// has consistent data to push.
+	entry := telemetry.LogEntry{
+		TS:      now,
+		Level:   levelName,
+		Message: msg,
+		Fields:  fields,
+	}
+	telemetry.Default().AppendLog(entry)
+	// Dual-write to the parent's telemetry store via the push
+	// exporter when this process is a sub-app. Drop on overflow,
+	// rate-limited warning; never blocks the caller.
+	if exp := ActivePushExporter(); exp != nil {
+		exp.PushLog(entry)
+	}
 	if logJSON {
-		entry := map[string]any{
+		entryMap := map[string]any{
 			"time":  ts,
 			"level": levelName,
 			"msg":   msg,
@@ -901,11 +935,11 @@ func logEmit(level int, levelName string, msg string, ctx any) {
 		if m, ok := ctx.(map[string]any); ok {
 			for k, v := range m {
 				if k != "time" && k != "level" && k != "msg" {
-					entry[k] = v
+					entryMap[k] = v
 				}
 			}
 		}
-		b, _ := json.Marshal(entry)
+		b, _ := json.Marshal(entryMap)
 		if level >= logLevelWarn {
 			fmt.Fprintln(os.Stderr, string(b))
 		} else {
@@ -914,13 +948,13 @@ func logEmit(level int, levelName string, msg string, ctx any) {
 		return
 	}
 	line := ts + " " + strings.ToUpper(levelName) + " " + msg
-	if m, ok := ctx.(map[string]any); ok && len(m) > 0 {
+	if len(fields) > 0 {
 		var b strings.Builder
-		for k, v := range m {
+		for k, v := range fields {
 			b.WriteString(" ")
 			b.WriteString(k)
 			b.WriteString("=")
-			b.WriteString(fmt.Sprintf("%v", v))
+			b.WriteString(v)
 		}
 		line += b.String()
 	}
@@ -6076,8 +6110,14 @@ func Server_listen(port any, routes any) any {
 	// SKY_LIVE_BASE_PATH is already set, never blocks startup on
 	// spawn failure. parentBasePath is "" because Sky.Http.Server has
 	// no concept of being itself mounted as a sub-app today.
-	maybeAutoMountConsole(mux, "")
+	// Pass `p` so the console child can push observability data
+	// back to us via SKY_PARENT_URL=http://127.0.0.1:<p>.
+	maybeAutoMountConsole(mux, "", p)
 	MountObservabilityEndpoints(mux)
+	// If THIS process is a sub-app (SKY_PARENT_URL + SKY_LIVE_NAMESPACE
+	// set), start the push-exporter so Log.* / metric / span writes
+	// flow back to the parent. No-op for standalone runs.
+	StartPushExporter()
 	// Production-mode gate — single source of truth in
 	// `productionFromEnv`: any ENV / SKY_ENV value EXCEPT
 	// {"dev", "development", "local"} gates. Unset → open.

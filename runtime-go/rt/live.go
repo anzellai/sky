@@ -1584,6 +1584,20 @@ func liveAppRun(cfg any) any {
 	}
 	app.store = chooseStore(storeKind, storePath, ttl)
 
+	// Resolve listen port early so sub-app spawn helpers
+	// (maybeAutoMountConsole below) can pass it to children via
+	// SKY_PARENT_URL — that's how the observability push exporter
+	// finds us. cfg.Port wins over env; both fall back to 8080.
+	port := 8080
+	if p := Field(cfg, "Port"); p != nil {
+		port = AsInt(p)
+	}
+	if v := skyGetenv("LIVE_PORT"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			port = n
+		}
+	}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/_sky/event", app.handleEvent)
 	mux.HandleFunc("/_sky/sse", app.handleSSE)
@@ -1591,8 +1605,18 @@ func liveAppRun(cfg any) any {
 	// Auto-mount Sky Console sub-app FIRST so MountObservability
 	// Endpoints' legacy /_sky/console fallback can see the flag
 	// and skip its own registration. Dev mode only; no-op in
-	// production / sub-app contexts.
-	maybeAutoMountConsole(mux, app.basePath)
+	// production / sub-app contexts. Skipped entirely when running
+	// AS a sub-app (basePath != "") — sub-apps don't host their own
+	// sub-consoles.
+	parentPortForChildren := port
+	if app.basePath != "" {
+		parentPortForChildren = 0 // we're a sub-app; no sub-children
+	}
+	maybeAutoMountConsole(mux, app.basePath, parentPortForChildren)
+	// If THIS process is a sub-app (env vars from MountSubApp set),
+	// kick the push exporter — Log.* / counter / span writes flow
+	// to the parent. No-op for standalone (parent) runs.
+	StartPushExporter()
 	// Observability endpoints — healthz / readyz / metrics / buildinfo.
 	// Default-on (per docs/v1-rfc/1-observability.md); opt-out via
 	// OBSERVABILITY_DISABLED=1. Mounted BEFORE the catch-all "/" route
@@ -1637,16 +1661,7 @@ func liveAppRun(cfg any) any {
 		gobRegisterAll(model)
 	}()
 
-	port := 8080
-	if p := Field(cfg, "Port"); p != nil {
-		port = AsInt(p)
-	}
-	// Allow <PREFIX>_LIVE_PORT env var to override (set in .env or shell).
-	if v := skyGetenv("LIVE_PORT"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			port = n
-		}
-	}
+	// (port was resolved earlier so sub-app spawn could use it)
 
 	// Production-mode detection — gates /_sky/metrics auth. Two
 	// signals (RFC §"Resolved question 1"):

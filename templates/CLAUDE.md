@@ -1866,10 +1866,16 @@ group so a Ctrl-C on the parent's terminal doesn't multi-kill;
 the parent's signal handler tears children down cleanly with a
 2 s SIGTERM grace then SIGKILL.
 
-**Not yet shipped** (v0.14 planned): sub-app metrics federation
-into the parent's `/_sky/metrics` with namespace prefix (so
-`billing_requests_total` etc. surface alongside parent metrics
-for a single Prometheus scrape).
+**Universal observability (shipped)**: every sub-app's logs,
+metrics, and trace spans automatically push to the parent's
+`/_sky/observability/ingest` endpoint, labelled by
+`subapp=<namespace>`. Parent's `/_sky/metrics` exposes the full
+process tree in one Prometheus exposition — `subapp="billing"`,
+`subapp="admin"`, etc. The console reads aggregated data via
+`/_sky/console/api/*`; PromQL queries can `sum by (subapp)`. No
+config needed — auto-wires when `MountSubApp` spawns the child
+(passes `SKY_PARENT_URL` + `SKY_LIVE_NAMESPACE` +
+`SKY_INGEST_TOKEN` env). Auth via shared token, CSRF-exempt.
 
 ## Sky.Live — Server-Driven UI
 

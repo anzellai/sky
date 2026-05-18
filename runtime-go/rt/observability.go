@@ -231,6 +231,11 @@ func MountObservabilityEndpoints(mux *http.ServeMux) {
 	safeMount(mux, "/_sky/readyz", HandleReadyz)
 	safeMount(mux, "/_sky/metrics", HandleMetrics)
 	safeMount(mux, "/_sky/buildinfo", HandleBuildInfo)
+	// Universal observability ingest endpoint — accepts logs +
+	// metrics + spans pushed from sub-apps spawned via
+	// rt.MountSubApp. Auth via X-Sky-Ingest-Token (auto-generated
+	// per parent boot, override via SKY_INGEST_TOKEN env).
+	MountObservabilityIngestEndpoint(mux)
 	// Phase 1.1b — /_sky/console dashboard + its JSON API.
 	MountConsoleEndpoints(mux)
 }

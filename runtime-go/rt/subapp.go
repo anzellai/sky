@@ -62,7 +62,14 @@ type SpawnFn func(ctx context.Context, basePath string) (port int, cmd *exec.Cmd
 // stderr go to /dev/null by default to keep the parent's terminal
 // clean; set SKY_SUBAPP_VERBOSE=1 to surface child output for
 // debugging.
-func SpawnBinary(binPath string, extraArgs ...string) SpawnFn {
+//
+// `parentPort` is the parent app's listen port — used to seed
+// SKY_PARENT_URL on the child so its push-exporter can ship logs /
+// metrics / spans back. Pass 0 to skip (the child still runs but
+// without observability federation; useful for sub-apps that
+// shouldn't be allowed to push, or for arbitrary non-Sky binaries
+// that don't speak the ingest protocol).
+func SpawnBinary(parentPort int, binPath string, extraArgs ...string) SpawnFn {
 	return func(ctx context.Context, basePath string) (int, *exec.Cmd, error) {
 		port, err := pickFreeLocalhostPort()
 		if err != nil {
@@ -70,14 +77,22 @@ func SpawnBinary(binPath string, extraArgs ...string) SpawnFn {
 		}
 		args := append([]string(nil), extraArgs...)
 		cmd := exec.CommandContext(ctx, binPath, args...)
-		cmd.Env = append(os.Environ(),
-			"SKY_LIVE_PORT="+strconv.Itoa(port),
-			"SKY_LIVE_BASE_PATH="+basePath,
+		envExtra := []string{
+			"SKY_LIVE_PORT=" + strconv.Itoa(port),
+			"SKY_LIVE_BASE_PATH=" + basePath,
 			// Suppress the child's connection-status banner: the user
 			// is interacting with the PARENT app, the child's "I'm
 			// reconnecting" chrome would just be noise.
 			"SKY_LIVE_BANNER=off",
-		)
+			"SKY_LIVE_NAMESPACE=" + subAppNamespaceFromPath(basePath),
+		}
+		if parentPort > 0 {
+			envExtra = append(envExtra,
+				fmt.Sprintf("SKY_PARENT_URL=http://127.0.0.1:%d", parentPort),
+				"SKY_INGEST_TOKEN="+CurrentIngestToken(),
+			)
+		}
+		cmd.Env = append(os.Environ(), envExtra...)
 		if os.Getenv("SKY_SUBAPP_VERBOSE") == "1" {
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
@@ -105,19 +120,25 @@ func SpawnBinary(binPath string, extraArgs ...string) SpawnFn {
 }
 
 // SpawnSkyConsole spawns the bundled Sky Console mini-app via
-// `sky console --port <free>`. Resolves the `sky` binary by
-// honouring (in order) the SKY_BIN env var, the running parent's
-// own argv[0] (if it IS sky), then exec.LookPath("sky"). Returns
-// an error explaining the lookup failure if none of those find a
-// usable binary — the caller logs the warning and continues
-// without auto-mounting.
+// `sky console --port <free>`. `parentPort` is the port the
+// parent app is listening on — passed to the child via
+// SKY_PARENT_URL so the child can push observability data back
+// to the parent's /_sky/observability/ingest endpoint. Pass 0 for
+// standalone scenarios where there's no parent (the child then
+// runs without the push exporter).
+//
+// Resolves the `sky` binary by honouring (in order) the SKY_BIN
+// env var, the running parent's own argv[0] (if it IS sky), then
+// exec.LookPath("sky"). Returns an error explaining the lookup
+// failure if none of those find a usable binary — the caller logs
+// the warning and continues without auto-mounting.
 //
 // Note: SpawnBinary's generic SKY_LIVE_PORT env is IGNORED by the
 // `sky console` CLI (which always overrides SKY_LIVE_PORT from its
 // own --port flag, default 8025). So we pass --port explicitly with
 // the picked free port and let SpawnBinary's env-setting fall on
 // the floor.
-func SpawnSkyConsole() SpawnFn {
+func SpawnSkyConsole(parentPort int) SpawnFn {
 	return func(ctx context.Context, basePath string) (int, *exec.Cmd, error) {
 		skyBin, err := resolveSkyBinary()
 		if err != nil {
@@ -129,15 +150,30 @@ func SpawnSkyConsole() SpawnFn {
 		}
 		cmd := exec.CommandContext(ctx, skyBin, "console",
 			"--port", strconv.Itoa(port))
-		cmd.Env = append(os.Environ(),
+		envExtra := []string{
 			// Tells the bundled console's Sky.Live runtime to emit
 			// URLs prefixed with our mount point.
-			"SKY_LIVE_BASE_PATH="+basePath,
+			"SKY_LIVE_BASE_PATH=" + basePath,
 			// Suppress the child's reconnect-status banner — the
 			// user interacts with the PARENT's chrome; the child's
 			// "I'm reconnecting" chrome would just be noise.
 			"SKY_LIVE_BANNER=off",
-		)
+			// Namespace for the push-exporter — every log /
+			// metric / span the child emits is labelled
+			// `subapp=console` on the parent's store.
+			"SKY_LIVE_NAMESPACE=" + subAppNamespaceFromPath(basePath),
+		}
+		// Tell the child where to push observability data when the
+		// parent is reachable. Empty parentPort skips this —
+		// standalone `sky console` invocations (no parent) just
+		// keep observability local.
+		if parentPort > 0 {
+			envExtra = append(envExtra,
+				fmt.Sprintf("SKY_PARENT_URL=http://127.0.0.1:%d", parentPort),
+				"SKY_INGEST_TOKEN="+CurrentIngestToken(),
+			)
+		}
+		cmd.Env = append(os.Environ(), envExtra...)
 		if os.Getenv("SKY_SUBAPP_VERBOSE") == "1" {
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
@@ -217,6 +253,38 @@ func MountSubApp(mux *http.ServeMux, prefix string, spawn SpawnFn) error {
 // ============================================================================
 // Internals
 // ============================================================================
+
+// subAppNamespaceFromPath derives a label-safe namespace string
+// from a mount prefix. "/_sky/console" → "console";
+// "/admin/v2" → "admin_v2". Empty or all-symbol input falls back
+// to "subapp" so the label always has a non-empty value.
+//
+// Rules:
+//   * Trim leading "/"
+//   * Drop any "_sky/" prefix (internal mounts) so the console
+//     namespace is "console", not "_sky_console"
+//   * Replace each "/" with "_"
+//   * Strip anything outside [a-zA-Z0-9_]
+func subAppNamespaceFromPath(p string) string {
+	p = strings.Trim(p, "/")
+	p = strings.TrimPrefix(p, "_sky/")
+	p = strings.Trim(p, "/")
+	var b strings.Builder
+	for _, c := range p {
+		switch {
+		case c == '/':
+			b.WriteByte('_')
+		case (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+			(c >= '0' && c <= '9') || c == '_':
+			b.WriteRune(c)
+		}
+	}
+	out := b.String()
+	if out == "" {
+		return "subapp"
+	}
+	return out
+}
 
 // pickFreeLocalhostPort asks the kernel for a free localhost port
 // via net.Listen(":0"), immediately closes the listener, and
@@ -326,7 +394,7 @@ func ConsoleAutoMounted() bool { return consoleAutoMounted.Load() }
 // Any failure is logged + skipped — the parent app's startup is
 // never blocked by console-mount issues; the legacy
 // MountConsoleEndpoints path then provides a working fallback.
-func maybeAutoMountConsole(mux *http.ServeMux, parentBasePath string) {
+func maybeAutoMountConsole(mux *http.ServeMux, parentBasePath string, parentPort int) {
 	if productionFromEnv() {
 		return
 	}
@@ -338,9 +406,16 @@ func maybeAutoMountConsole(mux *http.ServeMux, parentBasePath string) {
 		// another console inside ourselves.
 		return
 	}
+	// IMPORTANT: materialise the ingest token NOW so SpawnSkyConsole
+	// → CurrentIngestToken() reads a real value when seeding the
+	// child's SKY_INGEST_TOKEN env. Without this, the parent's
+	// MountObservabilityEndpoints call (which would otherwise init
+	// the token first) runs AFTER spawn, the child gets
+	// SKY_INGEST_TOKEN="" and every push hits 401.
+	IngestTokenInit()
 	// Spawn failures already log via MountSubApp's internal
 	// fmt.Fprintf — caller doesn't need to.
-	if err := MountSubApp(mux, "/_sky/console", SpawnSkyConsole()); err == nil {
+	if err := MountSubApp(mux, "/_sky/console", SpawnSkyConsole(parentPort)); err == nil {
 		consoleAutoMounted.Store(true)
 	}
 }

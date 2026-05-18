@@ -31,6 +31,13 @@ type LogEntry struct {
 	Status   int
 	LatencyMS float64
 	ErrorStr string
+	// Sub-app namespace this log was emitted from. Empty for entries
+	// produced by the parent process; populated by the observability
+	// ingest endpoint when accepting cross-process pushes from sub-
+	// apps (see runtime-go/rt/observability_ingest.go). The console's
+	// Logs tab filters / labels by this field; PromQL queries on
+	// /_sky/metrics can group by `subapp=`.
+	Subapp string
 	// Free-form attributes. Caller is responsible for low-cardinality
 	// values (we don't enforce here because that would block useful
 	// debugging context). Typical values: msg constructor name, user

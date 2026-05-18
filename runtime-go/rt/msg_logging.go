@@ -157,7 +157,7 @@ func emitMsgLog(level string, ctx MsgLogContext, elapsed time.Duration, noop boo
 	if err != nil {
 		errStr = err.Error()
 	}
-	telemetry.Default().AppendLog(telemetry.LogEntry{
+	RecordLog(telemetry.LogEntry{
 		TS:        time.Now(),
 		Level:     level,
 		Message:   "msg_dispatch",

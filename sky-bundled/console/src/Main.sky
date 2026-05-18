@@ -1,38 +1,85 @@
 module Main exposing (main)
 
--- Sky Console (Phase A — Std.Ui Sky.Live mini-app).
+-- Sky Console — Sky.Live entry. Auto-mounted at /_sky/console on
+-- every Sky.Live + Sky.Http.Server app in dev mode (see
+-- runtime-go/rt/subapp.go::maybeAutoMountConsole); also runs
+-- standalone via `sky console [--port N]`.
 --
--- Phase A: standalone Sky.Live example that proves the Std.Ui UI
--- works typed end-to-end with mocked data. Once green, the same
--- source moves to sky-stdlib/Sky/Internal/Console/ in Phase B and
--- the runtime auto-mounts it under /_sky/console.
+-- When running as a sub-app, the parent passes SKY_PARENT_URL +
+-- SKY_LIVE_BASE_PATH + SKY_INGEST_TOKEN. The console reads
+-- SKY_PARENT_URL at init time and uses it to fetch real telemetry
+-- (overview + logs) from the parent's /_sky/console/api/* JSON
+-- endpoints every 2s. Standalone runs leave parentUrl empty and
+-- the view shows a short "no parent" placeholder.
 --
 -- No hand-written JS in this source — every interaction is
 -- onClick → Msg → update → re-render via Sky.Live's framework
--- wire (SSE + POST /_sky/event). Multi-module split so the
--- type-checker stays well below the heap-exhaustion limit
--- (CLAUDE.md Limitation #17).
+-- wire. Multi-module split so the type-checker stays well below
+-- the heap-exhaustion limit (CLAUDE.md Limitation #17).
 import Sky.Core.Prelude exposing (..)
+import Sky.Core.System as System
+import Sky.Core.Http as Http
+import Sky.Core.Json.Decode as Decode
+import Sky.Core.Json.Decode.Pipeline as Pipeline
+import Sky.Core.Task as Task
 import Std.Cmd as Cmd
 import Std.Sub as Sub
 import Std.Live exposing (app, route)
 import Std.Ui as Ui
-import Std.Ui exposing (Element)
 import State exposing (..)
 import View exposing (view)
 
 
+-- ─── Decoders for the parent's /_sky/console/api/* JSON ──────────
+
+overviewDecoder : Decode.Decoder Overview
+overviewDecoder =
+    Decode.succeed Overview
+        |> Pipeline.optional "skyVersion"      Decode.string "—"
+        |> Pipeline.optional "commit"          Decode.string "—"
+        |> Pipeline.optional "builtAt"         Decode.string "—"
+        |> Pipeline.optional "uptimeSeconds"   Decode.float 0.0
+        |> Pipeline.optional "requestsTotal"   Decode.float 0.0
+        |> Pipeline.optional "errorRate5xx"    Decode.float 0.0
+        |> Pipeline.optional "bufferLogUsed"   Decode.float 0.0
+        |> Pipeline.optional "bufferTraceUsed" Decode.float 0.0
+        |> Pipeline.optional "productionMode"  Decode.bool False
+
+
+logsDecoder : Decode.Decoder (List LogEntry)
+logsDecoder =
+    Decode.list logEntryDecoder
+
+
+logEntryDecoder : Decode.Decoder LogEntry
+logEntryDecoder =
+    Decode.succeed LogEntry
+        |> Pipeline.optional "TS"       Decode.string "—"
+        |> Pipeline.optional "Level"    Decode.string "info"
+        |> Pipeline.optional "Message"  Decode.string ""
+        |> Pipeline.optional "Subapp"   Decode.string ""
+
+
+-- ─── Init / update / subscriptions / view ────────────────────────
+
 init : a -> ( Model, Cmd Msg )
 init _req =
-    ( { tab      = Overview
-      , overview = mockOverview
-      , logs     = mockLogs
-      , metrics  = mockMetrics
-      , traces   = mockTraces
-      , errors   = mockErrors
-      }
-    , Cmd.none
-    )
+    let
+        parent = System.getenvOr "SKY_PARENT_URL" ""
+        startModel =
+            { tab       = OverviewTab
+            , parentUrl = parent
+            , overview  = if parent == "" then mockOverview else emptyOverview
+            , logs      = if parent == "" then mockLogs else []
+            , metrics   = []
+            , traces    = []
+            , errors    = []
+            , lastError = ""
+            }
+    in
+    -- Fire one immediate fetch so the initial render isn't empty;
+    -- the 2 s Sub.every then keeps it fresh.
+    ( startModel, fetchAll parent )
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -42,15 +89,54 @@ update msg model =
             ( { model | tab = tab }, Cmd.none )
 
         Tick ->
-            -- Phase B: re-fetch overview / logs / etc. from runtime.
-            -- Phase A: tick is a no-op so the polling sub still
-            -- exercises the wire path end-to-end.
-            ( model, Cmd.none )
+            ( model, fetchAll model.parentUrl )
+
+        GotOverview (Ok ov) ->
+            ( { model | overview = ov, lastError = "" }, Cmd.none )
+
+        GotOverview (Err e) ->
+            ( { model | lastError = errorToString e }, Cmd.none )
+
+        GotLogs (Ok ls) ->
+            ( { model | logs = ls, lastError = "" }, Cmd.none )
+
+        GotLogs (Err e) ->
+            ( { model | lastError = errorToString e }, Cmd.none )
+
+
+fetchAll : String -> Cmd Msg
+fetchAll parent =
+    if parent == "" then
+        Cmd.none
+    else
+        Cmd.batch
+            [ Cmd.perform (fetchOverview parent) GotOverview
+            , Cmd.perform (fetchLogs parent) GotLogs
+            ]
+
+
+fetchOverview : String -> Task Error Overview
+fetchOverview parent =
+    Http.get (parent ++ "/_sky/console/api/overview")
+        |> Task.andThenResult (\resp -> Decode.decodeString overviewDecoder resp.body)
+
+
+fetchLogs : String -> Task Error (List LogEntry)
+fetchLogs parent =
+    Http.get (parent ++ "/_sky/console/api/logs?limit=200")
+        |> Task.andThenResult (\resp -> Decode.decodeString logsDecoder resp.body)
 
 
 subscriptions : Model -> Sub Msg
-subscriptions _ =
-    Sub.none
+subscriptions model =
+    if model.parentUrl == "" then
+        Sub.none
+    else
+        -- Refresh every 2 s. The wire echo cost per tick is the JSON
+        -- payload size (overview ~250 B, logs cap 200 entries × ~200 B
+        -- = ~40 KB) plus one HTTP round-trip to the parent (same
+        -- localhost, sub-ms). Easily within budget for a dev console.
+        Sub.every 2000 Tick
 
 
 viewWrapped : Model -> any

@@ -260,6 +260,10 @@ Set `SKY_LIVE_BASE_PATH` manually for advanced reverse-proxy setups where Sky.Li
 
 Children spawn in their own process group (`Setpgid: true`) so a Ctrl-C on the parent's terminal doesn't double-kill — the parent's handler tears them down cleanly via context cancel. If the parent crashes hard (SIGKILL, OOM), children orphan — best-effort cleanup, not a hard guarantee.
 
-### What's NOT shipped yet
+### Universal observability federation (shipped)
 
-Sub-app metrics federation into the parent's `/_sky/metrics` with namespace prefix (so `billing_requests_total` etc. surface alongside parent metrics on a single Prometheus scrape) — planned for v0.14. Until then, sub-app metrics are accessible at `<prefix>/_sky/metrics` through the proxy after setting `SKY_LIVE_OBSERVABILITY=on` on the child; aggregate in your scraper.
+Every sub-app automatically pushes its logs / metrics / trace spans to the parent's `/_sky/observability/ingest` endpoint, labelled by `subapp=<namespace>`. The parent's `/_sky/metrics` exposes the union for a single Prometheus scrape — e.g. `sky_live_requests_total{subapp="billing",route="/charge",status="200"}`. PromQL `sum by (subapp) (rate(...))` works without per-sub-app scrape jobs.
+
+Auth via shared `SKY_INGEST_TOKEN` (auto-generated per parent boot, passed to children by `MountSubApp`; constant-time compare; CSRF-exempt because it's not browser-driven). Wire format is JSON-over-HTTP (OTel-shaped); push interval default 2 s, per-category buffer cap 1024, both configurable via `SKY_OBSERVABILITY_PUSH_INTERVAL_MS` / `SKY_OBSERVABILITY_BUFFER`. Children's pushes drop with a 1-warning-per-minute log when the buffer overflows; never block the caller.
+
+The console (which IS a sub-app) is the first user — every tab in the live console is reading data the parent's store aggregated across the parent + every other sub-app you've mounted. Out of scope: long-term storage (delegate to an external OTel collector → Loki / Mimir / Tempo), alerting (Prometheus Alertmanager), cross-host federation (proper OTel collector).

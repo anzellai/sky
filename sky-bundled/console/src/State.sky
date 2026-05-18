@@ -10,50 +10,61 @@ import Sky.Core.Prelude exposing (..)
 
 -- The console has 5 tabs. Active tab is part of Model so navigation
 -- is just a Msg dispatch (no client-side router).
+--
+-- Variants suffixed `Tab_` to avoid collision with the `Overview`
+-- record type alias below (Sky's auto-generated record constructor
+-- shares the type-name as a value, so an unsuffixed `Overview`
+-- variant would shadow it in expression position).
 type Tab
-    = Overview
-    | Metrics
-    | Logs
-    | Traces
-    | Errors
+    = OverviewTab
+    | MetricsTab
+    | LogsTab
+    | TracesTab
+    | ErrorsTab
 
 
 tabLabel : Tab -> String
 tabLabel tab =
     case tab of
-        Overview -> "Overview"
-        Metrics  -> "Metrics"
-        Logs     -> "Logs"
-        Traces   -> "Traces"
-        Errors   -> "Errors"
+        OverviewTab -> "Overview"
+        MetricsTab  -> "Metrics"
+        LogsTab     -> "Logs"
+        TracesTab   -> "Traces"
+        ErrorsTab   -> "Errors"
 
 
--- ─── Data shapes ─────────────────────────────────────────────────
+-- ─── Data shapes (mirror /_sky/console/api/* JSON) ──────────────
 
--- Overview tab payload. Phase A: hand-mocked in init for the
--- standalone example. Phase B: populated via Cmd.perform from
--- runtime helpers (rt.consoleOverview / rt.consoleMetrics / ...).
+-- Overview tab payload — wire shape mirrors `OverviewResponse`
+-- in `runtime-go/rt/console.go`. Fetched periodically from
+-- `GET <parent>/_sky/console/api/overview` when running as the
+-- bundled sub-app (SKY_PARENT_URL set). Falls back to a small
+-- mock for standalone `sky console` invocations.
+-- All numeric fields are Float to match what Go's JSON encoder
+-- emits (json.Marshal serialises every numeric — including int64
+-- — as JSON Number which Sky's Json.Decode reads as Float). The
+-- view casts to Int at display via Math.round / Math.floor where
+-- whole-number display is preferred.
 type alias Overview =
-    { skyVersion     : String
-    , commit         : String
-    , builtAt        : String
-    , uptimeSeconds  : Int
-    , requestsTotal  : Int
-    , errorRate5xx   : Float
-    , logBufferUsed  : Int
-    , logBufferMax   : Int
-    , traceBufferUsed: Int
-    , traceBufferMax : Int
-    , runtimeMode    : String
-    , authMode       : String
+    { skyVersion      : String
+    , commit          : String
+    , builtAt         : String
+    , uptimeSeconds   : Float
+    , requestsTotal   : Float
+    , errorRate5xx    : Float
+    , bufferLogUsed   : Float
+    , bufferTraceUsed : Float
+    , productionMode  : Bool
     }
 
 
--- Log entry shown in the Logs tab.
+-- Log entry shown in the Logs tab — wire shape mirrors
+-- `telemetry.LogEntry` JSON serialisation.
 type alias LogEntry =
     { time    : String
     , level   : String
     , message : String
+    , subapp  : String   -- empty for parent-emitted entries
     }
 
 
@@ -81,73 +92,63 @@ type alias ErrorRow =
 -- ─── Model + Msg ─────────────────────────────────────────────────
 
 type alias Model =
-    { tab     : Tab
-    , overview: Overview
-    , logs    : List LogEntry
-    , metrics : List MetricRow
-    , traces  : List TraceRow
-    , errors  : List ErrorRow
+    { tab       : Tab
+    , parentUrl : String        -- empty → standalone; mock data
+    , overview  : Overview
+    , logs      : List LogEntry
+    , metrics   : List MetricRow
+    , traces    : List TraceRow
+    , errors    : List ErrorRow
+    , lastError : String        -- one-line surface for fetch failures
     }
 
 
+-- Msg covers tab switches + scheduled refresh + each per-endpoint
+-- response. Result-typed responses use the canonical Sky.Core.Error
+-- shape so a failure surfaces as model.lastError without crashing
+-- the tick.
 type Msg
     = SelectTab Tab
     | Tick
+    | GotOverview (Result Error Overview)
+    | GotLogs (Result Error (List LogEntry))
 
 
--- Mock overview used for Phase A. Numbers chosen to look believable
--- in screenshots without being misleading.
-mockOverview : Overview
-mockOverview =
-    { skyVersion      = "dev"
-    , commit          = "8ca9cee"
-    , builtAt         = "2026-05-18"
-    , uptimeSeconds   = 142
-    , requestsTotal   = 1287
-    , errorRate5xx    = 0.012
-    , logBufferUsed   = 432
-    , logBufferMax    = 10000
-    , traceBufferUsed = 18
-    , traceBufferMax  = 1000
-    , runtimeMode     = "vm"
-    , authMode        = "dev (open)"
+-- ─── Defaults ────────────────────────────────────────────────────
+
+emptyOverview : Overview
+emptyOverview =
+    { skyVersion      = "—"
+    , commit          = "—"
+    , builtAt         = "—"
+    , uptimeSeconds   = 0.0
+    , requestsTotal   = 0.0
+    , errorRate5xx    = 0.0
+    , bufferLogUsed   = 0.0
+    , bufferTraceUsed = 0.0
+    , productionMode  = False
     }
+
+
+-- Mock overview used by standalone `sky console` (no parent URL).
+mockOverview : Overview
+mockOverview = emptyOverview
 
 
 mockLogs : List LogEntry
 mockLogs =
-    [ { time = "13:42:11", level = "info",  message = "session 4f3a opened" }
-    , { time = "13:42:08", level = "warn",  message = "request /api/slow took 1240ms" }
-    , { time = "13:42:01", level = "info",  message = "POST /_sky/event 200 (12ms)" }
-    , { time = "13:41:55", level = "error", message = "panic in handler /admin: nil pointer" }
-    , { time = "13:41:49", level = "info",  message = "GET / 200 (3ms)" }
-    , { time = "13:41:42", level = "debug", message = "csrf cookie issued for new session" }
+    [ { time = "—", level = "info", message = "Standalone mode — no parent URL configured.", subapp = "" }
+    , { time = "—", level = "info", message = "Run from a host app to see live telemetry.", subapp = "" }
     ]
 
 
 mockMetrics : List MetricRow
-mockMetrics =
-    [ { name = "sky_requests_total",  value = "1287",   help = "Total HTTP requests served" }
-    , { name = "sky_requests_5xx",    value = "16",     help = "Requests resulting in 5xx" }
-    , { name = "sky_sessions_active", value = "23",     help = "Active Sky.Live sessions" }
-    , { name = "sky_uptime_seconds",  value = "142",    help = "Seconds since process start" }
-    , { name = "sky_log_buffer_used", value = "432",    help = "Log ring entries in use" }
-    , { name = "sky_trace_spans_used",value = "18",     help = "Trace ring spans in use" }
-    ]
+mockMetrics = []
 
 
 mockTraces : List TraceRow
-mockTraces =
-    [ { time = "13:42:11", name = "GET /",          durationMs = 3,    statusOk = True  }
-    , { time = "13:42:08", name = "GET /api/slow",  durationMs = 1240, statusOk = True  }
-    , { time = "13:42:01", name = "POST /_sky/event", durationMs = 12, statusOk = True  }
-    , { time = "13:41:55", name = "GET /admin",     durationMs = 4,    statusOk = False }
-    ]
+mockTraces = []
 
 
 mockErrors : List ErrorRow
-mockErrors =
-    [ { count = 8, message = "panic in handler /admin: nil pointer dereference" }
-    , { count = 3, message = "context deadline exceeded calling Stripe API" }
-    , { count = 1, message = "sql: connection refused (port 5432)" }
-    ]
+mockErrors = []
