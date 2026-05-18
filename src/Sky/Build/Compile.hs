@@ -3999,20 +3999,23 @@ goExprGoType e = case e of
     -- (`int` / `float64` / `string` / `bool` / `rune`) render
     -- identically everywhere, so they're safe.
     -- v0.13 Stage 1 — runtime-kernel fn referenced as a HOF arg.
-    -- The kernel-fn IR is `GoIr.GoQualified "rt" "X"` (e.g.
-    -- `rt.Time_timeString` passed to `Result.map`). Look up its
-    -- Sky-level kernel sig and render as a Go function type. Without
-    -- this, σ-recovery at the HOF call site sees `Just "any"` for the
-    -- arg and can't pin the kernel's TVars → emits
-    -- `rt.Coerce[func(any) any](rt.Time_timeString)`.
-    GoIr.GoQualified "rt" fn ->
-        lookupRtKernelFnType fn
+    -- INTENTIONALLY DISABLED: returning the Sky kernel sig (e.g.
+    -- `func(int) string` for `String.fromInt`) was unsafe because
+    -- the ACTUAL Go runtime fn `rt.String_fromInt` has sig
+    -- `func(any) any`. When σ-recovery pinned typed TVars from this
+    -- lying sig, the resulting Sky_Core_List_map_ call instantiated
+    -- with typed `[T1=int, T2=string]` and then handed the
+    -- `func(any) any` runtime fn at the typed slot — Go's inference
+    -- conflicted with the surrounding typed args (e.g.
+    -- `rt.AsListT[int](ages)`) and rejected the call. The only safe
+    -- routings are at sites where the runtime ALSO has the typed
+    -- variant in scope; not all kernels do, and the gain (closing
+    -- a small subset of FFI-adjacent adapter wraps) doesn't justify
+    -- the fragility. Reverted; the wraps stay, the reflect-based
+    -- Coerce adapter handles both shapes correctly.
+    GoIr.GoQualified "rt" _fn -> Nothing
     GoIr.GoIdent name
-        | "rt." `List.isPrefixOf` name ->
-            -- Sky.Generate.Go.Kernel emits kernel-registered fns as
-            -- `GoIr.GoIdent "rt.X"` (single token with the dot embedded).
-            -- Same lookup path as the GoQualified case above.
-            lookupRtKernelFnType (drop 3 name)
+        | "rt." `List.isPrefixOf` name -> Nothing
     GoIr.GoIdent name -> case lookupLambdaType name of
         Just t | isTypedPrimitive t -> Just (solvedTypeToGo t)
         -- v0.13 Stage 1 — typed function-typed param: recover its
@@ -5204,47 +5207,42 @@ goAppearsAsToken tok s = go 0 s
 -- Result/Task (i.e. the whole ok arg IS the TVar, not nested), or
 -- anywhere else. Returns `(errorCount, okCount, otherCount)` per TVar.
 tvarOccurrences :: T.Type -> Map.Map String (Int, Int, Int)
-tvarOccurrences = goRoot
+tvarOccurrences = go Other
   where
     bumpErr n   = Map.singleton n (1, 0, 0)
     bumpOk n    = Map.singleton n (0, 1, 0)
     bumpOther n = Map.singleton n (0, 0, 1)
     addP (a1, b1, c1) (a2, b2, c2) = (a1 + a2, b1 + b2, c1 + c2)
-    goRoot ty = go False Other ty
-    -- `inFnArg = True` means we're walking inside a function-typed
-    -- parameter's body. In that context, Maybe / Result / Task TVars
-    -- are NOT eligible for OkSlot defaulting: a typed fn arg passed
-    -- at the call site WILL constrain those TVars via Go generic
-    -- inference, so collapsing them to `rt.SkyValue` here destroys
-    -- the recoverable typing information. Pairs with `lookupRtKernelTypedVariant`
-    -- which routes `rt.String_toInt` → `rt.String_toIntT` at HOF
-    -- sites so the typed sig the call site now expects is actually
-    -- backed by a typed-output runtime function. Closes the
-    -- Maybe.andThen + String.toInt residual in 18-job-queue.
-    go inFnArg slot ty = case ty of
+    -- The earlier in-fn-arg distinction (don't default `b` when it
+    -- appears inside a function-typed parameter's body) was REVERTED
+    -- because it paired only with the disabled rtKernelTypedVariant
+    -- routing path. Without that routing, un-defaulting `b` emitted
+    -- a typed slot that the runtime's `func(any) any` kernel fn
+    -- couldn't fill — Go rejected the call. Reverted to the
+    -- conservative defaulting; the `rt.Coerce[func(...) any]` wrap
+    -- at the call site bridges shapes.
+    go slot ty = case ty of
         T.TVar n -> case slot of
             ErrorSlot -> bumpErr n
-            OkSlot | inFnArg -> bumpOther n
             OkSlot    -> bumpOk n
             Other     -> bumpOther n
-        T.TLambda a b ->
-            Map.unionWith addP (go True Other a) (go inFnArg Other b)
+        T.TLambda a b -> Map.unionWith addP (go Other a) (go Other b)
         T.TType _ "Result" [e, a] ->
-            Map.unionWith addP (go inFnArg ErrorSlot e) (go inFnArg OkSlot a)
+            Map.unionWith addP (go ErrorSlot e) (go OkSlot a)
         T.TType _ "Task"   [e, a] ->
-            Map.unionWith addP (go inFnArg ErrorSlot e) (go inFnArg OkSlot a)
-        T.TType _ "Maybe" [a] -> go inFnArg OkSlot a
-        T.TType _ _ args -> Map.unionsWith addP (map (go inFnArg Other) args)
-        T.TTuple a b cs -> Map.unionsWith addP (map (go inFnArg Other) (a : b : cs))
+            Map.unionWith addP (go ErrorSlot e) (go OkSlot a)
+        T.TType _ "Maybe" [a] -> go OkSlot a
+        T.TType _ _ args -> Map.unionsWith addP (map (go Other) args)
+        T.TTuple a b cs -> Map.unionsWith addP (map (go Other) (a : b : cs))
         T.TAlias _ _ pairs aliasType ->
             Map.unionsWith addP $
-                [go inFnArg Other v | (_, v) <- pairs]
+                [go Other v | (_, v) <- pairs]
                 ++ [case aliasType of
-                        T.Filled i  -> go inFnArg Other i
-                        T.Hoisted i -> go inFnArg Other i]
+                        T.Filled i  -> go Other i
+                        T.Hoisted i -> go Other i]
         T.TRecord fields _ ->
             Map.unionsWith addP
-                [go inFnArg Other fTy | T.FieldType _ fTy <- Map.elems fields]
+                [go Other fTy | T.FieldType _ fTy <- Map.elems fields]
         T.TUnit -> Map.empty
 
 
@@ -7467,11 +7465,27 @@ coerceArg e ty
     -- typed variant directly. This avoids the
     -- `rt.Coerce[func(string) rt.SkyMaybe[int]](rt.String_toInt)`
     -- reflect-adapter wrap by using static Go typing throughout.
-    | take 5 ty == "func("
-    , GoIr.GoIdent name <- e
-    , "rt." `List.isPrefixOf` name
-    , Just typedVariant <- lookupRtKernelTypedVariant (drop 3 name) ty =
-        GoIr.GoIdent typedVariant
+    -- v0.13 Stage 1 — runtime-kernel HOF arg: this branch is
+    -- INTENTIONALLY DISABLED. Routing `rt.X` → `rt.XT` at HOF arg
+    -- sites was correct for statically-dispatched kernels
+    -- (Sky_Core_Maybe_andThen__String_Int's typed param accepts
+    -- the typed variant raw) but unsafe for reflect-dispatched
+    -- kernels (Sky.Core.Json.Decode's `Decode.map String.fromInt
+    -- Decode.int` chains through SkyCall, which casts the
+    -- function arg to `func(any) any` at runtime — handing it
+    -- the typed `func(int) string` panics with `interface
+    -- conversion`). Until the routing can distinguish typed-path
+    -- kernels from reflect-path kernels, fall through to the
+    -- existing rt.Coerce reflect-adapter wrap, which handles
+    -- both shapes correctly. Closes the Maybe.andThen residual is
+    -- deferred.
+    --
+    -- Original (disabled) branch kept commented for reference:
+    -- | take 5 ty == "func("
+    -- , GoIr.GoIdent name <- e
+    -- , "rt." `List.isPrefixOf` name
+    -- , Just typedVariant <- lookupRtKernelTypedVariant (drop 3 name) ty =
+    --     GoIr.GoIdent typedVariant
     -- v0.13 Stage 1 — Sky-uncurried fn at a curried HOF slot. Auto-
     -- record-ctors (e.g. `Profile : String -> Int -> Bool -> Profile_R`)
     -- emit as Go-uncurried `func Profile(p0, p1, p2)`. At a HOF slot
