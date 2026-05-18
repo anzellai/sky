@@ -135,14 +135,18 @@ runAllChecks :: FilePath -> IO [Finding]
 runAllChecks root = do
     -- Each check is independent; order in the output reflects the
     -- order added here (severity then this order via stable sort).
-    fmap concat $ sequence
+    -- mem-guard is a compiler-dev concern (warns about runaway
+    -- ghc/cabal/sky processes on the contributor's machine),
+    -- gated to the Sky compiler repo so user projects + CI runners
+    -- don't see it as an issue.
+    isCompilerRepo <- Dir.doesFileExist (root </> "scripts" </> "mem-guard.sh")
+    fmap concat $ sequence $
         [ checkSkyTomlSyntax root
         , checkStaleCache root
         , checkSkyOutAge root
         , checkPortInUse root
         , checkMissingFfi root
-        , checkMemGuardAlive
-        ]
+        ] ++ [ checkMemGuardAlive | isCompilerRepo ]
 
 
 -- | sky.toml exists (root was found) AND parses as text. We don't
