@@ -7248,6 +7248,80 @@ substTVarsInGoType σ s = goSubst s
     isIdentStart = isGoIdentStart
     isIdentChar = isGoIdentChar
 
+-- | v0.13 Stage 1 — split a chained-func Go-type string like
+-- `func(string) func(int) func(bool) Foo` into ([string,int,bool],
+-- "Foo"). Returns Nothing when the chain has fewer than 2 levels
+-- (in which case the existing single-level handling already applies).
+-- Used to detect curried-HOF slot targets so an uncurried Go function
+-- ident can be wrapped in a typed curry adapter.
+splitCurriedFuncStr :: String -> Maybe ([String], String)
+splitCurriedFuncStr s = case splitFuncTypeStr s of
+    Just (input, rest)
+        | take 5 rest == "func(" ->
+            case splitCurriedFuncStr rest of
+                Just (more, final) -> Just (input : more, final)
+                Nothing            -> Just ([input], rest)
+        | otherwise -> Just ([input], rest)
+    Nothing -> Nothing
+
+-- | v0.13 Stage 1 — emit a typed curry adapter that wraps an
+-- uncurried top-level Go function as a chain of Go-typed closures
+-- matching the HOF slot's curried shape. Only fires when the
+-- function is in `_cg_funcParamTypes` with arity ≥ matching
+-- chain depth AND the chain's input types align with the fn's
+-- declared param types. Returns Nothing if any check fails;
+-- caller falls through to the existing `rt.Coerce` reflect-adapter
+-- path.
+--
+-- Emitted shape for `Profile : (string, int, bool) -> Foo_R`
+-- at slot `func(string) func(int) func(bool) Foo_R`:
+--
+--   func(__c0 string) func(int) func(bool) Foo_R {
+--       return func(__c1 int) func(bool) Foo_R {
+--           return func(__c2 bool) Foo_R {
+--               return Profile(__c0, __c1, __c2)
+--           }
+--       }
+--   }
+buildCurryAdapter :: String -> [String] -> String -> Maybe GoIr.GoExpr
+buildCurryAdapter name inputTys finalRet =
+    let env = getCgEnv
+        declaredParams = Map.findWithDefault [] name (Rec._cg_funcParamTypes env)
+        declaredRet = Map.findWithDefault "any" name (Rec._cg_funcRetType env)
+        n = length inputTys
+    in if length declaredParams /= n
+            || take n declaredParams /= inputTys
+            || declaredRet /= finalRet
+       then Nothing
+       else Just (buildChain 0 inputTys finalRet)
+  where
+    -- Build the chain inner-to-outer.
+    buildChain :: Int -> [String] -> String -> GoIr.GoExpr
+    buildChain _ [] _ = GoIr.GoIdent "BUG_buildChain_empty"
+    buildChain i [ty] retTy =
+        let paramName = "__c" ++ show i
+            innerCall = GoIr.GoCall (GoIr.GoIdent name)
+                [ GoIr.GoIdent ("__c" ++ show k) | k <- [0 .. i] ]
+        in GoIr.GoFuncLit
+            [GoIr.GoParam paramName ty]
+            retTy
+            [GoIr.GoReturn innerCall]
+    buildChain i (ty:rest) retTy =
+        let paramName = "__c" ++ show i
+            innerBody = buildChain (i + 1) rest retTy
+            -- Inner sig must be the CURRIED chain shape, not flat —
+            -- `func(int) func(bool) Foo`, not `func(int, bool) Foo`.
+            innerSig = renderCurriedSig rest retTy
+        in GoIr.GoFuncLit
+            [GoIr.GoParam paramName ty]
+            innerSig
+            [GoIr.GoReturn innerBody]
+
+    renderCurriedSig :: [String] -> String -> String
+    renderCurriedSig [] retTy = retTy
+    renderCurriedSig (ty:rest) retTy =
+        "func(" ++ ty ++ ") " ++ renderCurriedSig rest retTy
+
 -- | v0.13 Stage 1 — check whether a runtime kernel fn has a typed
 -- `*T` variant whose Go signature matches the target slot's typed
 -- shape. Returns the typed-variant name (e.g. `rt.String_toIntT`)
@@ -7398,6 +7472,22 @@ coerceArg e ty
     , "rt." `List.isPrefixOf` name
     , Just typedVariant <- lookupRtKernelTypedVariant (drop 3 name) ty =
         GoIr.GoIdent typedVariant
+    -- v0.13 Stage 1 — Sky-uncurried fn at a curried HOF slot. Auto-
+    -- record-ctors (e.g. `Profile : String -> Int -> Bool -> Profile_R`)
+    -- emit as Go-uncurried `func Profile(p0, p1, p2)`. At a HOF slot
+    -- expecting curried `func(string) func(int) func(bool) Profile_R`,
+    -- emit a typed curry adapter directly — no reflect Coerce wrap.
+    -- Detection: target is a chain of `func(X) func(Y) ...` nodes AND
+    -- source is a GoIdent for a top-level fn whose declared param
+    -- count matches the chain depth AND the chain's param types match
+    -- the fn's funcParamTypes entry.
+    | take 5 ty == "func("
+    , Just (inputTys, finalRet) <- splitCurriedFuncStr ty
+    , length inputTys > 1
+    , GoIr.GoIdent name <- e
+    , not ("rt." `List.isPrefixOf` name)
+    , Just curryWrapper <- buildCurryAdapter name inputTys finalRet =
+        curryWrapper
     -- v0.13 typed lowerer: `e` is already provably the target type —
     -- skip the coercion entirely (no `rt.CoerceInt(int)` etc.).
     | goExprGoType e == Just ty = e
