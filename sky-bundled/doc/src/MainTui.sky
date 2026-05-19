@@ -61,6 +61,7 @@ type alias Entry =
     , modL : String       -- pre-lowercased for case-insensitive search
     , nameL : String
     , sigL : String
+    , line : String       -- pre-formatted display line ("bucket  Mod.name : sig")
     }
 
 
@@ -148,14 +149,37 @@ entryDecoder : Decoder Entry
 entryDecoder =
     D.map4
         (\m n s b ->
-            { mod = m
-            , name = n
-            , sig = s
-            , bucket = b
-            , modL = String.toLower m
-            , nameL = String.toLower n
-            , sigL = String.toLower s
-            }
+            let
+                trimmedSig =
+                    if String.length s <= 80 then
+                        s
+
+                    else
+                        String.slice 0 78 s ++ "…"
+
+                pad8 t =
+                    if String.length t >= 8 then
+                        t
+
+                    else
+                        t ++ String.repeat (8 - String.length t) " "
+
+                sigSuffix =
+                    if String.isEmpty s then
+                        ""
+
+                    else
+                        "  : " ++ trimmedSig
+            in
+                { mod = m
+                , name = n
+                , sig = s
+                , bucket = b
+                , modL = String.toLower m
+                , nameL = String.toLower n
+                , sigL = String.toLower s
+                , line = pad8 b ++ m ++ "." ++ n ++ sigSuffix
+                }
         )
         (D.field "module" D.string)
         (D.field "name" D.string)
@@ -331,7 +355,7 @@ update msg model =
             ( { model | expanded = False }, Cmd.none )
 
         Quit ->
-            ( model, Cmd.none )
+            ( model, Cmd.perform (System.exit 0) (\_ -> NoOp) )
 
         NoOp ->
             ( model, Cmd.none )
@@ -507,6 +531,8 @@ resultsList model =
             (List.indexedMap (renderRow model) model.filtered)
 
 
+-- One element per row — the entry's `line` is pre-formatted at JSON-
+-- load time so paint reduces to a single `Ui.text`.
 renderRow : Model -> Int -> Entry -> Element Msg
 renderRow model i e =
     let
@@ -519,55 +545,27 @@ renderRow model i e =
             else
                 bg
 
-        modName = e.mod ++ "." ++ e.name
+        rowFg =
+            if isSel then
+                fg
+
+            else
+                fg
     in
-        Ui.column
+        Ui.el
             [ Background.color rowBg
+            , Font.color rowFg
             , Ui.paddingXY 4 0
             , Ui.width Ui.fill
             ]
-            [ Ui.row
-                [ Ui.spacing 8, Ui.width Ui.fill ]
-                [ Ui.el
-                    [ Font.color (bucketColor e.bucket)
-                    , Ui.width (Ui.px 56)
-                    ]
-                    (Ui.text e.bucket)
-                , Ui.el [ Font.color fg, Font.bold ] (Ui.text modName)
-                , if String.isEmpty e.sig then
-                    Ui.none
-
-                  else
-                    Ui.el
-                        [ Font.color sigColor ]
-                        (Ui.text (": " ++ trimSig e.sig))
-                ]
-            , if isSel && model.expanded && not (String.isEmpty e.sig) then
-                Ui.el
-                    [ Font.color dim
-                    , Ui.paddingXY 64 0
-                    ]
-                    (Ui.text e.sig)
-
-              else
-                Ui.none
-            ]
-
-
-trimSig : String -> String
-trimSig s =
-    if String.length s <= 80 then
-        s
-
-    else
-        String.slice 0 78 s ++ "…"
+            (Ui.text e.line)
 
 
 helpLine : Element Msg
 helpLine =
     Ui.el
         [ Font.color dim ]
-        (Ui.text "↑↓ select · enter expand · / focus search · esc clear · ctrl-c quit")
+        (Ui.text "↑↓ select · / focus search · esc clear · ctrl-c quit")
 
 
 
