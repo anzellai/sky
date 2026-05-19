@@ -1,5 +1,6 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE CPP #-}
 module Main where
 
 import Options.Applicative
@@ -15,7 +16,9 @@ import System.Directory (createDirectoryIfMissing, doesFileExist, removeFile, re
 import System.IO.Error (catchIOError)
 import qualified Control.Concurrent
 import qualified Control.Exception
+#ifndef mingw32_HOST_OS
 import qualified System.Posix.Signals as Signals
+#endif
 import System.FilePath ((</>), takeExtension, takeDirectory, takeFileName, dropExtension, splitDirectories)
 import System.Exit (exitWith)
 import Data.List (isPrefixOf, isInfixOf, stripPrefix, tails)
@@ -1729,6 +1732,43 @@ runDoc opts = do
 -- | Render the doc site to a per-version cache directory, then
 -- materialise the bundled Sky.Http.Server app and run it pointed
 -- at that directory. Mirrors `runConsole`'s spawn pattern.
+-- | Install SIGTERM / SIGHUP / SIGINT handlers that forward the
+-- signal to a spawned child process: terminate (gentle), wait 1 s,
+-- SIGKILL if still alive.  Used by `sky doc --serve|--tui` and
+-- `sky console` so an external supervisor's tear-down doesn't
+-- orphan the long-lived Sky.Live / Sky.Tui child.
+--
+-- Windows has no SIGTERM/SIGHUP and `unix` is unavailable, so the
+-- helper degrades to a no-op there — the child still dies when its
+-- parent's main loop exits (Haskell runtime closes handles on
+-- normal shutdown), just without the explicit graceful path.
+forwardChildSignals :: System.Process.ProcessHandle -> IO ()
+#ifdef mingw32_HOST_OS
+forwardChildSignals _ = return ()
+#else
+forwardChildSignals rph = do
+    let install sig = Signals.installHandler sig
+            (Signals.Catch $ do
+                System.Process.terminateProcess rph
+                _ <- Control.Concurrent.forkIO $ do
+                    Control.Concurrent.threadDelay 1000000
+                    mec <- System.Process.getProcessExitCode rph
+                    case mec of
+                        Just _  -> return ()
+                        Nothing -> do
+                            ph <- System.Process.getPid rph
+                            case ph of
+                                Just pid -> Signals.signalProcess Signals.sigKILL pid
+                                Nothing  -> return ()
+                return ())
+            Nothing
+    _ <- install Signals.sigTERM
+    _ <- install Signals.sigHUP
+    _ <- install Signals.sigINT
+    return ()
+#endif
+
+
 runDocServe :: DocIdx.DocIndex -> Int -> IO (Either String ())
 runDocServe idx port = do
     -- Render HTML + JSON to .skycache/doc-out/ under the project
@@ -1787,24 +1827,7 @@ runDocServe idx port = do
     -- Reuse runConsole's signal-forwarding so SIGTERM/SIGHUP from
     -- a parent (or external supervisor) tears down the child
     -- cleanly instead of orphaning it to PID 1.
-    let forwardSignal sig = Signals.installHandler sig
-            (Signals.Catch (do
-                System.Process.terminateProcess rph
-                _ <- Control.Concurrent.forkIO $ do
-                    Control.Concurrent.threadDelay 1000000
-                    mec <- System.Process.getProcessExitCode rph
-                    case mec of
-                        Just _  -> return ()
-                        Nothing -> do
-                            ph <- System.Process.getPid rph
-                            case ph of
-                                Just pid -> Signals.signalProcess Signals.sigKILL pid
-                                Nothing  -> return ()
-                return ()))
-            Nothing
-    _ <- forwardSignal Signals.sigTERM
-    _ <- forwardSignal Signals.sigHUP
-    _ <- forwardSignal Signals.sigINT
+    forwardChildSignals rph
     rec' <- Control.Exception.bracket_ (return ())
         (do
             mec <- System.Process.getProcessExitCode rph
@@ -1887,24 +1910,7 @@ runDocTui idx = do
                 }
     putStrLn "sky doc: starting terminal browser (Ctrl-C to exit)..."
     (_, _, _, rph) <- System.Process.createProcess rp
-    let forwardSignal sig = Signals.installHandler sig
-            (Signals.Catch (do
-                System.Process.terminateProcess rph
-                _ <- Control.Concurrent.forkIO $ do
-                    Control.Concurrent.threadDelay 1000000
-                    mec <- System.Process.getProcessExitCode rph
-                    case mec of
-                        Just _  -> return ()
-                        Nothing -> do
-                            ph <- System.Process.getPid rph
-                            case ph of
-                                Just pid -> Signals.signalProcess Signals.sigKILL pid
-                                Nothing  -> return ()
-                return ()))
-            Nothing
-    _ <- forwardSignal Signals.sigTERM
-    _ <- forwardSignal Signals.sigHUP
-    _ <- forwardSignal Signals.sigINT
+    forwardChildSignals rph
     rec' <- Control.Exception.bracket_ (return ())
         (do
             mec <- System.Process.getProcessExitCode rph
