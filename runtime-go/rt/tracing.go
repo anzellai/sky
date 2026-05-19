@@ -257,6 +257,48 @@ func WithSessionSpan(op, store string, fn func() any) any {
 		}, fn)
 }
 
+// ─── Std.Trace — Sky-level opt-in API (observability-design.md L3) ─
+//
+// Kernel implementations behind `sky-stdlib/Std/Trace.sky`. The Sky
+// signatures are fully parametric — `Trace.span : String -> Task e a
+// -> Task e a` preserves `a`; the value flows through untouched.
+
+// Trace_span wraps a Task in a named child span. Sky:
+//   Trace.span : String -> Task e a -> Task e a
+// Returns a Task thunk; when forced it opens the span, runs the
+// inner task under it, and returns the inner task's value verbatim.
+func Trace_span(name any, task any) any {
+	n := AsString(name)
+	capTask := task
+	return func() any {
+		return WithSpan(n, trace.SpanKindInternal, nil, func() any {
+			return AnyTaskRun(capTask)
+		})
+	}
+}
+
+// Trace_event records an instantaneous event on the current span.
+// Sky: Trace.event : String -> Task e ()
+func Trace_event(name any) any {
+	n := AsString(name)
+	return func() any {
+		trace.SpanFromContext(CurrentTraceContext()).AddEvent(n)
+		return Ok[any, any](struct{}{})
+	}
+}
+
+// Trace_attr annotates the current span with a string attribute.
+// Sky: Trace.attr : String -> String -> Task e ()
+func Trace_attr(key any, value any) any {
+	k := AsString(key)
+	v := AsString(value)
+	return func() any {
+		trace.SpanFromContext(CurrentTraceContext()).
+			SetAttributes(attribute.String("sky.trace."+k, v))
+		return Ok[any, any](struct{}{})
+	}
+}
+
 // EndSpanWithError finalises a span with error status when err is
 // non-nil. Records the error as an event (OTel convention so the
 // UI surfaces it as a clickable entry inside the span).

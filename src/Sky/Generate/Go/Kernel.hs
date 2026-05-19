@@ -133,6 +133,15 @@ registry = Map.fromList
     , (("Doc", "searchCatalog"),  KernelInfo "rt.Doc_searchCatalog" 3 False)
 
     -- ═══════════════════════════════════════════════════════
+    -- Trace — Std.Trace opt-in span API (observability-design.md
+    -- Layer 3). span/event/attr are Task-shaped; the runtime
+    -- wraps the OTEL span around the forced Task.
+    -- ═══════════════════════════════════════════════════════
+    , (("Trace", "span"),         KernelInfo "rt.Trace_span" 2 False)
+    , (("Trace", "event"),        KernelInfo "rt.Trace_event" 1 False)
+    , (("Trace", "attr"),         KernelInfo "rt.Trace_attr" 2 False)
+
+    -- ═══════════════════════════════════════════════════════
     -- List
     -- ═══════════════════════════════════════════════════════
     -- List: use any-typed runtime functions until type checker provides types
