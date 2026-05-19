@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -268,6 +269,14 @@ func MountSubApp(mux *http.ServeMux, prefix string, spawn SpawnFn) error {
 			r.Method, r.URL.Path, target.Host, err)
 		w.WriteHeader(http.StatusBadGateway)
 	}
+	// The ErrorHandler above only fires for errors BEFORE the
+	// response is committed. An error mid-body-copy (the upstream
+	// child closing during shutdown, or an SSE stream cut on
+	// Ctrl-C) instead goes to proxy.ErrorLog as
+	// "ReverseProxy read error during body copy: unexpected EOF".
+	// Those are routine disconnects, not faults — route ErrorLog
+	// through a filter that drops them and keeps everything else.
+	proxy.ErrorLog = log.New(filteredProxyLog{}, "", 0)
 	// Strip the prefix so the child sees `/_sky/event` instead of
 	// `/_sky/console/_sky/event`. Both Sky.Live and Sky.Http.Server
 	// register their routes at root-relative paths, so prefix-strip
@@ -452,6 +461,23 @@ func maybeAutoMountConsole(mux *http.ServeMux, parentBasePath string, parentPort
 	if err := MountSubApp(mux, "/_sky/console", SpawnSkyConsole(parentPort)); err == nil {
 		consoleAutoMounted.Store(true)
 	}
+}
+
+// filteredProxyLog is the io.Writer behind a reverse proxy's
+// ErrorLog. It drops the routine mid-stream-disconnect lines
+// (upstream EOF / context cancelled — a browser navigating away
+// from an SSE stream, or a child dying during shutdown) and
+// forwards anything genuinely actionable to stderr.
+type filteredProxyLog struct{}
+
+func (filteredProxyLog) Write(p []byte) (int, error) {
+	s := string(p)
+	if strings.Contains(s, "body copy") ||
+		strings.Contains(s, "unexpected EOF") ||
+		strings.Contains(s, "context canceled") {
+		return len(p), nil // routine disconnect — swallow
+	}
+	return os.Stderr.Write(p)
 }
 
 // ShutdownSubApps signals every tracked child to stop. Idempotent.

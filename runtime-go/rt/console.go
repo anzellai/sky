@@ -45,6 +45,7 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"sky-app/rt/telemetry"
@@ -196,13 +197,19 @@ func HandleConsoleMetricsSummary(w http.ResponseWriter, r *http.Request) {
 	if !consoleAccessAllowed(w, r) {
 		return
 	}
+	// Labels are flattened to a "k=v, k=v" string here — the
+	// console's MetricRow.labels field is a String ("rendered
+	// server-side"). Sending the raw map made the Sky-side decode
+	// yield an empty string, so distinct label-series (e.g.
+	// sky_live_msg_seconds{name=Tick} vs {name=PagesLoaded})
+	// rendered as indistinguishable "duplicate" rows.
 	type metricRow struct {
-		Name   string            `json:"name"`
-		Type   string            `json:"type"`
-		Labels map[string]string `json:"labels,omitempty"`
-		Value  float64           `json:"value"`
-		Sum    float64           `json:"sum,omitempty"`
-		Count  uint64            `json:"count,omitempty"`
+		Name   string  `json:"name"`
+		Type   string  `json:"type"`
+		Labels string  `json:"labels,omitempty"`
+		Value  float64 `json:"value"`
+		Sum    float64 `json:"sum,omitempty"`
+		Count  uint64  `json:"count,omitempty"`
 	}
 	snap := telemetry.Default().Snapshot()
 	out := make([]metricRow, 0, len(snap))
@@ -210,13 +217,33 @@ func HandleConsoleMetricsSummary(w http.ResponseWriter, r *http.Request) {
 		out = append(out, metricRow{
 			Name:   s.Name,
 			Type:   s.Type,
-			Labels: s.Labels,
+			Labels: flattenMetricLabels(s.Labels),
 			Value:  s.Value,
 			Sum:    s.Sum,
 			Count:  s.Count,
 		})
 	}
 	writeJSON(w, out)
+}
+
+// flattenMetricLabels renders a label map as a stable "k=v, k=v"
+// string (keys sorted so the same label set always serialises
+// identically — important for the console diffing rows frame to
+// frame).
+func flattenMetricLabels(labels map[string]string) string {
+	if len(labels) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(labels))
+	for k := range labels {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		parts = append(parts, k+"="+labels[k])
+	}
+	return strings.Join(parts, ", ")
 }
 
 // HandleConsoleLogs returns the most-recent ring entries. Filter

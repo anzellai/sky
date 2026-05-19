@@ -1808,11 +1808,19 @@ func liveAppRun(cfg any) any {
 		// finish + the goroutine exits cleanly. Idempotent —
 		// safe to call when no worker was ever spawned.
 		JobsShutdown()
+		// Close the parent HTTP server BEFORE killing sub-apps.
+		// Order matters: if a `/_sky/console/*` request is being
+		// reverse-proxied when Ctrl-C lands, killing the console
+		// child first leaves the proxy mid-body-copy with a dead
+		// upstream — "ReverseProxy read error during body copy:
+		// unexpected EOF". Closing the parent first ends those
+		// in-flight proxied requests; only then tear the children
+		// down.
+		_ = srv.Close()
 		// Tear down any sub-apps spawned via MountSubApp (the dev
 		// console + any user-mounted billing/admin/etc. processes).
 		// Idempotent + bounded (2s SIGTERM grace then SIGKILL).
 		ShutdownSubApps()
-		_ = srv.Close()
 		// If srv.Close completes the listener teardown, ListenAndServe
 		// returns and the function exits naturally. If something hangs,
 		// a second Ctrl-C escapes via os.Exit. Without this watchdog,
