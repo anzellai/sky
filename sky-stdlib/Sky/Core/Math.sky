@@ -1,0 +1,86 @@
+-- | Sky.Core.Math — pure numeric helpers (Layer 3 Sky source).
+--
+-- Every function aliased to its runtime kernel via Stage 4
+-- `Ffi.kernel`.  See `sky-stdlib/Sky/Core/String.sky` for the
+-- migration pattern.
+module Sky.Core.Math exposing
+    ( abs, min, max
+    , sqrt, pow, log
+    , floor, ceil, round
+    , sin, cos, tan
+    , pi, e
+    )
+
+
+import Sky.Ffi as Ffi
+
+
+-- ─── Integer helpers ───────────────────────────────────────────────
+
+
+abs : Int -> Int
+abs = Ffi.kernel "Math_abs"
+
+
+-- min / max are polymorphic — work on any comparable type at the
+-- runtime level.  The kernel-registry sig is `forall a. a -> a -> a`;
+-- Sky-source annotation mirrors that.
+min : a -> a -> a
+min = Ffi.kernel "Math_min"
+
+
+max : a -> a -> a
+max = Ffi.kernel "Math_max"
+
+
+-- ─── Float helpers ─────────────────────────────────────────────────
+
+
+sqrt : Float -> Float
+sqrt = Ffi.kernel "Math_sqrt"
+
+
+pow : Float -> Float -> Float
+pow = Ffi.kernel "Math_pow"
+
+
+log : Float -> Float
+log = Ffi.kernel "Math_log"
+
+
+sin : Float -> Float
+sin = Ffi.kernel "Math_sin"
+
+
+cos : Float -> Float
+cos = Ffi.kernel "Math_cos"
+
+
+tan : Float -> Float
+tan = Ffi.kernel "Math_tan"
+
+
+-- ─── Rounding (Float → Int) ────────────────────────────────────────
+
+
+floor : Float -> Int
+floor = Ffi.kernel "Math_floor"
+
+
+ceil : Float -> Int
+ceil = Ffi.kernel "Math_ceil"
+
+
+round : Float -> Int
+round = Ffi.kernel "Math_round"
+
+
+-- ─── Constants ─────────────────────────────────────────────────────
+
+
+pi : Float
+pi = Ffi.kernel "Math_pi"
+
+
+e : Float
+e = Ffi.kernel "Math_e"

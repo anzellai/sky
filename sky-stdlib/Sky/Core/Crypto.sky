@@ -1,0 +1,50 @@
+-- | Sky.Core.Crypto — hash + MAC + entropy helpers (Layer 3 Sky source).
+--
+-- Pure hash + MAC functions (`sha256` / `sha512` / `md5` /
+-- `hmacSha256`) return the hex-encoded digest as a plain `String`.
+-- Random helpers return `Task Error String` because they consume
+-- entropy from the OS RNG (a real side effect).
+module Sky.Core.Crypto exposing
+    ( sha256, sha512, md5
+    , hmacSha256
+    , constantTimeEqual
+    , randomBytes, randomToken
+    )
+
+
+import Sky.Ffi as Ffi
+import Sky.Core.Error exposing (Error)
+
+
+-- ─── Hashes + MAC ──────────────────────────────────────────────────
+
+
+sha256 : String -> String
+sha256 = Ffi.kernel "Crypto_sha256"
+
+
+sha512 : String -> String
+sha512 = Ffi.kernel "Crypto_sha512"
+
+
+md5 : String -> String
+md5 = Ffi.kernel "Crypto_md5"
+
+
+hmacSha256 : String -> String -> String
+hmacSha256 = Ffi.kernel "Crypto_hmacSha256"
+
+
+constantTimeEqual : String -> String -> Bool
+constantTimeEqual = Ffi.kernel "Crypto_constantTimeEqual"
+
+
+-- ─── Entropy (Task — touches the OS RNG) ───────────────────────────
+
+
+randomBytes : Int -> Task Error String
+randomBytes = Ffi.kernel "Crypto_randomBytes"
+
+
+randomToken : Int -> Task Error String
+randomToken = Ffi.kernel "Crypto_randomToken"
