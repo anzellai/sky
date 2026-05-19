@@ -1,0 +1,72 @@
+-- | Sky.Core.Time — clock + formatting + parsing (Layer 3 Sky source).
+--
+-- Clock reads (`now`, `unixMillis`) return `Task Error Int` (the
+-- value is the milliseconds since the Unix epoch).  Pure helpers
+-- (`format*`, `timeString`, `addMillis`, `diffMillis`) work on the
+-- integer millisecond value directly.
+--
+-- `Time.every` (the Sky.Live subscription helper that emits a
+-- `Sub msg`) is deliberately NOT exposed here — its return type
+-- `Sub msg` lives in `Std.Sub` whose typing is still kernel-only.
+-- Users of `Time.every` continue to resolve it via the kernel-
+-- registry fallback (`import Std.Sub` is not required at the call
+-- site since `Sub` is the runtime-typed sentinel).
+module Sky.Core.Time exposing
+    ( now, unixMillis, sleep
+    , timeString
+    , format, formatHTTP, formatISO8601, formatRFC3339
+    , addMillis, diffMillis
+    )
+
+
+import Sky.Ffi as Ffi
+import Sky.Core.Error exposing (Error)
+
+
+-- ─── Clock + sleep ─────────────────────────────────────────────────
+
+
+now : () -> Task Error Int
+now = Ffi.kernel "Time_now"
+
+
+unixMillis : () -> Task Error Int
+unixMillis = Ffi.kernel "Time_unixMillis"
+
+
+sleep : Int -> Task Error ()
+sleep = Ffi.kernel "Time_sleep"
+
+
+-- ─── Pure formatting ───────────────────────────────────────────────
+
+
+timeString : Int -> String
+timeString = Ffi.kernel "Time_timeString"
+
+
+format : String -> Int -> String
+format = Ffi.kernel "Time_format"
+
+
+formatHTTP : Int -> String
+formatHTTP = Ffi.kernel "Time_formatHTTP"
+
+
+formatISO8601 : Int -> String
+formatISO8601 = Ffi.kernel "Time_formatISO8601"
+
+
+formatRFC3339 : Int -> String
+formatRFC3339 = Ffi.kernel "Time_formatRFC3339"
+
+
+-- ─── Arithmetic ────────────────────────────────────────────────────
+
+
+addMillis : Int -> Int -> Int
+addMillis = Ffi.kernel "Time_addMillis"
+
+
+diffMillis : Int -> Int -> Int
+diffMillis = Ffi.kernel "Time_diffMillis"
