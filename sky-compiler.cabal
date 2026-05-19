@@ -187,6 +187,9 @@ executable sky
     Sky.Doc.Terminal
     Sky.Doc.Render
     Sky.Doc.Markdown
+    Sky.Doc.KernelRegistry
+    Sky.Build.KernelRegistryEntries
+    Sky.Build.KernelRegistryParser
     Sky.Build.EmbeddedDocServer
 
 

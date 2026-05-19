@@ -29,12 +29,14 @@ import qualified Data.ByteString.Lazy as BL
 import qualified Data.List as List
 import qualified Data.Map.Strict as Map
 import           Data.Map.Strict (Map)
+import qualified Data.Set as Set
 import           GHC.Generics (Generic)
 import qualified System.Directory as Dir
 import           System.FilePath ((</>))
 
 import qualified Sky.Reporting.Annotation as A
 import qualified Sky.Lsp.Index as LIdx
+import qualified Sky.Doc.KernelRegistry as KReg
 
 
 -- | Top-level catalogue. Modules are grouped into buckets so the
@@ -181,13 +183,124 @@ publicSymbolsByModule idx projectRoot =
                 , dmSymbols = sorted
                 }
         modules = map mkModule (Map.toAscList byMod)
-        classified = map (\m -> (classifyModule projectRoot m, m)) modules
+        -- Kernel-registry symbols (Sky.Core.String, Crypto, etc.)
+        -- that aren't on-disk Sky source. The LSP index doesn't
+        -- see them; we synthesise DocModules from the registry
+        -- enumeration and merge them in below. Modules whose
+        -- names overlap with on-disk modules (Sky.Core.List has
+        -- both an .sky file AND legacy registry entries) prefer
+        -- the on-disk version since it carries real docs.
+        kernelModules = kernelModulesFromRegistry
+        existingNames = Set.fromList (map dmName modules)
+        newKernelModules =
+            [ m | m <- kernelModules, not (Set.member (dmName m) existingNames) ]
+        allModules = modules ++ newKernelModules
+        classified = map (\m -> (classifyModule projectRoot m, m)) allModules
         pick t = [m | (t', m) <- classified, t' == t]
     in Buckets
         { _bProject = pick BucketProject
         , _bDeps    = pick BucketDeps
         , _bStdlib  = pick BucketStdlib
         }
+
+
+-- | Build DocModules from the scraped kernel registry. Each
+-- (module, name) pair gets its real HM signature via
+-- `KReg.kernelSigString`; entries with no resolvable type are
+-- skipped (shouldn't happen — registry is the source of truth).
+--
+-- Module names get canonicalised to the fully-qualified
+-- Sky.Core.* / Std.* / Sky.Http.* shape (the kernel registry
+-- uses bare names like "String", "Log"). This lets the doc
+-- index dedupe against on-disk Sky-source modules with the
+-- same canonical name (e.g. `Sky.Core.List` exists in both
+-- sky-stdlib AND the kernel registry — the Sky-source version
+-- wins).
+kernelModulesFromRegistry :: [DocModule]
+kernelModulesFromRegistry =
+    let
+        byMod = Map.fromListWith (++)
+                    [ (canonicaliseKernelModule modName, [(modName, funcName)])
+                    | (modName, funcName) <- KReg.kernelSymbols
+                    ]
+        mkSym (origMod, funcName) = DocSymbol
+            { dsName    = funcName
+            , dsKind    = KindFunction
+              -- Pass the ORIGINAL (registry-side) module name to
+              -- `kernelSigString` because `lookupKernelType`
+              -- still keys on bare names.
+            , dsTypeSig = KReg.kernelSigString origMod funcName
+            , dsDoc     = Just (KReg.kernelDocFor origMod funcName)
+            , dsFile    = "<kernel registry: " ++ origMod ++ ">"
+            , dsLine    = 0
+            , dsCol     = 0
+            }
+        mkMod (canonMod, entries) = DocModule
+            { dmName    = canonMod
+            , dmFile    = "<kernel registry>"
+            , dmDoc     = Just ("Kernel module — defined in the compiler "
+                              ++ "runtime (no on-disk source yet; "
+                              ++ "migrating to Sky source is in progress).")
+            , dmSymbols = List.sortOn dsName (map mkSym entries)
+            }
+    in [ mkMod (m, ns) | (m, ns) <- Map.toAscList byMod ]
+
+
+-- | The kernel registry uses bare module names ("String",
+-- "Crypto", "JsonDec") that match how user code references them
+-- at call sites. The doc tool shows fully-qualified names so the
+-- module list reads consistently. This table maps registry-side
+-- → canonical.
+--
+-- Anything not in the table passes through unchanged (covers
+-- Go-stdlib FFI proxies like `Context`, `Fmt` that have no Sky.*
+-- alias).
+canonicaliseKernelModule :: String -> String
+canonicaliseKernelModule m = case m of
+    -- Sky.Core.*
+    "Basics"        -> "Sky.Core.Basics"
+    "String"        -> "Sky.Core.String"
+    "List"          -> "Sky.Core.List"
+    "Dict"          -> "Sky.Core.Dict"
+    "Set"           -> "Sky.Core.Set"
+    "Maybe"         -> "Sky.Core.Maybe"
+    "Result"        -> "Sky.Core.Result"
+    "Math"          -> "Sky.Core.Math"
+    "Char"          -> "Sky.Core.Char"
+    "Path"          -> "Sky.Core.Path"
+    "Crypto"        -> "Sky.Core.Crypto"
+    "Encoding"      -> "Sky.Core.Encoding"
+    "Regex"         -> "Sky.Core.Regex"
+    "Uuid"          -> "Sky.Core.Uuid"
+    "Random"        -> "Sky.Core.Random"
+    "Task"          -> "Sky.Core.Task"
+    "Time"          -> "Sky.Core.Time"
+    "File"          -> "Sky.Core.File"
+    "Io"            -> "Sky.Core.Io"
+    "Http"          -> "Sky.Core.Http"
+    "System"        -> "Sky.Core.System"
+    "Process"       -> "Sky.Core.Process"
+    "JsonEnc"       -> "Sky.Core.Json.Encode"
+    "JsonDec"       -> "Sky.Core.Json.Decode"
+    "JsonDecP"      -> "Sky.Core.Json.Decode.Pipeline"
+    -- Std.*
+    "Cmd"           -> "Std.Cmd"
+    "Sub"           -> "Std.Sub"
+    "Log"           -> "Std.Log"
+    "Live"          -> "Std.Live"
+    "Tui"           -> "Std.Tui"
+    "Cli"           -> "Std.Cli"
+    "Auth"          -> "Std.Auth"
+    "Db"            -> "Std.Db"
+    -- Sky.Http.*
+    "Server"        -> "Sky.Http.Server"
+    "Middleware"    -> "Sky.Http.Middleware"
+    "RateLimit"     -> "Sky.Http.RateLimit"
+    -- Sky.*
+    "Test"          -> "Sky.Test"
+    "Ffi"           -> "Sky.Ffi"
+    -- Anything else — Go FFI proxies (Context, Fmt) — stays as-is.
+    other           -> other
 
 
 data BucketKind = BucketProject | BucketDeps | BucketStdlib
@@ -260,6 +373,8 @@ isStdlibModule m =
         n = dmName m
     in "/sky-stdlib/" `List.isInfixOf` f
        || ".sky-stdlib/" `List.isInfixOf` f
+       -- Kernel-registry synthetic modules (no on-disk file).
+       || "<kernel registry" `List.isPrefixOf` f
        || "Sky.Core." `List.isPrefixOf` n
        || "Std." `List.isPrefixOf` n
        || n `elem` [ "Sky.Live", "Sky.Tui", "Sky.Cli", "Sky.Http"
