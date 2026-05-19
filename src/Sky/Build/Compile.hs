@@ -6244,6 +6244,18 @@ exprToGo (A.At _ expr) = case expr of
                     got = length args
                 in if got < declared && declared > 0
                     then emitPartialUserCall func args (declared - got)
+                    -- Over-application: callee returns a function value
+                    -- which we apply further.  `pickIf : Bool -> (Int -> Int)`
+                    -- called as `pickIf True 10` must lower to a chain
+                    -- `pickIf(true)(10)`, not the (wrong) flat call
+                    -- `pickIf(true, 10)`.  Route the extras through
+                    -- `rt.SkyCall` — the reflective dispatcher handles
+                    -- whatever Go shape the inner call returns (typed
+                    -- `func(int) int`, an `any`-routing closure, or a
+                    -- runtime-built MakeFunc value).  Cost: ~100 ns per
+                    -- extra-arg call site.
+                    else if got > declared && declared > 0
+                    then emitOverApplication func args declared
                     -- T2/T6: when the callee has typed params (recorded
                     -- in env._cg_funcParamTypes), coerce each `any`-arg
                     -- expression to the expected param type.
@@ -8008,6 +8020,47 @@ zipWithDefault _ _  _ [] = []
 zipWithDefault f fb (a:as) (c:cs) = f (fb c) a : zipWithDefault f fb as cs
 
 
+-- | Over-application: the call supplied MORE args than the callee's
+-- declared arity. Means the callee returns a function value which we
+-- continue to apply.
+--
+-- Lowering: emit the regular flat call against the first `declared`
+-- args, then thread the remaining args through `rt.SkyCall` — the
+-- reflective dispatcher handles any return shape (typed Go `func`,
+-- `func(any) any` closure, MakeFunc value).
+--
+--   pickIf : Bool -> (Int -> Int)
+--   pickIf True 10  -- got=2, declared=1
+--
+-- emits as:
+--
+--   rt.SkyCall(pickIf(true), 10)
+--
+-- For N extras the dispatcher fold-applies them left-to-right:
+--   rt.SkyCall(rt.SkyCall(f(a), b), c)
+emitOverApplication :: Can.Expr -> [Can.Expr] -> Int -> GoIr.GoExpr
+emitOverApplication func allArgs declared =
+    let (firstK, rest) = splitAt declared allArgs
+        modStr = case A.toValue func of
+            Can.VarTopLevel home _ -> ModuleName.toString home
+            _ -> ""
+        rawName = case A.toValue func of
+            Can.VarTopLevel _ name -> name
+            _ -> ""
+        qualName = if null modStr || modStr == "Main"
+            then goSafeName rawName
+            else map (\c -> if c == '.' then '_' else c) modStr
+                 ++ "_" ++ goSafeName rawName
+        mMangled = instanceMangledName (A.toRegion func) qualName
+        callName = maybe qualName id mMangled
+        baseCall = GoIr.GoCall (GoIr.GoIdent callName)
+                       (coerceCallArgsAt (A.toRegion func) qualName firstK)
+        applyOne acc arg = GoIr.GoCall
+            (GoIr.GoQualified "rt" "SkyCall")
+            [acc, exprToGo arg]
+    in foldl applyOne baseCall rest
+
+
 emitPartialUserCall :: Can.Expr -> [Can.Expr] -> Int -> GoIr.GoExpr
 emitPartialUserCall func suppliedArgs missing =
     let -- Resolve callee qualified name so we can look up its typed
@@ -8926,7 +8979,16 @@ patternCondition subject pat = case pat of
         Just $ GoIr.GoBinary "==" (GoIr.GoIdent subject) (GoIr.GoRuneLit c)
 
     Can.PCtor home typeName union ctorName ctorIdx args ->
-        case Can._u_opts union of
+        -- Sky's `Bool` lowers to a raw Go `bool` — its True/False ctor
+        -- patterns must compare directly against the value, NOT via
+        -- `rt.EnumTagIs` (which expects an SkyADT carrying a .Tag).
+        -- A plain `case cond of True -> a; False -> b` is generated
+        -- with subject typed Go `bool`; routing through EnumTagIs would
+        -- fall through every arm and panic in `rt.Unreachable`.
+        if typeName == "Bool" && ctorName `elem` ["True", "False"] then
+            Just $ GoIr.GoBinary "==" (GoIr.GoIdent subject)
+                       (GoIr.GoBoolLit (ctorName == "True"))
+        else case Can._u_opts union of
             Can.Enum ->
                 -- Enum: zero-arg ADT. Route through rt.EnumTagIs so
                 -- values arriving from rt builders (SkyADT with the
