@@ -37,8 +37,12 @@ null : Value
 null = Ffi.kernel "JsonEnc_null"
 
 
--- | Encode a list of values as a JSON array.
-list : List Value -> Value
+-- | Encode a list of values as a JSON array.  Elm-style:
+-- `list Encode.string [ "a", "b" ]` — takes a per-element encoder
+-- plus the list.  Runtime is variadic so both the 1-arg
+-- (pre-encoded `List Value`) and the 2-arg (encoder + raw list)
+-- forms dispatch correctly.
+list : (a -> Value) -> List a -> Value
 list = Ffi.kernel "JsonEnc_list"
 
 
