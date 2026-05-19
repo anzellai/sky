@@ -2035,30 +2035,7 @@ runConsole opts = do
     -- Install explicit handlers that terminate the child first.
     -- SIGINT (Ctrl-C) already works via Haskell's UserInterrupt
     -- bubbling through bracket, but for symmetry handle it here too.
-    let forwardSignal sig = Signals.installHandler sig
-            (Signals.Catch (do
-                -- terminateProcess sends SIGTERM on POSIX.
-                System.Process.terminateProcess rph
-                -- Brief grace so the child can flush its log buffer,
-                -- then escalate. The parent's outer 2 s grace in
-                -- ShutdownSubApps gives us a window; we want to be
-                -- FASTER than that so the parent doesn't have to
-                -- SIGKILL us via process-group escalation.
-                _ <- Control.Concurrent.forkIO $ do
-                    Control.Concurrent.threadDelay 1000000  -- 1 s
-                    mec <- System.Process.getProcessExitCode rph
-                    case mec of
-                        Just _  -> return ()
-                        Nothing -> do
-                            ph <- System.Process.getPid rph
-                            case ph of
-                                Just pid -> Signals.signalProcess Signals.sigKILL pid
-                                Nothing  -> return ()
-                return ()))
-            Nothing
-    _ <- forwardSignal Signals.sigTERM
-    _ <- forwardSignal Signals.sigHUP
-    _ <- forwardSignal Signals.sigINT
+    forwardChildSignals rph
     rec' <- Control.Exception.bracket_ (return ())
         -- Even if we exit via uncaught exception, terminate the child.
         (do
