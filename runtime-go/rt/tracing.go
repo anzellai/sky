@@ -195,9 +195,25 @@ func WithCmdSpan(taskName string, fn func() any) any {
 // (observability-design.md Tier 1 — the causal middle layer that
 // groups DB / Http child spans under "which Msg caused them").
 func WithMsgSpan(msgName string, fn func() any) any {
-	return WithSpan("msg "+msgName, trace.SpanKindInternal,
+	out, _ := WithMsgSpanTraced(msgName, fn)
+	return out
+}
+
+// WithMsgSpanTraced is WithMsgSpan that also returns the span's
+// trace id. The caller (Sky.Live / Sky.Tui dispatch) stamps that id
+// onto the Msg log entry so a log line and its trace share ONE
+// correlation id — the console's Logs and Traces tabs can then
+// pivot between each other.
+func WithMsgSpanTraced(msgName string, fn func() any) (any, string) {
+	var traceID string
+	out := WithSpan("msg "+msgName, trace.SpanKindInternal,
 		[]attribute.KeyValue{attribute.String("sky.msg", msgName)},
-		fn)
+		func() any {
+			traceID = trace.SpanContextFromContext(
+				CurrentTraceContext()).TraceID().String()
+			return fn()
+		})
+	return out, traceID
 }
 
 // ─── Tier-1 auto-instrumentation convenience wrappers ─────────────

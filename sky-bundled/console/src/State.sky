@@ -161,6 +161,7 @@ type Msg
     | LogFilterPickSession String
     | LogFilterClear
     | TraceFilterQuery String
+    | PivotToTrace String   -- jump to Traces tab filtered by a trace id
 
 
 -- ─── Defaults ────────────────────────────────────────────────────

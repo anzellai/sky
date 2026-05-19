@@ -2449,9 +2449,12 @@ func (app *liveApp) dispatch(sess *liveSession, msg any) (body string) {
 	// Tier 1 auto-trace: wrap the TEA update in a Msg span. This is
 	// the causal middle layer — DB / Http / Auth child spans opened
 	// by the update body nest under "msg <Name>", so a trace shows
-	// which Msg triggered which queries.
-	result := WithMsgSpan(msgDisplayName(msg),
+	// which Msg triggered which queries. The span's trace id is
+	// stamped onto the Msg log entry (msgLogCtx.TraceID) so the log
+	// line and its trace share one correlation id.
+	result, msgTraceID := WithMsgSpanTraced(msgDisplayName(msg),
 		func() any { return sky_call2(app.update, msg, sess.model) })
+	msgLogCtx.TraceID = msgTraceID
 	sess.model = tupleFirst(result)
 	cmd := tupleSecond(result)
 	finalCmd = cmd

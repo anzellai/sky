@@ -403,6 +403,10 @@ logRow e =
           subappBadge e.subapp
         , -- Session id (clickable — sets the session pivot filter)
           sessionBadge e.sessionId
+        , -- Trace id (clickable — jumps to the Traces tab filtered
+          -- to this id). reqId is unified with the OTEL trace id, so
+          -- this matches the `trace <id>` chip on the Traces tab.
+          traceBadge e.reqId
         , -- Message — fills the rest of the row
           Ui.el
             [ Ui.width Ui.fill
@@ -435,6 +439,28 @@ sessionBadge sid =
             , Font.color accent
             ]
             (Ui.text (String.left 8 sid))
+
+
+-- Trace-id badge on a log row. reqId is unified with the OTEL
+-- trace id, so its first 8 chars match the `trace <id>` chip on
+-- the Traces tab. Click → jump to the filtered Traces tab.
+traceBadge : String -> Element Msg
+traceBadge tid =
+    if tid == "" then
+        Ui.el [ Ui.width (Ui.px 92) ] (Ui.text "")
+    else
+        Ui.el
+            [ Ui.width (Ui.px 92)
+            , Background.color bgCode
+            , Border.rounded 3
+            , Ui.paddingXY 6 2
+            , Ui.pointer
+            , Ui.onClick (PivotToTrace tid)
+            , Font.family "ui-monospace, Menlo, monospace"
+            , Font.size 11
+            , Font.color textSecondary
+            ]
+            (Ui.text ("trace " ++ String.left 8 tid))
 
 
 subappBadge : String -> Element Msg
