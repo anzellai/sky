@@ -26,6 +26,7 @@ import           System.Directory (createDirectoryIfMissing)
 import           System.FilePath ((</>))
 
 import           Sky.Doc.Index
+import qualified Sky.Doc.Markdown as MD
 
 
 -- | Render the entire site into the given directory. Creates
@@ -110,7 +111,7 @@ renderIndexPage idx = htmlShell "Sky docs" $ concat
     , "  </div>"
     , "</header>"
     , "<div class='search'>"
-    , "  <input id='q' type='search' placeholder='Search modules + names …' autofocus />"
+    , "  <input id='q' type='search' placeholder=\"Search modules, names, or types (e.g. 'String -> Int', 'Money -> Money') …\" autofocus />"
     , "  <div id='hits'></div>"
     , "</div>"
     , "<main id='index'>"
@@ -154,9 +155,15 @@ renderModulePage outDir m = do
         , "  <a class='back' href='/'>← all modules</a>"
         , "  <h1>" ++ esc (dmName m) ++ "</h1>"
         , case dmDoc m of
-            Just d  -> "  <p class='mod-doc'>" ++ esc d ++ "</p>"
+            Just d  -> "  <div class='mod-doc'>" ++ MD.renderMarkdown d ++ "</div>"
             Nothing -> ""
         , "  <p class='source'>Source: <code>" ++ esc (dmFile m) ++ "</code></p>"
+        , "  <div class='mod-search'>"
+        , "    <input id='mq' type='search' placeholder='Filter " ++ esc (dmName m)
+                          ++ " — " ++ show (length (dmSymbols m))
+                          ++ " symbols (name or signature) …' autofocus />"
+        , "    <span id='mq-count' class='dim'></span>"
+        , "  </div>"
         , "</header>"
         , "<main class='module'>"
         , renderSymGroup "Types" (List.filter (\s -> dsKind s == KindType
@@ -185,7 +192,7 @@ renderSym s = concat
     , esc (dsName s) ++ "</h3>"
     , "  <pre class='sig'>" ++ esc (formatSig s) ++ "</pre>"
     , case dsDoc s of
-        Just d  -> "  <p class='doc'>" ++ esc d ++ "</p>"
+        Just d  -> "  <div class='doc'>" ++ MD.renderMarkdown d ++ "</div>"
         Nothing -> ""
     , "</article>"
     ]
@@ -272,6 +279,26 @@ docCSS = unlines
     , ".sym:hover .anchor { color: var(--accent); }"
     , ".sig { font-family: ui-monospace, Menlo, monospace; font-size: 13px; padding: 8px 12px; background: var(--bg-2); border-radius: 4px; margin: 6px 0; overflow-x: auto; }"
     , ".doc { color: var(--dim); margin-top: 4px; white-space: pre-wrap; }"
+    -- In-module filter — same shape as the index search but inline
+    -- on the module page, narrowing the symbols within the page
+    -- (Std.Ui has 224 symbols; without this, the page is a wall).
+    , ".mod-search { margin: 12px 0; display: flex; align-items: center; gap: 12px; }"
+    , ".mod-search input { flex: 1; padding: 8px 12px; background: var(--bg-2); color: var(--fg); border: 1px solid var(--border); border-radius: 6px; font: inherit; }"
+    , ".mod-search input:focus { outline: none; border-color: var(--accent); }"
+    , ".mod-search #mq-count { font-size: 12px; }"
+    , ".sym.hidden { display: none; }"
+    , ".group.empty { display: none; }"
+    -- Markdown-rendered doc-comment styling.
+    , ".doc, .mod-doc { color: var(--dim); margin-top: 4px; line-height: 1.5; }"
+    , ".doc p, .mod-doc p { margin-bottom: 6px; }"
+    , ".doc code, .mod-doc code { font-family: ui-monospace, Menlo, monospace; font-size: 12px; background: rgba(96,165,250,.1); padding: 1px 5px; border-radius: 3px; color: var(--fg); }"
+    , ".doc pre.code, .mod-doc pre.code { font-family: ui-monospace, Menlo, monospace; font-size: 12px; background: var(--bg-2); padding: 10px 12px; border-radius: 4px; margin: 8px 0; overflow-x: auto; color: var(--fg); white-space: pre; }"
+    , ".doc a, .mod-doc a { color: var(--accent); text-decoration: none; }"
+    , ".doc a:hover, .mod-doc a:hover { text-decoration: underline; }"
+    , ".doc strong, .mod-doc strong { color: var(--fg); font-weight: 600; }"
+    , ".doc em, .mod-doc em { color: var(--fg); font-style: italic; }"
+    , ".doc ul, .mod-doc ul { margin: 6px 0 6px 20px; padding: 0; list-style: disc; }"
+    , ".doc h4, .doc h5, .mod-doc h4, .mod-doc h5 { color: var(--fg); margin: 10px 0 4px; font-weight: 600; font-size: 13px; }"
     ]
 
 
@@ -284,19 +311,62 @@ docJS = unlines
     , "  const hits = document.getElementById('hits');"
     , "  if (!q || !hits) return;"
     , "  let sel = -1;"
+    -- ─── Type-signature canonicaliser ────────────────────────"
+    -- Rename TVars (lowercase-leading identifiers in type
+    -- position) to a, b, c, ... in left-to-right order. Lets
+    -- `Int -> Int` match `a -> a`, `String -> Maybe a` match
+    -- `String -> Maybe Int`, etc. Hoogle-style.
+    , "  const normSig = (s) => {"
+    , "    if (!s) return '';"
+    , "    // Strip leading `name : ` if present."
+    , "    const colonIdx = s.indexOf(' : ');"
+    , "    let body = colonIdx >= 0 ? s.slice(colonIdx + 3) : s;"
+    , "    body = body.replace(/\\s+/g, ' ').trim();"
+    , "    // Tokenise into identifiers, keeping punctuation."
+    , "    const map = {};"
+    , "    let counter = 0;"
+    , "    return body.replace(/[A-Za-z_][A-Za-z0-9_']*/g, (tok) => {"
+    , "      // Capital-leading: concrete type, leave alone."
+    , "      if (/^[A-Z]/.test(tok)) return tok;"
+    , "      // Sky keywords / kernel module prefixes stay literal."
+    , "      if (['msg', 'model', 'a', 'b', 'c'].includes(tok)) {"
+    , "        if (map[tok] === undefined) {"
+    , "          map[tok] = String.fromCharCode(97 + counter++);"
+    , "        }"
+    , "        return map[tok];"
+    , "      }"
+    , "      // Lowercase-leading: assume TVar, rename canonically."
+    , "      if (map[tok] === undefined) {"
+    , "        map[tok] = String.fromCharCode(97 + counter++);"
+    , "      }"
+    , "      return map[tok];"
+    , "    });"
+    , "  };"
+    -- ─── Type-sig query detection ──────────────────────────"
+    , "  const looksLikeTypeQuery = (q) => /->|::/.test(q);"
     , "  const score = (entry, query) => {"
     , "    const lq = query.toLowerCase();"
     , "    const n = entry.name.toLowerCase();"
     , "    const m = entry.module.toLowerCase();"
     , "    const full = (m + '.' + n);"
     , "    let s = 0;"
+    -- Type-signature path: heavier score weights so type matches
+    -- rank above accidental name substring hits.
+    , "    if (looksLikeTypeQuery(query) && entry.sig) {"
+    , "      const qn = normSig(query);"
+    , "      const sn = normSig(entry.sig);"
+    , "      if (qn === sn) s += 1200;"
+    , "      else if (sn.includes(qn)) s += 700;"
+    , "      else if (sn.replace(/[()]/g, '').includes(qn.replace(/[()]/g, ''))) s += 500;"
+    , "    }"
+    -- Name / module match (fallback OR alongside type match).
     , "    if (n === lq) s += 1000;"
     , "    else if (n.startsWith(lq)) s += 500;"
     , "    else if (m.endsWith('.' + lq) || m === lq) s += 400;"
     , "    else if (n.includes(lq)) s += 200;"
     , "    else if (full.includes(lq)) s += 100;"
     , "    else if (m.includes(lq)) s += 80;"
-    , "    else return 0;"
+    , "    if (s === 0) return 0;"
     , "    if (entry.bucket === 'project') s += 50;"
     , "    else if (entry.bucket === 'deps') s += 20;"
     , "    return s;"
@@ -325,5 +395,41 @@ docJS = unlines
     , "    else if (e.key === 'Enter' && sel >= 0) { items[sel].click(); }"
     , "    else if (e.key === 'Escape') { hits.classList.remove('show'); q.blur(); }"
     , "  });"
+    , "})();"
+    -- ─── Per-module filter (only fires on module pages) ─────"
+    , "(() => {"
+    , "  const mq = document.getElementById('mq');"
+    , "  const counter = document.getElementById('mq-count');"
+    , "  if (!mq) return;"
+    , "  const syms = Array.from(document.querySelectorAll('.sym'));"
+    , "  const groups = Array.from(document.querySelectorAll('.group'));"
+    , "  const total = syms.length;"
+    , "  const updateGroups = () => {"
+    , "    groups.forEach(g => {"
+    , "      const visible = Array.from(g.querySelectorAll('.sym')).some(s => !s.classList.contains('hidden'));"
+    , "      g.classList.toggle('empty', !visible);"
+    , "    });"
+    , "  };"
+    , "  const filter = (v) => {"
+    , "    const lv = v.toLowerCase().trim();"
+    , "    if (!lv) { syms.forEach(s => s.classList.remove('hidden')); updateGroups(); counter.textContent = ''; return; }"
+    , "    let shown = 0;"
+    , "    syms.forEach(s => {"
+    , "      const name = (s.id || '').toLowerCase();"
+    , "      const sig = (s.querySelector('.sig')?.textContent || '').toLowerCase();"
+    , "      const doc = (s.querySelector('.doc')?.textContent || '').toLowerCase();"
+    , "      const match = name.includes(lv) || sig.includes(lv) || doc.includes(lv);"
+    , "      s.classList.toggle('hidden', !match);"
+    , "      if (match) shown++;"
+    , "    });"
+    , "    updateGroups();"
+    , "    counter.textContent = shown + ' / ' + total;"
+    , "  };"
+    , "  mq.addEventListener('input', () => filter(mq.value));"
+    , "  // Deep-link: if URL has #foo, jump to that symbol after render."
+    , "  if (location.hash) {"
+    , "    const el = document.getElementById(decodeURIComponent(location.hash.slice(1)));"
+    , "    if (el) el.scrollIntoView({ block: 'start' });"
+    , "  }"
     , "})();"
     ]

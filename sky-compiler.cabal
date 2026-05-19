@@ -186,6 +186,7 @@ executable sky
     Sky.Doc.Index
     Sky.Doc.Terminal
     Sky.Doc.Render
+    Sky.Doc.Markdown
     Sky.Build.EmbeddedDocServer
 
 
