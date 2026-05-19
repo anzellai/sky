@@ -21,6 +21,7 @@ package rt
 import (
 	"context"
 
+	"go.opentelemetry.io/otel/codes"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
 	"sky-app/rt/telemetry"
@@ -44,6 +45,16 @@ func (traceRingProcessor) OnEnd(s sdktrace.ReadOnlySpan) {
 	for _, kv := range s.Attributes() {
 		attrs[string(kv.Key)] = kv.Value.Emit()
 	}
+	// Normalise the status to the Console's convention: lowercase
+	// "ok" / "error". OTEL's Code.String() yields "Unset" / "Ok" /
+	// "Error" — the Console treats anything ≠ "ok" as a failure, so
+	// emitting the raw OTEL string would paint EVERY span red. An
+	// Unset span (the common case — a span that simply didn't error)
+	// is a success, not an error.
+	statusCode := "ok"
+	if s.Status().Code == codes.Error {
+		statusCode = "error"
+	}
 	RecordTrace(telemetry.TraceEntry{
 		TraceID:       sc.TraceID().String(),
 		SpanID:        sc.SpanID().String(),
@@ -53,7 +64,7 @@ func (traceRingProcessor) OnEnd(s sdktrace.ReadOnlySpan) {
 		StartTime:     s.StartTime(),
 		EndTime:       s.EndTime(),
 		Attributes:    attrs,
-		StatusCode:    s.Status().Code.String(),
+		StatusCode:    statusCode,
 		StatusMessage: s.Status().Description,
 	})
 }

@@ -160,6 +160,7 @@ init _req =
             , errors    = []
             , lastError = ""
             , logFilter = emptyLogFilter
+            , traceQuery = ""
             }
     in
     -- Fire one immediate fetch so the initial render isn't empty;
@@ -252,6 +253,11 @@ update msg model =
             ( { model | logFilter = emptyLogFilter }
             , fetchLogsOnly model.parentUrl emptyLogFilter
             )
+
+        -- Traces filter is purely client-side — every span is
+        -- already in model.traces, so no re-fetch is needed.
+        TraceFilterQuery q ->
+            ( { model | traceQuery = q }, Cmd.none )
 
 
 fetchLogsOnly : String -> LogFilter -> Cmd Msg

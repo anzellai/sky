@@ -31,6 +31,8 @@ init _ =
       , traces    = mockTraces
       , errors    = mockErrors
       , lastError = ""
+      , logFilter = emptyLogFilter
+      , traceQuery = ""
       }
     , Cmd.none
     )
@@ -51,6 +53,12 @@ update msg model =
             ( model, Cmd.none )
 
         GotLogs _ ->
+            ( model, Cmd.none )
+
+        -- Tui variant has no HTTP wire + no filter UI — every other
+        -- Msg (GotMetrics/Traces/Errors, LogFilter*, TraceFilterQuery)
+        -- is a no-op here.
+        _ ->
             ( model, Cmd.none )
 
 

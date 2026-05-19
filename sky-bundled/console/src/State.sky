@@ -140,6 +140,7 @@ type alias Model =
     , errors    : List ErrorRow
     , lastError : String        -- one-line surface for fetch failures
     , logFilter : LogFilter
+    , traceQuery : String       -- client-side Traces-tab filter (name / id)
     }
 
 
@@ -159,6 +160,7 @@ type Msg
     | LogFilterToggleLevel String
     | LogFilterPickSession String
     | LogFilterClear
+    | TraceFilterQuery String
 
 
 -- ─── Defaults ────────────────────────────────────────────────────

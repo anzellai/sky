@@ -98,6 +98,16 @@ func StartPushExporter() *PushExporter {
 	if parent == "" || ns == "" {
 		return nil // standalone — no parent to push to
 	}
+	// The Sky Console is the observability VIEWER, not a viewed
+	// app. Its own TEA loop (poll → GotLogs / GotOverview / Tick →
+	// re-render) would otherwise federate a `msg_dispatch` log + a
+	// `msg` span into the parent's ring every poll interval —
+	// observability observing itself, drowning the real app's
+	// activity in console-poll noise. The console keeps its
+	// telemetry local; it never pushes.
+	if ns == "console" {
+		return nil
+	}
 	intervalMs := 2000
 	if v := os.Getenv("SKY_OBSERVABILITY_PUSH_INTERVAL_MS"); v != "" {
 		if n, ok := parsePositiveInt(v); ok {

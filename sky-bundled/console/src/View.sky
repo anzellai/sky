@@ -170,7 +170,7 @@ content model =
             OverviewTab -> overviewView model.overview
             MetricsTab  -> metricsView model.metrics
             LogsTab     -> logsView model
-            TracesTab   -> tracesView model.traces
+            TracesTab   -> tracesView model.traceQuery model.traces
             ErrorsTab   -> errorsView model.errors)
 
 
@@ -570,56 +570,203 @@ formatAvg sum count =
 
 -- ─── Traces tab ──────────────────────────────────────────────────
 
-tracesView : List TraceRow -> List (Element Msg)
-tracesView rows =
-    [ panel "Recent traces"
-        (if List.isEmpty rows then
-            [ emptyState "No traces captured yet." ]
-         else
-            List.map traceRowView rows)
-    ]
-
-
-traceRowView : TraceRow -> Element Msg
-traceRowView r =
+tracesView : String -> List TraceRow -> List (Element Msg)
+tracesView query rows =
     let
-        statusOk = r.status == "ok" || r.status == ""
+        -- Keep a whole trace when ANY of its spans matches the query
+        -- (by span name or trace id) — so filtering on "db" still
+        -- shows the parent msg / cmd spans for context.
+        lq = String.toLower (String.trim query)
+
+        matches r =
+            String.contains lq (String.toLower r.name)
+                || String.contains lq (String.toLower r.traceId)
+
+        keepTrace tid =
+            List.any (\r -> r.traceId == tid && matches r) rows
+
+        visibleIds =
+            if lq == "" then
+                distinctTraceIds rows
+
+            else
+                List.filter keepTrace (distinctTraceIds rows)
     in
-    Ui.row
-        [ Ui.width Ui.fill
-        , Ui.paddingXY 0 6
-        , Ui.spacing 12
-        , Border.widthEach { top = 0, right = 0, bottom = 1, left = 0 }
-        , Border.color borderSoft
+        [ tracesFilterPanel query
+        , panel "Recent traces"
+            (if List.isEmpty rows then
+                [ emptyState "No traces captured yet." ]
+
+             else if List.isEmpty visibleIds then
+                [ emptyState "No traces match the filter." ]
+
+             else
+                List.map (traceGroupView rows) visibleIds)
         ]
-        [ Ui.el
-            [ Ui.width (Ui.px 80)
-            , Font.color textMuted
-            , Font.family "ui-monospace, Menlo, monospace"
+
+
+tracesFilterPanel : String -> Element Msg
+tracesFilterPanel query =
+    Ui.row
+        [ Background.color bgRaised
+        , Border.width 1
+        , Border.color border_
+        , Border.rounded 6
+        , Ui.padding 12
+        , Ui.spacing 8
+        , Ui.width Ui.fill
+        ]
+        [ Ui.input
+            [ Ui.htmlAttribute "type" "search"
+            , Ui.htmlAttribute "placeholder" "Filter traces by span name or trace id…"
+            , Ui.htmlAttribute "value" query
+            , Ui.onInput TraceFilterQuery
+            , Ui.width Ui.fill
+            , Background.color bgCode
+            , Border.width 1
+            , Border.color border_
+            , Border.rounded 4
+            , Ui.paddingXY 8 6
+            , Font.color textPrimary
             , Font.size 12
+            , Font.family "ui-monospace, Menlo, monospace"
             ]
-            (Ui.text (compactTime r.startTime))
         , Ui.el
-            [ Ui.width (Ui.px 50)
-            , Font.color (if statusOk then textMuted else err)
-            , Font.bold
+            [ Ui.paddingXY 8 6
+            , Background.color bgCode
+            , Border.rounded 4
+            , Ui.pointer
+            , Ui.onClick (TraceFilterQuery "")
+            , Font.color textSecondary
             , Font.size 11
             ]
-            (Ui.text (if statusOk then "OK" else "ERR"))
-        , Ui.el
-            [ Ui.width Ui.fill
-            , Font.size 13
-            , Font.color textPrimary
-            , Font.family "ui-monospace, Menlo, monospace"
-            ]
-            (Ui.text r.name)
-        , Ui.el
-            [ Font.color textSecondary
-            , Font.family "ui-monospace, Menlo, monospace"
-            , Font.size 12
-            ]
-            (Ui.text (formatFloat r.durationMs ++ "ms"))
+            (Ui.text "clear")
         ]
+
+
+-- Distinct trace ids in first-seen order (no List.sortBy in the
+-- Sky stdlib — fold preserving insertion order).
+distinctTraceIds : List TraceRow -> List String
+distinctTraceIds rows =
+    List.foldl
+        (\r acc ->
+            if r.traceId == "" || List.member r.traceId acc then
+                acc
+
+            else
+                acc ++ [ r.traceId ]
+        )
+        []
+        rows
+
+
+-- Depth of a span in its trace: count parentId hops up to the root.
+-- Fuel-capped so a malformed parent cycle can't loop forever.
+spanDepth : List TraceRow -> Int -> String -> Int
+spanDepth rows fuel parentId =
+    if fuel <= 0 || parentId == "" then
+        0
+
+    else
+        case List.find (\r -> r.spanId == parentId) rows of
+            Just parent ->
+                1 + spanDepth rows (fuel - 1) parent.parentId
+
+            Nothing ->
+                0
+
+
+-- One trace = its own little tree block: a header carrying the
+-- short trace id, then each span indented by its depth.
+traceGroupView : List TraceRow -> String -> Element Msg
+traceGroupView allRows tid =
+    let
+        spans =
+            List.filter (\r -> r.traceId == tid) allRows
+
+        shortId =
+            if String.length tid >= 8 then
+                String.slice 0 8 tid
+
+            else
+                tid
+
+        rootName =
+            case List.find (\r -> r.parentId == "") spans of
+                Just root -> root.name
+                Nothing ->
+                    case List.head spans of
+                        Just s -> s.name
+                        Nothing -> "(trace)"
+    in
+        Ui.column
+            [ Ui.width Ui.fill
+            , Ui.paddingXY 0 8
+            , Ui.spacing 2
+            , Border.widthEach { top = 0, right = 0, bottom = 1, left = 0 }
+            , Border.color borderSoft
+            ]
+            (Ui.row
+                [ Ui.spacing 8, Ui.paddingXY 0 2 ]
+                [ Ui.el
+                    [ Font.family "ui-monospace, Menlo, monospace"
+                    , Font.size 11
+                    , Font.color accent
+                    , Background.color bgCode
+                    , Ui.paddingXY 6 2
+                    , Border.rounded 3
+                    ]
+                    (Ui.text ("trace " ++ shortId))
+                , Ui.el
+                    [ Font.size 12, Font.color textSecondary ]
+                    (Ui.text (rootName ++ " · " ++ String.fromInt (List.length spans) ++ " spans"))
+                ]
+                :: List.map (spanRowView allRows) spans
+            )
+
+
+spanRowView : List TraceRow -> TraceRow -> Element Msg
+spanRowView allRows r =
+    let
+        statusErr = r.status == "error"
+
+        depth = spanDepth allRows 32 r.parentId
+
+        indent = depth * 18
+    in
+        Ui.row
+            [ Ui.width Ui.fill
+            , Ui.paddingEach { top = 3, right = 0, bottom = 3, left = indent }
+            , Ui.spacing 10
+            ]
+            [ Ui.el
+                [ Ui.width (Ui.px 76)
+                , Font.color textMuted
+                , Font.family "ui-monospace, Menlo, monospace"
+                , Font.size 11
+                ]
+                (Ui.text (compactTime r.startTime))
+            , Ui.el
+                [ Ui.width (Ui.px 40)
+                , Font.color (if statusErr then err else textMuted)
+                , Font.bold
+                , Font.size 10
+                ]
+                (Ui.text (if statusErr then "ERR" else "OK"))
+            , Ui.el
+                [ Ui.width Ui.fill
+                , Font.size 13
+                , Font.color textPrimary
+                , Font.family "ui-monospace, Menlo, monospace"
+                ]
+                (Ui.text ((if depth > 0 then "└ " else "") ++ r.name))
+            , Ui.el
+                [ Font.color textSecondary
+                , Font.family "ui-monospace, Menlo, monospace"
+                , Font.size 12
+                ]
+                (Ui.text (formatFloat r.durationMs ++ "ms"))
+            ]
 
 
 -- ─── Errors tab ──────────────────────────────────────────────────
