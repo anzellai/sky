@@ -3,19 +3,14 @@
 -- Clock reads (`now`, `unixMillis`) return `Task Error Int` (the
 -- value is the milliseconds since the Unix epoch).  Pure helpers
 -- (`format*`, `timeString`, `addMillis`, `diffMillis`) work on the
--- integer millisecond value directly.
---
--- `Time.every` (the Sky.Live subscription helper that emits a
--- `Sub msg`) is deliberately NOT exposed here — its return type
--- `Sub msg` lives in `Std.Sub` whose typing is still kernel-only.
--- Users of `Time.every` continue to resolve it via the kernel-
--- registry fallback (`import Std.Sub` is not required at the call
--- site since `Sub` is the runtime-typed sentinel).
+-- integer millisecond value directly.  `every` is the Sky.Live /
+-- Sky.Tui subscription helper that emits a `Sub msg` every N ms.
 module Sky.Core.Time exposing
     ( now, unixMillis, sleep
     , timeString
     , format, formatHTTP, formatISO8601, formatRFC3339
     , addMillis, diffMillis
+    , every
     )
 
 
@@ -70,3 +65,12 @@ addMillis = Ffi.kernel "Time_addMillis"
 
 diffMillis : Int -> Int -> Int
 diffMillis = Ffi.kernel "Time_diffMillis"
+
+
+-- ─── Subscriptions ─────────────────────────────────────────────────
+
+
+-- | `every intervalMillis msg` — Sky.Live / Sky.Tui subscription
+-- that emits `msg` every `intervalMillis` milliseconds.
+every : Int -> msg -> Sub msg
+every = Ffi.kernel "Time_every"

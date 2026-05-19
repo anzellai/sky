@@ -1,0 +1,32 @@
+-- | Std.Cmd — TEA-side outbound effects (Layer 3 Sky source).
+--
+-- A `Cmd msg` is a deferred effect that, when run by the runtime
+-- (Sky.Live / Sky.Tui / Sky.Cli), eventually produces a `msg`
+-- delivered back to `update`.  `Cmd.perform` is the canonical way
+-- to spawn an async Task from inside `update`.
+--
+-- `Cmd msg` is runtime-typed (empty home) — it shares its Go
+-- representation with the existing kernel-registered Cmd type.
+module Std.Cmd exposing
+    ( none, batch, perform
+    )
+
+
+import Sky.Ffi as Ffi
+
+
+-- | No outbound effect.
+none : Cmd msg
+none = Ffi.kernel "Cmd_none"
+
+
+-- | Run multiple commands concurrently in goroutines.
+batch : List (Cmd msg) -> Cmd msg
+batch = Ffi.kernel "Cmd_batch"
+
+
+-- | Spawn a Task in the background; when it completes, dispatch
+-- its `Result` to `update` via the supplied `(Result -> msg)`
+-- continuation.
+perform : Task err a -> (Result err a -> msg) -> Cmd msg
+perform = Ffi.kernel "Cmd_perform"

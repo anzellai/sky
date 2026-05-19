@@ -1,0 +1,151 @@
+-- | Std.Db — relational database helpers (Layer 3 Sky source).
+--
+-- `Db` is the opaque connection handle (runtime-typed — shares
+-- its representation with the existing kernel-registered Db).
+-- Open one with `connect` or `open`, pass it to every subsequent
+-- query, close it with `close` (or let `withTransaction` manage
+-- the lifecycle).
+--
+-- All row results come back as `Dict String String` — read
+-- typed values via `getInt` / `getBool` / `getField`.
+module Std.Db exposing
+    ( open, connect, close
+    , exec, execRaw, query
+    , insertRow, getById, updateById, deleteById
+    , findOneByField, findManyByField, findByConditions
+    , unsafeFindWhere, queryDecode
+    , withTransaction
+    , getField, getString, getInt, getBool
+    )
+
+
+import Sky.Ffi as Ffi
+import Sky.Core.Error exposing (Error)
+
+
+-- ─── Connection lifecycle ──────────────────────────────────────────
+
+
+-- | `open driver dsn` — opens a database connection.
+-- `driver` is `"sqlite"` / `"postgres"`; `dsn` is the connection
+-- string.
+open : String -> String -> Task Error Db
+open = Ffi.kernel "Db_open"
+
+
+-- | Use the connection configured by `sky.toml`'s `[database]`
+-- section (driver + url).
+connect : () -> Task Error Db
+connect = Ffi.kernel "Db_connect"
+
+
+close : Db -> Task Error ()
+close = Ffi.kernel "Db_close"
+
+
+-- ─── Raw SQL ───────────────────────────────────────────────────────
+
+
+-- | `exec db sql params` — parameterised SQL with bound args.
+-- Returns the affected-row count.
+exec : Db -> String -> List a -> Task Error Int
+exec = Ffi.kernel "Db_exec"
+
+
+-- | `execRaw db sql` — SQL without bound args (DDL,
+-- multi-statement scripts).  No parameter binding — vulnerable
+-- to injection if `sql` is built from user input.
+execRaw : Db -> String -> Task Error Int
+execRaw = Ffi.kernel "Db_execRaw"
+
+
+-- | `query db sql params` — parameterised SELECT.  Returns rows
+-- as a list of `Dict String String`.
+query : Db -> String -> List a -> Task Error (List (Dict String String))
+query = Ffi.kernel "Db_query"
+
+
+-- ─── Convenience CRUD ──────────────────────────────────────────────
+
+
+-- | `insertRow db table fields` — insert a row built from
+-- `fields` (`Dict String String`).  Returns the new row's `id`.
+insertRow : Db -> String -> Dict String String -> Task Error Int
+insertRow = Ffi.kernel "Db_insertRow"
+
+
+-- | `getById db table id` — fetch a single row by integer id.
+getById : Db -> String -> String -> Task Error (Maybe (Dict String String))
+getById = Ffi.kernel "Db_getById"
+
+
+-- | `updateById db table id fields` — partial update; returns
+-- the affected-row count.
+updateById : Db -> String -> String -> Dict String String -> Task Error Int
+updateById = Ffi.kernel "Db_updateById"
+
+
+-- | `deleteById db table id` — delete one row by id; returns
+-- the affected-row count.
+deleteById : Db -> String -> String -> Task Error Int
+deleteById = Ffi.kernel "Db_deleteById"
+
+
+-- | `findOneByField db table fieldName value` — equality lookup.
+findOneByField : Db -> String -> String -> a -> Task Error (Maybe (Dict String String))
+findOneByField = Ffi.kernel "Db_findOneByField"
+
+
+-- | `findManyByField db table fieldName value` — equality
+-- lookup returning all matches.
+findManyByField : Db -> String -> String -> a -> Task Error (List (Dict String String))
+findManyByField = Ffi.kernel "Db_findManyByField"
+
+
+-- | `findByConditions db table conditions` — AND-joined equality
+-- on every key/value pair in `conditions`.
+findByConditions : Db -> String -> Dict String String -> Task Error (List (Dict String String))
+findByConditions = Ffi.kernel "Db_findByConditions"
+
+
+-- | `unsafeFindWhere db table whereClause params` — raw `WHERE`
+-- with parameterised args.  The `whereClause` is appended
+-- verbatim to the SELECT — vulnerable to injection if built from
+-- user input.
+unsafeFindWhere : Db -> String -> String -> List a -> Task Error (List (Dict String String))
+unsafeFindWhere = Ffi.kernel "Db_unsafeFindWhere"
+
+
+-- | `queryDecode db sql params decoder` — typed query with a
+-- per-row decoder.
+queryDecode : Db -> String -> List a -> b -> Task Error (List b)
+queryDecode = Ffi.kernel "Db_queryDecode"
+
+
+-- ─── Transactions ──────────────────────────────────────────────────
+
+
+-- | Run a block of database work inside a transaction; commits
+-- on `Ok`, rolls back on `Err`.
+withTransaction : Db -> (Db -> Task Error a) -> Task Error a
+withTransaction = Ffi.kernel "Db_withTransaction"
+
+
+-- ─── Row accessors (read columns from a row) ───────────────────────
+
+
+-- | Read a field as a String (the canonical row-element shape).
+getField : String -> row -> String
+getField = Ffi.kernel "Db_getField"
+
+
+getString : String -> row -> String
+getString = Ffi.kernel "Db_getString"
+
+
+getInt : String -> row -> Int
+getInt = Ffi.kernel "Db_getInt"
+
+
+getBool : String -> row -> Bool
+getBool = Ffi.kernel "Db_getBool"

@@ -1,0 +1,22 @@
+-- | Sky.Core.Http — HTTP client (Layer 3 Sky source).
+--
+-- Outbound HTTP requests.  Returns `HttpResponse` (runtime-typed,
+-- shared with the existing kernel binding).
+module Sky.Core.Http exposing
+    ( get, post
+    )
+
+
+import Sky.Ffi as Ffi
+import Sky.Core.Error exposing (Error)
+
+
+-- | `get url` — issue a GET request.
+get : String -> Task Error HttpResponse
+get = Ffi.kernel "Http_get"
+
+
+-- | `post url body` — issue a POST request with the given body
+-- (raw bytes).
+post : String -> String -> Task Error HttpResponse
+post = Ffi.kernel "Http_post"

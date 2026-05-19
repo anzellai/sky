@@ -1,0 +1,20 @@
+-- | Sky.Http.RateLimit — token-bucket rate limiting (Layer 3
+-- Sky source).
+module Sky.Http.RateLimit exposing
+    ( allow
+    )
+
+
+import Sky.Ffi as Ffi
+
+
+-- | `allow name key capacity refillPerSec` — try to consume one
+-- token from a per-key bucket.  Returns True if the request is
+-- allowed; False if the bucket is empty.
+--
+--   * `name` — limiter label (so multiple limiters can coexist).
+--   * `key` — per-bucket key (typically the client IP).
+--   * `capacity` — bucket size in tokens.
+--   * `refillPerSec` — tokens added per second.
+allow : String -> String -> Int -> Int -> Bool
+allow = Ffi.kernel "RateLimit_allow"
