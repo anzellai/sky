@@ -312,10 +312,12 @@ docJS = unlines
     , "  if (!q || !hits) return;"
     , "  let sel = -1;"
     -- ─── Type-signature canonicaliser ────────────────────────"
-    -- Rename TVars (lowercase-leading identifiers in type
-    -- position) to a, b, c, ... in left-to-right order. Lets
-    -- `Int -> Int` match `a -> a`, `String -> Maybe a` match
-    -- `String -> Maybe Int`, etc. Hoogle-style.
+    -- Rename TVars (single-letter or known TVar names) to a, b,
+    -- c, ... in left-to-right order. Multi-letter lowercase
+    -- tokens are CASE-INSENSITIVELY treated as concrete type
+    -- names — title-cased before comparison. Lets `Int -> Int`
+    -- match `a -> a`, `string -> int` match `String -> Int`, etc.
+    , "  const tvarNames = new Set(['a','b','c','d','e','f','g','h','i','j','k','l','m','n','o','p','q','r','s','t','u','v','w','x','y','z','msg','model','cmd','sub','err','val','key','elem','item']);"
     , "  const normSig = (s) => {"
     , "    if (!s) return '';"
     , "    // Strip leading `name : ` if present."
@@ -328,18 +330,17 @@ docJS = unlines
     , "    return body.replace(/[A-Za-z_][A-Za-z0-9_']*/g, (tok) => {"
     , "      // Capital-leading: concrete type, leave alone."
     , "      if (/^[A-Z]/.test(tok)) return tok;"
-    , "      // Sky keywords / kernel module prefixes stay literal."
-    , "      if (['msg', 'model', 'a', 'b', 'c'].includes(tok)) {"
+    , "      // Known TVar names (single letters, msg, model, etc.): rename canonically."
+    , "      if (tvarNames.has(tok)) {"
     , "        if (map[tok] === undefined) {"
     , "          map[tok] = String.fromCharCode(97 + counter++);"
     , "        }"
     , "        return map[tok];"
     , "      }"
-    , "      // Lowercase-leading: assume TVar, rename canonically."
-    , "      if (map[tok] === undefined) {"
-    , "        map[tok] = String.fromCharCode(97 + counter++);"
-    , "      }"
-    , "      return map[tok];"
+    , "      // Multi-character lowercase token: treat as a"
+    , "      // case-insensitive concrete type name. Title-case so"
+    , "      // `string` matches `String`, `maybe` matches `Maybe`."
+    , "      return tok.charAt(0).toUpperCase() + tok.slice(1);"
     , "    });"
     , "  };"
     -- ─── Type-sig query detection ──────────────────────────"
