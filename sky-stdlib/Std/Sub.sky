@@ -1,0 +1,22 @@
+-- | Std.Sub — TEA-side inbound subscriptions (Layer 3 Sky source).
+--
+-- A `Sub msg` represents an ongoing stream of `msg` values
+-- delivered to `update`.  Use `Sub.every` for periodic ticks
+-- (animation, polling, …) and `Sub.none` when there's nothing
+-- to subscribe to.
+module Std.Sub exposing
+    ( none, every
+    )
+
+
+import Sky.Ffi as Ffi
+
+
+none : Sub msg
+none = Ffi.kernel "Sub_none"
+
+
+-- | `every intervalMillis msg` — dispatch `msg` every
+-- `intervalMillis` milliseconds.
+every : Int -> msg -> Sub msg
+every = Ffi.kernel "Sub_every"

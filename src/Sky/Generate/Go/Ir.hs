@@ -51,6 +51,8 @@ data GoStmt
     | GoSwitch !GoExpr [(GoExpr, [GoStmt])]         -- switch expr { case val: stmts }
     | GoTypeSwitch !String !GoExpr [(String, [GoStmt])] -- switch name := expr.(type) { case T: ... }
     | GoFor !String !GoExpr [GoStmt]                -- for _, name := range expr { stmts }
+    | GoForever [GoStmt]                            -- for { stmts } — TCO target
+    | GoContinue                                    -- continue (only valid inside ForRange / Forever)
     | GoBlock_ [GoStmt]                             -- { stmts }
     | GoComment !String                             -- // comment
     | GoBlank                                       -- blank line

@@ -1,0 +1,77 @@
+-- | Std.Auth — authentication helpers (Layer 3 Sky source).
+--
+-- Two-tier API: pure crypto helpers (`hashPassword` /
+-- `verifyPassword` / `signToken` / `verifyToken` /
+-- `passwordStrength`) return `Result Error _`; the higher-level
+-- DB-touching flows (`register` / `login` / `setRole`) return
+-- `Task Error _` because they read + write to the user store.
+--
+-- Bcrypt cost defaults to 12 for `hashPassword`; use
+-- `hashPasswordCost` to override (10 for tests, 14+ for high
+-- security).
+module Std.Auth exposing
+    ( register, login, setRole
+    , hashPassword, hashPasswordCost
+    , verifyPassword, passwordStrength
+    , signToken, verifyToken
+    )
+
+
+import Sky.Ffi as Ffi
+import Sky.Core.Error exposing (Error)
+
+
+-- ─── DB-touching flows (Task) ──────────────────────────────────────
+
+
+-- | `register db email password` — create a new user.  Returns
+-- the freshly-assigned user id.
+register : Db -> String -> String -> Task Error Int
+register = Ffi.kernel "Auth_register"
+
+
+-- | `login db email password` — authenticate.  Returns the user
+-- id on success.
+login : Db -> String -> String -> Task Error Int
+login = Ffi.kernel "Auth_login"
+
+
+-- | `setRole db userId role` — assign a role to the user.
+setRole : Db -> Int -> String -> Task Error ()
+setRole = Ffi.kernel "Auth_setRole"
+
+
+-- ─── Pure crypto (Result) ──────────────────────────────────────────
+
+
+-- | Bcrypt hash with default cost (12).
+hashPassword : String -> Result Error String
+hashPassword = Ffi.kernel "Auth_hashPassword"
+
+
+-- | Bcrypt hash with explicit cost — `hashPasswordCost password
+-- cost`.  Use 10 for tests, 14+ for high security.
+hashPasswordCost : String -> Int -> Result Error String
+hashPasswordCost = Ffi.kernel "Auth_hashPasswordCost"
+
+
+-- | `verifyPassword password hash` — constant-time bcrypt verify.
+verifyPassword : String -> String -> Result Error Bool
+verifyPassword = Ffi.kernel "Auth_verifyPassword"
+
+
+-- | Categorical password strength: "weak" / "fair" / "strong".
+passwordStrength : String -> Result Error String
+passwordStrength = Ffi.kernel "Auth_passwordStrength"
+
+
+-- | `signToken secret claims expirySeconds` — produce a signed
+-- JWT.  `claims` is left polymorphic; typically a `Dict` or a
+-- typed-record alias.
+signToken : String -> a -> Int -> Result Error String
+signToken = Ffi.kernel "Auth_signToken"
+
+
+-- | `verifyToken secret token` — verify + decode a JWT.
+verifyToken : String -> String -> Result Error a
+verifyToken = Ffi.kernel "Auth_verifyToken"

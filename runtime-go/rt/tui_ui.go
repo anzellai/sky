@@ -735,6 +735,27 @@ func tuiAppRun(cfg any) any {
 		model = tuiApplyUpdate(guardFn, updateFn, msg, model, msgCh)
 		subMgr.update(subsFn, model)
 
+		// Drain any other messages already queued (fast typing, batched
+		// Cmd Tick fires, mouse-move bursts). Apply them all against
+		// the same model before rendering once at the end. Without this
+		// drain, every keystroke costs one full layout+paint pass even
+		// when 3-4 chars arrived inside one frame window — the user
+		// sees per-character lag scale linearly with type rate.
+		//
+		// Cap the drain so a runaway Cmd loop (sub that re-emits Tick
+		// on every tick) doesn't starve the render path forever.
+		for drained := 0; drained < 64; drained++ {
+			select {
+			case nextMsg := <-msgCh:
+				model = tuiApplyUpdate(guardFn, updateFn, nextMsg, model, msgCh)
+				subMgr.update(subsFn, model)
+			default:
+				goto rendering
+			}
+		}
+
+	rendering:
+
 		// On resize, recompute terminal dims; the grid-size mismatch
 		// against prev forces a full repaint inside paintDiff.
 		newCols, newRows := tuiTermSize(fd)
@@ -743,10 +764,17 @@ func tuiAppRun(cfg any) any {
 			prev = nil // trigger full repaint
 		}
 
+		// First layout pass — discovers focusables + contentH so we
+		// can clamp focusIdx and adjust scrollY if the focused element
+		// scrolled out of view. Skip the second redundant render unless
+		// scrollY actually moved.
+		prevScrollY := scrollY
 		grid, focusables, contentH = renderElementFrameScroll(viewFn, model, cols, rows, canvas, focusIdx, inputs, scrollY)
 		focusIdx = clampFocus(focusIdx, len(focusables))
 		scrollY = ensureFocusVisible(focusables, focusIdx, scrollY, rows, contentH)
-		grid, focusables, contentH = renderElementFrameScroll(viewFn, model, cols, rows, canvas, focusIdx, inputs, scrollY)
+		if scrollY != prevScrollY {
+			grid, focusables, contentH = renderElementFrameScroll(viewFn, model, cols, rows, canvas, focusIdx, inputs, scrollY)
+		}
 		tuiPaint(paintDiff(prev, grid))
 		prev = grid
 	}

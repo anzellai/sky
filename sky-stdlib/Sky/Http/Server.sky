@@ -1,0 +1,53 @@
+-- | Sky.Http.Server — HTTP server request introspection (Layer 3
+-- Sky source).
+--
+-- Helpers that operate on a `Request` to extract path / query /
+-- header / cookie data.  `Server.static` returns a `Route` that
+-- serves files from a directory.
+--
+-- Higher-level routing (`Server.get` / `post` / `listen` /
+-- response builders) continues to live in the kernel-registered
+-- Server module — those entries return runtime-typed Route /
+-- Response shapes that need shape-preserving migration; tracked
+-- as a v0.14.x.1 follow-up.
+module Sky.Http.Server exposing
+    ( param, queryParam, header, getCookie
+    , static
+    )
+
+
+import Sky.Ffi as Ffi
+
+
+-- ─── Request introspection ─────────────────────────────────────────
+
+
+-- | `param name req` — read a URL path parameter
+-- (e.g. `/users/:id`'s `id`).
+param : String -> Request -> Maybe String
+param = Ffi.kernel "Server_param"
+
+
+-- | `queryParam name req` — read a `?key=value`-style query string
+-- parameter.
+queryParam : String -> Request -> Maybe String
+queryParam = Ffi.kernel "Server_queryParam"
+
+
+-- | `header name req` — read a request header (case-insensitive).
+header : String -> Request -> Maybe String
+header = Ffi.kernel "Server_header"
+
+
+-- | `getCookie name req` — read a cookie value.
+getCookie : String -> Request -> Maybe String
+getCookie = Ffi.kernel "Server_getCookie"
+
+
+-- ─── Static-file serving ───────────────────────────────────────────
+
+
+-- | `static urlPrefix diskPath` — serve files from `diskPath` at
+-- URLs starting with `urlPrefix`.  Returns a `Route`.
+static : String -> String -> Route
+static = Ffi.kernel "Server_static"

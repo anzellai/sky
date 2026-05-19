@@ -33,7 +33,10 @@ extra-source-files:
     runtime-go/rt/jobs/*.go
     runtime-go/rt/telemetry/*.go
     sky-stdlib/Sky/Core/*.sky
+    sky-stdlib/Sky/Core/Json/*.sky
+    sky-stdlib/Sky/Core/Json/Decode/*.sky
     sky-stdlib/Sky/*.sky
+    sky-stdlib/Sky/Http/*.sky
     sky-stdlib/Std/*.sky
     sky-stdlib/Std/Ui/*.sky
     sky-stdlib/Std/Html/*.sky
@@ -46,6 +49,8 @@ extra-source-files:
     -- runtime-go subdirs above (Issue #58).
     sky-bundled/console/sky.toml
     sky-bundled/console/src/*.sky
+    sky-bundled/doc/sky.toml
+    sky-bundled/doc/src/*.sky
     app/VERSION
 
 executable sky
@@ -167,6 +172,7 @@ executable sky
     Sky.Build.SkyDeps
     Sky.Build.Validator
     Sky.Build.Monomorphise
+    Sky.Build.TailCallOpt
 
     -- Reporting
     Sky.Reporting.Annotation
@@ -181,6 +187,14 @@ executable sky
     -- CLI helpers
     Sky.Cli.Watch
     Sky.Cli.Doctor
+    Sky.Doc.Index
+    Sky.Doc.Terminal
+    Sky.Doc.Render
+    Sky.Doc.Markdown
+    Sky.Doc.KernelRegistry
+    Sky.Build.KernelRegistryEntries
+    Sky.Build.KernelRegistryParser
+    Sky.Build.EmbeddedDocServer
 
 
 test-suite sky-tests
@@ -240,6 +254,7 @@ test-suite sky-tests
       Sky.Build.ExposingTypeCtorsSpec
       Sky.Build.LetForwardRefSpec
       Sky.Build.EntryLocalShadowsDepSpec
+      Sky.Build.FfiKernelAliasSpec
       Sky.Parse.MultiLineCaseSubjectSpec
       Sky.Type.InstanceCaptureSpec
       Sky.Format.FormatSpec

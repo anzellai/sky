@@ -1,0 +1,32 @@
+-- | Sky.Core.Uuid — UUID generation + parsing (Layer 3 Sky source).
+--
+-- Note: `v4` / `v7` are zero-arg bindings (called without `()`)
+-- following the Sky kernel convention for runtime-arity-0
+-- bindings.  Calling them as `Uuid.v4 ()` hits a pre-existing
+-- codegen bug for arity-0 kernels with a unit argument; use the
+-- bare form `Uuid.v4` instead.
+module Sky.Core.Uuid exposing
+    ( v4, v7
+    , parse
+    )
+
+
+import Sky.Ffi as Ffi
+
+
+-- | Random UUID v4 (122 bits of entropy).  Use when you need a
+-- collision-resistant ID and don't care about ordering.
+v4 : String
+v4 = Ffi.kernel "Uuid_v4"
+
+
+-- | Time-ordered UUID v7 (Unix-time milliseconds prefix +
+-- entropy).  Use for database PKs — sorts lexicographically by
+-- creation time, plays well with B-tree indexes.
+v7 : String
+v7 = Ffi.kernel "Uuid_v7"
+
+
+-- | Parse a UUID string; `Nothing` on malformed input.
+parse : String -> Maybe String
+parse = Ffi.kernel "Uuid_parse"

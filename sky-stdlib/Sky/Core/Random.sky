@@ -1,0 +1,21 @@
+-- | Sky.Core.Random — entropy-driven random helpers (Layer 3 Sky source).
+--
+-- All return `Task Error _` because random reads consume entropy
+-- from the OS RNG (a real side effect).
+module Sky.Core.Random exposing
+    ( int, float
+    )
+
+
+import Sky.Ffi as Ffi
+import Sky.Core.Error exposing (Error)
+
+
+-- | Uniform random integer in `[lo, hi]` inclusive on BOTH ends.
+int : Int -> Int -> Task Error Int
+int = Ffi.kernel "Random_int"
+
+
+-- | Uniform random float in `[lo, hi)` (lo inclusive, hi exclusive).
+float : Float -> Float -> Task Error Float
+float = Ffi.kernel "Random_float"

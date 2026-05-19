@@ -1,911 +1,592 @@
 # CLAUDE.md
 
-> **Quick orientation for new sessions**: Sky is an Elm-family functional
-> language compiling to Go. Compiler in Haskell (GHC 9.4.8). Branch
-> `perf/v0.13`. Last big push delivered v0.13's typed-codegen completion:
-> every USED Sky symbol emits fully-typed Go. Read **"v0.13 State"**
-> immediately below for what landed; sections after it are stable
-> reference material.
+> **Quick orientation.** Sky is an Elm-family functional language compiling to
+> typed Go via a Haskell compiler (GHC 9.4.8). The current branch ships
+> v0.14.x: full Layer-3 stdlib migration (every kernel module surfaced as
+> Sky source), `sky doc` browsable API surface, `Ffi.kernel` mechanism, and
+> auto-TCO for tail-recursive functions. The Phase B verification sweep
+> (26 examples + 114 Sky.Test assertions + ~300 cabal specs) is the source
+> of truth — green-everywhere is a hard release gate.
 
-## v0.13 State (current branch)
+## Current state
 
-**Branch**: `perf/v0.13`. **Last commits** (most recent first):
-```
-584d2e1  verifier scripts + reflect-adapter arg narrowing fix
-80dcdf9  G goto-def coverage + F3 orphan FfiT pruning + Unicode-aware ident matching
-316accc  regression tests — AnonLambda + AnonRecord specs
-5d2d8df  E anon-record struct decls — remove sanitiseTypedDeep cover-up
-041bd70  B0 prefer Sky-defined union over runtimeTypedMap any-alias
-5b59e68  G LSP 100% — every USED symbol class
-ecf024f  F whole-program Sky DCE — per-dep decl pruning
-3757025  D-Lambda-Lowerer + D1 typed HOF return
-22ee8e0  A2/A1/B1/C — pre-register + superset records + container TVars + parametric ADTs
-```
+| Surface | Status |
+|---|---|
+| Layer 3 stdlib (Sky source for every kernel module) | ✅ shipped — `sky-stdlib/{Sky/Core,Std,Sky/Http}/*.sky` |
+| `Ffi.kernel` mechanism (Sky-source bindings route to typed kernel dispatch) | ✅ shipped |
+| Auto-TCO for tail-recursive Sky functions | ✅ shipped |
+| `sky doc` (terminal + HTTP server with type-sig + Markdown + fuzzy search) | ✅ shipped |
+| `sky watch` / `sky doctor` / `sky console` / `sky upgrade-claude` | ✅ shipped |
+| Sky Console + sub-app mount + observability federation | ✅ shipped |
+| 26-example sweep + 114 Sky.Test assertions + ~300 cabal specs | ✅ green |
 
-### The agreed contract (FINAL — do not relax)
+**Examples (26 total — `examples/00`-`examples/25`).** Each builds clean
+from a wiped slate (`rm -rf sky-out .skycache .skydeps && sky build`).
+`examples/00-standard-libs` is the stdlib smoke test (114 assertions).
+`examples/13-skyshop` is the Stripe-SDK-scale benchmark (76k FFI
+symbols). Categories: CLI (7), Sky.Tui (5), Sky.Live + Sky.Http.Server
+(10), GUI (1 — Fyne), build-only fixtures (2).
 
-**All USED Sky code → fully-typed Go.** No bare `any` for used vars /
-funcs / lambdas / ADTs. ONLY genuinely-generic (Go-generic `[T any]`)
-OR genuinely-unused may use Go-generic or `any`. **Sky-side DCE in
-the Haskell phase pre-lowering** — Stripe-SDK-scale binding pruning.
-**LSP 100%** — hover + goto-definition for every used symbol class.
-**No deferral** — if a doc (this file, `docs/*.md`) says "post-v1.0",
-fix the doc; the contract supersedes any old "deferred" annotations.
+## Non-negotiables
 
-### What's done (A→G workstreams)
+### 1. Memory safety — `scripts/mem-guard.sh` MUST run during dev
 
-| # | Name | Done | Where |
-|---|---|---|---|
-| **A** | Two-pass `constrainDecls` pre-register (A2) + open-record superset match (A1) | ✅ | `src/Sky/Type/Constrain/Expression.hs`, `src/Sky/Generate/Go/Record.hs`, `src/Sky/Build/Compile.hs` |
-| **B** | Parametric-ADT erased-Go-name (B1) + Sky-union-name priority over `runtimeTypedMap` any-alias (B0) | ✅ | `Compile.hs` (`safeReturnType` / `safeReturnTypeWith`) |
-| **C** | `tvarsInEmitted` recurses into List/Dict/Set + PARAM-only filter for usedTypeParams | ✅ | `Compile.hs` |
-| **D** | D-Lambda-Lowerer (typed lambdas at user-defined HOF call sites) + D1 (typed HOF return in `renderHofParamTy`) | ✅ | `Compile.hs` (`coerceCallArgsAt` fallback, `renderHofParamTy`, `safeReturnTypeWith`'s `renderFuncTy`) |
-| **E** | Anon-record struct emission via `globalAnonRecords` + `generateAnonRecordDecls`; removed `sanitiseTypedDeep`'s `Anon_R_*` → `any` cover-up | ✅ | `Compile.hs` |
-| **F** | Whole-program Sky DCE: typed `Ref` ADT (TopRef \| FfiRef \| CtorRef), `reachableWholeProgram`, per-dep decl pruning, F3 orphan FfiT type-alias pruning | ✅ | `src/Sky/Build/Dce.hs` (379 lines), `Compile.hs` |
-| **G** | LSP 100% — 17 cabal-fenced tests: hover + goto-def for every used symbol class (function, type alias, ADT ctor, record-field, kernel call, lambda param, let-binding, case-pattern binder, completion paths) | ✅ | `src/Sky/Lsp/Server.hs`, `src/Sky/Lsp/Index.hs`, `scripts/lsp-test-nvim.{lua,sh}`, `test/Sky/Lsp/NvimDriverSpec.hs` |
-
-### Cross-cutting fixes shipped in v0.13
-
-- **UF cycle guard in HM solver** (v0.13.1 patch) — `Sky.Type.Unify.actuallyUnify`'s FlexVar↔Structure and FlexVar↔Alias merges had no occurs check. When the v0.13 dep-fixpoint round-1 solve fed a polymorphic external annotation back into a re-export module (the trigger was importing `Std.Ui.Events`, which re-exports across the mutually-recursive `Element msg` / `Attribute msg` ADTs), the merge could splice a self-referential cycle into the UF graph; downstream `Sky.Type.Solve.variableToType` then recursed forever through cyclic `App1` args, allocating 3+ GB before mem-guard / RTS killed the host. Fix lands in two layers: (1) `Unify.actuallyUnify` now calls `Occurs.occurs` on every FlexVar↔Structure / FlexVar↔Alias merge, rejecting cycle-introducing unifications cleanly; (2) `Solve.variableToType` carries a path-tracking `seen` set so any pre-existing cycle reads back as a `TVar "_cycle"` sentinel instead of looping. Symptom in user-facing reproducer (mini-notion, a Sky.Live + Std.Ui app importing `Std.Ui.Events`): pre-fix `sky build` OOMs at 7-8 GB RSS; post-fix completes in 16 MB / <1 s. The `Occurs` helper module already existed but was never called; this fix wires it into the unify path that was the missing link. Regression fence: `test/Sky/Type/UfCycleGuardSpec.hs` (compiles the minimal `Std.Ui.Events` importer under `+RTS -M256M` — pre-fix dies with "Heap exhausted", post-fix exits 0 or 1 with a real type error). Also added top-level-only filtering for the dep-fixpoint cross-module externals map (matches the entry-module path) so let-locals + lambda params from one dep don't pollute another dep's externals.
-- **Unicode-aware Go ident matching** (`isGoIdentStart` / `isGoIdentChar` in `Compile.hs` using `Char.isLetter` + `Char.isAlphaNum`). Replaced 4 ASCII-only sites that would silently slice Unicode-letter identifiers. Aligns with the parser side (`Sky.Parse.Variable.isIdentChar`).
-- **Reflect-adapter arg narrowing** in `runtime-go/rt/rt.go`. The `rt.Coerce[func(any) any]` adapter (`adaptFuncValue`) used by typed-codegen now narrows each arg to `skyFn.In(i)` via `narrowReflectValue` BEFORE `reflect.Call`. Fixes the runtime panic class `reflect.Call using map[string]interface{} as type map[string]string` that surfaced in 07-todo-cli when typed `formatTodo : map[string]string -> ...` was called over `[]map[string]any` DB rows.
-- **TEA dispatch fast-path** (`tupleFirst` / `tupleSecond` in `runtime-go/rt/live.go`). Type-assertion fast path for `SkyTuple2` / `SkyTuple3` before falling back to reflect. ~40 % faster per dispatch (60 ns vs 100 ns measured on Apple M1). Touches every TEA backend — Sky.Live, Sky.Tui, Sky.Cli — at the hot `update`-return path. Regression fence: `runtime-go/rt/tuple_dispatch_test.go` (6 cases — fast path on SkyTuple2/3, reflect fallback on typed T2, [2]any/[]any shape coverage, defensive non-tuple fallback). The earlier "typed tuple instantiation" attempt was consciously rolled back in v0.13 because `[]rt.T2[int, int]` and `[]rt.SkyTuple2` are distinct Go nominal types — the cross-site mismatch needed coercion at every list/dict-of-tuples site. See `solvedTypeToGo`'s TTuple comment for the design rationale; the fast-path is the focused win without re-introducing the inconsistency.
-- **Map→struct narrowing in `rt.Coerce[T]`** (`runtime-go/rt/rt.go`). When source is `map[string]any` (Db.query row, Firestore snapshot, JSON-decoded blob) and target is a record alias `Foo_R = struct { ... }`, Coerce builds T field-by-field using `narrowReflectValue` per field. Probes three key forms: PascalCase exact (`Foo`), lowercase-first (`foo` — Sky's `capitalise_`-emitted convention), and full lowercase (`id` — FFI all-caps acronyms + JSON / `Db.getField` output). Closes the panic class `rt.Coerce: expected Foo_R, got map[string]interface {}` for typed-record call boundaries fed by DB / Firestore. Codegen-side: `coerceArg` and `coerceToFieldType` now route record-alias fall-throughs (`isRecordAliasTy`: identifiers ending `_R`) through `rt.Coerce[T]` instead of the raw `any(e).(T)` assertion. ADT names + FFI opaque types keep the direct assertion (no map-source panic class). Regression fence: `runtime-go/rt/coerce_map_to_struct_test.go` (6 cases — happy path, PascalCase keys, partial fields, int64→int widening, nested typed-map field, no-panic guarantee).
-- **`globalUnionNames` IORef** (separate from `globalCgEnv`) so `typeStrWithAliasesReg` can do empty-home cross-module union recovery without `<<loop>>` black-holing inside a `modifyIORef globalCgEnv` callback.
-- **HttpResponse runtime-type mapping** in `runtimeTypedMap` (kernel `Http.get`/`post` declare empty-home `HttpResponse`).
-
-### Verification matrix (all 26 examples)
-
-| Category | Count | Tool | Result |
-|---|---|---|---|
-| Sky.Live + Sky.Http.Server | 10 | `scripts/verify-all-web.sh` (Playwright headless Chromium) | **10/10** |
-| CLI | 7 | `scripts/verify-cli.sh` (run + panic-grep) | **7/7** |
-| Sky.Tui + Sky.Cli | 5 | `scripts/verify-cli.sh` (brief spawn, non-TTY exit) | **5/5** |
-| Fyne GUI | 1 | `scripts/verify-cli.sh` (`skip-gui` flag — needs X11) | skip |
-| Test fixtures (`simple`, `test_pkg`) | 2 | example-sweep build-only | build-only |
-
-Full build sweep + cabal `Sky.Build.ExampleSweep`: **26/26 green**.
-
-### Skyshop / Stripe-scale benchmark (F + F3 win)
-
-| | Pre-v0.13 (DCE off) | Post-v0.13 |
-|---|---|---|
-| `examples/13-skyshop/sky-out/main.go` | 14,398 lines | **4,178 lines** (−71%) |
-| Total funcs in main.go | 3,518 | **975** (−72%) |
-| Std_* funcs in main.go | 379 | **169** (−55%) |
-| Emitted `Stripe_*` user-code refs | (full) | **0** (all DCE-pruned) |
-| `examples/13-skyshop/sky-out/rt/stripe_bindings.go` | 326,327 lines | **58,059 lines** (−82%) |
-| `type FfiT_*` aliases in stripe_bindings.go | 80,847 | **29** |
-| Wrapper funcs in stripe_bindings.go | 124,312 | **57** |
-
-### Deferred to v0.13.x (post-v0.13)
-
-- **Install-time Go binding optimization**: `sky install` currently runs `sky-ffi-inspect` and emits the FULL `.skycache/go/<pkg>_bindings.go` (Stripe: 326k lines). With Sky DCE now identifying reachable FFI sigs pre-lowering, install could emit only `.skicache/ffi/*.skyi` (HM types), deferring the Go-binding-source generation to `sky build` time, on the reachable subset. Win: Stripe install ~8min → ~10sec; disk usage 12MB → <100KB per FFI pkg. Scope: 8-10 hrs. Right architecture; deferred to its own release for risk isolation.
-
-## Language Convention
-
-All documentation, comments, variable names, function names, and user-facing strings **must use British English spelling** (`optimise`, `behaviour`, `colour`, `initialise`, `serialise`, `catalogue`). Exceptions: protocol identifiers (LSP `initialize`), CSS/HTML properties (`color`), Go stdlib names.
-
-**Unicode identifiers**: Sky source supports Unicode-letter identifiers (Go's identifier spec — `letter (letter | unicode_digit)*` where `letter = unicode_letter | '_'`). Codegen-side string scanners (FFI DCE, type-string substitution, func-name extraction) MUST use the shared `isGoIdentStart` / `isGoIdentChar` helpers (`Char.isLetter` / `Char.isAlphaNum` + `'_'`) — never write a fresh ASCII-only `c >= 'a' && c <= 'z'`-style predicate. A Sky identifier containing a Unicode letter (e.g. `mésa`) emits as the same identifier in Go; an ASCII walk would silently slice the token and misclassify the surrounding code. Parser side: `Sky.Parse.Variable.isIdentChar` is already Unicode-aware.
-
-## Core Principles (Non-Negotiable)
-
-1. **If it compiles, it works.** The 2026-04-15 adversarial audit
-   documented 23 counterexamples across P0 (soundness floor), P1
-   (security), P2 (soundness cleanup), and P3 (tooling). All 23 are
-   remediated with regression tests (see `docs/AUDIT_REMEDIATION.md`).
-   v0.13 closes the residual P4 items: typed codegen eliminates `any`
-   from emitted Go (workstreams A-E above); `sky test` Sky-harness
-   runs through the typed path. The principle now holds for every
-   path exercised by `cabal test`, `scripts/example-sweep.sh`,
-   `scripts/verify-all-web.sh`, `scripts/verify-cli.sh`, and
-   `runtime-go/rt/*_test.go`. Defence in depth (panic recovery +
-   `Err` return at Task boundaries) remains the reliability floor.
-2. **Dev experience is top priority.** Clear errors, predictable behaviour, no user-written FFI.
-3. **Root-cause fixes only.** Fix at the correct abstraction layer. **Never suppress type errors or warnings.** A defensive cover-up that hides a contract violation (e.g. the pre-v0.13 `sanitiseTypedDeep` rewriting `Anon_R_*` → `any`) IS a violation; remove the cover-up by fixing the underlying gap, not by widening the mask.
-4. **Production-grade architecture.** Must scale to large Go packages (Stripe SDK — 76k FFI symbols). Must remain maintainable.
-5. **UI/UX/DX/security/scalability are top-notch, fit-for-purpose.** Sky is the language; Std.Ui is the default UI surface (multi-backend — Sky.Live HTTP, Sky.Tui terminal, future webview/native). `Std.Auth` ships secure defaults; `Std.Db` is connection-pooled; Sky.Live's input-authority protocol preserves typed user input across re-renders. **AI-written Sky code defaults to Std.Ui + Std.Auth + Std.Db** unless the user explicitly opts out — these surfaces are reviewed for security + scalability.
-
-## Memory Safety (Non-Negotiable)
-
-**The mem-guard kill-switch MUST be running during any Sky compiler dev session, example build sweep, or LSP-heavy editing on macOS.** A runaway `sky build` / `sky lsp` / `cabal` / `ghc` / `haskell-language-server` process has previously pinned the entire Mac to swap and forced a hard power-off — losing unsaved work in every app, not just the offending terminal. This is a recurring risk class, not a one-off. Treat it like a missing `set -e`: the absence is the bug.
-
-Start it once at the top of the session and leave it running:
+A runaway `sky` / `cabal` / `ghc` / `haskell-language-server` process
+has previously force-powered-off the host Mac. Treat the absence of
+mem-guard like a missing `set -e`.
 
 ```bash
 nohup ./scripts/mem-guard.sh > /tmp/mem-guard.out 2>&1 &
-disown        # so it survives if the host shell exits
-tail -f /tmp/mem-guard.log    # optional, watch what it does
+disown                                # survives shell exit
 ```
 
-Defaults (16GB Mac):
-- Per-process kill at **6 GB RSS** for `sky` / `sky-ffi-inspect` / `cabal` / `ghc` / `ghc-iserv` / `cc1` / `ld` / `haskell-language-server` / `hls-wrapper` / `gopls`.
-- Per-process kill at **10 GB RSS** (panic tier) for `claude` / `node` / `ghostty` — these are the *host* of the dev session, so the threshold is higher and the system-pressure rule additionally requires the host itself to already be over 4 GB before sacrificing it.
-- System-pressure floor: when free + inactive + speculative memory drops below **1.2 GB**, kill the heaviest watched process immediately. macOS swap thrashing escalates to lock-up within seconds once free memory falls past this point — the 2-second poll interval is sized to act inside that window.
+Defaults (16 GB Mac): per-process kill at 6 GB RSS for compiler
+tooling (`sky` / `cabal` / `ghc` / `ghc-iserv` / `cc1` / `ld` /
+`haskell-language-server` / `hls-wrapper` / `gopls` /
+`sky-ffi-inspect`); 10 GB panic tier for the dev-session host
+(`claude` / `node` / `ghostty`); system-pressure floor kicks in
+when free + inactive + speculative memory drops below 1.2 GB. Tune
+via `MEM_GUARD_PROC_MB` / `MEM_GUARD_PANIC_MB` /
+`MEM_GUARD_SYS_FLOOR_MB`. `MEM_GUARD_DRY=1` runs in log-only mode.
+Never silence a kill by raising the threshold — the kill means the
+process was on a path to OOM the machine. Fix the underlying
+compiler bug.
 
-Tune via env vars: `MEM_GUARD_PROC_MB`, `MEM_GUARD_PANIC_MB`, `MEM_GUARD_SYS_FLOOR_MB`, `MEM_GUARD_INTERVAL`. `MEM_GUARD_DRY=1` runs in log-only mode for verification. The script never touches kernel processes, WindowServer, launchd, or anything outside its watch list.
+### 2. Background-task hygiene — clean up before declaring "done"
 
-**Workflow rules:**
-- **Before** kicking off `cabal test` or the full `for d in examples/*/; do … done` clean-slate sweep, confirm `pgrep -f mem-guard.sh` returns a PID. If it doesn't, start it first.
-- **When extending the watch list** (new compiler tool, new dev binary), add the regex to both `ALWAYS_KILL_RE` / `PANIC_KILL_RE` in `scripts/mem-guard.sh` AND mention the addition here so future sessions don't accidentally shrink the safety net.
-- **If the guard fires**, log the full kill line (`grep KILL /tmp/mem-guard.log`) into the related issue or commit message — repeated kills on the same binary are a real compiler/LSP bug, not just an unlucky build.
-- **Never disable the guard to silence a kill.** A kill means the offending process was on a path to OOM the machine; the fix is in the compiler/LSP, not in raising the threshold past available RAM.
+Long sessions accumulate orphan `run_in_background` zsh wait-loops
+that eventually exhaust the per-uid process table
+(`fork: retry: Resource temporarily unavailable`). When that
+happens `mem-guard.sh` silently dies and the user's binaries get
+killed instantly on launch.
 
-## Background-Task Hygiene (Non-Negotiable)
-
-**After completing ANY long-running mission (multi-step build sweep, CI monitoring, parallel-agent run, Playwright verification, etc.), audit and clean up all background tasks before declaring the work done.** Leftover `run_in_background` zsh wait-loops (`while pgrep ...; do sleep N; done`) accumulate silently — each `Bash(run_in_background=true)` that polls leaves a dormant `/bin/zsh -c` parent + `sleep` child alive until the polled condition clears. Across a session this can balloon into hundreds of orphan processes, exhausting the user's per-uid process table (RLIMIT_NPROC). Symptoms: `fork: retry: Resource temporarily unavailable` in shell output, `mem-guard.sh` unable to fork its `sleep` calls (silently dies), the user's `sky` binary getting killed instantly on launch because the OS cannot allocate a new process slot for it.
-
-This bit the user on 2026-05-11/12 (post-v0.12 verification session) — `467` total user processes, ~30+ orphan `while pgrep` zsh wait-loops, mem-guard log frozen at `fork: retry: Resource temporarily unavailable`.
-
-**End-of-mission checklist (run before reporting completion to the user):**
+End-of-mission checklist:
 
 ```bash
-# 1. Kill orphan polling loops spawned by run_in_background polling patterns
+# Orphan polling loops
 ps -u $USER -o pid,command | awk '/while pgrep|until ! pgrep/ && /\/bin\/zsh -c/ {print $1}' | xargs -n1 kill -9 2>/dev/null
 
-# 2. Kill stray sleep processes (only mine; never -9 a user-launched sleep)
+# Stray sleeps + verification leftovers
 ps -u $USER -o pid,ppid,command | awk '$3 == "sleep" && $2 != 1 {print $1}' | xargs -n1 kill -9 2>/dev/null
+pkill -f "playwright"; pkill -f "chromium"
+pkill -f "examples/.*/sky-out/app"
 
-# 3. Kill stragglers from this session's verification work
-pkill -f "playwright" 2>/dev/null; pkill -f "chromium" 2>/dev/null
-pkill -f "examples/.*/sky-out/app" 2>/dev/null   # any app server still bound to :8000
-
-# 4. Verify mem-guard is alive (restart if dead)
-pgrep -f mem-guard.sh >/dev/null || (rm -f /tmp/mem-guard.out && nohup ./scripts/mem-guard.sh > /tmp/mem-guard.out 2>&1 & disown)
-
-# 5. Sanity-check the user's binary still launches
-sky --version
+# mem-guard alive?
+pgrep -f mem-guard.sh >/dev/null || (nohup ./scripts/mem-guard.sh > /tmp/mem-guard.out 2>&1 & disown)
 ```
 
-**Workflow rules:**
-- **Prefer `Monitor`** over `run_in_background` + polling whenever possible — Monitor delivers events without spawning a wait-loop subprocess. Reserve `run_in_background` for tasks that genuinely produce final output and aren't being polled.
-- **Avoid `until ! pgrep ...; do sleep N; done` patterns** in foreground Bash calls. The shell-snapshot wrapper means every Bash invocation forks a fresh zsh; long polling loops here are equivalent to `run_in_background` waitloops but worse (block the agent on top of leaking the process).
-- **Audit before claiming "done"** — `ps -u $USER -o pid,command | grep -c "while pgrep\|until ! pgrep"` should return ≤ 1 (your audit grep itself). If it returns 5+, kill the rest before responding to the user.
-- **Watch for `Resource temporarily unavailable`** in any tool output. This is the canary — the moment it appears, abandon whatever started the loop and run the checklist above before continuing.
+**Prefer the Monitor tool** over `run_in_background` + polling.
+Monitor delivers events without leaving a wait-loop subprocess.
 
-## v0.10.0 Stdlib Consolidation (BREAKING)
+### 3. Core principles
 
-The standard library was deduplicated. Old modules with overlapping surface have been dropped or renamed. This is a one-shot migration — there are **no compat shims**, by design.
+1. **If it compiles, it works.** Every known runtime panic class
+   has a regression test in `runtime-go/rt/*_test.go` or
+   `test/Sky/**Spec.hs`. Defence in depth (panic recovery +
+   `Err`-return at Task boundaries) is the floor, not the
+   foundation.
+2. **Dev experience first.** Clear errors, predictable behaviour,
+   no user-written FFI.
+3. **Root-cause fixes only.** Never suppress type errors or
+   warnings. A defensive cover-up that hides a contract violation
+   IS a violation.
+4. **Production-grade architecture.** Scales to the Stripe SDK
+   (76k FFI symbols). Stays maintainable.
+5. **AI-written Sky code defaults to Std.Ui + Std.Auth + Std.Db.**
+   Each is reviewed for security + scalability — UI/UX/DX/security
+   are not afterthoughts.
 
-**Renamed:**
-- Sky kernel `Os` → `System`. Frees the `Os` qualifier for the Go FFI `os` package (sky-log et al. need stdin / stderr / fileWriteString from Go's std library and previously hit a kernel-vs-FFI namespace collision). Migration: `Os.exit` → `System.exit`, `Os.getenv` → `System.getenv`, `Os.cwd` → `System.cwd`, `Os.args` → `System.args`. `import Sky.Core.Os as Os` → `import Sky.Core.System as System`.
+### 4. Non-regression rules (enforced by `cabal test`)
 
-**Dropped (folded into other modules):**
-- `Args.*` → `System.{args, getArg}`. `Args.getArgs ()` is now `System.args ()`. `Args.getArg n` is `System.getArg n` (now returns `Task Error (Maybe String)` per Task-everywhere — see migration helper in sky-env's Main.sky).
-- `Env.*` → `System.{getenv, getenvOr, getenvInt, getenvBool}`. `Env.getOrDefault key def` → `System.getenvOr key def`, `Env.getInt key` → `System.getenvInt key`, `Env.require key` → `System.getenv key` (already errors on missing). `System.setenv` / `System.unsetenv` (v0.11.5+) cover the write side without Go FFI.
-- `Slog.*` → `Log.*With`. `Slog.info msg attrs` → `Log.infoWith msg attrs` (same for warn/error/debug). The plain-message `Log.info msg` form keeps working — the `With`-suffix variants take the structured `(msg, [k,v,k,v,…])` shape Slog had.
-- `Sha256.*` → `Crypto.sha256`. The chain `Sha256.sum256 (String.toBytes s) |> Result.andThen Hex.encodeToString` collapses to `Crypto.sha256 s` (returns the hex digest directly).
-- `Hex.*` → `Encoding.hexEncode` / `Encoding.hexDecode`.
+- **No `Result String a` / `Task String a`** in public surfaces.
+  Use `Result Error a` / `Task Error a`.
+- **No `Std.IoError`, no `RemoteData`** — both deleted pre-v1.
+- **No runtime panic from well-typed Sky code.**
+- **No silent numeric coercion** — `AsIntChecked` is the fallible
+  variant; `OrZero` suffix marks display-only lenient helpers.
+- **No raw `.(T)` assertions on any-typed thunks** — route via
+  `rt.Coerce[T]`.
+- **Record field enumeration sorts by `_fieldIndex`** before any
+  emission that depends on field order.
+- **Secrets are typed** — `Auth.signToken` / `verifyToken` take
+  `String`, not `any`. `fmt.Sprintf("%v", secret)` is forbidden.
+- **`sky check` ≡ `sky build`** — both invoke `go build` on the
+  emitted Go.
+- **New AST nodes require explicit walker arms** in
+  `Canonicalise/{Expression,Pattern,Type}.hs`,
+  `Type/Constrain/{Expression,Pattern}.hs`,
+  `Type/Exhaustiveness.hs`, `Format/Format.hs`, `Build/Compile.hs`,
+  and the LSP's `exprTokens` / `exprIdents` / `exprAllRefs` /
+  `refsInExpr` / `collectSemTokens` / `collectReferences`. Don't
+  rely on `_ -> []` catchalls.
 
-**Shrunk:**
-- `Process.*` keeps only `run` (subprocess execution). `Process.exit` / `getEnv` / `getCwd` / `loadEnv` all moved to `System.*`.
+### 5. Testing rules
 
-**New:**
-- `System.getenvOr key default` — no-error env read with fallback. **Bare `String` return** (not `Task Error String`) — see "default-supplied helpers stay bare" rule below the Effect Boundary table. Module-top-level usage stays sync: `apiKey _ = System.getenvOr "OPENAI_KEY" ""`.
-- `System.getenvInt key` / `System.getenvBool key` — typed env reads, `Task Error Int|Bool` (CAN fail on missing or unparseable, hence Task).
-- `System.getArg n` — single-arg lookup as `Task Error (Maybe String)`.
-- `System.loadEnv ()` — load `.env` file (was `Process.loadEnv`).
-- `Log.infoWith msg attrs` / `warnWith` / `errorWith` / `debugWith` — structured-log variants with key/value list (replaces `Slog.*`).
-- sky.toml `[log] format = "plain" | "json"` and `[log] level = "debug" | "info" | "warn" | "error"`. Seeds `SKY_LOG_FORMAT` / `SKY_LOG_LEVEL` defaults at compile time. Env vars still override at runtime — same precedence as `[live]`.
+- **Every new feature / bug becomes a regression test** before the
+  fix lands. The failing test is the discovery artefact.
+- **Cabal specs** for compile-time behaviour;
+  `runtime-go/rt/*_test.go` for runtime helpers;
+  `tests/**/*Test.sky` for stdlib semantics; `sky test <file>` is
+  the user-facing runner.
+- **Runtime verification on every push.** `sky verify` builds AND
+  runs each example; `scripts/verify-all-web.sh` drives the
+  Sky.Live + Sky.Http.Server scenarios through Playwright;
+  `scripts/verify-cli.sh` covers CLI / Sky.Cli / Sky.Tui apps.
+  `--build-only` doesn't catch the "click is a no-op" class of
+  regression.
 
-**Compiler infrastructure:**
-- Bare-name aliases for every kernel module added to `staticKernelModules`. `Log.error` resolves without `import Std.Log` because `Log` is in the kernel registry.
-- Auto-force `let _ = TaskExpr` discard semantics (already in v1.0+ doctrine, formalised here): the lowerer wraps the discarded expression in `rt.AnyTaskRun` so the side effect fires.
-- `main`'s body is wrapped in `rt.AnyTaskRun` too — `main = println X` actually prints under Task-everywhere (regression discovered when migrating examples).
-- Canonicaliser falls back to the kernel registry for unimported qualifiers — `Crypto.sha256` works without `import Sky.Core.Crypto`. Bug fixed: previously emitted bare `Crypto_sha256(arg)` (no `rt.` prefix), failing `go build`.
-- **Dep module HM errors are FATAL.** Pass-2 type errors in dep modules used to silently degrade to `any`-typed bindings, which let real type bugs (Task being case-matched as Result, `/` instead of `//`, `Bool -> Attribute` partial-applied as `Attribute`) ship and surface as runtime symptoms like `[AUTH] Admin ensured: 0x102…` (a func-pointer of an unforced thunk being string-split). Now the build aborts with `TYPE ERROR (Mod): …` and the user fixes the dep before shipping. Pass-1 errors stay tolerated because some deps need pass 2 to disambiguate via cross-module externals. Regression test: `test/Sky/Build/DepHmFatalSpec.hs`.
+## Effect boundary — Task-everywhere (v0.10.0+)
 
-The migration script at `/tmp/migrate-v0.10.sh` (see git history of this commit) handles the bulk rewrites in any external repo. Manual touch-ups needed for: `case Args.getArg n of Just/Nothing` patterns (now wrap with `Task.run |> Result.withDefault Nothing`), and `Sha256.sum256 + Hex.encodeToString` chains (collapse to `Crypto.sha256`).
+Single rule: **every observable side effect returns `Task Error a`.**
 
-## Non-Regression Rules
+| Tier | Type | Examples |
+|---|---|---|
+| Pure | bare `a` | `String.length`, `List.map`, `Crypto.sha256`, `Encoding.base64Encode`, `Time.timeString`, `System.getenvOr` |
+| Fallible-pure | `Result e a` / `Maybe a` | `String.toInt`, JSON decoders, `Encoding.base64Decode`, `Auth.hashPassword` |
+| Effects | `Task Error a` | `File.*`, `Http.*`, `Process.run`, `Io.*`, `Db.*`, `Auth.{register, login, setRole}`, `Crypto.{randomBytes, randomToken}`, `Time.{sleep, now, unixMillis}`, `Random.*`, `Log.*`, `System.*` (except `getenvOr`) |
+| Diverging | `Int -> a` | `System.exit` (polymorphic return — never comes back) |
 
-These constraints are enforced by `sky verify`, `test/Sky/ErrorUnificationSpec.hs`, and the audit-remediation specs under `test/Sky/**`. Violating them breaks the repo:
+**Default-supplied helpers stay bare.** `System.getenvOr key def : String`,
+`Maybe.withDefault`, `Result.withDefault`, `Db.getString`/`getInt`/`getBool`
+— the default plugs the failure case at the call site.
 
-- **No `Result String a`** in any public surface. Use `Result Error a`.
-- **No `Task String a`** in any public surface. Use `Task Error a`.
-- **No `Std.IoError`** — the pre-v1 error ADT was deleted.
-- **No `RemoteData`** — the pre-v1 async-state type was deleted.
-- **No runtime panic from well-typed Sky code.** Every known panic class has a regression test in `runtime-go/rt/*_test.go` or `test/Sky/**Spec.hs`.
-- **No silent numeric coercion.** `AsInt` / `AsBool` / `AsFloat` returning zero on type mismatch is a violation of P0-2 (see `docs/AUDIT_REMEDIATION.md`). New code uses the fallible `AsIntChecked` variants; lenient display-only helpers carry the suffix `OrZero` so the intent is visible at every call site.
-- **No raw `.(T)` assertions on generated any-typed thunks.** Typed codegen must route through a runtime `Coerce` helper (see P0-3). Grep gate: `sky-out/main.go` files contain no `any(body).(T)` patterns outside the `Coerce*` helpers.
-- **Record field enumeration sorts by `_fieldIndex`.** Any `Map.toList fields` in codegen that feeds field order (struct decl, auto-ctor, destructure) sorts by declaration index before emission. Violating this swaps auto-ctor parameters (P0-4).
-- **Secrets are typed.** `Auth.signToken` / `Auth.verifyToken` take `String`, not `any`. `fmt.Sprintf("%v", secret)` is forbidden — explicit `.(string)` assertion on a typed boundary, with minimum-length validation (P1-4).
-- **`sky check` is a superset of `sky build`.** `sky check` runs the Go emitter and invokes `go build` on the output. If `sky build` would fail, `sky check` fails (P0-1). Regression test: for every fixture in `test-files/`, both commands agree on accept/reject.
-- **New AST nodes must be matched explicitly in every walker.** When you add a constructor to `Src.Expr_` / `Src.Pattern_` / `Src.TypeAnnotation_` in `src/Sky/AST/Source.hs`, grep for EVERY case-on-AST in these modules and add an explicit arm:
-  - `src/Sky/Canonicalise/Expression.hs`, `Pattern.hs`, `Type.hs`
-  - `src/Sky/Type/Constrain/Expression.hs`, `Pattern.hs`
-  - `src/Sky/Type/Exhaustiveness.hs`
-  - `src/Sky/Format/Format.hs`
-  - `src/Sky/Build/Compile.hs` (lowerer)
-  - `src/Sky/Lsp/Server.hs` — `exprTokens`, `exprIdents`, `exprAllRefs`, `refsInExpr`, `collectSemTokens`, `collectReferences`, plus anything that walks expressions for hover / definition / rename
-
-  **Do NOT rely on `_ -> []` catchalls** — they silently drop the new node and surface as bugs that look nothing like "missing AST case" (semanticTokens hangs, definition jump fails, rename misses references). If a walker genuinely has no token/reference to emit for the new node, write `Src.MyNode inner -> walker inner` (transparent recurse) or `Src.MyNode _ -> []` (explicit no-op) — never leave it to the catchall. Regression artefact: the `Src.Paren` node landed in 85ef8d1 but wasn't wired into `Sky/Lsp/Server.hs`'s four walkers until v0.9.2 — broke `textDocument/definition` for every identifier inside parens AND hung `handleSemanticTokens` (pattern-match exception swallowed by the outer `try` loop).
-
-## Testing Rules
-
-- **Every new language feature or runtime helper needs a test.** Cabal specs for compile-time behaviour; `runtime-go/rt/*_test.go` for runtime helpers; `tests/**/*Test.sky` for stdlib semantics.
-- **Every bug becomes a regression test** *before* landing the fix. The failing test is the discovery artefact; without it, the class comes back. Audit items specifically require the test to fail against HEAD~1 and pass at HEAD.
-- **`sky test <file>` is the user-facing runner.** See `sky-stdlib/Sky/Test.sky` for the API.
-- **Runtime verification on every push.** `sky verify` builds and runs each example, catching panics and HTTP failures that `--build-only` misses.
-
-## Tooling Rules
-
-- **CLI commands must be correct end-to-end.** `sky build` / `sky run` / `sky check` / `sky fmt` / `sky test` all auto-regen missing FFI bindings and propagate exit codes.
-- **LSP capabilities must match `docs/tooling/lsp.md`.** If you add a capability, document it. If a feature is incomplete, narrow the claim — don't lie in docs.
-- **Formatter must be idempotent.** Two passes produce byte-identical output. Fixtures in `test/Sky/Format/FormatSpec.hs` guard this.
-
-## Effect Boundary: Task-everywhere (v0.10.0+)
-
-Single rule: **every observable side effect returns `Task Error a`.** No two-tier split, no per-function decision overhead. (Previously the v0.9.6 doctrine carved out `println` / `Slog` / `Os.getenv` / `Time.now` as "sync convenience effects" — that's gone; the lowerer's `let _ = TaskExpr` auto-force makes the Task-everywhere shape ergonomic without `do`-notation.)
-
-| Tier | Type | Examples | Why |
-|---|---|---|---|
-| **Pure** | bare `a` | `String.length`, `List.map`, `Crypto.{sha256,sha512,md5,hmacSha256}`, `Encoding.{base64,url,hex}Encode`, `Time.timeString`, `System.getenvOr` (default supplied → can't fail) | Referentially transparent, deterministic. |
-| **Fallible-pure** | `Result e a` / `Maybe a` | `String.toInt`, JSON decoders, `Encoding.{base64,url,hex}Decode`, `Auth.{hashPassword, verifyPassword, signToken, verifyToken}` | Pure CPU work that can fail on malformed input. Result is a value, not an effect. |
-| **Effects** | `Task Error a` | `File.*`, `Http.*`, `Process.run`, `Io.*`, `Db.*`, `Auth.{register, login, setRole}`, `Crypto.{randomBytes, randomToken}`, `Time.{sleep, now, unixMillis}`, `Random.*`, `Log.{println, info, warn, error, debug, infoWith, warnWith, errorWith, debugWith}`, `System.{getenv, getenvInt, getenvBool, cwd, args, getArg, loadEnv, setenv, unsetenv}`, `Live.app` | Anything that touches the outside world (clock, env, stdout, disk, network, DB, entropy). Composes uniformly with `Task.parallel` / `Cmd.perform` / `Task.andThen`. |
-| **Diverging** | polymorphic `Int -> a` | `System.exit` | Function never returns (process terminates). Polymorphic return makes it usable as the last expression in any case branch without forcing every branch to be Task-shaped. |
-
-**Default-supplied helpers stay bare.** `System.getenvOr key def : String`, `Maybe.withDefault def m : a`, `Result.withDefault def r : a`, `Db.getFieldOr def row k : any`, `Db.get{String,Int,Bool} k row : String|Int|Bool` — none of these can fail because the default plugs the failure case at the call site. Wrapping them in `Task` / `Result` / `Maybe` would force every call into `Task.run … |> Result.withDefault def` boilerplate — the exact pattern the helper exists to avoid. Reserve the wrap for genuinely fallible operations (no default supplied, parse may reject input, I/O may error).
-
-### Auto-force `let _ = TaskExpr`
-
-The lowerer special-cases `let _ = X in Y` discards: when X has type `Task e a`, it emits `_ = rt.AnyTaskRun(X)` instead of bare `_ = X`. The Task thunk is forced and its Result discarded — the side effect fires, the user gets the same eager-discard ergonomics they always had:
+**Auto-force `let _ = TaskExpr`.** The lowerer wraps the discarded
+expression in `rt.AnyTaskRun` so the side effect fires:
 
 ```elm
 let
-    _ = println "step 1"            -- Task auto-forced; print fires
-    _ = println "step 2"            -- same
-    _ = Log.infoWith "saving" [...]
+    _ = println "step 1"             -- auto-forced
+    _ = Log.infoWith "saving" [...]  -- auto-forced
 in
     continue
 ```
 
-This is the entire reason Task-everywhere is viable in Sky despite no `do`-notation. Without auto-force, every kernel-Task call would need explicit `Task.run` wrapping at the discard site, and forgetting would silently drop the side effect.
-
-`rt.AnyTaskRun` handles both shapes defensively: forces `func() any` thunks, passes bare values through wrapped in Ok. Auto-force at non-Task discard sites is therefore safe (negligible runtime cost: one type-assertion).
-
-**Rule that complements auto-force:** `let _ = X in Y` is the canonical "fire-and-forget" idiom. Don't manually wrap in `Task.run` for the discard case — write `let _ = task` and let the lowerer DTRT. Use `Task.run` explicitly when you need the `Result` for further inspection.
-
-### Top-level bindings stay explicit
-
-The auto-force magic applies **only** to `let _ = X` discards. Top-level module bindings of `Task`-typed values still require explicit `Task.run`:
+Top-level module bindings of Task-typed values still require explicit
+`Task.run`:
 
 ```elm
--- Module top-level
 apiKey =
-    System.getenv "OPENAI_KEY"
-        |> Task.run
-        |> Result.withDefault ""
+    System.getenv "OPENAI_KEY" |> Task.run |> Result.withDefault ""
 ```
 
-This is the deliberate single-rule trade-off: one piece of compiler magic (`let _ =` auto-force) covers the pervasive debug-trace pattern; everything else is explicit Task plumbing. No surprises about whether your value is wrapped or not.
+**Result/Task bridges:**
 
-### Two-level error handling pattern
+| Helper | Type |
+|---|---|
+| `Task.fromResult` | `Result e a -> Task e a` |
+| `Task.andThenResult` | `(a -> Result e b) -> Task e a -> Task e b` |
+| `Result.andThenTask` | `(a -> Task e b) -> Result e a -> Task e b` |
+| `Task.mapError` | `(e -> e2) -> Task e a -> Task e2 a` |
+| `Task.onError` | `(e -> Task e2 a) -> Task e a -> Task e2 a` |
 
-When a Task fails inside an effectful op, the canonical pattern (demonstrated in `examples/18-job-queue/src/Main.sky`'s `withErrorReporting` and `examples/07-todo-cli/src/Main.sky`'s `reportError`) is:
+No `Result.fromTask` exists by design — keep effectful pipelines in
+Task; the runtime entry boundary (CLI `main`, `Cmd.perform`, HTTP
+handler return) is what executes them.
 
-1. **Generate a short correlation ID** (`Crypto.randomToken 4`) — typically 4 bytes hex.
-2. **Server-side: structured log** via `Log.errorWith opName [ "errId", errId, "error", Error.toString e ]` — ops can grep their logs by the ID.
-3. **Client-side: user-friendly message** via `Task.fail (Error.unexpected ("Operation failed (ref " ++ errId ++ ")"))` — a user complaining "save failed ref a3f9" maps directly to the log line.
+**Two-level error pattern** (`07-todo-cli` + `18-job-queue`):
 
-Per app shape:
-- **CLI** (`07-todo-cli`): `main = Task.run (chain |> Task.onError reportError)` where `reportError` logs + prints to stderr + `System.exit 1`.
-- **Sky.Http.Server** (`08-notes-app`): handlers return `Task Error Response`; `Task.onError` recovers errors to a 4xx/5xx Response with the logged errId in the body.
-- **REST API**: same as Http.Server, but the recovered Response is `Server.json (errorJson errId)` instead of HTML.
-- **Sky.Live** (`18-job-queue`, `12-skyvote`, `13-skyshop`, etc.): `Cmd.perform task ResultMsg` dispatches; the `ResultMsg` handler updates a `notification` / `historyError` field in Model that the `view` renders as a banner.
+1. `errId = Crypto.randomToken 4` — short correlation ID
+2. `Log.errorWith op [ "errId", errId, "error", Error.toString e ]` — server-side structured log
+3. `Task.fail (Error.unexpected ("Operation failed (ref " ++ errId ++ ")"))` — user-facing message
 
-FFI boundary mapping: Go `(T, error)` → `Result Error T` (the FFI trust boundary is Result; user wrappers / kernel sigs lift to Task where appropriate) | Go `error` → `Result Error ()` | panics → `Err` | nil → `Maybe` / `Result`.
+Per app shape: CLI → `Task.run … |> Task.onError reportError`;
+Sky.Http.Server → `Task.onError` recovers to a 4xx/5xx Response;
+Sky.Live → `Cmd.perform task ResultMsg`, dispatch updates
+`notification` / `historyError` in Model.
 
-### Result/Task bridges
+## Memory safety + efficiency audit (v0.14.x)
 
-Every Go FFI call returns `Result Error T` (the synchronous trust boundary). When the surrounding pipeline is a `Task` (Sky.Http handler, Sky.Live `Cmd.perform`, `main` returning `Task`), three bridge helpers flatten what would otherwise be nested `case`-on-Result inside `Task.andThen` lambdas:
+### Stdlib stack behaviour
 
-| Helper | Type | When to reach for it |
+| Tier | Functions | Status |
 |---|---|---|
-| `Task.fromResult` | `Result e a -> Task e a` | Lift a Result-returning step (FFI call, parser) into a Task pipeline |
-| `Task.andThenResult` | `(a -> Result e b) -> Task e a -> Task e b` | Chain a Result-returning step after a Task |
-| `Result.andThenTask` | `(a -> Task e b) -> Result e a -> Task e b` | Chain a Task-returning step after a Result |
+| O(1) pure Sky | `head`, `tail`, `cons`, `isEmpty`, `Maybe.withDefault`, `Maybe.map`/`andThen`/`isJust`/`isNothing`/`map2-5`/`andMap`, `Result.withDefault`/`map`/`andThen`/`mapError`/`map2-5`/`andMap` | Stack-safe always |
+| Tail-recursive (auto-TCO) | `foldl`, `find`, `any`, `all`, `member`, `drop`, `reverseHelp`, `indexedMapHelp` | Compiles to `for { ... continue }`; constant stack |
+| Non-tail-recursive (pure Sky) | `map`, `filter`, `foldr`, `length`, `concat`, `concatMap`, `take`, `append`, `range`, `zip`, `indexedMap`, `Maybe.combine`, `Result.combine` | O(N) stack — fine for typical UI lists; theoretical risk at 1M+ elements. For huge inputs prefer `foldl`-based accumulator patterns. |
 
-```elm
--- Without bridges (nested case inside Task.andThen)
-case Db.connect dbUrl of
-    Ok db ->
-        case Db.query db "SELECT ..." of
-            Ok rows ->
-                Http.post url (encode rows) |> Task.andThen handleResponse
-            Err e -> Task.fail e
-    Err e -> Task.fail e
+**TCO mechanism.** The lowerer detects tail-position self-calls in
+`Can.Case` / `Can.If` / `Can.Let` bodies via
+`Sky.Build.TailCallOpt.isTailRecursive`. Tail-recursive function
+bodies emit as `[GoForever <stmts>]` where each tail call becomes
+`<param reassignment + coercion>; continue` and every other tail
+position emits `return <coerceReturnExprT goRetType expr>`. Func-typed
+params skip `coerceArg` (its `eraseTypeParams` would rewrite
+`T1 → any`); other params route through the existing coercion path.
 
--- With bridges (flat pipeline)
-Db.connect dbUrl
-    |> Task.fromResult
-    |> Task.andThenResult (\db -> Db.query db "SELECT ...")
-    |> Task.andThen (\rows -> Http.post url (encode rows))
-    |> Task.andThen handleResponse
+### Runtime hot paths
+
+- **FFI boundary** — every `Ffi.callTask` / `Ffi.callPure` is wrapped
+  in `runWithRecover` (panic → `Err`).
+- **`rt.SkyCall`** — reflect.MakeFunc per HOF call site, ~100 ns per
+  element. Bounded.
+- **`rt.AsList` / `rt.AsListT[T]`** — bounded slice cast / per-element
+  coercion.
+- **`rt.Coerce[T]`** — type assertion fast-path; reflect-backed
+  map→struct narrowing when needed (closes the Db.query → typed-record
+  panic class).
+- **TEA dispatch** — `SkyTuple2` fast-path before reflect fallback
+  (~40 % faster on Apple M1).
+
+### Session store bounds
+
+| Store | Bounded by |
+|---|---|
+| `memory` | `sync.Map` + TTL cleanup goroutine; user count × session size |
+| `sqlite` | Disk + connection pool |
+| `redis` / `postgres` | External service config |
+| `firestore` | GCP quota |
+
+### Compile-time + runtime memory protections
+
+- `[live] maxBodyBytes` (default 5 MiB) — POST cap on
+  `/_sky/event` (raise for file uploads).
+- `SKY_LIVE_QUEUE_MAX` (default 50) — POST retry queue cap.
+- **HM solver budget** — `SKY_SOLVER_BUDGET` (default
+  `max(5,000,000, constraint_count × 200)`). Caps `solveHelp`
+  invocations per `solve` call; trips with a clear error rather
+  than letting unbounded heap consumption OOM the host.
+- **DCE** — whole-program Sky-side dead-code elimination prunes
+  unreachable defs + FFI bindings before lowering.
+
+## Build & test
+
+```bash
+sky init [name]                    # new project
+sky build src/Main.sky             # compile → sky-out/app
+sky run src/Main.sky               # build + run
+sky watch src/Main.sky             # file-watch rebuild + restart
+sky check src/Main.sky             # type-check + go build
+sky fmt src/Main.sky               # opinionated formatter
+sky test tests/MyTest.sky          # Sky.Test runner
+sky doc Module                     # terminal docs
+sky doc --serve [--port 8080]      # browsable HTTP doc server (auto-opens browser)
+sky doc --tui                      # interactive terminal doc browser (Sky.Tui)
+sky doc --list                     # list every documented module
+sky doctor [--fix] [--verbose]     # project / environment health checks
+sky console [--port 8025]          # standalone Std.Ui Sky Console
+sky console --tui                  # same source, Sky.Tui backend
+sky add github.com/some/package    # add Go FFI binding
+sky remove <package>
+sky install                        # regen missing FFI + go.mod deps
+sky update                         # update deps
+sky upgrade                        # self-upgrade binary
+sky upgrade-claude                 # refresh ./CLAUDE.md from binary's embedded template
+sky clean                          # remove sky-out/ dist/
+sky lsp                            # JSON-RPC LSP server (stdio)
+sky --version                      # `sky dev` on local builds; CI injects release version
 ```
 
-There is **no** `Result.fromTask` / `Task -> Result` bridge. `Task.run` exists in the kernel for the runtime entry boundary, but user code should keep effectful pipelines in `Task` and let the boundary (CLI `main`, `Cmd.perform`, HTTP handler return) execute it. Collapsing a Task to a Result blocks the caller and erases effect tracking from the type — usually a sign the surrounding function should return `Task` itself.
+**Never run `sky build` from the repo root** — overwrites the
+compiler binary in `sky-out/`. Always `cd` into the example dir
+first:
 
-## Environment Variable Precedence
-
-Configuration values resolve in this order (highest priority first):
-
-1. **System environment variables** (`export PORT=8080`, Docker `ENV`, CI vars)
-2. **`.env` file** in the working directory (auto-loaded at startup, never overrides existing env vars)
-3. **`sky.toml`** defaults (compiled into the binary via `init()`, only set when not already present)
-
-This follows the standard convention (godotenv, Docker): system env vars always win so production deployments can override `.env` defaults without editing files. The `.env` file is for local development convenience.
-
-**Env-var namespacing (v0.11.5+)**: every internal runtime read uses the `SKY_` prefix by default (`SKY_LIVE_PORT`, `SKY_AUTH_TOKEN_TTL`, `SKY_LOG_FORMAT`, etc.). Projects that run multiple Sky binaries on the same host can declare a custom prefix in `sky.toml` to avoid collision:
-
-```toml
-[env]
-prefix = "FENCE"
-```
-
-The compiler emits `rt.SetEnvPrefix("FENCE")` at the top of the generated `init()`, and from there the runtime reads `FENCE_LIVE_PORT`, `FENCE_AUTH_TOKEN_TTL`, etc. The prefix is trimmed of any trailing `_` and validated non-empty (empty falls back to `SKY`). Only Sky's INTERNAL namespace is affected — user code calling `System.getenv "DATABASE_URL"` reads the raw name, and the standard fallbacks `DATABASE_URL` / `REDIS_URL` / `PORT` (consulted by Sky.Live's session-store config) stay un-prefixed because they're not in Sky's namespace. Compile-time-only knobs like `SKY_SOLVER_BUDGET` are read by the Haskell compiler itself, not the generated app, so they're unaffected too.
-
-`System.setenv name value : Task Error ()` and `System.unsetenv name : Task Error ()` (also v0.11.5+) let user code mutate process env without Go FFI — useful when the value isn't known until runtime. Reach for `[env] prefix` first; `setenv` is the escape hatch for runtime-derived values.
-
-Sky.Live env vars (sky.toml keys live under `[live]` — there is no `[live.session]` section): `SKY_LIVE_PORT` (`port`), `SKY_LIVE_TTL` (`ttl`), `SKY_LIVE_STORE` (`store` — `memory` / `sqlite` / `redis` / `postgres`), `SKY_LIVE_STORE_PATH` (`storePath` — sqlite file or `host:port` / `redis://…` / `postgres://…` URL), `SKY_LIVE_STATIC_DIR` (`static`), `SKY_LIVE_INPUT` (`input`), `SKY_LIVE_POLL_INTERVAL` (`poll_interval`), `SKY_LIVE_MAX_BODY_BYTES` (`maxBodyBytes` — cap for `/_sky/event` POST body, default `5242880` = 5 MiB; bump for `Event.onFile` / `Event.onImage` uploads larger than that). Postgres falls back to `DATABASE_URL` and Redis to `REDIS_URL` when `SKY_LIVE_STORE_PATH` is unset (Redis defaults further to `localhost:6379`). Auth: `SKY_AUTH_TOKEN_TTL`, `SKY_AUTH_COOKIE`. Connection-status banner: `SKY_LIVE_BANNER` (default `on`; `off` / `0` / `false` to disable the chrome but keep the POST retry queue active), `SKY_LIVE_RETRY_BASE_MS` (default `500`), `SKY_LIVE_RETRY_MAX_MS` (default `16000`), `SKY_LIVE_RETRY_MAX_ATTEMPTS` (default `10`), `SKY_LIVE_QUEUE_MAX` (default `50`), `SKY_LIVE_HELLO_TIMEOUT_MS` (default `8000` — how long the client waits for the server's SSE hello handshake before treating the connection as proxy-wedged and force-reopening), `SKY_LIVE_HEARTBEAT_TTL_MS` (default `35000` — max idle time on the SSE before the client treats the stream as silently dropped; tuned for the server's 15 s heartbeat interval × 2).
-
-**Logging (v0.10.0+)**: `SKY_LOG_FORMAT` (`plain` default | `json`) and `SKY_LOG_LEVEL` (`debug` | `info` default | `warn` | `error`) control `Log.*` output. Project-level defaults via sky.toml `[log] format = "json" / level = "info"` — same three-layer precedence (env > `.env` > `sky.toml`). Switch to JSON in production by setting `SKY_LOG_FORMAT=json` in the deployment env; no rebuild required.
-
-**Console + sub-apps (v0.13.x post-release)**: `SKY_CONSOLE_EMBED` (default `on`; `off` / `0` / `false` skips the dev-mode auto-spawn of the bundled Sky Console at `/_sky/console`), `SKY_DEV_BANNER` (default `on`; `off` suppresses the floating "🔍 Console" link without disabling the console mount), `SKY_CONSOLE_URL` (default `/_sky/console` — relative to same origin; override to point dev users at a remote shared console), `SKY_SUBAPP_VERBOSE` (default `0`; `1` forwards spawned sub-app children's stdout / stderr to the parent's terminal for debugging), `SKY_BIN` (override the `sky` binary path used by `SpawnSkyConsole`), `SKY_LIVE_BASE_PATH` (set automatically by `MountSubApp` — tells the spawned Sky.Live runtime it's running as a sub-app under this URL prefix so its inlined JS prefixes `/_sky/event` etc. correctly and observability + dev banner are suppressed to avoid duplication). `ENV` (then `SKY_ENV` fallback) is the production-mode gate — anything outside `{dev, development, local}` (incl. `production` / `prod` / `staging` / `qa` / `preview`) hides the console + banner and gates `/_sky/metrics` behind auth. Full reference: "Sky Console + sub-app mount" section.
-
-**Compiler internals (v0.12+)**: HM solver budget is now THREE-MODE:
-
-  * `SKY_SOLVER_BUDGET` UNSET → **STRUCTURAL** (default).
-    Cap = `max(5,000,000, constraint_count * SKY_SOLVER_BUDGET_FACTOR)`.
-    Default factor is 200, so a 100-constraint module gets the floor
-    while a 1M-constraint module gets 200M. Scales with input size,
-    so legitimately-large generated codebases don't trip a constant
-    cap, while pathological constraint expansion (which generates
-    >> N×factor solver steps from N constraints) is still caught.
-
-  * `SKY_SOLVER_BUDGET=0` → **DISABLED** (escape hatch). No cap. Debug
-    only — risk of unbounded heap consumption.
-
-  * `SKY_SOLVER_BUDGET=N` (N>0) → **ABSOLUTE** (legacy / regression-test
-    mode). Effective cap is exactly N. Backwards compatible with the
-    pre-v0.12 wall-clock-shaped budget.
-
-`SKY_SOLVER_BUDGET_FACTOR=K` overrides the multiplier (only relevant
-in STRUCTURAL mode). All env vars read by the Haskell compiler at
-build time, not the generated runtime, so they don't interact with
-the `[env] prefix` namespacing.
-
-Pre-v0.12 the bound was a fixed `5,000,000` constant. Limitation #17
-hardening fence in `test/Sky/Build/SolverBudgetSpec.hs` covers all
-three modes.
-
-## Project Overview
-
-Sky is a pure functional, ML-family language compiling to Go. The compiler is written in Haskell (GHC 9.4+) and ships as a single `sky` binary. Runtime binaries are Go output — single-file, statically-linked, no external runtime needed. See `docs/compiler/journey.md` for why the compiler moved TS → Go → Sky → Haskell. (Surface syntax is Elm-compatible; several files in `src/Sky/Type/`, `src/Sky/AST/`, `src/Sky/Reporting/`, `src/Sky/Parse/Primitives.hs` are derivative works adapted from elm/compiler under BSD-3-Clause — see `NOTICE.md`.)
-
-## Architecture
-
-```
-source → lexer → layout filtering → parser → AST → module graph → type checker → Go emitter
-```
-
-```
-src/                              -- Sky compiler (Haskell, GHC 9.4+)
-  Sky/Parse/                      -- lexer, layout filter, parser
-  Sky/Canonicalise/               -- name resolution, import validation
-  Sky/Type/                       -- HM inference, exhaustiveness
-  Sky/Build/                      -- orchestration + FFI generator
-  Sky/Generate/Go/                -- Go IR + printer
-  Sky/Lsp/                        -- language server
-  Sky/Format/                     -- opinionated formatter (Elm-compatible output)
-app/Main.hs                       -- CLI entry point
-runtime-go/rt/                    -- Go runtime (embedded via Template Haskell)
-sky-stdlib/                       -- Sky-side stdlib (embedded)
-tools/sky-ffi-inspect/            -- Go package introspector (embedded via TH;
-                                     self-provisions to XDG cache on first use
-                                     so releases ship a single `sky` binary)
-legacy-ts-compiler/               -- Legacy TypeScript bootstrap (reference only)
-legacy-sky-compiler/              -- Legacy self-hosted Sky compiler (reference only)
-templates/CLAUDE.md               -- Template for `sky init` projects
-examples/                         -- 18 example projects
-```
-
-See `docs/compiler/journey.md` for the TS → Go → Sky → Haskell history.
-
-## Template Sync (Non-Negotiable)
-
-When stdlib, syntax, Sky.Live APIs, or CLI commands change, **`templates/CLAUDE.md` MUST be updated**. AI assistants use this template to write Sky code in user projects.
-
-**User-facing doc sync** — these files mirror the same surface from a user (not AI) perspective and MUST be updated in the same commit when the underlying API changes:
-
-- **`docs/stdlib.md`** — comprehensive user-facing stdlib reference. When you add / rename / remove a function in any kernel module, update the matching table here.
-- **`docs/skyauth/overview.md`** — when `Std.Auth` surface or config changes (`hashPassword`, `signToken`, `register`, `login`, `setRole`, `[auth]` keys, env vars).
-- **`docs/skydb/overview.md`** — when `Std.Db` surface or config changes (`open`, `query`, `withTransaction`, CRUD helpers, `[database]` keys, env vars).
-- **`docs/skylive/overview.md`** + **`docs/skylive/architecture.md`** — when Sky.Live runtime, `Live.app` shape, session-store options, or `[live]` env vars change.
-- **`docs/skyui/overview.md`** — when `Std.Ui` surface or sub-modules change (`Std.Ui.{Background, Border, Font, Region, Input, Lazy, Keyed, Responsive}`), or when an idiom like the form/onSubmit pattern or file/image upload shape evolves.
-- **`README.md` "What's in the box" section** — if you add a brand-new killer module (top-level `Std.Foo`), add a callout there.
-
-The dense reference inside CLAUDE.md (this file, "Standard Library" section) and `templates/CLAUDE.md` is for AI; the `docs/*` files are for humans. Keep both in lockstep.
-
-## Building Examples
-
-**NEVER run `sky build` for examples from the repo root** — it overwrites the compiler binary in `sky-out/`. Always `cd` into the example directory first:
 ```bash
 cd examples/01-hello-world && sky build src/Main.sky
 ```
 
-## Git Push / Release Checklist
+### `sky watch` rules
 
-**These steps are non-negotiable. `--build-only` is NOT a substitute for runtime verification. Skipping step 5 has previously shipped silent runtime regressions (v0.13.0 → v0.13.2 Std.Ui event-emission bug — buttons rendered without any sky-click attrs; cabal test passed; example-sweep --build-only passed; only step 5 would have caught it).**
+- Watched scope (strict allowlist, no `.skywatchignore`): `sky.toml`
+  + the entry-point's directory (recursive `.sky` walk) + `tests/`
+  if present. Generated dirs (`sky-out/`, `.skycache/`, `.skydeps/`,
+  `dist-newstyle/`, `node_modules/`, `.git/`) excluded.
+- Build-error policy: on a failing rebuild, the previously-running
+  binary stays alive. The next successful build kills + respawns.
+- Caches: `.skycache/source.hash` (full short-circuit on
+  unchanged source), `.skycache/lowered/` (per-module IR),
+  `.skycache/ffi/*.skyi` (HM types — never regenerated; explicit
+  `sky add/install` step). Typical warm rebuild: 1-3 s.
 
-1. **DID YOU rebuild the compiler?** `cabal install --overwrite-policy=always --installdir=./sky-out --install-method=copy exe:sky`
-2. **DID YOU smoke-test the binary?** `sky-out/sky --version` — must print version, NOT start a server.
-3. **DID YOU run the cabal test suite?** `cabal test` — every spec must pass. Pending count must match prior runs.
-4. **DID YOU clean-build every example?** Loop over `examples/*/`, `rm -rf sky-out .skycache .skydeps`, `sky build src/Main.sky`. All 19+ must succeed.
-5. **DID YOU runtime-verify every Sky.Live / Sky.Http app?** `scripts/verify-all-web.sh` MUST exit 0. This is the only check that catches the "click is a no-op" class of regression (events stripped at render time, page still renders, Playwright clicks succeed silently). The script enforces TWO assertions per scenario:
-   - **Structural**: rendered HTML containing `<button>` or `<form>` MUST contain at least one `sky-(click|input|change|submit)=` attribute. Zero means events were dropped.
-   - **Round-trip**: scenarios using `expectSkyEventAfter` MUST observe a `POST /_sky/event` after a click. Zero means the wire dispatch is dead.
-6. **DID YOU runtime-verify every CLI / Sky.Tui / Sky.Cli app?** `scripts/verify-cli.sh` MUST exit 0.
-7. `cd examples/12-skyvote && sky check` — 0 errors.
-8. **DID YOU test in a temp dir from scratch?** `sky init mytest`, `sky build && sky run`, `sky add fmt`, `sky remove fmt`, `sky upgrade`.
-9. **DID YOU verify `.github/workflows/ci.yml` matches?** New verification scripts MUST be added to CI or the regression class can ship through CI green.
+### Release checklist (non-negotiable)
 
-**If step 5 or 6 fails, fix the root cause then re-run from step 1. Do NOT tag with a known runtime failure — even one example failing is a release blocker.**
+1. Rebuild: `cabal install --overwrite-policy=always --installdir=./sky-out --install-method=copy exe:sky`
+2. Smoke-test: `sky-out/sky --version` (must print version, not start a server)
+3. Cabal test sweep: `cabal test` — zero failures, pending count matches prior
+4. Clean-build every example: loop over `examples/*/`, `rm -rf sky-out .skycache .skydeps`, `sky build src/Main.sky`
+5. **Sky.Live + Sky.Http.Server runtime verify** — `scripts/verify-all-web.sh` (Playwright + the structural-events + round-trip-dispatch checks)
+6. **CLI / Tui / Cli runtime verify** — `scripts/verify-cli.sh`
+7. **`sky check`** on the largest example: `cd examples/12-skyvote && sky check`
+8. **From-scratch flow** — `sky init mytest` in a temp dir, `sky build && sky run`, `sky add fmt`, `sky remove fmt`, `sky upgrade`
+9. **CI parity** — `.github/workflows/ci.yml` matches the local verify scripts
 
-**Why we are strict here**: the typed-codegen v0.13 work introduced new type-conversion paths (`AsListT[T]`, `AsMapT[V]`, `Coerce[T]`) whose runtime behaviour depends on `T`. A subtle T=any edge case can flip an entire app's behaviour (events dropped, lists empty, dicts missing values) without affecting the type checker. The verification scripts watch the wire, not the types.
+If step 5 or 6 fails, fix root cause then re-run from step 1. Never
+tag with a known runtime failure.
 
-## CI/CD Rules
+## Environment variables
 
-When pushing to `main`, cancel any in-progress **CI build** runs (not release runs) since the new commit supersedes them:
-```bash
-# Cancel in-progress CI runs on main before pushing
-gh run list --branch main --status in_progress --workflow CI --json databaseId --jq '.[].databaseId' | xargs -I{} gh run cancel {} 2>/dev/null
-git push origin main
-```
-Never cancel **release** runs (triggered by tags) — those produce binaries users download.
+Configuration precedence: **process env > `.env` > `sky.toml`**.
 
-## Shell Commands
+### Sky.Live (`[live]` section)
 
-Always use `-f` flag with `rm` and `cp` (`rm -f`, `rm -rf`, `cp -f`).
+| Env var | sky.toml key | Default |
+|---|---|---|
+| `SKY_LIVE_PORT` | `port` | 8000 |
+| `SKY_LIVE_TTL` | `ttl` | `30m` |
+| `SKY_LIVE_STORE` | `store` | `memory` (memory \| sqlite \| redis \| postgres \| firestore) |
+| `SKY_LIVE_STORE_PATH` | `storePath` | `DATABASE_URL` / `REDIS_URL` fallback |
+| `SKY_LIVE_STATIC_DIR` | `static` | none |
+| `SKY_LIVE_INPUT` | `input` | none |
+| `SKY_LIVE_MAX_BODY_BYTES` | `maxBodyBytes` | 5242880 (5 MiB) |
+| `SKY_LIVE_BANNER` | — | `on` (off / 0 / false to disable) |
+| `SKY_LIVE_RETRY_BASE_MS` | — | 500 |
+| `SKY_LIVE_RETRY_MAX_MS` | — | 16000 |
+| `SKY_LIVE_RETRY_MAX_ATTEMPTS` | — | 10 |
+| `SKY_LIVE_QUEUE_MAX` | — | 50 |
+| `SKY_LIVE_HELLO_TIMEOUT_MS` | — | 8000 |
+| `SKY_LIVE_HEARTBEAT_TTL_MS` | — | 35000 |
+| `SKY_LIVE_BASE_PATH` | — | (set by `MountSubApp`) |
 
-## Build & Test
+### Logging (`[log]` section)
 
-```bash
-sky init [name]                   # Create new project
-sky build src/Main.sky            # Compile → sky-out/app
-sky run src/Main.sky              # Build and run
-sky watch src/Main.sky            # Watch sources; rebuild + restart on save
-sky check src/Main.sky            # Type-check only
-sky fmt src/Main.sky              # Format (opinionated, Elm-compatible)
-sky test tests/MyTest.sky         # Run a Sky test module (exposing `tests : List Test`)
-sky add github.com/some/package   # Add dependency + generate bindings
-sky remove <package>              # Remove dependency
-sky install                       # Install deps + generate missing bindings
-sky update                        # Update deps to latest
-sky upgrade                       # Self-upgrade binary
-sky upgrade-claude                # Refresh ./CLAUDE.md from this binary's embedded template
-sky console [--port 8025]         # Run the bundled Std.Ui Sky Console standalone
-sky console --tui                 # ... or render the same console via Sky.Tui (terminal)
-sky lsp                           # Language Server (JSON-RPC/stdio)
-sky clean                         # Remove sky-out/ dist/
-sky --version                     # `sky dev` on local builds; CI injects the release version
-```
+| Env | sky.toml | Values |
+|---|---|---|
+| `SKY_LOG_FORMAT` | `format` | `plain` (default) \| `json` |
+| `SKY_LOG_LEVEL` | `level` | `debug` \| `info` (default) \| `warn` \| `error` |
 
-`sky console` is the **standalone** launcher for ad-hoc use; every
-Sky.Live + Sky.Http.Server app also auto-mounts the same console at
-`/_sky/console` in dev mode (see "Sky Console + sub-app mount" section
-below for the env-gating + the `rt.MountSubApp` API that lets
-developers add their own sub-apps).
+### Auth, Console, Production gate
 
-Local builds read the compiler version from `app/VERSION` (literal `dev`). Release CI overwrites that file with the git tag before `cabal install`. Don't bump `sky-compiler.cabal`'s `version:` field — it's pinned to `0.0.0` by design so local and CI artefacts stay distinguishable.
+```dotenv
+ENV=production              # gates dev console + banner OFF + /_sky/metrics behind auth
+SKY_AUTH_TOKEN_SECRET=…     # ≥32 bytes — Sky errors at startup if shorter
+SKY_AUTH_TOKEN_TTL=24h
+SKY_AUTH_COOKIE=sky_sid
 
-### `sky watch` — file-watch-driven hot rebuild + restart
-
-```bash
-sky watch                           # entry: src/Main.sky
-sky watch src/Main.sky              # explicit entry
-sky watch --no-run                  # rebuild only (don't spawn the binary)
-sky watch --clear                   # clear screen between rebuilds
-sky watch --interval=200            # poll interval ms (default 200)
-sky watch --debounce=150            # debounce window after a change (default 150)
-sky watch --kill-timeout=3000       # graceful SIGTERM window before SIGKILL
-sky watch --watch=docs/notes.md     # add a path (file/dir, repeatable)
+SKY_CONSOLE_EMBED=on        # off/0/false suppresses dev console mount
+SKY_DEV_BANNER=on           # off suppresses the floating link (keeps mount)
+SKY_CONSOLE_URL=/_sky/console
+SKY_SUBAPP_VERBOSE=0        # 1 forwards spawned-child stdout/stderr to parent terminal
+SKY_BIN=…                   # override `sky` binary path for SpawnSkyConsole
+SKY_METRICS_TOKEN=…         # /_sky/metrics requires Bearer in production
 ```
 
-**Watched scope (strict allowlist, no .skywatchignore):** `sky.toml` at the project root + the directory containing the entry point (recursive walk, only `.sky` files) + `tests/` at the project root if it exists. Generated dirs (`sky-out/`, `.skycache/`, `.skydeps/`, `dist-newstyle/`, `node_modules/`, `.git/`) are excluded from the directory walk so a build never feedback-loops. Power users add extra paths via repeated `--watch=PATH` (file = exact, directory = recursive `.sky` walk).
+The production gate is `ENV` then `SKY_ENV` fallback. Unset OR
+set to `dev` / `development` / `local` → dev mode. Anything else
+(`production`, `prod`, `staging`, `qa`, `preview`, …) → production
+mode (console + banner gone, metrics auth on). Same gate governs
+three things; no chance of leaking a dev surface.
 
-**Build-error policy:** on a failing rebuild the watcher prints the error and **keeps the previously-running binary alive**. The next successful build kills + respawns. A typo halfway through a save doesn't tear down the dev session — huge DX win versus `while true; sky run; done` style loops.
+### Env prefix (multi-tenant)
 
-**Caching:** watch reuses every layer the existing build pipeline already has:
-- `.skycache/source.hash` — full short-circuit when nothing changed.
-- `.skycache/lowered/` — per-module lowered IR.
-- `.skycache/ffi/*.skyi` — FFI bindings; **never regenerated by watch** (`sky add/install` is the explicit step). The 8-min cold Stripe SDK introspection on skyshop is one-shot per package version, not per save.
-- Go's `~/Library/Caches/go-build` — Go-side compilation units; only `main.go` changes per save, all rt + FFI archives stay cached.
-
-Typical warm-rebuild latency: 1-2 s for small apps (live-counter, todo-cli), 2-3 s for skyvote-sized projects, 10-15 s for skyshop-sized projects with extensive Stripe FFI use.
-
-**Sky.Live + watch is near-zero-disruption** when paired with a persistent session store. The runtime's SSE handshake auto-reconnects post-restart (banner shows `Reconnecting…` for ~1 s then clears), and the input-preservation rules keep typed values across the swap. With the memory store the user re-inits to `init`'s output on every restart — `sky watch` warns about this at startup with a one-line tip pointing at sqlite/redis/postgres/firestore.
-
-**Signals:** Ctrl-C (SIGINT) and SIGTERM both go through the same clean teardown — the watcher's UserInterrupt-async-exception handler kills the child gracefully (SIGTERM → up to `kill-timeout` ms wait → SIGKILL fallback) and exits 0 silently. Never leaves zombies.
-
-**What watch does NOT do:**
-- No automatic `sky install` — deps don't change on a code edit, and surprise `sky-ffi-inspect` runs would burn 8 min on Stripe-sized SDKs.
-- No browser auto-refresh — Sky.Live's SSE handshake handles reconnection without page reload.
-- No file watching outside the allowlist — `runtime-go/`, `.skydeps/`, build artefacts are ignored. Compiler-dev workflows that need rt/ watching should use `cabal install` cycles instead.
-
-### `sky install` performance shape
-
-The pipeline does, in order:
-1. **`go get pkg1 pkg2 …`** — single batched call; module graph computed once. Warm cache near-instant.
-2. **`sky-ffi-inspect`** — invokes the Go AST inspector. CPU-heavy. Multi-mode (one inspector subprocess loading N pkgs in one `packages.Load`) so Go's loader dedupes shared transitive deps across roots — a Sky.Live app pulling Stripe SDK + Firebase + Firestore + Google APIs gets each shared dep type-checked once instead of once per root.
-3. **Chunked-multi parallelism** — split missing deps into K chunks, run K inspector subprocesses in parallel. K = `min(numProcessors, 4)` by default. Override via `SKY_INSTALL_PARALLEL=1..16`.
-4. **`generateBindings`** (Haskell) — emits `.skycache/ffi/<slug>.{kernel.json,skyi}` + `.skycache/go/<slug>_bindings.go` per pkg. Sub-second per pkg, parallel-safe.
-
-**Skyshop benchmark** (18 deps, warm Go module cache, M1 Mac 8-core):
-- Baseline: 67.5 s wall, 136.3 s CPU.
-- Optimised: 58.5 s wall, 112.5 s CPU. **13% faster, 17% less CPU.**
-- The hard floor: Stripe SDK master package alone takes ~53 s to type-check inside Go's loader. Below that is Tier 2 work (usage-driven FFI generation, only emit referenced symbols).
-
-**Inspector mode flags**: `packages.NeedName | NeedTypes | NeedDeps | NeedImports`. `NeedSyntax` and `NeedTypesInfo` were dropped (audited every helper in `tools/sky-ffi-inspect/main.go` — none reads `pkg.Syntax` or `pkg.TypesInfo`). Output is byte-identical to the previous mode set across skyshop's 18-dep set.
-
-**Forward-compat fallback**: a stale in-tree `bin/sky-ffi-inspect` predating the multi-mode upgrade returns a single-pkg JSON object even when given multiple argv args. The Sky-side `runInspectorMulti` detects this (array decode fails + object decode succeeds) and falls back to a per-pkg loop. Keeps `sky install` correct on stale dev binaries; loses the cross-pkg dedup speedup until contributors rebuild `bin/sky-ffi-inspect`.
-
-## Code Formatting (`sky fmt`)
-
-Opinionated formatter, no configuration. Output is Elm-compatible (4-space indent, leading commas, "one line or each on its own line"):
-- 4-space indentation (never tabs)
-- No max line width — short on one line, long ones break
-- "One line or each on its own line" for args, list items, record fields
-- Leading commas for multi-line lists/records
-- Trailing newline; two blank lines between declarations
-
-```elm
--- Pipelines
-value
-    |> transform1
-    |> transform2 arg1
-
--- Records: leading commas when multi-line
-{ firstName = "Alice"
-, lastName = "Smith"
-}
-
--- Case
-case msg of
-    Increment ->
-        count + 1
-    Decrement ->
-        count - 1
-
--- Let/in
-let
-    x = compute
-in
-    result
-
--- else if: flat chains
-if x > 0 then
-    positive
-else if x < 0 then
-    negative
-else
-    zero
+```toml
+[env]
+prefix = "MYAPP"            # internal SKY_*_ vars become MYAPP_*_
 ```
 
-Safety: formatter refuses to write if output loses >1/3 of code lines (prevents silent deletion from partial AST).
+Only Sky's internal namespace is affected. User code calling
+`System.getenv "DATABASE_URL"` reads the raw name.
+`System.setenv name value : Task Error ()` / `System.unsetenv` are
+the runtime escape hatch.
 
-## Standard Library
+### Compiler internals (build-time only)
 
-Single canonical module per concern after the v0.10.0 consolidation. Every kernel module is reachable via its bare name (e.g. `import Log` is the same as `import Std.Log as Log`); the `Sky.Core.X` / `Std.X` long paths are kept for cross-language familiarity but you can usually drop them.
+`SKY_DCE=0` disables DCE. `SKY_SOLVER_BUDGET=N` overrides the HM
+solver step cap (0 = disable, default uses constraint-count ×
+factor). `SKY_SOLVER_BUDGET_FACTOR=K` overrides the multiplier
+(default 200).
+
+## Standard library — Layer 3 (every kernel module is Sky source)
+
+Source location: `sky-stdlib/{Sky/Core,Std,Sky/Http}/*.sky`.
+
+Each binding is either:
+
+1. **Pure Sky** — recursive / case-based implementation (lists,
+   Maybes, Results).
+2. **`Ffi.kernel "Name"` alias** — Sky-source declaration with HM
+   signature; the compiler's Stage-4 rewrite routes call sites
+   directly to the existing typed kernel dispatch (no runtime
+   overhead, `sky doc` still surfaces the entry).
 
 ### Pure (no I/O, no Task wrap)
+
 | Module | Path | Key functions |
 |---|---|---|
-| `Basics` | `Sky.Core.Basics`, autoloaded via `Sky.Core.Prelude` | identity, always, not, toString, modBy, clamp, fst, snd, compare, negate, abs, sqrt, min, max |
-| `String` | `Sky.Core.String` | length, reverse, append, split, join, contains, startsWith, endsWith, toInt, fromInt, toFloat, fromFloat, toUpper, toLower, trim, trimStart, trimEnd, replace, slice, isEmpty, toBytes, fromBytes, fromChar, toChar, left, right, padLeft, padRight, repeat, lines, words, isValid, normalize, normalizeNFD, casefold, equalFold, graphemes, isEmail, isUrl, slugify, htmlEscape, truncate, ellipsize |
-| `List` | `Sky.Core.List` | map, filter, foldl, foldr, length, head, tail, take, drop, append, concat, concatMap, reverse, sort, sortBy, member, any, all, range, zip, filterMap, parallelMap, isEmpty, indexedMap, find, cons |
-| `Dict` | `Sky.Core.Dict` | empty, insert, get, remove, member, keys, values, toList, fromList, map, foldl, union |
-| `Set` | `Sky.Core.Set` | empty, insert, remove, member, union, diff, intersect, fromList, toList, size |
-| `Maybe` | `Sky.Core.Maybe` | withDefault, map, andThen, map2..5, andMap, combine, traverse |
-| `Result` | `Sky.Core.Result` | withDefault, map, andThen, mapError, map2..5, andMap, combine, traverse, andThenTask |
-| `Math` | `Sky.Core.Math` | sqrt, pow, abs, floor, ceil, round, sin, cos, tan, pi, e, log, min, max |
+| `Basics` | `Sky.Core.Basics` (autoloaded via `Sky.Core.Prelude`) | identity, always, not, toString, modBy, clamp, fst, snd, compare, negate, abs, sqrt, min, max |
+| `String` | `Sky.Core.String` | 33 entries — length, reverse, append, split, join, contains, startsWith, endsWith, toInt, fromInt, toFloat, fromFloat, toUpper, toLower, trim/trimStart/trimEnd, replace, slice, isEmpty, fromChar, toList, fromList, repeat, padLeft, padRight, casefold, equalFold, isEmail, isUrl, words, lines, concat |
+| `List` | `Sky.Core.List` | map, filter, foldl, foldr, length, head, tail, take, drop, append, concat, concatMap, reverse, member, any, all, range, zip, find, isEmpty, indexedMap, cons + reverseHelp/indexedMapHelp |
+| `Dict` | `Sky.Core.Dict` (kernel) | empty, insert, get, remove, member, keys, values, toList, fromList, map, foldl, union |
+| `Set` | `Sky.Core.Set` (kernel) | empty, insert, remove, member, union, diff, intersect, fromList, toList, size |
+| `Maybe` | `Sky.Core.Maybe` | withDefault, map, andThen, map2-5, andMap, combine, isJust, isNothing |
+| `Result` | `Sky.Core.Result` | withDefault, map, andThen, mapError, map2-5, andMap, combine |
+| `Math` | `Sky.Core.Math` | abs, min, max, sqrt, pow, floor, ceil, round, sin, cos, tan, pi, e, log |
 | `Regex` | `Sky.Core.Regex` | match, find, findAll, replace, split |
-| `Char` | `Sky.Core.Char` | isUpper, isLower, isDigit, isAlpha, toUpper, toLower |
-| `Path` | `Sky.Core.Path` | join, dir, base, ext, isAbsolute, safeJoin |
-| `Crypto` | `Sky.Core.Crypto` | sha256, sha512, md5, hmacSha256, constantTimeEqual, randomBytes, randomToken (random* return Task — entropy) |
+| `Char` | `Sky.Core.Char` | isAlpha, isDigit, isLower, isUpper, toUpper, toLower |
+| `Path` | `Sky.Core.Path` | base, dir, ext, isAbsolute |
+| `Crypto` | `Sky.Core.Crypto` | sha256, sha512, md5, hmacSha256, constantTimeEqual (pure); randomBytes, randomToken (Task — entropy) |
 | `Encoding` | `Sky.Core.Encoding` | base64Encode/Decode, urlEncode/Decode, hexEncode/Decode |
-| `Json.Encode` (alias `JsonEnc`) | `Sky.Core.Json.Encode` | string, int, float, bool, null, list, object, encode |
-| `Json.Decode` (alias `JsonDec`) | `Sky.Core.Json.Decode` | decodeString, string, int, float, bool, field, index, list, map, andThen, succeed, fail, oneOf, at, map2..5 |
-| `Json.Decode.Pipeline` (alias `JsonDecP`) | `Sky.Core.Json.Decode.Pipeline` | required, optional, custom, requiredAt |
-| `Uuid` | `Sky.Core.Uuid` | v4, v7, parse |
-| `Decimal` | `Std.Decimal` | Layer 3 Sky-source. Arbitrary-precision arithmetic for money / billing / tax. fromString, fromInt, fromFloat, fromMinor, toString, toStringFixed, toFloat, toInt, toMinor, add, sub, mul, div, mod, neg, abs, round (banker's), roundHalfUp, truncate, floor, ceil, compare, eq/neq/lt/lte/gt/gte, min, max, isZero/isPositive/isNegative, percentOf, addPercent, subPercent, formatWith, sum, zero, one, oneHundred |
-| `Money` | `Std.Money` | Layer 3 Sky-source. Currency-aware Money built on Decimal + ISO 4217 Currency enum (50+ codes + crypto). fromMinor, fromMajor, fromString, zero, zeroOf, amount, currency, currencyCode, add, sub, mul, allocate (fair-split), sumOf, neg, abs, eq/neq/lt/lte/gt/gte, compare, isZero/isPositive/isNegative, format, formatWithCode, toMinor, percentOf, addPercent, subPercent, minorUnits, symbol, currencyName, knownCurrency, parseCurrency, setRate, getRate, hasRate, clearRates, convert |
+| `JsonEnc` | `Sky.Core.Json.Encode` | string, int, float, bool, null, list (Elm-style `(a -> Value) -> List a -> Value`), object, encode |
+| `JsonDec` | `Sky.Core.Json.Decode` | string/int/float/bool, decodeString, field, at, index, list, map, andThen, succeed, fail, oneOf, map2-4 |
+| `JsonDecP` | `Sky.Core.Json.Decode.Pipeline` | required, optional, custom, requiredAt |
+| `Uuid` | `Sky.Core.Uuid` | v4, v7 (bare zero-arg — called without `()`), parse |
+| `Decimal` | `Std.Decimal` | Arbitrary-precision arithmetic (shopspring/decimal). 42 entries. Banker's round, percent helpers. |
+| `Money` | `Std.Money` | Currency-typed Money on Decimal + ISO 4217 enum (50+ codes + crypto). 44 entries. `allocate` (fair split), conversion rates. |
 
 ### Effects (`Task Error a`)
+
 | Module | Path | Key functions |
 |---|---|---|
 | `Task` | `Sky.Core.Task` | succeed, fail, map, andThen, perform, sequence, parallel, lazy, run, fromResult, andThenResult, mapError, onError |
 | `Cmd` | `Std.Cmd` | none, batch, perform |
 | `Sub` | `Std.Sub` | none, every |
-| `Time` | `Sky.Core.Time` | now, sleep, every, unixMillis, formatISO8601, formatRFC3339, formatHTTP, format, parseISO8601, parse, addMillis, diffMillis, timeString |
-| `Std.Time` (zone helpers) | `Std.Time` | Layer 3 Sky-source. IANA-zone helpers complementing the kernel `Sky.Core.Time`. inZone, formatInZone, addMonths/Years (CLAMPED to month-end — Jan 31 + 1 month → Feb 28/29), addDays/Hours/Minutes/Seconds, startOfDay/Week/Month/Year, endOfDay/Month/Year, year/month/day, dayOfWeek (ISO Mon=1..Sun=7), dayOfYear, weekOfYear (ISO 8601), isWeekend, daysInMonth, isLeapYear, diffDays/Hours/Minutes/Seconds, fromParts, zoneOffset, zoneName, utc |
-| `Random` | `Sky.Core.Random` | int, float, choice, shuffle |
-| `Http` | `Sky.Core.Http` | get, post, request |
-| `File` | `Sky.Core.File` | readFile, readFileLimit, readFileBytes, writeFile, append, mkdirAll, readDir, exists, remove, isDir, tempFile, copy, rename |
-| `Io` | `Sky.Core.Io` | readLine, readBytes, writeStdout, writeStderr, writeString |
-| **`System`** | `Sky.Core.System` | args, getArg, getenv, getenvOr, getenvInt, getenvBool, cwd, exit, loadEnv |
-| `Process` | `Sky.Core.Process` | run (subprocess execution only) |
-| `Db` | `Std.Db` | connect, open, close, exec, execRaw, query, queryDecode, insertRow, getById, updateById, deleteById, findWhere, withTransaction, getField, getFieldOr, getString, getInt, getBool |
-| `Auth` | `Std.Auth` | hashPassword, verifyPassword, signToken, verifyToken, register, login, setRole, hashPasswordCost, passwordStrength |
-| **`Log`** | `Std.Log` | println, debug, info, warn, error, debugWith, infoWith, warnWith, errorWith, with |
-
-### Web / Live / UI
-| Module | Path | Key functions |
-|---|---|---|
-| `Server` | `Sky.Http.Server` | listen, get/post/put/delete/any, static, text/json/html, withStatus, redirect, param, queryParam, header, getCookie, cookie, withCookie, withHeader, method, formValue, body, path, group, use |
-| `Live` | `Std.Live` | app, route, api |
-| `Event` | `Std.Html.Events` | v0.13 Sky-source typed module (renamed from `Std.Live.Events`). onClick, onInput, onChange, onSubmit, on*, onCheck, onImage, onFile, fileMaxWidth/Height/Size — builders return `Attribute msg` carrying a typed `Event msg` |
-| `Html` | `Std.Html` | v0.13 Sky-source typed module. text, div, span, p, h1..h6, a, button, input, form, … (~75 builders → typed `Html msg` ADT) + render/raw helpers |
-| `Attr` | `Std.Html.Attributes` | v0.13 Sky-source typed module. class/id/style/href/src (String), rows/cols/width/height (Int), checked/disabled/required (Bool), type_ (keyword clash), … (~60 builders → typed `Attribute msg` ADT) + attribute/dataAttribute/boolAttribute/none |
-| `Css` | `Std.Css` | v0.13 Sky-source typed module. `Length`/`Color` ADTs (px/rem/pct/hex/rgb/rgba…), keyword enums (`display Flex`, `cursor Pointer`, `fontWeight (Weight 600)`), String + `rawProp` for compound props. rule/media/keyframes/stylesheet/styles/property |
-| `Ui` | `Std.Ui` | Typed no-CSS layout DSL. **Layout**: el/row/column/wrappedRow/grid (CSS-Grid auto-fit, set min column width with `Ui.gridColumns N`)/paragraph/textColumn/text/none/button/input/form/link/image/html, layout. **Length**: px/fill/fillPortion/content/shrink/minimum/maximum/vh/vw (`fill : Length` is bare — for proportional fills use `fillPortion n`; `minimum n l` / `maximum n l` constrain a length; `vh n` / `vw n` are viewport-relative `Nvh` / `Nvw`). **Padding**: padding/paddingXY/paddingEach/spacing. **Align**: centerX/Y/alignLeft/Right/Top/Bottom/pointer. **Overflow**: clip/clipX/clipY/scrollbars/scrollbarX/scrollbarY. **Nearby**: above/below/onLeft/onRight/inFront/behind. **Color**: rgb/rgba/white/black/transparent. **Events**: onClick/onSubmit/onInput/onChange/onFocus/onMouseOver/onMouseOut/onKeyDown/onFile/onImage, fileMaxSize/Width/Height. **Attrs**: htmlAttribute/style/class/name. Sub-modules: `Std.Ui.Background` (color/image/linearGradient/gradient), `Std.Ui.Border` (color/width/widthEach/rounded/solid/dashed/dotted/shadow/glow/innerShadow), `Std.Ui.Font` (color/family/size/weight/bold/semiBold/regular/light/extraBold/black/italic/underline/noDecoration/lineThrough/overline/letterSpacing/wordSpacing/sansSerif/serif/monospace/alignLeft/alignRight/alignCenter/center/justify), `Std.Ui.Region` (heading/mainContent/navigation/footer/aside/label/announce/announceUrgently — renderer dispatches `<h1..h6>`/`<main>`/`<nav>`/`<footer>`/`<aside>` + aria-label/aria-live), `Std.Ui.Input` (button/text/multiline/checkbox/email/username/search/currentPassword/newPassword/radio/radioRow/slider + labelAbove/Below/Left/Right/Hidden + placeholder + option), `Std.Ui.Lazy` (lazy/lazy2..lazy5 — currently no-op wrappers), `Std.Ui.Keyed` (keyed), `Std.Ui.Responsive` (classifyDevice/adapt). Renders to inline-styled HTML via Std.Html — no CSS files. Full reference: docs/skyui/overview.md. Prior-art attribution: NOTICE.md. |
-| `RateLimit` | `Sky.Http.RateLimit` | allow |
+| `Time` | `Sky.Core.Time` | now, sleep, every, unixMillis, format/formatISO8601/formatRFC3339/formatHTTP, addMillis, diffMillis, timeString |
+| `Std.Time` | `Std.Time` | 32 entries. IANA zones, addMonths/Years (month-end CLAMPED), dayOfWeek (ISO Mon=1..Sun=7), weekOfYear (ISO 8601), startOfDay/Week/Month/Year, diffDays/Hours/Minutes/Seconds. |
+| `Random` | `Sky.Core.Random` | int, float |
+| `Http` | `Sky.Core.Http` | get, post |
+| `File` | `Sky.Core.File` | readFile, readFileLimit, readFileBytes, writeFile, append, exists, remove, mkdirAll, readDir, isDir, tempFile, copy, rename |
+| `Io` | `Sky.Core.Io` | readLine, writeStdout, writeStderr |
+| `System` | `Sky.Core.System` | args, getArg, getenv, getenvOr (bare), getenvInt, getenvBool, setenv, unsetenv, cwd, loadEnv, exit |
+| `Process` | `Sky.Core.Process` | run (subprocess) |
+| `Db` | `Std.Db` | open, connect, close, exec, execRaw, query, insertRow, getById, updateById, deleteById, findOneByField, findManyByField, findByConditions, unsafeFindWhere, queryDecode, withTransaction, getField, getString, getInt, getBool |
+| `Auth` | `Std.Auth` | register, login, setRole (Task) + hashPassword, hashPasswordCost, verifyPassword, passwordStrength, signToken, verifyToken (Result) |
+| `Log` | `Std.Log` | println, debug, info, warn, error, debugWith, infoWith, warnWith, errorWith |
+| `Server` | `Sky.Http.Server` | param, queryParam, header, getCookie, static (Layer 3 surface); higher-level `get/post/listen/text/json/html` stay kernel-only |
 | `Middleware` | `Sky.Http.Middleware` | withCors, withLogging, withBasicAuth, withRateLimit |
-
-### Low-level FFI proxies
-| Module | Path | Key functions |
-|---|---|---|
-| `Context` | `Context` (Go context) | background, todo, withValue, withCancel |
-| `Fmt` | `Fmt` (Go fmt) | sprint, sprintf, sprintln, errorf |
-| `Ffi` | `Sky.Ffi` | call, callPure, callTask, has, isPure |
+| `RateLimit` | `Sky.Http.RateLimit` | allow |
 
 ### Diverging
-- `System.exit : Int -> a` — process termination, polymorphic return.
 
-### Prelude (implicitly imported via `Sky.Core.Prelude exposing (..)`)
-`Result (Ok/Err)`, `Maybe (Just/Nothing)`, `identity`, `not`, `always`, `fst`, `snd`, `clamp`, `modBy`, `errorToString`
+`System.exit : Int -> a` — process termination, polymorphic return.
 
-### Concurrency
-```elm
-Task.parallel : List (Task err a) -> Task err (List a)  -- goroutine-backed, first error short-circuits
-Task.lazy : (() -> a) -> Task err a                      -- defer computation
-List.parallelMap : (a -> b) -> List a -> List b          -- pure goroutine map
-```
+### Prelude (autoloaded via `Sky.Core.Prelude exposing (..)`)
 
-## Go FFI / Interop Model
+`Result (Ok/Err)`, `Maybe (Just/Nothing)`, `identity`, `not`,
+`always`, `fst`, `snd`, `clamp`, `modBy`, `errorToString`.
 
-### Golden Rule: Users never write FFI code
+## Sky.Live + Sky.Http.Server
 
-Pipeline: `sky add pkg` → inspector extracts types → compiler classifies functions → generates `.skyi` + Go wrapper with panic recovery → DCE strips unused → `sky install` auto-generates missing bindings. Large packages (>50KB) use `sky-ffi-gen` for usage-driven bindings.
+### Live.app shape
 
-### Type Mapping
-
-**Every FFI call returns `Result Error T`.** The boundary is a trust
-boundary — same trust-boundary discipline as a typed FFI port. See `docs/ffi/boundary-philosophy.md`.
-
-This applies UNIFORMLY: method calls, constructors (`newX`), field
-getters, field setters, and package-level var reads all return
-`Result Error T`. No exceptions — an infallible getter still needs to
-survive nil receivers and concurrent data races, and we don't want
-callers checking "is this the kind of FFI that can fail?". Runtime
-wrappers: `SkyFfiFieldGet` / `SkyFfiFieldSet` wrap in `Ok(value)` on
-success, `Err(ErrFfi _)` on nil / missing field. Generated T-variants
-(`Go_Pkg_fieldT`) return `SkyResult[any, T]` so static callers and
-`|> Result.andThen` chains see the same shape. Generated any-variants
-(`Go_Pkg_field`) delegate to the reflect helpers.
-
-| Go return | Sky type |
-|---|---|
-| `string` / `int`/`int64` / `float64` / `bool` (element types) | `String` / `Int` / `Float` / `Bool` |
-| `T` (single, no error) | `Result Error T` |
-| `*T` (single pointer, no error) | `Result Error T` (opaque; nil-deref → Err via recover) |
-| `(T, error)` / `error` | `Result Error T` / `Result Error ()` |
-| `(T, bool)` (comma-ok) | `Result Error (Maybe T)` |
-| `(T, *NamedErr)` where NamedErr implements error | `Result Error T` |
-| `(T, U)` (no error/bool) | `Result Error (T, U)` |
-| `*sql.DB` / `[]T` / `map[string]V` | `Result Error Db` / `Result Error (List T)` / `Result Error (Dict String V)` |
-| Go struct / Go interface | Opaque type (constructor + getters + setters / method bindings, all wrapped in Result) |
-| void | `Result Error ()` |
-
-Bare `*T` returns are NOT wrapped in Maybe — Go SDK builder chains
-(Firestore, Stripe) rely on chaining pointer returns. Defer-recover
-catches downstream nil-deref and surfaces `Err(ErrFfi(...))`.
-
-Nil-receiver checks are added to every method/getter/setter wrapper —
-calling on a nil opaque returns `Err(ErrFfi "nil receiver: T.M")` instead
-of panicking.
-
-### Opaque Struct Pattern (Builder)
-
-Go structs are opaque — use generated constructors and pipeline setters (value first, struct second for `|>`). Every FFI call returns `Result Error T`; the example below shows the typical "stitch values out of Results then call" pattern using `Result.andThen`:
-
-```elm
--- Constructor: newTypeName () -> Result Error TypeName
--- Getter: typeNameFieldName : TypeName -> Result Error FieldType
--- Setter: typeNameSetFieldName : FieldType -> TypeName -> Result Error TypeName
-
-createSession : String -> Result Error CheckoutSession
-createSession successUrl =
-    Stripe.newCheckoutSessionParams ()
-        |> Result.andThen (Stripe.checkoutSessionParamsSetMode "payment")
-        |> Result.andThen (Stripe.checkoutSessionParamsSetSuccessURL successUrl)
-        |> Result.andThen Stripe.newCheckoutSession
-```
-
-Pointer fields auto-wrapped — pass plain values. For nested structs, build inner first. Boundary failure (panic, type mismatch) surfaces as `Err`; user code chains via `Result.andThen` / `withDefault` / `case`.
-
-## Sky.Live
-
-Server-driven UI with the TEA architecture (model / update / view / subscriptions):
 ```elm
 main =
     Live.app
         { init = init, update = update, view = view, subscriptions = subscriptions
-        , routes = [ route "/" HomePage, route "/about" AboutPage ], notFound = HomePage
+        , routes = [ route "/" HomePage, route "/about" AboutPage ]
+        , notFound = HomePage
         }
 ```
-HTTP-first (full HTML on load, patches on events), SSE subscriptions, session stores (memory/SQLite/Redis/PostgreSQL/Firestore), type-safe events, VNode diffing, security (cookies, rate limiting, CORS).
 
-### Async Commands (Cmd.perform)
+HTTP-first (full HTML on load, patches on events), SSE
+subscriptions, session stores (memory / sqlite / redis / postgres /
+firestore), type-safe events, VNode diffing.
 
-`update` returns `(Model, Cmd Msg)`. Use `Cmd.perform` to run long-running Tasks in background goroutines — results are dispatched back to `update` via SSE:
+### Async commands
+
+`update msg model` returns `(Model, Cmd Msg)`. `Cmd.perform task
+toMsg` runs the task in a goroutine; result dispatches back as a
+Msg through SSE.
 
 ```elm
-type Msg = FetchData | DataLoaded (Result Error String)
-
 update msg model =
     case msg of
         FetchData ->
             ( { model | loading = True }
-            , Cmd.perform (Http.get "/api/data") DataLoaded
-            )
+            , Cmd.perform (Http.get "/api/data") DataLoaded )
         DataLoaded result ->
             ( { model | loading = False, data = Result.withDefault "" result }
-            , Cmd.none
-            )
+            , Cmd.none )
 ```
 
-| Function | Type | Description |
-|----------|------|-------------|
-| `Cmd.none` | `Cmd msg` | No-op (most update branches) |
-| `Cmd.perform` | `Task err a -> (Result err a -> msg) -> Cmd msg` | Run task async, dispatch result as Msg |
-| `Cmd.batch` | `List (Cmd msg) -> Cmd msg` | Run multiple commands concurrently |
+### Wire-event arg shapes
 
-Concurrency: commands run in goroutines with session locking (same as subscriptions). Model is read fresh from the session store on completion — safe for multi-instance deployments.
-
-### View-event bindings: radio groups + checkboxes
-
-Wire-level events dispatch these args (see `__skyExtractArgs`):
-
-| Event | Element | Args sent |
+| Event | Element | Args |
 |---|---|---|
-| `click`, `focus`, `blur`, `mouseover`/`mouseout`, `mousedown`/`mouseup` | any | `[]` (just the Msg) |
-| `input`, `change` | `<input type="checkbox">` | `[checked : Bool]` |
-| `input`, `change` | `<input type="radio">` | `[checked : Bool]` (always `True` at selection — usually not what you want) |
-| `input`, `change` | `<input type="number">`/`range` | `[value : Float]` |
-| `input`, `change` | text inputs, `<textarea>`, `<select>` | `[value : String]` |
-| `submit` | `<form>` | `[formData]` — accepts `Dict String String` OR a typed record alias (v0.9.8+) |
+| `click`, `focus`, `blur`, `mouseover`/`mouseout` | any | `[]` |
+| `input`/`change` | checkbox | `[checked : Bool]` |
+| `input`/`change` | radio | `[checked : Bool]` (use `onClick` per radio instead — see below) |
+| `input`/`change` | number / range | `[value : Float]` |
+| `input`/`change` | text / textarea / select | `[value : String]` |
+| `submit` | form | `[formData]` — Dict String String OR typed record alias |
 | `keydown`/`keyup`/`keypress` | any | `[key : String]` |
 
-**Radio convention: use `onClick` on each label/input, not `onInput`.** A radio's `input` event fires on selection but reports `[checked=True]` (a boolean), not the chosen `value`. Binding a typed constructor like `UpdateRole : String -> Msg` to `onInput` would get a `Bool` at runtime and the dispatch drops the event with a `Msg decode error` in the log.
+### Radio convention — `onClick` per label, not `onInput`
+
+A radio's `input` event reports `checked=True` (Bool), not the
+chosen value. Bind a fully-applied Msg per choice via `onClick`:
 
 ```elm
--- Preferred: one fully-applied Msg per radio, dispatched on click.
-choiceRow =
-    label [ for "role-guardian", onClick (UpdateRole "guardian") ]
-        [ input [ type "radio", name "role", value "guardian", id "role-guardian" ] []
-        , text "Guardian"
-        ]
+label [ for "role-guardian", onClick (UpdateRole "guardian") ]
+    [ input [ type "radio", name "role", value "guardian", id "role-guardian" ] []
+    , text "Guardian"
+    ]
 ```
 
-The `for`/`id` pairing lets the browser toggle the radio natively on label click; the `onClick` on the label carries the fully-applied Msg (zero wire args) so no type coercion happens server-side. Same pattern works for checkbox groups when you want per-choice Msg variants.
+The `for`/`id` pairing lets the browser toggle the radio natively;
+`onClick` carries the typed Msg.
 
-### Forms with passwords (and other sensitive inputs)
+### Forms with passwords (mandatory pattern)
 
-**Use `onSubmit` with form data, not `onInput` per keystroke.** The pattern:
+**Use `onSubmit` with form data, NOT `onInput` per keystroke on
+password fields.**
 
 ```elm
-type alias AuthCreds =
-    { email : String, password : String }
-
-type Msg
-    = UpdateEmail String
-    | DoSignIn AuthCreds
+type alias AuthCreds = { email : String, password : String }
+type Msg = UpdateEmail String | DoSignIn AuthCreds
 
 view model =
     form [ onSubmit DoSignIn ]
-        [ input
-            [ type "email"
-            , name "email"            -- required: name is the formData key
-            , value model.email       -- email is fine to round-trip via Model
-            , onInput UpdateEmail
-            ] []
-        , input
-            [ type "password"
-            , name "password"
-            -- no `value` attr (don't round-trip the secret through DOM)
-            -- no `onInput`     (don't dispatch per keystroke)
-            ] []
+        [ input [ type "email", name "email", value model.email, onInput UpdateEmail ] []
+        , input [ type "password", name "password" ] []  -- no value, no onInput
         , button [ type "submit" ] [ text "Sign in" ]
         ]
-
-update msg model =
-    case msg of
-        UpdateEmail e ->
-            ( { model | email = e }, Cmd.none )
-
-        DoSignIn creds ->
-            -- creds.email and creds.password come straight from the typed
-            -- record decode at the dispatch boundary (v0.9.8+).
-            ( model, Cmd.perform (signIn creds) GotAuth )
 ```
 
-**Why this matters**:
+Three reasons:
 
-1. **Password manager extensions** (1Password, Bitwarden, browser autofill) watch DOM mutations on password inputs. Every server-driven re-render with `value=…` looks like the form changed and triggers a re-prompt / re-fill cycle. Submitting only on form submit eliminates that churn — the input's DOM stays untouched between user keystrokes and submit.
+1. **Password managers** (1Password / Bitwarden / browser autofill)
+   watch DOM mutations on password inputs. Every server-driven
+   re-render with `value=…` triggers a re-prompt/re-fill cycle.
+2. **Secret never lives in Model** — no `onInput UpdatePassword`
+   Msg → no Model field → never serialised into Redis / Postgres /
+   Firestore session stores.
+3. **Race-free submit** — form submit reads the live DOM value, not
+   a debounced keystroke.
 
-2. **Secret never lives in Model.** Without an `onInput UpdateAuthPassword` Msg, there's no Model field to populate, so the password never gets serialised into the session store (Redis, Postgres, etc.). It exists only in the browser DOM until the form submits, then briefly in the `DoSignIn` Msg's record argument until `update` consumes it. Compare to per-keystroke handlers where every Sky.Live session carries a partial password through every store round-trip.
+The `DoSignIn AuthCreds` constructor takes a typed record. The wire
+driver decodes form data directly into the Go struct via
+case-insensitive `json.Unmarshal` (`State_AuthCreds_R{Email,
+Password}`). No per-Msg decoder boilerplate.
 
-3. **Race-free submit.** Per-keystroke onInput debounces (~150 ms) can drop the last keystroke if the user hits Enter before the debounce settles — the auth attempt then sees the wrong password and the user retries blind. Form submit reads the live DOM value, so whatever is in the input at submit time is what gets sent.
+### Connection status banner
 
-The `DoSignIn AuthCreds` constructor takes a typed record — v0.9.8's typed Msg dispatch decodes the wire form data directly into `State_AuthCreds_R{Email, Password}` via `json.Unmarshal`'s case-insensitive field matching. No runtime guessing, no per-Msg decoder boilerplate. Same pattern applies to API keys, credit-card details, anything you don't want resident in the session store.
+Bottom-pinned, three states:
 
-### Connection status banner (v0.9.9+, hardened against proxy wedges in v0.11.x post-release)
+- **connected** — `display:none`.
+- **reconnecting** — amber `Reconnecting…`. Shown when SSE drops or
+  POST `/_sky/event` fails. 500 ms grace before painting.
+- **offline** — red `Connection lost — refresh to retry`. Reached
+  after `SKY_LIVE_RETRY_MAX_ATTEMPTS` (default 10, ~2 min). The
+  runtime keeps retrying in the background so a healed proxy
+  recovers without a refresh.
 
-Sky.Live's runtime injects a bottom-pinned status banner separate from the user's `view`. Three states:
+POST failures while reconnecting land in `__skyEventQueue` (FIFO,
+capped at `SKY_LIVE_QUEUE_MAX`) and replay on SSE `hello`. Server
+seq ordering tolerates late delivery.
 
-- **connected** — `display:none`, no chrome.
-- **reconnecting** — amber bar `Reconnecting…`. Shown when the SSE connection drops or a POST `/_sky/event` fails (network blip, deploy in progress, transient 5xx). 500ms grace period before painting so a one-off blip doesn't flicker.
-- **offline** — red bar `Connection lost — refresh to retry`. Reached after `SKY_LIVE_RETRY_MAX_ATTEMPTS` failed retries (default 10, ≈ 2 min of exponential backoff). The runtime keeps trying the SSE in the background even past this point so a healed proxy is picked up automatically — no refresh needed once the network recovers.
+**Reverse-proxy hardening.** Every `/_sky/sse` sends
+`X-Accel-Buffering: no` + 2 KB padding + immediate `event: hello`
+handshake + heartbeats every 15 s. Every `/_sky/event` POST carries
+`X-Sky-Live: 1`. Client: `connected` only flips on `hello` (never
+raw `EventSource.open`); 8 s watchdog reopens on missing hello;
+35 s watchdog reopens on missing heartbeat. POST 200 OK without
+`X-Sky-Live: 1` is treated as wedged-proxy and rerouted.
 
-POST failures while reconnecting land in `__skyEventQueue` (FIFO, capped at `SKY_LIVE_QUEUE_MAX`); the SSE `hello` handler drains the queue eagerly when the server comes back, so a click during the outage replays once the connection re-establishes. Server-side seq ordering tolerates the late delivery.
+Localise via `status = { reconnecting = "Reconnexion…", offline = "Connexion perdue" }` on `Live.app`'s cfg record. Partial overrides fall back to English defaults. Strings JSON-encoded, rendered via `textContent` (never `innerHTML`).
 
-**What users see during a deploy / restart**: the page pauses, banner shows `Reconnecting…` for the duration of the cutover, then clears and any in-flight clicks replay. With a persistent session store (Redis / Postgres / Firestore / SQLite) the user's Model rides through unchanged. With the memory store, the cookie still resolves but the session is gone — the user re-inits to `init`'s output. **For production deployments with restart/deploy expected, use a persistent session store**.
+### Input preservation across re-renders
 
-**Reverse-proxy hardening** (v0.11.x post-release): some edges (Cloudflare, fly.io, custom Nginx configs) rewrite an upstream 502 into a 200 OK with a non-SSE / HTML body, leaving `EventSource` to fire `open` and silently never deliver a frame — the symptom was the page pinned at `Reconnecting…` even after the server itself recovered. The runtime now defends against this on three layers:
+Three failure modes closed:
 
-1. **Server**: every `/_sky/sse` response sends `X-Accel-Buffering: no`, a 2 KB padding line to defeat residual proxy buffers, an immediate `event: hello\ndata: {"v":1,"sid":...}\n\n` handshake, and a `event: heartbeat` every 15 s. Every `/_sky/event` POST response carries `X-Sky-Live: 1`.
-2. **Client SSE**: `connected` only flips on the `hello` event, never on raw `EventSource.open`. A 5 s watchdog tears down + reopens the stream when no hello arrives within `SKY_LIVE_HELLO_TIMEOUT_MS` (default 8000) or no heartbeat within `SKY_LIVE_HEARTBEAT_TTL_MS` (default 35000 ≈ 2× heartbeat interval). Each forced reopen counts as a retry attempt and uses the existing exponential backoff schedule. After max attempts the banner flips to `offline` but reopens KEEP firing in the background at the max delay so a healed proxy recovers without a refresh.
-3. **Client POST**: a 200 OK without `X-Sky-Live: 1` is treated as a wedged proxy response — never applied as a patch, always rerouted through the retry path. JSON responses missing the `seq` field are also rejected (some proxies emit JSON error envelopes with 200 OK). A backwards-compat shim during rolling deploys: structurally-valid JSON (with `seq`) without the marker still passes, so an old binary returning {seq, patches} alongside a marker-aware client is non-breaking.
-
-Opt-out via `SKY_LIVE_BANNER=off` (or `0` / `false`) keeps the retry queue active but suppresses the chrome — useful when an app renders its own connection UI in the user's view. Override the styling via `#__sky-status { ... !important }` in the user's stylesheet; the runtime uses inline styles + max z-index so user CSS wins on conflict.
-
-**Localising the banner text** (i18n): override the two user-facing strings via the `status` field on `Live.app`. No type signature change is needed — `Live.app`'s record is open via the kernel's `appExt` extension, so the field is purely additive:
-
-```elm
-main =
-    Live.app
-        { init = init, update = update, view = view, subscriptions = subscriptions
-        , routes = [ Live.route "/" HomePage ], notFound = HomePage
-        , status =
-            { reconnecting = "Reconnexion…"
-            , offline = "Connexion perdue — actualisez la page"
-            }
-        }
-```
-
-Either field is optional — partial overrides fall back to the English defaults (`"Reconnecting…"` / `"Connection lost — refresh to retry"`). Strings are JSON-encoded into the JS template (so newlines, quotes, non-ASCII, emoji round-trip safely) and rendered via DOM `textContent`, never `innerHTML`, so user content can't break out of the banner. Same precedence as other Sky.Live config: app-level `status` field wins; env-var defaults fall through if absent.
-
-### Input preservation across re-renders (v0.11.x post-release hardening)
-
-Sky.Live's input-authority protocol (full spec in `docs/skylive/input-authority-protocol.md`) protects the user's typing from being clobbered by server-driven re-renders. Three failure modes were previously left uncovered and have now been closed:
-
-1. **Empty patches must JSON-ack, not HTML-fallback.** When alignment in `clientStateFromRequest` correctly drops every diff (the model advanced but the client already has the typed value), `dispatchRoot` used to misclassify the resulting empty patch list as "diff failed → send full HTML". The HTML fallback then went through `__skyPatch`, which `innerHTML`-replaces `sky-root` and recreates every input — blanking uncontrolled fields like password. Fix: `dispatchRoot` now sends an empty JSON envelope (with seq + ackInputs) on empty patches, parallel to the existing byte-identical-render branch. The client's `__skyApplyPatches([])` is a no-op so the DOM stays untouched. Regression test: `runtime-go/rt/live_input_preservation_test.go` `TestEmptyAlignedDiffStaysJson`.
-
-2. **Full-body swap preserves every uncontrolled input, not just the focused one.** `__skyReplaceHTMLPreservingFocus` only spliced `document.activeElement` across the swap; every other input got recreated by the innerHTML assignment. A user who tabbed away from a password field after typing into it would see the field blanked on the next full-body re-render. Fix: the helper now walks every `INPUT` / `TEXTAREA` / `SELECT` in the live container, locates each in the new tree (sky-id preferred; tag+name fallback only when unambiguous), and splices any that the server rendered as **uncontrolled** (no `value` / `checked` / `selected` attr; for `<textarea>` no children content; for `<select>` no `option[selected]`). Controlled fields with a server-supplied value still let the server win — the existing authority discipline is preserved. The previously-special focused-input path is unified into the same loop (focus is always preserved regardless of controlled-ness). Regression test: `TestLiveJS_PreserveAllUncontrolledInputs`.
-
-3. **Open `<select>` defence.** Native dropdowns close on any DOM mutation in their subtree OR an ancestor that re-mounts them — even a no-op `setAttribute`. A scheduled re-render (Tick subscription, Cmd.perform completion) firing while the user has a dropdown open used to collapse it mid-pick. There's no JS API to detect "dropdown open"; the runtime now uses `document.activeElement === SELECT` as a conservative proxy. `__skyApplyPatches` skips any patch where the target element is the focused select, contains it (ancestor that would re-mount), or is contained by it (descendant option). The SSE patch handler skips full-body re-renders for the same reason. Active user paths (sky-nav clicks, popstate, POST text fallback) are deliberately NOT defended — dropping them would freeze navigation. Trade-off: while the dropdown stays open, Tick subscriptions accumulate "pending" state on the server; the next user interaction (option click, blur) triggers a fresh response and reconciliation. Regression test: `TestLiveJS_OpenSelectDefence`.
-
-### Dispatch error handling
-
-`dispatch()` is wrapped in `defer/recover`. Two classes are handled cleanly:
-
-1. **Msg decode errors** — client's wire args don't fit the Msg constructor's parameter types (e.g. radio `onInput` bound to `String -> Msg`). `applyMsgArgs` detects the mismatch before `reflect.Call`, logs a targeted message (constructor name, expected type, actual arg), and drops the event. No model mutation.
-2. **User-code panics** — anything inside `update`/`view`/`guard` that panics (typed-FFI boundary mismatches, nil deref in user code, etc.) is caught, stack-traced to stderr, and the event is dropped. Session state stays consistent so the next event dispatches normally.
-
-Both paths return an empty body; the client sees an empty patch list and the DOM is unchanged. Check server logs for `[sky.live] dispatch panic recovered` or `[sky.live] Msg decode error` when debugging an event that "does nothing".
+1. **Empty patches** JSON-ack instead of HTML-fallback (preserves
+   uncontrolled fields like password).
+2. **Full-body swap** preserves EVERY uncontrolled INPUT /
+   TEXTAREA / SELECT, not just `document.activeElement`.
+3. **Open `<select>` defence** — `__skyApplyPatches` skips any
+   patch where the target is the focused select / contains it /
+   is contained by it. Tick subscriptions accumulate state on the
+   server; next user interaction reconciles.
 
 ### Sky.Http.Server
+
 ```elm
 main =
     Server.listen 8000
@@ -915,224 +596,83 @@ main =
         , Server.static "/assets" "./public"
         ]
 ```
-Routes: `get/post/put/delete/any` | Groups with prefix | Cookies (HttpOnly, Secure, SameSite) | Extractors: `param`, `queryParam`, `header`, `getCookie` | Responses: `text`, `json`, `html`, `withStatus`, `redirect` | Middleware: `Handler -> Handler`
 
-## Sky Console + sub-app mount (v0.13.x post-release)
+Routes: `get/post/put/delete/any` | groups with prefix | cookies
+(HttpOnly, Secure, SameSite) | extractors: `param`, `queryParam`,
+`header`, `getCookie` | responses: `text`, `json`, `html`,
+`withStatus`, `redirect` | middleware: `Handler -> Handler`.
 
-Sky.Live and Sky.Http.Server apps auto-mount a Std.Ui-written
-dev console under `/_sky/console/*` in dev mode. The console is a
-**self-contained Sky.Live mini-app** (source in
-`sky-bundled/console/`) reverse-proxied behind a child process —
-no Sky.Live wire collision with the parent, no shared state, no
-extra port for the user (everything on the parent's listener).
-**Same primitive (`rt.MountSubApp`) lets developers mount any
-other Sky app or external HTTP service under any URL prefix** —
-billing widgets, admin panels, mini-apps, docs.
+## Sky Console + sub-app mount + observability
 
-### What ships out-of-the-box
+Every Sky.Live and Sky.Http.Server app auto-mounts a Std.Ui dev
+console at `/_sky/console` in dev mode, with structured logging,
+Prometheus metrics, distributed tracing — no separate stack to
+stand up.
 
-| Surface | Effect |
+| Surface | What it is |
 |---|---|
-| `🔍 Console` banner | Floating bottom-right anchor injected into every Sky.Live page + every Sky.Http.Server `text/html` response. Same-origin link to `/_sky/console`. Suppressed in production (see `productionFromEnv` rule). |
-| `/_sky/console/*` | Reverse-proxied to a bundled Sky.Live child process running `sky console`. Tab-clicks dispatch through the proxy. Read-only mocked telemetry for now; live data wiring tracked separately. |
-| `sky console` CLI | Standalone launcher (cache in `$XDG_CACHE_HOME/sky/console-<version>/`). Useful for ad-hoc inspection without starting a host app. Defaults to `:8025`; override via `--port N`. |
-| `sky console --tui` | Same `State.sky` + `View.sky` rendered through Sky.Tui (terminal). Proves the cross-backend story end-to-end on a real Std.Ui app. |
+| `🔍 Console` link | Floating bottom-right anchor injected into every dev-mode page. Same-origin link to `/_sky/console`. |
+| `/_sky/console/*` | Reverse-proxied to a bundled Sky.Live mini-app spawned as a child process. |
+| `/_sky/metrics` | Prometheus scrape endpoint (Bearer-gated in production). `sky_live_requests_total{route,status}`, `sky_live_request_seconds`, error counters. |
+| `/_sky/healthz` · `/_sky/readyz` | Liveness + readiness probes. |
+| `/_sky/buildinfo` | Commit SHA, build timestamp, Sky version. |
+| `/_sky/observability/ingest` | Sub-app log/metric/span push endpoint. |
+| Structured logs | Every `Log.*` carries level + message + request-correlation ID. HTTP access log automatic. |
+| Trace spans | Every HTTP request opens a span; `rt.RecordTrace` adds child spans. Exported to OpenTelemetry if `OTEL_EXPORTER_OTLP_ENDPOINT` is set. |
 
-### Production-detection gate (single source of truth)
-
-The console auto-mount + dev banner BOTH gate on
-`productionFromEnv()` (in `runtime-go/rt/observability.go`):
-
-  * `ENV` (then `SKY_ENV`) **unset** OR set to `dev` /
-    `development` / `local` → **dev mode** (console mounted,
-    banner shown).
-  * Anything else (`production`, `prod`, `staging`, `qa`,
-    `preview`, …) → **production** (console + banner gone, plus
-    `/_sky/metrics` requires Bearer auth).
-
-This is intentionally bias-to-gate: if you bother setting `ENV` at
-all, you mean it's not a casual dev session. Same gate rules
-out the addr-based heuristic that was unreliable under Docker /
-local DNS proxies.
-
-### `rt.MountSubApp` — mount any Sky app as a sub-app
-
-Public Go API in `runtime-go/rt/subapp.go`:
+### `rt.MountSubApp`
 
 ```go
-// SpawnFn — produces a running HTTP child on a localhost port.
-// basePath is propagated to the child via SKY_LIVE_BASE_PATH so
-// its inlined JS prefixes /_sky/event etc. correctly.
-type SpawnFn func(ctx, basePath) (port int, cmd *exec.Cmd, err error)
-
-func SpawnBinary(binPath string, extraArgs ...string) SpawnFn
-func SpawnSkyConsole() SpawnFn
-
-// Mounts a reverse-proxy at prefix + "/" + a bare-prefix redirect.
-// SSE survives via proxy.FlushInterval = -1. The child is killed
-// when the parent exits (SIGTERM grace then SIGKILL).
-func MountSubApp(mux *http.ServeMux, prefix string, spawn SpawnFn) error
-```
-
-Examples of user-mountable patterns:
-
-```go
-// From a user app's generated init() or a post-build patch:
+import "your-app/rt"
 rt.MountSubApp(mux, "/billing", rt.SpawnBinary("./billing-app"))
 rt.MountSubApp(mux, "/admin",   rt.SpawnBinary("./admin-app"))
 rt.MountSubApp(mux, "/docs",    rt.SpawnBinary("./hugo-server"))
 ```
 
-Each child runs in its own process, has its own session store,
-its own observability namespace — zero shared state to coordinate.
-Cost: ~5 MB RAM + ~5 ms per request hop. Negligible for the
-console / admin class of sub-app.
+Each child runs as its own process — its own session store,
+update loop, cookies, zero shared state. Reverse proxy gives the
+user one port and one origin. Cost: ~5 MB RAM + ~5 ms per request
+hop.
 
-A Sky-side ergonomic API (`Live.subApp "/admin" "./admin-app"` in
-the app cfg record) is on the v0.14 list; for v0.13.x the Go-side
-API is the contract.
+### Sub-app observability federation
 
-### `SKY_LIVE_BASE_PATH` — sub-app awareness
+Each sub-app spawns `rt.PushExporter` (background goroutine) that
+batches logs / metrics / spans and POSTs every 2 s to
+`<parent>/_sky/observability/ingest` with namespace labelling.
+Single Prometheus scrape on the parent covers the tree. Auth:
+shared secret via `X-Sky-Ingest-Token` (auto-generated per parent
+boot; constant-time compare).
 
-When a Sky.Live app starts with `SKY_LIVE_BASE_PATH` set in env,
-it knows it's running AS a sub-app under that prefix. Three
-behaviour changes:
+### Production gate
 
-  1. `<meta name="sky-base" content="<prefix>">` injected into
-     every page wrap. The inlined JS reads it as `__skyBase` and
-     prefixes every hardcoded `/_sky/event`, `/_sky/sse`,
-     `/_sky/config` URL with it — without this, sub-app fetches
-     would hit the PARENT's wire endpoint and silently drop.
-  2. Dev banner suppressed. The console rendering its own
-     "click for console" banner would be recursive nonsense.
-  3. `MountObservabilityEndpoints` skipped. The parent owns
-     `/_sky/{healthz,readyz,metrics,buildinfo}`; the child
-     doesn't need duplicates at `/_sky/console/_sky/*`.
-  4. `maybeAutoMountConsole` early-returns. Prevents fork-bomb
-     recursion (sub-apps don't spawn sub-apps).
+`productionFromEnv()` reads `ENV` then `SKY_ENV`. Unset / `dev` /
+`development` / `local` → dev mode. Anything else → production
+(console + banner gone, metrics auth on).
 
-### Env-var knobs (all default-on in dev, default-off in prod)
-
-| Var | Default | Effect |
-|---|---|---|
-| `SKY_CONSOLE_EMBED` | `on` | `off`/`0`/`false` opts out of the auto-spawn. Useful when you've mounted a custom alternative at `/_sky/console`. |
-| `SKY_DEV_BANNER` | `on` | `off`/`0` suppresses the floating banner without disabling the proxy mount. Useful when an app renders its own dev chrome. |
-| `SKY_CONSOLE_URL` | `/_sky/console` | Override the banner's `href`. Use for pointing dev users at a remote shared console (e.g. internal staging dashboard). |
-| `SKY_SUBAPP_VERBOSE` | `0` | `1` forwards every spawned child's stdout / stderr to the parent's terminal. Off by default to keep `sky run` output clean; flip on when debugging an unreachable sub-app. |
-| `SKY_BIN` | (auto) | Override the `sky` binary path used by `SpawnSkyConsole`. Falls back to `exec.LookPath("sky")`. |
-| `SKY_LIVE_BASE_PATH` | (unset) | Tells THIS Sky.Live runtime it's running as a sub-app under this URL prefix. Set automatically by `SpawnSkyConsole` / `SpawnBinary`. Setting it manually is supported for advanced reverse-proxy setups. |
-| `ENV` / `SKY_ENV` | (unset) | Production gate. Anything outside `{dev, development, local}` (including `production`, `prod`, `staging`, etc.) suppresses console + banner + opens metrics auth. |
-
-### Console source layout
-
-`sky-bundled/console/` (NOT under `sky-stdlib/` — it's a
-self-contained app, not a user-importable library):
-
-```
-sky-bundled/console/
-├── sky.toml             — [live] port = 8025
-└── src/
-    ├── State.sky        — Tab enum, Model, Msg, mock data
-    ├── View.sky         — Std.Ui rendering (palette, KPIs, tables)
-    ├── Main.sky         — Sky.Live entry (Live.app)
-    └── MainTui.sky      — Sky.Tui entry (Tui.app); shares State+View
-```
-
-Embedded via TH (`Sky.Build.EmbeddedConsole`) into the sky binary
-at compile time. `sky console` materialises to
-`$XDG_CACHE_HOME/sky/console-<version>/` and shells out to
-`sky build` (recursive — uses the same compile pipeline as user
-projects). Builds are cached per `(version, backend)` so Live and
-TUI binaries coexist as `app-live` and `app-tui`.
-
-When iterating on console source: edit under `sky-bundled/console/src/`,
-then rebuild the sky compiler so the TH splice picks up the new
-bytes, wipe `~/.cache/sky/console-<version>/`, re-run.
-
-### Sub-app observability federation (shipped, v0.13.x post-release)
-
-Every sub-app mounted via `rt.MountSubApp` automatically pushes
-its logs, metrics, and trace spans back to the parent's shared
-telemetry store, labelled by `subapp=<namespace>` for clean
-PromQL filtering. Single Prometheus scrape on the parent's
-`/_sky/metrics` sees the entire process tree.
-
-**Architecture: push, not pull.** Each sub-app spawns a background
-goroutine (`rt.PushExporter`) that batches every `Log.*` /
-`RecordCounter` / `RecordTrace` write and POSTs every 2 s to
-`<parent>/_sky/observability/ingest`. The parent's ingest
-handler writes into `telemetry.Default()` with the namespace
-overlaid on every label. Buffer overflow drops with a
-1-warning-per-minute stderr log; child crashes lose only the
-in-flight buffer.
-
-**Wire format** (JSON-over-HTTP; OTel-shaped):
-
-```json
-POST /_sky/observability/ingest
-X-Sky-Ingest-Token: <auto-generated per parent boot>
-{
-  "namespace": "billing",
-  "logs":    [ {"ts": "2026-…", "level": "info", "msg": "…", ...}, ...],
-  "metrics": [ {"name": "requests_total", "type": "counter", "delta": 7, "labels": {...}}, ...],
-  "spans":   [ {"trace_id": "…", "span_id": "…", "name": "stripe.charge", "start_ms": …, "duration_ms": 412, ...}, ...]
-}
-```
-
-**Auth**: shared secret via `X-Sky-Ingest-Token`. Token is
-auto-generated per parent boot (32 random bytes hex); parent
-passes it to every child via `SKY_INGEST_TOKEN` env. Operators
-override via the same env var when sub-apps live on separate
-hosts. Constant-time compare. Endpoint exempt from CSRF (has
-its own auth, no browser cookies involved).
-
-**Namespace derivation**: from the mount-prefix basename —
-`/_sky/console` → `console`, `/billing` → `billing`,
-`/admin/v2` → `admin_v2`. Override via `SKY_LIVE_NAMESPACE`
-env. The handler ALWAYS overrides any incoming `subapp=` label
-so children can't spoof another namespace's metrics.
-
-**Sub-app side defaults**:
-  * Push interval: 2 s (`SKY_OBSERVABILITY_PUSH_INTERVAL_MS`)
-  * Per-category buffer cap: 1024 (`SKY_OBSERVABILITY_BUFFER`)
-  * HTTP timeout per push: 5 s
-  * Warning rate-limit: 1/min per error class
-
-**Counter semantics**: deltas (parent's store calls `Add`),
-NOT absolutes. Robust to lost / replayed pushes; running total
-lives in parent's store. Gauges push absolute value (last
-write wins). Histograms push single observations.
-
-**Out of scope** (deliberately): long-term storage (use an
-external OTel collector → Loki / Mimir / Tempo), alerting (Prometheus
-Alertmanager), cross-host federation (use a real OTel collector).
-Sky's in-process federation handles the same-process-tree case
-that 95 % of dev / small-prod deployments need.
-
-Implementation lives in `runtime-go/rt/observability_{ingest,push}.go`
-+ `runtime-go/rt/subapp.go` (env propagation). Tests:
-`runtime-go/rt/observability_{ingest,push,federation}_test.go`
-(20+ cases — auth, namespacing, buffer overflow, parent-down
-behaviour, end-to-end log/metric/span round-trip).
+**`SKY_LIVE_BASE_PATH`** — set automatically when a Sky.Live app
+runs as a sub-app. Causes: page wrap injects `<meta name="sky-base">`
+so inlined JS prefixes `/_sky/event` etc.; dev banner suppressed;
+`MountObservabilityEndpoints` skipped (parent owns the endpoints);
+`maybeAutoMountConsole` early-returns (no recursive auto-mounts).
 
 ## Std.Ui — typed no-CSS layout DSL
 
-Layered above `Std.Html`; renders to inline-styled HTML on the server side and Sky.Live's wire ferries diffs to the browser. Pick `row` / `column` / `el` for layout, attach typed attributes from `Background` / `Border` / `Font` / `Region` sub-modules, never write CSS. Full user-facing reference: `docs/skyui/overview.md`. Prior-art attribution: `NOTICE.md`.
+Layered above `Std.Html`; renders to inline-styled HTML on the
+server. Pick `row` / `column` / `el` for layout, attach typed
+attributes from `Background` / `Border` / `Font` / `Region`
+sub-modules, never write CSS.
 
 ```elm
 import Std.Ui as Ui
-import Std.Ui exposing (Element)
 import Std.Ui.Background as Background
 import Std.Ui.Border as Border
 import Std.Ui.Font as Font
 
-view : Model -> any
 view model =
     Ui.layout []
         (Ui.row
             [ Ui.spacing 12, Ui.padding 16
             , Background.color (Ui.rgb 255 102 0)
-            , Font.color (Ui.rgb 255 255 255)
             , Border.rounded 4
             ]
             [ Ui.button [] { onPress = Just Decrement, label = Ui.text "−" }
@@ -1141,55 +681,125 @@ view model =
             ])
 ```
 
-**Three idioms AI tooling MUST get right when writing Sky.Ui code:**
+### Three idioms AI tooling MUST get right
 
-1. **Forms with sensitive inputs use `Ui.form` + `Ui.onSubmit DoSignIn`, NOT `onInput` per keystroke on password fields.** The wire driver decodes formData `{"username":"...","password":"..."}` into a typed `LoginForm` record via case-insensitive `json.Unmarshal`. Three wins: password manager extensions stop seeing DOM mutations on every render, the secret never enters Model so never serialises into Redis/Postgres/Firestore session stores, race-free submit reads live DOM not a debounced keystroke. The username field MAY round-trip via `value` + `onInput`; the password field MUST NOT. See `examples/19-skyforum/src/View/Login.sky` for the canonical shape.
+1. **Forms with sensitive inputs use `Ui.form` + `onSubmit
+   DoSignIn`, NOT `onInput` per keystroke on password fields.**
+   See the password pattern in the Sky.Live section above.
 
-2. **For real `<input>` elements, use `Ui.input`, NOT `Ui.el [ htmlAttribute "type" "text" ]`.** `Ui.el` builds `Node` which renders as `<div>` — browsers ignore `type=`/`value=` on non-input elements and never fire input events on a div. `Ui.input` builds `TaggedNode "input"` which the renderer routes to a real `<input>` with self-closing void emission.
+2. **Real `<input>` elements use `Ui.input`, NOT `Ui.el [
+   htmlAttribute "type" "text" ]`.** `Ui.el` builds a Node that
+   renders as `<div>` — browsers ignore `type=` / `value=` on
+   non-inputs.
 
-3. **For Std.Ui-heavy modules (~25+ polymorphic `Element Msg` helpers + many nested calls), split the view layer across multiple modules.** A single monolithic Main.sky can blow the HM type-checker heap (CLAUDE.md Limitation #17 — "HM type-checker heap exhaustion on Std.Ui-heavy modules"). The canonical split is `State.sky` (types + pure helpers, no Std.Ui imports) / `Update.sky` / `View/Common.sky` / one View module per page / `Main.sky` dispatcher. `examples/19-skyforum`'s 8-module form delivers the full Reddit-style feature surface and type-checks in 1.11 s / 369 MB; the equivalent monolithic `test-fixtures/heap-bound-fence.sky` (kept as the regression artefact) allocates 2.6 GB/s pre-fix.
+3. **Std.Ui-heavy modules (~25+ polymorphic `Element Msg`
+   helpers) MUST be split across multiple modules.** A monolithic
+   `Main.sky` can blow the HM type-checker heap (Limitation #17).
+   Canonical split: `State.sky` (types, no Std.Ui imports) /
+   `Update.sky` / `View/Common.sky` / one View module per page /
+   `Main.sky` dispatcher. See `examples/19-skyforum`'s 8-module
+   form for the working shape.
 
-**Surface highlights** (full table in `docs/skyui/overview.md`):
-- Layout: `el` / `row` / `column` / `wrappedRow` (children wrap to next line via flex-wrap) / `grid` (CSS-Grid auto-fit — set min column width via `Ui.gridColumns N` attr; right primitive for product grids / dashboards / image galleries; immune to flex-vs-image collapse) / `paragraph` / `textColumn` / `text` / `none` / `html` (escape hatch wrapping a Std.Html VNode)
-- Sized elements: `link` (with `{url, label}` cfg), `image` (with `{src, description}` cfg), `button` (with `{onPress, label}` cfg), `input` (real `<input>` element), `form` (with `onSubmit msg`)
-- Length: `px` / `fill` (bare) / `fillPortion Int` / `content` / `shrink` / `minimum Int Length` / `maximum Int Length` / `vh Int` (viewport height %) / `vw Int` (viewport width %)
-- Padding: `padding Int` / `paddingXY x y` / `paddingEach { top, right, bottom, left }` (record-shaped, matches `Border.widthEach` + elm-ui) / `spacing Int`. **`paddingXY` is X-first, Y-second** — `paddingXY 24 16` = 24px horizontal (left/right), 16px vertical (top/bottom). Matches elm-ui and the wider XY-coord convention. BREAKING (v0.11.x post-release): the previous shape was `paddingXY vertical horizontal`; migration is to swap the two args at every call site. No compat shim — both shapes type-check identically as `Int -> Int -> Attribute msg` so a quiet runtime swap would be worse than the loud break.
-- Attributes: `width` / `height` / `centerX` / `centerY` / `alignLeft` / `alignRight` / `alignTop` / `alignBottom` / `pointer` / `style` / `class` / `htmlAttribute` / `name`
-- Overflow: `clip` / `clipX` / `clipY` / `scrollbars` / `scrollbarX` / `scrollbarY`
-- Nearby: `above` / `below` / `onLeft` / `onRight` / `inFront` / `behind` (absolute-positioned overlays for tooltips, popovers, badges; renderer wraps parent with `position: relative`)
-- Events: `onClick msg` / `onSubmit msg` / `onInput (String -> msg)` / `onChange (String -> msg)` / `onFocus msg` / `onMouseOver msg` / `onMouseOut msg` / `onKeyDown msg` / `onFile (String -> msg)` / `onImage (String -> msg)`
-- File/image hints: `fileMaxSize Int` (bytes) / `fileMaxWidth Int` / `fileMaxHeight Int` (resize before upload)
-- Colour: `rgb Int Int Int` / `rgba Int Int Int Float` / `white` / `black` / `transparent`
-- Sub-modules:
-  - `Std.Ui.Background` — `color` / `image url` / `linearGradient angle stops` / `gradient css`
-  - `Std.Ui.Border` — `color` / `width` / `widthEach {top,right,bottom,left}` / `rounded` / `solid` / `dashed` / `dotted` / `shadow {offsetX,offsetY,blur,spread,color}` / `glow blur color` / `innerShadow {…}`
-  - `Std.Ui.Font` — `color` / `family` / `size` / `weight` / `bold` / `semiBold` / `regular` / `light` / `extraBold` / `black` / `italic` / `underline` / `noDecoration` / `lineThrough` / `overline` / `letterSpacing em` / `wordSpacing em` / `alignLeft` / `alignRight` / `alignCenter` / `center` / `justify` / `sansSerif` / `serif` / `monospace`
-  - `Std.Ui.Region` — semantic landmarks routed to real HTML tags by the renderer: `heading n` (`<h1>`..`<h6>`) / `mainContent` (`<main>`) / `navigation` (`<nav>`) / `footer` (`<footer>`) / `aside` (`<aside>`) / `label text` (`aria-label`) / `announce` (`aria-live="polite"`) / `announceUrgently` (`aria-live="assertive"`)
-  - `Std.Ui.Input` — typed form controls: `button` / `text` / `multiline` / `email` / `username` / `search` / `currentPassword {show: Bool}` / `newPassword {show: Bool}` / `checkbox` / `radio {options, selected, …}` / `radioRow {…}` / `slider {min, max, step, value, …}` + `option value labelEl` (RadioOption ctor) + `labelAbove` / `labelBelow` / `labelLeft` / `labelRight` / `labelHidden` / `placeholder`
-  - `Std.Ui.Lazy` — `lazy` / `lazy2` … `lazy5`. v0.12+: kernel-mapped to a runtime LRU cache (default 1024 entries; `SKY_UI_LAZY_CAP=N` to override). Cache key = function-pointer + args fingerprint. Stable subtrees (long lists, repeated render passes) hit the cache; pathological cases fall back gracefully (cache miss, no benefit).
-  - `Std.Ui.Keyed` — `keyed` (emits `sky-key` for diff identity)
-  - `Std.Ui.Responsive` — `classifyDevice` / `adapt {phone, tablet, desktop}`
+### Surface highlights
 
-**File / image upload pattern:**
+Full reference: `docs/skyui/overview.md`.
+
+- **Layout**: `el`, `row`, `column`, `wrappedRow`, `grid` +
+  `gridColumns N` (CSS-Grid auto-fit), `paragraph`, `textColumn`,
+  `text`, `none`, `html`.
+- **Sized elements**: `link { url, label }`, `image { src,
+  description }`, `button { onPress, label }`, `input`, `form
+  onSubmit`.
+- **Length**: `px`, `fill`, `fillPortion Int`, `content`,
+  `shrink`, `minimum Int Length`, `maximum Int Length`, `vh Int`,
+  `vw Int`.
+- **Padding**: `padding Int`, `paddingXY x y` (X-first, Y-second),
+  `paddingEach { top, right, bottom, left }`, `spacing Int`.
+- **Alignment**: `centerX`, `centerY`, `alignLeft`, `alignRight`,
+  `alignTop`, `alignBottom`, `pointer`.
+- **Overflow**: `clip`, `clipX`, `clipY`, `scrollbars`,
+  `scrollbarX`, `scrollbarY`.
+- **Nearby**: `above`, `below`, `onLeft`, `onRight`, `inFront`,
+  `behind` (absolute-positioned overlays).
+- **Events**: `onClick msg`, `onSubmit msg`, `onInput (String ->
+  msg)`, `onChange`, `onFocus`, `onMouseOver/Out`, `onKeyDown`,
+  `onFile (String -> msg)`, `onImage (String -> msg)`.
+- **File/image upload hints**: `fileMaxSize Int` (bytes —
+  browser-side cap, not security), `fileMaxWidth Int`,
+  `fileMaxHeight Int`.
+- **Colour**: `rgb`, `rgba`, `white`, `black`, `transparent`.
+- **Sub-modules**: `Background` (color, image, linearGradient),
+  `Border` (color, width, widthEach, rounded, solid/dashed/dotted,
+  shadow, glow, innerShadow), `Font` (color, family, size, weight,
+  bold/semiBold/regular/light/extraBold/black, italic, underline,
+  noDecoration, letterSpacing, alignLeft/Right/Center/Justify,
+  sansSerif/serif/monospace), `Region` (semantic landmarks routed
+  to `<h1..h6>`, `<main>`, `<nav>`, `<aside>`, `<footer>`, aria-*),
+  `Input` (button, text, multiline, email, username, search,
+  currentPassword, newPassword, checkbox, radio, radioRow,
+  slider), `Lazy` (LRU-cached subtrees, `SKY_UI_LAZY_CAP=N`),
+  `Keyed` (sky-key for diff identity), `Responsive`
+  (classifyDevice, adapt).
+
+### File / image upload pattern
+
 ```elm
-type Msg = ... | AvatarSelected String | ...
-
 Ui.input
     [ Ui.htmlAttribute "type" "file"
     , Ui.htmlAttribute "accept" "image/*"
     , Ui.onImage AvatarSelected           -- AvatarSelected : String -> Msg
-    , Ui.fileMaxSize   2_000_000          -- 2MB browser-side cap (not security)
-    , Ui.fileMaxWidth  800                -- auto-resize + JPEG @ 0.85 before upload
+    , Ui.fileMaxSize   2_000_000          -- 2 MB cap (browser-side)
+    , Ui.fileMaxWidth  800                -- resize before upload (JPEG @ 0.85)
     , Ui.fileMaxHeight 800
     ]
 ```
-Callback receives the data URL (`data:image/jpeg;base64,...`) as a single `String`. Decode with `Std.Encoding.base64Decode` → upload via `Http.post`. Server-side, ensure `[live] maxBodyBytes` in `sky.toml` is ≥ your `fileMaxSize` (default 5 MiB).
 
-**`Ui.none` workaround:** the canonicaliser strips the type parameter from cross-module references to `Std.Ui.none` today — use `Ui.text ""` where you'd want `Ui.none`. An empty Text node renders identically (just an empty inline span).
+Callback receives the data URL. Decode with
+`Std.Encoding.base64Decode` → upload via `Http.post`. Ensure
+`[live] maxBodyBytes` ≥ your `fileMaxSize`.
 
-## Language Syntax
+## Sky.Tui v1
 
-Sky's surface syntax is deliberately Elm-compatible — modules, `case`/`let`/`if`, record literals, ADTs, `|>` pipelines port over with mechanical edits. See `NOTICE.md` for prior-art attribution.
+A TEA backend rendering `Std.Ui` to ANSI cells. Same
+`init`/`update`/`view`/`subscriptions` shape as `Sky.Live`.
+
+```elm
+type alias Cfg model msg =
+    { init          : () -> (model, Cmd msg)
+    , update        : msg -> model -> (model, Cmd msg)
+    , view          : model -> Element msg
+    , subscriptions : model -> Sub msg
+    , onKey         : KeyEvent -> msg                  -- optional
+    , guard         : msg -> model -> Result Error ()  -- optional; same as Live.app's guard
+    , canvasWidth   : Int                              -- default 1280 logical px
+    , canvasHeight  : Int                              -- default 720
+    }
+
+main = Tui.app cfg |> Task.run
+```
+
+**Logical-pixel canvas** — `canvasWidth × canvasHeight` defines
+the design surface. Runtime computes `pxPerCell*` from terminal
+size and converts `Ui.padding 8` / `Ui.px N` to cells. Default
+1280×720 matches a typical web canvas.
+
+**Coverage**: ~95 %+ of Std.Ui primitives. Unsupported attrs
+(gradients, fine letter-spacing, image fills) emit a deduped
+`tuiWarn`; `SKY_TUI_QUIET=1` suppresses. Wide chars (CJK + emoji
++ ZWJ) via `github.com/rivo/uniseg`. Bracketed paste capped at
+1 MiB. Modified arrows (Ctrl/Shift/Alt) pass to user `onKey`.
+
+**Reliability floor**: `safeGo` restores TTY on panic; external
+signals (SIGTERM/SIGHUP/SIGQUIT/SIGINT) trapped → teardown →
+`exit 128+signum`; `sanitiseRune` strips control bytes from user
+text; `tuiMaxContentH = 50,000` hard cap with 10,000 soft warn;
+`TERM=dumb` / non-TTY stdin refused with friendly error.
+
+**Sky.Cli password mode** — `Cli.readPassword : () -> Task Error
+String` reads stdin with echo disabled (`golang.org/x/term`'s
+`ReadPassword`). Password never echoes; never lands in scrollback.
+
+## Language syntax
 
 ```elm
 module Main exposing (main)
@@ -1209,1104 +819,131 @@ main =
     println (String.fromInt (update Increment 0))
 ```
 
-Key syntax: `|>` `<|` pipelines | `::` cons | `\x -> x + 1` lambdas | `let...in` | `case...of` with exhaustiveness | `{ record | field = value }` update | `module M exposing (..)` / `import M as Alias exposing (func)`
+`|>` `<|` pipelines | `::` cons | `\x -> x + 1` lambdas | `let…in`
+| `case…of` (exhaustiveness checked) | `{ record | field = value }`
+update | `module M exposing (..)` | `import M as Alias exposing (func)`.
 
-### Multiline Strings
-
-Triple-quoted strings preserve newlines and indentation. Interpolation uses `{{expr}}`:
+**Multiline strings** — triple-quoted, `{{expr}}` interpolation:
 
 ```elm
-html =
-    """<div class="card">
+html = """<div class="card">
     <h1>{{title}}</h1>
     <p>{{description}}</p>
 </div>"""
 ```
 
-Single braces `{` are literal — safe for JavaScript, CSS, JSON, SQL. Interpolation expressions can be identifiers, field access (`{{record.field}}`), qualified names (`{{String.fromInt n}}`), or function calls (`{{String.fromInt count}}`).
+Single `{` is literal. Interpolation expressions can be
+identifiers, field access (`{{record.field}}`), qualified names
+(`{{String.fromInt n}}`), or function calls.
 
-## Examples
+## Active limitations
 
-| # | Name | Description |
-|---|------|-------------|
-| 01 | hello-world | Basic println |
-| 02 | go-stdlib | Go stdlib (crypto, encoding, time, http) |
-| 03 | tea-external | TEA with external packages (UUID, godotenv) |
-| 04 | local-pkg | Multi-module with local imports |
-| 05 | mux-server | HTTP server with gorilla/mux |
-| 06 | json | JSON encoding/decoding |
-| 07 | todo-cli | SQLite CLI todo app |
-| 08 | notes-app | Full CRUD web app with database |
-| 09 | live-counter | Sky.Live counter with SSE |
-| 10 | live-component | Sky.Live component protocol |
-| 11 | fyne-stopwatch | Desktop GUI with Fyne |
-| 12 | skyvote | Full Sky.Live voting app with auth |
-| 13 | skyshop | E-commerce: Stripe, Firebase, i18n |
-| 14 | task-demo | Task effect boundary demo |
-| 15 | http-server | Sky.Http.Server with routing + cookies |
-| 16 | skychess | Sky.Live chess game with AI, SQLite persistence |
-| 17 | skymon | Sky.Live monitoring dashboard with metrics, alerts |
-| 18 | job-queue | Async Cmd.perform demo with Time.sleep, Random.int, Cmd.batch |
-| 19 | skyforum | Reddit/HN-style forum on Std.Ui — 8 modules, per-user vote tracking + downvote, threaded comments, form-driven password sign-in |
-| 20 | cli-counter | (exp/tea-core) Sky.Cli — TEA on stdin lines |
-| 21 | tui-stopwatch | (exp/tea-core) Sky.Tui — bubbletea-backed stopwatch |
-| 22 | tui-stopwatch-ui | (exp/tea-core) Sky.Tui — Std.Ui-driven stopwatch |
-| 23 | tui-todo | (exp/tea-core) Sky.Tui — todo CRUD demo |
-| 24 | tui-kitchen-sink | (exp/tea-core) Sky.Tui v1 — every supported Std.Ui primitive in one screen |
-| 25 | sky-console | Std.Ui Sky.Live dashboard used as the bundled `sky console` mini-app; mirrors `sky-bundled/console/`. Same source compiles to both the Live + Tui backends (see `--tui` flag). |
+These are current compiler limitations users must work around.
+Items marked FIXED are kept for diagnostic context.
 
-## Sky.Tui v1 (branch: `exp/tea-core`)
+1. **No anonymous records in function signatures.** Define a
+   `type alias` first.
+2. **No higher-kinded types.** HM only.
+3. **No `where` clauses.** Use `let…in`.
+4. **No custom operators.**
+5. **Negative literal arguments need parens.** `f -1` parses as
+   subtraction. Use `f (-1)`.
+6. **`Dict.toList` returns string keys.** `Dict Int v` still
+   yields string keys; arithmetic on them silently produces 0.
+   Workaround: iterate over known key ranges with `Dict.get`.
+7. **`sky check` does not fully model Go interface satisfaction.**
+   Opaque FFI types unify with each other; concrete-satisfies-
+   interface checks fall through.
+8. **Zero-arg FFI functions take `()` in Sky.** `Uuid.newString
+   ()` / `FyneApp.new ()`. Sky-side **kernel** zero-arity bindings
+   are the opposite — `Uuid.v4` / `Time.now` are called without
+   `()`.
+9. **Let bindings with parameters after multi-line case** — `let
+   mark j = …` after `case … of` confuses the parser. Workaround:
+   use lambdas or extract to a top-level function.
+10. **Zero-arity functions reading env vars** — memoised at Go
+    `init()` time (before `.env` loads). Workaround: add a dummy
+    `_` param.
+11. **`exposing (Type(..))` doesn't expose ADT constructors for
+    user modules** (kernel modules work). Workaround: `exposing
+    (..)` or qualify constructors.
+12. **Non-tail-recursive list operations are O(N) on Go stack.**
+    `map`, `filter`, `foldr`, `length`, `concat`, `take`,
+    `append`, `range`, `zip`, `concatMap`, `indexedMap`,
+    `Maybe.combine`, `Result.combine` recurse. Tail-recursive
+    operations (`foldl`, `find`, `any`, `all`, `member`, `drop`,
+    `reverseHelp`) are auto-TCO'd to constant stack. For very
+    large lists prefer the tail-recursive accumulator pattern.
+13. **Zero-arg `Css.*` keyword constants require `()`** —
+    `Css.zero ()`, `Css.auto ()`, `Css.none ()`. Without the unit,
+    the function pointer gets serialised as `0xc00001c0a0` into
+    the stylesheet.
+14. **`import X as Alias` leaks the alias into codegen for
+    exposed record/ADT types** — `import Lib.Db as Chat` emits
+    `Chat_Message_R` not `Lib_Db_Message_R`. Workaround: use
+    `exposing (Message, …)` or qualify without alias.
+15. **`let` bindings don't support forward references.** Reorder
+    so dependencies come first.
 
-**Status (2026-05-09):** v1 hardened for public experimental release on `exp/tea-core`, NOT yet merged to main.
+## Workflow rules
 
-A TEA backend that renders `Std.Ui` to ANSI cells in a terminal. Same `init`/`update`/`view`/`subscriptions` shape as `Sky.Live`, no HTML, no SSE. Entry point: `Tui_app` in `runtime-go/rt/tui_ui.go` (~2400 lines).
+- **Always run mem-guard.** See "Non-negotiables" above.
+- **Always clean up background tasks** before declaring "done".
+- **`sky fmt` after editing `.sky` / `.skyi` files.** Two passes
+  are byte-identical (formatter is idempotent).
+- **`-f` flag with `rm` / `cp`** to avoid interactive prompts.
+- **Never add co-author wording** to commits.
+- **Never tag a release** without explicit user ask.
+- **Never run `sky build` from the repo root** — overwrites the
+  compiler binary in `sky-out/`.
+- **Cancel in-progress CI runs on `main` before pushing** (newer
+  commit supersedes them; never cancel release/tag runs).
 
-### `Tui.app` config surface
-
-```elm
-type alias Cfg model msg =
-    { init          : () -> (model, Cmd msg)
-    , update        : msg -> model -> (model, Cmd msg)
-    , view          : model -> Element msg
-    , subscriptions : model -> Sub msg
-    , onKey         : KeyEvent -> msg            -- optional; runtime hard-exits on Ctrl-C if absent
-    , guard         : msg -> model -> Result Error ()  -- optional; same shape + semantics as Live.app's guard
-    , canvasWidth   : Int                        -- optional; default 1280 logical px
-    , canvasHeight  : Int                        -- optional; default 720
-    }
-
-type alias KeyEvent =
-    { kind  : String   -- "char" | "enter" | "tab" | "space" | "backspace"
-                        --   | "escape" | "up" | "down" | "left" | "right"
-                        --   | "home" | "end" | "delete" | "pageup" | "pagedown"
-                        --   | "ctrl" | "fn" | "paste" | "mouse" | "other"
-    , value : String   -- char body, ctrl letter, fn number, paste body, etc.
-    , shift : Bool     -- modifier flags (set when terminal sends CSI 1;<mod>X)
-    , alt   : Bool
-    , ctrl  : Bool
-    }
-
-main = Tui.app cfg |> Task.run
+```bash
+gh run list --branch main --status in_progress --workflow CI --json databaseId --jq '.[].databaseId' \
+    | xargs -I{} gh run cancel {} 2>/dev/null
+git push origin main
 ```
 
-### Logical-pixel canvas
+## Project layout
 
-`canvasWidth × canvasHeight` defines the design surface in logical pixels. The runtime computes `pxPerCellX = canvasWidth / cols` and `pxPerCellY = canvasHeight / rows` from the live terminal size, then converts every `Ui.padding 8`, `Ui.spacing 4`, `Ui.px N` to cells via `pxToCells*`. Default 1280×720 matches a typical web canvas — Std.Ui apps written for the browser look right in the terminal without re-tuning. Override via `canvasWidth = 800` if you want denser layout.
+```
+src/                              -- Sky compiler (Haskell, GHC 9.4+)
+  Sky/Parse/                      -- lexer, layout filter, parser
+  Sky/Canonicalise/               -- name resolution, import validation
+  Sky/Type/                       -- HM inference, exhaustiveness
+  Sky/Build/                      -- orchestration, FFI generator, TCO
+  Sky/Generate/Go/                -- Go IR + printer
+  Sky/Lsp/                        -- language server
+  Sky/Format/                     -- opinionated formatter (Elm-compatible)
+  Sky/Doc/                        -- sky doc — index, terminal, HTTP render
+app/Main.hs                       -- CLI entry point
+runtime-go/rt/                    -- Go runtime (embedded via TH)
+sky-stdlib/                       -- Sky-side stdlib (embedded via TH)
+sky-bundled/console/              -- Sky Console mini-app
+sky-bundled/doc/                  -- sky doc HTTP server mini-app
+tools/sky-ffi-inspect/            -- Go package introspector (TH-embedded)
+templates/CLAUDE.md               -- Template for `sky init` projects
+examples/                         -- 26 example projects
+docs/                             -- User + contributor documentation
+```
 
-Hard cap at 100,000 in either dimension; overshoot triggers a `tuiWarn`.
+## Template sync (non-negotiable)
 
-### Coverage
+When stdlib, syntax, Sky.Live APIs, or CLI commands change,
+**`templates/CLAUDE.md`** + **the matching `docs/*` files** MUST
+be updated in the same commit. AI assistants use these to write
+Sky code in user projects.
 
-~95%+ of Std.Ui primitives. Unsupported attributes (gradients, fine letter-spacing, image fills) emit a deduped warning via `tuiWarn(category, detail)`; the warning summary prints on exit AFTER the terminal is restored. `SKY_TUI_QUIET=1` suppresses, `SKY_TUI_LOG=1` writes a ledger file.
-
-**Supported:**
-- Layout: row, column, wrappedRow, paragraph (word-wrap), textColumn, grid + gridColumns, el
-- Text styling: bold, italic, underline, lineThrough, fg/bg colour (truecolour SGR; suppressed under `NO_COLOR`)
-- Headings h1-h6 with distinct visual markers (`═ ─ ▌ ▎ ▏ ·`)
-- Borders: solid, dashed, dotted with widthEach
-- Inputs: text, password (masked), checkbox (☐/☑), radio (○/●), slider, multiline textarea
-- Events: onClick, onInput, onFocus, onSubmit (form record-decode), mouse left-press (SGR 1006), scroll wheel (3 cells/notch). Release / drag / middle / right-click are deliberately deferred — the v0.12 surface is press + wheel; sliders take values via keyboard arrows.
-- Nearby overlays: above / below / onLeft / onRight / inFront / behind
-- Alignment: alignX/alignY (left/center/right, top/center/bottom)
-- Padding (incl. paddingXY, paddingEach), spacing
-- Focus ring with Tab + arrow-key cycling, focus indicator (`▸ ◂` for buttons, underline for links). Enter **and** Space activate the focused button (browser convention) before the keypress reaches user `onKey`.
-- Resize via SIGWINCH
-- **Wide chars (CJK + emoji + ZWJ family)** — proper grapheme cluster + display-width measurement via `github.com/rivo/uniseg` (MIT, see NOTICE.md)
-- **Bracketed paste** — multi-line paste into a single-line input no longer fires phantom Enter; pastes capped at 1 MiB
-- **Modified arrows** — Ctrl-Left/Right do word-jump in inputs; Shift/Alt/Ctrl flags pass through to user `onKey`
-
-### Reliability + security floor
-
-These are enforced runtime invariants — every panic / signal / malformed input path was audited before the experimental tag.
-
-| Concern | Floor |
+| Concern | User doc |
 |---|---|
-| Goroutine panic (Cmd.perform, key reader, SIGWINCH, Sub.every) | `safeGo` wrapper restores TTY before exiting |
-| External SIGTERM / SIGHUP / SIGQUIT / SIGINT-from-outside | trapped → tuiTeardown → exit 128+signum |
-| Panic on main goroutine | deferred tuiTeardown + DECSTR soft reset on exit |
-| ANSI injection via user text | `sanitiseRune` strips control bytes (0x00-0x1F, 0x7F); all paint paths route through it |
-| Wide-char column drift | `displayWidth`/`iterGraphemes` from uniseg; continuation cell marker `ch=""` keeps paintDiff in sync |
-| Resource exhaustion (runaway view height) | hard cap `tuiMaxContentH = 50,000`; soft warn at 10,000 |
-| `TERM=dumb` / non-TTY stdin | refused with friendly error before raw mode |
-| `NO_COLOR` env | colour SGR suppressed; bold/underline/reverse retained |
-| Readline corruption after exit (mosh) | DECSTR (`\x1b[!p`) + charset reset (`\x0f\x1b(B`) + scroll-region reset (`\x1b[r`) on every teardown path |
-
-**Logical-pixel canvas:** 1280×720 by default. `pxToCellsX/Y` round positive px values smaller than half a cell UP to 1 (rather than 0) so `Ui.spacing 4` stays visible in 80-col terminals.
-
-**Tests:** `runtime-go/rt/tui_{wrap,decode,editor,sanitize,scroll,width}_test.go` — ~90+ cases. `go test ./rt/...` passes.
-
-**Kitchen sink:** `examples/24-tui-kitchen-sink` exercises every supported primitive. `sky run src/Main.sky` to see it. To preview the same UI as Sky.Live: `sky run src/Main.sky live` (when the unified-backend dispatch lands — task #48).
-
-### Auth guard
-
-`Tui.app`'s `guard` field has the same shape + semantics as `Live.app`'s — `Msg -> Model -> Result Error ()`. The runtime invokes it BEFORE every `update`. `Ok ()` allows the msg through. `Err reason` skips update and (if the user's model has `notification` / `notificationType` fields) writes the rejection reason there for the view to render.
-
-```elm
-type alias Model =
-    { session       : Maybe Session
-    , notification  : String        -- runtime stamps guard rejections here
-    , notificationType : String     -- runtime stamps "error" alongside
-    , ...
-    }
-
-guard : Msg -> Model -> Result Error ()
-guard msg model =
-    case msg of
-        Logout       -> Ok ()                    -- always allowed
-        ViewSecret   -> requireAuth model        -- gated
-        _            -> Ok ()                    -- public
-
-requireAuth : Model -> Result Error ()
-requireAuth model =
-    case model.session of
-        Just _  -> Ok ()
-        Nothing -> Err (Error.unexpected "Login required")
-```
-
-When the user's model doesn't have those fields, guard rejection silently drops the msg (RecordUpdate is a graceful no-op on missing fields). The same `guard` function works under both `Tui.app` and `Live.app` — auth logic is portable across backends.
-
-### Sky.Cli password mode (v1.x post-release)
-
-`Cli.readPassword : () -> Task Error String` reads one line from stdin with terminal echo disabled. Wraps `golang.org/x/term`'s `ReadPassword`. Use from a `Cmd.perform` task in auth flows — the password never echoes to screen and never lands in scrollback. Falls back to a normal line read if stdin isn't a TTY (so piped scripts still work, just without echo suppression).
-
-```elm
-type Msg = AskPassword | GotPassword (Result Error String) | ...
-
-update msg model =
-    case msg of
-        AskPassword ->
-            ( model
-            , Cmd.perform (Cli.readPassword ()) GotPassword
-            )
-        GotPassword (Ok pw) ->
-            -- pw is the typed password; never echoed to screen
-            ...
-```
-
-**Next milestone:** Sky.Webview (after Sky.Tui v1 ships to users for feedback). Branch will likely stay open until then.
-
-## Compiler Optimisation Strategy (keep up to date)
-
-**This section must be kept current.** Any session changing the compiler pipeline, codegen, or build system must update it.
-
-### Current Optimisations (implemented)
-
-1. **Stale file cleanup** — `rm -f sky-out/sky_ffi_*.go sky-out/sky_*.go sky-out/live_init.go` at build start
-2. **Empty wrapper deletion** — DCE deletes FFI wrapper files with no remaining functions
-3. **Native DCE** (`bin/sky-dce`) — single-pass wrapper + main.go DCE, 27s → 1s
-4. **Var declaration preservation** — DCE preserves all `var` decls (type constructors, FFI aliases)
-5. **Large .skyi filtering** (`bin/skyi-filter`) — Stripe SDK: 147K→9K lines in 90ms
-6. **Combined FFI imports** — deduplicate before loading (was parsing 8.4MB Stripe SDK 40+ times)
-7. **FFI light path** — skip type-check + lowering for `.skyi`, generate constructors + wrapper vars only
-8. **Parallel module lowering** — `List.parallelMap` with goroutines, ~300% CPU
-9. **Parallel FFI loading/wrapper copying** — concurrent `skyi-filter` and file I/O
-10. **String.join in hot paths** — O(n²) → O(n) in lowerer
-11. **Incremental compilation** — `.skycache/lowered/` cache, skip type-check + lowering on warm builds
-12. **Usage-driven FFI** (`sky-ffi-gen`) — Stripe 8896 types → only referenced symbols
-13. **Runtime optimisations** — `sky_equal` type-switch, `sky_asString` via `strconv`, ASCII fast paths
-14. **ADT structs** (v0.7.10+) — `SkyADT{Tag: N, SkyName: "Name", V0: val}`, integer tag matching, struct field access
-15. **Type annotations** — `// sky:type funcName : Type` comments on all declarations
-16. **Single-binary release** — `tools/sky-ffi-inspect/` Go source embedded via TH (`Sky.Build.EmbeddedInspector`); materialises + go-builds to `$XDG_CACHE_HOME/sky/tools/sky-ffi-inspect-<hash>/` on first `sky add`. Cold-start ~4s, warm instant. Content-hash keys the cache dir so `sky upgrade` auto-invalidates. Dev workflow still picks up `bin/sky-ffi-inspect` via ancestor walk so contributors don't rebuild per branch.
-
-### Historical Fixes (all resolved)
-
-All issues below are FIXED — listed for context if debugging regressions:
-
-- **Formatter** — 7 fixes for output compatibility; all 32 modules format+compile; idempotent output
-- **Parser** — `(expr).field` support, `parseCaseBranches` nesting fix (`branchCol` tracking), long-line splits, `getLexemeAt1` field access
-- **Lowerer** — nested case IIFEs, ADT sub-pattern matching, cons pattern `len == N`, string pattern double-quoting, local variable shadowing by `exposedStdlib` (check `paramNames` first), hardcoded `Css.` prefix vs import aliases, let-binding hoisting (3-round bootstrap)
-- **Type checker** — working since v0.7.2; inner case extraction across Types/Unify/Infer/Adt modules
-- **FFI** — `.skycache` path resolution, Task boundary, Go generics filtered, keyword conflicts, IIFE invocation, type alias emission, interface pointer dereference, zero-arity params, callback function types, method/constant collision, slice-of-pointer types, namespace collisions
-- **Lexer** — `alias` removed from keywords (contextual only)
-- **Type safety audit** — 33 gaps fixed: case fallthrough panics, FFI panic recovery, float-aware arithmetic, rune-based strings, numeric sorting, typed FFI boundaries, session ADT rebuilding, exhaustiveness checking
-
-### Known Limitations (v0.11.0, updated for v0.13)
-
-These are current compiler limitations users must work around. Items marked ~~strikethrough~~ + FIXED are kept for context (their entries explain the failure mode + the fix); the active list is everything not struck through.
-
-**v0.13 closed** (do not re-document as open):
-
-* **Limitation #1** (anonymous records in function signatures) — closed by E (anon-record struct decl emission). `synthAnonRecordName` registers shapes in `globalAnonRecords`; `generateAnonRecordDecls` emits `type Anon_R_<hash> = struct { ... }` per shape. The pre-v0.13 `sanitiseTypedDeep` `Anon_R_* → any` cover-up is removed (kept as pass-through for ABI).
-* **Limitation #12** (typed codegen keeps `any` inside runtime kernels) — substantially closed by C + D + B0. Typed `*T` kernel variants emitted on reachable paths. Residual SkyCall reflect dispatch remains for non-literal HOF args (uses `narrowReflectValue` for arg-narrowing safety).
-* **Limitation #18** (typed `(String -> Msg)` callback emit + lambda-lowerer for user-defined HOFs) — closed by D (D-Lambda-Lowerer in `coerceCallArgsAt`'s no-CSI fallback) + D1 (typed return in `renderHofParamTy`). `HofTypedMsgSpec` updated to assert the typed shape; `AnonLambdaSpec` covers the broader regression class.
-* **Stripe-scale FFI bloat** — closed by F + F3. Whole-program DCE + orphan `type FfiT_*` alias pruning. Skyshop `stripe_bindings.go` 326k → 58k lines (−82%); 80,847 → 29 type aliases. Pre-v0.13 `dceFfiWrappers` only stripped wrapper bodies; v0.13 also strips orphan type aliases via `pruneOrphanFfiTypes` (Unicode-aware identifier scan).
-* **LSP gaps** — closed by G. Every USED symbol class has hover + (where applicable) goto-def coverage. 17 cabal-fenced tests across small + huge-FFI fixtures. `Sky.Lsp.NvimDriverSpec` runs the suite headless via `nvim`.
-
-**v0.13.x deferred** (post-v0.13, not blocking):
-
-* **Install-time Go binding optimisation** — `sky install` still emits the full `.skycache/go/<pkg>_bindings.go`. With Sky DCE now identifying the reachable set pre-lowering, install could skip Go-source generation entirely and let `sky build` generate only the reachable subset on demand. Stripe install would drop from ~8 min to ~10 sec, disk usage from ~12 MB to <100 KB per FFI pkg. Right architecture; deferred for risk-isolation.
-
-1. **No anonymous records in function signatures** — Record types must be defined as type aliases; inline `{ field : Type }` in annotations is not supported. Typed codegen cannot name an un-aliased record for struct emission.
-2. **No higher-kinded types** — No `Functor`, `Monad`, etc. Use concrete types. (Intentional — Hindley-Milner only.)
-3. **No `where` clauses** — Use `let...in` instead. (Intentional.)
-4. **No custom operators** — Only built-in operators (`|>`, `<|`, `++`, `::`, etc.). (Intentional.)
-5. **Negative literal arguments need parentheses** — `f -1` parses as `f - 1` (subtraction). Use `f (-1)` — matches Elm's behaviour.
-6. **`Dict.toList` returns string keys** — Sky's `Dict` uses `map[string]any` internally, so `Dict.toList` returns string keys even for `Dict Int v`. Arithmetic on these keys silently produces 0. **Workaround**: iterate over known key ranges with `Dict.get` instead of using `Dict.toList`.
-7. **`sky check` does not fully model Go interface satisfaction** — Opaque FFI types unify with each other (v0.7.21 fix), but the checker still cannot verify that a concrete Go type (e.g. `Label`) satisfies a named Go interface (e.g. `CanvasObject`). Calls like `Fyne.windowSetContent window label` may fail `sky check` but compile and run correctly.
-8. **Zero-arg FFI functions take `()` in Sky, not bare-name** — the inspector emits a `() -> R` signature for every zero-param Go function (`emitSkyiFn` in `src/Sky/Build/FfiGen.hs:1542`), so the Sky-side call is `Uuid.newString ()` / `Stripe.newCheckoutSessionParams ()` / `FyneApp.new ()`. (Sky-side **kernel** zero-arity bindings — `Uuid.v4`, `Time.now`, etc. — are the opposite: kernel-registered as bare values, called without `()`. The distinction is FFI-vs-kernel, not zero-arg-or-not.)
-9. **Let bindings with parameters after multi-line case** — A let binding like `mark j = expr` after a `case ... of` in the same let block causes the parser to misinterpret it as a new top-level declaration. **Workaround**: use lambdas (`\j -> expr`) or extract to a top-level function.
-10. **Zero-arity functions reading env vars** — Zero-arity functions are memoised and their import aliases evaluate at Go init time (before `.env` is loaded). If a zero-arity function reads `Os.getenv`, the value is cached as empty. **Workaround**: add a dummy `_` parameter: `getConfig _ = Os.getenv "KEY"`.
-11. **`exposing (Type(..))` doesn't expose ADT constructors for user modules** — `import MyModule exposing (MyType(..))` does not bring `MyType`'s constructors into scope for user-defined modules. The canonicaliser only resolves constructors when full dep info is available (kernel modules work). **Workaround**: use `import MyModule exposing (..)` to expose everything, or qualify constructors: `MyModule.MyConstructor`.
-12. **Typed codegen keeps `any` inside runtime kernels.** The typed surface is zero-`any`, but the v1.0-era reflection dispatch lives on inside `Dict_*`, `List_map`, `Html_render`. User code never sees it; observable cost is ~5% CPU vs. a hypothetical fully-generic runtime. Scheduled for the post-v1.0 runtime port (see the Typed Codegen TODO section).
-13. **Zero-arg `Css.*` constants require `()`** — `Css.zero`, `Css.auto`, `Css.none`, `Css.transparent`, `Css.inherit`, `Css.initial`, `Css.borderBox`, `Css.systemFont`, `Css.monoFont`, `Css.userSelectNone` are kernel bindings exposed as `() -> String` to sidestep zero-arity memoisation (which would interact badly with Go's `init()` ordering). Write `Css.margin (Css.zero ())` not `Css.margin Css.zero` — the latter serialises the function pointer (e.g. `0xc00001c0a0`) into the stylesheet. Sky's type checker doesn't flag the miss today because the `() -> String` surface unifies with any String slot via HM's let-polymorphism default. **Pattern**: any `Css.X` that names a CSS keyword (not a value constructor like `px`/`rem`/`hex`) takes `()`.
-14. **`import X as Alias` leaks the alias into codegen for exposed record/ADT types** — `import Lib.Db as Chat` causes `Message` to be emitted as `Chat_Message_R` instead of the module-prefixed `Lib_Db_Message_R`, breaking cross-module resolution when another module imports it unaliased. **Workaround**: use `import Lib.Db exposing (Message, …)` (or qualify without alias). Aliases on modules that only expose functions (no types) are unaffected.
-15. **`let` bindings don't support forward references** — Helpers inside a `let` block must be defined *before* their consumers in source order. `let writeAll db = … insertRow db ts …; insertRow db ts = …` fails `go build` with `undefined: insertRow` even though both are visible at the let-block scope. **Workaround**: reorder so dependencies come first. Surfaced when refactoring 18-job-queue/saveSnapshot's nested-andThen chain into named helpers; the lowerer emits each let binding sequentially without the let-as-mutually-recursive-rec semantics that Haskell `where` (and Sky's own top-level decls) provides. Worth a future fix — the canonicaliser already knows the full set of let names in the block.
-16. **Some kernel functions still missing HM type signatures** — Status as of 2026-04-27. **Dangerous-class gap is closed** (commits `f77888c` + 2026-04-27 follow-up): the `feat/effect-boundary-audit` branch added 57/66, then 10 more (`Server.static`, `Middleware.{withCors, withLogging, withBasicAuth, withRateLimit}`, `Http.{get, post}`, `JsonDec.map4`, `JsonDecP.{custom, requiredAt}`). `System.cwd` and `System.exit` were already registered (the v0.10.0 renames of `Os.cwd` / `Process.exit`). Regression fence: `test/Sky/Build/KernelSigCoverageSpec.hs` source-greps each entry — drops trip the spec at build time. **Remaining dangerous gap closed (v0.12)**: `Ffi.{call, callPure, callTask, has, isPure}` now have HM kernel sigs. Decision on the heterogeneous-list shape: kept `List any` since Sky.Ffi is the explicit FFI escape hatch — users who reach for it accept that the args list packs values of mixed types in exchange for direct access to bindings without static sigs. Pinned by KernelSigCoverageSpec "Sky.Ffi escape-hatch (v0.12)". **Bare-type sweep landed 2026-04-27**: 46 additional sigs across `Char.*` (6 — predicates + case helpers), `Crypto.*` (5 — sha256/sha512/md5/hmacSha256/constantTimeEqual), `Path.*` (4 — base/dir/ext/isAbsolute), `Math.*` (5 — e/sin/cos/tan/log), `Time.*` (6 — format helpers + addMillis/diffMillis), `String.*` (6 — casefold/equalFold/isEmail/isUrl/trimEnd/trimStart), `Css.*` (19 — Sprintf-returning length/transform/value helpers + `()`-keyword constants per Limitation #13). All return Go primitives (`String` / `Int` / `Bool` / `Float`); the runtime functions were inspected per-entry to ensure the sig matches the actual return shape. **Deliberately NOT added** (would cause `rt.Coerce[T]` runtime panic at the boundary): `Css.*` helpers returning opaque `cssRule` / `cssProp` / `cssMediaRule` (~100 entries), `Html.*` returning `vnode` (66), `Attr.*` returning `attr` struct (49), `Event.*` returning `eventPair` (24). These need the typed-codegen runtime port (post-v1.0 — see "Typed Codegen TODO") before they can be safely sigged. **Symptom of a dangerous-class regression** (kernel sig disagreeing with runtime return shape) is a runtime panic like `rt.AsInt: expected numeric value, got rt.SkyMaybe[interface{}]` — when you see this, check `lookupKernelType` (`src/Sky/Type/Constrain/Expression.hs`) against the matching `runtime-go/rt/*.go` helper.
-17. **~~HM type-checker heap exhaustion on Std.Ui-heavy modules.~~ FIXED 2026-04-27.** **Root cause turned out NOT to be a compiler-internal quadratic** — bisect showed it was a single ill-typed line in `sky-stdlib/Std/Ui/Input.sky`'s `inputBase` helper: `:: Ui.onInput (cfg.onChange cfg.text)` — passing a `Msg` (the result of applying the callback to the text) where `Ui.onInput : (String -> msg) -> Attribute msg` expects a function. Because `inputBase` was polymorphic over `msg`, HM didn't reject immediately; it tried to unify `msg = (String -> someMsg)` and propagated that constraint through every Std.Ui call site, hitting combinatorial explosion (~2.6 GB/s allocation, 4-5 GB RSS in 10s — enough to lock the Mac, which is why `scripts/mem-guard.sh` exists). The fix shipped in `dc1359b` (2026-04-26): `Ui.onInput cfg.onChange` — pass the function directly. Bisect verification: reverting only `Std.Ui.Input.sky` to its pre-`dc1359b` state reproduces the OOM exactly (783 MB allocated, 543 MB max residency at 256 MB cap); current state allocates 122 MB / 1.6 MB residency. Regression fence lives in `test/Sky/Build/HeapBoundedHmSpec.hs` — re-runs `sky check` on `examples/19-skyforum/test-fixtures/heap-bound-fence.sky` (the 689-line monolithic reproducer, kept specifically for this) under `+RTS -M256M`. **Defensive bound landed 2026-04-27** (commit follows this entry — see git log for the exact hash). The HM solver now caps total `solveHelp` invocations per `solve` call at `SKY_SOLVER_BUDGET` steps (default 5,000,000 — ~50× the largest legitimate Std.Ui-heavy module measured). When the cap is exceeded, the solver short-circuits with a clear, actionable `TYPE ERROR: constraint solver exceeded budget (N operations)` rather than letting unbounded heap consumption OOM the host. The error message points at the most likely cause (mistyped polymorphic helper) and includes the env-var override path. **Both stdlib-side and user-side pathological constraint shapes are now covered** — the HeapBoundedHmSpec catches stdlib regressions at test time; the defensive bound catches user-side patterns at compile time. SKY_SOLVER_BUDGET=0 disables the bound (escape hatch — debug only). Regression specs: `test/Sky/Build/SolverBudgetSpec.hs` (default budget passes / low budget trips with clear error / 0 disables). **Workarounds for non-skyforum code that hits a similar shape**: (a) inline event handlers at use sites instead of via typed `(String -> Msg)` helper functions, (b) prefer flat `List.map` rendering over mutually-recursive view helpers, (c) split heavy view modules per the `examples/19-skyforum` 8-module pattern. The `scripts/mem-guard.sh` rule in "Memory Safety (Non-Negotiable)" stays in force as a host-side safety net.
-19. **~~TEA app-runner kernel functions lack closed-record HM signatures.~~ FIXED (commit follows in git log).** `Live.app`, `Tui.app`, `Cli.program` now have closed-record HM kernel sigs in `lookupKernelType` with row-polymorphic extension (`appExt` row variable absorbs optional / extra fields like `guard`, `onKey`, `canvasWidth`, `api`). Required fields (`init`/`update`/`view`/`subscriptions` for all three; `+ onLine` for Cli) are enforced at type-check time. Plus the record renderer in `Sky.Type.Solve` now lists actual field names + types instead of the truncated `{ ... }` placeholder, so error messages tell the user EXACTLY which field is missing or wrong-typed. The LSP's `isLikelyExternalsFalsePositive` heuristic is gone — the LSP's diagnostics now match `sky check`'s 1:1, including the issue #52 case. Regression specs: `test/Sky/Lsp/DiagnosticsSpec.hs` "Limitation #19 — Tui.app missing required field" (asserts `subscriptions` shows in the diagnostic when omitted) + "TEA with Live.app: wrong view return type surfaces a real diagnostic" (asserts `view : ... -> String` vs `... -> VNode` is rendered with field names). Original symptoms (kept for context):
-
-    - **Missing required field passes type-check, panics at runtime.** `Live.app { init = init, update = update, view = view }` (no routes, no notFound, no subscriptions) builds fine, then crashes on first request with a useless `nil pointer` or `interface conversion` error.
-    - **Wrong-shape view (partial app) passes type-check, panics at runtime.** Issue #52's case: `view : Model -> any; view model = Ui.layout [] (codeSection)` where `codeSection : Model -> Element` — the user forgot to apply `model`. Sky HM should reject (Element-msg-fn ≠ Element) but doesn't because the cfg type is open. Crashes with `interface conversion: interface {} is func(interface {}) interface {}, not rt.SkyADT` on first GET.
-    - **Misnamed cfg fields silently ignored.** `view = view, sub = subscriptions` (typo) compiles; the runtime sees no Subscriptions field and does nothing.
-    - **LSP can't help either.** Without an HM sig, the LSP doesn't know which fields are required, so red squiggles never appear.
-
-    **Proper fix** is to define closed-record HM signatures for these kernel functions via `lookupKernelType` (`src/Sky/Type/Constrain/Expression.hs`):
-
-    ```hs
-    ("Live", "app") -> TLambda
-        (TRecord [
-          ("init",          a -> (model, Cmd msg)),
-          ("update",        msg -> model -> (model, Cmd msg)),
-          ("view",          model -> any),
-          ("subscriptions", model -> Sub msg),
-          ("routes",        List (Route page)),
-          ("notFound",      page),
-          ("guard",         Maybe (msg -> model -> Result Error ())),
-          ("api",           Maybe (List Endpoint)),
-          ...
-        ])
-        (Task Error ())
-    ```
-
-    Once defined, HM enforces each field's presence + shape at compile time, the LSP gets the same checks for free, and the partial-application class of bug from #52 surfaces with a real type error.
-
-    **Workaround for now**: hand-write a wrapper in user code that takes a typed cfg record alias and forwards to the kernel:
-
-    ```elm
-    type alias TuiCfg model msg =
-        { init : () -> (model, Cmd msg)
-        , update : msg -> model -> (model, Cmd msg)
-        , view : model -> Element msg
-        , subscriptions : model -> Sub msg
-        , onKey : KeyEvent -> msg
-        , guard : msg -> model -> Result Error ()
-        }
-
-    runTui : TuiCfg model msg -> Task Error ()
-    runTui cfg = Tui.app cfg
-    ```
-
-    The wrapper IS HM-checked (the cfg parameter has a closed record type), so calling `runTui {init=…}` without the other fields gets a real "field missing" error. The compromise is one extra level of indirection per app, but it gives users compile-time safety until the kernel-side fix lands. Issue #52 tracks the proper fix.
-
-18. **~~Typed codegen monomorphises `(String -> msg)` callback params + empty-list-in-typed-ctor-arg.~~ FIXED 2026-04-26.** Two related bugs in one limitation, both closed by `[compile] fix Limitation #18` (commit `fa6cbf0`):
-    - **Empty-list-in-typed-ctor-arg**: `Item 1 "x" []` against a `type alias Item = { ..., tags : List String }` shipped `Item(1, "x", []any{})` — `go build` rejected `[]any{} as []string`. Root cause: `collectFuncTypesWith` only registered param types for `Can.TypedDef` bindings; auto-generated record ctors are unannotated `Can.Def`s, so `_cg_funcParamTypes[Item]` was empty and `coerceArg` short-circuited. Fix: walk `Can._aliases` too and register `(qualName, fieldGoTys, qualName ++ "_R")` for each `DataRecord` alias. Empty list now coerces via `rt.AsListT[string]([]any{})` — fully typed (Go generic, no reflect). Regression test: `test/Sky/Build/RecordCtorEmptyListSpec.hs`.
-    - **`(String -> Msg)` helper callback param**: a helper `textField : String -> String -> (String -> Msg) -> Element Msg` got `cb func(string) any` in its emitted Go sig (load-bearing widening — Sky lambdas always lower to `func(any) any` and Go has no function-type covariance, so the helper sig must accept the widest shape). But the call-site `textField "u" "" Msg_X` shipped the typed `Msg_X : func(string) Msg` raw — `go build` rejected. Root cause: `safeReturnTypeWith` returned bare `"any"` for `T.TLambda`, so `_cg_funcParamTypes[textField]` knew the param was "any" and `coerceArg` short-circuited. Fix: `safeReturnTypeWith` now renders `T.TLambda` as `func(X) any` (matching what `renderHofParamTy` emits at sig time) — this gives `coerceArg` the `func(` prefix it needs to route call-site args through `rt.Coerce[func(X) any]`. The reflect.MakeFunc adapter handles both Sky lambdas (`func(any) any`) and typed Msg ctors (`func(string) Msg`) uniformly. Pragmatic — not "fully typed" in the strict sense (the `any` tail return is a structural compromise) but unblocks user code today; truly fully-typed HOFs need lambda lowering to preserve types (post-v1 work in "Typed Codegen TODO"). Regression test: `test/Sky/Build/HofTypedMsgSpec.hs`. The pre-existing `CompileSpec` "Result-typed lambda params" test (line 80-97) is the regression fence — `renderHofParamTy` is unchanged so Bug #1 from sky-chat ep07 stays fixed.
-
-### Recently Fixed (listed for regression context)
-
-#### v0.13 (perf/v0.13 branch — typed-codegen completion — 2026-05-15)
-
-Seven workstreams (A→G) + cross-cutting fixes. See "v0.13 State"
-section at the top of this file for the full state. Commit log:
-
-* **A2** (`22ee8e0`) — `constrainDecls` pre-registers UNANNOTATED
-  `Can.Def`s via an outer CLet header so forward refs (e.g. `main`
-  → a `view` declared later) bind to the real defType var, not a
-  CLocal-minted fresh var. Annotated `Can.TypedDef`s left
-  sequential to preserve polymorphic-per-use-site semantics —
-  pre-registering with `Forall []` would collapse the same `a`
-  across distinct same-module call sites. New `walkDecls` helper
-  handles the per-decl scoping under the outer header. Regression:
-  `test/Sky/Build/AnonLambdaSpec.hs` exercises the integration.
-
-* **A1** (`22ee8e0`) — `lookupRecordAlias` + `matchAliasByFieldSet`
-  do superset match on open records. The HM solver emits
-  `T.TRecord fields (Just rowExt)` for any function accessing a
-  record subset via `.field`; pre-A1 the exact-only lookup returned
-  Nothing and the renderer fell back to `any`. Smallest-superset
-  alias wins; tied sizes → Nothing (ambiguous → renderer falls back
-  to `any`, correctness preserved).
-
-* **B1+B0** (`22ee8e0` + `041bd70`) — Parametric ADT erased-Go-name
-  in `safeReturnType` (changed `T.TType _ _ []` to `_`); Sky-defined
-  union name in `_cg_unionNames` takes precedence over
-  `runtimeTypedMap`'s any-aliased entry. `Attribute` (defined in
-  both `Std.Ui` and `Std.Html.Attributes`) emits as
-  `Std_Ui_Attribute` / `Std_Html_Attributes_Attribute` instead of
-  `rt.SkyAttribute = any`. 19-skyforum: 109 refs flipped.
-
-* **C** (`22ee8e0`) — `tvarsInEmitted` recurses into List/Dict/Set
-  args + the `usedTypeParams` filter in `splitInferredSigWithReg`
-  matches against PARAM strings only (Go's generic inference only
-  works from input positions). Return-only TVars (e.g. `b` in
-  `concatMap : (a -> List b) -> List a -> List b` when fn's return
-  is blanket-`any`) collapse to `[]any` rather than emit a
-  `cannot infer T2` Go-build error. Lands the right ceiling until
-  D-Lambda-Lowerer makes typed-output lambdas at user-defined HOFs
-  work end-to-end.
-
-* **D + D-Lambda-Lowerer + D1** (`3757025`) — Five coordinated fixes
-  closing typed lambda output at user-defined HOF call sites:
-  - `coerceCallArgsAt`'s no-CSI fallback (where user-defined HOF
-    calls land) now routes literal `Can.Lambda` args at func-typed
-    param slots through `curryLambdaPatTyped`, matching what the
-    CSI-captured branch already did for kernel HOFs.
-  - `exprToGoTyped`'s `Can.Call` branch (used for annotated
-    `TypedDef` bodies via `exprToGoExpectGo`) delegates
-    `Can.VarTopLevel`-headed calls to the untyped `exprToGo` path
-    so they reach `coerceCallArgsAt`.
-  - `renderHofParamTy`'s concrete-return arm changed from blanket
-    `"any"` to `go _to` (typed return).
-  - `safeReturnTypeWith`'s `renderFuncTy` arm mirrors D1 — must
-    sync, otherwise `_cg_funcParamTypes` reports `func(any) any`
-    while `renderHofParamTy` emits `func(T1) rt.SkyResult[E, V]`
-    and the typed routing silently no-ops.
-  - `typedLambdaParam`'s `Can.PVar` arm emits `_ = paramName`
-    after the rebind so Go's "declared and not used" doesn't fire
-    when a Sky lambda binds a param the body doesn't consume.
-
-  Pinned regression test (`CompileSpec.hs:139` Result-typed lambda
-  params) now passes WITH typed shape. `HofTypedMsgSpec` updated:
-  `cb func(string) Msg` (was `cb func(string) any`).
-
-* **E** (`5d2d8df`) — Anon-record struct decl emission via
-  `globalAnonRecords` IORef + `generateAnonRecordDecls`.
-  `synthAnonRecordName` registers each produced shape; the new pass
-  emits one `type Anon_R_<hash> = struct { ... }` per registered
-  name (fields sorted by `_fieldIndex`). The pre-v0.13
-  `sanitiseTypedDeep` cover-up that rewrote `Anon_R_*` → `any`
-  is now a no-op pass-through. Across the current 26-example sweep
-  `synthAnonRecordName` is never reached (A1's superset match catches
-  every shape), so the registry stays empty in practice — but the
-  infrastructure exists for the moment it fires. Regression test:
-  `AnonRecordSpec`.
-
-* **F + F3** (`ecf024f` + `80dcdf9`) — Whole-program Sky DCE. New
-  `Sky.Build.Dce.Ref` (TopRef | FfiRef | CtorRef);
-  `reachableWholeProgram entryMod allMods extraRoots` walks the
-  call graph from `(entryMod, "main")` across every module.
-  `globalReachableProgram :: IORef (Set Dce.Ref)` populated after
-  canon-fixpoint. `generateDeclsForDep` filters via
-  `keepName`. `globalDceDisabled` honours `SKY_DCE=0` escape.
-  F3 (orphan FfiT type-alias pruning): the existing
-  `dceFfiWrappers` strips unused wrapper bodies but leaves the
-  per-position `type FfiT_*` aliases orphan. New
-  `pruneOrphanFfiTypes` (Unicode-aware identifier scan, O(blob +
-  Σ name_lengths)) drops them. Skyshop measurement: main.go 14k →
-  4k (−71%); `stripe_bindings.go` 326k → 58k (−82%); 80,847 → 29
-  type aliases.
-
-* **G + Unicode** (`5b59e68` + `80dcdf9`) — LSP 100%: 17 cabal-fenced
-  tests via headless Neovim driver covering every USED symbol
-  class. `Sky.Lsp.NvimDriverSpec` wraps the bash driver; pending
-  if nvim not on PATH. `caseArm` scope fix in
-  `Sky.Lsp.Index.exprLocals` so case-pattern binders' scope spans
-  pattern + body region (was body-only, hover on the binder
-  returned bare name). Unicode-aware Go ident matching:
-  `isGoIdentStart` / `isGoIdentChar` (Compile.hs) using
-  `Char.isLetter` / `Char.isAlphaNum`. Replaced 4 ASCII-only sites
-  (`matchFuncStart`, `substTVarsInGoType`, F3
-  `pruneOrphanFfiTypes`, Monomorphise.hs's
-  `substTypeParamsInString`) that would silently slice Unicode
-  identifiers.
-
-* **Runtime reflect-adapter arg narrowing** (`584d2e1`) — A runtime
-  panic surfaced by `verify-cli.sh` on 07-todo-cli:
-  `reflect.Call using map[string]interface{} as type map[string]string`
-  in `makeFuncAdapter`. The `rt.Coerce[func(any) any]` adapter
-  was invoking `formatTodo : map[string]string -> ...` via
-  `skyFn.Call(allArgs)` with `allArgs[0]` being the raw
-  `map[string]any` from `Db_query`. Fix: narrow each arg to
-  `skyFn.In(i)` via the existing `narrowReflectValue` helper
-  before `reflect.Call`. The helper already handles dict/list
-  element recursion.
-
-* **Verification scripts** (`584d2e1`) — `scripts/verify-all-web.sh`
-  + `scripts/verify-live-app.mjs` (Playwright headless Chromium for
-  Sky.Live + Sky.Http.Server apps); `scripts/verify-cli.sh` for
-  CLI / Sky.Cli / Sky.Tui. Verification matrix at the top of this
-  file.
-
-#### exp/tea-core (typed-codegen overhaul Phase 3 — Gap 3 substantially closed, 2026-05-10)
-
-**User-authorised multi-week scope** (Gap 3 + Gap 4 from the v0.12
-grilling session). 5 commits land Phase 3 of `docs/v012-typed-codegen-plan.md`
-in batches:
-
-| Batch | Kernels routed | Runtime additions |
-|---|---|---|
-| 1 | List.{map, filter, foldl, length, head, reverse, take, drop, append} | List_mapTA / List_filterTA / List_foldlTA |
-| 2 | Dict.{get, insert, remove, member, keys, values} | (existing Dict_*T variants reused) |
-| 3 | Maybe.withDefault, Result.withDefault | (existing Maybe_withDefaultT / Result_withDefaultT reused) |
-| 4 | List.{member, indexedMap}; Can.Access alias unfolding | List_memberT / List_indexedMapTA / List_concatTA |
-
-**Architecture**:
-- `inferExprType :: SolvedTypes -> Can.Expr -> Maybe T.Type` —
-  walks `Can.Expr` deriving HM-inferred types from the existing
-  `_cg_solvedTypes` map. Covers literals, `VarLocal` /
-  `VarTopLevel` / `VarKernel` / `VarCtor`, `Call` (callee return
-  via `splitFuncType`), `List` (element from first item), `If` /
-  `Case` (first arm), `Access` (record field, with alias
-  unfolding via `_cg_aliases`), `Record` literal, `Tuple`,
-  `Negate`. Lambda inference deferred (Gap 4 territory).
-- `inferGoType` / `inferListElemGoType` /
-  `inferDictValueGoType` / `inferMaybeInnerGoType` /
-  `inferResultGoTypes` — type-shape extractors; defensive
-  against HM-synthesised `Anon_R_*` names (no Go type alias).
-- `kernelTypedCall :: SolvedTypes -> ModName -> FnName ->
-  [Can.Expr] -> [GoIr.GoExpr] -> Maybe GoIr.GoExpr` —
-  emits a typed kernel call when the relevant call-site arg
-  types are derivable. Returns Nothing in every other case
-  → caller falls back to default any-routing. Conservative
-  by design: regression-safe.
-- `exprToGo`'s `Can.Call` branch: NEW guard pattern matches
-  `Can.VarKernel` and delegates to `kernelTypedCall` first.
-  Falls through to the existing any-routing on Nothing.
-
-**TA-variant pattern** (typed slice + any-typed function):
-Sky lambdas still lower to `func(any) any` (Gap 4 territory).
-The TA variants accept that shape internally and call SkyCall
-per element — same per-element dispatch cost as the any-path
-helpers, but eliminates the AsListT / AsMapT coercion at the
-call boundary AND lets Go iterate the typed slice directly.
-For 1000-element lists, that's ~1000 reflect.Value lookups
-saved per call site.
-
-**Boundary handling**: each container-positional arg wrapped
-with `rt.AsListT[A]` / `rt.AsMapT[V]` / `rt.MaybeCoerce[A]` /
-`rt.ResultCoerce[E, A]` at the call site so runtime any-typed
-sources (rt.Field on records, AnyT outputs, FFI returns)
-convert to the typed Go shape the kernel expects. All these
-helpers are no-ops on already-typed inputs.
-
-**Sweep measurement** (24 examples, post-2026-05-11 final state):
-
-| Status | Calls | Notes |
-|---|---|---|
-| Typed kernel routes (`*T` / `*TA`) | **~200** | up from 0 pre-fix |
-| Residual List_mapAny call sites | **10** | all functionally correct, see breakdown |
-| Total `reflect.MakeFunc` adapter sites in user code | 0 | unchanged |
-| Soundness panic surfaces | **0** | `coerceInner` strict-panic active; zero panics in Live sweep |
-
-**Gap 4 status (typed lambda lowering)**: SUBSTANTIALLY CLOSED
-(2026-05-10/11). The `curryLambdaPatTyped` helper emits typed Go
-function signatures for literal `\x -> ...` lambdas passed to
-kernels that need a typed-input fn. Active for List.map / filter /
-find / Maybe.map / Result.map / Maybe.andThen / Result.andThen.
-Output type stays `any` (lambda body's HM type not threaded yet)
-but the input type is fully typed — eliminates the per-element
-reflect.MakeFunc adapter at the input boundary.
-
-**Three coordinated 2026-05-11 fixes closed the long-tail**:
-1. `Dict_fromListT[V]` runtime variant + routing via the new
-   `inferListTupleSecondGoType` helper. Eliminates 8/9 Dict.fromList
-   any-routes in skyshop.
-2. Record-alias fallback in `inferExprType`'s `Can.Access` path:
-   Sky's HM stores record-field types with unresolved internal
-   TVars (`List _elem10`). The new `matchAliasByFieldSet` helper
-   looks up the user's record alias by field-set and pulls the
-   concrete declared type from there. Eliminates a class of
-   record-field-access any-routes.
-3. `List.member` key-type fallback: when the list arg's type is
-   unresolvable, infer the element type from the KEY arg
-   (`List.member`'s `a -> List a -> Bool` shape forces them to
-   share). Eliminates the skyforum residual.
-
-**Defensive runtime hardening (2026-05-11, second pass)**:
-- `narrowSkyContainer` gates on `Tag.Kind() == Int(64)` for both
-  source AND target. Previously called `outTag.SetInt(...)`
-  unconditionally, which panicked with "SetInt on string Value"
-  when narrow target was a non-Sky struct with a non-int "Tag"
-  field (e.g. rt.VNode where Tag is the HTML tag string).
-- Same int-kind gate added to every other `tagField.Int()` site
-  in rt.go: `ResultCoerce`, `MaybeCoerce`, `coerceInner`,
-  `anyResultView`, `anyMaybeView`, `Result_withDefault`,
-  `unwrapAny`, and the SkyMaybe slice-appendJust path. Defense
-  in depth — no `tagField.Int()` call in rt.go can fire on a
-  non-Sky-container struct without first verifying the Tag is
-  actually an int.
-- `coerceInner` PANICS LOUDLY on type-assertion failure (final
-  state, reverted from temporary graceful-fallback). The strict
-  panic surfaces wrong typed routes as compiler bugs to fix at
-  source. Conflict-detection merge + lambda-input-derived typing
-  ensure no wrong route is ever emitted; the panic NEVER fires
-  in well-formed code. All 6 Live apps serve HTTP 200 with this
-  active — empirical proof current routing is correct.
-
-**Architectural fix replacing the `sanitiseTypedElem rt.*`
-workaround (2026-05-11, commit 63c01c0 + a2ff8e9)**: The earlier
-post-conversion `rt.*` rejection in `sanitiseTypedElem` was a
-WORKAROUND for the symptom. Root cause: cross-module solvedTypes
-merge collapses same-named binders. The fix lives at the merge
-step (`typesWithDeps` in Compile.hs):
-
-  1. Collect per-key type assignments across all modules.
-  2. If entry has the key → use entry's type.
-  3. Else: normalise all dep candidates (collapse TVar names to a
-     shared sentinel `_norm` so structurally-identical types from
-     different modules match). If they all agree under
-     normalisation → use the first concrete candidate.
-  4. Else (genuine conflict) → replace with `TVar "_ambig"` so
-     `solvedTypeToGo` returns "any" and typed routing falls
-     back safely.
-
-This is a soundness-preserving merge. `sanitiseTypedElem` still
-filters `Anon_R_xxx` synthetic record names (no Go alias is
-emitted for those), but no longer needs the `rt.*` filter.
-
-**Per-example status**: all 24 examples build clean, 6 Live apps
-verified serving HTTP 200 with intact rendered content. No silent
-data loss observed in the integration tests.
-
-**The critical soundness fix (2026-05-11, commit a2a45d0)**:
-Earlier the typed routing in `inferListElemGoType` looked up the
-LIST argument's type in solvedTypes. But Sky's HM stores let-bound
-names with a single (innermost-wins) type per module — when two
-functions in the same module bound `visible` to different types,
-only one survived. Wrong typed routes (`rt.List_mapTA[State_Metric_R]`
-on a list of Monitors) emitted silently, producing zero-valued
-elements at runtime via the narrow fallback.
-
-**Fix**: `inferElemFromLambdaInput` derives the element type from
-the LAMBDA's INPUT TYPE via `_cg_funcParamTypes` lookup. HM enforces
-the lambda's input matches the list's element type, so this is
-guaranteed correct — immune to intra/cross-module shadowing. Applied
-to `List.map`, `List.filter`, `List.find`. Eliminates the silent-
-wrong-output class permanently.
-
-**Residual any-routes (10 across the sweep, all functionally correct)**:
-
-| Example | List_mapAny | Reason |
-|---|---|---|
-| 06-json | 1 | JSON-decoded list type unresolved |
-| 13-skyshop | 7 | FFI-opaque Firestore returns + partial-app closures |
-| 19-skyforum | 2 | Std.Ui internal `children` literal lambdas |
-
-All 10 sites route through `rt.List_mapTA[any]` which uses SkyCall
-reflect dispatch — functionally identical to typed routing, ~100ns
-per element slower. The strict `coerceInner` panic guarantees no
-wrong-typed route can fire silently — observed empirical zero
-panics across all 6 Live apps + cabal sweep.
-
-**What's not closed for v0.12 (would need multi-week refactors)**:
-1. **Lambda OUTPUT type for ALL call sites.** The typed routing for
-   `List.map`/`Maybe.map` uses `rt.List_mapT[A, any]` — input typed,
-   output `any`. Forcing `B` to concrete would require rewriting
-   Sky's curry semantics: today, partial applications produce
-   `func(any) any` closures that conflict with typed `func(A) B`
-   Go signatures. The TA approach (typed slice + any fn via
-   SkyCall) handles all closure shapes correctly; only the per-
-   element reflect.Call cost remains.
-2. **Generic HM cross-call substitution.** When `List.take 10 xs`
-   returns `List X` with X tied to xs's element type, we already
-   substitute correctly via the "identity-on-element-type" kernel
-   shortcut. Full unification (for kernels where TVar relationships
-   are non-trivial) would need a mini HM solver at codegen time.
-
-#### exp/tea-core (LSP works on huge FFI surfaces — skyshop / Stripe SDK, 2026-05-10)
-
-**Root cause** for the LSP-pegged-at-100%-CPU symptom on
-`examples/13-skyshop` (Stripe SDK ~12MB FFI catalogue, 76,141 generated
-symbols):
-
-1. `loadFfiSymbols` in `src/Sky/Lsp/Index.hs` did O(n×m) scans —
-   per-symbol `findSkyiLine` linearly searched the whole skyi for a
-   matching catalogue line. For Stripe that's 76K symbols × ~500K
-   lines ≈ 38 billion text comparisons. The cost was paid lazily: the
-   first reader of `idxByQual` triggered the entire chain, hanging the
-   LSP for tens of seconds. A timed-out reader would leave a half-
-   forced thunk that subsequent readers re-entered, deadlocking
-   permanently.
-2. `idxExternals` was an eagerly-built map over ALL workspace modules.
-   For pathological FFI types, `generaliseToAnnotation` blew the
-   solver budget. The same lazy-thunk class fired here too.
-
-**Fixes landed**:
-
-- **`buildSkyiNameIndex`** — pre-index the .skyi by capitalised symbol
-  name in a single linear pass, then O(log n) lookup per symbol. Drop
-  total cost from ~10 minutes to <1 second.
-- **Strict force inside `buildIndex`** — `let !merged = mergeFfi ... ;
-  !_ = Map.size (idxByQual merged)` (and siblings) before returning.
-  Plus `IORef.atomicModifyIORef'` for the index cache update so
-  subsequent readers see WHNF. Kills the half-forced-thunk class
-  entirely.
-- **`Idx.externalsForFile imports idx`** — replaces the eager
-  workspace-wide externals map with a per-file scoped builder that
-  takes the open file's qualified module references (extracted via
-  `collectImportNames`) and only generalises those modules' types.
-  Skyshop typically scopes to ~14 modules out of 64, with ~17
-  externals computed in 2.5s. Pathological modules (>400 declared
-  names) are skipped automatically — they still resolve via the FFI
-  catalogue + workspace symbol index, just without HM cross-file
-  type checks.
-- **3-second timeout** on the externals computation (`System.Timeout
-  .timeout`). If it ever exceeds, the LSP falls back to empty
-  externals and logs to `<projectRoot>/.skycache/lsp-error.log`.
-  Cross-module diagnostics on that one file are temporarily lost; the
-  editor stays responsive.
-
-**Result on skyshop** (76,141 FFI symbols, 64 user/stdlib modules):
-- One-time index build: ~3 seconds
-- Per-hover request: <100ms
-- Hover on Stripe FFI calls (`Stripe.newCustomerListParams`,
-  `Stripe.setKey`) returns full type signatures with `defined in`
-  module attribution
-- Qualified completion (`Stripe.<Tab>`) lists Stripe FFI surface
-
-**Test fixtures**: `scripts/lsp-test-skyshop.lua` is a headless-
-Neovim driver that probes existing project files (no fixture
-rewrites). Runs hover-stripe-newparams, hover-stripe-setkey, and
-completion-stripe-prefix end-to-end. Pair it with the synthetic
-fixture suite (`scripts/lsp-test-nvim.sh`) for regression coverage:
-small + medium + huge-FFI projects all green.
-
-**Diagnostic log**: `<projectRoot>/.skycache/lsp-error.log` — the
-LSP appends a timestamped line on `buildIndex` exceptions and on
-externals-timeout fallback. `Sky.Lsp.Diag` provides the helpers;
-silently swallows IO errors so logging itself never breaks the LSP.
-
-**Note on `sky build`**: cross-module type errors continue to fire
-correctly during `sky check` / `sky build` — the LSP fallback to
-empty externals only affects the editor's red-squiggle layer.
-Compile-time guarantees are unchanged.
-
-**Note on autocompletion**: completion is unaffected by this work
-because it consults `idxByQual` (which holds every workspace
-module + every FFI symbol from `loadFfiSymbols`), not the
-externals map. So `Stripe.<Tab>` returns the full Stripe surface
-the moment the LSP starts, regardless of whether the file has
-referenced anything yet. The externals scope (used only for type-
-check diagnostics) is unioned over (a) every `import M` statement
-in the source AST and (b) every `Can.VarTopLevel`-derived
-reference in the canonicalised expressions — so a file that just
-typed `import Stripe as S` already gets Stripe externals before
-any usage exists, ready for type-check the moment a reference
-appears.
-
-#### exp/tea-core (`sky verify` port-collision hardening, 2026-05-10)
-
-Background: `cabal test` running `sky verify` for the
-HTTP-server examples used to occasionally fail with
-`FAIL scenario: 15-http-server: GET /: body missing substring "Sky HTTP Server"`.
-Diagnosis: a stale `sky-out/app` from a prior session (or a
-parallel example's server) was holding port 8000. The new
-`sky verify` spawn silently failed to bind, but `curl` to the
-same port still got responses — from the wrong server. The
-scenario then "saw" some other example's HTML and reported a
-spurious body-substring failure.
-
-Fix: `runScenario` and `runDefaultProbe` in `app/Main.hs` now call
-`killPortHolder port` as a pre-flight. The helper does
-`lsof -ti :PORT` → `kill` (SIGTERM, then SIGKILL after 0.3s if
-still alive). Best-effort; silent on no-holder. Pure environmental
-hygiene — no behaviour change when the port is already free.
-
-#### exp/tea-core (LSP completeness + Sky.Tui button activation, 2026-05-10)
-
-- **LSP completion: field labels are bare, filterText carries the
-  qualified form.** When the user types `model.<Tab>`, the LSP now
-  returns items with `label: "count"` (clean dropdown), `insertText:
-  "count"` (cursor is after the dot — inserts to give `model.count`),
-  and `filterText: "model.count"` (so the server-side
-  `filterCompletions` and editor-side fuzzy matchers still see the
-  qualified prefix the user typed). Previously the label was
-  `"model.count"` (ugly dropdown), and accepting the suggestion gave
-  `model.model.count` in editors that defaulted insertText to label.
-  Server-side filter (`filterCompletions` in
-  `src/Sky/Lsp/Server.hs`) now honours `filterText` on every
-  completion item — matching LSP spec semantics. Symmetric path for
-  qualified completions (`Ui.<Tab>` → `label: "Ui.layout"`,
-  `insertText: "layout"`) was already correct from earlier work.
-
-- **Sky.Tui buttons activate on Space, not just Enter.** Previously
-  only Enter on a focused button fired its onPress; Space fell
-  through to user `onKey`, which meant a global `space → Toggle`
-  hotkey misfired when focus was on a different button (Reset,
-  Cancel, etc.). Runtime fix in `runtime-go/rt/tui_ui.go` so
-  `(km.ev.kind == "enter" || km.ev.kind == "space")` consumes the
-  keypress at the focused-button layer before reaching `onKey`.
-  Matches browser convention (`<button>` activates on both keys).
-  Examples/22-tui-stopwatch-ui's help text updated to reflect the
-  new behaviour.
-
-- **LSP test driver (`scripts/lsp-test-nvim.{lua,sh}`)** that
-  exercises hover/completion/goto-def end-to-end through Neovim's
-  real LSP client. Catches editor-level bugs that synthetic
-  JSON-RPC tests miss — the field-label and filterText bugs above
-  were both surfaced by this driver, not by the existing cabal test
-  suite. 7 tests cover: hover on Task.run, hover on a record field
-  (`model.count` → Int), hover on a type name in annotation
-  (`Model`), qualified completion's insertText handling
-  (`Ui.layout`), field completion (`m.<Tab>` → bare `count` /
-  `label`), let-binding completion (let-bound names show up), and
-  goto-definition for a type name (jumps to alias decl). All seven
-  pass against the freshly-built binary. Run with:
-  `scripts/lsp-test-nvim.sh` (uses `/tmp/lsp-real-test` by default;
-  override via `LSP_NVIM_PROJECT=...`).
-
-  Companion driver `scripts/lsp-test-skyshop.lua` probes existing
-  project files (no fixture rewrites). Confirmed working on
-  examples/12-skyvote (Db.exec hover returns full kernel sig).
-  **Known gap:** examples/13-skyshop's hover returns nil for every
-  symbol — pre-existing limitation when the LSP's
-  `typecheckWorkspace` hits memory/budget limits on very-large FFI
-  surfaces (the Stripe SDK kernel.json is ~12MB). The catch is in
-  `src/Sky/Lsp/Index.hs:156` — `try`-swallowed exceptions cause the
-  index to silently fall through to empty. **Symptom matches** the
-  user-reported sendcrafts gap; not a regression from this
-  session's work. Investigation deferred — likely needs streaming
-  index build or budget partitioning per FFI dep.
-
-#### v0.11.x (post-v0.11.0 — Ui.grid CSS-Grid auto-fit primitive, 2026-04-28)
-
-- **`Ui.grid` + `Ui.gridColumns`** — proper CSS-Grid auto-fit
-  primitive for product grids, dashboards, image galleries.
-  Compiles to `display: grid; grid-template-columns: repeat(auto-
-  fill, minmax(<col>px, 1fr))`. Closes the deferred-list gap from
-  the v0.11.0 release notes ("True CSS-Grid auto-fit needs a
-  separate `Ui.grid` primitive").
-
-  **Why this is needed even though `wrappedRow` exists**: `Ui.
-  wrappedRow` uses CSS flexbox `flex-wrap: wrap`. With children
-  containing `<img width:100%>` (typical card pattern), CSS's
-  `flex-basis: auto` collapses each child to 100% of the container
-  — every card ends up alone on its row regardless of viewport
-  width. CSS Grid `auto-fit` doesn't suffer this, so it's the
-  correct primitive for "N cards per row, where N adapts to
-  available width".
-
-  ```elm
-  Ui.grid
-      [ Ui.gridColumns 240   -- minmax(240px, 1fr)
-      , Ui.spacing 16        -- gap: 16px (existing Ui.spacing wires through)
-      , Ui.padding 24
-      ]
-      (List.map productCard products)
-  ```
-
-  Children become grid items; drop `Ui.width` from card-style
-  children and let the grid handle sizing. No `Ui.minimum 240`
-  needed on each child — the `minmax(240px, 1fr)` floor handles
-  it once at the container level.
-
-  Implementation: new `__grid` AttrStyle marker + `__gridMin`
-  value attr (set by `gridColumns N`). Renderer's
-  `buildStyleString` checks for `__grid` and overrides the
-  `displayFor` flex output with the grid template. Both markers
-  stripped from emitted style string by the same case that strips
-  `__row`/`__col`/`__wrap`. `Ui.spacing N` already emits
-  `gap: Npx;` which CSS Grid honours natively.
-
-  Default min column width is `240px` if `gridColumns` is
-  omitted (sensible product-card default — prevents totally-broken
-  single-column fallback when user forgets the attribute).
-
-#### v0.11.x (post-v0.11.0 — paddingEach API harmonisation, 2026-04-28, BREAKING)
-
-- **`Ui.paddingEach` switched from positional to record-shaped** —
-  was `Int -> Int -> Int -> Int -> Attribute msg`, now
-  `{ top : Int, right : Int, bottom : Int, left : Int } -> Attribute msg`.
-  Matches `Std.Ui.Border.widthEach` (which is already record-shaped)
-  and elm-ui's `Element.paddingEach`. The mismatch was an API
-  consistency bug surfaced by a downstream port: developer muscle
-  memory from `widthEach` led them to write
-  `paddingEach { top = 2, right = 4, bottom = 2, left = 4 }`,
-  which under the old positional sig partial-applied to a 3-arg
-  function — a function value then ended up in the attribute list
-  and crashed the render path with
-  `interface conversion: interface {} is func(interface {}) interface {}, not rt.SkyADT`.
-
-  The HM check `Type mismatch: { ... } vs Int` already surfaces the
-  mismatch at sky check time (round-2 closed-record exactness fix
-  in commit 47f3a43 closed the silent-pass gap), so the runtime
-  panic was strictly a "you compiled with an older binary" symptom.
-  The harmonisation removes the foot-gun upstream so muscle memory
-  from `widthEach` works out of the box.
-
-  Migration: `paddingEach t r b l` → `paddingEach { top = t, right
-  = r, bottom = b, left = l }`. No internal callers (stdlib /
-  examples) to update; only downstream Sky projects that used
-  `paddingEach` positionally need migrating.
-
-#### v0.11.x (post-v0.11.0 — Std.Ui surface gaps round 1, 2026-04-27)
-
-Three small additive surface gaps from a downstream port. None
-require architectural changes; bigger items (CSS pseudo-classes,
-`htmlAttribute "style"` merge semantics) are deferred.
-
-- **`Ui.wrappedRow`** — like `Ui.row` but children that overflow the
-  parent's width wrap to a new line. Compiles to
-  `display: flex; flex-direction: row; flex-wrap: wrap`. Use for
-  product grids, tag clouds, dashboards. Implementation: a new
-  `__wrap` AttrStyle marker (alongside the existing `__row`/`__col`/
-  `__paragraph` markers) consumed by `displayFor` to append
-  `flex-wrap: wrap`. The marker is stripped from the emitted style
-  string by the same case that strips the row/col markers.
-
-  For true CSS-Grid `repeat(auto-fill, minmax(...))` behaviour
-  (children stretch to fill row width) — that's a separate
-  `Ui.grid {minColumnWidth, gap}` primitive, not yet shipped.
-
-- **`Ui.vh n` / `Ui.vw n`** — viewport-relative Length. Renders as
-  `Nvh` / `Nvw`. Solves the full-page-shell case (`Ui.height
-  (Ui.vh 100)` for `min-height: 100vh`-style behaviour) that
-  previously needed `Ui.htmlAttribute "style" "min-height:100vh"`.
-  Stack with `Ui.minimum` / `Ui.maximum` for bounded viewport
-  sizing (e.g. `Ui.maximum 800 (Ui.vh 80)`).
-
-- **`Font.noDecoration` / `Font.lineThrough` / `Font.overline`** —
-  CSS `text-decoration` controls. Most useful for `Ui.link`:
-  browsers underline `<a>` by default and Sky.Ui inherits that.
-  `Font.noDecoration` opts out for "looks like a button" links.
-  Implementation: new generic `AttrFontDecoration String` variant
-  (existing `AttrFontUnderline` keeps its dedicated case for
-  back-compat).
-
-#### v0.11.x (post-v0.11.0 — `sky upgrade-claude` CLI, 2026-04-27)
-
-- **`sky upgrade-claude` — refresh project's CLAUDE.md from the binary's embedded template** — ADDED. Solves the staleness problem where a user upgrades the `sky` compiler (`sky upgrade`) but their project's `CLAUDE.md` (a snapshot taken at `sky init` time) keeps referencing old API names (`Ui.max` vs `Ui.maximum`) or doesn't mention surface that landed since the snapshot. The new command writes the current binary's embedded `templates/CLAUDE.md` to `./CLAUDE.md`, backs up any existing copy to `./CLAUDE.md.bak`, and prints a one-line byte-delta summary including the `sky` version that produced the new template. Implementation: new `UpgradeClaude` Command variant + `runUpgradeClaude` handler in `app/Main.hs` (next to `runUpgrade`). Uses the existing `embeddedClaudeMd` Template Haskell splice — no new build deps.
-
-#### v0.11.x (post-v0.11.0 — real-world Std.Ui port findings round 3, 2026-04-27)
-
-- **Qualified type annotation under `import M as Alias` ignored the alias map** — FIXED. `resolveTypeQual` in `src/Sky/Canonicalise/Type.hs` only handled hardcoded built-in module qualifiers (List/Maybe/Result/Task/Dict/Set) and fell through to a literal `Canonical qualifier` for everything else. So under `import Std.Ui as Ui`, an annotation like `mkColor : Ui.Color` canonicalised to `TType (Canonical "Ui") "Color" []`, while bare `Color` (via `import Std.Ui exposing (Color)`) canonicalised to `TType (Canonical "Std.Ui") "Color" []`. HM rejected the two as different types with the cryptic `Type mismatch: Color vs Color` (same display, different identity). Fix: thread an `aliasMap` (built from `Src._imports srcMod` via `buildImportAliasMap`) through `canonicaliseTypeAnnotationWithAliases` so `resolveTypeQualWith` consults it before the literal-qualifier fallback. Regression spec: `test/Sky/Canonicalise/QualifiedTypeAliasSpec.hs`.
-
-- **Wrong-shape Msg constructor passed to `Ui.onInput` was silently no-op'd at codegen** — RESOLVED INDIRECTLY by the round-2 closed-record exactness + externals-filter-dropped fixes. Pre-round-2: `Ui.input [ Ui.onInput DoSignIn ]` (where `DoSignIn : AuthCreds -> Msg`) passed sky check silently and the runtime's `makeFuncAdapter` reflect adapter substituted a no-op handler. Post-round-2 (already shipped in `47f3a43`): sky check correctly rejects with `Foreign 'DoSignIn': (AuthCreds) -> Msg vs String -> Msg`, pointing at the wrong-shape arg. Verified during round-3 probing — no additional fix needed.
-
-#### v0.11.x (post-v0.11.0 — real-world Std.Ui port findings, 2026-04-27)
-
-- **`Std.Ui.onSubmit` rejected `(record -> Msg)` constructors in-module** — FIXED. The kernel + wrapper were typed `forall msg. msg -> Attribute msg`, which forced `msg = (record -> Msg)` when callers passed e.g. `Ui.onSubmit DoSignIn` (where `DoSignIn : LoginForm -> Msg`). Surrounding `Element Msg` annotations then failed unification with `Element ((LoginForm) -> Msg)`. Asymmetry: cross-module callers (e.g. `examples/19-skyforum/src/View/Login.sky`) accidentally passed because the externals path uses a more permissive typing. Runtime always handled both shapes via `applyMsgArgs` + `decodeMsgArg`'s `reflect.New(paramT)` + `json.Unmarshal` — only HM was rejecting valid Sky code. Fix: widen both `Std.Ui.onSubmit` and `Std.Ui.Events.onSubmit` to `(a -> Attribute b)`. Regression spec: `test/Sky/Type/UiOnSubmitTypedRecordSpec.hs`.
-
-- **Sky function names colliding with Go keywords sanitised at definition only, not at call sites** — FIXED. Definition path (`emitFunctionDecl` ~line 2048 of `Sky/Build/Compile.hs`) used `goSafeName` so a Sky `go : Int -> Int` emitted as `func go_(n int)`. But the matching `Can.Call (VarTopLevel _ name)` branch (~line 3633) used the raw `name` for Main-module callees, emitting `go(rt.CoerceInt(41))` which Go's parser interpreted as a goroutine launch (`syntax error: unexpected keyword go, expected expression`). Fix: apply `goSafeName` in the call-site branch too (both Main-module and cross-module paths, defensively). Affects all Go reserved words listed in `reservedGoNames`: `go`/`defer`/`chan`/`make`/`len`/`type`/`func`/etc. Regression spec: `test/Sky/Build/GoKeywordCollisionSpec.hs`.
-
-- **`Std.Ui.Font` missing text-alignment helpers** — FIXED. `Font.alignLeft` / `Font.alignRight` / `Font.alignCenter` / `Font.center` (alias for alignCenter, matching elm-ui) / `Font.justify` added. New `AttrFontAlign String` variant in the `Attribute` ADT with renderer dispatch `text-align: <value>;`. Note these compile to CSS `text-align` so they affect inline content, not the element's placement (`Ui.centerX` / `Ui.alignLeft` etc. handle that). Surfaced from real-world Std.Ui port wanting `Font.center` for centred text inside cards.
-
-- **Doc bug: `Ui.min` / `Ui.max` documented but actual API is `minimum` / `maximum`** — FIXED. CLAUDE.md (line 433), `templates/CLAUDE.md` (line 1377), `docs/skyui/overview.md` (lines 71/109/110/346), `docs/stdlib.md` (line 497) all said `min/max` but the source has `minimum`/`maximum`. Same fix-up pass also clarified that `Ui.fill : Length` is bare (no arg) and `Ui.fillPortion Int` takes the proportional weight — earlier text confusingly said `fill Int`.
-
-#### v0.11.0 (release — `feat/std-ui`)
-
-- **Multi-line `module/import ... exposing (…)` silently drops exports** — FIXED. The exposing-list parser used `spaces` (no newlines) between items, so the canonical `sky fmt`-shape multi-line form fell through `oneOfWithFallback` returning `ExposingList []`. Imports vanished silently; module-header failures were downgraded to warnings and the build proceeded with 0 modules. Fix: `freshLine` inside the parens (newlines layout-irrelevant) + parse-errors-at-module-graph-stage-are-FATAL. Regression spec: `test/Sky/Parse/MultiLineExposingSpec.hs`.
-
-- **Cons-with-constructor pattern doesn't check head's tag** — FIXED. `case xs of (Ctor x) :: _ -> body` lowered to a guard that only checked `len(list) >= 1`, ignoring the head's constructor. The body's bindings then assumed the head IS the matched constructor and extracted field 0 from whatever was at the head — runtime panic with `interface conversion: …` when the head was a sister variant. Fix: new `consHeadCondition` / `patternConditionForExpr` helpers in the lowerer emit a head-discriminator check joined to the length test via `&&`. Regression spec: `test/Sky/Build/ConsCtorPatternSpec.hs`.
-
-- **Cross-branch HM with `any`-typed ADT payload** — FIXED. Distinct occurrences of `T.TVar "any"` shared a single fresh unification variable via the solver's `_varCache`. So `case x of AttrA s -> Just s | AttrB v -> Just v` (where AttrA holds String and AttrB holds `any`) collapsed `any` to String, and `AttrB 42` at construction sites failed with `Type mismatch: Int vs String`. Fix: in `Sky.Type.Solve.typeToVar`, treat `T.TVar "any"` as a wildcard — every occurrence creates a fresh unification variable, never shared. Regression spec: `test/Sky/Type/AnyWildcardSpec.hs`.
-
-- **Tuple-pattern in lambda arg shares element types across siblings** — FIXED. `patternBindings` for `Can.PTuple` bound element types to STATIC names (`_tup_0`, `_tup_1`). These collapsed via `_varCache`, so multiple tuple destructures in the same definition shared element-type vars — `\(name, r) -> ...` and `\(name, msg) -> ...` from sibling lambdas conflated their elements, surfacing as `Variable 'msg' type mismatch`. Fix: new `patternBindingsIO` (used by `constrainLambda`) mints fresh per-occurrence type-var names + emits structural `T.CEqual` constraints tying the outer ty to the pattern's structure. Regression spec: `test/Sky/Type/TupleLambdaSpec.hs`.
-
-- **`/=` operator panics on polymorphic generic params** — FIXED. The `/=` operator lowered to Go-native `!=`, which fails with `incomparable types in type set` for `func[T any](a, b T) ...` because `any` doesn't satisfy `comparable`. Fix: lower `/=` to the new `rt.NotEq` runtime helper (mirrors `rt.Eq` shape). Restores symmetry with `==` and unblocks polymorphic comparison helpers like `Sky.Test.notEqual`. Regression spec covered in `test/Sky/Type/TupleLambdaSpec.hs`.
-
-- **`sky fmt` collapses long imports to single-line** — FIXED. The formatter emitted exposing clauses on one line regardless of length, AND collapsed user-written multi-line forms back to single-line on round-trip. Fix: new `fmtExposingClause` helper auto-breaks past ~100 chars (matches `elm-format` convention) for both module headers and imports. Idempotent. Regression specs in `test/Sky/Format/FormatSpec.hs` (3 new cases).
-
-- **`sky test` for passing modules was xfail** — FIXED. The pending entry combined the two bugs above (tuple-pattern + `/=`). Both fixes flipped the spec from `xit` → `it`. The `sky test` contract is now fully tested for both passing AND failing test modules. (Was the only `pending` in the cabal sweep; now zero pending.)
-
-- **Std.Ui surface complete** — every previously ⚠️/❌ item in the surface-coverage table now ✅ except `Std.Ui.Lazy` (no-op wrappers; runtime memo deferred). NEW: `Std.Ui.Background.{image, linearGradient, gradient}`, `Std.Ui.Border.{widthEach, solid, dashed, dotted, shadow, glow, innerShadow}`, `Std.Ui.Font.{italic, underline, letterSpacing, wordSpacing, semiBold, extraBold, black}`, `Std.Ui.Region.{aside, announce, announceUrgently}` plus renderer dispatch from `Description` to real semantic HTML tags (`<main>` / `<nav>` / `<aside>` / `<footer>` / `<h1..h6>`), `Std.Ui.{above, below, onLeft, onRight, inFront, behind}` with absolute-positioning render, `Std.Ui.{clip, scrollbars}` + axis variants, `Std.Ui.html` (escape hatch wrapping a Std.Html VNode via the new `Raw` Element variant), `Std.Ui.Input.{email, username, search, currentPassword, newPassword, radio, radioRow, slider}`. Compiler-side: `Html.aside` registered in the kernel registry. Full reference: `docs/skyui/overview.md`.
-
-- **Apache 2.0 relicense + NOTICE.md attribution** — Sky relicensed from MIT to Apache 2.0 (existing v0.10.0-and-earlier releases keep their MIT terms). Brings patent grant, trademark clause (`Sky` name protected from fork-misuse), and the NOTICE-file mechanism. `NOTICE.md` documents prior-art for `Std.Ui` (mdgriffith/elm-ui), `Sky.Live` (Phoenix LiveView), and the ten elm/compiler-derived files in `src/Sky/Type/` + `src/Sky/AST/`. `CONTRIBUTING.md` sets the inbound = outbound expectation. Defensive endorsement-clause cleanup across docs and source comments removes promotional uses of upstream project names while preserving factual technical references.
-
-- **LSP false-positive on TEA + `Live.app`** — HEURISTICALLY SUPPRESSED. The LSP's `runPipeline` calls `Constrain.constrainModule canMod` (no externals), so the kernel-shape record param of `Live.app` false-positives with `Type mismatch: { ... } vs { ... }` even though `sky check` (with externals loaded) types it cleanly. Interim fix: `isLikelyExternalsFalsePositive` in `src/Sky/Lsp/Server.hs` detects the truncated-record signature and drops it from diagnostics. Trade-off: a genuine record-vs-record mismatch involving large records would also be silently dropped — but those are rare in user code. **Proper fix**: extract `loadProjectExternals` from `Sky.Build.Compile` so the LSP can populate its own externals cache; the heuristic can then be removed. Tracked, not in this release.
-
-#### v0.7.x – v0.10.x
-
-- **Partial application of multi-arg functions through higher-order combinators** — FIXED in v0.9.10. `List.indexedMap myTwoArgFn xs` (and any other HOF that drove the call one arg at a time via `skyCallOne`) used to panic with `reflect: Call with too few input arguments` whenever `myTwoArgFn` was a top-level multi-arg binding emitted as a Go N-ary func. Same panic class hit auto-generated FFI setters partially applied in pipelines (`|> Result.andThen (Stripe.checkoutSessionParamsSetMode "payment")`) and let-bound multi-arg helpers (`Task.andThen (insertRow db)`). Fix: `skyCallOne` now detects `NumIn() > 1` and returns a `func(any) any` curried closure (`curryRemainingArgs`) that captures partial args until the arity is satisfied, then dispatches via `skyCallDirect`. Recursive — works for 3+ arg functions too. Resolves the previous Limitations #14 and #17. Regression tests: `runtime-go/rt/skycall_curry_test.go`.
-- **Sky.Live `onImage` / `onFile` driver was dead** — FIXED in v0.9.10. `renderVNode` unconditionally prefixed event names with `sky-`, so an `eventPair{name: "sky-image"}` rendered as `sky-sky-image="…"` while the JS side-channel handler read `data-sky-ev-sky-image` — neither side rendezvoused. Plus the JS `__skySend(fileId, e.target.result)` and `__skySend(imageId, dataUrl)` passed bare strings as the wire `args`, but the server's `Args []json.RawMessage` rejected the unmarshal. Fix: `renderVNode` special-cases event names starting with `sky-` (the marker for side-channel meta-events) and emits as `data-sky-ev-<name>`; both `__skySend` call sites now wrap the data URL in `[…]`. Plain DOM events (click/input/etc.) keep `sky-<eventName>` since `__skyBindOne` queries by that selector. Also added the missing `Event_onFile` runtime kernel + canonicaliser whitelist entry (was documented but never implemented), and `fileMaxSize`/`fileMaxWidth`/`fileMaxHeight` attribute keys aligned to the `data-sky-ev-sky-file-max-*` shape the JS reads.
-- **Sky.Live status banner + POST retry queue** — ADDED in v0.9.9. SSE drops or POST `/_sky/event` failures now show a bottom-pinned amber `Reconnecting…` banner after 500ms grace; failed POSTs land in `__skyEventQueue` (FIFO, capped at 50) and replay on SSE reopen or successful retry. Falls to red `Connection lost — refresh to retry` after 10 retry attempts (~2 min total backoff). Tunables via `SKY_LIVE_BANNER` / `SKY_LIVE_RETRY_*` / `SKY_LIVE_QUEUE_MAX` env vars. With a persistent session store (Redis/Postgres/SQLite/Firestore) the user's Model rides through deploy restarts unchanged — visible UX is "the page paused for a few seconds, then resumed."
-- **Sky.Live Msg dispatch decodes wire arg into the constructor's typed Go param** — FIXED in v0.9.8. `<form onSubmit=...>` extracting form data as `map[string]any` couldn't be assigned to a `Dict String String -> Msg` constructor (typed-codegen lowered the param to `map[string]string`); reflect's `AssignableTo` rejected it and the submit silently dropped. Same gap for typed-record-arg Msgs (`DoSignIn AuthCreds`). Fix: `decodeMsgArg` uses `reflect.New(paramT)` + `json.Unmarshal(raw, ptr.Interface())` to decode wire bytes directly into the concrete Go type — Go's case-insensitive struct field matching does the lowercase-Sky-field → PascalCase-Go-field mapping for free.
-- **Sky.Live session-store env vars + sky.toml keys** — DOC FIX in v0.9.10. CLAUDE.md / templates / docs claimed `SKY_LIVE_SESSION_STORE` / `SKY_LIVE_SESSION_URL` and a `[live.session]` table. The runtime actually reads `SKY_LIVE_STORE` / `SKY_LIVE_STORE_PATH` (with `DATABASE_URL` / `REDIS_URL` fallbacks) and the sky.toml keys live under `[live]` directly as `store` / `storePath`. Apps that set the wrong names silently fell through to the memory store. `SKY_LIVE_STATIC_DIR` was the inverse — docs had the right name; runtime read `SKY_STATIC_DIR`. Both runtime + emitted-init-block now read the documented `SKY_LIVE_STATIC_DIR` first; legacy `SKY_STATIC_DIR` kept as backward-compat fallback.
-- **FFI-opaque types in Sky type aliases fall back to `any`** — FIXED in v0.9.7. Sky type aliases like `type alias SourceScanner = { scanner : Bufio.Scanner, label : String }` emitted a dangling `Bufio_Scanner` Go type identifier (no corresponding `type X = …` declaration), breaking `go build` with `undefined: Bufio_Scanner`. Tracking Sky-defined union/ADT names in CodegenEnv (`_cg_unionNames`) so `solvedTypeToGo` can distinguish "Sky-defined union (alias is emitted)" from "FFI-opaque (no Go alias exists)" — the latter falls back to `any`.
-- **Effect Boundary Audit + Result/Task bridges** — LANDED in v0.9.6. `Std.Db.*` migrated from `Result Error a` to `Task Error a` (real I/O composes via Cmd.perform / Task.parallel goroutines). New stdlib bridges: `Task.fromResult`, `Task.andThenResult`, `Result.andThenTask`, `Task.mapError`, `Task.onError`. Two-tier doctrine documented (real I/O = Task, sync convenience effects = sync). Typed-codegen fix: `Db` (and any `rt.SkyTask` param) now coerces through `rt.TaskCoerceT[…]` instead of a raw `.(T)` assertion.
-- **Nested `case...of`** — FIXED in v0.7.21. `caseDepth` counter in `LowerCtx` generates unique `__subject_N` variables per nesting level. Triple-nested case expressions compile and run correctly.
-- **FFI callback wrapping** — FIXED in v0.7.21. `mapGoFuncType` parses arbitrary Go callback signatures (not just `func(ResponseWriter, *Request)`).
-- **`sky check` Go callback function types** — FIXED in v0.7.21. Callback parsing in `TypeMapper.sky` handles `func(...)` types properly.
-- **Non-exhaustive case expressions** — FIXED. Now a compile error (was a dead binding in Infer.sky). Shows missing patterns with source context.
-- **Multi-module stdlib alias collision** — FIXED. `isStdlibCallee` checks `ctx.importAliases` instead of a hardcoded whitelist. `import Std.Db as Db` alongside `import Lib.Db as Db` works.
-- **Lexer: `from` keyword blocked parameter names** — FIXED. Same class as the earlier `alias` bug. Removed `from` from `isKeyword` in Token.sky. Was the root cause of the cons-pattern-in-recursive-functions symptom.
-- **`bin` field in sky.toml respected** — FIXED. `cmdBuild`, `cmdRun`, and the typed-build path now read `bin` from sky.toml and produce the configured binary path (defaults to `app`).
-- **Cross-module zero-arg ADT constructors emitted as function calls** — FIXED. `lowerQualifiedImport` in Lower.sky now consults `ctx.importedConstructors` and emits `Piece_King` (value) for zero-arg constructors instead of `Piece_King()` (call). Multi-arg constructors retain the existing call form so `Piece.Box 42` still works.
-- **Applicative combinators for Result and Task** — ADDED in v0.7.25. `Result.map2/3/4/5`, `Result.andMap`, `Result.combine`, `Result.traverse`, plus matching `Task.map2/3/4/5`, `Task.andMap`. Solves the heterogeneous-Result-combine and homogeneous-list-of-Results cases without needing nested case or `andThen` lambdas. Also upgraded `sky_call2`/`sky_call3` and added `sky_call4`/`sky_call5` to handle both curried and uncurried multi-arg Sky functions, fixing a latent issue where local-module functions passed to higher-order helpers crashed at runtime.
-- **Auto record constructors from type aliases** — ADDED in v0.7.26. Every `type alias Foo = { ... }` declaration auto-generates a constructor function `Foo : field1Type -> field2Type -> ... -> Foo` (Elm convention). Eliminates `makeFoo` boilerplate and lets type aliases drop directly into `Result.map3 Foo (parseA ...) (parseB ...) (parseC ...)`. Implemented as a post-parse `elaborateModule` step in `Parser.sky` that synthesizes `TypeAnnotDecl` + `FunDecl` for each record type alias, skipping when the user has defined a value with the same name. Also extended the parser dispatcher to accept `TkUpperIdentifier` as a value-level declaration name so users can override the auto-generated constructor with their own implementation. Field declaration order in the type alias becomes positional API for the constructor.
-- **Type system overhaul (annotations now load-bearing)** — FIXED in v0.7.28. Three coordinated changes restore "if it compiles, it works" for annotated functions:
-  1. **Pretty-printer renames quantified vars to `a, b, c`** in `Types.sky`. `formatScheme` and `formatTypePairForError` rename TVars consistently within a single error or hover, so users see `Cannot unify a -> Int with Int` instead of `Cannot unify t108 -> Int with Int`. All unification error messages now use `cannotUnifyMsg` which calls `formatTypePairForError`. `TypedDecl.prettyType` uses `formatScheme` so LSP hovers show real types.
-  2. **`inferFunctionSelfUnify` uses the annotation as the scheme** when present and the body validates against it. The new `applyAnnotationConstraint` helper unifies inferred body type with resolved annotation type, then uses the annotation type (substituted) as the function's stored scheme. Without this, `f : String -> Int -> String; f s n = s` was registered as `forall a b. a -> b -> a` (the inferred body type), and call sites could pass any types — silently ignoring the annotation.
-  3. **`preRegisterFunctions` uses the annotation when present** so use sites in earlier declarations of the same module see the user's declared type instead of a polymorphic placeholder. Forward references and mutual recursion now respect annotations.
-  - **Cross-module type alias resolution** in `registerTypeAliases` and `Resolver.typeExprToScheme`: both now accept the imported alias dict and combine it with the local paramMap, so an alias body like `myCounter : Counter` (where Counter is from another module) gets the resolved record substituted inline at registration time.
-  - **`Adt.resolveAnnotation`** added: walks an annotation TypeExpr collecting unique TypeVar names, allocates a fresh ID per name, builds a paramMap, and resolves. This makes polymorphic annotations like `f : a -> b -> a` get distinct TVar IDs (previously all `TypeVar` references got hardcoded ID 0).
-  - **Verified**: annotated `Decode.succeed makeStr |> Pipeline.required "a" Decode.string |> Pipeline.required "b" Decode.string` (where `makeStr : String -> Int -> String`) is now caught by `sky check` with `Pipeline operator: Type mismatch: String vs Int` instead of silently passing.
-
-- **Zero-arity declaration memoisation (Ref bug fix)** — FIXED in v0.7.30. The lowerer treated top-level zero-parameter declarations like `counter = Ref.new 0` as functions, re-evaluating the body on every reference. This broke `Ref.new`, `Dict.empty` singletons, and any other values that must be created once. Fix: zero-arity declarations now emit memoised functions (`var _memo_X; var _memoOk_X bool; func X() { if !_memoOk_X { _memo_X = <body>; _memoOk_X = true }; return _memo_X }`). The calling convention is unchanged — both same-module and cross-module references call the function, but the body evaluates only once. The runtime alias registry `Ref` in `Unify.sky` now works as a true singleton.
-- **`sky init` CLAUDE.md template embedded in binary** — FIXED in v0.7.30. The template is now in `bootstrap/runtime/templates/CLAUDE.md` and embedded via `//go:embed runtime/*`. Installed binaries no longer need a `templates/` directory on disk; `readEmbeddedTemplate` reads from the binary's embedded FS. Falls back to disk path lookup for repo dev builds.
-- **Task.perform returns Result uniformly** — FIXED in v0.7.29. The helper used to unwrap `Ok` values while keeping `Err` as `SkyResult`. Now returns `sky_runTask` result directly so `case Task.perform t of Ok x -> ... ; Err e -> ...` works for both branches.
-
-- **Async Cmd.perform for Sky.Live** — ADDED in v0.8.0. `update` returns `(Model, Cmd Msg)` where `Cmd.perform task toMsg` spawns a goroutine. On completion, the result is dispatched as a Msg through the full update/view/diff/SSE cycle with session locking. `Cmd.batch` runs multiple commands concurrently. Recursive: cmd-triggered updates can spawn more cmds.
-- **Time.sleep + Random.int lowerer mappings** — ADDED in v0.8.0. `Time.sleep : Int -> Task Error ()` and `Random.int/float/choice/shuffle` now have Go implementations and lowerer mappings. Type signatures in Resolver for compile-time checking.
-- **Constructor partial application** — FIXED in v0.8.0. `checkPartialIdent` now checks `importedConstructors` for ADT constructor arities, not just `localFunctionArity`. Fixes `JobDone jid` (partial apply of 2-arg constructor) generating invalid Go.
-- **MultilineStringExpr AST node** — ADDED in v0.8.0. The parser creates `MultilineStringExpr` for `"""..."""` strings instead of desugaring at parse time. The formatter preserves triple-quoted strings. The lowerer desugars at codegen time with `{{expr}}` interpolation handling.
-- **Formatter style improvements** — FIXED in v0.8.0. Tuples break vertically with leading commas. Function args indent 4 spaces (not aligned to callee column). Parenthesised expressions stay compact on one line.
-- **Skyshop env var race condition** — FIXED in v0.8.0. Zero-arity functions reading `Os.getenv` were memoised and evaluated at Go init time (before `.env` loaded). Fix: add `_` parameter to prevent memoisation.
-
-- **Nested typed-map narrowing at the FFI boundary** — FIXED in v0.9-dev (feat/typed-codegen). `rt.Coerce[T]` / `coerceInner` / `AsListT` / `AsDict` now delegate to recursive `narrowReflectValue` / `coerceMapValue` / `coerceSliceValue` helpers so `[]any` → `[]map[string]string` (each element being a `map[string]any` from a SQL row) converts correctly. Before this, 08-notes-app login and 13-skyshop product listing both showed empty results even though the DB returned rows.
-- **Curried lambda adapter recursion** — FIXED in v0.9-dev. `adaptFuncValue` (the MakeFunc worker behind `makeFuncAdapter`) wraps each inner `func(any) any` returned by a Sky curried lambda. Without this, `rt.Coerce[func(map[string]string) func(string) rt.SkyResponse]` lost the inner function and call sites panicked with `reflect.Value.Call: call of nil function`.
-- **`rt.AsList` accepts typed slices** — FIXED in v0.9-dev. It used to only handle `[]any`; typed slices (`[]map[string]string` from annotated `Lib_Notes_getNotes`) went to `nil` and downstream `List.isEmpty` wrongly reported empty, rendering "No notes yet" where data existed.
-- **`Html_render` with server-rendered form events** — FIXED in v0.9-dev. `renderVNode` was called with `nil` handlers; a form with `onSubmit="return confirm(...)"` panicked on `handlers[id] = msg`. Now `Html_render` always provides an empty `map[string]any{}`.
-- **`Db_getField` on typed session rows** — FIXED in v0.9-dev. The runtime helper only handled `map[string]any`; annotated `authenticateUser` returned `map[string]string` and every getField silently returned `""`, so signin always said "invalid email or password". Now accepts both.
-- **Literal patterns constrain scrutinee** — FIXED in v0.9-dev. `PStr`/`PInt`/`PBool`/`PChr`/`PUnit` in `instantiatePattern` emit a `CEqual` constraint on the scrutinee, so `case foo of "idle" -> _ ; "ready" -> _` now forces `foo : String` and later `foo == "other"` is type-checked. Before this, the string-literal patterns left the scrutinee polymorphic and the wrongly-typed `==` surfaced as a runtime panic once typed codegen stopped boxing everything.
-- **Incremental Go dep re-seeding** — FIXED in v0.9-dev. `copyRuntime` overwrites `sky-out/go.mod` on every incremental build, wiping the project's transitive Go deps and making `go build` fail with "missing module". Fix: re-run `seedGoDependencies` after `copyRuntime` on the incremental path too.
-- **Entry-module TypedDef generic instantiation** — FIXED in v0.9-dev. Entry-module `entryInferredSigs` now includes TypedDefs with their annotation type (not just the solved type), so call sites emit the right generic instantiation and `init_` / `update_` are never emitted as "cannot use generic function without instantiation".
-- **Cross-module HM with polymorphic externals** — FIXED in v0.9-dev. A second dep-solve pass after external annotation resolution lets imports that depend on stdlib generics (`Result.map2`, `Dict.get`) type-check in a consistent order.
-- **Redis session store actually implemented** — FIXED in v0.9-dev. `chooseStore` advertised `"redis"` in docs/CLAUDE.md/templates but `runtime-go/rt/live_store.go` only shipped memory/sqlite/postgres; `store = "redis"` silently fell back to memory. Added `redisStore` using `github.com/redis/go-redis/v9`, same gob-blob wire format as sqlite/postgres, native Redis TTL (no cleanup goroutine) refreshed on every `Get`. Accepts `redis://…` URLs and bare `host:port`. Tested with miniredis in `runtime-go/rt/live_store_redis_test.go` (7 cases: round-trip, Delete, TTL refresh, natural expiry, closure rejection, URL-form dial, `chooseStore` factory).
-
-**Coding constraints**: none active. (The "no nested case" rule is no longer required as of v0.7.21.)
-
-### Techniques from TS Compiler (to port)
-
-1. **Symbol-level tree-shaking** — collect wrapper refs during lowering, filter to referenced only (Stripe 40K→~50)
-2. **Selective import emission** — only emit imports for referenced packages (currently emits all 18)
-3. **go.mod/go.sum preservation** — only delete `.go` files, reuse Go compiled objects
-4. **Single-pass emission** — track imports during lowering, no second pass
-
-### Build Times
-
-| Project | Modules | Cold | Warm |
-|---|---|---|---|
-| hello-world | 1 | <1s | <1s |
-| skyvote | 32+2 FFI | 1.7s | 1.7s |
-| **skyshop** | 43+14 FFI | **1:30** | **0:59** |
-| compiler | 28 | 5.6s | 5.6s |
-
-### Typed Codegen (v0.9 / `feat/typed-codegen`)
-
-Typed Go emission is LIVE. The goal of v1.0 — "zero `any` in generated
-Go signatures" — is met on the branch. Every example in
-`examples/*` emits typed `func Foo(a int, b string) rt.SkyResult[Error, T]`
-rather than `func f(a any) any`. Entry-level invariant: **0 real-`any`
-sigs** across the 20-project sweep.
-
-What landed to make this work — keep in mind when editing the compiler
-or runtime:
-
-1. **HM infer is authoritative.** `Sky/Type/Constrain/Expression.hs`
-   resolves annotations against cross-module type aliases before
-   registering the scheme, so `f : Dict String String -> Result Error T`
-   in module A reaches module B's call site with the record inlined.
-   Annotations survive into codegen via `typeStrWithAliasesReg` /
-   `splitInferredSigWithReg` in `Sky/Build/Compile.hs`.
-2. **TVar defaulting.** Unresolved type variables default by position:
-   error-slot → `Sky.Core.Error.Error`; ok-slot (Result) and
-   return-only → `rt.SkyValue` (a named `any` alias used to mean
-   "runtime-tagged value"). Anything still polymorphic at emission
-   time is monomorphised at the call site via `rt.Coerce[T]`.
-3. **`lookupKernelType` feeds runtime kernel sigs.** Db.open,
-   Db.query, Db.exec, Db.execRaw, Db.connect, Context.background/todo,
-   Fmt.sprint*, Css.rgb/rgba/hsl/hsla/shadow are typed at the
-   inference layer so callers know the real Go signature.
-4. **Runtime coercion helpers** (runtime-go/rt/rt.go) bridge the
-   typed surface to the (still any-heavy) runtime: `rt.Coerce[T]`,
-   `rt.AsListT[T]`, `rt.AsMapT[V]`, `rt.AsDict`, plus the recursive
-   trio `narrowReflectValue` / `coerceMapValue` / `coerceSliceValue`.
-   They handle the chain SQL row → `map[string]any` → typed
-   `map[string]string` including the list-of-maps case that 08/13
-   exercise. String targets stringify heterogeneous values so mixed
-   SQL columns (int `verified`, int64 `id`, []byte `hash`) collapse
-   to a uniform map.
-5. **Curried Sky lambdas wrap recursively.** `adaptFuncValue` in
-   `runtime-go/rt/rt.go` is the MakeFunc worker behind
-   `makeFuncAdapter`. It recurses: when a Sky-returned inner func
-   doesn't match the target's next arrow, it wraps again. Without
-   this, `Coerce[func(map[string]string) func(string) rt.SkyResponse]`
-   over a Sky `func(any) any { return func(any) any {...} }` zero'd
-   the inner func and every call-site like requireAuth → route
-   handler blew up with `reflect.Value.Call: call of nil function`.
-6. **Literal patterns constrain scrutinee.** `PStr`, `PInt`, `PBool`,
-   `PChr`, `PUnit` in `instantiatePattern` now emit
-   `CEqual reg CString stringType` etc. Before this, a case branch
-   `case foo of "ready" -> _` left `foo` polymorphic and downstream
-   `foo == "idle"` compared against `any` at runtime, surfacing as a
-   panic once typed codegen stopped boxing.
-7. **`Html_render` + `Unify.Server_renderResponse` never pass nil
-   handlers.** VNode trees with `onSubmit` events (plain HTML forms
-   on server-rendered pages) would panic with
-   `assignment to entry in nil map` otherwise.
-
-#### Things we tried that didn't work (don't re-attempt without reading
-these first)
-
-- **Narrowing `Live.app.init`'s request-record type.** Making
-  `init : Dict String String -> (Model, Cmd Msg)` looks nice, but HM
-  then narrows the record type to whatever the first app uses
-  (Firestore nested maps in 13-skyshop), breaking every other app.
-  Kept `init`'s request argument as a polymorphic TVar — callers
-  plug in whatever shape their framework supplies.
-- **Attempting full Go-struct records.** `{ name : String, age : Int }`
-  → named Go struct (`State_R`, `Model_R`) works for annotated record
-  aliases, but anonymous records in function signatures still can't
-  be named because HM can't backfill a struct name. We emit the
-  typed struct only when the user writes a `type alias` for the
-  shape; inline records in signatures stay any-boxed.
-- **Monomorphisation over Go generics.** Rolled back after Stripe's
-  SDK blew the emit size up ~5× because every call site reinstantiated
-  opaque wrappers. Using Go generics (e.g. `SkyResult[E, A]`) is
-  cheaper and GHC-free.
-- **Zero-arity env lookups at init time.** Memoised zero-arity
-  declarations reading `Os.getenv` evaluate at Go `init()` — before
-  `.env` is loaded. Workaround is an explicit `_` param; still the
-  guidance in the Known Limitations section.
-
-#### Typed-codegen TODO (carry into v1.0; v0.12 review)
-
-The v0.12 overhaul session reviewed both items below and explicitly
-deferred. Foundation work has already landed (typed-generic helpers
-exist in `runtime-go/rt/rt.go`: `List_mapT`, `List_filterT`,
-`List_foldlT`, `List_lengthT`, `List_headT`, etc.). What's left is
-per-kernel migration + codegen routing — multi-release scope, not
-suitable for a single overhaul cycle.
-
-Tracking issues to revisit each release:
-- 11 reflect.MakeFunc adapters across the 19-example sweep (per the
-  2026-04-27 measurement). Re-measure each release; if the count
-  climbs into the hundreds, prioritise lambda-lowering work.
-- Runtime-kernel `any` returns: `rt.Dict_get`, `rt.Html_render`,
-  ~30+ others. Each port adds a typed `*T` variant + codegen
-  routing; runtime cost ~5 % CPU on hot paths until ported.
-
-- **Eliminate the `any` return in runtime kernels.** Helpers like
-  `rt.Dict_get`, `rt.List_map`, `rt.Html_render` still return `any`
-  internally; the typed surface calls `rt.Coerce[T]` on the result.
-  Porting them to generics (`Dict_getT[V]`, `List_mapT[A, B]`) drops
-  the reflect dance. **v0.12 status**: the typed-generic foundation
-  is in place (List_mapT, List_filterT, List_foldlT, List_lengthT,
-  List_headT, List_dropAnyT, etc. all exist in rt.go); per-kernel
-  migration is per-helper work that can land incrementally. No
-  blocking architectural decisions remain.
-- **Record struct for `update` / `view` signatures.** TEA apps still
-  return `(Model, Cmd Msg)` via `any` tuple; emitting a named
-  `State_R` tuple shape would let Go catch Msg/Model misalignment.
-- **Smarter cache invalidation.** `.skycache/lowered/` is hashed per
-  module source, but the hash doesn't cover imported module
-  annotations, so a downstream annotation edit doesn't always
-  invalidate dependent modules.
-- **Selective import emission.** Generated Go still imports all 18
-  Sky runtime subpackages even when the example only uses two.
-- **Sky-test harness in typed codegen.** `sky test` currently uses
-  the any-heavy path; port to typed once stdlib matches.
-- **Lambda lowering preserves types** (scoped 2026-04-27). Sky
-  lambdas always lower to `func(any) any` regardless of their
-  HM-inferred input/output types. This forces `rt.Coerce[func(X)
-  Y]` adapters at every call site that passes a typed function
-  (Msg constructor or sky-lambda) to a typed-callback helper
-  param. Limitation #18's fix made the adapter path correct, but
-  it's reflect.MakeFunc — not "fully typed" in the strict sense.
-  **Current cost is small**: across the 19-example sweep there
-  are only **11 such adapters** total (5 in 19-skyforum, 5 in
-  08-notes-app, 1 in 10-live-component) — measured 2026-04-27.
-  At that scale the runtime cost (~100 ns × 11 call sites) is
-  negligible vs. the cost of the architectural rewrite. Proper
-  fix needs: (1) the lowerer to thread HM-inferred types into
-  lambda emission, (2) `curryLambdaPat` to optionally take a
-  typed Go signature, (3) lambda body to coerce `any`-typed
-  param uses to the typed shape, (4) every callback shape across
-  the codebase to handle the typed/untyped split. Multi-week
-  scope — deferred until either the adapter count climbs into
-  the hundreds OR a dedicated session is set aside for this
-  specific architectural change. Tracked separately because
-  doing it half-way leaves the old behaviour intact for
-  unhandled cases — which IS a workaround, against the
-  no-workarounds principle.
+| Stdlib reference | `docs/stdlib.md` |
+| `Std.Auth` | `docs/skyauth/overview.md` |
+| `Std.Db` | `docs/skydb/overview.md` |
+| Sky.Live runtime | `docs/skylive/overview.md` + `docs/skylive/architecture.md` |
+| `Std.Ui` | `docs/skyui/overview.md` |
+| Sky.Tui | `docs/skytui/overview.md` |
+| CLI commands | `docs/tooling/cli.md` |
+| LSP capabilities | `docs/tooling/lsp.md` |
+| `sky.toml` schema | `docs/sky-toml.md` |
+| Brand-new module | "What's in the box" in `README.md` |

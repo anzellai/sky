@@ -1,0 +1,58 @@
+-- | Sky.Core.Json.Encode — JSON encoders (Layer 3 Sky source).
+--
+-- Builds a `Value` (opaque JSON tree) one piece at a time.  Call
+-- `encode indent value` at the end to serialise to a `String`.
+module Sky.Core.Json.Encode exposing
+    ( string, int, float, bool, null
+    , list, object
+    , encode
+    )
+
+
+import Sky.Ffi as Ffi
+
+
+-- | Encode a string as a JSON string value.
+string : String -> Value
+string = Ffi.kernel "JsonEnc_string"
+
+
+-- | Encode an integer as a JSON number value.
+int : Int -> Value
+int = Ffi.kernel "JsonEnc_int"
+
+
+-- | Encode a float as a JSON number value.
+float : Float -> Value
+float = Ffi.kernel "JsonEnc_float"
+
+
+-- | Encode a boolean as JSON `true` / `false`.
+bool : Bool -> Value
+bool = Ffi.kernel "JsonEnc_bool"
+
+
+-- | JSON `null`.
+null : Value
+null = Ffi.kernel "JsonEnc_null"
+
+
+-- | Encode a list of values as a JSON array.  Elm-style:
+-- `list Encode.string [ "a", "b" ]` — takes a per-element encoder
+-- plus the list.  Runtime is variadic so both the 1-arg
+-- (pre-encoded `List Value`) and the 2-arg (encoder + raw list)
+-- forms dispatch correctly.
+list : (a -> Value) -> List a -> Value
+list = Ffi.kernel "JsonEnc_list"
+
+
+-- | Encode a `[(key, value)]` list as a JSON object.
+object : List (String, Value) -> Value
+object = Ffi.kernel "JsonEnc_object"
+
+
+-- | `encode indent value` — serialise to a JSON string.  `indent`
+-- controls pretty-printing: `0` is compact, larger values use
+-- that many spaces per level.
+encode : Int -> Value -> String
+encode = Ffi.kernel "JsonEnc_encode"

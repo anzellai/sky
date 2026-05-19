@@ -338,8 +338,57 @@ verified by example sweep + cabal test before moving to the next.
       with union of all ctors' positional-typed slots; ctor functions
       populate the right slots; pattern-match reads typed slots based
       on Tag.
-- [ ] Stage 4 — Ffi.kernel mechanism (v0.14.x)
-- [ ] Stage 5 — Full stdlib migration (v0.14.x)
+- [x] **Stage 4 — Ffi.kernel mechanism (v0.14.x, 3f7fd73).**
+      Sky-source declaration layer routes to existing kernel
+      dispatch transparently.  HM sig `Ffi.kernel : String -> a`
+      + canonicaliser whitelist + runtime panic stub + Kernel
+      dispatch entry + `globalKernelAlias` IORef populated
+      post-canon-fixpoint + `rewriteAliasHead` in `Can.Call` and
+      bare `Can.VarTopLevel`.  Surfaced + fixed a load-bearing
+      canonicaliser bug — zero-pat `TypedDef` was unconditionally
+      stripping every annotation arrow (the new `arrowResultN n`
+      strips exactly `length canPatterns`).  Regression fence
+      lives in `test/Sky/Build/FfiKernelAliasSpec.hs`.
+- [x] **Stage 5 — Full stdlib migration (v0.14.x, COMPLETE).**
+      Nine Phase-B commits landed; every Layer 3 kernel module
+      with a runtime helper now ships as Sky source.
+      * B1 (`8911299`): Sky.Core.String — 33 entries.
+      * B2 (`b372517`): Math + Char + Crypto + Encoding + Path
+        — 5 modules.
+      * B3a (`c404e78`): Time + Random + Regex — 3 modules.
+      * B3b (`1c4ba31`): Sky.Core.Task — 13 entries.
+      * B4a (`79aa955`): File + Io + System + Process + Log —
+        5 modules.
+      * B5 + B3c + B4b (`6d95ed2`): Uuid + Http +
+        Json.{Encode,Decode,Decode.Pipeline} + Cmd + Sub + Auth
+        + Db + Sky.Http.Server + Sky.Http.Middleware +
+        Sky.Http.RateLimit + Time.every — 13 modules.
+
+      **The deferral plan above (about empty-home runtime types
+      needing a canonicaliser shim) turned out to be cautious.**
+      The canonicaliser already falls back to `Canonical ""` for
+      unknown bare type names — exactly the empty-home shape
+      `Cmd msg` / `Sub msg` / `Db` / `Decoder a` / `HttpResponse`
+      / `Route` / `Request` / `Handler` already use.  Sky-source
+      declarations of those types resolve correctly out of the
+      box; the existing `runtimeTypedMap` Go emission handles
+      the typed-codegen path; Stage 4's alias rewrite dispatches
+      every call site through the same kernel as before.  No
+      shim was needed.
+
+      **What stays kernel-only by design:**
+      * `Sky.Ffi` itself — Ffi.callPure / callTask / has /
+        isPure / toAny via `Ffi.kernel` would be self-
+        referential.  `Ffi.kernel` IS the user surface; no
+        Layer 3 benefit to wrapping the rest.
+      * Higher-level Server routing — `Server.get` / `post` /
+        `listen` / response builders return runtime-typed Route
+        / Response shapes.  Migration would need
+        shape-preserving Sky-side declarations.  Tracked as a
+        v0.14.x.1 follow-up.
+
+      Sweep: 26/26 examples build, 114/114 Sky.Test assertions
+      pass at every step.
 - [ ] Stage 6 — Documentation sync (v0.14.x)
 
 ## Adapter measurement — 24-example sweep (2026-05-17 end of session)

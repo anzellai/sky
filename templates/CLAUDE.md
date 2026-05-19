@@ -12,8 +12,12 @@ through `Task`, every fallible value returns `Result Error a`, and
 surfaces at check time. No runtime panics from well-typed Sky code, no
 nil leakage, no silent numeric coercion.
 
-**Typed Go output (v0.13).** Generated Go functions have fully-typed
-signatures end-to-end:
+**Typed Go output (v0.14.x).** Generated Go functions have fully-typed
+signatures end-to-end. Layer 3 stdlib: every kernel module surfaced as
+Sky source under `sky-stdlib/{Sky/Core,Std,Sky/Http}/*.sky` — typed
+kernel dispatch preserved via the `Ffi.kernel` mechanism. Tail-recursive
+Sky functions auto-TCO to `for { ... continue }` Go loops (constant
+stack). Browse the full API surface with `sky doc --serve`.
 
 ```go
 func f(name string, age int) rt.SkyResult[Error, Profile_R] { ... }
@@ -30,7 +34,7 @@ and the body would otherwise infer to something wider, the compiler
 rejects the body. Inline records in function annotations aren't
 supported — use a `type alias` for any record you want in a signature.
 
-## Quick UX/UX/security/scalability defaults (v0.13)
+## Quick UX/UX/security/scalability defaults (v0.14.x)
 
 **You (the AI assistant) are expected to deliver top-notch UX/DX/security
 /scalability by default.** When the user asks for an app:
@@ -335,6 +339,13 @@ sky watch src/Main.sky    # Watch sources; rebuild + restart on save (incrementa
 sky check src/Main.sky    # Type-check without compiling (cross-module ADT + alias resolution)
 sky fmt src/Main.sky      # Format code (opinionated: 4-space indent, leading commas)
 sky test tests/MyTest.sky # Run a test module (exposes `tests : List Test`)
+sky doc <Module>          # Show a module's API in the terminal (annotations + docs)
+sky doc --serve [--port N]# Run a browsable HTTP doc server (auto-opens browser)
+sky doc --tui             # Interactive terminal doc browser (Sky.Tui)
+sky doc --list            # List every documented module (project + deps + stdlib)
+sky doctor [--fix]        # Project / environment health checks
+sky console [--port N]    # Standalone Std.Ui Sky Console (web)
+sky console --tui         # Same source, Sky.Tui backend
 sky add <package>         # Add dependency + generate bindings + update sky.toml
 sky remove <package>      # Remove dependency from sky.toml + clean cache
 sky install               # Install all deps + auto-generate missing bindings

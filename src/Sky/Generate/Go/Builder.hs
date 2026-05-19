@@ -177,6 +177,14 @@ renderStmt stmt = case stmt of
         ++ concatMap (map ("\t" ++) . renderStmt) body
         ++ ["}"]
 
+    GoForever body ->
+        ["for {"]
+        ++ concatMap (map ("\t" ++) . renderStmt) body
+        ++ ["}"]
+
+    GoContinue ->
+        ["continue"]
+
     GoBlock_ stmts ->
         ["{"]
         ++ concatMap (map ("\t" ++) . renderStmt) stmts

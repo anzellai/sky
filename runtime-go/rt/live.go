@@ -151,7 +151,33 @@ func applyHtmlAttr(vn *VNode, a any) {
 	switch adt.SkyName {
 	case "Attr":
 		if len(adt.Fields) >= 2 {
-			vn.Attrs[AsString(adt.Fields[0])] = AsString(adt.Fields[1])
+			k := AsString(adt.Fields[0])
+			v := AsString(adt.Fields[1])
+			// `class` and `style` are HTML's space- and
+			// semicolon-separated multi-valued attributes — multiple
+			// `class "foo bar"` + `class "baz"` calls on the same
+			// element should produce `class="foo bar baz"` not
+			// `class="baz"` (which would silently drop the earlier
+			// values).  Same shape: `Border.shadow {…}` + `Border.glow`
+			// each emit a `style` attr that need joining.  Other attrs
+			// retain the last-wins semantics (Sky users writing two
+			// `href` or two `value` would expect override, not
+			// concatenation).
+			if existing, ok := vn.Attrs[k]; ok && existing != "" {
+				switch k {
+				case "class":
+					vn.Attrs[k] = existing + " " + v
+					return
+				case "style":
+					sep := "; "
+					if strings.HasSuffix(existing, ";") {
+						sep = " "
+					}
+					vn.Attrs[k] = existing + sep + v
+					return
+				}
+			}
+			vn.Attrs[k] = v
 		}
 	case "BoolAttr":
 		if len(adt.Fields) >= 2 && AsBool(adt.Fields[1]) {
@@ -1269,6 +1295,7 @@ type liveApp struct {
 	staticDir     string       // Serves files from this directory under /static/…
 	staticURL     string       // URL mount prefix (default "/static")
 	store         SessionStore // sessionID -> *liveSession (memory, sqlite, or postgres)
+	sessionTTL    time.Duration // session cookie MaxAge — kept in lock-step with the store TTL
 	locker        *sessionLocker
 	msgTags       map[string]int // SkyName → Tag cache for direct-send events
 	msgTagsMu     sync.Mutex
@@ -1588,6 +1615,7 @@ func liveAppRun(cfg any) any {
 		}
 	}
 	app.store = chooseStore(storeKind, storePath, ttl)
+	app.sessionTTL = ttl
 
 	// Resolve listen port early so sub-app spawn helpers
 	// (maybeAutoMountConsole below) can pass it to children via
@@ -1876,7 +1904,7 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	// would otherwise wipe sess.handlers and break the very next event
 	// POST with "handler not found". Per-session lock prevents
 	// concurrent re-renders racing each other's handlers.
-	sid := sessionID(r, w)
+	sid := sessionID(r, w, app.sessionTTL)
 	app.locker.Lock(sid)
 	defer app.locker.Unlock(sid)
 
@@ -2745,14 +2773,37 @@ func (app *liveApp) handleSSE(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func sessionID(r *http.Request, w http.ResponseWriter) string {
+func sessionID(r *http.Request, w http.ResponseWriter, ttl time.Duration) string {
 	if c, err := r.Cookie("sky_sid"); err == nil {
 		return c.Value
 	}
 	b := make([]byte, 16)
 	rand.Read(b)
 	sid := hex.EncodeToString(b)
-	http.SetCookie(w, &http.Cookie{Name: "sky_sid", Value: sid, Path: "/", HttpOnly: true})
+	// Persistent cookie keyed to the session-store TTL so the cookie
+	// survives tab-close + browser-restart up to the same window the
+	// stored session is valid for.  Previously this was a session
+	// cookie (no MaxAge) — browsers that drop session cookies on
+	// last-tab-close (Chrome with "continue where you left off"
+	// disabled, some Safari configurations) would invalidate the
+	// cookie immediately, forcing `init` to fire on every reopen and
+	// destroying the user's Model state even though the sqlite /
+	// redis / postgres backing store still had it.  MaxAge matches
+	// the store TTL so a server-side expiry and the cookie expiry
+	// converge to the same time-of-death.  HttpOnly stays on; SameSite
+	// defaults to Lax (browser default) which is right for top-level
+	// nav + form posts.
+	maxAge := int(ttl.Seconds())
+	if maxAge <= 0 {
+		maxAge = 30 * 60 // 30 min sane default
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     "sky_sid",
+		Value:    sid,
+		Path:     "/",
+		HttpOnly: true,
+		MaxAge:   maxAge,
+	})
 	return sid
 }
 

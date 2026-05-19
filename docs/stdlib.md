@@ -1,14 +1,21 @@
 # Standard library reference
 
-> **v0.13 state**: typed Go output end-to-end. Whole-program Sky DCE
-> prunes unused FFI bindings (Stripe-SDK scale: −82 % source). LSP 100 %
-> coverage; runtime verification across all 26 examples. See
-> [`compiler/journey.md`](compiler/journey.md) for the changelog.
+> **v0.14.x state.** Layer 3 stdlib complete: every kernel module
+> surfaced as Sky source under
+> `sky-stdlib/{Sky/Core,Std,Sky/Http}/*.sky`. Browse the full surface
+> with `sky doc --serve` (HTTP server with type-signature search,
+> Markdown rendering, in-module filter), or `sky doc <Module>` in the
+> terminal. Fully-typed Go output; whole-program DCE prunes unused
+> code + FFI bindings; auto-TCO for tail-recursive functions.
 
+Sky's standard library is **batteries-included** — one canonical module
+per concern, no plugin ecosystem, no `npm install` for crypto. This
+page is the complete user-facing reference.
 
-Sky's standard library is **batteries-included** — there's one canonical module per concern, no plugin ecosystem to navigate, no `npm install` for crypto. This page is the complete user-facing reference.
-
-> Each kernel module is reachable via its bare name. `import Log` works the same as `import Std.Log as Log`. The long `Sky.Core.X` / `Std.X` paths are kept for cross-language familiarity, but you can usually drop them.
+> Each kernel module is reachable via its bare name. `import Log`
+> works the same as `import Std.Log as Log`. The long `Sky.Core.X` /
+> `Std.X` paths are kept for cross-language familiarity, but you can
+> usually drop them.
 
 **Conventions you'll see throughout this page:**
 

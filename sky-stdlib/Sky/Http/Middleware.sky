@@ -1,0 +1,36 @@
+-- | Sky.Http.Middleware — request/response middleware composers
+-- (Layer 3 Sky source).
+--
+-- Each `with*` helper takes a `Handler` and returns a new
+-- decorated `Handler`.  Compose by chaining with `|>`.
+module Sky.Http.Middleware exposing
+    ( withCors, withLogging, withBasicAuth, withRateLimit
+    )
+
+
+import Sky.Ffi as Ffi
+
+
+-- | `withCors allowedOrigins handler` — add CORS headers for the
+-- given origin allow-list.
+withCors : List String -> Handler -> Handler
+withCors = Ffi.kernel "Middleware_withCors"
+
+
+-- | `withLogging handler` — log each request as `method path
+-- status duration` on stdout.
+withLogging : Handler -> Handler
+withLogging = Ffi.kernel "Middleware_withLogging"
+
+
+-- | `withBasicAuth username password handler` — require HTTP
+-- Basic auth with the given credentials.
+withBasicAuth : String -> String -> Handler -> Handler
+withBasicAuth = Ffi.kernel "Middleware_withBasicAuth"
+
+
+-- | `withRateLimit key requestsPerWindow windowSeconds handler`
+-- — per-IP fixed-window rate limit.  `key` is a label for the
+-- limiter (so multiple middlewares can share or partition).
+withRateLimit : String -> Int -> Int -> Handler -> Handler
+withRateLimit = Ffi.kernel "Middleware_withRateLimit"

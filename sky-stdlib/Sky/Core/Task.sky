@@ -1,0 +1,112 @@
+-- | Sky.Core.Task — deferred-effect combinators (Layer 3 Sky source).
+--
+-- `Task e a` is a deferred computation that, when executed, yields
+-- either `Ok a` or `Err e`.  Tasks compose without running — only
+-- the runtime entry boundary (CLI `main`, `Cmd.perform`, an HTTP
+-- handler return, `Task.run` from a `let _ =` discard) actually
+-- forces them.
+--
+-- Every binding aliases to its runtime kernel via Stage 4
+-- `Ffi.kernel`.  Includes both the foundational combinators
+-- (`succeed` / `fail` / `andThen` / `map` / `run`) and the
+-- v0.10.x bridges between `Task` and `Result`.
+module Sky.Core.Task exposing
+    ( succeed, fail
+    , andThen, map
+    , mapError, onError
+    , run, perform
+    , fromResult, andThenResult
+    , sequence, parallel
+    , lazy
+    )
+
+
+import Sky.Ffi as Ffi
+
+
+-- ─── Constructors ──────────────────────────────────────────────────
+
+
+succeed : a -> Task e a
+succeed = Ffi.kernel "Task_succeed"
+
+
+fail : e -> Task e a
+fail = Ffi.kernel "Task_fail"
+
+
+-- ─── Pipeline composition ──────────────────────────────────────────
+
+
+andThen : (a -> Task e b) -> Task e a -> Task e b
+andThen = Ffi.kernel "Task_andThen"
+
+
+map : (a -> b) -> Task e a -> Task e b
+map = Ffi.kernel "Task_map"
+
+
+mapError : (e -> e2) -> Task e a -> Task e2 a
+mapError = Ffi.kernel "Task_mapError"
+
+
+-- | Recover from a Task error by producing a new Task — the
+-- canonical "convert error to graceful response" pattern at HTTP
+-- handler boundaries and Sky.Live update branches.
+onError : (e -> Task e2 a) -> Task e a -> Task e2 a
+onError = Ffi.kernel "Task_onError"
+
+
+-- ─── Runtime entry boundary ────────────────────────────────────────
+
+
+-- | Force a Task to a Result.  Used at module-top-level discard
+-- sites and inside the `let _ = TaskExpr` auto-force shape.
+run : Task e a -> Result e a
+run = Ffi.kernel "Task_run"
+
+
+-- | Force a Task synchronously and return its Result.  Same shape
+-- as `run` — kept as the legacy name (`Task.perform` predates the
+-- Cmd.perform / Task.run split).
+perform : Task e a -> Result e a
+perform = Ffi.kernel "Task_perform"
+
+
+-- ─── Result bridges (v0.10.x) ──────────────────────────────────────
+
+
+-- | Lift a Result-returning step into a Task pipeline.  Bridges the
+-- FFI trust boundary (Result) to the effect boundary (Task) without
+-- requiring a `case` ladder.
+fromResult : Result e a -> Task e a
+fromResult = Ffi.kernel "Task_fromResult"
+
+
+-- | Chain a Result-returning step after a Task — flattens what
+-- would otherwise be `Task.andThen (\a -> Task.fromResult (f a))`.
+andThenResult : (a -> Result e b) -> Task e a -> Task e b
+andThenResult = Ffi.kernel "Task_andThenResult"
+
+
+-- ─── List-of-Tasks combinators ─────────────────────────────────────
+
+
+-- | Run a list of tasks sequentially; first error short-circuits.
+sequence : List (Task e a) -> Task e (List a)
+sequence = Ffi.kernel "Task_sequence"
+
+
+-- | Run a list of tasks concurrently (goroutine-backed); first
+-- error short-circuits.  Useful for parallel I/O.
+parallel : List (Task e a) -> Task e (List a)
+parallel = Ffi.kernel "Task_parallel"
+
+
+-- ─── Deferred computation ──────────────────────────────────────────
+
+
+-- | Defer evaluation of a pure thunk into a Task — handy for
+-- expensive computation that should only run inside a Task pipeline.
+lazy : (() -> a) -> Task e a
+lazy = Ffi.kernel "Task_lazy"

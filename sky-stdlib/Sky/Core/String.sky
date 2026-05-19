@@ -1,0 +1,182 @@
+-- | Sky.Core.String — string combinators (Layer 3 Sky source).
+--
+-- Every function in this module is declared as a Sky-source binding
+-- aliased to a kernel via `Ffi.kernel "String_<name>"`.  The Stage 4
+-- compiler primitive (see docs/V1_TYPED_CODEGEN_FINISH.md) rewrites
+-- every call site to the existing typed kernel dispatch — so
+-- `String.toUpper "hello"` continues to emit
+-- `rt.String_toUpperT("hello")` exactly as before, preserving the
+-- typed-codegen guarantees that the kernel-direct route already
+-- enjoyed.
+--
+-- The Sky-source layer exists for discoverability + Layer 3
+-- conformance + so `sky doc` shows a stable source location for
+-- every entry.  The runtime bodies live in `runtime-go/rt/rt.go`
+-- (`String_*` helpers).
+module Sky.Core.String exposing
+    ( fromInt, fromFloat
+    , length, isEmpty
+    , join, split, replace, slice
+    , toInt, toFloat
+    , toUpper, toLower, trim, trimStart, trimEnd
+    , reverse, append, concat
+    , contains, startsWith, endsWith
+    , casefold, equalFold
+    , isEmail, isUrl
+    , words, lines
+    , fromChar, toList, fromList
+    , repeat, padLeft, padRight
+    )
+
+
+import Sky.Ffi as Ffi
+
+
+-- ─── Construction ──────────────────────────────────────────────────
+
+
+fromInt : Int -> String
+fromInt = Ffi.kernel "String_fromInt"
+
+
+fromFloat : Float -> String
+fromFloat = Ffi.kernel "String_fromFloat"
+
+
+fromChar : Char -> String
+fromChar = Ffi.kernel "String_fromChar"
+
+
+fromList : List Char -> String
+fromList = Ffi.kernel "String_fromList"
+
+
+-- ─── Sizes + predicates ────────────────────────────────────────────
+
+
+length : String -> Int
+length = Ffi.kernel "String_length"
+
+
+isEmpty : String -> Bool
+isEmpty = Ffi.kernel "String_isEmpty"
+
+
+contains : String -> String -> Bool
+contains = Ffi.kernel "String_contains"
+
+
+startsWith : String -> String -> Bool
+startsWith = Ffi.kernel "String_startsWith"
+
+
+endsWith : String -> String -> Bool
+endsWith = Ffi.kernel "String_endsWith"
+
+
+isEmail : String -> Bool
+isEmail = Ffi.kernel "String_isEmail"
+
+
+isUrl : String -> Bool
+isUrl = Ffi.kernel "String_isUrl"
+
+
+equalFold : String -> String -> Bool
+equalFold = Ffi.kernel "String_equalFold"
+
+
+-- ─── Parsing ───────────────────────────────────────────────────────
+
+
+toInt : String -> Maybe Int
+toInt = Ffi.kernel "String_toInt"
+
+
+toFloat : String -> Maybe Float
+toFloat = Ffi.kernel "String_toFloat"
+
+
+-- ─── Case + whitespace ─────────────────────────────────────────────
+
+
+toUpper : String -> String
+toUpper = Ffi.kernel "String_toUpper"
+
+
+toLower : String -> String
+toLower = Ffi.kernel "String_toLower"
+
+
+casefold : String -> String
+casefold = Ffi.kernel "String_casefold"
+
+
+trim : String -> String
+trim = Ffi.kernel "String_trim"
+
+
+trimStart : String -> String
+trimStart = Ffi.kernel "String_trimStart"
+
+
+trimEnd : String -> String
+trimEnd = Ffi.kernel "String_trimEnd"
+
+
+-- ─── Slicing + assembly ────────────────────────────────────────────
+
+
+reverse : String -> String
+reverse = Ffi.kernel "String_reverse"
+
+
+append : String -> String -> String
+append = Ffi.kernel "String_append"
+
+
+concat : List String -> String
+concat = Ffi.kernel "String_concat"
+
+
+join : String -> List String -> String
+join = Ffi.kernel "String_join"
+
+
+split : String -> String -> List String
+split = Ffi.kernel "String_split"
+
+
+replace : String -> String -> String -> String
+replace = Ffi.kernel "String_replace"
+
+
+slice : Int -> Int -> String -> String
+slice = Ffi.kernel "String_slice"
+
+
+repeat : Int -> String -> String
+repeat = Ffi.kernel "String_repeat"
+
+
+padLeft : Int -> Char -> String -> String
+padLeft = Ffi.kernel "String_padLeft"
+
+
+padRight : Int -> Char -> String -> String
+padRight = Ffi.kernel "String_padRight"
+
+
+-- ─── Word / line / character views ─────────────────────────────────
+
+
+words : String -> List String
+words = Ffi.kernel "String_words"
+
+
+lines : String -> List String
+lines = Ffi.kernel "String_lines"
+
+
+toList : String -> List Char
+toList = Ffi.kernel "String_toList"
