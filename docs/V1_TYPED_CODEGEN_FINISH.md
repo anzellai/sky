@@ -338,8 +338,53 @@ verified by example sweep + cabal test before moving to the next.
       with union of all ctors' positional-typed slots; ctor functions
       populate the right slots; pattern-match reads typed slots based
       on Tag.
-- [ ] Stage 4 — Ffi.kernel mechanism (v0.14.x)
-- [ ] Stage 5 — Full stdlib migration (v0.14.x)
+- [x] **Stage 4 — Ffi.kernel mechanism (v0.14.x, 3f7fd73).**
+      Sky-source declaration layer routes to existing kernel
+      dispatch transparently.  HM sig `Ffi.kernel : String -> a`
+      + canonicaliser whitelist + runtime panic stub + Kernel
+      dispatch entry + `globalKernelAlias` IORef populated
+      post-canon-fixpoint + `rewriteAliasHead` in `Can.Call` and
+      bare `Can.VarTopLevel`.  Surfaced + fixed a load-bearing
+      canonicaliser bug — zero-pat `TypedDef` was unconditionally
+      stripping every annotation arrow (the new `arrowResultN n`
+      strips exactly `length canPatterns`).  Regression fence
+      lives in `test/Sky/Build/FfiKernelAliasSpec.hs`.
+- [~] **Stage 5 — Full stdlib migration (v0.14.x).**  Six
+      Phase-B commits landed; 14 of ~25 kernel modules now ship
+      as Sky source.
+      * B1 (`8911299`): Sky.Core.String — 33 entries.
+      * B2 (`b372517`): Math + Char + Crypto + Encoding + Path
+        — 5 modules.
+      * B3a (`c404e78`): Time + Random + Regex — 3 modules.
+      * B3b (`1c4ba31`): Sky.Core.Task — 13 entries.
+      * B4a (`79aa955`): File + Io + System + Process + Log —
+        5 modules.
+
+      **Deferred (gated on a shared prerequisite):** every
+      remaining module references at least one EMPTY-HOME
+      RUNTIME-TYPED type — `Cmd msg`, `Sub msg`, `Db`,
+      `Decoder a`, opaque request / response handles — that has
+      no Sky-side declaration today.  A migrated module's HM
+      signature `none : Cmd msg` would fail canonicalisation
+      because the canonicaliser can't resolve the `Cmd`
+      qualifier to a Sky-side type alias.  Unblocking work:
+
+      1. Add an empty-home shim type-alias mechanism — let
+         a Sky-source `type alias Cmd msg = …` declaration mark
+         itself as "alias of the runtime-typed empty-home Cmd"
+         so HM treats every cross-module reference to `Cmd msg`
+         as equivalent to today's runtime-typed shape.  Same
+         shape for `Sub msg`, `Db`, `Decoder a`.
+      2. Land that shim in a single commit (touches
+         `Sky.Canonicalise.Type`, `Sky.Type.Solve`).
+      3. Then the remaining B-phase modules ship mechanically:
+         B3c (Uuid — also gated on the kernel-arity-0 +
+         unit-arg codegen bug), B4b (Cmd, Sub), B5 (Auth, Db,
+         Server, Http, Middleware, Ffi).
+
+      Until the shim lands, the remaining kernel-only modules
+      continue to work via the existing kernel-registry path —
+      zero user-visible regression.
 - [ ] Stage 6 — Documentation sync (v0.14.x)
 
 ## Adapter measurement — 24-example sweep (2026-05-17 end of session)
