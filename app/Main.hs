@@ -873,6 +873,7 @@ data DocOpts = DocOpts
     { _docTarget :: !(Maybe String)  -- Module name to print (terminal mode)
     , _docList   :: !Bool            -- --list: print all module names
     , _docServe  :: !Bool            -- --serve: start the doc HTTP server
+    , _docTui    :: !Bool            -- --tui: launch the Sky.Tui doc browser
     , _docPort   :: !Int             -- --port (default 8030)
     } deriving (Show)
 
@@ -977,6 +978,10 @@ docOptsParser = DocOpts
     <*> switch
         ( long "serve"
        <> help "Start the browsable doc HTTP server"
+        )
+    <*> switch
+        ( long "tui"
+       <> help "Launch the Sky.Tui terminal doc browser"
         )
     <*> option auto
         ( long "port"
@@ -1703,15 +1708,20 @@ runDoc opts = do
             exitWith (ExitFailure 2)
         Just root -> do
             idx <- DocIdx.buildDocIndex skyBuildVersion root
-            case (_docServe opts, _docList opts, _docTarget opts) of
-                (True, _, _) -> runDocServe idx (_docPort opts)
-                (_, True, _) -> do
+            case (_docServe opts, _docTui opts, _docList opts, _docTarget opts) of
+                (True, True, _, _) -> do
+                    hPutStrLn stderr
+                        "sky doc: --serve and --tui are incompatible (pick one)."
+                    exitWith (ExitFailure 2)
+                (True, _, _, _) -> runDocServe idx (_docPort opts)
+                (_, True, _, _) -> runDocTui idx
+                (_, _, True, _) -> do
                     DocTerm.printAllModules idx
                     return (Right ())
-                (_, _, Just modName) -> do
+                (_, _, _, Just modName) -> do
                     DocTerm.printModule idx modName
                     return (Right ())
-                (_, _, Nothing) -> do
+                (_, _, _, Nothing) -> do
                     DocTerm.printIndexSummary idx
                     return (Right ())
 
@@ -1777,6 +1787,106 @@ runDocServe idx port = do
     -- Reuse runConsole's signal-forwarding so SIGTERM/SIGHUP from
     -- a parent (or external supervisor) tears down the child
     -- cleanly instead of orphaning it to PID 1.
+    let forwardSignal sig = Signals.installHandler sig
+            (Signals.Catch (do
+                System.Process.terminateProcess rph
+                _ <- Control.Concurrent.forkIO $ do
+                    Control.Concurrent.threadDelay 1000000
+                    mec <- System.Process.getProcessExitCode rph
+                    case mec of
+                        Just _  -> return ()
+                        Nothing -> do
+                            ph <- System.Process.getPid rph
+                            case ph of
+                                Just pid -> Signals.signalProcess Signals.sigKILL pid
+                                Nothing  -> return ()
+                return ()))
+            Nothing
+    _ <- forwardSignal Signals.sigTERM
+    _ <- forwardSignal Signals.sigHUP
+    _ <- forwardSignal Signals.sigINT
+    rec' <- Control.Exception.bracket_ (return ())
+        (do
+            mec <- System.Process.getProcessExitCode rph
+            case mec of
+                Just _  -> return ()
+                Nothing -> System.Process.terminateProcess rph)
+        (System.Process.waitForProcess rph)
+    case rec' of
+        ExitSuccess     -> return (Right ())
+        ExitFailure 130 -> return (Right ())
+        ExitFailure 143 -> return (Right ())
+        ExitFailure n   -> exitWith (ExitFailure n)
+
+
+-- | Render the doc site to a cache directory, then build + run the
+-- bundled Sky.Tui doc browser pointed at that directory.  Mirrors
+-- @runDocServe@'s spawn pattern but uses @src/MainTui.sky@ as the
+-- entry point so the cached binary is `app-tui` rather than `app`.
+runDocTui :: DocIdx.DocIndex -> IO (Either String ())
+runDocTui idx = do
+    let docOut = DocIdx.diRoot idx </> ".skycache" </> "doc-out"
+    DocRender.renderToDir docOut idx
+
+    cache <- System.Directory.getXdgDirectory System.Directory.XdgCache "sky"
+    let root    = cache </> ("doc-" ++ skyBuildVersion)
+        srcDir  = root </> "src"
+        binPath = root </> "sky-out" </> "app-tui"
+    createDirectoryIfMissing True srcDir
+    let writeFileBytes p bytes = do
+            createDirectoryIfMissing True (takeDirectory p)
+            B.writeFile p bytes
+    mapM_ (\(rel, bytes) -> writeFileBytes (root </> rel) bytes)
+          Sky.Build.EmbeddedDocServer.embeddedDocServerApp
+
+    let haveTui = any (\(p, _) -> p == "src/MainTui.sky")
+                       Sky.Build.EmbeddedDocServer.embeddedDocServerApp
+    when (not haveTui) $ do
+        hPutStrLn stderr
+            "sky doc --tui: bundled MainTui.sky missing (rebuild the sky binary)."
+        exitWith (ExitFailure 1)
+
+    skyBin  <- System.Environment.getExecutablePath
+    haveBin <- doesFileExist binPath
+    when (not haveBin) $ do
+        putStrLn $ "sky doc: building doc-tui (one-time per version, into "
+                   ++ root ++ ")..."
+        let bp = (System.Process.proc skyBin ["build", "src/MainTui.sky"])
+                    { System.Process.cwd      = Just root
+                    , System.Process.std_out  = System.Process.Inherit
+                    , System.Process.std_err  = System.Process.Inherit
+                    }
+        (_, _, _, ph) <- System.Process.createProcess bp
+        bec <- System.Process.waitForProcess ph
+        case bec of
+            ExitSuccess -> do
+                -- `sky build` always writes sky-out/app — rename to
+                -- the TUI-specific name so HTTP + TUI binaries can
+                -- coexist in the same cache dir.
+                let built = root </> "sky-out" </> "app"
+                ok <- doesFileExist built
+                if ok
+                    then renameFile built binPath
+                    else do
+                        hPutStrLn stderr
+                            "sky doc: build succeeded but sky-out/app is missing"
+                        exitWith (ExitFailure 1)
+            ExitFailure n -> do
+                hPutStrLn stderr $ "sky doc: doc-tui build failed (exit "
+                                   ++ show n ++ ")"
+                exitWith (ExitFailure n)
+
+    env0 <- System.Environment.getEnvironment
+    let env1 = filter (\(k, _) -> k /= "SKY_DOC_DIR") env0
+              ++ [ ("SKY_DOC_DIR", docOut) ]
+        rp = (System.Process.proc binPath [])
+                { System.Process.env      = Just env1
+                , System.Process.std_out  = System.Process.Inherit
+                , System.Process.std_err  = System.Process.Inherit
+                , System.Process.std_in   = System.Process.Inherit
+                }
+    putStrLn "sky doc: starting terminal browser (Ctrl-C to exit)..."
+    (_, _, _, rph) <- System.Process.createProcess rp
     let forwardSignal sig = Signals.installHandler sig
             (Signals.Catch (do
                 System.Process.terminateProcess rph

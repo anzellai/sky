@@ -69,10 +69,10 @@ Typical warm rebuild: 1-3 s.
 path. Sky.Live's SSE handshake auto-reconnects post-restart (banner
 shows "Reconnecting…" for ~1 s then clears).
 
-### `sky doc [target] [--list] [--serve] [--port N]`
+### `sky doc [target] [--list] [--serve] [--tui] [--port N]`
 
 Browsable API documentation for the Sky stdlib + project + deps.
-Three modes:
+Four modes:
 
 ```bash
 sky doc Sky.Core.String          # terminal: list every symbol with its HM signature
@@ -80,15 +80,21 @@ sky doc List                     # shorthand for Sky.Core.List
 sky doc --list                   # print every documented module
 sky doc --serve                  # HTTP doc server (auto-opens browser)
 sky doc --serve --port 8081      # custom port
+sky doc --tui                    # interactive terminal doc browser (Sky.Tui)
 ```
+
+`--serve` and `--tui` are mutually exclusive — `--serve` runs the
+Sky.Http.Server bundle; `--tui` runs the Sky.Tui bundle. Both
+consume the same on-disk catalogue rendered to `.skycache/doc-out/`
+under the project root.
 
 The HTTP server (default `:8080`) renders:
 
 * **Per-module pages** with HM signatures, Markdown-rendered doc
   comments, and an in-module symbol filter (counter shows `X / Y`).
 * **Fuzzy search** by name, module, OR **type signature**
-  (Hoogle-style — `String -> Int` finds `String.length`,
-  `Crypto.sha256` etc.).
+  (Hoogle-style, case-insensitive — `string -> int` or
+  `String -> Int` both find `String.length`, `String.toInt` etc.).
 * **FFI binding browsing** — every imported Go-pkg FFI dep lists its
   surface alongside the stdlib.
 * **Live reload** if the underlying project changes (re-runs the
@@ -97,6 +103,11 @@ The HTTP server (default `:8080`) renders:
 The server is a Sky.Live mini-app bundled into the compiler binary
 (`sky-bundled/doc/`), spawned as a child + reverse-proxied behind
 the `sky doc --serve` entry point.
+
+`--tui` runs the Sky.Tui sibling (`sky-bundled/doc/src/MainTui.sky`)
+which reads the same JSON catalogue and renders an interactive
+terminal view: ↑/↓ navigate, Enter expands the highlighted entry,
+`/` focuses the search box, Esc clears, Ctrl-C quits.
 
 ### `sky doctor [--fix] [--verbose]`
 

@@ -1,0 +1,527 @@
+module Main exposing (main)
+
+-- | sky-doc-tui — terminal-rendered doc browser.
+--
+-- Companion to the HTTP server in @Main.sky@.  Reads the same
+-- @$SKY_DOC_DIR/api/symbols.json@ catalogue the compiler-side
+-- renderer wrote, but instead of HTML+JS it paints an interactive
+-- Std.Ui Element tree through Sky.Tui.
+--
+-- Architecture:
+--   * Single file.  No shared state with the HTTP server — the two
+--     entry points run from different processes and only share
+--     the on-disk doc catalogue.
+--   * `init` fires a `Cmd.perform (File.readFile …) GotCatalog`
+--     so the first frame paints a load message; the JSON is
+--     decoded asynchronously and dispatched back as a Msg.
+--   * Filtering is case-insensitive substring scoring across
+--     name + module + sig + doc.  The HTTP server's Hoogle-style
+--     `normSig` could be ported here later; for now the simpler
+--     scoring covers the common case ("find me everything that
+--     mentions `String -> Int`").
+--
+-- Keys (handled either by the Std.Ui focus ring or `onKey`):
+--   * Up / Down        — scroll selection
+--   * Enter on a row   — expand inline doc detail
+--   * /                — focus the search input
+--   * Esc              — clear search
+--   * Ctrl-C           — quit
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.Task as Task
+import Sky.Core.File as File
+import Sky.Core.System as System
+import Sky.Core.Json.Decode as D
+import Sky.Core.Json.Decode exposing (Decoder)
+import Sky.Core.Error exposing (Error)
+import Std.Tui as Tui
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Ui as Ui
+import Std.Ui exposing (Element)
+import Std.Ui.Background as Background
+import Std.Ui.Border as Border
+import Std.Ui.Font as Font
+
+
+
+-- ═══════════════════════════════════════════════════════════════════
+-- Model + Msg
+-- ═══════════════════════════════════════════════════════════════════
+
+
+type alias Entry =
+    { mod : String
+    , name : String
+    , sig : String
+    , doc : String
+    , bucket : String
+    }
+
+
+type alias Model =
+    { entries : List Entry
+    , query : String
+    , selected : Int
+    , loadError : String
+    , expanded : Bool
+    }
+
+
+type alias KeyEvent =
+    { kind : String
+    , value : String
+    }
+
+
+type Msg
+    = GotCatalog (Result Error String)
+    | UpdateQuery String
+    | ArrowUp
+    | ArrowDown
+    | ToggleExpand
+    | ClearQuery
+    | FocusSearch
+    | Quit
+    | NoOp
+
+
+
+-- ═══════════════════════════════════════════════════════════════════
+-- Init
+-- ═══════════════════════════════════════════════════════════════════
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    let
+        dir =
+            System.getenvOr "SKY_DOC_DIR" ""
+
+        path =
+            dir ++ "/api/symbols.json"
+
+        loadTask =
+            if dir == "" then
+                Task.succeed ""
+
+            else
+                File.readFile path
+    in
+        ( { entries = []
+          , query = ""
+          , selected = 0
+          , loadError =
+                if dir == "" then
+                    "SKY_DOC_DIR not set — run via `sky doc --tui`."
+
+                else
+                    "loading " ++ path ++ " …"
+          , expanded = False
+          }
+        , Cmd.perform loadTask GotCatalog
+        )
+
+
+
+-- ═══════════════════════════════════════════════════════════════════
+-- JSON decoding
+-- ═══════════════════════════════════════════════════════════════════
+
+
+entryDecoder : Decoder Entry
+entryDecoder =
+    D.map4
+        (\m n s b -> { mod = m, name = n, sig = s, doc = "", bucket = b })
+        (D.field "module" D.string)
+        (D.field "name" D.string)
+        (D.oneOf [ D.field "sig" D.string, D.succeed "" ])
+        (D.oneOf [ D.field "bucket" D.string, D.succeed "stdlib" ])
+
+
+catalogDecoder : Decoder (List Entry)
+catalogDecoder =
+    D.field "entries" (D.list entryDecoder)
+
+
+parseCatalog : String -> List Entry
+parseCatalog body =
+    case D.decodeString catalogDecoder body of
+        Ok xs -> xs
+        Err _ -> []
+
+
+
+-- ═══════════════════════════════════════════════════════════════════
+-- Filter + scoring (case-insensitive substring across name/mod/sig)
+-- ═══════════════════════════════════════════════════════════════════
+
+
+score : String -> Entry -> Int
+score q e =
+    let
+        lq = String.toLower q
+        ln = String.toLower e.name
+        lm = String.toLower e.mod
+        ls = String.toLower e.sig
+        full = lm ++ "." ++ ln
+    in
+        if String.isEmpty lq then
+            1
+
+        else if ln == lq then
+            1000
+
+        else if String.startsWith lq ln then
+            500
+
+        else if String.contains lq ln then
+            300
+
+        else if String.contains lq full then
+            200
+
+        else if String.contains lq ls then
+            150
+
+        else if String.contains lq lm then
+            100
+
+        else
+            0
+
+
+filterEntries : String -> List Entry -> List Entry
+filterEntries q entries =
+    if String.isEmpty (String.trim q) then
+        List.take 200 entries
+
+    else
+        entries
+            |> List.filter (\e -> score q e > 0)
+            |> List.take 200
+
+
+
+-- ═══════════════════════════════════════════════════════════════════
+-- Update
+-- ═══════════════════════════════════════════════════════════════════
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        GotCatalog (Ok body) ->
+            let
+                entries = parseCatalog body
+            in
+                ( { model
+                    | entries = entries
+                    , loadError =
+                        if List.isEmpty entries then
+                            "(catalogue empty — did `sky doc` render the index?)"
+
+                        else
+                            ""
+                  }
+                , Cmd.none
+                )
+
+        GotCatalog (Err _) ->
+            ( { model | loadError = "failed to read symbols.json" }
+            , Cmd.none
+            )
+
+        UpdateQuery q ->
+            ( { model | query = q, selected = 0, expanded = False }
+            , Cmd.none
+            )
+
+        ArrowDown ->
+            let
+                visible = List.length (filterEntries model.query model.entries)
+                next = model.selected + 1
+                clamped =
+                    if next >= visible then
+                        visible - 1
+
+                    else
+                        next
+            in
+                ( { model | selected = clamped, expanded = False }, Cmd.none )
+
+        ArrowUp ->
+            let
+                prev = model.selected - 1
+                clamped =
+                    if prev < 0 then
+                        0
+
+                    else
+                        prev
+            in
+                ( { model | selected = clamped, expanded = False }, Cmd.none )
+
+        ToggleExpand ->
+            ( { model | expanded = not model.expanded }, Cmd.none )
+
+        ClearQuery ->
+            ( { model | query = "", selected = 0, expanded = False }, Cmd.none )
+
+        FocusSearch ->
+            ( { model | expanded = False }, Cmd.none )
+
+        Quit ->
+            ( model, Cmd.none )
+
+        NoOp ->
+            ( model, Cmd.none )
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+onKey : KeyEvent -> Msg
+onKey k =
+    if k.kind == "ctrl" && k.value == "c" then
+        Quit
+
+    else if k.kind == "up" then
+        ArrowUp
+
+    else if k.kind == "down" then
+        ArrowDown
+
+    else if k.kind == "enter" then
+        ToggleExpand
+
+    else if k.kind == "escape" then
+        ClearQuery
+
+    else if k.kind == "char" && k.value == "/" then
+        FocusSearch
+
+    else
+        NoOp
+
+
+
+-- ═══════════════════════════════════════════════════════════════════
+-- Colours
+-- ═══════════════════════════════════════════════════════════════════
+
+
+bg : Ui.Color
+bg = Ui.rgb 16 18 28
+
+
+fg : Ui.Color
+fg = Ui.rgb 220 220 230
+
+
+dim : Ui.Color
+dim = Ui.rgb 130 130 145
+
+
+accent : Ui.Color
+accent = Ui.rgb 142 200 168
+
+
+sigColor : Ui.Color
+sigColor = Ui.rgb 170 180 230
+
+
+selBg : Ui.Color
+selBg = Ui.rgb 50 70 100
+
+
+bucketColor : String -> Ui.Color
+bucketColor b =
+    if b == "project" then
+        Ui.rgb 220 180 110
+
+    else if b == "deps" then
+        Ui.rgb 170 130 200
+
+    else
+        Ui.rgb 110 160 200
+
+
+
+-- ═══════════════════════════════════════════════════════════════════
+-- View
+-- ═══════════════════════════════════════════════════════════════════
+
+
+view : Model -> Element Msg
+view model =
+    Ui.column
+        [ Ui.padding 16
+        , Ui.spacing 8
+        , Background.color bg
+        , Font.color fg
+        , Ui.width Ui.fill
+        , Ui.height Ui.fill
+        ]
+        [ header model
+        , searchRow model
+        , statusLine model
+        , resultsList model
+        , helpLine
+        ]
+
+
+header : Model -> Element Msg
+header _ =
+    Ui.row
+        [ Ui.spacing 8 ]
+        [ Ui.el [ Font.color accent, Font.bold ] (Ui.text "Sky docs")
+        , Ui.el [ Font.color dim ] (Ui.text "— terminal browser")
+        ]
+
+
+searchRow : Model -> Element Msg
+searchRow model =
+    Ui.row
+        [ Ui.spacing 8, Ui.width Ui.fill ]
+        [ Ui.el [ Font.color dim ] (Ui.text "›")
+        , Ui.input
+            [ Ui.width Ui.fill
+            , Background.color (Ui.rgb 30 36 60)
+            , Font.color fg
+            , Ui.paddingXY 8 2
+            , Border.color (Ui.rgb 80 100 140)
+            , Border.width 1
+            , Ui.htmlAttribute "value" model.query
+            , Ui.htmlAttribute "placeholder" "filter by name, module or signature…"
+            , Ui.onInput UpdateQuery
+            ]
+        ]
+
+
+statusLine : Model -> Element Msg
+statusLine model =
+    let
+        total = List.length model.entries
+        visible = List.length (filterEntries model.query model.entries)
+    in
+        if not (String.isEmpty model.loadError) then
+            Ui.el [ Font.color (Ui.rgb 230 130 130) ] (Ui.text model.loadError)
+
+        else
+            Ui.el
+                [ Font.color dim ]
+                (Ui.text
+                    (String.fromInt visible
+                        ++ " / "
+                        ++ String.fromInt total
+                        ++ " entries"
+                    )
+                )
+
+
+resultsList : Model -> Element Msg
+resultsList model =
+    let
+        results = filterEntries model.query model.entries
+    in
+        if List.isEmpty results then
+            Ui.el
+                [ Font.color dim, Ui.padding 8 ]
+                (Ui.text
+                    (if String.isEmpty model.query then
+                        ""
+
+                     else
+                        "(no matches)"
+                    )
+                )
+
+        else
+            Ui.column
+                [ Ui.spacing 0, Ui.width Ui.fill ]
+                (List.indexedMap (renderRow model) results)
+
+
+renderRow : Model -> Int -> Entry -> Element Msg
+renderRow model i e =
+    let
+        isSel = i == model.selected
+
+        rowBg =
+            if isSel then
+                selBg
+
+            else
+                bg
+
+        modName = e.mod ++ "." ++ e.name
+    in
+        Ui.column
+            [ Background.color rowBg
+            , Ui.paddingXY 4 0
+            , Ui.width Ui.fill
+            ]
+            [ Ui.row
+                [ Ui.spacing 8, Ui.width Ui.fill ]
+                [ Ui.el
+                    [ Font.color (bucketColor e.bucket)
+                    , Ui.width (Ui.px 56)
+                    ]
+                    (Ui.text e.bucket)
+                , Ui.el [ Font.color fg, Font.bold ] (Ui.text modName)
+                , if String.isEmpty e.sig then
+                    Ui.none
+
+                  else
+                    Ui.el
+                        [ Font.color sigColor ]
+                        (Ui.text (": " ++ trimSig e.sig))
+                ]
+            , if isSel && model.expanded && not (String.isEmpty e.sig) then
+                Ui.el
+                    [ Font.color dim
+                    , Ui.paddingXY 64 0
+                    ]
+                    (Ui.text e.sig)
+
+              else
+                Ui.none
+            ]
+
+
+trimSig : String -> String
+trimSig s =
+    if String.length s <= 80 then
+        s
+
+    else
+        String.slice 0 78 s ++ "…"
+
+
+helpLine : Element Msg
+helpLine =
+    Ui.el
+        [ Font.color dim ]
+        (Ui.text "↑↓ select · enter expand · / focus search · esc clear · ctrl-c quit")
+
+
+
+-- ═══════════════════════════════════════════════════════════════════
+-- Main
+-- ═══════════════════════════════════════════════════════════════════
+
+
+main =
+    Tui.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        , onKey = onKey
+        }
+        |> Task.run

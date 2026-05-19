@@ -260,6 +260,7 @@ sky fmt src/Main.sky               # opinionated formatter
 sky test tests/MyTest.sky          # Sky.Test runner
 sky doc Module                     # terminal docs
 sky doc --serve [--port 8080]      # browsable HTTP doc server (auto-opens browser)
+sky doc --tui                      # interactive terminal doc browser (Sky.Tui)
 sky doc --list                     # list every documented module
 sky doctor [--fix] [--verbose]     # project / environment health checks
 sky console [--port 8025]          # standalone Std.Ui Sky Console

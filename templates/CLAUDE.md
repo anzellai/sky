@@ -341,6 +341,7 @@ sky fmt src/Main.sky      # Format code (opinionated: 4-space indent, leading co
 sky test tests/MyTest.sky # Run a test module (exposes `tests : List Test`)
 sky doc <Module>          # Show a module's API in the terminal (annotations + docs)
 sky doc --serve [--port N]# Run a browsable HTTP doc server (auto-opens browser)
+sky doc --tui             # Interactive terminal doc browser (Sky.Tui)
 sky doc --list            # List every documented module (project + deps + stdlib)
 sky doctor [--fix]        # Project / environment health checks
 sky console [--port N]    # Standalone Std.Ui Sky Console (web)
