@@ -124,6 +124,15 @@ registry = Map.fromList
     , (("Ffi", "kernel"),         KernelInfo "rt.Ffi_kernel" 1 False)
 
     -- ═══════════════════════════════════════════════════════
+    -- Doc — sky-doc TUI fast catalogue loader + searcher.
+    -- Lives at the kernel layer so the 80k-entry Stripe SDK
+    -- catalogue parses in ~250 ms (Go) instead of timing out
+    -- after minutes (pure-Sky Json.Decode).
+    -- ═══════════════════════════════════════════════════════
+    , (("Doc", "loadCatalog"),    KernelInfo "rt.Doc_loadCatalog" 1 False)
+    , (("Doc", "searchCatalog"),  KernelInfo "rt.Doc_searchCatalog" 3 False)
+
+    -- ═══════════════════════════════════════════════════════
     -- List
     -- ═══════════════════════════════════════════════════════
     -- List: use any-typed runtime functions until type checker provides types

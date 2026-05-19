@@ -1131,6 +1131,31 @@ lookupKernelType modName funcName = case (modName, funcName) of
     ("Ffi", "kernel") ->
         Just $ T.Forall ["a"]
             (T.TLambda stringType (T.TVar "a"))
+    -- Doc.loadCatalog : String -> Result Error Int
+    --   Parse + cache a `symbols.json` doc catalogue in Go.
+    --   Returns the total entry count for the Sky-side status line.
+    ("Doc", "loadCatalog") ->
+        Just $ T.Forall []
+            (T.TLambda stringType
+                (T.TType ModuleName.result_ "Result"
+                    [ T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                    , intType
+                    ]))
+    -- Doc.searchCatalog : String -> String -> Int -> ( List String, Int )
+    --   Synchronous case-insensitive substring search against a
+    --   previously-loaded catalogue (keyed by path).  Returns
+    --   (top-N pre-formatted display lines, total match count).
+    --   Pure compute — no I/O, no Task wrap — so a per-keystroke
+    --   call stays under sub-millisecond.
+    ("Doc", "searchCatalog") ->
+        Just $ T.Forall []
+            (T.TLambda stringType
+                (T.TLambda stringType
+                    (T.TLambda intType
+                        (T.TTuple
+                            (T.TType ModuleName.list "List" [stringType])
+                            intType
+                            []))))
     ("Basics", "identity") ->
         Just $ T.Forall ["a"] (T.TLambda (T.TVar "a") (T.TVar "a"))
     ("Basics", "always") ->

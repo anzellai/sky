@@ -3,27 +3,21 @@ module Main exposing (main)
 -- | sky-doc-tui — terminal-rendered doc browser.
 --
 -- Companion to the HTTP server in @Main.sky@.  Reads the same
--- @$SKY_DOC_DIR/api/symbols.json@ catalogue the compiler-side
--- renderer wrote, but instead of HTML+JS it paints an interactive
--- Std.Ui Element tree through Sky.Tui.
+-- @$SKY_DOC_DIR/api/symbols.json@ catalogue, but parsing + search
+-- happen entirely in the Go runtime via two kernel bindings:
 --
--- Architecture (perf-tuned for 1k+ catalogues):
---   * Each entry is pre-lowercased ONCE on load (modL/nameL/sigL
---     fields) so scoring is pure ASCII substring on small strings
---     — no per-keystroke `String.toLower` on 1358 entries.
---   * The filtered slice is COMPUTED ONCE in `update` and cached
---     on the Model.  `view` reads `model.filtered`/`model.shown`
---     directly — no per-frame filter pass.
---   * Render is capped at `maxShown` (30) rows — enough to fill
---     a typical 24/40-line terminal without forcing the Std.Ui
---     tree-walker to lay out 200+ rows on every keystroke.
---   * The filter walks the full list but stops collecting once
---     `maxShown` matches are in hand (`collectFirstN`), so the
---     hot path on a populated query exits early.
+--   * `Doc.loadCatalog : String -> Result Error Int`
+--   * `Doc.searchCatalog : String -> String -> Int -> (List String, Int)`
 --
--- Keys:
+-- The Sky-side code only holds the cached display lines (already
+-- pre-formatted + pre-coloured) for the visible window — usually
+-- 20 entries.  This is what makes the TUI tractable on the
+-- Stripe-SDK-scale `examples/13-skyshop` catalogue (80k entries):
+-- pure-Sky Json.Decode took minutes; the Go loader takes ~250 ms,
+-- per-keystroke search ~1 ms.
+--
+-- Keys (forwarded by the Sky.Tui focus ring):
 --   * Up / Down        — scroll selection
---   * Enter            — toggle inline detail for the selected row
 --   * /                — focus the search input
 --   * Esc              — clear search
 --   * Ctrl-C           — quit
@@ -32,11 +26,9 @@ import Sky.Core.Prelude exposing (..)
 import Sky.Core.String as String
 import Sky.Core.List as List
 import Sky.Core.Task as Task
-import Sky.Core.File as File
 import Sky.Core.System as System
-import Sky.Core.Json.Decode as D
-import Sky.Core.Json.Decode exposing (Decoder)
 import Sky.Core.Error exposing (Error)
+import Sky.Ffi as Ffi
 import Std.Tui as Tui
 import Std.Cmd as Cmd
 import Std.Sub as Sub
@@ -49,20 +41,28 @@ import Std.Ui.Font as Font
 
 
 -- ═══════════════════════════════════════════════════════════════════
--- Model + Msg
+-- Kernel bindings (registered in src/Sky/Generate/Go/Kernel.hs)
 -- ═══════════════════════════════════════════════════════════════════
 
 
-type alias Entry =
-    { mod : String
-    , name : String
-    , sig : String
-    , bucket : String
-    , modL : String       -- pre-lowercased for case-insensitive search
-    , nameL : String
-    , sigL : String
-    , line : String       -- pre-formatted display line ("bucket  Mod.name : sig")
-    }
+-- Doc.loadCatalog path : Result Error Int
+-- Synchronous Go-side JSON parse + cache.  Result.Ok carries the
+-- total entry count for the status line.
+loadCatalog : String -> Result Error Int
+loadCatalog = Ffi.kernel "Doc_loadCatalog"
+
+
+-- Doc.searchCatalog path query maxShown : (List String, Int)
+-- Returns (top-N pre-formatted display lines, total match count).
+-- Pure compute against the cached blob — no I/O.
+searchCatalog : String -> String -> Int -> ( List String, Int )
+searchCatalog = Ffi.kernel "Doc_searchCatalog"
+
+
+
+-- ═══════════════════════════════════════════════════════════════════
+-- Model + Msg
+-- ═══════════════════════════════════════════════════════════════════
 
 
 maxShown : Int
@@ -70,14 +70,13 @@ maxShown = 20
 
 
 type alias Model =
-    { entries : List Entry
-    , filtered : List Entry
+    { path : String
     , total : Int
-    , filteredCount : Int
     , query : String
+    , filtered : List String
+    , filteredCount : Int
     , selected : Int
     , loadError : String
-    , expanded : Bool
     }
 
 
@@ -88,11 +87,9 @@ type alias KeyEvent =
 
 
 type Msg
-    = GotCatalog (Result Error String)
-    | UpdateQuery String
+    = UpdateQuery String
     | ArrowUp
     | ArrowDown
-    | ToggleExpand
     | ClearQuery
     | FocusSearch
     | Quit
@@ -101,7 +98,7 @@ type Msg
 
 
 -- ═══════════════════════════════════════════════════════════════════
--- Init
+-- Init — synchronous load via the kernel binding
 -- ═══════════════════════════════════════════════════════════════════
 
 
@@ -113,144 +110,46 @@ init _ =
 
         path =
             dir ++ "/api/symbols.json"
-
-        loadTask =
-            if dir == "" then
-                Task.succeed ""
-
-            else
-                File.readFile path
     in
-        ( { entries = []
-          , filtered = []
-          , total = 0
-          , filteredCount = 0
-          , query = ""
-          , selected = 0
-          , loadError =
-                if dir == "" then
-                    "SKY_DOC_DIR not set — run via `sky doc --tui`."
+        if dir == "" then
+            ( emptyModel "" "SKY_DOC_DIR not set — run via `sky doc --tui`."
+            , Cmd.none
+            )
 
-                else
-                    "loading " ++ path ++ " …"
-          , expanded = False
-          }
-        , Cmd.perform loadTask GotCatalog
-        )
+        else
+            case loadCatalog path of
+                Ok total ->
+                    let
+                        ( lines, count ) = searchCatalog path "" maxShown
+                    in
+                        ( { path = path
+                          , total = total
+                          , query = ""
+                          , filtered = lines
+                          , filteredCount = count
+                          , selected = 0
+                          , loadError = ""
+                          }
+                        , Cmd.none
+                        )
 
-
-
--- ═══════════════════════════════════════════════════════════════════
--- JSON decoding (pre-lowercases on the way in)
--- ═══════════════════════════════════════════════════════════════════
-
-
-entryDecoder : Decoder Entry
-entryDecoder =
-    D.map4
-        (\m n s b ->
-            let
-                trimmedSig =
-                    if String.length s <= 80 then
-                        s
-
-                    else
-                        String.slice 0 78 s ++ "…"
-
-                pad8 t =
-                    if String.length t >= 8 then
-                        t
-
-                    else
-                        t ++ String.repeat (8 - String.length t) " "
-
-                sigSuffix =
-                    if String.isEmpty s then
-                        ""
-
-                    else
-                        "  : " ++ trimmedSig
-            in
-                { mod = m
-                , name = n
-                , sig = s
-                , bucket = b
-                , modL = String.toLower m
-                , nameL = String.toLower n
-                , sigL = String.toLower s
-                , line = pad8 b ++ m ++ "." ++ n ++ sigSuffix
-                }
-        )
-        (D.field "module" D.string)
-        (D.field "name" D.string)
-        (D.oneOf [ D.field "sig" D.string, D.succeed "" ])
-        (D.oneOf [ D.field "bucket" D.string, D.succeed "stdlib" ])
+                Err _ ->
+                    ( emptyModel path
+                        ("failed to read " ++ path)
+                    , Cmd.none
+                    )
 
 
-catalogDecoder : Decoder (List Entry)
-catalogDecoder =
-    D.field "entries" (D.list entryDecoder)
-
-
-parseCatalog : String -> List Entry
-parseCatalog body =
-    case D.decodeString catalogDecoder body of
-        Ok xs -> xs
-        Err _ -> []
-
-
-
--- ═══════════════════════════════════════════════════════════════════
--- Filter — bounded prefix scan; stops at maxShown matches.
--- ═══════════════════════════════════════════════════════════════════
-
-
--- True if entry passes the lowercased query.
-matches : String -> Entry -> Bool
-matches lq e =
-    String.isEmpty lq
-        || String.contains lq e.nameL
-        || String.contains lq e.modL
-        || (not (String.isEmpty e.sigL) && String.contains lq e.sigL)
-
-
--- Walk `entries`, keeping at most `n` that satisfy `pred`. Returns
--- (kept-in-source-order, totalMatchesIncludingTail).  Tail-recursive
--- via the auto-TCO pass so a 100k-entry list runs in constant stack.
---
--- Inner `go` accumulator is built in reverse and flipped on exit;
--- `List.reverse` is tail-recursive (auto-TCO'd).
-collectFirstN : Int -> (Entry -> Bool) -> List Entry -> ( List Entry, Int )
-collectFirstN n pred entries =
-    collectFirstNGo n pred entries [] 0
-
-
-collectFirstNGo : Int -> (Entry -> Bool) -> List Entry -> List Entry -> Int -> ( List Entry, Int )
-collectFirstNGo remaining pred xs acc total =
-    case xs of
-        [] ->
-            ( List.reverse acc, total )
-
-        head :: rest ->
-            if pred head then
-                if remaining > 0 then
-                    collectFirstNGo (remaining - 1) pred rest (head :: acc) (total + 1)
-
-                else
-                    collectFirstNGo 0 pred rest acc (total + 1)
-
-            else
-                collectFirstNGo remaining pred rest acc total
-
-
--- Re-derive `filtered` + `filteredCount` from the current query.
-applyFilter : String -> List Entry -> ( List Entry, Int )
-applyFilter q entries =
-    let
-        lq = String.toLower (String.trim q)
-        pred = matches lq
-    in
-        collectFirstN maxShown pred entries
+emptyModel : String -> String -> Model
+emptyModel path err =
+    { path = path
+    , total = 0
+    , query = ""
+    , filtered = []
+    , filteredCount = 0
+    , selected = 0
+    , loadError = err
+    }
 
 
 
@@ -262,44 +161,15 @@ applyFilter q entries =
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
-        GotCatalog (Ok body) ->
-            let
-                entries = parseCatalog body
-                total = List.length entries
-                ( filtered, filteredCount ) =
-                    applyFilter "" entries
-            in
-                ( { model
-                    | entries = entries
-                    , filtered = filtered
-                    , total = total
-                    , filteredCount = filteredCount
-                    , loadError =
-                        if List.isEmpty entries then
-                            "(catalogue empty — did `sky doc` render the index?)"
-
-                        else
-                            ""
-                  }
-                , Cmd.none
-                )
-
-        GotCatalog (Err _) ->
-            ( { model | loadError = "failed to read symbols.json" }
-            , Cmd.none
-            )
-
         UpdateQuery q ->
             let
-                ( filtered, filteredCount ) =
-                    applyFilter q model.entries
+                ( lines, count ) = searchCatalog model.path q maxShown
             in
                 ( { model
                     | query = q
-                    , filtered = filtered
-                    , filteredCount = filteredCount
+                    , filtered = lines
+                    , filteredCount = count
                     , selected = 0
-                    , expanded = False
                   }
                 , Cmd.none
                 )
@@ -315,9 +185,7 @@ update msg model =
                     else
                         next
             in
-                ( { model | selected = clamped, expanded = False }
-                , Cmd.none
-                )
+                ( { model | selected = clamped }, Cmd.none )
 
         ArrowUp ->
             let
@@ -329,30 +197,23 @@ update msg model =
                     else
                         prev
             in
-                ( { model | selected = clamped, expanded = False }
-                , Cmd.none
-                )
-
-        ToggleExpand ->
-            ( { model | expanded = not model.expanded }, Cmd.none )
+                ( { model | selected = clamped }, Cmd.none )
 
         ClearQuery ->
             let
-                ( filtered, filteredCount ) =
-                    applyFilter "" model.entries
+                ( lines, count ) = searchCatalog model.path "" maxShown
             in
                 ( { model
                     | query = ""
-                    , filtered = filtered
-                    , filteredCount = filteredCount
+                    , filtered = lines
+                    , filteredCount = count
                     , selected = 0
-                    , expanded = False
                   }
                 , Cmd.none
                 )
 
         FocusSearch ->
-            ( { model | expanded = False }, Cmd.none )
+            ( model, Cmd.none )
 
         Quit ->
             ( model, Cmd.perform (System.exit 0) (\_ -> NoOp) )
@@ -376,9 +237,6 @@ onKey k =
 
     else if k.kind == "down" then
         ArrowDown
-
-    else if k.kind == "enter" then
-        ToggleExpand
 
     else if k.kind == "escape" then
         ClearQuery
@@ -412,24 +270,8 @@ accent : Ui.Color
 accent = Ui.rgb 142 200 168
 
 
-sigColor : Ui.Color
-sigColor = Ui.rgb 170 180 230
-
-
 selBg : Ui.Color
 selBg = Ui.rgb 50 70 100
-
-
-bucketColor : String -> Ui.Color
-bucketColor b =
-    if b == "project" then
-        Ui.rgb 220 180 110
-
-    else if b == "deps" then
-        Ui.rgb 170 130 200
-
-    else
-        Ui.rgb 110 160 200
 
 
 
@@ -448,7 +290,7 @@ view model =
         , Ui.width Ui.fill
         , Ui.height Ui.fill
         ]
-        [ header model
+        [ header
         , searchRow model
         , statusLine model
         , resultsList model
@@ -456,8 +298,8 @@ view model =
         ]
 
 
-header : Model -> Element Msg
-header _ =
+header : Element Msg
+header =
     Ui.row
         [ Ui.spacing 8 ]
         [ Ui.el [ Font.color accent, Font.bold ] (Ui.text "Sky docs")
@@ -492,7 +334,7 @@ statusLine model =
     else
         let
             shown = List.length model.filtered
-            extra =
+            suffix =
                 if model.filteredCount > shown then
                     " (showing " ++ String.fromInt shown ++ ")"
 
@@ -506,7 +348,7 @@ statusLine model =
                         ++ " / "
                         ++ String.fromInt model.total
                         ++ " entries"
-                        ++ extra
+                        ++ suffix
                     )
                 )
 
@@ -528,37 +370,26 @@ resultsList model =
     else
         Ui.column
             [ Ui.spacing 0, Ui.width Ui.fill ]
-            (List.indexedMap (renderRow model) model.filtered)
+            (List.indexedMap (renderRow model.selected) model.filtered)
 
 
--- One element per row — the entry's `line` is pre-formatted at JSON-
--- load time so paint reduces to a single `Ui.text`.
-renderRow : Model -> Int -> Entry -> Element Msg
-renderRow model i e =
+renderRow : Int -> Int -> String -> Element Msg
+renderRow selected i line =
     let
-        isSel = i == model.selected
-
         rowBg =
-            if isSel then
+            if i == selected then
                 selBg
 
             else
                 bg
-
-        rowFg =
-            if isSel then
-                fg
-
-            else
-                fg
     in
         Ui.el
             [ Background.color rowBg
-            , Font.color rowFg
+            , Font.color fg
             , Ui.paddingXY 4 0
             , Ui.width Ui.fill
             ]
-            (Ui.text e.line)
+            (Ui.text line)
 
 
 helpLine : Element Msg
