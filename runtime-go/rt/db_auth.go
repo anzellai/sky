@@ -231,26 +231,49 @@ func Db_close(db any) any {
 // Cmd.perform / Task.run boundary.
 func Db_exec(db any, query any, args any) any {
 	return func() any {
-		d, ok := db.(*SkyDb)
-		if !ok {
-			return Err[any, any](ErrInvalidInput("db.exec: not a Db"))
-		}
-		argList := asList(args)
-		goArgs := make([]any, len(argList))
-		for i, a := range argList {
-			goArgs[i] = a
-		}
-		q, errRes := mustStringTyped(query, "db.exec")
-		if errRes != nil {
-			return errRes
-		}
-		res, err := d.conn.Exec(q, goArgs...)
-		if err != nil {
-			return Err[any, any](ErrIo("db.exec: " + err.Error()))
-		}
-		n, _ := res.RowsAffected()
-		return Ok[any, any](int(n))
+		return WithDbSpan(dbSystemOf(db), "exec", stmtAttr(query), func() any {
+			d, ok := db.(*SkyDb)
+			if !ok {
+				return Err[any, any](ErrInvalidInput("db.exec: not a Db"))
+			}
+			argList := asList(args)
+			goArgs := make([]any, len(argList))
+			for i, a := range argList {
+				goArgs[i] = a
+			}
+			q, errRes := mustStringTyped(query, "db.exec")
+			if errRes != nil {
+				return errRes
+			}
+			res, err := d.conn.Exec(q, goArgs...)
+			if err != nil {
+				return Err[any, any](ErrIo("db.exec: " + err.Error()))
+			}
+			n, _ := res.RowsAffected()
+			return Ok[any, any](int(n))
+		})
 	}
+}
+
+// dbSystemOf maps a Sky Db value to its OTEL db.system attribute.
+func dbSystemOf(db any) string {
+	if d, ok := db.(*SkyDb); ok {
+		if d.driver == "pgx" {
+			return "postgresql"
+		}
+		return d.driver
+	}
+	return "unknown"
+}
+
+// stmtAttr extracts the parameterised SQL for the db.statement span
+// attribute. The query string already carries placeholders; bind
+// values are separate and never captured.
+func stmtAttr(query any) string {
+	if s, ok := query.(string); ok {
+		return s
+	}
+	return ""
 }
 
 // Db.query : Db -> String -> List any -> Task Error (List (Dict String any))
@@ -258,46 +281,48 @@ func Db_exec(db any, query any, args any) any {
 // thunk so the SELECT defers to the Cmd.perform / Task.run boundary.
 func Db_query(db any, query any, args any) any {
 	return func() any {
-		d, ok := db.(*SkyDb)
-		if !ok {
-			return Err[any, any](ErrInvalidInput("db.query: not a Db"))
-		}
-		argList := asList(args)
-		goArgs := make([]any, len(argList))
-		for i, a := range argList {
-			goArgs[i] = a
-		}
-		q, errRes := mustStringTyped(query, "db.query")
-		if errRes != nil {
-			return errRes
-		}
-		rows, err := d.conn.Query(q, goArgs...)
-		if err != nil {
-			return Err[any, any](ErrIo("db.query: " + err.Error()))
-		}
-		defer rows.Close()
+		return WithDbSpan(dbSystemOf(db), "query", stmtAttr(query), func() any {
+			d, ok := db.(*SkyDb)
+			if !ok {
+				return Err[any, any](ErrInvalidInput("db.query: not a Db"))
+			}
+			argList := asList(args)
+			goArgs := make([]any, len(argList))
+			for i, a := range argList {
+				goArgs[i] = a
+			}
+			q, errRes := mustStringTyped(query, "db.query")
+			if errRes != nil {
+				return errRes
+			}
+			rows, err := d.conn.Query(q, goArgs...)
+			if err != nil {
+				return Err[any, any](ErrIo("db.query: " + err.Error()))
+			}
+			defer rows.Close()
 
-		cols, err := rows.Columns()
-		if err != nil {
-			return Err[any, any](ErrIo("db.query columns: " + err.Error()))
-		}
-		var out []any
-		for rows.Next() {
-			raw := make([]any, len(cols))
-			ptrs := make([]any, len(cols))
-			for i := range raw {
-				ptrs[i] = &raw[i]
+			cols, err := rows.Columns()
+			if err != nil {
+				return Err[any, any](ErrIo("db.query columns: " + err.Error()))
 			}
-			if err := rows.Scan(ptrs...); err != nil {
-				return Err[any, any](ErrIo("db.query scan: " + err.Error()))
+			var out []any
+			for rows.Next() {
+				raw := make([]any, len(cols))
+				ptrs := make([]any, len(cols))
+				for i := range raw {
+					ptrs[i] = &raw[i]
+				}
+				if err := rows.Scan(ptrs...); err != nil {
+					return Err[any, any](ErrIo("db.query scan: " + err.Error()))
+				}
+				rowDict := map[string]any{}
+				for i, c := range cols {
+					rowDict[c] = normaliseSqlValue(raw[i])
+				}
+				out = append(out, rowDict)
 			}
-			rowDict := map[string]any{}
-			for i, c := range cols {
-				rowDict[c] = normaliseSqlValue(raw[i])
-			}
-			out = append(out, rowDict)
-		}
-		return Ok[any, any](out)
+			return Ok[any, any](out)
+		})
 	}
 }
 
@@ -902,27 +927,29 @@ func autoIdColumn(driver string) string {
 func Auth_login(db any, email any, password any) any {
 	capDb, capEmail, capPw := db, email, password
 	return func() any {
-		d, ok := capDb.(*SkyDb)
-		if !ok {
-			return Err[any, any](ErrInvalidInput("auth.login: not a Db"))
-		}
-		row := d.conn.QueryRow(
-			fmt.Sprintf("SELECT id, email, password_hash, role FROM users WHERE email = %s", d.placeholder(1)),
-			fmt.Sprintf("%v", capEmail),
-		)
-		var id int
-		var em, hash, role string
-		if err := row.Scan(&id, &em, &hash, &role); err != nil {
-			return Err[any, any](ErrFfi("auth.login: " + err.Error()))
-		}
-		ok2 := Auth_verifyPassword(capPw, hash)
-		if b, isB := ok2.(bool); !isB || !b {
-			return Err[any, any](ErrPermissionDenied("auth.login: invalid credentials"))
-		}
-		return Ok[any, any](map[string]any{
-			"id":    id,
-			"email": em,
-			"role":  role,
+		return WithAuthSpan("login", func() any {
+			d, ok := capDb.(*SkyDb)
+			if !ok {
+				return Err[any, any](ErrInvalidInput("auth.login: not a Db"))
+			}
+			row := d.conn.QueryRow(
+				fmt.Sprintf("SELECT id, email, password_hash, role FROM users WHERE email = %s", d.placeholder(1)),
+				fmt.Sprintf("%v", capEmail),
+			)
+			var id int
+			var em, hash, role string
+			if err := row.Scan(&id, &em, &hash, &role); err != nil {
+				return Err[any, any](ErrFfi("auth.login: " + err.Error()))
+			}
+			ok2 := Auth_verifyPassword(capPw, hash)
+			if b, isB := ok2.(bool); !isB || !b {
+				return Err[any, any](ErrPermissionDenied("auth.login: invalid credentials"))
+			}
+			return Ok[any, any](map[string]any{
+				"id":    id,
+				"email": em,
+				"role":  role,
+			})
 		})
 	}
 }

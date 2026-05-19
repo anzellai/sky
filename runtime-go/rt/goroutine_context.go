@@ -1,143 +1,169 @@
 package rt
 
-// Goroutine-local request-id storage. Phase 1.1a Step 2 — propagate
-// the triggering request's id into Cmd.perform goroutines so logs +
-// traces emitted from background tasks correlate back to the user
-// action that started them.
+// Goroutine-local trace-context propagation.
 //
-// Go has no native goroutine-local storage (deliberate design choice
-// — passing context.Context as a value is the canonical idiom). For
-// observability we need an out-of-band channel because Sky's Task
-// kernel doesn't carry context: the Task is an opaque thunk
-// `func() any`, and threading context through every kernel signature
-// would be a sweeping breaking change across the FFI surface.
+// Sky's `Task` kernel is an opaque thunk `func() any` — it carries
+// no context parameter, and threading `context.Context` through
+// every kernel signature would be a sweeping breaking change across
+// the FFI surface. For observability we instead keep an out-of-band
+// per-goroutine store: the spawn site of any goroutine that should
+// inherit a parent trace stamps the parent's `context.Context` on
+// entry and clears it on exit.
 //
-// Implementation: a sync.Map keyed by goroutine ID. The Cmd.perform
-// spawn site stamps the id on entry to the goroutine and clears on
-// exit. FFI helpers (and the diff-based Msg logger in Step 5) read
-// via CurrentRequestID(). When called outside a stamped goroutine,
-// returns "" — observability gracefully degrades to "untracked"
-// instead of crashing.
+// The stored value is a full `context.Context` (not just a
+// request-id string): it carries the OTEL span (traceID / spanID /
+// sampled bit) AND the Sky request-id. `CurrentTraceContext()` hands
+// it to `WithSpan` so an auto-instrumented kernel (Db.* / Auth.* /
+// Http.* / File.* / session store) opens its span as a CHILD of
+// whatever span is active on the calling goroutine — without any
+// kernel signature carrying a ctx parameter.
 //
-// Goroutine ID is parsed from runtime.Stack output. This is the
+// Goroutine ID is parsed from `runtime.Stack` output. This is the
 // standard non-blessed approach used by every Go observability
-// library (otel-go, datadog, honeycomb, sentry, …). It's stable
-// across Go versions because the runtime emits "goroutine <gid>
-// [<state>]:" as the first line of any stack trace, and that format
-// is part of Go's effective ABI even if not in the spec.
+// library (otel-go, datadog, honeycomb, sentry, …). It is stable
+// across Go versions because the runtime emits
+// "goroutine <gid> [<state>]:" as the first stack-trace line, a
+// format that is part of Go's effective ABI.
+//
+// RELIABILITY CONTRACT: every goroutine-spawn site in the runtime
+// must wrap its child in `RunWithTraceContext` (or the no-op when
+// there is no parent). A CI grep-gate forbids a bare `go func` in
+// `runtime-go/rt/` outside the blessed spawn helpers so a future
+// un-wrapped spawn fails the build rather than silently dropping
+// the trace.
 
 import (
+	"context"
 	"runtime"
 	"strconv"
 	"sync"
 )
 
-// goroutineReqIDs stores per-goroutine request-id stamps. Sized to
-// hold every active Cmd.perform goroutine + every SSE subscription
-// tick. At typical workloads (~1000 concurrent goroutines) the map
-// fits in <1 MB.
-var goroutineReqIDs sync.Map // map[int64]string
+// goroutineCtx stores per-goroutine trace context. Sized to hold
+// every active Cmd.perform goroutine + every SSE subscription tick.
+// At typical workloads (~1000 concurrent goroutines) the map fits
+// in well under 1 MB.
+var goroutineCtx sync.Map // map[int64]context.Context
 
-// CurrentRequestID returns the request-id stamped on the calling
-// goroutine, or "" when none is set. Safe to call from any
-// goroutine; cheap (one sync.Map.Load + a goroutine-ID parse).
+// CurrentTraceContext returns the trace context stamped on the
+// calling goroutine, or context.Background() when none is set.
+// Safe from any goroutine; cheap (one sync.Map.Load + a
+// goroutine-ID parse).
 //
-// Used by:
-//   - The diff-based Msg logger (Step 5) — annotates each logged
-//     Msg with the triggering request's id.
-//   - User code via FFI — Sky source can call
-//     `System.requestID` (registered as a kernel function) to
-//     embed the current id in user-emitted logs.
-//   - The OTel span exporter (Step 7) — links background spans to
-//     the request span via the same id.
-func CurrentRequestID() string {
+// `WithSpan` calls this to find the parent span for an
+// auto-instrumented kernel.
+func CurrentTraceContext() context.Context {
 	gid := currentGoroutineID()
-	if v, ok := goroutineReqIDs.Load(gid); ok {
-		if s, ok := v.(string); ok {
-			return s
+	if v, ok := goroutineCtx.Load(gid); ok {
+		if ctx, ok := v.(context.Context); ok && ctx != nil {
+			return ctx
 		}
 	}
-	return ""
+	return context.Background()
 }
 
-// SetGoroutineRequestID stamps the calling goroutine with a
-// request-id. Pairs with `defer ClearGoroutineRequestID()` at the
-// top of any goroutine that should propagate the parent's id. Used
-// by Cmd.perform's spawn site (runCmd).
-//
-// Calling with id == "" deletes the stamp (same as ClearGoroutineRequestID).
-func SetGoroutineRequestID(id string) {
+// SetGoroutineTraceContext stamps the calling goroutine with a
+// trace context. Pairs with `defer ClearGoroutineTraceContext()`.
+// Passing a nil ctx deletes the stamp.
+func SetGoroutineTraceContext(ctx context.Context) {
 	gid := currentGoroutineID()
-	if id == "" {
-		goroutineReqIDs.Delete(gid)
+	if ctx == nil {
+		goroutineCtx.Delete(gid)
 		return
 	}
-	goroutineReqIDs.Store(gid, id)
+	goroutineCtx.Store(gid, ctx)
 }
 
-// ClearGoroutineRequestID removes the calling goroutine's req-id
-// stamp. Should be called as `defer ClearGoroutineRequestID()` at
-// the top of any goroutine that has previously called
-// SetGoroutineRequestID, so the sync.Map entry doesn't leak after
-// the goroutine exits.
-//
-// Without this cleanup, sync.Map would accumulate entries for
-// every spawned-and-exited goroutine, growing unboundedly. The Go
-// runtime reuses goroutine IDs but eventually rolls them; cleanup
-// keeps the map size bounded to currently-active goroutines.
-func ClearGoroutineRequestID() {
+// ClearGoroutineTraceContext removes the calling goroutine's stamp.
+// Must run (via defer) at the top of any goroutine that called
+// SetGoroutineTraceContext, so the sync.Map doesn't accumulate
+// entries for spawned-and-exited goroutines.
+func ClearGoroutineTraceContext() {
 	gid := currentGoroutineID()
-	goroutineReqIDs.Delete(gid)
+	goroutineCtx.Delete(gid)
 }
 
-// RunWithRequestID is the canonical pattern for goroutine spawn
-// sites. Equivalent to:
+// RunWithTraceContext is the canonical goroutine-spawn pattern.
+// Equivalent to:
 //
 //	go func() {
-//	    SetGoroutineRequestID(id)
-//	    defer ClearGoroutineRequestID()
+//	    SetGoroutineTraceContext(ctx)
+//	    defer ClearGoroutineTraceContext()
 //	    fn()
 //	}()
 //
-// Encapsulating the pair makes it impossible to forget the defer;
-// Cmd.perform's spawn path uses this.
-func RunWithRequestID(id string, fn func()) {
-	if id != "" {
-		SetGoroutineRequestID(id)
-		defer ClearGoroutineRequestID()
+// Encapsulating the pair makes it impossible to forget the defer.
+// A nil ctx degrades to running fn() with no stamp (no-op
+// propagation) rather than crashing.
+func RunWithTraceContext(ctx context.Context, fn func()) {
+	if ctx != nil {
+		SetGoroutineTraceContext(ctx)
+		defer ClearGoroutineTraceContext()
 	}
 	fn()
 }
+
+// ─── request-id compatibility shims ───────────────────────────────
+//
+// The trace context subsumes the request-id (it lives inside the
+// ctx via WithRequestID / RequestIDFromContext). These shims keep
+// the existing CurrentRequestID-style call sites working unchanged.
+
+// CurrentRequestID returns the request-id of the calling
+// goroutine's trace context, or "" when none is set.
+func CurrentRequestID() string {
+	return RequestIDFromContext(CurrentTraceContext())
+}
+
+// SetGoroutineRequestID stamps the calling goroutine with a context
+// carrying just the given request-id. Prefer SetGoroutineTraceContext
+// when a full ctx (with the OTEL span) is available — this shim
+// exists for call sites that only have a bare id.
+//
+// Passing id == "" deletes the stamp.
+func SetGoroutineRequestID(id string) {
+	if id == "" {
+		SetGoroutineTraceContext(nil)
+		return
+	}
+	SetGoroutineTraceContext(WithRequestID(context.Background(), id))
+}
+
+// ClearGoroutineRequestID removes the calling goroutine's stamp.
+// Alias of ClearGoroutineTraceContext for back-compat.
+func ClearGoroutineRequestID() {
+	ClearGoroutineTraceContext()
+}
+
+// RunWithRequestID is the request-id-only spawn pattern. Prefer
+// RunWithTraceContext when a full ctx is available.
+func RunWithRequestID(id string, fn func()) {
+	if id != "" {
+		SetGoroutineRequestID(id)
+		defer ClearGoroutineTraceContext()
+	}
+	fn()
+}
+
+// ─── goroutine-ID parse ────────────────────────────────────────────
 
 // currentGoroutineID parses the calling goroutine's ID from the
 // stack header. runtime.Stack(buf, false) writes
 //
 //	"goroutine <gid> [<state>]:\n\t<frames>...\n"
 //
-// as the first line. We allocate a 64-byte buffer (always enough
-// for the header — gid is at most ~20 decimal digits, state is a
-// short word like "running" / "select" / "chan send") and parse
-// only the gid.
+// as the first line. A 64-byte buffer is always enough for the
+// header (gid ≤ ~20 decimal digits, state a short word).
 //
-// This is the Go-community-standard approach. Alternatives:
-//   - context.Context threading — would require changing every
-//     kernel signature; rejected (see top-of-file comment).
-//   - runtime.SetFinalizer + reflective access — too fragile,
-//     finalizers don't run reliably under load.
-//   - github.com/petermattis/goid CGo — extra dep + CGo cost.
-//
-// Cost: ~150 ns per call on M1. Each Cmd.perform goroutine stamps
-// once + clears once — 300 ns overhead per dispatched Task,
-// well below the per-Task latency budget.
+// Cost: ~150 ns per call on M1 — paid per goroutine spawn (one
+// stamp + one clear), not per span. Well below the per-Task budget.
 func currentGoroutineID() int64 {
 	var buf [64]byte
 	n := runtime.Stack(buf[:], false)
-	// Skip "goroutine " prefix (10 bytes).
 	if n < 11 {
 		return 0
 	}
-	line := buf[10:n]
-	// Parse digits until non-digit (space).
+	line := buf[10:n] // skip "goroutine " prefix
 	end := 0
 	for end < len(line) && line[end] >= '0' && line[end] <= '9' {
 		end++

@@ -114,19 +114,9 @@ func ObservabilityMiddleware(next http.Handler) http.Handler {
 		}
 		w.Header().Set("X-Request-Id", reqID)
 
-		// Stamp on context so Cmd.perform (Step 2) can read via
-		// either the context (RequestIDFromContext) or the
-		// goroutine-local registry (CurrentRequestID, when context
-		// can't be threaded — e.g. Sky kernels that don't take
-		// context).
+		// Stamp the req-id on the request context so Cmd.perform
+		// and RequestIDFromContext can read it.
 		r = r.WithContext(WithRequestID(r.Context(), reqID))
-		// Stamp the goroutine so runCmd (which doesn't see the
-		// context) can capture the parent req-id at goroutine
-		// spawn time. Cleared on handler exit so the entry doesn't
-		// leak past the underlying net/http worker goroutine being
-		// reused for the next request.
-		SetGoroutineRequestID(reqID)
-		defer ClearGoroutineRequestID()
 
 		// Step 7 — OTel server span. Honours inbound traceparent
 		// when present so distributed traces chain correctly
@@ -135,6 +125,16 @@ func ObservabilityMiddleware(next http.Handler) http.Handler {
 		// configured — every span call short-circuits to zero cost.
 		spanCtx, span := StartHTTPServerSpan(r, routeLabelFor(r))
 		r = r.WithContext(spanCtx)
+
+		// Stamp the goroutine with the FULL span context (it carries
+		// both the OTEL server span and the req-id). Auto-instrumented
+		// kernels — Db.* / Auth.* / Http.* / session store — running
+		// on this request goroutine read it via CurrentTraceContext()
+		// in WithSpan and nest their spans under the request span.
+		// Cleared on handler exit so the entry doesn't leak past the
+		// net/http worker goroutine being reused for the next request.
+		SetGoroutineTraceContext(spanCtx)
+		defer ClearGoroutineTraceContext()
 
 		// Wrap ResponseWriter to capture status + bytes-written.
 		sw := newStatusCapture(w)

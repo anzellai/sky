@@ -19,7 +19,9 @@ package rt
 
 import (
 	"context"
+	"fmt"
 	"net/http"
+	"reflect"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -28,6 +30,37 @@ import (
 
 	"sky-app/rt/telemetry"
 )
+
+// skyResultError inspects a kernel return value. When it is an
+// Err-shaped SkyResult (Tag == 1), it returns an `error` describing
+// the ErrValue so WithSpan can mark the span failed. Returns nil for
+// Ok results and for non-Result values (a kernel may return a bare
+// value or a Task thunk).
+//
+// Generic over E/A so it reads via reflection — SkyResult[E,A] has
+// no non-generic base type to assert against.
+func skyResultError(v any) error {
+	if v == nil {
+		return nil
+	}
+	rv := reflect.ValueOf(v)
+	if rv.Kind() != reflect.Struct {
+		return nil
+	}
+	tagF := rv.FieldByName("Tag")
+	errF := rv.FieldByName("ErrValue")
+	if !tagF.IsValid() || !errF.IsValid() || tagF.Kind() != reflect.Int {
+		return nil
+	}
+	if tagF.Int() != 1 {
+		return nil // Ok
+	}
+	ev := errF.Interface()
+	if e, ok := ev.(error); ok {
+		return e
+	}
+	return fmt.Errorf("%v", ev)
+}
 
 // StartHTTPServerSpan begins a server-side span for an incoming
 // HTTP request. Honours W3C traceparent if the client supplied
@@ -107,6 +140,121 @@ func StartCmdSpan(ctx context.Context, taskName string) (context.Context, trace.
 		),
 	)
 	return ctx, span
+}
+
+// WithSpan is the auto-instrumentation seam (observability-design.md
+// Layer 2). An observable kernel — Db.* / Auth.* / Http.* / File.* /
+// session store — wraps its implementation in exactly one WithSpan
+// call; that is the entire per-kernel maintenance burden.
+//
+// It reads the calling goroutine's current trace context
+// (CurrentTraceContext — set by the HTTP middleware / Msg dispatch /
+// Cmd.perform spawn site), opens a CHILD span, stamps the child
+// context for the duration of fn so nested kernels parent off it,
+// runs fn, and finalises. The stamp is restored on exit
+// (stack-disciplined defer) so sibling work on the same goroutine
+// sees the right parent.
+//
+// `WithSpan` is Go-runtime-internal: it is never a kernel, never
+// in the kernel registry, never visible in Sky source. The kernel's
+// Sky-level type signature is unchanged.
+//
+// fn's return value flows through untouched; if it is an Err-shaped
+// SkyResult the span is marked with error status.
+func WithSpan(name string, kind trace.SpanKind, attrs []attribute.KeyValue, fn func() any) any {
+	parent := CurrentTraceContext()
+	tracer := telemetry.Tracer()
+	childCtx, span := tracer.Start(parent, name,
+		trace.WithSpanKind(kind),
+		trace.WithAttributes(attrs...),
+	)
+	defer span.End()
+
+	prev := CurrentTraceContext()
+	SetGoroutineTraceContext(childCtx)
+	defer SetGoroutineTraceContext(prev)
+
+	out := fn()
+	if err := skyResultError(out); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+	}
+	return out
+}
+
+// WithCmdSpan wraps a Cmd.perform task execution in an internal
+// span (observability-design.md Tier 1). Convenience over WithSpan
+// so the caller (live.go) need not import go.opentelemetry.io/otel.
+func WithCmdSpan(taskName string, fn func() any) any {
+	return WithSpan("cmd.perform", trace.SpanKindInternal,
+		[]attribute.KeyValue{attribute.String("sky.cmd.task", taskName)},
+		fn)
+}
+
+// WithMsgSpan wraps a Sky.Live Msg dispatch in an internal span
+// (observability-design.md Tier 1 — the causal middle layer that
+// groups DB / Http child spans under "which Msg caused them").
+func WithMsgSpan(msgName string, fn func() any) any {
+	return WithSpan("msg "+msgName, trace.SpanKindInternal,
+		[]attribute.KeyValue{attribute.String("sky.msg", msgName)},
+		fn)
+}
+
+// ─── Tier-1 auto-instrumentation convenience wrappers ─────────────
+//
+// One per observable-kernel family. They pick the right SpanKind +
+// OTEL semantic-convention attributes so the kernel files
+// (db_auth.go, http kernels, file kernels, session stores) need not
+// import go.opentelemetry.io/otel directly.
+//
+// SECURITY: only structural metadata is captured — never bind
+// values, secrets, bodies, or session contents (observability-
+// design.md "safe-by-default").
+
+// WithDbSpan wraps a DB operation. `statement` is the PARAMETERISED
+// SQL (placeholders intact); bind values live in a separate args
+// slice and are deliberately NOT captured.
+func WithDbSpan(system, op, statement string, fn func() any) any {
+	return WithSpan("db."+op, trace.SpanKindClient,
+		[]attribute.KeyValue{
+			attribute.String("db.system", system),
+			attribute.String("db.operation", op),
+			attribute.String("db.statement", statement),
+		}, fn)
+}
+
+// WithAuthSpan wraps an auth operation. No email / password / token
+// is ever captured — only the operation name.
+func WithAuthSpan(op string, fn func() any) any {
+	return WithSpan("auth."+op, trace.SpanKindInternal,
+		[]attribute.KeyValue{attribute.String("sky.auth.op", op)}, fn)
+}
+
+// WithHTTPClientSpan wraps an outbound HTTP call.
+func WithHTTPClientSpan(method, url string, fn func() any) any {
+	return WithSpan("http "+method, trace.SpanKindClient,
+		[]attribute.KeyValue{
+			attribute.String("http.method", method),
+			attribute.String("http.url", url),
+		}, fn)
+}
+
+// WithFileSpan wraps a filesystem operation.
+func WithFileSpan(op, path string, fn func() any) any {
+	return WithSpan("file."+op, trace.SpanKindInternal,
+		[]attribute.KeyValue{
+			attribute.String("sky.file.op", op),
+			attribute.String("sky.file.path", path),
+		}, fn)
+}
+
+// WithSessionSpan wraps a session-store load / save.
+func WithSessionSpan(op, store string, fn func() any) any {
+	return WithSpan("session."+op, trace.SpanKindClient,
+		[]attribute.KeyValue{
+			attribute.String("sky.session.op", op),
+			attribute.String("sky.session.store", store),
+		}, fn)
 }
 
 // EndSpanWithError finalises a span with error status when err is
