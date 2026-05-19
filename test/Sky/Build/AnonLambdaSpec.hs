@@ -92,15 +92,23 @@ spec = do
                 -- typed return as `Msg` (D1). Pre-D1 it was `any`.
                 ("cb func(string) Msg" `isInfixOf` body) `shouldBe` True
 
-        it "routes Msg ctor through rt.Coerce[func(string) Msg]" $ do
+        it "passes Msg ctor RAW (no rt.Coerce wrap) post σ-pinning" $ do
+            -- v0.13 Stage 1 update: with ADT-ctor sigs registered in
+            -- `_cg_funcParamTypes` and σ-pinning preserving TVars in
+            -- the substituteOnly path, the call-site `cb` typed slot
+            -- (`func(string) Msg`) matches the Msg ctor's own sig
+            -- (`func(string) Msg`) directly, so no `rt.Coerce` wrap
+            -- is needed. Closing this adapter class is the entire
+            -- point of the Stage 1 commit chain.
             sky <- findSky
-            withSystemTempDirectory "sky-anon-lambda-coerce-msg" $ \tmp -> do
+            withSystemTempDirectory "sky-anon-lambda-raw-msg" $ \tmp -> do
                 writeFixture tmp msgCtorFixture
                 (ec, _, _) <- runSky sky ["build", "src/Main.sky"] tmp
                 ec `shouldBe` ExitSuccess
                 body <- readFile (tmp </> "sky-out" </> "main.go")
+                -- The wrap MUST be absent; Msg_UserChanged flows raw.
                 ("rt.Coerce[func(string) Msg](Msg_UserChanged)"
-                    `isInfixOf` body) `shouldBe` True
+                    `isInfixOf` body) `shouldBe` False
 
 
     describe "Maybe-typed lambda at a user-defined HOF" $ do

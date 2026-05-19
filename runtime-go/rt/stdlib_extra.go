@@ -226,12 +226,12 @@ func JsonEnc_list(args ...any) any {
 		items := asList(args[1])
 		var out []any
 		for _, v := range items {
-			var mapped any
-			if f, ok := fn.(func(any) any); ok {
-				mapped = f(v)
-			} else {
-				mapped = v
-			}
+			// SkyCall (reflect) so typed-return lambdas from v0.13
+			// codegen work. The pre-fix `func(any) any` checked
+			// assertion silently fell through to identity on every
+			// typed lambda, masking the bug as a "map did nothing"
+			// instead of surfacing a panic.
+			mapped := SkyCall(fn, v)
 			if jv, ok := mapped.(JsonValue); ok {
 				out = append(out, jv.raw)
 			} else {
@@ -286,9 +286,116 @@ func JsonEnc_encode(indent any, v any) any {
 // ═══════════════════════════════════════════════════════════
 // Sky.Core.Json.Decode — parse JSON
 // ═══════════════════════════════════════════════════════════
+//
+// Phase 2.6 — path-aware decode errors. When a nested decoder
+// fails, the error message prepends the path from the document
+// root: "at .user.email[3]: expected String, got Number".
+//
+// Mechanism: leaf decoders (string / int / float / bool) emit a
+// type-aware "expected X, got Y" message. Each combinator (field,
+// index, at, list, map2..5) that descends one level deeper detects
+// nested Err results and prefixes its path segment.
+//
+// Why string-prefixing (vs structured [PathSeg]): the Sky-side
+// Error ADT already carries a String body. Switching to a
+// path-list would be a breaking change across every JSON-using
+// app. The prefix string is human-readable AND machine-parseable
+// (consistent ".<field>" / "[N]" syntax), so AI debugging an API
+// integration can spot the offending field at a glance.
 
 type JsonDecoder struct {
-	run func(any) any // takes a decoded Go value, returns Result String T
+	run func(any) any // takes a decoded Go value, returns Result Error T
+}
+
+// jsonValueKind returns the JSON-spec type name for the actual
+// value the decoder received. Powers "expected X, got Y" messages
+// where Y identifies what the JSON actually contained.
+func jsonValueKind(v any) string {
+	switch v.(type) {
+	case nil:
+		return "Null"
+	case bool:
+		return "Boolean"
+	case float64, int, int64:
+		return "Number"
+	case string:
+		return "String"
+	case []any:
+		return "Array"
+	case map[string]any:
+		return "Object"
+	default:
+		return fmt.Sprintf("%T", v)
+	}
+}
+
+// jsonPrefixError — when inner returns Err, prepend the path
+// segment to the message so the caller sees the full path from
+// the document root. No-op on Ok results.
+//
+// `segment` is the path increment ("." + fieldName, "[" + idx + "]").
+// We prepend at each combinator level; the leaf gets the full
+// chain on the way back up.
+func jsonPrefixError(result any, segment string) any {
+	if !isErrResult(result) {
+		return result
+	}
+	msg := extractErrMsg(result)
+	// If the message already starts with "at " (a previous level
+	// already added a path), splice the new segment in:
+	//   "at .user: ..." + segment "[3]"  → "at .user[3]: ..."
+	// Otherwise wrap as a fresh "at <segment>: <msg>".
+	const atPrefix = "at "
+	if strings.HasPrefix(msg, atPrefix) {
+		// Find the colon that ends the path.
+		i := strings.Index(msg, ": ")
+		if i > 0 {
+			pathPart := msg[len(atPrefix):i]
+			rest := msg[i:] // includes ": "
+			return Err[any, any](ErrDecode(atPrefix + segment + pathPart + rest))
+		}
+	}
+	return Err[any, any](ErrDecode(atPrefix + segment + ": " + msg))
+}
+
+// extractErrMsg — helper to read the human-readable body of an
+// Err Result holding an ErrDecode/ErrFfi/etc. Sky Error.
+//
+// Sky's Error ADT shape (per makeError in rt.go):
+//
+//   Error[ErrorKind, ErrorInfo]
+//     where ErrorInfo = { Message: String, Details: Maybe ... }
+//
+// So Fields[0] is the kind enum and Fields[1] is the info record.
+// We pull `.Message` from Fields[1]; fall through to raw string +
+// stringify on shape mismatches so older callers / tests still
+// work.
+func extractErrMsg(result any) string {
+	v := extractErrResultValue(result)
+	if s, ok := v.(string); ok {
+		return s
+	}
+	// Sky Error ADT: skyErrorAdt with .Fields[1] = skyErrorInfo
+	if eAdt, ok := v.(skyErrorAdt); ok && len(eAdt.Fields) >= 2 {
+		if info, ok := eAdt.Fields[1].(skyErrorInfo); ok {
+			return info.Message
+		}
+	}
+	// Generic SkyADT — Field[1] often carries the message for
+	// other ADT shapes (Error ADT with non-info second field).
+	if adt, ok := v.(SkyADT); ok {
+		if len(adt.Fields) >= 2 {
+			if s, ok := adt.Fields[1].(string); ok {
+				return s
+			}
+		}
+		if len(adt.Fields) > 0 {
+			if s, ok := adt.Fields[0].(string); ok {
+				return s
+			}
+		}
+	}
+	return fmt.Sprintf("%v", v)
 }
 
 func JsonDec_decodeString(decoder any, input any) any {
@@ -310,7 +417,7 @@ func JsonDec_string() any {
 		if s, ok := v.(string); ok {
 			return Ok[any, any](s)
 		}
-		return Err[any, any](ErrDecode("expected string"))
+		return Err[any, any](ErrDecode("expected String, got " + jsonValueKind(v)))
 	}}
 }
 
@@ -319,7 +426,7 @@ func JsonDec_int() any {
 		if f, ok := v.(float64); ok {
 			return Ok[any, any](int(f))
 		}
-		return Err[any, any](ErrDecode("expected int"))
+		return Err[any, any](ErrDecode("expected Int, got " + jsonValueKind(v)))
 	}}
 }
 
@@ -328,7 +435,7 @@ func JsonDec_float() any {
 		if f, ok := v.(float64); ok {
 			return Ok[any, any](f)
 		}
-		return Err[any, any](ErrDecode("expected float"))
+		return Err[any, any](ErrDecode("expected Float, got " + jsonValueKind(v)))
 	}}
 }
 
@@ -337,22 +444,26 @@ func JsonDec_bool() any {
 		if b, ok := v.(bool); ok {
 			return Ok[any, any](b)
 		}
-		return Err[any, any](ErrDecode("expected bool"))
+		return Err[any, any](ErrDecode("expected Bool, got " + jsonValueKind(v)))
 	}}
 }
 
 func JsonDec_field(name any, inner any) any {
+	fieldName := fmt.Sprintf("%v", name)
 	return JsonDecoder{run: func(v any) any {
 		m, ok := v.(map[string]any)
 		if !ok {
-			return Err[any, any](ErrDecode("expected object"))
+			return Err[any, any](ErrDecode(
+				"expected Object (for field ." + fieldName +
+					"), got " + jsonValueKind(v)))
 		}
-		fv, exists := m[fmt.Sprintf("%v", name)]
+		fv, exists := m[fieldName]
 		if !exists {
-			return Err[any, any](ErrDecode("missing field: " + fmt.Sprintf("%v", name)))
+			return Err[any, any](ErrDecode(
+				"missing field: ." + fieldName))
 		}
 		if d, ok := inner.(JsonDecoder); ok {
-			return d.run(fv)
+			return jsonPrefixError(d.run(fv), "."+fieldName)
 		}
 		return Ok[any, any](fv)
 	}}
@@ -360,21 +471,25 @@ func JsonDec_field(name any, inner any) any {
 
 // JsonDec_index : Int -> Decoder a -> Decoder a
 // Pulls the Nth element of a JSON array and feeds it to inner.
-// Elm-compatible surface (Decode.index 0 decoder). Returns Err when
-// the value is not an array, or when the index is out of range.
+// Path-aware errors (Phase 2.6) — prepends "[<i>]" to the inner
+// decoder's error message so deeply-nested failures show their
+// full path.
 func JsonDec_index(idx any, inner any) any {
 	i := AsInt(idx)
 	return JsonDecoder{run: func(v any) any {
 		arr, ok := v.([]any)
 		if !ok {
-			return Err[any, any](ErrDecode("expected array"))
+			return Err[any, any](ErrDecode(
+				fmt.Sprintf("expected Array (for index [%d]), got %s",
+					i, jsonValueKind(v))))
 		}
 		if i < 0 || i >= len(arr) {
 			return Err[any, any](ErrDecode(
-				fmt.Sprintf("index %d out of range (len %d)", i, len(arr))))
+				fmt.Sprintf("index [%d] out of range (Array length %d)",
+					i, len(arr))))
 		}
 		if d, ok := inner.(JsonDecoder); ok {
-			return d.run(arr[i])
+			return jsonPrefixError(d.run(arr[i]), fmt.Sprintf("[%d]", i))
 		}
 		return Ok[any, any](arr[i])
 	}}
@@ -384,15 +499,18 @@ func JsonDec_list(inner any) any {
 	return JsonDecoder{run: func(v any) any {
 		arr, ok := v.([]any)
 		if !ok {
-			return Err[any, any](ErrDecode("expected array"))
+			return Err[any, any](ErrDecode("expected Array, got " + jsonValueKind(v)))
 		}
 		out := make([]any, 0, len(arr))
-		for _, item := range arr {
+		for idx, item := range arr {
 			if d, ok := inner.(JsonDecoder); ok {
 				r := d.run(item)
 				if sr, ok := r.(SkyResult[any, any]); ok {
 					if sr.Tag != 0 {
-						return r
+						// First failing element wins — prepend its
+						// index so the user knows WHICH element of
+						// the list rejected.
+						return jsonPrefixError(r, fmt.Sprintf("[%d]", idx))
 					}
 					out = append(out, sr.OkValue)
 				}
@@ -412,8 +530,16 @@ func JsonDec_map(fn any, inner any) any {
 				if sr.Tag != 0 {
 					return r
 				}
-				f := fn.(func(any) any)
-				return Ok[any, any](f(sr.OkValue))
+				// Use SkyCall (reflect dispatch) instead of a raw
+				// `fn.(func(any) any)` assertion. v0.13 typed
+				// codegen infers concrete return types for
+				// lambdas where it can — e.g. `\f -> Math.round
+				// f` lowers to `func(any) int`, not `func(any)
+				// any`. The raw assertion panicked on every such
+				// shape. SkyCall handles arbitrary `func(any) T`
+				// shapes by wrapping the typed return back into
+				// `interface{}` via `reflect.Value.Interface()`.
+				return Ok[any, any](SkyCall(fn, sr.OkValue))
 			}
 		}
 		return Err[any, any](ErrDecode("decode error"))
@@ -428,8 +554,11 @@ func JsonDec_andThen(fn any, inner any) any {
 				if sr.Tag != 0 {
 					return r
 				}
-				f := fn.(func(any) any)
-				nextDec := f(sr.OkValue)
+				// SkyCall here too — the callback returns a Decoder
+				// of a concrete type (e.g. `func(any)
+				// JsonDecoder`), which the raw assertion couldn't
+				// match. See JsonDec_map for the full rationale.
+				nextDec := SkyCall(fn, sr.OkValue)
 				if nd, ok := nextDec.(JsonDecoder); ok {
 					return nd.run(v)
 				}
@@ -470,22 +599,31 @@ func JsonDec_fail(msg any) any {
 
 // JsonDec.at : List String -> JsonDecoder a -> JsonDecoder a
 // Drill into a nested path before applying the inner decoder.
+// Path-aware errors (Phase 2.6) — concatenates every traversed
+// path segment into the final error so failures show "at .a.b.c:
+// ..." rather than "missing field c" with no context.
 func JsonDec_at(path any, inner any) any {
 	return JsonDecoder{run: func(v any) any {
 		cur := v
+		traversed := ""
 		for _, seg := range asList(path) {
+			segStr := fmt.Sprintf("%v", seg)
+			traversed += "." + segStr
 			m, ok := cur.(map[string]any)
 			if !ok {
-				return Err[any, any](ErrDecode("at: expected object at " + fmt.Sprintf("%v", seg)))
+				return Err[any, any](ErrDecode(
+					"at " + traversed + ": expected Object, got " +
+						jsonValueKind(cur)))
 			}
-			fv, exists := m[fmt.Sprintf("%v", seg)]
+			fv, exists := m[segStr]
 			if !exists {
-				return Err[any, any](ErrDecode("at: missing " + fmt.Sprintf("%v", seg)))
+				return Err[any, any](ErrDecode(
+					"at " + traversed + ": missing field"))
 			}
 			cur = fv
 		}
 		if d, ok := inner.(JsonDecoder); ok {
-			return d.run(cur)
+			return jsonPrefixError(d.run(cur), traversed)
 		}
 		return Ok[any, any](cur)
 	}}

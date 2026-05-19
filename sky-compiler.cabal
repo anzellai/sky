@@ -24,6 +24,14 @@ extra-source-files:
     runtime-go/go.mod
     runtime-go/go.sum
     runtime-go/rt/*.go
+    -- Runtime sub-packages — these must be listed explicitly,
+    -- otherwise `cabal install`'s sdist phase silently drops the
+    -- subdir contents and the binary's TH-embedded `embeddedRuntime`
+    -- only contains top-level files. Result: a published binary
+    -- without `rt/jobs/` or `rt/telemetry/`, and user `go build`
+    -- fails with `package sky-app/rt/jobs is not in std`. Issue #58.
+    runtime-go/rt/jobs/*.go
+    runtime-go/rt/telemetry/*.go
     sky-stdlib/Sky/Core/*.sky
     sky-stdlib/Sky/*.sky
     sky-stdlib/Std/*.sky
@@ -32,6 +40,12 @@ extra-source-files:
     tools/sky-ffi-inspect/main.go
     tools/sky-ffi-inspect/go.mod
     tools/sky-ffi-inspect/go.sum
+    -- Bundled Sky Console mini-app (sky-bundled/console/) — embedded
+    -- via TH for the `sky console` CLI subcommand. Listed explicitly
+    -- so cabal sdist picks the subdirs up; same issue class as the
+    -- runtime-go subdirs above (Issue #58).
+    sky-bundled/console/sky.toml
+    sky-bundled/console/src/*.sky
     app/VERSION
 
 executable sky
@@ -142,8 +156,10 @@ executable sky
     Sky.Build.ModuleGraph
     Sky.Build.Compile
     Sky.Build.Dce
+    Sky.Build.EmbedDirTH
     Sky.Build.EmbeddedRuntime
     Sky.Build.EmbeddedInspector
+    Sky.Build.EmbeddedConsole
     Sky.Build.FfiGen
     Sky.Build.FfiRegistry
     Sky.Build.FfiTypeParser
@@ -164,6 +180,7 @@ executable sky
 
     -- CLI helpers
     Sky.Cli.Watch
+    Sky.Cli.Doctor
 
 
 test-suite sky-tests
@@ -192,6 +209,8 @@ test-suite sky-tests
     , aeson >= 2.0
     , vector >= 0.12
     , time >= 1.9
+    , file-embed >= 0.0.15
+    , template-haskell >= 2.16
 
   other-modules:
       Sky.Build.Validator
@@ -211,12 +230,17 @@ test-suite sky-tests
       Sky.Canonicalise.QualifiedTypeAliasSpec
       Sky.Type.ExhaustivenessSpec
       Sky.Type.AnyWildcardSpec
+      Sky.Type.NumericBinopSpec
       Sky.Type.TupleLambdaSpec
       Sky.Type.UiOnSubmitTypedRecordSpec
       Sky.Type.UfCycleGuardSpec
       Sky.Type.RecordFieldExactnessSpec
       Sky.Build.UiFillCascadeSpec
       Sky.Build.UiMultilineTextareaSpec
+      Sky.Build.ExposingTypeCtorsSpec
+      Sky.Build.LetForwardRefSpec
+      Sky.Build.EntryLocalShadowsDepSpec
+      Sky.Parse.MultiLineCaseSubjectSpec
       Sky.Type.InstanceCaptureSpec
       Sky.Format.FormatSpec
       Sky.Build.GoKeywordCollisionSpec
@@ -267,3 +291,4 @@ test-suite sky-tests
     , Sky.Cli.TestSpec
     , Sky.Cli.UpgradeClaudeSpec
     , Sky.Cli.WatchSpec
+    , Sky.Cli.DoctorSpec

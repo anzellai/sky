@@ -222,6 +222,11 @@ builtinTypes =
     , ("Maybe",  TypeHome ModuleName.maybe_ "Maybe" 1)
     , ("Result", TypeHome ModuleName.result_ "Result" 2)
     , ("Task",   TypeHome ModuleName.task "Task" 2)
+    -- Sky.Core.Error.Error is the canonical Sky error type
+    -- (v0.10.0 consolidation). Auto-imported so every Sky source
+    -- can write `Result Error a` without an explicit
+    -- `import Sky.Core.Error exposing (Error)`.
+    , ("Error",  TypeHome (ModuleName.Canonical "Sky.Core.Error") "Error" 0)
     ]
 
 
@@ -384,6 +389,10 @@ staticKernelModules = Map.fromList
     -- Std.Css is a Sky-source stdlib module (v0.13 Layer 3) — NOT a
     -- kernel pseudo-module.
     , ("Std.Live",             "Live")
+    -- Phase 1.3 — Std.Jobs (background-task module). Sky source:
+    -- `Jobs.enqueue myJob payload`. Wired to runtime in
+    -- runtime-go/rt/jobs_kernel.go.
+    , ("Std.Jobs",             "Jobs")
     -- Sky.Cli — line-oriented TEA backend. Same Cmd/Sub/program shape
     -- as Sky.Live, view returns String (the prompt), onLine maps each
     -- stdin line to a Msg. See runtime-go/rt/cli.go.
@@ -459,6 +468,7 @@ staticKernelModules = Map.fromList
     -- Css bare alias removed (v0.13 Layer 3) — Sky-source module;
     -- resolve via a real `import Std.Css`.
     , ("Live",       "Live")
+    , ("Jobs",       "Jobs")
     , ("Cli",        "Cli")
     , ("Tui",        "Tui")
     , ("JsonEnc",    "JsonEnc")

@@ -14,6 +14,13 @@ Sky is an experimental fullstack programming language that combines **Go's pragm
 - **Runtime hardening.** Map→struct narrowing in `rt.Coerce[T]` closes the Db.query → typed-record panic class. Reflect-adapter arg narrowing closes the `[]map[string]any` → `map[string]string` typed-callback class. `rt.AsMapAny` widener closes the symmetric `map[string]string` → `map[string]any` polymorphic-callee class. Tuple dispatch fast-path (~40 % faster per TEA update). Static-dir favicon serving from root so browser auto-requests don't 404. All fixes have regression specs in `runtime-go/rt/*_test.go`.
 - **Full end-to-end verification.** All 25 examples build clean from a wiped state; Sky.Live + Sky.Http.Server apps drive sign-up / sign-in / CRUD / sign-out scenarios via Playwright with screen-recording artefacts (`scripts/verify-all-web.sh` with `SKY_RECORD=1`); Sky.Tui + Sky.Cli apps run panic-free.
 
+### Post-v0.13 additions
+
+- **Sky Console + sub-app mount + universal observability.** Every Sky.Live / Sky.Http.Server app auto-mounts a Std.Ui-written dev console at `/_sky/console` in dev mode — visit the path or click the injected "🔍 Console" floating link. The console is its own self-contained Sky.Live mini-app spawned as a child process and reverse-proxied behind your app: single port, same origin, zero shared state. **Same primitive (`rt.MountSubApp`) generalises**: mount any Sky binary (or any HTTP server) under any URL prefix to host billing widgets, admin panels, mini-apps under the parent's listener. Sub-apps push their logs / metrics / spans back to the parent's `/_sky/observability/ingest` labelled by namespace — one Prometheus scrape covers the whole tree. Also runs standalone via `sky console` (Sky.Live in the browser) or `sky console --tui` (Sky.Tui in the terminal — same source, different backend). See ["Sky Console + observability + sub-app mount"](#sky-console--observability--sub-app-mount--production-grade-out-of-the-box) below for what ships.
+- **Production-mode gate** for dev-only features. `ENV` (or `SKY_ENV`) unset OR set to `dev` / `development` / `local` → dev mode (console + banner shown). Anything else (`production`, `prod`, `staging`, `qa`, `preview`, …) → console + banner hidden, `/_sky/metrics` gated behind Bearer auth. Single source of truth across the runtime — see ["Going to production"](#going-to-production) below.
+- **HM merge bug fixed: entry-local lambda params no longer shadow dep top-levels.** `let xs = List.filter f model.logs` in a dep module had its result type silently mistyped as the entry module's lambda-param type (when a same-named param existed) — generating `rt.Coerce[WrongType](xs)` and panicking at runtime. `typesWithDeps` in `src/Sky/Build/Compile.hs` now detects entry+dep structural conflicts and falls back to safe any-routing. Regression fence: `test/Sky/Build/EntryLocalShadowsDepSpec.hs`.
+- **Sub-app process-tree leak fixed.** `sky console` now installs SIGTERM / SIGHUP / SIGINT handlers that propagate to its `app-live` child; `MountSubApp` uses `cmd.Cancel = SIGTERM` + `WaitDelay` so each level of the tree gets a chance to tear down its own children before SIGKILL escalation; bundled console sets `SKY_CONSOLE_EMBED=off` for its own child so it doesn't recursively auto-mount yet another console under itself. Routine "http: proxy error: context canceled" log noise silenced via a custom `proxy.ErrorHandler`.
+
 ```elm
 module Main exposing (main)
 
@@ -191,6 +198,72 @@ Same `update` semantics, same `view` widgets, two completely different output ta
 
 Plus typed events (`onClick / onSubmit / onInput`), forms with the password best-practice pattern (`Ui.form` + `onSubmit DoSignIn` decoding wire formData into a typed record — secret never enters Model), and file/image upload with browser-side resize hints (`Ui.onImage AvatarSelected, Ui.fileMaxWidth 800`). See [Sky.Ui overview](docs/skyui/overview.md).
 
+### Sky Console + observability + sub-app mount — production-grade out of the box
+
+This is the big one: **every Sky.Live and Sky.Http.Server app ships with a built-in dev console, structured logging, Prometheus metrics, distributed tracing, and the ability to host any number of mini-apps under one binary** — no separate Grafana stack to stand up, no separate dashboard to wire, no separate process supervisor. The same `sky build` you'd write for a tiny demo gives you the operational surface you'd otherwise spend weeks bolting on.
+
+**What you get the moment you run `sky run`:**
+
+| Surface | What it is |
+|---|---|
+| `🔍 Console` floating link | Injected into every page in dev mode. Click → opens the in-binary dashboard. |
+| `/_sky/console` | A bundled Std.Ui dashboard reverse-proxied behind your app. Tabs: Overview · Metrics · Logs · Traces · Errors. Auto-aggregates everything from your app + every sub-app you mount. |
+| `/_sky/metrics` | Prometheus scrape endpoint (token-gated in prod). `sky_live_requests_total{route,status}`, `sky_live_request_seconds`, response-byte histograms, error counters, custom counters via `rt.RecordCounter`. |
+| `/_sky/healthz` · `/_sky/readyz` | Liveness + readiness probes for k8s / Cloud Run / Fly / Render / Railway. |
+| `/_sky/buildinfo` | Commit SHA, build timestamp, Sky version — useful in deploy diffs. |
+| Structured logs | Every `Log.info / .warn / .error / .infoWith` carries level + message + request-correlation ID; HTTP access log is automatic ("GET / 200 (3ms)"); 4xx → warn, 5xx → error. |
+| Trace spans | Every HTTP request opens a span; `rt.RecordTrace` adds child spans. Visible in the Traces tab + exported to OpenTelemetry if `OTEL_EXPORTER_OTLP_ENDPOINT` is set. |
+
+```bash
+sky run          # dev — console, banner, logs/metrics all on
+ENV=production sky-out/app   # prod — console + banner gone, /_sky/metrics gated behind Bearer auth
+```
+
+**Sub-app mount — host multiple Sky apps under one binary, with federated observability:**
+
+```go
+// Inside your parent Sky app's generated main.go (one-line patch
+// — a Sky-side `Live.app { subApps = [...] }` API is next):
+import "your-app/rt"
+
+rt.MountSubApp(mux, "/billing",  rt.SpawnBinary("./billing-app"))
+rt.MountSubApp(mux, "/admin",    rt.SpawnBinary("./admin-app"))
+rt.MountSubApp(mux, "/docs",     rt.SpawnBinary("./hugo-server"))
+```
+
+Each sub-app runs as its own child process — its own session store, its own update loop, its own session cookies, zero shared state. The reverse proxy gives the user a single port and a single origin. **Observability federates automatically**: every log / metric / span the child emits gets pushed back to the parent labelled `subapp="billing"`, so one Prometheus scrape on the parent's `/_sky/metrics` covers the whole tree. PromQL `sum by (subapp) (rate(sky_live_requests_total[1m]))` works without per-sub-app scrape jobs. The console's tabs read the same store — view all your sub-apps' traffic in one place.
+
+**Why this matters** — typical "production-ready" web-app setup: pick a backend framework, pick a frontend framework, glue them, pick a logger, pick a metrics library, stand up Prometheus, stand up Grafana, stand up an OTel collector, wire a tracing library, write a dashboard, build an admin panel as a separate service, deploy four containers. Sky gives you the same operational surface with a single `sky build`. Read [Sky.Live overview — Dev console + sub-app mount](docs/skylive/overview.md#dev-console--auto-mounted-at-_skyconsole) for the full mechanism.
+
+### Std.Decimal + Std.Money + Std.Time — production-grade arithmetic + time
+
+For the things every real app gets wrong: floating-point money, banker's rounding, currency-typed arithmetic, IANA timezones.
+
+```elm
+import Std.Decimal as Dec
+import Std.Money as Money exposing (Currency)
+import Std.Time as Stime
+
+-- Exact arithmetic — 0.1 + 0.2 is genuinely 0.3
+total = Dec.add (Dec.fromString "0.1" |> okOr Dec.zero)
+                (Dec.fromString "0.2" |> okOr Dec.zero)
+
+-- Currency-typed Money — add USD to JPY at compile time, not at runtime
+subTotal = Money.fromMajor Money.USD 100
+tax      = Money.percentOf (Dec.fromString "8.875" |> okOr Dec.zero) subTotal
+total    = Money.add subTotal tax       -- "$108.88"
+
+-- Fair-split invoice
+parts = Money.allocate 3 (Money.fromMajor Money.USD 100)
+        -- → [$33.34, $33.33, $33.33] — sums to $100 exactly
+
+-- Timezone-aware date arithmetic (no /usr/share/zoneinfo needed)
+nextMonth = Stime.addMonths 1 today      -- Jan 31 + 1 → Feb 28/29 (clamped)
+weekend   = Stime.isWeekend now
+```
+
+`Decimal` backed by `shopspring/decimal`; `Money` enforces currency-match at the type level; `Time` ships embedded `time/tzdata` so containers without `/usr/share/zoneinfo` still work. ISO 4217 currency enum covers 50+ codes (USD, EUR, GBP, JPY, CHF, …) plus crypto (BTC, ETH, USDT, USDC) plus `CurrencyRaw String` for the long tail. Full surface: [Standard library reference — `Std.Decimal` / `Std.Money` / `Std.Time`](docs/stdlib.md#stddecimal--arbitrary-precision-decimal-arithmetic).
+
 ### Plus the rest of the stdlib
 
 Crypto, JSON, HTTP client/server, file I/O, time, regex, encoding (base64 / hex / URL), structured logging, UUIDs, async tasks, parallel execution. See [Standard library reference](docs/stdlib.md) for the full surface.
@@ -224,6 +297,68 @@ helper (`sky-ffi-inspect`) is embedded and self-provisions into
 to install or keep on `$PATH`.
 
 See [docs/getting-started.md](docs/getting-started.md) for a walkthrough.
+
+### Going to production
+
+Two things flip Sky from dev mode to production mode: a config block in `sky.toml` and a small set of env vars in your container / runner. Both are read at process start so they take effect on the next deploy — no rebuild needed.
+
+#### `sky.toml` (compiled defaults — checked into your repo)
+
+```toml
+[live]
+port        = 8000          # default if SKY_LIVE_PORT not set
+store       = "postgres"    # memory | sqlite | redis | postgres | firestore
+ttl         = "24h"         # session lifetime
+maxBodyBytes = 5242880      # 5 MiB cap on /_sky/event POST (raise for file uploads)
+# storePath = "postgres://…"  # explicit; otherwise picks up DATABASE_URL
+
+[log]
+format = "json"             # plain (dev default) | json (prod default)
+level  = "info"             # debug | info | warn | error
+
+[auth]
+tokenTtl       = "24h"
+cookie         = "sky_sid"
+# tokenSecret read from SKY_AUTH_TOKEN_SECRET (never put secrets in sky.toml!)
+
+[env]
+# prefix = "MYAPP"          # namespace SKY_*_ env vars under MYAPP_* — only if you run
+                            # multiple Sky binaries on the same host with colliding internal keys
+```
+
+Reference: [`sky.toml` full schema](docs/sky-toml.md).
+
+#### `.env` (deploy-time secrets + per-environment overrides)
+
+```dotenv
+# ─── Sky operational ────────────────────────────────────────────────
+ENV=production              # gates dev console + banner OFF; gates /_sky/metrics behind auth
+SKY_LIVE_PORT=8080          # or honour the platform's PORT env (Cloud Run / Fly / Heroku)
+SKY_LIVE_STORE=postgres     # overrides sky.toml [live] store
+DATABASE_URL=postgres://…   # standard fallback Sky reads when SKY_LIVE_STORE_PATH unset
+
+# ─── Logging ────────────────────────────────────────────────────────
+SKY_LOG_FORMAT=json         # structured logs ship to stdout → your log aggregator picks up
+SKY_LOG_LEVEL=info
+
+# ─── Auth secrets ───────────────────────────────────────────────────
+SKY_AUTH_TOKEN_SECRET=…     # ≥32 bytes; Sky errors at startup if shorter
+
+# ─── Observability ──────────────────────────────────────────────────
+SKY_METRICS_TOKEN=…         # /_sky/metrics requires `Authorization: Bearer <this>` in prod
+# OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
+                            # if set, traces are also exported to your OTel collector
+
+# ─── Sub-app federation (if you use rt.MountSubApp) ─────────────────
+# SKY_INGEST_TOKEN=…        # auto-generated per parent boot; override only if children
+                            # run on different hosts
+```
+
+Sky reads env vars in priority order: **process env > `.env` file > `sky.toml`**. The `.env` file is auto-loaded at startup and never overrides real env vars — so a `docker run -e ENV=production` always wins over what's in `.env`. Production deployments override `.env` entries via the platform's secret store; `.env` itself is for local dev convenience and should not contain real secrets in git.
+
+The `productionFromEnv()` gate (`ENV` then `SKY_ENV`, anything outside `{dev, development, local}` counts as production) governs **three** things simultaneously: dev console mount, `🔍 Console` banner, `/_sky/metrics` auth requirement. One env var, one switch, no chance of leaking a dev surface to prod.
+
+Reference: [Sky.Live overview — env precedence + prefix](docs/skylive/overview.md#environment-variable-precedence).
 
 ### Building from source
 

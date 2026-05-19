@@ -94,3 +94,42 @@ spec = do
             out <- fmtStdin src
             -- The string literal must round-trip with its `--` intact.
             ("\"not -- a comment\"" `isInfixOf` out) `shouldBe` True
+
+        -- Regression (2026-05-18): pre-fix `spaces` only consumed
+        -- ' ' and '\t' — an inline `-- comment` after a token was
+        -- left in the stream, and the expression parser then read
+        -- the `--` as subtraction, producing baffling "Undefined
+        -- name: foo" errors where `foo` was a word in the comment.
+        --
+        -- Fix lives in src/Sky/Parse/Space.hs (`spaces` now
+        -- consumes inline `-- comment` content up to but not past
+        -- the next newline, so layout still sees the line break).
+        it "ignores `-- comment` after value on the same line" $ do
+            let src = unlines
+                    [ "module M exposing (..)"
+                    , ""
+                    , "x ="
+                    , "    \"hello\"   -- inline comment after string"
+                    ]
+            out <- fmtStdin src
+            -- The literal survives + the formatter dropped the
+            -- inline comment (formatter only carries top-level
+            -- comments through). Crucially: this no longer errors
+            -- with `Undefined name: inline`.
+            ("\"hello\"" `isInfixOf` out) `shouldBe` True
+
+        it "ignores `-- comment` inside record literal" $ do
+            let src = unlines
+                    [ "module M exposing (..)"
+                    , ""
+                    , "settings ="
+                    , "    { name = \"x\"        -- a label"
+                    , "    , port = 8080        -- standard"
+                    , "    , debug = False"
+                    , "    }"
+                    ]
+            out <- fmtStdin src
+            -- Each field roundtrips cleanly; no compile error.
+            ("name = " `isInfixOf` out) `shouldBe` True
+            ("port = 8080" `isInfixOf` out) `shouldBe` True
+            ("debug = False" `isInfixOf` out) `shouldBe` True

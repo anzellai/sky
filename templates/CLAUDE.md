@@ -1281,6 +1281,152 @@ choice : List a -> Task Error a          -- random element from list
 shuffle : List a -> Task Error (List a)  -- Fisher-Yates shuffle
 ```
 
+### Std.Decimal — arbitrary-precision arithmetic
+
+For money, billing, tax, invoices — anything where 0.1 + 0.2 must equal
+0.3 exactly. Backed by shopspring/decimal under the hood. `Decimal` is
+opaque; construct via `fromString` / `fromInt` / `fromFloat` / `fromMinor`.
+
+```elm
+import Std.Decimal as Dec exposing (Decimal)
+
+-- Construction
+fromString : String -> Result Error Decimal      -- "3.14" → Decimal
+fromInt    : Int -> Decimal
+fromFloat  : Float -> Decimal
+fromMinor  : Int -> Int -> Decimal               -- fromMinor 2 12345 = 123.45
+
+-- Arithmetic (exact)
+add, sub, mul : Decimal -> Decimal -> Decimal
+div, mod      : Decimal -> Decimal -> Result Error Decimal  -- Err on /0
+neg, abs      : Decimal -> Decimal
+
+-- Rounding modes
+round       : Int -> Decimal -> Decimal    -- banker's (round-half-to-even)
+roundHalfUp : Int -> Decimal -> Decimal    -- schools rounding
+truncate    : Int -> Decimal -> Decimal    -- toward zero
+floor, ceil : Decimal -> Decimal
+
+-- Comparison
+compare : Decimal -> Decimal -> Int   -- -1 / 0 / 1
+eq, neq, lt, lte, gt, gte : Decimal -> Decimal -> Bool
+min, max : Decimal -> Decimal -> Decimal
+isZero, isPositive, isNegative : Decimal -> Bool
+
+-- Percent
+percentOf   : Decimal -> Decimal -> Decimal   -- percentOf 20 100 = 20
+addPercent  : Decimal -> Decimal -> Decimal   -- addPercent 10 100 = 110
+subPercent  : Decimal -> Decimal -> Decimal   -- subPercent 10 100 = 90
+
+-- Formatting
+toString      : Decimal -> String
+toStringFixed : Int -> Decimal -> String       -- always N dp
+formatWith    : String -> String -> Int -> Decimal -> String
+                                               -- thousandsSep decimalSep places d
+                                               -- formatWith "," "." 2 → "1,234,567.89" (US)
+                                               -- formatWith "." "," 2 → "1.234.567,89" (EU)
+
+sum  : List Decimal -> Decimal
+zero, one, oneHundred : Decimal
+```
+
+### Std.Money — currency-aware arithmetic on Decimal
+
+ISO 4217 minor-unit awareness (JPY=0dp, USD=2dp, BHD=3dp).
+Currency-match enforced at add/sub. Built-in fair-split allocator.
+Pluggable FX rate registry.
+
+```elm
+import Std.Money as Money exposing (Money, Currency(..))
+import Std.Decimal as Dec
+
+-- Currency: 50+ codes (USD/EUR/GBP/JPY/CNY/…/BTC/ETH/USDT) + CurrencyRaw String
+
+-- Construction
+Money.fromMajor USD 100       -- $100.00
+Money.fromMinor USD 12345     -- $123.45 (cents)
+Money.fromString USD "99.99"  -- Result Error Money
+
+-- Accessors
+Money.amount, Money.currency, Money.currencyCode
+
+-- Currency metadata (ISO 4217)
+Money.minorUnits   : Currency -> Int     -- USD=2, JPY=0, BHD=3
+Money.symbol       : Currency -> String  -- "$", "¥", "£", …
+Money.currencyName : Currency -> String
+Money.knownCurrency : Currency -> Bool  -- False only for CurrencyRaw _
+Money.isKnownCode   : String   -> Bool  -- raw ISO-code predicate (form input)
+Money.parseCurrency : String   -> Currency
+
+-- Arithmetic — currency-checked
+Money.add, Money.sub : Money -> Money -> Money      -- same-currency or no-op
+Money.mul            : Decimal -> Money -> Money    -- scalar multiply
+Money.neg, Money.abs
+
+-- Fair-split: sum-preserving allocation
+Money.allocate 3 ($100)   -- [$33.34, $33.33, $33.33] — sums to $100 exactly
+Money.sumOf USD [..]
+
+-- Comparison, predicates
+Money.eq/neq/lt/lte/gt/gte, Money.compare
+Money.isZero, Money.isPositive, Money.isNegative
+
+-- Percent (returns same currency)
+Money.percentOf, Money.addPercent, Money.subPercent
+
+-- Formatting
+Money.format          -- "$12.34" — symbol-prefix
+Money.formatWithCode  -- "12.34 USD" — ISO suffix (B2B)
+Money.toMinor         -- → integer cents (for DB persistence)
+
+-- FX rate registry (process-local)
+Money.setRate USD EUR (Dec.fromString "0.92" |> okOrZero)   -- inverse auto-set
+Money.getRate, Money.hasRate, Money.clearRates
+Money.convert EUR ($100 USD)   -- Result Error Money
+```
+
+### Std.Time — IANA timezone-aware helpers
+
+Complements kernel `Sky.Core.Time` (UTC-only). Zone strings are IANA
+("UTC", "America/New_York", "Asia/Tokyo"). Embedded `time/tzdata` so
+calls work in container/scratch images without /usr/share/zoneinfo.
+
+```elm
+import Std.Time as Tz
+
+-- Formatting (Go layout strings)
+Tz.inZone : String -> Int -> Result Error String       -- RFC 3339 with offset
+Tz.formatInZone "America/New_York" "2006-01-02 15:04" ms
+
+-- Calendar arithmetic (CLAMPED — Jan 31 + 1 month = Feb 28/29, NOT Mar 3)
+Tz.addMonths, Tz.addYears : Int -> Int -> Int
+Tz.addDays, Tz.addHours, Tz.addMinutes, Tz.addSeconds : Int -> Int -> Int
+
+-- Period boundaries (zone-aware — local midnight, not UTC midnight)
+Tz.startOfDay, Tz.endOfDay
+Tz.startOfWeek                -- Monday (ISO 8601)
+Tz.startOfMonth, Tz.endOfMonth
+Tz.startOfYear, Tz.endOfYear
+
+-- Calendar queries
+Tz.year, Tz.month, Tz.day      : String -> Int -> Result Error Int
+Tz.dayOfWeek                   -- ISO: Monday=1 .. Sunday=7
+Tz.dayOfYear, Tz.weekOfYear    -- ISO 8601 week
+Tz.isWeekend
+Tz.daysInMonth y m             -- pure (no zone)
+Tz.isLeapYear
+
+-- Differences (a - b)
+Tz.diffDays, Tz.diffHours, Tz.diffMinutes, Tz.diffSeconds : Int -> Int -> Int
+
+-- Construction from parts
+Tz.fromParts zone y m d h min s : Result Error Int
+
+-- Zone discovery
+Tz.zoneOffset, Tz.zoneName     -- DST-aware for the given moment
+Tz.utc                          -- shorthand "UTC"
+```
+
 ### Std.Html
 
 v0.13: `Std.Html` / `Std.Html.Attributes` / `Std.Html.Events` are
@@ -1645,6 +1791,93 @@ main =
 -- Response builders: text, json, html, withStatus, withHeader, withCookie, redirect
 -- Cookie: Server.cookie "name" "value", Server.secureCookie, Server.sessionCookie
 ```
+
+### Sky Console — auto-mounted dev dashboard
+
+Every Sky.Live AND Sky.Http.Server app **automatically gets a
+Std.Ui-rendered dev console at `/_sky/console`** in dev mode.
+Zero user code needed — visit the path or click the floating
+"🔍 Console" link injected bottom-right of every page.
+
+The console is its own self-contained Sky.Live mini-app
+(`sky-bundled/console/`) reverse-proxied from a child process —
+no shared state with your app, no extra port (everything on your
+existing listener). Production-detection auto-suppresses both
+the banner and the mount.
+
+**Production-mode gate** (single source of truth): `ENV` (or
+`SKY_ENV`) **unset** OR one of `{dev, development, local}` →
+console + banner SHOWN. Anything else (`production`, `prod`,
+`staging`, `qa`, `preview`, …) → console + banner HIDDEN and
+`/_sky/metrics` requires Bearer auth.
+
+```bash
+# Local dev — console is at http://localhost:8000/_sky/console
+sky run
+
+# Staging / prod — banner gone, console mount gone, metrics gated
+ENV=production ./sky-out/app
+
+# Ad-hoc standalone — no host app needed
+sky console            # http://localhost:8025
+sky console --tui      # ... or in the terminal via Sky.Tui
+
+# Override the banner's link target (e.g. point at a remote shared console)
+SKY_CONSOLE_URL=https://internal-dash.staging.example.com ./sky-out/app
+
+# Opt out of the auto-spawn (banner stays linkable if you mount your own)
+SKY_CONSOLE_EMBED=off ./sky-out/app
+
+# Opt out of just the banner chrome (mount stays active)
+SKY_DEV_BANNER=off ./sky-out/app
+```
+
+### Sub-app mount — host any Sky app under a URL prefix
+
+The console is the first user of `rt.MountSubApp`. The same
+primitive lets you mount any other Sky app (or arbitrary HTTP
+server) under a path prefix on the parent's mux. Each sub-app
+runs as its OWN child process — independent session store,
+independent observability namespace, zero shared state — but
+**single port for the user, single process tree for supervision**
+(children die when the parent exits).
+
+Use cases: billing widget at `/billing`, admin panel at `/admin`,
+docs site at `/docs`, mini-app per feature team. Each can be
+written + deployed independently and composed at the URL level.
+
+The Go-side API (use from generated code or via a post-build
+patch; Sky-side ergonomic API tracked for v0.14):
+
+```go
+import "sky-app/rt"
+
+// Mount an external Sky binary as a sub-app:
+rt.MountSubApp(mux, "/billing", rt.SpawnBinary("./billing-app"))
+rt.MountSubApp(mux, "/admin",   rt.SpawnBinary("./admin-app"))
+
+// Or any non-Sky HTTP server (gives you `127.0.0.1:port` + a
+// reverse-proxy mount under the prefix):
+rt.MountSubApp(mux, "/docs", rt.SpawnBinary("./hugo-server"))
+```
+
+Each sub-app gets its mount prefix in `SKY_LIVE_BASE_PATH` so its
+inlined JS prefixes `/_sky/event` etc. correctly. SSE survives
+the proxy hop (no buffering). Children spawn in their own process
+group so a Ctrl-C on the parent's terminal doesn't multi-kill;
+the parent's signal handler tears children down cleanly with a
+2 s SIGTERM grace then SIGKILL.
+
+**Universal observability (shipped)**: every sub-app's logs,
+metrics, and trace spans automatically push to the parent's
+`/_sky/observability/ingest` endpoint, labelled by
+`subapp=<namespace>`. Parent's `/_sky/metrics` exposes the full
+process tree in one Prometheus exposition — `subapp="billing"`,
+`subapp="admin"`, etc. The console reads aggregated data via
+`/_sky/console/api/*`; PromQL queries can `sum by (subapp)`. No
+config needed — auto-wires when `MountSubApp` spawns the child
+(passes `SKY_PARENT_URL` + `SKY_LIVE_NAMESPACE` +
+`SKY_INGEST_TOKEN` env). Auth via shared token, CSRF-exempt.
 
 ## Sky.Live — Server-Driven UI
 
@@ -3165,6 +3398,95 @@ case Auth.register email password of
 ```
 
 For apps with custom user fields (username, avatar), use `Auth.hashPassword`/`Auth.verifyPassword` for the crypto while keeping your own users table.
+
+---
+
+## Going to production — config cheatsheet
+
+Two sources of truth: `sky.toml` (compiled defaults, in repo) and the process environment (deploy-time secrets + per-env overrides). Precedence: **process env > `.env` file > `sky.toml`**. `.env` is auto-loaded at startup but never overrides existing env vars, so `docker run -e ENV=production` always wins.
+
+### Minimum production-ready `sky.toml`
+
+```toml
+name    = "myapp"
+version = "0.1.0"
+entry   = "src/Main.sky"
+
+[source]
+root = "src"
+
+[live]
+port         = 8000
+store        = "postgres"
+ttl          = "24h"
+maxBodyBytes = 5242880          # 5 MiB POST cap; bump for file uploads
+
+[log]
+format = "json"                 # plain | json — pick json for prod stdout aggregators
+level  = "info"
+
+[auth]
+tokenTtl = "24h"
+cookie   = "sky_sid"
+# NEVER put tokenSecret in sky.toml — set SKY_AUTH_TOKEN_SECRET in env.
+```
+
+### Production `.env` template
+
+```dotenv
+# ─── operational gate ──────────────────────────────────────────────
+ENV=production                  # gates console + banner OFF, /_sky/metrics behind auth
+SKY_LIVE_PORT=8080              # (or honour platform PORT)
+
+# ─── persistence ───────────────────────────────────────────────────
+SKY_LIVE_STORE=postgres
+DATABASE_URL=postgres://user:pass@host/db  # fallback if SKY_LIVE_STORE_PATH unset
+
+# ─── observability ─────────────────────────────────────────────────
+SKY_LOG_FORMAT=json
+SKY_LOG_LEVEL=info
+SKY_METRICS_TOKEN=…             # /_sky/metrics requires `Authorization: Bearer <this>`
+# OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318  # optional OTel export
+
+# ─── secrets ───────────────────────────────────────────────────────
+SKY_AUTH_TOKEN_SECRET=…         # ≥32 bytes; Sky errors at startup if shorter
+```
+
+### What flips between dev and prod
+
+`productionFromEnv()` in `runtime-go/rt/observability.go` is the **one** function that drives all dev-only behaviour. It reads `ENV` (then `SKY_ENV`):
+
+| `ENV` value | Mode | Console mount | `🔍 Console` banner | `/_sky/metrics` auth |
+|---|---|---|---|---|
+| unset / `dev` / `development` / `local` | dev | ✓ at `/_sky/console` | ✓ floating link | open (any read) |
+| `production` / `prod` / `staging` / `qa` / `preview` / anything else | prod | hidden | hidden | `Authorization: Bearer $SKY_METRICS_TOKEN` |
+
+Bias-to-gate: if you bother to set `ENV` at all, you mean it's not dev.
+
+### Sub-app mount (multi-binary deployments)
+
+```go
+// In the generated main.go of your PARENT app, after the mux is built:
+import "your-app/rt"
+
+rt.MountSubApp(mux, "/billing", rt.SpawnBinary("./billing-app"))
+rt.MountSubApp(mux, "/admin",   rt.SpawnBinary("./admin-app"))
+```
+
+Each child is its own process — own session store, own update loop, no shared state. Sub-app logs / metrics / spans push to the parent's `/_sky/observability/ingest` labelled `subapp=<namespace>` (derived from the URL prefix). One Prometheus scrape on `/_sky/metrics` covers the whole tree.
+
+A Sky-side ergonomic API (`Live.app { subApps = [...] }`) is on the v0.14 list; the Go-side API is the contract.
+
+### Deployment platform notes
+
+| Platform | What it gives you | What you set |
+|---|---|---|
+| Fly.io / Render / Railway | `PORT`, `DATABASE_URL`, secret manager | `ENV=production`, `SKY_AUTH_TOKEN_SECRET`, `SKY_METRICS_TOKEN` |
+| Cloud Run | `PORT`, secret manager | same + map `PORT` → `SKY_LIVE_PORT` if your code reads SKY_LIVE_PORT explicitly |
+| Kubernetes | ConfigMap + Secret + Service | mount `/_sky/healthz` as liveness probe, `/_sky/readyz` as readiness probe |
+| Docker compose | env_file: `.env.production` | same |
+
+The single static binary works the same on all of them. Health probes hit `/_sky/healthz` (always 200) and `/_sky/readyz` (200 once the session store responds + dep services connected).
 
 ---
 

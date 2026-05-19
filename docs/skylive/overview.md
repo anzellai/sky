@@ -197,3 +197,73 @@ What's NOT affected:
 - The compile-time-only `SKY_SOLVER_BUDGET` knob, read by the Haskell compiler itself.
 
 Backwards-compatible: omit `[env] prefix` and behaviour matches every prior Sky version exactly.
+
+## Dev console — auto-mounted at `/_sky/console`
+
+Every Sky.Live (and Sky.Http.Server) app **auto-mounts a Std.Ui-written dev console at `/_sky/console`** in dev mode. A floating "🔍 Console" anchor injected into every rendered page links straight to it. Zero user code needed.
+
+The console is a fully-isolated Sky.Live mini-app (`sky-bundled/console/`) spawned as a child process and reverse-proxied behind your app — same port, same origin, no shared state, no Sky.Live wire collision. The child dies when the parent exits.
+
+**Production gate**: console + banner are gated on the same `productionFromEnv()` rule that governs `/_sky/metrics` auth. `ENV` (then `SKY_ENV`) unset OR set to `dev` / `development` / `local` → console on. Anything else (`production`, `prod`, `staging`, `qa`, `preview`, …) → console off, banner gone, `/_sky/metrics` gated. Intentionally bias-to-gate: if you bother setting `ENV` at all, you mean it.
+
+```bash
+# Dev — console at http://localhost:PORT/_sky/console
+sky run
+
+# Staging / prod — console + banner suppressed
+ENV=production ./sky-out/app
+
+# Ad-hoc standalone (no host app needed)
+sky console            # browser at :8025
+sky console --tui      # ... or terminal via Sky.Tui
+```
+
+### Env knobs
+
+- `SKY_CONSOLE_EMBED=off` — opt out of the auto-mount.
+- `SKY_DEV_BANNER=off` — suppress the floating link without unmounting.
+- `SKY_CONSOLE_URL=<url>` — override the banner's `href` (e.g. point at a remote dashboard). Default: `/_sky/console` relative to same origin.
+- `SKY_SUBAPP_VERBOSE=1` — surface spawned children's stdout / stderr for debugging.
+- `SKY_BIN=<path>` — override the `sky` binary used by the auto-spawn (defaults to `exec.LookPath("sky")`).
+
+## Sub-app mount — host any Sky app under a URL prefix
+
+The console is the first user of the runtime's general-purpose `rt.MountSubApp` API. The same primitive lets you mount any other Sky app (or arbitrary HTTP server) under a path prefix on your parent's mux. Each sub-app runs as its own child process — independent session store, independent observability, zero shared state — but the user sees a single port and the OS sees a single process tree.
+
+```go
+import "sky-app/rt"
+
+// Mount external Sky binaries:
+rt.MountSubApp(mux, "/billing", rt.SpawnBinary("./billing-app"))
+rt.MountSubApp(mux, "/admin",   rt.SpawnBinary("./admin-app"))
+
+// Or any non-Sky HTTP server (any binary that listens on a localhost port):
+rt.MountSubApp(mux, "/docs", rt.SpawnBinary("./hugo-server"))
+```
+
+A Sky-side ergonomic API (`Live.app { subApps = [Live.subApp "/admin" "./admin-app", ...] }`) is on the v0.14 list. The Go-side API is the contract for v0.13.x.
+
+### Sub-app-aware `SKY_LIVE_BASE_PATH`
+
+When a Sky.Live runtime starts with `SKY_LIVE_BASE_PATH` set (which `MountSubApp` does automatically for child processes), four behaviours flip:
+
+1. `<meta name="sky-base" content="<prefix>">` injected into every page wrap. The inlined JS reads `__skyBase` and prefixes every hardcoded `/_sky/event` / `/_sky/sse` / `/_sky/config` URL — without this, sub-app fetches would hit the parent's wire endpoint and silently drop.
+2. Dev banner suppressed (no recursive "click for console" inside the console).
+3. `MountObservabilityEndpoints` skipped (the parent owns `/_sky/{healthz,readyz,metrics,buildinfo}` — sub-app duplicates would just pollute).
+4. `maybeAutoMountConsole` early-returns (sub-apps don't get to spawn sub-apps — fork-bomb prevention).
+
+Set `SKY_LIVE_BASE_PATH` manually for advanced reverse-proxy setups where Sky.Live runs behind a fronting Nginx / Cloudflare / Envoy that does the prefix-strip.
+
+### Process supervision + shutdown
+
+`MountSubApp` registers each child in a process-tree-wide registry. Sky.Live's existing SIGINT/SIGTERM/SIGHUP handler calls `rt.ShutdownSubApps()` before `srv.Close`; Sky.Http.Server gained a minimal handler specifically for this. Children get 2 s of SIGTERM grace then SIGKILL.
+
+Children spawn in their own process group (`Setpgid: true`) so a Ctrl-C on the parent's terminal doesn't double-kill — the parent's handler tears them down cleanly via context cancel. If the parent crashes hard (SIGKILL, OOM), children orphan — best-effort cleanup, not a hard guarantee.
+
+### Universal observability federation (shipped)
+
+Every sub-app automatically pushes its logs / metrics / trace spans to the parent's `/_sky/observability/ingest` endpoint, labelled by `subapp=<namespace>`. The parent's `/_sky/metrics` exposes the union for a single Prometheus scrape — e.g. `sky_live_requests_total{subapp="billing",route="/charge",status="200"}`. PromQL `sum by (subapp) (rate(...))` works without per-sub-app scrape jobs.
+
+Auth via shared `SKY_INGEST_TOKEN` (auto-generated per parent boot, passed to children by `MountSubApp`; constant-time compare; CSRF-exempt because it's not browser-driven). Wire format is JSON-over-HTTP (OTel-shaped); push interval default 2 s, per-category buffer cap 1024, both configurable via `SKY_OBSERVABILITY_PUSH_INTERVAL_MS` / `SKY_OBSERVABILITY_BUFFER`. Children's pushes drop with a 1-warning-per-minute log when the buffer overflows; never block the caller.
+
+The console (which IS a sub-app) is the first user — every tab in the live console is reading data the parent's store aggregated across the parent + every other sub-app you've mounted. Out of scope: long-term storage (delegate to an external OTel collector → Loki / Mimir / Tempo), alerting (Prometheus Alertmanager), cross-host federation (proper OTel collector).

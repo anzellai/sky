@@ -477,10 +477,23 @@ escapeStringLit = concatMap esc
     esc '\r' = "\\r"
     esc c    = [c]
 
+-- Multiline (`"""..."""`) strings are preserved VERBATIM by the
+-- parser (see Sky.Parse.String — no unescapeString applied), so
+-- the formatter MUST also preserve verbatim or the round-trip
+-- breaks. This was the bug behind issue 2026-05-18: a single
+-- `\test` in a multiline source became `\\test` after `sky fmt`
+-- because escapeMultilineLit was applying single-line-string
+-- backslash-doubling, which then re-parsed as a literal `\\test`.
+--
+-- The only character a multiline string CAN'T contain is the
+-- closing `"""` sequence — but the parser has no escape syntax
+-- for it either, so a source containing `"""` was already
+-- malformed before reaching the formatter. We pass it through
+-- as-is (lets the user spot the issue on the next compile)
+-- rather than silently inserting `\` escapes the parser would
+-- read as literal backslash-quote bytes.
+--
+-- Net: identity function. Whole purpose of multiline strings
+-- (JavaScript / CSS / JSON / SQL embedding) requires it.
 escapeMultilineLit :: String -> String
-escapeMultilineLit = go
-  where
-    go [] = []
-    go ('"':'"':'"':rest) = "\\\"\\\"\\\"" ++ go rest
-    go ('\\':rest)        = "\\\\" ++ go rest
-    go (c:rest)           = c : go rest
+escapeMultilineLit = id

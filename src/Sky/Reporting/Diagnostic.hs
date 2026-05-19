@@ -226,6 +226,12 @@ codegenE_FfiArityMismatch :: DiagCode
 codegenE_FfiArityMismatch = DiagCode "E4004"
 -- ^ FFI binding called with wrong number of args.
 
+codegenE_UndefinedKernel :: DiagCode
+codegenE_UndefinedKernel = DiagCode "E4005"
+-- ^ Codegen emitted `rt.X` for a kernel function but the runtime
+--   doesn't export `X`. Closes the "Sky type-checks but Go-build
+--   rejects with `undefined: rt.X`" class. Issue #56.
+
 
 -- | Go-build / runtime codes (E5000-E5999).
 goE_BuildFailed          :: DiagCode

@@ -254,7 +254,7 @@ exprAtom_ mkError =
                              -- than `-` — silently dropping the user's
                              -- explicit grouping.
                              return (Src.Paren e1)
-                         _ -> error "Expected , or ) in expression"
+                         _ -> failParse mkError  -- was: error "Expected , or ) in expression"
 
         , -- List literal: [a, b, c]
           do char mkError '['
@@ -363,16 +363,19 @@ exprAtom_ mkError =
 
         , -- String literals (single-line and multiline)
           do s <- stringLiteral mkError
-             return $ case s of
-                 SingleLine str -> Src.Str str
-                 MultiLine str  -> Src.MultilineStr str
-                 CharLit _      -> error "char in string context"
+             case s of
+                 SingleLine str -> return (Src.Str str)
+                 MultiLine str  -> return (Src.MultilineStr str)
+                 -- Lexer returned a char where a string was wanted
+                 -- — surface as a Sky parse error rather than a
+                 -- Haskell ErrorCall.
+                 CharLit _      -> failParse mkError
 
         , -- Char literal
           do s <- charLiteral mkError
-             return $ case s of
-                 CharLit c -> Src.Chr c
-                 _         -> error "expected char"
+             case s of
+                 CharLit c -> return (Src.Chr c)
+                 _         -> failParse mkError
 
         , -- Number
           do n <- number mkError
@@ -566,7 +569,18 @@ lambdaParams_ mkError =
 exprCase :: (Row -> Col -> x) -> Parser x Src.Expr_
 exprCase mkError = do
     subject <- expression mkError
-    spaces
+    -- Accept `of` either on the same line as the subject end (the
+    -- common single-line form), or after newlines+indent for the
+    -- multi-line subject form:
+    --     case Result.mapError
+    --             (\_ -> ...)
+    --             (...)
+    --     of
+    --         ...
+    -- `of` is a reserved keyword and never starts a top-level
+    -- declaration, so a bare `of` after the subject is
+    -- unambiguous regardless of column.
+    freshLine mkError
     keyword mkError (T.pack "of")
     freshLine mkError  -- skip to first branch (may be on next line)
     branchCol <- getCol

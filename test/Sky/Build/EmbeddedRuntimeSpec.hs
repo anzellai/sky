@@ -48,9 +48,19 @@ spec = do
             sky <- findSky
             cwd <- getCurrentDirectory
             let diskRtDir = cwd </> "runtime-go" </> "rt"
-            diskFiles <- filter (\p -> ".go" `suffixOf` p) <$> walkFiles diskRtDir
-            -- The binary ships with the embedded tree; materialise
-            -- it by building a throwaway project.
+            -- Use TOP-LEVEL files only (no subdirectory descent).
+            -- The embedded runtime tree is flat by design; the
+            -- `walkFiles` recursion previously assumed a flat
+            -- structure too, but `runtime-go/rt/telemetry/` was
+            -- added later, breaking the basename-keyed comparison
+            -- because `disk[telemetry/atomic_float.go]` would be
+            -- looked up by bare name in the materialised flat dir.
+            -- Restrict comparison to top-level .go files which is
+            -- what the embedded runtime tracks.
+            diskEntries <- listDirectory diskRtDir
+            let diskFiles =
+                    [ diskRtDir </> e
+                    | e <- diskEntries, ".go" `suffixOf` e ]
             withSystemTempDirectory "sky-p3-3" $ \dir -> do
                 createDirectoryIfMissing True (dir </> "src")
                 writeFile (dir </> "sky.toml")
@@ -65,7 +75,10 @@ spec = do
                         { cwd = Just dir } ""
                 ec `shouldBe` ExitSuccess
                 let matRtDir = dir </> "sky-out" </> "rt"
-                matFiles <- filter (\p -> ".go" `suffixOf` p) <$> walkFiles matRtDir
+                matEntries <- listDirectory matRtDir
+                let matFiles =
+                        [ matRtDir </> e
+                        | e <- matEntries, ".go" `suffixOf` e ]
                 -- File set by basename must match exactly.
                 let diskNames = sort (map takeFileName diskFiles)
                     matNames  = sort (map takeFileName matFiles)
@@ -76,5 +89,43 @@ spec = do
                         mat  <- BS.readFile (matRtDir </> name)
                         mat `shouldBe` disk)
                     diskNames
+
+        it "rt/jobs/ + rt/telemetry/ subpackages land in sky-out (issue #58)" $ do
+            -- Regression for issue #58: `cabal install`'s sdist only
+            -- bundles files declared in `extra-source-files`. If a
+            -- runtime subdirectory is added (e.g. `rt/jobs/`,
+            -- `rt/telemetry/`) but NOT declared, the binary's
+            -- TH-embedded `embeddedRuntime` silently drops those
+            -- files. User `go build` then fails with
+            -- `package sky-app/rt/jobs is not in std`.
+            --
+            -- This test materialises a trivial app and asserts both
+            -- `sky-out/rt/jobs/jobs.go` and
+            -- `sky-out/rt/telemetry/atomic_float.go` exist post-build.
+            -- Failure means either (a) the cabal file's
+            -- `extra-source-files` is missing the subpackage glob,
+            -- or (b) the embedded-write path lost the subdir
+            -- copy logic.
+            sky <- findSky
+            withSystemTempDirectory "sky-issue-58" $ \dir -> do
+                createDirectoryIfMissing True (dir </> "src")
+                writeFile (dir </> "sky.toml")
+                    "name = \"issue-58\"\nentry = \"src/Main.sky\"\n"
+                writeFile (dir </> "src" </> "Main.sky") $ unlines
+                    [ "module Main exposing (main)"
+                    , "import Std.Log exposing (println)"
+                    , "main = println \"hi\""
+                    ]
+                (ec, _out, _err) <- readCreateProcessWithExitCode
+                    (proc sky ["build", "src/Main.sky"])
+                        { cwd = Just dir } ""
+                ec `shouldBe` ExitSuccess
+                let jobsFile  = dir </> "sky-out" </> "rt" </> "jobs" </> "jobs.go"
+                    telemFile = dir </> "sky-out" </> "rt" </> "telemetry"
+                                    </> "atomic_float.go"
+                jobsExists  <- doesFileExist jobsFile
+                telemExists <- doesFileExist telemFile
+                jobsExists  `shouldBe` True
+                telemExists `shouldBe` True
   where
     suffixOf suf s = drop (length s - length suf) s == suf

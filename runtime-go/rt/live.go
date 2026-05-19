@@ -1127,6 +1127,11 @@ func logMsgDecodeError(fn any, arg any, raw json.RawMessage) {
 }
 
 type liveSession struct {
+	// sid: the session id this session belongs to. Stored here so
+	// the dispatch path can include it in observability logs
+	// without having to thread sid through every helper signature.
+	// Populated when the session is loaded/created via getOrInit.
+	sid      string
 	model    any
 	handlers map[string]any
 	prevTree *VNode // Last rendered tree; used by the diff protocol.
@@ -1268,6 +1273,15 @@ type liveApp struct {
 	msgTags       map[string]int // SkyName → Tag cache for direct-send events
 	msgTagsMu     sync.Mutex
 	bannerCfg     liveBannerConfig // resolved env-vars + cfg.status overrides
+	// basePath: URL prefix this app is mounted under when running as
+	// a sub-app (e.g. "/_sky/console" when reverse-proxied behind a
+	// parent Sky.Live runtime). Empty for root-mount (the common
+	// case). Read from SKY_LIVE_BASE_PATH at startup. Surfaced to
+	// the browser via a <meta name="sky-base"> tag in the page wrap
+	// so the inlined JS prefixes its fetch/EventSource URLs
+	// correctly — without this, a sub-app's wire calls would hit
+	// the PARENT mux instead of the sub-app's.
+	basePath string
 }
 
 // apiRoute represents a custom handler mounted outside the TEA cycle.
@@ -1527,6 +1541,7 @@ func liveAppRun(cfg any) any {
 		locker:        newSessionLocker(),
 		msgTags:       make(map[string]int),
 		bannerCfg:     resolveBannerStrings(loadLiveBannerConfig(), cfg),
+		basePath:      normaliseBasePath(skyGetenv("LIVE_BASE_PATH")),
 	}
 	for _, r := range asList(Field(cfg, "Routes")) {
 		if lr, ok := r.(liveRoute); ok {
@@ -1574,10 +1589,52 @@ func liveAppRun(cfg any) any {
 	}
 	app.store = chooseStore(storeKind, storePath, ttl)
 
+	// Resolve listen port early so sub-app spawn helpers
+	// (maybeAutoMountConsole below) can pass it to children via
+	// SKY_PARENT_URL — that's how the observability push exporter
+	// finds us. cfg.Port wins over env; both fall back to 8080.
+	port := 8080
+	if p := Field(cfg, "Port"); p != nil {
+		port = AsInt(p)
+	}
+	if v := skyGetenv("LIVE_PORT"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			port = n
+		}
+	}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/_sky/event", app.handleEvent)
 	mux.HandleFunc("/_sky/sse", app.handleSSE)
 	mux.HandleFunc("/_sky/config", app.handleConfig)
+	// Auto-mount Sky Console sub-app FIRST so MountObservability
+	// Endpoints' legacy /_sky/console fallback can see the flag
+	// and skip its own registration. Dev mode only; no-op in
+	// production / sub-app contexts. Skipped entirely when running
+	// AS a sub-app (basePath != "") — sub-apps don't host their own
+	// sub-consoles.
+	parentPortForChildren := port
+	if app.basePath != "" {
+		parentPortForChildren = 0 // we're a sub-app; no sub-children
+	}
+	maybeAutoMountConsole(mux, app.basePath, parentPortForChildren)
+	// If THIS process is a sub-app (env vars from MountSubApp set),
+	// kick the push exporter — Log.* / counter / span writes flow
+	// to the parent. No-op for standalone (parent) runs.
+	StartPushExporter()
+	// Observability endpoints — healthz / readyz / metrics / buildinfo.
+	// Default-on (per docs/v1-rfc/1-observability.md); opt-out via
+	// OBSERVABILITY_DISABLED=1. Mounted BEFORE the catch-all "/" route
+	// so the dispatchRoot handler doesn't shadow them.
+	//
+	// Skipped when this app is running AS a sub-app (basePath set)
+	// to avoid polluting the parent's observability namespace with
+	// nested /_sky/console/_sky/{healthz,readyz,metrics,buildinfo}
+	// duplicates. A console DOESN'T need its own metrics — its job
+	// is to read the parent's.
+	if app.basePath == "" {
+		MountObservabilityEndpoints(mux)
+	}
 	// Static assets (if configured) mounted first so api/page routing
 	// doesn't shadow them.
 	if app.staticDir != "" {
@@ -1609,31 +1666,74 @@ func liveAppRun(cfg any) any {
 		gobRegisterAll(model)
 	}()
 
-	port := 8080
-	if p := Field(cfg, "Port"); p != nil {
-		port = AsInt(p)
-	}
-	// Allow <PREFIX>_LIVE_PORT env var to override (set in .env or shell).
-	if v := skyGetenv("LIVE_PORT"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			port = n
-		}
+	// (port was resolved earlier so sub-app spawn could use it)
+
+	// Production-mode detection — gates /_sky/metrics auth. Two
+	// signals (RFC §"Resolved question 1"):
+	//   1. Explicit env: SKY_ENV=production (highest priority).
+	//   2. Heuristic: binding to all interfaces (":PORT" form, no
+	//      explicit host, or 0.0.0.0). Containers, fly.io, k8s,
+	//      cloud VMs all bind 0.0.0.0; local dev binds 127.0.0.1.
+	//
+	// Production-mode gate for /_sky/console + /_sky/metrics auth.
+	// Rule: ENV (or SKY_ENV) is SET to anything OTHER than the
+	// dev-marker set {"dev", "development", "local"} → gate.
+	// ENV unset OR matching a dev marker → open.
+	//
+	// This is intentionally bias-to-gate: if you bother setting
+	// ENV at all (staging, qa, production, prod, etc.), you mean
+	// it's not a casual dev session and the gate should apply.
+	// Default-open for unset ENV keeps dev workflows friction-free
+	// (Docker / proxy / sidecar deploys all bind to varying
+	// addresses, so the previous addr-based heuristic was
+	// unreliable in both directions and has been removed).
+	SetProductionMode(productionFromEnv())
+
+	// Step 7 — OTel tracer init. Honours OTEL_EXPORTER_OTLP_ENDPOINT.
+	// Non-fatal: any failure logs + falls back to noop tracer
+	// (every span call becomes a zero-cost no-op).
+	if err := InitTracingFromEnv(); err != nil {
+		fmt.Fprintf(os.Stderr, "[sky.live] OTel init failed (continuing without trace export): %v\n", err)
 	}
 
 	// Wrap the mux with panic recovery so one bad handler can't crash the process.
+	// Layer order (outermost → innermost):
+	//   1. panic recovery     — turn handler panics into 500s
+	//   2. observability      — req-id, access log, metrics, OTel span
+	//   3. CSRF middleware    — Phase 1.2; double-submit cookie; default ON
+	//   4. user mux           — the actual handlers
+	// Putting CSRF inside observability means rejected CSRF requests
+	// STILL produce an access-log line + counter bump (you want to
+	// see CSRF rejection rates as a metric — sudden spike = attack
+	// or misconfiguration).
+	csrfed := CSRFMiddleware(mux)
+	observed := ObservabilityMiddleware(csrfed)
 	wrapped := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
-			if rec := recover(); rec != nil {
-				// Log to stderr so `go run` / tailing the server surfaces
-				// the actual cause. Client still gets a generic 500.
-				fmt.Fprintf(os.Stderr,
-					"[sky.live] panic handling %s %s: %v\n%s\n",
-					r.Method, r.URL.Path, rec, debugStack())
-				w.WriteHeader(500)
-				fmt.Fprint(w, "Internal Server Error")
+			rec := recover()
+			if rec == nil {
+				return
 			}
+			// http.ErrAbortHandler is Go's sentinel panic value
+			// that handlers use to abort cleanly without logging
+			// (httputil.ReverseProxy panics with it when the
+			// client disconnects mid-stream — typical for SSE).
+			// Re-panic so net/http's own handler-recover (which
+			// special-cases this value) finishes the abort
+			// cleanly, instead of us logging it as a 500.
+			if rec == http.ErrAbortHandler {
+				panic(rec)
+			}
+			// Real panic — log to stderr so `go run` / tailing the
+			// server surfaces the cause. Client still gets a
+			// generic 500.
+			fmt.Fprintf(os.Stderr,
+				"[sky.live] panic handling %s %s: %v\n%s\n",
+				r.Method, r.URL.Path, rec, debugStack())
+			w.WriteHeader(500)
+			fmt.Fprint(w, "Internal Server Error")
 		}()
-		mux.ServeHTTP(w, r)
+		observed.ServeHTTP(w, r)
 	})
 
 	srv := &http.Server{
@@ -1665,6 +1765,24 @@ func liveAppRun(cfg any) any {
 	go func() {
 		<-sigCh
 		fmt.Println("\nSky.Live shutting down…")
+		// Flip readyz to 503 immediately so orchestrators (k8s /
+		// fly.io / ECS) stop routing new traffic while in-flight
+		// requests drain. healthz stays 200 — the process IS still
+		// alive, just refusing new work.
+		SetReady(false)
+		// Flush pending OTel spans BEFORE killing the server so
+		// in-flight requests' spans reach the collector. Bounded
+		// timeout (2s VM, 500ms serverless) so we don't hang past
+		// the orchestrator grace window.
+		ShutdownTracing()
+		// Stop the Std.Jobs worker (if started) so in-flight jobs
+		// finish + the goroutine exits cleanly. Idempotent —
+		// safe to call when no worker was ever spawned.
+		JobsShutdown()
+		// Tear down any sub-apps spawned via MountSubApp (the dev
+		// console + any user-mounted billing/admin/etc. processes).
+		// Idempotent + bounded (2s SIGTERM grace then SIGKILL).
+		ShutdownSubApps()
 		_ = srv.Close()
 		// If srv.Close completes the listener teardown, ListenAndServe
 		// returns and the function exits naturally. If something hangs,
@@ -1789,6 +1907,10 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 			cancelSub: make(chan struct{}),
 		}
 	}
+	// Always set sid — both on fresh sessions AND on resumes from
+	// persistent stores (which load `sess` without the sid field
+	// populated). Cheap; idempotent on equal sids.
+	sess.sid = sid
 
 	// Route dispatch: pick the page ADT value for this URL path and
 	// splice it into model.Page via RecordUpdate. Always run so the
@@ -1825,7 +1947,28 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	// impose font choice, line-height, or colour scheme. Apps that
 	// need a "designed" look still attach their own typography via
 	// view-level style attrs or a styleNode at the top of view.
-	fmt.Fprintf(w, "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><style>%s</style></head><body><div id=\"sky-root\">%s</div><script>%s</script></body></html>", liveBaseCSS, body, liveJSWithCfg(sid, app.bannerCfg))
+	csrfToken := CurrentCsrfToken(r)
+	// devBanner is "" in production; injected as a sibling of sky-root
+	// so it survives every diff/patch cycle (root replacement won't
+	// blow it away) and stays pinned bottom-right via position:fixed.
+	// Also suppressed when this app IS itself running as a sub-app
+	// (basePath != "") — the bundled Sky Console is the canonical
+	// case: rendering a "🔍 Console" link inside the console itself
+	// would be recursive and confusing.
+	var devBanner string
+	if app.basePath == "" {
+		devBanner = devBannerHTML()
+	}
+	// When this app is mounted as a sub-app under a URL prefix
+	// (e.g. /_sky/console), the inlined JS needs to know to prefix
+	// its /_sky/event / /_sky/sse / /_sky/config URLs with that
+	// base. We surface the prefix via a <meta> tag rather than a JS
+	// variable so it's also visible to non-JS clients (e.g. SSR
+	// debugging) and survives any future templating layer. Empty
+	// content for root-mounted apps — the JS treats "" as "no
+	// prefix" (the historical default).
+	baseMeta := fmt.Sprintf(`<meta name="sky-base" content=%q>`, app.basePath)
+	fmt.Fprintf(w, "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">%s<style>%s</style></head><body><div id=\"sky-root\">%s</div>%s<script>%s</script></body></html>", baseMeta, liveBaseCSS, body, devBanner, liveJSWithCfgAndCsrfWithBase(sid, app.bannerCfg, csrfToken, app.basePath))
 }
 
 // liveBaseCSS is the minimal reset injected into every Sky.Live page.
@@ -2219,14 +2362,28 @@ func (app *liveApp) dispatch(sess *liveSession, msg any) (body string) {
 		// session state stays consistent.
 		return ""
 	}
+	// Step 5 — diff-based Msg logging. Snapshot the pre-update
+	// model + start time so ObserveMsgLog (called near the end of
+	// dispatch) can decide whether to emit a log line. Lifecycle
+	// marker (Step 6) detected here too.
+	msgLogCtx := BeginMsgLogForSession(msg, sess.model, sess.sid)
+	// Step 6 — unwrap Std.Live.lifecycle so the user's update
+	// receives the inner Msg, not the wrapper.
+	msg = UnwrapLifecycle(msg)
+
+	var dispatchErr error
+	var finalCmd any
 	defer func() {
 		if r := recover(); r != nil {
 			fmt.Fprintf(os.Stderr,
 				"[sky.live] dispatch panic recovered, dropping event: %v\n%s\n",
 				r, debug.Stack())
 			body = ""
+			dispatchErr = fmt.Errorf("dispatch panic: %v", r)
 		}
+		ObserveMsgLog(msgLogCtx, sess.model, finalCmd, dispatchErr)
 	}()
+
 	if app.guard != nil && isFunc(app.guard) {
 		g := sky_call2(app.guard, msg, sess.model)
 		// guard returns Result: Ok _ (allow) or Err "reason" (reject).
@@ -2236,6 +2393,10 @@ func (app *liveApp) dispatch(sess *liveSession, msg any) (body string) {
 				"Notification":     reason,
 				"NotificationType": "error",
 			})
+			// Mark as error outcome for the Msg log so guard
+			// rejections surface as warnings (caller-visible
+			// auth/permission failures).
+			dispatchErr = fmt.Errorf("guard rejected: %v", reason)
 			return app.renderView(sess)
 		}
 	}
@@ -2251,6 +2412,7 @@ func (app *liveApp) dispatch(sess *liveSession, msg any) (body string) {
 	result := sky_call2(app.update, msg, sess.model)
 	sess.model = tupleFirst(result)
 	cmd := tupleSecond(result)
+	finalCmd = cmd
 	sess.handlers = map[string]any{}
 	vn := HtmlToVNode(sky_call(app.view, sess.model))
 	assignSkyIDs(&vn, "r")
@@ -2325,11 +2487,27 @@ func (app *liveApp) runCmd(sess *liveSession, cmd any) {
 			app.runCmd(sess, sub)
 		}
 	case "perform":
-		go app.runPerform(sess, c.task, c.toMsg)
+		// Capture the triggering request's id from the CURRENT
+		// goroutine (the dispatch path that's about to spawn the
+		// Task goroutine). Phase 1.1a Step 2 — without this, the
+		// spawned goroutine has no req-id and logs / traces emitted
+		// from inside the Task can't be correlated to the user
+		// action that started them.
+		parentReqID := CurrentRequestID()
+		go app.runPerform(sess, c.task, c.toMsg, parentReqID)
 	}
 }
 
-func (app *liveApp) runPerform(sess *liveSession, task any, toMsg any) {
+func (app *liveApp) runPerform(sess *liveSession, task any, toMsg any, parentReqID string) {
+	// Stamp the parent request's id on this goroutine so kernels
+	// running inside the Task (Db.query, Http.get, Log.info, etc.)
+	// emit logs / traces correlated to the user's request. Cleared
+	// on exit so the sync.Map entry doesn't leak past goroutine
+	// recycling.
+	if parentReqID != "" {
+		SetGoroutineRequestID(parentReqID)
+		defer ClearGoroutineRequestID()
+	}
 	// task is a Sky Task — a zero-arg func() any returning SkyResult
 	result := sky_call(task, nil)
 	// toMsg : Result err a -> Msg — convert result to Msg
@@ -2719,8 +2897,44 @@ func jsString(s string) string {
 }
 
 func liveJSWithCfg(sid string, cfg liveBannerConfig) string {
+	// Backwards-compat shim — older callers (tests, external probes)
+	// pre-date the Phase 1.2 CSRF wire. Forwards with an empty
+	// CSRF token; __skySend will simply not attach the header.
+	return liveJSWithCfgAndCsrf(sid, cfg, "")
+}
+
+// liveJSWithCfgAndCsrf — the Phase 1.2 entry point that bundles the
+// per-session CSRF token into the inlined JS. __skySend reads
+// __skyCsrfToken and adds the X-Sky-Csrf header on every POST so
+// the CSRF middleware accepts the request. Zero user code needed —
+// AI-written Sky apps are CSRF-protected by construction.
+// normaliseBasePath cleans up a SKY_LIVE_BASE_PATH value so the
+// JS / meta-tag / proxy mount agree on a single canonical form.
+// Rules: trim whitespace + trailing slashes, ensure a leading slash
+// if non-empty. Empty input → empty output (root-mount; no prefix).
+func normaliseBasePath(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	s = strings.TrimRight(s, "/")
+	if !strings.HasPrefix(s, "/") {
+		s = "/" + s
+	}
+	return s
+}
+
+func liveJSWithCfgAndCsrf(sid string, cfg liveBannerConfig, csrfToken string) string {
+	// Backwards-compat shim for callers that pre-date base-path
+	// support. Defaults base to "" (root mount).
+	return liveJSWithCfgAndCsrfWithBase(sid, cfg, csrfToken, "")
+}
+
+func liveJSWithCfgAndCsrfWithBase(sid string, cfg liveBannerConfig, csrfToken, basePath string) string {
 	return fmt.Sprintf(`
 var __skySid = %q;
+var __skyBase = %q;
+var __skyCsrfToken = %q;
 var __skyBannerEnabled = %t;
 var __skyRetryBaseMs = %d;
 var __skyRetryMaxMs = %d;
@@ -3123,7 +3337,7 @@ function __skyFlushPendingBeacon() {
   if (snapshot) body.inputState = snapshot;
   try {
     var blob = new Blob([JSON.stringify(body)], {type: "application/json"});
-    navigator.sendBeacon("/_sky/event", blob);
+    navigator.sendBeacon(__skyBase + "/_sky/event", blob);
   } catch (_) {}
 }
 
@@ -3219,9 +3433,16 @@ var __skyRetryAttempts = 0;
 // the SKY_LIVE_RETRY_* / SKY_LIVE_QUEUE_MAX env vars (see
 // loadLiveBannerConfig).
 function __skyPostEvent(body) {
-  fetch("/_sky/event", {
+  // Phase 1.2 — attach the per-session CSRF token. The server-side
+  // middleware (runtime-go/rt/csrf_middleware.go) rejects POSTs
+  // without a matching X-Sky-Csrf / __sky_csrf cookie pair. Empty
+  // token means CSRF is disabled at the runtime level (sky.toml
+  // [security] csrf = false) — header omitted, middleware skipped.
+  var headers = {"Content-Type":"application/json"};
+  if (__skyCsrfToken) headers["X-Sky-Csrf"] = __skyCsrfToken;
+  fetch(__skyBase + "/_sky/event", {
     method: "POST",
-    headers: {"Content-Type":"application/json"},
+    headers: headers,
     body: JSON.stringify(body),
     credentials: "same-origin"
   }).then(function(r){
@@ -3758,7 +3979,7 @@ function __skyOpenSSE() {
   __skyForcedClose = false;
   __skyHelloOk = false;
   __skyOpenAt = 0;
-  __skySSE = new EventSource("/_sky/sse");
+  __skySSE = new EventSource(__skyBase + "/_sky/sse");
   __skySSE.addEventListener("hello", function(e) {
     // Handshake received — we know we hit a real Sky.Live v2 server,
     // not a proxy that intercepted with a generic 200. Anything
@@ -3929,9 +4150,11 @@ var __skyProbedReload = false;  // one-shot guard so we don't trigger
                                 // failed reopen attempts.
 function __skyProbeSessionLost() {
   if (__skyProbedReload) return;
-  fetch("/_sky/event", {
+  var headers = {"Content-Type": "application/json"};
+  if (__skyCsrfToken) headers["X-Sky-Csrf"] = __skyCsrfToken;
+  fetch(__skyBase + "/_sky/event", {
     method: "POST",
-    headers: {"Content-Type": "application/json"},
+    headers: headers,
     body: JSON.stringify({sessionId: __skySid, msg: "__skySessionPing", args: []}),
     credentials: "same-origin"
   }).then(function(r) {
@@ -4046,7 +4269,7 @@ if (document.readyState === "loading") {
   __skyInit();
 }
 `,
-		sid, cfg.Enabled, cfg.BaseMs, cfg.MaxMs, cfg.MaxAttempts, cfg.QueueMax,
+		sid, basePath, csrfToken, cfg.Enabled, cfg.BaseMs, cfg.MaxMs, cfg.MaxAttempts, cfg.QueueMax,
 		jsString(cfg.Reconnecting), jsString(cfg.Offline),
 		cfg.HelloTimeoutMs, cfg.HeartbeatTtlMs,
 	)

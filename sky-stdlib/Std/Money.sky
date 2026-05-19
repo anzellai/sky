@@ -1,0 +1,491 @@
+module Std.Money exposing
+    ( Money(..), Currency(..)
+    , fromMinor, fromMajor, fromString
+    , zero, zeroOf
+    , amount, currency, currencyCode
+    , add, sub, mul, allocate, sumOf
+    , neg, abs
+    , eq, neq, lt, lte, gt, gte, compare
+    , isZero, isPositive, isNegative
+    , format, formatWithCode, toMinor
+    , percentOf, addPercent, subPercent
+    , minorUnits, symbol, currencyName
+    , knownCurrency, isKnownCode, parseCurrency
+    , setRate, getRate, hasRate, clearRates, convert
+    )
+
+-- | Std.Money — production-grade currency arithmetic.
+--
+-- Built on Std.Decimal for exact math, with ISO 4217 minor-unit
+-- awareness (JPY rounds to 0 dp, USD to 2 dp, BHD to 3 dp). All
+-- arithmetic enforces currency-match.
+--
+-- Currency is a typed enum of the ~50 most-used codes plus
+-- `CurrencyRaw String` for the long tail. Underlying property
+-- lookup (minor units, symbol, name) routes through the runtime
+-- table; unknown codes fall back to (2 dp, code-as-symbol).
+--
+-- Pluggable FX rate registry: register rates at startup, use
+-- `convert` to apply. The registry is process-local — multi-
+-- instance deployments need a shared source for consistency.
+--
+-- Common patterns:
+--
+--   -- Tax: 8.875% NYC sales tax on $99.99
+--   let subTotal = Money.fromString USD "99.99"
+--                      |> Result.withDefault (Money.zero USD)
+--       tax = Money.percentOf taxRate subTotal
+--       total = Money.add subTotal tax
+--   in
+--   Money.format total       -- "$108.87"
+--
+--   -- Split: $100 invoice across 3 fairly
+--   Money.allocate 3 (Money.fromMajor USD 100)
+--       -- → [$33.34, $33.33, $33.33]
+--
+--   -- Convert: $100 USD → EUR (rate set at startup)
+--   Money.setRate USD EUR (Dec.fromString "0.92" |> okOrZero)
+--   Money.convert EUR (Money.fromMajor USD 100)   -- → Ok €92.00
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error exposing (Error)
+import Sky.Core.List as List
+import Sky.Ffi as Ffi
+import Std.Decimal as Dec exposing (Decimal)
+
+
+-- ─── Currency enum ────────────────────────────────────────────────
+
+type Currency
+    = USD | EUR | GBP | JPY | CHF | AUD | CAD | NZD | SEK | NOK
+    | DKK | CNY | HKD | SGD | KRW | TWD | INR | THB | MYR | IDR
+    | PHP | VND | BRL | MXN | ARS | CLP | ZAR | TRY | RUB | UAH
+    | PLN | CZK | HUF | RON | BGN | AED | SAR | QAR | KWD | BHD
+    | OMR | JOD | ILS | EGP | NGN | KES | GHS | MAD | TND | DZD
+    | PKR | BDT | LKR | NPR
+    | BTC | ETH | USDT | USDC
+    | CurrencyRaw String
+
+
+-- ─── The Money ADT ────────────────────────────────────────────────
+
+type Money
+    = Money Decimal Currency
+
+
+-- ─── Construction ─────────────────────────────────────────────────
+
+fromMinor : Currency -> Int -> Money
+fromMinor c minor =
+    Money (Dec.fromMinor (minorUnits c) minor) c
+
+
+fromMajor : Currency -> Int -> Money
+fromMajor c n =
+    Money (Dec.fromInt n) c
+
+
+fromString : Currency -> String -> Result Error Money
+fromString c s =
+    case Dec.fromString s of
+        Ok d ->
+            Ok (Money d c)
+
+        Err e ->
+            Err e
+
+
+zero : Currency -> Money
+zero c =
+    Money Dec.zero c
+
+
+zeroOf : Money -> Money
+zeroOf m =
+    Money Dec.zero (currency m)
+
+
+-- ─── Accessors ────────────────────────────────────────────────────
+
+amount : Money -> Decimal
+amount (Money d _) =
+    d
+
+
+currency : Money -> Currency
+currency (Money _ c) =
+    c
+
+
+currencyCode : Currency -> String
+currencyCode c =
+    case c of
+        USD -> "USD"
+        EUR -> "EUR"
+        GBP -> "GBP"
+        JPY -> "JPY"
+        CHF -> "CHF"
+        AUD -> "AUD"
+        CAD -> "CAD"
+        NZD -> "NZD"
+        SEK -> "SEK"
+        NOK -> "NOK"
+        DKK -> "DKK"
+        CNY -> "CNY"
+        HKD -> "HKD"
+        SGD -> "SGD"
+        KRW -> "KRW"
+        TWD -> "TWD"
+        INR -> "INR"
+        THB -> "THB"
+        MYR -> "MYR"
+        IDR -> "IDR"
+        PHP -> "PHP"
+        VND -> "VND"
+        BRL -> "BRL"
+        MXN -> "MXN"
+        ARS -> "ARS"
+        CLP -> "CLP"
+        ZAR -> "ZAR"
+        TRY -> "TRY"
+        RUB -> "RUB"
+        UAH -> "UAH"
+        PLN -> "PLN"
+        CZK -> "CZK"
+        HUF -> "HUF"
+        RON -> "RON"
+        BGN -> "BGN"
+        AED -> "AED"
+        SAR -> "SAR"
+        QAR -> "QAR"
+        KWD -> "KWD"
+        BHD -> "BHD"
+        OMR -> "OMR"
+        JOD -> "JOD"
+        ILS -> "ILS"
+        EGP -> "EGP"
+        NGN -> "NGN"
+        KES -> "KES"
+        GHS -> "GHS"
+        MAD -> "MAD"
+        TND -> "TND"
+        DZD -> "DZD"
+        PKR -> "PKR"
+        BDT -> "BDT"
+        LKR -> "LKR"
+        NPR -> "NPR"
+        BTC -> "BTC"
+        ETH -> "ETH"
+        USDT -> "USDT"
+        USDC -> "USDC"
+        CurrencyRaw s -> s
+
+
+-- ─── Currency property lookups ────────────────────────────────────
+
+minorUnits : Currency -> Int
+minorUnits c =
+    Ffi.callPure "Money_minorUnits" [ currencyCode c ]
+
+
+symbol : Currency -> String
+symbol c =
+    Ffi.callPure "Money_symbol" [ currencyCode c ]
+
+
+currencyName : Currency -> String
+currencyName c =
+    Ffi.callPure "Money_currencyName" [ currencyCode c ]
+
+
+-- | Check whether the given ISO 4217 code maps to one of the
+-- named Currency variants. Pass a raw code string from external
+-- input (form field, JSON payload) and route accordingly.
+isKnownCode : String -> Bool
+isKnownCode code =
+    Ffi.callPure "Money_isKnownCurrency" [ code ]
+
+
+-- | Currency-typed counterpart: returns False ONLY for
+-- `CurrencyRaw _`, True for every named variant (USD, JPY, BTC,
+-- …). Use when you already have a Currency value and want to
+-- detect the long-tail / unrecognised case.
+knownCurrency : Currency -> Bool
+knownCurrency c =
+    case c of
+        CurrencyRaw _ ->
+            False
+
+        _ ->
+            True
+
+
+parseCurrency : String -> Currency
+parseCurrency code =
+    case String.toUpper (String.trim code) of
+        "USD" -> USD
+        "EUR" -> EUR
+        "GBP" -> GBP
+        "JPY" -> JPY
+        "CHF" -> CHF
+        "AUD" -> AUD
+        "CAD" -> CAD
+        "NZD" -> NZD
+        "SEK" -> SEK
+        "NOK" -> NOK
+        "DKK" -> DKK
+        "CNY" -> CNY
+        "HKD" -> HKD
+        "SGD" -> SGD
+        "KRW" -> KRW
+        "TWD" -> TWD
+        "INR" -> INR
+        "THB" -> THB
+        "MYR" -> MYR
+        "IDR" -> IDR
+        "PHP" -> PHP
+        "VND" -> VND
+        "BRL" -> BRL
+        "MXN" -> MXN
+        "ARS" -> ARS
+        "CLP" -> CLP
+        "ZAR" -> ZAR
+        "TRY" -> TRY
+        "RUB" -> RUB
+        "UAH" -> UAH
+        "PLN" -> PLN
+        "CZK" -> CZK
+        "HUF" -> HUF
+        "RON" -> RON
+        "BGN" -> BGN
+        "AED" -> AED
+        "SAR" -> SAR
+        "QAR" -> QAR
+        "KWD" -> KWD
+        "BHD" -> BHD
+        "OMR" -> OMR
+        "JOD" -> JOD
+        "ILS" -> ILS
+        "EGP" -> EGP
+        "NGN" -> NGN
+        "KES" -> KES
+        "GHS" -> GHS
+        "MAD" -> MAD
+        "TND" -> TND
+        "DZD" -> DZD
+        "PKR" -> PKR
+        "BDT" -> BDT
+        "LKR" -> LKR
+        "NPR" -> NPR
+        "BTC" -> BTC
+        "ETH" -> ETH
+        "USDT" -> USDT
+        "USDC" -> USDC
+        other -> CurrencyRaw other
+
+
+-- ─── Arithmetic (currency-checked) ────────────────────────────────
+
+add : Money -> Money -> Money
+add a b =
+    if eqCurrency (currency a) (currency b) then
+        Money (Dec.add (amount a) (amount b)) (currency a)
+    else
+        a
+
+
+sub : Money -> Money -> Money
+sub a b =
+    if eqCurrency (currency a) (currency b) then
+        Money (Dec.sub (amount a) (amount b)) (currency a)
+    else
+        a
+
+
+-- | Multiply by a scalar (Decimal). Currency carries through.
+mul : Decimal -> Money -> Money
+mul k m =
+    Money (Dec.mul k (amount m)) (currency m)
+
+
+neg : Money -> Money
+neg m =
+    Money (Dec.neg (amount m)) (currency m)
+
+
+abs : Money -> Money
+abs m =
+    Money (Dec.abs (amount m)) (currency m)
+
+
+-- | Allocate a Money value across N parts as evenly as possible,
+-- with any remainder distributed 1 cent at a time to the front.
+-- The sum of returned parts equals the input exactly.
+--
+--   allocate 3 ($100.00)  → [$33.34, $33.33, $33.33]
+allocate : Int -> Money -> List Money
+allocate parts m =
+    let
+        decimals = Ffi.callPure "Money_allocate"
+                       [ Ffi.toAny (minorUnits (currency m))
+                       , Ffi.toAny parts
+                       , Ffi.toAny (amount m)
+                       ]
+    in
+    List.map (\d -> Money d (currency m)) decimals
+
+
+-- | Sum a list of Money values (all should be same currency).
+sumOf : Currency -> List Money -> Money
+sumOf c xs =
+    sumOfHelp xs (zero c)
+
+
+sumOfHelp : List Money -> Money -> Money
+sumOfHelp xs acc =
+    case xs of
+        [] ->
+            acc
+
+        first :: rest ->
+            sumOfHelp rest (add acc first)
+
+
+-- ─── Comparison ───────────────────────────────────────────────────
+
+compare : Money -> Money -> Int
+compare a b =
+    Dec.compare (amount a) (amount b)
+
+
+eq : Money -> Money -> Bool
+eq a b =
+    eqCurrency (currency a) (currency b) && Dec.eq (amount a) (amount b)
+
+
+neq : Money -> Money -> Bool
+neq a b =
+    not (eq a b)
+
+
+lt : Money -> Money -> Bool
+lt a b =
+    Dec.lt (amount a) (amount b)
+
+
+lte : Money -> Money -> Bool
+lte a b =
+    Dec.lte (amount a) (amount b)
+
+
+gt : Money -> Money -> Bool
+gt a b =
+    Dec.gt (amount a) (amount b)
+
+
+gte : Money -> Money -> Bool
+gte a b =
+    Dec.gte (amount a) (amount b)
+
+
+eqCurrency : Currency -> Currency -> Bool
+eqCurrency a b =
+    currencyCode a == currencyCode b
+
+
+-- ─── Predicates ───────────────────────────────────────────────────
+
+isZero : Money -> Bool
+isZero m =
+    Dec.isZero (amount m)
+
+
+isPositive : Money -> Bool
+isPositive m =
+    Dec.isPositive (amount m)
+
+
+isNegative : Money -> Bool
+isNegative m =
+    Dec.isNegative (amount m)
+
+
+-- ─── Percent helpers ──────────────────────────────────────────────
+
+percentOf : Decimal -> Money -> Money
+percentOf pct m =
+    Money (Dec.percentOf pct (amount m)) (currency m)
+
+
+addPercent : Decimal -> Money -> Money
+addPercent pct m =
+    Money (Dec.addPercent pct (amount m)) (currency m)
+
+
+subPercent : Decimal -> Money -> Money
+subPercent pct m =
+    Money (Dec.subPercent pct (amount m)) (currency m)
+
+
+-- ─── Formatting + minor extraction ────────────────────────────────
+
+-- | Default symbol-prefixed form: "$12.34", "¥1234" (JPY).
+format : Money -> String
+format m =
+    Ffi.callPure "Money_format"
+        [ Ffi.toAny (currencyCode (currency m)), Ffi.toAny (amount m) ]
+
+
+-- | ISO-code suffix form: "12.34 USD". Preferred for B2B.
+formatWithCode : Money -> String
+formatWithCode m =
+    Ffi.callPure "Money_formatWithCode"
+        [ Ffi.toAny (currencyCode (currency m)), Ffi.toAny (amount m) ]
+
+
+-- | Integer-cents representation, for DB persistence.
+toMinor : Money -> Int
+toMinor m =
+    Dec.toMinor (minorUnits (currency m)) (amount m)
+
+
+-- ─── FX rate registry ─────────────────────────────────────────────
+
+setRate : Currency -> Currency -> Decimal -> Result Error ()
+setRate from to rate =
+    Ffi.callPure "Money_setRate"
+        [ Ffi.toAny (currencyCode from)
+        , Ffi.toAny (currencyCode to)
+        , Ffi.toAny rate
+        ]
+
+
+getRate : Currency -> Currency -> Result Error Decimal
+getRate from to =
+    Ffi.callPure "Money_getRate"
+        [ currencyCode from, currencyCode to ]
+
+
+hasRate : Currency -> Currency -> Bool
+hasRate from to =
+    Ffi.callPure "Money_hasRate"
+        [ currencyCode from, currencyCode to ]
+
+
+clearRates : () -> Result Error ()
+clearRates _ =
+    Ffi.callPure "Money_clearRates" []
+
+
+-- | Convert Money to a target currency using the registered rate.
+convert : Currency -> Money -> Result Error Money
+convert to m =
+    if eqCurrency (currency m) to then
+        Ok m
+    else
+        case getRate (currency m) to of
+            Ok rate ->
+                Ok (Money (Dec.mul rate (amount m)) to)
+
+            Err e ->
+                Err e

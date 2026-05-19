@@ -86,7 +86,7 @@ typeAtom mkError =
                          Just ')' -> do
                              char mkError ')'
                              return t1
-                         _ -> error "Expected , or ) in type"
+                         _ -> failParse mkError
 
         , -- Record type: { field : Type, ... }
           do char mkError '{'

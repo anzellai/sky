@@ -40,15 +40,19 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"os/signal"
 	"reflect"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"sky-app/rt/telemetry"
 )
 
 // ═══════════════════════════════════════════════════════════
@@ -373,6 +377,19 @@ func coerceInner[T any](v any) T {
 								innerField.Set(reflect.ValueOf(innerVal))
 							} else if reflect.TypeOf(innerVal) != nil && reflect.TypeOf(innerVal).AssignableTo(innerField.Type()) {
 								innerField.Set(reflect.ValueOf(innerVal))
+							} else if innerVal != nil {
+								// v0.13 Stage 1 — recursive narrowing
+								// for nested containers + func types.
+								// Closes `Maybe (Maybe (Int -> Int))`
+								// + `Dict K (Int -> Int)` etc.
+								// where the inner generic instantiation
+								// doesn't directly assign across.
+								narrowed := narrowReflectValue(
+									reflect.ValueOf(innerVal),
+									innerField.Type())
+								if narrowed.IsValid() {
+									innerField.Set(narrowed)
+								}
 							}
 						}
 					}
@@ -431,6 +448,22 @@ func coerceInner[T any](v any) T {
 			return out.Interface().(T)
 		}
 	}
+	// v0.13 Stage 1 — function-type conversion via makeFuncAdapter.
+	// When source is a Sky `func(any) any` lambda and target is a
+	// concrete `func(T1) T2`, build a reflect-based adapter that
+	// boxes typed args to any, calls the Sky lambda, and narrows
+	// the return. Closes the `Maybe (Int -> Int)` class — without
+	// this, `Just (\x -> x * 2)` panics at the SkyMaybe[func(int)
+	// int] boundary because the inner func(any) any can't be type-
+	// asserted to func(int) int.
+	if rv.Kind() == reflect.Func {
+		var zero T
+		zt := reflect.TypeOf(zero)
+		if zt != nil && zt.Kind() == reflect.Func {
+			adapted := makeFuncAdapter[T](rv, zt)
+			return adapted.(T)
+		}
+	}
 	// Final fallback: strict type assertion. If this panics, it
 	// means typed-codegen emitted a CALL with a wrong element type —
 	// a compiler bug, NOT a runtime input bug. Surfacing the panic
@@ -482,6 +515,18 @@ func narrowReflectValue(src reflect.Value, target reflect.Type) reflect.Value {
 	}
 	if target.Kind() == reflect.Slice && src.Kind() == reflect.Slice {
 		return coerceSliceValue(src, target)
+	}
+	// v0.13 Stage 1 — function type conversion via reflect-based
+	// adapter. When src is a Sky `func(any) any` lambda and target
+	// is a concrete `func(T1) T2`, build an adapter that boxes
+	// typed args + narrows the return. Closes the "list of typed
+	// functions" panic class: storing `[\x -> x+1, ...]` (each
+	// Sky lambda emits as func(any) any) into a typed slice
+	// `[]func(int) int` previously zero'd each element (nil func)
+	// because narrowReflectValue had no Func case. Reuses the
+	// `adaptFuncValue` helper already used by makeFuncAdapter.
+	if target.Kind() == reflect.Func && src.Kind() == reflect.Func {
+		return adaptFuncValue(src, target)
 	}
 	// Pointer → value dereference: FFI constructors return `*T` (via
 	// `new(pkg.T)`) for builder-pattern chaining, but the consuming
@@ -848,9 +893,41 @@ func logEmit(level int, levelName string, msg string, ctx any) {
 	if level < logThreshold {
 		return
 	}
-	ts := time.Now().UTC().Format(time.RFC3339Nano)
+	now := time.Now()
+	ts := now.UTC().Format(time.RFC3339Nano)
+	// Stringify ctx for the stdout / stderr writers + the telemetry
+	// ring's Fields map (rings are typed map[string]string).
+	var fields map[string]string
+	if m, ok := ctx.(map[string]any); ok && len(m) > 0 {
+		fields = make(map[string]string, len(m))
+		for k, v := range m {
+			if k == "time" || k == "level" || k == "msg" {
+				continue
+			}
+			fields[k] = fmt.Sprintf("%v", v)
+		}
+	}
+	// Always write to the in-process telemetry ring so the console
+	// Logs tab + /_sky/console/api/logs surface Sky-side Log.* calls
+	// the same as Go-side AppendLog writes. Pre-2026-05-18 gap:
+	// logEmit only wrote stdout/stderr, leaving the ring empty for
+	// Sky-user logs. Fixed here so the new sub-app push exporter
+	// has consistent data to push.
+	entry := telemetry.LogEntry{
+		TS:      now,
+		Level:   levelName,
+		Message: msg,
+		Fields:  fields,
+	}
+	telemetry.Default().AppendLog(entry)
+	// Dual-write to the parent's telemetry store via the push
+	// exporter when this process is a sub-app. Drop on overflow,
+	// rate-limited warning; never blocks the caller.
+	if exp := ActivePushExporter(); exp != nil {
+		exp.PushLog(entry)
+	}
 	if logJSON {
-		entry := map[string]any{
+		entryMap := map[string]any{
 			"time":  ts,
 			"level": levelName,
 			"msg":   msg,
@@ -858,11 +935,11 @@ func logEmit(level int, levelName string, msg string, ctx any) {
 		if m, ok := ctx.(map[string]any); ok {
 			for k, v := range m {
 				if k != "time" && k != "level" && k != "msg" {
-					entry[k] = v
+					entryMap[k] = v
 				}
 			}
 		}
-		b, _ := json.Marshal(entry)
+		b, _ := json.Marshal(entryMap)
 		if level >= logLevelWarn {
 			fmt.Fprintln(os.Stderr, string(b))
 		} else {
@@ -871,13 +948,13 @@ func logEmit(level int, levelName string, msg string, ctx any) {
 		return
 	}
 	line := ts + " " + strings.ToUpper(levelName) + " " + msg
-	if m, ok := ctx.(map[string]any); ok && len(m) > 0 {
+	if len(fields) > 0 {
 		var b strings.Builder
-		for k, v := range m {
+		for k, v := range fields {
 			b.WriteString(" ")
 			b.WriteString(k)
 			b.WriteString("=")
-			b.WriteString(fmt.Sprintf("%v", v))
+			b.WriteString(v)
 		}
 		line += b.String()
 	}
@@ -1251,6 +1328,29 @@ func Basics_modBy(divisor, n any) any {
 	return AsInt(n) % d
 }
 
+// Basics_clamp — any-typed wrapper around Basics_clampT to match the
+// codegen's default `rt.Basics_clamp` call shape. Without this, every
+// `clamp lo hi n` reference where ANY of the args isn't a primitive
+// literal lowered to `rt.Basics_clamp(...)` and Go-build rejected
+// with `undefined: rt.Basics_clamp`. Issue #56.
+//
+// Sky sig: `clamp : comparable -> comparable -> comparable -> comparable`.
+// We narrow to Int here (Sky stdlib documents this as "integer clamp"
+// in 99% of use; float-clamp users can call Basics_clampT directly via
+// the typed-literal path).
+func Basics_clamp(lo, hi, n any) any {
+	loI := AsInt(lo)
+	hiI := AsInt(hi)
+	nI := AsInt(n)
+	if nI < loI {
+		return loI
+	}
+	if nI > hiI {
+		return hiI
+	}
+	return nI
+}
+
 func Basics_fst(t any) any {
 	switch v := t.(type) {
 	case SkyTuple2:
@@ -1542,6 +1642,15 @@ func AsList(v any) []any {
 		}
 		return out
 	}
+	// Result/Maybe unwrap — mirrors AsString/AsInt. Needed for
+	// Sky-source modules that route list returns through
+	// Ffi.callPure (Money.allocate, …) where runWithRecover's
+	// auto-Ok-wrap parks the slice inside a SkyResult.
+	if isSkyContainer(v) {
+		if u := unwrapAny(v); u != nil {
+			return AsList(u)
+		}
+	}
 	return nil
 }
 
@@ -1560,6 +1669,12 @@ func AsListAny(v any) []any {
 	}
 	rv := reflect.ValueOf(v)
 	if rv.Kind() != reflect.Slice {
+		// Result/Maybe unwrap, then retry.
+		if isSkyContainer(v) {
+			if u := unwrapAny(v); u != nil {
+				return AsListAny(u)
+			}
+		}
 		return nil
 	}
 	n := rv.Len()
@@ -1704,6 +1819,20 @@ func AsMapT[V any](v any) map[string]V {
 			// returned "".
 			if isString {
 				out[k] = reflect.ValueOf(fmt.Sprintf("%v", x)).Interface().(V)
+				continue
+			}
+			// v0.13 Stage 1 — narrow via reflect for typed targets
+			// (func / SkyMaybe[T] / SkyResult[E, A] / typed structs).
+			// Without this, `Dict.fromList [("k", \x -> ...)]` typed
+			// as `Dict String (Int -> Int)` silently drops every
+			// function value (target V doesn't directly assign from
+			// the any-boxed `func(any) any` source).
+			if zeroTy != nil && x != nil {
+				sv := reflect.ValueOf(x)
+				narrowed := narrowReflectValue(sv, zeroTy)
+				if narrowed.IsValid() {
+					out[k] = narrowed.Interface().(V)
+				}
 			}
 		}
 		return out
@@ -1765,6 +1894,14 @@ func AsInt(v any) int {
 	case float32:
 		return int(n)
 	}
+	// Result/Maybe unwrap fallback (mirrors AsString). Only attempt
+	// on Sky container structs to avoid panicking on uncomparable
+	// types (e.g. slices, maps, funcs).
+	if isSkyContainer(v) {
+		if u := unwrapAny(v); u != nil {
+			return AsInt(u)
+		}
+	}
 	panic(fmt.Sprintf("rt.AsInt: expected numeric value, got %T (%v)", v, v))
 }
 
@@ -1811,6 +1948,11 @@ func AsFloat(v any) float64 {
 	case int32:
 		return float64(n)
 	}
+	if isSkyContainer(v) {
+		if u := unwrapAny(v); u != nil {
+			return AsFloat(u)
+		}
+	}
 	panic(fmt.Sprintf("rt.AsFloat: expected numeric value, got %T (%v)", v, v))
 }
 
@@ -1835,6 +1977,11 @@ func AsFloatOrZero(v any) float64 {
 func AsBool(v any) bool {
 	if b, ok := v.(bool); ok {
 		return b
+	}
+	if isSkyContainer(v) {
+		if u := unwrapAny(v); u != nil {
+			return AsBool(u)
+		}
 	}
 	panic(fmt.Sprintf("rt.AsBool: expected bool, got %T (%v)", v, v))
 }
@@ -2845,7 +2992,15 @@ func runWithRecover(name string, args []any, fn func([]any) any) (result any) {
 			result = Err[any, any](fmt.Sprintf("Ffi %q panicked: %v", name, r))
 		}
 	}()
-	return Ok[any, any](fn(args))
+	raw := fn(args)
+	// Handlers that already return a Sky Result (Decimal.fromString,
+	// Money.setRate, Time.inZone, …) shouldn't get double-wrapped —
+	// detect via SkyResult type-assertion and pass through. Plain
+	// return values (htmlRender → String) get the existing Ok-wrap.
+	if _, ok := raw.(SkyResult[any, any]); ok {
+		return raw
+	}
+	return Ok[any, any](raw)
 }
 
 // Ffi.callPure : String -> List any -> Result String a
@@ -2892,6 +3047,11 @@ func Ffi_isPure(name any) any {
 	ffiRegistryMu.RUnlock()
 	return ok
 }
+
+// Ffi.toAny : a -> any — runtime identity; the type-level wrap
+// for building heterogeneous Ffi.callPure arg lists from Sky source.
+// See lookupKernelType "Ffi.toAny" for the type rationale.
+func Ffi_toAny(v any) any { return v }
 
 // SkyADT: runtime type for ADT case-match dispatch.
 // Codegen emits `msg.(rt.SkyADT)` so any local ADT type (with matching Tag/Fields)
@@ -3469,10 +3629,14 @@ func Maybe_combine(maybes any) any {
 func Maybe_traverse(fn, items any) any {
 	xs := asList(items)
 	out := make([]any, 0, len(xs))
-	f, ok := fn.(func(any) any)
-	if !ok { return Nothing[any]() }
+	// SkyCall dispatches via reflect — accepts typed-return
+	// lambdas (e.g. `func(any) Maybe[T]`) that v0.13 typed-
+	// codegen produces. The pre-fix raw assertion silently
+	// returned Nothing on every typed lambda (wrong result, not
+	// crash) — worse than panicking because callers couldn't
+	// detect the bug.
 	for _, x := range xs {
-		tag, just := anyMaybeView(f(x))
+		tag, just := anyMaybeView(SkyCall(fn, x))
 		if tag < 0 || tag != 0 { return Nothing[any]() }
 		out = append(out, just)
 	}
@@ -3813,6 +3977,36 @@ func Coerce[T any](v any) T {
 	if t, ok := v.(T); ok {
 		return t
 	}
+	// If the source is a Sky Result/Maybe but the target isn't,
+	// unwrap the Ok/Just first. Fixes the path where Ffi.callPure's
+	// auto-Ok-wrap collides with a typed non-Result Sky surface
+	// (Decimal.zero : Decimal — the handler returns the bare
+	// SkyADT, runWithRecover wraps it in Ok, callers Coerce[SkyADT]).
+	// Source must be a Sky container struct (Result/Maybe) — guarding
+	// on Kind avoids panics from `u != v` on uncomparable types
+	// (e.g. func values).
+	if v != nil {
+		if rvSrc := reflect.ValueOf(v); rvSrc.IsValid() && rvSrc.Kind() == reflect.Struct {
+			if rvSrc.FieldByName("Tag").IsValid() && rvSrc.FieldByName("OkValue").IsValid() ||
+				rvSrc.FieldByName("Tag").IsValid() && rvSrc.FieldByName("JustValue").IsValid() {
+				var zeroT T
+				targetTy := reflect.TypeOf(zeroT)
+				isResultTarget := false
+				if targetTy != nil {
+					tyStr := targetTy.String()
+					isResultTarget = strings.HasPrefix(tyStr, "rt.SkyResult[") ||
+						strings.HasPrefix(tyStr, "rt.SkyMaybe[")
+				}
+				if !isResultTarget {
+					u := unwrapAny(v)
+					if t, ok := u.(T); ok {
+						return t
+					}
+					v = u
+				}
+			}
+		}
+	}
 	var zero T
 	// nil passes through for pointer/interface/slice/map/func targets.
 	// Sky's `js "nil"` produces Go nil; typed FFI wrappers may need to
@@ -3999,6 +4193,29 @@ func Coerce[T any](v any) T {
 // the wrapped value to runtime functions (Dict.map, List.member, etc.)
 // that expect the raw T. Without this, every such site panics with
 // "interface {} is rt.SkyResult[...], not <expected>".
+// isSkyContainer reports whether v is a Sky container struct
+// (SkyResult / SkyMaybe / SkyADT shape) — usable as a precondition
+// for unwrapAny when the caller can't risk an `u != v` comparison
+// on an uncomparable source type (slices, maps, funcs).
+func isSkyContainer(v any) bool {
+	if v == nil {
+		return false
+	}
+	rv := reflect.ValueOf(v)
+	if rv.Kind() != reflect.Struct {
+		return false
+	}
+	tagF := rv.FieldByName("Tag")
+	if !tagF.IsValid() {
+		return false
+	}
+	if tagF.Kind() != reflect.Int && tagF.Kind() != reflect.Int64 {
+		return false
+	}
+	return rv.FieldByName("OkValue").IsValid() ||
+		rv.FieldByName("JustValue").IsValid()
+}
+
 func unwrapAny(v any) any {
 	if v == nil {
 		return v
@@ -5741,11 +5958,22 @@ func Server_listen(port any, routes any) any {
 			// for post-mortem inspection. Dev mode keeps the full
 			// stack on stderr for fast-feedback debugging.
 			defer func() {
-				if rec := recover(); rec != nil {
-					logPanicFrame(req.Method, req.URL.Path, rec)
-					w.WriteHeader(500)
-					fmt.Fprint(w, "Internal Server Error")
+				rec := recover()
+				if rec == nil {
+					return
 				}
+				// http.ErrAbortHandler is Go's sentinel value
+				// handlers use to abort cleanly (httputil.
+				// ReverseProxy panics with it when a client
+				// disconnects mid-SSE-stream). Re-panic so
+				// net/http's own handler-recover treats it as
+				// the no-op abort it's meant to be.
+				if rec == http.ErrAbortHandler {
+					panic(rec)
+				}
+				logPanicFrame(req.Method, req.URL.Path, rec)
+				w.WriteHeader(500)
+				fmt.Fprint(w, "Internal Server Error")
 			}()
 			// Bound body read to prevent memory exhaustion.
 			req.Body = http.MaxBytesReader(w, req.Body, serverMaxBodyBytes)
@@ -5839,10 +6067,34 @@ func Server_listen(port any, routes any) any {
 				if w.Header().Get("Referrer-Policy") == "" {
 					w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
 				}
+				// CSRF auto-injection: for HTML responses, walk every
+				// `<form method="POST">` (case-insensitive on both tag
+				// and attribute) and inject a hidden `__sky_csrf` input
+				// just inside the opening tag. The submitted token will
+				// match the cookie via the `r.FormValue("__sky_csrf")`
+				// fallback in the CSRF middleware. Skip injection when
+				// the form already declares the field (idempotent on
+				// double-render). User code stays clean — no per-form
+				// boilerplate.
+				body := skyResp.Body
+				if strings.HasPrefix(w.Header().Get("Content-Type"), "text/html") {
+					tok := CurrentCsrfToken(req)
+					if tok != "" {
+						body = injectCsrfIntoForms(body, tok)
+					}
+					// Dev-only "🔍 Console" floating link. Injected
+					// just before </body> so it lives outside any
+					// user route container. Returns "" in production
+					// (productionFromEnv() == true), making this a
+					// no-op for staging / prod deployments.
+					if banner := devBannerHTML(); banner != "" {
+						body = injectDevBanner(body, banner)
+					}
+				}
 				if skyResp.Status > 0 {
 					w.WriteHeader(skyResp.Status)
 				}
-				fmt.Fprint(w, skyResp.Body)
+				fmt.Fprint(w, body)
 			} else {
 				w.WriteHeader(500)
 				fmt.Fprint(w, "Internal Server Error")
@@ -5850,17 +6102,69 @@ func Server_listen(port any, routes any) any {
 		})
 	}
 
+	// Observability endpoints (Phase 1.1a Step 4). Mount BEFORE
+	// any of the user's routes so the catch-all "/" pattern in
+	// user code doesn't shadow them. Opt-out via
+	// OBSERVABILITY_DISABLED=1.
+	// Auto-mount the bundled Sky Console as a sub-app at
+	// /_sky/console in dev mode. Must run BEFORE
+	// MountObservabilityEndpoints so the legacy console mount inside
+	// it sees the flag and stays out. Same helper Sky.Live uses, same
+	// gates — never spawns in production, never recurses when
+	// SKY_LIVE_BASE_PATH is already set, never blocks startup on
+	// spawn failure. parentBasePath is "" because Sky.Http.Server has
+	// no concept of being itself mounted as a sub-app today.
+	// Pass `p` so the console child can push observability data
+	// back to us via SKY_PARENT_URL=http://127.0.0.1:<p>.
+	maybeAutoMountConsole(mux, "", p)
+	MountObservabilityEndpoints(mux)
+	// If THIS process is a sub-app (SKY_PARENT_URL + SKY_LIVE_NAMESPACE
+	// set), start the push-exporter so Log.* / metric / span writes
+	// flow back to the parent. No-op for standalone runs.
+	StartPushExporter()
+	// Production-mode gate — single source of truth in
+	// `productionFromEnv`: any ENV / SKY_ENV value EXCEPT
+	// {"dev", "development", "local"} gates. Unset → open.
+	SetProductionMode(productionFromEnv())
+
+	// Step 7 — OTel tracer init. Same shape as Sky.Live; non-fatal
+	// on failure (logs + continues with noop tracer).
+	if err := InitTracingFromEnv(); err != nil {
+		fmt.Fprintf(os.Stderr, "[sky.http] OTel init failed (continuing without trace export): %v\n", err)
+	}
+
+	// Wrap with CSRF (Phase 1.2) + observability (Phase 1.1a Step 3).
+	// Order: observability is OUTER so CSRF rejections still get
+	// metered as 403 — surfaces attacks / misconfigs in dashboards.
+	csrfed := CSRFMiddleware(mux)
+	observed := ObservabilityMiddleware(csrfed)
+
 	srv := &http.Server{
 		Addr:              fmt.Sprintf(":%d", p),
-		Handler:           mux,
+		Handler:           observed,
 		ReadHeaderTimeout: serverReadHeaderTimeout,
 		ReadTimeout:       serverReadTimeout,
 		WriteTimeout:      serverWriteTimeout,
 		IdleTimeout:       serverIdleTimeout,
 		MaxHeaderBytes:    serverMaxHeaderBytes,
 	}
+	// Tear down sub-apps on signal so the dev-console child doesn't
+	// orphan when the user kills `sky run`. Sky.Live has its own
+	// richer shutdown handler (graceful SSE close, OTel flush, etc.);
+	// Sky.Http.Server doesn't, so a minimal handler is added here
+	// specifically for sub-app cleanup. Without this the child
+	// process group would survive parent exit and keep its port
+	// bound, making subsequent runs hit "address already in use".
+	srvSigCh := make(chan os.Signal, 2)
+	signal.Notify(srvSigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+	go func() {
+		<-srvSigCh
+		ShutdownSubApps()
+		_ = srv.Close()
+	}()
 	fmt.Printf("Sky server listening on http://localhost:%d\n", p)
 	err := srv.ListenAndServe()
+	signal.Stop(srvSigCh)
 	if err != nil && err != http.ErrServerClosed {
 		return Err[any, any](ErrFfi(err.Error()))
 	}
@@ -5893,6 +6197,76 @@ func Server_json(body any) any {
 
 func Server_html(body any) any {
 	return SkyResponse{Status: 200, Body: fmt.Sprintf("%v", body), ContentType: "text/html"}
+}
+
+// injectCsrfIntoForms walks an HTML body and inserts a hidden
+// `<input type="hidden" name="__sky_csrf" value="...">` immediately
+// after every opening `<form …>` whose method is POST (or absent —
+// HTML defaults to GET but apps that omit the attribute and use a
+// POST handler are rare; we cover only declared POSTs here). Case-
+// insensitive matching on both the tag and the method attribute.
+// Idempotent: if a form already contains `name="__sky_csrf"` in its
+// raw markup we skip injection so a double-render doesn't stack
+// duplicate inputs.
+//
+// Why this lives in the runtime: Sky.Http.Server templates are plain
+// strings produced by user code (typically from `<form method="POST"
+// action="…">…</form>`); rather than force every user to remember the
+// CSRF input, the runtime injects it before the body hits the wire.
+// The middleware's `r.FormValue("__sky_csrf")` fallback (see
+// csrf_middleware.go) reads it back. Net effect: AI-written
+// Sky.Http.Server form apps are CSRF-protected by construction, same
+// as Sky.Live apps.
+func injectCsrfIntoForms(body, token string) string {
+	if token == "" {
+		return body
+	}
+	hidden := `<input type="hidden" name="__sky_csrf" value="` + token + `">`
+	var out strings.Builder
+	out.Grow(len(body) + 128)
+	i := 0
+	lower := strings.ToLower(body)
+	for i < len(body) {
+		fIdx := strings.Index(lower[i:], "<form")
+		if fIdx < 0 {
+			out.WriteString(body[i:])
+			break
+		}
+		fIdx += i
+		// Copy everything up to and including the <form ... > opener.
+		closeIdx := strings.Index(body[fIdx:], ">")
+		if closeIdx < 0 {
+			// Unclosed tag — bail and emit the rest unchanged.
+			out.WriteString(body[i:])
+			break
+		}
+		tagEnd := fIdx + closeIdx + 1
+		formTag := body[fIdx:tagEnd]
+		out.WriteString(body[i:tagEnd])
+		// Find the matching `</form>` so we can scope idempotency
+		// check to this form's body.
+		formCloseRel := strings.Index(lower[tagEnd:], "</form>")
+		var formBodyEnd int
+		if formCloseRel < 0 {
+			formBodyEnd = len(body)
+		} else {
+			formBodyEnd = tagEnd + formCloseRel
+		}
+		// Only inject for POST forms (case-insensitive) that don't
+		// already carry a __sky_csrf input.
+		methodLower := strings.ToLower(formTag)
+		isPost := strings.Contains(methodLower, `method="post"`) ||
+			strings.Contains(methodLower, `method='post'`) ||
+			strings.Contains(methodLower, "method=post")
+		alreadyHas := strings.Contains(
+			strings.ToLower(body[tagEnd:formBodyEnd]),
+			`name="__sky_csrf"`)
+		if isPost && !alreadyHas {
+			out.WriteString(hidden)
+		}
+		i = tagEnd
+	}
+	return out.String()
 }
 func Server_htmlT(body string) SkyResponse {
 	return SkyResponse{Status: 200, Body: body, ContentType: "text/html"}
@@ -5984,7 +6358,7 @@ func Middleware_rateLimit(maxPerMinute any, handler any) any {
 				// No IP → don't rate-limit (the direct-handler path
 				// in unit tests has this shape). Production always
 				// has RemoteAddr set by net/http.
-				task := handler.(func(any) any)(req)
+				task := SkyCall(handler, req)
 				return anyTaskInvoke(task)
 			}
 			if rateLimitHit(key, limit) {
@@ -5998,7 +6372,7 @@ func Middleware_rateLimit(maxPerMinute any, handler any) any {
 				}
 				return Ok[any, any](resp)
 			}
-			task := handler.(func(any) any)(req)
+			task := SkyCall(handler, req)
 			return anyTaskInvoke(task)
 		}
 	}
@@ -6081,7 +6455,7 @@ func Middleware_withCors(origins any, handler any) any {
 				return Ok[any, any](resp)
 			}
 			// Delegate to inner handler, then add CORS headers to response.
-			task := handler.(func(any) any)(req)
+			task := SkyCall(handler, req)
 			res := any(anyTaskInvoke(task))
 			if sr, ok := res.(SkyResult[any, any]); ok && sr.Tag == 0 {
 				if resp, ok := sr.OkValue.(SkyResponse); ok {
@@ -6106,7 +6480,7 @@ func Middleware_withLogging(handler any) any {
 		return func() any {
 			r, _ := req.(SkyRequest)
 			start := time.Now()
-			task := handler.(func(any) any)(req)
+			task := SkyCall(handler, req)
 			res := any(anyTaskInvoke(task))
 			status := 0
 			if sr, ok := res.(SkyResult[any, any]); ok && sr.Tag == 0 {
@@ -6163,7 +6537,7 @@ func Middleware_withBasicAuth(expectedUser any, expectedPass any, handler any) a
 			if !(userOk && passOk) {
 				return Ok[any, any](SkyResponse{Status: 401, Body: "bad credentials"})
 			}
-			task := handler.(func(any) any)(req)
+			task := SkyCall(handler, req)
 			return task.(func() any)()
 		}
 	}
@@ -6201,7 +6575,7 @@ func Middleware_withRateLimit(name any, capacity any, refillPerSec any, handler 
 					Headers: map[string]string{"Retry-After": "1"},
 				})
 			}
-			task := handler.(func(any) any)(req)
+			task := SkyCall(handler, req)
 			return task.(func() any)()
 		}
 	}

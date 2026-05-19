@@ -6,12 +6,47 @@ import qualified Data.Text as T
 import Sky.Parse.Primitives
 
 
--- | Skip zero or more spaces (not newlines)
+-- | Skip zero or more spaces / tabs AND inline line comments.
+-- Stops at newlines so callers that care about layout still see
+-- the line boundary.
+--
+-- Pre-2026-05-18 this only skipped ' ' and '\t' — a `-- inline`
+-- comment after a token landed back into the expression parser as
+-- a `-` (subtraction) operator, leading to baffling "Undefined
+-- name: foo" errors where `foo` was a word inside the comment.
+-- Now `--` triggers consume-to-end-of-line. Block comments
+-- (`{- -}`) are NOT consumed here on purpose: they can span
+-- newlines, and callers that care about layout must opt in to
+-- multi-line skipping via `freshLine`.
 spaces :: Parser x ()
 spaces = Parser $ \s _ eok _ _ ->
-    let (_, rest) = T.span (\c -> c == ' ' || c == '\t') (_src s)
-        consumed = T.length (_src s) - T.length rest
-    in eok () (s { _src = rest, _offset = _offset s + consumed, _col = _col s + consumed })
+    let s' = skipInlineWsAndComments s
+    in eok () s'
+
+-- skipInlineWsAndComments walks ' ', '\t', and `-- …` line
+-- comments. Stops at the first non-whitespace, non-comment char OR
+-- at a newline (which the caller's layout filter will react to).
+skipInlineWsAndComments :: State -> State
+skipInlineWsAndComments s =
+    case T.uncons (_src s) of
+        Just (' ', rest) ->
+            skipInlineWsAndComments
+                (s { _src = rest, _offset = _offset s + 1, _col = _col s + 1 })
+        Just ('\t', rest) ->
+            skipInlineWsAndComments
+                (s { _src = rest, _offset = _offset s + 1, _col = _col s + 4 })
+        Just ('-', rest1)
+            | Just ('-', _) <- T.uncons rest1 ->
+                -- Line comment: drop to (but not past) the next
+                -- newline. The newline stays so layout-sensitive
+                -- callers (let/case branches, top-level decl
+                -- separation) still see it.
+                let afterComment = T.dropWhile (/= '\n') rest1
+                    skipped     = T.length (_src s) - T.length afterComment
+                in s { _src = afterComment
+                     , _offset = _offset s + skipped
+                     , _col = _col s + skipped }
+        _ -> s
 
 
 -- | Skip whitespace including newlines, line comments, block comments

@@ -19,6 +19,7 @@ ARTEFACT_DIR="$REPO_ROOT/.skycache/verify"
 # (example, mode, stdin-or-args, expected-stdout-substring)
 #   mode: cli | cli-stdin | tui-start | cli-args | skip-gui
 CLI_TESTS=(
+    "00-standard-libs    cli          ''            'passed'"
     "01-hello-world      cli          ''            'Hello'"
     "02-go-stdlib        cli          ''            ''"
     "03-tea-external     cli          ''            ''"

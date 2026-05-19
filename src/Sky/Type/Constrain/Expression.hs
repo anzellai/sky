@@ -458,9 +458,24 @@ constrainBinop counter env region op left right expected = do
 
 binopTypes :: Counter -> String -> IO (T.Type, T.Type, T.Type)
 binopTypes counter op = case op of
-    "+"  -> return (intType, intType, intType)
-    "-"  -> return (intType, intType, intType)
-    "*"  -> return (intType, intType, intType)
+    -- Numeric arithmetic operators (`+`, `-`, `*`) are polymorphic
+    -- over a single type variable: `Int -> Int -> Int` OR
+    -- `Float -> Float -> Float` per use site (Elm convention).
+    -- The runtime helpers (`rt.Add`, `rt.Sub`, `rt.Mul`) already
+    -- handle both via reflect dispatch, and the codegen drops to
+    -- native Go binops when both operand types resolve concretely
+    -- (Compile.hs `bothAre intTy || bothAre floatTy` arms).
+    --
+    -- Pre-2026-05-18 these were Int-only (`return (intType,
+    -- intType, intType)`), which forced ugly workarounds in any
+    -- Sky code mixing Float arithmetic — e.g. the console's
+    -- `formatFloat` had to spell `f / 0.01` instead of `f * 100`
+    -- because Float multiplication failed type-check. Fixed
+    -- here by giving `+ - *` the same shape `++` already has:
+    -- `forall a. a -> a -> a`.
+    "+"  -> do { n <- freshName counter "_num"; return (T.TVar n, T.TVar n, T.TVar n) }
+    "-"  -> do { n <- freshName counter "_num"; return (T.TVar n, T.TVar n, T.TVar n) }
+    "*"  -> do { n <- freshName counter "_num"; return (T.TVar n, T.TVar n, T.TVar n) }
     "/"  -> return (floatType, floatType, floatType)
     "//" -> return (intType, intType, intType)
     -- `++` is polymorphic: works on both strings and lists. Emit a fresh
@@ -1095,6 +1110,15 @@ lookupKernelType modName funcName = case (modName, funcName) of
         Just $ T.Forall [] (T.TLambda stringType boolType)
     ("Ffi", "isPure") ->
         Just $ T.Forall [] (T.TLambda stringType boolType)
+    -- Ffi.toAny : a -> any — runtime identity, type-level escape
+    -- hatch for building heterogeneous Ffi.callPure arg lists.
+    -- Sky's literal lists are homogeneous; passing mixed types
+    -- through Ffi.callPure's `List any` requires this wrap so the
+    -- list-element TVar resolves to `any` rather than unifying
+    -- conflicting concretes.
+    ("Ffi", "toAny") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TVar "a") (T.TVar "any"))
     ("Basics", "identity") ->
         Just $ T.Forall ["a"] (T.TLambda (T.TVar "a") (T.TVar "a"))
     ("Basics", "always") ->
@@ -2029,6 +2053,66 @@ lookupKernelType modName funcName = case (modName, funcName) of
             (T.TLambda stringType
                 (T.TLambda (T.TVar "page")
                     (T.TType (ModuleName.Canonical "") "Route" [])))
+    -- Live.lifecycle: msg -> msg  (identity-typed marker that tags
+    -- a Msg as a heartbeat/Tick for the diff-based logger; runtime
+    -- unwraps before invoking update so user code sees raw Msg).
+    -- See docs/v1-rfc/1-observability.md §"Resolved questions" #4
+    -- + runtime-go/rt/msg_logging.go Std_Live_lifecycle.
+    ("Live", "lifecycle") ->
+        Just $ T.Forall ["msg"]
+            (T.TLambda (T.TVar "msg") (T.TVar "msg"))
+
+    -- ─── Phase 1.3 — Std.Jobs ──────────────────────────────────
+    -- See docs/v1-roadmap.md Phase 1.3, runtime-go/rt/jobs_kernel.go.
+    --
+    -- Jobs.define : String -> (a -> Task Error ()) -> String
+    --   Registers a handler under the given name; returns the name
+    --   as an opaque "job reference" the user passes to enqueue.
+    --   Return type is String (the registered name) at the kernel
+    --   layer; future v1.x may wrap in an opaque newtype if value-
+    --   identity matters more than the convenience of String.
+    ("Jobs", "define") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda stringType
+                (T.TLambda
+                    (T.TLambda (T.TVar "a")
+                        (T.TType ModuleName.task "Task"
+                            [errorType, T.TUnit]))
+                    stringType))
+    -- Jobs.enqueue : String -> a -> Task Error String
+    --   Returns the JobId as a String (decimal representation —
+    --   opaque to user, fed back to Jobs.cancel).
+    ("Jobs", "enqueue") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda stringType
+                (T.TLambda (T.TVar "a")
+                    (T.TType ModuleName.task "Task"
+                        [errorType, stringType])))
+    -- Jobs.enqueueIn : Int -> String -> a -> Task Error String
+    --   Delay first run by N milliseconds.
+    ("Jobs", "enqueueIn") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda intType
+                (T.TLambda stringType
+                    (T.TLambda (T.TVar "a")
+                        (T.TType ModuleName.task "Task"
+                            [errorType, stringType]))))
+    -- Jobs.cancel : String -> Task Error ()
+    --   Removes a pending job by id; Err when already
+    --   started / dead-lettered / unknown.
+    ("Jobs", "cancel") ->
+        Just $ T.Forall []
+            (T.TLambda stringType
+                (T.TType ModuleName.task "Task"
+                    [errorType, T.TUnit]))
+
+    -- Phase 2.4 — Decimal / Money / Std.Time zone helpers are
+    -- Sky-source stdlib modules (sky-stdlib/Std/...), not kernel.
+    -- Their HM types come from the parsed Sky source. The
+    -- runtime-go primitives they call via Ffi.callPure are
+    -- registered in runtime-go/rt/decimal_kernel.go,
+    -- runtime-go/rt/time_zones.go, runtime-go/rt/money_kernel.go.
+
     -- Json.Decode (kernel mod "JsonDec") — signatures carry the
     -- opaque Sky `Decoder a` as TType "Decoder" [a]; the codegen
     -- resolves Decoder to rt.SkyDecoder via runtimeTypedMap.
@@ -2997,12 +3081,16 @@ lookupKernelType modName funcName = case (modName, funcName) of
     _ -> Nothing
 
 
-intType, floatType, stringType, boolType, charType :: T.Type
+intType, floatType, stringType, boolType, charType, errorType :: T.Type
 intType = T.TType ModuleName.basics "Int" []
 floatType = T.TType ModuleName.basics "Float" []
 stringType = T.TType ModuleName.basics "String" []
 boolType = T.TType ModuleName.basics "Bool" []
 charType = T.TType ModuleName.basics "Char" []
+-- Sky.Core.Error.Error — the canonical error ADT every Task carries
+-- as its err-channel type. Saves repeating the long form across the
+-- many kernel sigs that build Task Error a.
+errorType = T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
 
 -- v0.13 Layer 3: the Sky-source `Std.Html.Html msg` ADT.  Empty
 -- home so it unifies with a user `Html Msg` annotation the same

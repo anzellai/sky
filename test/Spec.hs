@@ -17,12 +17,17 @@ import qualified Sky.Canonicalise.UnboundSpec
 import qualified Sky.Canonicalise.QualifiedTypeAliasSpec
 import qualified Sky.Type.ExhaustivenessSpec
 import qualified Sky.Type.AnyWildcardSpec
+import qualified Sky.Type.NumericBinopSpec
 import qualified Sky.Type.TupleLambdaSpec
 import qualified Sky.Type.UiOnSubmitTypedRecordSpec
 import qualified Sky.Type.UfCycleGuardSpec
 import qualified Sky.Type.RecordFieldExactnessSpec
 import qualified Sky.Build.UiFillCascadeSpec
 import qualified Sky.Build.UiMultilineTextareaSpec
+import qualified Sky.Build.ExposingTypeCtorsSpec
+import qualified Sky.Build.LetForwardRefSpec
+import qualified Sky.Build.EntryLocalShadowsDepSpec
+import qualified Sky.Parse.MultiLineCaseSubjectSpec
 import qualified Sky.Format.FormatSpec
 import qualified Sky.Build.GoKeywordCollisionSpec
 import qualified Sky.Build.NestedPatternSpec
@@ -72,6 +77,7 @@ import qualified Sky.Cli.CleanSpec
 import qualified Sky.Cli.TestSpec
 import qualified Sky.Cli.UpgradeClaudeSpec
 import qualified Sky.Cli.WatchSpec
+import qualified Sky.Cli.DoctorSpec
 
 main :: IO ()
 main = hspec $ do
@@ -135,6 +141,7 @@ main = hspec $ do
     -- Surfaced together when investigating why `sky test` for a
     -- passing module was xfailing.
     describe "Sky.Type.TupleLambda"      Sky.Type.TupleLambdaSpec.spec
+    describe "Sky.Type.NumericBinop"     Sky.Type.NumericBinopSpec.spec
     -- Std.Ui.onSubmit widening: in-module typed-record-arg case
     -- (`Ui.onSubmit DoSignIn` where `DoSignIn : LoginForm -> Msg`).
     -- Pre-fix the kernel sig forced `msg = (record -> msg)` and the
@@ -162,6 +169,10 @@ main = hspec $ do
     -- routes through a real <textarea> element with the value-attr
     -- → text-content splice the Live runtime already supports.
     describe "Sky.Build.UiMultilineTextarea" Sky.Build.UiMultilineTextareaSpec.spec
+    describe "Sky.Build.ExposingTypeCtors" Sky.Build.ExposingTypeCtorsSpec.spec
+    describe "Sky.Build.LetForwardRef"     Sky.Build.LetForwardRefSpec.spec
+    describe "Sky.Build.EntryLocalShadowsDep" Sky.Build.EntryLocalShadowsDepSpec.spec
+    describe "Sky.Parse.MultiLineCaseSubject" Sky.Parse.MultiLineCaseSubjectSpec.spec
     -- Closed-record exactness + cross-module externals registration:
     --   1. unifyRecords (Sky.Type.Unify) used to silently merge field-
     --      mismatched closed records under a fresh extension. Now
@@ -345,3 +356,4 @@ main = hspec $ do
     -- edit-triggers-rebuild, broken-save keeps previous binary
     -- running (the most user-visible policy).
     describe "Sky.Cli.Watch"               Sky.Cli.WatchSpec.spec
+    describe "Sky.Cli.Doctor"              Sky.Cli.DoctorSpec.spec

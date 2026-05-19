@@ -17,6 +17,7 @@ module Sky.Parse.Primitives
     -- Combinators
     , oneOf
     , oneOfWithFallback
+    , failParse
     -- Positioning
     , getPosition
     , getRow
@@ -133,6 +134,27 @@ oneOfWithFallback parsers fallback = Parser $ \s cok eok cerr _eerr ->
     go [] s _ eok _ = eok fallback s
     go (Parser p : rest) s cok eok cerr =
         p s cok eok cerr (\_ _ _ -> go rest s cok eok cerr)
+
+
+-- | Fail the current parser at the CURRENT position using `mkError`.
+-- Use this instead of `error "…"` for unrecoverable in-parser
+-- failures — `error` throws a Haskell ErrorCall that bypasses
+-- Either and surfaces to the user as a GHC stack trace; `failParse`
+-- returns the proper `Left x` from `fromText`, which the build
+-- driver renders as an Elm-style Sky error block with row/col.
+--
+-- Implementation note: emit on `cerr` (the consumed-failure
+-- continuation) rather than `eerr`, so this is treated as a
+-- HARD failure that doesn't trigger oneOf retry. Without this, a
+-- single broken sub-expression makes oneOf re-walk the whole
+-- alternative list — each candidate parser may itself recurse,
+-- accumulating exponential parser state and eating GB of heap
+-- (which mem-guard then kills as SIGKILL on the dev side, or
+-- which surfaces as a Haskell stack trace + OOM kill in
+-- production).
+failParse :: (Row -> Col -> x) -> Parser x a
+failParse mkError = Parser $ \s _ _ cerr _ ->
+    cerr (_row s) (_col s) mkError
 
 
 -- POSITION
