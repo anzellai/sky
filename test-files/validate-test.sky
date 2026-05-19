@@ -3,20 +3,8 @@ module Main exposing (main)
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.String as String
 import Sky.Core.Uuid as Uuid
-import Sky.Core.Task as Task
 import Sky.Http.RateLimit as RateLimit
 import Std.Log exposing (println)
-import Sky.Core.Error as Error exposing (Error)
-
-
-showUuid label t =
-    case Task.perform t of
-
-        Ok v ->
-            println (String.append label v)
-
-        Err e ->
-            println (String.append "err: " e)
 
 
 main =
@@ -52,8 +40,12 @@ main =
             else
                 println "relative rejected"
         _ = println (String.slugify "Hello, World! Это тест  —  Sky")
-        _ = showUuid "v4: " Uuid.v4
-        _ = showUuid "v7: " Uuid.v7
+        -- v0.14.x: Uuid.v4 / v7 are kernel zero-arity bare values
+        -- (called without `()`).  Pre-Phase-B these returned an
+        -- any-typed value that could be passed to Task.perform;
+        -- now they're typed `String` and used directly.
+        _ = println (String.append "v4: " Uuid.v4)
+        _ = println (String.append "v7: " Uuid.v7)
         -- Rate limit: capacity=3, refill=1/sec. Fire 5 times and show allowed count
         _ =
             println
