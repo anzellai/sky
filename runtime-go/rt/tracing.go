@@ -332,6 +332,10 @@ func (c propagationHeaderCarrier) Keys() []string {
 // Returns error only on exporter init failure — runtime startup
 // treats as non-fatal (logs + continues with noop tracer).
 func InitTracingFromEnv() error {
+	// Register the in-process span ring BEFORE InitTracer so spans
+	// reach the Sky Console even with no OTLP endpoint configured
+	// (observability-design.md "useful by default").
+	registerTraceRing()
 	cfg := telemetry.LoadTracerConfigFromEnv(IsServerless())
 	return telemetry.InitTracer(cfg)
 }

@@ -122,6 +122,23 @@ func Tracer() trace.Tracer {
 	return otel.GetTracerProvider().Tracer("sky-app")
 }
 
+// extraProcessors are in-process span sinks registered BEFORE
+// InitTracer runs. The Sky Console trace ring registers one here
+// (via RegisterSpanProcessor) so spans are captured locally even
+// when no OTLP endpoint is configured — see observability-design.md
+// "useful by default".
+var extraProcessors []sdktrace.SpanProcessor
+
+// RegisterSpanProcessor adds an in-process span processor that
+// InitTracer wires into the TracerProvider — both when an OTLP
+// endpoint is configured (alongside the exporter) and when it is
+// not (as the sole processor). Must be called before InitTracer.
+func RegisterSpanProcessor(p sdktrace.SpanProcessor) {
+	if p != nil {
+		extraProcessors = append(extraProcessors, p)
+	}
+}
+
 // InitTracer installs the global OTel TracerProvider. Idempotent:
 // calling twice with the same config is a no-op. Calling with a
 // changed endpoint tears down the prior provider + builds a fresh
@@ -155,12 +172,37 @@ func InitTracer(cfg TracerConfig) error {
 	}
 
 	if cfg.Endpoint == "" {
-		// Disabled mode: noop tracer + W3C propagator still set so
-		// inbound traceparent headers are honoured even when we
-		// don't export ourselves.
+		// No OTLP endpoint. The W3C propagator is still set so inbound
+		// traceparent headers are honoured.
 		otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
 			propagation.TraceContext{}, propagation.Baggage{}))
 		currentCfg = cfg
+		// If an in-process span sink is registered (the Sky Console
+		// trace ring — observability-design.md "useful by default"),
+		// still install a real TracerProvider carrying ONLY that
+		// processor, so spans are captured locally even with no
+		// exporter configured. Otherwise fall through to the noop
+		// tracer.
+		if len(extraProcessors) > 0 {
+			res, _ := resource.New(context.Background(),
+				resource.WithAttributes(
+					semconv.ServiceName(orDefault(cfg.ServiceName, "sky-app")),
+					semconv.ServiceVersion(orDefault(cfg.ServiceVersion, "dev")),
+				),
+			)
+			opts := []sdktrace.TracerProviderOption{
+				sdktrace.WithSampler(sdktrace.ParentBased(
+					sdktrace.TraceIDRatioBased(cfg.SampleRate))),
+				sdktrace.WithResource(res),
+			}
+			for _, p := range extraProcessors {
+				opts = append(opts, sdktrace.WithSpanProcessor(p))
+			}
+			tp := sdktrace.NewTracerProvider(opts...)
+			otel.SetTracerProvider(tp)
+			tracerProvider = tp
+			currentTracer = tp.Tracer("sky-app")
+		}
 		return nil
 	}
 
@@ -218,11 +260,17 @@ func InitTracer(cfg TracerConfig) error {
 		)
 	}
 
-	tp := sdktrace.NewTracerProvider(
+	tpOpts := []sdktrace.TracerProviderOption{
 		sdktrace.WithSampler(sampler),
 		sdktrace.WithSpanProcessor(processor),
 		sdktrace.WithResource(res),
-	)
+	}
+	// Additionally run any in-process span sinks (the Sky Console
+	// trace ring) alongside the OTLP exporter.
+	for _, p := range extraProcessors {
+		tpOpts = append(tpOpts, sdktrace.WithSpanProcessor(p))
+	}
+	tp := sdktrace.NewTracerProvider(tpOpts...)
 	otel.SetTracerProvider(tp)
 	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
 		propagation.TraceContext{}, propagation.Baggage{}))
@@ -310,6 +358,22 @@ func orDefault(v, def string) string {
 //
 // `isServerless` is the runtime mode flag (caller passes
 // rt.IsServerless() from the parent package — avoids a cycle).
+// isProductionEnv mirrors the runtime's production gate (ENV then
+// SKY_ENV; unset / dev / development / local → dev). Re-implemented
+// here because the telemetry package must not import rt.
+func isProductionEnv() bool {
+	v := os.Getenv("ENV")
+	if v == "" {
+		v = os.Getenv("SKY_ENV")
+	}
+	switch v {
+	case "", "dev", "development", "local":
+		return false
+	default:
+		return true
+	}
+}
+
 func LoadTracerConfigFromEnv(isServerless bool) TracerConfig {
 	endpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
 	cfg := TracerConfig{
@@ -328,10 +392,20 @@ func LoadTracerConfigFromEnv(isServerless bool) TracerConfig {
 		}
 	}
 	if cfg.SampleRate == 0 {
-		if isServerless {
+		// observability-design.md sane defaults:
+		//   dev          → 100% (local debugging; the in-process
+		//                  ring is bounded anyway)
+		//   serverless   → 100% (each invocation is one short-lived
+		//                  trace; head-sampling buys nothing)
+		//   production   → 5% interim. Phase 5 replaces this with a
+		//                  rate-limited head sampler (50 traces/s +
+		//                  always-keep errors/slow) so cost is
+		//                  bounded without the dev computing a %.
+		switch {
+		case isServerless, !isProductionEnv():
 			cfg.SampleRate = 1.0
-		} else {
-			cfg.SampleRate = 0.01
+		default:
+			cfg.SampleRate = 0.05
 		}
 	}
 	return cfg

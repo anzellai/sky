@@ -991,24 +991,34 @@ func readBoundedBody(body io.ReadCloser) (string, error) {
 func Http_get(url any) any {
 	u := fmt.Sprintf("%v", url)
 	return func() any {
-		resp, err := skyHttpClient.Get(u)
-		if err != nil {
-			return Err[any, any](ErrNetwork("http.get: " + err.Error()))
-		}
-		body, err := readBoundedBody(resp.Body)
-		if err != nil {
-			return Err[any, any](ErrNetwork("http.get read: " + err.Error()))
-		}
-		hdrs := map[string]string{}
-		for k, v := range resp.Header {
-			if len(v) > 0 {
-				hdrs[k] = v[0]
+		return WithHTTPClientSpan("GET", u, func() any {
+			req, err := http.NewRequest("GET", u, nil)
+			if err != nil {
+				return Err[any, any](ErrNetwork("http.get: " + err.Error()))
 			}
-		}
-		return Ok[any, any](HttpResponse{
-			Status:  resp.StatusCode,
-			Body:    body,
-			Headers: hdrs,
+			// Carry the current trace context + inject W3C traceparent
+			// so the downstream service nests under this client span.
+			req = req.WithContext(CurrentTraceContext())
+			InjectTraceHeaders(req)
+			resp, err := skyHttpClient.Do(req)
+			if err != nil {
+				return Err[any, any](ErrNetwork("http.get: " + err.Error()))
+			}
+			body, err := readBoundedBody(resp.Body)
+			if err != nil {
+				return Err[any, any](ErrNetwork("http.get read: " + err.Error()))
+			}
+			hdrs := map[string]string{}
+			for k, v := range resp.Header {
+				if len(v) > 0 {
+					hdrs[k] = v[0]
+				}
+			}
+			return Ok[any, any](HttpResponse{
+				Status:  resp.StatusCode,
+				Body:    body,
+				Headers: hdrs,
+			})
 		})
 	}
 }
@@ -1042,24 +1052,33 @@ func Http_post(url any, body any) any {
 	u := fmt.Sprintf("%v", url)
 	b := fmt.Sprintf("%v", body)
 	return func() any {
-		resp, err := skyHttpClient.Post(u, "application/json", strings.NewReader(b))
-		if err != nil {
-			return Err[any, any](ErrNetwork("http.post: " + err.Error()))
-		}
-		rb, err := readBoundedBody(resp.Body)
-		if err != nil {
-			return Err[any, any](ErrNetwork("http.post read: " + err.Error()))
-		}
-		hdrs := map[string]string{}
-		for k, v := range resp.Header {
-			if len(v) > 0 {
-				hdrs[k] = v[0]
+		return WithHTTPClientSpan("POST", u, func() any {
+			req, err := http.NewRequest("POST", u, strings.NewReader(b))
+			if err != nil {
+				return Err[any, any](ErrNetwork("http.post: " + err.Error()))
 			}
-		}
-		return Ok[any, any](HttpResponse{
-			Status:  resp.StatusCode,
-			Body:    rb,
-			Headers: hdrs,
+			req.Header.Set("Content-Type", "application/json")
+			req = req.WithContext(CurrentTraceContext())
+			InjectTraceHeaders(req)
+			resp, err := skyHttpClient.Do(req)
+			if err != nil {
+				return Err[any, any](ErrNetwork("http.post: " + err.Error()))
+			}
+			rb, err := readBoundedBody(resp.Body)
+			if err != nil {
+				return Err[any, any](ErrNetwork("http.post read: " + err.Error()))
+			}
+			hdrs := map[string]string{}
+			for k, v := range resp.Header {
+				if len(v) > 0 {
+					hdrs[k] = v[0]
+				}
+			}
+			return Ok[any, any](HttpResponse{
+				Status:  resp.StatusCode,
+				Body:    rb,
+				Headers: hdrs,
+			})
 		})
 	}
 }

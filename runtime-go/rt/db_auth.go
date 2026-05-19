@@ -368,6 +368,14 @@ func Db_queryDecode(db any, query any, args any, decoder any) any {
 func Db_insertRow(db any, table any, row any) any {
 	capDb, capTable, capRow := db, table, row
 	return func() any {
+		return WithDbSpan(dbSystemOf(capDb), "insertRow",
+			"INSERT INTO "+safeTable(capTable),
+			func() any { return dbInsertRowBody(capDb, capTable, capRow) })
+	}
+}
+
+func dbInsertRowBody(capDb, capTable, capRow any) any {
+	{
 		d, ok := capDb.(*SkyDb)
 		if !ok {
 			return Err[any, any](ErrInvalidInput("db.insertRow: not a Db"))
@@ -631,6 +639,13 @@ func Db_findByConditions(db any, table any, conditions any) any {
 func Db_withTransaction(db any, body any) any {
 	capDb, capBody := db, body
 	return func() any {
+		return WithDbSpan(dbSystemOf(capDb), "transaction", "BEGIN",
+			func() any { return dbWithTransactionBody(capDb, capBody) })
+	}
+}
+
+func dbWithTransactionBody(capDb, capBody any) any {
+	{
 		d, ok := capDb.(*SkyDb)
 		if !ok {
 			return Err[any, any](ErrInvalidInput("db.withTransaction: not a Db"))
@@ -864,6 +879,14 @@ func Auth_verifyToken(secret any, token any) any {
 func Auth_register(db any, email any, password any) any {
 	capDb, capEmail, capPw := db, email, password
 	return func() any {
+		return WithAuthSpan("register", func() any {
+			return authRegisterBody(capDb, capEmail, capPw)
+		})
+	}
+}
+
+func authRegisterBody(capDb, capEmail, capPw any) any {
+	{
 		d, ok := capDb.(*SkyDb)
 		if !ok {
 			return Err[any, any](ErrInvalidInput("auth.register: not a Db"))
