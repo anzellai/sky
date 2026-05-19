@@ -116,6 +116,12 @@ registry = Map.fromList
     , (("Ffi", "callTask"),       KernelInfo "rt.Ffi_callTask" 2 False)
     , (("Ffi", "has"),            KernelInfo "rt.Ffi_has" 1 False)
     , (("Ffi", "isPure"),         KernelInfo "rt.Ffi_isPure" 1 False)
+    -- Ffi.kernel — runtime stub (panics if ever invoked). Codegen
+    -- rewrites every Ffi.kernel-wrapped function call to a direct
+    -- VarKernel of the named binding, so this entry exists only so
+    -- the lowerer has something to dispatch when an unrewritten
+    -- reference slips through (e.g. an indirect / partial-app).
+    , (("Ffi", "kernel"),         KernelInfo "rt.Ffi_kernel" 1 False)
 
     -- ═══════════════════════════════════════════════════════
     -- List

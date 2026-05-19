@@ -3053,6 +3053,22 @@ func Ffi_isPure(name any) any {
 // See lookupKernelType "Ffi.toAny" for the type rationale.
 func Ffi_toAny(v any) any { return v }
 
+// Ffi.kernel : String -> a — Layer 3 declaration sentinel.
+//
+// This function should NEVER be invoked at runtime. Sky-source stdlib
+// modules use `Ffi.kernel "KernelName"` as the body of thin wrappers
+// (`length s = Ffi.kernel "String_length" |> (\f -> f s)` etc.) and
+// the compiler rewrites every `Can.Call` of such a wrapper to a
+// direct `Can.VarKernel` of the named kernel binding at build time.
+// If we ever see this panic, the call-site rewrite failed — file
+// a bug.
+func Ffi_kernel(name any) any {
+	panic(fmt.Sprintf(
+		"Ffi.kernel %q reached the runtime — the build-time call-site "+
+			"rewrite did not fire. This is a compiler bug.",
+		fmt.Sprintf("%v", name)))
+}
+
 // SkyADT: runtime type for ADT case-match dispatch.
 // Codegen emits `msg.(rt.SkyADT)` so any local ADT type (with matching Tag/Fields)
 // can be pattern-matched via integer Tag comparison.

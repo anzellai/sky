@@ -1119,6 +1119,18 @@ lookupKernelType modName funcName = case (modName, funcName) of
     ("Ffi", "toAny") ->
         Just $ T.Forall ["a"]
             (T.TLambda (T.TVar "a") (T.TVar "any"))
+    -- Ffi.kernel : String -> a — Layer 3 declaration sentinel for
+    -- Sky-source stdlib modules.  When the body of a Sky-source
+    -- function is exactly `Ffi.kernel "KernelName"`, the build's
+    -- pre-lowering pass rewrites every `Can.Call` of that function
+    -- to a direct `Can.VarKernel` of the named kernel binding —
+    -- preserving the typed-codegen path that user code already
+    -- enjoys today.  At runtime the body never runs (codegen
+    -- rewrites the call site); the runtime panic stub exists only
+    -- as a self-check that the codegen-side rewrite fired.
+    ("Ffi", "kernel") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda stringType (T.TVar "a"))
     ("Basics", "identity") ->
         Just $ T.Forall ["a"] (T.TLambda (T.TVar "a") (T.TVar "a"))
     ("Basics", "always") ->

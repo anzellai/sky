@@ -164,6 +164,20 @@ globalAnnotMap :: IORef (Map.Map String T.Annotation)
 globalAnnotMap = unsafePerformIO $ newIORef Map.empty
 
 
+-- | v0.14.x Stage 4: Ffi.kernel alias registry.  Populated from
+-- canonicalised Sky-source modules whose bindings have the
+-- declaration shape `name = Ffi.kernel "KernelName"`.  Maps the
+-- Sky-source `(home, name)` to the kernel `(kernelMod, kernelName)`
+-- pair so codegen can rewrite call sites to the direct
+-- `Can.VarKernel` dispatch — preserving the typed-codegen path
+-- the kernel-direct route already enjoys.
+--
+-- See `docs/V1_TYPED_CODEGEN_FINISH.md` Stage 4 for the rationale.
+{-# NOINLINE globalKernelAlias #-}
+globalKernelAlias :: IORef (Map.Map (ModuleName.Canonical, String) (String, String))
+globalKernelAlias = unsafePerformIO $ newIORef Map.empty
+
+
 -- | v0.13 Phase A4: the set of specialised function names that
 -- `generateGoMulti` actually emitted as separate Go decls.  Used
 -- by `instanceMangledName` to gate call-site mangled-name
@@ -1062,6 +1076,19 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                             [(entryName, [])]
                     writeIORef globalReachableSet reached
                     writeIORef globalAnnotMap annotMap
+                    -- v0.14.x Stage 4: scan every canon module for
+                    -- Sky-source bindings whose body is exactly
+                    -- `Ffi.kernel "K_n"`. Register each (home, name)
+                    -- → (kernelMod, kernelName) so codegen rewrites
+                    -- call sites to the typed kernel dispatch.
+                    let entryModNameAlias = case mainModuleName entrySrcMod of
+                            Just n  -> n
+                            Nothing -> "Main"
+                        allModsForAlias =
+                            (entryModNameAlias, canMod) : validDeps
+                        kernelAliasMap = Map.fromList $
+                            concatMap collectKernelAliases allModsForAlias
+                    writeIORef globalKernelAlias kernelAliasMap
                     -- v0.13 F: whole-program Sky DCE.  Walk every
                     -- module's call graph from `(entryMod, "main")`
                     -- across module boundaries, tracking VarTopLevel
@@ -4248,6 +4275,54 @@ buildDefMap canMod validDeps =
         Can.DestructDef _ _         -> []  -- skip pattern-bindings
 
 
+-- | v0.14.x Stage 4: collect every Sky-source binding whose body is a
+-- kernel alias of the shape `name = Ffi.kernel "KernelName"`.  The
+-- kernel name is split at the first `_` into `(modPart, funcPart)`
+-- (matching the runtime's `KernelMod_funcName` Go-side convention) so
+-- the build-time call-site rewrite can route `Sky.Core.X.foo` to
+-- `Can.VarKernel "X" "foo"`.
+--
+-- A binding qualifies when its body is exactly `Ffi.kernel "K_n"`:
+--   * `Can.Call (Can.VarKernel "Ffi" "kernel") [Can.Str "K_n"]`
+-- or its single-Unit-applied form (auto-generated zero-arg shape).
+-- Defs with patterns (function with explicit params) are ignored —
+-- the value-binding shape is the canonical Layer 3 pattern.
+collectKernelAliases
+    :: (String, Can.Module)
+    -> [((ModuleName.Canonical, String), (String, String))]
+collectKernelAliases (_modName, m) =
+    let home = Can._name m
+    in walkDecls home (Can._decls m) []
+  where
+    walkDecls _ Can.SaveTheEnvironment acc = acc
+    walkDecls h (Can.Declare def rest) acc =
+        walkDecls h rest (defAlias h def ++ acc)
+    walkDecls h (Can.DeclareRec def defs rest) acc =
+        walkDecls h rest (concatMap (defAlias h) (def : defs) ++ acc)
+
+    defAlias h def = case def of
+        Can.Def (A.At _ name) [] body ->
+            maybe [] (\kp -> [((h, name), kp)]) (kernelAliasBody body)
+        Can.TypedDef (A.At _ name) _ [] body _ ->
+            maybe [] (\kp -> [((h, name), kp)]) (kernelAliasBody body)
+        _ -> []
+
+    -- Body must be `Ffi.kernel "Mod_func"`.  Returns the split
+    -- `(Mod, func)` pair so the call-site rewrite can emit a typed
+    -- kernel dispatch matching the existing `(modName, funcName)` keys
+    -- in `lookupKernelType` / the runtime registry.
+    kernelAliasBody (A.At _ inner) = case inner of
+        Can.Call (A.At _ (Can.VarKernel "Ffi" "kernel"))
+                 [A.At _ (Can.Str raw)] ->
+            splitKernelName raw
+        _ -> Nothing
+
+    splitKernelName raw = case break (== '_') raw of
+        (kMod, '_' : kFn) | not (null kMod), not (null kFn) ->
+            Just (kMod, kFn)
+        _ -> Nothing
+
+
 -- | v0.13 Phase A4: build a `Sky-qualName → generalised-annotation`
 -- map covering the entry module + every dep.  Each annotation comes
 -- from `generaliseToAnnotation` applied to the function's solved
@@ -5853,6 +5928,29 @@ exprToGoExpectGo goRendering e@(A.At _ expr)
             coerceReturnExprT goRendering (exprToGo e)
 
 
+-- | v0.14.x Stage 4: look up a Sky-source (home, name) in the
+-- kernel-alias registry.  Returns the matching (kernelMod, kernelName)
+-- pair so codegen can route the call through the typed kernel dispatch
+-- instead of treating the Sky-source binding as a regular user function.
+{-# NOINLINE lookupKernelAlias #-}
+lookupKernelAlias :: ModuleName.Canonical -> String -> Maybe (String, String)
+lookupKernelAlias home name = unsafePerformIO $ do
+    aliases <- readIORef globalKernelAlias
+    return $ Map.lookup (home, name) aliases
+
+
+-- | v0.14.x Stage 4: if `func` is a `Can.VarTopLevel` that resolves to
+-- a kernel alias, rewrite the head to the corresponding `Can.VarKernel`
+-- so the existing kernel-dispatch arms in `Can.Call` codegen take over
+-- (typed-kernel routing, literal-arg fast paths, etc.).
+rewriteAliasHead :: Can.Expr -> Can.Expr
+rewriteAliasHead expr@(A.At r e) = case e of
+    Can.VarTopLevel home name
+        | Just (kMod, kFn) <- lookupKernelAlias home name ->
+            A.At r (Can.VarKernel kMod kFn)
+    _ -> expr
+
+
 -- | Convert a canonical expression to Go IR
 exprToGo :: Can.Expr -> GoIr.GoExpr
 exprToGo (A.At _ expr) = case expr of
@@ -5874,6 +5972,13 @@ exprToGo (A.At _ expr) = case expr of
 
     Can.VarLocal name ->
         GoIr.GoIdent name
+
+    Can.VarTopLevel home name
+        -- v0.14.x Stage 4: Sky-source binding aliased to a kernel via
+        -- `name = Ffi.kernel "KernelName"` — emit the kernel binding
+        -- directly so the typed-codegen path takes over.
+        | Just (kMod, kFn) <- lookupKernelAlias home name ->
+            kernelToGo kMod kFn
 
     Can.VarTopLevel home name ->
         -- For cross-module references, prefix with module name.
@@ -5924,7 +6029,12 @@ exprToGo (A.At _ expr) = case expr of
         -- Generate curried function: \a b -> body becomes func(a any) any { return func(b any) any { return body } }
         curryLambdaPat params (exprToGo body)
 
-    Can.Call func args ->
+    Can.Call rawFunc args ->
+        -- v0.14.x Stage 4: if the callee is a Sky-source binding that's
+        -- aliased to a kernel via `name = Ffi.kernel "K_n"`, rewrite the
+        -- head to `Can.VarKernel "K" "n"` so the kernel-dispatch arms
+        -- below take over.  No-op when not an alias.
+        let func = rewriteAliasHead rawFunc in
         case A.toValue func of
             -- v0.12.x typed-codegen Phase 3: route List.* kernels with
             -- typed-T variants when the call-site list arg's element

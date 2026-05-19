@@ -250,6 +250,7 @@ test-suite sky-tests
       Sky.Build.ExposingTypeCtorsSpec
       Sky.Build.LetForwardRefSpec
       Sky.Build.EntryLocalShadowsDepSpec
+      Sky.Build.FfiKernelAliasSpec
       Sky.Parse.MultiLineCaseSubjectSpec
       Sky.Type.InstanceCaptureSpec
       Sky.Format.FormatSpec

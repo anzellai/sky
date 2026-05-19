@@ -1168,7 +1168,7 @@ staticKernelFunctions = Map.fromList
     -- errors on missing). `Env.get`'s Maybe-shape is dropped — use
     -- `System.getenvOr "" key` for the optional-default pattern.
     , ("Middleware", ["withCors", "withLogging", "withBasicAuth", "withRateLimit"])
-    , ("Ffi",     ["call", "callPure", "callTask", "has", "isPure", "toAny"])
+    , ("Ffi",     ["call", "callPure", "callTask", "has", "isPure", "toAny", "kernel"])
     -- v0.13 Layer 3: Html / Attr whitelist entries removed — those
     -- are Sky-source stdlib modules now; their exported names come
     -- from the parsed module, not this kernel registry.
@@ -1334,9 +1334,19 @@ canonicaliseValue tmap aliasMap env (A.At _ val) =
                 home = Env._home env
                 canType = CanType.canonicaliseTypeAnnotationWithAliases tmap aliasMap home srcType
                 freeVars = CanType.freeTypeVars srcType
-                typedPatterns = zip canPatterns (arrowArgs canType)
+                nPats = length canPatterns
+                typedPatterns = zip canPatterns (take nPats (arrowArgs canType))
+                -- Strip EXACTLY `nPats` arrows from the annotation to get
+                -- the binding's effective return type.  For a zero-pattern
+                -- value binding (`myUpper : String -> String; myUpper =
+                -- Ffi.kernel "X"`) this keeps `retType = String -> String`,
+                -- so the body must produce a value of that type.  The old
+                -- behaviour (strip ALL arrows unconditionally) corrupted
+                -- the dep's recorded type to `String`, surfacing as
+                -- "Foreign 'Lib.myUpper': String vs a -> b" at use sites.
+                resultType = arrowResultN nPats canType
             in
-            Can.TypedDef name freeVars typedPatterns canBody (arrowResult canType)
+            Can.TypedDef name freeVars typedPatterns canBody resultType
 
 
 -- | Extract argument types from a function type
@@ -1345,7 +1355,19 @@ arrowArgs (Can.TLambda from to) = from : arrowArgs to
 arrowArgs _ = []
 
 
--- | Extract the result type from a function type
+-- | Extract the result type from a function type, stripping exactly N
+-- arrows.  For binding shapes with K patterns + an N-arrow annotation,
+-- the effective return type is what's left after stripping K arrows.
+arrowResultN :: Int -> Can.Type -> Can.Type
+arrowResultN n t | n <= 0 = t
+arrowResultN n (Can.TLambda _ to) = arrowResultN (n - 1) to
+arrowResultN _ t = t
+
+
+-- | Extract the result type from a function type by stripping every
+-- arrow.  Retained as a back-compat helper for any caller that still
+-- needs the all-strip semantics; the binding-canonicalisation path now
+-- uses `arrowResultN` instead.
 arrowResult :: Can.Type -> Can.Type
 arrowResult (Can.TLambda _ to) = arrowResult to
 arrowResult t = t
