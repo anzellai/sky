@@ -11,7 +11,7 @@ import System.IO (hPutStr, hPutStrLn, stderr)
 import qualified System.Directory
 import qualified System.Environment
 import qualified Language.Haskell.TH.Syntax
-import System.Directory (createDirectoryIfMissing, doesFileExist, removeFile, renameFile)
+import System.Directory (createDirectoryIfMissing, doesFileExist, removeFile, renameFile, getCurrentDirectory)
 import System.IO.Error (catchIOError)
 import qualified Control.Concurrent
 import qualified Control.Exception
@@ -46,6 +46,10 @@ import qualified Sky.Build.Validator as Validator
 import qualified Sky.Reporting.Render as Render
 import qualified Sky.Cli.Watch as Watch
 import qualified Sky.Cli.Doctor as Doctor
+import qualified Sky.Doc.Index as DocIdx
+import qualified Sky.Doc.Terminal as DocTerm
+import qualified Sky.Doc.Render as DocRender
+import qualified Sky.Build.EmbeddedDocServer
 import qualified Sky.Build.EmbeddedConsole
 
 import qualified Control.Concurrent.Async as Async
@@ -851,6 +855,7 @@ data Command
     | Upgrade
     | UpgradeClaude              -- refresh ./CLAUDE.md from embedded template
     | Console ConsoleOpts        -- run bundled Sky Console mini-app
+    | Doc DocOpts                -- print / serve API documentation
     | Doctor Doctor.DoctorOpts   -- diagnose project / runtime issues
     | Version
     deriving (Show)
@@ -860,6 +865,15 @@ data Command
 data ConsoleOpts = ConsoleOpts
     { _consolePort :: Int        -- Sky.Live port (default 8025)
     , _consoleTui  :: Bool       -- --tui: run via Sky.Tui instead
+    } deriving (Show)
+
+
+-- | Options for `sky doc`.
+data DocOpts = DocOpts
+    { _docTarget :: !(Maybe String)  -- Module name to print (terminal mode)
+    , _docList   :: !Bool            -- --list: print all module names
+    , _docServe  :: !Bool            -- --serve: start the doc HTTP server
+    , _docPort   :: !Int             -- --port (default 8030)
     } deriving (Show)
 
 
@@ -913,6 +927,9 @@ commandParser = subparser
     <> command "console"
         (info (Console <$> consoleOptsParser)
             (progDesc "Run the bundled Sky Console dashboard (Std.Ui Sky.Live; --tui for terminal)"))
+    <> command "doc"
+        (info (Doc <$> docOptsParser)
+            (progDesc "Print or browse API docs (--serve for HTTP server)"))
     <> command "doctor"
         (info (Doctor <$> doctorOptsParser)
             (progDesc "Diagnose common project / runtime stuck-states (stale cache, port in use, missing FFI)"))
@@ -943,6 +960,30 @@ consoleOptsParser = ConsoleOpts
     <*> switch
         ( long "tui"
        <> help "Run via Sky.Tui in the terminal instead of the browser"
+        )
+
+
+-- Parser for `sky doc` flags.
+docOptsParser :: Parser DocOpts
+docOptsParser = DocOpts
+    <$> optional (argument str
+        ( metavar "MODULE"
+       <> help "Module name to print (e.g. Std.Money)"
+        ))
+    <*> switch
+        ( long "list"
+       <> help "List every indexed module name"
+        )
+    <*> switch
+        ( long "serve"
+       <> help "Start the browsable doc HTTP server"
+        )
+    <*> option auto
+        ( long "port"
+       <> short 'p'
+       <> metavar "PORT"
+       <> value 8030
+       <> help "Listen port for `--serve` (default 8030)"
         )
 
 
@@ -1506,6 +1547,8 @@ runCommand cmd = case cmd of
 
     Console opts -> runConsole opts
 
+    Doc opts -> runDoc opts
+
     Doctor opts -> do
         Doctor.runDoctor opts
         -- runDoctor exits the process directly with the proper
@@ -1631,6 +1674,157 @@ runUpgradeClaude = do
 -- auto-invalidates without manual cleanup. Subsequent runs that find
 -- @sky-out/app@ already present skip the rebuild step.
 --
+-- ─── `sky doc` — print or serve API documentation ─────────────
+--
+-- MVP scope (v0.14.x):
+--   * `sky doc`                — summary of the project's index
+--   * `sky doc <Module>`       — print one module's surface
+--   * `sky doc --list`         — list every module name
+--   * `sky doc --serve [-p N]` — TODO: Sky-app spawn (not in MVP)
+--
+-- The index is built via `Sky.Doc.Index.buildDocIndex` which
+-- re-projects the LSP index into a JSON-serializable catalog.
+-- For v0.14.x.MVP we ship the terminal subset only; `--serve`
+-- is a follow-up commit that adds the bundled Sky.Http.Server
+-- app under `sky-bundled/doc/`.
+runDoc :: DocOpts -> IO (Either String ())
+runDoc opts = do
+    cwd <- getCurrentDirectory
+    -- Walk up to find sky.toml (project root). If we never find
+    -- one, the index will be empty — surface a clear message
+    -- and exit with code 2 rather than producing an empty page.
+    mRoot <- findProjectRootUpward cwd
+    case mRoot of
+        Nothing -> do
+            hPutStrLn stderr
+                "sky doc: no sky.toml found in current directory or any ancestor."
+            hPutStrLn stderr
+                "         cd into a project (e.g. examples/01-hello-world) and re-run."
+            exitWith (ExitFailure 2)
+        Just root -> do
+            idx <- DocIdx.buildDocIndex skyBuildVersion root
+            case (_docServe opts, _docList opts, _docTarget opts) of
+                (True, _, _) -> runDocServe idx (_docPort opts)
+                (_, True, _) -> do
+                    DocTerm.printAllModules idx
+                    return (Right ())
+                (_, _, Just modName) -> do
+                    DocTerm.printModule idx modName
+                    return (Right ())
+                (_, _, Nothing) -> do
+                    DocTerm.printIndexSummary idx
+                    return (Right ())
+
+
+-- | Render the doc site to a per-version cache directory, then
+-- materialise the bundled Sky.Http.Server app and run it pointed
+-- at that directory. Mirrors `runConsole`'s spawn pattern.
+runDocServe :: DocIdx.DocIndex -> Int -> IO (Either String ())
+runDocServe idx port = do
+    -- Render HTML + JSON to .skycache/doc-out/ under the project
+    -- root. Re-render every invocation so the docs reflect the
+    -- current source state.
+    let docOut = DocIdx.diRoot idx </> ".skycache" </> "doc-out"
+    DocRender.renderToDir docOut idx
+
+    -- Materialise the bundled doc-server Sky app to a cache dir
+    -- (mirrors `runConsole`).
+    cache <- System.Directory.getXdgDirectory System.Directory.XdgCache "sky"
+    let root   = cache </> ("doc-" ++ skyBuildVersion)
+        srcDir = root </> "src"
+        binPath = root </> "sky-out" </> "app"
+    createDirectoryIfMissing True srcDir
+    let writeFileBytes p bytes = do
+            createDirectoryIfMissing True (takeDirectory p)
+            B.writeFile p bytes
+    mapM_ (\(rel, bytes) -> writeFileBytes (root </> rel) bytes)
+          Sky.Build.EmbeddedDocServer.embeddedDocServerApp
+
+    skyBin <- System.Environment.getExecutablePath
+    haveBin <- doesFileExist binPath
+    when (not haveBin) $ do
+        putStrLn $ "sky doc: building doc-server (one-time per version, into "
+                   ++ root ++ ")..."
+        let bp = (System.Process.proc skyBin ["build", "src/Main.sky"])
+                    { System.Process.cwd = Just root
+                    , System.Process.std_out = System.Process.Inherit
+                    , System.Process.std_err = System.Process.Inherit
+                    }
+        (_, _, _, ph) <- System.Process.createProcess bp
+        bec <- System.Process.waitForProcess ph
+        case bec of
+            ExitSuccess -> return ()
+            ExitFailure n -> do
+                hPutStrLn stderr $ "sky doc: doc-server build failed (exit "
+                                   ++ show n ++ ")"
+                exitWith (ExitFailure n)
+
+    env0 <- System.Environment.getEnvironment
+    let env1 = filter (\(k, _) -> k `notElem`
+                          ["SKY_LIVE_PORT", "SKY_DOC_DIR"]) env0
+              ++ [ ("SKY_LIVE_PORT", show port)
+                 , ("SKY_DOC_DIR", docOut)
+                 ]
+        rp = (System.Process.proc binPath [])
+                { System.Process.env = Just env1
+                , System.Process.std_out = System.Process.Inherit
+                , System.Process.std_err = System.Process.Inherit
+                , System.Process.std_in  = System.Process.Inherit
+                }
+    putStrLn $ "sky doc: serving " ++ docOut
+            ++ " on http://127.0.0.1:" ++ show port ++ " (Ctrl-C to stop)"
+    (_, _, _, rph) <- System.Process.createProcess rp
+    -- Reuse runConsole's signal-forwarding so SIGTERM/SIGHUP from
+    -- a parent (or external supervisor) tears down the child
+    -- cleanly instead of orphaning it to PID 1.
+    let forwardSignal sig = Signals.installHandler sig
+            (Signals.Catch (do
+                System.Process.terminateProcess rph
+                _ <- Control.Concurrent.forkIO $ do
+                    Control.Concurrent.threadDelay 1000000
+                    mec <- System.Process.getProcessExitCode rph
+                    case mec of
+                        Just _  -> return ()
+                        Nothing -> do
+                            ph <- System.Process.getPid rph
+                            case ph of
+                                Just pid -> Signals.signalProcess Signals.sigKILL pid
+                                Nothing  -> return ()
+                return ()))
+            Nothing
+    _ <- forwardSignal Signals.sigTERM
+    _ <- forwardSignal Signals.sigHUP
+    _ <- forwardSignal Signals.sigINT
+    rec' <- Control.Exception.bracket_ (return ())
+        (do
+            mec <- System.Process.getProcessExitCode rph
+            case mec of
+                Just _  -> return ()
+                Nothing -> System.Process.terminateProcess rph)
+        (System.Process.waitForProcess rph)
+    case rec' of
+        ExitSuccess     -> return (Right ())
+        ExitFailure 130 -> return (Right ())
+        ExitFailure 143 -> return (Right ())
+        ExitFailure n   -> exitWith (ExitFailure n)
+
+
+-- | Walk up the directory tree looking for `sky.toml`. Returns
+-- the absolute path of the directory containing it, or Nothing
+-- at the filesystem root.
+findProjectRootUpward :: FilePath -> IO (Maybe FilePath)
+findProjectRootUpward dir = do
+    let toml = dir </> "sky.toml"
+    ok <- doesFileExist toml
+    if ok
+        then return (Just dir)
+        else do
+            let parent = takeDirectory dir
+            if parent == dir || null parent
+                then return Nothing
+                else findProjectRootUpward parent
+
+
 -- --tui swaps the entrypoint (@src/Main.sky@) for the bundled Tui
 -- variant (@src/MainTui.sky@) before building. Both share the same
 -- @State.sky@ + @View.sky@ — only the app-runner module changes.

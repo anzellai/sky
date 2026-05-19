@@ -46,6 +46,8 @@ extra-source-files:
     -- runtime-go subdirs above (Issue #58).
     sky-bundled/console/sky.toml
     sky-bundled/console/src/*.sky
+    sky-bundled/doc/sky.toml
+    sky-bundled/doc/src/*.sky
     app/VERSION
 
 executable sky
@@ -181,6 +183,10 @@ executable sky
     -- CLI helpers
     Sky.Cli.Watch
     Sky.Cli.Doctor
+    Sky.Doc.Index
+    Sky.Doc.Terminal
+    Sky.Doc.Render
+    Sky.Build.EmbeddedDocServer
 
 
 test-suite sky-tests
