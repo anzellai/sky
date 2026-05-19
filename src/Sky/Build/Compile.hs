@@ -29,6 +29,7 @@ import System.FilePath (takeDirectory, takeExtension, (</>))
 
 import qualified Data.ByteString as BS
 import Sky.Build.EmbeddedRuntime (embeddedRuntime, embeddedSkyStdlib)
+import qualified Sky.Build.TailCallOpt as TCO
 
 import qualified Sky.AST.Source as Src
 import qualified Sky.AST.Canonical as Can
@@ -2755,12 +2756,26 @@ generateDeclsForDep canMod modPrefix =
               bodyExpr = if Map.null paramTypeBindings
                   then bodyExpr1
                   else withScopedLambdaTypes paramTypeBindings bodyExpr1
+              -- v0.14.x TCO: same shape as the entry-module emission.
+              -- Tail-recursive dep functions (Sky.Core.List.foldl,
+              -- find, any, all, …) emit as a `for {}` loop with
+              -- param-reassignment at recursive call sites.
+              depHome = Can._name canMod
+              depParamNames =
+                  [ pn | GoIr.GoParam pn _ <- typedGoParams' ]
+              depParamTyped =
+                  [ ty | GoIr.GoParam _ ty <- typedGoParams' ]
+              useTco = TCO.isTailRecursive depHome name (length params) body
+              tcoBody = [GoIr.GoForever
+                          (tcoBodyStmts depHome name (length params)
+                                        depParamNames depParamTyped depRetType body)]
+              normalBody = [GoIr.GoReturn bodyExpr]
           in [ GoIr.GoDeclFunc GoIr.GoFuncDecl
                 { GoIr._gf_name = goName
                 , GoIr._gf_typeParams = [ (tp, "any") | tp <- depTypeParams ]
                 , GoIr._gf_params = typedGoParams'
                 , GoIr._gf_returnType = depRetType
-                , GoIr._gf_body = destructStmts ++ [GoIr.GoReturn bodyExpr]
+                , GoIr._gf_body = destructStmts ++ (if useTco then tcoBody else normalBody)
                 }
            ]
 
@@ -3518,20 +3533,21 @@ generateDecls canMod solvedTypes =
     -- Disable with SKY_DCE=0 env var (checked at codegen time).
     let reachable = Dce.reachableTopLevel canMod
         dceEnabled = unsafePerformIO (fmap (/= "0") (lookupDceFlag))
-    in declsToList reachable dceEnabled (Can._decls canMod) []
+        home = Can._name canMod
+    in declsToList home reachable dceEnabled (Can._decls canMod) []
   where
-    declsToList _ _ Can.SaveTheEnvironment acc = acc
-    declsToList reachable dce (Can.Declare def rest) acc =
-        declsToList reachable dce rest (acc ++ generateDefMaybe reachable dce def solvedTypes)
-    declsToList reachable dce (Can.DeclareRec def defs rest) acc =
-        let these = generateDefMaybe reachable dce def solvedTypes
-                 ++ concatMap (\d -> generateDefMaybe reachable dce d solvedTypes) defs
-        in declsToList reachable dce rest (acc ++ these)
+    declsToList _ _ _ Can.SaveTheEnvironment acc = acc
+    declsToList h reachable dce (Can.Declare def rest) acc =
+        declsToList h reachable dce rest (acc ++ generateDefMaybe h reachable dce def solvedTypes)
+    declsToList h reachable dce (Can.DeclareRec def defs rest) acc =
+        let these = generateDefMaybe h reachable dce def solvedTypes
+                 ++ concatMap (\d -> generateDefMaybe h reachable dce d solvedTypes) defs
+        in declsToList h reachable dce rest (acc ++ these)
 
 
 -- | Emit def only if reachable (or DCE disabled).
-generateDefMaybe :: Set.Set String -> Bool -> Can.Def -> Solve.SolvedTypes -> [GoIr.GoDecl]
-generateDefMaybe reachable dceEnabled def solvedTypes = case def of
+generateDefMaybe :: ModuleName.Canonical -> Set.Set String -> Bool -> Can.Def -> Solve.SolvedTypes -> [GoIr.GoDecl]
+generateDefMaybe home reachable dceEnabled def solvedTypes = case def of
     Can.DestructDef{} -> []  -- destructure lets only live inside bodies
     _ ->
         let name = case def of
@@ -3539,7 +3555,7 @@ generateDefMaybe reachable dceEnabled def solvedTypes = case def of
                 Can.TypedDef (A.At _ n) _ _ _ _  -> n
                 Can.DestructDef{} -> error "unreachable: filtered above"
         in if not dceEnabled || Set.member name reachable || name == "main"
-            then generateDef def solvedTypes
+            then generateDef home def solvedTypes
             else []
 
 
@@ -3551,8 +3567,8 @@ lookupDceFlag = do
 
 
 -- | Generate Go for a single definition, using solved types for signatures
-generateDef :: Can.Def -> Solve.SolvedTypes -> [GoIr.GoDecl]
-generateDef def solvedTypes =
+generateDef :: ModuleName.Canonical -> Can.Def -> Solve.SolvedTypes -> [GoIr.GoDecl]
+generateDef home def solvedTypes =
     let (name, params, body) = case def of
             Can.Def (A.At _ n) pats expr -> (n, pats, expr)
             Can.TypedDef (A.At _ n) _ typedPats expr _ ->
@@ -3649,13 +3665,23 @@ generateDef def solvedTypes =
                 (\(GoIr.GoParam pn _) ty -> GoIr.GoParam pn ty)
                 goParams'
                 (entryParamGoTys ++ repeat "any")
+            -- v0.14.x TCO: tail-recursive functions emit as a `for {}`
+            -- loop with param-reassignment at the recursive call sites,
+            -- avoiding Go-stack growth on long iterations.
+            paramNames = [ pn | GoIr.GoParam pn _ <- goParams' ]
+            paramTyped = [ ty | GoIr.GoParam _ ty <- typedGoParams ]
+            useTco = TCO.isTailRecursive home name (length params) body
+            tcoBody = [GoIr.GoForever
+                        (tcoBodyStmts home name (length params)
+                                      paramNames paramTyped goRetType body)]
+            normalBody = [GoIr.GoReturn bodyExpr]
         in
         [ GoIr.GoDeclFunc GoIr.GoFuncDecl
             { GoIr._gf_name = goSafeName name
             , GoIr._gf_typeParams = [ (tp, "any") | tp <- entryTypeParams ]
             , GoIr._gf_params = typedGoParams
             , GoIr._gf_returnType = goRetType
-            , GoIr._gf_body = destructStmts ++ [GoIr.GoReturn bodyExpr]
+            , GoIr._gf_body = destructStmts ++ (if useTco then tcoBody else normalBody)
             }
         ]
 
@@ -8720,16 +8746,162 @@ detectSubjectType branches =
 
 -- | Convert a case branch to Go if-statement
 caseBranchToStmts :: String -> Can.CaseBranch -> [GoIr.GoStmt]
-caseBranchToStmts subject (Can.CaseBranch pat body) =
+caseBranchToStmts subject =
+    caseBranchToStmtsWith subject (\body -> [GoIr.GoReturn (exprToGo body)])
+
+
+-- | Same as `caseBranchToStmts` but with a customisable leaf
+-- emitter — used by TCO codegen to substitute the regular
+-- `return exprToGo body` with a `<assigns>; continue` shape for
+-- tail self-calls.  The default leaf emitter (`caseBranchToStmts`)
+-- is unchanged.
+caseBranchToStmtsWith
+    :: String
+    -> (Can.Expr -> [GoIr.GoStmt])
+    -> Can.CaseBranch
+    -> [GoIr.GoStmt]
+caseBranchToStmtsWith subject leafFn (Can.CaseBranch pat body) =
     let
         (A.At _ patInner) = pat
         cond = patternCondition subject patInner
         bindings = patternBindings subject patInner
-        bodyStmts = bindings ++ [GoIr.GoReturn (exprToGo body)]
+        bodyStmts = bindings ++ leafFn body
     in
     case cond of
         Nothing -> bodyStmts  -- always matches (PVar, PAnything)
         Just condExpr -> [GoIr.GoIf condExpr bodyStmts []]
+
+
+-- | v0.14.x TCO: lower a tail-recursive function body to GoStmts
+-- that go INSIDE a `GoForever` wrapper.  Each tail self-call is
+-- emitted as `<param reassignments>; continue`; every other tail
+-- position emits a regular `return`.
+--
+-- Scope: handles `Can.Case` and `Can.If` in tail position
+-- (recursively).  Other expression shapes at tail position fall
+-- through to regular `GoReturn (exprToGo body)`.  Mutual
+-- recursion + `Can.Let` rebindings of the function name are out
+-- of scope — `isTailRecursive` rules those out before this is
+-- called.
+tcoBodyStmts
+    :: ModuleName.Canonical
+    -> String
+    -> Int
+    -> [String]
+    -> [String]   -- param Go types (matching paramNames order)
+    -> String     -- function return Go type (for leaf-return coercion)
+    -> Can.Expr
+    -> [GoIr.GoStmt]
+tcoBodyStmts home fnName arity paramNames paramGoTys goRetType = lowerTail
+  where
+    lowerTail :: Can.Expr -> [GoIr.GoStmt]
+    lowerTail (A.At _ e) = case e of
+        Can.Case subj branches ->
+            -- Coerce the case-subject when the patterns require a
+            -- typed shape (ADT `.Tag` access, SkyMaybe / SkyResult
+            -- destructure).  For list / primitive patterns
+            -- (`detectSubjectType` returns Nothing) the existing
+            -- `caseBranchToStmts` path runs on `any` because the
+            -- pattern conditions use `len(rt.AsList(__subject))`
+            -- which accepts an any-typed source.
+            let subjectName = "__tco_subject"
+                rawSubjExpr = exprToGo subj
+                anyWrap e0 = GoIr.GoCall (GoIr.GoIdent "any") [e0]
+                subjExpr = case detectSubjectType branches of
+                    Nothing -> rawSubjExpr
+                    Just typeName
+                        | take (length ("rt.SkyMaybe" :: String)) typeName
+                            == "rt.SkyMaybe" ->
+                            GoIr.GoCall
+                                (GoIr.GoIdent "rt.MaybeCoerce[any]") [rawSubjExpr]
+                        | take (length ("rt.SkyResult" :: String)) typeName
+                            == "rt.SkyResult" ->
+                            GoIr.GoCall
+                                (GoIr.GoIdent "rt.ResultCoerce[any, any]")
+                                [rawSubjExpr]
+                        | otherwise ->
+                            GoIr.GoTypeAssert (anyWrap rawSubjExpr) typeName
+                subjStmt = GoIr.GoShortDecl subjectName subjExpr
+                branchStmts = concatMap
+                    (caseBranchToStmtsWith subjectName tcoLeaf) branches
+                fallthroughStmt = GoIr.GoExprStmt
+                    (GoIr.GoCall
+                        (GoIr.GoQualified "rt" "Unreachable")
+                        [GoIr.GoStringLit "tco/case"])
+            in subjStmt : branchStmts ++ [fallthroughStmt]
+
+        Can.If branches elseExpr ->
+            ifToTcoStmts branches elseExpr
+
+        -- Top-level body that IS a tail self-call (`f a b = g a b`
+        -- style) — handled by tcoLeaf which detects the head.
+        _ -> tcoLeaf (A.At A.one e)
+
+    -- Leaf emitter — runs on case-branch bodies + if-arms.
+    -- Recursively handles nested case/if; emits the regular
+    -- `GoReturn` for anything else.
+    tcoLeaf :: Can.Expr -> [GoIr.GoStmt]
+    tcoLeaf (A.At _ e) = case e of
+        Can.Call (A.At _ (Can.VarTopLevel h n)) args
+            | h == home, n == fnName, length args == arity ->
+                tcoJump args
+        Can.Call (A.At _ (Can.VarLocal n)) args
+            | n == fnName, length args == arity ->
+                tcoJump args
+
+        Can.If branches elseExpr ->
+            ifToTcoStmts branches elseExpr
+
+        Can.Case subj branches ->
+            -- Nested case in branch body: lower via the same path.
+            lowerTail (A.At A.one (Can.Case subj branches))
+
+        -- Anything else: regular return.  Wrap the value with
+        -- `coerceReturnExprT` so a base case like `[] -> []`
+        -- coerces `[]any{}` to the function's typed return
+        -- (`[]T1`, `rt.SkyMaybe[T1]`, …).
+        _ -> [GoIr.GoReturn (coerceReturnExprT goRetType (exprToGo (A.At A.one e)))]
+
+    -- Emit param-reassign + continue for a tail self-call.
+    -- Tmps capture the OLD param values before reassignment so a
+    -- swap-style `f a b = f b a` works correctly.  Go's `:=` type
+    -- inference gives each tmp the static type of the RHS — when
+    -- the RHS is an identifier referencing a typed local (e.g. a
+    -- case-bound `rest : []T1` or the typed param `pred : func(T1)
+    -- bool`), the tmp inherits that type and direct assignment to
+    -- the matching param works.  For typed slots whose source is
+    -- `any` (e.g. an FFI return), `coerceArg` widens / asserts as
+    -- needed.  Function-typed params are excluded from
+    -- `coerceArg`'s path because its `eraseTypeParams` rewrites
+    -- `func(T1) bool` → `func(any) bool`, and Go rejects the
+    -- resulting cross-type assignment.
+    tcoJump :: [Can.Expr] -> [GoIr.GoStmt]
+    tcoJump args =
+        let tmps = ["__tco_t" ++ show i | i <- [0 .. length args - 1]]
+            decls = zipWith
+                (\t a -> GoIr.GoShortDecl t (exprToGo a))
+                tmps args
+            coerceForTco ge ty
+                | take 5 ty == "func(" = ge
+                | otherwise = coerceArg ge ty
+            assigns = zipWith3
+                (\p t ty ->
+                    GoIr.GoAssign p (coerceForTco (GoIr.GoIdent t) ty))
+                paramNames tmps (paramGoTys ++ repeat "any")
+        in decls ++ assigns ++ [GoIr.GoContinue]
+
+    -- Lower an `Can.If` in tail position as a nested GoIf chain
+    -- with TCO-aware leaves.
+    ifToTcoStmts
+        :: [(Can.Expr, Can.Expr)]
+        -> Can.Expr
+        -> [GoIr.GoStmt]
+    ifToTcoStmts branches elseExpr =
+        foldr
+            (\(c, b) acc ->
+                [GoIr.GoIf (toBoolExpr (exprToGo c)) (tcoLeaf b) acc])
+            (tcoLeaf elseExpr)
+            branches
 
 
 -- | Generate a Go condition for pattern matching

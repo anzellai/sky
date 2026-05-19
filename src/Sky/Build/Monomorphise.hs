@@ -555,6 +555,9 @@ specialiseFuncDecl mangledName σ originalName func =
                 | (t, body) <- branches]
         Ir.GoFor n e body ->
             Ir.GoFor n (substExpr e) (map substStmt body)
+        Ir.GoForever body ->
+            Ir.GoForever (map substStmt body)
+        Ir.GoContinue -> stmt
         Ir.GoBlock_ stmts -> Ir.GoBlock_ (map substStmt stmts)
         Ir.GoComment _ -> stmt
         Ir.GoBlank -> stmt

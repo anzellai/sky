@@ -172,6 +172,7 @@ executable sky
     Sky.Build.SkyDeps
     Sky.Build.Validator
     Sky.Build.Monomorphise
+    Sky.Build.TailCallOpt
 
     -- Reporting
     Sky.Reporting.Annotation
