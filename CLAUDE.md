@@ -258,6 +258,8 @@ sky watch src/Main.sky             # file-watch rebuild + restart
 sky check src/Main.sky             # type-check + go build
 sky fmt src/Main.sky               # opinionated formatter
 sky test tests/MyTest.sky          # Sky.Test runner
+sky db status                      # Std.Db migrations: applied / pending / drift
+sky db migrate                     # apply pending Std.Db migrations, then exit
 sky doc Module                     # terminal docs
 sky doc --serve [--port 8080]      # browsable HTTP doc server (auto-opens browser)
 sky doc --tui                      # interactive terminal doc browser (Sky.Tui)

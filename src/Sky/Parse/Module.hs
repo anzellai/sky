@@ -98,17 +98,28 @@ collectComments src = go 1 1 (T.unpack src) []
         in if consumed
              then go r' c' rest (A.At region body : acc)
              else reverse acc   -- unclosed block; stop scanning to avoid run-on
+    go r c ('"':'"':'"':xs) acc = skipTriple r (c + 3) xs acc
     go r c ('"':xs)      acc = skipString r (c + 1) xs acc
     go r c (_:xs)        acc = go r (c + 1) xs acc
 
     -- Skip a Sky double-quoted string literal so a `--` inside a
-    -- string isn't treated as a line comment. Triple-quoted strings
-    -- also supported (scanner just treats them as nested quotes).
+    -- string isn't treated as a line comment. A raw newline ends
+    -- recovery — single-quoted strings cannot span lines.
     skipString r c []            acc = reverse acc
     skipString r _ ('\n':xs)     acc = go (r + 1) 1 xs acc
     skipString r c ('\\':_:xs)   acc = skipString r (c + 2) xs acc
     skipString r c ('"':xs)      acc = go r (c + 1) xs acc
     skipString r c (_:xs)        acc = skipString r (c + 1) xs acc
+
+    -- Skip a triple-quoted multiline string. Newlines are legal
+    -- content here, so the scanner tracks rows and only ends on a
+    -- closing `"""` — otherwise a `--`-prefixed line inside the
+    -- string would be mis-collected as a comment (and then
+    -- duplicated on every `sky fmt` round-trip).
+    skipTriple r c []               acc = reverse acc
+    skipTriple r c ('"':'"':'"':xs) acc = go r (c + 3) xs acc
+    skipTriple r _ ('\n':xs)        acc = skipTriple (r + 1) 1 xs acc
+    skipTriple r c (_:xs)           acc = skipTriple r (c + 1) xs acc
 
     -- Consume block body; returns (body, rest, endRow, endCol, closed).
     -- Handles nested `{- -}` per Sky's documented lexer rules.

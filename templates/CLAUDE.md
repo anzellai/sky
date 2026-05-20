@@ -339,6 +339,8 @@ sky watch src/Main.sky    # Watch sources; rebuild + restart on save (incrementa
 sky check src/Main.sky    # Type-check without compiling (cross-module ADT + alias resolution)
 sky fmt src/Main.sky      # Format code (opinionated: 4-space indent, leading commas)
 sky test tests/MyTest.sky # Run a test module (exposes `tests : List Test`)
+sky db status             # Std.Db migrations: applied / pending / drift, then exit
+sky db migrate            # Apply pending Std.Db migrations in order, then exit
 sky doc <Module>          # Show a module's API in the terminal (annotations + docs)
 sky doc --serve [--port N]# Run a browsable HTTP doc server (auto-opens browser)
 sky doc --tui             # Interactive terminal doc browser (Sky.Tui)
@@ -543,7 +545,7 @@ apiKey =
 
 **Db.* returns Task.** `Db.connect` / `Db.open` / `Db.exec` / `Db.execRaw` / `Db.query` / `Db.queryDecode` / `Db.insertRow` / `Db.{getById, updateById, deleteById}` / `Db.{findOneByField, findManyByField, findByConditions, withTransaction}` / `Db.migrate` all return `Task Error a` and compose directly with `Task.andThen` / `Task.parallel` / `Cmd.perform`. Pure dict accessors (`Db.getField` / `getString` / `getInt` / `getBool`) stay bare — they read from a row dict, no I/O. Auth side effects (`Auth.register` / `login` / `setRole`) are Task; pure CPU ones (`Auth.hashPassword` / `verifyPassword` / `signToken` / `verifyToken`) are Result.
 
-**Db.migrate** applies versioned, forward-only schema migrations — `migrate : Db -> List Migration -> Task Error (List String)` where `Migration = { name : String, sql : String }`. A `_sky_migrations` table tracks applied migrations by name + SQL checksum; re-running is a no-op; editing an already-applied migration is rejected (checksum guard). Call once at start-up. Forward-only — undo via a new compensating migration.
+**Db.migrate** applies versioned, forward-only schema migrations — `migrate : Db -> List Migration -> Task Error (List String)` where `Migration = { name : String, sql : String }`. A `_sky_migrations` table tracks applied migrations by name + SQL checksum; re-running is a no-op; editing an already-applied migration is rejected (checksum guard). Call once at start-up. Forward-only — undo via a new compensating migration. Inspect or apply from the CLI with `sky db status` (reports applied / pending / drifted, exits non-zero on drift) and `sky db migrate` (applies pending, then exits) — both build the app and run its `Db.migrate` call before serving.
 
 **Db chain (clean Task composition):**
 

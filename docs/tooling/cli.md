@@ -152,6 +152,32 @@ Scenario file format:
 
 Run a Sky test module. See [`testing.md`](testing.md).
 
+## Database
+
+### `sky db status [FILE]` · `sky db migrate [FILE]`
+
+Inspect and apply `Std.Db` schema migrations. `FILE` defaults to
+`src/Main.sky`.
+
+```bash
+sky db status      # report applied / pending / drifted migrations, then exit
+sky db migrate     # apply all pending migrations in order, then exit
+```
+
+Both build the project, then run it in **DB-ops mode** — the app's
+`Db.migrate` call does the work and exits *before serving*. The
+underlying mechanism is the `SKY_DB_OP` env var (`status` / `migrate`),
+usable directly in a deploy pipeline: `SKY_DB_OP=migrate ./sky-out/app`.
+
+- `sky db status` exits **non-zero on drift** (an applied migration
+  whose SQL was edited) — use it as a CI schema-drift gate.
+- `sky db migrate` exits non-zero if a migration fails — run it as a
+  pre-cutover deploy step so a bad migration blocks the rollout.
+- There is no `migrate <singlefile>`: migrations are an ordered,
+  checksum-tracked set; `migrate` always applies every pending one.
+
+See [Sky.Db — Schema migrations](../skydb/overview.md#schema-migrations).
+
 ## Cache & cleanup
 
 ### `sky clean`

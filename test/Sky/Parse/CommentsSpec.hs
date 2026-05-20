@@ -133,3 +133,64 @@ spec = do
             ("name = " `isInfixOf` out) `shouldBe` True
             ("port = 8080" `isInfixOf` out) `shouldBe` True
             ("debug = False" `isInfixOf` out) `shouldBe` True
+
+        -- Regression (2026-05-20): `collectComments`' string scanner
+        -- did not handle triple-quoted strings — `skipString` bailed
+        -- on the first newline, so `--`-prefixed lines INSIDE a `"""`
+        -- multiline string were mis-collected as comments AND
+        -- duplicated on every `sky fmt` round-trip (a CLI's help text
+        -- grew unboundedly). Fix: `collectComments` in
+        -- src/Sky/Parse/Module.hs now has a `skipTriple` arm that
+        -- treats newlines as content and ends only on `"""`.
+        it "does not collect/duplicate `--` lines inside a multiline string" $ do
+            let src = unlines
+                    [ "module M exposing (..)"
+                    , ""
+                    , "helpText ="
+                    , "    \"\"\"USAGE"
+                    , "--dry-run    print without running"
+                    , "--verbose    extra logging"
+                    , "\"\"\""
+                    ]
+            out <- fmtStdin src
+            -- Each flag line appears exactly once — not lifted out
+            -- as a comment, not duplicated.
+            countOccurrences "--dry-run" out `shouldBe` 1
+            countOccurrences "--verbose" out `shouldBe` 1
+
+        it "is idempotent across two fmt passes for a multiline string" $ do
+            let src = unlines
+                    [ "module M exposing (..)"
+                    , ""
+                    , "helpText ="
+                    , "    \"\"\"USAGE"
+                    , "--dry-run    print without running"
+                    , "\"\"\""
+                    ]
+            once <- fmtStdin src
+            twice <- fmtStdin once
+            twice `shouldBe` once
+
+        -- Regression (2026-05-20): `injectComments` matched `declKey`
+        -- on every output line, so a top-level function's header
+        -- comment was spliced before the first *call* of that
+        -- function (an indented use site) rather than its
+        -- definition. Fixed by gating `headerHit` on
+        -- `isTopLevelDecl` in app/Main.hs.
+        it "header comment stays above the definition, not a call site" $ do
+            let src = unlines
+                    [ "module M exposing (..)"
+                    , ""
+                    , "run x ="
+                    , "    helper x"
+                    , ""
+                    , ""
+                    , "-- doc for helper"
+                    , "helper y ="
+                    , "    y"
+                    ]
+            out <- fmtStdin src
+            -- The comment sits directly above the definition.
+            ("-- doc for helper\nhelper y" `isInfixOf` out) `shouldBe` True
+            -- ...and NOT above the call site inside `run`.
+            ("-- doc for helper\n    helper" `isInfixOf` out) `shouldBe` False

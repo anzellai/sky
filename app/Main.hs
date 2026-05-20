@@ -23,7 +23,7 @@ import qualified System.Posix.Signals as Signals
 import System.FilePath ((</>), takeExtension, takeDirectory, takeFileName, dropExtension, splitDirectories)
 import System.Exit (exitWith)
 import Data.List (isPrefixOf, isInfixOf, stripPrefix, tails)
-import System.Process (callProcess)
+import System.Process (callProcess, rawSystem)
 import qualified System.Process
 import qualified System.IO.Temp
 import qualified System.Timeout
@@ -684,6 +684,43 @@ appendGoDependency pkg = do
 --     override the cap via SKY_INSTALL_PARALLEL.
 --   * `generateBindings`: <1s per dep, parallel-safe (writes to
 --     distinct .skycache/ffi/<slug>.* files per dep).
+-- | Build the project at `path` and exec the resulting binary.
+-- Shared by `sky run` and `sky db <status|migrate>` (the latter
+-- pre-sets SKY_DB_OP so the app runs in DB-ops mode).
+runProject :: FilePath -> IO (Either String ())
+runProject path = do
+    hasToml <- doesFileExist "sky.toml"
+    config <- if hasToml
+        then Toml.parseSkyToml <$> readFile "sky.toml"
+        else return Toml.defaultConfig
+    let outDir = "sky-out"
+    createDirectoryIfMissing True outDir
+    let goDeps = Toml._goDeps config
+    when (not (null goDeps)) $ do
+        hasGoMod <- doesFileExist "sky-out/go.mod"
+        when (not hasGoMod) $ do
+            hasRt <- doesFileExist "runtime-go/go.mod"
+            if hasRt
+                then callProcess "cp" ["runtime-go/go.mod", "sky-out/go.mod"]
+                else writeFile "sky-out/go.mod" $ unlines ["module sky-app", "", "go 1.21"]
+        regenMissingBindings goDeps
+    result <- Compile.compile config path outDir
+    case result of
+        Left err -> return (Left err)
+        Right goPath -> do
+            putStrLn "Running go build..."
+            runGoBuildWithDiagnostics outDir (Toml._binName config) goPath
+            putStrLn "Build complete, running..."
+            -- Propagate the child's exit code verbatim rather than
+            -- surfacing a `callProcess … failed` exception — a
+            -- non-zero exit (e.g. `sky db status` finding drift) is
+            -- a legitimate, scriptable outcome.
+            ec <- rawSystem (outDir ++ "/" ++ Toml._binName config) []
+            case ec of
+                ExitSuccess   -> return (Right ())
+                ExitFailure _ -> exitWith ec
+
+
 regenMissingBindings :: [(String, String)] -> IO ()
 regenMissingBindings deps = do
     createDirectoryIfMissing True ".skycache/ffi"
@@ -869,7 +906,15 @@ data Command
     | Console ConsoleOpts        -- run bundled Sky Console mini-app
     | Doc DocOpts                -- print / serve API documentation
     | Doctor Doctor.DoctorOpts   -- diagnose project / runtime issues
+    | Db DbAction FilePath       -- sky db status / sky db migrate
     | Version
+    deriving (Show)
+
+
+-- | `sky db` sub-actions — drive the runtime's SKY_DB_OP mode.
+data DbAction
+    = DbStatus   -- report applied / pending / drifted migrations
+    | DbMigrate  -- apply pending migrations, then exit
     deriving (Show)
 
 
@@ -946,6 +991,9 @@ commandParser = subparser
     <> command "doctor"
         (info (Doctor <$> doctorOptsParser)
             (progDesc "Diagnose common project / runtime stuck-states (stale cache, port in use, missing FFI)"))
+    <> command "db"
+        (info dbParser
+            (progDesc "Database migrations — `sky db status` / `sky db migrate`"))
     <> command "version"
         (info (pure Version) (progDesc "Show version"))
     )
@@ -958,6 +1006,18 @@ commandParser = subparser
 
 fileArg :: Parser FilePath
 fileArg = argument str (metavar "FILE" <> value "src/Main.sky")
+
+
+-- Parser for `sky db <status|migrate> [FILE]`.
+dbParser :: Parser Command
+dbParser = subparser
+    ( command "status"
+        (info (Db DbStatus <$> fileArg)
+            (progDesc "Show applied / pending / drifted migrations, then exit"))
+    <> command "migrate"
+        (info (Db DbMigrate <$> fileArg)
+            (progDesc "Apply all pending migrations in order, then exit"))
+    )
 
 
 -- Parser for `sky console` flags.
@@ -1180,32 +1240,16 @@ runCommand cmd = case cmd of
                 putStrLn $ "Build complete: " ++ outDir ++ "/" ++ Toml._binName config
                 return (Right ())
 
-    Run path -> do
-        -- Build first, then exec
-        hasToml <- doesFileExist "sky.toml"
-        config <- if hasToml
-            then Toml.parseSkyToml <$> readFile "sky.toml"
-            else return Toml.defaultConfig
-        let outDir = "sky-out"
-        createDirectoryIfMissing True outDir
-        let goDeps = Toml._goDeps config
-        when (not (null goDeps)) $ do
-            hasGoMod <- doesFileExist "sky-out/go.mod"
-            when (not hasGoMod) $ do
-                hasRt <- doesFileExist "runtime-go/go.mod"
-                if hasRt
-                    then callProcess "cp" ["runtime-go/go.mod", "sky-out/go.mod"]
-                    else writeFile "sky-out/go.mod" $ unlines ["module sky-app", "", "go 1.21"]
-            regenMissingBindings goDeps
-        result <- Compile.compile config path outDir
-        case result of
-            Left err -> return (Left err)
-            Right goPath -> do
-                putStrLn "Running go build..."
-                runGoBuildWithDiagnostics outDir (Toml._binName config) goPath
-                putStrLn $ "Build complete, running..."
-                callProcess (outDir ++ "/" ++ Toml._binName config) []
-                return (Right ())
+    Run path -> runProject path
+
+    Db action path -> do
+        -- Drive the runtime's SKY_DB_OP mode: the built app's
+        -- Db.migrate call detects the env var, prints a report /
+        -- applies migrations, and exits before serving.
+        System.Environment.setEnv "SKY_DB_OP" $ case action of
+            DbStatus  -> "status"
+            DbMigrate -> "migrate"
+        runProject path
 
     Watch opts -> do
         Watch.runWatch opts
@@ -2176,26 +2220,37 @@ preserveTopLevelComments source formatted =
     --   * the stripped preceding code line (minus trailing comment) when
     --     isHeader=False, so downstream matching against the formatter's
     --     output (which has stripped trailing comments) still works.
-    collectCommentBlocks t = walk Nothing [] (T.lines t)
+    collectCommentBlocks t = walk Nothing False [] (T.lines t)
       where
-        walk _prev _acc [] = []
-        walk prev acc (l:ls)
-            | isCommentOrBlank l = walk prev (acc ++ [l]) ls
+        walk _prev _inStr _acc [] = []
+        walk prev inStr acc (l:ls)
+            -- Inside a `"""` multiline string the line is string
+            -- content — never a comment or a declaration. Skipping
+            -- it here is what stops a `--`-prefixed string line
+            -- from being collected as a comment and re-injected
+            -- (duplicated) on every `sky fmt` round-trip.
+            | inStr = walk prev (nextInStr inStr l) acc ls
+            | isCommentOrBlank l = walk prev inStr (acc ++ [l]) ls
             | isTopLevelDecl l =
                 let trimmed = trimBlanks acc
                     anchorKey = stripTrailingComment (T.strip l)
-                    rest = walk (Just anchorKey) [] ls
+                    rest = walk (Just anchorKey) (nextInStr False l) [] ls
                 in if null trimmed
                      then rest
                      else (trimmed, T.strip l, True) : rest
             | otherwise =
                 let trimmed = trimBlanks acc
                     anchorKey = stripTrailingComment (T.strip l)
-                    rest = walk (Just anchorKey) [] ls
+                    rest = walk (Just anchorKey) (nextInStr False l) [] ls
                 in case (trimmed, prev) of
                     ([], _) -> rest
                     (_, Just p) -> (trimmed, p, False) : rest
                     (_, Nothing) -> rest
+
+        -- A line flips the in-multiline-string state when it
+        -- contains an odd number of `"""` delimiters.
+        nextInStr cur l =
+            if odd (T.count (T.pack "\"\"\"") l) then not cur else cur
 
     -- Strip a trailing "-- comment" from a stripped code line so the
     -- anchor key stays stable across fmt (which drops trailing comments).
@@ -2343,9 +2398,15 @@ preserveTopLevelComments source formatted =
       where
         go _  _  [] = []
         go hm am (l:ls) =
-            -- Header injection fires BEFORE the line.
+            -- Header injection fires BEFORE the line — but only when
+            -- `l` is a genuine top-level declaration (col 1). Without
+            -- the `isTopLevelDecl` guard, `declKey` strips
+            -- indentation and would also match an indented *use* of
+            -- the name (e.g. `cmdSecret opts rest` inside a `case`),
+            -- splicing the decl's header comment in before the first
+            -- call site instead of its definition.
             let stripped = T.strip l
-                headerHit = case declKey l of
+                headerHit = case (if isTopLevelDecl l then declKey l else Nothing) of
                     Just k | Just (cs:rest) <- Map.lookup k hm ->
                         let hm' = if null rest then Map.delete k hm
                                                else Map.insert k rest hm

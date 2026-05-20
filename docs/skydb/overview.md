@@ -332,6 +332,37 @@ overlap briefly during a rollout: add a nullable column, deploy
 code that writes it, backfill in a later migration, and only drop
 the old column once nothing reads it.
 
+### Inspecting & applying from the CLI
+
+The migration list lives in your app (`migrations : List Migration`),
+so the `sky` CLI drives it through the built binary:
+
+```bash
+sky db status     # report applied / pending / drifted, then exit
+sky db migrate    # apply all pending migrations in order, then exit
+```
+
+Both build the project, then run it in **DB-ops mode**: the app's
+`Db.migrate` call detects the mode, does the work, and exits *before
+serving*. Behind the scenes this is the `SKY_DB_OP` environment
+variable (`status` / `migrate`), so a deploy pipeline that can't run
+the `sky` CLI can use it directly:
+
+```bash
+SKY_DB_OP=migrate ./sky-out/app   # apply migrations, exit 0 (1 on failure)
+SKY_DB_OP=status  ./sky-out/app   # print the status report, exit 0
+```
+
+`sky db status` exits **non-zero when it detects drift** (an applied
+migration whose SQL was edited) — wire it into CI as a schema-drift
+gate. `sky db migrate` exits non-zero if a migration fails, so a
+deploy step running it ahead of cutover blocks a bad rollout instead
+of crash-looping the app.
+
+There is no `sky db migrate <file>`: migrations are an ordered,
+checksum-tracked set — `migrate` always means "apply every pending
+one, in order."
+
 ## See also
 
 - [`examples/07-todo-cli`](../../examples/07-todo-cli/) — SQLite CLI todo app, showcases `withTransaction` and `queryDecode`
