@@ -1,6 +1,7 @@
 package rt
 
 import (
+	"crypto/sha256"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -670,6 +671,89 @@ func dbWithTransactionBody(capDb, capBody any) any {
 		}
 		tx.Rollback()
 		return result
+	}
+}
+
+// Db_migrateApply — kernel behind Std.Db.migrate.
+//
+// Applies pending schema migrations. `pairsA` is a Sky
+// List (name, sql); each migration whose name is not yet recorded
+// in `_sky_migrations` runs in its OWN transaction and is then
+// recorded with a checksum of its SQL. Already-applied migrations
+// are checksum-verified — a migration whose text changed after it
+// was applied aborts loudly rather than silently diverging.
+// Forward-only: there are no down migrations.
+//
+// Returns Ok (List String) — the names applied this run (empty
+// when the schema was already up to date).
+func Db_migrateApply(dbA, pairsA any) any {
+	return func() any {
+		return WithDbSpan(dbSystemOf(dbA), "migrate", "schema migration", func() any {
+			d, ok := dbA.(*SkyDb)
+			if !ok {
+				return Err[any, any](ErrInvalidInput("db.migrate: not a Db"))
+			}
+			if _, err := d.conn.Exec(
+				`CREATE TABLE IF NOT EXISTS _sky_migrations (` +
+					`name TEXT PRIMARY KEY, checksum TEXT NOT NULL, applied_at TEXT NOT NULL)`,
+			); err != nil {
+				return Err[any, any](ErrIo("db.migrate: create _sky_migrations: " + err.Error()))
+			}
+			// Existing applied migrations: name → checksum.
+			applied := map[string]string{}
+			rows, err := d.conn.Query(`SELECT name, checksum FROM _sky_migrations`)
+			if err != nil {
+				return Err[any, any](ErrIo("db.migrate: read _sky_migrations: " + err.Error()))
+			}
+			for rows.Next() {
+				var n, c string
+				if err := rows.Scan(&n, &c); err != nil {
+					rows.Close()
+					return Err[any, any](ErrIo("db.migrate: scan _sky_migrations: " + err.Error()))
+				}
+				applied[n] = c
+			}
+			rows.Close()
+
+			out := []any{}
+			for _, p := range asList(pairsA) {
+				name := AsString(tupleFirst(p))
+				stmt := AsString(tupleSecond(p))
+				sum := fmt.Sprintf("%x", sha256.Sum256([]byte(stmt)))
+				if prev, seen := applied[name]; seen {
+					if prev != sum {
+						return Err[any, any](ErrUnexpected(
+							"db.migrate: migration '" + name +
+								"' changed after it was applied — checksum mismatch"))
+					}
+					continue // already up to date
+				}
+				// Each migration in its own transaction: a failure
+				// rolls back only that migration; earlier ones stay
+				// applied, so re-running resumes from the failure.
+				tx, err := d.conn.Begin()
+				if err != nil {
+					return Err[any, any](ErrIo("db.migrate: begin: " + err.Error()))
+				}
+				if _, err := tx.Exec(stmt); err != nil {
+					tx.Rollback()
+					return Err[any, any](ErrIo("db.migrate: migration '" + name + "': " + err.Error()))
+				}
+				if _, err := tx.Exec(
+					"INSERT INTO _sky_migrations (name, checksum, applied_at) VALUES ("+
+						d.placeholder(1)+", "+d.placeholder(2)+", "+d.placeholder(3)+")",
+					name, sum, time.Now().UTC().Format(time.RFC3339),
+				); err != nil {
+					tx.Rollback()
+					return Err[any, any](ErrIo("db.migrate: record '" + name + "': " + err.Error()))
+				}
+				if err := tx.Commit(); err != nil {
+					return Err[any, any](ErrIo("db.migrate: commit '" + name + "': " + err.Error()))
+				}
+				out = append(out, name)
+			}
+			return Ok[any, any](out)
+		})
 	}
 }
 

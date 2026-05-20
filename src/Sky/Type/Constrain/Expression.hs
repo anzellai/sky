@@ -2306,6 +2306,20 @@ lookupKernelType modName funcName = case (modName, funcName) of
                     (T.TType ModuleName.task "Task"
                         [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
                         , intType])))
+    -- Db.migrateApply : Db -> List (String, String) -> Task Error (List String)
+    --   Low-level kernel behind Std.Db.migrate. Takes (name, sql)
+    --   pairs (the record-shaped `Migration` API is pure-Sky sugar
+    --   over this); returns the names applied this run.
+    ("Db", "migrateApply") ->
+        Just $ T.Forall []
+            (T.TLambda (T.TType (ModuleName.Canonical "") "Db" [])
+                (T.TLambda
+                    (T.TType ModuleName.list "List"
+                        [T.TTuple stringType stringType []])
+                    (T.TType ModuleName.task "Task"
+                        [ T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                        , T.TType ModuleName.list "List" [stringType]
+                        ])))
     ("Db", "query") ->
         -- Runtime returns List (Dict String any); user code reads
         -- strings via getField so typing as Dict String String matches

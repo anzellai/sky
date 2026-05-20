@@ -275,6 +275,63 @@ update msg model =
 
 The DB call runs in a goroutine; the result comes back as a Msg through the same SSE channel as user events.
 
+## Schema migrations
+
+`Db.migrate` applies versioned, forward-only schema migrations. A
+migration is a record — a stable `name` and the `sql` that applies
+it:
+
+```elm
+import Std.Db as Db
+import Std.Db exposing (Migration)
+
+migrations : List Migration
+migrations =
+    [ { name = "0001_users", sql = """
+        CREATE TABLE users (
+            id    INTEGER PRIMARY KEY,
+            email TEXT NOT NULL UNIQUE
+        )
+      """ }
+    , { name = "0002_posts", sql = """
+        CREATE TABLE posts (
+            id        INTEGER PRIMARY KEY,
+            author_id INTEGER NOT NULL,
+            title     TEXT NOT NULL
+        )
+      """ }
+    ]
+
+main =
+    Db.connect ()
+        |> Task.andThen (\db -> Db.migrate db migrations)
+        |> Task.run
+```
+
+How it works:
+
+- A `_sky_migrations` table (created automatically) records the
+  `name`, a `checksum` of the SQL, and `applied_at` of every
+  applied migration.
+- On each `migrate` call, migrations whose `name` is not yet
+  recorded run **in list order, each in its own transaction**, and
+  are recorded. Already-recorded migrations are skipped.
+- `migrate` returns the names applied this run — empty when the
+  schema was already current, so it is safe to call on every
+  start-up.
+- **Checksum guard.** If the SQL of an already-applied migration
+  changes, `migrate` fails loudly (`checksum mismatch`) rather
+  than silently diverging. Treat a shipped migration's `name` and
+  `sql` as immutable.
+- **Forward-only.** There are no down migrations. To undo a
+  change, ship a new compensating migration.
+
+For zero-downtime deploys use the expand/contract pattern — a
+migration must be safe under both the old and new code, since they
+overlap briefly during a rollout: add a nullable column, deploy
+code that writes it, backfill in a later migration, and only drop
+the old column once nothing reads it.
+
 ## See also
 
 - [`examples/07-todo-cli`](../../examples/07-todo-cli/) — SQLite CLI todo app, showcases `withTransaction` and `queryDecode`

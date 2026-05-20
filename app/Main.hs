@@ -16,6 +16,7 @@ import System.Directory (createDirectoryIfMissing, doesFileExist, removeFile, re
 import System.IO.Error (catchIOError)
 import qualified Control.Concurrent
 import qualified Control.Exception
+import qualified GHC.IO.Encoding
 #ifndef mingw32_HOST_OS
 import qualified System.Posix.Signals as Signals
 #endif
@@ -816,6 +817,14 @@ filterM p (x:xs) = do
 -- Commands: build, run, check, fmt, init, add, remove, install, lsp, upgrade, version
 main :: IO ()
 main = do
+    -- Force UTF-8 for all file IO regardless of the host locale.
+    -- Sky stdlib + user source contain non-ASCII bytes (…, box-
+    -- drawing, emoji in multiline strings). Under a C/POSIX locale
+    -- — common in minimal Docker images + CI — the default
+    -- locale encoding is ASCII and `readFile` aborts with
+    -- "hGetContents: invalid argument (cannot decode byte …)".
+    -- Setting the locale encoding here fixes every read + write.
+    GHC.IO.Encoding.setLocaleEncoding GHC.IO.Encoding.utf8
     -- `sky` with no arguments should print the help screen and exit 0
     -- instead of a bare "Missing: (COMMAND)" error. Inject `--help`
     -- into argv when none is present.
@@ -2383,9 +2392,34 @@ preserveTopLevelComments source formatted =
 --   4. Re-raise (via exitWith) so callers see the same failure
 runGoBuildWithDiagnostics :: FilePath -> String -> FilePath -> IO ()
 runGoBuildWithDiagnostics outDir binName _goPath = do
-    let cmd = "cd " ++ outDir ++ " && go build -o " ++ binName ++ " ."
-    (ec, _out, berr) <- System.Process.readCreateProcessWithExitCode
-        (System.Process.shell cmd) ""
+    -- Prefer a fully static binary: CGO_ENABLED=0 yields an
+    -- executable with no libc dependency, so it runs on a
+    -- distroless / scratch / Alpine base — smaller, portable
+    -- deploy images. Sky's default deps (modernc.org/sqlite, pgx)
+    -- are pure Go, so this is the right default.
+    --
+    -- A few apps DO need cgo — notably Fyne GUI apps (OpenGL
+    -- bindings). If the static build fails, transparently retry
+    -- with cgo enabled and note it; the resulting binary then
+    -- needs a glibc base.
+    let buildCmd cgo =
+            "cd " ++ outDir ++ " && CGO_ENABLED=" ++ (if cgo then "1" else "0")
+            ++ " go build -o " ++ binName ++ " ."
+    (ec0, _o0, e0) <- System.Process.readCreateProcessWithExitCode
+        (System.Process.shell (buildCmd False)) ""
+    (ec, berr) <- case ec0 of
+        System.Exit.ExitSuccess -> return (ec0, e0)
+        System.Exit.ExitFailure _ -> do
+            (ec1, _o1, e1) <- System.Process.readCreateProcessWithExitCode
+                (System.Process.shell (buildCmd True)) ""
+            case ec1 of
+                System.Exit.ExitSuccess -> do
+                    putStrLn "  (built with cgo — a dependency requires it; deploy images must use a glibc base)"
+                    return (ec1, e1)
+                -- Both attempts failed → the cgo error is the real
+                -- one (the static attempt may just have hit the
+                -- cgo gap); diagnose against it.
+                System.Exit.ExitFailure _ -> return (ec1, e1)
     case ec of
         System.Exit.ExitSuccess -> return ()
         System.Exit.ExitFailure _ -> do

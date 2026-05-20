@@ -504,6 +504,7 @@ registry = Map.fromList
     , (("Db", "open"),            KernelInfo "rt.Db_open" 1 False)
     , (("Db", "close"),           KernelInfo "rt.Db_close" 1 False)
     , (("Db", "exec"),            KernelInfo "rt.Db_exec" 3 False)
+    , (("Db", "migrateApply"),    KernelInfo "rt.Db_migrateApply" 2 False)
     , (("Db", "execRaw"),         KernelInfo "rt.Db_execRaw" 2 False)
     , (("Db", "getField"),        KernelInfo "rt.Db_getField" 2 False)
     , (("Db", "getFieldOr"),      KernelInfo "rt.Db_getFieldOr" 3 False)

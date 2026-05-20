@@ -16,10 +16,12 @@ module Std.Db exposing
     , unsafeFindWhere, queryDecode
     , withTransaction
     , getField, getString, getInt, getBool
+    , Migration, migrate
     )
 
 
 import Sky.Ffi as Ffi
+import Sky.Core.List as List
 import Sky.Core.Error exposing (Error)
 
 
@@ -129,6 +131,52 @@ queryDecode = Ffi.kernel "Db_queryDecode"
 -- on `Ok`, rolls back on `Err`.
 withTransaction : Db -> (Db -> Task Error a) -> Task Error a
 withTransaction = Ffi.kernel "Db_withTransaction"
+
+
+-- ─── Schema migrations ─────────────────────────────────────────────
+
+
+-- | A single schema migration: a unique `name` and the `sql` that
+-- applies it.  `name` is the identity recorded in `_sky_migrations`
+-- — keep it stable once a migration has shipped (a rename reads as
+-- a brand-new migration; an edit to the SQL of an applied
+-- migration is rejected by the checksum guard).
+type alias Migration =
+    { name : String
+    , sql : String
+    }
+
+
+-- | Apply pending schema migrations, in list order.
+--
+-- Each migration whose `name` is not yet recorded runs in its own
+-- transaction and is then recorded with a checksum of its SQL.
+-- Migrations already recorded are checksum-verified and skipped.
+-- Forward-only — there are no down migrations; to undo, ship a new
+-- compensating migration.
+--
+-- Returns the names applied this run (empty when already current).
+-- Call once at start-up, before serving:
+--
+--     migrations : List Migration
+--     migrations =
+--         [ { name = "0001_users", sql = """
+--             CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT)
+--           """ }
+--         ]
+--
+--     Db.connect ()
+--         |> Task.andThen (\db -> Db.migrate db migrations)
+migrate : Db -> List Migration -> Task Error (List String)
+migrate db migrations =
+    migrateApply db
+        (List.map (\m -> ( m.name, m.sql )) migrations)
+
+
+-- | Low-level kernel: applies (name, sql) pairs. The record-shaped
+-- `Migration` API above is pure-Sky sugar over this.
+migrateApply : Db -> List ( String, String ) -> Task Error (List String)
+migrateApply = Ffi.kernel "Db_migrateApply"
 
 
 -- ─── Row accessors (read columns from a row) ───────────────────────
