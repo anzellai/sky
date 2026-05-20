@@ -105,10 +105,12 @@ metricRowDecoder =
     Decode.succeed MetricRow
         |> Pipeline.optional "name"   Decode.string ""
         |> Pipeline.optional "type"   Decode.string ""
-        -- Labels object decoding deferred: Sky's Json.Decode doesn't
-        -- ship a `dict` decoder yet. Use a `custom` slot with
-        -- succeed-constant; cleaner once Pipeline grows `hardcoded`.
-        |> Pipeline.custom (Decode.succeed "")
+        -- `labels` arrives pre-flattened to a "k=v, k=v" string by
+        -- HandleConsoleMetricsSummary — decode it directly. (It used
+        -- to be a JSON object the pipeline punted on with
+        -- `succeed ""`, which is why distinct label-series rendered
+        -- as indistinguishable rows.)
+        |> Pipeline.optional "labels" Decode.string ""
         |> Pipeline.optional "value"  Decode.float 0.0
         |> Pipeline.optional "sum"    Decode.float 0.0
         |> Pipeline.optional "count"  Decode.float 0.0
@@ -160,6 +162,7 @@ init _req =
             , errors    = []
             , lastError = ""
             , logFilter = emptyLogFilter
+            , traceQuery = ""
             }
     in
     -- Fire one immediate fetch so the initial render isn't empty;
@@ -251,6 +254,19 @@ update msg model =
         LogFilterClear ->
             ( { model | logFilter = emptyLogFilter }
             , fetchLogsOnly model.parentUrl emptyLogFilter
+            )
+
+        -- Traces filter is purely client-side — every span is
+        -- already in model.traces, so no re-fetch is needed.
+        TraceFilterQuery q ->
+            ( { model | traceQuery = q }, Cmd.none )
+
+        -- Log → trace pivot: clicking a log row's trace-id badge
+        -- jumps to the Traces tab pre-filtered to that id, and
+        -- fetches traces if they aren't loaded yet.
+        PivotToTrace tid ->
+            ( { model | tab = TracesTab, traceQuery = tid }
+            , Cmd.perform (fetchTraces model.parentUrl) GotTraces
             )
 
 

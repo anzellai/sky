@@ -55,6 +55,12 @@ type MsgLogContext struct {
 	// console Logs tab can correlate every msg_dispatch for one user
 	// into a single timeline.
 	SessionID string
+	// TraceID — the OTEL trace id of the Msg span for this dispatch.
+	// Set by the dispatcher (via WithMsgSpanTraced) AFTER the span
+	// runs but BEFORE the deferred ObserveMsgLog fires. When set, it
+	// becomes the log entry's correlation id so a log line and its
+	// trace share ONE id — the console can pivot Logs ↔ Traces.
+	TraceID string
 }
 
 // BeginMsgLog snapshots the dispatch start. Call BEFORE invoking
@@ -152,7 +158,14 @@ func ObserveMsgLog(ctx MsgLogContext, newModel any, cmd any, err error) {
 // sink — stderr in serverless mode (container-evict-safe), ring
 // buffer in VM mode (dashboard reads it).
 func emitMsgLog(level string, ctx MsgLogContext, elapsed time.Duration, noop bool, err error) {
-	reqID := CurrentRequestID()
+	// Prefer the Msg span's trace id so this log line shares ONE
+	// correlation id with its trace (console Logs ↔ Traces pivot).
+	// Fall back to the goroutine's request id only when no span id
+	// was captured (e.g. a dispatch site that didn't open a span).
+	reqID := ctx.TraceID
+	if reqID == "" {
+		reqID = CurrentRequestID()
+	}
 	if IsServerless() {
 		// Single JSON line to stderr — Cloud Run / Lambda capture.
 		// Minimal allocation: no encoding/json round trip.

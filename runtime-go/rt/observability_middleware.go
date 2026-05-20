@@ -108,33 +108,46 @@ func ObservabilityMiddleware(next http.Handler) http.Handler {
 		}
 
 		start := time.Now()
-		reqID := r.Header.Get("X-Request-Id")
-		if reqID == "" {
-			reqID = generateRequestID()
+
+		// Step 7 — OTel server span. Created FIRST so the request-id
+		// can be unified with the trace-id (below). Honours inbound
+		// traceparent so distributed traces chain correctly
+		// (browser → CDN → API gateway → Sky → DB shows as one trace).
+		spanCtx, span := StartHTTPServerSpan(r, routeLabelFor(r))
+
+		// Unify the request-id with the OTEL trace-id. Before this,
+		// logs carried a standalone reqID and spans carried a
+		// separate traceID — two id spaces, so a log line could not
+		// be pivoted to its trace. Now they are the SAME id: a log's
+		// correlation badge equals the trace's id, and the console's
+		// Logs / Traces search boxes cross-reference. Falls back to a
+		// generated id only if the tracer is fully disabled (zero
+		// trace-id) — which doesn't happen while the in-process ring
+		// processor is registered.
+		reqID := span.SpanContext().TraceID().String()
+		if reqID == "" || reqID == "00000000000000000000000000000000" {
+			reqID = r.Header.Get("X-Request-Id")
+			if reqID == "" {
+				reqID = generateRequestID()
+			}
 		}
 		w.Header().Set("X-Request-Id", reqID)
 
-		// Stamp on context so Cmd.perform (Step 2) can read via
-		// either the context (RequestIDFromContext) or the
-		// goroutine-local registry (CurrentRequestID, when context
-		// can't be threaded — e.g. Sky kernels that don't take
-		// context).
-		r = r.WithContext(WithRequestID(r.Context(), reqID))
-		// Stamp the goroutine so runCmd (which doesn't see the
-		// context) can capture the parent req-id at goroutine
-		// spawn time. Cleared on handler exit so the entry doesn't
-		// leak past the underlying net/http worker goroutine being
-		// reused for the next request.
-		SetGoroutineRequestID(reqID)
-		defer ClearGoroutineRequestID()
-
-		// Step 7 — OTel server span. Honours inbound traceparent
-		// when present so distributed traces chain correctly
-		// (browser → CDN → API gateway → Sky → DB shows as one
-		// trace in the UI).  No-op tracer when OTLP endpoint isn't
-		// configured — every span call short-circuits to zero cost.
-		spanCtx, span := StartHTTPServerSpan(r, routeLabelFor(r))
+		// Stamp the unified id on the context so Cmd.perform,
+		// RequestIDFromContext, and every Log.* call correlate to
+		// the trace.
+		spanCtx = WithRequestID(spanCtx, reqID)
 		r = r.WithContext(spanCtx)
+
+		// Stamp the goroutine with the FULL span context (it carries
+		// both the OTEL server span and the req-id). Auto-instrumented
+		// kernels — Db.* / Auth.* / Http.* / session store — running
+		// on this request goroutine read it via CurrentTraceContext()
+		// in WithSpan and nest their spans under the request span.
+		// Cleared on handler exit so the entry doesn't leak past the
+		// net/http worker goroutine being reused for the next request.
+		SetGoroutineTraceContext(spanCtx)
+		defer ClearGoroutineTraceContext()
 
 		// Wrap ResponseWriter to capture status + bytes-written.
 		sw := newStatusCapture(w)

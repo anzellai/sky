@@ -5088,6 +5088,7 @@ func File_readFile(path any) any {
 // binary data).
 func File_readFileLimit(path any, limit any) any {
 	return func() any {
+	  return WithFileSpan("readFile", fmt.Sprintf("%v", path), func() any {
 		p := fmt.Sprintf("%v", path)
 		n := int64(AsInt(limit))
 		if n <= 0 {
@@ -5111,6 +5112,7 @@ func File_readFileLimit(path any, limit any) any {
 			return Err[any, any](ErrFfi(err.Error()))
 		}
 		return Ok[any, any](string(data))
+	  })
 	}
 }
 
@@ -5138,20 +5140,24 @@ func File_readFileBytes(path any) any {
 
 func File_writeFile(path any, content any) any {
 	return func() any {
+	  return WithFileSpan("writeFile", fmt.Sprintf("%v", path), func() any {
 		err := os.WriteFile(fmt.Sprintf("%v", path), []byte(fmt.Sprintf("%v", content)), 0644)
 		if err != nil { return Err[any, any](ErrFfi(err.Error())) }
 		return Ok[any, any](struct{}{})
+	  })
 	}
 }
 
 func File_append(path any, content any) any {
 	return func() any {
+	  return WithFileSpan("append", fmt.Sprintf("%v", path), func() any {
 		f, err := os.OpenFile(fmt.Sprintf("%v", path), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 		if err != nil { return Err[any, any](ErrFfi(err.Error())) }
 		defer f.Close()
 		_, err = f.WriteString(fmt.Sprintf("%v", content))
 		if err != nil { return Err[any, any](ErrFfi(err.Error())) }
 		return Ok[any, any](struct{}{})
+	  })
 	}
 }
 

@@ -14,6 +14,7 @@
 package rt
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -1807,11 +1808,19 @@ func liveAppRun(cfg any) any {
 		// finish + the goroutine exits cleanly. Idempotent —
 		// safe to call when no worker was ever spawned.
 		JobsShutdown()
+		// Close the parent HTTP server BEFORE killing sub-apps.
+		// Order matters: if a `/_sky/console/*` request is being
+		// reverse-proxied when Ctrl-C lands, killing the console
+		// child first leaves the proxy mid-body-copy with a dead
+		// upstream — "ReverseProxy read error during body copy:
+		// unexpected EOF". Closing the parent first ends those
+		// in-flight proxied requests; only then tear the children
+		// down.
+		_ = srv.Close()
 		// Tear down any sub-apps spawned via MountSubApp (the dev
 		// console + any user-mounted billing/admin/etc. processes).
 		// Idempotent + bounded (2s SIGTERM grace then SIGKILL).
 		ShutdownSubApps()
-		_ = srv.Close()
 		// If srv.Close completes the listener teardown, ListenAndServe
 		// returns and the function exits naturally. If something hangs,
 		// a second Ctrl-C escapes via os.Exit. Without this watchdog,
@@ -2437,7 +2446,15 @@ func (app *liveApp) dispatch(sess *liveSession, msg any) (body string) {
 		app.msgTags[adt.SkyName] = adt.Tag
 		app.msgTagsMu.Unlock()
 	}
-	result := sky_call2(app.update, msg, sess.model)
+	// Tier 1 auto-trace: wrap the TEA update in a Msg span. This is
+	// the causal middle layer — DB / Http / Auth child spans opened
+	// by the update body nest under "msg <Name>", so a trace shows
+	// which Msg triggered which queries. The span's trace id is
+	// stamped onto the Msg log entry (msgLogCtx.TraceID) so the log
+	// line and its trace share one correlation id.
+	result, msgTraceID := WithMsgSpanTraced(msgDisplayName(msg),
+		func() any { return sky_call2(app.update, msg, sess.model) })
+	msgLogCtx.TraceID = msgTraceID
 	sess.model = tupleFirst(result)
 	cmd := tupleSecond(result)
 	finalCmd = cmd
@@ -2515,29 +2532,32 @@ func (app *liveApp) runCmd(sess *liveSession, cmd any) {
 			app.runCmd(sess, sub)
 		}
 	case "perform":
-		// Capture the triggering request's id from the CURRENT
-		// goroutine (the dispatch path that's about to spawn the
-		// Task goroutine). Phase 1.1a Step 2 — without this, the
-		// spawned goroutine has no req-id and logs / traces emitted
-		// from inside the Task can't be correlated to the user
-		// action that started them.
-		parentReqID := CurrentRequestID()
-		go app.runPerform(sess, c.task, c.toMsg, parentReqID)
+		// Capture the triggering request's FULL trace context from
+		// the CURRENT goroutine (the dispatch path about to spawn
+		// the Task goroutine). The ctx carries both the OTEL span
+		// (so the Task's spans nest under the request) and the Sky
+		// request-id (so logs correlate). Without this the spawned
+		// goroutine is untracked.
+		parentCtx := CurrentTraceContext()
+		go app.runPerform(sess, c.task, c.toMsg, parentCtx)
 	}
 }
 
-func (app *liveApp) runPerform(sess *liveSession, task any, toMsg any, parentReqID string) {
-	// Stamp the parent request's id on this goroutine so kernels
-	// running inside the Task (Db.query, Http.get, Log.info, etc.)
-	// emit logs / traces correlated to the user's request. Cleared
+func (app *liveApp) runPerform(sess *liveSession, task any, toMsg any, parentCtx context.Context) {
+	// Stamp the parent request's trace context on this goroutine so
+	// kernels running inside the Task (Db.query, Http.get, Log.info,
+	// …) emit spans + logs correlated to the user's request. Cleared
 	// on exit so the sync.Map entry doesn't leak past goroutine
 	// recycling.
-	if parentReqID != "" {
-		SetGoroutineRequestID(parentReqID)
-		defer ClearGoroutineRequestID()
-	}
-	// task is a Sky Task — a zero-arg func() any returning SkyResult
-	result := sky_call(task, nil)
+	RunWithTraceContext(parentCtx, func() {
+		app.runPerformBody(sess, task, toMsg)
+	})
+}
+
+func (app *liveApp) runPerformBody(sess *liveSession, task any, toMsg any) {
+	// task is a Sky Task — a zero-arg func() any returning SkyResult.
+	// Wrap its execution in a cmd.perform span (Tier 1 auto-trace).
+	result := WithCmdSpan("perform", func() any { return sky_call(task, nil) })
 	// toMsg : Result err a -> Msg — convert result to Msg
 	msg := sky_call(toMsg, result)
 	// Push update through locked dispatch, then emit an SSE frame

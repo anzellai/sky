@@ -1141,6 +1141,28 @@ lookupKernelType modName funcName = case (modName, funcName) of
                     [ T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
                     , intType
                     ]))
+    -- Std.Trace — opt-in span API. span preserves the inner Task's
+    -- type parameters (Forall [e, a]); event / attr produce
+    -- Task Error ().
+    ("Trace", "span") ->
+        Just $ T.Forall ["e", "a"]
+            (T.TLambda stringType
+                (T.TLambda
+                    (T.TType ModuleName.task "Task" [T.TVar "e", T.TVar "a"])
+                    (T.TType ModuleName.task "Task" [T.TVar "e", T.TVar "a"])))
+    ("Trace", "event") ->
+        Just $ T.Forall []
+            (T.TLambda stringType
+                (T.TType ModuleName.task "Task"
+                    [ T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                    , T.TUnit ]))
+    ("Trace", "attr") ->
+        Just $ T.Forall []
+            (T.TLambda stringType
+                (T.TLambda stringType
+                    (T.TType ModuleName.task "Task"
+                        [ T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                        , T.TUnit ])))
     -- Doc.searchCatalog : String -> String -> Int -> ( List String, Int )
     --   Synchronous case-insensitive substring search against a
     --   previously-loaded catalogue (keyed by path).  Returns

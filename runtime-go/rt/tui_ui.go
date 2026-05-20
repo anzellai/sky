@@ -207,7 +207,13 @@ func tuiApplyUpdate(guardFn, updateFn, msg, model any, msgCh chan<- any) any {
 			})
 		}
 	}
-	return cliApplyUpdate(updateFn, msg, model, msgCh)
+	// Tier-1 auto-trace: wrap the TEA update in a Msg span. A Tui app
+	// has no HTTP request, so this span is the ROOT of its trace —
+	// each keypress→update is one interaction. DB / Http / File
+	// kernels called inside `update` nest under it.
+	return WithMsgSpan(msgDisplayName(msg), func() any {
+		return cliApplyUpdate(updateFn, msg, model, msgCh)
+	})
 }
 
 func tuiAppRun(cfg any) any {
@@ -220,6 +226,15 @@ func tuiAppRun(cfg any) any {
 	if initFn == nil || updateFn == nil || viewFn == nil {
 		return Err[any, any](ErrInvalidInput(
 			"Tui.app: cfg must define init / update / view"))
+	}
+
+	// Wire tracing so a Tui app's Db / Http / File / Msg spans are
+	// captured (OTLP export when OTEL_EXPORTER_OTLP_ENDPOINT is set;
+	// otherwise the in-process ring). Non-fatal on failure — same as
+	// the Sky.Live / Sky.Http.Server startup path.
+	if err := InitTracingFromEnv(); err != nil {
+		fmt.Fprintf(os.Stderr,
+			"[sky.tui] OTel init failed (continuing without trace export): %v\n", err)
 	}
 
 	canvas := tuiCanvas{width: 1280, height: 720}
