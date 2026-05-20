@@ -4,6 +4,7 @@
 -- shared with the existing kernel binding).
 module Sky.Core.Http exposing
     ( get, post
+    , HttpRequest, request
     )
 
 
@@ -20,3 +21,21 @@ get = Ffi.kernel "Http_get"
 -- (raw bytes).
 post : String -> String -> Task Error HttpResponse
 post = Ffi.kernel "Http_post"
+
+
+-- | A full HTTP request — method, URL, body, and headers.
+-- `headers` is a list of (name, value) pairs.
+type alias HttpRequest =
+    { method : String
+    , url : String
+    , body : String
+    , headers : List ( String, String )
+    }
+
+
+-- | `request req` — issue an HTTP request with full control over
+-- the method, headers, and body — the cases `get` / `post` don't
+-- cover (e.g. sending an `Authorization` header). Returns the
+-- `HttpResponse`.
+request : HttpRequest -> Task Error HttpResponse
+request = Ffi.kernel "Http_request"

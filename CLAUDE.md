@@ -433,7 +433,7 @@ Each binding is either:
 | `Time` | `Sky.Core.Time` | now, sleep, every, unixMillis, format/formatISO8601/formatRFC3339/formatHTTP, addMillis, diffMillis, timeString |
 | `Std.Time` | `Std.Time` | 32 entries. IANA zones, addMonths/Years (month-end CLAMPED), dayOfWeek (ISO Mon=1..Sun=7), weekOfYear (ISO 8601), startOfDay/Week/Month/Year, diffDays/Hours/Minutes/Seconds. |
 | `Random` | `Sky.Core.Random` | int, float |
-| `Http` | `Sky.Core.Http` | get, post |
+| `Http` | `Sky.Core.Http` | get, post, request (custom method/headers/body via `HttpRequest`) |
 | `File` | `Sky.Core.File` | readFile, readFileLimit, readFileBytes, writeFile, append, exists, remove, mkdirAll, readDir, isDir, tempFile, copy, rename |
 | `Io` | `Sky.Core.Io` | readLine, writeStdout, writeStderr |
 | `System` | `Sky.Core.System` | args, getArg, getenv, getenvOr (bare), getenvInt, getenvBool, setenv, unsetenv, cwd, loadEnv, exit |
