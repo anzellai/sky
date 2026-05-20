@@ -2989,7 +2989,7 @@ func invokeFfi(name string, args []any, pureOnly bool) any {
 func runWithRecover(name string, args []any, fn func([]any) any) (result any) {
 	defer func() {
 		if r := recover(); r != nil {
-			result = Err[any, any](fmt.Sprintf("Ffi %q panicked: %v", name, r))
+			result = Err[any, any](ErrFfi(fmt.Sprintf("Ffi %q panicked: %v", name, r)))
 		}
 	}()
 	raw := fn(args)
@@ -5051,7 +5051,7 @@ func Process_run(cmd any, args any) any {
 		for i, a := range argList { strArgs[i] = fmt.Sprintf("%v", a) }
 		c := exec.Command(cmdStr, strArgs...)
 		out, err := c.CombinedOutput()
-		if err != nil { return Err[any, any](fmt.Sprintf("%s: %v", string(out), err)) }
+		if err != nil { return Err[any, any](ErrIo(fmt.Sprintf("%s: %v", string(out), err))) }
 		return Ok[any, any](string(out))
 	}
 }
@@ -5105,7 +5105,7 @@ func File_readFileLimit(path any, limit any) any {
 			return Err[any, any](ErrFfi(err.Error()))
 		}
 		if st.Size() > n {
-			return Err[any, any](fmt.Sprintf("file exceeds %d-byte limit (actual: %d)", n, st.Size()))
+			return Err[any, any](ErrIo(fmt.Sprintf("file exceeds %d-byte limit (actual: %d)", n, st.Size())))
 		}
 		data, err := io.ReadAll(io.LimitReader(f, n))
 		if err != nil {
@@ -7105,7 +7105,7 @@ func SkyFfiReflectCall(fn reflect.Value, hasError bool, args []any) any {
 		} else if i < n {
 			pt = ft.In(i)
 		} else {
-			return Err[any, any](fmt.Sprintf("SkyFfiReflectCall: too many args (%d) for %v", len(args), ft))
+			return Err[any, any](ErrFfi(fmt.Sprintf("SkyFfiReflectCall: too many args (%d) for %v", len(args), ft)))
 		}
 		if a == nil {
 			vals = append(vals, reflect.Zero(pt))
