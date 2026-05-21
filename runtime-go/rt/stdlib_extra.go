@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -1095,6 +1096,24 @@ func Http_post(url any, body any) any {
 // so the first-arg typeswitch below picks up the record and ignores
 // the variadic tail. The positional four-arg form falls through to
 // the variadic path.
+// Http.parseQuery : String -> Dict String String
+// Parses a URL query string ("a=1&b=2") into a Dict via Go's
+// net/url.ParseQuery — proper percent-decoding, no hand-rolled
+// splitting. Repeated keys keep the first value; malformed input
+// yields a best-effort partial result rather than an error.
+func Http_parseQuery(raw any) any {
+	values, _ := url.ParseQuery(fmt.Sprintf("%v", raw))
+	out := make(map[string]any, len(values))
+	for k, vs := range values {
+		if len(vs) > 0 {
+			out[k] = vs[0]
+		} else {
+			out[k] = ""
+		}
+	}
+	return out
+}
+
 func Http_request(firstArg any, rest ...any) any {
 	var method, url, body string
 	var headers any

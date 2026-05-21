@@ -373,6 +373,7 @@ registry = Map.fromList
     -- still accepts the legacy 4-positional call shape, but kernel
     -- arity 1 keeps call-site codegen emitting the record unchanged.
     , (("Http", "request"),       KernelInfo "rt.Http_request" 1 False)
+    , (("Http", "parseQuery"),    KernelInfo "rt.Http_parseQuery" 1 False)
 
     , (("Path", "join"),          KernelInfo "rt.Path_join" 1 False)
     , (("Path", "dir"),           KernelInfo "rt.Path_dir" 1 False)

@@ -1752,6 +1752,8 @@ Http.post url body                            -- Task Error Response
 Http.request { method, url, headers, body }   -- Task Error Response
 
 -- Response = { status : Int, body : String, headers : List (String, String) }
+
+Http.parseQuery "a=1&b=2"   -- Dict String String (pure; Go net/url)
 ```
 
 ### Sky.Core.Encoding (pure)

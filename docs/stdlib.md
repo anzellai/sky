@@ -404,7 +404,9 @@ response =
         |> Task.andThen (\body -> println body)
 ```
 
-`get`, `post`, `request` (custom method/headers).
+`get`, `post`, `request` (custom method/headers). `parseQuery`
+parses a URL query string into a `Dict String String` (pure —
+backed by Go's `net/url`, proper percent-decoding).
 
 ### `File` — filesystem
 

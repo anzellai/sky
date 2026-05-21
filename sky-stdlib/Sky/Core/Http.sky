@@ -5,6 +5,7 @@
 module Sky.Core.Http exposing
     ( get, post
     , HttpRequest, request
+    , parseQuery
     )
 
 
@@ -39,3 +40,12 @@ type alias HttpRequest =
 -- `HttpResponse`.
 request : HttpRequest -> Task Error HttpResponse
 request = Ffi.kernel "Http_request"
+
+
+-- | `parseQuery raw` — parse a URL query string (`"a=1&b=2"`)
+-- into a `Dict String String`. Backed by Go's `net/url`, so
+-- percent-decoding is handled properly — no hand-rolled
+-- splitting. Repeated keys keep the first value; malformed
+-- input yields a best-effort partial result.
+parseQuery : String -> Dict String String
+parseQuery = Ffi.kernel "Http_parseQuery"
