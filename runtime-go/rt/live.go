@@ -1350,6 +1350,15 @@ func Live_api(spec any, handler any) any {
 		method = s[:idx]
 		pattern = strings.TrimSpace(s[idx+1:])
 	}
+	// `api` routes are raw developer HTTP endpoints — OAuth
+	// callbacks, webhooks, REST, server-to-server callbacks. They
+	// carry their own auth (Bearer / HMAC) and are NOT framework-
+	// cookie-authenticated, so the double-submit CSRF guard (a
+	// browser-form-forgery defence for the cookie-authed TEA event
+	// path) does not apply. Without this, a server-to-server POST
+	// to an api route — e.g. a build-job status callback — is
+	// 403'd for lacking a CSRF token it could never have.
+	WithoutCsrf(pattern)
 	return apiRoute{method: method, pattern: pattern, handler: handler}
 }
 

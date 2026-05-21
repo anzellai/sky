@@ -303,11 +303,39 @@ func ResetWithoutCsrf() {
 
 func isWithoutCsrfPath(path string) bool {
 	for _, p := range *withoutCsrfPaths.Load() {
-		if p == path {
+		if csrfPatternMatch(p, path) {
 			return true
 		}
 	}
 	return false
+}
+
+// csrfPatternMatch reports whether request path `path` matches a
+// registered exempt pattern `pat`. A `:name` segment in the
+// pattern is a wildcard for exactly one path segment, so api
+// routes like `POST /api/orders/:id/cancel` are exempt for every
+// concrete id. A pattern with no `:` is matched exactly.
+func csrfPatternMatch(pat, path string) bool {
+	if pat == path {
+		return true
+	}
+	if !strings.Contains(pat, ":") {
+		return false
+	}
+	ps := strings.Split(strings.Trim(pat, "/"), "/")
+	rs := strings.Split(strings.Trim(path, "/"), "/")
+	if len(ps) != len(rs) {
+		return false
+	}
+	for i := range ps {
+		if strings.HasPrefix(ps[i], ":") {
+			continue
+		}
+		if ps[i] != rs[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // ─── Token generation ─────────────────────────────────────────
