@@ -1688,7 +1688,7 @@ func liveAppRun(cfg any) any {
 	//      dynamically-typed map entries).
 	func() {
 		defer func() { recover() }()
-		req := map[string]any{"path": "/"}
+		req := map[string]any{"path": "/", "query": ""}
 		res := sky_call(app.init, req)
 		model := tupleFirst(res)
 		GobRegisterTypeGraph(reflect.TypeOf(model))
@@ -1932,7 +1932,7 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	if existing && sess != nil && sess.model != nil {
 		model = sess.model
 	} else {
-		req := map[string]any{"path": r.URL.Path}
+		req := map[string]any{"path": r.URL.Path, "query": r.URL.RawQuery}
 		res := sky_call(app.init, req)
 		model = tupleFirst(res)
 		cmd = tupleSecond(res)
