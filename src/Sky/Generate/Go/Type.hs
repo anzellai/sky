@@ -106,6 +106,15 @@ goNamedType home name args = case (ModuleName.toString home, name) of
         [msg] -> "rt.SkySub[" ++ typeToGo msg ++ "]"
         _     -> "rt.SkySub[any]"
 
+    -- Std.Html.Html — the Layer-3 HTML ADT. htmlType in the
+    -- constraint generator carries an empty home (so it unifies
+    -- with a user `Html Msg` annotation regardless of import path),
+    -- which would otherwise render unqualified and break go build
+    -- ("undefined: Html"). Map it to the generated type here, the
+    -- same way Cmd/Sub are. It codegens non-generic (`= rt.SkyADT`),
+    -- so the `msg` arg is dropped.
+    (_, "Html") -> "Std_Html_Html"
+
     -- User-defined types: Module_Name or Module_Name[T1, T2]
     _ ->
         let prefix = goModulePrefix home

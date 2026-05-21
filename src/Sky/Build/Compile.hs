@@ -5665,6 +5665,13 @@ typeStrWithAliasesReg recAliases fieldIdx tvarMap ty = case ty of
     -- Cmd/Sub: opaque Go types (ignore inner type param)
     T.TType _ "Cmd" _ -> "rt.SkyCmd"
     T.TType _ "Sub" _ -> "rt.SkySub"
+    -- Std.Html.Html: htmlType in the constraint generator carries an
+    -- empty home so it unifies with user `Html Msg` annotations. Map
+    -- it to the generated ADT here, the same way Cmd/Sub are — the
+    -- empty home would otherwise render the bare `Html`, which go
+    -- build rejects ("undefined: Html"). The ADT codegens non-generic
+    -- (`= rt.SkyADT`), so the msg type arg is dropped.
+    T.TType _ "Html" _ -> "Std_Html_Html"
     T.TTuple _ _ []   -> "rt.SkyTuple2"
     T.TTuple _ _ [_]  -> "rt.SkyTuple3"
     T.TTuple _ _ _    -> "rt.SkyTupleN"
