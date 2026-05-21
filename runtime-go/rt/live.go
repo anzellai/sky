@@ -4457,6 +4457,46 @@ func coerceReflectArg(av reflect.Value, want reflect.Type) reflect.Value {
 		}
 		return dst
 	}
+	// Map-to-struct: Sky's untyped record rep is map[string]any, but a
+	// typed function parameter (e.g. an empty-record Model) wants the
+	// struct. Build it, pulling each field by name — the map key may be
+	// the lowercase Sky field name or the exported Go name, so try both.
+	// Extra keys are ignored and missing fields stay zero, so this also
+	// covers the empty-record case (struct{}) — the reflective dispatch
+	// previously panicked there ("Call using map[string]interface {}").
+	if av.Kind() == reflect.Map && want.Kind() == reflect.Struct &&
+		av.Type().Key().Kind() == reflect.String {
+		dst := reflect.New(want).Elem()
+		for i := 0; i < want.NumField(); i++ {
+			df := dst.Field(i)
+			if !df.CanSet() {
+				continue
+			}
+			name := want.Field(i).Name
+			mv := av.MapIndex(reflect.ValueOf(name))
+			if !mv.IsValid() && name != "" {
+				mv = av.MapIndex(reflect.ValueOf(strings.ToLower(name[:1]) + name[1:]))
+			}
+			if !mv.IsValid() {
+				continue
+			}
+			sv := mv
+			for sv.Kind() == reflect.Interface && !sv.IsNil() {
+				sv = sv.Elem()
+			}
+			if sv.Type().AssignableTo(df.Type()) {
+				df.Set(sv)
+			} else if df.Kind() == reflect.Interface {
+				df.Set(sv)
+			} else {
+				narrowed := coerceReflectArg(sv, df.Type())
+				if narrowed.IsValid() && narrowed.Type().AssignableTo(df.Type()) {
+					df.Set(narrowed)
+				}
+			}
+		}
+		return dst
+	}
 	// Interface target: wrap as-is
 	if want.Kind() == reflect.Interface {
 		return av
