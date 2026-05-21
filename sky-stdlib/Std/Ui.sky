@@ -942,7 +942,8 @@ renderNodeAs tag ctx extraAttrs attrs children =
                 ""
             else
                 "position: relative; "
-        styleStr = positionPrefix ++ buildStyleString ctx renderCtx allAttrs
+        isReplaced = tag == "img" || tag == "input"
+        styleStr = positionPrefix ++ buildStyleString (not isReplaced) ctx renderCtx allAttrs
         htmlAttrs = collectHtmlAttrs allAttrs
         renderedMain = List.map (renderElement renderCtx []) children
         renderedNearby = List.map renderNearby nearbyChildren
@@ -972,7 +973,7 @@ toNearbyPair a =
 renderNearby : ( Location, Element msg ) -> any
 renderNearby ( loc, el ) =
     let
-        positionStyle = "position: absolute; " ++ locationCss loc
+        positionStyle = "position: absolute; display: flex; " ++ locationCss loc
         rendered = renderElement AsEl [] el
     in
         Html.div [ Attr.style positionStyle ] [ rendered ]
@@ -985,10 +986,10 @@ renderNearby ( loc, el ) =
 locationCss : Location -> String
 locationCss loc =
     case loc of
-        Above   -> "left: 0; right: 0; bottom: 100%;"
-        Below   -> "left: 0; right: 0; top: 100%;"
-        OnLeft  -> "top: 0; bottom: 0; right: 100%;"
-        OnRight -> "top: 0; bottom: 0; left: 100%;"
+        Above   -> "left: 0; right: 0; bottom: 100%; height: max-content;"
+        Below   -> "left: 0; right: 0; top: 100%; height: max-content;"
+        OnLeft  -> "top: 0; bottom: 0; right: 100%; width: max-content;"
+        OnRight -> "top: 0; bottom: 0; left: 100%; width: max-content;"
         InFront -> "left: 0; right: 0; top: 0; bottom: 0; z-index: 1;"
         Behind  -> "left: 0; right: 0; top: 0; bottom: 0; z-index: -1;"
 
@@ -1141,8 +1142,11 @@ isMarker name a =
         _ -> False
 
 
-buildStyleString : LayoutContext -> LayoutContext -> List (Attribute msg) -> String
-buildStyleString parentCtx myCtx attrs =
+-- `emitDisplay` is False for replaced/form tags (<img>, <input>):
+-- forcing `display:flex` on a replaced element breaks intrinsic
+-- sizing + object-fit, so they keep their native display.
+buildStyleString : Bool -> LayoutContext -> LayoutContext -> List (Attribute msg) -> String
+buildStyleString emitDisplay parentCtx myCtx attrs =
     let
         -- `Ui.grid` carries a `__grid` marker that switches the
         -- container to CSS Grid auto-fit. When present, we OVERRIDE
@@ -1151,7 +1155,9 @@ buildStyleString parentCtx myCtx attrs =
         -- ctx-driven display + the optional flex-wrap continuation.
         gridOn = hasMarker "__grid" attrs
         baseDisplay =
-            if gridOn then
+            if not emitDisplay then
+                ""
+            else if gridOn then
                 "display: grid; grid-template-columns: repeat(auto-fill, minmax("
                     ++ findGridMin attrs ++ "px, 1fr));"
             else
