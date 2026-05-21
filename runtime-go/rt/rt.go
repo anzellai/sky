@@ -3,16 +3,18 @@
 //
 // Audit P3-4: this file has ~140 `fmt.Sprintf("%v", x)` call sites.
 // They fall into three justified categories:
-//   (1) panic messages — rt.Coerce/AsInt/AsBool/AsFloat failures
-//       stringify the offending value to help the user debug the
-//       boundary bug. Never secret material (Auth secrets go through
-//       coerceAuthSecret in db_auth.go).
-//   (2) display-only toString kernels — rt.toString, stdlib Int→String,
-//       debug prints. These are explicitly for user output.
-//   (3) error-message composition — ErrInvalidInput / ErrIo wrap the
-//       offending value in a descriptive message. Cryptographic
-//       tokens (CSRF, HMAC signatures) use crypto/subtle compares
-//       and never pass through %v.
+//
+//	(1) panic messages — rt.Coerce/AsInt/AsBool/AsFloat failures
+//	    stringify the offending value to help the user debug the
+//	    boundary bug. Never secret material (Auth secrets go through
+//	    coerceAuthSecret in db_auth.go).
+//	(2) display-only toString kernels — rt.toString, stdlib Int→String,
+//	    debug prints. These are explicitly for user output.
+//	(3) error-message composition — ErrInvalidInput / ErrIo wrap the
+//	    offending value in a descriptive message. Cryptographic
+//	    tokens (CSRF, HMAC signatures) use crypto/subtle compares
+//	    and never pass through %v.
+//
 // No password, session id, auth token, cookie value, or SQL query
 // reaches a %v site in this file. Secret-bearing code paths live in
 // db_auth.go (covered by p3_4_typed_strings_test.go) and live.go
@@ -187,27 +189,37 @@ func adaptFuncValueWithCapture(skyFn reflect.Value, targetTy reflect.Type, captu
 		results := make([]reflect.Value, nOut)
 		for i := 0; i < nOut; i++ {
 			outTy := targetTy.Out(i)
-			if i < len(out) {
-				v := out[i]
-				if v.Type().AssignableTo(outTy) {
-					results[i] = v
-				} else if v.IsValid() && v.Kind() == reflect.Interface && !v.IsNil() {
-					inner := v.Elem()
-					if inner.Type().AssignableTo(outTy) {
-						results[i] = inner
-					} else if inner.Kind() == reflect.Func && outTy.Kind() == reflect.Func {
-						results[i] = adaptFuncValue(inner, outTy)
-					} else {
-						results[i] = reflect.Zero(outTy)
-					}
-				} else if v.IsValid() && v.Kind() == reflect.Func && outTy.Kind() == reflect.Func {
-					results[i] = adaptFuncValue(v, outTy)
-				} else {
-					results[i] = reflect.Zero(outTy)
-				}
-			} else {
+			if i >= len(out) {
 				results[i] = reflect.Zero(outTy)
+				continue
 			}
+			v := out[i]
+			if v.IsValid() && v.Type().AssignableTo(outTy) {
+				results[i] = v
+				continue
+			}
+			// Unwrap a boxing interface, then narrow through the
+			// canonical narrower. The previous hand-rolled cascade
+			// only knew assignable / interface-unwrap / func→func and
+			// zero-valued everything else — notably a struct return
+			// like SkyResult[E,A] / SkyMaybe[T] / a tuple handed back
+			// where the any-instantiation was expected (a Sky func
+			// returning Task/Result/Maybe routed through a func→func
+			// rt.Coerce). That silently dropped the Ok payload to a
+			// zero value. narrowReflectValue covers struct→struct,
+			// func→func, slices, maps and map→struct uniformly.
+			src := v
+			if v.IsValid() && v.Kind() == reflect.Interface && !v.IsNil() {
+				src = v.Elem()
+			}
+			if src.IsValid() {
+				if narrowed := narrowReflectValue(src, outTy); narrowed.IsValid() &&
+					narrowed.Type().AssignableTo(outTy) {
+					results[i] = narrowed
+					continue
+				}
+			}
+			results[i] = reflect.Zero(outTy)
 		}
 		return results
 	})
@@ -216,7 +228,6 @@ func adaptFuncValueWithCapture(skyFn reflect.Value, targetTy reflect.Type, captu
 func makeFuncAdapter[T any](skyFn reflect.Value, targetTy reflect.Type) any {
 	return adaptFuncValue(skyFn, targetTy).Interface()
 }
-
 
 // CommaOkToMaybe converts Go's `(T, bool)` comma-ok pattern into
 // a Sky Maybe. Used by typed FFI wrappers for functions like
@@ -237,7 +248,6 @@ func NilToMaybe[T any](v *T) SkyMaybe[*T] {
 	}
 	return Just[*T](v)
 }
-
 
 // ═══════════════════════════════════════════════════════════
 // Generic-coercion helpers (T4)
@@ -277,7 +287,6 @@ func MaybeAsAny[A any](m SkyMaybe[A]) SkyMaybe[any] {
 	}
 	return Nothing[any]()
 }
-
 
 // ResultCoerce reconstructs a SkyResult with target generic params.
 // Works for any source SkyResult[X, Y] via reflection — Go's generic
@@ -491,15 +500,61 @@ func coerceInner[T any](v any) T {
 	panic(fmt.Sprintf("rt.coerceInner: type mismatch — source %s cannot be cast to target %s. This is a compiler bug in typed-codegen routing. Reproduce, then investigate kernelTypedCall (Compile.hs) and the relevant inferXType helper.", srcDesc, targetDesc))
 }
 
-
 // narrowReflectValue converts `src` to a value of type `target`, handling:
 //   - identity / interface target
 //   - assignable / numerically-convertible types
 //   - map[K]any → map[K]X (recurses into coerceMapValue)
 //   - []any → []X (recurses via the same rules)
 //   - any → string (via fmt.Sprintf "%v")
+//
 // Returns an invalid reflect.Value when the conversion isn't supported;
 // the caller decides whether to skip the entry or panic.
+// narrowMapToStruct rebuilds a record struct from a string-keyed map
+// (a JSON-decoded object, a Db.query row, a Firestore snapshot).
+// Each field is probed under three key forms — PascalCase exact,
+// lower-first (Sky's record-field emission), all-lower (FFI acronyms
+// / Db.getField) — and narrowed recursively, so nested typed maps,
+// slices and record-lists round-trip. Shared by rt.Coerce and
+// narrowReflectValue so the two narrowers never diverge.
+func narrowMapToStruct(src reflect.Value, targetTy reflect.Type) reflect.Value {
+	out := reflect.New(targetTy).Elem()
+	n := targetTy.NumField()
+	for i := 0; i < n; i++ {
+		fld := targetTy.Field(i)
+		if !fld.IsExported() {
+			continue
+		}
+		mv := src.MapIndex(reflect.ValueOf(fld.Name))
+		if !mv.IsValid() && len(fld.Name) > 0 {
+			lowered := string(fld.Name[0]|0x20) + fld.Name[1:]
+			mv = src.MapIndex(reflect.ValueOf(lowered))
+			if !mv.IsValid() {
+				buf := make([]byte, len(fld.Name))
+				for j := 0; j < len(fld.Name); j++ {
+					c := fld.Name[j]
+					if c >= 'A' && c <= 'Z' {
+						c |= 0x20
+					}
+					buf[j] = c
+				}
+				mv = src.MapIndex(reflect.ValueOf(string(buf)))
+			}
+		}
+		if !mv.IsValid() {
+			continue
+		}
+		inner := mv.Interface()
+		if inner == nil {
+			continue
+		}
+		narrowed := narrowReflectValue(reflect.ValueOf(inner), fld.Type)
+		if narrowed.IsValid() && narrowed.Type().AssignableTo(fld.Type) {
+			out.Field(i).Set(narrowed)
+		}
+	}
+	return out
+}
+
 func narrowReflectValue(src reflect.Value, target reflect.Type) reflect.Value {
 	if target.Kind() == reflect.Interface {
 		return src
@@ -515,6 +570,15 @@ func narrowReflectValue(src reflect.Value, target reflect.Type) reflect.Value {
 	}
 	if target.Kind() == reflect.Slice && src.Kind() == reflect.Slice {
 		return coerceSliceValue(src, target)
+	}
+	// map[string]any → a record struct. JSON-decoded objects, Db
+	// rows and Firestore snapshots arrive string-keyed; a record
+	// field or constructor parameter typed `Foo_R` needs the
+	// field-by-field rebuild. Without this case, narrowing a nested
+	// record (and so any record-list element) silently failed.
+	if target.Kind() == reflect.Struct && src.Kind() == reflect.Map &&
+		src.Type().Key().Kind() == reflect.String {
+		return narrowMapToStruct(src, target)
 	}
 	// v0.13 Stage 1 — function type conversion via reflect-based
 	// adapter. When src is a Sky `func(any) any` lambda and target
@@ -574,7 +638,6 @@ func narrowReflectValue(src reflect.Value, target reflect.Type) reflect.Value {
 	}
 	return reflect.Value{}
 }
-
 
 // narrowTupleStruct reconstructs an rt.T2/T3/T4/T5 across generic
 // instantiations. Sky's tuple structs use `V0..Vn` field names with
@@ -757,7 +820,6 @@ func coerceSliceValue(src reflect.Value, target reflect.Type) reflect.Value {
 	}
 	return out
 }
-
 
 // ═══════════════════════════════════════════════════════════
 // Task
@@ -1008,7 +1070,9 @@ func Log_error(msg any) any {
 }
 
 // Log.{debugWith,infoWith,warnWith,errorWith}
-//   : String -> List a -> Task Error ()
+//
+//	: String -> List a -> Task Error ()
+//
 // Structured variants — second arg is a `List a` of alternating
 // key/value pairs (the Slog convention). Flattened into the
 // message string for the plain driver; JSON driver wraps as
@@ -1062,7 +1126,8 @@ func renderLogMsgWithAttrs(msg any, attrs any) string {
 
 // Log.with : String -> Dict String any -> Task Error ()
 // Structured log with additional context fields. E.g.
-//   Log.with "request completed" (Dict.fromList [("method","GET"), ("status",200)])
+//
+//	Log.with "request completed" (Dict.fromList [("method","GET"), ("status",200)])
 func Log_with(msg any, ctx any) any {
 	capturedMsg, capturedCtx := msg, ctx
 	return func() any {
@@ -1197,24 +1262,36 @@ func Basics_sndAnyT(t SkyTuple2) any { return t.V1 }
 // Basics_clampT — common enough to deserve a typed shortcut. Integer
 // version only; Sky's Float clamp is rarely called with literal args.
 func Basics_clampT(lo, hi, n int) int {
-	if n < lo { return lo }
-	if n > hi { return hi }
+	if n < lo {
+		return lo
+	}
+	if n > hi {
+		return hi
+	}
 	return n
 }
 
 // Basics_modByT — integer modulo with Sky's divisor-first convention.
 func Basics_modByT(divisor, n int) int {
-	if divisor == 0 { return 0 }
+	if divisor == 0 {
+		return 0
+	}
 	r := n % divisor
-	if r < 0 { r += divisor }
+	if r < 0 {
+		r += divisor
+	}
 	return r
 }
 
 // Basics_ordT — generic ordering comparison. Sky's compare kernel has
 // a polymorphic shape; the typed companion specialises to primitives.
 func Basics_ordT[A interface{ ~int | ~float64 | ~string }](a, b A) int {
-	if a < b { return -1 }
-	if a > b { return 1 }
+	if a < b {
+		return -1
+	}
+	if a > b {
+		return 1
+	}
 	return 0
 }
 
@@ -1230,7 +1307,8 @@ func Basics_toString(v any) string {
 // Elm Prelude exposes a function with the same name and shape). Preserves
 // String/error values verbatim, stringifies anything else. Registered as a
 // Prelude builtin (`errorToString`) so Sky programs can write:
-//   Result.mapError errorToString someResult
+//
+//	Result.mapError errorToString someResult
 func Basics_errorToString(v any) any {
 	switch x := v.(type) {
 	case string:
@@ -1284,7 +1362,7 @@ func Context_withCancel(parent any) any {
 		ctx = context.Background()
 	}
 	c, cancel := context.WithCancel(ctx)
-	_ = cancel  // Sky can't easily thread the cancel fn; discard for now.
+	_ = cancel // Sky can't easily thread the cancel fn; discard for now.
 	return c
 }
 
@@ -1293,10 +1371,14 @@ func Context_withCancel(parent any) any {
 // ═══════════════════════════════════════════════════════════
 
 func derefPointer(v any) any {
-	if v == nil { return v }
+	if v == nil {
+		return v
+	}
 	rv := reflect.ValueOf(v)
 	for rv.Kind() == reflect.Ptr {
-		if rv.IsNil() { return nil }
+		if rv.IsNil() {
+			return nil
+		}
 		rv = rv.Elem()
 	}
 	return rv.Interface()
@@ -1312,7 +1394,7 @@ func Fmt_sprint(args ...any) any {
 func Fmt_sprintf(format any, args ...any) any {
 	return fmt.Sprintf(fmt.Sprintf("%v", format), args...)
 }
-func Fmt_sprintln(args ...any) any  { return fmt.Sprintln(args...) }
+func Fmt_sprintln(args ...any) any { return fmt.Sprintln(args...) }
 func Fmt_errorf(format any, args ...any) any {
 	return fmt.Errorf(fmt.Sprintf("%v", format), args...)
 }
@@ -2234,14 +2316,15 @@ func deepEq(a, b any) bool {
 	}
 	return false
 }
+
 // Comparison operators. Dispatch on the left operand's concrete type
 // so `3.14 < 4.0`, `"apple" < "banana"`, and `true && false` all do
 // the right thing. Prior to P0-2 these silently routed through AsInt,
 // so strings compared as `0 < 0 = false` and float comparisons
 // truncated to int — a wrong-answer class that passed the type
 // checker.
-func Gt(a, b any) any { return cmp(a, b) > 0 }
-func Lt(a, b any) any { return cmp(a, b) < 0 }
+func Gt(a, b any) any  { return cmp(a, b) > 0 }
+func Lt(a, b any) any  { return cmp(a, b) < 0 }
 func Gte(a, b any) any { return cmp(a, b) >= 0 }
 func Lte(a, b any) any { return cmp(a, b) <= 0 }
 
@@ -2286,7 +2369,7 @@ func cmp(a, b any) int {
 }
 
 func And(a, b any) any { return AsBool(a) && AsBool(b) }
-func Or(a, b any) any { return AsBool(a) || AsBool(b) }
+func Or(a, b any) any  { return AsBool(a) || AsBool(b) }
 
 func Negate(a any) any {
 	if isFloatish(a) {
@@ -2314,7 +2397,9 @@ func Negate(a any) any {
 func List_map(fn any, list any) any {
 	items := AsList(list)
 	result := make([]any, len(items))
-	for i, item := range items { result[i] = SkyCall(fn, item) }
+	for i, item := range items {
+		result[i] = SkyCall(fn, item)
+	}
 	return result
 }
 
@@ -2322,7 +2407,9 @@ func List_filter(fn any, list any) any {
 	items := AsList(list)
 	var result []any
 	for _, item := range items {
-		if AsBool(SkyCall(fn, item)) { result = append(result, item) }
+		if AsBool(SkyCall(fn, item)) {
+			result = append(result, item)
+		}
 	}
 	return result
 }
@@ -2342,28 +2429,36 @@ func List_length(list any) any {
 
 func List_head(list any) any {
 	items := AsList(list)
-	if len(items) == 0 { return Nothing[any]() }
+	if len(items) == 0 {
+		return Nothing[any]()
+	}
 	return Just[any](items[0])
 }
 
 func List_reverse(list any) any {
 	items := AsList(list)
 	result := make([]any, len(items))
-	for i, item := range items { result[len(items)-1-i] = item }
+	for i, item := range items {
+		result[len(items)-1-i] = item
+	}
 	return result
 }
 
 func List_take(n any, list any) any {
 	count := AsInt(n)
 	items := AsList(list)
-	if count > len(items) { count = len(items) }
+	if count > len(items) {
+		count = len(items)
+	}
 	return items[:count]
 }
 
 func List_drop(n any, list any) any {
 	count := AsInt(n)
 	items := AsList(list)
-	if count > len(items) { count = len(items) }
+	if count > len(items) {
+		count = len(items)
+	}
 	return items[count:]
 }
 
@@ -2385,7 +2480,9 @@ func List_append(a any, b any) any {
 
 func List_mapT[A, B any](fn func(A) B, xs []A) []B {
 	out := make([]B, len(xs))
-	for i, x := range xs { out[i] = fn(x) }
+	for i, x := range xs {
+		out[i] = fn(x)
+	}
 	return out
 }
 
@@ -2395,7 +2492,9 @@ func List_mapT[A, B any](fn func(A) B, xs []A) []B {
 // the any/any List_map kernel, but with a typed slice contract.
 func List_mapAnyT(fn any, xs []any) []any {
 	out := make([]any, len(xs))
-	for i, x := range xs { out[i] = SkyCall(fn, x) }
+	for i, x := range xs {
+		out[i] = SkyCall(fn, x)
+	}
 	return out
 }
 
@@ -2413,7 +2512,9 @@ func List_mapAnyT(fn any, xs []any) []any {
 // HM types are known).
 func List_mapTA[A any](fn any, xs []A) []any {
 	out := make([]any, len(xs))
-	for i, x := range xs { out[i] = SkyCall(fn, x) }
+	for i, x := range xs {
+		out[i] = SkyCall(fn, x)
+	}
 	return out
 }
 
@@ -2422,7 +2523,9 @@ func List_mapTA[A any](fn any, xs []A) []any {
 func List_filterTA[A any](fn any, xs []A) []A {
 	out := make([]A, 0, len(xs))
 	for _, x := range xs {
-		if AsBool(SkyCall(fn, x)) { out = append(out, x) }
+		if AsBool(SkyCall(fn, x)) {
+			out = append(out, x)
+		}
 	}
 	return out
 }
@@ -2502,7 +2605,9 @@ func List_filterAnyT(fn any, xs []any) []any {
 func List_mapAny(fn any, xs any) any {
 	items := asList(xs)
 	out := make([]any, len(items))
-	for i, x := range items { out[i] = SkyCall(fn, x) }
+	for i, x := range items {
+		out[i] = SkyCall(fn, x)
+	}
 	return out
 }
 
@@ -2511,14 +2616,20 @@ func List_filterAny(fn any, xs any) any {
 	items := asList(xs)
 	out := make([]any, 0, len(items))
 	for _, x := range items {
-		if AsBool(SkyCall(fn, x)) { out = append(out, x) }
+		if AsBool(SkyCall(fn, x)) {
+			out = append(out, x)
+		}
 	}
 	return out
 }
 
 func List_takeAnyT(n int, xs []any) []any {
-	if n < 0 { n = 0 }
-	if n > len(xs) { n = len(xs) }
+	if n < 0 {
+		n = 0
+	}
+	if n > len(xs) {
+		n = len(xs)
+	}
 	return xs[:n]
 }
 
@@ -2536,13 +2647,17 @@ func List_foldlAnyT(fn any, seed any, xs []any) any {
 	// every iteration, so eval always returned the last element
 	// (63) regardless of actual board material.
 	acc := seed
-	for _, x := range xs { acc = SkyCall(fn, x, acc) }
+	for _, x := range xs {
+		acc = SkyCall(fn, x, acc)
+	}
 	return acc
 }
 
 func List_foldrAnyT(fn any, seed any, xs []any) any {
 	acc := seed
-	for i := len(xs) - 1; i >= 0; i-- { acc = SkyCall(fn, xs[i], acc) }
+	for i := len(xs) - 1; i >= 0; i-- {
+		acc = SkyCall(fn, xs[i], acc)
+	}
 	return acc
 }
 
@@ -2551,7 +2666,9 @@ func List_filterMapAnyT(fn any, xs []any) []any {
 	for _, x := range xs {
 		r := SkyCall(fn, x)
 		if m, ok := r.(SkyMaybe[any]); ok {
-			if m.Tag == 0 { out = append(out, m.JustValue) }
+			if m.Tag == 0 {
+				out = append(out, m.JustValue)
+			}
 			continue
 		}
 		// reflect fallback for typed SkyMaybe[T]
@@ -2590,35 +2707,47 @@ func List_concatMapAnyT(fn any, xs []any) []any {
 
 func List_anyAnyT(fn any, xs []any) bool {
 	for _, x := range xs {
-		if b, ok := SkyCall(fn, x).(bool); ok && b { return true }
+		if b, ok := SkyCall(fn, x).(bool); ok && b {
+			return true
+		}
 	}
 	return false
 }
 
 func List_allAnyT(fn any, xs []any) bool {
 	for _, x := range xs {
-		if b, ok := SkyCall(fn, x).(bool); ok && !b { return false }
+		if b, ok := SkyCall(fn, x).(bool); ok && !b {
+			return false
+		}
 	}
 	return true
 }
 
 func List_dropAnyT(n int, xs []any) []any {
-	if n < 0 { n = 0 }
-	if n > len(xs) { return []any{} }
+	if n < 0 {
+		n = 0
+	}
+	if n > len(xs) {
+		return []any{}
+	}
 	return xs[n:]
 }
 
 func List_filterT[A any](fn func(A) bool, xs []A) []A {
 	out := make([]A, 0, len(xs))
 	for _, x := range xs {
-		if fn(x) { out = append(out, x) }
+		if fn(x) {
+			out = append(out, x)
+		}
 	}
 	return out
 }
 
 func List_foldlT[A, B any](fn func(B, A) B, seed B, xs []A) B {
 	acc := seed
-	for _, x := range xs { acc = fn(acc, x) }
+	for _, x := range xs {
+		acc = fn(acc, x)
+	}
 	return acc
 }
 
@@ -2637,14 +2766,18 @@ func List_headT[A any](xs []A) SkyMaybe[A] {
 // The codegen routes here when the input might be a typed slice.
 func List_headAny(xs any) any {
 	items := asList(xs)
-	if len(items) == 0 { return Nothing[any]() }
+	if len(items) == 0 {
+		return Nothing[any]()
+	}
 	return Just[any](items[0])
 }
 
 func List_reverseT[A any](xs []A) []A {
 	n := len(xs)
 	out := make([]A, n)
-	for i, x := range xs { out[n-1-i] = x }
+	for i, x := range xs {
+		out[n-1-i] = x
+	}
 	return out
 }
 
@@ -2653,21 +2786,31 @@ func List_reverseAny(xs any) any {
 	items := asList(xs)
 	n := len(items)
 	out := make([]any, n)
-	for i, x := range items { out[n-1-i] = x }
+	for i, x := range items {
+		out[n-1-i] = x
+	}
 	return out
 }
 
 func List_takeT[A any](n int, xs []A) []A {
-	if n > len(xs) { n = len(xs) }
-	if n < 0 { n = 0 }
+	if n > len(xs) {
+		n = len(xs)
+	}
+	if n < 0 {
+		n = 0
+	}
 	return xs[:n]
 }
 
 func List_isEmptyT[A any](xs []A) bool { return len(xs) == 0 }
 
 func List_dropT[A any](n int, xs []A) []A {
-	if n > len(xs) { n = len(xs) }
-	if n < 0 { n = 0 }
+	if n > len(xs) {
+		n = len(xs)
+	}
+	if n < 0 {
+		n = 0
+	}
 	return xs[n:]
 }
 
@@ -2676,7 +2819,9 @@ func List_appendT[A any](a, b []A) []A { return append(a, b...) }
 func List_range(lo any, hi any) any {
 	l, h := AsInt(lo), AsInt(hi)
 	result := make([]any, 0, h-l+1)
-	for i := l; i <= h; i++ { result = append(result, i) }
+	for i := l; i <= h; i++ {
+		result = append(result, i)
+	}
 	return result
 }
 
@@ -2692,39 +2837,55 @@ func String_join(sep any, list any) any {
 	// assertion panics on those; AsList boxes any Go slice.
 	items := AsList(list)
 	parts := make([]string, len(items))
-	for i, item := range items { parts[i] = fmt.Sprintf("%v", item) }
+	for i, item := range items {
+		parts[i] = fmt.Sprintf("%v", item)
+	}
 	return strings.Join(parts, s)
 }
 
 func String_split(sep any, s any) any {
 	parts := strings.Split(fmt.Sprintf("%v", s), fmt.Sprintf("%v", sep))
 	result := make([]any, len(parts))
-	for i, p := range parts { result[i] = p }
+	for i, p := range parts {
+		result[i] = p
+	}
 	return result
 }
 
 func String_toInt(s any) any {
 	n, err := strconv.Atoi(fmt.Sprintf("%v", s))
-	if err != nil { return Nothing[any]() }
+	if err != nil {
+		return Nothing[any]()
+	}
 	return Just[any](n)
 }
 
 func String_toUpper(s any) any { return strings.ToUpper(fmt.Sprintf("%v", s)) }
 func String_toLower(s any) any { return strings.ToLower(fmt.Sprintf("%v", s)) }
-func String_trim(s any) any { return strings.TrimSpace(fmt.Sprintf("%v", s)) }
-func String_contains(sub any, s any) any { return strings.Contains(fmt.Sprintf("%v", s), fmt.Sprintf("%v", sub)) }
-func String_startsWith(prefix any, s any) any { return strings.HasPrefix(fmt.Sprintf("%v", s), fmt.Sprintf("%v", prefix)) }
-func String_reverse(s any) any { runes := []rune(fmt.Sprintf("%v", s)); for i, j := 0, len(runes)-1; i < j; i, j = i+1, j-1 { runes[i], runes[j] = runes[j], runes[i] }; return string(runes) }
+func String_trim(s any) any    { return strings.TrimSpace(fmt.Sprintf("%v", s)) }
+func String_contains(sub any, s any) any {
+	return strings.Contains(fmt.Sprintf("%v", s), fmt.Sprintf("%v", sub))
+}
+func String_startsWith(prefix any, s any) any {
+	return strings.HasPrefix(fmt.Sprintf("%v", s), fmt.Sprintf("%v", prefix))
+}
+func String_reverse(s any) any {
+	runes := []rune(fmt.Sprintf("%v", s))
+	for i, j := 0, len(runes)-1; i < j; i, j = i+1, j-1 {
+		runes[i], runes[j] = runes[j], runes[i]
+	}
+	return string(runes)
+}
 
 // P8/String typed companions — direct string in/out, no fmt.Sprintf
 // boxing. Length is rune-count (matches the any/any behaviour via
 // utf8.RuneCountInString).
-func String_toUpperT(s string) string                  { return strings.ToUpper(s) }
-func String_toLowerT(s string) string                  { return strings.ToLower(s) }
-func String_trimT(s string) string                     { return strings.TrimSpace(s) }
-func String_containsT(sub, s string) bool              { return strings.Contains(s, sub) }
-func String_startsWithT(prefix, s string) bool         { return strings.HasPrefix(s, prefix) }
-func String_endsWithT(suffix, s string) bool           { return strings.HasSuffix(s, suffix) }
+func String_toUpperT(s string) string          { return strings.ToUpper(s) }
+func String_toLowerT(s string) string          { return strings.ToLower(s) }
+func String_trimT(s string) string             { return strings.TrimSpace(s) }
+func String_containsT(sub, s string) bool      { return strings.Contains(s, sub) }
+func String_startsWithT(prefix, s string) bool { return strings.HasPrefix(s, prefix) }
+func String_endsWithT(suffix, s string) bool   { return strings.HasSuffix(s, suffix) }
 func String_reverseT(s string) string {
 	runes := []rune(s)
 	for i, j := 0, len(runes)-1; i < j; i, j = i+1, j-1 {
@@ -2732,32 +2893,45 @@ func String_reverseT(s string) string {
 	}
 	return string(runes)
 }
-func String_lengthT(s string) int                      { return utf8.RuneCountInString(s) }
-func String_isEmptyT(s string) bool                    { return s == "" }
-func String_appendT(a, b string) string                { return a + b }
-func String_splitT(sep, s string) []string             { return strings.Split(s, sep) }
-func String_joinT(sep string, parts []string) string   { return strings.Join(parts, sep) }
-func String_replaceT(old, new_, s string) string       { return strings.ReplaceAll(s, old, new_) }
+func String_lengthT(s string) int                    { return utf8.RuneCountInString(s) }
+func String_isEmptyT(s string) bool                  { return s == "" }
+func String_appendT(a, b string) string              { return a + b }
+func String_splitT(sep, s string) []string           { return strings.Split(s, sep) }
+func String_joinT(sep string, parts []string) string { return strings.Join(parts, sep) }
+func String_replaceT(old, new_, s string) string     { return strings.ReplaceAll(s, old, new_) }
 func String_sliceT(start, end int, s string) string {
 	runes := []rune(s)
 	total := len(runes)
-	if start < 0 { start += total }
-	if end < 0 { end += total }
-	if start < 0 { start = 0 }
-	if end > total { end = total }
-	if start > end { return "" }
+	if start < 0 {
+		start += total
+	}
+	if end < 0 {
+		end += total
+	}
+	if start < 0 {
+		start = 0
+	}
+	if end > total {
+		end = total
+	}
+	if start > end {
+		return ""
+	}
 	return string(runes[start:end])
 }
-func String_fromIntT(n int) string                     { return strconv.Itoa(n) }
-func String_fromFloatT(f float64) string               { return strconv.FormatFloat(f, 'g', -1, 64) }
+func String_fromIntT(n int) string       { return strconv.Itoa(n) }
+func String_fromFloatT(f float64) string { return strconv.FormatFloat(f, 'g', -1, 64) }
+
 // String_toIntT / String_toFloatT — typed companions for the typed-
 // codegen path. Return SkyMaybe to match the kernel's declared type
 // `String -> Maybe Int` / `String -> Maybe Float` (see lookupKernelType
 // in src/Sky/Type/Constrain/Expression.hs). Previously these returned
 // SkyResult, so user code patterns like
-//     case String.toInt s of
-//         Nothing -> _
-//         Just n  -> _
+//
+//	case String.toInt s of
+//	    Nothing -> _
+//	    Just n  -> _
+//
 // failed at runtime when the typed-codegen path dispatched here —
 // the SkyResult{Tag:1, ErrValue:"…"} value couldn't pattern-match
 // against Nothing. The any-typed String_toInt above was always
@@ -2782,7 +2956,9 @@ func String_toFloatT(s string) SkyMaybe[float64] {
 // mirrors String_toInt which also returns Maybe.
 func String_toFloat(s any) any {
 	f, err := strconv.ParseFloat(strings.TrimSpace(fmt.Sprintf("%v", s)), 64)
-	if err != nil { return Nothing[any]() }
+	if err != nil {
+		return Nothing[any]()
+	}
 	return Just[any](f)
 }
 
@@ -2791,7 +2967,9 @@ func String_toFloat(s any) any {
 // ═══════════════════════════════════════════════════════════
 
 func RecordGet(record any, field string) any {
-	if m, ok := record.(map[string]any); ok { return m[field] }
+	if m, ok := record.(map[string]any); ok {
+		return m[field]
+	}
 	return nil
 }
 
@@ -2802,13 +2980,19 @@ func RecordUpdate(base any, updates map[string]any) any {
 	// Fast path: map-based record
 	if m, ok := base.(map[string]any); ok {
 		result := make(map[string]any, len(m)+len(updates))
-		for k, v := range m { result[k] = v }
-		for k, v := range updates { result[k] = v }
+		for k, v := range m {
+			result[k] = v
+		}
+		for k, v := range updates {
+			result[k] = v
+		}
 		return result
 	}
 	// Reflect path: struct-based record
 	v := reflect.ValueOf(base)
-	if v.Kind() == reflect.Ptr { v = v.Elem() }
+	if v.Kind() == reflect.Ptr {
+		v = v.Elem()
+	}
 	if v.Kind() != reflect.Struct {
 		return base
 	}
@@ -2861,10 +3045,28 @@ func RecordUpdate(base any, updates map[string]any) any {
 // 6-wide tuple is a code-smell per the plan — users should use a
 // record alias instead.
 
-type T2[A, B any] struct { V0 A; V1 B }
-type T3[A, B, C any] struct { V0 A; V1 B; V2 C }
-type T4[A, B, C, D any] struct { V0 A; V1 B; V2 C; V3 D }
-type T5[A, B, C, D, E any] struct { V0 A; V1 B; V2 C; V3 D; V4 E }
+type T2[A, B any] struct {
+	V0 A
+	V1 B
+}
+type T3[A, B, C any] struct {
+	V0 A
+	V1 B
+	V2 C
+}
+type T4[A, B, C, D any] struct {
+	V0 A
+	V1 B
+	V2 C
+	V3 D
+}
+type T5[A, B, C, D, E any] struct {
+	V0 A
+	V1 B
+	V2 C
+	V3 D
+	V4 E
+}
 
 // Back-compat aliases. Literal codegen (`Can.Tuple`) still produces
 // `SkyTuple2{V0:..., V1:...}` — with these aliases the same value also
@@ -2875,7 +3077,7 @@ type SkyTuple3 = T3[any, any, any]
 
 // SkyTupleN: arity ≥ 6 tuples use a uniform slice-backed struct. Element
 // access in generated code is `t.Vs[i]`.
-type SkyTupleN struct { Vs []any }
+type SkyTupleN struct{ Vs []any }
 
 // Opaque Sky-side types with no concrete Go representation. They exist
 // solely so emitted function signatures name the abstraction (e.g.
@@ -2937,7 +3139,7 @@ var (
 // primitives, exported so auto-generated binding files (in package rt) don't
 // need to import "reflect" themselves. Used by the identity-pointer
 // generic fallback (Stripe's String[T any](v T) *T and friends).
-func reflectValueOfAny(v any) reflect.Value { return reflect.ValueOf(v) }
+func reflectValueOfAny(v any) reflect.Value     { return reflect.ValueOf(v) }
 func reflectNewOf(t reflect.Type) reflect.Value { return reflect.New(t) }
 
 func Register(name string, fn func([]any) any) {
@@ -2952,6 +3154,7 @@ func Register(name string, fn func([]any) any) {
 //   - opaque-type setters (struct field write on a copy)
 //   - zero-value constructors (no args, deterministic output)
 //   - pure data transforms (crypto hash, text slugification, …)
+//
 // NOT suitable for anything that reads time, env, args, files, network,
 // random, a database, global state, or spawns goroutines.
 func RegisterPure(name string, fn func([]any) any) {
@@ -3083,7 +3286,6 @@ type SkyADT struct {
 	Fields  []any
 }
 
-
 // adtTagRegistry maps constructor SkyName → Tag for runtime-constructed
 // ADTs (e.g. __sky_send events). Populated by RegisterAdtTag which the
 // codegen's init() block calls for each Msg constructor.
@@ -3107,7 +3309,6 @@ func LookupAdtTag(skyName string) (int, bool) {
 	return tag, ok
 }
 
-
 // ── Sky.Core.Error builders ────────────────────────────────────────
 //
 // These produce values structurally compatible with the Sky-side
@@ -3128,17 +3329,16 @@ func LookupAdtTag(skyName string) (int, bool) {
 // values produced by rt's Err*/Maybe* builders.
 type skyErrorAdt = SkyADT
 
-
 // EnumTagIs compares an any-boxed zero-arg ADT value against an
 // integer constructor tag. The value may arrive in either of two
 // representations:
 //
-//   1. Typed int constant (`Sky_Core_Error_ErrorKind_Io`) — the
-//      form codegen emits when every constructor of an ADT has
-//      zero arguments (the Can.Enum optimisation).
-//   2. `SkyADT{Tag: N, SkyName: "Io"}` — the form rt builders
-//      produce (`makeError` / `errorKindAdt`) because rt doesn't
-//      know about per-ADT Can.Enum lowering in user code.
+//  1. Typed int constant (`Sky_Core_Error_ErrorKind_Io`) — the
+//     form codegen emits when every constructor of an ADT has
+//     zero arguments (the Can.Enum optimisation).
+//  2. `SkyADT{Tag: N, SkyName: "Io"}` — the form rt builders
+//     produce (`makeError` / `errorKindAdt`) because rt doesn't
+//     know about per-ADT Can.Enum lowering in user code.
 //
 // Without a tolerant compare, every `case kind of Io -> ...`
 // downstream of a rt-built error hit `rt.Unreachable` — the
@@ -3185,9 +3385,10 @@ func skyMaybeNothing() any {
 
 // errorKindAdt builds an `Sky.Core.Error.ErrorKind` value with the
 // integer tag matching the constructor order in Error.sky:
-//   0=Io, 1=Network, 2=Ffi, 3=Decode, 4=Timeout, 5=NotFound,
-//   6=PermissionDenied, 7=InvalidInput, 8=Conflict, 9=Unavailable,
-//   10=Unexpected
+//
+//	0=Io, 1=Network, 2=Ffi, 3=Decode, 4=Timeout, 5=NotFound,
+//	6=PermissionDenied, 7=InvalidInput, 8=Conflict, 9=Unavailable,
+//	10=Unexpected
 func errorKindAdt(tag int, name string) any {
 	// Typed codegen maps Sky's pure-enum `ErrorKind` to a Go `int`
 	// (via iota). We return the raw tag so `AdtField(err, 0)` yields
@@ -3209,20 +3410,22 @@ func makeError(kindTag int, kindName, msg string) any {
 
 // Public Sky-shaped error builders. Used by the FFI runtime to
 // produce structured Error values instead of raw strings.
-func ErrIo(msg string) any               { return makeError(0,  "Io",               msg) }
-func ErrNetwork(msg string) any          { return makeError(1,  "Network",          msg) }
-func ErrFfi(msg string) any              { return makeError(2,  "Ffi",              msg) }
-func ErrDecode(msg string) any           { return makeError(3,  "Decode",           msg) }
-func ErrTimeout() any                    { return makeError(4,  "Timeout",          "operation timed out") }
-func ErrNotFound() any                   { return makeError(5,  "NotFound",         "not found") }
+func ErrIo(msg string) any      { return makeError(0, "Io", msg) }
+func ErrNetwork(msg string) any { return makeError(1, "Network", msg) }
+func ErrFfi(msg string) any     { return makeError(2, "Ffi", msg) }
+func ErrDecode(msg string) any  { return makeError(3, "Decode", msg) }
+func ErrTimeout() any           { return makeError(4, "Timeout", "operation timed out") }
+func ErrNotFound() any          { return makeError(5, "NotFound", "not found") }
 func ErrPermissionDenied(msg string) any {
-	if msg == "" { msg = "permission denied" }
+	if msg == "" {
+		msg = "permission denied"
+	}
 	return makeError(6, "PermissionDenied", msg)
 }
-func ErrInvalidInput(msg string) any     { return makeError(7,  "InvalidInput",     msg) }
-func ErrConflict(msg string) any         { return makeError(8,  "Conflict",         msg) }
-func ErrUnavailable(msg string) any      { return makeError(9,  "Unavailable",      msg) }
-func ErrUnexpected(msg string) any       { return makeError(10, "Unexpected",       msg) }
+func ErrInvalidInput(msg string) any { return makeError(7, "InvalidInput", msg) }
+func ErrConflict(msg string) any     { return makeError(8, "Conflict", msg) }
+func ErrUnavailable(msg string) any  { return makeError(9, "Unavailable", msg) }
+func ErrUnexpected(msg string) any   { return makeError(10, "Unexpected", msg) }
 
 // ═══════════════════════════════════════════════════════════
 // Result operations
@@ -3258,15 +3461,18 @@ func Result_andThen(fn any, result any) any {
 	return Err[any, any](err)
 }
 
-
 // Result/Maybe AnyT combinators: call-site dispatch targets that
 // preserve the any-boxed shape but skip the interface function-value
 // cast (use SkyCall instead, which handles both curried Sky closures
 // and uncurried multi-arg functions).
 func Result_mapAnyT(fn any, result any) any {
 	tag, ok, err := anyResultView(result)
-	if tag < 0 { return Ok[any, any](SkyCall(fn, result)) }
-	if tag == 0 { return Ok[any, any](SkyCall(fn, ok)) }
+	if tag < 0 {
+		return Ok[any, any](SkyCall(fn, result))
+	}
+	if tag == 0 {
+		return Ok[any, any](SkyCall(fn, ok))
+	}
 	return Err[any, any](err)
 }
 
@@ -3276,20 +3482,29 @@ func Result_mapAnyT(fn any, result any) any {
 //   - bare value (shouldn't happen after the FFI trust-boundary fix
 //     but kept defensive) → treat as already-unwrapped Ok and trust
 //     fn to return the next Result.
+//
 // Previously the bare-value branch wrapped fn's result in Ok, which
 // double-wrapped whenever fn itself returned a Result and surfaced
 // `SkyResult(SkyResult(...))` that panicked at the Task boundary.
 func Result_andThenAnyT(fn any, result any) any {
 	tag, ok, err := anyResultView(result)
-	if tag < 0 { return SkyCall(fn, result) }
-	if tag == 0 { return SkyCall(fn, ok) }
+	if tag < 0 {
+		return SkyCall(fn, result)
+	}
+	if tag == 0 {
+		return SkyCall(fn, ok)
+	}
 	return Err[any, any](err)
 }
 
 func Result_mapErrorAnyT(fn any, result any) any {
 	tag, ok, err := anyResultView(result)
-	if tag < 0 { return Ok[any, any](result) }
-	if tag == 0 { return Ok[any, any](ok) }
+	if tag < 0 {
+		return Ok[any, any](result)
+	}
+	if tag == 0 {
+		return Ok[any, any](ok)
+	}
 	return Err[any, any](SkyCall(fn, err))
 }
 
@@ -3297,12 +3512,16 @@ func Result_mapErrorAnyT(fn any, result any) any {
 // and A, so typed Result pipelines compile without any boxing.
 
 func Result_mapT[E, A, B any](fn func(A) B, r SkyResult[E, A]) SkyResult[E, B] {
-	if r.Tag == 0 { return Ok[E, B](fn(r.OkValue)) }
+	if r.Tag == 0 {
+		return Ok[E, B](fn(r.OkValue))
+	}
 	return Err[E, B](r.ErrValue)
 }
 
 func Result_andThenT[E, A, B any](fn func(A) SkyResult[E, B], r SkyResult[E, A]) SkyResult[E, B] {
-	if r.Tag == 0 { return fn(r.OkValue) }
+	if r.Tag == 0 {
+		return fn(r.OkValue)
+	}
 	return Err[E, B](r.ErrValue)
 }
 
@@ -3316,24 +3535,32 @@ func Result_withDefaultAnyT(def any, result any) any {
 }
 
 func Result_withDefaultT[E, A any](def A, r SkyResult[E, A]) A {
-	if r.Tag == 0 { return r.OkValue }
+	if r.Tag == 0 {
+		return r.OkValue
+	}
 	return def
 }
 
 func Result_mapErrorT[E, F, A any](fn func(E) F, r SkyResult[E, A]) SkyResult[F, A] {
-	if r.Tag == 1 { return Err[F, A](fn(r.ErrValue)) }
+	if r.Tag == 1 {
+		return Err[F, A](fn(r.ErrValue))
+	}
 	return Ok[F, A](r.OkValue)
 }
 
 // P8/Maybe typed companions.
 
 func Maybe_mapT[A, B any](fn func(A) B, m SkyMaybe[A]) SkyMaybe[B] {
-	if m.Tag == 0 { return Just[B](fn(m.JustValue)) }
+	if m.Tag == 0 {
+		return Just[B](fn(m.JustValue))
+	}
 	return Nothing[B]()
 }
 
 func Maybe_andThenT[A, B any](fn func(A) SkyMaybe[B], m SkyMaybe[A]) SkyMaybe[B] {
-	if m.Tag == 0 { return fn(m.JustValue) }
+	if m.Tag == 0 {
+		return fn(m.JustValue)
+	}
 	return Nothing[B]()
 }
 
@@ -3342,10 +3569,11 @@ func Maybe_withDefaultAnyT(def any, maybe any) any {
 }
 
 func Maybe_withDefaultT[A any](def A, m SkyMaybe[A]) A {
-	if m.Tag == 0 { return m.JustValue }
+	if m.Tag == 0 {
+		return m.JustValue
+	}
 	return def
 }
-
 
 // anyResultView returns (tag, okValue, errValue) for any Sky Result
 // shape. tag == -1 signals "not a Result" (caller decides policy).
@@ -3360,7 +3588,7 @@ func anyResultView(result any) (int, any, any) {
 	rv := reflect.ValueOf(result)
 	if rv.Kind() == reflect.Struct {
 		tagField := rv.FieldByName("Tag")
-		okField  := rv.FieldByName("OkValue")
+		okField := rv.FieldByName("OkValue")
 		errField := rv.FieldByName("ErrValue")
 		if tagField.IsValid() && okField.IsValid() && errField.IsValid() &&
 			(tagField.Kind() == reflect.Int || tagField.Kind() == reflect.Int64) {
@@ -3376,7 +3604,9 @@ func Result_withDefault(def any, result any) any {
 	// as already-extracted Ok values rather than panicking — matches
 	// Elm's "graceful degradation" intent for this combinator.
 	if r, ok := result.(SkyResult[any, any]); ok {
-		if r.Tag == 0 { return r.OkValue }
+		if r.Tag == 0 {
+			return r.OkValue
+		}
 		return def
 	}
 	// P7: typed FFI wrappers now return SkyResult[string, A] for some
@@ -3386,7 +3616,7 @@ func Result_withDefault(def any, result any) any {
 	rv := reflect.ValueOf(result)
 	if rv.Kind() == reflect.Struct {
 		tagField := rv.FieldByName("Tag")
-		okField  := rv.FieldByName("OkValue")
+		okField := rv.FieldByName("OkValue")
 		if tagField.IsValid() && okField.IsValid() &&
 			(tagField.Kind() == reflect.Int || tagField.Kind() == reflect.Int64) {
 			if tagField.Int() == 0 {
@@ -3419,55 +3649,135 @@ func Result_mapError(fn any, result any) any {
 // so typed FFI results flow in without an explicit ResultCoerce wrap.
 
 func Result_map2(fn, a, b any) any {
-	ta, oa, ea := anyResultView(a); if ta < 0 { return a }
-	if ta != 0 { return Err[any, any](ea) }
-	tb, ob, eb := anyResultView(b); if tb < 0 { return b }
-	if tb != 0 { return Err[any, any](eb) }
+	ta, oa, ea := anyResultView(a)
+	if ta < 0 {
+		return a
+	}
+	if ta != 0 {
+		return Err[any, any](ea)
+	}
+	tb, ob, eb := anyResultView(b)
+	if tb < 0 {
+		return b
+	}
+	if tb != 0 {
+		return Err[any, any](eb)
+	}
 	return Ok[any, any](apply2(fn, oa, ob))
 }
 
 func Result_map3(fn, a, b, c any) any {
-	ta, oa, ea := anyResultView(a); if ta < 0 { return a }
-	if ta != 0 { return Err[any, any](ea) }
-	tb, ob, eb := anyResultView(b); if tb < 0 { return b }
-	if tb != 0 { return Err[any, any](eb) }
-	tc, oc, ec := anyResultView(c); if tc < 0 { return c }
-	if tc != 0 { return Err[any, any](ec) }
+	ta, oa, ea := anyResultView(a)
+	if ta < 0 {
+		return a
+	}
+	if ta != 0 {
+		return Err[any, any](ea)
+	}
+	tb, ob, eb := anyResultView(b)
+	if tb < 0 {
+		return b
+	}
+	if tb != 0 {
+		return Err[any, any](eb)
+	}
+	tc, oc, ec := anyResultView(c)
+	if tc < 0 {
+		return c
+	}
+	if tc != 0 {
+		return Err[any, any](ec)
+	}
 	return Ok[any, any](apply3(fn, oa, ob, oc))
 }
 
 func Result_map4(fn, a, b, c, d any) any {
-	ta, oa, ea := anyResultView(a); if ta < 0 { return a }
-	if ta != 0 { return Err[any, any](ea) }
-	tb, ob, eb := anyResultView(b); if tb < 0 { return b }
-	if tb != 0 { return Err[any, any](eb) }
-	tc, oc, ec := anyResultView(c); if tc < 0 { return c }
-	if tc != 0 { return Err[any, any](ec) }
-	td, od, ed := anyResultView(d); if td < 0 { return d }
-	if td != 0 { return Err[any, any](ed) }
+	ta, oa, ea := anyResultView(a)
+	if ta < 0 {
+		return a
+	}
+	if ta != 0 {
+		return Err[any, any](ea)
+	}
+	tb, ob, eb := anyResultView(b)
+	if tb < 0 {
+		return b
+	}
+	if tb != 0 {
+		return Err[any, any](eb)
+	}
+	tc, oc, ec := anyResultView(c)
+	if tc < 0 {
+		return c
+	}
+	if tc != 0 {
+		return Err[any, any](ec)
+	}
+	td, od, ed := anyResultView(d)
+	if td < 0 {
+		return d
+	}
+	if td != 0 {
+		return Err[any, any](ed)
+	}
 	return Ok[any, any](apply4(fn, oa, ob, oc, od))
 }
 
 func Result_map5(fn, a, b, c, d, e any) any {
-	ta, oa, ea := anyResultView(a); if ta < 0 { return a }
-	if ta != 0 { return Err[any, any](ea) }
-	tb, ob, eb := anyResultView(b); if tb < 0 { return b }
-	if tb != 0 { return Err[any, any](eb) }
-	tc, oc, ec := anyResultView(c); if tc < 0 { return c }
-	if tc != 0 { return Err[any, any](ec) }
-	td, od, ed := anyResultView(d); if td < 0 { return d }
-	if td != 0 { return Err[any, any](ed) }
-	te, oe, ee := anyResultView(e); if te < 0 { return e }
-	if te != 0 { return Err[any, any](ee) }
+	ta, oa, ea := anyResultView(a)
+	if ta < 0 {
+		return a
+	}
+	if ta != 0 {
+		return Err[any, any](ea)
+	}
+	tb, ob, eb := anyResultView(b)
+	if tb < 0 {
+		return b
+	}
+	if tb != 0 {
+		return Err[any, any](eb)
+	}
+	tc, oc, ec := anyResultView(c)
+	if tc < 0 {
+		return c
+	}
+	if tc != 0 {
+		return Err[any, any](ec)
+	}
+	td, od, ed := anyResultView(d)
+	if td < 0 {
+		return d
+	}
+	if td != 0 {
+		return Err[any, any](ed)
+	}
+	te, oe, ee := anyResultView(e)
+	if te < 0 {
+		return e
+	}
+	if te != 0 {
+		return Err[any, any](ee)
+	}
 	return Ok[any, any](apply5(fn, oa, ob, oc, od, oe))
 }
 
 // Result.andMap : Result e (a -> b) -> Result e a -> Result e b
 func Result_andMap(fr, ra any) any {
-	tfr, ofn, efn := anyResultView(fr); if tfr < 0 { return fr }
-	if tfr != 0 { return Err[any, any](efn) }
-	tra, oa, ea := anyResultView(ra); if tra < 0 { return ra }
-	if tra != 0 { return Err[any, any](ea) }
+	tfr, ofn, efn := anyResultView(fr)
+	if tfr < 0 {
+		return fr
+	}
+	if tfr != 0 {
+		return Err[any, any](efn)
+	}
+	tra, oa, ea := anyResultView(ra)
+	if tra < 0 {
+		return ra
+	}
+	if tra != 0 {
+		return Err[any, any](ea)
+	}
 	return Ok[any, any](pipelineApply(ofn, oa))
 }
 
@@ -3478,8 +3788,12 @@ func Result_combine(results any) any {
 	out := make([]any, 0, len(items))
 	for _, r := range items {
 		tag, ok, err := anyResultView(r)
-		if tag < 0 { return r }
-		if tag != 0 { return Err[any, any](err) }
+		if tag < 0 {
+			return r
+		}
+		if tag != 0 {
+			return Err[any, any](err)
+		}
 		out = append(out, ok)
 	}
 	return Ok[any, any](out)
@@ -3492,8 +3806,12 @@ func Result_traverse(fn, items any) any {
 	for _, x := range xs {
 		r := SkyCall(fn, x)
 		tag, okVal, err := anyResultView(r)
-		if tag < 0 { return Err[any, any](ErrInvalidInput("Result.traverse: fn did not return a Result")) }
-		if tag != 0 { return Err[any, any](err) }
+		if tag < 0 {
+			return Err[any, any](ErrInvalidInput("Result.traverse: fn did not return a Result"))
+		}
+		if tag != 0 {
+			return Err[any, any](err)
+		}
 		out = append(out, okVal)
 	}
 	return Ok[any, any](out)
@@ -3513,7 +3831,9 @@ func stringifyLogArgs(args []any) any {
 	}
 	var sb strings.Builder
 	for i, a := range args {
-		if i > 0 { sb.WriteString(" ") }
+		if i > 0 {
+			sb.WriteString(" ")
+		}
 		sb.WriteString(fmt.Sprintf("%v", a))
 	}
 	return sb.String()
@@ -3526,10 +3846,14 @@ func stringifyLogArgs(args []any) any {
 func Maybe_withDefault(def any, maybe any) any {
 	tag, just := anyMaybeView(maybe)
 	if tag < 0 {
-		if maybe == nil { return def }
+		if maybe == nil {
+			return def
+		}
 		return maybe
 	}
-	if tag == 0 { return just }
+	if tag == 0 {
+		return just
+	}
 	return def
 }
 
@@ -3538,7 +3862,9 @@ func Maybe_map(fn any, maybe any) any {
 	if tag < 0 {
 		return Just[any](SkyCall(fn, maybe))
 	}
-	if tag == 0 { return Just[any](SkyCall(fn, just)) }
+	if tag == 0 {
+		return Just[any](SkyCall(fn, just))
+	}
 	return Nothing[any]()
 }
 
@@ -3547,24 +3873,33 @@ func Maybe_andThen(fn any, maybe any) any {
 	if tag < 0 {
 		return SkyCall(fn, maybe)
 	}
-	if tag == 0 { return SkyCall(fn, just) }
+	if tag == 0 {
+		return SkyCall(fn, just)
+	}
 	return Nothing[any]()
 }
 
 func Maybe_mapAnyT(fn any, maybe any) any {
 	tag, just := anyMaybeView(maybe)
-	if tag < 0 { return Just[any](SkyCall(fn, maybe)) }
-	if tag == 0 { return Just[any](SkyCall(fn, just)) }
+	if tag < 0 {
+		return Just[any](SkyCall(fn, maybe))
+	}
+	if tag == 0 {
+		return Just[any](SkyCall(fn, just))
+	}
 	return Nothing[any]()
 }
 
 func Maybe_andThenAnyT(fn any, maybe any) any {
 	tag, just := anyMaybeView(maybe)
-	if tag < 0 { return SkyCall(fn, maybe) }
-	if tag == 0 { return SkyCall(fn, just) }
+	if tag < 0 {
+		return SkyCall(fn, maybe)
+	}
+	if tag == 0 {
+		return SkyCall(fn, just)
+	}
 	return Nothing[any]()
 }
-
 
 // anyMaybeView returns (tag, justValue) for any SkyMaybe shape. Mirrors
 // anyResultView. tag == -1 means "not a Maybe" and the caller decides
@@ -3575,7 +3910,7 @@ func anyMaybeView(maybe any) (int, any) {
 	}
 	rv := reflect.ValueOf(maybe)
 	if rv.Kind() == reflect.Struct {
-		tagField  := rv.FieldByName("Tag")
+		tagField := rv.FieldByName("Tag")
 		justField := rv.FieldByName("JustValue")
 		if tagField.IsValid() && justField.IsValid() &&
 			(tagField.Kind() == reflect.Int || tagField.Kind() == reflect.Int64) {
@@ -3585,46 +3920,93 @@ func anyMaybeView(maybe any) (int, any) {
 	return -1, nil
 }
 
-
 // ── Maybe applicative combinators (parallel to Result) ─────────────
 // Short-circuits on the first Nothing. All accept any SkyMaybe[X]
 // shape via anyMaybeView, so typed-FFI Maybe producers flow in
 // without an explicit MaybeCoerce wrap.
 
 func Maybe_map2(fn, a, b any) any {
-	ta, oa := anyMaybeView(a); if ta < 0 || ta != 0 { return Nothing[any]() }
-	tb, ob := anyMaybeView(b); if tb < 0 || tb != 0 { return Nothing[any]() }
+	ta, oa := anyMaybeView(a)
+	if ta < 0 || ta != 0 {
+		return Nothing[any]()
+	}
+	tb, ob := anyMaybeView(b)
+	if tb < 0 || tb != 0 {
+		return Nothing[any]()
+	}
 	return Just[any](apply2(fn, oa, ob))
 }
 
 func Maybe_map3(fn, a, b, c any) any {
-	ta, oa := anyMaybeView(a); if ta < 0 || ta != 0 { return Nothing[any]() }
-	tb, ob := anyMaybeView(b); if tb < 0 || tb != 0 { return Nothing[any]() }
-	tc, oc := anyMaybeView(c); if tc < 0 || tc != 0 { return Nothing[any]() }
+	ta, oa := anyMaybeView(a)
+	if ta < 0 || ta != 0 {
+		return Nothing[any]()
+	}
+	tb, ob := anyMaybeView(b)
+	if tb < 0 || tb != 0 {
+		return Nothing[any]()
+	}
+	tc, oc := anyMaybeView(c)
+	if tc < 0 || tc != 0 {
+		return Nothing[any]()
+	}
 	return Just[any](apply3(fn, oa, ob, oc))
 }
 
 func Maybe_map4(fn, a, b, c, d any) any {
-	ta, oa := anyMaybeView(a); if ta < 0 || ta != 0 { return Nothing[any]() }
-	tb, ob := anyMaybeView(b); if tb < 0 || tb != 0 { return Nothing[any]() }
-	tc, oc := anyMaybeView(c); if tc < 0 || tc != 0 { return Nothing[any]() }
-	td, od := anyMaybeView(d); if td < 0 || td != 0 { return Nothing[any]() }
+	ta, oa := anyMaybeView(a)
+	if ta < 0 || ta != 0 {
+		return Nothing[any]()
+	}
+	tb, ob := anyMaybeView(b)
+	if tb < 0 || tb != 0 {
+		return Nothing[any]()
+	}
+	tc, oc := anyMaybeView(c)
+	if tc < 0 || tc != 0 {
+		return Nothing[any]()
+	}
+	td, od := anyMaybeView(d)
+	if td < 0 || td != 0 {
+		return Nothing[any]()
+	}
 	return Just[any](apply4(fn, oa, ob, oc, od))
 }
 
 func Maybe_map5(fn, a, b, c, d, e any) any {
-	ta, oa := anyMaybeView(a); if ta < 0 || ta != 0 { return Nothing[any]() }
-	tb, ob := anyMaybeView(b); if tb < 0 || tb != 0 { return Nothing[any]() }
-	tc, oc := anyMaybeView(c); if tc < 0 || tc != 0 { return Nothing[any]() }
-	td, od := anyMaybeView(d); if td < 0 || td != 0 { return Nothing[any]() }
-	te, oe := anyMaybeView(e); if te < 0 || te != 0 { return Nothing[any]() }
+	ta, oa := anyMaybeView(a)
+	if ta < 0 || ta != 0 {
+		return Nothing[any]()
+	}
+	tb, ob := anyMaybeView(b)
+	if tb < 0 || tb != 0 {
+		return Nothing[any]()
+	}
+	tc, oc := anyMaybeView(c)
+	if tc < 0 || tc != 0 {
+		return Nothing[any]()
+	}
+	td, od := anyMaybeView(d)
+	if td < 0 || td != 0 {
+		return Nothing[any]()
+	}
+	te, oe := anyMaybeView(e)
+	if te < 0 || te != 0 {
+		return Nothing[any]()
+	}
 	return Just[any](apply5(fn, oa, ob, oc, od, oe))
 }
 
 // Maybe.andMap : Maybe (a -> b) -> Maybe a -> Maybe b
 func Maybe_andMap(fm, ma any) any {
-	tfm, ofn := anyMaybeView(fm); if tfm < 0 || tfm != 0 { return Nothing[any]() }
-	tma, oa  := anyMaybeView(ma); if tma < 0 || tma != 0 { return Nothing[any]() }
+	tfm, ofn := anyMaybeView(fm)
+	if tfm < 0 || tfm != 0 {
+		return Nothing[any]()
+	}
+	tma, oa := anyMaybeView(ma)
+	if tma < 0 || tma != 0 {
+		return Nothing[any]()
+	}
 	return Just[any](pipelineApply(ofn, oa))
 }
 
@@ -3635,7 +4017,9 @@ func Maybe_combine(maybes any) any {
 	out := make([]any, 0, len(items))
 	for _, m := range items {
 		tag, just := anyMaybeView(m)
-		if tag < 0 || tag != 0 { return Nothing[any]() }
+		if tag < 0 || tag != 0 {
+			return Nothing[any]()
+		}
 		out = append(out, just)
 	}
 	return Just[any](out)
@@ -3653,7 +4037,9 @@ func Maybe_traverse(fn, items any) any {
 	// detect the bug.
 	for _, x := range xs {
 		tag, just := anyMaybeView(SkyCall(fn, x))
-		if tag < 0 || tag != 0 { return Nothing[any]() }
+		if tag < 0 || tag != 0 {
+			return Nothing[any]()
+		}
 		out = append(out, just)
 	}
 	return Just[any](out)
@@ -3672,7 +4058,9 @@ func Dict_empty() any { return map[string]any{} }
 func Dict_insert(key any, val any, dict any) any {
 	m := AsDict(unwrapAny(dict))
 	new := make(map[string]any, len(m)+1)
-	for k, v := range m { new[k] = v }
+	for k, v := range m {
+		new[k] = v
+	}
 	new[fmt.Sprintf("%v", key)] = val
 	return new
 }
@@ -3680,7 +4068,9 @@ func Dict_insert(key any, val any, dict any) any {
 func Dict_get(key any, dict any) any {
 	m := AsDict(unwrapAny(dict))
 	v, ok := m[fmt.Sprintf("%v", key)]
-	if ok { return Just[any](derefPointer(v)) }
+	if ok {
+		return Just[any](derefPointer(v))
+	}
 	return Nothing[any]()
 }
 
@@ -3688,7 +4078,11 @@ func Dict_remove(key any, dict any) any {
 	m := AsDict(unwrapAny(dict))
 	new := make(map[string]any, len(m))
 	k := fmt.Sprintf("%v", key)
-	for kk, v := range m { if kk != k { new[kk] = v } }
+	for kk, v := range m {
+		if kk != k {
+			new[kk] = v
+		}
+	}
 	return new
 }
 
@@ -3701,14 +4095,18 @@ func Dict_member(key any, dict any) any {
 func Dict_keys(dict any) any {
 	m := AsDict(unwrapAny(dict))
 	result := make([]any, 0, len(m))
-	for k := range m { result = append(result, k) }
+	for k := range m {
+		result = append(result, k)
+	}
 	return result
 }
 
 func Dict_values(dict any) any {
 	m := AsDict(unwrapAny(dict))
 	result := make([]any, 0, len(m))
-	for _, v := range m { result = append(result, v) }
+	for _, v := range m {
+		result = append(result, v)
+	}
 	return result
 }
 
@@ -3739,7 +4137,9 @@ func AsDict(v any) map[string]any {
 func Dict_toList(dict any) any {
 	m := AsDict(unwrapAny(dict))
 	result := make([]any, 0, len(m))
-	for k, v := range m { result = append(result, SkyTuple2{V0: k, V1: v}) }
+	for k, v := range m {
+		result = append(result, SkyTuple2{V0: k, V1: v})
+	}
 	return result
 }
 
@@ -3768,7 +4168,9 @@ func Dict_emptyT[V any]() map[string]V { return map[string]V{} }
 
 func Dict_insertT[V any](key string, val V, d map[string]V) map[string]V {
 	out := make(map[string]V, len(d)+1)
-	for k, v := range d { out[k] = v }
+	for k, v := range d {
+		out[k] = v
+	}
 	out[key] = val
 	return out
 }
@@ -3781,13 +4183,19 @@ func Dict_getAnyT(key any, dict any) any {
 }
 
 func Dict_getT[V any](key string, d map[string]V) SkyMaybe[V] {
-	if v, ok := d[key]; ok { return Just[V](v) }
+	if v, ok := d[key]; ok {
+		return Just[V](v)
+	}
 	return Nothing[V]()
 }
 
 func Dict_removeT[V any](key string, d map[string]V) map[string]V {
 	out := make(map[string]V, len(d))
-	for k, v := range d { if k != key { out[k] = v } }
+	for k, v := range d {
+		if k != key {
+			out[k] = v
+		}
+	}
 	return out
 }
 
@@ -3802,19 +4210,25 @@ func Dict_memberT[V any](key string, d map[string]V) bool {
 // the caller's dict is map[string]V for any V.
 func Dict_keysT[V any](d map[string]V) []any {
 	keys := make([]any, 0, len(d))
-	for k := range d { keys = append(keys, any(k)) }
+	for k := range d {
+		keys = append(keys, any(k))
+	}
 	return keys
 }
 
 func Dict_valuesT[V any](d map[string]V) []any {
 	vals := make([]any, 0, len(d))
-	for _, v := range d { vals = append(vals, any(v)) }
+	for _, v := range d {
+		vals = append(vals, any(v))
+	}
 	return vals
 }
 
 func Dict_mapT[V, W any](fn func(V) W, d map[string]V) map[string]W {
 	out := make(map[string]W, len(d))
-	for k, v := range d { out[k] = fn(v) }
+	for k, v := range d {
+		out[k] = fn(v)
+	}
 	return out
 }
 
@@ -3895,8 +4309,12 @@ func Dict_union(a any, b any) any {
 	ma := AsDict(unwrapAny(a))
 	mb := AsDict(unwrapAny(b))
 	result := make(map[string]any, len(ma)+len(mb))
-	for k, v := range mb { result[k] = v }
-	for k, v := range ma { result[k] = v }
+	for k, v := range mb {
+		result[k] = v
+	}
+	for k, v := range ma {
+		result[k] = v
+	}
 	return result
 }
 
@@ -3904,22 +4322,57 @@ func Dict_union(a any, b any) any {
 // Math operations
 // ═══════════════════════════════════════════════════════════
 
-func Math_abs(n any) any { x := AsInt(n); if x < 0 { return -x }; return x }
-func Math_min(a any, b any) any { if AsInt(a) < AsInt(b) { return a }; return b }
-func Math_max(a any, b any) any { if AsInt(a) > AsInt(b) { return a }; return b }
+func Math_abs(n any) any {
+	x := AsInt(n)
+	if x < 0 {
+		return -x
+	}
+	return x
+}
+func Math_min(a any, b any) any {
+	if AsInt(a) < AsInt(b) {
+		return a
+	}
+	return b
+}
+func Math_max(a any, b any) any {
+	if AsInt(a) > AsInt(b) {
+		return a
+	}
+	return b
+}
 
 // P8/Math typed companions — direct int arithmetic, no AsInt boxing.
-func Math_absT(n int) int { if n < 0 { return -n }; return n }
-func Math_minT(a, b int) int { if a < b { return a }; return b }
-func Math_maxT(a, b int) int { if a > b { return a }; return b }
+func Math_absT(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
+}
+func Math_minT(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+func Math_maxT(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
 
 func Field(record any, field string) any {
 	record = unwrapAny(record)
 	v := reflect.ValueOf(record)
-	if v.Kind() == reflect.Ptr { v = v.Elem() }
+	if v.Kind() == reflect.Ptr {
+		v = v.Elem()
+	}
 	if v.Kind() == reflect.Struct {
 		f := v.FieldByName(field)
-		if f.IsValid() { return f.Interface() }
+		if f.IsValid() {
+			return f.Interface()
+		}
 	}
 	if m, ok := record.(map[string]any); ok {
 		return m[field]
@@ -4156,48 +4609,7 @@ func Coerce[T any](v any) T {
 		// types (typed maps, typed slices) round-trip too.
 		if rv.Kind() == reflect.Map && targetTy.Kind() == reflect.Struct &&
 			rv.Type().Key().Kind() == reflect.String {
-			out := reflect.New(targetTy).Elem()
-			n := targetTy.NumField()
-			for i := 0; i < n; i++ {
-				fld := targetTy.Field(i)
-				if !fld.IsExported() {
-					continue
-				}
-				// Probe three forms in order: PascalCase exact
-				// ("Foo" / "ID"), lowercase-first ("foo" / "iD",
-				// matching Sky's `capitalise_`-emitted record
-				// fields), and full lowercase ("id", matching FFI
-				// all-caps acronyms + JSON / Db.getField output).
-				mv := rv.MapIndex(reflect.ValueOf(fld.Name))
-				if !mv.IsValid() && len(fld.Name) > 0 {
-					lowered := string(fld.Name[0]|0x20) + fld.Name[1:]
-					mv = rv.MapIndex(reflect.ValueOf(lowered))
-					if !mv.IsValid() {
-						buf := make([]byte, len(fld.Name))
-						for j := 0; j < len(fld.Name); j++ {
-							c := fld.Name[j]
-							if c >= 'A' && c <= 'Z' {
-								c |= 0x20
-							}
-							buf[j] = c
-						}
-						mv = rv.MapIndex(reflect.ValueOf(string(buf)))
-					}
-				}
-				if !mv.IsValid() {
-					continue
-				}
-				inner := mv.Interface()
-				if inner == nil {
-					continue
-				}
-				ev := reflect.ValueOf(inner)
-				narrowed := narrowReflectValue(ev, fld.Type)
-				if narrowed.IsValid() && narrowed.Type().AssignableTo(fld.Type) {
-					out.Field(i).Set(narrowed)
-				}
-			}
-			return out.Interface().(T)
+			return narrowMapToStruct(rv, targetTy).Interface().(T)
 		}
 	}
 	panic(fmt.Sprintf("rt.Coerce: expected %T, got %T (%v)", zero, v, v))
@@ -4264,7 +4676,6 @@ func unwrapAny(v any) any {
 // unwrapResultOk is the legacy name — delegates to unwrapAny.
 func unwrapResultOk(v any) any { return unwrapAny(v) }
 
-
 // safeReflectConvert whitelists reflect.Value.Convert pairs that are
 // semantically meaningful for Sky's type system. Numeric widening
 // between int/float variants is fine. Everything else — especially
@@ -4296,8 +4707,8 @@ func CoerceString(v any) string {
 	return AsString(v)
 }
 
-func CoerceInt(v any) int { return AsInt(v) }      // AsInt is strict post-P0-2
-func CoerceBool(v any) bool { return AsBool(v) }   // same
+func CoerceInt(v any) int       { return AsInt(v) }  // AsInt is strict post-P0-2
+func CoerceBool(v any) bool     { return AsBool(v) } // same
 func CoerceFloat(v any) float64 { return AsFloat(v) }
 
 // Unreachable — audit P0-5. Stands in for raw
@@ -4534,7 +4945,9 @@ func Task_map(fn any, task any) any {
 func Task_mapT[E, A, B any](fn func(A) B, t SkyTask[E, A]) SkyTask[E, B] {
 	return func() SkyResult[E, B] {
 		r := t()
-		if r.Tag != 0 { return Err[E, B](r.ErrValue) }
+		if r.Tag != 0 {
+			return Err[E, B](r.ErrValue)
+		}
 		return Ok[E, B](fn(r.OkValue))
 	}
 }
@@ -4544,7 +4957,9 @@ func Task_sequenceT[E, A any](ts []SkyTask[E, A]) SkyTask[E, []A] {
 		out := make([]A, 0, len(ts))
 		for _, t := range ts {
 			r := t()
-			if r.Tag != 0 { return Err[E, []A](r.ErrValue) }
+			if r.Tag != 0 {
+				return Err[E, []A](r.ErrValue)
+			}
 			out = append(out, r.OkValue)
 		}
 		return Ok[E, []A](out)
@@ -4561,6 +4976,7 @@ func Task_sequenceT[E, A any](ts []SkyTask[E, A]) SkyTask[E, []A] {
 //     `listen` returns `Ok ()` / `Err msg` directly rather than a
 //     deferred thunk).
 //   - Bare value — wrapped in Ok defensively.
+//
 // The unified shape means every caller of AnyTaskRun sees the same
 // `SkyResult[any, any]` contract and can case on Tag without a
 // `tag < 0` escape hatch.
@@ -4589,13 +5005,13 @@ func AnyTaskRun(task any) any {
 
 // Time.now / Time.unixMillis / Time.timeString — Task-everywhere
 // doctrine (2026-04-24+):
-//   * Time.now / Time.unixMillis: clock reads are non-deterministic
+//   - Time.now / Time.unixMillis: clock reads are non-deterministic
 //     real-world I/O. Kernel sig `() -> Task Error Int`. Runtime
 //     wraps in `func() any` thunk so the lowerer's auto-force on
 //     `let _ = Time.now ()` discard fires the side effect. Inside
 //     a Task chain, the thunk is lifted via Task.andThen/Cmd.perform
 //     in the usual way.
-//   * Time.timeString: pure deterministic formatter (Int -> String,
+//   - Time.timeString: pure deterministic formatter (Int -> String,
 //     just strftime-equivalent). No wrapper — bare String.
 func Time_now(_ any) any {
 	return func() any {
@@ -4974,7 +5390,9 @@ func Time_diffMillis(later any, earlier any) any {
 func Random_int(lo any, hi any) any {
 	return func() any {
 		l, h := AsInt(lo), AsInt(hi)
-		if h <= l { return Ok[any, any](l) }
+		if h <= l {
+			return Ok[any, any](l)
+		}
 		return Ok[any, any](l + mrand.Intn(h-l+1))
 	}
 }
@@ -4990,7 +5408,9 @@ func Random_float(lo any, hi any) any {
 func Random_choice(list any) any {
 	return func() any {
 		items := AsList(list)
-		if len(items) == 0 { return Err[any, any](ErrInvalidInput("empty list")) }
+		if len(items) == 0 {
+			return Err[any, any](ErrInvalidInput("empty list"))
+		}
 		return Ok[any, any](items[mrand.Intn(len(items))])
 	}
 }
@@ -5012,7 +5432,9 @@ func Random_shuffle(list any) any {
 // consistency with the rest of the runtime.
 func Random_intT(lo, hi int) SkyTask[any, int] {
 	return func() SkyResult[any, int] {
-		if hi <= lo { return Ok[any, int](lo) }
+		if hi <= lo {
+			return Ok[any, int](lo)
+		}
 		return Ok[any, int](lo + mrand.Intn(hi-lo+1))
 	}
 }
@@ -5025,7 +5447,9 @@ func Random_floatT(lo, hi float64) SkyTask[any, float64] {
 
 func Random_choiceT[A any](xs []A) SkyTask[any, A] {
 	return func() SkyResult[any, A] {
-		if len(xs) == 0 { return Err[any, A](ErrInvalidInput("empty list")) }
+		if len(xs) == 0 {
+			return Err[any, A](ErrInvalidInput("empty list"))
+		}
 		return Ok[any, A](xs[mrand.Intn(len(xs))])
 	}
 }
@@ -5048,10 +5472,14 @@ func Process_run(cmd any, args any) any {
 		cmdStr := fmt.Sprintf("%v", cmd)
 		argList := AsList(args)
 		strArgs := make([]string, len(argList))
-		for i, a := range argList { strArgs[i] = fmt.Sprintf("%v", a) }
+		for i, a := range argList {
+			strArgs[i] = fmt.Sprintf("%v", a)
+		}
 		c := exec.Command(cmdStr, strArgs...)
 		out, err := c.CombinedOutput()
-		if err != nil { return Err[any, any](ErrIo(fmt.Sprintf("%s: %v", string(out), err))) }
+		if err != nil {
+			return Err[any, any](ErrIo(fmt.Sprintf("%s: %v", string(out), err)))
+		}
 		return Ok[any, any](string(out))
 	}
 }
@@ -5065,7 +5493,6 @@ func Process_run(cmd any, args any) any {
 // Args.* dropped in v0.10.0 — `Args.getArgs ()` and `Args.getArg n`
 // were duplicates of `System.args` and a missing `System.getArg`.
 // Both now live on System (System_args / System_getArg above).
-
 
 // ═══════════════════════════════════════════════════════════
 // File
@@ -5088,31 +5515,31 @@ func File_readFile(path any) any {
 // binary data).
 func File_readFileLimit(path any, limit any) any {
 	return func() any {
-	  return WithFileSpan("readFile", fmt.Sprintf("%v", path), func() any {
-		p := fmt.Sprintf("%v", path)
-		n := int64(AsInt(limit))
-		if n <= 0 {
-			n = defaultFileReadLimit
-		}
-		f, err := os.Open(p)
-		if err != nil {
-			return Err[any, any](ErrFfi(err.Error()))
-		}
-		defer f.Close()
-		// Stat first so we can early-reject oversize files without reading them.
-		st, err := f.Stat()
-		if err != nil {
-			return Err[any, any](ErrFfi(err.Error()))
-		}
-		if st.Size() > n {
-			return Err[any, any](ErrIo(fmt.Sprintf("file exceeds %d-byte limit (actual: %d)", n, st.Size())))
-		}
-		data, err := io.ReadAll(io.LimitReader(f, n))
-		if err != nil {
-			return Err[any, any](ErrFfi(err.Error()))
-		}
-		return Ok[any, any](string(data))
-	  })
+		return WithFileSpan("readFile", fmt.Sprintf("%v", path), func() any {
+			p := fmt.Sprintf("%v", path)
+			n := int64(AsInt(limit))
+			if n <= 0 {
+				n = defaultFileReadLimit
+			}
+			f, err := os.Open(p)
+			if err != nil {
+				return Err[any, any](ErrFfi(err.Error()))
+			}
+			defer f.Close()
+			// Stat first so we can early-reject oversize files without reading them.
+			st, err := f.Stat()
+			if err != nil {
+				return Err[any, any](ErrFfi(err.Error()))
+			}
+			if st.Size() > n {
+				return Err[any, any](ErrIo(fmt.Sprintf("file exceeds %d-byte limit (actual: %d)", n, st.Size())))
+			}
+			data, err := io.ReadAll(io.LimitReader(f, n))
+			if err != nil {
+				return Err[any, any](ErrFfi(err.Error()))
+			}
+			return Ok[any, any](string(data))
+		})
 	}
 }
 
@@ -5140,24 +5567,30 @@ func File_readFileBytes(path any) any {
 
 func File_writeFile(path any, content any) any {
 	return func() any {
-	  return WithFileSpan("writeFile", fmt.Sprintf("%v", path), func() any {
-		err := os.WriteFile(fmt.Sprintf("%v", path), []byte(fmt.Sprintf("%v", content)), 0644)
-		if err != nil { return Err[any, any](ErrFfi(err.Error())) }
-		return Ok[any, any](struct{}{})
-	  })
+		return WithFileSpan("writeFile", fmt.Sprintf("%v", path), func() any {
+			err := os.WriteFile(fmt.Sprintf("%v", path), []byte(fmt.Sprintf("%v", content)), 0644)
+			if err != nil {
+				return Err[any, any](ErrFfi(err.Error()))
+			}
+			return Ok[any, any](struct{}{})
+		})
 	}
 }
 
 func File_append(path any, content any) any {
 	return func() any {
-	  return WithFileSpan("append", fmt.Sprintf("%v", path), func() any {
-		f, err := os.OpenFile(fmt.Sprintf("%v", path), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-		if err != nil { return Err[any, any](ErrFfi(err.Error())) }
-		defer f.Close()
-		_, err = f.WriteString(fmt.Sprintf("%v", content))
-		if err != nil { return Err[any, any](ErrFfi(err.Error())) }
-		return Ok[any, any](struct{}{})
-	  })
+		return WithFileSpan("append", fmt.Sprintf("%v", path), func() any {
+			f, err := os.OpenFile(fmt.Sprintf("%v", path), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+			if err != nil {
+				return Err[any, any](ErrFfi(err.Error()))
+			}
+			defer f.Close()
+			_, err = f.WriteString(fmt.Sprintf("%v", content))
+			if err != nil {
+				return Err[any, any](ErrFfi(err.Error()))
+			}
+			return Ok[any, any](struct{}{})
+		})
 	}
 }
 
@@ -5171,7 +5604,9 @@ func File_exists(path any) any {
 func File_remove(path any) any {
 	return func() any {
 		err := os.Remove(fmt.Sprintf("%v", path))
-		if err != nil { return Err[any, any](ErrFfi(err.Error())) }
+		if err != nil {
+			return Err[any, any](ErrFfi(err.Error()))
+		}
 		return Ok[any, any](struct{}{})
 	}
 }
@@ -5179,7 +5614,9 @@ func File_remove(path any) any {
 func File_mkdirAll(path any) any {
 	return func() any {
 		err := os.MkdirAll(fmt.Sprintf("%v", path), 0755)
-		if err != nil { return Err[any, any](ErrFfi(err.Error())) }
+		if err != nil {
+			return Err[any, any](ErrFfi(err.Error()))
+		}
 		return Ok[any, any](struct{}{})
 	}
 }
@@ -5187,9 +5624,13 @@ func File_mkdirAll(path any) any {
 func File_readDir(path any) any {
 	return func() any {
 		entries, err := os.ReadDir(fmt.Sprintf("%v", path))
-		if err != nil { return Err[any, any](ErrFfi(err.Error())) }
+		if err != nil {
+			return Err[any, any](ErrFfi(err.Error()))
+		}
 		result := make([]any, len(entries))
-		for i, e := range entries { result[i] = e.Name() }
+		for i, e := range entries {
+			result[i] = e.Name()
+		}
 		return Ok[any, any](result)
 	}
 }
@@ -5202,7 +5643,9 @@ func File_readFileT(path string) func() SkyResult[string, string] {
 	return func() SkyResult[string, string] {
 		v := File_readFile(path).(func() any)()
 		if r, ok := v.(SkyResult[any, any]); ok {
-			if r.Tag == 0 { return Ok[string, string](fmt.Sprintf("%v", r.OkValue)) }
+			if r.Tag == 0 {
+				return Ok[string, string](fmt.Sprintf("%v", r.OkValue))
+			}
 			return Err[string, string](fmt.Sprintf("%v", r.ErrValue))
 		}
 		return Err[string, string]("unexpected runtime shape")
@@ -5212,8 +5655,12 @@ func File_readFileT(path string) func() SkyResult[string, string] {
 func File_existsT(path string) func() SkyResult[string, bool] {
 	return func() SkyResult[string, bool] {
 		_, err := os.Stat(path)
-		if err == nil { return Ok[string, bool](true) }
-		if os.IsNotExist(err) { return Ok[string, bool](false) }
+		if err == nil {
+			return Ok[string, bool](true)
+		}
+		if os.IsNotExist(err) {
+			return Ok[string, bool](false)
+		}
 		return Err[string, bool](err.Error())
 	}
 }
@@ -5248,7 +5695,9 @@ func File_mkdirAllT(path string) func() SkyResult[string, struct{}] {
 func File_isDir(path any) any {
 	return func() any {
 		info, err := os.Stat(fmt.Sprintf("%v", path))
-		if err != nil { return Ok[any, any](false) }
+		if err != nil {
+			return Ok[any, any](false)
+		}
 		return Ok[any, any](info.IsDir())
 	}
 }
@@ -5311,9 +5760,13 @@ var stdinReader *bufio.Reader
 // kernel_wrapper_parity_test.go audit on 2026-04-23.
 func Io_readLine(args ...any) any {
 	return func() any {
-		if stdinReader == nil { stdinReader = bufio.NewReader(os.Stdin) }
+		if stdinReader == nil {
+			stdinReader = bufio.NewReader(os.Stdin)
+		}
 		line, err := stdinReader.ReadString('\n')
-		if err != nil && err != io.EOF { return Err[any, any](ErrFfi(err.Error())) }
+		if err != nil && err != io.EOF {
+			return Err[any, any](ErrFfi(err.Error()))
+		}
 		return Ok[any, any](strings.TrimRight(line, "\n\r"))
 	}
 }
@@ -5335,7 +5788,9 @@ func Io_writeStderr(s any) any {
 // P8/Io typed companions — Task-shaped.
 func Io_readLineT() func() SkyResult[string, string] {
 	return func() SkyResult[string, string] {
-		if stdinReader == nil { stdinReader = bufio.NewReader(os.Stdin) }
+		if stdinReader == nil {
+			stdinReader = bufio.NewReader(os.Stdin)
+		}
 		line, err := stdinReader.ReadString('\n')
 		if err != nil && err != io.EOF {
 			return Err[string, string](err.Error())
@@ -5442,7 +5897,9 @@ func Encoding_base64Encode(s any) any {
 
 func Encoding_base64Decode(s any) any {
 	data, err := base64.StdEncoding.DecodeString(fmt.Sprintf("%v", s))
-	if err != nil { return Err[any, any](ErrFfi(err.Error())) }
+	if err != nil {
+		return Err[any, any](ErrFfi(err.Error()))
+	}
 	return Ok[any, any](string(data))
 }
 
@@ -5452,7 +5909,9 @@ func Encoding_urlEncode(s any) any {
 
 func Encoding_urlDecode(s any) any {
 	decoded, err := url.QueryUnescape(fmt.Sprintf("%v", s))
-	if err != nil { return Err[any, any](ErrFfi(err.Error())) }
+	if err != nil {
+		return Err[any, any](ErrFfi(err.Error()))
+	}
 	return Ok[any, any](decoded)
 }
 
@@ -5462,7 +5921,9 @@ func Encoding_hexEncode(s any) any {
 
 func Encoding_hexDecode(s any) any {
 	data, err := hex.DecodeString(fmt.Sprintf("%v", s))
-	if err != nil { return Err[any, any](ErrFfi(err.Error())) }
+	if err != nil {
+		return Err[any, any](ErrFfi(err.Error()))
+	}
 	return Ok[any, any](string(data))
 }
 
@@ -5477,19 +5938,25 @@ func Encoding_hexDecode(s any) any {
 func Encoding_base64EncodeT(s string) string { return base64.StdEncoding.EncodeToString([]byte(s)) }
 func Encoding_base64DecodeT(s string) SkyResult[string, string] {
 	data, err := base64.StdEncoding.DecodeString(s)
-	if err != nil { return Err[string, string](err.Error()) }
+	if err != nil {
+		return Err[string, string](err.Error())
+	}
 	return Ok[string, string](string(data))
 }
 func Encoding_urlEncodeT(s string) string { return url.QueryEscape(s) }
 func Encoding_urlDecodeT(s string) SkyResult[string, string] {
 	decoded, err := url.QueryUnescape(s)
-	if err != nil { return Err[string, string](err.Error()) }
+	if err != nil {
+		return Err[string, string](err.Error())
+	}
 	return Ok[string, string](decoded)
 }
 func Encoding_hexEncodeT(s string) string { return hex.EncodeToString([]byte(s)) }
 func Encoding_hexDecodeT(s string) SkyResult[string, string] {
 	data, err := hex.DecodeString(s)
-	if err != nil { return Err[string, string](err.Error()) }
+	if err != nil {
+		return Err[string, string](err.Error())
+	}
 	return Ok[string, string](string(data))
 }
 
@@ -5504,33 +5971,47 @@ func Regex_match(pattern any, s any) any {
 
 func Regex_find(pattern any, s any) any {
 	re, err := regexp.Compile(fmt.Sprintf("%v", pattern))
-	if err != nil { return Nothing[any]() }
+	if err != nil {
+		return Nothing[any]()
+	}
 	match := re.FindString(fmt.Sprintf("%v", s))
-	if match == "" { return Nothing[any]() }
+	if match == "" {
+		return Nothing[any]()
+	}
 	return Just[any](match)
 }
 
 func Regex_findAll(pattern any, s any) any {
 	re, err := regexp.Compile(fmt.Sprintf("%v", pattern))
-	if err != nil { return []any{} }
+	if err != nil {
+		return []any{}
+	}
 	matches := re.FindAllString(fmt.Sprintf("%v", s), -1)
 	result := make([]any, len(matches))
-	for i, m := range matches { result[i] = m }
+	for i, m := range matches {
+		result[i] = m
+	}
 	return result
 }
 
 func Regex_replace(pattern any, replacement any, s any) any {
 	re, err := regexp.Compile(fmt.Sprintf("%v", pattern))
-	if err != nil { return s }
+	if err != nil {
+		return s
+	}
 	return re.ReplaceAllString(fmt.Sprintf("%v", s), fmt.Sprintf("%v", replacement))
 }
 
 func Regex_split(pattern any, s any) any {
 	re, err := regexp.Compile(fmt.Sprintf("%v", pattern))
-	if err != nil { return []any{s} }
+	if err != nil {
+		return []any{s}
+	}
 	parts := re.Split(fmt.Sprintf("%v", s), -1)
 	result := make([]any, len(parts))
-	for i, p := range parts { result[i] = p }
+	for i, p := range parts {
+		result[i] = p
+	}
 	return result
 }
 
@@ -5542,24 +6023,34 @@ func Regex_matchT(pattern, s string) bool {
 }
 func Regex_findT(pattern, s string) SkyMaybe[string] {
 	re, err := regexp.Compile(pattern)
-	if err != nil { return Nothing[string]() }
+	if err != nil {
+		return Nothing[string]()
+	}
 	m := re.FindString(s)
-	if m == "" { return Nothing[string]() }
+	if m == "" {
+		return Nothing[string]()
+	}
 	return Just[string](m)
 }
 func Regex_findAllT(pattern, s string) []string {
 	re, err := regexp.Compile(pattern)
-	if err != nil { return []string{} }
+	if err != nil {
+		return []string{}
+	}
 	return re.FindAllString(s, -1)
 }
 func Regex_replaceT(pattern, replacement, s string) string {
 	re, err := regexp.Compile(pattern)
-	if err != nil { return s }
+	if err != nil {
+		return s
+	}
 	return re.ReplaceAllString(s, replacement)
 }
 func Regex_splitT(pattern, s string) []string {
 	re, err := regexp.Compile(pattern)
-	if err != nil { return []string{s} }
+	if err != nil {
+		return []string{s}
+	}
 	return re.Split(s, -1)
 }
 
@@ -5603,30 +6094,30 @@ func Char_toLowerT(c rune) string { return string(unicode.ToLower(c)) }
 // Math (extended)
 // ═══════════════════════════════════════════════════════════
 
-func Math_sqrt(n any) any  { return math.Sqrt(AsFloat(n)) }
+func Math_sqrt(n any) any            { return math.Sqrt(AsFloat(n)) }
 func Math_pow(base any, exp any) any { return math.Pow(AsFloat(base), AsFloat(exp)) }
-func Math_floor(n any) any { return int(math.Floor(AsFloat(n))) }
-func Math_ceil(n any) any  { return int(math.Ceil(AsFloat(n))) }
-func Math_round(n any) any { return int(math.Round(AsFloat(n))) }
-func Math_sin(n any) any   { return math.Sin(AsFloat(n)) }
-func Math_cos(n any) any   { return math.Cos(AsFloat(n)) }
-func Math_tan(n any) any   { return math.Tan(AsFloat(n)) }
-func Math_pi() any         { return math.Pi }
-func Math_e() any          { return math.E }
-func Math_log(n any) any   { return math.Log(AsFloat(n)) }
+func Math_floor(n any) any           { return int(math.Floor(AsFloat(n))) }
+func Math_ceil(n any) any            { return int(math.Ceil(AsFloat(n))) }
+func Math_round(n any) any           { return int(math.Round(AsFloat(n))) }
+func Math_sin(n any) any             { return math.Sin(AsFloat(n)) }
+func Math_cos(n any) any             { return math.Cos(AsFloat(n)) }
+func Math_tan(n any) any             { return math.Tan(AsFloat(n)) }
+func Math_pi() any                   { return math.Pi }
+func Math_e() any                    { return math.E }
+func Math_log(n any) any             { return math.Log(AsFloat(n)) }
 
 // P8/Math typed float companions.
-func Math_sqrtT(n float64) float64              { return math.Sqrt(n) }
-func Math_powT(base, exp float64) float64       { return math.Pow(base, exp) }
-func Math_floorT(n float64) int                 { return int(math.Floor(n)) }
-func Math_ceilT(n float64) int                  { return int(math.Ceil(n)) }
-func Math_roundT(n float64) int                 { return int(math.Round(n)) }
-func Math_sinT(n float64) float64               { return math.Sin(n) }
-func Math_cosT(n float64) float64               { return math.Cos(n) }
-func Math_tanT(n float64) float64               { return math.Tan(n) }
-func Math_piT() float64                         { return math.Pi }
-func Math_eT() float64                          { return math.E }
-func Math_logT(n float64) float64               { return math.Log(n) }
+func Math_sqrtT(n float64) float64        { return math.Sqrt(n) }
+func Math_powT(base, exp float64) float64 { return math.Pow(base, exp) }
+func Math_floorT(n float64) int           { return int(math.Floor(n)) }
+func Math_ceilT(n float64) int            { return int(math.Ceil(n)) }
+func Math_roundT(n float64) int           { return int(math.Round(n)) }
+func Math_sinT(n float64) float64         { return math.Sin(n) }
+func Math_cosT(n float64) float64         { return math.Cos(n) }
+func Math_tanT(n float64) float64         { return math.Tan(n) }
+func Math_piT() float64                   { return math.Pi }
+func Math_eT() float64                    { return math.E }
+func Math_logT(n float64) float64         { return math.Log(n) }
 
 // ═══════════════════════════════════════════════════════════
 // Additional String functions
@@ -5635,14 +6126,18 @@ func Math_logT(n float64) float64               { return math.Log(n) }
 func String_lines(s any) any {
 	parts := strings.Split(fmt.Sprintf("%v", s), "\n")
 	result := make([]any, len(parts))
-	for i, p := range parts { result[i] = p }
+	for i, p := range parts {
+		result[i] = p
+	}
 	return result
 }
 
 func String_words(s any) any {
 	parts := strings.Fields(fmt.Sprintf("%v", s))
 	result := make([]any, len(parts))
-	for i, p := range parts { result[i] = p }
+	for i, p := range parts {
+		result[i] = p
+	}
 	return result
 }
 
@@ -5736,7 +6231,9 @@ func String_slice(start any, end any, s any) any {
 // ═══════════════════════════════════════════════════════════
 
 func List_isEmpty(list any) any {
-	if list == nil { return true }
+	if list == nil {
+		return true
+	}
 	items := asList(list)
 	return len(items) == 0
 }
@@ -5791,13 +6288,21 @@ func List_sortBy(keyFn any, list any) any {
 func skyLessThan(a, b any) bool {
 	switch x := a.(type) {
 	case int:
-		if y, ok := b.(int); ok { return x < y }
+		if y, ok := b.(int); ok {
+			return x < y
+		}
 	case int64:
-		if y, ok := b.(int64); ok { return x < y }
+		if y, ok := b.(int64); ok {
+			return x < y
+		}
 	case float64:
-		if y, ok := b.(float64); ok { return x < y }
+		if y, ok := b.(float64); ok {
+			return x < y
+		}
 	case string:
-		if y, ok := b.(string); ok { return x < y }
+		if y, ok := b.(string); ok {
+			return x < y
+		}
 	}
 	return fmt.Sprintf("%v", a) < fmt.Sprintf("%v", b)
 }
@@ -5805,7 +6310,9 @@ func skyLessThan(a, b any) bool {
 func List_member(item any, list any) any {
 	items := asList(list)
 	for _, v := range items {
-		if Eq(v, item) == true { return true }
+		if Eq(v, item) == true {
+			return true
+		}
 	}
 	return false
 }
@@ -5813,7 +6320,9 @@ func List_member(item any, list any) any {
 func List_any(fn any, list any) any {
 	items := asList(list)
 	for _, item := range items {
-		if AsBool(SkyCall(fn, item)) { return true }
+		if AsBool(SkyCall(fn, item)) {
+			return true
+		}
 	}
 	return false
 }
@@ -5821,7 +6330,9 @@ func List_any(fn any, list any) any {
 func List_all(fn any, list any) any {
 	items := asList(list)
 	for _, item := range items {
-		if !AsBool(SkyCall(fn, item)) { return false }
+		if !AsBool(SkyCall(fn, item)) {
+			return false
+		}
 	}
 	return true
 }
@@ -5830,9 +6341,13 @@ func List_zip(a any, b any) any {
 	la := asList(a)
 	lb := asList(b)
 	n := len(la)
-	if len(lb) < n { n = len(lb) }
+	if len(lb) < n {
+		n = len(lb)
+	}
 	result := make([]any, n)
-	for i := 0; i < n; i++ { result[i] = SkyTuple2{V0: la[i], V1: lb[i]} }
+	for i := 0; i < n; i++ {
+		result[i] = SkyTuple2{V0: la[i], V1: lb[i]}
+	}
 	return result
 }
 
@@ -5860,7 +6375,9 @@ func List_filterMap(fn any, list any) any {
 	var result []any
 	for _, item := range items {
 		maybe := MaybeCoerce[any](SkyCall(fn, item))
-		if maybe.Tag == 0 { result = append(result, maybe.JustValue) }
+		if maybe.Tag == 0 {
+			result = append(result, maybe.JustValue)
+		}
 	}
 	return result
 }
@@ -5877,7 +6394,9 @@ func List_foldr(fn any, acc any, list any) any {
 
 func List_tail(list any) any {
 	items := asList(list)
-	if len(items) == 0 { return Nothing[any]() }
+	if len(items) == 0 {
+		return Nothing[any]()
+	}
 	return Just[any](items[1:])
 }
 
@@ -5944,9 +6463,9 @@ type SkyRequest struct {
 
 // SkyResponse wraps an HTTP response
 type SkyResponse struct {
-	Status  int
-	Body    string
-	Headers map[string]string
+	Status      int
+	Body        string
+	Headers     map[string]string
 	ContentType string
 }
 
@@ -6051,13 +6570,17 @@ func Server_listen(port any, routes any) any {
 					vals, err := url.ParseQuery(skyReq.Body)
 					if err == nil {
 						for k, v := range vals {
-							if len(v) > 0 { skyReq.Form[k] = v[0] }
+							if len(v) > 0 {
+								skyReq.Form[k] = v[0]
+							}
 						}
 					}
 				}
 			}
 			for k, v := range req.URL.Query() {
-				if len(v) > 0 { skyReq.Query[k] = v[0] }
+				if len(v) > 0 {
+					skyReq.Query[k] = v[0]
+				}
 			}
 
 			// Call the Sky handler and invoke the returned Task
@@ -6077,7 +6600,7 @@ func Server_listen(port any, routes any) any {
 				rv := reflect.ValueOf(result)
 				if rv.IsValid() && rv.Kind() == reflect.Struct {
 					tagF := rv.FieldByName("Tag")
-					okF  := rv.FieldByName("OkValue")
+					okF := rv.FieldByName("OkValue")
 					if tagF.IsValid() && okF.IsValid() {
 						resp = SkyResult[any, any]{
 							Tag:     int(tagF.Int()),
@@ -6340,13 +6863,13 @@ func Server_withStatus(status any, resp any) any {
 
 func Server_redirect(url any) any {
 	return SkyResponse{
-		Status: 302,
+		Status:  302,
 		Headers: map[string]string{"Location": fmt.Sprintf("%v", url)},
 	}
 }
 func Server_redirectT(url string) SkyResponse {
 	return SkyResponse{
-		Status: 302,
+		Status:  302,
 		Headers: map[string]string{"Location": url},
 	}
 }
@@ -6354,21 +6877,27 @@ func Server_redirectT(url string) SkyResponse {
 func Server_param(name any, req any) any {
 	r := req.(SkyRequest)
 	v, ok := r.Params[fmt.Sprintf("%v", name)]
-	if ok { return Just[any](v) }
+	if ok {
+		return Just[any](v)
+	}
 	return Nothing[any]()
 }
 
 func Server_queryParam(name any, req any) any {
 	r := req.(SkyRequest)
 	v, ok := r.Query[fmt.Sprintf("%v", name)]
-	if ok { return Just[any](v) }
+	if ok {
+		return Just[any](v)
+	}
 	return Nothing[any]()
 }
 
 func Server_header(name any, req any) any {
 	r := req.(SkyRequest)
 	v, ok := r.Headers[fmt.Sprintf("%v", name)]
-	if ok { return Just[any](v) }
+	if ok {
+		return Just[any](v)
+	}
 	return Nothing[any]()
 }
 
@@ -6553,10 +7082,10 @@ func Middleware_withLogging(handler any) any {
 			}
 			dur := time.Since(start).Milliseconds()
 			ctx := map[string]any{
-				"method":  r.Method,
-				"path":    r.Path,
-				"status":  status,
-				"ms":      dur,
+				"method": r.Method,
+				"path":   r.Path,
+				"status": status,
+				"ms":     dur,
 			}
 			logEmit(logLevelInfo, "info", "http request", ctx)
 			return res
@@ -6672,9 +7201,10 @@ func Server_cookie(name any, value any) any {
 // Server.withCookie — flexible arity so Sky can pipe either a pre-built
 // cookie object or a name/value/attrs triple straight into a response.
 // Forms:
-//   withCookie(Cookie, Response) -> Response
-//   withCookie(name, value, Response) -> Response      (no extra attrs)
-//   withCookie(name, value, attrs, Response) -> Response
+//
+//	withCookie(Cookie, Response) -> Response
+//	withCookie(name, value, Response) -> Response      (no extra attrs)
+//	withCookie(name, value, attrs, Response) -> Response
 func Server_withCookie(args ...any) any {
 	switch len(args) {
 	case 2:
@@ -6932,7 +7462,7 @@ func Server_any(path any, handler any) any {
 func Server_static(path any, dir any) any {
 	return SkyRoute{
 		Method: "GET",
-		Path: fmt.Sprintf("%v", path),
+		Path:   fmt.Sprintf("%v", path),
 		Handler: func(req any) any {
 			return func() any {
 				return Ok[any, any](SkyResponse{Status: 200, Body: "static:" + fmt.Sprintf("%v", dir)})
@@ -6949,11 +7479,11 @@ func Server_static(path any, dir any) any {
 // inside an FFI call into an Err[any,any] written to *out. Generated FFI
 // wrappers wire it in as:
 //
-//     func <K>_foo(args ...) (out any) {
-//         defer SkyFfiRecover(&out)()
-//         ... actual FFI call ...
-//         return Ok[any, any](result)
-//     }
+//	func <K>_foo(args ...) (out any) {
+//	    defer SkyFfiRecover(&out)()
+//	    ... actual FFI call ...
+//	    return Ok[any, any](result)
+//	}
 //
 // `out` is a named return so the deferred closure can reassign it.
 func SkyFfiRecover(out *any) func() {
@@ -7124,8 +7654,9 @@ func SkyFfiFieldSet(value any, recv any, field string) any {
 // via `reflect.ValueOf(pkg.Func)` or `reflect.ValueOf(recv).MethodByName(...)`.
 //
 // hasError:
-//   false → wrap pure result in Ok (or bare list for multi-return)
-//   true  → last Go return must be error; Ok(prefix)/Err on non-nil
+//
+//	false → wrap pure result in Ok (or bare list for multi-return)
+//	true  → last Go return must be error; Ok(prefix)/Err on non-nil
 func SkyFfiReflectCall(fn reflect.Value, hasError bool, args []any) any {
 	if !fn.IsValid() || fn.Kind() != reflect.Func {
 		return Err[any, any](ErrFfi("SkyFfiReflectCall: not a function value"))
@@ -7376,8 +7907,16 @@ func skyCallOne(f any, arg any) any {
 		av = reflect.Zero(pt)
 	} else {
 		av = reflect.ValueOf(arg)
-		if av.Type() != pt && av.Type().ConvertibleTo(pt) {
-			av = av.Convert(pt)
+		// Route through the canonical narrower: a bare ConvertibleTo
+		// check can't turn `[]any` into `[]Foo_R` (a record-list arg),
+		// so a HOF combinator driving a typed function one element at
+		// a time would panic at reflect.Call. narrowReflectValue
+		// handles list/map/record recursion.
+		if av.Type() != pt {
+			if narrowed := narrowReflectValue(av, pt); narrowed.IsValid() &&
+				narrowed.Type().AssignableTo(pt) {
+				av = narrowed
+			}
 		}
 	}
 	out := rv.Call([]reflect.Value{av})

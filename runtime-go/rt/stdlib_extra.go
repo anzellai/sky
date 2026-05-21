@@ -143,7 +143,11 @@ func Set_diff(a any, b any) any {
 // so typed pipelines can flow string/int values without boxing.
 
 func Set_memberT[A comparable](v A, s []A) bool {
-	for _, x := range s { if x == v { return true } }
+	for _, x := range s {
+		if x == v {
+			return true
+		}
+	}
 	return false
 }
 
@@ -164,24 +168,46 @@ func Set_fromListT[A comparable](xs []A) []A {
 func Set_unionT[A comparable](a, b []A) []A {
 	seen := map[A]struct{}{}
 	out := make([]A, 0, len(a)+len(b))
-	for _, x := range a { if _, ok := seen[x]; !ok { seen[x] = struct{}{}; out = append(out, x) } }
-	for _, x := range b { if _, ok := seen[x]; !ok { seen[x] = struct{}{}; out = append(out, x) } }
+	for _, x := range a {
+		if _, ok := seen[x]; !ok {
+			seen[x] = struct{}{}
+			out = append(out, x)
+		}
+	}
+	for _, x := range b {
+		if _, ok := seen[x]; !ok {
+			seen[x] = struct{}{}
+			out = append(out, x)
+		}
+	}
 	return out
 }
 
 func Set_intersectT[A comparable](a, b []A) []A {
 	bs := map[A]struct{}{}
-	for _, x := range b { bs[x] = struct{}{} }
+	for _, x := range b {
+		bs[x] = struct{}{}
+	}
 	out := make([]A, 0, len(a))
-	for _, x := range a { if _, ok := bs[x]; ok { out = append(out, x) } }
+	for _, x := range a {
+		if _, ok := bs[x]; ok {
+			out = append(out, x)
+		}
+	}
 	return out
 }
 
 func Set_diffT[A comparable](a, b []A) []A {
 	bs := map[A]struct{}{}
-	for _, x := range b { bs[x] = struct{}{} }
+	for _, x := range b {
+		bs[x] = struct{}{}
+	}
 	out := make([]A, 0, len(a))
-	for _, x := range a { if _, ok := bs[x]; !ok { out = append(out, x) } }
+	for _, x := range a {
+		if _, ok := bs[x]; !ok {
+			out = append(out, x)
+		}
+	}
 	return out
 }
 
@@ -193,27 +219,32 @@ type JsonValue struct {
 	raw any // string | int | float64 | bool | nil | []any | map[string]any
 }
 
-func JsonEnc_string(s any) any  { return JsonValue{raw: fmt.Sprintf("%v", s)} }
-func JsonEnc_int(n any) any     { return JsonValue{raw: AsInt(n)} }
-func JsonEnc_float(n any) any   { return JsonValue{raw: AsFloat(n)} }
-func JsonEnc_bool(b any) any    { return JsonValue{raw: b} }
-func JsonEnc_null() any         { return JsonValue{raw: nil} }
+func JsonEnc_string(s any) any { return JsonValue{raw: fmt.Sprintf("%v", s)} }
+func JsonEnc_int(n any) any    { return JsonValue{raw: AsInt(n)} }
+func JsonEnc_float(n any) any  { return JsonValue{raw: AsFloat(n)} }
+func JsonEnc_bool(b any) any   { return JsonValue{raw: b} }
+func JsonEnc_null() any        { return JsonValue{raw: nil} }
 
 // P8/Json typed encoder companions — direct primitive in, JsonValue out.
-func JsonEnc_stringT(s string) JsonValue  { return JsonValue{raw: s} }
-func JsonEnc_intT(n int) JsonValue         { return JsonValue{raw: n} }
-func JsonEnc_floatT(f float64) JsonValue   { return JsonValue{raw: f} }
-func JsonEnc_boolT(b bool) JsonValue       { return JsonValue{raw: b} }
-func JsonEnc_nullT() JsonValue             { return JsonValue{raw: nil} }
+func JsonEnc_stringT(s string) JsonValue { return JsonValue{raw: s} }
+func JsonEnc_intT(n int) JsonValue       { return JsonValue{raw: n} }
+func JsonEnc_floatT(f float64) JsonValue { return JsonValue{raw: f} }
+func JsonEnc_boolT(b bool) JsonValue     { return JsonValue{raw: b} }
+func JsonEnc_nullT() JsonValue           { return JsonValue{raw: nil} }
 
 // JsonEnc.list may be called as:
-//   Encode.list items                   -- 1-arg form (legacy)
-//   Encode.list Encode.string [...]     -- 2-arg (combinator-style: map each item; same shape as Elm's Json.Encode.list)
+//
+//	Encode.list items                   -- 1-arg form (legacy)
+//	Encode.list Encode.string [...]     -- 2-arg (combinator-style: map each item; same shape as Elm's Json.Encode.list)
+//
 // The variadic-args signature accommodates both.
 func JsonEnc_list(args ...any) any {
 	switch len(args) {
 	case 1:
-		var out []any
+		// Non-nil empty slice: an empty Sky list must encode as the
+		// JSON array `[]`, not `null` (a nil slice marshals to null,
+		// which then fails to round-trip back through JsonDec.list).
+		out := []any{}
 		for _, v := range asList(args[0]) {
 			if jv, ok := v.(JsonValue); ok {
 				out = append(out, jv.raw)
@@ -225,7 +256,7 @@ func JsonEnc_list(args ...any) any {
 	case 2:
 		fn := args[0]
 		items := asList(args[1])
-		var out []any
+		out := []any{}
 		for _, v := range items {
 			// SkyCall (reflect) so typed-return lambdas from v0.13
 			// codegen work. The pre-fix `func(any) any` checked
@@ -364,8 +395,8 @@ func jsonPrefixError(result any, segment string) any {
 //
 // Sky's Error ADT shape (per makeError in rt.go):
 //
-//   Error[ErrorKind, ErrorInfo]
-//     where ErrorInfo = { Message: String, Details: Maybe ... }
+//	Error[ErrorKind, ErrorInfo]
+//	  where ErrorInfo = { Message: String, Details: Maybe ... }
 //
 // So Fields[0] is the kind enum and Fields[1] is the info record.
 // We pull `.Message` from Fields[1]; fall through to raw string +
@@ -633,38 +664,80 @@ func JsonDec_at(path any, inner any) any {
 // JsonDec.map2..map5 — apply a function to N decoded results.
 func JsonDec_map2(fn, d1, d2 any) any {
 	return JsonDecoder{run: func(v any) any {
-		a := runDec(d1, v); if isErr(a) { return a }
-		b := runDec(d2, v); if isErr(b) { return b }
+		a := runDec(d1, v)
+		if isErr(a) {
+			return a
+		}
+		b := runDec(d2, v)
+		if isErr(b) {
+			return b
+		}
 		return Ok[any, any](apply2(fn, okVal(a), okVal(b)))
 	}}
 }
 
 func JsonDec_map3(fn, d1, d2, d3 any) any {
 	return JsonDecoder{run: func(v any) any {
-		a := runDec(d1, v); if isErr(a) { return a }
-		b := runDec(d2, v); if isErr(b) { return b }
-		c := runDec(d3, v); if isErr(c) { return c }
+		a := runDec(d1, v)
+		if isErr(a) {
+			return a
+		}
+		b := runDec(d2, v)
+		if isErr(b) {
+			return b
+		}
+		c := runDec(d3, v)
+		if isErr(c) {
+			return c
+		}
 		return Ok[any, any](apply3(fn, okVal(a), okVal(b), okVal(c)))
 	}}
 }
 
 func JsonDec_map4(fn, d1, d2, d3, d4 any) any {
 	return JsonDecoder{run: func(v any) any {
-		a := runDec(d1, v); if isErr(a) { return a }
-		b := runDec(d2, v); if isErr(b) { return b }
-		c := runDec(d3, v); if isErr(c) { return c }
-		d := runDec(d4, v); if isErr(d) { return d }
+		a := runDec(d1, v)
+		if isErr(a) {
+			return a
+		}
+		b := runDec(d2, v)
+		if isErr(b) {
+			return b
+		}
+		c := runDec(d3, v)
+		if isErr(c) {
+			return c
+		}
+		d := runDec(d4, v)
+		if isErr(d) {
+			return d
+		}
 		return Ok[any, any](apply4(fn, okVal(a), okVal(b), okVal(c), okVal(d)))
 	}}
 }
 
 func JsonDec_map5(fn, d1, d2, d3, d4, d5 any) any {
 	return JsonDecoder{run: func(v any) any {
-		a := runDec(d1, v); if isErr(a) { return a }
-		b := runDec(d2, v); if isErr(b) { return b }
-		c := runDec(d3, v); if isErr(c) { return c }
-		d := runDec(d4, v); if isErr(d) { return d }
-		e := runDec(d5, v); if isErr(e) { return e }
+		a := runDec(d1, v)
+		if isErr(a) {
+			return a
+		}
+		b := runDec(d2, v)
+		if isErr(b) {
+			return b
+		}
+		c := runDec(d3, v)
+		if isErr(c) {
+			return c
+		}
+		d := runDec(d4, v)
+		if isErr(d) {
+			return d
+		}
+		e := runDec(d5, v)
+		if isErr(e) {
+			return e
+		}
 		return Ok[any, any](apply5(fn, okVal(a), okVal(b), okVal(c), okVal(d), okVal(e)))
 	}}
 }
@@ -827,6 +900,32 @@ func JsonDecP_requiredAt(path any, inner any, fnDec any) any {
 	}}
 }
 
+// pipelineCallArg narrows one argument to the callee's declared
+// parameter type before reflect.Call. Sky lists/dicts are `[]any` /
+// `map[string]any` at runtime; a Go constructor field typed
+// `[]Foo_R` (a record alias) is NOT assignable from `[]any`, so a
+// raw reflect.Call panics with "Call using []interface {} as type
+// []Foo_R". narrowReflectValue already recurses into list/dict/
+// record element types — this just routes every pipeline argument
+// through it, the same pre-call narrowing adaptFuncValue does.
+func pipelineCallArg(a any, wantTy reflect.Type) reflect.Value {
+	if a == nil {
+		return reflect.Zero(wantTy)
+	}
+	av := reflect.ValueOf(a)
+	if av.Type().AssignableTo(wantTy) {
+		return av
+	}
+	narrowed := narrowReflectValue(av, wantTy)
+	if narrowed.IsValid() && narrowed.Type().AssignableTo(wantTy) {
+		return narrowed
+	}
+	// Fall through unchanged — reflect.Call then yields the clear
+	// type-mismatch panic, which is the right diagnostic if a value
+	// genuinely cannot be narrowed.
+	return av
+}
+
 // pipelineApply: apply an accumulator to one more argument.
 // Accumulators in pipeline-style decoders (e.g. Json.Decode.Pipeline-style) start as a multi-arg function and are
 // progressively applied one field at a time. The function may be a Go
@@ -851,7 +950,7 @@ func pipelineApply(acc any, arg any) any {
 		return acc
 	}
 	if n == 1 {
-		out := rv.Call([]reflect.Value{reflect.ValueOf(arg)})
+		out := rv.Call([]reflect.Value{pipelineCallArg(arg, ft.In(0))})
 		if len(out) > 0 {
 			return out[0].Interface()
 		}
@@ -865,11 +964,7 @@ func pipelineApply(acc any, arg any) any {
 		if len(collected) == n {
 			vs := make([]reflect.Value, n)
 			for i, a := range collected {
-				if a == nil {
-					vs[i] = reflect.Zero(ft.In(i))
-				} else {
-					vs[i] = reflect.ValueOf(a)
-				}
+				vs[i] = pipelineCallArg(a, ft.In(i))
 			}
 			out := rv.Call(vs)
 			if len(out) > 0 {
@@ -1041,7 +1136,9 @@ func Http_getT(url string) func() SkyResult[string, HttpResponse] {
 		}
 		hdrs := map[string]string{}
 		for k, v := range resp.Header {
-			if len(v) > 0 { hdrs[k] = v[0] }
+			if len(v) > 0 {
+				hdrs[k] = v[0]
+			}
 		}
 		return Ok[string, HttpResponse](HttpResponse{
 			Status:  resp.StatusCode,
@@ -1090,9 +1187,9 @@ func Http_post(url any, body any) any {
 
 // Http.request supports two calling shapes:
 //
-//   * Positional (legacy): `Http.request method url body headers` →
+//   - Positional (legacy): `Http.request method url body headers` →
 //     `Http_request(method, url, body, headers)`
-//   * Record (Elm-style): `Http.request { method, url, headers, body }`
+//   - Record (Elm-style): `Http.request { method, url, headers, body }`
 //     — single Sky record argument. This is the documented form in
 //     templates/CLAUDE.md and matches Elm's `Http.request` API.
 //
@@ -1292,9 +1389,10 @@ func String_equalFold(a any, b any) any {
 // perceives as "one character". Differs from rune count for combining marks,
 // emoji ZWJ sequences, regional indicators, etc.
 // E.g. "👨‍👩‍👧" (family emoji) = 5 code points, 1 grapheme.
-//      "é" composed = 1 rune = 1 grapheme.
-//      "é" decomposed (e + ◌́) = 2 runes = 1 grapheme.
-//      "🇬🇧" (UK flag) = 2 regional-indicator code points = 1 grapheme.
+//
+//	"é" composed = 1 rune = 1 grapheme.
+//	"é" decomposed (e + ◌́) = 2 runes = 1 grapheme.
+//	"🇬🇧" (UK flag) = 2 regional-indicator code points = 1 grapheme.
 func String_graphemes(s any) any {
 	return uniseg.GraphemeClusterCount(fmt.Sprintf("%v", s))
 }
