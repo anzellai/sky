@@ -50,6 +50,8 @@ import qualified Data.Time.Clock as Clock
 import qualified Data.Time.Clock.POSIX as POSIX
 
 import qualified Sky.Build.Compile as Compile
+import qualified Sky.Build.Validator as Validator
+import qualified Sky.Reporting.Render as Render
 import qualified Sky.Sky.Toml as Toml
 
 
@@ -268,7 +270,30 @@ runBuildInner WatchOpts{..} = do
             (ec, _, gerr) <- P.readCreateProcessWithExitCode (P.shell cmd) ""
             case ec of
                 ExitSuccess   -> pure (Right binPath)
-                ExitFailure _ -> pure (Left ("go build failed:\n" ++ gerr))
+                ExitFailure _ -> Left <$> renderGoBuildError outDir gerr
+
+
+-- | Render a failed `go build` the way `sky run` does — map the Go
+-- error back to Sky source via the SKY-ORIGIN comments and frame it as
+-- a structured [E5001] diagnostic, falling back to the raw output when
+-- it can't be resolved. Keeps `sky watch` error output aligned with
+-- `sky run` (issue #62).
+renderGoBuildError :: FilePath -> String -> IO String
+renderGoBuildError outDir gerr = do
+    let mainGoPath = outDir </> "main.go"
+    mainGoExists <- Dir.doesFileExist mainGoPath
+    rendered <- if mainGoExists
+        then do
+            goSrc <- readFile mainGoPath
+            let originMap = Validator.parseOriginComments goSrc
+                loc = Validator.parseGoBuildError gerr
+            case loc >>= Validator.resolveGoErrorToSky originMap of
+                Just diag -> Just <$> Render.renderCli diag
+                Nothing   -> pure Nothing
+        else pure Nothing
+    pure $ case rendered of
+        Just r  -> r ++ "\n\nRaw `go build` output for reference:\n" ++ gerr
+        Nothing -> "go build failed:\n" ++ gerr
 
 
 -- ── Top-level loop ──────────────────────────────────────────────────
