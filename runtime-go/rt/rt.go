@@ -5950,9 +5950,12 @@ type SkyResponse struct {
 	ContentType string
 }
 
-// HTTP server safety limits.
-// These apply to every Sky.Http.Server request. They exist to prevent
-// trivial resource-exhaustion DoS. Users can tune per-handler via extractors.
+// HTTP server safety limits — the DEFAULTS. They exist to prevent
+// trivial resource-exhaustion DoS. The four timeouts are each
+// overridable via env (see httpEnvTimeout) so an app with
+// legitimately long-running handlers (LLM proxying, large
+// downloads, streaming) can extend or disable them without a
+// per-handler workaround.
 const (
 	serverReadHeaderTimeout = 10 * time.Second
 	serverReadTimeout       = 30 * time.Second
@@ -5961,6 +5964,19 @@ const (
 	serverMaxHeaderBytes    = 1 << 20 // 1 MiB
 	serverMaxBodyBytes      = 1 << 25 // 32 MiB; users can override per-handler
 )
+
+// httpEnvTimeout reads a Go duration from env var `key` (e.g.
+// "45s", "5m", "2h", or "0" to disable that timeout entirely).
+// Unset or unparseable → `def`. Shared by the HTTP server timeouts
+// and the HTTP client timeout so timeout config is uniform.
+func httpEnvTimeout(key string, def time.Duration) time.Duration {
+	if v := os.Getenv(key); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			return d
+		}
+	}
+	return def
+}
 
 func Server_listen(port any, routes any) any {
 	p := AsInt(port)
@@ -6164,10 +6180,10 @@ func Server_listen(port any, routes any) any {
 	srv := &http.Server{
 		Addr:              fmt.Sprintf(":%d", p),
 		Handler:           observed,
-		ReadHeaderTimeout: serverReadHeaderTimeout,
-		ReadTimeout:       serverReadTimeout,
-		WriteTimeout:      serverWriteTimeout,
-		IdleTimeout:       serverIdleTimeout,
+		ReadHeaderTimeout: httpEnvTimeout("SKY_HTTP_READ_HEADER_TIMEOUT", serverReadHeaderTimeout),
+		ReadTimeout:       httpEnvTimeout("SKY_HTTP_READ_TIMEOUT", serverReadTimeout),
+		WriteTimeout:      httpEnvTimeout("SKY_HTTP_WRITE_TIMEOUT", serverWriteTimeout),
+		IdleTimeout:       httpEnvTimeout("SKY_HTTP_IDLE_TIMEOUT", serverIdleTimeout),
 		MaxHeaderBytes:    serverMaxHeaderBytes,
 	}
 	// Tear down sub-apps on signal so the dev-console child doesn't
@@ -6207,6 +6223,28 @@ func Server_put(path any, handler any) any {
 
 func Server_delete(path any, handler any) any {
 	return SkyRoute{Method: "DELETE", Path: fmt.Sprintf("%v", path), Handler: handler}
+}
+
+// Server_api registers an API route — a REST / machine-to-machine
+// endpoint (server-to-server calls, webhooks) that authenticates via
+// Bearer token or HMAC, NOT the browser session cookie. API routes
+// bypass CSRF protection: the double-submit CSRF guard is a
+// browser-form-forgery defence for cookie-authed requests, and an
+// API client neither has nor needs a CSRF token. Mirrors Sky.Live's
+// Live.api so the "API endpoint" category is consistent across both
+// server kinds.
+//
+// `spec` is "METHOD /path" (e.g. "POST /v1/generate"); an omitted
+// method matches any verb.
+func Server_api(spec any, handler any) any {
+	s := fmt.Sprintf("%v", spec)
+	method, pattern := "", s
+	if idx := strings.Index(s, " "); idx > 0 {
+		method = strings.ToUpper(strings.TrimSpace(s[:idx]))
+		pattern = strings.TrimSpace(s[idx+1:])
+	}
+	WithoutCsrf(pattern)
+	return SkyRoute{Method: method, Path: pattern, Handler: handler}
 }
 
 func Server_text(body any) any {

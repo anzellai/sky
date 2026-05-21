@@ -961,7 +961,11 @@ var skyHttpClient = newSkyHttpClient()
 
 func newSkyHttpClient() *http.Client {
 	return &http.Client{
-		Timeout: 30 * time.Second,
+		// 30s default; overridable via SKY_HTTP_CLIENT_TIMEOUT
+		// (e.g. "180s", "5m", or "0" to disable). Apps that call
+		// slow upstreams — LLM APIs especially — routinely need
+		// more than 30s, and the cap had no escape hatch before.
+		Timeout: httpEnvTimeout("SKY_HTTP_CLIENT_TIMEOUT", 30*time.Second),
 		// Bound redirect chains.
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= 10 {

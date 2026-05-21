@@ -1151,7 +1151,7 @@ staticKernelFunctions = Map.fromList
     -- loadEnv all moved to System (sibling kernel for OS interaction).
     , ("Process", ["run"])
     , ("Http",    ["get", "post", "request"])
-    , ("Server",  ["listen", "get", "post", "put", "delete", "static", "text", "json", "html",
+    , ("Server",  ["listen", "get", "post", "put", "delete", "api", "static", "text", "json", "html",
                     "withStatus", "redirect", "param", "queryParam", "header",
                     "getCookie", "cookie", "withCookie", "withHeader", "any",
                     "method", "formValue", "body", "path", "group", "use"])
