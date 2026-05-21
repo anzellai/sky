@@ -793,12 +793,16 @@ clip : Attribute msg
 clip = AttrOverflow "hidden" "hidden"
 
 
+-- Single-axis clip uses the `clip` keyword, not `hidden`. CSS
+-- promotes a `visible` axis to `auto` (scrollbar!) when the other
+-- axis is `hidden`/`auto`/`scroll` — but NOT when it is `clip`.
+-- So `overflow-x:clip; overflow-y:visible` truly leaves Y visible.
 clipX : Attribute msg
-clipX = AttrOverflow "hidden" "visible"
+clipX = AttrOverflow "clip" "visible"
 
 
 clipY : Attribute msg
-clipY = AttrOverflow "visible" "hidden"
+clipY = AttrOverflow "visible" "clip"
 
 
 -- Show scrollbars on overflow on both axes.
@@ -806,12 +810,15 @@ scrollbars : Attribute msg
 scrollbars = AttrOverflow "auto" "auto"
 
 
+-- The off-axis is `hidden`, not `visible`: a `visible` off-axis
+-- gets promoted to `auto` by CSS (an unwanted second scrollbar).
+-- A single-axis scroller clips the other axis.
 scrollbarX : Attribute msg
-scrollbarX = AttrOverflow "auto" "visible"
+scrollbarX = AttrOverflow "auto" "hidden"
 
 
 scrollbarY : Attribute msg
-scrollbarY = AttrOverflow "visible" "auto"
+scrollbarY = AttrOverflow "hidden" "auto"
 
 
 -- ─── Color ───────────────────────────────────────────────────────
@@ -1159,8 +1166,18 @@ buildStyleString parentCtx myCtx attrs =
                 then " flex-wrap: wrap;"
                 else ""
         attrParts = List.foldl (collectStyle parentCtx myCtx) "" attrs
+        -- A border needs a style to render. `border-width` no longer
+        -- emits `border-style` itself (that clobbered an explicit
+        -- Border.dashed / .dotted depending on attribute order), so
+        -- default to solid here — only when a width is set and no
+        -- explicit style is.
+        borderStyleDefault =
+            if String.contains "border-width" attrParts
+                && not (String.contains "border-style" attrParts)
+            then " border-style: solid;"
+            else ""
     in
-        baseDisplay ++ wrapPart ++ attrParts
+        baseDisplay ++ wrapPart ++ attrParts ++ borderStyleDefault
 
 
 -- Pull the `__gridMin` value (set by `Ui.gridColumns`) out of the
@@ -1184,7 +1201,7 @@ displayFor ctx =
         AsColumn      -> "display: flex; flex-direction: column;"
         AsEl          -> "display: flex; flex-direction: column;"
         AsParagraph   -> "display: block;"
-        AsTextColumn  -> "display: block;"
+        AsTextColumn  -> "display: flex; flex-direction: column;"
 
 
 collectStyle : LayoutContext -> LayoutContext -> Attribute msg -> String -> String
@@ -1275,9 +1292,9 @@ collectStyle parentCtx myCtx attr acc =
         AttrBgGradient css ->
             acc ++ " background-image: " ++ css ++ ";"
         AttrBorderWidth n ->
-            acc ++ " border-width: " ++ String.fromInt n ++ "px; border-style: solid;"
+            acc ++ " border-width: " ++ String.fromInt n ++ "px;"
         AttrBorderWidthEach t r b l ->
-            acc ++ " border-width: " ++ String.fromInt t ++ "px " ++ String.fromInt r ++ "px " ++ String.fromInt b ++ "px " ++ String.fromInt l ++ "px; border-style: solid;"
+            acc ++ " border-width: " ++ String.fromInt t ++ "px " ++ String.fromInt r ++ "px " ++ String.fromInt b ++ "px " ++ String.fromInt l ++ "px;"
         AttrBorderColor c ->
             acc ++ " border-color: " ++ colorCss c ++ ";"
         AttrBorderRounded n ->
@@ -1341,17 +1358,21 @@ widthCssIn parentCtx lng =
     case lng of
         Px n        -> "width: " ++ String.fromInt n ++ "px;"
         Content     -> "width: max-content;"
-        Fill _      -> widthFillFor parentCtx
+        Fill n      -> widthFillFor parentCtx n
         Min n inner -> widthCssIn parentCtx inner ++ " min-width: " ++ String.fromInt n ++ "px;"
         Max n inner -> widthCssIn parentCtx inner ++ " max-width: " ++ String.fromInt n ++ "px;"
         Vh n        -> "width: " ++ String.fromInt n ++ "vh;"
         Vw n        -> "width: " ++ String.fromInt n ++ "vw;"
 
 
-widthFillFor : LayoutContext -> String
-widthFillFor parentCtx =
+-- `n` is the fill portion (`fill` = 1, `fillPortion 3` = 3). It
+-- maps to flex-grow on the parent's MAIN axis, where portions
+-- actually divide the free space. On the cross axis a portion is
+-- meaningless — the child simply stretches.
+widthFillFor : LayoutContext -> Int -> String
+widthFillFor parentCtx n =
     case parentCtx of
-        AsRow        -> "flex-grow: 1; min-width: 0;"
+        AsRow        -> "flex-grow: " ++ String.fromInt n ++ "; min-width: 0;"
         AsColumn     -> "align-self: stretch; width: 100%;"
         AsEl         -> "width: 100%;"
         AsParagraph  -> "width: 100%;"
@@ -1363,18 +1384,18 @@ heightCssIn parentCtx lng =
     case lng of
         Px n        -> "height: " ++ String.fromInt n ++ "px;"
         Content     -> "height: max-content;"
-        Fill _      -> heightFillFor parentCtx
+        Fill n      -> heightFillFor parentCtx n
         Min n inner -> heightCssIn parentCtx inner ++ " min-height: " ++ String.fromInt n ++ "px;"
         Max n inner -> heightCssIn parentCtx inner ++ " max-height: " ++ String.fromInt n ++ "px;"
         Vh n        -> "height: " ++ String.fromInt n ++ "vh;"
         Vw n        -> "height: " ++ String.fromInt n ++ "vw;"
 
 
-heightFillFor : LayoutContext -> String
-heightFillFor parentCtx =
+heightFillFor : LayoutContext -> Int -> String
+heightFillFor parentCtx n =
     case parentCtx of
         AsRow        -> "align-self: stretch; height: 100%;"
-        AsColumn     -> "flex-grow: 1; min-height: 0;"
+        AsColumn     -> "flex-grow: " ++ String.fromInt n ++ "; min-height: 0;"
         AsEl         -> "height: 100%;"
         AsParagraph  -> "height: 100%;"
         AsTextColumn -> "height: 100%;"
@@ -1392,31 +1413,49 @@ heightCss : Length -> String
 heightCss lng = heightCssIn AsColumn lng
 
 
+-- alignXCss / alignYCss render an element's alignment attributes
+-- as CONTENT alignment on the flex container: `centerX` on a
+-- container centres its children horizontally, `centerY` centres
+-- them vertically (so `el [ centerX, centerY ] (text "x")` centres
+-- the text, and `column [ centerX ] [...]` centres each child).
+--
+-- Which flex property does the centring depends on the
+-- container's own direction (`ctx` = the element's own
+-- LayoutContext): the main axis uses justify-content, the cross
+-- axis align-items.
+--   * row                     → X is main,  Y is cross
+--   * column / el / paragraph  → X is cross, Y is main
+--
+-- Previously these emitted `align-self` / `margin:auto` (which
+-- position the element in its *parent*, not its content) and were
+-- fed the element's own context — so `centerX` and `centerY` both
+-- collapsed to a duplicated `align-self: center` and never centred
+-- anything (issue #63).
 alignXCss : LayoutContext -> HAlign -> String
 alignXCss ctx h =
     case ctx of
         AsRow ->
             case h of
-                AlignLeft   -> "margin-right: auto;"
-                CenterX     -> "margin-left: auto; margin-right: auto;"
-                AlignRight  -> "margin-left: auto;"
+                AlignLeft   -> "justify-content: flex-start;"
+                CenterX     -> "justify-content: center;"
+                AlignRight  -> "justify-content: flex-end;"
         _ ->
             case h of
-                AlignLeft   -> "align-self: flex-start;"
-                CenterX     -> "align-self: center;"
-                AlignRight  -> "align-self: flex-end;"
+                AlignLeft   -> "align-items: flex-start;"
+                CenterX     -> "align-items: center;"
+                AlignRight  -> "align-items: flex-end;"
 
 
 alignYCss : LayoutContext -> VAlign -> String
 alignYCss ctx v =
     case ctx of
-        AsColumn ->
+        AsRow ->
             case v of
-                AlignTop    -> "margin-bottom: auto;"
-                CenterY     -> "margin-top: auto; margin-bottom: auto;"
-                AlignBottom -> "margin-top: auto;"
+                AlignTop    -> "align-items: flex-start;"
+                CenterY     -> "align-items: center;"
+                AlignBottom -> "align-items: flex-end;"
         _ ->
             case v of
-                AlignTop    -> "align-self: flex-start;"
-                CenterY     -> "align-self: center;"
-                AlignBottom -> "align-self: flex-end;"
+                AlignTop    -> "justify-content: flex-start;"
+                CenterY     -> "justify-content: center;"
+                AlignBottom -> "justify-content: flex-end;"
