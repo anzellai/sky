@@ -1224,9 +1224,9 @@ collectStyle parentCtx myCtx attr acc =
         AttrSpacing n ->
             acc ++ " gap: " ++ String.fromInt n ++ "px;"
         AttrAlignX h ->
-            acc ++ " " ++ alignXCss myCtx h
+            acc ++ " " ++ alignXCss myCtx h ++ " " ++ alignSelfX parentCtx h
         AttrAlignY v ->
-            acc ++ " " ++ alignYCss myCtx v
+            acc ++ " " ++ alignYCss myCtx v ++ " " ++ alignSelfY parentCtx v
         AttrStyle k v ->
             if k == "__row" then
                 acc
@@ -1465,3 +1465,41 @@ alignYCss ctx v =
                 AlignTop    -> "justify-content: flex-start;"
                 CenterY     -> "justify-content: center;"
                 AlignBottom -> "justify-content: flex-end;"
+
+
+-- alignSelfX / alignSelfY position the element WITHIN ITS PARENT
+-- — the complement of alignXCss/alignYCss (which align the
+-- element's own content). `centerX` does both: centres the
+-- element in its parent AND centres its content. They touch
+-- different CSS properties (align-self/margin vs align-items/
+-- justify-content) so there is no conflict. Self-positioning
+-- depends on the PARENT's axis: the parent's cross axis uses
+-- align-self, its main axis uses auto margins.
+alignSelfX : LayoutContext -> HAlign -> String
+alignSelfX parentCtx h =
+    case parentCtx of
+        AsRow ->
+            case h of
+                AlignLeft   -> "margin-right: auto;"
+                CenterX     -> "margin-left: auto; margin-right: auto;"
+                AlignRight  -> "margin-left: auto;"
+        _ ->
+            case h of
+                AlignLeft   -> "align-self: flex-start;"
+                CenterX     -> "align-self: center;"
+                AlignRight  -> "align-self: flex-end;"
+
+
+alignSelfY : LayoutContext -> VAlign -> String
+alignSelfY parentCtx v =
+    case parentCtx of
+        AsColumn ->
+            case v of
+                AlignTop    -> "margin-bottom: auto;"
+                CenterY     -> "margin-top: auto; margin-bottom: auto;"
+                AlignBottom -> "margin-top: auto;"
+        _ ->
+            case v of
+                AlignTop    -> "align-self: flex-start;"
+                CenterY     -> "align-self: center;"
+                AlignBottom -> "align-self: flex-end;"
