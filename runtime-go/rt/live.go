@@ -2029,7 +2029,13 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 // body. NO !important is used; user view styles always win.
 const liveBaseCSS = `*,*::before,*::after{box-sizing:border-box}` +
 	`html,body{margin:0;padding:0;min-height:100%}` +
-	`body{min-height:100vh;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;line-height:1.4}` +
+	`body{min-height:100vh;display:flex;flex-direction:column;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;line-height:1.4}` +
+	// #sky-root must grow to fill <body> and be a flex column itself,
+	// otherwise a Std.Ui `Ui.height Ui.fill` root has no resolvable
+	// parent height to flex against and collapses to content height
+	// (issue #63). flex:1 0 auto fills the viewport; min-height:0 lets
+	// inner scroll regions shrink below content size.
+	`#sky-root{display:flex;flex-direction:column;flex:1 0 auto;min-height:0}` +
 	`h1,h2,h3,h4,h5,h6,p,ul,ol,li,figure,blockquote,pre,dl,dd{margin:0;padding:0;font-weight:inherit;font-size:inherit}` +
 	`button,input,select,textarea{font:inherit;color:inherit}` +
 	`button{background:none;border:0;padding:0;cursor:pointer;text-align:inherit}` +
