@@ -5,7 +5,7 @@
 > v0.14.x: full Layer-3 stdlib migration (every kernel module surfaced as
 > Sky source), `sky doc` browsable API surface, `Ffi.kernel` mechanism, and
 > auto-TCO for tail-recursive functions. The Phase B verification sweep
-> (26 examples + 114 Sky.Test assertions + ~300 cabal specs) is the source
+> (27 examples + 114 Sky.Test assertions + ~300 cabal specs) is the source
 > of truth — green-everywhere is a hard release gate.
 
 ## Current state
@@ -18,14 +18,16 @@
 | `sky doc` (terminal + HTTP server with type-sig + Markdown + fuzzy search) | ✅ shipped |
 | `sky watch` / `sky doctor` / `sky console` / `sky upgrade-claude` | ✅ shipped |
 | Sky Console + sub-app mount + observability federation | ✅ shipped |
-| 26-example sweep + 114 Sky.Test assertions + ~300 cabal specs | ✅ green |
+| 27-example sweep + 114 Sky.Test assertions + ~300 cabal specs | ✅ green |
 
-**Examples (26 total — `examples/00`-`examples/25`).** Each builds clean
+**Examples (27 total — `examples/00`-`examples/26`).** Each builds clean
 from a wiped slate (`rm -rf sky-out .skycache .skydeps && sky build`).
 `examples/00-standard-libs` is the stdlib smoke test (114 assertions).
 `examples/13-skyshop` is the Stripe-SDK-scale benchmark (76k FFI
-symbols). Categories: CLI (7), Sky.Tui (5), Sky.Live + Sky.Http.Server
-(10), GUI (1 — Fyne), build-only fixtures (2).
+symbols). `examples/26-ui-showcase` exercises every Std.Ui layout
+primitive for visual-regression review. Categories: CLI (7),
+Sky.Tui (5), Sky.Live + Sky.Http.Server (11), GUI (1 — Fyne),
+build-only fixtures (2).
 
 ## Non-negotiables
 
@@ -927,7 +929,7 @@ sky-bundled/console/              -- Sky Console mini-app
 sky-bundled/doc/                  -- sky doc HTTP server mini-app
 tools/sky-ffi-inspect/            -- Go package introspector (TH-embedded)
 templates/CLAUDE.md               -- Template for `sky init` projects
-examples/                         -- 26 example projects
+examples/                         -- 27 example projects
 docs/                             -- User + contributor documentation
 ```
 

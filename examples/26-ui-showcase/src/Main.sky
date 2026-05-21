@@ -1,0 +1,267 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Std.Live as Live
+import Std.Ui as Ui exposing (Element)
+import Std.Ui.Background as Background
+import Std.Ui.Border as Border
+import Std.Ui.Font as Font
+
+type alias Model =
+    { count : Int }
+
+type Msg
+    = Inc
+    | Dec
+
+
+init : {  } -> ( Model, Cmd Msg )
+init _ =
+    ( { count = 0 }, Cmd.none )
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Inc ->
+            ( { model | count = model.count + 1 }, Cmd.none )
+
+        Dec ->
+            ( { model | count = model.count - 1 }, Cmd.none )
+
+
+white : Ui.Color
+white =
+    Ui.rgb 255 255 255
+
+
+ink : Ui.Color
+ink =
+    Ui.rgb 25 30 40
+
+
+-- A labelled card wrapping one demo.
+section : String -> Element Msg -> Element Msg
+section title body =
+    Ui.column
+        [ Ui.width Ui.fill
+        , Ui.spacing 10
+        , Ui.padding 16
+        , Background.color white
+        , Border.width 1
+        , Border.color (Ui.rgb 220 222 226)
+        , Border.rounded 8
+        ]
+        [ Ui.el [ Font.size 15, Font.bold, Font.color ink ] (Ui.text title)
+        , body
+        ]
+
+
+-- A coloured box with a centred label — exercises centerX/centerY
+-- content alignment.
+labelBox : Int -> Ui.Color -> String -> Element Msg
+labelBox portion colour caption =
+    Ui.el
+        [ Ui.width (Ui.fillPortion portion)
+        , Ui.height Ui.fill
+        , Background.color colour
+        , Ui.centerX
+        , Ui.centerY
+        ]
+        (Ui.el [Font.color white] (Ui.text caption))
+
+
+-- 1 : 2 : 3 portion split — verifies fillPortion.
+fillPortionDemo : Element Msg
+fillPortionDemo =
+    Ui.row
+        [ Ui.width Ui.fill, Ui.height (Ui.px 56), Ui.spacing 8 ]
+        [ labelBox 1 (Ui.rgb 224 96 96) "portion 1"
+        , labelBox 2 (Ui.rgb 96 176 104) "portion 2"
+        , labelBox 3 (Ui.rgb 96 128 224) "portion 3"
+        ]
+
+
+-- height fill split inside a fixed-height column.
+heightFillDemo : Element Msg
+heightFillDemo =
+    Ui.column
+        [ Ui.width Ui.fill, Ui.height (Ui.px 120) ]
+        [ Ui.el
+              [ Ui.width Ui.fill
+              , Ui.height Ui.fill
+              , Background.color (Ui.rgb 60 80 200)
+              , Ui.centerX
+              , Ui.centerY
+              ]
+              (Ui.el [Font.color white] (Ui.text "height fill (top)"))
+        , Ui.el
+              [ Ui.width Ui.fill
+              , Ui.height Ui.fill
+              , Background.color (Ui.rgb 96 176 104)
+              , Ui.centerX
+              , Ui.centerY
+              ]
+              (Ui.el [Font.color white] (Ui.text "height fill (bottom)"))
+        ]
+
+
+-- One bordered swatch — `Border.width` is placed before the style
+-- attr in one and after in another, to prove order no longer
+-- clobbers the style.
+swatch : String -> Element Msg -> Element Msg
+swatch caption styled =
+    Ui.column [Ui.spacing 6] [ styled, Ui.el [Font.size 12] (Ui.text caption) ]
+
+
+borderDemo : Element Msg
+borderDemo =
+    Ui.row
+        [Ui.spacing 16]
+        [ swatch
+              "solid"
+              (Ui.el
+                  [ Ui.width (Ui.px 90)
+                  , Ui.height (Ui.px 44)
+                  , Border.width 2
+                  , Border.solid
+                  , Border.color ink
+                  , Border.rounded 6
+                  ]
+                  Ui.none)
+        , swatch
+              "dashed (width first)"
+              (Ui.el
+                  [ Ui.width (Ui.px 90)
+                  , Ui.height (Ui.px 44)
+                  , Border.width 2
+                  , Border.dashed
+                  , Border.color ink
+                  , Border.rounded 6
+                  ]
+                  Ui.none)
+        , swatch
+              "dotted (style first)"
+              (Ui.el
+                  [ Ui.width (Ui.px 90)
+                  , Ui.height (Ui.px 44)
+                  , Border.dotted
+                  , Border.width 2
+                  , Border.color ink
+                  , Border.rounded 6
+                  ]
+                  Ui.none)
+        ]
+
+
+-- textColumn with spacing — verifies the gap now applies.
+textColumnDemo : Element Msg
+textColumnDemo =
+    Ui.textColumn
+        [ Ui.spacing 8, Ui.width Ui.fill ]
+        [ Ui.paragraph [] [Ui.text "First paragraph in a textColumn."]
+        , Ui.paragraph
+              []
+              [Ui.text
+                  "Second paragraph — there should be an 8px gap above this line."]
+        , Ui.paragraph [] [Ui.text "Third paragraph, likewise spaced."]
+        ]
+
+
+-- clipX on a narrow box — a wider child is cut on X, Y stays
+-- visible with no spurious scrollbar.
+clipDemo : Element Msg
+clipDemo =
+    Ui.el
+        [ Ui.width (Ui.px 240)
+        , Ui.height (Ui.px 40)
+        , Ui.clipX
+        , Border.width 1
+        , Border.color (Ui.rgb 200 202 206)
+        , Border.rounded 4
+        ]
+        (Ui.el
+            [ Ui.width (Ui.px 460)
+            , Ui.height Ui.fill
+            , Background.color (Ui.rgb 255 238 198)
+            , Ui.padding 10
+            ]
+            (Ui.text "this 460px strip is clipped to the 240px box on x"))
+
+
+counterDemo : Model -> Element Msg
+counterDemo model =
+    Ui.row
+        [ Ui.spacing 12, Ui.centerY ]
+        [ Ui.button
+              [ Ui.padding 8
+              , Background.color (Ui.rgb 230 232 236)
+              , Border.rounded 6
+              ]
+              { onPress = Just Dec, label = Ui.text "−" }
+        , Ui.el
+              [ Font.size 20, Font.bold ]
+              (Ui.text (String.fromInt model.count))
+        , Ui.button
+              [ Ui.padding 8
+              , Background.color (Ui.rgb 230 232 236)
+              , Border.rounded 6
+              ]
+              { onPress = Just Inc, label = Ui.text "+" }
+        ]
+
+
+view : Model -> any
+view model =
+    Ui.layout
+        [ Ui.width Ui.fill
+        , Ui.height Ui.fill
+        , Background.color (Ui.rgb 244 245 248)
+        , Font.family "system-ui, -apple-system, Segoe UI, sans-serif"
+        ]
+        (Ui.column
+            [ Ui.width (Ui.maximum 760 Ui.fill)
+            , Ui.centerX
+            , Ui.padding 28
+            , Ui.spacing 18
+            ]
+            [ Ui.el
+                  [ Font.size 24, Font.bold, Font.color ink ]
+                  (Ui.text "Std.Ui showcase")
+            , section "fillPortion — 1 : 2 : 3" fillPortionDemo
+            , section "height fill" heightFillDemo
+            , section
+                  "centerX / centerY content alignment"
+                  (Ui.el
+                      [ Ui.width Ui.fill
+                      , Ui.height (Ui.px 72)
+                      , Background.color (Ui.rgb 60 64 84)
+                      , Ui.centerX
+                      , Ui.centerY
+                      ]
+                      (Ui.el
+                          [ Font.color white, Font.size 16 ]
+                          (Ui.text "centred both ways")))
+            , section "Border styles" borderDemo
+            , section "textColumn spacing" textColumnDemo
+            , section "clipX overflow" clipDemo
+            , section "button + events" (counterDemo model)
+            ])
+
+
+main =
+    Live.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        , routes = []
+        , notFound = ()
+        }
