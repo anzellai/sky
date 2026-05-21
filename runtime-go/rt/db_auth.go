@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -362,6 +363,26 @@ func Db_queryDecode(db any, query any, args any, decoder any) any {
 	}
 }
 
+// dbAnyToStringMap normalises a Sky Dict argument to map[string]any.
+// The typed codegen represents `Dict String String` as Go
+// map[string]string (and `Dict String V` as map[string]V), while the
+// untyped Dict rep is map[string]any — the Db kernels must accept all.
+func dbAnyToStringMap(v any) (map[string]any, bool) {
+	if m, ok := v.(map[string]any); ok {
+		return m, true
+	}
+	rv := reflect.ValueOf(v)
+	if rv.Kind() != reflect.Map || rv.Type().Key().Kind() != reflect.String {
+		return nil, false
+	}
+	out := make(map[string]any, rv.Len())
+	iter := rv.MapRange()
+	for iter.Next() {
+		out[iter.Key().String()] = iter.Value().Interface()
+	}
+	return out, true
+}
+
 // Db.insertRow : Db -> String -> Dict String any -> Task Error Int
 // Returns the last-insert id. Task-shaped per the Task-everywhere
 // doctrine; thunk defers the INSERT to Cmd.perform / Task.run.
@@ -382,7 +403,7 @@ func dbInsertRowBody(capDb, capTable, capRow any) any {
 		if !ok {
 			return Err[any, any](ErrInvalidInput("db.insertRow: not a Db"))
 		}
-		m, ok := capRow.(map[string]any)
+		m, ok := dbAnyToStringMap(capRow)
 		if !ok {
 			return Err[any, any](ErrInvalidInput("db.insertRow: row must be a Dict"))
 		}
@@ -456,7 +477,7 @@ func Db_updateById(db any, table any, id any, row any) any {
 		if !ok {
 			return Err[any, any](ErrInvalidInput("db.updateById: not a Db"))
 		}
-		m, ok := capRow.(map[string]any)
+		m, ok := dbAnyToStringMap(capRow)
 		if !ok {
 			return Err[any, any](ErrInvalidInput("db.updateById: row must be a Dict"))
 		}
@@ -609,7 +630,7 @@ func Db_findByConditions(db any, table any, conditions any) any {
 	if qTable == "" {
 		return Err[any, any](ErrInvalidInput("db.findByConditions: invalid table name"))
 	}
-	m, ok := conditions.(map[string]any)
+	m, ok := dbAnyToStringMap(conditions)
 	if !ok {
 		return Err[any, any](ErrInvalidInput("db.findByConditions: conditions must be a Dict String any"))
 	}
