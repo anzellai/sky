@@ -481,6 +481,7 @@ func tuiAppRun(cfg any) any {
 			continue
 		}
 
+	processMsg:
 		// Intercept tuiKeyMsg before dispatching to update — Tab /
 		// Shift-Tab handle focus locally, Enter activates focused
 		// element, mouse clicks find a focusable + activate it,
@@ -762,6 +763,14 @@ func tuiAppRun(cfg any) any {
 		for drained := 0; drained < 64; drained++ {
 			select {
 			case nextMsg := <-msgCh:
+				// A queued key msg must go through the same focus /
+				// onKey interception the main loop applies — it must
+				// never be dispatched raw to update, which expects
+				// the app's Msg ADT, not a tuiKeyMsg (issue #64).
+				if _, isKey := nextMsg.(tuiKeyMsg); isKey {
+					msg = nextMsg
+					goto processMsg
+				}
 				model = tuiApplyUpdate(guardFn, updateFn, nextMsg, model, msgCh)
 				subMgr.update(subsFn, model)
 			default:
