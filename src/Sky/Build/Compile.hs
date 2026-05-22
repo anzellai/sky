@@ -3703,12 +3703,28 @@ destructureParams pats =
             in (GoIr.GoParam tmp "any", patternBindings tmp pat)
 
 
--- | Escape Sky identifiers that collide with Go reserved/builtin names.
--- Only applies to top-level Sky functions emitted as Go funcs.
+-- | Escape Sky identifiers that collide with Go reserved/builtin
+-- names. The canonical Sky-local-name -> Go-identifier map: applied
+-- at every emission of a local — parameter declarations, let-binding
+-- declarations, pattern-bound names, AND every reference
+-- (Can.VarLocal) — so a Sky identifier named after a Go keyword
+-- (var, type, range, ...) emits consistently as <name>_ at both its
+-- declaration and its uses. Idempotent for non-reserved names.
 goSafeName :: String -> String
 goSafeName n
     | n `elem` reservedGoNames = n ++ "_"
     | otherwise = n
+
+
+-- | The two statements a let-binding emits — the declaration and an
+-- unused-suppressing assign — with the bound name keyword-escaped so
+-- it matches the goSafeName-escaped references emitted for it.
+letBindStmts :: String -> GoIr.GoExpr -> [GoIr.GoStmt]
+letBindStmts name expr =
+    let sn = goSafeName name
+    in [ GoIr.GoShortDecl sn expr
+       , GoIr.GoAssign "_" (GoIr.GoIdent sn)
+       ]
 
 
 -- | Sky convention: identifiers starting with `_` mean the value is unused.
@@ -6004,7 +6020,9 @@ exprToGo (A.At _ expr) = case expr of
         GoIr.GoRaw "struct{}{}"
 
     Can.VarLocal name ->
-        GoIr.GoIdent name
+        -- Keyword-escape: a Sky local named var/type/range/etc. must
+        -- reference as <name>_ to match its escaped declaration.
+        GoIr.GoIdent (goSafeName name)
 
     Can.VarTopLevel home name
         -- v0.14.x Stage 4: Sky-source binding aliased to a kernel via
@@ -8415,14 +8433,10 @@ letToGo mExpectedGo def body =
             Can.Def (A.At _ dn) [] valExpr
                 | dn /= "_"
                 , Just dt <- inferExprType solvedTypes valExpr ->
-                    [ GoIr.GoShortDecl dn (exprToGoExpect dt valExpr)
-                    , GoIr.GoAssign "_" (GoIr.GoIdent dn)
-                    ]
+                    letBindStmts dn (exprToGoExpect dt valExpr)
             Can.TypedDef (A.At _ dn) _ [] valExpr _
                 | Just dt <- inferExprType solvedTypes valExpr ->
-                    [ GoIr.GoShortDecl dn (exprToGoExpect dt valExpr)
-                    , GoIr.GoAssign "_" (GoIr.GoIdent dn)
-                    ]
+                    letBindStmts dn (exprToGoExpect dt valExpr)
             _ -> defToStmts def
         bodyGo = if Map.null bindingExtras
             then lowerBody body
@@ -8523,9 +8537,7 @@ defToStmts def = case def of
             [GoIr.GoAssign "_"
                 (GoIr.GoCall (GoIr.GoQualified "rt" "AnyTaskRun")
                     [loweredDiscard body])]
-        else [ GoIr.GoShortDecl name (exprToGo body)
-             , GoIr.GoAssign "_" (GoIr.GoIdent name)  -- suppress unused errors
-             ]
+        else letBindStmts name (exprToGo body)
 
     Can.Def (A.At _ name) params body ->
         -- v0.13 Stage 1 — for unannotated multi-pattern let-defs,
@@ -8562,16 +8574,11 @@ defToStmts def = case def of
             bodyExpr = if retGoTy == "any"
                 then exprToGo body
                 else exprToGoExpectGo retGoTy body
-        in [ GoIr.GoShortDecl name
-                (GoIr.GoFuncLit goParams retGoTy
-                    [GoIr.GoReturn bodyExpr])
-           , GoIr.GoAssign "_" (GoIr.GoIdent name)
-           ]
+        in letBindStmts name
+            (GoIr.GoFuncLit goParams retGoTy [GoIr.GoReturn bodyExpr])
 
     Can.TypedDef (A.At _ name) _ [] body _ ->
-        [ GoIr.GoShortDecl name (exprToGo body)
-        , GoIr.GoAssign "_" (GoIr.GoIdent name)
-        ]
+        letBindStmts name (exprToGo body)
 
     Can.TypedDef (A.At _ name) _ typedPats body retType ->
         -- v0.13 Stage 1 — multi-pattern annotated let-def: use the
@@ -8588,11 +8595,8 @@ defToStmts def = case def of
                 if isEmittableGoType retGoTy
                     then (retGoTy, exprToGoExpectGo retGoTy body)
                     else ("any", exprToGo body)
-        in [ GoIr.GoShortDecl name
-                (GoIr.GoFuncLit typedGoParams effectiveRet
-                    [GoIr.GoReturn bodyExpr])
-           , GoIr.GoAssign "_" (GoIr.GoIdent name)
-           ]
+        in letBindStmts name
+            (GoIr.GoFuncLit typedGoParams effectiveRet [GoIr.GoReturn bodyExpr])
 
 
 -- ═══════════════════════════════════════════════════════════
@@ -9321,9 +9325,7 @@ patternBindings subject pat = case pat of
     Can.PVar name ->
         if isDiscardName name
             then [ GoIr.GoAssign "_" (GoIr.GoIdent subject) ]
-            else [ GoIr.GoShortDecl name (GoIr.GoIdent subject)
-                 , GoIr.GoAssign "_" (GoIr.GoIdent name)
-                 ]
+            else letBindStmts name (GoIr.GoIdent subject)
 
     Can.PAnything -> []
     Can.PUnit -> []
@@ -11460,7 +11462,7 @@ isSimpleVarPattern (A.At _ pat) = case pat of
 -- | Extract a single name from a pattern (for destructuring)
 patternName :: Can.Pattern -> String
 patternName (A.At _ pat) = case pat of
-    Can.PVar name -> name
+    Can.PVar name -> goSafeName name
     _ -> "_"
 
 

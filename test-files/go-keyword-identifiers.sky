@@ -1,0 +1,34 @@
+module Main exposing (main)
+
+-- Regression: Sky identifiers named after Go keywords/builtins are
+-- legal Sky names and must emit valid Go — escaped consistently as
+-- <name>_ at every declaration AND every reference (params, let
+-- bindings, references). Previously the declaration escaped but the
+-- uses did not, producing uncompilable Go.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Std.Log exposing (println)
+
+
+-- parameters named after Go keywords
+combine : String -> String -> String -> String
+combine var func range =
+    var ++ "-" ++ func ++ "-" ++ range
+
+
+-- let-bindings named after Go keywords/builtins
+withLet : String -> String
+withLet map =
+    let
+        select = map ++ "!"
+
+        defer = select ++ "?"
+
+        len = String.fromInt (String.length defer)
+    in
+    defer ++ "/" ++ len
+
+
+main =
+    println (combine "a" "b" "c" ++ " " ++ withLet "x")
