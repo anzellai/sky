@@ -478,6 +478,17 @@ func coerceInner[T any](v any) T {
 			return adapted.(T)
 		}
 	}
+	// Numeric convert: a kernel can hand back int64 where typed
+	// codegen routed a plain int (Time.unixMillis and friends) —
+	// same value, different Go width. reflect.Convert bridges them
+	// rather than panicking on the strict assertion below.
+	if isNumericKind(rv.Kind()) {
+		var zero T
+		zt := reflect.TypeOf(zero)
+		if zt != nil && isNumericKind(zt.Kind()) {
+			return rv.Convert(zt).Interface().(T)
+		}
+	}
 	// Final fallback: strict type assertion. If this panics, it
 	// means typed-codegen emitted a CALL with a wrong element type —
 	// a compiler bug, NOT a runtime input bug. Surfacing the panic
@@ -503,6 +514,19 @@ func coerceInner[T any](v any) T {
 		targetDesc = "<unknown>"
 	}
 	panic(fmt.Sprintf("rt.coerceInner: type mismatch — source %s cannot be cast to target %s. This is a compiler bug in typed-codegen routing. Reproduce, then investigate kernelTypedCall (Compile.hs) and the relevant inferXType helper.", srcDesc, targetDesc))
+}
+
+// isNumericKind reports whether k is an integer or float reflect.Kind —
+// the kinds reflect.Value.Convert can bridge without loss of meaning.
+func isNumericKind(k reflect.Kind) bool {
+	switch k {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+		reflect.Float32, reflect.Float64:
+		return true
+	default:
+		return false
+	}
 }
 
 // narrowReflectValue converts `src` to a value of type `target`, handling:
@@ -5020,7 +5044,7 @@ func AnyTaskRun(task any) any {
 //     just strftime-equivalent). No wrapper — bare String.
 func Time_now(_ any) any {
 	return func() any {
-		return Ok[any, any](time.Now().UnixMilli())
+		return Ok[any, any](int(time.Now().UnixMilli()))
 	}
 }
 
@@ -5306,7 +5330,7 @@ func Time_sleep(ms any) any {
 // returns the thunk for auto-force discard or Task chain consumption.
 func Time_unixMillis(_ any) any {
 	return func() any {
-		return Ok[any, any](time.Now().UnixMilli())
+		return Ok[any, any](int(time.Now().UnixMilli()))
 	}
 }
 
@@ -5364,7 +5388,7 @@ func Time_parseISO8601(s any) any {
 			return Err[any, any](ErrDecode("parseISO8601: " + err.Error()))
 		}
 	}
-	return Ok[any, any](t.UnixMilli())
+	return Ok[any, any](int(t.UnixMilli()))
 }
 
 // Time.parse : String -> String -> Result String Int
@@ -5374,7 +5398,7 @@ func Time_parse(layout any, s any) any {
 	if err != nil {
 		return Err[any, any](ErrDecode("time.parse: " + err.Error()))
 	}
-	return Ok[any, any](t.UnixMilli())
+	return Ok[any, any](int(t.UnixMilli()))
 }
 
 // Time.addMillis : Int -> Int -> Int

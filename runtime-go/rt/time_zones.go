@@ -103,8 +103,8 @@ func init() {
 		if d > lastDay {
 			d = lastDay
 		}
-		return time.Date(ny, nm, d, t.Hour(), t.Minute(), t.Second(),
-			t.Nanosecond(), t.Location()).UnixMilli()
+		return int(time.Date(ny, nm, d, t.Hour(), t.Minute(), t.Second(),
+			t.Nanosecond(), t.Location()).UnixMilli())
 	})
 
 	RegisterPure("Time_addYears", func(args []any) any {
@@ -119,8 +119,8 @@ func init() {
 		if d > lastDay {
 			d = lastDay
 		}
-		return time.Date(ny, m, d, t.Hour(), t.Minute(), t.Second(),
-			t.Nanosecond(), t.Location()).UnixMilli()
+		return int(time.Date(ny, m, d, t.Hour(), t.Minute(), t.Second(),
+			t.Nanosecond(), t.Location()).UnixMilli())
 	})
 
 	RegisterPure("Time_addDays", func(args []any) any {
@@ -128,7 +128,7 @@ func init() {
 			return 0
 		}
 		t := time.UnixMilli(int64(AsInt(args[1]))).UTC()
-		return t.AddDate(0, 0, AsInt(args[0])).UnixMilli()
+		return int(t.AddDate(0, 0, AsInt(args[0])).UnixMilli())
 	})
 
 	RegisterPure("Time_addHours", func(args []any) any {
@@ -136,7 +136,7 @@ func init() {
 			return 0
 		}
 		ms := int64(AsInt(args[1]))
-		return ms + int64(AsInt(args[0]))*3600*1000
+		return int(ms + int64(AsInt(args[0]))*3600*1000)
 	})
 
 	RegisterPure("Time_addMinutes", func(args []any) any {
@@ -144,7 +144,7 @@ func init() {
 			return 0
 		}
 		ms := int64(AsInt(args[1]))
-		return ms + int64(AsInt(args[0]))*60*1000
+		return int(ms + int64(AsInt(args[0]))*60*1000)
 	})
 
 	RegisterPure("Time_addSeconds", func(args []any) any {
@@ -152,7 +152,7 @@ func init() {
 			return 0
 		}
 		ms := int64(AsInt(args[1]))
-		return ms + int64(AsInt(args[0]))*1000
+		return int(ms + int64(AsInt(args[0]))*1000)
 	})
 
 	// ── Period boundaries ───────────────────────────────────────
@@ -166,7 +166,7 @@ func init() {
 		}
 		return withZone(args[0], args[1], func(t time.Time, loc *time.Location) any {
 			start := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, loc)
-			return Ok[any, any](start.UnixMilli())
+			return Ok[any, any](int(start.UnixMilli()))
 		})
 	})
 
@@ -176,7 +176,7 @@ func init() {
 		}
 		return withZone(args[0], args[1], func(t time.Time, loc *time.Location) any {
 			start := time.Date(t.Year(), t.Month(), t.Day()+1, 0, 0, 0, 0, loc)
-			return Ok[any, any](start.Add(-time.Millisecond).UnixMilli())
+			return Ok[any, any](int(start.Add(-time.Millisecond).UnixMilli()))
 		})
 	})
 
@@ -191,7 +191,7 @@ func init() {
 			daysFromMonday := (wd + 6) % 7
 			start := time.Date(t.Year(), t.Month(), t.Day()-daysFromMonday,
 				0, 0, 0, 0, loc)
-			return Ok[any, any](start.UnixMilli())
+			return Ok[any, any](int(start.UnixMilli()))
 		})
 	})
 
@@ -201,7 +201,7 @@ func init() {
 		}
 		return withZone(args[0], args[1], func(t time.Time, loc *time.Location) any {
 			start := time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, loc)
-			return Ok[any, any](start.UnixMilli())
+			return Ok[any, any](int(start.UnixMilli()))
 		})
 	})
 
@@ -211,7 +211,7 @@ func init() {
 		}
 		return withZone(args[0], args[1], func(t time.Time, loc *time.Location) any {
 			firstOfNext := time.Date(t.Year(), t.Month()+1, 1, 0, 0, 0, 0, loc)
-			return Ok[any, any](firstOfNext.Add(-time.Millisecond).UnixMilli())
+			return Ok[any, any](int(firstOfNext.Add(-time.Millisecond).UnixMilli()))
 		})
 	})
 
@@ -221,7 +221,7 @@ func init() {
 		}
 		return withZone(args[0], args[1], func(t time.Time, loc *time.Location) any {
 			start := time.Date(t.Year(), 1, 1, 0, 0, 0, 0, loc)
-			return Ok[any, any](start.UnixMilli())
+			return Ok[any, any](int(start.UnixMilli()))
 		})
 	})
 
@@ -231,7 +231,7 @@ func init() {
 		}
 		return withZone(args[0], args[1], func(t time.Time, loc *time.Location) any {
 			start := time.Date(t.Year()+1, 1, 1, 0, 0, 0, 0, loc)
-			return Ok[any, any](start.Add(-time.Millisecond).UnixMilli())
+			return Ok[any, any](int(start.Add(-time.Millisecond).UnixMilli()))
 		})
 	})
 
@@ -397,7 +397,7 @@ func init() {
 			return Err[any, any](ErrInvalidInput("Time.fromParts: out-of-range field"))
 		}
 		t := time.Date(year, time.Month(month), day, hour, minute, second, 0, loc)
-		return Ok[any, any](t.UnixMilli())
+		return Ok[any, any](int(t.UnixMilli()))
 	})
 
 	// ── Zone discovery ──────────────────────────────────────────
