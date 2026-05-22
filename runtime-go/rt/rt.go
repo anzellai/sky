@@ -6618,16 +6618,9 @@ func Server_listen(port any, routes any) any {
 				if skyResp.ContentType != "" {
 					w.Header().Set("Content-Type", skyResp.ContentType)
 				}
-				// Safe-by-default security headers (callers can override).
-				if w.Header().Get("X-Content-Type-Options") == "" {
-					w.Header().Set("X-Content-Type-Options", "nosniff")
-				}
-				if w.Header().Get("X-Frame-Options") == "" {
-					w.Header().Set("X-Frame-Options", "SAMEORIGIN")
-				}
-				if w.Header().Get("Referrer-Policy") == "" {
-					w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
-				}
+				// Safe-by-default security headers (callers can override);
+				// honours SKY_LIVE_FRAME_ANCESTORS for embeddable deploys.
+				setSecurityHeaders(w.Header())
 				// CSRF auto-injection: for HTML responses, walk every
 				// `<form method="POST">` (case-insensitive on both tag
 				// and attribute) and inject a hidden `__sky_csrf` input

@@ -1855,8 +1855,17 @@ func setSecurityHeaders(h http.Header) {
 	if h.Get("X-Content-Type-Options") == "" {
 		h.Set("X-Content-Type-Options", "nosniff")
 	}
-	if h.Get("X-Frame-Options") == "" {
-		h.Set("X-Frame-Options", "SAMEORIGIN")
+	// Framing: SAMEORIGIN by default. SKY_LIVE_FRAME_ANCESTORS opts a
+	// deploy into being embedded by specific origins (e.g. a control
+	// plane's app-preview iframe) — emitted as a CSP `frame-ancestors`
+	// directive, the only header that can scope framing to a
+	// cross-origin allow-list (X-Frame-Options has no such value).
+	if h.Get("X-Frame-Options") == "" && h.Get("Content-Security-Policy") == "" {
+		if fa := os.Getenv("SKY_LIVE_FRAME_ANCESTORS"); fa != "" {
+			h.Set("Content-Security-Policy", "frame-ancestors "+fa)
+		} else {
+			h.Set("X-Frame-Options", "SAMEORIGIN")
+		}
 	}
 	if h.Get("Referrer-Policy") == "" {
 		h.Set("Referrer-Policy", "strict-origin-when-cross-origin")

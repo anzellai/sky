@@ -29,7 +29,7 @@
 -- make a real content change to THIS `.hs` file — bump the marker
 -- below — so cabal recompiles it and the splice re-walks the tree.
 --
--- re-embed marker: 2026-05-22.1 — Std.Ui #63 height-fill fix
+-- re-embed marker: 2026-05-22.2 — Sky.Live frame-ancestors opt-in
 module Sky.Build.EmbeddedRuntime
     ( embeddedRuntime
     , embeddedSkyStdlib
