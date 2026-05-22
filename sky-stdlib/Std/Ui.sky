@@ -1005,8 +1005,13 @@ layout rootAttrs root =
 -- makes its `height fill` resolve to `flex-grow`, so it (and the
 -- fill chain beneath it) stretches to the viewport.
     Html.div
-        [Attr.style "min-height: 100vh; display: flex; flex-direction: column;"]
-        [renderElement AsColumn rootAttrs root]
+        [Attr.style "height: 100vh; display: flex; flex-direction: column;"]
+        [ Html.node
+            "style"
+            []
+            [Html.text "html,body{height:100%;margin:0;padding:0}"]
+        , renderElement AsColumn rootAttrs root
+        ]
 
 
 renderElement : LayoutContext -> List (Attribute msg) -> Element msg -> any
@@ -1730,12 +1735,12 @@ colorCss c =
 --
 -- The mapping (rendered by `widthCssIn parentCtx` /
 -- `heightCssIn parentCtx`):
---   * Column parent (`AsColumn` / `AsTextColumn`): width = cross,
---     so `width fill` = `align-self: stretch; width: 100%`;
---     height = main, so `height fill` = `flex-grow: 1`.
+--   * Column-like parent (`AsColumn` / `AsEl` / `AsTextColumn` — all
+--     render `flex-direction: column`): width = cross, so
+--     `width fill` = `align-self: stretch`; height = main, so
+--     `height fill` = `flex-grow`.
 --   * Row parent (`AsRow`): the inverse.
---   * El / Paragraph: no flex on parent — `fill` becomes plain
---     `width:100%` / `height:100%`.
+--   * Paragraph: a `<p>`, not flex — `fill` stays `width/height:100%`.
 widthCssIn : LayoutContext -> Length -> String
 widthCssIn parentCtx lng =
     case lng of
@@ -1779,7 +1784,7 @@ widthFillFor parentCtx n =
             "align-self: stretch; width: 100%;"
 
         AsEl ->
-            "width: 100%;"
+            "align-self: stretch; width: 100%;"
 
         AsParagraph ->
             "width: 100%;"
@@ -1827,13 +1832,13 @@ heightFillFor parentCtx n =
             "flex-grow: " ++ String.fromInt n ++ "; min-height: 0;"
 
         AsEl ->
-            "height: 100%;"
+            "flex-grow: " ++ String.fromInt n ++ "; min-height: 0;"
 
         AsParagraph ->
             "height: 100%;"
 
         AsTextColumn ->
-            "height: 100%;"
+            "flex-grow: " ++ String.fromInt n ++ "; min-height: 0;"
 
 
 -- Back-compat shims so any caller / fixture importing the old names

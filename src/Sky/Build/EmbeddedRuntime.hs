@@ -20,13 +20,16 @@
 -- tree at TH compile time and emits the full file list (rather
 -- than trusting `embedDir`'s recursive walk).
 --
--- Audit P3-3: cabal must re-embed when runtime files are
--- *modified*. The new `embedDirRecursive` calls
--- `qAddDependentFile` on every file it walks, so cabal rebuilds
--- the splice when any tracked file's mtime changes. New files
--- still need a touch of this module to invalidate the cache
--- (Haskell TH can't watch directory listings) — but at least the
--- splice itself is now correct on first walk.
+-- Audit P3-3: cabal must re-embed when runtime / stdlib files
+-- change. `embedDirRecursive` calls `qAddDependentFile` on every
+-- file, but cabal does NOT track non-`.hs` files for its own
+-- up-to-date check — so editing a `.sky` / `.go` file alone (even
+-- with a newer mtime) does NOT make `cabal build` recompile this
+-- module, and the embedded copy goes stale. To force a re-embed,
+-- make a real content change to THIS `.hs` file — bump the marker
+-- below — so cabal recompiles it and the splice re-walks the tree.
+--
+-- re-embed marker: 2026-05-22.1 — Std.Ui #63 height-fill fix
 module Sky.Build.EmbeddedRuntime
     ( embeddedRuntime
     , embeddedSkyStdlib
