@@ -1778,9 +1778,29 @@ Regex.split "[,;]" "a,b;c"           -- ["a", "b", "c"]
 ### Sky.Core.Crypto (pure)
 
 ```elm
-Crypto.sha256 "hello"      -- "2cf24dba..."
-Crypto.hmacSha256 "key" "msg"  -- HMAC signature
+Crypto.sha256 "hello"               -- "2cf24dba..." (also sha512, sha1, md5)
+Crypto.hmacSha256 "key" "msg"       -- hex HMAC (also hmacSha512)
+Crypto.rsaSha256Sign pemKey "msg"   -- Result Error String — RS256 signature
+Crypto.rsaSha256Verify pub "msg" s  -- Bool
+Crypto.constantTimeEqual a b        -- compare secrets safely, never ==
 ```
+
+### Sky.Core.Jwt (pure)
+
+```elm
+import Sky.Core.Jwt as Jwt
+
+token =
+    Jwt.encode (Jwt.hs256 secret)
+        (Jwt.claims |> Jwt.subject "u1" |> Jwt.expiresAt 1999999999)
+-- token : Result Error String
+
+payload = Jwt.decode (Jwt.hs256 secret) now token
+-- verifies the signature + exp/nbf against `now` → Result Error String
+```
+
+`Jwt.rs256 pemKey` selects RS256 (GitHub Apps, service accounts) —
+pass the private key to `encode`, the public key to `decode`.
 
 ### Sky.Core.Random (Task)
 
@@ -4063,9 +4083,10 @@ Time.diffMillis later earlier
 ### New Crypto Functions
 
 ```elm
-Crypto.sha256 "hello"                    -- hex digest
-Crypto.sha512 "hello"
-Crypto.hmacSha256 "secret" "message"     -- for signing cookies/tokens
+Crypto.sha256 "hello"                    -- hex digest (also sha512, sha1, md5)
+Crypto.hmacSha256 "secret" "message"     -- hex HMAC (also hmacSha512)
+Crypto.rsaSha256Sign pemKey "message"    -- Result Error String — RS256
+Crypto.rsaSha256Verify pubKey msg sig    -- Bool
 Crypto.constantTimeEqual a b             -- use for comparing secrets, NOT ==
 Crypto.randomBytes 16                    -- Task Error String, hex
 Crypto.randomToken 32                    -- Task Error String, URL-safe base64

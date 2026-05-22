@@ -1,12 +1,16 @@
--- | Sky.Core.Crypto — hash + MAC + entropy helpers (Layer 3 Sky source).
+-- | Sky.Core.Crypto — hash + MAC + signature + entropy helpers
+-- (Layer 3 Sky source).
 --
--- Pure hash + MAC functions (`sha256` / `sha512` / `md5` /
--- `hmacSha256`) return the hex-encoded digest as a plain `String`.
+-- Pure hash + MAC functions (`sha256` / `sha512` / `sha1` / `md5` /
+-- `hmacSha256` / `hmacSha512`) return the hex-encoded digest as a
+-- plain `String`. `rsaSha256Sign` / `rsaSha256Verify` cover
+-- RSASSA-PKCS1-v1_5 (the `RS256` of JWT and signed-request APIs).
 -- Random helpers return `Task Error String` because they consume
 -- entropy from the OS RNG (a real side effect).
 module Sky.Core.Crypto exposing
-    ( sha256, sha512, md5
-    , hmacSha256
+    ( sha256, sha512, sha1, md5
+    , hmacSha256, hmacSha512
+    , rsaSha256Sign, rsaSha256Verify
     , constantTimeEqual
     , randomBytes, randomToken
     )
@@ -16,7 +20,7 @@ import Sky.Ffi as Ffi
 import Sky.Core.Error exposing (Error)
 
 
--- ─── Hashes + MAC ──────────────────────────────────────────────────
+-- ─── Hashes ────────────────────────────────────────────────────────
 
 
 sha256 : String -> String
@@ -27,16 +31,51 @@ sha512 : String -> String
 sha512 = Ffi.kernel "Crypto_sha512"
 
 
+-- SHA-1 — for interop only (git object ids, legacy webhook
+-- signatures). Not collision-resistant; never use for new security
+-- hashing — reach for `sha256` / `sha512`.
+sha1 : String -> String
+sha1 = Ffi.kernel "Crypto_sha1"
+
+
+-- MD5 — retained for legacy interoperability only. Not secure.
 md5 : String -> String
 md5 = Ffi.kernel "Crypto_md5"
 
 
+-- ─── MAC ───────────────────────────────────────────────────────────
+
+
+-- `hmacSha256 key message` → hex HMAC-SHA256.
 hmacSha256 : String -> String -> String
 hmacSha256 = Ffi.kernel "Crypto_hmacSha256"
 
 
+-- `hmacSha512 key message` → hex HMAC-SHA512.
+hmacSha512 : String -> String -> String
+hmacSha512 = Ffi.kernel "Crypto_hmacSha512"
+
+
+-- Constant-time string compare — use when comparing secrets (tokens,
+-- MACs, password hashes) so an attacker can't leak bytes via timing.
 constantTimeEqual : String -> String -> Bool
 constantTimeEqual = Ffi.kernel "Crypto_constantTimeEqual"
+
+
+-- ─── RSA signatures (RSASSA-PKCS1-v1_5 over SHA-256 — "RS256") ──────
+
+
+-- `rsaSha256Sign pemPrivateKey message` → a standard-base64
+-- signature. The PEM may be PKCS#1 or PKCS#8. `Err` on an
+-- unparseable key.
+rsaSha256Sign : String -> String -> Result Error String
+rsaSha256Sign = Ffi.kernel "Crypto_rsaSha256Sign"
+
+
+-- `rsaSha256Verify pemPublicKey message base64Signature` → is the
+-- signature valid? `False` on any parse / verification failure.
+rsaSha256Verify : String -> String -> String -> Bool
+rsaSha256Verify = Ffi.kernel "Crypto_rsaSha256Verify"
 
 
 -- ─── Entropy (Task — touches the OS RNG) ───────────────────────────

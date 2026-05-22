@@ -139,7 +139,7 @@ match = Regex.match "^[a-z]+$" "hello"   -- True
 
 `join`, `dir`, `base`, `ext`, `isAbsolute`, `safeJoin` (refuses `..` traversal).
 
-### `Crypto` — hashes + entropy
+### `Crypto` — hashes, MAC, signatures, entropy
 
 ```elm
 import Sky.Core.Crypto as Crypto
@@ -152,11 +152,50 @@ hmac   = Crypto.hmacSha256 "secret" "message"
 |---|---|---|
 | `Crypto.sha256` | `String -> String` | Hex digest |
 | `Crypto.sha512` | `String -> String` | Hex digest |
+| `Crypto.sha1` | `String -> String` | Hex digest — interop only (git ids, legacy webhook signatures) |
 | `Crypto.md5` | `String -> String` | Hex digest (legacy support only) |
-| `Crypto.hmacSha256` | `String -> String -> String` | Hex digest |
+| `Crypto.hmacSha256` | `String -> String -> String` | Hex HMAC-SHA256 |
+| `Crypto.hmacSha512` | `String -> String -> String` | Hex HMAC-SHA512 |
+| `Crypto.rsaSha256Sign` | `String -> String -> Result Error String` | RSASSA-PKCS1-v1_5 over SHA-256 ("RS256"); (PEM private key, message) → standard-base64 signature |
+| `Crypto.rsaSha256Verify` | `String -> String -> String -> Bool` | (PEM public key, message, base64 signature) → valid? |
 | `Crypto.constantTimeEqual` | `String -> String -> Bool` | Side-channel safe comparison |
 | `Crypto.randomBytes` | `Int -> Task Error Bytes` | OS entropy → raw bytes |
 | `Crypto.randomToken` | `Int -> Task Error String` | OS entropy → hex string of given byte length |
+
+### `Jwt` — JSON Web Tokens
+
+```elm
+import Sky.Core.Jwt as Jwt
+
+token =
+    Jwt.encode (Jwt.hs256 secret)
+        (Jwt.claims
+            |> Jwt.issuer "my-app"
+            |> Jwt.subject "user-1"
+            |> Jwt.expiresAt 1999999999
+        )
+-- token : Result Error String
+
+payload = Jwt.decode (Jwt.hs256 secret) now token
+-- → Result Error String (the verified payload JSON)
+```
+
+`encode` / `decode` support `HS256` (HMAC) and `RS256` (RSA — what
+GitHub Apps and service accounts sign with). `decode` verifies the
+signature *and* the `exp` / `nbf` claims against the `now` you pass
+(unix seconds), then returns the payload JSON — decode it further
+with `Sky.Core.Json.Decode`.
+
+| Function | Type | Notes |
+|---|---|---|
+| `Jwt.hs256` | `String -> Algorithm` | HMAC-SHA256; the shared secret |
+| `Jwt.rs256` | `String -> Algorithm` | RSA; PEM private key to `encode`, public key to `decode` |
+| `Jwt.claims` | `Claims` | An empty claim set |
+| `Jwt.issuer` / `subject` / `audience` / `jwtId` | `String -> Claims -> Claims` | Registered string claims (`iss`/`sub`/`aud`/`jti`) |
+| `Jwt.expiresAt` / `notBefore` / `issuedAt` | `Int -> Claims -> Claims` | Registered time claims (`exp`/`nbf`/`iat`), unix seconds |
+| `Jwt.withClaim` | `String -> JsonEnc.Value -> Claims -> Claims` | Any custom claim |
+| `Jwt.encode` | `Algorithm -> Claims -> Result Error String` | Sign a token |
+| `Jwt.decode` | `Algorithm -> Int -> String -> Result Error String` | Verify signature + `exp`/`nbf`; → payload JSON |
 
 ### `Encoding` — base64, URL, hex
 

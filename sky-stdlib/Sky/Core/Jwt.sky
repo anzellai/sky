@@ -1,0 +1,297 @@
+-- | Sky.Core.Jwt — JSON Web Tokens (encode + verify).
+--
+-- A focused, composable JWT module: build a token with a `Claims`
+-- builder, sign it with an `Algorithm`, and verify + time-check on
+-- the way back. `HS256` (HMAC) and `RS256` (RSA, the algorithm
+-- GitHub Apps / service accounts use) are supported; a new
+-- algorithm is just another `Algorithm` constructor — no API churn.
+--
+--   token  = Jwt.encode (Jwt.hs256 secret)
+--                (Jwt.claims |> Jwt.subject "u1" |> Jwt.expiresAt t)
+--   claims = Jwt.decode (Jwt.hs256 secret) now token
+--
+-- `decode` verifies the signature AND the `exp` / `nbf` claims
+-- against the `now` you pass (unix seconds), then hands back the
+-- verified payload JSON — decode it with `Sky.Core.Json.Decode`.
+module Sky.Core.Jwt exposing
+    ( Algorithm, hs256, rs256
+    , Claims, claims, withClaim
+    , issuer, subject, audience, expiresAt, notBefore, issuedAt, jwtId
+    , encode, decode
+    )
+
+
+import Sky.Core.Crypto as Crypto
+import Sky.Core.Encoding as Encoding
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.Result as Result
+import Sky.Core.Json.Encode as JsonEnc
+import Sky.Core.Json.Decode as JsonDec
+import Sky.Core.Error as Error exposing (Error)
+
+
+-- ─── Algorithm ─────────────────────────────────────────────────────
+
+
+-- A signing/verifying algorithm with its key. For `RS256`, pass the
+-- PEM *private* key to `encode` and the PEM *public* key to `decode`
+-- (HMAC's `HS256` uses the same secret for both).
+type Algorithm
+    = HS256 String
+    | RS256 String
+
+
+hs256 : String -> Algorithm
+hs256 secret =
+    HS256 secret
+
+
+rs256 : String -> Algorithm
+rs256 key =
+    RS256 key
+
+
+algName : Algorithm -> String
+algName alg =
+    case alg of
+        HS256 _ ->
+            "HS256"
+
+        RS256 _ ->
+            "RS256"
+
+
+-- ─── Claims ────────────────────────────────────────────────────────
+
+
+-- An ordered set of claims. Registered claims (iss/sub/aud/exp/
+-- nbf/iat/jti) have typed helpers; `withClaim` adds any custom one.
+type Claims
+    = Claims (List ( String, JsonEnc.Value ))
+
+
+claims : Claims
+claims =
+    Claims []
+
+
+withClaim : String -> JsonEnc.Value -> Claims -> Claims
+withClaim k v c =
+    case c of
+        Claims kvs ->
+            Claims (kvs ++ [ ( k, v ) ])
+
+
+issuer : String -> Claims -> Claims
+issuer v c =
+    withClaim "iss" (JsonEnc.string v) c
+
+
+subject : String -> Claims -> Claims
+subject v c =
+    withClaim "sub" (JsonEnc.string v) c
+
+
+audience : String -> Claims -> Claims
+audience v c =
+    withClaim "aud" (JsonEnc.string v) c
+
+
+-- `exp` — expiry, unix seconds.
+expiresAt : Int -> Claims -> Claims
+expiresAt ts c =
+    withClaim "exp" (JsonEnc.int ts) c
+
+
+-- `nbf` — not-before, unix seconds.
+notBefore : Int -> Claims -> Claims
+notBefore ts c =
+    withClaim "nbf" (JsonEnc.int ts) c
+
+
+-- `iat` — issued-at, unix seconds.
+issuedAt : Int -> Claims -> Claims
+issuedAt ts c =
+    withClaim "iat" (JsonEnc.int ts) c
+
+
+jwtId : String -> Claims -> Claims
+jwtId v c =
+    withClaim "jti" (JsonEnc.string v) c
+
+
+-- ─── encode ────────────────────────────────────────────────────────
+
+
+-- Sign a `Claims` set into a compact JWT string.
+encode : Algorithm -> Claims -> Result Error String
+encode alg c =
+    let
+        headerJson =
+            JsonEnc.encode 0
+                (JsonEnc.object
+                    [ ( "alg", JsonEnc.string (algName alg) )
+                    , ( "typ", JsonEnc.string "JWT" )
+                    ]
+                )
+
+        payloadJson =
+            JsonEnc.encode 0 (JsonEnc.object (claimList c))
+
+        signingInput =
+            b64uEncode headerJson ++ "." ++ b64uEncode payloadJson
+    in
+    Result.map
+        (\sig -> signingInput ++ "." ++ sig)
+        (sign alg signingInput)
+
+
+claimList : Claims -> List ( String, JsonEnc.Value )
+claimList c =
+    case c of
+        Claims kvs ->
+            kvs
+
+
+-- Produce the base64url signature over the signing input.
+sign : Algorithm -> String -> Result Error String
+sign alg input =
+    case alg of
+        HS256 secret ->
+            -- hmacSha256 hands back hex; JWT wants the raw bytes,
+            -- base64url-encoded.
+            Result.map
+                b64uEncode
+                (Encoding.hexDecode (Crypto.hmacSha256 secret input))
+
+        RS256 pemKey ->
+            -- rsaSha256Sign hands back standard base64.
+            Result.map standardToUrl (Crypto.rsaSha256Sign pemKey input)
+
+
+-- ─── decode + verify ───────────────────────────────────────────────
+
+
+-- Verify a token's signature and its `exp` / `nbf` against `now`
+-- (unix seconds), returning the verified payload JSON.
+decode : Algorithm -> Int -> String -> Result Error String
+decode alg now token =
+    case String.split "." token of
+        [ h, p, s ] ->
+            if not (verify alg (h ++ "." ++ p) s) then
+                Err (Error.unexpected "Jwt.decode: signature verification failed")
+
+            else
+                Result.andThen (validateTime now) (b64uDecode p)
+
+        _ ->
+            Err
+                (Error.unexpected
+                    "Jwt.decode: malformed token — expected three dot-separated segments"
+                )
+
+
+verify : Algorithm -> String -> String -> Bool
+verify alg input sig =
+    case alg of
+        HS256 secret ->
+            case sign (HS256 secret) input of
+                Ok expected ->
+                    Crypto.constantTimeEqual expected sig
+
+                Err _ ->
+                    False
+
+        RS256 pemKey ->
+            Crypto.rsaSha256Verify pemKey input (urlToStandard sig)
+
+
+-- Reject an expired or not-yet-valid token; absent claims are fine.
+validateTime : Int -> String -> Result Error String
+validateTime now payloadJson =
+    let
+        expR =
+            JsonDec.decodeString (JsonDec.field "exp" JsonDec.int) payloadJson
+
+        nbfR =
+            JsonDec.decodeString (JsonDec.field "nbf" JsonDec.int) payloadJson
+    in
+    if pastClaim now expR then
+        Err (Error.unexpected "Jwt.decode: token has expired")
+
+    else if futureClaim now nbfR then
+        Err (Error.unexpected "Jwt.decode: token is not yet valid")
+
+    else
+        Ok payloadJson
+
+
+-- `now` is at or past the claimed time.
+pastClaim : Int -> Result e Int -> Bool
+pastClaim now r =
+    case r of
+        Ok ts ->
+            now >= ts
+
+        Err _ ->
+            False
+
+
+-- `now` is before the claimed time.
+futureClaim : Int -> Result e Int -> Bool
+futureClaim now r =
+    case r of
+        Ok ts ->
+            now < ts
+
+        Err _ ->
+            False
+
+
+-- ─── base64url (RFC 7515 — no padding, URL-safe alphabet) ──────────
+
+
+b64uEncode : String -> String
+b64uEncode s =
+    standardToUrl (Encoding.base64Encode s)
+
+
+b64uDecode : String -> Result Error String
+b64uDecode u =
+    let
+        std =
+            String.replace "_" "/" (String.replace "-" "+" u)
+
+        rem =
+            modBy 4 (String.length std)
+
+        padded =
+            if rem == 0 then
+                std
+
+            else
+                std ++ String.repeat (4 - rem) "="
+    in
+    Encoding.base64Decode padded
+
+
+standardToUrl : String -> String
+standardToUrl b64 =
+    String.replace "=" "" (String.replace "/" "_" (String.replace "+" "-" b64))
+
+
+urlToStandard : String -> String
+urlToStandard u =
+    let
+        std =
+            String.replace "_" "/" (String.replace "-" "+" u)
+
+        rem =
+            modBy 4 (String.length std)
+    in
+    if rem == 0 then
+        std
+
+    else
+        std ++ String.repeat (4 - rem) "="

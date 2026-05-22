@@ -14,6 +14,7 @@ import Sky.Core.Maybe as Maybe
 import Sky.Core.Result as Result
 import Sky.Core.Math as Math
 import Sky.Core.Crypto as Crypto
+import Sky.Core.Jwt as Jwt
 import Sky.Core.Encoding as Encoding
 import Sky.Core.Json.Encode as JsonEnc
 import Sky.Core.Json.Decode as JsonDec
@@ -36,6 +37,7 @@ tests =
     , resultSuite
     , mathSuite
     , cryptoSuite
+    , jwtSuite
     , encodingSuite
     , jsonSuite
     , decimalSuite
@@ -319,6 +321,69 @@ cryptoSuite =
             Test.isTrue (Crypto.constantTimeEqual "abc" "abc"))
         , Test.test "constantTimeEqual differing strings" (\_ ->
             Test.isFalse (Crypto.constantTimeEqual "abc" "abd"))
+        , Test.test "sha1 known vector" (\_ ->
+            -- sha1("hello") = aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d
+            Test.equal
+                "aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d"
+                (Crypto.sha1 "hello"))
+        , Test.test "hmacSha512 produces 128 hex chars" (\_ ->
+            Test.equal 128 (String.length (Crypto.hmacSha512 "secret" "msg")))
+        ]
+
+
+-- ─── Jwt ───────────────────────────────────────────────────────────
+
+jwtClaimSet : Jwt.Claims
+jwtClaimSet =
+    Jwt.claims |> Jwt.subject "alice" |> Jwt.expiresAt 9999999999
+
+
+jwtHsToken : Result Error String
+jwtHsToken =
+    Jwt.encode (Jwt.hs256 "topsecret") jwtClaimSet
+
+
+jwtDecodeOk : String -> Int -> String -> Bool
+jwtDecodeOk secret now tok =
+    case Jwt.decode (Jwt.hs256 secret) now tok of
+        Ok _ ->
+            True
+
+        Err _ ->
+            False
+
+
+jwtSuite : Test
+jwtSuite =
+    Test.suite "Jwt"
+        [ Test.test "HS256 encode yields three segments" (\_ ->
+            case jwtHsToken of
+                Ok tok ->
+                    Test.equal 3 (List.length (String.split "." tok))
+
+                Err _ ->
+                    Test.isTrue False)
+        , Test.test "HS256 verify round-trips" (\_ ->
+            case jwtHsToken of
+                Ok tok ->
+                    Test.isTrue (jwtDecodeOk "topsecret" 1000 tok)
+
+                Err _ ->
+                    Test.isTrue False)
+        , Test.test "rejects a forged signature (wrong key)" (\_ ->
+            case jwtHsToken of
+                Ok tok ->
+                    Test.isFalse (jwtDecodeOk "wrong-key" 1000 tok)
+
+                Err _ ->
+                    Test.isTrue False)
+        , Test.test "rejects an expired token" (\_ ->
+            case jwtHsToken of
+                Ok tok ->
+                    Test.isFalse (jwtDecodeOk "topsecret" 99999999999 tok)
+
+                Err _ ->
+                    Test.isTrue False)
         ]
 
 

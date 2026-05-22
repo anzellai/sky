@@ -30,6 +30,11 @@ import (
 	"crypto/sha256"
 	"crypto/sha512"
 	"crypto/subtle"
+	"crypto"
+	"crypto/rsa"
+	"crypto/sha1"
+	"crypto/x509"
+	"encoding/pem"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -5840,6 +5845,79 @@ func Crypto_hmacSha256(key any, msg any) any {
 	mac := hmac.New(sha256.New, []byte(fmt.Sprintf("%v", key)))
 	mac.Write([]byte(fmt.Sprintf("%v", msg)))
 	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// Crypto.hmacSha512 : String -> String -> String
+// (key, message) → hex HMAC-SHA512.
+func Crypto_hmacSha512(key any, msg any) any {
+	mac := hmac.New(sha512.New, []byte(fmt.Sprintf("%v", key)))
+	mac.Write([]byte(fmt.Sprintf("%v", msg)))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// Crypto.sha1 : String -> String — hex SHA-1 digest.
+// Retained for interop (git object ids, legacy webhook signatures).
+// Not for security hashing — use sha256/sha512.
+func Crypto_sha1(s any) any {
+	h := sha1.Sum([]byte(fmt.Sprintf("%v", s)))
+	return hex.EncodeToString(h[:])
+}
+
+// Crypto.rsaSha256Sign : String -> String -> Result Error String
+// (PEM private key, message) → standard-base64 RSASSA-PKCS1-v1_5
+// signature over the SHA-256 digest. Accepts PKCS#1 and PKCS#8 PEM
+// keys. The signing key never leaves this process.
+func Crypto_rsaSha256Sign(pemKey any, msg any) any {
+	block, _ := pem.Decode([]byte(fmt.Sprintf("%v", pemKey)))
+	if block == nil {
+		return Err[any, any](ErrFfi("Crypto.rsaSha256Sign: not a PEM-encoded key"))
+	}
+	var priv *rsa.PrivateKey
+	if k, err := x509.ParsePKCS1PrivateKey(block.Bytes); err == nil {
+		priv = k
+	} else if k, err := x509.ParsePKCS8PrivateKey(block.Bytes); err == nil {
+		rk, ok := k.(*rsa.PrivateKey)
+		if !ok {
+			return Err[any, any](ErrFfi("Crypto.rsaSha256Sign: PEM key is not RSA"))
+		}
+		priv = rk
+	} else {
+		return Err[any, any](ErrFfi("Crypto.rsaSha256Sign: could not parse the private key"))
+	}
+	digest := sha256.Sum256([]byte(fmt.Sprintf("%v", msg)))
+	sig, err := rsa.SignPKCS1v15(cryptorand.Reader, priv, crypto.SHA256, digest[:])
+	if err != nil {
+		return Err[any, any](ErrFfi("Crypto.rsaSha256Sign: " + err.Error()))
+	}
+	return Ok[any, any](base64.StdEncoding.EncodeToString(sig))
+}
+
+// Crypto.rsaSha256Verify : String -> String -> String -> Bool
+// (PEM public key, message, standard-base64 signature) → valid?
+// False on any parse or verification failure.
+func Crypto_rsaSha256Verify(pemKey any, msg any, sigB64 any) any {
+	block, _ := pem.Decode([]byte(fmt.Sprintf("%v", pemKey)))
+	if block == nil {
+		return false
+	}
+	var pub *rsa.PublicKey
+	if k, err := x509.ParsePKIXPublicKey(block.Bytes); err == nil {
+		rk, ok := k.(*rsa.PublicKey)
+		if !ok {
+			return false
+		}
+		pub = rk
+	} else if k, err := x509.ParsePKCS1PublicKey(block.Bytes); err == nil {
+		pub = k
+	} else {
+		return false
+	}
+	sig, err := base64.StdEncoding.DecodeString(fmt.Sprintf("%v", sigB64))
+	if err != nil {
+		return false
+	}
+	digest := sha256.Sum256([]byte(fmt.Sprintf("%v", msg)))
+	return rsa.VerifyPKCS1v15(pub, crypto.SHA256, digest[:], sig) == nil
 }
 
 // Crypto.constantTimeEqual : String -> String -> Bool

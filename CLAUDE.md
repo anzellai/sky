@@ -416,7 +416,8 @@ Each binding is either:
 | `Regex` | `Sky.Core.Regex` | match, find, findAll, replace, split |
 | `Char` | `Sky.Core.Char` | isAlpha, isDigit, isLower, isUpper, toUpper, toLower |
 | `Path` | `Sky.Core.Path` | base, dir, ext, isAbsolute |
-| `Crypto` | `Sky.Core.Crypto` | sha256, sha512, md5, hmacSha256, constantTimeEqual (pure); randomBytes, randomToken (Task — entropy) |
+| `Crypto` | `Sky.Core.Crypto` | sha256, sha512, sha1, md5, hmacSha256, hmacSha512, rsaSha256Sign, rsaSha256Verify, constantTimeEqual (pure); randomBytes, randomToken (Task — entropy) |
+| `Jwt` | `Sky.Core.Jwt` | encode, decode (HS256 + RS256 — signature + `exp`/`nbf` checked); `hs256`/`rs256` algorithms; `claims` builder — issuer/subject/audience/expiresAt/notBefore/issuedAt/jwtId/withClaim |
 | `Encoding` | `Sky.Core.Encoding` | base64Encode/Decode, urlEncode/Decode, hexEncode/Decode |
 | `JsonEnc` | `Sky.Core.Json.Encode` | string, int, float, bool, null, list (Elm-style `(a -> Value) -> List a -> Value`), object, encode |
 | `JsonDec` | `Sky.Core.Json.Decode` | string/int/float/bool, decodeString, field, at, index, list, map, andThen, succeed, fail, oneOf, map2-4 |
