@@ -1,0 +1,45 @@
+module Main exposing (main)
+
+-- Regression (issue #56): a `case` on a tuple whose components carry
+-- discriminating sub-patterns — `(Just a, Just b)` — must GATE the
+-- arm on each component's tag. Before the fix `patternCondition`
+-- returned `Nothing` for a tuple pattern, so the arm fired
+-- unconditionally and ran its body on a non-matching tuple — `a`/`b`
+-- were extracted from a `Nothing` and `a + b` panicked at runtime.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Std.Log exposing (println)
+
+
+-- The (Just, Just) arm must only fire when BOTH are Just.
+classify : Maybe Int -> Maybe Int -> String
+classify ma mb =
+    case ( ma, mb ) of
+        ( Just a, Just b ) ->
+            String.fromInt (a + b)
+
+        _ ->
+            "fallback"
+
+
+-- A nested tuple inside a tuple — the "similar patterns" case: the
+-- inner tuple's components must gate too.
+deep : ( Maybe Int, Maybe Int ) -> Bool -> String
+deep pair flag =
+    case ( pair, flag ) of
+        ( ( Just a, Just b ), True ) ->
+            String.fromInt (a * b)
+
+        _ ->
+            "no"
+
+
+main =
+    let
+        _ = println (classify (Just 2) (Just 3))
+        -- These two must reach "fallback" / "no", NOT panic:
+        _ = println (classify Nothing (Just 3))
+        _ = println (deep ( Nothing, Just 9 ) True)
+    in
+    println (deep ( Just 4, Just 5 ) True)

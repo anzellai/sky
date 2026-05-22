@@ -593,7 +593,10 @@ constrainIf counter env region branches elseExpr expected = do
         constrain counter env body (T.FromContext region (T.IfBranch i) branchType))
         [1..] branches
     elseCon <- constrain counter env elseExpr (T.FromContext region (T.IfBranch 0) branchType)
-    return $ T.CAnd (condCons ++ bodyCons ++ [elseCon, T.CEqual region T.CIf branchType expected])
+    -- Pin the branch type to the expected type before the branch
+    -- bodies — so an annotated return type blames the disagreeing
+    -- branch, not the first one HM unified (issue #65, as constrainCase).
+    return $ T.CAnd (condCons ++ T.CEqual region T.CIf branchType expected : bodyCons ++ [elseCon])
 
 
 -- ═══════════════════════════════════════════════════════════
@@ -751,7 +754,13 @@ constrainCase counter env region subject branches expected = do
         resultType = T.TVar resName
     subjectCon <- constrain counter env subject (T.NoExpectation subjectType)
     branchCons <- zipWithM (constrainBranch counter env region subjectType resultType) [1..] branches
-    return $ T.CAnd (subjectCon : branchCons ++ [T.CEqual region T.CCase resultType expected])
+    -- Unify the case result with the expected type BEFORE the
+    -- branches. When the function carries a return annotation, this
+    -- pins the result to the annotated type first, so a branch that
+    -- disagrees with the signature is the one blamed — not whichever
+    -- branch HM happened to unify first (issue #65). With no
+    -- annotation `expected` is a fresh var, so behaviour is unchanged.
+    return $ T.CAnd (subjectCon : T.CEqual region T.CCase resultType expected : branchCons)
 
 
 constrainBranch :: Counter -> Env -> T.Region -> T.Type -> T.Type -> Int -> Can.CaseBranch -> IO T.Constraint

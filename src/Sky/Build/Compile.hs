@@ -9081,8 +9081,13 @@ patternCondition subject pat = case pat of
                 [ GoIr.GoCall (GoIr.GoIdent "rt.AsList") [GoIr.GoIdent subject] ])
             (GoIr.GoIntLit (length xs))
 
-    -- Tuples, records, aliases: structure is guaranteed by HM — bindings carry the work.
-    Can.PTuple{} -> Nothing
+    -- A tuple's shape is guaranteed by HM, but its components can
+    -- carry discriminating sub-patterns (`(Just x, Just y)`) — those
+    -- MUST gate the arm. Without this the arm fired unconditionally
+    -- and ran its body on a non-matching tuple (issue #56).
+    Can.PTuple aPat bPat more ->
+        tuplePatternCondition subject (aPat : bPat : more)
+
     Can.PRecord _    -> Nothing
     Can.PAlias inner _ ->
         let (A.At _ innerPat) = inner
@@ -9248,8 +9253,12 @@ patternConditionForExpr subjectRaw pat = case pat of
     Can.PAnything -> Nothing
     Can.PVar _    -> Nothing
     Can.PUnit     -> Nothing
-    Can.PTuple{}  -> Nothing
     Can.PRecord _ -> Nothing
+
+    -- A nested tuple (a tuple inside a ctor arg, a cons, or another
+    -- tuple) recurses the same way — issue #56, "similar patterns".
+    Can.PTuple aPat bPat more ->
+        tuplePatternCondition subjectRaw (aPat : bPat : more)
 
     Can.PInt n ->
         Just $ GoIr.GoBinary "=="
@@ -9276,8 +9285,20 @@ patternConditionForExpr subjectRaw pat = case pat of
                 "rune")
             (GoIr.GoRuneLit c)
 
-    Can.PCtor _home _typeName union _ctorName ctorIdx _args ->
-        case Can._u_opts union of
+    Can.PCtor _home typeName union ctorName ctorIdx _args ->
+        -- Sky's `Bool` lowers to a raw Go `bool`, so a True/False
+        -- ctor pattern must compare the value directly — `rt.EnumTagIs`
+        -- expects an SkyADT and is always false on a `bool`. The
+        -- top-level `patternCondition` already special-cases this;
+        -- the gap here surfaced once tuple components began routing
+        -- through `patternConditionForExpr` (issue #56, a Bool inside
+        -- a tuple pattern).
+        if typeName == "Bool" && (ctorName == "True" || ctorName == "False") then
+            Just $ GoIr.GoBinary "=="
+                (GoIr.GoCall (GoIr.GoQualified "rt" "AsBool")
+                    [GoIr.GoRaw subjectRaw])
+                (GoIr.GoBoolLit (ctorName == "True"))
+        else case Can._u_opts union of
             Can.Enum ->
                 -- Enum (zero-arg ADT): use rt.EnumTagIs which tolerates
                 -- both Sky-side typed-int and rt.SkyADT-shaped values.
@@ -9317,6 +9338,32 @@ patternConditionForExpr subjectRaw pat = case pat of
     Can.PAlias inner _ ->
         let (A.At _ innerPat) = inner
         in patternConditionForExpr subjectRaw innerPat
+
+
+-- | Conjoin the sub-pattern conditions of a tuple, each tested
+-- against its component — `rt.AsTuple2/3(subj).V<i>`, or
+-- `SkyTupleN.Vs[i]` for arity ≥ 4 (matching the binding accessors).
+-- `subj` is spliced raw, so it works whether the tuple subject is a
+-- plain identifier or itself a Go expression (a nested tuple).
+-- Nothing when every component is irrefutable (a pure-`PVar` tuple).
+tuplePatternCondition :: String -> [Can.Pattern] -> Maybe GoIr.GoExpr
+tuplePatternCondition subj pats =
+    let arity = length pats
+        compRaw i = case arity of
+            2 -> "rt.AsTuple2(" ++ subj ++ ").V" ++ show i
+            3 -> "rt.AsTuple3(" ++ subj ++ ").V" ++ show i
+            _ -> "any(" ++ subj ++ ").(rt.SkyTupleN).Vs[" ++ show i ++ "]"
+        conds =
+            [ c
+            | (i, A.At _ subPat) <- zip [0 :: Int ..] pats
+            , Just c <- [patternConditionForExpr (compRaw i) subPat]
+            ]
+    in case conds of
+        [] ->
+            Nothing
+
+        (h : t) ->
+            Just (foldl (GoIr.GoBinary "&&") h t)
 
 
 -- | Generate Go variable bindings from a pattern
