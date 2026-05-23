@@ -438,15 +438,33 @@ func ConsoleAutoMounted() bool { return consoleAutoMounted.Load() }
 // never blocked by console-mount issues; the legacy
 // MountConsoleEndpoints path then provides a working fallback.
 func maybeAutoMountConsole(mux *http.ServeMux, parentBasePath string, parentPort int) {
-	if productionFromEnv() {
+	if parentBasePath != "" {
+		// We're running AS a sub-app — don't recursively mount
+		// another console inside ourselves.
 		return
 	}
 	if v := os.Getenv("SKY_CONSOLE_EMBED"); v == "off" || v == "0" || v == "false" {
 		return
 	}
-	if parentBasePath != "" {
-		// We're running AS a sub-app — don't recursively mount
-		// another console inside ourselves.
+
+	// PRO+ CONSOLE — SKY_CONSOLE_TOKEN_SECRET set overrides the
+	// production gate AND wraps the console mount in a JWT/cookie
+	// auth middleware (see console_auth.go). The control-plane
+	// (skydeploy.app) mints the URL token; the tenant runtime here
+	// verifies it + sets a session cookie. Banner stays hidden
+	// because productionFromEnv() is still true → devBannerHTML()
+	// returns "" regardless.
+	if secret := os.Getenv("SKY_CONSOLE_TOKEN_SECRET"); secret != "" {
+		IngestTokenInit()
+		if err := MountConsoleAuth(mux, parentPort, secret); err == nil {
+			consoleAutoMounted.Store(true)
+		}
+		return
+	}
+
+	// DEV-MODE CONSOLE — production gate blocks; everything below
+	// is the existing pre-2026-05-23 behaviour, unchanged.
+	if productionFromEnv() {
 		return
 	}
 	// IMPORTANT: materialise the ingest token NOW so SpawnSkyConsole
@@ -461,6 +479,67 @@ func maybeAutoMountConsole(mux *http.ServeMux, parentBasePath string, parentPort
 	if err := MountSubApp(mux, "/_sky/console", SpawnSkyConsole(parentPort)); err == nil {
 		consoleAutoMounted.Store(true)
 	}
+}
+
+
+// MountConsoleAuth mounts the Sky Console as a token-gated sub-app
+// at /_sky/console. Used by Pro+ deploy mode to expose the console
+// in production with the owner's skydeploy.app session validating
+// access. The token is a JWT issued by the control-plane and
+// signed with the shared SKY_CONSOLE_TOKEN_SECRET; this runtime
+// verifies + issues a session cookie + strips token from URL.
+// See console_auth.go for the middleware + cookie flow.
+//
+// Mirrors MountSubApp's proxy setup but inserts consoleTokenAuth
+// between the mux and the reverse-proxy.
+func MountConsoleAuth(mux *http.ServeMux, parentPort int, secret string) error {
+	if mux == nil {
+		return fmt.Errorf("MountConsoleAuth: mux is nil")
+	}
+	const prefix = "/_sky/console"
+
+	ctx, cancel := context.WithCancel(context.Background())
+	port, cmd, err := SpawnSkyConsole(parentPort)(ctx, prefix)
+	if err != nil {
+		cancel()
+		fmt.Fprintf(os.Stderr, "[sky.console-auth] mount skipped: %v\n", err)
+		return err
+	}
+	registerSubAppChild(cmd, cancel)
+
+	target, _ := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", port))
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	proxy.FlushInterval = -1
+	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+		if errors.Is(err, context.Canceled) || errors.Is(err, io.EOF) {
+			return
+		}
+		fmt.Fprintf(os.Stderr, "[sky.console-auth] proxy %s %s -> %s: %v\n",
+			r.Method, r.URL.Path, target.Host, err)
+		w.WriteHeader(http.StatusBadGateway)
+	}
+	proxy.ErrorLog = log.New(filteredProxyLog{}, "", 0)
+
+	// Auth wraps the prefix-stripped proxy. StripPrefix is OUTSIDE
+	// the auth gate so the gate sees the original `/_sky/console`
+	// path (its 401 page and redirect-to-strip-token logic both
+	// use r.URL.Path / RequestURI as-is).
+	gated := consoleTokenAuth(secret, http.StripPrefix(prefix, proxy))
+
+	mux.Handle(prefix+"/", gated)
+	// Bare path (no trailing slash) — the iframe src from skydeploy
+	// hits exactly this URL with `?token=…`. Don't pre-redirect
+	// before auth: the auth wrapper handles the token + sets the
+	// cookie, then redirects to the slash-form WITHOUT the token.
+	mux.HandleFunc(prefix, func(w http.ResponseWriter, r *http.Request) {
+		target := prefix + "/"
+		if r.URL.RawQuery != "" {
+			target += "?" + r.URL.RawQuery
+		}
+		http.Redirect(w, r, target, http.StatusTemporaryRedirect)
+	})
+	fmt.Fprintf(os.Stderr, "[sky.console-auth] mounted %s (token-gated) -> 127.0.0.1:%d\n", prefix, port)
+	return nil
 }
 
 // filteredProxyLog is the io.Writer behind a reverse proxy's
