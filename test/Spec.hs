@@ -29,6 +29,7 @@ import qualified Sky.Build.LetForwardRefSpec
 import qualified Sky.Build.EntryLocalShadowsDepSpec
 import qualified Sky.Build.FfiKernelAliasSpec
 import qualified Sky.Parse.MultiLineCaseSubjectSpec
+import qualified Sky.Parse.MultiLineSignatureSpec
 import qualified Sky.Format.FormatSpec
 import qualified Sky.Build.GoKeywordCollisionSpec
 import qualified Sky.Build.NestedPatternSpec
@@ -175,6 +176,7 @@ main = hspec $ do
     describe "Sky.Build.EntryLocalShadowsDep" Sky.Build.EntryLocalShadowsDepSpec.spec
     describe "Sky.Build.FfiKernelAlias" Sky.Build.FfiKernelAliasSpec.spec
     describe "Sky.Parse.MultiLineCaseSubject" Sky.Parse.MultiLineCaseSubjectSpec.spec
+    describe "Sky.Parse.MultiLineSignature" Sky.Parse.MultiLineSignatureSpec.spec
     -- Closed-record exactness + cross-module externals registration:
     --   1. unifyRecords (Sky.Type.Unify) used to silently merge field-
     --      mismatched closed records under a fresh extension. Now

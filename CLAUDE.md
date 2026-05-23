@@ -953,8 +953,10 @@ identifiers, field access (`{{record.field}}`), qualified names
 These are current compiler limitations users must work around.
 Items marked FIXED are kept for diagnostic context.
 
-1. **No anonymous records in function signatures.** Define a
-   `type alias` first.
+1. ~~**No anonymous records in function signatures.** Define a
+   `type alias` first.~~ FIXED — `processReq : Int -> { name : String, age : Int } -> String`
+   parses cleanly. The original limitation was overly broad — what
+   actually broke was a separate multi-line-sig issue.
 2. **No higher-kinded types.** HM only.
 3. **No `where` clauses.** Use `let…in`.
 4. **No custom operators.**
@@ -966,10 +968,16 @@ Items marked FIXED are kept for diagnostic context.
 7. **`sky check` does not fully model Go interface satisfaction.**
    Opaque FFI types unify with each other; concrete-satisfies-
    interface checks fall through.
-8. **Zero-arg FFI functions take `()` in Sky.** `Uuid.newString
-   ()` / `FyneApp.new ()`. Sky-side **kernel** zero-arity bindings
-   are the opposite — `Uuid.v4` / `Time.now` are called without
-   `()`.
+8. **Zero-arg calls follow the binding's declared type, not its
+   FFI-vs-kernel origin.** Bare `Uuid.v4` works because its stdlib
+   sig is `v4 : String`. `Time.now ()` / `Time.unixMillis ()` /
+   `FyneApp.new ()` are *all* needed because their sigs are
+   `() -> Task Error a` / `() -> any`. Calling a `: String`
+   binding with `()` triggers a known codegen bug for arity-0
+   kernels (`Uuid.v4 ()` mis-applies the unit); stick to the
+   declared shape. Dict / Set / Maybe / Result stay bare for
+   their `empty` / `none` etc. because those have non-function
+   types too.
 9. **Let bindings with parameters after multi-line case** — `let
    mark j = …` after `case … of` confuses the parser. Workaround:
    use lambdas or extract to a top-level function.
@@ -996,6 +1004,10 @@ Items marked FIXED are kept for diagnostic context.
     `exposing (Message, …)` or qualify without alias.
 15. **`let` bindings don't support forward references.** Reorder
     so dependencies come first.
+16. **Multi-line function signatures.** `name\n    : T` (the `:`
+    on a continuation line) parses cleanly. Continuation INSIDE
+    the type body (`T1\n    -> T2`) is not supported — extract a
+    `type alias` for the whole arrow type.
 
 ## Workflow rules
 

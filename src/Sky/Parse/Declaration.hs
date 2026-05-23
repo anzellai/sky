@@ -5,7 +5,7 @@ module Sky.Parse.Declaration where
 import Data.List (intercalate)
 import qualified Data.Text as T
 import Sky.Parse.Primitives
-import Sky.Parse.Space (spaces, freshLine, skipWhitespace)
+import Sky.Parse.Space (spaces, freshLine, skipWhitespace, checkIndent)
 import Sky.Parse.Variable (lower, upper)
 import Sky.Parse.Expression (expression)
 import Sky.Parse.Pattern (pattern_)
@@ -36,49 +36,65 @@ declaration mkError =
              spaces
              parseForeignImport mkError
 
-        , -- value definition or type annotation
+        , -- value definition or type annotation. Annotation handles
+          -- two forms: `name : T` on one line, or
+          -- `name\n    : T` on a continuation line (the latter for
+          -- multi-line sigs where the type is wide enough to want
+          -- its own line). oneOf retries from the ORIGINAL state on
+          -- eerr, so consuming freshLine in the continuation
+          -- alternative doesn't leak into the value-def fallback.
           do name <- addLocation (lower mkError)
              spaces
-             mc <- peek
-             case mc of
-                 Just ':' -> do
-                     -- Type annotation: name : Type
-                     char mkError ':'
-                     spaces
-                     ann <- addLocation (typeAnnotation mkError)
-                     return (DeclAnnotation, A.At (A.toRegion name) (AnnotPayload (A.toValue name) ann))
-                 _ -> do
-                     -- Value definition: name params = body
-                     params <- functionParams mkError
-                     spaces
-                     char mkError '='
-                     freshLine mkError
-                     bodyCol <- getCol
-                     body <- withIndent bodyCol (expression mkError)
-                     return (DeclValue, A.At (A.toRegion name) (ValuePayload (A.toValue name) params body Nothing))
+             oneOf mkError
+                 [ -- Same-line annotation: name : T
+                   do char mkError ':'
+                      spaces
+                      ann <- addLocation (typeAnnotation mkError)
+                      return (DeclAnnotation, A.At (A.toRegion name) (AnnotPayload (A.toValue name) ann))
+                 , -- Continuation-line annotation: name\n    : T
+                   do freshLine mkError
+                      checkIndent mkError
+                      char mkError ':'
+                      spaces
+                      ann <- addLocation (typeAnnotation mkError)
+                      return (DeclAnnotation, A.At (A.toRegion name) (AnnotPayload (A.toValue name) ann))
+                 , -- Value definition: name params = body
+                   do params <- functionParams mkError
+                      spaces
+                      char mkError '='
+                      freshLine mkError
+                      bodyCol <- getCol
+                      body <- withIndent bodyCol (expression mkError)
+                      return (DeclValue, A.At (A.toRegion name) (ValuePayload (A.toValue name) params body Nothing))
+                 ]
 
         , -- Uppercase name — can be either:
           --   Profile : String -> Int -> Profile           (type annotation)
           --   Profile name age = { name = name, age = age } (record constructor)
           -- Both are legal: matches the Elm convention where a record's type
-          -- alias name doubles as its constructor.
+          -- alias name doubles as its constructor. Multi-line sig support
+          -- mirrors the lowercase branch above.
           do name <- addLocation (upper mkError)
              spaces
-             mc <- peek
-             case mc of
-                 Just ':' -> do
-                     char mkError ':'
-                     spaces
-                     ann <- addLocation (typeAnnotation mkError)
-                     return (DeclAnnotation, A.At (A.toRegion name) (AnnotPayload (A.toValue name) ann))
-                 _ -> do
-                     params <- functionParams mkError
-                     spaces
-                     char mkError '='
-                     freshLine mkError
-                     bodyCol <- getCol
-                     body <- withIndent bodyCol (expression mkError)
-                     return (DeclValue, A.At (A.toRegion name) (ValuePayload (A.toValue name) params body Nothing))
+             oneOf mkError
+                 [ do char mkError ':'
+                      spaces
+                      ann <- addLocation (typeAnnotation mkError)
+                      return (DeclAnnotation, A.At (A.toRegion name) (AnnotPayload (A.toValue name) ann))
+                 , do freshLine mkError
+                      checkIndent mkError
+                      char mkError ':'
+                      spaces
+                      ann <- addLocation (typeAnnotation mkError)
+                      return (DeclAnnotation, A.At (A.toRegion name) (AnnotPayload (A.toValue name) ann))
+                 , do params <- functionParams mkError
+                      spaces
+                      char mkError '='
+                      freshLine mkError
+                      bodyCol <- getCol
+                      body <- withIndent bodyCol (expression mkError)
+                      return (DeclValue, A.At (A.toRegion name) (ValuePayload (A.toValue name) params body Nothing))
+                 ]
         ]
 
 

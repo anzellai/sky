@@ -4121,6 +4121,14 @@ func Dict_member(key any, dict any) any {
 	return ok
 }
 
+func Dict_size(dict any) any {
+	return len(AsDict(unwrapAny(dict)))
+}
+
+func Dict_isEmpty(dict any) any {
+	return len(AsDict(unwrapAny(dict))) == 0
+}
+
 func Dict_keys(dict any) any {
 	m := AsDict(unwrapAny(dict))
 	result := make([]any, 0, len(m))

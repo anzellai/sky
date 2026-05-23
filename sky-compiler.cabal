@@ -256,6 +256,7 @@ test-suite sky-tests
       Sky.Build.EntryLocalShadowsDepSpec
       Sky.Build.FfiKernelAliasSpec
       Sky.Parse.MultiLineCaseSubjectSpec
+      Sky.Parse.MultiLineSignatureSpec
       Sky.Type.InstanceCaptureSpec
       Sky.Format.FormatSpec
       Sky.Build.GoKeywordCollisionSpec

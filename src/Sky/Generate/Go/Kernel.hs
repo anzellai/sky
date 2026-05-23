@@ -184,6 +184,8 @@ registry = Map.fromList
     , (("Dict", "map"),           KernelInfo "rt.Dict_map" 2 False)
     , (("Dict", "foldl"),         KernelInfo "rt.Dict_foldl" 3 False)
     , (("Dict", "union"),         KernelInfo "rt.Dict_union" 2 False)
+    , (("Dict", "size"),          KernelInfo "rt.Dict_size" 1 False)
+    , (("Dict", "isEmpty"),       KernelInfo "rt.Dict_isEmpty" 1 False)
 
     -- ═══════════════════════════════════════════════════════
     -- Maybe
