@@ -3812,25 +3812,28 @@ function __skyRunEvals(root) {
 
 // __skyRunPaths: safer, CSP-friendly alternative to data-sky-eval for
 // the specific case of "update the address bar after a render." Looks
-// for [data-sky-path] elements, pushes the value if location.pathname
-// differs (or replaces when only the query differs — strips a stale
-// ?sso=…), then removes the element. No new Function(), no eval; the
-// only DOM API touched is history.pushState / replaceState. Works
-// under strict CSP (no 'unsafe-eval'); has no XSS surface (the value
-// is treated as a URL path string, never executed).
+// for [data-sky-path] elements and pushes / replaces history if the
+// value differs from location. No new Function(), no eval; the only
+// DOM APIs touched are getAttribute and history.pushState /
+// replaceState. Works under strict CSP (no 'unsafe-eval') and has no
+// XSS surface (the value is a URL path, never executed).
+//
+// The element is intentionally NOT removed after running — Sky.Live's
+// patches identify elements by sky-id and look them up via
+// querySelector; removing the data-sky-path element would orphan its
+// sky-id, and the next attribute patch (when the path changes) would
+// silently skip. The path-check makes the call idempotent, so leaving
+// the element in place is cheap — at most one comparison per patch.
 function __skyRunPaths(root) {
   var els = (root || document).querySelectorAll("[data-sky-path]");
   for (var i = 0; i < els.length; i++) {
-    var el = els[i];
-    var p = el.getAttribute("data-sky-path");
-    if (p) {
-      if (location.pathname !== p) {
-        try { history.pushState({}, "", p); } catch (_) {}
-      } else if (location.search) {
-        try { history.replaceState({}, "", p); } catch (_) {}
-      }
+    var p = els[i].getAttribute("data-sky-path");
+    if (!p) continue;
+    if (location.pathname !== p) {
+      try { history.pushState({}, "", p); } catch (_) {}
+    } else if (location.search) {
+      try { history.replaceState({}, "", p); } catch (_) {}
     }
-    el.remove();
   }
 }
 
