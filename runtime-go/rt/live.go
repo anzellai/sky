@@ -3336,6 +3336,7 @@ function __skyPatch(t) {
   window.scrollTo(scrollX, scrollY);
   __skyBindEvents(document);
   __skyRunEvals(root);
+  __skyRunPaths(root);
 }
 
 // ── Loading indicator ────────────────────────────────────────
@@ -3770,6 +3771,10 @@ function __skyApplyPatches(patches) {
   }
   // Any new sky-* attribute in the patched DOM needs a listener.
   __skyBindEvents(document);
+  // After SSE-driven patches the URL also needs reconciling — without
+  // this, programmatic Navigate Msgs would only update the in-memory
+  // model and leave the address bar pointing at the previous page.
+  __skyRunPaths(document);
 }
 
 function __skyContainsFocusedInput(el) {
@@ -3803,6 +3808,30 @@ function __skyBindEvents(root) {
 function __skyRunEvals(root) {
   var el = (root || document).querySelector("[data-sky-eval]");
   if (el) { try { (new Function(el.getAttribute("data-sky-eval")))(); } catch(e) {} el.remove(); }
+}
+
+// __skyRunPaths: safer, CSP-friendly alternative to data-sky-eval for
+// the specific case of "update the address bar after a render." Looks
+// for [data-sky-path] elements, pushes the value if location.pathname
+// differs (or replaces when only the query differs — strips a stale
+// ?sso=…), then removes the element. No new Function(), no eval; the
+// only DOM API touched is history.pushState / replaceState. Works
+// under strict CSP (no 'unsafe-eval'); has no XSS surface (the value
+// is treated as a URL path string, never executed).
+function __skyRunPaths(root) {
+  var els = (root || document).querySelectorAll("[data-sky-path]");
+  for (var i = 0; i < els.length; i++) {
+    var el = els[i];
+    var p = el.getAttribute("data-sky-path");
+    if (p) {
+      if (location.pathname !== p) {
+        try { history.pushState({}, "", p); } catch (_) {}
+      } else if (location.search) {
+        try { history.replaceState({}, "", p); } catch (_) {}
+      }
+    }
+    el.remove();
+  }
 }
 
 function __skyBindOne(root, eventName) {
