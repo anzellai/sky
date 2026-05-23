@@ -326,16 +326,20 @@ func productionFromEnv() bool {
 // Returns true if request bears valid admin credentials. Returns
 // false (deny) when in doubt — fail-closed.
 func hasAdminAuth(r *http.Request) bool {
-	// v1.0-rc1 placeholder: the SKY_METRICS_TOKEN env var, when set,
-	// is compared against the Authorization header (Basic auth form
+	// v1.0-rc1 placeholder: a per-app admin secret, when set, is
+	// compared against the Authorization header (Basic auth form
 	// "Bearer <token>" or "Basic base64(metrics:token)"). This
 	// matches how Prometheus operators typically configure scrape
 	// authentication: a single shared token per environment, rotated
 	// via secret management.
 	//
+	// Read via adminTokenSecret so SKY_ADMIN_TOKEN takes precedence,
+	// with SKY_METRICS_TOKEN / SKY_CONSOLE_TOKEN_SECRET honoured as
+	// v0.14.21 / v0.14.20 back-compat aliases.
+	//
 	// Phase 1.2 will replace this with proper Std.Auth admin-role
 	// verification once the CSRF / auth wire path lands.
-	token := os.Getenv("SKY_METRICS_TOKEN")
+	token := adminTokenSecret()
 	if token == "" {
 		// No token configured — fall through to "no admin auth
 		// possible". Production users MUST set this; failure to do

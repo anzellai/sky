@@ -161,33 +161,57 @@ func TestConsoleAuthRejectsNoCredentials(t *testing.T) {
 }
 
 
-// TestConsoleAdminSecretPrefersMetricsToken — the new canonical
-// env var SKY_METRICS_TOKEN takes precedence; SKY_CONSOLE_TOKEN_SECRET
-// is kept as a back-compat alias for v0.14.20-seeded tenants.
-func TestConsoleAdminSecretPrefersMetricsToken(t *testing.T) {
-	t.Setenv("SKY_METRICS_TOKEN", "canonical-secret")
-	t.Setenv("SKY_CONSOLE_TOKEN_SECRET", "legacy-secret")
-	if got := consoleAdminSecret(); got != "canonical-secret" {
-		t.Errorf("when both set, expected SKY_METRICS_TOKEN to win; got %q", got)
+// TestAdminTokenSecretPrefersAdminToken — the canonical
+// SKY_ADMIN_TOKEN beats both legacy aliases.
+func TestAdminTokenSecretPrefersAdminToken(t *testing.T) {
+	t.Setenv("SKY_ADMIN_TOKEN", "canonical-admin")
+	t.Setenv("SKY_METRICS_TOKEN", "v14_21-alias")
+	t.Setenv("SKY_CONSOLE_TOKEN_SECRET", "v14_20-alias")
+	if got := adminTokenSecret(); got != "canonical-admin" {
+		t.Errorf("with all three set, expected SKY_ADMIN_TOKEN to win; got %q", got)
 	}
 }
 
-// TestConsoleAdminSecretFallsBackToConsoleSecret — back-compat for
-// tenants seeded on v0.14.20 before the token unification.
-func TestConsoleAdminSecretFallsBackToConsoleSecret(t *testing.T) {
+// TestAdminTokenSecretFallsBackToMetricsToken — v0.14.21-seeded
+// tenants with only SKY_METRICS_TOKEN provisioned still work.
+func TestAdminTokenSecretFallsBackToMetricsToken(t *testing.T) {
+	t.Setenv("SKY_ADMIN_TOKEN", "")
+	t.Setenv("SKY_METRICS_TOKEN", "v14_21-alias")
+	t.Setenv("SKY_CONSOLE_TOKEN_SECRET", "v14_20-alias")
+	if got := adminTokenSecret(); got != "v14_21-alias" {
+		t.Errorf("with admin unset + metrics set, got %q want v14_21-alias", got)
+	}
+}
+
+// TestAdminTokenSecretFallsBackToConsoleSecret — v0.14.20-seeded
+// tenants with only SKY_CONSOLE_TOKEN_SECRET still work.
+func TestAdminTokenSecretFallsBackToConsoleSecret(t *testing.T) {
+	t.Setenv("SKY_ADMIN_TOKEN", "")
 	t.Setenv("SKY_METRICS_TOKEN", "")
-	t.Setenv("SKY_CONSOLE_TOKEN_SECRET", "legacy-secret")
-	if got := consoleAdminSecret(); got != "legacy-secret" {
-		t.Errorf("with only legacy var set, got %q want legacy-secret", got)
+	t.Setenv("SKY_CONSOLE_TOKEN_SECRET", "v14_20-alias")
+	if got := adminTokenSecret(); got != "v14_20-alias" {
+		t.Errorf("with only legacy var set, got %q want v14_20-alias", got)
 	}
 }
 
-// TestConsoleAdminSecretEmptyWhenUnset — both empty → no admin
-// surface unlocked; the deploy falls back to dev-mode rules.
-func TestConsoleAdminSecretEmptyWhenUnset(t *testing.T) {
+// TestAdminTokenSecretEmptyWhenUnset — none set → admin surface
+// stays locked; the deploy falls back to dev-mode rules.
+func TestAdminTokenSecretEmptyWhenUnset(t *testing.T) {
+	t.Setenv("SKY_ADMIN_TOKEN", "")
 	t.Setenv("SKY_METRICS_TOKEN", "")
 	t.Setenv("SKY_CONSOLE_TOKEN_SECRET", "")
-	if got := consoleAdminSecret(); got != "" {
+	if got := adminTokenSecret(); got != "" {
 		t.Errorf("nothing set, got %q want \"\"", got)
+	}
+}
+
+// TestConsoleAdminSecretAlias — the v0.14.21 helper name is kept
+// as a thin alias so external callers don't break.
+func TestConsoleAdminSecretAlias(t *testing.T) {
+	t.Setenv("SKY_ADMIN_TOKEN", "via-admin")
+	t.Setenv("SKY_METRICS_TOKEN", "")
+	t.Setenv("SKY_CONSOLE_TOKEN_SECRET", "")
+	if got := consoleAdminSecret(); got != "via-admin" {
+		t.Errorf("alias should resolve same as adminTokenSecret; got %q", got)
 	}
 }

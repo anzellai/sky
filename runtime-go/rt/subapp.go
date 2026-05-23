@@ -459,18 +459,17 @@ func maybeAutoMountConsole(mux *http.ServeMux, parentBasePath string, parentPort
 		return
 	}
 
-	// PRO+ CONSOLE — a shared admin secret unlocks the console
-	// AND the /_sky/metrics scrape behind the same trust domain.
-	// SKY_METRICS_TOKEN is the canonical name (it already gates
-	// Prom scrape); SKY_CONSOLE_TOKEN_SECRET is kept as a
-	// back-compat alias from before the rename (v0.14.20 used the
-	// console-specific var). Setting either:
+	// PRO+ CONSOLE — a single per-app admin secret unlocks the
+	// console AND the /_sky/metrics scrape behind the same trust
+	// domain. Canonical env var SKY_ADMIN_TOKEN; SKY_METRICS_TOKEN
+	// and SKY_CONSOLE_TOKEN_SECRET are honoured as v0.14.21 / v0.14.20
+	// legacy aliases (see adminTokenSecret). Setting any of them:
 	//   – wraps /_sky/console in MountConsoleAuth (JWT URL token
 	//     + session cookie; see console_auth.go),
-	//   – leaves production gate on for the dev banner.
+	//   – leaves the production gate on for the dev banner.
 	// The control-plane (skydeploy.app) mints the URL JWT signed
 	// with the same secret it provisions per tenant.
-	if secret := consoleAdminSecret(); secret != "" {
+	if secret := adminTokenSecret(); secret != "" {
 		IngestTokenInit()
 		if err := MountConsoleAuth(mux, parentPort, secret); err == nil {
 			consoleAutoMounted.Store(true)
@@ -498,19 +497,39 @@ func maybeAutoMountConsole(mux *http.ServeMux, parentBasePath string, parentPort
 }
 
 
-// consoleAdminSecret returns the per-app admin secret that gates
-// /_sky/console (JWT signing) and /_sky/metrics (Bearer auth). One
-// secret per app, two surfaces. We read SKY_METRICS_TOKEN first
-// (the canonical name); SKY_CONSOLE_TOKEN_SECRET is kept as a
-// transitional alias for tenants still seeded with the older var
-// name from v0.14.20. Empty when neither is set — Pro+ console
-// auth stays off and the deploy falls back to dev-mode rules
-// (i.e. nothing mounts in production).
-func consoleAdminSecret() string {
+// adminTokenSecret returns the per-app admin secret that gates
+// every privileged Sky.Live surface — /_sky/console (HS256 JWT
+// signing), /_sky/metrics (Bearer auth), and any future admin-
+// only endpoint. One secret per app, multiple surfaces, one
+// trust domain.
+//
+// The canonical env var is SKY_ADMIN_TOKEN. Two legacy aliases
+// are honoured for tenants seeded on earlier Sky versions:
+//
+//   - SKY_METRICS_TOKEN — v0.14.21's first-pass unification name
+//     (kept "metrics" in the name; promoted to admin-wide).
+//   - SKY_CONSOLE_TOKEN_SECRET — v0.14.20's console-specific
+//     secret before any unification.
+//
+// Returns "" when nothing is set — Pro+ console auth stays off
+// and the deploy falls back to dev-mode rules (nothing mounts
+// in production).
+func adminTokenSecret() string {
+	if s := os.Getenv("SKY_ADMIN_TOKEN"); s != "" {
+		return s
+	}
 	if s := os.Getenv("SKY_METRICS_TOKEN"); s != "" {
 		return s
 	}
 	return os.Getenv("SKY_CONSOLE_TOKEN_SECRET")
+}
+
+
+// consoleAdminSecret is a thin alias kept so callers that imported
+// this name from v0.14.21 keep compiling. Use adminTokenSecret for
+// new code.
+func consoleAdminSecret() string {
+	return adminTokenSecret()
 }
 
 
