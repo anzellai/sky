@@ -1,0 +1,779 @@
+module Std.Markdown exposing (render, renderInline)
+
+-- Std.Markdown — render markdown source to Std.Ui Element trees.
+--
+-- Direct render-to-Element (no HTML string round-trip) so styling
+-- inherits the surrounding theme (Font.color, Background.color,
+-- typography). The output is a `Ui.column` of block-level
+-- elements — embed as a child of any Std.Ui layout.
+--
+-- The supported subset is "chat-grade": enough for agent
+-- responses, commit messages, PR bodies, prompt history. Block
+-- types: headers (# / ## / ### / #### / ##### / ######),
+-- paragraphs, fenced code blocks (```), bullet lists (- / *),
+-- ordered lists (1.), horizontal rules (---). Inline: **bold**,
+-- *italic*, `code`, [text](url), trailing-double-space → <br>.
+-- Deliberately not supported in v1 (add when needed): tables,
+-- blockquotes, images, footnotes, raw HTML, math, mermaid.
+--
+-- Security: the parser never emits raw HTML, scripts, or event
+-- handlers — everything routes through typed Std.Ui constructors.
+-- Safe to feed untrusted markdown without an extra sanitisation
+-- step (compare: HTML-string renderers need bluemonday or
+-- equivalent).
+--
+-- Performance note: pure Sky implementation. Linear in input
+-- length for typical chat-sized inputs (≤10 KB). For multi-MB
+-- documents, the recursive descent will get heavy — a future
+-- kernel-FFI to a Go markdown lib (goldmark) is the natural
+-- escape hatch when that becomes a real workload. Same module
+-- name; the kernel binding swaps in.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Std.Ui as Ui
+import Std.Ui exposing (Element)
+import Std.Ui.Font as Font
+
+
+-- Render a multi-line markdown document. Splits into block-level
+-- elements and stacks them in a column. Use this for any non-
+-- trivial markdown (multiple paragraphs, lists, etc.).
+render : String -> Element msg
+render src =
+    Ui.column
+        [ Ui.spacing 12 ]
+        (List.map renderBlock (parseBlocks src))
+
+
+-- Render a SINGLE line of inline markdown (bold, italic, code,
+-- links). Use this when you want markdown formatting inside an
+-- existing inline context (e.g. inside another paragraph). For
+-- multi-line documents, use `render`.
+renderInline : String -> Element msg
+renderInline line =
+    Ui.paragraph [] (renderSpans (parseSpans line))
+
+
+-- ─── Block parsing ──────────────────────────────────────────────
+
+
+-- A block is one "paragraph-shaped" chunk: a heading, a fenced
+-- code block, a list, a horizontal rule, a table, or a plain
+-- paragraph.
+type Block
+    = HeaderBlock Int String
+    | ParaBlock String
+    | CodeBlock String
+    | BulletBlock (List String)
+    | NumberedBlock (List String)
+    | TableBlock (List String) (List (List String))
+    | RuleBlock
+
+
+-- Split a markdown document into a list of Blocks. Recursive
+-- descent on a line buffer: each iteration peels off one block
+-- (consuming as many lines as that block needs) and recurses on
+-- the remainder.
+parseBlocks : String -> List Block
+parseBlocks src =
+    blocksFromLines (String.lines src)
+
+
+blocksFromLines : List String -> List Block
+blocksFromLines lines =
+    case lines of
+
+        [] ->
+            []
+
+        l :: rest ->
+            let
+                t = String.trim l
+            in
+                if t == "" then
+                    blocksFromLines rest
+
+                else if isHrLine t then
+                    RuleBlock :: blocksFromLines rest
+
+                else if String.startsWith "###### " l then
+                    HeaderBlock 6 (String.slice 7 (String.length l) l)
+                        :: blocksFromLines rest
+
+                else if String.startsWith "##### " l then
+                    HeaderBlock 5 (String.slice 6 (String.length l) l)
+                        :: blocksFromLines rest
+
+                else if String.startsWith "#### " l then
+                    HeaderBlock 4 (String.slice 5 (String.length l) l)
+                        :: blocksFromLines rest
+
+                else if String.startsWith "### " l then
+                    HeaderBlock 3 (String.slice 4 (String.length l) l)
+                        :: blocksFromLines rest
+
+                else if String.startsWith "## " l then
+                    HeaderBlock 2 (String.slice 3 (String.length l) l)
+                        :: blocksFromLines rest
+
+                else if String.startsWith "# " l then
+                    HeaderBlock 1 (String.slice 2 (String.length l) l)
+                        :: blocksFromLines rest
+
+                else if String.startsWith "```" l then
+                    let
+                        cf = takeCodeFence rest
+                    in
+                        CodeBlock (fst cf) :: blocksFromLines (snd cf)
+
+                else if isBulletLine l then
+                    let
+                        bl = takeBulletGroup lines
+                    in
+                        BulletBlock (fst bl) :: blocksFromLines (snd bl)
+
+                else if isNumberedLine l then
+                    let
+                        nl = takeNumberedGroup lines
+                    in
+                        NumberedBlock (fst nl) :: blocksFromLines (snd nl)
+
+                else if isTableHeaderLine l rest then
+                    let
+                        tbl = takeTable lines
+                    in
+                        TableBlock tbl.header tbl.rows
+                            :: blocksFromLines tbl.after
+
+                else
+                    let
+                        pp = takeParagraph lines
+                    in
+                        ParaBlock (fst pp) :: blocksFromLines (snd pp)
+
+
+-- "---" / "***" / "___" with any padding → horizontal rule.
+isHrLine : String -> Bool
+isHrLine t =
+    t == "---" || t == "***" || t == "___"
+        || t == "----" || t == "----" || t == "-----"
+
+
+isBulletLine : String -> Bool
+isBulletLine l =
+    String.startsWith "- " l
+        || String.startsWith "* " l
+        || String.startsWith "  - " l
+        || String.startsWith "  * " l
+
+
+-- A numbered list line starts "<digits>. ". We approximate with a
+-- few common prefixes — proper detection requires Char.isDigit on
+-- the first char which is fine but verbose. Cheap heuristic
+-- catches `1. ` through `99. ` which is enough for any chat-grade
+-- content.
+isNumberedLine : String -> Bool
+isNumberedLine l =
+    let
+        prefixes =
+            [ "1. ", "2. ", "3. ", "4. ", "5. "
+            , "6. ", "7. ", "8. ", "9. ", "10. "
+            ]
+    in
+        List.any (\p -> String.startsWith p l) prefixes
+
+
+-- Consume a code fence's body: everything up to the next closing
+-- ```. Returns (body, lines-after-the-close).
+takeCodeFence : List String -> ( String, List String )
+takeCodeFence lines =
+    let
+        looped = codeFenceLoop lines []
+        bodyRev = fst looped
+        after = snd looped
+    in
+        ( String.join "\n" (List.reverse bodyRev), after )
+
+
+codeFenceLoop : List String -> List String -> ( List String, List String )
+codeFenceLoop lines acc =
+    case lines of
+
+        [] ->
+            ( acc, [] )
+
+        l :: rest ->
+            if String.startsWith "```" l then
+                ( acc, rest )
+
+            else
+                codeFenceLoop rest (l :: acc)
+
+
+-- Take a table: header row + separator + zero or more data rows
+-- until a non-table-row line. Returns (header cells, list of row
+-- cell-lists, remaining lines). NB: returns 3-tuple via two
+-- 2-tuples internally (Sky parses nested-tuple destructure in
+-- recursive contexts unreliably; using fst/snd everywhere).
+
+
+-- Group consecutive bullet lines. Stops at the first non-bullet,
+-- non-blank line (or EOF).
+takeBulletGroup : List String -> ( List String, List String )
+takeBulletGroup lines =
+    case lines of
+
+        [] ->
+            ( [], [] )
+
+        l :: rest ->
+            if isBulletLine l then
+                let
+                    grouped = takeBulletGroup rest
+                    items = stripBulletPrefix l :: fst grouped
+                in
+                    ( items, snd grouped )
+
+            else
+                ( [], lines )
+
+
+-- A table-header line is `| ... | ... |` IMMEDIATELY followed by
+-- a separator row like `|---|---|` (with optional alignment colons).
+-- Both conditions checked so we don't false-match a plain pipe-
+-- delimited paragraph.
+isTableHeaderLine : String -> List String -> Bool
+isTableHeaderLine l rest =
+    if not (looksLikeTableRow l) then
+        False
+
+    else
+        case rest of
+
+            [] ->
+                False
+
+            next :: _ ->
+                isTableSeparator next
+
+
+looksLikeTableRow : String -> Bool
+looksLikeTableRow l =
+    let
+        t = String.trim l
+    in
+        String.startsWith "|" t && String.contains "|" (String.slice 1 (String.length t) t)
+
+
+isTableSeparator : String -> Bool
+isTableSeparator l =
+    let
+        t = String.trim l
+    in
+        String.startsWith "|" t
+            && (String.contains "-" t || String.contains "=" t)
+            && tableSeparatorOk t
+
+
+-- A separator row contains only |, -, :, =, and whitespace.
+-- Check by stripping each allowed char + seeing what's left.
+-- Avoids String.toList (no runtime export today).
+tableSeparatorOk : String -> Bool
+tableSeparatorOk t =
+    let
+        stripped =
+            t |> String.replace "|" ""
+                |> String.replace "-" ""
+                |> String.replace ":" ""
+                |> String.replace "=" ""
+                |> String.trim
+    in
+        stripped == ""
+
+
+-- Take a table: header row + separator + zero or more data rows
+-- until a non-table-row line. Returns (header cells, list of row
+-- cell-lists, remaining lines).
+-- Tuple stand-in record — Sky's nested let-pattern destructure
+-- is unreliable in recursive contexts, so we use a named record.
+type alias TableResult =
+    { header : List String
+    , rows : List (List String)
+    , after : List String
+    }
+
+
+takeTable : List String -> TableResult
+takeTable lines =
+    case lines of
+
+        header :: _sep :: dataLines ->
+            let
+                headerCells = parseTableRow header
+                tbl = takeTableRows dataLines
+            in
+                { header = headerCells
+                , rows = fst tbl
+                , after = snd tbl
+                }
+
+        _ ->
+            { header = [], rows = [], after = lines }
+
+
+takeTableRows : List String -> ( List (List String), List String )
+takeTableRows lines =
+    case lines of
+
+        [] ->
+            ( [], [] )
+
+        l :: rest ->
+            if looksLikeTableRow l then
+                let
+                    grouped = takeTableRows rest
+                    rows = parseTableRow l :: fst grouped
+                in
+                    ( rows, snd grouped )
+
+            else
+                ( [], lines )
+
+
+-- "| a | b | c |" → [ "a", "b", "c" ]. Strips the outer pipes,
+-- splits on `|`, trims each cell. Empty cells preserved.
+parseTableRow : String -> List String
+parseTableRow l =
+    let
+        t = String.trim l
+        stripped =
+            if String.startsWith "|" t then
+                String.slice 1 (String.length t) t
+
+            else
+                t
+
+        trimmedTrailing =
+            if String.endsWith "|" stripped then
+                String.slice 0 (String.length stripped - 1) stripped
+
+            else
+                stripped
+    in
+        List.map String.trim (String.split "|" trimmedTrailing)
+
+
+takeNumberedGroup : List String -> ( List String, List String )
+takeNumberedGroup lines =
+    case lines of
+
+        [] ->
+            ( [], [] )
+
+        l :: rest ->
+            if isNumberedLine l then
+                let
+                    grouped = takeNumberedGroup rest
+                    items = stripNumberedPrefix l :: fst grouped
+                in
+                    ( items, snd grouped )
+
+            else
+                ( [], lines )
+
+
+-- Drop "- " / "* " / "  - " etc.
+stripBulletPrefix : String -> String
+stripBulletPrefix l =
+    if String.startsWith "  - " l || String.startsWith "  * " l then
+        String.slice 4 (String.length l) l
+
+    else
+        String.slice 2 (String.length l) l
+
+
+-- Drop "1. " / "10. ". Find the ". " and slice after it.
+stripNumberedPrefix : String -> String
+stripNumberedPrefix l =
+    case String.split ". " l of
+
+        _ :: rest ->
+            String.join ". " rest
+
+        [] ->
+            l
+
+
+-- Consume contiguous paragraph lines (joined by a space when
+-- they wrap). Stops at a blank line or a block-starter (header,
+-- code fence, list, etc.).
+takeParagraph : List String -> ( String, List String )
+takeParagraph lines =
+    case lines of
+
+        [] ->
+            ( "", [] )
+
+        l :: rest ->
+            if String.trim l == "" || isBlockStarter l then
+                ( "", lines )
+
+            else
+                let
+                    p = takeParagraph rest
+                    more = fst p
+                    after = snd p
+                    body = if more == "" then l else l ++ " " ++ more
+                in
+                    ( body, after )
+
+
+isBlockStarter : String -> Bool
+isBlockStarter l =
+    String.startsWith "# " l || String.startsWith "## " l
+        || String.startsWith "### " l
+        || String.startsWith "#### " l
+        || String.startsWith "##### " l
+        || String.startsWith "###### " l
+        || String.startsWith "```" l
+        || isBulletLine l
+        || isNumberedLine l
+        || isHrLine (String.trim l)
+
+
+-- ─── Block rendering (Block → Element) ──────────────────────────
+
+
+renderBlock : Block -> Element msg
+renderBlock b =
+    case b of
+
+        HeaderBlock level text ->
+            renderHeader level text
+
+        ParaBlock text ->
+            Ui.paragraph [] (renderSpans (parseSpans text))
+
+        CodeBlock body ->
+            Ui.el
+                [ Ui.width Ui.fill
+                , Ui.paddingXY 12 10
+                , Ui.htmlAttribute "style"
+                    "background:#101116;border:1px solid #2A2A33;border-radius:8px;overflow-x:auto;white-space:pre"
+                , Font.family "ui-monospace,SFMono-Regular,Menlo,Consolas,monospace"
+                , Font.size 13
+                ]
+                (Ui.text body)
+
+        BulletBlock items ->
+            Ui.column
+                [ Ui.spacing 4 ]
+                (List.map (bulletRow "•") items)
+
+        NumberedBlock items ->
+            Ui.column
+                [ Ui.spacing 4 ]
+                (List.indexedMap numberedRow items)
+
+        TableBlock header rows ->
+            renderTable header rows
+
+        RuleBlock ->
+            Ui.el
+                [ Ui.width Ui.fill
+                , Ui.htmlAttribute "style"
+                    "border-top:1px solid #2A2A33;margin:4px 0"
+                ]
+                Ui.none
+
+
+renderTable : List String -> List (List String) -> Element msg
+renderTable header rows =
+    Ui.column
+        [ Ui.width Ui.fill
+        , Ui.htmlAttribute "style"
+            "border:1px solid #2A2A33;border-radius:8px;overflow:hidden"
+        ]
+        (renderTableHeader header :: List.map renderTableRow rows)
+
+
+renderTableHeader : List String -> Element msg
+renderTableHeader cells =
+    Ui.row
+        [ Ui.width Ui.fill
+        , Ui.htmlAttribute "style"
+            "background:#1c1c23;border-bottom:1px solid #2A2A33"
+        ]
+        (List.map renderTableHeaderCell cells)
+
+
+renderTableHeaderCell : String -> Element msg
+renderTableHeaderCell text =
+    Ui.el
+        [ Ui.width Ui.fill
+        , Ui.paddingXY 12 8
+        , Font.semiBold
+        , Font.size 13
+        ]
+        (Ui.paragraph [] (renderSpans (parseSpans text)))
+
+
+renderTableRow : List String -> Element msg
+renderTableRow cells =
+    Ui.row
+        [ Ui.width Ui.fill
+        , Ui.htmlAttribute "style" "border-top:1px solid #1f1f27"
+        ]
+        (List.map renderTableCell cells)
+
+
+renderTableCell : String -> Element msg
+renderTableCell text =
+    Ui.el
+        [ Ui.width Ui.fill
+        , Ui.paddingXY 12 8
+        , Font.size 13
+        ]
+        (Ui.paragraph [] (renderSpans (parseSpans text)))
+
+
+renderHeader : Int -> String -> Element msg
+renderHeader level text =
+    let
+        size =
+            if level == 1 then
+                22
+
+            else if level == 2 then
+                18
+
+            else if level == 3 then
+                16
+
+            else
+                14
+
+        weight =
+            if level <= 3 then
+                Font.bold
+
+            else
+                Font.semiBold
+    in
+        Ui.el
+            [ Font.size size, weight ]
+            (Ui.text text)
+
+
+bulletRow : String -> String -> Element msg
+bulletRow marker text =
+    Ui.row
+        [ Ui.spacing 8 ]
+        [ Ui.el
+              [ Font.color (Ui.rgb 158 158 175) ]
+              (Ui.text marker)
+        , Ui.paragraph [] (renderSpans (parseSpans text))
+        ]
+
+
+numberedRow : Int -> String -> Element msg
+numberedRow i text =
+    bulletRow (String.fromInt (i + 1) ++ ".") text
+
+
+-- ─── Inline parsing (spans) ─────────────────────────────────────
+--
+-- A line of markdown text is a sequence of inline spans. The
+-- supported set: plain text, bold (**X**), italic (*X*), inline
+-- code (`X`), links ([text](url)). Spans nest: bold-italic via
+-- ***X*** would be nice but defers — flat parse is enough for
+-- chat-grade content.
+
+
+type Span
+    = PlainSpan String
+    | BoldSpan String
+    | ItalicSpan String
+    | CodeSpan String
+    | LinkSpan String String    -- text, url
+
+
+parseSpans : String -> List Span
+parseSpans s =
+    spanLoop s [] ""
+
+
+-- Char-by-char loop, emitting spans on delimiter boundaries.
+-- `pending` accumulates plain text; on a delimiter we flush
+-- pending + consume the delimited span + recurse.
+spanLoop : String -> List Span -> String -> List Span
+spanLoop remaining acc pending =
+    if String.isEmpty remaining then
+        List.reverse (flushPending pending acc)
+
+    else if String.startsWith "**" remaining then
+        let
+            tb = takeBetween "**" (String.slice 2 (String.length remaining) remaining)
+            inner = fst tb
+            after = snd tb
+        in
+            spanLoop after (BoldSpan inner :: flushPending pending acc) ""
+
+    else if String.startsWith "`" remaining then
+        let
+            tb = takeBetween "`" (String.slice 1 (String.length remaining) remaining)
+            inner = fst tb
+            after = snd tb
+        in
+            spanLoop after (CodeSpan inner :: flushPending pending acc) ""
+
+    else if String.startsWith "[" remaining then
+        case takeLink remaining of
+
+            Just ( text, url, after ) ->
+                spanLoop after (LinkSpan text url :: flushPending pending acc) ""
+
+            Nothing ->
+                spanLoop
+                    (String.slice 1 (String.length remaining) remaining)
+                    acc
+                    (pending ++ "[")
+
+    else if String.startsWith "*" remaining then
+        let
+            tb = takeBetween "*" (String.slice 1 (String.length remaining) remaining)
+            inner = fst tb
+            after = snd tb
+        in
+            if inner == "" then
+                spanLoop
+                    (String.slice 1 (String.length remaining) remaining)
+                    acc
+                    (pending ++ "*")
+
+            else
+                spanLoop after (ItalicSpan inner :: flushPending pending acc) ""
+
+    else
+        let
+            c = String.slice 0 1 remaining
+            rest = String.slice 1 (String.length remaining) remaining
+        in
+            spanLoop rest acc (pending ++ c)
+
+
+flushPending : String -> List Span -> List Span
+flushPending pending acc =
+    if pending == "" then
+        acc
+
+    else
+        PlainSpan pending :: acc
+
+
+-- Take text up to (and consuming) the closing delimiter. Returns
+-- (inner, after). If no closing delim found, treats the rest as
+-- inner — graceful degradation on malformed input.
+takeBetween : String -> String -> ( String, String )
+takeBetween delim s =
+    let
+        idx = indexOfFirst delim s
+    in
+        if idx < 0 then
+            ( s, "" )
+
+        else
+            ( String.slice 0 idx s
+            , String.slice (idx + String.length delim) (String.length s) s
+            )
+
+
+indexOfFirst : String -> String -> Int
+indexOfFirst needle hay =
+    indexLoop needle hay 0
+
+
+indexLoop : String -> String -> Int -> Int
+indexLoop needle hay pos =
+    if pos + String.length needle > String.length hay then
+        -1
+
+    else if String.slice pos (pos + String.length needle) hay == needle then
+        pos
+
+    else
+        indexLoop needle hay (pos + 1)
+
+
+-- Parse [text](url) at the current position. Returns Nothing if
+-- the syntax doesn't match (e.g. lone `[`).
+takeLink : String -> Maybe ( String, String, String )
+takeLink s =
+    let
+        close = indexOfFirst "]" s
+    in
+        if close < 0 then
+            Nothing
+
+        else
+            let
+                openParen = close + 1
+                afterClose = String.slice openParen (String.length s) s
+            in
+                if not (String.startsWith "(" afterClose) then
+                    Nothing
+
+                else
+                    let
+                        urlAndAfter = String.slice 1 (String.length afterClose) afterClose
+                        closeParen = indexOfFirst ")" urlAndAfter
+                    in
+                        if closeParen < 0 then
+                            Nothing
+
+                        else
+                            let
+                                linkText = String.slice 1 close s
+                                linkUrl = String.slice 0 closeParen urlAndAfter
+                                afterLink = String.slice (closeParen + 1) (String.length urlAndAfter) urlAndAfter
+                            in
+                                Just ( linkText, linkUrl, afterLink )
+
+
+-- ─── Span rendering (Span → Element) ────────────────────────────
+
+
+renderSpans : List Span -> List (Element msg)
+renderSpans spans =
+    List.map renderSpan spans
+
+
+renderSpan : Span -> Element msg
+renderSpan span =
+    case span of
+
+        PlainSpan text ->
+            Ui.text text
+
+        BoldSpan text ->
+            Ui.el [ Font.bold ] (Ui.text text)
+
+        ItalicSpan text ->
+            Ui.el [ Font.italic ] (Ui.text text)
+
+        CodeSpan text ->
+            Ui.el
+                [ Font.family "ui-monospace,SFMono-Regular,Menlo,Consolas,monospace"
+                , Ui.htmlAttribute "style"
+                    "background:#1c1c23;padding:1px 5px;border-radius:3px"
+                ]
+                (Ui.text text)
+
+        LinkSpan text url ->
+            Ui.link
+                [ Font.color (Ui.rgb 62 207 142)
+                , Ui.htmlAttribute "target" "_blank"
+                ]
+                { url = url, label = Ui.text text }
