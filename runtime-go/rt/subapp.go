@@ -205,12 +205,24 @@ func SpawnSkyConsole(parentPort int) SpawnFn {
 		if err := cmd.Start(); err != nil {
 			return 0, nil, fmt.Errorf("sky console spawn failed: %w", err)
 		}
-		// 60 × 100ms = 6 s — long enough for sky console's
-		// first-run build (which compiles the bundled mini-app)
-		// to finish, short enough to fail fast on broken setups.
-		if !waitForPort("127.0.0.1", port, 60, 100*time.Millisecond) {
+		// Wait up to 30 s. Local dev usually has the bundled
+		// console mini-app ready in ~1 s, but Cloud Run cold
+		// starts on small instances (e2-micro / 256 MiB / 1 vCPU)
+		// take significantly longer — `sky console` has to load
+		// the runtime, init its SQLite + memory store, bind a
+		// port, and respond. SKY_CONSOLE_READY_TIMEOUT_MS overrides
+		// for unusual environments. Was 6 s pre-2026-05-23 and
+		// regularly timed out on Cloud Run e2-micro deploys.
+		readyMs := 30000
+		if v := os.Getenv("SKY_CONSOLE_READY_TIMEOUT_MS"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				readyMs = n
+			}
+		}
+		ticks := readyMs / 100
+		if !waitForPort("127.0.0.1", port, ticks, 100*time.Millisecond) {
 			_ = cmd.Process.Kill()
-			return 0, nil, fmt.Errorf("sky console on :%d did not become ready within 6s", port)
+			return 0, nil, fmt.Errorf("sky console on :%d did not become ready within %dms", port, readyMs)
 		}
 		return port, cmd, nil
 	}
