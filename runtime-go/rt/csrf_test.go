@@ -104,3 +104,23 @@ func TestCsrfIssue_FreshTokenEachCall(t *testing.T) {
 		t.Fatal("csrfIssue must generate a fresh token on each call")
 	}
 }
+
+
+// TestCsrfEnvVarOff — SKY_CSRF=off disables the middleware before
+// the first request. Mirrors the path that pure-API services like
+// skydeploy's sky-tools take to authenticate via Bearer alone.
+//
+// init() reads SKY_CSRF at process start, so we can't toggle env
+// post-hoc and re-trigger init in a test. We test the equivalent
+// effect: SetCsrfEnabled(false) should make CSRF behave as if the
+// env var was set.
+func TestCsrfEnvVarOff(t *testing.T) {
+	// preserve current state for other tests
+	prior := IsCsrfEnabled()
+	t.Cleanup(func() { SetCsrfEnabled(prior) })
+
+	SetCsrfEnabled(false)
+	if IsCsrfEnabled() {
+		t.Fatal("SetCsrfEnabled(false) should disable middleware")
+	}
+}

@@ -54,6 +54,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"net/http"
+	"os"
 	"strings"
 	"sync/atomic"
 )
@@ -78,6 +79,18 @@ var csrfEnabled atomic.Bool
 
 func init() {
 	csrfEnabled.Store(true)
+	// SKY_CSRF=off|false|0 disables the global CSRF middleware
+	// before the first request lands. Intended for pure-API
+	// services authenticated via Bearer in Authorization (where
+	// the header itself acts as the CSRF defence — cross-origin
+	// browsers can't add custom headers without preflight). The
+	// sky.toml [security] csrf = false toml-side plumbing routes
+	// through here too once it lands. Default-secure: any other
+	// value, including unset, keeps CSRF on.
+	switch strings.ToLower(os.Getenv("SKY_CSRF")) {
+	case "off", "false", "0":
+		csrfEnabled.Store(false)
+	}
 }
 
 // SetCsrfEnabled toggles the global CSRF middleware. Called from
