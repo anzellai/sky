@@ -64,30 +64,30 @@ type Attribute msg
     | AttrStyle String String
     | AttrDescribe Description
     | AttrClass String
-    | AttrEvent any-- pre-constructed Std.Html.Events.* value (eventPair)
-    | AttrAttribute String String-- raw attribute (href, src, name, ...)
+    | AttrEvent any
+    | AttrAttribute String String
     | AttrFontSize Int
     | AttrFontColor Color
-    | AttrFontFamily String-- pre-joined "Inter, sans-serif"
+    | AttrFontFamily String
     | AttrFontWeight Int
-    | AttrFontItalic-- font-style: italic
-    | AttrFontUnderline-- text-decoration: underline
-    | AttrFontDecoration String-- text-decoration: <value> (none / line-through / overline / …)
-    | AttrFontLetterSpacing Float-- letter-spacing in em
-    | AttrFontWordSpacing Float-- word-spacing in em
-    | AttrFontAlign String-- text-align: left | right | center | justify
+    | AttrFontItalic
+    | AttrFontUnderline
+    | AttrFontDecoration String
+    | AttrFontLetterSpacing Float
+    | AttrFontWordSpacing Float
+    | AttrFontAlign String
     | AttrBgColor Color
-    | AttrBgImage String-- background-image: url(<url>)
-    | AttrBgGradient String-- pre-built CSS gradient string (linear-gradient(...) etc)
+    | AttrBgImage String
+    | AttrBgGradient String
     | AttrBorderWidth Int
-    | AttrBorderWidthEach Int Int Int Int-- top right bottom left
+    | AttrBorderWidthEach Int Int Int Int
     | AttrBorderColor Color
     | AttrBorderRounded Int
-    | AttrBorderStyle String-- "solid" / "dashed" / "dotted"
-    | AttrBorderShadow Int Int Int Int Color-- offsetX offsetY blur spread color
-    | AttrBorderInsetShadow Int Int Int Int Color-- same shape, but rendered with `inset` keyword
-    | AttrPointer-- cursor: pointer for clickable els
-    | AttrOverflow String String-- overflow-x value, overflow-y value (clip/scrollbars/etc)
+    | AttrBorderStyle String
+    | AttrBorderShadow Int Int Int Int Color
+    | AttrBorderInsetShadow Int Int Int Int Color
+    | AttrPointer
+    | AttrOverflow String String
 
 type Length
     = Px Int
@@ -95,8 +95,8 @@ type Length
     | Fill Int
     | Min Int Length
     | Max Int Length
-    | Vh Int-- viewport-height percent (1..100)
-    | Vw Int-- viewport-width percent  (1..100)
+    | Vh Int
+    | Vw Int
 
 type HAlign
     = AlignLeft
@@ -1001,15 +1001,21 @@ layout rootAttrs root =
 -- is content-height by default, so a root with `height fill`
 -- rendered as a bare `height: 100%` (what the old AsEl path
 -- emitted) collapsed to its content — issue #63. The outer div
--- gives a real 100vh to fill; rendering the root under AsColumn
--- makes its `height fill` resolve to `flex-grow`, so it (and the
--- fill chain beneath it) stretches to the viewport.
+-- gives a real 100vh floor to fill; rendering the root under
+-- AsColumn makes its `height fill` resolve to `flex-grow`, so it
+-- (and the fill chain beneath it) stretches to the viewport.
+--
+-- min-height (not height) at every level — the wrapper must
+-- expand beyond 100vh when content overflows, otherwise the
+-- theme background stays locked at viewport height and the
+-- scrolled-past region exposes bare <body>. Same goes for the
+-- injected html,body style.
     Html.div
-        [Attr.style "height: 100vh; display: flex; flex-direction: column;"]
+        [Attr.style "min-height: 100vh; display: flex; flex-direction: column;"]
         [ Html.node
-            "style"
-            []
-            [Html.text "html,body{height:100%;margin:0;padding:0}"]
+              "style"
+              []
+              [Html.text "html,body{min-height:100%;margin:0;padding:0}"]
         , renderElement AsColumn rootAttrs root
         ]
 
