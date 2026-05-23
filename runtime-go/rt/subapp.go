@@ -459,14 +459,18 @@ func maybeAutoMountConsole(mux *http.ServeMux, parentBasePath string, parentPort
 		return
 	}
 
-	// PRO+ CONSOLE — SKY_CONSOLE_TOKEN_SECRET set overrides the
-	// production gate AND wraps the console mount in a JWT/cookie
-	// auth middleware (see console_auth.go). The control-plane
-	// (skydeploy.app) mints the URL token; the tenant runtime here
-	// verifies it + sets a session cookie. Banner stays hidden
-	// because productionFromEnv() is still true → devBannerHTML()
-	// returns "" regardless.
-	if secret := os.Getenv("SKY_CONSOLE_TOKEN_SECRET"); secret != "" {
+	// PRO+ CONSOLE — a shared admin secret unlocks the console
+	// AND the /_sky/metrics scrape behind the same trust domain.
+	// SKY_METRICS_TOKEN is the canonical name (it already gates
+	// Prom scrape); SKY_CONSOLE_TOKEN_SECRET is kept as a
+	// back-compat alias from before the rename (v0.14.20 used the
+	// console-specific var). Setting either:
+	//   – wraps /_sky/console in MountConsoleAuth (JWT URL token
+	//     + session cookie; see console_auth.go),
+	//   – leaves production gate on for the dev banner.
+	// The control-plane (skydeploy.app) mints the URL JWT signed
+	// with the same secret it provisions per tenant.
+	if secret := consoleAdminSecret(); secret != "" {
 		IngestTokenInit()
 		if err := MountConsoleAuth(mux, parentPort, secret); err == nil {
 			consoleAutoMounted.Store(true)
@@ -491,6 +495,22 @@ func maybeAutoMountConsole(mux *http.ServeMux, parentBasePath string, parentPort
 	if err := MountSubApp(mux, "/_sky/console", SpawnSkyConsole(parentPort)); err == nil {
 		consoleAutoMounted.Store(true)
 	}
+}
+
+
+// consoleAdminSecret returns the per-app admin secret that gates
+// /_sky/console (JWT signing) and /_sky/metrics (Bearer auth). One
+// secret per app, two surfaces. We read SKY_METRICS_TOKEN first
+// (the canonical name); SKY_CONSOLE_TOKEN_SECRET is kept as a
+// transitional alias for tenants still seeded with the older var
+// name from v0.14.20. Empty when neither is set — Pro+ console
+// auth stays off and the deploy falls back to dev-mode rules
+// (i.e. nothing mounts in production).
+func consoleAdminSecret() string {
+	if s := os.Getenv("SKY_METRICS_TOKEN"); s != "" {
+		return s
+	}
+	return os.Getenv("SKY_CONSOLE_TOKEN_SECRET")
 }
 
 

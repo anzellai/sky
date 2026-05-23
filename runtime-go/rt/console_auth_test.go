@@ -159,3 +159,35 @@ func TestConsoleAuthRejectsNoCredentials(t *testing.T) {
 		t.Errorf("no-creds status: got %d, want 401", w.Result().StatusCode)
 	}
 }
+
+
+// TestConsoleAdminSecretPrefersMetricsToken — the new canonical
+// env var SKY_METRICS_TOKEN takes precedence; SKY_CONSOLE_TOKEN_SECRET
+// is kept as a back-compat alias for v0.14.20-seeded tenants.
+func TestConsoleAdminSecretPrefersMetricsToken(t *testing.T) {
+	t.Setenv("SKY_METRICS_TOKEN", "canonical-secret")
+	t.Setenv("SKY_CONSOLE_TOKEN_SECRET", "legacy-secret")
+	if got := consoleAdminSecret(); got != "canonical-secret" {
+		t.Errorf("when both set, expected SKY_METRICS_TOKEN to win; got %q", got)
+	}
+}
+
+// TestConsoleAdminSecretFallsBackToConsoleSecret — back-compat for
+// tenants seeded on v0.14.20 before the token unification.
+func TestConsoleAdminSecretFallsBackToConsoleSecret(t *testing.T) {
+	t.Setenv("SKY_METRICS_TOKEN", "")
+	t.Setenv("SKY_CONSOLE_TOKEN_SECRET", "legacy-secret")
+	if got := consoleAdminSecret(); got != "legacy-secret" {
+		t.Errorf("with only legacy var set, got %q want legacy-secret", got)
+	}
+}
+
+// TestConsoleAdminSecretEmptyWhenUnset — both empty → no admin
+// surface unlocked; the deploy falls back to dev-mode rules.
+func TestConsoleAdminSecretEmptyWhenUnset(t *testing.T) {
+	t.Setenv("SKY_METRICS_TOKEN", "")
+	t.Setenv("SKY_CONSOLE_TOKEN_SECRET", "")
+	if got := consoleAdminSecret(); got != "" {
+		t.Errorf("nothing set, got %q want \"\"", got)
+	}
+}
