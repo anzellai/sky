@@ -2834,12 +2834,22 @@ func sessionID(r *http.Request, w http.ResponseWriter, ttl time.Duration) string
 	// destroying the user's Model state even though the sqlite /
 	// redis / postgres backing store still had it.  MaxAge matches
 	// the store TTL so a server-side expiry and the cookie expiry
-	// converge to the same time-of-death.  HttpOnly stays on; SameSite
-	// defaults to Lax (browser default) which is right for top-level
-	// nav + form posts.
+	// converge to the same time-of-death.
 	maxAge := int(ttl.Seconds())
 	if maxAge <= 0 {
 		maxAge = 30 * 60 // 30 min sane default
+	}
+	// SameSite: when SKY_LIVE_FRAME_ANCESTORS opts this deploy into
+	// being iframed cross-origin (e.g. a control plane's preview
+	// pane), the browser would silently drop a Lax-default cookie on
+	// every iframe request — Sky.Live's SSE + POST loop would
+	// reconnect-and-reset every few seconds. None+Secure lets the
+	// cookie ride along, and the existing CSRF check still gates
+	// state-mutating POSTs. Outside that mode keep Lax (the right
+	// floor for top-level nav + form posts on a same-origin app).
+	sameSite, secure := http.SameSiteLaxMode, false
+	if crossOriginIframeMode() {
+		sameSite, secure = http.SameSiteNoneMode, true
 	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     "sky_sid",
@@ -2847,8 +2857,21 @@ func sessionID(r *http.Request, w http.ResponseWriter, ttl time.Duration) string
 		Path:     "/",
 		HttpOnly: true,
 		MaxAge:   maxAge,
+		SameSite: sameSite,
+		Secure:   secure,
 	})
 	return sid
+}
+
+// crossOriginIframeMode reports whether SKY_LIVE_FRAME_ANCESTORS is
+// set — i.e. this deploy expects to be embedded by a different origin
+// (typically a control plane's app-preview iframe). When true, the
+// session + CSRF cookies must be SameSite=None; Secure to survive the
+// browser's cross-site cookie policy. The CSP `frame-ancestors`
+// directive set in setSecurityHeaders is the orthogonal gate that
+// scopes WHICH origins may embed.
+func crossOriginIframeMode() bool {
+	return os.Getenv("SKY_LIVE_FRAME_ANCESTORS") != ""
 }
 
 // liveBannerConfig collects the <PREFIX>_LIVE_* env vars that

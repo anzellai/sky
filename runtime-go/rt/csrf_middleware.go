@@ -145,13 +145,30 @@ func CSRFMiddleware(next http.Handler) http.Handler {
 		}
 		if cookieToken == "" {
 			cookieToken = generateSkyCsrfToken()
+			// SameSite policy: Strict by default (its own purpose). When
+			// SKY_LIVE_FRAME_ANCESTORS opts this deploy into cross-origin
+			// embedding, browsers will silently drop a Strict cookie on
+			// every iframe request — POSTs from the iframed app's own JS
+			// would 403 with "csrf_missing" because the cookie never
+			// arrives. None+Secure lets the cookie ride; the X-Sky-Csrf
+			// header-vs-cookie check (set by the SAME-ORIGIN iframed JS)
+			// remains the actual CSRF gate, since cross-origin attackers
+			// can't read the cookie value to forge the header.
+			sameSite := http.SameSiteStrictMode
+			secure := r.TLS != nil
+			if crossOriginIframeMode() {
+				sameSite = http.SameSiteNoneMode
+				secure = true
+			} else if proto := r.Header.Get("X-Forwarded-Proto"); proto == "https" {
+				secure = true
+			}
 			http.SetCookie(w, &http.Cookie{
 				Name:     SkyCsrfCookieName,
 				Value:    cookieToken,
 				Path:     "/",
 				HttpOnly: true,
-				SameSite: http.SameSiteStrictMode,
-				Secure:   r.TLS != nil,
+				SameSite: sameSite,
+				Secure:   secure,
 			})
 			// Also stash the freshly-generated token on the
 			// request so downstream handlers calling
