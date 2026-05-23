@@ -475,6 +475,112 @@ HTTP-first (full HTML on load, patches on events), SSE
 subscriptions, session stores (memory / sqlite / redis / postgres /
 firestore), type-safe events, VNode diffing.
 
+### URL routing + history
+
+The `routes` field maps URL paths to Page values. The runtime
+matches incoming URLs in declaration order, captures `:param`
+segments, and reflect-calls the Page constructor with the captured
+values (always `String`). Declaration order matters — put
+literals before patterns (`/apps/new` before `/apps/:slug`, or
+"new" matches as a slug).
+
+```elm
+type Page
+    = LoginPage
+    | DashboardPage
+    | NewAppPage
+    | AppDetailPage String         -- :slug delivers a String
+    | InsightsPage
+
+routes =
+    [ route "/" LoginPage
+    , route "/auth/sign-in" LoginPage
+    , route "/apps" DashboardPage
+    , route "/apps/new" NewAppPage             -- literal before pattern
+    , route "/apps/:slug" AppDetailPage        -- ctor: String -> Page
+    , route "/insights" InsightsPage
+    ]
+notFound = LoginPage
+```
+
+**URL-from-Page** (keeping the address bar in step with programmatic
+`Navigate` Msgs): emit a sentinel `<div>` with `data-sky-path` on
+every render. The runtime pushes / replaces history when the value
+differs from `location.pathname` — called from BOTH `__skyPatch`
+(full-body / `sky-nav` fetches) AND `__skyApplyPatches` (SSE
+patches), so all in-app navigation updates the URL.
+
+```elm
+import Std.Html as Html
+import Std.Html.Attributes as Attr
+
+urlSync : Model -> Element msg
+urlSync model =
+    Ui.html
+        (Html.node "div"
+            [ Attr.attribute "data-sky-path" (currentPath model) ]
+            []
+        )
+
+-- Place urlSync inside the view's top-level column, next to the shell.
+```
+
+`data-sky-path` is typed (no JS-in-string, no `new Function()`,
+works under strict CSP, no XSS surface). Leave the element in the
+DOM after the runtime processes it — removing it orphans its
+`sky-id` and the next attribute patch silently skips (the
+patch's `querySelector('[sky-id=…]')` returns null). The
+path-check (`location.pathname !== p`) keeps the call idempotent.
+
+For **link navigation**, add `sky-nav` to the `<a>` — the runtime
+intercepts the click, fetches the URL with `X-Sky-Nav: 1`,
+full-body-patches, and pushes history. No app code needed.
+
+```elm
+Html.a [ Attr.href "/apps", Attr.attribute "sky-nav" "" ] [ Html.text "Dashboard" ]
+```
+
+**Back / Forward** is handled by the runtime: a popstate listener
+re-fetches the URL with `X-Sky-Nav: 1` and patches. App code does
+NOT need anything for Back to work.
+
+`data-sky-eval` (older, runs the attribute via `new Function()`) is
+CSP-incompatible (`script-src` without `'unsafe-eval'` blocks it)
+AND only fires from `__skyPatch`, not from SSE patches. Use
+`data-sky-path` for URL updates; specific-purpose typed attributes
+for other one-off post-patch effects.
+
+**Auth gates around routes.** For public-vs-authenticated apps:
+
+- Let Sky.Live route the URL to a page as usual.
+- In `pageBody` / view, outer-case on `model.session`: signed-out
+  always renders the sign-in surface regardless of page.
+- Use a single `currentPath : Model -> String` (not a per-page
+  `pathForPage`) that returns the sign-in URL when `session =
+  Nothing`, otherwise dispatches on `model.page`. So the address bar
+  follows what the user actually sees.
+
+```elm
+currentPath : Model -> String
+currentPath model =
+    case model.session of
+        Nothing -> "/auth/sign-in"
+        Just _ ->
+            case model.page of
+                LoginPage          -> "/apps"            -- authed at sign-in → bounce
+                DashboardPage      -> "/apps"
+                NewAppPage         -> "/apps/new"
+                AppDetailPage slug -> "/apps/" ++ slug
+                InsightsPage       -> "/insights"
+                AdminUsersPage     -> "/users"
+```
+
+**Slug ↔ subdomain convention.** When apps deploy under a wildcard
+domain (`*.platform.app`), prefer slug-keyed URLs (`/apps/<slug>`)
+that match the subdomain (`<slug>.platform.app`) — bookmarkable,
+follows renames. Carry the slug on the Page constructor; handlers
+that need the numeric id resolve it via a `findBySlug` helper.
+
 ### Async commands
 
 `update msg model` returns `(Model, Cmd Msg)`. `Cmd.perform task

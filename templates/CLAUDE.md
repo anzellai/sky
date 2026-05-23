@@ -1968,6 +1968,99 @@ main =
 **Navigation**: `a [ href "/about", attribute "sky-nav" "" ] [ text "About" ]`
 **Styling**: Use `Std.Css` with `stylesheet`/`rule` — not inline style strings.
 
+### URL routing + history (Sky.Live)
+
+`routes` is the URL → Page mapping; the runtime matches in
+declaration order, captures `:param` segments, and reflect-calls
+the Page constructor with the captured values (`String`).
+
+```elm
+type Page
+    = LoginPage
+    | DashboardPage
+    | NewAppPage
+    | AppDetailPage String          -- :slug delivers a String
+    | InsightsPage
+
+main = app
+    { …
+    , routes =
+        [ route "/" LoginPage
+        , route "/apps" DashboardPage
+        , route "/apps/new" NewAppPage           -- literal BEFORE pattern
+        , route "/apps/:slug" AppDetailPage      -- ctor: String -> Page
+        , route "/insights" InsightsPage
+        ]
+    , notFound = LoginPage
+    }
+```
+
+Put literals before patterns — otherwise `"new"` matches as a
+slug.
+
+**URL-from-Page.** After a programmatic `Navigate` Msg, the
+address bar follows via Sky.Live's `data-sky-path` hook — a typed
+attribute the runtime checks on EVERY patch (`__skyPatch` for
+sky-nav fetches, `__skyApplyPatches` for SSE-driven Msg patches).
+No JS-in-string, no `new Function()`, CSP-safe.
+
+```elm
+import Std.Html as Html
+import Std.Html.Attributes as Attr
+
+urlSync : Model -> Element msg
+urlSync model =
+    Ui.html
+        (Html.node "div"
+            [ Attr.attribute "data-sky-path" (currentPath model) ]
+            []
+        )
+
+-- Place urlSync inside the view's top-level column.
+```
+
+Do NOT remove the `data-sky-path` element after the runtime
+processes it — Sky.Live's diff looks elements up by `sky-id` via
+querySelector, and a removed element orphans its sky-id so the next
+attribute patch silently skips. The path-check is idempotent so
+leaving it in place is cheap.
+
+**Link clicks.** Add the `sky-nav` attribute to an `<a>`: the
+runtime intercepts the click, fetches with `X-Sky-Nav: 1`,
+full-body-patches, and pushes history. No app code needed.
+`Back/Forward` is handled by a built-in popstate listener — also
+no app code.
+
+`data-sky-eval` (older, runs the attribute via `new Function()`)
+is CSP-incompatible and only fires from `__skyPatch`, not from
+SSE patches. Always prefer `data-sky-path` for URL updates.
+
+**Auth-gated routing pattern.** Outer-case `pageBody` on
+`model.session` (signed-out always renders sign-in regardless of
+page) and have a single `currentPath : Model -> String` that
+returns `/auth/sign-in` when unauthed, so the URL follows the
+surface the user actually sees.
+
+```elm
+currentPath : Model -> String
+currentPath model =
+    case model.session of
+        Nothing -> "/auth/sign-in"
+        Just _ ->
+            case model.page of
+                LoginPage          -> "/apps"           -- authed at sign-in → bounce
+                DashboardPage      -> "/apps"
+                NewAppPage         -> "/apps/new"
+                AppDetailPage slug -> "/apps/" ++ slug
+                InsightsPage       -> "/insights"
+```
+
+**Slug ↔ subdomain.** When apps deploy under a wildcard domain
+(`*.platform.app`), prefer slug-keyed URLs (`/apps/<slug>`) that
+match the subdomain (`<slug>.platform.app`) — bookmarkable, follows
+renames. Carry the slug on the Page constructor; handlers that need
+the numeric id resolve via a `findBySlug` helper.
+
 ### Event binding — radio groups
 
 Sky.Live's `input`/`change` event on a `<input type="radio">` reports the radio's `checked` state (always `True` at selection), NOT its `value`. Binding a typed constructor like `UpdateRole : String -> Msg` to `onInput` gets a `Bool` at runtime, which the server drops as a Msg decode error.
