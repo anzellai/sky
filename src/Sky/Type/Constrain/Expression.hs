@@ -220,13 +220,28 @@ constrain counter env (A.At region expr) expected = case expr of
         let homeStr = ModuleName.toString home
         if homeStr == currentModule
             then case Map.lookup name sameModAnnots of
-                Just annot@(T.Forall freeVars _) | not (null freeVars) ->
+                Just annot@(T.Forall freeVars _) | any (/= "any") freeVars ->
                     -- Sibling reference to a POLYMORPHIC annotated
                     -- TypedDef.  Use CForeign with the user
                     -- annotation so the alpha-rename per call site
                     -- lets `cfg : Cfg msg` be called with msg=Int
                     -- AND msg=Bool in the same module without
                     -- pinning to the first.
+                    --
+                    -- Wildcard-only gate: an annotation whose ONLY
+                    -- "free" var is `any` (e.g. `view : Model -> any`)
+                    -- MUST stay on CLocal.  CForeign would re-
+                    -- instantiate the wildcard per call site,
+                    -- diverging the body-side `any` UF var from the
+                    -- caller-side `any` UF var — so a wrong return
+                    -- type (`view _ = "hi"` against expected
+                    -- `Model -> Html msg`) goes silently undetected.
+                    -- Wildcard-only sigs are intentionally NOT
+                    -- polymorphic in the schema sense; they're just
+                    -- shorthand for "I don't care about this slot".
+                    -- The shared env-var path preserves the body ↔
+                    -- caller unification chain required to surface
+                    -- the type error.
                     --
                     -- Non-polymorphic (empty freeVars) annotations
                     -- stay on the CLocal path: CForeign would create
@@ -241,7 +256,7 @@ constrain counter env (A.At region expr) expected = case expr of
                     return $ T.CForeign region
                         (homeStr ++ "." ++ name) annot expected
                 _ ->
-                    -- Unannotated OR non-polymorphic annotated
+                    -- Unannotated OR non-polymorphic-only-wildcard
                     -- same-module ref: shared env var.
                     return $ T.CLocal region name expected
             else case Map.lookup (homeStr, name) externals of
