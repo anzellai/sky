@@ -147,12 +147,57 @@ actuallyUnify v1 v2 = do
         (T.Structure flat1, T.Structure flat2) ->
             unifyStructure v1 v2 flat1 flat2
 
+        -- App1 ↔ Alias with same name + arity: unfold and match.
+        -- This case arises with recursive parametric aliases: the
+        -- alias body's self-reference is preserved as `Can.TType
+        -- name args` (the visited-set guard prevents loop), but
+        -- references from OUTSIDE the alias's expansion are wrapped
+        -- as `Can.TAlias`.  Unify must bridge these representations
+        -- by name, otherwise `mkBranch n cs = { kids = cs }` with
+        -- `cs : List (Tree Int)` fails to unify against the field's
+        -- declared `List (Tree a)` (a := Int) shape.
+        (T.Structure (T.App1 home1 name1 args1),
+         T.Alias home2 name2 pairs2 realVar2)
+            | (home1 == home2 || nullHome home1 || nullHome home2)
+            , name1 == name2
+            , length args1 == length pairs2 -> do
+                results <- mapM (uncurry unify)
+                    (zip args1 (map snd pairs2))
+                if and results
+                    then do
+                        merge v1 v2
+                            (T.Alias home2 name2 pairs2 realVar2)
+                        return True
+                    else return False
+
+        (T.Alias home1 name1 pairs1 realVar1,
+         T.Structure (T.App1 home2 name2 args2))
+            | (home1 == home2 || nullHome home1 || nullHome home2)
+            , name1 == name2
+            , length pairs1 == length args2 -> do
+                results <- mapM (uncurry unify)
+                    (zip (map snd pairs1) args2)
+                if and results
+                    then do
+                        merge v1 v2
+                            (T.Alias home1 name1 pairs1 realVar1)
+                        return True
+                    else return False
+
         -- Alias: unwrap and unify
         (T.Alias _ _ _ realVar, _) ->
             unify realVar v2
 
         (_, T.Alias _ _ _ realVar) ->
             unify v1 realVar
+
+
+-- | Empty-home sentinel test used by both the App1-vs-App1 same-name
+-- short-circuit and the App1-vs-Alias same-name path above.  Empty
+-- home appears for kernel pseudo-types and TAlias instances whose
+-- home was lost during a constraint round trip.
+nullHome :: ModuleName.Canonical -> Bool
+nullHome h = null (ModuleName.toString h)
 
 
 -- | Unify two type structures

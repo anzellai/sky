@@ -1,0 +1,40 @@
+-- A widget module declaring parametric record alias + concrete record
+-- alias.  Consumer module exercises every surface against these.
+module Widget.Editor exposing
+    ( Cfg
+    , Form
+    , view
+    , render
+    )
+
+import Sky.Core.Prelude exposing (..)
+
+
+-- Parametric record alias.  This is the canonical "Cfg msg" pattern
+-- from skydeploy/sky-editor.
+type alias Cfg msg =
+    { onSubmit : String -> msg
+    , label : String
+    , busy : Bool
+    }
+
+
+-- Concrete record alias used as form payload.
+type alias Form =
+    { content : String
+    , action : String
+    }
+
+
+-- Widget consumer (no explicit signature — works around pre-Surface-1
+-- HM limitation).  Body uses field access on parametric-alias-typed
+-- param.  Post-v0.15 this should accept an explicit Cfg msg signature
+-- too.
+view cfg =
+    "label=" ++ cfg.label ++ "/busy=" ++ (if cfg.busy then "y" else "n")
+
+
+-- Explicit Form arg.  Demonstrates field access on concrete alias.
+render : Form -> String
+render f =
+    f.content ++ "|" ++ f.action
