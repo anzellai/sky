@@ -614,6 +614,43 @@ makes it unnecessary AND gob-stable.
 | **Cabal test regression on intermediate stages** | Each stage runs cabal test before merge |
 | **Sky.Live session invalidation on Stage E deploy** | Same TTL pattern; document |
 
+## 10.6 Stage E SHIPPED (2026-05-24) — Go generics on parametric records
+
+End-to-end Stage E completed via these new building blocks:
+
+| Component | Purpose |
+|---|---|
+| `globalAllAliases` IORef | Early-populated alias decl map; safe to read from sig emission without triggering the `<<loop>>` from `getCgEnv` during env build |
+| `globalAllFieldIdx` IORef | Early-populated field-set → alias-name registry; same safety property |
+| `extractAliasBindings` | Positional matching of alias body against actual record → recovered `(alias-var ↦ actual-type)` bindings |
+| `syntheticAliasVar` | Deterministic `_skysynth_<alias>_<var>` names for alias vars whose bindings can't be structurally extracted (subset-record / partial-use case) |
+| `aliasGenericArgs` | Combines extraction + synthesis → final type-arg list (always full, falling back to synthetic TVars where needed) |
+| Generic struct emission | `generateStruct` / `generateAliasForDep` emit `type Cfg_R[T1 any] struct { … }` |
+| TAlias arm in renderers | `solvedTypeToGo` + `typeStrWithAliasesReg` emit type-args via `typeArgSuffix` |
+| TRecord arm in renderers | Same renderers use `aliasGenericArgs` to render row-poly HM records as parametric instantiations |
+| `tvarsInEmitted` TRecord | Surfaces synthetic TVars so `splitInferredSigWithReg` promotes them to Go-side T-vars in the function's generic-clause |
+| `exprToGoExpectGo` Can.Record arm | Routes to `lowerRecordLiteralTo` when slot is a parametric instantiation; literal emits typed `Cfg_R[Msg]{...}` with INSTANTIATED field types |
+| `substituteTVarsToGo` TType + TAlias arms | Recursive parametric aliases (`Tree a = { kids : List (Tree a) }`) emit with outer instantiation propagating through |
+| `goZeroValue` | Recognizes `Foo_R[Args]` instantiation form |
+
+Bonus fix in the same release: **same-module polymorphic call
+re-instantiation.** When an annotated TypedDef `f : Cfg msg -> msg`
+in the same module is called twice with different concrete `msg`
+instantiations, the previous CLocal-only path pinned `msg` to the
+first call's type. Now we use CForeign with fresh alpha-renaming
+when the annotation has actual free TVars (Forall non-empty),
+otherwise stay on CLocal (preserves identity-based unification for
+non-parametric aliases like `NewAppForm`).
+
+Verified:
+- 29/29 example clean-slate sweep
+- 120/120 stdlib Sky.Test assertions
+- 21/21 v0.15 stress test (including S6d same-module poly +
+  recursive Tree)
+- skydeploy clean WITH workaround
+- skydeploy clean WITHOUT cross-alias workaround (verified by
+  removing `type alias FileForm = Editor.Form` and rebuilding)
+
 ## 10.5 Stage E attempts — two blockers identified (2026-05-24)
 
 ### Attempt 1 — naive: just make structs generic
