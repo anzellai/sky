@@ -2,6 +2,79 @@
 
 Notable user-visible changes. Keep this file additive — never rewrite history.
 
+## v0.15.0 — Type-directed lowering (2026-05-24)
+
+### Type system
+
+- **Type-directed lowering throughout.** Sub-expressions at lambda
+  bodies, record-field inits, list elements, and call args lower with
+  the slot's typed Go form propagated. The solver writes a per-region
+  type map (`globalRegionTypes`); `LowerCtx` threads the expected
+  type down through `exprToGoExpectGo`. Closes the long-standing
+  parametric-record-alias bug class (every Surface 1/2/3 is now
+  shipped). Architecture: [`docs/v1-rfc/type-soundness-deep-analysis.md`](docs/v1-rfc/type-soundness-deep-analysis.md).
+- **Go generics on parametric record aliases.** `type alias Cfg msg
+  = { onSubmit : msg, label : String, ... }` now emits
+  `type Cfg_R[T1 any] struct { OnSubmit T1; Label string; ... }`
+  with per-instance type args (`Cfg_R[Msg]`, `Cfg_R[Int]`). Callback
+  fields keep their typed callee parameter — no more `func(any) any`
+  fallback at parametric-record slots.
+- **Inline lambdas keep their typed shape at record-field slots.**
+  `{ onSubmit = \s -> Tag ("L:" ++ s), ... }` against `Cfg Msg` now
+  emits `func(string) Msg` for the lambda, not `func(any) any`.
+- **Cross-alias call without the alias-chain workaround.** Structurally-
+  equal records can be passed across module boundaries without the
+  `type alias State.FileForm = Editor.Form` redirect. The redirect
+  remains a valid idiom but is no longer required.
+- **Same-module polymorphic call re-instantiation.** Annotated `f :
+  Cfg msg -> msg` called with `msg=Int` AND `msg=Bool` in the SAME
+  module both work — sibling references alpha-rename per call site.
+  Previously the first call pinned `msg`.
+- **Wildcard-`any` soundness gate.** `view : Model -> any` returning
+  a String against an expected `Model -> Html msg` slot now correctly
+  surfaces as a type error. Mid-development the v0.15 same-mod
+  CForeign change wrongly treated wildcard-only sigs as polymorphic;
+  the final gate requires at least one non-`any` freeVar before
+  routing through CForeign. The pair `Canonicalise.Type.freeTypeVars`
+  (collects wildcards) + `Instantiate.fromAnnotation` (filters them
+  + per-occurrence fresh UF var) is documented in CLAUDE.md as
+  load-bearing.
+
+### Type errors / diagnostics
+
+- **TAlias type-args propagate through readback + showType +
+  typeStructEq.** Errors like `Cfg Msg vs Cfg Int` are now shown
+  with their type args instead of the unhelpful `Cfg vs Cfg`.
+- **Unify.hs App1 ↔ Alias same-name bridge.** Recursive parametric
+  alias bodies (`type alias Tree a = { value : a, kids : List (Tree
+  a) }`) unify with external `TAlias` references correctly.
+- **Canonicaliser parametric-alias var substitution (Surface 1).**
+  Sky source can now access fields on `Cfg msg`-typed function
+  parameters without dropping to structural inference.
+
+### Limitations closed in v0.15 (with the older list trimmed)
+
+- ~~Let bindings with parameters after multi-line case~~
+- ~~Zero-arity functions reading env vars memoised at init()~~
+- ~~`exposing (Type(..))` for user-module ADT constructors~~
+- ~~`import X as Alias` leaks the alias into codegen~~
+- ~~`let` bindings don't support forward references~~
+- ~~Parametric record alias bugs (Surfaces 1, 2, 3)~~
+
+### Verification
+
+- 27/27 examples clean-build from a wiped slate
+- 120/120 stdlib Sky.Test assertions (`examples/00-standard-libs`)
+- 21/21 v0.15 parametric-record-alias stress test sections
+- 306/306 cabal tests (0 failures, 1 pending) — including the LSP
+  `DiagnosticsSpec` "TEA with Live.app: wrong view return type
+  surfaces as a real diagnostic" case
+- `scripts/verify-all-web.sh` — 10/10 Sky.Live + Sky.Http.Server
+  Playwright runs + console-e2e
+- `scripts/verify-cli.sh` — 13/13 CLI / Tui / Cli (Fyne X11 skipped)
+- Skydeploy clean rebuild + runtime probe (`/`, `/_sky/healthz`,
+  `/_sky/buildinfo`, console mounted)
+
 ## Unreleased
 
 ### Std.Ui — surface complete

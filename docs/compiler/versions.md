@@ -1,12 +1,110 @@
 # Version history
 
-> **v0.13 state**: typed Go output end-to-end. Whole-program Sky DCE
-> prunes unused FFI bindings (Stripe-SDK scale: −82 % source). LSP 100 %
-> coverage; runtime verification across all 26 examples. See
-> [`../compiler/journey.md`](../compiler/journey.md) for the changelog.
+> **v0.15 state**: type-directed lowering throughout (lambdas,
+> record-field inits, list elements, call args all carry the slot's
+> typed Go form); Go generics on parametric record aliases; same-module
+> polymorphic re-instantiation; wildcard-`any` soundness gate. Builds
+> on Layer-3 stdlib + whole-program DCE + auto-TCO from v0.14 and
+> earlier. Runtime verification across all 27 examples (120 stdlib
+> assertions + 306 cabal specs).
 
+This is a feature-level changelog covering major architectural shifts.
+For the line-level history see `git log` or `CHANGELOG.md` at the repo
+root.
 
-This is a feature-level changelog covering major architectural shifts. For the line-level history see `git log`.
+## v0.15 — type-directed lowering (2026-05-24)
+
+End-to-end type-directed lowering pass: every sub-expression at a
+lambda body, record-field init, list element, or call arg carries the
+slot's typed Go form. Closes the long-standing parametric-record-alias
+bug class (Surfaces 1, 2, 3 all shipped).
+
+**Type system.**
+
+- **`globalRegionTypes` + `LowerCtx`.** The solver writes a per-region
+  type map; `LowerCtx` threads the expected type down through
+  `exprToGoExpectGo`.
+- **Go generics on parametric record aliases.** `type alias Cfg msg =
+  { onSubmit : msg, ... }` emits `type Cfg_R[T1 any] struct {
+  OnSubmit T1; ... }` with per-instance type args (`Cfg_R[Msg]`,
+  `Cfg_R[Int]`).
+- **Inline lambdas keep their typed shape at record-field slots.**
+  `{ onSubmit = \s -> Tag ("L:" ++ s), ... }` against `Cfg Msg` now
+  emits `func(string) Msg` for the lambda.
+- **Cross-alias call without the alias-chain workaround.** Structurally-
+  equal records pass across module boundaries without the
+  `type alias State.FileForm = Editor.Form` redirect.
+- **Same-module polymorphic re-instantiation.** Annotated `f : Cfg msg
+  -> msg` called with `msg=Int` AND `msg=Bool` in the SAME module both
+  type-check.
+- **Wildcard-`any` soundness gate.** `view : Model -> any` returning a
+  String against `Model -> Html msg` now surfaces as a clean type
+  error.
+
+**Limitations closed.**
+
+- Let bindings with parameters after a multi-line case
+- Zero-arity functions reading env vars memoised at init()
+- `exposing (Type(..))` for user-module ADT constructors
+- `import X as Alias` leaks the alias into codegen
+- `let` bindings don't support forward references
+- Parametric record alias bugs (Surfaces 1, 2, 3)
+- Same-module polymorphic call pinned by first instantiation
+- The "use alias chain" workaround for parametric records is no longer
+  required
+
+**Verification — green.**
+
+- 27/27 examples clean-build from a wiped slate
+- 120/120 stdlib `Sky.Test` assertions (`examples/00-standard-libs`)
+- 306/306 cabal tests (0 failures, 1 pending)
+- `scripts/verify-all-web.sh` 10/10 Playwright runs + console-e2e
+- `scripts/verify-cli.sh` 13/13 (Fyne X11 skipped)
+- Skydeploy clean rebuild + runtime probe
+
+## v0.14 — Layer 3 stdlib + observability + Std.Jobs + Std.Decimal/Money
+
+Headline shifts between v0.13 and v0.15:
+
+- **Layer 3 stdlib** — every kernel module surfaced as Sky source under
+  `sky-stdlib/{Sky/Core,Std,Sky/Http}/*.sky`. Each binding is either
+  pure Sky or a `Ffi.kernel "Name"` alias whose Stage-4 rewrite routes
+  call sites directly to the existing typed kernel dispatch. `sky doc`
+  surfaces every entry.
+- **Auto-TCO** for tail-recursive Sky functions. The lowerer detects
+  tail-position self-calls (`Sky.Build.TailCallOpt.isTailRecursive`)
+  and emits `[GoForever <stmts>]` with each tail call becoming
+  `<param reassignment + coercion>; continue` — constant stack on
+  `foldl`, `find`, `any`, `all`, `member`, `drop` etc.
+- **`sky doc`** — terminal renderer + browsable HTTP server (with
+  fuzzy search) + Sky.Tui interactive browser. Auto-opens the system
+  browser when run with `--serve`.
+- **`sky doctor`** — project / environment health checks (stale
+  `.skycache/`, port-in-use, missing FFI deps, mem-guard alive). The
+  `--fix` flag applies the suggested action.
+- **Sky Console + sub-app mount + observability federation.** Every
+  Sky.Live / Sky.Http.Server app auto-mounts a Std.Ui dev console at
+  `/_sky/console` in dev mode; structured logging + Prometheus
+  metrics + W3C-traceparent distributed tracing built in. Sub-apps
+  pushed via `rt.MountSubApp` federate their telemetry to the parent.
+- **Std.Decimal + Std.Money** — arbitrary-precision Decimal (Banker's
+  round, percent helpers), currency-typed Money on Decimal + ISO 4217
+  enum, `Money.allocate` (fair split), conversion rates.
+- **Std.Time** — IANA zones, calendar-aware `addMonths`/`addYears`
+  (month-end clamped), ISO `dayOfWeek` + `weekOfYear`, `startOfDay`
+  / `startOfWeek` / `startOfMonth` / `startOfYear` /
+  `diffDays`/`Hours`/`Minutes`/`Seconds`.
+- **Std.Jobs** — kernel module with memory / SQLite / Postgres
+  backends, exponential backoff + dead-letter table + `/_sky/jobs`
+  admin UI.
+- **CSRF default-on** for Sky.Live `POST /_sky/event`.
+- **JSON path-aware decode errors** carry a `[PathSeg]` and pretty-
+  print to `.user.email[3]`.
+- **`sky watch`** — file-watch-driven rebuild + respawn with a strict
+  allowlist; failed rebuilds keep the previously-running binary alive.
+
+The v0.13 typed-codegen contract carries forward. The full per-PR
+log lives at the repo root `CHANGELOG.md`.
 
 ## v0.13 — typed-codegen completion (perf/v0.13, 2026-05-15)
 
@@ -47,7 +145,8 @@ headless Chromium for 10 Sky.Live + Sky.Http.Server apps) +
 `scripts/verify-cli.sh` (CLI / Sky.Cli / Sky.Tui). 25/26 examples PASS
 end-to-end (Fyne `11-fyne-stopwatch` skip — needs X11).
 
-See `journey.md` for the full per-workstream technical write-up.
+See [`journey.md`](journey.md) for the full per-workstream technical
+write-up (frozen at v0.13).
 
 ## v0.11.x post-0 — DX (`sky watch`) + Sky.Live hot-reload + install perf (2026-05-07)
 

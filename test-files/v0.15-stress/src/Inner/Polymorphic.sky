@@ -1,0 +1,30 @@
+-- Polymorphic helper module — same-module polymorphic limitation
+-- workaround: putting the helpers in a dep module so CForeign
+-- re-instantiates per call site.
+module Inner.Polymorphic exposing
+    ( applyHandler
+    , identityM
+    , mkPair
+    )
+
+import Sky.Core.Prelude exposing (..)
+import Widget.Editor exposing (Cfg)
+
+
+-- Polymorphic over msg.  Calls cfg.onSubmit n through the
+-- parametric-alias-typed param.
+applyHandler : Cfg msg -> String -> msg
+applyHandler cfg s =
+    cfg.onSubmit s
+
+
+-- Plain identity — verifies polymorphic non-parametric-alias path.
+identityM : a -> a
+identityM x =
+    x
+
+
+-- Multi-var polymorphic.
+mkPair : a -> b -> ( a, b )
+mkPair x y =
+    ( x, y )

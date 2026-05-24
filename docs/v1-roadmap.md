@@ -216,34 +216,31 @@ need careful docs. Idempotency keys not in v1 — leave for v1.1.
 Each of these makes AI-written Sky better. They're not blockers for
 v1.0 but compound the value-prop.
 
-### 2.1 Close Limitation #18 — typed lambda lowering
+### 2.1 Type-directed lowering — SHIPPED in v0.15.0
 
-**Why.** The reflect.MakeFunc adapter path is currently the source of
-the cosmetic `sky-input="makeFuncStub"` in rendered HTML AND the
-~11 reflect adapters per sweep. Closing it removes a confusing
-DevTools artefact AND makes `msgDisplayName` extract real Msg names.
+**Why.** Lambdas, record-field inits, list elements, and call args
+were all lowered as `func(any) any` / `any`, forcing reflect-backed
+coercion at the boundary and leaving cosmetic
+`sky-input="makeFuncStub"` artefacts in rendered HTML.
 
-**What.**
-1. Lowerer threads HM-inferred lambda input/output types into Go
-   emission (currently always `func(any) any`).
-2. `curryLambdaPat` optionally takes a typed Go signature.
-3. Lambda body coerces `any`-typed param uses to the typed shape.
-4. Every callback shape across the codebase handles the typed/untyped
-   split.
+**What shipped (v0.15.0).**
+1. Solver writes per-region type map (`globalRegionTypes`); `LowerCtx`
+   threads the expected type down through `exprToGoExpectGo`.
+2. Lambda bodies, record-field inits, list elements, and call args at
+   typed slots lower with the slot's typed Go form propagated.
+3. Go generics on parametric record aliases: `type alias Cfg msg = {
+   onSubmit : msg, ... }` emits `type Cfg_R[T1 any] struct { OnSubmit
+   T1; ... }` with per-instance type args.
+4. Same-module polymorphic call re-instantiation — sibling refs
+   alpha-rename per call site.
+5. Wildcard-`any` soundness gate — same-mod CForeign requires at
+   least one non-`any` freeVar.
 
-**Acceptance.**
-- `runtime-go/rt/*_test.go` regression: `sky-input` attr value
-  equals the Msg constructor name (e.g. `EditDraft`), not
-  `makeFuncStub`. Across all 19 examples.
-- `examples/19-skyforum` HTML grep: zero `makeFuncStub` strings in
-  rendered HTML.
-- `runtime-go/rt/reflect_adapter_count_test.go` measures the
-  `makeFuncAdapter` instantiations per Live render; baseline 11,
-  asserted ≤ 1 (only genuinely-cross-arity cases).
-
-**Risk.** Multi-week scope. Half-done would leave the old behaviour
-intact for unhandled cases — which IS a workaround, against the
-no-workarounds principle. Don't ship partial.
+**Acceptance — green.**
+- 27/27 examples clean-build, 120/120 stdlib assertions, 306/306
+  cabal specs, full web + cli verify sweeps.
+- Architecture write-up:
+  [`v1-rfc/type-soundness-deep-analysis.md`](v1-rfc/type-soundness-deep-analysis.md).
 
 ---
 
@@ -338,31 +335,32 @@ auto-generate via `sky add`, so should be straightforward.
 
 ---
 
-### 2.5 Closed limitations sweep (6, 10, 11, 15, 16)
+### 2.5 Closed limitations sweep
 
-**Why.** Each Limitation in CLAUDE.md is a documented footgun.
-Closing them removes per-item AI failure modes.
+**Why.** Each documented limitation is a per-item AI failure mode.
+Closing them removes footguns.
 
-- **Lim 6** (Dict.toList returns string keys for Dict Int v): fix by
-  storing the key type in the Dict ADT, deserialising on toList.
-- **Lim 10** (zero-arity env reads cached at init time): emit
-  zero-arity declarations that touch `System.getenv` / `loadEnv` as
-  non-memoised. Detect via Can.Expr walk.
-- **Lim 11** (`exposing (Type(..))` doesn't expose ADT ctors for
-  user modules): canonicaliser fix; LSP needs to follow.
-- **Lim 15** (no `let` forward refs): canonicaliser already knows
-  the full let-name set; promote `Can.Def` in let blocks to a single
-  mutual-rec group like top-level decls.
-- **Lim 16** (kernel sigs missing for non-primitive returns):
-  needs runtime port to typed shape (Std.Html, Std.Attr, Std.Event,
-  Std.Css opaque returns).
+Closed across v0.14.x → v0.15.0:
 
-**Acceptance.**
-- Each Limitation entry in CLAUDE.md flipped to ~~strikethrough~~
-  with FIXED note + regression spec link.
+- ~~Zero-arity env reads cached at init time~~ — zero-arity bindings
+  touching `System.getenv` / `loadEnv` now emit non-memoised.
+- ~~`exposing (Type(..))` for user-module ADT constructors~~ —
+  canonicaliser + LSP both follow.
+- ~~`let` bindings forward references~~ — let blocks now promote to a
+  single mutual-rec group.
+- ~~Parametric record alias bugs (Surfaces 1, 2, 3)~~ — closed by
+  v0.15 type-directed lowering + Go generics on parametric records.
+- ~~Same-module polymorphic call pinned by first instantiation~~ —
+  sibling refs to polymorphic annotated TypedDefs alpha-rename per
+  call site.
+- ~~`import X as Alias` leaks alias into codegen~~ — emits the source
+  module name, not the alias.
 
-**Risk.** Limitation 16 ties into the post-v1 typed codegen runtime
-port — substantial scope. Others are bounded.
+Still active — see `docs/KNOWN_LIMITATIONS.md`:
+- Dict.toList returns string keys for Dict Int v (deferred —
+  workaround via `Dict.get` over known ranges).
+- Kernel sigs for non-primitive returns (runtime port for Std.Html,
+  Std.Attr, Std.Event, Std.Css opaque returns — deferred).
 
 ---
 
@@ -474,8 +472,8 @@ template-specific Playwright smoke test under `examples/templates/`.
   implement.
 - After each item lands: re-run the full preflight (`scripts/preflight-tag.sh`),
   tag a patch release, update this doc's status.
-- Limitations 6/10/11/15/16 in CLAUDE.md are the authoritative
-  open-bug list — keep this doc in sync.
+- `docs/KNOWN_LIMITATIONS.md` is the authoritative open-bug list —
+  keep this doc in sync.
 
 ---
 
@@ -483,29 +481,21 @@ template-specific Playwright smoke test under `examples/templates/`.
 
 | Phase | Item | Status |
 |---|---|---|
-| 1.1a | Telemetry primitives (incl. serverless detection + OTel) | **shipped** on `feat/v1-roadmap` |
-| 1.1b | `/_sky/console` dashboard (5-tab MVP — overview/metrics/logs/traces/errors) | **shipped** on `feat/v1-roadmap` |
-| 1.2 | CSRF default-on | **shipped** on `feat/v1-roadmap` |
-| 1.3 | Std.Jobs (memory backend + SQLite + Postgres) | **shipped** on `feat/v1-roadmap` |
-| 2.3 | `sky doctor` command | **shipped** on `feat/v1-roadmap` |
-| 2.5 | Limitations sweep (Lim 10 already fixed; Lim 11 + 15 closed) | **shipped** on `feat/v1-roadmap` |
-| 2.6 | JSON path-aware decode errors | **shipped** on `feat/v1-roadmap` |
-| 2.1 | Typed lambda lowering (multi-week scope) | deferred |
+| 1.1a | Telemetry primitives (incl. serverless detection + OTel) | **shipped** (v0.14.x) |
+| 1.1b | `/_sky/console` dashboard (5-tab MVP — overview/metrics/logs/traces/errors) | **shipped** (v0.14.x) |
+| 1.2 | CSRF default-on | **shipped** (v0.14.x) |
+| 1.3 | Std.Jobs (memory backend + SQLite + Postgres) | **shipped** (v0.14.x) |
+| 2.1 | Type-directed lowering (lambdas + record-field + list + call args) | **shipped** (v0.15.0) |
+| 2.3 | `sky doctor` command | **shipped** (v0.14.x) |
+| 2.4 | `Std.Decimal` + `Std.Money` + IANA time zones | **shipped** (v0.14.x) |
+| 2.5 | Limitations sweep (incl. Lim #11, #14, #15, and Surfaces 1-3 in v0.15) | **shipped** |
+| 2.6 | JSON path-aware decode errors | **shipped** (v0.14.x) |
 | 2.2 | LSP code actions | deferred |
-| 2.4 | Time zones + Decimal | deferred |
-| 2.7 | Std.Ui Playwright snapshot suite | deferred |
-
-**Phases 1 + most of 2 COMPLETE.** Remaining Phase 2 items (typed
-lambda lowering, LSP code actions, time-zones + Decimal,
-Std.Ui snapshot suite) are bigger-scope or lower-leverage —
-deferred until the v1.x cadence settles.
-| 2.1 | Typed lambda lowering | partial (Limitation #18) |
-| 2.2 | LSP code actions | not started |
-| 2.3 | `sky doctor` | not started |
-| 2.4 | Time zones + Decimal | not started |
-| 2.5 | Limitations sweep | partial |
-| 2.6 | JSON path-aware errors | not started |
-| 2.7 | Std.Ui snapshot suite | not started |
+| 2.7 | Std.Ui Playwright snapshot suite | deferred (examples/26-ui-showcase covers visual-regression for now) |
 | 3.1 | Playground | not started |
 | 3.2 | Docs site | not started |
 | 3.3 | Starter templates | not started |
+
+**Phases 1 + most of 2 COMPLETE.** Remaining Phase 2 items (LSP code
+actions, Std.Ui snapshot suite) are bigger-scope or lower-leverage —
+deferred until the v1.x cadence settles.

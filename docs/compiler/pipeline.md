@@ -1,9 +1,13 @@
 # Compilation pipeline
 
-> **v0.13 state**: typed Go output end-to-end. Whole-program Sky DCE
-> prunes unused FFI bindings (Stripe-SDK scale: −82 % source). LSP 100 %
-> coverage; runtime verification across all 26 examples. See
-> [`../compiler/journey.md`](../compiler/journey.md) for the changelog.
+> **v0.15 state**: type-directed lowering throughout — solver writes
+> per-region types and `LowerCtx` threads the expected Go type through
+> the lowerer for lambdas, record-field inits, list elements, and call
+> args. Go generics on parametric record aliases. Same-module
+> polymorphic call re-instantiation. Layer-3 stdlib, whole-program DCE
+> (Stripe-SDK scale: −82 % source), LSP 100 % coverage; runtime
+> verification across all 27 examples (120 stdlib assertions + 306
+> cabal specs). See [`versions.md`](versions.md) for the changelog.
 
 
 Step-by-step trace of what happens when you run `sky build src/Main.sky`.
@@ -75,7 +79,7 @@ For each module in topological order:
 
 ## Phase 4 — lowering to Go IR
 
-`Sky.Build.Compile.exprToGo` and its typed variant `exprToGoTyped` walk the canonical expression tree, producing `GoIr.GoExpr` nodes.
+`Sky.Build.Compile.exprToGo` and its typed variant `exprToGoTyped` walk the canonical expression tree, producing `GoIr.GoExpr` nodes. As of v0.15 the lowerer is **type-directed**: the solver writes a per-region type map (`globalRegionTypes`) and `LowerCtx` threads the expected Go type down through `exprToGoExpectGo`, so sub-expressions at lambda bodies, record-field inits, list elements, and call args lower with the slot's typed Go form propagated.
 
 Key transformations:
 - **ADT construction** — `Some x` → `rt.SkyADT{Tag: 0, SkyName: "Some", V0: x}` (or typed struct when `P4` record alias applies).
@@ -83,6 +87,8 @@ Key transformations:
 - **Pipeline** — `x |> f y` lowers through `Can.Call` so it participates in typed FFI dispatch.
 - **Kernel call** — `String.toUpper s` routes through the typed companion when `String_toUpperT(s string) string` is known and the arg type is primitive. See `typedKernelArgCoerce` in `Compile.hs`.
 - **FFI call** — `Uuid.newString ()` routes to `rt.Go_Uuid_newStringT()` when the wrapper is in the typed set.
+- **Parametric record aliases** — `type alias Cfg msg = { onSubmit : msg, ... }` emits `type Cfg_R[T1 any] struct { OnSubmit T1; ... }` with per-instance type args (`Cfg_R[Msg]`, `Cfg_R[Int]`). Callback fields keep their typed callee parameter — no more `func(any) any` fallback at parametric-record slots.
+- **Same-module polymorphic re-instantiation** — sibling refs to a polymorphic annotated TypedDef alpha-rename per call site, so `f : Cfg msg -> msg` called with `msg=Int` AND `msg=Bool` in the SAME module both type-check.
 
 ## Phase 5 — Go emission
 

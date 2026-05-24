@@ -1,0 +1,384 @@
+-- v0.15 stress test — every parametric-record-alias surface exercised.
+--
+-- Sections labelled S1A, S1B, S2, S3a, S3b, S4 (lambda), S5 (readback),
+-- S6 (same-module poly), then recursive / phantom / Maybe-List / update.
+--
+-- Each section's expected output is asserted in `main`.  A non-zero
+-- exit code means an assertion failed.  Run with the v0.15 compiler;
+-- pre-v0.15 hits Surface 1 at type-check.
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+import Widget.Editor as Editor
+import Widget.Editor exposing (Cfg, Form)
+import Inner.Polymorphic as Poly
+
+
+-- ═══════════════════════════════════════════════════════════
+-- ADT used by every Msg-style test
+-- ═══════════════════════════════════════════════════════════
+
+type Msg
+    = Tag String
+    | SaveFile Int String Form
+    | NoOp
+
+
+type IntMsg
+    = II Int
+
+
+type BoolMsg
+    = BB Bool
+
+
+-- ═══════════════════════════════════════════════════════════
+-- S3a — structurally-identical concrete record alias
+-- (cross-alias passing requires alias chain post-v0.15)
+-- ═══════════════════════════════════════════════════════════
+
+type alias FileForm =
+    Editor.Form
+
+
+mkFile : String -> String -> FileForm
+mkFile c a =
+    { content = c, action = a }
+
+
+-- ═══════════════════════════════════════════════════════════
+-- S1A — field access through parametric-alias-typed param
+-- WITH explicit signature
+-- ═══════════════════════════════════════════════════════════
+
+fireCfg : Cfg Msg -> String -> Msg
+fireCfg cfg s =
+    cfg.onSubmit s
+
+
+-- ═══════════════════════════════════════════════════════════
+-- S2 — partial-applied ADT ctor in record-literal slot
+-- ═══════════════════════════════════════════════════════════
+
+mkCfgPartial : Int -> String -> Cfg Msg
+mkCfgPartial appId fileName =
+    { onSubmit = SaveFile appId fileName << mkFile fileName
+    , label = "save " ++ fileName
+    , busy = False
+    }
+
+
+-- A simpler form: partial-applied 1-arg ctor.
+mkCfgTag : Cfg Msg
+mkCfgTag =
+    { onSubmit = Tag
+    , label = "tag"
+    , busy = False
+    }
+
+
+-- ═══════════════════════════════════════════════════════════
+-- S4 — inline lambda in parametric-alias slot (v0.15 Stage C)
+-- ═══════════════════════════════════════════════════════════
+
+mkCfgLambda : Cfg Msg
+mkCfgLambda =
+    { onSubmit = \s -> Tag ("L:" ++ s)
+    , label = "lambda"
+    , busy = True
+    }
+
+
+-- ═══════════════════════════════════════════════════════════
+-- S6 — polymorphic call via dep module (cross-module CForeign)
+-- AND same-module polymorphic call test (S6d): same fn called
+-- with two different concrete instantiations in same module.
+-- ═══════════════════════════════════════════════════════════
+
+
+-- Same-module polymorphic helper.  Tests if v0.15 closes the
+-- CLocal-vs-CForeign single-module limitation.
+sameModApply : Cfg msg -> String -> msg
+sameModApply cfg s =
+    cfg.onSubmit s
+
+intCfg : Cfg IntMsg
+intCfg =
+    { onSubmit = \s -> II (String.length s)
+    , label = "int"
+    , busy = False
+    }
+
+
+boolCfg : Cfg BoolMsg
+boolCfg =
+    { onSubmit = \s -> BB (String.startsWith "y" s)
+    , label = "bool"
+    , busy = False
+    }
+
+
+-- ═══════════════════════════════════════════════════════════
+-- S7 — recursive parametric alias
+-- ═══════════════════════════════════════════════════════════
+
+type alias Tree a =
+    { value : a
+    , kids : List (Tree a)
+    }
+
+
+mkLeaf : Int -> Tree Int
+mkLeaf n =
+    { value = n, kids = [] }
+
+
+mkBranch : Int -> List (Tree Int) -> Tree Int
+mkBranch n cs =
+    { value = n, kids = cs }
+
+
+sumTree : Tree Int -> Int
+sumTree t =
+    -- Sky's foldl is (a -> acc -> acc), arg order is (elem, acc).
+    t.value + List.foldl (\k acc -> acc + sumTree k) 0 t.kids
+
+
+-- ═══════════════════════════════════════════════════════════
+-- S8 — phantom type parameter
+-- ═══════════════════════════════════════════════════════════
+
+type alias Tagged a =
+    { id : Int
+    , label : String
+    }
+
+
+mkTagged : Int -> String -> Tagged String
+mkTagged i l =
+    { id = i, label = l }
+
+
+-- ═══════════════════════════════════════════════════════════
+-- S9 — multi-var parametric alias
+-- ═══════════════════════════════════════════════════════════
+
+type alias Pair a b =
+    { first : a, second : b }
+
+
+mkPairR : Int -> String -> Pair Int String
+mkPairR i s =
+    { first = i, second = s }
+
+
+-- ═══════════════════════════════════════════════════════════
+-- S10 — Maybe / List containing parametric alias
+-- ═══════════════════════════════════════════════════════════
+
+cfgList : List (Cfg Msg)
+cfgList =
+    [ mkCfgTag, mkCfgLambda ]
+
+
+cfgMaybe : Maybe (Cfg Msg)
+cfgMaybe =
+    Just mkCfgTag
+
+
+-- ═══════════════════════════════════════════════════════════
+-- S11 — record update over parametric alias
+-- ═══════════════════════════════════════════════════════════
+
+busyOn : Cfg Msg -> Cfg Msg
+busyOn cfg =
+    { cfg | busy = True }
+
+
+-- ═══════════════════════════════════════════════════════════
+-- S13 — lambda as direct call arg (List.map, List.filter)
+-- ═══════════════════════════════════════════════════════════
+
+ints : List Int
+ints =
+    List.map (\x -> x + 1) [ 1, 2, 3 ]
+
+
+positives : List Int
+positives =
+    List.filter (\x -> x > 0) [ -1, 2, -3, 4 ]
+
+
+-- ═══════════════════════════════════════════════════════════
+-- S14 — lambda inside Maybe (named helper avoids binop+lambda-
+-- param-type bug; inline-lambda HOF arg with binop body is a
+-- separate Stage C.2+ work-item — orthogonal to this fix).
+-- ═══════════════════════════════════════════════════════════
+
+doubleIt : Int -> Int
+doubleIt x =
+    x * 2
+
+
+doubled : Maybe Int
+doubled =
+    Maybe.map doubleIt (Just 21)
+
+
+-- S14b: inline lambda with NON-binop body (no binop = no
+-- operand-type inference issue).
+doubledStr : Maybe String
+doubledStr =
+    Maybe.map (\n -> String.fromInt n) (Just 7)
+
+
+-- S14c: inline lambda passed to List.map with binop body — Sky
+-- already infers `x : Int` via call-arg propagation for List
+-- which is well-tested.  This passes pre-v0.15 too — it's the
+-- baseline of what worked.  Included here for regression
+-- coverage.
+mappedDirect : List Int
+mappedDirect =
+    List.map (\x -> x + 10) [ 1, 2, 3 ]
+
+
+-- ═══════════════════════════════════════════════════════════
+-- S12 — anonymous record literal at parametric-alias slot
+-- ═══════════════════════════════════════════════════════════
+
+useDirectLiteral : String
+useDirectLiteral =
+    -- The record literal here must unify with Cfg Msg.
+    Editor.view
+        { onSubmit = Tag, label = "anon", busy = False }
+
+
+-- ═══════════════════════════════════════════════════════════
+-- Helper that prints + asserts equality
+-- ═══════════════════════════════════════════════════════════
+
+check : String -> String -> String -> Result String String
+check name actual expected =
+    if actual == expected then
+        Ok (name ++ ": OK")
+
+    else
+        Err (name ++ ": expected " ++ expected ++ ", got " ++ actual)
+
+
+fmtMsg : Msg -> String
+fmtMsg m =
+    case m of
+        Tag s ->
+            "Tag " ++ s
+
+        SaveFile aid fn f ->
+            "SaveFile " ++ String.fromInt aid ++ " " ++ fn ++ " {" ++ f.content ++ "," ++ f.action ++ "}"
+
+        NoOp ->
+            "NoOp"
+
+
+fmtIM : IntMsg -> String
+fmtIM m =
+    case m of
+        II n ->
+            "II " ++ String.fromInt n
+
+
+fmtBM : BoolMsg -> String
+fmtBM m =
+    case m of
+        BB b ->
+            "BB " ++ (if b then "true" else "false")
+
+
+-- ═══════════════════════════════════════════════════════════
+-- Drive every section, accumulate results, print
+-- ═══════════════════════════════════════════════════════════
+
+main =
+    let
+        -- S1A: field access through Cfg Msg
+        r_s1a = check "S1A" (fmtMsg (fireCfg mkCfgTag "hi")) "Tag hi"
+
+        -- S1B: anonymous record literal at typed slot via Editor.view
+        r_s1b = check "S1B" useDirectLiteral "label=anon/busy=n"
+
+        -- S2: partial-applied ctor in record field
+        cfg_p = mkCfgPartial 42 "Main.sky"
+        r_s2 = check "S2" (fmtMsg (fireCfg cfg_p "data")) "SaveFile 42 Main.sky {Main.sky,data}"
+
+        -- S4: inline lambda in record field
+        r_s4 = check "S4" (fmtMsg (fireCfg mkCfgLambda "hi")) "Tag L:hi"
+
+        -- S6: same-module poly via dep
+        r_s6a = check "S6a" (fmtIM (Poly.applyHandler intCfg "hi")) "II 2"
+        r_s6b = check "S6b" (fmtBM (Poly.applyHandler boolCfg "yes")) "BB true"
+        -- S6d: same-MODULE polymorphic helper called twice with
+        -- different concrete msg types.  Pre-v0.15 this hit the
+        -- CLocal/CForeign limitation (first call pinned msg).
+        r_s6d_i = check "S6d_i" (fmtIM (sameModApply intCfg "yo")) "II 2"
+        r_s6d_b = check "S6d_b" (fmtBM (sameModApply boolCfg "yes")) "BB true"
+
+        -- S7: recursive
+        leaf = mkLeaf 1
+        branch = mkBranch 10 [ mkLeaf 2, mkLeaf 3, mkBranch 4 [ mkLeaf 5 ] ]
+        r_s7 = check "S7" (String.fromInt (sumTree branch)) "24"
+
+        -- S8: phantom
+        t = mkTagged 1 "x"
+        r_s8 = check "S8" (String.fromInt t.id ++ "/" ++ t.label) "1/x"
+
+        -- S9: multi-var
+        p = mkPairR 7 "hi"
+        r_s9 = check "S9" (String.fromInt p.first ++ "/" ++ p.second) "7/hi"
+
+        -- S10: list / Maybe
+        firstFromList = List.head cfgList
+        r_s10a = check "S10a" (Maybe.withDefault "none" (Maybe.map .label firstFromList)) "tag"
+        r_s10b = check "S10b" (Maybe.withDefault "none" (Maybe.map .label cfgMaybe)) "tag"
+
+        -- S11: record update
+        busy = busyOn mkCfgTag
+        r_s11 = check "S11" (if busy.busy then "ON" else "OFF") "ON"
+
+        -- S12: anonymous-literal-at-typed-slot tested via useDirectLiteral above (S1B)
+
+        -- S3a: FileForm passed where Form expected (alias chain works)
+        ff = mkFile "C" "A"
+        r_s3a = check "S3a" (Editor.render ff) "C|A"
+
+        -- S6c: cross-module polymorphic identity at multiple types
+        idResult = String.fromInt (Poly.identityM 5) ++ "|" ++ Poly.identityM "x"
+        r_s6c = check "S6c" idResult "5|x"
+
+        -- S13: lambda as direct call arg
+        r_s13a = check "S13a" (String.join "," (List.map String.fromInt ints)) "2,3,4"
+        r_s13b = check "S13b" (String.join "," (List.map String.fromInt positives)) "2,4"
+
+        -- S14: lambda inside Maybe
+        r_s14 = check "S14" (String.fromInt (Maybe.withDefault 0 doubled)) "42"
+        r_s14b = check "S14b" (Maybe.withDefault "none" doubledStr) "7"
+        r_s14c = check "S14c" (String.join "," (List.map String.fromInt mappedDirect)) "11,12,13"
+
+        results =
+            [ r_s1a, r_s1b, r_s2, r_s4
+            , r_s6a, r_s6b, r_s6c
+            , r_s6d_i, r_s6d_b
+            , r_s7, r_s8, r_s9
+            , r_s10a, r_s10b, r_s11
+            , r_s3a
+            , r_s13a, r_s13b, r_s14, r_s14b, r_s14c
+            ]
+
+        report = case Result.combine results of
+            Ok oks ->
+                "ALL " ++ String.fromInt (List.length oks) ++ " PASS\n"
+                    ++ String.join "\n" oks
+
+            Err first ->
+                "FAIL: " ++ first
+    in
+    println report

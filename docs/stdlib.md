@@ -1,12 +1,17 @@
 # Standard library reference
 
-> **v0.14.x state.** Layer 3 stdlib complete: every kernel module
+> **v0.15.x state.** Layer 3 stdlib complete: every kernel module
 > surfaced as Sky source under
 > `sky-stdlib/{Sky/Core,Std,Sky/Http}/*.sky`. Browse the full surface
 > with `sky doc --serve` (HTTP server with type-signature search,
 > Markdown rendering, in-module filter), or `sky doc <Module>` in the
 > terminal. Fully-typed Go output; whole-program DCE prunes unused
 > code + FFI bindings; auto-TCO for tail-recursive functions.
+> v0.15 adds **type-directed lowering** end-to-end (lambdas, record
+> fields, list literals) and **Go generics on parametric record
+> aliases** (`type alias Cfg msg = { ... }` compiles to
+> `Cfg_R[msg any]` so callback shapes stay typed across the FFI
+> boundary).
 
 Sky's standard library is **batteries-included** — one canonical module
 per concern, no plugin ecosystem, no `npm install` for crypto. This
@@ -58,7 +63,7 @@ main =
         ++ println (String.split "," "a,b,c") -- ["a","b","c"]
 ```
 
-Highlights: `length`, `reverse`, `append`, `split`, `join`, `contains`, `startsWith`, `endsWith`, `toInt`, `fromInt`, `toFloat`, `fromFloat`, `toUpper`, `toLower`, `trim`, `replace`, `slice`, `repeat`, `padLeft`, `padRight`, `lines`, `words`, `htmlEscape`, `slugify`, `truncate`, `ellipsize`, `isEmail`, `isUrl`, `graphemes` (correct Unicode segmentation), `casefold`, `equalFold`.
+All 33 entries: `length`, `isEmpty`, `reverse`, `append`, `concat`, `split`, `join`, `replace`, `slice`, `contains`, `startsWith`, `endsWith`, `toInt`, `fromInt`, `toFloat`, `fromFloat`, `toUpper`, `toLower`, `trim`, `trimStart`, `trimEnd`, `repeat`, `padLeft`, `padRight`, `lines`, `words`, `fromChar`, `toList`, `fromList`, `casefold`, `equalFold`, `isEmail`, `isUrl`.
 
 ### `List` — sequences
 
@@ -70,7 +75,13 @@ sum     = List.foldl (\n acc -> n + acc) 0 [ 1, 2, 3 ]    -- 6
 evens   = List.filter (\n -> modBy 2 n == 0) [ 1, 2, 3, 4 ] -- [2, 4]
 ```
 
-`map`, `filter`, `foldl`, `foldr`, `length`, `head`, `tail`, `take`, `drop`, `append`, `concat`, `concatMap`, `reverse`, `sort`, `sortBy`, `member`, `any`, `all`, `range`, `zip`, `filterMap`, `parallelMap` (goroutine-backed), `isEmpty`, `indexedMap`, `find`, `cons`.
+`map`, `filter`, `foldl`, `foldr`, `length`, `head`, `tail`, `take`, `drop`, `append`, `concat`, `concatMap`, `reverse`, `member`, `any`, `all`, `range`, `zip`, `isEmpty`, `indexedMap`, `find`, `cons`.
+
+> `foldl` is auto-TCO'd (constant stack) along with `find` /
+> `any` / `all` / `member` / `drop` / `reverse`. The remaining
+> entries recurse O(N) on the Go stack — fine for typical UI
+> lists; for million-entry inputs prefer `foldl` with an
+> accumulator. See [Limitation 12](../CLAUDE.md#active-limitations).
 
 ### `Dict` — key-value maps (string keys)
 
@@ -98,7 +109,7 @@ name : String
 name = Maybe.withDefault "Anonymous" maybeName
 ```
 
-`withDefault`, `map`, `andThen`, `map2`, `map3`, `map4`, `map5`, `andMap`, `combine`, `traverse`.
+`withDefault`, `map`, `andThen`, `map2`, `map3`, `map4`, `map5`, `andMap`, `combine`, `isJust`, `isNothing`.
 
 ### `Result` — fallible computations
 
@@ -114,7 +125,7 @@ id =
             println ("computation failed: " ++ Error.toString e) 
 ```
 
-`withDefault`, `map`, `andThen`, `mapError`, `map2`, `map3`, `map4`, `map5`, `andMap`, `combine`, `traverse`, `andThenTask` (bridge — see [Result/Task bridges](../CLAUDE.md#resulttask-bridges)).
+`withDefault`, `map`, `andThen`, `mapError`, `map2`, `map3`, `map4`, `map5`, `andMap`, `combine`. The `Result → Task` bridges live on `Task` (`Task.fromResult` / `Task.andThenResult`) — see [Result/Task bridges](../CLAUDE.md#resulttask-bridges).
 
 ### `Math` — numerical functions
 
@@ -137,7 +148,7 @@ match = Regex.match "^[a-z]+$" "hello"   -- True
 
 ### `Path` — file path manipulation
 
-`join`, `dir`, `base`, `ext`, `isAbsolute`, `safeJoin` (refuses `..` traversal).
+`base`, `dir`, `ext`, `isAbsolute`. (For joining paths, use string concatenation with `String.append` or interpolation — the Sky-source surface is intentionally minimal; reach for `Sky.Ffi.callPure "path/filepath.Join"` if you need Go's full path API.)
 
 ### `Crypto` — hashes, MAC, signatures, entropy
 
@@ -339,22 +350,30 @@ ISO 4217 minor-unit awareness (JPY=0dp, USD=2dp, BHD=3dp). `Currency` is a typed
 import Std.Time as Stime
 ```
 
-Embedded `time/tzdata` so works in containers without `/usr/share/zoneinfo`. **Note** the import alias `Stime` rather than `Time` — the kernel `Time` already owns that name.
+Embedded `time/tzdata`, so it works in containers without
+`/usr/share/zoneinfo`. **Note** the import alias `Stime` rather
+than `Time` — the kernel `Time` already owns that name. Zones are
+IANA strings (`"UTC"`, `"America/New_York"`, `"Asia/Tokyo"`); a bad
+zone name returns `Err Error`. Timestamps are unix-millis `Int`,
+matching `Time.unixMillis`. 32 entries.
 
-| Surface | Signature |
+| Surface | Signature / behaviour |
 |---|---|
-| `inZone` / `formatInZone fmt zone t` | RFC 3339 + custom Go layouts |
-| `addMonths n t` / `addYears n t` | **clamped** (Jan 31 + 1 month → Feb 28/29, NOT Mar 3) |
-| `addDays` / `addHours` / `addMinutes` / `addSeconds` | self-explanatory |
-| `startOfDay` / `startOfWeek` / `startOfMonth` / `startOfYear` | floor helpers |
-| `endOfDay` / `endOfMonth` / `endOfYear` | ceiling helpers |
-| `year` / `month` / `day` / `dayOfWeek` | extract components (ISO Mon=1..Sun=7) |
-| `dayOfYear` / `weekOfYear` | ISO 8601 |
-| `isWeekend` / `isLeapYear` | `Bool` |
-| `daysInMonth y m` | `Int` (handles leap Feb) |
-| `diffDays` / `diffHours` / `diffMinutes` / `diffSeconds` | `Time -> Time -> Int` |
-| `fromParts y m d h mi s ms zone` | construct from components |
-| `zoneOffset` / `zoneName` / `utc` | zone metadata |
+| `inZone zone ms` | `Result Error String` — RFC 3339 in the given zone |
+| `formatInZone zone layout ms` | `Result Error String` — custom Go layout |
+| `addMonths n ms` / `addYears n ms` | `Int -> Int -> Int` — **clamped** (Jan 31 + 1 month → Feb 28/29, NOT Mar 3) |
+| `addDays` / `addHours` / `addMinutes` / `addSeconds` | `Int -> Int -> Int` — non-clamped arithmetic |
+| `startOfDay zone` / `startOfWeek` / `startOfMonth` / `startOfYear` | `String -> Int -> Result Error Int` — floor helpers (week starts Monday, ISO) |
+| `endOfDay` / `endOfMonth` / `endOfYear` | `String -> Int -> Result Error Int` — ceiling helpers |
+| `year` / `month` / `day` / `dayOfWeek` | `String -> Int -> Result Error Int` — components (`dayOfWeek` is ISO Mon=1..Sun=7) |
+| `dayOfYear` / `weekOfYear` | `String -> Int -> Result Error Int` — ISO 8601 week |
+| `isWeekend` | `String -> Int -> Result Error Bool` |
+| `isLeapYear y` | `Int -> Bool` |
+| `daysInMonth y m` | `Int -> Int -> Int` (handles leap Feb) |
+| `diffDays` / `diffHours` / `diffMinutes` / `diffSeconds` | `Int -> Int -> Int` (millis → unit) |
+| `fromParts zone y m d h mi s` | `... -> Result Error Int` — construct from components |
+| `zoneOffset zone ms` / `zoneName zone ms` | zone metadata at that instant |
+| `utc` | `String` — the `"UTC"` constant |
 
 ---
 
@@ -409,7 +428,7 @@ update msg model =
 | `Cmd.perform` | `Task err a -> (Result err a -> msg) -> Cmd msg` | Run task, dispatch result as Msg |
 | `Cmd.batch` | `List (Cmd msg) -> Cmd msg` | Concurrent batch |
 | `Sub.none` | `Sub msg` | No subscription |
-| `Sub.every` | `Float -> (Posix -> msg) -> Sub msg` | Tick every N ms |
+| `Sub.every` | `Int -> msg -> Sub msg` | Dispatch `msg` every N ms |
 
 ### `Time` — clock + duration
 
@@ -421,7 +440,10 @@ now =
         |> Task.andThen (\t -> println (Time.formatISO8601 t))
 ```
 
-`now`, `sleep`, `every`, `unixMillis`, `formatISO8601`, `formatRFC3339`, `formatHTTP`, `format`, `parseISO8601`, `parse`, `addMillis`, `diffMillis`, `timeString`.
+`now`, `unixMillis`, `sleep`, `every`, `format`, `formatISO8601`, `formatRFC3339`, `formatHTTP`, `addMillis`, `diffMillis`, `timeString`.
+
+> For zone-aware formatting, parsing, calendar arithmetic, and
+> period boundaries reach for [`Std.Time`](#stdtime--iana-zone-helpers-complementing-kernel-time).
 
 ### `Random` — pseudo-random generation
 
@@ -431,7 +453,9 @@ import Sky.Core.Random as Random
 dice = Random.int 1 6   -- Task Error Int
 ```
 
-`int`, `float`, `choice` (pick from list), `shuffle`.
+`int : Int -> Int -> Task Error Int` (inclusive low/high) and
+`float : Float -> Float -> Task Error Float`. For cryptographic
+entropy use [`Crypto.randomBytes` / `Crypto.randomToken`](#crypto--hashes-mac-signatures-entropy).
 
 ### `Http` — HTTP client
 
@@ -461,7 +485,9 @@ readme =
 
 ### `Io` — stdin / stdout / stderr
 
-`readLine`, `readBytes`, `writeStdout`, `writeStderr`, `writeString`.
+`readLine`, `writeStdout`, `writeStderr` — all `Task Error
+…`-typed. For password input with stdin echo disabled, use
+[`Sky.Cli.readPassword`](skytui/overview.md#skycli-password-mode).
 
 ### `System` — environment + arguments
 
@@ -533,12 +559,56 @@ Log.infoWith "user logged in" [ "userId", "42", "ip", "1.2.3.4" ]
 
 | Function | Type |
 |---|---|
-| `Log.println` | `String -> Task Error ()` (alias for `Std.Log.println`) |
-| `Log.debug`, `info`, `warn`, `error` | `String -> Task Error ()` |
-| `Log.debugWith`, `infoWith`, `warnWith`, `errorWith` | `String -> List String -> Task Error ()` (key/value pairs) |
-| `Log.with` | `List String -> Logger` (build a contextual logger) |
+| `Log.println` | `String -> Task Error ()` — stdout, no level routing |
+| `Log.debug` / `info` / `warn` / `error` | `String -> Task Error ()` |
+| `Log.debugWith` / `infoWith` / `warnWith` / `errorWith` | `String -> List a -> Task Error ()` — key/value pairs `[ "k1", v1, "k2", v2, … ]` |
 
 `SKY_LOG_FORMAT` (`plain` | `json`) and `SKY_LOG_LEVEL` (`debug` | `info` | `warn` | `error`) control output format and threshold. Configure defaults in `sky.toml` `[log] format = "json"`. See [Logging precedence](../CLAUDE.md#environment-variable-precedence).
+
+### `Trace` — opt-in application tracing spans
+
+```elm
+import Std.Trace as Trace
+
+checkout : Cart -> Task Error Receipt
+checkout cart =
+    Trace.span "checkout"
+        (reserveStock cart
+            |> Task.andThen chargeCard
+            |> Task.andThen issueReceipt)
+```
+
+Tier-1 spans (HTTP request, session load/save, Msg dispatch, DB /
+Auth / Http / File operations) are emitted **automatically** by
+the runtime — you only reach for `Std.Trace` when you want a named
+**application**-level span that groups the auto-spans underneath.
+
+| Function | Type | Notes |
+|---|---|---|
+| `Trace.span` | `String -> Task e a -> Task e a` | Wrap a Task in a named child span. Parametric in the error type. |
+| `Trace.event` | `String -> Task Error ()` | Record an instantaneous event on the current span ("cache miss", "retry"). |
+| `Trace.attr` | `String -> String -> Task Error ()` | Tag the current span with a `key = value` attribute (auto-namespaced under `sky.trace.`). |
+
+Spans surface in `/_sky/console`'s Trace tab and export to OpenTelemetry when `OTEL_EXPORTER_OTLP_ENDPOINT` is set. See [observability docs](observability.md) for the full model.
+
+### `Markdown` — render markdown to Std.Ui
+
+```elm
+import Std.Markdown as Markdown
+
+view model =
+    Ui.column []
+        [ Ui.text model.title
+        , Markdown.render model.body          -- → Element msg
+        ]
+```
+
+| Function | Type |
+|---|---|
+| `Markdown.render` | `String -> Element msg` — block-level (Ui.column of paragraphs / headings / code / lists) |
+| `Markdown.renderInline` | `String -> Element msg` — single line of inline-only markdown |
+
+Renders straight into Std.Ui Element trees (no HTML round-trip) so the surrounding theme controls colour and typography. Subset is "chat-grade": headings (`#`-`######`), paragraphs, fenced code, bullet / ordered lists, horizontal rules, `**bold**` / `*italic*` / `` `code` `` / `[text](url)` / trailing double-space `<br>`. **Safe with untrusted input** — never emits raw HTML or event handlers; every node routes through typed Std.Ui constructors.
 
 ---
 
@@ -558,11 +628,14 @@ main =
         ]
 ```
 
-Routing: `get`, `post`, `put`, `delete`, `any`, `static`, `group` (prefix), `use` (middleware).
+Routing: `get`, `post`, `put`, `delete`, `any`, `static`, `group` (prefix), `use` (middleware), `listen`.
 
-Extractors: `param` (path), `queryParam`, `header`, `getCookie`, `formValue`, `body`, `path`, `method`.
+Extractors (Layer 3 Sky source — `Sky.Http.Server.sky`): `param`
+(path `:id`), `queryParam`, `header`, `getCookie`. Kernel-side
+extras: `formValue`, `body`, `path`, `method`.
 
-Responses: `text`, `json`, `html`, `withStatus`, `redirect`, `cookie`, `withCookie`, `withHeader`.
+Responses: `text`, `json`, `html`, `withStatus`, `redirect`,
+`cookie`, `withCookie`, `withHeader`.
 
 ### `Live` — Sky.Live (server-driven UI)
 
@@ -640,7 +713,7 @@ compound properties (`transition`, `transform`, `gridTemplateColumns`,
 
 > Bare keyword constants (`Css.zero`, `Css.auto`, `Css.none`,
 > `Css.transparent`) take `()` to sidestep zero-arity memoisation —
-> write `Css.margin (Css.zero ())`. See [Limitation #13](../CLAUDE.md#known-limitations-v09-dev).
+> write `Css.margin (Css.zero ())`. See [Limitation 13](../CLAUDE.md#active-limitations).
 
 ### `Ui` — typed no-CSS layout DSL
 
@@ -689,21 +762,36 @@ Full reference, surface-coverage table, known limitations: [Sky.Ui overview](sky
 ```elm
 import Sky.Http.RateLimit as RateLimit
 
-if RateLimit.allow "login" req then
+if RateLimit.allow "login" clientIp 5 1 then
     handleLogin req
 else
     Task.succeed (Server.withStatus 429 (Server.text "too many attempts"))
 ```
 
-`allow` (single bucket); use with `Middleware.withRateLimit` for declarative wiring.
+`allow : String -> String -> Int -> Int -> Bool` — try to consume
+one token from a token-bucket keyed by `(name, key)`. Arguments
+are `name` (limiter label), `key` (typically the client IP),
+`capacity` (bucket size), `refillPerSec` (refill rate). Returns
+`True` when the request is allowed, `False` when the bucket is
+empty. For declarative wiring use `Middleware.withRateLimit`.
 
 ### `Middleware` — composable handler wrappers
 
-`withCors`, `withLogging`, `withBasicAuth`, `withRateLimit`. Each is a `Handler -> Handler` function — compose by chaining.
+Each helper returns a decorated `Handler` — compose by chaining
+with `|>` or by nesting via `Server.use`.
+
+| Helper | Signature |
+|---|---|
+| `withCors` | `List String -> Handler -> Handler` — allowed-origin list |
+| `withLogging` | `Handler -> Handler` — `method path status duration` to stdout |
+| `withBasicAuth` | `String -> String -> Handler -> Handler` — `username password handler` |
+| `withRateLimit` | `String -> Int -> Int -> Handler -> Handler` — `key requestsPerWindow windowSeconds handler` (per-IP fixed window) |
 
 ```elm
+import Sky.Http.Middleware as Middleware
+
 Server.use Middleware.withLogging
-    (Server.use (Middleware.withRateLimit "api" 100)
+    (Server.use (Middleware.withRateLimit "api" 100 60)
         [ Server.get "/api/users" listUsers
         , ...
         ]
@@ -752,7 +840,6 @@ case validateConfig config of
 
 ```elm
 import Sky.Core.Task as Task
-import Sky.Core.List as List
 
 -- Goroutine-backed parallel; first error short-circuits
 allUsers =
@@ -761,16 +848,14 @@ allUsers =
         , Db.getById db "users" 2
         , Db.getById db "users" 3
         ]
-
--- Pure parallel map
-squared = List.parallelMap (\n -> n * n) [ 1..1000 ]
 ```
 
-`Task.parallel : List (Task err a) -> Task err (List a)` — concurrent task execution, error short-circuits.
+`Task.parallel : List (Task err a) -> Task err (List a)` —
+concurrent task execution; the first error short-circuits the
+batch.
 
-`Task.lazy : (() -> a) -> Task err a` — defer a pure computation to be run as a task.
-
-`List.parallelMap : (a -> b) -> List a -> List b` — pure goroutine map.
+`Task.lazy : (() -> a) -> Task err a` — defer a pure computation
+so it can be sequenced with other tasks.
 
 ---
 

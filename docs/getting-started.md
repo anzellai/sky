@@ -1,10 +1,15 @@
 # Getting started
 
-> **v0.13 state**: typed Go output end-to-end (no bare `any` for used
-> code). Whole-program Sky DCE prunes unused FFI bindings (Stripe-SDK
-> scale: −82 % source). LSP 100 % — hover + goto-def for every used
-> symbol class. Real runtime verification across all 26 examples. See
-> [`compiler/journey.md`](compiler/journey.md) for the changelog.
+> **v0.15 state**: type-directed lowering throughout — lambdas,
+> record-field inits, list elements, and call args all carry the
+> slot's typed Go form. Go generics on parametric record aliases
+> (`type Cfg_R[T1 any] struct{...}`). Same-module polymorphic call
+> re-instantiation. Layer-3 stdlib (every kernel module surfaced as
+> Sky source), whole-program DCE (Stripe-SDK scale: −82 % source),
+> auto-TCO for tail-recursive Sky functions, real runtime
+> verification across all 27 examples (120 stdlib assertions + 306
+> cabal specs). See [`compiler/versions.md`](compiler/versions.md)
+> for the full changelog.
 
 ## Install
 

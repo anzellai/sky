@@ -2,27 +2,35 @@
 
 > **Quick orientation.** Sky is an Elm-family functional language compiling to
 > typed Go via a Haskell compiler (GHC 9.4.8). The current branch ships
-> v0.14.x: full Layer-3 stdlib migration (every kernel module surfaced as
-> Sky source), `sky doc` browsable API surface, `Ffi.kernel` mechanism, and
-> auto-TCO for tail-recursive functions. The Phase B verification sweep
-> (27 examples + 114 Sky.Test assertions + ~300 cabal specs) is the source
+> v0.15.x: type-directed lowering throughout (lambdas, record-field inits,
+> list elements, call args all lower with the slot's typed Go form
+> propagated), Go generics on parametric record aliases
+> (`type Cfg_R[T1 any] struct{...}`), same-module polymorphic call
+> re-instantiation, and the wildcard-`any` soundness fix. Layer-3 stdlib
+> migration, `Ffi.kernel`, auto-TCO, `sky doc` all carry forward from
+> v0.14. The Phase B verification sweep
+> (27 examples + 120 Sky.Test assertions + 306 cabal specs) is the source
 > of truth — green-everywhere is a hard release gate.
 
 ## Current state
 
 | Surface | Status |
 |---|---|
+| **v0.15 type-directed lowering** (Stages A → F) | ✅ shipped — `Compile.hs` `globalRegionTypes` + `LowerCtx` |
+| **v0.15 Go generics on parametric record aliases** | ✅ shipped — `Cfg_R[T1 any]` + per-instance type args |
+| **v0.15 same-module polymorphic re-instantiation** | ✅ shipped — sibling refs to polymorphic annotated TypedDefs alpha-rename per call site |
+| **v0.15 wildcard-`any` soundness gate** | ✅ shipped — same-mod CForeign now gates on non-`any` freeVar |
 | Layer 3 stdlib (Sky source for every kernel module) | ✅ shipped — `sky-stdlib/{Sky/Core,Std,Sky/Http}/*.sky` |
 | `Ffi.kernel` mechanism (Sky-source bindings route to typed kernel dispatch) | ✅ shipped |
 | Auto-TCO for tail-recursive Sky functions | ✅ shipped |
 | `sky doc` (terminal + HTTP server with type-sig + Markdown + fuzzy search) | ✅ shipped |
 | `sky watch` / `sky doctor` / `sky console` / `sky upgrade-claude` | ✅ shipped |
 | Sky Console + sub-app mount + observability federation | ✅ shipped |
-| 27-example sweep + 114 Sky.Test assertions + ~300 cabal specs | ✅ green |
+| 27-example sweep + 120 Sky.Test assertions + 306 cabal specs | ✅ green |
 
 **Examples (27 total — `examples/00`-`examples/26`).** Each builds clean
 from a wiped slate (`rm -rf sky-out .skycache .skydeps && sky build`).
-`examples/00-standard-libs` is the stdlib smoke test (114 assertions).
+`examples/00-standard-libs` is the stdlib smoke test (120 assertions).
 `examples/13-skyshop` is the Stripe-SDK-scale benchmark (76k FFI
 symbols). `examples/26-ui-showcase` exercises every Std.Ui layout
 primitive for visual-regression review. Categories: CLI (7),
@@ -196,7 +204,74 @@ Sky.Http.Server → `Task.onError` recovers to a 4xx/5xx Response;
 Sky.Live → `Cmd.perform task ResultMsg`, dispatch updates
 `notification` / `historyError` in Model.
 
-## Memory safety + efficiency audit (v0.14.x)
+## Type-directed lowering (v0.15.x)
+
+The compiler now propagates HM types through to the Go IR. Sub-
+expressions at lambda bodies, record-field inits, list elements,
+and call args lower with the slot's typed Go form. This closes
+the long-standing parametric-record-alias bug class (every Surface
+1/2/3 is shipped — see `docs/v1-rfc/type-soundness-deep-analysis.md`
+for the full architecture write-up).
+
+### Mechanics
+
+- **Solver writes per-region types.** `Sky.Type.Solve` carries a
+  `RegionTypes :: Map A.Region T.Type` IORef alongside the existing
+  state. After unification settles, every constrained region has a
+  concrete type readable from `globalRegionTypes` during lowering.
+- **`LowerCtx`** carries the optional "expected type for this
+  position" down through `exprToGoExpectGo`. When a slot has a
+  known typed shape (record-field, call-arg, list-element), the
+  child expression sees it and lowers with that shape.
+- **`coerceToFieldType`** elides redundant `rt.Coerce` wraps when
+  the emitted Go expression's static type already matches the
+  target (Stage D — saves both runtime work and codegen noise).
+
+### Go generics on parametric record aliases
+
+A `type alias Cfg msg = { onSubmit : msg, label : String, ... }`
+emits:
+
+```go
+type Cfg_R[T1 any] struct {
+    OnSubmit T1
+    Label    string
+    ...
+}
+```
+
+Per-instance instantiations carry their type args explicitly:
+`Cfg_R[Msg]`, `Cfg_R[Int]`, etc. This means callback fields keep
+their typed callee parameter (no `func(any) any` fallback), and
+cross-alias passing now works without the alias-chain workaround.
+
+Subset-record cases (a function uses only some fields) synthesise
+`_skysynth_<alias>_<var>` TVars so the alias's missing parameters
+still flow as Go T-vars through the inferred sig.
+
+### Same-module polymorphic re-instantiation
+
+Sibling references to **polymorphic** annotated TypedDefs in the
+same module now emit `CForeign` and alpha-rename per call site —
+so `f : Cfg msg -> msg` called with `msg=Int` AND `msg=Bool` in
+the same module both work. Non-polymorphic / wildcard-only sigs
+still use `CLocal` (shared env var); identity-based unification
+on nominal aliases needs the shared path, and wildcard-`any`
+binding needs the body ↔ caller UF var chain to keep soundness.
+
+### Wildcard-`any` soundness gate
+
+`Sky.Canonicalise.Type.freeTypeVars` collects EVERY type-variable
+name including `"any"`. `Instantiate.fromAnnotation` then filters
+`"any"` out and `buildEnv` gives each occurrence its own fresh UF
+var — that pair is load-bearing for `any`'s wildcard semantics.
+Any new gate on "is this annotation polymorphic?" MUST check
+`any (/= "any") freeVars`, not `not (null freeVars)`. Mis-gating
+would treat wildcard-only sigs as polymorphic, diverge body ↔
+caller UF vars under fresh-per-call-site re-instantiation, and
+silently accept wrong return types.
+
+## Memory safety + efficiency audit (v0.15.x)
 
 ### Stdlib stack behaviour
 
@@ -950,25 +1025,22 @@ identifiers, field access (`{{record.field}}`), qualified names
 
 ## Active limitations
 
-These are current compiler limitations users must work around.
-Items marked FIXED are kept for diagnostic context.
+Real current compiler limitations users must work around. v0.15
+closed several earlier-listed items; the surviving list below is
+verified against HEAD.
 
-1. ~~**No anonymous records in function signatures.** Define a
-   `type alias` first.~~ FIXED — `processReq : Int -> { name : String, age : Int } -> String`
-   parses cleanly. The original limitation was overly broad — what
-   actually broke was a separate multi-line-sig issue.
-2. **No higher-kinded types.** HM only.
-3. **No `where` clauses.** Use `let…in`.
-4. **No custom operators.**
-5. **Negative literal arguments need parens.** `f -1` parses as
+1. **No higher-kinded types.** HM only.
+2. **No `where` clauses.** Use `let…in`.
+3. **No custom operators.**
+4. **Negative literal arguments need parens.** `f -1` parses as
    subtraction. Use `f (-1)`.
-6. **`Dict.toList` returns string keys.** `Dict Int v` still
+5. **`Dict.toList` returns string keys.** `Dict Int v` still
    yields string keys; arithmetic on them silently produces 0.
    Workaround: iterate over known key ranges with `Dict.get`.
-7. **`sky check` does not fully model Go interface satisfaction.**
+6. **`sky check` does not fully model Go interface satisfaction.**
    Opaque FFI types unify with each other; concrete-satisfies-
    interface checks fall through.
-8. **Zero-arg calls follow the binding's declared type, not its
+7. **Zero-arg calls follow the binding's declared type, not its
    FFI-vs-kernel origin.** Bare `Uuid.v4` works because its stdlib
    sig is `v4 : String`. `Time.now ()` / `Time.unixMillis ()` /
    `FyneApp.new ()` are *all* needed because their sigs are
@@ -978,36 +1050,53 @@ Items marked FIXED are kept for diagnostic context.
    declared shape. Dict / Set / Maybe / Result stay bare for
    their `empty` / `none` etc. because those have non-function
    types too.
-9. **Let bindings with parameters after multi-line case** — `let
-   mark j = …` after `case … of` confuses the parser. Workaround:
-   use lambdas or extract to a top-level function.
-10. **Zero-arity functions reading env vars** — memoised at Go
-    `init()` time (before `.env` loads). Workaround: add a dummy
-    `_` param.
-11. **`exposing (Type(..))` doesn't expose ADT constructors for
-    user modules** (kernel modules work). Workaround: `exposing
-    (..)` or qualify constructors.
-12. **Non-tail-recursive list operations are O(N) on Go stack.**
-    `map`, `filter`, `foldr`, `length`, `concat`, `take`,
-    `append`, `range`, `zip`, `concatMap`, `indexedMap`,
-    `Maybe.combine`, `Result.combine` recurse. Tail-recursive
-    operations (`foldl`, `find`, `any`, `all`, `member`, `drop`,
-    `reverseHelp`) are auto-TCO'd to constant stack. For very
-    large lists prefer the tail-recursive accumulator pattern.
-13. **Zero-arg `Css.*` keyword constants require `()`** —
-    `Css.zero ()`, `Css.auto ()`, `Css.none ()`. Without the unit,
-    the function pointer gets serialised as `0xc00001c0a0` into
-    the stylesheet.
-14. **`import X as Alias` leaks the alias into codegen for
-    exposed record/ADT types** — `import Lib.Db as Chat` emits
-    `Chat_Message_R` not `Lib_Db_Message_R`. Workaround: use
-    `exposing (Message, …)` or qualify without alias.
-15. **`let` bindings don't support forward references.** Reorder
-    so dependencies come first.
-16. **Multi-line function signatures.** `name\n    : T` (the `:`
+8. **Non-tail-recursive list operations are O(N) on Go stack.**
+   `map`, `filter`, `foldr`, `length`, `concat`, `take`,
+   `append`, `range`, `zip`, `concatMap`, `indexedMap`,
+   `Maybe.combine`, `Result.combine` recurse. Tail-recursive
+   operations (`foldl`, `find`, `any`, `all`, `member`, `drop`,
+   `reverseHelp`) are auto-TCO'd to constant stack. For very
+   large lists (200k+ elements) prefer the tail-recursive
+   accumulator pattern.
+9. **Zero-arg `Css.*` keyword constants require `()`** —
+   `Css.zero ()`, `Css.auto ()`, `Css.none ()`. Bare form is now
+   a clean type error rather than the silent function-pointer
+   leak it used to be, but the `()` is still required.
+10. **Multi-line function signatures.** `name\n    : T` (the `:`
     on a continuation line) parses cleanly. Continuation INSIDE
     the type body (`T1\n    -> T2`) is not supported — extract a
     `type alias` for the whole arrow type.
+
+### Closed in v0.15 (kept here for grep)
+
+- ~~Anonymous records in function signatures~~ — closed in v0.13
+  (`processReq : Int -> { name : String, age : Int } -> String`
+  parses cleanly).
+- ~~Let bindings with parameters after multi-line case~~ — `let
+  mark j = …` after a `case … of` arm now parses.
+- ~~Zero-arity functions reading env vars memoised at init()~~ —
+  `apiKey = System.getenvOr "K" "def"` now reads runtime env.
+- ~~`exposing (Type(..))` for user-module ADT constructors~~ —
+  user `type Color = Red | Green` exporting `Color(..)` and
+  imported `exposing (Color(..))` now exposes unqualified
+  constructors.
+- ~~`import X as Alias` leaks the alias into codegen~~ —
+  `import Lib.Db as Chat` now emits `Lib_Db_Message_R` based on
+  the source module, not the alias.
+- ~~`let` bindings don't support forward references~~ — `let a = b
+  + 1; b = 5 in a` now compiles and evaluates correctly.
+- ~~Parametric record alias bugs (Surfaces 1, 2, 3)~~ — closed
+  by v0.15 type-directed lowering + Go generics on parametric
+  records. See `docs/v1-rfc/type-soundness-deep-analysis.md` for
+  the full architecture write-up.
+- ~~Same-module polymorphic call pinned by first instantiation~~
+  — sibling refs to polymorphic annotated TypedDefs now alpha-
+  rename per call site (`f : Cfg msg -> msg` called with `msg=Int`
+  and `msg=Bool` in the same module both work).
+- ~~Wildcard-`any` return type silently accepted against typed
+  slot~~ — `view : Model -> any` returning a String against an
+  expected `Model -> Html msg` now correctly surfaces as a type
+  error (v0.15.1 same-mod CForeign wildcard-gate fix).
 
 ## Workflow rules
 

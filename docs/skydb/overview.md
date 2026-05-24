@@ -1,9 +1,11 @@
 # Std.Db overview
 
-> **v0.13 state**: typed Go output end-to-end. Whole-program Sky DCE
-> prunes unused FFI bindings (Stripe-SDK scale: −82 % source). LSP 100 %
-> coverage; runtime verification across all 26 examples. See
-> [`../compiler/journey.md`](../compiler/journey.md) for the changelog.
+> **v0.15 state**: type-directed lowering across callback fields,
+> record-field inits, list elements, and call args; Go generics on
+> parametric record aliases. Whole-program Sky DCE prunes unused FFI
+> bindings. LSP 100 % coverage; runtime verification across all 27
+> examples. See [`../compiler/journey.md`](../compiler/journey.md)
+> for the changelog.
 
 
 **One database API, two backends.** `Std.Db` is a thin, parameter-safe wrapper over `database/sql` that works identically against SQLite and PostgreSQL. Pick the driver in `sky.toml`; never touch it again in your code.
@@ -17,7 +19,7 @@ import Std.Log exposing (println)
 
 
 main =
-    Db.open "todos.db"
+    Db.connect ()                       -- reads `[database]` from sky.toml
         |> Task.andThen
             (\db ->
                 Db.exec db
@@ -41,18 +43,18 @@ Every operation that touches the disk returns `Task Error a` (per the [Task-ever
 
 | Function | Type | Notes |
 |---|---|---|
-| `Db.open` | `String -> Task Error Db` | Auto-detects driver from `sky.toml` `[database] driver`; path is sqlite file OR Postgres URL |
-| `Db.connect` | `String -> Task Error Db` | Explicit alias for `open` (compatibility) |
+| `Db.connect` | `() -> Task Error Db` | Reads driver + dsn from `sky.toml` `[database]` (or `SKY_DB_*` / `DATABASE_URL`). Preferred shape. |
+| `Db.open` | `String -> String -> Task Error Db` | Explicit driver + dsn. `Db.open "sqlite" "./app.db"` / `Db.open "postgres" "postgres://..."`. |
 | `Db.close` | `Db -> Task Error ()` | Releases the connection pool |
 
 ### Statements
 
 | Function | Type | Notes |
 |---|---|---|
-| `Db.exec` | `Db -> String -> List any -> Task Error Int` | Parameterised insert / update / delete; returns affected rows |
-| `Db.execRaw` | `Db -> String -> Task Error ()` | DDL only — no parameters. Use for `CREATE TABLE`, `CREATE INDEX`. |
-| `Db.query` | `Db -> String -> List any -> Task Error (List (Dict String any))` | Returns rows as `Dict String any` |
-| `Db.queryDecode` | `Db -> String -> List any -> (Dict String any -> Result Error a) -> Task Error (List a)` | Decodes each row through your function; failures abort the whole query |
+| `Db.exec` | `Db -> String -> List a -> Task Error Int` | Parameterised insert / update / delete; returns affected rows |
+| `Db.execRaw` | `Db -> String -> Task Error Int` | DDL or multi-statement script — **no** parameter binding (vulnerable to injection if `sql` is built from user input). Use for `CREATE TABLE`, `CREATE INDEX`. |
+| `Db.query` | `Db -> String -> List a -> Task Error (List (Dict String String))` | Returns rows as `Dict String String` (every column stringified at the boundary) |
+| `Db.queryDecode` | `Db -> String -> List a -> b -> Task Error (List b)` | Decoder is parametric — typically a `Dict String String -> Result Error a` function; failures abort the whole query |
 
 ### Conventional CRUD (auto-generated SQL)
 
@@ -60,12 +62,14 @@ For any table with an `id` column, these save you from hand-writing SELECT/UPDAT
 
 | Function | Type | Notes |
 |---|---|---|
-| `Db.insertRow` | `Db -> String -> Dict String any -> Task Error Int` | Returns new row id |
-| `Db.getById` | `Db -> String -> Int -> Task Error (Dict String any)` | Single row by primary key |
-| `Db.updateById` | `Db -> String -> Int -> Dict String any -> Task Error Int` | Returns affected rows |
-| `Db.deleteById` | `Db -> String -> Int -> Task Error Int` | Returns affected rows |
-| `Db.findWhere` | `Db -> String -> String -> List any -> Task Error (List (Dict String any))` | Parameterised WHERE; never string-concatenate user input into the clause |
-| `Db.findOneByField` | `Db -> String -> String -> any -> Task Error (Maybe (Dict String any))` | Single-row lookup by indexed column |
+| `Db.insertRow` | `Db -> String -> Dict String String -> Task Error Int` | Returns new row id |
+| `Db.getById` | `Db -> String -> String -> Task Error (Maybe (Dict String String))` | Single row by primary key (id is a string at the wire boundary). `Nothing` when missing. |
+| `Db.updateById` | `Db -> String -> String -> Dict String String -> Task Error Int` | Returns affected rows |
+| `Db.deleteById` | `Db -> String -> String -> Task Error Int` | Returns affected rows |
+| `Db.findOneByField` | `Db -> String -> String -> a -> Task Error (Maybe (Dict String String))` | Single-row equality lookup |
+| `Db.findManyByField` | `Db -> String -> String -> a -> Task Error (List (Dict String String))` | All matches by equality |
+| `Db.findByConditions` | `Db -> String -> Dict String String -> Task Error (List (Dict String String))` | AND-joined equality across every key/value in the conditions dict |
+| `Db.unsafeFindWhere` | `Db -> String -> String -> List a -> Task Error (List (Dict String String))` | Raw WHERE + bound params — clause is appended verbatim, **vulnerable to injection** if built from user input |
 
 ### Transactions
 
@@ -77,11 +81,10 @@ For any table with an `id` column, these save you from hand-writing SELECT/UPDAT
 
 | Function | Type | Notes |
 |---|---|---|
-| `Db.getField` | `String -> Dict String any -> String` | Stringifies any value at the field |
-| `Db.getFieldOr` | `any -> Dict String any -> String -> any` | Default value when field missing |
-| `Db.getString` | `String -> Dict String any -> String` | Type-aware; empty string when missing |
-| `Db.getInt` | `String -> Dict String any -> Int` | Type-aware; 0 when missing |
-| `Db.getBool` | `String -> Dict String any -> Bool` | Type-aware; False when missing |
+| `Db.getField` | `String -> row -> String` | Reads a field as a String (the canonical row-element shape) |
+| `Db.getString` | `String -> row -> String` | Same as `getField` — kept for symmetry with the typed helpers below |
+| `Db.getInt` | `String -> row -> Int` | Parses to Int; 0 when missing or unparseable |
+| `Db.getBool` | `String -> row -> Bool` | Parses to Bool; False when missing |
 
 These return bare values — see [default-supplied helpers stay bare](../../CLAUDE.md#effect-boundary-task-everywhere-v0100). Reach for a typed decoder via `Db.queryDecode` when "missing" needs to fail loud.
 
@@ -108,10 +111,11 @@ type alias Todo =
 
 
 -- Decode one row into a Todo (or fail loudly).
--- Row shape from the runtime is `Dict String any` — the typed
--- accessors (`Db.getInt` / `Db.getString` / `Db.getBool`) read
--- through the dict and apply the default-supplied fallback.
-decodeTodo : Dict String any -> Result Error Todo
+-- Row shape from the runtime is `Dict String String` — every
+-- column lands stringified, and the typed accessors
+-- (`Db.getInt` / `Db.getString` / `Db.getBool`) parse on read
+-- with a default-supplied fallback.
+decodeTodo : Dict String String -> Result Error Todo
 decodeTodo row =
     Ok
         (Todo
@@ -122,7 +126,7 @@ decodeTodo row =
 
 
 main =
-    Db.open "todos.db"
+    Db.connect ()
         |> Task.andThen
             (\db ->
                 Db.execRaw db
@@ -242,8 +246,8 @@ See [Result/Task bridges](../../CLAUDE.md#resulttask-bridges) for the full cheat
 - **Connection pooling is on by default.** `Db.open` returns a `*sql.DB` — Go's `database/sql` manages the pool. No per-request open/close.
 - **Set explicit timeouts** for production. The default driver timeouts are generous; tighten via the connection URL (`?statement_timeout=5s` for Postgres).
 - **Never embed secrets in `sky.toml`.** Use `DATABASE_URL` from the environment in production; keep `sky.toml` for local-dev defaults only.
-- **Index columns you query**. The `findOneByField` / `findWhere` helpers don't add indexes — that's still a deliberate schema decision.
-- **Migrations are your responsibility.** `Db.execRaw` runs DDL but there's no built-in migration runner. Most apps keep a `migrations/*.sql` directory and apply them in order at startup; example projects 07/08/16 show the pattern.
+- **Index columns you query**. The `findOneByField` / `findManyByField` / `findByConditions` helpers don't add indexes — that's still a deliberate schema decision.
+- **Use `Db.migrate` for schema changes**. Versioned, forward-only, checksum-tracked — see the [Schema migrations](#schema-migrations) section below. Wire `sky db status` into CI as a drift gate; run `sky db migrate` ahead of cutover so a bad migration blocks a deploy rather than crash-looping the app.
 
 ## Sky.Live integration
 

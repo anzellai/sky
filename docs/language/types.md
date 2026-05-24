@@ -1,9 +1,11 @@
 # Types
 
-> **v0.13 state**: typed Go output end-to-end. Whole-program Sky DCE
-> prunes unused FFI bindings (Stripe-SDK scale: −82 % source). LSP 100 %
-> coverage; runtime verification across all 26 examples. See
-> [`../compiler/journey.md`](../compiler/journey.md) for the changelog.
+> **v0.15 state**: type-directed lowering throughout, Go generics on
+> parametric record aliases. Layer-3 stdlib, whole-program DCE
+> (Stripe-SDK scale: −82 % source), LSP 100 % coverage; runtime
+> verification across all 27 examples (120 stdlib assertions + 306
+> cabal specs). See [`../compiler/versions.md`](../compiler/versions.md)
+> for the changelog.
 
 
 Sky's type system is Hindley-Milner with algebraic data types, records, and concrete Go interop types. There are no type classes, no higher-kinded types, no row polymorphism.
@@ -138,6 +140,24 @@ func Identity[T1 any](x T1) T1 { return x }
 ```
 
 `solvedTypeToGo TVar` falls back to `any` at expression positions (Go's type parameters can't appear outside enclosing function signatures). This is by design, not an escape hatch.
+
+**Parametric record aliases** (v0.15+) lower to Go-generic structs with one type parameter per HM type variable:
+
+```elm
+type alias Cfg msg =
+    { onSubmit : msg
+    , label : String
+    }
+```
+
+```go
+type Cfg_R[T1 any] struct {
+    OnSubmit T1
+    Label    string
+}
+```
+
+Per-instance construction takes the type args: `Cfg_R[Msg]`, `Cfg_R[Int]`. Callback fields keep their typed callee parameter — no `func(any) any` fallback at parametric-record slots. The same-module polymorphic re-instantiation rule lets `f : Cfg msg -> msg` be called with `msg=Int` AND `msg=Bool` in the same module without pinning.
 
 ## Type variables with constraints
 

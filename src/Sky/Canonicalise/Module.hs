@@ -1455,14 +1455,33 @@ expandModuleAliases depAliases m =
 -- | Expand nominal type refs into TAlias nodes when they match an
 -- alias in the alias map. Carries a visited-set so a recursive
 -- alias (unusual but possible) can't loop.
+--
+-- Parametric aliases (`type alias Cfg msg = { onSubmit : Form -> msg
+-- , ... }`) get the same treatment: the body's type vars are
+-- substituted with the call-site args, then wrapped in a TAlias node
+-- carrying the (var, arg) pairs.  Surface 1 in
+-- docs/parametric-record-aliases-bugs.md: without this expansion,
+-- `Cfg Msg` reaches the solver as `TType "Cfg" [Msg]` (a nominal
+-- App1), so unifying `cfg : Cfg Msg` with a field-access row
+-- constraint `{ onSubmit : a | ρ }` fails — the unifier's alias-
+-- unwrap arm (Unify.hs) never fires because the value isn't a
+-- T.Alias.  Expanding eagerly preserves alias identity (TAlias)
+-- AND unfolds for unification.
 expandTypeAliases :: Map.Map String Can.Alias -> Set.Set String -> Can.Type -> Can.Type
 expandTypeAliases aliasMap visited ty = case ty of
-    Can.TType home name []
+    Can.TType home name args
         | not (Set.member name visited)
         , Just (Can.Alias vars body) <- Map.lookup name aliasMap
-        , null vars ->
-            let body' = expandTypeAliases aliasMap (Set.insert name visited) body
-            in Can.TAlias home name [] (Can.Filled body')
+        , length vars == length args ->
+            let visited' = Set.insert name visited
+                -- Recur into args first so nested aliases also expand.
+                args' = map (expandTypeAliases aliasMap visited') args
+                -- Substitute vars → args' in the alias body, then
+                -- recur so any nested alias references expand.
+                subst = Map.fromList (zip vars args')
+                substituted = substTypeVars subst body
+                body' = expandTypeAliases aliasMap visited' substituted
+            in Can.TAlias home name (zip vars args') (Can.Filled body')
     Can.TType home name args ->
         Can.TType home name (map recur args)
     Can.TLambda a b ->
@@ -1483,6 +1502,32 @@ expandTypeAliases aliasMap visited ty = case ty of
     Can.TVar n -> Can.TVar n
   where
     recur = expandTypeAliases aliasMap visited
+
+
+-- | Substitute named type variables in a Canonical.Type with their
+-- concrete bindings.  Used by `expandTypeAliases` when applying a
+-- parametric alias body to its call-site args.
+substTypeVars :: Map.Map String Can.Type -> Can.Type -> Can.Type
+substTypeVars subst ty = case ty of
+    Can.TVar n -> Map.findWithDefault ty n subst
+    Can.TLambda a b ->
+        Can.TLambda (substTypeVars subst a) (substTypeVars subst b)
+    Can.TType h n args ->
+        Can.TType h n (map (substTypeVars subst) args)
+    Can.TTuple a b rest ->
+        Can.TTuple (substTypeVars subst a) (substTypeVars subst b)
+                   (map (substTypeVars subst) rest)
+    Can.TRecord fields mExt ->
+        Can.TRecord
+            (Map.map (\(Can.FieldType i t) -> Can.FieldType i (substTypeVars subst t)) fields)
+            mExt
+    Can.TAlias h n pairs aliasType ->
+        Can.TAlias h n
+            [ (k, substTypeVars subst v) | (k, v) <- pairs ]
+            (case aliasType of
+                Can.Filled  inner -> Can.Filled  (substTypeVars subst inner)
+                Can.Hoisted inner -> Can.Hoisted (substTypeVars subst inner))
+    Can.TUnit -> Can.TUnit
 
 
 mapDeclsTypes :: (Can.Type -> Can.Type) -> Can.Decls -> Can.Decls

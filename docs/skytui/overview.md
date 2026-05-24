@@ -1,9 +1,12 @@
 # Sky.Tui overview
 
-> **v0.13 state**: typed Go output end-to-end. Whole-program Sky DCE
-> prunes unused FFI bindings (Stripe-SDK scale: −82 % source). LSP 100 %
-> coverage; runtime verification across all 26 examples. See
-> [`../compiler/journey.md`](../compiler/journey.md) for the changelog.
+> **v0.15 state**: type-directed lowering across callback fields,
+> record-field inits, list elements, and call args; Go generics on
+> parametric record aliases (so `Tui.app`'s callback fields keep
+> their typed callee param). Whole-program Sky DCE prunes unused
+> FFI bindings. LSP 100 % coverage; runtime verification across
+> all 27 examples. See [`../compiler/journey.md`](../compiler/journey.md)
+> for the changelog.
 
 
 **Terminal-rendering TEA backend.** `Sky.Tui` runs an `init` / `update`
@@ -18,6 +21,7 @@ module Main exposing (main)
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Task as Task
+import Sky.Core.System as System
 import Std.Tui as Tui
 import Std.Cmd as Cmd
 import Std.Sub as Sub
@@ -38,7 +42,7 @@ update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model = case msg of
     Increment -> ( { model | count = model.count + 1 }, Cmd.none )
     Decrement -> ( { model | count = model.count - 1 }, Cmd.none )
-    Quit      -> ( model, Cmd.perform (Sky.Core.System.exit 0) (\_ -> NoOp) )
+    Quit      -> ( model, Cmd.perform (System.exit 0) (\_ -> NoOp) )
     NoOp      -> ( model, Cmd.none )
 
 view : Model -> Element Msg
@@ -68,13 +72,12 @@ switches to alt-screen, raw mode, and mouse tracking; teardown on
 exit (Ctrl-C, `Quit`, panic, SIGTERM) restores the user's primary
 screen.
 
-## Status: experimental
+## Status: stable
 
-Sky.Tui shipped on the `exp/tea-core` branch and is targeted at
-v0.12. The surface is feature-stable but not yet covered by the same
-backwards-compatibility promises as Sky.Live. Treat it as a way to
-experiment with TEA-style terminal apps; expect ergonomic polish
-between minor releases.
+Sky.Tui shipped as part of v0.12 and has tracked Sky.Live in the
+27-example regression sweep since. The surface follows the same
+backwards-compatibility discipline as Sky.Live — `examples/21..24`
+exercise the full primitive set on every release.
 
 ## What works
 

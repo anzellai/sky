@@ -15,19 +15,36 @@ main =
     println "Hello from Sky!"
 ```
 
-## Current state (v0.14.x)
+## Current state (v0.15.x)
 
-- **Layer 3 stdlib — every kernel module is Sky source.** Browse it in
-  `sky-stdlib/{Sky/Core,Std,Sky/Http}/*.sky`, or via `sky doc --serve`
-  for a browsable HTTP doc server with type-signature search (Hoogle-
-  style), in-module symbol filter, and Markdown rendering.
+- **Type-directed lowering throughout (v0.15).** Sub-expressions at
+  lambda bodies, record-field inits, list elements, and call args
+  lower with the slot's typed Go form propagated. Closes the long-
+  standing parametric-record-alias bug class (callback fields keep
+  their typed callee parameter; cross-alias passing works without
+  the alias-chain workaround; inline lambdas in record fields keep
+  their typed shape). Architecture write-up:
+  [docs/v1-rfc/type-soundness-deep-analysis.md](docs/v1-rfc/type-soundness-deep-analysis.md).
+- **Go generics on parametric record aliases (v0.15).** A
+  `type alias Cfg msg = { onSubmit : msg, label : String, ... }` now
+  emits `type Cfg_R[T1 any] struct { OnSubmit T1; Label string; ... }`
+  with per-instance type args. Stripe-SDK-scale benchmark
+  (`examples/13-skyshop`, 76 k FFI symbols) still tree-shakes
+  `main.go` 14 k → 4 k lines (−71 %) and `stripe_bindings.go`
+  326 k → 58 k lines (−82 %).
+- **Same-module polymorphic re-instantiation (v0.15).** Annotated
+  `f : Cfg msg -> msg` called with `msg=Int` AND `msg=Bool` in the
+  same module both work — sibling references alpha-rename per call
+  site. Wildcard-`any` sigs stay on the shared-env path so body ↔
+  caller unification chains keep soundness.
+- **Layer 3 stdlib — every kernel module is Sky source** (carried
+  forward from v0.14). Browse via
+  `sky-stdlib/{Sky/Core,Std,Sky/Http}/*.sky`, or `sky doc --serve`
+  for a browsable HTTP doc server with type-signature search
+  (Hoogle-style), in-module symbol filter, and Markdown rendering.
 - **Auto-TCO.** Every Sky function with tail-position self-recursion
   compiles to a `for { ... continue }` Go loop. Constant Go stack
   regardless of input size. Applies to user code, not just stdlib.
-- **Fully-typed Go output.** Every USED Sky symbol emits typed Go.
-  Whole-program DCE prunes unused code + FFI bindings (Stripe-SDK
-  benchmark on `examples/13-skyshop`: `main.go` 14 k → 4 k lines −71 %;
-  `stripe_bindings.go` 326 k → 58 k lines −82 %).
 - **Sky Console + sub-app mount + observability federation.** Every
   Sky.Live / Sky.Http.Server app auto-mounts a Std.Ui dashboard at
   `/_sky/console` in dev mode. Prometheus metrics at `/_sky/metrics`
@@ -39,9 +56,10 @@ main =
   `sky watch` (file-watch rebuild + restart with sticky-on-error
   policy), `sky doctor` (project + env health checks), `sky console`
   (standalone Std.Ui dashboard — Live or Tui backend).
-- **26 example projects** covering CLI, Sky.Tui, Sky.Live + Sky.Http
+- **27 example projects** covering CLI, Sky.Tui, Sky.Live + Sky.Http
   apps, databases (SQLite / PostgreSQL / Firestore), payments
-  (Stripe), auth, GUI (Fyne), and a Reddit/HN-style forum on Std.Ui.
+  (Stripe), auth, GUI (Fyne), a Reddit/HN-style forum, and a
+  visual-regression Std.Ui showcase.
 
 ## What Sky brings together
 
@@ -369,13 +387,15 @@ guide).
   panic class has a regression test in `runtime-go/rt/*_test.go` or
   `test/Sky/**Spec.hs`. Defence in depth (panic recovery + `Err`-
   return at Task boundaries) is the floor.
-- **26 example projects** under `examples/` — clean build from a wiped
+- **27 example projects** under `examples/` — clean build from a wiped
   slate is a release gate.
 - **`sky verify`** is the canonical runtime check: builds AND runs each
   example, hits HTTP endpoints, honours per-example `verify.json`
   scenarios.
-- **Test matrix** — ~300 cabal hspec specs + 25+ runtime Go tests +
-  67-file `test-files/*.sky` self-test loop + format idempotency.
+- **Test matrix** — 306 cabal hspec specs + 25+ runtime Go tests +
+  70-file `test-files/*.sky` self-test loop + format idempotency +
+  Playwright browser sweep across every Sky.Live / Sky.Http.Server
+  example.
 - **FFI generation** — Stripe SDK (8 896 types), Firestore, Fyne, and
   others auto-bind.
 

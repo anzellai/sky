@@ -61,7 +61,32 @@ constrainModuleWithExternals externals canMod = do
     writeIORef globalExternals externals
     writeIORef globalCurrentModule
         (ModuleName.toString (Can._name canMod))
+    -- v0.15.1 — register same-module annotated TypedDef annotations
+    -- for fresh-instantiation at sibling call sites.
+    writeIORef globalSameModAnnots (collectSameModAnnots canMod)
     constrainDecls counter Map.empty (Can._decls canMod)
+
+
+-- | v0.15.1 — collect annotations from a module's TypedDef
+-- declarations.  Used to make sibling references within the same
+-- module emit `CForeign` (alpha-rename fresh per call site).
+collectSameModAnnots :: Can.Module -> Map.Map String T.Annotation
+collectSameModAnnots canMod =
+    Map.fromList (collectFromDecls (Can._decls canMod))
+  where
+    collectFromDecls Can.SaveTheEnvironment = []
+    collectFromDecls (Can.Declare def rest) =
+        addDef def ++ collectFromDecls rest
+    collectFromDecls (Can.DeclareRec def defs rest) =
+        addDef def ++ concatMap addDef defs ++ collectFromDecls rest
+
+    addDef d = case d of
+        Can.TypedDef (A.At _ n) freeVars typedPats _ retTy ->
+            let argTys = map snd typedPats
+                funcTy = foldr T.TLambda retTy argTys
+                quants = map fst freeVars
+            in [(n, T.Forall quants funcTy)]
+        _ -> []
 
 
 -- | Thread the external signature map through a global IORef so the
@@ -79,17 +104,30 @@ globalExternals = unsafePerformIO (newIORef Map.empty)
 -- | The module currently being solved. Set by
 -- `constrainModuleWithExternals` alongside `globalExternals`.
 --
--- VarTopLevel references whose `home` equals this MUST emit `CLocal`,
--- never `CForeign` — even though the dep-solve fixpoint's
--- `globalExternals` includes the module's own previous-round solved
--- types. Binding a same-module reference against that stale
--- generalised self-annotation breaks within-module mutual recursion:
--- the two functions no longer share their parameter vars, and across
--- fixpoint rounds the (now row-polymorphic) record param types drift
--- and absorb concrete types from `Html msg` etc. A module's own
--- functions must always be solved together as one unit.
+-- VarTopLevel references whose `home` equals this previously emitted
+-- `CLocal` regardless — to avoid breaking within-module mutual
+-- recursion through stale dep-fixpoint annotations.  Per v0.15.1,
+-- references to ANNOTATED TypedDefs in the current module instead
+-- emit `CForeign` against the user's annotation (which alpha-renames
+-- fresh per call site, fixing the same-module polymorphic-call
+-- limitation).  Unannotated same-module refs still emit `CLocal`.
 globalCurrentModule :: IORef String
 {-# NOINLINE globalCurrentModule #-}
+
+
+-- | v0.15.1 — same-module annotated TypedDef annotations.  Populated
+-- by `constrainModule`/`constrainModuleWithExternals` from the
+-- module's own `Can.TypedDef` entries.  Consumed by the
+-- `Can.VarTopLevel` arm so same-module references to annotated
+-- functions emit `CForeign` (alpha-rename fresh per call site) AND
+-- the polymorphic helper handles multiple concrete instantiations
+-- in the same module without pinning to the first call's type args.
+--
+-- Unannotated same-module references still emit `CLocal` to
+-- preserve mutual-recursion guarantees (per the comment above).
+globalSameModAnnots :: IORef (Map.Map String T.Annotation)
+{-# NOINLINE globalSameModAnnots #-}
+globalSameModAnnots = unsafePerformIO (newIORef Map.empty)
 globalCurrentModule = unsafePerformIO (newIORef "")
 
 
@@ -170,29 +208,57 @@ constrain counter env (A.At region expr) expected = case expr of
         return $ T.CLocal region name expected
 
     Can.VarTopLevel home name -> do
-        -- Cross-module channel: if we have an externally-solved
-        -- annotation for (home, name), emit CForeign so the solver
-        -- instantiates fresh vars at this call site. Falls back to
-        -- CLocal for same-module references or when no external
-        -- annotation is registered.
-        --
-        -- SAME-MODULE GUARD: a reference whose `home` is the module
-        -- currently being solved MUST emit CLocal — never CForeign —
-        -- even though the dep-solve fixpoint's `globalExternals`
-        -- contains this module's OWN previous-round solved types.
-        -- Binding a same-module reference against that stale
-        -- generalised self-annotation severs within-module mutual
-        -- recursion (the two functions stop sharing their parameter
-        -- vars), and across fixpoint rounds the row-polymorphic
-        -- record param types drift and absorb concrete types from
-        -- `Html msg` etc. A module's own functions are solved as one
-        -- unit; only genuinely cross-module references go through the
-        -- CForeign / external channel.
+        -- Cross-module channel: emit CForeign so the solver
+        -- instantiates fresh vars at this call site.  Same-module
+        -- references emit CForeign when the target is an ANNOTATED
+        -- TypedDef (v0.15.1 — fixes the same-module polymorphic-
+        -- call limitation), and CLocal otherwise (preserves mutual-
+        -- recursion through shared env vars).
         externals <- readIORef globalExternals
         currentModule <- readIORef globalCurrentModule
+        sameModAnnots <- readIORef globalSameModAnnots
         let homeStr = ModuleName.toString home
         if homeStr == currentModule
-            then return $ T.CLocal region name expected
+            then case Map.lookup name sameModAnnots of
+                Just annot@(T.Forall freeVars _) | any (/= "any") freeVars ->
+                    -- Sibling reference to a POLYMORPHIC annotated
+                    -- TypedDef.  Use CForeign with the user
+                    -- annotation so the alpha-rename per call site
+                    -- lets `cfg : Cfg msg` be called with msg=Int
+                    -- AND msg=Bool in the same module without
+                    -- pinning to the first.
+                    --
+                    -- Wildcard-only gate: an annotation whose ONLY
+                    -- "free" var is `any` (e.g. `view : Model -> any`)
+                    -- MUST stay on CLocal.  CForeign would re-
+                    -- instantiate the wildcard per call site,
+                    -- diverging the body-side `any` UF var from the
+                    -- caller-side `any` UF var — so a wrong return
+                    -- type (`view _ = "hi"` against expected
+                    -- `Model -> Html msg`) goes silently undetected.
+                    -- Wildcard-only sigs are intentionally NOT
+                    -- polymorphic in the schema sense; they're just
+                    -- shorthand for "I don't care about this slot".
+                    -- The shared env-var path preserves the body ↔
+                    -- caller unification chain required to surface
+                    -- the type error.
+                    --
+                    -- Non-polymorphic (empty freeVars) annotations
+                    -- stay on the CLocal path: CForeign would create
+                    -- a fresh Alias innerVar per call, breaking
+                    -- identity-based unification when the same
+                    -- nominal alias appears in caller + callee
+                    -- positions (e.g. `handleCreateApp : NewAppForm
+                    -- -> Model -> Model` called with `form : NewAppForm`
+                    -- — both NewAppForm refs need to share their
+                    -- inner Record1 var via the env's shared CLocal
+                    -- path, not via fresh per-call TAlias UF vars).
+                    return $ T.CForeign region
+                        (homeStr ++ "." ++ name) annot expected
+                _ ->
+                    -- Unannotated OR non-polymorphic-only-wildcard
+                    -- same-module ref: shared env var.
+                    return $ T.CLocal region name expected
             else case Map.lookup (homeStr, name) externals of
                 Just annot ->
                     return $ T.CForeign region (homeStr ++ "." ++ name) annot expected
