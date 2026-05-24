@@ -6557,6 +6557,17 @@ coerceToFieldType targetTy e
              -- map-source panic class.
              else if isRecordAliasTy erasedTy
                   then GoIr.GoCall (GoIr.GoIdent ("rt.Coerce[" ++ erasedTy ++ "]")) [e]
+                  -- Function-typed record fields: route through
+                  -- rt.Coerce (which uses adaptFuncValue via reflect.
+                  -- MakeFunc). Direct `any(e).(func(P) R)` assertion
+                  -- is doomed when the source's signature differs in
+                  -- ANY position (Go function types are nominal in
+                  -- both params and returns). Concrete case bit
+                  -- skydeploy's Editor.Cfg.onSubmit: lambda returns
+                  -- State_Msg, slot expects func(Form_R) any. See
+                  -- docs/parametric-record-aliases-bugs.md Surface 2.
+                  else if "func(" `List.isPrefixOf` erasedTy
+                  then GoIr.GoCall (GoIr.GoIdent ("rt.Coerce[" ++ erasedTy ++ "]")) [e]
                   else GoIr.GoTypeAssert (GoIr.GoCall (GoIr.GoIdent "any") [e]) erasedTy
 
 
@@ -11261,6 +11272,21 @@ solvedTypeToGo ty = case ty of
                 Nothing   -> lookup name runtimeTypedMap
             unionNames = Rec._cg_unionNames env
             isKnownUnion = Set.member base unionNames || Set.member name unionNames
+            -- Alias chains: `type alias FileForm = Editor.Form`
+            -- stores aliasTy as Hoisted/Filled (TAlias Form …).  If
+            -- the outer name (FileForm) isn't in the registry, the
+            -- chain's underlying type IS resolvable — recurse on it
+            -- rather than widening to `any`.  Without this, a typed
+            -- field whose type is an alias-of-alias renders as `any`
+            -- and breaks downstream coercions (e.g. the wire
+            -- dispatcher's func(Form_R) X assertion).
+            unwrappedAlias = case aliasTy of
+                T.Hoisted t -> Just t
+                T.Filled  t -> Just t
+                _           -> Nothing
+            recursedFromChain = case unwrappedAlias of
+                Just t -> Just (solvedTypeToGo t)
+                Nothing -> Nothing
         in case matches of
             (m:_) -> m ++ "_R"
             _ -> case runtimeTyped of
@@ -11269,6 +11295,11 @@ solvedTypeToGo ty = case ty of
                     | isRecord      -> base ++ "_R"
                     | isRuntimeOnly -> "any"
                     | isKnownUnion  -> base
+                    -- Alias chain (e.g. FileForm = Form) — resolve
+                    -- to the inner alias's Go type, not `any`.
+                    | Just goTy <- recursedFromChain
+                    , goTy /= "any"
+                                    -> goTy
                     -- Last resort: a TAlias whose name we can't
                     -- resolve to a real Go type.  `base` would
                     -- dangle (`undefined: X`).  Fall to `any` —
