@@ -2,6 +2,17 @@
 
 Notable user-visible changes. Keep this file additive — never rewrite history.
 
+## v0.15.1 — Docs: `SKY_ADMIN_TOKEN` canonical (2026-05-24)
+
+- **Docs: `SKY_ADMIN_TOKEN` is the canonical env var** for gating
+  `/_sky/metrics` and `/_sky/console` in production. The v0.15.0 doc
+  refresh accidentally kept `SKY_METRICS_TOKEN` (a v0.14.21 legacy
+  alias) as the recommended name in `README.md` + `CLAUDE.md` +
+  `templates/CLAUDE.md`. Runtime behaviour unchanged — both
+  `SKY_METRICS_TOKEN` (v0.14.21) and `SKY_CONSOLE_TOKEN_SECRET`
+  (v0.14.20) are still honoured by `adminTokenSecret()` in
+  `runtime-go/rt/subapp.go`.
+
 ## v0.15.0 — Type-directed lowering (2026-05-24)
 
 ### Type system
