@@ -6009,6 +6009,26 @@ exprToGoExpectGo goRendering e@(A.At _ expr)
             letToGo (Just goRendering) def body
         Can.Case subject branches ->
             caseToGo (Just goRendering) subject branches
+        -- v0.15 Stage C — type-directed Can.Lambda lowering.
+        --
+        -- When a lambda fills a typed slot (e.g. a parametric record
+        -- field's `func(string) any` callback type), the lambda's
+        -- emitted Go must use the SLOT'S typed parameters rather
+        -- than the default `any`.  Pre-fix, an inline lambda like
+        -- `onSubmit = \s -> Tag s` emitted as `func(s any) any {...}`,
+        -- which Go rejected against the `func(string) any` slot.
+        --
+        -- Strategy: parse the slot's `func(P1, ..., PN) R` shape from
+        -- `goRendering`.  For an N-param Sky lambda where N is the
+        -- slot's arity, emit a single typed `GoFuncLit` with the
+        -- parsed param types + return type.  Multi-param Sky lambdas
+        -- where N != arity (currying) fall back to the generic
+        -- `coerceReturnExprT` path.
+        Can.Lambda pats body
+            | Just (paramTys, retTy) <- parseFuncType goRendering
+            , length paramTys == length pats
+            , all (/= "any") paramTys -> do
+                lowerTypedLambda pats paramTys retTy body
         _ ->
             -- Leaf / non-control-flow: lower generically, then coerce
             -- the result to the expected Go type.  `coerceReturnExprT`
@@ -6016,6 +6036,77 @@ exprToGoExpectGo goRendering e@(A.At _ expr)
             -- through still gets typed) and is a no-op when the Go
             -- type is already concrete + matching.
             coerceReturnExprT goRendering (exprToGo e)
+
+
+-- | v0.15 Stage C helper — emit a `Can.Lambda` as a single typed
+-- `GoFuncLit` whose parameters use the typed slot's expected
+-- param-Go-types, and whose body is lowered with the slot's
+-- expected return type so its leaf coerces correctly.
+--
+-- This is the single-fn-level analogue of `curryLambdaPat`: it
+-- handles the case where the slot expects exactly N params (i.e.
+-- the lambda fills a Go function value, not a curried Sky function).
+-- For Sky lambdas with simple PVar patterns, the params bind
+-- directly; for non-PVar patterns the existing `patternBindings`
+-- machinery destructures inside the lambda body.
+--
+-- The lambda body lowers via `exprToGoExpectGo` with `retTy` so
+-- nested constructs (let / case / if) get the typed-return
+-- treatment too.
+lowerTypedLambda
+    :: [Can.Pattern]
+    -> [String]        -- typed Go param types (parallel to patterns)
+    -> String          -- typed Go return type
+    -> Can.Expr        -- body
+    -> GoIr.GoExpr
+lowerTypedLambda pats paramTys retTy body =
+    let (params, destructStmts) = unzip (zipWith oneParam [0 :: Int ..] (zip pats paramTys))
+        allDestructStmts = concat destructStmts
+        bodyExpr = exprToGoExpectGo retTy body
+        wrappedBody =
+            if null allDestructStmts
+                then [GoIr.GoReturn bodyExpr]
+                else allDestructStmts ++ [GoIr.GoReturn bodyExpr]
+        -- v0.13 typed lowerer: register PVar param types in the
+        -- lambda-scope map so the body's `Can.VarLocal name`
+        -- accesses recover the typed Go reference.  Mirrors what
+        -- `wrapTyped`'s eta-expansion path does for partial-applied
+        -- ctors.
+        paramTypeBindings = Map.fromList
+            [ (n, inferTypeFromGoString gty)
+            | (A.At _ (Can.PVar n), gty) <- zip pats paramTys
+            , gty /= "any"
+            ]
+        skyBoundLambda = if Map.null paramTypeBindings
+            then GoIr.GoFuncLit params retTy wrappedBody
+            else withScopedLambdaTypes paramTypeBindings
+                (GoIr.GoFuncLit params retTy wrappedBody)
+    in skyBoundLambda
+  where
+    oneParam :: Int -> (Can.Pattern, String) -> (GoIr.GoParam, [GoIr.GoStmt])
+    oneParam idx (A.At _ pat, gty) = case pat of
+        Can.PVar name -> (GoIr.GoParam (goSafeName name) gty, [])
+        Can.PAnything -> (GoIr.GoParam "_" gty, [])
+        Can.PUnit     -> (GoIr.GoParam "_" gty, [])
+        _ ->
+            let tmp = "_lp" ++ show idx
+            in (GoIr.GoParam tmp gty, patternBindings tmp pat)
+
+
+-- | v0.15 Stage C helper — coarse Go-string-to-Sky-type recovery for
+-- the lambda-scope binding map.  Handles primitives + falls back to
+-- `T.TVar "_"` (treated as unconstrained by the lambda-scope reader,
+-- which is sufficient for the param-type-propagation use case).  The
+-- returned type is consumed by `lookupLambdaType` for sub-expression
+-- type recovery; precision can be improved later.
+inferTypeFromGoString :: String -> T.Type
+inferTypeFromGoString s = case s of
+    "string" -> T.TType ModuleName.basics "String" []
+    "int"    -> T.TType ModuleName.basics "Int" []
+    "bool"   -> T.TType ModuleName.basics "Bool" []
+    "float64"-> T.TType ModuleName.basics "Float" []
+    "rune"   -> T.TType ModuleName.basics "Char" []
+    _        -> T.TVar "_"
 
 
 -- | v0.14.x Stage 4: look up a Sky-source (home, name) in the
@@ -6478,8 +6569,21 @@ exprToGo (A.At _ expr) = case expr of
                         Just (Can.Alias _ (T.TRecord m _)) ->
                             Map.map (\(T.FieldType _ ty) -> solvedTypeToGo ty) m
                         _ -> Map.empty
+                    -- v0.15 Stage C — type-directed field-init
+                    -- lowering.  `exprToGoExpectGo` threads the
+                    -- field's Go type DOWN into the lowering, so an
+                    -- inline lambda fills a typed slot with typed
+                    -- params (closing the long-standing
+                    -- inline-lambda bug).  The outer
+                    -- `coerceToFieldType` stays as a safety net for
+                    -- non-lambda values where typed lowering didn't
+                    -- propagate fully (will be retreated in Stage D).
+                    lowerField fn fe =
+                        let fieldGoTy = Map.findWithDefault "any" fn fieldTypeMap
+                        in coerceToFieldType fieldGoTy
+                               (exprToGoExpectGo fieldGoTy fe)
                 in GoIr.GoStructLit structName
-                    [ (capitalise_ fn, coerceToFieldType (Map.findWithDefault "any" fn fieldTypeMap) (exprToGo fe))
+                    [ (capitalise_ fn, lowerField fn fe)
                     | (fn, fe) <- entries
                     ]
             Nothing ->
