@@ -325,7 +325,8 @@ DATABASE_URL=postgres://…   # fallback when SKY_LIVE_STORE_PATH unset
 SKY_AUTH_TOKEN_SECRET=…     # ≥32 bytes; Sky errors at startup if shorter
 SKY_LOG_FORMAT=json
 SKY_LOG_LEVEL=info
-SKY_METRICS_TOKEN=…         # /_sky/metrics requires Bearer in prod
+SKY_ADMIN_TOKEN=…           # /_sky/metrics + /_sky/console require Bearer in prod
+                            # (legacy: SKY_METRICS_TOKEN / SKY_CONSOLE_TOKEN_SECRET still honoured)
 # OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
 ```
 
