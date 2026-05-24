@@ -156,6 +156,31 @@ globalAnonRecords :: IORef (Map.Map String (Map.Map String T.FieldType))
 globalAnonRecords = unsafePerformIO $ newIORef Map.empty
 
 
+-- | v0.15 Stage B — per-region HM type map for the current module.
+-- Populated from the solver's `RegionTypes` after `solveWithInstances`-
+-- AndRegions (Stage A) writes per-constraint types.  Consumed by
+-- typed-directed lowering paths (Stage C+) that need the HM type
+-- of a sub-expression by its source region.
+--
+-- Following Sky's existing pattern of NOINLINE global IORefs.  A
+-- principled refactor to thread `LowerCtx` as an explicit parameter
+-- is a separate follow-up task.
+{-# NOINLINE globalRegionTypes #-}
+globalRegionTypes :: IORef Solve.RegionTypes
+globalRegionTypes = unsafePerformIO $ newIORef Map.empty
+
+
+-- | v0.15 Stage B — look up the HM type at a given source region.
+-- Returns Nothing for regions the solver didn't record (synthetic
+-- code, FFI-derived expressions, etc.).  Used by typed-directed
+-- lowering arms (Stage C) to recover an expression's type without
+-- routing through the solver.
+lookupRegionType :: A.Region -> Maybe T.Type
+lookupRegionType region = unsafePerformIO $ do
+    rt <- readIORef globalRegionTypes
+    return (Map.lookup region rt)
+
+
 -- | v0.13 Phase A4: per-callee generalised annotation, used to
 -- derive σ for each reachable instance.  Same map shape as
 -- `buildCrossModuleExternalsWithMods` but keyed by full
@@ -928,18 +953,24 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                     -- (used by monomorphisation).
                     mapM (\(modName, depMod) -> do
                         cs <- Constrain.constrainModuleWithExternals externals depMod
-                        (r, _, csi) <- Solve.solveWithInstances cs
+                        -- v0.15 Stage A/B: dep modules also get
+                        -- per-region types.  Merge into the global
+                        -- map below, after the fixpoint converges,
+                        -- so the lowerer can query dep-body regions
+                        -- too.  Pass-through `regionTys` per dep.
+                        (r, _, csi, regionTys)
+                            <- Solve.solveWithInstancesAndRegions cs
                         case r of
                             Solve.SolveOk t ->
-                                return (modName, Right (t, csi, Nothing))
+                                return (modName, Right (t, csi, regionTys, Nothing))
                             Solve.SolveError err
                                 | isForeignErr err -> return (modName, Left err)
                                 | otherwise -> case lookup modName prevSolved of
                                     Just p | not (Map.null p) ->
-                                        return (modName, Right (p, csi, Just err))
+                                        return (modName, Right (p, csi, regionTys, Just err))
                                     _ -> return (modName, Left err)) validDeps
                 depTypesOf results =
-                    [(mn, t) | (mn, Right (t, _, _)) <- results]
+                    [(mn, t) | (mn, Right (t, _, _, _)) <- results]
                 solveFixpoint prevSolved n = do
                     results <- solveRound prevSolved
                     let curSolved = depTypesOf results
@@ -950,10 +981,17 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
             let depErrors = [(mn, e) | (mn, Left e) <- finalResults]
                          -- Converged-round non-Foreign errors are real.
                          ++ [ (mn, e)
-                            | (mn, Right (_, _, Just e)) <- finalResults
+                            | (mn, Right (_, _, _, Just e)) <- finalResults
                             ]
-                depSolved = [(mn, t) | (mn, Right (t, _, _)) <- finalResults]
-                depCsiByMod = [(mn, csi) | (mn, Right (_, csi, _)) <- finalResults]
+                depSolved = [(mn, t) | (mn, Right (t, _, _, _)) <- finalResults]
+                depCsiByMod = [(mn, csi) | (mn, Right (_, csi, _, _)) <- finalResults]
+                -- v0.15 Stage A/B: merge per-region types from every
+                -- dep into one map.  Entry-module region types added
+                -- after solveWithInstancesAndRegions on the entry
+                -- below; the merged map is written to
+                -- globalRegionTypes there.
+                depRegionTys = Map.unions
+                    [ rt | (_, Right (_, _, rt, _)) <- finalResults ]
             unless (null depErrors) $ do
                 -- v0.13 Layer 1: route dep-module type errors through the
                 -- structured Diagnostic renderer too.  Pre-fix each was
@@ -1006,7 +1044,14 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
             -- identically (the missing merge was a subtle
             -- regression on Live.app's `init_` function-value
             -- references that's now fixed).
-            (solveResult, callInstances, callSiteInstances) <- Solve.solveWithInstances constraints
+            -- v0.15 Stage A/B: collect per-region types so the
+            -- typed-directed lowerer can look up sub-expression HM
+            -- types by region.  Merge entry-module + every dep's
+            -- region map into the global lookup.  Consumed by
+            -- lookupRegionType in Stage C+ arms.
+            (solveResult, callInstances, callSiteInstances, entryRegionTys)
+                <- Solve.solveWithInstancesAndRegions constraints
+            writeIORef globalRegionTypes (Map.union entryRegionTys depRegionTys)
             -- v0.13 Phase A5: install the per-call-site instance
             -- registry into `_cg_callSiteInstances` so call-site
             -- codegen can pick the right generic instantiation
