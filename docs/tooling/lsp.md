@@ -4,7 +4,7 @@
 It's used by the Helix, Zed, and VS Code integrations, and any
 LSP-aware editor.
 
-**v0.13 contract (LSP 100 %)**: every USED symbol class has hover +
+**v0.15 contract (LSP 100 %)**: every USED symbol class has hover +
 goto-definition coverage. 17 cabal-fenced end-to-end tests via headless
 Neovim driver (`scripts/lsp-test-nvim.{lua,sh}`, wired through
 `Sky.Lsp.NvimDriverSpec`):

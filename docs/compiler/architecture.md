@@ -1,9 +1,14 @@
 # Compiler architecture
 
-> **v0.13 state**: typed Go output end-to-end. Whole-program Sky DCE
-> prunes unused FFI bindings (Stripe-SDK scale: −82 % source). LSP 100 %
-> coverage; runtime verification across all 26 examples. See
-> [`../compiler/journey.md`](../compiler/journey.md) for the changelog.
+> **v0.15 state**: type-directed lowering throughout — solver writes
+> per-region types and `LowerCtx` threads the expected Go type through
+> the lowerer for lambdas, record-field inits, list elements, and call
+> args. Go generics on parametric record aliases. Same-module
+> polymorphic call re-instantiation. Layer-3 stdlib, whole-program DCE
+> (Stripe-SDK scale: −82 % source), LSP 100 % coverage; runtime
+> verification across all 27 examples (120 stdlib assertions + 306
+> cabal specs). See [`../compiler/versions.md`](versions.md) for the
+> changelog.
 
 
 The Sky compiler is a Haskell program that reads Sky source and emits Go. It has no external dependencies beyond GHC 9.4+ and `cabal`.

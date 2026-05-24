@@ -12,12 +12,18 @@ through `Task`, every fallible value returns `Result Error a`, and
 surfaces at check time. No runtime panics from well-typed Sky code, no
 nil leakage, no silent numeric coercion.
 
-**Typed Go output (v0.14.x).** Generated Go functions have fully-typed
-signatures end-to-end. Layer 3 stdlib: every kernel module surfaced as
-Sky source under `sky-stdlib/{Sky/Core,Std,Sky/Http}/*.sky` — typed
-kernel dispatch preserved via the `Ffi.kernel` mechanism. Tail-recursive
-Sky functions auto-TCO to `for { ... continue }` Go loops (constant
-stack). Browse the full API surface with `sky doc --serve`.
+**Typed Go output (v0.15.x).** Generated Go functions have fully-typed
+signatures end-to-end. Type-directed lowering propagates the slot's
+expected type into lambda bodies, record-field inits, list elements,
+and call args — so `{ onSubmit = \s -> Tag ("L:" ++ s), ... }` against
+`Cfg Msg` emits `func(string) Msg`, not `func(any) any`. Parametric
+record aliases compile to Go generics (`type Cfg_R[T1 any] struct{...}`
+with per-instance type args). Layer 3 stdlib: every kernel module
+surfaced as Sky source under `sky-stdlib/{Sky/Core,Std,Sky/Http}/*.sky`
+— typed kernel dispatch preserved via the `Ffi.kernel` mechanism.
+Tail-recursive Sky functions auto-TCO to `for { ... continue }` Go
+loops (constant stack). Browse the full API surface with
+`sky doc --serve`.
 
 ```go
 func f(name string, age int) rt.SkyResult[Error, Profile_R] { ... }
@@ -34,7 +40,7 @@ and the body would otherwise infer to something wider, the compiler
 rejects the body. Inline records in function annotations aren't
 supported — use a `type alias` for any record you want in a signature.
 
-## Quick UX/UX/security/scalability defaults (v0.14.x)
+## Quick UX/UX/security/scalability defaults (v0.15.x)
 
 **You (the AI assistant) are expected to deliver top-notch UX/DX/security
 /scalability by default.** When the user asks for an app:
@@ -3766,45 +3772,39 @@ Session store memory grows with inactive sessions. Set a TTL:
 
 ---
 
-## Known Limitations (v0.13)
+## Known Limitations (v0.15)
 
-Active limitations users still hit. Things v0.13 closed are documented
-in the repo `CLAUDE.md`'s "v0.13 closed" list; do not re-add them here.
+Active limitations users still hit at HEAD. Anything not on this list
+was either never a limitation or has been fixed; the repo `CHANGELOG.md`
+records the per-version closures if you want history.
 
-- **No anonymous records in type annotations** — use `type alias` for record types in signatures. v0.13 E emits `type Anon_R_<hash>` structs for HM-inferred anon shapes, but the parser still rejects inline `{ field : Type }` syntax in an annotation. Reach for a `type alias`.
+- **Anonymous records in function signatures (parser-side)** — the
+  parser accepts `f : { name : String, age : Int } -> String` cleanly;
+  what previously broke was a separate multi-line-sig issue (see
+  "Multi-line function signatures" below). If you want to share a
+  record shape across functions, a `type alias` is still preferable.
 - **No higher-kinded types** — no `Functor`, `Monad`, etc. Use concrete types.
 - **No `where` clauses** — use `let...in` instead.
 - **No custom operators** — only built-in (`|>`, `<|`, `++`, `::`, etc.).
 - **No row-polymorphic annotation syntax** — Sky doesn't parse `{ r | field : T }` in annotations. Use a closed record alias for the function's input.
 - **Negative literal arguments need parentheses** — `f (-1)` not `f -1` (`f -1` parses as subtraction).
-- **`Dict.toList` returns string keys** — `Dict` is `map[string]any` at runtime, so `Dict.toList` on `Dict Int v` gives string keys. Iterate via `Dict.get` over known ranges.
+- **`Dict.toList` returns string keys** — `Dict` is `map[string]any` at runtime, so `Dict.toList` on `Dict Int v` gives string keys; arithmetic on them silently produces 0. Iterate via `Dict.get` over known ranges.
 - **`sky check` doesn't fully model Go interfaces** — concrete types can't unify with Go interfaces (`Fyne.CanvasObject`), but the code compiles and runs fine.
-- **Zero-arg FFI functions need no `()`** — call `Uuid.newString` (the return value), not `Uuid.newString ()`.
-- **Zero-arg `Css.*` constants DO need `()`** — `Css.zero`, `Css.auto`, `Css.none`, `Css.transparent`, `Css.inherit`, `Css.initial`, `Css.borderBox`, `Css.systemFont`, `Css.monoFont`, `Css.userSelectNone`. These are exposed as `() -> String` kernels (not zero-arity values) so they don't interact with Go's `init()` ordering. Write `Css.padding (Css.zero ())`, not `Css.padding Css.zero` — the latter serialises a function pointer like `0xc00001c0a0` into the stylesheet. Pattern: any `Css.X` that names a literal CSS keyword takes `()`; value constructors like `px`, `rem`, `em`, `hex`, `rgba` take their arguments directly.
+- **Zero-arg calls follow the binding's declared type** — bare `Uuid.v4` works because its stdlib sig is `v4 : String`; `Time.now ()` / `Time.unixMillis ()` / `FyneApp.new ()` are *all* needed because their sigs are `() -> Task Error a`. Calling a `: String` binding with `()` triggers a known codegen bug for arity-0 kernels — stick to the declared shape.
 - **FFI setters in pipelines need an explicit lambda** — `|> Result.andThen (OpenAi.chatCompletionMessageSetRole m.role)` emits a call to the non-existent non-T variant and fails codegen. Wrap: `|> Result.andThen (\msg -> OpenAi.chatCompletionMessageSetRole m.role msg)`.
-- **`import Lib.X as Alias` leaks the alias into codegen for exposed types** — `import Lib.Db as Chat` emits `Chat_Message_R` instead of the canonical `Lib_Db_Message_R`. **Workaround**: import types without the alias — `import Lib.Db exposing (Message, ...)`. Aliases are fine for modules that only expose functions.
-- **Zero-arity functions reading env vars** — zero-arity functions are memoised; when they read `System.getenv` they evaluate during Go `init()`, before `.env` is loaded. **Workaround**: add a dummy `_` parameter: `getConfig _ = System.getenv "KEY"`.
-- **Let bindings with parameters after multi-line case** — `mark j = expr` directly after a `case ... of` in the same `let` can be reparsed as a new top-level declaration. Use a lambda (`\j -> expr`) or extract to a top-level function.
-- **`exposing (Type(..))` doesn't expose user-module constructors** — only stdlib/kernel modules resolve `MyType(..)` fully. For a user-defined `MyModule`, import `exposing (..)` or qualify constructors (`MyModule.MyConstructor`).
-- **`let` bindings don't support forward references** — Helpers inside a `let` block must be defined *before* their consumers in source order. `let writeAll db = … insertRow db ts …; insertRow db ts = …` fails `go build` with `undefined: insertRow`. **Workaround**: reorder so dependencies come first. (Future fix — the canonicaliser already knows the full set of let names.)
+- **Zero-arg `Css.*` constants DO need `()`** — `Css.zero ()`, `Css.auto ()`, `Css.none ()`, `Css.transparent ()`, `Css.inherit ()`, `Css.initial ()`, `Css.borderBox ()`, `Css.systemFont ()`, `Css.monoFont ()`, `Css.userSelectNone ()`. Bare form is now a clean type error (no longer the silent function-pointer leak it used to be), but the `()` is still required. Pattern: any `Css.X` that names a literal CSS keyword takes `()`; value constructors like `px`, `rem`, `em`, `hex`, `rgba` take their arguments directly.
+- **Non-tail-recursive list operations are O(N) on Go stack** — `map`, `filter`, `foldr`, `length`, `concat`, `concatMap`, `take`, `append`, `range`, `zip`, `indexedMap`, `Maybe.combine`, `Result.combine` recurse. Tail-recursive operations (`foldl`, `find`, `any`, `all`, `member`, `drop`) are auto-TCO'd to constant stack. For very large lists (200k+ elements) prefer the tail-recursive accumulator pattern.
+- **Multi-line function signatures with continuation INSIDE the type body** — `name\n    : T` (the `:` on a continuation line) parses cleanly. Continuation INSIDE the type body (`T1\n    -> T2`) is not supported — extract a `type alias` for the whole arrow type.
 
-### Deferred to v0.13.x (next release)
+### Closed in v0.15 (for grep)
 
-- **`sky install` time on huge Go SDKs (Stripe-scale)** — install currently emits the full `.skycache/go/<pkg>_bindings.go` (Stripe: 326k lines, ~8 min cold). v0.13 prunes most of that at build time (`F + F3`); v0.13.x will move the generation to build-time entirely, so install drops to ~10 sec. No code change needed; just `sky upgrade` once the release ships.
-
-### Fixed in v0.9-dev (feat/typed-codegen)
-- **Typed-map round-trips at the FFI boundary** — `[]any` containing `map[string]any` now narrows into `[]map[string]string` correctly across `rt.Coerce`, `AsListT`, `AsMapT`, `AsDict`. `List.isEmpty` / `List.map` on annotated DB result slices no longer wrongly report empty.
-- **Curried lambdas passed to Go-typed callbacks** — `rt.Coerce[func(X) func(Y) Z]` over a Sky `func(any) any { return func(any) any {...} }` now wraps the inner func too; requireAuth → route-handler style no longer panics.
-- **Server-rendered form events** — `Html_render` for a form with `onSubmit="..."` no longer panics on `assignment to entry in nil map`.
-- **Signin on annotated auth rows** — `Db.getField` accepts both `map[string]string` (typed) and `map[string]any` (raw) sources.
-- **Pattern literal inference** — `case foo of "idle" -> _` now forces `foo : String` at check time.
-
-### Fixed earlier (historical)
-- **Nested `case...of`** — fixed v0.7.21; cases at any depth compile.
-- **Cross-module type alias unification** — record aliases defined in module A unify correctly in module B's type annotations.
-- **Cross-module ADT exhaustiveness** — missing case branches for imported ADTs are caught at compile time.
-- **`exposing (Constructor(..))` qualified call issue** — resolved; use `import M exposing (..)` for unqualified constructors on stdlib/kernel modules.
-- **Type annotations are load-bearing** — since v0.7.28, the annotation wins when the body would infer a wider type.
+- ~~Let bindings with parameters after multi-line case~~ — `let mark j = …` after a `case … of` arm now parses cleanly.
+- ~~Zero-arity functions reading env vars memoised at init()~~ — `apiKey = System.getenvOr "K" "def"` now reads the runtime environment.
+- ~~`exposing (Type(..))` for user-module ADT constructors~~ — user `type Color = Red | Green` exporting `Color(..)` and imported `exposing (Color(..))` now exposes unqualified constructors.
+- ~~`import X as Alias` leaks the alias into codegen~~ — `import Lib.Db as Chat` now emits `Lib_Db_Message_R` (source module name), not `Chat_Message_R`.
+- ~~`let` bindings don't support forward references~~ — `let a = b + 1; b = 5 in a` now compiles and evaluates correctly.
+- ~~Parametric record alias bugs (Surfaces 1, 2, 3)~~ — closed by v0.15 type-directed lowering + Go generics on parametric records.
+- ~~Same-module polymorphic call pinned by first instantiation~~ — sibling refs to polymorphic annotated TypedDefs now alpha-rename per call site.
 
 ## Coding Conventions
 

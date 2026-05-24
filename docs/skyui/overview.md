@@ -1,9 +1,14 @@
 # Std.Ui overview
 
-> **v0.13 state**: typed Go output end-to-end. Whole-program Sky DCE
-> prunes unused FFI bindings (Stripe-SDK scale: −82 % source). LSP 100 %
-> coverage; runtime verification across all 26 examples. See
-> [`../compiler/journey.md`](../compiler/journey.md) for the changelog.
+> **v0.15 state**: type-directed lowering across callback fields,
+> record-field inits, list elements, and call args; Go generics on
+> parametric record aliases. The codegen pain in **Limitation #18**
+> (helper params with concrete-Msg `(String -> Msg)` previously
+> mono-mised to `func(string) any`) is **closed in v0.15** — extract
+> helpers freely. Whole-program Sky DCE prunes unused FFI bindings.
+> LSP 100 % coverage; runtime verification across all 27 examples.
+> See [`../compiler/journey.md`](../compiler/journey.md) for the
+> changelog.
 
 
 **A typed, no-CSS layout DSL for Sky.Live.** Build a UI from typed primitives (`el`, `row`, `column`, `paragraph`, `textColumn`) and typed attributes (`Background.color`, `Border.rounded`, `Font.size`, `Region.heading`) — Std.Ui renders to inline-styled HTML on the server side and Sky.Live's wire ferries diffs to the browser. No CSS files. No template languages. No client framework.
@@ -101,9 +106,7 @@ Ui.grid       [Attr] [Element]         -- CSS-Grid auto-fit container.
 Ui.paragraph [Attr] [Element]          -- inline text flow with wrapping
 Ui.textColumn [Attr] [Element]         -- vertical text-flow column
 Ui.text   String                       -- bare text (no wrapping element)
-Ui.none                                -- empty placeholder (workaround:
-                                       --   use Ui.text "" today — see
-                                       --   Limitations below)
+Ui.none                                -- empty placeholder (`Element msg`)
 ```
 
 `row` and `column` use flexbox under the hood, with `gap` driven by `Ui.spacing`. The default flex direction matches the helper name. Mix freely:
@@ -370,7 +373,7 @@ The data URL carries the MIME type (`data:image/jpeg;base64,...` or `data:applic
 import Std.Ui.Lazy as Lazy
 import Std.Ui.Keyed as Keyed
 
-Lazy.lazy renderItem item               -- memo wrapper (no-op today; see Limitations)
+Lazy.lazy renderItem item               -- LRU-cached subtree (function-pointer + args fingerprint)
 Lazy.lazy2 renderRow username item      -- 2-arg variant; lazy3..lazy5 too
 Keyed.column [ Ui.spacing 8 ]
     [ ( "row-" ++ String.fromInt item.id, renderRow item )
@@ -410,7 +413,7 @@ The 8-module split (`State.sky` / `Update.sky` / `View/{Common,Posts,Detail,Comp
 | Surface | Status | Notes |
 |---|:---:|---|
 | **Layout**: `el / row / column / wrappedRow / grid / paragraph / textColumn` | ✅ | `wrappedRow` adds `flex-wrap: wrap`; `grid` is CSS-Grid auto-fit (`Ui.gridColumns N` for the minmax floor) |
-| Layout: `none` | ✅ | Use `import Std.Ui exposing (Element)` and bare `Element Msg` in annotations (not `Ui.Element Msg`) |
+| Layout: `none` | ✅ | Bare `Ui.none : Element msg`. Use `import Std.Ui exposing (Element)` so annotations read `Element Msg` (not `Ui.Element Msg`). |
 | Layout: `link / image / button` | ✅ | |
 | Layout: `input` (real `<input>`) | ✅ | `Ui.el` renders as `<div>`, so a dedicated helper exists |
 | Layout: `form` (with `onSubmit`-into-typed-record) | ✅ | Wire driver decodes formData into a typed record |
@@ -432,7 +435,7 @@ The 8-module split (`State.sky` / `Update.sky` / `View/{Common,Posts,Detail,Comp
 | Input: `radio / radioRow / slider` | ✅ | `RadioOption` uses string values (Sky-side trade-off vs elm-ui's polymorphic option type to sidestep deeply-nested-polymorphic-record HM friction) |
 | Input: `placeholder` | ✅ | Renders as the HTML `placeholder=` attribute on the input |
 | Input: `labelAbove/Below/Left/Right/Hidden` | ✅ | LabelHidden emits `aria-label` on the wrapper |
-| **Lazy**: `lazy / lazy2..lazy5` | ⚠️ | No-op wrappers (type-correct passthrough); runtime memoisation deferred — needs a runtime VNode cache keyed on function-pointer + serialised args |
+| **Lazy**: `lazy / lazy2..lazy5` | ✅ | LRU-cached subtree, keyed on `(function-pointer, args fingerprint)`. Default cap 1024 entries; override via `SKY_UI_LAZY_CAP=N`. |
 | **Keyed**: `keyed` | ✅ | `sky-key` attribute |
 | **Nearby**: `above / below / onLeft / onRight / inFront / behind` | ✅ | Renderer wraps the parent with `position: relative` and the nearby Element with `position: absolute` + matching offsets |
 | **Cursor**: `pointer` | ✅ | |
@@ -450,9 +453,7 @@ Legend: ✅ ships · ⚠️ partial
 
 When iterating on Std.Ui-heavy code on macOS, run `scripts/mem-guard.sh` in the background first — it SIGKILLs runaway compiler processes before they OOM the machine. See CLAUDE.md "Memory Safety (Non-Negotiable)" for the standing rule.
 
-**#18 — Typed-codegen monomorphises `(String -> Msg)` helper params to `(String -> any)`.** A helper like `textField : String -> String -> (String -> Msg) -> Element Msg` (with concrete `Msg`, not polymorphic `msg`) gets emitted with a `func(string) any` arg, which `go build` rejects: `cannot use Msg_LoginUserChanged (value of type func(v0 string) Msg) as func(string) any`. Workaround: inline the input element at the use site (no helper indirection — the typed codegen sees the constructor through). Most Std.Ui form patterns flatten naturally.
-
-Same bug class also turns up as: empty list `[]` in a positional constructor's typed-slice arg position emits as `[]any{}` instead of `[]string{}`. Workaround: switch seed data from positional `Post 1 "..." ... [] []` form to record-literal `{ id = 1, ..., upvoters = [], ... }` — the field's type alias gives the codegen the target type.
+**#18 — Typed-codegen monomorphised `(String -> Msg)` helper params to `(String -> any)`.** **Closed in v0.15.** Type-directed lowering now threads the typed callee param through call-site arg coercion and record-field lambda lowering, so a helper `textField : String -> (String -> Msg) -> Element Msg` emits with `func(string) Msg` and `go build` accepts the typed constructor directly. The empty-list-in-positional-constructor variant is closed by the same lowering.
 
 **Cross-module qualified type references.** Annotations using a *qualified-with-alias* type reference (`view : ... -> Ui.Element Msg`) can fail with `Type mismatch: Element a vs Element Msg` because Sky's canonicaliser strips type parameters from qualified-alias references. **Workaround**: import the type unqualified and use the bare name in annotations. The canonical pattern (used by every Sky.Ui example) is:
 
@@ -468,7 +469,8 @@ With this pattern, `Ui.none`, `Ui.text`, `Ui.row`, `Ui.column` and the rest unif
 
 ## See also
 
-* [`examples/19-skyforum`](../../examples/19-skyforum/) — the full demo
+* [`examples/19-skyforum`](../../examples/19-skyforum/) — the full feature demo (forum)
+* [`examples/26-ui-showcase`](../../examples/26-ui-showcase/) — every Std.Ui layout primitive on one page (visual-regression reference)
 * [Sky.Live overview](../skylive/overview.md) — the runtime Std.Ui sits on top of
 * [Standard library reference](../stdlib.md) — the rest of Sky's surface
 * [NOTICE.md](../../NOTICE.md) — prior-art attribution for Std.Ui's API conventions

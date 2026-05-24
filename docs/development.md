@@ -1,9 +1,11 @@
 # Development
 
-> **v0.13 state**: typed Go output end-to-end. Whole-program Sky DCE
-> prunes unused FFI bindings (Stripe-SDK scale: −82 % source). LSP 100 %
-> coverage; runtime verification across all 26 examples. See
-> [`compiler/journey.md`](compiler/journey.md) for the changelog.
+> **v0.15 state**: type-directed lowering throughout, Go generics on
+> parametric record aliases, same-module polymorphic re-instantiation.
+> Layer-3 stdlib, whole-program DCE (Stripe-SDK scale: −82 % source),
+> LSP 100 % coverage; runtime verification across all 27 examples
+> (120 stdlib assertions + 306 cabal specs). See
+> [`compiler/versions.md`](compiler/versions.md) for the changelog.
 
 
 Building Sky from source — for contributors, language-tooling work,

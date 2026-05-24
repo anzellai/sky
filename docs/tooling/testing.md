@@ -1,9 +1,11 @@
 # Testing Sky projects
 
-> **v0.13 state**: typed Go output end-to-end. Whole-program Sky DCE
-> prunes unused FFI bindings (Stripe-SDK scale: −82 % source). LSP 100 %
-> coverage; runtime verification across all 26 examples. See
-> [`../compiler/journey.md`](../compiler/journey.md) for the changelog.
+> **v0.15 state**: type-directed lowering throughout, Go generics on
+> parametric record aliases. Layer-3 stdlib, whole-program DCE
+> (Stripe-SDK scale: −82 % source), LSP 100 % coverage; runtime
+> verification across all 27 examples (120 stdlib assertions + 306
+> cabal specs + 70 self-test files). See
+> [`../compiler/versions.md`](../compiler/versions.md) for the changelog.
 
 
 Sky ships with a first-class test framework: the `Sky.Test` stdlib module plus a `sky test` CLI command. Tests are plain Sky code and benefit from the same type checker, pattern exhaustiveness, and Error system as production code.
@@ -137,4 +139,4 @@ Current permanent regressions:
 ## Known limits
 
 - **Nested `Test.suite`** — currently hits a `SkyCall` shape issue when the outer list is walked via `List.map` over an ADT-pattern-match closure. Use a flat `List Test` until fixed.
-- **`Test.equal` on lists/records** — Sky's `==` operator delegates to `rt.Eq` which doesn't deep-compare lists. For collections, extract a scalar (`List.length`, `List.head`) and assert on that.
+- **`Test.equal` is deep-structural.** `==` / `Test.equal` go through `rt.sky_equal`, which recurses into ADTs / records / lists / dicts — `runtime-go/rt/eq_deep_test.go` exercises the deep-list / deep-map / cross-instantiation paths. (Older versions of this page warned that collections needed scalar extraction; that workaround is no longer required.)

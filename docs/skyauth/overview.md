@@ -1,8 +1,9 @@
-# Sky.Auth overview
+# Std.Auth overview
 
-> **v0.13 state**: typed Go output end-to-end. Whole-program Sky DCE
-> prunes unused FFI bindings (Stripe-SDK scale: −82 % source). LSP 100 %
-> coverage; runtime verification across all 26 examples. See
+> **v0.15 state**: type-directed lowering across callback fields,
+> record-field inits, list elements, and call args. Whole-program
+> Sky DCE prunes unused FFI bindings. LSP 100 % coverage; runtime
+> verification across all 27 examples. See
 > [`../compiler/journey.md`](../compiler/journey.md) for the changelog.
 
 
@@ -18,24 +19,23 @@ import Std.Log exposing (println)
 
 
 main =
-    Db.open "users.db"
+    Db.open "sqlite" "users.db"
         |> Task.andThen
             (\db ->
                 Auth.register db "alice@example.com" "correct horse battery staple"
                     |> Task.andThen
                         (\userId ->
                             Auth.login db "alice@example.com" "correct horse battery staple"
-                                |> Task.andThen
-                                    (\user ->
+                                |> Task.andThenResult
+                                    (\uid ->
                                         Auth.signToken
                                             "your-secret-min-32-bytes-please-rotate"
-                                            user
+                                            { sub = uid }
                                             3600
-                                            |> Task.fromResult
-                                            |> Task.andThen
-                                                (\jwt ->
-                                                    println ("Token for user " ++ String.fromInt userId ++ ": " ++ jwt)
-                                                )
+                                    )
+                                |> Task.andThen
+                                    (\jwt ->
+                                        println ("Token for user " ++ String.fromInt userId ++ ": " ++ jwt)
                                     )
                         )
             )
@@ -55,9 +55,9 @@ If you already have a users table and just want to hash passwords + issue JWTs:
 | `Auth.hashPassword` | `String -> Result Error String` | bcrypt, default cost 12 |
 | `Auth.hashPasswordCost` | `String -> Int -> Result Error String` | explicit cost (10–14 typical) |
 | `Auth.verifyPassword` | `String -> String -> Result Error Bool` | constant-time compare |
-| `Auth.passwordStrength` | `String -> Int` | 0–4 score (length + diversity heuristic) |
-| `Auth.signToken` | `String -> Dict String any -> Int -> Result Error String` | HMAC-SHA256 JWT, expirySeconds from now |
-| `Auth.verifyToken` | `String -> String -> Result Error (Dict String any)` | returns claims dict on success |
+| `Auth.passwordStrength` | `String -> Result Error String` | `"weak" / "fair" / "strong"` category label |
+| `Auth.signToken` | `String -> a -> Int -> Result Error String` | HMAC-SHA256 JWT, expirySeconds from now; `a` is your claims record / dict |
+| `Auth.verifyToken` | `String -> String -> Result Error a` | parametric — decode into the claims record / dict the call site annotates |
 
 These return `Result` (synchronous CPU work), so they compose naturally inside any handler:
 
@@ -67,13 +67,17 @@ import Sky.Core.Result as Result
 
 
 -- Sign a session token from your own user record
+type alias Claims = { sub : Int, role : String }
+
 issueToken : User -> Result Error String
 issueToken user =
     Auth.signToken
         secret
-        (Dict.fromList [("sub", user.id), ("role", user.role)])
+        ({ sub = user.id, role = user.role } : Claims)
         86400  -- 24h
 ```
+
+`signToken`'s claims arg is parametric (`a`) — pass any record, dict, or primitive. `verifyToken` round-trips into the type the call site annotates.
 
 ### Layer 2 — built-in user table (zero schema work)
 
@@ -82,8 +86,8 @@ If you don't already have a users table, `Auth.register` / `Auth.login` create o
 | Function | Type | Notes |
 |---|---|---|
 | `Auth.register` | `Db -> String -> String -> Task Error Int` | Creates `users` table on first call. Returns user id. |
-| `Auth.login` | `Db -> String -> String -> Task Error (Dict String any)` | Returns `{id, email, role}` row on success |
-| `Auth.setRole` | `Db -> Int -> String -> Task Error Int` | Promote / demote. Returns affected rows. |
+| `Auth.login` | `Db -> String -> String -> Task Error Int` | Returns the authenticated user id on success. |
+| `Auth.setRole` | `Db -> Int -> String -> Task Error ()` | Promote / demote. |
 
 Schema is portable across SQLite and Postgres — the `id` column uses `INTEGER PRIMARY KEY AUTOINCREMENT` on SQLite and `SERIAL PRIMARY KEY` on Postgres automatically.
 
@@ -110,7 +114,7 @@ secret =
 
 
 main =
-    Db.open "app.db"
+    Db.connect ()
         |> Task.andThen
             (\db ->
                 Server.listen 8000
@@ -144,7 +148,7 @@ handleLogin db req =
         ( Just email, Just password ) ->
             Auth.login db email password
                 |> Task.andThenResult
-                    (\user -> Auth.signToken secret user 86400)
+                    (\uid -> Auth.signToken secret { sub = uid } 86400)
                 |> Task.andThen
                     (\token ->
                         Task.succeed
@@ -158,13 +162,16 @@ handleLogin db req =
 
 
 -- GET /me — reads the cookie, verifies, returns the claims
+type alias Claims = { sub : Int }
+
+
 handleMe : Db -> Request -> Task Error Response
 handleMe db req =
     case Server.getCookie "sky_auth" req of
         Just token ->
-            case Auth.verifyToken secret token of
+            case (Auth.verifyToken secret token : Result Error Claims) of
                 Ok claims ->
-                    Task.succeed (Server.json (claimsToJson claims))
+                    Task.succeed (Server.json ("{\"sub\":" ++ String.fromInt claims.sub ++ "}"))
 
                 Err _ ->
                     Task.succeed (Server.withStatus 401 (Server.text "invalid token"))
@@ -181,26 +188,25 @@ handleMe db req =
 
 ```toml
 [auth]
-secret     = "REPLACE-WITH-32+-BYTE-RANDOM-STRING"   # SKY_AUTH_SECRET
-tokenTtl   = 86400                                    # SKY_AUTH_TOKEN_TTL (seconds)
-cookieName = "sky_auth"                               # SKY_AUTH_COOKIE
-driver     = "jwt"                                    # SKY_AUTH_DRIVER (jwt | session | oauth)
+tokenSecret = "REPLACE-WITH-32+-BYTE-RANDOM-STRING"   # SKY_AUTH_TOKEN_SECRET
+tokenTtl    = "24h"                                    # SKY_AUTH_TOKEN_TTL (Go duration string)
+cookie      = "sky_sid"                                # SKY_AUTH_COOKIE
 ```
 
-Three-layer precedence (highest wins): `SKY_AUTH_*` env var → `.env` file → `sky.toml`. See [environment-variable precedence](../../CLAUDE.md#environment-variable-precedence) for the full doctrine.
+Three-layer precedence (highest wins): `SKY_AUTH_*` env var → `.env` file → `sky.toml`. See [environment-variable precedence](../../CLAUDE.md#environment-variables) for the full doctrine.
 
 **Never commit a real secret to `sky.toml`.** The intended pattern is:
-- `sky.toml` ships the *defaults* (timeouts, cookie name, driver) so a fresh `sky build` works
-- `SKY_AUTH_SECRET` lives in `.env` (gitignored) for local dev and in the deployment env for production
+- `sky.toml` ships the *defaults* (timeouts, cookie name) so a fresh `sky build` works
+- `SKY_AUTH_TOKEN_SECRET` lives in `.env` (gitignored) for local dev and in the deployment env for production. Sky's runtime errors at startup when this is set but shorter than 32 bytes.
 
 ## Production checklist
 
-- **Rotate `SKY_AUTH_SECRET` periodically.** All outstanding tokens become invalid on rotation. Plan a deploy window.
-- **Minimum 32 bytes** for the secret. `Auth.signToken` rejects shorter values with an error rather than producing weak HMACs (P1-4 in the audit).
+- **Rotate `SKY_AUTH_TOKEN_SECRET` periodically.** All outstanding tokens become invalid on rotation. Plan a deploy window.
+- **Minimum 32 bytes** for the secret. `Auth.signToken` rejects shorter values with an error rather than producing weak HMACs; the runtime also refuses to start with a short `SKY_AUTH_TOKEN_SECRET`.
 - **Set cookie attrs**. `Server.withCookie` defaults to `HttpOnly; Secure; SameSite=Lax`. Use `Server.cookie` to override only when you actually need cross-site flow.
 - **Bcrypt cost**. Default is 12, which is ~250ms on a 2024 laptop. Raise to 13–14 in production if you can spare the latency budget; lower to 10 only for CI/test fixtures.
 - **Rate-limit `/login` and `/register`.** Use [`Sky.Http.Middleware.withRateLimit`](../../CLAUDE.md#standard-library) on those routes — credential stuffing is the #1 attack on any auth endpoint.
-- **Validate password strength at registration**. `Auth.passwordStrength password >= 2` is a sensible minimum (length 8+ AND mixed character classes).
+- **Validate password strength at registration**. `Auth.passwordStrength password` returns `Result Error String` where the body is `"weak" / "fair" / "strong"`; reject `"weak"` at registration as a baseline.
 
 ## Sky.Live integration
 
@@ -209,7 +215,7 @@ Inside a Sky.Live app, the auth flow lives in `update`:
 ```elm
 type Msg
     = SubmitLogin LoginForm
-    | LoginResult (Result Error (Dict String any))
+    | LoginResult (Result Error Int)
 
 
 update msg model =
@@ -219,8 +225,8 @@ update msg model =
             , Cmd.perform (Auth.login model.db form.email form.password) LoginResult
             )
 
-        LoginResult (Ok user) ->
-            ( { model | session = Just user, loading = False }, Cmd.none )
+        LoginResult (Ok userId) ->
+            ( { model | session = Just userId, loading = False }, Cmd.none )
 
         LoginResult (Err _) ->
             ( { model | error = Just "invalid credentials", loading = False }, Cmd.none )

@@ -1,9 +1,11 @@
 # Language syntax
 
-> **v0.13 state**: typed Go output end-to-end. Whole-program Sky DCE
-> prunes unused FFI bindings (Stripe-SDK scale: −82 % source). LSP 100 %
-> coverage; runtime verification across all 26 examples. See
-> [`../compiler/journey.md`](../compiler/journey.md) for the changelog.
+> **v0.15 state**: type-directed lowering throughout, Go generics on
+> parametric record aliases. Layer-3 stdlib, whole-program DCE
+> (Stripe-SDK scale: −82 % source), LSP 100 % coverage; runtime
+> verification across all 27 examples (120 stdlib assertions + 306
+> cabal specs). See [`../compiler/versions.md`](../compiler/versions.md)
+> for the changelog.
 
 
 Sky's surface syntax is Elm-compatible: most expressions that parse in Elm also parse in Sky. (See [NOTICE.md](../../NOTICE.md) for prior-art attribution; programming-language syntax is not itself copyrightable.)
@@ -35,7 +37,7 @@ increment c =
 ## Types
 
 - Primitives: `Int`, `Float`, `String`, `Bool`, `Char`, `Bytes`.
-- Records: `{ name : String, age : Int }` (must be aliased; inline record types in annotations are not supported).
+- Records: `{ name : String, age : Int }`. The parser accepts inline record types in annotations (`f : { name : String, age : Int } -> String`), though sharing a record shape across functions still reads better as a named `type alias`.
 - Tuples: `( Int, String )` — 2-tuples emit `rt.SkyTuple2`, 3-tuples emit `rt.SkyTuple3`, 4+ emit the slice-backed `rt.SkyTupleN`.
 - Lists: `List a`.
 - Dicts: `Dict k v` (runtime `map[string]any`; see [types.md](types.md) for caveats).

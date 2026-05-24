@@ -1,9 +1,15 @@
 # Sky.Live overview
 
-> **v0.13 state**: typed Go output end-to-end. Whole-program Sky DCE
-> prunes unused FFI bindings (Stripe-SDK scale: −82 % source). LSP 100 %
-> coverage; runtime verification across all 26 examples. See
-> [`../compiler/journey.md`](../compiler/journey.md) for the changelog.
+> **v0.15 state**: type-directed lowering across callback fields,
+> record-field inits, list elements, and call args; Go generics on
+> parametric record aliases (`type alias Cfg msg = {…}` emits
+> `Cfg_R[T1 any]` with per-instance type args so callback fields
+> keep their typed callee param). Whole-program Sky DCE prunes
+> unused FFI bindings (Stripe-SDK scale: −82 % source). LSP 100 %
+> coverage; runtime verification across all 27 examples
+> (`examples/00-standard-libs` ships 120 Sky.Test assertions;
+> ~306 cabal specs). See [`../compiler/journey.md`](../compiler/journey.md)
+> for the changelog.
 
 
 **Server-driven UI with the TEA architecture** (`init` / `update` / `view` / `subscriptions`). Sky.Live lets you build interactive web apps where all state, logic, and rendering live on the server. The browser runs no client-side framework — just minimal JavaScript for DOM patching and SSE reconnection.
@@ -11,9 +17,12 @@
 ```elm
 module Main exposing (main)
 
-import Sky.Live as Live
-import Html exposing (..)
-import Html.Events exposing (onClick)
+import Sky.Core.Prelude exposing (..)
+import Std.Live exposing (app, route)
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Html as Html
+import Std.Html.Events as Event
 
 
 type Msg
@@ -23,6 +32,10 @@ type Msg
 
 type alias Model =
     { count : Int }
+
+
+type Page
+    = HomePage
 
 
 init : () -> ( Model, Cmd Msg )
@@ -40,12 +53,12 @@ update msg model =
             ( { model | count = model.count - 1 }, Cmd.none )
 
 
-view : Model -> Html Msg
+view : Model -> any
 view model =
-    div []
-        [ button [ onClick Increment ] [ text "+" ]
-        , span [] [ text (String.fromInt model.count) ]
-        , button [ onClick Decrement ] [ text "-" ]
+    Html.div []
+        [ Html.button [ Event.onClick Increment ] [ Html.text "+" ]
+        , Html.span [] [ Html.text (String.fromInt model.count) ]
+        , Html.button [ Event.onClick Decrement ] [ Html.text "-" ]
         ]
 
 
@@ -55,14 +68,12 @@ subscriptions _ =
 
 
 main =
-    Live.app
+    app
         { init = init
         , update = update
         , view = view
         , subscriptions = subscriptions
-        , routes =
-            [ Live.route "/" HomePage
-            ]
+        , routes = [ route "/" HomePage ]
         , notFound = HomePage
         }
 ```
@@ -97,7 +108,7 @@ See [architecture.md](architecture.md) for the detailed flow and session managem
 
 - Auth-gated pages: check `session` in `update` or in the route handler.
 - Async work: `Cmd.perform (Http.get url) GotResponse` dispatches a task, the result comes back as `GotResponse (Result Error Response)`.
-- Scheduled updates: `Sub.interval 1000 Tick` emits `Tick` every second.
+- Scheduled updates: `Sub.every 1000 Tick` emits `Tick` every second.
 - Multi-page: `routes` maps URL paths to route messages; `update` responds to navigation.
 
 See [`examples/09-live-counter`](../../examples/09-live-counter/), [`examples/12-skyvote`](../../examples/12-skyvote/), [`examples/16-skychess`](../../examples/16-skychess/) for worked examples.
@@ -241,7 +252,7 @@ rt.MountSubApp(mux, "/admin",   rt.SpawnBinary("./admin-app"))
 rt.MountSubApp(mux, "/docs", rt.SpawnBinary("./hugo-server"))
 ```
 
-A Sky-side ergonomic API (`Live.app { subApps = [Live.subApp "/admin" "./admin-app", ...] }`) is on the v0.14 list. The Go-side API is the contract for v0.13.x.
+A Sky-side ergonomic API (`Live.app { subApps = [Live.subApp "/admin" "./admin-app", ...] }`) is on the roadmap; the Go-side API above is the stable contract.
 
 ### Sub-app-aware `SKY_LIVE_BASE_PATH`
 

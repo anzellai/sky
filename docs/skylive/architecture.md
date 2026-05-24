@@ -1,8 +1,10 @@
 # Sky.Live architecture
 
-> **v0.13 state**: typed Go output end-to-end. Whole-program Sky DCE
-> prunes unused FFI bindings (Stripe-SDK scale: −82 % source). LSP 100 %
-> coverage; runtime verification across all 26 examples. See
+> **v0.15 state**: type-directed lowering across callback fields,
+> record-field inits, list elements, and call args; Go generics on
+> parametric record aliases. Whole-program Sky DCE prunes unused FFI
+> bindings (Stripe-SDK scale: −82 % source). LSP 100 % coverage;
+> runtime verification across all 27 examples. See
 > [`../compiler/journey.md`](../compiler/journey.md) for the changelog.
 
 
@@ -36,7 +38,7 @@ Technical reference for how Sky.Live dispatches events, renders, and diffs. For 
 ## Session lifecycle
 
 1. **Page load** — server renders `init ()`. The resulting model + view are cached under a session id (cookie or query param). A `session_id` cookie is set with `HttpOnly; SameSite=Lax` (the CSRF cookie is separately `SameSite=Strict`).
-2. **SSE open** — client connects to `/_sky/subscribe?session=<id>`. Server locks the session and emits a `hello` event.
+2. **SSE open** — client connects to `/_sky/sse?session=<id>`. Server locks the session and emits a `hello` event.
 3. **Event post** — client sends `POST /_sky/event` with `{ session, msg }`. Server decodes `msg`, locks the session, runs `update`, diffs, emits patch over SSE.
 4. **Cmd dispatch** — if `update` returned a non-none `cmd`, server spawns a goroutine per command. Each goroutine holds the session lock only to apply the resulting `Msg`, not while the task runs — so long-running HTTP requests don't block other events.
 5. **TTL expiry** — sessions expire after `[live] ttl` seconds of inactivity. The store sweeps expired rows periodically.
@@ -45,7 +47,7 @@ Technical reference for how Sky.Live dispatches events, renders, and diffs. For 
 
 All the plumbing lives in `runtime-go/rt/live.go` (HTTP handlers, VNode diff, SSE encoding) and `runtime-go/rt/live_store.go` (session backends). These are embedded into every project's binary.
 
-The Sky-facing `Sky.Live` module (registered as a kernel in `Sky.Canonicalise.Module`) exposes `app`, `route`, `Sub.none`, `Sub.interval`, `Cmd.none`, `Cmd.perform`, `Cmd.batch`, and a handful of HTML helpers.
+The Sky-facing `Std.Live` module exposes `app` + `route`; subscriptions / commands live in their own modules (`Std.Sub.{none,every}`, `Std.Cmd.{none,perform,batch}`); HTML primitives are in `Std.Html` / `Std.Html.Attributes` / `Std.Html.Events`; Std.Ui sits on top of those.
 
 ## VNode shape
 

@@ -1,9 +1,11 @@
 # Runtime verification
 
-> **v0.13 state**: typed Go output end-to-end. Whole-program Sky DCE
-> prunes unused FFI bindings (Stripe-SDK scale: −82 % source). LSP 100 %
-> coverage; runtime verification across all 26 examples. See
-> [`../compiler/journey.md`](../compiler/journey.md) for the changelog.
+> **v0.15 state**: type-directed lowering throughout, Go generics on
+> parametric record aliases, same-module polymorphic re-instantiation.
+> Layer-3 stdlib, whole-program DCE (Stripe-SDK scale: −82 % source),
+> LSP 100 % coverage; runtime verification across all 27 examples
+> (120 stdlib assertions + 306 cabal specs). See
+> [`versions.md`](versions.md) for the changelog.
 
 
 Build success is necessary but not sufficient. Sky's runtime verification layer ensures the contract "if it compiles, it works" is enforced end-to-end, not only at `sky build` time.
@@ -36,9 +38,13 @@ Builds and RUNS every example. Fails if any of:
 
 Classification:
 
-- **cli** (01, 02, 03, 04, 06, 07, 14): run and expect graceful exit.
-- **server** (05, 08, 09, 10, 12, 13, 15, 16, 17, 18): boot, probe the port, kill.
-- **gui** (11): build-only (requires display).
+- **cli** (7 examples): run and expect graceful exit.
+- **Sky.Tui** (5 examples): allocate a pty, drive scripted keystrokes.
+- **server** (11 Sky.Live + Sky.Http.Server examples): boot, probe the port, kill — driven by `scripts/verify-all-web.sh` (Playwright).
+- **gui** (1 — Fyne): build-only (requires display).
+- **build-only fixtures** (2): build only — exercise the compiler without a runtime entry point.
+
+Total: 27 examples (`examples/00`-`examples/26`).
 
 ### 3. Forbidden-pattern gate
 
@@ -141,11 +147,7 @@ All five must pass. The v1 soundness audit at `docs/compiler/v1-soundness-audit.
 
 ## Known-gap runtime failures (non-regressions)
 
-At the time of writing, `sky verify` reports four pre-existing runtime failures that are NOT compiler soundness bugs:
-
-- **05-mux-server** — Sky handler emits `func(any, any) any` but gorilla/mux expects `func(http.ResponseWriter, *http.Request)`. FFI callback wrapping gap.
-- **06-json** — JSON pipeline decoder invariant violation in `optionalExample`. User-code type mismatch.
-- **08-notes-app / 15-http-server** — HTTP 500 from `Server.get` handler type mismatch: Sky source declares `handleLanding : a -> Request -> Task Error Response` (two params) but `Sky.Http.Server` expects `Request -> Task Error Response` (one param).
-- **13-skyshop** — panic during Sky.Live session handling path.
-
-These are tracked as separate backlog items, not v1 acceptance gates. The verify script surfaces them so they don't silently accumulate.
+As of v0.15.0 the full 27-example sweep + `scripts/verify-all-web.sh`
++ `scripts/verify-cli.sh` runs green from a wiped slate. There are no
+known-gap runtime failures — any failure here is a regression and
+blocks the tag.
