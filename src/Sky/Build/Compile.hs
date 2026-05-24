@@ -6029,6 +6029,17 @@ exprToGoExpectGo goRendering e@(A.At _ expr)
             , length paramTys == length pats
             , all (/= "any") paramTys -> do
                 lowerTypedLambda pats paramTys retTy body
+
+        -- v0.15 Stage C.2 — type-directed list literal.
+        --
+        -- When `goRendering` parses as `[]T`, each list element is
+        -- lowered with T as expected type so nested lambdas and
+        -- records get type-directed too.  Falls back to the generic
+        -- `[]any` shape when the slot type is unrecognised.
+        Can.List items
+            | Just elemTy <- stripListType goRendering ->
+                GoIr.GoSliceLit elemTy
+                    [ exprToGoExpectGo elemTy it | it <- items ]
         _ ->
             -- Leaf / non-control-flow: lower generically, then coerce
             -- the result to the expected Go type.  `coerceReturnExprT`
