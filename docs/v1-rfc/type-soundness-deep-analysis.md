@@ -534,6 +534,56 @@ Stated formally:
 
 Today, none of these hold reliably.  After v0.15, all three do.
 
+## 8.4 Final v0.15.1 shipping state (ALL STAGES COMPLETE)
+
+All 6 stages plus the same-module-polymorphic-call bonus fix landed
+on `feat/v0.15-typed-lowering`.
+
+| Stage | Status |
+|---|---|
+| A: solver per-region types | ✅ shipped |
+| B: globalRegionTypes IORef | ✅ shipped |
+| C.1: type-directed lambda + record-field | ✅ shipped |
+| C.2: type-directed list literals | ✅ shipped |
+| D: rt.Coerce retreat at typed sites | ✅ shipped |
+| E: Go generics on parametric records | ✅ shipped |
+| Bonus: same-module polymorphic call | ✅ shipped |
+| F: verification | ✅ all gates green |
+
+### User-visible bugs closed
+
+1. **Inline lambda in record field** — `onSubmit = \s -> Tag s`
+   emits with the slot's typed `func(string) Msg` param, not the
+   default `func(any) any`. (Stage C.1)
+2. **Cross-alias call without workaround** — Sky source can declare
+   structurally-equal records and pass them across module
+   boundaries without the alias-chain `= Editor.Form` workaround.
+   skydeploy's `State.FileForm = Editor.Form` is now optional;
+   verified by removing it and rebuilding. (Stage E)
+3. **Same-module polymorphic call** — annotated TypedDef like
+   `f : Cfg msg -> msg` called twice with different concrete `msg`
+   types in the SAME module now works.  Previously the first
+   call's instantiation pinned `msg`. (Bonus fix.)
+4. **`Cfg Msg vs Cfg Int` shown as `Cfg vs Cfg`** in errors —
+   TAlias type-args propagate through `variableToTypeSeen` +
+   `showType` + `typeStructEq`. (Foundation: Solve.hs readback fix.)
+
+### Soundness invariants achieved
+
+> **Invariant 1 — Lowering preserves typing.** ✅ achieved at the
+> positions covered by Stages C/D/E.  Sub-expressions at lambda
+> bodies, record-field inits, list elements, and call args all
+> lower with the slot's typed Go form propagated.
+
+> **Invariant 2 — Sky HM rejects all Go-level type errors.** ✅
+> achieved for the parametric-record-alias class. Other classes
+> (typed FFI, anonymous records) covered by pre-existing Sky
+> infrastructure.
+
+> **Invariant 3 — Runtime type errors only at FFI / gob / reflect
+> boundaries.** ✅ achieved.  rt.Coerce stays only at legitimate
+> boundaries (FFI calls, gob decode, reflect.Field).
+
 ## 8.5 What shipped on `feat/v0.15-typed-lowering` (iteration 1)
 
 Commits stacked on main (oldest → newest):
