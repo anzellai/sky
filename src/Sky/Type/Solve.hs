@@ -865,9 +865,18 @@ variableToTypeSeen seen var = do
                 T.RigidVar name -> return (T.TVar name)
                 T.RigidSuper _ name -> return (T.TVar name)
                 T.Structure flat -> flatTypeToTypeSeen (var : seen) flat
-                T.Alias home name _ realVar -> do
+                T.Alias home name pairVars realVar -> do
                     inner <- variableToTypeSeen (var : seen) realVar
-                    return (T.TAlias home name [] (T.Filled inner))
+                    -- Read back the type-arg pair vars too — parametric
+                    -- aliases (post Surface 1 / Canonicalise expansion)
+                    -- carry their bindings here.  Pre-fix this was `[]`
+                    -- which made `Cfg Msg` and `Cfg Int` look identical
+                    -- in error messages ("Cfg vs Cfg") and made
+                    -- `typeStructEq`'s arg comparison meaningless.
+                    pairTys <- mapM (\(n, pv) -> do
+                                        pty <- variableToTypeSeen (var : seen) pv
+                                        return (n, pty)) pairVars
+                    return (T.TAlias home name pairTys (T.Filled inner))
                 T.Error -> return (T.TVar "_error")
 
 
@@ -1195,7 +1204,13 @@ typeStructEq (T.TRecord f1 _) (T.TRecord f2 _) =
 typeStructEq (T.TTuple a1 b1 cs1) (T.TTuple a2 b2 cs2) =
     typeStructEq a1 a2 && typeStructEq b1 b2
     && length cs1 == length cs2 && and (zipWith typeStructEq cs1 cs2)
-typeStructEq (T.TAlias _ n1 _ _) (T.TAlias _ n2 _ _) = n1 == n2
+-- Parametric aliases must compare type-args too: `Cfg Msg` and
+-- `Cfg Int` share the alias name but are distinct types. Pre-fix
+-- this returned True for any matching name, so error-message diff
+-- generation skipped the actual type-arg mismatch.
+typeStructEq (T.TAlias _ n1 p1 _) (T.TAlias _ n2 p2 _) =
+    n1 == n2 && length p1 == length p2
+    && and (zipWith typeStructEq (map snd p1) (map snd p2))
 typeStructEq _ _ = False
 
 -- | Build a stable per-module renaming from all types that will be
@@ -1229,7 +1244,12 @@ showTypeR ty = case ty of
     -- diagnostics readable; longer records get a trailing ", ...".
     T.TRecord fields ext -> showRecord fields ext
     T.TTuple a b _ -> "( " ++ showTypeR a ++ ", " ++ showTypeR b ++ " )"
-    T.TAlias _ name _ _ -> name
+    -- Parametric aliases (post Surface 1 in Canonicalise/Module.hs)
+    -- carry their type-arg bindings in `pairs`. Render them so the
+    -- error message stays informative: `Cfg Msg` not just `Cfg`.
+    T.TAlias _ name pairs _
+        | null pairs -> name
+        | otherwise  -> name ++ " " ++ unwords (map (showTypeAtomR . snd) pairs)
 
 
 -- Render the fields of a record. Extension marker (`| r`) shown
