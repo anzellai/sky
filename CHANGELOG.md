@@ -2,6 +2,12 @@
 
 Notable user-visible changes. Keep this file additive — never rewrite history.
 
+## v0.15.2 — `sky build` propagates compiler version to apps (2026-05-24)
+
+- **`sky build` now injects `-ldflags "-X sky-app/rt.skyVersion=<compiler version>"`** into the underlying `go build`. Every Sky-built app's `/_sky/buildinfo` now reports the actual Sky version that built it instead of the default `"dev"`. No deploy-script ceremony — a tagged Sky binary built with `cabal install -ldflags="-X main.skyBuildVersion=0.15.2"` propagates that string to every app it compiles.
+  - **Why:** pre-v0.15.2, the `rt.skyVersion` package-level var defaulted to `"dev"` and was only populated by the Sky compiler's own release CI (`-X main.skyBuildVersion=...`). The compiler's own version never reached the apps it built — every deployed Sky app reported `"skyVersion":"dev"` regardless of which tagged compiler had built it.
+  - **Migration:** none. Existing apps rebuild → buildinfo flips from `"dev"` to the real version on next `sky build`. Deploy scripts that previously injected the ldflag manually (none in the public examples) can remove that step.
+
 ## v0.15.1 — Docs: `SKY_ADMIN_TOKEN` canonical (2026-05-24)
 
 - **Docs: `SKY_ADMIN_TOKEN` is the canonical env var** for gating

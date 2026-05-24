@@ -2463,9 +2463,25 @@ runGoBuildWithDiagnostics outDir binName _goPath = do
     -- bindings). If the static build fails, transparently retry
     -- with cgo enabled and note it; the resulting binary then
     -- needs a glibc base.
-    let buildCmd cgo =
+    -- v0.15.2: inject the Sky compiler version into the emitted binary's
+    -- rt.skyVersion via -ldflags. Pre-v0.15.2 every sky-built app's
+    -- `/_sky/buildinfo` reported `skyVersion: "dev"` regardless of which
+    -- Sky compiler had built it — the variable defaults to "dev" and was
+    -- only populated by the release CI's `cabal install -ldflags="-X
+    -- sky-app/rt.skyVersion=..."` (which only the Sky compiler binary
+    -- itself got, not the apps it builds). Propagating the compiler's
+    -- own version through `go build` makes any sky-built app report the
+    -- truth without per-project deploy-script ceremony.
+    --
+    -- Quoting: skyBuildVersion is a tag name like `0.15.2` (alphanumerics
+    -- + dot only — no shell metacharacters), so single-quoting is enough
+    -- to defend against an accidental space without breaking under sh -c.
+    let versionLdflag =
+            "-ldflags '-X sky-app/rt.skyVersion=" ++ skyBuildVersion ++ "'"
+        buildCmd cgo =
             "cd " ++ outDir ++ " && CGO_ENABLED=" ++ (if cgo then "1" else "0")
-            ++ " go build -o " ++ binName ++ " ."
+            ++ " go build " ++ versionLdflag
+            ++ " -o " ++ binName ++ " ."
     (ec0, _o0, e0) <- System.Process.readCreateProcessWithExitCode
         (System.Process.shell (buildCmd False)) ""
     (ec, berr) <- case ec0 of
