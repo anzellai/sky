@@ -24,7 +24,7 @@ wrapping that breaks at runtime (Surface 2).
 **Repro:** `test-files/record-field-partial-app.sky` —
 build fails at type-check.
 
-## Surface 2 — partial-applied ctors in record fields type-erase incorrectly
+## Surface 2 — partial-applied ctors in record fields type-erase incorrectly **[CLOSED 2026-05-24]**
 
 ```
 type alias Cfg msg = { onSubmit : Form -> msg, ... }
@@ -60,6 +60,19 @@ positional args (not record fields). See
 
 **Repro after fixing Surface 1:** the same .sky program at the
 `cfg.onSubmit form` call panics at runtime.
+
+**Resolution (2026-05-24).**
+
+1. `rt.Coerce[T]` for function targets now always goes through
+   `makeFuncAdapter` (rt/rt.go:4486) — Fix A above.
+2. Parametric record alias struct emission (`generateAlias` /
+   `generateAliasForDep` in `src/Sky/Build/Compile.hs`) was changed
+   to non-generic with Sky TVar fields erased to `any` in field
+   types. So `Editor_Cfg_R` stays a plain struct and Go's "cannot
+   use generic type without instantiation" error class is avoided.
+3. Combined, the slot↔value func-signature mismatch is bridged at
+   the call boundary by `makeFuncAdapter` without needing the
+   struct to be generic.
 
 ## Surface 3 — structurally-identical record aliases generate distinct Go structs
 

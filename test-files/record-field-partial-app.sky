@@ -1,31 +1,19 @@
--- Minimal repro of Sky compiler task #262.
+-- Surface 2 regression test (closed 2026-05-24).
 --
--- A partial-applied ADT constructor stored in a record field
--- (`onSubmit : Form -> Msg`) gets type-erased / nominal-mismatched
--- at the wire dispatch boundary. Used by every Sky.Live widget
--- API that takes Msg callbacks in a Cfg record (sky-editor,
--- future sky-form-builder, etc.).
+-- Pre-fix: Sky.Live wire dispatcher panicked at runtime when invoking
+--   a callback stored in a parametric record alias field — Go's
+--   nominal function types refuse `func(Form_R) Msg` ≠ `func(any) Msg`.
 --
--- Expected after fix: this program builds AND runs to completion
--- without `interface conversion` panic from main(). Pre-fix, the
--- equivalent pattern panics at runtime when the wire dispatcher
--- tries to invoke `cfg.onSubmit` via the standard type assertion.
+-- Post-fix: struct emission erases TVar fields to `any` AND the
+--   runtime func-target Coerce path (rt.Coerce → makeFuncAdapter)
+--   widens nominally-different func signatures at the call boundary.
 --
--- Hand-traced lowering bug (from real sky-editor extraction):
---
---   rt.Coerce[func(any) State_Msg](           ← surrounding expects func(any) X
---       func(__p0 Editor_Form_R) State_Msg {  ← but lowerer emits typed param
---           ...
---       })
---
--- Go's function types are nominal; func(any) X ≠ func(Form_R) X.
--- rt.Coerce's `v.(T)` fast-path returns ok=false, falls to
--- makeFuncAdapter — but the calling site already type-asserted
--- as `func(any) X`, which panics.
+-- This test mirrors the skydeploy/sky-editor pattern: a widget module
+-- exposing a Cfg alias + a `view`-style consumer that field-accesses
+-- the callback without an explicit signature.
 module Main exposing (main)
 
 import Sky.Core.Prelude exposing (..)
-import Sky.Core.Task as Task
 import Std.Log exposing (println)
 
 
@@ -34,40 +22,36 @@ type alias Form =
 
 
 type Msg
-    = DoIt Int String Form
+    = SaveFile Int String Form
 
 
 type alias Cfg msg =
-    { label : String
-    , onSubmit : Form -> msg
+    { onSubmit : Form -> msg
+    , label : String
     }
 
 
--- Build a Cfg with a partial-applied ADT ctor as onSubmit.
--- This is the exact shape sky-editor needs (Editor.view consumes
--- a Cfg whose onSubmit is partial-applied SaveFile).
-mkCfg : Int -> String -> Cfg Msg
-mkCfg appId fileName =
-    { label = "Save " ++ fileName
-    , onSubmit = DoIt appId fileName
-    }
-
-
--- Invoke the partial-applied ctor through the record field.
--- This is what the Sky.Live wire dispatcher does at runtime.
-trigger : Cfg Msg -> Form -> Msg
-trigger cfg form =
+-- Widget consumer — no explicit type signature on its parameter.
+-- HM infers the structural row, NOT the Cfg alias (works around
+-- Surface 1).  Field access on cfg.onSubmit returns the partial-
+-- applied ctor.
+runWidget cfg form =
     cfg.onSubmit form
 
 
+-- Consumer constructs the Cfg with a partial-applied Msg ctor —
+-- the exact pattern that lowered to `rt.Coerce[func(any) Msg](
+-- func(Form_R) Msg{...})` and panicked at runtime pre-fix.
 main =
     let
-        cfg = mkCfg 42 "Main.sky"
+        cfg = { onSubmit = SaveFile 42 "Main.sky"
+              , label = "Save Main.sky"
+              }
         form = { name = "Main.sky", action = "save" }
-        result = trigger cfg form
+        result = runWidget cfg form
     in
-        println
-            (case result of
-                DoIt aid fn frm ->
-                    "DoIt " ++ String.fromInt aid ++ " " ++ fn ++ " {"
-                        ++ frm.name ++ "," ++ frm.action ++ "}")
+    case result of
+        SaveFile aid fn frm ->
+            println
+                ("SaveFile " ++ String.fromInt aid ++ " " ++ fn
+                    ++ " {" ++ frm.name ++ "," ++ frm.action ++ "}")
