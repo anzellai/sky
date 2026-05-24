@@ -6557,18 +6557,105 @@ coerceToFieldType targetTy e
              -- map-source panic class.
              else if isRecordAliasTy erasedTy
                   then GoIr.GoCall (GoIr.GoIdent ("rt.Coerce[" ++ erasedTy ++ "]")) [e]
-                  -- Function-typed record fields: route through
-                  -- rt.Coerce (which uses adaptFuncValue via reflect.
-                  -- MakeFunc). Direct `any(e).(func(P) R)` assertion
-                  -- is doomed when the source's signature differs in
-                  -- ANY position (Go function types are nominal in
-                  -- both params and returns). Concrete case bit
-                  -- skydeploy's Editor.Cfg.onSubmit: lambda returns
-                  -- State_Msg, slot expects func(Form_R) any. See
-                  -- docs/parametric-record-aliases-bugs.md Surface 2.
+                  -- Function-typed targets need careful handling.
+                  -- Go function types are nominal in BOTH params and
+                  -- returns: a `func(P) State_Msg` is NOT assignable
+                  -- to a `func(P) any` slot via `.(...)` assertion.
+                  --
+                  -- When the SOURCE is a `GoFuncLit` (typically the
+                  -- eta-expansion lambda emitted by partial-applied
+                  -- ctors; see line ~6986), the compiler KNOWS the
+                  -- lambda's intended shape. If the slot's signature
+                  -- can absorb the source's body (e.g. target return
+                  -- = `any`; Go auto-wraps any concrete value), we
+                  -- rewrite the GoFuncLit's signature DIRECTLY,
+                  -- producing fully-typed Go with no runtime adapter.
+                  --
+                  -- For non-lambda sources, or signature shapes where
+                  -- a static rewrite isn't sound, we fall through to
+                  -- rt.Coerce (which uses reflect.MakeFunc via
+                  -- adaptFuncValue at runtime — slower but correct).
                   else if "func(" `List.isPrefixOf` erasedTy
-                  then GoIr.GoCall (GoIr.GoIdent ("rt.Coerce[" ++ erasedTy ++ "]")) [e]
+                  then retypeFuncLitOrCoerce erasedTy e
                   else GoIr.GoTypeAssert (GoIr.GoCall (GoIr.GoIdent "any") [e]) erasedTy
+
+
+-- | Function-target coercion. When the source is a lambda literal,
+-- rewrite its signature to match the target so the emitted Go is
+-- fully typed end-to-end. Falls back to `rt.Coerce[func(...)]`
+-- (reflect.MakeFunc) for non-literal sources.
+--
+-- Soundness: rewriting the lambda's `retTy` to the target's is safe
+-- iff the source body's return type is ASSIGNABLE to the target's
+-- return type. The two cases we exercise here:
+--   1. Target return = "any" — every concrete Go type is assignable
+--      to interface{}. Always safe.
+--   2. Identical retTys — no rewrite needed; original lambda stands.
+-- Other cases (concrete→concrete with structural diff) still need
+-- the runtime adapter — fall through to rt.Coerce.
+--
+-- Param-type rewriting is NOT done here. The source lambda's params
+-- are produced by `wrapTyped` (the partial-app eta path) which sets
+-- them from the ctor's annotation — they're already typed to the
+-- field's expected param shape. If a future case needs param
+-- rewriting (e.g. widening Editor_Form_R to any for record-stored
+-- callbacks across module boundaries), this is the place.
+retypeFuncLitOrCoerce :: String -> GoIr.GoExpr -> GoIr.GoExpr
+retypeFuncLitOrCoerce targetTy e = case parseFuncType targetTy of
+    Just (_targetParams, targetRet)
+      | GoIr.GoFuncLit params srcRet body <- e
+      , srcRet /= targetRet
+      , canStaticRetypeReturn srcRet targetRet
+      -> GoIr.GoFuncLit params targetRet body
+      | GoIr.GoFuncLit _ srcRet _ <- e
+      , srcRet == targetRet
+      -> e   -- identical: drop the wrap entirely
+    _ -> GoIr.GoCall (GoIr.GoIdent ("rt.Coerce[" ++ targetTy ++ "]")) [e]
+  where
+    -- target = "any" absorbs every concrete return.
+    canStaticRetypeReturn :: String -> String -> Bool
+    canStaticRetypeReturn _ "any" = True
+    canStaticRetypeReturn _ _     = False
+
+
+-- | Parse a Go function type `func(P1, P2, ...) R` into (params, ret).
+-- Returns Nothing if the string doesn't conform to this exact shape.
+-- Used only at the field-coercion boundary; not a general Go parser.
+parseFuncType :: String -> Maybe ([String], String)
+parseFuncType s = case stripPrefix' "func(" s of
+    Nothing -> Nothing
+    Just rest -> case spanParenBalanced rest of
+        Nothing -> Nothing
+        Just (paramsStr, afterParen) -> case afterParen of
+            ' ':retTy -> Just (splitTopLevelCommas paramsStr, retTy)
+            _         -> Nothing
+  where
+    stripPrefix' p str
+      | p `List.isPrefixOf` str = Just (drop (length p) str)
+      | otherwise               = Nothing
+    -- Walk `s` accumulating chars until the matching close-paren
+    -- (depth 0). Returns the inside + what's after the close-paren.
+    spanParenBalanced :: String -> Maybe (String, String)
+    spanParenBalanced = go 0 []
+      where
+        go _ _    []           = Nothing
+        go 0 acc  (')':after)  = Just (reverse acc, after)
+        go d acc  ('(':cs)     = go (d+1) ('(':acc) cs
+        go d acc  (')':cs)     = go (d-1) (')':acc) cs
+        go d acc  (c:cs)       = go d (c:acc) cs
+    -- Split on top-level commas (respecting parens/brackets).
+    splitTopLevelCommas :: String -> [String]
+    splitTopLevelCommas = splitOn 0 []
+      where
+        splitOn :: Int -> String -> String -> [String]
+        splitOn _ acc []           = [reverse acc | not (null acc)]
+        splitOn 0 acc (',':' ':cs) = reverse acc : splitOn 0 [] cs
+        splitOn 0 acc (',':cs)     = reverse acc : splitOn 0 [] cs
+        splitOn d acc ('(':cs)     = splitOn (d+1) ('(':acc) cs
+        splitOn d acc (')':cs)     = splitOn (d-1) (')':acc) cs
+        splitOn d acc ('[':cs)     = splitOn (d+1) ('[':acc) cs
+        splitOn d acc (']':cs)     = splitOn (d-1) (']':acc) cs
+        splitOn d acc (c:cs)       = splitOn d (c:acc) cs
 
 
 -- | True when `ty` looks like a record alias the codegen emits:
