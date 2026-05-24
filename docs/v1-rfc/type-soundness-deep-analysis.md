@@ -614,6 +614,48 @@ makes it unnecessary AND gob-stable.
 | **Cabal test regression on intermediate stages** | Each stage runs cabal test before merge |
 | **Sky.Live session invalidation on Stage E deploy** | Same TTL pattern; document |
 
+## 10.5 Stage E attempt — blocker identified (2026-05-24)
+
+Attempted Stage E in the same session as A+B+C.1+C.2.  Made parametric
+record alias structs emit as Go generics + updated `solvedTypeToGo`
+and `typeStrWithAliasesReg` TAlias arms to emit type-args.  Build
+failed with:
+
+    ./main.go:27:29: cannot use generic type Widget_Editor_Cfg_R[T1 any]
+    without instantiation
+
+The struct + ctor + return-type rendering worked correctly (param-
+type at construction sites instantiates from concrete HM type args).
+What FAILED was the CONSUMER FUNCTION SIGNATURE rendering for
+non-annotated functions like `Widget.Editor.view`.
+
+Root cause: when a Sky source function has no explicit type
+annotation (the common case for widget consumers), HM infers a
+structural row record (`TRecord { onSubmit : Form → msg, ... }`)
+rather than a `TAlias "Cfg" [(msg, TVar msg)] (Filled record)`.
+
+The lowerer's `typeStrWithAliasesReg` TRecord arm matches the
+field-set against the alias registry and emits `Cfg_R`.  Without
+the alias's bound TVars in scope, it has no way to emit
+`Cfg_R[T1]` AND simultaneously promote T1 to a generic param of
+the enclosing function.
+
+To unblock Stage E:
+1. Function-sig rendering must recognize parametric aliases by
+   field-set match AND infer concrete type args from field-position
+   TVars (the row constraint's `msg` TVar in `onSubmit : Form → msg`
+   maps to the alias's first var).
+2. Promote those TVars to function-level generic params.
+3. Thread the resulting generic-param list into both the struct
+   reference (`Cfg_R[T1]`) AND the function's Go generic-param
+   clause (`func F[T1 any](...) ...`).
+4. Call sites must instantiate the function explicitly when Go's
+   inference can't deduce T1 from argument positions alone.
+
+This is real work — ~200-300 LOC + extensive testing.  Deferred
+to a dedicated Stage E session.  Stage A+B+C.1+C.2 ship as v0.15.0;
+Stage E + D + F become v0.15.1+.
+
 ## 11. Open design questions to resolve before Stage C
 
 1. **`ExpectedType` polymorphic position**: when the position is
