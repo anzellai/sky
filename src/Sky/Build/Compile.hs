@@ -7007,6 +7007,12 @@ genericParams modName funcName = case (modName, funcName) of
 coerceToFieldType :: String -> GoIr.GoExpr -> GoIr.GoExpr
 coerceToFieldType targetTy e
     | targetTy == "any" || null targetTy = e
+    -- v0.15 Stage D — elide the wrap when the expression's IR
+    -- already has the target's Go type.  After Stages C/E,
+    -- `exprToGoExpectGo` produces typed values at most positions;
+    -- the outer `coerceToFieldType` was unconditionally wrapping
+    -- even when the inner was already typed.
+    | goExprGoType e == Just targetTy = e
     -- Parametric container types: use the runtime's cross-instantiation
     -- coerce helpers that reconstruct the value with the target generic
     -- params. Handles SkyMaybe[any] → SkyMaybe[ErrorDetails] etc.
