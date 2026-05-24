@@ -13,8 +13,10 @@ module Sky.Type.Solve
     ( solve
     , solveWithLocals
     , solveWithInstances
+    , solveWithInstancesAndRegions   -- v0.15 Stage A
     , SolveResult(..)
     , SolvedTypes
+    , RegionTypes                    -- v0.15 Stage A
     , CallInstance(..)
     , CallSiteInstance(..)
     , showType
@@ -59,6 +61,13 @@ data SolveResult
 type SolvedTypes = Map.Map String T.Type
 
 
+-- | v0.15 Stage A — per-region type map.  Every solved constraint's
+-- actual type, keyed by the constraint's source region.  Consumed
+-- by the typed-directed lowerer in v0.15 Stage B+ to look up the
+-- concrete HM type of any sub-expression by its source position.
+type RegionTypes = Map.Map A.Region T.Type
+
+
 -- | Solver state
 data SolverState = SolverState
     { _env      :: !(Map.Map String T.Variable)  -- variable name → UF variable
@@ -98,6 +107,17 @@ data SolverState = SolverState
       -- at that call site.  Front-of-list prepend; order doesn't
       -- matter because the downstream consumer deduplicates by
       -- (callee, type-args) anyway.
+    , _regionVars :: !(IORef (Map.Map A.Region T.Variable))
+      -- v0.15 Stage A — per-region UF-variable map.  Every solved
+      -- CEqual / CLocal / CForeign records its actualVar against
+      -- the constraint's region here.  After solve completes,
+      -- variables are walked to concrete `T.Type`s, producing the
+      -- region-keyed `RegionTypes` map the typed-directed lowerer
+      -- queries in Stage B+.  Behaviour-preserving: existing
+      -- consumers (LSP, codegen, monomorphisation) don't read this
+      -- map yet.  Front-of-write: last-write-wins per region (a
+      -- constraint may fire multiple times during fixpoint
+      -- iteration; final entry is the converged type).
     }
 
 
@@ -277,6 +297,35 @@ bumpSolverStep state
             else return Nothing
 
 
+-- | v0.15 Stage A — record a region → UF-variable mapping.
+--
+-- Called from every solved CEqual / CLocal / CForeign once unify has
+-- succeeded.  Variables (not types) are stored because subsequent
+-- constraints can further unify the variable's transitive structure.
+-- Post-solve, callers (`solveWithRegions` / wrappers) walk each var
+-- to a concrete `T.Type`.
+--
+-- The skip on `A.zero`-position regions filters synthetic constraints
+-- the constraint generator emits with `A.one` / `A.zero` sentinels for
+-- bookkeeping (let-binding header, lambda-param scope, etc.).  Real
+-- source positions carry non-zero line:col, so this filter loses no
+-- user-facing type info.
+recordRegionVar :: SolverState -> A.Region -> T.Variable -> IO ()
+recordRegionVar state region var =
+    case A._start region of
+        A.Position 0 0 -> return ()
+        _ -> modifyIORef' (_regionVars state) (Map.insert region var)
+
+
+-- | v0.15 Stage A — convert the per-region UF-variable map to typed
+-- form.  Walked at solve-end so every variable's transitive structure
+-- is fully unified.
+freezeRegionTypes :: IORef (Map.Map A.Region T.Variable) -> IO RegionTypes
+freezeRegionTypes ref = do
+    raw <- readIORef ref
+    Map.traverseWithKey (\_ v -> variableToType v) raw
+
+
 budgetExceededMsg :: Int -> String
 budgetExceededMsg budget = unlines
     [ "TYPE ERROR: constraint solver exceeded budget (" ++ show budget ++ " operations)."
@@ -309,7 +358,8 @@ solve constraint = do
     steps <- newIORef 0
     budget <- effectiveSolverBudget constraint
     instances <- newIORef []
-    let state0 = SolverState Map.empty cache 0 locals steps budget instances
+    regions <- newIORef Map.empty
+    let state0 = SolverState Map.empty cache 0 locals steps budget instances regions
     (result, finalState) <- solveHelp state0 constraint
     case result of
         Nothing -> do
@@ -357,7 +407,8 @@ solveWithLocals constraint = do
     steps <- newIORef 0
     budget <- effectiveSolverBudget constraint
     instances <- newIORef []
-    let state0 = SolverState Map.empty cache 0 locals steps budget instances
+    regions <- newIORef Map.empty
+    let state0 = SolverState Map.empty cache 0 locals steps budget instances regions
     (result, finalState) <- solveHelp state0 constraint
     localVars <- readIORef (_locals finalState)
     localTypes <- Map.traverseWithKey (\_ vars ->
@@ -392,23 +443,31 @@ solveWithLocals constraint = do
 -- the `_Any` fallback at emission time.
 solveWithInstances :: T.Constraint -> IO (SolveResult, [CallInstance], [CallSiteInstance])
 solveWithInstances constraint = do
+    (result, ci, csi, _) <- solveWithInstancesAndRegions constraint
+    return (result, ci, csi)
+
+
+-- | v0.15 Stage A — superset of `solveWithInstances` that ALSO
+-- returns the per-region type map.  The lowerer (Stage B+) calls
+-- this and threads `RegionTypes` into `LowerCtx` so any
+-- sub-expression's HM type can be queried by its source region.
+-- The 4-tuple shape preserves backward compatibility with
+-- `solveWithInstances` (which now delegates here and discards the
+-- regions component).
+solveWithInstancesAndRegions
+    :: T.Constraint
+    -> IO (SolveResult, [CallInstance], [CallSiteInstance], RegionTypes)
+solveWithInstancesAndRegions constraint = do
     cache <- newIORef Map.empty
     locals <- newIORef Map.empty
     steps <- newIORef 0
     budget <- effectiveSolverBudget constraint
     instances <- newIORef []
-    let state0 = SolverState Map.empty cache 0 locals steps budget instances
+    regions <- newIORef Map.empty
+    let state0 = SolverState Map.empty cache 0 locals steps budget instances regions
     (result, finalState) <- solveHelp state0 constraint
     case result of
         Nothing -> do
-            -- Behaviour-equivalent to `solve` for the SolvedTypes
-            -- portion: merge the locals-captured bindings into the
-            -- env-derived map so let-bound + top-level declarations
-            -- both appear in the output map.  Without this,
-            -- downstream consumers (entryInferredSigs etc.) miss
-            -- top-level bindings tracked only via `_locals` and the
-            -- call-site value-reference codegen emits bare names
-            -- without `[any]` instantiation → Go build rejects.
             envTypes <- readSolvedTypes (_env finalState)
             localVars <- readIORef (_locals finalState)
             localTys <- Map.traverseWithKey (\_ vars ->
@@ -423,7 +482,8 @@ solveWithInstances constraint = do
                 merged = Map.union localFirst envTypes
             records <- readIORef (_callInstances finalState)
             (ci, csi) <- extractInstancesAndSites records
-            return (SolveOk merged, ci, csi)
+            regionTys <- freezeRegionTypes (_regionVars finalState)
+            return (SolveOk merged, ci, csi, regionTys)
         Just err -> do
             -- v0.13 Phase A4: even on error, return whatever
             -- call-site instances were captured BEFORE the error
@@ -435,7 +495,8 @@ solveWithInstances constraint = do
             -- — breaking the drop-generics pass.
             records <- readIORef (_callInstances finalState)
             (ci, csi) <- extractInstancesAndSites records
-            return (SolveError err, ci, csi)
+            regionTys <- freezeRegionTypes (_regionVars finalState)
+            return (SolveError err, ci, csi, regionTys)
 
 
 -- | Walk the captured call-instance records, resolve each fresh
@@ -686,7 +747,9 @@ solveHelpBody state constraint = case constraint of
         expectedVar <- expectedToVar state expected
         ok <- Unify.unify actualVar expectedVar
         if ok
-            then return (Nothing, state)
+            then do
+                recordRegionVar state region actualVar
+                return (Nothing, state)
             else do
                 -- Debug: read back actual resolved types
                 at <- variableToType actualVar
@@ -721,7 +784,9 @@ solveHelpBody state constraint = case constraint of
                 expectedVar <- expectedToVar state expected
                 ok <- Unify.unify var expectedVar
                 if ok
-                    then return (Nothing, state)
+                    then do
+                        recordRegionVar state region var
+                        return (Nothing, state)
                     else do
                         vt <- variableToType var
                         et <- variableToType expectedVar
@@ -747,6 +812,7 @@ solveHelpBody state constraint = case constraint of
                 unless (null freshVars) $
                     modifyIORef' (_callInstances state) $
                         \xs -> CallInstanceRecord region name freshVars quants : xs
+                recordRegionVar state region instVar
                 return (Nothing, state)
             else do
                 instType <- variableToType instVar
