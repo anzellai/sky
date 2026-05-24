@@ -2,7 +2,42 @@
 
 Notable user-visible changes. Keep this file additive — never rewrite history.
 
-## v0.15.2 — `sky build` propagates compiler version to apps (2026-05-24)
+## v0.15.2 — Cfg_R[any] panic fix + version propagation (2026-05-24)
+
+### Codegen
+
+- **Closed `interface conversion: Cfg_R[any] vs Cfg_R[Msg]` runtime
+  panic** at every place a `Can.Record` literal sits in a typed
+  call-arg slot whose Go target is a parametric record alias
+  instantiation. Surfaced by skydeploy's Editor (`Editor.view
+  editorCfg` at AppDetail.sky:Source tab) on every mount — Go
+  generic types are nominal, so `any(Cfg_R[any]{...}).(Cfg_R[Msg])`
+  fails at runtime even though Go's type checker accepts it.
+  - **Fix:** call-arg lowering at every site (`zipWithDefault
+    coerceArg exprToGo`, `coerceCallArgsAt`'s `coerceOne`,
+    `kernelCoerceArg`, bare ctor-call zip) now routes
+    `Can.Record` literals targeting parametric record slots
+    through `exprToGoExpectGo` → `lowerRecordLiteralTo`, which
+    emits the literal with the target's concrete type args
+    directly (no nominal-type-assert wrapper).
+  - **Symmetry:** the same pipeline also routes `Can.Lambda` at
+    typed `func(...) ...` slots through `lowerTypedLambda` (was
+    already happening at some call sites; now uniform across all
+    five).
+  - **Edge cases handled:** the new arms are uniformly gated on
+    `not (containsGenericTypeParam ty)` so call sites where σ
+    hasn't pinned the callee's TVar (`Cfg_R[T1]`) fall back to
+    the legacy `coerceArg` path — emitting `Cfg_R[T1]{...}` at
+    the caller would trigger `undefined: T1` since T1 names the
+    callee's type variable, not in scope here. The existing
+    `exprToGoExpectGo` arms (record-field-init, list-elem) are
+    unchanged because they're only reached from contexts where σ
+    is already concrete.
+  - Stage E shipped the parametric record alias struct generation
+    + Stage E.2 routed the record-field-init context; v0.15.2 closes
+    the call-arg context that Stage E missed.
+
+### `sky build`
 
 - **`sky build` now injects `-ldflags "-X sky-app/rt.skyVersion=<compiler version>"`** into the underlying `go build`. Every Sky-built app's `/_sky/buildinfo` now reports the actual Sky version that built it instead of the default `"dev"`. No deploy-script ceremony — a tagged Sky binary built with `cabal install -ldflags="-X main.skyBuildVersion=0.15.2"` propagates that string to every app it compiles.
   - **Why:** pre-v0.15.2, the `rt.skyVersion` package-level var defaulted to `"dev"` and was only populated by the Sky compiler's own release CI (`-X main.skyBuildVersion=...`). The compiler's own version never reached the apps it built — every deployed Sky app reported `"skyVersion":"dev"` regardless of which tagged compiler had built it.

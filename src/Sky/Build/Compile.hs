@@ -6705,8 +6705,13 @@ exprToGo (A.At _ expr) = case expr of
                 in if got < declared
                     then emitPartialCtor func args (declared - got)
                     -- T1: coerce each arg to the ctor's declared param type.
+                    -- v0.15.2: route through `zipWithDefaultExpect` so a
+                    -- Can.Record literal passed to a parametric record
+                    -- ctor slot lowers with the slot's type args, not the
+                    -- generic Cfg_R[any] + Coerce wrap that panics on
+                    -- Go's nominal generic types.
                     else GoIr.GoCall (exprToGo func)
-                          (zipWithDefault coerceArg exprToGo paramTys args)
+                          (zipWithDefaultExpect paramTys args)
             Can.VarTopLevel home name ->
                 -- Partial application of a top-level function:
                 -- `canViewMonitor session` where canViewMonitor : Session -> Monitor -> Bool
@@ -6803,7 +6808,14 @@ exprToGo (A.At _ expr) = case expr of
                         _ -> []
                     goArgs
                         | not (null ctorParamTypes) =
-                            zipWith (\e ty -> coerceArg e ty) (map exprToGo args) (ctorParamTypes ++ repeat "any")
+                            -- v0.15.2: ctor call args go through
+                            -- `zipWithDefaultExpect` to surface Can.Record /
+                            -- Can.Lambda at parametric-record / typed-func
+                            -- slots directly (no `Cfg_R[any] + Coerce`
+                            -- wrap that panics under Go's nominal generic
+                            -- type assertions).  Behaviour identical for
+                            -- non-special args (falls through to coerceArg).
+                            zipWithDefaultExpect (ctorParamTypes ++ repeat "any") args
                         | not (null localQual) =
                             coerceCallArgs localQual args
                         | otherwise = map exprToGo args
@@ -7572,7 +7584,11 @@ emitPartialCtor func suppliedArgs missing =
                                         then "any" else t) extraTys
         sanitisedRet = if containsGenericTypeParam ctorRetTy
                           then "any" else ctorRetTy
-        suppliedGo  = zipWithDefault coerceArg exprToGo suppliedTys suppliedArgs
+        -- v0.15.2: typed-target call args via `zipWithDefaultExpect`
+        -- (see note at the helper definition near the bottom of this
+        -- file).  Required for `Editor.view editorCfg` and similar
+        -- parametric-record passing on partial-applied ctors.
+        suppliedGo  = zipWithDefaultExpect suppliedTys suppliedArgs
         extraNames  = [ "__p" ++ show i | i <- [0 .. missing - 1] ]
         extraIdents = zipWith (\n ty -> coerceArg (GoIr.GoIdent n) ty)
                               extraNames sanitisedExtras
@@ -7651,7 +7667,8 @@ coerceCallArgs qualName args =
                                  then eraseTypeParams subbed
                                  else subbed
                  substituted = map substituteOnly paramTypes
-             in zipWithDefault coerceArg exprToGo substituted args
+             -- v0.15.2: typed-target call args via `zipWithDefaultExpect`.
+             in zipWithDefaultExpect substituted args
 
 
 -- | v0.13 Phase A5 — call-site-aware variant of `coerceCallArgs`.
@@ -7864,6 +7881,30 @@ coerceCallArgsAt region qualName args =
                             Can.Let{}
                                 | isEmittableGoType subbed
                                 , not (isGenericTypeParam subbed) ->
+                                    exprToGoExpectGo subbed e
+                            -- v0.15.2: Can.Record at a parametric-alias
+                            -- monomorphisation slot (`Cfg_R[Msg]`).  Route
+                            -- to `exprToGoExpectGo` so the literal emits
+                            -- with the target's type args directly,
+                            -- avoiding the `Cfg_R[any]{...}.(Cfg_R[Msg])`
+                            -- nominal-type-assert panic that surfaced as
+                            -- "interface conversion: Cfg_R[interface {}]
+                            -- vs Cfg_R[State_Msg]" on every editor mount
+                            -- in skydeploy.  Stage E handled this for
+                            -- record-field-init contexts but missed the
+                            -- monomorphisation call-arg path.
+                            --
+                            -- Gated on `not containsGenericTypeParam`:
+                            -- when the target's type args are still bare
+                            -- type params (`Cfg_R[T1]` for a Sky-side
+                            -- polymorphic call where σ didn't pin the
+                            -- TVar), emitting `Cfg_R[T1]{...}` at the
+                            -- caller's site triggers `undefined: T1` in
+                            -- `go build` — T1 names the CALLEE's type
+                            -- variable, not in scope at the call site.
+                            Can.Record{}
+                                | isParametricAliasInstantiation subbed
+                                , not (containsGenericTypeParam subbed) ->
                                     exprToGoExpectGo subbed e
                             _ ->
                                 if subbed == "any" && containsTypeParam orig
@@ -8455,6 +8496,22 @@ kernelCoerceArg _allSubbed _idx subbed e@(A.At _ inner) =
                 in if bodyPreTyped
                     then curryLambdaPatTypedPre inputTypes finalRet pats body'
                     else curryLambdaPatTyped inputTypes finalRet pats body'
+        -- v0.15.2: Can.Record at a parametric-alias kernel slot —
+        -- same insight as `coerceCallArgsAt`'s Record arm and
+        -- `lowerArgExpect`.  Without this, a `Maybe.withDefault
+        -- defaultCfg (Just newCfg)` where Cfg is a parametric alias
+        -- with σ={a → State.Msg} substituted the slot to `Cfg_R[State_Msg]`
+        -- would emit `any(Cfg_R[any]{...}).(Cfg_R[State_Msg])` and
+        -- panic on Go's nominal generic-type assertion.
+        --
+        -- Gated on `not containsGenericTypeParam subbed` for the same
+        -- reason the other arms are: the kernel's σ may still have
+        -- TVars at the call site (only the callee body has them in
+        -- scope as Go generic params).
+        Can.Record _
+            | isParametricAliasInstantiation subbed
+            , not (containsGenericTypeParam subbed) ->
+                exprToGoExpectGo subbed e
         _ -> coerceArg (exprToGo e) subbed
 
 
@@ -8635,6 +8692,63 @@ zipWithDefault _ _  _ [] = []
 zipWithDefault f fb (a:as) (c:cs) = f (fb c) a : zipWithDefault f fb as cs
 
 
+-- | v0.15.2 — Can.Expr-aware variant of `zipWithDefault coerceArg
+-- exprToGo`.  At call-arg sites where the target Go type is a
+-- parametric record alias instantiation (`Cfg_R[Msg]`) and the
+-- source is a `Can.Record` literal, route through
+-- `exprToGoExpectGo` so the literal emits with the target's type
+-- args directly (`Cfg_R[Msg]{ OnSubmit: func(...) Msg {...} }`).
+--
+-- Pre-fix the lowerer first emitted the literal generically as
+-- `Cfg_R[any]{...}` (no target context) then wrapped it with
+-- `any(...).(Cfg_R[Msg])` via `coerceArg`.  Go generic types are
+-- nominal, so the runtime type assertion panicked with
+-- `interface conversion: Cfg_R[interface {}] vs Cfg_R[Msg]`.
+-- Surfaced by skydeploy's Editor (`Editor.view editorCfg` at
+-- AppDetail.sky) on every Source-tab mount — pre-Stage-E this
+-- worked because Cfg_R was an unparameterised struct.
+--
+-- Same insight applies to `Can.Lambda` at a typed `func(...) ...`
+-- slot — route to `lowerTypedLambda` via `exprToGoExpectGo` so
+-- the inner func emits with the slot's typed params and return.
+-- The pre-existing `coerceArg` would have wrapped a generic
+-- `func(any) any` body with `rt.Coerce[func(X) Y]`, working but
+-- reflecting through MakeFunc on every call.
+zipWithDefaultExpect :: [String] -> [Can.Expr] -> [GoIr.GoExpr]
+zipWithDefaultExpect [] cs = map exprToGo cs
+zipWithDefaultExpect _ [] = []
+zipWithDefaultExpect (ty:tys) (e:es) =
+    lowerArgExpect ty e : zipWithDefaultExpect tys es
+
+
+-- | v0.15.2 — single arg lowering with target type awareness.
+-- Falls through to the historic `coerceArg . exprToGo` pipeline
+-- for every shape EXCEPT the two type-directed ones above.
+--
+-- Parametric-alias arm gated on `not containsGenericTypeParam`:
+-- a target like `Cfg_R[T1]` (Sky-side polymorphic, σ didn't pin
+-- the TVar at this site) would emit `Cfg_R[T1]{...}` at the
+-- caller, triggering `undefined: T1` in `go build` because T1
+-- names the callee's type variable, not in scope at the caller.
+-- Typed-lambda arm already excludes generic param targets via
+-- `all (/= "any") paramTys` (a func type containing a TVar would
+-- have at least one "any" position).
+lowerArgExpect :: String -> Can.Expr -> GoIr.GoExpr
+lowerArgExpect ty e@(A.At _ expr)
+    | isParametricAliasInstantiation ty
+    , not (containsGenericTypeParam ty)
+    , Can.Record _ <- expr
+    = exprToGoExpectGo ty e
+    | Just (paramTys, _retTy) <- parseFuncType ty
+    , Can.Lambda pats _ <- expr
+    , length pats == length paramTys
+    , all (/= "any") paramTys
+    , not (containsGenericTypeParam ty)
+    = exprToGoExpectGo ty e
+    | otherwise
+    = coerceArg (exprToGo e) ty
+
+
 -- | Over-application: the call supplied MORE args than the callee's
 -- declared arity. Means the callee returns a function value which we
 -- continue to apply.
@@ -8718,7 +8832,8 @@ emitPartialUserCall func suppliedArgs missing =
         ultRetType = eraseTypeParams
                         (Map.findWithDefault "any" qualName
                            (Rec._cg_funcUltimateRetType env))
-        suppliedGo = zipWithDefault coerceArg exprToGo suppliedTypes suppliedArgs
+        -- v0.15.2: typed-target call args via `zipWithDefaultExpect`.
+        suppliedGo = zipWithDefaultExpect suppliedTypes suppliedArgs
         extraNames = [ "__pp" ++ show i | i <- [0 .. missing - 1] ]
         extraIdents = zipWith (\n ty -> coerceArg (GoIr.GoIdent n) ty)
                               extraNames extraTypes
