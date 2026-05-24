@@ -614,47 +614,96 @@ makes it unnecessary AND gob-stable.
 | **Cabal test regression on intermediate stages** | Each stage runs cabal test before merge |
 | **Sky.Live session invalidation on Stage E deploy** | Same TTL pattern; document |
 
-## 10.5 Stage E attempt — blocker identified (2026-05-24)
+## 10.5 Stage E attempts — two blockers identified (2026-05-24)
 
-Attempted Stage E in the same session as A+B+C.1+C.2.  Made parametric
-record alias structs emit as Go generics + updated `solvedTypeToGo`
-and `typeStrWithAliasesReg` TAlias arms to emit type-args.  Build
-failed with:
+### Attempt 1 — naive: just make structs generic
+
+Emit `type Cfg_R[T1 any] struct { OnSubmit func(Form_R) T1 ... }`.
+Build failed:
 
     ./main.go:27:29: cannot use generic type Widget_Editor_Cfg_R[T1 any]
     without instantiation
 
-The struct + ctor + return-type rendering worked correctly (param-
-type at construction sites instantiates from concrete HM type args).
-What FAILED was the CONSUMER FUNCTION SIGNATURE rendering for
-non-annotated functions like `Widget.Editor.view`.
+The struct + ctor + return-type rendering worked at construction
+sites (where HM has concrete type args).  Consumer function
+signatures for non-annotated functions like `Widget.Editor.view`
+failed because HM infers a structural row record, not a TAlias —
+so the lowerer renders the param as bare `Cfg_R`.
 
-Root cause: when a Sky source function has no explicit type
-annotation (the common case for widget consumers), HM infers a
-structural row record (`TRecord { onSubmit : Form → msg, ... }`)
-rather than a `TAlias "Cfg" [(msg, TVar msg)] (Filled record)`.
+### Attempt 2 — structural extraction from field-position TVars
 
-The lowerer's `typeStrWithAliasesReg` TRecord arm matches the
-field-set against the alias registry and emits `Cfg_R`.  Without
-the alias's bound TVars in scope, it has no way to emit
-`Cfg_R[T1]` AND simultaneously promote T1 to a generic param of
-the enclosing function.
+Added:
+- `globalAllAliases` IORef (populated early, before sig emission,
+  avoids the `<<loop>>` from reading `globalCgEnv` during env
+  construction).
+- `extractAliasBindings` helper: walks alias's declared body
+  against the actual record, recovers `(alias-var ↦ actual-type)`
+  bindings positionally.
+- `tvarsInRecordField` helper: collects TVars from record-field
+  types in source order.
+- TRecord arm in `typeStrWithAliasesReg`: looks up alias by field
+  set, extracts bindings, renders `Cfg_R[arg1, arg2]`.
+- Updated `tvarsInEmitted`'s TRecord arm to walk fields.
 
-To unblock Stage E:
-1. Function-sig rendering must recognize parametric aliases by
-   field-set match AND infer concrete type args from field-position
-   TVars (the row constraint's `msg` TVar in `onSubmit : Form → msg`
-   maps to the alias's first var).
-2. Promote those TVars to function-level generic params.
-3. Thread the resulting generic-param list into both the struct
-   reference (`Cfg_R[T1]`) AND the function's Go generic-param
-   clause (`func F[T1 any](...) ...`).
-4. Call sites must instantiate the function explicitly when Go's
-   inference can't deduce T1 from argument positions alone.
+Build progress: many call sites improved (ctor sigs, return types,
+struct literals at typed slots).  Several still failed.
 
-This is real work — ~200-300 LOC + extensive testing.  Deferred
-to a dedicated Stage E session.  Stage A+B+C.1+C.2 ship as v0.15.0;
-Stage E + D + F become v0.15.1+.
+### Blocker — partial-use of parametric alias
+
+For `view cfg = "label=" ++ cfg.label ++ ...` (uses only `label`
+and `busy`, not `onSubmit`):
+
+- HM infers `cfg : { label : String, busy : Bool | ρ }` — a row-
+  polymorphic record MISSING the `onSubmit` field.
+- `lookupRecordAlias`'s superset-match correctly identifies
+  `Widget.Editor.Cfg` as the matching alias.
+- BUT `extractAliasBindings` walks the alias body's fields against
+  the actual record — and the alias body's `onSubmit : Form → msg`
+  has no counterpart in the actual record (the record was
+  consumed-narrowed to {label, busy}).  So `msg` has NO extractable
+  binding.  Renderer falls back to bare `Cfg_R`.
+
+Go-build rejects bare references to a generic type.
+
+### Why this is hard
+
+Three structural facts collide:
+
+1. **HM is sub-shape-aware**: a non-annotated function's inferred
+   param type omits unreferenced fields.  This is correct (Sky's
+   row polymorphism).
+2. **Go generics require all type-args at every use**: there's no
+   "polymorphic-Cfg_R" wildcard syntax.
+3. **Sky's `splitInferredSigWithReg` derives function generic-
+   params from `tvarsInEmitted`**: which collects TVars from
+   rendered types.  But when the alias's TVar isn't structurally
+   reachable from the (sub-shape) record, it isn't in `tvarsInEmitted`.
+
+Closing the gap requires:
+
+a. **Generic-param synthesis**: when an alias has more vars than
+   the record's TVars can fill, INVENT a synthetic TVar per
+   missing slot.  Add to the function's generic clause.
+b. **Pseudo-TVar propagation through `tvarsInEmitted`**: synthetic
+   TVars must appear in the rendered type AND in
+   `tvarsInEmitted`'s output AND in `splitInferredSigWithReg`'s
+   numbered map.
+c. **Consistent naming across the entire sig**: the same synthetic
+   TVar at the param slot and (if used) at the return slot must
+   share a name → same Go T-var.
+
+This is ~300-500 LOC of compiler work spanning `tvarsInEmitted`,
+`typeStrWithAliasesReg`, `splitInferredSigWithReg`,
+`renderHofParamTy`, and the dep-sig population path.  Each
+requires careful regression testing.
+
+### Decision
+
+Deferred to a dedicated v0.15.1 session with its own design pass.
+The v0.15.0 shipping unit (A + B + C.1 + C.2) is regression-free
+and closes the actively-painful inline-lambda bug.  Surface 2's
+TVar→any erasure + alias-chain workaround for cross-alias passing
+remain the idiomatic v0.14/v0.15 patterns.
 
 ## 11. Open design questions to resolve before Stage C
 
