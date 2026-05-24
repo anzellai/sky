@@ -170,6 +170,66 @@ globalRegionTypes :: IORef Solve.RegionTypes
 globalRegionTypes = unsafePerformIO $ newIORef Map.empty
 
 
+-- | v0.15 Stage E — merged alias-declaration map (entry + deps),
+-- populated EARLY in continueCompile (after canonicalisation, before
+-- codegen).  Separate from `globalCgEnv._cg_aliases` because the
+-- parametric-alias generic-args renderer is called during env
+-- CONSTRUCTION; reading the env's own lazy thunk at that moment
+-- produces a `<<loop>>` black-hole.  This IORef is written before
+-- any sig emission, so reads from inside emission are always safe.
+{-# NOINLINE globalAllAliases #-}
+globalAllAliases :: IORef (Map.Map String Can.Alias)
+globalAllAliases = unsafePerformIO $ newIORef Map.empty
+
+
+-- | v0.15 Stage E — early-populated field-index registry.  Same
+-- shape as `globalCgEnv._cg_fieldIndex` but readable from
+-- `tvarsInEmitted` without triggering env build (avoiding the
+-- `<<loop>>` black-hole).  Populated alongside `globalAllAliases`.
+{-# NOINLINE globalAllFieldIdx #-}
+globalAllFieldIdx :: IORef Rec.RecordRegistry
+globalAllFieldIdx = unsafePerformIO $ newIORef Map.empty
+
+
+-- | v0.15 Stage E — synthetic TVar naming.  Same (aliasName,
+-- varName) must produce the SAME synthetic name in every renderer
+-- so they all collapse to one Go T-var.  Encodes both pieces.
+syntheticAliasVar :: String -> String -> String
+syntheticAliasVar aliasName varName =
+    "_skysynth_" ++ aliasName ++ "_" ++ varName
+
+
+-- | v0.15 Stage E — alias lookup with module-prefix fallback.
+lookupAliasDecl :: String -> Maybe Can.Alias
+lookupAliasDecl aliasName = unsafePerformIO $ do
+    aliasMap <- readIORef globalAllAliases
+    return $ case Map.lookup aliasName aliasMap of
+        Just a -> Just a
+        Nothing ->
+            let suffix = reverse (takeWhile (/= '_') (reverse aliasName))
+            in Map.lookup suffix aliasMap
+
+
+-- | v0.15 Stage E — compute the type-arg list for a parametric alias
+-- whose declared shape was captured by a row-poly record's field
+-- set.  Each alias var resolves via structural extraction OR a
+-- synthetic TVar (for unbinable / subset-record cases).
+aliasGenericArgs
+    :: String
+    -> Map.Map String T.FieldType
+    -> Maybe (String, [T.Type])
+aliasGenericArgs aliasName actualFields =
+    case lookupAliasDecl aliasName of
+        Just (Can.Alias skyVars body) | not (null skyVars) ->
+            let actualRec = T.TRecord actualFields Nothing
+                bindings = extractAliasBindings skyVars body actualRec
+                resolve v = case Map.lookup v bindings of
+                    Just t  -> t
+                    Nothing -> T.TVar (syntheticAliasVar aliasName v)
+            in Just (aliasName, map resolve skyVars)
+        _ -> Nothing
+
+
 -- | v0.15 Stage B — look up the HM type at a given source region.
 -- Returns Nothing for regions the solver didn't record (synthetic
 -- code, FFI-derived expressions, etc.).  Used by typed-directed
@@ -734,6 +794,33 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
             return (Left "Canonicalise error")
            Right canMod -> do
             putStrLn "   Names resolved"
+            -- v0.15 Stage E — populate the all-alias map EARLY (before
+            -- any sig emission) so the parametric-alias generic-args
+            -- renderer can recover alias type-args from row-poly HM
+            -- inferred records.  Both raw + prefixed alias names are
+            -- registered so the lookup-with-prefix-strip path always
+            -- resolves.
+            let allAliasesMap = Map.unions
+                    (Can._aliases canMod
+                     : [ Map.mapKeys (\n -> prefix ++ "_" ++ n)
+                                      (Can._aliases dm)
+                       | (mn, dm) <- validDeps
+                       , let prefix = map (\c -> if c == '.' then '_' else c) mn
+                       ]
+                     ++ [ Can._aliases dm | (_, dm) <- validDeps ])
+            writeIORef globalAllAliases allAliasesMap
+            -- v0.15 Stage E — same for the field-index registry.
+            -- Used by `tvarsInEmitted` to detect parametric-alias-
+            -- shaped records WITHOUT triggering the cgEnv lazy
+            -- thunk's `<<loop>>` black-hole during env construction.
+            let allFieldIdx = Map.union
+                    (Rec.buildRegistry (Can._aliases canMod))
+                    (Rec.buildDepFieldIndex
+                        [ (prefix, Can._aliases dm)
+                        | (mn, dm) <- validDeps
+                        , let prefix = map (\c -> if c == '.' then '_' else c) mn
+                        ])
+            writeIORef globalAllFieldIdx allFieldIdx
             -- T2/T6: prime the global codegen env's function-type
             -- tables BEFORE dep-decl emission, so call-site codegen
             -- in dep bodies (Can.Call → coerceCallArgs) can also see
@@ -2906,13 +2993,22 @@ generateAliasForDep userDefs modPrefix (aliasName, Can.Alias skyVars body) =
     in case body of
         T.TRecord fields _ ->
             let fieldList = List.sortOn (T._fieldIndex . snd) (Map.toList fields)
-                -- Non-generic struct emission.  Sky TVars from the
-                -- alias's params erase to `any`; concrete types
-                -- unaffected.  See generateAlias for rationale.
-                tvarMap = Map.fromList [(v, "any") | v <- skyVars]
+                -- v0.15 Stage E: parametric dep alias emits as Go
+                -- generic struct.
+                goTVars = zipWith (\i _ -> "T" ++ show (i :: Int)) [1 ..] skyVars
+                tvarMap = Map.fromList (zip skyVars goTVars)
                 fieldGoType fty = substituteTVarsToGo tvarMap fty
+                typeParamDecl =
+                    if null goTVars
+                        then ""
+                        else "[" ++ intercalate_ ", "
+                                    [tp ++ " any" | tp <- goTVars] ++ "]"
+                structAppliedSelf =
+                    if null goTVars
+                        then structName
+                        else structName ++ "[" ++ intercalate_ ", " goTVars ++ "]"
                 structDecl = GoIr.GoDeclRaw $
-                    "type " ++ structName ++ " struct { "
+                    "type " ++ structName ++ typeParamDecl ++ " struct { "
                     ++ intercalate_ "; "
                         [ capitalise_ fn ++ " " ++ fieldGoType fty
                         | (fn, T.FieldType _ fty) <- fieldList
@@ -2928,12 +3024,17 @@ generateAliasForDep userDefs modPrefix (aliasName, Can.Alias skyVars body) =
                     | (i, (fn, _)) <- zip [0::Int ..] fieldList
                     ]
                 ctorDecl = GoIr.GoDeclRaw $
-                    "func " ++ qualName ++ "("
-                    ++ paramDecls ++ ") " ++ structName ++
-                    " { return " ++ structName
+                    "func " ++ qualName ++ typeParamDecl ++ "("
+                    ++ paramDecls ++ ") " ++ structAppliedSelf ++
+                    " { return " ++ structAppliedSelf
                     ++ "{" ++ intercalate_ ", " fieldInits ++ "} }"
+                gobInst =
+                    if null goTVars
+                        then structName ++ "{}"
+                        else structName ++ "[" ++ intercalate_ ", "
+                                           (map (const "any") goTVars) ++ "]{}"
                 gobDecl = GoIr.GoDeclRaw $
-                    "func init() { rt.RegisterGobType(" ++ structName ++ "{}) }"
+                    "func init() { rt.RegisterGobType(" ++ gobInst ++ ") }"
             in structDecl : gobDecl : [ctorDecl | not hasUserCtor]
         _ ->
             [ GoIr.GoDeclRaw ("type " ++ qualName ++ " = any") ]
@@ -3508,14 +3609,23 @@ generateAliasTypes canMod =
     -- signatures via `makeFuncAdapter` at the call boundary — closing
     -- docs/parametric-record-aliases-bugs.md Surface 2 without making
     -- the struct generic.
+    -- v0.15 Stage E: parametric aliases emit as GENERIC Go structs.
     generateStruct userDefinedNames name skyVars fields =
         let structName = name ++ "_R"
-            -- Sky TVars from the alias's params (`msg` in `Cfg msg`)
-            -- erase to `any`.  Concrete types unaffected.
-            tvarMap = Map.fromList [(v, "any") | v <- skyVars]
+            goTVars = zipWith (\i _ -> "T" ++ show (i :: Int)) [1 ..] skyVars
+            tvarMap = Map.fromList (zip skyVars goTVars)
             fieldGoType fty = substituteTVarsToGo tvarMap fty
             goFields = map (\(fname, T.FieldType _ ftype) ->
                 (capitalise fname, fieldGoType ftype)) fields
+            typeParamDecl =
+                if null goTVars
+                    then ""
+                    else "[" ++ intercalate_ ", "
+                                 [tp ++ " any" | tp <- goTVars] ++ "]"
+            structAppliedSelf =
+                if null goTVars
+                    then structName
+                    else structName ++ "[" ++ intercalate_ ", " goTVars ++ "]"
             paramList = zipWith (\i _ -> "p" ++ show i) [0::Int ..] fields
             paramGoTypes = map (\(_, T.FieldType _ fty) -> fieldGoType fty) fields
             paramDecls = intercalate_ ", "
@@ -3525,14 +3635,27 @@ generateAliasTypes canMod =
                 | (i, (fn, _)) <- zip [0::Int ..] fields
                 ]
             ctorDecl = GoIr.GoDeclRaw $
-                "func " ++ name ++ "("
-                ++ paramDecls ++ ") " ++ structName ++
-                " { return " ++ structName
+                "func " ++ name ++ typeParamDecl ++ "("
+                ++ paramDecls ++ ") " ++ structAppliedSelf ++
+                " { return " ++ structAppliedSelf
                 ++ "{" ++ intercalate_ ", " fieldInits ++ "} }"
+            gobInst =
+                if null goTVars
+                    then structName ++ "{}"
+                    else structName ++ "[" ++ intercalate_ ", "
+                                       (map (const "any") goTVars) ++ "]{}"
             gobDecl = GoIr.GoDeclRaw $
-                "func init() { rt.RegisterGobType(" ++ structName ++ "{}) }"
+                "func init() { rt.RegisterGobType(" ++ gobInst ++ ") }"
             structDecls =
-                [ GoIr.GoDeclType structName (GoIr.GoStructDef goFields) ]
+                if null goTVars
+                    then [ GoIr.GoDeclType structName (GoIr.GoStructDef goFields) ]
+                    else [ GoIr.GoDeclRaw $
+                            "type " ++ structName ++ typeParamDecl
+                            ++ " struct { "
+                            ++ intercalate_ "; "
+                                [ fn ++ " " ++ ty | (fn, ty) <- goFields ]
+                            ++ " }"
+                         ]
         in if Set.member name userDefinedNames
                then structDecls ++ [ gobDecl ]
                else structDecls ++ [ gobDecl, ctorDecl ]
@@ -3919,6 +4042,13 @@ goZeroValue t = case t of
       -- Record-alias structs (`Foo_R`) and Sky ADT struct aliases
       -- zero via `T{}`.
       | "_R" `List.isSuffixOf` t           -> Just (t ++ "{}")
+      -- v0.15 Stage E — parametric alias instantiation like
+      -- `Foo_R[Bar]`: same `T{}` form.  Both `_R[` infix AND `]`
+      -- suffix required to avoid false-matching shapes like
+      -- `rt.SkyResult[any, Foo_R[Bar]]` (those have their own arms
+      -- above).
+      | "_R[" `List.isInfixOf` t && "]" `List.isSuffixOf` t
+                                           -> Just (t ++ "{}")
       -- A Go generic type parameter (`T1`, `T2`, …) in scope: its
       -- zero value is `*new(T)` (the standard expression-form zero
       -- for a type param).  Only valid INSIDE the generic function
@@ -5800,7 +5930,7 @@ typeStrWithAliasesReg recAliases fieldIdx tvarMap ty = case ty of
                 Nothing   -> case unionRecovery of
                     Just u  -> u
                     Nothing -> if isRuntimeOnly then "any" else base
-    T.TAlias home name _typeArgs aliasType ->
+    T.TAlias home name typeArgs aliasType ->
         let modStr = ModuleName.toString home
             prefix = if null modStr || modStr == "Main"
                        then ""
@@ -5824,17 +5954,22 @@ typeStrWithAliasesReg recAliases fieldIdx tvarMap ty = case ty of
             inner = case aliasType of
                 T.Filled  i -> i
                 T.Hoisted i -> i
-            -- Parametric aliases emit non-generic Go structs with
-            -- TVar fields erased to `any`; struct refs in sigs
-            -- therefore stay bare.  See generateAlias in this file.
+            -- v0.15 Stage E — emit explicit Go type-args.  Empty for
+            -- non-parametric aliases.
+            typeArgSuffix =
+                if null typeArgs
+                    then ""
+                    else "[" ++ intercalate_ ", "
+                              [ go argTy | (_, argTy) <- typeArgs ]
+                          ++ "]"
         in case matches of
-            (m:_) -> m ++ "_R"
+            (m:_) -> m ++ "_R" ++ typeArgSuffix
             _     -> case runtimeTyped of
                 Just goTy -> goTy
                 Nothing
                     | isRuntimeOnly -> "any"
                     | otherwise     -> case inner of
-                        T.TRecord{} -> if null base then "any" else base
+                        T.TRecord{} -> if null base then "any" else base ++ typeArgSuffix
                         _           -> go inner
     -- Bare anonymous record (HM collapses alias-of-record after row
     -- unification): match its field set against the codegen field-index
@@ -5844,11 +5979,86 @@ typeStrWithAliasesReg recAliases fieldIdx tvarMap ty = case ty of
     T.TRecord fields _ ->
         let fieldNames = Map.keys fields
         in case Rec.lookupRecordAlias fieldIdx fieldNames of
-            Just aliasName -> aliasName ++ "_R"
+            Just aliasName ->
+                case aliasGenericArgs aliasName fields of
+                    Just (_, argTys) ->
+                        aliasName ++ "_R[" ++
+                        intercalate_ ", " (map go argTys) ++
+                        "]"
+                    Nothing -> aliasName ++ "_R"
             Nothing -> "any"
     _ -> safeReturnTypePure ty
   where
     go = typeStrWithAliasesReg recAliases fieldIdx tvarMap
+
+
+-- | v0.15 Stage E — extract (alias-var ↦ actual-type) bindings from
+-- a structural row record by positional matching against the alias's
+-- declared body.  Walks both trees in parallel: where the alias body
+-- has `T.TVar v` (v ∈ vars), records `v ↦ <type at same position>`.
+-- For unbinable vars (alias has a var that doesn't appear in any
+-- accessible field), the caller falls back to a synthetic TVar via
+-- `aliasGenericArgs`.
+--
+-- Recursive arms match by name + arity to avoid the infinite-loop
+-- class on cyclic parametric aliases (`Tree a = { kids : List (Tree a) }`).
+extractAliasBindings :: [String] -> T.Type -> T.Type -> Map.Map String T.Type
+extractAliasBindings vars aliasBody actualTy =
+    snd (walk Map.empty aliasBody actualTy)
+  where
+    isVar v = v `elem` vars
+
+    walk acc (T.TVar v) ty
+        | isVar v   = (True, Map.insert v ty acc)
+        | otherwise = (True, acc)
+    walk acc (T.TLambda a1 b1) (T.TLambda a2 b2) =
+        let (ok1, acc1) = walk acc a1 a2
+            (ok2, acc2) = walk acc1 b1 b2
+        in (ok1 && ok2, acc2)
+    walk acc (T.TType _ n1 args1) (T.TType _ n2 args2)
+        | n1 == n2 && length args1 == length args2 =
+            foldl (\(ok, a) (l, r) ->
+                let (ok', a') = walk a l r in (ok && ok', a'))
+                (True, acc)
+                (zip args1 args2)
+        | otherwise = (False, acc)
+    walk acc (T.TTuple a1 b1 cs1) (T.TTuple a2 b2 cs2)
+        | length cs1 == length cs2 =
+            foldl (\(ok, a) (l, r) ->
+                let (ok', a') = walk a l r in (ok && ok', a'))
+                (True, acc)
+                (zip (a1 : b1 : cs1) (a2 : b2 : cs2))
+        | otherwise = (False, acc)
+    walk acc (T.TRecord f1 _) (T.TRecord f2 _) =
+        let shared = Map.intersectionWith (,) f1 f2
+            walkPair a (T.FieldType _ ta, T.FieldType _ tb) =
+                let (_, a') = walk a ta tb in a'
+        in (True, foldl walkPair acc (Map.elems shared))
+    -- Alias-vs-alias / alias-vs-App1 by name + arity, no inner unwrap
+    -- (recursive parametric aliases would loop).
+    walk acc (T.TAlias _ n1 args1 _) (T.TAlias _ n2 args2 _)
+        | n1 == n2 && length args1 == length args2 =
+            foldl (\(ok, a) (l, r) ->
+                let (ok', a') = walk a l r in (ok && ok', a'))
+                (True, acc)
+                (zip (map snd args1) (map snd args2))
+        | otherwise = (False, acc)
+    walk acc (T.TAlias _ _ args1 _) (T.TType _ _ args2)
+        | length args1 == length args2 =
+            foldl (\(ok, a) (l, r) ->
+                let (ok', a') = walk a l r in (ok && ok', a'))
+                (True, acc)
+                (zip (map snd args1) args2)
+        | otherwise = (True, acc)
+    walk acc (T.TType _ _ args1) (T.TAlias _ _ args2 _)
+        | length args1 == length args2 =
+            foldl (\(ok, a) (l, r) ->
+                let (ok', a') = walk a l r in (ok && ok', a'))
+                (True, acc)
+                (zip args1 (map snd args2))
+        | otherwise = (True, acc)
+    walk acc T.TUnit T.TUnit = (True, acc)
+    walk acc _ _ = (True, acc)
 
 
 -- | Collect TVars that survive to the final emitted Go type — i.e. TVars
@@ -5886,7 +6096,26 @@ tvarsInEmitted ty = case ty of
     T.TTuple a b cs -> concatMap tvarsInEmitted (a : b : cs)
     T.TAlias _ _ pairs (T.Filled inner)  -> concatMap tvarsInEmitted (inner : map snd pairs)
     T.TAlias _ _ pairs (T.Hoisted inner) -> concatMap tvarsInEmitted (inner : map snd pairs)
-    T.TRecord{} -> []
+    -- v0.15 Stage E — capture TVars in record-field types AND
+    -- surface synthetic TVars from parametric-alias generic args
+    -- (handles the partial-use / subset-record case).  Reads
+    -- `globalAllFieldIdx` (populated EARLY, safe to read from sig
+    -- emission), NOT `getCgEnv` (which causes `<<loop>>` because
+    -- this function runs DURING env construction).
+    T.TRecord fields _ ->
+        let fieldTVars = concatMap
+                (\(T.FieldType _ ft) -> tvarsInEmitted ft)
+                (Map.elems fields)
+            fieldNames = Map.keys fields
+            fieldIdx = unsafePerformIO (readIORef globalAllFieldIdx)
+            aliasMatch = Rec.lookupRecordAlias fieldIdx fieldNames
+            syntheticForRec = case aliasMatch of
+                Just aliasName ->
+                    case aliasGenericArgs aliasName fields of
+                        Just (_, argTys) -> concatMap tvarsInEmitted argTys
+                        Nothing          -> []
+                Nothing -> []
+        in fieldTVars ++ syntheticForRec
     T.TUnit     -> []
 
 
@@ -6040,6 +6269,16 @@ exprToGoExpectGo goRendering e@(A.At _ expr)
             | Just elemTy <- stripListType goRendering ->
                 GoIr.GoSliceLit elemTy
                     [ exprToGoExpectGo elemTy it | it <- items ]
+
+        -- v0.15 Stage E.2 — type-directed record literal.  When
+        -- the slot's Go type is a parametric struct instantiation
+        -- (e.g. `Cfg_R[Msg]`), emit the literal with the SAME
+        -- instantiation so Go's type checker accepts it directly.
+        -- Pre-fix, the literal emitted as bare `Cfg_R{...}` which
+        -- Go rejects for generic types.
+        Can.Record fields
+            | isParametricAliasInstantiation goRendering ->
+                lowerRecordLiteralTo goRendering fields
         _ ->
             -- Leaf / non-control-flow: lower generically, then coerce
             -- the result to the expected Go type.  `coerceReturnExprT`
@@ -6118,6 +6357,82 @@ inferTypeFromGoString s = case s of
     "float64"-> T.TType ModuleName.basics "Float" []
     "rune"   -> T.TType ModuleName.basics "Char" []
     _        -> T.TVar "_"
+
+
+-- | v0.15 Stage E helper — detect a Go-string-typed parametric alias
+-- instantiation, e.g. `Widget_Editor_Cfg_R[Msg]`.  Match: contains an
+-- `_R[` substring AND ends with `]`.  Used by `exprToGoExpectGo`'s
+-- Can.Record arm to route to the typed literal emitter.
+isParametricAliasInstantiation :: String -> Bool
+isParametricAliasInstantiation s =
+    not (null s)
+    && last s == ']'
+    && "_R[" `List.isInfixOf` s
+
+
+-- | v0.15 Stage E helper — lower a record literal targeting a typed
+-- parametric-alias slot.  Emits the struct literal with the slot's
+-- instantiation AND uses INSTANTIATED field types (msg → Msg, …) so
+-- the field-init values render with the correct typed Go types,
+-- matching Go's parametric struct field-type rules.
+--
+-- Example: slot `Cfg_R[Msg]`, alias body `{ onSubmit : Form → msg }`.
+-- Instantiation: `msg ↦ Msg`.  OnSubmit's field type renders as
+-- `func(Form_R) Msg`, not `func(Form_R) any`.  Field-init lowering
+-- routes via `exprToGoExpectGo` with that typed slot.
+lowerRecordLiteralTo
+    :: String                        -- target Go type, e.g. "Cfg_R[Msg]"
+    -> Map.Map String Can.Expr       -- record fields
+    -> GoIr.GoExpr
+lowerRecordLiteralTo targetTy fields =
+    let entries = Map.toList fields
+        fieldNames = map fst entries
+        env = getCgEnv
+        aliasMatch = Rec.lookupRecordAlias (Rec._cg_fieldIndex env) fieldNames
+        aliasDecl = aliasMatch >>= flip Map.lookup (Rec._cg_aliases env)
+        -- Parse `Cfg_R[Msg, OtherMsg]` → ["Msg", "OtherMsg"].
+        targetArgs = parseTargetArgs targetTy
+        fieldTypeMap = case aliasDecl of
+            Just (Can.Alias skyVars (T.TRecord m _)) ->
+                let tvarSubst = Map.fromList (zip skyVars targetArgs)
+                in Map.map (\(T.FieldType _ ty) ->
+                        substituteTVarsToGo tvarSubst ty) m
+            _ -> Map.empty
+        lowerField fn fe =
+            let fieldGoTy = Map.findWithDefault "any" fn fieldTypeMap
+            in coerceToFieldType fieldGoTy
+                   (exprToGoExpectGo fieldGoTy fe)
+    in GoIr.GoStructLit targetTy
+        [ (capitalise_ fn, lowerField fn fe)
+        | (fn, fe) <- entries
+        ]
+  where
+    capitalise_ [] = []
+    capitalise_ (c:cs) = toUpper c : cs
+    toUpper c = if c >= 'a' && c <= 'z' then toEnum (fromEnum c - 32) else c
+
+
+-- | v0.15 Stage E helper — parse `Cfg_R[A, B, C]` → ["A", "B", "C"].
+-- Returns the list of arg type-strings (top-level comma split,
+-- bracket-balanced).  Returns [] when input doesn't carry the
+-- `_R[...]` instantiation form.
+parseTargetArgs :: String -> [String]
+parseTargetArgs s = case List.dropWhile (/= '[') s of
+    '[' : rest -> case dropTrailingBracket rest of
+        Just inner -> splitTopLevelArgs 0 [] inner
+        Nothing    -> []
+    _ -> []
+  where
+    dropTrailingBracket str = case reverse str of
+        ']' : tailR -> Just (reverse tailR)
+        _           -> Nothing
+    splitTopLevelArgs :: Int -> String -> String -> [String]
+    splitTopLevelArgs _ acc [] = [reverse acc | not (null acc)]
+    splitTopLevelArgs 0 acc (',':' ':cs) = reverse acc : splitTopLevelArgs 0 [] cs
+    splitTopLevelArgs 0 acc (',':cs)     = reverse acc : splitTopLevelArgs 0 [] cs
+    splitTopLevelArgs d acc ('[':cs)     = splitTopLevelArgs (d+1) ('[':acc) cs
+    splitTopLevelArgs d acc (']':cs)     = splitTopLevelArgs (d-1) (']':acc) cs
+    splitTopLevelArgs d acc (c:cs)       = splitTopLevelArgs d (c:acc) cs
 
 
 -- | v0.14.x Stage 4: look up a Sky-source (home, name) in the
@@ -6574,9 +6889,24 @@ exprToGo (A.At _ expr) = case expr of
             env = getCgEnv
         in case Rec.lookupRecordAlias (Rec._cg_fieldIndex env) fieldNames of
             Just aliasName ->
-                -- Named struct: Alias_R{Name: "Alice", Age: 30}
-                let structName = aliasName ++ "_R"
-                    fieldTypeMap = case Map.lookup aliasName (Rec._cg_aliases env) of
+                -- Named struct: Alias_R{Name: "Alice", Age: 30}.
+                -- v0.15 Stage E — parametric aliases need explicit
+                -- instantiation at the literal site (Go rejects bare
+                -- references to generic types).  Default to `[any, …]`
+                -- per alias var; the rt.Coerce wrap at the call
+                -- boundary tightens to the concrete instantiation.
+                let aliasDecl = Map.lookup aliasName (Rec._cg_aliases env)
+                    aliasArity = case aliasDecl of
+                        Just (Can.Alias vs _) -> length vs
+                        _ -> 0
+                    structName =
+                        if aliasArity == 0
+                            then aliasName ++ "_R"
+                            else aliasName ++ "_R[" ++
+                                 intercalate_ ", "
+                                     (replicate aliasArity "any") ++
+                                 "]"
+                    fieldTypeMap = case aliasDecl of
                         Just (Can.Alias _ (T.TRecord m _)) ->
                             Map.map (\(T.FieldType _ ty) -> solvedTypeToGo ty) m
                         _ -> Map.empty
@@ -11404,10 +11734,28 @@ substituteTVarsToGo tvarMap = go
                 0 -> "rt.SkyTuple2"
                 1 -> "rt.SkyTuple3"
                 _ -> "rt.SkyTupleN"
+        -- v0.15 Stage E — recursive-alias self-reference: a TType
+        -- referencing the SAME parametric alias being substituted
+        -- (e.g. `Tree a` inside `Tree a = { kids : List (Tree a) }`).
+        T.TType _ name args
+            | not (null args)
+            , Just (Can.Alias _ (T.TRecord _ _)) <- lookupAliasDecl name ->
+                let argStrs = map go args
+                in name ++ "_R[" ++ intercalate_ ", " argStrs ++ "]"
+        -- v0.15 Stage E — Surface 1's canonicaliser wraps parametric
+        -- alias references as `TAlias name [(v, arg)] (Filled body)`.
+        -- The default `solvedTypeToGo` TAlias arm renders the type-
+        -- args via its own go (no tvarSubst), losing the outer
+        -- substitution.  Re-emit via THIS module's substituting
+        -- renderer so nested alias-typed fields stay correctly
+        -- instantiated.
+        T.TAlias _ name pairs _
+            | not (null pairs)
+            , Just (Can.Alias _ (T.TRecord _ _)) <- lookupAliasDecl name ->
+                let argStrs = map (go . snd) pairs
+                in name ++ "_R[" ++ intercalate_ ", " argStrs ++ "]"
         _ -> solvedTypeToGo ty
-            -- For other shapes (TType App, TRecord, TAlias) the
-            -- legacy renderer is correct — those don't have TVar
-            -- substitution rules that differ from solvedTypeToGo.
+            -- For other shapes the legacy renderer is correct.
 
 
 solvedTypeToGo :: T.Type -> String
@@ -11490,17 +11838,20 @@ solvedTypeToGo ty = case ty of
                     | otherwise     -> "any"
     T.TLambda from to -> "func(" ++ solvedTypeToGo from ++ ") " ++ solvedTypeToGo to
     T.TRecord fields _ ->
-        -- P4: records always map to a named Go struct. If the shape
-        -- matches a registered alias we use its `_R` name. Otherwise
-        -- the anon-registry synthesises a deterministic `Anon_R_<hash>`
-        -- name; the pre-pass emits its struct decl alongside the alias
-        -- decls so Go can resolve it.
+        -- v0.15 Stage E — parametric aliases render with explicit
+        -- generic args via `aliasGenericArgs` (structural extraction
+        -- + synthetic-TVar fallback).
         let env = getCgEnv
             names = Map.keys fields
-            nonMatch = case Rec.lookupRecordAlias (Rec._cg_fieldIndex env) names of
-                Just aliasName -> aliasName ++ "_R"
-                Nothing        -> synthAnonRecordName fields
-        in nonMatch
+        in case Rec.lookupRecordAlias (Rec._cg_fieldIndex env) names of
+            Just aliasName ->
+                case aliasGenericArgs aliasName fields of
+                    Just (_, argTys) ->
+                        aliasName ++ "_R[" ++
+                        intercalate_ ", " (map solvedTypeToGo argTys) ++
+                        "]"
+                    Nothing -> aliasName ++ "_R"
+            Nothing -> synthAnonRecordName fields
     T.TTuple _ _ rest ->
         -- v0.13: render tuples as `rt.SkyTuple2/3/N` — CONSISTENT
         -- with `typeStrWithAliasesReg` / `safeReturnTypeWith` (which
@@ -11515,7 +11866,7 @@ solvedTypeToGo ty = case ty of
             0 -> "rt.SkyTuple2"
             1 -> "rt.SkyTuple3"
             _ -> "rt.SkyTupleN"
-    T.TAlias home name _typeArgs aliasTy ->
+    T.TAlias home name typeArgs aliasTy ->
         let modStr = ModuleName.toString home
             prefix = if null modStr || modStr == "Main"
                        then ""
@@ -11523,13 +11874,14 @@ solvedTypeToGo ty = case ty of
             base = prefix ++ name
             env = getCgEnv
             allAliases = Rec._cg_recordAliases env
-            -- Parametric record aliases (`type alias Cfg msg = …`)
-            -- emit as NON-generic Go structs with TVar fields erased
-            -- to `any`.  The type-args list carried by TAlias is
-            -- therefore dropped here — Go references the struct by
-            -- its bare name, and the func-target Coerce path in
-            -- rt/rt.go (Fix A) handles the slot↔value func-signature
-            -- mismatch for callback fields.
+            -- v0.15 Stage E — emit explicit Go type-args.
+            typeArgSuffix =
+                if null typeArgs
+                    then ""
+                    else "[" ++ intercalate_ ", "
+                              [ solvedTypeToGo argTy
+                              | (_, argTy) <- typeArgs ]
+                          ++ "]"
             -- Try every registered cross-module alias of the form
             -- "<Mod>_<name>" so a captured TAlias with empty home (the
             -- canonicaliser leaves home unset when the alias is imported
@@ -11579,22 +11931,16 @@ solvedTypeToGo ty = case ty of
                 Just t -> Just (solvedTypeToGo t)
                 Nothing -> Nothing
         in case matches of
-            (m:_) -> m ++ "_R"
+            (m:_) -> m ++ "_R" ++ typeArgSuffix
             _ -> case runtimeTyped of
                 Just goTy -> goTy
                 Nothing
-                    | isRecord      -> base ++ "_R"
+                    | isRecord      -> base ++ "_R" ++ typeArgSuffix
                     | isRuntimeOnly -> "any"
                     | isKnownUnion  -> base
-                    -- Alias chain (e.g. FileForm = Form) — resolve
-                    -- to the inner alias's Go type, not `any`.
                     | Just goTy <- recursedFromChain
                     , goTy /= "any"
                                     -> goTy
-                    -- Last resort: a TAlias whose name we can't
-                    -- resolve to a real Go type.  `base` would
-                    -- dangle (`undefined: X`).  Fall to `any` —
-                    -- correctness over a speculative typed emit.
                     | otherwise     -> "any"
 
 
