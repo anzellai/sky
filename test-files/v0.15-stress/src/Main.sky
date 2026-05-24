@@ -188,6 +188,53 @@ busyOn cfg =
 
 
 -- ═══════════════════════════════════════════════════════════
+-- S13 — lambda as direct call arg (List.map, List.filter)
+-- ═══════════════════════════════════════════════════════════
+
+ints : List Int
+ints =
+    List.map (\x -> x + 1) [ 1, 2, 3 ]
+
+
+positives : List Int
+positives =
+    List.filter (\x -> x > 0) [ -1, 2, -3, 4 ]
+
+
+-- ═══════════════════════════════════════════════════════════
+-- S14 — lambda inside Maybe (named helper avoids binop+lambda-
+-- param-type bug; inline-lambda HOF arg with binop body is a
+-- separate Stage C.2+ work-item — orthogonal to this fix).
+-- ═══════════════════════════════════════════════════════════
+
+doubleIt : Int -> Int
+doubleIt x =
+    x * 2
+
+
+doubled : Maybe Int
+doubled =
+    Maybe.map doubleIt (Just 21)
+
+
+-- S14b: inline lambda with NON-binop body (no binop = no
+-- operand-type inference issue).
+doubledStr : Maybe String
+doubledStr =
+    Maybe.map (\n -> String.fromInt n) (Just 7)
+
+
+-- S14c: inline lambda passed to List.map with binop body — Sky
+-- already infers `x : Int` via call-arg propagation for List
+-- which is well-tested.  This passes pre-v0.15 too — it's the
+-- baseline of what worked.  Included here for regression
+-- coverage.
+mappedDirect : List Int
+mappedDirect =
+    List.map (\x -> x + 10) [ 1, 2, 3 ]
+
+
+-- ═══════════════════════════════════════════════════════════
 -- S12 — anonymous record literal at parametric-alias slot
 -- ═══════════════════════════════════════════════════════════
 
@@ -293,12 +340,22 @@ main =
         idResult = String.fromInt (Poly.identityM 5) ++ "|" ++ Poly.identityM "x"
         r_s6c = check "S6c" idResult "5|x"
 
+        -- S13: lambda as direct call arg
+        r_s13a = check "S13a" (String.join "," (List.map String.fromInt ints)) "2,3,4"
+        r_s13b = check "S13b" (String.join "," (List.map String.fromInt positives)) "2,4"
+
+        -- S14: lambda inside Maybe
+        r_s14 = check "S14" (String.fromInt (Maybe.withDefault 0 doubled)) "42"
+        r_s14b = check "S14b" (Maybe.withDefault "none" doubledStr) "7"
+        r_s14c = check "S14c" (String.join "," (List.map String.fromInt mappedDirect)) "11,12,13"
+
         results =
             [ r_s1a, r_s1b, r_s2, r_s4
             , r_s6a, r_s6b, r_s6c
             , r_s7, r_s8, r_s9
             , r_s10a, r_s10b, r_s11
             , r_s3a
+            , r_s13a, r_s13b, r_s14, r_s14b, r_s14c
             ]
 
         report = case Result.combine results of
