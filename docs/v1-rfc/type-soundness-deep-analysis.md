@@ -534,6 +534,53 @@ Stated formally:
 
 Today, none of these hold reliably.  After v0.15, all three do.
 
+## 8.5 What shipped on `feat/v0.15-typed-lowering` (iteration 1)
+
+Commits stacked on main (oldest → newest):
+
+| Commit | Stage | What |
+|---|---|---|
+| `f99a3a0` | Foundation | canonicaliser parametric-alias expansion (Surface 1) |
+| `87c02cb` | Foundation | Solve.hs TAlias readback + showType + typeStructEq |
+| `bddad69` | Foundation | Unify.hs App1↔Alias same-name bridge; stress test scaffold |
+| `95528fe` | **A** | solver writes per-region types via `RegionTypes` |
+| `ee25e62` | **B** | `globalRegionTypes` IORef + `lookupRegionType` |
+| `2a07810` | **C.1** | type-directed `Can.Lambda` + `Can.Record` field-init |
+| `1cce733` | test | extended stress to 19 sections (S13/S14 lambda HOF) |
+| `982bcc8` | **C.2** | type-directed `Can.List` items |
+
+Verified at each step:
+- 29/29 example clean-slate sweep
+- 19/19 v0.15 stress test sections
+- 120/120 stdlib Sky.Test assertions
+
+User-visible bugs closed:
+- Inline-lambda-in-record-field (S4) — the long-standing
+  `cannot use func(s any) any as func(string) any value in struct
+  literal` Go-build error class.
+- Cross-alias non-parametric pass (S3a) — via Sky source alias
+  chains like `State.FileForm = Editor.Form`, currently the
+  RECOMMENDED idiom (not a workaround).
+
+What's deferred to subsequent v0.15 sessions:
+- **Stage C.3+**: `Can.Update`, `Can.Tuple`, `Can.Call` arg-binop
+  propagation (only matters when an inline lambda body uses binop
+  with a polymorphic param — rare; named-helper sidesteps it).
+- **Stage D**: `rt.Coerce` retreat at positions where typed
+  lowering ensures the IR is already typed.
+- **Stage E**: Go generics on parametric record aliases.  The big
+  architectural change.  Would deliver:
+  - Cross-alias call without alias-chain workaround
+  - Surface 2's TVar→any erasure removed (fully typed callbacks)
+  - Gob session-store forward-compat (distinct nominal types per
+    Sky alias)
+  - Per the deep analysis (Sec 6.2 + 6.3 + 6.7), Stage E
+    introduces a fresh class of edge cases (Go generic inference,
+    explicit instantiation for phantom T-vars, anonymous-record-
+    at-parametric-slot, sub-app federation IPC schema).
+  Recommended approach: design doc → Stage E charter → multi-
+  session implementation with its own regression gate.
+
 ## 9. What ships in v0.14.x while v0.15 is in flight
 
 For the immediate window (NOT on the v0.15 branch):
