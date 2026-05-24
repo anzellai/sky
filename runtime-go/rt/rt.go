@@ -4483,6 +4483,24 @@ func Coerce[T any](v any) T {
 	if t, ok := v.(T); ok {
 		return t
 	}
+	// Fix A for docs/parametric-record-aliases-bugs.md Surface 2:
+	// function-targeted Coerce must always go via makeFuncAdapter
+	// when the source signature differs from T. Go function types
+	// are nominal in their parameter/return types — partial-applied
+	// ADT ctors lowered into `func(Concrete_R) Msg` then asked to
+	// fit `func(any) Msg` would otherwise panic at the wire
+	// dispatcher. (The exact-signature happy path is already
+	// caught by the v.(T) assertion above.)
+	if v != nil {
+		rv0 := reflect.ValueOf(v)
+		if rv0.IsValid() && rv0.Kind() == reflect.Func {
+			var zero T
+			tt := reflect.TypeOf(zero)
+			if tt != nil && tt.Kind() == reflect.Func {
+				return makeFuncAdapter[T](rv0, tt).(T)
+			}
+		}
+	}
 	// If the source is a Sky Result/Maybe but the target isn't,
 	// unwrap the Ok/Just first. Fixes the path where Ffi.callPure's
 	// auto-Ok-wrap collides with a typed non-Result Sky surface

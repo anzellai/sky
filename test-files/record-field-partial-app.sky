@@ -1,0 +1,73 @@
+-- Minimal repro of Sky compiler task #262.
+--
+-- A partial-applied ADT constructor stored in a record field
+-- (`onSubmit : Form -> Msg`) gets type-erased / nominal-mismatched
+-- at the wire dispatch boundary. Used by every Sky.Live widget
+-- API that takes Msg callbacks in a Cfg record (sky-editor,
+-- future sky-form-builder, etc.).
+--
+-- Expected after fix: this program builds AND runs to completion
+-- without `interface conversion` panic from main(). Pre-fix, the
+-- equivalent pattern panics at runtime when the wire dispatcher
+-- tries to invoke `cfg.onSubmit` via the standard type assertion.
+--
+-- Hand-traced lowering bug (from real sky-editor extraction):
+--
+--   rt.Coerce[func(any) State_Msg](           ← surrounding expects func(any) X
+--       func(__p0 Editor_Form_R) State_Msg {  ← but lowerer emits typed param
+--           ...
+--       })
+--
+-- Go's function types are nominal; func(any) X ≠ func(Form_R) X.
+-- rt.Coerce's `v.(T)` fast-path returns ok=false, falls to
+-- makeFuncAdapter — but the calling site already type-asserted
+-- as `func(any) X`, which panics.
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Std.Log exposing (println)
+
+
+type alias Form =
+    { name : String, action : String }
+
+
+type Msg
+    = DoIt Int String Form
+
+
+type alias Cfg msg =
+    { label : String
+    , onSubmit : Form -> msg
+    }
+
+
+-- Build a Cfg with a partial-applied ADT ctor as onSubmit.
+-- This is the exact shape sky-editor needs (Editor.view consumes
+-- a Cfg whose onSubmit is partial-applied SaveFile).
+mkCfg : Int -> String -> Cfg Msg
+mkCfg appId fileName =
+    { label = "Save " ++ fileName
+    , onSubmit = DoIt appId fileName
+    }
+
+
+-- Invoke the partial-applied ctor through the record field.
+-- This is what the Sky.Live wire dispatcher does at runtime.
+trigger : Cfg Msg -> Form -> Msg
+trigger cfg form =
+    cfg.onSubmit form
+
+
+main =
+    let
+        cfg = mkCfg 42 "Main.sky"
+        form = { name = "Main.sky", action = "save" }
+        result = trigger cfg form
+    in
+        println
+            (case result of
+                DoIt aid fn frm ->
+                    "DoIt " ++ String.fromInt aid ++ " " ++ fn ++ " {"
+                        ++ frm.name ++ "," ++ frm.action ++ "}")
