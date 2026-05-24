@@ -548,6 +548,7 @@ on `feat/v0.15-typed-lowering`.
 | D: rt.Coerce retreat at typed sites | ✅ shipped |
 | E: Go generics on parametric records | ✅ shipped |
 | Bonus: same-module polymorphic call | ✅ shipped |
+| Soundness fix: same-mod CForeign on wildcard sigs | ✅ shipped |
 | F: verification | ✅ all gates green |
 
 ### User-visible bugs closed
@@ -567,6 +568,15 @@ on `feat/v0.15-typed-lowering`.
 4. **`Cfg Msg vs Cfg Int` shown as `Cfg vs Cfg`** in errors —
    TAlias type-args propagate through `variableToTypeSeen` +
    `showType` + `typeStructEq`. (Foundation: Solve.hs readback fix.)
+5. **Wildcard-only sig regression closed** — the same-module
+   CForeign change (commit `7ff1c72`) wrongly routed wildcard-only
+   sigs (`view : Model -> any`) through CForeign, diverging body
+   ↔ caller UF vars and silently accepting wrong return types.
+   `01a45a7` gates same-mod CForeign on at least one NON-`any`
+   freeVar; wildcard-only sigs stay on the shared-env CLocal path
+   so body ↔ caller stays chained.  LSP DiagnosticsSpec "TEA with
+   Live.app: wrong view return type surfaces as a real diagnostic"
+   re-passes.
 
 ### Soundness invariants achieved
 
