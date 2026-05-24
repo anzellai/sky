@@ -3581,7 +3581,8 @@ DATABASE_URL=postgres://user:pass@host/db  # fallback if SKY_LIVE_STORE_PATH uns
 # ─── observability ─────────────────────────────────────────────────
 SKY_LOG_FORMAT=json
 SKY_LOG_LEVEL=info
-SKY_METRICS_TOKEN=…             # /_sky/metrics requires `Authorization: Bearer <this>`
+SKY_ADMIN_TOKEN=…               # gates /_sky/metrics + /_sky/console in production
+                                # legacy aliases: SKY_METRICS_TOKEN (v0.14.21), SKY_CONSOLE_TOKEN_SECRET (v0.14.20)
 # OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318  # optional OTel export
 
 # ─── secrets ───────────────────────────────────────────────────────
@@ -3595,7 +3596,7 @@ SKY_AUTH_TOKEN_SECRET=…         # ≥32 bytes; Sky errors at startup if shorte
 | `ENV` value | Mode | Console mount | `🔍 Console` banner | `/_sky/metrics` auth |
 |---|---|---|---|---|
 | unset / `dev` / `development` / `local` | dev | ✓ at `/_sky/console` | ✓ floating link | open (any read) |
-| `production` / `prod` / `staging` / `qa` / `preview` / anything else | prod | hidden | hidden | `Authorization: Bearer $SKY_METRICS_TOKEN` |
+| `production` / `prod` / `staging` / `qa` / `preview` / anything else | prod | hidden | hidden | `Authorization: Bearer $SKY_ADMIN_TOKEN` |
 
 Bias-to-gate: if you bother to set `ENV` at all, you mean it's not dev.
 
@@ -3617,7 +3618,7 @@ A Sky-side ergonomic API (`Live.app { subApps = [...] }`) is on the v0.14 list; 
 
 | Platform | What it gives you | What you set |
 |---|---|---|
-| Fly.io / Render / Railway | `PORT`, `DATABASE_URL`, secret manager | `ENV=production`, `SKY_AUTH_TOKEN_SECRET`, `SKY_METRICS_TOKEN` |
+| Fly.io / Render / Railway | `PORT`, `DATABASE_URL`, secret manager | `ENV=production`, `SKY_AUTH_TOKEN_SECRET`, `SKY_ADMIN_TOKEN` |
 | Cloud Run | `PORT`, secret manager | same + map `PORT` → `SKY_LIVE_PORT` if your code reads SKY_LIVE_PORT explicitly |
 | Kubernetes | ConfigMap + Secret + Service | mount `/_sky/healthz` as liveness probe, `/_sky/readyz` as readiness probe |
 | Docker compose | env_file: `.env.production` | same |

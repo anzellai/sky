@@ -435,7 +435,8 @@ SKY_DEV_BANNER=on           # off suppresses the floating link (keeps mount)
 SKY_CONSOLE_URL=/_sky/console
 SKY_SUBAPP_VERBOSE=0        # 1 forwards spawned-child stdout/stderr to parent terminal
 SKY_BIN=…                   # override `sky` binary path for SpawnSkyConsole
-SKY_METRICS_TOKEN=…         # /_sky/metrics requires Bearer in production
+SKY_ADMIN_TOKEN=…           # /_sky/metrics + /_sky/console require Bearer in production
+                            # (legacy: SKY_METRICS_TOKEN / SKY_CONSOLE_TOKEN_SECRET still honoured)
 ```
 
 The production gate is `ENV` then `SKY_ENV` fallback. Unset OR
