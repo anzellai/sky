@@ -91,8 +91,17 @@ mkCfgLambda =
 
 
 -- ═══════════════════════════════════════════════════════════
--- S6 — same-module polymorphic call via dep module (works)
+-- S6 — polymorphic call via dep module (cross-module CForeign)
+-- AND same-module polymorphic call test (S6d): same fn called
+-- with two different concrete instantiations in same module.
 -- ═══════════════════════════════════════════════════════════
+
+
+-- Same-module polymorphic helper.  Tests if v0.15 closes the
+-- CLocal-vs-CForeign single-module limitation.
+sameModApply : Cfg msg -> String -> msg
+sameModApply cfg s =
+    cfg.onSubmit s
 
 intCfg : Cfg IntMsg
 intCfg =
@@ -307,6 +316,11 @@ main =
         -- S6: same-module poly via dep
         r_s6a = check "S6a" (fmtIM (Poly.applyHandler intCfg "hi")) "II 2"
         r_s6b = check "S6b" (fmtBM (Poly.applyHandler boolCfg "yes")) "BB true"
+        -- S6d: same-MODULE polymorphic helper called twice with
+        -- different concrete msg types.  Pre-v0.15 this hit the
+        -- CLocal/CForeign limitation (first call pinned msg).
+        r_s6d_i = check "S6d_i" (fmtIM (sameModApply intCfg "yo")) "II 2"
+        r_s6d_b = check "S6d_b" (fmtBM (sameModApply boolCfg "yes")) "BB true"
 
         -- S7: recursive
         leaf = mkLeaf 1
@@ -352,6 +366,7 @@ main =
         results =
             [ r_s1a, r_s1b, r_s2, r_s4
             , r_s6a, r_s6b, r_s6c
+            , r_s6d_i, r_s6d_b
             , r_s7, r_s8, r_s9
             , r_s10a, r_s10b, r_s11
             , r_s3a
