@@ -7750,7 +7750,7 @@ emitPartialCtor func suppliedArgs missing =
         -- parametric-record passing on partial-applied ctors.
         suppliedGo  = zipWithDefaultExpect suppliedTys suppliedArgs
         extraNames  = [ "__p" ++ show i | i <- [0 .. missing - 1] ]
-        extraIdents = zipWith (\n ty -> coerceArg (GoIr.GoIdent n) ty)
+        extraIdents = zipWith (\n ty -> coerceArg Nothing (GoIr.GoIdent n) ty)
                               extraNames sanitisedExtras
         finalCall = GoIr.GoCall (exprToGo func) (suppliedGo ++ extraIdents)
         -- Wrap outer-first (last extra wrapped first) so the chain is
@@ -8069,7 +8069,7 @@ coerceCallArgsAt region qualName args =
                             _ ->
                                 if subbed == "any" && containsTypeParam orig
                                     then GoIr.GoCall (GoIr.GoIdent "any") [exprToGo e]
-                                    else coerceArg (exprToGo e) subbed
+                                    else coerceArg (Just e) (exprToGo e) subbed
                 in zipWith3Default coerceOne paramTypes substituted args
         _ ->
             -- v0.13 Phase A5+: when no CSI is captured at this call
@@ -8216,7 +8216,7 @@ coerceCallArgsAt region qualName args =
                         _ ->
                             if subbed == "any" && containsTypeParam orig
                                 then GoIr.GoCall (GoIr.GoIdent "any") [exprToGo e]
-                                else coerceArg (exprToGo e) subbed
+                                else coerceArg (Just e) (exprToGo e) subbed
             in zipWith3Default coerceFallback paramTypes substituted args
 
 
@@ -8452,8 +8452,21 @@ splitFuncTypeStr s
 -- (e.g. `SkyResult[any,any]` vs `SkyResult[IoError,string]`), use the
 -- runtime coerce helpers that reconstruct the value with target
 -- generic params.
-coerceArg :: GoIr.GoExpr -> String -> GoIr.GoExpr
-coerceArg e ty
+--
+-- v0.15.x hardening / Gap A1 — accepts an optional source `Can.Expr`.
+-- The parametric-alias short-circuit historically gated on
+-- `goExprGoType e` returning Just; for expression shapes whose Go-
+-- static type isn't tracked in the lambda-types registry (let-
+-- bindings holding a polymorphic-call result, VarLocal references
+-- to outer-scope bindings), `goExprGoType` returns Nothing.  The
+-- structural-fallback arm uses `inferExprType` on the source to
+-- recover the alias identity directly from the HM-solved type and
+-- short-circuits when the alias base names match.  Callers that
+-- don't have an underlying `Can.Expr` (synthesised
+-- `__p0 / __tco_t0` identifiers in over-application + TCO jumps)
+-- pass `Nothing` and the new arm cleanly no-ops.
+coerceArg :: Maybe Can.Expr -> GoIr.GoExpr -> String -> GoIr.GoExpr
+coerceArg mSrc e ty
     | ty == "any" || null ty = e
     -- Generic type parameter (T1, T2, ...) — when the arg's static
     -- Go type is concrete (`int`, `string`, `[]T1`, `rt.SkyResult
@@ -8483,23 +8496,52 @@ coerceArg e ty
     -- same generic struct are distinct nominal types, so the
     -- assertion panics for any T ≠ any at runtime.
     --
-    -- Soundness: we only apply when the SOURCE's static Go type
-    -- matches the target's parametric base.  When the source is
-    -- `any`-typed (rt.Field / rt.SkyCall result, unannotated
-    -- local), we fall through to the existing wrap path, which
-    -- still works because the runtime value's actual instantiation
-    -- matches the target's `any` slot.
+    -- Two soundness paths — both gated on the SOURCE actually
+    -- carrying the same parametric base as the target:
     --
-    -- Regression: test-files/v0.15-stress/src/Widget/Form.sky
-    -- exercises three call sites — view body sibling helpers
-    -- (`body cfg`, `toolbar cfg check`), consumeForm's typed-arg
+    --   (a) Lambda-types-registry path (the original short-circuit).
+    --       When `goExprGoType e` returns the Go-static type of a
+    --       typed local (let-binding registered via the lowerer's
+    --       `withScopedLambdaTypes`, typed function param, …), the
+    --       structural match is trivial — both sides are Go-type
+    --       strings of shape `Foo_R[<args>]`.
+    --
+    --   (b) v0.15.x hardening / Gap A1 — structural fallback via
+    --       `inferExprType`.  The lambda-types registry doesn't
+    --       cover every shape: let-bindings whose RHS is a
+    --       polymorphic-call result, VarLocal references to
+    --       outer-scope bindings, and other cases where the
+    --       lazy-rendering race leaves the entry unfilled.  But
+    --       `Solve.SolvedTypes` carries the HM-solved type for
+    --       every name in scope, and for record-alias-typed values
+    --       that type is `T.TAlias _ aliasName _ _`.  When the
+    --       target slot is `<aliasName>_R[...]` we can short-
+    --       circuit safely: at runtime the value's actual generic
+    --       instantiation IS the target alias's instantiation
+    --       (HM has already proved it), so Go's call-site type
+    --       inference pins the callee's T from the source.
+    --
+    -- Regression: test-files/v0.15-stress/src/Widget/Form.sky and
+    -- test-files/v0.15-stress/src/Widget/CrossInstanceCfg.sky.  Form
+    -- exercises view-body sibling helpers, consumeForm's typed-arg
     -- forwarding, and main's let-bound record passed to a
-    -- polymorphic view.  All three previously emitted
-    -- `Setup_R[X]` → `Setup_R[any]` assertions and panicked.
+    -- polymorphic view (path (a)).  CrossInstanceCfg exercises a
+    -- let-bound concrete alias passing through a polymorphic
+    -- forwarder, then consumed by a concretely-typed function —
+    -- both call sites pre-fix emitted `any(.).(Cfg_R[any])` casts
+    -- that panicked under Go's nominal generic-type rules
+    -- (path (b)).  See spec
+    -- test/Sky/Build/CoerceArgParametricSpec.hs.
     | Just targetBase <- parametricAliasBase ty
     , Just srcTy <- goExprGoType e
     , Just srcBase <- parametricAliasBase srcTy
     , targetBase == srcBase
+        = e
+    -- (b) Structural fallback gated on the HM-solved source type.
+    | Just targetBase <- parametricAliasBase ty
+    , Just src <- mSrc
+    , Just aliasName <- aliasBaseFromCanExpr src
+    , aliasName ++ "_R" == targetBase
         = e
     -- v0.13 Stage 1 — runtime-kernel HOF arg: when the target slot
     -- expects a typed `func(...) ...` AND the source is a
@@ -8716,6 +8758,57 @@ parametricAliasBase ty =
         _ -> Nothing
 
 
+-- | v0.15.x hardening / Gap A1 — recover an alias base name from a
+-- source `Can.Expr` by routing through `inferExprType` against the
+-- global codegen env's `Solve.SolvedTypes`.
+--
+-- Used by `coerceArg`'s structural-fallback arm.  The lambda-types
+-- registry covers most lowered-expression shapes but misses three:
+--   * Let-bindings whose RHS is a polymorphic-call result
+--     (`let cfg1 = forwardCfg cfg0`).
+--   * VarLocal references that pre-date the current scope's
+--     `withScopedLambdaTypes` push.
+--   * Field selectors whose record's Go-static type isn't tracked.
+-- For all three the HM solver still has the type — we read it,
+-- detect a record-alias-typed value, and return the alias's name.
+-- The caller appends `"_R"` and compares against the target's
+-- parametric base.
+--
+-- Returns Nothing when:
+--   * The expression isn't HM-typed (synthesised identifiers,
+--     `Nothing` from `inferExprType`).
+--   * The type isn't a record alias (primitives, lambdas, ADTs).
+--   * The alias isn't a record alias (raw `type alias X = Int`
+--     style aliases that emit as their underlying Go type, not
+--     `X_R`).
+aliasBaseFromCanExpr :: Can.Expr -> Maybe String
+aliasBaseFromCanExpr src =
+    let env = getCgEnv
+        solved = Rec._cg_solvedTypes env
+    in case inferExprType solved src of
+        Just (T.TAlias homeMod aliasName _ _) ->
+            -- Only RECORD aliases emit as `<name>_R` in Go.  Aliases
+            -- of other shapes (transparent `type alias X = Int`) emit
+            -- as their underlying Go type and never match a parametric
+            -- base check.  Confirm via `_cg_recordAliases`, which
+            -- carries BOTH the entry-module unqualified names AND
+            -- module-prefixed dep names — so this works whether the
+            -- target instantiation renders as `XCfg_R` (entry) or
+            -- `Widget_CrossInstanceCfg_XCfg_R` (dep).  Returns the
+            -- name flavour that matches the in-scope target.
+            let prefix = case ModuleName.toString homeMod of
+                    ""  -> ""
+                    nm  -> map (\c -> if c == '.' then '_' else c) nm
+                                ++ "_"
+                qualified = prefix ++ aliasName
+                isRec = Set.member aliasName (Rec._cg_recordAliases env)
+                isQualRec = Set.member qualified (Rec._cg_recordAliases env)
+            in if isRec then Just aliasName
+               else if isQualRec then Just qualified
+               else Nothing
+        _ -> Nothing
+
+
 -- | v0.13 Stage 1 — extract Go-string param types from a kernel's
 -- HM type, taking N param positions. Returns empty list if the
 -- type isn't a function (the Forall body was a bare value).
@@ -8808,7 +8901,7 @@ kernelCoerceArg _allSubbed _idx subbed e@(A.At _ inner) =
             | isParametricAliasInstantiation subbed
             , not (containsGenericTypeParam subbed) ->
                 exprToGoExpectGo subbed e
-        _ -> coerceArg (exprToGo e) subbed
+        _ -> coerceArg (Just e) (exprToGo e) subbed
 
 
 -- | v0.13 Stage 1 — does a Go-type string contain any generic-param
@@ -9042,7 +9135,7 @@ lowerArgExpect ty e@(A.At _ expr)
     , not (containsGenericTypeParam ty)
     = exprToGoExpectGo ty e
     | otherwise
-    = coerceArg (exprToGo e) ty
+    = coerceArg (Just e) (exprToGo e) ty
 
 
 -- | Over-application: the call supplied MORE args than the callee's
@@ -9131,7 +9224,7 @@ emitPartialUserCall func suppliedArgs missing =
         -- v0.15.2: typed-target call args via `zipWithDefaultExpect`.
         suppliedGo = zipWithDefaultExpect suppliedTypes suppliedArgs
         extraNames = [ "__pp" ++ show i | i <- [0 .. missing - 1] ]
-        extraIdents = zipWith (\n ty -> coerceArg (GoIr.GoIdent n) ty)
+        extraIdents = zipWith (\n ty -> coerceArg Nothing (GoIr.GoIdent n) ty)
                               extraNames extraTypes
         finalCall = GoIr.GoCall (exprToGo func) (suppliedGo ++ extraIdents)
         -- Build the curried wrapper chain from the inside out.
@@ -10134,13 +10227,29 @@ tcoBodyStmts home fnName arity paramNames paramGoTys goRetType = lowerTail
             decls = zipWith
                 (\t a -> GoIr.GoShortDecl t (exprToGo a))
                 tmps args
-            coerceForTco ge ty
+            -- v0.15.x hardening / Gap A1 — pass the underlying
+            -- Can.Expr through to coerceArg so the structural-
+            -- fallback arm can recognise parametric-alias cross-
+            -- instantiation in tail-recursive jumps.  The Go-side
+            -- `__tco_t<i>` identifier hides the source's HM type
+            -- from `goExprGoType`, but `inferExprType` on the
+            -- original arg recovers it.
+            coerceForTco mSrc ge ty
                 | take 5 ty == "func(" = ge
-                | otherwise = coerceArg ge ty
-            assigns = zipWith3
-                (\p t ty ->
-                    GoIr.GoAssign p (coerceForTco (GoIr.GoIdent t) ty))
-                paramNames tmps (paramGoTys ++ repeat "any")
+                | otherwise = coerceArg mSrc ge ty
+            -- Build the (param, tmp, ty, src) tuple list and walk.
+            zip4tco (a:as) (b:bs) (c:cs) (d:ds) =
+                (a, b, c, d) : zip4tco as bs cs ds
+            zip4tco _ _ _ _ = []
+            quadrants =
+                zip4tco paramNames
+                        tmps
+                        (paramGoTys ++ repeat "any")
+                        (map Just args ++ repeat Nothing)
+            assigns =
+                [ GoIr.GoAssign p
+                    (coerceForTco src (GoIr.GoIdent t) ty)
+                | (p, t, ty, src) <- quadrants ]
         in decls ++ assigns ++ [GoIr.GoContinue]
 
     -- Lower an `Can.If` in tail position as a nested GoIf chain
