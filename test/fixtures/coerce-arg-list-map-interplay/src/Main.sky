@@ -1,0 +1,43 @@
+module Main exposing (main)
+
+-- Cycle 1 / P2-followup LOCK reproducer.
+--
+-- Drives the canonical `List.map fn (List.take 6 xs)` shape that
+-- the original P2 attempt regressed examples/13-skyshop on:
+--
+--     ./main.go:3749: in call to Sky_Core_List_map_,
+--     type []string of Sky_Core_List_take__String(6, ...)
+--     does not match inferred type []any for []T1
+--
+-- Pre-P2 (main): σ-recovery + TVar erasure widen both the typed
+-- list arg and the `any`-typed lambda arg uniformly to `[]any`
+-- / `func(any) any`.  `coerceArg "[]any" ([]string)` wraps the
+-- typed list source with `rt.AsListAny` to keep the three-way σ
+-- consensus.  Lossy but Go-safe.
+--
+-- P2-followup: gate `coerceArg`'s skip-check on the IR-SHAPE
+-- classifier alone (no structural fallback), so the σ consensus
+-- stays consistent across sibling args.  Structural fallback
+-- still fires at the parametric-alias arm where it's needed.
+--
+-- The spec asserts a single invariant: this fixture's emitted Go
+-- clean-builds via `go build`.  The shape of the wrap (whether
+-- the lambda widens or the list widens) is irrelevant — what
+-- matters is that the three-way σ consensus stays consistent.
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Std.Log exposing (println)
+
+
+categories : List String
+categories =
+    [ "a", "b", "c", "d", "e", "f", "g" ]
+
+
+view : List String
+view =
+    List.map (\cat -> cat ++ "!") (List.take 6 categories)
+
+
+main =
+    println (String.join "" view)

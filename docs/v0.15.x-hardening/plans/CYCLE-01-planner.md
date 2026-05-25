@@ -80,7 +80,7 @@ The root cause is that `goExprGoType` returns Nothing for a polymorphic-call res
 | Item | Closes | Branch | Tag | Hours |
 |---|---|---|---|---|
 | P1 | A1, prior #3 | `feat/v0.15.x-hardening-P1-coerce-parametric-alias-gate` | v0.15.7 | 4-6 |
-| P2 | A2, prior #7 | `feat/v0.15.x-hardening-P2-goexpr-type-poly-call` | v0.15.8 | 3-5 |
+| P2 + P2-followup | A2, prior #7 | `feat/v0.15.x-hardening-P2-followup-goexpr-skip-gate` | v0.15.8 | 6-9 |
 | P3 | A4 | `feat/v0.15.x-hardening-P3-isplain-ident-deep-recursion` | v0.15.9 | 3-4 |
 | P4 | A5, A14, A15 | `feat/v0.15.x-hardening-P4-infer-expr-binop-completeness` | v0.15.10 | 5-7 |
 | P5 | A6 (kernel layer) | `feat/v0.15.x-hardening-P5-auth-typed-boundary` | v0.15.11 | 6-8 |
@@ -157,6 +157,36 @@ Full per-item content (architectural diagnosis, sequenced steps, file lists, tes
 - **26 patch releases** (v0.15.7 → v0.15.32).
 - **Cumulative session-cost: ~130-185 hours** (4-6 weeks at 30h/week).
 - **Cumulative new tests**: 36+ cabal specs + 12+ go tests + 8+ .sky tests + 1 CI gate + 1 measurement script.
+
+## Coordination caveat — P2's structural fallback
+
+Per the Head Arbitration `arbitrations/HEAD-CYCLE-01-P2.md` (Cycle
+1 P2 regression, 2026-05-25):
+
+> P2's structural fallback in `goExprGoType` MUST NOT be consumed
+> by `coerceArg`'s skip-check arm at line 8709 (worktree
+> numbering).  The skip-check is a vote in the three-way
+> σ/erasure/skip consensus that keeps Go's generic-call inference
+> consistent across sibling args.  Gate the skip-check on the
+> IR-shape classifier alone (`goExprGoType Nothing e`).  Other
+> consumers (`wrapTypedReturn`, `coerceToFieldType`, the
+> parametric-alias arm) DO consume the structural fallback safely
+> because they don't participate in the σ consensus.
+
+Standing direction for every future cycle that touches
+`coerceArg` or `goExprGoType`: the PR description MUST explicitly
+state which of the three voters (σ-recovery / TVar erasure /
+skip-check) changed and why the other two stay consistent.  A
+reviewer who can't verify the three-way consensus must block the
+merge.  The followup spec
+`test/Sky/Build/CoerceArgListMapInterplaySpec.hs` is the
+load-bearing lock test; deletion or skipping is grounds for a
+Head Arbitration re-spawn.  The skyshop-clean-build lock spec
+`test/Sky/Build/SkyshopCompilesSpec.hs` is the
+"breaks-at-scale" canary; both must stay green across every
+Developer cycle.
+
+---
 
 ## Sign-off checklist for the Developer (per Item)
 
