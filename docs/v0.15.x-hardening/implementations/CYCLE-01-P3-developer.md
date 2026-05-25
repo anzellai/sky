@@ -169,10 +169,11 @@ Test suite sky-tests: PASS
 ## Rollout / regression gates
 
 - 28-assertion IsPlainIdent unit table green.
-- Wider cabal test sweep (standard skip pattern) green —
-  _(filled in after sweep completes)_.
+- Wider cabal test sweep (standard skip pattern) — **332 examples,
+  0 failures, 1 pending** (matches prior pending count). `1 of 1
+  test suites (1 of 1 test cases) passed`.
 - 3 representative examples (12-skyvote, 13-skyshop, 19-skyforum)
-  build clean.
+  build clean from wiped slate.
 - Golden-size delta byte-identical on all 3 representative
   examples (well within Planner's ±3 % tolerance).
 
@@ -182,7 +183,7 @@ Test suite sky-tests: PASS
 |---|---|
 | mem-guard alive | Yes (pgrep `mem-guard.sh` returned PID) |
 | IsPlainIdent unit table | 28/28 green |
-| Wider cabal test sweep | _(filled)_ |
+| Wider cabal test sweep | 332/333 PASS (1 pending matches prior) |
 | 12-skyvote clean build | OK (1562 LOC, sha b87610bb…) |
 | 13-skyshop clean build | OK (4351 LOC, sha 67b048ec…) |
 | 19-skyforum clean build | OK (1454 LOC, sha 427e75bf…) |
