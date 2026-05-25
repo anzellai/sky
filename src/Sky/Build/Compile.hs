@@ -285,16 +285,32 @@ globalEmittedSpecs = unsafePerformIO $ newIORef Set.empty
 globalCsiByCallee :: IORef (Map.Map String [String])
 globalCsiByCallee = unsafePerformIO $ newIORef Map.empty
 
--- | v0.13 typed lowerer: per-lambda-scope local-variable type bindings.
--- When emitting a typed lambda body, `withLambdaTypes` pushes the
--- lambda's `pat → T.Type` bindings here so `inferExprType` /
--- `Can.VarLocal` lookups resolve the param's HM-inferred type.
--- Without this, `\x -> x + 1` inside a typed HOF (where `x : Int`
--- was inferred) would lower `x + 1` as `rt.Add(x, 1)` (any-routed
--- through reflect) instead of Go-native `x + 1` (typed).
-{-# NOINLINE globalLambdaTypes #-}
-globalLambdaTypes :: IORef (Map.Map String T.Type)
-globalLambdaTypes = unsafePerformIO $ newIORef Map.empty
+-- | v0.15.5 PR 2 — consolidated lowering-scope state IORef.
+--
+-- Replaces the v0.13/v0.15 pair of IORefs (the lambda-type +
+-- lambda-Go-string maps, both retired in this PR) with a single
+-- `LC.LowerCtx`-shaped snapshot.  The two old IORefs held
+-- disjoint maps that were
+-- ALWAYS pushed/popped together at the same scope seams; combining
+-- them into one ctx-shaped IORef:
+--
+--   1. Cuts the IORef boundary by 2 names (`IORefBoundarySpec`).
+--   2. Aligns the per-scope state with the `LowerCtx` record PR 1
+--      introduced — PRs 3-6 migrate the consumers to read from a
+--      threaded `ctx` parameter directly, at which point this
+--      IORef itself disappears.
+--   3. Lets `lookupLambdaType` / `lookupLambdaGoStr` / scope
+--      helpers route through `LC.*` lookup helpers, so the
+--      readers' shape matches the eventual threaded-ctx shape.
+--
+-- The IORef holds an `LC.LowerCtx` whose only meaningful fields in
+-- this PR are `_lc_lambdaTypes` and `_lc_lambdaGoStr` — every
+-- other field is reset to the empty / module-stub when this ref
+-- is initialised, since the per-scope state never reads them.
+{-# NOINLINE scopeStateRef #-}
+scopeStateRef :: IORef LC.LowerCtx
+scopeStateRef = unsafePerformIO $ newIORef
+    (LC.emptyLowerCtx (ModuleName.Canonical "Sky.Build.Compile.scopeStateRef"))
 
 
 -- | Snapshot + restore the lambda-types map around an action.  Used at
@@ -304,8 +320,8 @@ globalLambdaTypes = unsafePerformIO $ newIORef Map.empty
 -- scope.
 withLambdaTypes :: Map.Map String T.Type -> a -> a
 withLambdaTypes additions x = unsafePerformIO $ do
-    prev <- readIORef globalLambdaTypes
-    writeIORef globalLambdaTypes (Map.union additions prev)
+    prev <- readIORef scopeStateRef
+    writeIORef scopeStateRef (LC.withLambdaTypes additions prev)
     return x
 
 
@@ -322,8 +338,8 @@ withLambdaTypes additions x = unsafePerformIO $ do
 -- typed registration, function-param registration.
 withScopedLambdaTypes :: Map.Map String T.Type -> GoIr.GoExpr -> GoIr.GoExpr
 withScopedLambdaTypes additions x = unsafePerformIO $ do
-    prev <- readIORef globalLambdaTypes
-    writeIORef globalLambdaTypes (Map.union additions prev)
+    prev <- readIORef scopeStateRef
+    writeIORef scopeStateRef (LC.withLambdaTypes additions prev)
     -- Force the GoExpr to String form which fully evaluates the tree.
     -- After this, the bindings are no longer needed (the rendered
     -- String is final).  Restore the previous bindings so sibling
@@ -331,7 +347,7 @@ withScopedLambdaTypes additions x = unsafePerformIO $ do
     let rendered = GoBuilder.renderExpr x
         -- Force evaluation by demanding length (rendered is a String).
         forced = length rendered
-    forced `seq` writeIORef globalLambdaTypes prev
+    forced `seq` writeIORef scopeStateRef prev
     return (GoIr.GoRaw rendered)
 
 
@@ -349,30 +365,29 @@ withScopedLambdaTypes additions x = unsafePerformIO $ do
 -- pipeline.
 lookupLambdaType :: String -> Maybe T.Type
 lookupLambdaType k = unsafePerformIO $ do
-    m <- readIORef globalLambdaTypes
-    return (Map.lookup k m)
+    ctx <- readIORef scopeStateRef
+    return (LC.lookupLambdaType ctx k)
 
 
 -- | v0.13 Stage 1 (task #189) — Go-type-string registry for typed
 -- function parameters in scope. When a dep function emits as
 -- `func [T1, T2 any](fn func(T1) T2, list []T1) …`, the `fn` param
--- is registered here as `"func(T1) T2"`. Lets `goExprGoType` resolve
+-- is registered as a Go-type string. Lets `goExprGoType` resolve
 -- bare ident `fn` to its typed sig at recursive call sites without
 -- needing a round-trip through `T.Type` (which the standard Sky
--- TVar machinery erases to `any`). Sister of `globalLambdaTypes`.
-{-# NOINLINE globalLambdaGoStrings #-}
-globalLambdaGoStrings :: IORef (Map.Map String String)
-globalLambdaGoStrings = unsafePerformIO $ newIORef Map.empty
-
-
+-- TVar machinery erases to `any`).  In v0.15.5 PR 2 the underlying
+-- storage was consolidated into `scopeStateRef`'s `_lc_lambdaGoStr`
+-- map; the helpers below preserve the public API so existing
+-- consumers continue to work.
+--
 -- | Like `withScopedLambdaTypes` but stores Go-type strings directly.
 withScopedLambdaGoStrings :: Map.Map String String -> GoIr.GoExpr -> GoIr.GoExpr
 withScopedLambdaGoStrings additions x = unsafePerformIO $ do
-    prev <- readIORef globalLambdaGoStrings
-    writeIORef globalLambdaGoStrings (Map.union additions prev)
+    prev <- readIORef scopeStateRef
+    writeIORef scopeStateRef (LC.withLambdaGoStrs additions prev)
     let rendered = GoBuilder.renderExpr x
         forced = length rendered
-    forced `seq` writeIORef globalLambdaGoStrings prev
+    forced `seq` writeIORef scopeStateRef prev
     return (GoIr.GoRaw rendered)
 
 
@@ -383,15 +398,8 @@ withScopedLambdaGoStrings additions x = unsafePerformIO $ do
 -- Go-side TVar names like `T1`, `T2`).
 lookupLambdaGoStr :: String -> Maybe String
 lookupLambdaGoStr k = unsafePerformIO $ do
-    m <- readIORef globalLambdaGoStrings
-    return (Map.lookup k m)
-
-
--- | Membership-only sister of `lookupLambdaType`.
-memberLambdaType :: String -> Bool
-memberLambdaType k = unsafePerformIO $ do
-    m <- readIORef globalLambdaTypes
-    return (Map.member k m)
+    ctx <- readIORef scopeStateRef
+    return (LC.lookupLambdaGoStr ctx k)
 
 
 -- | Read the global codegen env (for use in pure codegen functions).
@@ -3225,9 +3233,9 @@ generateGoMulti canMod srcMod config solvedTypes depDecls depRecAliases depUnion
         -- pure `LowerCtx` value.  `imports` has already populated
         -- `globalCgEnv` + `globalUnionNames`; `globalRegionTypes`,
         -- `globalAllAliases`, `globalAllFieldIdx`, `globalAnnotMap`,
-        -- `globalLambdaTypes`, `globalLambdaGoStrings` were written
-        -- by `continueCompile` earlier.  Sequence the snapshot AFTER
-        -- `importsForced` so all writes are visible.
+        -- and the per-scope lambda-type / lambda-Go-string maps were
+        -- written by `continueCompile` earlier.  Sequence the
+        -- snapshot AFTER `importsForced` so all writes are visible.
         --
         -- The value is constructed but has NO CALLERS in this PR.
         -- PRs 2-6 of the v0.16 sequence (see
@@ -8620,7 +8628,7 @@ isGenericTypeParam _ = False
 --     local with known static type) — perfect match, Go infers.
 --   * `GoIdent name` for a user-introduced local (not `rt.*`)
 --     where `goExprGoType` is Nothing — could be a function param
---     whose type isn't tracked in `globalLambdaTypes` (the
+--     whose type isn't tracked in the lambda-types scope (the
 --     scoped-binding-vs-lazy-rendering race), but its Go-static
 --     type IS `Foo_R[T]` at the actual call site.  Go's
 --     inference handles it.  If the type turns out wrong, Go
@@ -9164,8 +9172,8 @@ binopToGo op left right =
     -- Go-native vs `rt.*` any-routed.  Soundness restriction: only
     -- optimise when BOTH operands are statically typed in Go — i.e.
     -- they're literals (Int, Float, String, Bool, Char) or simple
-    -- references to typed lambda params (registered in
-    -- `globalLambdaTypes`).  Runtime kernel calls (e.g.
+    -- references to typed lambda params (registered in the
+    -- lambda-types scope).  Runtime kernel calls (e.g.
     -- `rt.Crypto_sha256`) return `any` even when HM says the result
     -- is String, so a naive `"prefix " + rt.Crypto_sha256(data)`
     -- would fail Go's static type check.  Falls back to runtime
@@ -9482,7 +9490,7 @@ loweredDiscard body@(A.At _ inner) = case inner of
 -- non-`any` shape) — registering an `any`-rendering type would
 -- pollute the lookup with useless entries.
 --
--- Uses the unscoped `globalLambdaTypes` write because main's body
+-- Uses the unscoped scope-state write because main's body
 -- lowering is a `concatMap defToStmts` chain with no expression-
 -- level scoping seam to thread through.  The leak is bounded —
 -- `main` is the last function emitted for the entry module, and
@@ -9493,13 +9501,13 @@ registerMainLetBindingType types def = case def of
         | name /= "_"
         , Just t <- letBindingType types name body ->
             unsafePerformIO $ do
-                modifyIORef globalLambdaTypes (Map.insert name t)
+                modifyIORef scopeStateRef (LC.withLambdaTypes (Map.singleton name t))
                 return ()
     Can.TypedDef (A.At _ name) _ [] body _
         | name /= "_"
         , Just t <- letBindingType types name body ->
             unsafePerformIO $ do
-                modifyIORef globalLambdaTypes (Map.insert name t)
+                modifyIORef scopeStateRef (LC.withLambdaTypes (Map.singleton name t))
                 return ()
     _ -> ()
 
@@ -9822,7 +9830,7 @@ caseToGo mExpectedGo subject branches =
                 , isConcreteResultOrMaybe retTy
                 -> True
             -- v0.13 typed lowerer: a bare `GoIdent name` referring to a
-            -- typed local (registered in `globalLambdaTypes` with a
+            -- typed local (registered in the lambda-types scope with a
             -- concrete Maybe/Result type) is also statically typed —
             -- skip the ResultCoerce/MaybeCoerce reflect dance and let
             -- bindCtorArg emit direct `.OkValue` / `.JustValue` access.
@@ -11392,7 +11400,7 @@ goTypeStrToSkyType s = case s of
 -- to a Go value whose STATIC type matches its HM-inferred Sky type?
 -- True for primitive literals (Int, Float, String, Bool, Char, Unit)
 -- and for `Can.VarLocal` references whose name is registered in
--- `globalLambdaTypes` (typed lambda params).  False for everything
+-- the lambda-types scope (typed lambda params).  False for everything
 -- else — call results, field access, etc. — because runtime kernels
 -- (e.g. `rt.Crypto_sha256`) return Go `any` even when HM says the
 -- result is String, and forcing a Go-native binop on those would
