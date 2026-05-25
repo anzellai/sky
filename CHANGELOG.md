@@ -2,6 +2,97 @@
 
 Notable user-visible changes. Keep this file additive — never rewrite history.
 
+## v0.15.3 — typed let-binding RHS + sibling-helper call sites (2026-05-25)
+
+### Codegen
+
+- **Closed `interface conversion: Cfg_R[Msg] vs Cfg_R[any]` panic
+  in the REVERSE direction from v0.15.2.** Surface: a library
+  module (sky-editor's `Editor.view`) defines `view : Cfg msg ->
+  Element msg` whose body forwards `cfg` to sibling polymorphic
+  helpers (`editorBody cfg`, `toolbar cfg onCheck`, `diagnostics
+  cfg onDismissCheck`). v0.15.2 closed the *literal*-into-typed-
+  slot direction (`Cfg_R[any]{...}` → `Cfg_R[Msg]`); v0.15.3
+  closes the *typed-source*-into-erased-slot direction
+  (`Cfg_R[Msg]` arg → `Cfg_R[any]` callee param at the sibling
+  call site, plus `Cfg_R[T1]` arg → `Cfg_R[any]` sibling call
+  inside the generic body itself).
+  - **Symptom in production:** clicking the Source tab in the
+    skydeploy file editor panicked at every render with
+    `Cfg_R[State_Msg] vs Cfg_R[any]`.
+  - **Fix mechanism (4 surgical changes, all in `Sky.Build.Compile`):**
+    1. `letBindingType` — types the RHS of a zero-param let-
+       binding from the source region or HM solver, gated on
+       `canRouteTyped` (only record literals, lambdas, and
+       control flow get typed routing — Can.Call/Access pass
+       through untyped so FFI return wrappers like `rt.AsListT`
+       don't strip Result-Ok wrappers).
+    2. `Can.Access` typed-field-access path — now also fires
+       when `inferExprType` returns an ambig TVar but
+       `lookupLambdaType` carries the concrete `TAlias`
+       (function param via `withScopedLambdaTypes` from the
+       dep-emission registration). Includes a secondary check
+       via `lookupLambdaGoStr` to catch the lazy-rendering race
+       where the Go-string registry is active but the Sky-type
+       registry isn't yet populated.
+    3. `coerceArg` — short-circuits `any(arg).(Foo_R[any])`
+       nominal cast when source's static Go type is the SAME
+       parametric record alias base. Lets Go's call-site type
+       inference pin the callee's T from the source's
+       instantiation, which is the only correct behaviour
+       across Go's nominal generic typing.
+    4. Param registration in dep-emission (`goStringBindings` +
+       `inferredArgTys`) now includes parametric record alias
+       params, not just func-typed ones — so the call-arg short-
+       circuit has the info to fire.
+  - **Regression test:** `test-files/v0.15-stress/src/Widget/
+    Form.sky` is a synthetic library mirroring sky-editor's
+    `Editor.sky` shape (top-level polymorphic `view cfg`,
+    sibling helpers, mixed `_ -> msg` + bare `msg` fields,
+    Std.Ui body, let-extracted polymorphic fields). The L1-L7
+    assertion in `examples/00-standard-libs`-style `Main.sky`
+    fails on v0.15.2, passes on v0.15.3.
+
+### `defToStmts` zero-param let-binding
+
+- `Can.Def name [] body` now consults the same `letBindingType`
+  helper before lowering, so `main`'s top-level let-bindings of
+  record literals emit as `Setup_R[Msg]{...}` instead of the
+  type-erased `Setup_R[any]{...}` shape that propagated the
+  panic at downstream call sites.
+
+### Known gap (documented in regression test)
+
+- Passing a let-bound func-typed field-access (`let submit =
+  cfg.wfSubmit in submitProbe cfg submit`) to a SAME-MODULE
+  generic helper still emits `rt.Coerce[func(P) any](submit)`,
+  which fails Go's call-site inference against the callee's
+  `func(P) T1` slot. Workaround in user code: pass the field
+  directly (`submitProbe cfg cfg.wfSubmit`). Sky-editor's
+  actual code does NOT hit this — it passes such fields to
+  Std.Ui kernels (`Ui.onSubmit cfg.onSubmit`) where the kernel's
+  reflect-adapter handles the conversion. The synthetic
+  `submitProbe` case is commented out in the regression test
+  with a forward-looking note for the next iteration.
+
+### Verification gates (all green pre-merge)
+
+- Cabal test: 306 examples, 0 failures, 1 pending (matches v0.15.2).
+- 27/27 examples build clean from wiped slate.
+- `examples/00-standard-libs` stdlib smoke test: 120/120 assertions pass.
+- `sky check` clean on `examples/{12-skyvote, 13-skyshop,
+  19-skyforum, 26-ui-showcase, 00-standard-libs}` + synthetic
+  stress test + skydeploy control plane.
+- `scripts/verify-cli.sh`: 13 pass / 0 fail / 1 skip.
+- `scripts/verify-all-web.sh`: 10 pass / 0 fail + console-e2e green.
+- `scripts/lsp-test-nvim.sh`: 17/17 LSP requests pass (hover,
+  completion, goto-def across kernel calls, field access, let-
+  bindings, lambda params, case patterns).
+- Skydeploy control plane: generated Go for `Editor_view` /
+  `Editor_view__Msg_...` no longer emits the panic-causing
+  `any(cfg).(Editor_Cfg_R[any])` cast at sibling helper calls.
+
+
 ## v0.15.2 — Cfg_R[any] panic fix + version propagation (2026-05-24)
 
 ### Codegen

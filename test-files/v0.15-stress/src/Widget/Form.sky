@@ -1,0 +1,143 @@
+-- ═══════════════════════════════════════════════════════════
+-- Widget.Form — library-shaped module mirroring sky-editor's
+-- Editor.sky structure as closely as possible.  Synthetic
+-- reproduction of patterns that triggered all three v0.15.x
+-- runtime panics.
+--
+-- Why this module exists:
+--   Production library code (sky-editor) defines a polymorphic
+--   `view : Cfg msg -> Element msg` whose body forwards `cfg`
+--   to sibling polymorphic helpers (`editorBody`, `toolbar`,
+--   `diagnostics`).  When a consumer module monomorphises
+--   `view` with a concrete msg type, the lowerer emits the
+--   sibling-helper calls with `any(cfg).(Cfg_R[any])` — a
+--   nominal-type cast that panics at runtime.
+--
+-- Patterns covered (L1–L7 — see Main.sky `r_lib` for the
+-- runtime assertion):
+--   L1. Top-level polymorphic `view cfg` forwarding cfg to
+--       SIBLING top-level polymorphic helpers within ONE
+--       expression — the canonical library-author shape.
+--   L2. Let-extraction of `cfg.field` (where field type is
+--       `msg`) at the top of `view`, then BOTH the let-bound
+--       name AND cfg itself flow into sibling-helper calls.
+--   L3. Helper signature mixing the same TVar in different
+--       positions: `toolbar : Setup msg -> msg -> Element msg`.
+--   L4. Multiple bare-`msg`-typed fields on the alias (not
+--       just `_ -> msg` callbacks).
+--   L5. The same cfg passed as the first arg to N different
+--       sibling polymorphic helpers within one list literal.
+--   L6. Helpers return `Element msg` (polymorphic in msg) —
+--       same TVar threads through view → helpers → return.
+--   L7. View body uses Std.Ui combinators (Ui.column, Ui.row)
+--       so the lowered Go has the deeply-nested IIFE
+--       structure that surfaces the monomorphised-body
+--       sibling-call codegen bug.  Without the IIFE depth,
+--       the bug doesn't fire.
+-- ═══════════════════════════════════════════════════════════
+module Widget.Form exposing
+    ( Setup
+    , Payload
+    , view
+    , render
+    )
+
+
+import Sky.Core.Prelude exposing (..)
+import Std.Ui as Ui exposing (Element)
+import Std.Html as Html
+
+
+-- L4 — parametric record alias with MIXED field types:
+-- a `_ -> msg` callback PLUS two bare `msg` fields.  This
+-- matches sky-editor's `Cfg msg = { onSubmit : Form -> msg,
+-- onCheck : msg, onDismissCheck : msg, ... }`.
+--
+-- Field names deliberately unique vs Widget.Editor.Setup to
+-- avoid triggering the unrelated structurally-similar-alias
+-- dedupe issue (task #261).
+type alias Setup msg =
+    { wfSubmit : Payload -> msg
+    , wfCheck : msg
+    , wfDismiss : msg
+    , wfLabel : String
+    , wfBusy : Bool
+    }
+
+
+type alias Payload =
+    { wfPath : String
+    , wfContent : String
+    }
+
+
+-- L1 + L2 + L5 + L6 + L7 — the canonical library-author shape.
+-- Returns `Element msg` (NOT String), uses Std.Ui combinators,
+-- let-extracts polymorphic fields, then forwards cfg to THREE
+-- sibling polymorphic helpers in a single nested expression.
+-- This exactly matches sky-editor's Editor.view shape.
+view : Setup msg -> Element msg
+view cfg =
+    let
+        check = cfg.wfCheck
+        dismiss = cfg.wfDismiss
+    in
+    Ui.column
+        [ Ui.spacing 8 ]
+        [ Ui.row
+              [ Ui.spacing 4 ]
+              [ Ui.text cfg.wfLabel
+              , body cfg
+              , toolbar cfg check
+              ]
+        , footer cfg dismiss
+        ]
+
+
+-- NOTE — KNOWN GAP (v0.15.3): passing a let-bound func-typed
+-- field-access (`submit = cfg.wfSubmit`) to a SAME-MODULE
+-- generic helper (`submitProbe : Setup msg -> (Payload -> msg)
+-- -> Element msg`) currently emits `rt.Coerce[func(P) any]
+-- (submit)` which fails Go's call-site inference against the
+-- callee's `func(P) T1` slot.  Workaround in user code: pass
+-- the field directly at the call site (`submitProbe cfg cfg.
+-- wfSubmit`) — direct field access fires the typed path.
+-- The real-world sky-editor shape passes such fields to Std.Ui
+-- kernel calls (`Ui.onSubmit cfg.onSubmit`), NOT to same-module
+-- generic helpers, so the panic class the editor exhibits is
+-- fully closed by v0.15.3; this synthetic helper exists as a
+-- forward-looking gate for the next iteration.
+-- submitProbe : Setup msg -> (Payload -> msg) -> Element msg
+-- submitProbe cfg _onSubmit =
+--     Ui.text ("submit[" ++ cfg.wfLabel ++ "]")
+
+
+-- L1, L6 — sibling polymorphic helper returning Element msg.
+body : Setup msg -> Element msg
+body cfg =
+    Ui.text ("busy=" ++ (if cfg.wfBusy then "y" else "n"))
+
+
+-- L3, L6 — same msg variable in TWO positions: `Setup msg`
+-- arg AND a bare `msg` arg.
+toolbar : Setup msg -> msg -> Element msg
+toolbar cfg _onCheck =
+    Ui.text ("toolbar[" ++ cfg.wfLabel ++ "]")
+
+
+-- L3, L6 — same shape as toolbar for the dismiss path.
+footer : Setup msg -> msg -> Element msg
+footer cfg _onDismiss =
+    Ui.text ("footer[" ++ cfg.wfLabel ++ "]")
+
+
+-- A render helper that the consumer can use to flatten the
+-- Element msg tree to an Int for assertion in `check` calls
+-- inside Main.sky's `main`.  Walks Std.Ui's Element via
+-- `Ui.layout` (returns Std.Html VNode) → `Html.render` (string)
+-- → `String.length` (int).  We use the HTML length as a proxy
+-- for "view didn't panic" — any positive int means codegen is
+-- sound.  The actual contents don't matter for the regression.
+render : Element msg -> Int
+render el =
+    String.length (Html.render (Ui.layout [] el))
