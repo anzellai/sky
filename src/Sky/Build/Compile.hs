@@ -11112,7 +11112,7 @@ substTypeVars types = go Set.empty
 
 
 inferExprType :: Solve.SolvedTypes -> Can.Expr -> Maybe T.Type
-inferExprType types (A.At _ e) = case e of
+inferExprType types (A.At r e) = case e of
     Can.Int _    -> Just ConstrainExpr.intType
     Can.Float _  -> Just ConstrainExpr.floatType
     Can.Str _    -> Just ConstrainExpr.stringType
@@ -11261,9 +11261,35 @@ inferExprType types (A.At _ e) = case e of
         case (inferExprType types a, inferExprType types b, mapM (inferExprType types) cs) of
             (Just ta, Just tb, Just tcs) -> Just (T.TTuple ta tb tcs)
             _ -> Nothing
-    -- Lambda: requires walking the body. v0.12.x scope stops here —
-    -- lambda type inference is Gap 4's responsibility.
-    Can.Lambda _ _ -> Nothing
+    -- Lambda: walk the body to build a TLambda.  Preference order:
+    --   (1) `lookupRegionType r` on the lambda's whole-expression
+    --       region — the solver writes the full TLambda there when
+    --       it constrained the lambda.  Cheapest + most accurate.
+    --   (2) Recurse into the body with each PVar param registered
+    --       under a fresh placeholder TVar in `types`, and lift the
+    --       body's inferred type into a TLambda chain.  The
+    --       placeholder TVars guarantee `solvedTypeToGo` collapses
+    --       to `any` if a caller tries to render the lambda's
+    --       Go-side shape from this result — sound default.
+    --
+    -- Audit item #2 closure (v0.15.5 PR 3): pre-PR this returned
+    -- Nothing universally, leaving `let cb = \x -> …` un-typed and
+    -- forcing typed-let routing to fall back to `func() any`.
+    Can.Lambda pats body ->
+        case lookupRegionType r of
+            Just t  -> Just t
+            Nothing ->
+                let paramNames = [n | A.At _ (Can.PVar n) <- pats]
+                    paramTVars =
+                        [ T.TVar ("_lambda_arg_" ++ show i)
+                        | i <- [0 .. length pats - 1]
+                        ]
+                    types' = Map.union
+                        (Map.fromList (zip paramNames paramTVars))
+                        types
+                in case inferExprType types' body of
+                    Just bodyTy -> Just (foldr T.TLambda bodyTy paramTVars)
+                    Nothing     -> Nothing
     -- Negate inherits its operand's type.
     Can.Negate inner -> inferExprType types inner
     -- Binop: most operators have a statically-known result type.
@@ -11294,8 +11320,29 @@ inferExprType types (A.At _ e) = case e of
             _ -> case inferExprType types left of
                 Just elemTy -> Just (mkListType elemTy)
                 Nothing     -> Nothing
-        -- Pipe / composition (`|>` `<|` `>>` `<<`) need application
-        -- inference — out of scope, fall back to Nothing.
+        -- Pipe (`|>` `<|`): function-application binops — the result
+        -- is the function's return type.  `a |> f` ≡ `f a` so the
+        -- function side is `right`; `f <| a` ≡ `f a` so the function
+        -- side is `left`.  Peel one arrow off the function's type
+        -- via `splitFuncType 1`.
+        --
+        -- Audit item #2 closure — pre-PR these fell into the
+        -- catch-all `_ -> Nothing`.
+        "|>" -> case inferExprType types right of
+            Just fnTy -> Just (snd (splitFuncType 1 fnTy))
+            Nothing   -> Nothing
+        "<|" -> case inferExprType types left of
+            Just fnTy -> Just (snd (splitFuncType 1 fnTy))
+            Nothing   -> Nothing
+        -- Composition (`>>` `<<`): the result is a one-arg function
+        -- (`a -> c`) whose input matches the first-applied function's
+        -- input and whose output matches the second-applied
+        -- function's output.  `f >> g` applies `f` then `g`; `f << g`
+        -- applies `g` then `f`.  Need at least one TLambda on the
+        -- "first" side to know its input.
+        ">>" -> composeResult left right
+        "<<" -> composeResult right left
+        -- Unknown operator — fall back.
         _ -> Nothing
     -- Let: the let-expression's type IS the body's type.  Thread
     -- the binding's inferred type into `types` first so the body
@@ -11313,11 +11360,60 @@ inferExprType types (A.At _ e) = case e of
                         Map.insert n t types
                 _ -> types
         in inferExprType types' body
-    -- Update / others — out of v0.13 scope; safe fallback returns
-    -- Nothing (caller falls back to any-routing).
+    -- LetRec: same shape as `Can.Let` but with [Def] — register
+    -- every simple zero-param binding's inferred type into `types`
+    -- before inferring the body.  Forward-references across
+    -- recursive defs resolve by a single linear pass; that misses
+    -- mutual-recursion type inference but is sound (any unresolved
+    -- name falls back to `Map.lookup` returning Nothing).
+    --
+    -- Audit item #2 closure — pre-PR fell into the catch-all.
+    Can.LetRec defs body ->
+        let extend acc d = case d of
+                Can.Def (A.At _ n) [] valExpr
+                    | n /= "_"
+                    , Just t <- inferExprType acc valExpr ->
+                        Map.insert n t acc
+                Can.TypedDef (A.At _ n) _ [] valExpr _
+                    | Just t <- inferExprType acc valExpr ->
+                        Map.insert n t acc
+                _ -> acc
+            types' = foldl extend types defs
+        in inferExprType types' body
+    -- Update: a record-update expression inherits the original
+    -- record's type — `{ rec | f = v }` has the SAME type as `rec`
+    -- (record updates preserve nominal alias identity).  This
+    -- closes the let-binding case where `let r' = { r | f = v }`
+    -- previously lowered as `any` because Update fell through the
+    -- catch-all.
+    --
+    -- Audit item #2 closure.
+    Can.Update _ origExpr _changes ->
+        inferExprType types origExpr
+    -- Accessor (standalone `.fieldName`): a polymorphic one-arg
+    -- function `{ rec | fieldName : a } -> a`.  Without a concrete
+    -- record type on hand we return a placeholder TVar so callers
+    -- that gate on `solvedTypeToGo == "any"` cleanly route through
+    -- the any-typed path (matching today's Nothing behaviour) but
+    -- a context-aware caller can still see the result is
+    -- *something*.
+    --
+    -- Audit item #2 closure.
+    Can.Accessor _fieldName ->
+        Just (T.TVar "_accessor_placeholder")
+    -- Anything else (chr/other AST shapes already shadowed by the
+    -- explicit arms above) — safe fallback.
     _ -> Nothing
   where
     mkListType elemTy = T.TType ModuleName.list "List" [elemTy]
+    -- | `>>` / `<<` composition helper.  `first` is the side that
+    -- runs first under `apply`; `second` runs second.  Result is
+    -- a function from `first`'s input to `second`'s output.
+    composeResult first second =
+        case (inferExprType types first, inferExprType types second) of
+            (Just (T.TLambda fIn _), Just sTy) ->
+                Just (T.TLambda fIn (snd (splitFuncType 1 sTy)))
+            _ -> Nothing
 
 
 -- | Compute the Go-type string for an arbitrary Can.Expr by combining
