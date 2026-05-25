@@ -65,7 +65,18 @@ type SolvedTypes = Map.Map String T.Type
 -- actual type, keyed by the constraint's source region.  Consumed
 -- by the typed-directed lowerer in v0.15 Stage B+ to look up the
 -- concrete HM type of any sub-expression by its source position.
-type RegionTypes = Map.Map A.Region T.Type
+--
+-- v0.15.6 region-key qualifier — outer key is `FilePath`, inner
+-- key is `A.Region`.  `A.Region` carries only `(line, col)`
+-- positions with NO file identity; before this qualifier, the
+-- per-module RegionTypes merged via `Map.union` in
+-- `continueCompile` silently overwrote across modules whenever
+-- two modules had a region at the same `(line, col)` coordinates.
+-- The nested-by-FilePath shape prevents that collision class.
+-- A consumer that doesn't know the path (`lookupRegionType` with
+-- "" qualifier) falls back to a SAFE-MULTI lookup: hit only if
+-- exactly one path has the region; otherwise Nothing.
+type RegionTypes = Map.Map FilePath (Map.Map A.Region T.Type)
 
 
 -- | Solver state
@@ -320,10 +331,21 @@ recordRegionVar state region var =
 -- | v0.15 Stage A — convert the per-region UF-variable map to typed
 -- form.  Walked at solve-end so every variable's transitive structure
 -- is fully unified.
-freezeRegionTypes :: IORef (Map.Map A.Region T.Variable) -> IO RegionTypes
-freezeRegionTypes ref = do
+--
+-- v0.15.6 — caller passes a `FilePath` qualifier; the returned map
+-- has a single outer key (the path) wrapping the inner per-region
+-- types.  The solver itself doesn't know which source file these
+-- regions came from; the caller (per-module solve entry in
+-- `continueCompile`) provides it.  Subsequent `Map.unionWith
+-- Map.union` of multiple modules' RegionTypes is collision-free
+-- as long as each module's outer key is unique (i.e. the source
+-- paths are distinct, which holds in practice — the compile
+-- enumerates each .sky file at most once).
+freezeRegionTypes :: FilePath -> IORef (Map.Map A.Region T.Variable) -> IO RegionTypes
+freezeRegionTypes path ref = do
     raw <- readIORef ref
-    Map.traverseWithKey (\_ v -> variableToType v) raw
+    inner <- Map.traverseWithKey (\_ v -> variableToType v) raw
+    return (Map.singleton path inner)
 
 
 budgetExceededMsg :: Int -> String
@@ -443,7 +465,9 @@ solveWithLocals constraint = do
 -- the `_Any` fallback at emission time.
 solveWithInstances :: T.Constraint -> IO (SolveResult, [CallInstance], [CallSiteInstance])
 solveWithInstances constraint = do
-    (result, ci, csi, _) <- solveWithInstancesAndRegions constraint
+    -- Path qualifier irrelevant for callers that discard the regions
+    -- component.  Pass "" so the cross-module lookup doesn't fire.
+    (result, ci, csi, _) <- solveWithInstancesAndRegions "" constraint
     return (result, ci, csi)
 
 
@@ -454,10 +478,17 @@ solveWithInstances constraint = do
 -- The 4-tuple shape preserves backward compatibility with
 -- `solveWithInstances` (which now delegates here and discards the
 -- regions component).
+--
+-- v0.15.6 — first `FilePath` argument qualifies every region key
+-- with its source path.  Callers (`continueCompile` per-module
+-- solve sites) pass the dep's / entry's `_mi_path` so the
+-- subsequent `Map.union` of multiple modules' RegionTypes never
+-- silently overwrites across files.
 solveWithInstancesAndRegions
-    :: T.Constraint
+    :: FilePath
+    -> T.Constraint
     -> IO (SolveResult, [CallInstance], [CallSiteInstance], RegionTypes)
-solveWithInstancesAndRegions constraint = do
+solveWithInstancesAndRegions path constraint = do
     cache <- newIORef Map.empty
     locals <- newIORef Map.empty
     steps <- newIORef 0
@@ -482,7 +513,7 @@ solveWithInstancesAndRegions constraint = do
                 merged = Map.union localFirst envTypes
             records <- readIORef (_callInstances finalState)
             (ci, csi) <- extractInstancesAndSites records
-            regionTys <- freezeRegionTypes (_regionVars finalState)
+            regionTys <- freezeRegionTypes path (_regionVars finalState)
             return (SolveOk merged, ci, csi, regionTys)
         Just err -> do
             -- v0.13 Phase A4: even on error, return whatever
@@ -495,7 +526,7 @@ solveWithInstancesAndRegions constraint = do
             -- — breaking the drop-generics pass.
             records <- readIORef (_callInstances finalState)
             (ci, csi) <- extractInstancesAndSites records
-            regionTys <- freezeRegionTypes (_regionVars finalState)
+            regionTys <- freezeRegionTypes path (_regionVars finalState)
             return (SolveError err, ci, csi, regionTys)
 
 

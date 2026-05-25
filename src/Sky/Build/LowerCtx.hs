@@ -172,8 +172,30 @@ memberLambdaType ctx k = Map.member k (_lc_lambdaTypes ctx)
 
 -- | Look up the HM type at a given source region.  Pure
 -- substitute for `Compile.lookupRegionType`.
+--
+-- v0.15.6 — `_lc_regionTypes` is `Map FilePath (Map A.Region T.Type)`
+-- (the qualifier prevents cross-module key collisions).  This
+-- lookup doesn't have a path in hand — the call site (`letBindingType`,
+-- `inferExprType` lambda arm) doesn't track which dep is being
+-- lowered.  Strategy: search every per-path inner map; return
+-- Just t ONLY when EXACTLY ONE path has the region with a
+-- resolved type.  This makes cross-module collisions surface as
+-- `Nothing` (the safe fallback) rather than silently returning
+-- a foreign-module type.  Same-position regions in different
+-- modules — the bug class the qualifier closes — return Nothing,
+-- and the caller falls back to `viaInferred` (sound).
+--
+-- Threading the path explicitly to every consumer is the cleaner
+-- long-term fix; tracked as part of the v0.15.6 cascade Phase 2.
 lookupRegionType :: LowerCtx -> A.Region -> Maybe T.Type
-lookupRegionType ctx region = Map.lookup region (_lc_regionTypes ctx)
+lookupRegionType ctx region =
+    let hits = [ t
+               | (_, inner) <- Map.toList (_lc_regionTypes ctx)
+               , Just t <- [Map.lookup region inner]
+               ]
+    in case hits of
+        [t] -> Just t
+        _   -> Nothing
 
 
 -- | Look up an alias by name.  No module-prefix fallback yet — that

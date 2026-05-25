@@ -1057,8 +1057,24 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                         -- map below, after the fixpoint converges,
                         -- so the lowerer can query dep-body regions
                         -- too.  Pass-through `regionTys` per dep.
+                        --
+                        -- v0.15.6 — qualify the regions map by the
+                        -- dep's source path.  Without this, region
+                        -- keys with overlapping `(line, col)`
+                        -- coordinates across modules collide in the
+                        -- post-fixpoint `Map.unions`, mis-typing
+                        -- let-binding RHSs to a foreign type
+                        -- (verified regression: Sky_Core_Jwt.
+                        -- urlToStandard's `rem` mis-typed as
+                        -- Sky_Test_TestResult under the canRouteTyped
+                        -- drop attempt).
+                        let depPath = case [p | mi <- moduleOrder
+                                              , Graph._mi_name mi == modName
+                                              , let p = Graph._mi_path mi ] of
+                                        (p:_) -> p
+                                        _     -> ""
                         (r, _, csi, regionTys)
-                            <- Solve.solveWithInstancesAndRegions cs
+                            <- Solve.solveWithInstancesAndRegions depPath cs
                         case r of
                             Solve.SolveOk t ->
                                 return (modName, Right (t, csi, regionTys, Nothing))
@@ -1091,6 +1107,12 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                 -- `scopeStateRef`'s `_lc_regionTypes` field there
                 -- (v0.15.5 PR 3 — consolidated with the rest of the
                 -- lowering-scope state).
+                -- v0.15.6 — outer-key-keyed by `FilePath`, so a
+                -- conventional `Map.unions` works here (each dep's
+                -- map carries a single outer entry under the dep's
+                -- own path).  Cross-module collisions structurally
+                -- impossible: a dep's entry can only land under
+                -- its own outer key.
                 depRegionTys = Map.unions
                     [ rt | (_, Right (_, _, rt, _)) <- finalResults ]
             unless (null depErrors) $ do
@@ -1150,12 +1172,19 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
             -- types by region.  Merge entry-module + every dep's
             -- region map into the global lookup.  Consumed by
             -- lookupRegionType in Stage C+ arms.
+            -- v0.15.6 — qualify entry regions by `entryPath` so the
+            -- subsequent `Map.union entryRegionTys depRegionTys`
+            -- doesn't collide entry-module region keys with dep
+            -- region keys that share `(line, col)` coordinates.
             (solveResult, callInstances, callSiteInstances, entryRegionTys)
-                <- Solve.solveWithInstancesAndRegions constraints
+                <- Solve.solveWithInstancesAndRegions entryPath constraints
             -- v0.15.5 PR 3 — write the merged region map into
             -- `scopeStateRef`'s `_lc_regionTypes` slot instead of
             -- the retired per-region-types IORef.  Reads via
             -- `lookupRegionType` consult the same field.
+            -- v0.15.6 — `Map.union` on the outer FilePath map.
+            -- Entry's path is `entryPath`; deps land under their
+            -- own paths.  All distinct → no collisions.
             let mergedRegionTys = Map.union entryRegionTys depRegionTys
             modifyIORef scopeStateRef $ \ctx ->
                 ctx { LC._lc_regionTypes = mergedRegionTys }
@@ -9618,6 +9647,36 @@ letBindingType ctx solvedTypes _name body@(A.At r _) =
     --   which stripped the Result-Ok wrap incorrectly and yielded
     --   an empty slice; downstream `List.map` returned [] and
     --   `Money.allocate` silently produced no parts.
+    --
+    -- v0.15.3 — Two-axis gate.
+    --
+    -- (A) Body-shape gate: ONLY route typed for body shapes where
+    -- the typed routing materially changes the emission:
+    --   * Can.Record  — `Setup_R[Msg]{...}` vs `Setup_R[any]{...}`
+    --     (the primary motivation; closes the editor panic class).
+    --   * Can.Lambda  — typed func signature emission.
+    --   * Can.If / Can.Case / Can.Let — typed IIFE return so a
+    --     nested control-flow expression keeps its result type
+    --     through the let-binding boundary.
+    --
+    -- v0.15.6 — keeping the whitelist for two distinct reasons:
+    --   1. **Region-key collisions** addressed structurally via
+    --      the FilePath-qualified `Solve.RegionTypes` v0.15.6
+    --      introduced.  `LC.lookupRegionType` SAFE-MULTI lookup
+    --      now returns Nothing on cross-module collisions instead
+    --      of silently returning a foreign type.  This part of
+    --      the whitelist's role is closed.
+    --   2. **`rt.AsListT[T]` doesn't unwrap Result-Ok FFI returns**.
+    --      Concrete regression: `Std_Money.allocate`'s
+    --      `decimals = Ffi.callPure "Money_allocate" [...]` body is
+    --      a `Can.Call`; lifting it under typed routing emits
+    --      `rt.AsListT[Decimal](rt.Ffi_callPure(...))` which
+    --      strips the Result-Ok wrap and yields [] downstream.
+    --      Verified 2026-05-25 — 2 moneySuite tests fail under
+    --      whitelist-drop.  Until `rt.AsListT` learns to unwrap
+    --      Result-Ok (or the lowerer routes FFI/kernel calls
+    --      through a different typed-coerce path), the whitelist
+    --      must keep `Can.Call` OUT.
     --
     -- (B) Type gate: the rendered Go type must be emittable AND
     -- not contain the `any` token anywhere (a `func(P) any` slot
