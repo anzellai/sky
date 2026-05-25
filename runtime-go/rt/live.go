@@ -3967,11 +3967,38 @@ function __skyExtractArgs(ev) {
       if (t.type === "number" || t.type === "range") return [t.valueAsNumber || 0];
       return [t.value == null ? "" : String(t.value)];
     case "submit":
+      // Form-data assembly. Two non-obvious rules:
+      //
+      // 1. SUBMITTER FILTER. <button type="submit"> and
+      //    <input type="submit"> entries appear in form.elements.
+      //    Spec: only the SUBMITTER (the button that actually
+      //    triggered the submit) contributes its name/value to
+      //    the payload — peer submit buttons MUST NOT. Editors
+      //    routinely use multiple submit buttons sharing one
+      //    name="action" (Save / Format / Check); the naive
+      //    "iterate everything" loop lets later buttons clobber
+      //    earlier ones, so the LAST button name=action wins
+      //    regardless of which the user clicked. Honour
+      //    ev.submitter (modern browsers; falls back to
+      //    document.activeElement for old Safari).
+      //
+      // 2. Disabled fields are excluded by the spec — skip them
+      //    too so a disabled-but-submittable field doesn't leak
+      //    a stale value.
       var data = {};
+      var submitter = ev.submitter ||
+          (document.activeElement && t && t.contains(document.activeElement)
+              ? document.activeElement : null);
       if (t && t.elements) {
         for (var i = 0; i < t.elements.length; i++) {
           var el = t.elements[i];
-          if (!el.name) continue;
+          if (!el.name || el.disabled) continue;
+          if (el.type === "submit" || el.type === "button" ||
+              el.type === "image" || el.type === "reset") {
+            // Only the submitter button contributes its name/value.
+            if (el === submitter) data[el.name] = el.value;
+            continue;
+          }
           if (el.type === "checkbox" || el.type === "radio") {
             if (el.checked) data[el.name] = el.value;
           } else if (el.type === "file") {
