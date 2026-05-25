@@ -46,6 +46,8 @@ import qualified Sky.Build.RecordCtorEmptyListSpec
 import qualified Sky.Build.HofTypedMsgSpec
 import qualified Sky.Build.CoerceArgParametricSpec
 import qualified Sky.Build.IsPlainIdentSpec
+import qualified Sky.Build.CoerceArgListMapInterplaySpec
+import qualified Sky.Build.SkyshopCompilesSpec
 import qualified Sky.Build.AnonLambdaSpec
 import qualified Sky.Build.AnonRecordSpec
 import qualified Sky.Build.Issue52Spec
@@ -277,6 +279,22 @@ main = hspec $ do
     -- chains is the spec's load-bearing case; companion typed
     -- gate is exercised by CoerceArgParametricSpec at runtime.
     describe "Sky.Build.IsPlainIdent"       Sky.Build.IsPlainIdentSpec.spec
+    -- v0.15.x hardening / Cycle 1 P2-followup — LOCK spec for the
+    -- three-way σ/erasure/coerceArg consensus.  See the spec
+    -- module header + `docs/v0.15.x-hardening/arbitrations/HEAD-
+    -- CYCLE-01-P2.md` for the architectural rationale.  Without
+    -- this lock the canonical `List.map fn (List.take 6 xs)`
+    -- pattern regresses under any future Compile.hs edit that
+    -- threads positive `goExprGoType` information into the
+    -- `coerceArg` skip-check vote.
+    describe "Sky.Build.CoerceArgListMapInterplay"
+                                            Sky.Build.CoerceArgListMapInterplaySpec.spec
+    -- v0.15.x hardening / Cycle 1 P2-followup STANDING lock —
+    -- examples/13-skyshop is the Stripe-SDK-scale benchmark
+    -- (76k FFI symbols) and is the canary that catches
+    -- "looks fine in 26 small examples, breaks at scale"
+    -- regressions in compiler edits.
+    describe "Sky.Build.SkyshopCompiles"    Sky.Build.SkyshopCompilesSpec.spec
     -- v0.13 D-Lambda-Lowerer regression: Sky lambdas at user-
     -- defined HOF slots lower to typed `func(X) Y` shapes via
     -- curryLambdaPatTyped (was only kernel HOFs pre-v0.13).

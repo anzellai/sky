@@ -266,3 +266,30 @@ Sky v0.15.3 is **sound for the tested subset**. But the architecture — mixing 
 4. **Test-pinning:** The regression test suite is good, but it only pins the bugs we've hit.
 
 The principled solution documented in the RFC is **full type-directed lowering** (replace 124 `exprToGo` (blind) callsites with `lower :: LowerCtx -> ExpectedType -> Can.Expr -> GoExpr`). Until that's done, **fragility will accumulate** with each new feature.
+
+---
+
+## Closed in v0.15.x
+
+### #19 (NEW, closed in v0.15.8): three-way σ consensus invariant — coordination caveat
+
+The σ-recovery / TVar-erasure / coerceArg-skip-check three-way
+consensus is FRAGILE — any consumer of `goExprGoType`'s positive
+type info must be audited against the other two voters.  Pre-P2,
+all three voters voted "any" uniformly (consistent if lossy).
+The original P2 attempt added a structural fallback that broke
+the consensus in ONE specific branch (coerceArg's skip-check),
+causing `examples/13-skyshop` to regress with
+`type []string ... does not match inferred type []any for []T1`.
+
+The P2-followup landed in v0.15.8 with the gated skip-check
+(IR-shape classifier alone), restoring the consensus.  Lock
+tests:
+
+- `test/Sky/Build/CoerceArgListMapInterplaySpec.hs` — drives
+  the canonical `List.map fn (List.take 6 xs)` shape.
+- `test/Sky/Build/SkyshopCompilesSpec.hs` — standing
+  examples/13-skyshop clean-build canary.
+
+Recorded in
+`docs/v0.15.x-hardening/arbitrations/HEAD-CYCLE-01-P2.md`.
