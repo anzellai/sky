@@ -9659,24 +9659,36 @@ letBindingType ctx solvedTypes _name body@(A.At r _) =
     --     nested control-flow expression keeps its result type
     --     through the let-binding boundary.
     --
-    -- v0.15.6 — keeping the whitelist for two distinct reasons:
+    -- v0.15.6 — keeping the whitelist; investigated dropping it
+    -- (or shrinking to a Can.Call-only blacklist) under C1's
+    -- region-key qualifier but cabal test surfaced 150 failures
+    -- — body shapes beyond the documented `Can.Call` ↔ FFI-unwrap
+    -- issue also regress under typed routing (suspected:
+    -- `Can.VarTopLevel` for zero-arg helpers, `Can.Access` on
+    -- generic-instantiated records, `Can.Update` on Result-typed
+    -- records, …).  Each shape needs its own audit before the
+    -- whitelist can safely widen.
+    --
     --   1. **Region-key collisions** addressed structurally via
-    --      the FilePath-qualified `Solve.RegionTypes` v0.15.6
-    --      introduced.  `LC.lookupRegionType` SAFE-MULTI lookup
-    --      now returns Nothing on cross-module collisions instead
-    --      of silently returning a foreign type.  This part of
-    --      the whitelist's role is closed.
+    --      the FilePath-qualified `Solve.RegionTypes` introduced
+    --      in C1.  `LC.lookupRegionType` SAFE-MULTI lookup now
+    --      returns Nothing on cross-module collisions instead of
+    --      silently returning a foreign type.  Closes audit #8.
     --   2. **`rt.AsListT[T]` doesn't unwrap Result-Ok FFI returns**.
     --      Concrete regression: `Std_Money.allocate`'s
     --      `decimals = Ffi.callPure "Money_allocate" [...]` body is
     --      a `Can.Call`; lifting it under typed routing emits
     --      `rt.AsListT[Decimal](rt.Ffi_callPure(...))` which
     --      strips the Result-Ok wrap and yields [] downstream.
-    --      Verified 2026-05-25 — 2 moneySuite tests fail under
-    --      whitelist-drop.  Until `rt.AsListT` learns to unwrap
-    --      Result-Ok (or the lowerer routes FFI/kernel calls
-    --      through a different typed-coerce path), the whitelist
-    --      must keep `Can.Call` OUT.
+    --      Until `rt.AsListT` learns to unwrap Result-Ok (or the
+    --      lowerer routes FFI/kernel calls through a different
+    --      typed-coerce path), the whitelist must keep `Can.Call`
+    --      OUT.
+    --   3. **Other shapes (Can.VarLocal, Can.Access, Can.Update,
+    --      …)** — empirically also regress under typed routing.
+    --      Audit residual; needs per-shape investigation before
+    --      adding to the whitelist.  Tracked under cascade Phase 4
+    --      follow-up.
     --
     -- (B) Type gate: the rendered Go type must be emittable AND
     -- not contain the `any` token anywhere (a `func(P) any` slot

@@ -27,13 +27,13 @@ Decisions: **fix** (root-cause work this cycle), **defer** (track but don't bloc
 | 5 | Wildcard-`any` gate easy to mis-edit | Critical | **accept + lock** | Add explicit test (Invariant I6). |
 | 6 | `lookupLambdaGoStr` stale entries | Critical | **fix** | Subsumed by §2 (LowerCtx is scoped per-module). |
 | 7 | `coerceArg` 10+ branches | High | **fix** | Collapse to ≤4 cases. §3. |
-| 8 | `inferExprType` ↔ `globalRegionTypes` divergence | High | **DEFERRED to v0.15.6** | Iter 3 attempted removal of `canRouteTyped` whitelist; exposed cross-binding region-map pollution (regression in `Sky_Core_Jwt_urlToStandard`). Needs single-snapshot-per-compile from cascade. |
+| 8 | `inferExprType` ↔ `globalRegionTypes` divergence | High | **SHIPPED in v0.15.6 C1** (region-key qualifier) | `Solve.RegionTypes` now `Map FilePath (Map A.Region T.Type)`; cross-module key collisions structurally impossible. |
 | 9 | `withLambdaTypes` permanent global mutation | High | **fix** | Goes away with LowerCtx. |
 | 10 | `splitCurriedFuncStr` bracket-depth bug | High | **fix** | One-line fix inside §3. |
 | 11 | `globalRegionTypes` not populated for all regions | Medium | **SHIPPED in v0.15.5** (PR #73 — 4d71a55) | `globalRegionTypes` IORef retired; the region map lives in `scopeStateRef`'s `_lc_regionTypes` field. |
 | 12 | Monomorphisation type-alias equivalence | Medium | **defer** | Track in v0.17. |
 | 13 | `rt.Coerce` Kind-based reflect fallback | Medium | **defer** | Already documented safety net. |
-| 14 | `defToStmts` zero-param routing on `canRouteTyped` | Medium | **DEFERRED to v0.15.6** | Same blocker as #8 — needs single-snapshot-per-compile + region-key disambiguation before the whitelist can safely shrink. |
+| 14 | `defToStmts` zero-param routing on `canRouteTyped` | Medium | **DEFERRED — needs per-shape typed-routing audit** | Region-key blocker closed by C1; whitelist-drop attempt under C1 surfaced 150 cabal failures from `Can.Call` + other shapes (`Can.VarTopLevel`/`Can.Access`/`Can.Update`) — structural typed-coerce issue, not region-pollution.  Per-shape audit before whitelist widens. |
 | 15 | `globalLambdaGoStrings` not cleaned between phases | Low | **SHIPPED in v0.15.5** (PR #73 — 7fa51bd) | Retired as an IORef; replaced by `scopeStateRef`'s `_lc_lambdaGoStr` field, which is cleared at codegen entry. |
 | 16 | `eraseTypeParams` over-zealous | Low | **fix-with-§3** | Same fix as #4. |
 | 17 | `parametricAliasBase` string heuristics | Low | **fix-with-§3** | Replaced by structural classifier. |
@@ -46,11 +46,48 @@ the v0.15.6 cascade (below) finishes them by deleting the IORef.
 Items #8, #14 deferred to v0.15.6 (region-pollution bug found
 during iter 3 attempt; remediation needs the cascade first).
 
+**v0.15.6 C1 status (2026-05-25)**: item #8 SHIPPED via region-key
+qualifier (`Solve.RegionTypes :: Map FilePath (Map A.Region T.Type)`).
+Item #14 still pending — Phase-4 whitelist-drop attempt under C1
+exposed 150 cabal failures from typed-routing of body shapes
+beyond the documented `Can.Call` ↔ FFI-unwrap issue.  Items #1,
+#6, #9 deferred (full `ctx`-threading cascade) — without #14
+closure, the cascade delivers reduced auditability without
+semantic improvement; revisit alongside the per-shape audit.
+
 ---
 
 ## Next: v0.15.6 — close audit #1 + #8 + #14 (the big cascade)
 
 Estimated 2-3 days.  Single PR.  Branch: `refactor/v0.15.6-lower-ctx-cascade`.
+
+### Status (2026-05-25)
+
+**C1 SHIPPED** — region-key qualifier (closes audit #8 structurally).
+`Solve.RegionTypes` is now `Map FilePath (Map A.Region T.Type)`;
+`continueCompile` qualifies each per-module solver result with its
+`_mi_path` BEFORE merging; `LC.lookupRegionType` does a SAFE-MULTI
+lookup that returns `Nothing` on cross-module hash-collisions
+(falls back to `viaInferred`, sound).  Verified: cabal test green,
+skyshop main.go 868821 bytes (byte-identical with v0.15.5).
+
+**Phase 4 (drop `canRouteTyped`) NOT SHIPPED** — investigation
+under C1 attempted shrinking the whitelist to a `Can.Call`-only
+blacklist (motivated by the documented FFI-unwrap issue with
+`rt.AsListT[T]`).  Result: cabal test surfaced 150 failures.
+Body shapes beyond `Can.Call` (suspected: `Can.VarTopLevel`
+zero-arg helpers, `Can.Access` on generic-instantiated records,
+`Can.Update` on Result-typed records) also regress under typed
+routing — each shape needs its own audit before the whitelist
+can safely widen.  This is structural — the per-compile snapshot
++ region-qualifier ALONE does NOT close audit #14.  The remaining
+risk is in the typed-coerce path itself.
+
+**Cascade Phases 1-3, 5-6 (thread `ctx`, delete `scopeStateRef`)
+NOT SHIPPED** — without Phase 4 closing audit #14, the cascade's
+mechanical refactor delivers reduced auditability but no
+semantic improvement.  The IORef stays for now; defer to v0.16
+along with the per-shape typed-routing audit.
 
 ### Scope
 
