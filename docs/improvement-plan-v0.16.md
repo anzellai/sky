@@ -1,6 +1,12 @@
 # Improvement plan — Sky compiler v0.16+
 
 > Status: planning artefact for branch `refactor/compiler-fragility-audit`. Author: Agent B (compiler expert review of Agent A's audit at `docs/fragility-audit-v0.15.3.md`). Date: 2026-05-25.
+>
+> **v0.15.5 shipped a subset of this plan early** (PRs 1-2 + iteration-3 POC):
+> items **#2, #11, #15** are CLOSED.  Items **#1, #6, #9** are partially
+> closed by the PR 2 IORef consolidation but still pending the v0.15.6 cascade.
+> Items **#8, #14** were attempted in iteration 3 but REVERTED — see the
+> "Next: v0.15.6" section below for why and the remediation plan.
 
 > The audit identifies 17 fragility items; the RFC at `docs/v1-rfc/type-soundness-deep-analysis.md` already names the principled solution (full type-directed lowering via `LowerCtx`). Stages A–E shipped in v0.15.0/.1, closing the worst Surface-1/2/3 bugs. What remains is the **fragility tail**: 18 NOINLINE IORefs (`Compile.hs:67-295`), 48 `unsafePerformIO` uses, 10+ branches in `coerceArg` (`Compile.hs:8371-8547`), and an `inferExprType` that returns `Nothing` for `Can.Lambda`/`Can.Update`/`Can.Accessor`/`Can.LetRec` (`Compile.hs:11178-11232`). This plan turns those into discrete, sequenced, low-risk PRs.
 
@@ -15,24 +21,96 @@ Decisions: **fix** (root-cause work this cycle), **defer** (track but don't bloc
 | # | Audit item | Severity | Decision | Rationale |
 |---|---|---|---|---|
 | 1 | Lambda-types IORef push/pop race vs lazy GoIR rendering | Critical | **fix** | Root cause of every "lazy-deferral" panic class. §2. |
-| 2 | `inferExprType` returns `Nothing` for Lambda/Update/Accessor/BinOp/LetRec | Critical | **fix** | Each `Nothing` collapses to `"any"` → downstream uses `any(...)` → runtime panic. §4. |
+| 2 | `inferExprType` returns `Nothing` for Lambda/Update/Accessor/BinOp/LetRec | Critical | **SHIPPED in v0.15.5** (PR #73 iter 2 — 89cfcf6) | Each `Nothing` collapses to `"any"` → downstream uses `any(...)` → runtime panic. §4. |
 | 3 | `containsGenericTypeParam` gate applied backward at `coerceArg` | Critical | **fix** | Symptom-fix inside §3. |
 | 4 | `eraseTypeParams` loses info at container boundaries | Critical | **fix** | Replace with structural walk over `GoType` ADT. §3. |
 | 5 | Wildcard-`any` gate easy to mis-edit | Critical | **accept + lock** | Add explicit test (Invariant I6). |
 | 6 | `lookupLambdaGoStr` stale entries | Critical | **fix** | Subsumed by §2 (LowerCtx is scoped per-module). |
 | 7 | `coerceArg` 10+ branches | High | **fix** | Collapse to ≤4 cases. §3. |
-| 8 | `inferExprType` ↔ `globalRegionTypes` divergence | High | **fix** | Subsumed by §4. |
+| 8 | `inferExprType` ↔ `globalRegionTypes` divergence | High | **DEFERRED to v0.15.6** | Iter 3 attempted removal of `canRouteTyped` whitelist; exposed cross-binding region-map pollution (regression in `Sky_Core_Jwt_urlToStandard`). Needs single-snapshot-per-compile from cascade. |
 | 9 | `withLambdaTypes` permanent global mutation | High | **fix** | Goes away with LowerCtx. |
 | 10 | `splitCurriedFuncStr` bracket-depth bug | High | **fix** | One-line fix inside §3. |
-| 11 | `globalRegionTypes` not populated for all regions | Medium | **fix-with-§2** | Snapshot at lowering entry. |
+| 11 | `globalRegionTypes` not populated for all regions | Medium | **SHIPPED in v0.15.5** (PR #73 — 4d71a55) | `globalRegionTypes` IORef retired; the region map lives in `scopeStateRef`'s `_lc_regionTypes` field. |
 | 12 | Monomorphisation type-alias equivalence | Medium | **defer** | Track in v0.17. |
 | 13 | `rt.Coerce` Kind-based reflect fallback | Medium | **defer** | Already documented safety net. |
-| 14 | `defToStmts` zero-param routing on `canRouteTyped` | Medium | **fix** | Subsumed by §4. |
-| 15 | `globalLambdaGoStrings` not cleaned between phases | Low | **fix-incidentally** | Goes away with §2. |
+| 14 | `defToStmts` zero-param routing on `canRouteTyped` | Medium | **DEFERRED to v0.15.6** | Same blocker as #8 — needs single-snapshot-per-compile + region-key disambiguation before the whitelist can safely shrink. |
+| 15 | `globalLambdaGoStrings` not cleaned between phases | Low | **SHIPPED in v0.15.5** (PR #73 — 7fa51bd) | Retired as an IORef; replaced by `scopeStateRef`'s `_lc_lambdaGoStr` field, which is cleared at codegen entry. |
 | 16 | `eraseTypeParams` over-zealous | Low | **fix-with-§3** | Same fix as #4. |
 | 17 | `parametricAliasBase` string heuristics | Low | **fix-with-§3** | Replaced by structural classifier. |
 
 **Headline**: 11 fixes, 3 defers, 2 accept/lock.
+
+**v0.15.5 status (2026-05-25)**: items #2, #11, #15 SHIPPED.  Items
+#1, #6, #9 partially closed by `scopeStateRef` consolidation —
+the v0.15.6 cascade (below) finishes them by deleting the IORef.
+Items #8, #14 deferred to v0.15.6 (region-pollution bug found
+during iter 3 attempt; remediation needs the cascade first).
+
+---
+
+## Next: v0.15.6 — close audit #1 + #8 + #14 (the big cascade)
+
+Estimated 2-3 days.  Single PR.  Branch: `refactor/v0.15.6-lower-ctx-cascade`.
+
+### Scope
+
+Migrate every reader of `scopeStateRef` to take an explicit
+`LC.LowerCtx` parameter, until the IORef itself can be deleted.
+`letBindingType` (v0.15.5 iter 3 POC) is the seed pattern.
+
+THEN close #8/#14: with a single per-compile snapshot threading
+the same `_lc_regionTypes` Map throughout, the region-pollution
+bug iter 3 hit disappears (different bindings can't accidentally
+overwrite each other's region entries in a snapshot that's frozen
+at compile entry).  Drop the `canRouteTyped` whitelist after that.
+
+### Mechanical changes
+
+1. **`generateGoMulti` snapshot** — read `scopeStateRef` ONCE at
+   the entry point (`Compile.hs:3069`), bind to `ctx0`, pass to
+   every top-level lowering entry function.
+2. **Thread `ctx` through `exprToGo` / `exprToGoExpect*` /
+   `coerceArg` / `kernelCoerceArg` / `loweredDiscard` / `letToGo`
+   / `caseToGo` / `ifToGo` / `defToStmts`** — ~206 call sites
+   identified by `grep -c "exprToGo\b\|exprToGoExpect" Compile.hs`.
+   Each grows a leading `ctx ::` argument; recursion passes `ctx`
+   unchanged or via `LC.withLambdaTypes`.
+3. **Replace `withScopedLambdaTypes m action`** with
+   `let ctx' = LC.withLambdaTypes m ctx in action ctx'` — the
+   scoped helper goes away.
+4. **Drop `canRouteTyped` whitelist** in `letBindingType` — closes
+   audit #8 + #14.  Per-compile region snapshot makes region
+   lookups safe for any body shape; iter 3's regression
+   (`Sky_Core_Jwt_urlToStandard` mis-typed `rem` as
+   `Sky_Test_TestResult`) doesn't recur because cross-binding
+   region pollution can't happen in a frozen snapshot.
+5. **Delete `scopeStateRef`** — its last reader is gone.
+6. **Update `IORefBoundarySpec`** with a negative assertion for
+   `scopeStateRef` (it should not appear anywhere in Compile.hs).
+7. **Extend the positive surface spec** with assertions for
+   `ctx :: LC.LowerCtx` reaching `exprToGo` (the cascade root).
+
+### Risk
+
+Low.  Mechanical refactor.  Each function gains one parameter; no
+logic change.  The cascade is byte-identity-preserving for steps
+1-3 because the underlying lookups are identical pure functions
+over the same snapshotted data.  Step 4 (drop whitelist) will
+change codegen for Can.Call / Can.Access let bodies — but with
+the snapshot in place, no region pollution → no regression.
+
+### Acceptance
+
+- `cabal test` 309+ specs green
+- 27/27 examples build clean
+- `examples/00-standard-libs` 120/120 assertions pass
+- `IORefBoundarySpec` extended (`scopeStateRef` no longer present)
+- `Compile.hs` IORef count: ≤ 5 NOINLINE (was 8 pre-v0.15.5;
+   v0.15.5 closed 3 of them — `globalLambdaTypes`,
+   `globalLambdaGoStrings`, `globalRegionTypes`)
+- skyshop main.go: tracked codegen delta documented per audit
+  expectations (whitelist drop adds typed routing for Call/Access
+  let bodies — net positive soundness, small size growth).
 
 ---
 

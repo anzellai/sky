@@ -2,6 +2,15 @@
 
 > Source: autonomous audit by Agent A (Explore) on branch
 > `refactor/compiler-fragility-audit`, 2026-05-25.
+>
+> **Update — v0.15.5 (2026-05-25)**: items #2, #11, #15 closed by
+> PR #73 (branch `refactor/v0.15.5-lower-ctx-migrate-lookups`).
+> Items #1, #6, #9 partially closed by the same PR (IORef
+> consolidation into `scopeStateRef`); the v0.15.6 cascade finishes
+> them.  Items #8, #14 deferred to v0.15.6 (iter 3 attempt
+> exposed a region-pollution bug; needs the cascade's
+> single-snapshot-per-compile to land first).  See
+> `docs/improvement-plan-v0.16.md` for the next stage.
 
 ## Executive Summary
 
@@ -39,6 +48,8 @@ let f = \x -> someFunc x        -- x registered in globalLambdaTypes
 ---
 
 ### 2. `inferExprType` Returns `Nothing` for Unhandled Expression Forms
+
+**Status: CLOSED (v0.15.5 — PR #73 iter 2, commit 89cfcf6)** — Added arms for `Can.Lambda`, `Can.Update`, `Can.Accessor`, `Can.LetRec`, plus pipe/composition binops (`|>`, `<|`, `>>`, `<<`).
 
 **File:** `src/Sky/Build/Compile.hs:11028-11177`
 
@@ -142,6 +153,8 @@ If new code is added that checks `not (null (freeTypeVars sig))` instead of `not
 
 ### 8. `inferExprType` Cache Inconsistency With Solver's `solvedTypes`
 
+**Status: DEFERRED to v0.15.6** — Iter 3 of v0.15.5 PR #73 attempted to remove the `canRouteTyped` body-shape whitelist (turning `letBindingType` into a single-axis type-emittability gate).  This exposed a CROSS-BINDING REGION-MAP POLLUTION bug: `lookupRegionType` returned a type from an unrelated sibling-region binding for `Sky_Core_Jwt_urlToStandard`'s `let rem = modBy 4 (length std)`, mis-typing `rem` as `Sky_Test_TestResult` instead of `int`.  2/120 stdlib assertions failed.  The fix requires the v0.15.6 cascade's single-snapshot-per-compile, where region entries are frozen at compile entry and cannot be polluted by sibling bindings.
+
 **File:** `src/Sky/Build/Compile.hs:9510-9538, 11028-11177`
 
 **Issue:**
@@ -178,6 +191,8 @@ If new code is added that checks `not (null (freeTypeVars sig))` instead of `not
 
 ### 11. `globalRegionTypes` Not Populated for All Expression Regions
 
+**Status: CLOSED (v0.15.5 — PR #73, commit 4d71a55)** — The `globalRegionTypes` IORef is retired.  The region map now lives in `scopeStateRef`'s `_lc_regionTypes` field, populated identically by the Solve pass at codegen entry.  The underlying gap (some sub-expression regions still missing) is a Solve-pass concern, not a Compile-pass one; tracked separately.
+
 Sub-expressions inside let-bindings, case arms, and deeply-nested calls often have regions NOT in `globalRegionTypes`. Type-directed lowering doesn't activate for them.
 
 ### 12. Monomorphisation Doesn't Account For Type-Alias Equivalence
@@ -190,6 +205,8 @@ The reflect fallback uses **type.Kind() matching** rather than **exact structura
 
 ### 14. `defToStmts` Zero-Param Let-Binding Routing Assumes `canRouteTyped` Completeness
 
+**Status: DEFERRED to v0.15.6** — Same blocker as #8.  Removing the `canRouteTyped` whitelist requires the v0.15.6 cascade's single-snapshot-per-compile to land first.
+
 If a zero-param let-binding's body is an unhandled shape (e.g., `Can.Call` or `Can.Access`), `letBindingType` returns `Nothing` and the binding emits as untyped.
 
 ---
@@ -197,6 +214,9 @@ If a zero-param let-binding's body is an unhandled shape (e.g., `Can.Call` or `C
 ## Low (Cosmetic/Clarity)
 
 ### 15. `globalLambdaGoStrings` Never Cleaned Up Between Compilation Phases
+
+**Status: CLOSED (v0.15.5 — PR #73, commit 7fa51bd)** — The `globalLambdaGoStrings` IORef is retired; its map now lives in `scopeStateRef`'s `_lc_lambdaGoStr` field, freshly populated per compile.
+
 ### 16. `eraseTypeParams` Removes Useful Information Even When It Shouldn't
 ### 17. `parametricAliasBase` Uses String Heuristics Instead of Structural Analysis
 
