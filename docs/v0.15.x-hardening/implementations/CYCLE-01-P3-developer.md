@@ -7,7 +7,9 @@
 **Target patch tag:** v0.15.9 (push is the human's gate — branch +
 PR is the developer's finish line).
 
-**PR:** _(filled in after PR open)_
+**PR:** [#76](https://github.com/anzellai/sky/pull/76) — CI 4/4 GREEN
+(Linux push 23m24s · Linux PR 36m49s · macOS push 33m2s · macOS PR
+36m51s).
 
 ## Architectural diagnosis
 
@@ -210,5 +212,5 @@ Test suite sky-tests: PASS
 - [x] `sky fmt` — no `.sky` files in this PR.
 - [x] Background tasks cleaned up before declaring done.
 - [x] Golden-size delta logged.
-- [ ] PR opened, CI green (filled after PR + CI).
-- [ ] CYCLE_LOG line appended.
+- [x] PR opened (#76), CI 4/4 green.
+- [x] CYCLE_LOG line appended.
