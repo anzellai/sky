@@ -158,17 +158,15 @@ globalAnonRecords = unsafePerformIO $ newIORef Map.empty
 
 
 -- | v0.15 Stage B — per-region HM type map for the current module.
--- Populated from the solver's `RegionTypes` after `solveWithInstances`-
--- AndRegions (Stage A) writes per-constraint types.  Consumed by
--- typed-directed lowering paths (Stage C+) that need the HM type
--- of a sub-expression by its source region.
 --
--- Following Sky's existing pattern of NOINLINE global IORefs.  A
--- principled refactor to thread `LowerCtx` as an explicit parameter
--- is a separate follow-up task.
-{-# NOINLINE globalRegionTypes #-}
-globalRegionTypes :: IORef Solve.RegionTypes
-globalRegionTypes = unsafePerformIO $ newIORef Map.empty
+-- v0.15.5 PR 3 — retired in favour of `scopeStateRef`'s
+-- `_lc_regionTypes` field.  The map is now written into the
+-- consolidated `scopeStateRef` at codegen entry alongside the
+-- lambda-types / lambda-Go-string state, and read via
+-- `LC.lookupRegionType` — same `unsafePerformIO`-wrapped IORef
+-- read, one fewer IORef on the boundary.  See `IORefBoundarySpec`
+-- for the gate that forbids the old name (string match) from
+-- coming back.
 
 
 -- | v0.15 Stage E — merged alias-declaration map (entry + deps),
@@ -236,10 +234,15 @@ aliasGenericArgs aliasName actualFields =
 -- code, FFI-derived expressions, etc.).  Used by typed-directed
 -- lowering arms (Stage C) to recover an expression's type without
 -- routing through the solver.
+--
+-- v0.15.5 PR 3 — reads the region map from `scopeStateRef`'s
+-- `_lc_regionTypes` field (consolidated with the lambda-scope state
+-- by PR 2) instead of the retired per-region-types IORef.  Same
+-- IORef-snapshot semantics, one fewer IORef on the boundary.
 lookupRegionType :: A.Region -> Maybe T.Type
 lookupRegionType region = unsafePerformIO $ do
-    rt <- readIORef globalRegionTypes
-    return (Map.lookup region rt)
+    ctx <- readIORef scopeStateRef
+    return (LC.lookupRegionType ctx region)
 
 
 -- | v0.13 Phase A4: per-callee generalised annotation, used to
@@ -1084,8 +1087,10 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                 -- v0.15 Stage A/B: merge per-region types from every
                 -- dep into one map.  Entry-module region types added
                 -- after solveWithInstancesAndRegions on the entry
-                -- below; the merged map is written to
-                -- globalRegionTypes there.
+                -- below; the merged map is written into
+                -- `scopeStateRef`'s `_lc_regionTypes` field there
+                -- (v0.15.5 PR 3 — consolidated with the rest of the
+                -- lowering-scope state).
                 depRegionTys = Map.unions
                     [ rt | (_, Right (_, _, rt, _)) <- finalResults ]
             unless (null depErrors) $ do
@@ -1147,7 +1152,13 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
             -- lookupRegionType in Stage C+ arms.
             (solveResult, callInstances, callSiteInstances, entryRegionTys)
                 <- Solve.solveWithInstancesAndRegions constraints
-            writeIORef globalRegionTypes (Map.union entryRegionTys depRegionTys)
+            -- v0.15.5 PR 3 — write the merged region map into
+            -- `scopeStateRef`'s `_lc_regionTypes` slot instead of
+            -- the retired per-region-types IORef.  Reads via
+            -- `lookupRegionType` consult the same field.
+            let mergedRegionTys = Map.union entryRegionTys depRegionTys
+            modifyIORef scopeStateRef $ \ctx ->
+                ctx { LC._lc_regionTypes = mergedRegionTys }
             -- v0.13 Phase A5: install the per-call-site instance
             -- registry into `_cg_callSiteInstances` so call-site
             -- codegen can pick the right generic instantiation
@@ -3231,7 +3242,8 @@ generateGoMulti canMod srcMod config solvedTypes depDecls depRecAliases depUnion
         importsForced = imports `seq` imports
         -- v0.16 PR 1 — snapshot the lowering-time IORef state into a
         -- pure `LowerCtx` value.  `imports` has already populated
-        -- `globalCgEnv` + `globalUnionNames`; `globalRegionTypes`,
+        -- `globalCgEnv` + `globalUnionNames`; the per-region HM type
+        -- map (now in `scopeStateRef._lc_regionTypes`),
         -- `globalAllAliases`, `globalAllFieldIdx`, `globalAnnotMap`,
         -- and the per-scope lambda-type / lambda-Go-string maps were
         -- written by `continueCompile` earlier.  Sequence the
@@ -3247,7 +3259,12 @@ generateGoMulti canMod srcMod config solvedTypes depDecls depRecAliases depUnion
             -- Sequence the snapshot AFTER `importsForced` so writes
             -- to `globalCgEnv` + `globalUnionNames` are visible.
             importsForced `seq` return ()
-            regions <- readIORef globalRegionTypes
+            -- v0.15.5 PR 3 — region map now lives in `scopeStateRef`'s
+            -- `_lc_regionTypes` field (the consolidated lowering-scope
+            -- IORef from PR 2).  Read from there instead of the
+            -- retired per-region-types IORef.
+            scopeCtx <- readIORef scopeStateRef
+            let regions = LC._lc_regionTypes scopeCtx
             aliases <- readIORef globalAllAliases
             fieldIdx <- readIORef globalAllFieldIdx
             unions <- readIORef globalUnionNames
@@ -9516,8 +9533,10 @@ registerMainLetBindingType types def = case def of
 --
 -- Layered preference:
 --   1. `lookupRegionType (regionOf body)` — the v0.15 Stage A
---      solver writes per-region types to `globalRegionTypes`,
---      keyed by source region.  This is the CORRECT lookup for a
+--      solver writes per-region types into `scopeStateRef`'s
+--      `_lc_regionTypes` field (v0.15.5 PR 3 — was its own IORef
+--      pre-consolidation), keyed by source region.  This is the
+--      CORRECT lookup for a
 --      let-binding's RHS — it cannot collide with a sibling
 --      top-level binding of the same name (e.g. `let check =
 --      cfg.field` inside a library, where `check` is also a
