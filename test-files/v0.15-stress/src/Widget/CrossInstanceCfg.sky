@@ -1,0 +1,80 @@
+-- ═══════════════════════════════════════════════════════════
+-- Widget.CrossInstanceCfg — Gap A1 / Plan Item P1 regression.
+--
+-- The fragility audit (docs/fragility-audit-v0.15.3.md item #3)
+-- flagged `coerceArg`'s parametric-alias short-circuit as a
+-- backward-gated branch.  The arm gates on
+--   Just srcTy <- goExprGoType e
+-- but for expression shapes whose Go-static type isn't tracked
+-- in the lambda-types registry (let-bindings cross polymorphic
+-- call result, VarLocal references to outer-scope bindings, …)
+-- `goExprGoType` returns Nothing and the short-circuit doesn't
+-- fire.  Codegen falls through to `any(arg).(Foo_R[any])`, a
+-- nominal type assertion that panics at runtime when the
+-- source's actual instantiation is `Foo_R[int]` / `Foo_R[Msg]`.
+--
+-- The structural-fallback arm closes this by inspecting the
+-- source `Can.Expr` directly: when `inferExprType` resolves it
+-- to a `T.TAlias _ aliasName _` whose `aliasName ++ "_R"`
+-- matches the target's parametric base, the arg flows raw.
+-- Go's call-site type inference then pins the callee's T from
+-- the source's local static type — no nominal cast, no
+-- reflect-adapter wrap.
+--
+-- Reproducer pattern:
+--   1. Let-bind a concrete-instantiation alias value (`cfg0`).
+--   2. Pass it to a polymorphic forwarder whose result type
+--      is the same alias parameterised on the same TVar.
+--   3. Bind the result (`cfg1`).
+--   4. Pass `cfg1` to a concretely-typed consumer.
+--
+-- Pre-fix codegen:
+--   cfg1 := forwardCfg(any(cfg0).(Cfg_R[any]))
+--   n    := consumeIntCfg(any(cfg1).(Cfg_R[int]))
+-- Both casts panic — different generic instantiations of the
+-- same struct are distinct nominal types under Go's rules.
+-- ═══════════════════════════════════════════════════════════
+module Widget.CrossInstanceCfg exposing (XCfg, forwardCfg, makeIntCfg, consumeIntCfg, roundTripInt)
+
+import Sky.Core.Prelude exposing (..)
+
+-- Distinct alias name (`XCfg`) avoids field-set collision with
+-- Widget.Editor.Cfg / Widget.Form.Setup.  The bug we're regression-
+-- testing is independent of the alias name — it's the parametric
+-- record-alias cross-instantiation pattern.
+type alias XCfg msg =
+    { xOnSubmit : msg
+    , xLabel : String
+    }
+
+
+-- Polymorphic identity-shaped passthrough.  Returns XCfg msg —
+-- HM types the result region as a polymorphic alias, so the
+-- caller's `Map.lookup` over the lambda-types registry yields
+-- Nothing for the call result expression.
+forwardCfg : XCfg msg -> XCfg msg
+forwardCfg cfg =
+    cfg
+
+
+-- Concrete builder; result is statically `XCfg_R[int]`.
+makeIntCfg : Int -> XCfg Int
+makeIntCfg x =
+    { xOnSubmit = x, xLabel = "i" }
+
+
+-- Concrete consumer; arg is statically `XCfg_R[int]`.
+consumeIntCfg : XCfg Int -> Int
+consumeIntCfg cfg =
+    cfg.xOnSubmit
+
+
+-- Round-trip: make → forward → consume.  Triggers two
+-- coerceArg call sites that pre-fix emitted nominal casts.
+roundTripInt : Int -> Int
+roundTripInt x =
+    let
+        cfg0 = makeIntCfg x
+        cfg1 = forwardCfg cfg0
+    in
+        consumeIntCfg cfg1

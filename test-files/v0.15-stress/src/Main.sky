@@ -13,6 +13,7 @@ import Std.Log exposing (println)
 import Widget.Editor as Editor
 import Widget.Editor exposing (Cfg, Form)
 import Widget.Form as WForm
+import Widget.CrossInstanceCfg as XCfg
 import Inner.Polymorphic as Poly
 
 
@@ -406,6 +407,13 @@ main =
         r_lib = check "L1-L7" (if libInline > 0 then "rendered" else "empty") "rendered"
         r_lib_consumer = check "L1-L7-consumer" (if libConsumer > 0 then "rendered" else "empty") "rendered"
 
+        -- Gap A1 / Plan Item P1 — let-bound concrete alias passes
+        -- through a polymorphic forwarder, then is consumed by a
+        -- concretely-typed function.  Pre-fix, BOTH call sites
+        -- emitted `any(.).(Cfg_R[any])` casts that panicked with
+        -- `interface {} is Cfg_R[int], not Cfg_R[interface {}]`.
+        r_xcfg = check "XCfg" (String.fromInt (XCfg.roundTripInt 42)) "42"
+
         results =
             [ r_s1a, r_s1b, r_s2, r_s4
             , r_s6a, r_s6b, r_s6c
@@ -416,6 +424,7 @@ main =
             , r_s13a, r_s13b, r_s14, r_s14b, r_s14c
             , r_lib
             , r_lib_consumer
+            , r_xcfg
             ]
 
         report = case Result.combine results of

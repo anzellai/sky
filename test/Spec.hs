@@ -44,6 +44,7 @@ import qualified Sky.Build.CheckIsBuildSpec
 import qualified Sky.Build.RecordFieldOrderSpec
 import qualified Sky.Build.RecordCtorEmptyListSpec
 import qualified Sky.Build.HofTypedMsgSpec
+import qualified Sky.Build.CoerceArgParametricSpec
 import qualified Sky.Build.AnonLambdaSpec
 import qualified Sky.Build.AnonRecordSpec
 import qualified Sky.Build.Issue52Spec
@@ -256,6 +257,17 @@ main = hspec $ do
     -- the inner-function return as `any`, breaking helpers with typed
     -- (String -> Msg) callbacks. Now routes via typeStrWithAliasesReg.
     describe "Sky.Build.HofTypedMsg"        Sky.Build.HofTypedMsgSpec.spec
+    -- v0.15.x hardening / Gap A1 / Plan Item P1 — coerceArg's
+    -- parametric-alias short-circuit was gated on `goExprGoType e`
+    -- returning Just. For let-bound polymorphic-call results the
+    -- registry has no entry; the arm didn't fire; codegen emitted
+    -- `any(arg).(Cfg_R[any])`, panicking with `interface {} is
+    -- main.Cfg_R[int], not main.Cfg_R[interface {}]`. The
+    -- structural-fallback arm closes this by resolving the
+    -- source's `Can.Expr` through `inferExprType` and matching
+    -- alias bases.
+    describe "Sky.Build.CoerceArgParametric"
+                                            Sky.Build.CoerceArgParametricSpec.spec
     -- v0.13 D-Lambda-Lowerer regression: Sky lambdas at user-
     -- defined HOF slots lower to typed `func(X) Y` shapes via
     -- curryLambdaPatTyped (was only kernel HOFs pre-v0.13).
