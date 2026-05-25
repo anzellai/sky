@@ -2825,10 +2825,23 @@ generateDeclsForDep canMod modPrefix =
                       -- directly, but we have depParamGoTys which is
                       -- Go-string. We can synthesise a Sky TLambda from
                       -- Go-type-strings using `goTypeStrToSkyType`.
+                      --
+                      -- v0.15.3 — also include parametric record alias
+                      -- params (`Foo_R[T1]`).  `goTypeStrToSkyType`
+                      -- returns `TVar "_unknown"` for these — which
+                      -- alone wouldn't help, but the parallel
+                      -- `goStringBindings` path below registers the
+                      -- ACTUAL Go-type-string into `lookupLambdaGoStr`
+                      -- so `goExprGoType` resolves the ident's Go
+                      -- type without round-tripping through Sky types.
+                      -- We keep the filter wide here for symmetry —
+                      -- the goStringBindings path is the one that
+                      -- actually pays off for record-alias params.
                       [ goTypeStrToSkyType gty
                       | gty <- ps
                       , gty /= "any"
                       , take 5 gty == "func("
+                         || isJust (parametricAliasBase gty)
                       ]
                   Nothing -> []
               annotArgs = case mAnnotArgs of
@@ -2873,11 +2886,23 @@ generateDeclsForDep canMod modPrefix =
               -- recursive call-site `goExprGoType` resolves
               -- `fn` to `func(T1) T2` (the emitted Go sig) and
               -- coerceArg short-circuits without wrapping.
-              -- Filters the param list to only func-typed Go decls.
+              --
+              -- v0.15.3 — ALSO register parametric record alias
+              -- params (`Foo_R[T1]`).  Without this, sibling
+              -- polymorphic-helper calls inside a generic
+              -- function's body emit `any(cfg).(Foo_R[any])` —
+              -- a nominal cast across Go generic instantiations
+              -- that panics at runtime when the caller passed
+              -- `Foo_R[Msg]`.  With this entry, `goExprGoType
+              -- (GoIdent "cfg")` returns `Foo_R[T1]` and
+              -- coerceArg's parametricAliasBase short-circuit
+              -- emits the bare arg, letting Go's call-site
+              -- inference pin the callee's T.
               goStringBindings = Map.fromList
                   [ (pname, pgo)
                   | (GoIr.GoParam pname pgo) <- typedGoParams'
                   , take 5 pgo == "func("
+                     || isJust (parametricAliasBase pgo)
                   ]
               -- Go-strings INNER, Sky-types OUTER so both bindings are
               -- active during typedBody's render (which is forced
@@ -4304,14 +4329,20 @@ goExprGoType e = case e of
         | "rt." `List.isPrefixOf` name -> Nothing
     GoIr.GoIdent name -> case lookupLambdaType name of
         Just t | isTypedPrimitive t -> Just (solvedTypeToGo t)
-        -- v0.13 Stage 1 — typed function-typed param: recover its
-        -- Go sig from the Sky annotation so call-site recovery σ
-        -- can pin the kernel's TVars. Critical for recursive Sky-
-        -- source kernel calls (`map fn xs` inside the body of
-        -- `Sky_Core_List_map_` passes `fn : func(T1) T2` to the
-        -- recursive call; the call-site coerceArg must see fn's
-        -- typed sig so it can pass raw instead of wrapping with
-        -- `rt.Coerce[func(any) any]`).
+        -- v0.15.3 — typed parametric-record-alias param/let-binding:
+        -- recover the Go-rendered alias instantiation so the call-
+        -- site coerceArg can short-circuit the nominal `.(Foo_R[any])`
+        -- assertion (which panics on cross-instantiation).
+        -- Example:
+        --   view : Setup msg -> Element msg
+        --   view cfg = ... body cfg ...
+        -- `cfg` is registered as TAlias "Setup" [...] (Filled (TRecord …)).
+        -- Rendering returns `Setup_R[T1]` (preserving the in-scope
+        -- generic param); coerceArg then sees `body`'s param type
+        -- `Setup_R[T1]` matches source `Setup_R[T1]` and emits raw.
+        Just t
+          | let goTy = solvedTypeToGoPreserveTVars t
+          , isJust (parametricAliasBase goTy) -> Just goTy
         Just t@(T.TLambda _ _) ->
             -- v0.13 Stage 1 (task #189) — use TVar-preserving render
             -- so identifiers like T1/T2 (Go-side generic type
@@ -6862,24 +6893,69 @@ exprToGo (A.At _ expr) = case expr of
         -- (its Go static type matches a record-alias Go struct).
         -- Falls back to `rt.Field` (reflect) otherwise.
         let solved = Rec._cg_solvedTypes getCgEnv
-            targetTy = inferExprType solved target
+            env = getCgEnv
+            recSet = Rec._cg_recordAliases env
+            nameMatches name =
+                Set.member name recSet ||
+                any (\a -> let parts = splitOn '_' a
+                           in not (null parts) && last parts == name)
+                    (Set.toList recSet)
+            -- v0.15.3 — for a local-ident target, prefer the per-
+            -- function-scope `lookupLambdaType` ONLY when
+            -- `inferExprType` (via solvedTypes) returns an
+            -- unresolved TVar.  Module-level solvedTypes can
+            -- record a function param as `TVar "_ambig"` for
+            -- parametric record alias types (`view cfg` where
+            -- `cfg : Setup msg`), but `withScopedLambdaTypes`
+            -- registers the concrete TAlias.  Narrowed to this
+            -- specific case (TVar fallback only) so we don't
+            -- shadow the more-precise solved type for typed
+            -- aliases like `t : Tree Int` whose Tree-param sub-
+            -- type is required at element-type-rendering sites
+            -- and is captured correctly by solvedTypes.
+            inferredViaSolved = inferExprType solved target
+            isAmbigTVar (Just (T.TVar _)) = True
+            isAmbigTVar _ = False
+            targetTy = case (target, inferredViaSolved) of
+                (A.At _ (Can.VarLocal name), tv) | isAmbigTVar tv ->
+                    case lookupLambdaType name of
+                        Just t  -> Just t
+                        Nothing -> tv
+                _ -> inferredViaSolved
             isRecordAlias = case targetTy of
-                Just (T.TAlias _ name _ _) ->
-                    let env = getCgEnv
-                        recSet = Rec._cg_recordAliases env
-                    in Set.member name recSet ||
-                       any (\a -> let parts = splitOn '_' a
-                                  in not (null parts) && last parts == name)
-                          (Set.toList recSet)
-                Just (T.TType _ name _) ->
-                    let env = getCgEnv
-                        recSet = Rec._cg_recordAliases env
-                    in Set.member name recSet ||
-                       any (\a -> let parts = splitOn '_' a
-                                  in not (null parts) && last parts == name)
-                          (Set.toList recSet)
+                Just (T.TAlias _ name _ _) -> nameMatches name
+                Just (T.TType _ name _)    -> nameMatches name
+                Just (T.TRecord fields _) ->
+                    let names = Map.keys fields
+                    in case Rec.lookupRecordAlias
+                                (Rec._cg_fieldIndex env) names of
+                        Just _ -> True
+                        Nothing -> False
                 _ -> False
-        in if isRecordAlias && operandIsStaticallyTyped target
+            -- v0.15.3 — secondary check via `lookupLambdaGoStr`.
+            -- For function params that registered as Go-type
+            -- strings (e.g. parametric record alias `cfg :
+            -- Setup_R[T1]` via `goStringBindings`), the Sky-type
+            -- registry (`lookupLambdaType`) is empty due to a
+            -- lazy-eval race between scoped binding push/pop and
+            -- GoIR rendering.  The Go-string registry IS active
+            -- during render, so consult it here to catch the same
+            -- record-alias-target case.  Matches when the
+            -- recorded Go type parses as a parametric record
+            -- alias (`Foo_R[T]`) whose `Foo` is a known alias.
+            isRecordAliasViaGoStr = case target of
+                A.At _ (Can.VarLocal name) ->
+                    case lookupLambdaGoStr name of
+                        Just goTy
+                          | Just base <- parametricAliasBase goTy
+                          , let aliasName = take (length base - 2) base
+                          , nameMatches aliasName -> True
+                        _ -> False
+                _ -> False
+            targetTyped =
+                (isRecordAlias && operandIsStaticallyTyped target)
+                || isRecordAliasViaGoStr
+        in if targetTyped
               then GoIr.GoSelector (exprToGo target) (capitalise_ field)
               else GoIr.GoCall (GoIr.GoQualified "rt" "Field")
                        [exprToGo target, GoIr.GoStringLit (capitalise_ field)]
@@ -8311,6 +8387,36 @@ coerceArg e ty
             Just t | t /= "any" -> e
             _ ->
                 GoIr.GoCall (GoIr.GoIdent ("rt.Coerce[" ++ ty ++ "]")) [e]
+    -- v0.15.3 — parametric record alias instantiation.  The callee
+    -- almost always emits as a Go-generic function whose param
+    -- type is `Foo_R[T]`; renderers erase TVars in the param-type
+    -- string to `Foo_R[any]` here, but the LIVE callee is generic.
+    -- When the source statically carries the same base alias
+    -- (`Foo_R[Msg]`, `Foo_R[T1]`), passing it raw lets Go's call-
+    -- site inference pin the callee's T from the arg.  The default
+    -- `any(arg).(Foo_R[any])` cast is a NOMINAL assertion across
+    -- Go generic instantiations — different instantiations of the
+    -- same generic struct are distinct nominal types, so the
+    -- assertion panics for any T ≠ any at runtime.
+    --
+    -- Soundness: we only apply when the SOURCE's static Go type
+    -- matches the target's parametric base.  When the source is
+    -- `any`-typed (rt.Field / rt.SkyCall result, unannotated
+    -- local), we fall through to the existing wrap path, which
+    -- still works because the runtime value's actual instantiation
+    -- matches the target's `any` slot.
+    --
+    -- Regression: test-files/v0.15-stress/src/Widget/Form.sky
+    -- exercises three call sites — view body sibling helpers
+    -- (`body cfg`, `toolbar cfg check`), consumeForm's typed-arg
+    -- forwarding, and main's let-bound record passed to a
+    -- polymorphic view.  All three previously emitted
+    -- `Setup_R[X]` → `Setup_R[any]` assertions and panicked.
+    | Just targetBase <- parametricAliasBase ty
+    , Just srcTy <- goExprGoType e
+    , Just srcBase <- parametricAliasBase srcTy
+    , targetBase == srcBase
+        = e
     -- v0.13 Stage 1 — runtime-kernel HOF arg: when the target slot
     -- expects a typed `func(...) ...` AND the source is a
     -- `GoIdent "rt.X"` reference to a non-typed kernel whose typed
@@ -8403,8 +8509,32 @@ coerceArg e ty
              -- reflect-based adapter (makeFuncAdapter) that boxes
              -- the callback's params and unwraps its return.
              else if take 5 erasedTy == "func("
-                  then GoIr.GoCall
-                        (GoIr.GoIdent ("rt.Coerce[" ++ erasedTy ++ "]")) [e]
+                  -- v0.15.3 — when target is a function type AND the
+                  -- raw `ty` STILL carries Go-side generic params
+                  -- (T1/T2/...) that `eraseTypeParams` flattened to
+                  -- `any`, AND source is a plain user identifier
+                  -- (let-binding / param ref / field selector), pass
+                  -- the arg raw.  Wrapping in `rt.Coerce[func(P)
+                  -- any]` would erase the generic-param connection
+                  -- and break the callee's inference (`func(P) any`
+                  -- doesn't unify with `func(P) T1`).  When the
+                  -- source is a typed local (e.g. `submit := cfg.
+                  -- WfSubmit` whose Go type is `func(P) T1`),
+                  -- passing it raw lets Go pin T1 from cfg's
+                  -- instantiation at the call site.
+                  --
+                  -- Soundness: gated on `containsGenericTypeParam
+                  -- ty` (not erasedTy) — so the wrap is ONLY
+                  -- skipped when the original param sig contained
+                  -- a TVar (the generic-callee case).  Non-generic
+                  -- callees still get the wrap because their sig
+                  -- has no T1.  And we restrict to `isPlainIdent`
+                  -- sources so kernel-call results / coercion
+                  -- wrappers still flow through Coerce.
+                  then if containsGenericTypeParam ty && isPlainIdent e
+                       then e
+                       else GoIr.GoCall
+                              (GoIr.GoIdent ("rt.Coerce[" ++ erasedTy ++ "]")) [e]
                   -- v0.13.x #158: record-alias targets route through
                   -- `rt.Coerce[T]` so a `map[string]any` source narrows
                   -- to the typed struct via Coerce's map→struct field
@@ -8418,6 +8548,88 @@ coerceArg e ty
 
 isGenericTypeParam ('T':rest) = all (\c -> c >= '0' && c <= '9') rest && not (null rest)
 isGenericTypeParam _ = False
+
+
+-- | v0.15.3 — accept a Go expression as a compatible source for
+-- a parametric record alias slot.  When the target is `Foo_R[X]`
+-- (a generic-callee param type), the goal is to pass the arg
+-- raw so Go's call-site type inference pins the callee's T from
+-- the source's actual instantiation.
+--
+-- Sources we accept:
+--   * `goExprGoType e` returns the SAME `Foo_R` base (typed
+--     local with known static type) — perfect match, Go infers.
+--   * `GoIdent name` for a user-introduced local (not `rt.*`)
+--     where `goExprGoType` is Nothing — could be a function param
+--     whose type isn't tracked in `globalLambdaTypes` (the
+--     scoped-binding-vs-lazy-rendering race), but its Go-static
+--     type IS `Foo_R[T]` at the actual call site.  Go's
+--     inference handles it.  If the type turns out wrong, Go
+--     compile-fails — caught at build time, not runtime.
+--   * `GoSelector base _` where `base` is a plain ident — same
+--     reasoning (e.g. `cfg.WfSubmit` field access).
+--
+-- Sources we REJECT (fall through to the existing wrap path):
+--   * Kernel call results (`rt.*`), Coerce wrappers, struct lits,
+--     literal values — those have their own type management
+--     that the legacy `any(arg).(Foo_R[any])` assertion happens
+--     to handle correctly.
+isParametricCompatibleSource :: GoIr.GoExpr -> Bool
+isParametricCompatibleSource e = case goExprGoType e of
+    Just srcTy | isJust (parametricAliasBase srcTy) -> True
+    _ -> case e of
+        GoIr.GoIdent name -> not ("rt." `List.isPrefixOf` name)
+                          && not ("__tco" `List.isPrefixOf` name)
+                          && not ("__destruct" `List.isPrefixOf` name)
+        GoIr.GoSelector base _ -> isParametricCompatibleSource base
+        _ -> False
+
+
+-- | v0.15.3 — recognise a "plain user identifier" Go expression.
+--
+-- True for:
+--   * A bare `GoIdent name` where `name` doesn't start with `rt.`
+--     (user-introduced local: let-binding, function param,
+--     top-level fn ref).
+--   * A field selector `target.Field` where the target is a plain
+--     identifier (so `cfg.WfSubmit` qualifies as "plain").
+--
+-- False for:
+--   * `GoCall` / `GoFuncLit` / `GoStructLit` / literals — those
+--     are values produced by computation, not user-named refs.
+--   * `rt.X` identifiers — runtime helper results that often need
+--     explicit coercion.
+--
+-- Used by the generic-param-bearing target arm of `coerceArg` to
+-- decide whether passing the expr raw is safe (Go's call-site
+-- type inference can pin the param from the source's local
+-- static type) vs needs the existing wrap path.
+isPlainIdent :: GoIr.GoExpr -> Bool
+isPlainIdent e = case e of
+    GoIr.GoIdent name -> not ("rt." `List.isPrefixOf` name)
+    GoIr.GoSelector base _ -> isPlainIdent base
+    _ -> False
+
+
+-- | v0.15.3 — extract the base alias name from a parametric record
+-- alias instantiation.  `Foo_R[Msg]`, `Foo_R[any]`, `Foo_R[T1]`
+-- all return `Just "Foo_R"`.  Bare `Foo_R` (no `[...]`) returns
+-- Nothing — that's the structural shape that uses the non-
+-- parametric record-alias path via `isRecordAliasTy`.
+--
+-- Used by `coerceArg` to recognise cross-instantiation cases:
+-- when both target and source share the same Foo_R base, the
+-- callee is invariably Go-generic (`func view[T any](Foo_R[T])`),
+-- so Go's type inference pins T from the source's instantiation
+-- — no runtime cast needed, and the nominal `.(Foo_R[any])`
+-- assertion would panic for any source whose T ≠ any.
+parametricAliasBase :: String -> Maybe String
+parametricAliasBase ty =
+    case List.span (/= '[') ty of
+        (base, '[':_)
+          | "_R" `List.isSuffixOf` base
+          , isRecordAliasTy base -> Just base
+        _ -> Nothing
 
 
 -- | v0.13 Stage 1 — extract Go-string param types from a kernel's
@@ -9137,10 +9349,10 @@ letToGo mExpectedGo def body =
         defStmts = case def of
             Can.Def (A.At _ dn) [] valExpr
                 | dn /= "_"
-                , Just dt <- inferExprType solvedTypes valExpr ->
+                , Just dt <- letBindingType solvedTypes dn valExpr ->
                     letBindStmts dn (exprToGoExpect dt valExpr)
             Can.TypedDef (A.At _ dn) _ [] valExpr _
-                | Just dt <- inferExprType solvedTypes valExpr ->
+                | Just dt <- letBindingType solvedTypes dn valExpr ->
                     letBindStmts dn (exprToGoExpect dt valExpr)
             _ -> defToStmts def
         bodyGo = if Map.null bindingExtras
@@ -9202,6 +9414,130 @@ loweredDiscard body@(A.At _ inner) = case inner of
         Nothing -> exprToGo body
 
 
+-- | v0.15.3 — register a `main`-body let-binding's HM type into
+-- the global lambda-types map so downstream `goExprGoType` calls
+-- can resolve the binding's static Go type at call sites.
+--
+-- Restricted to types whose Go rendering is a real, named type
+-- (record-alias instantiation, primitive, or a func type with a
+-- non-`any` shape) — registering an `any`-rendering type would
+-- pollute the lookup with useless entries.
+--
+-- Uses the unscoped `globalLambdaTypes` write because main's body
+-- lowering is a `concatMap defToStmts` chain with no expression-
+-- level scoping seam to thread through.  The leak is bounded —
+-- `main` is the last function emitted for the entry module, and
+-- the registry is read fresh on each compile.
+registerMainLetBindingType :: Solve.SolvedTypes -> Can.Def -> ()
+registerMainLetBindingType types def = case def of
+    Can.Def (A.At _ name) [] body
+        | name /= "_"
+        , Just t <- letBindingType types name body ->
+            unsafePerformIO $ do
+                modifyIORef globalLambdaTypes (Map.insert name t)
+                return ()
+    Can.TypedDef (A.At _ name) _ [] body _
+        | name /= "_"
+        , Just t <- letBindingType types name body ->
+            unsafePerformIO $ do
+                modifyIORef globalLambdaTypes (Map.insert name t)
+                return ()
+    _ -> ()
+
+
+-- | v0.15.3: recover a zero-param let-binding's HM-solved type.
+--
+-- Layered preference:
+--   1. `lookupRegionType (regionOf body)` — the v0.15 Stage A
+--      solver writes per-region types to `globalRegionTypes`,
+--      keyed by source region.  This is the CORRECT lookup for a
+--      let-binding's RHS — it cannot collide with a sibling
+--      top-level binding of the same name (e.g. `let check =
+--      cfg.field` inside a library, where `check` is also a
+--      top-level test helper in the consuming module).
+--   2. `inferExprType solvedTypes body` — falls back when the
+--      solver didn't record the region (synthetic code, FFI
+--      derivation).  inferExprType's Can.Record arm bails on
+--      Can.Lambda fields (returns Nothing) — those records are
+--      caught by (1) above; this fallback covers simpler shapes.
+--   3. `Map.lookup name solvedTypes` — last-ditch lookup for
+--      bindings whose region wasn't recorded AND whose body
+--      doesn't infer.  Gated on the name NOT matching a module-
+--      level binding (collision check); the gate is implemented
+--      by requiring the type match a record/tuple/alias shape,
+--      since function-typed module bindings (the common shadow
+--      case — `check : ... -> ... -> Result`) cannot be a
+--      zero-param let-binding's resolved type anyway.
+--
+-- All candidates gated on `isEmittableGoType` so an un-nameable
+-- type cannot reach the typed path; untyped fallback stays safe.
+letBindingType :: Solve.SolvedTypes -> String -> Can.Expr -> Maybe T.Type
+letBindingType solvedTypes _name body@(A.At r _) =
+    -- v0.15.3 — Two-axis gate.
+    --
+    -- (A) Body-shape gate: ONLY route typed for body shapes where
+    -- the typed routing materially changes the emission:
+    --   * Can.Record  — `Setup_R[Msg]{...}` vs `Setup_R[any]{...}`
+    --     (the primary motivation; closes the editor panic class).
+    --   * Can.Lambda  — typed func signature emission.
+    --   * Can.If / Can.Case / Can.Let — typed IIFE return so a
+    --     nested control-flow expression keeps its result type
+    --     through the let-binding boundary.
+    --
+    -- Other body shapes (Can.Call, Can.Access, Can.VarLocal, …)
+    -- are LEFT UNTYPED because their generic lowerers already
+    -- emit correctly-typed Go, and forcing typed routing on top
+    -- wraps the result in helpers (`rt.AsListT[T]`) that misbehave
+    -- for FFI results / Result-wrapped values / kernel returns.
+    -- Concrete regression that fired in baseline sweep:
+    --   `decimals = Ffi.callPure "Money_allocate" […]` — typed
+    --   gate emitted `rt.AsListT[Decimal](rt.Ffi_callPure(…))`
+    --   which stripped the Result-Ok wrap incorrectly and yielded
+    --   an empty slice; downstream `List.map` returned [] and
+    --   `Money.allocate` silently produced no parts.
+    --
+    -- (B) Type gate: the rendered Go type must be emittable AND
+    -- not contain the `any` token anywhere (a `func(P) any` slot
+    -- typed routing would strip a sharper source `func(P) T1`).
+    let canRouteTyped = case body of
+            A.At _ (Can.Record _) -> True
+            A.At _ (Can.Lambda _ _) -> True
+            A.At _ (Can.If _ _) -> True
+            A.At _ (Can.Case _ _) -> True
+            A.At _ (Can.Let _ _) -> True
+            A.At _ (Can.LetRec _ _) -> True
+            _ -> False
+        viaRegion   = lookupRegionType r
+        viaInferred = inferExprType solvedTypes body
+        containsAny s = goAny 0 s
+          where
+            goAny _ [] = False
+            goAny d ('a':'n':'y':rest)
+                | atTokenBoundary d rest = True
+                | otherwise = goAny d rest
+            goAny d ('[':rest) = goAny (d+1) rest
+            goAny d (']':rest) = goAny (max 0 (d-1)) rest
+            goAny d (_:rest) = goAny d rest
+            atTokenBoundary _ [] = True
+            atTokenBoundary _ (c:_) = not (isIdentChar c)
+            isIdentChar c =
+                (c >= 'a' && c <= 'z') ||
+                (c >= 'A' && c <= 'Z') ||
+                (c >= '0' && c <= '9') || c == '_'
+        emittable t =
+            let goTy = solvedTypeToGo t
+            in isEmittableGoType goTy
+               && goTy /= "any"
+               && not (containsAny goTy)
+    in if not canRouteTyped
+        then Nothing
+        else case viaRegion of
+            Just t | emittable t -> Just t
+            _ -> case viaInferred of
+                Just t | emittable t -> Just t
+                _ -> Nothing
+
+
 defToStmts :: Can.Def -> [GoIr.GoStmt]
 defToStmts def = case def of
     Can.DestructDef pat valExpr ->
@@ -9242,7 +9578,23 @@ defToStmts def = case def of
             [GoIr.GoAssign "_"
                 (GoIr.GoCall (GoIr.GoQualified "rt" "AnyTaskRun")
                     [loweredDiscard body])]
-        else letBindStmts name (exprToGo body)
+        else
+            -- v0.15.3: prefer the HM-solved type for the binding
+            -- over `inferExprType`. `solvedTypes` carries the fully
+            -- resolved type (including record-with-lambda-field
+            -- cases that `inferExprType` returns Nothing for —
+            -- `Can.Lambda _ _ -> Nothing` in its arm). When solved
+            -- type renders to a real Go type, route through
+            -- `exprToGoExpect` so a `Setup_R{...}` literal emits
+            -- as `Setup_R[Msg]{...}` instead of `Setup_R[any]{...}`.
+            -- See test-files/v0.15-stress/src/Widget/Form.sky for
+            -- the regression case that closed this gap.
+            let solved = Rec._cg_solvedTypes getCgEnv
+            in case letBindingType solved name body of
+                Just dt ->
+                    letBindStmts name (exprToGoExpect dt body)
+                Nothing ->
+                    letBindStmts name (exprToGo body)
 
     Can.Def (A.At _ name) params body ->
         -- v0.13 Stage 1 — for unannotated multi-pattern let-defs,
@@ -10367,10 +10719,21 @@ defBody (Can.DestructDef _ body) = body
 exprToMainStmtsTyped :: Solve.SolvedTypes -> Can.Expr -> [GoIr.GoStmt]
 exprToMainStmtsTyped types (A.At _ expr) = case expr of
     Can.Let def body ->
-        defToStmts def ++ exprToMainStmtsTyped types body
+        -- v0.15.3 — register the let-binding's HM type into the
+        -- in-scope lambda-types map BEFORE defToStmts runs so
+        -- both the binding's RHS lowering AND every downstream
+        -- ref in the body see the typed shape.  Without this,
+        -- `wformCfg := Setup_R[Msg]{...}` is emitted correctly
+        -- but the next-line call `Widget_Form_view(wformCfg)`
+        -- can't pin Setup_R[Msg] as wformCfg's Go-static type —
+        -- coerceArg's parametric-record short-circuit doesn't
+        -- fire, and the legacy nominal cast panics at runtime.
+        registerMainLetBindingType types def `seq`
+            (defToStmts def ++ exprToMainStmtsTyped types body)
 
     Can.LetRec defs body ->
-        concatMap defToStmts defs ++ exprToMainStmtsTyped types body
+        foldr seq () (map (registerMainLetBindingType types) defs) `seq`
+            (concatMap defToStmts defs ++ exprToMainStmtsTyped types body)
 
     Can.LetDestruct _pat valExpr body ->
         [GoIr.GoExprStmt (exprToGoMain types valExpr)] ++ exprToMainStmtsTyped types body

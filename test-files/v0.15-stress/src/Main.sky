@@ -12,6 +12,7 @@ import Sky.Core.Prelude exposing (..)
 import Std.Log exposing (println)
 import Widget.Editor as Editor
 import Widget.Editor exposing (Cfg, Form)
+import Widget.Form as WForm
 import Inner.Polymorphic as Poly
 
 
@@ -254,6 +255,18 @@ useDirectLiteral =
         { onSubmit = Tag, label = "anon", busy = False }
 
 
+-- L1-L7 — top-level consumer that takes a `WForm.Setup Msg`
+-- and threads it into `WForm.view`.  This is the
+-- monomorphisation trigger: the σ for `WForm.view` is captured
+-- with concrete `msg=Msg` at this call site.  Pre-fix, the
+-- mono'd `Widget_Form_view__Msg_...` body emitted
+-- `Widget_Form_body(any(cfg).(Setup_R[any]))` which panicked
+-- on Go's nominal generic type assertion.
+consumeForm : WForm.Setup Msg -> Int
+consumeForm cfg =
+    WForm.render (WForm.view cfg)
+
+
 -- ═══════════════════════════════════════════════════════════
 -- Helper that prints + asserts equality
 -- ═══════════════════════════════════════════════════════════
@@ -363,6 +376,36 @@ main =
         r_s14b = check "S14b" (Maybe.withDefault "none" doubledStr) "7"
         r_s14c = check "S14c" (String.join "," (List.map String.fromInt mappedDirect)) "11,12,13"
 
+        -- L1-L5: library-shaped module forwarding `Cfg msg` to
+        -- sibling polymorphic helpers.  Synthetic repro of the
+        -- pattern that caused all three v0.15.x runtime panics
+        -- (Editor_Cfg_R[any] vs Cfg_R[Msg] interface conversion).
+        -- Type inference pins the Cfg's msg to Main.Msg via the
+        -- SaveFile/NoOp ctor refs.
+        wformCfg =
+            { wfSubmit = \_p -> Tag "lib-submit"
+            , wfCheck = NoOp
+            , wfDismiss = NoOp
+            , wfLabel = "lib"
+            , wfBusy = False
+            }
+
+        -- The runtime assertion: render the Element tree to HTML
+        -- and check its length is sensible (>0, <large).  The
+        -- panic class we're catching fires DURING the mono'd
+        -- view's evaluation, long before render() returns — so
+        -- if we get a positive int, the codegen is sound.
+        -- Two assertions in one: r_lib uses the inline view
+        -- call (no mono); r_lib_consumer uses the top-level
+        -- `consumeForm` helper that DOES get monomorphised
+        -- with msg=Msg.  Both paths must return positive int
+        -- (= "Element rendered without runtime panic").
+        libInline = WForm.render (WForm.view wformCfg)
+        libConsumer = consumeForm wformCfg
+
+        r_lib = check "L1-L7" (if libInline > 0 then "rendered" else "empty") "rendered"
+        r_lib_consumer = check "L1-L7-consumer" (if libConsumer > 0 then "rendered" else "empty") "rendered"
+
         results =
             [ r_s1a, r_s1b, r_s2, r_s4
             , r_s6a, r_s6b, r_s6c
@@ -371,6 +414,8 @@ main =
             , r_s10a, r_s10b, r_s11
             , r_s3a
             , r_s13a, r_s13b, r_s14, r_s14b, r_s14c
+            , r_lib
+            , r_lib_consumer
             ]
 
         report = case Result.combine results of
