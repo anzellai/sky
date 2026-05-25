@@ -202,6 +202,22 @@ MD5 (…) = 2a740e622c1cd94d9be58c7c0ca7ae69    # byte-identical
   `length args /= 1` gate keeps multi-arg callees on the reflect
   path.  Caught by `scripts/example-sweep.sh --build-only`;
   regression coverage in `Sky.Build.ExampleSweep`.
+* **(closed post-PR-79 push)** `test-files/record-field-partial-app.sky`
+  self-test regressed: `runWidget cfg form = cfg.onSubmit form`
+  emitted Go that `go build` rejected with
+  `cannot call rt.Field(cfg, "OnSubmit") (any): any is not a function`.
+  Cause: the HM-driven recovery saw `cfg.onSubmit : Form -> Msg`
+  and fired the fast-path, but `Can.Access` lowers via `rt.Field`
+  which returns `any` (no static function shape).  Fix: gate the
+  fast-path on `Can.VarLocal` callees only.  Those emit as bare
+  `GoIdent (goSafeName name)`, and the entry-/dep-module decl
+  paths zip `typedGoParams` with the resolved `solvedTypeToGo`
+  per annotation slot — so the bare ident statically carries a
+  Go function value and the direct call typechecks.  Other
+  indirect shapes (`Can.Access`, `Can.Call` result, `Can.Update`,
+  `Can.LetRec` name, …) widen to `any` at the call boundary and
+  stay on the `rt.SkyCall` reflect path.  Caught by
+  `./scripts/build.sh --self-tests` (CI's self-test gate).
 * **(open, future P4-followup)** Multi-arg HOF param values
   (`pickAdd op a b`) still route through `rt.SkyCall`.  Closing
   this needs a per-callee flat-vs-curry registry built at
