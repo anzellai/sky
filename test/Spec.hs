@@ -2,6 +2,7 @@ module Main (main) where
 
 import Test.Hspec
 import qualified Sky.Build.CompileSpec
+import qualified Sky.Build.IORefBoundarySpec
 import qualified Sky.Build.DepHmFatalSpec
 import qualified Sky.Build.ExampleSweepSpec
 import qualified Sky.Build.ForeignFatalSpec
@@ -84,6 +85,9 @@ import qualified Sky.Cli.DoctorSpec
 main :: IO ()
 main = hspec $ do
     describe "Sky.Build.Compile"         Sky.Build.CompileSpec.spec
+    -- v0.15.5 PR 2/6 — regression gate for the retired per-scope
+    -- IORef pair (mechanical string match on Compile.hs).
+    describe "Sky.Build.IORefBoundary"   Sky.Build.IORefBoundarySpec.spec
     -- v0.10.0: dep module HM errors must abort the build (used to
     -- silently degrade to `any`-typed bindings, hiding real type
     -- bugs that surfaced as func-pointer-as-string at runtime).

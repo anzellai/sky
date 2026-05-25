@@ -283,6 +283,7 @@ test-suite sky-tests
       Sky.Diagnostics.CoverageSpec
       Sky.Build.KernelSigCoverageSpec
       Sky.Build.HeapBoundedHmSpec
+      Sky.Build.IORefBoundarySpec
       Sky.Build.SolverBudgetSpec
       Sky.Build.UnreachableGateSpec
       Sky.Parse.CommentsSpec
