@@ -39,6 +39,7 @@ module Sky.Build.LowerCtx
     , lookupRegionType
     , lookupAlias
     , lookupAnnotation
+    , lookupSolved
     , withLambdaTypes
     , withLambdaGoStrs
     ) where
@@ -185,6 +186,15 @@ lookupAlias ctx aliasName = Map.lookup aliasName (_lc_aliases ctx)
 -- for reads of `globalAnnotMap`.
 lookupAnnotation :: LowerCtx -> String -> Maybe T.Annotation
 lookupAnnotation ctx name = Map.lookup name (_lc_annotMap ctx)
+
+
+-- | Look up a top-level binding's HM-solved type.  Pure substitute
+-- for `Map.lookup name (_lc_solved ctx)`.  PR 3 (`inferExprType` /
+-- `letBindingType` migration) will use this to retire the
+-- `Solve.SolvedTypes` thread now passed alongside `LowerCtx` —
+-- one source of truth for solved types.
+lookupSolved :: LowerCtx -> String -> Maybe T.Type
+lookupSolved ctx name = Map.lookup name (_lc_solved ctx)
 
 
 -- | Extend the lambda-types scope.  Returns a NEW ctx — the parent
