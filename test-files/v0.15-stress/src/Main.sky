@@ -14,6 +14,7 @@ import Widget.Editor as Editor
 import Widget.Editor exposing (Cfg, Form)
 import Widget.Form as WForm
 import Widget.CrossInstanceCfg as XCfg
+import Widget.PipelineResult as PR
 import Inner.Polymorphic as Poly
 
 
@@ -414,6 +415,16 @@ main =
         -- `interface {} is Cfg_R[int], not Cfg_R[interface {}]`.
         r_xcfg = check "XCfg" (String.fromInt (XCfg.roundTripInt 42)) "42"
 
+        -- v0.15.8 (P2) — Gap A2 reproducer: `Result.andThen` chain
+        -- whose typed result flows into a `Result Error String`-typed
+        -- consumer.  Pre-P2 the consumer-call arg was wrapped in
+        -- `rt.ResultCoerce[Sky_Core_Error_Error, string](...)`; post-
+        -- P2 the wrap is elided and the runtime value flows raw.
+        -- Verified by the cabal spec `GoExprTypeInferenceSpec`; this
+        -- section adds a runtime assertion on the in-process sweep.
+        r_p2_pipeline = check "P2-pipeline" (PR.report (PR.pipeline 5)) "ok:final"
+        r_p2_neg      = check "P2-neg"      (PR.report (PR.pipeline (-1))) "err:InvalidInput: neg"
+
         results =
             [ r_s1a, r_s1b, r_s2, r_s4
             , r_s6a, r_s6b, r_s6c
@@ -425,6 +436,8 @@ main =
             , r_lib
             , r_lib_consumer
             , r_xcfg
+            , r_p2_pipeline
+            , r_p2_neg
             ]
 
         report = case Result.combine results of

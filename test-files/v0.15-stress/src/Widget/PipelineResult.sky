@@ -1,0 +1,43 @@
+module Widget.PipelineResult exposing (pipeline, report)
+
+-- v0.15.8 (Cycle-01 / Plan-Item P2) — closes Gap A2.
+--
+-- The polymorphic-call result of `Result.andThen` lowers as a
+-- `GoCall (GoIdent "Sky_Core_Result_andThen_...") [...]`.  Pre-P2
+-- `goExprGoType` returned Nothing for this shape, so downstream
+-- coerceArg fell back to `rt.ResultCoerce[...]` or `rt.Coerce[...]`
+-- wraps around the pipeline result — wasteful and reflect-backed.
+--
+-- Post-P2's structural fallback (HM-driven `inferExprType` →
+-- `solvedTypeToGo` → sanity filter) recovers the
+-- `Result Error String` shape and the wrap is elided.  The
+-- `report (pipeline 5)` site at the bottom of the entry module
+-- ends up emitting `report(pipeline(5))` — raw call, no
+-- reflective coercion adapter.
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Result as Result
+import Sky.Core.Error as Error
+
+
+pipeline : Int -> Result Error String
+pipeline x =
+    Ok "step1"
+        |> Result.andThen
+               (\_ ->
+                   if x > 0 then
+                       Ok "step2"
+
+                   else
+                       Err (Error.invalidInput "neg"))
+        |> Result.andThen (\_ -> Ok "final")
+
+
+report : Result Error String -> String
+report r =
+    case r of
+
+        Ok s ->
+            "ok:" ++ s
+
+        Err e ->
+            "err:" ++ Error.toString e
