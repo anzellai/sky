@@ -160,6 +160,7 @@ executable sky
     -- Build system
     Sky.Build.ModuleGraph
     Sky.Build.Compile
+    Sky.Build.LowerCtx
     Sky.Build.Dce
     Sky.Build.EmbedDirTH
     Sky.Build.EmbeddedRuntime
