@@ -58,11 +58,33 @@ Migrate every reader of `scopeStateRef` to take an explicit
 `LC.LowerCtx` parameter, until the IORef itself can be deleted.
 `letBindingType` (v0.15.5 iter 3 POC) is the seed pattern.
 
-THEN close #8/#14: with a single per-compile snapshot threading
-the same `_lc_regionTypes` Map throughout, the region-pollution
-bug iter 3 hit disappears (different bindings can't accidentally
-overwrite each other's region entries in a snapshot that's frozen
-at compile entry).  Drop the `canRouteTyped` whitelist after that.
+THEN close #8/#14.  **Important: 2026-05-25 investigation found
+that a per-compile snapshot alone is NOT sufficient to close #8.**
+`A.Region` (`{_start :: Position, _end :: Position}`) carries
+NO module / file identity, so when `continueCompile` merges
+`Map.union entryRegionTys depRegionTys` at line 1159, region keys
+from different modules with overlapping `(line, col)` coordinates
+collide silently — the later write wins.  Dropping `canRouteTyped`
+then re-routes a let-binding like `Sky_Core_Jwt.urlToStandard`'s
+`rem = modBy 4 (...)` (a `Can.Call` body, previously gated out)
+through `viaRegion`, which returns whatever-type-happened-to-share-
+that-position (`Sky_Test_TestResult` in the bisect run).
+
+The real fix is a **two-stage cascade** for #8/#14:
+
+**Stage A (cascade)**: thread `LC.LowerCtx` through the lowerer
+(audit #1/#6/#9) and snapshot `scopeStateRef` once.  Byte-identity
+preserving; mechanical refactor.
+
+**Stage B (region-key fix)**: change `RegionTypes` from
+`Map A.Region T.Type` to `Map (FilePath, A.Region) T.Type` (or
+`Map ModuleName.Canonical (Map A.Region T.Type)`), and qualify
+each per-module solver result with its source path BEFORE merging.
+`LC.lookupRegionType` then takes both `ctx` AND the current
+module's qualifier as input.
+
+After both stages: drop `canRouteTyped`, verify Jwt.urlToStandard
+emits `rem : int`, run the verification sweep.
 
 ### Mechanical changes
 
@@ -78,26 +100,49 @@ at compile entry).  Drop the `canRouteTyped` whitelist after that.
 3. **Replace `withScopedLambdaTypes m action`** with
    `let ctx' = LC.withLambdaTypes m ctx in action ctx'` — the
    scoped helper goes away.
-4. **Drop `canRouteTyped` whitelist** in `letBindingType` — closes
-   audit #8 + #14.  Per-compile region snapshot makes region
-   lookups safe for any body shape; iter 3's regression
-   (`Sky_Core_Jwt_urlToStandard` mis-typed `rem` as
-   `Sky_Test_TestResult`) doesn't recur because cross-binding
-   region pollution can't happen in a frozen snapshot.
-5. **Delete `scopeStateRef`** — its last reader is gone.
-6. **Update `IORefBoundarySpec`** with a negative assertion for
+4. **Region-key fix (audit #8/#14 actual blocker — see "Scope"
+   above)**: change `Solve.RegionTypes` from `Map A.Region T.Type`
+   to `Map (FilePath, A.Region) T.Type`.  Qualify each per-module
+   solver result with its source path in `continueCompile` BEFORE
+   the `Map.union` merge.  Extend `LC.lookupRegionType` to take
+   `FilePath` (or `ModuleName.Canonical`) alongside `Region`.
+   Update `_lc_module` consumers to carry the current dep's path
+   when lowering dep decls via `generateDeclsForDep`.
+5. **Drop `canRouteTyped` whitelist** in `letBindingType` — closes
+   audit #8 + #14.  Only safe AFTER step 4; without it, dropping
+   the whitelist mis-types let-binding RHSs whose region keys
+   collide with foreign-module entries (verified
+   2026-05-25: `Sky_Core_Jwt_urlToStandard` regression recurs even
+   under single-snapshot semantics).
+6. **Delete `scopeStateRef`** — its last reader is gone.
+7. **Update `IORefBoundarySpec`** with a negative assertion for
    `scopeStateRef` (it should not appear anywhere in Compile.hs).
-7. **Extend the positive surface spec** with assertions for
+8. **Extend the positive surface spec** with assertions for
    `ctx :: LC.LowerCtx` reaching `exprToGo` (the cascade root).
 
 ### Risk
 
-Low.  Mechanical refactor.  Each function gains one parameter; no
-logic change.  The cascade is byte-identity-preserving for steps
-1-3 because the underlying lookups are identical pure functions
-over the same snapshotted data.  Step 4 (drop whitelist) will
-change codegen for Can.Call / Can.Access let bodies — but with
-the snapshot in place, no region pollution → no regression.
+Steps 1-3: Low.  Mechanical refactor.  Each function gains one
+parameter; no logic change.  Byte-identity-preserving because
+the underlying lookups are identical pure functions over the
+same snapshotted data.
+
+Step 4 (region-key fix): Medium.  Changes `RegionTypes`'s type
+shape, ripples through `Solve.hs`, `LowerCtx.hs`, and call sites
+of `lookupRegionType`.  Solver doesn't currently know the source
+path; qualifier must be threaded from `continueCompile`'s
+per-module solve sites (lines 1059-1069, 1153-1161).
+
+Step 5 (drop whitelist): Low ONLY AFTER step 4.  Changes codegen
+for `Can.Call` / `Can.Access` let bodies — adds typed routing
+where the region map has a precise type.  Verified
+2026-05-25: without step 4, this regresses `Sky_Core_Jwt.
+urlToStandard`'s `rem` binding from `int` to `Sky_Test_TestResult`
+via cross-module region-key collision.
+
+Step 6 (delete `scopeStateRef`): Zero risk — its remaining
+readers are mechanical replacements; IORefBoundarySpec catches
+any back-reference.
 
 ### Acceptance
 
