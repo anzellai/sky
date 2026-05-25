@@ -9364,7 +9364,15 @@ letToGo mExpectedGo def body =
     -- let-bindings in the same function can't collide because they
     -- have different names; cross-function leakage is prevented by
     -- the scoping wrapper.
-    let solved = Rec._cg_solvedTypes getCgEnv
+    --
+    -- v0.15.5 PR 3 (iteration 3) — read `scopeStateRef` ONCE at the
+    -- function head into a local `ctx`, then pass `ctx` explicitly
+    -- to every typed-routing call below.  This is the cascade
+    -- pattern PR 4-6 (v0.15.6) will repeat at every call site
+    -- reachable from `exprToGo`.  One IORef read replaces what was
+    -- N implicit reads inside `letBindingType`'s region lookup.
+    let ctx = unsafePerformIO (readIORef scopeStateRef)
+        solved = Rec._cg_solvedTypes getCgEnv
         -- v0.13 typed lowerer: register a primitive-typed let-binding
         -- under the body's scope so Go-native binops fire on it.
         -- Restricted to primitives — broadening to record/ADT types
@@ -9433,10 +9441,10 @@ letToGo mExpectedGo def body =
         defStmts = case def of
             Can.Def (A.At _ dn) [] valExpr
                 | dn /= "_"
-                , Just dt <- letBindingType solvedTypes dn valExpr ->
+                , Just dt <- letBindingType ctx solvedTypes dn valExpr ->
                     letBindStmts dn (exprToGoExpect dt valExpr)
             Can.TypedDef (A.At _ dn) _ [] valExpr _
-                | Just dt <- letBindingType solvedTypes dn valExpr ->
+                | Just dt <- letBindingType ctx solvedTypes dn valExpr ->
                     letBindStmts dn (exprToGoExpect dt valExpr)
             _ -> defToStmts def
         bodyGo = if Map.null bindingExtras
@@ -9513,20 +9521,26 @@ loweredDiscard body@(A.At _ inner) = case inner of
 -- `main` is the last function emitted for the entry module, and
 -- the registry is read fresh on each compile.
 registerMainLetBindingType :: Solve.SolvedTypes -> Can.Def -> ()
-registerMainLetBindingType types def = case def of
-    Can.Def (A.At _ name) [] body
-        | name /= "_"
-        , Just t <- letBindingType types name body ->
-            unsafePerformIO $ do
-                modifyIORef scopeStateRef (LC.withLambdaTypes (Map.singleton name t))
-                return ()
-    Can.TypedDef (A.At _ name) _ [] body _
-        | name /= "_"
-        , Just t <- letBindingType types name body ->
-            unsafePerformIO $ do
-                modifyIORef scopeStateRef (LC.withLambdaTypes (Map.singleton name t))
-                return ()
-    _ -> ()
+registerMainLetBindingType types def =
+    -- v0.15.5 PR 3 (iteration 3) — snapshot `scopeStateRef` once at
+    -- entry; pass `ctx` to `letBindingType` instead of letting the
+    -- old IORef-backed `lookupRegionType` re-read on every region
+    -- query.
+    let ctx = unsafePerformIO (readIORef scopeStateRef)
+    in case def of
+        Can.Def (A.At _ name) [] body
+            | name /= "_"
+            , Just t <- letBindingType ctx types name body ->
+                unsafePerformIO $ do
+                    modifyIORef scopeStateRef (LC.withLambdaTypes (Map.singleton name t))
+                    return ()
+        Can.TypedDef (A.At _ name) _ [] body _
+            | name /= "_"
+            , Just t <- letBindingType ctx types name body ->
+                unsafePerformIO $ do
+                    modifyIORef scopeStateRef (LC.withLambdaTypes (Map.singleton name t))
+                    return ()
+        _ -> ()
 
 
 -- | v0.15.3: recover a zero-param let-binding's HM-solved type.
@@ -9557,8 +9571,31 @@ registerMainLetBindingType types def = case def of
 --
 -- All candidates gated on `isEmittableGoType` so an un-nameable
 -- type cannot reach the typed path; untyped fallback stays safe.
-letBindingType :: Solve.SolvedTypes -> String -> Can.Expr -> Maybe T.Type
-letBindingType solvedTypes _name body@(A.At r _) =
+-- | v0.15.5 PR 3 (iteration 3) — Threaded-LowerCtx POC.
+--
+-- `letBindingType` is the first call site to accept an EXPLICIT
+-- `LC.LowerCtx` parameter in addition to its other inputs.  The
+-- region lookup (formerly via the IORef-backed `lookupRegionType`)
+-- now goes through `LC.lookupRegionType ctx`, a PURE function.
+-- This makes ONE IORef read explicit (a positive change — the
+-- snapshot is taken once at the function-head and threaded
+-- downstream) instead of N hidden reads.
+--
+-- The two-axis gate (body-shape whitelist + type-emittability) is
+-- INTENTIONALLY preserved here.  Removing the whitelist exposes a
+-- region-map pollution bug — `lookupRegionType` can return a type
+-- from an unrelated sibling-region binding when the let-binding's
+-- region key collides across modules in the snapshot.  Closing
+-- that needs the v0.15.6 cascade (single snapshot per compile)
+-- plus a region-key disambiguation pass; tracked as audit
+-- residual #8 + #14 in `docs/improvement-plan-v0.16.md`.
+--
+-- v0.15.6 cascade target: every call site reachable from this
+-- function should grow a `ctx` parameter, until `scopeStateRef`'s
+-- last reader is gone and the IORef can be deleted (see
+-- `docs/improvement-plan-v0.16.md` §2 for the staging).
+letBindingType :: LC.LowerCtx -> Solve.SolvedTypes -> String -> Can.Expr -> Maybe T.Type
+letBindingType ctx solvedTypes _name body@(A.At r _) =
     -- v0.15.3 — Two-axis gate.
     --
     -- (A) Body-shape gate: ONLY route typed for body shapes where
@@ -9593,7 +9630,7 @@ letBindingType solvedTypes _name body@(A.At r _) =
             A.At _ (Can.Let _ _) -> True
             A.At _ (Can.LetRec _ _) -> True
             _ -> False
-        viaRegion   = lookupRegionType r
+        viaRegion   = LC.lookupRegionType ctx r
         viaInferred = inferExprType solvedTypes body
         containsAny s = goAny 0 s
           where
@@ -9675,8 +9712,17 @@ defToStmts def = case def of
             -- as `Setup_R[Msg]{...}` instead of `Setup_R[any]{...}`.
             -- See test-files/v0.15-stress/src/Widget/Form.sky for
             -- the regression case that closed this gap.
-            let solved = Rec._cg_solvedTypes getCgEnv
-            in case letBindingType solved name body of
+            --
+            -- v0.15.5 PR 3 (iteration 3) — POC for the v0.15.6
+            -- cascade.  `defToStmts` is invoked from a top-level
+            -- `concatMap` chain with no expression-level seam to
+            -- thread `ctx` through, so we snapshot `scopeStateRef`
+            -- at the function head here.  PRs 4-6 will lift this
+            -- read to `generateGoMulti` so a single snapshot fans
+            -- out across the entire compile.
+            let ctx = unsafePerformIO (readIORef scopeStateRef)
+                solved = Rec._cg_solvedTypes getCgEnv
+            in case letBindingType ctx solved name body of
                 Just dt ->
                     letBindStmts name (exprToGoExpect dt body)
                 Nothing ->
