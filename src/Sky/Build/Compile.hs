@@ -158,17 +158,15 @@ globalAnonRecords = unsafePerformIO $ newIORef Map.empty
 
 
 -- | v0.15 Stage B — per-region HM type map for the current module.
--- Populated from the solver's `RegionTypes` after `solveWithInstances`-
--- AndRegions (Stage A) writes per-constraint types.  Consumed by
--- typed-directed lowering paths (Stage C+) that need the HM type
--- of a sub-expression by its source region.
 --
--- Following Sky's existing pattern of NOINLINE global IORefs.  A
--- principled refactor to thread `LowerCtx` as an explicit parameter
--- is a separate follow-up task.
-{-# NOINLINE globalRegionTypes #-}
-globalRegionTypes :: IORef Solve.RegionTypes
-globalRegionTypes = unsafePerformIO $ newIORef Map.empty
+-- v0.15.5 PR 3 — retired in favour of `scopeStateRef`'s
+-- `_lc_regionTypes` field.  The map is now written into the
+-- consolidated `scopeStateRef` at codegen entry alongside the
+-- lambda-types / lambda-Go-string state, and read via
+-- `LC.lookupRegionType` — same `unsafePerformIO`-wrapped IORef
+-- read, one fewer IORef on the boundary.  See `IORefBoundarySpec`
+-- for the gate that forbids the old name (string match) from
+-- coming back.
 
 
 -- | v0.15 Stage E — merged alias-declaration map (entry + deps),
@@ -236,10 +234,15 @@ aliasGenericArgs aliasName actualFields =
 -- code, FFI-derived expressions, etc.).  Used by typed-directed
 -- lowering arms (Stage C) to recover an expression's type without
 -- routing through the solver.
+--
+-- v0.15.5 PR 3 — reads the region map from `scopeStateRef`'s
+-- `_lc_regionTypes` field (consolidated with the lambda-scope state
+-- by PR 2) instead of the retired per-region-types IORef.  Same
+-- IORef-snapshot semantics, one fewer IORef on the boundary.
 lookupRegionType :: A.Region -> Maybe T.Type
 lookupRegionType region = unsafePerformIO $ do
-    rt <- readIORef globalRegionTypes
-    return (Map.lookup region rt)
+    ctx <- readIORef scopeStateRef
+    return (LC.lookupRegionType ctx region)
 
 
 -- | v0.13 Phase A4: per-callee generalised annotation, used to
@@ -285,16 +288,32 @@ globalEmittedSpecs = unsafePerformIO $ newIORef Set.empty
 globalCsiByCallee :: IORef (Map.Map String [String])
 globalCsiByCallee = unsafePerformIO $ newIORef Map.empty
 
--- | v0.13 typed lowerer: per-lambda-scope local-variable type bindings.
--- When emitting a typed lambda body, `withLambdaTypes` pushes the
--- lambda's `pat → T.Type` bindings here so `inferExprType` /
--- `Can.VarLocal` lookups resolve the param's HM-inferred type.
--- Without this, `\x -> x + 1` inside a typed HOF (where `x : Int`
--- was inferred) would lower `x + 1` as `rt.Add(x, 1)` (any-routed
--- through reflect) instead of Go-native `x + 1` (typed).
-{-# NOINLINE globalLambdaTypes #-}
-globalLambdaTypes :: IORef (Map.Map String T.Type)
-globalLambdaTypes = unsafePerformIO $ newIORef Map.empty
+-- | v0.15.5 PR 2 — consolidated lowering-scope state IORef.
+--
+-- Replaces the v0.13/v0.15 pair of IORefs (the lambda-type +
+-- lambda-Go-string maps, both retired in this PR) with a single
+-- `LC.LowerCtx`-shaped snapshot.  The two old IORefs held
+-- disjoint maps that were
+-- ALWAYS pushed/popped together at the same scope seams; combining
+-- them into one ctx-shaped IORef:
+--
+--   1. Cuts the IORef boundary by 2 names (`IORefBoundarySpec`).
+--   2. Aligns the per-scope state with the `LowerCtx` record PR 1
+--      introduced — PRs 3-6 migrate the consumers to read from a
+--      threaded `ctx` parameter directly, at which point this
+--      IORef itself disappears.
+--   3. Lets `lookupLambdaType` / `lookupLambdaGoStr` / scope
+--      helpers route through `LC.*` lookup helpers, so the
+--      readers' shape matches the eventual threaded-ctx shape.
+--
+-- The IORef holds an `LC.LowerCtx` whose only meaningful fields in
+-- this PR are `_lc_lambdaTypes` and `_lc_lambdaGoStr` — every
+-- other field is reset to the empty / module-stub when this ref
+-- is initialised, since the per-scope state never reads them.
+{-# NOINLINE scopeStateRef #-}
+scopeStateRef :: IORef LC.LowerCtx
+scopeStateRef = unsafePerformIO $ newIORef
+    (LC.emptyLowerCtx (ModuleName.Canonical "Sky.Build.Compile.scopeStateRef"))
 
 
 -- | Snapshot + restore the lambda-types map around an action.  Used at
@@ -304,8 +323,8 @@ globalLambdaTypes = unsafePerformIO $ newIORef Map.empty
 -- scope.
 withLambdaTypes :: Map.Map String T.Type -> a -> a
 withLambdaTypes additions x = unsafePerformIO $ do
-    prev <- readIORef globalLambdaTypes
-    writeIORef globalLambdaTypes (Map.union additions prev)
+    prev <- readIORef scopeStateRef
+    writeIORef scopeStateRef (LC.withLambdaTypes additions prev)
     return x
 
 
@@ -322,8 +341,8 @@ withLambdaTypes additions x = unsafePerformIO $ do
 -- typed registration, function-param registration.
 withScopedLambdaTypes :: Map.Map String T.Type -> GoIr.GoExpr -> GoIr.GoExpr
 withScopedLambdaTypes additions x = unsafePerformIO $ do
-    prev <- readIORef globalLambdaTypes
-    writeIORef globalLambdaTypes (Map.union additions prev)
+    prev <- readIORef scopeStateRef
+    writeIORef scopeStateRef (LC.withLambdaTypes additions prev)
     -- Force the GoExpr to String form which fully evaluates the tree.
     -- After this, the bindings are no longer needed (the rendered
     -- String is final).  Restore the previous bindings so sibling
@@ -331,7 +350,7 @@ withScopedLambdaTypes additions x = unsafePerformIO $ do
     let rendered = GoBuilder.renderExpr x
         -- Force evaluation by demanding length (rendered is a String).
         forced = length rendered
-    forced `seq` writeIORef globalLambdaTypes prev
+    forced `seq` writeIORef scopeStateRef prev
     return (GoIr.GoRaw rendered)
 
 
@@ -349,30 +368,29 @@ withScopedLambdaTypes additions x = unsafePerformIO $ do
 -- pipeline.
 lookupLambdaType :: String -> Maybe T.Type
 lookupLambdaType k = unsafePerformIO $ do
-    m <- readIORef globalLambdaTypes
-    return (Map.lookup k m)
+    ctx <- readIORef scopeStateRef
+    return (LC.lookupLambdaType ctx k)
 
 
 -- | v0.13 Stage 1 (task #189) — Go-type-string registry for typed
 -- function parameters in scope. When a dep function emits as
 -- `func [T1, T2 any](fn func(T1) T2, list []T1) …`, the `fn` param
--- is registered here as `"func(T1) T2"`. Lets `goExprGoType` resolve
+-- is registered as a Go-type string. Lets `goExprGoType` resolve
 -- bare ident `fn` to its typed sig at recursive call sites without
 -- needing a round-trip through `T.Type` (which the standard Sky
--- TVar machinery erases to `any`). Sister of `globalLambdaTypes`.
-{-# NOINLINE globalLambdaGoStrings #-}
-globalLambdaGoStrings :: IORef (Map.Map String String)
-globalLambdaGoStrings = unsafePerformIO $ newIORef Map.empty
-
-
+-- TVar machinery erases to `any`).  In v0.15.5 PR 2 the underlying
+-- storage was consolidated into `scopeStateRef`'s `_lc_lambdaGoStr`
+-- map; the helpers below preserve the public API so existing
+-- consumers continue to work.
+--
 -- | Like `withScopedLambdaTypes` but stores Go-type strings directly.
 withScopedLambdaGoStrings :: Map.Map String String -> GoIr.GoExpr -> GoIr.GoExpr
 withScopedLambdaGoStrings additions x = unsafePerformIO $ do
-    prev <- readIORef globalLambdaGoStrings
-    writeIORef globalLambdaGoStrings (Map.union additions prev)
+    prev <- readIORef scopeStateRef
+    writeIORef scopeStateRef (LC.withLambdaGoStrs additions prev)
     let rendered = GoBuilder.renderExpr x
         forced = length rendered
-    forced `seq` writeIORef globalLambdaGoStrings prev
+    forced `seq` writeIORef scopeStateRef prev
     return (GoIr.GoRaw rendered)
 
 
@@ -383,15 +401,8 @@ withScopedLambdaGoStrings additions x = unsafePerformIO $ do
 -- Go-side TVar names like `T1`, `T2`).
 lookupLambdaGoStr :: String -> Maybe String
 lookupLambdaGoStr k = unsafePerformIO $ do
-    m <- readIORef globalLambdaGoStrings
-    return (Map.lookup k m)
-
-
--- | Membership-only sister of `lookupLambdaType`.
-memberLambdaType :: String -> Bool
-memberLambdaType k = unsafePerformIO $ do
-    m <- readIORef globalLambdaTypes
-    return (Map.member k m)
+    ctx <- readIORef scopeStateRef
+    return (LC.lookupLambdaGoStr ctx k)
 
 
 -- | Read the global codegen env (for use in pure codegen functions).
@@ -1076,8 +1087,10 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                 -- v0.15 Stage A/B: merge per-region types from every
                 -- dep into one map.  Entry-module region types added
                 -- after solveWithInstancesAndRegions on the entry
-                -- below; the merged map is written to
-                -- globalRegionTypes there.
+                -- below; the merged map is written into
+                -- `scopeStateRef`'s `_lc_regionTypes` field there
+                -- (v0.15.5 PR 3 — consolidated with the rest of the
+                -- lowering-scope state).
                 depRegionTys = Map.unions
                     [ rt | (_, Right (_, _, rt, _)) <- finalResults ]
             unless (null depErrors) $ do
@@ -1139,7 +1152,13 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
             -- lookupRegionType in Stage C+ arms.
             (solveResult, callInstances, callSiteInstances, entryRegionTys)
                 <- Solve.solveWithInstancesAndRegions constraints
-            writeIORef globalRegionTypes (Map.union entryRegionTys depRegionTys)
+            -- v0.15.5 PR 3 — write the merged region map into
+            -- `scopeStateRef`'s `_lc_regionTypes` slot instead of
+            -- the retired per-region-types IORef.  Reads via
+            -- `lookupRegionType` consult the same field.
+            let mergedRegionTys = Map.union entryRegionTys depRegionTys
+            modifyIORef scopeStateRef $ \ctx ->
+                ctx { LC._lc_regionTypes = mergedRegionTys }
             -- v0.13 Phase A5: install the per-call-site instance
             -- registry into `_cg_callSiteInstances` so call-site
             -- codegen can pick the right generic instantiation
@@ -3223,11 +3242,12 @@ generateGoMulti canMod srcMod config solvedTypes depDecls depRecAliases depUnion
         importsForced = imports `seq` imports
         -- v0.16 PR 1 — snapshot the lowering-time IORef state into a
         -- pure `LowerCtx` value.  `imports` has already populated
-        -- `globalCgEnv` + `globalUnionNames`; `globalRegionTypes`,
+        -- `globalCgEnv` + `globalUnionNames`; the per-region HM type
+        -- map (now in `scopeStateRef._lc_regionTypes`),
         -- `globalAllAliases`, `globalAllFieldIdx`, `globalAnnotMap`,
-        -- `globalLambdaTypes`, `globalLambdaGoStrings` were written
-        -- by `continueCompile` earlier.  Sequence the snapshot AFTER
-        -- `importsForced` so all writes are visible.
+        -- and the per-scope lambda-type / lambda-Go-string maps were
+        -- written by `continueCompile` earlier.  Sequence the
+        -- snapshot AFTER `importsForced` so all writes are visible.
         --
         -- The value is constructed but has NO CALLERS in this PR.
         -- PRs 2-6 of the v0.16 sequence (see
@@ -3239,7 +3259,12 @@ generateGoMulti canMod srcMod config solvedTypes depDecls depRecAliases depUnion
             -- Sequence the snapshot AFTER `importsForced` so writes
             -- to `globalCgEnv` + `globalUnionNames` are visible.
             importsForced `seq` return ()
-            regions <- readIORef globalRegionTypes
+            -- v0.15.5 PR 3 — region map now lives in `scopeStateRef`'s
+            -- `_lc_regionTypes` field (the consolidated lowering-scope
+            -- IORef from PR 2).  Read from there instead of the
+            -- retired per-region-types IORef.
+            scopeCtx <- readIORef scopeStateRef
+            let regions = LC._lc_regionTypes scopeCtx
             aliases <- readIORef globalAllAliases
             fieldIdx <- readIORef globalAllFieldIdx
             unions <- readIORef globalUnionNames
@@ -8620,7 +8645,7 @@ isGenericTypeParam _ = False
 --     local with known static type) — perfect match, Go infers.
 --   * `GoIdent name` for a user-introduced local (not `rt.*`)
 --     where `goExprGoType` is Nothing — could be a function param
---     whose type isn't tracked in `globalLambdaTypes` (the
+--     whose type isn't tracked in the lambda-types scope (the
 --     scoped-binding-vs-lazy-rendering race), but its Go-static
 --     type IS `Foo_R[T]` at the actual call site.  Go's
 --     inference handles it.  If the type turns out wrong, Go
@@ -9164,8 +9189,8 @@ binopToGo op left right =
     -- Go-native vs `rt.*` any-routed.  Soundness restriction: only
     -- optimise when BOTH operands are statically typed in Go — i.e.
     -- they're literals (Int, Float, String, Bool, Char) or simple
-    -- references to typed lambda params (registered in
-    -- `globalLambdaTypes`).  Runtime kernel calls (e.g.
+    -- references to typed lambda params (registered in the
+    -- lambda-types scope).  Runtime kernel calls (e.g.
     -- `rt.Crypto_sha256`) return `any` even when HM says the result
     -- is String, so a naive `"prefix " + rt.Crypto_sha256(data)`
     -- would fail Go's static type check.  Falls back to runtime
@@ -9339,7 +9364,15 @@ letToGo mExpectedGo def body =
     -- let-bindings in the same function can't collide because they
     -- have different names; cross-function leakage is prevented by
     -- the scoping wrapper.
-    let solved = Rec._cg_solvedTypes getCgEnv
+    --
+    -- v0.15.5 PR 3 (iteration 3) — read `scopeStateRef` ONCE at the
+    -- function head into a local `ctx`, then pass `ctx` explicitly
+    -- to every typed-routing call below.  This is the cascade
+    -- pattern PR 4-6 (v0.15.6) will repeat at every call site
+    -- reachable from `exprToGo`.  One IORef read replaces what was
+    -- N implicit reads inside `letBindingType`'s region lookup.
+    let ctx = unsafePerformIO (readIORef scopeStateRef)
+        solved = Rec._cg_solvedTypes getCgEnv
         -- v0.13 typed lowerer: register a primitive-typed let-binding
         -- under the body's scope so Go-native binops fire on it.
         -- Restricted to primitives — broadening to record/ADT types
@@ -9408,10 +9441,10 @@ letToGo mExpectedGo def body =
         defStmts = case def of
             Can.Def (A.At _ dn) [] valExpr
                 | dn /= "_"
-                , Just dt <- letBindingType solvedTypes dn valExpr ->
+                , Just dt <- letBindingType ctx solvedTypes dn valExpr ->
                     letBindStmts dn (exprToGoExpect dt valExpr)
             Can.TypedDef (A.At _ dn) _ [] valExpr _
-                | Just dt <- letBindingType solvedTypes dn valExpr ->
+                | Just dt <- letBindingType ctx solvedTypes dn valExpr ->
                     letBindStmts dn (exprToGoExpect dt valExpr)
             _ -> defToStmts def
         bodyGo = if Map.null bindingExtras
@@ -9482,34 +9515,42 @@ loweredDiscard body@(A.At _ inner) = case inner of
 -- non-`any` shape) — registering an `any`-rendering type would
 -- pollute the lookup with useless entries.
 --
--- Uses the unscoped `globalLambdaTypes` write because main's body
+-- Uses the unscoped scope-state write because main's body
 -- lowering is a `concatMap defToStmts` chain with no expression-
 -- level scoping seam to thread through.  The leak is bounded —
 -- `main` is the last function emitted for the entry module, and
 -- the registry is read fresh on each compile.
 registerMainLetBindingType :: Solve.SolvedTypes -> Can.Def -> ()
-registerMainLetBindingType types def = case def of
-    Can.Def (A.At _ name) [] body
-        | name /= "_"
-        , Just t <- letBindingType types name body ->
-            unsafePerformIO $ do
-                modifyIORef globalLambdaTypes (Map.insert name t)
-                return ()
-    Can.TypedDef (A.At _ name) _ [] body _
-        | name /= "_"
-        , Just t <- letBindingType types name body ->
-            unsafePerformIO $ do
-                modifyIORef globalLambdaTypes (Map.insert name t)
-                return ()
-    _ -> ()
+registerMainLetBindingType types def =
+    -- v0.15.5 PR 3 (iteration 3) — snapshot `scopeStateRef` once at
+    -- entry; pass `ctx` to `letBindingType` instead of letting the
+    -- old IORef-backed `lookupRegionType` re-read on every region
+    -- query.
+    let ctx = unsafePerformIO (readIORef scopeStateRef)
+    in case def of
+        Can.Def (A.At _ name) [] body
+            | name /= "_"
+            , Just t <- letBindingType ctx types name body ->
+                unsafePerformIO $ do
+                    modifyIORef scopeStateRef (LC.withLambdaTypes (Map.singleton name t))
+                    return ()
+        Can.TypedDef (A.At _ name) _ [] body _
+            | name /= "_"
+            , Just t <- letBindingType ctx types name body ->
+                unsafePerformIO $ do
+                    modifyIORef scopeStateRef (LC.withLambdaTypes (Map.singleton name t))
+                    return ()
+        _ -> ()
 
 
 -- | v0.15.3: recover a zero-param let-binding's HM-solved type.
 --
 -- Layered preference:
 --   1. `lookupRegionType (regionOf body)` — the v0.15 Stage A
---      solver writes per-region types to `globalRegionTypes`,
---      keyed by source region.  This is the CORRECT lookup for a
+--      solver writes per-region types into `scopeStateRef`'s
+--      `_lc_regionTypes` field (v0.15.5 PR 3 — was its own IORef
+--      pre-consolidation), keyed by source region.  This is the
+--      CORRECT lookup for a
 --      let-binding's RHS — it cannot collide with a sibling
 --      top-level binding of the same name (e.g. `let check =
 --      cfg.field` inside a library, where `check` is also a
@@ -9530,8 +9571,31 @@ registerMainLetBindingType types def = case def of
 --
 -- All candidates gated on `isEmittableGoType` so an un-nameable
 -- type cannot reach the typed path; untyped fallback stays safe.
-letBindingType :: Solve.SolvedTypes -> String -> Can.Expr -> Maybe T.Type
-letBindingType solvedTypes _name body@(A.At r _) =
+-- | v0.15.5 PR 3 (iteration 3) — Threaded-LowerCtx POC.
+--
+-- `letBindingType` is the first call site to accept an EXPLICIT
+-- `LC.LowerCtx` parameter in addition to its other inputs.  The
+-- region lookup (formerly via the IORef-backed `lookupRegionType`)
+-- now goes through `LC.lookupRegionType ctx`, a PURE function.
+-- This makes ONE IORef read explicit (a positive change — the
+-- snapshot is taken once at the function-head and threaded
+-- downstream) instead of N hidden reads.
+--
+-- The two-axis gate (body-shape whitelist + type-emittability) is
+-- INTENTIONALLY preserved here.  Removing the whitelist exposes a
+-- region-map pollution bug — `lookupRegionType` can return a type
+-- from an unrelated sibling-region binding when the let-binding's
+-- region key collides across modules in the snapshot.  Closing
+-- that needs the v0.15.6 cascade (single snapshot per compile)
+-- plus a region-key disambiguation pass; tracked as audit
+-- residual #8 + #14 in `docs/improvement-plan-v0.16.md`.
+--
+-- v0.15.6 cascade target: every call site reachable from this
+-- function should grow a `ctx` parameter, until `scopeStateRef`'s
+-- last reader is gone and the IORef can be deleted (see
+-- `docs/improvement-plan-v0.16.md` §2 for the staging).
+letBindingType :: LC.LowerCtx -> Solve.SolvedTypes -> String -> Can.Expr -> Maybe T.Type
+letBindingType ctx solvedTypes _name body@(A.At r _) =
     -- v0.15.3 — Two-axis gate.
     --
     -- (A) Body-shape gate: ONLY route typed for body shapes where
@@ -9566,7 +9630,7 @@ letBindingType solvedTypes _name body@(A.At r _) =
             A.At _ (Can.Let _ _) -> True
             A.At _ (Can.LetRec _ _) -> True
             _ -> False
-        viaRegion   = lookupRegionType r
+        viaRegion   = LC.lookupRegionType ctx r
         viaInferred = inferExprType solvedTypes body
         containsAny s = goAny 0 s
           where
@@ -9648,8 +9712,17 @@ defToStmts def = case def of
             -- as `Setup_R[Msg]{...}` instead of `Setup_R[any]{...}`.
             -- See test-files/v0.15-stress/src/Widget/Form.sky for
             -- the regression case that closed this gap.
-            let solved = Rec._cg_solvedTypes getCgEnv
-            in case letBindingType solved name body of
+            --
+            -- v0.15.5 PR 3 (iteration 3) — POC for the v0.15.6
+            -- cascade.  `defToStmts` is invoked from a top-level
+            -- `concatMap` chain with no expression-level seam to
+            -- thread `ctx` through, so we snapshot `scopeStateRef`
+            -- at the function head here.  PRs 4-6 will lift this
+            -- read to `generateGoMulti` so a single snapshot fans
+            -- out across the entire compile.
+            let ctx = unsafePerformIO (readIORef scopeStateRef)
+                solved = Rec._cg_solvedTypes getCgEnv
+            in case letBindingType ctx solved name body of
                 Just dt ->
                     letBindStmts name (exprToGoExpect dt body)
                 Nothing ->
@@ -9822,7 +9895,7 @@ caseToGo mExpectedGo subject branches =
                 , isConcreteResultOrMaybe retTy
                 -> True
             -- v0.13 typed lowerer: a bare `GoIdent name` referring to a
-            -- typed local (registered in `globalLambdaTypes` with a
+            -- typed local (registered in the lambda-types scope with a
             -- concrete Maybe/Result type) is also statically typed —
             -- skip the ResultCoerce/MaybeCoerce reflect dance and let
             -- bindCtorArg emit direct `.OkValue` / `.JustValue` access.
@@ -11085,7 +11158,7 @@ substTypeVars types = go Set.empty
 
 
 inferExprType :: Solve.SolvedTypes -> Can.Expr -> Maybe T.Type
-inferExprType types (A.At _ e) = case e of
+inferExprType types (A.At r e) = case e of
     Can.Int _    -> Just ConstrainExpr.intType
     Can.Float _  -> Just ConstrainExpr.floatType
     Can.Str _    -> Just ConstrainExpr.stringType
@@ -11234,9 +11307,35 @@ inferExprType types (A.At _ e) = case e of
         case (inferExprType types a, inferExprType types b, mapM (inferExprType types) cs) of
             (Just ta, Just tb, Just tcs) -> Just (T.TTuple ta tb tcs)
             _ -> Nothing
-    -- Lambda: requires walking the body. v0.12.x scope stops here —
-    -- lambda type inference is Gap 4's responsibility.
-    Can.Lambda _ _ -> Nothing
+    -- Lambda: walk the body to build a TLambda.  Preference order:
+    --   (1) `lookupRegionType r` on the lambda's whole-expression
+    --       region — the solver writes the full TLambda there when
+    --       it constrained the lambda.  Cheapest + most accurate.
+    --   (2) Recurse into the body with each PVar param registered
+    --       under a fresh placeholder TVar in `types`, and lift the
+    --       body's inferred type into a TLambda chain.  The
+    --       placeholder TVars guarantee `solvedTypeToGo` collapses
+    --       to `any` if a caller tries to render the lambda's
+    --       Go-side shape from this result — sound default.
+    --
+    -- Audit item #2 closure (v0.15.5 PR 3): pre-PR this returned
+    -- Nothing universally, leaving `let cb = \x -> …` un-typed and
+    -- forcing typed-let routing to fall back to `func() any`.
+    Can.Lambda pats body ->
+        case lookupRegionType r of
+            Just t  -> Just t
+            Nothing ->
+                let paramNames = [n | A.At _ (Can.PVar n) <- pats]
+                    paramTVars =
+                        [ T.TVar ("_lambda_arg_" ++ show i)
+                        | i <- [0 .. length pats - 1]
+                        ]
+                    types' = Map.union
+                        (Map.fromList (zip paramNames paramTVars))
+                        types
+                in case inferExprType types' body of
+                    Just bodyTy -> Just (foldr T.TLambda bodyTy paramTVars)
+                    Nothing     -> Nothing
     -- Negate inherits its operand's type.
     Can.Negate inner -> inferExprType types inner
     -- Binop: most operators have a statically-known result type.
@@ -11267,8 +11366,29 @@ inferExprType types (A.At _ e) = case e of
             _ -> case inferExprType types left of
                 Just elemTy -> Just (mkListType elemTy)
                 Nothing     -> Nothing
-        -- Pipe / composition (`|>` `<|` `>>` `<<`) need application
-        -- inference — out of scope, fall back to Nothing.
+        -- Pipe (`|>` `<|`): function-application binops — the result
+        -- is the function's return type.  `a |> f` ≡ `f a` so the
+        -- function side is `right`; `f <| a` ≡ `f a` so the function
+        -- side is `left`.  Peel one arrow off the function's type
+        -- via `splitFuncType 1`.
+        --
+        -- Audit item #2 closure — pre-PR these fell into the
+        -- catch-all `_ -> Nothing`.
+        "|>" -> case inferExprType types right of
+            Just fnTy -> Just (snd (splitFuncType 1 fnTy))
+            Nothing   -> Nothing
+        "<|" -> case inferExprType types left of
+            Just fnTy -> Just (snd (splitFuncType 1 fnTy))
+            Nothing   -> Nothing
+        -- Composition (`>>` `<<`): the result is a one-arg function
+        -- (`a -> c`) whose input matches the first-applied function's
+        -- input and whose output matches the second-applied
+        -- function's output.  `f >> g` applies `f` then `g`; `f << g`
+        -- applies `g` then `f`.  Need at least one TLambda on the
+        -- "first" side to know its input.
+        ">>" -> composeResult left right
+        "<<" -> composeResult right left
+        -- Unknown operator — fall back.
         _ -> Nothing
     -- Let: the let-expression's type IS the body's type.  Thread
     -- the binding's inferred type into `types` first so the body
@@ -11286,11 +11406,60 @@ inferExprType types (A.At _ e) = case e of
                         Map.insert n t types
                 _ -> types
         in inferExprType types' body
-    -- Update / others — out of v0.13 scope; safe fallback returns
-    -- Nothing (caller falls back to any-routing).
+    -- LetRec: same shape as `Can.Let` but with [Def] — register
+    -- every simple zero-param binding's inferred type into `types`
+    -- before inferring the body.  Forward-references across
+    -- recursive defs resolve by a single linear pass; that misses
+    -- mutual-recursion type inference but is sound (any unresolved
+    -- name falls back to `Map.lookup` returning Nothing).
+    --
+    -- Audit item #2 closure — pre-PR fell into the catch-all.
+    Can.LetRec defs body ->
+        let extend acc d = case d of
+                Can.Def (A.At _ n) [] valExpr
+                    | n /= "_"
+                    , Just t <- inferExprType acc valExpr ->
+                        Map.insert n t acc
+                Can.TypedDef (A.At _ n) _ [] valExpr _
+                    | Just t <- inferExprType acc valExpr ->
+                        Map.insert n t acc
+                _ -> acc
+            types' = foldl extend types defs
+        in inferExprType types' body
+    -- Update: a record-update expression inherits the original
+    -- record's type — `{ rec | f = v }` has the SAME type as `rec`
+    -- (record updates preserve nominal alias identity).  This
+    -- closes the let-binding case where `let r' = { r | f = v }`
+    -- previously lowered as `any` because Update fell through the
+    -- catch-all.
+    --
+    -- Audit item #2 closure.
+    Can.Update _ origExpr _changes ->
+        inferExprType types origExpr
+    -- Accessor (standalone `.fieldName`): a polymorphic one-arg
+    -- function `{ rec | fieldName : a } -> a`.  Without a concrete
+    -- record type on hand we return a placeholder TVar so callers
+    -- that gate on `solvedTypeToGo == "any"` cleanly route through
+    -- the any-typed path (matching today's Nothing behaviour) but
+    -- a context-aware caller can still see the result is
+    -- *something*.
+    --
+    -- Audit item #2 closure.
+    Can.Accessor _fieldName ->
+        Just (T.TVar "_accessor_placeholder")
+    -- Anything else (chr/other AST shapes already shadowed by the
+    -- explicit arms above) — safe fallback.
     _ -> Nothing
   where
     mkListType elemTy = T.TType ModuleName.list "List" [elemTy]
+    -- | `>>` / `<<` composition helper.  `first` is the side that
+    -- runs first under `apply`; `second` runs second.  Result is
+    -- a function from `first`'s input to `second`'s output.
+    composeResult first second =
+        case (inferExprType types first, inferExprType types second) of
+            (Just (T.TLambda fIn _), Just sTy) ->
+                Just (T.TLambda fIn (snd (splitFuncType 1 sTy)))
+            _ -> Nothing
 
 
 -- | Compute the Go-type string for an arbitrary Can.Expr by combining
@@ -11392,7 +11561,7 @@ goTypeStrToSkyType s = case s of
 -- to a Go value whose STATIC type matches its HM-inferred Sky type?
 -- True for primitive literals (Int, Float, String, Bool, Char, Unit)
 -- and for `Can.VarLocal` references whose name is registered in
--- `globalLambdaTypes` (typed lambda params).  False for everything
+-- the lambda-types scope (typed lambda params).  False for everything
 -- else — call results, field access, etc. — because runtime kernels
 -- (e.g. `rt.Crypto_sha256`) return Go `any` even when HM says the
 -- result is String, and forcing a Go-native binop on those would
