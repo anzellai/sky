@@ -7113,8 +7113,34 @@ exprToGo (A.At _ expr) = case expr of
                     -- Slot types must be emittable, concrete, and
                     -- free of generic-type-param leaks — those would
                     -- defeat Go's call-site type inference.
+                    -- Soundness gate: only fire for `Can.VarLocal`
+                    -- callees.  The emitted Go for those is a bare
+                    -- `GoIdent (goSafeName name)` — and whenever the
+                    -- HM type is a function arrow the EMITTED Go
+                    -- param IS that typed function shape (the entry-
+                    -- and dep-module decl paths zip `typedGoParams`
+                    -- with the resolved `solvedTypeToGo` per
+                    -- annotation slot).  So the bare ident statically
+                    -- carries a Go function value and a direct call
+                    -- typechecks.
+                    --
+                    -- We deliberately EXCLUDE other shapes — most
+                    -- importantly `Can.Access` (emission goes through
+                    -- `rt.Field` returning `any` and Go rejects
+                    -- direct-call on `any`).  Other indirect shapes
+                    -- (`Can.Call` result, `Can.Update`, `Can.LetRec`
+                    -- name, …) likewise widen to `any` at the call
+                    -- boundary and would fail Go's static type
+                    -- check.  These all stay on the `rt.SkyCall`
+                    -- reflect path which handles `any` callees
+                    -- correctly.
+                    isLocalCallable = case A.toValue func of
+                        Can.VarLocal _ -> True
+                        _              -> False
                     typedCallableShape =
-                        if isDirectCallable func || length args /= 1
+                        if isDirectCallable func
+                            || not isLocalCallable
+                            || length args /= 1
                             then Nothing
                         else let solved = Rec._cg_solvedTypes getCgEnv
                              in case inferExprType solved func of
