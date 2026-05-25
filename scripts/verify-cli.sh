@@ -138,6 +138,37 @@ for entry in "${GUI_TESTS[@]}"; do
 done
 
 echo ""
+echo "=== SKY_DEBUG_INFER smoke (v0.15.8 P2 Gap A2 fence) ==="
+# Build examples/19-skyforum under SKY_DEBUG_INFER=1 — the
+# diagnostic mode logs every `goExprGoType` call that returned
+# Nothing along with the source region (covers `<shape-unsafe>`,
+# `<infer-Nothing>`, `<unresolved-tvar>`).  skyforum is the Std.Ui
+# splay app — covers the broadest set of lowering paths.  The
+# smoke is non-blocking: missing-coverage lines are informational
+# signals for the next audit cycle, not failures.  An ABORT
+# (Haskell exception) IS a failure — `set -e` doesn't catch
+# backgrounded process exits, so we explicitly check the build's
+# exit.
+infer_log="$ARTEFACT_DIR/sky_debug_infer.log"
+mkdir -p "$ARTEFACT_DIR"
+(
+    cd "$REPO_ROOT/examples/19-skyforum"
+    rm -rf sky-out .skycache .skydeps
+    SKY_DEBUG_INFER=1 "$REPO_ROOT/sky-out/sky" build src/Main.sky 2> "$infer_log"
+) >/dev/null 2>&1
+infer_ec=$?
+if [ "$infer_ec" -ne 0 ]; then
+    echo "✗ SKY_DEBUG_INFER build failed (exit $infer_ec)"
+    fail=$((fail+1)); FAILS+=("SKY_DEBUG_INFER")
+else
+    nothing_count=$(grep -c "goExprGoType returned Nothing" "$infer_log" || true)
+    hit_count=$(grep -c "structural fallback hit" "$infer_log" || true)
+    echo "✓ SKY_DEBUG_INFER smoke: Nothing=$nothing_count hits=$hit_count"
+    echo "  log: $infer_log"
+    pass=$((pass+1))
+fi
+
+echo ""
 echo "VERIFY: $pass pass / $fail fail / $skip skip"
 [ ${#FAILS[@]} -eq 0 ] || echo "FAILED: ${FAILS[*]}"
 [ ${#SKIPS[@]} -eq 0 ] || echo "SKIPPED: ${SKIPS[*]}"
