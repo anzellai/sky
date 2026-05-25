@@ -79,6 +79,7 @@ type alias Payload =
 view : Setup msg -> Element msg
 view cfg =
     let
+        submit = cfg.wfSubmit
         check = cfg.wfCheck
         dismiss = cfg.wfDismiss
     in
@@ -91,25 +92,34 @@ view cfg =
               , toolbar cfg check
               ]
         , footer cfg dismiss
+        , submitProbe cfg submit
         ]
 
 
--- NOTE — KNOWN GAP (v0.15.3): passing a let-bound func-typed
--- field-access (`submit = cfg.wfSubmit`) to a SAME-MODULE
--- generic helper (`submitProbe : Setup msg -> (Payload -> msg)
--- -> Element msg`) currently emits `rt.Coerce[func(P) any]
--- (submit)` which fails Go's call-site inference against the
--- callee's `func(P) T1` slot.  Workaround in user code: pass
--- the field directly at the call site (`submitProbe cfg cfg.
--- wfSubmit`) — direct field access fires the typed path.
--- The real-world sky-editor shape passes such fields to Std.Ui
--- kernel calls (`Ui.onSubmit cfg.onSubmit`), NOT to same-module
--- generic helpers, so the panic class the editor exhibits is
--- fully closed by v0.15.3; this synthetic helper exists as a
--- forward-looking gate for the next iteration.
--- submitProbe : Setup msg -> (Payload -> msg) -> Element msg
--- submitProbe cfg _onSubmit =
---     Ui.text ("submit[" ++ cfg.wfLabel ++ "]")
+-- L8 — passing a let-bound FUNC-typed field-access to a SAME-
+-- module generic helper.  The let-binding `submit = cfg.wfSubmit`
+-- emits as a typed selector (`submit := cfg.WfSubmit`), giving
+-- submit's Go-static type `func(Widget_Form_Payload_R) T1`.
+-- At the `submitProbe cfg submit` call site, Go's call-site
+-- type inference pins both the cfg arg (matching `Setup_R[T1]`)
+-- AND the submit arg (matching `func(P) T1`) — no nominal cast
+-- or reflect-adapter wrap required.
+--
+-- v0.15.3 closes this case via the combination of:
+--   * `parametricAliasBase` short-circuit in `coerceArg` (target
+--     base matches source base → emit raw),
+--   * `lookupLambdaGoStr` registration of typed func + record-
+--     alias params at dep-emission (so `goExprGoType` returns
+--     the typed signature for the call-site short-circuit gate).
+--
+-- Initial commit of this regression suite (v0.15.3 PR #70)
+-- omitted this case under the false belief it was a residual
+-- gap.  Subsequent verification showed it actually passes — this
+-- commit adds the case as a permanent regression gate so a
+-- future change can't silently regress it.
+submitProbe : Setup msg -> (Payload -> msg) -> Element msg
+submitProbe cfg _onSubmit =
+    Ui.text ("submit[" ++ cfg.wfLabel ++ "]")
 
 
 -- L1, L6 — sibling polymorphic helper returning Element msg.
