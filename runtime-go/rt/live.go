@@ -3360,6 +3360,58 @@ function __skyPatch(t) {
   __skyBindEvents(document);
   __skyRunEvals(root);
   __skyRunPaths(root);
+  __skyReviveScripts(root);
+}
+
+// __skyReviveScripts: browsers DO NOT execute <script> tags inserted
+// via innerHTML (or any HTML-string assignment). When Sky.Live
+// swaps the body via __skyReplaceHTMLPreservingFocus (sky-nav, full-
+// body patches) or applies an attribute/HTML patch via
+// __skyApplyPatches, any <script src=...> or inline <script>
+// element in the new content is added to the DOM but never
+// executed. This breaks any app-level JS bundle injected via the
+// Sky-side Ui.html (Html.node "script" [...]) pattern (notably
+// sky-editor's Editor.scriptTag).
+//
+// The fix: walk the new subtree for <script> elements, replace
+// each with a freshly-created one carrying the same attributes
+// and inline content. Freshly-created script nodes execute on
+// insertion.
+//
+// Idempotency: each revived <script> gets a data-sky-script-revived
+// attribute; subsequent calls skip it. This prevents the bundle
+// from re-loading on every patch (which would re-run any
+// DOMContentLoaded handlers and re-fire setInterval-driven
+// bootstraps multiple times).
+//
+// Safety: only matches <script> nodes inside root (the sky-root
+// container). Top-level page <script> tags (in <head> or outside
+// sky-root) are left alone — they ran on initial load and need
+// no revival.
+function __skyReviveScripts(root) {
+  if (!root) return;
+  var scripts = root.querySelectorAll("script:not([data-sky-script-revived])");
+  for (var i = 0; i < scripts.length; i++) {
+    var old = scripts[i];
+    var fresh = document.createElement("script");
+    // Copy all attributes (src, type, async, defer, integrity, ...).
+    for (var j = 0; j < old.attributes.length; j++) {
+      var a = old.attributes[j];
+      try { fresh.setAttribute(a.name, a.value); } catch (_) {}
+    }
+    // Inline body (rare for app bundles but possible).
+    if (old.textContent) {
+      fresh.textContent = old.textContent;
+    }
+    fresh.setAttribute("data-sky-script-revived", "1");
+    // Mark the old one as revived too so the next pass doesn't
+    // double-process if revival fails for some reason.
+    old.setAttribute("data-sky-script-revived", "1");
+    // Replacing the old node with the fresh one triggers script
+    // execution (for src= it fetches + runs; for inline it runs
+    // the body).
+    old.parentNode.replaceChild(fresh, old);
+  }
 }
 
 // ── Loading indicator ────────────────────────────────────────
@@ -3798,6 +3850,12 @@ function __skyApplyPatches(patches) {
   // this, programmatic Navigate Msgs would only update the in-memory
   // model and leave the address bar pointing at the previous page.
   __skyRunPaths(document);
+  // Any <script> in newly-patched HTML wouldn't execute via innerHTML
+  // — revive them so JS bundles (e.g. sky-editor) bootstrap correctly
+  // when their host element first appears via a patch (not the initial
+  // SSR).  See __skyReviveScripts above for the full rationale.
+  var skyRootForPatches = document.getElementById("sky-root");
+  if (skyRootForPatches) __skyReviveScripts(skyRootForPatches);
 }
 
 function __skyContainsFocusedInput(el) {
