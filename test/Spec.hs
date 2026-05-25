@@ -45,6 +45,7 @@ import qualified Sky.Build.RecordFieldOrderSpec
 import qualified Sky.Build.RecordCtorEmptyListSpec
 import qualified Sky.Build.HofTypedMsgSpec
 import qualified Sky.Build.CoerceArgParametricSpec
+import qualified Sky.Build.IsPlainIdentSpec
 import qualified Sky.Build.AnonLambdaSpec
 import qualified Sky.Build.AnonRecordSpec
 import qualified Sky.Build.Issue52Spec
@@ -268,6 +269,14 @@ main = hspec $ do
     -- alias bases.
     describe "Sky.Build.CoerceArgParametric"
                                             Sky.Build.CoerceArgParametricSpec.spec
+    -- v0.15.x hardening / Gap A4 / Plan Item P3 — `isPlainIdent`
+    -- structural unit table.  Locks the recursion invariants of
+    -- the "plain user-ident chain" classifier used by `coerceArg`
+    -- at the generic-param-bearing target arm.  The legacy
+    -- recursion correctness for kernel-call-rooted selector
+    -- chains is the spec's load-bearing case; companion typed
+    -- gate is exercised by CoerceArgParametricSpec at runtime.
+    describe "Sky.Build.IsPlainIdent"       Sky.Build.IsPlainIdentSpec.spec
     -- v0.13 D-Lambda-Lowerer regression: Sky lambdas at user-
     -- defined HOF slots lower to typed `func(X) Y` shapes via
     -- curryLambdaPatTyped (was only kernel HOFs pre-v0.13).
