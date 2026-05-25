@@ -1,0 +1,52 @@
+module Main exposing (main)
+
+-- Regression for Gap A2 — `goExprGoType` returning Nothing for
+-- polymorphic-call results.  `Result.andThen` chains lower as
+-- nested `GoCall` shapes whose return type is `Result e a`.
+-- Pre-fix, `goExprGoType` on such a `GoCall` returns Nothing —
+-- there is no by-shape pattern that recovers the Sky kernel
+-- sig's return type.  Downstream coercions that gate on
+-- `Just srcTy <- goExprGoType e` then collapse to `rt.Coerce`
+-- wraps OR mis-cast the pipeline value through a nominal
+-- `.(rt.SkyResult[Error, String])` assertion.
+--
+-- Post-fix, when the `Maybe Can.Expr` fallback path runs
+-- `inferExprType` against the source `Can.Expr`, the chain
+-- resolves to `Result Error String` and the wasteful wrap is
+-- elided.
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Result as Result
+import Sky.Core.Error as Error
+import Std.Log exposing (println)
+
+
+pipeline : Int -> Result Error String
+pipeline x =
+    Ok "step1"
+        |> Result.andThen
+               (\_ ->
+                   if x > 0 then
+                       Ok "step2"
+
+                   else
+                       Err (Error.invalidInput "neg"))
+        |> Result.andThen (\_ -> Ok "final")
+
+
+-- Consumer that takes the pipeline's Result statically — pre-fix
+-- the arg lowered with a redundant Coerce wrap because
+-- `goExprGoType (pipeline 5)` returned Nothing and `coerceArg`
+-- couldn't see the source's static SkyResult type.
+report : Result Error String -> String
+report r =
+    case r of
+
+        Ok s ->
+            "ok:" ++ s
+
+        Err e ->
+            "err:" ++ Error.toString e
+
+
+main =
+    println (report (pipeline 5))

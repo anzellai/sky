@@ -292,6 +292,7 @@ test-suite sky-tests
       Sky.Build.HofTypedMsgSpec
       Sky.Build.CoerceArgParametricSpec
       Sky.Build.IsPlainIdentSpec
+      Sky.Build.GoExprTypeInferenceSpec
       Sky.Build.AnonLambdaSpec
       Sky.Build.AnonRecordSpec
       Sky.Build.Issue52Spec

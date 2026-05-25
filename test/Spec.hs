@@ -46,6 +46,7 @@ import qualified Sky.Build.RecordCtorEmptyListSpec
 import qualified Sky.Build.HofTypedMsgSpec
 import qualified Sky.Build.CoerceArgParametricSpec
 import qualified Sky.Build.IsPlainIdentSpec
+import qualified Sky.Build.GoExprTypeInferenceSpec
 import qualified Sky.Build.AnonLambdaSpec
 import qualified Sky.Build.AnonRecordSpec
 import qualified Sky.Build.Issue52Spec
@@ -277,6 +278,13 @@ main = hspec $ do
     -- chains is the spec's load-bearing case; companion typed
     -- gate is exercised by CoerceArgParametricSpec at runtime.
     describe "Sky.Build.IsPlainIdent"       Sky.Build.IsPlainIdentSpec.spec
+    -- v0.15.x Cycle-01 P2 regression: `goExprGoType` returning Nothing
+    -- for polymorphic-call results stripped downstream coercions of the
+    -- precision they needed to elide redundant `rt.Coerce`/SkyResult
+    -- wraps.  Spec drives a Result.andThen pipeline whose typed
+    -- result flows into a `Result Error String`-typed consumer and
+    -- asserts both the runtime semantics AND the elided-wrap shape.
+    describe "Sky.Build.GoExprTypeInference" Sky.Build.GoExprTypeInferenceSpec.spec
     -- v0.13 D-Lambda-Lowerer regression: Sky lambdas at user-
     -- defined HOF slots lower to typed `func(X) Y` shapes via
     -- curryLambdaPatTyped (was only kernel HOFs pre-v0.13).
