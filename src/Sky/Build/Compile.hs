@@ -30,6 +30,7 @@ import System.FilePath (takeDirectory, takeExtension, (</>))
 import qualified Data.ByteString as BS
 import Sky.Build.EmbeddedRuntime (embeddedRuntime, embeddedSkyStdlib)
 import qualified Sky.Build.TailCallOpt as TCO
+import qualified Sky.Build.LowerCtx as LC
 
 import qualified Sky.AST.Source as Src
 import qualified Sky.AST.Canonical as Can
@@ -3220,6 +3221,37 @@ generateGoMulti canMod srcMod config solvedTypes depDecls depRecAliases depUnion
         -- Force `imports` before anything else so the env is set up
         -- before depDecls / decls are evaluated (they read getCgEnv).
         importsForced = imports `seq` imports
+        -- v0.16 PR 1 — snapshot the lowering-time IORef state into a
+        -- pure `LowerCtx` value.  `imports` has already populated
+        -- `globalCgEnv` + `globalUnionNames`; `globalRegionTypes`,
+        -- `globalAllAliases`, `globalAllFieldIdx`, `globalAnnotMap`,
+        -- `globalLambdaTypes`, `globalLambdaGoStrings` were written
+        -- by `continueCompile` earlier.  Sequence the snapshot AFTER
+        -- `importsForced` so all writes are visible.
+        --
+        -- The value is constructed but has NO CALLERS in this PR.
+        -- PRs 2-6 of the v0.16 sequence (see
+        -- docs/improvement-plan-v0.16.md §2) migrate `exprToGo` /
+        -- `exprToGoExpectGo` / `coerceArg` / `letBindingType` /
+        -- `inferExprType` to read from `lowerCtx` instead of the
+        -- IORefs, after which the IORefs are deleted.
+        lowerCtx = unsafePerformIO $ do
+            -- Sequence the snapshot AFTER `importsForced` so writes
+            -- to `globalCgEnv` + `globalUnionNames` are visible.
+            importsForced `seq` return ()
+            regions <- readIORef globalRegionTypes
+            aliases <- readIORef globalAllAliases
+            fieldIdx <- readIORef globalAllFieldIdx
+            unions <- readIORef globalUnionNames
+            annots <- readIORef globalAnnotMap
+            return $ LC.buildLowerCtx
+                (Can._name canMod)
+                solvedTypes
+                regions
+                aliases
+                fieldIdx
+                unions
+                annots
         unionDecls = generateUnionTypes canMod
         aliasDecls = generateAliasTypes canMod
         decls = generateDecls canMod solvedTypes
@@ -3383,7 +3415,11 @@ generateGoMulti canMod srcMod config solvedTypes depDecls depRecAliases depUnion
             , GoIr._pkg_imports = imports
             , GoIr._pkg_decls = rtPin ++ errorAliasStub ++ portDefault ++ depDecls ++ unionDecls ++ aliasDecls ++ decls ++ anonRecordDecls ++ specDecls ++ mainDecl
             }
-    in GoBuilder.renderPackage pkg
+    -- Force `lowerCtx` so the IORef snapshot actually runs (v0.16
+    -- PR 1).  The value has no callers in this PR — PRs 2-6 migrate
+    -- `exprToGo` etc. to consume it — but exercising the snapshot
+    -- here verifies the scaffolding works in every release build.
+    in lowerCtx `seq` GoBuilder.renderPackage pkg
 
 
 -- | Emit a Go if-not-already-set runtime default for a sky.toml-derived
@@ -6223,6 +6259,29 @@ splitFuncType _ ty = ([], ty)  -- not enough arrows, return as-is
 -- ═══════════════════════════════════════════════════════════
 -- EXPRESSION CODE GENERATION
 -- ═══════════════════════════════════════════════════════════
+
+
+-- | v0.16 PR 1 — explicit-context lowering wrapper.  Delegates to
+-- `exprToGo` today; PRs 2-6 of the v0.16 sequence migrate the
+-- function body to read from `ctx` instead of the NOINLINE IORefs.
+--
+-- The signature already accepts `LowerCtx` so call sites can be
+-- migrated bottom-up without further churn to type signatures.
+-- The `_ctx` underscore is deliberate: until PR 2 lands, the
+-- delegated `exprToGo` still reads the IORefs, and `ctx` is the
+-- snapshot the eventual migration will consult.  See
+-- `docs/improvement-plan-v0.16.md` Priority 1.
+lowerExpr :: LC.LowerCtx -> Can.Expr -> GoIr.GoExpr
+lowerExpr _ctx = exprToGo
+
+
+-- | v0.16 PR 1 — explicit-context typed-slot wrapper.  Mirror of
+-- `lowerExpr` for the `exprToGoExpectGo` entry point.  Delegates
+-- to the existing IORef-based implementation; PR 2+ migrates the
+-- body.
+lowerExprExpectGo :: LC.LowerCtx -> String -> Can.Expr -> GoIr.GoExpr
+lowerExprExpectGo _ctx = exprToGoExpectGo
+
 
 -- | v0.13 typed lowerer: convert a canonical expression to Go IR
 -- WITH a known expected type from the surrounding context.
