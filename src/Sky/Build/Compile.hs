@@ -8654,10 +8654,25 @@ coerceArg mSrc e ty
                   -- skipped when the original param sig contained
                   -- a TVar (the generic-callee case).  Non-generic
                   -- callees still get the wrap because their sig
-                  -- has no T1.  And we restrict to `isPlainIdent`
-                  -- sources so kernel-call results / coercion
-                  -- wrappers still flow through Coerce.
-                  then if containsGenericTypeParam ty && isPlainIdent e
+                  -- has no T1.  And we restrict to
+                  -- `isPlainIdentForTypedRouting` sources so
+                  -- kernel-call results / coercion wrappers / chains
+                  -- whose intermediate bases erase to `any` still
+                  -- flow through Coerce.
+                  --
+                  -- v0.15.x hardening / Gap A4 / Plan Item P3: the
+                  -- previous gate used the purely-structural
+                  -- `isPlainIdent`, which accepted shapes like
+                  -- `cfg.someAnyField.deep` where the intermediate
+                  -- `cfg.someAnyField` resolves to `any` — Go's
+                  -- call-site inference can't pin T1 from an
+                  -- `any`-typed base, so the raw-pass silently
+                  -- routed the wrong code.  The typed companion
+                  -- gate validates every intermediate selector's
+                  -- base via `goExprGoType` (non-`any`).  Invariant
+                  -- locked by `IsPlainIdentSpec`.
+                  then if containsGenericTypeParam ty
+                          && isPlainIdentForTypedRouting e
                        then e
                        else GoIr.GoCall
                               (GoIr.GoIdent ("rt.Coerce[" ++ erasedTy ++ "]")) [e]
@@ -8711,14 +8726,17 @@ isParametricCompatibleSource e = case goExprGoType e of
         _ -> False
 
 
--- | v0.15.3 — recognise a "plain user identifier" Go expression.
+-- | v0.15.3 — recognise a "plain user identifier" Go expression
+-- by STRUCTURE only.
 --
 -- True for:
 --   * A bare `GoIdent name` where `name` doesn't start with `rt.`
 --     (user-introduced local: let-binding, function param,
 --     top-level fn ref).
---   * A field selector `target.Field` where the target is a plain
---     identifier (so `cfg.WfSubmit` qualifies as "plain").
+--   * A field-selector chain `target.f1.f2…` whose deepest base
+--     is a plain ident (recursion walks the chain to the leaf —
+--     `(rt.SkyCall(…)).Field.Nested` correctly returns False
+--     because the leaf is a `GoCall`, not a plain ident).
 --
 -- False for:
 --   * `GoCall` / `GoFuncLit` / `GoStructLit` / literals — those
@@ -8726,15 +8744,84 @@ isParametricCompatibleSource e = case goExprGoType e of
 --   * `rt.X` identifiers — runtime helper results that often need
 --     explicit coercion.
 --
--- Used by the generic-param-bearing target arm of `coerceArg` to
--- decide whether passing the expr raw is safe (Go's call-site
--- type inference can pin the param from the source's local
--- static type) vs needs the existing wrap path.
+-- ## Pure structural classifier
+--
+-- This function is pure — no IORef reads, no `goExprGoType` lookup.
+-- Unit-tested in `test/Sky/Build/IsPlainIdentSpec.hs` against a
+-- table of crafted `GoExpr` shapes; the test is the discovery
+-- artefact for any future recursion-correctness regression.
+--
+-- The TYPED gate used at the `coerceArg` call site is the
+-- companion `isPlainIdentForTypedRouting` below — it layers a
+-- `goExprGoType`-on-each-selector-base check over this structural
+-- predicate.  The split keeps the structural recursion test-able
+-- in isolation while the typed gate carries the soundness
+-- contract for the codegen path.
 isPlainIdent :: GoIr.GoExpr -> Bool
 isPlainIdent e = case e of
     GoIr.GoIdent name -> not ("rt." `List.isPrefixOf` name)
     GoIr.GoSelector base _ -> isPlainIdent base
     _ -> False
+
+
+-- | v0.15.x hardening / Gap A4 / Plan Item P3 — the typed-routing
+-- gate used by `coerceArg` at the generic-param-bearing target arm.
+--
+-- Same SHAPE acceptance as `isPlainIdent`, PLUS: every intermediate
+-- selector's base must resolve to a non-`any` static Go type via
+-- `goExprGoType`.  Go's call-site type inference pins the callee's
+-- T from the source's STATIC Go type — if any base in the chain is
+-- (or erases to) `any`, Go inference has nothing to pin against
+-- and passing the expression raw silently routes a runtime panic
+-- (the Coerce wrap that should have narrowed the chain is missing).
+--
+-- ### Why a separate function vs widening `isPlainIdent`
+--
+-- 1. `isPlainIdent` is widely re-used as a structural classifier
+--    (the bare-ident-or-selector-chain shape) — keeping it pure
+--    lets the unit table in `IsPlainIdentSpec` lock its recursion
+--    invariants in isolation, without depending on a populated
+--    `scopeStateRef` / `globalCgEnv`.
+-- 2. `goExprGoType` is impure (`unsafePerformIO` reads of mutable
+--    IORefs).  Routing this impurity through every existing
+--    `isPlainIdent` consumer would broaden the soundness surface
+--    with no benefit; ALL non-`coerceArg` callers want the
+--    structural meaning.
+-- 3. The split documents the soundness contract clearly: the
+--    typed-routing path EXPLICITLY opts into the static-type
+--    check via the named function.
+--
+-- ### The intermediate-base check
+--
+-- For `cfg.WfSubmit`:
+--   * `cfg`'s `goExprGoType` returns `Just "Cfg_R[T1]"`
+--     (parametric-record-alias arm in `goExprGoType`).
+--   * Non-`any` → accepted.
+--   * Selector leaf reached; OK.
+-- For `unknownLocal.f1.f2`:
+--   * `unknownLocal.f1`'s `goExprGoType` may return `Nothing` —
+--     base is untracked.  Reject; wrap path runs.
+-- For `cfg.someAnyField.deep`:
+--   * `cfg.someAnyField`'s `goExprGoType` returns `Just "any"`.
+--     Reject; wrap path runs.
+--
+-- The Nothing-→-reject rule is intentionally strict: an un-trackable
+-- base could be the parametric-alias case the v0.15.3 arm handles,
+-- BUT it could equally be a heterogeneous user expression whose
+-- Go-static type is unknown to us — and the soundness floor is to
+-- WRAP unless we can prove the unwrap-safe contract.  The
+-- companion runtime-shape tests (CoerceArgParametricSpec + the
+-- 27-example sweep) confirm the over-rejection rate is benign in
+-- practice (golden-size delta ≤ ±3 % per Planner's risk register).
+isPlainIdentForTypedRouting :: GoIr.GoExpr -> Bool
+isPlainIdentForTypedRouting e = isPlainIdent e && intermediatesTyped e
+  where
+    intermediatesTyped (GoIr.GoIdent _)       = True
+    intermediatesTyped (GoIr.GoSelector b _)  =
+        case goExprGoType b of
+            Just t  -> t /= "any" && intermediatesTyped b
+            Nothing -> False
+    intermediatesTyped _                       = False
 
 
 -- | v0.15.3 — extract the base alias name from a parametric record

@@ -226,6 +226,24 @@ test-suite sky-tests
     , time >= 1.9
     , file-embed >= 0.0.15
     , template-haskell >= 2.16
+    -- v0.15.x hardening / P3: IsPlainIdentSpec imports
+    -- `Sky.Build.Compile` directly to unit-test the structural
+    -- `isPlainIdent` classifier.  `Compile.hs` and its transitive
+    -- imports pull in `async`, `mtl`, `binary`, `utf8-string`,
+    -- `optparse-applicative`, `cryptohash-sha256`, `ansi-terminal`,
+    -- `unix` (POSIX), which previously only the library stanza
+    -- carried.  Keep parity so the test stanza compiles every
+    -- module it needs to host the unit test.
+    , async >= 2.2
+    , mtl >= 2.2
+    , binary >= 0.8
+    , utf8-string >= 1.0
+    , optparse-applicative >= 0.17
+    , cryptohash-sha256 >= 0.11
+    , ansi-terminal >= 0.11
+
+  if !os(windows)
+    build-depends: unix >= 2.7
 
   other-modules:
       Sky.Build.Validator
@@ -273,6 +291,7 @@ test-suite sky-tests
       Sky.Build.RecordCtorEmptyListSpec
       Sky.Build.HofTypedMsgSpec
       Sky.Build.CoerceArgParametricSpec
+      Sky.Build.IsPlainIdentSpec
       Sky.Build.AnonLambdaSpec
       Sky.Build.AnonRecordSpec
       Sky.Build.Issue52Spec
