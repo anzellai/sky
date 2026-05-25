@@ -40,3 +40,10 @@ spec = do
         it "no longer references the retired globalLambdaGoStrings IORef" $ do
             src <- readFile "src/Sky/Build/Compile.hs"
             ("globalLambdaGoStrings" `List.isInfixOf` src) `shouldBe` False
+        it "no longer references the retired globalRegionTypes IORef" $ do
+            src <- readFile "src/Sky/Build/Compile.hs"
+            -- v0.15.5 PR 3 — retired in favour of `scopeStateRef`'s
+            -- `_lc_regionTypes` field.  Same gate-shape as the PR 2
+            -- pair above: any reintroduction (even a back-reference
+            -- in a comment) trips this spec.
+            ("globalRegionTypes" `List.isInfixOf` src) `shouldBe` False
