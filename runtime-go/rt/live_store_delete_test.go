@@ -175,7 +175,8 @@ func TestEveryGoroutine_exitsOnDelete(t *testing.T) {
 		sseCh:     make(chan string, 16),
 		cancelSub: make(chan struct{}),
 		done:      make(chan struct{}),
-		prevBody:  "<div>hi</div>",
+		lastComputedBody: "<div>hi</div>",
+		lastShippedBody:  "<div>hi</div>",
 	}
 	app.store.Set("sid-leak", sess)
 
@@ -250,7 +251,8 @@ func TestEveryGoroutine_exitsOnCleanupExpiry(t *testing.T) {
 		sseCh:     make(chan string, 16),
 		cancelSub: make(chan struct{}),
 		done:      make(chan struct{}),
-		prevBody:  "<div>hi</div>",
+		lastComputedBody: "<div>hi</div>",
+		lastShippedBody:  "<div>hi</div>",
 	}
 	app.store.Set("sid-expire", sess)
 	app.setupSubscriptions(sess)

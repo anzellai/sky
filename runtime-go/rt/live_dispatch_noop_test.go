@@ -7,7 +7,8 @@ package rt
 // equality check started firing through legitimate keypress dispatch
 // paths, freezing live editing. Suppression of identical-view SSE
 // pushes is now the SSE producer's responsibility (it compares the
-// returned body to sess.prevBody before encoding a frame).
+// returned body to sess.lastShippedBody — Cycle 3 P39 split — before
+// encoding a frame).
 //
 // What this file pins:
 //   * dispatch returns a non-empty body for both the initial dispatch
