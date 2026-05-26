@@ -48,6 +48,7 @@ import qualified Sky.Build.CoerceArgParametricSpec
 import qualified Sky.Build.IsPlainIdentSpec
 import qualified Sky.Build.InferExprTypeBinopSpec
 import qualified Sky.Build.CoerceArgListMapInterplaySpec
+import qualified Sky.Build.LowerCtxCascadeSpec
 import qualified Sky.Build.SkyshopCompilesSpec
 import qualified Sky.Build.AnonLambdaSpec
 import qualified Sky.Build.AnonRecordSpec
@@ -303,6 +304,14 @@ main = hspec $ do
     -- `coerceArg` skip-check vote.
     describe "Sky.Build.CoerceArgListMapInterplay"
                                             Sky.Build.CoerceArgListMapInterplaySpec.spec
+    -- v0.15.x hardening / Cycle 1 P6 — LowerCtx cascade Phase 2.
+    -- Promotes `lowerExpr` / `lowerExprExpectGo` from no-op
+    -- delegates into REAL ctx-installing wrappers, and migrates
+    -- four structural-backbone slots (lambda body / record-field
+    -- init / list element / call arg) to route through them.
+    -- Lock fires on the constructor surface + the byte-identical
+    -- compile contract for a four-slot exercise.
+    describe "Sky.Build.LowerCtxCascade"    Sky.Build.LowerCtxCascadeSpec.spec
     -- v0.15.x hardening / Cycle 1 P2-followup STANDING lock —
     -- examples/13-skyshop is the Stripe-SDK-scale benchmark
     -- (76k FFI symbols) and is the canary that catches

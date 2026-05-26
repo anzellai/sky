@@ -6434,26 +6434,70 @@ splitFuncType _ ty = ([], ty)  -- not enough arrows, return as-is
 -- ═══════════════════════════════════════════════════════════
 
 
--- | v0.16 PR 1 — explicit-context lowering wrapper.  Delegates to
--- `exprToGo` today; PRs 2-6 of the v0.16 sequence migrate the
--- function body to read from `ctx` instead of the NOINLINE IORefs.
+-- | v0.15.x P6 (Phase 2) — explicit-context lowering wrapper.
 --
--- The signature already accepts `LowerCtx` so call sites can be
--- migrated bottom-up without further churn to type signatures.
--- The `_ctx` underscore is deliberate: until PR 2 lands, the
--- delegated `exprToGo` still reads the IORefs, and `ctx` is the
--- snapshot the eventual migration will consult.  See
--- `docs/improvement-plan-v0.16.md` Priority 1.
+-- Installs `ctx` into `scopeStateRef` around the delegated call so
+-- the IORef-based readers (`lookupLambdaType`, `lookupLambdaGoStr`,
+-- `lookupRegionType`) observe the threaded ctx for the duration of
+-- the lowering, then restores the previous value.  This is the
+-- "ctx is the channel" Phase 2 step: callers explicitly pass ctx,
+-- the wrapper installs it for the recursive backbone.  Phase 3
+-- (P7) migrates the body away from `scopeStateRef` entirely.
+--
+-- The previous Phase 1 wrapper ignored ctx (`_ctx`) and was a pure
+-- no-op delegate — useful only as a placeholder for the bottom-up
+-- migration.  Phase 2 makes ctx actually flow through.
+--
+-- Concurrency: codegen runs single-threaded per compile (the
+-- per-module Async parallelism happens at canonicalise/HM only;
+-- final lowering serialises through `generateGoMulti`).  The
+-- write/restore pair is therefore safe without an MVar lock.  If
+-- future work parallelises lowering, switch to MVars on
+-- `scopeStateRef` or push the read down to per-helper ctx
+-- arguments (the Phase 3 direction anyway).
+--
+-- The lowering result must be forced to WHNF BEFORE the restore so
+-- any deferred IORef-reading thunks see the installed ctx.
+-- `GoBuilder.renderExpr` triggers full evaluation of the GoExpr
+-- tree; we then wrap the rendered String as a `GoRaw` so the
+-- downstream printer treats it verbatim.  Mirrors the technique
+-- `withScopedLambdaTypes` uses for the same race class.
 lowerExpr :: LC.LowerCtx -> Can.Expr -> GoIr.GoExpr
-lowerExpr _ctx = exprToGo
+lowerExpr ctx e = unsafePerformIO $ do
+    prev <- readIORef scopeStateRef
+    writeIORef scopeStateRef ctx
+    let rendered = GoBuilder.renderExpr (exprToGo e)
+        forced = length rendered
+    forced `seq` writeIORef scopeStateRef prev
+    return (GoIr.GoRaw rendered)
 
 
--- | v0.16 PR 1 — explicit-context typed-slot wrapper.  Mirror of
--- `lowerExpr` for the `exprToGoExpectGo` entry point.  Delegates
--- to the existing IORef-based implementation; PR 2+ migrates the
--- body.
+-- | v0.15.x P6 (Phase 2) — explicit-context typed-slot wrapper.
+-- Mirror of `lowerExpr` for the `exprToGoExpectGo` entry point.
+-- Same write/restore + force-to-WHNF pattern.
 lowerExprExpectGo :: LC.LowerCtx -> String -> Can.Expr -> GoIr.GoExpr
-lowerExprExpectGo _ctx = exprToGoExpectGo
+lowerExprExpectGo ctx goRendering e = unsafePerformIO $ do
+    prev <- readIORef scopeStateRef
+    writeIORef scopeStateRef ctx
+    let rendered = GoBuilder.renderExpr (exprToGoExpectGo goRendering e)
+        forced = length rendered
+    forced `seq` writeIORef scopeStateRef prev
+    return (GoIr.GoRaw rendered)
+
+
+-- | v0.15.x P6 (Phase 2) — read the current scope-state ctx from
+-- the IORef.  Phase 2 callers that don't yet have an explicit
+-- `ctx` parameter use this to opt in to ctx threading without
+-- changing their call-graph parents.  Phase 3 (P7) deletes the
+-- IORef; this helper goes with it.
+--
+-- NOINLINE so GHC doesn't memoise the snapshot across call sites:
+-- a fresh read on every invocation matches the implicit-IO
+-- semantics the rest of the codegen helpers (lookupLambdaType etc.)
+-- already rely on.
+{-# NOINLINE ctxFromIORef #-}
+ctxFromIORef :: () -> LC.LowerCtx
+ctxFromIORef () = unsafePerformIO (readIORef scopeStateRef)
 
 
 -- | v0.13 typed lowerer: convert a canonical expression to Go IR
@@ -6528,6 +6572,15 @@ exprToGoExpectGo goRendering e@(A.At _ expr)
         -- lowered with T as expected type so nested lambdas and
         -- records get type-directed too.  Falls back to the generic
         -- `[]any` shape when the slot type is unrecognised.
+        --
+        -- NOTE — v0.15.x P6 (Phase 2) initially routed this site
+        -- through `lowerExprExpectGo ctx` but reverted: under
+        -- examples/16-skychess (large module graph) the wrapper's
+        -- write-and-force interacts with deferred lazy thunks
+        -- inside the list element lowering, blackholing.  Same
+        -- failure class as `lowerRecordLiteralTo` and `letToGo`.
+        -- Closing this needs Phase 3 (P7): kill `scopeStateRef`'s
+        -- shared-state seam.
         Can.List items
             | Just elemTy <- stripListType goRendering ->
                 GoIr.GoSliceLit elemTy
@@ -6575,11 +6628,6 @@ lowerTypedLambda
 lowerTypedLambda pats paramTys retTy body =
     let (params, destructStmts) = unzip (zipWith oneParam [0 :: Int ..] (zip pats paramTys))
         allDestructStmts = concat destructStmts
-        bodyExpr = exprToGoExpectGo retTy body
-        wrappedBody =
-            if null allDestructStmts
-                then [GoIr.GoReturn bodyExpr]
-                else allDestructStmts ++ [GoIr.GoReturn bodyExpr]
         -- v0.13 typed lowerer: register PVar param types in the
         -- lambda-scope map so the body's `Can.VarLocal name`
         -- accesses recover the typed Go reference.  Mirrors what
@@ -6590,11 +6638,29 @@ lowerTypedLambda pats paramTys retTy body =
             | (A.At _ (Can.PVar n), gty) <- zip pats paramTys
             , gty /= "any"
             ]
-        skyBoundLambda = if Map.null paramTypeBindings
-            then GoIr.GoFuncLit params retTy wrappedBody
-            else withScopedLambdaTypes paramTypeBindings
-                (GoIr.GoFuncLit params retTy wrappedBody)
-    in skyBoundLambda
+        -- v0.15.x P6 (Phase 2) — thread ctx EXPLICITLY through the
+        -- lambda body's lowering instead of relying on
+        -- `withScopedLambdaTypes`'s push/pop IORef dance.  Build a
+        -- per-lambda `LC.LowerCtx` extended with `paramTypeBindings`
+        -- and lower the body via `lowerExprExpectGo` — the ctx-
+        -- aware wrapper writes ctx into `scopeStateRef` for the
+        -- duration of the call, then restores.  Same net effect as
+        -- the legacy push/pop, but the ctx is now an EXPLICIT
+        -- VALUE the caller passes, not implicit IORef state.
+        --
+        -- When `paramTypeBindings` is empty the body still routes
+        -- through the wrapper so call-graph ctx threading stays
+        -- uniform.  The wrapper re-installs the same ctx (no-op
+        -- write+restore) so the rest of the IORef-based machinery
+        -- is unaffected.
+        parentCtx = ctxFromIORef ()
+        lambdaCtx = LC.withLambdaTypes paramTypeBindings parentCtx
+        bodyExpr = lowerExprExpectGo lambdaCtx retTy body
+        wrappedBody =
+            if null allDestructStmts
+                then [GoIr.GoReturn bodyExpr]
+                else allDestructStmts ++ [GoIr.GoReturn bodyExpr]
+    in GoIr.GoFuncLit params retTy wrappedBody
   where
     oneParam :: Int -> (Can.Pattern, String) -> (GoIr.GoParam, [GoIr.GoStmt])
     oneParam idx (A.At _ pat, gty) = case pat of
@@ -6661,6 +6727,16 @@ lowerRecordLiteralTo targetTy fields =
                 in Map.map (\(T.FieldType _ ty) ->
                         substituteTVarsToGo tvarSubst ty) m
             _ -> Map.empty
+        -- NOTE — v0.15.x P6 (Phase 2) initially routed this site
+        -- through `lowerExprExpectGo ctx` but reverted: when the
+        -- enclosing function body returns a parametric-alias
+        -- record literal (e.g. `makeIntCfg x = { onSubmit = x, … }`
+        -- against `Cfg_R[Int]`), the ctx-aware wrapper's
+        -- write-and-force interacts with the lambda-scope laziness
+        -- around the function body, blackholing.  Reproducer:
+        -- examples/16-skychess (deterministic) + the
+        -- CoerceArgParametricSpec fixture.  Closing this needs
+        -- Phase 3 (P7): kill `scopeStateRef`'s shared-state seam.
         lowerField fn fe =
             let fieldGoTy = Map.findWithDefault "any" fn fieldTypeMap
             in coerceToFieldType fieldGoTy
@@ -9572,16 +9648,21 @@ zipWithDefaultExpect (ty:tys) (e:es) =
 -- have at least one "any" position).
 lowerArgExpect :: String -> Can.Expr -> GoIr.GoExpr
 lowerArgExpect ty e@(A.At _ expr)
+    -- v0.15.x P6 (Phase 2) — call-arg lowering at the two
+    -- type-directed slots routes via `lowerExprExpectGo` so the
+    -- "call arg" structural-backbone slot threads ctx explicitly.
+    -- Same ctx as the enclosing call (call args are siblings,
+    -- not nested binders).
     | isParametricAliasInstantiation ty
     , not (containsGenericTypeParam ty)
     , Can.Record _ <- expr
-    = exprToGoExpectGo ty e
+    = lowerExprExpectGo (ctxFromIORef ()) ty e
     | Just (paramTys, _retTy) <- parseFuncType ty
     , Can.Lambda pats _ <- expr
     , length pats == length paramTys
     , all (/= "any") paramTys
     , not (containsGenericTypeParam ty)
-    = exprToGoExpectGo ty e
+    = lowerExprExpectGo (ctxFromIORef ()) ty e
     | otherwise
     = coerceArg (Just e) (exprToGo e) ty
 
@@ -9969,6 +10050,18 @@ letToGo mExpectedGo def body =
         -- When the expected Go type is known, lower the let-body via
         -- `exprToGoExpectGo` so a nested case/if/let in the body gets
         -- the type threaded directly.
+        --
+        -- NOTE — v0.15.x P6 (Phase 2) deliberately leaves this site
+        -- on the legacy `withScopedLambdaTypes` push/pop path
+        -- instead of routing through `lowerExpr ctx`.  The
+        -- `letBindingType ctx …` thunk above defers a
+        -- `readIORef scopeStateRef`, and the ctx-aware wrappers
+        -- write `scopeStateRef` for the body's duration.  Forcing
+        -- the deferred read inside the body lowering THEN observes
+        -- the body's installed ctx, but the body's installed ctx
+        -- DEPENDS on the deferred read → GHC blackholes (verified
+        -- under skyshop, May 2026).  Closing this needs Phase 3
+        -- (P7): kill `scopeStateRef` and consume ctx purely.
         lowerBody = case mExpectedGo of
             Just gt -> exprToGoExpectGo gt
             Nothing -> exprToGo
