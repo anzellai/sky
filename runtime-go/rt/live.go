@@ -1257,12 +1257,38 @@ type liveSession struct {
 	model    any
 	handlers map[string]any
 	prevTree *VNode // Last rendered tree; used by the diff protocol.
-	// Last rendered body string. Any dispatch that produces a byte-
-	// identical body is a no-op from the client's perspective; we
-	// suppress the SSE push to avoid flooding the wire when a
-	// Time.every subscription ticks but the model-derived view
-	// hasn't actually changed.
-	prevBody string
+	// View-body bookkeeping for the SSE no-op suppression contract
+	// (Cycle 3 P39 / Gap C2 — split out from the historical single
+	// `prevBody` field whose dual meaning had bitten v0.15.14).
+	//
+	// Two distinct invariants are tracked:
+	//
+	//   * lastComputedBody — every dispatch / renderView / initial-
+	//     mount writes this with the just-rendered HTML. Mirrors the
+	//     `prevTree` field. dispatch's contract is to ALWAYS update
+	//     it (rolled back on a render panic so a partial render
+	//     doesn't poison the next dispatch's diff baseline).
+	//
+	//   * lastShippedBody — only the SSE-producing call sites
+	//     (dispatchBatched, runPerformBody, the Time.every tick
+	//     subscription, handleInitial's HTTP-response push, the SSE
+	//     reconnect-resync push) write this — and ONLY when they
+	//     actually emit a frame to the client (sseCh enqueue or
+	//     direct write to the SSE/HTTP response writer).
+	//
+	// Suppression checks ("a tick whose view byte-equals the last
+	// thing the client saw is a wasted frame — drop it") compare
+	// against `lastShippedBody`. Comparing against `lastComputedBody`
+	// would be a tautology: dispatch wrote it post-render.
+	//
+	// Why the split matters: a future cleanup that made dispatch
+	// skip the write (e.g. "only update on actual ship") would
+	// silently break suppression of every byte-identical view —
+	// because every check would see the SAME value before and
+	// after. Splitting names the two invariants so the contract is
+	// resilient to that refactor class.
+	lastComputedBody string
+	lastShippedBody  string
 	lastSeen time.Time
 	mu       sync.Mutex
 	// SSE outbound channel: any writer goroutine may push a frame.
@@ -2133,7 +2159,11 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	assignSkyIDs(&vn, "r")
 	body := renderVNode(vn, sess.handlers)
 	sess.prevTree = &vn
-	sess.prevBody = body
+	// Initial mount writes the full HTML directly into the HTTP
+	// response below — the client receives this body as the page,
+	// so it counts as BOTH "last computed" and "last shipped".
+	sess.lastComputedBody = body
+	sess.lastShippedBody = body
 	app.store.Set(sid, sess)
 
 	setSecurityHeaders(w.Header())
@@ -2380,6 +2410,18 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 	prev := sess.prevTree
 	body2 := app.dispatch(sess, msg)
 	newTree := sess.prevTree
+	// /_sky/event ships its reply directly down the POST response
+	// (writeEventJSON / writeEventHTML below), so for the suppression
+	// contract this counts as "the client received the new body".
+	// Advance lastShippedBody under sess.mu so any concurrent SSE
+	// producer (tick subscription, runPerformBody) reading
+	// lastShippedBody picks up the post-click value and correctly
+	// suppresses a redundant frame on its next tick. Skip the empty-
+	// body case (no-op dispatch — body2 == "") so the field continues
+	// to reflect whatever the client genuinely last received.
+	if body2 != "" {
+		sess.lastShippedBody = body2
+	}
 	// Capture outgoing protocol metadata before releasing the lock so
 	// the seq reflects this session's true mutation order. Bumped once
 	// per reply (including no-op replies) so the client's cross-channel
@@ -2522,19 +2564,26 @@ func (app *liveApp) dispatchBatched(sess *liveSession, ev batchedEvent) {
 	if _, isSkyAdt := msg.(SkyADT); !isSkyAdt {
 		msg = applyMsgArgs(msg, ev.Args, ev.Value)
 	}
-	// Capture prevBody BEFORE dispatch so we can suppress a byte-
-	// identical view (symmetric with runPerformBody + the Time.every
-	// SSE producer — v0.15.14 / v0.15.17). Without this gate a beacon-
-	// driven tab-unload dispatch that produces no view change still
-	// ships a redundant SSE frame to other observers of the session.
-	prevBody := sess.prevBody
+	// Capture lastShippedBody BEFORE dispatch so we can suppress a
+	// byte-identical view (symmetric with runPerformBody + the
+	// Time.every SSE producer — v0.15.14 / v0.15.17). Comparing
+	// against lastShippedBody (not lastComputedBody) means the
+	// suppression contract is about the wire, not about dispatch's
+	// internal post-render write. Without this gate a beacon-driven
+	// tab-unload dispatch that produces no view change still ships
+	// a redundant SSE frame to other observers of the session.
+	prevShipped := sess.lastShippedBody
 	body2 := app.dispatch(sess, msg)
 	// Bump outSeq once per batched entry so any SSE frame pushed as a
 	// side effect carries a unique seq. Each dispatch that mutates the
 	// view is its own observable event.
 	var frame string
-	if body2 != "" && body2 != prevBody {
+	if body2 != "" && body2 != prevShipped {
 		frame = encodeSSEFrame(sess, body2)
+		// Advance lastShippedBody atomically with the enqueue
+		// decision — done while still holding sess.mu so future
+		// dispatches under the same lock see a coherent value.
+		sess.lastShippedBody = body2
 	}
 	sess.mu.Unlock()
 	// Push to other subscribers (other tabs, SSE listeners). The
@@ -2593,16 +2642,24 @@ func (app *liveApp) dispatch(sess *liveSession, msg any) (body string) {
 	// Snapshot the pre-dispatch view invariants so a panic anywhere in
 	// the body (update, view-render, runCmd, setupSubscriptions) can
 	// roll them back. Without this, a panic AFTER `sess.prevTree = &vn`
-	// (line ~2594) but BEFORE `sess.prevBody = body` (line ~2618) leaves
-	// the two fields desynced: prevTree pointing at the new (possibly
-	// partial) render and prevBody still on the prior-good body. The
-	// next dispatch's suppression check would then compare against a
-	// stale prevBody — typically harmless, but the asymmetry is fragile
-	// and the audit (Cycle 3 P35 residual c) flagged it as obscuring
-	// the intent of the recovery path. We restore BOTH fields so the
-	// failed dispatch is observably a no-op for the suppression layer.
+	// (line ~2594) but BEFORE `sess.lastComputedBody = body` (line
+	// ~2618) leaves the two fields desynced: prevTree pointing at the
+	// new (possibly partial) render and lastComputedBody still on the
+	// prior-good body. The next dispatch's diff baseline would then
+	// use a stale tree — typically harmless, but the asymmetry is
+	// fragile and the audit (Cycle 3 P35 residual c) flagged it as
+	// obscuring the intent of the recovery path. We restore both
+	// fields so the failed dispatch is observably a no-op for the
+	// suppression + diff layers.
+	//
+	// lastShippedBody is NOT snapshotted here because dispatch never
+	// writes it — its contract is "last thing sent to the wire",
+	// owned by the SSE producer callers (dispatchBatched,
+	// runPerformBody, the tick goroutine). A panic mid-dispatch has
+	// definitionally not shipped anything, so lastShippedBody stays
+	// at whatever the last successful SSE emission set it to.
 	prevTreeOnEntry := sess.prevTree
-	prevBodyOnEntry := sess.prevBody
+	prevComputedOnEntry := sess.lastComputedBody
 	defer func() {
 		if r := recover(); r != nil {
 			fmt.Fprintf(os.Stderr,
@@ -2611,11 +2668,11 @@ func (app *liveApp) dispatch(sess *liveSession, msg any) (body string) {
 			body = ""
 			dispatchErr = fmt.Errorf("dispatch panic: %v", r)
 			// Roll back the view invariants. The current dispatch has
-			// failed; the prior valid prevTree / prevBody must remain
-			// the source of truth for the next dispatch's suppression
-			// and diff baseline.
+			// failed; the prior valid prevTree / lastComputedBody must
+			// remain the source of truth for the next dispatch's
+			// suppression and diff baseline.
 			sess.prevTree = prevTreeOnEntry
-			sess.prevBody = prevBodyOnEntry
+			sess.lastComputedBody = prevComputedOnEntry
 		}
 		ObserveMsgLog(msgLogCtx, sess.model, finalCmd, dispatchErr)
 	}()
@@ -2685,7 +2742,12 @@ func (app *liveApp) dispatch(sess *liveSession, msg any) (body string) {
 	// frames per tick, but the client's __skyHandleResponse uses the
 	// seq guard + focus-preserving splice so a redundant frame is a
 	// bandwidth cost (~150 bytes/tick), not a correctness break.
-	sess.prevBody = body
+	//
+	// lastShippedBody is intentionally NOT written here — that's the
+	// SSE producer's job (post-P39 / Gap C2). Suppression callers
+	// compare against the last value the client actually received,
+	// not against this just-computed value.
+	sess.lastComputedBody = body
 	return body
 }
 
@@ -2775,11 +2837,17 @@ func (app *liveApp) runPerformBody(sess *liveSession, task any, toMsg any) {
 	// the same lock as dispatch means the seq reflects the actual
 	// mutation order even when other goroutines dispatch concurrently.
 	sess.mu.Lock()
-	prevBody := sess.prevBody
+	// Compare against lastShippedBody — the last body the client
+	// actually received — so a perform whose dispatch byte-equals
+	// what the client already has doesn't push a redundant frame.
+	prevShipped := sess.lastShippedBody
 	body := app.dispatch(sess, msg)
 	var frame string
-	if body != "" && body != prevBody {
+	if body != "" && body != prevShipped {
 		frame = encodeSSEFrame(sess, body)
+		// Advance lastShippedBody under the same lock as the enqueue
+		// decision; future suppression checks see a coherent value.
+		sess.lastShippedBody = body
 	}
 	sess.mu.Unlock()
 	if frame == "" {
@@ -2837,19 +2905,24 @@ func (app *liveApp) setupSubscriptions(sess *liveSession) {
 				if isFunc(msg) {
 					msg = sky_call(toMsg, t.UnixMilli())
 				}
-				// Capture prevBody BEFORE dispatch so we can detect
-				// a tick whose update produced a byte-identical view
-				// (the typical Time.every shape — heartbeat polling,
+				// Capture lastShippedBody BEFORE dispatch so we can
+				// detect a tick whose update produced a view that
+				// byte-equals what the client already has (the
+				// typical Time.every shape — heartbeat polling,
 				// once-per-second refresh, etc.). Suppression lives
 				// at the SSE callsite (not inside dispatch) because
 				// the HTTP /_sky/event response path needs the body
 				// to compute structural patches; only the SSE tick
 				// can safely silence-drop when the view didn't move.
-				prevBody := sess.prevBody
+				prevShipped := sess.lastShippedBody
 				body := app.dispatch(sess, msg)
 				var frame string
-				if body != "" && body != prevBody {
+				if body != "" && body != prevShipped {
 					frame = encodeSSEFrame(sess, body)
+					// Advance lastShippedBody under sess.mu so the
+					// next tick (or any concurrent dispatcher) sees
+					// the just-enqueued value.
+					sess.lastShippedBody = body
 				}
 				sess.mu.Unlock()
 				// Suppress SSE write when the tick didn't change
@@ -2965,7 +3038,8 @@ func (app *liveApp) handleSSE(w http.ResponseWriter, r *http.Request) {
 	if sess.model != nil {
 		// Recover from any panic in view() so a bad render doesn't tear
 		// down the SSE connection. The recovered SSE just enters its
-		// for-select loop with the legacy prevTree/prevBody untouched.
+		// for-select loop with the legacy prevTree / lastComputedBody /
+		// lastShippedBody untouched.
 		func() {
 			defer func() { _ = recover() }()
 			vn := HtmlToVNode(sky_call(app.view, sess.model))
@@ -2973,7 +3047,12 @@ func (app *liveApp) handleSSE(w http.ResponseWriter, r *http.Request) {
 			sess.handlers = map[string]any{}
 			body := renderVNode(vn, sess.handlers)
 			sess.prevTree = &vn
-			sess.prevBody = body
+			// Reconnect-resync writes the resync frame DIRECTLY to
+			// the SSE response writer below — so this body is both
+			// just-computed AND just-shipped, and the next tick's
+			// suppression must compare against it.
+			sess.lastComputedBody = body
+			sess.lastShippedBody = body
 			frame := encodeSSEFrame(sess, body)
 			// Encode + write while still under lock to avoid interleaving
 			// with concurrent dispatch frames pushed via sess.sseCh.
@@ -2984,8 +3063,9 @@ func (app *liveApp) handleSSE(w http.ResponseWriter, r *http.Request) {
 			}
 		}()
 		sess.mu.Unlock()
-		// Persist the rebuilt prevTree+prevBody so future events diff
-		// against the new-binary view and don't fall back to full-body.
+		// Persist the rebuilt prevTree + lastComputedBody +
+		// lastShippedBody so future events diff against the
+		// new-binary view and don't fall back to full-body.
 		app.store.Set(sid, sess)
 	} else {
 		sess.mu.Unlock()
