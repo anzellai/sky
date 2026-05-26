@@ -1610,7 +1610,9 @@ solveForName srcMod name =
             (r, localTys) <- Solve.solveWithLocals cs
             case r of
                 Solve.SolveOk types ->
-                    case Map.lookup name types of
+                    -- v0.15.x P37a: SolvedTypes is now a record;
+                    -- consult its env field for var-name lookup.
+                    case Solve.lookupSolvedVar name types of
                         Just t  -> return (Just t)
                         Nothing -> case Map.lookup name localTys of
                             Just (t:_) -> return (Just t)
@@ -1677,7 +1679,7 @@ computeHover text line col = case Parse.parseModule text of
                         cs <- Constrain.constrainModule canMod
                         r  <- Solve.solve cs
                         case r of
-                            Solve.SolveOk types -> case Map.lookup name types of
+                            Solve.SolveOk types -> case Solve.lookupSolvedVar name types of
                                 Just t  -> return (Just (mkHover (name ++ " : " ++ Solve.showType t)))
                                 Nothing -> return (Just (mkHover name))
                             _ -> return (Just (mkHover name))
@@ -2446,8 +2448,11 @@ addAnnotationActions uri _text srcMod = do
         Right canMod -> do
             cs <- Constrain.constrainModule canMod
             r  <- Solve.solve cs
+            -- v0.15.x P37a: extract the env-map view; the rest of
+            -- this code path uses `Map.lookup` directly so we keep
+            -- the bare-map shape locally.
             case r of
-                Solve.SolveOk types -> return types
+                Solve.SolveOk types -> return (Solve._stEnv types)
                 _                   -> return Map.empty
 
     annotAction types (A.At _ v)
@@ -2839,7 +2844,7 @@ computeSignatureHelp text line col = case Parse.parseModule text of
                     r  <- Solve.solve cs
                     case r of
                         Solve.SolveOk types ->
-                            case Map.lookup (simpleName funcName) types of
+                            case Solve.lookupSolvedVar (simpleName funcName) types of
                                 Just t  -> return (Just (mkSignature funcName (Solve.showType t) paramIdx))
                                 Nothing -> return (Just (mkSignature funcName "" paramIdx))
                         _ -> return (Just (mkSignature funcName "" paramIdx))

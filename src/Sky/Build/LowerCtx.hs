@@ -110,7 +110,7 @@ data LowerCtx = LowerCtx
 emptyLowerCtx :: ModuleName.Canonical -> LowerCtx
 emptyLowerCtx home = LowerCtx
     { _lc_module      = home
-    , _lc_solved      = Map.empty
+    , _lc_solved      = Solve.emptySolvedTypes
     , _lc_regionTypes = Map.empty
     , _lc_lambdaTypes = Map.empty
     , _lc_lambdaGoStr = Map.empty
@@ -194,7 +194,7 @@ lookupAnnotation ctx name = Map.lookup name (_lc_annotMap ctx)
 -- `Solve.SolvedTypes` thread now passed alongside `LowerCtx` —
 -- one source of truth for solved types.
 lookupSolved :: LowerCtx -> String -> Maybe T.Type
-lookupSolved ctx name = Map.lookup name (_lc_solved ctx)
+lookupSolved ctx name = Solve.lookupSolvedVar name (_lc_solved ctx)
 
 
 -- | Extend the lambda-types scope.  Returns a NEW ctx — the parent
