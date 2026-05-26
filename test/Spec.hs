@@ -46,6 +46,7 @@ import qualified Sky.Build.RecordCtorEmptyListSpec
 import qualified Sky.Build.HofTypedMsgSpec
 import qualified Sky.Build.CoerceArgParametricSpec
 import qualified Sky.Build.IsPlainIdentSpec
+import qualified Sky.Build.InferExprTypeBinopSpec
 import qualified Sky.Build.CoerceArgListMapInterplaySpec
 import qualified Sky.Build.SkyshopCompilesSpec
 import qualified Sky.Build.AnonLambdaSpec
@@ -279,6 +280,18 @@ main = hspec $ do
     -- chains is the spec's load-bearing case; companion typed
     -- gate is exercised by CoerceArgParametricSpec at runtime.
     describe "Sky.Build.IsPlainIdent"       Sky.Build.IsPlainIdentSpec.spec
+    -- v0.15.x hardening / Gap A5 / Plan Item P4 — typed-primitive
+    -- binop fast-path in HOF arg slots.  Locks the codegen
+    -- invariant that `f (x + 1)` (where `f : Int -> Int` is a
+    -- typed local) lowers Go-native (`f(x + 1)`) instead of the
+    -- legacy `rt.CoerceInt(rt.SkyCall(f, x + 1))` reflect-wrap.
+    -- 8 cases cover arithmetic, logical, list / string concat,
+    -- cons, deeply nested arithmetic, chained typed-HOF, two-arg
+    -- siblings.  Spec runs the real `sky build` end-to-end +
+    -- inspects the emitted main.go AND runs the compiled binary
+    -- to assert no panic.
+    describe "Sky.Build.InferExprTypeBinop"
+                                            Sky.Build.InferExprTypeBinopSpec.spec
     -- v0.15.x hardening / Cycle 1 P2-followup — LOCK spec for the
     -- three-way σ/erasure/coerceArg consensus.  See the spec
     -- module header + `docs/v0.15.x-hardening/arbitrations/HEAD-

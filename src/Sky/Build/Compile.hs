@@ -7068,9 +7068,94 @@ exprToGo (A.At _ expr) = case expr of
                         | not (null localQual) =
                             coerceCallArgs localQual args
                         | otherwise = map exprToGo args
-                in if isDirectCallable func
-                    then GoIr.GoCall goFunc goArgs
-                    else GoIr.GoCall (GoIr.GoQualified "rt" "SkyCall")
+                    -- v0.15.10 / Gap A5 — typed-callable HOF fast-path.
+                    --
+                    -- When `func` is NOT one of the structural-direct
+                    -- callees (`Can.VarLocal` / `Can.Access` / `Can.Call`
+                    -- result, etc.) but its HM-recovered Go shape is
+                    -- `func(P1) R` with a single emittable param + ret,
+                    -- and the call has exactly one arg, emit a Go-
+                    -- native `goFunc(typedArg)` instead of routing
+                    -- through `rt.SkyCall`'s reflect dispatcher.
+                    -- Closes the audit Gap A5 symptom in
+                    -- `addOne f x = f (x + 1)`: pre-fix emitted
+                    -- `rt.CoerceInt(rt.SkyCall(f, x + 1))`, post-fix
+                    -- emits `f(x + 1)` Go-native.
+                    --
+                    -- The arg routes through `zipWithDefaultExpect` so
+                    -- the typed slot propagates into the lowering of the
+                    -- arg expression (binops therein emit Go-native
+                    -- when the slot is a Go primitive; record literals
+                    -- pick up the parametric-alias instantiation; etc.)
+                    -- — the same path ctor calls already use.
+                    --
+                    -- Recovery uses HM (`inferExprType`) NOT the lambda-
+                    -- types scope: the scope is pushed on the WRAPPED
+                    -- expr right before render; sub-expression thunks
+                    -- like this `Can.Call` arm may force BEFORE the
+                    -- wrap's IO action runs, leaving the IORef empty
+                    -- during the lookup.  HM is global and pre-populated
+                    -- by the time codegen runs.
+                    --
+                    -- Restricted to **single-arg** calls (`f x`).  Sky
+                    -- HM always renders curried (`T1 -> T2 -> T3` ↦
+                    -- `func(T1) func(T2) T3`), but the EMITTED Go for
+                    -- multi-pattern let-bound functions is FLAT
+                    -- (`func(t1, t2) t3`).  The codegen has no per-
+                    -- callee record we can consult at this layer to
+                    -- disambiguate, so multi-arg sites stay on the
+                    -- `rt.SkyCall` reflect path (which curries via
+                    -- `skyCallOne` and is correct for both shapes).
+                    -- At single-arg call sites the distinction
+                    -- collapses (`func(T1) <rest>` is the only shape),
+                    -- so the fast-path is sound.
+                    --
+                    -- Slot types must be emittable, concrete, and
+                    -- free of generic-type-param leaks — those would
+                    -- defeat Go's call-site type inference.
+                    -- Soundness gate: only fire for `Can.VarLocal`
+                    -- callees.  The emitted Go for those is a bare
+                    -- `GoIdent (goSafeName name)` — and whenever the
+                    -- HM type is a function arrow the EMITTED Go
+                    -- param IS that typed function shape (the entry-
+                    -- and dep-module decl paths zip `typedGoParams`
+                    -- with the resolved `solvedTypeToGo` per
+                    -- annotation slot).  So the bare ident statically
+                    -- carries a Go function value and a direct call
+                    -- typechecks.
+                    --
+                    -- We deliberately EXCLUDE other shapes — most
+                    -- importantly `Can.Access` (emission goes through
+                    -- `rt.Field` returning `any` and Go rejects
+                    -- direct-call on `any`).  Other indirect shapes
+                    -- (`Can.Call` result, `Can.Update`, `Can.LetRec`
+                    -- name, …) likewise widen to `any` at the call
+                    -- boundary and would fail Go's static type
+                    -- check.  These all stay on the `rt.SkyCall`
+                    -- reflect path which handles `any` callees
+                    -- correctly.
+                    isLocalCallable = case A.toValue func of
+                        Can.VarLocal _ -> True
+                        _              -> False
+                    typedCallableShape =
+                        if isDirectCallable func
+                            || not isLocalCallable
+                            || length args /= 1
+                            then Nothing
+                        else let solved = Rec._cg_solvedTypes getCgEnv
+                             in case inferExprType solved func of
+                                  Just ty ->
+                                      peelTypedArrows 1 (solvedTypeToGo ty)
+                                  Nothing -> Nothing
+                in case typedCallableShape of
+                    Just (typedParamTys, _typedRetTy) ->
+                        let typedArgs = zipWithDefaultExpect
+                                            (typedParamTys ++ repeat "any") args
+                        in GoIr.GoCall goFunc typedArgs
+                    Nothing ->
+                        if isDirectCallable func
+                            then GoIr.GoCall goFunc goArgs
+                            else GoIr.GoCall (GoIr.GoQualified "rt" "SkyCall")
                                     (goFunc : goArgs)
 
     Can.If branches elseExpr ->
@@ -7403,6 +7488,60 @@ coerceToFieldType targetTy e
 -- field's expected param shape. If a future case needs param
 -- rewriting (e.g. widening Editor_Form_R to any for record-stored
 -- callbacks across module boundaries), this is the place.
+-- | v0.15.10 / Gap A5 helper — peel `n` curried Go function arrows
+-- off `goTy`, collecting each peeled param type and returning the
+-- final return type.  Each peeled slot must be `isEmittableGoType`,
+-- NON-`any`, and free of generic-type-param leaks (`T1`, `T2`, …) —
+-- those would prevent Go's call-site type inference from pinning
+-- the call's type.  Returns Nothing if any slot fails the gate or
+-- the arrow chain is shorter than `n`.
+--
+-- Examples:
+--
+--   peelTypedArrows 1 "func(int) int"
+--     ==> Just (["int"], "int")
+--   peelTypedArrows 2 "func(int) func(int) int"
+--     ==> Just (["int", "int"], "int")
+--   peelTypedArrows 2 "func(int) int"  -- arrow chain too short
+--     ==> Nothing
+--   peelTypedArrows 1 "func(any) int"  -- `any` slot, can't pin
+--     ==> Nothing
+peelTypedArrows :: Int -> String -> Maybe ([String], String)
+peelTypedArrows = go []
+  where
+    go acc 0 ret = Just (reverse acc, ret)
+    go acc n curTy = case parseFuncType curTy of
+        Just ([pty], retTy)
+          | isEmittableGoType pty
+          , pty /= "any"
+          , not (isGenericTypeParam pty)
+          , not (containsGenericTypeParam pty)
+          , isEmittableGoType retTy
+          -> if n == 1
+                 then if retTy /= "any"
+                          && not (isGenericTypeParam retTy)
+                          && not (containsGenericTypeParam retTy)
+                        then Just (reverse (pty:acc), retTy)
+                        else Nothing
+                 else go (pty:acc) (n - 1) retTy
+        -- Multi-param Go function: matches when Sky-side is already
+        -- a single uncurried function value (e.g. an explicit Go
+        -- callback `func(a, b int) int` reached through FFI).
+        Just (ptys, retTy)
+          | length ptys == n
+          , all isEmittableGoType ptys
+          , all (\p -> p /= "any"
+                    && not (isGenericTypeParam p)
+                    && not (containsGenericTypeParam p))
+                ptys
+          , isEmittableGoType retTy
+          , retTy /= "any"
+          , not (isGenericTypeParam retTy)
+          , not (containsGenericTypeParam retTy)
+          -> Just (reverse acc ++ ptys, retTy)
+        _ -> Nothing
+
+
 retypeFuncLitOrCoerce :: String -> GoIr.GoExpr -> GoIr.GoExpr
 retypeFuncLitOrCoerce targetTy e = case parseFuncType targetTy of
     Just (_targetParams, targetRet)
