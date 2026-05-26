@@ -28,6 +28,7 @@ import (
 	"reflect"
 	"runtime"
 	"runtime/debug"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -293,17 +294,49 @@ func renderVNode(n VNode, handlers map[string]any) string {
 			textareaValue = v
 		}
 	}
-	for k, v := range n.Attrs {
+	// Deterministic attribute order — Go map iteration is randomised,
+	// so without sorting the same VNode emits attrs in a different
+	// order across renders.  That doesn't affect the diff's correctness
+	// (diffNodes walks new.Attrs and key-looks-up in old.Attrs, which
+	// is order-independent) BUT it does mean:
+	//   * Two identical states produce byte-different HTML strings
+	//     — golden/snapshot tests can flake, log diffs are noisy.
+	//   * Browsers parse innerHTML into DOM in source order; when a
+	//     parent's subtree gets replaced via the focus-preserving
+	//     splicer, deterministic attr order on the re-parsed nodes
+	//     lets future attribute-level patches target stable property
+	//     positions (modern browsers don't care, but tooling that
+	//     inspects the serialised HTML does).
+	//   * Server-side caching (ETag of rendered HTML, Sky.Doc HTML
+	//     diffing in CI) collapses to a no-op when the rendered bytes
+	//     are stable across runs.
+	// Sort by key — alphabetical is fine; the only authority-controlled
+	// attrs (value/checked/selected) are still routed via the diff's
+	// alignment path, not via render order.
+	attrKeys := make([]string, 0, len(n.Attrs))
+	for k := range n.Attrs {
+		attrKeys = append(attrKeys, k)
+	}
+	sort.Strings(attrKeys)
+	for _, k := range attrKeys {
 		if (isTextarea || n.Tag == "select") && k == "value" {
 			continue
 		}
 		sb.WriteString(" ")
 		sb.WriteString(k)
 		sb.WriteString(`="`)
-		sb.WriteString(html.EscapeString(v))
+		sb.WriteString(html.EscapeString(n.Attrs[k]))
 		sb.WriteString(`"`)
 	}
-	for ev, msg := range n.Events {
+	// Same determinism for event attributes — also a Go map, also
+	// previously emitted in randomised order.
+	evKeys := make([]string, 0, len(n.Events))
+	for ev := range n.Events {
+		evKeys = append(evKeys, ev)
+	}
+	sort.Strings(evKeys)
+	for _, ev := range evKeys {
+		msg := n.Events[ev]
 		// Sky.Live TEA protocol:
 		//   * Every event attribute is `sky-<event>="<MsgName>"` —
 		//     MsgName is the Sky-side Msg constructor (e.g. "Increment",
