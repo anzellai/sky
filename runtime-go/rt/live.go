@@ -2642,10 +2642,21 @@ func (app *liveApp) runPerformBody(sess *liveSession, task any, toMsg any) {
 	// carrying the session-wide seq. Keeping frame construction under
 	// the same lock as dispatch means the seq reflects the actual
 	// mutation order even when other goroutines dispatch concurrently.
+	//
+	// Suppress identical-view frames the same way the Time.every tick
+	// callsite does: capture prevBody before dispatch, compare after.
+	// A common shape — `RefreshTick -> Cmd.perform (Db.getVersion …)
+	// VersionLoaded`, where most ticks find the version unchanged and
+	// the Msg handler returns model untouched — would otherwise push
+	// a full ~14 KB SSE frame every interval just because the Cmd
+	// completed. Skipping byte-identical pushes is symmetric with the
+	// Time.every path; the client doesn't lose anything (the next
+	// genuine state change ships normally).
 	sess.mu.Lock()
+	prevBody := sess.prevBody
 	body := app.dispatch(sess, msg)
 	var frame string
-	if body != "" {
+	if body != "" && body != prevBody {
 		frame = encodeSSEFrame(sess, body)
 	}
 	sess.mu.Unlock()
