@@ -2477,12 +2477,18 @@ func (app *liveApp) dispatchBatched(sess *liveSession, ev batchedEvent) {
 	if _, isSkyAdt := msg.(SkyADT); !isSkyAdt {
 		msg = applyMsgArgs(msg, ev.Args, ev.Value)
 	}
+	// Capture prevBody BEFORE dispatch so we can suppress a byte-
+	// identical view (symmetric with runPerformBody + the Time.every
+	// SSE producer — v0.15.14 / v0.15.17). Without this gate a beacon-
+	// driven tab-unload dispatch that produces no view change still
+	// ships a redundant SSE frame to other observers of the session.
+	prevBody := sess.prevBody
 	body2 := app.dispatch(sess, msg)
 	// Bump outSeq once per batched entry so any SSE frame pushed as a
 	// side effect carries a unique seq. Each dispatch that mutates the
 	// view is its own observable event.
 	var frame string
-	if body2 != "" {
+	if body2 != "" && body2 != prevBody {
 		frame = encodeSSEFrame(sess, body2)
 	}
 	sess.mu.Unlock()
@@ -2539,6 +2545,19 @@ func (app *liveApp) dispatch(sess *liveSession, msg any) (body string) {
 
 	var dispatchErr error
 	var finalCmd any
+	// Snapshot the pre-dispatch view invariants so a panic anywhere in
+	// the body (update, view-render, runCmd, setupSubscriptions) can
+	// roll them back. Without this, a panic AFTER `sess.prevTree = &vn`
+	// (line ~2594) but BEFORE `sess.prevBody = body` (line ~2618) leaves
+	// the two fields desynced: prevTree pointing at the new (possibly
+	// partial) render and prevBody still on the prior-good body. The
+	// next dispatch's suppression check would then compare against a
+	// stale prevBody — typically harmless, but the asymmetry is fragile
+	// and the audit (Cycle 3 P35 residual c) flagged it as obscuring
+	// the intent of the recovery path. We restore BOTH fields so the
+	// failed dispatch is observably a no-op for the suppression layer.
+	prevTreeOnEntry := sess.prevTree
+	prevBodyOnEntry := sess.prevBody
 	defer func() {
 		if r := recover(); r != nil {
 			fmt.Fprintf(os.Stderr,
@@ -2546,6 +2565,12 @@ func (app *liveApp) dispatch(sess *liveSession, msg any) (body string) {
 				r, debug.Stack())
 			body = ""
 			dispatchErr = fmt.Errorf("dispatch panic: %v", r)
+			// Roll back the view invariants. The current dispatch has
+			// failed; the prior valid prevTree / prevBody must remain
+			// the source of truth for the next dispatch's suppression
+			// and diff baseline.
+			sess.prevTree = prevTreeOnEntry
+			sess.prevBody = prevBodyOnEntry
 		}
 		ObserveMsgLog(msgLogCtx, sess.model, finalCmd, dispatchErr)
 	}()
