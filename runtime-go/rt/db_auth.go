@@ -99,12 +99,22 @@ func safeTable(v any) string {
 // SQL call. `mustStringDisplay` is the explicit display-only path,
 // reserved for identifier wrappers where the value is statically a
 // string at the Sky type level.
+//
+// v0.15.12 P5 (Gap A6): the user-visible error message is now a
+// FIXED `expected String` string. The Go runtime type of the
+// offending value is logged via `logAuthBoundaryLeak` for the
+// server-side audit trail instead of being interpolated into the
+// API response. Pre-P5, `%T` of the value leaked into the response
+// — letting a probe of e.g. `Auth.signToken nil claims exp` see
+// `secret must be a String, got <nil>` and infer the upstream
+// binding's runtime shape.
 func mustStringTyped(v any, callerTag string) (string, any) {
 	if s, ok := v.(string); ok {
 		return s, nil
 	}
+	logAuthBoundaryLeak(callerTag, v)
 	return "", Err[any, any](ErrInvalidInput(
-		callerTag + ": expected String, got " + fmt.Sprintf("%T", v)))
+		callerTag + ": expected String"))
 }
 
 func mustStringDisplay(v any) string {
@@ -1003,11 +1013,21 @@ const authSecretMinBytes = 32
 
 // coerceAuthSecret enforces the typed-secret invariant. Returns the
 // secret bytes on success; an Err SkyResult on any policy violation.
+//
+// v0.15.12 P5 (Gap A6): the user-visible error message on a non-
+// String secret is the fixed `expected String` blurb shared with
+// `mustStringTyped`. The actual Go type is logged via
+// `logAuthBoundaryLeak` for the server-side audit trail. The
+// secret-too-short variant still reports the byte count + minimum
+// because that information is intentional security UX (telling
+// the operator their secret needs to be larger) and reveals
+// nothing about the surrounding Sky binding's runtime shape.
 func coerceAuthSecret(v any, callerTag string) ([]byte, any) {
 	s, ok := v.(string)
 	if !ok {
+		logAuthBoundaryLeak(callerTag, v)
 		return nil, Err[any, any](ErrInvalidInput(
-			callerTag + ": secret must be a String, got " + fmt.Sprintf("%T", v)))
+			callerTag + ": expected String"))
 	}
 	if len(s) < authSecretMinBytes {
 		return nil, Err[any, any](ErrInvalidInput(fmt.Sprintf(
@@ -1015,6 +1035,29 @@ func coerceAuthSecret(v any, callerTag string) ([]byte, any) {
 			callerTag, len(s), authSecretMinBytes)))
 	}
 	return []byte(s), nil
+}
+
+// logAuthBoundaryLeak records a structured Log.warn entry whenever an
+// Auth kernel sees a non-String argument at runtime. The Go type is
+// intentionally captured ONLY here (NOT in the caller-visible error
+// message). Ops can grep these entries when triaging — operators get
+// the visibility they need without exposing the runtime shape to
+// untrusted callers.
+//
+// The format matches the structured-log `Log.warnWith` shape:
+//
+//	[WARN] auth.boundary kernel=<tag> goType=<%T> reason=non-string-arg
+//
+// Lives next to the kernels (not in log.go) so the audit trail can
+// never be turned off accidentally — there is no env-var disable
+// path. The warning costs one allocation per boundary failure,
+// which is negligible against the bcrypt / JWT cost on the happy
+// path and the typed-Err return is the immediate next step on the
+// unhappy path.
+func logAuthBoundaryLeak(callerTag string, v any) {
+	fmt.Fprintf(os.Stderr,
+		"[WARN] auth.boundary kernel=%s goType=%T reason=non-string-arg\n",
+		callerTag, v)
 }
 
 // Auth.signToken : String -> Dict String any -> Int -> Result Error String
@@ -1054,8 +1097,10 @@ func Auth_verifyToken(secret any, token any) any {
 	}
 	tokStr, ok := token.(string)
 	if !ok {
-		return Err[any, any](ErrInvalidInput(fmt.Sprintf(
-			"verifyToken: token must be a String, got %T", token)))
+		// v0.15.12 P5 (Gap A6): fixed user-visible message; the
+		// actual Go type is logged for the server-side audit trail.
+		logAuthBoundaryLeak("verifyToken", token)
+		return Err[any, any](ErrInvalidInput("verifyToken: expected String"))
 	}
 	parsed, err := jwt.Parse(tokStr, func(t *jwt.Token) (any, error) {
 		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {

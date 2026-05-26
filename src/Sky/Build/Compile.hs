@@ -1604,54 +1604,80 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                     declOriginMap = collectDeclOrigins entryPath canMod
                     goCode = Validator.injectOriginComments
                                 declOriginMap goCodeRaw
-                createDirectoryIfMissing True outDir
-                let mainGoPath = outDir </> "main.go"
-                writeFile mainGoPath goCode
-                putStrLn $ "   Wrote " ++ mainGoPath
-                -- v0.13 Layer 2: codegen-stage validator runs after
-                -- writing main.go but before any downstream tooling
-                -- (DCE / go build).  It scans the emitted Go for
-                -- known-bad shapes (typed-kernel call with raw any
-                -- arg, etc.) and emits a structured Diagnostic with
-                -- a Sky-source region if the bug shape is found.
-                -- This gives "if it compiles, it works" defence in
-                -- depth — even if a new codegen regression slips
-                -- past the cabal tests, the validator catches it
-                -- pre-build and prints an actionable Diagnostic
-                -- instead of a cryptic `go build` error.
-                let originMap = Validator.parseOriginComments goCode
-                    valDiags  = Validator.validateEmittedGo
-                                  mainGoPath originMap goCode
-                if not (null valDiags)
+                    -- v0.15.12 P5 / Gap A6 — Auth typed-boundary gate.
+                    -- Scan the entry module + every validated dep for
+                    -- Auth.* kernel call sites whose String-typed
+                    -- slots receive an `any`-typed argument. The
+                    -- check runs BEFORE codegen writes main.go so
+                    -- the user sees the soundness gap at the source
+                    -- instead of a runtime `mustStringTyped` failure
+                    -- on the request hot path.
+                    authDiagsEntry = authBoundaryDiagnostics
+                                        entryPath typesWithDeps canMod
+                    authDiagsDeps =
+                        [ d
+                        | (modName, depMod) <- validDeps
+                        , let depTypesMap = case lookup modName depSolved of
+                                Just ts -> ts
+                                Nothing -> Map.empty
+                        , d <- authBoundaryDiagnostics entryPath depTypesMap depMod
+                        ]
+                    authDiags = authDiagsEntry ++ authDiagsDeps
+                if not (null authDiags)
                   then do
-                      rendered <- Render.renderCliMany valDiags
+                      rendered <- Render.renderCliMany authDiags
                       putStrLn rendered
                       removeStaleBuildOutput outDir (Toml._binName config)
-                      return (Left "Codegen validation rejected the emitted Go")
+                      return (Left ("Sky.Auth.UntypedBoundary: " ++ entryPath))
                   else do
-                      -- copyRuntime also copies runtime-go/go.mod + go.sum into
-                      -- outDir when it can locate the runtime. Only fall back
-                      -- to a minimal go.mod here if copyRuntime didn't write
-                      -- one (no runtime found).
-                      copyRuntime outDir
-                      hasOutMod <- doesFileExist (outDir </> "go.mod")
-                      if not hasOutMod
-                          then writeFile (outDir </> "go.mod") $ unlines ["module sky-app", "", "go 1.21"]
-                          else return ()
-                      -- Pull in Go deps declared in sky.toml so generated
-                      -- ffi/*_bindings.go can resolve imports.
-                      seedGoDependencies outDir (Toml._goDeps config)
-                      -- P7: strip unreferenced FFI wrappers from
-                      -- sky-out/rt/*_bindings.go.  Tens of thousands of
-                      -- any/any wrapper bodies user code never calls
-                      -- (stripe alone contributes 74k).
-                      dceFfiWrappers outDir
-                      -- Write cache hash to enable incremental rebuild skip
-                      let cacheDir = ".skycache"
-                      createDirectoryIfMissing True cacheDir
-                      writeFile (cacheDir </> "source.hash") srcHash
-                      putStrLn "Compilation successful"
-                      return (Right mainGoPath)
+                    createDirectoryIfMissing True outDir
+                    let mainGoPath = outDir </> "main.go"
+                    writeFile mainGoPath goCode
+                    putStrLn $ "   Wrote " ++ mainGoPath
+                    -- v0.13 Layer 2: codegen-stage validator runs after
+                    -- writing main.go but before any downstream tooling
+                    -- (DCE / go build).  It scans the emitted Go for
+                    -- known-bad shapes (typed-kernel call with raw any
+                    -- arg, etc.) and emits a structured Diagnostic with
+                    -- a Sky-source region if the bug shape is found.
+                    -- This gives "if it compiles, it works" defence in
+                    -- depth — even if a new codegen regression slips
+                    -- past the cabal tests, the validator catches it
+                    -- pre-build and prints an actionable Diagnostic
+                    -- instead of a cryptic `go build` error.
+                    let originMap = Validator.parseOriginComments goCode
+                        valDiags  = Validator.validateEmittedGo
+                                      mainGoPath originMap goCode
+                    if not (null valDiags)
+                      then do
+                          rendered <- Render.renderCliMany valDiags
+                          putStrLn rendered
+                          removeStaleBuildOutput outDir (Toml._binName config)
+                          return (Left "Codegen validation rejected the emitted Go")
+                      else do
+                          -- copyRuntime also copies runtime-go/go.mod + go.sum into
+                          -- outDir when it can locate the runtime. Only fall back
+                          -- to a minimal go.mod here if copyRuntime didn't write
+                          -- one (no runtime found).
+                          copyRuntime outDir
+                          hasOutMod <- doesFileExist (outDir </> "go.mod")
+                          if not hasOutMod
+                              then writeFile (outDir </> "go.mod") $ unlines ["module sky-app", "", "go 1.21"]
+                              else return ()
+                          -- Pull in Go deps declared in sky.toml so generated
+                          -- ffi/*_bindings.go can resolve imports.
+                          seedGoDependencies outDir (Toml._goDeps config)
+                          -- P7: strip unreferenced FFI wrappers from
+                          -- sky-out/rt/*_bindings.go.  Tens of thousands of
+                          -- any/any wrapper bodies user code never calls
+                          -- (stripe alone contributes 74k).
+                          dceFfiWrappers outDir
+                          -- Write cache hash to enable incremental rebuild skip
+                          let cacheDir = ".skycache"
+                          createDirectoryIfMissing True cacheDir
+                          writeFile (cacheDir </> "source.hash") srcHash
+                          putStrLn "Compilation successful"
+                          return (Right mainGoPath)
 
 
 -- LEGACY: single-module parse entry (no longer used from compile)
@@ -12000,6 +12026,302 @@ inferGoType :: Solve.SolvedTypes -> Can.Expr -> String
 inferGoType types e = case inferExprType types e of
     Just t  -> solvedTypeToGo t
     Nothing -> "any"
+
+
+-- ─── v0.15.12 P5 / Gap A6 — Auth typed-boundary gate ───────────────
+
+
+-- | The security-critical Auth kernels and, for each, the 0-indexed
+-- positions of the parameter slots whose Sky type is `String`.
+--
+-- The kernel signatures live in `Sky.Type.Constrain.Expression`'s
+-- `lookupKernelType` (see the `("Auth", ...)` cases). The map below
+-- is the AUDIT-SURFACE projection: at every call site the gate
+-- checks ONLY these positions, because they are the slots whose
+-- runtime values reach `mustStringTyped` / `coerceAuthSecret`.
+--
+-- Sig recap:
+--   * hashPassword     :: String -> Result Error String                          → slot 0
+--   * hashPasswordCost :: String -> Int -> Result Error String                   → slot 0
+--   * passwordStrength :: String -> Result Error String                          → slot 0
+--   * verifyPassword   :: String -> String -> Result Error Bool                  → slots 0, 1
+--   * signToken        :: String -> a -> Int -> Result Error String              → slot 0 (secret)
+--   * verifyToken      :: String -> String -> Result Error a                     → slots 0, 1
+--   * register         :: Db -> String -> String -> Task Error Int               → slots 1, 2
+--   * login            :: Db -> String -> String -> Task Error Int               → slots 1, 2
+--   * setRole          :: Db -> Int -> String -> Task Error ()                   → slot 2
+authSecurityKernels :: Map.Map String [Int]
+authSecurityKernels = Map.fromList
+    [ ("hashPassword",     [0])
+    , ("hashPasswordCost", [0])
+    , ("passwordStrength", [0])
+    , ("verifyPassword",   [0, 1])
+    , ("signToken",        [0])
+    , ("verifyToken",      [0, 1])
+    , ("register",         [1, 2])
+    , ("login",            [1, 2])
+    , ("setRole",          [2])
+    ]
+
+
+-- | A Sky type that contains the wildcard `any` at ANY position.
+-- The wildcard semantics give each occurrence a fresh UF variable,
+-- so HM unifies cleanly at the call site even when the binding
+-- carries no concrete contract. The audit's soundness gap (A6) is
+-- about exactly this: the user-declared annotation includes `any`
+-- somewhere → no typed contract reaches the runtime → bypasses
+-- `mustStringTyped` if the FFI return is the wrong shape.
+typeContainsAny :: T.Type -> Bool
+typeContainsAny ty = case ty of
+    T.TVar "any"        -> True
+    T.TVar _            -> False
+    T.TUnit             -> False
+    T.TLambda a b       -> typeContainsAny a || typeContainsAny b
+    T.TType _ _ args    -> any typeContainsAny args
+    T.TRecord fields _  -> any (typeContainsAny . T._fieldType) (Map.elems fields)
+    T.TTuple a b cs     -> any typeContainsAny (a : b : cs)
+    T.TAlias _ _ pairs at ->
+        any (typeContainsAny . snd) pairs ||
+        (case at of
+            T.Hoisted t -> typeContainsAny t
+            T.Filled  t -> typeContainsAny t)
+
+
+-- | Is the inferred HM type a typed-String contract? Returns False
+-- when the type is `TVar _` (unresolved generic) OR when the
+-- underlying structure isn't `String` (in which case the regular
+-- HM type-check should already have surfaced a mismatch, but we
+-- conservatively reject — defence in depth).
+--
+-- `String` lives in Sky as `T.TType ModuleName.string "String" []`.
+-- We compare on the resolved structure rather than the printed name
+-- so we ignore module-prefix variants.
+authArgIsTyped :: Maybe T.Type -> Bool
+authArgIsTyped mty = case mty of
+    Nothing -> False
+    Just t  -> case stripAlias t of
+        T.TType _ "String" [] -> True
+        _                     -> False
+  where
+    -- Peel a TAlias wrapper so `type alias UserEmail = String` still
+    -- counts as String at the boundary. The audit's contract is
+    -- "the value is a String at runtime", which aliases respect by
+    -- definition.
+    stripAlias (T.TAlias _ _ _ at) = case at of
+        T.Hoisted inner -> stripAlias inner
+        T.Filled  inner -> stripAlias inner
+    stripAlias x = x
+
+
+-- | Pre-computed per-module map of (binding name) → (raw
+-- source-level annotation type). Built directly from the
+-- canonical `Can.TypedDef` shape so we see the USER'S declared
+-- annotation, not the solver's post-unification rendering.
+--
+-- `Can.TypedDef _ _ pats _ retType` — the function type is rebuilt
+-- by folding the pattern types onto the retType:
+--   `pats : [(p, ty)]` → `T.TLambda p1 (T.TLambda p2 (... retType))`
+-- so we capture the WHOLE shape (e.g. `String -> any` rather than
+-- losing the `any` to a solver-side substitution).
+collectSourceAnnots :: Can.Module -> Map.Map String T.Type
+collectSourceAnnots m =
+    foldDecls Map.empty (Can._decls m)
+  where
+    foldDecls acc d = case d of
+        Can.SaveTheEnvironment   -> acc
+        Can.Declare def rest     -> foldDecls (addDef acc def) rest
+        Can.DeclareRec dd ds rest -> foldDecls (foldl addDef acc (dd:ds)) rest
+
+    addDef acc (Can.TypedDef (A.At _ n) _ pats _ retType) =
+        let fullTy = foldr T.TLambda retType (map snd pats)
+        in Map.insert n fullTy acc
+    addDef acc _ = acc
+
+
+-- | The arg expression's source-level binding annotation, if it
+-- carries one and that annotation contains `any` anywhere. Used by
+-- the gate as the SECOND layer of the contract check (the first is
+-- HM `inferExprType`): even when HM has unified the per-occurrence
+-- UF var with String at the call site, a source-level `any`
+-- annotation on the binding means the runtime VALUE flowing into
+-- the kernel may be ANY Go type. That's the soundness gap A6
+-- describes.
+--
+-- The annotation map is computed once per module (collectSourceAnnots)
+-- and threaded in; we look up the binding name with the home-module
+-- alias fallback.
+--
+-- We inspect:
+--   * `Can.VarTopLevel home name` → look up the binding's RAW
+--     annotation in the source-annot map; True iff the annotation
+--     contains `T.TVar "any"` anywhere.
+--   * `Can.Call funcE _` → recurse into the head.
+--   * Everything else → False (literals / lambdas / case
+--     expressions can't carry an `any` contract that bypasses HM).
+argSourceCarriesAny :: Map.Map String T.Type -> Can.Expr -> Bool
+argSourceCarriesAny srcAnnots (A.At _ e) = case e of
+    Can.VarTopLevel _ name ->
+        case Map.lookup name srcAnnots of
+            Just t  -> typeContainsAny t
+            Nothing -> False
+    Can.Call funcE _ -> argSourceCarriesAny srcAnnots funcE
+    _ -> False
+
+
+-- | Walk every Can.Expr in a module, calling `visit` at each Can.Call
+-- site whose head is a `Can.VarKernel "Auth" _`. The visitor receives
+-- the full call expression so it can re-extract args + region for
+-- the diagnostic. Tail-recursive accumulator pattern keeps the walk
+-- stack-safe on large modules (Std.Ui / skyshop scale).
+walkAuthCalls
+    :: (A.Region -> String -> [Can.Expr] -> a -> a)
+    -> a
+    -> Can.Module
+    -> a
+walkAuthCalls visit z0 m =
+    foldDecls (\acc d -> foldDef visit acc d) z0 (Can._decls m)
+  where
+    foldDecls f acc decls = case decls of
+        Can.SaveTheEnvironment   -> acc
+        Can.Declare d rest       -> foldDecls f (f acc d) rest
+        Can.DeclareRec d ds rest ->
+            let acc' = foldl f acc (d:ds) in foldDecls f acc' rest
+
+    foldDef vis acc d = case d of
+        Can.Def _ _ body              -> walkExpr vis acc body
+        Can.TypedDef _ _ _ body _     -> walkExpr vis acc body
+        Can.DestructDef _ body        -> walkExpr vis acc body
+
+    walkExpr vis acc (A.At r expr) = case expr of
+        Can.Call funcE args ->
+            -- Apply rewriteAliasHead so we see calls like
+            -- `Std.Auth.hashPassword …` (a `Can.VarTopLevel`
+            -- pointing at the `Ffi.kernel "Auth_hashPassword"`
+            -- alias in Std/Auth.sky) as the kernel call they will
+            -- become at lowering time. The kernel-alias registry is
+            -- populated during canonicalisation so reading it here
+            -- (BEFORE codegen) is safe.
+            let A.At _ funcV = rewriteAliasHead funcE
+                acc1 = case funcV of
+                    Can.VarKernel "Auth" name ->
+                        vis r name args acc
+                    _ -> acc
+                acc2 = walkExpr vis acc1 funcE
+            in foldl (walkExpr vis) acc2 args
+        Can.Lambda _ body  -> walkExpr vis acc body
+        Can.If branches el ->
+            let acc1 = foldl (\a (c, t) ->
+                                  walkExpr vis (walkExpr vis a c) t) acc branches
+            in walkExpr vis acc1 el
+        Can.Let d body     -> walkExpr vis (foldDef vis acc d) body
+        Can.LetRec ds body -> walkExpr vis (foldl (foldDef vis) acc ds) body
+        Can.LetDestruct _ valE body ->
+            walkExpr vis (walkExpr vis acc valE) body
+        Can.Case subjE arms ->
+            let acc1 = walkExpr vis acc subjE
+            in foldl (\a (Can.CaseBranch _ armE) -> walkExpr vis a armE)
+                     acc1 arms
+        Can.Access target _ -> walkExpr vis acc target
+        Can.Update _ baseE updates ->
+            let acc1 = walkExpr vis acc baseE
+            in foldl walkUpdate acc1 (Map.elems updates)
+        Can.Record fields ->
+            foldl (walkExpr vis) acc (Map.elems fields)
+        Can.List elems   -> foldl (walkExpr vis) acc elems
+        Can.Negate inner -> walkExpr vis acc inner
+        Can.Binop _ _ _ _ l rgt ->
+            walkExpr vis (walkExpr vis acc l) rgt
+        Can.Tuple a b cs ->
+            foldl (walkExpr vis) acc (a : b : cs)
+        _ -> acc
+
+    walkUpdate acc (Can.FieldUpdate _ e) = walkExpr (\_ _ _ a -> a) acc e
+
+
+-- | Run the Auth typed-boundary gate against the entry module's
+-- canonical AST + solved types. Returns one diagnostic per offending
+-- call site; the empty list means every Auth kernel call site
+-- carries a typed-String contract on every String slot.
+--
+-- Why this gate matters (per Audit Gap A6 + P5 plan): Sky's
+-- wildcard-`any` semantics give each occurrence its own fresh UF
+-- variable, so `bridge : any` paired with `Auth.hashPassword bridge`
+-- unifies cleanly at the call site (bridge's UF var = String) even
+-- though the bridge's BODY carries no typed contract that the
+-- runtime value is actually a String. The runtime
+-- `mustStringTyped` check catches the violation late and (pre-P5)
+-- leaked the actual Go type into the user-visible message. This
+-- gate stops the program from compiling so the user sees the
+-- soundness gap at the source instead of as a runtime error in a
+-- production audit log.
+authBoundaryDiagnostics
+    :: FilePath
+    -> Solve.SolvedTypes
+    -> Can.Module
+    -> [Diag.Diagnostic]
+authBoundaryDiagnostics filePath solved canMod =
+    reverse $ walkAuthCalls visit [] canMod
+  where
+    srcAnnots = collectSourceAnnots canMod
+    -- An arg slot is "bad" iff EITHER its HM-inferred type doesn't
+    -- resolve to String OR its source-level binding annotation
+    -- contains `any` anywhere.  The two checks compose: HM catches
+    -- structural mismatches at the call site (`Int` vs `String`);
+    -- the annotation check catches the wildcard-`any` escape hatch
+    -- that HM's per-occurrence freshness lets through.
+    visit region name args acc =
+        case Map.lookup name authSecurityKernels of
+            Nothing -> acc
+            Just stringSlots ->
+                let badSlots =
+                        [ (slot, argRegion arg)
+                        | slot <- stringSlots
+                        , slot < length args
+                        , let arg = args !! slot
+                        , let mty = inferExprType solved arg
+                              hmTyped = authArgIsTyped mty
+                              srcAny  = argSourceCarriesAny srcAnnots arg
+                        , not hmTyped || srcAny
+                        ]
+                in case badSlots of
+                    [] -> acc
+                    bs -> map (mkDiag region name) bs ++ acc
+
+    argRegion (A.At r _) = r
+
+    mkDiag callRegion kernelName (slot, argRegion0) =
+        let msg = authBoundaryMessage kernelName slot
+            diag = Diag.mkError filePath argRegion0 Diag.CatCodegen
+                     Diag.authE_UntypedBoundary msg
+            withCall = Diag.withRelated filePath callRegion
+                ("at this `Auth." ++ kernelName ++ "` call site")
+                diag
+        in Diag.withHint authBoundaryHint withCall
+
+
+authBoundaryMessage :: String -> Int -> String
+authBoundaryMessage kernelName slot =
+       "Sky.Auth.UntypedBoundary — argument " ++ show (slot + 1)
+    ++ " of `Auth." ++ kernelName ++ "` carries no typed-String\n"
+    ++ "contract at the Sky type level.\n\n"
+    ++ "Security-critical Auth kernels (Auth.hashPassword,\n"
+    ++ "hashPasswordCost, passwordStrength, signToken, verifyToken,\n"
+    ++ "register, login, setRole) require every String-typed slot\n"
+    ++ "to receive a value whose static Sky type resolves to\n"
+    ++ "`String`. Bridging an `any`-typed value (or an unresolved\n"
+    ++ "type variable) into the slot would unify at the call site\n"
+    ++ "but leave the runtime value's Go type unconstrained — the\n"
+    ++ "runtime `mustStringTyped` check would then fire on the\n"
+    ++ "request hot path."
+
+
+authBoundaryHint :: String
+authBoundaryHint =
+       "Annotate the binding feeding this slot with a concrete\n"
+    ++ "`String` type, or thread the value through a String-typed\n"
+    ++ "validator (e.g. `Maybe.withDefault \"\" maybeString`,\n"
+    ++ "`Result.withDefault \"\" resultString`,\n"
+    ++ "`String.fromInt`, …) before passing it to the Auth kernel."
 
 
 -- | Extract the element type of a list-typed expression, as a Go

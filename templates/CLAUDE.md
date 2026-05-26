@@ -397,6 +397,7 @@ Non-regression rules (enforced by `sky verify`):
 - Every bug you fix must land with a regression test in `tests/`.
 - `sky check` is a full soundness gate (runs `go build` on the generated Go). Don't work around check failures by disabling it.
 - Secrets (`Auth.signToken` / `Auth.verifyToken`) take `String` and reject short keys (< 32 bytes) — don't stringify a `Maybe` or `Dict` into an auth secret.
+- **Security-critical Auth kernels require typed-String arguments.** `Auth.hashPassword`, `Auth.hashPasswordCost`, `Auth.passwordStrength`, `Auth.signToken`, `Auth.verifyToken`, `Auth.register`, `Auth.login`, `Auth.setRole` each gate at compile time on every String-typed slot — bridging an `any`-typed binding (`bridge : any` annotation; raw `Ffi.kernel "K"` without a signature) into any of those slots is a compile-time `Sky.Auth.UntypedBoundary` (E4006) error, not a runtime surprise. The user-visible runtime error on a non-String value is the fixed `<kernel>: expected String` blurb; the actual Go type lands in the server-side audit log (`[WARN] auth.boundary kernel=… goType=… …`), never in the API response.
 
 
 ## Language Syntax

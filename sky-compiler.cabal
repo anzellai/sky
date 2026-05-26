@@ -297,6 +297,7 @@ test-suite sky-tests
       Sky.Build.SkyshopCompilesSpec
       Sky.Build.AnonLambdaSpec
       Sky.Build.AnonRecordSpec
+      Sky.Build.AuthUntypedBoundarySpec
       Sky.Build.Issue52Spec
       Sky.Build.ValidatorSpec
       Sky.Build.GoBuildRefinerSpec
