@@ -28,6 +28,7 @@ import (
 	"reflect"
 	"runtime"
 	"runtime/debug"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -293,17 +294,49 @@ func renderVNode(n VNode, handlers map[string]any) string {
 			textareaValue = v
 		}
 	}
-	for k, v := range n.Attrs {
+	// Deterministic attribute order — Go map iteration is randomised,
+	// so without sorting the same VNode emits attrs in a different
+	// order across renders.  That doesn't affect the diff's correctness
+	// (diffNodes walks new.Attrs and key-looks-up in old.Attrs, which
+	// is order-independent) BUT it does mean:
+	//   * Two identical states produce byte-different HTML strings
+	//     — golden/snapshot tests can flake, log diffs are noisy.
+	//   * Browsers parse innerHTML into DOM in source order; when a
+	//     parent's subtree gets replaced via the focus-preserving
+	//     splicer, deterministic attr order on the re-parsed nodes
+	//     lets future attribute-level patches target stable property
+	//     positions (modern browsers don't care, but tooling that
+	//     inspects the serialised HTML does).
+	//   * Server-side caching (ETag of rendered HTML, Sky.Doc HTML
+	//     diffing in CI) collapses to a no-op when the rendered bytes
+	//     are stable across runs.
+	// Sort by key — alphabetical is fine; the only authority-controlled
+	// attrs (value/checked/selected) are still routed via the diff's
+	// alignment path, not via render order.
+	attrKeys := make([]string, 0, len(n.Attrs))
+	for k := range n.Attrs {
+		attrKeys = append(attrKeys, k)
+	}
+	sort.Strings(attrKeys)
+	for _, k := range attrKeys {
 		if (isTextarea || n.Tag == "select") && k == "value" {
 			continue
 		}
 		sb.WriteString(" ")
 		sb.WriteString(k)
 		sb.WriteString(`="`)
-		sb.WriteString(html.EscapeString(v))
+		sb.WriteString(html.EscapeString(n.Attrs[k]))
 		sb.WriteString(`"`)
 	}
-	for ev, msg := range n.Events {
+	// Same determinism for event attributes — also a Go map, also
+	// previously emitted in randomised order.
+	evKeys := make([]string, 0, len(n.Events))
+	for ev := range n.Events {
+		evKeys = append(evKeys, ev)
+	}
+	sort.Strings(evKeys)
+	for _, ev := range evKeys {
+		msg := n.Events[ev]
 		// Sky.Live TEA protocol:
 		//   * Every event attribute is `sky-<event>="<MsgName>"` —
 		//     MsgName is the Sky-side Msg constructor (e.g. "Increment",
@@ -2501,14 +2534,25 @@ func (app *liveApp) dispatch(sess *liveSession, msg any) (body string) {
 	app.runCmd(sess, cmd)
 	// Re-evaluate subscriptions based on new model
 	app.setupSubscriptions(sess)
-	// No-op suppression: if the rendered body is byte-identical to
-	// the last one we pushed, return "" so producer goroutines can
-	// skip the SSE write. A Time.every subscription that ticks
-	// without mutating any view-reachable state produces the same
-	// HTML twice; there's no reason to ship a patch.
-	if body == sess.prevBody {
-		return ""
-	}
+	// No-op suppression: previously we short-circuited on
+	// `body == sess.prevBody` (byte-equality) so a Time.every tick
+	// without view-reachable state changes wouldn't push a redundant
+	// HTML frame. That was load-bearing on map iteration order being
+	// random — once renderVNode's attr/event loops were sorted
+	// (v0.15.x deterministic-HTML fix) the byte-check started firing
+	// for cases where the diff path's input-authority alignment
+	// expected to see a patch flow, freezing live keypress dispatch.
+	//
+	// The HTTP /_sky/event path uses the diff result (diffTrees, with
+	// I5 client-state alignment) to decide whether to ship patches at
+	// all — a true no-op produces an empty patch list, which already
+	// routes through writeEventJSON without an SSE frame. The Time.every
+	// SSE producer at setupSubscriptions checks `body != ""` to skip
+	// pushing a frame, so we keep that contract: returning the body
+	// unconditionally here means the SSE callsite continues to ship
+	// frames per tick, but the client's __skyHandleResponse uses the
+	// seq guard + focus-preserving splice so a redundant frame is a
+	// bandwidth cost (~150 bytes/tick), not a correctness break.
 	sess.prevBody = body
 	return body
 }
@@ -2649,9 +2693,18 @@ func (app *liveApp) setupSubscriptions(sess *liveSession) {
 				if isFunc(msg) {
 					msg = sky_call(toMsg, t.UnixMilli())
 				}
+				// Capture prevBody BEFORE dispatch so we can detect
+				// a tick whose update produced a byte-identical view
+				// (the typical Time.every shape — heartbeat polling,
+				// once-per-second refresh, etc.). Suppression lives
+				// at the SSE callsite (not inside dispatch) because
+				// the HTTP /_sky/event response path needs the body
+				// to compute structural patches; only the SSE tick
+				// can safely silence-drop when the view didn't move.
+				prevBody := sess.prevBody
 				body := app.dispatch(sess, msg)
 				var frame string
-				if body != "" {
+				if body != "" && body != prevBody {
 					frame = encodeSSEFrame(sess, body)
 				}
 				sess.mu.Unlock()
