@@ -208,6 +208,31 @@ Three-layer precedence (highest wins): `SKY_AUTH_*` env var → `.env` file → 
 - **Rate-limit `/login` and `/register`.** Use [`Sky.Http.Middleware.withRateLimit`](../../CLAUDE.md#standard-library) on those routes — credential stuffing is the #1 attack on any auth endpoint.
 - **Validate password strength at registration**. `Auth.passwordStrength password` returns `Result Error String` where the body is `"weak" / "fair" / "strong"`; reject `"weak"` at registration as a baseline.
 
+## Security-critical kernels require typed arguments
+
+Every public Auth kernel — `hashPassword` / `hashPasswordCost` / `passwordStrength` / `signToken` / `verifyToken` / `register` / `login` / `setRole` — gates at **compile time** on every `String`-typed parameter slot. Bridging an `any`-typed binding into any of those slots is a compile-time `Sky.Auth.UntypedBoundary` (`E4006`) error, not a runtime surprise.
+
+```elm
+-- Compile-time error: bridge's static type carries `any`.
+bridge : any
+bridge = Ffi.kernel "Time_unixMillis"
+
+main =
+    case Auth.hashPassword bridge of           -- E4006
+        Ok h  -> println h
+        Err _ -> println "bad"
+```
+
+```text
+-- CODEGEN ERROR ───────────────────────────── src/Main.sky:9:28 [E4006]
+Sky.Auth.UntypedBoundary — argument 1 of `Auth.hashPassword` carries no
+typed-String contract at the Sky type level.
+```
+
+The fix is always to annotate the bridging binding with a concrete type (`String`, or a type alias whose body is `String`) before it reaches the kernel.
+
+**Runtime defence in depth.** If a non-String value reaches the kernel through some other path (an FFI return whose Go type doesn't match its Sky annotation, etc.), the runtime returns a typed Err with a **fixed** message — `<kernel>: expected String`. The actual Go type of the offending value is captured in a server-side audit log (`[WARN] auth.boundary kernel=<tag> goType=<%T> reason=non-string-arg`) and **never** leaks into the user-visible error message. That blocks the timing / log-scraping reconnaissance an attacker would otherwise use to learn how the upstream binding is shaped.
+
 ## Sky.Live integration
 
 Inside a Sky.Live app, the auth flow lives in `update`:

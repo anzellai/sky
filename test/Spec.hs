@@ -51,6 +51,7 @@ import qualified Sky.Build.CoerceArgListMapInterplaySpec
 import qualified Sky.Build.SkyshopCompilesSpec
 import qualified Sky.Build.AnonLambdaSpec
 import qualified Sky.Build.AnonRecordSpec
+import qualified Sky.Build.AuthUntypedBoundarySpec
 import qualified Sky.Build.Issue52Spec
 import qualified Sky.Build.ValidatorSpec
 import qualified Sky.Build.GoBuildRefinerSpec
@@ -317,6 +318,11 @@ main = hspec $ do
     -- `type Anon_R_<hash> = struct{...}` so the typed Go name
     -- resolves. Removed the pre-E `sanitiseTypedDeep` cover-up.
     describe "Sky.Build.AnonRecord"         Sky.Build.AnonRecordSpec.spec
+    -- v0.15.12 P5 / Gap A6 — security-critical Auth kernels gate
+    -- on String typing at the Sky type level; bridging an `any`
+    -- typed binding into Auth.hashPassword / signToken / etc. is
+    -- a compile-time E4006 / Sky.Auth.UntypedBoundary error.
+    describe "Sky.Build.AuthUntypedBoundary" Sky.Build.AuthUntypedBoundarySpec.spec
     -- Issue #52 regression: (1) List.drop with any-typed Int arg
     -- needs rt.AsInt coercion at the typed-kernel boundary, and
     -- (2) record update `{ m | n = X }` must HM-check the new value

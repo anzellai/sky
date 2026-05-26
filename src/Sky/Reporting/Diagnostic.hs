@@ -232,6 +232,22 @@ codegenE_UndefinedKernel = DiagCode "E4005"
 --   doesn't export `X`. Closes the "Sky type-checks but Go-build
 --   rejects with `undefined: rt.X`" class. Issue #56.
 
+authE_UntypedBoundary :: DiagCode
+authE_UntypedBoundary = DiagCode "E4006"
+-- ^ v0.15.12 P5 / Gap A6: a security-critical Auth kernel call
+--   (Auth.hashPassword / hashPasswordCost / passwordStrength /
+--   signToken / verifyToken / register / login / setRole) sees
+--   an `any`-typed argument at a slot the kernel signature
+--   declares as String. The HM type system's wildcard-`any`
+--   per-occurrence semantics would let this pass at the call
+--   site (each `any` is a fresh UF var that unifies with String),
+--   but the Sky binding feeding the value carries no typed
+--   contract — at runtime the value could be ANY Go type. The
+--   gate stops the program from compiling so the type confusion
+--   surfaces at the source instead of as a runtime "expected
+--   String" error in an audit log. Diagnostic kind:
+--   `Sky.Auth.UntypedBoundary`.
+
 
 -- | Go-build / runtime codes (E5000-E5999).
 goE_BuildFailed          :: DiagCode
