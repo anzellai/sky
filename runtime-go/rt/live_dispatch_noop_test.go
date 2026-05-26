@@ -1,11 +1,18 @@
 package rt
 
-// When a Time.every subscription ticks (or a Cmd.perform completes)
-// but the resulting view is byte-identical to the previous one, the
-// runtime must suppress the SSE push. Pre-fix, every tick dispatched
-// a fresh HTML frame even when nothing observable changed — clients
-// running `subscriptions = Time.every 500 Tick` received a diff
-// twice a second forever.
+// dispatch always returns the rendered body. The byte-equality short-
+// circuit that used to live inside dispatch was load-bearing on map
+// iteration order being random — once renderVNode's attr/event
+// emission was sorted (v0.15.x deterministic-HTML fix) the byte-
+// equality check started firing through legitimate keypress dispatch
+// paths, freezing live editing. Suppression of identical-view SSE
+// pushes is now the SSE producer's responsibility (it compares the
+// returned body to sess.prevBody before encoding a frame).
+//
+// What this file pins:
+//   * dispatch returns a non-empty body for both the initial dispatch
+//     AND for repeat dispatches over an identical view.
+//   * dispatch returns DIFFERENT bodies when the view changes.
 
 import (
 	"testing"
@@ -28,7 +35,7 @@ func dispatchTestApp(viewResult VNode) *liveApp {
 }
 
 
-func TestDispatch_suppressesDuplicateBody(t *testing.T) {
+func TestDispatch_returnsBodyForIdenticalView(t *testing.T) {
 	vn := velement("div", nil, []any{vtext("hello")})
 	app := dispatchTestApp(vn)
 	sess := &liveSession{
@@ -39,10 +46,16 @@ func TestDispatch_suppressesDuplicateBody(t *testing.T) {
 	if first == "" {
 		t.Fatalf("first dispatch must return body, got empty")
 	}
-	// Second dispatch with identical view must suppress.
+	// Second dispatch with identical view returns the SAME body — not
+	// "" — so the SSE producer can decide whether to ship it. (Pre-
+	// v0.15.13 dispatch returned "" here; that contract froze keypress
+	// dispatch under sorted-attr rendering.)
 	second := app.dispatch(sess, "tick")
-	if second != "" {
-		t.Fatalf("repeat dispatch with identical view must return \"\" (no-op), got %q", second)
+	if second == "" {
+		t.Fatalf("repeat dispatch must return body, not '' (v0.15.13: keypress-freeze guard)")
+	}
+	if second != first {
+		t.Fatalf("identical view must produce byte-identical body, got %q vs %q", first, second)
 	}
 }
 
