@@ -299,8 +299,17 @@ func (s *memoryStore) Set(sid string, sess *liveSession) {
 
 func (s *memoryStore) Delete(sid string) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	sess := s.sessions[sid]
 	delete(s.sessions, sid)
+	s.mu.Unlock()
+	// Cycle 3 P36 / Gap C4: signal terminal teardown OUTSIDE the
+	// store lock so any Time.every / runPerformBody goroutine that
+	// is currently blocked on `sess.mu` can resolve (close is
+	// idempotent via doneOnce so concurrent Delete + cleanupLoop
+	// can't double-close).
+	if sess != nil {
+		sess.markDone()
+	}
 }
 
 func (s *memoryStore) NewID() string { return generateSkySessionID() }
@@ -318,13 +327,25 @@ func (s *memoryStore) cleanupLoop() {
 		case <-s.stop:
 			return
 		case now := <-t.C:
+			// Cycle 3 P36 / Gap C4: collect expired sessions under
+			// the lock, but signal their terminal teardown OUTSIDE
+			// the lock — markDone is fast (a sync.Once gate + a
+			// close on an unbuffered channel) but conceptually it
+			// hands control to whatever goroutines are blocked on
+			// `sess.done`, and we don't want to hold `s.mu` while
+			// those resume.
 			s.mu.Lock()
+			var expired []*liveSession
 			for id, sess := range s.sessions {
 				if now.Sub(sess.lastSeen) > s.ttl {
+					expired = append(expired, sess)
 					delete(s.sessions, id)
 				}
 			}
 			s.mu.Unlock()
+			for _, sess := range expired {
+				sess.markDone()
+			}
 		}
 	}
 }
@@ -426,8 +447,16 @@ func (s *sqliteStore) Set(sid string, sess *liveSession) {
 
 func (s *sqliteStore) Delete(sid string) {
 	s.memMu.Lock()
+	sess := s.memCache[sid]
 	delete(s.memCache, sid)
 	s.memMu.Unlock()
+	// Cycle 3 P36 / Gap C4: signal terminal teardown for the in-memory
+	// pointer so any subscription goroutine bound to it exits. The
+	// blob in SQLite owns no goroutines (it's just a checkpoint), so
+	// only the live pointer needs the signal.
+	if sess != nil {
+		sess.markDone()
+	}
 	_, _ = s.db.Exec(`DELETE FROM sky_sessions WHERE sid = ?`, sid)
 }
 
@@ -448,6 +477,25 @@ func (s *sqliteStore) cleanupLoop() {
 		case now := <-t.C:
 			_, _ = s.db.Exec(`DELETE FROM sky_sessions WHERE last_seen < ?`,
 				now.Add(-s.ttl).Unix())
+			// Cycle 3 P36 / Gap C4: also evict the matching memCache
+			// entries and signal terminal teardown. The memCache holds
+			// the LIVE pointer (the one that owns Time.every goroutines);
+			// without this, a session whose blob expires on disk still
+			// keeps its in-process pointer + subscription goroutines alive
+			// for the lifetime of the process.
+			cutoff := now.Add(-s.ttl)
+			s.memMu.Lock()
+			var expired []*liveSession
+			for sid, sess := range s.memCache {
+				if sess.lastSeen.Before(cutoff) {
+					expired = append(expired, sess)
+					delete(s.memCache, sid)
+				}
+			}
+			s.memMu.Unlock()
+			for _, sess := range expired {
+				sess.markDone()
+			}
 		}
 	}
 }
@@ -534,8 +582,13 @@ func (s *postgresStore) Set(sid string, sess *liveSession) {
 
 func (s *postgresStore) Delete(sid string) {
 	s.memMu.Lock()
+	sess := s.memCache[sid]
 	delete(s.memCache, sid)
 	s.memMu.Unlock()
+	// Cycle 3 P36 / Gap C4: see sqliteStore.Delete for rationale.
+	if sess != nil {
+		sess.markDone()
+	}
 	_, _ = s.db.Exec(`DELETE FROM sky_sessions WHERE sid = $1`, sid)
 }
 
@@ -556,6 +609,22 @@ func (s *postgresStore) cleanupLoop() {
 		case now := <-t.C:
 			_, _ = s.db.Exec(`DELETE FROM sky_sessions WHERE last_seen < $1`,
 				now.Add(-s.ttl).Unix())
+			// Cycle 3 P36 / Gap C4: also evict the matching memCache
+			// entries and signal terminal teardown. See sqliteStore
+			// cleanupLoop for the full rationale.
+			cutoff := now.Add(-s.ttl)
+			s.memMu.Lock()
+			var expired []*liveSession
+			for sid, sess := range s.memCache {
+				if sess.lastSeen.Before(cutoff) {
+					expired = append(expired, sess)
+					delete(s.memCache, sid)
+				}
+			}
+			s.memMu.Unlock()
+			for _, sess := range expired {
+				sess.markDone()
+			}
 		}
 	}
 }
@@ -663,8 +732,16 @@ func (s *redisStore) Set(sid string, sess *liveSession) {
 
 func (s *redisStore) Delete(sid string) {
 	s.memMu.Lock()
+	sess := s.memCache[sid]
 	delete(s.memCache, sid)
 	s.memMu.Unlock()
+	// Cycle 3 P36 / Gap C4: signal terminal teardown for the in-memory
+	// pointer. Redis uses native TTL (no cleanupLoop), so per-key
+	// expiry races with Redis itself; in-process memCache eviction is
+	// what frees the Go-side goroutines.
+	if sess != nil {
+		sess.markDone()
+	}
 	if err := s.client.Del(s.ctx, redisKey(sid)).Err(); err != nil {
 		log.Printf("[sky.live] redis: delete session %s: %v", sid, err)
 	}
@@ -814,8 +891,12 @@ func decodeSession(blob []byte) (*liveSession, error) {
 		handlers:  map[string]any{},
 		sseCh:     make(chan string, 16),
 		cancelSub: make(chan struct{}),
-		lastSeen:  st.LastSeen,
-		outSeq:    st.OutSeq,
+		// Cycle 3 P36 / Gap C4: provision the terminal-teardown
+		// channel so persistent-store rehydrates can also be cleanly
+		// stopped by markDone when the session is later evicted.
+		done:     make(chan struct{}),
+		lastSeen: st.LastSeen,
+		outSeq:   st.OutSeq,
 	}
 	return sess, nil
 }
