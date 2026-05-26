@@ -1618,12 +1618,22 @@ func liveAppRun(cfg any) any {
 	// fallback is memory.
 	storeKind := stringField(cfg, "Store")
 	storePath := stringField(cfg, "StorePath")
-	ttl := 30 * time.Minute
-	if v := skyGetenv("LIVE_TTL"); v != "" {
-		if secs, err := strconv.Atoi(v); err == nil && secs > 0 {
-			ttl = time.Duration(secs) * time.Second
-		}
-	}
+	// TTL resolution order:  env > sky.toml > default (30m).
+	// Two value shapes accepted at BOTH layers, per CLAUDE.md
+	// docs ("30m" default form):
+	//
+	//   1. Go-duration string — "30m", "24h", "1h30m", "45s"
+	//      (anything time.ParseDuration handles, the documented
+	//      shape).
+	//   2. Bare integer — interpreted as SECONDS for backward-
+	//      compatibility with the original env-only path.
+	//
+	// Empty / unparseable values fall through to the next layer;
+	// the final fallback is 30m.  The previous implementation only
+	// read the env var AND only accepted bare-integer seconds, so
+	// `SKY_LIVE_TTL=24h` and any `ttl = "24h"` in sky.toml were
+	// both silently ignored.
+	ttl := parseTTL(skyGetenv("LIVE_TTL"), stringField(cfg, "Ttl"), 30*time.Minute)
 	app.store = chooseStore(storeKind, storePath, ttl)
 	app.sessionTTL = ttl
 

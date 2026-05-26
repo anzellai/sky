@@ -13,7 +13,7 @@
 //   storePath = "sessions.db"                    (sqlite)
 //            = "postgres://user:pass@host/db"    (postgres)
 //            = "redis://:password@host:6379/0"   (redis; or bare "host:6379")
-//   ttl       = 1800                             (seconds; default 30m)
+//   ttl       = "30m"                            (Go duration or bare-int seconds; default 30m)
 
 package rt
 
@@ -29,6 +29,7 @@ import (
 	"log"
 	"os"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -209,6 +210,39 @@ func stringField(cfg any, name string) string {
 		return s
 	}
 	return fmt.Sprintf("%v", v)
+}
+
+
+// parseTTL — resolve a TTL value from env > sky.toml > default in
+// precedence order. Each layer accepts EITHER a Go-duration string
+// ("30m", "24h", "1h30m") OR a bare integer interpreted as seconds.
+// Empty or unparseable values fall through to the next layer.
+//
+// History: the pre-fix implementation read only the env var AND
+// accepted only bare-integer seconds via strconv.Atoi.  So both
+// `SKY_LIVE_TTL=24h` AND any `ttl = "24h"` in sky.toml's [live]
+// section silently fell back to the 30-minute default — at odds
+// with the documented `30m`-style default in CLAUDE.md.  This
+// helper makes the documented shape the canonical one while
+// preserving bare-integer-seconds for backward compatibility.
+func parseTTL(envVal, tomlVal string, def time.Duration) time.Duration {
+	for _, raw := range []string{envVal, tomlVal} {
+		s := strings.TrimSpace(raw)
+		if s == "" {
+			continue
+		}
+		// Duration-string form first (more specific — "24h" parses
+		// as duration, NOT as the integer 24).
+		if d, err := time.ParseDuration(s); err == nil && d > 0 {
+			return d
+		}
+		// Bare-integer fallback — interpreted as seconds.
+		if secs, err := strconv.Atoi(s); err == nil && secs > 0 {
+			return time.Duration(secs) * time.Second
+		}
+		// Unparseable at this layer — fall through to the next.
+	}
+	return def
 }
 
 
