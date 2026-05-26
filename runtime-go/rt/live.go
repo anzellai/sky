@@ -675,6 +675,68 @@ func diffNodes(old, new_ *VNode, clientState map[string]string, out *[]Patch) {
 			attrChanges[k] = ""
 		}
 	}
+	// Events diff — VNode.Events stores DOM event handlers separately
+	// from Attrs, but renderVNode emits them as `sky-<event>` /
+	// `data-sky-ev-<event>` attributes plus a `data-sky-hid` companion.
+	// Without diffing Events, an element that toggles handlers (a
+	// canvas-wrap gaining `Events.onKeyDown` when an edit overlay
+	// closes, a button losing its onClick when a permission changes)
+	// produces no patch for those attributes — the previous bound
+	// listeners stay attached but the runtime's per-event lookup via
+	// `target.getAttribute("sky-<event>")` returns null, so no Msg is
+	// dispatched and the user's keypress / click is silently dropped.
+	//
+	// Repro that surfaced this: sky-diagram's canvas-wrap conditionally
+	// includes `Events.onKeyDown (keyDown model)` only when
+	// `editingShapeId == Nothing`. After CommitText flips back to
+	// Nothing, the HTTP diff used to emit only a `p.html` patch on the
+	// canvas child div (overlay removed), never touching canvas-wrap's
+	// own attrs. Result: every subsequent keypress on canvas-wrap was a
+	// no-op. Pre-v0.15.13 the full-body SSE frame following Cmd
+	// completions accidentally re-rendered #sky-root and restored the
+	// attribute; v0.15.13's Tick suppression + v0.15.14's runPerform
+	// suppression both peeled away that safety net and exposed the
+	// genuine diff bug.
+	for ev, newMsg := range new_.Events {
+		attrName := "sky-" + ev
+		if strings.HasPrefix(ev, "sky-") {
+			attrName = "data-sky-ev-" + ev
+		}
+		newMsgName := msgDisplayName(newMsg)
+		if oldMsg, ok := old.Events[ev]; !ok || msgDisplayName(oldMsg) != newMsgName {
+			if attrChanges == nil {
+				attrChanges = map[string]string{}
+			}
+			attrChanges[attrName] = newMsgName
+			// data-sky-hid encodes the sky-id + event suffix the runtime
+			// expects when routing the user gesture back to its handler.
+			// Re-emit it on any event change so a stale hid (from a
+			// previous render that bound a different handler) can't
+			// outlive the new wiring.
+			attrChanges["data-sky-hid"] = new_.SkyID + "." + ev
+		}
+	}
+	for ev := range old.Events {
+		if _, ok := new_.Events[ev]; !ok {
+			attrName := "sky-" + ev
+			if strings.HasPrefix(ev, "sky-") {
+				attrName = "data-sky-ev-" + ev
+			}
+			if attrChanges == nil {
+				attrChanges = map[string]string{}
+			}
+			attrChanges[attrName] = ""
+			// If the element has lost ALL its events the data-sky-hid
+			// companion is now stale; clear it. When other events
+			// remain, the new_.Events loop above will have rewritten
+			// data-sky-hid to one of them already (last-write wins,
+			// matching renderVNode's HTML emission order over the
+			// sorted event keys).
+			if len(new_.Events) == 0 {
+				attrChanges["data-sky-hid"] = ""
+			}
+		}
+	}
 	if attrChanges != nil && old.SkyID != "" {
 		*out = append(*out, Patch{ID: old.SkyID, Attrs: attrChanges})
 	}
@@ -2643,9 +2705,10 @@ func (app *liveApp) runPerformBody(sess *liveSession, task any, toMsg any) {
 	// the same lock as dispatch means the seq reflects the actual
 	// mutation order even when other goroutines dispatch concurrently.
 	sess.mu.Lock()
+	prevBody := sess.prevBody
 	body := app.dispatch(sess, msg)
 	var frame string
-	if body != "" {
+	if body != "" && body != prevBody {
 		frame = encodeSSEFrame(sess, body)
 	}
 	sess.mu.Unlock()
