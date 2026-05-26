@@ -66,8 +66,9 @@ Risk register:
 
 ### 3. Developer — `subagent_type: general-purpose` (worktree-isolated)
 **Role.** Implements one Planner item per cycle. Lands a feature
-branch + opens a PR + drives CI green + merges + cuts the next
-patch tag (`v0.15.N+1`).
+branch + opens a PR + drives CI green + **merges into main**.
+**DOES NOT cut a tag.** See "Release cadence" below — tags are
+batched and human-gated, not per-PR.
 
 **Hard non-negotiables (verbatim from CLAUDE.md):**
 - mem-guard MUST be alive.
@@ -104,13 +105,55 @@ agents commit to it on the next cycle.
 
 Every cycle appends one line to `CYCLE_LOG.md`:
 ```
-CYCLE-NN | YYYY-MM-DD HH:MM | AUDITOR done (N gaps) | PLANNER done (M items) | DEVELOPER PR #NNN merged | tag v0.15.K
+CYCLE-NN | YYYY-MM-DD HH:MM | AUDITOR done (N gaps) | PLANNER done (M items) | DEVELOPER PR #NNN merged | <tag-line if batch released>
 ```
 
-A cycle is **complete** only when the Developer's PR has merged AND
-the next patch tag has been pushed AND the release workflow shows
-green. If any of those fail, the cycle re-runs (Auditor takes the
-failure as input).
+A cycle is **complete** when the Developer's PR has merged into main
+with CI green. Tagging is decoupled (see below) so a cycle doesn't
+block on tag emission.
+
+---
+
+## Release cadence (revised 2026-05-26)
+
+**Push to main early, tag late.** PRs still land individually on main
+(small + reviewable). **Tags + GitHub releases batch related changes
+together** to avoid notification spam to followers and to reduce the
+number of upgrade points users have to deal with.
+
+**Developer agents MUST NOT push tags.** They merge into main and
+stop. The CYCLE_LOG entry should still record the merged PR + sha,
+but the `target tag` field becomes `target batch` (e.g. "Sky.Live
+runtime hardening batch") or is left blank.
+
+**A batch is cut when ALL of the following hold:**
+- A logically-grouped set of changes is on main (e.g. "all C1
+  residuals + TTL leak", "Solver region-map + lowerer purity"),
+  OR a single significant feature has fully landed.
+- All included PRs are CI-green on main.
+- No in-flight PR in the same logical group is still open (avoid
+  fragmenting a batch).
+- The user explicitly asks, OR the coordinator agent (this session)
+  determines a natural checkpoint has been reached.
+
+**The batch tag carries the next available `v0.15.N`** with an
+annotated message summarising the batch — bullet list of fixes/
+features, one line per included PR with `(#NNN)` reference, no
+co-author trailers (per CLAUDE.md feedback rules).
+
+Example future batch:
+```
+v0.15.18 — Sky.Live runtime hardening batch
+
+* TTL goroutine leak — `done` channel + `sync.Once` (#88)
+* dispatchBatched suppression symmetry (#87 part)
+* Post-panic prevBody preservation (#87 part)
+* Perform suppression Go test (#87 part)
+```
+
+Single-purpose tags are still valid when the change is genuinely
+standalone and there's nothing else in flight worth batching with —
+but the bias is now toward batching.
 
 ---
 
