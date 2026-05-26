@@ -66,7 +66,7 @@ import qualified Debug.Trace
 -- | Global codegen environment (set once per compilation, read during codegen)
 {-# NOINLINE globalCgEnv #-}
 globalCgEnv :: IORef Rec.CodegenEnv
-globalCgEnv = unsafePerformIO $ newIORef (Rec.CodegenEnv Map.empty Map.empty Map.empty Set.empty Set.empty Set.empty Set.empty Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty)
+globalCgEnv = unsafePerformIO $ newIORef (Rec.CodegenEnv Solve.emptySolvedTypes Map.empty Map.empty Set.empty Set.empty Set.empty Set.empty Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty)
 
 
 -- | v0.13 A2 follow-up: dedicated, eagerly-populated union-name
@@ -952,7 +952,7 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                 r  <- Solve.solve cs
                 case r of
                     Solve.SolveOk t -> return (modName, t)
-                    Solve.SolveError _ -> return (modName, Map.empty)
+                    Solve.SolveError _ -> return (modName, Solve.emptySolvedTypes)
             -- Pass 2: re-solve each dep with cross-module externals
             -- from pass 1. Serialised (mapM not Async.forConcurrently)
             -- because the external-ref write is global — parallel
@@ -1046,7 +1046,13 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
             let solveRound prevSolved = do
                     let externals =
                             filterToTopLevel
-                                (buildCrossModuleExternalsWithMods validDeps prevSolved)
+                                -- v0.15.x P37a: `prevSolved` carries
+                                -- the new `Solve.SolvedTypes` records;
+                                -- the externals helper still consumes
+                                -- the bare `Map.Map String T.Type`
+                                -- view, so extract `_stEnv` here.
+                                (buildCrossModuleExternalsWithMods validDeps
+                                    [(mn, Solve._stEnv s) | (mn, s) <- prevSolved])
                     -- v0.13 Phase A5: use `solveWithInstances` so per-call
                     -- instance capture flows through dep-module callsites
                     -- (used by monomorphisation).
@@ -1065,7 +1071,7 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                             Solve.SolveError err
                                 | isForeignErr err -> return (modName, Left err)
                                 | otherwise -> case lookup modName prevSolved of
-                                    Just p | not (Map.null p) ->
+                                    Just p | not (Map.null (Solve._stEnv p)) ->
                                         return (modName, Right (p, csi, regionTys, Just err))
                                     _ -> return (modName, Left err)) validDeps
                 depTypesOf results =
@@ -1082,7 +1088,12 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                          ++ [ (mn, e)
                             | (mn, Right (_, _, _, Just e)) <- finalResults
                             ]
-                depSolved = [(mn, t) | (mn, Right (t, _, _, _)) <- finalResults]
+                -- v0.15.x P37a: `t` is the new `Solve.SolvedTypes`
+                -- record; helpers downstream (`buildAnnotMap`,
+                -- `buildCrossModuleExternalsWithMods`) take the raw
+                -- `Map.Map String T.Type` view.  Extract `_stEnv`
+                -- here so the existing helper signatures stay put.
+                depSolved = [(mn, Solve._stEnv t) | (mn, Right (t, _, _, _)) <- finalResults]
                 depCsiByMod = [(mn, csi) | (mn, Right (_, csi, _, _)) <- finalResults]
                 -- v0.15 Stage A/B: merge per-region types from every
                 -- dep into one map.  Entry-module region types added
@@ -1193,7 +1204,7 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                     _                  -> Nothing
             types <- case solveResult of
                 Solve.SolveOk t -> do
-                    putStrLn $ "   Types OK (" ++ show (length (Map.keys t)) ++ " bindings)"
+                    putStrLn $ "   Types OK (" ++ show (length (Map.keys (Solve._stEnv t))) ++ " bindings)"
                     -- v0.13 Phase A3: log the captured instance table.
                     -- Format: "<N> instances across <M> functions".
                     -- Set SKY_MONO_TRACE=1 to dump every instance.
@@ -1214,7 +1225,7 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                     -- generateGoMulti to consume when emitting
                     -- per-instance specialisations.
                     let defMap = buildDefMap canMod validDeps
-                        annotMap = buildAnnotMap t depSolved
+                        annotMap = buildAnnotMap (Solve._stEnv t) depSolved
                         csiMapForReach = Map.fromList
                             [ ( ( A._line (A._start (Solve._cs_region csi))
                                 , A._col  (A._start (Solve._cs_region csi)) )
@@ -1329,7 +1340,7 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                             let diag = Solve.solveErrorToDiagnostic entryPath err
                             rendered <- Render.renderCli diag
                             putStrLn rendered
-                    return Map.empty
+                    return Solve.emptySolvedTypes
             -- P3: exhaustiveness — walk the entry + every dep's canonical
             -- tree for non-exhaustive case expressions. A miss is a
             -- compile-time error with source context; the `panic("non-
@@ -1543,8 +1554,16 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                     -- Conflict-detection merge with TVar normalisation.
                     -- See typesWithDepsBuilder below for the algorithm.
                     typesWithDeps =
-                        let entryKeys = Map.keysSet types
-                            allMaps = types : [t | (_, t) <- depSolved]
+                        -- v0.15.x P37a: `types` is now the new
+                        -- `Solve.SolvedTypes` record.  The merge logic
+                        -- below works over the `_stEnv` Map view;
+                        -- after merging, we re-wrap with the
+                        -- `mergedRegionTys` region map computed
+                        -- earlier so `generateGoMulti` continues to
+                        -- receive a full `Solve.SolvedTypes` value.
+                        let typesEnv = Solve._stEnv types
+                            entryKeys = Map.keysSet typesEnv
+                            allMaps = typesEnv : [t | (_, t) <- depSolved]
                             keyToTypes = Map.unionsWith (++)
                                 [ Map.map (:[]) m | m <- allMaps ]
                             isResolved (T.TVar _) = False
@@ -1570,7 +1589,7 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                             -- pipeline (treat as cross-scope conflict).
                             resolveKey k tys
                                 | k `Set.member` entryKeys =
-                                    let entryTy = Map.findWithDefault (T.TVar "_unbound") k types
+                                    let entryTy = Map.findWithDefault (T.TVar "_unbound") k typesEnv
                                         depTys  = [ t | (_, m) <- depSolved
                                                       , Just t <- [Map.lookup k m]
                                                       , isResolved t ]
@@ -1592,7 +1611,8 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                                                  (t:_) -> t
                                                  []    -> T.TVar "_unresolved"
                                         _   -> T.TVar "_ambig"
-                        in Map.mapWithKey resolveKey keyToTypes
+                            mergedEnv = Map.mapWithKey resolveKey keyToTypes
+                        in Solve.SolvedTypes mergedEnv mergedRegionTys
                     goCodeRaw = generateGoMulti canMod entrySrcMod config typesWithDeps depDecls depRecAliases depUnionNames depEnumNames depArities depParamTypes depRetTypes depUltRetTypes depInferredParams depInferredRets depInferredSigs depAliasPairs
                     -- v0.13 Layer 2: collect Sky-name → source-region
                     -- for every top-level declaration so the post-emit
@@ -1617,9 +1637,14 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                     authDiagsDeps =
                         [ d
                         | (modName, depMod) <- validDeps
+                        -- v0.15.x P37a: `depSolved` was extracted via
+                        -- `Solve._stEnv` at the assembly site; wrap
+                        -- back into a `SolvedTypes` record for the
+                        -- auth-boundary helper (region map empty —
+                        -- the gate only consults the env).
                         , let depTypesMap = case lookup modName depSolved of
-                                Just ts -> ts
-                                Nothing -> Map.empty
+                                Just ts -> Solve.SolvedTypes ts Map.empty
+                                Nothing -> Solve.emptySolvedTypes
                         , d <- authBoundaryDiagnostics entryPath depTypesMap depMod
                         ]
                     authDiags = authDiagsEntry ++ authDiagsDeps
@@ -1713,13 +1738,14 @@ parseSingle config entryPath outDir = do
                     solveResult <- Solve.solve constraints
                     let solvedTypes = case solveResult of
                             Solve.SolveOk types -> do
-                                putStrLn $ "   Types OK (" ++ show (length (Map.keys types)) ++ " bindings)"
-                                mapM_ (\(n, t) -> putStrLn $ "     " ++ n ++ " : " ++ Solve.showType t) (Map.toList types)
+                                let envMap = Solve._stEnv types
+                                putStrLn $ "   Types OK (" ++ show (length (Map.keys envMap)) ++ " bindings)"
+                                mapM_ (\(n, t) -> putStrLn $ "     " ++ n ++ " : " ++ Solve.showType t) (Map.toList envMap)
                                 return types
                             Solve.SolveError err -> do
                                 putStrLn $ "   TYPE WARNING: " ++ err
                                 -- Still return empty types — codegen falls back to any
-                                return Map.empty
+                                return Solve.emptySolvedTypes
                     types <- solvedTypes
 
                     -- Phase 5: Generate Go (using solved types)
@@ -2521,8 +2547,11 @@ typecheckWorkspace config entryPath = do
             Right canMod -> do
                 cs <- Constrain.constrainModule canMod
                 (r, localTys) <- Solve.solveWithLocals cs
+                -- v0.15.x P37a: `SolvedTypes` is now a record; extract
+                -- the bare env map for the `_wm_types` field (which
+                -- carries the pre-P37a shape `Map.Map String T.Type`).
                 let envTypes = case r of
-                        Solve.SolveOk t -> t
+                        Solve.SolveOk t -> Solve._stEnv t
                         _               -> Map.empty
                     -- Match Solve.solve's merge: take the innermost
                     -- (first) type from each local, merge under
@@ -3154,14 +3183,18 @@ generateGoMulti canMod srcMod config solvedTypes depDecls depRecAliases depUnion
             -- (e.g. `init : a -> …` where the body narrows `a` to a
             -- concrete Dict — call sites would omit the `[any]`
             -- instantiation that the declaration still needs).
-            let sigTypeFor n =
+            -- v0.15.x P37a: `solvedTypes` is the new `SolvedTypes`
+            -- record; the lookup / iteration here works against the
+            -- env-map projection.  Extract once for readability.
+            let solvedEnv = Solve._stEnv solvedTypes
+                sigTypeFor n =
                     case Map.lookup n (declsByName canMod) of
                         Just (Can.TypedDef _ _ typedPats _ retTy) ->
                             Just (foldr T.TLambda retTy (map snd typedPats))
-                        _ -> Map.lookup n solvedTypes
+                        _ -> Map.lookup n solvedEnv
                 entryInferredSigs = Map.fromList
                     [ (goSafeName n, splitInferredSigWithReg earlyRecAliases earlyFieldIdx (countParamsFor n canMod) ty)
-                    | (n, _) <- Map.toList solvedTypes
+                    | (n, _) <- Map.toList solvedEnv
                     , Just ty <- [sigTypeFor n]
                     ]
                 entryInferredParams = Map.map (\(_, ps, _) -> ps) entryInferredSigs
@@ -3185,7 +3218,7 @@ generateGoMulti canMod srcMod config solvedTypes depDecls depRecAliases depUnion
                             earlyRecAliases earlyFieldIdx
                             (countParamsFor n canMod)
                             (renameTypeForExternal' ty) )
-                    | (n, _) <- Map.toList solvedTypes
+                    | (n, _) <- Map.toList solvedEnv
                     , Just ty <- [sigTypeFor n]
                     ]
             -- Gather the FULL record-alias set (entry + dep modules,
@@ -3851,7 +3884,9 @@ generateDef home def solvedTypes =
         -- Prefer the user's annotation when present, else use HM-
         -- inferred type. TVars in the inferred type become Go type
         -- params (T4b) via splitInferredSig.
-        mSolvedType = Map.lookup name solvedTypes
+        -- v0.15.x P37a: `SolvedTypes` is a record; consult the env
+        -- field for the name lookup.
+        mSolvedType = Solve.lookupSolvedVar name solvedTypes
         mAnnotTy = case def of
             Can.TypedDef _ _ _ _ ty -> Just ty
             _                       -> Nothing
@@ -4401,7 +4436,7 @@ goExprGoType mSrc e = case shapeClassified of
         go seen t = case t of
             T.TVar name
                 | Set.member name seen -> True
-                | otherwise -> case Map.lookup name solved of
+                | otherwise -> case Solve.lookupSolvedVar name solved of
                     Just t' | t' /= t -> go (Set.insert name seen) t'
                     _                 -> True
             T.TType _ _ args         -> any (go seen) args
@@ -10043,7 +10078,7 @@ letToGo mExpectedGo def body =
             Can.Def (A.At _ name) pats _
                 | not (null pats)
                 , name /= "_"
-                , Just t <- Map.lookup name solved
+                , Just t <- Solve.lookupSolvedVar name solved
                 , case t of { T.TLambda _ _ -> True; _ -> False } ->
                     Map.singleton name t
             _ -> Map.empty
@@ -10370,7 +10405,7 @@ defToStmts def = case def of
         -- adapters (e.g. 18-job-queue's `insertRow db ts = …`
         -- inside saveSnapshot).
         let solved = Rec._cg_solvedTypes getCgEnv
-            inferredTy = Map.lookup name solved
+            inferredTy = Solve.lookupSolvedVar name solved
             (paramTys, retTy) = case inferredTy of
                 Just ty -> splitTLambda (length params) ty
                 Nothing -> (replicate (length params) Nothing, Nothing)
@@ -11556,7 +11591,7 @@ exprToGoMain _types = exprToGo
 
 -- | Legacy untyped main stmts (kept for reference)
 exprToMainStmts :: Can.Expr -> [GoIr.GoStmt]
-exprToMainStmts = exprToMainStmtsTyped Map.empty
+exprToMainStmts = exprToMainStmtsTyped Solve.emptySolvedTypes
 
 
 -- ═══════════════════════════════════════════════════════════
@@ -11584,7 +11619,7 @@ exprToGoTyped types retType (A.At _ expr) = case expr of
 
     Can.VarLocal name ->
         -- If we have a solved type for this var and it's concrete, use type assertion
-        case Map.lookup name types of
+        case Solve.lookupSolvedVar name types of
             Just ty | isConcreteType ty -> GoIr.GoTypeAssert (GoIr.GoIdent name) (solvedTypeToGo ty)
             _ -> GoIr.GoIdent name
     Can.VarTopLevel _ name -> GoIr.GoIdent (goSafeName name)
@@ -11608,7 +11643,7 @@ exprToGoTyped types retType (A.At _ expr) = case expr of
                 Just expr -> expr
                 Nothing -> case func of
                     A.At _ (Can.VarLocal name) ->
-                        case Map.lookup name types of
+                        case Solve.lookupSolvedVar name types of
                             Just (T.TLambda _ _) ->
                                 GoIr.GoCall (GoIr.GoRaw (name ++ ".(func(any) any)")) goArgs
                             _ -> GoIr.GoCall goFunc goArgs
@@ -11634,7 +11669,7 @@ exprToGoTyped types retType (A.At _ expr) = case expr of
             -- yields a concrete value and asserting `.(T)` on it would be a Go error.
             calleeInfo = case func of
                 A.At _ (Can.VarTopLevel _ name) ->
-                    case Map.lookup name types of
+                    case Solve.lookupSolvedVar name types of
                         Just ft ->
                             let (argTys, rtTy) = splitFuncType (length args) ft
                                 fullyTyped = length argTys == length args
@@ -11643,7 +11678,7 @@ exprToGoTyped types retType (A.At _ expr) = case expr of
                             in Just (rtTy, fullyTyped)
                         Nothing -> Nothing
                 A.At _ (Can.VarLocal name) ->
-                    case Map.lookup name types of
+                    case Solve.lookupSolvedVar name types of
                         Just ft ->
                             let (_, rtTy) = splitFuncType (length args) ft
                             in Just (rtTy, False)  -- VarLocal calls go through any-dispatch
@@ -11789,7 +11824,7 @@ substTypeVars types = go Set.empty
   where
     go seen ty = case ty of
         T.TVar name | not (Set.member name seen) ->
-            case Map.lookup name types of
+            case Solve.lookupSolvedVar name types of
                 Just resolved | resolved /= ty -> go (Set.insert name seen) resolved
                 _ -> ty
         T.TType home name args -> T.TType home name (map (go seen) args)
@@ -11814,10 +11849,10 @@ inferExprType types (A.At r e) = case e of
     Can.Str _    -> Just ConstrainExpr.stringType
     Can.Chr _    -> Just ConstrainExpr.charType
     Can.Unit     -> Just T.TUnit
-    Can.VarLocal name    -> case Map.lookup name types of
+    Can.VarLocal name    -> case Solve.lookupSolvedVar name types of
         Just t  -> Just t
         Nothing -> lookupLambdaType name
-    Can.VarTopLevel _ n  -> Map.lookup n types
+    Can.VarTopLevel _ n  -> Solve.lookupSolvedVar n types
     -- VarKernel: instantiate the kernel's HM annotation. Strips the
     -- Forall wrapper (kernel sigs are universally quantified) so the
     -- result is the raw type with TVars left in place.
@@ -11980,7 +12015,7 @@ inferExprType types (A.At r e) = case e of
                         [ T.TVar ("_lambda_arg_" ++ show i)
                         | i <- [0 .. length pats - 1]
                         ]
-                    types' = Map.union
+                    types' = Solve.unionSolvedEnv
                         (Map.fromList (zip paramNames paramTVars))
                         types
                 in case inferExprType types' body of
@@ -12050,10 +12085,10 @@ inferExprType types (A.At r e) = case e of
                 Can.Def (A.At _ n) [] valExpr
                     | n /= "_"
                     , Just t <- inferExprType types valExpr ->
-                        Map.insert n t types
+                        Solve.insertSolvedVar n t types
                 Can.TypedDef (A.At _ n) _ [] valExpr _
                     | Just t <- inferExprType types valExpr ->
-                        Map.insert n t types
+                        Solve.insertSolvedVar n t types
                 _ -> types
         in inferExprType types' body
     -- LetRec: same shape as `Can.Let` but with [Def] — register
@@ -12069,10 +12104,10 @@ inferExprType types (A.At r e) = case e of
                 Can.Def (A.At _ n) [] valExpr
                     | n /= "_"
                     , Just t <- inferExprType acc valExpr ->
-                        Map.insert n t acc
+                        Solve.insertSolvedVar n t acc
                 Can.TypedDef (A.At _ n) _ [] valExpr _
                     | Just t <- inferExprType acc valExpr ->
-                        Map.insert n t acc
+                        Solve.insertSolvedVar n t acc
                 _ -> acc
             types' = foldl extend types defs
         in inferExprType types' body

@@ -61,6 +61,7 @@ import qualified Sky.Build.MonoIntegrationSpec
 import qualified Sky.Reporting.DiagnosticSpec
 import qualified Sky.Diagnostics.CoverageSpec
 import qualified Sky.Type.InstanceCaptureSpec
+import qualified Sky.Type.SolvedTypesRegionMapSpec
 import qualified Sky.Build.KernelSigCoverageSpec
 import qualified Sky.Build.HeapBoundedHmSpec
 import qualified Sky.Build.SolverBudgetSpec
@@ -359,6 +360,14 @@ main = hspec $ do
     -- the solver's CForeign instance-recording mechanism that the
     -- monomorphisation pass consumes downstream.
     describe "Sky.Type.InstanceCapture"      Sky.Type.InstanceCaptureSpec.spec
+    -- v0.15.x P37a: SolvedTypes carries the per-region HM type map
+    -- as pure data.  Locks the populate-time contract so the
+    -- IORef-backed `lookupRegionType` reader (still load-bearing in
+    -- Compile.hs) and the pure `Solve.lookupSolvedRegion` query
+    -- key off ONE solver-side write.  P37b consumes the field via
+    -- `letBindingType` and drops the IORef.
+    describe "Sky.Type.SolvedTypesRegionMap"
+                                            Sky.Type.SolvedTypesRegionMapSpec.spec
     -- v0.13 Phase A2: monomorphisation type-level pieces.  Locks
     -- the mangling encoding + substitution semantics that the
     -- downstream emission pass relies on.

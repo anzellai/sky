@@ -277,6 +277,7 @@ test-suite sky-tests
       Sky.Parse.MultiLineCaseSubjectSpec
       Sky.Parse.MultiLineSignatureSpec
       Sky.Type.InstanceCaptureSpec
+      Sky.Type.SolvedTypesRegionMapSpec
       Sky.Format.FormatSpec
       Sky.Build.GoKeywordCollisionSpec
       Sky.Build.NestedPatternSpec
