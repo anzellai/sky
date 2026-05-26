@@ -1269,8 +1269,28 @@ type liveSession struct {
 	// Frame contents are JSON envelopes produced by encodeSSEFrame
 	// (carry seq + ackInputs alongside the body), not raw HTML.
 	sseCh chan string
-	// Cancel function for any active subscription ticker
+	// Cancel function for any active subscription ticker. Re-created
+	// by setupSubscriptions on every dispatch (the old one is closed
+	// first); see also the session-wide `done` field which signals
+	// TERMINAL teardown (TTL eviction / Delete) regardless of how
+	// many setupSubscriptions cycles have run.
 	cancelSub chan struct{}
+
+	// Terminal teardown signal — closed exactly once when the session
+	// is evicted from its Store (Delete or TTL cleanup). Any goroutine
+	// holding a reference to this session (Time.every Tick loop,
+	// in-flight runPerformBody, future broadcast handlers) MUST select
+	// on `done` so they exit promptly when the session is dead. Closing
+	// is gated by `doneOnce` so concurrent Delete calls (or test
+	// teardown that fires both Delete + Close on the store) are safe.
+	//
+	// Cycle 3 P36 / Gap C4: the previous implementation only signalled
+	// the per-subscription `cancelSub`, which is replaced on every
+	// dispatch — so a session deleted between dispatches kept its
+	// Time.every goroutine alive forever, pushing to `sseCh` with no
+	// reader. The leak persisted for the lifetime of the process.
+	done     chan struct{}
+	doneOnce sync.Once
 
 	// Single session-wide monotonic counter for EVERY outgoing frame
 	// (event reply OR SSE patch). Bumped under sess.mu so the value
@@ -1282,6 +1302,30 @@ type liveSession struct {
 	// flags once the server has caught up. Stale ids (not present in
 	// prevTree) are evicted on each ack build; see ackInputsForPrevTree.
 	inputSeqs map[string]int64
+}
+
+// markDone signals terminal teardown for this session. Idempotent;
+// safe to call from multiple stores or from concurrent Delete calls.
+// Goroutines that hold a reference to the session (Time.every Tick,
+// runPerformBody, future broadcast handlers) MUST select on
+// `sess.done` so they exit promptly once this fires.
+//
+// Sessions constructed by tests that never enter a Store keep
+// `done == nil`; that's intentional — those sessions are never
+// Deleted, so no signal is required. A `nil` channel in a select
+// blocks forever, which is the desired semantics (Time.every keeps
+// running until the test cancels its own context).
+func (s *liveSession) markDone() {
+	s.doneOnce.Do(func() {
+		if s.done == nil {
+			// Lazily provision the channel so a session that was
+			// constructed without one (test fixtures, decoded-from-blob
+			// sessions whose store-write path didn't initialise it) can
+			// still receive a terminal signal once it lands in a Store.
+			s.done = make(chan struct{})
+		}
+		close(s.done)
+	})
 }
 
 // nextOutSeq advances and returns the session-wide outgoing seq.
@@ -2065,6 +2109,7 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 		sess = &liveSession{
 			sseCh:     make(chan string, 16),
 			cancelSub: make(chan struct{}),
+			done:      make(chan struct{}),
 		}
 	}
 	// Always set sid — both on fresh sessions AND on resumes from
@@ -2766,6 +2811,15 @@ func (app *liveApp) setupSubscriptions(sess *liveSession) {
 		return
 	}
 	cancel := sess.cancelSub
+	// Cycle 3 P36 / Gap C4: also listen on the session-wide terminal
+	// `done` channel so the Tick goroutine exits when the session is
+	// evicted from its Store. `cancelSub` alone is insufficient
+	// because it's recreated by every setupSubscriptions call — a
+	// session deleted BETWEEN dispatches kept this goroutine alive
+	// pushing to an unread `sseCh` for the lifetime of the process.
+	// A `nil` done (test-constructed sessions that never enter a Store)
+	// is safe: select on a nil channel blocks forever.
+	done := sess.done
 	toMsg := sub.toMsg
 	go func() {
 		ticker := time.NewTicker(interval)
@@ -2773,6 +2827,8 @@ func (app *liveApp) setupSubscriptions(sess *liveSession) {
 		for {
 			select {
 			case <-cancel:
+				return
+			case <-done:
 				return
 			case t := <-ticker.C:
 				sess.mu.Lock()
