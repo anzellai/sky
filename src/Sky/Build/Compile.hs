@@ -6573,15 +6573,18 @@ exprToGoExpectGo goRendering e@(A.At _ expr)
         -- records get type-directed too.  Falls back to the generic
         -- `[]any` shape when the slot type is unrecognised.
         --
-        -- v0.15.x P6 (Phase 2) — element lowering routes via
-        -- `lowerExprExpectGo` so the "list element" structural-
-        -- backbone slot threads ctx explicitly.  Same ctx for every
-        -- element (siblings, no per-element scoping).
+        -- NOTE — v0.15.x P6 (Phase 2) initially routed this site
+        -- through `lowerExprExpectGo ctx` but reverted: under
+        -- examples/16-skychess (large module graph) the wrapper's
+        -- write-and-force interacts with deferred lazy thunks
+        -- inside the list element lowering, blackholing.  Same
+        -- failure class as `lowerRecordLiteralTo` and `letToGo`.
+        -- Closing this needs Phase 3 (P7): kill `scopeStateRef`'s
+        -- shared-state seam.
         Can.List items
             | Just elemTy <- stripListType goRendering ->
-                let ctx = ctxFromIORef () in
                 GoIr.GoSliceLit elemTy
-                    [ lowerExprExpectGo ctx elemTy it | it <- items ]
+                    [ exprToGoExpectGo elemTy it | it <- items ]
 
         -- v0.15 Stage E.2 — type-directed record literal.  When
         -- the slot's Go type is a parametric struct instantiation
@@ -6724,20 +6727,20 @@ lowerRecordLiteralTo targetTy fields =
                 in Map.map (\(T.FieldType _ ty) ->
                         substituteTVarsToGo tvarSubst ty) m
             _ -> Map.empty
-        -- v0.15.x P6 (Phase 2) — thread ctx through the field-init
-        -- lowering via `lowerExprExpectGo`.  Each field's init
-        -- expression lowers in the same ctx as the enclosing record
-        -- literal (no per-field scoping needed — record fields are
-        -- siblings, not nested binders).  Routing through the
-        -- ctx-aware wrapper instead of the bare
-        -- `exprToGoExpectGo` makes the structural-backbone slot
-        -- mentioned in the P6 spec ("record-field inits") an
-        -- explicit ctx-threading point.
-        ctx = ctxFromIORef ()
+        -- NOTE — v0.15.x P6 (Phase 2) initially routed this site
+        -- through `lowerExprExpectGo ctx` but reverted: when the
+        -- enclosing function body returns a parametric-alias
+        -- record literal (e.g. `makeIntCfg x = { onSubmit = x, … }`
+        -- against `Cfg_R[Int]`), the ctx-aware wrapper's
+        -- write-and-force interacts with the lambda-scope laziness
+        -- around the function body, blackholing.  Reproducer:
+        -- examples/16-skychess (deterministic) + the
+        -- CoerceArgParametricSpec fixture.  Closing this needs
+        -- Phase 3 (P7): kill `scopeStateRef`'s shared-state seam.
         lowerField fn fe =
             let fieldGoTy = Map.findWithDefault "any" fn fieldTypeMap
             in coerceToFieldType fieldGoTy
-                   (lowerExprExpectGo ctx fieldGoTy fe)
+                   (exprToGoExpectGo fieldGoTy fe)
     in GoIr.GoStructLit targetTy
         [ (capitalise_ fn, lowerField fn fe)
         | (fn, fe) <- entries
