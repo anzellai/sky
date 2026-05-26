@@ -3376,8 +3376,39 @@ function __skyReplaceHTMLPreservingFocus(container, newHTML) {
 
   // Parse the new HTML into a detached element so we can splice
   // preserved live nodes into it before committing.
-  var tmp = document.createElement("div");
-  tmp.innerHTML = newHTML;
+  //
+  // Namespace correctness: when the container element is in a foreign-
+  // content namespace (SVG or MathML), parsing the new HTML via a
+  // plain document.createElement("div") + .innerHTML = ... uses the
+  // HTML insertion mode, so element names like <g>, <rect>, <text>
+  // (which the diff emits as direct children when it replaces the
+  // children of an <svg> element) end up in the XHTML namespace
+  // rather than SVG. The elements appear in the DOM but the browser
+  // doesn't lay them out as SVG primitives — the canvas silently goes
+  // blank after a shape add/remove with no JS error to point at.
+  //
+  // Range.createContextualFragment parses HTML using the namespace
+  // context of the range's container, preserving SVG/MathML element
+  // namespaces correctly. The downstream code accepts either an
+  // Element or a DocumentFragment via the same .firstChild /
+  // .querySelectorAll / .parentNode.replaceChild surface, so no
+  // other changes are needed.
+  //
+  // Repro before this fix: any Sky.Live view that emits an HTML
+  // patch at a sky-id pointing at an <svg> element (the diff does
+  // this whenever the SVG's children-count changes, or a child
+  // tag/kind mismatches between renders) leaves the SVG with HTML-
+  // namespaced children. Drawing tools, charts, and apps that swap
+  // inline-SVG icon <path> children are the common victims.
+  var tmp;
+  if (container.namespaceURI && container.namespaceURI !== "http://www.w3.org/1999/xhtml") {
+    var range = document.createRange();
+    range.selectNodeContents(container);
+    tmp = range.createContextualFragment(newHTML);
+  } else {
+    tmp = document.createElement("div");
+    tmp.innerHTML = newHTML;
+  }
 
   // Snapshot focused-state BEFORE any DOM mutation. Selection read
   // throws on some input types, so catch.
