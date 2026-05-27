@@ -1408,7 +1408,18 @@ type liveSession struct {
 	// (event reply OR SSE patch). Bumped under sess.mu so the value
 	// reflects this session's true mutation order. The client keys its
 	// stale-drop / cross-channel ordering off this number.
-	outSeq int64
+	//
+	// Cycle 3 P47 (Phase 3g pub/sub prereq 2 — see
+	// docs/skylive/pubsub-design.md §3.2): renamed from outSeq → localSeq
+	// to disambiguate from the new app-wide `liveApp.globalSeq` that
+	// tags broadcast-induced frames. Per-session dispatch + SSE replies
+	// still bump localSeq; broadcast Publish bumps app.globalSeq once
+	// before fan-out so every subscriber sees the same globalSeq for
+	// one publish. Both seqs travel together in the SSE envelope; the
+	// client guards on each independently. Single counter would have
+	// forced every per-session dispatch to contend with broadcasts on
+	// one atomic — the split keeps per-session dispatch lock-free.
+	localSeq int64
 	// Per input sky-id → largest req.InputState[id].Seq observed. Used
 	// to populate response.ackInputs so the client can retire "dirty"
 	// flags once the server has caught up. Stale ids (not present in
@@ -1500,11 +1511,14 @@ func (s *liveSession) markDone() {
 	})
 }
 
-// nextOutSeq advances and returns the session-wide outgoing seq.
+// nextLocalSeq advances and returns the session-wide outgoing seq.
 // MUST be called with sess.mu held.
-func (s *liveSession) nextOutSeq() int64 {
-	s.outSeq++
-	return s.outSeq
+//
+// Cycle 3 P47: renamed from nextOutSeq. See the `localSeq` field comment
+// on liveSession for the global+local seq split rationale.
+func (s *liveSession) nextLocalSeq() int64 {
+	s.localSeq++
+	return s.localSeq
 }
 
 // commitRender writes both `prevTree` and `lastComputedBody` as a single
@@ -1623,30 +1637,65 @@ func ackInputsForPrevTree(s *liveSession) map[string]int64 {
 // the same session for the duration of the encode (~200µs for 50 KB
 // on M1). The snapshot makes that block strictly the bump+ack-build
 // + map-copy cost; the marshal moves outside.
+//
+// Cycle 3 P47 (pub/sub prereq 2 — docs/skylive/pubsub-design.md §3.2):
+// `seq` is the session-local monotonic counter (renamed from outSeq).
+// `globalSeq` is the new app-wide counter populated by broadcast-
+// derived frames so subscribers can detect dropped broadcasts via gap-
+// check. Non-broadcast frames leave it 0; the JSON envelope omits it
+// (omitempty) so old clients ignore it; new clients treat 0 as
+// "no global ordering constraint" and never block on it.
 type frameSnapshot struct {
 	seq       int64
+	globalSeq int64
 	body      string
 	ackInputs map[string]int64
 }
 
 // prepareFrameSnapshot captures (seq, body, ackInputs) under sess.mu so
 // the JSON marshal can run after the caller releases the lock. Caller
-// MUST already hold sess.mu — both nextOutSeq and ackInputsForPrevTree
-// mutate session state (outSeq counter; inputSeqs eviction of unmounted
+// MUST already hold sess.mu — both nextLocalSeq and ackInputsForPrevTree
+// mutate session state (localSeq counter; inputSeqs eviction of unmounted
 // ids). After this returns, the caller is free to Unlock and then call
 // encodeSSEFrameFromSnapshot on the returned value without re-locking;
 // the snapshot is pure data with no aliasing back to sess.
 //
 // seq monotonicity across concurrent producers is preserved by the
-// existing sess.mu serialisation of nextOutSeq: two dispatch paths
+// existing sess.mu serialisation of nextLocalSeq: two dispatch paths
 // that race for the lock take the seq in the order they acquire the
 // lock, regardless of how their post-unlock marshal interleaves. The
 // SSE channel reader writes frames to the wire in arrival order; the
 // client's __skyHandleResponse applies frames in seq order (already
 // the contract — see live_adversarial_test.go for the lock-out test).
+//
+// Cycle 3 P47: prepareFrameSnapshot returns globalSeq=0 by default; the
+// broadcast fan-out path uses prepareFrameSnapshotWithGlobalSeq to
+// stamp the captured globalSeq so subscriber-derived frames carry it.
 func (s *liveSession) prepareFrameSnapshot(body string) frameSnapshot {
 	return frameSnapshot{
-		seq:       s.nextOutSeq(),
+		seq:       s.nextLocalSeq(),
+		body:      body,
+		ackInputs: ackInputsForPrevTree(s),
+	}
+}
+
+// prepareFrameSnapshotWithGlobalSeq is the broadcast variant of
+// prepareFrameSnapshot — same contract for localSeq + body + ackInputs,
+// plus stamps the supplied globalSeq from the publish event. The caller
+// (broadcast-driven dispatch path, P48's job to wire up) captures the
+// globalSeq from SessionEvent.GlobalSeq BEFORE acquiring sess.mu, then
+// passes it through here so the SSE envelope shipped to the client
+// carries both the per-session localSeq AND the app-wide globalSeq.
+// MUST be called with sess.mu held (same as prepareFrameSnapshot).
+//
+// Why a separate function rather than an optional parameter: the
+// snapshot is the cheap-to-call hot path (every SSE producer hits it),
+// and a single zero-globalSeq sentinel-arm in the common case is
+// strictly cheaper than a closure or option-struct allocation.
+func (s *liveSession) prepareFrameSnapshotWithGlobalSeq(body string, globalSeq int64) frameSnapshot {
+	return frameSnapshot{
+		seq:       s.nextLocalSeq(),
+		globalSeq: globalSeq,
 		body:      body,
 		ackInputs: ackInputsForPrevTree(s),
 	}
@@ -1654,12 +1703,20 @@ func (s *liveSession) prepareFrameSnapshot(body string) frameSnapshot {
 
 // encodeSSEFrameFromSnapshot serialises a snapshot to the SSE wire
 // envelope. Pure function — safe to call without holding sess.mu.
-// The fallback branch uses snap.seq (not sess.outSeq) so a marshal
+// The fallback branch uses snap.seq (not sess.localSeq) so a marshal
 // failure post-unlock still names the frame's true seq.
+//
+// Cycle 3 P47: globalSeq rides as an OPTIONAL field on the envelope.
+// Zero → omitted (legacy client + non-broadcast frames stay byte-
+// identical to pre-P47). Non-zero → "globalSeq":N attached so the
+// client can dedupe replayed broadcasts via __skyLastGlobalSeq.
 func encodeSSEFrameFromSnapshot(snap frameSnapshot) string {
 	frame := map[string]any{
 		"seq":  snap.seq,
 		"body": snap.body,
+	}
+	if snap.globalSeq > 0 {
+		frame["globalSeq"] = snap.globalSeq
 	}
 	if snap.ackInputs != nil {
 		frame["ackInputs"] = snap.ackInputs
@@ -1718,8 +1775,15 @@ type sseFrame struct {
 // shape is identical between the HTTP /_sky/event reply path and the
 // SSE event:patches push path. Reusing the shape means
 // __skyApplyPatches consumes both routes uniformly.
+//
+// Cycle 3 P47: GlobalSeq rides as an optional field on the envelope —
+// zero → omitted (legacy clients + non-broadcast frames stay byte-
+// identical to pre-P47); non-zero → consumed by the client's
+// __skyLastGlobalSeq guard so a replayed broadcast event drops at the
+// boundary rather than mutating state twice.
 type patchesEventEnvelope struct {
 	Seq       int64            `json:"seq"`
+	GlobalSeq int64            `json:"globalSeq,omitempty"`
 	AckInputs map[string]int64 `json:"ackInputs,omitempty"`
 	Patches   []Patch          `json:"patches"`
 }
@@ -1737,12 +1801,16 @@ type patchesEventEnvelope struct {
 //
 // Empty-patches case: the slice is encoded as `"patches":[]` (not
 // omitted), matching writeEventJSON's contract.
+//
+// Cycle 3 P47: snap.globalSeq travels in the envelope when non-zero
+// (broadcast-derived frame); zero leaves the field omitted.
 func encodePatchesEventFromSnapshot(snap frameSnapshot, patches []Patch) string {
 	if patches == nil {
 		patches = []Patch{}
 	}
 	env := patchesEventEnvelope{
 		Seq:       snap.seq,
+		GlobalSeq: snap.globalSeq,
 		AckInputs: snap.ackInputs,
 		Patches:   patches,
 	}
@@ -1816,6 +1884,72 @@ type liveApp struct {
 	// Postgres LISTEN/NOTIFY — see docs/skylive/pubsub-design.md
 	// §11.2.5) implement the same Broker interface.
 	topics Broker
+
+	// globalSeq — app-wide monotonic counter (Cycle 3 P47 / pub/sub
+	// prereq 2; see docs/skylive/pubsub-design.md §3.2). Bumped ONCE
+	// per Publish, BEFORE fan-out, so every subscriber sees the SAME
+	// globalSeq value for one logical publish. The captured value
+	// rides on SessionEvent.GlobalSeq, the subscriber goroutine in
+	// P48 will thread it through prepareFrameSnapshotWithGlobalSeq,
+	// and the SSE envelope's `globalSeq` field carries it to the
+	// client. Per-session dispatch (the non-broadcast common case)
+	// leaves globalSeq at zero — `localSeq` alone suffices for the
+	// stale-drop guard, and the JSON envelope omits the zero field
+	// (byte-identical to pre-P47 frames). Atomic so a flood of
+	// concurrent Publish calls across goroutines remains lock-free.
+	//
+	// Why a SEPARATE counter from per-session localSeq:
+	// docs/skylive/pubsub-design.md §3.2 — a single counter would
+	// force every per-session dispatch to contend with broadcasts on
+	// one atomic; the split keeps per-session dispatch lock-free
+	// (no cross-session contention) and pays the atomic cost only on
+	// broadcast.
+	//
+	// v0.16+ cross-process pub/sub will prepend a `ProcessId` field
+	// to (origin, globalSeq) tuples; the v0.15.x design does NOT
+	// preclude that — SessionEvent.GlobalSeq is already process-
+	// scoped (the cross-process layer prepends its own id at the
+	// backbone). §5.4 of the design doc.
+	globalSeq atomic.Int64
+}
+
+// nextGlobalSeq advances the app-wide broadcast counter and returns
+// the new value. Lock-free (atomic.Int64.Add). Used by the broadcast
+// fan-out path (P48 wires this end-to-end) — Publish bumps globalSeq
+// ONCE, then stamps the same value into every subscriber's
+// SessionEvent so all subscribers observe one publish as one
+// globalSeq.
+//
+// Cycle 3 P47 / pub/sub prereq 2 — docs/skylive/pubsub-design.md §3.2.
+func (a *liveApp) nextGlobalSeq() int64 {
+	return a.globalSeq.Add(1)
+}
+
+// Publish is the app-level fan-out entry point that all broadcast
+// call sites use. It performs the two locked-in invariants of the
+// pub/sub seq split (Cycle 3 P47 / docs/skylive/pubsub-design.md §3.2):
+//
+//  1. Bump `app.globalSeq` ONCE per publish, BEFORE fan-out.
+//  2. Stamp the captured globalSeq into the outgoing event so EVERY
+//     subscriber sees the SAME globalSeq for one logical publish.
+//
+// Returns the number of subscribers the event reached (passed through
+// from topicRegistry.Publish — see Broker.Publish doc for the
+// drop-vs-deliver contract).
+//
+// Why the helper rather than open-coding the bump at every call site:
+// the "one bump per publish" contract is load-bearing for the client-
+// side __skyLastGlobalSeq dedupe — if two call sites raced and the
+// stamp happened AFTER fan-out, two subscribers could see different
+// globalSeq for the same publish. Routing every Publish through this
+// helper makes the invariant a function-boundary guarantee.
+//
+// P48 will wire this in via `Std.Cmd.publish` → runtime; for now the
+// helper exists so the seq-split tests can drive a publish end-to-end
+// without P48's Sky-side surface.
+func (a *liveApp) Publish(topic string, event SessionEvent) int {
+	event.GlobalSeq = a.nextGlobalSeq()
+	return a.topics.Publish(topic, event)
 }
 
 // apiRoute represents a custom handler mounted outside the TEA cycle.
@@ -2776,7 +2910,7 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 	// the seq reflects this session's true mutation order. Bumped once
 	// per reply (including no-op replies) so the client's cross-channel
 	// ordering works uniformly.
-	respSeq := sess.nextOutSeq()
+	respSeq := sess.nextLocalSeq()
 	respAck := ackInputsForPrevTree(sess)
 	sess.mu.Unlock()
 	// Persist the mutated session so DB-backed stores see the new
@@ -2932,7 +3066,7 @@ func (app *liveApp) dispatchBatched(sess *liveSession, ev batchedEvent) {
 	prevTreeBeforeDispatch := sess.prevTree
 	body2 := app.dispatch(sess, msg)
 	newTreeAfterDispatch := sess.prevTree
-	// Bump outSeq once per batched entry so any SSE frame pushed as a
+	// Bump localSeq once per batched entry so any SSE frame pushed as a
 	// side effect carries a unique seq. Each dispatch that mutates the
 	// view is its own observable event.
 	//
@@ -3518,7 +3652,7 @@ func (app *liveApp) handleSSE(w http.ResponseWriter, r *http.Request) {
 		// blocking every concurrent dispatcher on this session. The
 		// for-select loop below runs in this same goroutine so there
 		// is no race against sseCh-fed frames during the write; seq
-		// ordering is preserved because nextOutSeq runs inside the
+		// ordering is preserved because nextLocalSeq runs inside the
 		// lock-held prepareFrameSnapshot.
 		var snap frameSnapshot
 		var haveSnap bool
@@ -3931,8 +4065,20 @@ var __skyHeartbeatTtlMs = %d;
 // Step 2 populates these counters + per-input table on every send
 // and response; Step 3 activates the patch filter that reads them;
 // Step 4 activates the stale-drop test against __skyLastAppliedSeq.
+//
+// Cycle 3 P47 (pub/sub global+local seq split — see
+// docs/skylive/pubsub-design.md §3.2): __skyLastGlobalSeq is the
+// app-wide broadcast counter. The server stamps it onto every
+// broadcast-derived SSE frame (event:patches OR event:patch); the
+// client dedupes against the largest value already applied so a
+// replayed broadcast (e.g. SSE reconnect that re-delivers buffered
+// frames) drops at the boundary without mutating state twice. Frames
+// from per-session dispatch (the common case) carry globalSeq=0 OR
+// omit the field; the guard treats 0 / missing as "no broadcast
+// ordering constraint" and never blocks.
 var __skyClientSeq = 0;       // monotonic, client-owned; bumped on every __skySend
-var __skyLastAppliedSeq = 0;  // server-owned; largest seq already applied
+var __skyLastAppliedSeq = 0;  // server-owned; largest local seq already applied
+var __skyLastGlobalSeq = 0;   // server-owned; largest broadcast globalSeq already applied (P47)
 var __skyInputs = {};         // sky-id → InputEntry (populated by __skyBindOne)
 
 function __skyInputEntry(sid) {
@@ -3990,9 +4136,15 @@ function __skyIsDirty(el) {
   return false;
 }
 
-function __skyIngestSeq(seq, ackInputs) {
+function __skyIngestSeq(seq, ackInputs, globalSeq) {
   if (typeof seq === "number" && seq > __skyLastAppliedSeq) {
     __skyLastAppliedSeq = seq;
+  }
+  // Cycle 3 P47: monotonic-applied semantics on the broadcast counter,
+  // mirroring the local-seq path. Missing / zero / non-numeric globalSeq
+  // is treated as "no broadcast ordering constraint" and ignored.
+  if (typeof globalSeq === "number" && globalSeq > __skyLastGlobalSeq) {
+    __skyLastGlobalSeq = globalSeq;
   }
   if (ackInputs) {
     var ids = Object.keys(ackInputs);
@@ -4011,11 +4163,25 @@ function __skyIngestSeq(seq, ackInputs) {
 // already landed with a later view, and applying the stale payload
 // would regress the DOM. Legacy frames that omit seq (or report 0)
 // always apply — pre-upgrade servers keep working.
-function __skyHandleResponse(seq, ackInputs, applyFn) {
+//
+// Cycle 3 P47 (pub/sub global+local seq split — see
+// docs/skylive/pubsub-design.md §3.2): broadcast-derived frames also
+// carry an OPTIONAL globalSeq. If supplied AND already applied (i.e.
+// globalSeq > 0 && globalSeq <= __skyLastGlobalSeq) the frame is
+// dropped — a replayed broadcast (e.g. an SSE reconnect re-delivering
+// buffered frames) would otherwise mutate state twice. Both guards
+// fire independently: a frame is dropped if EITHER counter has already
+// passed it; the localSeq guard alone suffices for the legacy
+// non-broadcast case (globalSeq omitted / 0 → broadcast guard always
+// passes).
+function __skyHandleResponse(seq, ackInputs, applyFn, globalSeq) {
   if (typeof seq === "number" && seq > 0 && seq <= __skyLastAppliedSeq) {
-    return; // stale — a newer frame already landed
+    return; // stale — a newer local-seq frame already landed
   }
-  __skyIngestSeq(seq, ackInputs);
+  if (typeof globalSeq === "number" && globalSeq > 0 && globalSeq <= __skyLastGlobalSeq) {
+    return; // stale — a newer broadcast frame already landed
+  }
+  __skyIngestSeq(seq, ackInputs, globalSeq);
   applyFn();
 }
 
@@ -4548,7 +4714,7 @@ function __skyPostEvent(body) {
         if (!data) return;
         __skyHandleResponse(data.seq, data.ackInputs, function() {
           if (data.patches) __skyApplyPatches(data.patches);
-        });
+        }, data.globalSeq);
       });
     }
     return r.text().then(function(t) {
@@ -5174,7 +5340,7 @@ function __skyOpenSSE() {
       __skyHandleResponse(frame.seq, frame.ackInputs, function() {
         if (document.activeElement && document.activeElement.tagName === "SELECT") return;
         if (frame.body) __skyPatch(frame.body.replace(/\\n/g, "\n"));
-      });
+      }, frame.globalSeq);
     }
   });
   // Cycle 3 P50b / Gap C11 — structural-patches SSE event.
@@ -5235,7 +5401,7 @@ function __skyOpenSSE() {
     if (!frame || typeof frame !== "object" || !frame.patches) return;
     __skyHandleResponse(frame.seq, frame.ackInputs, function() {
       __skyApplyPatches(frame.patches);
-    });
+    }, frame.globalSeq);
   });
   __skySSE.addEventListener("open", function() {
     // EventSource fired open — but we don't trust this alone, since a

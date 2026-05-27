@@ -812,12 +812,21 @@ func (s *redisStore) Close() error {
 //
 // OutSeq must persist: the client tracks the largest seq it has applied
 // (__skyLastAppliedSeq) and silently drops any frame with seq ≤ that.
-// Without this field, after a server restart the new process's outSeq
+// Without this field, after a server restart the new process's localSeq
 // would reset to 0 and every frame would be classified stale by the
 // client — including the reconnect-resync push that's supposed to
 // refresh stale-view DOM after `sky watch` rebuilds. By persisting the
 // counter, the new process continues climbing past whatever the client
 // last saw, so resync frames register as fresh and apply.
+//
+// Cycle 3 P47 (pub/sub prereq 2 — see docs/skylive/pubsub-design.md
+// §3.2): liveSession's in-memory field has been renamed outSeq →
+// localSeq, but the GOB-persisted name MUST stay OutSeq so existing
+// SQLite / Postgres / Redis / Firestore session blobs decode cleanly.
+// globalSeq is app-wide (atomic.Int64 on liveApp) — NOT serialised
+// per-session; on restart the new process restarts globalSeq from 0,
+// and the client's __skyLastGlobalSeq guard is benign (a fresh
+// broadcast cycle is its own monotonic series).
 type storableSession struct {
 	Model    any
 	// PrevTree excluded: VNode.Events holds function values which
@@ -848,7 +857,7 @@ func encodeSession(s *liveSession) ([]byte, error) {
 	if err := enc.Encode(storableSession{
 		Model:    s.model,
 		LastSeen: s.lastSeenTime(),
-		OutSeq:   s.outSeq,
+		OutSeq:   s.localSeq,
 	}); err != nil {
 		return nil, err
 	}
@@ -940,8 +949,8 @@ func decodeSession(blob []byte) (*liveSession, error) {
 		// Cycle 3 P36 / Gap C4: provision the terminal-teardown
 		// channel so persistent-store rehydrates can also be cleanly
 		// stopped by markDone when the session is later evicted.
-		done:   make(chan struct{}),
-		outSeq: st.OutSeq,
+		done:     make(chan struct{}),
+		localSeq: st.OutSeq,
 	}
 	// Task #326: lastSeen is now an atomic.Int64 — can't be set in a
 	// struct literal, so seed it after construction.

@@ -2,7 +2,7 @@ package rt
 
 // Step 2 of docs/skylive/input-authority-protocol.md — wire-format
 // scaffolding. These tests pin the new fields end-to-end: parsing
-// req.inputState + req.batch on the server side, monotonic outSeq,
+// req.inputState + req.batch on the server side, monotonic localSeq,
 // ack-inputs eviction for unmounted elements, and the JSON / HTML /
 // SSE envelope shapes. Behaviour remains legacy-compatible: no patch
 // filtering yet (that's step 3), no stale-drop yet (step 4), but the
@@ -18,13 +18,13 @@ import (
 	"time"
 )
 
-func TestOutSeqMonotonic(t *testing.T) {
+func TestLocalSeqMonotonic(t *testing.T) {
 	s := &liveSession{}
-	a := s.nextOutSeq()
-	b := s.nextOutSeq()
-	c := s.nextOutSeq()
+	a := s.nextLocalSeq()
+	b := s.nextLocalSeq()
+	c := s.nextLocalSeq()
 	if a != 1 || b != 2 || c != 3 {
-		t.Errorf("nextOutSeq non-monotonic: got %d,%d,%d, want 1,2,3", a, b, c)
+		t.Errorf("nextLocalSeq non-monotonic: got %d,%d,%d, want 1,2,3", a, b, c)
 	}
 }
 

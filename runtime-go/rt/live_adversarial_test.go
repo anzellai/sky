@@ -19,7 +19,7 @@ import (
 
 // TestConcurrentEventsSerialise — two /_sky/event requests fired
 // concurrently against the same session MUST produce strictly
-// ordered seq values. sess.mu serialises dispatch, so nextOutSeq
+// ordered seq values. sess.mu serialises dispatch, so nextLocalSeq
 // runs under the lock per request; any interleaving that produces
 // duplicate or out-of-order seqs would mean the lock is being
 // released too early.
@@ -119,9 +119,9 @@ func TestConcurrentEventsSerialise(t *testing.T) {
 // DOM reflects the server's actual mutation order.
 func TestSeqCountsCoverEveryOutgoingFrame(t *testing.T) {
 	sess := &liveSession{}
-	a := sess.nextOutSeq()  // simulate event reply 1
+	a := sess.nextLocalSeq() // simulate event reply 1
 	sseFrame := encodeSSEFrame(sess, "<p>sub</p>") // subscription tick
-	b := sess.nextOutSeq()  // simulate event reply 2
+	b := sess.nextLocalSeq() // simulate event reply 2
 
 	var env map[string]any
 	if err := json.Unmarshal([]byte(sseFrame), &env); err != nil {
@@ -224,7 +224,7 @@ func TestLegacyFieldsPreserved(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("legacy request rejected: status %d, body %s", rr.Code, rr.Body.String())
 	}
-	// The response still carries a seq (server advances outSeq for
+	// The response still carries a seq (server advances localSeq for
 	// every reply), but respondingTo must be omitted since the client
 	// didn't supply one.
 	if strings.HasPrefix(rr.Header().Get("Content-Type"), "application/json") {
