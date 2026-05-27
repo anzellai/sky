@@ -568,6 +568,15 @@ lambdaParams_ mkError =
 
 exprCase :: (Row -> Col -> x) -> Parser x Src.Expr_
 exprCase mkError = do
+    -- Cycle 4 D4: subject may also start on the next line, as in
+    --     case
+    --         (a, b, c)
+    --     of
+    --         ...
+    -- `exprLet` does the same with `freshLine` at the head — mirror
+    -- it here so `case` accepts both the same-line and next-line
+    -- subject forms.
+    freshLine mkError
     subject <- expression mkError
     -- Accept `of` either on the same line as the subject end (the
     -- common single-line form), or after newlines+indent for the

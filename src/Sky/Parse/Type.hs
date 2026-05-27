@@ -5,7 +5,7 @@ module Sky.Parse.Type where
 import qualified Data.Text as T
 import Sky.Parse.Primitives
 import Sky.Parse.Space (spaces, freshLine, skipWhitespace)
-import Sky.Parse.Variable (lower, upper)
+import Sky.Parse.Variable (lower, upper, isLowerLike, isIdentChar)
 import qualified Sky.AST.Source as Src
 import qualified Sky.Reporting.Annotation as A
 
@@ -89,6 +89,12 @@ typeAtom mkError =
                          _ -> failParse mkError
 
         , -- Record type: { field : Type, ... }
+          -- Cycle 4 D6: also accept the row-polymorphic form
+          --     { r | field : Type, ... }
+          -- where `r` is a lowercase row variable.  The AST slot
+          -- (`Src.TRecord fields (Maybe String)`), canonicaliser,
+          -- HM Instantiate, and Unify all already support open
+          -- records — the parser was the only missing surface.
           do char mkError '{'
              freshLine mkError  -- field may be on next line
              mc <- peek
@@ -97,10 +103,31 @@ typeAtom mkError =
                      char mkError '}'
                      return (Src.TRecord [] Nothing)
                  _ -> do
-                     fields <- typeRecordFields mkError
-                     freshLine mkError
-                     char mkError '}'
-                     return (Src.TRecord fields Nothing)
+                     -- Use a non-consuming lookahead to decide
+                     -- between the row-poly form (`<lower> |`) and
+                     -- the closed form (`<lower> :`).  `lower`
+                     -- consumes on success, and once a parser has
+                     -- consumed input the surrounding bind converts
+                     -- any later empty-fail into a consumed-fail
+                     -- (Primitives.hs:93-102 `>>=` definition) which
+                     -- `oneOfWithFallback` won't catch — so we must
+                     -- branch BEFORE consuming.
+                     isRowPoly <- peekRowPolyIntro
+                     if isRowPoly
+                         then do
+                             rowVar <- lower mkError
+                             spaces
+                             char mkError '|'
+                             freshLine mkError
+                             fields <- typeRecordFields mkError
+                             freshLine mkError
+                             char mkError '}'
+                             return (Src.TRecord fields (Just rowVar))
+                         else do
+                             fields <- typeRecordFields mkError
+                             freshLine mkError
+                             char mkError '}'
+                             return (Src.TRecord fields Nothing)
 
         , -- Type constructor: Maybe, List, MyType, or qualified: Set.Set
           do name <- upper mkError
@@ -172,3 +199,29 @@ typeRecordFieldsRest mkError = Parser $ \s _ eok _ _ ->
             in p s (\a s2 -> eok a s2) eok (\r c m -> eok [] s) (\r c m -> eok [] s)
         _ ->
             eok [] s
+
+
+-- | Non-consuming lookahead for the row-polymorphic record opener
+-- `<lowerIdent> [whitespace] |`. Used by the record-type parser to
+-- decide between the closed form (`{ field : Type, … }`) and the
+-- row-poly form (`{ r | field : Type, … }`) WITHOUT first consuming
+-- the identifier (consumed input cannot be backtracked through
+-- `oneOfWithFallback`).
+peekRowPolyIntro :: Parser x Bool
+peekRowPolyIntro = Parser $ \s _cok eok _cerr _eerr ->
+    let src = _src s
+    in case T.uncons src of
+        Just (c, _)
+            | isLowerLike c ->
+                let (name, rest) = T.span isIdentChar src
+                    afterName    = T.dropWhile (\ch -> ch == ' ' || ch == '\t') rest
+                in case T.uncons afterName of
+                    -- A '|' immediately (mod inline whitespace) after
+                    -- the lowercase identifier is the row-poly
+                    -- separator.  A '|' from a record-update sigil
+                    -- (`{ rec | field = v }`) is in EXPRESSION land,
+                    -- never TYPE land, so we never see one here for
+                    -- the field-assignment-update meaning.
+                    Just ('|', _) | not (T.null name) -> eok True s
+                    _                                 -> eok False s
+        _ -> eok False s
