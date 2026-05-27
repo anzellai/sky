@@ -1361,6 +1361,45 @@ func (s *liveSession) nextOutSeq() int64 {
 	return s.outSeq
 }
 
+// commitRender writes both `prevTree` and `lastComputedBody` as a single
+// atomic step. Caller MUST hold sess.mu so the two fields are observed
+// in lockstep by any concurrent reader holding the same mutex.
+//
+// Cycle 3 P40 / Gap C7: prior to extraction, this 2-field invariant was
+// fanned out across FIVE call sites (handleInitial, dispatch's late
+// write at the end of the success path, dispatch's handler-rebuild
+// branch in handleEvent, the same rebuild in dispatchBatched, the SSE
+// reconnect-resync in handleSSE, and renderView's guard-rejected path).
+// Each site re-implemented "render → set prevTree → maybe set body"
+// with subtle variations:
+//
+//   - dispatch wrote prevTree EARLY (pre-runCmd) and lastComputedBody
+//     LATE (post-setupSubscriptions), with a panic-rollback snapshot
+//     bracketing both writes.
+//   - renderView wrote ONLY prevTree, leaving lastComputedBody stale
+//     against the freshly-rendered tree — a silent contract break that
+//     the audit (Cycle 3 C7) called out specifically.
+//   - The handler-rebuild branches in handleEvent + dispatchBatched
+//     discarded the rebuilt body entirely, leaving lastComputedBody
+//     pointing at whatever the prior dispatch (potentially in a prior
+//     process, decoded from sqlite/redis/postgres) had written. After
+//     P40 these write the rebuilt body too, strengthening the invariant.
+//
+// `lastShippedBody` is INTENTIONALLY NOT touched here — it tracks "last
+// body the client actually received" (post-P39 / Gap C2), an invariant
+// owned by the SSE-producing call sites (dispatchBatched, runPerformBody,
+// the Time.every tick goroutine, handleInitial's HTTP-response write,
+// handleSSE's reconnect-resync push). Those sites still write
+// `lastShippedBody` explicitly after commitRender so the "computed vs
+// shipped" split stays explicit at every callsite that ships.
+//
+// vn MUST NOT be nil; passing nil would corrupt the diff baseline used
+// by every subsequent dispatch.
+func (s *liveSession) commitRender(vn *VNode, body string) {
+	s.prevTree = vn
+	s.lastComputedBody = body
+}
+
 // ingestInputState absorbs the client's dirty-input snapshot into
 // sess.inputSeqs, retaining the larger seq per id. No state is lost
 // on concurrent events because every caller holds sess.mu.
@@ -2158,11 +2197,10 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	vn := HtmlToVNode(sky_call(app.view, model))
 	assignSkyIDs(&vn, "r")
 	body := renderVNode(vn, sess.handlers)
-	sess.prevTree = &vn
 	// Initial mount writes the full HTML directly into the HTTP
 	// response below — the client receives this body as the page,
 	// so it counts as BOTH "last computed" and "last shipped".
-	sess.lastComputedBody = body
+	sess.commitRender(&vn, body)
 	sess.lastShippedBody = body
 	app.store.Set(sid, sess)
 
@@ -2336,8 +2374,13 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 		sess.handlers = map[string]any{}
 		vn := HtmlToVNode(sky_call(app.view, sess.model))
 		assignSkyIDs(&vn, "r")
-		_ = renderVNode(vn, sess.handlers)
-		sess.prevTree = &vn
+		body := renderVNode(vn, sess.handlers)
+		// Route through commitRender (Cycle 3 P40 / Gap C7) so
+		// the rebuilt-handlers branch keeps prevTree +
+		// lastComputedBody coherent. Previously the body was
+		// discarded, so lastComputedBody pointed at whatever the
+		// prior process (or prior dispatch) had written.
+		sess.commitRender(&vn, body)
 	}
 	msg, ok := sess.handlers[req.HandlerID]
 	if !ok && req.Msg != "" && req.HandlerID == "" {
@@ -2521,8 +2564,12 @@ func (app *liveApp) dispatchBatched(sess *liveSession, ev batchedEvent) {
 		sess.handlers = map[string]any{}
 		vn := HtmlToVNode(sky_call(app.view, sess.model))
 		assignSkyIDs(&vn, "r")
-		_ = renderVNode(vn, sess.handlers)
-		sess.prevTree = &vn
+		body := renderVNode(vn, sess.handlers)
+		// Route through commitRender (Cycle 3 P40 / Gap C7) so
+		// the rebuilt-handlers branch keeps prevTree +
+		// lastComputedBody coherent — same shape as the
+		// handleEvent rebuild above.
+		sess.commitRender(&vn, body)
 	}
 	msg, ok := sess.handlers[ev.HandlerID]
 	if !ok && ev.Msg != "" && ev.HandlerID == "" {
@@ -2670,9 +2717,10 @@ func (app *liveApp) dispatch(sess *liveSession, msg any) (body string) {
 			// Roll back the view invariants. The current dispatch has
 			// failed; the prior valid prevTree / lastComputedBody must
 			// remain the source of truth for the next dispatch's
-			// suppression and diff baseline.
-			sess.prevTree = prevTreeOnEntry
-			sess.lastComputedBody = prevComputedOnEntry
+			// suppression and diff baseline. Route through commitRender
+			// (Cycle 3 P40 / Gap C7) so the rollback path follows the
+			// same atomic-pair contract as every other write site.
+			sess.commitRender(prevTreeOnEntry, prevComputedOnEntry)
 		}
 		ObserveMsgLog(msgLogCtx, sess.model, finalCmd, dispatchErr)
 	}()
@@ -2718,11 +2766,18 @@ func (app *liveApp) dispatch(sess *liveSession, msg any) (body string) {
 	vn := HtmlToVNode(sky_call(app.view, sess.model))
 	assignSkyIDs(&vn, "r")
 	body = renderVNode(vn, sess.handlers)
-	sess.prevTree = &vn
-	// Process Cmds (may spawn goroutines)
-	app.runCmd(sess, cmd)
-	// Re-evaluate subscriptions based on new model
-	app.setupSubscriptions(sess)
+	// Commit prevTree + lastComputedBody as one atomic step (Cycle 3
+	// P40 / Gap C7). Previously this was two separate writes — prevTree
+	// here, lastComputedBody after runCmd + setupSubscriptions — which
+	// left a window where the two fields could be observed desynced
+	// (handled by the panic-rollback snapshot above, but fragile).
+	//
+	// runCmd + setupSubscriptions don't read prevTree or
+	// lastComputedBody synchronously (they spawn goroutines that
+	// acquire sess.mu later), so consolidating the write here is
+	// behaviourally equivalent to the prior split and tightens the
+	// invariant window.
+	//
 	// No-op suppression: previously we short-circuited on
 	// `body == sess.prevBody` (byte-equality) so a Time.every tick
 	// without view-reachable state changes wouldn't push a redundant
@@ -2747,18 +2802,29 @@ func (app *liveApp) dispatch(sess *liveSession, msg any) (body string) {
 	// SSE producer's job (post-P39 / Gap C2). Suppression callers
 	// compare against the last value the client actually received,
 	// not against this just-computed value.
-	sess.lastComputedBody = body
+	sess.commitRender(&vn, body)
+	// Process Cmds (may spawn goroutines)
+	app.runCmd(sess, cmd)
+	// Re-evaluate subscriptions based on new model
+	app.setupSubscriptions(sess)
 	return body
 }
 
 // renderView: re-render from current session model without updating
 // the model (used by dispatch when guard short-circuits).
+//
+// Routes through commitRender (Cycle 3 P40 / Gap C7) so the guard-
+// rejected path keeps prevTree + lastComputedBody coherent.
+// Previously this wrote ONLY prevTree, leaving lastComputedBody
+// pointing at the prior dispatch's body even though the just-
+// rendered tree had just replaced prevTree — a silent contract
+// break the audit explicitly flagged.
 func (app *liveApp) renderView(sess *liveSession) string {
 	sess.handlers = map[string]any{}
 	vn := HtmlToVNode(sky_call(app.view, sess.model))
 	assignSkyIDs(&vn, "r")
 	body := renderVNode(vn, sess.handlers)
-	sess.prevTree = &vn
+	sess.commitRender(&vn, body)
 	return body
 }
 
@@ -3046,12 +3112,11 @@ func (app *liveApp) handleSSE(w http.ResponseWriter, r *http.Request) {
 			assignSkyIDs(&vn, "r")
 			sess.handlers = map[string]any{}
 			body := renderVNode(vn, sess.handlers)
-			sess.prevTree = &vn
 			// Reconnect-resync writes the resync frame DIRECTLY to
 			// the SSE response writer below — so this body is both
 			// just-computed AND just-shipped, and the next tick's
 			// suppression must compare against it.
-			sess.lastComputedBody = body
+			sess.commitRender(&vn, body)
 			sess.lastShippedBody = body
 			frame := encodeSSEFrame(sess, body)
 			// Encode + write while still under lock to avoid interleaving
