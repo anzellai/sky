@@ -29,7 +29,7 @@
 -- make a real content change to THIS `.hs` file — bump the marker
 -- below — so cabal recompiles it and the splice re-walks the tree.
 --
--- re-embed marker: 2026-05-23.2 — __skyRunPaths keeps the element (sky-id continuity)
+-- re-embed marker: 2026-05-27 — Cycle 3 P46 pub/sub registry (live_topics.go + live_topics_test.go)
 module Sky.Build.EmbeddedRuntime
     ( embeddedRuntime
     , embeddedSkyStdlib

@@ -839,20 +839,38 @@ func randID() string {
 // ═══════════════════════════════════════════════════════════
 
 type cmdT struct {
-	kind  string // "none", "perform", "batch"
+	// kind values:
+	//   "none"      — Cmd.none — no-op
+	//   "batch"     — Cmd.batch — fan out a list of Cmds
+	//   "perform"   — Cmd.perform task toMsg — spawn task in goroutine
+	//   "publish"   — Cmd.publish topic payload (Cycle 3 P46 stub;
+	//                 P48 wires the dispatch path)
+	kind  string
 	task  any
 	toMsg any
 	batch []any
+	// Pub/sub fields (kind = "publish"). Cycle 3 P46.
+	topic   string
+	payload any
 }
 
 // SkyCmd is the public type for Sky's Cmd msg type.
 type SkyCmd = cmdT
 
 type subT struct {
-	kind  string // "none", "every", "batch"
+	// kind values:
+	//   "none"           — Sub.none — no subscription
+	//   "every"          — Sub.every intervalMs toMsg — periodic tick
+	//   "batch"          — Sub.batch — combine multiple Subs
+	//   "subscribeTopic" — Sub.subscribeTopic topic toMsg
+	//                      (Cycle 3 P46 stub; P48 wires setupSubscriptions
+	//                      to spawn the subscriber goroutine)
+	kind  string
 	ms    int
 	toMsg any
 	batch []any
+	// Pub/sub field (kind = "subscribeTopic"). Cycle 3 P46.
+	topic string
 }
 
 // SkySub is the public type for Sky's Sub msg type.
@@ -881,6 +899,51 @@ func Sub_batch(list any) SkySub {
 
 // Time.every is an alias of Sub.every in Sky code
 func Time_every(ms any, to any) SkySub { return Sub_every(ms, to) }
+
+// ─── Pub/sub stubs (Cycle 3 P46) ───────────────────────────────────
+//
+// These kernels MINT the typed Cmd/Sub envelope but don't yet
+// dispatch through the registry — P48 wires runCmd's "publish" arm
+// + setupSubscriptions' "subscribeTopic" arm. P46's job is to land
+// the runtime registry + interface seam; the Sky-side surface
+// (Std.Cmd.publish / Std.Sub.subscribeTopic) lands in P48 alongside
+// the dispatch wiring.
+//
+// Kept here (next to the existing Cmd_/Sub_ family) so the codegen
+// kernel table — once P48 adds them — has the symbols pre-existing
+// at the runtime layer. Calling these from hand-written Go code
+// today builds a well-formed value; runCmd / setupSubscriptions
+// currently no-op on the new kinds (no behaviour leak).
+
+// Cmd_publish builds a "publish" Cmd. Sky-side surface:
+//
+//	Std.Cmd.publish : String -> any -> Cmd msg
+//
+// Fire-and-forget; no result feedback to the publisher (per design
+// doc §2.1). topic is the wire channel id (exact-match string;
+// pattern subs out of scope per design doc §1.2 non-goal 4).
+func Cmd_publish(topic, payload any) SkyCmd {
+	return cmdT{
+		kind:    "publish",
+		topic:   fmt.Sprintf("%v", topic),
+		payload: payload,
+	}
+}
+
+// Sub_subscribeTopic builds a "subscribeTopic" Sub. Sky-side surface:
+//
+//	Std.Sub.subscribeTopic : String -> (any -> msg) -> Sub msg
+//
+// The toMsg function is the user-supplied decoder; the subscriber
+// goroutine (P48) calls it with each incoming SessionEvent.Payload
+// to produce a Msg for `update`.
+func Sub_subscribeTopic(topic, toMsg any) SkySub {
+	return subT{
+		kind:  "subscribeTopic",
+		topic: fmt.Sprintf("%v", topic),
+		toMsg: toMsg,
+	}
+}
 
 // ═══════════════════════════════════════════════════════════
 // Std.Live — HTTP-first server-driven UI with TEA architecture
@@ -1344,6 +1407,19 @@ type liveSession struct {
 	// flags once the server has caught up. Stale ids (not present in
 	// prevTree) are evicted on each ack build; see ackInputsForPrevTree.
 	inputSeqs map[string]int64
+
+	// activeSubs — pub/sub subscriptions currently bound to this
+	// session, keyed by topic. Cycle 3 P46. Populated by
+	// setupSubscriptions (diff-mode in P48): on every dispatch, the
+	// runtime builds the DESIRED topic set from the model, computes
+	// (added, removed) vs activeSubs, opens NEW subscriptions for
+	// `added`, cancels REMOVED, and leaves the intersection untouched
+	// (the existing channel + goroutine carry over with no broadcast
+	// loss). markDone walks activeSubs and calls each cancel so a
+	// Deleted / TTL-evicted session releases its broker refcounts.
+	//
+	// Owned by sess.mu — every read / write happens under the lock.
+	activeSubs map[string]*subRegistration
 }
 
 // touchLastSeen — stamp the lastSeen counter with the current wall
@@ -1399,6 +1475,21 @@ func (s *liveSession) markDone() {
 			s.done = make(chan struct{})
 		}
 		close(s.done)
+		// Cycle 3 P46: release every pub/sub subscription bound to
+		// this session so its refcount on the broker drops to zero.
+		// Each cancel is idempotent (sync.Once on the broker side)
+		// so a setupSubscriptions cancel racing with markDone is
+		// safe. We DON'T take sess.mu here — markDone can fire from
+		// the cleanupLoop / Store.Delete path, and the existing
+		// terminal-teardown discipline (Time.every goroutine selects
+		// on sess.done before touching sess fields) keeps the data
+		// race-free without escalating to the mutex.
+		for _, reg := range s.activeSubs {
+			if reg != nil && reg.cancel != nil {
+				reg.cancel()
+			}
+		}
+		s.activeSubs = nil
 	})
 }
 
@@ -1618,6 +1709,14 @@ type liveApp struct {
 	// correctly — without this, a sub-app's wire calls would hit
 	// the PARENT mux instead of the sub-app's.
 	basePath string
+	// topics — pub/sub registry (Cycle 3 P46). Same pointer the
+	// app.store.Broker() returns; cached here so subscribe / publish
+	// call sites don't have to indirect through the store on every
+	// hot-path call. v0.15.x: in-process *topicRegistry. v0.16+
+	// cross-process backends (Redis Pub/Sub, Cloud Pub/Sub, NATS,
+	// Postgres LISTEN/NOTIFY — see docs/skylive/pubsub-design.md
+	// §11.2.5) implement the same Broker interface.
+	topics Broker
 }
 
 // apiRoute represents a custom handler mounted outside the TEA cycle.
@@ -1944,6 +2043,11 @@ func liveAppRun(cfg any) any {
 	ttl := parseTTL(skyGetenv("LIVE_TTL"), stringField(cfg, "Ttl"), 30*time.Minute)
 	app.store = chooseStore(storeKind, storePath, ttl)
 	app.sessionTTL = ttl
+	// Cycle 3 P46: cache the store-bound broker on the app for
+	// hot-path Subscribe/Publish call sites (the broker is shared
+	// app-wide; the store owns the binding so v0.16+ cross-process
+	// backends can swap implementations without touching call sites).
+	app.topics = app.store.Broker()
 
 	// Resolve listen port early so sub-app spawn helpers
 	// (maybeAutoMountConsole below) can pass it to children via
