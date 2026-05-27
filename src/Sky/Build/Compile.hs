@@ -6541,6 +6541,51 @@ ctxFromIORef :: () -> LC.LowerCtx
 ctxFromIORef () = unsafePerformIO (readIORef scopeStateRef)
 
 
+-- | v0.15.x P38 (Cycle 3 / audit C10) — explicit-snapshot helper for
+-- the P37b-resumed cascade slots (record-field init, list element,
+-- let body).  Reads `scopeStateRef` ONCE at the call site and forces
+-- the resulting `LC.LowerCtx` to WHNF before returning it.
+--
+-- Why a separate helper from `ctxFromIORef`:
+--
+--   1. The cascade-resume slots feed the returned ctx into the
+--      ctx-aware wrappers (`lowerExprExpectGo` / `lowerExpr`).  Those
+--      wrappers `seq` the incoming ctx before writing it back into
+--      `scopeStateRef` — but that `seq` runs at the wrapper's entry,
+--      AFTER any sibling computation that may have built deferred
+--      thunks reading `scopeStateRef`.  Forcing WHNF at THE SNAPSHOT
+--      site closes the secondary thunk race that PR #91 (P37b,
+--      v0.15.19 / merged at c7a31df) called out as the load-bearing
+--      `<<loop>>` reproducer on examples/13-skyshop: the wrapper
+--      writes the not-yet-forced snapshot, downstream reads the
+--      IORef, forces the value, finds "reread me from scopeStateRef",
+--      and loops.  See the PR description's section "P37b — `seq` the
+--      incoming ctx before writing it" for the exhaustive analysis.
+--
+--   2. The Haddock here documents the snapshot semantics explicitly:
+--      the returned ctx is the value installed at the CALL site, NOT
+--      any inner-wrapper-installed value.  Future cascade migrations
+--      (record/list/let-body deepening; eventual full IORef deletion
+--      under Phase 3+) must preserve this contract.  Naming the read
+--      makes the semantic visible at every call site rather than
+--      sprinkled across multiple `unsafePerformIO (readIORef …)`
+--      transliterations.
+--
+--   3. NOINLINE matches `ctxFromIORef`: each call site forces a
+--      fresh IORef read.  Without it GHC may share the snapshot
+--      across nested cascade slots — silently breaking the
+--      "snapshot at call site" contract.
+--
+-- The `seq` here is LOAD-BEARING; do NOT remove it as part of a
+-- "tidy up" refactor.  Removing it re-opens the PR #91 thunk hazard
+-- class.
+{-# NOINLINE snapshotCallerCtx #-}
+snapshotCallerCtx :: () -> LC.LowerCtx
+snapshotCallerCtx () = unsafePerformIO $ do
+    ctx <- readIORef scopeStateRef
+    ctx `seq` return ctx
+
+
 -- | v0.13 typed lowerer: convert a canonical expression to Go IR
 -- WITH a known expected type from the surrounding context.
 --
@@ -6625,7 +6670,11 @@ exprToGoExpectGo goRendering e@(A.At _ expr)
         -- records.
         Can.List items
             | Just elemTy <- stripListType goRendering ->
-                let elemCtx = ctxFromIORef ()
+                -- v0.15.x P38 — list-element slot routes its caller
+                -- ctx through `snapshotCallerCtx` so the snapshot is
+                -- forced to WHNF at the call site (closes the P37b
+                -- PR #91 thunk hazard for the cascade-resume slots).
+                let elemCtx = snapshotCallerCtx ()
                 in GoIr.GoSliceLit elemTy
                     [ lowerExprExpectGo elemCtx elemTy it | it <- items ]
 
@@ -6779,7 +6828,12 @@ lowerRecordLiteralTo targetTy fields =
         -- `letBindingType` is pure, the seam is gone: every field
         -- routes through the explicit-ctx wrapper so threaded ctx
         -- flows into nested record / lambda / list arms.
-        fieldCtx = ctxFromIORef ()
+        --
+        -- v0.15.x P38 — caller ctx now flows through
+        -- `snapshotCallerCtx` so the WHNF force happens at the
+        -- snapshot site, not deferred to the wrapper's entry seq
+        -- (see helper Haddock for the P37b PR #91 thunk hazard).
+        fieldCtx = snapshotCallerCtx ()
         lowerField fn fe =
             let fieldGoTy = Map.findWithDefault "any" fn fieldTypeMap
             in coerceToFieldType fieldGoTy
@@ -10101,7 +10155,12 @@ letToGo mExpectedGo def body =
         -- region lookup reads `Solve.SolvedTypes._stRegions`
         -- directly), the deferred-thunk cycle is broken and the
         -- body can route through the explicit-ctx wrapper.
-        bodyCtx = ctxFromIORef ()
+        --
+        -- v0.15.x P38 — caller ctx now flows through
+        -- `snapshotCallerCtx` so the WHNF force happens at the
+        -- snapshot site (see helper Haddock for the P37b PR #91
+        -- thunk hazard the seq pattern was designed to close).
+        bodyCtx = snapshotCallerCtx ()
         lowerBody = case mExpectedGo of
             Just gt -> lowerExprExpectGo bodyCtx gt
             Nothing -> lowerExpr bodyCtx

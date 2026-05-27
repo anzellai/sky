@@ -297,6 +297,7 @@ test-suite sky-tests
       Sky.Build.CoerceArgListMapInterplaySpec
       Sky.Build.LowerCtxCascadeSpec
       Sky.Build.LetBodyCascadeResumeSpec
+      Sky.Build.SnapshotCallerCtxSpec
       Sky.Build.SkyshopCompilesSpec
       Sky.Build.AnonLambdaSpec
       Sky.Build.AnonRecordSpec

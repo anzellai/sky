@@ -50,6 +50,7 @@ import qualified Sky.Build.InferExprTypeBinopSpec
 import qualified Sky.Build.CoerceArgListMapInterplaySpec
 import qualified Sky.Build.LowerCtxCascadeSpec
 import qualified Sky.Build.LetBodyCascadeResumeSpec
+import qualified Sky.Build.SnapshotCallerCtxSpec
 import qualified Sky.Build.SkyshopCompilesSpec
 import qualified Sky.Build.AnonLambdaSpec
 import qualified Sky.Build.AnonRecordSpec
@@ -322,6 +323,17 @@ main = hspec $ do
     -- (c) the typed-coerce emission shape on a let-body fixture.
     describe "Sky.Build.LetBodyCascadeResume"
                                             Sky.Build.LetBodyCascadeResumeSpec.spec
+    -- v0.15.x hardening / Cycle 3 P38 — audit gap C10 closure.
+    -- The three P37b-resumed cascade slots (record-field init,
+    -- list element, let body) now share a single
+    -- `snapshotCallerCtx` helper that reads scopeStateRef and
+    -- forces the resulting LowerCtx to WHNF before returning it.
+    -- Lock fires on (a) the helper's source-level signature +
+    -- NOINLINE pragma + load-bearing `seq`, (b) exactly three
+    -- call sites, (c) the P37b PR #91 thunk-hazard provenance
+    -- comment, (d) end-to-end build of the three-slot fixture.
+    describe "Sky.Build.SnapshotCallerCtx"
+                                            Sky.Build.SnapshotCallerCtxSpec.spec
     -- v0.15.x hardening / Cycle 1 P2-followup STANDING lock —
     -- examples/13-skyshop is the Stripe-SDK-scale benchmark
     -- (76k FFI symbols) and is the canary that catches
