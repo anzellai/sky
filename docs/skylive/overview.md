@@ -155,6 +155,17 @@ Some edges (Cloudflare without the right page rule, fly.io, custom Nginx) can re
 2. **Client SSE.** `connected` only flips on the `hello` event, never on raw `EventSource.open`. A 5 s watchdog tears down + reopens the stream if no hello arrives within `SKY_LIVE_HELLO_TIMEOUT_MS` (8 s default) or no heartbeat within `SKY_LIVE_HEARTBEAT_TTL_MS` (35 s default ≈ 2× heartbeat).
 3. **Client POST.** A 200 OK without `X-Sky-Live: 1` is treated as a wedged proxy response — never applied as a patch, always rerouted through the retry path.
 
+### SSE frame buffer + drop visibility
+
+Each session has a buffered `chan string` between its SSE producers (`dispatchBatched`, `runPerformBody`, the `Time.every` tick goroutine) and the SSE consumer (the `handleSSE` for-select loop). Default capacity is **16 frames**. Under heavy load (rapid keystrokes + tight `Time.every` + parallel `Cmd.perform` completions), the buffer can fill; the producer's `select { default: }` arm drops the frame to keep the dispatcher unblocked.
+
+Two knobs:
+
+- **`SKY_LIVE_SSE_BUFFER`** (default `16`, clamped to `[1, 1024]`) — raise the capacity for apps that burst-render (e.g. screen-share, collaborative cursors, high-frequency dashboards). Lower it to `1` in tests that want to deterministically trigger drops.
+- **`sky_live_sse_drops_total{session=<sid>}`** — Prometheus counter exported at `/_sky/metrics`. Increments once per dropped frame, labelled by session id so operators can pinpoint hot loops. Per-session cardinality is bounded by the telemetry store's 10k label-combination cap; deployments expecting many more unique sessions should rely on the unlabelled total (sum across the label).
+
+The drop is a correctness loss in transit (the client misses that specific frame), but the next view-changing dispatch supersedes it, so the user's eventual state is consistent. Watching `rate(sky_live_sse_drops_total[5m])` is the production signal that the buffer needs raising.
+
 ### Localising the banner
 
 Override the banner strings via the `status` field on `Live.app`. No type signature change is needed — `Live.app`'s record is open via the kernel's `appExt` extension.

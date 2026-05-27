@@ -413,6 +413,7 @@ Configuration precedence: **process env > `.env` > `sky.toml`**.
 | `SKY_LIVE_QUEUE_MAX` | — | 50 |
 | `SKY_LIVE_HELLO_TIMEOUT_MS` | — | 8000 |
 | `SKY_LIVE_HEARTBEAT_TTL_MS` | — | 35000 |
+| `SKY_LIVE_SSE_BUFFER` | — | 16 (clamped to [1, 1024]; drops surfaced as `sky_live_sse_drops_total{session}`) |
 | `SKY_LIVE_BASE_PATH` | — | (set by `MountSubApp`) |
 
 ### Logging (`[log]` section)
