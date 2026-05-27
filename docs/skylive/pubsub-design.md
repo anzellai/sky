@@ -986,10 +986,21 @@ reference; user-facing docs are a separate deliverable.
 | Memory backend + many topics + restart → no continuity | Acceptable | Memory backend is dev-mode default; persistent backends (sqlite / postgres / redis) preserve sessions across restart and subscriptions re-attach automatically (§6.4). |
 | Existing apps that use polling continue to poll AND now also subscribe (double-load) | None | Opt-in; no automatic migration (§10.5). Apps that adopt pub/sub remove their polling explicitly. |
 
-### 11.2 Open questions for human reviewer
+### 11.2 Open questions for human reviewer — RESOLVED 2026-05-27
 
-The doc resolves most architectural decisions, but four points
-explicitly need a thumbs-up before P46 starts.
+User locked in all four recommended defaults. Summary in §11.2.5;
+full original analysis preserved below for context.
+
+| Q | Default chosen |
+|---|---|
+| Q1 — API naming | `Std.Cmd.publish` / `Std.Sub.subscribeTopic` |
+| Q2 — Echo to publisher | Yes (matches Redis/NATS/MQTT) |
+| Q3 — Per-session sub-rate limit | No limit in v0.15.x |
+| Q4 — Cmd_publish routing | Thread through dispatch context (option a) |
+
+P46 unblocked to begin implementation with these defaults.
+
+---
 
 **Q1: Is `Live.publish` / `Live.subscribeTopic` the right naming?**
 
@@ -1069,6 +1080,88 @@ options:
 reference; passing it through is a one-line plumbing change.
 
 **Decision needed:** confirm or pick alternative.
+
+### 11.2.5 Cross-process broker tiers (Cloud Run scaling)
+
+The in-process registry in §3 covers a SINGLE Sky.Live instance
+end-to-end. For multi-instance deployments (Cloud Run autoscaling,
+multi-pod Kubernetes, blue/green deploys with concurrent traffic on
+both versions) sessions on different instances do NOT see each
+other's publishes — the registry is per-process.
+
+**v0.15.x ships in-process only.** The `liveStore.Subscribe`
+interface already exists (§3.2) precisely so v0.16+ can plug in
+cross-process brokers without touching call-sites. This subsection
+records the planned implementation tiers so apps can pick the right
+broker when they need cross-instance fan-out.
+
+| Tier | Tech | Cost | When |
+|---|---|---|---|
+| 0 (v0.15.x default) | In-process Go channels + refcounted registry | $0 / no extra infra | Single-instance Cloud Run; dev; sky-diagram-shaped apps with low cross-session traffic |
+| 1 (v0.16 priority) | Redis Pub/Sub via `github.com/redis/go-redis/v9` PSubscribe | $5-30/mo managed Redis | Multi-instance Cloud Run; ubiquitous broker; sub-ms latency on same VPC; doesn't persist (acceptable for live-collab) |
+| 2 (v0.16+) | Google Cloud Pub/Sub streaming pull | ~$0.40 per million msgs | GCP-native deployments (Cloud Run + Firestore stacks); IAM-authenticated; auto-scales infinitely; persistence + replay if needed |
+| 3 (v0.16+ nice-to-have) | PostgreSQL LISTEN/NOTIFY | $0 if already on Postgres | Apps already on Postgres that want zero extra moving parts; 8KB payload cap acceptable for Msg-shape broadcasts |
+| 4 (deferred) | NATS JetStream | $5+/mo managed NATS | High-throughput apps that outgrow Redis Pub/Sub; subjects + persistence |
+
+**Selection at runtime** mirrors `[live] store` in sky.toml:
+
+```toml
+[live.broker]
+kind    = "redis"             # in-process (default) | redis | gcp-pubsub | pg-notify
+url     = "$REDIS_URL"        # broker-specific URL
+prefix  = "sky-live"          # topic prefix for namespacing
+```
+
+`sky_live_broker_msgs_total{kind,direction}` Prometheus counter
+exported alongside the SSE drop counter (§6.7).
+
+### 11.2.6 Cloud Run connection-duration cap
+
+Cloud Run terminates HTTP requests at `--timeout` (max 60 min). The
+SSE long-lived response is one such request; it gets cut at the
+ceiling. Existing v0.15.13+ behaviour handles this without changes:
+
+1. EventSource auto-reconnects on close
+2. handleSSE's reconnect-resync (§4.4 / `live.go:~2820`) re-renders
+   from current sess.model and ships a fresh frame on connect
+3. Pub/sub messages published DURING the reconnect window:
+   - In-process (tier 0): SAFE — same process retains session state
+     across the SSE reconnect; messages buffered briefly in
+     `sess.sseCh` (capacity gated by `SKY_LIVE_SSE_BUFFER`)
+   - Cross-process tiers (1-4): broker buffers per-subscriber
+     queues; on reconnect the subscriber rejoins + drains the
+     queue. Redis Pub/Sub does NOT buffer (ephemeral) — small
+     window of message loss across reconnect; Cloud Pub/Sub +
+     Redis Streams + NATS JetStream all buffer durably
+
+User-visible impact during reconnect: the connection-status banner
+flashes "reconnecting…" for the SSE handshake (~50-500ms typical).
+No polling, no message loss when using durable brokers.
+
+### 11.2.7 Push at every layer (no polling anywhere)
+
+Recap of the no-polling guarantee for downstream readers:
+
+| Layer | Direction | Mechanism |
+|---|---|---|
+| Browser ← Sky.Live | Push | SSE (existing) — server-sent events; browser receives without polling |
+| Sky.Live instance ← Broker | Push | Long-lived subscription. Redis PSubscribe blocks on the connection; Cloud Pub/Sub streaming pull holds the connection open; both are push from the broker's perspective |
+| Sky.Live publish → Broker | Synchronous request | Single PUBLISH on the existing broker connection; no polling involved |
+
+The previous polling-based approach (`Time.every 2000 RefreshTick`)
+is **completely replaced** in apps that adopt pub/sub. The
+migration path (§10) walks through this for sky-diagram and the
+chatroom example.
+
+### 11.2.8 Security defaults
+
+| Concern | v0.15.x | v0.16+ broker tiers |
+|---|---|---|
+| Transport | N/A (in-process) | TLS to broker (Redis 6+ TLS, Cloud Pub/Sub HTTPS-only) |
+| Broker auth | N/A | Redis AUTH/ACL, Cloud Pub/Sub IAM |
+| Topic namespacing by tenant | App responsibility (prefix topics manually) | Recommended pattern: `<tenant>:<app>:<topic>` — sky.toml `[live.broker] prefix = "<tenant>"` does the first segment automatically |
+| Server-side topic-access guard | Extend existing `guard : Msg → Model → Result Error ()` to a `subscribeGuard : Topic → Model → Result Error ()` so apps gate subscription from Std.Auth context. **Implementation deferred to P47 or later — call out in plan.** |
+| Cross-tenant accidental subscription | Prevented if both broker-prefix + app-level topic-namespacing are used | Audited in P49's example |
 
 ### 11.3 Things that DON'T need a decision
 
