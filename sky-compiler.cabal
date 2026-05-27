@@ -262,6 +262,7 @@ test-suite sky-tests
       Sky.Canonicalise.KernelFallbackSpec
       Sky.Canonicalise.UnboundSpec
       Sky.Canonicalise.QualifiedTypeAliasSpec
+      Sky.Canonicalise.DualImportCollisionSpec
       Sky.Type.ExhaustivenessSpec
       Sky.Type.AnyWildcardSpec
       Sky.Type.NumericBinopSpec

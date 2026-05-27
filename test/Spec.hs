@@ -16,6 +16,7 @@ import qualified Sky.Canonicalise.ExposingSpec
 import qualified Sky.Canonicalise.KernelFallbackSpec
 import qualified Sky.Canonicalise.UnboundSpec
 import qualified Sky.Canonicalise.QualifiedTypeAliasSpec
+import qualified Sky.Canonicalise.DualImportCollisionSpec
 import qualified Sky.Type.ExhaustivenessSpec
 import qualified Sky.Type.AnyWildcardSpec
 import qualified Sky.Type.NumericBinopSpec
@@ -153,6 +154,14 @@ main = hspec $ do
     -- rejected with the cryptic "Color vs Color" message.
     describe "Sky.Canonicalise.QualifiedTypeAlias"
                                          Sky.Canonicalise.QualifiedTypeAliasSpec.spec
+    -- Cycle 4 D5: two imports with the same default qualifier (e.g.
+    -- `import State` + `import App.State` — both last-segment `State`)
+    -- silently miscompiled — the `_importAliases` last-wins vs
+    -- `_qualVars` union mismatch produced the dishonest "Model vs
+    -- Model" type error. Now rejected at canonicalisation time with
+    -- an explicit fix-it suggesting `as Alias`.
+    describe "Sky.Canonicalise.DualImportCollision"
+                                         Sky.Canonicalise.DualImportCollisionSpec.spec
     describe "Sky.Type.Exhaustiveness"   Sky.Type.ExhaustivenessSpec.spec
     -- Cross-branch HM `any` wildcard fix (compiler bug #3). Distinct
     -- occurrences of `any` in source types must NOT share a single
