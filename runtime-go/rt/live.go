@@ -1467,25 +1467,81 @@ func ackInputsForPrevTree(s *liveSession) map[string]int64 {
 	return out
 }
 
-// encodeSSEFrame serialises a body plus the session-wide seq + ack
-// inputs into a JSON envelope. The consumer-side EventSource listener
-// parses it back out. MUST be called with sess.mu held.
-func encodeSSEFrame(sess *liveSession, body string) string {
-	frame := map[string]any{
-		"seq":  sess.nextOutSeq(),
-		"body": body,
+// frameSnapshot captures every piece of session state encodeSSEFrame
+// reads — bumped seq, body, ackInputs — so the JSON marshal can run
+// AFTER sess.mu has been released. Cycle 3 P41 / Gap C6: prior to
+// this, encodeSSEFrame was called under sess.mu at four call sites
+// (dispatchBatched, runPerformBody, the Time.every Tick goroutine,
+// the SSE reconnect-resync in handleSSE). Marshalling a ~14 KB body
+// while holding the session mutex blocked every other dispatch on
+// the same session for the duration of the encode (~200µs for 50 KB
+// on M1). The snapshot makes that block strictly the bump+ack-build
+// + map-copy cost; the marshal moves outside.
+type frameSnapshot struct {
+	seq       int64
+	body      string
+	ackInputs map[string]int64
+}
+
+// prepareFrameSnapshot captures (seq, body, ackInputs) under sess.mu so
+// the JSON marshal can run after the caller releases the lock. Caller
+// MUST already hold sess.mu — both nextOutSeq and ackInputsForPrevTree
+// mutate session state (outSeq counter; inputSeqs eviction of unmounted
+// ids). After this returns, the caller is free to Unlock and then call
+// encodeSSEFrameFromSnapshot on the returned value without re-locking;
+// the snapshot is pure data with no aliasing back to sess.
+//
+// seq monotonicity across concurrent producers is preserved by the
+// existing sess.mu serialisation of nextOutSeq: two dispatch paths
+// that race for the lock take the seq in the order they acquire the
+// lock, regardless of how their post-unlock marshal interleaves. The
+// SSE channel reader writes frames to the wire in arrival order; the
+// client's __skyHandleResponse applies frames in seq order (already
+// the contract — see live_adversarial_test.go for the lock-out test).
+func (s *liveSession) prepareFrameSnapshot(body string) frameSnapshot {
+	return frameSnapshot{
+		seq:       s.nextOutSeq(),
+		body:      body,
+		ackInputs: ackInputsForPrevTree(s),
 	}
-	if ack := ackInputsForPrevTree(sess); ack != nil {
-		frame["ackInputs"] = ack
+}
+
+// encodeSSEFrameFromSnapshot serialises a snapshot to the SSE wire
+// envelope. Pure function — safe to call without holding sess.mu.
+// The fallback branch uses snap.seq (not sess.outSeq) so a marshal
+// failure post-unlock still names the frame's true seq.
+func encodeSSEFrameFromSnapshot(snap frameSnapshot) string {
+	frame := map[string]any{
+		"seq":  snap.seq,
+		"body": snap.body,
+	}
+	if snap.ackInputs != nil {
+		frame["ackInputs"] = snap.ackInputs
 	}
 	b, err := json.Marshal(frame)
 	if err != nil {
 		// Marshalling a map of primitives can't fail in practice, but
 		// fall back to a bare seq+body frame just in case so the
 		// channel never carries a garbage string.
-		return fmt.Sprintf(`{"seq":%d,"body":%q}`, sess.outSeq, body)
+		return fmt.Sprintf(`{"seq":%d,"body":%q}`, snap.seq, snap.body)
 	}
 	return string(b)
+}
+
+// encodeSSEFrame is the legacy lock-held shape kept for callers that
+// still need the synchronous "snapshot + marshal under one lock"
+// behaviour. Internally it now defers to prepareFrameSnapshot +
+// encodeSSEFrameFromSnapshot so the wire envelope is bit-identical to
+// the unlocked path. New call sites SHOULD use the snapshot-then-
+// marshal-outside-lock pattern instead (see runPerformBody / Tick /
+// dispatchBatched for the canonical shape post-P41); this wrapper
+// stays for handleSSE's reconnect-resync, which writes directly to
+// the HTTP response writer rather than enqueueing onto sess.sseCh,
+// and benefits from a single synchronous call shape.
+//
+// MUST be called with sess.mu held.
+func encodeSSEFrame(sess *liveSession, body string) string {
+	return encodeSSEFrameFromSnapshot(sess.prepareFrameSnapshot(body))
 }
 
 type liveApp struct {
@@ -2624,19 +2680,29 @@ func (app *liveApp) dispatchBatched(sess *liveSession, ev batchedEvent) {
 	// Bump outSeq once per batched entry so any SSE frame pushed as a
 	// side effect carries a unique seq. Each dispatch that mutates the
 	// view is its own observable event.
-	var frame string
+	//
+	// Cycle 3 P41 / Gap C6: snapshot the wire metadata (seq +
+	// ackInputs + body) under sess.mu, then release the lock BEFORE
+	// the JSON marshal. The marshal is CPU-bound and was previously
+	// blocking every other dispatcher on this session for the entire
+	// encode. Advancing lastShippedBody stays under the lock so the
+	// suppression decision is atomic with the seq bump — two
+	// concurrent dispatches can never both decide "ship" on the same
+	// prior-shipped body.
+	var snap frameSnapshot
+	var haveFrame bool
 	if body2 != "" && body2 != prevShipped {
-		frame = encodeSSEFrame(sess, body2)
-		// Advance lastShippedBody atomically with the enqueue
-		// decision — done while still holding sess.mu so future
-		// dispatches under the same lock see a coherent value.
+		snap = sess.prepareFrameSnapshot(body2)
 		sess.lastShippedBody = body2
+		haveFrame = true
 	}
 	sess.mu.Unlock()
 	// Push to other subscribers (other tabs, SSE listeners). The
 	// originating tab has already unloaded so the frame is for anyone
-	// else observing the session.
-	if frame != "" {
+	// else observing the session. Marshal happens here, outside the
+	// lock — see frameSnapshot doc above for the rationale.
+	if haveFrame {
+		frame := encodeSSEFrameFromSnapshot(snap)
 		select {
 		case sess.sseCh <- frame:
 		default:
@@ -2908,17 +2974,29 @@ func (app *liveApp) runPerformBody(sess *liveSession, task any, toMsg any) {
 	// what the client already has doesn't push a redundant frame.
 	prevShipped := sess.lastShippedBody
 	body := app.dispatch(sess, msg)
-	var frame string
+	// Cycle 3 P41 / Gap C6: capture (seq, body, ackInputs) under
+	// sess.mu via prepareFrameSnapshot, then release the lock and
+	// run JSON marshal outside. The previous shape held the mutex
+	// across encodeSSEFrame's marshal (~200µs for a 50 KB body on
+	// M1), stalling every other dispatcher on the session for the
+	// full encode. lastShippedBody is advanced under the lock so
+	// concurrent producers (Tick goroutine, dispatchBatched) see a
+	// coherent prior-shipped value when they take their snapshot.
+	var snap frameSnapshot
+	var haveFrame bool
 	if body != "" && body != prevShipped {
-		frame = encodeSSEFrame(sess, body)
-		// Advance lastShippedBody under the same lock as the enqueue
-		// decision; future suppression checks see a coherent value.
+		snap = sess.prepareFrameSnapshot(body)
 		sess.lastShippedBody = body
+		haveFrame = true
 	}
 	sess.mu.Unlock()
-	if frame == "" {
+	if !haveFrame {
 		return
 	}
+	// Marshal outside the lock. Wire envelope is bit-identical to the
+	// legacy lock-held encodeSSEFrame because both routes use
+	// encodeSSEFrameFromSnapshot under the hood.
+	frame := encodeSSEFrameFromSnapshot(snap)
 	select {
 	case sess.sseCh <- frame:
 	default:
@@ -2982,21 +3060,29 @@ func (app *liveApp) setupSubscriptions(sess *liveSession) {
 				// can safely silence-drop when the view didn't move.
 				prevShipped := sess.lastShippedBody
 				body := app.dispatch(sess, msg)
-				var frame string
+				// Cycle 3 P41 / Gap C6: snapshot under the lock, then
+				// release before the JSON marshal. Time.every ticks
+				// on every session that subscribes — the lock-held
+				// marshal previously serialised through sess.mu at
+				// every interval, amplifying contention on busy
+				// sessions. Advancing lastShippedBody stays under
+				// the lock so the next tick's prevShipped read sees
+				// the up-to-date value.
+				var snap frameSnapshot
+				var haveFrame bool
 				if body != "" && body != prevShipped {
-					frame = encodeSSEFrame(sess, body)
-					// Advance lastShippedBody under sess.mu so the
-					// next tick (or any concurrent dispatcher) sees
-					// the just-enqueued value.
+					snap = sess.prepareFrameSnapshot(body)
 					sess.lastShippedBody = body
+					haveFrame = true
 				}
 				sess.mu.Unlock()
 				// Suppress SSE write when the tick didn't change
 				// the view — prevents Time.every from pushing an
 				// identical HTML frame every interval.
-				if frame == "" {
+				if !haveFrame {
 					continue
 				}
+				frame := encodeSSEFrameFromSnapshot(snap)
 				select {
 				case sess.sseCh <- frame:
 				default:
@@ -3106,6 +3192,17 @@ func (app *liveApp) handleSSE(w http.ResponseWriter, r *http.Request) {
 		// down the SSE connection. The recovered SSE just enters its
 		// for-select loop with the legacy prevTree / lastComputedBody /
 		// lastShippedBody untouched.
+		//
+		// Cycle 3 P41 / Gap C6: snapshot under sess.mu, then release
+		// the lock BEFORE the JSON marshal + HTTP write. The previous
+		// shape held the mutex for the full render + marshal + write,
+		// blocking every concurrent dispatcher on this session. The
+		// for-select loop below runs in this same goroutine so there
+		// is no race against sseCh-fed frames during the write; seq
+		// ordering is preserved because nextOutSeq runs inside the
+		// lock-held prepareFrameSnapshot.
+		var snap frameSnapshot
+		var haveSnap bool
 		func() {
 			defer func() { _ = recover() }()
 			vn := HtmlToVNode(sky_call(app.view, sess.model))
@@ -3118,16 +3215,18 @@ func (app *liveApp) handleSSE(w http.ResponseWriter, r *http.Request) {
 			// suppression must compare against it.
 			sess.commitRender(&vn, body)
 			sess.lastShippedBody = body
-			frame := encodeSSEFrame(sess, body)
-			// Encode + write while still under lock to avoid interleaving
-			// with concurrent dispatch frames pushed via sess.sseCh.
+			snap = sess.prepareFrameSnapshot(body)
+			haveSnap = true
+		}()
+		sess.mu.Unlock()
+		if haveSnap {
+			frame := encodeSSEFrameFromSnapshot(snap)
 			escaped := strings.ReplaceAll(frame, "\n", "\\n")
 			_, _ = fmt.Fprintf(w, "event: patch\ndata: %s\n\n", escaped)
 			if flusher != nil {
 				flusher.Flush()
 			}
-		}()
-		sess.mu.Unlock()
+		}
 		// Persist the rebuilt prevTree + lastComputedBody +
 		// lastShippedBody so future events diff against the
 		// new-binary view and don't fall back to full-body.
