@@ -176,6 +176,14 @@ canonicaliseWithDeps deps srcMod =
         -- P2: reject `import M exposing (name)` when M doesn't export name.
         importHidingErrors = checkImportExposingAgainstDep deps (Src._imports srcMod)
 
+        -- D5 (Cycle 4): reject when two imports bind the SAME qualifier
+        -- but resolve to DIFFERENT canonical modules. Without this guard
+        -- the canonicaliser's `_importAliases` (last-wins) and
+        -- `_qualVars` (union) maps disagree on which module a qualified
+        -- TYPE reference belongs to, producing the dishonest
+        -- "Model vs Model" error at the type checker.
+        importAliasCollisions = detectImportAliasCollisions (Src._imports srcMod)
+
         -- Build environment from imports
         env0 = Env.initialEnv modName
         env1 = foldl (processImportWith deps modName) env0 (Src._imports srcMod)
@@ -216,10 +224,11 @@ canonicaliseWithDeps deps srcMod =
         unboundErrs
             | Map.null deps && hasUserImports = []
             | otherwise = collectUnboundNameErrors env4 srcMod
-    in case (importHidingErrors, collisions, unboundErrs) of
-        (err:_, _, _) -> Left err
-        (_, Just err, _) -> Left err
-        (_, _, err:_) -> Left err
+    in case (importAliasCollisions, importHidingErrors, collisions, unboundErrs) of
+        (err:_, _, _, _) -> Left err
+        (_, err:_, _, _) -> Left err
+        (_, _, Just err, _) -> Left err
+        (_, _, _, err:_) -> Left err
         _ -> Right $ expandModuleAliases depAliasMap Can.Module
             { Can._name    = modName
             , Can._exports = exports
@@ -577,6 +586,134 @@ kernelFunctions :: Map.Map String [String]
 kernelFunctions =
     Map.unionWith (++) staticKernelFunctions
         (unsafePerformIO (readIORef Env.ffiKernelFunctionsRef))
+
+
+-- | Cycle 4 — D5. Detect when two imports bind the SAME qualifier but
+-- resolve to DIFFERENT canonical modules. The dangerous shape is:
+--
+--     import State exposing (Model, initial)
+--     import App.State exposing (defaultModel)
+--
+-- Both imports default their qualifier to `State` (the last segment).
+-- `_importAliases` in the canonicalisation env is a last-wins
+-- `Map String ModuleName.Canonical`, while `_qualVars` is a
+-- union-merged `Map String (Map String VarHome)`. The mismatch causes
+-- qualified TYPE references (`useFn : State.Model`) to silently misroute
+-- to whichever module was imported LAST, while qualified VALUE references
+-- of the SAME qualifier reach BOTH modules' bindings via the unioned map.
+--
+-- Two imports collide ONLY when their canonical-module identity differs.
+-- Kernel modules collapse to their kernel name (so
+-- `import Sky.Core.Time` + `import Std.Time` are both `Time` kernel and
+-- DO NOT collide — they route to the same kernel dispatch table). Two
+-- aliased imports of the SAME module (`import Std.Ui as Ui` plus
+-- `import Std.Ui exposing (Element)`) also resolve to the same canonical
+-- module and do not collide. Only the dishonest cross-module case is
+-- rejected.
+--
+-- The user-facing workaround is `import App.State as AppState`, which
+-- gives each import a distinct qualifier and disambiguates the two
+-- modules at every call site.
+detectImportAliasCollisions :: [Src.Import] -> [String]
+detectImportAliasCollisions imps =
+    let -- For each import, derive (qualifier, canonical-source, region, importPath).
+        -- canonical-source folds kernel modules onto their pseudo-module
+        -- name so multiple kernel paths to the same dispatch table don't
+        -- count as a collision.
+        entries :: [(String, String, A.Region, String)]
+        entries =
+            [ (qualifier, src, region, importPath)
+            | imp <- imps
+            , let segs = case Src._importName imp of A.At _ s -> s
+                  region = case Src._importName imp of A.At r _ -> r
+                  importPath = ModuleName.joinWith "." segs
+                  qualifier = case Src._importAlias imp of
+                      Just alias -> alias
+                      Nothing    -> case segs of
+                          [] -> importPath  -- defensive — parser shouldn't allow
+                          _  -> last segs
+                  src = Map.findWithDefault importPath importPath Env.kernelModules
+            ]
+
+        -- Group entries by qualifier. Earliest-region first per group so
+        -- the error message points at the FIRST import (a stable choice
+        -- for fix-it suggestions).
+        byQualifier :: Map.Map String [(String, A.Region, String)]
+        byQualifier = Map.fromListWith (\old new -> new ++ old)
+            [ (q, [(src, region, importPath)])
+            | (q, src, region, importPath) <- entries
+            ]
+
+        -- Keep only qualifiers where ≥2 DISTINCT canonical sources appear.
+        clashes :: [(String, [(String, A.Region, String)])]
+        clashes =
+            [ (q, group)
+            | (q, group) <- Map.toList byQualifier
+            , length (distinctSources group) >= 2
+            ]
+    in map formatClash clashes
+  where
+    distinctSources :: [(String, A.Region, String)] -> [String]
+    distinctSources xs = Map.keys (Map.fromList [(s, ()) | (s, _, _) <- xs])
+
+    formatClash :: (String, [(String, A.Region, String)]) -> String
+    formatClash (qualifier, group) =
+        let -- Sort by source-region so the leader points at the FIRST
+            -- offending import and the fix suggestion is stable.
+            sorted = sortByRegion group
+            (_, firstRegion, _) = head sorted
+            leader = case firstRegion of
+                A.Region (A.Position r c) _ -> show r ++ ":" ++ show c ++ ": "
+            -- Suggest aliasing the LAST imported colliding module (so
+            -- the user's intent — first import "owns" the qualifier —
+            -- is preserved). Pick a unique alias by camelCasing the
+            -- full canonical path.
+            lastPath = case reverse sorted of
+                ((_, _, p):_) -> p
+                _             -> "Other.Mod"
+            suggestedAlias = camelCasePath lastPath
+            suggestion = "Add `as <Alias>` to one of them, e.g. `import "
+                ++ lastPath ++ " as " ++ suggestedAlias ++ "`."
+            body = "Import error: two imports both bind the qualifier `"
+                ++ qualifier ++ "`:\n"
+                ++ concat
+                    [ "  - import " ++ p
+                       ++ posTag region ++ "\n"
+                    | (_, region, p) <- sorted
+                    ]
+                ++ "  " ++ suggestion
+        in leader ++ body
+
+    -- "App.State" → "AppState"; "Lib.Internal.Foo" → "LibInternalFoo".
+    -- Keeps the alias unique against the dangling last-segment qualifier
+    -- so the user can pick it up verbatim from the error message.
+    camelCasePath :: String -> String
+    camelCasePath p =
+        let segs = splitOnDot p
+        in concat segs
+
+    splitOnDot :: String -> [String]
+    splitOnDot s = case break (== '.') s of
+        (a, "") -> [a]
+        (a, _:rest) -> a : splitOnDot rest
+
+    posTag :: A.Region -> String
+    posTag (A.Region (A.Position r c) _) =
+        "  (at " ++ show r ++ ":" ++ show c ++ ")"
+
+    sortByRegion :: [(String, A.Region, String)] -> [(String, A.Region, String)]
+    sortByRegion = sortBy3
+      where
+        sortBy3 = foldr insertByRegion []
+        insertByRegion x@(_, A.Region (A.Position r c) _, _) acc =
+            case acc of
+                [] -> [x]
+                y@(_, A.Region (A.Position r2 c2) _, _) : ys
+                  | (r, c) <= (r2, c2) -> x : acc
+                  | otherwise -> y : insertByRegion x ys
+
+    distinctPaths :: [(String, A.Region, String)] -> [String]
+    distinctPaths xs = Map.keys (Map.fromList [(p, ()) | (_, _, p) <- xs])
 
 
 -- | Map each unqualified name to the list of distinct canonical sources
