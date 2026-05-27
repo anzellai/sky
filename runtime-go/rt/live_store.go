@@ -285,7 +285,12 @@ func (s *memoryStore) Get(sid string) (*liveSession, bool) {
 	defer s.mu.RUnlock()
 	sess, ok := s.sessions[sid]
 	if ok {
-		sess.lastSeen = time.Now()
+		// Task #326: atomic.Int64 store keeps Get race-free under the
+		// RLock-only gate. Two concurrent Get calls used to race on the
+		// `sess.lastSeen` struct field (visible under `go test -race
+		// -run TestConcurrentEventsSerialise`); the atomic field
+		// closes that without escalating Get to a write lock.
+		sess.touchLastSeen()
 	}
 	return sess, ok
 }
@@ -293,7 +298,7 @@ func (s *memoryStore) Get(sid string) (*liveSession, bool) {
 func (s *memoryStore) Set(sid string, sess *liveSession) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	sess.lastSeen = time.Now()
+	sess.touchLastSeen()
 	s.sessions[sid] = sess
 }
 
@@ -337,7 +342,7 @@ func (s *memoryStore) cleanupLoop() {
 			s.mu.Lock()
 			var expired []*liveSession
 			for id, sess := range s.sessions {
-				if now.Sub(sess.lastSeen) > s.ttl {
+				if now.Sub(sess.lastSeenTime()) > s.ttl {
 					expired = append(expired, sess)
 					delete(s.sessions, id)
 				}
@@ -421,7 +426,10 @@ func (s *sqliteStore) Get(sid string) (*liveSession, bool) {
 }
 
 func (s *sqliteStore) Set(sid string, sess *liveSession) {
-	sess.lastSeen = time.Now()
+	// Task #326: atomic.Int64 store — safe to write from any goroutine
+	// without holding s.memMu (sibling memCache readers under RLock no
+	// longer race on the field).
+	sess.touchLastSeen()
 	// Always keep the live pointer in memory so intra-process requests
 	// find the session even when the value isn't gob-encodable.
 	s.memMu.Lock()
@@ -439,7 +447,7 @@ func (s *sqliteStore) Set(sid string, sess *liveSession) {
 	_, err = s.db.Exec(`
 		INSERT INTO sky_sessions (sid, blob, last_seen) VALUES (?, ?, ?)
 		ON CONFLICT(sid) DO UPDATE SET blob=excluded.blob, last_seen=excluded.last_seen`,
-		sid, blob, sess.lastSeen.Unix())
+		sid, blob, sess.lastSeenTime().Unix())
 	if err != nil {
 		log.Printf("[sky.live] sqlite: failed to save session %s: %v", sid, err)
 	}
@@ -487,7 +495,7 @@ func (s *sqliteStore) cleanupLoop() {
 			s.memMu.Lock()
 			var expired []*liveSession
 			for sid, sess := range s.memCache {
-				if sess.lastSeen.Before(cutoff) {
+				if sess.lastSeenTime().Before(cutoff) {
 					expired = append(expired, sess)
 					delete(s.memCache, sid)
 				}
@@ -560,7 +568,7 @@ func (s *postgresStore) Get(sid string) (*liveSession, bool) {
 }
 
 func (s *postgresStore) Set(sid string, sess *liveSession) {
-	sess.lastSeen = time.Now()
+	sess.touchLastSeen()
 	s.memMu.Lock()
 	s.memCache[sid] = sess
 	s.memMu.Unlock()
@@ -574,7 +582,7 @@ func (s *postgresStore) Set(sid string, sess *liveSession) {
 	_, err = s.db.Exec(`
 		INSERT INTO sky_sessions (sid, blob, last_seen) VALUES ($1, $2, $3)
 		ON CONFLICT (sid) DO UPDATE SET blob = EXCLUDED.blob, last_seen = EXCLUDED.last_seen`,
-		sid, blob, sess.lastSeen.Unix())
+		sid, blob, sess.lastSeenTime().Unix())
 	if err != nil {
 		log.Printf("[sky.live] postgres: failed to save session %s: %v", sid, err)
 	}
@@ -616,7 +624,7 @@ func (s *postgresStore) cleanupLoop() {
 			s.memMu.Lock()
 			var expired []*liveSession
 			for sid, sess := range s.memCache {
-				if sess.lastSeen.Before(cutoff) {
+				if sess.lastSeenTime().Before(cutoff) {
 					expired = append(expired, sess)
 					delete(s.memCache, sid)
 				}
@@ -710,7 +718,7 @@ func (s *redisStore) Get(sid string) (*liveSession, bool) {
 }
 
 func (s *redisStore) Set(sid string, sess *liveSession) {
-	sess.lastSeen = time.Now()
+	sess.touchLastSeen()
 	// Keep an in-process pointer so values that fail gob encoding
 	// (closures, channels) still work within this instance. They won't
 	// survive a restart or cross-instance routing, which is the same
@@ -801,7 +809,7 @@ func encodeSession(s *liveSession) ([]byte, error) {
 	enc := gob.NewEncoder(&buf)
 	if err := enc.Encode(storableSession{
 		Model:    s.model,
-		LastSeen: s.lastSeen,
+		LastSeen: s.lastSeenTime(),
 		OutSeq:   s.outSeq,
 	}); err != nil {
 		return nil, err
@@ -894,10 +902,12 @@ func decodeSession(blob []byte) (*liveSession, error) {
 		// Cycle 3 P36 / Gap C4: provision the terminal-teardown
 		// channel so persistent-store rehydrates can also be cleanly
 		// stopped by markDone when the session is later evicted.
-		done:     make(chan struct{}),
-		lastSeen: st.LastSeen,
-		outSeq:   st.OutSeq,
+		done:   make(chan struct{}),
+		outSeq: st.OutSeq,
 	}
+	// Task #326: lastSeen is now an atomic.Int64 — can't be set in a
+	// struct literal, so seed it after construction.
+	sess.setLastSeenTime(st.LastSeen)
 	return sess, nil
 }
 

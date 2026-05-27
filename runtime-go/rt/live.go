@@ -32,6 +32,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"unicode"
@@ -1289,7 +1290,20 @@ type liveSession struct {
 	// resilient to that refactor class.
 	lastComputedBody string
 	lastShippedBody  string
-	lastSeen time.Time
+	// lastSeen — UnixNano timestamp of the most recent store touch
+	// (Get / Set / decodeSession seed). Stored as atomic.Int64 so the
+	// store-level RWMutex (memoryStore.mu et al.) can keep using RLock
+	// in the read path without the touch-update racing with a sibling
+	// Get on the SAME session. Read via lastSeenTime(), written via
+	// touchLastSeen() / setLastSeenTime().
+	//
+	// Race history (v0.15.x hardening task #326): `memoryStore.Get`
+	// holds s.mu.RLock and writes `sess.lastSeen = time.Now()` — two
+	// concurrent /_sky/event requests for the same session both pass
+	// the RLock-only gate and race on the struct field. Equivalent
+	// pattern present in sqliteStore / postgresStore / redisStore Set
+	// + decodeSession. atomic.Int64 fixes the lot uniformly.
+	lastSeen atomic.Int64
 	mu       sync.Mutex
 	// SSE outbound channel: any writer goroutine may push a frame.
 	// Frame contents are JSON envelopes produced by encodeSSEFrame
@@ -1328,6 +1342,38 @@ type liveSession struct {
 	// flags once the server has caught up. Stale ids (not present in
 	// prevTree) are evicted on each ack build; see ackInputsForPrevTree.
 	inputSeqs map[string]int64
+}
+
+// touchLastSeen — stamp the lastSeen counter with the current wall
+// clock. Race-free under concurrent readers holding the store's
+// RLock (the field is atomic.Int64, not a struct copy).
+func (s *liveSession) touchLastSeen() {
+	s.lastSeen.Store(time.Now().UnixNano())
+}
+
+// setLastSeenTime — write a specific time (used by decodeSession to
+// restore a persisted timestamp, and by tests that need to backdate
+// for TTL eviction). A zero `time.Time` lands as `Store(0)`, which
+// lastSeenTime() reads back as a zero time.Time (`now.Sub(0)` is a
+// huge positive duration → looks expired, matching the prior
+// semantics of an uninitialised `time.Time{}` field).
+func (s *liveSession) setLastSeenTime(t time.Time) {
+	if t.IsZero() {
+		s.lastSeen.Store(0)
+		return
+	}
+	s.lastSeen.Store(t.UnixNano())
+}
+
+// lastSeenTime — read the lastSeen counter as a time.Time. A stored
+// value of 0 returns the zero time (`time.Time{}`) so existing
+// `time.Time.IsZero()` / `now.Sub(t)` callers keep working.
+func (s *liveSession) lastSeenTime() time.Time {
+	ns := s.lastSeen.Load()
+	if ns == 0 {
+		return time.Time{}
+	}
+	return time.Unix(0, ns)
 }
 
 // markDone signals terminal teardown for this session. Idempotent;
