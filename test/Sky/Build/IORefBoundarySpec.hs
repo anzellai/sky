@@ -52,27 +52,49 @@ spec = do
         -- v0.15.5 PR 3 (iteration 3) — symmetric to the retired-IORef
         -- gate above: assert that the explicit LowerCtx integration is
         -- still wired in.  Catches the inverse regression — someone
-        -- deletes the `LC.lookupRegionType` /
-        -- `LC.withLambdaTypes` reads in a refactor and the scope
-        -- state silently regresses to the IORef-only era.
+        -- deletes the integration helpers in a refactor and the
+        -- scope state silently regresses to the IORef-only era.
         --
         -- These literal-string checks pin the CURRENT integration
-        -- shape (v0.15.5 head).  If a future refactor renames
-        -- `LC.lookupRegionType` / `LC.withLambdaTypes`, this spec
-        -- needs an update too — that's intentional, because such a
-        -- rename is exactly the kind of structural change worth a
-        -- second look during code review.
-        it "uses LC.lookupRegionType (pure region lookup)" $ do
+        -- shape.  If a future refactor renames a helper this spec
+        -- pins, the spec needs an update too — that's intentional,
+        -- because such a rename is exactly the kind of structural
+        -- change worth a second look during code review.
+        --
+        -- v0.15.x P37b — `letBindingType` is now pure end-to-end;
+        -- its region lookup uses `Solve.lookupSolvedRegion` against
+        -- the per-region map that `Solve.SolvedTypes._stRegions`
+        -- carries (populated by P37a at every solver entry point).
+        -- The IORef-backed `LC.lookupRegionType` reader is no
+        -- longer consulted from `Compile.hs`; the helper remains in
+        -- `Sky.Build.LowerCtx` for completeness but Compile.hs's
+        -- region path is now pure data flow.
+        it "uses Solve.lookupSolvedRegion (pure region lookup)" $ do
+            -- v0.15.x P37b — replaces the prior `LC.lookupRegionType`
+            -- gate.  The two `letBindingType` + `inferExprType
+            -- Can.Lambda` consumers both read `Solve.SolvedTypes.
+            -- _stRegions` via this pure projection, completely
+            -- bypassing `scopeStateRef`.
             src <- readFile "src/Sky/Build/Compile.hs"
-            ("LC.lookupRegionType" `List.isInfixOf` src) `shouldBe` True
+            ("Solve.lookupSolvedRegion" `List.isInfixOf` src) `shouldBe` True
         it "uses LC.withLambdaTypes (scoped lambda-type extension)" $ do
             src <- readFile "src/Sky/Build/Compile.hs"
             ("LC.withLambdaTypes" `List.isInfixOf` src) `shouldBe` True
-        it "letBindingType accepts an explicit LC.LowerCtx parameter" $ do
-            -- v0.15.5 PR 3 (iteration 3) — POC for the v0.15.6
-            -- cascade.  This pins the signature so a future refactor
-            -- that drops the ctx parameter (which would force the
-            -- region lookup back through the IORef-backed
-            -- `lookupRegionType`) fails the gate.
+        it "letBindingType is PURE — drops the LC.LowerCtx parameter" $ do
+            -- v0.15.x P37b — the prior PR 3 contract pinned
+            -- `letBindingType :: LC.LowerCtx -> …`, gating against
+            -- a refactor that dropped the ctx (which would have
+            -- forced the region lookup back through the IORef).
+            -- Post-P37b the contract flips: the function NO LONGER
+            -- takes a LowerCtx.  Its only inputs are `Solve.
+            -- SolvedTypes`, the binding's name, and the body
+            -- expression — every region/type query is pure data
+            -- over `Solve.SolvedTypes`.  Pinning the new signature
+            -- guards against an accidental revert to the IORef era.
             src <- readFile "src/Sky/Build/Compile.hs"
-            ("letBindingType :: LC.LowerCtx" `List.isInfixOf` src) `shouldBe` True
+            -- The new pure shape.
+            ("letBindingType :: Solve.SolvedTypes -> String -> Can.Expr"
+                `List.isInfixOf` src) `shouldBe` True
+            -- The old IORef-coupled shape is gone.
+            ("letBindingType :: LC.LowerCtx" `List.isInfixOf` src)
+                `shouldBe` False

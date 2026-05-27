@@ -49,6 +49,7 @@ import qualified Sky.Build.IsPlainIdentSpec
 import qualified Sky.Build.InferExprTypeBinopSpec
 import qualified Sky.Build.CoerceArgListMapInterplaySpec
 import qualified Sky.Build.LowerCtxCascadeSpec
+import qualified Sky.Build.LetBodyCascadeResumeSpec
 import qualified Sky.Build.SkyshopCompilesSpec
 import qualified Sky.Build.AnonLambdaSpec
 import qualified Sky.Build.AnonRecordSpec
@@ -313,6 +314,14 @@ main = hspec $ do
     -- Lock fires on the constructor surface + the byte-identical
     -- compile contract for a four-slot exercise.
     describe "Sky.Build.LowerCtxCascade"    Sky.Build.LowerCtxCascadeSpec.spec
+    -- v0.15.x hardening / Cycle 3 P37b — LowerCtx cascade Phase 3
+    -- resume.  `letBindingType` is now pure; the three slots P6
+    -- deferred (record-field init / list element / let body) now
+    -- route through the ctx-aware wrapper.  Lock fires on (a) the
+    -- pure signature, (b) `Solve.lookupSolvedRegion` consumption,
+    -- (c) the typed-coerce emission shape on a let-body fixture.
+    describe "Sky.Build.LetBodyCascadeResume"
+                                            Sky.Build.LetBodyCascadeResumeSpec.spec
     -- v0.15.x hardening / Cycle 1 P2-followup STANDING lock —
     -- examples/13-skyshop is the Stripe-SDK-scale benchmark
     -- (76k FFI symbols) and is the canary that catches
