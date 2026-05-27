@@ -859,18 +859,23 @@ type SkyCmd = cmdT
 
 type subT struct {
 	// kind values:
-	//   "none"           — Sub.none — no subscription
-	//   "every"          — Sub.every intervalMs toMsg — periodic tick
-	//   "batch"          — Sub.batch — combine multiple Subs
-	//   "subscribeTopic" — Sub.subscribeTopic topic toMsg
-	//                      (Cycle 3 P46 stub; P48 wires setupSubscriptions
-	//                      to spawn the subscriber goroutine)
+	//   "none"            — Sub.none — no subscription
+	//   "every"           — Sub.every intervalMs toMsg — periodic tick
+	//   "batch"           — Sub.batch — combine multiple Subs
+	//   "subscribeTopic"  — Sub.subscribeTopic topic toMsg
+	//                       (Cycle 3 P46 stub; P48 wires setupSubscriptions
+	//                       to spawn the subscriber goroutine)
+	//   "subscribeStream" — Http.Stream.chunks streamId toMsg
+	//                       (Cycle 4 HS — Sub leaf reads streamHandle.ch
+	//                       and dispatches ChunkEvent values to update)
 	kind  string
 	ms    int
 	toMsg any
 	batch []any
 	// Pub/sub field (kind = "subscribeTopic"). Cycle 3 P46.
 	topic string
+	// Streaming-HTTP field (kind = "subscribeStream"). Cycle 4 HS.
+	streamID int64
 }
 
 // SkySub is the public type for Sky's Sub msg type.
@@ -942,6 +947,24 @@ func Sub_subscribeTopic(topic, toMsg any) SkySub {
 		kind:  "subscribeTopic",
 		topic: fmt.Sprintf("%v", topic),
 		toMsg: toMsg,
+	}
+}
+
+// Sub_subscribeStream builds a "subscribeStream" Sub. Sky-side surface:
+//
+//	Http.Stream.chunks : StreamId -> (ChunkEvent -> msg) -> Sub msg
+//
+// The toMsg function receives a ChunkEvent ADT value (Chunk String /
+// Done / Errored Error); the runtime constructs the ADT before
+// invoking it. The Sky wrapper unwraps `StreamId Int` to the inner
+// int before passing here.
+//
+// Cycle 4 HS / docs/skylive/http-streaming.md.
+func Sub_subscribeStream(streamID, toMsg any) SkySub {
+	return subT{
+		kind:     "subscribeStream",
+		streamID: asInt64(streamID),
+		toMsg:    toMsg,
 	}
 }
 
@@ -1444,6 +1467,32 @@ type liveSession struct {
 	// the view-state lock and keeps both deadlock-free.
 	activeSubs   map[string]*subRegistration
 	activeSubsMu sync.Mutex
+
+	// streams — Sky.Core.Http.Stream open handles owned by this
+	// session, keyed by stream id (Cycle 4 HS). HttpStream_open
+	// registers each new handle here; HttpStream_close deletes;
+	// markDone walks the map and closes every entry so a
+	// session disconnect can't leak a body connection.
+	//
+	// Protected by streamsMu — dedicated mutex (NOT sess.mu) so
+	// the subscriber loop's drainStreamSub can take sess.mu around
+	// its dispatch call without recursing on the registry lock.
+	// Mirrors the activeSubs / activeSubsMu split rationale.
+	streams   map[int64]*streamHandle
+	streamsMu sync.Mutex
+
+	// activeStreamSubs — Http.Stream.chunks subscriptions currently
+	// bound to this session, keyed by stream id (Cycle 4 HS). The
+	// shape mirrors activeSubs (pub/sub) — diff-mode update on every
+	// setupSubscriptions call: open new drain goroutines for added
+	// stream ids, cancel removed ones, keep the intersection's
+	// goroutines untouched (so no chunk falls in the gap when
+	// `subscriptions` re-evaluates while a stream is mid-flight).
+	//
+	// Protected by activeStreamSubsMu (NOT sess.mu — same recursion
+	// concern as activeSubsMu).
+	activeStreamSubs   map[int64]*streamSubReg
+	activeStreamSubsMu sync.Mutex
 }
 
 // touchLastSeen — stamp the lastSeen counter with the current wall
@@ -1524,6 +1573,17 @@ func (s *liveSession) markDone() {
 			if reg.cancel != nil {
 				reg.cancel()
 			}
+		}
+
+		// Cycle 4 HS: close every open Http.Stream owned by this
+		// session so the spool goroutines exit + the body
+		// connections release. Mirrors the activeSubs sweep above.
+		// closeAllStreams is idempotent + safe under markDone's
+		// sync.Once gate.
+		if n := closeAllStreams(s); n > 0 {
+			fmt.Fprintf(os.Stderr,
+				"[sky.stream] cleaned %d orphaned streams on session close (sid=%q)\n",
+				n, s.sid)
 		}
 	})
 }
@@ -2640,6 +2700,14 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	// populated). Cheap; idempotent on equal sids.
 	sess.sid = sid
 
+	// Cycle 4 HS: stamp the session on the handler goroutine for the
+	// init + view + runCmd + setupSubscriptions block so synchronous
+	// kernel calls (notably Http.Stream.open invoked directly from
+	// init) can resolve `currentLiveSession()`. The cleared-on-exit
+	// discipline mirrors RunWithTraceContext.
+	setGoroutineLiveSession(sess)
+	defer clearGoroutineLiveSession()
+
 	// Route dispatch: pick the page ADT value for this URL path and
 	// splice it into model.Page via RecordUpdate. Always run so the
 	// returning visitor lands on the URL they requested.
@@ -3163,6 +3231,13 @@ func (app *liveApp) dispatch(sess *liveSession, msg any) (body string) {
 		// session state stays consistent.
 		return ""
 	}
+	// Cycle 4 HS: stamp the session pointer onto the calling
+	// goroutine so kernels invoked from `update` / `view` /
+	// `runCmd` (notably Http.Stream.open / close) can resolve the
+	// CURRENT session for streams registry lookup. Cleared on exit
+	// — symmetric with RunWithTraceContext's discipline.
+	setGoroutineLiveSession(sess)
+	defer clearGoroutineLiveSession()
 	// Step 5 — diff-based Msg logging. Snapshot the pre-update
 	// model + start time so ObserveMsgLog (called near the end of
 	// dispatch) can decide whether to emit a log line. Lifecycle
@@ -3392,8 +3467,17 @@ func (app *liveApp) runPerform(sess *liveSession, task any, toMsg any, parentCtx
 	// …) emit spans + logs correlated to the user's request. Cleared
 	// on exit so the sync.Map entry doesn't leak past goroutine
 	// recycling.
+	//
+	// Cycle 4 HS: also stamp the live session so Http.Stream.open
+	// invoked INSIDE the Task (the canonical pattern — open in the
+	// Task that Cmd.perform spawns, dispatch returned StreamId via
+	// the result Msg) registers the stream handle on the OWNING
+	// session. Without this stamp the stream becomes orphaned and
+	// markDone can't sweep it.
 	RunWithTraceContext(parentCtx, func() {
-		app.runPerformBody(sess, task, toMsg)
+		runWithLiveSession(sess, func() {
+			app.runPerformBody(sess, task, toMsg)
+		})
 	})
 }
 
@@ -3530,9 +3614,11 @@ func (app *liveApp) setupSubscriptions(sess *liveSession) {
 
 	// Partition leaves by kind. We honour ONE Sub.every per dispatch
 	// (the existing contract — see Sub_batch doc); any number of
-	// Sub.subscribeTopic entries.
+	// Sub.subscribeTopic entries; any number of Sub.subscribeStream
+	// entries (one per active Http.Stream).
 	var everyLeaf *subT
 	desired := map[string]subT{}
+	desiredStreams := map[int64]subT{}
 	for i := range leaves {
 		leaf := leaves[i]
 		switch leaf.kind {
@@ -3545,6 +3631,9 @@ func (app *liveApp) setupSubscriptions(sess *liveSession) {
 			// to the same topic in one dispatch is a misuse; we take
 			// the last entry deterministically rather than panicking.
 			desired[leaf.topic] = leaf
+		case "subscribeStream":
+			// Last-write-wins per streamID — same rationale as topics.
+			desiredStreams[leaf.streamID] = leaf
 		}
 	}
 
@@ -3552,6 +3641,7 @@ func (app *liveApp) setupSubscriptions(sess *liveSession) {
 	// so a single dispatch's worth of work touches the registry
 	// once + lands on a coherent activeSubs map.
 	app.applyTopicSubsDiff(sess, desired)
+	app.applyStreamSubsDiff(sess, desiredStreams)
 
 	// Time.every — keep the existing goroutine shape verbatim.
 	if everyLeaf == nil {
@@ -3868,6 +3958,217 @@ func (app *liveApp) runSubscriberDispatch(sess *liveSession, toMsg any, ev Sessi
 		// Channel full — broadcast frame drops are surfaced through
 		// the same sky_live_sse_drops_total counter; the next user
 		// dispatch supersedes anyway (design doc §6.1).
+		recordSseDrop(sess.sid)
+	}
+}
+
+// ═════════════════════════════════════════════════════════════════════
+// Http.Stream.chunks subscriber wiring (Cycle 4 HS)
+// ═════════════════════════════════════════════════════════════════════
+
+// applyStreamSubsDiff opens drain goroutines for newly-added stream
+// subscriptions, cancels removed ones, and leaves the intersection
+// untouched. Mirrors applyTopicSubsDiff structurally — diff-mode +
+// dedicated mutex (activeStreamSubsMu, NOT sess.mu) so the drain
+// goroutine's dispatch path can take sess.mu without recursing.
+func (app *liveApp) applyStreamSubsDiff(sess *liveSession, desired map[int64]subT) {
+	sess.activeStreamSubsMu.Lock()
+	desiredAny := make(map[int64]any, len(desired))
+	for k := range desired {
+		desiredAny[k] = struct{}{}
+	}
+	old := sess.activeStreamSubs
+	added, removed := diffStreamSubs(old, desiredAny)
+
+	removedRegs := make([]*streamSubReg, 0, len(removed))
+	for _, id := range removed {
+		reg := old[id]
+		if reg == nil {
+			continue
+		}
+		removedRegs = append(removedRegs, reg)
+		delete(sess.activeStreamSubs, id)
+	}
+
+	type spawnEntry struct {
+		reg   *streamSubReg
+		sh    *streamHandle
+		gDone <-chan struct{}
+	}
+	var spawn []spawnEntry
+	if sess.activeStreamSubs == nil && len(added) > 0 {
+		sess.activeStreamSubs = make(map[int64]*streamSubReg, len(added))
+	}
+	for _, id := range added {
+		leaf := desired[id]
+		// Look up the handle the user already opened via
+		// Http.Stream.open. If the lookup fails the user passed an
+		// unknown / stale id — silently skip (no drain goroutine,
+		// no registration) so the next dispatch can pick up a
+		// freshly-opened stream without an orphan reg.
+		sh := lookupStream(sess, id)
+		if sh == nil {
+			continue
+		}
+		gDone := make(chan struct{})
+		var gDoneOnce sync.Once
+		wrappedCancel := func() {
+			gDoneOnce.Do(func() { close(gDone) })
+		}
+		reg := &streamSubReg{
+			streamID: id,
+			toMsg:    leaf.toMsg,
+			cancel:   wrappedCancel,
+		}
+		sess.activeStreamSubs[id] = reg
+		spawn = append(spawn, spawnEntry{reg: reg, sh: sh, gDone: gDone})
+	}
+	sess.activeStreamSubsMu.Unlock()
+
+	for _, reg := range removedRegs {
+		if reg.cancel != nil {
+			reg.cancel()
+		}
+	}
+
+	for _, s := range spawn {
+		parentCtx := CurrentTraceContext()
+		go app.runStreamSubscriberLoop(sess, s.reg, s.sh, s.gDone, parentCtx)
+	}
+}
+
+// runStreamSubscriberLoop is the drain goroutine for one
+// Http.Stream.chunks subscription. Reads streamEvents from sh.ch,
+// constructs the ChunkEvent ADT, decodes via the user's `toMsg`,
+// dispatches the resulting Msg through app.dispatch (the same path
+// Cmd.perform completions + topic subscribers take).
+//
+// Locked default #3: drains up to `streamDrainBatchMax` events per
+// pass before yielding via a sleep-zero, so one fast stream can't
+// starve other Subs on the same session.
+//
+// Exit conditions mirror runSubscriberLoop:
+//
+//   - `gDone` closed — diff-mode cancel OR markDone.
+//   - `sess.done` closed — terminal session teardown.
+//   - sh.done closed — Http.Stream.close fired (HttpStream_close
+//     OR spool body-EOF + error path). We forward any final
+//     events queued on sh.ch before exiting (consumer sees Done
+//     OR Errored as the last Msg, then the goroutine retires).
+func (app *liveApp) runStreamSubscriberLoop(sess *liveSession, reg *streamSubReg, sh *streamHandle, gDone <-chan struct{}, parentCtx context.Context) {
+	sessDone := sess.done
+
+	// Stamp BOTH the trace context AND the session on this goroutine
+	// so toMsg-invoked kernels (Http.Stream.close / Http.Stream.open
+	// from inside Chunked handlers) can resolve currentLiveSession()
+	// and register / unregister on the owning session. Mirrors the
+	// runPerform stamping pattern.
+	RunWithTraceContext(parentCtx, func() {
+		runWithLiveSession(sess, func() {
+			for {
+			// Locked default #3: drain up to streamDrainBatchMax
+			// events per pass. The batch loop reads non-blocking
+			// from sh.ch so a partially-full channel doesn't stall
+			// a yield. After batchMax iterations OR an empty
+			// channel, fall back to the blocking select below.
+			drained := 0
+			for drained < streamDrainBatchMax {
+				select {
+				case ev, open := <-sh.ch:
+					if !open {
+						return
+					}
+					app.runStreamSubscriberDispatch(sess, reg.toMsg, ev)
+					drained++
+					if ev.kind != streamChunkEv {
+						// Done / Errored is terminal — retire the
+						// goroutine; the consumer's handler can
+						// call Http.Stream.close to unregister.
+						return
+					}
+				default:
+					goto blocking
+				}
+			}
+		blocking:
+			select {
+			case <-gDone:
+				return
+			case <-sessDone:
+				return
+			case ev, open := <-sh.ch:
+				if !open {
+					return
+				}
+				app.runStreamSubscriberDispatch(sess, reg.toMsg, ev)
+				if ev.kind != streamChunkEv {
+					return
+				}
+			}
+		}
+		})
+	})
+}
+
+// runStreamSubscriberDispatch_debugCounter — atomic counter of how
+// many chunks we've dispatched, for SKY_STREAM_DEBUG tracing.
+var runStreamSubscriberDispatch_debugCounter atomic.Int64
+
+// runStreamSubscriberDispatch decodes one streamEvent into a Msg via
+// the user-supplied `toMsg` decoder and routes the dispatch + SSE
+// frame production. Mirrors runSubscriberDispatch (pub/sub) — wraps
+// the decoder in defer-recover so a panicking decoder consumes the
+// event without crashing the session.
+func (app *liveApp) runStreamSubscriberDispatch(sess *liveSession, toMsg any, ev streamEvent) {
+	if streamDebug {
+		n := runStreamSubscriberDispatch_debugCounter.Add(1)
+		fmt.Fprintf(os.Stderr, "[sky.stream-drain] #%d ev.kind=%d entering dispatch\n", n, ev.kind)
+		defer fmt.Fprintf(os.Stderr, "[sky.stream-drain] #%d ev.kind=%d exit dispatch\n", n, ev.kind)
+	}
+	chunkVal := buildChunkEventValue(ev)
+	if chunkVal == nil {
+		return
+	}
+	var msg any
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				fmt.Fprintf(os.Stderr,
+					"[sky.stream] chunk decoder panic, dropping event kind=%d: %v\n%s\n",
+					ev.kind, r, debug.Stack())
+				msg = nil
+			}
+		}()
+		msg = sky_call(toMsg, chunkVal)
+	}()
+	if msg == nil {
+		return
+	}
+
+	sess.mu.Lock()
+	prevShipped := sess.lastShippedBody
+	prevTreeBeforeDispatch := sess.prevTree
+	body := app.dispatch(sess, msg)
+	newTreeAfterDispatch := sess.prevTree
+	var snap frameSnapshot
+	var patches []Patch
+	var haveFrame bool
+	if body != "" && body != prevShipped {
+		snap = sess.prepareFrameSnapshot(body)
+		sess.lastShippedBody = body
+		if prevTreeBeforeDispatch != nil && newTreeAfterDispatch != nil {
+			patches = diffTrees(prevTreeBeforeDispatch, newTreeAfterDispatch, nil)
+		}
+		haveFrame = true
+	}
+	sess.mu.Unlock()
+	if !haveFrame {
+		return
+	}
+	frame := chooseSSEFrame(snap, prevTreeBeforeDispatch, patches)
+	select {
+	case sess.sseCh <- frame:
+	default:
 		recordSseDrop(sess.sid)
 	}
 }
@@ -4847,9 +5148,11 @@ function __skyReviveScripts(root) {
       } catch (_) {}
     }
     // Inline body is now ONLY admitted when src= is also present.
-    // This stays compatible with <script src="…">// optional inline
-    // bootstrapping comment</script> patterns; the body is included
+    // This stays compatible with <script src=...>// optional inline
+    // bootstrapping comment <\/script> patterns; the body is included
     // verbatim, the src= drives the actual execution.
+    // (The escaped </ above prevents the literal closing-script tag
+    // from terminating the inline JS wrapper at the HTML parser.)
     if (hasSrc && hasInline) {
       fresh.textContent = old.textContent;
     }

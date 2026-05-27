@@ -199,6 +199,37 @@ func TestLiveJS_I18nDefaults(t *testing.T) {
 	}
 }
 
+// TestLiveJS_NoLiteralClosingScriptTag is a regression guard against
+// the Cycle 4 HS bug: a comment inside the inline JS bundle contained
+// a literal `</script>` substring (`bootstrapping comment</script>
+// patterns`), and the HTML parser closed the inline `<script>...</script>`
+// wrapper at that point — the bottom 40 KB of JS landed as plain
+// text + the wire driver never bound any handler.
+//
+// The fix escapes the close tag in the comment text (e.g. `<\/script>`).
+// This test pins that the rendered JS string never contains a literal
+// `</script>` — every closing-script-tag-like substring must be
+// escaped in a way that the HTML parser doesn't see it.
+func TestLiveJS_NoLiteralClosingScriptTag(t *testing.T) {
+	js := liveJSWithCfg("sid-test", loadLiveBannerConfig())
+	if strings.Contains(js, "</script>") {
+		// Find the offending region to make the failure actionable.
+		idx := strings.Index(js, "</script>")
+		start := idx - 60
+		if start < 0 {
+			start = 0
+		}
+		end := idx + 60
+		if end > len(js) {
+			end = len(js)
+		}
+		t.Fatalf("inline JS bundle contains literal `</script>` at offset %d — "+
+			"HTML parser would close the wrapper script tag here.\n"+
+			"Escape via `<\\/script>` in the JS source.\n"+
+			"Context: ...%q...", idx, js[start:end])
+	}
+}
+
 // TestLiveJS_I18nOverrides asserts user-supplied banner strings round-
 // trip through liveJSWithCfg JSON-encoded so non-ASCII (the whole point
 // of this knob) survives intact, and embedded quotes / newlines /

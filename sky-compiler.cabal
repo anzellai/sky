@@ -33,6 +33,7 @@ extra-source-files:
     runtime-go/rt/jobs/*.go
     runtime-go/rt/telemetry/*.go
     sky-stdlib/Sky/Core/*.sky
+    sky-stdlib/Sky/Core/Http/*.sky
     sky-stdlib/Sky/Core/Json/*.sky
     sky-stdlib/Sky/Core/Json/Decode/*.sky
     sky-stdlib/Sky/*.sky
