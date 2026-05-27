@@ -36,7 +36,6 @@ module Sky.Build.LowerCtx
     , lookupLambdaType
     , lookupLambdaGoStr
     , memberLambdaType
-    , lookupRegionType
     , lookupAlias
     , lookupAnnotation
     , lookupSolved
@@ -49,7 +48,6 @@ import qualified Data.Set as Set
 
 import qualified Sky.AST.Canonical as Can
 import qualified Sky.Generate.Go.Record as Rec
-import qualified Sky.Reporting.Annotation as A
 import qualified Sky.Sky.ModuleName as ModuleName
 import qualified Sky.Type.Solve as Solve
 import qualified Sky.Type.Type as T
@@ -69,9 +67,16 @@ data LowerCtx = LowerCtx
     , _lc_solved      :: !Solve.SolvedTypes
         -- ^ HM-solved types for every top-level binding in the
         -- current module.  Snapshotted from the entry-point.
-    , _lc_regionTypes :: !Solve.RegionTypes
-        -- ^ Per-source-region HM types (v0.15 Stage A).
-        -- Snapshotted from `globalRegionTypes`.
+        -- v0.15.x P37b — `SolvedTypes` also carries the per-source-
+        -- region HM type map in `_stRegions` (since P37a's solver
+        -- surgery).  The previously-separate `_lc_regionTypes`
+        -- field was deleted as part of P37b; consumers that need
+        -- a region lookup call `Solve.lookupSolvedRegion r solved`
+        -- against the SolvedTypes value flowing through their
+        -- arguments, not against a snapshot installed via
+        -- `scopeStateRef`.  This breaks the deferred-thunk cycle
+        -- that blackholed the P6 record-field / list-element /
+        -- let-body cascade migrations.
     , _lc_lambdaTypes :: !(Map.Map String T.Type)
         -- ^ Lambda-scope local-variable type bindings.  Replaces
         -- `globalLambdaTypes`.  Nested scopes update this field
@@ -111,7 +116,6 @@ emptyLowerCtx :: ModuleName.Canonical -> LowerCtx
 emptyLowerCtx home = LowerCtx
     { _lc_module      = home
     , _lc_solved      = Solve.emptySolvedTypes
-    , _lc_regionTypes = Map.empty
     , _lc_lambdaTypes = Map.empty
     , _lc_lambdaGoStr = Map.empty
     , _lc_aliases     = Map.empty
@@ -127,19 +131,24 @@ emptyLowerCtx home = LowerCtx
 -- IORefs once in IO and pass the snapshots here.  Decoupling the
 -- snapshot from the read site means tests can build a `LowerCtx`
 -- directly without touching any global state.
+--
+-- v0.15.x P37b — the per-region HM type map is no longer a
+-- separate parameter: it lives on `Solve.SolvedTypes._stRegions`
+-- (populated by P37a) and is read directly via
+-- `Solve.lookupSolvedRegion`.  The `LC._lc_regionTypes` field +
+-- its dedicated lookup helper were deleted together with the
+-- corresponding `scopeStateRef` write in `Compile.hs`.
 buildLowerCtx
     :: ModuleName.Canonical
     -> Solve.SolvedTypes
-    -> Solve.RegionTypes
     -> Map.Map String Can.Alias
     -> Rec.RecordRegistry
     -> Set.Set String
     -> Map.Map String T.Annotation
     -> LowerCtx
-buildLowerCtx home solved regions aliases fieldIdx unions annots = LowerCtx
+buildLowerCtx home solved aliases fieldIdx unions annots = LowerCtx
     { _lc_module      = home
     , _lc_solved      = solved
-    , _lc_regionTypes = regions
     , _lc_lambdaTypes = Map.empty
     , _lc_lambdaGoStr = Map.empty
     , _lc_aliases     = aliases
@@ -170,10 +179,14 @@ memberLambdaType :: LowerCtx -> String -> Bool
 memberLambdaType ctx k = Map.member k (_lc_lambdaTypes ctx)
 
 
--- | Look up the HM type at a given source region.  Pure
--- substitute for `Compile.lookupRegionType`.
-lookupRegionType :: LowerCtx -> A.Region -> Maybe T.Type
-lookupRegionType ctx region = Map.lookup region (_lc_regionTypes ctx)
+-- v0.15.x P37b — `lookupRegionType` was deleted.  The region
+-- map now lives on `Solve.SolvedTypes._stRegions` (populated by
+-- P37a's solver surgery) and is read via
+-- `Solve.lookupSolvedRegion`.  Consumers in `Compile.hs`
+-- (`letBindingType`, `inferExprType`'s `Can.Lambda` arm) consume
+-- the SolvedTypes value flowing through their arguments instead
+-- of routing through a per-call IORef snapshot — pure data,
+-- pure lookups, no scope-state seam.
 
 
 -- | Look up an alias by name.  No module-prefix fallback yet — that
