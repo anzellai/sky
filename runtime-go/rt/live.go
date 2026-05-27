@@ -5073,6 +5073,66 @@ function __skyOpenSSE() {
       });
     }
   });
+  // Cycle 3 P50b / Gap C11 — structural-patches SSE event.
+  //
+  // The producer (Cycle 3 P50a) now ships event:patches for any
+  // render whose diff against the previous tree fits in a small
+  // patch list (the typical 1-3 attribute/text node change at
+  // ~200-1000 B, vs the ~14 KB full body). The legacy event:patch
+  // handler above stays for first-renders, reconnect-resync,
+  // full-replace fallbacks, and any pre-P50a server.
+  //
+  // Shape parity with the HTTP /_sky/event reply: frame is
+  // {seq, ackInputs, patches} — identical to writeEventJSON's
+  // envelope, so __skyApplyPatches consumes both routes without
+  // divergence. seq-gating via __skyHandleResponse means out-of-
+  // order frames (a stale patches frame arriving after a fresher
+  // patch frame, e.g. across a brief network blip) are dropped at
+  // the same monotonic guard the HTTP path uses.
+  //
+  // No open-<select> defence at this outer level — __skyApplyPatches
+  // already has its own per-patch focus-restore + open-select skip
+  // (live.go:4386+); applying it twice would surface as a no-op
+  // either way, but the inner check is the canonical defence.
+  // Focus / input-authority / dirty-input filtering all flow through
+  // the same code path as the HTTP-side patches application, so
+  // in-flight typing is preserved without server-side clientState
+  // alignment (the SSE producer passes nil clientState to diffTrees;
+  // the client's __skyIsDirty filter takes over).
+  __skySSE.addEventListener("patches", function(e) {
+    __skyLastSseAt = Date.now();
+    // Same implicit-handshake defence as the legacy patch listener:
+    // a real patches frame proves we're talking to a Sky.Live server,
+    // so unstick the hello check even if the dedicated 'hello' event
+    // got eaten by a misbehaving proxy.
+    if (!__skyHelloOk) {
+      __skyHelloOk = true;
+      if (__skyStatusGraceTimer !== null) {
+        clearTimeout(__skyStatusGraceTimer);
+        __skyStatusGraceTimer = null;
+      }
+      if (__skyStatus !== "connected") {
+        __skySetStatus("connected", "");
+      }
+      __skyRetryAttempts = 0;
+      if (__skyRetryTimer !== null) {
+        clearTimeout(__skyRetryTimer);
+        __skyRetryTimer = null;
+      }
+    }
+    var frame;
+    try { frame = JSON.parse(e.data); }
+    catch (_) {
+      // Producer guarantees JSON for event:patches; a non-JSON
+      // payload is impossible from a P50a+ server. Drop silently
+      // rather than running __skyPatch on garbage.
+      return;
+    }
+    if (!frame || typeof frame !== "object" || !frame.patches) return;
+    __skyHandleResponse(frame.seq, frame.ackInputs, function() {
+      __skyApplyPatches(frame.patches);
+    });
+  });
   __skySSE.addEventListener("open", function() {
     // EventSource fired open — but we don't trust this alone, since a
     // proxy can rewrite a non-SSE 200 OK into something that fires
