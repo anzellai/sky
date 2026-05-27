@@ -5187,6 +5187,11 @@ func System_cwd(_ any) any {
 	}
 }
 
+// System_getcwd — back-compat alias for System_cwd. The Sky-source
+// stdlib in `sky-stdlib/Sky/Core/System.sky` exposes both names
+// (`cwd` and `getcwd`); both lower to the same Task Error String.
+func System_getcwd(unit any) any { return System_cwd(unit) }
+
 // System_exit: never returns (process terminates) — kept eager and
 // polymorphic per the rationale in lookupKernelType.
 //
@@ -6250,6 +6255,56 @@ func Math_logT(n float64) float64         { return math.Log(n) }
 // ═══════════════════════════════════════════════════════════
 // Additional String functions
 // ═══════════════════════════════════════════════════════════
+
+// String_toList — String -> List Char
+// Decomposes a string into its Unicode code points. Each Char is
+// boxed as a Go rune so downstream Char_* helpers (firstRune) keep
+// the typed fast path.
+func String_toList(s any) any {
+	str := fmt.Sprintf("%v", s)
+	out := make([]any, 0, runeCount(str))
+	for _, r := range str {
+		out = append(out, r)
+	}
+	return out
+}
+
+// String_fromList — List Char -> String
+// Concatenates a list of Char (rune-typed) into a UTF-8 string.
+// Accepts any-slice or typed slice; AsList unwraps the latter
+// element-wise so Sky-source `[ 'a', 'b' ]` literals round-trip.
+func String_fromList(chars any) any {
+	xs := AsList(chars)
+	var b strings.Builder
+	b.Grow(len(xs))
+	for _, c := range xs {
+		if r, ok := c.(rune); ok {
+			b.WriteRune(r)
+			continue
+		}
+		if i, ok := c.(int); ok {
+			b.WriteRune(rune(i))
+			continue
+		}
+		// Last-resort: stringify and append the first rune.
+		b.WriteRune(firstRune(c))
+	}
+	return b.String()
+}
+
+// String_concat — List String -> String
+// Concatenates a list of strings. Mirrors `Std.Html.text`'s
+// idiomatic "join with empty separator" but at the kernel layer so
+// the typed-codegen path can flow through without `rt.SkyCall` per
+// element.
+func String_concat(parts any) any {
+	xs := AsList(parts)
+	var b strings.Builder
+	for _, p := range xs {
+		b.WriteString(fmt.Sprintf("%v", p))
+	}
+	return b.String()
+}
 
 func String_lines(s any) any {
 	parts := strings.Split(fmt.Sprintf("%v", s), "\n")
