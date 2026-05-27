@@ -37,6 +37,8 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"sky-app/rt/telemetry"
 )
 
 // ═══════════════════════════════════════════════════════════
@@ -2274,7 +2276,7 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 		// session stores can decode them on future Get calls.
 		gobRegisterAll(model)
 		sess = &liveSession{
-			sseCh:     make(chan string, 16),
+			sseCh:     make(chan string, sseChanBuffer),
 			cancelSub: make(chan struct{}),
 			done:      make(chan struct{}),
 		}
@@ -2752,6 +2754,9 @@ func (app *liveApp) dispatchBatched(sess *liveSession, ev batchedEvent) {
 		select {
 		case sess.sseCh <- frame:
 		default:
+			// Cycle 3 P42 / Gap C14: buffer full; drop + count.
+			// Buffer capacity is SKY_LIVE_SSE_BUFFER (default 16).
+			recordSseDrop(sess.sid)
 		}
 	}
 }
@@ -3046,7 +3051,9 @@ func (app *liveApp) runPerformBody(sess *liveSession, task any, toMsg any) {
 	select {
 	case sess.sseCh <- frame:
 	default:
-		// channel full, drop
+		// Cycle 3 P42 / Gap C14: channel full; drop + count.
+		// Buffer capacity is SKY_LIVE_SSE_BUFFER (default 16).
+		recordSseDrop(sess.sid)
 	}
 }
 
@@ -3132,6 +3139,11 @@ func (app *liveApp) setupSubscriptions(sess *liveSession) {
 				select {
 				case sess.sseCh <- frame:
 				default:
+					// Cycle 3 P42 / Gap C14: Time.every tick fired
+					// but the SSE consumer is wedged or slow; drop
+					// + count. Next tick's view-equality check (or
+					// the next user dispatch) supersedes anyway.
+					recordSseDrop(sess.sid)
 				}
 			}
 		}
@@ -3488,6 +3500,88 @@ func parsePositiveInt(s string) (int, bool) {
 		return 0, false
 	}
 	return n, true
+}
+
+// ─── SSE outbound channel buffer (Cycle 3 P42 / Gap C14) ───────────
+//
+// `sess.sseCh` is the buffered chan<-string every SSE-producing site
+// pushes frames onto. Its capacity gates how many in-flight frames
+// can queue between the producer (dispatchBatched / runPerformBody /
+// Time.every tick) and the consumer (handleSSE for-select). When
+// the buffer fills, each writer's `select { default: }` arm DROPS
+// the frame silently — a correctness loss the client never sees
+// (until the next dispatch ships a fresher view that overrides it).
+//
+// Historical default: hardcoded 16, which is generous for steady
+// state but a 5-second burst at 100 ms/tick under a Time.every
+// subscription can fill it. The Cycle 3 audit (Gap C14) called for
+// two changes: (i) make the capacity tunable via env; (ii) export a
+// Prometheus counter so operators can observe drop rate.
+//
+// Env: `SKY_LIVE_SSE_BUFFER` (subject to the [env] prefix override).
+// Default 16; clamp to [1, 1024]. Re-read via the
+// `onEnvPrefixChange` hook so a compiler-generated
+// `rt.SetEnvPrefix(...)` mid-init() picks up a prefixed value the
+// init() block also set.
+//
+// Metric: `sky_live_sse_drops_total{session=<sid>}` increments at
+// each `default:` arm. The per-session label is high-cardinality
+// by construction; telemetry/store.go caps total label combinations
+// at 10k per metric — past that, new sessions silently miss the
+// label. Acceptable: the operator's interest is "are drops
+// happening?" (yes/no answered by any non-zero series) and "are
+// they concentrated on one session?" (answered by per-session
+// labels up to the cap). For deployments expecting >10k sessions
+// over the metric horizon, configure the [env] prefix + a
+// shorter scrape retention.
+const (
+	sseChanBufferDefault = 16
+	sseChanBufferMin     = 1
+	sseChanBufferMax     = 1024
+)
+
+var sseChanBuffer = sseChanBufferDefault
+
+// loadSseChanBuffer reads SKY_LIVE_SSE_BUFFER + clamp + assign.
+// Idempotent; safe to call from init() + onEnvPrefixChange hooks.
+func loadSseChanBuffer() {
+	v := skyGetenv("LIVE_SSE_BUFFER")
+	if v == "" {
+		sseChanBuffer = sseChanBufferDefault
+		return
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n <= 0 {
+		// Malformed or non-positive — fall back to default rather
+		// than refusing to boot. Matches the pattern of
+		// parsePositiveInt callers throughout live.go.
+		sseChanBuffer = sseChanBufferDefault
+		return
+	}
+	if n < sseChanBufferMin {
+		n = sseChanBufferMin
+	}
+	if n > sseChanBufferMax {
+		n = sseChanBufferMax
+	}
+	sseChanBuffer = n
+}
+
+func init() {
+	loadSseChanBuffer()
+	onEnvPrefixChange(loadSseChanBuffer)
+}
+
+// recordSseDrop increments the sky_live_sse_drops_total counter for
+// the given session id. Called from the `default:` arm of every
+// sseCh writer. `sid` MAY be empty (e.g. test-constructed sessions
+// that never enter a Store) — telemetry/store.go handles empty
+// label values fine; downstream dashboards group those under a
+// single empty-string series.
+func recordSseDrop(sid string) {
+	telemetry.Default().Inc("sky_live_sse_drops_total", map[string]string{
+		"session": sid,
+	})
 }
 
 // liveJS keeps the historical signature (used by tests + any external

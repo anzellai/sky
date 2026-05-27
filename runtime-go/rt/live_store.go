@@ -897,7 +897,7 @@ func decodeSession(blob []byte) (*liveSession, error) {
 		model:     st.Model,
 		prevTree:  nil, // rebuilt on next render via handleEvent
 		handlers:  map[string]any{},
-		sseCh:     make(chan string, 16),
+		sseCh:     make(chan string, sseChanBuffer),
 		cancelSub: make(chan struct{}),
 		// Cycle 3 P36 / Gap C4: provision the terminal-teardown
 		// channel so persistent-store rehydrates can also be cleanly
