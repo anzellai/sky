@@ -29,7 +29,7 @@
 -- make a real content change to THIS `.hs` file — bump the marker
 -- below — so cabal recompiles it and the splice re-walks the tree.
 --
--- re-embed marker: 2026-05-23.2 — __skyRunPaths keeps the element (sky-id continuity)
+-- re-embed marker: 2026-05-27.c9 — __skyReviveScripts attribute allowlist (Cycle 3 C9 / cycle 2 P31)
 module Sky.Build.EmbeddedRuntime
     ( embeddedRuntime
     , embeddedSkyStdlib
