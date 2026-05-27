@@ -28,6 +28,7 @@ import qualified Sky.Build.UiMultilineTextareaSpec
 import qualified Sky.Build.ExposingTypeCtorsSpec
 import qualified Sky.Build.LetForwardRefSpec
 import qualified Sky.Build.EntryLocalShadowsDepSpec
+import qualified Sky.Build.CaseSubjectNameShadowSpec
 import qualified Sky.Build.FfiKernelAliasSpec
 import qualified Sky.Parse.MultiLineCaseSubjectSpec
 import qualified Sky.Parse.MultiLineSignatureSpec
@@ -188,6 +189,7 @@ main = hspec $ do
     describe "Sky.Build.ExposingTypeCtors" Sky.Build.ExposingTypeCtorsSpec.spec
     describe "Sky.Build.LetForwardRef"     Sky.Build.LetForwardRefSpec.spec
     describe "Sky.Build.EntryLocalShadowsDep" Sky.Build.EntryLocalShadowsDepSpec.spec
+    describe "Sky.Build.CaseSubjectNameShadow" Sky.Build.CaseSubjectNameShadowSpec.spec
     describe "Sky.Build.FfiKernelAlias" Sky.Build.FfiKernelAliasSpec.spec
     describe "Sky.Parse.MultiLineCaseSubject" Sky.Parse.MultiLineCaseSubjectSpec.spec
     describe "Sky.Parse.MultiLineSignature" Sky.Parse.MultiLineSignatureSpec.spec
