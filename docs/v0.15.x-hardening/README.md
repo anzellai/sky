@@ -155,6 +155,35 @@ Single-purpose tags are still valid when the change is genuinely
 standalone and there's nothing else in flight worth batching with —
 but the bias is now toward batching.
 
+### Large multi-PR work — feature branch pattern
+
+When a work chunk spans multiple sub-PRs (~10h+ total, multiple
+distinct stages, e.g. C11 SSE diff-then-patch = P50a producer +
+P50b transport/client; C3 Phase 3g pub/sub = P45 design doc +
+P46-P49 four prereq items), develop on a SINGLE long-lived
+feature branch instead of merging each sub-PR independently
+into main.
+
+Pattern:
+- Branch name describes the umbrella, e.g. `feat/sse-diff-then-patch`,
+  `feat/sky-live-pubsub`.
+- Sub-Dev agents land their work as commits on the branch
+  (not PRs against main).
+- Wide integration testing happens on the branch (cabal test,
+  example sweep, Playwright, multi-session probes, perf benchmarks).
+- ONE PR + merge to main + tag when everything is done, tested,
+  verified end-to-end.
+
+Why: large architectural rewrites benefit from being viewable as
+a coherent whole. Partial states (e.g. P50a's producer without
+P50b's transport adapter) would be broken in main even if locally
+green. Reviewers see the full change at once. Downstream consumers
+get a single upgrade point.
+
+Small/medium items (~2-4h, single concern, no architectural
+surface) keep merging individual PRs into main and batch tags
+as before.
+
 ---
 
 ## Stopping conditions
