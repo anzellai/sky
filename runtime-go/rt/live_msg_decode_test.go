@@ -162,7 +162,7 @@ func TestDispatch_DropsMsgDecodeError(t *testing.T) {
 	sess := &liveSession{
 		model:     originalModel,
 		handlers:  map[string]any{},
-		sseCh:     make(chan string, 1),
+		sseCh:     make(chan sseFrame, 1),
 		cancelSub: make(chan struct{}),
 	}
 	body := app.dispatch(sess, msgDecodeError{})
@@ -196,7 +196,7 @@ func TestDispatch_RecoversFromPanic(t *testing.T) {
 	sess := &liveSession{
 		model:     originalModel,
 		handlers:  map[string]any{},
-		sseCh:     make(chan string, 1),
+		sseCh:     make(chan sseFrame, 1),
 		cancelSub: make(chan struct{}),
 	}
 	// Pick any Msg — the update() panic fires regardless.

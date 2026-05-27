@@ -42,7 +42,7 @@ const pollutorCount = 32
 func concurrentGetSetDelete(t *testing.T, store SessionStore) {
 	t.Helper()
 	sess := &liveSession{
-		sseCh:     make(chan string, 4),
+		sseCh:     make(chan sseFrame, 4),
 		cancelSub: make(chan struct{}),
 		done:      make(chan struct{}),
 	}

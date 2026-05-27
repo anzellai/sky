@@ -1308,9 +1308,16 @@ type liveSession struct {
 	lastSeen atomic.Int64
 	mu       sync.Mutex
 	// SSE outbound channel: any writer goroutine may push a frame.
-	// Frame contents are JSON envelopes produced by encodeSSEFrame
-	// (carry seq + ackInputs alongside the body), not raw HTML.
-	sseCh chan string
+	// Frame contents are typed envelopes — `event` names the SSE event
+	// type ("patch" for the legacy full-body shape; "patches" for the
+	// Cycle 3 P50 structural-diff shape) and `data` is the JSON
+	// payload the writer in handleSSE escapes + emits verbatim.
+	//
+	// Cycle 3 P50a / Gap C11: the channel previously carried `chan
+	// string` and the writer always emitted `event: patch`. Switching
+	// to a typed envelope lets the SSE producer choose patches-vs-body
+	// per render without changing the channel/buffer plumbing.
+	sseCh chan sseFrame
 	// Cancel function for any active subscription ticker. Re-created
 	// by setupSubscriptions on every dispatch (the old one is closed
 	// first); see also the session-wide `done` field which signals
@@ -1590,6 +1597,98 @@ func encodeSSEFrameFromSnapshot(snap frameSnapshot) string {
 // MUST be called with sess.mu held.
 func encodeSSEFrame(sess *liveSession, body string) string {
 	return encodeSSEFrameFromSnapshot(sess.prepareFrameSnapshot(body))
+}
+
+// sseFrame names the SSE event type alongside the serialised data.
+// Cycle 3 P50a / Gap C11: SSE producers now choose between two
+// transports per render:
+//
+//   - event="patch"  — legacy full-HTML-body envelope produced by
+//     encodeSSEFrameFromSnapshot. Used when there is no previous
+//     tree to diff against (first render, post-reconnect resync) and
+//     as a fallback when the structural diff degenerates to a full
+//     root-replace (patchesAreFullReplace).
+//   - event="patches" — structural diff envelope produced by
+//     encodePatchesEventFromSnapshot. Wire shape mirrors the HTTP
+//     /_sky/event reply (writeEventJSON): {seq, ackInputs, patches}.
+//     The client reuses __skyApplyPatches to apply.
+//
+// The channel writer in handleSSE emits `event: <event>\n` + the
+// escaped data line; the SSE protocol on the client picks the event
+// up via addEventListener for the matching name. Old clients with
+// no `patches` listener silently ignore them — P50b adds the
+// listener so they take effect on the wire.
+type sseFrame struct {
+	event string
+	data  string
+}
+
+// patchesEventEnvelope mirrors writeEventJSON's body so the wire
+// shape is identical between the HTTP /_sky/event reply path and the
+// SSE event:patches push path. Reusing the shape means
+// __skyApplyPatches consumes both routes uniformly.
+type patchesEventEnvelope struct {
+	Seq       int64            `json:"seq"`
+	AckInputs map[string]int64 `json:"ackInputs,omitempty"`
+	Patches   []Patch          `json:"patches"`
+}
+
+// encodePatchesEventFromSnapshot serialises a frameSnapshot + patches
+// list into the JSON envelope shipped as `event: patches`. Pure
+// function — safe to call without holding sess.mu.
+//
+// Patches MUST be the diff between the snapshot's logical prev tree
+// and the just-computed new tree; the caller decides via diffTrees
+// and patchesAreFullReplace whether this route or the legacy
+// full-body route applies. The snapshot's `body` field is unused here
+// (the structural diff has already captured the change); we keep the
+// shared snapshot shape so seq + ackInputs allocate once per render.
+//
+// Empty-patches case: the slice is encoded as `"patches":[]` (not
+// omitted), matching writeEventJSON's contract.
+func encodePatchesEventFromSnapshot(snap frameSnapshot, patches []Patch) string {
+	if patches == nil {
+		patches = []Patch{}
+	}
+	env := patchesEventEnvelope{
+		Seq:       snap.seq,
+		AckInputs: snap.ackInputs,
+		Patches:   patches,
+	}
+	b, err := json.Marshal(env)
+	if err != nil {
+		// Marshal of a slice of typed structs + a map of primitives
+		// can't fail in practice; degrade to the bare seq frame so
+		// the channel never carries a truncated envelope.
+		return fmt.Sprintf(`{"seq":%d,"patches":[]}`, snap.seq)
+	}
+	return string(b)
+}
+
+// chooseSSEFrame picks the SSE transport for a given render. Cycle 3
+// P50a / Gap C11: when a structural diff exists and isn't a full
+// root-replace, ship the small patch envelope (typically 200-1000 B);
+// otherwise fall back to the legacy full-body envelope (~14 KB
+// typical).
+//
+// The fall-back triggers in three cases:
+//   - prevTreeBeforeDispatch == nil — first render after session
+//     creation; the client has nothing to diff against client-side.
+//   - patches == nil — diffTrees was not run (caller couldn't capture
+//     prev/new trees safely; treat as "no diff available" rather
+//     than "empty patch list"). nil here is a distinct signal from
+//     len(patches)==0 (which would mean the diff ran and produced
+//     no changes — but the caller already gated body != "" so that
+//     path doesn't reach here).
+//   - patchesAreFullReplace(patches) — the diff degenerated to a
+//     single root-level innerHTML replace; the patches envelope is
+//     no smaller than the full body, so the legacy event is the
+//     simpler shape.
+func chooseSSEFrame(snap frameSnapshot, prevTreeBeforeDispatch *VNode, patches []Patch) sseFrame {
+	if prevTreeBeforeDispatch != nil && patches != nil && !patchesAreFullReplace(patches) {
+		return sseFrame{event: "patches", data: encodePatchesEventFromSnapshot(snap, patches)}
+	}
+	return sseFrame{event: "patch", data: encodeSSEFrameFromSnapshot(snap)}
 }
 
 type liveApp struct {
@@ -2276,7 +2375,7 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 		// session stores can decode them on future Get calls.
 		gobRegisterAll(model)
 		sess = &liveSession{
-			sseCh:     make(chan string, sseChanBuffer),
+			sseCh:     make(chan sseFrame, sseChanBuffer),
 			cancelSub: make(chan struct{}),
 			done:      make(chan struct{}),
 		}
@@ -2724,7 +2823,11 @@ func (app *liveApp) dispatchBatched(sess *liveSession, ev batchedEvent) {
 	// tab-unload dispatch that produces no view change still ships
 	// a redundant SSE frame to other observers of the session.
 	prevShipped := sess.lastShippedBody
+	// Cycle 3 P50a / Gap C11: capture prevTree BEFORE dispatch so the
+	// SSE producer can diff against the tree the client last saw.
+	prevTreeBeforeDispatch := sess.prevTree
 	body2 := app.dispatch(sess, msg)
+	newTreeAfterDispatch := sess.prevTree
 	// Bump outSeq once per batched entry so any SSE frame pushed as a
 	// side effect carries a unique seq. Each dispatch that mutates the
 	// view is its own observable event.
@@ -2738,10 +2841,20 @@ func (app *liveApp) dispatchBatched(sess *liveSession, ev batchedEvent) {
 	// concurrent dispatches can never both decide "ship" on the same
 	// prior-shipped body.
 	var snap frameSnapshot
+	var patches []Patch
 	var haveFrame bool
 	if body2 != "" && body2 != prevShipped {
 		snap = sess.prepareFrameSnapshot(body2)
 		sess.lastShippedBody = body2
+		if prevTreeBeforeDispatch != nil && newTreeAfterDispatch != nil {
+			// Cycle 3 P50a / Gap C11: structural diff for SSE
+			// transport. clientState is nil here — batched tab-
+			// unload dispatch happens without fresh inputState
+			// from the now-unloading tab; observers in OTHER tabs
+			// rely on __skyApplyPatches' dirty-input authority
+			// filter to preserve their own in-flight typing.
+			patches = diffTrees(prevTreeBeforeDispatch, newTreeAfterDispatch, nil)
+		}
 		haveFrame = true
 	}
 	sess.mu.Unlock()
@@ -2750,7 +2863,10 @@ func (app *liveApp) dispatchBatched(sess *liveSession, ev batchedEvent) {
 	// else observing the session. Marshal happens here, outside the
 	// lock — see frameSnapshot doc above for the rationale.
 	if haveFrame {
-		frame := encodeSSEFrameFromSnapshot(snap)
+		// Cycle 3 P50a / Gap C11: ship event:patches when the diff
+		// is small, falling back to event:patch for first-render or
+		// full-replace shapes.
+		frame := chooseSSEFrame(snap, prevTreeBeforeDispatch, patches)
 		select {
 		case sess.sseCh <- frame:
 		default:
@@ -3024,7 +3140,14 @@ func (app *liveApp) runPerformBody(sess *liveSession, task any, toMsg any) {
 	// actually received — so a perform whose dispatch byte-equals
 	// what the client already has doesn't push a redundant frame.
 	prevShipped := sess.lastShippedBody
+	// Capture prevTree BEFORE dispatch so the structural diff can run
+	// against the tree the client last saw, not the post-dispatch one.
+	// Cycle 3 P50a / Gap C11: the SSE channel now ships either a full
+	// HTML body OR a structural patch envelope depending on what
+	// diffTrees produces (see chooseSSEFrame below).
+	prevTreeBeforeDispatch := sess.prevTree
 	body := app.dispatch(sess, msg)
+	newTreeAfterDispatch := sess.prevTree
 	// Cycle 3 P41 / Gap C6: capture (seq, body, ackInputs) under
 	// sess.mu via prepareFrameSnapshot, then release the lock and
 	// run JSON marshal outside. The previous shape held the mutex
@@ -3034,20 +3157,35 @@ func (app *liveApp) runPerformBody(sess *liveSession, task any, toMsg any) {
 	// concurrent producers (Tick goroutine, dispatchBatched) see a
 	// coherent prior-shipped value when they take their snapshot.
 	var snap frameSnapshot
+	var patches []Patch
 	var haveFrame bool
 	if body != "" && body != prevShipped {
 		snap = sess.prepareFrameSnapshot(body)
 		sess.lastShippedBody = body
+		if prevTreeBeforeDispatch != nil && newTreeAfterDispatch != nil {
+			// Cycle 3 P50a / Gap C11: compute the structural diff
+			// against the tree the client last saw. clientState is
+			// nil here — SSE-pushed renders are server-initiated
+			// (Cmd.perform completion / Time.every tick), no fresh
+			// inputState arrives from the client. The client-side
+			// authority filter in __skyApplyPatches still drops
+			// value/checked/selected attrs on dirty inputs, so
+			// in-flight typing is preserved without server-side
+			// clientState alignment.
+			patches = diffTrees(prevTreeBeforeDispatch, newTreeAfterDispatch, nil)
+		}
 		haveFrame = true
 	}
 	sess.mu.Unlock()
 	if !haveFrame {
 		return
 	}
-	// Marshal outside the lock. Wire envelope is bit-identical to the
-	// legacy lock-held encodeSSEFrame because both routes use
-	// encodeSSEFrameFromSnapshot under the hood.
-	frame := encodeSSEFrameFromSnapshot(snap)
+	// Marshal outside the lock. chooseSSEFrame picks event:patches
+	// (structural diff) vs event:patch (legacy full body) based on
+	// the diff result. Both paths run JSON marshalling outside the
+	// lock — wire-format equivalence with the pre-P50a shape is
+	// preserved for the fallback (legacy) path.
+	frame := chooseSSEFrame(snap, prevTreeBeforeDispatch, patches)
 	select {
 	case sess.sseCh <- frame:
 	default:
@@ -3112,7 +3250,12 @@ func (app *liveApp) setupSubscriptions(sess *liveSession) {
 				// to compute structural patches; only the SSE tick
 				// can safely silence-drop when the view didn't move.
 				prevShipped := sess.lastShippedBody
+				// Cycle 3 P50a / Gap C11: capture prevTree BEFORE
+				// dispatch so the structural diff can run against
+				// the tree the client last saw.
+				prevTreeBeforeDispatch := sess.prevTree
 				body := app.dispatch(sess, msg)
+				newTreeAfterDispatch := sess.prevTree
 				// Cycle 3 P41 / Gap C6: snapshot under the lock, then
 				// release before the JSON marshal. Time.every ticks
 				// on every session that subscribes — the lock-held
@@ -3122,10 +3265,22 @@ func (app *liveApp) setupSubscriptions(sess *liveSession) {
 				// the lock so the next tick's prevShipped read sees
 				// the up-to-date value.
 				var snap frameSnapshot
+				var patches []Patch
 				var haveFrame bool
 				if body != "" && body != prevShipped {
 					snap = sess.prepareFrameSnapshot(body)
 					sess.lastShippedBody = body
+					if prevTreeBeforeDispatch != nil && newTreeAfterDispatch != nil {
+						// Cycle 3 P50a / Gap C11: structural diff
+						// for Time.every ticks — the largest win,
+						// because ticks fire periodically without
+						// user interaction so server-driven body
+						// shipping previously hit every connected
+						// session at every interval. clientState
+						// nil: the SSE tick has no fresh inputState
+						// from the client.
+						patches = diffTrees(prevTreeBeforeDispatch, newTreeAfterDispatch, nil)
+					}
 					haveFrame = true
 				}
 				sess.mu.Unlock()
@@ -3135,7 +3290,9 @@ func (app *liveApp) setupSubscriptions(sess *liveSession) {
 				if !haveFrame {
 					continue
 				}
-				frame := encodeSSEFrameFromSnapshot(snap)
+				// Cycle 3 P50a / Gap C11: chooseSSEFrame picks
+				// event:patches vs event:patch per render.
+				frame := chooseSSEFrame(snap, prevTreeBeforeDispatch, patches)
 				select {
 				case sess.sseCh <- frame:
 				default:
@@ -3306,10 +3463,21 @@ func (app *liveApp) handleSSE(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-r.Context().Done():
 			return
-		case body := <-sess.sseCh:
-			// Escape newlines for SSE data lines
-			escaped := strings.ReplaceAll(body, "\n", "\\n")
-			if _, err := fmt.Fprintf(w, "event: patch\ndata: %s\n\n", escaped); err != nil {
+		case fr := <-sess.sseCh:
+			// Escape newlines for SSE data lines. Cycle 3 P50a /
+			// Gap C11: the event name now travels with the frame —
+			// producers choose `event: patches` (structural diff)
+			// or `event: patch` (legacy full body) via
+			// chooseSSEFrame. Both consumers exist on the client:
+			// the legacy `patch` listener is unchanged, and P50b
+			// adds the `patches` listener that routes through
+			// __skyApplyPatches.
+			ev := fr.event
+			if ev == "" {
+				ev = "patch"
+			}
+			escaped := strings.ReplaceAll(fr.data, "\n", "\\n")
+			if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", ev, escaped); err != nil {
 				return
 			}
 			if flusher != nil {
