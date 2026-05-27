@@ -31,7 +31,10 @@ import qualified Sky.Build.EntryLocalShadowsDepSpec
 import qualified Sky.Build.CaseSubjectNameShadowSpec
 import qualified Sky.Build.FfiKernelAliasSpec
 import qualified Sky.Parse.MultiLineCaseSubjectSpec
+import qualified Sky.Parse.MultiLineCaseKeywordSpec
 import qualified Sky.Parse.MultiLineSignatureSpec
+import qualified Sky.Parse.RowPolyRecordAnnotationSpec
+import qualified Sky.Build.CaseCatchallSubjectDiscardSpec
 import qualified Sky.Format.FormatSpec
 import qualified Sky.Build.GoKeywordCollisionSpec
 import qualified Sky.Build.NestedPatternSpec
@@ -193,7 +196,13 @@ main = hspec $ do
     describe "Sky.Build.CaseSubjectNameShadow" Sky.Build.CaseSubjectNameShadowSpec.spec
     describe "Sky.Build.FfiKernelAlias" Sky.Build.FfiKernelAliasSpec.spec
     describe "Sky.Parse.MultiLineCaseSubject" Sky.Parse.MultiLineCaseSubjectSpec.spec
+    describe "Sky.Parse.MultiLineCaseKeyword"
+        Sky.Parse.MultiLineCaseKeywordSpec.spec
     describe "Sky.Parse.MultiLineSignature" Sky.Parse.MultiLineSignatureSpec.spec
+    describe "Sky.Parse.RowPolyRecordAnnotation"
+        Sky.Parse.RowPolyRecordAnnotationSpec.spec
+    describe "Sky.Build.CaseCatchallSubjectDiscard"
+        Sky.Build.CaseCatchallSubjectDiscardSpec.spec
     -- Closed-record exactness + cross-module externals registration:
     --   1. unifyRecords (Sky.Type.Unify) used to silently merge field-
     --      mismatched closed records under a fresh extension. Now

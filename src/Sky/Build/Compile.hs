@@ -10754,6 +10754,16 @@ caseToGo mExpectedGo subject branches =
                 GoIr.GoShortDecl subjectName (coerceSubject typeName goSubject)
             Nothing ->
                 GoIr.GoShortDecl subjectName goSubject
+        -- Cycle 4 D2: a case whose only branch is `_ -> ...` (or
+        -- `var -> ...` where `var` is not referenced in the body)
+        -- never reads `__subject`, and Go rejects the unused
+        -- declaration with `declared but not used: __subject`.
+        -- Always emit a blank-identifier discard right after the
+        -- subject declaration — it both pacifies Go for the
+        -- catchall-only shape and matches Sky's `let _ = TaskExpr`
+        -- auto-force convention for "keep evaluated, ignore result".
+        subjectDiscard = GoIr.GoExprStmt
+            (GoIr.GoRaw ("_ = " ++ subjectName))
         branchStmts = concatMap (caseBranchToStmts subjectName) branches
         -- P3: exhaustiveness is verified before codegen, so this arm is
         -- statically unreachable. Audit P0-5: route through
@@ -10766,7 +10776,7 @@ caseToGo mExpectedGo subject branches =
         unreachableStmt = GoIr.GoExprStmt
             (GoIr.GoRaw ("_ = rt.Unreachable(\"case/" ++ subjectName ++ "\")"))
         raw = GoIr.GoBlock
-                (subjectDecl : branchStmts ++ [unreachableStmt])
+                (subjectDecl : subjectDiscard : branchStmts ++ [unreachableStmt])
                 (GoIr.GoRaw "nil")  -- unreachable, branches return
     in case mExpectedGo of
         Just gt -> typeIIFE gt raw
@@ -10875,13 +10885,19 @@ tcoBodyStmts home fnName arity paramNames paramGoTys goRetType = lowerTail
                         | otherwise ->
                             GoIr.GoTypeAssert (anyWrap rawSubjExpr) typeName
                 subjStmt = GoIr.GoShortDecl subjectName subjExpr
+                -- Cycle 4 D2 (TCO path): mirror the non-TCO caseToGo
+                -- discard so a tail-position `case` whose only branch
+                -- is `_ -> ...` doesn't emit an unused-var Go build
+                -- error.
+                subjDiscardStmt = GoIr.GoExprStmt
+                    (GoIr.GoRaw ("_ = " ++ subjectName))
                 branchStmts = concatMap
                     (caseBranchToStmtsWith subjectName tcoLeaf) branches
                 fallthroughStmt = GoIr.GoExprStmt
                     (GoIr.GoCall
                         (GoIr.GoQualified "rt" "Unreachable")
                         [GoIr.GoStringLit "tco/case"])
-            in subjStmt : branchStmts ++ [fallthroughStmt]
+            in subjStmt : subjDiscardStmt : branchStmts ++ [fallthroughStmt]
 
         Can.If branches elseExpr ->
             ifToTcoStmts branches elseExpr

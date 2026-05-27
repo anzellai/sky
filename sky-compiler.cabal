@@ -276,7 +276,10 @@ test-suite sky-tests
       Sky.Build.CaseSubjectNameShadowSpec
       Sky.Build.FfiKernelAliasSpec
       Sky.Parse.MultiLineCaseSubjectSpec
+      Sky.Parse.MultiLineCaseKeywordSpec
       Sky.Parse.MultiLineSignatureSpec
+      Sky.Parse.RowPolyRecordAnnotationSpec
+      Sky.Build.CaseCatchallSubjectDiscardSpec
       Sky.Type.InstanceCaptureSpec
       Sky.Type.SolvedTypesRegionMapSpec
       Sky.Format.FormatSpec

@@ -84,8 +84,22 @@ buildEnv rank canType env = case canType of
     T.TType _ _ args ->
         foldlM (\e arg -> buildEnv rank arg e) env args
 
-    T.TRecord fields _ ->
-        foldlM (\e (T.FieldType _ ty) -> buildEnv rank ty e) env (Map.elems fields)
+    T.TRecord fields mExt -> do
+        -- Cycle 4 D6: register the row variable so multi-occurrence
+        -- row vars share a single UF var, matching the `T.TVar name`
+        -- treatment above.  `typeToVariable` already prefers env
+        -- lookup over fresh-flex for `Just name` (lines 118-127), so
+        -- this just keeps `freeTypeVars`'s collection in sync.
+        env' <- foldlM (\e (T.FieldType _ ty) -> buildEnv rank ty e)
+                       env (Map.elems fields)
+        case mExt of
+            Just "any" -> return env'
+            Just name -> case Map.lookup name env' of
+                Just _  -> return env'
+                Nothing -> do
+                    v <- UF.fresh (T.Descriptor (T.FlexVar (Just name)) rank T.noMark Nothing)
+                    return (Map.insert name v env')
+            Nothing -> return env'
 
     T.TUnit -> return env
 

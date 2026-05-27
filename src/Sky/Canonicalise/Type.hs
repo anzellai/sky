@@ -156,6 +156,16 @@ freeTypeVars srcType =
         Src.TLambda from to -> collectVars from `Set.union` collectVars to
         Src.TType _ _ args -> Set.unions (map collectVars args)
         Src.TTypeQual _ _ args -> Set.unions (map collectVars args)
-        Src.TRecord fields _ -> Set.unions (map (\(_, ty) -> collectVars ty) fields)
+        Src.TRecord fields mExt ->
+            -- Cycle 4 D6: include the row variable name (if any) so
+            -- multi-occurrence row vars (`f : { r | a : Int } ->
+            -- { r | b : String } -> _`) share the same UF var
+            -- through Instantiate's env.  Without this the row var
+            -- would still work (typeToVariable falls back to a fresh
+            -- FlexVar) but each occurrence would be UNSHARED — which
+            -- defeats the purpose of giving the row a name.
+            let fieldVars = Set.unions (map (\(_, ty) -> collectVars ty) fields)
+                rowVars   = maybe Set.empty Set.singleton mExt
+            in Set.union fieldVars rowVars
         Src.TUnit -> Set.empty
         Src.TTuple a b rest -> collectVars a `Set.union` collectVars b `Set.union` Set.unions (map collectVars rest)
