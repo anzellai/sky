@@ -16,7 +16,11 @@ import (
 // buildSess wraps a model into the minimal liveSession shape needed
 // to exercise encodeSession.
 func buildSess(model any) *liveSession {
-	return &liveSession{model: model, lastSeen: time.Now()}
+	sess := &liveSession{model: model}
+	// Task #326: lastSeen is atomic.Int64 — must be seeded via the
+	// setter, not via struct literal.
+	sess.setLastSeenTime(time.Now())
+	return sess
 }
 
 func TestEncodeSession_RejectsClosureInModel(t *testing.T) {

@@ -105,9 +105,9 @@ func TestMemoryStore_cleanupLoop_signalsDoneOnExpiry(t *testing.T) {
 	}
 	store.Set("sid-expired", sess)
 	// Backdate lastSeen so the TTL check fires.
-	store.mu.Lock()
-	sess.lastSeen = time.Now().Add(-1 * time.Hour)
-	store.mu.Unlock()
+	// Task #326: lastSeen is atomic.Int64; the setter is race-free so
+	// we no longer need the store mutex bracketing the write.
+	sess.setLastSeenTime(time.Now().Add(-1 * time.Hour))
 	// Inline the cleanup body — same logic as cleanupLoop's ticker
 	// branch (the loop itself runs on a 60-second ticker; we don't
 	// want to wait that long).
@@ -115,7 +115,7 @@ func TestMemoryStore_cleanupLoop_signalsDoneOnExpiry(t *testing.T) {
 	store.mu.Lock()
 	var expired []*liveSession
 	for id, s := range store.sessions {
-		if now.Sub(s.lastSeen) > store.ttl {
+		if now.Sub(s.lastSeenTime()) > store.ttl {
 			expired = append(expired, s)
 			delete(store.sessions, id)
 		}
@@ -266,13 +266,14 @@ func TestEveryGoroutine_exitsOnCleanupExpiry(t *testing.T) {
 
 	// Backdate lastSeen + drive the cleanup body inline (same as the
 	// cleanupLoop ticker branch — we don't want to wait 60s).
+	// Task #326: lastSeen is atomic.Int64; the setter is race-free.
 	memStore := app.store.(*memoryStore)
+	sess.setLastSeenTime(time.Now().Add(-1 * time.Hour))
 	memStore.mu.Lock()
-	sess.lastSeen = time.Now().Add(-1 * time.Hour)
 	now := time.Now()
 	var expired []*liveSession
 	for id, s := range memStore.sessions {
-		if now.Sub(s.lastSeen) > memStore.ttl {
+		if now.Sub(s.lastSeenTime()) > memStore.ttl {
 			expired = append(expired, s)
 			delete(memStore.sessions, id)
 		}
