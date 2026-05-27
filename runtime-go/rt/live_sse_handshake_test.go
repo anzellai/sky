@@ -37,7 +37,7 @@ func TestSSEHandshakeHeaders(t *testing.T) {
 	}
 	// Pre-seed a session so handleSSE doesn't 404 on lookup.
 	app.store.Set("sid-handshake", &liveSession{
-		sseCh:     make(chan string, 4),
+		sseCh:     make(chan sseFrame, 4),
 		cancelSub: make(chan struct{}),
 	})
 
@@ -139,7 +139,7 @@ func TestSSEReconnectResyncPushesCurrentView(t *testing.T) {
 	// Pre-seed: session has model, but no prevTree/prevBody (the
 	// post-restart shape — these are deliberately not gob-encoded).
 	app.store.Set("sid-resync", &liveSession{
-		sseCh:     make(chan string, 4),
+		sseCh:     make(chan sseFrame, 4),
 		cancelSub: make(chan struct{}),
 		model:     "model-state",
 		handlers:  map[string]any{},
@@ -214,7 +214,7 @@ func TestSSEHeartbeatFires(t *testing.T) {
 		locker: newSessionLocker(),
 	}
 	app.store.Set("sid-hb", &liveSession{
-		sseCh:     make(chan string, 4),
+		sseCh:     make(chan sseFrame, 4),
 		cancelSub: make(chan struct{}),
 	})
 
@@ -389,7 +389,7 @@ func TestPostEventHasSkyLiveHeader(t *testing.T) {
 	}
 	// Seed a session.
 	app.store.Set("sid-post", &liveSession{
-		sseCh:     make(chan string, 4),
+		sseCh:     make(chan sseFrame, 4),
 		cancelSub: make(chan struct{}),
 		model:     "model",
 		handlers:  map[string]any{},

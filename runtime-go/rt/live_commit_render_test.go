@@ -207,7 +207,7 @@ func Test_CommitRender_DispatchEndToEnd(t *testing.T) {
 	}
 	sess := &liveSession{
 		cancelSub: make(chan struct{}),
-		sseCh:     make(chan string, 16),
+		sseCh:     make(chan sseFrame, 16),
 		model:     "init",
 		handlers:  map[string]any{},
 	}
@@ -254,7 +254,7 @@ func Test_CommitRender_DispatchPanicRollsBackViaHelper(t *testing.T) {
 	}
 	sess := &liveSession{
 		cancelSub: make(chan struct{}),
-		sseCh:     make(chan string, 16),
+		sseCh:     make(chan sseFrame, 16),
 		model:     "init",
 		handlers:  map[string]any{},
 	}

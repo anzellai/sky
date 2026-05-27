@@ -67,7 +67,7 @@ func TestSseChanBuffer_EnvOverride(t *testing.T) {
 	// here because the production code paths require a full liveApp
 	// to exercise; the per-call capacity assertion is sufficient to
 	// pin the value-flow contract.
-	ch := make(chan string, sseChanBuffer)
+	ch := make(chan sseFrame, sseChanBuffer)
 	if cap(ch) != 4 {
 		t.Fatalf("chan capacity from env: want 4, got %d", cap(ch))
 	}
@@ -176,7 +176,7 @@ func TestRunPerformBody_DropIncrementsCounter(t *testing.T) {
 	app := dropCounterApp(bumpView)
 	sess := &liveSession{
 		cancelSub: make(chan struct{}),
-		sseCh:     make(chan string, sseChanBuffer),
+		sseCh:     make(chan sseFrame, sseChanBuffer),
 		model:     "initial",
 		sid:       sid,
 	}
@@ -187,7 +187,7 @@ func TestRunPerformBody_DropIncrementsCounter(t *testing.T) {
 	// Fill the buffer (capacity 1) with a sentinel frame the test
 	// will NOT drain. The next sseCh write inside runPerformBody
 	// MUST select the default arm and drop.
-	sess.sseCh <- "<sentinel>"
+	sess.sseCh <- sseFrame{event: "patch", data: "<sentinel>"}
 
 	// runPerformBody renders a NEW body (bumpView advances) so
 	// suppression doesn't fire — the producer tries to push, and
@@ -215,7 +215,7 @@ func TestDispatchBatched_DropIncrementsCounter(t *testing.T) {
 	})
 	sess := &liveSession{
 		cancelSub: make(chan struct{}),
-		sseCh:     make(chan string, sseChanBuffer),
+		sseCh:     make(chan sseFrame, sseChanBuffer),
 		model:     "initial",
 		sid:       sid,
 		handlers:  map[string]any{},
@@ -229,7 +229,7 @@ func TestDispatchBatched_DropIncrementsCounter(t *testing.T) {
 	sess.handlers["h1"] = "test-msg"
 
 	// Saturate the buffer with a sentinel the test never drains.
-	sess.sseCh <- "<sentinel>"
+	sess.sseCh <- sseFrame{event: "patch", data: "<sentinel>"}
 
 	// Drive a batched dispatch via the public path. View advances
 	// per call (bumpView increments) so suppression is bypassed
@@ -277,7 +277,7 @@ func TestSetupSubscriptions_TickDropIncrementsCounter(t *testing.T) {
 	sess := &liveSession{
 		cancelSub: make(chan struct{}),
 		done:      make(chan struct{}),
-		sseCh:     make(chan string, sseChanBuffer),
+		sseCh:     make(chan sseFrame, sseChanBuffer),
 		model:     "initial",
 		sid:       sid,
 	}
@@ -291,7 +291,7 @@ func TestSetupSubscriptions_TickDropIncrementsCounter(t *testing.T) {
 	})
 
 	// Saturate the channel; never drain.
-	sess.sseCh <- "<sentinel>"
+	sess.sseCh <- sseFrame{event: "patch", data: "<sentinel>"}
 
 	app.setupSubscriptions(sess)
 	// Wait long enough for several ticks to fire — even a single

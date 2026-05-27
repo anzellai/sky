@@ -79,6 +79,54 @@ Sky-side `Html.div [ Attr.class "x" ] [ Html.text "hi" ]` produces a `vnode` lit
 
 Patches are encoded as JSON and streamed over SSE.
 
+## SSE transport: `event: patches` vs `event: patch`
+
+(Cycle 3 P50 / Gap C11 — landed in v0.15.x hardening.)
+
+The SSE channel carries TWO event types, chosen per render by the
+server-side `chooseSSEFrame` helper:
+
+| Event | Envelope shape | Used when |
+|---|---|---|
+| `event: patches` | `{seq, ackInputs, patches: [...]}` (mirrors `writeEventJSON`'s HTTP reply) | A structural diff between the previous tree and the just-rendered tree fits in a small patch list. Typical 200-1000 B per frame. |
+| `event: patch` | `{seq, ackInputs, body: "<html>..."}` (legacy full-body shape) | First render after session creation (no previous tree to diff against); reconnect-resync (server has the model but the client may have lost DOM state); the diff degenerated to a single root-level `innerHTML` replace (`patchesAreFullReplace`). Typical 5-50 KB per frame. |
+
+The client routes via two `addEventListener` calls on the same
+`EventSource`:
+
+```js
+__skySSE.addEventListener("patches", function(e) {
+  var frame = JSON.parse(e.data);
+  __skyHandleResponse(frame.seq, frame.ackInputs, function() {
+    __skyApplyPatches(frame.patches);
+  });
+});
+__skySSE.addEventListener("patch", function(e) {
+  // legacy full-body shape — __skyPatch() driven by frame.body
+});
+```
+
+Both consumers route through `__skyHandleResponse` for the same
+monotonic seq guard the HTTP path uses, so out-of-order frames
+(e.g. a stale patches frame arriving after a fresher patch frame
+across a brief network blip) are dropped at the same point.
+
+**Input-authority preservation on the SSE path.** SSE producers
+pass `nil` as `clientState` to `diffTrees` — server-driven renders
+(Cmd.perform completion, Time.every tick) carry no fresh client
+inputState. The client-side `__skyApplyPatches` filter
+(`__skyIsDirty(el)`) drops `value`/`checked`/`selected` attrs on
+dirty inputs, so in-flight typing is preserved without server-side
+alignment. See [input-authority-protocol.md](input-authority-protocol.md).
+
+**Backwards compatibility.** A pre-P50b client (no `patches`
+listener) is unaffected: `EventSource` silently no-ops events
+without a registered listener, and the producer's fallback path
+(first-render / full-replace) still uses `event: patch` so the
+client receives a full-body frame for those cases. The producer
+NEVER ships `event: patches` to a session that hasn't yet seen
+a prev tree.
+
 ## Event serialisation
 
 Sky closures can't cross the wire. Event handlers are serialised to string tags:

@@ -77,7 +77,7 @@ func TestMemoryStore_Delete_signalsDone(t *testing.T) {
 	store := newMemoryStore(30 * time.Minute)
 	defer store.Close()
 	sess := &liveSession{
-		sseCh:     make(chan string, 16),
+		sseCh:     make(chan sseFrame, 16),
 		cancelSub: make(chan struct{}),
 		done:      make(chan struct{}),
 	}
@@ -99,7 +99,7 @@ func TestMemoryStore_cleanupLoop_signalsDoneOnExpiry(t *testing.T) {
 	store := newMemoryStore(10 * time.Millisecond)
 	defer store.Close()
 	sess := &liveSession{
-		sseCh:     make(chan string, 16),
+		sseCh:     make(chan sseFrame, 16),
 		cancelSub: make(chan struct{}),
 		done:      make(chan struct{}),
 	}
@@ -172,7 +172,7 @@ func TestEveryGoroutine_exitsOnDelete(t *testing.T) {
 	sess := &liveSession{
 		model:     "seed",
 		handlers:  map[string]any{},
-		sseCh:     make(chan string, 16),
+		sseCh:     make(chan sseFrame, 16),
 		cancelSub: make(chan struct{}),
 		done:      make(chan struct{}),
 		lastComputedBody: "<div>hi</div>",
@@ -248,7 +248,7 @@ func TestEveryGoroutine_exitsOnCleanupExpiry(t *testing.T) {
 	sess := &liveSession{
 		model:     "seed",
 		handlers:  map[string]any{},
-		sseCh:     make(chan string, 16),
+		sseCh:     make(chan sseFrame, 16),
 		cancelSub: make(chan struct{}),
 		done:      make(chan struct{}),
 		lastComputedBody: "<div>hi</div>",

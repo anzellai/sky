@@ -250,7 +250,7 @@ func Test_MarshalOutsideLock_PreservesSeqMonotonicity(t *testing.T) {
 	}
 	sess := &liveSession{
 		cancelSub: make(chan struct{}),
-		sseCh:     make(chan string, 256),
+		sseCh:     make(chan sseFrame, 256),
 		model:     0,
 	}
 	// Seed lastShippedBody so the first dispatch's suppression check
@@ -280,12 +280,12 @@ func Test_MarshalOutsideLock_PreservesSeqMonotonicity(t *testing.T) {
 		select {
 		case f := <-sess.sseCh:
 			var env map[string]any
-			if err := json.Unmarshal([]byte(f), &env); err != nil {
-				t.Fatalf("frame is not valid JSON: %v\n%s", err, f)
+			if err := json.Unmarshal([]byte(f.data), &env); err != nil {
+				t.Fatalf("frame is not valid JSON: %v\n%s", err, f.data)
 			}
 			s, ok := env["seq"].(float64)
 			if !ok {
-				t.Fatalf("frame missing seq: %s", f)
+				t.Fatalf("frame missing seq: %s", f.data)
 			}
 			seqs = append(seqs, int64(s))
 		default:
@@ -352,7 +352,7 @@ func Test_MarshalOutsideLock_DispatchBatched_Snapshot(t *testing.T) {
 	}
 	sess := &liveSession{
 		cancelSub: make(chan struct{}),
-		sseCh:     make(chan string, 64),
+		sseCh:     make(chan sseFrame, 64),
 		model:     0,
 		handlers:  map[string]any{},
 	}
@@ -374,12 +374,12 @@ func Test_MarshalOutsideLock_DispatchBatched_Snapshot(t *testing.T) {
 		select {
 		case f := <-sess.sseCh:
 			var env map[string]any
-			if err := json.Unmarshal([]byte(f), &env); err != nil {
-				t.Fatalf("batched frame not valid JSON: %v\n%s", err, f)
+			if err := json.Unmarshal([]byte(f.data), &env); err != nil {
+				t.Fatalf("batched frame not valid JSON: %v\n%s", err, f.data)
 			}
 			s, ok := env["seq"].(float64)
 			if !ok {
-				t.Fatalf("batched frame missing seq: %s", f)
+				t.Fatalf("batched frame missing seq: %s", f.data)
 			}
 			seqs = append(seqs, int64(s))
 		default:

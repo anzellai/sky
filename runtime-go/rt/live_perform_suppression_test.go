@@ -70,7 +70,7 @@ func performTestApp(view func(model any) any) *liveApp {
 func performTestSession(app *liveApp) *liveSession {
 	sess := &liveSession{
 		cancelSub: make(chan struct{}),
-		sseCh:     make(chan string, 16),
+		sseCh:     make(chan sseFrame, 16),
 		model:     "initial",
 	}
 	// Baseline: dispatch once so prevTree + lastComputedBody match
@@ -83,13 +83,18 @@ func performTestSession(app *liveApp) *liveSession {
 	return sess
 }
 
-// drainFrame returns a frame from sess.sseCh if one is available
-// within the timeout window; returns "" if nothing arrives. Used to
-// pin "no frame was queued" without false-failing on a race.
+// drainFrame returns a frame's data payload from sess.sseCh if one
+// is available within the timeout window; returns "" if nothing
+// arrives. Used to pin "no frame was queued" without false-failing
+// on a race. Cycle 3 P50a: sseCh now carries typed sseFrame values;
+// the data payload is what existing tests substring-match against
+// (it is the legacy {"seq":...,"body":"..."} envelope when the
+// frame's event == "patch", or the new {"seq":...,"patches":[...]}
+// envelope when event == "patches").
 func drainFrame(sess *liveSession, d time.Duration) string {
 	select {
 	case f := <-sess.sseCh:
-		return f
+		return f.data
 	case <-time.After(d):
 		return ""
 	}
@@ -263,7 +268,7 @@ func TestDispatch_PanicPreservesPrevTreeAndLastComputed(t *testing.T) {
 	}
 	sess := &liveSession{
 		cancelSub: make(chan struct{}),
-		sseCh:     make(chan string, 16),
+		sseCh:     make(chan sseFrame, 16),
 		model:     "init",
 		handlers:  map[string]any{},
 	}
