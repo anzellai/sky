@@ -241,6 +241,7 @@ registry = Map.fromList
     , (("Cmd", "none"),           KernelInfo "rt.Cmd_none" 0 True)
     , (("Cmd", "batch"),          KernelInfo "rt.Cmd_batch" 1 True)
     , (("Cmd", "perform"),        KernelInfo "rt.Cmd_perform" 2 True)
+    , (("Cmd", "publish"),        KernelInfo "rt.Cmd_publish" 2 True)
 
     -- ═══════════════════════════════════════════════════════
     -- Time
@@ -457,6 +458,7 @@ registry = Map.fromList
     , (("Sub", "none"),           KernelInfo "rt.Sub_none" 0 False)
     , (("Sub", "every"),          KernelInfo "rt.Sub_every" 2 False)
     , (("Sub", "batch"),          KernelInfo "rt.Sub_batch" 1 False)
+    , (("Sub", "subscribeTopic"), KernelInfo "rt.Sub_subscribeTopic" 2 False)
 
     -- ═══════════════════════════════════════════════════════
     -- Set

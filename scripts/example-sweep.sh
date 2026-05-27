@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# scripts/example-sweep.sh — canonical 20-example regression fence.
+# scripts/example-sweep.sh — canonical 20-example regression fence
+# (19 historical + 27-multi-session-chat for the pub/sub umbrella).
 #
 # Builds every example from a clean slate. Optionally runs non-server
 # examples (asserting exit 0 + non-empty stdout) and probes server
@@ -105,6 +106,7 @@ declare -a EXAMPLES=(
     "17-skymon:server:8000:/"
     "18-job-queue:server:8000:/"
     "19-skyforum:server:8000:/"
+    "27-multi-session-chat:server:8000:/"
 )
 
 pass=0; fail=0

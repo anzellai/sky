@@ -839,20 +839,38 @@ func randID() string {
 // ═══════════════════════════════════════════════════════════
 
 type cmdT struct {
-	kind  string // "none", "perform", "batch"
+	// kind values:
+	//   "none"      — Cmd.none — no-op
+	//   "batch"     — Cmd.batch — fan out a list of Cmds
+	//   "perform"   — Cmd.perform task toMsg — spawn task in goroutine
+	//   "publish"   — Cmd.publish topic payload (Cycle 3 P46 stub;
+	//                 P48 wires the dispatch path)
+	kind  string
 	task  any
 	toMsg any
 	batch []any
+	// Pub/sub fields (kind = "publish"). Cycle 3 P46.
+	topic   string
+	payload any
 }
 
 // SkyCmd is the public type for Sky's Cmd msg type.
 type SkyCmd = cmdT
 
 type subT struct {
-	kind  string // "none", "every", "batch"
+	// kind values:
+	//   "none"           — Sub.none — no subscription
+	//   "every"          — Sub.every intervalMs toMsg — periodic tick
+	//   "batch"          — Sub.batch — combine multiple Subs
+	//   "subscribeTopic" — Sub.subscribeTopic topic toMsg
+	//                      (Cycle 3 P46 stub; P48 wires setupSubscriptions
+	//                      to spawn the subscriber goroutine)
+	kind  string
 	ms    int
 	toMsg any
 	batch []any
+	// Pub/sub field (kind = "subscribeTopic"). Cycle 3 P46.
+	topic string
 }
 
 // SkySub is the public type for Sky's Sub msg type.
@@ -881,6 +899,51 @@ func Sub_batch(list any) SkySub {
 
 // Time.every is an alias of Sub.every in Sky code
 func Time_every(ms any, to any) SkySub { return Sub_every(ms, to) }
+
+// ─── Pub/sub stubs (Cycle 3 P46) ───────────────────────────────────
+//
+// These kernels MINT the typed Cmd/Sub envelope but don't yet
+// dispatch through the registry — P48 wires runCmd's "publish" arm
+// + setupSubscriptions' "subscribeTopic" arm. P46's job is to land
+// the runtime registry + interface seam; the Sky-side surface
+// (Std.Cmd.publish / Std.Sub.subscribeTopic) lands in P48 alongside
+// the dispatch wiring.
+//
+// Kept here (next to the existing Cmd_/Sub_ family) so the codegen
+// kernel table — once P48 adds them — has the symbols pre-existing
+// at the runtime layer. Calling these from hand-written Go code
+// today builds a well-formed value; runCmd / setupSubscriptions
+// currently no-op on the new kinds (no behaviour leak).
+
+// Cmd_publish builds a "publish" Cmd. Sky-side surface:
+//
+//	Std.Cmd.publish : String -> any -> Cmd msg
+//
+// Fire-and-forget; no result feedback to the publisher (per design
+// doc §2.1). topic is the wire channel id (exact-match string;
+// pattern subs out of scope per design doc §1.2 non-goal 4).
+func Cmd_publish(topic, payload any) SkyCmd {
+	return cmdT{
+		kind:    "publish",
+		topic:   fmt.Sprintf("%v", topic),
+		payload: payload,
+	}
+}
+
+// Sub_subscribeTopic builds a "subscribeTopic" Sub. Sky-side surface:
+//
+//	Std.Sub.subscribeTopic : String -> (any -> msg) -> Sub msg
+//
+// The toMsg function is the user-supplied decoder; the subscriber
+// goroutine (P48) calls it with each incoming SessionEvent.Payload
+// to produce a Msg for `update`.
+func Sub_subscribeTopic(topic, toMsg any) SkySub {
+	return subT{
+		kind:  "subscribeTopic",
+		topic: fmt.Sprintf("%v", topic),
+		toMsg: toMsg,
+	}
+}
 
 // ═══════════════════════════════════════════════════════════
 // Std.Live — HTTP-first server-driven UI with TEA architecture
@@ -1345,12 +1408,42 @@ type liveSession struct {
 	// (event reply OR SSE patch). Bumped under sess.mu so the value
 	// reflects this session's true mutation order. The client keys its
 	// stale-drop / cross-channel ordering off this number.
-	outSeq int64
+	//
+	// Cycle 3 P47 (Phase 3g pub/sub prereq 2 — see
+	// docs/skylive/pubsub-design.md §3.2): renamed from outSeq → localSeq
+	// to disambiguate from the new app-wide `liveApp.globalSeq` that
+	// tags broadcast-induced frames. Per-session dispatch + SSE replies
+	// still bump localSeq; broadcast Publish bumps app.globalSeq once
+	// before fan-out so every subscriber sees the same globalSeq for
+	// one publish. Both seqs travel together in the SSE envelope; the
+	// client guards on each independently. Single counter would have
+	// forced every per-session dispatch to contend with broadcasts on
+	// one atomic — the split keeps per-session dispatch lock-free.
+	localSeq int64
 	// Per input sky-id → largest req.InputState[id].Seq observed. Used
 	// to populate response.ackInputs so the client can retire "dirty"
 	// flags once the server has caught up. Stale ids (not present in
 	// prevTree) are evicted on each ack build; see ackInputsForPrevTree.
 	inputSeqs map[string]int64
+
+	// activeSubs — pub/sub subscriptions currently bound to this
+	// session, keyed by topic. Cycle 3 P46 / P48. Populated by
+	// setupSubscriptions (diff-mode): on every dispatch, the runtime
+	// builds the DESIRED topic set from the model, computes
+	// (added, removed) vs activeSubs, opens NEW subscriptions for
+	// `added`, cancels REMOVED, and leaves the intersection untouched
+	// (the existing channel + goroutine carry over with no broadcast
+	// loss). markDone walks activeSubs and calls each cancel so a
+	// Deleted / TTL-evicted session releases its broker refcounts.
+	//
+	// Cycle 3 P48: protected by activeSubsMu — NOT by sess.mu. The
+	// subscriber goroutine takes sess.mu around its dispatch call,
+	// and dispatch internally calls setupSubscriptions; if activeSubs
+	// were under sess.mu the inner setupSubscriptions would recurse
+	// on it. A dedicated mutex decouples the registration map from
+	// the view-state lock and keeps both deadlock-free.
+	activeSubs   map[string]*subRegistration
+	activeSubsMu sync.Mutex
 }
 
 // touchLastSeen — stamp the lastSeen counter with the current wall
@@ -1406,14 +1499,43 @@ func (s *liveSession) markDone() {
 			s.done = make(chan struct{})
 		}
 		close(s.done)
+		// Cycle 3 P46 + P48: release every pub/sub subscription
+		// bound to this session so its refcount on the broker
+		// drops to zero. Each cancel is idempotent (sync.Once on
+		// the broker side) so a setupSubscriptions cancel racing
+		// with markDone is safe.
+		//
+		// Take activeSubsMu (NOT sess.mu — markDone can be invoked
+		// from any goroutine that's evicting the session; sess.mu
+		// is owned by the per-session dispatch path). Snapshot the
+		// registration list under the lock, then call cancel funcs
+		// AFTER releasing — keeps the critical section small in
+		// case the broker's cancel briefly contends.
+		s.activeSubsMu.Lock()
+		regs := make([]*subRegistration, 0, len(s.activeSubs))
+		for _, r := range s.activeSubs {
+			if r != nil {
+				regs = append(regs, r)
+			}
+		}
+		s.activeSubs = nil
+		s.activeSubsMu.Unlock()
+		for _, reg := range regs {
+			if reg.cancel != nil {
+				reg.cancel()
+			}
+		}
 	})
 }
 
-// nextOutSeq advances and returns the session-wide outgoing seq.
+// nextLocalSeq advances and returns the session-wide outgoing seq.
 // MUST be called with sess.mu held.
-func (s *liveSession) nextOutSeq() int64 {
-	s.outSeq++
-	return s.outSeq
+//
+// Cycle 3 P47: renamed from nextOutSeq. See the `localSeq` field comment
+// on liveSession for the global+local seq split rationale.
+func (s *liveSession) nextLocalSeq() int64 {
+	s.localSeq++
+	return s.localSeq
 }
 
 // commitRender writes both `prevTree` and `lastComputedBody` as a single
@@ -1532,30 +1654,65 @@ func ackInputsForPrevTree(s *liveSession) map[string]int64 {
 // the same session for the duration of the encode (~200µs for 50 KB
 // on M1). The snapshot makes that block strictly the bump+ack-build
 // + map-copy cost; the marshal moves outside.
+//
+// Cycle 3 P47 (pub/sub prereq 2 — docs/skylive/pubsub-design.md §3.2):
+// `seq` is the session-local monotonic counter (renamed from outSeq).
+// `globalSeq` is the new app-wide counter populated by broadcast-
+// derived frames so subscribers can detect dropped broadcasts via gap-
+// check. Non-broadcast frames leave it 0; the JSON envelope omits it
+// (omitempty) so old clients ignore it; new clients treat 0 as
+// "no global ordering constraint" and never block on it.
 type frameSnapshot struct {
 	seq       int64
+	globalSeq int64
 	body      string
 	ackInputs map[string]int64
 }
 
 // prepareFrameSnapshot captures (seq, body, ackInputs) under sess.mu so
 // the JSON marshal can run after the caller releases the lock. Caller
-// MUST already hold sess.mu — both nextOutSeq and ackInputsForPrevTree
-// mutate session state (outSeq counter; inputSeqs eviction of unmounted
+// MUST already hold sess.mu — both nextLocalSeq and ackInputsForPrevTree
+// mutate session state (localSeq counter; inputSeqs eviction of unmounted
 // ids). After this returns, the caller is free to Unlock and then call
 // encodeSSEFrameFromSnapshot on the returned value without re-locking;
 // the snapshot is pure data with no aliasing back to sess.
 //
 // seq monotonicity across concurrent producers is preserved by the
-// existing sess.mu serialisation of nextOutSeq: two dispatch paths
+// existing sess.mu serialisation of nextLocalSeq: two dispatch paths
 // that race for the lock take the seq in the order they acquire the
 // lock, regardless of how their post-unlock marshal interleaves. The
 // SSE channel reader writes frames to the wire in arrival order; the
 // client's __skyHandleResponse applies frames in seq order (already
 // the contract — see live_adversarial_test.go for the lock-out test).
+//
+// Cycle 3 P47: prepareFrameSnapshot returns globalSeq=0 by default; the
+// broadcast fan-out path uses prepareFrameSnapshotWithGlobalSeq to
+// stamp the captured globalSeq so subscriber-derived frames carry it.
 func (s *liveSession) prepareFrameSnapshot(body string) frameSnapshot {
 	return frameSnapshot{
-		seq:       s.nextOutSeq(),
+		seq:       s.nextLocalSeq(),
+		body:      body,
+		ackInputs: ackInputsForPrevTree(s),
+	}
+}
+
+// prepareFrameSnapshotWithGlobalSeq is the broadcast variant of
+// prepareFrameSnapshot — same contract for localSeq + body + ackInputs,
+// plus stamps the supplied globalSeq from the publish event. The caller
+// (broadcast-driven dispatch path, P48's job to wire up) captures the
+// globalSeq from SessionEvent.GlobalSeq BEFORE acquiring sess.mu, then
+// passes it through here so the SSE envelope shipped to the client
+// carries both the per-session localSeq AND the app-wide globalSeq.
+// MUST be called with sess.mu held (same as prepareFrameSnapshot).
+//
+// Why a separate function rather than an optional parameter: the
+// snapshot is the cheap-to-call hot path (every SSE producer hits it),
+// and a single zero-globalSeq sentinel-arm in the common case is
+// strictly cheaper than a closure or option-struct allocation.
+func (s *liveSession) prepareFrameSnapshotWithGlobalSeq(body string, globalSeq int64) frameSnapshot {
+	return frameSnapshot{
+		seq:       s.nextLocalSeq(),
+		globalSeq: globalSeq,
 		body:      body,
 		ackInputs: ackInputsForPrevTree(s),
 	}
@@ -1563,12 +1720,20 @@ func (s *liveSession) prepareFrameSnapshot(body string) frameSnapshot {
 
 // encodeSSEFrameFromSnapshot serialises a snapshot to the SSE wire
 // envelope. Pure function — safe to call without holding sess.mu.
-// The fallback branch uses snap.seq (not sess.outSeq) so a marshal
+// The fallback branch uses snap.seq (not sess.localSeq) so a marshal
 // failure post-unlock still names the frame's true seq.
+//
+// Cycle 3 P47: globalSeq rides as an OPTIONAL field on the envelope.
+// Zero → omitted (legacy client + non-broadcast frames stay byte-
+// identical to pre-P47). Non-zero → "globalSeq":N attached so the
+// client can dedupe replayed broadcasts via __skyLastGlobalSeq.
 func encodeSSEFrameFromSnapshot(snap frameSnapshot) string {
 	frame := map[string]any{
 		"seq":  snap.seq,
 		"body": snap.body,
+	}
+	if snap.globalSeq > 0 {
+		frame["globalSeq"] = snap.globalSeq
 	}
 	if snap.ackInputs != nil {
 		frame["ackInputs"] = snap.ackInputs
@@ -1627,8 +1792,15 @@ type sseFrame struct {
 // shape is identical between the HTTP /_sky/event reply path and the
 // SSE event:patches push path. Reusing the shape means
 // __skyApplyPatches consumes both routes uniformly.
+//
+// Cycle 3 P47: GlobalSeq rides as an optional field on the envelope —
+// zero → omitted (legacy clients + non-broadcast frames stay byte-
+// identical to pre-P47); non-zero → consumed by the client's
+// __skyLastGlobalSeq guard so a replayed broadcast event drops at the
+// boundary rather than mutating state twice.
 type patchesEventEnvelope struct {
 	Seq       int64            `json:"seq"`
+	GlobalSeq int64            `json:"globalSeq,omitempty"`
 	AckInputs map[string]int64 `json:"ackInputs,omitempty"`
 	Patches   []Patch          `json:"patches"`
 }
@@ -1646,12 +1818,16 @@ type patchesEventEnvelope struct {
 //
 // Empty-patches case: the slice is encoded as `"patches":[]` (not
 // omitted), matching writeEventJSON's contract.
+//
+// Cycle 3 P47: snap.globalSeq travels in the envelope when non-zero
+// (broadcast-derived frame); zero leaves the field omitted.
 func encodePatchesEventFromSnapshot(snap frameSnapshot, patches []Patch) string {
 	if patches == nil {
 		patches = []Patch{}
 	}
 	env := patchesEventEnvelope{
 		Seq:       snap.seq,
+		GlobalSeq: snap.globalSeq,
 		AckInputs: snap.ackInputs,
 		Patches:   patches,
 	}
@@ -1717,6 +1893,80 @@ type liveApp struct {
 	// correctly — without this, a sub-app's wire calls would hit
 	// the PARENT mux instead of the sub-app's.
 	basePath string
+	// topics — pub/sub registry (Cycle 3 P46). Same pointer the
+	// app.store.Broker() returns; cached here so subscribe / publish
+	// call sites don't have to indirect through the store on every
+	// hot-path call. v0.15.x: in-process *topicRegistry. v0.16+
+	// cross-process backends (Redis Pub/Sub, Cloud Pub/Sub, NATS,
+	// Postgres LISTEN/NOTIFY — see docs/skylive/pubsub-design.md
+	// §11.2.5) implement the same Broker interface.
+	topics Broker
+
+	// globalSeq — app-wide monotonic counter (Cycle 3 P47 / pub/sub
+	// prereq 2; see docs/skylive/pubsub-design.md §3.2). Bumped ONCE
+	// per Publish, BEFORE fan-out, so every subscriber sees the SAME
+	// globalSeq value for one logical publish. The captured value
+	// rides on SessionEvent.GlobalSeq, the subscriber goroutine in
+	// P48 will thread it through prepareFrameSnapshotWithGlobalSeq,
+	// and the SSE envelope's `globalSeq` field carries it to the
+	// client. Per-session dispatch (the non-broadcast common case)
+	// leaves globalSeq at zero — `localSeq` alone suffices for the
+	// stale-drop guard, and the JSON envelope omits the zero field
+	// (byte-identical to pre-P47 frames). Atomic so a flood of
+	// concurrent Publish calls across goroutines remains lock-free.
+	//
+	// Why a SEPARATE counter from per-session localSeq:
+	// docs/skylive/pubsub-design.md §3.2 — a single counter would
+	// force every per-session dispatch to contend with broadcasts on
+	// one atomic; the split keeps per-session dispatch lock-free
+	// (no cross-session contention) and pays the atomic cost only on
+	// broadcast.
+	//
+	// v0.16+ cross-process pub/sub will prepend a `ProcessId` field
+	// to (origin, globalSeq) tuples; the v0.15.x design does NOT
+	// preclude that — SessionEvent.GlobalSeq is already process-
+	// scoped (the cross-process layer prepends its own id at the
+	// backbone). §5.4 of the design doc.
+	globalSeq atomic.Int64
+}
+
+// nextGlobalSeq advances the app-wide broadcast counter and returns
+// the new value. Lock-free (atomic.Int64.Add). Used by the broadcast
+// fan-out path (P48 wires this end-to-end) — Publish bumps globalSeq
+// ONCE, then stamps the same value into every subscriber's
+// SessionEvent so all subscribers observe one publish as one
+// globalSeq.
+//
+// Cycle 3 P47 / pub/sub prereq 2 — docs/skylive/pubsub-design.md §3.2.
+func (a *liveApp) nextGlobalSeq() int64 {
+	return a.globalSeq.Add(1)
+}
+
+// Publish is the app-level fan-out entry point that all broadcast
+// call sites use. It performs the two locked-in invariants of the
+// pub/sub seq split (Cycle 3 P47 / docs/skylive/pubsub-design.md §3.2):
+//
+//  1. Bump `app.globalSeq` ONCE per publish, BEFORE fan-out.
+//  2. Stamp the captured globalSeq into the outgoing event so EVERY
+//     subscriber sees the SAME globalSeq for one logical publish.
+//
+// Returns the number of subscribers the event reached (passed through
+// from topicRegistry.Publish — see Broker.Publish doc for the
+// drop-vs-deliver contract).
+//
+// Why the helper rather than open-coding the bump at every call site:
+// the "one bump per publish" contract is load-bearing for the client-
+// side __skyLastGlobalSeq dedupe — if two call sites raced and the
+// stamp happened AFTER fan-out, two subscribers could see different
+// globalSeq for the same publish. Routing every Publish through this
+// helper makes the invariant a function-boundary guarantee.
+//
+// P48 will wire this in via `Std.Cmd.publish` → runtime; for now the
+// helper exists so the seq-split tests can drive a publish end-to-end
+// without P48's Sky-side surface.
+func (a *liveApp) Publish(topic string, event SessionEvent) int {
+	event.GlobalSeq = a.nextGlobalSeq()
+	return a.topics.Publish(topic, event)
 }
 
 // apiRoute represents a custom handler mounted outside the TEA cycle.
@@ -2043,6 +2293,11 @@ func liveAppRun(cfg any) any {
 	ttl := parseTTL(skyGetenv("LIVE_TTL"), stringField(cfg, "Ttl"), 30*time.Minute)
 	app.store = chooseStore(storeKind, storePath, ttl)
 	app.sessionTTL = ttl
+	// Cycle 3 P46: cache the store-bound broker on the app for
+	// hot-path Subscribe/Publish call sites (the broker is shared
+	// app-wide; the store owns the binding so v0.16+ cross-process
+	// backends can swap implementations without touching call sites).
+	app.topics = app.store.Broker()
 
 	// Resolve listen port early so sub-app spawn helpers
 	// (maybeAutoMountConsole below) can pass it to children via
@@ -2672,7 +2927,7 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 	// the seq reflects this session's true mutation order. Bumped once
 	// per reply (including no-op replies) so the client's cross-channel
 	// ordering works uniformly.
-	respSeq := sess.nextOutSeq()
+	respSeq := sess.nextLocalSeq()
 	respAck := ackInputsForPrevTree(sess)
 	sess.mu.Unlock()
 	// Persist the mutated session so DB-backed stores see the new
@@ -2828,7 +3083,7 @@ func (app *liveApp) dispatchBatched(sess *liveSession, ev batchedEvent) {
 	prevTreeBeforeDispatch := sess.prevTree
 	body2 := app.dispatch(sess, msg)
 	newTreeAfterDispatch := sess.prevTree
-	// Bump outSeq once per batched entry so any SSE frame pushed as a
+	// Bump localSeq once per batched entry so any SSE frame pushed as a
 	// side effect carries a unique seq. Each dispatch that mutates the
 	// view is its own observable event.
 	//
@@ -3111,6 +3366,23 @@ func (app *liveApp) runCmd(sess *liveSession, cmd any) {
 		// goroutine is untracked.
 		parentCtx := CurrentTraceContext()
 		go app.runPerform(sess, c.task, c.toMsg, parentCtx)
+	case "publish":
+		// Cycle 3 P48: Std.Cmd.publish dispatch. Route every publish
+		// through app.Publish so the "one bump per publish, BEFORE
+		// fan-out" invariant (design doc §3.2) is a function-boundary
+		// guarantee — never open-coded at the call site.
+		//
+		// app.topics may be nil for tests that build a bare liveApp
+		// (no store), in which case publish is a no-op. Production
+		// apps always have a store + cached broker (see liveApp wiring
+		// in newLiveApp / Live_app).
+		if app.topics == nil {
+			return
+		}
+		app.Publish(c.topic, SessionEvent{
+			Payload: c.payload,
+			Origin:  sess.sid,
+		})
 	}
 }
 
@@ -3195,20 +3467,97 @@ func (app *liveApp) runPerformBody(sess *liveSession, task any, toMsg any) {
 	}
 }
 
-// setupSubscriptions: cancel any prior ticker, then re-evaluate subscriptions for new model.
+// flattenSubs walks a Sub value, recursing into "batch", and appends
+// every non-batch leaf (kind = "every", "subscribeTopic", "none", …)
+// to `out`. Pure walk — no I/O, no registry touch. Used by
+// setupSubscriptions to demux multi-shape Sub.batch results into the
+// per-kind dispatch arms.
+//
+// Cycle 3 P48 / docs/skylive/pubsub-design.md §3.3 + §4.1: pub/sub
+// subscriptions arrive co-mingled with Time.every via Sub.batch, so
+// the runtime now walks the batch list instead of insisting on a
+// single Sub.every. Pre-P48 behaviour pinned by
+// live_store_delete_test.go continues to work because a bare
+// Sub.every (the existing common case) lands in flatSubs verbatim.
+func flattenSubs(s any, out []subT) []subT {
+	sub, ok := s.(subT)
+	if !ok {
+		return out
+	}
+	if sub.kind == "batch" {
+		for _, child := range sub.batch {
+			out = flattenSubs(child, out)
+		}
+		return out
+	}
+	out = append(out, sub)
+	return out
+}
+
+// setupSubscriptions: re-evaluate subscriptions for the new model.
+//
+// Two subscription kinds (post-P48):
+//
+//   - "every" — Time.every interval Msg. Cancel-and-replace each
+//     dispatch via sess.cancelSub (the goroutine selects on it).
+//     A bare Sub.every (the existing common case) keeps its pre-P48
+//     shape.
+//
+//   - "subscribeTopic" — Std.Sub.subscribeTopic topic toMsg. Diff-mode:
+//     compute (added, removed) vs sess.activeSubs; cancel only
+//     `removed`, subscribe only `added`. Topics in the intersection
+//     keep their existing channel + goroutine so no broadcast falls
+//     in the gap (design doc §4.1).
+//
+// Sub.batch composes them — `subscriptions = \model -> Sub.batch [
+// Sub.every 1000 Tick, Sub.subscribeTopic "chat" ChatMsg ]` is the
+// canonical multi-source shape.
 func (app *liveApp) setupSubscriptions(sess *liveSession) {
-	// Cancel existing ticker
+	// Cancel existing ticker (Time.every always rebuilds; pub/sub
+	// uses its own per-topic cancels stored in sess.activeSubs).
 	close(sess.cancelSub)
 	sess.cancelSub = make(chan struct{})
 
 	if app.subscriptions == nil {
+		// No subscriptions at all → tear down anything that was
+		// previously active (e.g. user returned Sub.subscribeTopic
+		// last dispatch, returns Sub.none / no subscriptions fn now).
+		app.applyTopicSubsDiff(sess, nil)
 		return
 	}
 	subResult := sky_call(app.subscriptions, sess.model)
-	sub, ok := subResult.(subT)
-	if !ok || sub.kind != "every" {
+	leaves := flattenSubs(subResult, nil)
+
+	// Partition leaves by kind. We honour ONE Sub.every per dispatch
+	// (the existing contract — see Sub_batch doc); any number of
+	// Sub.subscribeTopic entries.
+	var everyLeaf *subT
+	desired := map[string]subT{}
+	for i := range leaves {
+		leaf := leaves[i]
+		switch leaf.kind {
+		case "every":
+			if everyLeaf == nil {
+				everyLeaf = &leaves[i]
+			}
+		case "subscribeTopic":
+			// Last-write-wins per topic — a user binding two decoders
+			// to the same topic in one dispatch is a misuse; we take
+			// the last entry deterministically rather than panicking.
+			desired[leaf.topic] = leaf
+		}
+	}
+
+	// Apply pub/sub diff BEFORE spawning the Time.every goroutine
+	// so a single dispatch's worth of work touches the registry
+	// once + lands on a coherent activeSubs map.
+	app.applyTopicSubsDiff(sess, desired)
+
+	// Time.every — keep the existing goroutine shape verbatim.
+	if everyLeaf == nil {
 		return
 	}
+	sub := *everyLeaf
 	interval := time.Duration(sub.ms) * time.Millisecond
 	if interval <= 0 {
 		return
@@ -3305,6 +3654,222 @@ func (app *liveApp) setupSubscriptions(sess *liveSession) {
 			}
 		}
 	}()
+}
+
+// applyTopicSubsDiff computes the diff between the session's current
+// pub/sub subscription set and the desired set from this dispatch's
+// `subscriptions model` evaluation, then:
+//
+//   - cancels every "removed" topic — releases its broker refcount,
+//     signals the subscriber goroutine to exit.
+//   - opens new broker subscriptions for "added" topics — spawns a
+//     subscriber goroutine for each.
+//   - leaves the intersection (topics in both old and desired)
+//     untouched — the existing channel + goroutine keep running so
+//     no broadcast falls in the cancel/re-subscribe gap (design
+//     doc §4.1 diff-mode requirement).
+//
+// Mutates sess.activeSubs in place — protected by sess.activeSubsMu
+// (NOT sess.mu, so a concurrent subscriber dispatch holding sess.mu
+// + calling setupSubscriptions doesn't recurse on the registration
+// lock).
+//
+// `desired` is nil-safe — a nil map signals "no subscriptions" and
+// the diff cancels every existing entry, which is exactly what
+// setupSubscriptions needs when app.subscriptions is nil OR returns
+// Sub.none.
+//
+// Cycle 3 P48 / docs/skylive/pubsub-design.md §4.1.
+func (app *liveApp) applyTopicSubsDiff(sess *liveSession, desired map[string]subT) {
+	// Snapshot old + compute the diff under the lock; release before
+	// invoking cancel funcs OR Subscribe / spawning goroutines so a
+	// slow Subscribe path doesn't stall every other dispatcher on
+	// the same session's activeSubs.
+	sess.activeSubsMu.Lock()
+	desiredAny := make(map[string]any, len(desired))
+	for k := range desired {
+		desiredAny[k] = struct{}{}
+	}
+	old := sess.activeSubs
+	added, removed := diffSubscriptions(old, desiredAny)
+
+	// Mutate the registration map in place under the lock — every
+	// reader (markDone, the next applyTopicSubsDiff) sees a coherent
+	// post-diff snapshot.
+	removedRegs := make([]*subRegistration, 0, len(removed))
+	for _, topic := range removed {
+		reg := old[topic]
+		if reg == nil {
+			continue
+		}
+		removedRegs = append(removedRegs, reg)
+		delete(sess.activeSubs, topic)
+	}
+
+	// Open new subscriptions — broker handle + per-topic goroutine.
+	// We seed the activeSubs entries BEFORE releasing the lock so a
+	// concurrent markDone snapshot sees the new registrations and
+	// cancels them; without that ordering an added topic could
+	// linger after markDone fires.
+	type spawnEntry struct {
+		reg   *subRegistration
+		gDone <-chan struct{}
+	}
+	var spawn []spawnEntry
+	if app.topics != nil {
+		if sess.activeSubs == nil && len(added) > 0 {
+			sess.activeSubs = make(map[string]*subRegistration, len(added))
+		}
+		for _, topic := range added {
+			leaf := desired[topic]
+			ch, brokerCancel := app.topics.Subscribe(topic)
+			// Wire the per-goroutine done channel HERE — before
+			// releasing the lock + spawning — so the cancel func
+			// stored in subRegistration is final + race-free
+			// once the goroutine starts. A diff-mode cancel +
+			// the loop's exit are both driven by the same closure.
+			gDone := make(chan struct{})
+			var gDoneOnce sync.Once
+			wrappedCancel := func() {
+				brokerCancel()
+				gDoneOnce.Do(func() { close(gDone) })
+			}
+			reg := &subRegistration{
+				topic:  topic,
+				ch:     ch,
+				cancel: wrappedCancel,
+				toMsg:  leaf.toMsg,
+			}
+			sess.activeSubs[topic] = reg
+			spawn = append(spawn, spawnEntry{reg: reg, gDone: gDone})
+		}
+	}
+	sess.activeSubsMu.Unlock()
+
+	// Cancel removed AFTER releasing the lock — the broker's cancel
+	// can briefly contend on its own mutex; doing it under our lock
+	// would stall a concurrent markDone.
+	for _, reg := range removedRegs {
+		if reg.cancel != nil {
+			reg.cancel()
+		}
+	}
+
+	// Spawn subscriber goroutines AFTER releasing the lock — go's
+	// runtime can occasionally schedule a worker thread eagerly, so
+	// keeping the registration lock during goroutine creation would
+	// extend the critical section unnecessarily.
+	for _, s := range spawn {
+		parentCtx := CurrentTraceContext()
+		go app.runSubscriberLoop(sess, s.reg, s.gDone, parentCtx)
+	}
+}
+
+// runSubscriberLoop is the subscriber goroutine for one pub/sub
+// topic registration. Cycle 3 P48 / docs/skylive/pubsub-design.md
+// §3.3 + §4.3.
+//
+// Receives SessionEvents from the broker, decodes each via the
+// user-supplied `toMsg : any -> Msg`, dispatches the Msg through
+// app.dispatch (the same path Cmd.perform completions take), and
+// ships an SSE frame stamped with the broadcast event's globalSeq
+// so subscribers and the publisher see a consistent broadcast
+// ordering at the wire layer.
+//
+// Exit conditions:
+//
+//   - `gDone` is closed by the reg.cancel func (which the caller
+//     stores on the registration in applyTopicSubsDiff so both
+//     diff-mode cancel + markDone trigger goroutine exit through
+//     the same channel).
+//   - `sess.done` fires — terminal session teardown (markDone). A
+//     nil sess.done (test-constructed sessions) parks forever on
+//     that arm; cancellation via gDone is the only signal.
+//   - `reg.ch` closes — reserved for v0.16+ cross-process brokers
+//     that close on backbone teardown; the in-process default
+//     never closes (design doc §3.1).
+func (app *liveApp) runSubscriberLoop(sess *liveSession, reg *subRegistration, gDone <-chan struct{}, parentCtx context.Context) {
+	sessDone := sess.done
+
+	RunWithTraceContext(parentCtx, func() {
+		for {
+			select {
+			case <-gDone:
+				return
+			case <-sessDone:
+				// Defensive — sessDone is nil for test-constructed
+				// sessions; select on a nil channel blocks forever
+				// so this arm is dormant in that case.
+				return
+			case ev, open := <-reg.ch:
+				if !open {
+					return
+				}
+				app.runSubscriberDispatch(sess, reg.toMsg, ev)
+			}
+		}
+	})
+}
+
+// runSubscriberDispatch decodes one SessionEvent into a Msg via the
+// user-supplied `toMsg` decoder and routes the dispatch + SSE frame
+// production. Pulled out of runSubscriberLoop so the per-event work
+// has its own scope for the panic-recover discipline.
+//
+// The decoder is wrapped in a defer-recover so a panicking decoder
+// consumes the event without crashing the session (design doc §4.3
+// "Open: what happens if the decoder panics?" — log + swallow).
+func (app *liveApp) runSubscriberDispatch(sess *liveSession, toMsg any, ev SessionEvent) {
+	var msg any
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				fmt.Fprintf(os.Stderr,
+					"[sky.live] pub/sub decoder panic, dropping event topic=%q: %v\n%s\n",
+					ev.Topic, r, debug.Stack())
+				msg = nil
+			}
+		}()
+		msg = sky_call(toMsg, ev.Payload)
+	}()
+	if msg == nil {
+		return
+	}
+
+	sess.mu.Lock()
+	prevShipped := sess.lastShippedBody
+	prevTreeBeforeDispatch := sess.prevTree
+	body := app.dispatch(sess, msg)
+	newTreeAfterDispatch := sess.prevTree
+	var snap frameSnapshot
+	var patches []Patch
+	var haveFrame bool
+	if body != "" && body != prevShipped {
+		// Stamp the broadcast event's globalSeq onto the snapshot so
+		// the SSE envelope carries it. The client guards on
+		// __skyLastAppliedGlobalSeq independently of the per-session
+		// localSeq — see live.go's frame snapshot path + the wire
+		// envelope (Cycle 3 P47).
+		snap = sess.prepareFrameSnapshotWithGlobalSeq(body, ev.GlobalSeq)
+		sess.lastShippedBody = body
+		if prevTreeBeforeDispatch != nil && newTreeAfterDispatch != nil {
+			patches = diffTrees(prevTreeBeforeDispatch, newTreeAfterDispatch, nil)
+		}
+		haveFrame = true
+	}
+	sess.mu.Unlock()
+	if !haveFrame {
+		return
+	}
+	frame := chooseSSEFrame(snap, prevTreeBeforeDispatch, patches)
+	select {
+	case sess.sseCh <- frame:
+	default:
+		// Channel full — broadcast frame drops are surfaced through
+		// the same sky_live_sse_drops_total counter; the next user
+		// dispatch supersedes anyway (design doc §6.1).
+		recordSseDrop(sess.sid)
+	}
 }
 
 // handleSSE: Server-Sent Events endpoint. Pushes view patches as they arrive.
@@ -3414,7 +3979,7 @@ func (app *liveApp) handleSSE(w http.ResponseWriter, r *http.Request) {
 		// blocking every concurrent dispatcher on this session. The
 		// for-select loop below runs in this same goroutine so there
 		// is no race against sseCh-fed frames during the write; seq
-		// ordering is preserved because nextOutSeq runs inside the
+		// ordering is preserved because nextLocalSeq runs inside the
 		// lock-held prepareFrameSnapshot.
 		var snap frameSnapshot
 		var haveSnap bool
@@ -3827,8 +4392,20 @@ var __skyHeartbeatTtlMs = %d;
 // Step 2 populates these counters + per-input table on every send
 // and response; Step 3 activates the patch filter that reads them;
 // Step 4 activates the stale-drop test against __skyLastAppliedSeq.
+//
+// Cycle 3 P47 (pub/sub global+local seq split — see
+// docs/skylive/pubsub-design.md §3.2): __skyLastGlobalSeq is the
+// app-wide broadcast counter. The server stamps it onto every
+// broadcast-derived SSE frame (event:patches OR event:patch); the
+// client dedupes against the largest value already applied so a
+// replayed broadcast (e.g. SSE reconnect that re-delivers buffered
+// frames) drops at the boundary without mutating state twice. Frames
+// from per-session dispatch (the common case) carry globalSeq=0 OR
+// omit the field; the guard treats 0 / missing as "no broadcast
+// ordering constraint" and never blocks.
 var __skyClientSeq = 0;       // monotonic, client-owned; bumped on every __skySend
-var __skyLastAppliedSeq = 0;  // server-owned; largest seq already applied
+var __skyLastAppliedSeq = 0;  // server-owned; largest local seq already applied
+var __skyLastGlobalSeq = 0;   // server-owned; largest broadcast globalSeq already applied (P47)
 var __skyInputs = {};         // sky-id → InputEntry (populated by __skyBindOne)
 
 function __skyInputEntry(sid) {
@@ -3886,9 +4463,15 @@ function __skyIsDirty(el) {
   return false;
 }
 
-function __skyIngestSeq(seq, ackInputs) {
+function __skyIngestSeq(seq, ackInputs, globalSeq) {
   if (typeof seq === "number" && seq > __skyLastAppliedSeq) {
     __skyLastAppliedSeq = seq;
+  }
+  // Cycle 3 P47: monotonic-applied semantics on the broadcast counter,
+  // mirroring the local-seq path. Missing / zero / non-numeric globalSeq
+  // is treated as "no broadcast ordering constraint" and ignored.
+  if (typeof globalSeq === "number" && globalSeq > __skyLastGlobalSeq) {
+    __skyLastGlobalSeq = globalSeq;
   }
   if (ackInputs) {
     var ids = Object.keys(ackInputs);
@@ -3907,11 +4490,25 @@ function __skyIngestSeq(seq, ackInputs) {
 // already landed with a later view, and applying the stale payload
 // would regress the DOM. Legacy frames that omit seq (or report 0)
 // always apply — pre-upgrade servers keep working.
-function __skyHandleResponse(seq, ackInputs, applyFn) {
+//
+// Cycle 3 P47 (pub/sub global+local seq split — see
+// docs/skylive/pubsub-design.md §3.2): broadcast-derived frames also
+// carry an OPTIONAL globalSeq. If supplied AND already applied (i.e.
+// globalSeq > 0 && globalSeq <= __skyLastGlobalSeq) the frame is
+// dropped — a replayed broadcast (e.g. an SSE reconnect re-delivering
+// buffered frames) would otherwise mutate state twice. Both guards
+// fire independently: a frame is dropped if EITHER counter has already
+// passed it; the localSeq guard alone suffices for the legacy
+// non-broadcast case (globalSeq omitted / 0 → broadcast guard always
+// passes).
+function __skyHandleResponse(seq, ackInputs, applyFn, globalSeq) {
   if (typeof seq === "number" && seq > 0 && seq <= __skyLastAppliedSeq) {
-    return; // stale — a newer frame already landed
+    return; // stale — a newer local-seq frame already landed
   }
-  __skyIngestSeq(seq, ackInputs);
+  if (typeof globalSeq === "number" && globalSeq > 0 && globalSeq <= __skyLastGlobalSeq) {
+    return; // stale — a newer broadcast frame already landed
+  }
+  __skyIngestSeq(seq, ackInputs, globalSeq);
   applyFn();
 }
 
@@ -4504,7 +5101,7 @@ function __skyPostEvent(body) {
         if (!data) return;
         __skyHandleResponse(data.seq, data.ackInputs, function() {
           if (data.patches) __skyApplyPatches(data.patches);
-        });
+        }, data.globalSeq);
       });
     }
     return r.text().then(function(t) {
@@ -5130,7 +5727,7 @@ function __skyOpenSSE() {
       __skyHandleResponse(frame.seq, frame.ackInputs, function() {
         if (document.activeElement && document.activeElement.tagName === "SELECT") return;
         if (frame.body) __skyPatch(frame.body.replace(/\\n/g, "\n"));
-      });
+      }, frame.globalSeq);
     }
   });
   // Cycle 3 P50b / Gap C11 — structural-patches SSE event.
@@ -5191,7 +5788,7 @@ function __skyOpenSSE() {
     if (!frame || typeof frame !== "object" || !frame.patches) return;
     __skyHandleResponse(frame.seq, frame.ackInputs, function() {
       __skyApplyPatches(frame.patches);
-    });
+    }, frame.globalSeq);
   });
   __skySSE.addEventListener("open", function() {
     // EventSource fired open — but we don't trust this alone, since a

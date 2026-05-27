@@ -4,19 +4,48 @@
 -- delivered to `update`.  Use `Sub.every` for periodic ticks
 -- (animation, polling, …) and `Sub.none` when there's nothing
 -- to subscribe to.
-module Std.Sub exposing
-    ( none, every
-    )
-
+module Std.Sub exposing (none, every, batch, subscribeTopic)
 
 import Sky.Ffi as Ffi
 
 
 none : Sub msg
-none = Ffi.kernel "Sub_none"
+none =
+    Ffi.kernel "Sub_none"
 
 
 -- | `every intervalMillis msg` — dispatch `msg` every
 -- `intervalMillis` milliseconds.
 every : Int -> msg -> Sub msg
-every = Ffi.kernel "Sub_every"
+every =
+    Ffi.kernel "Sub_every"
+
+
+-- | `batch subs` — combine multiple subscriptions into one. Composes
+-- `Sub.every` with `Sub.subscribeTopic` so a session can tick on a
+-- timer AND receive pub/sub broadcasts in a single `subscriptions`
+-- evaluation.
+batch : List (Sub msg) -> Sub msg
+batch =
+    Ffi.kernel "Sub_batch"
+
+
+-- | `subscribeTopic topic toMsg` — receive pub/sub broadcasts on
+-- `topic`. The `toMsg : any -> msg` decoder is called with each
+-- incoming payload; its result is dispatched to `update` exactly
+-- like any other Msg.
+--
+-- Subscriptions are exact-match by topic name (no wildcards in
+-- v0.15.x). Use string concatenation to build per-room / per-user
+-- topics, e.g. `("chat-" ++ roomId)`.
+--
+-- The runtime cleans up subscriptions automatically when:
+--
+--  * The next `subscriptions model` evaluation no longer mentions
+--    this topic (diff-mode update).
+--  * The session is evicted (TTL or explicit `markDone`).
+--
+-- See `docs/skylive/pubsub-design.md` §3.3 + §4 for the lifecycle.
+subscribeTopic : String -> (any -> msg) -> Sub msg
+subscribeTopic =
+    Ffi.kernel "Sub_subscribeTopic"

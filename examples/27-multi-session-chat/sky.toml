@@ -1,0 +1,14 @@
+name = "multi-session-chat"
+version = "0.1.0"
+entry = "src/Main.sky"
+
+[source]
+root = "src"
+
+[live]
+port = 8000
+store = "memory"
+
+[database]
+driver = "sqlite"
+path = "chat.db"

@@ -250,12 +250,24 @@ func parseTTL(envVal, tomlVal string, def time.Duration) time.Duration {
 // reads/writes via `Get`, `Set`, `Delete`, and generates IDs via
 // `NewID`. Callers are responsible for per-session locking (the runtime
 // uses a SessionLocker to serialise event handling + SSE writes).
+//
+// Cycle 3 P46 (pub/sub) — SessionStore also exposes a Broker accessor.
+// The v0.15.x default impl returns an in-process *topicRegistry shared
+// across all sessions on the app; v0.16+ cross-process backends (Redis
+// Pub/Sub, Cloud Pub/Sub, Postgres LISTEN/NOTIFY, NATS JetStream — see
+// docs/skylive/pubsub-design.md §11.2.5) override Broker() to return
+// their own implementation. The Broker interface lives in
+// runtime-go/rt/live_topics.go.
 type SessionStore interface {
 	Get(sid string) (*liveSession, bool)
 	Set(sid string, sess *liveSession)
 	Delete(sid string)
 	NewID() string
 	Close() error
+	// Broker returns the pub/sub broker bound to this store. v0.15.x
+	// default: in-process *topicRegistry. Future cross-process
+	// backends override.
+	Broker() Broker
 }
 
 
@@ -268,6 +280,11 @@ type memoryStore struct {
 	sessions map[string]*liveSession
 	ttl      time.Duration
 	stop     chan struct{}
+	// broker — pub/sub registry. Cycle 3 P46. Default in-process
+	// *topicRegistry; future cross-process tiers swap the pointer.
+	// Stored as the Broker interface so test fixtures + memory-store
+	// alternatives slot in via the SAME field.
+	broker Broker
 }
 
 func newMemoryStore(ttl time.Duration) *memoryStore {
@@ -275,10 +292,13 @@ func newMemoryStore(ttl time.Duration) *memoryStore {
 		sessions: map[string]*liveSession{},
 		ttl:      ttl,
 		stop:     make(chan struct{}),
+		broker:   newTopicRegistry(0),
 	}
 	go s.cleanupLoop()
 	return s
 }
+
+func (s *memoryStore) Broker() Broker { return s.broker }
 
 func (s *memoryStore) Get(sid string) (*liveSession, bool) {
 	s.mu.RLock()
@@ -371,7 +391,11 @@ type sqliteStore struct {
 	// which is the same trade-off the memoryStore makes.
 	memMu    sync.RWMutex
 	memCache map[string]*liveSession
+	// broker — pub/sub registry. Cycle 3 P46.
+	broker Broker
 }
+
+func (s *sqliteStore) Broker() Broker { return s.broker }
 
 func newSQLiteStore(path string, ttl time.Duration) (*sqliteStore, error) {
 	db, err := sql.Open("sqlite", path)
@@ -396,6 +420,7 @@ func newSQLiteStore(path string, ttl time.Duration) (*sqliteStore, error) {
 		ttl:      ttl,
 		stop:     make(chan struct{}),
 		memCache: map[string]*liveSession{},
+		broker:   newTopicRegistry(0),
 	}
 	go s.cleanupLoop()
 	return s, nil
@@ -519,7 +544,11 @@ type postgresStore struct {
 	stop     chan struct{}
 	memMu    sync.RWMutex
 	memCache map[string]*liveSession
+	// broker — pub/sub registry. Cycle 3 P46.
+	broker Broker
 }
+
+func (s *postgresStore) Broker() Broker { return s.broker }
 
 func newPostgresStore(connStr string, ttl time.Duration) (*postgresStore, error) {
 	db, err := sql.Open("pgx", connStr)
@@ -540,6 +569,7 @@ func newPostgresStore(connStr string, ttl time.Duration) (*postgresStore, error)
 		ttl:      ttl,
 		stop:     make(chan struct{}),
 		memCache: map[string]*liveSession{},
+		broker:   newTopicRegistry(0),
 	}
 	go s.cleanupLoop()
 	return s, nil
@@ -652,7 +682,14 @@ type redisStore struct {
 	cancel   context.CancelFunc
 	memMu    sync.RWMutex
 	memCache map[string]*liveSession
+	// broker — pub/sub registry. Cycle 3 P46. v0.15.x: still
+	// in-process *topicRegistry; a v0.16+ RedisPubsubBroker would
+	// override this field to use `redis.PSubscribe` for cross-process
+	// fan-out (design doc §11.2.5 tier 1).
+	broker Broker
 }
+
+func (s *redisStore) Broker() Broker { return s.broker }
 
 // redisKey: namespace session ids under a fixed prefix so the Redis
 // instance can be shared with other workloads.
@@ -688,6 +725,7 @@ func newRedisStore(addr string, ttl time.Duration) (*redisStore, error) {
 		ctx:      ctx,
 		cancel:   cancel,
 		memCache: map[string]*liveSession{},
+		broker:   newTopicRegistry(0),
 	}, nil
 }
 
@@ -774,12 +812,21 @@ func (s *redisStore) Close() error {
 //
 // OutSeq must persist: the client tracks the largest seq it has applied
 // (__skyLastAppliedSeq) and silently drops any frame with seq ≤ that.
-// Without this field, after a server restart the new process's outSeq
+// Without this field, after a server restart the new process's localSeq
 // would reset to 0 and every frame would be classified stale by the
 // client — including the reconnect-resync push that's supposed to
 // refresh stale-view DOM after `sky watch` rebuilds. By persisting the
 // counter, the new process continues climbing past whatever the client
 // last saw, so resync frames register as fresh and apply.
+//
+// Cycle 3 P47 (pub/sub prereq 2 — see docs/skylive/pubsub-design.md
+// §3.2): liveSession's in-memory field has been renamed outSeq →
+// localSeq, but the GOB-persisted name MUST stay OutSeq so existing
+// SQLite / Postgres / Redis / Firestore session blobs decode cleanly.
+// globalSeq is app-wide (atomic.Int64 on liveApp) — NOT serialised
+// per-session; on restart the new process restarts globalSeq from 0,
+// and the client's __skyLastGlobalSeq guard is benign (a fresh
+// broadcast cycle is its own monotonic series).
 type storableSession struct {
 	Model    any
 	// PrevTree excluded: VNode.Events holds function values which
@@ -810,7 +857,7 @@ func encodeSession(s *liveSession) ([]byte, error) {
 	if err := enc.Encode(storableSession{
 		Model:    s.model,
 		LastSeen: s.lastSeenTime(),
-		OutSeq:   s.outSeq,
+		OutSeq:   s.localSeq,
 	}); err != nil {
 		return nil, err
 	}
@@ -902,8 +949,8 @@ func decodeSession(blob []byte) (*liveSession, error) {
 		// Cycle 3 P36 / Gap C4: provision the terminal-teardown
 		// channel so persistent-store rehydrates can also be cleanly
 		// stopped by markDone when the session is later evicted.
-		done:   make(chan struct{}),
-		outSeq: st.OutSeq,
+		done:     make(chan struct{}),
+		localSeq: st.OutSeq,
 	}
 	// Task #326: lastSeen is now an atomic.Int64 — can't be set in a
 	// struct literal, so seed it after construction.

@@ -427,8 +427,11 @@ update msg model =
 | `Cmd.none` | `Cmd msg` | No-op |
 | `Cmd.perform` | `Task err a -> (Result err a -> msg) -> Cmd msg` | Run task, dispatch result as Msg |
 | `Cmd.batch` | `List (Cmd msg) -> Cmd msg` | Concurrent batch |
+| `Cmd.publish` | `String -> any -> Cmd msg` | Broadcast payload to every Sky.Live session subscribed to topic — see [skylive/pubsub.md](skylive/pubsub.md) |
 | `Sub.none` | `Sub msg` | No subscription |
 | `Sub.every` | `Int -> msg -> Sub msg` | Dispatch `msg` every N ms |
+| `Sub.subscribeTopic` | `String -> (any -> msg) -> Sub msg` | Receive pub/sub broadcasts on topic; decoder turns payload into a Msg |
+| `Sub.batch` | `List (Sub msg) -> Sub msg` | Combine timer + topic + others |
 
 ### `Time` — clock + duration
 
