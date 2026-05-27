@@ -474,6 +474,26 @@ response =
 parses a URL query string into a `Dict String String` (pure —
 backed by Go's `net/url`, proper percent-decoding).
 
+For **streaming response bodies** (LLM completions, SSE, large
+downloads), use `Sky.Core.Http.Stream`:
+
+```elm
+import Sky.Core.Http.Stream as HttpStream exposing (StreamId, ChunkEvent(..))
+
+-- Cmd.perform kicks off the request; chunks arrive via Sub.
+( model, Cmd.perform (HttpStream.open req) StreamOpened )
+
+-- subscriptions: attach `chunks` only while a stream is live.
+subscriptions model =
+    case model.activeStream of
+        Just sid -> HttpStream.chunks sid Chunked
+        Nothing  -> Sub.none
+```
+
+See [`docs/skylive/http-streaming.md`](skylive/http-streaming.md)
+for the full design + `examples/28-streaming-chat` for the
+canonical pattern.
+
 ### `File` — filesystem
 
 ```elm

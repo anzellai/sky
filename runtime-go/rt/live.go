@@ -4110,12 +4110,21 @@ func (app *liveApp) runStreamSubscriberLoop(sess *liveSession, reg *streamSubReg
 	})
 }
 
+// runStreamSubscriberDispatch_debugCounter — atomic counter of how
+// many chunks we've dispatched, for SKY_STREAM_DEBUG tracing.
+var runStreamSubscriberDispatch_debugCounter atomic.Int64
+
 // runStreamSubscriberDispatch decodes one streamEvent into a Msg via
 // the user-supplied `toMsg` decoder and routes the dispatch + SSE
 // frame production. Mirrors runSubscriberDispatch (pub/sub) — wraps
 // the decoder in defer-recover so a panicking decoder consumes the
 // event without crashing the session.
 func (app *liveApp) runStreamSubscriberDispatch(sess *liveSession, toMsg any, ev streamEvent) {
+	if streamDebug {
+		n := runStreamSubscriberDispatch_debugCounter.Add(1)
+		fmt.Fprintf(os.Stderr, "[sky.stream-drain] #%d ev.kind=%d entering dispatch\n", n, ev.kind)
+		defer fmt.Fprintf(os.Stderr, "[sky.stream-drain] #%d ev.kind=%d exit dispatch\n", n, ev.kind)
+	}
 	chunkVal := buildChunkEventValue(ev)
 	if chunkVal == nil {
 		return

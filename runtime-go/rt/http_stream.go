@@ -55,6 +55,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"reflect"
 	"strings"
 	"sync"
@@ -277,6 +278,13 @@ func (sh *streamHandle) IsClosed() bool {
 	return sh.closed.Load()
 }
 
+// streamDebug — set true via SKY_STREAM_DEBUG=1 env to print
+// per-event timing on the spool + drain paths. Useful for
+// diagnosing latency when the dispatch loop falls behind the
+// upstream's chunk cadence. Off by default — adds two stderr
+// lines per chunk when on.
+var streamDebug = os.Getenv("SKY_STREAM_DEBUG") == "1"
+
 // runSpool reads from body in streamReadBuffer-sized chunks and
 // pushes streamEvents onto ch. Exits on:
 //
@@ -305,25 +313,36 @@ func (sh *streamHandle) runSpool() {
 	}()
 
 	buf := make([]byte, streamReadBuffer)
+	startNs := time.Now()
 	for {
 		if sh.IsClosed() {
 			return
 		}
 		n, err := sh.body.Read(buf)
+		if streamDebug {
+			fmt.Fprintf(os.Stderr, "[sky.stream/%d] %dms Read n=%d err=%v\n",
+				sh.id, time.Since(startNs).Milliseconds(), n, err)
+		}
 		if n > 0 {
 			chunk := string(buf[:n])
+			deliveredAt := time.Now()
 			if !sh.deliver(streamEvent{kind: streamChunkEv, data: chunk}) {
 				// Consumer-stall timeout fired; abandon the stream.
 				sh.Close()
 				return
 			}
+			if streamDebug {
+				fmt.Fprintf(os.Stderr, "[sky.stream/%d] %dms delivered chunk (took %dms)\n",
+					sh.id, time.Since(startNs).Milliseconds(), time.Since(deliveredAt).Milliseconds())
+			}
 		}
 		if err == io.EOF {
+			doneAt := time.Now()
 			sh.deliver(streamEvent{kind: streamDoneEv})
-			// Don't Close() here — the consumer may still want to
-			// read the Done event. HttpStream_close from the
-			// chunkEvent->Done handler is idempotent; the consumer
-			// retires the stream naturally.
+			if streamDebug {
+				fmt.Fprintf(os.Stderr, "[sky.stream/%d] %dms delivered Done (took %dms)\n",
+					sh.id, time.Since(startNs).Milliseconds(), time.Since(doneAt).Milliseconds())
+			}
 			return
 		}
 		if err != nil {
@@ -382,6 +401,18 @@ func newStreamHttpClient() *http.Client {
 		Transport: &http.Transport{
 			Proxy:                 http.ProxyFromEnvironment,
 			ResponseHeaderTimeout: streamHeaderTimeout,
+			// DisableKeepAlives: prevents the chunked-transfer EOF
+			// from being deferred to keep-alive idle timeout. Without
+			// this, Go's http.Transport may hold the body Reader
+			// open after the upstream closes the chunked stream
+			// because the underlying TCP conn is being recycled into
+			// the keep-alive pool — body.Read blocks for the conn's
+			// idle timeout (~30 s with default settings) instead of
+			// returning io.EOF immediately on server close.
+			//
+			// Streaming responses are one-shot by definition; reusing
+			// the conn buys us nothing and costs us EOF latency.
+			DisableKeepAlives:     true,
 			// IdleConnTimeout, ExpectContinueTimeout etc. inherit
 			// from the http stdlib defaults.
 		},

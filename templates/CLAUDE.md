@@ -1856,6 +1856,35 @@ Http.request { method, url, headers, body }   -- Task Error Response
 Http.parseQuery "a=1&b=2"   -- Dict String String (pure; Go net/url)
 ```
 
+### Sky.Core.Http.Stream (Task + Sub) — incremental HTTP bodies
+
+Read HTTP response bodies as bytes arrive — the view re-renders
+progressively (LLM streaming, SSE, long downloads). Drops perceived
+latency 5-10× vs `Http.get`.
+
+```elm
+import Sky.Core.Http.Stream as HttpStream exposing (StreamId, ChunkEvent(..))
+
+HttpStream.open req       -- Task Error StreamId — completes once HEADERS arrive
+HttpStream.chunks sid f   -- Sub msg — `f : ChunkEvent -> msg` per chunk
+HttpStream.close sid      -- Task Error () — idempotent
+
+type ChunkEvent
+    = Chunk String       -- UTF-8 bytes just arrived
+    | Done               -- clean EOF
+    | Errored Error      -- network / protocol fault
+```
+
+**Canonical shape**: subscribe only while a stream is in-flight.
+Store `StreamId` on the model after `StreamOpened (Ok sid)`, clear
+on `Chunked Done` / `Errored`, return `Sub.none` when Nothing.
+See `examples/28-streaming-chat` for the reference; full design
+write-up in `docs/skylive/http-streaming.md`.
+
+Session disconnect (TTL eviction OR Delete) closes every owned
+stream automatically; log: `[sky.stream] cleaned N orphaned
+streams on session close`.
+
 ### Sky.Core.Encoding (pure)
 
 ```elm
