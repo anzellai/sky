@@ -10538,12 +10538,55 @@ caseToGo mExpectedGo subject branches =
         -- (direct field access), `n` becomes `int` and Go's type
         -- inference works through Test.equal and friends.
         solvedTypes = Rec._cg_solvedTypes getCgEnv
+        -- Cycle 3 task #330 / Dev P40 (skyshop Db.snapshotToDict panic):
+        -- when the subject is a bare variable reference, treat the
+        -- per-region HM type map as authoritative and do NOT fall back
+        -- to `inferExprType`.  `inferExprType` on `Can.VarLocal name`
+        -- routes through `Solve.lookupSolvedVar name solvedTypes`, which
+        -- reads the FLAT name -> type env shared across the whole
+        -- compilation unit.  When the same lambda-param name (e.g. `r`
+        -- in `Result.withDefault def r`) appears in BOTH the polymorphic
+        -- stdlib definition AND a user-side helper that pins it to a
+        -- concrete type (e.g. `Result Error String`), the env stores
+        -- the pinned shape and lowering the polymorphic body picks
+        -- THAT up when computing the case-subject coercion.  Concrete
+        -- fallout: `__subject_tFfi := rt.ResultCoerce[Sky_Core_Error_Error,
+        -- string](r)` gets baked into the generic
+        -- `Sky_Core_Result_withDefault[T1 any]` body, and every
+        -- monomorphised instance with `T1 != string` panics at runtime
+        -- with `coerceInner: type mismatch`.
+        --
+        -- `lookupSolvedRegion` is keyed by `A.Region`, so the lookup is
+        -- per source location and cannot be polluted by an unrelated
+        -- binding that happens to share the variable's name.  For
+        -- subject shapes that don't go through the polluted name-env
+        -- (literals, calls, accessors, …) the legacy `inferExprType`
+        -- path stays unchanged — those never poll `_stEnv` for a
+        -- same-named lambda param, and routing them through the
+        -- region map can regress cases where the region resolved to
+        -- an anonymous-record-typed shape that has no emitted Go
+        -- struct decl (e.g. `case Decode.decodeString d json of …`
+        -- when the decoder targets `{ name : String, age : Int }`:
+        -- the region knows the full record shape, but
+        -- `solvedTypeToGo` synthesises an `Anon_R_…` name that the
+        -- alias index only emits a decl for when there's a source-
+        -- level alias — caught by `test-files/json-pipeline-test.sky`).
+        (A.At subjectRegion subjectExpr) = subject
+        isBareNameRef = case subjectExpr of
+            Can.VarLocal _      -> True
+            Can.VarTopLevel _ _ -> True
+            _                   -> False
         inferredSubjectGoType =
-            case inferExprType solvedTypes subject of
-                Just t ->
+            let bySearch t =
                     let s = solvedTypeToGo t
                     in if isConcreteResultOrMaybe s then Just s else Nothing
-                Nothing -> Nothing
+            in if isBareNameRef
+                then case Solve.lookupSolvedRegion subjectRegion solvedTypes of
+                        Just t  -> bySearch t
+                        Nothing -> Nothing
+                else case inferExprType solvedTypes subject of
+                        Just t  -> bySearch t
+                        Nothing -> Nothing
         -- Wrap in `any(...)` before asserting so the assertion works
         -- whether the expression is already typed (e.g. a typed Sky
         -- function returning SkyResult[IoError, string]) or `any`
