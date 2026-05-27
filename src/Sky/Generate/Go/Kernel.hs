@@ -482,6 +482,13 @@ registry = Map.fromList
     , (("Sub", "every"),          KernelInfo "rt.Sub_every" 2 False)
     , (("Sub", "batch"),          KernelInfo "rt.Sub_batch" 1 False)
     , (("Sub", "subscribeTopic"), KernelInfo "rt.Sub_subscribeTopic" 2 False)
+    , (("Sub", "subscribeStream"), KernelInfo "rt.Sub_subscribeStream" 2 False)
+
+    -- ═══════════════════════════════════════════════════════
+    -- Sky.Core.Http.Stream  (Cycle 4 HS — streaming HTTP bodies)
+    -- ═══════════════════════════════════════════════════════
+    , (("HttpStream", "open"),    KernelInfo "rt.HttpStream_open" 1 True)
+    , (("HttpStream", "close"),   KernelInfo "rt.HttpStream_close" 1 True)
 
     -- ═══════════════════════════════════════════════════════
     -- Set

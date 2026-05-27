@@ -29,7 +29,7 @@
 -- make a real content change to THIS `.hs` file — bump the marker
 -- below — so cabal recompiles it and the splice re-walks the tree.
 --
--- re-embed marker: 2026-05-27 — merged Cycle 3 P49 pub/sub example + divergence test AND C9 __skyReviveScripts allowlist
+-- re-embed marker: 2026-05-27 — Cycle 4 HS (rev7): JS comment </script> literal escaped + stream-loop session stamp
 module Sky.Build.EmbeddedRuntime
     ( embeddedRuntime
     , embeddedSkyStdlib

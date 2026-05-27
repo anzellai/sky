@@ -1,0 +1,126 @@
+-- | Sky.Core.Http.Stream — incremental HTTP response bodies as Subs.
+--
+-- Opens an HTTP request whose response body streams back to the
+-- update loop as a sequence of `ChunkEvent` Msgs. The view re-renders
+-- as bytes arrive — perceived latency on a slow upstream (LLM
+-- streaming, server-sent events, large-file downloads) drops 5-10×
+-- compared with `Http.get` returning the full body at once.
+--
+-- Lifecycle:
+--
+--  1. `Cmd.perform (Http.Stream.open req) Opened` — kick off the
+--     request; the runtime returns a `StreamId` once the response
+--     headers arrive (no body wait).
+--
+--  2. `subscriptions model = Http.Stream.chunks sid Chunked` —
+--     subscribe to the chunk stream. Each `Chunk String` Msg carries
+--     a UTF-8 byte chunk; `Done` signals clean EOF; `Errored Error`
+--     surfaces a network / protocol fault.
+--
+--  3. `Http.Stream.close sid` — release the underlying body
+--     connection. Idempotent — safe from a Done handler that always
+--     closes, OR from a teardown branch.
+--
+-- Session lifecycle: when a session is evicted (TTL OR explicit
+-- Delete), the runtime closes every owned stream automatically.
+-- App code is never responsible for cleanup on disconnect.
+--
+-- See `docs/skylive/http-streaming.md` for the design write-up and
+-- `examples/28-streaming-chat` for the canonical pattern.
+module Sky.Core.Http.Stream exposing (StreamId(..), ChunkEvent(..), open, chunks, close)
+
+import Sky.Ffi as Ffi
+import Sky.Core.Error exposing (Error)
+import Sky.Core.Http exposing (HttpRequest)
+import Sky.Core.Task as Task
+
+
+-- | Opaque handle to an open streaming response. The wrapped `Int`
+-- is the runtime's per-stream id; user code treats it as opaque
+-- (pattern-matches via `(StreamId _)` only when destructuring is
+-- unavoidable, e.g. JSON round-trip through a Db column).
+type StreamId
+    = StreamId Int
+
+
+-- | One incremental event on a stream.
+--
+--  * `Chunk String` — a UTF-8 byte chunk just arrived.
+--  * `Done` — the response body is fully consumed; the stream may
+--    be closed (idempotent — `close` after Done is a no-op).
+--  * `Errored Error` — network / protocol error; the stream is
+--    closed; the connection is released.
+--
+-- Bytes overload deferred to a future signature; chunks are
+-- always UTF-8 text in v0.15.x (LLM SSE + JSON streams cover the
+-- driving use cases).
+type ChunkEvent
+    = Chunk String
+    | Done
+    | Errored Error
+
+
+-- | Internal — direct kernel alias. The runtime returns a bare
+-- `Task Error Int`; `open` wraps the Int in `StreamId` so the
+-- public surface stays type-safe.
+openRaw : HttpRequest -> Task Error Int
+openRaw =
+    Ffi.kernel "HttpStream_open"
+
+
+-- | `open req` — start streaming the response body of `req`. The
+-- returned Task completes once the response HEADERS arrive — body
+-- bytes flow via `chunks sid` after that. The 30s header timeout
+-- mirrors `Http.request`; the body itself has no upper time bound
+-- (LLM completions routinely run for minutes).
+--
+-- The `req` shape is identical to `Http.request`'s — a method,
+-- URL, body, and headers — so an existing Http.request call site
+-- can switch to streaming by changing only the function name.
+open : HttpRequest -> Task Error StreamId
+open req =
+    Task.map StreamId (openRaw req)
+
+
+-- | Internal — direct kernel alias on the raw Int id. `chunks` wraps
+-- the destructure of `StreamId` so the public surface only sees
+-- the opaque handle.
+chunksRaw : Int -> (ChunkEvent -> msg) -> Sub msg
+chunksRaw =
+    Ffi.kernel "Sub_subscribeStream"
+
+
+-- | `chunks sid toMsg` — subscribe to the chunk stream for `sid`.
+-- Each chunk dispatches `toMsg event` as a Msg through `update`.
+-- Compose with `Time.every` / `Sub.subscribeTopic` via `Sub.batch`.
+--
+-- Subscribing to a stream id that was never `open`-ed (or was
+-- already closed) is a no-op — the runtime silently drops the
+-- registration on the next `subscriptions` re-eval. This is the
+-- canonical shape for "only subscribe while the stream is
+-- in-flight": store the StreamId in `model` after `Opened` lands,
+-- clear it on `Done` / `Errored`, return `Sub.none` when the field
+-- is `Nothing`.
+chunks : StreamId -> (ChunkEvent -> msg) -> Sub msg
+chunks sid toMsg =
+    case sid of
+
+        StreamId raw ->
+            chunksRaw raw toMsg
+
+
+-- | Internal — direct kernel alias on the raw Int id.
+closeRaw : Int -> Task Error ()
+closeRaw =
+    Ffi.kernel "HttpStream_close"
+
+
+-- | `close sid` — release the underlying connection. Idempotent —
+-- a Done handler that always closes (regardless of whether close
+-- already fired from an Errored arm) lands cleanly.
+close : StreamId -> Task Error ()
+close sid =
+    case sid of
+
+        StreamId raw ->
+            closeRaw raw

@@ -1,0 +1,342 @@
+module Main exposing (main)
+
+-- examples/28-streaming-chat — incremental HTTP streaming demo (Cycle 4 HS).
+--
+-- Simulates an LLM-streaming chat. User types a prompt, hits send,
+-- and the reply paints token-by-token (one chunk every ~100 ms) via
+-- Sky.Core.Http.Stream — NOT by polling, NOT by waiting for the full
+-- reply.
+--
+-- ARCHITECTURE
+--
+--  * `Cmd.perform (Http.Stream.open req) StreamOpened` kicks off
+--    the upstream request. Stream id arrives once headers land.
+--
+--  * `subscriptions model = case model.activeStream of`
+--      Just sid -> Http.Stream.chunks sid Chunked
+--      Nothing  -> Sub.none
+--    So we only subscribe while a stream is in flight.
+--
+--  * Chunked Chunk -> append text to model.reply; view re-renders;
+--    SSE patches the open browser tab via the standard Sky.Live wire.
+--
+--  * Chunked Done / Errored -> close the stream + clear
+--    activeStream so subscriptions stops re-evaluating.
+--
+-- The mock upstream lives in examples/28-streaming-chat/mock/main.go —
+-- a tiny Go binary that streams 20 chunks @ 100 ms each. The
+-- verification probe (scripts/verify-streaming-chat.sh) boots both.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.Http as Http exposing (HttpRequest)
+import Sky.Core.Http.Stream as HttpStream exposing (StreamId, ChunkEvent(..))
+import Std.Log exposing (println)
+import Std.Html exposing (..)
+import Std.Html.Attributes exposing (..)
+import Std.Html.Events exposing (onSubmit)
+import Std.Live exposing (app, route)
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+
+
+-- ─── Mock upstream ──────────────────────────────────────────────
+-- The mock streaming server runs on :8765 (see ../mock/main.go).
+-- Override via SKY_MOCK_STREAM_URL if you want to point at a real
+-- upstream (LLM API, SSE endpoint, etc.).
+
+mockStreamUrl : String
+mockStreamUrl =
+    "http://localhost:8765/stream"
+
+
+-- ─── Model ───────────────────────────────────────────────────────
+type alias PromptForm =
+    { prompt : String }
+
+type Page
+    = HomePage
+
+type alias Model =
+    { page : Page
+    , history : List String       -- prior completed replies
+    , prompt : String              -- current input (controlled — but see note below)
+    , reply : String               -- text accumulated from the active stream
+    , activeStream : Maybe StreamId  -- Nothing when idle
+    , chunkCount : Int             -- chunks received this stream — debug surface
+    , notice : String              -- last error or status hint
+    }
+
+type Msg
+    = SendPrompt PromptForm
+    | StreamOpened (Result Error StreamId)
+    | Chunked ChunkEvent
+    | StreamClosed (Result Error ())
+
+
+-- ─── Init ────────────────────────────────────────────────────────
+init : any -> ( Model, Cmd Msg )
+init _ =
+    ( { page = HomePage
+      , history = []
+      , prompt = ""
+      , reply = ""
+      , activeStream = Nothing
+      , chunkCount = 0
+      , notice = ""
+      }
+    , Cmd.none
+    )
+
+
+-- ─── Subscriptions ───────────────────────────────────────────────
+-- Subscribe only while a stream is open. On Done / Errored we clear
+-- activeStream, which causes the next subscriptions eval to drop
+-- the chunk Sub — drain goroutine retires cleanly.
+subscriptions : Model -> Sub.Sub Msg
+subscriptions model =
+    case model.activeStream of
+        Just sid ->
+            HttpStream.chunks sid Chunked
+
+        Nothing ->
+            Sub.none
+
+
+-- ─── Update ──────────────────────────────────────────────────────
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        SendPrompt form ->
+            let
+                trimmed = String.trim form.prompt
+            in
+                if trimmed == "" then
+                    ( { model | notice = "Empty prompt ignored" }, Cmd.none )
+
+                else
+                    let
+                        req =
+                            { method = "POST"
+                            , url = mockStreamUrl
+                            , body = trimmed
+                            , headers = [ ( "Content-Type", "text/plain" ) ]
+                            }
+                    in
+                        ( { model
+                              | prompt = trimmed
+                              , reply = ""
+                              , chunkCount = 0
+                              , notice = "Streaming reply..."
+                              , activeStream = Nothing  -- cleared until Opened lands
+                          }
+                        , Cmd.perform (HttpStream.open req) StreamOpened
+                        )
+
+        StreamOpened (Ok sid) ->
+            ( { model | activeStream = Just sid, notice = "Connected" }
+            , Cmd.none
+            )
+
+        StreamOpened (Err e) ->
+            ( { model
+                  | notice = "Open failed: " ++ Error.toString e
+                  , activeStream = Nothing
+              }
+            , Cmd.none
+            )
+
+        Chunked (Chunk text) ->
+            ( { model
+                  | reply = model.reply ++ text
+                  , chunkCount = model.chunkCount + 1
+              }
+            , Cmd.none
+            )
+
+        Chunked Done ->
+            -- Persist the completed reply into history, close the
+            -- stream (idempotent) + clear activeStream so the next
+            -- subscriptions eval drops the Sub.
+            let
+                finished = model.reply
+                history2 = List.append model.history [finished]
+                closeCmd =
+                    case model.activeStream of
+                        Just sid ->
+                            Cmd.perform (HttpStream.close sid) StreamClosed
+
+                        Nothing ->
+                            Cmd.none
+            in
+                ( { model
+                      | history = history2
+                      , reply = ""
+                      , chunkCount = 0
+                      , activeStream = Nothing
+                      , notice = "Done"
+                  }
+                , closeCmd
+                )
+
+        Chunked (Errored e) ->
+            let
+                closeCmd =
+                    case model.activeStream of
+                        Just sid ->
+                            Cmd.perform (HttpStream.close sid) StreamClosed
+
+                        Nothing ->
+                            Cmd.none
+            in
+                ( { model
+                      | notice = "Stream error: " ++ Error.toString e
+                      , activeStream = Nothing
+                      , reply = ""
+                      , chunkCount = 0
+                  }
+                , closeCmd
+                )
+
+        StreamClosed _ ->
+            ( model, Cmd.none )
+
+
+-- ─── View ────────────────────────────────────────────────────────
+view : Model -> Html Msg
+view model =
+    div
+        []
+        [ styleNode [] pageStyles
+        , div
+              [class "app"]
+              [ header
+                    [class "topbar"]
+                    [ h1 [] [text "Sky.Live · streaming chat"]
+                    , p
+                          [class "hint"]
+                          [text
+                              "Type a prompt; the reply paints token-by-token via Sky.Core.Http.Stream."]
+                    ]
+              , div [class "content"]
+                    [ historyView model.history
+                    , liveReplyView model
+                    , composerView model
+                    , noticeView model.notice
+                    ]
+              , footer
+                    [class "footer"]
+                    [text "Mock upstream: localhost:8765/stream (see mock/main.go) — 20 chunks @ 100 ms."]
+              ]
+        ]
+
+
+historyView : List String -> Html Msg
+historyView history =
+    if List.isEmpty history then
+        div [class "history empty"] [text "(no replies yet — send a prompt below)"]
+
+    else
+        div [class "history"] (List.map historyRow history)
+
+
+historyRow : String -> Html Msg
+historyRow reply =
+    div [class "history-row"] [text reply]
+
+
+liveReplyView : Model -> Html Msg
+liveReplyView model =
+    case model.activeStream of
+        Just _ ->
+            div
+                [ class "live-reply", id "live-reply" ]
+                [ div [class "live-reply-label"] [text "Streaming..."]
+                , div [class "live-reply-text"] [text model.reply]
+                , div [class "live-reply-meta"]
+                      [text ("(" ++ String.fromInt model.chunkCount ++ " chunks)")]
+                ]
+
+        Nothing ->
+            div [class "live-reply idle"] []
+
+
+composerView : Model -> Html Msg
+composerView model =
+    let
+        disabledAttr =
+            case model.activeStream of
+                Just _ -> [disabled True]
+                Nothing -> []
+    in
+        form
+            [ class "composer", onSubmit SendPrompt ]
+            [ input
+                  ([ name "prompt"
+                   , id "prompt-input"
+                   , placeholder "Ask the mock anything..."
+                   , autocomplete "off"
+                   ] ++ disabledAttr)
+            , button
+                  ([ type_ "submit", class "primary" ] ++ disabledAttr)
+                  [text "Send"]
+            ]
+
+
+noticeView : String -> Html Msg
+noticeView notice =
+    if notice == "" then
+        span [class "notice empty"] []
+
+    else
+        div [class "notice", id "notice"] [text notice]
+
+
+-- ─── App wiring ──────────────────────────────────────────────────
+main =
+    app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        , routes = [ route "/" HomePage ]
+        , notFound = HomePage
+        }
+
+
+-- ─── Styles ──────────────────────────────────────────────────────
+pageStyles =
+    """
+    * { box-sizing: border-box; }
+    body {
+        margin: 0;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        background: #f9fafb;
+        color: #111827;
+    }
+    .app { max-width: 760px; margin: 0 auto; padding: 2rem 1rem; }
+    .topbar { border-bottom: 1px solid #e5e7eb; padding-bottom: 1rem; margin-bottom: 1.5rem; }
+    .topbar h1 { margin: 0 0 .25rem; font-size: 1.4rem; }
+    .hint { color: #6b7280; font-size: .9rem; margin: 0; }
+    .history { background: white; border: 1px solid #e5e7eb; border-radius: 8px; padding: .5rem; margin-bottom: 1rem; max-height: 320px; overflow-y: auto; }
+    .history.empty { color: #9ca3af; text-align: center; padding: 1rem; font-size: .9rem; }
+    .history-row { padding: .5rem; border-bottom: 1px solid #f3f4f6; white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, monospace; font-size: .85rem; }
+    .history-row:last-child { border-bottom: 0; }
+    .live-reply { background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: .75rem; margin-bottom: 1rem; }
+    .live-reply.idle { display: none; }
+    .live-reply-label { font-size: .8rem; color: #2563eb; font-weight: 600; margin-bottom: .35rem; }
+    .live-reply-text { white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, monospace; font-size: .9rem; color: #111827; min-height: 1.2em; }
+    .live-reply-meta { color: #6b7280; font-size: .75rem; margin-top: .35rem; }
+    .composer { display: flex; gap: .5rem; margin-bottom: .75rem; }
+    .composer input { flex: 1; padding: .5rem .75rem; border: 1px solid #d1d5db; border-radius: 6px; font-size: 1rem; }
+    .composer input:disabled { background: #f3f4f6; color: #9ca3af; }
+    .primary { padding: .5rem 1rem; border: 0; border-radius: 6px; background: #2563eb; color: white; font-size: .95rem; cursor: pointer; }
+    .primary:disabled { background: #93c5fd; cursor: not-allowed; }
+    .primary:hover:not(:disabled) { background: #1d4ed8; }
+    .notice { padding: .5rem .75rem; background: #fef3c7; color: #92400e; border-radius: 6px; font-size: .85rem; }
+    .notice.empty { display: none; }
+    .footer { margin-top: 2rem; color: #9ca3af; font-size: .8rem; text-align: center; }
+    """
