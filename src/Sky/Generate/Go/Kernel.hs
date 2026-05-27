@@ -86,6 +86,17 @@ registry = Map.fromList
     , (("String", "htmlEscape"),  KernelInfo "rt.String_htmlEscape" 1 False)
     , (("String", "truncate"),    KernelInfo "rt.String_truncate" 2 False)
     , (("String", "ellipsize"),   KernelInfo "rt.String_ellipsize" 2 False)
+    -- Cycle 4 D1 — Layer 3 stdlib entries the registry missed.
+    -- `String.toList` / `String.fromList` / `String.concat` are
+    -- declared via `Ffi.kernel "String_*"` in
+    -- `sky-stdlib/Sky/Core/String.sky` but the kernel lookup
+    -- previously fell through to `kernelToGo`'s default,
+    -- emitting `rt.String_toList` against a runtime that did not
+    -- export it. Closed by adding the runtime helpers + these
+    -- registry entries together.
+    , (("String", "toList"),      KernelInfo "rt.String_toList" 1 False)
+    , (("String", "fromList"),    KernelInfo "rt.String_fromList" 1 False)
+    , (("String", "concat"),      KernelInfo "rt.String_concat" 1 False)
 
     -- Sky.Core.Uuid
     , (("Uuid", "v4"),            KernelInfo "rt.Uuid_v4" 0 False)
@@ -342,8 +353,16 @@ registry = Map.fromList
     , (("Math", "round"),         KernelInfo "rt.Math_round" 1 False)
     , (("Math", "sin"),           KernelInfo "rt.Math_sin" 1 False)
     , (("Math", "cos"),           KernelInfo "rt.Math_cos" 1 False)
+    , (("Math", "tan"),           KernelInfo "rt.Math_tan" 1 False)
     , (("Math", "pi"),            KernelInfo "rt.Math_pi" 0 False)
+    , (("Math", "e"),             KernelInfo "rt.Math_e" 0 False)
     , (("Math", "log"),           KernelInfo "rt.Math_log" 1 False)
+    -- Cycle 4 D1 — `abs / min / max` declared via `Ffi.kernel` in
+    -- `sky-stdlib/Sky/Core/Math.sky`; runtime helpers exist
+    -- (`rt.Math_abs/min/max`) but the registry was empty.
+    , (("Math", "abs"),           KernelInfo "rt.Math_abs" 1 False)
+    , (("Math", "min"),           KernelInfo "rt.Math_min" 2 False)
+    , (("Math", "max"),           KernelInfo "rt.Math_max" 2 False)
 
     , (("Server", "listen"),      KernelInfo "rt.Server_listen" 2 False)
     , (("Server", "get"),         KernelInfo "rt.Server_get" 2 False)
@@ -437,6 +456,10 @@ registry = Map.fromList
     , (("System", "getenvInt"),   KernelInfo "rt.System_getenvInt" 1 False)
     , (("System", "getenvBool"),  KernelInfo "rt.System_getenvBool" 1 False)
     , (("System", "cwd"),         KernelInfo "rt.System_cwd" 1 False)
+    -- Cycle 4 D1 — back-compat alias of `cwd`, exposed by
+    -- `sky-stdlib/Sky/Core/System.sky`. Routes to the same runtime
+    -- helper via the `System_getcwd` wrapper in `rt.go`.
+    , (("System", "getcwd"),      KernelInfo "rt.System_getcwd" 1 False)
     , (("System", "exit"),        KernelInfo "rt.System_exit" 1 False)
     , (("System", "loadEnv"),     KernelInfo "rt.System_loadEnv" 1 False)
     , (("System", "setenv"),      KernelInfo "rt.System_setenv" 2 False)

@@ -66,6 +66,7 @@ import qualified Sky.Diagnostics.CoverageSpec
 import qualified Sky.Type.InstanceCaptureSpec
 import qualified Sky.Type.SolvedTypesRegionMapSpec
 import qualified Sky.Build.KernelSigCoverageSpec
+import qualified Sky.Build.KernelStdlibCoverageSpec
 import qualified Sky.Build.HeapBoundedHmSpec
 import qualified Sky.Build.SolverBudgetSpec
 import qualified Sky.Build.UnreachableGateSpec
@@ -404,6 +405,10 @@ main = hspec $ do
     -- Without HM sigs, user pattern-matching against the wrapper
     -- silently degrades to `any` and surfaces as runtime panics.
     describe "Sky.Build.KernelSigCoverage" Sky.Build.KernelSigCoverageSpec.spec
+    -- Cycle 4 D1: every Ffi.kernel "Name" declaration in
+    -- sky-stdlib/ must have a matching Kernel.lookup entry. Closes
+    -- the `String.toList undefined` / `Math.abs undefined` class.
+    describe "Sky.Build.KernelStdlibCoverage" Sky.Build.KernelStdlibCoverageSpec.spec
     -- Limitation #17: Std.Ui-cascading HM constraint pathology that
     -- pre-fix OOMed at 4-5 GB. Spec re-runs sky check on the bak
     -- reproducer under a tight heap cap.

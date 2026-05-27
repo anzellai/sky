@@ -311,6 +311,7 @@ test-suite sky-tests
       Sky.Reporting.DiagnosticSpec
       Sky.Diagnostics.CoverageSpec
       Sky.Build.KernelSigCoverageSpec
+      Sky.Build.KernelStdlibCoverageSpec
       Sky.Build.HeapBoundedHmSpec
       Sky.Build.IORefBoundarySpec
       Sky.Build.SolverBudgetSpec
