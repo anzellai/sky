@@ -4761,9 +4761,24 @@ function __skyPatch(t) {
 // sky-editor's Editor.scriptTag).
 //
 // The fix: walk the new subtree for <script> elements, replace
-// each with a freshly-created one carrying the same attributes
-// and inline content. Freshly-created script nodes execute on
-// insertion.
+// each with a freshly-created one carrying a STRICT ALLOWLIST of
+// attributes. Freshly-created script nodes execute on insertion.
+//
+// Security (Cycle 3 audit gap C9 / cycle 2 plan P31):
+//   - Attribute copy is filtered through __skyScriptAttrAllowlist.
+//     Event-handler attrs (onerror, onload, onclick, …) are NEVER
+//     re-emitted — the original unfiltered loop allowed an attacker
+//     who controlled WYSIWYG content rendered back into Ui.html to
+//     ship <script onerror=alert(1)> and watch the handler fire on
+//     the next patch.
+//   - Inline script bodies (textContent) are DROPPED unless the
+//     element also carries a src= attribute (a same-origin opt-in:
+//     Sky-bundled scripts like sky-editor's Editor.scriptTag set
+//     src=; user-supplied inline bodies are silently rejected with
+//     a console.warn so the misuse is visible during dev).
+//   - Rejected scripts STILL get the data-sky-script-revived
+//     marker so a subsequent revival pass doesn't reprocess them
+//     (i.e. silent-drop is idempotent — no infinite warning storm).
 //
 // Idempotency: each revived <script> gets a data-sky-script-revived
 // attribute; subsequent calls skip it. This prevents the bundle
@@ -4775,25 +4790,70 @@ function __skyPatch(t) {
 // container). Top-level page <script> tags (in <head> or outside
 // sky-root) are left alone — they ran on initial load and need
 // no revival.
+var __skyScriptAttrAllowlist = {
+  "src": 1,
+  "type": 1,
+  "async": 1,
+  "defer": 1,
+  "integrity": 1,
+  "crossorigin": 1,
+  "nomodule": 1,
+  "referrerpolicy": 1,
+  "data-sky-script-revived": 1
+};
 function __skyReviveScripts(root) {
   if (!root) return;
   var scripts = root.querySelectorAll("script:not([data-sky-script-revived])");
   for (var i = 0; i < scripts.length; i++) {
     var old = scripts[i];
+    // Mark the source element revived FIRST so a rejection branch
+    // (no-src + inline body) doesn't re-trip on the next pass.
+    try { old.setAttribute("data-sky-script-revived", "1"); } catch (_) {}
+    var hasSrc = old.hasAttribute("src");
+    var hasInline = !!(old.textContent && old.textContent.length > 0);
+    // Reject inline-only scripts (no src) — same-origin opt-in via
+    // src= is the contract. Console.warn so the misuse is visible
+    // during dev; never throws (one bad node mustn't kill the loop).
+    if (!hasSrc && hasInline) {
+      try {
+        if (typeof console !== "undefined" && console.warn) {
+          console.warn("[sky.live] script revival rejected an inline <script> without src= (XSS hardening, gap C9). Bundle via src= for Sky-side scripts.");
+        }
+      } catch (_) {}
+      continue;
+    }
     var fresh = document.createElement("script");
-    // Copy all attributes (src, type, async, defer, integrity, ...).
+    // Copy ONLY allowlisted attributes. Event-handler attrs (anything
+    // starting with "on…") and any non-allowlisted attribute are
+    // silently dropped — see __skyScriptAttrAllowlist.
+    var droppedAttrs = null;
     for (var j = 0; j < old.attributes.length; j++) {
       var a = old.attributes[j];
-      try { fresh.setAttribute(a.name, a.value); } catch (_) {}
+      var n = a.name.toLowerCase();
+      if (__skyScriptAttrAllowlist[n] === 1) {
+        try { fresh.setAttribute(a.name, a.value); } catch (_) {}
+      } else {
+        // Capture for a single dev-time warn at the end (a single
+        // <script onerror=…> shouldn't fire one warn per attr).
+        if (!droppedAttrs) droppedAttrs = [];
+        droppedAttrs.push(a.name);
+      }
     }
-    // Inline body (rare for app bundles but possible).
-    if (old.textContent) {
+    if (droppedAttrs) {
+      try {
+        if (typeof console !== "undefined" && console.warn) {
+          console.warn("[sky.live] script revival dropped non-allowlisted attrs (XSS hardening, gap C9):", droppedAttrs.join(", "));
+        }
+      } catch (_) {}
+    }
+    // Inline body is now ONLY admitted when src= is also present.
+    // This stays compatible with <script src="…">// optional inline
+    // bootstrapping comment</script> patterns; the body is included
+    // verbatim, the src= drives the actual execution.
+    if (hasSrc && hasInline) {
       fresh.textContent = old.textContent;
     }
     fresh.setAttribute("data-sky-script-revived", "1");
-    // Mark the old one as revived too so the next pass doesn't
-    // double-process if revival fails for some reason.
-    old.setAttribute("data-sky-script-revived", "1");
     // Replacing the old node with the fresh one triggers script
     // execution (for src= it fetches + runs; for inline it runs
     // the body).
