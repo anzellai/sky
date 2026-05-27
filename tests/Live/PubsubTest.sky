@@ -1,0 +1,111 @@
+module Live.PubsubTest exposing (tests)
+
+-- Cycle 3 P48 — Sky-side pub/sub stdlib surface smoke test.
+--
+-- Pins the two new bindings (Std.Cmd.publish, Std.Sub.subscribeTopic)
+-- so the cabal test gate catches a missing Kernel.hs registration or
+-- a Sky-source signature regression. The functional contract (broker
+-- fan-out + diff-mode setupSubscriptions + Msg-shape dispatch) is
+-- exercised in runtime-go/rt/live_pubsub_dispatch_test.go; this file
+-- pins the Sky-source half of the surface.
+--
+-- The pattern is the same as Std.Cmd.batch / Std.Cmd.perform tests
+-- below: construct a Cmd / Sub value, route it through Cmd.batch /
+-- Sub.batch so the kernel-typed value's shape is exercised through
+-- the type system. A regression that drops the kernel registration
+-- (or changes the binding's arity) shows up as a compile-time error
+-- in this file.
+
+import Sky.Core.Prelude exposing (..)
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Sky.Test as Test exposing (Test)
+
+
+-- ======================================================
+-- MSG — a tiny ADT for the receiver decoder
+-- ======================================================
+type Msg
+    = Received String
+    | Bumped
+
+
+-- ======================================================
+-- Sample pub/sub values — exercise the surface
+-- ======================================================
+
+samplePublish : Cmd Msg
+samplePublish =
+    Cmd.publish "topic-x" "payload-1"
+
+
+sampleSubscribe : Sub Msg
+sampleSubscribe =
+    Sub.subscribeTopic "topic-x" toMsg
+
+
+toMsg : any -> Msg
+toMsg payload =
+    Received (toString payload)
+
+
+-- Combined Cmd — proves Cmd.publish lives in the Cmd msg slot
+-- alongside Cmd.none / Cmd.batch (so apps can use Cmd.batch to
+-- fan out a save + a publish in one update arm).
+sampleCmdBatch : Cmd Msg
+sampleCmdBatch =
+    Cmd.batch
+        [ Cmd.none
+        , Cmd.publish "topic-x" "payload-1"
+        ]
+
+
+-- Combined Sub — proves Sub.subscribeTopic composes with Sub.every
+-- via Sub.batch (the canonical multi-source pattern from the
+-- design doc).
+sampleSubBatch : Sub Msg
+sampleSubBatch =
+    Sub.batch
+        [ Sub.every 1000 Bumped
+        , Sub.subscribeTopic "topic-x" toMsg
+        , Sub.none
+        ]
+
+
+-- ======================================================
+-- TESTS
+-- ======================================================
+-- The values above are tested for *constructibility* via the type
+-- system: if any kernel binding regressed (wrong arity, missing
+-- registration, type mismatch) this module would fail to compile.
+-- The runtime tests (live_pubsub_dispatch_test.go) cover the
+-- dispatch + fan-out semantics; Sky.Test here pins the public
+-- module surface.
+tests : List Test
+tests =
+    [ Test.suite "Std.Cmd.publish"
+        [ Test.test "constructible against Cmd msg slot" (\_ ->
+            -- A `Cmd Msg` value is opaque from Sky's perspective —
+            -- there's no Eq instance — so we round-trip it through
+            -- Cmd.batch (which accepts any Cmd msg) to prove the
+            -- type checker accepted the value in a Cmd msg context.
+            let
+                _ = samplePublish
+                _ = sampleCmdBatch
+            in
+            Test.pass)
+        ]
+    , Test.suite "Std.Sub.subscribeTopic"
+        [ Test.test "constructible against Sub msg slot" (\_ ->
+            let
+                _ = sampleSubscribe
+                _ = sampleSubBatch
+            in
+            Test.pass)
+        , Test.test "decoder produces Msg from payload" (\_ ->
+            -- The decoder is callable from Sky as an ordinary
+            -- function — pin its shape so a regression in the
+            -- `(any -> msg)` callback contract shows up here.
+            Test.equal (Received "abc") (toMsg "abc"))
+        ]
+    ]

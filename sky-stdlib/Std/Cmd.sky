@@ -7,26 +7,43 @@
 --
 -- `Cmd msg` is runtime-typed (empty home) — it shares its Go
 -- representation with the existing kernel-registered Cmd type.
-module Std.Cmd exposing
-    ( none, batch, perform
-    )
-
+module Std.Cmd exposing (none, batch, perform, publish)
 
 import Sky.Ffi as Ffi
 
 
 -- | No outbound effect.
 none : Cmd msg
-none = Ffi.kernel "Cmd_none"
+none =
+    Ffi.kernel "Cmd_none"
 
 
 -- | Run multiple commands concurrently in goroutines.
 batch : List (Cmd msg) -> Cmd msg
-batch = Ffi.kernel "Cmd_batch"
+batch =
+    Ffi.kernel "Cmd_batch"
 
 
 -- | Spawn a Task in the background; when it completes, dispatch
 -- its `Result` to `update` via the supplied `(Result -> msg)`
 -- continuation.
 perform : Task err a -> (Result err a -> msg) -> Cmd msg
-perform = Ffi.kernel "Cmd_perform"
+perform =
+    Ffi.kernel "Cmd_perform"
+
+
+-- | `publish topic payload` — broadcast `payload` to every Sky.Live
+-- session that has declared `Sub.subscribeTopic topic` in its
+-- `subscriptions`. Fire-and-forget; no result feedback to the
+-- publisher. The publisher's own subscription (if any) ALSO
+-- receives the payload — echo-by-default matches Redis/NATS/MQTT
+-- semantics. App code can self-skip on `Origin == sess.sid` if
+-- needed.
+--
+-- The payload is delivered as an opaque `any`; subscribers decode
+-- it via the `toMsg : any -> msg` function passed to
+-- `Sub.subscribeTopic`. See `docs/skylive/pubsub-design.md` for the
+-- architecture write-up.
+publish : String -> any -> Cmd msg
+publish =
+    Ffi.kernel "Cmd_publish"

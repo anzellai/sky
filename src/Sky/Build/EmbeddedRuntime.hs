@@ -29,7 +29,7 @@
 -- make a real content change to THIS `.hs` file — bump the marker
 -- below — so cabal recompiles it and the splice re-walks the tree.
 --
--- re-embed marker: 2026-05-27 — Cycle 3 P47 pub/sub global+local seq split (live.go localSeq rename + liveApp.globalSeq + live_seq_split_test.go)
+-- re-embed marker: 2026-05-27 — Cycle 3 P48 pub/sub dispatch wiring (runCmd "publish" arm + setupSubscriptions diff-mode + Sub_subscribeTopic / Cmd_publish stdlib bindings + Kernel.hs registrations)
 module Sky.Build.EmbeddedRuntime
     ( embeddedRuntime
     , embeddedSkyStdlib

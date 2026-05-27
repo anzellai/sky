@@ -1427,17 +1427,23 @@ type liveSession struct {
 	inputSeqs map[string]int64
 
 	// activeSubs — pub/sub subscriptions currently bound to this
-	// session, keyed by topic. Cycle 3 P46. Populated by
-	// setupSubscriptions (diff-mode in P48): on every dispatch, the
-	// runtime builds the DESIRED topic set from the model, computes
+	// session, keyed by topic. Cycle 3 P46 / P48. Populated by
+	// setupSubscriptions (diff-mode): on every dispatch, the runtime
+	// builds the DESIRED topic set from the model, computes
 	// (added, removed) vs activeSubs, opens NEW subscriptions for
 	// `added`, cancels REMOVED, and leaves the intersection untouched
 	// (the existing channel + goroutine carry over with no broadcast
 	// loss). markDone walks activeSubs and calls each cancel so a
 	// Deleted / TTL-evicted session releases its broker refcounts.
 	//
-	// Owned by sess.mu — every read / write happens under the lock.
-	activeSubs map[string]*subRegistration
+	// Cycle 3 P48: protected by activeSubsMu — NOT by sess.mu. The
+	// subscriber goroutine takes sess.mu around its dispatch call,
+	// and dispatch internally calls setupSubscriptions; if activeSubs
+	// were under sess.mu the inner setupSubscriptions would recurse
+	// on it. A dedicated mutex decouples the registration map from
+	// the view-state lock and keeps both deadlock-free.
+	activeSubs   map[string]*subRegistration
+	activeSubsMu sync.Mutex
 }
 
 // touchLastSeen — stamp the lastSeen counter with the current wall
@@ -1493,21 +1499,32 @@ func (s *liveSession) markDone() {
 			s.done = make(chan struct{})
 		}
 		close(s.done)
-		// Cycle 3 P46: release every pub/sub subscription bound to
-		// this session so its refcount on the broker drops to zero.
-		// Each cancel is idempotent (sync.Once on the broker side)
-		// so a setupSubscriptions cancel racing with markDone is
-		// safe. We DON'T take sess.mu here — markDone can fire from
-		// the cleanupLoop / Store.Delete path, and the existing
-		// terminal-teardown discipline (Time.every goroutine selects
-		// on sess.done before touching sess fields) keeps the data
-		// race-free without escalating to the mutex.
-		for _, reg := range s.activeSubs {
-			if reg != nil && reg.cancel != nil {
-				reg.cancel()
+		// Cycle 3 P46 + P48: release every pub/sub subscription
+		// bound to this session so its refcount on the broker
+		// drops to zero. Each cancel is idempotent (sync.Once on
+		// the broker side) so a setupSubscriptions cancel racing
+		// with markDone is safe.
+		//
+		// Take activeSubsMu (NOT sess.mu — markDone can be invoked
+		// from any goroutine that's evicting the session; sess.mu
+		// is owned by the per-session dispatch path). Snapshot the
+		// registration list under the lock, then call cancel funcs
+		// AFTER releasing — keeps the critical section small in
+		// case the broker's cancel briefly contends.
+		s.activeSubsMu.Lock()
+		regs := make([]*subRegistration, 0, len(s.activeSubs))
+		for _, r := range s.activeSubs {
+			if r != nil {
+				regs = append(regs, r)
 			}
 		}
 		s.activeSubs = nil
+		s.activeSubsMu.Unlock()
+		for _, reg := range regs {
+			if reg.cancel != nil {
+				reg.cancel()
+			}
+		}
 	})
 }
 
@@ -3349,6 +3366,23 @@ func (app *liveApp) runCmd(sess *liveSession, cmd any) {
 		// goroutine is untracked.
 		parentCtx := CurrentTraceContext()
 		go app.runPerform(sess, c.task, c.toMsg, parentCtx)
+	case "publish":
+		// Cycle 3 P48: Std.Cmd.publish dispatch. Route every publish
+		// through app.Publish so the "one bump per publish, BEFORE
+		// fan-out" invariant (design doc §3.2) is a function-boundary
+		// guarantee — never open-coded at the call site.
+		//
+		// app.topics may be nil for tests that build a bare liveApp
+		// (no store), in which case publish is a no-op. Production
+		// apps always have a store + cached broker (see liveApp wiring
+		// in newLiveApp / Live_app).
+		if app.topics == nil {
+			return
+		}
+		app.Publish(c.topic, SessionEvent{
+			Payload: c.payload,
+			Origin:  sess.sid,
+		})
 	}
 }
 
@@ -3433,20 +3467,97 @@ func (app *liveApp) runPerformBody(sess *liveSession, task any, toMsg any) {
 	}
 }
 
-// setupSubscriptions: cancel any prior ticker, then re-evaluate subscriptions for new model.
+// flattenSubs walks a Sub value, recursing into "batch", and appends
+// every non-batch leaf (kind = "every", "subscribeTopic", "none", …)
+// to `out`. Pure walk — no I/O, no registry touch. Used by
+// setupSubscriptions to demux multi-shape Sub.batch results into the
+// per-kind dispatch arms.
+//
+// Cycle 3 P48 / docs/skylive/pubsub-design.md §3.3 + §4.1: pub/sub
+// subscriptions arrive co-mingled with Time.every via Sub.batch, so
+// the runtime now walks the batch list instead of insisting on a
+// single Sub.every. Pre-P48 behaviour pinned by
+// live_store_delete_test.go continues to work because a bare
+// Sub.every (the existing common case) lands in flatSubs verbatim.
+func flattenSubs(s any, out []subT) []subT {
+	sub, ok := s.(subT)
+	if !ok {
+		return out
+	}
+	if sub.kind == "batch" {
+		for _, child := range sub.batch {
+			out = flattenSubs(child, out)
+		}
+		return out
+	}
+	out = append(out, sub)
+	return out
+}
+
+// setupSubscriptions: re-evaluate subscriptions for the new model.
+//
+// Two subscription kinds (post-P48):
+//
+//   - "every" — Time.every interval Msg. Cancel-and-replace each
+//     dispatch via sess.cancelSub (the goroutine selects on it).
+//     A bare Sub.every (the existing common case) keeps its pre-P48
+//     shape.
+//
+//   - "subscribeTopic" — Std.Sub.subscribeTopic topic toMsg. Diff-mode:
+//     compute (added, removed) vs sess.activeSubs; cancel only
+//     `removed`, subscribe only `added`. Topics in the intersection
+//     keep their existing channel + goroutine so no broadcast falls
+//     in the gap (design doc §4.1).
+//
+// Sub.batch composes them — `subscriptions = \model -> Sub.batch [
+// Sub.every 1000 Tick, Sub.subscribeTopic "chat" ChatMsg ]` is the
+// canonical multi-source shape.
 func (app *liveApp) setupSubscriptions(sess *liveSession) {
-	// Cancel existing ticker
+	// Cancel existing ticker (Time.every always rebuilds; pub/sub
+	// uses its own per-topic cancels stored in sess.activeSubs).
 	close(sess.cancelSub)
 	sess.cancelSub = make(chan struct{})
 
 	if app.subscriptions == nil {
+		// No subscriptions at all → tear down anything that was
+		// previously active (e.g. user returned Sub.subscribeTopic
+		// last dispatch, returns Sub.none / no subscriptions fn now).
+		app.applyTopicSubsDiff(sess, nil)
 		return
 	}
 	subResult := sky_call(app.subscriptions, sess.model)
-	sub, ok := subResult.(subT)
-	if !ok || sub.kind != "every" {
+	leaves := flattenSubs(subResult, nil)
+
+	// Partition leaves by kind. We honour ONE Sub.every per dispatch
+	// (the existing contract — see Sub_batch doc); any number of
+	// Sub.subscribeTopic entries.
+	var everyLeaf *subT
+	desired := map[string]subT{}
+	for i := range leaves {
+		leaf := leaves[i]
+		switch leaf.kind {
+		case "every":
+			if everyLeaf == nil {
+				everyLeaf = &leaves[i]
+			}
+		case "subscribeTopic":
+			// Last-write-wins per topic — a user binding two decoders
+			// to the same topic in one dispatch is a misuse; we take
+			// the last entry deterministically rather than panicking.
+			desired[leaf.topic] = leaf
+		}
+	}
+
+	// Apply pub/sub diff BEFORE spawning the Time.every goroutine
+	// so a single dispatch's worth of work touches the registry
+	// once + lands on a coherent activeSubs map.
+	app.applyTopicSubsDiff(sess, desired)
+
+	// Time.every — keep the existing goroutine shape verbatim.
+	if everyLeaf == nil {
 		return
 	}
+	sub := *everyLeaf
 	interval := time.Duration(sub.ms) * time.Millisecond
 	if interval <= 0 {
 		return
@@ -3543,6 +3654,222 @@ func (app *liveApp) setupSubscriptions(sess *liveSession) {
 			}
 		}
 	}()
+}
+
+// applyTopicSubsDiff computes the diff between the session's current
+// pub/sub subscription set and the desired set from this dispatch's
+// `subscriptions model` evaluation, then:
+//
+//   - cancels every "removed" topic — releases its broker refcount,
+//     signals the subscriber goroutine to exit.
+//   - opens new broker subscriptions for "added" topics — spawns a
+//     subscriber goroutine for each.
+//   - leaves the intersection (topics in both old and desired)
+//     untouched — the existing channel + goroutine keep running so
+//     no broadcast falls in the cancel/re-subscribe gap (design
+//     doc §4.1 diff-mode requirement).
+//
+// Mutates sess.activeSubs in place — protected by sess.activeSubsMu
+// (NOT sess.mu, so a concurrent subscriber dispatch holding sess.mu
+// + calling setupSubscriptions doesn't recurse on the registration
+// lock).
+//
+// `desired` is nil-safe — a nil map signals "no subscriptions" and
+// the diff cancels every existing entry, which is exactly what
+// setupSubscriptions needs when app.subscriptions is nil OR returns
+// Sub.none.
+//
+// Cycle 3 P48 / docs/skylive/pubsub-design.md §4.1.
+func (app *liveApp) applyTopicSubsDiff(sess *liveSession, desired map[string]subT) {
+	// Snapshot old + compute the diff under the lock; release before
+	// invoking cancel funcs OR Subscribe / spawning goroutines so a
+	// slow Subscribe path doesn't stall every other dispatcher on
+	// the same session's activeSubs.
+	sess.activeSubsMu.Lock()
+	desiredAny := make(map[string]any, len(desired))
+	for k := range desired {
+		desiredAny[k] = struct{}{}
+	}
+	old := sess.activeSubs
+	added, removed := diffSubscriptions(old, desiredAny)
+
+	// Mutate the registration map in place under the lock — every
+	// reader (markDone, the next applyTopicSubsDiff) sees a coherent
+	// post-diff snapshot.
+	removedRegs := make([]*subRegistration, 0, len(removed))
+	for _, topic := range removed {
+		reg := old[topic]
+		if reg == nil {
+			continue
+		}
+		removedRegs = append(removedRegs, reg)
+		delete(sess.activeSubs, topic)
+	}
+
+	// Open new subscriptions — broker handle + per-topic goroutine.
+	// We seed the activeSubs entries BEFORE releasing the lock so a
+	// concurrent markDone snapshot sees the new registrations and
+	// cancels them; without that ordering an added topic could
+	// linger after markDone fires.
+	type spawnEntry struct {
+		reg   *subRegistration
+		gDone <-chan struct{}
+	}
+	var spawn []spawnEntry
+	if app.topics != nil {
+		if sess.activeSubs == nil && len(added) > 0 {
+			sess.activeSubs = make(map[string]*subRegistration, len(added))
+		}
+		for _, topic := range added {
+			leaf := desired[topic]
+			ch, brokerCancel := app.topics.Subscribe(topic)
+			// Wire the per-goroutine done channel HERE — before
+			// releasing the lock + spawning — so the cancel func
+			// stored in subRegistration is final + race-free
+			// once the goroutine starts. A diff-mode cancel +
+			// the loop's exit are both driven by the same closure.
+			gDone := make(chan struct{})
+			var gDoneOnce sync.Once
+			wrappedCancel := func() {
+				brokerCancel()
+				gDoneOnce.Do(func() { close(gDone) })
+			}
+			reg := &subRegistration{
+				topic:  topic,
+				ch:     ch,
+				cancel: wrappedCancel,
+				toMsg:  leaf.toMsg,
+			}
+			sess.activeSubs[topic] = reg
+			spawn = append(spawn, spawnEntry{reg: reg, gDone: gDone})
+		}
+	}
+	sess.activeSubsMu.Unlock()
+
+	// Cancel removed AFTER releasing the lock — the broker's cancel
+	// can briefly contend on its own mutex; doing it under our lock
+	// would stall a concurrent markDone.
+	for _, reg := range removedRegs {
+		if reg.cancel != nil {
+			reg.cancel()
+		}
+	}
+
+	// Spawn subscriber goroutines AFTER releasing the lock — go's
+	// runtime can occasionally schedule a worker thread eagerly, so
+	// keeping the registration lock during goroutine creation would
+	// extend the critical section unnecessarily.
+	for _, s := range spawn {
+		parentCtx := CurrentTraceContext()
+		go app.runSubscriberLoop(sess, s.reg, s.gDone, parentCtx)
+	}
+}
+
+// runSubscriberLoop is the subscriber goroutine for one pub/sub
+// topic registration. Cycle 3 P48 / docs/skylive/pubsub-design.md
+// §3.3 + §4.3.
+//
+// Receives SessionEvents from the broker, decodes each via the
+// user-supplied `toMsg : any -> Msg`, dispatches the Msg through
+// app.dispatch (the same path Cmd.perform completions take), and
+// ships an SSE frame stamped with the broadcast event's globalSeq
+// so subscribers and the publisher see a consistent broadcast
+// ordering at the wire layer.
+//
+// Exit conditions:
+//
+//   - `gDone` is closed by the reg.cancel func (which the caller
+//     stores on the registration in applyTopicSubsDiff so both
+//     diff-mode cancel + markDone trigger goroutine exit through
+//     the same channel).
+//   - `sess.done` fires — terminal session teardown (markDone). A
+//     nil sess.done (test-constructed sessions) parks forever on
+//     that arm; cancellation via gDone is the only signal.
+//   - `reg.ch` closes — reserved for v0.16+ cross-process brokers
+//     that close on backbone teardown; the in-process default
+//     never closes (design doc §3.1).
+func (app *liveApp) runSubscriberLoop(sess *liveSession, reg *subRegistration, gDone <-chan struct{}, parentCtx context.Context) {
+	sessDone := sess.done
+
+	RunWithTraceContext(parentCtx, func() {
+		for {
+			select {
+			case <-gDone:
+				return
+			case <-sessDone:
+				// Defensive — sessDone is nil for test-constructed
+				// sessions; select on a nil channel blocks forever
+				// so this arm is dormant in that case.
+				return
+			case ev, open := <-reg.ch:
+				if !open {
+					return
+				}
+				app.runSubscriberDispatch(sess, reg.toMsg, ev)
+			}
+		}
+	})
+}
+
+// runSubscriberDispatch decodes one SessionEvent into a Msg via the
+// user-supplied `toMsg` decoder and routes the dispatch + SSE frame
+// production. Pulled out of runSubscriberLoop so the per-event work
+// has its own scope for the panic-recover discipline.
+//
+// The decoder is wrapped in a defer-recover so a panicking decoder
+// consumes the event without crashing the session (design doc §4.3
+// "Open: what happens if the decoder panics?" — log + swallow).
+func (app *liveApp) runSubscriberDispatch(sess *liveSession, toMsg any, ev SessionEvent) {
+	var msg any
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				fmt.Fprintf(os.Stderr,
+					"[sky.live] pub/sub decoder panic, dropping event topic=%q: %v\n%s\n",
+					ev.Topic, r, debug.Stack())
+				msg = nil
+			}
+		}()
+		msg = sky_call(toMsg, ev.Payload)
+	}()
+	if msg == nil {
+		return
+	}
+
+	sess.mu.Lock()
+	prevShipped := sess.lastShippedBody
+	prevTreeBeforeDispatch := sess.prevTree
+	body := app.dispatch(sess, msg)
+	newTreeAfterDispatch := sess.prevTree
+	var snap frameSnapshot
+	var patches []Patch
+	var haveFrame bool
+	if body != "" && body != prevShipped {
+		// Stamp the broadcast event's globalSeq onto the snapshot so
+		// the SSE envelope carries it. The client guards on
+		// __skyLastAppliedGlobalSeq independently of the per-session
+		// localSeq — see live.go's frame snapshot path + the wire
+		// envelope (Cycle 3 P47).
+		snap = sess.prepareFrameSnapshotWithGlobalSeq(body, ev.GlobalSeq)
+		sess.lastShippedBody = body
+		if prevTreeBeforeDispatch != nil && newTreeAfterDispatch != nil {
+			patches = diffTrees(prevTreeBeforeDispatch, newTreeAfterDispatch, nil)
+		}
+		haveFrame = true
+	}
+	sess.mu.Unlock()
+	if !haveFrame {
+		return
+	}
+	frame := chooseSSEFrame(snap, prevTreeBeforeDispatch, patches)
+	select {
+	case sess.sseCh <- frame:
+	default:
+		// Channel full — broadcast frame drops are surfaced through
+		// the same sky_live_sse_drops_total counter; the next user
+		// dispatch supersedes anyway (design doc §6.1).
+		recordSseDrop(sess.sid)
+	}
 }
 
 // handleSSE: Server-Sent Events endpoint. Pushes view patches as they arrive.
