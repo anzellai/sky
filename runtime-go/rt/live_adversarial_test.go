@@ -52,7 +52,7 @@ func TestConcurrentEventsSerialise(t *testing.T) {
 		model:     "seed",
 		handlers:  handlers,
 		prevTree:  &init,
-		sseCh:     make(chan string, 64),
+		sseCh:     make(chan sseFrame, 64),
 		cancelSub: make(chan struct{}),
 	}
 	app.store.Set("sid-conc", sess)
@@ -207,7 +207,7 @@ func TestLegacyFieldsPreserved(t *testing.T) {
 		model:     "seed",
 		handlers:  handlers,
 		prevTree:  &init,
-		sseCh:     make(chan string, 1),
+		sseCh:     make(chan sseFrame, 1),
 		cancelSub: make(chan struct{}),
 	}
 	app.store.Set("sid-legacy", sess)

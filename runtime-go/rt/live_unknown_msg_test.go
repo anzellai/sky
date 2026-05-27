@@ -34,7 +34,7 @@ func TestUnknownMsg_DirectSend_Returns400(t *testing.T) {
 		msgTags:       map[string]int{},
 	}
 	app.store.Set("sid-unknown", &liveSession{
-		sseCh:     make(chan string, 4),
+		sseCh:     make(chan sseFrame, 4),
 		cancelSub: make(chan struct{}),
 		model:     "model",
 		handlers:  map[string]any{},
@@ -82,7 +82,7 @@ func TestUnknownMsg_SkySentinel_Returns200(t *testing.T) {
 		msgTags:       map[string]int{},
 	}
 	app.store.Set("sid-sentinel", &liveSession{
-		sseCh:     make(chan string, 4),
+		sseCh:     make(chan sseFrame, 4),
 		cancelSub: make(chan struct{}),
 		model:     "model",
 		handlers:  map[string]any{},

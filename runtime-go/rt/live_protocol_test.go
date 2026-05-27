@@ -210,7 +210,7 @@ func TestHandleEventRoundTripsSeq(t *testing.T) {
 		model:     "seed",
 		handlers:  handlers,
 		prevTree:  &init,
-		sseCh:     make(chan string, 1),
+		sseCh:     make(chan sseFrame, 1),
 		cancelSub: make(chan struct{}),
 	}
 	app.store.Set("sid-1", sess)
@@ -294,7 +294,7 @@ func TestHandleEventBatch(t *testing.T) {
 		model:     "seed",
 		handlers:  handlers,
 		prevTree:  &init,
-		sseCh:     make(chan string, 16),
+		sseCh:     make(chan sseFrame, 16),
 		cancelSub: make(chan struct{}),
 	}
 	app.store.Set("sid-2", sess)
