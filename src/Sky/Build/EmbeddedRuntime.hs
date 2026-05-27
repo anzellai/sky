@@ -29,7 +29,7 @@
 -- make a real content change to THIS `.hs` file — bump the marker
 -- below — so cabal recompiles it and the splice re-walks the tree.
 --
--- re-embed marker: 2026-05-27 — Cycle 3 P48 pub/sub dispatch wiring (runCmd "publish" arm + setupSubscriptions diff-mode + Sub_subscribeTopic / Cmd_publish stdlib bindings + Kernel.hs registrations)
+-- re-embed marker: 2026-05-27 — Cycle 3 P49 pub/sub example + divergence test (live_broadcast_divergence_test.go added; no runtime-go production changes, but TH splice must pick up the new _test.go for the bundled go test sweep)
 module Sky.Build.EmbeddedRuntime
     ( embeddedRuntime
     , embeddedSkyStdlib

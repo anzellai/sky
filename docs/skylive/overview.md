@@ -110,6 +110,7 @@ See [architecture.md](architecture.md) for the detailed flow and session managem
 - Async work: `Cmd.perform (Http.get url) GotResponse` dispatches a task, the result comes back as `GotResponse (Result Error Response)`.
 - Scheduled updates: `Sub.every 1000 Tick` emits `Tick` every second.
 - Multi-page: `routes` maps URL paths to route messages; `update` responds to navigation.
+- **Real-time multi-session updates**: `Cmd.publish topic payload` broadcasts to every session subscribed via `Sub.subscribeTopic topic toMsg`. Chatrooms, collaborative editors, live dashboards — push delivery without polling. See [`pubsub.md`](pubsub.md) for the tutorial and [`examples/27-multi-session-chat`](../../examples/27-multi-session-chat/) for the worked example.
 
 See [`examples/09-live-counter`](../../examples/09-live-counter/), [`examples/12-skyvote`](../../examples/12-skyvote/), [`examples/16-skychess`](../../examples/16-skychess/) for worked examples.
 

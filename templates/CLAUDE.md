@@ -1242,9 +1242,10 @@ Configure at runtime via env vars (or sky.toml `[log]` defaults):
 ```elm
 type Cmd msg = Cmd Foreign
 
-none : Cmd msg
+none    : Cmd msg
 perform : Task err a -> (Result err a -> msg) -> Cmd msg
-batch : List (Cmd msg) -> Cmd msg
+batch   : List (Cmd msg) -> Cmd msg
+publish : String -> any -> Cmd msg          -- pub/sub broadcast (Sky.Live only)
 ```
 
 `Cmd.perform` runs a Task in a background goroutine. When it completes, the result is dispatched as a Msg through the full update/view/diff/SSE cycle:
@@ -1275,10 +1276,12 @@ Cmd.batch
 ### Std.Sub
 
 ```elm
-type Sub msg = SubNone | SubTimer Int msg | SubBatch (List (Sub msg))
+type Sub msg = SubNone | SubTimer Int msg | SubBatch (List (Sub msg)) | SubSubscribeTopic String (any -> msg)
 
-none : Sub msg
-batch : List (Sub msg) -> Sub msg
+none           : Sub msg
+batch          : List (Sub msg) -> Sub msg
+every          : Int -> msg -> Sub msg                 -- timer; fires msg every N ms
+subscribeTopic : String -> (any -> msg) -> Sub msg     -- pub/sub receive (Sky.Live only)
 ```
 
 ### Std.Time
@@ -1286,6 +1289,96 @@ batch : List (Sub msg) -> Sub msg
 ```elm
 every : Int -> msg -> Sub msg    -- timer subscription, fires msg every N milliseconds
 ```
+
+### Pub/sub (`Cmd.publish` + `Sub.subscribeTopic`)
+
+Server-side broadcast channel between Sky.Live sessions. Use to push
+real-time updates WITHOUT polling — chatrooms, collaborative editors,
+live dashboards, presence indicators.
+
+**Decision rule.** **DB writes in your own Sky.Live app → pub/sub.**
+**External state changing on another service → `Time.every` poll.**
+
+| Use case | Primitive |
+|---|---|
+| Chat / collab / multi-session UI | `Cmd.publish` + `Sub.subscribeTopic` |
+| Animation tick, clock, watchdog heartbeat | `Sub.every` / `Time.every` |
+| Periodic refresh of state from an external HTTP API that doesn't push | `Time.every` + `Cmd.perform` |
+
+**Mandatory pattern: persist FIRST, publish SECOND.** Notification
+loss is acceptable (process crash, network blip); data loss is not.
+The DB row is the source of truth; the broadcast is the low-latency
+hint. Late joiners load history from the DB; in-flight subscribers
+hear the broadcast.
+
+```elm
+type Msg
+    = SendChat String
+    | ChatReceived any        -- any payload — decoder turns it into your Msg shape
+    | PersistOk (Result Error Int)
+
+
+subscriptions model =
+    case model.page of
+        ChatPage room ->
+            Sub.subscribeTopic ("chat:room-" ++ room) ChatReceived
+
+        _ ->
+            Sub.none
+
+
+update msg model =
+    case msg of
+        SendChat text ->
+            let
+                chatMsg = { author = model.me, text = text, at = nowString () }
+                payload =
+                    Dict.fromList
+                        [ ( "author", chatMsg.author )
+                        , ( "text", chatMsg.text )
+                        , ( "at", chatMsg.at )
+                        ]
+            in
+                ( model
+                , Cmd.batch
+                    [ Cmd.perform (persistChatMessage chatMsg) PersistOk    -- 1. DB write
+                    , Cmd.publish ("chat:room-" ++ model.room) payload      -- 2. broadcast
+                    ]
+                )
+
+        ChatReceived payload ->
+            let
+                chatMsg =
+                    { author = Db.getString "author" payload
+                    , text   = Db.getString "text"   payload
+                    , at     = Db.getString "at"     payload
+                    }
+            in
+                ( { model | history = List.append model.history [chatMsg] }
+                , Cmd.none
+                )
+```
+
+**Echo-by-default.** The publisher's OWN subscription ALSO receives
+the broadcast (matches Redis / NATS / MQTT). Apps can self-skip on
+origin via the broadcast's `Origin` field if needed.
+
+**Topics are exact-match strings.** Build per-room / per-user topics
+by concatenation: `"chat:room-" ++ roomId`, `"presence:" ++ userId`.
+
+**Sub.batch composes everything.** A single session can subscribe to
+multiple topics AND a `Sub.every` tick simultaneously — the runtime
+diff-updates subscriptions on every dispatch, so topics in the
+intersection of old + new sets keep their existing goroutine + broker
+registration (no broadcast loss in the gap).
+
+**v0.15.x is in-process only.** A single Sky.Live instance. v0.16+
+plugs in cross-process broker tiers (Redis, Cloud Pub/Sub, NATS,
+Postgres LISTEN/NOTIFY) via the existing `liveStore.Subscribe`
+interface without app-source changes — pick the broker in `sky.toml`
+`[live.broker]`. See `docs/skylive/pubsub.md` for the user-facing
+tutorial and `docs/skylive/pubsub-design.md` for the architecture
+write-up. The worked example is `examples/27-multi-session-chat`.
 
 ### Sky.Core.Time
 

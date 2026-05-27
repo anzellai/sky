@@ -1,0 +1,486 @@
+module Main exposing (main)
+
+-- examples/27-multi-session-chat — pub/sub chatroom demo (Cycle 3 P49).
+--
+-- Two browser tabs in the same room see each other's messages in
+-- real time WITHOUT polling. Each session subscribes to the room's
+-- topic via `Std.Sub.subscribeTopic` and broadcasts new messages via
+-- `Std.Cmd.publish`. The publisher's own subscription also receives
+-- the broadcast (echo-by-default — matches Redis/NATS/MQTT
+-- semantics).
+--
+-- DURABILITY PATTERN. Each SendMessage handler ALWAYS writes the
+-- message to SQLite first, THEN publishes to the topic. Notifications
+-- can be lost on a process crash or network blip — the database is
+-- the source of truth, the broadcast is the low-latency hint. If the
+-- publish never reaches a subscriber, the next /chat/<room> page
+-- load reads the persisted history.
+--
+-- See `docs/skylive/pubsub.md` for the user-facing tutorial and
+-- `docs/skylive/pubsub-design.md` for the architecture write-up.
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.Dict as Dict
+import Sky.Core.Task as Task
+import Sky.Core.Time as Time
+import Sky.Core.Error as Error exposing (Error(..), ErrorKind(..))
+import Std.Log exposing (println)
+import Sky.Core.System as System
+import Std.Html exposing (..)
+import Std.Html.Attributes exposing (..)
+import Std.Html.Events exposing (onSubmit)
+import Std.Live exposing (app, route)
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Db as Db
+
+-- ─── Model ───────────────────────────────────────────────────────
+type Page
+    = LobbyPage
+    | RoomPage String
+
+type alias ChatMessage =
+    { author : String
+    , text : String
+    , at : String
+    }
+
+type alias Model =
+    { page : Page
+    , me : String
+    , room : String
+    , history : List ChatMessage
+    , notice : String
+    }
+
+type alias JoinPayload =
+    { room : String
+    , me : String
+    }
+
+type alias ChatForm =
+    { text : String }
+
+type Msg
+    = JoinRoom JoinPayload
+    | SendMessage ChatForm
+    | MessageReceived any
+    | PersistResult (Result Error Int)
+
+
+-- ─── Db helpers ──────────────────────────────────────────────────
+dbConn =
+    case Task.run (Db.connect ()) of
+
+        Ok conn ->
+            conn
+
+        Err e ->
+            let
+                _ =
+                    println
+                        ("[FATAL] cannot open chat.db: " ++ Error.toString e)
+            in
+                System.exit 1
+
+
+initSchema =
+    let
+        _ =
+            Task.run
+                (Db.execRaw
+                    dbConn
+                    """CREATE TABLE IF NOT EXISTS messages (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        room TEXT NOT NULL,
+                        author TEXT NOT NULL,
+                        text TEXT NOT NULL,
+                        at TEXT NOT NULL
+                    )""")
+    in
+        ()
+
+
+loadRoomHistory : String -> List ChatMessage
+loadRoomHistory room =
+    let
+        result =
+            Task.run
+                (Db.query
+                    dbConn
+                    "SELECT author, text, at FROM messages WHERE room = ? ORDER BY id ASC LIMIT 200"
+                    [room])
+    in
+        case result of
+
+            Ok rows ->
+                List.map rowToMessage rows
+
+            Err _ ->
+                []
+
+
+rowToMessage : Dict String String -> ChatMessage
+rowToMessage row =
+    { author = Db.getString "author" row
+    , text = Db.getString "text" row
+    , at = Db.getString "at" row
+    }
+
+
+persistMessage : String -> ChatMessage -> Task Error Int
+persistMessage room msg =
+    Db.insertRow
+        dbConn
+        "messages"
+        (Dict.fromList
+            [ ( "room", room )
+            , ( "author", msg.author )
+            , ( "text", msg.text )
+            , ( "at", msg.at )
+            ])
+
+
+-- ─── Topic naming ────────────────────────────────────────────────
+roomTopic : String -> String
+roomTopic room =
+    "chat:room-" ++ room
+
+
+-- ─── Decoder for broadcast payloads ──────────────────────────────
+
+
+-- The publisher passes `Cmd.publish topic payload` with payload typed
+-- `any`. Subscribers receive it as `any` and decode it back to the
+-- application shape via the toMsg callback. We carry the payload as
+-- a `Dict String String` (see SendMessage in update) so the
+-- subscriber side just reads fields back via Db.getString (which is
+-- a Dict-shaped accessor in disguise).
+decodeChatMessage : any -> ChatMessage
+decodeChatMessage payload =
+    { author = Db.getString "author" payload
+    , text = Db.getString "text" payload
+    , at = Db.getString "at" payload
+    }
+
+
+-- ─── Init ────────────────────────────────────────────────────────
+-- | `init` runs once per new session. The runtime hands us a request
+-- map with `"path"` set to the URL that opened the session, so we
+-- can pre-load the room's persisted history when a user lands
+-- directly on `/chat/<room>` (e.g. via a bookmark or shared link).
+init : any -> ( Model, Cmd Msg )
+init req =
+    let
+        _ = initSchema
+        path = Db.getString "path" req
+        slug = roomSlugFromPath path
+        startPage =
+            if slug == "" then
+                LobbyPage
+
+            else
+                RoomPage slug
+        history =
+            if slug == "" then
+                []
+
+            else
+                loadRoomHistory slug
+    in
+        ( { page = startPage
+          , me = ""
+          , room = slug
+          , history = history
+          , notice = ""
+          }
+        , Cmd.none
+        )
+
+
+-- | `roomSlugFromPath path` — pull `<slug>` out of `/chat/<slug>`.
+-- Returns "" when the path doesn't match (lobby + everything else).
+roomSlugFromPath : String -> String
+roomSlugFromPath path =
+    if String.startsWith "/chat/" path then
+        String.slice 6 (String.length path) path
+
+    else
+        ""
+
+
+-- ─── Subscriptions ───────────────────────────────────────────────
+subscriptions : Model -> Sub.Sub Msg
+subscriptions model =
+    case model.page of
+
+        RoomPage room ->
+            Sub.subscribeTopic (roomTopic room) MessageReceived
+
+        _ ->
+            Sub.none
+
+
+-- | Derive the current room slug from `model.page`. This stays in
+-- step with the URL automatically (the runtime sets `model.page`
+-- from the matched route), so SendMessage / subscribeTopic never
+-- drift out of sync with the browser's address bar.
+currentRoom : Model -> String
+currentRoom model =
+    case model.page of
+
+        RoomPage room ->
+            room
+
+        _ ->
+            ""
+
+
+-- ─── Update ──────────────────────────────────────────────────────
+nowString : a -> String
+nowString _ =
+    case Task.run (Time.now ()) of
+
+        Ok t ->
+            Time.timeString t
+
+        Err _ ->
+            "?"
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        JoinRoom payload ->
+            let
+                history = loadRoomHistory payload.room
+            in
+                ( { model | page = RoomPage payload.room
+                  , me = payload.me
+                  , room = payload.room
+                  , history = history
+                  , notice = "Joined " ++ payload.room ++ " as " ++ payload.me
+                  }
+                , Cmd.none
+                )
+
+        SendMessage submitted ->
+            let
+                trimmed = String.trim submitted.text
+                room = currentRoom model
+                author =
+                    if model.me == "" then
+                        "guest"
+
+                    else
+                        model.me
+            in
+                if trimmed == "" || room == "" then
+                    ( model, Cmd.none )
+
+                else
+                    let
+                        timestamp = nowString ()
+                        chatMsg =
+                            { author = author, text = trimmed, at = timestamp }
+                        topic = roomTopic room
+                        payloadDict =
+                            Dict.fromList
+                                [ ( "author", chatMsg.author )
+                                , ( "text", chatMsg.text )
+                                , ( "at", chatMsg.at )
+                                ]
+                    in
+                        ( model
+                        , Cmd.batch
+                              [ Cmd.perform
+                                    (persistMessage room chatMsg)
+                                    PersistResult
+                              , Cmd.publish topic payloadDict
+                              ]
+                        )
+
+        MessageReceived payload ->
+            let
+                chatMsg = decodeChatMessage payload
+            in
+                ( { model | history = List.append model.history [chatMsg] }
+                , Cmd.none
+                )
+
+        PersistResult (Ok _) ->
+            ( model, Cmd.none )
+
+        PersistResult (Err e) ->
+            ( { model | notice = "save failed: " ++ Error.toString e }
+            , Cmd.none
+            )
+
+
+-- ─── View ────────────────────────────────────────────────────────
+view : Model -> Html Msg
+view model =
+    div
+        []
+        [ styleNode [] pageStyles
+        , div
+              [class "app"]
+              [ header
+                    [class "topbar"]
+                    [ h1 [] [text "Sky.Live · multi-session chat"]
+                    , p
+                          [class "hint"]
+                          [text
+                              "Open two browser tabs in the same room to see pub/sub in action."]
+                    ]
+              , div [class "content"] [pageBody model]
+              , footer
+                    [class "footer"]
+                    [text
+                        "Echo-to-publisher matches Redis/NATS/MQTT — your own messages arrive on the broadcast too."]
+              ]
+        ]
+
+
+pageBody : Model -> Html Msg
+pageBody model =
+    case model.page of
+
+        LobbyPage ->
+            lobbyView model
+
+        RoomPage room ->
+            roomView model room
+
+
+lobbyView : Model -> Html Msg
+lobbyView _model =
+    div
+        [class "lobby"]
+        [ h2 [] [text "Join a room"]
+        , form
+              [ class "lobby-form", onSubmit JoinRoom ]
+              [ label
+                    []
+                    [ text "Your name"
+                    , input
+                          [ name "me"
+                          , placeholder "alice"
+                          , required True
+                          , autocomplete "off"
+                          ]
+                    ]
+              , label
+                    []
+                    [ text "Room"
+                    , input
+                          [ name "room"
+                          , placeholder "lounge"
+                          , required True
+                          , autocomplete "off"
+                          ]
+                    ]
+              , button [ type_ "submit", class "primary" ] [text "Join"]
+              ]
+        , p
+              [class "hint"]
+              [text
+                  "Tip: open this page in TWO browser tabs and join the same room with different names. Each message you send in one tab will appear in the other within a few milliseconds, with no polling."]
+        ]
+
+
+roomView : Model -> String -> Html Msg
+roomView model room =
+    div
+        [class "room"]
+        [ div
+              [class "room-header"]
+              [ h2 [] [text ("# " ++ room)]
+              , div [class "me"] [text ("you: " ++ model.me)]
+              ]
+        , div
+              [ class "log", id "chat-log" ]
+              (List.map (messageRow model.me) model.history)
+        , form
+              [ class "composer", onSubmit SendMessage ]
+              [ input
+                    [ name "text"
+                    , id "chat-input"
+                    , placeholder "Say something…"
+                    , autocomplete "off"
+                    ]
+              , button [ type_ "submit", class "primary" ] [text "Send"]
+              ]
+        , if model.notice == "" then
+              span [] []
+
+          else
+              div [class "notice"] [text model.notice]
+        ]
+
+
+messageRow : String -> ChatMessage -> Html Msg
+messageRow me msg =
+    let
+        klass =
+            if msg.author == me then
+                "msg msg-mine"
+
+            else
+                "msg"
+    in
+        div
+            [class klass]
+            [ span [class "msg-author"] [text msg.author]
+            , span [class "msg-at"] [text (" · " ++ msg.at)]
+            , div [class "msg-text"] [text msg.text]
+            ]
+
+
+-- ─── App wiring ──────────────────────────────────────────────────
+main =
+    app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        , routes = [ route "/" LobbyPage, route "/chat/:room" RoomPage ]
+        , notFound = LobbyPage
+        }
+
+
+-- ─── Styles ──────────────────────────────────────────────────────
+pageStyles =
+    """
+    * { box-sizing: border-box; }
+    body {
+        margin: 0;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        background: #f5f5f5;
+        color: #1f2937;
+    }
+    .app { max-width: 800px; margin: 0 auto; padding: 2rem 1rem; }
+    .topbar { border-bottom: 1px solid #e5e7eb; padding-bottom: 1rem; margin-bottom: 1.5rem; }
+    .topbar h1 { margin: 0 0 .25rem; font-size: 1.4rem; }
+    .hint { color: #6b7280; font-size: .9rem; margin: 0; }
+    .lobby-form { display: flex; flex-direction: column; gap: .75rem; max-width: 320px; margin: 1rem 0 1.5rem; }
+    .lobby-form label { display: flex; flex-direction: column; gap: .25rem; font-size: .85rem; color: #374151; }
+    .lobby-form input { padding: .5rem .75rem; border: 1px solid #d1d5db; border-radius: 6px; font-size: 1rem; }
+    .room-header { display: flex; justify-content: space-between; align-items: center; padding-bottom: .5rem; border-bottom: 1px solid #e5e7eb; margin-bottom: 1rem; }
+    .room-header h2 { margin: 0; font-size: 1.2rem; }
+    .me { color: #6b7280; font-size: .85rem; }
+    .log { min-height: 280px; max-height: 460px; overflow-y: auto; padding: .5rem; background: white; border: 1px solid #e5e7eb; border-radius: 8px; margin-bottom: 1rem; }
+    .msg { padding: .35rem .5rem; margin: .15rem 0; border-radius: 6px; }
+    .msg-mine { background: #eff6ff; }
+    .msg-author { font-weight: 600; color: #1f2937; font-size: .85rem; }
+    .msg-at { color: #9ca3af; font-size: .75rem; }
+    .msg-text { color: #1f2937; margin-top: .15rem; white-space: pre-wrap; word-break: break-word; }
+    .composer { display: flex; gap: .5rem; }
+    .composer input { flex: 1; padding: .5rem .75rem; border: 1px solid #d1d5db; border-radius: 6px; font-size: 1rem; }
+    .primary { padding: .5rem 1rem; border: 0; border-radius: 6px; background: #2563eb; color: white; font-size: .95rem; cursor: pointer; }
+    .primary:hover { background: #1d4ed8; }
+    .notice { margin-top: .75rem; padding: .5rem .75rem; background: #fef3c7; color: #92400e; border-radius: 6px; font-size: .85rem; }
+    .footer { margin-top: 2rem; color: #9ca3af; font-size: .8rem; text-align: center; }
+    """
