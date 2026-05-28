@@ -35,6 +35,7 @@
 -- re-embed marker: 2026-05-28c — fix(http-server): Server.static implementation via http.FileServer (was a stub returning literal "static:dir")
 -- re-embed marker: 2026-05-28e — Cycle 4 #353: sky fmt next-anchor fallback so body comments above a reflowed expression round-trip losslessly
 -- re-embed marker: 2026-05-28f — revert(canonicalise): roll back #350 alias-name fix (regression in row-poly access on duplicate-named modules — #361)
+-- re-embed marker: 2026-05-28g — fix(canonicalise): cross-module alias-name collision v2 — (home, name) primary lookup + unique-body bare-name fallback (#350 + #361)
 module Sky.Build.EmbeddedRuntime
     ( embeddedRuntime
     , embeddedSkyStdlib
