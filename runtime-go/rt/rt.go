@@ -6795,11 +6795,17 @@ func Server_listen(port any, routes any) any {
 			}
 			if ok && resp.Tag == 0 {
 				skyResp := resp.OkValue.(SkyResponse)
-				for k, v := range skyResp.Headers {
-					w.Header().Set(k, v)
-				}
+				// Apply the response's default ContentType FIRST so the
+				// Headers map (populated by Server.withHeader) can
+				// override it. Otherwise an explicit
+				// `withHeader "Content-Type" "application/javascript"`
+				// applied to a Server.text/json/html response would be
+				// silently clobbered by the default ("text/plain" etc).
 				if skyResp.ContentType != "" {
 					w.Header().Set("Content-Type", skyResp.ContentType)
+				}
+				for k, v := range skyResp.Headers {
+					w.Header().Set(k, v)
 				}
 				// Safe-by-default security headers (callers can override);
 				// honours SKY_LIVE_FRAME_ANCESTORS for embeddable deploys.

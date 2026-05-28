@@ -1,0 +1,114 @@
+/*
+ * Sky.Webview spike — Three.js test surface
+ *
+ * Dark gradient background; HUD pinned top-left with status info
+ * (FPS, GL renderer string, WebGL version). The canvas fills the
+ * viewport behind the HUD.
+ */
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+html, body {
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+    background: linear-gradient(135deg, #0a0e27 0%, #1a1f3a 50%, #0a0e27 100%);
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    color: #e8e8ec;
+}
+
+#canvas-wrap {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+}
+
+#canvas-wrap canvas {
+    width: 100%;
+    height: 100%;
+    display: block;
+}
+
+#hud {
+    position: fixed;
+    top: 16px;
+    left: 16px;
+    z-index: 10;
+    padding: 14px 16px;
+    background: rgba(15, 18, 35, 0.78);
+    border: 1px solid rgba(120, 140, 200, 0.25);
+    border-radius: 10px;
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    min-width: 240px;
+    font-size: 12px;
+    line-height: 1.55;
+    user-select: none;
+}
+
+#title {
+    font-size: 14px;
+    font-weight: 700;
+    color: #fff;
+    margin-bottom: 2px;
+    letter-spacing: 0.02em;
+}
+
+#info {
+    font-size: 11px;
+    color: #a8b0c8;
+    margin-bottom: 10px;
+}
+
+#fps, #renderer, #webgl-version {
+    color: #c0c8e0;
+    margin-bottom: 2px;
+}
+
+#fps-value, #renderer-value, #webgl-version-value {
+    color: #7fb8ff;
+    font-weight: 600;
+}
+
+#renderer-value, #webgl-version-value {
+    font-size: 11px;
+    word-break: break-all;
+}
+
+button {
+    display: block;
+    width: 100%;
+    margin-top: 8px;
+    padding: 8px 12px;
+    background: #2a3a5a;
+    border: 1px solid #3a4a70;
+    border-radius: 6px;
+    color: #e8e8ec;
+    font-family: inherit;
+    font-size: 12px;
+    cursor: pointer;
+    transition: background 0.15s ease;
+}
+
+button:hover {
+    background: #3a4a70;
+}
+
+button:active {
+    background: #1a2a4a;
+}
+
+/* Tiny footer "what is this" hint pinned bottom-right. */
+#hud::after {
+    content: "Sky compiler · webview spike";
+    position: fixed;
+    bottom: 12px;
+    right: 16px;
+    font-size: 10px;
+    color: rgba(200, 210, 240, 0.45);
+    pointer-events: none;
+}

@@ -1,0 +1,114 @@
+module Main exposing (main)
+
+-- Sky.Webview spike — Three.js + animation under webview_go.
+--
+-- Validates risk #2 from docs/skywebview/PLAN.md: does WebGL2 +
+-- Three.js work end-to-end through webview_go's underlying engine
+-- (WebKit on macOS, WebView2 on Windows, WebKitGTK on Linux)?
+--
+-- Architecture: a plain Sky.Http.Server (NOT Sky.Live) that serves a
+-- static page. The page loads Three.js + a hand-written scene from
+-- /static, both vendored on disk. Two ways to test it:
+--
+--   1. Sky.Http.Server side: `sky run src/Main.sky` → browse
+--      http://localhost:8765 → confirm WebGL animation runs.
+--
+--   2. webview_go side: with the server running, in another shell:
+--      `cd webview_shim && go run main.go` → opens the same URL in
+--      a webview_go window → confirm the SAME content renders +
+--      animates inside the native webview.
+--
+-- This sidesteps Sky.Live's __skyReviveScripts hardening (which
+-- rejects inline <script>) by serving static assets per-request via
+-- File.readFile. When Sky.Webview ships for real, the renderer will
+-- reuse Sky.Live's pipeline so the same script-allowlist rules
+-- apply — that's deliberately out of scope for this spike.
+--
+-- Workaround: Sky.Http.Server.static (the natural API for this)
+-- is currently a stub that returns the literal string "static:<dir>"
+-- (see runtime-go/rt/rt.go:7638, filed as a follow-up Sky bug). For
+-- the spike we hand-roll three Server.get handlers that read the
+-- files fresh per request — slow but correct, and the spike's
+-- workload is two file reads on page load.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.File as File
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Http.Server as Server
+import Sky.Http.Server exposing (Request, Response)
+import Std.Log exposing (println)
+
+
+main : Task Error ()
+main =
+    let
+        _ = println "Sky.Webview spike — Three.js rendering test"
+        _ = println "  open http://localhost:8765 in a browser"
+        _ = println "  then run: cd webview_shim && go run main.go"
+    in
+        Server.listen 8765
+            [ Server.get "/" rootHandler
+            , Server.get "/healthz" healthzHandler
+            , Server.get "/static/three.min.js" (staticFile "static/three.min.js" "application/javascript")
+            , Server.get "/static/scene.js" (staticFile "static/scene.js" "application/javascript")
+            , Server.get "/static/style.css" (staticFile "static/style.css" "text/css; charset=utf-8")
+            ]
+
+
+rootHandler : Request -> Task Error Response
+rootHandler _ =
+    Task.succeed (Server.html shellHtml)
+
+
+healthzHandler : Request -> Task Error Response
+healthzHandler _ =
+    Task.succeed (Server.text "ok")
+
+
+-- Read a file from disk + serve with the right Content-Type. This
+-- exists only because Server.static is currently a stub — when that
+-- ships properly we can collapse the three routes back to a single
+-- `Server.static "/static" "static"` line.
+staticFile : String -> String -> Request -> Task Error Response
+staticFile path contentType _ =
+    File.readFile path
+        |> Task.map
+            (\body ->
+                Server.text body
+                    |> Server.withHeader "Content-Type" contentType
+            )
+
+
+-- Inline HTML shell — references /static/three.min.js + /static/scene.js
+-- + /static/style.css. The HUD in the top-left shows the GL renderer
+-- string + WebGL version, so we can compare what the embedded webview
+-- reports versus a regular browser tab when running through webview_go.
+--
+-- The {{ }} interpolation isn't used here (this is a static page) so
+-- the triple-quoted string ships exactly as written.
+shellHtml : String
+shellHtml =
+    """<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sky.Webview spike — Three.js</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div id="hud">
+    <div id="title">Sky.Webview spike</div>
+    <div id="info">three.js + animation under webview_go</div>
+    <div id="fps">FPS: <span id="fps-value">--</span></div>
+    <div id="renderer">Renderer: <span id="renderer-value">probing…</span></div>
+    <div id="webgl-version">WebGL: <span id="webgl-version-value">probing…</span></div>
+    <button id="toggle-rotate">pause rotation</button>
+    <button id="toggle-wireframe">toggle wireframe</button>
+  </div>
+  <div id="canvas-wrap"></div>
+  <script src="/static/three.min.js"></script>
+  <script src="/static/scene.js"></script>
+</body>
+</html>"""
