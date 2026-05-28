@@ -17,6 +17,7 @@ import qualified Sky.Canonicalise.KernelFallbackSpec
 import qualified Sky.Canonicalise.UnboundSpec
 import qualified Sky.Canonicalise.QualifiedTypeAliasSpec
 import qualified Sky.Canonicalise.DualImportCollisionSpec
+import qualified Sky.Canonicalise.AliasNameCollisionSpec
 import qualified Sky.Type.ExhaustivenessSpec
 import qualified Sky.Type.AnyWildcardSpec
 import qualified Sky.Type.NumericBinopSpec
@@ -164,6 +165,15 @@ main = hspec $ do
     -- an explicit fix-it suggesting `as Alias`.
     describe "Sky.Canonicalise.DualImportCollision"
                                          Sky.Canonicalise.DualImportCollisionSpec.spec
+    -- Cycle 4 #350 / #361 v2: cross-module type-alias NAME collision.
+    -- Two deps each exposing `Model` under disambiguating `as Alias`
+    -- clauses (#350) — closes the dep-alias map collapsing on bare
+    -- name. AND qualified type reference through a re-exporting
+    -- transit module (#361) — the Dashboard regression that reverted
+    -- PR #111. Both close in one shot: (home, name) primary lookup +
+    -- bare-name fallback for unique bodies.
+    describe "Sky.Canonicalise.AliasNameCollision"
+                                         Sky.Canonicalise.AliasNameCollisionSpec.spec
     describe "Sky.Type.Exhaustiveness"   Sky.Type.ExhaustivenessSpec.spec
     -- Cross-branch HM `any` wildcard fix (compiler bug #3). Distinct
     -- occurrences of `any` in source types must NOT share a single
