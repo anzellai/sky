@@ -6629,6 +6629,14 @@ type SkyRoute struct {
 	Method  string
 	Path    string
 	Handler any // func(SkyRequest) any (Task that returns SkyResponse)
+
+	// StaticDir — non-empty when the route was created by Server_static.
+	// Server_listen detects it and registers http.FileServer instead of
+	// the Sky-handler dispatch path, so static-file serving gets Go
+	// stdlib's path-traversal protection, Last-Modified handling,
+	// Range requests, and MIME type detection without re-implementing
+	// any of it on the Sky side.
+	StaticDir string
 }
 
 // SkyRequest wraps an HTTP request
@@ -6689,6 +6697,27 @@ func Server_listen(port any, routes any) any {
 		route := r.(SkyRoute)
 		handler := route.Handler
 		pattern := route.Path
+
+		// Static-file routes (registered via Server_static) bypass
+		// the Sky-handler dispatch entirely. http.FileServer +
+		// http.StripPrefix delivers path-traversal protection,
+		// MIME detection, Last-Modified, and Range support — all
+		// the things a hand-rolled static handler in Sky would
+		// have to re-implement.
+		//
+		// Pattern is already prefix-form ("/static/" with trailing
+		// slash) so ServeMux longest-prefix-matches every nested
+		// path. StripPrefix removes the prefix (keeping the
+		// trailing slash) before FileServer maps the rest onto the
+		// directory.
+		if route.StaticDir != "" {
+			stripPattern := pattern
+			if len(stripPattern) > 1 && stripPattern[len(stripPattern)-1] == '/' {
+				stripPattern = stripPattern[:len(stripPattern)-1]
+			}
+			mux.Handle(pattern, http.StripPrefix(stripPattern, http.FileServer(http.Dir(route.StaticDir))))
+			continue
+		}
 
 		mux.HandleFunc(pattern, func(w http.ResponseWriter, req *http.Request) {
 			// Panic recovery — one bad handler mustn't kill the process.
@@ -7641,15 +7670,37 @@ func Server_any(path any, handler any) any {
 	return SkyRoute{Method: "*", Path: fmt.Sprintf("%v", path), Handler: handler}
 }
 
-func Server_static(path any, dir any) any {
+// Server_static returns a Route that serves files from `dir` under
+// the URL prefix `urlPrefix`. Implementation defers to
+// http.FileServer + http.StripPrefix at registration time
+// (see Server_listen's StaticDir branch) — so path-traversal
+// protection (http.Dir refuses `..`), MIME detection (via
+// mime.TypeByExtension), Last-Modified, and Range request support
+// all come for free from Go's stdlib.
+//
+//   - urlPrefix is normalised: a missing leading "/" is added, a
+//     missing trailing "/" is added so ServeMux's longest-prefix
+//     match catches every nested path.
+//   - dir is a filesystem path relative to the process cwd (or
+//     absolute). A nonexistent dir yields 404s at request time,
+//     not an error here — the listing-or-deny behaviour is the
+//     stdlib's.
+func Server_static(urlPrefix any, dir any) any {
+	prefix := fmt.Sprintf("%v", urlPrefix)
+	if prefix == "" || prefix[0] != '/' {
+		prefix = "/" + prefix
+	}
+	if prefix[len(prefix)-1] != '/' {
+		prefix = prefix + "/"
+	}
 	return SkyRoute{
-		Method: "GET",
-		Path:   fmt.Sprintf("%v", path),
-		Handler: func(req any) any {
-			return func() any {
-				return Ok[any, any](SkyResponse{Status: 200, Body: "static:" + fmt.Sprintf("%v", dir)})
-			}
-		},
+		Method:    "GET",
+		Path:      prefix,
+		StaticDir: fmt.Sprintf("%v", dir),
+		// Handler stays nil — the dispatch path checks StaticDir
+		// FIRST and never reaches the handler call site for a
+		// static route.
+		Handler: nil,
 	}
 }
 
