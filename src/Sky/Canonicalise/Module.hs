@@ -1576,10 +1576,31 @@ canonicaliseAliases tmap aliasMap env aliases =
 -- expanded — applying them requires type-var substitution that we
 -- can add later. Treating them as nominal is correct, just
 -- pessimistic for inference.
-expandModuleAliases :: Map.Map String Can.Alias -> Can.Module -> Can.Module
+--
+-- ── Cycle 4 #350: cross-module alias-NAME collision fix ──────────
+--
+-- The alias map MUST be keyed by `(home, name)` rather than `name`
+-- alone. Two dependency modules can both expose `type alias Model =
+-- ...` (e.g. `App.State.Model` AND `Lib.State.Model`); before this
+-- fix `collectDepAliases` flattened the map using `Map.unions` on
+-- the bare name key and ONE body silently won. Downstream the HM
+-- solver then emitted the dishonest "Model vs Model" type error
+-- because both `Can.TType "App.State" "Model"` and
+-- `Can.TType "Lib.State" "Model"` resolved to the SAME body.
+--
+-- The key here uses the canonical home from `Can.TType` — see
+-- `expandTypeAliases` for the lookup. D5 (PR #105) closed only the
+-- shallow qualifier-collision class; this is the deeper class it
+-- carved out.
+expandModuleAliases :: Map.Map (ModuleName.Canonical, String) Can.Alias
+                    -> Can.Module
+                    -> Can.Module
 expandModuleAliases depAliases m =
-    let localAliases = Can._aliases m
-        -- Merge local and dep aliases; local wins on name collision (unlikely).
+    let home = Can._name m
+        localAliases = Map.mapKeys (\n -> (home, n)) (Can._aliases m)
+        -- Local wins on full-key collision (a dep keyed under the
+        -- current module's home — never happens in practice but the
+        -- left-bias keeps semantics predictable).
         allAliases = Map.union localAliases depAliases
         expand = expandTypeAliases allAliases Set.empty
     in m
@@ -1604,13 +1625,21 @@ expandModuleAliases depAliases m =
 -- unwrap arm (Unify.hs) never fires because the value isn't a
 -- T.Alias.  Expanding eagerly preserves alias identity (TAlias)
 -- AND unfolds for unification.
-expandTypeAliases :: Map.Map String Can.Alias -> Set.Set String -> Can.Type -> Can.Type
+-- | The alias map key carries the alias's HOME module — see
+-- `expandModuleAliases` for the rationale (Cycle 4 #350). The
+-- `visited` set is keyed identically so a recursive alias from one
+-- home cannot accidentally short-circuit a same-named alias from a
+-- different home.
+expandTypeAliases :: Map.Map (ModuleName.Canonical, String) Can.Alias
+                  -> Set.Set (ModuleName.Canonical, String)
+                  -> Can.Type
+                  -> Can.Type
 expandTypeAliases aliasMap visited ty = case ty of
     Can.TType home name args
-        | not (Set.member name visited)
-        , Just (Can.Alias vars body) <- Map.lookup name aliasMap
+        | not (Set.member (home, name) visited)
+        , Just (Can.Alias vars body) <- Map.lookup (home, name) aliasMap
         , length vars == length args ->
-            let visited' = Set.insert name visited
+            let visited' = Set.insert (home, name) visited
                 -- Recur into args first so nested aliases also expand.
                 args' = map (expandTypeAliases aliasMap visited') args
                 -- Substitute vars → args' in the alias body, then
@@ -1770,11 +1799,21 @@ mapAliasBody f (Can.Alias vars body) = Can.Alias vars (f body)
 
 -- | Collect the canonicalised alias bodies from dep modules so a
 -- value annotation can refer to an imported record alias and still
--- have its body expanded for HM unification. Local aliases win on
--- collision (unlikely in practice).
-collectDepAliases :: Map.Map String DepInfo -> Map.Map String Can.Alias
+-- have its body expanded for HM unification.
+--
+-- Each entry is keyed by `(home, alias-name)`. Two deps can each
+-- expose `Model` (e.g. `App.State.Model` + `Lib.State.Model`) without
+-- collapsing — Cycle 4 #350 root cause was the prior `String`-keyed
+-- map silently dropping one body. Lookups in `expandTypeAliases` use
+-- the resolved `home` from `Can.TType` so each call site reaches the
+-- right body for its qualifier.
+collectDepAliases :: Map.Map String DepInfo
+                  -> Map.Map (ModuleName.Canonical, String) Can.Alias
 collectDepAliases deps =
-    Map.unions [ _dep_aliasDefs d | d <- Map.elems deps ]
+    Map.unions
+        [ Map.mapKeys (\n -> (_dep_name d, n)) (_dep_aliasDefs d)
+        | d <- Map.elems deps
+        ]
 
 
 -- ═══════════════════════════════════════════════════════════

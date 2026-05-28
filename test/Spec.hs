@@ -17,6 +17,7 @@ import qualified Sky.Canonicalise.KernelFallbackSpec
 import qualified Sky.Canonicalise.UnboundSpec
 import qualified Sky.Canonicalise.QualifiedTypeAliasSpec
 import qualified Sky.Canonicalise.DualImportCollisionSpec
+import qualified Sky.Canonicalise.AliasNameCollisionSpec
 import qualified Sky.Type.ExhaustivenessSpec
 import qualified Sky.Type.AnyWildcardSpec
 import qualified Sky.Type.NumericBinopSpec
@@ -164,6 +165,13 @@ main = hspec $ do
     -- an explicit fix-it suggesting `as Alias`.
     describe "Sky.Canonicalise.DualImportCollision"
                                          Sky.Canonicalise.DualImportCollisionSpec.spec
+    -- Cycle 4 #350: cross-module alias-NAME collision (the deeper
+    -- bug class D5 carved out). Two deps each exposing `Model` under
+    -- disambiguating `as` clauses pre-fix collapsed in the dep-alias
+    -- map (keyed on String) and produced the "Model vs Model" type
+    -- error; post-fix, both bodies coexist under their home module.
+    describe "Sky.Canonicalise.AliasNameCollision"
+                                         Sky.Canonicalise.AliasNameCollisionSpec.spec
     describe "Sky.Type.Exhaustiveness"   Sky.Type.ExhaustivenessSpec.spec
     -- Cross-branch HM `any` wildcard fix (compiler bug #3). Distinct
     -- occurrences of `any` in source types must NOT share a single

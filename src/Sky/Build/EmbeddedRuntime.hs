@@ -30,9 +30,9 @@
 -- below — so cabal recompiles it and the splice re-walks the tree.
 --
 -- re-embed marker: 2026-05-27 — Cycle 4 HS (rev7): JS comment </script> literal escaped + stream-loop session stamp
--- re-embed marker: 2026-05-28 — Cycle 4 PT: Std.PubSub.publish (Task-shaped) + Std/PubSub.sky stdlib + live_pubsub_task.go runtime
 -- re-embed marker: 2026-05-28b — Sky.Http.Server withHeader Content-Type override fix (spike-discovered)
 -- re-embed marker: 2026-05-28c — fix(http-server): Server.static implementation via http.FileServer (was a stub returning literal "static:dir")
+-- re-embed marker: 2026-05-28d — Cycle 4 #350: cross-module alias-NAME collision fix (depAliasMap keyed by (home, name))
 module Sky.Build.EmbeddedRuntime
     ( embeddedRuntime
     , embeddedSkyStdlib
