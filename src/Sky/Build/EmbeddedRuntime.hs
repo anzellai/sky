@@ -30,6 +30,7 @@
 -- below — so cabal recompiles it and the splice re-walks the tree.
 --
 -- re-embed marker: 2026-05-27 — Cycle 4 HS (rev7): JS comment </script> literal escaped + stream-loop session stamp
+-- re-embed marker: 2026-05-28 — Cycle 4 PT: Std.PubSub.publish (Task-shaped) + Std/PubSub.sky stdlib + live_pubsub_task.go runtime
 module Sky.Build.EmbeddedRuntime
     ( embeddedRuntime
     , embeddedSkyStdlib

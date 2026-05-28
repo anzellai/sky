@@ -2358,6 +2358,11 @@ func liveAppRun(cfg any) any {
 	// app-wide; the store owns the binding so v0.16+ cross-process
 	// backends can swap implementations without touching call sites).
 	app.topics = app.store.Broker()
+	// Cycle 4 PT: register as the process-global broker so
+	// Std.PubSub.publish (Task-shaped, callable from raw api
+	// handlers / post-init goroutines / scheduled jobs) can find a
+	// *liveApp without an update-tuple context.
+	registerProcessBroker(app)
 
 	// Resolve listen port early so sub-app spawn helpers
 	// (maybeAutoMountConsole below) can pass it to children via
