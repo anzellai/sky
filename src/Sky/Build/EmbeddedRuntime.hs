@@ -33,8 +33,8 @@
 -- re-embed marker: 2026-05-28 — Cycle 4 PT: Std.PubSub.publish (Task-shaped) + Std/PubSub.sky stdlib + live_pubsub_task.go runtime
 -- re-embed marker: 2026-05-28b — Sky.Http.Server withHeader Content-Type override fix (spike-discovered)
 -- re-embed marker: 2026-05-28c — fix(http-server): Server.static implementation via http.FileServer (was a stub returning literal "static:dir")
--- re-embed marker: 2026-05-28d — Cycle 4 #350: cross-module alias-NAME collision fix (depAliasMap keyed by (home, name))
 -- re-embed marker: 2026-05-28e — Cycle 4 #353: sky fmt next-anchor fallback so body comments above a reflowed expression round-trip losslessly
+-- re-embed marker: 2026-05-28f — revert(canonicalise): roll back #350 alias-name fix (regression in row-poly access on duplicate-named modules — #361)
 module Sky.Build.EmbeddedRuntime
     ( embeddedRuntime
     , embeddedSkyStdlib
