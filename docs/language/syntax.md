@@ -126,6 +126,17 @@ html =
 - Preserves newlines and indentation.
 - `{{expr}}` for interpolation (identifier, qualified name, field access, or function call).
 - Single `{` is literal — safe for CSS, JSON, SQL, JS.
+- Backslash escape: `\{{` emits a literal `{{` (no interpolation). Useful for
+  shipping Mustache / Handlebars / shell-script placeholders verbatim:
+
+  ```elm
+  template =
+      """Hello \{{NAME}}, welcome to {{appName}}!"""
+  -- → "Hello {{NAME}}, welcome to MyApp!"
+  ```
+
+  `\\` collapses to a single literal backslash. Other `\X` sequences are
+  preserved verbatim (so regex / paths like `\d+` / `\test` are unaffected).
 
 ## Operators
 

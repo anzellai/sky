@@ -281,6 +281,7 @@ test-suite sky-tests
       Sky.Parse.MultiLineCaseKeywordSpec
       Sky.Parse.MultiLineSignatureSpec
       Sky.Parse.RowPolyRecordAnnotationSpec
+      Sky.Parse.MultilineInterpolationEscapeSpec
       Sky.Build.CaseCatchallSubjectDiscardSpec
       Sky.Type.InstanceCaptureSpec
       Sky.Type.SolvedTypesRegionMapSpec

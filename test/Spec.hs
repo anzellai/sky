@@ -35,6 +35,7 @@ import qualified Sky.Parse.MultiLineCaseSubjectSpec
 import qualified Sky.Parse.MultiLineCaseKeywordSpec
 import qualified Sky.Parse.MultiLineSignatureSpec
 import qualified Sky.Parse.RowPolyRecordAnnotationSpec
+import qualified Sky.Parse.MultilineInterpolationEscapeSpec
 import qualified Sky.Build.CaseCatchallSubjectDiscardSpec
 import qualified Sky.Format.FormatSpec
 import qualified Sky.Build.GoKeywordCollisionSpec
@@ -210,6 +211,12 @@ main = hspec $ do
     describe "Sky.Parse.MultiLineSignature" Sky.Parse.MultiLineSignatureSpec.spec
     describe "Sky.Parse.RowPolyRecordAnnotation"
         Sky.Parse.RowPolyRecordAnnotationSpec.spec
+    -- Cycle 4 D3: `\{{NAME}}` escape for literal `{{NAME}}` placeholders
+    -- in triple-quoted strings (Mustache / Handlebars / shell-script
+    -- templating). Pre-fix the desugarer ate every `{{ident}}` as a Sky
+    -- variable reference; codegen then emitted `undefined: NAME`.
+    describe "Sky.Parse.MultilineInterpolationEscape"
+        Sky.Parse.MultilineInterpolationEscapeSpec.spec
     describe "Sky.Build.CaseCatchallSubjectDiscard"
         Sky.Build.CaseCatchallSubjectDiscardSpec.spec
     -- Closed-record exactness + cross-module externals registration:

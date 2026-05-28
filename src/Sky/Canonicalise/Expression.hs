@@ -1,6 +1,8 @@
 -- | Canonicalise expressions — resolve all variable references.
 module Sky.Canonicalise.Expression
     ( canonicaliseExpr
+    , Chunk(..)
+    , splitInterpolation
     )
     where
 
@@ -555,16 +557,33 @@ data Chunk = Lit String | ExprChunk String deriving (Show)
 
 
 -- Split a raw multiline string into alternating Lit / ExprChunk parts.
+--
+-- Escape grammar (D3, audit-driven):
+--   `\{{`  → literal `{{` (no interpolation consumed; `}}` later stays literal)
+--   `\\`   → literal `\`
+--   `\X`   → literal `\X` for any other X (backwards-compatible: today the
+--            lexer preserves backslashes verbatim, so `\test`, `\n`, `\d` all
+--            keep flowing through as the user wrote them)
+-- This lets a triple-quoted string ship literal `{{NAME}}` template
+-- placeholders for downstream tooling (Mustache / Handlebars / env-var
+-- substitution / shell scripts) without Sky hijacking them.
 splitInterpolation :: String -> [Chunk]
 splitInterpolation = go ""
   where
     go acc [] = emit acc []
+    -- Escape: \{{ emits literal {{ (no interpolation).
+    go acc ('\\':'{':'{':rest) = go (acc ++ "{{") rest
+    -- Escape: \\ collapses to a single literal \.
+    go acc ('\\':'\\':rest) = go (acc ++ "\\") rest
+    -- Interpolation start.
     go acc ('{':'{':rest) =
         let (inside, after) = span (/= '}') rest
         in case after of
             ('}':'}':after') ->
                 emit acc (ExprChunk inside : go "" after')
             _ -> go (acc ++ "{{") rest  -- unclosed {{; treat as literal
+    -- Any other character (including a `\` not followed by `{{` or `\`) is
+    -- copied verbatim.
     go acc (c:rest) = go (acc ++ [c]) rest
 
     emit "" rest = rest
