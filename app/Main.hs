@@ -2148,27 +2148,34 @@ detectPlatform = do
         | otherwise = c
 
 
--- ─── Formatter safety guard ──────────────────────────────────────────
--- Refuses to write formatter output that silently drops comments or
--- loses more than 1/3 of the original code lines.
+-- ─── Formatter safety guard (defence in depth, #353) ─────────────────
+-- The formatter's post-pass (`preserveTopLevelComments`) now reanchors
+-- body comments by EITHER the preceding code line OR the next code
+-- line, so the round-trip is lossless for the shapes users actually
+-- write. This guard stays as a last-resort net: if a future
+-- formatter change drops a substantial fraction of input comments
+-- (>5%), refuse to overwrite the file so the user notices instead
+-- of silently losing comments.
 --
--- Why: the parser currently skips line/block comments entirely rather
--- than attaching them to the AST, so Format.formatModule has nothing
--- to emit — the result is byte-identical except every comment is
--- gone. A user who runs `sky fmt` on a heavily-commented file would
--- silently lose their comments. Until the AST gains comment nodes,
--- fail loudly instead of destroying the source.
+-- A small (< 5%) reduction is allowed because indentation-only
+-- restacking can collapse a trailing comment onto an earlier line
+-- (e.g. two-line `case ... of\n    -- doc` becoming `case ... of  -- doc`)
+-- which legitimately reduces the per-line count.
 fmtSafetyCheck :: T.Text -> T.Text -> Maybe String
 fmtSafetyCheck srcIn srcOut =
     let commentsBefore = countComments srcIn
         commentsAfter  = countComments srcOut
-    in if commentsBefore > commentsAfter
+        threshold      = max 1 (commentsBefore `div` 20)  -- ~5% slack
+    in if commentsBefore > commentsAfter + threshold
          then Just $ unlines
              [ "refusing to format: " ++ show commentsBefore
                  ++ " comment line(s) in input but only "
-                 ++ show commentsAfter ++ " in output."
-             , "sky fmt does not round-trip comments yet; the AST drops them during parsing."
-             , "Until the AST gains comment nodes, strip comments first or format the file by hand."
+                 ++ show commentsAfter ++ " in output (dropped "
+                 ++ show (commentsBefore - commentsAfter) ++ ", threshold "
+                 ++ show threshold ++ ")."
+             , "This is a sky fmt bug — please report at"
+             , "https://github.com/anzellai/sky/issues with the source file."
+             , "To format anyway, re-run with SKY_FMT_FORCE=1."
              ]
        else Nothing
   where
@@ -2198,28 +2205,49 @@ fmtSafetyCheck srcIn srcOut =
 -- needing per-node AST position tracking.
 preserveTopLevelComments :: T.Text -> T.Text -> T.Text
 preserveTopLevelComments source formatted =
-    let srcBlocks    = collectCommentBlocks source
-        headerMap    = foldl addHeaderBlock Map.empty srcBlocks
-        anchorMap    = foldl addAnchorBlock Map.empty srcBlocks
-        trailingMap  = collectTrailingComments source
-        outLines     = T.lines formatted
-        withTrailing = map (reattachTrailing trailingMap) outLines
-        injected     = injectComments headerMap anchorMap withTrailing
+    let -- Assign each body block a stable id; the maps then carry
+        -- the id only, and a shared blocks-by-id table holds the
+        -- actual comment text. Consumption by either prev- or
+        -- next-anchor deletes the id from the table so the other
+        -- anchor can't re-emit the same block (#353).
+        srcBlocks      = collectCommentBlocks source
+        bodyBlocks     = [(i, cs)
+                         | (i, (cs, _, _, isH)) <- zip [0::Int ..] srcBlocks
+                         , not isH]
+        headerMap      = foldl addHeaderBlock Map.empty srcBlocks
+        prevAnchorMap  = foldl addPrevAnchorBlock Map.empty
+                              (zip [0::Int ..] srcBlocks)
+        nextAnchorMap  = foldl addNextAnchorBlock Map.empty
+                              (zip [0::Int ..] srcBlocks)
+        bodyTable      = Map.fromList bodyBlocks
+        trailingMap    = collectTrailingComments source
+        outLines       = T.lines formatted
+        withTrailing   = map (reattachTrailing trailingMap) outLines
+        injected       = injectComments headerMap prevAnchorMap nextAnchorMap
+                                        bodyTable withTrailing
     in T.unlines injected
   where
     -- Walk source; for each run of comment/blank lines, produce a
-    -- block keyed either by the NEXT non-blank line (header anchor)
-    -- or the PREVIOUS non-blank line (body anchor), whichever is
-    -- appropriate. A line is a header if it starts at col 1 with a
-    -- keyword or a lowercase identifier; otherwise it's a body line
-    -- (inside a let, case, etc.).
-    collectCommentBlocks :: T.Text -> [([T.Text], T.Text, Bool)]
-    -- each entry: (commentLines, anchorText, isHeader)
-    -- anchorText is:
-    --   * the stripped header line when isHeader=True (match via declKey)
-    --   * the stripped preceding code line (minus trailing comment) when
-    --     isHeader=False, so downstream matching against the formatter's
-    --     output (which has stripped trailing comments) still works.
+    -- block carrying THREE keys:
+    --   * a header-anchor (the line right AFTER the block) when that
+    --     line is a top-level decl — comments float above the decl
+    --     header in output
+    --   * a prev-anchor (the line right BEFORE the block) for body
+    --     comments — used when the previous code line survives `sky
+    --     fmt` unchanged (typical for short single-line expressions)
+    --   * a next-anchor (the line right AFTER the block) for body
+    --     comments — used when the previous expression got reflowed
+    --     so its text key no longer matches (e.g. a multi-segment
+    --     string concat collapsed onto fewer lines under `sky fmt`).
+    --     The next anchor is typically a let-binding name or branch
+    --     pattern, both of which survive reformatting.
+    collectCommentBlocks :: T.Text -> [([T.Text], T.Text, Maybe T.Text, Bool)]
+    -- each entry: (commentLines, prevOrHeaderAnchor, maybeNextAnchor, isHeader)
+    --   * when isHeader=True the second field is the next code line
+    --     (a top-level decl) — `declKey` derives a structural key
+    --   * when isHeader=False the second field is the previous code
+    --     line (preserves the pre-#353 behaviour); the third field
+    --     is the next code line for the fallback path
     collectCommentBlocks t = walk Nothing False [] (T.lines t)
       where
         walk _prev _inStr _acc [] = []
@@ -2237,15 +2265,18 @@ preserveTopLevelComments source formatted =
                     rest = walk (Just anchorKey) (nextInStr False l) [] ls
                 in if null trimmed
                      then rest
-                     else (trimmed, T.strip l, True) : rest
+                     else (trimmed, T.strip l, Nothing, True) : rest
             | otherwise =
                 let trimmed = trimBlanks acc
-                    anchorKey = stripTrailingComment (T.strip l)
-                    rest = walk (Just anchorKey) (nextInStr False l) [] ls
+                    nextAnchor = stripTrailingComment (T.strip l)
+                    rest = walk (Just nextAnchor) (nextInStr False l) [] ls
                 in case (trimmed, prev) of
                     ([], _) -> rest
-                    (_, Just p) -> (trimmed, p, False) : rest
-                    (_, Nothing) -> rest
+                    (_, Just p) -> (trimmed, p, Just nextAnchor, False) : rest
+                    -- No previous code line (e.g. comments at the
+                    -- very top of a `let` body): fall back to using
+                    -- the next-anchor as the primary key.
+                    (_, Nothing) -> (trimmed, nextAnchor, Just nextAnchor, False) : rest
 
         -- A line flips the in-multiline-string state when it
         -- contains an odd number of `"""` delimiters.
@@ -2378,26 +2409,134 @@ preserveTopLevelComments source formatted =
         . T.dropWhile (== ' ')
 
     -- Header map: decl key → queue of comment blocks (source order).
-    addHeaderBlock :: Map.Map T.Text [[T.Text]] -> ([T.Text], T.Text, Bool) -> Map.Map T.Text [[T.Text]]
-    addHeaderBlock acc (cs, anchor, isHeader) =
+    addHeaderBlock
+        :: Map.Map T.Text [[T.Text]]
+        -> ([T.Text], T.Text, Maybe T.Text, Bool)
+        -> Map.Map T.Text [[T.Text]]
+    addHeaderBlock acc (cs, anchor, _next, isHeader) =
         if not isHeader then acc
         else case declKey anchor of
             Nothing -> acc
             Just k  -> Map.insertWith (\new existing -> existing ++ new) k [cs] acc
 
-    -- Anchor map: stripped preceding-code line → queue of comment blocks.
-    addAnchorBlock :: Map.Map T.Text [[T.Text]] -> ([T.Text], T.Text, Bool) -> Map.Map T.Text [[T.Text]]
-    addAnchorBlock acc (cs, anchor, isHeader) =
+    -- Prev-anchor map: stripped preceding-code line → queue of body
+    -- block IDs (most-recent-last). This is the original (pre-#353)
+    -- anchor; preserved as the primary key for the common case
+    -- where the previous code line survives the formatter unchanged.
+    -- Storing IDs (rather than text) lets the injector consume an
+    -- ID, which then also removes it from the next-anchor queue
+    -- via the shared `bodyTable` lookup — preventing double-emit.
+    addPrevAnchorBlock
+        :: Map.Map T.Text [Int]
+        -> (Int, ([T.Text], T.Text, Maybe T.Text, Bool))
+        -> Map.Map T.Text [Int]
+    addPrevAnchorBlock acc (i, (_cs, prevA, _next, isHeader)) =
         if isHeader then acc
-        else Map.insertWith (\new existing -> existing ++ new) anchor [cs] acc
+        else Map.insertWith (\new existing -> existing ++ new) prevA [i] acc
+
+    -- Next-anchor map: NORMALISED next-code line → queue of body
+    -- block IDs. #353: fallback used when the previous expression
+    -- got reflowed under `sky fmt` (e.g. a multi-segment string
+    -- concat collapsed) so the prev-anchor key never matches in
+    -- the output. The next-anchor (typically a let-binding name or
+    -- a type signature like `name : T`) survives reformatting and
+    -- lands the comment above the right line.
+    --
+    -- ONLY binding-shaped next-lines are kept — `name =`, `name :`,
+    -- `name args =` etc. — where the leading identifier is the
+    -- binding name. Expression-shaped lines (`Process.run ...`,
+    -- `case x of`, function applications) are SKIPPED because their
+    -- first identifier (`Process`, `case`, `List`, …) is too generic
+    -- — matching the first occurrence in the formatted output would
+    -- mis-place the comment when the same identifier is used at
+    -- multiple call sites earlier in the file.
+    addNextAnchorBlock
+        :: Map.Map T.Text [Int]
+        -> (Int, ([T.Text], T.Text, Maybe T.Text, Bool))
+        -> Map.Map T.Text [Int]
+    addNextAnchorBlock acc (i, (_cs, _prevA, mNext, isHeader)) =
+        case (isHeader, mNext) of
+            (False, Just nextA) ->
+                case nextAnchorKey nextA of
+                    Just k -> Map.insertWith (\new existing -> existing ++ new) k [i] acc
+                    Nothing -> acc
+            _ -> acc
+
+    -- Compute a next-anchor key from a candidate line.
+    -- Returns `Just <ident>` ONLY for binding-shaped lines:
+    --   * `name =`             → `Just "name"`
+    --   * `name : Type`        → `Just "name"`
+    --   * `name arg1 arg2 =`   → `Just "name"`
+    -- Returns `Nothing` for expression-shaped lines (call sites,
+    -- `case … of`, operator-led continuations) — those would
+    -- mis-match because the identifier is too generic.
+    nextAnchorKey :: T.Text -> Maybe T.Text
+    nextAnchorKey t =
+        let stripped = T.stripStart t
+            isIdentCh c = (c >= 'a' && c <= 'z')
+                       || (c >= 'A' && c <= 'Z')
+                       || (c >= '0' && c <= '9')
+                       || c == '_'
+            ident = T.takeWhile isIdentCh stripped
+        in if T.null ident
+             then Nothing
+             else if isBindingShape stripped
+                    then Just ident
+                    else Nothing
+
+    -- A binding-shape line has a `=` (after the binder) or a `:`
+    -- (top-level type annotation) at the top level. Crude but
+    -- effective: scan for ` = ` / ` : ` while tracking nesting in
+    -- (), [], {} and skipping string contents.
+    isBindingShape :: T.Text -> Bool
+    isBindingShape t = scan 0 False (T.unpack t)
+      where
+        scan _ _ [] = False
+        scan d inStr (c:rest)
+            | inStr = case c of
+                '"'  -> scan d False rest
+                '\\' | (_:rest') <- rest -> scan d True rest'
+                _    -> scan d True rest
+            | otherwise = case c of
+                '"' -> scan d True rest
+                '(' -> scan (d+1) False rest
+                '[' -> scan (d+1) False rest
+                '{' -> scan (d+1) False rest
+                ')' -> scan (max 0 (d-1)) False rest
+                ']' -> scan (max 0 (d-1)) False rest
+                '}' -> scan (max 0 (d-1)) False rest
+                '=' | d == 0
+                    , take 1 rest /= "="           -- not `==`
+                    , take 1 rest /= ">"           -- not `=>`
+                    -> True
+                ':' | d == 0
+                    , take 1 rest /= ":"           -- not `::`
+                    -> True
+                _ -> scan d inStr rest
 
     -- Walk output lines, splicing comments in at header/anchor matches.
-    injectComments :: Map.Map T.Text [[T.Text]] -> Map.Map T.Text [[T.Text]]
-                   -> [T.Text] -> [T.Text]
-    injectComments = go
+    --
+    -- Header map keys → comment text directly (top-level header
+    -- comments aren't ambiguous, they only ever fire on the matched
+    -- top-level decl).
+    --
+    -- Prev/Next anchor maps key → block ID; the `bodyTable` resolves
+    -- the ID to the comment text. Once an ID is consumed by either
+    -- anchor we drop it from the body table so the other anchor can
+    -- still POP its queue (head-of-line pointers stay correct) but
+    -- skips emitting empty content. This is what stops the same
+    -- block from being emitted twice when both anchors match (#353).
+    injectComments
+        :: Map.Map T.Text [[T.Text]]
+        -> Map.Map T.Text [Int]
+        -> Map.Map T.Text [Int]
+        -> Map.Map Int [T.Text]
+        -> [T.Text]
+        -> [T.Text]
+    injectComments hm0 am0 nm0 bt0 = go hm0 am0 nm0 bt0
       where
-        go _  _  [] = []
-        go hm am (l:ls) =
+        go _  _  _  _  [] = []
+        go hm am nm bt (l:ls) =
             -- Header injection fires BEFORE the line — but only when
             -- `l` is a genuine top-level declaration (col 1). Without
             -- the `isTopLevelDecl` guard, `declKey` strips
@@ -2412,30 +2551,63 @@ preserveTopLevelComments source formatted =
                                                else Map.insert k rest hm
                         in Just (cs, hm')
                     _ -> Nothing
-                -- Anchor injection fires AFTER the line (splice body
-                -- comments below the matched code line).
-                anchorHit = case Map.lookup stripped am of
-                    Just (cs:rest) ->
-                        let am' = if null rest then Map.delete stripped am
-                                               else Map.insert stripped rest am
-                        in Just (cs, am')
+                -- Pop the head ID of a queue and resolve it through
+                -- bodyTable. Empty result → block already consumed.
+                popQueue mp key bt' = case Map.lookup key mp of
+                    Just (i:rest) ->
+                        let mp' = if null rest then Map.delete key mp
+                                               else Map.insert key rest mp
+                        in case Map.lookup i bt' of
+                            Just cs -> Just (cs, mp', Map.delete i bt')
+                            Nothing -> Nothing   -- already consumed via the other anchor
                     _ -> Nothing
-            in case (headerHit, anchorHit) of
-                (Just (hcs, hm'), Just (acs, am')) ->
-                    hcs ++ [l] ++ indentLike l acs ++ go hm' am' ls
-                (Just (hcs, hm'), Nothing) ->
-                    hcs ++ [l] ++ go hm' am ls
-                (Nothing, Just (acs, am')) ->
-                    l : indentLike l acs ++ go hm am' ls
-                (Nothing, Nothing) ->
-                    l : go hm am ls
+                prevAnchorHit = popQueue am stripped bt
+                (prevAnchorRes, bt1, am') = case prevAnchorHit of
+                    Just (cs, m, b) -> (Just cs, b, m)
+                    Nothing         -> (Nothing, bt, am)
+                -- Next-anchor only fires when prev-anchor didn't and
+                -- when the output line is binding-shaped (see
+                -- `nextAnchorKey`).
+                nextAnchorHit
+                    | prevAnchorRes /= Nothing = Nothing
+                    | otherwise = case nextAnchorKey l of
+                        Just nextK -> popQueue nm nextK bt1
+                        Nothing    -> Nothing
+                (nextAnchorRes, bt2, nm') = case nextAnchorHit of
+                    Just (cs, m, b) -> (Just cs, b, m)
+                    Nothing         -> (Nothing, bt1, nm)
+            in case (headerHit, prevAnchorRes, nextAnchorRes) of
+                -- Header hit + prev-anchor on the same line:
+                -- header above, body below. Header comments float
+                -- to column 1 (a top-level decl's leading comment).
+                -- Body comments keep their source indentation.
+                (Just (hcs, hm'), Just acs, _) ->
+                    hcs ++ [l] ++ acs ++ go hm' am' nm' bt2 ls
+                (Just (hcs, hm'), Nothing, _) ->
+                    hcs ++ [l] ++ go hm' am' nm' bt2 ls
+                -- No header. Prev-anchor wins (we already gated
+                -- next-anchor on prev-anchor above). Body comments
+                -- keep their source-original indentation — re-indenting
+                -- to the prev-line's indent broke idempotency when
+                -- the prev line lived at a deeper indent than the
+                -- comment (a continuation line of a multi-segment
+                -- string concat, vs. the comment at let-binding level).
+                (Nothing, Just acs, _) ->
+                    l : acs ++ go hm am' nm' bt2 ls
+                (Nothing, Nothing, Just ncs) ->
+                    -- Place comments ABOVE the matched line, also
+                    -- with their source indentation.
+                    ncs ++ l : go hm am' nm' bt2 ls
+                (Nothing, Nothing, Nothing) ->
+                    l : go hm am' nm' bt2 ls
 
-    -- Re-indent comment block to match the indentation of the anchor line.
-    -- Preserves the internal stripped shape so multi-line comments line up.
-    indentLike :: T.Text -> [T.Text] -> [T.Text]
-    indentLike ref cs =
-        let indent = T.takeWhile (\c -> c == ' ' || c == '\t') ref
-        in map (\c -> if T.null (T.strip c) then c else T.append indent (T.stripStart c)) cs
+    -- (Removed in #353: comment blocks are now emitted with their
+    -- source-original indentation rather than being re-indented to
+    -- the anchor line. The previous behaviour broke idempotency
+    -- when the anchor line lived at a different indent level from
+    -- the comment — common for body comments above a let-binding
+    -- where the previous expression's continuation line is deeper
+    -- than the binding-level indent.)
 
 
 -- | Wrap `go build` with stderr capture + Sky-shaped diagnostics.

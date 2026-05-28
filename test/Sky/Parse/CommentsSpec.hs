@@ -194,3 +194,71 @@ spec = do
             ("-- doc for helper\nhelper y" `isInfixOf` out) `shouldBe` True
             -- ...and NOT above the call site inside `run`.
             ("-- doc for helper\n    helper" `isInfixOf` out) `shouldBe` False
+
+        -- Regression (2026-05-28, #353): body comments anchored to a
+        -- preceding code line whose shape changes under `sky fmt`
+        -- used to vanish from the output. The post-pass keyed
+        -- comments by the stripped text of the previous code line;
+        -- when that line got reflowed (e.g. a multi-segment string
+        -- concat collapsed onto fewer lines, or a `case ... of`
+        -- subject re-wrapped), the anchor never matched and the
+        -- comment fell on the floor.
+        --
+        -- Fix: anchor body comments by EITHER the preceding code
+        -- line OR the next code line (let-binding name, branch
+        -- pattern, etc.) — the next-anchor survives reformatting of
+        -- the previous expression. Reported via
+        -- skydeploy/control-plane/src/Tools.sky, where the
+        -- `-- Step 3` block above `tarCmd =` (inside a `let`) was
+        -- being dropped because the multi-line `prepCmd` string
+        -- above got reflowed.
+        it "body comment above a let-binding survives reflow of the previous expression" $ do
+            let src = unlines
+                    [ "module M exposing (..)"
+                    , ""
+                    , ""
+                    , "fn dir ="
+                    , "    let"
+                    , "        prepCmd ="
+                    , "            \"rm -rf \" ++ dir"
+                    , "                ++ \" && mkdir -p \" ++ dir"
+                    , "                ++ \" && cp -a \" ++ dir ++ \"/. \" ++ dir ++ \"/\""
+                    , ""
+                    , "        -- Step 3: tar the WORKING COPY (not the original source)."
+                    , "        -- Same excludes as before."
+                    , "        tarCmd ="
+                    , "            \"tar -czf -\""
+                    , "    in"
+                    , "        prepCmd ++ tarCmd"
+                    ]
+            out <- fmtStdin src
+            -- Both comments survive — anchored to the `tarCmd =`
+            -- line below them rather than the `prepCmd ++ "..."` lines above.
+            countOccurrences "-- Step 3: tar the WORKING COPY" out `shouldBe` 1
+            countOccurrences "-- Same excludes as before." out `shouldBe` 1
+            -- And they appear ABOVE `tarCmd =`, not above some unrelated line.
+            ("-- Same excludes as before.\n        tarCmd " `isInfixOf` out) `shouldBe` True
+
+        -- Regression (2026-05-28, #353): idempotency for a file with
+        -- body comments whose anchor needs the next-line fallback.
+        -- A second `sky fmt` pass must produce byte-identical output.
+        it "is idempotent for body comments anchored by the next line" $ do
+            let src = unlines
+                    [ "module M exposing (..)"
+                    , ""
+                    , ""
+                    , "fn dir ="
+                    , "    let"
+                    , "        prepCmd ="
+                    , "            \"rm -rf \" ++ dir"
+                    , "                ++ \" && mkdir -p \" ++ dir"
+                    , ""
+                    , "        -- doc for tarCmd"
+                    , "        tarCmd ="
+                    , "            \"tar -czf -\""
+                    , "    in"
+                    , "        prepCmd ++ tarCmd"
+                    ]
+            once <- fmtStdin src
+            twice <- fmtStdin once
+            twice `shouldBe` once
