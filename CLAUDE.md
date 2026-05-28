@@ -1026,6 +1026,12 @@ Single `{` is literal. Interpolation expressions can be
 identifiers, field access (`{{record.field}}`), qualified names
 (`{{String.fromInt n}}`), or function calls.
 
+Escape with backslash: `\{{` emits a literal `{{` (no interpolation).
+Use this to ship Mustache / Handlebars / shell-script placeholders to
+downstream tooling without Sky hijacking them. `\\` collapses to a
+single literal backslash; other `\X` sequences are preserved verbatim
+(regex `\d+`, paths `\test`, etc).
+
 ## Active limitations
 
 Real current compiler limitations users must work around. v0.15

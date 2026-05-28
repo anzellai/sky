@@ -473,6 +473,8 @@ sql =
 
 Single braces `{` are literal — safe for JavaScript, CSS, JSON, SQL. Interpolation expressions support identifiers, field access, qualified names, and function calls.
 
+Escape with backslash: `\{{` emits a literal `{{` (no interpolation). Use this to ship Mustache / Handlebars / shell-script placeholders to downstream tooling without Sky hijacking them. `\\` collapses to a single backslash; other `\X` sequences are preserved (regex `\d+`, paths `\test`, etc).
+
 ### Patterns
 
 Literals, constructors (`Just x`, `Ok v`, `Err e`), tuples `(a, b)`, lists `[]`, `[x]`, `x :: xs`, wildcards `_`, as-patterns `Just x as original`, nested `Ok (Just x)`
