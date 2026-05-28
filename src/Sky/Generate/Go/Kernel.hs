@@ -491,6 +491,13 @@ registry = Map.fromList
     , (("HttpStream", "close"),   KernelInfo "rt.HttpStream_close" 1 True)
 
     -- ═══════════════════════════════════════════════════════
+    -- Std.PubSub  (Cycle 4 PT — Task-shaped publish, callable from
+    -- any context; complements Cmd.publish which only fires from
+    -- a Sky.Live update return).
+    -- ═══════════════════════════════════════════════════════
+    , (("PubSub", "publish"),     KernelInfo "rt.PubSub_publish" 2 True)
+
+    -- ═══════════════════════════════════════════════════════
     -- Set
     -- ═══════════════════════════════════════════════════════
     , (("Set", "empty"),          KernelInfo "rt.Set_empty" 0 False)

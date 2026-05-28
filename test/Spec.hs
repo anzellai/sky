@@ -31,6 +31,7 @@ import qualified Sky.Build.LetForwardRefSpec
 import qualified Sky.Build.EntryLocalShadowsDepSpec
 import qualified Sky.Build.CaseSubjectNameShadowSpec
 import qualified Sky.Build.FfiKernelAliasSpec
+import qualified Sky.Build.PubSubPublishTaskSpec
 import qualified Sky.Parse.MultiLineCaseSubjectSpec
 import qualified Sky.Parse.MultiLineCaseKeywordSpec
 import qualified Sky.Parse.MultiLineSignatureSpec
@@ -204,6 +205,11 @@ main = hspec $ do
     describe "Sky.Build.EntryLocalShadowsDep" Sky.Build.EntryLocalShadowsDepSpec.spec
     describe "Sky.Build.CaseSubjectNameShadow" Sky.Build.CaseSubjectNameShadowSpec.spec
     describe "Sky.Build.FfiKernelAlias" Sky.Build.FfiKernelAliasSpec.spec
+    -- Cycle 4 PT: Task-shaped Std.PubSub.publish — callable from any
+    -- context (raw Sky.Http.Server api handlers / post-init goroutines
+    -- / scheduled jobs), complements Cmd.publish which is bound to
+    -- the Sky.Live update-return tuple.
+    describe "Sky.Build.PubSubPublishTask" Sky.Build.PubSubPublishTaskSpec.spec
     describe "Sky.Parse.MultiLineCaseSubject" Sky.Parse.MultiLineCaseSubjectSpec.spec
     describe "Sky.Parse.MultiLineCaseKeyword"
         Sky.Parse.MultiLineCaseKeywordSpec.spec

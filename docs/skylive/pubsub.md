@@ -53,14 +53,32 @@ doesn't deprecate polling for use cases that genuinely need it.
 
 ## API
 
-Two primitives, one per side of the TEA loop:
+Three primitives — one per side of the TEA loop, plus a Task-shaped
+escape hatch for non-Live contexts:
 
 ```elm
--- Std.Cmd
+-- Std.Cmd            (update-return tuple side)
 publish : String -> any -> Cmd msg
--- Std.Sub
+-- Std.Sub            (subscriptions side)
 subscribeTopic : String -> (any -> msg) -> Sub msg
+-- Std.PubSub         (Task-shaped — any goroutine)
+publish : String -> any -> Task Error Int
 ```
+
+`Cmd.publish` and `Std.PubSub.publish` route to the same in-process
+broker — a subscriber sees the same `SessionEvent` regardless of
+which side fired it. They differ only in where they can be CALLED
+from:
+
+- `Cmd.publish` lives inside an `update msg model -> (Model, Cmd Msg)`
+  return. Use it for "user clicked → broadcast" or "another Msg
+  triggered a broadcast".
+- `Std.PubSub.publish` returns a `Task Error Int` runnable from ANY
+  goroutine — raw `Sky.Http.Server` `api` handlers, post-init
+  bootstrap, scheduled jobs, callbacks from external systems
+  (webhooks). The `Int` is the broker's delivery count. Errors with
+  `Unavailable` when no `Live.app` is running in this process
+  (CLI tools, isolated unit tests, pure HTTP servers).
 
 ### `Cmd.publish topic payload`
 
@@ -136,6 +154,62 @@ The runtime diff-updates subscriptions on every dispatch: topics in
 the intersection of the old + new sets keep their existing goroutine
 + broker registration (no broadcast loss in the gap); only added
 topics open new subscriptions and only removed topics cancel.
+
+### `Std.PubSub.publish topic payload` — Task-shaped
+
+Same broadcast semantics as `Cmd.publish`, but returns a
+`Task Error Int` you can run from contexts that don't have a `Cmd msg`
+channel:
+
+- Raw `Sky.Http.Server` `api` handlers (webhooks, callbacks from
+  external systems, internal admin endpoints).
+- Post-init bootstrap (e.g. seed-data load that needs to notify
+  warming subscribers).
+- Scheduled jobs (cron handlers, queue workers).
+- Anything else running on a goroutine that's not the Sky.Live
+  update loop.
+
+The Task resolves with the count of subscribers that received the
+broadcast (the same `int` `Cmd.publish` gets in its internal path).
+Errors with `Unavailable` when no `Live.app` is registered in this
+process.
+
+```elm
+import Std.PubSub as PubSub
+
+-- A GitHub webhook lands as a raw api handler — no update tuple
+-- in scope, but we want every dashboard tab watching this repo's
+-- deploys to learn instantly.
+handleGithubWebhook : Dict String any -> Response
+handleGithubWebhook req =
+    case decodeWebhook req of
+        Err _ ->
+            plain 400 "bad webhook payload"
+
+        Ok ev ->
+            let
+                -- 1) durable write first (matches the same pattern
+                --    described below for Cmd.publish — the topic is
+                --    a notification, the DB row is the source of
+                --    truth).
+                _ = Store.recordWebhook ev
+                -- 2) push the notification — Task.run forces the
+                --    Task at the handler boundary.
+                _ = Task.run
+                        (PubSub.publish
+                            ("deploy:status:" ++ ev.appSlug)
+                            (encodeDeployEvent ev))
+            in
+                plain 200 "ok"
+```
+
+Origin is the empty string on the broker side — server-side publishes
+have no originating session and therefore no echo-suppression target.
+Subscribers that filter on `Origin == ownSid` see these as foreign and
+will receive them normally.
+
+The same in-process scope rules as `Cmd.publish` apply (v0.15.x:
+in-process only; v0.16+ cross-process tiers cover both APIs uniformly).
 
 ## The durability pattern: write to DB FIRST, publish SECOND
 

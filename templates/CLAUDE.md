@@ -1284,6 +1284,16 @@ every          : Int -> msg -> Sub msg                 -- timer; fires msg every
 subscribeTopic : String -> (any -> msg) -> Sub msg     -- pub/sub receive (Sky.Live only)
 ```
 
+### Std.PubSub
+
+Task-shaped publish for ANY context (raw `Sky.Http.Server` `api` handlers, post-init goroutines, scheduled jobs, webhook callbacks). Complements `Cmd.publish` which only fires from a Sky.Live `update` return — same broker, same subscribers, same in-process semantics.
+
+```elm
+publish : String -> any -> Task Error Int    -- delivery count; Err Unavailable if no Live.app
+```
+
+Both `Cmd.publish` and `Std.PubSub.publish` route to the same in-process topic registry — a subscriber's `Sub.subscribeTopic` receives them identically. Use `Cmd.publish` when you're inside an update return; use `Std.PubSub.publish` (with `Task.run` or `Cmd.perform`) from anywhere else.
+
 ### Std.Time
 
 ```elm
