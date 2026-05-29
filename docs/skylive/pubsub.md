@@ -54,15 +54,19 @@ doesn't deprecate polling for use cases that genuinely need it.
 ## API
 
 Three primitives — one per side of the TEA loop, plus a Task-shaped
-escape hatch for non-Live contexts:
+escape hatch for non-Live contexts, each with an echo-by-default form
+and a `publishNoEcho` variant that opts the publisher's own session
+out of delivery:
 
 ```elm
 -- Std.Cmd            (update-return tuple side)
-publish : String -> any -> Cmd msg
+publish       : String -> any -> Cmd msg
+publishNoEcho : String -> any -> Cmd msg
 -- Std.Sub            (subscriptions side)
 subscribeTopic : String -> (any -> msg) -> Sub msg
 -- Std.PubSub         (Task-shaped — any goroutine)
-publish : String -> any -> Task Error Int
+publish       : String -> any -> Task Error Int
+publishNoEcho : String -> any -> Task Error Int
 ```
 
 `Cmd.publish` and `Std.PubSub.publish` route to the same in-process
@@ -70,15 +74,16 @@ broker — a subscriber sees the same `SessionEvent` regardless of
 which side fired it. They differ only in where they can be CALLED
 from:
 
-- `Cmd.publish` lives inside an `update msg model -> (Model, Cmd Msg)`
-  return. Use it for "user clicked → broadcast" or "another Msg
-  triggered a broadcast".
-- `Std.PubSub.publish` returns a `Task Error Int` runnable from ANY
-  goroutine — raw `Sky.Http.Server` `api` handlers, post-init
-  bootstrap, scheduled jobs, callbacks from external systems
-  (webhooks). The `Int` is the broker's delivery count. Errors with
-  `Unavailable` when no `Live.app` is running in this process
-  (CLI tools, isolated unit tests, pure HTTP servers).
+- `Cmd.publish` / `Cmd.publishNoEcho` live inside an
+  `update msg model -> (Model, Cmd Msg)` return. Use them for "user
+  clicked → broadcast" or "another Msg triggered a broadcast".
+- `Std.PubSub.publish` / `Std.PubSub.publishNoEcho` return
+  `Task Error Int` runnable from ANY goroutine — raw
+  `Sky.Http.Server` `api` handlers, post-init bootstrap, scheduled
+  jobs, callbacks from external systems (webhooks). The `Int` is the
+  broker's delivery count. Errors with `Unavailable` when no
+  `Live.app` is running in this process (CLI tools, isolated unit
+  tests, pure HTTP servers).
 
 ### `Cmd.publish topic payload`
 
@@ -265,6 +270,73 @@ an `Origin` field on the wire that subscribers can match against their
 own sid. App-level suppression is the responsibility of the
 subscriber, not the publisher — this keeps the broker contract
 universal.
+
+### When to use echo vs no-echo
+
+`Cmd.publishNoEcho` (and `PubSub.publishNoEcho`) flips one bit:
+`SessionEvent.SkipOrigin = true`. The broker then skips delivery to
+any subscriber whose ownSid matches the publisher's sid — every other
+subscriber receives the event exactly as it would under the default
+`publish`.
+
+| Pattern | Use |
+|---|---|
+| Universal Msg handler — "A's tab and B's tab both apply the broadcast the same way through `MessageReceived`" | `publish` (echo-by-default) |
+| Instant feedback for publisher — "user clicked send, I've already appended the message to their model locally; just tell the OTHER tabs" | `publishNoEcho` |
+
+The savings:
+
+- **One broker round-trip per publish.** In v0.15.x in-process
+  broker, that's a channel push + a dispatch goroutine wakeup — sub-
+  microsecond, but eliminated entirely.
+- **Network latency in v0.16+ broker tiers.** Redis Pub/Sub, Cloud
+  Pub/Sub, NATS, and Postgres LISTEN/NOTIFY all route the publisher's
+  own echo back through the network. That's 10-100ms+ depending on
+  tier — visible UX latency on every keystroke / mouse click that
+  triggers a broadcast.
+
+The "instant feedback" pattern with `publishNoEcho`:
+
+```elm
+update msg model =
+    case msg of
+        SendChat text ->
+            let
+                chatMsg = { author = model.me, text = text, at = nowString () }
+                -- 1) Update the publisher's OWN model directly.
+                model_ =
+                    { model | history = model.history ++ [chatMsg], draft = "" }
+            in
+                ( model_
+                , Cmd.batch
+                    [ -- 2) Durable write — pattern from "write to DB first".
+                      Cmd.perform (persistMessage model.room chatMsg) PersistResult
+                    , -- 3) Broadcast to OTHER sessions only — broker suppresses
+                      --    delivery back to this session.
+                      Cmd.publishNoEcho
+                        ("chat:room-" ++ model.room)
+                        (chatMessageToDict chatMsg)
+                    ]
+                )
+
+        MessageReceived payload ->
+            -- Only fires for messages published by OTHER sessions —
+            -- the publisher's own message lands via the direct model
+            -- update above.
+            let
+                chatMsg = decodeChatMessage payload
+            in
+                ( { model | history = model.history ++ [chatMsg] }
+                , Cmd.none
+                )
+```
+
+`Cmd.publishNoEcho` is the right default for "I'm the source of
+truth for my own state" patterns. `Cmd.publish` remains the right
+default when the publisher's own dispatch path naturally consumes
+the broadcast — for example, a kanban board where every tab applies
+the same `CardMoved` Msg through `MessageReceived` whether they
+originated it or not.
 
 ## Cross-process delivery (v0.16+)
 

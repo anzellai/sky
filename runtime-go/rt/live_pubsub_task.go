@@ -71,3 +71,41 @@ func PubSub_publish(topicArg, payloadArg any) any {
 		return Ok[any, any](delivered)
 	}
 }
+
+// PubSub_publishNoEcho — Task-shaped no-echo publish. Sky surface:
+//
+//	Std.PubSub.publishNoEcho : String -> any -> Task Error Int
+//
+// Cycle 4 NE / issue #359 — broker sets SkipOrigin = true on the
+// outgoing event. For the server-side path the Origin is always ""
+// (this function is called outside any Live session's update loop),
+// so SkipOrigin is effectively a no-op for the common case — no
+// subscriber's ownerSid will match an empty Origin.
+//
+// The Sky-side surface is still useful for forward-compat with v0.16+
+// cross-process broker tiers: a Redis/NATS/Cloud Pub/Sub backend may
+// need to advertise the "no-echo" bit on its own protocol level (so
+// the receiving node's broker can self-suppress without re-checking
+// the local registry). Shipping the surface now means user code that
+// migrates from PubSub.publish to PubSub.publishNoEcho doesn't need
+// a re-deploy at the v0.15 → v0.16 transition.
+func PubSub_publishNoEcho(topicArg, payloadArg any) any {
+	topic := AsString(topicArg)
+	return func() any {
+		app := processBroker.Load()
+		if app == nil {
+			return Err[any, any](ErrUnavailable(
+				"PubSub.publishNoEcho: no Sky.Live app registered in this process — Task-shaped publish needs Live.app running",
+			))
+		}
+		if app.topics == nil {
+			return Ok[any, any](0)
+		}
+		delivered := app.Publish(topic, SessionEvent{
+			Payload:    payloadArg,
+			Origin:     "",
+			SkipOrigin: true,
+		})
+		return Ok[any, any](delivered)
+	}
+}

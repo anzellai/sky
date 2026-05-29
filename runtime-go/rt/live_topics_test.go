@@ -673,6 +673,10 @@ func newStubMemoryBroker() *stubMemoryBroker {
 }
 
 func (s *stubMemoryBroker) Subscribe(topic string) (<-chan SessionEvent, func()) {
+	return s.SubscribeWithOwner(topic, "")
+}
+
+func (s *stubMemoryBroker) SubscribeWithOwner(topic, _ownerSid string) (<-chan SessionEvent, func()) {
 	s.mu.Lock()
 	s.subscribed[topic]++
 	s.mu.Unlock()

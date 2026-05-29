@@ -253,6 +253,7 @@ registry = Map.fromList
     , (("Cmd", "batch"),          KernelInfo "rt.Cmd_batch" 1 True)
     , (("Cmd", "perform"),        KernelInfo "rt.Cmd_perform" 2 True)
     , (("Cmd", "publish"),        KernelInfo "rt.Cmd_publish" 2 True)
+    , (("Cmd", "publishNoEcho"),  KernelInfo "rt.Cmd_publishNoEcho" 2 True)
 
     -- ═══════════════════════════════════════════════════════
     -- Time
@@ -496,6 +497,7 @@ registry = Map.fromList
     -- a Sky.Live update return).
     -- ═══════════════════════════════════════════════════════
     , (("PubSub", "publish"),     KernelInfo "rt.PubSub_publish" 2 True)
+    , (("PubSub", "publishNoEcho"), KernelInfo "rt.PubSub_publishNoEcho" 2 True)
 
     -- ═══════════════════════════════════════════════════════
     -- Set

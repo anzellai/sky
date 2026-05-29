@@ -33,6 +33,7 @@ import qualified Sky.Build.EntryLocalShadowsDepSpec
 import qualified Sky.Build.CaseSubjectNameShadowSpec
 import qualified Sky.Build.FfiKernelAliasSpec
 import qualified Sky.Build.PubSubPublishTaskSpec
+import qualified Sky.Build.PubSubPublishNoEchoSpec
 import qualified Sky.Parse.MultiLineCaseSubjectSpec
 import qualified Sky.Parse.MultiLineCaseKeywordSpec
 import qualified Sky.Parse.MultiLineSignatureSpec
@@ -221,6 +222,11 @@ main = hspec $ do
     -- / scheduled jobs), complements Cmd.publish which is bound to
     -- the Sky.Live update-return tuple.
     describe "Sky.Build.PubSubPublishTask" Sky.Build.PubSubPublishTaskSpec.spec
+    -- Cycle 4 NE / issue #359: Cmd.publishNoEcho + PubSub.publishNoEcho —
+    -- opt-out echo for "instant feedback for publisher" pattern. Saves
+    -- the broker round-trip; in v0.16+ cross-process broker tiers the
+    -- saved hop is 10-100ms+ of latency.
+    describe "Sky.Build.PubSubPublishNoEcho" Sky.Build.PubSubPublishNoEchoSpec.spec
     describe "Sky.Parse.MultiLineCaseSubject" Sky.Parse.MultiLineCaseSubjectSpec.spec
     describe "Sky.Parse.MultiLineCaseKeyword"
         Sky.Parse.MultiLineCaseKeywordSpec.spec
