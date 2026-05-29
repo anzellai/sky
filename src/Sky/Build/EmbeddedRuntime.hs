@@ -37,6 +37,7 @@
 -- re-embed marker: 2026-05-28f — revert(canonicalise): roll back #350 alias-name fix (regression in row-poly access on duplicate-named modules — #361)
 -- re-embed marker: 2026-05-28g — fix(canonicalise): cross-module alias-name collision v2 — (home, name) primary lookup + unique-body bare-name fallback (#350 + #361)
 -- re-embed marker: 2026-05-29 — Cycle 4 NE (#359): Cmd.publishNoEcho + PubSub.publishNoEcho — opt-out echo via SessionEvent.SkipOrigin + Broker.SubscribeWithOwner
+-- re-embed marker: 2026-05-29b — Cycle 4 HS-Server (#362): Sky.Http.Server.Stream — server-side streaming HTTP response primitive via SkyResponse.StreamHandler sentinel
 module Sky.Build.EmbeddedRuntime
     ( embeddedRuntime
     , embeddedSkyStdlib

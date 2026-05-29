@@ -1901,6 +1901,52 @@ Session disconnect (TTL eviction OR Delete) closes every owned
 stream automatically; log: `[sky.stream] cleaned N orphaned
 streams on session close`.
 
+### Sky.Http.Server.Stream (Task) — incremental HTTP responses
+
+Mirror image of `Sky.Core.Http.Stream`: a `Sky.Http.Server`
+handler emits chunks back to its HTTP client one piece at a time
+instead of buffering the whole body.  Use for SSE, LLM token
+forwarding, chunked downloads.
+
+```elm
+import Sky.Http.Server.Stream as Stream exposing (StreamWriter)
+
+Stream.stream            -- String -> (StreamWriter -> Task Error ()) -> Task Error Response
+Stream.emit              -- String -> StreamWriter -> Task Error ()       (writes + flushes)
+Stream.finish            -- StreamWriter -> Task Error ()                 (idempotent; implicit at handler return)
+Stream.withContentType   -- String -> StreamWriter -> Task Error ()       (best-effort; pre-emit only)
+```
+
+Canonical SSE handler:
+
+```elm
+handleEvents : Request -> Task Error Response
+handleEvents _ =
+    Stream.stream "text/event-stream" (\writer ->
+        Stream.emit "event: hello\ndata: 1\n\n" writer
+            |> Task.andThen (\_ -> Time.sleep 100)
+            |> Task.andThen (\_ -> Stream.emit "event: tick\ndata: 2\n\n" writer)
+            |> Task.andThen (\_ -> Stream.finish writer))
+```
+
+Dispatcher writes headers + flushes BEFORE the handler runs (SSE
+requires `Content-Type: text/event-stream` visible before the
+first event).  Underlying `http.ResponseWriter` must implement
+`http.Flusher` — middleware wrapping that strips it gets a clean
+`503 Service Unavailable` instead of silent buffering.  CSRF
+auto-injection is skipped (streaming bodies aren't form-bearing
+HTML); security headers (X-Content-Type-Options, X-Frame-Options,
+Referrer-Policy) apply identically to buffered responses.
+
+`emit` after `finish` is a no-op.  Client disconnect mid-stream
+returns `Err (ErrNetwork ...)` from the next `emit`.  Single-
+goroutine emit ordering per request (Go's `http.Handler`
+convention) — linearise concurrent emits via `Task.andThen`.
+
+See `examples/30-sse-server-demo` for a runnable demo +
+`docs/skylive/http-streaming.md` §"Server-side" for the design
+write-up.
+
 ### Sky.Core.Encoding (pure)
 
 ```elm

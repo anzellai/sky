@@ -492,6 +492,15 @@ registry = Map.fromList
     , (("HttpStream", "close"),   KernelInfo "rt.HttpStream_close" 1 True)
 
     -- ═══════════════════════════════════════════════════════
+    -- Sky.Http.Server.Stream  (Cycle 4 HS-Server — server-side
+    -- streaming HTTP responses; mirror of HttpStream above)
+    -- ═══════════════════════════════════════════════════════
+    , (("ServerStream", "stream"),          KernelInfo "rt.ServerStream_stream" 2 True)
+    , (("ServerStream", "emit"),            KernelInfo "rt.ServerStream_emit" 2 True)
+    , (("ServerStream", "finish"),          KernelInfo "rt.ServerStream_finish" 1 True)
+    , (("ServerStream", "withContentType"), KernelInfo "rt.ServerStream_withContentType" 2 True)
+
+    -- ═══════════════════════════════════════════════════════
     -- Std.PubSub  (Cycle 4 PT — Task-shaped publish, callable from
     -- any context; complements Cmd.publish which only fires from
     -- a Sky.Live update return).

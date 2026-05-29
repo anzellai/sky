@@ -34,6 +34,7 @@ import qualified Sky.Build.CaseSubjectNameShadowSpec
 import qualified Sky.Build.FfiKernelAliasSpec
 import qualified Sky.Build.PubSubPublishTaskSpec
 import qualified Sky.Build.PubSubPublishNoEchoSpec
+import qualified Sky.Build.ServerStreamSpec
 import qualified Sky.Parse.MultiLineCaseSubjectSpec
 import qualified Sky.Parse.MultiLineCaseKeywordSpec
 import qualified Sky.Parse.MultiLineSignatureSpec
@@ -227,6 +228,11 @@ main = hspec $ do
     -- the broker round-trip; in v0.16+ cross-process broker tiers the
     -- saved hop is 10-100ms+ of latency.
     describe "Sky.Build.PubSubPublishNoEcho" Sky.Build.PubSubPublishNoEchoSpec.spec
+    -- Cycle 4 HS-Server / issue #362: Sky.Http.Server.Stream — server-side
+    -- streaming HTTP response primitive (mirror of Sky.Core.Http.Stream).
+    -- Unblocks LLM token-stream proxying + SSE endpoints without
+    -- hand-rolled chunk plumbing on the Sky side.
+    describe "Sky.Build.ServerStream" Sky.Build.ServerStreamSpec.spec
     describe "Sky.Parse.MultiLineCaseSubject" Sky.Parse.MultiLineCaseSubjectSpec.spec
     describe "Sky.Parse.MultiLineCaseKeyword"
         Sky.Parse.MultiLineCaseKeywordSpec.spec

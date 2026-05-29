@@ -107,6 +107,7 @@ declare -a EXAMPLES=(
     "18-job-queue:server:8000:/"
     "19-skyforum:server:8000:/"
     "27-multi-session-chat:server:8000:/"
+    "30-sse-server-demo:server:8000:/"
 )
 
 pass=0; fail=0

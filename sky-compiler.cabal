@@ -38,6 +38,7 @@ extra-source-files:
     sky-stdlib/Sky/Core/Json/Decode/*.sky
     sky-stdlib/Sky/*.sky
     sky-stdlib/Sky/Http/*.sky
+    sky-stdlib/Sky/Http/Server/*.sky
     sky-stdlib/Std/*.sky
     sky-stdlib/Std/Ui/*.sky
     sky-stdlib/Std/Html/*.sky
@@ -280,6 +281,7 @@ test-suite sky-tests
       Sky.Build.FfiKernelAliasSpec
       Sky.Build.PubSubPublishTaskSpec
       Sky.Build.PubSubPublishNoEchoSpec
+      Sky.Build.ServerStreamSpec
       Sky.Parse.MultiLineCaseSubjectSpec
       Sky.Parse.MultiLineCaseKeywordSpec
       Sky.Parse.MultiLineSignatureSpec
