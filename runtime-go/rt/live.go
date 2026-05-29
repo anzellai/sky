@@ -840,16 +840,21 @@ func randID() string {
 
 type cmdT struct {
 	// kind values:
-	//   "none"      — Cmd.none — no-op
-	//   "batch"     — Cmd.batch — fan out a list of Cmds
-	//   "perform"   — Cmd.perform task toMsg — spawn task in goroutine
-	//   "publish"   — Cmd.publish topic payload (Cycle 3 P46 stub;
-	//                 P48 wires the dispatch path)
+	//   "none"          — Cmd.none — no-op
+	//   "batch"         — Cmd.batch — fan out a list of Cmds
+	//   "perform"       — Cmd.perform task toMsg — spawn task in goroutine
+	//   "publish"       — Cmd.publish topic payload (Cycle 3 P46/P48 —
+	//                     echo-by-default: publisher's own subscription
+	//                     receives the broadcast)
+	//   "publishNoEcho" — Cmd.publishNoEcho topic payload (Cycle 4 NE,
+	//                     issue #359 — broker skips delivery to
+	//                     subscribers whose ownerSid matches the
+	//                     publisher's sid)
 	kind  string
 	task  any
 	toMsg any
 	batch []any
-	// Pub/sub fields (kind = "publish"). Cycle 3 P46.
+	// Pub/sub fields (kind = "publish" or "publishNoEcho").
 	topic   string
 	payload any
 }
@@ -927,9 +932,34 @@ func Time_every(ms any, to any) SkySub { return Sub_every(ms, to) }
 // Fire-and-forget; no result feedback to the publisher (per design
 // doc §2.1). topic is the wire channel id (exact-match string;
 // pattern subs out of scope per design doc §1.2 non-goal 4).
+//
+// Echo-by-default: the publisher's own subscription on the same
+// topic receives the broadcast — matches Redis / NATS / MQTT
+// semantics. Use Cmd_publishNoEcho to opt out (issue #359).
 func Cmd_publish(topic, payload any) SkyCmd {
 	return cmdT{
 		kind:    "publish",
+		topic:   fmt.Sprintf("%v", topic),
+		payload: payload,
+	}
+}
+
+// Cmd_publishNoEcho builds a "publishNoEcho" Cmd. Sky-side surface:
+//
+//	Std.Cmd.publishNoEcho : String -> any -> Cmd msg
+//
+// Cycle 4 NE / issue #359 — opt out of echo-by-default. The broker
+// suppresses delivery to any subscriber whose ownerSid matches the
+// publisher's sid; every OTHER subscriber receives the broadcast
+// normally.
+//
+// Use this when the publisher updates its own model directly (in
+// `update`) and wants the broker to skip the round-trip back to
+// itself. In v0.16+ cross-process broker tiers (Redis / Cloud
+// Pub/Sub / NATS) the saved hop becomes 10-100ms+ of latency.
+func Cmd_publishNoEcho(topic, payload any) SkyCmd {
+	return cmdT{
+		kind:    "publishNoEcho",
 		topic:   fmt.Sprintf("%v", topic),
 		payload: payload,
 	}
@@ -3463,6 +3493,20 @@ func (app *liveApp) runCmd(sess *liveSession, cmd any) {
 			Payload: c.payload,
 			Origin:  sess.sid,
 		})
+	case "publishNoEcho":
+		// Cycle 4 NE / issue #359 — same dispatch as "publish" but
+		// the broker SKIPS delivery to subscribers whose ownerSid
+		// matches sess.sid (i.e. the publisher's own session). Pair
+		// with a direct model update for the "instant feedback for
+		// publisher" pattern without paying the broker round-trip.
+		if app.topics == nil {
+			return
+		}
+		app.Publish(c.topic, SessionEvent{
+			Payload:    c.payload,
+			Origin:     sess.sid,
+			SkipOrigin: true,
+		})
 	}
 }
 
@@ -3817,7 +3861,13 @@ func (app *liveApp) applyTopicSubsDiff(sess *liveSession, desired map[string]sub
 		}
 		for _, topic := range added {
 			leaf := desired[topic]
-			ch, brokerCancel := app.topics.Subscribe(topic)
+			// Register with the session sid as ownerSid so the broker
+			// can self-suppress on `Cmd.publishNoEcho` /
+			// `PubSub.publishNoEcho` (issue #359). Legacy callers
+			// who route through the bare Subscribe path are
+			// unaffected — empty ownerSid never matches a non-empty
+			// Origin.
+			ch, brokerCancel := app.topics.SubscribeWithOwner(topic, sess.sid)
 			// Wire the per-goroutine done channel HERE — before
 			// releasing the lock + spawning — so the cancel func
 			// stored in subRegistration is final + race-free

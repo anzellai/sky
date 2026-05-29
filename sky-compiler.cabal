@@ -279,6 +279,7 @@ test-suite sky-tests
       Sky.Build.CaseSubjectNameShadowSpec
       Sky.Build.FfiKernelAliasSpec
       Sky.Build.PubSubPublishTaskSpec
+      Sky.Build.PubSubPublishNoEchoSpec
       Sky.Parse.MultiLineCaseSubjectSpec
       Sky.Parse.MultiLineCaseKeywordSpec
       Sky.Parse.MultiLineSignatureSpec

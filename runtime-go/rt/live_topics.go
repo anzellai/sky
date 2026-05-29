@@ -59,11 +59,18 @@ import (
 //   - Origin is the publisher sid; subscribers MAY self-skip on
 //     match to implement echo suppression at the app layer (echo-by-
 //     default is the locked behaviour per design doc Q2).
+//   - SkipOrigin (Cycle 4 NE — issue #359) requests broker-level
+//     self-suppression: when true, the registry skips delivery to
+//     any subscriber whose ownSid matches Origin. Set by
+//     `Cmd.publishNoEcho` / `PubSub.publishNoEcho`. Defaults to
+//     false → echo-by-default semantics preserved for existing
+//     `Cmd.publish` / `PubSub.publish` callers.
 type SessionEvent struct {
-	Topic     string
-	Payload   any
-	GlobalSeq int64
-	Origin    string
+	Topic      string
+	Payload    any
+	GlobalSeq  int64
+	Origin     string
+	SkipOrigin bool
 }
 
 // ═════════════════════════════════════════════════════════════════════
@@ -84,14 +91,23 @@ type SessionEvent struct {
 //     caller MUST call cancel when done; the registry uses cancel
 //     refcount transitions to drop the topic entry once it reaches 0.
 //
+//   - SubscribeWithOwner (Cycle 4 NE, issue #359) is Subscribe + an
+//     ownerSid argument the broker tracks alongside the channel. When
+//     a SkipOrigin publish arrives, the broker compares each
+//     subscriber's ownerSid to event.Origin and suppresses self-
+//     delivery. Legacy callers may keep using Subscribe (records ""
+//     as ownerSid; never matches a non-empty Origin).
+//
 //   - Publish returns the number of subscribers the event reached
 //     (useful for tracing / metrics + observability surfaces; the
-//     publisher's own subscription IS counted per echo-by-default).
+//     publisher's own subscription IS counted unless event.SkipOrigin
+//     suppresses it).
 //
 //   - Close releases any backend resources (no-op for the in-process
 //     impl; Redis / Cloud Pub/Sub close their network connections).
 type Broker interface {
 	Subscribe(topic string) (<-chan SessionEvent, func())
+	SubscribeWithOwner(topic, ownerSid string) (<-chan SessionEvent, func())
 	Publish(topic string, event SessionEvent) int
 	Close() error
 }
@@ -126,7 +142,18 @@ type topicEntry struct {
 	// subs holds every active subscriber's channel keyed by a
 	// per-subscribe unique id. Refcount = len(subs); when it reaches
 	// 0 the entry is removed from registry.entries.
-	subs map[uint64]chan SessionEvent
+	subs map[uint64]topicSub
+}
+
+// topicSub carries a single subscriber's delivery channel plus the
+// owning session sid (used by SkipOrigin self-suppression in
+// Cmd.publishNoEcho / PubSub.publishNoEcho — issue #359). ownerSid is
+// "" for legacy callers that registered via Subscribe (no-owner) —
+// such subscribers are never self-skipped because publishers never
+// dispatch with an empty Origin in the normal Live.app path.
+type topicSub struct {
+	ch       chan SessionEvent
+	ownerSid string
 }
 
 // subIDCounter — monotonic source of unique subscriber ids. atomic so
@@ -163,17 +190,38 @@ func newTopicRegistry(subBuf int) *topicRegistry {
 // When the cancel drops the refcount to zero, the topic entry is
 // removed from the registry — the contract that keeps the registry
 // bounded under churn (design doc §3.5).
+//
+// Subscribe registers with an empty ownerSid (legacy callers); to
+// participate in SkipOrigin self-suppression — `Cmd.publishNoEcho` /
+// `PubSub.publishNoEcho` (#359) — register via SubscribeWithOwner
+// instead.
 func (r *topicRegistry) Subscribe(topic string) (<-chan SessionEvent, func()) {
+	return r.SubscribeWithOwner(topic, "")
+}
+
+// SubscribeWithOwner is Subscribe + an `ownerSid` that the registry
+// records alongside the channel. When a SkipOrigin publish arrives,
+// the registry compares each subscriber's ownerSid to event.Origin
+// and skips delivery to matches. Legacy Subscribe is a thin wrapper
+// over this with ownerSid="" — empty ownerSid never matches a
+// non-empty Origin so legacy subscribers are not affected.
+//
+// Wired into Sky.Live's setupSubscriptions in P48 follow-up: the
+// session's sid IS the owner sid for every topic the session
+// subscribes to. The dispatch path passes session.sid as Origin on
+// every publish, so a session's own SkipOrigin publishes never echo
+// back to itself.
+func (r *topicRegistry) SubscribeWithOwner(topic, ownerSid string) (<-chan SessionEvent, func()) {
 	ch := make(chan SessionEvent, r.subBuf)
 	id := subIDCounter.Add(1)
 
 	r.mu.Lock()
 	entry, ok := r.entries[topic]
 	if !ok {
-		entry = &topicEntry{subs: map[uint64]chan SessionEvent{}}
+		entry = &topicEntry{subs: map[uint64]topicSub{}}
 		r.entries[topic] = entry
 	}
-	entry.subs[id] = ch
+	entry.subs[id] = topicSub{ch: ch, ownerSid: ownerSid}
 	r.mu.Unlock()
 
 	var cancelOnce sync.Once
@@ -204,10 +252,21 @@ func (r *topicRegistry) Subscribe(topic string) (<-chan SessionEvent, func()) {
 // arm. The publisher does not block; the next user dispatch (or
 // next broadcast) supersedes the missed event (per design doc §6.1).
 //
-// The publisher's OWN subscription is delivered to like any other —
-// echo-by-default is the locked behaviour (design doc Q2). App code
-// can self-skip on `event.Origin == sess.sid` if a particular
-// session shouldn't see its own message.
+// Echo behaviour:
+//
+//   - event.SkipOrigin == false (the default — `Cmd.publish` /
+//     `PubSub.publish`): every subscriber receives the event,
+//     including a subscriber whose ownerSid matches event.Origin.
+//     This is the echo-by-default behaviour from design doc Q2 and
+//     matches Redis / NATS / MQTT semantics.
+//
+//   - event.SkipOrigin == true (`Cmd.publishNoEcho` /
+//     `PubSub.publishNoEcho`, issue #359): every subscriber whose
+//     ownerSid matches event.Origin is skipped. Other subscribers
+//     receive normally. Pattern: publisher updates own model in
+//     `update`, calls publishNoEcho for the foreign fan-out — saves
+//     the broker round-trip + (in v0.16+ cross-process tiers) the
+//     network hop back.
 func (r *topicRegistry) Publish(topic string, event SessionEvent) int {
 	event.Topic = topic // canonicalise — caller might've left it blank
 	r.mu.Lock()
@@ -216,20 +275,33 @@ func (r *topicRegistry) Publish(topic string, event SessionEvent) int {
 		r.mu.Unlock()
 		return 0
 	}
-	// Snapshot the subscriber channel set under the lock, then
-	// release before the non-blocking pushes — keeps the critical
-	// section short so unrelated Subscribe / Cancel calls aren't
-	// stalled by a fan-out over many subscribers.
-	chans := make([]chan SessionEvent, 0, len(entry.subs))
-	for _, ch := range entry.subs {
-		chans = append(chans, ch)
+	// Snapshot the subscriber set under the lock, then release
+	// before the non-blocking pushes — keeps the critical section
+	// short so unrelated Subscribe / Cancel calls aren't stalled by
+	// a fan-out over many subscribers. We snapshot topicSub (not
+	// just the channel) so the SkipOrigin filter can compare
+	// ownerSid outside the lock.
+	subs := make([]topicSub, 0, len(entry.subs))
+	for _, sub := range entry.subs {
+		subs = append(subs, sub)
 	}
 	r.mu.Unlock()
 
 	delivered := 0
-	for _, ch := range chans {
+	for _, sub := range subs {
+		// SkipOrigin self-suppression — issue #359. The "" guard on
+		// ownerSid is load-bearing for the legacy Subscribe path
+		// (registered with empty ownerSid); without it, an empty
+		// Origin would silently skip every legacy subscriber. In
+		// practice publishers either carry sess.sid (Cmd.* dispatch
+		// arm) or "" (server-side PubSub.* path), and legacy
+		// subscribers register with "" — so the only intentional
+		// match is sess.sid → sess.sid.
+		if event.SkipOrigin && sub.ownerSid != "" && sub.ownerSid == event.Origin {
+			continue
+		}
 		select {
-		case ch <- event:
+		case sub.ch <- event:
 			delivered++
 		default:
 			// Slow / wedged subscriber — drop the event for THIS

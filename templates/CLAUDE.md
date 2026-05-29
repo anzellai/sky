@@ -1244,10 +1244,11 @@ Configure at runtime via env vars (or sky.toml `[log]` defaults):
 ```elm
 type Cmd msg = Cmd Foreign
 
-none    : Cmd msg
-perform : Task err a -> (Result err a -> msg) -> Cmd msg
-batch   : List (Cmd msg) -> Cmd msg
-publish : String -> any -> Cmd msg          -- pub/sub broadcast (Sky.Live only)
+none           : Cmd msg
+perform        : Task err a -> (Result err a -> msg) -> Cmd msg
+batch          : List (Cmd msg) -> Cmd msg
+publish        : String -> any -> Cmd msg   -- pub/sub broadcast, echo-by-default (Sky.Live only)
+publishNoEcho  : String -> any -> Cmd msg   -- pub/sub broadcast, broker skips publisher's own subscription
 ```
 
 `Cmd.perform` runs a Task in a background goroutine. When it completes, the result is dispatched as a Msg through the full update/view/diff/SSE cycle:
@@ -1291,10 +1292,13 @@ subscribeTopic : String -> (any -> msg) -> Sub msg     -- pub/sub receive (Sky.L
 Task-shaped publish for ANY context (raw `Sky.Http.Server` `api` handlers, post-init goroutines, scheduled jobs, webhook callbacks). Complements `Cmd.publish` which only fires from a Sky.Live `update` return — same broker, same subscribers, same in-process semantics.
 
 ```elm
-publish : String -> any -> Task Error Int    -- delivery count; Err Unavailable if no Live.app
+publish        : String -> any -> Task Error Int  -- delivery count; Err Unavailable if no Live.app
+publishNoEcho  : String -> any -> Task Error Int  -- sets broker's SkipOrigin bit (forward-compat with v0.16+ cross-process tiers)
 ```
 
 Both `Cmd.publish` and `Std.PubSub.publish` route to the same in-process topic registry — a subscriber's `Sub.subscribeTopic` receives them identically. Use `Cmd.publish` when you're inside an update return; use `Std.PubSub.publish` (with `Task.run` or `Cmd.perform`) from anywhere else.
+
+`publishNoEcho` is the "instant feedback for publisher" variant — the broker skips delivery to subscribers whose ownSid matches the publisher's sid (the publisher updates its own model directly in `update`, and only OTHER sessions receive the broadcast). Saves one broker round-trip per publish; in v0.16+ cross-process broker tiers that's 10-100ms+ of network latency.
 
 ### Std.Time
 
