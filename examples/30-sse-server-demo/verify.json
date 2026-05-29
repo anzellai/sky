@@ -1,0 +1,7 @@
+{
+    "_comment": "verify scenarios for the SSE server demo (Sky.Http.Server.Stream). The /events endpoint streams 5 tick events + 1 done event with 200ms delays between ticks — total ~1.2s response time. Body assertions check the SSE protocol shape, not chunked-incremental delivery (that's covered by runtime-go/rt/server_stream_test.go's end-to-end test).",
+    "requests": [
+        { "method": "GET", "path": "/",       "expectStatus": 200, "expectBody": ["SSE server demo"] },
+        { "method": "GET", "path": "/events", "expectStatus": 200, "expectBody": ["event: tick", "event: done"] }
+    ]
+}

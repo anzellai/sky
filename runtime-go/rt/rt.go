@@ -6652,12 +6652,28 @@ type SkyRequest struct {
 	RemoteAddr string // audit P1-2: client IP for rate-limit keying
 }
 
-// SkyResponse wraps an HTTP response
+// SkyResponse wraps an HTTP response.
+//
+// Streaming (Sky.Http.Server.Stream): when StreamHandler is non-nil
+// the dispatcher in Server_listen takes the chunked-write path
+// instead of `fmt.Fprint(w, Body)`. Body MUST be empty in that
+// shape — the user's handler emits chunks via ServerStream_emit
+// after the dispatcher flushes the head.
 type SkyResponse struct {
 	Status      int
 	Body        string
 	Headers     map[string]string
 	ContentType string
+
+	// StreamHandler is the user's `StreamWriter -> Task Error ()`
+	// closure. The dispatcher special-cases this when non-nil:
+	// writes headers + flush, registers a serverStreamHandle,
+	// invokes the closure (driving the returned Task to
+	// completion), then sweeps the handle.
+	//
+	// Set by Server.Stream.stream (ServerStream_stream); never set
+	// by the buffered builders (Server.text/json/html).
+	StreamHandler any
 }
 
 // HTTP server safety limits — the DEFAULTS. They exist to prevent
@@ -6824,6 +6840,15 @@ func Server_listen(port any, routes any) any {
 			}
 			if ok && resp.Tag == 0 {
 				skyResp := resp.OkValue.(SkyResponse)
+				// Streaming response (Sky.Http.Server.Stream): dispatch
+				// the user's handler over a chunk-writer instead of
+				// buffering the body. The branch sets headers + flushes,
+				// then drives the handler Task to completion. After
+				// return the connection closes naturally.
+				if skyResp.StreamHandler != nil {
+					serveStreamingResponse(w, req, skyResp)
+					return
+				}
 				// Apply the response's default ContentType FIRST so the
 				// Headers map (populated by Server.withHeader) can
 				// override it. Otherwise an explicit

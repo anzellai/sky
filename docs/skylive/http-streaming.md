@@ -191,3 +191,142 @@ subscriptions model =
 
 Streaming is for endpoints where time-to-first-byte beats
 end-to-end throughput. Pick deliberately.
+
+---
+
+## Server-side streaming responses (Sky.Http.Server.Stream)
+
+The mirror image of `Sky.Core.Http.Stream`: instead of reading
+chunks from an upstream into the update loop, a
+`Sky.Http.Server` handler emits chunks back to its HTTP client
+one piece at a time.
+
+### Driving use case
+
+`agent-service`'s `/generate` endpoint streams LLM tokens to the
+SkyDeploy dashboard.  Before `Server.Stream` existed, every Sky
+HTTP handler buffered its whole body (`SkyResponse.Body string`)
+— the client waited for the entire completion before seeing
+anything.  Now the handler emits each upstream chunk as it
+arrives.  Combined with `Sky.Core.Http.Stream` on the proxy
+side (reading the upstream LLM API) and `Sky.Core.Http.Stream`
+on the dashboard side (consuming the proxy), the whole pipe is
+incremental.
+
+### Surface
+
+`sky-stdlib/Sky/Http/Server/Stream.sky`:
+
+| Name | Type |
+|---|---|
+| `StreamWriter(..)` | `type StreamWriter = StreamWriter Int` — opaque handle |
+| `stream` | `String -> (StreamWriter -> Task Error ()) -> Task Error Response` |
+| `emit` | `String -> StreamWriter -> Task Error ()` |
+| `finish` | `StreamWriter -> Task Error ()` |
+| `withContentType` | `String -> StreamWriter -> Task Error ()` (best-effort, pre-emit only) |
+
+### Minimal example (SSE)
+
+```elm
+import Sky.Http.Server as Server
+import Sky.Http.Server.Stream as Stream
+import Sky.Core.Time as Time
+import Sky.Core.Task as Task
+
+handleEvents : Request -> Task Error Response
+handleEvents _ =
+    Stream.stream "text/event-stream" (\writer ->
+        Stream.emit "event: hello\ndata: 1\n\n" writer
+            |> Task.andThen (\_ -> Time.sleep 100)
+            |> Task.andThen (\_ -> Stream.emit "event: tick\ndata: 2\n\n" writer)
+            |> Task.andThen (\_ -> Stream.finish writer))
+```
+
+Verify with `curl --no-buffer http://localhost:8000/events` —
+chunks arrive incrementally, not buffered.
+
+Runnable: `examples/30-sse-server-demo`.
+
+### Dispatcher contract
+
+When a handler returns `Stream.stream ct h` (i.e. a `SkyResponse`
+with `StreamHandler` non-nil), the dispatcher in `Server_listen`:
+
+1. Asserts the underlying `http.ResponseWriter` implements
+   `http.Flusher`.  Rejects with `503 Service Unavailable` if not
+   — buffered output would silently break the streaming
+   contract.
+2. Applies `Content-Type` from `ct`, plus any `Headers` map +
+   safe-by-default security headers (parity with the buffered
+   path).  CSRF auto-injection is skipped — streaming bodies
+   aren't form-bearing HTML.
+3. `WriteHeader(status)` + `Flush()` — the response head is on
+   the wire BEFORE the handler runs.  Critical for SSE: the
+   EventSource spec requires `Content-Type: text/event-stream`
+   to be visible before the first event.
+4. Registers a `serverStreamHandle` keyed on a process-global
+   atomic id, invokes the user's handler closure via `SkyCall`
+   passing the `StreamWriter` ADT, and drives the returned Task
+   to completion.
+5. Sweeps the handle on dispatcher return (deferred — runs on
+   panic too).
+
+### `emit` semantics
+
+- `emit chunk writer` writes `chunk` to the response body and
+  calls `Flush()` immediately.  The bytes are on the client's
+  socket before the Task resolves.
+- Client disconnect mid-stream returns `Err (ErrNetwork ...)`
+  from the next `emit` so the handler can choose to abort.
+- `emit` after `finish` (or after the handle is swept) is a
+  silent no-op (`Ok ()`).  Lets a "tail `finish` + always-final
+  `emit`" defensive shape compose without races.
+
+### `finish` semantics
+
+- `finish writer` flips the closed flag.  Subsequent emits
+  become no-ops.  The dispatcher's connection-close happens
+  when the handler's outer Task resolves, NOT inside `finish`.
+- Idempotent — safe to call from multiple branches.
+
+### Concurrency contract
+
+- ONE handler goroutine per request (Go's `http.Handler`
+  convention).  `emit` is NOT safe across user-spawned
+  goroutines without external synchronisation.
+- Handles live in a process-global `sync.Map` only for the
+  duration of the handler call.  No persistent registry — if
+  the handler returns, the writer id is invalid.
+
+### CSRF + security headers
+
+- `setSecurityHeaders` runs on streaming responses (parity with
+  buffered).
+- CSRF middleware only inspects `POST` / `PUT` / `PATCH` /
+  `DELETE`; the typical SSE/streaming endpoint is `GET`, so it
+  passes through.  For streaming POST endpoints, the CSRF
+  middleware verifies the token before the handler runs — same
+  shape as the buffered path.
+
+### Limitations
+
+- **No keep-alive ping built in.**  If you need an idle
+  heartbeat (browsers + many proxies drop SSE connections after
+  ~60 s of silence), emit your own `: ping\n\n` comment line
+  on a `Time.sleep`+`emit` loop.
+- **Single-handler-goroutine emit ordering.**  Concurrent emits
+  from goroutines spawned inside the handler are undefined.
+  Linearise via `Task.andThen`.
+- **`withContentType` is best-effort.**  Once the first `emit`
+  fires, headers are sealed.  Set the real Content-Type via
+  the `stream` argument; reserve `withContentType` for the
+  rare "decide on the format after a Task" pattern.
+
+### See also
+
+- `runtime-go/rt/server_stream.go` — runtime helpers + dispatcher
+  integration.
+- `runtime-go/rt/server_stream_test.go` — Flusher contract,
+  chunk-ordering, handle-sweep, end-to-end via httptest.
+- `examples/30-sse-server-demo` — runnable demo with a browser
+  EventSource snippet in the home page.

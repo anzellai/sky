@@ -1,0 +1,55 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.String as String
+import Sky.Core.Time as Time
+import Sky.Http.Server as Server
+import Sky.Http.Server exposing (Request, Response)
+import Sky.Http.Server.Stream as Stream
+import Sky.Core.Error exposing (Error)
+
+
+-- | A canonical Server-Sent Events endpoint demonstrating
+-- `Sky.Http.Server.Stream`.  Streams a `tick` event every 200ms
+-- for five ticks, then a final `done` event, then closes.
+--
+-- Verify with `curl --no-buffer http://localhost:8000/events` —
+-- chunks should appear progressively, not all at once.
+main =
+    Server.listen
+        8000
+        [ Server.get "/" handleHome, Server.get "/events" handleEvents ]
+
+
+handleHome : Request -> Task Error Response
+handleHome _ =
+    Task.succeed
+        (Server.html
+            """<h1>SSE server demo</h1>
+<p>Open <code>/events</code> in a terminal:</p>
+<pre>curl --no-buffer http://localhost:8000/events</pre>
+<p>Or run this in a browser console:</p>
+<pre>const s = new EventSource('/events');
+s.addEventListener('tick', e =&gt; console.log('tick:', e.data));
+s.addEventListener('done', () =&gt; { console.log('done'); s.close(); });</pre>""")
+
+
+handleEvents : Request -> Task Error Response
+handleEvents _ =
+    Stream.stream
+        "text/event-stream"
+        (\writer ->
+            emitTick writer 1 |> Task.andThen (\_ -> emitTick writer 2)
+                |> Task.andThen (\_ -> emitTick writer 3)
+                |> Task.andThen (\_ -> emitTick writer 4)
+                |> Task.andThen (\_ -> emitTick writer 5)
+                |> Task.andThen
+                       (\_ -> Stream.emit "event: done\ndata: bye\n\n" writer)
+                |> Task.andThen (\_ -> Stream.finish writer))
+
+
+emitTick : Stream.StreamWriter -> Int -> Task Error ()
+emitTick writer n =
+    Stream.emit ("event: tick\ndata: " ++ String.fromInt n ++ "\n\n") writer
+        |> Task.andThen (\_ -> Time.sleep 200)
