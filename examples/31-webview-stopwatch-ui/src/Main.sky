@@ -15,7 +15,6 @@ import Std.Webview as Webview
 import Std.Cmd as Cmd
 import Std.Sub as Sub
 import Std.Ui as Ui
-import Std.Ui exposing (Element)
 import Std.Ui.Background as Background
 import Std.Ui.Font as Font
 
@@ -68,42 +67,40 @@ subscriptions model =
 -- ═══════════════════════════════════════════════════════════════════
 -- View — same Std.Ui tree as 22-tui-stopwatch-ui's
 -- ═══════════════════════════════════════════════════════════════════
-view : Model -> Element Msg
+view : Model -> any
 view model =
-    Ui.column
-        [ Ui.padding 32
-        , Ui.spacing 16
-        , Background.color (Ui.rgb 24 28 48)
-        , Font.color (Ui.rgb 220 220 230)
-        ]
-        [ Ui.el
-              [ Font.color (Ui.rgb 142 200 168), Font.size 24 ]
-              (Ui.text "Sky Webview Stopwatch")
-        , Ui.el
-              [ Font.size 48, Font.color (Ui.rgb 240 240 240) ]
-              (Ui.text (formatElapsed model.elapsedMs))
-        , Ui.el [Font.color (Ui.rgb 150 150 170)] (Ui.text (statusLine model))
-        , Ui.row
-              [Ui.spacing 16]
-              [ Ui.button
-                    [ Background.color (Ui.rgb 60 90 70)
-                    , Font.color (Ui.rgb 240 240 240)
-                    , Ui.paddingXY 16 8
-                    ]
-                    { onPress = Just Toggle
-                    , label = Ui.text (toggleLabel model)
-                    }
-              , Ui.button
-                    [ Background.color (Ui.rgb 90 60 60)
-                    , Font.color (Ui.rgb 240 240 240)
-                    , Ui.paddingXY 16 8
-                    ]
-                    { onPress = Just Reset, label = Ui.text "Reset" }
-              ]
-        , Ui.el
-              [Font.color (Ui.rgb 120 120 140)]
-              (Ui.text "Click the buttons or close the window to quit.")
-        ]
+    Ui.layout
+        [Background.color (Ui.rgb 24 28 48), Font.color (Ui.rgb 220 220 230)]
+        (Ui.column
+            [Ui.padding 32, Ui.spacing 16]
+            [ Ui.el
+                  [ Font.color (Ui.rgb 142 200 168), Font.size 24 ]
+                  (Ui.text "Sky Webview Stopwatch")
+            , Ui.el
+                  [ Font.size 48, Font.color (Ui.rgb 240 240 240) ]
+                  (Ui.text (formatElapsed model.elapsedMs))
+            , Ui.el [Font.color (Ui.rgb 150 150 170)] (Ui.text (statusLine model))
+            , Ui.row
+                  [Ui.spacing 16]
+                  [ Ui.button
+                        [ Background.color (Ui.rgb 60 90 70)
+                        , Font.color (Ui.rgb 240 240 240)
+                        , Ui.paddingXY 16 8
+                        ]
+                        { onPress = Just Toggle
+                        , label = Ui.text (toggleLabel model)
+                        }
+                  , Ui.button
+                        [ Background.color (Ui.rgb 90 60 60)
+                        , Font.color (Ui.rgb 240 240 240)
+                        , Ui.paddingXY 16 8
+                        ]
+                        { onPress = Just Reset, label = Ui.text "Reset" }
+                  ]
+            , Ui.el
+                  [Font.color (Ui.rgb 120 120 140)]
+                  (Ui.text "Click the buttons or close the window to quit.")
+            ])
 
 
 toggleLabel : Model -> String

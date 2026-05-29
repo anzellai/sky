@@ -2654,10 +2654,29 @@ runGoBuildWithDiagnostics outDir binName _goPath = do
             "cd " ++ outDir ++ " && CGO_ENABLED=" ++ (if cgo then "1" else "0")
             ++ " go build " ++ versionLdflag
             ++ " -o " ++ binName ++ " ."
+    -- Some kernels exist as a real `cgo && darwin` implementation +
+    -- a `!cgo || !darwin` stub that returns Err Error at runtime.
+    -- A static-first build picks up the stub and "succeeds" even
+    -- though the resulting binary instantly exits at runtime. For
+    -- those kernels we must start with cgo on. The signal is the
+    -- presence of `rt.Webview_app` (the only kernel of this shape
+    -- today) in the emitted main.go.
+    let mainGoPath0 = outDir System.FilePath.</> "main.go"
+    mainGoExists0 <- doesFileExist mainGoPath0
+    needsCgo <- if mainGoExists0
+        then ("rt.Webview_app" `isInfixOf`) <$> readFile mainGoPath0
+        else return False
     (ec0, _o0, e0) <- System.Process.readCreateProcessWithExitCode
-        (System.Process.shell (buildCmd False)) ""
+        (System.Process.shell (buildCmd needsCgo)) ""
     (ec, berr) <- case ec0 of
-        System.Exit.ExitSuccess -> return (ec0, e0)
+        System.Exit.ExitSuccess -> do
+            when needsCgo $
+                putStrLn "  (built with cgo — Sky.Webview requires it; deploy targets must be macOS for v0.1)"
+            return (ec0, e0)
+        System.Exit.ExitFailure _ | needsCgo ->
+            -- Already used cgo on first attempt; the failure is the
+            -- real one — don't double-attempt.
+            return (ec0, e0)
         System.Exit.ExitFailure _ -> do
             (ec1, _o1, e1) <- System.Process.readCreateProcessWithExitCode
                 (System.Process.shell (buildCmd True)) ""

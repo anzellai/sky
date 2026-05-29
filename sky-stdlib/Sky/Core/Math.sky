@@ -5,10 +5,17 @@
 -- migration pattern.
 module Sky.Core.Math exposing
     ( abs, min, max
-    , sqrt, pow, log
-    , floor, ceil, round
+    , sqrt, pow, log, log2, log10
+    , exp, exp2
+    , cbrt, hypot
+    , floor, ceil, round, trunc
     , sin, cos, tan
-    , pi, e
+    , asin, acos, atan, atan2
+    , sinh, cosh, tanh
+    , asinh, acosh, atanh
+    , mod, remainder
+    , pi, e, phi, sqrt2
+    , inf, nan
     )
 
 
@@ -44,8 +51,38 @@ pow : Float -> Float -> Float
 pow = Ffi.kernel "Math_pow"
 
 
+cbrt : Float -> Float
+cbrt = Ffi.kernel "Math_cbrt"
+
+
+hypot : Float -> Float -> Float
+hypot = Ffi.kernel "Math_hypot"
+
+
+-- ─── Exp / log family ──────────────────────────────────────────────
+
+
+exp : Float -> Float
+exp = Ffi.kernel "Math_exp"
+
+
+exp2 : Float -> Float
+exp2 = Ffi.kernel "Math_exp2"
+
+
 log : Float -> Float
 log = Ffi.kernel "Math_log"
+
+
+log2 : Float -> Float
+log2 = Ffi.kernel "Math_log2"
+
+
+log10 : Float -> Float
+log10 = Ffi.kernel "Math_log10"
+
+
+-- ─── Trigonometry ──────────────────────────────────────────────────
 
 
 sin : Float -> Float
@@ -58,6 +95,64 @@ cos = Ffi.kernel "Math_cos"
 
 tan : Float -> Float
 tan = Ffi.kernel "Math_tan"
+
+
+asin : Float -> Float
+asin = Ffi.kernel "Math_asin"
+
+
+acos : Float -> Float
+acos = Ffi.kernel "Math_acos"
+
+
+atan : Float -> Float
+atan = Ffi.kernel "Math_atan"
+
+
+-- atan2 y x — quadrant-aware arctangent. Matches Go's math.Atan2
+-- (y first, x second), distinct from atan which is unary.
+atan2 : Float -> Float -> Float
+atan2 = Ffi.kernel "Math_atan2"
+
+
+-- ─── Hyperbolic ────────────────────────────────────────────────────
+
+
+sinh : Float -> Float
+sinh = Ffi.kernel "Math_sinh"
+
+
+cosh : Float -> Float
+cosh = Ffi.kernel "Math_cosh"
+
+
+tanh : Float -> Float
+tanh = Ffi.kernel "Math_tanh"
+
+
+asinh : Float -> Float
+asinh = Ffi.kernel "Math_asinh"
+
+
+acosh : Float -> Float
+acosh = Ffi.kernel "Math_acosh"
+
+
+atanh : Float -> Float
+atanh = Ffi.kernel "Math_atanh"
+
+
+-- ─── Modulo + remainder ────────────────────────────────────────────
+
+
+-- Float modulo. Result has the sign of the dividend (Go's math.Mod).
+mod : Float -> Float -> Float
+mod = Ffi.kernel "Math_mod"
+
+
+-- IEEE 754 remainder. Result has the sign of the dividend or zero.
+remainder : Float -> Float -> Float
+remainder = Ffi.kernel "Math_remainder"
 
 
 -- ─── Rounding (Float → Int) ────────────────────────────────────────
@@ -75,6 +170,11 @@ round : Float -> Int
 round = Ffi.kernel "Math_round"
 
 
+-- Truncate toward zero. `trunc 3.7 == 3`, `trunc (-3.7) == -3`.
+trunc : Float -> Int
+trunc = Ffi.kernel "Math_trunc"
+
+
 -- ─── Constants ─────────────────────────────────────────────────────
 
 
@@ -84,3 +184,23 @@ pi = Ffi.kernel "Math_pi"
 
 e : Float
 e = Ffi.kernel "Math_e"
+
+
+-- Golden ratio (1.618033988…).
+phi : Float
+phi = Ffi.kernel "Math_phi"
+
+
+sqrt2 : Float
+sqrt2 = Ffi.kernel "Math_sqrt2"
+
+
+-- Positive infinity.
+inf : Float
+inf = Ffi.kernel "Math_inf"
+
+
+-- Not-a-Number. `nan == nan` is False (NaN ≠ NaN by IEEE 754);
+-- guard via `Math.isNaN` if added in a later release.
+nan : Float
+nan = Ffi.kernel "Math_nan"

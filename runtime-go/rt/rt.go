@@ -6252,6 +6252,65 @@ func Math_piT() float64                   { return math.Pi }
 func Math_eT() float64                    { return math.E }
 func Math_logT(n float64) float64         { return math.Log(n) }
 
+// #366 — full Go math.* parity.
+// Inverse trig
+func Math_asin(n any) any              { return math.Asin(AsFloat(n)) }
+func Math_acos(n any) any              { return math.Acos(AsFloat(n)) }
+func Math_atan(n any) any              { return math.Atan(AsFloat(n)) }
+func Math_atan2(y, x any) any          { return math.Atan2(AsFloat(y), AsFloat(x)) }
+
+// Hyperbolic + inverse hyperbolic
+func Math_sinh(n any) any              { return math.Sinh(AsFloat(n)) }
+func Math_cosh(n any) any              { return math.Cosh(AsFloat(n)) }
+func Math_tanh(n any) any              { return math.Tanh(AsFloat(n)) }
+func Math_asinh(n any) any             { return math.Asinh(AsFloat(n)) }
+func Math_acosh(n any) any             { return math.Acosh(AsFloat(n)) }
+func Math_atanh(n any) any             { return math.Atanh(AsFloat(n)) }
+
+// Exp / log family
+func Math_exp(n any) any               { return math.Exp(AsFloat(n)) }
+func Math_exp2(n any) any              { return math.Exp2(AsFloat(n)) }
+func Math_log2(n any) any              { return math.Log2(AsFloat(n)) }
+func Math_log10(n any) any             { return math.Log10(AsFloat(n)) }
+
+// Roots + utilities
+func Math_cbrt(n any) any              { return math.Cbrt(AsFloat(n)) }
+func Math_hypot(x, y any) any          { return math.Hypot(AsFloat(x), AsFloat(y)) }
+func Math_trunc(n any) any             { return int(math.Trunc(AsFloat(n))) }
+func Math_mod(x, y any) any            { return math.Mod(AsFloat(x), AsFloat(y)) }
+func Math_remainder(x, y any) any      { return math.Remainder(AsFloat(x), AsFloat(y)) }
+
+// Additional constants
+func Math_phi() any                    { return math.Phi }
+func Math_sqrt2() any                  { return math.Sqrt2 }
+func Math_inf() any                    { return math.Inf(1) }
+func Math_nan() any                    { return math.NaN() }
+
+// Typed companions for the new entries
+func Math_asinT(n float64) float64         { return math.Asin(n) }
+func Math_acosT(n float64) float64         { return math.Acos(n) }
+func Math_atanT(n float64) float64         { return math.Atan(n) }
+func Math_atan2T(y, x float64) float64     { return math.Atan2(y, x) }
+func Math_sinhT(n float64) float64         { return math.Sinh(n) }
+func Math_coshT(n float64) float64         { return math.Cosh(n) }
+func Math_tanhT(n float64) float64         { return math.Tanh(n) }
+func Math_asinhT(n float64) float64        { return math.Asinh(n) }
+func Math_acoshT(n float64) float64        { return math.Acosh(n) }
+func Math_atanhT(n float64) float64        { return math.Atanh(n) }
+func Math_expT(n float64) float64          { return math.Exp(n) }
+func Math_exp2T(n float64) float64         { return math.Exp2(n) }
+func Math_log2T(n float64) float64         { return math.Log2(n) }
+func Math_log10T(n float64) float64        { return math.Log10(n) }
+func Math_cbrtT(n float64) float64         { return math.Cbrt(n) }
+func Math_hypotT(x, y float64) float64     { return math.Hypot(x, y) }
+func Math_truncT(n float64) int            { return int(math.Trunc(n)) }
+func Math_modT(x, y float64) float64       { return math.Mod(x, y) }
+func Math_remainderT(x, y float64) float64 { return math.Remainder(x, y) }
+func Math_phiT() float64                   { return math.Phi }
+func Math_sqrt2T() float64                 { return math.Sqrt2 }
+func Math_infT() float64                   { return math.Inf(1) }
+func Math_nanT() float64                   { return math.NaN() }
+
 // ═══════════════════════════════════════════════════════════
 // Additional String functions
 // ═══════════════════════════════════════════════════════════

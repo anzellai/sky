@@ -377,6 +377,35 @@ registry = Map.fromList
     , (("Math", "abs"),           KernelInfo "rt.Math_abs" 1 False)
     , (("Math", "min"),           KernelInfo "rt.Math_min" 2 False)
     , (("Math", "max"),           KernelInfo "rt.Math_max" 2 False)
+    -- #366 — full Go math.* parity.
+    -- Inverse trig
+    , (("Math", "asin"),          KernelInfo "rt.Math_asin" 1 False)
+    , (("Math", "acos"),          KernelInfo "rt.Math_acos" 1 False)
+    , (("Math", "atan"),          KernelInfo "rt.Math_atan" 1 False)
+    , (("Math", "atan2"),         KernelInfo "rt.Math_atan2" 2 False)
+    -- Hyperbolic + inverse hyperbolic
+    , (("Math", "sinh"),          KernelInfo "rt.Math_sinh" 1 False)
+    , (("Math", "cosh"),          KernelInfo "rt.Math_cosh" 1 False)
+    , (("Math", "tanh"),          KernelInfo "rt.Math_tanh" 1 False)
+    , (("Math", "asinh"),         KernelInfo "rt.Math_asinh" 1 False)
+    , (("Math", "acosh"),         KernelInfo "rt.Math_acosh" 1 False)
+    , (("Math", "atanh"),         KernelInfo "rt.Math_atanh" 1 False)
+    -- Exp / log family
+    , (("Math", "exp"),           KernelInfo "rt.Math_exp" 1 False)
+    , (("Math", "exp2"),          KernelInfo "rt.Math_exp2" 1 False)
+    , (("Math", "log2"),          KernelInfo "rt.Math_log2" 1 False)
+    , (("Math", "log10"),         KernelInfo "rt.Math_log10" 1 False)
+    -- Roots + utilities
+    , (("Math", "cbrt"),          KernelInfo "rt.Math_cbrt" 1 False)
+    , (("Math", "hypot"),         KernelInfo "rt.Math_hypot" 2 False)
+    , (("Math", "trunc"),         KernelInfo "rt.Math_trunc" 1 False)
+    , (("Math", "mod"),           KernelInfo "rt.Math_mod" 2 False)
+    , (("Math", "remainder"),     KernelInfo "rt.Math_remainder" 2 False)
+    -- Additional constants
+    , (("Math", "phi"),           KernelInfo "rt.Math_phi" 0 False)
+    , (("Math", "sqrt2"),         KernelInfo "rt.Math_sqrt2" 0 False)
+    , (("Math", "inf"),           KernelInfo "rt.Math_inf" 0 False)
+    , (("Math", "nan"),           KernelInfo "rt.Math_nan" 0 False)
 
     , (("Server", "listen"),      KernelInfo "rt.Server_listen" 2 False)
     , (("Server", "get"),         KernelInfo "rt.Server_get" 2 False)

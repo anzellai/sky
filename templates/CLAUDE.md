@@ -308,6 +308,31 @@ apiKey = System.getenv "OPENAI_API_KEY" |> Result.withDefault ""
 bindings with panic recovery and typed wrappers. Hand-written FFI loses the
 safety net.
 
+**11. Go-keyword names are safe — the compiler rewrites them.** A Sky
+identifier in the reserved set (every Go keyword + predeclared type/func/
+constant) lowers to `<name>_` in emitted Go (`init` → `init_`,
+`string` → `string_`, `error` → `error_`, `for` → `for_`). The TEA idiom
+`init = init`, `view = view`, `update = update` is **safe** — the LHS is a
+record-field key (Go-side `Init` / `View` / `Update`, capitalised) and the
+RHS is an identifier reference (Go-side `init_` / `view_` / `update_`).
+Different namespaces, no collision with Go's special `func init()`.
+
+Tier 1 (special semantics): `init`.
+Tier 2 (predeclared funcs): `new`, `make`, `len`, `cap`, `copy`, `append`,
+`delete`, `panic`, `recover`, `print`, `println`, `clear`, `min`, `max`,
+`complex`, `imag`, `real`, `close`.
+Tier 3 (reserved keywords): all 23 Go keywords (`for`, `case`, `type`, `func`,
+`var`, `const`, `interface`, `struct`, `map`, `chan`, `go`, `defer`, `goto`,
+`fallthrough`, `range`, `return`, `switch`, `default`, `break`, `continue`,
+`import`, `package`, `select`).
+Tier 4 (predeclared types + constants): `bool`, `byte`, `rune`, `string`,
+`error`, `any`, `comparable`, every `int*`/`uint*`/`float*`/`complex*` size,
+`true`, `false`, `iota`, `nil`.
+
+Special-cased outside this set: `main` (program entry → Go's `func main()`).
+The Sky parser rejects `if`/`else`/`nil` as identifiers before they reach
+codegen.
+
 ---
 
 ## Common Pitfalls & Fixes
@@ -1839,16 +1864,50 @@ view model =
 ### Sky.Core.Math (pure)
 
 ```elm
-Math.sqrt 16.0        -- 4.0
-Math.pow 2.0 10.0     -- 1024.0
-Math.abs -5            -- 5
-Math.floor 3.7         -- 3
-Math.ceil 3.2          -- 4
-Math.round 3.5         -- 4
-Math.pi                -- 3.14159...
-Math.sin, Math.cos, Math.tan, Math.atan2
-Math.min 3 7           -- 3
-Math.max 3 7           -- 7
+-- Integer helpers
+Math.abs -5             -- 5
+Math.min 3 7            -- 3
+Math.max 3 7            -- 7
+
+-- Roots / powers
+Math.sqrt 16.0          -- 4.0
+Math.pow 2.0 10.0       -- 1024.0
+Math.cbrt 27.0          -- 3.0
+Math.hypot 3.0 4.0      -- 5.0  (sqrt(x² + y²))
+
+-- Exp / log family
+Math.exp 1.0            -- 2.71828...
+Math.exp2 10.0          -- 1024.0
+Math.log Math.e         -- 1.0
+Math.log2 1024.0        -- 10.0
+Math.log10 1000.0       -- 3.0
+
+-- Rounding (Float → Int)
+Math.floor 3.7          -- 3
+Math.ceil 3.2           -- 4
+Math.round 3.5          -- 4
+Math.trunc -3.7         -- -3  (toward zero)
+
+-- Trigonometry (radians)
+Math.sin, Math.cos, Math.tan
+Math.asin, Math.acos, Math.atan
+Math.atan2 1.0 1.0      -- π/4  (y first, x second)
+
+-- Hyperbolic
+Math.sinh, Math.cosh, Math.tanh
+Math.asinh, Math.acosh, Math.atanh
+
+-- Modulo
+Math.mod 7.5 2.0        -- 1.5  (float modulo, sign of dividend)
+Math.remainder 7.5 2.0  -- -0.5 (IEEE 754)
+
+-- Constants
+Math.pi                 -- 3.14159...
+Math.e                  -- 2.71828...
+Math.phi                -- 1.61803... (golden ratio)
+Math.sqrt2              -- 1.41421...
+Math.inf                -- +Inf
+Math.nan                -- NaN  (NaN ≠ NaN by IEEE 754)
 ```
 
 ### Sky.Core.Time (mixed pure + Task)
@@ -4015,6 +4074,17 @@ records the per-version closures if you want history.
 - **Zero-arg `Css.*` constants DO need `()`** — `Css.zero ()`, `Css.auto ()`, `Css.none ()`, `Css.transparent ()`, `Css.inherit ()`, `Css.initial ()`, `Css.borderBox ()`, `Css.systemFont ()`, `Css.monoFont ()`, `Css.userSelectNone ()`. Bare form is now a clean type error (no longer the silent function-pointer leak it used to be), but the `()` is still required. Pattern: any `Css.X` that names a literal CSS keyword takes `()`; value constructors like `px`, `rem`, `em`, `hex`, `rgba` take their arguments directly.
 - **Non-tail-recursive list operations are O(N) on Go stack** — `map`, `filter`, `foldr`, `length`, `concat`, `concatMap`, `take`, `append`, `range`, `zip`, `indexedMap`, `Maybe.combine`, `Result.combine` recurse. Tail-recursive operations (`foldl`, `find`, `any`, `all`, `member`, `drop`) are auto-TCO'd to constant stack. For very large lists (200k+ elements) prefer the tail-recursive accumulator pattern.
 - **Multi-line function signatures with continuation INSIDE the type body** — `name\n    : T` (the `:` on a continuation line) parses cleanly. Continuation INSIDE the type body (`T1\n    -> T2`) is not supported — extract a `type alias` for the whole arrow type.
+- **Same-named local lambdas across modules → `reflect: Call using X as type Y` panic** (deferred to v0.15.6). When 3+ same-named let-bound lambdas (`let encodeOne x = …`) exist across modules and each is passed to a polymorphic combinator (`List.map`, `Result.map`, etc.), ALL get typed against the LAST-processed module's element type → runtime panic in `reflect.Value.Call`. **Workaround**: hoist the encoder to a top-level def with an explicit type annotation; top-level defs alpha-rename per call site and aren't subject to the region-snapshot collision:
+
+```elm
+encodeItemA : ItemA -> String              -- ✓ top-level + annotated
+encodeItemA i = "..."
+
+asJson : () -> String
+asJson _ = String.join "," (List.map encodeItemA items)
+```
+
+  Brittle alternative: rename locals to unique names across modules (`encodeItemA` / `encodeItemB`). 2-encoder cases happen to render correctly; 3+ same-named locals is the reliable trigger.
 
 ### Closed in v0.15 (for grep)
 

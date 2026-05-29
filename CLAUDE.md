@@ -27,16 +27,19 @@
 | `sky watch` / `sky doctor` / `sky console` / `sky upgrade-claude` | ✅ shipped |
 | Sky Console + sub-app mount + observability federation | ✅ shipped |
 | Sky.Webview v0.1 (desktop, macOS) — `Webview.app cfg` via `webview_go` | ✅ shipped — `runtime-go/rt/webview.go`, `sky-stdlib/Std/Webview.sky` |
-| 27-example sweep + 120 Sky.Test assertions + 306 cabal specs | ✅ green |
+| 32-example sweep + 120 Sky.Test assertions + 410+ cabal specs | ✅ green |
 
-**Examples (27 total — `examples/00`-`examples/26`).** Each builds clean
+**Examples (32 total — `examples/00`-`examples/31`).** Each builds clean
 from a wiped slate (`rm -rf sky-out .skycache .skydeps && sky build`).
 `examples/00-standard-libs` is the stdlib smoke test (120 assertions).
 `examples/13-skyshop` is the Stripe-SDK-scale benchmark (76k FFI
 symbols). `examples/26-ui-showcase` exercises every Std.Ui layout
-primitive for visual-regression review. Categories: CLI (7),
-Sky.Tui (5), Sky.Live + Sky.Http.Server (11), GUI (1 — Fyne),
-build-only fixtures (2).
+primitive for visual-regression review.
+`examples/30-sse-server-demo` exercises `Sky.Http.Server.Stream`.
+`examples/31-webview-stopwatch-ui` exercises Sky.Webview (macOS).
+Categories: CLI (8), Sky.Tui (5), Sky.Live + Sky.Http.Server (13),
+GUI (2 — Fyne + Sky.Webview), build-only fixtures (2), Sky.Webview
+WebGL2 spike (1).
 
 ## Non-negotiables
 
@@ -272,6 +275,56 @@ would treat wildcard-only sigs as polymorphic, diverge body ↔
 caller UF vars under fresh-per-call-site re-instantiation, and
 silently accept wrong return types.
 
+## Go reserved-name rewriting
+
+Sky compiles to Go but Sky's identifier rules are stricter than
+Go's (Sky banishes keywords at parse time; Go *tolerates* shadowing
+predeclared types like `string` / `error`). To keep emitted Go safe
+and free from accidental-shadow gotchas, every Sky identifier in
+`reservedGoNames` (`src/Sky/Build/Compile.hs:4058`) is rewritten
+at codegen with a trailing `_`.
+
+```
+init → init_       (Go's func init() is auto-called at package load)
+string → string_   (avoid shadowing Go's predeclared type)
+error → error_     (avoid shadowing Go's predeclared interface)
+for → for_         (Go syntactic keyword)
+true → true_       (Go predeclared constant)
+```
+
+The list covers four tiers:
+
+1. `init` — special-cased with a code comment; load-bearing for
+   Sky.Live + Sky.Webview's `init = …` TEA convention.
+2. **Predeclared funcs** — `new`, `make`, `len`, `cap`, `copy`,
+   `append`, `delete`, `panic`, `recover`, `print`, `println`,
+   `clear`, `min`, `max`, `complex`, `imag`, `real`, `close`.
+3. **Reserved keywords** — all 23 Go keywords (`for`, `case`,
+   `type`, `func`, …). `if`/`else`/`nil` not in list because the
+   Sky parser rejects them as identifiers first.
+4. **Predeclared types + constants** — `bool`, `byte`, `rune`,
+   `string`, `error`, `any`, `comparable`, every `int*`/`uint*`/
+   `float*`/`complex*` size, `true`, `false`, `iota`, `nil`.
+
+**Rule for AI-written Sky code.** `init = init` is safe (LHS is a
+record-field key → Go field `Init`; RHS is a binding ref → Go
+identifier `init_`). Same for `view = view`, `update = update`,
+etc. — every TEA app uses this idiom and it lowers correctly.
+
+**Special-cased outside the list.** `main` is the program entry —
+the Sky binding `main` in `module Main exposing (main)` emits as
+Go's `func main()` (the program entry), not as `main_`. A
+user-named binding `main` in any other module would module-prefix
+to `Mod_main` and never collide.
+
+**Module-prefix safety net.** Every top-level Sky binding becomes
+`<Mod>_<name>` in Go (`Main_view`, `Std_Ui_layout`). So the
+reserved list only matters for locals + parameters within
+functions. The audit gate before adding any new entry: grep
+`examples/*/sky-out/main.go` for the bare identifier outside any
+`Mod_…` token — if there are no hits, the patch is purely
+future-proofing.
+
 ## Memory safety + efficiency audit (v0.15.x)
 
 ### Stdlib stack behaviour
@@ -490,7 +543,7 @@ Each binding is either:
 | `Set` | `Sky.Core.Set` (kernel) | empty, insert, remove, member, union, diff, intersect, fromList, toList, size |
 | `Maybe` | `Sky.Core.Maybe` | withDefault, map, andThen, map2-5, andMap, combine, isJust, isNothing |
 | `Result` | `Sky.Core.Result` | withDefault, map, andThen, mapError, map2-5, andMap, combine |
-| `Math` | `Sky.Core.Math` | abs, min, max, sqrt, pow, floor, ceil, round, sin, cos, tan, pi, e, log |
+| `Math` | `Sky.Core.Math` | 36 entries — abs, min, max; sqrt, pow, cbrt, hypot; exp, exp2, log, log2, log10; floor, ceil, round, trunc; sin, cos, tan; asin, acos, atan, atan2; sinh, cosh, tanh, asinh, acosh, atanh; mod, remainder; pi, e, phi, sqrt2, inf, nan |
 | `Regex` | `Sky.Core.Regex` | match, find, findAll, replace, split |
 | `Char` | `Sky.Core.Char` | isAlpha, isDigit, isLower, isUpper, toUpper, toLower |
 | `Path` | `Sky.Core.Path` | base, dir, ext, isAbsolute |
@@ -1026,7 +1079,11 @@ in v0.1 for clean missing-field type errors. v0.2 reopens it for
 global hotkeys, native file dialogs, and Windows + Linux smoke
 validation. v0.1 ships macOS only.
 
-Sky-stdlib path: `sky-stdlib/Std/Webview.sky`. Runtime: `runtime-go/rt/webview.go` (build tag `cgo && (darwin || linux || windows)`). Example: `examples/31-webview-stopwatch-ui`.
+Sky-stdlib path: `sky-stdlib/Std/Webview.sky`. Runtime: `runtime-go/rt/webview.go` (build tag `cgo && darwin` for v0.1; widens v0.2 with smoke for Linux/Windows). Stub at `webview_stub.go` covers `!cgo || !darwin` so non-macOS builds link cleanly and surface a runtime `Err Error` on call. Example: `examples/31-webview-stopwatch-ui`.
+
+**`sky build` cgo-detect.** Normally `sky build` runs `CGO_ENABLED=0 go build` first (static-binary preference) and only retries with cgo on failure. When the emitted `main.go` contains `rt.Webview_app` (i.e. the project uses Sky.Webview), the build runner flips straight to `CGO_ENABLED=1` on the first attempt — otherwise the stub would compile cleanly and the resulting binary would silently exit at runtime. Look for `(built with cgo — Sky.Webview requires it; …)` in the build log to confirm.
+
+**Std.Ui convention** — your `view` function MUST wrap its output in `Ui.layout [] (...)` to convert `Element` → `Html` before the renderer (`HtmlToVNode`) processes it. A raw `Ui.column [...]` body produces a blank window. Same convention as Sky.Live (see `examples/19-skyforum`, `examples/26-ui-showcase`).
 
 ## Language syntax
 
@@ -1114,6 +1171,30 @@ verified against HEAD.
     on a continuation line) parses cleanly. Continuation INSIDE
     the type body (`T1\n    -> T2`) is not supported — extract a
     `type alias` for the whole arrow type.
+11. **Same-named local lambdas across modules pollute the typed
+    lowerer's region snapshot** (deferred to v0.15.6 LowerCtx
+    cascade). When 3+ same-named let-bound lambdas (`let
+    encodeOne x = …`) exist across modules and each is passed to
+    a polymorphic combinator (`List.map`, `Result.map`, etc.),
+    ALL get typed with the LAST-processed module's element type
+    → `reflect.Value.Call` panics at runtime. **Workaround**:
+    hoist the encoder to a top-level def with an explicit type
+    annotation — top-level defs alpha-rename per call site and
+    don't share the region cache:
+
+```elm
+encodeItemA : ItemA -> String              -- ✓ top-level + annotated
+encodeItemA i = "..."
+
+asJson : () -> String
+asJson _ = String.join "," (List.map encodeItemA items)
+```
+
+    The brittle alternative (rename locals `encodeItemA` /
+    `encodeItemB`) works but relies on user-side naming
+    discipline. 2-encoder cases happen to render correctly;
+    3+ is the reliable trigger. Closes when the v0.15.6 LowerCtx
+    cascade lands.
 
 ### Closed in v0.15 (kept here for grep)
 

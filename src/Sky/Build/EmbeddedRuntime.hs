@@ -39,6 +39,9 @@
 -- re-embed marker: 2026-05-29 — Cycle 4 NE (#359): Cmd.publishNoEcho + PubSub.publishNoEcho — opt-out echo via SessionEvent.SkipOrigin + Broker.SubscribeWithOwner
 -- re-embed marker: 2026-05-29b — Cycle 4 HS-Server (#362): Sky.Http.Server.Stream — server-side streaming HTTP response primitive via SkyResponse.StreamHandler sentinel
 -- re-embed marker: 2026-05-29c — Sky.Webview backend v0.1 MVP (#356): rt.Webview_app via webview_go bridge + Std.Webview.sky stdlib + Element-tree reuse from Sky.Live
+-- re-embed marker: 2026-05-29d — sky build: force cgo-on first attempt when emitted main.go calls rt.Webview_app (the static-first build picked up webview_stub.go and shipped a silent-exit binary)
+-- re-embed marker: 2026-05-29e — reservedGoNames: extend with predeclared types + constants + Go 1.21+ builtins (defense-in-depth; audit of examples/*/sky-out/main.go shows zero existing collisions — module prefix was already insulating top-level bindings, this hardens locals + parameters)
+-- re-embed marker: 2026-05-29f — Sky.Core.Math: full Go math.* parity (#366) — inverse trig (asin/acos/atan/atan2), hyperbolic (sinh/cosh/tanh + inverse), exp/log family (exp/exp2/log2/log10), roots + utilities (cbrt/hypot/trunc/mod/remainder), constants (phi/sqrt2/inf/nan); +23 functions across stdlib + Kernel.hs registry + rt.go kernels
 module Sky.Build.EmbeddedRuntime
     ( embeddedRuntime
     , embeddedSkyStdlib

@@ -4055,15 +4055,47 @@ isGoIdentChar :: Char -> Bool
 isGoIdentChar c = Char.isAlphaNum c || c == '_'
 
 
+-- | Identifiers that must NOT leak through to emitted Go as-is.
+-- `goSafeName` appends `_` to any Sky identifier in this list
+-- (the user's `init` becomes Go `init_`, etc.). Three risk tiers:
+--
+--   1. `init` — Go runs `func init()` at package load. A user
+--      binding named `init` lowered as `func init()` would silently
+--      execute at startup. Module prefixing alone can't save us:
+--      Sky's TEA convention is `init = …` everywhere.
+--
+--   2. Reserved keywords — `for`, `case`, etc. are syntactic.
+--      A user local named `for` is a syntax error in Go.
+--
+--   3. Predeclared identifiers — Go *allows* shadowing `string` /
+--      `error` / `true` etc., but it breaks user reasoning and any
+--      same-scope code that references the predeclared meaning.
+--      Module prefix saves top-level bindings; this list saves
+--      locals + parameters.
+--
+-- Special-cased OUTSIDE this list:
+--   - `main`     — emitted as Go's program-entry `func main()`.
+--   - `if`/`else`/`nil` — Sky parser rejects them as identifiers
+--     before they ever reach codegen.
 reservedGoNames :: [String]
 reservedGoNames =
     [ "init"      -- Go's package init has special semantics
+    -- Predeclared funcs
     , "new", "make", "len", "cap", "copy", "append", "delete"
     , "panic", "recover", "print", "println"
+    , "clear", "min", "max", "complex", "imag", "real", "close"  -- Go 1.21+ and pre-1.21
+    -- Reserved keywords
     , "type", "func", "var", "const", "interface", "struct"
     , "map", "chan", "go", "defer", "goto", "fallthrough"
     , "range", "return", "for", "switch", "case", "default"
     , "break", "continue", "import", "package", "select"
+    -- Predeclared types (Go tolerates shadowing but reasoning breaks)
+    , "bool", "byte", "rune", "string", "error", "any", "comparable"
+    , "int", "int8", "int16", "int32", "int64"
+    , "uint", "uint8", "uint16", "uint32", "uint64", "uintptr"
+    , "float32", "float64", "complex64", "complex128"
+    -- Predeclared constants / nil
+    , "true", "false", "iota", "nil"
     ]
 
 
