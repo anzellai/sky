@@ -35,6 +35,7 @@ import qualified Sky.Build.FfiKernelAliasSpec
 import qualified Sky.Build.PubSubPublishTaskSpec
 import qualified Sky.Build.PubSubPublishNoEchoSpec
 import qualified Sky.Build.ServerStreamSpec
+import qualified Sky.Build.WebviewAppSpec
 import qualified Sky.Parse.MultiLineCaseSubjectSpec
 import qualified Sky.Parse.MultiLineCaseKeywordSpec
 import qualified Sky.Parse.MultiLineSignatureSpec
@@ -233,6 +234,9 @@ main = hspec $ do
     -- Unblocks LLM token-stream proxying + SSE endpoints without
     -- hand-rolled chunk plumbing on the Sky side.
     describe "Sky.Build.ServerStream" Sky.Build.ServerStreamSpec.spec
+    -- Issue #356 / v0.1 MVP: Sky.Webview backend. Pins the
+    -- Std.Webview.app type-checker contract + kernel routing.
+    describe "Sky.Build.WebviewApp" Sky.Build.WebviewAppSpec.spec
     describe "Sky.Parse.MultiLineCaseSubject" Sky.Parse.MultiLineCaseSubjectSpec.spec
     describe "Sky.Parse.MultiLineCaseKeyword"
         Sky.Parse.MultiLineCaseKeywordSpec.spec

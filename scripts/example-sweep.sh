@@ -108,6 +108,10 @@ declare -a EXAMPLES=(
     "19-skyforum:server:8000:/"
     "27-multi-session-chat:server:8000:/"
     "30-sse-server-demo:server:8000:/"
+    # 31 — Sky.Webview MVP. Native desktop window; build-only sweep
+    # (running needs a display, same skip semantics as the Fyne GUI
+    # example). v0.1 is macOS only.
+    "31-webview-stopwatch-ui:gui"
 )
 
 pass=0; fail=0

@@ -26,6 +26,7 @@
 | `sky doc` (terminal + HTTP server with type-sig + Markdown + fuzzy search) | ✅ shipped |
 | `sky watch` / `sky doctor` / `sky console` / `sky upgrade-claude` | ✅ shipped |
 | Sky Console + sub-app mount + observability federation | ✅ shipped |
+| Sky.Webview v0.1 (desktop, macOS) — `Webview.app cfg` via `webview_go` | ✅ shipped — `runtime-go/rt/webview.go`, `sky-stdlib/Std/Webview.sky` |
 | 27-example sweep + 120 Sky.Test assertions + 306 cabal specs | ✅ green |
 
 **Examples (27 total — `examples/00`-`examples/26`).** Each builds clean
@@ -989,6 +990,43 @@ text; `tuiMaxContentH = 50,000` hard cap with 10,000 soft warn;
 **Sky.Cli password mode** — `Cli.readPassword : () -> Task Error
 String` reads stdin with echo disabled (`golang.org/x/term`'s
 `ReadPassword`). Password never echoes; never lands in scrollback.
+
+## Sky.Webview v0.1 (desktop)
+
+Cross-backend mirror of `Live.app` + `Tui.app` — same TEA shape,
+native desktop window via the system webview (WKWebView on macOS,
+WebView2 on Windows, WebKitGTK on Linux) using `webview_go`. No
+HTTP server, no SSE, no session store — the bridge is in-process
+`Bind` + `Eval`.
+
+```elm
+import Std.Webview as Webview
+
+main =
+    Webview.app
+        { init = init
+        , update = update
+        , view = view                  -- view : Model -> Element msg
+        , subscriptions = subscriptions
+        , window = { title = "Sky App", size = ( 800, 600 ) }
+        }
+        |> Task.run
+```
+
+Reuses Sky.Live's renderer (`HtmlToVNode`, `assignSkyIDs`,
+`renderVNode`, `diffTrees`) — same `view` function paints
+identically across Sky.Live (web), Sky.Tui (terminal),
+Sky.Webview (desktop). XSS hardening parity:
+focus-preserving DOM replacer, `__skyReviveScripts` for
+late-injected `<script>` tags.
+
+`WindowCfg` is closed (`{ title : String, size : (Int, Int) }`)
+in v0.1 for clean missing-field type errors. v0.2 reopens it for
+`alwaysOnTop` / `transparent` / `decorated` and adds tray icons,
+global hotkeys, native file dialogs, and Windows + Linux smoke
+validation. v0.1 ships macOS only.
+
+Sky-stdlib path: `sky-stdlib/Std/Webview.sky`. Runtime: `runtime-go/rt/webview.go` (build tag `cgo && (darwin || linux || windows)`). Example: `examples/31-webview-stopwatch-ui`.
 
 ## Language syntax
 
