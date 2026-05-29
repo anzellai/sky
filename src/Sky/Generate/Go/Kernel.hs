@@ -256,6 +256,18 @@ registry = Map.fromList
     , (("Cmd", "publishNoEcho"),  KernelInfo "rt.Cmd_publishNoEcho" 2 True)
 
     -- ═══════════════════════════════════════════════════════
+    -- Webview (Sky.Webview v0.1 MVP — #356)
+    -- ═══════════════════════════════════════════════════════
+    -- Webview.app is the desktop-backend TEA entry. Declared via
+    -- Ffi.kernel in sky-stdlib/Std/Webview.sky; the
+    -- KernelStdlibCoverageSpec walks every Ffi.kernel name and
+    -- asserts a registry entry exists. (Tui_app / Cli_program /
+    -- Live_app don't appear here because they are kernel-only —
+    -- no sky-stdlib source — so the default Mod_Func fallback in
+    -- kernelToGo handles them transparently.)
+    , (("Webview", "app"),        KernelInfo "rt.Webview_app" 1 True)
+
+    -- ═══════════════════════════════════════════════════════
     -- Time
     -- ═══════════════════════════════════════════════════════
     -- Time.now / Time.unixMillis arity 1: kernel sig is
