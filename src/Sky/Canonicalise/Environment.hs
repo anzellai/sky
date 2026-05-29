@@ -404,6 +404,12 @@ staticKernelModules = Map.fromList
     -- See runtime-go/rt/tui.go.
     , ("Sky.Tui",              "Tui")
     , ("Std.Tui",              "Tui")
+    -- Sky.Webview — desktop UI backend. Same TEA shape as
+    -- Sky.Live + Sky.Tui (`view : Model -> Element msg`), but the
+    -- runtime drives a native webview window via `webview_go`'s
+    -- `Bind` / `Eval` bridge. See runtime-go/rt/webview.go.
+    , ("Sky.Webview",          "Webview")
+    , ("Std.Webview",          "Webview")
     , ("Sky.Core.Json.Encode", "JsonEnc")
     , ("Sky.Core.Json.Decode", "JsonDec")
     , ("Sky.Core.Json.Decode.Pipeline", "JsonDecP")
@@ -471,6 +477,7 @@ staticKernelModules = Map.fromList
     , ("Jobs",       "Jobs")
     , ("Cli",        "Cli")
     , ("Tui",        "Tui")
+    , ("Webview",    "Webview")
     , ("JsonEnc",    "JsonEnc")
     , ("JsonDec",    "JsonDec")
     , ("JsonDecP",   "JsonDecP")

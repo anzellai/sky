@@ -77,7 +77,8 @@ supported — use a `type alias` for any record you want in a signature.
    AskUserQuestion in Claude Code, structured prompts otherwise):
 
    - **Backend shape**: "Web app (Sky.Live)" / "Terminal UI (Sky.Tui)"
-     / "CLI (Sky.Cli)" / "HTTP API only".
+     / "Desktop app (Sky.Webview — macOS only in v0.1)" / "CLI (Sky.Cli)"
+     / "HTTP API only".
    - **Database**: "SQLite (local file)" / "PostgreSQL (deploy-ready)"
      / "None (pure compute)".
    - **Authentication**: "None" / "Std.Auth (built-in cookies + JWT)"
@@ -2503,6 +2504,39 @@ Limits of portability:
 - Where backends share: layout (row/column/grid/wrappedRow), text
   styling, borders, padding/spacing, inputs (text/checkbox/radio/
   slider), `onClick`/`onSubmit`/`onInput` events, focus management.
+
+## Sky.Webview — Native desktop TEA (v0.1 MVP, macOS only)
+
+Cross-backend mirror of `Live.app` + `Tui.app`. Opens a native
+system webview window (WKWebView on macOS) and reuses the
+Sky.Live HTML renderer + VNode diff so the same `view` function
+paints unchanged. Bridge is in-process `Bind` + `Eval` — no HTTP,
+no SSE, no session store.
+
+```elm
+import Std.Webview as Webview
+
+main =
+    Webview.app
+        { init = init
+        , update = update
+        , view = view                      -- view : Model -> Element msg
+        , subscriptions = subscriptions
+        , window = { title = "My App", size = ( 800, 600 ) }
+        }
+        |> Task.run
+```
+
+v0.1 is macOS only. Windows + Linux compile but smoke-validation
+lands in v0.2 (along with tray icons, alwaysOnTop, transparent,
+native file dialogs). Pick Sky.Webview for single-user desktop
+apps that need a packaged binary; Sky.Live for anything
+multi-tenant or with a public URL; Sky.Tui for headless / SSH /
+CI terminals.
+
+`WindowCfg = { title : String, size : (Int, Int) }` is a closed
+record in v0.1 — missing fields surface as clean Sky TYPE ERROR
+diagnostics. v0.2 will reopen the record for optional fields.
 
 ## Application Patterns — When to Use What
 

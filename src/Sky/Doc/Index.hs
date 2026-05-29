@@ -290,6 +290,7 @@ canonicaliseKernelModule m = case m of
     "Live"          -> "Std.Live"
     "Tui"           -> "Std.Tui"
     "Cli"           -> "Std.Cli"
+    "Webview"       -> "Std.Webview"
     "Auth"          -> "Std.Auth"
     "Db"            -> "Std.Db"
     -- Sky.Http.*
@@ -379,7 +380,7 @@ isStdlibModule m =
        || "Std." `List.isPrefixOf` n
        || n `elem` [ "Sky.Live", "Sky.Tui", "Sky.Cli", "Sky.Http"
                    , "Sky.Http.Server", "Sky.Http.RateLimit"
-                   , "Sky.Http.Middleware", "Sky.Test"
+                   , "Sky.Http.Middleware", "Sky.Test", "Sky.Webview"
                    , "Sky.Ffi", "Context", "Fmt", "System", "Log"
                    ]
 

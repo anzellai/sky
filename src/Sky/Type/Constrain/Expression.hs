@@ -2148,6 +2148,42 @@ lookupKernelType modName funcName = case (modName, funcName) of
                     (Just "appExt"))
                 (T.TType ModuleName.task "Task"
                     [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" [], T.TUnit]))
+    -- Webview.app: desktop UI backend. Required fields are the
+    -- same TEA quartet as Tui.app (init / update / view /
+    -- subscriptions) plus a closed window record. The window
+    -- record is closed in v0.1 for clean missing-field errors;
+    -- v0.2 will reopen it for optional fields (alwaysOnTop,
+    -- transparent, decorated). view returns Element-shaped
+    -- output (typed as `any` so user code is free to use either
+    -- Element or a Std.Html VNode wrapper, mirroring Tui.app).
+    ("Webview", "app") ->
+        Just $ T.Forall ["model", "msg", "appExt"]
+            (T.TLambda
+                (T.TRecord
+                    (Map.fromList
+                        [ ("init", T.FieldType 0
+                            (T.TLambda T.TUnit
+                                (T.TTuple (T.TVar "model") cmdTypeOfMsg [])))
+                        , ("update", T.FieldType 1
+                            (T.TLambda (T.TVar "msg")
+                                (T.TLambda (T.TVar "model")
+                                    (T.TTuple (T.TVar "model") cmdTypeOfMsg []))))
+                        , ("view", T.FieldType 2
+                            (T.TLambda (T.TVar "model") (T.TVar "any")))
+                        , ("subscriptions", T.FieldType 3
+                            (T.TLambda (T.TVar "model") subTypeOfMsg))
+                        , ("window", T.FieldType 4
+                            (T.TRecord
+                                (Map.fromList
+                                    [ ("title", T.FieldType 0 stringType)
+                                    , ("size", T.FieldType 1
+                                        (T.TTuple intType intType []))
+                                    ])
+                                Nothing))
+                        ])
+                    (Just "appExt"))
+                (T.TType ModuleName.task "Task"
+                    [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" [], T.TUnit]))
     -- Cli.program: line-oriented TEA. Required: init / update /
     -- view / subscriptions / onLine. view returns String (the
     -- prompt printed before each line read). onLine receives the

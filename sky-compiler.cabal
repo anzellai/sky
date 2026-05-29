@@ -282,6 +282,7 @@ test-suite sky-tests
       Sky.Build.PubSubPublishTaskSpec
       Sky.Build.PubSubPublishNoEchoSpec
       Sky.Build.ServerStreamSpec
+      Sky.Build.WebviewAppSpec
       Sky.Parse.MultiLineCaseSubjectSpec
       Sky.Parse.MultiLineCaseKeywordSpec
       Sky.Parse.MultiLineSignatureSpec
