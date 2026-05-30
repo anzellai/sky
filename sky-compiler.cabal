@@ -285,6 +285,7 @@ test-suite sky-tests
       Sky.Build.ServerStreamSpec
       Sky.Build.WebviewAppSpec
       Sky.Build.WebviewLoopbackAssetsSpec
+      Sky.Build.JsonPipelinePanic372Spec
       Sky.Parse.MultiLineCaseSubjectSpec
       Sky.Parse.MultiLineCaseKeywordSpec
       Sky.Parse.MultiLineSignatureSpec

@@ -1,0 +1,89 @@
+module Json.PipelinePanic372Test exposing (tests)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Json.Decode as Decode
+import Sky.Test as Test exposing (Test)
+
+-- Bug #372: user-defined Decoder pipeline panicked at the final
+-- accumulator stage when a multi-arg record ctor flowed through
+-- `Decode.succeed` and was unwrapped through `Decode.andThen` +
+-- `Decode.map` over a curried `\f -> map f innerDecoder`. The
+-- runtime's adaptFuncValue zero-padded the missing arg instead of
+-- currying, collapsing a `String -> a` to a fully-constructed
+-- record at the next stage.
+--
+-- Regression guard: build a Spec via two helper-chained stages and
+-- assert the round-trip values match.
+type alias Spec =
+    { a : String
+    , b : String
+    }
+
+
+orEmpty : String -> Decode.Decoder (String -> a) -> Decode.Decoder a
+orEmpty field next =
+    next
+        |> Decode.andThen
+               (\f ->
+                   Decode.oneOf
+                       [ Decode.field field Decode.string, Decode.succeed "" ]
+                       |> Decode.map f)
+
+
+specDecoder : Decode.Decoder Spec
+specDecoder =
+    Decode.succeed Spec |> orEmpty "a" |> orEmpty "b"
+
+type alias Triple =
+    { x : String
+    , y : String
+    , z : String
+    }
+
+
+tripleDecoder : Decode.Decoder Triple
+tripleDecoder =
+    Decode.succeed Triple |> orEmpty "x" |> orEmpty "y" |> orEmpty "z"
+
+
+tests : List Test
+tests =
+    [Test.suite
+        "Json pipeline panic #372"
+        [ Test.test
+              "two-field user-defined optional helper round-trips"
+              (\_ ->
+                  case Decode.decodeString
+                           specDecoder
+                           "{\"a\":\"x\",\"b\":\"y\"}" of
+
+                      Ok spec ->
+                          Test.equal "x|y" (spec.a ++ "|" ++ spec.b)
+
+                      Err _ ->
+                          Test.isTrue False)
+        , Test.test
+              "missing field falls back to empty string"
+              (\_ ->
+                  case Decode.decodeString specDecoder "{\"a\":\"only-a\"}" of
+
+                      Ok spec ->
+                          Test.equal "only-a|" (spec.a ++ "|" ++ spec.b)
+
+                      Err _ ->
+                          Test.isTrue False)
+        , Test.test
+              "three-field chain (curry depth 3) round-trips"
+              (\_ ->
+                  case Decode.decodeString
+                           tripleDecoder
+                           "{\"x\":\"1\",\"y\":\"2\",\"z\":\"3\"}" of
+
+                      Ok triple ->
+                          Test.equal
+                              "1|2|3"
+                              (triple.x ++ "|" ++ triple.y ++ "|" ++ triple.z)
+
+                      Err _ ->
+                          Test.isTrue False)
+        ]]

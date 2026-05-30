@@ -147,6 +147,34 @@ func adaptFuncValueWithCapture(skyFn reflect.Value, targetTy reflect.Type, captu
 			if outTy.Kind() == reflect.Func {
 				return []reflect.Value{adaptFuncValueWithCapture(skyFn, outTy, allArgs)}
 			}
+			// Bug #372: when the target's return is `any` (or any
+			// other interface) instead of another func, currying still
+			// applies — Sky semantics say all functions are curried,
+			// so a multi-arg Go function flowing into a Sky-typed
+			// `func(any) any` slot must partial-apply and return a
+			// closure waiting for the rest. The previous zero-padding
+			// branch below silently called skyFn with a Zero-valued
+			// remaining arg, producing wrong values (e.g. a 2-arg
+			// record ctor handed one String got `Ctor("x", "")`
+			// instead of a closure waiting for the second String).
+			// That collapsed accumulator types down a Decode.andThen
+			// chain, leaving a record where a function should be at
+			// the next stage — panic in the next Coerce[func(any) any].
+			//
+			// Mirrors curryRemainingArgs in skyCallOne; the boxed
+			// `func(any) any` closure dispatches through SkyCall on
+			// the next invocation and either calls skyFn (when all
+			// args supplied) or recurses.
+			if outTy.Kind() == reflect.Interface {
+				capturedAny := make([]any, len(allArgs))
+				for i, av := range allArgs {
+					if av.IsValid() {
+						capturedAny[i] = av.Interface()
+					}
+				}
+				closure := curryRemainingArgs(skyFn, capturedAny)
+				return []reflect.Value{reflect.ValueOf(closure)}
+			}
 		}
 		// Default behaviour: align argument count and invoke skyFn.
 		if nin != len(allArgs) && !skyTy.IsVariadic() {

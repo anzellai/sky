@@ -38,6 +38,7 @@ import qualified Sky.Build.PubSubPublishNoEchoSpec
 import qualified Sky.Build.ServerStreamSpec
 import qualified Sky.Build.WebviewAppSpec
 import qualified Sky.Build.WebviewLoopbackAssetsSpec
+import qualified Sky.Build.JsonPipelinePanic372Spec
 import qualified Sky.Parse.MultiLineCaseSubjectSpec
 import qualified Sky.Parse.MultiLineCaseKeywordSpec
 import qualified Sky.Parse.MultiLineSignatureSpec
@@ -247,6 +248,13 @@ main = hspec $ do
     -- SetHtml (no regression) when unset.
     describe "Sky.Build.WebviewLoopbackAssets"
         Sky.Build.WebviewLoopbackAssetsSpec.spec
+    -- Bug #372: user-defined Decoder pipeline (Decode.andThen +
+    -- Decode.map over a curried record ctor) panicked with
+    -- `rt.Coerce: expected func(interface {}) interface {}, got
+    -- Spec_R` at the final stage.  Runtime fix: adaptFuncValue now
+    -- currys instead of zero-pads when target's return is `any`.
+    describe "Sky.Build.JsonPipelinePanic372"
+        Sky.Build.JsonPipelinePanic372Spec.spec
     describe "Sky.Parse.MultiLineCaseSubject" Sky.Parse.MultiLineCaseSubjectSpec.spec
     describe "Sky.Parse.MultiLineCaseKeyword"
         Sky.Parse.MultiLineCaseKeywordSpec.spec
