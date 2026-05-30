@@ -65,12 +65,15 @@ func TestTime_CalendarAdd(t *testing.T) {
 	// 2026-01-31 00:00 UTC = 1769817600000
 	jan31 := int64(1769817600000)
 	added := invokeTime(t, "Time_addMonths", 1, int(jan31))
-	addedMs, ok := added.(int64)
+	// Int-declared Time kernels box a Go int (canonical Sky Int → Go int).
+	// See kernel_return_width_test.go for the contract — int64 would
+	// break the typed SkyResult / SkyTask boundary via coerceInner.
+	addedMs, ok := added.(int)
 	if !ok {
-		t.Fatalf("addMonths returned %T", added)
+		t.Fatalf("addMonths returned %T, want int", added)
 	}
 	// Should be 2026-02-28 (not 2026-03-03).
-	zone := invokeTime(t, "Time_formatInZone", "UTC", "2006-01-02", int(addedMs))
+	zone := invokeTime(t, "Time_formatInZone", "UTC", "2006-01-02", addedMs)
 	s := zone.(SkyResult[any, any]).OkValue.(string)
 	if s != "2026-02-28" {
 		t.Errorf("Jan 31 + 1 month: want 2026-02-28 got %q", s)
@@ -85,9 +88,14 @@ func TestTime_StartOfDay(t *testing.T) {
 	if sr.Tag != 0 {
 		t.Fatalf("startOfDay failed: %v", sr.ErrValue)
 	}
-	startMs := sr.OkValue.(int64)
+	// Int-declared Time kernels box a Go int — see TestTime_CalendarAdd
+	// note + kernel_return_width_test.go for the contract.
+	startMs, ok := sr.OkValue.(int)
+	if !ok {
+		t.Fatalf("startOfDay returned %T, want int", sr.OkValue)
+	}
 	// Format the result back as NYC date — should be 2026-04-12 00:00
-	f := invokeTime(t, "Time_formatInZone", "America/New_York", "2006-01-02 15:04", int(startMs))
+	f := invokeTime(t, "Time_formatInZone", "America/New_York", "2006-01-02 15:04", startMs)
 	if got := f.(SkyResult[any, any]).OkValue.(string); got != "2026-04-12 00:00" {
 		t.Errorf("startOfDay NYC: want '2026-04-12 00:00' got %q", got)
 	}
@@ -95,9 +103,12 @@ func TestTime_StartOfDay(t *testing.T) {
 
 func TestTime_EndOfMonth(t *testing.T) {
 	r := invokeTime(t, "Time_endOfMonth", "UTC", refTs)
-	endMs := r.(SkyResult[any, any]).OkValue.(int64)
+	endMs, ok := r.(SkyResult[any, any]).OkValue.(int)
+	if !ok {
+		t.Fatalf("endOfMonth returned %T, want int", r.(SkyResult[any, any]).OkValue)
+	}
 	// April 2026 has 30 days. End-of-month-UTC = 2026-04-30 23:59:59.999
-	f := invokeTime(t, "Time_formatInZone", "UTC", "2006-01-02 15:04:05", int(endMs))
+	f := invokeTime(t, "Time_formatInZone", "UTC", "2006-01-02 15:04:05", endMs)
 	if got := f.(SkyResult[any, any]).OkValue.(string); got != "2026-04-30 23:59:59" {
 		t.Errorf("endOfMonth UTC: want '2026-04-30 23:59:59' got %q", got)
 	}
@@ -159,8 +170,12 @@ func TestTime_FromParts(t *testing.T) {
 		t.Fatalf("fromParts failed: %v", sr.ErrValue)
 	}
 	// Format back — should round-trip cleanly.
-	ms := sr.OkValue.(int64)
-	f := invokeTime(t, "Time_formatInZone", "America/New_York", "2006-01-02 15:04", int(ms))
+	// Int-declared Time kernels box a Go int — see kernel_return_width_test.go.
+	ms, ok := sr.OkValue.(int)
+	if !ok {
+		t.Fatalf("fromParts returned %T, want int", sr.OkValue)
+	}
+	f := invokeTime(t, "Time_formatInZone", "America/New_York", "2006-01-02 15:04", ms)
 	if got := f.(SkyResult[any, any]).OkValue.(string); got != "2026-04-12 12:00" {
 		t.Errorf("fromParts round-trip: want '2026-04-12 12:00' got %q", got)
 	}
