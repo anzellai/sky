@@ -358,22 +358,11 @@ func orDefault(v, def string) string {
 //
 // `isServerless` is the runtime mode flag (caller passes
 // rt.IsServerless() from the parent package — avoids a cycle).
-// isProductionEnv mirrors the runtime's production gate (ENV then
-// SKY_ENV; unset / dev / development / local → dev). Re-implemented
-// here because the telemetry package must not import rt.
-func isProductionEnv() bool {
-	v := os.Getenv("ENV")
-	if v == "" {
-		v = os.Getenv("SKY_ENV")
-	}
-	switch v {
-	case "", "dev", "development", "local":
-		return false
-	default:
-		return true
-	}
-}
-
+// Defaults match the canonical ServerlessTraceSampleRate() helper
+// in rt/serverless.go: VM mode → 1%, serverless → 100%. The
+// production-gate (ENV / SKY_ENV) does NOT influence the default;
+// callers raise to 100% locally with OTEL_TRACES_SAMPLER_ARG=1.0
+// for debugging.
 func LoadTracerConfigFromEnv(isServerless bool) TracerConfig {
 	endpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
 	cfg := TracerConfig{
@@ -393,19 +382,19 @@ func LoadTracerConfigFromEnv(isServerless bool) TracerConfig {
 	}
 	if cfg.SampleRate == 0 {
 		// observability-design.md sane defaults:
-		//   dev          → 100% (local debugging; the in-process
-		//                  ring is bounded anyway)
 		//   serverless   → 100% (each invocation is one short-lived
-		//                  trace; head-sampling buys nothing)
-		//   production   → 5% interim. Phase 5 replaces this with a
-		//                  rate-limited head sampler (50 traces/s +
-		//                  always-keep errors/slow) so cost is
-		//                  bounded without the dev computing a %.
-		switch {
-		case isServerless, !isProductionEnv():
+		//                  trace; head-sampling buys nothing — the
+		//                  platform already prices per request)
+		//   VM (always-on) → 1% (collector load is proportional to
+		//                  always-on traffic; 100% would flood). Same
+		//                  rate as ServerlessTraceSampleRate() in the
+		//                  serverless.go canonical helper. Callers
+		//                  raise to 100% locally with
+		//                  OTEL_TRACES_SAMPLER_ARG=1.0 for debugging.
+		if isServerless {
 			cfg.SampleRate = 1.0
-		default:
-			cfg.SampleRate = 0.05
+		} else {
+			cfg.SampleRate = 0.01
 		}
 	}
 	return cfg
