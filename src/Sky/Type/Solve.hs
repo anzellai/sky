@@ -18,9 +18,14 @@ module Sky.Type.Solve
     , SolvedTypes(..)
     , emptySolvedTypes               -- v0.15.x P37a
     , lookupSolvedVar                -- v0.15.x P37a
+    , lookupSolvedVarScoped          -- v0.15.6 #365 — per-module env lookup
     , lookupSolvedRegion             -- v0.15.x P37a
+    , lookupSolvedRegionScoped       -- v0.15.6 #365 — per-module region lookup
     , insertSolvedVar                -- v0.15.x P37a
     , unionSolvedEnv                 -- v0.15.x P37a
+    , withCurrentModule              -- v0.15.6 #365 — install per-dep module hint
+    , withPerModuleRegions           -- v0.15.6 #365 — install per-module region maps
+    , withPerModuleEnv               -- v0.15.6 #365 — install per-module env maps
     , RegionTypes                    -- v0.15 Stage A
     , CallInstance(..)
     , CallSiteInstance(..)
@@ -100,6 +105,47 @@ data SolvedTypes = SolvedTypes
         -- `solveWithInstancesAndRegions`) so the SolvedTypes value
         -- always carries the full pure snapshot.  P37b consumes
         -- this to make `letBindingType`'s region lookup pure.
+    , _stPerModuleEnv :: !(Map.Map String (Map.Map String T.Type))
+        -- ^ v0.15.6 #365 — per-module env maps, keyed by the
+        -- module's dotted name (e.g. "Lib.A").  Populated at the
+        -- merge site in `Compile.hs` from each dep's own `_stEnv`
+        -- snapshot, PLUS the entry module's own.  Closes the
+        -- cross-module let-binding name collision class: when
+        -- `Lib.A` has `let encodeOne x = ...` with two different
+        -- signatures across `asJson` / `otherAsJson` AND `Lib.B`
+        -- also has its own `encodeOne`, the flat `_stEnv`
+        -- collapses all three via the `resolveKey` ambiguity
+        -- collapse and picks the surviving non-ambig
+        -- (`Lib.B`'s) — which then types every `encodeOne` in
+        -- every module against `Lib.B`'s record alias.  The
+        -- per-module ledger preserves each module's actual
+        -- (possibly `_ambig`) entry.  Consumers
+        -- (`Can.Def name params body` arm in `defToStmts`) consult
+        -- this via `lookupSolvedVarScoped` when a
+        -- `_stCurrentModule` hint is installed.
+    , _stPerModuleRegions :: !(Map.Map String RegionTypes)
+        -- ^ v0.15.6 #365 — per-module region maps, keyed by the
+        -- module's dotted name (e.g. "Lib.A").  Populated at the
+        -- merge site in `Compile.hs` from each dep's own
+        -- `RegionTypes` snapshot, PLUS the entry module's own
+        -- snapshot under its own canonical name.  Closes the
+        -- cross-module same-region collision bug: when `Lib.A`
+        -- and `Lib.B` both have a `let encodeOne x = ...` at the
+        -- same `(line, col)`, the flat `_stRegions` `Map.unions`
+        -- loses the loser; the per-module map preserves both.
+        -- Consumers (`letBindingType`, `inferExprType` `Can.Lambda`)
+        -- consult this via `lookupSolvedRegionScoped` when a
+        -- `_stCurrentModule` hint is installed.
+    , _stCurrentModule :: !(Maybe String)
+        -- ^ v0.15.6 #365 — which module's body is currently being
+        -- lowered.  Installed by `Compile.generateDeclsForDep`'s
+        -- scoped wrapper around each dep's emission; left
+        -- `Nothing` for entry-module decls (entry uses the merged
+        -- flat `_stRegions` which contains its own regions).  The
+        -- region lookup helpers consult the per-module map first
+        -- when this hint is set, falling back to the flat map for
+        -- entries that didn't make it into the per-module ledger
+        -- (e.g. synthetic regions from monomorphisation).
     }
     deriving (Eq, Show)
 
@@ -108,13 +154,38 @@ data SolvedTypes = SolvedTypes
 -- errored before producing a usable map AND in tests that need a
 -- placeholder.
 emptySolvedTypes :: SolvedTypes
-emptySolvedTypes = SolvedTypes Map.empty Map.empty
+emptySolvedTypes = SolvedTypes Map.empty Map.empty Map.empty Map.empty Nothing
 
 
 -- | Look up a top-level / let-bound name's HM-resolved type.
 -- Convenience for the common `Map.lookup name (_stEnv st)` idiom.
 lookupSolvedVar :: String -> SolvedTypes -> Maybe T.Type
 lookupSolvedVar n = Map.lookup n . _stEnv
+
+
+-- | v0.15.6 #365 — module-aware env lookup.
+--
+-- When `_stCurrentModule` is set, consults the per-module env
+-- map for that module FIRST and only falls back to the flat
+-- `_stEnv` if the per-module map has no entry for the name.
+-- The fallback is critical for cross-module top-level value
+-- references (e.g. `Std.Db.connect` resolved from any module).
+--
+-- Closes the cross-module let-bound name collision class: when
+-- multiple modules' `let encodeOne x = ...` would otherwise
+-- collide in the flat `_stEnv`'s `mergedEnv` build step, the
+-- per-module ledger preserves each module's own entry.
+lookupSolvedVarScoped :: String -> SolvedTypes -> Maybe T.Type
+lookupSolvedVarScoped name solvedTypes =
+    case _stCurrentModule solvedTypes of
+        Just modName ->
+            case Map.lookup modName (_stPerModuleEnv solvedTypes) of
+                Just modEnv ->
+                    case Map.lookup name modEnv of
+                        Just t  -> Just t
+                        Nothing -> Map.lookup name (_stEnv solvedTypes)
+                Nothing -> Map.lookup name (_stEnv solvedTypes)
+        Nothing -> Map.lookup name (_stEnv solvedTypes)
 
 
 -- | Look up the HM type recorded at a given source region.
@@ -124,6 +195,59 @@ lookupSolvedVar n = Map.lookup n . _stEnv
 -- IORef-backed path.
 lookupSolvedRegion :: A.Region -> SolvedTypes -> Maybe T.Type
 lookupSolvedRegion r = Map.lookup r . _stRegions
+
+
+-- | v0.15.6 #365 — module-aware region lookup.
+--
+-- When `_stCurrentModule` is set, consults the per-module region
+-- map for that module FIRST and only falls back to the flat
+-- `_stRegions` if the per-module map has no entry for the region.
+-- Closes the cross-module same-position collision class: two
+-- modules' `let encodeOne x = …` lambdas both at line 10 col 5
+-- previously collided in the flat `_stRegions` `Map.unions` merge
+-- (last-write-wins); now each module's region map is preserved
+-- and the lookup picks the right one based on the installed hint.
+--
+-- When no hint is installed (`_stCurrentModule = Nothing`),
+-- behaves identically to `lookupSolvedRegion` — used by the
+-- entry-module emission path and by callers that don't yet know
+-- the lowering module (e.g. LSP hover diagnostics on the entry
+-- file).
+lookupSolvedRegionScoped :: A.Region -> SolvedTypes -> Maybe T.Type
+lookupSolvedRegionScoped r solvedTypes =
+    case _stCurrentModule solvedTypes of
+        Just modName ->
+            case Map.lookup modName (_stPerModuleRegions solvedTypes) of
+                Just modRegions ->
+                    case Map.lookup r modRegions of
+                        Just t  -> Just t
+                        Nothing -> Map.lookup r (_stRegions solvedTypes)
+                Nothing -> Map.lookup r (_stRegions solvedTypes)
+        Nothing -> Map.lookup r (_stRegions solvedTypes)
+
+
+-- | v0.15.6 #365 — install the current-module hint for a scoped
+-- lowering pass.  Returns a NEW `SolvedTypes` value (no mutation).
+-- Used at the dep-emission boundary in `Compile.generateGoMulti`
+-- so the dep's let-body region lookups consult its own region
+-- map instead of the merged-and-collided flat map.
+withCurrentModule :: Maybe String -> SolvedTypes -> SolvedTypes
+withCurrentModule mModName st = st { _stCurrentModule = mModName }
+
+
+-- | v0.15.6 #365 — install the per-module region map ledger.
+-- Used once at the merge site to wire each dep's own region map
+-- (plus the entry module's) into the `SolvedTypes` value handed
+-- to `generateGoMulti`.
+withPerModuleRegions :: Map.Map String RegionTypes -> SolvedTypes -> SolvedTypes
+withPerModuleRegions ledger st = st { _stPerModuleRegions = ledger }
+
+
+-- | v0.15.6 #365 — install the per-module env map ledger.
+-- Mirror of `withPerModuleRegions` for the env (name → type)
+-- maps.  Used once at the merge site in `Compile.hs`.
+withPerModuleEnv :: Map.Map String (Map.Map String T.Type) -> SolvedTypes -> SolvedTypes
+withPerModuleEnv ledger st = st { _stPerModuleEnv = ledger }
 
 
 -- | Insert a binding into the env map, leaving the region map
@@ -480,7 +604,7 @@ solve constraint = do
             -- a complete SolvedTypes even though they don't yet
             -- consume the regions field.
             regionTys <- freezeRegionTypes (_regionVars finalState)
-            return (SolveOk (SolvedTypes merged regionTys))
+            return (SolveOk (SolvedTypes merged regionTys Map.empty Map.empty Nothing))
         Just err -> return (SolveError err)
 
 
@@ -507,7 +631,7 @@ solveWithLocals constraint = do
             envTypes <- readSolvedTypes (_env finalState)
             -- v0.15.x P37a — same freeze pattern as `solve` above.
             regionTys <- freezeRegionTypes (_regionVars finalState)
-            return (SolveOk (SolvedTypes envTypes regionTys), localTypes)
+            return (SolveOk (SolvedTypes envTypes regionTys Map.empty Map.empty Nothing), localTypes)
         Just err ->
             return (SolveError err, localTypes)
 
@@ -582,7 +706,7 @@ solveWithInstancesAndRegions constraint = do
             -- fourth tuple slot (`regionTys`) stays for backward
             -- compatibility — `Compile.hs` still threads it into
             -- `scopeStateRef._lc_regionTypes` directly today.
-            return (SolveOk (SolvedTypes merged regionTys), ci, csi, regionTys)
+            return (SolveOk (SolvedTypes merged regionTys Map.empty Map.empty Nothing), ci, csi, regionTys)
         Just err -> do
             -- v0.13 Phase A4: even on error, return whatever
             -- call-site instances were captured BEFORE the error

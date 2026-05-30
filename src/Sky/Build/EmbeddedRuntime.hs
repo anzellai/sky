@@ -42,6 +42,7 @@
 -- re-embed marker: 2026-05-29d — sky build: force cgo-on first attempt when emitted main.go calls rt.Webview_app (the static-first build picked up webview_stub.go and shipped a silent-exit binary)
 -- re-embed marker: 2026-05-29e — reservedGoNames: extend with predeclared types + constants + Go 1.21+ builtins (defense-in-depth; audit of examples/*/sky-out/main.go shows zero existing collisions — module prefix was already insulating top-level bindings, this hardens locals + parameters)
 -- re-embed marker: 2026-05-29f — Sky.Core.Math: full Go math.* parity (#366) — inverse trig (asin/acos/atan/atan2), hyperbolic (sinh/cosh/tanh + inverse), exp/log family (exp/exp2/log2/log10), roots + utilities (cbrt/hypot/trunc/mod/remainder), constants (phi/sqrt2/inf/nan); +23 functions across stdlib + Kernel.hs registry + rt.go kernels
+-- re-embed marker: 2026-05-30c-approach-C — fix(#365): cross-module local lambda collision — Approach C LowerCtx cascade scoped to the #365 reader path. SolvedTypes gains _stPerModuleEnv + _stCurrentModule (+ _stPerModuleRegions for safety); generateDeclsForDepScoped wraps each dep's emission in a per-module scope (eager render + IORef force-restore); lookupSolvedVarScoped consults the per-module env first under that hint.  The defToStmts let-bound-name reader path now reads via an explicit unsafePerformIO IORef read (works around the CAF leak in getCgEnv that was sharing the first-evaluated solvedTypes across all dep emissions).
 module Sky.Build.EmbeddedRuntime
     ( embeddedRuntime
     , embeddedSkyStdlib

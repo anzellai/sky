@@ -64,6 +64,7 @@ import qualified Sky.Build.LetBodyCascadeResumeSpec
 import qualified Sky.Build.SnapshotCallerCtxSpec
 import qualified Sky.Build.SkyshopCompilesSpec
 import qualified Sky.Build.AnonLambdaSpec
+import qualified Sky.Build.CrossModuleLambdaCollisionC_Spec
 import qualified Sky.Build.AnonRecordSpec
 import qualified Sky.Build.AuthUntypedBoundarySpec
 import qualified Sky.Build.Issue52Spec
@@ -404,6 +405,8 @@ main = hspec $ do
     -- defined HOF slots lower to typed `func(X) Y` shapes via
     -- curryLambdaPatTyped (was only kernel HOFs pre-v0.13).
     describe "Sky.Build.AnonLambda"         Sky.Build.AnonLambdaSpec.spec
+    -- v0.15.6 #365 — cross-module local lambda collision.
+    describe "Sky.Build.CrossModuleLambdaCollisionC" Sky.Build.CrossModuleLambdaCollisionC_Spec.spec
     -- v0.13 E regression: synthAnonRecordName registers shapes
     -- into globalAnonRecords; generateAnonRecordDecls emits
     -- `type Anon_R_<hash> = struct{...}` so the typed Go name

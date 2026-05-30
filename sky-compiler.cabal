@@ -313,6 +313,7 @@ test-suite sky-tests
       Sky.Build.SnapshotCallerCtxSpec
       Sky.Build.SkyshopCompilesSpec
       Sky.Build.AnonLambdaSpec
+      Sky.Build.CrossModuleLambdaCollisionC_Spec
       Sky.Build.AnonRecordSpec
       Sky.Build.AuthUntypedBoundarySpec
       Sky.Build.Issue52Spec

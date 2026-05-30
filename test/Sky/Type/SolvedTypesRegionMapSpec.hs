@@ -81,6 +81,9 @@ spec = do
             let st0 = Solve.SolvedTypes
                         Map.empty
                         (Map.singleton (mkRegion 5 5) tyInt)
+                        Map.empty
+                        Map.empty
+                        Nothing
                 st1 = Solve.insertSolvedVar "x" tyString st0
             Solve.lookupSolvedVar "x" st1 `shouldBe` Just tyString
             -- Region map preserved bit-for-bit.
@@ -90,6 +93,9 @@ spec = do
             let st0 = Solve.SolvedTypes
                         (Map.fromList [("a", tyInt), ("b", tyString)])
                         Map.empty
+                        Map.empty
+                        Map.empty
+                        Nothing
                 additions = Map.fromList [("b", tyBool), ("c", tyInt)]
                 st1 = Solve.unionSolvedEnv additions st0
             Solve.lookupSolvedVar "a" st1 `shouldBe` Just tyInt
