@@ -150,7 +150,45 @@ The user has the right to interrupt with "ship this without
 fixing X" — only that explicit override allows shipping with a
 known unfixed issue. Default is fix-first.
 
-### 5. Core principles
+### 5. SkyDeploy redeploy follows every Sky release
+
+Every Sky compiler / stdlib release that's been tagged (`vX.Y.Z`)
+MUST be paired with a SkyDeploy redeploy of the matching version:
+
+```bash
+cd ~/works/playground/skydeploy
+# 1. Bump SKY_VERSION in all 5 refs:
+#    - sky-tools/Dockerfile
+#    - deploy/Dockerfile
+#    - agent-service/Dockerfile
+#    - build-image/Dockerfile
+#    - control-plane/deploy/setup-remote.sh
+# 2. Commit + push origin main.
+# 3. Bounded redeploy:
+timeout 1200 bash control-plane/deploy/deploy.sh
+```
+
+**Graceful degradation on auth failure.** If `gcloud` auth has
+expired (token revoked, refresh needed, SSO challenge required)
+or any other deploy-side blocker fires, do NOT retry indefinitely:
+
+1. Detect via the bounded `timeout`'s exit code OR `gcloud auth`
+   complaints in stderr.
+2. **Park the redeploy.** The bump commit on skydeploy `main` is
+   already pushed — that's the durable artifact.
+3. **Warn the user explicitly**: "SkyDeploy redeploy parked due to
+   `<reason>` — please `gcloud auth login` and re-run
+   `control-plane/deploy/deploy.sh` when convenient. Sky compiler
+   work continuing." Include the exact gcloud command they need.
+4. **Continue Sky compiler/stdlib work** without blocking on the
+   deploy.
+
+The deploy is downstream consumption of the release; the release
+itself is the authoritative artifact (tag + GitHub release). Sky's
+flow does not block on operational state outside the compiler
+repo.
+
+### 6. Core principles
 
 1. **If it compiles, it works.** Every known runtime panic class
    has a regression test in `runtime-go/rt/*_test.go` or
@@ -168,7 +206,7 @@ known unfixed issue. Default is fix-first.
    Each is reviewed for security + scalability — UI/UX/DX/security
    are not afterthoughts.
 
-### 6. Non-regression rules (enforced by `cabal test`)
+### 7. Non-regression rules (enforced by `cabal test`)
 
 - **No `Result String a` / `Task String a`** in public surfaces.
   Use `Result Error a` / `Task Error a`.
@@ -192,7 +230,7 @@ known unfixed issue. Default is fix-first.
   `refsInExpr` / `collectSemTokens` / `collectReferences`. Don't
   rely on `_ -> []` catchalls.
 
-### 7. Testing rules
+### 8. Testing rules
 
 - **Every new feature / bug becomes a regression test** before the
   fix lands. The failing test is the discovery artefact.
