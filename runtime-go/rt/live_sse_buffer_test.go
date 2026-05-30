@@ -281,19 +281,49 @@ func TestSetupSubscriptions_TickDropIncrementsCounter(t *testing.T) {
 		model:     "initial",
 		sid:       sid,
 	}
-	// Baseline so subscriptions can establish a starting prevTree /
-	// lastComputedBody / lastShippedBody.
+	// Bug #339: hold sess.mu across the entire setup sequence —
+	// bootstrap dispatch + lastShippedBody seed + channel
+	// saturation — so it lands as one atomic step before the
+	// spawned Time.every goroutine ever takes sess.mu for its
+	// first tick. Production callers (handleEvent /
+	// dispatchBatched) follow the same discipline: they hold
+	// sess.mu around every dispatch invocation. Without it, the
+	// test's bare writes to sess.lastShippedBody race the tick
+	// goroutine's reads (both happen while the goroutine is
+	// alive). The cancelSubMu added to liveSession in this fix
+	// only guards the cancelSub field; sess.mu is still the
+	// per-session view-state lock.
+	sess.mu.Lock()
 	body := app.dispatch(sess, "bootstrap")
 	sess.lastShippedBody = body
+	// Saturate the channel; never drain. Done inside the crit
+	// section so the tick goroutine can't observe an
+	// already-saturated channel until the test is ready to assert
+	// the drop.
+	sess.sseCh <- sseFrame{event: "patch", data: "<sentinel>"}
+	sess.mu.Unlock()
+
+	// Bug #339: teardown is via the terminal `done` channel ONLY —
+	// the tick goroutine selects on both `cancel` (per-subscription)
+	// and `done` (session-wide terminal), so closing `done` is
+	// sufficient to wind it down. Closing `sess.cancelSub` from
+	// here would read the field unsynchronised with the in-flight
+	// setupSubscriptions running on the tick goroutine (which
+	// rewrites cancelSub via close+make every dispatch), and the
+	// race detector would flag the unsynchronised read + double
+	// close. doneOnce guards the close so a duplicate close from a
+	// future cleanup tweak is harmless.
 	t.Cleanup(func() {
-		close(sess.cancelSub)
-		close(sess.done)
+		sess.doneOnce.Do(func() { close(sess.done) })
 	})
 
-	// Saturate the channel; never drain.
-	sess.sseCh <- sseFrame{event: "patch", data: "<sentinel>"}
-
-	app.setupSubscriptions(sess)
+	// Bug #339: the bootstrap dispatch above already invoked
+	// setupSubscriptions internally (every dispatch ends with one,
+	// see live.go), so the Time.every tick goroutine is already
+	// alive. A second direct call would race the tick-driven
+	// dispatch on sess.model + sess.activeSubs without holding
+	// sess.mu. The pre-fix test had a redundant explicit call here
+	// that introduced the race surfaced by `go test -race`.
 	// Wait long enough for several ticks to fire — even a single
 	// dropped tick is enough; sleeping longer just makes the assertion
 	// robust against scheduler hiccups.

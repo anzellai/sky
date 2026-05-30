@@ -1439,7 +1439,20 @@ type liveSession struct {
 	// first); see also the session-wide `done` field which signals
 	// TERMINAL teardown (TTL eviction / Delete) regardless of how
 	// many setupSubscriptions cycles have run.
-	cancelSub chan struct{}
+	//
+	// Bug #339: the close-then-reassign pair MUST be serialised so
+	// concurrent setupSubscriptions callers (test fixtures that don't
+	// hold sess.mu, or any future code path that fires from a
+	// non-dispatch goroutine) can't double-close the channel. In
+	// production all setupSubscriptions paths fan through
+	// dispatch-under-sess.mu, but enforcing the invariant on the
+	// field itself with a dedicated mutex makes the contract
+	// crash-safe regardless of caller discipline. The mutex is also
+	// taken by markDone before closing `done`, so a terminal
+	// teardown can't race with an in-flight setupSubscriptions
+	// midway through the (close, reassign) pair.
+	cancelSub   chan struct{}
+	cancelSubMu sync.Mutex
 
 	// Terminal teardown signal — closed exactly once when the session
 	// is evicted from its Store (Delete or TTL cleanup). Any goroutine
@@ -3648,8 +3661,19 @@ func flattenSubs(s any, out []subT) []subT {
 func (app *liveApp) setupSubscriptions(sess *liveSession) {
 	// Cancel existing ticker (Time.every always rebuilds; pub/sub
 	// uses its own per-topic cancels stored in sess.activeSubs).
+	//
+	// Bug #339: serialise the close-then-reassign under
+	// cancelSubMu so two concurrent callers can't both observe the
+	// same `sess.cancelSub` pointer and double-close it. In
+	// production the outer dispatch sites hold sess.mu so they
+	// already serialise, but test fixtures and any future
+	// non-dispatch caller need the contract enforced on the field
+	// itself. The crit-section is tiny (one close, one make) so
+	// contention is negligible even under tight Time.every ticks.
+	sess.cancelSubMu.Lock()
 	close(sess.cancelSub)
 	sess.cancelSub = make(chan struct{})
+	sess.cancelSubMu.Unlock()
 
 	if app.subscriptions == nil {
 		// No subscriptions at all → tear down anything that was
@@ -3701,7 +3725,15 @@ func (app *liveApp) setupSubscriptions(sess *liveSession) {
 	if interval <= 0 {
 		return
 	}
+	// Bug #339: read sess.cancelSub under the same mutex that
+	// guards its mutation. Without this the race detector flags a
+	// read/write race between this snapshot and a concurrent
+	// setupSubscriptions's close+reassign. The captured `cancel`
+	// is local to the goroutine for the rest of its lifetime, so
+	// the lock can be released immediately after the load.
+	sess.cancelSubMu.Lock()
 	cancel := sess.cancelSub
+	sess.cancelSubMu.Unlock()
 	// Cycle 3 P36 / Gap C4: also listen on the session-wide terminal
 	// `done` channel so the Tick goroutine exits when the session is
 	// evicted from its Store. `cancelSub` alone is insufficient
