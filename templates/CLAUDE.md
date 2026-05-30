@@ -333,6 +333,25 @@ Special-cased outside this set: `main` (program entry → Go's `func main()`).
 The Sky parser rejects `if`/`else`/`nil` as identifiers before they reach
 codegen.
 
+**12. Every long-running command MUST be timeout-bounded.** Tests,
+builds, sweeps, even smoke runs of `sky-out/app`. A hung subprocess
+without a timeout will silently steal hours. `cabal test` runs under
+`timeout 3600` (60 min ceiling); per-spec subprocess calls wrap children
+in `timeout 60`; `scripts/example-sweep.sh` already enforces
+`run_with_timeout 10` per example; never `wait $PID` unbounded — kill
+after a finite ceiling. If a test legitimately needs more than 60 min,
+that's a flaky test — bisect, don't widen.
+
+**13. No "pre-existing" dismissal — every bug enters the pipeline.**
+When you spot a test failure / sweep failure / runtime panic / log
+error during dev or CI — **whether your work introduced it or it's
+older than your branch** — file a task immediately. The phrases
+"pre-existing flake", "defer to v0.X", "known issue, ignore" are
+forbidden as shipping excuses. Workarounds in CLAUDE.md are a
+temporary bridge while the actual fix is in flight, not a permanent
+resolution. Only an explicit user override allows shipping with a
+known unfixed issue.
+
 ---
 
 ## Common Pitfalls & Fixes
@@ -4074,19 +4093,9 @@ records the per-version closures if you want history.
 - **Zero-arg `Css.*` constants DO need `()`** — `Css.zero ()`, `Css.auto ()`, `Css.none ()`, `Css.transparent ()`, `Css.inherit ()`, `Css.initial ()`, `Css.borderBox ()`, `Css.systemFont ()`, `Css.monoFont ()`, `Css.userSelectNone ()`. Bare form is now a clean type error (no longer the silent function-pointer leak it used to be), but the `()` is still required. Pattern: any `Css.X` that names a literal CSS keyword takes `()`; value constructors like `px`, `rem`, `em`, `hex`, `rgba` take their arguments directly.
 - **Non-tail-recursive list operations are O(N) on Go stack** — `map`, `filter`, `foldr`, `length`, `concat`, `concatMap`, `take`, `append`, `range`, `zip`, `indexedMap`, `Maybe.combine`, `Result.combine` recurse. Tail-recursive operations (`foldl`, `find`, `any`, `all`, `member`, `drop`) are auto-TCO'd to constant stack. For very large lists (200k+ elements) prefer the tail-recursive accumulator pattern.
 - **Multi-line function signatures with continuation INSIDE the type body** — `name\n    : T` (the `:` on a continuation line) parses cleanly. Continuation INSIDE the type body (`T1\n    -> T2`) is not supported — extract a `type alias` for the whole arrow type.
-- **Same-named local lambdas across modules → `reflect: Call using X as type Y` panic** (deferred to v0.15.6). When 3+ same-named let-bound lambdas (`let encodeOne x = …`) exist across modules and each is passed to a polymorphic combinator (`List.map`, `Result.map`, etc.), ALL get typed against the LAST-processed module's element type → runtime panic in `reflect.Value.Call`. **Workaround**: hoist the encoder to a top-level def with an explicit type annotation; top-level defs alpha-rename per call site and aren't subject to the region-snapshot collision:
-
-```elm
-encodeItemA : ItemA -> String              -- ✓ top-level + annotated
-encodeItemA i = "..."
-
-asJson : () -> String
-asJson _ = String.join "," (List.map encodeItemA items)
-```
-
-  Brittle alternative: rename locals to unique names across modules (`encodeItemA` / `encodeItemB`). 2-encoder cases happen to render correctly; 3+ same-named locals is the reliable trigger.
-
 ### Closed in v0.15 (for grep)
+
+- ~~Same-named local lambdas across modules → `reflect: Call using X as type Y` panic~~ — closed in v0.15.30 via the scoped LowerCtx cascade (per-module env ledger in `Solve.SolvedTypes`, consulted at every reader site).
 
 - ~~Let bindings with parameters after multi-line case~~ — `let mark j = …` after a `case … of` arm now parses cleanly.
 - ~~Zero-arity functions reading env vars memoised at init()~~ — `apiKey = System.getenvOr "K" "def"` now reads the runtime environment.

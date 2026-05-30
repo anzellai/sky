@@ -1,3 +1,5 @@
+{-# LANGUAGE NumericUnderscores #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 module Sky.Cli.WatchSpec (spec) where
 
 -- Regression tests for `sky watch`. The watch command spawns a child
@@ -27,6 +29,10 @@ import Test.Hspec
 import Control.Concurrent (threadDelay)
 import qualified Control.Exception as E
 import Data.List (isInfixOf)
+import qualified System.Timeout as Timeout
+import System.Posix.Signals (signalProcess, sigKILL)
+import System.Process.Internals
+    ( ProcessHandle__(..), withProcessHandle )
 import System.Directory (getCurrentDirectory, doesFileExist, createDirectoryIfMissing)
 import System.FilePath ((</>))
 import System.IO.Temp (withSystemTempDirectory)
@@ -104,11 +110,25 @@ spawnWatch sky dir logPath = do
 -- TerminateProcess (Windows); the watch's clean-exit path catches it
 -- as UserInterrupt async exception, kills its own child if any, and
 -- returns from runWatch. waitForProcess reaps the zombie.
+-- #368 — bounded process teardown. Earlier this called `waitForProcess`
+-- without a timeout, and on a wedged child the spec hung forever (we
+-- once waited 7 hours before noticing). Two-stage escalation:
+--   1. SIGTERM, wait up to 5 s.
+--   2. If still alive: SIGKILL, wait up to 3 s (POSIX) — the kernel
+--      will reap regardless.
 killWatch :: ProcessHandle -> IO ()
 killWatch ph = do
     terminateProcess ph
-    _ <- waitForProcess ph
-    pure ()
+    mTerm <- Timeout.timeout 5_000_000 (waitForProcess ph)
+    case mTerm of
+        Just _  -> pure ()
+        Nothing -> do
+            -- SIGTERM ignored — escalate to SIGKILL on POSIX.
+            withProcessHandle ph $ \h -> case h of
+                OpenHandle pid -> signalProcess sigKILL pid
+                _              -> pure ()
+            _ <- Timeout.timeout 3_000_000 (waitForProcess ph)
+            pure ()
 
 
 -- Read the watch log with a polite delay so the underlying process
@@ -118,6 +138,30 @@ readLogAfter delayMs path = do
     threadDelay (delayMs * 1000)
     ex <- doesFileExist path
     if ex then readFile path else pure ""
+
+-- Poll the log every 200ms up to `maxMs` waiting for `marker` to
+-- appear, then return the full file contents. Avoids the
+-- timing-sensitive "wait fixed N seconds then assert" pattern that
+-- breaks when the underlying compile/run is slower than the budget.
+-- Returns the log contents at the moment the marker appeared (or
+-- the final contents after timeout, so the assertion still gets
+-- a useful diagnostic).
+waitForLogContaining :: Int -> String -> FilePath -> IO String
+waitForLogContaining maxMs marker path = go 0
+  where
+    pollMs = 200
+    go elapsed
+        | elapsed >= maxMs = readFile path `E.catch` (\(_ :: E.SomeException) -> pure "")
+        | otherwise = do
+            ex <- doesFileExist path
+            content <- if ex
+                then readFile path `E.catch` (\(_ :: E.SomeException) -> pure "")
+                else pure ""
+            if marker `isInfixOf` content
+                then pure content
+                else do
+                    threadDelay (pollMs * 1000)
+                    go (elapsed + pollMs)
 
 
 spec :: Spec
@@ -143,12 +187,16 @@ spec = do
                 let logP = tmp </> "watch.log"
                 ph <- spawnWatch sky tmp logP
                 E.bracket_ (pure ()) (killWatch ph) $ do
-                    -- Wait for the initial build to settle.
-                    _ <- readLogAfter 5000 logP
+                    -- Wait for the initial build to settle (poll up to
+                    -- 30s) — first-build cabal compile + go build can
+                    -- be slow on a cold cache.
+                    _ <- waitForLogContaining 30000 "watching" logP
                     -- Edit the file in-place — the watcher's mtime+size
                     -- check picks this up on the next poll cycle.
                     writeFile (tmp </> "src" </> "Main.sky") miniSrcEdited
-                    log_ <- readLogAfter 5000 logP
+                    -- Poll up to 30s for the "rebuilt in" banner so the
+                    -- test isn't timing-sensitive on slow hardware.
+                    log_ <- waitForLogContaining 30000 "rebuilt in" logP
                     log_ `shouldSatisfy` ("rebuilt in" `isInfixOf`)
 
         it "keeps state alive on broken save (build failed banner appears)" $ do

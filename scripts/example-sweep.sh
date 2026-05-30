@@ -160,7 +160,12 @@ run_example() {
     case "$kind" in
         cli)
             local out rc=0
-            out=$( (cd "$dir" && run_with_timeout 10 "$bin") 2>&1 ) || rc=$?
+            # #367 — keep HTTP client tail-latency under the per-example
+            # budget (10s). The runtime's default is 30s which exceeds
+            # the sweep budget and flakes on slow upstreams (httpbin
+            # was the trigger). 5s is plenty for a healthy connection
+            # and surfaces a graceful Err on a wedged one.
+            out=$( (cd "$dir" && SKY_HTTP_CLIENT_TIMEOUT=5s run_with_timeout 10 "$bin") 2>&1 ) || rc=$?
             if [[ $rc -ne 0 ]]; then
                 failures+=("$name: cli non-zero exit (rc=$rc) — last 20 lines: $(printf '%s' "$out" | tail -20 | tr '\n' ' | ')")
                 fail=$((fail+1)); return

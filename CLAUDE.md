@@ -92,7 +92,65 @@ pgrep -f mem-guard.sh >/dev/null || (nohup ./scripts/mem-guard.sh > /tmp/mem-gua
 **Prefer the Monitor tool** over `run_in_background` + polling.
 Monitor delivers events without leaving a wait-loop subprocess.
 
-### 3. Core principles
+### 3. Test / build timeout gate — every long-running command MUST be timeout-bounded
+
+A test or build that hangs forever is a silent task waster. We
+have already lost 7 hours waiting on a stuck `Sky.Cli.Watch`
+subprocess. Never again.
+
+Rules:
+- **`cabal test` MUST run under `timeout`**:
+  `timeout 3600 cabal test` (60 min hard ceiling). If 60 min is
+  not enough, that's a flaky test — bisect it, don't widen the
+  ceiling.
+- **Per-spec timeouts.** Hspec specs that exec subprocesses
+  (`sky build` / `sky watch` / `sky test`) MUST wrap the child in
+  `timeout 60` or use Hspec's `Test.Hspec.Wai`-style timeout
+  combinators. A test that doesn't time out cannot be re-run.
+- **Example sweep already enforces this** via
+  `run_with_timeout 10` in `scripts/example-sweep.sh`. Don't
+  remove or widen those calls without a real reason.
+- **Background `run_in_background` shell commands** that wait
+  on a process MUST `kill -KILL` it after a finite wait —
+  default 600 s ceiling. Never `wait $PID` unbounded.
+- **Monitors** in dev-loop tooling (sky watch, sky doctor)
+  watching for state changes MUST have a heartbeat / max-wait
+  so a wedged child doesn't poison the parent.
+
+If you see a process running > 30 min that you can't justify,
+kill it and file a bug. Never wait it out.
+
+### 4. No-deferral principle — every known bug enters the pipeline
+
+If a bug surfaces during dev, sweep, CI, or testing — **whether
+introduced by your current work or pre-existing** — it MUST
+enter the task pipeline immediately and be fixed in the next
+appropriate patch release. The phrases "pre-existing flake",
+"defer to v0.X", "known issue, ignore" are forbidden as
+shipping excuses.
+
+Rules:
+- **Spotted = filed.** Any test failure / sweep failure /
+  runtime panic / log error you observe gets a task created on
+  the spot. No mental "I'll look at it later".
+- **Pipeline groups related fixes.** Bundle related bug fixes
+  into the next patch release (v0.15.x) to reduce notification
+  noise — don't tag per fix.
+- **Closing tasks requires actual fix, not workaround.** A
+  documented workaround in CLAUDE.md is acceptable as a TEMPORARY
+  bridge while the actual fix is in flight, NOT as a permanent
+  resolution.
+- **"Pre-existing" is investigation context, not a verdict.**
+  When a failure pre-dates your work it tells you the bug is
+  older and the fix can ship in its own commit (not bundled
+  with your unrelated work), but it does NOT excuse skipping
+  the fix.
+
+The user has the right to interrupt with "ship this without
+fixing X" — only that explicit override allows shipping with a
+known unfixed issue. Default is fix-first.
+
+### 5. Core principles
 
 1. **If it compiles, it works.** Every known runtime panic class
    has a regression test in `runtime-go/rt/*_test.go` or
@@ -110,7 +168,7 @@ Monitor delivers events without leaving a wait-loop subprocess.
    Each is reviewed for security + scalability — UI/UX/DX/security
    are not afterthoughts.
 
-### 4. Non-regression rules (enforced by `cabal test`)
+### 6. Non-regression rules (enforced by `cabal test`)
 
 - **No `Result String a` / `Task String a`** in public surfaces.
   Use `Result Error a` / `Task Error a`.
@@ -134,7 +192,7 @@ Monitor delivers events without leaving a wait-loop subprocess.
   `refsInExpr` / `collectSemTokens` / `collectReferences`. Don't
   rely on `_ -> []` catchalls.
 
-### 5. Testing rules
+### 7. Testing rules
 
 - **Every new feature / bug becomes a regression test** before the
   fix lands. The failing test is the discovery artefact.
@@ -1171,33 +1229,17 @@ verified against HEAD.
     on a continuation line) parses cleanly. Continuation INSIDE
     the type body (`T1\n    -> T2`) is not supported — extract a
     `type alias` for the whole arrow type.
-11. **Same-named local lambdas across modules pollute the typed
-    lowerer's region snapshot** (deferred to v0.15.6 LowerCtx
-    cascade). When 3+ same-named let-bound lambdas (`let
-    encodeOne x = …`) exist across modules and each is passed to
-    a polymorphic combinator (`List.map`, `Result.map`, etc.),
-    ALL get typed with the LAST-processed module's element type
-    → `reflect.Value.Call` panics at runtime. **Workaround**:
-    hoist the encoder to a top-level def with an explicit type
-    annotation — top-level defs alpha-rename per call site and
-    don't share the region cache:
-
-```elm
-encodeItemA : ItemA -> String              -- ✓ top-level + annotated
-encodeItemA i = "..."
-
-asJson : () -> String
-asJson _ = String.join "," (List.map encodeItemA items)
-```
-
-    The brittle alternative (rename locals `encodeItemA` /
-    `encodeItemB`) works but relies on user-side naming
-    discipline. 2-encoder cases happen to render correctly;
-    3+ is the reliable trigger. Closes when the v0.15.6 LowerCtx
-    cascade lands.
-
 ### Closed in v0.15 (kept here for grep)
 
+- ~~Same-named local lambdas across modules pollute the typed
+  lowerer's region snapshot~~ — closed in v0.15.30 via the
+  scoped `LowerCtx` cascade. Per-module env ledger
+  (`Solve.SolvedTypes._stPerModuleEnv`) consulted via
+  `lookupSolvedVarScoped` at each lookup site; sentinel
+  `GoDeclRaw` entries bracket each dep's `[GoDecl]` to switch
+  `globalCurrentDepModule` during render. Multi-modules can now
+  share `let encodeOne x = …` shapes without typed-codegen
+  cross-contamination.
 - ~~Anonymous records in function signatures~~ — closed in v0.13
   (`processReq : Int -> { name : String, age : Int } -> String`
   parses cleanly).

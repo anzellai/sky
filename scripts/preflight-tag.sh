@@ -61,7 +61,9 @@ echo "  version output: $ver"
 echo "$ver" | grep -qE "^sky " || fail "sky --version did not print 'sky' line"
 
 step "3/6 — cabal test"
-out=$(cabal test 2>&1)
+# CLAUDE.md §2.3 — long-running commands must be timeout-bounded.
+# 60 min ceiling; if real runs need more, that's a flaky test.
+out=$(timeout 3600 cabal test 2>&1)
 echo "$out" | grep -E "examples, [0-9]+ failures" | tail -1
 echo "$out" | grep -qE "[0-9]+ failures, " || fail "cabal test output unrecognised"
 if echo "$out" | grep -qE "^[1-9][0-9]* failures? "; then
