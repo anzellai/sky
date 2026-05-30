@@ -277,6 +277,7 @@ test-suite sky-tests
       Sky.Build.ExposingTypeCtorsSpec
       Sky.Build.LetForwardRefSpec
       Sky.Build.EntryLocalShadowsDepSpec
+      Sky.Build.RtFieldAdtBug342Spec
       Sky.Build.CaseSubjectNameShadowSpec
       Sky.Build.FfiKernelAliasSpec
       Sky.Build.PubSubPublishTaskSpec

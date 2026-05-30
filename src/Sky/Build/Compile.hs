@@ -5720,12 +5720,36 @@ betterRetType = betterTypeStr
 -- | v0.13 Stage 1 — per-string picker. Prefers the type carrying
 -- more concrete information.  See `betterParamTypes` for the
 -- ordering rationale.
+--
+-- Bug #342 fix: the previous ordering had a hole — bare TVar `T1`
+-- was beaten by ANY non-TVar string including `"any"`.  But `any`
+-- is the LESS informative type (erasure), not the more
+-- informative one.  Comparing `["T1","T1"]` (HM-inferred,
+-- TVar-preserved) against `["any","any"]` (early collector,
+-- TVar-erased) at a polymorphic Sky function like
+-- `equal : a -> a -> TestResult` would silently pick `["any","any"]`,
+-- collapsing call-site generic-type inference and emitting
+-- `rt.Field(...)` returning `any` at a `T1` slot without the
+-- needed `rt.Coerce[T1]` wrap — Go's call-site inference then
+-- rejected the typed sibling arg with `does not match inferred
+-- type T1`.
+--
+-- The corrected ordering:
+--   1. Concrete type beats both `any` and bare TVar.
+--   2. Bare TVar beats `any` (polymorphism preserved).
+--   3. Tie → keep the left (HM-inferred).
 betterTypeStr :: String -> String -> String
 betterTypeStr l r
-    -- A bare TVar (`T1`) carries the least info — beaten by anything else.
-    | isGenericTypeParam l && not (isGenericTypeParam r) = r
-    | isGenericTypeParam r && not (isGenericTypeParam l) = l
-    -- Both bare TVars (or both not): prefer the one with NO `any`
+    -- Bare TVar (`T1`) beats `"any"` exactly — preserves the
+    -- generic-param connection for call-site σ-recovery.
+    | isGenericTypeParam l && r == "any" = l
+    | isGenericTypeParam r && l == "any" = r
+    -- Concrete type beats both `any` and bare TVar.
+    | isGenericTypeParam l && not (isGenericTypeParam r)
+                          && not (r == "any") = r
+    | isGenericTypeParam r && not (isGenericTypeParam l)
+                          && not (l == "any") = l
+    -- Neither side bare TVar: prefer the one with NO `any` token
     -- (typed-everywhere) over the one that has `any`.
     | hasAnyToken l && not (hasAnyToken r) = r
     | hasAnyToken r && not (hasAnyToken l) = l
