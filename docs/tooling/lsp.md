@@ -113,7 +113,7 @@ curl --create-dirs --output-dir ~/.config/helix/runtime/queries/sky \
   "languages": {
     "Sky": {
       "language_servers": ["sky-lsp"],
-      "formatter": { "external": { "command": "sky", "arguments": ["fmt"] } }
+      "formatter": { "external": { "command": "sky", "arguments": ["fmt", "--stdin"] } }
     }
   },
   "lsp": {
