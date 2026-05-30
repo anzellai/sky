@@ -37,6 +37,7 @@ import qualified Sky.Build.PubSubPublishTaskSpec
 import qualified Sky.Build.PubSubPublishNoEchoSpec
 import qualified Sky.Build.ServerStreamSpec
 import qualified Sky.Build.WebviewAppSpec
+import qualified Sky.Build.WebviewLoopbackAssetsSpec
 import qualified Sky.Parse.MultiLineCaseSubjectSpec
 import qualified Sky.Parse.MultiLineCaseKeywordSpec
 import qualified Sky.Parse.MultiLineSignatureSpec
@@ -240,6 +241,12 @@ main = hspec $ do
     -- Issue #356 / v0.1 MVP: Sky.Webview backend. Pins the
     -- Std.Webview.app type-checker contract + kernel routing.
     describe "Sky.Build.WebviewApp" Sky.Build.WebviewAppSpec.spec
+    -- Bug #370: Sky.Webview can't load relative-path assets — the
+    -- runtime now spawns a 127.0.0.1 loopback http server when
+    -- sky.toml `[live].static` is set, and falls through to
+    -- SetHtml (no regression) when unset.
+    describe "Sky.Build.WebviewLoopbackAssets"
+        Sky.Build.WebviewLoopbackAssetsSpec.spec
     describe "Sky.Parse.MultiLineCaseSubject" Sky.Parse.MultiLineCaseSubjectSpec.spec
     describe "Sky.Parse.MultiLineCaseKeyword"
         Sky.Parse.MultiLineCaseKeywordSpec.spec

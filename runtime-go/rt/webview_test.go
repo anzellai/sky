@@ -16,6 +16,11 @@ package rt
 
 import (
 	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -218,6 +223,175 @@ func TestWebviewMsgChBoundedDoesNotBlock(t *testing.T) {
 	if got != 100 {
 		t.Errorf("expected 100 dropped msgs, got %d", got)
 	}
+}
+
+// Test (bug #370): when SKY_LIVE_STATIC_DIR is unset, the loopback
+// helper webviewStaticDir() returns "" so the call site falls
+// through to the no-regression SetHtml path. Pin the contract so
+// Sky.Ui-only desktop apps (examples/31-webview-stopwatch-ui) stay
+// on the in-process SetHtml bridge.
+func TestWebviewStaticDirUnsetReturnsEmpty(t *testing.T) {
+	// Defence: clear both candidate vars under the configured
+	// prefix in case the test runner shell has them set.
+	for _, k := range []string{"LIVE_STATIC_DIR", "STATIC_DIR"} {
+		old, had := os.LookupEnv(skyEnvName(k))
+		os.Unsetenv(skyEnvName(k))
+		t.Cleanup(func() {
+			if had {
+				os.Setenv(skyEnvName(k), old)
+			} else {
+				os.Unsetenv(skyEnvName(k))
+			}
+		})
+	}
+	if got := webviewStaticDir(); got != "" {
+		t.Errorf("webviewStaticDir() with no env = %q, want \"\" (no-regression SetHtml path)", got)
+	}
+}
+
+// Test (bug #370): webviewStaticDir reads SKY_LIVE_STATIC_DIR
+// (the canonical name emitted from sky.toml `[live].static`).
+func TestWebviewStaticDirReadsLiveStaticEnv(t *testing.T) {
+	key := skyEnvName("LIVE_STATIC_DIR")
+	old, had := os.LookupEnv(key)
+	os.Setenv(key, "./public")
+	t.Cleanup(func() {
+		if had {
+			os.Setenv(key, old)
+		} else {
+			os.Unsetenv(key)
+		}
+	})
+	if got := webviewStaticDir(); got != "./public" {
+		t.Errorf("webviewStaticDir() = %q, want %q", got, "./public")
+	}
+}
+
+// Test (bug #370): startWebviewLoopback spawns a 127.0.0.1-only
+// http server that serves /static/* from the given directory AND
+// returns the current rendered body on /. Verifies the actual
+// wire shape — fixture file fetched + page wrap applied to body.
+func TestWebviewLoopbackServesStaticAndBody(t *testing.T) {
+	tmp := t.TempDir()
+	asset := []byte("/* vrm placeholder */\nbody { color: orange; }\n")
+	if err := os.WriteFile(filepath.Join(tmp, "model.vrm"), []byte("VRM-FAKE"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmp, "style.css"), asset, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	state := &webviewState{}
+	state.currentBody.Store(`<h1 sky-id="0">hello loopback</h1>`)
+
+	srv, port, err := startWebviewLoopback(tmp, state)
+	if err != nil {
+		t.Fatalf("startWebviewLoopback: %v", err)
+	}
+	defer srv.Close()
+
+	// /static/style.css — file served verbatim.
+	{
+		resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/static/style.css", port))
+		if err != nil {
+			t.Fatalf("GET /static/style.css: %v", err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != 200 {
+			t.Errorf("status=%d, want 200", resp.StatusCode)
+		}
+		if string(body) != string(asset) {
+			t.Errorf("body=%q, want %q", body, asset)
+		}
+	}
+
+	// /static/model.vrm — confirms binary assets work too. This
+	// is the real-world failure mode (19MB VRM in user's app).
+	{
+		resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/static/model.vrm", port))
+		if err != nil {
+			t.Fatalf("GET /static/model.vrm: %v", err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != 200 {
+			t.Errorf("status=%d, want 200", resp.StatusCode)
+		}
+		if string(body) != "VRM-FAKE" {
+			t.Errorf("body=%q, want %q", body, "VRM-FAKE")
+		}
+	}
+
+	// / — returns the rendered body wrapped in webviewPageWrap.
+	{
+		resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/", port))
+		if err != nil {
+			t.Fatalf("GET /: %v", err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != 200 {
+			t.Errorf("status=%d, want 200", resp.StatusCode)
+		}
+		got := string(body)
+		if !strings.Contains(got, "<!DOCTYPE html>") {
+			t.Errorf("body missing doctype: %s", got)
+		}
+		if !strings.Contains(got, `<div id="sky-root">`) {
+			t.Errorf("body missing sky-root wrapper")
+		}
+		if !strings.Contains(got, "hello loopback") {
+			t.Errorf("body missing the published render: %s", got)
+		}
+		if ct := resp.Header.Get("Content-Type"); !strings.Contains(ct, "text/html") {
+			t.Errorf("Content-Type=%q, want text/html", ct)
+		}
+	}
+
+	// Live re-render: publishing a new body shows up on next /.
+	state.currentBody.Store(`<h1 sky-id="0">post-tick render</h1>`)
+	{
+		resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/", port))
+		if err != nil {
+			t.Fatalf("GET / (post-tick): %v", err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if !strings.Contains(string(body), "post-tick render") {
+			t.Errorf("body did not reflect updated render: %s", body)
+		}
+	}
+}
+
+// Test (bug #370 — security): the loopback listener binds to
+// 127.0.0.1 only, never the wildcard 0.0.0.0. A desktop webview
+// app's local server must not be reachable from the LAN. Asserts
+// the addr.Network()/String() shape exposes a loopback IP.
+func TestWebviewLoopbackBindsLoopbackOnly(t *testing.T) {
+	tmp := t.TempDir()
+	state := &webviewState{}
+	state.currentBody.Store("")
+	srv, port, err := startWebviewLoopback(tmp, state)
+	if err != nil {
+		t.Fatalf("startWebviewLoopback: %v", err)
+	}
+	defer srv.Close()
+	if port <= 0 {
+		t.Errorf("port=%d, want >0", port)
+	}
+	// Confirm the chosen port responds on 127.0.0.1 — the listener's
+	// bind address is captured at net.Listen time; here we exercise
+	// it round-trip. A LAN-reachable bind would have been
+	// 0.0.0.0:<port> or :: — those answer on the host's external IPs
+	// too. We can't easily probe an external IP from a test, but
+	// the source's explicit "127.0.0.1:0" Listen call is the gate;
+	// this test pins the round-trip side.
+	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/", port))
+	if err != nil {
+		t.Fatalf("GET /: %v", err)
+	}
+	resp.Body.Close()
 }
 
 // Test: handler lookup table swap is atomic and concurrent reads

@@ -108,6 +108,10 @@ declare -a EXAMPLES=(
     "19-skyforum:server:8000:/"
     "27-multi-session-chat:server:8000:/"
     "30-sse-server-demo:server:8000:/"
+    # 29 — Sky.Webview spike: Three.js + WebGL2 under the new
+    # loopback-asset pipeline (bug #370). Same gui-kind skip
+    # semantics as 31 (display + macOS-only cgo).
+    "29-webview-threejs-spike:gui"
     # 31 — Sky.Webview MVP. Native desktop window; build-only sweep
     # (running needs a display, same skip semantics as the Fyne GUI
     # example). v0.1 is macOS only.

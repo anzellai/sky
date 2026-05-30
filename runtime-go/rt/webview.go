@@ -64,8 +64,11 @@ package rt
 import (
 	"encoding/json"
 	"fmt"
+	"net"
+	"net/http"
 	"os"
 	"sync"
+	"sync/atomic"
 
 	webview "github.com/webview/webview_go"
 )
@@ -94,6 +97,14 @@ type webviewState struct {
 	msgDropped  uint64
 	currentTree *VNode         // last committed render; nil on first paint
 	handlers    map[string]any // <sky-id>.<event> → Msg ctor (rebuilt per render)
+
+	// Loopback mode (bug #370): when SKY_LIVE_STATIC_DIR is set, we
+	// spawn a 127.0.0.1 loopback server so the webview can resolve
+	// relative paths (`/static/foo.vrm`, `/voice.js`). The latest
+	// rendered body is atomically published here so the loopback
+	// server's `/` handler can serve the current HTML on
+	// navigation / reload. Empty in SetHtml mode.
+	currentBody atomic.Value // string
 }
 
 func (s *webviewState) bumpDropped() {
@@ -231,16 +242,48 @@ func webviewAppRun(cfg any) any {
 		cliRunCmd(cmd, msgCh)
 	}
 
-	// First render: VNode tree → HTML body → SetHtml. renderVNode
-	// populates the handlers map with every (sky-id, event) → Msg
-	// ctor binding so __skyDispatch can recover the typed ctor
-	// from the wire's handlerId.
+	// First render: VNode tree → HTML body → SetHtml/Navigate.
+	// renderVNode populates the handlers map with every (sky-id,
+	// event) → Msg ctor binding so __skyDispatch can recover the
+	// typed ctor from the wire's handlerId.
 	htmlAny := SkyCall(viewFn, model)
 	tree := webviewBuildTree(htmlAny)
 	handlers := map[string]any{}
 	body := renderVNode(*tree, handlers)
 	state.swapTree(tree, handlers)
-	w.SetHtml(webviewPageWrap(body))
+	state.currentBody.Store(body)
+
+	// Bug #370: when sky.toml `[live].static` (or env
+	// SKY_LIVE_STATIC_DIR) is set, the user's view references
+	// relative paths (`/static/scene.js`, `/static/foo.vrm`). A
+	// w.SetHtml("...") page has no origin so the browser can't
+	// resolve them. Spawn a loopback http server on 127.0.0.1:<free>
+	// that serves the rendered body at `/` and `/static/*` from the
+	// configured directory; Navigate to it instead.
+	//
+	// When no static dir is configured, fall through to the original
+	// SetHtml path — no behaviour change for Sky.Ui-only apps
+	// (examples/31-webview-stopwatch-ui etc).
+	staticDir := webviewStaticDir()
+	var loopbackSrv *http.Server
+	if staticDir != "" {
+		srv, port, err := startWebviewLoopback(staticDir, state)
+		if err != nil {
+			fmt.Fprintf(os.Stderr,
+				"[sky.webview] loopback server failed (%v); falling back to SetHtml — relative-path assets WILL NOT load\n",
+				err)
+			w.SetHtml(webviewPageWrap(body))
+		} else {
+			loopbackSrv = srv
+			url := fmt.Sprintf("http://127.0.0.1:%d/", port)
+			fmt.Fprintf(os.Stderr,
+				"[sky.webview] loopback server on %s (static=%q)\n",
+				url, staticDir)
+			w.Navigate(url)
+		}
+	} else {
+		w.SetHtml(webviewPageWrap(body))
+	}
 
 	// Subscription manager. Same shape as Sky.Tui / Sky.Cli — pushes
 	// Sub.every ticks into msgCh.
@@ -272,6 +315,10 @@ func webviewAppRun(cfg any) any {
 				newHandlers := map[string]any{}
 				newBody := renderVNode(*newTree, newHandlers)
 				prev := state.swapTree(newTree, newHandlers)
+				// Publish for the loopback `/` handler so a manual
+				// reload picks up the latest render. No-op in
+				// SetHtml mode (the field is just never read).
+				state.currentBody.Store(newBody)
 
 				// First-render edge: prev guaranteed non-nil here
 				// because the initial render swapped it in BEFORE
@@ -305,6 +352,12 @@ func webviewAppRun(cfg any) any {
 	w.Run()
 	subMgr.stopAll()
 	close(doneCh)
+	if loopbackSrv != nil {
+		// Best-effort: closing the listener returns http.Serve and
+		// drops the goroutine. We ignore the error; the process is
+		// about to exit anyway.
+		_ = loopbackSrv.Close()
+	}
 
 	return Ok[any, any](struct{}{})
 }
@@ -332,6 +385,86 @@ func webviewPageWrap(body string) string {
 	return fmt.Sprintf(
 		`<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>%s</style></head><body><div id="sky-root">%s</div></body></html>`,
 		liveBaseCSS, body)
+}
+
+// webviewStaticDir reads the configured static-asset directory for
+// the webview's loopback server (bug #370). It mirrors the lookup
+// chain Sky.Live uses (rt.live.go:2356-2368) so a single sky.toml
+// `[live].static = "public"` works identically for both backends.
+// Returns "" when no source has set it — caller falls through to
+// the SetHtml path.
+func webviewStaticDir() string {
+	// sky.toml `[live].static = "public"` is emitted as a
+	// SetSkyDefault("LIVE_STATIC_DIR", "public") call in the
+	// generated init() (src/Sky/Build/Compile.hs:3501), so by the
+	// time runtime code runs the env var is the canonical source.
+	// Process-level overrides win automatically — SetSkyDefault is
+	// a no-op when the env is already set.
+	if v := skyGetenv("LIVE_STATIC_DIR"); v != "" {
+		return v
+	}
+	if v := skyGetenv("STATIC_DIR"); v != "" {
+		return v
+	}
+	return ""
+}
+
+// startWebviewLoopback spawns a 127.0.0.1-bound http.Server that
+// serves the current rendered body at `/` (and any unknown path)
+// and the static-asset directory at `/static/*`. Returns the live
+// *http.Server (close()-able on shutdown) and the chosen port.
+//
+// Security: bound to 127.0.0.1 explicitly — NEVER 0.0.0.0. A
+// desktop app's loopback server must not be reachable from the
+// LAN; no authentication is wired because the only client is the
+// embedded webview in this process.
+func startWebviewLoopback(staticDir string, state *webviewState) (*http.Server, int, error) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return nil, 0, err
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+
+	mux := http.NewServeMux()
+	// /static/* — files from the configured directory. Matches the
+	// Sky.Live convention (rt.live.go:2458-2465) so the same view
+	// source paints identically under both backends.
+	mux.Handle("/static/",
+		http.StripPrefix("/static/", http.FileServer(http.Dir(staticDir))))
+	// `/` (and any unknown path) — serves the current rendered
+	// body. The body is wrapped with webviewPageWrap to add the
+	// CSS reset + <div id="sky-root"> shell, matching what
+	// SetHtml would have shipped in non-loopback mode.
+	//
+	// A manual reload (Cmd-R) re-fetches `/` and gets the
+	// most-recent render. TEA-tick re-renders continue to flow
+	// through w.Eval(__skyApplyPatches) — they don't trigger
+	// navigation.
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		// Reject non-GET to avoid surprising behaviour with curl
+		// poking at the loopback server (e.g. form POSTs that we
+		// don't handle — Sky.Webview's bridge isn't HTTP).
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		body, _ := state.currentBody.Load().(string)
+		page := webviewPageWrap(body)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		_, _ = w.Write([]byte(page))
+	})
+
+	srv := &http.Server{Handler: mux}
+	safeGo("Webview.app loopback server", func() {
+		// http.Serve returns ErrServerClosed on graceful Close —
+		// suppress that one. Any other error gets logged.
+		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
+			fmt.Fprintf(os.Stderr,
+				"[sky.webview] loopback server: %v\n", err)
+		}
+	})
+	return srv, port, nil
 }
 
 // webviewFieldString reads a string-typed field from a record, falling
