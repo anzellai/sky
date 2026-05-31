@@ -249,6 +249,45 @@ activeLink =
         { url = "#test", label = Ui.text "click me" }
 
 
+-- ─── Media-query / breakpoint primitive (#376) ─────────────────
+--
+-- `Ui.breakpoint Ui.mobile` overrides padding + background on the
+-- inner box ONLY when the viewport is ≤ 767 px wide. The runner
+-- captures desktop (1280 wide → base padding 8, blue bg) AND mobile
+-- (375 wide → overridden padding 24, red bg). Computed style + PNG
+-- snapshot both differ — proves the CSS engine reacts without a JS
+-- round-trip / re-render / re-mount.
+--
+-- A second box exercises `Ui.mediaQuery` raw-query escape hatch.
+mediaQueryDemo : Element msg
+mediaQueryDemo =
+    Ui.column
+        [ Ui.width Ui.fill, Ui.spacing 8, testId "mediaquery-row" ]
+        [ Ui.breakpoint
+              Ui.mobile
+              [ Ui.padding 24, Background.color (Ui.rgb 224 96 96) ]
+              (Ui.el
+                  [ Ui.width Ui.fill
+                  , Ui.padding 8
+                  , Background.color (Ui.rgb 96 128 224)
+                  , Font.color white
+                  , testId "mq-mobile-box"
+                  ]
+                  (Ui.text "padded + red on mobile only"))
+        , Ui.mediaQuery
+              "(min-width: 800px)"
+              [Background.color (Ui.rgb 96 176 104)]
+              (Ui.el
+                  [ Ui.width Ui.fill
+                  , Ui.padding 8
+                  , Background.color (Ui.rgb 200 200 200)
+                  , Font.color white
+                  , testId "mq-raw-box"
+                  ]
+                  (Ui.text "green on screens ≥800px wide"))
+        ]
+
+
 -- ─── 4. Aspect-ratio + grid placeholders ───────────────────────
 --
 -- `aspectRatio` lands in #379. Today we approximate with
@@ -341,4 +380,5 @@ cases =
               [ hoverableButton, focusableInput, activeLink ])
     , card "aspect" "Aspect ratio (#379)" aspectStubs
     , card "grid" "Grid (#379)" gridDemo
+    , card "mediaquery" "Media query / breakpoint (#376)" mediaQueryDemo
     ]

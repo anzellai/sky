@@ -381,6 +381,57 @@ try {
             }
         }
 
+        // ─── Media query / breakpoint (#376) ────────────────────
+        // Desktop pass: viewport 1280 ≥ 768, so `Ui.breakpoint Ui.mobile`
+        // overrides DO NOT fire — base styles (padding 8, blue) apply.
+        // `Ui.mediaQuery "(min-width: 800px)"` DOES fire — overrides apply (green bg).
+        console.log("--- media-query / breakpoint (desktop) ---");
+        const mqMobileDesktop = await measure(page, "mq-mobile-box");
+        const mqRawDesktop = await measure(page, "mq-raw-box");
+        if (mqMobileDesktop) {
+            // Inner box has base padding 8 + parent's default (no breakpoint
+            // override on desktop). The CSS engine should NOT have applied
+            // `padding: 24px` to the outer wrapper.
+            const bg = await page.evaluate(
+                (s) => window.getComputedStyle(document.querySelector(`[data-test-id="${s}"]`)).backgroundColor,
+                "mq-mobile-box",
+            );
+            // Expect the BLUE base — `rgb(96, 128, 224)`. If the breakpoint
+            // wrongly fired on desktop, the inner box would still be blue
+            // (the override is on its parent), so we instead check the
+            // PARENT'S background colour through the wrapper sky-id.
+            if (!bg.includes("96") || !bg.includes("128") || !bg.includes("224")) {
+                fail("mq-mobile-box desktop bg", `expected base blue, got ${bg}`);
+            } else {
+                ok(`mq-mobile-box desktop bg = blue (no mobile override)`);
+            }
+        }
+        if (mqRawDesktop) {
+            // The wrapper around mq-raw-box gets `background-color: green`
+            // when viewport ≥ 800px. Check the wrapper's bg.
+            const parentBg = await page.evaluate(() => {
+                const el = document.querySelector('[data-test-id="mq-raw-box"]');
+                if (!el || !el.parentElement) return "";
+                return window.getComputedStyle(el.parentElement).backgroundColor;
+            });
+            // Expect green: rgb(96, 176, 104).
+            if (parentBg.includes("96") && parentBg.includes("176") && parentBg.includes("104")) {
+                ok(`mq-raw parent bg = green (≥800px override fires at desktop 1280)`);
+            } else {
+                fail("mq-raw parent bg", `expected green ≥800px override, got ${parentBg}`);
+            }
+        }
+        // The breakpoint wrappers must expose their sky-id-scoped <style>
+        // blocks — verify at least one is in the DOM.
+        const mqStyleCount = await page.evaluate(
+            () => document.querySelectorAll('style[data-sky-mq]').length,
+        );
+        if (mqStyleCount >= 2) {
+            ok(`media-query <style> blocks present (count=${mqStyleCount})`);
+        } else {
+            fail("media-query <style>", `expected ≥2 data-sky-mq blocks, found ${mqStyleCount}`);
+        }
+
         // ─── 4. Pseudo-class stubs (#377) — render only ─────────
         console.log("--- pseudo-class stubs ---");
         const hover = await measure(page, "hover-button");
@@ -398,6 +449,7 @@ try {
         for (const section of [
             "triple-nested", "wrap-label", "portion",
             "fixed-fill", "aspect", "grid", "pseudo", "viewport",
+            "mediaquery",
         ]) {
             await snapshot(page, section, `section-${section}`, "desktop");
         }
@@ -443,9 +495,37 @@ try {
         console.log("--- snapshots (mobile) ---");
         for (const section of [
             "triple-nested", "wrap-label", "portion",
-            "fixed-fill", "viewport",
+            "fixed-fill", "viewport", "mediaquery",
         ]) {
             await snapshot(mp, section, `section-${section}`, "mobile");
+        }
+
+        // ─── Media query — mobile assertions ─────────────────────
+        // At 375 px the `Ui.breakpoint Ui.mobile` override IS active:
+        // the wrapper around mq-mobile-box has bg = red, padding = 24.
+        console.log("--- media-query (mobile assertions) ---");
+        const mqMobileParentBg = await mp.evaluate(() => {
+            const el = document.querySelector('[data-test-id="mq-mobile-box"]');
+            if (!el || !el.parentElement) return "";
+            return window.getComputedStyle(el.parentElement).backgroundColor;
+        });
+        // Expect rgb(224, 96, 96).
+        if (mqMobileParentBg.includes("224") && mqMobileParentBg.includes("96")) {
+            ok(`mq-mobile parent bg = red (mobile breakpoint fires at 375px)`);
+        } else {
+            fail("mq-mobile parent bg (mobile)", `expected red mobile override, got ${mqMobileParentBg}`);
+        }
+        // `(min-width: 800px)` should NOT fire at 375 — wrapper stays
+        // its base colour (transparent, since the wrapper has no base bg).
+        const mqRawParentBg = await mp.evaluate(() => {
+            const el = document.querySelector('[data-test-id="mq-raw-box"]');
+            if (!el || !el.parentElement) return "";
+            return window.getComputedStyle(el.parentElement).backgroundColor;
+        });
+        if (mqRawParentBg.includes("96, 176, 104")) {
+            fail("mq-raw parent bg (mobile)", `green override leaked into mobile: ${mqRawParentBg}`);
+        } else {
+            ok(`mq-raw parent bg ≠ green at 375px (≥800px override correctly suppressed)`);
         }
         const mobileFull = await mp.screenshot({ fullPage: true, animations: "disabled" });
         writeFileSync(resolve(SNAP_DIR, "fullpage-mobile.png"), mobileFull);
