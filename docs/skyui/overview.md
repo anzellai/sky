@@ -597,6 +597,167 @@ Ui.breakpoint Ui.mobile
 
 The selector keys off the runtime-assigned `sky-id`, so multiple pseudo-rules on the same page cannot cross-contaminate. Sky.Tui silently ignores the injected `<style>` (terminal renders the base layer only); Sky.Webview honours pseudo-classes identically to Sky.Live because they share the runtime VNode pipeline.
 
+## Transitions + animations
+
+`Transition.attribute` + `Animation.attribute` (in `Std.Ui.Transition` / `Std.Ui.Animation`) declare CSS transitions and keyframe animations on a Sky.Ui element. Both are CSS-driven — the browser handles the frame timing, no JS round-trip, no model field, no re-render.
+
+**`prefers-reduced-motion` is respected by default.** Every transition + animation rule is auto-wrapped in `@media (prefers-reduced-motion: no-preference) { ... }` by the runtime, so users who've opted out of motion in their OS get a static UI. This is non-negotiable for a11y. Opt OUT explicitly via `Transition.attributeUnsafe` or `respectReducedMotion = False` on an `Animation.Spec` ONLY when motion is semantically required (loading spinner, progress indicator).
+
+### Transitions
+
+```elm
+import Std.Ui as Ui
+import Std.Ui.Background as Background
+import Std.Ui.Transition as Transition
+
+view : Model -> Element Msg
+view _ =
+    Ui.layout []
+        (Ui.button
+            [ Background.color (Ui.rgb 0 122 255)
+            , Background.hoverColor (Ui.rgb 0 92 215)
+            , Transition.attribute
+                  [ Transition.property "background-color"
+                  , Transition.duration 200
+                  , Transition.easing Transition.easeOut
+                  ]
+            ]
+            { onPress = Just Save, label = Ui.text "Save" })
+```
+
+Build the transition by composing typed `Step`s. The renderer joins them into the CSS `transition: <prop> <dur>ms <easing> <delay>ms` shorthand.
+
+| Step | Type | Default | Notes |
+|---|---|---|---|
+| `property` | `String -> Step` | `"all"` | CSS property name. Common: `"background-color"`, `"color"`, `"transform"`, `"opacity"`. Pass `"all"` to transition every animatable property. |
+| `duration` | `Int -> Step` | `200` | Milliseconds. |
+| `delay` | `Int -> Step` | `0` | Milliseconds. Only emitted in the shorthand when non-zero. |
+| `easing` | `Easing -> Step` | `easeOut` | One of `Transition.linear`, `easeIn`, `easeOut`, `easeInOut`, `cubicBezier x1 y1 x2 y2`. |
+
+### Animations (keyframes)
+
+```elm
+import Std.Ui.Animation as Animation
+import Std.Ui.Transform as Transform
+
+fadeInUp : Ui.Attribute msg
+fadeInUp =
+    Animation.attribute
+        { name = "fadeInUp"
+        , duration = 300
+        , easing = Animation.easeOut
+        , delay = 0
+        , iterations = Animation.once
+        , fillMode = Animation.forwards
+        , respectReducedMotion = True
+        , keyframes =
+            [ ( 0, [ Transform.opacity 0.0, Transform.translateY 10 ] )
+            , ( 100, [ Transform.opacity 1.0, Transform.translateY 0 ] )
+            ]
+        }
+```
+
+`Animation.Spec` fields:
+
+| Field | Type | Notes |
+|---|---|---|
+| `name` | `String` | User-visible name. **Auto-suffixed with the element's sky-id by the runtime** — two `name = "fadeIn"` elements with different keyframes don't collide. |
+| `duration` | `Int` | Milliseconds. |
+| `easing` | `Easing` | Same constants as `Transition`. |
+| `delay` | `Int` | Milliseconds. |
+| `iterations` | `Iterations` | `Animation.once` / `Animation.infinite` / `Animation.times N`. |
+| `fillMode` | `FillMode` | `Animation.none` / `Animation.forwards` / `Animation.backwards` / `Animation.both`. `forwards` is the most common — hold the final keyframe after the animation ends. |
+| `respectReducedMotion` | `Bool` | `True` wraps the animation in `@media (prefers-reduced-motion: no-preference)` (default + recommended). `False` ignores the user's preference. |
+| `keyframes` | `List (Int, List Transform.Prop)` | `(percent, props)` pairs. Percent in `[0, 100]`. Order doesn't matter; renderer sorts. |
+
+### Transform / opacity properties (for keyframes)
+
+`Std.Ui.Transform` exposes the typed keyframe properties:
+
+| Helper | CSS |
+|---|---|
+| `Transform.translateX n` / `translateY n` / `translate x y` | `transform: translateX(Npx)` etc. |
+| `Transform.scale s` / `scaleXY sx sy` | `transform: scale(s)` |
+| `Transform.rotate deg` | `transform: rotate(<deg>deg)` |
+| `Transform.skewX deg` / `skewY deg` | `transform: skew*(deg)` |
+| `Transform.opacity a` | `opacity: a` (NOT a transform — emitted as standalone) |
+
+Multiple `transform`-typed props on the same keyframe join into a single `transform:` shorthand (`transform: translateY(10px) scale(0.95)`). Mixed `transform` + `opacity` props emit two rules.
+
+### Composition
+
+- **Pseudo-class + transition.** `Background.hoverColor` defines the target state; `Transition.attribute` declares how to interpolate the change. Most natural way to build interactive buttons / cards / nav links.
+- **Breakpoint + animation.** `Ui.breakpoint Ui.mobile [ ... ] child` wraps the element; the animation attaches to `child`. Both layers stack via CSS — the `@keyframes` lives in the inner scoped `<style>` while the `@media` wrapper from the breakpoint applies to the wrapper layout.
+- **Multiple animations.** Stacking two `Animation.attribute` calls joins them in the `animation:` shorthand with commas.
+
+### Reduced-motion sample
+
+A loading spinner uses `respectReducedMotion = False` because a static circle defeats the purpose of "indicate the page is busy":
+
+```elm
+spinner : Element msg
+spinner =
+    Ui.el
+        [ Ui.width (Ui.px 24)
+        , Ui.height (Ui.px 24)
+        , Background.color (Ui.rgb 60 120 200)
+        , Border.rounded 12
+        , Animation.attribute
+              { name = "spin"
+              , duration = 1000
+              , easing = Animation.linear
+              , delay = 0
+              , iterations = Animation.infinite
+              , fillMode = Animation.none
+              , respectReducedMotion = False
+              , keyframes =
+                    [ ( 0, [Transform.rotate 0.0] )
+                    , ( 100, [Transform.rotate 360.0] )
+                    ]
+              }
+        ]
+        Ui.none
+```
+
+For every other case — hover/focus transitions, page-load fades, slide-in panels — keep `respectReducedMotion = True` (the default).
+
+### What renders on the wire
+
+```html
+<button sky-id="r.0#button" style="...base styles...">
+    <style data-sky-tr="r.0#button">
+        @media (prefers-reduced-motion: no-preference) {
+            [sky-id="r.0#button"] { transition: background-color 200ms ease-out; }
+        }
+    </style>
+    <style data-sky-pc="r.0#button">
+        @media (hover: hover) {
+            [sky-id="r.0#button"]:hover { background-color: rgba(0, 92, 215, 1); }
+        }
+    </style>
+    Save
+</button>
+```
+
+For an animated element:
+
+```html
+<div sky-id="r.1#div" style="...base styles...">
+    <style data-sky-anim="r.1#div">
+        @keyframes fadeInUp__r_1_div {
+            0% { transform: translateY(10px); opacity: 0; }
+            100% { transform: translateY(0px); opacity: 1; }
+        }
+        @media (prefers-reduced-motion: no-preference) {
+            [sky-id="r.1#div"] { animation: fadeInUp__r_1_div 300ms ease-out 0ms 1 forwards; }
+        }
+    </style>
+    ...content...
+</div>
+```
+
+The `@keyframes` name is auto-suffixed with `__<sky-id>` (CSS-sanitised) so two unrelated elements declaring `name = "fadeInUp"` with different keyframes never collide globally.
+
 ## Putting it all together — a non-trivial example
 
 `examples/19-skyforum` is the canonical Sky.Ui demo: a Reddit/HackerNews-style forum split across 8 modules. Highlights:
@@ -644,6 +805,8 @@ The 8-module split (`State.sky` / `Update.sky` / `View/{Common,Posts,Detail,Comp
 | **Misc**: `transparent` / `htmlAttribute` / `style` / `class` / `name` | ✅ | |
 | Misc: `classifyDevice` | ✅ | Via `Std.Ui.Responsive` (Model-driven) |
 | **Media queries**: `mediaQuery / breakpoint / Breakpoint` | ✅ | CSS-driven viewport-conditional styling — instant, no JS round-trip. Typed `Mobile / Tablet / Desktop / SmAndUp / MdAndUp / LgAndUp / XlAndUp / DarkMode / LightMode / ReducedMotion / TouchDevice / Portrait / Landscape / Custom`. See §"Media queries + breakpoints". |
+| **Pseudo-classes**: `Background.hoverColor / Font.focusColor / Border.activeColor / ... / Ui.onPseudo` | ✅ | `:hover` / `:focus-visible` / `:focus` / `:active` / `:disabled` typed helpers on every sub-module + generic escape hatch. `:hover` auto-gated behind `@media (hover: hover)` for touch-device safety. See §"Pseudo-classes (hover, focus, active, disabled)". |
+| **Transitions + animations**: `Transition.attribute / Animation.attribute / Std.Ui.Transform` | ✅ | Typed CSS transition Steps + typed keyframe Spec with Iterations + FillMode. Auto-wrapped in `@media (prefers-reduced-motion: no-preference)` by default; opt out via `attributeUnsafe` / `respectReducedMotion = False`. `@keyframes` names auto-suffixed with sky-id. See §"Transitions + animations". |
 | **Render target** | — | Server-side Sky.Live + ~2 KB browser JS |
 | **Style emission** | — | Inline styles per element |
 

@@ -515,12 +515,97 @@ try {
             fail("disabled-button snapshot", String(e));
         }
 
-        // ─── 5. Snapshots ───────────────────────────────────────
+        // ─── 5. Transitions + animations (#378) ──────────────────
+        console.log("--- transitions + animations (#378) ---");
+        // The Std.Ui transition / animation injection passes both
+        // wrap their rules in `@media (prefers-reduced-motion:
+        // no-preference)` by default. Inspect every emitted style
+        // block to confirm the gate is present (the snapshot
+        // baseline used `reducedMotion: "reduce"` so the actual
+        // movement is suppressed, but the gated CSS is in the DOM).
+        const trStyleCount = await page.evaluate(() =>
+            document.querySelectorAll("style[data-sky-tr]").length,
+        );
+        if (trStyleCount >= 1) {
+            ok(`transition <style> blocks present (count=${trStyleCount})`);
+        } else {
+            fail("transition <style>", `expected ≥1 data-sky-tr blocks, found ${trStyleCount}`);
+        }
+        const animStyleCount = await page.evaluate(() =>
+            document.querySelectorAll("style[data-sky-anim]").length,
+        );
+        if (animStyleCount >= 2) {
+            ok(`animation <style> blocks present (count=${animStyleCount})`);
+        } else {
+            fail("animation <style>", `expected ≥2 data-sky-anim blocks, found ${animStyleCount}`);
+        }
+        // Reduced-motion gate present on the gated animation
+        // (animatedFadeIn carries respectReducedMotion = True; the
+        // spinner opts out, so we look at the fade-in element).
+        const fadeInGated = await page.evaluate(() => {
+            const el = document.querySelector('[data-test-id="animated-fade-in"]');
+            if (!el) return false;
+            const style = el.querySelector("style[data-sky-anim]");
+            if (!style) return false;
+            return style.textContent.includes(
+                "@media (prefers-reduced-motion: no-preference)",
+            );
+        });
+        if (fadeInGated) {
+            ok("animated-fade-in wrapped in @media (prefers-reduced-motion: no-preference)");
+        } else {
+            fail("fade-in reduced-motion gate", "expected gate missing");
+        }
+        // Spinner opts OUT — its style block MUST NOT have the gate.
+        const spinnerUngated = await page.evaluate(() => {
+            const el = document.querySelector('[data-test-id="animated-spinner"]');
+            if (!el) return false;
+            const style = el.querySelector("style[data-sky-anim]");
+            if (!style) return false;
+            // Animation rule (not just @keyframes) must NOT be gated.
+            return !style.textContent
+                .replace(/@keyframes[^}]*\{[^}]*\}/g, "")
+                .includes("@media (prefers-reduced-motion: no-preference)");
+        });
+        if (spinnerUngated) {
+            ok("animated-spinner correctly opts out of reduced-motion gate");
+        } else {
+            fail("spinner ungated", "spinner rule should bypass reduced-motion gate");
+        }
+        // Transition shorthand should be present on the
+        // transition-button's style block.
+        const trShorthand = await page.evaluate(() => {
+            const el = document.querySelector('[data-test-id="transition-button"]');
+            if (!el) return "";
+            const style = el.querySelector("style[data-sky-tr]");
+            return style ? style.textContent : "";
+        });
+        if (trShorthand.includes("transition: background-color 200ms ease-out")) {
+            ok("transition-button shorthand = `background-color 200ms ease-out`");
+        } else {
+            fail("transition shorthand", `expected 'background-color 200ms ease-out', got: ${trShorthand}`);
+        }
+        // Animation @keyframes effective name MUST be auto-suffixed
+        // with the element's sky-id-derived ident (prevents global
+        // collisions across elements).
+        const fadeInKeyframes = await page.evaluate(() => {
+            const el = document.querySelector('[data-test-id="animated-fade-in"]');
+            if (!el) return "";
+            const style = el.querySelector("style[data-sky-anim]");
+            return style ? style.textContent : "";
+        });
+        if (/@keyframes fadeInUp__\w+/.test(fadeInKeyframes)) {
+            ok("animated-fade-in @keyframes name auto-suffixed with sky-id");
+        } else {
+            fail("fadeInUp suffix", `expected fadeInUp__<sky-id>, got: ${fadeInKeyframes}`);
+        }
+
+        // ─── 6. Snapshots ───────────────────────────────────────
         console.log("--- snapshots (desktop) ---");
         for (const section of [
             "triple-nested", "wrap-label", "portion",
             "fixed-fill", "aspect", "grid", "pseudo", "viewport",
-            "mediaquery",
+            "mediaquery", "motion",
         ]) {
             await snapshot(page, section, `section-${section}`, "desktop");
         }

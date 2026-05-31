@@ -28,6 +28,9 @@ import Std.Ui as Ui exposing (Element)
 import Std.Ui.Background as Background
 import Std.Ui.Border as Border
 import Std.Ui.Font as Font
+import Std.Ui.Transition as Transition
+import Std.Ui.Animation as Animation
+import Std.Ui.Transform as Transform
 
 
 -- Stable data-test-id helper; the runner selects by attribute.
@@ -376,6 +379,88 @@ gridCell label colour =
         (Ui.text label)
 
 
+-- ─── Transitions + animations (#378) ──────────────────────────
+--
+-- `transitionButton` exercises `Transition.attribute` paired with
+-- `Background.hoverColor` — when the cursor enters, the browser's
+-- CSS engine animates the background between the two colours over
+-- 200 ms. The runtime injects ONE <style> per element block with
+-- the transition rule wrapped in
+-- `@media (prefers-reduced-motion: no-preference)` so users who've
+-- opted out of motion get a static UI by default.
+transitionButton : Element msg
+transitionButton =
+    Ui.button
+        [ Ui.padding 10
+        , Background.color (Ui.rgb 60 120 200)
+        , Background.hoverColor (Ui.rgb 30 90 170)
+        , Transition.attribute
+              [ Transition.property "background-color"
+              , Transition.duration 200
+              , Transition.easing Transition.easeOut
+              ]
+        , Border.rounded 6
+        , Font.color white
+        , testId "transition-button"
+        ]
+        { onPress = Nothing, label = Ui.text "transition (hover me)" }
+
+
+-- `animatedFadeIn` exercises `Animation.attribute` — a keyframe
+-- fade-in that runs once on page load.
+animatedFadeIn : Element msg
+animatedFadeIn =
+    Ui.el
+        [ Ui.padding 12
+        , Background.color (Ui.rgb 96 176 104)
+        , Font.color white
+        , Border.rounded 6
+        , Animation.attribute
+              { name = "fadeInUp"
+              , duration = 600
+              , easing = Animation.easeOut
+              , delay = 0
+              , iterations = Animation.once
+              , fillMode = Animation.forwards
+              , respectReducedMotion = True
+              , keyframes =
+                    [ ( 0, [ Transform.opacity 0.0, Transform.translateY 8 ] )
+                    , ( 100, [ Transform.opacity 1.0, Transform.translateY 0 ] )
+                    ]
+              }
+        , testId "animated-fade-in"
+        ]
+        (Ui.text "fade-in animation (respects reduced motion)")
+
+
+-- `animatedSpinner` — opts OUT of the reduced-motion gate via
+-- `respectReducedMotion = False`. The spinner MUST move to convey
+-- "loading"; a static circle is misleading.
+animatedSpinner : Element msg
+animatedSpinner =
+    Ui.el
+        [ Ui.width (Ui.px 24)
+        , Ui.height (Ui.px 24)
+        , Background.color (Ui.rgb 60 120 200)
+        , Border.rounded 12
+        , Animation.attribute
+              { name = "spin"
+              , duration = 1000
+              , easing = Animation.linear
+              , delay = 0
+              , iterations = Animation.infinite
+              , fillMode = Animation.none
+              , respectReducedMotion = False
+              , keyframes =
+                    [ ( 0, [Transform.rotate 0.0] )
+                    , ( 100, [Transform.rotate 360.0] )
+                    ]
+              }
+        , testId "animated-spinner"
+        ]
+        Ui.none
+
+
 -- ─── Section composition ───────────────────────────────────────
 card : String -> String -> Element msg -> Element msg
 card sectionId title body =
@@ -414,4 +499,10 @@ cases =
     , card "aspect" "Aspect ratio (#379)" aspectStubs
     , card "grid" "Grid (#379)" gridDemo
     , card "mediaquery" "Media query / breakpoint (#376)" mediaQueryDemo
+    , card
+          "motion"
+          "Transitions + animations (#378)"
+          (Ui.column
+              [Ui.spacing 8]
+              [ transitionButton, animatedFadeIn, animatedSpinner ])
     ]

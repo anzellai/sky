@@ -1116,6 +1116,32 @@ Full reference: `docs/skyui/overview.md`.
   Sky.Webview honours media queries identically to Sky.Live.
   Pick `Ui.breakpoint` when the layout transition needs no typed
   Msg; pick `Std.Ui.Responsive` when it does.
+- **Transitions + animations** (`Std.Ui.Transition` /
+  `Std.Ui.Animation` / `Std.Ui.Transform`) — typed CSS transitions
+  + keyframe animations declared on a Sky.Ui element. The browser
+  handles frame timing — no JS round-trip, no Model field. Both
+  rules AUTO-WRAPPED in `@media (prefers-reduced-motion: no-preference)`
+  by default for a11y; opt out via `Transition.attributeUnsafe` /
+  `respectReducedMotion = False` on the Animation Spec ONLY when
+  motion is semantically required (loading spinner, progress
+  indicator). `Transition.attribute [property "background-color",
+  duration 200, easing easeOut]` builds the CSS transition shorthand
+  from typed `Step`s; pair with `Background.hoverColor` so the
+  browser animates the change between base + `:hover` states.
+  `Animation.attribute { name, duration, easing, delay, iterations,
+  fillMode, respectReducedMotion, keyframes }` builds a keyframe
+  spec; `keyframes : List (Int, List Transform.Prop)` is
+  `[(percent, [Transform.opacity 0.0, Transform.translateY 10]),
+  ...]`. `Transform.{translateX, translateY, translate, scale,
+  scaleXY, rotate, skewX, skewY, opacity}` are the typed property
+  helpers — `transform`-shaped ones join into ONE `transform:`
+  shorthand per keyframe, `opacity` emits standalone. Two elements
+  naming their animation `"fadeIn"` with different keyframes don't
+  collide globally because the runtime auto-suffixes the
+  @keyframes name with the element's sky-id-derived ident
+  (`fadeIn__r_1_div_0`). Renders a sky-id-scoped
+  `<style data-sky-tr=...>` + `<style data-sky-anim=...>` child via
+  the same pattern as pseudo-classes / media queries.
 
 ```elm
 -- Mobile-first: column on phones, row above 768.

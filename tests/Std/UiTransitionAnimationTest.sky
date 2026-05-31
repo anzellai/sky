@@ -1,0 +1,260 @@
+module Std.UiTransitionAnimationTest exposing (tests)
+
+-- Sky-side fixtures for the Std.Ui transition + animation DSL
+-- (`Transition.attribute` / `Animation.attribute`, issue #378).
+--
+-- Covers the pure parts of the API surface — easing lowering,
+-- iteration / fill-mode wire formats, transform property
+-- stringification, shorthand builders. The runtime injection
+-- (CSS scoping + reduced-motion gate + name auto-suffix) is
+-- covered by runtime-go/rt/live_transition_animation_test.go;
+-- the compile-pipeline side by
+-- test/Sky/Build/UiTransitionAnimationSpec.hs. This file is the
+-- pure-Sky regression fence against accidental tag-drift /
+-- encoding-drift.
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Std.Ui as Ui
+import Std.Ui.Transition as Transition
+import Std.Ui.Animation as Animation
+import Std.Ui.Transform as Transform
+import Sky.Test as Test exposing (Test)
+
+
+tests : List Test
+tests =
+    [Test.suite
+        "Std.Ui transitions + animations (#378)"
+        [ Test.test
+              "Transition.linear → CSS linear"
+              (\_ ->
+                  Test.equal "linear" (Transition.easingToCss Transition.linear))
+        , Test.test
+              "Transition.easeIn → CSS ease-in"
+              (\_ ->
+                  Test.equal "ease-in" (Transition.easingToCss Transition.easeIn))
+        , Test.test
+              "Transition.easeOut → CSS ease-out"
+              (\_ ->
+                  Test.equal
+                      "ease-out"
+                      (Transition.easingToCss Transition.easeOut))
+        , Test.test
+              "Transition.easeInOut → CSS ease-in-out"
+              (\_ ->
+                  Test.equal
+                      "ease-in-out"
+                      (Transition.easingToCss Transition.easeInOut))
+        , Test.test
+              "Transition.cubicBezier emits cubic-bezier(...)"
+              (\_ ->
+                  Test.equal
+                      True
+                      (String.contains
+                          "cubic-bezier"
+                          (Transition.easingToCss
+                              (Transition.cubicBezier 0.4 0.0 0.2 1.0))))
+        , Test.test
+              "Transition.buildShorthand default property = all"
+              (\_ ->
+                  Test.equal
+                      "all 200ms ease-out"
+                      (Transition.buildShorthand []))
+        , Test.test
+              "Transition.buildShorthand custom property/duration/easing"
+              (\_ ->
+                  Test.equal
+                      "background-color 200ms ease-out"
+                      (Transition.buildShorthand
+                          [ Transition.property "background-color"
+                          , Transition.duration 200
+                          , Transition.easing Transition.easeOut
+                          ]))
+        , Test.test
+              "Transition.buildShorthand emits delay only when non-zero"
+              (\_ ->
+                  Test.equal
+                      "color 150ms linear 50ms"
+                      (Transition.buildShorthand
+                          [ Transition.property "color"
+                          , Transition.duration 150
+                          , Transition.easing Transition.linear
+                          , Transition.delay 50
+                          ]))
+        , Test.test
+              "Animation.once → CSS 1"
+              (\_ ->
+                  Test.equal "1" (Animation.iterationsToCss Animation.once))
+        , Test.test
+              "Animation.infinite → CSS infinite"
+              (\_ ->
+                  Test.equal
+                      "infinite"
+                      (Animation.iterationsToCss Animation.infinite))
+        , Test.test
+              "Animation.times 3 → CSS 3"
+              (\_ ->
+                  Test.equal
+                      "3"
+                      (Animation.iterationsToCss (Animation.times 3)))
+        , Test.test
+              "Animation.none → CSS none"
+              (\_ ->
+                  Test.equal "none" (Animation.fillModeToCss Animation.none))
+        , Test.test
+              "Animation.forwards → CSS forwards"
+              (\_ ->
+                  Test.equal
+                      "forwards"
+                      (Animation.fillModeToCss Animation.forwards))
+        , Test.test
+              "Animation.backwards → CSS backwards"
+              (\_ ->
+                  Test.equal
+                      "backwards"
+                      (Animation.fillModeToCss Animation.backwards))
+        , Test.test
+              "Animation.both → CSS both"
+              (\_ ->
+                  Test.equal "both" (Animation.fillModeToCss Animation.both))
+        , Test.test
+              "Transform.opacity 0.5 → opacity: 0.5;"
+              (\_ ->
+                  Test.equal
+                      "opacity: 0.5;"
+                      (Transform.propsToCss [Transform.opacity 0.5]))
+        , Test.test
+              "Transform.translateY 10 → transform: translateY(10px);"
+              (\_ ->
+                  Test.equal
+                      "transform: translateY(10px);"
+                      (Transform.propsToCss [Transform.translateY 10]))
+        , Test.test
+              "Transform multiple parts join into one transform rule"
+              (\_ ->
+                  let
+                      css =
+                          Transform.propsToCss
+                              [ Transform.translateY 10
+                              , Transform.scale 0.9
+                              ]
+                  in
+                      Test.equal
+                          True
+                          (String.contains "translateY(10px) scale(0.9)" css))
+        , Test.test
+              "Transform mixed transform + opacity emits both rules"
+              (\_ ->
+                  let
+                      css =
+                          Transform.propsToCss
+                              [ Transform.opacity 0.0
+                              , Transform.translateY 10
+                              ]
+                  in
+                      Test.equal
+                          True
+                          (String.contains "transform: translateY(10px)" css
+                              && String.contains "opacity: 0" css))
+        , Test.test
+              "Animation.buildShorthandTail composes dur+easing+delay+iter+fill"
+              (\_ ->
+                  Test.equal
+                      "300ms ease-out 0ms 1 forwards"
+                      (Animation.buildShorthandTail
+                          { name = "fadeIn"
+                          , duration = 300
+                          , easing = Animation.easeOut
+                          , delay = 0
+                          , iterations = Animation.once
+                          , fillMode = Animation.forwards
+                          , respectReducedMotion = True
+                          , keyframes = []
+                          }))
+        , Test.test
+              "Animation.buildKeyframesBody renders frames as % { props }"
+              (\_ ->
+                  let
+                      body =
+                          Animation.buildKeyframesBody
+                              [ ( 0, [Transform.opacity 0.0] )
+                              , ( 100, [Transform.opacity 1.0] )
+                              ]
+                  in
+                      Test.equal
+                          True
+                          (String.contains "0% { opacity: 0" body
+                              && String.contains "100% { opacity: 1" body))
+        , Test.test
+              "collectTransitions joins multiple AttrTransitions with ', '"
+              (\_ ->
+                  let
+                      attrs =
+                          [ Transition.attribute
+                                [ Transition.property "color"
+                                , Transition.duration 100
+                                , Transition.easing Transition.easeIn
+                                ]
+                          , Transition.attribute
+                                [ Transition.property "background-color"
+                                , Transition.duration 200
+                                , Transition.easing Transition.easeOut
+                                ]
+                          ]
+                      result = Ui.collectTransitions attrs
+                  in
+                      case result of
+
+                          ( joined, _ ) ->
+                              Test.equal
+                                  True
+                                  (String.contains "color 100ms ease-in" joined
+                                      && String.contains
+                                              "background-color 200ms ease-out"
+                                              joined))
+        , Test.test
+              "Transition.attributeUnsafe sets opt-out flag (True returned)"
+              (\_ ->
+                  let
+                      attrs =
+                          [Transition.attributeUnsafe
+                              [ Transition.property "transform"
+                              , Transition.duration 1000
+                              ]]
+                      result = Ui.collectTransitions attrs
+                  in
+                      case result of
+
+                          ( _, optOut ) ->
+                              Test.equal True optOut)
+        , Test.test
+              "Animation.attribute returns one entry; user name preserved"
+              (\_ ->
+                  let
+                      attrs =
+                          [Animation.attribute
+                              { name = "fadeIn"
+                              , duration = 200
+                              , easing = Animation.easeOut
+                              , delay = 0
+                              , iterations = Animation.once
+                              , fillMode = Animation.forwards
+                              , respectReducedMotion = True
+                              , keyframes =
+                                    [ ( 0, [Transform.opacity 0.0] )
+                                    , ( 100, [Transform.opacity 1.0] )
+                                    ]
+                              }]
+                      entries = Ui.collectAnimations attrs
+                      firstName =
+                          case List.head entries of
+
+                              Just e ->
+                                  Ui.animationEntryName e
+
+                              Nothing ->
+                                  "(none)"
+                  in
+                      Test.equal "fadeIn" firstName)
+        ]]
