@@ -1,0 +1,44 @@
+module Sky.Core.StringInTest exposing (tests)
+
+-- Regression fence for the v0.15.47 haystack-first String
+-- companions (containsIn / startsWithIn / endsWithIn). These
+-- close the pipeline-friendly gap left by the needle-first
+-- contains / startsWith / endsWith helpers.
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Test as Test exposing (Test)
+
+
+tests : List Test
+tests =
+    [ Test.suite
+        "String haystack-first companions (v0.15.47)"
+        [ Test.test
+            "containsIn — pipeline-friendly"
+            (\_ -> Test.equal True (String.containsIn "hello world" "world"))
+        , Test.test
+            "containsIn — false on miss"
+            (\_ -> Test.equal False (String.containsIn "hello" "world"))
+        , Test.test
+            "containsIn pipe — common idiom"
+            (\_ -> Test.equal True ("hello world" |> String.containsIn "hello"))
+        , Test.test
+            "startsWithIn — prefix"
+            (\_ -> Test.equal True (String.startsWithIn "/api/users" "/api"))
+        , Test.test
+            "startsWithIn — no match"
+            (\_ -> Test.equal False (String.startsWithIn "/api/users" "/v1"))
+        , Test.test
+            "endsWithIn — suffix"
+            (\_ -> Test.equal True (String.endsWithIn "image.png" ".png"))
+        , Test.test
+            "endsWithIn — no match"
+            (\_ -> Test.equal False (String.endsWithIn "image.jpg" ".png"))
+        , Test.test
+            "needle-first contains still works"
+            (\_ -> Test.equal True (String.contains "world" "hello world"))
+        , Test.test
+            "needle-first startsWith still works"
+            (\_ -> Test.equal True (String.startsWith "/api" "/api/users"))
+        ]
+    ]

@@ -21,6 +21,7 @@ module Sky.Core.String exposing
     , toUpper, toLower, trim, trimStart, trimEnd
     , reverse, append, concat
     , contains, startsWith, endsWith
+    , containsIn, startsWithIn, endsWithIn
     , casefold, equalFold
     , isEmail, isUrl
     , words, lines
@@ -72,6 +73,29 @@ startsWith = Ffi.kernel "String_startsWith"
 
 endsWith : String -> String -> Bool
 endsWith = Ffi.kernel "String_endsWith"
+
+
+-- | Haystack-first companion to `contains` — built for pipelines.
+--
+--     "hello world" |> String.containsIn "world"   -- True
+--
+-- Equivalent to `\\haystack needle -> contains needle haystack`.
+containsIn : String -> String -> Bool
+containsIn haystack needle = contains needle haystack
+
+
+-- | Haystack-first companion to `startsWith`.
+--
+--     "/api/users" |> String.startsWithIn "/api"  -- True
+startsWithIn : String -> String -> Bool
+startsWithIn haystack prefix = startsWith prefix haystack
+
+
+-- | Haystack-first companion to `endsWith`.
+--
+--     "image.png" |> String.endsWithIn ".png"  -- True
+endsWithIn : String -> String -> Bool
+endsWithIn haystack suffix = endsWith suffix haystack
 
 
 isEmail : String -> Bool
