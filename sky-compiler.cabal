@@ -298,6 +298,7 @@ test-suite sky-tests
       Sky.Build.JsonPipelinePanic372Spec
       Sky.Build.DictSourceSpec
       Sky.Build.DbDecoderSpec
+      Sky.Build.WebSocketSpec
       Sky.Parse.MultiLineCaseSubjectSpec
       Sky.Parse.MultiLineCaseKeywordSpec
       Sky.Parse.MultiLineSignatureSpec

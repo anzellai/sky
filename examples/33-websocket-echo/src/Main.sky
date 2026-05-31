@@ -1,0 +1,101 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.String as String
+import Sky.Core.Error exposing (Error)
+import Sky.Http.Server as Server
+import Sky.Http.Server exposing (Request, Response)
+import Sky.Http.Server.WebSocket as Ws
+import Std.Log as Log
+
+
+-- | WebSocket echo demo — the canonical pattern for v0.15.46
+-- `Sky.Http.Server.WebSocket`.
+--
+-- Architecture:
+--
+--   browser / websocat / Go ws client ──/ws──> this server (port 8033)
+--                                                    │
+--                                                    │ Ws.upgrade hijacks
+--                                                    │ the connection
+--                                                    ▼
+--                                       onMessage echoes "echo: <msg>"
+--                                                    ▼
+--   browser / websocat / Go ws client <─text frames─ this server
+--
+-- The handler returns `Ws.upgrade req cfg` directly; the dispatcher
+-- detects the upgrade sentinel and routes to the Hijack path.  Each
+-- accepted peer runs the cfg's callbacks in its own goroutine.
+--
+-- Run + verify:
+--
+--   sky build src/Main.sky
+--   ./sky-out/app &
+--   websocat -n1 ws://localhost:8033/ws <<<'hello'
+--   ⇒ echo: hello
+
+
+-- | Landing page — a tiny HTML snippet so the verify gate can hit
+-- `/` for a sanity 200.
+handleRoot : Request -> Task Error Response
+handleRoot _ =
+    Task.succeed (Server.html landingHtml)
+
+
+landingHtml : String
+landingHtml =
+    """<!doctype html>
+<html><head><meta charset="utf-8"><title>WebSocket echo demo</title></head>
+<body><h1>WebSocket echo demo (v0.15.46)</h1>
+<p>Open a WebSocket to <code>ws://localhost:8033/ws</code> and any text
+frame you send will come back prefixed with <code>echo: </code>.</p>
+<p>Try: <code>websocat -n1 ws://localhost:8033/ws &lt;&lt;&lt;'hello'</code></p>
+</body></html>"""
+
+
+-- | WebSocket upgrade — accept the upgrade, echo every text frame
+-- back with `echo: ` prefix.  Closing the connection from either
+-- side ends the loop cleanly.
+handleWs : Request -> Task Error Response
+handleWs req =
+    Ws.upgrade req
+        (Ws.defaultCfg
+            |> Ws.withOnConnect onConnect
+            |> Ws.withOnMessage onMessage
+            |> Ws.withOnClose onClose
+            |> Ws.withOnError onError
+            |> Ws.withOriginPatterns [ "*" ]
+        )
+
+
+onConnect : Ws.WebSocketServer -> Task Error ()
+onConnect _ =
+    Log.println "[ws] client connected"
+
+
+onMessage : Ws.WebSocketServer -> String -> Task Error ()
+onMessage sock msg =
+    let
+        _ =
+            Log.println ("[ws] received: " ++ msg)
+    in
+    Ws.sendToClient sock ("echo: " ++ msg)
+
+
+onClose : Ws.WebSocketServer -> Task Error ()
+onClose _ =
+    Log.println "[ws] client gone"
+
+
+onError : Ws.WebSocketServer -> Error -> Task Error ()
+onError _ _ =
+    Log.println "[ws] error"
+
+
+main : Task Error ()
+main =
+    Server.listen 8033
+        [ Server.get "/" handleRoot
+        , Server.get "/ws" handleWs
+        ]

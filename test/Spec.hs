@@ -50,6 +50,7 @@ import qualified Sky.Build.WebviewLoopbackAssetsSpec
 import qualified Sky.Build.JsonPipelinePanic372Spec
 import qualified Sky.Build.DictSourceSpec
 import qualified Sky.Build.DbDecoderSpec
+import qualified Sky.Build.WebSocketSpec
 import qualified Sky.Parse.MultiLineCaseSubjectSpec
 import qualified Sky.Parse.MultiLineCaseKeywordSpec
 import qualified Sky.Parse.MultiLineSignatureSpec
@@ -319,6 +320,9 @@ main = hspec $ do
     describe "Sky.Build.DictSource" Sky.Build.DictSourceSpec.spec
     -- v0.15.45 — Std.Db.Decode typed row decoder pipeline.
     describe "Sky.Build.DbDecoder" Sky.Build.DbDecoderSpec.spec
+    -- v0.15.46 — Sky.Core.WebSocket + Sky.Http.Server.WebSocket
+    -- kernel routing + Sky-side type-checking.
+    describe "Sky.Build.WebSocket" Sky.Build.WebSocketSpec.spec
     describe "Sky.Parse.MultiLineCaseSubject" Sky.Parse.MultiLineCaseSubjectSpec.spec
     describe "Sky.Parse.MultiLineCaseKeyword"
         Sky.Parse.MultiLineCaseKeywordSpec.spec

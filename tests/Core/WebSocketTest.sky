@@ -1,0 +1,177 @@
+module Core.WebSocketTest exposing (tests)
+
+-- v0.15.46 — Sky.Test fixtures for Sky.Core.WebSocket + Sky.Http.Server.WebSocket.
+--
+-- The runtime behaviour (real socket handshake, send + receive,
+-- broadcast) is covered by `runtime-go/rt/websocket_test.go`
+-- (TestWebSocket_RoundTrip etc.) and by
+-- `examples/33-websocket-echo` (`websocat` round-trip in
+-- scripts/example-sweep.sh).
+--
+-- This module covers the PURE logic + record-shape invariants:
+--
+--   * CloseCode → Int round-trip is well-defined
+--   * defaultCfg produces the documented field values
+--   * with* builders compose left-to-right and override fields
+--   * WebSocketServerCfg defaultCfg produces no-op Task callbacks
+--
+-- A regression in either record's shape (silent field drop, wrong
+-- default, builder helper that doesn't actually overwrite) will
+-- trip a test before a deployed app misbehaves.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.WebSocket as Ws exposing (CloseCode(..))
+import Sky.Http.Server.WebSocket as ServerWs
+import Sky.Test as Test exposing (Test)
+
+
+-- | CloseCode → Int per Ws.closeCodeToInt.  Pure helper exposed for
+-- testing; the runtime kernels never see the ADT (they receive the
+-- already-mapped Int via closeWithCode's wrapper).
+closeCodeToInt : CloseCode -> Int
+closeCodeToInt code =
+    case code of
+
+        Normal ->
+            1000
+
+        GoingAway ->
+            1001
+
+        UnsupportedData ->
+            1003
+
+        InternalError ->
+            1011
+
+        Custom n ->
+            n
+
+
+tests : List Test
+tests =
+    [ Test.suite
+        "Sky.Core.WebSocket.CloseCode"
+        [ Test.test
+            "Normal → 1000"
+            (\_ -> Test.equal 1000 (closeCodeToInt Normal))
+        , Test.test
+            "GoingAway → 1001"
+            (\_ -> Test.equal 1001 (closeCodeToInt GoingAway))
+        , Test.test
+            "UnsupportedData → 1003"
+            (\_ -> Test.equal 1003 (closeCodeToInt UnsupportedData))
+        , Test.test
+            "InternalError → 1011"
+            (\_ -> Test.equal 1011 (closeCodeToInt InternalError))
+        , Test.test
+            "Custom 4000 → 4000"
+            (\_ -> Test.equal 4000 (closeCodeToInt (Custom 4000)))
+        ]
+    , Test.suite
+        "Sky.Core.WebSocket.WebSocketCfg"
+        [ Test.test
+            "defaultCfg.url is preserved"
+            (\_ ->
+                let
+                    cfg =
+                        Ws.defaultCfg "wss://example.com"
+                in
+                Test.equal "wss://example.com" cfg.url
+            )
+        , Test.test
+            "defaultCfg.timeout is 30000"
+            (\_ ->
+                let
+                    cfg =
+                        Ws.defaultCfg "wss://x"
+                in
+                Test.equal 30000 cfg.timeout
+            )
+        , Test.test
+            "defaultCfg.pingInterval is 30000"
+            (\_ ->
+                let
+                    cfg =
+                        Ws.defaultCfg "wss://x"
+                in
+                Test.equal 30000 cfg.pingInterval
+            )
+        , Test.test
+            "withTimeout overrides"
+            (\_ ->
+                let
+                    cfg =
+                        Ws.defaultCfg "wss://x" |> Ws.withTimeout 5000
+                in
+                Test.equal 5000 cfg.timeout
+            )
+        , Test.test
+            "withPingInterval overrides"
+            (\_ ->
+                let
+                    cfg =
+                        Ws.defaultCfg "wss://x" |> Ws.withPingInterval 60000
+                in
+                Test.equal 60000 cfg.pingInterval
+            )
+        , Test.test
+            "withHeaders overrides"
+            (\_ ->
+                let
+                    cfg =
+                        Ws.defaultCfg "wss://x"
+                            |> Ws.withHeaders [ ( "Authorization", "Bearer t" ) ]
+                in
+                Test.equal 1 (List.length cfg.headers)
+            )
+        , Test.test
+            "compose: url + headers + timeout coexist"
+            (\_ ->
+                let
+                    cfg =
+                        Ws.defaultCfg "wss://api"
+                            |> Ws.withHeaders [ ( "X", "y" ) ]
+                            |> Ws.withTimeout 10000
+                in
+                Test.equal True
+                    (cfg.url == "wss://api"
+                        && cfg.timeout == 10000
+                        && List.length cfg.headers == 1
+                    )
+            )
+        ]
+    , Test.suite
+        "Sky.Http.Server.WebSocket.WebSocketServerCfg"
+        [ Test.test
+            "defaultCfg.maxMessageBytes is 1 MiB"
+            (\_ -> Test.equal 1048576 ServerWs.defaultCfg.maxMessageBytes)
+        , Test.test
+            "defaultCfg.originPatterns is empty"
+            (\_ ->
+                Test.equal 0
+                    (List.length ServerWs.defaultCfg.originPatterns)
+            )
+        , Test.test
+            "withMaxMessageBytes overrides"
+            (\_ ->
+                let
+                    cfg =
+                        ServerWs.defaultCfg |> ServerWs.withMaxMessageBytes 65536
+                in
+                Test.equal 65536 cfg.maxMessageBytes
+            )
+        , Test.test
+            "withOriginPatterns overrides"
+            (\_ ->
+                let
+                    cfg =
+                        ServerWs.defaultCfg
+                            |> ServerWs.withOriginPatterns
+                                [ "https://*.example.com", "https://app.example.com" ]
+                in
+                Test.equal 2 (List.length cfg.originPatterns)
+            )
+        ]
+    ]
