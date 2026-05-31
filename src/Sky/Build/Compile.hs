@@ -1752,7 +1752,12 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
                           let cacheDir = ".skycache"
                           createDirectoryIfMissing True cacheDir
                           writeFile (cacheDir </> "source.hash") srcHash
-                          putStrLn "Compilation successful"
+                          -- v0.15.42 (audit §3.4): Sky lowering succeeded, but
+                          -- `go build` hasn't run yet. The CLI prints
+                          -- "Compilation successful" only after Go returns 0,
+                          -- so users never see a "successful" banner followed
+                          -- by a go-build failure.
+                          putStrLn "Sky lowering succeeded"
                           return (Right mainGoPath)
 
 
@@ -1820,7 +1825,8 @@ parseSingle config entryPath outDir = do
                         , "go 1.21"
                         ]
 
-                    putStrLn "Compilation successful"
+                    -- v0.15.42 (audit §3.4): see comment above.
+                    putStrLn "Sky lowering succeeded"
                     return (Right mainGoPath)
 
 
