@@ -396,6 +396,104 @@ Responsive.adapt viewport
     }
 ```
 
+`Std.Ui.Responsive` is the **Model-driven** path: feed the viewport size in via `Sub.windowSize`, branch in your `view` function, dispatch a Msg when the layout changes. Useful when the layout transition needs to fire a typed event (e.g. close a tray, refit a canvas).
+
+For **CSS-driven** viewport-conditional styling — instant, no JS, no Model field, no re-render — use the **media-query primitive** below.
+
+## Media queries + breakpoints
+
+`Ui.mediaQuery` + `Ui.breakpoint` express viewport-conditional styling in pure typed Sky. The CSS engine handles reactivity natively — instant, no JS round-trip, no model field, no re-render when the viewport crosses the breakpoint.
+
+```elm
+import Std.Ui as Ui
+import Std.Ui.Background as Background
+
+
+view : Model -> any
+view _ =
+    Ui.layout []
+        (Ui.row
+            [ Ui.spacing 16, Ui.padding 16 ]
+            [ -- Typed-constant breakpoint: stacks vertically + red bg
+              -- ONLY when viewport ≤ 767 px wide. Above the breakpoint
+              -- the wrapper keeps its base layout (none here).
+              Ui.breakpoint Ui.mobile
+                  [ Ui.htmlAttribute "style" "flex-direction: column;"
+                  , Background.color (Ui.rgb 240 0 0)
+                  ]
+                  sidebar
+
+              -- Escape hatch: any raw CSS media-query string. The
+              -- caller owns query correctness.
+            , Ui.mediaQuery "(prefers-color-scheme: dark)"
+                  [ Background.color (Ui.rgb 18 18 24) ]
+                  main
+            ])
+```
+
+### `Ui.breakpoint : Breakpoint -> List (Attribute msg) -> Element msg -> Element msg`
+
+Typed constants covering 95 % of cases. Defaults follow Tailwind cuts so AI-generated Sky lines up with the most-common mental model.
+
+| Breakpoint | CSS query | Typical use |
+|---|---|---|
+| `Ui.mobile` | `(max-width: 767px)` | phone-only overrides |
+| `Ui.tablet` | `(min-width: 768px) and (max-width: 1023px)` | mid-size styling |
+| `Ui.desktop` | `(min-width: 1024px)` | desktop-only |
+| `Ui.smAndUp` | `(min-width: 640px)` | Tailwind `sm` cut |
+| `Ui.mdAndUp` | `(min-width: 768px)` | Tailwind `md` cut |
+| `Ui.lgAndUp` | `(min-width: 1024px)` | Tailwind `lg` cut |
+| `Ui.xlAndUp` | `(min-width: 1280px)` | Tailwind `xl` cut |
+| `Ui.darkMode` | `(prefers-color-scheme: dark)` | dark-theme overrides |
+| `Ui.lightMode` | `(prefers-color-scheme: light)` | light-theme overrides |
+| `Ui.reducedMotion` | `(prefers-reduced-motion: reduce)` | suppress transitions |
+| `Ui.touchDevice` | `(hover: none) and (pointer: coarse)` | touch-first UI |
+| `Ui.portrait` | `(orientation: portrait)` | tall layouts |
+| `Ui.landscape` | `(orientation: landscape)` | wide layouts |
+| `Ui.Custom minPx maxPx` | `(min-width: <minPx>px) and (max-width: <maxPx>px)` (or one bound when the other is `0`) | custom ranges |
+
+### `Ui.mediaQuery : String -> List (Attribute msg) -> Element msg -> Element msg`
+
+Escape hatch — any raw CSS media-query string. Use when no typed `Breakpoint` covers the case (`(orientation: portrait)`, `(min-resolution: 2dppx)`, `(forced-colors: active)`, etc.). The string is emitted verbatim inside `@media <q> { ... }`; the caller owns correctness.
+
+### Composition
+
+Nested breakpoints stack — each call wraps a fresh `<div>` with its own scoped `<style>` block. CSS rules match independently.
+
+```elm
+-- Stacks two media-query overrides on the same content.
+Ui.breakpoint Ui.mobile
+    [ Background.color (Ui.rgb 240 0 0) ]
+    (Ui.breakpoint Ui.darkMode
+        [ Background.color (Ui.rgb 18 18 24) ]
+        content)
+```
+
+### What renders on the wire
+
+`Ui.breakpoint Ui.mobile [ Ui.padding 8 ] child` lowers to:
+
+```html
+<div sky-id="r.0.2#div" style="display: flex; flex-direction: column;">
+    <style data-sky-mq="r.0.2#div">
+        @media (max-width: 767px) {
+            [sky-id="r.0.2#div"] { padding: 8px 8px 8px 8px; }
+        }
+    </style>
+    <!-- child content -->
+</div>
+```
+
+The selector keys off the wrapper's runtime-assigned `sky-id` — so two breakpoints on the same page cannot cross-contaminate each other's rules. Sky.Tui silently ignores the injected `<style>` (terminal renders the base layer only); Sky.Webview honours media queries identically to Sky.Live because they share the runtime VNode pipeline.
+
+### When to pick `Ui.breakpoint` vs `Std.Ui.Responsive`
+
+| Use case | Pick |
+|---|---|
+| Layout differs by viewport, no Msg needed | `Ui.breakpoint` (no Model field, no re-render) |
+| Layout-transition fires a typed Msg (close tray on mobile, refit canvas, re-fetch tile grid) | `Std.Ui.Responsive` (Model-driven via `Sub.windowSize`) |
+| Both — visual override + Msg | Combine: `Ui.breakpoint` for the styling, `Sub.windowSize` for the Msg |
+
 ## Putting it all together — a non-trivial example
 
 `examples/19-skyforum` is the canonical Sky.Ui demo: a Reddit/HackerNews-style forum split across 8 modules. Highlights:
@@ -441,7 +539,8 @@ The 8-module split (`State.sky` / `Update.sky` / `View/{Common,Posts,Detail,Comp
 | **Cursor**: `pointer` | ✅ | |
 | **Overflow**: `clip / clipX / clipY / scrollbars / scrollbarX / scrollbarY` | ✅ | `overflow-x` / `overflow-y` |
 | **Misc**: `transparent` / `htmlAttribute` / `style` / `class` / `name` | ✅ | |
-| Misc: `classifyDevice` | ✅ | Via `Std.Ui.Responsive` |
+| Misc: `classifyDevice` | ✅ | Via `Std.Ui.Responsive` (Model-driven) |
+| **Media queries**: `mediaQuery / breakpoint / Breakpoint` | ✅ | CSS-driven viewport-conditional styling — instant, no JS round-trip. Typed `Mobile / Tablet / Desktop / SmAndUp / MdAndUp / LgAndUp / XlAndUp / DarkMode / LightMode / ReducedMotion / TouchDevice / Portrait / Landscape / Custom`. See §"Media queries + breakpoints". |
 | **Render target** | — | Server-side Sky.Live + ~2 KB browser JS |
 | **Style emission** | — | Inline styles per element |
 

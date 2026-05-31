@@ -1080,7 +1080,41 @@ Full reference: `docs/skyui/overview.md`.
   currentPassword, newPassword, checkbox, radio, radioRow,
   slider), `Lazy` (LRU-cached subtrees, `SKY_UI_LAZY_CAP=N`),
   `Keyed` (sky-key for diff identity), `Responsive`
-  (classifyDevice, adapt).
+  (classifyDevice, adapt — Model-driven branching that needs a
+  typed Msg dispatch).
+- **Media queries + breakpoints** (`Ui.mediaQuery` / `Ui.breakpoint`
+  / `Breakpoint` ADT) — CSS-driven viewport-conditional styling
+  with instant CSS-engine reactivity (no JS round-trip, no Model
+  field, no re-render). Typed `Breakpoint`: `Mobile`, `Tablet`,
+  `Desktop`, `SmAndUp`, `MdAndUp`, `LgAndUp`, `XlAndUp`
+  (Tailwind cuts), `DarkMode`, `LightMode`, `ReducedMotion`,
+  `TouchDevice`, `Portrait`, `Landscape`, `Custom Int Int` (minPx
+  maxPx; 0 = unset). `Ui.mediaQuery query [attrs] child` is the
+  escape hatch for any raw CSS media-query string. Renders a
+  wrapper `<div>` + a sky-id-scoped `<style>` child:
+  `<style data-sky-mq="<sid>">@media <q> { [sky-id="<sid>"] { <rules> } }</style>`
+  — two breakpoints on the same page can't cross-contaminate.
+  Composes via nesting; Sky.Tui silently ignores `<style>`;
+  Sky.Webview honours media queries identically to Sky.Live.
+  Pick `Ui.breakpoint` when the layout transition needs no typed
+  Msg; pick `Std.Ui.Responsive` when it does.
+
+```elm
+-- Mobile-first: column on phones, row above 768.
+Ui.breakpoint Ui.mobile
+    [ Ui.htmlAttribute "style" "flex-direction: column;" ]
+    (Ui.row [ Ui.spacing 16 ] [ sidebar, main ])
+
+-- Dark-mode background, no model field required.
+Ui.breakpoint Ui.darkMode
+    [ Background.color (Ui.rgb 18 18 24) ]
+    pageBody
+
+-- Raw query for cases no typed Breakpoint covers.
+Ui.mediaQuery "(min-resolution: 2dppx)"
+    [ Background.image "hero@2x.png" ]
+    hero
+```
 
 ### File / image upload pattern
 
