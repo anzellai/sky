@@ -1,0 +1,121 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.String as String
+import Sky.Core.Time as Time
+import Sky.Core.Http exposing (HttpRequest)
+import Sky.Core.Http.Stream as HttpStream
+import Sky.Http.Server as Server
+import Sky.Http.Server exposing (Request, Response)
+import Sky.Http.Server.Stream as ServerStream
+import Sky.Core.Error exposing (Error)
+
+
+-- | SSE relay demo — the canonical synchronous-relay shape for
+-- `Sky.Core.Http.Stream.forEachChunk` (#373).
+--
+-- Architecture:
+--
+--   browser/curl ──GET /relay──> this server (port 8001)
+--                                       │
+--                                       │ Sky.Core.Http.Stream.open
+--                                       ▼
+--                              upstream /upstream (this server too,
+--                              just to keep the demo self-contained)
+--                                       │
+--                                       │ forEachChunk synchronously
+--                                       │ emits each chunk back via
+--                                       │ Server.Stream.emit
+--                                       ▼
+--   browser/curl <─chunked SSE─ this server
+--
+-- The relay handler runs in the Sky.Http.Server handler goroutine
+-- (NO Sky.Live update loop / Sub mechanism available there). The new
+-- `forEachChunk` primitive drains the upstream's chunk channel
+-- synchronously from that same goroutine, calling the body Task
+-- (`Server.Stream.emit`) per chunk.
+--
+-- Run + verify:
+--
+--   sky run src/Main.sky
+--   curl --no-buffer http://localhost:8001/relay
+--
+-- Expected: chunks appear progressively (alpha, beta, gamma, delta,
+-- epsilon, done) over ~1 s — NOT all at once at the end.
+main =
+    Server.listen
+        8001
+        [ Server.get "/" handleHome
+        , Server.get "/upstream" handleUpstream
+        , Server.get "/relay" handleRelay
+        ]
+
+
+handleHome : Request -> Task Error Response
+handleHome _ =
+    Task.succeed
+        (Server.html
+            """<h1>SSE relay demo (#373)</h1>
+<p>The <code>/relay</code> endpoint proxies <code>/upstream</code>
+chunk-for-chunk via <code>Sky.Core.Http.Stream.forEachChunk</code>
+inside a plain <code>Sky.Http.Server</code> handler (no Sky.Live update
+loop required).</p>
+<pre>curl --no-buffer http://localhost:8001/relay</pre>""")
+
+
+-- | A simple upstream that emits 5 SSE ticks + a done event, with a
+-- 200ms gap between each. Pretends to be Anthropic's streaming
+-- /v1/messages endpoint.
+handleUpstream : Request -> Task Error Response
+handleUpstream _ =
+    ServerStream.stream
+        "text/event-stream"
+        (\writer ->
+            emitTick writer 1
+                |> Task.andThen (\_ -> emitTick writer 2)
+                |> Task.andThen (\_ -> emitTick writer 3)
+                |> Task.andThen (\_ -> emitTick writer 4)
+                |> Task.andThen (\_ -> emitTick writer 5)
+                |> Task.andThen
+                       (\_ ->
+                            ServerStream.emit
+                                "event: done\ndata: bye\n\n"
+                                writer)
+                |> Task.andThen (\_ -> ServerStream.finish writer))
+
+
+emitTick : ServerStream.StreamWriter -> Int -> Task Error ()
+emitTick writer n =
+    ServerStream.emit
+        ("event: tick\ndata: " ++ String.fromInt n ++ "\n\n")
+        writer
+        |> Task.andThen (\_ -> Time.sleep 200)
+
+
+-- | The relay handler — synchronously drains an upstream stream and
+-- re-emits every chunk to its own client.
+--
+-- This is the shape SkyDeploy's agent-service uses to forward
+-- Anthropic SSE tokens to control-plane: per-token, not per-turn.
+handleRelay : Request -> Task Error Response
+handleRelay _ =
+    ServerStream.stream
+        "text/event-stream"
+        (\writer ->
+            HttpStream.open upstreamRequest
+                |> Task.andThen
+                       (\hdl ->
+                            HttpStream.forEachChunk
+                                hdl
+                                (\chunk -> ServerStream.emit chunk writer))
+                |> Task.andThen (\_ -> ServerStream.finish writer))
+
+
+upstreamRequest : HttpRequest
+upstreamRequest =
+    { method = "GET"
+    , url = "http://127.0.0.1:8001/upstream"
+    , body = ""
+    , headers = []
+    }

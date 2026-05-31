@@ -1,0 +1,8 @@
+{
+    "_comment": "verify scenarios for the SSE relay demo (Sky.Core.Http.Stream.forEachChunk, #373). /upstream emits 5 tick + 1 done event over ~1s. /relay opens that upstream stream from within a plain Sky.Http.Server handler goroutine, forEach-drains it synchronously, and re-emits each chunk back through Sky.Http.Server.Stream.emit — chunk-for-chunk. Both endpoints share the same SSE wire shape; the relay just proves the synchronous-iterator bridge.",
+    "requests": [
+        { "method": "GET", "path": "/",         "expectStatus": 200, "expectBody": ["SSE relay demo"] },
+        { "method": "GET", "path": "/upstream", "expectStatus": 200, "expectBody": ["event: tick", "event: done"] },
+        { "method": "GET", "path": "/relay",    "expectStatus": 200, "expectBody": ["event: tick", "event: done"] }
+    ]
+}

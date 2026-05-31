@@ -112,6 +112,10 @@ declare -a EXAMPLES=(
     "26-ui-showcase:server:8000:/"
     "27-multi-session-chat:server:8000:/"
     "30-sse-server-demo:server:8000:/"
+    # 32 — SSE relay (#373): Sky.Http.Server handler synchronously
+    # drains an upstream Http.Stream + re-emits via Server.Stream.emit
+    # chunk-for-chunk. Uses port 8001 to avoid colliding with peers.
+    "32-sse-relay:server:8001:/"
     # 29 — Sky.Webview spike: Three.js + WebGL2 under the new
     # loopback-asset pipeline (bug #370). Same gui-kind skip
     # semantics as 31 (display + macOS-only cgo).
