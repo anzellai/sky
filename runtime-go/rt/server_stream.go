@@ -61,6 +61,7 @@ package rt
 import (
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 )
@@ -138,6 +139,51 @@ func lookupServerStream(id int64) *serverStreamHandle {
 // Sky-facing kernel entries
 // ═══════════════════════════════════════════════════════════════
 
+// pendingStreamHandlers carries StreamHandler closures across the
+// typed-codegen boundary.  v0.15.44 made user-side `Response` a
+// typed record alias (Sky_Http_Server_Response_R) — a struct shape
+// with no StreamHandler field.  When TaskCoerceT[E, Response_R]
+// narrows the rt.SkyResponse the user produced via
+// ServerStream_stream, the StreamHandler `any` field gets silently
+// dropped (target struct has no slot for it).
+//
+// To preserve streaming end-to-end, ServerStream_stream registers
+// the closure here under a fresh token AND stamps the token into
+// the response Body (as `__sky_stream:<token>`).  The listener's
+// asSkyResponse detects the sentinel + restores StreamHandler from
+// this map before routing to serveStreamingResponse.  The entry is
+// removed on lookup so a long-lived token can't leak indefinitely.
+var pendingStreamHandlers sync.Map // map[string]any (any = handler closure)
+var pendingStreamTokenSeq atomic.Int64
+
+const pendingStreamSentinelPrefix = "__sky_stream:"
+
+func registerPendingStreamHandler(handler any) string {
+	id := pendingStreamTokenSeq.Add(1)
+	token := fmt.Sprintf("%d", id)
+	pendingStreamHandlers.Store(token, handler)
+	return token
+}
+
+func takePendingStreamHandler(token string) (any, bool) {
+	v, ok := pendingStreamHandlers.LoadAndDelete(token)
+	if !ok {
+		return nil, false
+	}
+	return v, true
+}
+
+// extractPendingStreamToken returns the token + true when body
+// starts with the sentinel prefix.  Otherwise empty + false.  The
+// listener uses this to detect a streaming response and look up
+// its handler.
+func extractPendingStreamToken(body string) (string, bool) {
+	if !strings.HasPrefix(body, pendingStreamSentinelPrefix) {
+		return "", false
+	}
+	return body[len(pendingStreamSentinelPrefix):], true
+}
+
 // ServerStream_stream implements:
 //
 //	Sky.Http.Server.Stream.stream
@@ -148,17 +194,24 @@ func lookupServerStream(id int64) *serverStreamHandle {
 // the non-nil StreamHandler and routes to serveStreamingResponse.
 //
 // The user's handler closure (the `(StreamWriter -> Task Error ())`
-// argument) is stored verbatim on the response; the dispatcher
-// calls it via SkyCall once the response head is on the wire.
+// argument) is stashed in pendingStreamHandlers under a unique
+// token; the token is encoded into Body as `__sky_stream:<token>`
+// so it survives the typed-codegen Response_R boundary.  The
+// listener's asSkyResponse path detects the sentinel + restores
+// the closure to StreamHandler before serving.  StreamHandler is
+// ALSO set on the returned SkyResponse so the legacy any-typed
+// path (FFI direct return, pre-v0.15.44 codegen) still works.
 func ServerStream_stream(contentType any, handler any) any {
 	ct := fmt.Sprintf("%v", contentType)
 	if ct == "" {
 		ct = "application/octet-stream"
 	}
+	token := registerPendingStreamHandler(handler)
 	return func() any {
 		return Ok[any, any](SkyResponse{
 			Status:        200,
 			ContentType:   ct,
+			Body:          pendingStreamSentinelPrefix + token,
 			StreamHandler: handler,
 		})
 	}

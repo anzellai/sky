@@ -6909,6 +6909,254 @@ type SkyResponse struct {
 	StreamHandler any
 }
 
+// asSkyResponse bridges a value into a SkyResponse, accepting either
+// the runtime FFI struct directly OR any record-shaped struct with
+// matching field names (`Status`, `Body`, `Headers`, `ContentType`,
+// optionally `StreamHandler`).
+//
+// Why this exists (v0.15.44): the Layer-3 stdlib now declares
+// `Sky.Http.Server.Response` as a typed Sky record alias, so user
+// handlers' Go return type is `Sky_Http_Server_Response_R` — a
+// distinct nominal struct from `rt.SkyResponse`.  Both shapes flow
+// through the same listener dispatch, `withHeader`, `withCookie`,
+// `csrfIssue`, etc.; every call site that used to do `resp.(SkyResponse)`
+// would panic on the typed shape.  This helper folds both into the
+// runtime's working struct without touching codegen.
+//
+// Fast paths: identical type assertion + the StreamHandler case
+// (Server.Stream still uses the bare runtime struct).  Fallback:
+// reflect-extract each field by name; missing fields keep their
+// zero value (so an older `{ status, body, headers, contentType }`
+// shape — pre-StreamHandler — continues to work).
+//
+// Returns (zero, false) only when src is nil or carries no
+// recognisable field. The bool is for call sites that need to
+// distinguish "not a response" (Server_withHeader's pass-through
+// path) from "a response with all-zero fields".
+func asSkyResponse(src any) (SkyResponse, bool) {
+	if src == nil {
+		return SkyResponse{}, false
+	}
+	if r, ok := src.(SkyResponse); ok {
+		// Even on the fast path, the user may have stamped the
+		// streaming sentinel into Body via ServerStream_stream.
+		// Restore StreamHandler (if not already set) + clear the
+		// sentinel so it doesn't leak onto the wire.
+		if r.StreamHandler == nil {
+			if tok, ok := extractPendingStreamToken(r.Body); ok {
+				if h, found := takePendingStreamHandler(tok); found {
+					r.StreamHandler = h
+					r.Body = ""
+				}
+			}
+		} else if tok, ok := extractPendingStreamToken(r.Body); ok {
+			// StreamHandler already populated (legacy path) — just
+			// clean up the registry entry + strip the sentinel.
+			_, _ = takePendingStreamHandler(tok)
+			r.Body = ""
+		}
+		return r, true
+	}
+	rv := reflect.ValueOf(src)
+	if rv.Kind() == reflect.Ptr && !rv.IsNil() {
+		rv = rv.Elem()
+	}
+	if !rv.IsValid() || rv.Kind() != reflect.Struct {
+		return SkyResponse{}, false
+	}
+	var out SkyResponse
+	matched := false
+	if f := rv.FieldByName("Status"); f.IsValid() {
+		switch f.Kind() {
+		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+			out.Status = int(f.Int())
+			matched = true
+		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+			out.Status = int(f.Uint())
+			matched = true
+		}
+	}
+	if f := rv.FieldByName("Body"); f.IsValid() && f.Kind() == reflect.String {
+		out.Body = f.String()
+		matched = true
+	}
+	if f := rv.FieldByName("ContentType"); f.IsValid() && f.Kind() == reflect.String {
+		out.ContentType = f.String()
+		matched = true
+	}
+	if f := rv.FieldByName("Headers"); f.IsValid() {
+		switch f.Kind() {
+		case reflect.Map:
+			out.Headers = coerceHeadersToStringMap(f)
+			matched = true
+		}
+	}
+	if f := rv.FieldByName("StreamHandler"); f.IsValid() && f.CanInterface() {
+		iv := f.Interface()
+		if iv != nil {
+			out.StreamHandler = iv
+			matched = true
+		}
+	}
+	// v0.15.44: typed `Sky_Http_Server_Response_R` has no
+	// StreamHandler field — the user-side Response record
+	// alias intentionally hides it. When the source struct
+	// is missing StreamHandler but Body starts with the
+	// streaming sentinel ServerStream_stream stamped in,
+	// restore the closure from pendingStreamHandlers + clear
+	// the sentinel so it never lands on the wire.
+	if out.StreamHandler == nil && out.Body != "" {
+		if tok, ok := extractPendingStreamToken(out.Body); ok {
+			if h, found := takePendingStreamHandler(tok); found {
+				out.StreamHandler = h
+				out.Body = ""
+				matched = true
+			}
+		}
+	}
+	return out, matched
+}
+
+// coerceHeadersToStringMap normalises a map field (any value kind)
+// to map[string]string. Drops entries whose value can't be coerced
+// to a string. Used by asSkyResponse for the Headers field — typed
+// records emit `map[string]string` directly; the older runtime
+// SkyResponse already carries the right shape; defensive against
+// future `map[string]any` widenings.
+func coerceHeadersToStringMap(m reflect.Value) map[string]string {
+	if m.Kind() != reflect.Map || m.IsNil() {
+		return nil
+	}
+	out := make(map[string]string, m.Len())
+	iter := m.MapRange()
+	for iter.Next() {
+		k := iter.Key()
+		v := iter.Value()
+		if k.Kind() != reflect.String {
+			continue
+		}
+		if v.Kind() == reflect.String {
+			out[k.String()] = v.String()
+			continue
+		}
+		if v.CanInterface() {
+			out[k.String()] = fmt.Sprintf("%v", v.Interface())
+		}
+	}
+	return out
+}
+
+// asSkyRequest is the inbound-request mirror of asSkyResponse.
+// `Server_param` / `_queryParam` / `_header` / `_getCookie` etc.
+// used to do `req.(SkyRequest)`; typed codegen now hands those
+// kernels a `Sky_Http_Server_Request_R` (or any record-shaped
+// struct) so a direct assertion panics.  Reflect-extract every
+// field that maps 1:1, narrowing `map[string]string` ↔
+// `map[string]any` shapes both ways (typed records use
+// `map[string]string`; the runtime struct keeps `map[string]any`
+// for forward compatibility with header-value polymorphism).
+func asSkyRequest(src any) (SkyRequest, bool) {
+	if src == nil {
+		return SkyRequest{}, false
+	}
+	if r, ok := src.(SkyRequest); ok {
+		return r, true
+	}
+	rv := reflect.ValueOf(src)
+	if rv.Kind() == reflect.Ptr && !rv.IsNil() {
+		rv = rv.Elem()
+	}
+	if !rv.IsValid() || rv.Kind() != reflect.Struct {
+		return SkyRequest{}, false
+	}
+	var out SkyRequest
+	matched := false
+	if f := rv.FieldByName("Method"); f.IsValid() && f.Kind() == reflect.String {
+		out.Method = f.String()
+		matched = true
+	}
+	if f := rv.FieldByName("Path"); f.IsValid() && f.Kind() == reflect.String {
+		out.Path = f.String()
+		matched = true
+	}
+	if f := rv.FieldByName("Body"); f.IsValid() && f.Kind() == reflect.String {
+		out.Body = f.String()
+		matched = true
+	}
+	if f := rv.FieldByName("RemoteAddr"); f.IsValid() && f.Kind() == reflect.String {
+		out.RemoteAddr = f.String()
+		matched = true
+	}
+	if f := rv.FieldByName("Headers"); f.IsValid() && f.Kind() == reflect.Map {
+		out.Headers = mapToAnyValueMap(f)
+		matched = true
+	}
+	if f := rv.FieldByName("Params"); f.IsValid() && f.Kind() == reflect.Map {
+		out.Params = mapToAnyValueMap(f)
+		matched = true
+	}
+	if f := rv.FieldByName("Query"); f.IsValid() && f.Kind() == reflect.Map {
+		out.Query = mapToAnyValueMap(f)
+		matched = true
+	}
+	if f := rv.FieldByName("Cookies"); f.IsValid() && f.Kind() == reflect.Map {
+		out.Cookies = mapToStringMap(f)
+		matched = true
+	}
+	if f := rv.FieldByName("Form"); f.IsValid() && f.Kind() == reflect.Map {
+		out.Form = mapToStringMap(f)
+		matched = true
+	}
+	return out, matched
+}
+
+// mapToAnyValueMap widens any string-keyed map to map[string]any.
+// SkyRequest's Headers/Params/Query carry `any` values for header-
+// list polymorphism; the typed record's matching field is
+// `map[string]string`. Field-by-field copy preserves nil maps as
+// nil (so a missing field stays absent on the runtime struct).
+func mapToAnyValueMap(m reflect.Value) map[string]any {
+	if m.Kind() != reflect.Map || m.IsNil() {
+		return nil
+	}
+	out := make(map[string]any, m.Len())
+	iter := m.MapRange()
+	for iter.Next() {
+		k := iter.Key()
+		if k.Kind() != reflect.String {
+			continue
+		}
+		if iter.Value().CanInterface() {
+			out[k.String()] = iter.Value().Interface()
+		}
+	}
+	return out
+}
+
+// mapToStringMap narrows to map[string]string, dropping non-string
+// values. Used for SkyRequest.Cookies / Form whose runtime shape
+// is exactly map[string]string.
+func mapToStringMap(m reflect.Value) map[string]string {
+	if m.Kind() != reflect.Map || m.IsNil() {
+		return nil
+	}
+	out := make(map[string]string, m.Len())
+	iter := m.MapRange()
+	for iter.Next() {
+		k := iter.Key()
+		v := iter.Value()
+		if k.Kind() != reflect.String {
+			continue
+		}
+		if v.Kind() == reflect.String {
+			out[k.String()] = v.String()
+		} else if v.CanInterface() {
+			out[k.String()] = fmt.Sprintf("%v", v.Interface())
+		}
+	}
+	return out
+}
+
 // HTTP server safety limits — the DEFAULTS. They exist to prevent
 // trivial resource-exhaustion DoS. The four timeouts are each
 // overridable via env (see httpEnvTimeout) so an app with
@@ -7072,7 +7320,18 @@ func Server_listen(port any, routes any) any {
 				}
 			}
 			if ok && resp.Tag == 0 {
-				skyResp := resp.OkValue.(SkyResponse)
+				// v0.15.44: bridge typed Sky_Http_Server_Response_R
+				// (record alias declared in Layer-3 Server.sky) into
+				// the runtime SkyResponse shape. Older handlers that
+				// return bare `rt.SkyResponse` (FFI direct path,
+				// Server_text/json/html before Layer-3 wrap) keep
+				// the fast-path assertion via asSkyResponse.
+				skyResp, okR := asSkyResponse(resp.OkValue)
+				if !okR {
+					w.WriteHeader(500)
+					fmt.Fprint(w, "Internal Server Error")
+					return
+				}
 				// Streaming response (Sky.Http.Server.Stream): dispatch
 				// the user's handler over a chunk-writer instead of
 				// buffering the body. The branch sets headers + flushes,
@@ -7325,7 +7584,11 @@ func Server_htmlT(body string) SkyResponse {
 }
 
 func Server_withStatus(status any, resp any) any {
-	r := resp.(SkyResponse)
+	// v0.15.44: accept typed Sky_Http_Server_Response_R via asSkyResponse.
+	r, ok := asSkyResponse(resp)
+	if !ok {
+		return resp
+	}
 	r.Status = AsInt(status)
 	return r
 }
@@ -7344,27 +7607,37 @@ func Server_redirectT(url string) SkyResponse {
 }
 
 func Server_param(name any, req any) any {
-	r := req.(SkyRequest)
-	v, ok := r.Params[fmt.Sprintf("%v", name)]
-	if ok {
+	// v0.15.44: accept typed Sky_Http_Server_Request_R via asSkyRequest.
+	r, ok := asSkyRequest(req)
+	if !ok {
+		return Nothing[any]()
+	}
+	v, found := r.Params[fmt.Sprintf("%v", name)]
+	if found {
 		return Just[any](v)
 	}
 	return Nothing[any]()
 }
 
 func Server_queryParam(name any, req any) any {
-	r := req.(SkyRequest)
-	v, ok := r.Query[fmt.Sprintf("%v", name)]
-	if ok {
+	r, ok := asSkyRequest(req)
+	if !ok {
+		return Nothing[any]()
+	}
+	v, found := r.Query[fmt.Sprintf("%v", name)]
+	if found {
 		return Just[any](v)
 	}
 	return Nothing[any]()
 }
 
 func Server_header(name any, req any) any {
-	r := req.(SkyRequest)
-	v, ok := r.Headers[fmt.Sprintf("%v", name)]
-	if ok {
+	r, ok := asSkyRequest(req)
+	if !ok {
+		return Nothing[any]()
+	}
+	v, found := r.Headers[fmt.Sprintf("%v", name)]
+	if found {
 		return Just[any](v)
 	}
 	return Nothing[any]()
@@ -7410,7 +7683,8 @@ func Middleware_rateLimit(maxPerMinute any, handler any) any {
 	limit := AsInt(maxPerMinute)
 	return func(req any) any {
 		return func() any {
-			r, _ := req.(SkyRequest)
+			// v0.15.44: bridge typed Sky_Http_Server_Request_R.
+			r, _ := asSkyRequest(req)
 			key := r.RemoteAddr
 			if key == "" {
 				// No IP → don't rate-limit (the direct-handler path
@@ -7487,7 +7761,7 @@ func Middleware_withCors(origins any, handler any) any {
 	}
 	return func(req any) any {
 		return func() any {
-			r, _ := req.(SkyRequest)
+			r, _ := asSkyRequest(req)
 			origin := ""
 			if o, ok := r.Headers["Origin"]; ok {
 				origin = fmt.Sprintf("%v", o)
@@ -7516,7 +7790,7 @@ func Middleware_withCors(origins any, handler any) any {
 			task := SkyCall(handler, req)
 			res := any(anyTaskInvoke(task))
 			if sr, ok := res.(SkyResult[any, any]); ok && sr.Tag == 0 {
-				if resp, ok := sr.OkValue.(SkyResponse); ok {
+				if resp, ok := asSkyResponse(sr.OkValue); ok {
 					if resp.Headers == nil {
 						resp.Headers = map[string]string{}
 					}
@@ -7536,13 +7810,13 @@ func Middleware_withCors(origins any, handler any) any {
 func Middleware_withLogging(handler any) any {
 	return func(req any) any {
 		return func() any {
-			r, _ := req.(SkyRequest)
+			r, _ := asSkyRequest(req)
 			start := time.Now()
 			task := SkyCall(handler, req)
 			res := any(anyTaskInvoke(task))
 			status := 0
 			if sr, ok := res.(SkyResult[any, any]); ok && sr.Tag == 0 {
-				if resp, ok := sr.OkValue.(SkyResponse); ok {
+				if resp, ok := asSkyResponse(sr.OkValue); ok {
 					status = resp.Status
 					if status == 0 {
 						status = 200
@@ -7571,7 +7845,7 @@ func Middleware_withBasicAuth(expectedUser any, expectedPass any, handler any) a
 	ep := fmt.Sprintf("%v", expectedPass)
 	return func(req any) any {
 		return func() any {
-			r, _ := req.(SkyRequest)
+			r, _ := asSkyRequest(req)
 			authHeader, _ := r.Headers["Authorization"].(string)
 			const prefix = "Basic "
 			if !strings.HasPrefix(authHeader, prefix) {
@@ -7607,7 +7881,7 @@ func Middleware_withBasicAuth(expectedUser any, expectedPass any, handler any) a
 func Middleware_withRateLimit(name any, capacity any, refillPerSec any, handler any) any {
 	return func(req any) any {
 		return func() any {
-			r, _ := req.(SkyRequest)
+			r, _ := asSkyRequest(req)
 			ip := ""
 			// Try X-Forwarded-For first (behind reverse proxy), then Remote.
 			if v, ok := r.Headers["X-Forwarded-For"].(string); ok && v != "" {
@@ -7641,7 +7915,7 @@ func Middleware_withRateLimit(name any, capacity any, refillPerSec any, handler 
 
 // Server.getCookie : String -> Request -> Maybe String
 func Server_getCookie(name any, req any) any {
-	r, ok := req.(SkyRequest)
+	r, ok := asSkyRequest(req)
 	if !ok {
 		return Nothing[any]()
 	}
@@ -7678,7 +7952,8 @@ func Server_withCookie(args ...any) any {
 	switch len(args) {
 	case 2:
 		cookie, resp := args[0], args[1]
-		r, ok := resp.(SkyResponse)
+		// v0.15.44: bridge typed Sky_Http_Server_Response_R.
+		r, ok := asSkyResponse(resp)
 		if !ok {
 			return resp
 		}
@@ -7704,7 +7979,7 @@ func Server_withCookie(args ...any) any {
 }
 
 func setCookieHeader(resp any, name, value, attrs string) any {
-	r, ok := resp.(SkyResponse)
+	r, ok := asSkyResponse(resp)
 	if !ok {
 		return resp
 	}
@@ -7784,7 +8059,7 @@ func logPanicFrame(method, path string, rec any) {
 
 // Server.method : Request -> String   — HTTP method name in upper case.
 func Server_method(req any) any {
-	if r, ok := req.(SkyRequest); ok {
+	if r, ok := asSkyRequest(req); ok {
 		return r.Method
 	}
 	return "GET"
@@ -7814,7 +8089,7 @@ const csrfFormField = "__csrf"
 // the response. Returns the token + updated response as a Sky tuple
 // so the caller can embed the token in their HTML form.
 func Server_csrfIssue(resp any) any {
-	r, ok := resp.(SkyResponse)
+	r, ok := asSkyResponse(resp)
 	if !ok {
 		// Honour the contract even when the wrong shape comes in;
 		// the caller's pattern-match will catch the (empty, resp)
@@ -7835,7 +8110,7 @@ func Server_csrfIssue(resp any) any {
 // Returns true iff the request's __csrf cookie matches its __csrf
 // form field. Both must be present and equal.
 func Server_csrfVerify(req any) any {
-	r, ok := req.(SkyRequest)
+	r, ok := asSkyRequest(req)
 	if !ok {
 		return false
 	}
@@ -7862,7 +8137,7 @@ func generateCsrfToken() string {
 
 // Server.formValue : String -> Request -> String
 func Server_formValue(key any, req any) any {
-	if r, ok := req.(SkyRequest); ok {
+	if r, ok := asSkyRequest(req); ok {
 		if r.Form != nil {
 			if v, ok2 := r.Form[fmt.Sprintf("%v", key)]; ok2 {
 				return v
@@ -7874,7 +8149,7 @@ func Server_formValue(key any, req any) any {
 
 // Server.body : Request -> String
 func Server_body(req any) any {
-	if r, ok := req.(SkyRequest); ok {
+	if r, ok := asSkyRequest(req); ok {
 		return r.Body
 	}
 	return ""
@@ -7882,7 +8157,7 @@ func Server_body(req any) any {
 
 // Server.path : Request -> String
 func Server_path(req any) any {
-	if r, ok := req.(SkyRequest); ok {
+	if r, ok := asSkyRequest(req); ok {
 		return r.Path
 	}
 	return ""
@@ -7911,7 +8186,7 @@ func Server_use(_ any, routes any) any { return routes }
 
 // Server.withHeader : String -> String -> Response -> Response
 func Server_withHeader(name any, value any, resp any) any {
-	r, ok := resp.(SkyResponse)
+	r, ok := asSkyResponse(resp)
 	if !ok {
 		return resp
 	}
