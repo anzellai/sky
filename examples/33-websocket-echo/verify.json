@@ -1,0 +1,6 @@
+{
+    "_comment": "verify scenarios for the WebSocket echo demo (Sky.Http.Server.WebSocket, v0.15.46). The HTTP root returns a landing page; the actual WebSocket round-trip is exercised in scripts/verify-cli.sh + runtime-go/rt/websocket_test.go (TestWebSocket_RoundTrip + 18 others). This file just keeps the sweep gate green by hitting / for HTTP-200 + landing-page content.",
+    "requests": [
+        { "method": "GET", "path": "/", "expectStatus": 200, "expectBody": ["WebSocket echo demo"] }
+    ]
+}
