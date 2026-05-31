@@ -1,0 +1,109 @@
+module Std.UiAspectGridTest exposing (tests)
+
+-- Sky-side fixtures for Std.Ui aspect-ratio + content-aware grid
+-- tracks (issue #379).
+--
+-- Covers the pure parts of the API surface — `Grid.trackToCss`
+-- + `Grid.tracksToCss` lowerings, the typed `Track` ADT, and the
+-- composability of every primitive. The compile-pipeline side is
+-- covered by `test/Sky/Build/UiAspectGridSpec.hs`; the visual /
+-- DOM-level injection by `scripts/verify-ui-showcase.mjs`. This
+-- file is the regression fence against accidental CSS-string drift
+-- (a single character off — `minmax` vs `MinMax`, missing space
+-- after the comma — and the browser silently falls back to `auto`).
+import Sky.Core.Prelude exposing (..)
+import Std.Ui.Grid as Grid
+import Sky.Test as Test exposing (Test)
+
+
+tests : List Test
+tests =
+    [Test.suite
+        "Std.Ui aspect-ratio + grid tracks (#379)"
+        [ Test.test
+              "Grid.fr 1 → 1fr"
+              (\_ -> Test.equal "1fr" (Grid.trackToCss (Grid.fr 1)))
+        , Test.test
+              "Grid.fr 3 → 3fr"
+              (\_ -> Test.equal "3fr" (Grid.trackToCss (Grid.fr 3)))
+        , Test.test
+              "Grid.px 200 → 200px"
+              (\_ -> Test.equal "200px" (Grid.trackToCss (Grid.px 200)))
+        , Test.test
+              "Grid.auto → auto"
+              (\_ -> Test.equal "auto" (Grid.trackToCss Grid.auto))
+        , Test.test
+              "Grid.minContent → min-content"
+              (\_ -> Test.equal "min-content" (Grid.trackToCss Grid.minContent))
+        , Test.test
+              "Grid.maxContent → max-content"
+              (\_ -> Test.equal "max-content" (Grid.trackToCss Grid.maxContent))
+        , Test.test
+              "Grid.minmax (px 240) (fr 1) → minmax(240px, 1fr)"
+              (\_ ->
+                  Test.equal
+                      "minmax(240px, 1fr)"
+                      (Grid.trackToCss (Grid.minmax (Grid.px 240) (Grid.fr 1))))
+        , Test.test
+              "Grid.minmax minContent (fr 1) → minmax(min-content, 1fr)"
+              (\_ ->
+                  Test.equal
+                      "minmax(min-content, 1fr)"
+                      (Grid.trackToCss (Grid.minmax Grid.minContent (Grid.fr 1))))
+        , Test.test
+              "Grid.repeat 3 (fr 1) → repeat(3, 1fr)"
+              (\_ ->
+                  Test.equal
+                      "repeat(3, 1fr)"
+                      (Grid.trackToCss (Grid.repeat 3 (Grid.fr 1))))
+        , Test.test
+              "Grid.repeatAutoFit (minmax 200 1fr) → repeat(auto-fit, minmax(200px, 1fr))"
+              (\_ ->
+                  Test.equal
+                      "repeat(auto-fit, minmax(200px, 1fr))"
+                      (Grid.trackToCss
+                          (Grid.repeatAutoFit
+                              (Grid.minmax (Grid.px 200) (Grid.fr 1)))))
+        , Test.test
+              "Grid.repeatAutoFill (minmax 100 1fr) → repeat(auto-fill, minmax(100px, 1fr))"
+              (\_ ->
+                  Test.equal
+                      "repeat(auto-fill, minmax(100px, 1fr))"
+                      (Grid.trackToCss
+                          (Grid.repeatAutoFill
+                              (Grid.minmax (Grid.px 100) (Grid.fr 1)))))
+          -- Composed lists — the most user-facing surface.
+        , Test.test
+              "tracksToCss [fr 1, px 200, fr 1] → '1fr 200px 1fr' (sidebar layout)"
+              (\_ ->
+                  Test.equal
+                      "1fr 200px 1fr"
+                      (Grid.tracksToCss [ Grid.fr 1, Grid.px 200, Grid.fr 1 ]))
+        , Test.test
+              "tracksToCss [auto, fr 1, auto] → 'auto 1fr auto'"
+              (\_ ->
+                  Test.equal
+                      "auto 1fr auto"
+                      (Grid.tracksToCss [ Grid.auto, Grid.fr 1, Grid.auto ]))
+        , Test.test
+              "tracksToCss [] → '' (caller falls back to default)"
+              (\_ -> Test.equal "" (Grid.tracksToCss []))
+        , Test.test
+              "tracksToCss singleton repeat → no trailing spaces"
+              (\_ ->
+                  Test.equal
+                      "repeat(auto-fit, minmax(240px, 1fr))"
+                      (Grid.tracksToCss
+                          [Grid.repeatAutoFit
+                              (Grid.minmax (Grid.px 240) (Grid.fr 1))]))
+          -- Nested minmax (rare but legal) — recursion correctness.
+        , Test.test
+              "Nested minmax — minmax(minmax(px 100, fr 1), max-content)"
+              (\_ ->
+                  Test.equal
+                      "minmax(minmax(100px, 1fr), max-content)"
+                      (Grid.trackToCss
+                          (Grid.minmax
+                              (Grid.minmax (Grid.px 100) (Grid.fr 1))
+                              Grid.maxContent)))
+        ]]

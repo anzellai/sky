@@ -29,6 +29,7 @@ import qualified Sky.Build.UiFillCascadeSpec
 import qualified Sky.Build.UiMediaQuerySpec
 import qualified Sky.Build.UiPseudoClassSpec
 import qualified Sky.Build.UiTransitionAnimationSpec
+import qualified Sky.Build.UiAspectGridSpec
 import qualified Sky.Build.UiMultilineTextareaSpec
 import qualified Sky.Build.ExposingTypeCtorsSpec
 import qualified Sky.Build.LetForwardRefSpec
@@ -236,6 +237,15 @@ main = hspec $ do
     -- runtime-go/rt/live_transition_animation_test.go.
     describe "Sky.Build.UiTransitionAnimation"
                                        Sky.Build.UiTransitionAnimationSpec.spec
+    -- Std.Ui aspect-ratio + content-aware grid tracks (#379) — the
+    -- compile-side regression fence. Checks that the new helper
+    -- symbols (Ui.aspectRatio / Ui.aspectRatioWH / Std.Ui.Grid.tracks
+    -- / Grid.columns / Grid.rows) lower to the expected literal CSS
+    -- strings + marker keys in the emitted Go. The runtime side is
+    -- a pure inline-style emission via the existing AttrStyle channel
+    -- (no new injection pass needed) — verified by the visual gates
+    -- in scripts/verify-ui-showcase.mjs.
+    describe "Sky.Build.UiAspectGrid"  Sky.Build.UiAspectGridSpec.spec
     -- Std.Ui.Input.multiline used to call `inputBase "textarea"` which
     -- built a `Ui.input` element with type="textarea" — invalid HTML
     -- that browsers silently degrade to single-line text input. Fix
