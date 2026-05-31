@@ -1,0 +1,92 @@
+-- | Sky.Core.Set — unordered set of unique elements (Layer 3 Sky source).
+--
+-- Every function in this module is declared as a Sky-source binding
+-- aliased to a kernel via `Ffi.kernel "Set_<name>"`.  The Stage-4
+-- compiler primitive rewrites every call site to the existing typed
+-- kernel dispatch — so `Set.member x s` continues to emit
+-- `rt.Set_member(x, s)` exactly as before, preserving the typed-
+-- codegen guarantees the kernel-direct route already enjoyed.
+--
+-- The Sky-source layer exists for discoverability + Layer 3
+-- conformance + so `sky doc` shows a stable source location for
+-- every entry.  The runtime bodies live in `runtime-go/rt/rt.go`
+-- (`Set_*` helpers).
+--
+-- Internally a `Set a` is represented as a `map[string]struct{}` so
+-- equality + hash semantics inherit Sky's stringified-key contract
+-- (the same one Dict uses). Order of iteration is unspecified.
+module Sky.Core.Set exposing
+    ( empty
+    , size
+    , insert, remove, member
+    , toList, fromList
+    , union, intersect, diff
+    )
+
+
+import Sky.Ffi as Ffi
+
+
+-- ─── Construction ──────────────────────────────────────────────────
+
+
+-- | The empty set.
+empty : Set a
+empty = Ffi.kernel "Set_empty"
+
+
+-- ─── Queries ───────────────────────────────────────────────────────
+
+
+-- | Number of distinct elements.
+size : Set a -> Int
+size = Ffi.kernel "Set_size"
+
+
+-- | `member x s` — `True` iff `x` is in `s`.
+member : a -> Set a -> Bool
+member = Ffi.kernel "Set_member"
+
+
+-- ─── Mutation (returns new Set) ────────────────────────────────────
+
+
+-- | `insert x s` — add `x` to `s`. No-op if already present.
+insert : a -> Set a -> Set a
+insert = Ffi.kernel "Set_insert"
+
+
+-- | `remove x s` — drop `x` from `s`. No-op if absent.
+remove : a -> Set a -> Set a
+remove = Ffi.kernel "Set_remove"
+
+
+-- ─── Conversion ────────────────────────────────────────────────────
+
+
+-- | All elements in the set (unsorted).
+toList : Set a -> List a
+toList = Ffi.kernel "Set_toList"
+
+
+-- | Build a set from a list, de-duplicating along the way.
+fromList : List a -> Set a
+fromList = Ffi.kernel "Set_fromList"
+
+
+-- ─── Set algebra ───────────────────────────────────────────────────
+
+
+-- | `union a b` — every element in `a` OR `b`.
+union : Set a -> Set a -> Set a
+union = Ffi.kernel "Set_union"
+
+
+-- | `intersect a b` — every element in BOTH `a` and `b`.
+intersect : Set a -> Set a -> Set a
+intersect = Ffi.kernel "Set_intersect"
+
+
+-- | `diff a b` — every element in `a` BUT NOT in `b`.
+diff : Set a -> Set a -> Set a
+diff = Ffi.kernel "Set_diff"
