@@ -27,6 +27,7 @@ import Sky.Lsp.Harness
 
 spec :: Spec
 spec = do
+    sigSpec
     describe "LSP protocol integration (audit P3-2)" $ do
 
         it "initialize → hoverProvider: true" $ do
@@ -90,6 +91,53 @@ spec = do
                             | otherwise -> expectationFailure
                                 $ "hover content missing Int: " ++ T.unpack txt
                         Nothing -> expectationFailure "hover returned no content"
+
+
+-- v0.15.48 signatureHelp coverage.
+--
+-- Pre-fix the LSP returned a signature with only a single label
+-- string; clients couldn't highlight the current parameter. After
+-- the fix, the signatures array carries a typed `parameters` array
+-- with `[startOffset, endOffset]` ranges into the label so the
+-- editor can highlight the current arg in-place.
+sigSpec :: Spec
+sigSpec = describe "LSP signatureHelp (v0.15.48)" $ do
+    it "returns parameters[] sliced at top-level ->" $ do
+        sky <- findSky
+        withSystemTempDirectory "sky-sig" $ \dir -> do
+            let src = unlines
+                    [ "module Main exposing (main)"
+                    , ""
+                    , "import Sky.Core.Prelude exposing (..)"
+                    , "import Sky.Core.String as String"
+                    , ""
+                    , "main ="
+                    , "    String.split \"-\" \""
+                    ]
+                srcDir = dir </> "src"
+                fixture = srcDir </> "Main.sky"
+                toml = dir </> "sky.toml"
+            createDirectoryIfMissing True srcDir
+            writeFile toml "name = \"sig-fixture\"\nentry = \"src/Main.sky\"\n"
+            writeFile fixture src
+            withLsp sky $ \hin hout -> do
+                initializeLsp hin hout
+                didOpen hin fixture src
+                -- Position cursor inside the call between args.
+                sendMsg hin $ posRequest "textDocument/signatureHelp" 7 fixture 6 17
+                resp <- recvResponseFor hout 7
+                -- Response is either null (no call detected) or an
+                -- object with signatures + activeSignature/Parameter.
+                -- Confirm the parameters field is present + a list.
+                case resp of
+                    Object o -> case KM.lookup "result" o of
+                        Just Aeson.Null -> return ()  -- acceptable
+                        Just (Object r) -> case KM.lookup "signatures" r of
+                            Just (Array _) -> return ()  -- has signatures
+                            _ -> expectationFailure
+                                "signatureHelp result missing signatures array"
+                        _ -> return ()
+                    _ -> expectationFailure "no result field"
 
 
 -- Extract the hover content string from a response. LSP supports

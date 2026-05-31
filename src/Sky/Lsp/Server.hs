@@ -2927,19 +2927,96 @@ argIndexAtPos line col = go 0
                else i
 
 
+-- | Build the LSP @SignatureHelp@ response.
+--
+-- v0.15.48 — the response now carries a typed @parameters@ array
+-- so editors can highlight the current argument's type slot in the
+-- signature label. We split the type string at TOP-LEVEL @->@
+-- arrows (respecting parens + brackets so @List a -> a@ doesn't
+-- treat @List a@ as two params, and @(a -> b) -> List a -> List b@
+-- handles the higher-order callback as one slot).
+--
+-- The label string is laid out as:
+--
+-- @
+--     funcName : T1 -> T2 -> T3
+-- @
+--
+-- and each parameter's @label@ is the @[startOffset, endOffset]@
+-- pair into that string per the LSP @ParameterInformation@ shape.
 mkSignature :: String -> String -> Int -> A.Value
 mkSignature funcName typeStr paramIdx =
-    let label = funcName ++ (if null typeStr then "" else " : " ++ typeStr)
+    let label  = funcName ++ (if null typeStr then "" else " : " ++ typeStr)
+        params = parameterRanges funcName typeStr
     in A.object
         [ "signatures" A..= A.toJSON
             [ A.object
                 [ "label"       A..= label
                 , "documentation" A..= ("" :: T.Text)
+                , "parameters"    A..= A.toJSON params
                 ]
             ]
         , "activeSignature" A..= (0 :: Int)
         , "activeParameter" A..= paramIdx
         ]
+
+
+-- | Slice a Sky function type string into per-parameter label
+-- offsets. The return-type slot (the tail past the final @->@)
+-- is NOT included as a parameter — only the arrow-LHS slots.
+--
+-- The offsets are into the FULL signature label (funcName + " : "
+-- + typeStr), so editor highlight ranges land in the right place.
+parameterRanges :: String -> String -> [A.Value]
+parameterRanges funcName typeStr
+    | null typeStr = []
+    | otherwise =
+        let prefixLen = length funcName + 3  -- "funcName : "
+            slots    = splitTopArrow typeStr
+            -- splitTopArrow returns each segment + its start offset
+            -- in typeStr. We drop the return slot (the last one).
+            paramSlots = case slots of
+                [] -> []
+                xs -> init xs
+        in map (renderSlot prefixLen) paramSlots
+  where
+    renderSlot prefix (start, ttext) =
+        let startOff = prefix + start
+            endOff   = startOff + length ttext
+            trimmed  = trimSlot ttext
+        in A.object
+            [ "label" A..= A.toJSON ([startOff, endOff] :: [Int])
+            , "documentation" A..= trimmed
+            ]
+    trimSlot = dropWhile (== ' ') . reverse . dropWhile (== ' ') . reverse
+
+
+-- | Split a Sky type string at TOP-LEVEL @->@ tokens. Respects
+-- paren + bracket nesting. Each returned tuple is @(startOffset,
+-- segment)@.
+--
+-- > splitTopArrow "Int -> String -> Bool"
+-- > == [(0,"Int "), (7,"String "), (17,"Bool")]
+-- > splitTopArrow "(a -> b) -> List a -> List b"
+-- > == [(0,"(a -> b) "), (12,"List a "), (22,"List b")]
+splitTopArrow :: String -> [(Int, String)]
+splitTopArrow s = go 0 0 0 [] s
+  where
+    -- go depth currentStart pos acc remaining
+    go _ start _ acc [] = reverse ((start, drop start s) : acc)
+    go d start pos acc ('-':'>':rest)
+        | d == 0 =
+            let seg = take (pos - start) (drop start s)
+            in go d (pos + 2) (pos + 2) ((start, seg) : acc) rest
+        | otherwise = go d start (pos + 2) acc rest
+    go d start pos acc (c:rest) =
+        let d' = case c of
+                '(' -> d + 1
+                ')' -> max 0 (d - 1)
+                '[' -> d + 1
+                ']' -> max 0 (d - 1)
+                _   -> d
+        in go d' start (pos + 1) acc rest
 
 
 -- ─── Document Symbols ─────────────────────────────────────────────────
