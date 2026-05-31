@@ -83,7 +83,7 @@ evens   = List.filter (\n -> modBy 2 n == 0) [ 1, 2, 3, 4 ] -- [2, 4]
 > lists; for million-entry inputs prefer `foldl` with an
 > accumulator. See [Limitation 12](../CLAUDE.md#active-limitations).
 
-### `Dict` — key-value maps (string keys)
+### `Dict` — key-value maps
 
 ```elm
 import Sky.Core.Dict as Dict
@@ -92,9 +92,9 @@ prefs = Dict.fromList [ ("theme", "dark"), ("lang", "en") ]
 theme = Dict.get "theme" prefs   -- Just "dark"
 ```
 
-`empty`, `insert`, `get`, `remove`, `member`, `keys`, `values`, `toList`, `fromList`, `map`, `foldl`, `union`.
+`empty`, `insert`, `get`, `remove`, `member`, `keys`, `values`, `toList`, `fromList`, `map`, `foldl`, `union`, `size`, `isEmpty`.
 
-> `Dict` keys are strings internally. If your keys are numeric, convert at the boundary: `Dict.insert (String.fromInt id) value`.
+> **Key types.** The runtime representation is `map[string]V` regardless of the Sky-level key type — Int / Float keys get stringified on `fromList` and re-parsed on `toList`. v0.15.45's typed-key routing closes the soundness gap for inlined `Dict.toList (Dict.fromList […])` chains (Int / Float keys round-trip faithfully). Let-bound intermediates still fall back to the legacy String-key path — see [Limitation #5](../CLAUDE.md#active-limitations).
 
 ### `Set` — unique-element collections
 
@@ -624,6 +624,36 @@ These are big enough to deserve their own pages:
 - **[Std.Db overview](skydb/overview.md)** — SQLite + Postgres, one API
 - **[Std.Auth overview](skyauth/overview.md)** — bcrypt, JWT, register / login
 - **[Std.Log](#stdlog)** — see below
+
+### `Std.Db.Decode` — typed DB row decoders (v0.15.45)
+
+Mirror of `Sky.Core.Json.Decode`'s combinator shape but targets SQL
+row maps instead of JSON values. Replaces the `Db.getString "field"
+row` / `Db.getInt "field" row` boilerplate with declarative
+decoders.
+
+```elm
+import Std.Db.Decode as DbDecode
+
+type alias User =
+    { id : Int, name : String, email : String, age : Maybe Int }
+
+userDecoder : Decoder User
+userDecoder =
+    DbDecode.succeed (\i n e a -> { id = i, name = n, email = e, age = a })
+        |> DbDecode.andMap (DbDecode.int "id")
+        |> DbDecode.andMap (DbDecode.string "name")
+        |> DbDecode.andMap (DbDecode.string "email")
+        |> DbDecode.andMap (DbDecode.nullable "age" (DbDecode.int "age"))
+
+users : Db -> Task Error (List User)
+users db = Db.queryDecode db "SELECT id, name, email, age FROM users" [] userDecoder
+
+userById : Db -> Int -> Task Error (Maybe User)
+userById db uid = Db.getByIdDecode db "users" uid userDecoder
+```
+
+Surface: `string` / `int` / `float` / `bool` / `nullable` (per-column primitives), `succeed` / `fail`, `map` / `andThen` / `andMap`, `map2` / `map3` / `map4` / `map5`, `required` / `optional` (pipeline-style). See [`docs/skydb/overview.md`](skydb/overview.md) for the full decoder pipeline pattern.
 
 ### `Log` — structured logging
 

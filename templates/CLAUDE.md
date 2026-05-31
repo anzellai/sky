@@ -3827,9 +3827,25 @@ Db.exec conn "INSERT INTO t (name) VALUES (?)" ["val"]
 Db.query conn "SELECT * FROM t WHERE x = ?" ["val"]
 Db.execRaw conn "CREATE TABLE IF NOT EXISTS t (...)"
 
--- Typed queries via Json.Decode
-Db.queryDecode conn "SELECT * FROM t" [] myDecoder
-Db.queryOneDecode conn "SELECT * FROM t WHERE id = ?" [id] myDecoder
+-- Typed queries via Std.Db.Decode (v0.15.45 — preferred over the
+-- Dict.get accessor boilerplate). Mirrors Sky.Core.Json.Decode's
+-- shape (string/int/float/bool/nullable/map/map2-5/andMap/required/
+-- optional).
+import Std.Db.Decode as DbDecode
+
+userDecoder : Decoder User
+userDecoder =
+    DbDecode.succeed (\i n e -> { id = i, name = n, email = e })
+        |> DbDecode.andMap (DbDecode.int "id")
+        |> DbDecode.andMap (DbDecode.string "name")
+        |> DbDecode.andMap (DbDecode.string "email")
+
+users : Task Error (List User)
+users = Db.queryDecode db "SELECT id, name, email FROM users" [] userDecoder
+
+userById : Int -> Task Error (Maybe User)
+userById uid =
+    Db.getByIdDecode db "users" uid userDecoder
 
 -- Convenience
 Db.insertRow conn "table" (Dict.fromList [("col", "val")])
@@ -4162,7 +4178,7 @@ records the per-version closures if you want history.
 - **No custom operators** — only built-in (`|>`, `<|`, `++`, `::`, etc.).
 - **No row-polymorphic annotation syntax** — Sky doesn't parse `{ r | field : T }` in annotations. Use a closed record alias for the function's input.
 - **Negative literal arguments need parentheses** — `f (-1)` not `f -1` (`f -1` parses as subtraction).
-- **`Dict.toList` returns string keys** — `Dict` is `map[string]any` at runtime, so `Dict.toList` on `Dict Int v` gives string keys; arithmetic on them silently produces 0. Iterate via `Dict.get` over known ranges.
+- **`Dict.toList` typed-key inference is inline-only** — `Dict.toList (Dict.fromList [(1, "a")])` chained in the same expression returns real `Int` keys (v0.15.45 closed the soundness hole for this shape via the typed-key `rt.Dict_toListIntKey` / `rt.Dict_toListFloatKey` runtime routes). For let-bound intermediates — `let d = Dict.fromList […] in Dict.toList d` — the solver doesn't expose `d`'s typed shape at the use-site, so routing falls back to the legacy String-key path. Workaround: inline the chain directly.
 - **`sky check` doesn't fully model Go interfaces** — concrete types can't unify with Go interfaces (`Fyne.CanvasObject`), but the code compiles and runs fine.
 - **Zero-arg calls follow the binding's declared type** — bare `Uuid.v4` works because its stdlib sig is `v4 : String`; `Time.now ()` / `Time.unixMillis ()` / `FyneApp.new ()` are *all* needed because their sigs are `() -> Task Error a`. Calling a `: String` binding with `()` triggers a known codegen bug for arity-0 kernels — stick to the declared shape.
 - **FFI setters in pipelines need an explicit lambda** — `|> Result.andThen (OpenAi.chatCompletionMessageSetRole m.role)` emits a call to the non-existent non-T variant and fails codegen. Wrap: `|> Result.andThen (\msg -> OpenAi.chatCompletionMessageSetRole m.role msg)`.

@@ -1365,9 +1365,16 @@ verified against HEAD.
 3. **No custom operators.**
 4. **Negative literal arguments need parens.** `f -1` parses as
    subtraction. Use `f (-1)`.
-5. **`Dict.toList` returns string keys.** `Dict Int v` still
-   yields string keys; arithmetic on them silently produces 0.
-   Workaround: iterate over known key ranges with `Dict.get`.
+5. **`Dict.toList` typed-key inference is inline-only.**
+   `Dict.toList (Dict.fromList [(1, "a")])` chained in the same
+   expression returns real `Int` keys (v0.15.45 closed the soundness
+   hole for that shape). For let-bound intermediates — `let d =
+   Dict.fromList […] in Dict.toList d` — the solver doesn't expose
+   `d`'s typed shape at the use-site's region, so the routing falls
+   back to the legacy String-key path. Workaround: inline the chain
+   directly, or wrap the result in a typed accessor
+   (`d |> Dict.toList`). v0.16+ tracking covers the let-region
+   propagation fix.
 6. **`sky check` does not fully model Go interface satisfaction.**
    Opaque FFI types unify with each other; concrete-satisfies-
    interface checks fall through.
