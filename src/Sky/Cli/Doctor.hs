@@ -31,6 +31,7 @@ import Control.Exception (SomeException, try)
 import Data.List (isInfixOf, isSuffixOf, sortOn)
 import Data.Time.Clock (UTCTime, diffUTCTime, getCurrentTime)
 import qualified System.Directory as Dir
+import qualified System.Environment as Env
 import System.Exit (ExitCode(..), exitWith)
 import System.FilePath ((</>), takeDirectory)
 import qualified System.Process as Proc
@@ -237,28 +238,52 @@ checkSkyOutAge root = do
 -- We do NOT auto-kill — that would risk killing a process the user
 -- wants to keep. Hint at `lsof -i :PORT | grep LISTEN` so they
 -- decide.
+--
+-- Bug #371: previously this check ran unconditionally, producing a
+-- false-positive finding on any project where an unrelated host
+-- process happened to hold port 8000 (a different web server, a
+-- prior dev session, a parallel cabal test). Two narrowing gates
+-- close that:
+--
+--   1. **No `sky-out/` → skip.** A project that has never been
+--      built has never had a `sky run` to leave a listener; flagging
+--      port-busy there is dishonest. Cross-spec test pollution +
+--      ambient host state can't trip a clean scaffolded project.
+--
+--   2. **`SKY_DOCTOR_SKIP_PORT_CHECK=1` → skip.** Escape hatch for
+--      developers running Doctor in environments where port 8000 is
+--      legitimately owned by something else (e.g. running Doctor
+--      against a built project while a separate live server is
+--      intentionally serving on 8000).
 checkPortInUse :: FilePath -> IO [Finding]
 checkPortInUse root = do
-    let _ = root -- placeholder; v1.x will parse sky.toml [live] port
-    let port = "8000" -- TODO: parse sky.toml [live] port. v1.0: hardcoded default.
-    result <- try (Proc.readProcessWithExitCode
-        "lsof" ["-ti", ":" ++ port] "")
-        :: IO (Either SomeException (ExitCode, String, String))
-    let (ec, out, _) = either (\_ -> (ExitFailure 1, "", "")) id result
-    case ec of
-        ExitSuccess | not (null (trim out)) -> do
-            let pid = takeWhile (/= '\n') out
-            pure [ Finding
-                { _fCheck = "port-busy"
-                , _fSeverity = Warn
-                , _fMessage = "port " ++ port ++ " is in use (pid " ++ pid ++ ")"
-                , _fHint = "previous `sky run` left a listener — kill with `kill " ++ pid
-                           ++ "` (or `sky doctor --fix` to do it for you)"
-                , _fFix = Just $ do
-                    _ <- Proc.system ("kill " ++ pid)
-                    pure ("✓ killed pid " ++ pid)
-                } ]
-        _ -> pure []
+    skipEnv <- Env.lookupEnv "SKY_DOCTOR_SKIP_PORT_CHECK"
+    let skipByEnv = case skipEnv of
+            Just v | v `elem` ["1", "true", "yes", "on"] -> True
+            _ -> False
+    hasBuilt <- Dir.doesDirectoryExist (root </> "sky-out")
+    if skipByEnv || not hasBuilt
+        then pure []
+        else do
+            let port = "8000" -- TODO: parse sky.toml [live] port. v1.0: hardcoded default.
+            result <- try (Proc.readProcessWithExitCode
+                "lsof" ["-ti", ":" ++ port] "")
+                :: IO (Either SomeException (ExitCode, String, String))
+            let (ec, out, _) = either (\_ -> (ExitFailure 1, "", "")) id result
+            case ec of
+                ExitSuccess | not (null (trim out)) -> do
+                    let pid = takeWhile (/= '\n') out
+                    pure [ Finding
+                        { _fCheck = "port-busy"
+                        , _fSeverity = Warn
+                        , _fMessage = "port " ++ port ++ " is in use (pid " ++ pid ++ ")"
+                        , _fHint = "previous `sky run` left a listener — kill with `kill " ++ pid
+                                   ++ "` (or `sky doctor --fix` to do it for you)"
+                        , _fFix = Just $ do
+                            _ <- Proc.system ("kill " ++ pid)
+                            pure ("✓ killed pid " ++ pid)
+                        } ]
+                _ -> pure []
   where
     trim = dropWhile (`elem` (" \n\t" :: String)) . reverse
          . dropWhile (`elem` (" \n\t" :: String)) . reverse

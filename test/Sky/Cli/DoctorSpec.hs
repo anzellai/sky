@@ -39,10 +39,20 @@ findSky = do
 
 
 -- | Run `sky doctor` in @dir@ and return (exit code, stdout).
+--
+-- Bug #371 (test hygiene): `SKY_DOCTOR_SKIP_PORT_CHECK=1` makes the
+-- port-8000 check deterministic across runs — without it, an unrelated
+-- host process holding the port would inject a spurious "port-busy"
+-- finding into the "clean project" / "stale-cache" / "empty toml"
+-- assertions and break them under the full-sweep `cabal test`. The
+-- production code-path already skips the check on un-built projects,
+-- but the `--fix`/`stale` cases scaffold + build, so we also gate via
+-- env on every invocation here.
 runDoctorIn :: FilePath -> [String] -> IO (Int, String)
 runDoctorIn dir args = do
     sky <- findSky
-    let cmd = "cd " ++ dir ++ " && " ++ sky ++ " doctor " ++ unwords args
+    let cmd = "cd " ++ dir ++ " && SKY_DOCTOR_SKIP_PORT_CHECK=1 "
+              ++ sky ++ " doctor " ++ unwords args
     (ec, out, _err) <- Proc.readCreateProcessWithExitCode
         (Proc.shell cmd) ""
     let code = case ec of
@@ -148,6 +158,33 @@ spec = describe "Sky.Cli.Doctor" $ do
             (code, _) <- runDoctorIn dir []
             -- No errors, no findings → exit 0.
             code `shouldSatisfy` (\c -> c == 0 || c == 1)
+
+    -- Bug #371 regression: the port-busy check used to fire on a
+    -- pristine scaffolded project whenever ANY host process held
+    -- port 8000 (other dev servers, parallel test runs, browser
+    -- live-reload). The fix gates the check on `sky-out/` existing
+    -- — a project that has never been built can't have leaked a
+    -- `sky run` listener, so the finding is dishonest.
+    --
+    -- This test runs `sky doctor` WITHOUT the env-var skip (using a
+    -- bare shell command) on a pristine scaffold, which used to
+    -- emit a port-busy warning whenever the host happened to bind
+    -- 8000. Now it always reports "no issues found".
+    it "Bug #371: clean unbuilt project skips the port-8000 check" $ do
+        withSystemTempDirectory "sky-doctor-371" $ \dir -> do
+            scaffold dir
+            sky <- findSky
+            -- Bare invocation (no SKY_DOCTOR_SKIP_PORT_CHECK) — this
+            -- exercises the production code-path's "no sky-out/ → skip"
+            -- gate, not the env-var escape hatch.
+            let cmd = "cd " ++ dir ++ " && " ++ sky ++ " doctor"
+            (ec, out, _err) <- Proc.readCreateProcessWithExitCode
+                (Proc.shell cmd) ""
+            let code = case ec of
+                    ExitSuccess   -> 0
+                    ExitFailure n -> n
+            code `shouldBe` 0
+            out `shouldContain` "no issues found"
 
 
 -- Catch + drop exceptions in helpers that probe filesystem state
