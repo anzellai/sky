@@ -2,6 +2,7 @@ module Main (main) where
 
 import Test.Hspec
 import qualified Sky.Build.CompileSpec
+import qualified Sky.Build.MainPanicRecoverSpec
 import qualified Sky.Build.IORefBoundarySpec
 import qualified Sky.Build.DepHmFatalSpec
 import qualified Sky.Build.ExampleSweepSpec
@@ -117,6 +118,10 @@ import qualified Sky.Cli.DoctorSpec
 main :: IO ()
 main = hspec $ do
     describe "Sky.Build.Compile"         Sky.Build.CompileSpec.spec
+    -- v0.15.43 Cycle 6 PC — top-level `func main()` MUST start with
+    -- `defer rt.LogPanicAndExit()`. Regression here re-exposes the
+    -- synchronous-panic class (Sky.Cli / Sky.Tui / batch jobs).
+    describe "Sky.Build.MainPanicRecover" Sky.Build.MainPanicRecoverSpec.spec
     -- v0.15.5 PR 2/6 — regression gate for the retired per-scope
     -- IORef pair (mechanical string match on Compile.hs).
     describe "Sky.Build.IORefBoundary"   Sky.Build.IORefBoundarySpec.spec

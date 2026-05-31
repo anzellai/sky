@@ -11828,7 +11828,9 @@ generateMainFunc canMod srcMod solvedTypes =
                 , GoIr._gf_typeParams = []
                 , GoIr._gf_params = []
                 , GoIr._gf_returnType = ""
-                , GoIr._gf_body = [GoIr.GoExprStmt (GoIr.GoCall (GoIr.GoQualified "rt" "Log_println") [GoIr.GoStringLit "No main function"])]
+                , GoIr._gf_body =
+                    panicRecoverDeferStmt :
+                    [GoIr.GoExprStmt (GoIr.GoCall (GoIr.GoQualified "rt" "Log_println") [GoIr.GoStringLit "No main function"])]
                 }
             ]
         Just def ->
@@ -11844,9 +11846,31 @@ generateMainFunc canMod srcMod solvedTypes =
                 , GoIr._gf_typeParams = []
                 , GoIr._gf_params = []
                 , GoIr._gf_returnType = ""
-                , GoIr._gf_body = wrappedStmts
+                , GoIr._gf_body = panicRecoverDeferStmt : wrappedStmts
                 }
             ]
+
+
+-- | Cycle 6 PC (v0.15.43) — top-level panic→Err recovery.
+--
+-- Sky's `main = …` emits Go's `func main()` calling the user's task
+-- directly. Without a recover, any Go panic that escapes the
+-- synchronous path crashes the process with a Go stack dump —
+-- breaks the "if it compiles, it works" contract for Sky.Cli +
+-- Sky.Tui + batch jobs (the non-server synchronous surface).
+--
+-- This injects `defer rt.LogPanicAndExit()` as the FIRST statement
+-- of main(). The recover catches whatever escaped, classifies the
+-- panic (div-by-zero, type mismatch, nil deref, …), emits a
+-- structured log line with a 4-byte errId, and exits 1 — instead
+-- of dumping the Go stack to stderr.
+--
+-- The compiler-bug panics in `rt.go` (coerceInner, Unreachable,
+-- Ffi.kernel) are routed through the same gate but classified as
+-- `CompilerBug` so users know it's not their code.
+panicRecoverDeferStmt :: GoIr.GoStmt
+panicRecoverDeferStmt =
+    GoIr.GoExprStmt (GoIr.GoRaw "defer rt.LogPanicAndExit()")
 
 
 -- | Find the main definition
