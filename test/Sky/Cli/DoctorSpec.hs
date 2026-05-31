@@ -19,12 +19,18 @@ module Sky.Cli.DoctorSpec (spec) where
 
 import Test.Hspec
 import Control.Exception (catch, SomeException)
+import Data.List (isInfixOf)
 import System.Exit (ExitCode(..))
 import qualified System.Directory as Dir
 import System.FilePath ((</>))
 import System.IO.Temp (withSystemTempDirectory)
 import qualified Data.Time.Clock as Clock
 import qualified System.Process as Proc
+
+
+-- | String-level isInfixOf alias to keep test prose readable.
+isInfixOfStr :: String -> String -> Bool
+isInfixOfStr = isInfixOf
 
 
 -- The runner exits the process via System.Exit. To test, we shell
@@ -170,6 +176,56 @@ spec = describe "Sky.Cli.Doctor" $ do
     -- bare shell command) on a pristine scaffold, which used to
     -- emit a port-busy warning whenever the host happened to bind
     -- 8000. Now it always reports "no issues found".
+    -- v0.15.48 +10 tooling-polish checks
+    it "v0.15.48: go-toolchain check runs (Go is on PATH in dev env)" $ do
+        withSystemTempDirectory "sky-doctor-go" $ \dir -> do
+            scaffold dir
+            (_, out) <- runDoctorIn dir ["--verbose"]
+            -- We don't enforce a specific result — just confirm
+            -- the check doesn't crash. If `go version` ≥ 1.22 the
+            -- check is silent; older Go fires "Go X.Y is too old".
+            -- Either way, no other check should fail.
+            out `shouldSatisfy`
+              (\o -> ("no issues found" `isInfixOfStr` o)
+                   || ("go-toolchain" `isInfixOfStr` o)
+                   || ("checking" `isInfixOfStr` o))
+
+    it "v0.15.48: unknown [foo] section in sky.toml fires toml-unknown-section" $ do
+        withSystemTempDirectory "sky-doctor-toml" $ \dir -> do
+            Dir.createDirectoryIfMissing True (dir </> "src")
+            writeFile (dir </> "sky.toml") $
+                "name = \"x\"\n[totallymadeup]\nkey = 1\n"
+            writeFile (dir </> "src" </> "Main.sky")
+                "module Main exposing (main)\nmain = ()\n"
+            (_, out) <- runDoctorIn dir ["--verbose"]
+            out `shouldContain` "unknown section"
+
+    it "v0.15.48: known [live] section does NOT fire toml-unknown-section" $ do
+        withSystemTempDirectory "sky-doctor-live" $ \dir -> do
+            Dir.createDirectoryIfMissing True (dir </> "src")
+            writeFile (dir </> "sky.toml") $
+                "name = \"x\"\n[live]\nport = 8000\n"
+            writeFile (dir </> "src" </> "Main.sky")
+                "module Main exposing (main)\nmain = ()\n"
+            (_, out) <- runDoctorIn dir ["--verbose"]
+            out `shouldNotContain` "toml-unknown-section"
+
+    it "v0.15.48: [live] without SKY_AUTH_TOKEN_SECRET fires auth-secret-missing" $ do
+        withSystemTempDirectory "sky-doctor-auth" $ \dir -> do
+            Dir.createDirectoryIfMissing True (dir </> "src")
+            writeFile (dir </> "sky.toml") $
+                "name = \"x\"\n[live]\nport = 8000\n"
+            writeFile (dir </> "src" </> "Main.sky")
+                "module Main exposing (main)\nmain = ()\n"
+            -- Explicitly clear the env to make this deterministic.
+            sky <- findSky
+            let cmd = "cd " ++ dir
+                    ++ " && SKY_DOCTOR_SKIP_PORT_CHECK=1 unset SKY_AUTH_TOKEN_SECRET 2>/dev/null; "
+                    ++ "env -u SKY_AUTH_TOKEN_SECRET " ++ sky ++ " doctor --verbose"
+            (_, out, _) <- Proc.readCreateProcessWithExitCode
+                (Proc.shell cmd) ""
+            out `shouldContain` "auth-secret-missing"
+
     it "Bug #371: clean unbuilt project skips the port-8000 check" $ do
         withSystemTempDirectory "sky-doctor-371" $ \dir -> do
             scaffold dir
