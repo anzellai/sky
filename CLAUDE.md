@@ -1409,6 +1409,25 @@ verified against HEAD.
   slot~~ — `view : Model -> any` returning a String against an
   expected `Model -> Html msg` now correctly surfaces as a type
   error (v0.15.1 same-mod CForeign wildcard-gate fix).
+- ~~Unknown qualified name (`NotARealModule.foo`) silently passed
+  canonicaliser~~ — closed in v0.15.42 (audit §3.1). The
+  canonicaliser now flags any qualified ref whose qualifier is
+  neither a kernel module, an import alias, nor present in
+  `_qualVars`/`_qualCtors`, with a Did-you-mean suggestion via
+  Levenshtein distance. Pre-fix Sky printed "Compilation successful"
+  and `go build` then rejected with `undefined: NotARealModule_foo`.
+- ~~"Compilation successful" printed before `go build` ran~~ —
+  closed in v0.15.42 (audit §3.4). Sky lowering prints
+  "Sky lowering succeeded"; "Compilation successful" only fires
+  after Go returns 0. Failure path prints "Sky lowering succeeded
+  but `go build` failed:" before the Go diagnostic.
+- ~~User `type Result a = Just a | Nothing` silently shadows the
+  Prelude-exposed Maybe/Result constructors~~ — closed in v0.15.42
+  (audit §3.2). The canonicaliser now rejects any user-defined ADT
+  whose type name OR constructor name collides with a Prelude-
+  exposed entry (Int/Float/Bool/String/Char/List/Maybe/Result/Task/
+  Error/True/False/Just/Nothing/Ok/Err) with a hard error naming
+  the canonical stdlib origin.
 
 ## Workflow rules
 

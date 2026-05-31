@@ -116,6 +116,21 @@ record aliases closed a cluster of long-standing limitations:
 - ~~Zero-arity functions reading env vars memoised at init()~~ —
   `apiKey = System.getenvOr "K" "def"` now reads the runtime
   environment.
+- ~~Unknown qualified name silently passes canonicaliser~~ —
+  v0.15.42 (audit §3.1). `NotARealModule.foo` is now flagged at
+  canonicalisation with a Did-you-mean suggestion, not as a
+  cryptic `undefined: NotARealModule_foo` from `go build`.
+- ~~"Compilation successful" prints before `go build` runs~~ —
+  v0.15.42 (audit §3.4). Sky lowering prints "Sky lowering
+  succeeded"; "Compilation successful" only fires after Go
+  returns 0. Failure path is labelled "Sky lowering succeeded
+  but `go build` failed:" so log readers can disambiguate.
+- ~~User ADTs silently shadow Prelude-exposed types and
+  constructors~~ — v0.15.42 (audit §3.2). `type Result a = Just a
+  | Nothing` is now a hard canonicaliser error citing the stdlib
+  origin (e.g. `Sky.Core.Result`), eliminating the refactor
+  regression class where downstream code silently bound to the
+  user's ADT instead of stdlib Maybe / Result.
 
 ## Deferred (roadmap, not active bugs)
 
