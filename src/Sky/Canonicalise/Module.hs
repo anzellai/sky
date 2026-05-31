@@ -934,9 +934,39 @@ collectUnboundNameErrors env srcMod =
                 ++ ": Undefined name: " ++ q ++ "." ++ n
                 ++ "\n    Module `" ++ q ++ "` is imported but does not export `" ++ n ++ "`."
                 ++ "\n    Check the module's `exposing (...)` list, or check for a typo."
+
+        -- v0.15.42 audit §3.1 — UNKNOWN QUALIFIER pass. A reference
+        -- like `NotARealModule.foo` where `NotARealModule` is neither
+        -- a kernel module, an import alias, NOR present in the qualVars
+        -- / qualCtors maps used to fall through `resolveQualVar`'s
+        -- final clause to `VarTopLevel (Canonical qualifier) name`,
+        -- emitting bogus Go that `go build` later rejected. Catch
+        -- here so the user sees a Sky-shape error citing the missing
+        -- module, not a cryptic `undefined: NotARealModule_foo`.
+        knownQualifiers =
+            Set.unions
+                [ Set.fromList (Map.keys Env.kernelModules)
+                , Set.fromList (Map.keys (Env._qualVars env))
+                , Set.fromList (Map.keys (Env._qualCtors env))
+                , Set.fromList (Map.keys (Env._importAliases env))
+                ]
+        unknownQual =
+            [ (q, n, reg)
+            | (q, n, reg) <- allQualRefs
+            , not (Set.member q knownQualifiers)
+            ]
+        formatUnknownQual (q, n, A.Region (A.Position r c) _) =
+            show r ++ ":" ++ show c
+                ++ ": Undefined name: " ++ q ++ "." ++ n
+                ++ "\n    Module `" ++ q ++ "` is not imported and is"
+                ++ " not a known kernel module."
+                ++ "\n    Did you forget `import " ++ q ++ "`? Or check"
+                ++ " for a typo in the module qualifier."
+                ++ suggestQualifier q knownQualifiers
     in
         map formatOne (dedupeByNameTop unbound)
         ++ map formatQual unboundQual
+        ++ map formatUnknownQual unknownQual
 
 
 -- | v0.13 Layer 1 migration: collect unbound-name errors as
@@ -1011,9 +1041,35 @@ collectUnboundDiagnostics path env srcMod =
                           ++ " does not export `" ++ n ++ "`. Check"
                           ++ " the module's exposing list, or check"
                           ++ " for a typo.")
+
+        -- v0.15.42 audit §3.1 — unknown-qualifier diagnostics. Mirror
+        -- of the rendered-string detector above; see notes there.
+        knownQualifiers =
+            Set.unions
+                [ Set.fromList (Map.keys Env.kernelModules)
+                , Set.fromList (Map.keys (Env._qualVars env))
+                , Set.fromList (Map.keys (Env._qualCtors env))
+                , Set.fromList (Map.keys (Env._importAliases env))
+                ]
+        unknownQual =
+            [ (q, n, reg)
+            | (q, n, reg) <- allQualRefs
+            , not (Set.member q knownQualifiers)
+            ]
+        mkUnknownQualDiag (q, n, reg) =
+            let suggestion = suggestQualifier q knownQualifiers
+                base = "Module `" ++ q ++ "` is not imported and is"
+                    ++ " not a known kernel module."
+                    ++ " Did you forget `import " ++ q ++ "`? Or check"
+                    ++ " for a typo in the module qualifier."
+                full = if null suggestion then base else base ++ suggestion
+            in Diag.mkError path reg Diag.CatCanonical Diag.canonE_UndefinedName
+                    ("Undefined name: " ++ q ++ "." ++ n)
+                & Diag.withHint full
     in
         map mkDiag (dedupeByNameTop unbound)
         ++ map mkQualDiag unboundQual
+        ++ map mkUnknownQualDiag unknownQual
 
 
 -- | Walk the AST collecting every `Src.VarQual qualifier name`
@@ -1074,6 +1130,49 @@ defBodyQualifiedRefs shadowed (A.At _ d) = case d of
 -- emit-time absence.
 qualifiedExistsInKernel :: String -> String -> Bool
 qualifiedExistsInKernel _ _ = True
+
+
+-- | v0.15.42 audit §3.1. When a user writes `NotARealModule.foo` and
+-- the canonicaliser flags `NotARealModule` as unknown, suggest the
+-- closest known qualifier from the env (kernel modules + import
+-- aliases + qualVars/qualCtors keys). Returns "" when no candidate
+-- is within edit-distance 2 of the typo — silence beats a misleading
+-- hint.
+suggestQualifier :: String -> Set.Set String -> String
+suggestQualifier typo knowns =
+    let candidates =
+            [ (d, k)
+            | k <- Set.toList knowns
+            , let d = levenshtein typo k
+            , d > 0
+            , d <= 2
+            ]
+    in case candidates of
+        [] -> ""
+        _  -> let (_, best) = minimum candidates
+              in "\n    Did you mean `" ++ best ++ "`?"
+
+
+-- | Iterative Levenshtein edit distance. ASCII Sky identifiers stay
+-- under 32 chars in practice, so the O(N*M) table is cheap.
+levenshtein :: String -> String -> Int
+levenshtein s t =
+    let n = length s
+        m = length t
+        sa = zip [1..] s
+        ta = zip [1..] t
+        -- Build the DP row-by-row.
+        initRow = [0..m]
+        step prev (i, ci) =
+            let go _ acc [] = reverse acc
+                go (left, upDiag) acc ((j, cj):rest) =
+                    let up = prev !! j
+                        cost = if ci == cj then 0 else 1
+                        cell = minimum [up + 1, left + 1, upDiag + cost]
+                    in go (cell, up) (cell:acc) rest
+            in i : go (i, head prev) [] ta
+        finalRow = foldl step initRow sa
+    in finalRow !! m
 
 
 -- | Reverse-application operator (`&`), used by the new Diagnostic-
