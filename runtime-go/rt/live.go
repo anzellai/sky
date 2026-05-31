@@ -510,6 +510,80 @@ func assignSkyIDs(n *VNode, path string) {
 	}
 }
 
+// injectMediaQueryStyles walks the tree after assignSkyIDs and rewrites
+// every element that carries a `data-sky-mq-q` + `data-sky-mq-rules`
+// marker pair (set by `Std.Ui.mediaQuery` / `Ui.breakpoint`, issue
+// #376) into a base wrapper with a sky-id-scoped `<style>` child:
+//
+//   <div sky-id="r.0.2#div" ...>
+//       <style data-sky-mq="r.0.2#div">
+//           @media (max-width: 767px) {
+//               [sky-id="r.0.2#div"] { padding: 8px; flex-direction: column; }
+//           }
+//       </style>
+//       <child ... />
+//   </div>
+//
+// The marker attrs are stripped from the wire output (the runtime
+// has fully consumed them); the `<style>` block is scoped per-
+// element so multiple `Ui.breakpoint`s on the same page cannot
+// cross-contaminate each other's selectors. The browser's CSS
+// engine handles reactivity natively — instant, no JS round-trip,
+// no re-render needed when the viewport crosses the breakpoint.
+//
+// Composition: nested `Ui.breakpoint` calls produce nested
+// wrappers, each with its own scoped style block.
+//
+// Pre-condition: assignSkyIDs has already stamped n.SkyID on every
+// element. Post-condition: marker attrs removed; style child
+// prepended where present.
+func injectMediaQueryStyles(n *VNode) {
+	if n.Kind != "element" {
+		return
+	}
+	query, hasQuery := n.Attrs["data-sky-mq-q"]
+	rules, hasRules := n.Attrs["data-sky-mq-rules"]
+	if hasQuery && hasRules && n.SkyID != "" {
+		// Build the scoped style content.
+		// Selector: `[sky-id="..."]` — exact-match attribute
+		// selector keys directly off the sky-id we already emit
+		// for diff-patch addressing. Same string is escaped by
+		// html.EscapeString during render so no quote-injection
+		// surface.
+		selector := `[sky-id="` + n.SkyID + `"]`
+		// CSS-escape inside the style element: the `rules` string
+		// must NOT contain a closing `</style>` sequence (browsers
+		// terminate <style> on that literal regardless of context).
+		// Strip defensively.
+		safeRules := strings.ReplaceAll(rules, "</style", "")
+		safeRules = strings.ReplaceAll(safeRules, "</STYLE", "")
+		safeQuery := strings.ReplaceAll(query, "</style", "")
+		safeQuery = strings.ReplaceAll(safeQuery, "</STYLE", "")
+		styleText := "@media " + safeQuery + " { " + selector +
+			" { " + safeRules + " } }"
+		styleNode := VNode{
+			Kind: "element",
+			Tag:  "style",
+			Attrs: map[string]string{
+				"data-sky-mq": n.SkyID,
+			},
+			Children: []VNode{{Kind: "raw", Text: styleText}},
+		}
+		// Strip marker attrs from the wire output — they served
+		// their purpose and shouldn't leak as inert data-* on the
+		// rendered HTML.
+		delete(n.Attrs, "data-sky-mq-q")
+		delete(n.Attrs, "data-sky-mq-rules")
+		// Prepend style as the first child so it parses before any
+		// rendered content (matches the convention used by the
+		// outer Ui.layout wrapper's body-reset style block).
+		n.Children = append([]VNode{styleNode}, n.Children...)
+	}
+	for i := range n.Children {
+		injectMediaQueryStyles(&n.Children[i])
+	}
+}
+
 // skyIDKey returns a stable disambiguator for `n`, or "" if none applies.
 // Priority: explicit `sky-key` attribute (set by `Html.keyed`) first,
 // then `name` on form-bearing tags. Any matched value is sanitised to
@@ -2770,6 +2844,7 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 
 	vn := HtmlToVNode(sky_call(app.view, model))
 	assignSkyIDs(&vn, "r")
+	injectMediaQueryStyles(&vn)
 	body := renderVNode(vn, sess.handlers)
 	// Initial mount writes the full HTML directly into the HTTP
 	// response below — the client receives this body as the page,
@@ -2948,6 +3023,7 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 		sess.handlers = map[string]any{}
 		vn := HtmlToVNode(sky_call(app.view, sess.model))
 		assignSkyIDs(&vn, "r")
+		injectMediaQueryStyles(&vn)
 		body := renderVNode(vn, sess.handlers)
 		// Route through commitRender (Cycle 3 P40 / Gap C7) so
 		// the rebuilt-handlers branch keeps prevTree +
@@ -3138,6 +3214,7 @@ func (app *liveApp) dispatchBatched(sess *liveSession, ev batchedEvent) {
 		sess.handlers = map[string]any{}
 		vn := HtmlToVNode(sky_call(app.view, sess.model))
 		assignSkyIDs(&vn, "r")
+		injectMediaQueryStyles(&vn)
 		body := renderVNode(vn, sess.handlers)
 		// Route through commitRender (Cycle 3 P40 / Gap C7) so
 		// the rebuilt-handlers branch keeps prevTree +
@@ -3376,6 +3453,7 @@ func (app *liveApp) dispatch(sess *liveSession, msg any) (body string) {
 	sess.handlers = map[string]any{}
 	vn := HtmlToVNode(sky_call(app.view, sess.model))
 	assignSkyIDs(&vn, "r")
+	injectMediaQueryStyles(&vn)
 	body = renderVNode(vn, sess.handlers)
 	// Commit prevTree + lastComputedBody as one atomic step (Cycle 3
 	// P40 / Gap C7). Previously this was two separate writes — prevTree
@@ -3434,6 +3512,7 @@ func (app *liveApp) renderView(sess *liveSession) string {
 	sess.handlers = map[string]any{}
 	vn := HtmlToVNode(sky_call(app.view, sess.model))
 	assignSkyIDs(&vn, "r")
+	injectMediaQueryStyles(&vn)
 	body := renderVNode(vn, sess.handlers)
 	sess.commitRender(&vn, body)
 	return body
@@ -4375,6 +4454,7 @@ func (app *liveApp) handleSSE(w http.ResponseWriter, r *http.Request) {
 			defer func() { _ = recover() }()
 			vn := HtmlToVNode(sky_call(app.view, sess.model))
 			assignSkyIDs(&vn, "r")
+			injectMediaQueryStyles(&vn)
 			sess.handlers = map[string]any{}
 			body := renderVNode(vn, sess.handlers)
 			// Reconnect-resync writes the resync frame DIRECTLY to

@@ -891,6 +891,235 @@ html : any -> Element msg
 html node =
     Raw node
 
+-- ─── Media queries + responsive breakpoints (issue #376) ─────────
+--
+-- Express viewport-conditional styling in pure typed Sky. Layout
+-- reacts via the browser's CSS engine — instant, no JS round-trip,
+-- no model field, no re-render.
+--
+-- `Ui.breakpoint`: typed-constant ADT covering 95 % of cases (mobile
+-- / tablet / desktop / dark-mode / reduced-motion / etc.).
+-- `Ui.mediaQuery`: low-level escape hatch — any raw CSS media-query
+-- string (e.g. "(orientation: portrait)", "(min-resolution: 2dppx)").
+--
+--     -- Stack vertically on mobile, side-by-side on desktop.
+--     Ui.row
+--         [ Ui.spacing 16 ]
+--         [ Ui.breakpoint Ui.mobile
+--             [ Ui.htmlAttribute "style" "flex-direction: column;" ]
+--             sidebar
+--         , main
+--         ]
+--
+-- See docs/skyui/overview.md §"Media queries + breakpoints" for the
+-- full reference + design notes. Composes via nesting:
+-- `breakpoint Mobile [a] (breakpoint DarkMode [b] child)` produces
+-- two scoped <style> blocks; CSS rules independently match.
+type Breakpoint
+    = SmAndUp
+    | MdAndUp
+    | LgAndUp
+    | XlAndUp
+    | Mobile
+    | Tablet
+    | Desktop
+    | DarkMode
+    | LightMode
+    | ReducedMotion
+    | TouchDevice
+    | Portrait
+    | Landscape
+    | Custom Int Int
+
+
+        -- `Custom minPx maxPx`. 0 = unset (no min / no max).
+        -- `Custom 600 0`   → `(min-width: 600px)`
+        -- `Custom 0 800`   → `(max-width: 800px)`
+        -- `Custom 600 800` → `(min-width: 600px) and (max-width: 800px)`
+
+
+-- Typed-constant shortcuts so user code can write `Ui.mobile` /
+-- `Ui.darkMode` without `Ui.Breakpoint.Mobile`. Bare-value pattern
+-- mirrors `Std.Ui.Responsive.mobile`.
+mobile : Breakpoint
+mobile =
+    Mobile
+
+
+tablet : Breakpoint
+tablet =
+    Tablet
+
+
+desktop : Breakpoint
+desktop =
+    Desktop
+
+
+smAndUp : Breakpoint
+smAndUp =
+    SmAndUp
+
+
+mdAndUp : Breakpoint
+mdAndUp =
+    MdAndUp
+
+
+lgAndUp : Breakpoint
+lgAndUp =
+    LgAndUp
+
+
+xlAndUp : Breakpoint
+xlAndUp =
+    XlAndUp
+
+
+darkMode : Breakpoint
+darkMode =
+    DarkMode
+
+
+lightMode : Breakpoint
+lightMode =
+    LightMode
+
+
+reducedMotion : Breakpoint
+reducedMotion =
+    ReducedMotion
+
+
+touchDevice : Breakpoint
+touchDevice =
+    TouchDevice
+
+
+portrait : Breakpoint
+portrait =
+    Portrait
+
+
+landscape : Breakpoint
+landscape =
+    Landscape
+
+
+-- Map a Breakpoint to its CSS media-query expression. Defaults
+-- follow Tailwind-style cuts (sm 640, md 768, lg 1024, xl 1280) so
+-- AI-generated Sky lines up with the most-common web mental model.
+breakpointToQuery : Breakpoint -> String
+breakpointToQuery bp =
+    case bp of
+
+        SmAndUp ->
+            "(min-width: 640px)"
+
+        MdAndUp ->
+            "(min-width: 768px)"
+
+        LgAndUp ->
+            "(min-width: 1024px)"
+
+        XlAndUp ->
+            "(min-width: 1280px)"
+
+        Mobile ->
+            "(max-width: 767px)"
+
+        Tablet ->
+            "(min-width: 768px) and (max-width: 1023px)"
+
+        Desktop ->
+            "(min-width: 1024px)"
+
+        DarkMode ->
+            "(prefers-color-scheme: dark)"
+
+        LightMode ->
+            "(prefers-color-scheme: light)"
+
+        ReducedMotion ->
+            "(prefers-reduced-motion: reduce)"
+
+        TouchDevice ->
+            "(hover: none) and (pointer: coarse)"
+
+        Portrait ->
+            "(orientation: portrait)"
+
+        Landscape ->
+            "(orientation: landscape)"
+
+        Custom minPx maxPx ->
+            customRangeQuery minPx maxPx
+
+
+-- 0 means "unset". Both 0 → fallback `all` matches everything (the
+-- attrs always apply); pick one to control properly.
+customRangeQuery : Int -> Int -> String
+customRangeQuery minPx maxPx =
+    if minPx > 0 && maxPx > 0 then
+        "(min-width: " ++ String.fromInt minPx ++ "px) and (max-width: "
+            ++ String.fromInt maxPx
+            ++ "px)"
+
+    else if minPx > 0 then
+        "(min-width: " ++ String.fromInt minPx ++ "px)"
+
+    else if maxPx > 0 then
+        "(max-width: " ++ String.fromInt maxPx ++ "px)"
+
+    else
+            -- Generic fallback for arbitrary attribute names (sky-key,
+            -- aria-*, custom data-*, etc.).
+        "all"
+
+
+-- `breakpoint bp attrs child` — wrap `child` so the attrs apply only
+-- when the breakpoint matches. Renders to a `<div>` wrapper carrying
+-- `child` plus a sky-id-scoped `<style>` block injected by the
+-- runtime. Sky.Tui silently ignores the `<style>` (terminal renders
+-- the base layer only); Sky.Webview honours media queries identically
+-- to Sky.Live because they share the runtime VNode pipeline.
+breakpoint : Breakpoint -> List (Attribute msg) -> Element msg -> Element msg
+breakpoint bp attrs child =
+    mediaQuery (breakpointToQuery bp) attrs child
+
+
+-- Escape hatch — any raw CSS media-query string. The string is
+-- emitted verbatim inside `@media <q> { ... }`; the caller owns
+-- correctness. Examples: "(orientation: portrait)",
+-- "(min-resolution: 2dppx)", "(min-width: 600px) and (hover: hover)".
+mediaQuery : String -> List (Attribute msg) -> Element msg -> Element msg
+mediaQuery query attrs child =
+    let
+        rulesCss = mediaQueryRulesCss attrs
+        -- Marker attrs carried on the wrapper. The runtime
+        -- (`injectMediaQueryStyles` in runtime-go/rt/live.go) walks
+        -- the tree after assignSkyIDs, finds these data attrs,
+        -- generates a `<style>` block scoped by `[sky-id="<sid>"]`,
+        -- prepends it as a child, and strips the markers from the
+        -- emitted HTML attribute set so the wire stays clean.
+        markerQuery = AttrAttribute "data-sky-mq-q" query
+        markerRules = AttrAttribute "data-sky-mq-rules" rulesCss
+    in
+        Node NoDescription [ markerQuery, markerRules ] [child]
+
+
+-- Lower a media-query attribute list into a CSS-rules string with
+-- the same per-attribute emission as the base inline-style path —
+-- so `Background.color`, `Border.width`, `Font.size`, `padding`,
+-- `spacing`, `width`, `height`, `htmlAttribute "style" "..."` etc.
+-- all work identically inside `Ui.breakpoint` / `Ui.mediaQuery`.
+-- Parent + my context default to AsColumn (the safe layout
+-- assumption for an overridable container); the user can still
+-- override via explicit CSS in a `style` attr if needed.
+mediaQueryRulesCss : List (Attribute msg) -> String
+mediaQueryRulesCss attrs =
+    List.foldl (collectStyle AsColumn AsColumn) "" attrs
+
 
 -- Extract a plain string from a `Text s` element, or "" for any
 -- other shape. Used by Std.Ui.Input.placeholder rendering to pull
@@ -1168,8 +1397,6 @@ renderNodeAs tag ctx extraAttrs attrs children =
                 ""
 
             else
-            -- Generic fallback for arbitrary attribute names (sky-key,
-            -- aria-*, custom data-*, etc.).
                 "position: relative; "
         isReplaced = tag == "img" || tag == "input"
         styleStr =

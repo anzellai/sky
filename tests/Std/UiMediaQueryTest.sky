@@ -1,0 +1,120 @@
+module Std.UiMediaQueryTest exposing (tests)
+
+-- Sky-side fixtures for the Std.Ui media-query primitive
+-- (`Ui.breakpoint` / `Ui.mediaQuery`, issue #376).
+--
+-- Covers the pure parts of the API surface — the `Breakpoint` ADT,
+-- the `breakpointToQuery` lowering, and the `customRangeQuery`
+-- combinator. The runtime injection / scoping side is covered by
+-- `runtime-go/rt/live_media_query_test.go`; the compile-pipeline
+-- side by `test/Sky/Build/UiMediaQuerySpec.hs`. This file is the
+-- pure-Sky regression fence against accidental query-string drift.
+import Sky.Core.Prelude exposing (..)
+import Std.Ui as Ui
+import Sky.Test as Test exposing (Test)
+
+
+tests : List Test
+tests =
+    [Test.suite
+        "Std.Ui media-query primitive (#376)"
+        [ Test.test
+              "Mobile → (max-width: 767px)"
+              (\_ ->
+                  Test.equal
+                      "(max-width: 767px)"
+                      (Ui.breakpointToQuery Ui.mobile))
+        , Test.test
+              "Tablet → 768..1023 range"
+              (\_ ->
+                  Test.equal
+                      "(min-width: 768px) and (max-width: 1023px)"
+                      (Ui.breakpointToQuery Ui.tablet))
+        , Test.test
+              "Desktop → (min-width: 1024px)"
+              (\_ ->
+                  Test.equal
+                      "(min-width: 1024px)"
+                      (Ui.breakpointToQuery Ui.desktop))
+        , Test.test
+              "SmAndUp → (min-width: 640px) — Tailwind sm cut"
+              (\_ ->
+                  Test.equal
+                      "(min-width: 640px)"
+                      (Ui.breakpointToQuery Ui.smAndUp))
+        , Test.test
+              "MdAndUp → (min-width: 768px) — Tailwind md cut"
+              (\_ ->
+                  Test.equal
+                      "(min-width: 768px)"
+                      (Ui.breakpointToQuery Ui.mdAndUp))
+        , Test.test
+              "LgAndUp → (min-width: 1024px) — Tailwind lg cut"
+              (\_ ->
+                  Test.equal
+                      "(min-width: 1024px)"
+                      (Ui.breakpointToQuery Ui.lgAndUp))
+        , Test.test
+              "XlAndUp → (min-width: 1280px) — Tailwind xl cut"
+              (\_ ->
+                  Test.equal
+                      "(min-width: 1280px)"
+                      (Ui.breakpointToQuery Ui.xlAndUp))
+        , Test.test
+              "DarkMode → prefers-color-scheme: dark"
+              (\_ ->
+                  Test.equal
+                      "(prefers-color-scheme: dark)"
+                      (Ui.breakpointToQuery Ui.darkMode))
+        , Test.test
+              "LightMode → prefers-color-scheme: light"
+              (\_ ->
+                  Test.equal
+                      "(prefers-color-scheme: light)"
+                      (Ui.breakpointToQuery Ui.lightMode))
+        , Test.test
+              "ReducedMotion → prefers-reduced-motion: reduce"
+              (\_ ->
+                  Test.equal
+                      "(prefers-reduced-motion: reduce)"
+                      (Ui.breakpointToQuery Ui.reducedMotion))
+        , Test.test
+              "TouchDevice → hover: none + pointer: coarse"
+              (\_ ->
+                  Test.equal
+                      "(hover: none) and (pointer: coarse)"
+                      (Ui.breakpointToQuery Ui.touchDevice))
+        , Test.test
+              "Portrait → orientation: portrait"
+              (\_ ->
+                  Test.equal
+                      "(orientation: portrait)"
+                      (Ui.breakpointToQuery Ui.portrait))
+        , Test.test
+              "Landscape → orientation: landscape"
+              (\_ ->
+                  Test.equal
+                      "(orientation: landscape)"
+                      (Ui.breakpointToQuery Ui.landscape))
+        , Test.test
+              "Custom 600 0 → (min-width: 600px)"
+              (\_ ->
+                  Test.equal
+                      "(min-width: 600px)"
+                      (Ui.breakpointToQuery (Ui.Custom 600 0)))
+        , Test.test
+              "Custom 0 800 → (max-width: 800px)"
+              (\_ ->
+                  Test.equal
+                      "(max-width: 800px)"
+                      (Ui.breakpointToQuery (Ui.Custom 0 800)))
+        , Test.test
+              "Custom 600 800 → and-joined"
+              (\_ ->
+                  Test.equal
+                      "(min-width: 600px) and (max-width: 800px)"
+                      (Ui.breakpointToQuery (Ui.Custom 600 800)))
+        , Test.test
+              "Custom 0 0 → fallback all (matches everything)"
+              (\_ -> Test.equal "all" (Ui.breakpointToQuery (Ui.Custom 0 0)))
+        ]]
