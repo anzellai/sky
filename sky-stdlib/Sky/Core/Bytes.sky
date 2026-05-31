@@ -1,0 +1,112 @@
+-- | Sky.Core.Bytes — byte-buffer helpers (Layer 3 Sky source).
+--
+-- Sky represents binary payloads as `String` on the wire (Go's
+-- `string` is a sequence of bytes, not characters).  Where a
+-- function expects "raw bytes" — `Crypto.aesGcmEncrypt`,
+-- `File.readFileBytes`, an RPC handler reading a binary upload —
+-- the value passed is a `String` whose bytes are NOT necessarily
+-- valid UTF-8.  Treating it as text via `String.length` /
+-- `String.append` works because those operate on bytes too, but
+-- the helpers in this module spell out the byte-buffer intent and
+-- handle hex / base64 / UTF-8 conversion safely.
+--
+-- Why not a new opaque type?  Sky.Core.String is already
+-- byte-string-shaped (Go-side).  An opaque `Bytes` wrapper would
+-- force every caller to wrap / unwrap at every kernel boundary
+-- with zero runtime benefit.  Treating "bytes" as a `String` whose
+-- contents are unrestricted is the same shape the runtime already
+-- ships and matches Go's stdlib (`[]byte(s)` / `string(b)` are
+-- both O(1) copies for the typical case).
+module Sky.Core.Bytes exposing
+    ( empty, length, isEmpty
+    , fromString, toString
+    , fromHex, toHex
+    , fromBase64, toBase64
+    , append, slice
+    )
+
+
+import Sky.Ffi as Ffi
+import Sky.Core.Maybe exposing (Maybe(..))
+import Sky.Core.String as String
+
+
+-- | A type alias is intentional — `Bytes` is a `String` whose
+-- bytes are NOT required to be valid UTF-8.  Switching this to an
+-- opaque ADT would force every caller to wrap / unwrap and gain
+-- nothing at runtime.
+type alias Bytes = String
+
+
+-- ─── Constructors / introspection ─────────────────────────────────
+
+
+empty : Bytes
+empty = ""
+
+
+-- | Byte count of the buffer.  This is `String.length` under the
+-- hood — Go's `len(s)` over a `string` IS the byte count, NOT a
+-- rune count.
+length : Bytes -> Int
+length b = String.length b
+
+
+isEmpty : Bytes -> Bool
+isEmpty b = String.isEmpty b
+
+
+-- ─── Conversion ────────────────────────────────────────────────────
+
+
+-- | `fromString s` — interpret a Sky string's bytes as a `Bytes`
+-- buffer.  Round-trip-safe for any input (Go strings are
+-- arbitrary byte sequences).
+fromString : String -> Bytes
+fromString s = s
+
+
+-- | `toString b` — try to interpret a `Bytes` buffer as a valid
+-- UTF-8 string.  Returns `Nothing` if any byte sequence is
+-- invalid UTF-8 (use `String.fromList` after `Bytes.toHex` if you
+-- need a lossless rendering).
+toString : Bytes -> Maybe String
+toString = Ffi.kernel "Bytes_toString"
+
+
+-- | `fromHex hex` — parse a hex-encoded byte buffer (case
+-- insensitive).  `Nothing` on any non-hex character or odd
+-- length.
+fromHex : String -> Maybe Bytes
+fromHex = Ffi.kernel "Bytes_fromHex"
+
+
+-- | `toHex b` — hex-encode (lowercase).  Inverse of `fromHex`.
+toHex : Bytes -> String
+toHex = Ffi.kernel "Bytes_toHex"
+
+
+-- | `fromBase64 s` — parse a standard-base64 buffer.  `Nothing`
+-- on any non-base64 character or wrong padding.
+fromBase64 : String -> Maybe Bytes
+fromBase64 = Ffi.kernel "Bytes_fromBase64"
+
+
+-- | `toBase64 b` — standard-base64 encode.  Inverse of
+-- `fromBase64`.
+toBase64 : Bytes -> String
+toBase64 = Ffi.kernel "Bytes_toBase64"
+
+
+-- ─── Buffer composition ───────────────────────────────────────────
+
+
+-- | `append a b` — concatenate two byte buffers.
+append : Bytes -> Bytes -> Bytes
+append a b = String.append a b
+
+
+-- | `slice start end b` — substring on byte indices.  Negative
+-- indices count from the end (like `String.slice`).
+slice : Int -> Int -> Bytes -> Bytes
+slice start end b = String.slice start end b

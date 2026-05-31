@@ -1,23 +1,31 @@
--- | Sky.Core.Crypto — hash + MAC + signature + entropy helpers
--- (Layer 3 Sky source).
+-- | Sky.Core.Crypto — hash + MAC + signature + symmetric-cipher +
+-- entropy helpers (Layer 3 Sky source).
 --
 -- Pure hash + MAC functions (`sha256` / `sha512` / `sha1` / `md5` /
 -- `hmacSha256` / `hmacSha512`) return the hex-encoded digest as a
 -- plain `String`. `rsaSha256Sign` / `rsaSha256Verify` cover
 -- RSASSA-PKCS1-v1_5 (the `RS256` of JWT and signed-request APIs).
--- Random helpers return `Task Error String` because they consume
+-- v0.15.44 adds **AES-256-GCM** and **ChaCha20-Poly1305** symmetric
+-- encryption — both are AEAD (authenticated + integrity-checked)
+-- and use a per-call random nonce (output format:
+-- `base64(nonce || ciphertext || tag)`).
+-- Random helpers return `Task Error a` because they consume
 -- entropy from the OS RNG (a real side effect).
 module Sky.Core.Crypto exposing
     ( sha256, sha512, sha1, md5
     , hmacSha256, hmacSha512
     , rsaSha256Sign, rsaSha256Verify
     , constantTimeEqual
+    , aesGcmEncrypt, aesGcmDecrypt
+    , chacha20Encrypt, chacha20Decrypt
+    , aesKeyFromPassword, chachaKeyFromPassword
     , randomBytes, randomToken
     )
 
 
 import Sky.Ffi as Ffi
 import Sky.Core.Error exposing (Error)
+import Sky.Core.Result exposing (Result(..))
 
 
 -- ─── Hashes ────────────────────────────────────────────────────────
@@ -76,6 +84,67 @@ rsaSha256Sign = Ffi.kernel "Crypto_rsaSha256Sign"
 -- signature valid? `False` on any parse / verification failure.
 rsaSha256Verify : String -> String -> String -> Bool
 rsaSha256Verify = Ffi.kernel "Crypto_rsaSha256Verify"
+
+
+-- ─── Symmetric encryption (AEAD) ───────────────────────────────────
+
+
+-- | `aesGcmEncrypt key plaintext` — encrypt under AES-256-GCM.
+-- `key` must be exactly 32 bytes (use `aesKeyFromPassword` for a
+-- password-derived key).  `plaintext` is the raw byte payload (a
+-- Sky `String` whose bytes are not constrained to UTF-8 — use the
+-- Sky.Core.Bytes helpers when in doubt).  Returns
+-- `base64(nonce || ciphertext || tag)` — a single opaque string
+-- safe to store / transmit.  A new random nonce is drawn for
+-- every call (so encrypting the same message twice yields
+-- different ciphertexts).
+aesGcmEncrypt : String -> String -> Result Error String
+aesGcmEncrypt = Ffi.kernel "Crypto_aesGcmEncrypt"
+
+
+-- | `aesGcmDecrypt key encoded` — decrypt the output of
+-- `aesGcmEncrypt`.  Returns `Err` on any tag-validation failure
+-- (so a tampered ciphertext NEVER decrypts to garbage).  Same
+-- key length rules as `aesGcmEncrypt`.
+aesGcmDecrypt : String -> String -> Result Error String
+aesGcmDecrypt = Ffi.kernel "Crypto_aesGcmDecrypt"
+
+
+-- | `chacha20Encrypt key plaintext` — encrypt under
+-- ChaCha20-Poly1305 (RFC 8439).  Same key length (32 bytes) and
+-- output format as `aesGcmEncrypt`.  ChaCha20 is preferred on
+-- platforms without AES hardware acceleration — typically smaller
+-- mobile / embedded CPUs.
+chacha20Encrypt : String -> String -> Result Error String
+chacha20Encrypt = Ffi.kernel "Crypto_chacha20Encrypt"
+
+
+-- | `chacha20Decrypt key encoded` — decrypt the output of
+-- `chacha20Encrypt`.  Same Err-on-tampering guarantee as
+-- `aesGcmDecrypt`.
+chacha20Decrypt : String -> String -> Result Error String
+chacha20Decrypt = Ffi.kernel "Crypto_chacha20Decrypt"
+
+
+-- | `aesKeyFromPassword password salt` — derive a 32-byte
+-- AES-256 key from a password + salt via PBKDF2-HMAC-SHA256
+-- (100 000 iterations — OWASP recommended floor as of 2026).
+-- The returned `String` is the raw 32 bytes; pass it straight
+-- to `aesGcmEncrypt`.  `salt` MUST be unique per user / record
+-- (16 random bytes from `randomBytes 16` is the standard
+-- shape).  NOT for password storage — use `Std.Auth.hashPassword`
+-- (bcrypt) for that.
+aesKeyFromPassword : String -> String -> String
+aesKeyFromPassword = Ffi.kernel "Crypto_aesKeyFromPassword"
+
+
+-- | `chachaKeyFromPassword password salt` — same as
+-- `aesKeyFromPassword` but the derived key is intended for use
+-- with `chacha20Encrypt`.  Both ciphers use 32-byte keys, so this
+-- is a thin alias for documentation; you can interchange the two
+-- safely.
+chachaKeyFromPassword : String -> String -> String
+chachaKeyFromPassword = Ffi.kernel "Crypto_chachaKeyFromPassword"
 
 
 -- ─── Entropy (Task — touches the OS RNG) ───────────────────────────

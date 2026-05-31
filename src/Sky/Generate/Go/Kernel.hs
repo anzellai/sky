@@ -339,6 +339,19 @@ registry = Map.fromList
     , (("Crypto", "constantTimeEqual"), KernelInfo "rt.Crypto_constantTimeEqual" 2 False)
     , (("Crypto", "randomBytes"), KernelInfo "rt.Crypto_randomBytes" 1 False)
     , (("Crypto", "randomToken"), KernelInfo "rt.Crypto_randomToken" 1 False)
+    -- AES-GCM + ChaCha20-Poly1305 (v0.15.44).
+    , (("Crypto", "aesGcmEncrypt"),       KernelInfo "rt.Crypto_aesGcmEncrypt" 2 False)
+    , (("Crypto", "aesGcmDecrypt"),       KernelInfo "rt.Crypto_aesGcmDecrypt" 2 False)
+    , (("Crypto", "chacha20Encrypt"),     KernelInfo "rt.Crypto_chacha20Encrypt" 2 False)
+    , (("Crypto", "chacha20Decrypt"),     KernelInfo "rt.Crypto_chacha20Decrypt" 2 False)
+    , (("Crypto", "aesKeyFromPassword"),  KernelInfo "rt.Crypto_aesKeyFromPassword" 2 False)
+    , (("Crypto", "chachaKeyFromPassword"), KernelInfo "rt.Crypto_chachaKeyFromPassword" 2 False)
+    -- Sky.Core.Bytes (v0.15.44).
+    , (("Bytes", "toString"),   KernelInfo "rt.Bytes_toString" 1 False)
+    , (("Bytes", "fromHex"),    KernelInfo "rt.Bytes_fromHex" 1 False)
+    , (("Bytes", "toHex"),      KernelInfo "rt.Bytes_toHex" 1 False)
+    , (("Bytes", "fromBase64"), KernelInfo "rt.Bytes_fromBase64" 1 False)
+    , (("Bytes", "toBase64"),   KernelInfo "rt.Bytes_toBase64" 1 False)
 
     , (("Encoding", "base64Encode"), KernelInfo "rt.Encoding_base64Encode" 1 False)
     , (("Encoding", "base64Decode"), KernelInfo "rt.Encoding_base64Decode" 1 False)

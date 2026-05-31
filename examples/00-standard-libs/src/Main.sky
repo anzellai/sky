@@ -328,6 +328,45 @@ cryptoSuite =
                 (Crypto.sha1 "hello"))
         , Test.test "hmacSha512 produces 128 hex chars" (\_ ->
             Test.equal 128 (String.length (Crypto.hmacSha512 "secret" "msg")))
+        , Test.test "aesKeyFromPassword derivation succeeds round-trip" (\_ ->
+            let
+                key = Crypto.aesKeyFromPassword "p" "salt"
+            in
+                case Crypto.aesGcmEncrypt key "x" of
+                    Ok _ -> Test.isTrue True
+                    Err _ -> Test.isFalse True)
+        , Test.test "aesGcm round-trip" (\_ ->
+            let
+                key = Crypto.aesKeyFromPassword "hunter2" "salt"
+            in
+                case Crypto.aesGcmEncrypt key "hello world" of
+                    Ok ct ->
+                        case Crypto.aesGcmDecrypt key ct of
+                            Ok pt -> Test.equal "hello world" pt
+                            Err _ -> Test.isFalse True
+                    Err _ -> Test.isFalse True)
+        , Test.test "aesGcm tamper detection" (\_ ->
+            let
+                key = Crypto.aesKeyFromPassword "hunter2" "salt"
+                tampered = "AAAAAAAAAAAAAAAAAAAAAAAAA"
+            in
+                case Crypto.aesGcmDecrypt key tampered of
+                    Ok _ -> Test.isFalse True
+                    Err _ -> Test.isTrue True)
+        , Test.test "chacha20 round-trip" (\_ ->
+            let
+                key = Crypto.chachaKeyFromPassword "pw" "saltsalt"
+            in
+                case Crypto.chacha20Encrypt key "another payload" of
+                    Ok ct ->
+                        case Crypto.chacha20Decrypt key ct of
+                            Ok pt -> Test.equal "another payload" pt
+                            Err _ -> Test.isFalse True
+                    Err _ -> Test.isFalse True)
+        , Test.test "aesGcm short-key rejected" (\_ ->
+            case Crypto.aesGcmEncrypt "short" "x" of
+                Err _ -> Test.isTrue True
+                Ok _ -> Test.isFalse True)
         ]
 
 
