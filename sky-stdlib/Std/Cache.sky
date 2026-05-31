@@ -1,0 +1,197 @@
+-- | Std.Cache — in-memory LRU + TTL cache (Layer 3 Sky source).
+--
+-- Bounded by entry count (`maxEntries`).  Optional TTL evicts on
+-- read; `0` disables.  Both keys and values are typed via phantom
+-- parameters — the runtime stringifies the key for the LRU map
+-- but the surface API stays parametric.
+--
+-- v0.15.46 stdlib convention: every typed record ships with a
+-- `defaultCfg` constructor + `with*` builder helpers so future
+-- field additions don't break record literals.
+--
+-- v0.15.47.
+--
+-- Example:
+--
+--     usersCache : Task Error (Cache String User)
+--     usersCache =
+--         Cache.new
+--             (Cache.defaultCfg
+--                 |> Cache.withMaxEntries 10000
+--                 |> Cache.withTTL 60000  -- 60s
+--             )
+--
+--     -- ...
+--     Cache.get cache "alice"           -- Task Error (Maybe User)
+--     Cache.put cache "alice" newUser   -- Task Error ()
+module Std.Cache exposing
+    ( Cache(..)
+    , CacheCfg
+    , defaultCfg
+    , withMaxEntries
+    , withTTL
+    , withMaxBytes
+    , new
+    , get
+    , put
+    , remove
+    , clear
+    , size
+    , stats
+    )
+
+
+import Sky.Ffi as Ffi
+import Sky.Core.Error exposing (Error)
+import Sky.Core.Maybe exposing (Maybe(..))
+import Sky.Core.Task as Task
+
+
+-- | Opaque handle to a cache.  The wrapped `Int` is the runtime's
+-- per-cache id; user code treats it as opaque.
+type Cache k v
+    = Cache Int
+
+
+-- | Configuration record for `new`.  All-defaults via `defaultCfg`;
+-- tweak via `withMaxEntries` / `withTTL` / `withMaxBytes`.
+type alias CacheCfg =
+    { maxEntries : Int
+    , ttlMs : Int
+    , maxBytes : Int
+    }
+
+
+-- | Default cache config: 1024 entries, no TTL, no byte cap.
+defaultCfg : CacheCfg
+defaultCfg =
+    { maxEntries = 1024
+    , ttlMs = 0
+    , maxBytes = 0
+    }
+
+
+-- | Override the max number of entries.  Triggers LRU eviction when
+-- the cache would exceed the cap.
+withMaxEntries : Int -> CacheCfg -> CacheCfg
+withMaxEntries n cfg =
+    { cfg | maxEntries = n }
+
+
+-- | Override the per-entry TTL in milliseconds.  `0` disables TTL.
+-- Expired entries are pruned on next access (lazy expiration).
+withTTL : Int -> CacheCfg -> CacheCfg
+withTTL ms cfg =
+    { cfg | ttlMs = ms }
+
+
+-- | Override the approximate byte cap.  Reserved for v0.16+ — the
+-- v0.15.47 LRU is entry-count-bounded only; byte tracking lands
+-- when the runtime gains per-value size accounting.
+withMaxBytes : Int -> CacheCfg -> CacheCfg
+withMaxBytes n cfg =
+    { cfg | maxBytes = n }
+
+
+-- | Internal — direct kernel alias returning the raw cache id.
+newRaw : CacheCfg -> Task Error Int
+newRaw =
+    Ffi.kernel "Cache_newRaw"
+
+
+-- | `new cfg` — create a new cache.  Resolves once the underlying
+-- LRU is initialised.
+new : CacheCfg -> Task Error (Cache k v)
+new cfg =
+    Task.map Cache (newRaw cfg)
+
+
+-- | Internal — kernel call from raw id.
+getRaw : Int -> k -> Task Error (Maybe v)
+getRaw =
+    Ffi.kernel "Cache_get"
+
+
+-- | `get cache key` — look up `key` in `cache`.  Returns
+-- `Ok (Just v)` on hit, `Ok Nothing` on miss or expired entry.
+get : Cache k v -> k -> Task Error (Maybe v)
+get cache key =
+    case cache of
+
+        Cache raw ->
+            getRaw raw key
+
+
+putRaw : Int -> k -> v -> Task Error ()
+putRaw =
+    Ffi.kernel "Cache_put"
+
+
+-- | `put cache key value` — insert (or update) `key → value`.  May
+-- evict the oldest entry if `maxEntries` is exceeded.
+put : Cache k v -> k -> v -> Task Error ()
+put cache key value =
+    case cache of
+
+        Cache raw ->
+            putRaw raw key value
+
+
+removeRaw : Int -> k -> Task Error ()
+removeRaw =
+    Ffi.kernel "Cache_remove"
+
+
+-- | `remove cache key` — delete `key`.  Idempotent — missing keys
+-- succeed silently.
+remove : Cache k v -> k -> Task Error ()
+remove cache key =
+    case cache of
+
+        Cache raw ->
+            removeRaw raw key
+
+
+clearRaw : Int -> Task Error ()
+clearRaw =
+    Ffi.kernel "Cache_clear"
+
+
+-- | `clear cache` — purge every entry.  Stats counters keep their
+-- running totals (`stats` is observability, not state).
+clear : Cache k v -> Task Error ()
+clear cache =
+    case cache of
+
+        Cache raw ->
+            clearRaw raw
+
+
+sizeRaw : Int -> Task Error Int
+sizeRaw =
+    Ffi.kernel "Cache_size"
+
+
+-- | `size cache` — current entry count (after lazy expiration).
+size : Cache k v -> Task Error Int
+size cache =
+    case cache of
+
+        Cache raw ->
+            sizeRaw raw
+
+
+statsRaw : Int -> Task Error { hits : Int, misses : Int, evictions : Int }
+statsRaw =
+    Ffi.kernel "Cache_stats"
+
+
+-- | `stats cache` — running totals of `{ hits, misses, evictions }`
+-- since the cache was created.  Counters are monotone — they
+-- survive `clear`.
+stats : Cache k v -> Task Error { hits : Int, misses : Int, evictions : Int }
+stats cache =
+    case cache of
+
+        Cache raw ->
+            statsRaw raw
