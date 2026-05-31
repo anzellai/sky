@@ -7,6 +7,7 @@ import Std.Ui as Ui exposing (Element)
 import Std.Ui.Background as Background
 import Std.Ui.Border as Border
 import Std.Ui.Font as Font
+import RegressionGates
 
 type alias Model =
     { count : Int }
@@ -220,18 +221,8 @@ counterDemo model =
 
 view : Model -> any
 view model =
-    Ui.layout
-        [ Ui.width Ui.fill
-        , Ui.height Ui.fill
-        , Background.color (Ui.rgb 244 245 248)
-        , Font.family "system-ui, -apple-system, Segoe UI, sans-serif"
-        ]
-        (Ui.column
-            [ Ui.width (Ui.maximum 760 Ui.fill)
-            , Ui.centerX
-            , Ui.padding 28
-            , Ui.spacing 18
-            ]
+    let
+        originalSections =
             [ Ui.el
                   [ Font.size 24, Font.bold, Font.color ink ]
                   (Ui.text "Std.Ui showcase")
@@ -253,7 +244,22 @@ view model =
             , section "textColumn spacing" textColumnDemo
             , section "clipX overflow" clipDemo
             , section "button + events" (counterDemo model)
-            ])
+            ]
+    in
+        Ui.layout
+            [ Ui.width Ui.fill
+            , Ui.height Ui.fill
+            , Background.color (Ui.rgb 244 245 248)
+            , Font.family "system-ui, -apple-system, Segoe UI, sans-serif"
+            ]
+            (Ui.column
+                [ Ui.width (Ui.maximum 760 Ui.fill)
+                , Ui.centerX
+                , Ui.padding 28
+                , Ui.spacing 18
+                , Ui.htmlAttribute "data-test-id" "showcase-root"
+                ]
+                (originalSections ++ RegressionGates.cases))
 
 
 main =

@@ -1,0 +1,344 @@
+module RegressionGates exposing (cases)
+
+-- Std.Ui regression-gate fixtures for the Cycle 5 renderer churn
+-- (v0.15.37+ → v0.15.41 will add mediaQuery / pseudo-classes /
+-- transitions / aspectRatio). Each section here is owned by
+-- scripts/verify-ui-showcase.{sh,mjs} — keep the data-test-id
+-- attributes stable, or update the runner in lockstep.
+--
+-- Cases by category:
+--   1. Deep-nesting fill — catches issue #63-class flex-chain
+--      regressions (the v0.14.7-v0.14.16 cycle hit 5 times before
+--      ee2812a). Triple/quad-nested fill + fillPortion + explicit-
+--      pixel siblings of fill children.
+--   2. Viewport-resize stubs — exercises Responsive.classifyDevice
+--      at a known viewport size; the runner re-takes the page after
+--      a Playwright resize to check whether dispatch is reactive
+--      (will land in #376; today it's a one-shot at render time).
+--   3. Pseudo-class stubs — primitives that today emit plain
+--      styles, ready to grow `:hover`/`:focus-visible`/`:active`
+--      attributes once #377 ships.
+--   4. Aspect-ratio + grid — placeholders for #379 (aspectRatio +
+--      content-aware grid tracks).
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Std.Html as Html
+import Std.Html.Attributes as Attr
+import Std.Ui as Ui exposing (Element)
+import Std.Ui.Background as Background
+import Std.Ui.Border as Border
+import Std.Ui.Font as Font
+
+
+-- Stable data-test-id helper; the runner selects by attribute.
+testId : String -> Ui.Attribute msg
+testId v =
+    Ui.htmlAttribute "data-test-id" v
+
+
+white : Ui.Color
+white =
+    Ui.rgb 255 255 255
+
+
+ink : Ui.Color
+ink =
+    Ui.rgb 25 30 40
+
+
+-- ─── 1. Deep-nesting fill ──────────────────────────────────────
+
+-- Triple-nested fill: outer column has FIXED height; an unsized
+-- middle Ui.el (NO height attr) wraps a child that asks for
+-- `height fill`. Without issue #63's flex-chain propagation the
+-- middle wrapper has no flex-grow, so the inner box collapses.
+-- After the fix, propagation injects synthetic `Fill 1` on the
+-- middle wrapper → flex-grow: 1 → inner stretches to the parent's
+-- 180 px (minus 8 px padding).
+tripleNestedFill : Element msg
+tripleNestedFill =
+    Ui.column
+        [ Ui.width Ui.fill, Ui.height (Ui.px 180), testId "triple-outer" ]
+        [Ui.el
+            [ Ui.width Ui.fill
+            , Ui.padding 8
+            , Background.color (Ui.rgb 240 245 255)
+            , testId "triple-mid"
+            ]
+            (Ui.el
+                [ Ui.width Ui.fill
+                , Ui.height Ui.fill
+                , Background.color (Ui.rgb 60 80 200)
+                , testId "triple-inner"
+                ]
+                (Ui.el [Font.color white] (Ui.text "triple-nested fill")))]
+
+
+-- Wrap-with-label shape: the canonical issue #63 reproducer.
+-- Mirrors `Input.multiline`'s internal `wrapWithLabel` which
+-- inserts an unsized Ui.el wrapper between the user-supplied
+-- parent (fill main axis) and the textarea (fill main axis).
+-- Without propagation the wrapper collapses; the inner fill
+-- has no growing container so the child stays at content height.
+--
+-- AsRow shape: outer row has fixed width, intermediate row has
+-- NO explicit width, inner asks for width fill. Propagation must
+-- lift width-fill onto the unsized intermediate.
+wrapWithLabelShape : Element msg
+wrapWithLabelShape =
+    Ui.row
+        [ Ui.width (Ui.px 360)
+        , Ui.height (Ui.px 80)
+        , Background.color (Ui.rgb 230 235 245)
+        , testId "wrap-outer"
+        ]
+        [Ui.row
+            [ Ui.height Ui.fill, testId "wrap-mid" ]
+            [Ui.el
+                [ Ui.width Ui.fill
+                , Ui.height Ui.fill
+                , Background.color (Ui.rgb 100 130 200)
+                , testId "wrap-inner"
+                ]
+                (Ui.el [Font.color white] (Ui.text "wrap"))]]
+
+
+-- 1:2:3 fillPortion split, proves the surgical fix doesn't break
+-- portion arithmetic. Verified by computed flex-grow on each child.
+portionRow : Element msg
+portionRow =
+    Ui.row
+        [ Ui.width Ui.fill
+        , Ui.height (Ui.px 56)
+        , Ui.spacing 8
+        , testId "portion-row"
+        ]
+        [ Ui.el
+              [ Ui.width (Ui.fillPortion 1)
+              , Ui.height Ui.fill
+              , Background.color (Ui.rgb 224 96 96)
+              , testId "portion-1"
+              ]
+              Ui.none
+        , Ui.el
+              [ Ui.width (Ui.fillPortion 2)
+              , Ui.height Ui.fill
+              , Background.color (Ui.rgb 96 176 104)
+              , testId "portion-2"
+              ]
+              Ui.none
+        , Ui.el
+              [ Ui.width (Ui.fillPortion 3)
+              , Ui.height Ui.fill
+              , Background.color (Ui.rgb 96 128 224)
+              , testId "portion-3"
+              ]
+              Ui.none
+        ]
+
+
+-- Mixed pixel + fill siblings — the regression class that hit
+-- v0.14.x five times. Explicit `px 80` siblings of a `fill` child
+-- must keep their pixel width; the middle el grows to fill.
+fixedAndFill : Element msg
+fixedAndFill =
+    Ui.row
+        [ Ui.width Ui.fill
+        , Ui.height (Ui.px 56)
+        , Ui.spacing 8
+        , testId "fixed-fill-row"
+        ]
+        [ Ui.el
+              [ Ui.width (Ui.px 80)
+              , Ui.height Ui.fill
+              , Background.color (Ui.rgb 224 96 96)
+              , testId "fixed-left"
+              ]
+              Ui.none
+        , Ui.el
+              [ Ui.width Ui.fill
+              , Ui.height Ui.fill
+              , Background.color (Ui.rgb 240 240 240)
+              , testId "fill-mid"
+              ]
+              Ui.none
+        , Ui.el
+              [ Ui.width (Ui.px 80)
+              , Ui.height Ui.fill
+              , Background.color (Ui.rgb 96 128 224)
+              , testId "fixed-right"
+              ]
+              Ui.none
+        ]
+
+
+-- ─── 2. Viewport-responsive stub ───────────────────────────────
+--
+-- Today `classifyDevice` runs once at render time, NOT on each
+-- viewport resize. The runner records both desktop + mobile
+-- snapshots; after #376 ships, both should differ visibly.
+-- For now the stub renders a fixed `desktop`-looking pill so the
+-- baseline is stable; once reactive, the runner compares the two
+-- snapshots and asserts the mobile one differs.
+viewportStub : Element msg
+viewportStub =
+    Ui.row
+        [ Ui.width Ui.fill, Ui.spacing 12, testId "viewport-stub" ]
+        [ Ui.el
+              [ Ui.width Ui.fill
+              , Background.color (Ui.rgb 60 64 84)
+              , Ui.padding 12
+              , testId "viewport-pane-1"
+              , Font.color white
+              ]
+              (Ui.text "pane A (desktop)")
+        , Ui.el
+              [ Ui.width Ui.fill
+              , Background.color (Ui.rgb 80 100 180)
+              , Ui.padding 12
+              , testId "viewport-pane-2"
+              , Font.color white
+              ]
+              (Ui.text "pane B")
+        ]
+
+
+-- ─── 3. Pseudo-class stubs ─────────────────────────────────────
+--
+-- Plain styles today; after #377 these primitives gain typed
+-- `:hover` / `:focus-visible` / `:active` attribute constructors
+-- and the runner re-snapshots in the corresponding state.
+hoverableButton : Element msg
+hoverableButton =
+    Ui.button
+        [ Ui.padding 10
+        , Background.color (Ui.rgb 60 120 200)
+        , Border.rounded 6
+        , Font.color white
+        , testId "hover-button"
+        ]
+        { onPress = Nothing, label = Ui.text "hover me" }
+
+
+focusableInput : Element msg
+focusableInput =
+    Ui.el
+        [testId "focus-input-wrap"]
+        (Ui.html
+            (Html.node
+                "input"
+                [ Attr.attribute "type" "text"
+                , Attr.attribute "data-test-id" "focus-input"
+                , Attr.attribute "placeholder" "focus me"
+                , Attr.attribute
+                      "style"
+                      "padding:8px;border:1px solid #888;border-radius:6px;font-size:14px;"
+                ]
+                []))
+
+
+activeLink : Element msg
+activeLink =
+    Ui.link
+        [ Ui.padding 8
+        , Background.color (Ui.rgb 240 240 240)
+        , Border.rounded 4
+        , Font.color (Ui.rgb 20 80 200)
+        , testId "active-link"
+        ]
+        { url = "#test", label = Ui.text "click me" }
+
+
+-- ─── 4. Aspect-ratio + grid placeholders ───────────────────────
+--
+-- `aspectRatio` lands in #379. Today we approximate with
+-- height = round(width / ratio) on a few fixed widths. The runner
+-- asserts the rendered height / width matches 1.777 (±3 px).
+aspectStubs : Element msg
+aspectStubs =
+    Ui.row
+        [ Ui.spacing 12, testId "aspect-row" ]
+        [ Ui.el
+              [ Ui.width (Ui.px 320)
+              , Ui.height (Ui.px 180)
+              , Background.color (Ui.rgb 80 120 200)
+              , testId "aspect-320"
+              ]
+              Ui.none
+        , Ui.el
+              [ Ui.width (Ui.px 160)
+              , Ui.height (Ui.px 90)
+              , Background.color (Ui.rgb 120 80 200)
+              , testId "aspect-160"
+              ]
+              Ui.none
+        ]
+
+
+-- 3-col CSS grid via Ui.gridColumns. `gridColumns N` sets the MIN
+-- track width in px (auto-fill repeats minmax(N, 1fr)). With a
+-- ~640 px card body, 200 px min produces 3 tracks on desktop and
+-- 1 track at mobile (375 px viewport → ~320 px usable).
+gridDemo : Element msg
+gridDemo =
+    Ui.grid
+        [ Ui.width Ui.fill
+        , Ui.gridColumns 200
+        , Ui.spacing 8
+        , testId "grid-row"
+        ]
+        [ gridCell "g1" (Ui.rgb 200 100 100)
+        , gridCell "g2" (Ui.rgb 100 200 100)
+        , gridCell "g3" (Ui.rgb 100 100 200)
+        ]
+
+
+gridCell : String -> Ui.Color -> Element msg
+gridCell label colour =
+    Ui.el
+        [ Ui.padding 16
+        , Background.color colour
+        , Font.color white
+        , testId ("grid-cell-" ++ label)
+        ]
+        (Ui.text label)
+
+
+-- ─── Section composition ───────────────────────────────────────
+card : String -> String -> Element msg -> Element msg
+card sectionId title body =
+    Ui.column
+        [ Ui.width Ui.fill
+        , Ui.spacing 10
+        , Ui.padding 16
+        , Background.color white
+        , Border.width 1
+        , Border.color (Ui.rgb 220 222 226)
+        , Border.rounded 8
+        , testId ("section-" ++ sectionId)
+        ]
+        [ Ui.el [ Font.size 15, Font.bold, Font.color ink ] (Ui.text title)
+        , body
+        ]
+
+
+-- Composite list — wired into Main's view.
+cases : List (Element msg)
+cases =
+    [ card "triple-nested" "Triple-nested fill (#63 class)" tripleNestedFill
+    , card
+          "wrap-label"
+          "wrapWithLabel shape (AsRow #63 class)"
+          wrapWithLabelShape
+    , card "portion" "fillPortion 1:2:3" portionRow
+    , card "fixed-fill" "Fixed-px siblings of fill child" fixedAndFill
+    , card "viewport" "Viewport-resize stub (#376)" viewportStub
+    , card
+          "pseudo"
+          "Pseudo-class stubs (#377)"
+          (Ui.column
+              [Ui.spacing 8]
+              [ hoverableButton, focusableInput, activeLink ])
+    , card "aspect" "Aspect ratio (#379)" aspectStubs
+    , card "grid" "Grid (#379)" gridDemo
+    ]
