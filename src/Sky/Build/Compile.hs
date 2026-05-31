@@ -12262,8 +12262,30 @@ inferExprType types (A.At r e) = case e of
                     case inferExprType types (args !! listArgIdx) of
                         Just listTy@(T.TType _ "List" _) -> Just listTy
                         _ -> defaultCallResult
+            -- v0.15.45 — `Dict.fromList list : List (K, V) -> Dict K V`.
+            -- The kernel's annotation is universally quantified (k, v
+            -- are TVars), so `splitFuncType` leaves them as the
+            -- placeholder `_ambig` TVars.  To recover the concrete K/V
+            -- for the typed-key `Dict.toList` routing (closes
+            -- Limitation #10), unify directly with the list arg's
+            -- element tuple types.
+            --
+            -- Note: matches both the Stage-4 routed `Can.VarKernel
+            -- "Dict" "fromList"` shape AND the pre-rewrite
+            -- `Can.VarTopLevel "Sky.Core.Dict" "fromList"` shape (the
+            -- Layer 3 stdlib's Sky-source declaration carries the
+            -- top-level reference; the kernel-alias rewrite happens
+            -- LATER than this `inferExprType` walk).
+            A.At _ (Can.VarKernel "Dict" "fromList")
+                | [listArg] <- args -> dictFromListType listArg
+            A.At _ (Can.VarTopLevel (ModuleName.Canonical "Sky.Core.Dict") "fromList")
+                | [listArg] <- args -> dictFromListType listArg
             _ -> defaultCallResult
       where
+        dictFromListType listArg = case inferExprType types listArg of
+            Just (T.TType _ "List" [T.TTuple kTy vTy _]) ->
+                Just (T.TType ModuleName.dict "Dict" [kTy, vTy])
+            _ -> defaultCallResult
         defaultCallResult = case inferExprType types func of
             Just ft -> Just (snd (splitFuncType (length args) ft))
             Nothing -> Nothing
@@ -13089,6 +13111,29 @@ inferDictValueGoType types e = case inferExprType types e of
     _ -> "any"
 
 
+-- | Extract the KEY type of a Dict-typed expression as a Go type
+-- string. Returns "any" on non-Dict / unresolved / unsupported-key
+-- shapes. v0.15.45 — used by `Dict.toList` typed-key routing to
+-- close the Limitation #10 soundness hole (a `Dict Int v` was
+-- previously returning `(String, v)` tuples from `toList`, breaking
+-- arithmetic on the keys silently).
+--
+-- Currently recognises String/Int/Float/Bool key types; opaque TVars
+-- or container-typed keys fall back to "any" (which routes through
+-- the legacy String-key path — safe regression behaviour because the
+-- runtime map is `map[string]V` regardless).
+inferDictKeyGoType :: Solve.SolvedTypes -> Can.Expr -> String
+inferDictKeyGoType types e = case inferExprType types e of
+    Just (T.TType _ "Dict" [keyTy, _]) ->
+        case solvedTypeToGo keyTy of
+            "string"  -> "string"
+            "int"     -> "int"
+            "float64" -> "float64"
+            "bool"    -> "bool"
+            _         -> "any"
+    _ -> "any"
+
+
 -- | Extract the inner type of a Maybe-typed expression. e.g.
 -- `Maybe Int` → "int". Returns "any" when the expression isn't a
 -- Maybe or when the inner type isn't statically derivable.
@@ -13533,6 +13578,31 @@ kernelTypedCall types modName funcName args goArgs =
                else Just (GoIr.GoCall
                     (GoIr.GoIdent ("rt.Dict_fromListT[" ++ valGo ++ "]"))
                     [wrapAsList "any" goList])
+
+        -- Dict.toList dict : Dict K V -> List (K, V) — v0.15.45.
+        -- Closes Limitation #10 (Dict.toList on Dict Int v was returning
+        -- (String, v) tuples, silently breaking arithmetic on the keys).
+        -- The runtime map is map[string]V regardless; the typed-key
+        -- variants re-parse the string keys through strconv before
+        -- building the result tuple list. Only routes when the key is
+        -- a recognised concrete type — String keys keep using the
+        -- legacy Dict_toList path (no work needed); Int keys route
+        -- through Dict_toListIntKey; Float keys through
+        -- Dict_toListFloatKey. Opaque/TVar keys fall back to the legacy
+        -- path (returns String keys — same behaviour as before; the
+        -- TVar arises in fully-polymorphic Dict-handling code where the
+        -- caller treats the keys opaquely).
+        ("Dict", "toList", [dictArg], [goDict]) ->
+            case inferDictKeyGoType types dictArg of
+                "int" ->
+                    Just (GoIr.GoCall
+                        (GoIr.GoIdent "rt.Dict_toListIntKey")
+                        [goDict])
+                "float64" ->
+                    Just (GoIr.GoCall
+                        (GoIr.GoIdent "rt.Dict_toListFloatKey")
+                        [goDict])
+                _ -> Nothing
 
         -- Dict.map fn dict : (String -> V -> W) -> Dict String V -> Dict String W
         -- Sky's Dict.map is 2-arg curried (K -> V -> W). The single-arg
@@ -14667,6 +14737,35 @@ runtimeGoSource = unlines
     , "\tm := dict.(map[string]any)"
     , "\tresult := make([]any, 0, len(m))"
     , "\tfor k, v := range m { result = append(result, SkyTuple2{V0: k, V1: v}) }"
+    , "\treturn result"
+    , "}"
+    , ""
+    , "// v0.15.45 — typed-key Dict.toList variants closing Limitation #10."
+    , "func Dict_toListIntKey(dict any) any {"
+    , "\tm := dict.(map[string]any)"
+    , "\tresult := make([]any, 0, len(m))"
+    , "\tfor k, v := range m {"
+    , "\t\tif n, err := strconv.Atoi(k); err == nil {"
+    , "\t\t\tresult = append(result, SkyTuple2{V0: n, V1: v})"
+    , "\t\t} else if f, err := strconv.ParseFloat(k, 64); err == nil {"
+    , "\t\t\tresult = append(result, SkyTuple2{V0: int(f), V1: v})"
+    , "\t\t} else {"
+    , "\t\t\tresult = append(result, SkyTuple2{V0: 0, V1: v})"
+    , "\t\t}"
+    , "\t}"
+    , "\treturn result"
+    , "}"
+    , ""
+    , "func Dict_toListFloatKey(dict any) any {"
+    , "\tm := dict.(map[string]any)"
+    , "\tresult := make([]any, 0, len(m))"
+    , "\tfor k, v := range m {"
+    , "\t\tif f, err := strconv.ParseFloat(k, 64); err == nil {"
+    , "\t\t\tresult = append(result, SkyTuple2{V0: f, V1: v})"
+    , "\t\t} else {"
+    , "\t\t\tresult = append(result, SkyTuple2{V0: 0.0, V1: v})"
+    , "\t\t}"
+    , "\t}"
     , "\treturn result"
     , "}"
     , ""

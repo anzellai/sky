@@ -4486,6 +4486,64 @@ func Dict_fromListTA(list []any) any {
 	return out
 }
 
+// ── Typed-key Dict variants (v0.15.45) ─────────────────────────────
+//
+// Closes Limitation #10 — `Dict.toList` on a `Dict Int v` was returning
+// `(String, v)` tuples (the underlying Go map's string keys leaking
+// through), so arithmetic on the keys silently produced 0 / NaN /
+// junk.  The fix is approach (B): keep the runtime as `map[string]V`
+// for backwards compatibility, but emit typed-key entry points that
+// re-parse the string back to the original key type before building
+// the tuple list / new map.  The compiler picks the right entry
+// point from the HM-inferred key type at the call site.
+//
+// Float64 parse uses strconv.ParseFloat — round-trip on the canonical
+// `fmt.Sprintf("%v", float64)` representation is faithful to the
+// nearest IEEE 754 double.  Int uses strconv.Atoi (with a Float
+// fallback truncation) so callers can round-trip a `Dict Int v` even
+// if a key was inserted via `Dict.fromList` with a Float-shaped Sky
+// value mis-tagged as Int (e.g. through `Dict.fromList [(toFloat 1,
+// "a")]` typed as Dict Int).
+
+// Dict_toListIntKey: like Dict_toList but returns [](Int, V) tuples.
+// Parses each string key back through strconv; un-parsable keys
+// (shouldn't happen for a well-typed Dict Int v but defended against
+// for runtime FFI shapes) fall back to 0 so the call still returns
+// rather than panicking.  Matches Dict_toList's "always returns a
+// list" contract.
+func Dict_toListIntKey(dict any) any {
+	m := AsDict(unwrapAny(dict))
+	result := make([]any, 0, len(m))
+	for k, v := range m {
+		// strconv.Atoi handles signed decimals; ParseFloat fallback
+		// covers the Float-rounded-to-Int corner case.
+		if n, err := strconv.Atoi(k); err == nil {
+			result = append(result, SkyTuple2{V0: n, V1: v})
+		} else if f, err := strconv.ParseFloat(k, 64); err == nil {
+			result = append(result, SkyTuple2{V0: int(f), V1: v})
+		} else {
+			result = append(result, SkyTuple2{V0: 0, V1: v})
+		}
+	}
+	return result
+}
+
+// Dict_toListFloatKey: like Dict_toList but returns [](Float, V)
+// tuples.  Parses each string key through strconv.ParseFloat; on
+// failure falls back to 0.0.
+func Dict_toListFloatKey(dict any) any {
+	m := AsDict(unwrapAny(dict))
+	result := make([]any, 0, len(m))
+	for k, v := range m {
+		if f, err := strconv.ParseFloat(k, 64); err == nil {
+			result = append(result, SkyTuple2{V0: f, V1: v})
+		} else {
+			result = append(result, SkyTuple2{V0: 0.0, V1: v})
+		}
+	}
+	return result
+}
+
 func Dict_foldl(fn any, acc any, dict any) any {
 	m := AsDict(unwrapAny(dict))
 	result := acc

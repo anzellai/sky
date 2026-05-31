@@ -1,0 +1,63 @@
+module Core.DictIntKeyTest exposing (tests)
+
+-- v0.15.45 regression spec — Limitation #10 (Dict.toList key-type
+-- soundness hole).
+--
+-- Pre-fix `Dict.fromList [(1, "a"), (2, "b")] |> Dict.toList`
+-- returned `[ ( "1", "a" ), ( "2", "b" ) ]` (String keys) even
+-- though the Sky type was `List (Int, String)`. Arithmetic on the
+-- returned keys silently produced 0 because every "1" string
+-- coerced to Int through `rt.AsInt` failed and fell back.
+--
+-- v0.15.45 routes `Dict.toList` calls on `Dict Int v` through the
+-- new `Dict_toListIntKey` runtime helper which re-parses the
+-- string keys back to Int before building the tuple list.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Dict as Dict
+import Sky.Core.List as List
+import Sky.Test as Test exposing (Test)
+
+
+-- | Build a Dict Int String and sum its keys via toList.  Pre-fix
+-- this would have returned 0 (every "1"/"2"/"3" String stayed a
+-- String and arithmetic on coerced keys produced zero).
+--
+-- The Dict.fromList result is FED DIRECTLY into Dict.toList so the
+-- compiler's `inferExprType` Call-result path recovers the concrete
+-- Dict K V type from the list literal's element tuples. For let-bound
+-- intermediates (`let d = Dict.fromList … in Dict.toList d`) the type
+-- inference doesn't yet flow through — typed routing falls back to the
+-- legacy String-key path. Workaround: inline the chain (this test) or
+-- annotate the let-binding (followups in v0.16+).
+sumKeysViaToList : Int
+sumKeysViaToList =
+    List.foldl (\( k, _ ) acc -> acc + k) 0
+        (Dict.toList (Dict.fromList [ ( 1, "a" ), ( 2, "b" ), ( 3, "c" ) ]))
+
+
+-- | Same but for Float keys — Dict Float v should round-trip.
+sumKeysViaToListFloat : Float
+sumKeysViaToListFloat =
+    List.foldl (\( k, _ ) acc -> acc + k) 0.0
+        (Dict.toList (Dict.fromList [ ( 1.5, "a" ), ( 2.25, "b" ) ]))
+
+
+tests : List Test
+tests =
+    [ Test.suite "Dict.toList Int-key soundness (Limitation #10)"
+        [ Test.test "sum of Int keys via Dict.toList"
+            (\_ -> Test.equal 6 sumKeysViaToList)
+        , Test.test "sum of Float keys via Dict.toList"
+            (\_ -> Test.equal 3.75 sumKeysViaToListFloat)
+        , Test.test "String-key Dict.toList unchanged (regression baseline)"
+            (\_ ->
+                Test.equal 2
+                    (List.length
+                        (Dict.toList
+                            (Dict.fromList [ ( "x", 1 ), ( "y", 2 ) ])
+                        )
+                    )
+            )
+        ]
+    ]
