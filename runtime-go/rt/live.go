@@ -584,6 +584,161 @@ func injectMediaQueryStyles(n *VNode) {
 	}
 }
 
+// injectPseudoClassStyles walks the tree after assignSkyIDs and
+// rewrites every element that carries a `data-sky-pc-rules` marker
+// (set by `Std.Ui.onPseudo` and its sub-module sugar
+// `Background.hoverColor`, `Font.focusColor`, etc. — issue #377)
+// into a base wrapper with a sky-id-scoped `<style>` child:
+//
+//	<button sky-id="r.0.2#button" ...>
+//	    <style data-sky-pc="r.0.2#button">
+//	        @media (hover: hover) {
+//	            [sky-id="r.0.2#button"]:hover { background-color: …; }
+//	        }
+//	        [sky-id="r.0.2#button"]:focus-visible { border-color: …; }
+//	    </style>
+//	    <!-- original children -->
+//	</button>
+//
+// Per-pseudo rules are emitted in deterministic order (h, f, v, a,
+// d — see `pseudoClassTag` in Std.Ui.sky); `:hover` rules are
+// auto-wrapped in `@media (hover: hover)` so they don't fire as
+// sticky-hover on touch devices.
+//
+// The marker attr is stripped from the wire output (the runtime
+// has fully consumed it). Composition with
+// `injectMediaQueryStyles` is order-independent: nested
+// `Ui.breakpoint` wrappers don't see this marker (it lives on the
+// inner element, not the wrapper), and pseudo-rules attach to
+// their element regardless of which breakpoint wraps it. Since
+// pseudo-rules don't open their own `@media` block they nest
+// naturally under the breakpoint's `@media` block via CSS
+// inheritance.
+//
+// Pre-condition: assignSkyIDs has already stamped n.SkyID on every
+// element. Post-condition: marker attr removed; style child
+// prepended where present.
+func injectPseudoClassStyles(n *VNode) {
+	if n.Kind != "element" {
+		return
+	}
+	encoded, ok := n.Attrs["data-sky-pc-rules"]
+	if ok && n.SkyID != "" && encoded != "" {
+		styleText := buildPseudoClassStyleText(n.SkyID, encoded)
+		if styleText != "" {
+			styleNode := VNode{
+				Kind: "element",
+				Tag:  "style",
+				Attrs: map[string]string{
+					"data-sky-pc": n.SkyID,
+				},
+				Children: []VNode{{Kind: "raw", Text: styleText}},
+			}
+			n.Children = append([]VNode{styleNode}, n.Children...)
+		}
+		// Marker attr stripped regardless — bad/empty input
+		// shouldn't leak as inert data-* either.
+		delete(n.Attrs, "data-sky-pc-rules")
+	}
+	for i := range n.Children {
+		injectPseudoClassStyles(&n.Children[i])
+	}
+}
+
+// buildPseudoClassStyleText parses the `data-sky-pc-rules` marker
+// string and produces a CSS block scoped to the given sky-id.
+//
+// Marker grammar (mirror of `encodePseudoRules` in Std.Ui.sky):
+//
+//	rules    = entry ("||" entry)*
+//	entry    = tag "|" css
+//	tag      = "h" | "f" | "v" | "a" | "d"
+//	css      = arbitrary CSS property string
+//
+// Unknown tags are skipped (forward-compat: a future Sky compiler
+// can emit new pseudo-class tags without breaking older
+// runtimes). `</style` sequences in the css portion are stripped
+// defensively — they'd otherwise terminate the <style> element
+// prematurely.
+func buildPseudoClassStyleText(skyID, encoded string) string {
+	if encoded == "" {
+		return ""
+	}
+	selector := `[sky-id="` + skyID + `"]`
+	var sb strings.Builder
+	for _, entry := range strings.Split(encoded, "||") {
+		sep := strings.IndexByte(entry, '|')
+		if sep < 0 {
+			continue
+		}
+		tag := entry[:sep]
+		css := entry[sep+1:]
+		if css == "" {
+			continue
+		}
+		pseudo, hoverGated, knownTag := pseudoSelectorForTag(tag)
+		if !knownTag {
+			continue
+		}
+		safeCSS := strings.ReplaceAll(css, "</style", "")
+		safeCSS = strings.ReplaceAll(safeCSS, "</STYLE", "")
+		// One rule per pseudo. `:hover` wrapped in `@media (hover:
+		// hover)` to suppress sticky-hover on touch devices.
+		if hoverGated {
+			sb.WriteString("@media (hover: hover) { ")
+			sb.WriteString(selector)
+			sb.WriteString(pseudo)
+			sb.WriteString(" { ")
+			sb.WriteString(safeCSS)
+			sb.WriteString(" } } ")
+		} else {
+			sb.WriteString(selector)
+			sb.WriteString(pseudo)
+			sb.WriteString(" { ")
+			sb.WriteString(safeCSS)
+			sb.WriteString(" } ")
+		}
+	}
+	return strings.TrimSpace(sb.String())
+}
+
+// pseudoSelectorForTag maps a wire-format pseudo-class tag (single
+// letter) to its CSS pseudo-class selector + whether `:hover`-style
+// `@media (hover: hover)` gating applies. Keep in lock-step with
+// `pseudoClassTag` / `pseudoClassSelector` in Std.Ui.sky.
+func pseudoSelectorForTag(tag string) (selector string, hoverGated bool, known bool) {
+	switch tag {
+	case "h":
+		return ":hover", true, true
+	case "f":
+		return ":focus", false, true
+	case "v":
+		return ":focus-visible", false, true
+	case "a":
+		return ":active", false, true
+	case "d":
+		return ":disabled", false, true
+	}
+	return "", false, false
+}
+
+// applyStyleInjections runs every Std.Ui style-marker rewriter on
+// the rendered tree in a fixed order:
+//  1. injectMediaQueryStyles — `@media`-scoped CSS (issue #376)
+//  2. injectPseudoClassStyles — `:hover`/`:focus` etc. (issue #377)
+//
+// Single funnel so future style-injection passes (animations,
+// container queries, …) add ONE call site here instead of hunting
+// down every render hook. Both passes are idempotent on already-
+// processed elements (they strip their marker attrs on first run)
+// so re-invoking is safe.
+//
+// Pre-condition: assignSkyIDs has already stamped n.SkyID.
+func applyStyleInjections(n *VNode) {
+	injectMediaQueryStyles(n)
+	injectPseudoClassStyles(n)
+}
+
 // skyIDKey returns a stable disambiguator for `n`, or "" if none applies.
 // Priority: explicit `sky-key` attribute (set by `Html.keyed`) first,
 // then `name` on form-bearing tags. Any matched value is sanitised to
@@ -2844,7 +2999,7 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 
 	vn := HtmlToVNode(sky_call(app.view, model))
 	assignSkyIDs(&vn, "r")
-	injectMediaQueryStyles(&vn)
+	applyStyleInjections(&vn)
 	body := renderVNode(vn, sess.handlers)
 	// Initial mount writes the full HTML directly into the HTTP
 	// response below — the client receives this body as the page,
@@ -3023,7 +3178,7 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 		sess.handlers = map[string]any{}
 		vn := HtmlToVNode(sky_call(app.view, sess.model))
 		assignSkyIDs(&vn, "r")
-		injectMediaQueryStyles(&vn)
+		applyStyleInjections(&vn)
 		body := renderVNode(vn, sess.handlers)
 		// Route through commitRender (Cycle 3 P40 / Gap C7) so
 		// the rebuilt-handlers branch keeps prevTree +
@@ -3214,7 +3369,7 @@ func (app *liveApp) dispatchBatched(sess *liveSession, ev batchedEvent) {
 		sess.handlers = map[string]any{}
 		vn := HtmlToVNode(sky_call(app.view, sess.model))
 		assignSkyIDs(&vn, "r")
-		injectMediaQueryStyles(&vn)
+		applyStyleInjections(&vn)
 		body := renderVNode(vn, sess.handlers)
 		// Route through commitRender (Cycle 3 P40 / Gap C7) so
 		// the rebuilt-handlers branch keeps prevTree +
@@ -3453,7 +3608,7 @@ func (app *liveApp) dispatch(sess *liveSession, msg any) (body string) {
 	sess.handlers = map[string]any{}
 	vn := HtmlToVNode(sky_call(app.view, sess.model))
 	assignSkyIDs(&vn, "r")
-	injectMediaQueryStyles(&vn)
+	applyStyleInjections(&vn)
 	body = renderVNode(vn, sess.handlers)
 	// Commit prevTree + lastComputedBody as one atomic step (Cycle 3
 	// P40 / Gap C7). Previously this was two separate writes — prevTree
@@ -3512,7 +3667,7 @@ func (app *liveApp) renderView(sess *liveSession) string {
 	sess.handlers = map[string]any{}
 	vn := HtmlToVNode(sky_call(app.view, sess.model))
 	assignSkyIDs(&vn, "r")
-	injectMediaQueryStyles(&vn)
+	applyStyleInjections(&vn)
 	body := renderVNode(vn, sess.handlers)
 	sess.commitRender(&vn, body)
 	return body
@@ -4454,7 +4609,7 @@ func (app *liveApp) handleSSE(w http.ResponseWriter, r *http.Request) {
 			defer func() { _ = recover() }()
 			vn := HtmlToVNode(sky_call(app.view, sess.model))
 			assignSkyIDs(&vn, "r")
-			injectMediaQueryStyles(&vn)
+			applyStyleInjections(&vn)
 			sess.handlers = map[string]any{}
 			body := renderVNode(vn, sess.handlers)
 			// Reconnect-resync writes the resync frame DIRECTLY to

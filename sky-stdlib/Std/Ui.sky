@@ -88,6 +88,27 @@ type Attribute msg
     | AttrBorderInsetShadow Int Int Int Int Color
     | AttrPointer
     | AttrOverflow String String
+    -- Pseudo-class rule marker (issue #377). Carries the pre-
+    -- rendered CSS rules-string for ONE pseudo-class. The renderer
+    -- collects all `AttrPseudoRule` entries on an element, joins
+    -- them into a `data-sky-pc-rules` data-attr, and the runtime
+    -- (`injectPseudoClassStyles` in runtime-go/rt/live.go) walks
+    -- the tree after assignSkyIDs, generates a `<style>` block
+    -- scoped by `[sky-id="<sid>"]:<pseudo>`, and prepends it.
+    -- `:hover` rules are auto-gated behind `@media (hover: hover)`
+    -- so they don't fire as sticky-hover on touch devices.
+    | AttrPseudoRule PseudoClass String
+
+-- Pseudo-class selector tag. `FocusVisible` (the safer default —
+-- only fires on keyboard nav, not on click-induced focus rings)
+-- is the recommended `focusColor` target; use `Focus` only when
+-- you explicitly want the sticky-focus behaviour.
+type PseudoClass
+    = Hover
+    | Focus
+    | FocusVisible
+    | Active
+    | Disabled
 
 type Length
     = Px Int
@@ -1121,6 +1142,180 @@ mediaQueryRulesCss attrs =
     List.foldl (collectStyle AsColumn AsColumn) "" attrs
 
 
+-- ─── Pseudo-classes (issue #377) ─────────────────────────────────
+--
+-- `:hover`, `:focus`, `:focus-visible`, `:active`, `:disabled` —
+-- declared inline on an element via `Background.hoverColor` /
+-- `Font.hoverColor` / `Border.hoverColor` etc., or via the generic
+-- `Ui.onPseudo Ui.hover [...]` escape hatch for selector
+-- combinations no sub-module helper covers.
+--
+--     Ui.button
+--         [ Background.color (Ui.rgb 0 122 255)
+--         , Background.hoverColor (Ui.rgb 0 92 215)
+--         , Background.activeColor (Ui.rgb 0 62 175)
+--         , Font.color Ui.white
+--         , Ui.padding 12
+--         ]
+--         { onPress = Just Submit, label = Ui.text "Save" }
+--
+-- The CSS rules-string is computed at render time and attached to
+-- the element via a `data-sky-pc-rules` marker; the runtime
+-- (`injectPseudoClassStyles` in runtime-go/rt/live.go) generates
+-- a sky-id-scoped `<style>` child with the per-pseudo rule. Hover
+-- rules are auto-wrapped in `@media (hover: hover)` so they don't
+-- fire as sticky-hover on touch devices (no tap-and-stay button).
+--
+-- `focusColor` targets `:focus-visible` by default — only fires on
+-- keyboard navigation, not on click-induced focus rings. Use
+-- `Ui.onPseudo Ui.focus [...]` (or the `focusActiveColor` helpers
+-- per sub-module) when you want the sticky-focus behaviour.
+--
+-- Composition with `Ui.breakpoint`: `Background.hoverColor red`
+-- inside `Ui.breakpoint Ui.mobile [...]` emits its `:hover` rule
+-- under the breakpoint's `@media` block — both layers stack
+-- naturally because the breakpoint wraps the element and the
+-- pseudo-class rule attaches to the same sky-id inside the
+-- breakpoint wrapper's tree.
+
+
+-- Typed-constant shortcuts so user code can write `Ui.hover` /
+-- `Ui.focus` without `Ui.PseudoClass.Hover`. Bare-value pattern
+-- mirrors `Ui.mobile` / `Ui.darkMode`.
+hover : PseudoClass
+hover =
+    Hover
+
+
+focus : PseudoClass
+focus =
+    Focus
+
+
+focusVisible : PseudoClass
+focusVisible =
+    FocusVisible
+
+
+active : PseudoClass
+active =
+    Active
+
+
+disabled : PseudoClass
+disabled =
+    Disabled
+
+
+-- Map a PseudoClass to its CSS selector suffix (`:hover`,
+-- `:focus-visible`, etc.). Used by the runtime's
+-- injectPseudoClassStyles to assemble per-pseudo rules. Kept here
+-- (Sky-side, exposed) so the wire shape stays in sync with the
+-- runtime parser (round-trip pin via UiPseudoClassSpec).
+pseudoClassSelector : PseudoClass -> String
+pseudoClassSelector pc =
+    case pc of
+
+        Hover ->
+            ":hover"
+
+        Focus ->
+            ":focus"
+
+        FocusVisible ->
+            ":focus-visible"
+
+        Active ->
+            ":active"
+
+        Disabled ->
+            ":disabled"
+
+
+-- Stable wire tag for a PseudoClass — the runtime parser keys off
+-- this string. Order: shortest tag first to keep parsing cheap
+-- (single-char prefix lookup).
+pseudoClassTag : PseudoClass -> String
+pseudoClassTag pc =
+    case pc of
+
+        Hover ->
+            "h"
+
+        Focus ->
+            "f"
+
+        FocusVisible ->
+            "v"
+
+        Active ->
+            "a"
+
+        Disabled ->
+            "d"
+
+
+-- Generic escape hatch — attach a set of attrs that apply only
+-- when the element matches the given pseudo-class selector.
+-- Returns a single Attribute, so user code stays linear:
+--
+--     Ui.button
+--         [ Ui.onPseudo Ui.hover [ Background.color red, Font.size 18 ]
+--         , Ui.onPseudo Ui.focusVisible [ Border.color blue ]
+--         ]
+--         { onPress = Just Save, label = text "Save" }
+--
+-- Sub-module helpers (`Background.hoverColor`, `Font.hoverColor`,
+-- etc.) all reduce to this — they're sugar for `onPseudo Hover
+-- [<single helper>]`. Use this when you need to compose multiple
+-- properties under one pseudo-state.
+onPseudo : PseudoClass -> List (Attribute msg) -> Attribute msg
+onPseudo pc attrs =
+    AttrPseudoRule pc (mediaQueryRulesCss attrs)
+
+
+-- Extract pseudo-class rules from the attribute list. Returned
+-- as a list of (tag, css) pairs — the renderer serialises them
+-- into the `data-sky-pc-rules` data-attr that the runtime parses.
+-- Empty-rules entries are dropped so we don't pollute the wire.
+collectPseudoRules : List (Attribute msg) -> List ( String, String )
+collectPseudoRules attrs =
+    List.filterMap pseudoRuleEntry attrs
+
+
+pseudoRuleEntry : Attribute msg -> Maybe ( String, String )
+pseudoRuleEntry a =
+    case a of
+
+        AttrPseudoRule pc css ->
+            if String.length css == 0 then
+                Nothing
+
+            else
+                Just ( pseudoClassTag pc, css )
+
+        _ ->
+            Nothing
+
+
+-- Serialise the collected pseudo rules into the on-the-wire
+-- marker string. Format: `tag1|rules1||tag2|rules2` — `|` separates
+-- the tag from its rules within one entry; `||` separates entries.
+-- Both characters are forbidden inside CSS property values
+-- (selectors only), so they're a safe in-band delimiter.
+encodePseudoRules : List ( String, String ) -> String
+encodePseudoRules entries =
+    String.join "||" (List.map encodeOneEntry entries)
+
+
+encodeOneEntry : ( String, String ) -> String
+encodeOneEntry pair =
+    case pair of
+
+        ( tag, css ) ->
+            tag ++ "|" ++ css
+
+
 -- Extract a plain string from a `Text s` element, or "" for any
 -- other shape. Used by Std.Ui.Input.placeholder rendering to pull
 -- the placeholder text out of the user-supplied Element wrapper.
@@ -1407,10 +1602,23 @@ renderNodeAs tag ctx extraAttrs attrs children =
                        renderCtx
                        propagatedAttrs
         htmlAttrs = collectHtmlAttrs propagatedAttrs
+        -- Pseudo-class rules (issue #377) — harvested into a
+        -- `data-sky-pc-rules` marker on this element; the runtime's
+        -- `injectPseudoClassStyles` pass then generates a sky-id-
+        -- scoped `<style>` child with the per-pseudo rules.
+        pseudoEntries = collectPseudoRules propagatedAttrs
+        pseudoAttrs =
+            if List.isEmpty pseudoEntries then
+                []
+
+            else
+                [Attr.attribute
+                    "data-sky-pc-rules"
+                    (encodePseudoRules pseudoEntries)]
         renderedMain = List.map (renderElement renderCtx []) children
         renderedNearby = List.map renderNearby nearbyChildren
         renderedChildren = renderedMain ++ renderedNearby
-        attrList = Attr.style styleStr :: htmlAttrs
+        attrList = Attr.style styleStr :: (pseudoAttrs ++ htmlAttrs)
     in
         dispatchTag tag attrList renderedChildren
 
@@ -2153,6 +2361,14 @@ collectStyle parentCtx myCtx attr acc =
 
         AttrOverflow x y ->
             acc ++ " overflow-x: " ++ x ++ "; overflow-y: " ++ y ++ ";"
+
+        AttrPseudoRule _ _ ->
+        -- Pseudo-class rules don't emit inline CSS — they're
+        -- harvested by `renderNodeAs` into the
+        -- `data-sky-pc-rules` marker, then turned into a scoped
+        -- <style> child by the runtime's
+        -- `injectPseudoClassStyles` pass. Skip here.
+            acc
 
 
 -- Render a Color as a CSS rgba(...) string using percentage

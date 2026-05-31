@@ -366,9 +366,16 @@ func webviewAppRun(cfg any) any {
 // returned tree's children carry the same sky-id structural-path
 // scheme as Sky.Live's, so the patch shim can address them by
 // `[sky-id="…"]` selectors without divergence.
+//
+// `applyStyleInjections` runs after the sky-id pass so Std.Ui's
+// `Ui.breakpoint` / pseudo-class markers (issues #376 + #377)
+// produce sky-id-scoped `<style>` children with `@media` + pseudo-
+// class rules — same behaviour as Sky.Live, so a single `view`
+// function paints identically across both backends.
 func webviewBuildTree(node any) *VNode {
 	vn := HtmlToVNode(node)
 	assignSkyIDs(&vn, "0")
+	applyStyleInjections(&vn)
 	return &vn
 }
 

@@ -273,6 +273,8 @@ test-suite sky-tests
       Sky.Type.UfCycleGuardSpec
       Sky.Type.RecordFieldExactnessSpec
       Sky.Build.UiFillCascadeSpec
+      Sky.Build.UiMediaQuerySpec
+      Sky.Build.UiPseudoClassSpec
       Sky.Build.UiMultilineTextareaSpec
       Sky.Build.ExposingTypeCtorsSpec
       Sky.Build.LetForwardRefSpec

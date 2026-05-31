@@ -1,68 +1,124 @@
 module Std.Ui.Font exposing
-    ( color, size, family, weight
-    , sansSerif, serif, monospace, typeface
-    , bold, light, regular, semiBold, extraBold, black
-    , italic, underline, noDecoration, lineThrough, overline
-    , letterSpacing, wordSpacing
-    , alignLeft, alignRight, alignCenter, center, justify
+    ( color
+    , size
+    , family
+    , weight
+    , sansSerif
+    , serif
+    , monospace
+    , typeface
+    , bold
+    , light
+    , regular
+    , semiBold
+    , extraBold
+    , black
+    , italic
+    , underline
+    , noDecoration
+    , lineThrough
+    , overline
+    , letterSpacing
+    , wordSpacing
+    , alignLeft
+    , alignRight
+    , alignCenter
+    , center
+    , justify
+    , hoverColor
+    , focusColor
+    , focusVisibleColor
+    , activeColor
+    , disabledColor
+    , hoverSize
     )
-
 
 import Sky.Core.Prelude exposing (..)
 import Std.Ui exposing
-    ( Color, Attribute
-    , fontColor, fontSize, fontFamily, fontWeight
-    , fontItalic, fontUnderline, fontDecoration, fontAlign
-    , fontLetterSpacing, fontWordSpacing
+    ( Color
+    , Attribute
+    , fontColor
+    , fontSize
+    , fontFamily
+    , fontWeight
+    , fontItalic
+    , fontUnderline
+    , fontDecoration
+    , fontAlign
+    , fontLetterSpacing
+    , fontWordSpacing
+    , onPseudo
+    , hover
+    , focus
+    , focusVisible
+    , active
+    , disabled
     )
 
 
 color : Color -> Attribute msg
-color c = fontColor c
+color c =
+    fontColor c
 
 
 size : Int -> Attribute msg
-size n = fontSize n
+size n =
+    fontSize n
 
 
 -- Pass a comma-separated CSS font-family string. Sky's typed codegen
 -- doesn't currently route `String.join` cleanly over `List String`,
 -- so the helper takes the pre-joined form (`"Inter, sans-serif"`).
 family : String -> Attribute msg
-family joined = fontFamily joined
+family joined =
+    fontFamily joined
 
 
 weight : Int -> Attribute msg
-weight n = fontWeight n
+weight n =
+    fontWeight n
 
 
 bold : Attribute msg
-bold = fontWeight 700
+bold =
+    fontWeight 700
+
 
 semiBold : Attribute msg
-semiBold = fontWeight 600
+semiBold =
+    fontWeight 600
+
 
 regular : Attribute msg
-regular = fontWeight 400
+regular =
+    fontWeight 400
+
 
 light : Attribute msg
-light = fontWeight 300
+light =
+    fontWeight 300
+
 
 extraBold : Attribute msg
-extraBold = fontWeight 800
+extraBold =
+    fontWeight 800
+
 
 black : Attribute msg
-black = fontWeight 900
+black =
+    fontWeight 900
 
 
 -- Italic text.
 italic : Attribute msg
-italic = fontItalic
+italic =
+    fontItalic
 
 
 -- Underlined text.
 underline : Attribute msg
-underline = fontUnderline
+underline =
+    fontUnderline
 
 
 -- Strip default text decoration. Most useful for `Ui.link` — browsers
@@ -77,27 +133,32 @@ underline = fontUnderline
 --         ]
 --         { url = "/start", label = Ui.text "Get started" }
 noDecoration : Attribute msg
-noDecoration = fontDecoration "none"
+noDecoration =
+    fontDecoration "none"
 
 
 -- Strikethrough text. CSS `text-decoration: line-through`.
 lineThrough : Attribute msg
-lineThrough = fontDecoration "line-through"
+lineThrough =
+    fontDecoration "line-through"
 
 
 -- Overlined text. CSS `text-decoration: overline`.
 overline : Attribute msg
-overline = fontDecoration "overline"
+overline =
+    fontDecoration "overline"
 
 
 -- Letter-spacing (tracking) in em.
 letterSpacing : Float -> Attribute msg
-letterSpacing em = fontLetterSpacing em
+letterSpacing em =
+    fontLetterSpacing em
 
 
 -- Word-spacing in em.
 wordSpacing : Float -> Attribute msg
-wordSpacing em = fontWordSpacing em
+wordSpacing em =
+    fontWordSpacing em
 
 
 -- Text alignment within the element. These compile to `text-align`,
@@ -106,30 +167,88 @@ wordSpacing em = fontWordSpacing em
 -- `Ui.alignLeft` etc. for that). `center` is an alias for
 -- `alignCenter`, matching the elm-ui convention.
 alignLeft : Attribute msg
-alignLeft = fontAlign "left"
+alignLeft =
+    fontAlign "left"
+
 
 alignRight : Attribute msg
-alignRight = fontAlign "right"
+alignRight =
+    fontAlign "right"
+
 
 alignCenter : Attribute msg
-alignCenter = fontAlign "center"
+alignCenter =
+    fontAlign "center"
+
 
 center : Attribute msg
-center = alignCenter
+center =
+    alignCenter
+
 
 justify : Attribute msg
-justify = fontAlign "justify"
+justify =
+    fontAlign "justify"
 
 
 sansSerif : String
-sansSerif = "sans-serif"
+sansSerif =
+    "sans-serif"
+
 
 serif : String
-serif = "serif"
+serif =
+    "serif"
+
 
 monospace : String
-monospace = "monospace"
+monospace =
+    "monospace"
 
 
 typeface : String -> String
-typeface s = s
+typeface s =
+    s
+
+
+-- ─── Pseudo-classes (issue #377) ─────────────────────────────────
+--
+-- Hover-state text colour swap. Hover rules are auto-gated behind
+-- `@media (hover: hover)` by the runtime so they don't fire as
+-- sticky-hover on touch devices.
+hoverColor : Color -> Attribute msg
+hoverColor c =
+    onPseudo hover [fontColor c]
+
+
+-- `focusColor` targets `:focus-visible` (safer default — only
+-- fires on keyboard navigation, never on click-induced focus
+-- rings).
+focusColor : Color -> Attribute msg
+focusColor c =
+    onPseudo focusVisible [fontColor c]
+
+
+-- Explicit `:focus-visible` alias.
+focusVisibleColor : Color -> Attribute msg
+focusVisibleColor c =
+    onPseudo focusVisible [fontColor c]
+
+
+-- Text colour while the element is being clicked / tapped.
+activeColor : Color -> Attribute msg
+activeColor c =
+    onPseudo active [fontColor c]
+
+
+-- Text colour when the element has the `disabled` attribute.
+-- Most useful on `<input>` / `<button>`.
+disabledColor : Color -> Attribute msg
+disabledColor c =
+    onPseudo disabled [fontColor c]
+
+
+-- Hover-state font size (in px). Mirrors `size`.
+hoverSize : Int -> Attribute msg
+hoverSize n =
+    onPseudo hover [fontSize n]

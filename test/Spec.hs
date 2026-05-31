@@ -27,6 +27,7 @@ import qualified Sky.Type.UfCycleGuardSpec
 import qualified Sky.Type.RecordFieldExactnessSpec
 import qualified Sky.Build.UiFillCascadeSpec
 import qualified Sky.Build.UiMediaQuerySpec
+import qualified Sky.Build.UiPseudoClassSpec
 import qualified Sky.Build.UiMultilineTextareaSpec
 import qualified Sky.Build.ExposingTypeCtorsSpec
 import qualified Sky.Build.LetForwardRefSpec
@@ -218,6 +219,11 @@ main = hspec $ do
     -- marker attrs (data-sky-mq-q / data-sky-mq-rules) + the
     -- breakpoint expansion (max-width / prefers-color-scheme).
     describe "Sky.Build.UiMediaQuery"    Sky.Build.UiMediaQuerySpec.spec
+    -- Std.Ui pseudo-class primitive (issue #377). Same shape as
+    -- UiMediaQuerySpec — builds a tiny project + checks the lowered
+    -- Go contains the runtime marker attr (data-sky-pc-rules) +
+    -- per-pseudo wire tags (h|, v|, f|, a|, d|).
+    describe "Sky.Build.UiPseudoClass"    Sky.Build.UiPseudoClassSpec.spec
     -- Std.Ui.Input.multiline used to call `inputBase "textarea"` which
     -- built a `Ui.input` element with type="textarea" — invalid HTML
     -- that browsers silently degrade to single-line text input. Fix

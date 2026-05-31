@@ -1,7 +1,16 @@
-module Std.Ui.Background exposing (color, image, gradient, linearGradient)
+module Std.Ui.Background exposing
+    ( color
+    , image
+    , gradient
+    , linearGradient
+    , hoverColor
+    , focusColor
+    , focusVisibleColor
+    , activeColor
+    , disabledColor
+    )
 
 -- Std.Ui.Background — background colour / image / gradient helpers.
-
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.List as List
 import Sky.Core.String as String
@@ -10,13 +19,68 @@ import Sky.Core.String as String
 -- `Ui.Color` unify cleanly with the bare Color type at user call
 -- sites — Sky's canonicaliser treats the qualified name as a
 -- distinct type-of-type.
-import Std.Ui exposing (Color, Attribute, bgColor, bgImage, bgGradient, colorCss)
+import Std.Ui exposing
+    ( Color
+    , Attribute
+    , bgColor
+    , bgImage
+    , bgGradient
+    , colorCss
+    , onPseudo
+    , hover
+    , focus
+    , focusVisible
+    , active
+    , disabled
+    )
 
 
 -- Solid background colour. Composes with width/height/padding.
 color : Color -> Attribute msg
 color c =
     bgColor c
+
+
+-- ─── Pseudo-classes (issue #377) ─────────────────────────────────
+--
+-- `hoverColor` swaps the background colour while the pointer is
+-- over the element. Hover rules are auto-gated behind
+-- `@media (hover: hover)` by the runtime so they don't fire as
+-- sticky-hover on touch devices.
+hoverColor : Color -> Attribute msg
+hoverColor c =
+    onPseudo hover [bgColor c]
+
+
+-- `focusColor` targets `:focus-visible` (the safer default — only
+-- fires on keyboard navigation, never on click-induced focus
+-- rings). Use `focusActiveColor` when you want the sticky-focus
+-- behaviour.
+focusColor : Color -> Attribute msg
+focusColor c =
+    onPseudo focusVisible [bgColor c]
+
+
+-- Explicit `:focus-visible` alias for users who prefer the
+-- spelled-out form.
+focusVisibleColor : Color -> Attribute msg
+focusVisibleColor c =
+    onPseudo focusVisible [bgColor c]
+
+
+-- `activeColor` — background while the element is being clicked /
+-- tapped. CSS `:active`.
+activeColor : Color -> Attribute msg
+activeColor c =
+    onPseudo active [bgColor c]
+
+
+-- `disabledColor` — background when the element has the
+-- `disabled` attribute. Most useful on `<input>` / `<button>`;
+-- silently has no visual effect on other elements.
+disabledColor : Color -> Attribute msg
+disabledColor c =
+    onPseudo disabled [bgColor c]
 
 
 -- Background image from a URL. The renderer emits
@@ -36,7 +100,9 @@ linearGradient angle stops =
     let
         stopParts = List.map renderStop stops
         joined = String.join ", " stopParts
-        css = "linear-gradient(" ++ String.fromFloat angle ++ "deg, " ++ joined ++ ")"
+        css =
+            "linear-gradient(" ++ String.fromFloat angle ++ "deg, " ++ joined
+                ++ ")"
     in
         bgGradient css
 
