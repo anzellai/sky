@@ -4718,3 +4718,32 @@ auto-generated binding.
 
 All FFI calls go through `defer/recover`: any Go panic becomes a Sky `Err`,
 never a process crash.
+
+### v0.15.47+ Stdlib Additions (Std.Cache / Std.Email / Std.Compression / Std.Csv / Std.Config)
+
+Five new modules — every Sky app stops reinventing them.
+
+- `Std.Cache` — typed LRU + TTL in-memory. `CacheCfg` ships with `defaultCfg` + `withMaxEntries`/`withTTL`/`withMaxBytes` builders per the v0.15.46 typed-record convention. API: `new` / `get` / `put` / `remove` / `clear` / `size` / `stats`. Backed by `hashicorp/golang-lru/v2`.
+- `Std.Email` — Resend / SES / SendGrid / SMTP under one `EmailProvider` ADT. Typed `EmailMessage` + `Attachment` with `defaultMessage { from, to, subject }` + `with*` builders. `Email.send : EmailProvider -> EmailMessage -> Task Error String` returns the provider message id. `SKY_EMAIL_DRY_RUN=1` short-circuits for tests.
+- `Std.Compression` — `gzip` / `gunzip` (RFC 1952) + `zstdCompress` / `zstdDecompress` (RFC 8478). Operates on `Bytes` (String alias).
+- `Std.Csv` — `parse` / `parseWithDelimiter`, `encode` / `encodeWithDelimiter` (RFC 4180), `parseStreamFromFile` for large files. Returns typed `Csv = { header, rows }`.
+- `Std.Config` — typed TOML / YAML / JSON decoders mirroring `Sky.Core.Json.Decode`'s shape. `decodeToml` / `decodeYaml` / `decodeJson` + `loadFromFile` (extension-detected).
+
+### v0.15.47+ Additions to Existing Modules
+
+- `String.containsIn / startsWithIn / endsWithIn` — **haystack-first** companions. The existing `String.contains needle haystack` was needle-first and broke `|>` chains. Now: `"hello world" |> String.containsIn "world"` reads naturally.
+- `Sky.Core.Random` — `range`, `choice`, `shuffle`, `weighted` (entropy-backed Task) + `seed`, `seededInt`, `seededFloat`, `seededChoice` (deterministic splitmix64).
+
+### Stdlib typed-record convention (v0.15.46+)
+
+**Every typed record in Std.* ships with a `default<Name>` constructor + `with<Field>` builder helpers per field.** This makes adding fields non-breaking (downstream callers using builders auto-pick up new defaults). Always compose typed records via builders, not raw record literals:
+
+```elm
+-- Preferred (won't break when fields are added):
+defaultCacheCfg
+    |> withMaxEntries 1000
+    |> withTTL 60000
+
+-- Fragile (breaks the moment a field is added to CacheCfg):
+{ maxEntries = 1000, ttlMs = 60000, maxBytes = 0 }
+```
