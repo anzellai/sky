@@ -301,7 +301,12 @@ registry = Map.fromList
     , (("Random", "int"),         KernelInfo "rt.Random_int" 2 False)
     , (("Random", "float"),       KernelInfo "rt.Random_float" 2 False)
     , (("Random", "choice"),      KernelInfo "rt.Random_choice" 1 False)
+    , (("Random", "choiceMaybe"), KernelInfo "rt.Random_choiceMaybe" 1 False)
     , (("Random", "shuffle"),     KernelInfo "rt.Random_shuffle" 1 False)
+    , (("Random", "weighted"),    KernelInfo "rt.Random_weighted" 1 False)
+    , (("Random", "seededInt"),   KernelInfo "rt.Random_seededInt" 3 False)
+    , (("Random", "seededFloat"), KernelInfo "rt.Random_seededFloat" 1 False)
+    , (("Random", "seededChoice"), KernelInfo "rt.Random_seededChoice" 2 False)
 
     , (("Process", "run"),        KernelInfo "rt.Process_run" 2 False)
     -- Process.exit / getEnv / getCwd / loadEnv all moved to System
@@ -721,4 +726,51 @@ registry = Map.fromList
     , (("Lazy", "lazy3"), KernelInfo "rt.Std_Ui_Lazy_lazy3" 4 False)
     , (("Lazy", "lazy4"), KernelInfo "rt.Std_Ui_Lazy_lazy4" 5 False)
     , (("Lazy", "lazy5"), KernelInfo "rt.Std_Ui_Lazy_lazy5" 6 False)
+
+    -- ═══════════════════════════════════════════════════════
+    -- v0.15.47 stdlib quality-of-life batch
+    -- ═══════════════════════════════════════════════════════
+    --
+    -- Std.Compression — gzip + zstd
+    , (("Compression", "gzip"),            KernelInfo "rt.Compression_gzip" 1 False)
+    , (("Compression", "gunzip"),          KernelInfo "rt.Compression_gunzip" 1 False)
+    , (("Compression", "zstdCompress"),    KernelInfo "rt.Compression_zstdCompress" 1 False)
+    , (("Compression", "zstdDecompress"),  KernelInfo "rt.Compression_zstdDecompress" 1 False)
+
+    -- Std.Csv — encode + decode
+    , (("Csv", "parse"),                   KernelInfo "rt.Csv_parse" 1 False)
+    , (("Csv", "parseWithDelimiter"),      KernelInfo "rt.Csv_parseWithDelimiter" 2 False)
+    , (("Csv", "encode"),                  KernelInfo "rt.Csv_encode" 1 False)
+    , (("Csv", "encodeWithDelimiter"),     KernelInfo "rt.Csv_encodeWithDelimiter" 2 False)
+    , (("Csv", "parseStreamFromFile"),     KernelInfo "rt.Csv_parseStreamFromFile" 1 False)
+
+    -- Std.Cache — LRU + TTL
+    , (("Cache", "newRaw"),                KernelInfo "rt.Cache_new" 1 False)
+    , (("Cache", "get"),                   KernelInfo "rt.Cache_get" 2 False)
+    , (("Cache", "put"),                   KernelInfo "rt.Cache_put" 3 False)
+    , (("Cache", "remove"),                KernelInfo "rt.Cache_remove" 2 False)
+    , (("Cache", "clear"),                 KernelInfo "rt.Cache_clear" 1 False)
+    , (("Cache", "size"),                  KernelInfo "rt.Cache_size" 1 False)
+    , (("Cache", "stats"),                 KernelInfo "rt.Cache_stats" 1 False)
+
+    -- Std.Email — provider-abstract email send
+    , (("Email", "send"),                  KernelInfo "rt.Email_send" 2 False)
+
+    -- Std.Config — typed TOML/YAML/JSON
+    , (("Config", "string"),               KernelInfo "rt.Config_string" 0 False)
+    , (("Config", "int"),                  KernelInfo "rt.Config_int" 0 False)
+    , (("Config", "float"),                KernelInfo "rt.Config_float" 0 False)
+    , (("Config", "bool"),                 KernelInfo "rt.Config_bool" 0 False)
+    , (("Config", "nullable"),             KernelInfo "rt.Config_nullable" 1 False)
+    , (("Config", "field"),                KernelInfo "rt.Config_field" 2 False)
+    , (("Config", "at"),                   KernelInfo "rt.Config_at" 2 False)
+    , (("Config", "list"),                 KernelInfo "rt.Config_list" 1 False)
+    , (("Config", "succeed"),              KernelInfo "rt.Config_succeed" 1 False)
+    , (("Config", "fail"),                 KernelInfo "rt.Config_fail" 1 False)
+    , (("Config", "map"),                  KernelInfo "rt.Config_map" 2 False)
+    , (("Config", "andThen"),              KernelInfo "rt.Config_andThen" 2 False)
+    , (("Config", "decodeToml"),           KernelInfo "rt.Config_decodeToml" 2 False)
+    , (("Config", "decodeYaml"),           KernelInfo "rt.Config_decodeYaml" 2 False)
+    , (("Config", "decodeJson"),           KernelInfo "rt.Config_decodeJson" 2 False)
+    , (("Config", "loadFromFile"),         KernelInfo "rt.Config_loadFromFile" 2 False)
     ]

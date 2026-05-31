@@ -489,6 +489,18 @@ func coerceInner[T any](v any) T {
 			out := coerceMapValue(rv, zt)
 			return out.Interface().(T)
 		}
+		// v0.15.47 — map[string]any source, record-struct target.
+		// New kernels (Csv_parse, Cache_stats) return map[string]any
+		// for record-shaped values; narrow to the user's declared
+		// `Foo_R` struct via field-by-field rebuild (same path
+		// narrowReflectValue already uses).
+		if zt != nil && zt.Kind() == reflect.Struct &&
+			rv.Type().Key().Kind() == reflect.String {
+			narrowed := narrowMapToStruct(rv, zt)
+			if narrowed.IsValid() {
+				return narrowed.Interface().(T)
+			}
+		}
 	}
 	// v0.13 Stage 1 — function-type conversion via makeFuncAdapter.
 	// When source is a Sky `func(any) any` lambda and target is a
@@ -5753,6 +5765,152 @@ func Random_shuffleT[A any](xs []A) SkyTask[any, []A] {
 		mrand.Shuffle(len(out), func(i, j int) { out[i], out[j] = out[j], out[i] })
 		return Ok[any, []A](out)
 	}
+}
+
+// ═══════════════════════════════════════════════════════════
+// Random — v0.15.47 extensions (range / choiceMaybe / weighted
+// + seeded deterministic variants).
+// ═══════════════════════════════════════════════════════════
+
+// Random_choiceMaybe returns Task Error (Maybe a) — Ok Nothing on empty
+// list, Ok (Just elem) otherwise. Differs from Random_choice which
+// fails outright on empty.
+func Random_choiceMaybe(list any) any {
+	return func() any {
+		items := AsList(list)
+		if len(items) == 0 {
+			return Ok[any, any](makeMaybeNothing())
+		}
+		return Ok[any, any](makeMaybeJust(items[mrand.Intn(len(items))]))
+	}
+}
+
+// Random_weighted picks one element from `[(weight, value), ...]`
+// proportional to weight. Non-positive weights skipped. Returns
+// Ok Nothing if every weight is ≤ 0 (or the list is empty).
+func Random_weighted(list any) any {
+	return func() any {
+		items := AsList(list)
+		if len(items) == 0 {
+			return Ok[any, any](makeMaybeNothing())
+		}
+		// Extract (weight, value) pairs and compute total.
+		weights := make([]float64, 0, len(items))
+		values := make([]any, 0, len(items))
+		total := 0.0
+		for _, it := range items {
+			w, v := wsExtractWeightedPair(it)
+			if w > 0 {
+				weights = append(weights, w)
+				values = append(values, v)
+				total += w
+			}
+		}
+		if total <= 0 {
+			return Ok[any, any](makeMaybeNothing())
+		}
+		r := mrand.Float64() * total
+		cum := 0.0
+		for i, w := range weights {
+			cum += w
+			if r < cum {
+				return Ok[any, any](makeMaybeJust(values[i]))
+			}
+		}
+		// fallthrough (float rounding) — return last
+		return Ok[any, any](makeMaybeJust(values[len(values)-1]))
+	}
+}
+
+// wsExtractWeightedPair pulls (weight: Float, value) from a 2-tuple-like value.
+func wsExtractWeightedPair(v any) (float64, any) {
+	if v == nil {
+		return 0, nil
+	}
+	if pair, ok := v.(SkyTuple2); ok {
+		return AsFloat(pair.V0), pair.V1
+	}
+	rv := reflect.ValueOf(v)
+	if !rv.IsValid() {
+		return 0, nil
+	}
+	switch rv.Kind() {
+	case reflect.Slice, reflect.Array:
+		if rv.Len() >= 2 {
+			return AsFloat(rv.Index(0).Interface()), rv.Index(1).Interface()
+		}
+	case reflect.Struct:
+		// SkyTuple2-ish struct via reflect
+		if rv.NumField() >= 2 {
+			return AsFloat(rv.Field(0).Interface()), rv.Field(1).Interface()
+		}
+	}
+	return 0, nil
+}
+
+// makeMaybeJust / makeMaybeNothing build the canonical `Maybe a` ADT
+// shape used by the runtime — `SkyMaybe[any]`. Mirrors what user Sky
+// source lowers to via `Just`/`Nothing`.
+func makeMaybeJust(v any) any {
+	return SkyMaybe[any]{Tag: 0, JustValue: v}
+}
+
+func makeMaybeNothing() any {
+	return SkyMaybe[any]{Tag: 1}
+}
+
+// Random_seededInt implements `Random.seededIntRaw : Int -> Int -> Int -> (Int, Int)`
+// — pure, deterministic. Mixes seed via splitmix64-style step then
+// reduces into [lo, hi].
+func Random_seededInt(seedArg, lo, hi any) any {
+	s := AsInt(seedArg)
+	l := AsInt(lo)
+	h := AsInt(hi)
+	next := seedStep(int64(s))
+	if h <= l {
+		return SkyTuple2{V0: l, V1: int(next)}
+	}
+	width := h - l + 1
+	// Take low 31 bits to stay positive across platforms.
+	v := l + int(uint64(next)>>33)%width
+	if v < l {
+		v = l
+	}
+	return SkyTuple2{V0: v, V1: int(next)}
+}
+
+// Random_seededFloat implements `Random.seededFloatRaw : Int -> (Float, Int)`.
+func Random_seededFloat(seedArg any) any {
+	s := AsInt(seedArg)
+	next := seedStep(int64(s))
+	// Use top 53 bits as a fraction in [0, 1).
+	f := float64(uint64(next)>>11) / float64(1<<53)
+	return SkyTuple2{V0: f, V1: int(next)}
+}
+
+// Random_seededChoice implements `Random.seededChoiceRaw : Int -> List a -> (Maybe a, Int)`.
+func Random_seededChoice(seedArg, listArg any) any {
+	s := AsInt(seedArg)
+	items := AsList(listArg)
+	next := seedStep(int64(s))
+	if len(items) == 0 {
+		return SkyTuple2{V0: makeMaybeNothing(), V1: int(next)}
+	}
+	idx := int(uint64(next)>>33) % len(items)
+	if idx < 0 {
+		idx = 0
+	}
+	return SkyTuple2{V0: makeMaybeJust(items[idx]), V1: int(next)}
+}
+
+// seedStep is a splitmix64 step. Pure, deterministic.
+func seedStep(zIn int64) int64 {
+	z := uint64(zIn)
+	z += uint64(0x9E3779B97F4A7C15)
+	z = (z ^ (z >> 30)) * uint64(0xBF58476D1CE4E5B9)
+	z = (z ^ (z >> 27)) * uint64(0x94D049BB133111EB)
+	z = z ^ (z >> 31)
+	return int64(z)
 }
 
 // ═══════════════════════════════════════════════════════════
