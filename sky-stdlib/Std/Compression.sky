@@ -1,0 +1,52 @@
+-- | Std.Compression — gzip + zstd compression (Layer 3 Sky source).
+--
+-- Operate on raw bytes (`Sky.Core.Bytes` alias = `String`); use
+-- `Bytes.fromString` / `Bytes.toBase64` etc. for transport encoding.
+--
+-- Compression is CPU work — every entry returns `Task Error _` so a
+-- caller can run it through `Task.parallel` or off the request
+-- goroutine.  Failures (corrupt input on decompress, OOM-class
+-- workload) surface as `Err Error`.
+--
+-- v0.15.47.
+module Std.Compression exposing
+    ( gzip
+    , gunzip
+    , zstdCompress
+    , zstdDecompress
+    )
+
+
+import Sky.Ffi as Ffi
+import Sky.Core.Error exposing (Error)
+
+
+-- All entry points operate on `String` (the runtime representation
+-- of Sky.Core.Bytes).  Bytes carry arbitrary byte sequences — not
+-- necessarily valid UTF-8 — so passing the raw gzip/zstd payload
+-- as `String` is safe (Go strings are byte slices under the hood).
+
+
+-- | `gzip bytes` — RFC 1952 gzip-compress.  Output is a complete
+-- gzip stream with header + checksum.
+gzip : String -> Task Error String
+gzip = Ffi.kernel "Compression_gzip"
+
+
+-- | `gunzip bytes` — RFC 1952 gzip-decompress.  Fails on truncated
+-- or corrupt input.
+gunzip : String -> Task Error String
+gunzip = Ffi.kernel "Compression_gunzip"
+
+
+-- | `zstdCompress bytes` — Zstandard (RFC 8478) compress at the
+-- default level.  Higher compression ratio than gzip with
+-- comparable decompression speed.
+zstdCompress : String -> Task Error String
+zstdCompress = Ffi.kernel "Compression_zstdCompress"
+
+
+-- | `zstdDecompress bytes` — Zstandard decompress.  Fails on
+-- truncated or corrupt input.
+zstdDecompress : String -> Task Error String
+zstdDecompress = Ffi.kernel "Compression_zstdDecompress"
