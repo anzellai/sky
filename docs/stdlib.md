@@ -819,6 +819,143 @@ Renders straight into Std.Ui Element trees (no HTML round-trip) so the surroundi
 
 ---
 
+## Stdlib quality-of-life batch (v0.15.47)
+
+Seven additions covering the modules every production Sky app
+reinvents today. Each ships under the v0.15.46 typed-record
+convention — every record carries a `default*` constructor +
+`with*` builder helpers so future field additions never break
+downstream record literals.
+
+### `Std.Cache` — LRU + TTL in-memory cache
+
+```elm
+import Std.Cache as Cache
+
+cfg : Cache.CacheCfg
+cfg =
+    Cache.withTTL 60000 (Cache.withMaxEntries 10000 Cache.defaultCfg)
+
+usersCache : Task Error (Cache String User)
+usersCache = Cache.new cfg
+
+-- ...
+Cache.get cache "alice"           -- Task Error (Maybe User)
+Cache.put cache "alice" newUser   -- Task Error ()
+Cache.stats cache                 -- { hits, misses, evictions }
+```
+
+Backed by `hashicorp/golang-lru/v2`. Lazy TTL: expired entries are
+pruned on next access (no background goroutine to leak).
+
+### `Std.Email` — Resend / SES / SendGrid / SMTP under one API
+
+```elm
+import Std.Email as Email
+
+provider = Email.Resend (System.getenvOr "RESEND_API_KEY" "")
+
+msg = Email.defaultMessage
+        { from = "noreply@example.com"
+        , to = [ "alice@example.com" ]
+        , subject = "Hi"
+        }
+        |> Email.withTextBody "Hello, world!"
+
+Email.send provider msg     -- Task Error String (provider message ID)
+```
+
+`SKY_EMAIL_DRY_RUN=1` short-circuits every provider for unit tests.
+`SKY_EMAIL_ENDPOINT_<PROVIDER>` (UPPERCASE) overrides the URL when
+pointing at a local mock.
+
+### `Std.Compression` — gzip + zstd
+
+```elm
+import Std.Compression as Compression
+
+compressed : Task Error String
+compressed = Compression.gzip "large payload"
+
+Compression.zstdCompress payload    -- Task Error String
+Compression.zstdDecompress encoded  -- Task Error String
+```
+
+`compress/gzip` (stdlib) + `klauspost/compress/zstd`.
+
+### `Std.Csv` — RFC 4180 encode/decode + streaming reader
+
+```elm
+import Std.Csv as Csv
+
+case Csv.parse "name,age\nAlice,30\nBob,25\n" of
+
+    Ok csv ->
+        -- csv.header : List String, csv.rows : List (List String)
+        ...
+
+    Err _ ->
+        ...
+
+-- Stream a large file row-by-row:
+Csv.parseStreamFromFile "users.csv"    -- Task Error (List (List String))
+```
+
+### `Sky.Core.Random` — `range`, `weighted`, `shuffle`, seeded\*
+
+```elm
+Random.range 1 100              -- Task Error Int (inclusive both ends)
+Random.weighted [ (0.7, "a"), (0.3, "b") ]
+                                -- Task Error (Maybe a)
+Random.shuffle [1, 2, 3, 4, 5]  -- Task Error (List a)
+
+-- Deterministic, reproducible:
+s0 = Random.seed 42
+( v, s1 ) = Random.seededInt s0 1 100
+( f, s2 ) = Random.seededFloat s1
+```
+
+Seeded variants thread a `Seed` state via splitmix64 — same seed
+produces the same sequence across runs (use for tests and content
+generation).
+
+### `String.containsIn` / `startsWithIn` / `endsWithIn` — pipeline-friendly
+
+Haystack-first companions to the existing needle-first helpers:
+
+```elm
+"hello world" |> String.containsIn "world"      -- True
+"/api/users"  |> String.startsWithIn "/api"     -- True
+"image.png"   |> String.endsWithIn ".png"       -- True
+```
+
+`String.contains` / `startsWith` / `endsWith` stay for backwards
+compatibility.
+
+### `Std.Config` — typed TOML / YAML / JSON decoders
+
+Mirror of `Sky.Core.Json.Decode`'s shape — code that already
+decodes JSON gets a consistent vocabulary for TOML and YAML:
+
+```elm
+import Std.Config as Config
+
+dbDecoder : Decoder DbCfg
+dbDecoder =
+    Config.field "host" Config.string
+        |> Config.andThen (\h ->
+            Config.map (\p -> { host = h, port = p })
+                (Config.field "port" Config.int))
+
+Config.loadFromFile "config/database.toml" dbDecoder
+    -- Task Error DbCfg (extension dispatch: .toml/.yaml/.yml/.json)
+```
+
+TOML via `BurntSushi/toml`, YAML via `gopkg.in/yaml.v3`, JSON via
+the stdlib `encoding/json`.
+
+---
+
 ## Web modules
 
 ### `Server` — Sky.Http.Server
