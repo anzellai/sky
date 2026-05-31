@@ -1,0 +1,274 @@
+module Std.Ui.Animation exposing
+    ( Iterations
+    , FillMode
+    , Spec
+    , once
+    , infinite
+    , times
+    , none
+    , forwards
+    , backwards
+    , both
+    , Easing
+    , linear
+    , easeIn
+    , easeOut
+    , easeInOut
+    , cubicBezier
+    , iterationsToCss
+    , fillModeToCss
+    , easingToCss
+    , attribute
+    , buildShorthandTail
+    , buildKeyframesBody
+    )
+
+-- Std.Ui.Animation — typed CSS keyframe animation iteration / fill-
+-- mode / easing constants (issue #378).
+--
+-- Re-exports `Easing` from `Std.Ui.Transition` so user code only
+-- needs ONE import for the typical transition + animation pair.
+--
+-- `Iterations` controls the `animation-iteration-count` CSS
+-- property. `FillMode` controls `animation-fill-mode` — what state
+-- the element retains AFTER the animation finishes (or BEFORE it
+-- starts when delayed). `forwards` is the most common choice for
+-- "animate in and stay there" (e.g. a fade-in that ends opaque).
+--
+-- See `Ui.animate` in `Std.Ui` for the full Spec record + usage
+-- pattern. Composition with `Ui.breakpoint` + pseudo-classes:
+-- animations attach to the base element selector; breakpoints wrap
+-- the element so the CSS @keyframes nests under the @media block
+-- naturally.
+--
+-- ─── prefers-reduced-motion safety default ─────────────────────────
+--
+-- Every animation is auto-wrapped in
+-- `@media (prefers-reduced-motion: no-preference) { ... }` so users
+-- who've opted out of motion in their OS get a static UI by default.
+-- This is non-negotiable for a11y. Opt OUT explicitly via the
+-- `respectReducedMotion = False` knob on a `Ui.animate` spec when
+-- the animation is semantically required (loading spinner,
+-- progress indicator).
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Std.Ui exposing (Attribute, animateRaw)
+import Std.Ui.Transition as Transition exposing (Easing)
+import Std.Ui.Transform as Transform exposing (Prop)
+
+
+-- ─── Iterations ──────────────────────────────────────────────────
+
+
+-- How many times the animation runs. `Once` is the default for a
+-- typical "fade-in once and stay there" pattern; `Infinite` for
+-- spinners; `Times N` for a fixed count (e.g. blink 3 times).
+type Iterations
+    = Once
+    | Infinite
+    | Times Int
+
+
+once : Iterations
+once =
+    Once
+
+
+infinite : Iterations
+infinite =
+    Infinite
+
+
+times : Int -> Iterations
+times n =
+    Times n
+
+
+iterationsToCss : Iterations -> String
+iterationsToCss it =
+    case it of
+
+        Once ->
+            "1"
+
+        Infinite ->
+            "infinite"
+
+        Times n ->
+            String.fromInt n
+
+
+-- ─── FillMode ────────────────────────────────────────────────────
+
+
+-- `animation-fill-mode`: what state the element retains outside
+-- the animation's active period.
+--
+-- `None` — element reverts to its base style outside the animation.
+-- `Forwards` — element holds the final keyframe's style after the
+--              animation finishes (the most common choice for
+--              "animate in and stay there").
+-- `Backwards` — element shows the first keyframe's style during
+--               the `delay` period before the animation starts.
+-- `Both` — both `Forwards` and `Backwards`.
+type FillMode
+    = NoneMode
+    | Forwards
+    | Backwards
+    | BothMode
+
+
+none : FillMode
+none =
+    NoneMode
+
+
+forwards : FillMode
+forwards =
+    Forwards
+
+
+backwards : FillMode
+backwards =
+    Backwards
+
+
+both : FillMode
+both =
+    BothMode
+
+
+fillModeToCss : FillMode -> String
+fillModeToCss fm =
+    case fm of
+
+        NoneMode ->
+            "none"
+
+        Forwards ->
+            "forwards"
+
+        Backwards ->
+            "backwards"
+
+        BothMode ->
+            "both"
+
+
+-- ─── Easing re-exports ───────────────────────────────────────────
+
+
+linear : Easing
+linear =
+    Transition.linear
+
+
+easeIn : Easing
+easeIn =
+    Transition.easeIn
+
+
+easeOut : Easing
+easeOut =
+    Transition.easeOut
+
+
+easeInOut : Easing
+easeInOut =
+    Transition.easeInOut
+
+
+cubicBezier : Float -> Float -> Float -> Float -> Easing
+cubicBezier x1 y1 x2 y2 =
+    Transition.cubicBezier x1 y1 x2 y2
+
+
+easingToCss : Easing -> String
+easingToCss e =
+    Transition.easingToCss e
+
+
+-- ─── Spec record + attribute entry point ─────────────────────────
+
+
+-- A complete keyframe-animation specification. Pass to
+-- `Animation.attribute` to attach to a Sky.Ui element.
+--
+--     Ui.el
+--         [ Animation.attribute
+--             { name = "fadeIn"
+--             , duration = 300
+--             , easing = Animation.easeOut
+--             , delay = 0
+--             , iterations = Animation.once
+--             , fillMode = Animation.forwards
+--             , respectReducedMotion = True
+--             , keyframes =
+--                 [ ( 0,   [ Transform.opacity 0, Transform.translateY 10 ] )
+--                 , ( 100, [ Transform.opacity 1, Transform.translateY 0 ] )
+--                 ]
+--             }
+--         ]
+--         content
+--
+-- `name` is the user-visible animation name. The runtime
+-- auto-suffixes with the element's sky-id so two elements naming
+-- their animation `"fadeIn"` with DIFFERENT keyframes don't collide.
+--
+-- `keyframes` is a list of (percent, props) pairs. Percent values
+-- in [0, 100]; props from `Std.Ui.Transform`. Order doesn't matter
+-- — the renderer sorts by percent.
+type alias Spec =
+    { name : String
+    , duration : Int
+    , easing : Easing
+    , delay : Int
+    , iterations : Iterations
+    , fillMode : FillMode
+    , respectReducedMotion : Bool
+    , keyframes : List ( Int, List Prop )
+    }
+
+
+-- Build the animation shorthand WITHOUT the leading name token:
+--   "<dur>ms <easing> <delay>ms <iter> <fill>"
+-- The runtime composes "<effective-name> <shorthand>" using the
+-- auto-suffixed name.
+buildShorthandTail : Spec -> String
+buildShorthandTail spec =
+    String.fromInt spec.duration ++ "ms " ++ easingToCss spec.easing
+        ++ " "
+        ++ String.fromInt spec.delay
+        ++ "ms "
+        ++ iterationsToCss spec.iterations
+        ++ " "
+        ++ fillModeToCss spec.fillMode
+
+
+-- Build the @keyframes body — concatenated "<pct>% { <props> }"
+-- blocks, NO surrounding `@keyframes name { }` wrapper (the
+-- runtime adds that with the disambiguated name).
+buildKeyframesBody : List ( Int, List Prop ) -> String
+buildKeyframesBody frames =
+    String.join " " (List.map renderFrame frames)
+
+
+renderFrame : ( Int, List Prop ) -> String
+renderFrame frame =
+    case frame of
+
+        ( pct, props ) ->
+            String.fromInt pct ++ "% { " ++ Transform.propsToCss props ++ " }"
+
+
+-- Construct an animation Attribute from a Spec. The runtime
+-- handles the `prefers-reduced-motion` gate + sky-id-based name
+-- disambiguation.
+attribute : Spec -> Attribute msg
+attribute spec =
+    animateRaw
+        spec.name
+        (buildShorthandTail spec)
+        (buildKeyframesBody spec.keyframes)
+        spec.respectReducedMotion

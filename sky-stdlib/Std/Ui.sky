@@ -98,6 +98,29 @@ type Attribute msg
     -- `:hover` rules are auto-gated behind `@media (hover: hover)`
     -- so they don't fire as sticky-hover on touch devices.
     | AttrPseudoRule PseudoClass String
+    -- Transition rule marker (issue #378). Carries the pre-built
+    -- CSS `transition` shorthand value (e.g. "background-color
+    -- 200ms ease-out"). The renderer harvests every AttrTransition
+    -- on an element into a single `data-sky-tr-rules` data-attr +
+    -- `data-sky-tr-respect` flag. The runtime's
+    -- `injectTransitionStyles` pass scopes the rule by sky-id and
+    -- wraps it in `@media (prefers-reduced-motion: no-preference)`
+    -- when `respectReducedMotion = True` (the default).
+    | AttrTransition String Bool
+    -- Animation marker (issue #378). Payload:
+    --   1. effective-name (auto-suffixed with sky-id-disambiguator
+    --      by the renderer so two `name = "fadeIn"` elements with
+    --      different keyframes don't collide globally; this carries
+    --      the user-visible name unmodified, the runtime
+    --      disambiguates).
+    --   2. animation shorthand WITHOUT name prefix
+    --      ("<dur>ms <easing> <delay>ms <iter> <fill>") — the
+    --      runtime composes "<final-name> <shorthand>".
+    --   3. keyframe body — concatenated `<pct>% { <props> }` blocks.
+    --   4. respectReducedMotion flag — when True (default) the
+    --      animation rule is wrapped in
+    --      `@media (prefers-reduced-motion: no-preference)`.
+    | AttrAnimation String String String Bool
 
 -- Pseudo-class selector tag. `FocusVisible` (the safer default —
 -- only fires on keyboard nav, not on click-induced focus rings)
@@ -1274,6 +1297,158 @@ onPseudo pc attrs =
     AttrPseudoRule pc (mediaQueryRulesCss attrs)
 
 
+-- ─── Transitions + animations (issue #378) ────────────────────────
+--
+-- `Ui.transitionRaw shorthand respect` — low-level escape hatch
+-- for users who already have a CSS `transition` shorthand string
+-- (e.g. interop with a design token system). Most user code calls
+-- `Transition.attribute [...]` instead, which builds the shorthand
+-- from typed `Step` values.
+--
+-- `respect` = True (the default for the typed-Step path) wraps the
+-- rule in `@media (prefers-reduced-motion: no-preference) { ... }`
+-- so users who've opted out of motion in their OS get a static UI.
+-- Pass `False` only for animations that are semantically required
+-- (loading spinner, progress indicator).
+--
+--     Ui.button
+--         [ Background.color blue
+--         , Background.hoverColor lightBlue
+--         , Ui.transitionRaw "background-color 200ms ease-out" True
+--         ]
+--         cfg
+--
+-- The renderer harvests every AttrTransition on an element into ONE
+-- `data-sky-tr-rules` data-attr (comma-joined); the runtime's
+-- `injectTransitionStyles` pass generates a sky-id-scoped <style>
+-- with the per-element `transition: ...` rule.
+transitionRaw : String -> Bool -> Attribute msg
+transitionRaw shorthand respect =
+    AttrTransition shorthand respect
+
+
+-- `Ui.animateRaw name shorthand keyframesBody respect` — low-level
+-- escape hatch for users with raw CSS in hand. Most user code calls
+-- `Animation.attribute spec`. The shorthand is the animation
+-- shorthand WITHOUT the leading name token: "<dur>ms <easing>
+-- <delay>ms <iter> <fill>". The keyframes body is the concatenated
+-- "<pct>% { <props> } ..." string with NO surrounding `@keyframes
+-- name { }` wrapper (the runtime adds that with an auto-suffixed
+-- effective name).
+animateRaw : String -> String -> String -> Bool -> Attribute msg
+animateRaw name shorthandTail keyframesBody respect =
+    AttrAnimation name shorthandTail keyframesBody respect
+
+
+-- Extract transition rules from the attribute list. Returns the
+-- joined CSS shorthand string + a flag whose meaning is "any
+-- transition on this element opts out of the reduced-motion gate
+-- (`respect = False`)". If ANY transition wants the unsafe path,
+-- the whole element's transition block ships unwrapped — mixing
+-- gated + ungated within one element would otherwise need two
+-- style blocks for a tiny gain.
+collectTransitions : List (Attribute msg) -> ( String, Bool )
+collectTransitions attrs =
+    let
+        rules = List.filterMap pickTransitionShorthand attrs
+        anyOptOut = List.any isTransitionOptOut attrs
+    in
+        ( String.join ", " rules, anyOptOut )
+
+
+pickTransitionShorthand : Attribute msg -> Maybe String
+pickTransitionShorthand a =
+    case a of
+
+        AttrTransition s _ ->
+            if String.length s == 0 then
+                Nothing
+
+            else
+                Just s
+
+        _ ->
+            Nothing
+
+
+isTransitionOptOut : Attribute msg -> Bool
+isTransitionOptOut a =
+    case a of
+
+        AttrTransition _ respect ->
+            not respect
+
+        _ ->
+            False
+
+
+-- An animation entry as collected from an element's attributes.
+-- A small custom ADT instead of a 4-tuple — Sky's runtime tuple
+-- destructuring for arity ≥ 3 currently routes through
+-- rt.SkyTupleN, which collides with the rt.T3/T4 generic shapes
+-- some lowering paths emit. The ADT route is panic-proof.
+type AnimationEntry
+    = AnimationEntry String String String Bool
+
+
+-- Extract animation specs from the attribute list. Returns a list
+-- of (name, shorthandTail, keyframesBody, respect) entries — one
+-- per animation declared on the element. The renderer serialises
+-- them into the `data-sky-anim-rules` marker.
+collectAnimations : List (Attribute msg) -> List AnimationEntry
+collectAnimations attrs =
+    List.filterMap pickAnimation attrs
+
+
+pickAnimation : Attribute msg -> Maybe AnimationEntry
+pickAnimation a =
+    case a of
+
+        AttrAnimation name tail body respect ->
+            if String.length name == 0 || String.length body == 0 then
+                Nothing
+
+            else
+                Just (AnimationEntry name tail body respect)
+
+        _ ->
+            Nothing
+
+
+-- Serialise animation entries into the wire-format marker the
+-- runtime parses. Format:
+--   "name||tail||kfBody||respect" per entry; entries separated by
+--   "@@" (forbidden inside CSS property values). `respect` is the
+--   literal "1" or "0".
+encodeAnimations : List AnimationEntry -> String
+encodeAnimations entries =
+    String.join "@@" (List.map encodeAnimationEntry entries)
+
+
+encodeAnimationEntry : AnimationEntry -> String
+encodeAnimationEntry entry =
+    case entry of
+
+        AnimationEntry name tail body respect ->
+            name ++ "||" ++ tail ++ "||" ++ body ++ "||"
+                ++ (if respect then
+                        "1"
+
+                    else
+                        "0")
+
+
+-- Extract the name of an AnimationEntry. Helper for users /
+-- testing — case-destructure is fine but the helper avoids the
+-- ADT-ctor name leaking into call sites.
+animationEntryName : AnimationEntry -> String
+animationEntryName entry =
+    case entry of
+
+        AnimationEntry name _ _ _ ->
+            name
+
+
 -- Extract pseudo-class rules from the attribute list. Returned
 -- as a list of (tag, css) pairs — the renderer serialises them
 -- into the `data-sky-pc-rules` data-attr that the runtime parses.
@@ -1615,10 +1790,51 @@ renderNodeAs tag ctx extraAttrs attrs children =
                 [Attr.attribute
                     "data-sky-pc-rules"
                     (encodePseudoRules pseudoEntries)]
+        -- Transitions (issue #378) — collect into a single
+        -- `data-sky-tr-rules` data-attr; the runtime's
+        -- `injectTransitionStyles` pass scopes it by sky-id and
+        -- wraps it in `@media (prefers-reduced-motion: no-preference)`
+        -- unless the user opted out via `respect = False`.
+        transitionPair = collectTransitions propagatedAttrs
+        transitionAttrs =
+            case transitionPair of
+
+                ( "", _ ) ->
+                    []
+
+                ( joined, optOut ) ->
+                    [ Attr.attribute "data-sky-tr-rules" joined
+                    , Attr.attribute
+                          "data-sky-tr-respect"
+                          (if optOut then
+                                "0"
+
+                           else
+                                "1")
+                    ]
+        -- Animations (issue #378) — collect into
+        -- `data-sky-anim-rules` data-attr; the runtime's
+        -- `injectAnimationStyles` pass auto-suffixes the
+        -- @keyframes name with the sky-id to avoid global
+        -- collisions across elements.
+        animationEntries = collectAnimations propagatedAttrs
+        animationAttrs =
+            if List.isEmpty animationEntries then
+                []
+
+            else
+                [Attr.attribute
+                    "data-sky-anim-rules"
+                    (encodeAnimations animationEntries)]
         renderedMain = List.map (renderElement renderCtx []) children
         renderedNearby = List.map renderNearby nearbyChildren
         renderedChildren = renderedMain ++ renderedNearby
-        attrList = Attr.style styleStr :: (pseudoAttrs ++ htmlAttrs)
+        attrList =
+            Attr.style styleStr
+                :: (pseudoAttrs
+                       ++ transitionAttrs
+                       ++ animationAttrs
+                       ++ htmlAttrs)
     in
         dispatchTag tag attrList renderedChildren
 
@@ -2368,6 +2584,21 @@ collectStyle parentCtx myCtx attr acc =
         -- `data-sky-pc-rules` marker, then turned into a scoped
         -- <style> child by the runtime's
         -- `injectPseudoClassStyles` pass. Skip here.
+            acc
+
+        AttrTransition _ _ ->
+        -- Transitions don't emit inline CSS — they're harvested
+        -- by `renderNodeAs` into the `data-sky-tr-rules` marker,
+        -- then turned into a scoped <style> child by the runtime's
+        -- `injectTransitionStyles` pass (issue #378).
+            acc
+
+        AttrAnimation _ _ _ _ ->
+        -- Animations are harvested by `renderNodeAs` into the
+        -- `data-sky-anim-rules` marker; the runtime's
+        -- `injectAnimationStyles` pass emits a sky-id-scoped
+        -- <style> child containing the `@keyframes` block + the
+        -- `animation: ...` rule (issue #378).
             acc
 
 

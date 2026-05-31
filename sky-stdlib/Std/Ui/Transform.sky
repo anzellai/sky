@@ -1,0 +1,186 @@
+module Std.Ui.Transform exposing
+    ( translateX
+    , translateY
+    , translate
+    , scale
+    , scaleXY
+    , rotate
+    , skewX
+    , skewY
+    , opacity
+    , Prop
+    , propsToCss
+    , propToCssPair
+    )
+
+-- Std.Ui.Transform — typed transform / opacity properties for
+-- `Ui.animate` keyframes (issue #378).
+--
+-- Each helper returns a `Prop` value that the animation renderer
+-- lowers to one CSS property:value pair inside a `@keyframes`
+-- block. Transforms compose by being in the SAME `Prop` list
+-- (multiple translate/scale/rotate on one keyframe are joined into
+-- one `transform: translateY(10px) scale(0.95)` rule).
+--
+--     Ui.animate
+--         { name = "popIn"
+--         , duration = 250
+--         , easing = Animation.easeOut
+--         , delay = 0
+--         , iterations = Animation.once
+--         , fillMode = Animation.forwards
+--         , respectReducedMotion = True
+--         , keyframes =
+--             [ ( 0,   [ Transform.opacity 0, Transform.scale 0.9 ] )
+--             , ( 100, [ Transform.opacity 1, Transform.scale 1.0 ] )
+--             ]
+--         }
+--
+-- Use these helpers ONLY inside `Ui.animate` keyframes — they're
+-- not `Attribute msg` values and won't apply to a plain element
+-- without an animation wrapper.
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+
+
+-- A single keyframe property. Each variant either folds into the
+-- `transform: ...` shorthand (`TransformPart`) or emits a
+-- standalone CSS property (`OpacityProp`). Future variants might
+-- include `FilterPart` etc. — keep grouping by CSS shorthand so
+-- the renderer can join them correctly.
+type Prop
+    = TransformPart String
+    | OpacityProp Float
+
+
+-- ─── Transform builders ──────────────────────────────────────────
+
+
+-- Translate horizontally by `n` pixels.
+translateX : Int -> Prop
+translateX n =
+    TransformPart ("translateX(" ++ String.fromInt n ++ "px)")
+
+
+-- Translate vertically by `n` pixels. Positive = down.
+translateY : Int -> Prop
+translateY n =
+    TransformPart ("translateY(" ++ String.fromInt n ++ "px)")
+
+
+-- Translate both axes.
+translate : Int -> Int -> Prop
+translate x y =
+    TransformPart
+        ("translate(" ++ String.fromInt x ++ "px, "
+            ++ String.fromInt y
+            ++ "px)")
+
+
+-- Uniform scale. `1.0` = no change; `0.9` = 90 %.
+scale : Float -> Prop
+scale s =
+    TransformPart ("scale(" ++ String.fromFloat s ++ ")")
+
+
+-- Per-axis scale.
+scaleXY : Float -> Float -> Prop
+scaleXY sx sy =
+    TransformPart
+        ("scale(" ++ String.fromFloat sx ++ ", " ++ String.fromFloat sy ++ ")")
+
+
+-- Rotate by degrees. Positive = clockwise.
+rotate : Float -> Prop
+rotate deg =
+    TransformPart ("rotate(" ++ String.fromFloat deg ++ "deg)")
+
+
+-- Skew horizontally by degrees.
+skewX : Float -> Prop
+skewX deg =
+    TransformPart ("skewX(" ++ String.fromFloat deg ++ "deg)")
+
+
+-- Skew vertically by degrees.
+skewY : Float -> Prop
+skewY deg =
+    TransformPart ("skewY(" ++ String.fromFloat deg ++ "deg)")
+
+
+-- Opacity in [0, 1]. Emits as a standalone `opacity: <n>` rule;
+-- composable with transforms on the same keyframe.
+opacity : Float -> Prop
+opacity a =
+    OpacityProp a
+
+
+-- ─── CSS lowering ────────────────────────────────────────────────
+
+
+-- Map one Prop to a (cssKey, cssValue) pair. `TransformPart` is
+-- pre-stringified — the renderer joins multiple TransformParts
+-- into a single `transform: ...` rule, so the "key" portion is the
+-- placeholder string the joiner recognises.
+propToCssPair : Prop -> ( String, String )
+propToCssPair p =
+    case p of
+
+        TransformPart part ->
+            ( "transform", part )
+
+        OpacityProp a ->
+            ( "opacity", String.fromFloat a )
+
+
+-- Lower a list of Props to a CSS property block string
+-- ("transform: …; opacity: …;"). Multiple TransformParts are
+-- joined into ONE transform rule (CSS only honours the last
+-- transform declaration on an element).
+propsToCss : List Prop -> String
+propsToCss props =
+    let
+        pairs = List.map propToCssPair props
+        transformParts = List.filterMap pickTransformPart pairs
+        otherPairs = List.filter isNotTransform pairs
+        transformRule =
+            if List.isEmpty transformParts then
+                ""
+
+            else
+                "transform: " ++ String.join " " transformParts ++ ";"
+        otherRules =
+            List.foldl appendPair "" otherPairs
+    in
+        transformRule ++ otherRules
+
+
+pickTransformPart : ( String, String ) -> Maybe String
+pickTransformPart pair =
+    case pair of
+
+        ( "transform", v ) ->
+            Just v
+
+        _ ->
+            Nothing
+
+
+isNotTransform : ( String, String ) -> Bool
+isNotTransform pair =
+    case pair of
+
+        ( "transform", _ ) ->
+            False
+
+        _ ->
+            True
+
+
+appendPair : ( String, String ) -> String -> String
+appendPair pair acc =
+    case pair of
+
+        ( k, v ) ->
+            acc ++ k ++ ": " ++ v ++ ";"

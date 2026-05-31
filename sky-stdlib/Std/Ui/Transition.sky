@@ -1,0 +1,300 @@
+module Std.Ui.Transition exposing
+    ( Step
+    , Easing
+    , property
+    , duration
+    , delay
+    , easing
+    , linear
+    , easeIn
+    , easeOut
+    , easeInOut
+    , cubicBezier
+    , buildShorthand
+    , easingToCss
+    , defaultProperty
+    , defaultDuration
+    , defaultEasing
+    , attribute
+    , attributeUnsafe
+    )
+
+-- Std.Ui.Transition — typed CSS transition steps (issue #378).
+--
+-- Build a transition by composing `Step`s (`property`, `duration`,
+-- `delay`, `easing`); pass the list to `Ui.transition`. The renderer
+-- joins steps into the CSS `transition: <prop> <dur>ms <easing>
+-- <delay>ms` shorthand, then wraps the rule inside
+-- `@media (prefers-reduced-motion: no-preference) { ... }` so users
+-- who've opted out of motion in their OS get a static UI by default.
+-- (Opt out of the gate via the explicit `respectReducedMotion =
+-- False` knob on `Ui.animate`.)
+--
+--     Ui.button
+--         [ Background.color blue
+--         , Background.hoverColor lightBlue
+--         , Ui.transition
+--             [ Transition.property "background-color"
+--             , Transition.duration 200
+--             , Transition.easing Transition.easeOut
+--             ]
+--         ]
+--         cfg
+--
+-- Composition with pseudo-classes: `Background.hoverColor` sets the
+-- :hover CSS rule; `Ui.transition` emits a separate <style> block
+-- declaring `transition: background-color 200ms ease-out` on the
+-- base selector. The browser animates the change between the base
+-- and hover states without any JS round-trip.
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Std.Ui exposing (Attribute, transitionRaw)
+
+
+-- A single step in a transition definition. Combined by
+-- `buildShorthand` into the CSS `transition` shorthand value
+-- ("property duration easing delay").
+type Step
+    = StepProperty String
+    | StepDuration Int
+    | StepDelay Int
+    | StepEasing Easing
+
+
+-- Easing curve. `Linear` / `EaseIn` / `EaseOut` / `EaseInOut` map
+-- to the same-named CSS keywords; `CubicBezier x1 y1 x2 y2` is the
+-- escape hatch for custom curves (Material's standard curve is
+-- `cubicBezier 0.4 0.0 0.2 1.0`, Apple's is `0.25 0.1 0.25 1.0`).
+type Easing
+    = Linear
+    | EaseIn
+    | EaseOut
+    | EaseInOut
+    | CubicBezier Float Float Float Float
+
+
+-- ─── Step builders ───────────────────────────────────────────────
+
+
+-- Name the CSS property to transition. Common targets:
+-- "background-color", "color", "border-color", "transform",
+-- "opacity", "width", "height", "padding", "border-radius".
+-- Pass "all" to transition every animatable property.
+property : String -> Step
+property name =
+    StepProperty name
+
+
+-- Animation duration in milliseconds.
+duration : Int -> Step
+duration ms =
+    StepDuration ms
+
+
+-- Delay before the transition starts (milliseconds).
+delay : Int -> Step
+delay ms =
+    StepDelay ms
+
+
+-- Easing curve — see `linear` / `easeIn` / `easeOut` / `easeInOut` /
+-- `cubicBezier`.
+easing : Easing -> Step
+easing e =
+    StepEasing e
+
+
+-- ─── Easing constants ────────────────────────────────────────────
+
+
+linear : Easing
+linear =
+    Linear
+
+
+easeIn : Easing
+easeIn =
+    EaseIn
+
+
+easeOut : Easing
+easeOut =
+    EaseOut
+
+
+easeInOut : Easing
+easeInOut =
+    EaseInOut
+
+
+-- Cubic-bezier control points. All four params should be in [0, 1]
+-- for standard curves; the X coordinates (`x1`, `x2`) MUST stay in
+-- [0, 1] or the browser rejects the curve.
+cubicBezier : Float -> Float -> Float -> Float -> Easing
+cubicBezier x1 y1 x2 y2 =
+    CubicBezier x1 y1 x2 y2
+
+
+-- ─── CSS lowering ────────────────────────────────────────────────
+
+
+-- Map an Easing to its CSS function string.
+easingToCss : Easing -> String
+easingToCss e =
+    case e of
+
+        Linear ->
+            "linear"
+
+        EaseIn ->
+            "ease-in"
+
+        EaseOut ->
+            "ease-out"
+
+        EaseInOut ->
+            "ease-in-out"
+
+        CubicBezier x1 y1 x2 y2 ->
+            "cubic-bezier(" ++ String.fromFloat x1 ++ ", "
+                ++ String.fromFloat y1
+                ++ ", "
+                ++ String.fromFloat x2
+                ++ ", "
+                ++ String.fromFloat y2
+                ++ ")"
+
+
+-- Defaults so the user can write `Ui.transition [property "color"]`
+-- and get a sensible 200 ms ease-out. 200 ms is Material's medium-tier
+-- default; ease-out matches "things flying in" (slow stop) — the
+-- common interaction-feedback case.
+defaultProperty : String
+defaultProperty =
+    "all"
+
+
+defaultDuration : Int
+defaultDuration =
+    200
+
+
+defaultEasing : Easing
+defaultEasing =
+    EaseOut
+
+
+-- Helper extractors — walk the step list once per field. Inlining
+-- via a 4-tuple accumulator would be tighter but the lowerer's
+-- typed-record-tuple support is older + more brittle than per-
+-- field folds.
+extractProperty : List Step -> String
+extractProperty steps =
+    case steps of
+
+        [] ->
+            defaultProperty
+
+        StepProperty p :: _ ->
+            p
+
+        _ :: rest ->
+            extractProperty rest
+
+
+extractDuration : List Step -> Int
+extractDuration steps =
+    case steps of
+
+        [] ->
+            defaultDuration
+
+        StepDuration d :: _ ->
+            d
+
+        _ :: rest ->
+            extractDuration rest
+
+
+extractDelay : List Step -> Int
+extractDelay steps =
+    case steps of
+
+        [] ->
+            0
+
+        StepDelay d :: _ ->
+            d
+
+        _ :: rest ->
+            extractDelay rest
+
+
+extractEasing : List Step -> Easing
+extractEasing steps =
+    case steps of
+
+        [] ->
+            defaultEasing
+
+        StepEasing e :: _ ->
+            e
+
+        _ :: rest ->
+            extractEasing rest
+
+
+-- Lower a list of steps to the CSS `transition` shorthand:
+-- "<prop> <dur>ms <easing> <delay>ms". The delay segment is only
+-- emitted when non-zero (kept short for common case).
+buildShorthand : List Step -> String
+buildShorthand steps =
+    let
+        prop = extractProperty steps
+        dur = extractDuration steps
+        ease = extractEasing steps
+        del = extractDelay steps
+        base =
+            prop ++ " " ++ String.fromInt dur ++ "ms " ++ easingToCss ease
+    in
+        if del > 0 then
+            base ++ " " ++ String.fromInt del ++ "ms"
+
+        else
+            base
+
+
+-- ─── Attribute entry points ──────────────────────────────────────
+
+
+-- Build a transition Attribute from typed steps. The browser
+-- animates property changes (e.g. `Background.color` → `Background.
+-- hoverColor`) over the specified duration. The rule is
+-- auto-wrapped in `@media (prefers-reduced-motion: no-preference)`
+-- by the runtime so users who've opted out of motion get a static
+-- UI by default.
+--
+--     Ui.button
+--         [ Background.color blue
+--         , Background.hoverColor lightBlue
+--         , Transition.attribute
+--             [ Transition.property "background-color"
+--             , Transition.duration 200
+--             , Transition.easing Transition.easeOut
+--             ]
+--         ]
+--         cfg
+attribute : List Step -> Attribute msg
+attribute steps =
+    transitionRaw (buildShorthand steps) True
+
+
+-- Same as `attribute` but opts OUT of the `prefers-reduced-motion`
+-- gate — the transition will fire even for users who've requested
+-- reduced motion in their OS. Reserve for transitions that are
+-- semantically required (a loading spinner that MUST move or it's
+-- a UI bug).
+attributeUnsafe : List Step -> Attribute msg
+attributeUnsafe steps =
+    transitionRaw (buildShorthand steps) False
