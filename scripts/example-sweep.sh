@@ -227,6 +227,10 @@ declare -a EXAMPLES=(
     # drains an upstream Http.Stream + re-emits via Server.Stream.emit
     # chunk-for-chunk. Uses port 8001 to avoid colliding with peers.
     "32-sse-relay:server:8001:/"
+    # 33 — WebSocket echo (#388 v0.15.46). Server upgrades incoming
+    # GET /ws and echoes back. Sweep checks plain HTTP GET / for the
+    # index page, NOT the /ws upgrade itself (which curl can't speak).
+    "33-websocket-echo:server:8033:/"
     # 29 — Sky.Webview spike: Three.js + WebGL2 under the new
     # loopback-asset pipeline (bug #370). Same gui-kind skip
     # semantics as 31 (display + macOS-only cgo).
