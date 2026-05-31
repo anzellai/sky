@@ -494,6 +494,109 @@ The selector keys off the wrapper's runtime-assigned `sky-id` — so two breakpo
 | Layout-transition fires a typed Msg (close tray on mobile, refit canvas, re-fetch tile grid) | `Std.Ui.Responsive` (Model-driven via `Sub.windowSize`) |
 | Both — visual override + Msg | Combine: `Ui.breakpoint` for the styling, `Sub.windowSize` for the Msg |
 
+## Pseudo-classes (hover, focus, active, disabled)
+
+`Background.hoverColor` / `Font.focusColor` / `Border.activeColor` (and friends) attach `:hover` / `:focus-visible` / `:active` / `:disabled` styling directly on an element — no `onMouseOver` Msg, no Model field, no re-render. The CSS engine handles the state transition natively.
+
+```elm
+import Std.Ui as Ui
+import Std.Ui.Background as Background
+import Std.Ui.Border as Border
+import Std.Ui.Font as Font
+
+view : Model -> Element Msg
+view _ =
+    Ui.layout []
+        (Ui.button
+            [ Ui.padding 12
+            , Background.color (Ui.rgb 0 122 255)
+            , Background.hoverColor (Ui.rgb 0 92 215)     -- pointer over
+            , Background.activeColor (Ui.rgb 0 62 175)    -- click down
+            , Border.rounded 6
+            , Border.hoverRounded 12                       -- morph corners on hover
+            , Font.color Ui.white
+            ]
+            { onPress = Just Save, label = Ui.text "Save" })
+```
+
+### Per-sub-module helpers
+
+| Module | Helpers |
+|---|---|
+| `Std.Ui.Background` | `hoverColor`, `focusColor`, `focusVisibleColor`, `activeColor`, `disabledColor` |
+| `Std.Ui.Border` | `hoverColor`, `focusColor`, `focusVisibleColor`, `activeColor`, `hoverWidth`, `hoverRounded` |
+| `Std.Ui.Font` | `hoverColor`, `focusColor`, `focusVisibleColor`, `activeColor`, `disabledColor`, `hoverSize` |
+
+### Generic escape hatch — `Ui.onPseudo`
+
+For selector combinations no sub-module helper covers:
+
+```elm
+Ui.button
+    [ Ui.onPseudo Ui.hover [ Background.color red, Font.size 18 ]
+    , Ui.onPseudo Ui.focusVisible [ Border.color blue, Border.width 2 ]
+    ]
+    { onPress = Just Save, label = Ui.text "Save" }
+```
+
+`Ui.PseudoClass` constructors: `Ui.hover`, `Ui.focus`, `Ui.focusVisible`, `Ui.active`, `Ui.disabled`.
+
+### `:focus-visible` vs `:focus` — the safer default
+
+`focusColor` in every sub-module targets **`:focus-visible`** (not `:focus`). Why: `:focus` fires on every click as well as keyboard nav, so click-induced focus rings paint on every interaction — visual noise users perceive as "broken". `:focus-visible` only fires when the browser thinks the user is navigating via keyboard, so the ring appears for accessibility users + disappears for pointer users.
+
+Explicit alternatives:
+
+* `Background.focusVisibleColor c` — spelled-out form (same behaviour as `focusColor`).
+* `Ui.onPseudo Ui.focus [...]` — opt into the sticky-focus variant when you explicitly want click-induced rings (rare).
+
+### Touch-device safety — `@media (hover: hover)` auto-gating
+
+`:hover` rules are automatically wrapped in `@media (hover: hover)` by the runtime so they don't fire as sticky-hover on touch devices (the classic mobile bug where a tap leaves a button stuck in the hover colour until the next tap elsewhere). User code never needs to think about this — the runtime handles it.
+
+```css
+/* What the runtime emits for Background.hoverColor: */
+@media (hover: hover) {
+    [sky-id="r.0.2#button"]:hover { background-color: rgba(0, 92, 215, 1); }
+}
+
+/* But :focus-visible / :active / :disabled are NOT gated — they apply on every device: */
+[sky-id="r.0.2#button"]:focus-visible { border-color: rgba(0, 122, 255, 1); }
+[sky-id="r.0.2#button"]:active { background-color: rgba(0, 62, 175, 1); }
+```
+
+### Composition with `Ui.breakpoint`
+
+`Background.hoverColor` inside `Ui.breakpoint Ui.mobile [...]` works as expected — the breakpoint wraps the element and the pseudo-rule attaches to the element itself; both layers stack via CSS inheritance. Each layer gets its own scoped `<style>` block, so neither cross-contaminates.
+
+```elm
+Ui.breakpoint Ui.mobile
+    [ Ui.padding 24 ]
+    (Ui.button
+        [ Background.color (Ui.rgb 0 122 255)
+        , Background.hoverColor (Ui.rgb 0 92 215)
+        ]
+        { onPress = Just Save, label = Ui.text "Save" })
+```
+
+### What renders on the wire
+
+`Background.hoverColor` attaches a `data-sky-pc-rules` marker to the element. The runtime injects a sky-id-scoped `<style>` child:
+
+```html
+<button sky-id="r.0.2#button" style="...base styles...">
+    <style data-sky-pc="r.0.2#button">
+        @media (hover: hover) {
+            [sky-id="r.0.2#button"]:hover { background-color: rgba(0, 92, 215, 1); }
+        }
+        [sky-id="r.0.2#button"]:active { background-color: rgba(0, 62, 175, 1); }
+    </style>
+    Save
+</button>
+```
+
+The selector keys off the runtime-assigned `sky-id`, so multiple pseudo-rules on the same page cannot cross-contaminate. Sky.Tui silently ignores the injected `<style>` (terminal renders the base layer only); Sky.Webview honours pseudo-classes identically to Sky.Live because they share the runtime VNode pipeline.
+
 ## Putting it all together — a non-trivial example
 
 `examples/19-skyforum` is the canonical Sky.Ui demo: a Reddit/HackerNews-style forum split across 8 modules. Highlights:

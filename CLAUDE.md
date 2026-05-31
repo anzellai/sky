@@ -1069,12 +1069,15 @@ Full reference: `docs/skyui/overview.md`.
   browser-side cap, not security), `fileMaxWidth Int`,
   `fileMaxHeight Int`.
 - **Colour**: `rgb`, `rgba`, `white`, `black`, `transparent`.
-- **Sub-modules**: `Background` (color, image, linearGradient),
+- **Sub-modules**: `Background` (color, image, linearGradient,
+  hoverColor/focusColor/focusVisibleColor/activeColor/disabledColor),
   `Border` (color, width, widthEach, rounded, solid/dashed/dotted,
-  shadow, glow, innerShadow), `Font` (color, family, size, weight,
+  shadow, glow, innerShadow, hoverColor/focusColor/activeColor/
+  hoverWidth/hoverRounded), `Font` (color, family, size, weight,
   bold/semiBold/regular/light/extraBold/black, italic, underline,
   noDecoration, letterSpacing, alignLeft/Right/Center/Justify,
-  sansSerif/serif/monospace), `Region` (semantic landmarks routed
+  sansSerif/serif/monospace, hoverColor/focusColor/activeColor/
+  disabledColor/hoverSize), `Region` (semantic landmarks routed
   to `<h1..h6>`, `<main>`, `<nav>`, `<aside>`, `<footer>`, aria-*),
   `Input` (button, text, multiline, email, username, search,
   currentPassword, newPassword, checkbox, radio, radioRow,
@@ -1082,6 +1085,21 @@ Full reference: `docs/skyui/overview.md`.
   `Keyed` (sky-key for diff identity), `Responsive`
   (classifyDevice, adapt — Model-driven branching that needs a
   typed Msg dispatch).
+- **Pseudo-classes** (`:hover` / `:focus-visible` / `:active` /
+  `:disabled`) — per sub-module `on<State>` helpers above + generic
+  `Ui.onPseudo : PseudoClass -> List (Attribute msg) -> Attribute msg`
+  escape hatch for selector combinations no sub-module covers.
+  `PseudoClass`: `Ui.hover`, `Ui.focus`, `Ui.focusVisible`,
+  `Ui.active`, `Ui.disabled`. `focusColor` targets `:focus-visible`
+  (safer default — only fires on keyboard nav, never on click-
+  induced focus rings); use `Ui.onPseudo Ui.focus [...]` for
+  sticky-focus behaviour. `:hover` rules are AUTO-WRAPPED in
+  `@media (hover: hover)` by the runtime so they don't fire as
+  sticky-hover on touch devices (the classic mobile "tap-and-stay-
+  hovered" bug). Renders a sky-id-scoped `<style data-sky-pc=...>`
+  child via the same pattern as media queries. Composes with
+  `Ui.breakpoint` via natural nesting — breakpoint wraps the
+  element, pseudo-rule attaches to the element inside.
 - **Media queries + breakpoints** (`Ui.mediaQuery` / `Ui.breakpoint`
   / `Breakpoint` ADT) — CSS-driven viewport-conditional styling
   with instant CSS-engine reactivity (no JS round-trip, no Model
