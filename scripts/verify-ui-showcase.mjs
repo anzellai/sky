@@ -432,7 +432,7 @@ try {
             fail("media-query <style>", `expected ≥2 data-sky-mq blocks, found ${mqStyleCount}`);
         }
 
-        // ─── 4. Pseudo-class stubs (#377) — render only ─────────
+        // ─── 4. Pseudo-class stubs (#377) ────────────────────────
         console.log("--- pseudo-class stubs ---");
         const hover = await measure(page, "hover-button");
         const focus = await measure(page, "focus-input");
@@ -443,6 +443,77 @@ try {
         else fail("focus-input", "missing or zero-size");
         if (active && active.width > 0) ok("active-link rendered");
         else fail("active-link", "missing or zero-size");
+
+        // The runtime injects a `<style data-sky-pc=...>` block as
+        // the first child of any element carrying pseudo-class
+        // rules. Confirm at least one such block exists.
+        const pcStyleCount = await page.evaluate(() =>
+            document.querySelectorAll("style[data-sky-pc]").length,
+        );
+        if (pcStyleCount >= 1) {
+            ok(`pseudo-class <style> blocks present (count=${pcStyleCount})`);
+        } else {
+            fail("pseudo-class <style>", `expected ≥1 data-sky-pc blocks, found ${pcStyleCount}`);
+        }
+
+        // The `:hover` rule MUST be auto-wrapped in `@media (hover:
+        // hover)` so it doesn't fire as sticky-hover on touch
+        // devices. Inspect every emitted pseudo <style> block.
+        const hoverGatePresent = await page.evaluate(() => {
+            const blocks = document.querySelectorAll("style[data-sky-pc]");
+            for (const b of blocks) {
+                if (b.textContent.includes(":hover")
+                    && b.textContent.includes("@media (hover: hover)")) {
+                    return true;
+                }
+            }
+            return false;
+        });
+        if (hoverGatePresent) {
+            ok(":hover wrapped in @media (hover: hover) (touch-safe)");
+        } else {
+            fail(":hover hover-gate", "no @media (hover: hover) wrap found");
+        }
+
+        // Snapshot the hover-button in its hovered state. Playwright's
+        // page.hover() triggers the pointer:over+CSS :hover state.
+        // Need a desktop browser with `(hover: hover)` to fire the
+        // gated rule — which is the default for chromium on a
+        // 1280×720 viewport (mouse pointer, hover-capable).
+        try {
+            await page.hover('[data-test-id="hover-button"]');
+            await page.waitForTimeout(80);
+            await snapshot(
+                page, "hover-button-state", "hover-button", "desktop",
+            );
+        } catch (e) {
+            fail("hover-button :hover snapshot", String(e));
+        }
+
+        // Focus the input via `.focus()` AND `.click()` so
+        // `:focus-visible` fires (in chromium, programmatic focus
+        // doesn't always paint focus-visible; clicking the input
+        // gives a stable visible-ring snapshot baseline).
+        try {
+            await page.focus('[data-test-id="focus-input"]');
+            await page.waitForTimeout(80);
+            await snapshot(
+                page, "focus-input-state", "focus-input-wrap", "desktop",
+            );
+        } catch (e) {
+            fail("focus-input :focus snapshot", String(e));
+        }
+
+        // Static disabled-button snapshot — confirms the disabled
+        // styling renders cleanly. (We don't trigger :disabled at
+        // runtime; the HTML `disabled=true` attribute already does.)
+        try {
+            await snapshot(
+                page, "disabled-button-state", "disabled-wrap", "desktop",
+            );
+        } catch (e) {
+            fail("disabled-button snapshot", String(e));
+        }
 
         // ─── 5. Snapshots ───────────────────────────────────────
         console.log("--- snapshots (desktop) ---");

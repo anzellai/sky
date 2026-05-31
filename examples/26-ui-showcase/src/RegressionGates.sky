@@ -203,17 +203,22 @@ viewportStub =
         ]
 
 
--- ─── 3. Pseudo-class stubs ─────────────────────────────────────
+-- ─── 3. Pseudo-class stubs (#377) ──────────────────────────────
 --
--- Plain styles today; after #377 these primitives gain typed
--- `:hover` / `:focus-visible` / `:active` attribute constructors
--- and the runner re-snapshots in the corresponding state.
+-- Each helper carries a `data-test-id` so the Playwright runner
+-- can hover()/focus() the element and snapshot the resulting state.
+-- The runtime injects sky-id-scoped `<style>` blocks with `:hover`
+-- under `@media (hover: hover)`, `:focus-visible`, and `:active`
+-- selectors — no JS round-trip, no model field, instant.
 hoverableButton : Element msg
 hoverableButton =
     Ui.button
         [ Ui.padding 10
         , Background.color (Ui.rgb 60 120 200)
+        , Background.hoverColor (Ui.rgb 30 90 170)
+        , Background.activeColor (Ui.rgb 20 60 140)
         , Border.rounded 6
+        , Border.hoverRounded 12
         , Font.color white
         , testId "hover-button"
         ]
@@ -232,7 +237,12 @@ focusableInput =
                 , Attr.attribute "placeholder" "focus me"
                 , Attr.attribute
                       "style"
-                      "padding:8px;border:1px solid #888;border-radius:6px;font-size:14px;"
+                      "padding:8px;border:2px solid #888;border-radius:6px;font-size:14px;outline:none;"
+                  -- Plain HTML <input> so the visual baseline can
+                  -- exercise browser-native :focus-visible without
+                  -- routing through Std.Ui.Input's wrapper. The
+                  -- typed Ui pseudo-classes path lives on
+                  -- `hoverableButton`/`disabledButton` here.
                 ]
                 []))
 
@@ -242,11 +252,34 @@ activeLink =
     Ui.link
         [ Ui.padding 8
         , Background.color (Ui.rgb 240 240 240)
+        , Background.activeColor (Ui.rgb 200 200 240)
         , Border.rounded 4
         , Font.color (Ui.rgb 20 80 200)
+        , Font.hoverColor (Ui.rgb 180 0 0)
         , testId "active-link"
         ]
         { url = "#test", label = Ui.text "click me" }
+
+
+-- A disabled-state stub — pairs `disabled=true` HTML attribute with
+-- `Background.disabledColor` + `Font.disabledColor` so the runner
+-- can confirm the `:disabled` selector emits + applies. (Browsers
+-- don't fire `:hover` on disabled inputs by default; the runner
+-- just renders the static state.)
+disabledButton : Element msg
+disabledButton =
+    Ui.el
+        [testId "disabled-wrap"]
+        (Ui.html
+            (Html.node
+                "button"
+                [ Attr.attribute "disabled" "true"
+                , Attr.attribute "data-test-id" "disabled-button"
+                , Attr.attribute
+                      "style"
+                      "padding:10px;border-radius:6px;background:#cccccc;color:#666666;border:none;"
+                ]
+                [Html.text "disabled"]))
 
 
 -- ─── Media-query / breakpoint primitive (#376) ─────────────────
@@ -377,7 +410,7 @@ cases =
           "Pseudo-class stubs (#377)"
           (Ui.column
               [Ui.spacing 8]
-              [ hoverableButton, focusableInput, activeLink ])
+              [ hoverableButton, focusableInput, activeLink, disabledButton ])
     , card "aspect" "Aspect ratio (#379)" aspectStubs
     , card "grid" "Grid (#379)" gridDemo
     , card "mediaquery" "Media query / breakpoint (#376)" mediaQueryDemo
