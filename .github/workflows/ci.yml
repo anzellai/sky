@@ -123,6 +123,31 @@ jobs:
         run: bash scripts/example-e2e.sh
 
       # ─────────────────────────────────────────────────────────
+      # Std.Ui regression gates (issue #63-class flex-chain +
+      # visual snapshots on examples/26-ui-showcase). Catches the
+      # bug class that hit v0.14.7-v0.14.16 five times BEFORE the
+      # Cycle 5 renderer churn (mediaQuery, pseudo-classes,
+      # transitions, aspectRatio) lands. CLAUDE.md §2.3 — bounded
+      # by `timeout 120` inside the runner script.
+      #
+      # macOS-only: Linux Chromium renders text 1-2 px differently
+      # than the developer macOS Chromium that recorded the
+      # baselines, so the pixel-diff check would false-positive on
+      # every Linux PR. Computed-style assertions ARE portable but
+      # are gated behind the same runner today. Track in #380
+      # follow-up if we ever need Linux coverage.
+      # ─────────────────────────────────────────────────────────
+      - name: Install Playwright deps (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          npm install
+          npx playwright install chromium
+
+      - name: Std.Ui regression gates (ui-showcase)
+        if: matrix.os == 'macos-latest'
+        run: TMPDIR=/tmp bash scripts/verify-ui-showcase.sh
+
+      # ─────────────────────────────────────────────────────────
       # Tooling smoke tests
       # ─────────────────────────────────────────────────────────
       - name: Test sky fmt (idempotent)

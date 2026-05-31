@@ -106,6 +106,10 @@ declare -a EXAMPLES=(
     "17-skymon:server:8000:/"
     "18-job-queue:server:8000:/"
     "19-skyforum:server:8000:/"
+    # 26 — Std.Ui kitchen-sink showcase. Server-shaped because the
+    # Sky.Live runtime serves the HTML; scripts/verify-ui-showcase.sh
+    # runs the deep visual-regression sweep separately.
+    "26-ui-showcase:server:8000:/"
     "27-multi-session-chat:server:8000:/"
     "30-sse-server-demo:server:8000:/"
     # 29 — Sky.Webview spike: Three.js + WebGL2 under the new

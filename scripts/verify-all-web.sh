@@ -85,4 +85,22 @@ if [ "${SKY_VERIFY_SKIP_CONSOLE_E2E:-0}" != "1" ]; then
     fi
 fi
 
+# Std.Ui regression gates — deep computed-style + visual-snapshot
+# checks on examples/26-ui-showcase. Catches issue #63-class flex-
+# chain regressions BEFORE the Cycle 5 renderer churn (mediaQuery,
+# pseudo-classes, transitions, aspectRatio) lands. See
+# scripts/verify-ui-showcase.sh for the gate list.
+if [ "${SKY_VERIFY_SKIP_UI_SHOWCASE:-0}" != "1" ]; then
+    echo ""
+    echo "--- ui-showcase regression gates ---"
+    if bash "$REPO_ROOT/scripts/verify-ui-showcase.sh" 2>&1 | tail -15; then
+        echo "✓ ui-showcase"
+    else
+        echo "✗ ui-showcase"
+        fail=$((fail+1))
+        FAILS+=("ui-showcase")
+        echo "VERIFY: $pass pass / $fail fail (with ui-showcase)"
+    fi
+fi
+
 exit $fail
