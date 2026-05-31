@@ -1,0 +1,222 @@
+-- | Sky.Http.Server.WebSocket — server-side WebSocket upgrade.
+--
+-- Mirror image of `Sky.Core.WebSocket`: this module's handlers run
+-- on the SERVER side of a WebSocket connection — upgrading an
+-- incoming HTTP request into a long-lived bidirectional channel,
+-- dispatching `onConnect` / `onMessage` / `onClose` / `onError`
+-- callbacks per peer.
+--
+-- Usage from inside a Sky.Http.Server handler:
+--
+--   import Sky.Http.Server as Server
+--   import Sky.Http.Server.WebSocket as Ws
+--   import Std.Log
+--
+--   handleWs : Server.Request -> Task Error Server.Response
+--   handleWs req =
+--       Ws.upgrade req
+--           (Ws.defaultCfg
+--               |> Ws.withOnConnect
+--                   (\sock -> Std.Log.println "client connected")
+--               |> Ws.withOnMessage
+--                   (\sock msg -> Ws.sendToClient sock ("echo: " ++ msg))
+--               |> Ws.withOnClose
+--                   (\sock -> Std.Log.println "client gone")
+--               |> Ws.withOriginPatterns
+--                   [ "https://*.example.com" ]
+--           )
+--
+-- The handler RETURNS a `Task Error Response` like every other
+-- Server handler — the dispatcher detects the upgrade sentinel on
+-- the returned response and routes through the Hijack path.
+--
+-- Origin validation: in production (`ENV=production`) the cfg's
+-- `originPatterns` MUST be non-empty — an upgrade with no
+-- explicit Origin allowlist returns 403.  In dev mode an empty
+-- list allows any origin (matches `*.localhost` etc.).
+--
+-- Backpressure: `sendToClient` blocks up to 30 s when the
+-- underlying write buffer is full.  `broadcast` fans out to every
+-- listed peer and tolerates partial failure (one slow / dead peer
+-- doesn't poison the others).
+--
+-- See `examples/33-websocket-echo` for the canonical pattern.
+module Sky.Http.Server.WebSocket exposing
+    ( WebSocketServer(..)
+    , WebSocketServerCfg
+    , defaultCfg
+    , withOnConnect
+    , withOnMessage
+    , withOnClose
+    , withOnError
+    , withMaxMessageBytes
+    , withOriginPatterns
+    , upgrade
+    , sendToClient
+    , sendBinaryToClient
+    , broadcast
+    , closeClient
+    )
+
+import Sky.Ffi as Ffi
+import Sky.Core.Error exposing (Error)
+import Sky.Core.List as List
+import Sky.Core.Task as Task
+import Sky.Http.Server exposing (Request, Response)
+
+
+-- | Opaque handle to one connected peer.  The wrapped `Int` is the
+-- runtime's per-socket id.  Multiple handles coexist on the same
+-- server — every accepted upgrade gets its own.
+type WebSocketServer
+    = WebSocketServer Int
+
+
+-- | Server-side WebSocket cfg record.
+--
+-- Constructed via `defaultCfg` + `with*` builders so future field
+-- additions don't break call sites.
+--
+-- All four callbacks are Task-returning; failures are logged and
+-- isolated per-peer (an erroring `onMessage` on one client does
+-- not abort the upgrade loop).
+type alias WebSocketServerCfg msg =
+    { onConnect : WebSocketServer -> Task Error ()
+    , onMessage : WebSocketServer -> String -> Task Error ()
+    , onClose : WebSocketServer -> Task Error ()
+    , onError : WebSocketServer -> Error -> Task Error ()
+    , maxMessageBytes : Int
+    , originPatterns : List String
+    }
+
+
+-- | All-defaults cfg.  Override fields via the `with*` helpers.
+--
+-- Default callbacks are no-ops (return `Task.succeed ()`); set the
+-- ones you care about.
+defaultCfg : WebSocketServerCfg msg
+defaultCfg =
+    { onConnect = \_ -> Task.succeed ()
+    , onMessage = \_ _ -> Task.succeed ()
+    , onClose = \_ -> Task.succeed ()
+    , onError = \_ _ -> Task.succeed ()
+    , maxMessageBytes = 1048576
+    , originPatterns = []
+    }
+
+
+withOnConnect : (WebSocketServer -> Task Error ()) -> WebSocketServerCfg msg -> WebSocketServerCfg msg
+withOnConnect cb cfg =
+    { cfg | onConnect = cb }
+
+
+withOnMessage : (WebSocketServer -> String -> Task Error ()) -> WebSocketServerCfg msg -> WebSocketServerCfg msg
+withOnMessage cb cfg =
+    { cfg | onMessage = cb }
+
+
+withOnClose : (WebSocketServer -> Task Error ()) -> WebSocketServerCfg msg -> WebSocketServerCfg msg
+withOnClose cb cfg =
+    { cfg | onClose = cb }
+
+
+withOnError : (WebSocketServer -> Error -> Task Error ()) -> WebSocketServerCfg msg -> WebSocketServerCfg msg
+withOnError cb cfg =
+    { cfg | onError = cb }
+
+
+-- | Cap incoming message size in bytes (default 1 MiB).  Frames
+-- larger than this fail the read; the peer is disconnected with
+-- `MessageTooBig` close code.
+withMaxMessageBytes : Int -> WebSocketServerCfg msg -> WebSocketServerCfg msg
+withMaxMessageBytes n cfg =
+    { cfg | maxMessageBytes = n }
+
+
+-- | `withOriginPatterns ps cfg` — accept upgrades only from origins
+-- matching one of the patterns (wildcard `*` is supported per
+-- nhooyr/websocket's matching rules).  In production this list
+-- MUST be non-empty.
+withOriginPatterns : List String -> WebSocketServerCfg msg -> WebSocketServerCfg msg
+withOriginPatterns ps cfg =
+    { cfg | originPatterns = ps }
+
+
+-- | Internal — direct kernel alias.  Builds a Response carrying the
+-- upgrade sentinel; the dispatcher detects it + Hijacks.
+upgradeRaw : Request -> WebSocketServerCfg msg -> Task Error Response
+upgradeRaw =
+    Ffi.kernel "ServerWebSocket_upgrade"
+
+
+-- | `upgrade req cfg` — accept an incoming WebSocket upgrade on
+-- `req`.  Returns a `Task Error Response` — return the result
+-- directly from your Sky.Http.Server handler.
+upgrade : Request -> WebSocketServerCfg msg -> Task Error Response
+upgrade req cfg =
+    upgradeRaw req cfg
+
+
+sendToClientRaw : Int -> String -> Task Error ()
+sendToClientRaw =
+    Ffi.kernel "ServerWebSocket_sendToClient"
+
+
+-- | `sendToClient sock text` — write a text frame to one peer.
+sendToClient : WebSocketServer -> String -> Task Error ()
+sendToClient sock msg =
+    case sock of
+
+        WebSocketServer raw ->
+            sendToClientRaw raw msg
+
+
+sendBinaryToClientRaw : Int -> String -> Task Error ()
+sendBinaryToClientRaw =
+    Ffi.kernel "ServerWebSocket_sendBinaryToClient"
+
+
+-- | `sendBinaryToClient sock bytes` — write a binary frame to one peer.
+sendBinaryToClient : WebSocketServer -> String -> Task Error ()
+sendBinaryToClient sock msg =
+    case sock of
+
+        WebSocketServer raw ->
+            sendBinaryToClientRaw raw msg
+
+
+broadcastRaw : List Int -> String -> Task Error ()
+broadcastRaw =
+    Ffi.kernel "ServerWebSocket_broadcast"
+
+
+-- | `broadcast socks text` — fan a text frame out to every peer in
+-- the list.  Best-effort: a closed / errored peer is skipped (and
+-- closed) without aborting the rest.  Returns Err only if EVERY
+-- send failed.
+broadcast : List WebSocketServer -> String -> Task Error ()
+broadcast socks msg =
+    broadcastRaw (List.map unwrapId socks) msg
+
+
+-- | Internal — unwrap a `WebSocketServer Int` to its raw int id.
+unwrapId : WebSocketServer -> Int
+unwrapId sock =
+    case sock of
+
+        WebSocketServer raw ->
+            raw
+
+
+closeClientRaw : Int -> Task Error ()
+closeClientRaw =
+    Ffi.kernel "ServerWebSocket_closeClient"
+
+
+-- | `closeClient sock` — disconnect one peer.  Idempotent.
+closeClient : WebSocketServer -> Task Error ()
+closeClient sock =
+    case sock of
+
+        WebSocketServer raw ->
+            closeClientRaw raw

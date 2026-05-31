@@ -559,6 +559,28 @@ registry = Map.fromList
     , (("ServerStream", "withContentType"), KernelInfo "rt.ServerStream_withContentType" 2 True)
 
     -- ═══════════════════════════════════════════════════════
+    -- Sky.Core.WebSocket  (v0.15.46 — client-side bidirectional
+    -- WebSocket; incoming frames flow via Sub.subscribeWebSocket)
+    -- ═══════════════════════════════════════════════════════
+    , (("WebSocket", "connect"),       KernelInfo "rt.WebSocket_connect" 1 True)
+    , (("WebSocket", "connectWith"),   KernelInfo "rt.WebSocket_connectWith" 1 True)
+    , (("WebSocket", "send"),          KernelInfo "rt.WebSocket_send" 2 True)
+    , (("WebSocket", "sendBinary"),    KernelInfo "rt.WebSocket_sendBinary" 2 True)
+    , (("WebSocket", "close"),         KernelInfo "rt.WebSocket_close" 1 True)
+    , (("WebSocket", "closeWithCode"), KernelInfo "rt.WebSocket_closeWithCode" 3 True)
+    , (("Sub", "subscribeWebSocket"),  KernelInfo "rt.Sub_subscribeWebSocket" 3 False)
+
+    -- ═══════════════════════════════════════════════════════
+    -- Sky.Http.Server.WebSocket  (v0.15.46 — server-side
+    -- WebSocket upgrade; mirror of WebSocket above)
+    -- ═══════════════════════════════════════════════════════
+    , (("ServerWebSocket", "upgrade"),             KernelInfo "rt.ServerWebSocket_upgrade" 2 True)
+    , (("ServerWebSocket", "sendToClient"),        KernelInfo "rt.ServerWebSocket_sendToClient" 2 True)
+    , (("ServerWebSocket", "sendBinaryToClient"),  KernelInfo "rt.ServerWebSocket_sendBinaryToClient" 2 True)
+    , (("ServerWebSocket", "broadcast"),           KernelInfo "rt.ServerWebSocket_broadcast" 2 True)
+    , (("ServerWebSocket", "closeClient"),         KernelInfo "rt.ServerWebSocket_closeClient" 1 True)
+
+    -- ═══════════════════════════════════════════════════════
     -- Std.PubSub  (Cycle 4 PT — Task-shaped publish, callable from
     -- any context; complements Cmd.publish which only fires from
     -- a Sky.Live update return).

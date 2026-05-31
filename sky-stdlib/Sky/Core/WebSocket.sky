@@ -1,0 +1,297 @@
+-- | Sky.Core.WebSocket — outbound WebSocket client.
+--
+-- Opens a long-lived bidirectional connection to a peer.  Incoming
+-- frames surface as `Sub` events on a Sky.Live update loop (mirror
+-- of `Sky.Core.Http.Stream.chunks`); outbound `send` writes a text
+-- or binary frame from the calling goroutine.
+--
+-- Driving use cases: bidirectional LLM chat, collab editor ops,
+-- multiplayer game state, financial feeds.  When you need request
+-- /response with no incremental body Http.get is the right tool;
+-- this is for the long-lived bidirectional case.
+--
+-- Lifecycle:
+--
+--  1. `Cmd.perform (WebSocket.connect "wss://…") Connected` — kick
+--     off the handshake.  The runtime returns a `WebSocket` once the
+--     handshake completes (no message wait).
+--
+--  2. `subscriptions model = WebSocket.onMessage sock GotFrame` —
+--     subscribe to incoming frames.  Each `Text String` or
+--     `Binary String` Msg flows through `update`.
+--
+--  3. `WebSocket.send sock "hello"` — write a text frame.  Blocks
+--     up to 30 s if the underlying write buffer is full.
+--
+--  4. `WebSocket.close sock` — release the connection.  Idempotent.
+--
+-- Session lifecycle: when a Sky.Live session is evicted (TTL OR
+-- explicit Delete) the runtime closes every owned socket
+-- automatically — app code is NEVER responsible for cleanup on
+-- disconnect.
+--
+-- Heartbeat: built-in ping every 30 s by default (configurable via
+-- `connectWith.pingInterval`).  A peer that doesn't pong within
+-- the timeout triggers `onClose` automatically.
+--
+-- Backpressure: `send` blocks up to the consumer-stall timeout
+-- (30 s).  The bounded read channel (64 frames) provides
+-- per-socket backpressure to the upstream when the user's update
+-- loop falls behind — Sky.Live's existing
+-- `sky_live_sse_drops_total` covers spillover.
+--
+-- See `examples/33-websocket-echo` for the canonical pattern.
+module Sky.Core.WebSocket exposing
+    ( WebSocket(..)
+    , WebSocketMessage(..)
+    , CloseCode(..)
+    , WebSocketCfg
+    , defaultCfg
+    , withHeaders
+    , withTimeout
+    , withPingInterval
+    , connect
+    , connectWith
+    , send
+    , sendBinary
+    , close
+    , closeWithCode
+    , onOpen
+    , onMessage
+    , onClose
+    , onError
+    )
+
+import Sky.Ffi as Ffi
+import Sky.Core.Error exposing (Error)
+import Sky.Core.Task as Task
+
+
+-- | Opaque handle to an open WebSocket.  The wrapped `Int` is the
+-- runtime's per-socket id; user code treats it as opaque.
+type WebSocket
+    = WebSocket Int
+
+
+-- | One incoming frame from the peer.
+--
+--   * `Text String` — UTF-8 text frame.
+--   * `Binary String` — raw bytes (Sky.Core.Bytes alias = String).
+type WebSocketMessage
+    = Text String
+    | Binary String
+
+
+-- | A WebSocket close code.  Either one of the standard symbolic
+-- codes OR a `Custom Int` for application-defined codes (1000-4999).
+type CloseCode
+    = Normal
+    | GoingAway
+    | UnsupportedData
+    | InternalError
+    | Custom Int
+
+
+-- | Connect configuration record for `connectWith`.
+--
+-- v0.15.46 stdlib convention: every typed record ships with a
+-- `default` constructor + `with*` builder helpers so adding new
+-- fields in future releases doesn't break downstream record
+-- literals.
+type alias WebSocketCfg =
+    { url : String
+    , headers : List ( String, String )
+    , timeout : Int
+    , pingInterval : Int
+    }
+
+
+-- | Default WebSocketCfg.  All-defaults values.  Override fields
+-- with the `with*` builder helpers.
+defaultCfg : String -> WebSocketCfg
+defaultCfg url =
+    { url = url
+    , headers = []
+    , timeout = 30000
+    , pingInterval = 30000
+    }
+
+
+-- | Override the HTTP headers (e.g. Authorization) sent on the
+-- upgrade handshake.
+withHeaders : List ( String, String ) -> WebSocketCfg -> WebSocketCfg
+withHeaders headers cfg =
+    { cfg | headers = headers }
+
+
+-- | Override the handshake timeout in milliseconds (default 30000).
+withTimeout : Int -> WebSocketCfg -> WebSocketCfg
+withTimeout ms cfg =
+    { cfg | timeout = ms }
+
+
+-- | Override the ping interval in milliseconds (default 30000).
+-- Pass 0 to disable application-level pings entirely.
+withPingInterval : Int -> WebSocketCfg -> WebSocketCfg
+withPingInterval ms cfg =
+    { cfg | pingInterval = ms }
+
+
+-- | Internal — direct kernel alias.  Returns a bare `Task Error Int`;
+-- the public `connect` wraps it in `WebSocket`.
+connectRaw : String -> Task Error Int
+connectRaw =
+    Ffi.kernel "WebSocket_connect"
+
+
+-- | `connect url` — open a new WebSocket to `url` (typically
+-- `ws://…` or `wss://…`).  The Task resolves once the handshake
+-- completes; frames flow via `onMessage` after that.
+connect : String -> Task Error WebSocket
+connect url =
+    Task.map WebSocket (connectRaw url)
+
+
+-- | Internal — direct kernel alias for the typed-record cfg form.
+connectWithRaw : WebSocketCfg -> Task Error Int
+connectWithRaw =
+    Ffi.kernel "WebSocket_connectWith"
+
+
+-- | `connectWith cfg` — connect with custom headers / timeout /
+-- ping cadence.  Build the cfg via `defaultCfg url |> withHeaders
+-- [...]` etc. so future field additions don't break call sites.
+connectWith : WebSocketCfg -> Task Error WebSocket
+connectWith cfg =
+    Task.map WebSocket (connectWithRaw cfg)
+
+
+-- | Internal — direct kernel alias.
+sendRaw : Int -> String -> Task Error ()
+sendRaw =
+    Ffi.kernel "WebSocket_send"
+
+
+-- | `send sock text` — write a text frame.  Blocks up to 30 s if
+-- the write buffer is full.
+send : WebSocket -> String -> Task Error ()
+send sock msg =
+    case sock of
+
+        WebSocket raw ->
+            sendRaw raw msg
+
+
+sendBinaryRaw : Int -> String -> Task Error ()
+sendBinaryRaw =
+    Ffi.kernel "WebSocket_sendBinary"
+
+
+-- | `sendBinary sock bytes` — write a binary frame.  The String
+-- carries raw bytes (Sky.Core.Bytes alias = String for v0.15.x).
+sendBinary : WebSocket -> String -> Task Error ()
+sendBinary sock msg =
+    case sock of
+
+        WebSocket raw ->
+            sendBinaryRaw raw msg
+
+
+closeRaw : Int -> Task Error ()
+closeRaw =
+    Ffi.kernel "WebSocket_close"
+
+
+-- | `close sock` — release the connection (sends a Normal close
+-- frame).  Idempotent.
+close : WebSocket -> Task Error ()
+close sock =
+    case sock of
+
+        WebSocket raw ->
+            closeRaw raw
+
+
+closeWithCodeRaw : Int -> String -> Int -> Task Error ()
+closeWithCodeRaw =
+    Ffi.kernel "WebSocket_closeWithCode"
+
+
+-- | `closeWithCode code reason sock` — release the connection with
+-- a custom close code + reason.
+closeWithCode : CloseCode -> String -> WebSocket -> Task Error ()
+closeWithCode code reason sock =
+    case sock of
+
+        WebSocket raw ->
+            closeWithCodeRaw (closeCodeToInt code) reason raw
+
+
+-- | Map a CloseCode ADT to the WebSocket integer code.
+closeCodeToInt : CloseCode -> Int
+closeCodeToInt code =
+    case code of
+
+        Normal ->
+            1000
+
+        GoingAway ->
+            1001
+
+        UnsupportedData ->
+            1003
+
+        InternalError ->
+            1011
+
+        Custom n ->
+            n
+
+
+-- | Internal — direct kernel alias.  `kind` selects which event
+-- class this Sub receives: "open" | "message" | "close" | "error".
+subscribeWebSocketRaw : Int -> String -> any -> Sub msg
+subscribeWebSocketRaw =
+    Ffi.kernel "Sub_subscribeWebSocket"
+
+
+-- | `onOpen sock msg` — dispatch `msg` once the socket is connected.
+-- The Sub is one-shot semantically (the connection opens at most
+-- once over its lifetime); subsequent re-subscriptions are no-ops.
+onOpen : WebSocket -> msg -> Sub msg
+onOpen sock msg =
+    case sock of
+
+        WebSocket raw ->
+            subscribeWebSocketRaw raw "open" msg
+
+
+-- | `onMessage sock toMsg` — dispatch `toMsg event` for every
+-- incoming frame.
+onMessage : WebSocket -> (WebSocketMessage -> msg) -> Sub msg
+onMessage sock toMsg =
+    case sock of
+
+        WebSocket raw ->
+            subscribeWebSocketRaw raw "message" toMsg
+
+
+-- | `onClose sock toMsg` — dispatch `toMsg closeCode` when the
+-- peer (or this side) closes the connection.
+onClose : WebSocket -> (CloseCode -> msg) -> Sub msg
+onClose sock toMsg =
+    case sock of
+
+        WebSocket raw ->
+            subscribeWebSocketRaw raw "close" toMsg
+
+
+-- | `onError sock toMsg` — dispatch `toMsg err` on a network /
+-- protocol error.  The socket is closed automatically after the
+-- error is dispatched.
+onError : WebSocket -> (Error -> msg) -> Sub msg
+onError sock toMsg =
+    case sock of
+
+        WebSocket raw ->
+            subscribeWebSocketRaw raw "error" toMsg
