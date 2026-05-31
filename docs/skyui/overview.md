@@ -158,6 +158,111 @@ totally-broken single-column fallback when the attribute is forgotten).
 `Ui.spacing N` works as the gap (CSS Grid honours the `gap` property
 natively, same as flexbox).
 
+### `Std.Ui.Grid` — typed track lists (sidebars, content-aware columns)
+
+`Ui.gridColumns` is great for product-card grids where every track
+has the same minimum width. For **sidebar layouts** (`1fr 200px 1fr`),
+**content-aware columns** (`auto 1fr`), or **`repeat(auto-fit,
+minmax(<px>, 1fr))` card grids that re-flow on resize**, reach for
+`Std.Ui.Grid`. The typed `Track` ADT spells out the exact CSS Grid
+track-list, then `Grid.columns` / `Grid.rows` / `Grid.tracks` attach
+it to a `Ui.grid` container.
+
+```elm
+import Std.Ui as Ui
+import Std.Ui.Grid as Grid
+
+Ui.grid
+    [ Ui.width Ui.fill
+    , Grid.columns
+        [ Grid.repeatAutoFit (Grid.minmax (Grid.px 240) (Grid.fr 1)) ]
+    , Ui.spacing 16
+    ]
+    (List.map productCard products)
+
+-- Sidebar layout:
+Ui.grid
+    [ Ui.width Ui.fill
+    , Grid.columns [ Grid.fr 1, Grid.px 200, Grid.fr 1 ]
+    ]
+    [ leftPane, mainPane, rightPane ]
+
+-- Header + body + footer rows:
+Ui.grid
+    [ Ui.width Ui.fill
+    , Grid.tracks
+        [ Grid.auto, Grid.fr 1 ]
+        [ Grid.px 60, Grid.fr 1, Grid.px 40 ]
+    ]
+    [ header, body, footer ]
+```
+
+**Track constructors** (every variant lowers to its idiomatic CSS):
+
+| Sky | CSS | Use case |
+|---|---|---|
+| `Grid.fr N` | `Nfr` | Flexible track, proportional to other `fr` |
+| `Grid.px N` | `Npx` | Fixed-width pixel track |
+| `Grid.auto` | `auto` | Track hugs its content |
+| `Grid.minContent` | `min-content` | Track shrinks to smallest non-overflowing size |
+| `Grid.maxContent` | `max-content` | Track grows to content's preferred width |
+| `Grid.minmax lo hi` | `minmax(lo, hi)` | Bounded — e.g. `minmax (px 240) (fr 1)` |
+| `Grid.repeat N t` | `repeat(N, t)` | Repeat a track N times |
+| `Grid.repeatAutoFit t` | `repeat(auto-fit, t)` | Re-flowing card grid (empty tracks collapse) |
+| `Grid.repeatAutoFill t` | `repeat(auto-fill, t)` | Re-flowing grid that keeps ghost slots |
+
+**`gridColumns` vs `Grid.columns` — when to pick which**
+
+| Need | Reach for |
+|---|---|
+| Product-card grid (all tracks same min-width) | `Ui.gridColumns N` (lighter, default) |
+| Sidebar shells, header rows, mixed track types | `Grid.tracks` / `Grid.columns` |
+| Content-aware tracks (`auto` / `min-content`) | `Grid.columns` |
+| Both column + row axes set explicitly | `Grid.tracks cols rows` |
+| Responsive card grids that must `auto-fit minmax` | `Grid.columns [ Grid.repeatAutoFit … ]` |
+
+Both compile to inline `grid-template-*` declarations — no runtime
+injection pass, no model state. Sky.Tui falls back to column stacking
+(it can't draw a 2-D grid in ANSI cells); Sky.Webview honours the
+grid identically to Sky.Live.
+
+### `Ui.aspectRatio` — proportional sizing (16:9, 1:1, 2.35:1)
+
+Lock an element to a fixed width-to-height ratio. Pair with
+`Ui.width Ui.fill` (or a fixed pixel width) — the browser's
+`aspect-ratio` solver fills in the unset axis. Indispensable for
+video embeds, image galleries, hero banners, avatar tiles, square
+product images.
+
+```elm
+import Std.Ui as Ui
+
+-- Decimal form — `aspect-ratio: 1.777`
+Ui.el [ Ui.width Ui.fill, Ui.aspectRatio 1.777 ] videoPlaceholder
+
+-- Integer-pair form — `aspect-ratio: 16 / 9` (more readable)
+Ui.el [ Ui.width Ui.fill, Ui.aspectRatioWH 16 9 ] videoPlaceholder
+
+-- Convenience aliases for common ratios:
+Ui.el [ Ui.width (Ui.px 100), Ui.square ] avatar           -- 1:1
+Ui.el [ Ui.width Ui.fill, Ui.widescreen ] heroBanner       -- 16:9
+Ui.el [ Ui.width Ui.fill, Ui.fullHd ] heroBanner           -- 16:9 (alias)
+Ui.el [ Ui.width Ui.fill, Ui.cinemascope ] cinemaBanner    -- 2.35:1
+```
+
+| Helper | CSS emitted | Common case |
+|---|---|---|
+| `Ui.aspectRatio Float` | `aspect-ratio: <r>` | Custom decimal ratio |
+| `Ui.aspectRatioWH Int Int` | `aspect-ratio: <w> / <h>` | Standard ratios (4:3, 16:9, 2:3, …) |
+| `Ui.square` | `aspect-ratio: 1 / 1` | Avatars, product tiles |
+| `Ui.widescreen` / `Ui.fullHd` | `aspect-ratio: 16 / 9` | Video embeds, HDTV |
+| `Ui.cinemascope` | `aspect-ratio: 2.35` | Hero banners, cinema |
+
+The browser resizes the unset axis on every viewport change — no
+re-render needed, no observer to wire up. Sky.Tui ignores the
+property (ANSI cells don't have an aspect-ratio concept); Sky.Webview
+honours it via the embedded WebKit/Chromium engine.
+
 ## Length
 
 ```elm
@@ -807,6 +912,8 @@ The 8-module split (`State.sky` / `Update.sky` / `View/{Common,Posts,Detail,Comp
 | **Media queries**: `mediaQuery / breakpoint / Breakpoint` | ✅ | CSS-driven viewport-conditional styling — instant, no JS round-trip. Typed `Mobile / Tablet / Desktop / SmAndUp / MdAndUp / LgAndUp / XlAndUp / DarkMode / LightMode / ReducedMotion / TouchDevice / Portrait / Landscape / Custom`. See §"Media queries + breakpoints". |
 | **Pseudo-classes**: `Background.hoverColor / Font.focusColor / Border.activeColor / ... / Ui.onPseudo` | ✅ | `:hover` / `:focus-visible` / `:focus` / `:active` / `:disabled` typed helpers on every sub-module + generic escape hatch. `:hover` auto-gated behind `@media (hover: hover)` for touch-device safety. See §"Pseudo-classes (hover, focus, active, disabled)". |
 | **Transitions + animations**: `Transition.attribute / Animation.attribute / Std.Ui.Transform` | ✅ | Typed CSS transition Steps + typed keyframe Spec with Iterations + FillMode. Auto-wrapped in `@media (prefers-reduced-motion: no-preference)` by default; opt out via `attributeUnsafe` / `respectReducedMotion = False`. `@keyframes` names auto-suffixed with sky-id. See §"Transitions + animations". |
+| **Aspect ratio**: `Ui.aspectRatio / Ui.aspectRatioWH / Ui.square / Ui.widescreen / Ui.fullHd / Ui.cinemascope` | ✅ | Inline `aspect-ratio:` CSS; pairs with `Ui.width Ui.fill` so the unset axis auto-scales via the browser's aspect-ratio solver. See §"`Ui.aspectRatio` — proportional sizing". |
+| **Grid tracks**: `Std.Ui.Grid.{tracks,columns,rows}` + `Track` ADT (`fr / px / auto / minContent / maxContent / minmax / repeat / repeatAutoFit / repeatAutoFill`) | ✅ | Typed CSS-grid track-list — sidebar layouts (`1fr 200px 1fr`), content-aware tracks (`auto 1fr`), responsive card grids (`repeat(auto-fit, minmax(240px, 1fr))`). Lighter `Ui.gridColumns N` (auto-fill default) stays for the common-case product-card grid. See §"`Std.Ui.Grid` — typed track lists". |
 | **Render target** | — | Server-side Sky.Live + ~2 KB browser JS |
 | **Style emission** | — | Inline styles per element |
 

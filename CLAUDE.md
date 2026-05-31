@@ -1142,6 +1142,31 @@ Full reference: `docs/skyui/overview.md`.
   (`fadeIn__r_1_div_0`). Renders a sky-id-scoped
   `<style data-sky-tr=...>` + `<style data-sky-anim=...>` child via
   the same pattern as pseudo-classes / media queries.
+- **Aspect ratio + grid tracks** (`Ui.aspectRatio` /
+  `Ui.aspectRatioWH` / `Ui.square` / `Ui.widescreen` / `Ui.fullHd` /
+  `Ui.cinemascope` + `Std.Ui.Grid.tracks` / `Grid.columns` /
+  `Grid.rows`) — typed proportional sizing + explicit CSS-grid
+  track lists. `Ui.aspectRatio 1.777` / `Ui.aspectRatioWH 16 9`
+  lock an element to a width-to-height ratio (pair with
+  `Ui.width Ui.fill` so the unset axis auto-scales). `Std.Ui.Grid`
+  exposes a typed `Track` ADT (`fr`, `px`, `auto`, `minContent`,
+  `maxContent`, `minmax`, `repeat`, `repeatAutoFit`,
+  `repeatAutoFill`) + the attribute entry points; reach for it on
+  sidebar layouts (`[fr 1, px 200, fr 1]`), content-aware columns
+  (`[auto, fr 1]`), or responsive card grids
+  (`[repeatAutoFit (minmax (px 240) (fr 1))]`). The lighter-weight
+  `Ui.gridColumns N` (auto-fill `minmax(Npx, 1fr)`) stays for the
+  common-case product-card grid. Both lower to inline CSS via the
+  existing AttrStyle channel — no runtime injection pass.
+
+| Need | Reach for |
+|---|---|
+| Square avatars, 16:9 video embeds | `Ui.square` / `Ui.widescreen` / `Ui.aspectRatioWH w h` |
+| Custom decimal ratio (e.g. 2.35:1 cinemascope) | `Ui.aspectRatio Float` |
+| Product-card grid (all tracks same min-width) | `Ui.gridColumns N` |
+| Sidebar layout / mixed track types | `Std.Ui.Grid.columns [ fr 1, px 200, fr 1 ]` |
+| Responsive card grid (re-flow on resize) | `Grid.columns [ Grid.repeatAutoFit (Grid.minmax (Grid.px 240) (Grid.fr 1)) ]` |
+| Both axes set explicitly | `Grid.tracks cols rows` |
 
 ```elm
 -- Mobile-first: column on phones, row above 768.
