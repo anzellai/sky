@@ -124,6 +124,9 @@ update msg model =
                             , url = mockStreamUrl
                             , body = trimmed
                             , headers = [ ( "Content-Type", "text/plain" ) ]
+                            , timeout = 30000
+                            , followRedirects = True
+                            , maxRedirects = 10
                             }
                     in
                         ( { model

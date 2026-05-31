@@ -1218,11 +1218,29 @@ func Http_parseQuery(raw any) any {
 func Http_request(firstArg any, rest ...any) any {
 	var method, url, body string
 	var headers any
+	// v0.15.44: per-request timeout / redirect overrides.
+	timeoutMs := -1 // -1 = inherit skyHttpClient default
+	followRedirects := true
+	maxRedirects := 10
 	if isRecordArg(firstArg) {
 		method = fmt.Sprintf("%v", recordField(firstArg, "Method", "method"))
 		url = fmt.Sprintf("%v", recordField(firstArg, "Url", "url"))
 		body = fmt.Sprintf("%v", recordField(firstArg, "Body", "body"))
 		headers = recordField(firstArg, "Headers", "headers")
+		if t := recordField(firstArg, "Timeout", "timeout"); t != nil {
+			timeoutMs = AsInt(t)
+		}
+		if fr := recordField(firstArg, "FollowRedirects", "followRedirects"); fr != nil {
+			if b, ok := fr.(bool); ok {
+				followRedirects = b
+			}
+		}
+		if mr := recordField(firstArg, "MaxRedirects", "maxRedirects"); mr != nil {
+			maxRedirects = AsInt(mr)
+			if maxRedirects <= 0 {
+				maxRedirects = 10
+			}
+		}
 	} else {
 		method = fmt.Sprintf("%v", firstArg)
 		if len(rest) >= 1 {
@@ -1235,13 +1253,20 @@ func Http_request(firstArg any, rest ...any) any {
 			headers = rest[2]
 		}
 	}
+	if method == "" {
+		method = "GET"
+	}
 	return func() any {
 		req, err := http.NewRequest(method, url, strings.NewReader(body))
 		if err != nil {
 			return Err[any, any](ErrNetwork("http.request: " + err.Error()))
 		}
 		applyHttpHeaders(req, headers)
-		resp, err := skyHttpClient.Do(req)
+		client := skyHttpClient
+		if timeoutMs >= 0 || !followRedirects || maxRedirects != 10 {
+			client = httpClientFor(timeoutMs, followRedirects, maxRedirects)
+		}
+		resp, err := client.Do(req)
 		if err != nil {
 			return Err[any, any](ErrNetwork("http.request do: " + err.Error()))
 		}
@@ -1260,6 +1285,33 @@ func Http_request(firstArg any, rest ...any) any {
 			Body:    rb,
 			Headers: hdrs,
 		})
+	}
+}
+
+// httpClientFor returns a *http.Client that honours per-request
+// overrides on top of the shared skyHttpClient transport. timeoutMs<0
+// inherits the env default; ==0 disables. followRedirects=false
+// returns the first response (resp.Body must still be read & closed).
+func httpClientFor(timeoutMs int, followRedirects bool, maxRedirects int) *http.Client {
+	timeout := skyHttpClient.Timeout
+	if timeoutMs == 0 {
+		timeout = 0
+	} else if timeoutMs > 0 {
+		timeout = time.Duration(timeoutMs) * time.Millisecond
+	}
+	check := func(req *http.Request, via []*http.Request) error {
+		if !followRedirects {
+			return http.ErrUseLastResponse
+		}
+		if len(via) >= maxRedirects {
+			return fmt.Errorf("stopped after %d redirects", maxRedirects)
+		}
+		return nil
+	}
+	return &http.Client{
+		Transport:     skyHttpClient.Transport,
+		Timeout:       timeout,
+		CheckRedirect: check,
 	}
 }
 

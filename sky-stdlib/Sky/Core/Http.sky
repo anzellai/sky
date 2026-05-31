@@ -1,16 +1,30 @@
 -- | Sky.Core.Http — HTTP client (Layer 3 Sky source).
 --
--- Outbound HTTP requests.  Returns `HttpResponse` (runtime-typed,
--- shared with the existing kernel binding).
+-- Outbound HTTP requests.  Returns the typed `HttpResponse` record
+-- alias whose Go-side counterpart (`rt.HttpResponse`) matches the
+-- declared Sky shape — apps may annotate `resp : HttpResponse`
+-- and read `.status` / `.body` / `.headers` directly.
 module Sky.Core.Http exposing
     ( get, post
-    , HttpRequest, request
+    , HttpRequest, HttpResponse, request
+    , defaultRequest, withHeader, withTimeout, withBody, withMethod
     , parseQuery
     )
 
 
 import Sky.Ffi as Ffi
 import Sky.Core.Error exposing (Error)
+
+
+-- | The shape of an HTTP response.  Returned by every Sky.Core.Http
+-- call (`get`, `post`, `request`).  Maps 1:1 to `rt.HttpResponse`
+-- on the Go side — record-field access (`resp.status` / `.body` /
+-- `.headers`) is the typed read path.
+type alias HttpResponse =
+    { status : Int
+    , body : String
+    , headers : Dict String String
+    }
 
 
 -- | `get url` — issue a GET request.
@@ -24,22 +38,76 @@ post : String -> String -> Task Error HttpResponse
 post = Ffi.kernel "Http_post"
 
 
--- | A full HTTP request — method, URL, body, and headers.
--- `headers` is a list of (name, value) pairs.
+-- | A full HTTP request — method, URL, body, headers, timeout,
+-- and redirect controls.  Build with `defaultRequest` + builder
+-- helpers; e.g.
+--
+--     defaultRequest "https://api.example.com/v1/foo"
+--         |> withMethod "POST"
+--         |> withHeader "Authorization" ("Bearer " ++ token)
+--         |> withBody "{\"hello\":\"world\"}"
+--         |> withTimeout 60000
+--         |> request
 type alias HttpRequest =
     { method : String
     , url : String
     , body : String
     , headers : List ( String, String )
+    , timeout : Int
+    , followRedirects : Bool
+    , maxRedirects : Int
     }
 
 
 -- | `request req` — issue an HTTP request with full control over
--- the method, headers, and body — the cases `get` / `post` don't
--- cover (e.g. sending an `Authorization` header). Returns the
--- `HttpResponse`.
+-- the method, headers, body, and timeout.  Headers are sent as-is
+-- (case-preserved); use the builders below for the common shape.
 request : HttpRequest -> Task Error HttpResponse
 request = Ffi.kernel "Http_request"
+
+
+-- ─── HttpRequest builders (zero-cost record updates) ──────────────
+
+
+-- | `defaultRequest url` — a GET to `url`, no headers, no body,
+-- 30 s timeout, follow up to 10 redirects.  Compose with the
+-- builders below.
+defaultRequest : String -> HttpRequest
+defaultRequest url =
+    { method = "GET"
+    , url = url
+    , body = ""
+    , headers = []
+    , timeout = 30000
+    , followRedirects = True
+    , maxRedirects = 10
+    }
+
+
+-- | `withMethod "POST" req` — replace the method.
+withMethod : String -> HttpRequest -> HttpRequest
+withMethod m req =
+    { req | method = m }
+
+
+-- | `withHeader name value req` — prepend a (case-preserving)
+-- header.  Multiple calls accumulate.
+withHeader : String -> String -> HttpRequest -> HttpRequest
+withHeader name value req =
+    { req | headers = ( name, value ) :: req.headers }
+
+
+-- | `withTimeout ms req` — replace the per-request timeout
+-- (milliseconds).  Pass `0` to disable.
+withTimeout : Int -> HttpRequest -> HttpRequest
+withTimeout ms req =
+    { req | timeout = ms }
+
+
+-- | `withBody body req` — replace the request body.
+withBody : String -> HttpRequest -> HttpRequest
+withBody body req =
+    { req | body = body }
 
 
 -- | `parseQuery raw` — parse a URL query string (`"a=1&b=2"`)

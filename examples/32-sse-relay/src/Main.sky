@@ -118,4 +118,7 @@ upstreamRequest =
     , url = "http://127.0.0.1:8001/upstream"
     , body = ""
     , headers = []
+    , timeout = 30000
+    , followRedirects = True
+    , maxRedirects = 10
     }

@@ -517,6 +517,22 @@ func coerceInner[T any](v any) T {
 			return rv.Convert(zt).Interface().(T)
 		}
 	}
+	// v0.15.44 — struct→struct cross-shape narrowing.  Sky-declared
+	// `type alias`es emit as `main.Foo_R` Go structs; runtime FFI
+	// often returns a parallel struct (`rt.HttpResponse`,
+	// `rt.SkyRequest`, etc.).  Field-by-field copy bridges the gap
+	// when their PascalCase field names line up.  The non-trivial
+	// guards live in narrowStructToStruct (skip Tag/V0-shaped ADT
+	// and tuple containers).
+	if rv.Kind() == reflect.Struct {
+		var zero T
+		zt := reflect.TypeOf(zero)
+		if zt != nil && zt.Kind() == reflect.Struct {
+			if narrowed, ok := narrowStructToStruct(rv, zt); ok {
+				return narrowed.Interface().(T)
+			}
+		}
+	}
 	// Final fallback: strict type assertion. If this panics, it
 	// means typed-codegen emitted a CALL with a wrong element type —
 	// a compiler bug, NOT a runtime input bug. Surfacing the panic
@@ -694,11 +710,89 @@ func narrowReflectValue(src reflect.Value, target reflect.Type) reflect.Value {
 		if narrowed, ok := narrowTupleStruct(src, target); ok {
 			return narrowed
 		}
+		// v0.15.44 — record-shape struct → record-shape struct.
+		// rt.HttpResponse (runtime FFI struct) → main.Sky_Core_Http_HttpResponse_R
+		// (user-side declared record alias). The Sky `type alias` declares
+		// PascalCase Go field names (`Status`, `Body`, `Headers`) that match
+		// the runtime struct 1:1; field-by-field copy bridges them. Same
+		// approach as narrowMapToStruct but iterates source FIELDS instead
+		// of map keys. Falls back to map-shape on absent fields.
+		if narrowed, ok := narrowStructToStruct(src, target); ok {
+			return narrowed
+		}
 	}
 	if target.Kind() == reflect.String {
 		return reflect.ValueOf(fmt.Sprintf("%v", src.Interface()))
 	}
 	return reflect.Value{}
+}
+
+// narrowStructToStruct field-copies a record-shaped struct into another
+// record-shaped struct with the same Sky-level shape. Used when a Sky-
+// declared `type alias` (compiled to `main.Foo_R`) needs to receive a
+// runtime FFI struct (`rt.HttpResponse`, `rt.SkyRequest`, etc.) that
+// the runtime returns. Targets are guarded:
+//
+//  1. Target must have NO Tag field (i.e. NOT an ADT — those route via
+//     narrowSkyContainer).
+//  2. Target must have NO V0/V1 fields (NOT a tuple — narrowTupleStruct).
+//  3. At least one source field name must match a target field name
+//     (so completely unrelated structs don't accidentally narrow).
+//
+// Per-field narrowing recurses via narrowReflectValue, so nested record
+// or container mismatches still get the right treatment.
+func narrowStructToStruct(src reflect.Value, target reflect.Type) (reflect.Value, bool) {
+	if target.NumField() == 0 {
+		return reflect.Value{}, false
+	}
+	if f, ok := target.FieldByName("Tag"); ok && (f.Type.Kind() == reflect.Int || f.Type.Kind() == reflect.Int64) {
+		return reflect.Value{}, false
+	}
+	if _, ok := target.FieldByName("V0"); ok {
+		return reflect.Value{}, false
+	}
+	srcTy := src.Type()
+	out := reflect.New(target).Elem()
+	matched := 0
+	for i := 0; i < target.NumField(); i++ {
+		fld := target.Field(i)
+		if !fld.IsExported() {
+			continue
+		}
+		srcF, found := srcTy.FieldByName(fld.Name)
+		if !found {
+			continue
+		}
+		srcVal := src.FieldByIndex(srcF.Index)
+		if !srcVal.IsValid() {
+			continue
+		}
+		// Take the interface and re-narrow against the target field
+		// type — covers the case where the source field is `any` and
+		// the target field is a concrete type (or vice versa).
+		var iv any
+		if srcVal.Kind() == reflect.Interface && srcVal.IsNil() {
+			matched++
+			continue
+		}
+		iv = srcVal.Interface()
+		if iv == nil {
+			matched++
+			continue
+		}
+		narrowed := narrowReflectValue(reflect.ValueOf(iv), fld.Type)
+		if narrowed.IsValid() && narrowed.Type().AssignableTo(fld.Type) {
+			out.Field(i).Set(narrowed)
+			matched++
+		} else if srcVal.Type().AssignableTo(fld.Type) {
+			out.Field(i).Set(srcVal)
+			matched++
+		}
+	}
+	if matched == 0 {
+		return reflect.Value{}, false
+	}
+	return out, true
 }
 
 // narrowTupleStruct reconstructs an rt.T2/T3/T4/T5 across generic

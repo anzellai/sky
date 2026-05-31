@@ -1,22 +1,157 @@
--- | Sky.Http.Server — HTTP server request introspection (Layer 3
--- Sky source).
+-- | Sky.Http.Server — HTTP server (Layer 3 Sky source).
 --
--- Helpers that operate on a `Request` to extract path / query /
--- header / cookie data.  `Server.static` returns a `Route` that
--- serves files from a directory.
---
--- Higher-level routing (`Server.get` / `post` / `listen` /
--- response builders) continues to live in the kernel-registered
--- Server module — those entries return runtime-typed Route /
--- Response shapes that need shape-preserving migration; tracked
--- as a v0.14.x.1 follow-up.
+-- Routing primitives (`get` / `post` / …), response builders
+-- (`text` / `json` / `html` / `withStatus` / `redirect`), request
+-- introspection (`param` / `queryParam` / `header` / `getCookie`),
+-- and the `listen` entry point.  Every binding is declared with
+-- a HM signature and routes via `Ffi.kernel` to the typed kernel
+-- dispatcher — so `sky doc Server.get` returns the real type, LSP
+-- hover surfaces `String -> (Request -> Task Error Response) ->
+-- Route`, and consumers can annotate their handlers exactly.
 module Sky.Http.Server exposing
-    ( param, queryParam, header, getCookie
+    ( Request, Response, Route, Server, Cookie
+    , get, post, put, delete, any, api
+    , listen
+    , text, json, html, withStatus, redirect
+    , param, queryParam, header, getCookie
+    , withHeader, cookie, withCookie
     , static
     )
 
 
 import Sky.Ffi as Ffi
+import Sky.Core.Error exposing (Error)
+
+
+-- ─── Types ────────────────────────────────────────────────────────
+
+
+-- | The shape of an inbound HTTP request handed to every Sky
+-- handler.  Maps 1:1 to `rt.SkyRequest` on the Go side — field
+-- access (`req.method` / `.path` / `.headers` / `.body` / etc.)
+-- is the typed read path.  `params` carries URL path captures
+-- (e.g. `/users/:id`'s `id`); `query` carries `?k=v` pairs.
+type alias Request =
+    { method : String
+    , path : String
+    , body : String
+    , headers : Dict String String
+    , params : Dict String String
+    , query : Dict String String
+    , cookies : Dict String String
+    , remoteAddr : String
+    }
+
+
+-- | The shape of an outbound HTTP response.  Built by the response
+-- helpers below (`text` / `json` / `html` / `redirect`) and
+-- decorated by `withStatus`, `withHeader`, `withCookie`.  Maps to
+-- `rt.SkyResponse` on the Go side.
+type alias Response =
+    { status : Int
+    , body : String
+    , headers : Dict String String
+    , contentType : String
+    }
+
+
+-- | A registered route.  Opaque — produced by `get` / `post` /
+-- `put` / `delete` / `any` / `api` / `static`, consumed by
+-- `listen`.
+type Route
+    = Route_OPAQUE
+
+
+-- | The Server handle returned by `listen` (resolved Task) — opaque.
+type Server
+    = Server_OPAQUE
+
+
+-- | An opaque HTTP cookie carrying safe defaults (HttpOnly + Path=/ +
+-- SameSite=Lax).  Build with `cookie`, attach with `withCookie`.
+type Cookie
+    = Cookie_OPAQUE
+
+
+-- ─── Routing ──────────────────────────────────────────────────────
+
+
+-- | `get path handler` — register a GET route.
+get : String -> (Request -> Task Error Response) -> Route
+get = Ffi.kernel "Server_get"
+
+
+-- | `post path handler` — register a POST route.
+post : String -> (Request -> Task Error Response) -> Route
+post = Ffi.kernel "Server_post"
+
+
+-- | `put path handler` — register a PUT route.
+put : String -> (Request -> Task Error Response) -> Route
+put = Ffi.kernel "Server_put"
+
+
+-- | `delete path handler` — register a DELETE route.
+delete : String -> (Request -> Task Error Response) -> Route
+delete = Ffi.kernel "Server_delete"
+
+
+-- | `any path handler` — register a route that matches any HTTP
+-- method.
+any : String -> (Request -> Task Error Response) -> Route
+any = Ffi.kernel "Server_any"
+
+
+-- | `api spec handler` — register an API route that bypasses
+-- browser-form CSRF protection.  `spec` is `"METHOD /path"`
+-- (e.g. `"POST /v1/foo"`); an omitted method matches any verb.
+api : String -> (Request -> Task Error Response) -> Route
+api = Ffi.kernel "Server_api"
+
+
+-- | `listen port routes` — bind the server.  The returned Task
+-- only resolves on shutdown (clean stop) or a fatal listen error.
+listen : Int -> List Route -> Task Error ()
+listen = Ffi.kernel "Server_listen"
+
+
+-- ─── Response builders ────────────────────────────────────────────
+
+
+-- | `text body` — build a 200 OK `text/plain` response.
+text : String -> Response
+text = Ffi.kernel "Server_text"
+
+
+-- | `json body` — build a 200 OK `application/json` response.
+-- The body is the already-serialised JSON string.
+json : String -> Response
+json = Ffi.kernel "Server_json"
+
+
+-- | `html body` — build a 200 OK `text/html` response.  CSRF
+-- tokens are auto-injected into any `<form method="post">` in
+-- the body before the wire.
+html : String -> Response
+html = Ffi.kernel "Server_html"
+
+
+-- | `withStatus code resp` — override the status code.
+withStatus : Int -> Response -> Response
+withStatus = Ffi.kernel "Server_withStatus"
+
+
+-- | `redirect url` — build a 302 response that points the client
+-- at `url`.
+redirect : String -> Response
+redirect = Ffi.kernel "Server_redirect"
+
+
+-- | `withHeader name value resp` — add (or override) a response
+-- header.  Pass `"Content-Type"` to override the content type
+-- that the response builder set.
+withHeader : String -> String -> Response -> Response
+withHeader = Ffi.kernel "Server_withHeader"
 
 
 -- ─── Request introspection ─────────────────────────────────────────
@@ -42,6 +177,30 @@ header = Ffi.kernel "Server_header"
 -- | `getCookie name req` — read a cookie value.
 getCookie : String -> Request -> Maybe String
 getCookie = Ffi.kernel "Server_getCookie"
+
+
+-- ─── Cookies ───────────────────────────────────────────────────────
+
+
+-- | `cookie name value` — build a default cookie (Path=/, HttpOnly,
+-- SameSite=Lax).  Pair with `withCookie` to add it to a response.
+cookie : String -> String -> Cookie
+cookie = Ffi.kernel "Server_cookie"
+
+
+-- | `withCookie` — attach a cookie to a response.  Three call
+-- shapes are supported (variadic on the runtime side):
+--
+--   * `withCookie cookieValue resp` — using a pre-built `Cookie`.
+--   * `withCookie name value resp` — quick form with safe defaults.
+--   * `withCookie name value attrs resp` — full control over
+--     attribute string (e.g. `"Path=/; HttpOnly; Max-Age=0"`).
+--
+-- The Sky signature is left untyped (`any -> any`) to admit all
+-- three shapes; consider migrating to the `cookie` + 2-arg form for
+-- typed call sites in new code.
+withCookie : any
+withCookie = Ffi.kernel "Server_withCookie"
 
 
 -- ─── Static-file serving ───────────────────────────────────────────
