@@ -1,0 +1,160 @@
+-- | Std.Db.Decode — typed DB row decoders (Layer 3 Sky source).
+--
+-- A `Decoder a` describes how to extract a value of type `a` from a
+-- single SQL row.  Compose with `string` / `int` / `float` / `bool` /
+-- `nullable` / `map` / `andMap` / `required` / `optional`; run via
+-- `Db.queryDecode` (for SELECT-many) or `Db.getByIdDecode` (for
+-- SELECT-one-by-id).
+--
+-- The combinator shape mirrors `Sky.Core.Json.Decode` / `.Pipeline`,
+-- intentionally — code that already does JSON decoding gets a
+-- consistent vocabulary for SQL rows.  Real production benefit:
+-- production app code drops hundreds of lines of
+-- `Db.getString "field" row` boilerplate.
+--
+-- Example:
+--
+--     type alias User =
+--         { id    : Int
+--         , email : String
+--         , age   : Maybe Int
+--         }
+--
+--     userDecoder : Decoder User
+--     userDecoder =
+--         Db.Decode.succeed (\i e a -> { id = i, email = e, age = a })
+--             |> Db.Decode.andMap (Db.Decode.int "id")
+--             |> Db.Decode.andMap (Db.Decode.string "email")
+--             |> Db.Decode.andMap (Db.Decode.nullable "age" (Db.Decode.int "age"))
+--
+--     users : Db -> Task Error (List User)
+--     users db =
+--         Db.queryDecode db "SELECT id, email, age FROM users" [] userDecoder
+module Std.Db.Decode exposing
+    ( string, int, float, bool
+    , nullable
+    , succeed, fail
+    , map, andThen, andMap
+    , map2, map3, map4, map5
+    , required, optional
+    )
+
+
+import Sky.Ffi as Ffi
+
+
+-- ─── Primitive column decoders ─────────────────────────────────────
+
+
+-- | `string col` — decode column `col` as a String.
+-- Fails with `ErrDecode` if the column is missing.
+string : String -> Decoder String
+string = Ffi.kernel "DbDec_string"
+
+
+-- | `int col` — decode column `col` as an Int.
+-- Accepts driver-native ints AND stringified-int forms (PostgreSQL +
+-- SQLite both round-trip ints faithfully in queries; this combinator
+-- protects against the rare driver that returns numeric columns as
+-- text).
+int : String -> Decoder Int
+int = Ffi.kernel "DbDec_int"
+
+
+-- | `float col` — decode column `col` as a Float.
+float : String -> Decoder Float
+float = Ffi.kernel "DbDec_float"
+
+
+-- | `bool col` — decode column `col` as a Bool.
+-- Accepts driver-native bools, 0/1 ints, AND case-insensitive
+-- "true"/"false"/"t"/"f"/"1"/"0" strings (SQLite stores Bools as
+-- 0/1 ints; PostgreSQL drivers may return either form).
+bool : String -> Decoder Bool
+bool = Ffi.kernel "DbDec_bool"
+
+
+-- | `nullable col inner` — wrap `inner` so it returns `Nothing` for
+-- NULL / absent columns, `Just <decoded>` otherwise.
+nullable : String -> Decoder a -> Decoder (Maybe a)
+nullable = Ffi.kernel "DbDec_nullable"
+
+
+-- ─── Trivial decoders ──────────────────────────────────────────────
+
+
+-- | A decoder that always succeeds with the given value, ignoring
+-- the row entirely.  Use as the starting accumulator in pipeline-
+-- style decoders.
+succeed : a -> Decoder a
+succeed = Ffi.kernel "DbDec_succeed"
+
+
+-- | A decoder that always fails with the given message.
+fail : String -> Decoder a
+fail = Ffi.kernel "DbDec_fail"
+
+
+-- ─── Combinators ───────────────────────────────────────────────────
+
+
+-- | `map fn dec` — transform the decoded value.
+map : (a -> b) -> Decoder a -> Decoder b
+map = Ffi.kernel "DbDec_map"
+
+
+-- | `andThen fn dec` — sequence a follow-up decoder that depends on
+-- the previous one's value.
+andThen : (a -> Decoder b) -> Decoder a -> Decoder b
+andThen = Ffi.kernel "DbDec_andThen"
+
+
+-- | `andMap fieldDec ctorDec` — applicative-style combine.  The
+-- pipeline shape:
+--
+--     succeed Ctor
+--         |> andMap (Db.Decode.string "name")
+--         |> andMap (Db.Decode.int "age")
+--
+-- builds a Decoder (Ctor String Int -> User) → Decoder (Int -> User)
+-- → Decoder User incrementally.
+andMap : Decoder a -> Decoder (a -> b) -> Decoder b
+andMap = Ffi.kernel "DbDec_andMap"
+
+
+-- ─── Multi-arg combiners ───────────────────────────────────────────
+
+
+-- | `map2 fn dA dB` — combine two decoders with a 2-arg function.
+map2 : (a -> b -> c) -> Decoder a -> Decoder b -> Decoder c
+map2 = Ffi.kernel "DbDec_map2"
+
+
+map3 : (a -> b -> c -> d) -> Decoder a -> Decoder b -> Decoder c -> Decoder d
+map3 = Ffi.kernel "DbDec_map3"
+
+
+map4 : (a -> b -> c -> d -> e) -> Decoder a -> Decoder b -> Decoder c -> Decoder d -> Decoder e
+map4 = Ffi.kernel "DbDec_map4"
+
+
+map5 : (a -> b -> c -> d -> e -> f) -> Decoder a -> Decoder b -> Decoder c -> Decoder d -> Decoder e -> Decoder f
+map5 = Ffi.kernel "DbDec_map5"
+
+
+-- ─── Pipeline-style ────────────────────────────────────────────────
+
+
+-- | `required col fieldDec ctorDec` — decode a required column.
+-- The first arg is the column name (documentation only; the field
+-- decoder already names its column); the second is the per-column
+-- decoder; the third is the partial-applied constructor decoder.
+required : String -> Decoder a -> Decoder (a -> b) -> Decoder b
+required = Ffi.kernel "DbDec_required"
+
+
+-- | `optional col fieldDec fallback ctorDec` — decode a column,
+-- supplying a fallback value when the field decoder fails (typically
+-- absent column / NULL).
+optional : String -> Decoder a -> a -> Decoder (a -> b) -> Decoder b
+optional = Ffi.kernel "DbDec_optional"

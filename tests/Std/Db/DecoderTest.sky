@@ -1,0 +1,94 @@
+module Std.Db.DecoderTest exposing (tests)
+
+-- v0.15.45 — Std.Db.Decode surface coverage.
+--
+-- This module is a compile-time smoke test for the typed DB row
+-- decoder surface introduced in v0.15.45.  The real query-and-decode
+-- pipeline is exercised by the example sweep (examples/08-notes-app,
+-- examples/12-skyvote use Db.queryDecode).  Here we pin the surface:
+--
+--   * `Std.Db.Decode` imports cleanly.
+--   * The `Decoder a` type aligns across Std.Db (queryDecode's 4th
+--     arg) and Std.Db.Decode (the decoder builders).
+--   * Each combinator's HM signature is correctly registered so a
+--     pipeline like `succeed Ctor |> andMap (string "name") |>
+--     andMap (int "age")` type-checks end-to-end.
+
+import Sky.Core.Prelude exposing (..)
+import Std.Db.Decode as Decode
+import Sky.Test as Test exposing (Test)
+
+
+-- ── Records the decoder pipeline targets ────────────────────────────
+
+
+type alias User =
+    { id    : Int
+    , name  : String
+    , email : String
+    , age   : Maybe Int
+    }
+
+
+-- ── Pipeline-style decoder ──────────────────────────────────────────
+
+
+-- Three-field record built via `andMap`.  The compile-time payoff:
+-- `Decode.succeed` carries the curried record-builder lambda, every
+-- subsequent `andMap` peels off one decoder + applies it.  The whole
+-- chain types as `Decoder User`.
+userDecoder : Decoder User
+userDecoder =
+    Decode.succeed (\i n e a -> { id = i, name = n, email = e, age = a })
+        |> Decode.andMap (Decode.int "id")
+        |> Decode.andMap (Decode.string "name")
+        |> Decode.andMap (Decode.string "email")
+        |> Decode.andMap (Decode.nullable "age" (Decode.int "age"))
+
+
+-- A simpler 2-field decoder via `map2` (no curried lambda).
+type alias TitledRow =
+    { title : String, rank : Int }
+
+
+titledDecoder : Decoder TitledRow
+titledDecoder =
+    Decode.map2
+        (\title rank -> { title = title, rank = rank })
+        (Decode.string "title")
+        (Decode.int "rank")
+
+
+-- Exercise the `optional` pipeline-style combinator with an Int
+-- fallback for a possibly-absent column.
+type alias CountedRow =
+    { name : String, count : Int }
+
+
+countedDecoder : Decoder CountedRow
+countedDecoder =
+    Decode.succeed (\n c -> { name = n, count = c })
+        |> Decode.andMap (Decode.string "name")
+        |> Decode.optional "count" (Decode.int "count") 0
+
+
+-- ── Tests ────────────────────────────────────────────────────────────
+
+
+tests : List Test
+tests =
+    [ Test.suite "Std.Db.Decode surface compiles"
+        [ -- The presence of `userDecoder`, `titledDecoder`, and
+          -- `countedDecoder` in the type-correct shape is itself the
+          -- assertion.  The cabal-test `cabal test` walk picks this
+          -- module up; if the surface ever regresses (HM mismatch /
+          -- kernel registration drop), the module fails to compile
+          -- and the test framework reports the breakage.
+          Test.test "userDecoder is a Decoder User"
+            (\_ -> Test.pass)
+        , Test.test "titledDecoder is a Decoder TitledRow"
+            (\_ -> Test.pass)
+        , Test.test "countedDecoder is a Decoder CountedRow"
+            (\_ -> Test.pass)
+        ]
+    ]

@@ -413,6 +413,11 @@ staticKernelModules = Map.fromList
     , ("Sky.Core.Json.Encode", "JsonEnc")
     , ("Sky.Core.Json.Decode", "JsonDec")
     , ("Sky.Core.Json.Decode.Pipeline", "JsonDecP")
+    -- Std.Db.Decode (v0.15.45) is NOT in staticKernelModules — it's a
+    -- Layer 3 Sky-source module whose `Ffi.kernel "DbDec_*"` bodies
+    -- get rewritten at Stage 4. Mirrors the Std.PubSub pattern (also
+    -- not here). Adding it to staticKernelModules would shadow the
+    -- parsed Sky-source module's export list, breaking imports.
     , ("Sky.Core.Uuid",        "Uuid")
     -- `Sha256` and `Hex` modules dropped in v0.10.0 — surface
     -- collapsed onto `Crypto.sha256` and `Encoding.hexEncode/Decode`.

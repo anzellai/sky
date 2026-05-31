@@ -13,7 +13,7 @@ module Std.Db exposing
     , exec, execRaw, query
     , insertRow, getById, updateById, deleteById
     , findOneByField, findManyByField, findByConditions
-    , unsafeFindWhere, queryDecode
+    , unsafeFindWhere, queryDecode, getByIdDecode
     , withTransaction
     , getField, getString, getInt, getBool
     , Migration, migrate
@@ -119,9 +119,23 @@ unsafeFindWhere = Ffi.kernel "Db_unsafeFindWhere"
 
 
 -- | `queryDecode db sql params decoder` — typed query with a
--- per-row decoder.
-queryDecode : Db -> String -> List a -> b -> Task Error (List b)
+-- per-row decoder (v0.15.45).
+--
+-- `decoder` is a `Std.Db.Decode.Decoder b` describing how to extract
+-- each row's columns into a typed `b`.  Returns a `List b` on
+-- success; the first row-decoder failure short-circuits the entire
+-- task with `Err`.
+queryDecode : Db -> String -> List a -> Decoder b -> Task Error (List b)
 queryDecode = Ffi.kernel "Db_queryDecode"
+
+
+-- | `getByIdDecode db table id decoder` — typed sibling of
+-- `getById`.  Returns `Nothing` when the row isn't present; `Just`
+-- the decoded value otherwise.  Decoder failure surfaces as
+-- `Err Error` (not `Ok Nothing`) — the row exists but didn't match
+-- the expected shape.
+getByIdDecode : Db -> String -> Int -> Decoder a -> Task Error (Maybe a)
+getByIdDecode = Ffi.kernel "Db_getByIdDecode"
 
 
 -- ─── Transactions ──────────────────────────────────────────────────

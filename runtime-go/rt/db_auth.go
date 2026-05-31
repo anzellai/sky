@@ -353,6 +353,27 @@ func Db_queryDecode(db any, query any, args any, decoder any) any {
 			return resp
 		}
 		rows := AsList(r.OkValue)
+		// v0.15.45 — recognise typed Std.Db.Decode decoders first.
+		if d, isDec := capDec.(DbDecoder); isDec {
+			out := make([]any, 0, len(rows))
+			for _, row := range rows {
+				m, ok := dbRowAsMap(row)
+				if !ok {
+					return Err[any, any](ErrDecode("queryDecode: row is not a Dict"))
+				}
+				result := d.run(m)
+				sr, ok := result.(SkyResult[any, any])
+				if !ok {
+					return Err[any, any](ErrDecode("queryDecode: decoder returned non-Result"))
+				}
+				if sr.Tag != 0 {
+					return result
+				}
+				out = append(out, sr.OkValue)
+			}
+			return Ok[any, any](out)
+		}
+		// Legacy JsonDecoder path (pre-v0.15.45 callers).
 		d, isDec := capDec.(JsonDecoder)
 		if !isDec {
 			return Ok[any, any](rows)

@@ -2987,15 +2987,34 @@ lookupKernelType modName funcName = case (modName, funcName) of
                                 , T.TType ModuleName.list "List"
                                     [T.TType ModuleName.dict "Dict"
                                         [stringType, stringType]]])))))
+    -- queryDecode : Db -> String -> List a -> Decoder b -> Task Error (List b)
+    -- v0.15.45 typed: third arg is the user's Sky-side params list,
+    -- fourth arg is a `Decoder b` (from Std.Db.Decode).  Pre-v0.15.45
+    -- the fourth arg was a bare `b` placeholder for ergonomic FFI
+    -- pass-through; new typed shape pins it to Decoder b so callers
+    -- get the proper compile-time check.
     ("Db", "queryDecode") ->
         Just $ T.Forall ["a", "b"]
             (T.TLambda (T.TType (ModuleName.Canonical "") "Db" [])
                 (T.TLambda stringType
                     (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"])
-                        (T.TLambda (T.TVar "b")
+                        (T.TLambda (decoderOf (T.TVar "b"))
                             (T.TType ModuleName.task "Task"
                                 [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
                                 , T.TType ModuleName.list "List" [T.TVar "b"]])))))
+    -- v0.15.45 — Db.getByIdDecode : Db -> String -> Int -> Decoder a
+    -- -> Task Error (Maybe a).  Typed sibling of Db.getById that
+    -- threads the decoded shape through; returns Nothing when no
+    -- row matches the id.
+    ("Db", "getByIdDecode") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TType (ModuleName.Canonical "") "Db" [])
+                (T.TLambda stringType
+                    (T.TLambda intType
+                        (T.TLambda (decoderOf (T.TVar "a"))
+                            (T.TType ModuleName.task "Task"
+                                [T.TType (ModuleName.Canonical "Sky.Core.Error") "Error" []
+                                , T.TType ModuleName.maybe_ "Maybe" [T.TVar "a"]])))))
     ("Db", "withTransaction") ->
         -- withTransaction : Db -> (Db -> Task Error a) -> Task Error a
         Just $ T.Forall ["a"]
@@ -3261,6 +3280,112 @@ lookupKernelType modName funcName = case (modName, funcName) of
                 (T.TLambda (decoderOf (T.TVar "a"))
                     (T.TLambda (decoderOf (T.TLambda (T.TVar "a") (T.TVar "b")))
                         (decoderOf (T.TVar "b")))))
+
+    -- ── Std.Db.Decode (kernel mod "DbDec") — v0.15.45 ──────────────
+    --
+    -- Mirror of the JsonDec / JsonDecP shape but targets SQL row
+    -- maps instead of JSON values.  Same opaque `Decoder a` (the
+    -- empty-home "Decoder" alias resolves to rt.SkyDecoder via
+    -- runtimeTypedMap regardless of where the value originates),
+    -- so user code freely mixes the two layers (`Decoder User`
+    -- value can flow from either Std.Db.Decode or Sky.Core.Json.
+    -- Decode depending on context).
+    --
+    -- Per-column primitives take a column name + return a Decoder
+    -- whose run-function reads that column from the row.
+    ("DbDec", "string") ->
+        Just $ T.Forall []
+            (T.TLambda stringType (decoderOf stringType))
+    ("DbDec", "int") ->
+        Just $ T.Forall []
+            (T.TLambda stringType (decoderOf intType))
+    ("DbDec", "float") ->
+        Just $ T.Forall []
+            (T.TLambda stringType (decoderOf floatType))
+    ("DbDec", "bool") ->
+        Just $ T.Forall []
+            (T.TLambda stringType (decoderOf boolType))
+    ("DbDec", "nullable") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda stringType
+                (T.TLambda (decoderOf (T.TVar "a"))
+                    (decoderOf
+                        (T.TType ModuleName.maybe_ "Maybe" [T.TVar "a"]))))
+    ("DbDec", "succeed") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda (T.TVar "a") (decoderOf (T.TVar "a")))
+    ("DbDec", "fail") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda stringType (decoderOf (T.TVar "a")))
+    ("DbDec", "map") ->
+        Just $ T.Forall ["a", "b"]
+            (T.TLambda (T.TLambda (T.TVar "a") (T.TVar "b"))
+                (T.TLambda (decoderOf (T.TVar "a")) (decoderOf (T.TVar "b"))))
+    ("DbDec", "andThen") ->
+        Just $ T.Forall ["a", "b"]
+            (T.TLambda (T.TLambda (T.TVar "a") (decoderOf (T.TVar "b")))
+                (T.TLambda (decoderOf (T.TVar "a")) (decoderOf (T.TVar "b"))))
+    -- andMap : Decoder a -> Decoder (a -> b) -> Decoder b
+    ("DbDec", "andMap") ->
+        Just $ T.Forall ["a", "b"]
+            (T.TLambda (decoderOf (T.TVar "a"))
+                (T.TLambda
+                    (decoderOf (T.TLambda (T.TVar "a") (T.TVar "b")))
+                    (decoderOf (T.TVar "b"))))
+    ("DbDec", "map2") ->
+        Just $ T.Forall ["a", "b", "c"]
+            (T.TLambda (T.TLambda (T.TVar "a") (T.TLambda (T.TVar "b") (T.TVar "c")))
+                (T.TLambda (decoderOf (T.TVar "a"))
+                    (T.TLambda (decoderOf (T.TVar "b"))
+                        (decoderOf (T.TVar "c")))))
+    ("DbDec", "map3") ->
+        Just $ T.Forall ["a", "b", "c", "d"]
+            (T.TLambda (T.TLambda (T.TVar "a")
+                (T.TLambda (T.TVar "b")
+                    (T.TLambda (T.TVar "c") (T.TVar "d"))))
+                (T.TLambda (decoderOf (T.TVar "a"))
+                    (T.TLambda (decoderOf (T.TVar "b"))
+                        (T.TLambda (decoderOf (T.TVar "c"))
+                            (decoderOf (T.TVar "d"))))))
+    ("DbDec", "map4") ->
+        Just $ T.Forall ["a", "b", "c", "d", "e"]
+            (T.TLambda (T.TLambda (T.TVar "a")
+                (T.TLambda (T.TVar "b")
+                    (T.TLambda (T.TVar "c")
+                        (T.TLambda (T.TVar "d") (T.TVar "e")))))
+                (T.TLambda (decoderOf (T.TVar "a"))
+                    (T.TLambda (decoderOf (T.TVar "b"))
+                        (T.TLambda (decoderOf (T.TVar "c"))
+                            (T.TLambda (decoderOf (T.TVar "d"))
+                                (decoderOf (T.TVar "e")))))))
+    ("DbDec", "map5") ->
+        Just $ T.Forall ["a", "b", "c", "d", "e", "f"]
+            (T.TLambda (T.TLambda (T.TVar "a")
+                (T.TLambda (T.TVar "b")
+                    (T.TLambda (T.TVar "c")
+                        (T.TLambda (T.TVar "d")
+                            (T.TLambda (T.TVar "e") (T.TVar "f"))))))
+                (T.TLambda (decoderOf (T.TVar "a"))
+                    (T.TLambda (decoderOf (T.TVar "b"))
+                        (T.TLambda (decoderOf (T.TVar "c"))
+                            (T.TLambda (decoderOf (T.TVar "d"))
+                                (T.TLambda (decoderOf (T.TVar "e"))
+                                    (decoderOf (T.TVar "f"))))))))
+    -- Pipeline-style: required col fieldDec ctorDec → ctorDec a→b
+    ("DbDec", "required") ->
+        Just $ T.Forall ["a", "b"]
+            (T.TLambda stringType
+                (T.TLambda (decoderOf (T.TVar "a"))
+                    (T.TLambda (decoderOf (T.TLambda (T.TVar "a") (T.TVar "b")))
+                        (decoderOf (T.TVar "b")))))
+    -- optional col fieldDec fallback ctorDec → ctorDec a→b
+    ("DbDec", "optional") ->
+        Just $ T.Forall ["a", "b"]
+            (T.TLambda stringType
+                (T.TLambda (decoderOf (T.TVar "a"))
+                    (T.TLambda (T.TVar "a")
+                        (T.TLambda (decoderOf (T.TLambda (T.TVar "a") (T.TVar "b")))
+                            (decoderOf (T.TVar "b"))))))
 
     _ -> Nothing
 

@@ -630,6 +630,7 @@ registry = Map.fromList
     , (("Db", "getBool"),         KernelInfo "rt.Db_getBool" 2 False)
     , (("Db", "query"),           KernelInfo "rt.Db_query" 3 False)
     , (("Db", "queryDecode"),     KernelInfo "rt.Db_queryDecode" 4 False)
+    , (("Db", "getByIdDecode"),   KernelInfo "rt.Db_getByIdDecode" 4 False)
     , (("Db", "insertRow"),       KernelInfo "rt.Db_insertRow" 3 False)
     , (("Db", "getById"),         KernelInfo "rt.Db_getById" 3 False)
     , (("Db", "updateById"),      KernelInfo "rt.Db_updateById" 4 False)
@@ -662,6 +663,26 @@ registry = Map.fromList
     , (("JsonDecP", "optional"),   KernelInfo "rt.JsonDecP_optional" 4 False)
     , (("JsonDecP", "custom"),     KernelInfo "rt.JsonDecP_custom" 2 False)
     , (("JsonDecP", "requiredAt"), KernelInfo "rt.JsonDecP_requiredAt" 3 False)
+
+    -- ═══════════════════════════════════════════════════════
+    -- Std.Db.Decode — typed DB row decoders (v0.15.45 Layer 3)
+    -- ═══════════════════════════════════════════════════════
+    , (("DbDec", "string"),      KernelInfo "rt.DbDec_string" 1 False)
+    , (("DbDec", "int"),         KernelInfo "rt.DbDec_int" 1 False)
+    , (("DbDec", "float"),       KernelInfo "rt.DbDec_float" 1 False)
+    , (("DbDec", "bool"),        KernelInfo "rt.DbDec_bool" 1 False)
+    , (("DbDec", "nullable"),    KernelInfo "rt.DbDec_nullable" 2 False)
+    , (("DbDec", "succeed"),     KernelInfo "rt.DbDec_succeed" 1 False)
+    , (("DbDec", "fail"),        KernelInfo "rt.DbDec_fail" 1 False)
+    , (("DbDec", "map"),         KernelInfo "rt.DbDec_map" 2 False)
+    , (("DbDec", "andThen"),     KernelInfo "rt.DbDec_andThen" 2 False)
+    , (("DbDec", "andMap"),      KernelInfo "rt.DbDec_andMap" 2 False)
+    , (("DbDec", "map2"),        KernelInfo "rt.DbDec_map2" 3 False)
+    , (("DbDec", "map3"),        KernelInfo "rt.DbDec_map3" 4 False)
+    , (("DbDec", "map4"),        KernelInfo "rt.DbDec_map4" 5 False)
+    , (("DbDec", "map5"),        KernelInfo "rt.DbDec_map5" 6 False)
+    , (("DbDec", "required"),    KernelInfo "rt.DbDec_required" 3 False)
+    , (("DbDec", "optional"),    KernelInfo "rt.DbDec_optional" 4 False)
 
     -- ═══════════════════════════════════════════════════════
     -- Std.Ui.Lazy (v0.12 — runtime memoisation)
