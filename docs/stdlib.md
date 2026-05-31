@@ -556,6 +556,98 @@ See [`docs/skylive/http-streaming.md`](skylive/http-streaming.md)
 for the full design + `examples/28-streaming-chat` for the
 canonical pattern.
 
+### `WebSocket` — bidirectional sockets (v0.15.46)
+
+For bidirectional, long-lived connections (collab editor ops,
+multiplayer game state, bidirectional LLM chat, financial feeds),
+use `Sky.Core.WebSocket` (client) + `Sky.Http.Server.WebSocket`
+(server-side upgrade).
+
+**Client side (Sky.Core.WebSocket):**
+
+```elm
+import Sky.Core.WebSocket as Ws exposing (WebSocketMessage(..))
+import Sky.Core.Cmd as Cmd
+import Sky.Core.Sub as Sub
+
+-- Open the connection via Cmd.perform; the runtime returns a
+-- typed `WebSocket` handle.
+( model, Cmd.perform (Ws.connect "wss://api.example.com/feed") Connected )
+
+-- Subscribe to incoming frames while the socket is live.
+subscriptions model =
+    case model.socket of
+        Just sock ->
+            Sub.batch
+                [ Ws.onMessage sock GotFrame
+                , Ws.onClose   sock SocketClosed
+                ]
+
+        Nothing ->
+            Sub.none
+
+-- Send a text frame.  Blocks up to 30 s if the write buffer is full.
+update msg model =
+    case msg of
+        SendPing sock ->
+            ( model, Cmd.perform (Ws.send sock "ping") Sent )
+
+        GotFrame (Text text) ->
+            -- handle incoming text frame
+            ( { model | latest = text }, Cmd.none )
+
+        GotFrame (Binary bytes) ->
+            ( { model | latestBlob = bytes }, Cmd.none )
+```
+
+**Server side (Sky.Http.Server.WebSocket):** turn any
+`Sky.Http.Server` route into a WebSocket upgrade endpoint.
+
+```elm
+import Sky.Http.Server as Server
+import Sky.Http.Server.WebSocket as Ws
+
+handleWs : Request -> Task Error Response
+handleWs req =
+    Ws.upgrade req
+        (Ws.defaultCfg
+            |> Ws.withOnConnect (\sock ->
+                Ws.sendToClient sock "welcome!")
+            |> Ws.withOnMessage (\sock msg ->
+                Ws.sendToClient sock ("echo: " ++ msg))
+            |> Ws.withOriginPatterns
+                [ "https://*.example.com" ]
+        )
+
+main =
+    Server.listen 8000
+        [ Server.get "/ws" handleWs
+        ]
+```
+
+| Concern | Default |
+|---|---|
+| Handshake timeout | 30 s |
+| Heartbeat ping | 30 s (set `pingInterval = 0` to disable) |
+| Max message size | 1 MiB (`withMaxMessageBytes`) |
+| Origin gate | empty `originPatterns` rejects in production; dev-mode allows all |
+| Read buffer | 64 frames per socket (bounded) |
+| `send` backpressure | blocks up to 30 s on a slow consumer |
+
+`broadcast` fans a single text frame across a list of peers and
+tolerates partial failure (one slow / dead peer doesn't poison
+the others — those connections are closed silently).
+
+**Stdlib-typed-record convention (v0.15.46+).** Every public
+typed record (`WebSocketCfg`, `WebSocketServerCfg`,
+`HttpRequest`, …) ships with a `default*` constructor and one
+`with*` builder per field.  Always build via the builders
+(`Ws.defaultCfg "wss://x" |> Ws.withTimeout 5000`) rather than
+record literals — adding a new optional field in a future patch
+release won't break your call sites.
+
+See `examples/33-websocket-echo` for the canonical pattern.
+
 ### `File` — filesystem
 
 ```elm

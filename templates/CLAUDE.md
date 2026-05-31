@@ -2068,6 +2068,78 @@ See `examples/30-sse-server-demo` for a runnable demo +
 `docs/skylive/http-streaming.md` §"Server-side" for the design
 write-up.
 
+### Sky.Core.WebSocket + Sky.Http.Server.WebSocket (v0.15.46+)
+
+Bidirectional WebSocket — collab editors, multiplayer, bidirectional
+LLM chat, financial feeds.  Two mirror modules:
+`Sky.Core.WebSocket` (outbound client) + `Sky.Http.Server.WebSocket`
+(server-side upgrade).
+
+**Client side** — `Sky.Live` shape (Sub-driven receive):
+
+```elm
+import Sky.Core.WebSocket as Ws exposing (WebSocketMessage(..))
+
+-- Open
+( model, Cmd.perform (Ws.connect "wss://api.example.com/feed") Connected )
+
+-- Receive
+subscriptions model =
+    case model.socket of
+        Just sock -> Sub.batch [ Ws.onMessage sock GotFrame, Ws.onClose sock SocketClosed ]
+        Nothing   -> Sub.none
+
+-- Send
+Cmd.perform (Ws.send sock "hello") Sent
+```
+
+`Ws.connect : String -> Task Error WebSocket`,
+`Ws.connectWith : WebSocketCfg -> Task Error WebSocket`,
+`Ws.send` / `Ws.sendBinary` / `Ws.close` /
+`Ws.closeWithCode`, plus the four Sub helpers `Ws.onOpen` /
+`Ws.onMessage` / `Ws.onClose` / `Ws.onError`.  Build the cfg via
+`Ws.defaultCfg url |> Ws.withHeaders [...] |> Ws.withTimeout 5000
+|> Ws.withPingInterval 30000`.
+
+**Server side** — turn any `Sky.Http.Server` route into a
+WebSocket upgrade endpoint by returning `Ws.upgrade req cfg`:
+
+```elm
+import Sky.Http.Server.WebSocket as Ws
+
+handleWs : Request -> Task Error Response
+handleWs req =
+    Ws.upgrade req
+        (Ws.defaultCfg
+            |> Ws.withOnConnect (\sock -> Ws.sendToClient sock "welcome!")
+            |> Ws.withOnMessage (\sock msg -> Ws.sendToClient sock ("echo: " ++ msg))
+            |> Ws.withOnClose   (\_    -> Task.succeed ())
+            |> Ws.withOriginPatterns [ "https://*.example.com" ]
+        )
+```
+
+`Ws.sendToClient` / `Ws.sendBinaryToClient` for individual peers;
+`Ws.broadcast peers text` for fan-out (tolerates partial failure);
+`Ws.closeClient` for explicit disconnect.
+
+| Concern | Default |
+|---|---|
+| Handshake timeout | 30 s |
+| Heartbeat ping | 30 s (`withPingInterval 0` disables) |
+| Max message size | 1 MiB (`withMaxMessageBytes`) |
+| Origin gate | empty `originPatterns` REJECTS in production (403); dev allows all |
+| Read buffer | 64 frames per socket |
+| `send` backpressure | blocks up to 30 s on a slow consumer |
+
+**Stdlib typed-record convention (v0.15.46+).** Every public
+typed record (`WebSocketCfg`, `WebSocketServerCfg`,
+`HttpRequest`, …) ships with a `default*` constructor + at least
+one `with*` builder per field.  Always compose via builders — a
+new optional field in a patch release would break a record
+literal.
+
+See `examples/33-websocket-echo` for the canonical pattern.
+
 ### Sky.Core.Encoding (pure)
 
 ```elm
