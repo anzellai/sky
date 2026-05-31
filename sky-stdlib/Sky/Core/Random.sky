@@ -1,14 +1,34 @@
 -- | Sky.Core.Random — entropy-driven random helpers (Layer 3 Sky source).
 --
--- All return `Task Error _` because random reads consume entropy
--- from the OS RNG (a real side effect).
+-- Three tiers:
+--
+--   1. **Entropy-backed Task** — `int` / `float` / `range` / `choice` /
+--      `shuffle` / `weighted` consume entropy from the OS RNG and so
+--      return `Task Error _`.
+--
+--   2. **Seeded deterministic** — `seed` / `seededInt` / `seededFloat` /
+--      `seededChoice` are reproducible pure functions: they take a
+--      `Seed` and return `(value, nextSeed)`.  Use these for tests and
+--      content generation that must reproduce across runs.
+--
+-- v0.15.47 added range / weighted / shuffle / seeded helpers.
 module Sky.Core.Random exposing
     ( int, float
+    , range
+    , choice
+    , shuffle
+    , weighted
+    , Seed
+    , seed
+    , seededInt
+    , seededFloat
+    , seededChoice
     )
 
 
 import Sky.Ffi as Ffi
 import Sky.Core.Error exposing (Error)
+import Sky.Core.Maybe exposing (Maybe(..))
 
 
 -- | Uniform random integer in `[lo, hi]` inclusive on BOTH ends.
@@ -19,3 +39,106 @@ int = Ffi.kernel "Random_int"
 -- | Uniform random float in `[lo, hi)` (lo inclusive, hi exclusive).
 float : Float -> Float -> Task Error Float
 float = Ffi.kernel "Random_float"
+
+
+-- | Alias for `int` with a more obvious name when used in pipelines:
+--
+--     Random.range 1 6 |> Task.run
+--
+-- Identical semantics to `int` (inclusive on both ends).
+range : Int -> Int -> Task Error Int
+range lo hi = int lo hi
+
+
+-- | Pick one element from a list uniformly at random.  Returns
+-- `Nothing` only when the list is empty (matches Sky's
+-- failure-as-Maybe convention for total functions).
+choice : List a -> Task Error (Maybe a)
+choice = Ffi.kernel "Random_choiceMaybe"
+
+
+-- | Fisher-Yates shuffle.  Returns a new list with the same
+-- elements in pseudo-random order; the input is not mutated.
+shuffle : List a -> Task Error (List a)
+shuffle = Ffi.kernel "Random_shuffle"
+
+
+-- | Weighted random pick.  Each tuple is `(weight, value)`.  Weights
+-- are summed and an index drawn proportionally; non-positive weights
+-- are skipped.  Returns `Nothing` only when every weight is ≤ 0 or
+-- the list is empty.
+weighted : List ( Float, a ) -> Task Error (Maybe a)
+weighted = Ffi.kernel "Random_weighted"
+
+
+-- ─── Seeded (deterministic) variants ──────────────────────────────
+--
+-- These do NOT consume OS entropy; they produce the same sequence
+-- across runs given the same starting seed.  Use them in tests and
+-- in content generation where reproducibility matters.
+
+
+-- | Opaque PRNG state.  Threaded through every seeded call.
+type Seed
+    = Seed Int
+
+
+-- | `seed n` — construct a starting seed from an `Int`.  Identical
+-- inputs produce identical sequences across runs.
+seed : Int -> Seed
+seed n = Seed n
+
+
+-- | Internal kernel: pure (Int seed, lo, hi) -> (value, nextSeed).
+seededIntRaw : Int -> Int -> Int -> ( Int, Int )
+seededIntRaw = Ffi.kernel "Random_seededInt"
+
+
+-- | `seededInt s lo hi` — uniform integer in `[lo, hi]` inclusive,
+-- returning the value and the next seed.
+seededInt : Seed -> Int -> Int -> ( Int, Seed )
+seededInt s lo hi =
+    case s of
+
+        Seed n ->
+            case seededIntRaw n lo hi of
+
+                ( v, next ) ->
+                    ( v, Seed next )
+
+
+-- | Internal kernel: pure Int seed -> (Float, nextSeed).
+seededFloatRaw : Int -> ( Float, Int )
+seededFloatRaw = Ffi.kernel "Random_seededFloat"
+
+
+-- | `seededFloat s` — uniform float in `[0, 1)`, returning the value
+-- and the next seed.
+seededFloat : Seed -> ( Float, Seed )
+seededFloat s =
+    case s of
+
+        Seed n ->
+            case seededFloatRaw n of
+
+                ( v, next ) ->
+                    ( v, Seed next )
+
+
+-- | Internal kernel: pure (Int seed, list) -> (Maybe a, nextSeed).
+seededChoiceRaw : Int -> List a -> ( Maybe a, Int )
+seededChoiceRaw = Ffi.kernel "Random_seededChoice"
+
+
+-- | `seededChoice s list` — pick one element from a list, returning
+-- the choice and the next seed.  `Nothing` only when the list is
+-- empty.
+seededChoice : Seed -> List a -> ( Maybe a, Seed )
+seededChoice s xs =
+    case s of
+
+        Seed n ->
+            case seededChoiceRaw n xs of
+
+                ( v, next ) ->
+                    ( v, Seed next )

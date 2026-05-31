@@ -1,0 +1,81 @@
+module Sky.Core.RandomExtTest exposing (tests)
+
+-- Regression fence for v0.15.47 Random extensions: deterministic
+-- seeded* helpers (the only pure-deterministic surface we can
+-- pin without relying on RNG state).  The entropy-backed
+-- `range` / `choice` / `weighted` / `shuffle` paths are covered
+-- by the Go runtime tests in `runtime-go/rt/random_test.go`.
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Random as Random
+import Sky.Test as Test exposing (Test)
+
+
+tests : List Test
+tests =
+    [ Test.suite
+        "Random seeded* (v0.15.47)"
+        [ Test.test
+            "seededInt is deterministic — same seed → same value"
+            (\_ ->
+                let
+                    s = Random.seed 42
+
+                    ( v1, _ ) = Random.seededInt s 1 100
+
+                    ( v2, _ ) = Random.seededInt s 1 100
+                in
+                Test.equal v1 v2)
+        , Test.test
+            "seededInt lands inside [lo, hi]"
+            (\_ ->
+                let
+                    s = Random.seed 7
+
+                    ( v, _ ) = Random.seededInt s 1 10
+                in
+                Test.equal True (v >= 1 && v <= 10))
+        , Test.test
+            "seededFloat lands in [0, 1)"
+            (\_ ->
+                let
+                    s = Random.seed 99
+
+                    ( v, _ ) = Random.seededFloat s
+                in
+                Test.equal True (v >= 0.0 && v < 1.0))
+        , Test.test
+            "seededFloat is deterministic"
+            (\_ ->
+                let
+                    s = Random.seed 1234
+
+                    ( v1, _ ) = Random.seededFloat s
+
+                    ( v2, _ ) = Random.seededFloat s
+                in
+                Test.equal v1 v2)
+        , Test.test
+            "seededChoice — Nothing on empty list"
+            (\_ ->
+                let
+                    s = Random.seed 0
+
+                    ( v, _ ) = Random.seededChoice s []
+                in
+                Test.equal Nothing v)
+        , Test.test
+            "seededChoice — Just on non-empty"
+            (\_ ->
+                let
+                    s = Random.seed 0
+
+                    ( v, _ ) = Random.seededChoice s [ 10, 20, 30 ]
+                in
+                case v of
+                    Just _ ->
+                        Test.equal True True
+
+                    Nothing ->
+                        Test.equal True False)
+        ]
+    ]
