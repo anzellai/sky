@@ -541,6 +541,11 @@ func coerceInner[T any](v any) T {
 	if targetDesc == "" {
 		targetDesc = "<unknown>"
 	}
+	// COMPILER-BUG-CONTRACT: reaching this point means typed-codegen
+	// emitted a Coerce[T] over a value the source-level Sky type
+	// system never narrowed to T. Top-level recover catches this as
+	// `CompilerBug` per classifyPanic; the message stays detailed
+	// so users can file an actionable report.
 	panic(fmt.Sprintf("rt.coerceInner: type mismatch — source %s cannot be cast to target %s. This is a compiler bug in typed-codegen routing. Reproduce, then investigate kernelTypedCall (Compile.hs) and the relevant inferXType helper.", srcDesc, targetDesc))
 }
 
@@ -2041,6 +2046,11 @@ func AsInt(v any) int {
 			return AsInt(u)
 		}
 	}
+	// REACHABLE-FROM-SKY (heterogeneous slice / untyped FFI return):
+	// a non-numeric value flowed into a numeric position. Top-level
+	// recover (Cycle 6 PC) classifies as `TypeMismatch`. The display
+	// variant `AsIntOrZero` is the lenient counterpart for UI-only
+	// paths where a missing value should render as 0.
 	panic(fmt.Sprintf("rt.AsInt: expected numeric value, got %T (%v)", v, v))
 }
 
@@ -2092,6 +2102,8 @@ func AsFloat(v any) float64 {
 			return AsFloat(u)
 		}
 	}
+	// REACHABLE-FROM-SKY: same shape as AsInt — classified `TypeMismatch`
+	// at the top-level recover.
 	panic(fmt.Sprintf("rt.AsFloat: expected numeric value, got %T (%v)", v, v))
 }
 
@@ -2122,6 +2134,8 @@ func AsBool(v any) bool {
 			return AsBool(u)
 		}
 	}
+	// REACHABLE-FROM-SKY: heterogeneous slice / untyped FFI return.
+	// Classified `TypeMismatch` at the top-level recover.
 	panic(fmt.Sprintf("rt.AsBool: expected bool, got %T (%v)", v, v))
 }
 
@@ -2165,7 +2179,10 @@ func Mul(a, b any) any {
 }
 
 func Div(a, b any) any {
-	// Sky's `/` is float division (Elm convention). Always float.
+	// REACHABLE-FROM-SKY: `x / 0.0` triggers this. Caught by top-level
+	// recover as `DivisionByZero` (Cycle 6 PC, v0.15.43). Sky exposes
+	// no NaN/Inf shape today, so the safe behaviour is to fail rather
+	// than silently produce `+Inf`.
 	db := AsFloat(b)
 	if db == 0 {
 		panic("rt.Div: division by zero")
@@ -2174,8 +2191,12 @@ func Div(a, b any) any {
 }
 
 func IntDiv(a, b any) any {
-	// Sky's `//` is integer division. Panic on div-by-zero so the
-	// error path surfaces via panic-recovery as Err, not silent 0.
+	// REACHABLE-FROM-SKY: `n // 0` from valid Sky source triggers
+	// this panic. The top-level recover in func main() (Cycle 6 PC,
+	// v0.15.43) catches it as `DivisionByZero` and emits a structured
+	// Error log + exit 1 — instead of dumping a Go stack. See
+	// runtime-go/rt/panic_recover.go + docs/v0.15.x-hardening/
+	// CYCLE-06-PC-panic-site-audit.md.
 	db := AsInt(b)
 	if db == 0 {
 		panic("rt.IntDiv: integer division by zero")
@@ -2184,6 +2205,7 @@ func IntDiv(a, b any) any {
 }
 
 func Rem(a, b any) any {
+	// REACHABLE-FROM-SKY: `n % 0` — same recover contract as IntDiv.
 	db := AsInt(b)
 	if db == 0 {
 		panic("rt.Rem: modulo by zero")
@@ -2388,6 +2410,11 @@ func Lte(a, b any) any { return cmp(a, b) <= 0 }
 // cmp returns -1/0/+1 with a type-aware compare. Panics on type
 // mismatch between a and b so the error surfaces via rt panic-recovery
 // as Err at the Task boundary.
+//
+// REACHABLE-FROM-SKY: `(1 :: Int) < ("a" :: String)` after a typed
+// FFI call returned `any` of either side; the HM checker would
+// normally reject this in pure Sky source. Classified `Comparison-
+// Mismatch` at the top-level recover (Cycle 6 PC).
 func cmp(a, b any) int {
 	// String vs string.
 	if sa, ok := a.(string); ok {
@@ -3323,6 +3350,12 @@ func Ffi_toAny(v any) any { return v }
 // If we ever see this panic, the call-site rewrite failed — file
 // a bug.
 func Ffi_kernel(name any) any {
+	// COMPILER-BUG-CONTRACT: the Stage-4 call-site rewrite is supposed
+	// to substitute every `Ffi.kernel "Name"` in Sky source with a
+	// direct VarKernel reference. If we get here at runtime, the
+	// rewrite missed a site — likely a new wrapper shape the
+	// pattern-matcher doesn't recognise. Top-level recover classifies
+	// as `CompilerBug`.
 	panic(fmt.Sprintf(
 		"Ffi.kernel %q reached the runtime — the build-time call-site "+
 			"rewrite did not fire. This is a compiler bug.",
@@ -4623,6 +4656,9 @@ func Coerce[T any](v any) T {
 					out.Index(i).Set(narrowed)
 					continue
 				}
+				// REACHABLE-FROM-SKY: heterogeneous slice element through
+				// a typed narrowing. Subsumed by `CoerceFailure` at the
+				// top-level recover (panic message starts with `rt.Coerce`).
 				panic(fmt.Sprintf(
 					"rt.Coerce: slice element [%d]: cannot convert %T to %v",
 					i, elem, elemTy))
@@ -4652,6 +4688,9 @@ func Coerce[T any](v any) T {
 					out.SetMapIndex(k, narrowed)
 					continue
 				}
+				// REACHABLE-FROM-SKY: heterogeneous map value through
+				// typed narrowing. Subsumed by `CoerceFailure` at the
+				// top-level recover.
 				panic(fmt.Sprintf(
 					"rt.Coerce: map value [%v]: cannot convert %T to %v",
 					k.Interface(), elem, valTy))
@@ -4695,6 +4734,15 @@ func Coerce[T any](v any) T {
 			return narrowMapToStruct(rv, targetTy).Interface().(T)
 		}
 	}
+	// REACHABLE-FROM-SKY in two shapes:
+	// (1) `rt.Coerce[T](anyValueFromFfi)` — the FFI returned a value
+	//     of the wrong shape against its declared `.skyi` signature.
+	//     This is an FFI-contract violation; classified `CoerceFailure`
+	//     at the top-level recover (Cycle 6 PC).
+	// (2) typed-codegen routing emitted `Coerce[T]` over a value the
+	//     HM checker never narrowed — that's a COMPILER-BUG-CONTRACT
+	//     (would file a soundness bug), also classified `CoerceFailure`
+	//     so the user sees the actionable "report this" hint.
 	panic(fmt.Sprintf("rt.Coerce: expected %T, got %T (%v)", zero, v, v))
 }
 
@@ -4809,6 +4857,10 @@ func CoerceFloat(v any) float64 { return AsFloat(v) }
 // return, so the return type is only there to satisfy Go's type
 // inference at the call site.
 func Unreachable(site string) any {
+	// COMPILER-BUG-CONTRACT: the exhaustiveness checker said this
+	// arm was impossible; if we reach it, codegen produced an
+	// over-broad case match. Top-level recover (Cycle 6 PC)
+	// classifies as `CompilerBug` and surfaces the actionable hint.
 	msg := "sky: codegen reached an arm the exhaustiveness checker said was impossible"
 	fmt.Fprintf(os.Stderr, "[sky.unreachable] %s (site=%s)\n%s\n", msg, site, debugStack())
 	panic(fmt.Sprintf("sky.Unreachable(%s): %s", site, msg))
@@ -8207,6 +8259,13 @@ func skyCallDirect(rv reflect.Value, args []any) any {
 			// SkyFfiRecover caught it and produced Err, which masked the
 			// real boundary check. Now we surface a clean diagnostic
 			// directly so observability shows the FFI mismatch.
+			//
+			// REACHABLE-FROM-SKY (FFI boundary): the bridge from Sky's
+			// any-typed runtime values to a typed Go FFI signature
+			// found a mismatch. Top-level recover (Cycle 6 PC)
+			// classifies as `TypeMismatch` via the rt.AsInt/AsBool
+			// shape pattern doesn't fire here, so the default
+			// `Unexpected` bucket with the raw message is used.
 			panic(fmt.Sprintf(
 				"rt.skyCallDirect: argument %d type mismatch — function expects %v, got %T (%v)",
 				i, pt, a, a))

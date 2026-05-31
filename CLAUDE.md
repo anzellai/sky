@@ -475,6 +475,32 @@ params skip `coerceArg` (its `eraseTypeParams` would rewrite
 - **DCE** — whole-program Sky-side dead-code elimination prunes
   unreachable defs + FFI bindings before lowering.
 
+### Synchronous-panic gate (v0.15.43)
+
+Every emitted `func main()` starts with
+`defer rt.LogPanicAndExit()`. The deferred call's `recover()`
+catches whatever escaped the synchronous Sky path (Sky.Cli /
+Sky.Tui / batch jobs — every `main = Task.run …` shape that's
+not a server), classifies the panic (DivisionByZero,
+TypeMismatch, CoerceFailure, ComparisonMismatch, IndexOutOfRange,
+NilDereference, CompilerBug, Unexpected), emits a structured
+Error log line with a 4-byte errId, and exits 1 — instead of
+dumping a Go stack. `SKY_LOG_FORMAT=json` honours the JSON shape.
+
+Reachable-from-Sky panic sites: `rt.IntDiv` / `rt.Rem` / `rt.Div`
+(div-by-zero), `rt.AsInt` / `AsFloat` / `AsBool` (heterogeneous
+slice / untyped FFI return), `rt.cmp`, `rt.Coerce` (3 variants),
+`rt.skyCallDirect`, plus Go-runtime `index out of range` /
+nil-deref. Compiler-bug-contract panic sites: `coerceInner`,
+`Unreachable`, `Ffi.kernel` — surface as `CompilerBug` with a
+"please report" hint. Full site audit:
+`docs/v0.15.x-hardening/audits/CYCLE-06-PC-panic-site-audit.md`.
+
+Sky.Http.Server handlers already have a per-request defer/recover
+(at `rt.go:6863`) — they emit a 500 instead of crashing. The
+Cmd.perform goroutine wraps `rt.SafeGo`. The top-level recover
+closes the remaining synchronous surface.
+
 ## Build & test
 
 ```bash

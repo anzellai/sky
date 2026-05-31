@@ -131,6 +131,19 @@ record aliases closed a cluster of long-standing limitations:
   origin (e.g. `Sky.Core.Result`), eliminating the refactor
   regression class where downstream code silently bound to the
   user's ADT instead of stdlib Maybe / Result.
+- ~~Synchronous Sky main crashes with a Go stack dump on `1 // 0`,
+  bad numeric cast, or comparison-type-mismatch~~ — v0.15.43
+  (audit §3.5 + §9). Codegen now injects `defer rt.LogPanicAndExit()`
+  as the first statement of every emitted `func main()`. The
+  recover catches each "reachable from valid Sky" panic site
+  (`rt.IntDiv` / `rt.Rem` / `rt.Div`, `rt.AsInt` / `AsFloat` /
+  `AsBool`, `rt.cmp`, `rt.Coerce`, `rt.skyCallDirect`, plus Go-
+  runtime `index out of range` / nil-deref) and emits a structured
+  `Sky panic: <Kind> (ref <errId>) — <hint>` log line + exit 1
+  instead. Compiler-bug panics (`Unreachable`, `Ffi.kernel`,
+  `coerceInner`) are classified as `CompilerBug` and prompt the
+  user to file a report. Full site-by-site audit at
+  `docs/v0.15.x-hardening/audits/CYCLE-06-PC-panic-site-audit.md`.
 
 ## Deferred (roadmap, not active bugs)
 
