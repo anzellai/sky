@@ -7390,6 +7390,15 @@ func Server_listen(port any, routes any) any {
 					fmt.Fprint(w, "Internal Server Error")
 					return
 				}
+				// v0.15.46: WebSocket upgrade sentinel.  The user's
+				// handler returned Server.WebSocket.upgrade; we hijack
+				// the connection and run the upgrade-and-loop dance.
+				if tok, ok := extractPendingWebSocketToken(skyResp.Body); ok {
+					if cfg, found := takePendingWebSocketCfg(tok); found {
+						serveWebSocketUpgrade(w, req, cfg)
+						return
+					}
+				}
 				// Streaming response (Sky.Http.Server.Stream): dispatch
 				// the user's handler over a chunk-writer instead of
 				// buffering the body. The branch sets headers + flushes,

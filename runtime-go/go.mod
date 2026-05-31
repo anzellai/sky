@@ -9,6 +9,8 @@ require (
 	github.com/jackc/pgx/v5 v5.9.1
 	github.com/redis/go-redis/v9 v9.18.0
 	github.com/rivo/uniseg v0.4.7
+	github.com/shopspring/decimal v1.4.0
+	github.com/webview/webview_go v0.0.0-20240831120633-6173450d4dd6
 	go.opentelemetry.io/otel v1.43.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.43.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.43.0
@@ -35,8 +37,6 @@ require (
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/ncruces/go-strftime v0.1.9 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
-	github.com/shopspring/decimal v1.4.0 // indirect
-	github.com/webview/webview_go v0.0.0-20240831120633-6173450d4dd6 // indirect
 	github.com/yuin/gopher-lua v1.1.1 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/otel/metric v1.43.0 // indirect
@@ -55,4 +55,5 @@ require (
 	modernc.org/memory v1.8.0 // indirect
 	modernc.org/strutil v1.2.0 // indirect
 	modernc.org/token v1.1.0 // indirect
+	nhooyr.io/websocket v1.8.17 // indirect
 )

@@ -1372,6 +1372,11 @@ type subT struct {
 	topic string
 	// Streaming-HTTP field (kind = "subscribeStream"). Cycle 4 HS.
 	streamID int64
+	// WebSocket fields (kind = "subscribeWebSocket"). v0.15.46.
+	// wsKind selects which event class this subscription receives:
+	// "message" | "open" | "close" | "error".
+	socketID int64
+	wsKind   string
 }
 
 // SkySub is the public type for Sky's Sub msg type.
@@ -2027,6 +2032,24 @@ type liveSession struct {
 	// concern as activeSubsMu).
 	activeStreamSubs   map[int64]*streamSubReg
 	activeStreamSubsMu sync.Mutex
+
+	// sockets — Sky.Core.WebSocket open handles owned by this session
+	// (v0.15.46). WebSocket_connect registers; WebSocket_close
+	// deletes; markDone walks the map and closes every entry so a
+	// session disconnect can't leak an open WebSocket.
+	//
+	// Protected by socketsMu — dedicated mutex (mirrors streamsMu's
+	// rationale).
+	sockets   map[int64]*wsHandle
+	socketsMu sync.Mutex
+
+	// activeWsSubs — Sub.subscribeWebSocket entries currently bound
+	// to this session, keyed by `<socketID>:<kind>` so onMessage +
+	// onOpen + onClose + onError can coexist per socket.
+	//
+	// Protected by activeWsSubsMu (mirrors activeStreamSubsMu).
+	activeWsSubs   map[string]*wsSubReg
+	activeWsSubsMu sync.Mutex
 }
 
 // touchLastSeen — stamp the lastSeen counter with the current wall
@@ -2118,6 +2141,29 @@ func (s *liveSession) markDone() {
 			fmt.Fprintf(os.Stderr,
 				"[sky.stream] cleaned %d orphaned streams on session close (sid=%q)\n",
 				n, s.sid)
+		}
+		// v0.15.46: same sweep for Sky.Core.WebSocket open sockets.
+		// closeAllSockets is idempotent.
+		if n := closeAllSockets(s); n > 0 {
+			fmt.Fprintf(os.Stderr,
+				"[sky.websocket] cleaned %d orphaned sockets on session close (sid=%q)\n",
+				n, s.sid)
+		}
+		// Release ws subscription registrations (drain goroutines)
+		// so they don't linger pushing to dead sessions.
+		s.activeWsSubsMu.Lock()
+		wsRegs := make([]*wsSubReg, 0, len(s.activeWsSubs))
+		for _, r := range s.activeWsSubs {
+			if r != nil {
+				wsRegs = append(wsRegs, r)
+			}
+		}
+		s.activeWsSubs = nil
+		s.activeWsSubsMu.Unlock()
+		for _, reg := range wsRegs {
+			if reg.cancel != nil {
+				reg.cancel()
+			}
 		}
 	})
 }
@@ -4188,6 +4234,10 @@ func (app *liveApp) setupSubscriptions(sess *liveSession) {
 	var everyLeaf *subT
 	desired := map[string]subT{}
 	desiredStreams := map[int64]subT{}
+	// v0.15.46: WebSocket subs keyed by `<socketID>:<wsKind>` so the
+	// four onMessage/onOpen/onClose/onError variants coexist per
+	// socket.
+	desiredWs := map[string]subT{}
 	for i := range leaves {
 		leaf := leaves[i]
 		switch leaf.kind {
@@ -4203,6 +4253,9 @@ func (app *liveApp) setupSubscriptions(sess *liveSession) {
 		case "subscribeStream":
 			// Last-write-wins per streamID — same rationale as topics.
 			desiredStreams[leaf.streamID] = leaf
+		case "subscribeWebSocket":
+			key := fmt.Sprintf("%d:%s", leaf.socketID, leaf.wsKind)
+			desiredWs[key] = leaf
 		}
 	}
 
@@ -4211,6 +4264,7 @@ func (app *liveApp) setupSubscriptions(sess *liveSession) {
 	// once + lands on a coherent activeSubs map.
 	app.applyTopicSubsDiff(sess, desired)
 	app.applyStreamSubsDiff(sess, desiredStreams)
+	app.applyWsSubsDiff(sess, desiredWs)
 
 	// Time.every — keep the existing goroutine shape verbatim.
 	if everyLeaf == nil {
