@@ -669,7 +669,8 @@ Each binding is either:
 | `Regex` | `Sky.Core.Regex` | match, find, findAll, replace, split |
 | `Char` | `Sky.Core.Char` | isAlpha, isDigit, isLower, isUpper, toUpper, toLower |
 | `Path` | `Sky.Core.Path` | base, dir, ext, isAbsolute |
-| `Crypto` | `Sky.Core.Crypto` | sha256, sha512, sha1, md5, hmacSha256, hmacSha512, rsaSha256Sign, rsaSha256Verify, constantTimeEqual (pure); randomBytes, randomToken (Task — entropy) |
+| `Crypto` | `Sky.Core.Crypto` | sha256, sha512, sha1, md5, hmacSha256, hmacSha512, rsaSha256Sign, rsaSha256Verify, constantTimeEqual (pure); aesGcmEncrypt/Decrypt, chacha20Encrypt/Decrypt, aesKeyFromPassword, chachaKeyFromPassword (Result Error String — symmetric encryption, AEAD); randomBytes, randomToken (Task — entropy) |
+| `Bytes` | `Sky.Core.Bytes` | empty, length, isEmpty, fromString/toString (UTF-8 lossy via Maybe), fromHex/toHex, fromBase64/toBase64, append, slice |
 | `Jwt` | `Sky.Core.Jwt` | encode, decode (HS256 + RS256 — signature + `exp`/`nbf` checked); `hs256`/`rs256` algorithms; `claims` builder — issuer/subject/audience/expiresAt/notBefore/issuedAt/jwtId/withClaim |
 | `Encoding` | `Sky.Core.Encoding` | base64Encode/Decode, urlEncode/Decode, hexEncode/Decode |
 | `JsonEnc` | `Sky.Core.Json.Encode` | string, int, float, bool, null, list (Elm-style `(a -> Value) -> List a -> Value`), object, encode |
@@ -683,14 +684,14 @@ Each binding is either:
 
 | Module | Path | Key functions |
 |---|---|---|
-| `Task` | `Sky.Core.Task` | succeed, fail, map, andThen, perform, sequence, parallel, lazy, run, fromResult, andThenResult, mapError, onError |
+| `Task` | `Sky.Core.Task` | succeed, fail, map, andThen, perform, sequence, parallel, lazy, run, fromResult, andThenResult, mapError, onError; **retryWith** + RetryPolicy (linearBackoff, exponentialBackoff, withJitter, retryOn) |
 | `Cmd` | `Std.Cmd` | none, batch, perform, publish (echo-by-default pub/sub from update return), publishNoEcho (opt-out echo — broker skips publisher's own subscription) |
 | `Sub` | `Std.Sub` | none, every, batch, subscribeTopic (pub/sub receive) |
 | `PubSub` | `Std.PubSub` | publish (Task-shaped — callable from raw `api` handlers / post-init / scheduled jobs; complements `Cmd.publish` which is bound to update-returns), publishNoEcho (Task-shaped no-echo — sets the broker's SkipOrigin bit for v0.16+ cross-process tier propagation) |
 | `Time` | `Sky.Core.Time` | now, sleep, every, unixMillis, format/formatISO8601/formatRFC3339/formatHTTP, addMillis, diffMillis, timeString |
 | `Std.Time` | `Std.Time` | 32 entries. IANA zones, addMonths/Years (month-end CLAMPED), dayOfWeek (ISO Mon=1..Sun=7), weekOfYear (ISO 8601), startOfDay/Week/Month/Year, diffDays/Hours/Minutes/Seconds. |
 | `Random` | `Sky.Core.Random` | int, float |
-| `Http` | `Sky.Core.Http` | get, post, request (custom method/headers/body via `HttpRequest`), parseQuery (query string → `Dict String String`) |
+| `Http` | `Sky.Core.Http` | get, post, request (custom method/headers/body/timeout via `HttpRequest`), defaultRequest/withMethod/withHeader/withTimeout/withBody builders, parseQuery; typed `HttpResponse = { status : Int, body : String, headers : Dict String String }` |
 | `File` | `Sky.Core.File` | readFile, readFileLimit, readFileBytes, writeFile, append, exists, remove, mkdirAll, readDir, isDir, tempFile, copy, rename |
 | `Io` | `Sky.Core.Io` | readLine, writeStdout, writeStderr |
 | `System` | `Sky.Core.System` | args, getArg, getenv, getenvOr (bare), getenvInt, getenvBool, setenv, unsetenv, cwd, loadEnv, exit |

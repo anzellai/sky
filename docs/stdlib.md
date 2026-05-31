@@ -170,8 +170,35 @@ hmac   = Crypto.hmacSha256 "secret" "message"
 | `Crypto.rsaSha256Sign` | `String -> String -> Result Error String` | RSASSA-PKCS1-v1_5 over SHA-256 ("RS256"); (PEM private key, message) → standard-base64 signature |
 | `Crypto.rsaSha256Verify` | `String -> String -> String -> Bool` | (PEM public key, message, base64 signature) → valid? |
 | `Crypto.constantTimeEqual` | `String -> String -> Bool` | Side-channel safe comparison |
-| `Crypto.randomBytes` | `Int -> Task Error Bytes` | OS entropy → raw bytes |
-| `Crypto.randomToken` | `Int -> Task Error String` | OS entropy → hex string of given byte length |
+| `Crypto.randomBytes` | `Int -> Task Error String` | OS entropy → raw bytes (as a Sky String) |
+| `Crypto.randomToken` | `Int -> Task Error String` | OS entropy → URL-safe-base64 string of given byte length |
+| `Crypto.aesGcmEncrypt` | `String -> String -> Result Error String` | AES-256-GCM AEAD; output is `base64(nonce \|\| ct \|\| tag)`. Pair with `aesKeyFromPassword` |
+| `Crypto.aesGcmDecrypt` | `String -> String -> Result Error String` | Inverse of `aesGcmEncrypt`. Err on tag/key mismatch |
+| `Crypto.chacha20Encrypt` | `String -> String -> Result Error String` | ChaCha20-Poly1305 AEAD — preferred on ARM / mobile (no AES-NI) |
+| `Crypto.chacha20Decrypt` | `String -> String -> Result Error String` | Inverse of `chacha20Encrypt` |
+| `Crypto.aesKeyFromPassword` | `String -> String -> String` | PBKDF2-HMAC-SHA256 100k iter → 32-byte key for `aesGcmEncrypt` |
+| `Crypto.chachaKeyFromPassword` | `String -> String -> String` | Same shape — derive a key for ChaCha |
+
+### `Bytes` — byte-buffer helpers (Sky.Core.Bytes)
+
+`type alias Bytes = String` — Go strings ARE byte sequences;
+`Bytes` is a typed alias for documenting "this string holds raw
+bytes, not text".  Same value at runtime as the underlying
+`String` so passing back and forth costs nothing.
+
+| Function | Type | Notes |
+|---|---|---|
+| `Bytes.empty` | `Bytes` | `""` |
+| `Bytes.length` | `Bytes -> Int` | Byte count (NOT rune count) |
+| `Bytes.isEmpty` | `Bytes -> Bool` |  |
+| `Bytes.fromString` | `String -> Bytes` | No-op (identity) — clarifies intent |
+| `Bytes.toString` | `Bytes -> Maybe String` | `Nothing` on invalid UTF-8 |
+| `Bytes.fromHex` | `String -> Maybe Bytes` | Case-insensitive |
+| `Bytes.toHex` | `Bytes -> String` | Lowercase |
+| `Bytes.fromBase64` | `String -> Maybe Bytes` | Standard base64 |
+| `Bytes.toBase64` | `Bytes -> String` |  |
+| `Bytes.append` | `Bytes -> Bytes -> Bytes` |  |
+| `Bytes.slice` | `Int -> Int -> Bytes -> Bytes` | Byte indices |
 
 ### `Jwt` — JSON Web Tokens
 
@@ -406,6 +433,11 @@ main =
 | `Task.run` | `Task e a -> Result e a` | Force at the boundary |
 | `Task.fromResult` | `Result e a -> Task e a` | Bridge from Result |
 | `Task.andThenResult` | `(a -> Result e b) -> Task e a -> Task e b` | Chain Result step after Task |
+| `Task.linearBackoff` | `Int -> Int -> RetryPolicy` | (maxAttempts, delayMs) — same delay every retry |
+| `Task.exponentialBackoff` | `Int -> Int -> RetryPolicy` | (maxAttempts, baseMs) — `baseMs * 2^(n-1)`, capped at 30 s |
+| `Task.withJitter` | `RetryPolicy -> RetryPolicy` | Randomise delay in `[0.5×, 1.5×]` to spread retry waves |
+| `Task.retryOn` | `(e -> Bool) -> RetryPolicy -> RetryPolicy` | Predicate-gate retry (e.g. transient-vs-validation) |
+| `Task.retryWith` | `RetryPolicy -> Task e a -> Task e a` | Drive task up to maxAttempts; first Ok wins, last Err otherwise |
 | `Task.map2`...`Task.map5`, `Task.andMap` | combinators | NOT YET IMPLEMENTED — use `Task.parallel [...] \|> Task.map ...` or `Result.map2..5` for the Result counterparts |
 
 ### `Cmd` / `Sub` — Sky.Live commands and subscriptions
@@ -467,12 +499,42 @@ import Sky.Core.Http as Http
 
 response =
     Http.get "https://api.example.com/users"
-        |> Task.andThen (\body -> println body)
+        |> Task.map (\resp -> resp.body)
+        |> Task.andThen println
+
+-- HttpResponse is a typed record (v0.15.44+) — annotate and
+-- destructure directly:
+--   HttpResponse = { status : Int, body : String, headers : Dict String String }
 ```
 
-`get`, `post`, `request` (custom method/headers). `parseQuery`
-parses a URL query string into a `Dict String String` (pure —
-backed by Go's `net/url`, proper percent-decoding).
+`HttpResponse` is a typed record alias.  Annotate handlers as
+`resp : HttpResponse` and read `.status` / `.body` / `.headers`
+directly — no opaque kernel boundary any more.
+
+The builder API on `HttpRequest` covers custom headers, timeout,
+redirect policy:
+
+```elm
+req =
+    Http.defaultRequest "https://api.example.com/v1/foo"
+        |> Http.withMethod "POST"
+        |> Http.withHeader "Authorization" ("Bearer " ++ token)
+        |> Http.withBody jsonBody
+        |> Http.withTimeout 60000              -- 60 s; 0 disables
+```
+
+Pair with `Task.retryWith` for flaky upstreams:
+
+```elm
+fetchData =
+    Task.retryWith
+        (Task.exponentialBackoff 5 500 |> Task.withJitter)
+        (Http.request req)
+```
+
+`get`, `post`, `request` (custom method/headers/timeout).
+`parseQuery` parses a URL query string into a `Dict String String`
+(pure — backed by Go's `net/url`, proper percent-decoding).
 
 For **streaming response bodies** (LLM completions, SSE, large
 downloads), use `Sky.Core.Http.Stream`:

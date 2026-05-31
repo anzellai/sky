@@ -1947,11 +1947,25 @@ Time.sleep 1000        -- Task Error () (sleep 1 second)
 ### Sky.Core.Http (Task)
 
 ```elm
-Http.get "https://api.example.com/data"     -- Task Error Response
-Http.post url body                            -- Task Error Response
-Http.request { method, url, headers, body }   -- Task Error Response
+Http.get "https://api.example.com/data"     -- Task Error HttpResponse
+Http.post url body                          -- Task Error HttpResponse
 
--- Response = { status : Int, body : String, headers : List (String, String) }
+-- HttpResponse = { status : Int, body : String, headers : Dict String String }
+
+-- Build a custom request with the builder API (typed):
+Http.defaultRequest "https://api.example.com/v1/foo"
+    |> Http.withMethod "POST"
+    |> Http.withHeader "Authorization" ("Bearer " ++ token)
+    |> Http.withBody jsonBody
+    |> Http.withTimeout 60000              -- 60 s; 0 disables
+    |> Http.request                         -- Task Error HttpResponse
+
+-- Retry on transient errors:
+fetchToken : Task Error String
+fetchToken =
+    Task.retryWith
+        (Task.exponentialBackoff 5 500 |> Task.withJitter)
+        (Http.get tokenUrl |> Task.map (\resp -> resp.body))
 
 Http.parseQuery "a=1&b=2"   -- Dict String String (pure; Go net/url)
 ```
@@ -2081,7 +2095,32 @@ Crypto.hmacSha256 "key" "msg"       -- hex HMAC (also hmacSha512)
 Crypto.rsaSha256Sign pemKey "msg"   -- Result Error String — RS256 signature
 Crypto.rsaSha256Verify pub "msg" s  -- Bool
 Crypto.constantTimeEqual a b        -- compare secrets safely, never ==
+
+-- Symmetric encryption (AEAD).  Output: base64(nonce || ct || tag).
+key = Crypto.aesKeyFromPassword "password" "salt-must-be-unique"
+Crypto.aesGcmEncrypt key "plaintext"    -- Result Error String
+Crypto.aesGcmDecrypt key ciphertext     -- Result Error String
+Crypto.chacha20Encrypt key plaintext    -- AES alternative on ARM / mobile
+Crypto.chacha20Decrypt key ciphertext
 ```
+
+### Sky.Core.Bytes (pure)
+
+```elm
+import Sky.Core.Bytes as Bytes
+
+Bytes.fromHex "deadbeef"    -- Maybe Bytes
+Bytes.toHex bytes           -- String
+Bytes.fromBase64 "SGVsbG8=" -- Maybe Bytes
+Bytes.toBase64 bytes        -- String
+Bytes.toString bytes        -- Maybe String — Nothing on invalid UTF-8
+Bytes.length bytes          -- byte count
+```
+
+`Bytes` is a `type alias = String` — Go strings are byte sequences, no
+opaque-wrapper round-trip needed.  Use `Bytes` when you want the
+intent (this string holds raw bytes, not text) to read in your type
+signatures.
 
 ### Sky.Core.Jwt (pure)
 
@@ -2111,20 +2150,29 @@ Random.shuffle [1,2,3,4]    -- Task Error (List Int)
 
 ### Sky.Http.Server
 
+Every binding carries an HM signature (v0.15.44+).  `sky doc
+Server.get` returns the real type; LSP hover surfaces `String ->
+(Request -> Task Error Response) -> Route`.
+
 ```elm
-import Sky.Http.Server as Server
+import Sky.Http.Server as Server exposing (Request, Response, Route)
+
+handleHome : Request -> Task Error Response
+handleHome _ =
+    Task.succeed (Server.text "Hello!")
 
 main =
     Server.listen 8000
-        [ Server.get "/" (\_ -> Task.succeed (Server.text "Hello!"))
+        [ Server.get "/" handleHome
         , Server.get "/api/users/:id" getUser
         , Server.post "/api/data" handlePost
         , Server.static "/assets" "./public"
         ]
 
--- Request = { method, path, body, headers, params, query, cookies, ... }
+-- Request  = { method, path, body, headers, params, query, cookies, remoteAddr }
+-- Response = { status, body, headers, contentType }
 -- Response builders: text, json, html, withStatus, withHeader, withCookie, redirect
--- Cookie: Server.cookie "name" "value", Server.secureCookie, Server.sessionCookie
+-- Cookie:   Server.cookie "name" "value" -- pair with Server.withCookie
 ```
 
 ### Sky Console — auto-mounted dev dashboard
