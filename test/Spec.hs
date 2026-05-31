@@ -18,6 +18,7 @@ import qualified Sky.Canonicalise.UnboundSpec
 import qualified Sky.Canonicalise.QualifiedTypeAliasSpec
 import qualified Sky.Canonicalise.DualImportCollisionSpec
 import qualified Sky.Canonicalise.AliasNameCollisionSpec
+import qualified Sky.Canonicalise.PipelineIntegritySpec
 import qualified Sky.Type.ExhaustivenessSpec
 import qualified Sky.Type.AnyWildcardSpec
 import qualified Sky.Type.NumericBinopSpec
@@ -186,6 +187,13 @@ main = hspec $ do
     -- bare-name fallback for unique bodies.
     describe "Sky.Canonicalise.AliasNameCollision"
                                          Sky.Canonicalise.AliasNameCollisionSpec.spec
+    -- v0.15.42 Cycle 6: 3 pipeline-integrity bugs called out in the
+    -- v0.15.41 audit (§3.1 unknown qualifier silently passing,
+    -- §3.4 "Compilation successful" banner before go build runs,
+    -- §3.2 Prelude shadowing of stdlib types). One regression spec
+    -- per bug — see PipelineIntegritySpec.hs header for context.
+    describe "Sky.Canonicalise.PipelineIntegrity"
+                                         Sky.Canonicalise.PipelineIntegritySpec.spec
     describe "Sky.Type.Exhaustiveness"   Sky.Type.ExhaustivenessSpec.spec
     -- Cross-branch HM `any` wildcard fix (compiler bug #3). Distinct
     -- occurrences of `any` in source types must NOT share a single

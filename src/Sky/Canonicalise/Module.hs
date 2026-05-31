@@ -184,6 +184,21 @@ canonicaliseWithDeps deps srcMod =
         -- "Model vs Model" error at the type checker.
         importAliasCollisions = detectImportAliasCollisions (Src._imports srcMod)
 
+        -- v0.15.42 audit §3.2 — Prelude-shadow gate. Reject any user-
+        -- defined ADT whose type name OR any constructor name collides
+        -- with a Prelude-exposed type / constructor. The resulting
+        -- program is silently wrong: `type Result a = Just a | Nothing`
+        -- makes `Just`/`Nothing` resolve to the USER's constructors
+        -- everywhere downstream, even in modules expecting the stdlib
+        -- Maybe. Hard error (not warning) per audit's "soundness
+        -- regression" classification — refactor regression class.
+        --
+        -- Carve-out: the protected name's own canonical home module is
+        -- allowed to define it (that's WHERE the protected name lives).
+        -- E.g. `Sky.Core.Error.Error` is the canonical Error; Sky.Core.
+        -- Maybe defines `Maybe(Just, Nothing)` etc.
+        preludeShadowErrors = detectPreludeShadowing modName (Src._unions srcMod)
+
         -- Build environment from imports
         env0 = Env.initialEnv modName
         env1 = foldl (processImportWith deps modName) env0 (Src._imports srcMod)
@@ -224,11 +239,12 @@ canonicaliseWithDeps deps srcMod =
         unboundErrs
             | Map.null deps && hasUserImports = []
             | otherwise = collectUnboundNameErrors env4 srcMod
-    in case (importAliasCollisions, importHidingErrors, collisions, unboundErrs) of
-        (err:_, _, _, _) -> Left err
-        (_, err:_, _, _) -> Left err
-        (_, _, Just err, _) -> Left err
-        (_, _, _, err:_) -> Left err
+    in case (importAliasCollisions, importHidingErrors, preludeShadowErrors, collisions, unboundErrs) of
+        (err:_, _, _, _, _) -> Left err
+        (_, err:_, _, _, _) -> Left err
+        (_, _, err:_, _, _) -> Left err
+        (_, _, _, Just err, _) -> Left err
+        (_, _, _, _, err:_) -> Left err
         _ -> Right $ expandModuleAliases depAliasMap Can.Module
             { Can._name    = modName
             , Can._exports = exports
@@ -614,6 +630,96 @@ kernelFunctions =
 -- The user-facing workaround is `import App.State as AppState`, which
 -- gives each import a distinct qualifier and disambiguates the two
 -- modules at every call site.
+-- | v0.15.42 audit §3.2. Reject any user-defined union whose type
+-- name OR any constructor name collides with a Prelude-exposed
+-- type / constructor. Hard error: the resulting program is silently
+-- wrong — references to the shadowed name resolve to the user's
+-- ADT instead of the stdlib version, with no visible cue.
+--
+-- Protected names match `Env.builtinTypes` (Int, Float, Bool,
+-- String, Char, List, Maybe, Result, Task, Error) and
+-- `Env.builtinCtors` (True, False, Just, Nothing, Ok, Err).
+--
+-- This is type/ctor shadowing only; user-defined VALUES (functions
+-- named `map`, `filter`, etc.) are allowed since they're qualified
+-- away by module prefixing. Type-name collision is the regression
+-- class because Sky has no value-level distinction between "stdlib
+-- Maybe.Just" and "MyType.Just" — both lower to the same Go ctor
+-- and pattern-match identically.
+detectPreludeShadowing :: ModuleName.Canonical -> [A.Located Src.Union] -> [String]
+detectPreludeShadowing (ModuleName.Canonical home) unions =
+    concatMap checkUnion unions
+  where
+    -- Match Env.builtinTypes / Env.builtinCtors. Kept inline to avoid
+    -- pulling builtin tables through several layers — both lists are
+    -- tiny and rarely change.
+    --
+    -- Map each protected name to its canonical home module so we can
+    -- carve that module out (it's allowed to DEFINE its own protected
+    -- name).
+    protectedTypeHomes :: Map.Map String String
+    protectedTypeHomes = Map.fromList
+        [ ("Int",    "Sky.Core.Basics")
+        , ("Float",  "Sky.Core.Basics")
+        , ("Bool",   "Sky.Core.Basics")
+        , ("String", "Sky.Core.Basics")
+        , ("Char",   "Sky.Core.Basics")
+        , ("List",   "Sky.Core.List")
+        , ("Maybe",  "Sky.Core.Maybe")
+        , ("Result", "Sky.Core.Result")
+        , ("Task",   "Sky.Core.Task")
+        , ("Error",  "Sky.Core.Error")
+        ]
+
+    protectedCtorHomes :: Map.Map String (String, String)
+    protectedCtorHomes = Map.fromList
+        [ ("True",    ("Sky.Core.Basics", "Bool"))
+        , ("False",   ("Sky.Core.Basics", "Bool"))
+        , ("Just",    ("Sky.Core.Maybe", "Maybe"))
+        , ("Nothing", ("Sky.Core.Maybe", "Maybe"))
+        , ("Ok",      ("Sky.Core.Result", "Result"))
+        , ("Err",     ("Sky.Core.Result", "Result"))
+        ]
+
+    checkUnion (A.At _ u) =
+        let A.At nameReg typeName = Src._unionName u
+            ctors = Src._unionCtors u
+
+            typeErrors = case Map.lookup typeName protectedTypeHomes of
+                Just origin | origin /= home ->
+                    let A.Region (A.Position r c) _ = nameReg
+                    in [show r ++ ":" ++ show c
+                       ++ ": Prelude shadowing: `type " ++ typeName
+                       ++ "` collides with the built-in type `" ++ typeName
+                       ++ "` from " ++ origin ++ "."
+                       ++ "\n    Sky's Prelude auto-exposes `" ++ typeName
+                       ++ "`. A user-defined ADT with the same name silently"
+                       ++ " shadows the stdlib version at every downstream use"
+                       ++ " site, with no warning — refactor regression class."
+                       ++ "\n    Rename your type (e.g. `My" ++ typeName ++ "`)"
+                       ++ " or drop the shadowing definition."]
+                _ -> []
+
+            ctorErrors = concatMap checkCtor ctors
+
+        in typeErrors ++ ctorErrors
+
+    checkCtor (A.At ctorReg (ctorName, _args)) =
+        case Map.lookup ctorName protectedCtorHomes of
+            Just (origin, parent) | origin /= home ->
+                let A.Region (A.Position r c) _ = ctorReg
+                in [show r ++ ":" ++ show c
+                   ++ ": Prelude shadowing: constructor `" ++ ctorName
+                   ++ "` collides with the built-in constructor `" ++ ctorName
+                   ++ "` from " ++ origin ++ " (" ++ parent ++ ")."
+                   ++ "\n    A user-defined ADT constructor with the same name"
+                   ++ " silently shadows the stdlib version at every downstream"
+                   ++ " use site, with no warning."
+                   ++ "\n    Rename your constructor (e.g. `My" ++ ctorName ++ "`)."
+                   ]
+            _ -> []
+
+
 detectImportAliasCollisions :: [Src.Import] -> [String]
 detectImportAliasCollisions imps =
     let -- For each import, derive (qualifier, canonical-source, region, importPath).
