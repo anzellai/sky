@@ -14,6 +14,7 @@ import Sky.Core.Maybe as Maybe
 import Sky.Core.Result as Result
 import Sky.Core.Math as Math
 import Sky.Core.Crypto as Crypto
+import Sky.Core.Task as Task
 import Sky.Core.Jwt as Jwt
 import Sky.Core.Encoding as Encoding
 import Sky.Core.Json.Encode as JsonEnc
@@ -43,7 +44,36 @@ tests =
     , decimalSuite
     , moneySuite
     , timeSuite
+    , taskRetrySuite
     ]
+
+
+-- ─── Task.retryWith ───────────────────────────────────────────────
+
+
+taskRetrySuite : Test
+taskRetrySuite =
+    Test.suite "Task.retryWith"
+        [ Test.test "Ok body runs once" (\_ ->
+            case Task.perform (Task.retryWith (Task.linearBackoff 5 1) (Task.succeed 42)) of
+                Ok v -> Test.equal 42 v
+                Err _ -> Test.isFalse True)
+        , Test.test "Err body retries to maxAttempts" (\_ ->
+            case Task.perform (Task.retryWith (Task.linearBackoff 2 1) (Task.fail (Error.io "transient"))) of
+                Err _ -> Test.isTrue True
+                Ok _ -> Test.isFalse True)
+        , Test.test "Exponential policy survives" (\_ ->
+            case Task.perform (Task.retryWith (Task.exponentialBackoff 1 1) (Task.succeed "ok")) of
+                Ok v -> Test.equal "ok" v
+                Err _ -> Test.isFalse True)
+        , Test.test "withJitter composes" (\_ ->
+            let
+                policy = Task.exponentialBackoff 1 1 |> Task.withJitter
+            in
+                case Task.perform (Task.retryWith policy (Task.succeed "j")) of
+                    Ok v -> Test.equal "j" v
+                    Err _ -> Test.isFalse True)
+        ]
 
 
 -- ─── String ────────────────────────────────────────────────────────

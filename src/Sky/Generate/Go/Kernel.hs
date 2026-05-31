@@ -245,6 +245,9 @@ registry = Map.fromList
     , (("Task", "andThenResult"), KernelInfo "rt.Task_andThenResult" 2 False)
     , (("Task", "mapError"),      KernelInfo "rt.Task_mapError" 2 False)
     , (("Task", "onError"),       KernelInfo "rt.Task_onError" 2 False)
+    -- v0.15.44 retry combinator.
+    , (("Task", "retryWith"),     KernelInfo "rt.Task_retryWith" 2 False)
+    , (("Task", "retryAlways"),   KernelInfo "rt.Task_retryAlways" 1 False)
 
     -- ═══════════════════════════════════════════════════════
     -- Cmd
