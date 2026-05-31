@@ -99,6 +99,9 @@ spec = describe "Sky.Core.Http.Stream.forEachChunk (#373)" $ do
         \    , url = \"http://127.0.0.1:9999/upstream\"\n\
         \    , body = \"\"\n\
         \    , headers = []\n\
+        \    , timeout = 30000\n\
+        \    , followRedirects = True\n\
+        \    , maxRedirects = 10\n\
         \    }\n\n\n\
         \routes =\n\
         \    [ Server.get \"/relay\" handleRelay\n\
