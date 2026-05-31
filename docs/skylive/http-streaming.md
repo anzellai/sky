@@ -31,6 +31,7 @@ module Sky.Core.Http.Stream exposing
     , open
     , chunks
     , close
+    , forEachChunk
     )
 
 type StreamId = StreamId Int
@@ -40,9 +41,10 @@ type ChunkEvent
     | Done               -- clean EOF
     | Errored Error      -- network / protocol error
 
-open   : HttpRequest -> Task Error StreamId
-chunks : StreamId -> (ChunkEvent -> msg) -> Sub msg
-close  : StreamId -> Task Error ()
+open         : HttpRequest -> Task Error StreamId
+chunks       : StreamId -> (ChunkEvent -> msg) -> Sub msg
+close        : StreamId -> Task Error ()
+forEachChunk : StreamId -> (String -> Task Error ()) -> Task Error ()
 ```
 
 `HttpRequest` is the same record `Http.request` takes — method, URL,
@@ -330,3 +332,107 @@ with `StreamHandler` non-nil), the dispatcher in `Server_listen`:
   chunk-ordering, handle-sweep, end-to-end via httptest.
 - `examples/30-sse-server-demo` — runnable demo with a browser
   EventSource snippet in the home page.
+
+---
+
+## Synchronous relay (`forEachChunk`)
+
+> v0.15.41 feature. Shipped issue #373.
+
+### Problem this closes
+
+`Sky.Core.Http.Stream.chunks` is `Sub`-based — it only fires inside
+Sky.Live update loops. A plain `Sky.Http.Server` handler runs as a
+goroutine **with no Sub mechanism**. So chunks can't currently flow
+from an upstream Sub-based stream to a `Server.Stream.emit` call in
+the same goroutine.
+
+That blocks the canonical relay shape: `agent-service` wants to
+forward Anthropic SSE tokens to `control-plane` one token at a time,
+not one per agent-loop phase.
+
+### API
+
+```elm
+forEachChunk : StreamId -> (String -> Task Error ()) -> Task Error ()
+```
+
+Blocks the calling goroutine until upstream EOF (or error). Calls
+`body` per chunk synchronously. Always closes the underlying handle
+on exit (success OR error) — callers do not need to wrap with their
+own `close`.
+
+### Canonical relay handler
+
+```elm
+import Sky.Core.Http.Stream as HttpStream
+import Sky.Http.Server as Server
+import Sky.Http.Server.Stream as ServerStream
+
+handleRelay : Server.Request -> Task Error Server.Response
+handleRelay req =
+    ServerStream.stream "text/event-stream" (\writer ->
+        HttpStream.open upstreamReq
+            |> Task.andThen (\hdl ->
+                HttpStream.forEachChunk hdl
+                    (\chunk -> ServerStream.emit chunk writer))
+            |> Task.andThen (\_ -> ServerStream.finish writer))
+```
+
+Each chunk is `Server.Stream.emit`-ted synchronously to the
+downstream client before the next upstream Read fires. The pipe is
+fully incremental.
+
+Runnable example: `examples/32-sse-relay`.
+
+### Semantics
+
+| Exit path | `forEachChunk` returns |
+|---|---|
+| Upstream emits Done | `Task.succeed ()` |
+| Upstream emits Errored e | `Task.fail e` |
+| `body chunk` returns `Err e` | aborts upstream, returns `Err e` (fail-fast) |
+| Unknown / already-closed StreamId | `Task.succeed ()` (idempotent no-op) |
+| Out-of-band `close` from another goroutine | `Task.succeed ()` (treated as clean EOF) |
+
+The underlying handle is closed + unregistered on every exit path —
+the deferred close in the runtime helper guarantees no handle leak
+even if `body` errors mid-stream.
+
+### Backpressure
+
+`body` runs synchronously per chunk. If `body` blocks (e.g.
+`Server.Stream.emit` waiting for the downstream client's write
+buffer to drain), the spool goroutine's 16-event bounded channel
+fills. The upstream HTTP client then naturally slows its body
+reads — no extra buffer needed at the Sky level.
+
+The existing `streamConsumerTimeout` (30 s) is the safety net for
+runaway stalls: if `body` blocks for more than 30 s, the spool
+goroutine abandons + the stream errors.
+
+### Why no `Bytes` overload
+
+`Sky.Core.Http.Stream.ChunkEvent` is already locked to `Chunk
+String` (UTF-8) for the Sub-based path. `forEachChunk` follows
+suit so the two surfaces stay symmetric — a future `Bytes` overload
+ships across BOTH simultaneously, not separately.
+
+### Lifecycle vs. `chunks`
+
+| Surface | Where it runs | Who closes |
+|---|---|---|
+| `chunks sid toMsg` | Sky.Live update loop (Sub) | Session teardown OR explicit `close` from Done arm |
+| `forEachChunk sid body` | Plain HTTP handler goroutine | `forEachChunk` itself on exit (always) |
+
+Don't mix them on the same StreamId — both would drain the same
+spool channel and chunks would race.
+
+### See also
+
+- `runtime-go/rt/http_stream.go` — `HttpStream_forEachChunk` helper.
+- `runtime-go/rt/http_stream_test.go` — drain order, body-Err abort,
+  empty-stream Ok, unknown-id no-op, registry cleanup.
+- `examples/32-sse-relay` — canonical runnable relay (port 8001).
+- `test/Sky/Build/HttpStreamForEachSpec.hs` — cabal spec pinning the
+  typed kernel routing + non-widened body shape.

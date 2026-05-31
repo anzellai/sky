@@ -1965,9 +1965,11 @@ latency 5-10× vs `Http.get`.
 ```elm
 import Sky.Core.Http.Stream as HttpStream exposing (StreamId, ChunkEvent(..))
 
-HttpStream.open req       -- Task Error StreamId — completes once HEADERS arrive
-HttpStream.chunks sid f   -- Sub msg — `f : ChunkEvent -> msg` per chunk
-HttpStream.close sid      -- Task Error () — idempotent
+HttpStream.open req              -- Task Error StreamId — completes once HEADERS arrive
+HttpStream.chunks sid f          -- Sub msg — `f : ChunkEvent -> msg` per chunk
+HttpStream.close sid             -- Task Error () — idempotent
+HttpStream.forEachChunk sid body -- Task Error () — synchronous drain
+                                 -- body : String -> Task Error ()
 
 type ChunkEvent
     = Chunk String       -- UTF-8 bytes just arrived
@@ -1975,15 +1977,36 @@ type ChunkEvent
     | Errored Error      -- network / protocol fault
 ```
 
-**Canonical shape**: subscribe only while a stream is in-flight.
-Store `StreamId` on the model after `StreamOpened (Ok sid)`, clear
-on `Chunked Done` / `Errored`, return `Sub.none` when Nothing.
-See `examples/28-streaming-chat` for the reference; full design
-write-up in `docs/skylive/http-streaming.md`.
+**Two ways to consume a stream:**
+
+1. **Sub-based** (`chunks`) — for Sky.Live apps. The runtime
+   dispatches `ChunkEvent` Msgs through the update loop. Subscribe
+   only while in-flight: store `StreamId` on the model after
+   `StreamOpened (Ok sid)`, clear on `Chunked Done` / `Errored`,
+   return `Sub.none` when Nothing. See `examples/28-streaming-chat`.
+
+2. **Synchronous** (`forEachChunk`) — for plain Sky.Http.Server
+   handler goroutines (NO Sub mechanism available). Blocks until
+   upstream EOF / error; calls `body` per chunk. Fail-fast on body
+   `Err`. Always closes the handle on exit. Canonical relay shape:
+
+   ```elm
+   handleRelay req =
+       Server.Stream.stream "text/event-stream" (\writer ->
+           HttpStream.open upstreamReq
+               |> Task.andThen (\hdl ->
+                   HttpStream.forEachChunk hdl
+                       (\chunk -> Server.Stream.emit chunk writer))
+               |> Task.andThen (\_ -> Server.Stream.finish writer))
+   ```
+
+   See `examples/32-sse-relay` for the runnable reference. Full
+   design write-up in `docs/skylive/http-streaming.md`.
 
 Session disconnect (TTL eviction OR Delete) closes every owned
-stream automatically; log: `[sky.stream] cleaned N orphaned
-streams on session close`.
+Sub-registered stream automatically; log: `[sky.stream] cleaned N
+orphaned streams on session close`. forEachChunk-owned streams
+self-close on exit.
 
 ### Sky.Http.Server.Stream (Task) — incremental HTTP responses
 
