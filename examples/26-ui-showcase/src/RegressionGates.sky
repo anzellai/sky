@@ -31,6 +31,7 @@ import Std.Ui.Font as Font
 import Std.Ui.Transition as Transition
 import Std.Ui.Animation as Animation
 import Std.Ui.Transform as Transform
+import Std.Ui.Grid as Grid
 
 
 -- Stable data-test-id helper; the runner selects by attribute.
@@ -324,36 +325,50 @@ mediaQueryDemo =
         ]
 
 
--- ─── 4. Aspect-ratio + grid placeholders ───────────────────────
+-- ─── 4. Aspect-ratio + grid tracks (#379) ──────────────────────
 --
--- `aspectRatio` lands in #379. Today we approximate with
--- height = round(width / ratio) on a few fixed widths. The runner
--- asserts the rendered height / width matches 1.777 (±3 px).
+-- `Ui.aspectRatio` / `Ui.aspectRatioWH` lower to inline
+-- `aspect-ratio: <r>` CSS. Pair with `Ui.width Ui.fill` (or a
+-- specific pixel width) so the unset axis auto-scales. The runner
+-- captures three boxes at known widths so it can compute the
+-- expected height and assert width / height matches the ratio.
 aspectStubs : Element msg
 aspectStubs =
-    Ui.row
+    Ui.column
         [ Ui.spacing 12, testId "aspect-row" ]
         [ Ui.el
               [ Ui.width (Ui.px 320)
-              , Ui.height (Ui.px 180)
+              , Ui.aspectRatioWH 16 9
               , Background.color (Ui.rgb 80 120 200)
               , testId "aspect-320"
               ]
               Ui.none
         , Ui.el
               [ Ui.width (Ui.px 160)
-              , Ui.height (Ui.px 90)
+              , Ui.aspectRatio 1.777
               , Background.color (Ui.rgb 120 80 200)
               , testId "aspect-160"
+              ]
+              Ui.none
+        , Ui.el
+              [ Ui.width (Ui.px 100)
+              , Ui.square
+              , Background.color (Ui.rgb 200 120 80)
+              , testId "aspect-square"
+              ]
+              Ui.none
+        , Ui.el
+              [ Ui.width Ui.fill
+              , Ui.cinemascope
+              , Background.color (Ui.rgb 60 80 100)
+              , testId "aspect-fill-cinema"
               ]
               Ui.none
         ]
 
 
--- 3-col CSS grid via Ui.gridColumns. `gridColumns N` sets the MIN
--- track width in px (auto-fill repeats minmax(N, 1fr)). With a
--- ~640 px card body, 200 px min produces 3 tracks on desktop and
--- 1 track at mobile (375 px viewport → ~320 px usable).
+-- Auto-fill grid via the lightweight `Ui.gridColumns` helper. Same
+-- behaviour as before — repeat(auto-fill, minmax(200px, 1fr)).
 gridDemo : Element msg
 gridDemo =
     Ui.grid
@@ -365,6 +380,52 @@ gridDemo =
         [ gridCell "g1" (Ui.rgb 200 100 100)
         , gridCell "g2" (Ui.rgb 100 200 100)
         , gridCell "g3" (Ui.rgb 100 100 200)
+        ]
+
+
+-- Content-aware grid tracks (#379) — Std.Ui.Grid lets you spell
+-- out explicit track lists. Three variants here, each in its own
+-- row so the runner can assert per-row `grid-template-columns`.
+--
+-- 1. Sidebar layout: 1fr / 200px / 1fr — a fixed-width middle
+--    column with stretching outer columns.
+-- 2. Auto-fit cards: repeat(auto-fit, minmax(200px, 1fr)) —
+--    re-flows when the container resizes.
+-- 3. Mixed: auto / fr 1 — hug-the-content + take-the-rest.
+gridTracksDemo : Element msg
+gridTracksDemo =
+    Ui.column
+        [ Ui.width Ui.fill, Ui.spacing 8, testId "grid-tracks-row" ]
+        [ Ui.grid
+              [ Ui.width Ui.fill
+              , Grid.columns [ Grid.fr 1, Grid.px 200, Grid.fr 1 ]
+              , Ui.spacing 8
+              , testId "grid-tracks-sidebar"
+              ]
+              [ gridCell "sl" (Ui.rgb 200 160 100)
+              , gridCell "sm" (Ui.rgb 120 200 160)
+              , gridCell "sr" (Ui.rgb 100 160 200)
+              ]
+        , Ui.grid
+              [ Ui.width Ui.fill
+              , Grid.columns
+                    [Grid.repeatAutoFit (Grid.minmax (Grid.px 200) (Grid.fr 1))]
+              , Ui.spacing 8
+              , testId "grid-tracks-autofit"
+              ]
+              [ gridCell "af1" (Ui.rgb 180 120 200)
+              , gridCell "af2" (Ui.rgb 120 180 200)
+              , gridCell "af3" (Ui.rgb 200 180 120)
+              ]
+        , Ui.grid
+              [ Ui.width Ui.fill
+              , Grid.columns [ Grid.auto, Grid.fr 1 ]
+              , Ui.spacing 8
+              , testId "grid-tracks-auto"
+              ]
+              [ gridCell "ag" (Ui.rgb 220 100 100)
+              , gridCell "ar" (Ui.rgb 100 220 220)
+              ]
         ]
 
 
@@ -423,10 +484,9 @@ animatedFadeIn =
               , iterations = Animation.once
               , fillMode = Animation.forwards
               , respectReducedMotion = True
-              , keyframes =
-                    [ ( 0, [ Transform.opacity 0.0, Transform.translateY 8 ] )
-                    , ( 100, [ Transform.opacity 1.0, Transform.translateY 0 ] )
-                    ]
+              , keyframes = [ ( 0, [ Transform.opacity 0.0, Transform.translateY 8 ] )
+                , ( 100, [ Transform.opacity 1.0, Transform.translateY 0 ] )
+                ]
               }
         , testId "animated-fade-in"
         ]
@@ -451,10 +511,9 @@ animatedSpinner =
               , iterations = Animation.infinite
               , fillMode = Animation.none
               , respectReducedMotion = False
-              , keyframes =
-                    [ ( 0, [Transform.rotate 0.0] )
-                    , ( 100, [Transform.rotate 360.0] )
-                    ]
+              , keyframes = [ ( 0, [Transform.rotate 0.0] )
+                , ( 100, [Transform.rotate 360.0] )
+                ]
               }
         , testId "animated-spinner"
         ]
@@ -498,6 +557,7 @@ cases =
               [ hoverableButton, focusableInput, activeLink, disabledButton ])
     , card "aspect" "Aspect ratio (#379)" aspectStubs
     , card "grid" "Grid (#379)" gridDemo
+    , card "grid-tracks" "Grid tracks — typed Track ADT (#379)" gridTracksDemo
     , card "mediaquery" "Media query / breakpoint (#376)" mediaQueryDemo
     , card
           "motion"

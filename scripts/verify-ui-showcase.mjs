@@ -225,6 +225,8 @@ async function measure(page, sel) {
             minWidth: cs.minWidth,
             minHeight: cs.minHeight,
             gridTemplateColumns: cs.gridTemplateColumns,
+            gridTemplateRows: cs.gridTemplateRows,
+            aspectRatio: cs.aspectRatio,
         };
     }, sel);
 }
@@ -358,18 +360,40 @@ try {
             fail("fixed-fill-row", "missing fixed/fill children");
         }
 
-        // ─── 2. Aspect ratio (#379) — manual 16:9 boxes ─────────
+        // ─── 2. Aspect ratio (#379) — typed `Ui.aspectRatio*` ────
         console.log("--- aspect ratio ---");
         const a320 = await measure(page, "aspect-320");
         const a160 = await measure(page, "aspect-160");
+        const aSquare = await measure(page, "aspect-square");
+        const aFillCine = await measure(page, "aspect-fill-cinema");
         if (a320) {
-            approxEq("aspect-320 ratio", a320.width / a320.height, 320 / 180, 0.05);
+            // 320 wide → 16:9 → ~180 high
+            approxEq("aspect-320 width", a320.width, 320, PIXEL_TOLERANCE);
+            approxEq("aspect-320 ratio", a320.width / a320.height, 16 / 9, 0.05);
+            // CSS aspect-ratio property reads as `auto N / M` or `N / M`
+            // depending on the browser — verify it's present and matches 16/9.
+            if (a320.aspectRatio && (a320.aspectRatio.includes("16 / 9") || a320.aspectRatio.includes("auto 16 / 9"))) {
+                ok(`aspect-320 aspect-ratio = ${a320.aspectRatio}`);
+            } else {
+                fail("aspect-320 aspect-ratio", `expected '16 / 9', got '${a320.aspectRatio}'`);
+            }
         }
         if (a160) {
-            approxEq("aspect-160 ratio", a160.width / a160.height, 160 / 90, 0.05);
+            // 160 wide, 1.777 decimal → ~90 high
+            approxEq("aspect-160 width", a160.width, 160, PIXEL_TOLERANCE);
+            approxEq("aspect-160 ratio", a160.width / a160.height, 1.777, 0.05);
+        }
+        if (aSquare) {
+            // 100×100 square via Ui.square
+            approxEq("aspect-square width", aSquare.width, 100, PIXEL_TOLERANCE);
+            approxEq("aspect-square height", aSquare.height, 100, PIXEL_TOLERANCE);
+        }
+        if (aFillCine) {
+            // Cinemascope 2.35:1; width fills the card body
+            approxEq("aspect-fill-cinema ratio", aFillCine.width / aFillCine.height, 2.35, 0.05);
         }
 
-        // ─── 3. Grid (#379) — 3 tracks at desktop width ─────────
+        // ─── 3. Grid (#379) — auto-fill default ─────────────────
         console.log("--- grid ---");
         const grid = await measure(page, "grid-row");
         if (grid) {
@@ -380,6 +404,67 @@ try {
                 fail("grid-row tracks", `expected 3, got ${tracks.length}: ${grid.gridTemplateColumns}`);
             }
         }
+
+        // ─── 3b. Grid tracks (#379) — typed Std.Ui.Grid ─────────
+        console.log("--- grid tracks (typed) ---");
+        const gtSidebar = await measure(page, "grid-tracks-sidebar");
+        const gtAutoFit = await measure(page, "grid-tracks-autofit");
+        const gtAuto = await measure(page, "grid-tracks-auto");
+        if (gtSidebar) {
+            // Sidebar: 1fr 200px 1fr → exactly 3 tracks; middle = 200px.
+            const t = (gtSidebar.gridTemplateColumns || "").trim().split(/\s+/).filter(Boolean);
+            if (t.length === 3 && t[1] === "200px") {
+                ok(`grid-tracks-sidebar = ${gtSidebar.gridTemplateColumns}`);
+            } else {
+                fail("grid-tracks-sidebar layout", `expected 3 tracks middle=200px, got '${gtSidebar.gridTemplateColumns}'`);
+            }
+        }
+        if (gtAutoFit) {
+            // Auto-fit at desktop ≥ 400px → expect 2-3 tracks (depends on card body width).
+            const t = (gtAutoFit.gridTemplateColumns || "").trim().split(/\s+/).filter(Boolean);
+            if (t.length >= 2) {
+                ok(`grid-tracks-autofit produced ${t.length} tracks (${gtAutoFit.gridTemplateColumns})`);
+            } else {
+                fail("grid-tracks-autofit", `expected ≥2 tracks, got ${t.length}: ${gtAutoFit.gridTemplateColumns}`);
+            }
+        }
+        if (gtAuto) {
+            // auto 1fr → 2 tracks, second is fractional (huge px value
+            // when computed). Just confirm 2 tracks emitted.
+            const t = (gtAuto.gridTemplateColumns || "").trim().split(/\s+/).filter(Boolean);
+            if (t.length === 2) {
+                ok(`grid-tracks-auto = ${gtAuto.gridTemplateColumns}`);
+            } else {
+                fail("grid-tracks-auto", `expected 2 tracks (auto + 1fr), got ${t.length}: ${gtAuto.gridTemplateColumns}`);
+            }
+        }
+
+        // ─── 3c. Aspect ratio at multiple widths (#379) ──────────
+        // Resize the page across three widths; the `aspect-fill-cinema`
+        // box has `Ui.width Ui.fill + Ui.cinemascope` so its height MUST
+        // track its width via the browser's `aspect-ratio` solver. This
+        // is the load-bearing regression — the moment the browser stops
+        // honouring `aspect-ratio` (or our CSS-emission drifts), the
+        // height drops to 0 or matches some unrelated content height.
+        console.log("--- aspect ratio @ multi-width ---");
+        for (const w of [400, 800, 1200]) {
+            await page.setViewportSize({ width: w, height: 720 });
+            await page.waitForTimeout(120);
+            const a = await measure(page, "aspect-fill-cinema");
+            if (a && a.width > 0) {
+                const r = a.width / a.height;
+                if (Math.abs(r - 2.35) <= 0.05) {
+                    ok(`aspect-fill-cinema @ viewport=${w} → ${a.width.toFixed(0)}×${a.height.toFixed(0)} (ratio ${r.toFixed(2)})`);
+                } else {
+                    fail(`aspect-fill-cinema @ viewport=${w}`, `ratio ${r.toFixed(2)} ≠ 2.35 (tol 0.05); box ${a.width.toFixed(0)}×${a.height.toFixed(0)}`);
+                }
+            } else {
+                fail(`aspect-fill-cinema @ viewport=${w}`, "missing or zero-size element");
+            }
+        }
+        // Reset to desktop viewport before snapshots.
+        await page.setViewportSize({ width: 1280, height: 720 });
+        await page.waitForTimeout(120);
 
         // ─── Media query / breakpoint (#376) ────────────────────
         // Desktop pass: viewport 1280 ≥ 768, so `Ui.breakpoint Ui.mobile`
@@ -604,8 +689,8 @@ try {
         console.log("--- snapshots (desktop) ---");
         for (const section of [
             "triple-nested", "wrap-label", "portion",
-            "fixed-fill", "aspect", "grid", "pseudo", "viewport",
-            "mediaquery", "motion",
+            "fixed-fill", "aspect", "grid", "grid-tracks",
+            "pseudo", "viewport", "mediaquery", "motion",
         ]) {
             await snapshot(page, section, `section-${section}`, "desktop");
         }
