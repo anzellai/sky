@@ -1,0 +1,145 @@
+-- | Std.Config — typed TOML/YAML/JSON decoders (Layer 3 Sky source).
+--
+-- A `Decoder a` describes how to extract a value of type `a` from a
+-- config document.  Compose with `field` / `at` / `nullable` / `map`
+-- / `andThen`; run via `decodeToml` / `decodeYaml` / `decodeJson`
+-- or `loadFromFile` (which detects the format by extension).
+--
+-- Shape mirrors `Sky.Core.Json.Decode` — code that already does
+-- JSON decoding gets a consistent vocabulary for TOML and YAML.
+--
+-- v0.15.47.
+--
+-- Example:
+--
+--     type alias DbCfg = { host : String, port : Int, name : String }
+--
+--     dbDecoder : Decoder DbCfg
+--     dbDecoder =
+--         Config.succeed (\h p n -> { host = h, port = p, name = n })
+--             |> Config.andThen
+--                 (\\f -> Config.map f (Config.field "host" Config.string))
+--             |> Config.andThen
+--                 (\\f -> Config.map f (Config.field "port" Config.int))
+--             |> Config.andThen
+--                 (\\f -> Config.map f (Config.field "name" Config.string))
+--
+--     loadDb : Task Error DbCfg
+--     loadDb = Config.loadFromFile "config/database.toml" dbDecoder
+module Std.Config exposing
+    ( Decoder
+    , string, int, float, bool
+    , nullable
+    , field, at
+    , list
+    , succeed, fail
+    , map, andThen
+    , decodeToml
+    , decodeYaml
+    , decodeJson
+    , loadFromFile
+    )
+
+
+import Sky.Ffi as Ffi
+import Sky.Core.Error exposing (Error)
+import Sky.Core.Maybe exposing (Maybe(..))
+
+
+-- | Opaque decoder.  Construct with the combinators below.
+type Decoder a
+    = Decoder
+
+
+-- ─── Primitive decoders ────────────────────────────────────────────
+
+
+string : Decoder String
+string = Ffi.kernel "Config_string"
+
+
+int : Decoder Int
+int = Ffi.kernel "Config_int"
+
+
+float : Decoder Float
+float = Ffi.kernel "Config_float"
+
+
+bool : Decoder Bool
+bool = Ffi.kernel "Config_bool"
+
+
+-- ─── Field accessors ───────────────────────────────────────────────
+
+
+-- | `field name decoder` — decode the named field at the current
+-- level.  Fails if the field is missing or its value doesn't
+-- match `decoder`.
+field : String -> Decoder a -> Decoder a
+field = Ffi.kernel "Config_field"
+
+
+-- | `at path decoder` — drill into nested fields.  `at ["db",
+-- "host"] string` is equivalent to `field "db" (field "host"
+-- string)`.
+at : List String -> Decoder a -> Decoder a
+at = Ffi.kernel "Config_at"
+
+
+-- | `nullable decoder` — like `decoder`, but `Nothing` on null /
+-- missing.
+nullable : Decoder a -> Decoder (Maybe a)
+nullable = Ffi.kernel "Config_nullable"
+
+
+-- ─── Collections ───────────────────────────────────────────────────
+
+
+list : Decoder a -> Decoder (List a)
+list = Ffi.kernel "Config_list"
+
+
+-- ─── Combinators ───────────────────────────────────────────────────
+
+
+succeed : a -> Decoder a
+succeed = Ffi.kernel "Config_succeed"
+
+
+fail : String -> Decoder a
+fail = Ffi.kernel "Config_fail"
+
+
+map : (a -> b) -> Decoder a -> Decoder b
+map = Ffi.kernel "Config_map"
+
+
+andThen : (a -> Decoder b) -> Decoder a -> Decoder b
+andThen = Ffi.kernel "Config_andThen"
+
+
+-- ─── Entry points ──────────────────────────────────────────────────
+
+
+-- | Run a decoder against a TOML document.
+decodeToml : String -> Decoder a -> Result Error a
+decodeToml = Ffi.kernel "Config_decodeToml"
+
+
+-- | Run a decoder against a YAML document.
+decodeYaml : String -> Decoder a -> Result Error a
+decodeYaml = Ffi.kernel "Config_decodeYaml"
+
+
+-- | Run a decoder against a JSON document.  Alias for
+-- `Sky.Core.Json.Decode.decodeString` from the Config namespace.
+decodeJson : String -> Decoder a -> Result Error a
+decodeJson = Ffi.kernel "Config_decodeJson"
+
+
+-- | `loadFromFile path decoder` — read `path`, dispatch to the
+-- right decoder by extension (`.toml`, `.yaml`, `.yml`, `.json`),
+-- then decode.
+loadFromFile : String -> Decoder a -> Task Error a
+loadFromFile = Ffi.kernel "Config_loadFromFile"
