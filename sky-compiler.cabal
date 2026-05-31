@@ -286,6 +286,8 @@ test-suite sky-tests
       Sky.Build.RtFieldAdtBug342Spec
       Sky.Build.CaseSubjectNameShadowSpec
       Sky.Build.FfiKernelAliasSpec
+      Sky.Build.HttpTypesSpec
+      Sky.Build.CryptoAeadSpec
       Sky.Build.PubSubPublishTaskSpec
       Sky.Build.PubSubPublishNoEchoSpec
       Sky.Build.ServerStreamSpec

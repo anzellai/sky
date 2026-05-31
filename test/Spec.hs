@@ -39,6 +39,8 @@ import qualified Sky.Build.EntryLocalShadowsDepSpec
 import qualified Sky.Build.RtFieldAdtBug342Spec
 import qualified Sky.Build.CaseSubjectNameShadowSpec
 import qualified Sky.Build.FfiKernelAliasSpec
+import qualified Sky.Build.HttpTypesSpec
+import qualified Sky.Build.CryptoAeadSpec
 import qualified Sky.Build.PubSubPublishTaskSpec
 import qualified Sky.Build.PubSubPublishNoEchoSpec
 import qualified Sky.Build.ServerStreamSpec
@@ -272,6 +274,8 @@ main = hspec $ do
     describe "Sky.Build.RtFieldAdtBug342" Sky.Build.RtFieldAdtBug342Spec.spec
     describe "Sky.Build.CaseSubjectNameShadow" Sky.Build.CaseSubjectNameShadowSpec.spec
     describe "Sky.Build.FfiKernelAlias" Sky.Build.FfiKernelAliasSpec.spec
+    describe "Sky.Build.HttpTypes" Sky.Build.HttpTypesSpec.spec
+    describe "Sky.Build.CryptoAead" Sky.Build.CryptoAeadSpec.spec
     -- Cycle 4 PT: Task-shaped Std.PubSub.publish — callable from any
     -- context (raw Sky.Http.Server api handlers / post-init goroutines
     -- / scheduled jobs), complements Cmd.publish which is bound to
