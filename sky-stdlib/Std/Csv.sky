@@ -1,0 +1,75 @@
+-- | Std.Csv — CSV encode + decode (Layer 3 Sky source).
+--
+-- Operates on whole-CSV documents in memory via the `Csv` record:
+-- a `List String` header and a `List (List String)` body.  The
+-- streaming reader (`parseStreamFromFile`) handles large files
+-- without materialising the whole document.
+--
+-- Delimiter handling: `parse` / `encode` use ',' by default.  Use
+-- `parseWithDelimiter` / `encodeWithDelimiter` for ';', '\\t', etc.
+--
+-- v0.15.47.
+module Std.Csv exposing
+    ( Csv
+    , parse
+    , parseWithDelimiter
+    , encode
+    , encodeWithDelimiter
+    , parseStreamFromFile
+    )
+
+
+import Sky.Ffi as Ffi
+import Sky.Core.Error exposing (Error)
+
+
+-- | A parsed CSV document.
+--
+--   * `header` — the first row of the document, treated as the
+--     column names.
+--   * `rows` — every subsequent row.  Each row is a `List String`
+--     of cell values in column order.
+--
+-- This is a record alias so callers can construct it directly to
+-- feed into `encode`.
+type alias Csv =
+    { header : List String
+    , rows : List (List String)
+    }
+
+
+-- | `parse text` — parse `text` as comma-delimited CSV.  The first
+-- row is treated as the header.  Returns `Err Error` on
+-- malformed input.
+parse : String -> Result Error Csv
+parse = Ffi.kernel "Csv_parse"
+
+
+-- | `parseWithDelimiter delim text` — like `parse` but with a
+-- custom single-character delimiter.
+parseWithDelimiter : String -> String -> Result Error Csv
+parseWithDelimiter = Ffi.kernel "Csv_parseWithDelimiter"
+
+
+-- | `encode csv` — encode `csv` back to a comma-delimited string.
+-- Cells containing the delimiter, double quotes, or newlines are
+-- quoted per RFC 4180.
+encode : Csv -> String
+encode = Ffi.kernel "Csv_encode"
+
+
+-- | `encodeWithDelimiter delim csv` — like `encode` but with a
+-- custom delimiter.
+encodeWithDelimiter : String -> Csv -> String
+encodeWithDelimiter = Ffi.kernel "Csv_encodeWithDelimiter"
+
+
+-- | `parseStreamFromFile path` — stream-read a CSV file into
+-- memory as `List (List String)` (including the header).  Uses
+-- `encoding/csv`'s buffered reader so it doesn't materialise the
+-- raw file before parsing, which makes it suitable for large
+-- exports.  For truly massive files (>1 GB) prefer running the
+-- import inside a worker `Task` and chunking by row count at the
+-- caller.
+parseStreamFromFile : String -> Task Error (List (List String))
+parseStreamFromFile = Ffi.kernel "Csv_parseStreamFromFile"
