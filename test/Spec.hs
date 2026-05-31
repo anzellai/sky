@@ -48,6 +48,8 @@ import qualified Sky.Build.HttpStreamForEachSpec
 import qualified Sky.Build.WebviewAppSpec
 import qualified Sky.Build.WebviewLoopbackAssetsSpec
 import qualified Sky.Build.JsonPipelinePanic372Spec
+import qualified Sky.Build.DictSourceSpec
+import qualified Sky.Build.DbDecoderSpec
 import qualified Sky.Parse.MultiLineCaseSubjectSpec
 import qualified Sky.Parse.MultiLineCaseKeywordSpec
 import qualified Sky.Parse.MultiLineSignatureSpec
@@ -313,6 +315,10 @@ main = hspec $ do
     -- currys instead of zero-pads when target's return is `any`.
     describe "Sky.Build.JsonPipelinePanic372"
         Sky.Build.JsonPipelinePanic372Spec.spec
+    -- v0.15.45 — Dict + Set Layer 3 contract + typed-key routing.
+    describe "Sky.Build.DictSource" Sky.Build.DictSourceSpec.spec
+    -- v0.15.45 — Std.Db.Decode typed row decoder pipeline.
+    describe "Sky.Build.DbDecoder" Sky.Build.DbDecoderSpec.spec
     describe "Sky.Parse.MultiLineCaseSubject" Sky.Parse.MultiLineCaseSubjectSpec.spec
     describe "Sky.Parse.MultiLineCaseKeyword"
         Sky.Parse.MultiLineCaseKeywordSpec.spec
