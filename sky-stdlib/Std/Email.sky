@@ -1,0 +1,166 @@
+-- | Std.Email — provider-abstract email send (Layer 3 Sky source).
+--
+-- Supports Resend, AWS SES, SendGrid, and raw SMTP under one API.
+-- Pick a provider once at boot (typically from `System.getenv`) and
+-- the rest of the codebase calls `Email.send provider message`.
+--
+-- v0.15.46 stdlib convention: every typed record ships with a
+-- `default*` constructor + `with*` builder helpers so future
+-- field additions don't break record literals.
+--
+-- v0.15.47.
+--
+-- Example:
+--
+--     provider : EmailProvider
+--     provider =
+--         Resend (System.getenvOr "RESEND_API_KEY" "")
+--
+--     msg : EmailMessage
+--     msg =
+--         Email.defaultMessage
+--             { from = "noreply@example.com"
+--             , to = [ "alice@example.com" ]
+--             , subject = "Hi"
+--             }
+--             |> Email.withTextBody "Hello, world!"
+--
+--     Email.send provider msg
+--         |> Task.run
+module Std.Email exposing
+    ( EmailMessage
+    , Attachment
+    , EmailProvider(..)
+    , SesConfig
+    , SmtpConfig
+    , defaultMessage
+    , withCc
+    , withBcc
+    , withTextBody
+    , withHtmlBody
+    , withAttachment
+    , withReplyTo
+    , send
+    )
+
+
+import Sky.Ffi as Ffi
+import Sky.Core.Error exposing (Error)
+
+
+-- `Attachment.content` carries arbitrary bytes; we type it as
+-- `String` so callers can pass `File.readFileBytes` output
+-- directly.  Sky.Core.Bytes is an alias over String anyway.
+
+
+-- | A single email message.
+--
+-- Build with `defaultMessage { from, to, subject }` + `with*`
+-- helpers; never construct via record literal so future fields
+-- don't break call sites (v0.15.46 convention).
+type alias EmailMessage =
+    { from : String
+    , to : List String
+    , cc : List String
+    , bcc : List String
+    , subject : String
+    , textBody : String
+    , htmlBody : String
+    , attachments : List Attachment
+    , replyTo : String
+    }
+
+
+-- | A file attachment.  `content` carries the raw bytes — type is
+-- `String` (Sky.Core.Bytes alias).
+type alias Attachment =
+    { filename : String
+    , mimeType : String
+    , content : String
+    }
+
+
+-- | SES auth: region + credentials.
+type alias SesConfig =
+    { region : String
+    , key : String
+    , secret : String
+    }
+
+
+-- | SMTP transport: host + port + creds.
+type alias SmtpConfig =
+    { host : String
+    , port : Int
+    , user : String
+    , pass : String
+    }
+
+
+-- | The provider to send through.  Pick at boot; pass to `send`.
+type EmailProvider
+    = Resend String
+    | Ses SesConfig
+    | SendGrid String
+    | Smtp SmtpConfig
+
+
+-- | Construct a baseline message with the three required fields
+-- (`from`, `to`, `subject`).  Optional fields default to empty.
+defaultMessage : { from : String, to : List String, subject : String } -> EmailMessage
+defaultMessage core =
+    { from = core.from
+    , to = core.to
+    , cc = []
+    , bcc = []
+    , subject = core.subject
+    , textBody = ""
+    , htmlBody = ""
+    , attachments = []
+    , replyTo = ""
+    }
+
+
+-- | Override CC.
+withCc : List String -> EmailMessage -> EmailMessage
+withCc cc msg =
+    { msg | cc = cc }
+
+
+-- | Override BCC.
+withBcc : List String -> EmailMessage -> EmailMessage
+withBcc bcc msg =
+    { msg | bcc = bcc }
+
+
+-- | Override the plain-text body.
+withTextBody : String -> EmailMessage -> EmailMessage
+withTextBody t msg =
+    { msg | textBody = t }
+
+
+-- | Override the HTML body.  Most providers fall back to textBody
+-- when htmlBody is empty.
+withHtmlBody : String -> EmailMessage -> EmailMessage
+withHtmlBody h msg =
+    { msg | htmlBody = h }
+
+
+-- | Append one attachment.  Call repeatedly for multiple files.
+withAttachment : Attachment -> EmailMessage -> EmailMessage
+withAttachment att msg =
+    { msg | attachments = msg.attachments ++ [ att ] }
+
+
+-- | Override Reply-To.
+withReplyTo : String -> EmailMessage -> EmailMessage
+withReplyTo addr msg =
+    { msg | replyTo = addr }
+
+
+-- | `send provider message` — submit the message to the chosen
+-- provider.  Returns the provider's message ID on success.  Fails
+-- on network errors, auth errors, or invalid input (missing
+-- recipient, etc.).
+send : EmailProvider -> EmailMessage -> Task Error String
+send = Ffi.kernel "Email_send"
