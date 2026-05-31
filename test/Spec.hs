@@ -40,6 +40,7 @@ import qualified Sky.Build.FfiKernelAliasSpec
 import qualified Sky.Build.PubSubPublishTaskSpec
 import qualified Sky.Build.PubSubPublishNoEchoSpec
 import qualified Sky.Build.ServerStreamSpec
+import qualified Sky.Build.HttpStreamForEachSpec
 import qualified Sky.Build.WebviewAppSpec
 import qualified Sky.Build.WebviewLoopbackAssetsSpec
 import qualified Sky.Build.JsonPipelinePanic372Spec
@@ -273,6 +274,12 @@ main = hspec $ do
     -- Unblocks LLM token-stream proxying + SSE endpoints without
     -- hand-rolled chunk plumbing on the Sky side.
     describe "Sky.Build.ServerStream" Sky.Build.ServerStreamSpec.spec
+    -- Issue #373: Sky.Core.Http.Stream.forEachChunk — synchronous
+    -- chunk-iterator that bridges the Sub-based client-side stream
+    -- consumer with Sky.Http.Server.Stream producers inside the
+    -- same handler goroutine (the SkyDeploy /generate/stream
+    -- relay shape).
+    describe "Sky.Build.HttpStreamForEach" Sky.Build.HttpStreamForEachSpec.spec
     -- Issue #356 / v0.1 MVP: Sky.Webview backend. Pins the
     -- Std.Webview.app type-checker contract + kernel routing.
     describe "Sky.Build.WebviewApp" Sky.Build.WebviewAppSpec.spec
