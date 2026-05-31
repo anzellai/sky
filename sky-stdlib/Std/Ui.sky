@@ -276,6 +276,86 @@ gridColumns minWidthPx =
     AttrStyle "__gridMin" (String.fromInt minWidthPx)
 
 
+-- Explicit grid track lists (issue #379). Pre-built CSS strings —
+-- typed Sky helpers live in `Std.Ui.Grid` (`Track` ADT +
+-- `Grid.tracks` / `Grid.columns` / `Grid.rows`). Bypasses the
+-- default `repeat(auto-fill, minmax(<gridColumns>px, 1fr))` and
+-- emits the supplied `grid-template-columns` / `grid-template-rows`
+-- declarations verbatim. Pass an empty string to skip an axis (the
+-- default `auto` fallback then applies). Like `gridColumns`, no
+-- effect outside `Ui.grid` (the `__grid` marker still has to be
+-- present, which the user gets by calling `Ui.grid [...] [...]`).
+gridTracksRaw : String -> String -> Attribute msg
+gridTracksRaw cols rows =
+    AttrStyle "__gridTracks" (cols ++ "|" ++ rows)
+
+
+-- ─── Aspect ratio (issue #379) ───────────────────────────────────
+
+
+-- Lock an element to a fixed width/height ratio. Compiles to inline
+-- `aspect-ratio: <r>`. Pair with `Ui.width Ui.fill` (or a specific
+-- pixel width) so height auto-scales — `aspect-ratio` is a ONE-axis
+-- declaration: the browser solves for the unset dimension from the
+-- set one.
+--
+-- Common values:
+--
+--     Ui.aspectRatio 1.0        -- 1:1 square
+--     Ui.aspectRatio 1.777      -- 16:9 widescreen / Full-HD
+--     Ui.aspectRatio 1.5        -- 3:2 photo print
+--     Ui.aspectRatio 1.333      -- 4:3 SD video / iPad
+--     Ui.aspectRatio 0.667      -- 2:3 portrait
+--     Ui.aspectRatio 2.35       -- cinemascope
+--
+-- For integer-pair ratios prefer `aspectRatioWH` — same final CSS
+-- but easier to read.
+aspectRatio : Float -> Attribute msg
+aspectRatio r =
+    AttrStyle "aspect-ratio" (String.fromFloat r)
+
+
+-- Lock an element to a width:height ratio expressed as two integers.
+-- Compiles to inline `aspect-ratio: <w> / <h>` — the browser handles
+-- the division. More readable for standard ratios:
+--
+--     Ui.aspectRatioWH 16 9     -- widescreen
+--     Ui.aspectRatioWH 4 3      -- SD / iPad
+--     Ui.aspectRatioWH 1 1      -- square
+--     Ui.aspectRatioWH 2 3      -- portrait poster
+aspectRatioWH : Int -> Int -> Attribute msg
+aspectRatioWH w h =
+    AttrStyle "aspect-ratio" (String.fromInt w ++ " / " ++ String.fromInt h)
+
+
+-- 1:1 square — alias for `aspectRatio 1.0` / `aspectRatioWH 1 1`.
+square : Attribute msg
+square =
+    aspectRatioWH 1 1
+
+
+-- 16:9 widescreen — alias for `aspectRatioWH 16 9`. Matches HDTV /
+-- YouTube / most monitors.
+widescreen : Attribute msg
+widescreen =
+    aspectRatioWH 16 9
+
+
+-- 16:9 — alias for `widescreen` (full-HD is 1920×1080, same ratio).
+fullHd : Attribute msg
+fullHd =
+    aspectRatioWH 16 9
+
+
+-- 21:9 ultra-wide (cinemascope) — common for hero banners + cinema
+-- presentation. CSS doesn't accept 21/9 directly because it isn't
+-- the true cinematic ratio (which is 2.35:1 ≈ 47:20). We emit the
+-- decimal form so the browser computes the canonical 2.35.
+cinemascope : Attribute msg
+cinemascope =
+    aspectRatio 2.35
+
+
 -- Internal markers — encoded as inline AttrStyle entries at the
 -- start of the attribute list so user attrs can override.
 rowMarker : Attribute msg
@@ -1381,7 +1461,6 @@ isTransitionOptOut a =
         _ ->
             False
 
-
 -- An animation entry as collected from an element's attributes.
 -- A small custom ADT instead of a 4-tuple — Sky's runtime tuple
 -- destructuring for arity ≥ 3 currently routes through
@@ -1432,10 +1511,10 @@ encodeAnimationEntry entry =
         AnimationEntry name tail body respect ->
             name ++ "||" ++ tail ++ "||" ++ body ++ "||"
                 ++ (if respect then
-                        "1"
+                       "1"
 
-                    else
-                        "0")
+                   else
+                       "0")
 
 
 -- Extract the name of an AnimationEntry. Helper for users /
@@ -1619,6 +1698,11 @@ layout rootAttrs root =
         ]
 
 
+        -- Animations (issue #378) — collect into
+        -- `data-sky-anim-rules` data-attr; the runtime's
+        -- `injectAnimationStyles` pass auto-suffixes the
+        -- @keyframes name with the sky-id to avoid global
+        -- collisions across elements.
 renderElement : LayoutContext -> List (Attribute msg) -> Element msg -> any
 renderElement ctx extraAttrs elem =
     case elem of
@@ -1807,16 +1891,11 @@ renderNodeAs tag ctx extraAttrs attrs children =
                     , Attr.attribute
                           "data-sky-tr-respect"
                           (if optOut then
-                                "0"
+                              "0"
 
-                           else
-                                "1")
+                          else
+                              "1")
                     ]
-        -- Animations (issue #378) — collect into
-        -- `data-sky-anim-rules` data-attr; the runtime's
-        -- `injectAnimationStyles` pass auto-suffixes the
-        -- @keyframes name with the sky-id to avoid global
-        -- collisions across elements.
         animationEntries = collectAnimations propagatedAttrs
         animationAttrs =
             if List.isEmpty animationEntries then
@@ -1831,10 +1910,7 @@ renderNodeAs tag ctx extraAttrs attrs children =
         renderedChildren = renderedMain ++ renderedNearby
         attrList =
             Attr.style styleStr
-                :: (pseudoAttrs
-                       ++ transitionAttrs
-                       ++ animationAttrs
-                       ++ htmlAttrs)
+                :: (pseudoAttrs ++ transitionAttrs ++ animationAttrs ++ htmlAttrs)
     in
         dispatchTag tag attrList renderedChildren
 
@@ -2324,9 +2400,7 @@ buildStyleString emitDisplay parentCtx myCtx attrs =
                 ""
 
             else if gridOn then
-                "display: grid; grid-template-columns: repeat(auto-fill, minmax("
-                    ++ findGridMin attrs
-                    ++ "px, 1fr));"
+                "display: grid;" ++ findGridTemplate attrs
 
             else
                 displayFor myCtx
@@ -2381,6 +2455,111 @@ findGridMin attrs =
 
                 _ ->
                     findGridMin rest
+
+
+-- Pull the `__gridTracks` value (set by `Ui.gridTracksRaw` /
+-- `Std.Ui.Grid.tracks`) out of the attribute list. Encoded as
+-- `"<cols>|<rows>"` — empty halves are skipped. Returns the
+-- composed `grid-template-columns:…; grid-template-rows:…;` CSS.
+-- Falls back to `__gridMin`'s `repeat(auto-fill, minmax(<px>px,
+-- 1fr))` shape (the legacy auto-fit default) when no explicit
+-- tracks attr is present.
+findGridTemplate : List (Attribute msg) -> String
+findGridTemplate attrs =
+    let
+        raw = findGridTracksRaw attrs
+    in
+        if raw == "" then
+            " grid-template-columns: repeat(auto-fill, minmax("
+                ++ findGridMin attrs
+                ++ "px, 1fr));"
+
+        else
+            let
+                cols = takeBeforePipe raw
+                rows = takeAfterPipe raw
+                colsCss =
+                    if cols == "" then
+                        ""
+
+                    else
+                        " grid-template-columns: " ++ cols ++ ";"
+                rowsCss =
+                    if rows == "" then
+                        ""
+
+                    else
+                        " grid-template-rows: " ++ rows ++ ";"
+            in
+                colsCss ++ rowsCss
+
+
+-- Returns the raw "<cols>|<rows>" payload, or "" when the marker
+-- isn't present (using empty-string as the absent sentinel avoids
+-- pulling the Maybe import into this module — same idiom used by
+-- `findGridMin`'s `"240"` default).
+findGridTracksRaw : List (Attribute msg) -> String
+findGridTracksRaw attrs =
+    case attrs of
+
+        [] ->
+            ""
+
+        a :: rest ->
+            case a of
+
+                AttrStyle k v ->
+                    if k == "__gridTracks" then
+                        v
+
+                    else
+                        findGridTracksRaw rest
+
+                _ ->
+                    findGridTracksRaw rest
+
+
+-- Split a "<cols>|<rows>" payload at the single `|`. The Track
+-- ADT lowering in `Std.Ui.Grid` never emits a literal `|` in track
+-- CSS (every CSS function — minmax(), repeat() — uses commas), so
+-- a naïve split is safe.
+takeBeforePipe : String -> String
+takeBeforePipe s =
+    case String.split "|" s of
+
+        first :: _ ->
+            first
+
+        [] ->
+            ""
+
+
+takeAfterPipe : String -> String
+takeAfterPipe s =
+    case String.split "|" s of
+
+        _ :: rest ->
+            joinWithPipe rest
+
+        [] ->
+            ""
+
+
+-- Re-joins the post-first segments (defensive: never expected to
+-- carry data because emitters use one pipe, but keeps the helper
+-- total).
+joinWithPipe : List String -> String
+joinWithPipe parts =
+    case parts of
+
+        [] ->
+            ""
+
+        x :: [] ->
+            x
+
+        x :: rest ->
+            x ++ "|" ++ joinWithPipe rest
 
 
 displayFor : LayoutContext -> String
@@ -2463,6 +2642,12 @@ collectStyle parentCtx myCtx attr acc =
             -- Grid-minmax-floor value, read out by `findGridMin`
             -- to build the `repeat(auto-fill, minmax(<v>px,
             -- 1fr))` declaration. Stripped here.
+                acc
+
+            else if k == "__gridTracks" then
+            -- Explicit `grid-template-columns|grid-template-rows`
+            -- value, read out by `findGridTemplate` (overrides the
+            -- legacy `__gridMin` shape). Stripped here.
                 acc
 
             else

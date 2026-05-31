@@ -1,0 +1,218 @@
+module Std.Ui.Grid exposing
+    ( Track
+    , fr
+    , px
+    , auto
+    , minContent
+    , maxContent
+    , minmax
+    , repeat
+    , repeatAutoFit
+    , repeatAutoFill
+    , trackToCss
+    , tracksToCss
+    , tracks
+    , columns
+    , rows
+    )
+
+-- Std.Ui.Grid — typed CSS-grid track specifications (issue #379).
+--
+-- The right primitive for non-trivial grid layouts:
+--   * 3-column shells with a fixed sidebar (`[Fr 1, Px 200, Fr 1]`)
+--   * Responsive card grids that fill but don't shrink past a
+--     minimum width (`[RepeatAutoFit (Minmax (Px 240) (Fr 1))]`)
+--   * Content-aware columns that hug their child width
+--     (`[Auto, Fr 1, Auto]`)
+--
+-- The lighter-weight `Ui.gridColumns N` (auto-fill `minmax(Npx, 1fr)`)
+-- stays for the common-case product-card grid — `Grid.tracks` is the
+-- escape hatch when you need explicit track control.
+--
+--     import Std.Ui as Ui
+--     import Std.Ui.Grid as Grid
+--
+--     Ui.grid
+--         [ Ui.width Ui.fill
+--         , Grid.columns
+--             [ Grid.repeatAutoFit (Grid.minmax (Grid.px 240) (Grid.fr 1)) ]
+--         , Ui.spacing 16
+--         ]
+--         (List.map productCard products)
+--
+-- Composes via nesting in the standard `Ui.grid` container. Sky.Tui
+-- silently ignores the emitted `grid-template-*` properties (its
+-- ANSI-cell renderer falls back to column-stacking); Sky.Webview
+-- honours them identically to Sky.Live (shared VNode pipeline).
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Std.Ui exposing (Attribute, gridTracksRaw)
+
+-- A single grid track spec. Composed into the CSS
+-- `grid-template-columns` / `grid-template-rows` value by
+-- `trackToCss`.
+type Track
+    = Fr Int
+    | TrackPx Int
+    | Auto
+    | MinContent
+    | MaxContent
+    | Minmax Track Track
+    | Repeat Int Track
+    | RepeatAutoFit Track
+    | RepeatAutoFill Track
+
+
+-- ─── Constructors (Sky-friendly camelCase aliases) ──────────────
+
+
+-- N flexible units (`<N>fr`). The browser distributes available
+-- space in proportion to fr values across all fr-typed tracks.
+fr : Int -> Track
+fr n =
+    Fr n
+
+
+-- A fixed pixel-width track.
+px : Int -> Track
+px n =
+    TrackPx n
+
+
+-- An `auto` track — sized to the largest child along that axis.
+auto : Track
+auto =
+    Auto
+
+
+-- `min-content` — narrowest size the track's content can take
+-- without overflow (the longest unbreakable word, the widest
+-- image's intrinsic width, …).
+minContent : Track
+minContent =
+    MinContent
+
+
+-- `max-content` — the widest size the content prefers (full
+-- paragraph width, image's natural width, …). Almost always
+-- pair with a fallback (`minmax max-content (px 600)` etc.).
+maxContent : Track
+maxContent =
+    MaxContent
+
+
+-- `minmax(low, high)` — the track grows between two bounds. The
+-- canonical responsive cell: `minmax (px 240) (fr 1)` — at least
+-- 240 px, expand to fill available space.
+minmax : Track -> Track -> Track
+minmax lo hi =
+    Minmax lo hi
+
+
+-- `repeat(<n>, <track>)` — repeat a track shape N times. Use when
+-- the track count is known and fixed.
+repeat : Int -> Track -> Track
+repeat n t =
+    Repeat n t
+
+
+-- `repeat(auto-fit, <track>)` — repeat as many times as fit, then
+-- collapse any leftover empty tracks. The right primitive for
+-- product-card grids that should re-flow when the container
+-- resizes. Pair with `minmax (px M) (fr 1)` so each track has a
+-- sensible floor + a stretch ceiling.
+repeatAutoFit : Track -> Track
+repeatAutoFit t =
+    RepeatAutoFit t
+
+
+-- `repeat(auto-fill, <track>)` — repeat as many times as fit, but
+-- keep empty tracks as ghost slots (preserves the rhythm even when
+-- the row is partial). Use for date-pickers and other "always-N
+-- columns visible" layouts where you don't want the last row to
+-- center awkwardly.
+repeatAutoFill : Track -> Track
+repeatAutoFill t =
+    RepeatAutoFill t
+
+
+-- ─── CSS lowering ───────────────────────────────────────────────
+
+
+-- Lower a single Track to its CSS string fragment.
+trackToCss : Track -> String
+trackToCss t =
+    case t of
+
+        Fr n ->
+            String.fromInt n ++ "fr"
+
+        TrackPx n ->
+            String.fromInt n ++ "px"
+
+        Auto ->
+            "auto"
+
+        MinContent ->
+            "min-content"
+
+        MaxContent ->
+            "max-content"
+
+        Minmax lo hi ->
+            "minmax(" ++ trackToCss lo ++ ", " ++ trackToCss hi ++ ")"
+
+        Repeat n inner ->
+            "repeat(" ++ String.fromInt n ++ ", " ++ trackToCss inner ++ ")"
+
+        RepeatAutoFit inner ->
+            "repeat(auto-fit, " ++ trackToCss inner ++ ")"
+
+        RepeatAutoFill inner ->
+            "repeat(auto-fill, " ++ trackToCss inner ++ ")"
+
+
+-- Lower a track list to a space-joined CSS string. Empty list
+-- returns `""` (caller falls back to default).
+tracksToCss : List Track -> String
+tracksToCss ts =
+    case ts of
+
+        [] ->
+            ""
+
+        first :: rest ->
+            List.foldl
+                (\t acc -> acc ++ " " ++ trackToCss t)
+                (trackToCss first)
+                rest
+
+
+-- ─── Attribute entry points ─────────────────────────────────────
+
+
+-- Set both columns + rows explicitly. Pass `[]` for either axis to
+-- skip it (CSS `auto` default applies).
+--
+--     Grid.tracks
+--         [ Grid.fr 1, Grid.px 200, Grid.fr 1 ]   -- sidebar layout
+--         [ Grid.px 60, Grid.fr 1, Grid.px 40 ]   -- header/body/footer
+tracks : List Track -> List Track -> Attribute msg
+tracks cols rs =
+    gridTracksRaw (tracksToCss cols) (tracksToCss rs)
+
+
+-- Set only columns — convenience for the common case.
+--
+--     Grid.columns
+--         [ Grid.repeatAutoFit (Grid.minmax (Grid.px 240) (Grid.fr 1)) ]
+columns : List Track -> Attribute msg
+columns cols =
+    gridTracksRaw (tracksToCss cols) ""
+
+
+-- Set only rows.
+rows : List Track -> Attribute msg
+rows rs =
+    gridTracksRaw "" (tracksToCss rs)
