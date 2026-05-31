@@ -7,8 +7,14 @@
 # examples (HTTP 200 on the configured port).
 #
 # Flags:
-#   --build-only   only clean-build every example (default: runtime too)
-#   --no-clean     keep existing sky-out/ .skycache/ (faster iteration)
+#   --build-only      only clean-build every example (default: runtime too)
+#   --no-clean        keep existing sky-out/ .skycache/ (faster iteration)
+#   --workdir DIR     copy examples/* into DIR/examples/ and run there
+#                     instead of mutating the in-tree examples/. Fixes
+#                     bug #381: cabal-test ExampleSweep racing TypedFfi
+#                     by rm -rf'ing the in-tree sky-out/ + .skycache/go
+#                     directories TypedFfi reads from. Cleaned up on
+#                     exit via trap.
 #
 # Exit 0 on full pass; non-zero and a failure list on any failure.
 
@@ -19,13 +25,22 @@ cd "$ROOT"
 
 BUILD_ONLY=0
 CLEAN=1
-for arg in "$@"; do
-    case "$arg" in
-        --build-only) BUILD_ONLY=1 ;;
-        --no-clean)   CLEAN=0 ;;
+WORKDIR=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --build-only) BUILD_ONLY=1; shift ;;
+        --no-clean)   CLEAN=0; shift ;;
+        --workdir)
+            shift
+            [[ $# -gt 0 ]] || { echo "--workdir requires a directory argument" >&2; exit 2; }
+            WORKDIR="$1"
+            shift ;;
+        --workdir=*)
+            WORKDIR="${1#--workdir=}"
+            shift ;;
         --help|-h)
-            sed -n '2,15p' "$0"; exit 0 ;;
-        *) echo "unknown flag: $arg" >&2; exit 2 ;;
+            sed -n '2,21p' "$0"; exit 0 ;;
+        *) echo "unknown flag: $1" >&2; exit 2 ;;
     esac
 done
 
@@ -33,6 +48,102 @@ SKY="$ROOT/sky-out/sky"
 [[ -x "$SKY" ]] || { echo "missing $SKY — run scripts/build.sh first" >&2; exit 2; }
 
 export SKY_RUNTIME_DIR="$ROOT/runtime-go"
+
+# Workdir mode (bug #381): copy examples/* into $WORKDIR/examples/ and
+# point EXAMPLES_ROOT at the copies. Stops cabal-test ExampleSweep from
+# rm -rf'ing the in-tree sky-out/ + .skycache/go directories that
+# TypedFfi / UnreachableGate specs read from while the sweep is mid-
+# flight.
+#
+# Preserves $ROOT for SKY_RUNTIME_DIR (the runtime + stdlib live there
+# and are NEVER mutated by the sweep). Only example dirs get copied.
+#
+# After a successful sweep we MIRROR THE WORKDIR BACK to the in-tree
+# examples/. Two reasons:
+#   1. Consumer specs (Sky.Build.TypedFfi, Sky.Build.UnreachableGate,
+#      Sky.Build.SkyshopCompiles) read in-tree paths. Without the
+#      mirror, a fresh checkout that runs `cabal test` would have
+#      empty `examples/*/sky-out/` and the consumer specs would
+#      cascade-fail.
+#   2. Standalone `sky verify`/CI users expect the sweep to leave
+#      the in-tree examples/ in a built state.
+# The mirror is END-OF-SWEEP atomic from the consumer specs' point of
+# view (sequential hspec ordering: ExampleSweep `it` block completes,
+# THEN TypedFfi `it` block starts). No race possible.
+#
+# Cleanup: trap on EXIT removes $WORKDIR/examples — caller's wider
+# workdir tree (if any) is left intact.
+EXAMPLES_ROOT="$ROOT/examples"
+if [[ -n "$WORKDIR" ]]; then
+    mkdir -p "$WORKDIR/examples"
+    EXAMPLES_ROOT="$WORKDIR/examples"
+    # On macOS `cp -R src/. dst/` copies CONTENTS of src into dst (BSD
+    # quirk). Use rsync where available for predictable exclude rules;
+    # otherwise fall back to a per-example cp + post-prune of dirs the
+    # sweep would rm anyway. We exclude `sky-out`, `.skycache/lowered`,
+    # `.skycache/go` (the sweep recreates them) but KEEP `.skycache/ffi`
+    # (15+ min to regenerate for skyshop's 76k FFI symbols), `.skydeps`,
+    # and `sky.lock`.
+    if command -v rsync >/dev/null 2>&1; then
+        rsync -a \
+            --exclude='sky-out' \
+            --exclude='.skycache/lowered' \
+            --exclude='.skycache/go' \
+            "$ROOT/examples/" "$EXAMPLES_ROOT/"
+    else
+        cp -R "$ROOT/examples/." "$EXAMPLES_ROOT/"
+        find "$EXAMPLES_ROOT" -mindepth 2 -maxdepth 3 \
+            \( -name 'sky-out' -o -path '*/.skycache/lowered' \
+               -o -path '*/.skycache/go' \) \
+            -prune -exec rm -rf {} + 2>/dev/null || true
+    fi
+    # Cleanup on exit. Scope the rm to the examples subtree we created.
+    # If the caller's WORKDIR was empty before we touched it (only the
+    # `examples/` we added) we also remove the parent so $TMPDIR stays
+    # clean across runs. `trap` runs on EXIT / SIGTERM / SIGINT.
+    cleanup_workdir() {
+        rm -rf "$EXAMPLES_ROOT" 2>/dev/null || true
+        # Only remove the parent if it's empty (caller may have passed
+        # a shared scratch dir they're populating in parallel — never
+        # blow away their other contents).
+        rmdir "$WORKDIR" 2>/dev/null || true
+    }
+    trap cleanup_workdir EXIT INT TERM
+    echo "  [workdir] copied examples → $EXAMPLES_ROOT"
+fi
+
+# Mirror workdir builds back to in-tree examples/. Runs on success at
+# the bottom of the script. Decoupled into a helper here so the trap
+# arm + the success-path call can share the same logic.
+mirror_back_to_intree() {
+    [[ -z "$WORKDIR" ]] && return 0  # No workdir → nothing to mirror.
+    # rsync just the sweep's built artifacts back. We DON'T touch
+    # source-tree files (src/, sky.toml, …) — the workdir's copies are
+    # byte-identical to the originals (we copied them in earlier).
+    # Mirroring those would be a no-op but burns IO; selective rsync
+    # also makes the operation visibly atomic in the in-tree mtimes.
+    if command -v rsync >/dev/null 2>&1; then
+        rsync -a --include='*/' \
+            --include='sky-out/***' \
+            --include='.skycache/lowered/***' \
+            --include='.skycache/go/***' \
+            --exclude='*' \
+            "$EXAMPLES_ROOT/" "$ROOT/examples/"
+    else
+        # Per-example cp of just the sweep-produced subtrees.
+        for d in "$EXAMPLES_ROOT"/*/; do
+            local name
+            name="$(basename "$d")"
+            for sub in sky-out .skycache/lowered .skycache/go; do
+                if [[ -d "$d/$sub" ]]; then
+                    rm -rf "$ROOT/examples/$name/$sub" 2>/dev/null || true
+                    mkdir -p "$ROOT/examples/$name/$(dirname "$sub")" 2>/dev/null || true
+                    cp -R "$d/$sub" "$ROOT/examples/$name/$sub"
+                fi
+            done
+        done
+    fi
+}
 
 # Cross-platform `timeout`. macOS doesn't ship GNU coreutils, so the
 # bare `timeout` binary is missing on default GitHub `macos-latest`
@@ -131,7 +242,7 @@ declare -a failures=()
 
 run_example() {
     local name="$1" kind="$2" port="${3:-}" path="${4:-/}"
-    local dir="$ROOT/examples/$name"
+    local dir="$EXAMPLES_ROOT/$name"
     [[ -d "$dir" ]] || { failures+=("$name: missing directory"); fail=$((fail+1)); return; }
 
     # GUI examples (Fyne) need X11/GTK dev libs on Linux. On a headless
@@ -234,4 +345,12 @@ if [[ $fail -gt 0 ]]; then
         fi
     done
     exit 1
+fi
+
+# Sweep succeeded; mirror workdir builds back to in-tree examples/.
+# No-op when --workdir was not passed. See mirror_back_to_intree()
+# header above the trap for the contract + race semantics.
+mirror_back_to_intree
+if [[ -n "$WORKDIR" ]]; then
+    echo "  [workdir] mirrored builds back to $ROOT/examples/"
 fi
