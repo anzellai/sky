@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -590,6 +591,175 @@ func TestHttpStream_OpenAndChunks_E2EAgainstMockServer(t *testing.T) {
 // ════════════════════════════════════════════════════════════════════
 // Concurrency / stress — register + close + lookup under -race
 // ════════════════════════════════════════════════════════════════════
+
+// ════════════════════════════════════════════════════════════════════
+// forEachChunk — synchronous-relay primitive (issue #373)
+// ════════════════════════════════════════════════════════════════════
+
+// Happy path: every upstream chunk reaches body in order; clean Done
+// resolves the forEach Task to Ok unit.
+func TestHttpStream_ForEachChunk_AllInOrder(t *testing.T) {
+	srv := newStreamingServer(t,
+		[]string{"alpha", "beta", "gamma", "delta", "epsilon"},
+		5*time.Millisecond)
+	defer srv.Close()
+
+	sess := &liveSession{
+		sid:  "foreach-ok-sid",
+		done: make(chan struct{}),
+	}
+	runWithLiveSession(sess, func() {
+		reqMap := map[string]any{
+			"method":  "GET",
+			"url":     srv.URL,
+			"body":    "",
+			"headers": []any{},
+		}
+		openRes := anyTaskInvoke(HttpStream_open(reqMap))
+		if openRes.Tag != 0 {
+			t.Fatalf("HttpStream_open Err: %+v", openRes)
+		}
+		sid := asInt64(openRes.OkValue)
+		if sid == 0 {
+			t.Fatal("HttpStream_open returned zero stream id")
+		}
+
+		var seen []string
+		var mu sync.Mutex
+		body := func(chunkArg any) any {
+			mu.Lock()
+			seen = append(seen, fmt.Sprintf("%v", chunkArg))
+			mu.Unlock()
+			return func() any { return Ok[any, any](skyUnit()) }
+		}
+		feRes := anyTaskInvoke(HttpStream_forEachChunk(sid, body))
+		if feRes.Tag != 0 {
+			t.Fatalf("forEachChunk Err: %+v", feRes)
+		}
+
+		mu.Lock()
+		got := strings.Join(seen, "")
+		mu.Unlock()
+		want := "alphabetagammadeltaepsilon"
+		if got != want {
+			t.Errorf("chunks combined=%q want %q (saw %d events)",
+				got, want, len(seen))
+		}
+
+		// Handle should be closed + unregistered after forEachChunk
+		// completes — the documented "always close on exit" contract.
+		if sh := lookupStream(sess, sid); sh != nil {
+			t.Errorf("stream still registered after forEachChunk returned")
+		}
+	})
+}
+
+// Body returns Err mid-stream: forEachChunk MUST abort, propagate
+// body's Err, AND close the handle (registry-evicted on return).
+func TestHttpStream_ForEachChunk_BodyErrAborts(t *testing.T) {
+	srv := newStreamingServer(t,
+		[]string{"first", "second", "third"},
+		15*time.Millisecond)
+	defer srv.Close()
+
+	sess := &liveSession{
+		sid:  "foreach-aborts-sid",
+		done: make(chan struct{}),
+	}
+	runWithLiveSession(sess, func() {
+		reqMap := map[string]any{
+			"method":  "GET",
+			"url":     srv.URL,
+			"body":    "",
+			"headers": []any{},
+		}
+		openRes := anyTaskInvoke(HttpStream_open(reqMap))
+		if openRes.Tag != 0 {
+			t.Fatalf("HttpStream_open Err: %+v", openRes)
+		}
+		sid := asInt64(openRes.OkValue)
+
+		var seen []string
+		var mu sync.Mutex
+		body := func(chunkArg any) any {
+			mu.Lock()
+			seen = append(seen, fmt.Sprintf("%v", chunkArg))
+			mu.Unlock()
+			// Abort on the second chunk.
+			if len(seen) >= 2 {
+				return func() any {
+					return Err[any, any](ErrUnexpected("body-abort"))
+				}
+			}
+			return func() any { return Ok[any, any](skyUnit()) }
+		}
+		feRes := anyTaskInvoke(HttpStream_forEachChunk(sid, body))
+		if feRes.Tag == 0 {
+			t.Fatalf("expected Err from body-abort, got Ok %+v", feRes)
+		}
+
+		mu.Lock()
+		count := len(seen)
+		mu.Unlock()
+		if count < 2 {
+			t.Errorf("body should have been called ≥2 times before abort; got %d", count)
+		}
+
+		// Handle MUST be unregistered after a forEachChunk Err exit
+		// — the deferred close runs on every return path.
+		if sh := lookupStream(sess, sid); sh != nil {
+			t.Errorf("stream still registered after forEachChunk Err")
+		}
+	})
+}
+
+// Unknown stream id MUST resolve to Ok unit (idempotent no-op, mirroring
+// HttpStream_close's contract for unknown ids).
+func TestHttpStream_ForEachChunk_UnknownIdIsNoOp(t *testing.T) {
+	body := func(_ any) any {
+		return func() any { return Ok[any, any](skyUnit()) }
+	}
+	res := anyTaskInvoke(HttpStream_forEachChunk(int64(99999991), body))
+	if res.Tag != 0 {
+		t.Fatalf("expected Ok on unknown id, got %+v", res)
+	}
+}
+
+// Upstream EOF (clean) → Ok unit. (Already covered by AllInOrder but
+// pin the explicit zero-chunk case too: a stream whose body is empty
+// emits Done immediately.)
+func TestHttpStream_ForEachChunk_EmptyStreamReturnsOk(t *testing.T) {
+	srv := newStreamingServer(t, []string{}, 0)
+	defer srv.Close()
+
+	sess := &liveSession{
+		sid:  "foreach-empty-sid",
+		done: make(chan struct{}),
+	}
+	runWithLiveSession(sess, func() {
+		reqMap := map[string]any{
+			"method":  "GET",
+			"url":     srv.URL,
+			"body":    "",
+			"headers": []any{},
+		}
+		openRes := anyTaskInvoke(HttpStream_open(reqMap))
+		sid := asInt64(openRes.OkValue)
+
+		callCount := 0
+		body := func(_ any) any {
+			callCount++
+			return func() any { return Ok[any, any](skyUnit()) }
+		}
+		feRes := anyTaskInvoke(HttpStream_forEachChunk(sid, body))
+		if feRes.Tag != 0 {
+			t.Fatalf("expected Ok on empty stream, got %+v", feRes)
+		}
+		if callCount != 0 {
+			t.Errorf("body called %d times on empty stream; want 0", callCount)
+		}
+	})
+}
 
 func TestStreamRegistry_ConcurrentRegisterCloseLookup(t *testing.T) {
 	sess := &liveSession{

@@ -531,6 +531,7 @@ registry = Map.fromList
     -- ═══════════════════════════════════════════════════════
     , (("HttpStream", "open"),    KernelInfo "rt.HttpStream_open" 1 True)
     , (("HttpStream", "close"),   KernelInfo "rt.HttpStream_close" 1 True)
+    , (("HttpStream", "forEachChunk"), KernelInfo "rt.HttpStream_forEachChunk" 2 True)
 
     -- ═══════════════════════════════════════════════════════
     -- Sky.Http.Server.Stream  (Cycle 4 HS-Server — server-side

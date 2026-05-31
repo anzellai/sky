@@ -27,7 +27,7 @@
 --
 -- See `docs/skylive/http-streaming.md` for the design write-up and
 -- `examples/28-streaming-chat` for the canonical pattern.
-module Sky.Core.Http.Stream exposing (StreamId(..), ChunkEvent(..), open, chunks, close)
+module Sky.Core.Http.Stream exposing (StreamId(..), ChunkEvent(..), open, chunks, close, forEachChunk)
 
 import Sky.Ffi as Ffi
 import Sky.Core.Error exposing (Error)
@@ -124,3 +124,59 @@ close sid =
 
         StreamId raw ->
             closeRaw raw
+
+
+-- | Internal — direct kernel alias on the raw Int id. The runtime
+-- helper drains the spool channel synchronously, calling `body`
+-- per chunk and propagating its Result. See `runtime-go/rt/http_stream.go`
+-- (`HttpStream_forEachChunk`).
+forEachChunkRaw : Int -> (String -> Task Error ()) -> Task Error ()
+forEachChunkRaw =
+    Ffi.kernel "HttpStream_forEachChunk"
+
+
+-- | `forEachChunk sid body` — block the calling goroutine until the
+-- stream reaches EOF (Done) OR errors, calling `body chunk`
+-- synchronously on every chunk that arrives.
+--
+-- Designed for the synchronous-relay shape — an `Sky.Http.Server`
+-- handler that proxies an upstream streaming response (LLM SSE,
+-- chunked download) chunk-for-chunk to its own client without going
+-- through Sky.Live's update-loop Sub dispatch (which is unavailable
+-- inside plain HTTP handler goroutines).
+--
+-- Semantics:
+--
+--  * On clean Done from upstream: returns `Task.succeed ()`.
+--  * On upstream `Errored e`: returns `Task.fail e`.
+--  * On `body chunk` returning `Err e`: aborts iteration AND closes
+--    the stream, propagates `Err e` as forEach's result. Fail-fast.
+--  * On success OR error: the underlying `StreamId` is closed before
+--    forEach returns — callers do NOT need to wrap with their own
+--    close. (Idempotent if you do — `close` is always safe.)
+--
+-- Backpressure: `body` runs synchronously per chunk; if it blocks
+-- on a downstream write buffer (e.g. `Server.Stream.emit` to a slow
+-- consumer), the spool goroutine's bounded 16-event channel fills
+-- and the upstream HTTP client naturally slows its reads. No extra
+-- buffering at the Sky level.
+--
+-- Pairs with `Sky.Http.Server.Stream.{stream,emit,finish}` for the
+-- relay shape:
+--
+--   relayHandler : Server.Request -> Task Error Server.Response
+--   relayHandler req =
+--       Server.Stream.stream "text/event-stream" (\writer ->
+--           Http.Stream.open upstreamReq
+--               |> Task.andThen (\hdl ->
+--                   Http.Stream.forEachChunk hdl
+--                       (\chunk -> Server.Stream.emit chunk writer))
+--               |> Task.andThen (\_ -> Server.Stream.finish writer))
+--
+-- See `examples/32-sse-relay` for the runnable canonical example.
+forEachChunk : StreamId -> (String -> Task Error ()) -> Task Error ()
+forEachChunk sid body =
+    case sid of
+
+        StreamId raw ->
+            forEachChunkRaw raw body

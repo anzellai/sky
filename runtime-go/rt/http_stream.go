@@ -158,6 +158,24 @@ type streamHandle struct {
 // trivial. The Sky-side StreamId Int wraps this.
 var streamIDCounter atomic.Int64
 
+// sessionlessStreams — fallback registry for streams opened OUTSIDE
+// a live session (plain Sky.Http.Server handlers, direct-Task
+// callers, tests). Without this, `Http.Stream.close` /
+// `Http.Stream.forEachChunk` can't recover the handle from the
+// returned StreamId (the per-session map is unreachable).
+//
+// Driving use case: the synchronous-relay shape (#373) — an HTTP
+// handler opens an upstream stream + forEachChunk-drains it
+// chunk-for-chunk back to its own client. The handler goroutine
+// has NO live session, so the open path needs a global home for
+// the handle.
+//
+// Lifetime: entries are removed on explicit Close / forEachChunk
+// exit. A handler that drops the StreamId without closing leaks
+// one entry forever (mirrors the Sky-side promise that close is
+// the caller's responsibility outside session-managed flows).
+var sessionlessStreams sync.Map // map[int64]*streamHandle
+
 // nextStreamID — assigns a fresh non-zero stream id. We skip 0 so a
 // zero-valued StreamId (uninitialised model field) can't accidentally
 // resolve to a real stream.
@@ -176,11 +194,13 @@ func nextStreamID() int64 {
 // stays in one place.
 //
 // sess MAY be nil (HttpStream_open invoked outside a live session
-// — direct-Task callers, tests). In that case the handle is owned
-// by the caller via the returned StreamId and must be closed
-// explicitly; markDone never reaches it.
+// — direct-Task callers, Sky.Http.Server handler goroutines, tests).
+// In that case the handle goes into the process-global
+// sessionlessStreams map so close / forEachChunk can still find it
+// by id. markDone never reaches it; the caller owns the lifecycle.
 func registerStream(sess *liveSession, sh *streamHandle) {
 	if sess == nil {
+		sessionlessStreams.Store(sh.id, sh)
 		return
 	}
 	sess.streamsMu.Lock()
@@ -196,6 +216,7 @@ func registerStream(sess *liveSession, sh *streamHandle) {
 // idempotent close path on a session whose markDone already swept).
 func unregisterStream(sess *liveSession, id int64) {
 	if sess == nil {
+		sessionlessStreams.Delete(id)
 		return
 	}
 	sess.streamsMu.Lock()
@@ -208,15 +229,27 @@ func unregisterStream(sess *liveSession, id int64) {
 // closed + unregistered. Called by:
 //
 //   - HttpStream_close to find the handle to close.
+//   - HttpStream_forEachChunk to find the handle to drain.
 //   - setupSubscriptions / drainStreamSub to find the handle whose
 //     channel a subscriber should read from.
+//
+// Resolution order: session-scoped map first (covers Sky.Live);
+// falls back to the process-global sessionlessStreams map for
+// handler-goroutine / direct-Task callers (covers
+// Sky.Http.Server + tests).
 func lookupStream(sess *liveSession, id int64) *streamHandle {
-	if sess == nil {
-		return nil
+	if sess != nil {
+		sess.streamsMu.Lock()
+		sh := sess.streams[id]
+		sess.streamsMu.Unlock()
+		if sh != nil {
+			return sh
+		}
 	}
-	sess.streamsMu.Lock()
-	defer sess.streamsMu.Unlock()
-	return sess.streams[id]
+	if v, ok := sessionlessStreams.Load(id); ok {
+		return v.(*streamHandle)
+	}
+	return nil
 }
 
 // closeAllStreams walks every active stream on the session, closes
@@ -491,6 +524,94 @@ func HttpStream_open(reqArg any) any {
 
 		go sh.runSpool()
 		return Ok[any, any](sh.id)
+	}
+}
+
+// HttpStream_forEachChunk implements:
+//
+//	Sky.Core.Http.Stream.forEachChunk : Int -> (String -> Task Error ()) -> Task Error ()
+//
+// Synchronous-iterator counterpart to the Sub-based `chunks` driver.
+// Drains the spool channel for the stream id from the calling
+// goroutine, calling the user-supplied `body` Task per chunk.
+//
+// Bridges Sky.Core.Http.Stream (consumer) to Sky.Http.Server.Stream
+// (producer) inside the same Sky.Http.Server handler goroutine —
+// `Sub.*` only fires inside Sky.Live update loops, so plain HTTP
+// handlers had no way to relay an upstream chunked response
+// chunk-for-chunk before this primitive.
+//
+// Semantics:
+//
+//   - Clean Done from upstream → return Ok unit.
+//   - Upstream Errored e        → return Err e.
+//   - body returns Err e        → abort, close the stream, return Err e.
+//   - On any exit path the underlying handle is closed (idempotent
+//     — safe if the caller also calls close).
+//
+// Backpressure: body runs synchronously per chunk; if it blocks
+// (e.g. on Server.Stream.emit waiting for a slow downstream
+// consumer's write buffer), the spool goroutine's bounded
+// streamChanBuffer fills + the upstream HTTP client naturally
+// throttles. The existing streamConsumerTimeout (30s) is the
+// runaway-stall safety net.
+func HttpStream_forEachChunk(sidArg any, bodyArg any) any {
+	id := asInt64(sidArg)
+	return func() any {
+		sess := currentLiveSession()
+		sh := lookupStream(sess, id)
+		if sh == nil {
+			// Unknown / already-closed stream id — nothing to drain.
+			// Match HttpStream_close's idempotent-no-op contract.
+			return Ok[any, any](skyUnit())
+		}
+		// Always close + unregister on exit. Idempotent — the spool
+		// goroutine's own close is also safe. unregisterStream covers
+		// BOTH the per-session map AND the sessionless global map
+		// (lookupStream may have found the handle in either).
+		defer func() {
+			sh.Close()
+			unregisterStream(sess, id)
+			// Defense-in-depth: if the handle was opened outside a
+			// session but later a session emerged (rare — Sky.Live
+			// state-restore path), still scrub the global map.
+			sessionlessStreams.Delete(id)
+		}()
+		for {
+			select {
+			case ev, open := <-sh.ch:
+				if !open {
+					// Channel closed without a Done/Errored sentinel —
+					// treat as clean EOF (shouldn't happen with the
+					// current spool, but be defensive).
+					return Ok[any, any](skyUnit())
+				}
+				switch ev.kind {
+				case streamChunkEv:
+					// Call user's `body chunk` Task synchronously.
+					// SkyCall returns the body's Task value
+					// (typically func() any); anyTaskInvoke drives
+					// it to a SkyResult.
+					taskVal := SkyCall(bodyArg, ev.data)
+					res := anyTaskInvoke(taskVal)
+					if res.Tag != 0 {
+						// body errored — fail-fast: abort iteration
+						// and propagate the body's Err upward.
+						return Err[any, any](res.ErrValue)
+					}
+				case streamDoneEv:
+					return Ok[any, any](skyUnit())
+				case streamErrEv:
+					return Err[any, any](ev.err)
+				}
+			case <-sh.done:
+				// Stream was closed out-of-band (e.g. session
+				// teardown, explicit Http.Stream.close from a
+				// concurrent goroutine). Treat as clean EOF —
+				// the caller asked to stop.
+				return Ok[any, any](skyUnit())
+			}
+		}
 	}
 }
 
