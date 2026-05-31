@@ -28,6 +28,7 @@ import qualified Sky.Type.RecordFieldExactnessSpec
 import qualified Sky.Build.UiFillCascadeSpec
 import qualified Sky.Build.UiMediaQuerySpec
 import qualified Sky.Build.UiPseudoClassSpec
+import qualified Sky.Build.UiTransitionAnimationSpec
 import qualified Sky.Build.UiMultilineTextareaSpec
 import qualified Sky.Build.ExposingTypeCtorsSpec
 import qualified Sky.Build.LetForwardRefSpec
@@ -224,6 +225,17 @@ main = hspec $ do
     -- Go contains the runtime marker attr (data-sky-pc-rules) +
     -- per-pseudo wire tags (h|, v|, f|, a|, d|).
     describe "Sky.Build.UiPseudoClass"    Sky.Build.UiPseudoClassSpec.spec
+    -- Std.Ui transitions + animations DSL (issue #378). Compile-side
+    -- fence — checks the new helper symbols
+    -- (Transition.attribute / Animation.attribute) lower to AttrTransition /
+    -- AttrAnimation ctors + the runtime marker attrs
+    -- (data-sky-tr-rules / data-sky-anim-rules) appear in the
+    -- emitted Go. The runtime injection side
+    -- (injectTransitionStyles / injectAnimationStyles +
+    -- reduced-motion auto-gate) is covered by
+    -- runtime-go/rt/live_transition_animation_test.go.
+    describe "Sky.Build.UiTransitionAnimation"
+                                       Sky.Build.UiTransitionAnimationSpec.spec
     -- Std.Ui.Input.multiline used to call `inputBase "textarea"` which
     -- built a `Ui.input` element with type="textarea" — invalid HTML
     -- that browsers silently degrade to single-line text input. Fix

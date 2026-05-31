@@ -275,6 +275,7 @@ test-suite sky-tests
       Sky.Build.UiFillCascadeSpec
       Sky.Build.UiMediaQuerySpec
       Sky.Build.UiPseudoClassSpec
+      Sky.Build.UiTransitionAnimationSpec
       Sky.Build.UiMultilineTextareaSpec
       Sky.Build.ExposingTypeCtorsSpec
       Sky.Build.LetForwardRefSpec
