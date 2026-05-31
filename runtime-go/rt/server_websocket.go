@@ -425,6 +425,11 @@ func serveWebSocketUpgrade(w http.ResponseWriter, r *http.Request, cfg webSocket
 			isPeerClosed := closeStatus != -1 ||
 				strings.Contains(errStr, "EOF") ||
 				strings.Contains(errStr, "connection reset") ||
+				strings.Contains(errStr, "use of closed network connection") ||
+				strings.Contains(errStr, "broken pipe") ||
+				strings.Contains(errStr, "websocket: close 1000") ||
+				strings.Contains(errStr, "websocket: close 1001") ||
+				strings.Contains(errStr, "failed to read frame header: EOF") ||
 				h.ctx.Err() != nil
 			if isPeerClosed {
 				if cfg.onClose != nil {
