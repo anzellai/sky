@@ -15,16 +15,20 @@ module Sky.Build.CheckIsBuildSpec (spec) where
 -- v0.15.52 #396 — workdir isolation. Pre-fix the spec ran `sky
 -- {check,build}` from the repo cwd, so the emitted `sky-out/main.go`
 -- and `.skycache/` raced RecordFieldOrderSpec (which also writes
--- there) and any other spec that reads them. The fix is the same
--- shape as #381: each invocation runs with `cwd = $TMPDIR/sky-cib-…`
--- so the artefacts live in a dedicated directory with no shared
--- mutable state. Both specs in isolation AND under the full sweep
--- now ship the same artefacts every run.
+-- there) and any other spec that reads them under parallel sweep.
+-- The fix is the same shape as #381: this spec now runs ALL
+-- invocations under one dedicated `withSystemTempDirectory "sky-cib-"`
+-- workdir per spec invocation — shared across fixtures (so the
+-- Sky-side `.skycache/` + Go build cache stay warm between
+-- fixtures, keeping the sweep wall-time the same as the pre-fix
+-- shared-cwd run) but completely walled off from any other spec's
+-- view of the in-tree `sky-out/` directory.
 
 import Test.Hspec
 import System.Process (readCreateProcessWithExitCode, proc, CreateProcess(..))
 import System.Exit (ExitCode(..))
-import System.Directory (listDirectory, getCurrentDirectory, doesFileExist)
+import System.Directory (listDirectory, getCurrentDirectory, doesFileExist,
+                         removePathForcibly)
 import System.FilePath ((</>), takeFileName)
 import System.IO.Temp (withSystemTempDirectory)
 import Data.List (isSuffixOf, isInfixOf, sort)
@@ -66,7 +70,13 @@ spec = do
             skyBinary `shouldBe` True
             names <- listDirectory fixtureDir
             let skyFiles = sort [ fixtureDir </> n | n <- names, ".sky" `isSuffixOf` n ]
-            divergences <- traverse (runBoth sky) skyFiles
+            -- One shared workdir for ALL fixtures in this spec —
+            -- keeps the Sky `.skycache/` + Go build cache warm
+            -- (so the sweep stays as fast as the pre-fix in-tree
+            -- shared-cwd run) but isolates the artefacts from any
+            -- OTHER spec that also pokes the repo's `sky-out/`.
+            divergences <- withSystemTempDirectory "sky-cib-sweep" $ \tmp ->
+                traverse (runBoth sky tmp) skyFiles
             let disagreeing =
                     [ (takeFileName f, c, b)
                     | (f, c, b) <- divergences
@@ -75,18 +85,21 @@ spec = do
             disagreeing `shouldBe` []
 
 
--- Run both `sky check` and `sky build` against the fixture, each
--- inside its own tempdir so concurrent specs can't observe a
--- half-written `sky-out/main.go` or `.skycache/`. Returns the
--- verdicts side-by-side.
-runBoth :: FilePath -> FilePath -> IO (FilePath, Verdict, Verdict)
-runBoth sky fixture = do
-    cec <- withSystemTempDirectory "sky-cib-check" $ \tmp -> do
-        let cp = (proc sky ["check", fixture]) { cwd = Just tmp }
-        (ec, _, _) <- readCreateProcessWithExitCode cp ""
-        return ec
-    bec <- withSystemTempDirectory "sky-cib-build" $ \tmp -> do
-        let cp = (proc sky ["build", fixture]) { cwd = Just tmp }
-        (ec, _, _) <- readCreateProcessWithExitCode cp ""
-        return ec
+-- Run both `sky check` and `sky build` against the fixture inside
+-- the given workdir. Scrubs the per-workdir `sky-out/main.go` +
+-- `.skycache/` between the two invocations so check and build see
+-- an identical starting state. Returns the verdicts side-by-side.
+runBoth :: FilePath -> FilePath -> FilePath -> IO (FilePath, Verdict, Verdict)
+runBoth sky workdir fixture = do
+    let cleanArtefacts = do
+            removePathForcibly (workdir </> ".skycache")
+            removePathForcibly (workdir </> "sky-out" </> "main.go")
+    -- check
+    cleanArtefacts
+    let cpCheck = (proc sky ["check", fixture]) { cwd = Just workdir }
+    (cec, _, _) <- readCreateProcessWithExitCode cpCheck ""
+    -- build
+    cleanArtefacts
+    let cpBuild = (proc sky ["build", fixture]) { cwd = Just workdir }
+    (bec, _, _) <- readCreateProcessWithExitCode cpBuild ""
     return (fixture, verdictOf cec, verdictOf bec)
