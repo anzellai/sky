@@ -9,6 +9,11 @@ module Std.Time exposing
     , diffDays, diffHours, diffMinutes, diffSeconds
     , fromParts, zoneOffset, zoneName
     , utc
+    , yearUtc, monthUtc, dayUtc
+    , dayOfWeekUtc, dayOfYearUtc, weekOfYearUtc, isWeekendUtc
+    , startOfDayUtc, endOfDayUtc
+    , startOfWeekUtc, startOfMonthUtc, endOfMonthUtc
+    , startOfYearUtc, endOfYearUtc
     )
 
 -- | Std.Time — IANA timezone-aware time helpers.
@@ -212,3 +217,113 @@ zoneOffset zone ms =
 zoneName : String -> Int -> Result Error String
 zoneName zone ms =
     Ffi.callPure "Time_zoneName" [ Ffi.toAny zone, Ffi.toAny ms ]
+
+
+-- ─── UTC infallible companions (v0.15.48) ──────────────────────
+--
+-- The `*Utc` variants plug the IANA-zone lookup at the call site
+-- with `"UTC"` (always valid → no fallible `Result Error _`
+-- wrap), so callers that don't need TZ-awareness don't have to
+-- thread a `Result.withDefault 0` everywhere.
+--
+-- The full zone-aware fn stays canonical; reach for `*Utc` only
+-- when you're already operating on canonical UTC unix millis
+-- (e.g. server-internal timestamps, log lines, audit rows).
+
+
+yearUtc : Int -> Int
+yearUtc ms =
+    case year utc ms of
+        Ok v -> v
+        Err _ -> 0
+
+
+monthUtc : Int -> Int
+monthUtc ms =
+    case month utc ms of
+        Ok v -> v
+        Err _ -> 0
+
+
+dayUtc : Int -> Int
+dayUtc ms =
+    case day utc ms of
+        Ok v -> v
+        Err _ -> 0
+
+
+dayOfWeekUtc : Int -> Int
+dayOfWeekUtc ms =
+    case dayOfWeek utc ms of
+        Ok v -> v
+        Err _ -> 0
+
+
+dayOfYearUtc : Int -> Int
+dayOfYearUtc ms =
+    case dayOfYear utc ms of
+        Ok v -> v
+        Err _ -> 0
+
+
+weekOfYearUtc : Int -> Int
+weekOfYearUtc ms =
+    case weekOfYear utc ms of
+        Ok v -> v
+        Err _ -> 0
+
+
+isWeekendUtc : Int -> Bool
+isWeekendUtc ms =
+    case isWeekend utc ms of
+        Ok v -> v
+        Err _ -> False
+
+
+startOfDayUtc : Int -> Int
+startOfDayUtc ms =
+    case startOfDay utc ms of
+        Ok v -> v
+        Err _ -> ms
+
+
+endOfDayUtc : Int -> Int
+endOfDayUtc ms =
+    case endOfDay utc ms of
+        Ok v -> v
+        Err _ -> ms
+
+
+startOfWeekUtc : Int -> Int
+startOfWeekUtc ms =
+    case startOfWeek utc ms of
+        Ok v -> v
+        Err _ -> ms
+
+
+startOfMonthUtc : Int -> Int
+startOfMonthUtc ms =
+    case startOfMonth utc ms of
+        Ok v -> v
+        Err _ -> ms
+
+
+endOfMonthUtc : Int -> Int
+endOfMonthUtc ms =
+    case endOfMonth utc ms of
+        Ok v -> v
+        Err _ -> ms
+
+
+startOfYearUtc : Int -> Int
+startOfYearUtc ms =
+    case startOfYear utc ms of
+        Ok v -> v
+        Err _ -> ms
+
+
+endOfYearUtc : Int -> Int
+endOfYearUtc ms =
+    case endOfYear utc ms of
+        Ok v -> v
+        Err _ -> ms

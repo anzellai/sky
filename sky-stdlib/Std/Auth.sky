@@ -14,11 +14,13 @@ module Std.Auth exposing
     , hashPassword, hashPasswordCost
     , verifyPassword, passwordStrength
     , signToken, verifyToken
+    , signTokenWithClaims, verifyTokenWithAlgorithm
     )
 
 
 import Sky.Ffi as Ffi
 import Sky.Core.Error exposing (Error)
+import Sky.Core.Jwt as Jwt
 
 
 -- ─── DB-touching flows (Task) ──────────────────────────────────────
@@ -75,3 +77,46 @@ signToken = Ffi.kernel "Auth_signToken"
 -- | `verifyToken secret token` — verify + decode a JWT.
 verifyToken : String -> String -> Result Error a
 verifyToken = Ffi.kernel "Auth_verifyToken"
+
+
+-- | `signTokenWithClaims alg claims` — typed-builder alternative
+-- to `signToken`.  Routes through `Sky.Core.Jwt.encode` so the
+-- caller composes the algorithm + claims via the typed builders
+-- (`Jwt.hs256 secret`, `Jwt.claims |> Jwt.issuer "..."` etc.).
+--
+-- The arity-3 `signToken` shape (`secret -> claims -> expirySeconds`)
+-- stays the canonical short-form; reach for `signTokenWithClaims`
+-- when you need fine-grained control over the algorithm + multi-
+-- claim shape:
+--
+-- @
+--     import Sky.Core.Jwt as Jwt
+--     import Std.Auth as Auth
+--     import Sky.Core.Time as Time
+--
+--     buildToken : Int -> Result Error String
+--     buildToken now =
+--         Auth.signTokenWithClaims
+--             (Jwt.hs256 "secret")
+--             (Jwt.claims
+--                 |> Jwt.subject "user-42"
+--                 |> Jwt.audience "https://example.app"
+--                 |> Jwt.expiresAt (now + 86400)
+--             )
+-- @
+signTokenWithClaims : Jwt.Algorithm -> Jwt.Claims -> Result Error String
+signTokenWithClaims alg claims =
+    Jwt.encode alg claims
+
+
+-- | `verifyTokenWithAlgorithm alg now token` — typed-builder
+-- mirror of `verifyToken` that delegates to `Sky.Core.Jwt.decode`.
+-- The `now : Int` argument is the current unix-millis used for
+-- `exp` / `nbf` window checks.
+--
+-- @
+--     Auth.verifyTokenWithAlgorithm (Jwt.hs256 "secret") now token
+-- @
+verifyTokenWithAlgorithm : Jwt.Algorithm -> Int -> String -> Result Error String
+verifyTokenWithAlgorithm alg now token =
+    Jwt.decode alg now token

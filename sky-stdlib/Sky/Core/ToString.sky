@@ -1,0 +1,54 @@
+-- | Sky.Core.ToString — uniform `fromX` naming for the
+-- four-way-split `String.fromInt` / `Time.timeString` /
+-- `Decimal.toString` / `Json.Encode.encode` problem.
+--
+-- v0.15.48 — naming-consistency batch. Every existing function
+-- keeps its existing name (no breaking renames per the v0.15.44
+-- lesson); this module is purely additive surface for editors,
+-- LSP autocomplete, and `sky doc` discoverability:
+--
+-- @
+--     import Sky.Core.ToString as ToString
+--
+--     ToString.fromInt 42                -- "42"
+--     ToString.fromFloat 3.14            -- "3.14"
+--     ToString.fromBool True             -- "True"
+--     ToString.fromTime someTime         -- canonical timeString
+-- @
+--
+-- The bindings are tail-call aliases — no runtime overhead vs the
+-- existing kernel.  AI-written Sky code is encouraged to default
+-- to this module for "make me a String" rather than memorising
+-- which sub-namespace each conversion lives under.
+module Sky.Core.ToString exposing
+    ( fromInt
+    , fromFloat
+    , fromBool
+    , fromTime
+    )
+
+
+import Sky.Core.String as String
+import Sky.Core.Time as Time
+
+
+fromInt : Int -> String
+fromInt n =
+    String.fromInt n
+
+
+fromFloat : Float -> String
+fromFloat x =
+    String.fromFloat x
+
+
+fromBool : Bool -> String
+fromBool b =
+    case b of
+        True -> "True"
+        False -> "False"
+
+
+fromTime : Int -> String
+fromTime t =
+    Time.timeString t
