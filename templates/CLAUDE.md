@@ -2089,11 +2089,21 @@ policyB =
         |> Task.retryOn Error.isRetryable
 
 -- Builder pattern (mirror of `Http.defaultRequest |> Http.withTimeout`):
+-- Note: `defaultRetryPolicy` returns `RetryPolicy e` polymorphic in
+-- `e`; when threading a typed predicate (`Error -> Bool`) through the
+-- builder chain, start from `exponentialBackoff` / `linearBackoff`
+-- instead — they specialise `e` at the call site.
 policyC =
+    Task.exponentialBackoff 5 250
+        |> Task.withJitter
+        |> Task.withRetryOn Error.isRetryable
+
+-- Pure builder chain (untyped predicate stays generic):
+policyD =
     Task.defaultRetryPolicy
         |> Task.withMaxAttempts 5
         |> Task.withBaseMs 250
-        |> Task.withRetryOn Error.isRetryable
+        |> Task.withKind 1
 
 fetchToken : Task Error String
 fetchToken =

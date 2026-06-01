@@ -94,7 +94,8 @@ taskRetrySuite =
                     Task.defaultRetryPolicy
                         |> Task.withMaxAttempts 5
                         |> Task.withBaseMs 1
-                        |> Task.withRetryOn Error.isRetryable
+                        |> Task.withKind 0
+                        |> Task.withRetryOn (\_ -> True)
             in
                 case Task.perform (Task.retryWith policy (Task.succeed "built")) of
                     Ok v -> Test.equal "built" v

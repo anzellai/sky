@@ -279,8 +279,8 @@ withKind k policy =
 -- `retryOn`, matching the `with*` builder convention.  Sets
 -- `shouldRetry = RetryWhen predicate`.
 withRetryOn : (e -> Bool) -> RetryPolicy e -> RetryPolicy e
-withRetryOn =
-    retryOn
+withRetryOn predicate policy =
+    retryOn predicate policy
 
 
 -- | `retryWith policy task` — run `task`, retrying on Err per
