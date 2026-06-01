@@ -86,6 +86,20 @@ jobs:
       - name: Smoke-test sky binary
         run: sky --version
 
+      # macOS GitHub runners don't ship GNU coreutils — bare `timeout`
+      # (used by example-sweep.sh + the cabal test step below) is
+      # missing, causing exit 127 ("command not found"). Install
+      # coreutils + symlink `gtimeout` → `timeout` for the rest of
+      # the job. example-sweep.sh has its own shim but the bare
+      # `timeout 3600 cabal test` line on the next step doesn't.
+      - name: Install GNU coreutils (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          brew install coreutils
+          mkdir -p "$HOME/.local/bin"
+          ln -sf "$(brew --prefix coreutils)/libexec/gnubin/timeout" "$HOME/.local/bin/timeout"
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
       - name: Run cabal test suite
         # Skip Sky.Build.VerifyAll: that spec wraps `sky verify`
         # which we ALSO run as a dedicated step below. Doubling
