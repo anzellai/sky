@@ -1,0 +1,143 @@
+-- | Sky.Core.Pure — uniform `() -> Task Error a` companion surface
+-- for runtime-arity-0 stdlib bindings.
+--
+-- v0.15.50 — additive mirror module.  Closes Limitation #7 (the
+-- inconsistent `()` / bare arity-0 convention) for new code without
+-- renaming any existing surface.  Every Pure.* wrapper is a 2-line
+-- alias that delegates to the canonical kernel; zero runtime
+-- overhead vs the underlying form.
+--
+-- @
+--     import Sky.Core.Pure as Pure
+--
+--     -- All consistent — every call site shaped `Pure.foo ()`.
+--     uuid    <- Pure.uuidV4 ()
+--     now     <- Pure.timeNow ()
+--     cwd     <- Pure.systemCwd ()
+--     line    <- Pure.ioReadLine ()
+--     handle  <- Pure.dbConnect ()
+-- @
+--
+-- Inclusion criteria: a stdlib binding belongs here when (a) it
+-- takes no real Sky-level argument that disambiguates the call,
+-- and (b) it returns a `Task Error a` (entropy / clock / env /
+-- I/O / database connection — the surfaces where the inconsistency
+-- bit users most often).  Non-zero-arg helpers like `Random.int`,
+-- `Crypto.randomToken`, `System.exit`, `Process.run` are NOT
+-- candidates — their argument list carries semantic information.
+module Sky.Core.Pure exposing
+    ( uuidV4
+    , uuidV7
+    , timeNow
+    , timeUnixMillis
+    , systemArgs
+    , systemCwd
+    , systemLoadEnv
+    , ioReadLine
+    , dbConnect
+    )
+
+import Sky.Ffi as Ffi
+import Sky.Core.Error exposing (Error)
+import Sky.Core.Task as Task
+import Sky.Core.Time as Time
+import Sky.Core.System as System
+import Sky.Core.Io as Io
+import Std.Db as Db exposing (Db)
+
+
+-- ─── UUID generation ───────────────────────────────────────────────
+
+
+-- | `Pure.uuidV4 ()` — uniform-shape companion for `Uuid.v4`.
+-- See `Sky.Core.Uuid.v4` for semantics.
+--
+-- Implementation note: `Uuid_v4` runtime is already a Task-shaped
+-- closure (`func() any { return Ok/Err }`), so we declare it
+-- directly as `() -> Task Error String` at this boundary — bypassing
+-- the legacy `Uuid.v4 : String` Sky surface which the existing
+-- arity-0 kernel pathway forces through a String narrow.  Both
+-- forms point at the same runtime kernel.
+uuidV4 : () -> Task Error String
+uuidV4 _ =
+    uuidV4Kernel
+
+
+uuidV4Kernel : Task Error String
+uuidV4Kernel =
+    Ffi.kernel "Uuid_v4"
+
+
+-- | `Pure.uuidV7 ()` — uniform-shape companion for `Uuid.v7`.
+-- See `Sky.Core.Uuid.v7` for semantics.
+uuidV7 : () -> Task Error String
+uuidV7 _ =
+    uuidV7Kernel
+
+
+uuidV7Kernel : Task Error String
+uuidV7Kernel =
+    Ffi.kernel "Uuid_v7"
+
+
+-- ─── Clock reads ───────────────────────────────────────────────────
+
+
+-- | `Pure.timeNow ()` — uniform-shape companion for `Time.now ()`.
+-- Returns Unix milliseconds since epoch.
+timeNow : () -> Task Error Int
+timeNow _ =
+    Time.now ()
+
+
+-- | `Pure.timeUnixMillis ()` — uniform-shape companion for
+-- `Time.unixMillis ()`.  Identical semantics to `timeNow`.
+timeUnixMillis : () -> Task Error Int
+timeUnixMillis _ =
+    Time.unixMillis ()
+
+
+-- ─── Process environment ───────────────────────────────────────────
+
+
+-- | `Pure.systemArgs ()` — uniform-shape companion for
+-- `System.args ()`.  Returns the command-line argv tail (program
+-- name excluded).
+systemArgs : () -> Task Error (List String)
+systemArgs _ =
+    System.args ()
+
+
+-- | `Pure.systemCwd ()` — uniform-shape companion for
+-- `System.cwd ()`.  Returns the current working directory.
+systemCwd : () -> Task Error String
+systemCwd _ =
+    System.cwd ()
+
+
+-- | `Pure.systemLoadEnv ()` — uniform-shape companion for
+-- `System.loadEnv ()`.  Loads `.env` into the process env table.
+systemLoadEnv : () -> Task Error ()
+systemLoadEnv _ =
+    System.loadEnv ()
+
+
+-- ─── Standard input ────────────────────────────────────────────────
+
+
+-- | `Pure.ioReadLine ()` — uniform-shape companion for
+-- `Io.readLine ()`.  Reads one line from stdin.
+ioReadLine : () -> Task Error String
+ioReadLine _ =
+    Io.readLine ()
+
+
+-- ─── Database connection ───────────────────────────────────────────
+
+
+-- | `Pure.dbConnect ()` — uniform-shape companion for
+-- `Db.connect ()`.  Opens the connection described by
+-- `sky.toml`'s `[database]` section.
+dbConnect : () -> Task Error Db
+dbConnect _ =
+    Db.connect ()
