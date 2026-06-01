@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"math"
 	mrand "math/rand"
+	"reflect"
 	"time"
 )
 
@@ -77,33 +78,100 @@ func computeDelay(kind, baseMs, attempt int, jitter bool) time.Duration {
 	return time.Duration(d) * time.Millisecond
 }
 
-// callShouldRetry invokes a Sky-side predicate `(e -> Bool)` with the
-// surfaced Err value.  Returns true when the predicate value is nil
-// (the default-retry case) or a non-callable value (defensive).
-func callShouldRetry(fn any, errValue any) bool {
-	if fn == nil {
+// callShouldRetry decides whether to retry given the policy's
+// `shouldRetry` field.  v0.15.50: the field is now the `ShouldRetry e`
+// ADT (RetryAlways | RetryWhen (e -> Bool)) instead of the previous
+// `any` value.  We switch on the constructor tag — cheaper than the
+// reflect-backed callable detection, exhaustiveness-checked at the
+// Sky source level, and portable to statically-typed backends.
+//
+// Defensive defaults: unknown ctor name OR malformed RetryWhen payload
+// → retry (safer than dropping the err).
+func callShouldRetry(should any, errValue any) bool {
+	if should == nil {
 		return true
 	}
-	// Sky lambdas land as `func(any) any`.
-	if predicate, ok := fn.(func(any) any); ok {
-		r := predicate(errValue)
+	name, fields := readShouldRetry(should)
+	switch name {
+	case "RetryAlways":
+		return true
+	case "RetryWhen":
+		if len(fields) != 1 {
+			return true
+		}
+		fn := fields[0]
+		if predicate, ok := fn.(func(any) any); ok {
+			r := predicate(errValue)
+			if b, ok := r.(bool); ok {
+				return b
+			}
+			return true
+		}
+		r := skyCallOne(fn, errValue)
 		if b, ok := r.(bool); ok {
 			return b
 		}
 		return true
+	default:
+		// Unknown ctor (forward-compat extension) — retry safely.
+		return true
 	}
-	// Curried wrapper / typed adapter — fall back to skyCallOne.
-	r := skyCallOne(fn, errValue)
-	if b, ok := r.(bool); ok {
-		return b
-	}
-	return true
 }
 
-// Task.retryAlways : any
-// Default `shouldRetry` predicate.  Always returns True.
-func Task_retryAlways(_ any) any {
-	return true
+// readShouldRetry pulls (ctorName, args) off a ShouldRetry value.
+// Two shapes accepted:
+//   1. SkyADT (runtime-constructed values; codegen sets SkyName).
+//   2. Any reflect-readable struct exposing SkyName + Fields fields
+//      (the typed Go struct shape codegen emits for user-declared ADTs).
+// Numeric-Tag fallback uses the Sky-source declaration order:
+// RetryAlways = 0, RetryWhen = 1.
+func readShouldRetry(v any) (string, []any) {
+	if v == nil {
+		return "", nil
+	}
+	if a, ok := v.(SkyADT); ok {
+		if a.SkyName != "" {
+			return a.SkyName, a.Fields
+		}
+		return shouldRetryNameForTag(a.Tag), a.Fields
+	}
+	rv := reflect.ValueOf(v)
+	for rv.Kind() == reflect.Pointer {
+		if rv.IsNil() {
+			return "", nil
+		}
+		rv = rv.Elem()
+	}
+	if !rv.IsValid() || rv.Kind() != reflect.Struct {
+		return "", nil
+	}
+	skyName := ""
+	if f := rv.FieldByName("SkyName"); f.IsValid() && f.Kind() == reflect.String {
+		skyName = f.String()
+	}
+	var fields []any
+	if f := rv.FieldByName("Fields"); f.IsValid() && f.Kind() == reflect.Slice {
+		fields = make([]any, f.Len())
+		for i := 0; i < f.Len(); i++ {
+			fields[i] = f.Index(i).Interface()
+		}
+	}
+	if skyName == "" {
+		if f := rv.FieldByName("Tag"); f.IsValid() && f.CanInt() {
+			skyName = shouldRetryNameForTag(int(f.Int()))
+		}
+	}
+	return skyName, fields
+}
+
+func shouldRetryNameForTag(tag int) string {
+	switch tag {
+	case 0:
+		return "RetryAlways"
+	case 1:
+		return "RetryWhen"
+	}
+	return ""
 }
 
 // Task.retryWith : RetryPolicy -> Task e a -> Task e a

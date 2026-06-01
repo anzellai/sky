@@ -18,8 +18,10 @@ module Sky.Core.Task exposing
     , fromResult, andThenResult
     , sequence, parallel
     , lazy
+    , ShouldRetry(..)
     , RetryPolicy
     , linearBackoff, exponentialBackoff, withJitter, retryOn
+    , retryAlways
     , retryWith
     )
 
@@ -118,6 +120,21 @@ lazy = Ffi.kernel "Task_lazy"
 -- ─── Retry combinator (v0.15.44) ───────────────────────────────────
 
 
+-- | Predicate ADT for `RetryPolicy.shouldRetry`.  Encodes the two
+-- value shapes the retry combinator accepts: the default "always
+-- retry" sentinel, or a user-supplied predicate.  Replaces the
+-- prior `shouldRetry : any` field, which relied on Go's
+-- `interface{}` runtime and could not be lowered to any
+-- statically-typed backend (Rust, WASM, future C) without runtime
+-- boxing / downcasts.  The Go runtime's `task_retry_with` already
+-- type-asserts on the value at each attempt; switching that to a
+-- match on the constructor tag is cheaper, exhaustiveness-checked
+-- at compile time, and portable.
+type ShouldRetry e
+    = RetryAlways
+    | RetryWhen (e -> Bool)
+
+
 -- | A retry policy.  Build with `linearBackoff` /
 -- `exponentialBackoff`; decorate with `withJitter` /
 -- `retryOn`; consume with `retryWith`.
@@ -132,22 +149,23 @@ lazy = Ffi.kernel "Task_lazy"
 --     `[0.5 * delay, 1.5 * delay]` to spread retry waves.
 --   * `kind` — `0 = linear, 1 = exponential`.  Used by
 --     `retryWith` to pick the delay formula.
---   * `shouldRetry` — predicate the policy consults on each
---     error.  When `False`, the error short-circuits the retry
---     loop.  Defaults to `\_ -> True` (always retry).
-type alias RetryPolicy =
+--   * `shouldRetry` — `ShouldRetry e` ADT.  `RetryAlways` (the
+--     default, from `retryAlways`) retries every Err up to
+--     `maxAttempts`.  `RetryWhen predicate` consults `predicate`
+--     on each Err; `False` short-circuits the loop.
+type alias RetryPolicy e =
     { maxAttempts : Int
     , baseMs : Int
     , jitter : Bool
     , kind : Int
-    , shouldRetry : any
+    , shouldRetry : ShouldRetry e
     }
 
 
 -- | `linearBackoff maxAttempts delayMs` — sleep the same `delayMs`
 -- between attempts.  Suitable for transient network errors when
 -- the upstream is briefly degraded.
-linearBackoff : Int -> Int -> RetryPolicy
+linearBackoff : Int -> Int -> RetryPolicy e
 linearBackoff maxAttempts delayMs =
     { maxAttempts = maxAttempts
     , baseMs = delayMs
@@ -161,7 +179,7 @@ linearBackoff maxAttempts delayMs =
 -- `baseMs * 2^(attempt - 1)` between attempts (capped at 30 s).
 -- The canonical shape for talking to upstream APIs that
 -- rate-limit.
-exponentialBackoff : Int -> Int -> RetryPolicy
+exponentialBackoff : Int -> Int -> RetryPolicy e
 exponentialBackoff maxAttempts baseMs =
     { maxAttempts = maxAttempts
     , baseMs = baseMs
@@ -174,7 +192,7 @@ exponentialBackoff maxAttempts baseMs =
 -- | `withJitter policy` — randomise each delay across
 -- `[0.5 * delay, 1.5 * delay]` so concurrent retriers don't
 -- thunder-herd the upstream.
-withJitter : RetryPolicy -> RetryPolicy
+withJitter : RetryPolicy e -> RetryPolicy e
 withJitter policy =
     { policy | jitter = True }
 
@@ -183,16 +201,16 @@ withJitter policy =
 -- returns `True` for the surfaced error.  Useful for
 -- distinguishing transient network errors (retry) from validation
 -- failures (don't retry).
-retryOn : (e -> Bool) -> RetryPolicy -> RetryPolicy
+retryOn : (e -> Bool) -> RetryPolicy e -> RetryPolicy e
 retryOn predicate policy =
-    { policy | shouldRetry = predicate }
+    { policy | shouldRetry = RetryWhen predicate }
 
 
--- | Internal — the default "always retry" predicate.  Typed as
--- `any` because RetryPolicy.shouldRetry is `any` (heterogeneous
--- error types across call sites).
-retryAlways : any
-retryAlways = Ffi.kernel "Task_retryAlways"
+-- | The default "always retry" predicate.  Equivalent to
+-- `RetryAlways` — kept as a named alias for readability inside
+-- the linear/exponential policy constructors.
+retryAlways : ShouldRetry e
+retryAlways = RetryAlways
 
 
 -- | `retryWith policy task` — run `task`, retrying on Err per
@@ -212,5 +230,5 @@ retryAlways = Ffi.kernel "Task_retryAlways"
 --             (Task.exponentialBackoff 5 500 |> Task.withJitter)
 --             (Http.get "https://auth.example.com/token"
 --                  |> Task.andThenResult decodeToken)
-retryWith : RetryPolicy -> Task e a -> Task e a
+retryWith : RetryPolicy e -> Task e a -> Task e a
 retryWith = Ffi.kernel "Task_retryWith"

@@ -246,8 +246,9 @@ registry = Map.fromList
     , (("Task", "mapError"),      KernelInfo "rt.Task_mapError" 2 False)
     , (("Task", "onError"),       KernelInfo "rt.Task_onError" 2 False)
     -- v0.15.44 retry combinator.
+    -- v0.15.50: retryAlways is now pure Sky (`= RetryAlways` ADT ctor),
+    -- no longer a kernel — `retryAlways` only registered on retryWith below.
     , (("Task", "retryWith"),     KernelInfo "rt.Task_retryWith" 2 False)
-    , (("Task", "retryAlways"),   KernelInfo "rt.Task_retryAlways" 1 False)
 
     -- ═══════════════════════════════════════════════════════
     -- Cmd
