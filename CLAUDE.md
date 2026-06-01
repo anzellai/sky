@@ -188,7 +188,62 @@ itself is the authoritative artifact (tag + GitHub release). Sky's
 flow does not block on operational state outside the compiler
 repo.
 
-### 6. Core principles
+### 6. Disk hygiene — unused build caches MUST be pruned
+
+The Go toolchain on macOS does NOT auto-prune its build cache. In
+one session of heavy Sky compilation + example sweeps + agent
+worktrees, `~/Library/Caches/go-build` grew to 202 GB and pushed a
+927 GB disk to 100% full. This blocks every subsequent build /
+test / agent task.
+
+End-of-mission checklist (run BEFORE declaring a release shipped
+when a sweep has run):
+
+```bash
+# 1. Worktrees from finished agents — wipe the directories
+#    after the cherry-pick is on main. Each carries a full
+#    .skycache + sky-out ≈ 1.5 GB.
+for wt in $(ls .claude/worktrees/ 2>/dev/null); do
+    # Skip the one currently running an agent; check via TaskList
+    # before bulk-removing.
+    : keep-if-active
+done
+rm -rf .claude/worktrees/agent-<sha-of-completed-agent>
+
+# 2. Tell git about it
+git worktree prune --verbose
+
+# 3. Go build cache — safe; rebuilds on next `go build`. Reclaims
+#    multi-GB after a sweep; multi-tens-of-GB after multiple
+#    sweeps.
+go clean -cache
+
+# 4. /tmp leftovers — sweep logs + deploy artifacts.
+rm -f /tmp/sky-build-*.log /tmp/cabal-*.log /tmp/skydeploy-cp-linux /tmp/skydeploy-*.log
+
+# 5. Sanity check
+df -h /
+```
+
+NOT to do without explicit user ask:
+
+- `go clean -modcache` (`~/go/pkg/mod`) — deletes ~50–70 GB but
+  every project re-downloads modules on next build (slow + needs
+  network).
+- `rm -rf dist-newstyle/` — cabal full rebuild ≈ 5 min.
+- Wiping `.skycache/ffi/` in `examples/13-skyshop/` — 15+ min of
+  Stripe SDK introspection on next sweep.
+
+Periodic hygiene (set a Calendar reminder if you run sweeps
+daily): `go clean -cache` weekly. Worktree dir cleanup after EVERY
+agent cherry-pick.
+
+When the host shows < 5 GB free, ABORT the next agent spawn until
+cleanup completes — an agent that runs into ENOSPC mid-build leaves
+half-written artifacts that are harder to recover than a clean
+build.
+
+### 7. Core principles
 
 1. **If it compiles, it works.** Every known runtime panic class
    has a regression test in `runtime-go/rt/*_test.go` or
@@ -206,7 +261,7 @@ repo.
    Each is reviewed for security + scalability — UI/UX/DX/security
    are not afterthoughts.
 
-### 7. Non-regression rules (enforced by `cabal test`)
+### 8. Non-regression rules (enforced by `cabal test`)
 
 - **No `Result String a` / `Task String a`** in public surfaces.
   Use `Result Error a` / `Task Error a`.
@@ -230,7 +285,7 @@ repo.
   `refsInExpr` / `collectSemTokens` / `collectReferences`. Don't
   rely on `_ -> []` catchalls.
 
-### 8. Testing rules
+### 9. Testing rules
 
 - **Every new feature / bug becomes a regression test** before the
   fix lands. The failing test is the discovery artefact.
