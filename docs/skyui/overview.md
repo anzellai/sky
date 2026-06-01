@@ -299,6 +299,35 @@ Ui.column
     ]
 ```
 
+### `Ui.fill` — how it lowers (v0.15.55+)
+
+`Ui.fill` lowers asymmetrically per the parent's flex direction:
+
+| Position | Emitted CSS |
+|---|---|
+| Main-axis fill (e.g. `Ui.width Ui.fill` on a `Ui.row` child, `Ui.height Ui.fill` on a `Ui.column` child) | `flex-grow: N; min-{w,h}: 0;` |
+| Cross-axis HEIGHT fill (`Ui.height Ui.fill` on a `Ui.row` child) | `align-self: stretch;` — no explicit `height: 100%` |
+| Cross-axis WIDTH fill (`Ui.width Ui.fill` on a `Ui.column` / `Ui.el` / `Ui.textColumn` child) | `align-self: stretch; width: 100%;` |
+
+The asymmetry isn't sloppy — it closes a real bug class. CSS
+Flexbox §9.8 resolves `%` lengths against a parent's USED size
+only when that size is "definite"; a flex-grow-derived size is
+indefinite for the purpose of `%` resolution on cross-axis
+children. Row parents commonly have indefinite heights (no
+`Ui.height` attr or a grown-via-flex parent), so emitting
+`height: 100%` on the cross-axis previously collapsed every
+fill-height child to text-content height (issue #63 — three-pane
+app shell, Input.multiline). Stripping it lets `align-self:
+stretch` do its job — stretching to the row's actual flex-
+derived height.
+
+The width axis keeps its explicit `100%` because column-parent
+widths are typically definite (block elements inherit width from
+`<body>` / viewport), AND `width: 100%` survives the `centerX`
+cascade (`align-self: center` defeats `align-self: stretch`,
+but `width: 100%` stays put so `[Ui.width fill, Ui.centerX]`
+still fills width before centring).
+
 ## Alignment + spacing + padding
 
 ```elm

@@ -1965,6 +1965,8 @@ view model =
 
 4. **`Input.*` size / layout attrs apply to the wrapper, form attrs stay on the inner control.** Every `Std.Ui.Input.*` (text / multiline / email / username / search / currentPassword / newPassword / slider / checkbox / radio / radioRow) routes layout attrs (`Ui.width`/`Ui.height`/`Ui.padding`/`Ui.spacing`/`Ui.alignX`/`Ui.alignY`/`Ui.nearby`/`Ui.pointer`/`Ui.overflow`) to the outer wrapper `wrapWithLabel` emits, while form / event / visual attrs stay on the inner `<input>` / `<textarea>`. So `Input.multiline [Ui.height Ui.fill] {...}` inside a column-fill parent fills the parent; `Background.color (Ui.rgb 240 240 240)` colours the textarea itself, not the wrapper.
 
+5. **`Ui.fill` lowers asymmetrically (v0.15.55+).** Main-axis fill emits `flex-grow: N; min-{w,h}: 0;`. Cross-axis HEIGHT fill (row child) emits BARE `align-self: stretch;` — no `height: 100%`. Cross-axis WIDTH fill (column / el / textColumn child) keeps `align-self: stretch; width: 100%;`. The asymmetry closes the cross-axis collapse class (issue #63 — Input.multiline + three-pane app shell), where the pre-v0.15.55 `height: 100%` resolved against an indefinite flex-grow-derived parent height and collapsed children to text-content height. Width keeps `100%` because column-parent widths are typically definite AND it protects `[Ui.width fill, Ui.centerX]` from `align-self: center` defeating the stretch.
+
 **File / image upload pattern:**
 ```elm
 type Msg = ... | AvatarSelected String | ...

@@ -645,3 +645,95 @@ NODE_PATH=/Users/anzel/works/playground/sky/node_modules \
 - Either: a reproducing case is found and a fix lands, OR
 - Verification shows the suspected gap is non-real and F5 is
   deleted from the plan.
+
+---
+
+## §5. v0.15.55 implementation log
+
+What shipped on `feat/v0.15.55-stdui-correctness-f1-f2`:
+
+**F1 (revised scope — asymmetric).** The audit proposed
+stripping `100%` from BOTH `widthFillFor` cross-axis (column /
+el / textColumn parents) AND `heightFillFor AsRow`. The
+implementation only strips `heightFillFor AsRow` because the
+full symmetric strip surfaced a F4 interaction in
+`examples/26-ui-showcase`: the showcase's outer `Ui.column
+[Ui.width (Ui.maximum 760 Ui.fill), Ui.centerX, ...]` was
+relying on the pre-fix `width: 100%` to actually fill width
+despite `Ui.centerX` cascading `align-self: center` over the
+stretch. The full strip regressed the showcase from a 760-px
+cap to a 574-px content-fit. The conservative scope:
+
+  * `heightFillFor AsRow` → `align-self: stretch;` (was
+    `align-self: stretch; height: 100%;`). Closes Z2 + Z3.
+  * `widthFillFor AsColumn / AsEl / AsTextColumn` → unchanged
+    (still `align-self: stretch; width: 100%;`). Column-parent
+    widths are typically definite (block inheritance) AND the
+    `width: 100%` survives the `centerX` cascade.
+
+The audit's "symmetric width-axis bug … not separately
+reproduced" gives cover for the asymmetric scope. The
+symmetric strip can ship under F4 (when align-self
+reconciliation lands) without breaking the F4 invariant first.
+
+Regression fence:
+  * `test/Sky/Build/UiFillCssSpec.hs` — 4 cases asserting
+    `align-self: stretch; height: 100%;` never reappears,
+    `align-self: stretch; width: 100%;` still appears,
+    bare `align-self: stretch;` literal exists, main-axis
+    fill still emits `flex-grow + min-{axis}: 0`.
+  * `scripts/verify-stdui-matrix.mjs` — Z1/Z2/Z3 +
+    7-cell in-page matrix (B-flex-chain / D-input / E-align).
+
+**F2 (cherry-picked from `fix/403-input-wrapwithlabel-attrs-
+split`).** `splitLayoutAttrs` + `implicitFillIfHoisted`
+applied uniformly to all 11 `Input.*` primitives. Existing
+helpers were directionally correct against the audit's F2
+section — no in-flight tweaks needed. With F1 in place the
+`Ui.height Ui.fill` injected by `implicitFillIfHoisted` on
+the inner control correctly cascades because the wrapper now
+carries the user's `Ui.height Ui.fill` directly via the split.
+
+**F3 / F4 / F5: deferred to v0.15.56+.** F4 reconciliation
+(double `align-self` emission) sequences cleanly behind F1.
+F3 (`Ui.layoutWith`) is additive and not blocking. F5 was
+unverified speculation; the audit rig's wrappedRow rows
+already PASS, so F5 deletes unless a new repro appears.
+
+**Doc + marker changes shipped in v0.15.55:**
+
+  * `sky-stdlib/Std/Ui.sky` — `heightFillFor AsRow` emission
+    + asymmetry-rationale comment block.
+  * `sky-stdlib/Std/Ui/Input.sky` — `splitLayoutAttrs` /
+    `isLayoutAttr` / `implicitFillIfHoisted` (from F2
+    cherry-pick).
+  * `src/Sky/Build/EmbeddedRuntime.hs` — re-embed markers
+    `2026-06-01t` (F2) + `2026-06-01u` (F1).
+  * `docs/skyui/overview.md` — new "`Ui.fill` — how it
+    lowers (v0.15.55+)" section.
+  * `CLAUDE.md` + `templates/CLAUDE.md` — `Ui.fill` asymmetry
+    note alongside the existing #4 `Input.*` attrs-split
+    convention.
+  * `scripts/verify-stdui-matrix.mjs` — new 4-fixture
+    Playwright regression set (self-bootstrapping).
+  * `test/Sky/Build/UiFillCssSpec.hs` — new 4-case spec.
+  * `test/Sky/Build/InputAttrsSplitSpec.hs` — adopted from
+    F2 branch.
+
+**Verification gates green at HEAD:**
+
+  * `cabal test` — full suite + new UiFillCss + adopted
+    InputAttrsSplit specs pass.
+  * `scripts/example-sweep.sh` — 26 / 26 pass.
+  * `scripts/verify-ui-showcase.sh` — all snapshots
+    byte-identical to v0.15.54 baseline (the conservative
+    F1 scope preserves the showcase's `width: 100%`
+    behaviour).
+  * `scripts/verify-issue-63.mjs` + `verify-issue-63-input.mjs`
+    — both pass (textarea ≥ 764 px tall).
+  * `scripts/verify-stdui-matrix.mjs` — 4 / 4 fixtures pass.
+
+**Sibling bugs surfaced (per CLAUDE.md §4 no-deferral).** None
+new from this work — F4 was already documented in the audit's
+§2 root-cause taxonomy. The audit's F3 + F4 + F5 stay queued
+on the v0.15.56+ task pipeline.
