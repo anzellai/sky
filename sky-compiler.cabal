@@ -341,6 +341,7 @@ test-suite sky-tests
       Sky.Diagnostics.CoverageSpec
       Sky.Build.KernelSigCoverageSpec
       Sky.Build.KernelStdlibCoverageSpec
+      Sky.Build.PureModuleSpec
       Sky.Build.HeapBoundedHmSpec
       Sky.Build.IORefBoundarySpec
       Sky.Build.SolverBudgetSpec
@@ -358,6 +359,7 @@ test-suite sky-tests
     , Sky.Lsp.CompletionSpec
     , Sky.Lsp.ScaleSpec
     , Sky.Lsp.NvimDriverSpec
+    , Sky.Lsp.CallHierarchySpec
     , Sky.Build.EmbeddedRuntimeSpec
     , Sky.Build.EmbeddedInspectorSpec
     , Sky.Cli.ExitCodesSpec

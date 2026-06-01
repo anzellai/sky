@@ -93,6 +93,7 @@ import qualified Sky.Type.InstanceCaptureSpec
 import qualified Sky.Type.SolvedTypesRegionMapSpec
 import qualified Sky.Build.KernelSigCoverageSpec
 import qualified Sky.Build.KernelStdlibCoverageSpec
+import qualified Sky.Build.PureModuleSpec
 import qualified Sky.Build.HeapBoundedHmSpec
 import qualified Sky.Build.SolverBudgetSpec
 import qualified Sky.Build.UnreachableGateSpec
@@ -108,6 +109,7 @@ import qualified Sky.Lsp.HoverTypesSpec
 import qualified Sky.Lsp.CompletionSpec
 import qualified Sky.Lsp.ScaleSpec
 import qualified Sky.Lsp.NvimDriverSpec
+import qualified Sky.Lsp.CallHierarchySpec
 import qualified Sky.Build.EmbeddedRuntimeSpec
 import qualified Sky.Build.EmbeddedInspectorSpec
 import qualified Sky.Cli.ExitCodesSpec
@@ -554,6 +556,9 @@ main = hspec $ do
     -- sky-stdlib/ must have a matching Kernel.lookup entry. Closes
     -- the `String.toList undefined` / `Math.abs undefined` class.
     describe "Sky.Build.KernelStdlibCoverage" Sky.Build.KernelStdlibCoverageSpec.spec
+    -- v0.15.50: Sky.Core.Pure additive `() -> Task Error a` mirror module.
+    -- Spec pins the typed-Go shape (no `any` widening) + kernel reuse.
+    describe "Sky.Build.PureModule"          Sky.Build.PureModuleSpec.spec
     -- Limitation #17: Std.Ui-cascading HM constraint pathology that
     -- pre-fix OOMed at 4-5 GB. Spec re-runs sky check on the bak
     -- reproducer under a tight heap cap.
@@ -592,6 +597,8 @@ main = hspec $ do
     -- ctor, record-field access, kernel call, lambda param, let-
     -- binding, case-pattern binder. Pending if nvim not installed.
     describe "Sky.Lsp.NvimDriver"         Sky.Lsp.NvimDriverSpec.spec
+    -- v0.15.49: textDocument/prepareCallHierarchy + callHierarchy/{incomingCalls, outgoingCalls}.
+    describe "Sky.Lsp.CallHierarchy"      Sky.Lsp.CallHierarchySpec.spec
     -- Audit P3-3: embedded runtime must track on-disk tree.
     describe "Sky.Build.EmbeddedRuntime"  Sky.Build.EmbeddedRuntimeSpec.spec
     -- Embedded sky-ffi-inspect: single-binary release shape.
