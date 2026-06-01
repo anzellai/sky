@@ -109,6 +109,7 @@ import qualified Sky.Lsp.HoverTypesSpec
 import qualified Sky.Lsp.CompletionSpec
 import qualified Sky.Lsp.ScaleSpec
 import qualified Sky.Lsp.NvimDriverSpec
+import qualified Sky.Lsp.CallHierarchySpec
 import qualified Sky.Build.EmbeddedRuntimeSpec
 import qualified Sky.Build.EmbeddedInspectorSpec
 import qualified Sky.Cli.ExitCodesSpec
@@ -596,6 +597,8 @@ main = hspec $ do
     -- ctor, record-field access, kernel call, lambda param, let-
     -- binding, case-pattern binder. Pending if nvim not installed.
     describe "Sky.Lsp.NvimDriver"         Sky.Lsp.NvimDriverSpec.spec
+    -- v0.15.50: call-hierarchy LSP methods (prepare / incoming / outgoing).
+    describe "Sky.Lsp.CallHierarchy"      Sky.Lsp.CallHierarchySpec.spec
     -- Audit P3-3: embedded runtime must track on-disk tree.
     describe "Sky.Build.EmbeddedRuntime"  Sky.Build.EmbeddedRuntimeSpec.spec
     -- Embedded sky-ffi-inspect: single-binary release shape.
