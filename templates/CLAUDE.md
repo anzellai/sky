@@ -1963,6 +1963,8 @@ view model =
 
 3. **For Std.Ui-heavy views (~25+ polymorphic `Element Msg` helpers), split the view layer across multiple modules.** Single monolithic Main.sky can blow the HM type-checker heap (Limitation #17). Canonical split: `State.sky` (types + pure helpers, no Std.Ui) / `Update.sky` / `View/Common.sky` / one View module per page / `Main.sky` dispatcher. See `examples/19-skyforum`.
 
+4. **`Input.*` size / layout attrs apply to the wrapper, form attrs stay on the inner control.** Every `Std.Ui.Input.*` (text / multiline / email / username / search / currentPassword / newPassword / slider / checkbox / radio / radioRow) routes layout attrs (`Ui.width`/`Ui.height`/`Ui.padding`/`Ui.spacing`/`Ui.alignX`/`Ui.alignY`/`Ui.nearby`/`Ui.pointer`/`Ui.overflow`) to the outer wrapper `wrapWithLabel` emits, while form / event / visual attrs stay on the inner `<input>` / `<textarea>`. So `Input.multiline [Ui.height Ui.fill] {...}` inside a column-fill parent fills the parent; `Background.color (Ui.rgb 240 240 240)` colours the textarea itself, not the wrapper.
+
 **File / image upload pattern:**
 ```elm
 type Msg = ... | AvatarSelected String | ...

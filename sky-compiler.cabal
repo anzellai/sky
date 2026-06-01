@@ -281,6 +281,7 @@ test-suite sky-tests
       Sky.Build.UiTransitionAnimationSpec
       Sky.Build.UiAspectGridSpec
       Sky.Build.UiMultilineTextareaSpec
+      Sky.Build.InputAttrsSplitSpec
       Sky.Build.ExposingTypeCtorsSpec
       Sky.Build.LetForwardRefSpec
       Sky.Build.EntryLocalShadowsDepSpec

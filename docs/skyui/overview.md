@@ -902,6 +902,7 @@ The 8-module split (`State.sky` / `Update.sky` / `View/{Common,Posts,Detail,Comp
 | Input: `radio / radioRow / slider` | ✅ | `RadioOption` uses string values (Sky-side trade-off vs elm-ui's polymorphic option type to sidestep deeply-nested-polymorphic-record HM friction) |
 | Input: `placeholder` | ✅ | Renders as the HTML `placeholder=` attribute on the input |
 | Input: `labelAbove/Below/Left/Right/Hidden` | ✅ | LabelHidden emits `aria-label` on the wrapper |
+| Input: attrs split between wrapper + control | ✅ | v0.15.55+. Layout / size / alignment attrs on `Input.*` (`Ui.width`/`Ui.height`/`Ui.padding`/`Ui.spacing`/`Ui.alignX`/`Ui.alignY`/`Ui.nearby`/`Ui.pointer`/`Ui.overflow`) hoist to the outer wrapper so the flex chain stays intact; form / event / visual attrs (`Ui.htmlAttribute`, `Ui.onInput`, `Background.color`, `Font.color`, …) stay on the inner `<input>` / `<textarea>`. The inner control gains implicit `Ui.width Ui.fill + Ui.height Ui.fill` when ≥1 layout attr was hoisted (no implicit fill when zero layout attrs → defaults stay intrinsic). |
 | **Lazy**: `lazy / lazy2..lazy5` | ✅ | LRU-cached subtree, keyed on `(function-pointer, args fingerprint)`. Default cap 1024 entries; override via `SKY_UI_LAZY_CAP=N`. |
 | **Keyed**: `keyed` | ✅ | `sky-key` attribute |
 | **Nearby**: `above / below / onLeft / onRight / inFront / behind` | ✅ | Renderer wraps the parent with `position: relative` and the nearby Element with `position: absolute` + matching offsets |
