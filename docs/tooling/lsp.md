@@ -35,7 +35,7 @@ From `serverCapabilities` in `src/Sky/Lsp/Server.hs`:
 | `textDocument/formatting` | yes | Delegates to `Sky.Format` |
 | `textDocument/references` | yes | Finds use-sites across the project |
 | `textDocument/rename` + `prepareRename` | yes | WorkspaceEdit with per-file TextEdits |
-| `textDocument/signatureHelp` | yes | Parameter info while typing a call |
+| `textDocument/signatureHelp` | yes | Parameter info while typing a call (v0.15.48+: per-parameter `[startOffset, endOffset]` ranges so editors highlight the active argument in-place) |
 | `textDocument/codeAction` | yes | `quickfix` + `source.organizeImports` kinds |
 | `textDocument/semanticTokens/full` | yes | Syntactic highlighting |
 | `textDocument/completion` | yes | Triggered on `.` (qualified-name) |

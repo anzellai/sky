@@ -1601,6 +1601,70 @@ Tz.fromParts zone y m d h min s : Result Error Int
 -- Zone discovery
 Tz.zoneOffset, Tz.zoneName     -- DST-aware for the given moment
 Tz.utc                          -- shorthand "UTC"
+
+-- v0.15.48+ infallible UTC companions
+-- (plug "UTC" at the call site so server-internal callers don't
+--  thread Result.withDefault 0 / "UTC" everywhere)
+Tz.yearUtc, Tz.monthUtc, Tz.dayUtc        : Int -> Int
+Tz.dayOfWeekUtc, Tz.dayOfYearUtc          : Int -> Int
+Tz.weekOfYearUtc                           : Int -> Int
+Tz.isWeekendUtc                            : Int -> Bool
+Tz.startOfDayUtc, Tz.endOfDayUtc          : Int -> Int
+Tz.startOfWeekUtc                          : Int -> Int
+Tz.startOfMonthUtc, Tz.endOfMonthUtc      : Int -> Int
+Tz.startOfYearUtc,  Tz.endOfYearUtc       : Int -> Int
+```
+
+### Sky.Core.ToString — uniform naming surface (v0.15.48+)
+
+When you need "convert this thing to a String" without remembering
+which kernel namespace it lives under, reach for `Sky.Core.ToString`.
+Routes to existing kernels — zero runtime overhead vs the canonical
+form.
+
+```elm
+import Sky.Core.ToString as ToString
+
+ToString.fromInt 42        -- "42"   (→ String.fromInt)
+ToString.fromFloat 3.14    -- "3.14" (→ String.fromFloat)
+ToString.fromBool True     -- "True"
+ToString.fromTime ms       -- canonical timeString (→ Time.timeString)
+```
+
+The canonical sub-namespace functions stay (`String.fromInt`,
+`Time.timeString`) — `Sky.Core.ToString` is purely a discoverability
+surface for editors and `sky doc`.
+
+### Std.Auth — JWT typed-builder (v0.15.48+)
+
+Two equivalent paths for signing JWTs. The arity-3 short form stays
+canonical for the simple case; the *WithClaims variant gives full
+control over the `Sky.Core.Jwt.Algorithm` + `Jwt.Claims` builders:
+
+```elm
+import Std.Auth as Auth
+import Sky.Core.Jwt as Jwt
+import Sky.Core.Time as Time
+
+-- Simple case
+short = Auth.signToken "secret" claimsRecord 86400
+
+-- Typed-builder case (RS256, multi-claim, custom audience, jti)
+typed =
+    Auth.signTokenWithClaims
+        (Jwt.rs256 privateKeyPem)
+        (Jwt.claims
+            |> Jwt.subject "user-42"
+            |> Jwt.audience "https://api.example.app"
+            |> Jwt.expiresAt (now + 86400)
+            |> Jwt.jwtId tokenId
+            |> Jwt.withClaim "scope" "admin"
+        )
+
+-- Verify with explicit algorithm + window-check time
+case Auth.verifyTokenWithAlgorithm (Jwt.hs256 "secret") now token of
+    Ok rawJson -> ...
+    Err e      -> ...
 ```
 
 ### Std.Html

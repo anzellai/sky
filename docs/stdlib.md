@@ -956,6 +956,77 @@ the stdlib `encoding/json`.
 
 ---
 
+## Naming-consistency surface (v0.15.48)
+
+Three additive batches improving discoverability without disturbing
+any existing public types or function names.
+
+### `Sky.Core.ToString` — uniform `fromX` naming
+
+```elm
+import Sky.Core.ToString as ToString
+
+ToString.fromInt   42      -- "42"   — routes to String.fromInt
+ToString.fromFloat 3.14    -- "3.14" — routes to String.fromFloat
+ToString.fromBool  True    -- "True"
+ToString.fromTime  ms      -- canonical Time.timeString
+```
+
+Zero runtime overhead — the bindings are tail-call aliases to the
+existing kernels. The point is editor + `sky doc` discoverability:
+AI-written code is encouraged to default to `ToString.fromInt n`
+rather than memorising which sub-namespace each type lives under.
+The canonical kernel-direct call (`String.fromInt`, `Time.timeString`)
+stays available for code that prefers the explicit shape.
+
+### `Std.Auth.signTokenWithClaims` / `verifyTokenWithAlgorithm`
+
+The arity-3 `Auth.signToken : String -> a -> Int -> Result Error String`
+shape stays canonical for the simple secret + claims + expiry case.
+For richer JWT shapes, reach for the typed-builder companion:
+
+```elm
+import Std.Auth as Auth
+import Sky.Core.Jwt as Jwt
+
+token : Result Error String
+token =
+    Auth.signTokenWithClaims
+        (Jwt.rs256 privateKeyPem)
+        (Jwt.claims
+            |> Jwt.subject "user-42"
+            |> Jwt.audience "https://api.example.app"
+            |> Jwt.expiresAt (now + 86400)
+            |> Jwt.jwtId tokenId
+            |> Jwt.withClaim "scope" "admin"
+        )
+
+verified : Result Error String   -- raw JSON claims string
+verified = Auth.verifyTokenWithAlgorithm (Jwt.hs256 "secret") now token
+```
+
+### `Std.Time` `*Utc` infallible companions
+
+Every zone-aware `String -> Int -> Result Error _` ships a `Int -> _`
+UTC variant for server-internal timestamp work that doesn't need
+TZ-awareness:
+
+| Zone-aware (`String -> Int -> Result Error _`) | UTC infallible (`Int -> _`) |
+|---|---|
+| `year` / `month` / `day` | `yearUtc` / `monthUtc` / `dayUtc` |
+| `dayOfWeek` / `dayOfYear` / `weekOfYear` | `dayOfWeekUtc` / `dayOfYearUtc` / `weekOfYearUtc` |
+| `isWeekend` | `isWeekendUtc : Int -> Bool` |
+| `startOfDay` / `endOfDay` | `startOfDayUtc` / `endOfDayUtc` |
+| `startOfWeek` / `startOfMonth` / `endOfMonth` | `startOfWeekUtc` / `startOfMonthUtc` / `endOfMonthUtc` |
+| `startOfYear` / `endOfYear` | `startOfYearUtc` / `endOfYearUtc` |
+
+The UTC variants plug `"UTC"` (always-valid IANA zone) at the call
+site, so the `Result Error _` wrap collapses to the bare value.
+Reach for them in logs / audit rows / server-internal timestamp
+arithmetic. For user-facing UI, keep using the zone-aware form.
+
+---
+
 ## Web modules
 
 ### `Server` — Sky.Http.Server

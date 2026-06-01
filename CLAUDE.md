@@ -689,7 +689,7 @@ Each binding is either:
 | `Sub` | `Std.Sub` | none, every, batch, subscribeTopic (pub/sub receive) |
 | `PubSub` | `Std.PubSub` | publish (Task-shaped — callable from raw `api` handlers / post-init / scheduled jobs; complements `Cmd.publish` which is bound to update-returns), publishNoEcho (Task-shaped no-echo — sets the broker's SkipOrigin bit for v0.16+ cross-process tier propagation) |
 | `Time` | `Sky.Core.Time` | now, sleep, every, unixMillis, format/formatISO8601/formatRFC3339/formatHTTP, addMillis, diffMillis, timeString |
-| `Std.Time` | `Std.Time` | 32 entries. IANA zones, addMonths/Years (month-end CLAMPED), dayOfWeek (ISO Mon=1..Sun=7), weekOfYear (ISO 8601), startOfDay/Week/Month/Year, diffDays/Hours/Minutes/Seconds. |
+| `Std.Time` | `Std.Time` | 32 entries. IANA zones, addMonths/Years (month-end CLAMPED), dayOfWeek (ISO Mon=1..Sun=7), weekOfYear (ISO 8601), startOfDay/Week/Month/Year, diffDays/Hours/Minutes/Seconds. v0.15.48+ adds `*Utc` infallible companions (`dayOfWeekUtc` / `startOfDayUtc` / `yearUtc` / etc. — `Int -> Int` shape, plug "UTC" at the call site so server-internal callers don't thread `Result.withDefault 0`). |
 | `Random` | `Sky.Core.Random` | int, float, range, choice, shuffle, weighted (entropy-backed); seed, seededInt, seededFloat, seededChoice (deterministic splitmix64) |
 | `Http` | `Sky.Core.Http` | get, post, request (custom method/headers/body/timeout via `HttpRequest`), defaultRequest/withMethod/withHeader/withTimeout/withBody builders, parseQuery; typed `HttpResponse = { status : Int, body : String, headers : Dict String String }` |
 | `File` | `Sky.Core.File` | readFile, readFileLimit, readFileBytes, writeFile, append, exists, remove, mkdirAll, readDir, isDir, tempFile, copy, rename |
@@ -697,7 +697,7 @@ Each binding is either:
 | `System` | `Sky.Core.System` | args, getArg, getenv, getenvOr (bare), getenvInt, getenvBool, setenv, unsetenv, cwd, loadEnv, exit |
 | `Process` | `Sky.Core.Process` | run (subprocess) |
 | `Db` | `Std.Db` | open, connect, close, exec, execRaw, query, insertRow, getById, updateById, deleteById, findOneByField, findManyByField, findByConditions, unsafeFindWhere, queryDecode, withTransaction, migrate (versioned forward-only schema migrations + `_sky_migrations` + checksum guard), getField, getString, getInt, getBool |
-| `Auth` | `Std.Auth` | register, login, setRole (Task) + hashPassword, hashPasswordCost, verifyPassword, passwordStrength, signToken, verifyToken (Result) |
+| `Auth` | `Std.Auth` | register, login, setRole (Task) + hashPassword, hashPasswordCost, verifyPassword, passwordStrength, signToken, verifyToken (Result); v0.15.48+ signTokenWithClaims / verifyTokenWithAlgorithm — typed-builder aliases over Sky.Core.Jwt for fine-grained algorithm + claims control |
 | `Log` | `Std.Log` | println, debug, info, warn, error, debugWith, infoWith, warnWith, errorWith |
 | `Trace` | `Std.Trace` | span, event, attr — opt-in app-level tracing spans. Tier-1 spans (HTTP/session/Msg/DB/Auth/Http/File) are automatic; see `docs/observability.md` |
 | `Server` | `Sky.Http.Server` | param, queryParam, header, getCookie, static (Layer 3 surface); higher-level `get/post/listen/text/json/html` stay kernel-only |
@@ -710,6 +710,7 @@ Each binding is either:
 | `Compression` | `Std.Compression` | v0.15.47+. `gzip` / `gunzip` (RFC 1952) + `zstdCompress` / `zstdDecompress` (RFC 8478). Operates on `String` (Bytes alias). Built on `compress/gzip` (stdlib) + `klauspost/compress/zstd`. |
 | `Csv` | `Std.Csv` | v0.15.47+. `parse` / `parseWithDelimiter` (returns `Csv = { header, rows }`), `encode` / `encodeWithDelimiter` (RFC 4180 quoting), `parseStreamFromFile` for buffered large-file reading. Built on `encoding/csv` (stdlib). |
 | `Config` | `Std.Config` | v0.15.47+. Typed TOML / YAML / JSON decoders mirroring `Sky.Core.Json.Decode`'s shape — same `string` / `int` / `float` / `bool` / `nullable` / `field` / `at` / `list` / `succeed` / `fail` / `map` / `andThen` combinators. `decodeToml` / `decodeYaml` / `decodeJson` + `loadFromFile` (extension dispatch). Backends: `BurntSushi/toml` + `gopkg.in/yaml.v3` + stdlib `encoding/json`. |
+| `ToString` | `Sky.Core.ToString` | v0.15.48+. Naming-consistency surface: `fromInt`/`fromFloat`/`fromBool`/`fromTime` route to the canonical kernels — zero overhead, exists for editor / `sky doc` discoverability. AI-written code is encouraged to default to `ToString.fromInt n` rather than memorising the per-type kernel sub-namespace. |
 
 ### Diverging
 
