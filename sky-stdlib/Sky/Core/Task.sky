@@ -11,55 +11,70 @@
 -- (`succeed` / `fail` / `andThen` / `map` / `run`) and the
 -- v0.10.x bridges between `Task` and `Result`.
 module Sky.Core.Task exposing
-    ( succeed, fail
-    , andThen, map
-    , mapError, onError
-    , run, perform
-    , fromResult, andThenResult
-    , sequence, parallel
+    ( succeed
+    , fail
+    , andThen
+    , map
+    , mapError
+    , onError
+    , run
+    , perform
+    , fromResult
+    , andThenResult
+    , sequence
+    , parallel
     , lazy
     , ShouldRetry(..)
     , RetryPolicy
-    , linearBackoff, exponentialBackoff, withJitter, retryOn
+    , linearBackoff
+    , exponentialBackoff
+    , withJitter
+    , retryOn
     , retryAlways
+    , defaultRetryPolicy
+    , withMaxAttempts
+    , withBaseMs
+    , withKind
+    , withRetryOn
     , retryWith
     )
-
 
 import Sky.Ffi as Ffi
 
 
 -- ─── Constructors ──────────────────────────────────────────────────
-
-
 succeed : a -> Task e a
-succeed = Ffi.kernel "Task_succeed"
+succeed =
+    Ffi.kernel "Task_succeed"
 
 
 fail : e -> Task e a
-fail = Ffi.kernel "Task_fail"
+fail =
+    Ffi.kernel "Task_fail"
 
 
 -- ─── Pipeline composition ──────────────────────────────────────────
-
-
 andThen : (a -> Task e b) -> Task e a -> Task e b
-andThen = Ffi.kernel "Task_andThen"
+andThen =
+    Ffi.kernel "Task_andThen"
 
 
 map : (a -> b) -> Task e a -> Task e b
-map = Ffi.kernel "Task_map"
+map =
+    Ffi.kernel "Task_map"
 
 
 mapError : (e -> e2) -> Task e a -> Task e2 a
-mapError = Ffi.kernel "Task_mapError"
+mapError =
+    Ffi.kernel "Task_mapError"
 
 
 -- | Recover from a Task error by producing a new Task — the
 -- canonical "convert error to graceful response" pattern at HTTP
 -- handler boundaries and Sky.Live update branches.
 onError : (e -> Task e2 a) -> Task e a -> Task e2 a
-onError = Ffi.kernel "Task_onError"
+onError =
+    Ffi.kernel "Task_onError"
 
 
 -- ─── Runtime entry boundary ────────────────────────────────────────
@@ -68,14 +83,16 @@ onError = Ffi.kernel "Task_onError"
 -- | Force a Task to a Result.  Used at module-top-level discard
 -- sites and inside the `let _ = TaskExpr` auto-force shape.
 run : Task e a -> Result e a
-run = Ffi.kernel "Task_run"
+run =
+    Ffi.kernel "Task_run"
 
 
 -- | Force a Task synchronously and return its Result.  Same shape
 -- as `run` — kept as the legacy name (`Task.perform` predates the
 -- Cmd.perform / Task.run split).
 perform : Task e a -> Result e a
-perform = Ffi.kernel "Task_perform"
+perform =
+    Ffi.kernel "Task_perform"
 
 
 -- ─── Result bridges (v0.10.x) ──────────────────────────────────────
@@ -85,13 +102,15 @@ perform = Ffi.kernel "Task_perform"
 -- FFI trust boundary (Result) to the effect boundary (Task) without
 -- requiring a `case` ladder.
 fromResult : Result e a -> Task e a
-fromResult = Ffi.kernel "Task_fromResult"
+fromResult =
+    Ffi.kernel "Task_fromResult"
 
 
 -- | Chain a Result-returning step after a Task — flattens what
 -- would otherwise be `Task.andThen (\a -> Task.fromResult (f a))`.
 andThenResult : (a -> Result e b) -> Task e a -> Task e b
-andThenResult = Ffi.kernel "Task_andThenResult"
+andThenResult =
+    Ffi.kernel "Task_andThenResult"
 
 
 -- ─── List-of-Tasks combinators ─────────────────────────────────────
@@ -99,13 +118,15 @@ andThenResult = Ffi.kernel "Task_andThenResult"
 
 -- | Run a list of tasks sequentially; first error short-circuits.
 sequence : List (Task e a) -> Task e (List a)
-sequence = Ffi.kernel "Task_sequence"
+sequence =
+    Ffi.kernel "Task_sequence"
 
 
 -- | Run a list of tasks concurrently (goroutine-backed); first
 -- error short-circuits.  Useful for parallel I/O.
 parallel : List (Task e a) -> Task e (List a)
-parallel = Ffi.kernel "Task_parallel"
+parallel =
+    Ffi.kernel "Task_parallel"
 
 
 -- ─── Deferred computation ──────────────────────────────────────────
@@ -114,8 +135,8 @@ parallel = Ffi.kernel "Task_parallel"
 -- | Defer evaluation of a pure thunk into a Task — handy for
 -- expensive computation that should only run inside a Task pipeline.
 lazy : (() -> a) -> Task e a
-lazy = Ffi.kernel "Task_lazy"
-
+lazy =
+    Ffi.kernel "Task_lazy"
 
 -- ─── Retry combinator (v0.15.44) ───────────────────────────────────
 
@@ -133,7 +154,6 @@ lazy = Ffi.kernel "Task_lazy"
 type ShouldRetry e
     = RetryAlways
     | RetryWhen (e -> Bool)
-
 
 -- | A retry policy.  Build with `linearBackoff` /
 -- `exponentialBackoff`; decorate with `withJitter` /
@@ -210,7 +230,57 @@ retryOn predicate policy =
 -- `RetryAlways` — kept as a named alias for readability inside
 -- the linear/exponential policy constructors.
 retryAlways : ShouldRetry e
-retryAlways = RetryAlways
+retryAlways =
+    RetryAlways
+
+
+-- ─── Builder convention (v0.15.51) ─────────────────────────────────
+--
+-- Mirror of `Http.defaultRequest |> Http.withTimeout …` etc. — start
+-- from `defaultRetryPolicy`, decorate field-by-field. Lets future
+-- RetryPolicy fields land additively without breaking existing
+-- record literals.
+
+
+-- | A sensible default: 3 attempts, 500 ms exponential base, no
+-- jitter, `RetryAlways`. Build on top with the `with*` helpers
+-- below.
+defaultRetryPolicy : RetryPolicy e
+defaultRetryPolicy =
+    { maxAttempts = 3
+    , baseMs = 500
+    , jitter = False
+    , kind = 1
+    , shouldRetry = RetryAlways
+    }
+
+
+-- | Override the maximum number of attempts.
+withMaxAttempts : Int -> RetryPolicy e -> RetryPolicy e
+withMaxAttempts n policy =
+    { policy | maxAttempts = n }
+
+
+-- | Override the base delay (ms).  Used as the fixed delay under
+-- `kind = 0` (linear) and as the exponential base under
+-- `kind = 1` (exponential).
+withBaseMs : Int -> RetryPolicy e -> RetryPolicy e
+withBaseMs ms policy =
+    { policy | baseMs = ms }
+
+
+-- | Override the backoff kind.  `0 = linear`, `1 = exponential`.
+withKind : Int -> RetryPolicy e -> RetryPolicy e
+withKind k policy =
+    { policy | kind = k }
+
+
+-- | `withRetryOn predicate policy` — clearer-named alias for
+-- `retryOn`, matching the `with*` builder convention.  Sets
+-- `shouldRetry = RetryWhen predicate`.
+withRetryOn : (e -> Bool) -> RetryPolicy e -> RetryPolicy e
+withRetryOn =
+    retryOn
 
 
 -- | `retryWith policy task` — run `task`, retrying on Err per
@@ -231,4 +301,5 @@ retryAlways = RetryAlways
 --             (Http.get "https://auth.example.com/token"
 --                  |> Task.andThenResult decodeToken)
 retryWith : RetryPolicy e -> Task e a -> Task e a
-retryWith = Ffi.kernel "Task_retryWith"
+retryWith =
+    Ffi.kernel "Task_retryWith"
