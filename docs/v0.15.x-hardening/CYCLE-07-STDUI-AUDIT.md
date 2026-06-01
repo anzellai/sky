@@ -862,7 +862,25 @@ regression cell.
   * `scripts/verify-stdui-matrix.mjs` — 7 / 7 fixtures pass:
     Z1/Z2/Z3/M (carried) + F3/F4/F5 (new).
 
-**Sibling bugs surfaced (per CLAUDE.md §4 no-deferral).** None
-new from this work. The audit's bundle is now CLOSED: F1+F2
-shipped in v0.15.55; F3+F4 shipped in v0.15.56; F5 verified
-clean and stays as a regression cell. Cycle 7 complete.
+**Sibling bugs surfaced (per CLAUDE.md §4 no-deferral).**
+
+  * **Test-ordering flake in `TypedFfiSpec` + `UnreachableGateSpec`**
+    (NOT introduced by this work, observed during verification).
+    Both specs read pre-built example artifacts (e.g.
+    `examples/03-tea-external/sky-out/main.go`,
+    `examples/12-skyvote/sky-out/main.go`) but don't guarantee the
+    artifacts exist before reading — if `cabal test` runs from a
+    clean tree (without `scripts/example-sweep.sh` having run first
+    to build the examples), the specs fail with "openFile: does
+    not exist". Re-running with examples built makes all 10
+    affected specs PASS. The robust fix is to wrap the file-read
+    in a `withSystemTempDirectory`-style scaffold that builds the
+    target fixture inline (same shape as the v0.15.54 #381
+    `ExampleSweep` ordering-race fix) OR add a `Sky.Build.Setup`
+    dependency that ensures the artifact exists before the spec
+    runs. Tracked for the next v0.15.x patch — not bundled here
+    because it's orthogonal to the Std.Ui correctness theme.
+
+  * The audit's bundle is now CLOSED: F1+F2 shipped in v0.15.55;
+    F3+F4 shipped in v0.15.56; F5 verified clean and stays as a
+    regression cell. Cycle 7 complete.
