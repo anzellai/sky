@@ -4187,6 +4187,10 @@ SKY_LOG_FORMAT=json
 SKY_LOG_LEVEL=info
 SKY_ADMIN_TOKEN=…               # gates /_sky/metrics + /_sky/console in production
                                 # legacy aliases: SKY_METRICS_TOKEN (v0.14.21), SKY_CONSOLE_TOKEN_SECRET (v0.14.20)
+SKY_CONSOLE_DB_PATH=…           # write-through telemetry to a SQLite file
+                                # (WAL; 24h log/span TTL, 7d metric TTL).
+                                # SkyDeploy injects /data/console.db on
+                                # Pro+ tenants. Unset → pure in-RAM.
 # OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318  # optional OTel export
 
 # ─── secrets ───────────────────────────────────────────────────────

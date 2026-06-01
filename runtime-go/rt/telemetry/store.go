@@ -68,6 +68,13 @@ type Store struct {
 
 	// Start time, for `process_start_time_seconds`.
 	startedAt time.Time
+
+	// Optional write-through persistence to SQLite (console.db).
+	// Enabled when SKY_CONSOLE_DB_PATH is set — SkyDeploy injects it
+	// on Pro+ tenants.  Nil = in-RAM only.  See persist.go.
+	persistMu           sync.RWMutex
+	persist             *persistence
+	persistOverflowOnce sync.Map
 }
 
 // seriesKey identifies a metric series by name + sorted label string.
@@ -118,6 +125,9 @@ func Default() *Store {
 // force a fresh one on next Default(). Calling from production code
 // is a bug — it loses every counter / log / trace.
 func ResetDefault() {
+	if defaultStore != nil {
+		defaultStore.ClosePersistence()
+	}
 	defaultStoreOnce = sync.Once{}
 	defaultStore = nil
 }
@@ -186,6 +196,15 @@ func (s *Store) Add(name string, labels map[string]string, delta float64) {
 		old := ser.bits.Load()
 		nv := float64FromBits(old) + delta
 		if ser.bits.CompareAndSwap(old, bitsFromFloat64(nv)) {
+			s.enqueuePersist(persistEntry{
+				kind: "metric",
+				metric: persistMetric{
+					name:       name,
+					labels:     labels,
+					value:      nv,
+					observedAt: time.Now(),
+				},
+			})
 			return
 		}
 	}
@@ -231,6 +250,15 @@ func (s *Store) SetGauge(name string, labels map[string]string, v float64) {
 		return
 	}
 	ser.bits.Store(bitsFromFloat64(v))
+	s.enqueuePersist(persistEntry{
+		kind: "metric",
+		metric: persistMetric{
+			name:       name,
+			labels:     labels,
+			value:      v,
+			observedAt: time.Now(),
+		},
+	})
 }
 
 // AddGauge increments / decrements a gauge.
@@ -243,6 +271,15 @@ func (s *Store) AddGauge(name string, labels map[string]string, delta float64) {
 		old := ser.bits.Load()
 		nv := float64FromBits(old) + delta
 		if ser.bits.CompareAndSwap(old, bitsFromFloat64(nv)) {
+			s.enqueuePersist(persistEntry{
+				kind: "metric",
+				metric: persistMetric{
+					name:       name,
+					labels:     labels,
+					value:      nv,
+					observedAt: time.Now(),
+				},
+			})
 			return
 		}
 	}
@@ -309,6 +346,18 @@ func (s *Store) Observe(name string, labels map[string]string, v float64) {
 		old := ser.sumBits.Load()
 		ns := float64FromBits(old) + v
 		if ser.sumBits.CompareAndSwap(old, bitsFromFloat64(ns)) {
+			// Persist the raw observation, NOT the rolling sum — the
+			// console UI's histogram rendering rebuilds from
+			// per-observation rows.
+			s.enqueuePersist(persistEntry{
+				kind: "metric",
+				metric: persistMetric{
+					name:       name,
+					labels:     labels,
+					value:      v,
+					observedAt: time.Now(),
+				},
+			})
 			return
 		}
 	}
@@ -459,6 +508,7 @@ func (s *Store) StartedAt() time.Time {
 // when the buffer fills.
 func (s *Store) AppendLog(e LogEntry) {
 	s.logs.append(e)
+	s.enqueuePersist(persistEntry{kind: "log", log: e})
 }
 
 // RecentLogs returns up to `limit` most-recent log entries, newest
@@ -470,6 +520,7 @@ func (s *Store) RecentLogs(limit int) []LogEntry {
 // AppendTrace stores a span in the trace ring buffer.
 func (s *Store) AppendTrace(e TraceEntry) {
 	s.traces.append(e)
+	s.enqueuePersist(persistEntry{kind: "span", span: e})
 }
 
 // RecentTraces returns up to `limit` most-recent traces, newest

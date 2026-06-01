@@ -101,3 +101,4 @@ Override with `OTEL_TRACES_SAMPLER_ARG=<0.0–1.0>`.
 | `OTEL_TRACES_SAMPLER_ARG` | (mode default) | Fixed sample fraction `0.0–1.0`. |
 | `SKY_SERVICE_NAME` / `OTEL_SERVICE_NAME` | `sky-app` | `service.name` the backend groups by. |
 | `OTEL_EXPORTER_OTLP_HEADERS` | (unset) | Comma-separated `k=v` headers (auth tokens for managed collectors). |
+| `SKY_CONSOLE_DB_PATH` | (unset) | When set, dual-writes every log / metric / span to the SQLite file at this path so the bundled console mini-app can render history beyond the 10 k-line / 1 k-span in-RAM caps. WAL mode, 24 h log/span retention, 7 d metric retention. SkyDeploy injects `/data/console.db` on Pro+ tenants; OSS / dev keeps the pure in-RAM path. |

@@ -58,6 +58,19 @@ func init() {
 	readinessReady.Store(true)
 	probes := []func() error{}
 	readinessProbes.Store(&probes)
+	// SkyDeploy Pro+ tenants get /data/console.db mounted and
+	// SKY_CONSOLE_DB_PATH injected — when present, dual-write every
+	// log / metric / span to the file so the bundled console
+	// mini-app can render history beyond the 10k-line / 1k-span
+	// in-RAM caps.  Failure is logged warn-level (visible at
+	// /_sky/console) but never blocks the runtime.
+	if err := telemetry.Default().EnablePersistenceFromEnv(); err != nil {
+		telemetry.Default().AppendLog(telemetry.LogEntry{
+			Level:   "warn",
+			Message: "telemetry persistence init failed",
+			Fields:  map[string]string{"error": err.Error()},
+		})
+	}
 }
 
 // RegisterReadinessProbe adds a health check to the readyz endpoint.

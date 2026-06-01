@@ -96,6 +96,13 @@ the per-version closures if you want history.
 The v0.15 type-directed lowering pass and Go generics on parametric
 record aliases closed a cluster of long-standing limitations:
 
+- ~~Cons-pattern length-guard shared between arms (#402)~~ — closed
+  in v0.15.54. `a :: b :: c :: _` previously emitted the same
+  `len(subj) >= 2` guard as `a :: b :: _`, so a 2-element list could
+  enter the longer arm and panic at `IndexOutOfRange` when the body's
+  binding code read `tail[1]` of a 1-element tail. New
+  `consChainLength` walks the cons-chain so the emitted guard is the
+  correct `>= 3` (`a :: b :: c :: _`) or `== 2` (`a :: b :: []`).
 - ~~Parametric record alias bugs (Surfaces 1, 2, 3)~~ — fields on
   `Cfg msg`-typed function parameters, inline lambdas at record-field
   slots, cross-alias call without the alias-chain workaround all

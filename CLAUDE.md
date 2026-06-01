@@ -614,6 +614,14 @@ SKY_SUBAPP_VERBOSE=0        # 1 forwards spawned-child stdout/stderr to parent t
 SKY_BIN=…                   # override `sky` binary path for SpawnSkyConsole
 SKY_ADMIN_TOKEN=…           # /_sky/metrics + /_sky/console require Bearer in production
                             # (legacy: SKY_METRICS_TOKEN / SKY_CONSOLE_TOKEN_SECRET still honoured)
+SKY_CONSOLE_DB_PATH=…       # when set, telemetry dual-writes every
+                            # log/metric/span to the SQLite file at this
+                            # path (WAL mode, 24h log/span retention,
+                            # 7d metric retention). SkyDeploy injects
+                            # `/data/console.db` on Pro+ tenants so the
+                            # bundled console mini-app can render
+                            # history beyond the 10k-line / 1k-span
+                            # in-RAM caps. Unset → pure in-RAM (default).
 ```
 
 The production gate is `ENV` then `SKY_ENV` fallback. Unset OR
@@ -1424,6 +1432,13 @@ verified against HEAD.
     `type alias` for the whole arrow type.
 ### Closed in v0.15 (kept here for grep)
 
+- ~~Cons-pattern length-guard shared between arms (#402)~~ —
+  closed in v0.15.54. The codegen previously emitted only
+  `len(subj) >= 1` per cons step, so `a :: b :: c :: _` and
+  `a :: b :: _` shared the same `>= 2` guard, letting a
+  2-element list enter the longer arm and panic at
+  `IndexOutOfRange`. New `consChainLength` walks the chain to
+  emit the correct `>= N` / `== N` per arm.
 - ~~Same-named local lambdas across modules pollute the typed
   lowerer's region snapshot~~ — closed in v0.15.30 via the
   scoped `LowerCtx` cascade. Per-module env ledger
