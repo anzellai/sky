@@ -11,12 +11,22 @@ module Sky.Build.CheckIsBuildSpec (spec) where
 -- asserts they agree on accept/reject. A divergence means either
 -- codegen is broken for that fixture (bug to fix) or the checker is
 -- silently tolerant (bug to fix).
+--
+-- v0.15.52 #396 — workdir isolation. Pre-fix the spec ran `sky
+-- {check,build}` from the repo cwd, so the emitted `sky-out/main.go`
+-- and `.skycache/` raced RecordFieldOrderSpec (which also writes
+-- there) and any other spec that reads them. The fix is the same
+-- shape as #381: each invocation runs with `cwd = $TMPDIR/sky-cib-…`
+-- so the artefacts live in a dedicated directory with no shared
+-- mutable state. Both specs in isolation AND under the full sweep
+-- now ship the same artefacts every run.
 
 import Test.Hspec
-import System.Process (readCreateProcessWithExitCode, shell)
+import System.Process (readCreateProcessWithExitCode, proc, CreateProcess(..))
 import System.Exit (ExitCode(..))
 import System.Directory (listDirectory, getCurrentDirectory, doesFileExist)
 import System.FilePath ((</>), takeFileName)
+import System.IO.Temp (withSystemTempDirectory)
 import Data.List (isSuffixOf, isInfixOf, sort)
 
 
@@ -40,23 +50,23 @@ spec = do
             -- in-process Go parse must update this spec.
             cwd <- getCurrentDirectory
             let fixture = cwd </> "test-files" </> "add-test.sky"
+                sky = cwd </> "sky-out" </> "sky"
             fixtureExists <- doesFileExist fixture
             fixtureExists `shouldBe` True
-            (_ec, out, _err) <- readCreateProcessWithExitCode
-                (shell ("cd " ++ cwd
-                        ++ " && ./sky-out/sky check "
-                        ++ fixture ++ " 2>&1"))
-                ""
-            ("Running go build..." `isInfixOf` out) `shouldBe` True
+            withSystemTempDirectory "sky-cib-hello" $ \tmp -> do
+                let cp = (proc sky ["check", fixture]) { cwd = Just tmp }
+                (_ec, out, _err) <- readCreateProcessWithExitCode cp ""
+                ("Running go build..." `isInfixOf` out) `shouldBe` True
 
         it "agrees with sky build on every test-files/*.sky fixture" $ do
             cwd <- getCurrentDirectory
             let fixtureDir = cwd </> "test-files"
-            skyBinary <- doesFileExist (cwd </> "sky-out" </> "sky")
+                sky = cwd </> "sky-out" </> "sky"
+            skyBinary <- doesFileExist sky
             skyBinary `shouldBe` True
             names <- listDirectory fixtureDir
             let skyFiles = sort [ fixtureDir </> n | n <- names, ".sky" `isSuffixOf` n ]
-            divergences <- traverse (runBoth cwd) skyFiles
+            divergences <- traverse (runBoth sky) skyFiles
             let disagreeing =
                     [ (takeFileName f, c, b)
                     | (f, c, b) <- divergences
@@ -65,21 +75,18 @@ spec = do
             disagreeing `shouldBe` []
 
 
--- Run both `sky check` and `sky build` against the fixture, scrubbing
--- the per-project sky-out/ cache between them so the two commands see
--- an identical starting state. Returns the verdicts side-by-side.
+-- Run both `sky check` and `sky build` against the fixture, each
+-- inside its own tempdir so concurrent specs can't observe a
+-- half-written `sky-out/main.go` or `.skycache/`. Returns the
+-- verdicts side-by-side.
 runBoth :: FilePath -> FilePath -> IO (FilePath, Verdict, Verdict)
-runBoth cwd fixture = do
-    let sky = cwd </> "sky-out" </> "sky"
-        clean = "rm -rf " ++ (cwd </> ".skycache") ++ " " ++ (cwd </> "sky-out" </> "main.go")
-    -- check
-    _ <- readCreateProcessWithExitCode (shell clean) ""
-    (cec, _, _) <- readCreateProcessWithExitCode
-        (shell (sky ++ " check " ++ fixture ++ " > /dev/null 2>&1"))
-        ""
-    -- build
-    _ <- readCreateProcessWithExitCode (shell clean) ""
-    (bec, _, _) <- readCreateProcessWithExitCode
-        (shell (sky ++ " build " ++ fixture ++ " > /dev/null 2>&1"))
-        ""
+runBoth sky fixture = do
+    cec <- withSystemTempDirectory "sky-cib-check" $ \tmp -> do
+        let cp = (proc sky ["check", fixture]) { cwd = Just tmp }
+        (ec, _, _) <- readCreateProcessWithExitCode cp ""
+        return ec
+    bec <- withSystemTempDirectory "sky-cib-build" $ \tmp -> do
+        let cp = (proc sky ["build", fixture]) { cwd = Just tmp }
+        (ec, _, _) <- readCreateProcessWithExitCode cp ""
+        return ec
     return (fixture, verdictOf cec, verdictOf bec)

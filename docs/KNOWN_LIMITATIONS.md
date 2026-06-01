@@ -131,6 +131,17 @@ record aliases closed a cluster of long-standing limitations:
   origin (e.g. `Sky.Core.Result`), eliminating the refactor
   regression class where downstream code silently bound to the
   user's ADT instead of stdlib Maybe / Result.
+- ~~Point-free top-level alias of a polymorphic / N-ary function
+  ships a 0-arity Go thunk wrapper~~ — v0.15.52 (#398). `tickle =
+  String.toUpper` (and any `name = fn` whose RHS has greater arrow
+  arity than its syntactic param count) now eta-expands at the
+  codegen entry point via `etaExpandPointFree` in `Sky.Build.Compile`.
+  The emitted Go is a normal N-ary function with synthetic
+  `_skyEta_pN` parameters, so `tickle "hi"` compiles and runs.
+  Applied at both the entry-module path (`generateDef`) AND the
+  dep-module path (`generateDeclsForDep.mkDef`) — the latter uses
+  the per-module-scoped `Solve.withCurrentModule` lookup so the
+  arity check matches the dep's own HM ledger.
 - ~~Synchronous Sky main crashes with a Go stack dump on `1 // 0`,
   bad numeric cast, or comparison-type-mismatch~~ — v0.15.43
   (audit §3.5 + §9). Codegen now injects `defer rt.LogPanicAndExit()`
