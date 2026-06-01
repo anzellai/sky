@@ -328,6 +328,34 @@ try {
             fail("input-multiline-textarea", "missing textarea[data-test-id=input-multiline-textarea]");
         }
 
+        // F1 contract (v0.15.55) — the inner control's implicit
+        // `Ui.height Ui.fill` (injected by `implicitFillIfHoisted`
+        // when ≥1 layout attr was hoisted to the wrapper) must lower
+        // through `heightFillFor` per its parent context. In a column
+        // wrapper (LabelHidden = Ui.el = column parent) the inner
+        // textarea's height-fill is MAIN axis → `flex-grow: 1; min-
+        // height: 0;`. We assert the inline-style does NOT contain
+        // the harmful `height: 100%;` substring on the cross-axis
+        // child element. Pre-v0.15.55 had `align-self: stretch;
+        // height: 100%;` on row-cross-axis children which collapsed
+        // under indefinite parents.
+        const taInline = await page.evaluate(() => {
+            const ta = document.querySelector('[data-test-id="input-multiline-textarea"]');
+            if (!ta) return null;
+            return { style: ta.getAttribute("style") || "" };
+        });
+        if (taInline) {
+            // Stylesheet shouldn't carry the legacy `height: 100%;`
+            // signature in any cross-axis context. (Main-axis is
+            // flex-grow + min-height: 0; no `100%` involvement.)
+            if (taInline.style.includes("height: 100%;")) {
+                fail("F1 input-multiline-textarea cross-axis",
+                    `inline style still emits the pre-F1 height: 100%: ${taInline.style}`);
+            } else {
+                ok(`F1 input-multiline-textarea: no legacy height: 100% (style="${taInline.style.slice(0, 80)}...")`);
+            }
+        }
+
         // wrapWithLabel shape (AsRow propagation, the canonical
         // issue #63 reproducer for the horizontal axis).
         const wrapMid = await measure(page, "wrap-mid");
