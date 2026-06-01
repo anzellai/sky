@@ -1027,6 +1027,63 @@ arithmetic. For user-facing UI, keep using the zone-aware form.
 
 ---
 
+## Arity-0 consistency surface (v0.15.50)
+
+Pre-v0.15.50 the stdlib was inconsistent about whether
+arity-0 helpers took `()`:
+
+| Convention | Examples |
+|---|---|
+| Takes `()` | `Time.now ()`, `Time.unixMillis ()`, `System.cwd ()`, `System.args ()`, `Io.readLine ()`, `Db.connect ()` |
+| Bare | `Uuid.v4`, `Uuid.v7` |
+
+For new code preferring a uniform `Pure.foo ()` shape, reach for
+`Sky.Core.Pure`. Every entry is a typed `() -> Task Error a`
+companion that re-routes to the canonical kernel — same runtime
+performance, but one consistent call shape:
+
+```elm
+import Sky.Core.Pure as Pure
+import Sky.Core.Task as Task
+import Std.Log exposing (println)
+
+main =
+    Pure.systemCwd ()
+        |> Task.andThen (\cwd  -> Pure.uuidV4 ())
+        |> Task.andThen (\uuid -> Pure.timeNow ())
+        |> Task.andThen (\now  -> println (String.fromInt now))
+```
+
+Full Pure.* surface (9 entries):
+
+```
+Pure.uuidV4         : () -> Task Error String
+Pure.uuidV7         : () -> Task Error String
+Pure.timeNow        : () -> Task Error Int
+Pure.timeUnixMillis : () -> Task Error Int
+Pure.systemArgs     : () -> Task Error (List String)
+Pure.systemCwd      : () -> Task Error String
+Pure.systemLoadEnv  : () -> Task Error ()
+Pure.ioReadLine     : () -> Task Error String
+Pure.dbConnect      : () -> Task Error Db
+```
+
+Inclusion criterion: a stdlib binding belongs to `Sky.Core.Pure`
+when (a) it takes no real Sky-level argument that disambiguates
+the call AND (b) it returns a `Task Error a` — i.e. entropy /
+clock / env / I/O / database-connection surfaces where the
+inconsistency bit users most often. Non-zero-arg helpers like
+`Random.int`, `Crypto.randomToken`, `System.exit`, `Process.run`
+are NOT candidates — their argument list carries semantic
+information.
+
+Existing names + shapes are **unchanged** (per the v0.15.44
+backwards-compat lesson). `Pure.*` is purely additive — call
+sites preferring the legacy convention keep working exactly as
+before.
+
+---
+
 ## Web modules
 
 ### `Server` — Sky.Http.Server

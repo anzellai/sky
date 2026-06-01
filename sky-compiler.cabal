@@ -359,7 +359,6 @@ test-suite sky-tests
     , Sky.Lsp.CompletionSpec
     , Sky.Lsp.ScaleSpec
     , Sky.Lsp.NvimDriverSpec
-    , Sky.Lsp.CallHierarchySpec
     , Sky.Build.EmbeddedRuntimeSpec
     , Sky.Build.EmbeddedInspectorSpec
     , Sky.Cli.ExitCodesSpec

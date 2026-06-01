@@ -711,6 +711,7 @@ Each binding is either:
 | `Csv` | `Std.Csv` | v0.15.47+. `parse` / `parseWithDelimiter` (returns `Csv = { header, rows }`), `encode` / `encodeWithDelimiter` (RFC 4180 quoting), `parseStreamFromFile` for buffered large-file reading. Built on `encoding/csv` (stdlib). |
 | `Config` | `Std.Config` | v0.15.47+. Typed TOML / YAML / JSON decoders mirroring `Sky.Core.Json.Decode`'s shape — same `string` / `int` / `float` / `bool` / `nullable` / `field` / `at` / `list` / `succeed` / `fail` / `map` / `andThen` combinators. `decodeToml` / `decodeYaml` / `decodeJson` + `loadFromFile` (extension dispatch). Backends: `BurntSushi/toml` + `gopkg.in/yaml.v3` + stdlib `encoding/json`. |
 | `ToString` | `Sky.Core.ToString` | v0.15.48+. Naming-consistency surface: `fromInt`/`fromFloat`/`fromBool`/`fromTime` route to the canonical kernels — zero overhead, exists for editor / `sky doc` discoverability. AI-written code is encouraged to default to `ToString.fromInt n` rather than memorising the per-type kernel sub-namespace. |
+| `Pure` | `Sky.Core.Pure` | v0.15.50+. Uniform `() -> Task Error a` companion surface for runtime-arity-0 stdlib bindings (`uuidV4` / `uuidV7` / `timeNow` / `timeUnixMillis` / `systemArgs` / `systemCwd` / `systemLoadEnv` / `ioReadLine` / `dbConnect`). Closes Limitation #7 for new code without renaming any existing surface — every `Pure.*` is a tail-call alias to the canonical kernel, typed `SkyTask[Error, T]` end-to-end. Existing names + shapes unchanged. |
 
 ### Diverging
 
@@ -1395,6 +1396,16 @@ verified against HEAD.
    declared shape. Dict / Set / Maybe / Result stay bare for
    their `empty` / `none` etc. because those have non-function
    types too.
+
+   **v0.15.50 mitigation — `Sky.Core.Pure`.** New code
+   targeting a uniform `() -> Task Error a` shape can import
+   `Sky.Core.Pure as Pure` and call the additive companions —
+   `Pure.uuidV4 ()` / `Pure.uuidV7 ()` / `Pure.timeNow ()` /
+   `Pure.timeUnixMillis ()` / `Pure.systemArgs ()` /
+   `Pure.systemCwd ()` / `Pure.systemLoadEnv ()` /
+   `Pure.ioReadLine ()` / `Pure.dbConnect ()`. Existing names +
+   shapes unchanged. Pure.* lowers to the canonical kernel with
+   typed `SkyTask[Error, T]` shape (no `any` widening).
 8. **Non-tail-recursive list operations are O(N) on Go stack.**
    `map`, `filter`, `foldr`, `length`, `concat`, `take`,
    `append`, `range`, `zip`, `concatMap`, `indexedMap`,

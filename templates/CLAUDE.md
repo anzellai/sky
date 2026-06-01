@@ -1635,6 +1635,51 @@ The canonical sub-namespace functions stay (`String.fromInt`,
 `Time.timeString`) — `Sky.Core.ToString` is purely a discoverability
 surface for editors and `sky doc`.
 
+### Sky.Core.Pure — uniform `() -> Task Error a` arity-0 mirror (v0.15.50+)
+
+Long-standing wart: some arity-0 stdlib bindings take `()`
+(`Time.now ()`), others are bare (`Uuid.v4`). For new code preferring
+a single consistent `Pure.foo ()` shape across every entropy / clock
+/ env / I/O surface, import `Sky.Core.Pure as Pure` — every wrapper
+is a typed `() -> Task Error a` tail-call alias to the canonical
+kernel:
+
+```elm
+import Sky.Core.Pure as Pure
+import Sky.Core.Task as Task
+
+main =
+    Pure.systemCwd ()                                  -- () -> Task Error String
+        |> Task.andThen (\cwd  -> Pure.uuidV4 ())      -- () -> Task Error String
+        |> Task.andThen (\uuid -> Pure.timeNow ())     -- () -> Task Error Int
+        |> Task.andThen (\now  -> println (String.fromInt now))
+```
+
+Current Pure.* surface (9 entries):
+
+```
+Pure.uuidV4          : () -> Task Error String
+Pure.uuidV7          : () -> Task Error String
+Pure.timeNow         : () -> Task Error Int
+Pure.timeUnixMillis  : () -> Task Error Int
+Pure.systemArgs      : () -> Task Error (List String)
+Pure.systemCwd       : () -> Task Error String
+Pure.systemLoadEnv   : () -> Task Error ()
+Pure.ioReadLine      : () -> Task Error String
+Pure.dbConnect       : () -> Task Error Db
+```
+
+Inclusion criterion: a binding belongs to `Sky.Core.Pure` when it
+takes no real Sky-level argument that disambiguates the call AND
+returns a `Task Error a`. Non-zero-arg helpers like `Random.int` /
+`Crypto.randomToken` / `System.exit` / `Process.run` are NOT
+candidates — their argument list carries semantic information.
+
+Existing names + shapes unchanged: `Time.now ()` / `Uuid.v4` /
+`System.cwd ()` / `Db.connect ()` etc. still work exactly as before.
+`Pure.*` is purely additive — pick whichever surface fits the style
+of your codebase.
+
 ### Std.Auth — JWT typed-builder (v0.15.48+)
 
 Two equivalent paths for signing JWTs. The arity-3 short form stays
