@@ -43,6 +43,10 @@ TESTS=(
     goto-def-let-binding
     goto-def-lambda-param
     goto-def-field
+    # v0.15.50 — LSP call-hierarchy (prepare / incoming / outgoing).
+    call-hierarchy-prepare
+    call-hierarchy-incoming
+    call-hierarchy-outgoing
 )
 
 failures=()

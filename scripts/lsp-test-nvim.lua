@@ -534,6 +534,123 @@ local tests = {
     -- col 25). Expect to land on the alias decl (line 8 — the
     -- `type alias Model = { count : Int, ... }` line where `count`
     -- is declared).
+    -- v0.15.50 — LSP call-hierarchy.
+    --
+    -- Three tests for prepareCallHierarchy / incomingCalls /
+    -- outgoingCalls driven through the real Neovim LSP client so
+    -- editor-side wiring (CallHierarchy panel) is exercised end-to-end:
+
+    -- prepareCallHierarchy on the `applyMsg` declaration name returns
+    -- a CallHierarchyItem with name == "applyMsg".
+    ["call-hierarchy-prepare"] = function()
+        local bufnr = start_lsp(project_dir .. "/src/Main.sky")
+        local result = nil
+        vim.lsp.buf_request(bufnr, "textDocument/prepareCallHierarchy",
+            {
+                textDocument = vim.lsp.util.make_text_document_params(bufnr),
+                -- `applyMsg` decl: line 22 (0-based), col 0..7
+                position     = { line = 22, character = 2 },
+            },
+            function(_, res, _, _) result = res end)
+        vim.wait(5000, function() return result ~= nil end, 50)
+        if not result then return false, "no prepare response" end
+        local items = result
+        if type(items) ~= "table" or #items == 0 then
+            return false, "prepare returned empty: " .. vim.inspect(result)
+        end
+        if items[1].name ~= "applyMsg" then
+            return false, string.format(
+                "prepare item.name=%q (expected \"applyMsg\")",
+                tostring(items[1].name))
+        end
+        return true, "prepareCallHierarchy resolved applyMsg"
+    end,
+
+    -- incomingCalls on applyMsg's CallHierarchyItem returns >= 1
+    -- caller — `main` calls applyMsg via `applyMsg Increment 41`.
+    ["call-hierarchy-incoming"] = function()
+        local bufnr = start_lsp(project_dir .. "/src/Main.sky")
+        local file_uri = "file://" .. project_dir .. "/src/Main.sky"
+        local item = {
+            name = "applyMsg",
+            kind = 12,
+            uri  = file_uri,
+            range = {
+                ["start"] = { line = 22, character = 0 },
+                ["end"]   = { line = 22, character = 8 },
+            },
+            selectionRange = {
+                ["start"] = { line = 22, character = 0 },
+                ["end"]   = { line = 22, character = 8 },
+            },
+        }
+        local result = nil
+        vim.lsp.buf_request(bufnr, "callHierarchy/incomingCalls",
+            { item = item },
+            function(_, res, _, _) result = res end)
+        vim.wait(5000, function() return result ~= nil end, 50)
+        if not result then return false, "no incomingCalls response" end
+        if type(result) ~= "table" or #result == 0 then
+            return false, "incomingCalls returned empty: " .. vim.inspect(result)
+        end
+        -- `main` should be the caller in the fixture.
+        for _, entry in ipairs(result) do
+            if entry.from and entry.from.name == "main" then
+                if entry.fromRanges and #entry.fromRanges >= 1 then
+                    return true, "incomingCalls surfaced main → applyMsg"
+                end
+                return false, "main entry has no fromRanges"
+            end
+        end
+        -- Failure debug: list every caller name we did see.
+        local names = {}
+        for _, e in ipairs(result) do
+            names[#names+1] = (e.from and e.from.name) or "?"
+        end
+        return false, "main not among callers: " .. table.concat(names, ", ")
+    end,
+
+    -- outgoingCalls on main's CallHierarchyItem returns >= 1 callee.
+    -- main calls `applyMsg` (and via Task.run, Task.succeed, println).
+    ["call-hierarchy-outgoing"] = function()
+        local bufnr = start_lsp(project_dir .. "/src/Main.sky")
+        local file_uri = "file://" .. project_dir .. "/src/Main.sky"
+        -- `main =` is the last decl in the fixture — line 31 (0-based).
+        local item = {
+            name = "main",
+            kind = 12,
+            uri  = file_uri,
+            range = {
+                ["start"] = { line = 31, character = 0 },
+                ["end"]   = { line = 31, character = 4 },
+            },
+            selectionRange = {
+                ["start"] = { line = 31, character = 0 },
+                ["end"]   = { line = 31, character = 4 },
+            },
+        }
+        local result = nil
+        vim.lsp.buf_request(bufnr, "callHierarchy/outgoingCalls",
+            { item = item },
+            function(_, res, _, _) result = res end)
+        vim.wait(5000, function() return result ~= nil end, 50)
+        if not result then return false, "no outgoingCalls response" end
+        if type(result) ~= "table" or #result == 0 then
+            return false, "outgoingCalls returned empty: " .. vim.inspect(result)
+        end
+        -- applyMsg should be in the callee list.
+        for _, entry in ipairs(result) do
+            if entry.to and entry.to.name == "applyMsg" then
+                return true, "outgoingCalls surfaced main → applyMsg"
+            end
+        end
+        local names = {}
+        for _, e in ipairs(result) do
+            names[#names+1] = (e.to and e.to.name) or "?"
+        end
+        return false, "applyMsg not among callees: " .. table.concat(names, ", ")
+    end,
+
     ["goto-def-field"] = function()
         local bufnr = start_lsp(project_dir .. "/src/Main.sky")
         return test_goto_def(bufnr, 12, 25, 8)
