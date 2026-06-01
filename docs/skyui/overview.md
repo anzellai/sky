@@ -299,15 +299,15 @@ Ui.column
     ]
 ```
 
-### `Ui.fill` — how it lowers (v0.15.55+)
+### `Ui.fill` — how it lowers (v0.15.55+, refined in v0.15.56)
 
 `Ui.fill` lowers asymmetrically per the parent's flex direction:
 
 | Position | Emitted CSS |
 |---|---|
 | Main-axis fill (e.g. `Ui.width Ui.fill` on a `Ui.row` child, `Ui.height Ui.fill` on a `Ui.column` child) | `flex-grow: N; min-{w,h}: 0;` |
-| Cross-axis HEIGHT fill (`Ui.height Ui.fill` on a `Ui.row` child) | `align-self: stretch;` — no explicit `height: 100%` |
-| Cross-axis WIDTH fill (`Ui.width Ui.fill` on a `Ui.column` / `Ui.el` / `Ui.textColumn` child) | `align-self: stretch; width: 100%;` |
+| Cross-axis HEIGHT fill (`Ui.height Ui.fill` on a `Ui.row` child) | nothing — relies on flex's default `align-items: stretch` |
+| Cross-axis WIDTH fill (`Ui.width Ui.fill` on a `Ui.column` / `Ui.el` / `Ui.textColumn` child) | `width: 100%;` |
 
 The asymmetry isn't sloppy — it closes a real bug class. CSS
 Flexbox §9.8 resolves `%` lengths against a parent's USED size
@@ -317,16 +317,78 @@ children. Row parents commonly have indefinite heights (no
 `Ui.height` attr or a grown-via-flex parent), so emitting
 `height: 100%` on the cross-axis previously collapsed every
 fill-height child to text-content height (issue #63 — three-pane
-app shell, Input.multiline). Stripping it lets `align-self:
-stretch` do its job — stretching to the row's actual flex-
-derived height.
+app shell, Input.multiline). With the explicit `100%` stripped,
+the flex default `align-items: stretch` handles cross-axis fill
+correctly under both definite and indefinite parents.
 
 The width axis keeps its explicit `100%` because column-parent
 widths are typically definite (block elements inherit width from
 `<body>` / viewport), AND `width: 100%` survives the `centerX`
-cascade (`align-self: center` defeats `align-self: stretch`,
-but `width: 100%` stays put so `[Ui.width fill, Ui.centerX]`
-still fills width before centring).
+cascade so `[Ui.width fill, Ui.centerX]` and `[Ui.width (Ui.maximum
+N Ui.fill), Ui.centerX]` (the canonical centred-page-content
+shape) still fill width before centring within the max-width cap.
+
+### `align-self` — single-emission contract (v0.15.56 F4)
+
+Before v0.15.56 the cross-axis fill emitters AND the alignment
+emitters (`alignSelfX/Y`) both wrote `align-self` declarations,
+producing two declarations on the same element when both attrs
+were present (`[Ui.width Ui.fill, Ui.centerX]`). Cascade-last
+gave the visible-correct result but the rendering was order-
+dependent — fragile against attr re-ordering or future CSS
+engine work.
+
+v0.15.56 F4 strips the redundant `align-self: stretch` from the
+cross-axis fill emitters. `stretch` is the default `align-items`
+value, so emitting it explicitly was a no-op; default behaviour
+still applies when no other `align-self` is emitted. Post-F4
+contract: at most ONE `align-self` declaration per element,
+sourced from `alignSelfX/Y` only.
+
+User-visible effect: identical rendering to v0.15.55. The change
+is code-hygiene: clean cascade, explicit precedence (alignment
+attrs always win over implicit fill-stretch), no ordering
+ambiguity.
+
+### `Ui.layoutWith` — wrapper customisation (v0.15.56)
+
+`Ui.layout` builds an outer `<div>` wrapper around your root —
+viewport-tall (`min-height: 100vh`), flex column. Apps that want
+to reach the wrapper itself (page-wide `Background.color` for
+dark mode, `Font.color` / `Font.family` cascading to every
+descendant, raw style overrides for the wrapper's flex
+direction) use the additive `Ui.layoutWith` entry point:
+
+```elm
+import Std.Ui as Ui
+import Std.Ui.Background as Background
+import Std.Ui.Font as Font
+
+view model =
+    Ui.layoutWith
+        { wrapperAttrs =
+            [ Background.color (Ui.rgb 18 18 24)
+            , Font.color (Ui.rgb 240 240 240)
+            , Font.family "system-ui, -apple-system, sans-serif"
+            ]
+        , rootAttrs =
+            [ Ui.padding 16
+            , Ui.width Ui.fill
+            ]
+        }
+        (Ui.column
+            [ Ui.spacing 16 ]
+            [ header, mainBody, footer ])
+```
+
+| Attr list | Reaches |
+|---|---|
+| `wrapperAttrs` | The outer 100 vh `<div>` (the page-tall flex floor). Background colours paint the whole viewport; Font.color / Font.family cascade to every descendant; raw style overrides via `Ui.htmlAttribute "style" "flex-direction: row;"` (rare). |
+| `rootAttrs` | The root element rendered under the wrapper (same as `Ui.layout`'s arg). `Ui.width` / `Ui.height` / `Ui.padding` / `Ui.spacing` etc. apply here. |
+
+`Ui.layout attrs el` is equivalent to `Ui.layoutWith {
+wrapperAttrs = [], rootAttrs = attrs } el` — byte-identical for
+existing call sites.
 
 ## Alignment + spacing + padding
 

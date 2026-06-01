@@ -1673,8 +1673,40 @@ transparent =
 -- Render an Element tree to plain Html. Wrap your top-level view
 -- function with `layout [] view` to produce a Sky.Live or
 -- Sky.Http.Server view value.
+--
+-- `rootAttrs` apply to the root element (the user's `Ui.column` /
+-- `Ui.row`). For attrs that should reach the OUTER page-tall
+-- wrapper (page-wide `Background.color` for dark mode,
+-- `Font.family` for a document-wide font stack, etc.), use
+-- `Ui.layoutWith { wrapperAttrs = [...], rootAttrs = [...] }`.
 layout : List (Attribute msg) -> Element msg -> any
 layout rootAttrs root =
+    layoutWith { wrapperAttrs = [], rootAttrs = rootAttrs } root
+
+
+-- `Ui.layoutWith` — additive entry point that lets callers reach
+-- the page-tall wrapper. `wrapperAttrs` carry styles + html attrs
+-- onto the outer `<div>` (the 100 vh flex floor); `rootAttrs`
+-- behave exactly like `Ui.layout`'s argument and apply to the
+-- root element rendered under that wrapper.
+--
+-- Use cases:
+--   * page-wide dark mode: `wrapperAttrs = [Background.color dark]`
+--     paints the whole viewport, not just the root child
+--   * document-level typography: `wrapperAttrs = [Font.color text,
+--     Font.family [Font.sansSerif]]` cascades to every descendant
+--   * background image at the page level
+--   * row-direction page (rare; default `flex-direction: column`
+--     can be overridden by `wrapperAttrs =
+--     [Ui.htmlAttribute "style" "flex-direction: row;"]`)
+--
+-- `Ui.layout attrs el` is exactly `Ui.layoutWith { wrapperAttrs =
+-- [], rootAttrs = attrs } el` — call-site byte-identical for
+-- existing apps.
+layoutWith : { wrapperAttrs : List (Attribute msg)
+, rootAttrs : List (Attribute msg)
+} -> Element msg -> any
+layoutWith cfg root =
 -- Wrap the tree in a viewport-tall flex column. The page <body>
 -- is content-height by default, so a root with `height fill`
 -- rendered as a bare `height: 100%` (what the old AsEl path
@@ -1688,14 +1720,32 @@ layout rootAttrs root =
 -- theme background stays locked at viewport height and the
 -- scrolled-past region exposes bare <body>. Same goes for the
 -- injected html,body style.
-    Html.div
-        [Attr.style "min-height: 100vh; display: flex; flex-direction: column;"]
-        [ Html.node
-              "style"
-              []
-              [Html.text "html,body{min-height:100%;margin:0;padding:0}"]
-        , renderElement AsColumn rootAttrs root
-        ]
+--
+-- `wrapperAttrs` are CSS-folded via `buildStyleString` and the
+-- result is APPENDED after the default style, so later (= user)
+-- rules win on the cascade. HTML attrs in `wrapperAttrs` (class,
+-- data-*, aria-*, etc.) attach to the wrapper alongside the style.
+    let
+        defaultWrapperStyle =
+            "min-height: 100vh; display: flex; flex-direction: column;"
+        wrapperExtraStyle =
+            buildStyleString False AsColumn AsColumn cfg.wrapperAttrs
+        wrapperStyle =
+            if String.isEmpty (String.trim wrapperExtraStyle) then
+                defaultWrapperStyle
+
+            else
+                defaultWrapperStyle ++ wrapperExtraStyle
+        wrapperHtmlAttrs = collectHtmlAttrs cfg.wrapperAttrs
+    in
+        Html.div
+            ((Attr.style wrapperStyle) :: wrapperHtmlAttrs)
+            [ Html.node
+                  "style"
+                  []
+                  [Html.text "html,body{min-height:100%;margin:0;padding:0}"]
+            , renderElement AsColumn cfg.rootAttrs root
+            ]
 
 
         -- Animations (issue #378) — collect into
@@ -2863,17 +2913,39 @@ widthCssIn parentCtx lng =
 -- actually divide the free space. On the cross axis a portion is
 -- meaningless — the child simply stretches.
 --
--- F1 asymmetry note. The cross-axis WIDTH fill keeps the explicit
--- `width: 100%` because column / el / textColumn parents have
--- DEFINITE block widths (inherited from <body>/viewport) in 99% of
--- real pages — so the `100%` resolves cleanly AND additionally
--- protects against the F4 interaction (e.g. `[Ui.width Ui.fill,
--- Ui.centerX]` where `align-self: center` cascades over the
--- stretch). The cross-axis HEIGHT fill (heightFillFor below)
--- DOES strip `height: 100%` because row parents commonly have
--- indefinite heights (flex-grow-derived or content-derived) and
--- the `100%` collapses harmfully — that's the documented #63
--- + Z2/Z3 bug class.
+-- F1 + F4 asymmetry note.
+--
+-- The cross-axis WIDTH fill keeps the explicit `width: 100%`
+-- because column / el / textColumn parents have DEFINITE block
+-- widths (inherited from <body>/viewport) in 99% of real pages —
+-- the `100%` resolves cleanly AND protects against the F4
+-- interaction `[Ui.width Ui.fill, Ui.centerX]` where
+-- `align-self: center` (from `centerX`) cascades over the implicit
+-- `align-items: stretch` default. Without `width: 100%`, a
+-- centred column collapses to content-width even though the user
+-- asked for fill (see the showcase outer column —
+-- `examples/26-ui-showcase/src/Main.sky` — `[Ui.width (Ui.maximum
+-- 760 Ui.fill), Ui.centerX]`: must hit the 760 px cap, not
+-- shrink to content).
+--
+-- The cross-axis HEIGHT fill (heightFillFor below) DOES strip
+-- `height: 100%` because row parents commonly have indefinite
+-- heights (flex-grow-derived or content-derived) and the `100%`
+-- collapses harmfully — that's the documented #63 + Z2/Z3 bug
+-- class. The asymmetry is principled, NOT an oversight.
+--
+-- F4 contract: the cross-axis branches DO NOT emit
+-- `align-self: stretch` — `stretch` is the default flex
+-- `align-items` value already, so emitting it explicitly was
+-- redundant. With F4 in place, `align-self` is emitted from
+-- ONE place only: `alignSelfX` / `alignSelfY` when the user
+-- attaches an explicit `Ui.centerX/Y` / `Ui.alignLeft/Right/
+-- Top/Bottom` attr. No double declaration; no cascade-order-
+-- dependent rendering. Pre-F4, `[Ui.width Ui.fill, Ui.centerX]`
+-- emitted BOTH `align-self: stretch;` AND `align-self: center;`
+-- and relied on cascade-last for `center` to win — fragile
+-- against attr re-ordering. Post-F4, only `align-self: center;`
+-- emits.
 widthFillFor : LayoutContext -> Int -> String
 widthFillFor parentCtx n =
     case parentCtx of
@@ -2882,16 +2954,16 @@ widthFillFor parentCtx n =
             "flex-grow: " ++ String.fromInt n ++ "; min-width: 0;"
 
         AsColumn ->
-            "align-self: stretch; width: 100%;"
+            "width: 100%;"
 
         AsEl ->
-            "align-self: stretch; width: 100%;"
+            "width: 100%;"
 
         AsParagraph ->
             "width: 100%;"
 
         AsTextColumn ->
-            "align-self: stretch; width: 100%;"
+            "width: 100%;"
 
 
 heightCssIn : LayoutContext -> Length -> String
@@ -2922,14 +2994,22 @@ heightCssIn parentCtx lng =
             "height: " ++ String.fromInt n ++ "vw;"
 
 
--- See F1 note on widthFillFor — cross-axis stays as bare
--- `align-self: stretch;` for correctness under indefinite parents.
+-- See F1+F4 note on widthFillFor — cross-axis emits NOTHING
+-- (the implicit `align-items: stretch` default makes the child
+-- fill the cross axis without any explicit declaration). Pre-
+-- v0.15.55 emitted `align-self: stretch; height: 100%;` for
+-- cross-axis HEIGHT fill (row parents); the `100%` collapsed
+-- against indefinite-height row parents (Z2/Z3 bug class).
+-- v0.15.55 stripped `height: 100%`. v0.15.56 (F4) strips the
+-- redundant `align-self: stretch` as well, so `align-self` is
+-- emitted from ONE place only: `alignSelfX/Y` for explicit
+-- alignment attrs.
 heightFillFor : LayoutContext -> Int -> String
 heightFillFor parentCtx n =
     case parentCtx of
 
         AsRow ->
-            "align-self: stretch;"
+            ""
 
         AsColumn ->
             "flex-grow: " ++ String.fromInt n ++ "; min-height: 0;"

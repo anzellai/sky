@@ -1,28 +1,41 @@
 module Sky.Build.UiFillCssSpec (spec) where
 
--- Regression fence for the v0.15.55 F1 fix.
+-- Regression fence for the v0.15.55 F1 + v0.15.56 F4 fixes.
 --
 -- F1 root cause: `widthFillFor` / `heightFillFor` in
 -- `sky-stdlib/Std/Ui.sky` emitted `align-self: stretch; width: 100%`
--- (or `height: 100%`) for the cross-axis case.  The
--- `align-self: stretch` part is sufficient and correct; the explicit
--- `width: 100%` / `height: 100%` is REDUNDANT in spec-compliant flex
--- and ACTIVELY HARMFUL when the parent's cross-axis size was itself
--- flex-grow-derived — CSS Flexbox §9.8 resolves `%` against the
--- parent's USED size only when that size is "definite"; a
--- flex-grow-derived height is indefinite for the purpose of `%`
--- resolution on cross-axis children.
+-- (or `height: 100%`) for the cross-axis case.  The explicit
+-- `width: 100%` / `height: 100%` is ACTIVELY HARMFUL when the
+-- parent's cross-axis size was itself flex-grow-derived — CSS
+-- Flexbox §9.8 resolves `%` against the parent's USED size only
+-- when that size is "definite"; a flex-grow-derived height is
+-- indefinite for the purpose of `%` resolution on cross-axis
+-- children.
 --
 -- Symptom: every Sky.Live app where a `Ui.row` is a flex child of a
 -- column ancestor AND that row's children ask for `Ui.height Ui.fill`
 -- saw the children collapse to text-content height (~22 px on the
 -- user's three-pane app shell; 51 px on Input.multiline).
 --
--- Fix: strip the explicit `100%` emission. `align-self: stretch`
--- alone is correct cross-axis stretching in every standards-compliant
--- browser regardless of parent definiteness.
+-- v0.15.55 F1: strip `height: 100%` from `heightFillFor AsRow`.
+-- v0.15.56 F4: strip the redundant `align-self: stretch` from BOTH
+-- cross-axis width AND cross-axis height fill emitters. `stretch`
+-- is the default `align-items` value, so emitting it explicitly was
+-- redundant AND collided with explicit `Ui.centerX/Y` /
+-- `Ui.alignLeft/Right/Top/Bottom` alignment attrs (which emit
+-- their own `align-self`). Post-F4 the cascade has exactly ONE
+-- `align-self` declaration per element — emitted from
+-- `alignSelfX/Y` only.
 --
--- This spec greps the lowered Go output for the OLD bad combo and
+-- Width-axis asymmetry (intentional): `widthFillFor AsColumn /
+-- AsEl / AsTextColumn` STILL emits `width: 100%` because column-
+-- parent widths are typically definite (block inheritance) AND the
+-- `width: 100%` survives the `[Ui.width fill, Ui.centerX]` cascade
+-- (alignment overrides the implicit stretch default; width: 100%
+-- stays put so the column still fills before centring within a
+-- `max-width` cap). See the showcase outer column pattern.
+--
+-- This spec greps the lowered Go output for the OLD bad combos and
 -- the EXPECTED new combo to fence the contract.
 
 import Test.Hspec
@@ -91,48 +104,58 @@ fixture = unlines
 
 
 spec :: Spec
-spec = describe "Std.Ui cross-axis fill emission (F1)" $ do
+spec = describe "Std.Ui cross-axis fill emission (F1 + F4)" $ do
 
     it "heightFillFor AsRow does NOT emit `height: 100%`" $ do
         (ec, mainGo, err) <- buildAndReadMain fixture
         ec `shouldBe` 0
         err `shouldBe` ""
-        -- This is the F1 fix signature. heightFillFor AsRow previously
-        -- emitted `align-self: stretch; height: 100%;` — the `100%`
-        -- resolved to auto/content when the row's cross-axis (height)
-        -- was indefinite (flex-grow-derived or content-derived),
+        -- F1 fix signature. heightFillFor AsRow previously emitted
+        -- `align-self: stretch; height: 100%;` — the `100%` resolved
+        -- to auto/content when the row's cross-axis (height) was
+        -- indefinite (flex-grow-derived or content-derived),
         -- collapsing every fill child to text-content height. That
         -- was the Z2 (Input.multiline → 51 px) + Z3 (three-pane shell
         -- → 22 px each) bug class. Must NEVER come back.
         mainGo `shouldNotSatisfy`
             ("align-self: stretch; height: 100%;" `isInfixOf`)
+        -- F4: the bare `align-self: stretch;` SHOULD ALSO be gone
+        -- from cross-axis height fill — `stretch` is the default
+        -- `align-items` value so emitting it explicitly was redundant
+        -- AND collided with explicit alignment attrs. Post-F4 the
+        -- cross-axis height branch emits NOTHING; alignment is
+        -- emitted from `alignSelfX/Y` only.
+        mainGo `shouldNotSatisfy`
+            ("align-self: stretch; height:" `isInfixOf`)
 
     it "widthFillFor cross-axis keeps `width: 100%` (column parents have definite widths)" $ do
         (ec, mainGo, err) <- buildAndReadMain fixture
         ec `shouldBe` 0
         err `shouldBe` ""
-        -- F1 asymmetry note: width cross-axis fill KEEPS the explicit
+        -- F1+F4 asymmetry: width cross-axis fill KEEPS the explicit
         -- `width: 100%` because column / el / textColumn parents have
-        -- DEFINITE block widths (inherited from <body>) in real-world
-        -- pages — the `100%` resolves cleanly. It also protects
-        -- against the F4 interaction (`[Ui.width fill, Ui.centerX]`
-        -- where the alignment's `align-self: center` cascades over
-        -- the stretch). The fixture's column-of-row-of-el chain forces
-        -- two widthFillFor AsColumn emissions (the row + the el
-        -- inside) so the byte string must appear.
+        -- DEFINITE block widths (inherited from <body>) AND because
+        -- `[Ui.width fill, Ui.centerX]` needs the explicit `width:
+        -- 100%` to survive the alignment cascade (alignment overrides
+        -- the implicit stretch; width: 100% stays put, so the column
+        -- still fills before centring within a max-width cap). The
+        -- fixture's column-of-row-of-el chain forces two
+        -- widthFillFor AsColumn emissions (the row + the el inside)
+        -- so the byte string must appear.
         mainGo `shouldSatisfy`
-            ("align-self: stretch; width: 100%;" `isInfixOf`)
+            ("width: 100%;" `isInfixOf`)
 
-    it "emits bare `align-self: stretch;` for cross-axis HEIGHT fill" $ do
+    it "F4: widthFillFor cross-axis does NOT emit `align-self: stretch`" $ do
         (ec, mainGo, err) <- buildAndReadMain fixture
         ec `shouldBe` 0
         err `shouldBe` ""
-        -- The fixture's row → el chain triggers heightFillFor AsRow
-        -- (el inside row has Ui.height Ui.fill). The bare stretch
-        -- string must appear as a standalone literal — that's the
-        -- F1 post-fix shape.
-        mainGo `shouldSatisfy`
-            ("\"align-self: stretch;\"" `isInfixOf`)
+        -- F4 fix signature. `widthFillFor AsColumn/AsEl/AsTextColumn`
+        -- previously emitted `align-self: stretch; width: 100%;`. The
+        -- `align-self: stretch` was redundant (default flex behaviour)
+        -- and conflicted with explicit alignment attrs (cascade-
+        -- order-dependent). Post-F4 it emits only `width: 100%;`.
+        mainGo `shouldNotSatisfy`
+            ("align-self: stretch; width: 100%;" `isInfixOf`)
 
     it "main-axis fill still emits flex-grow + min-{axis}: 0" $ do
         (ec, mainGo, err) <- buildAndReadMain fixture

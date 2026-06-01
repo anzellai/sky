@@ -1151,15 +1151,15 @@ view model =
    parent fills the parent; `Background.color (Ui.rgb 240 240 240)`
    colours the textarea itself, not the wrapper.
 
-### `Ui.fill` emission (v0.15.55+)
+### `Ui.fill` emission (v0.15.55+, refined v0.15.56)
 
 `Ui.fill` lowers asymmetrically per the parent's flex direction:
 
 | Position | CSS emitted |
 |---|---|
 | Main-axis fill | `flex-grow: N; min-{w,h}: 0;` |
-| Cross-axis HEIGHT fill (row child) | bare `align-self: stretch;` — no `height: 100%` |
-| Cross-axis WIDTH fill (column / el / textColumn child) | `align-self: stretch; width: 100%;` |
+| Cross-axis HEIGHT fill (row child) | nothing — relies on flex default `align-items: stretch` |
+| Cross-axis WIDTH fill (column / el / textColumn child) | `width: 100%;` |
 
 The asymmetry closes a real bug class. CSS Flexbox §9.8 resolves
 `%` against a parent's USED size only when "definite"; a flex-
@@ -1168,15 +1168,46 @@ indefinite heights → the pre-v0.15.55 `height: 100%` on cross-
 axis fill collapsed every child to text-content height (issue
 #63 — three-pane app shell, Input.multiline → 22/51 px). Width
 keeps `100%` because column-parent widths are typically definite
-AND it survives the `[Ui.width fill, Ui.centerX]` cascade
-(`align-self: center` defeats `align-self: stretch` for
-positioning, but `width: 100%` stays put so the column still
-fills before centring).
+AND it survives the `[Ui.width fill, Ui.centerX]` cascade — the
+canonical centred-page-content shape.
+
+**v0.15.56 F4 `align-self` single-emission contract.** The
+cross-axis fill emitters dropped their redundant `align-self:
+stretch` declaration — `stretch` is the default `align-items`
+value, so it was a no-op AND created a cascade conflict with
+explicit alignment attrs (`Ui.centerX/Y`, `alignLeft/Right/Top/
+Bottom`). Post-F4 invariant: at most ONE `align-self`
+declaration per element, sourced from `alignSelfX/Y` only.
+User-visible rendering identical to v0.15.55; code is
+order-independent.
+
+### `Ui.layoutWith` — wrapper customisation (v0.15.56)
+
+```elm
+Ui.layoutWith { wrapperAttrs : [Attr msg], rootAttrs : [Attr msg] } -> Element msg -> Html
+```
+
+Additive entry point. `wrapperAttrs` reach the outer 100 vh
+`<div>` page wrapper (Background.color for page-wide dark mode,
+Font.color / Font.family for document-wide typography, raw
+`htmlAttribute "style"` for `flex-direction: row` overrides).
+`rootAttrs` apply to the root element (same as `Ui.layout`'s
+argument).
+
+`Ui.layout attrs el` is now `Ui.layoutWith { wrapperAttrs = [],
+rootAttrs = attrs } el` — byte-identical for existing call
+sites. Reach for `layoutWith` when you need the wrapper to take
+visual styles (dark page, custom font cascade, page background
+image).
 
 ### Surface highlights
 
 Full reference: `docs/skyui/overview.md`.
 
+- **Entry points**: `layout : List Attr -> Element -> Html` +
+  `layoutWith : { wrapperAttrs : List Attr, rootAttrs : List Attr } -> Element -> Html`
+  (v0.15.56 — reach the page wrapper for dark mode / Font cascade /
+  flex-direction override).
 - **Layout**: `el`, `row`, `column`, `wrappedRow`, `grid` +
   `gridColumns N` (CSS-Grid auto-fit), `paragraph`, `textColumn`,
   `text`, `none`, `html`.

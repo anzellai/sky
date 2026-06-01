@@ -277,6 +277,7 @@ test-suite sky-tests
       Sky.Type.RecordFieldExactnessSpec
       Sky.Build.UiFillCascadeSpec
       Sky.Build.UiFillCssSpec
+      Sky.Build.UiAlignSelfSpec
       Sky.Build.UiMediaQuerySpec
       Sky.Build.UiPseudoClassSpec
       Sky.Build.UiTransitionAnimationSpec

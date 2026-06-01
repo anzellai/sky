@@ -29,6 +29,7 @@ import qualified Sky.Type.UfCycleGuardSpec
 import qualified Sky.Type.RecordFieldExactnessSpec
 import qualified Sky.Build.UiFillCascadeSpec
 import qualified Sky.Build.UiFillCssSpec
+import qualified Sky.Build.UiAlignSelfSpec
 import qualified Sky.Build.UiMediaQuerySpec
 import qualified Sky.Build.UiPseudoClassSpec
 import qualified Sky.Build.UiTransitionAnimationSpec
@@ -240,12 +241,23 @@ main = hspec $ do
     -- child marked `width: fill` then competed for vertical space,
     -- breaking the typical header/main/footer layout.
     describe "Sky.Build.UiFillCascade"   Sky.Build.UiFillCascadeSpec.spec
-    -- v0.15.55 F1: cross-axis fill emits ONLY `align-self: stretch;`
-    -- (was `align-self: stretch; width|height: 100%;`). The `100%`
-    -- was harmful when the parent's cross-axis was flex-grow-derived
-    -- (indefinite per CSS Flexbox §9.8), collapsing children that
-    -- asked for `Ui.height Ui.fill` to text-content height.
+    -- v0.15.55 F1 + v0.15.56 F4: cross-axis fill CSS emission.
+    -- F1 (v0.15.55) — drop `height: 100%` from cross-axis HEIGHT fill
+    -- (was actively harmful under flex-grow-derived parents per CSS
+    -- Flexbox §9.8). F4 (v0.15.56) — drop redundant `align-self:
+    -- stretch` from cross-axis fill emitters; `stretch` is the
+    -- default `align-items` value, so emitting it explicitly was a
+    -- no-op AND collided with `Ui.centerX/Y` / `alignLeft/Right/
+    -- Top/Bottom` which emit their own `align-self`. Width-axis
+    -- keeps `width: 100%` (showcase outer column needs it to
+    -- survive the alignment cascade).
     describe "Sky.Build.UiFillCss"       Sky.Build.UiFillCssSpec.spec
+    -- v0.15.56 F4 single-emission contract: at most one `align-self`
+    -- declaration per element after F4 strips the redundant
+    -- `align-self: stretch` from fill emitters. `alignSelfX/Y`
+    -- becomes the sole source of `align-self` (for explicit
+    -- `centerX/Y` / `alignLeft/Right/Top/Bottom` attrs).
+    describe "Sky.Build.UiAlignSelf"     Sky.Build.UiAlignSelfSpec.spec
     -- Std.Ui.mediaQuery / Ui.breakpoint — issue #376. Compiles a
     -- tiny project + checks the lowered Go contains the runtime
     -- marker attrs (data-sky-mq-q / data-sky-mq-rules) + the

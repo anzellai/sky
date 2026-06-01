@@ -737,3 +737,132 @@ already PASS, so F5 deletes unless a new repro appears.
 new from this work — F4 was already documented in the audit's
 §2 root-cause taxonomy. The audit's F3 + F4 + F5 stay queued
 on the v0.15.56+ task pipeline.
+
+---
+
+## §6. v0.15.56 implementation log
+
+What shipped on `feat/v0.15.56-stdui-correctness-f3-f4-f5`:
+
+**F3 (additive entry point — `Ui.layoutWith`).** New surface:
+
+```elm
+Ui.layoutWith :
+    { wrapperAttrs : List (Attribute msg)
+    , rootAttrs : List (Attribute msg)
+    } -> Element msg -> any
+```
+
+`wrapperAttrs` route Background.color / Font.color / Font.family
+/ html attrs onto the outer 100 vh `<div>` page wrapper.
+`rootAttrs` apply to the root element (same as `Ui.layout`'s
+arg). `Ui.layout attrs el = Ui.layoutWith { wrapperAttrs = [],
+rootAttrs = attrs } el` — byte-identical for existing call sites.
+
+Implementation: `wrapperExtraStyle = buildStyleString False
+AsColumn AsColumn cfg.wrapperAttrs` (the existing collector
+pipeline does the work — Background.color → background-color:,
+Font.color → color:, etc.); the result is APPENDED after the
+default `min-height: 100vh; display: flex; flex-direction:
+column;` so user attrs cascade-last (i.e. can override the
+default flex-direction via raw `htmlAttribute "style"`).
+`collectHtmlAttrs cfg.wrapperAttrs` carries class / data-* /
+aria-* through.
+
+**Row-direction wrapper.** Per the audit's "investigate" point:
+no example today relies on a column-direction wrapper. The
+mechanism for row-direction is `wrapperAttrs = [Ui.htmlAttribute
+"style" "flex-direction: row;"]` (cascade-last wins). No need
+for a typed flex-direction marker — the raw escape hatch covers
+the rare row-direction case without bloating the API surface.
+
+**F4 (align-self single-emission contract).** Stripped
+`align-self: stretch;` from cross-axis fill emitters in
+`sky-stdlib/Std/Ui.sky`:
+
+  * `widthFillFor AsColumn` / `AsEl` / `AsTextColumn` → `width:
+    100%;` only (was `align-self: stretch; width: 100%;`)
+  * `heightFillFor AsRow` → empty (was `align-self: stretch;`)
+
+The key insight: `align-items: stretch` is the default flex
+behaviour, so emitting `align-self: stretch` explicitly was a
+no-op. With the explicit emission gone, the `alignSelfX/Y`
+helpers become the SOLE source of `align-self` declarations —
+exactly one declaration per element (or none, when no
+alignment attr is present).
+
+`pureFill` cell in the matrix rig verifies the no-emission case
+still fills correctly via the default. The showcase outer
+column (`[Ui.width (Ui.maximum 760 Ui.fill), Ui.centerX]`)
+verifies that `centerX` correctly overrides the default
+stretch — `align-self: center` is the sole declaration, `width:
+100%` survives, max-width caps at 760 px.
+
+**F1 symmetric finish: NOT shipped (correct decision).** Re-
+analysis showed the audit's hypothesis ("F4 closes the loop,
+allowing symmetric F1 strip") was wrong. Stripping `width:
+100%` from `widthFillFor AsColumn` would break the showcase
+pattern: with only `max-width: 760px; align-self: center;`, the
+column collapses to content-width (centred). The `width: 100%`
+explicitly forces the column to fill before the cap kicks in.
+This is intentional asymmetry, not an oversight — height-axis
+indefinite-parent collapse is a real CSS-spec corollary; width-
+axis collapse only happens when the user also asks for centring
++ a max cap. Documented in `widthFillFor`'s comment block and
+in CLAUDE.md / templates/CLAUDE.md / docs/skyui/overview.md.
+
+**F5 (wrappedRow + spacing): VERIFIED CLEAN, dropped from
+bundle.** New matrix cell drives 8 cards of width 300 through a
+`Ui.wrappedRow [Ui.spacing 16]` at viewport 1280:
+
+  * `flex-wrap: wrap` ✓
+  * `gap: 16px` (single value applies to row + column gaps) ✓
+  * 8 cards wrap to 2 rows of 4 ✓
+  * row-gap measured 16 px (no off-by-one on the last row) ✓
+  * column-gap measured 16 px within each row ✓
+
+`Ui.wrappedRow` already uses CSS `gap` via `AttrSpacing`'s
+`gap: Npx;` emission — modern flex-gap handles both axes
+correctly. No fix needed; no `margin-right` injection between
+siblings to remove. F5 stays in the matrix rig as a permanent
+regression cell.
+
+**Doc + marker changes shipped in v0.15.56:**
+
+  * `sky-stdlib/Std/Ui.sky` — `layoutWith` entry point added +
+    `widthFillFor` / `heightFillFor` cross-axis emission updated
+    + F1/F4 asymmetry rationale comment blocks rewritten.
+  * `src/Sky/Build/EmbeddedRuntime.hs` — re-embed marker
+    `2026-06-01v`.
+  * `docs/skyui/overview.md` — updated "`Ui.fill` — how it
+    lowers" section + new "F4 single-emission contract" +
+    "`Ui.layoutWith` — wrapper customisation" sections.
+  * `CLAUDE.md` + `templates/CLAUDE.md` — `Ui.fill` table
+    updated to reflect F4; new `Ui.layoutWith` section; surface-
+    highlights list mentions the new entry point.
+  * `scripts/verify-stdui-matrix.mjs` — 3 new fixtures (F3 +
+    F4 + F5). Total: 7 fixtures (Z1, Z2, Z3, M, F3, F4, F5).
+  * `test/Sky/Build/UiAlignSelfSpec.hs` — new 2-case spec
+    fencing the F4 single-emission contract.
+  * `test/Sky/Build/UiFillCssSpec.hs` — extended to assert
+    `align-self: stretch` is gone from BOTH cross-axis branches
+    (was: only `height: 100%` was checked).
+
+**Verification gates green at HEAD:**
+
+  * `cabal test` — full suite + new UiAlignSelfSpec + extended
+    UiFillCssSpec pass.
+  * `scripts/example-sweep.sh` — 26 / 26 pass.
+  * `scripts/verify-ui-showcase.sh` — every snapshot ≤ 0.82 %
+    diff (within `PIXEL_TOLERANCE = 3`); F1 contract assertion
+    still passes (no `height: 100%` on the textarea inline
+    style).
+  * `scripts/verify-issue-63.mjs` + `verify-issue-63-input.mjs`
+    — both pass (textarea ≥ 764 px tall).
+  * `scripts/verify-stdui-matrix.mjs` — 7 / 7 fixtures pass:
+    Z1/Z2/Z3/M (carried) + F3/F4/F5 (new).
+
+**Sibling bugs surfaced (per CLAUDE.md §4 no-deferral).** None
+new from this work. The audit's bundle is now CLOSED: F1+F2
+shipped in v0.15.55; F3+F4 shipped in v0.15.56; F5 verified
+clean and stays as a regression cell. Cycle 7 complete.
