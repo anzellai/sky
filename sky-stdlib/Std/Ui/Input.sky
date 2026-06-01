@@ -1,4 +1,27 @@
-module Std.Ui.Input exposing (button, text, multiline, email, username, search, currentPassword, newPassword, checkbox, radio, radioRow, slider, option, labelAbove, labelBelow, labelLeft, labelRight, labelHidden, placeholder, Label, Placeholder, RadioOption)
+module Std.Ui.Input exposing
+    ( button
+    , text
+    , multiline
+    , email
+    , username
+    , search
+    , currentPassword
+    , newPassword
+    , checkbox
+    , radio
+    , radioRow
+    , slider
+    , option
+    , labelAbove
+    , labelBelow
+    , labelLeft
+    , labelRight
+    , labelHidden
+    , placeholder
+    , Label
+    , Placeholder
+    , RadioOption
+    )
 
 -- Std.Ui.Input — typed form controls.
 --
@@ -15,13 +38,11 @@ module Std.Ui.Input exposing (button, text, multiline, email, username, search, 
 -- ADTs in field positions), and the string-keyed shape works with
 -- the typed-Msg dispatch boundary that Sky.Live's `update` function
 -- already uses for form data.
-
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.String as String
 import Sky.Core.List as List
 import Std.Ui as Ui
-import Std.Ui exposing (Element, Attribute)
-
+import Std.Ui exposing (Element, Attribute(..))
 
 -- A label paired with an Element. `labelAbove` / `labelBelow` /
 -- `labelLeft` / `labelRight` set the position; `labelHidden` keeps
@@ -31,20 +52,17 @@ type Label msg
     = Label LabelPosition (List (Attribute msg)) (Element msg)
     | LabelHidden String
 
-
 type LabelPosition
     = AbovePos
     | BelowPos
     | LeftPos
     | RightPos
 
-
 -- Placeholder text shown inside an empty input. Wrap a `Ui.text "..."`
 -- to set the placeholder string; non-`Text` placeholders are
 -- silently ignored (HTML's `placeholder` attr is text-only).
 type Placeholder msg
     = Placeholder (List (Attribute msg)) (Element msg)
-
 
 -- A single choice in a `radio` / `radioRow` group: a string value
 -- (sent back via the typed onChange callback when this option is
@@ -54,29 +72,40 @@ type RadioOption msg
 
 
 labelAbove : List (Attribute msg) -> Element msg -> Label msg
-labelAbove attrs el = Label AbovePos attrs el
+labelAbove attrs el =
+    Label AbovePos attrs el
+
 
 labelBelow : List (Attribute msg) -> Element msg -> Label msg
-labelBelow attrs el = Label BelowPos attrs el
+labelBelow attrs el =
+    Label BelowPos attrs el
+
 
 labelLeft : List (Attribute msg) -> Element msg -> Label msg
-labelLeft attrs el = Label LeftPos attrs el
+labelLeft attrs el =
+    Label LeftPos attrs el
+
 
 labelRight : List (Attribute msg) -> Element msg -> Label msg
-labelRight attrs el = Label RightPos attrs el
+labelRight attrs el =
+    Label RightPos attrs el
+
 
 labelHidden : String -> Label msg
-labelHidden s = LabelHidden s
+labelHidden s =
+    LabelHidden s
 
 
 placeholder : List (Attribute msg) -> Element msg -> Placeholder msg
-placeholder attrs el = Placeholder attrs el
+placeholder attrs el =
+    Placeholder attrs el
 
 
 -- Construct a single radio option from its string value + label
 -- Element.
 option : String -> Element msg -> RadioOption msg
-option value labelEl = RadioOption value labelEl
+option value labelEl =
+    RadioOption value labelEl
 
 
 -- ─── Controls ────────────────────────────────────────────────────
@@ -84,14 +113,20 @@ option value labelEl = RadioOption value labelEl
 -- Button. Set `onPress = Nothing` to render a disabled button (the
 -- runtime adds `disabled="true"` so the browser greys it out and
 -- ignores clicks).
-button : List (Attribute msg) -> { onPress : Maybe msg, label : Element msg } -> Element msg
+button : List (Attribute msg) -> { onPress : Maybe msg
+, label : Element msg
+} -> Element msg
 button attrs cfg =
     Ui.button attrs cfg
 
 
 -- Single-line text input. The change handler fires on every
 -- keystroke per Sky.Live's input-event semantics.
-text : List (Attribute msg) -> { onChange : String -> msg, text : String, placeholder : Maybe (Placeholder msg), label : Label msg } -> Element msg
+text : List (Attribute msg) -> { onChange : String -> msg
+, text : String
+, placeholder : Maybe (Placeholder msg)
+, label : Label msg
+} -> Element msg
 text attrs cfg =
     inputBase "text" attrs cfg
 
@@ -99,7 +134,11 @@ text attrs cfg =
 -- Email-typed text input. Renders as `<input type="email">` so
 -- mobile browsers show the @-aware keyboard and HTML5 form
 -- validation kicks in.
-email : List (Attribute msg) -> { onChange : String -> msg, text : String, placeholder : Maybe (Placeholder msg), label : Label msg } -> Element msg
+email : List (Attribute msg) -> { onChange : String -> msg
+, text : String
+, placeholder : Maybe (Placeholder msg)
+, label : Label msg
+} -> Element msg
 email attrs cfg =
     inputBase "email" attrs cfg
 
@@ -107,14 +146,22 @@ email attrs cfg =
 -- Username-typed text input — identical to `text` plus
 -- `autocomplete="username"` so password managers recognise it as a
 -- sign-in field.
-username : List (Attribute msg) -> { onChange : String -> msg, text : String, placeholder : Maybe (Placeholder msg), label : Label msg } -> Element msg
+username : List (Attribute msg) -> { onChange : String -> msg
+, text : String
+, placeholder : Maybe (Placeholder msg)
+, label : Label msg
+} -> Element msg
 username attrs cfg =
     inputBase "text" (Ui.htmlAttribute "autocomplete" "username" :: attrs) cfg
 
 
 -- Search input. Renders as `<input type="search">` (mobile clear
 -- button + dedicated search keyboard on some platforms).
-search : List (Attribute msg) -> { onChange : String -> msg, text : String, placeholder : Maybe (Placeholder msg), label : Label msg } -> Element msg
+search : List (Attribute msg) -> { onChange : String -> msg
+, text : String
+, placeholder : Maybe (Placeholder msg)
+, label : Label msg
+} -> Element msg
 search attrs cfg =
     inputBase "search" attrs cfg
 
@@ -124,13 +171,26 @@ search attrs cfg =
 -- normally want `Ui.form` + `onSubmit` rather than wiring `onChange`
 -- on every keystroke; this control is here for cases where you do
 -- need per-keystroke updates (validation feedback, strength meters).
-currentPassword : List (Attribute msg) -> { onChange : String -> msg, text : String, placeholder : Maybe (Placeholder msg), label : Label msg, show : Bool } -> Element msg
+currentPassword : List (Attribute msg) -> { onChange : String -> msg
+, text : String
+, placeholder : Maybe (Placeholder msg)
+, label : Label msg
+, show : Bool
+} -> Element msg
 currentPassword attrs cfg =
     let
-        passType = if cfg.show then "text" else "password"
-        baseAttrs = Ui.htmlAttribute "autocomplete" "current-password" :: attrs
+        passType =
+            if cfg.show then
+                "text"
+
+            else
+                "password"
+        baseAttrs =
+            Ui.htmlAttribute "autocomplete" "current-password" :: attrs
     in
-        inputBase passType baseAttrs
+        inputBase
+            passType
+            baseAttrs
             { onChange = cfg.onChange
             , text = cfg.text
             , placeholder = cfg.placeholder
@@ -140,13 +200,25 @@ currentPassword attrs cfg =
 
 -- Password input — new-password autocomplete (sign-up / change-password
 -- flows). Same `show` toggle as `currentPassword`.
-newPassword : List (Attribute msg) -> { onChange : String -> msg, text : String, placeholder : Maybe (Placeholder msg), label : Label msg, show : Bool } -> Element msg
+newPassword : List (Attribute msg) -> { onChange : String -> msg
+, text : String
+, placeholder : Maybe (Placeholder msg)
+, label : Label msg
+, show : Bool
+} -> Element msg
 newPassword attrs cfg =
     let
-        passType = if cfg.show then "text" else "password"
+        passType =
+            if cfg.show then
+                "text"
+
+            else
+                "password"
         baseAttrs = Ui.htmlAttribute "autocomplete" "new-password" :: attrs
     in
-        inputBase passType baseAttrs
+        inputBase
+            passType
+            baseAttrs
             { onChange = cfg.onChange
             , text = cfg.text
             , placeholder = cfg.placeholder
@@ -172,69 +244,120 @@ newPassword attrs cfg =
 -- branch in `runtime-go/rt/live.go` handles the dance. The TUI side
 -- still consults the `type="textarea"` attr for its multiline-editor
 -- code path, so keep it on the attribute list.
-multiline : List (Attribute msg) -> { onChange : String -> msg, text : String, placeholder : Maybe (Placeholder msg), label : Label msg, spellcheck : Bool } -> Element msg
+multiline : List (Attribute msg) -> { onChange : String -> msg
+, text : String
+, placeholder : Maybe (Placeholder msg)
+, label : Label msg
+, spellcheck : Bool
+} -> Element msg
 multiline attrs cfg =
     let
         spellAttr =
             if cfg.spellcheck then
                 Ui.htmlAttribute "spellcheck" "true"
+
             else
                 Ui.htmlAttribute "spellcheck" "false"
         placeholderAttr =
             case cfg.placeholder of
+
                 Just (Placeholder _ el) ->
                     placeholderTextOf el
+
                 Nothing ->
                     []
+        layoutAndControl = splitLayoutAttrs attrs
+        layoutAttrs = fst layoutAndControl
+        controlAttrs = snd layoutAndControl
         baseAttrs =
-            -- `type="textarea"` is kept for TUI's input-type detection
-            -- (see `runtime-go/rt/tui_ui.go`'s walkAttrs picking up
-            -- `inputType`). The web renderer ignores `type` on a
-            -- `<textarea>` element; the TUI editor uses it.
             Ui.htmlAttribute "type" "textarea"
                 :: Ui.htmlAttribute "value" cfg.text
                 :: spellAttr
                 :: Ui.onInput cfg.onChange
                 :: placeholderAttr
-                ++ attrs
+                ++ controlAttrs
+                ++ implicitFillIfHoisted layoutAttrs
         textareaEl = Ui.TaggedNode "textarea" Ui.NoDescription baseAttrs []
     in
-        wrapWithLabel cfg.label [] textareaEl
+        wrapWithLabel cfg.label layoutAttrs textareaEl
 
 
 -- Checkbox. The icon is the visual checkmark element (use a simple
 -- unicode tick for now or a custom Element).
-checkbox : List (Attribute msg) -> { onChange : Bool -> msg, icon : Bool -> Element msg, checked : Bool, label : Label msg } -> Element msg
+checkbox : List (Attribute msg) -> { onChange : Bool -> msg
+, icon : Bool -> Element msg
+, checked : Bool
+, label : Label msg
+} -> Element msg
 checkbox attrs cfg =
     let
+        layoutAndControl = splitLayoutAttrs attrs
+        layoutAttrs = fst layoutAndControl
+        controlAttrs = snd layoutAndControl
         checkInput =
-            inputElement "checkbox"
+            inputElement
+                "checkbox"
                 (cfg.onChange (not cfg.checked))
-                (if cfg.checked then "true" else "false")
+                (if cfg.checked then
+                    "true"
+
+                else
+                    "false")
         iconEl = cfg.icon cfg.checked
+        rowBaseAttrs =
+            Ui.spacing 8 :: controlAttrs ++ implicitFillIfHoisted layoutAttrs
     in
-        wrapWithLabel cfg.label attrs (Ui.row [ Ui.spacing 8 ] [ checkInput, iconEl ])
+        wrapWithLabel
+            cfg.label
+            layoutAttrs
+            (Ui.row rowBaseAttrs [ checkInput, iconEl ])
 
 
 -- Radio button group — vertical layout. Each `RadioOption value
 -- labelEl` becomes one selectable choice; clicking dispatches
 -- `onChange value`. `selected` is the currently-active value.
-radio : List (Attribute msg) -> { onChange : String -> msg, options : List (RadioOption msg), selected : String, label : Label msg } -> Element msg
+radio : List (Attribute msg) -> { onChange : String -> msg
+, options : List (RadioOption msg)
+, selected : String
+, label : Label msg
+} -> Element msg
 radio attrs cfg =
     let
-        renderedOptions = List.map (renderRadioOption cfg.onChange cfg.selected) cfg.options
+        layoutAndControl = splitLayoutAttrs attrs
+        layoutAttrs = fst layoutAndControl
+        controlAttrs = snd layoutAndControl
+        renderedOptions =
+            List.map (renderRadioOption cfg.onChange cfg.selected) cfg.options
+        columnBaseAttrs =
+            Ui.spacing 6 :: controlAttrs ++ implicitFillIfHoisted layoutAttrs
     in
-        wrapWithLabel cfg.label attrs (Ui.column [ Ui.spacing 6 ] renderedOptions)
+        wrapWithLabel
+            cfg.label
+            layoutAttrs
+            (Ui.column columnBaseAttrs renderedOptions)
 
 
 -- Radio button group — horizontal layout. Same args as `radio`,
 -- children flow left-to-right.
-radioRow : List (Attribute msg) -> { onChange : String -> msg, options : List (RadioOption msg), selected : String, label : Label msg } -> Element msg
+radioRow : List (Attribute msg) -> { onChange : String -> msg
+, options : List (RadioOption msg)
+, selected : String
+, label : Label msg
+} -> Element msg
 radioRow attrs cfg =
     let
-        renderedOptions = List.map (renderRadioOption cfg.onChange cfg.selected) cfg.options
+        layoutAndControl = splitLayoutAttrs attrs
+        layoutAttrs = fst layoutAndControl
+        controlAttrs = snd layoutAndControl
+        renderedOptions =
+            List.map (renderRadioOption cfg.onChange cfg.selected) cfg.options
+        rowBaseAttrs =
+            Ui.spacing 12 :: controlAttrs ++ implicitFillIfHoisted layoutAttrs
     in
-        wrapWithLabel cfg.label attrs (Ui.row [ Ui.spacing 12 ] renderedOptions)
+        wrapWithLabel
+            cfg.label
+            layoutAttrs
+            (Ui.row rowBaseAttrs renderedOptions)
 
 
 -- Range slider — `<input type="range">`. The change handler receives
@@ -242,9 +365,18 @@ radioRow attrs cfg =
 -- text); use `String.toFloat` or `String.toInt` to parse. `min`,
 -- `max`, `step`, and `value` are pre-rendered as Strings so the
 -- handler can stay String-typed.
-slider : List (Attribute msg) -> { onChange : String -> msg, value : String, min : String, max : String, step : String, label : Label msg } -> Element msg
+slider : List (Attribute msg) -> { onChange : String -> msg
+, value : String
+, min : String
+, max : String
+, step : String
+, label : Label msg
+} -> Element msg
 slider attrs cfg =
     let
+        layoutAndControl = splitLayoutAttrs attrs
+        layoutAttrs = fst layoutAndControl
+        controlAttrs = snd layoutAndControl
         baseAttrs =
             Ui.htmlAttribute "type" "range"
                 :: Ui.htmlAttribute "value" cfg.value
@@ -252,9 +384,10 @@ slider attrs cfg =
                 :: Ui.htmlAttribute "max" cfg.max
                 :: Ui.htmlAttribute "step" cfg.step
                 :: Ui.onInput cfg.onChange
-                :: attrs
+                :: controlAttrs
+                ++ implicitFillIfHoisted layoutAttrs
     in
-        wrapWithLabel cfg.label [] (Ui.input baseAttrs)
+        wrapWithLabel cfg.label layoutAttrs (Ui.input baseAttrs)
 
 
 -- ─── Internals ───────────────────────────────────────────────────
@@ -263,44 +396,56 @@ slider attrs cfg =
 -- Renders as a real <input> via `Ui.input` (Ui.el would render
 -- as <div> and the browser would ignore the type/value attrs and
 -- never fire input events).
-inputBase : String -> List (Attribute msg) -> { onChange : String -> msg, text : String, placeholder : Maybe (Placeholder msg), label : Label msg } -> Element msg
+inputBase : String -> List (Attribute msg) -> { onChange : String -> msg
+, text : String
+, placeholder : Maybe (Placeholder msg)
+, label : Label msg
+} -> Element msg
 inputBase inputType attrs cfg =
     let
         placeholderAttr =
             case cfg.placeholder of
+
                 Just (Placeholder _ el) ->
                     placeholderTextOf el
+
                 Nothing ->
                     []
+        layoutAndControl = splitLayoutAttrs attrs
+        layoutAttrs = fst layoutAndControl
+        controlAttrs = snd layoutAndControl
         baseAttrs =
             Ui.htmlAttribute "type" inputType
                 :: Ui.htmlAttribute "value" cfg.text
                 :: Ui.onInput cfg.onChange
                 :: placeholderAttr
-                ++ attrs
+                ++ controlAttrs
+                ++ implicitFillIfHoisted layoutAttrs
         inputEl = Ui.input baseAttrs
     in
-        wrapWithLabel cfg.label [] inputEl
+        wrapWithLabel cfg.label layoutAttrs inputEl
 
 
 -- Render a single radio option — a clickable `<input type="radio">`
 -- + its visible label, wrapped in a `<label>` element so clicking
 -- the text also activates the radio.
 renderRadioOption : (String -> msg) -> String -> RadioOption msg -> Element msg
-renderRadioOption onChange selected (RadioOption value labelEl) =
+renderRadioOption onChange selected RadioOption value labelEl =
     let
         isChecked = value == selected
         checkedAttr =
             if isChecked then
-                [ Ui.htmlAttribute "checked" "checked" ]
+                [Ui.htmlAttribute "checked" "checked"]
+
             else
                 []
         radioInput =
             Ui.input
                 ([ Ui.htmlAttribute "type" "radio"
-                 , Ui.htmlAttribute "value" value
-                 , Ui.onClick (onChange value)
-                 ] ++ checkedAttr)
+                , Ui.htmlAttribute "value" value
+                , Ui.onClick (onChange value)
+                ]
+                    ++ checkedAttr)
     in
         Ui.row [ Ui.spacing 6, Ui.pointer ] [ radioInput, labelEl ]
 
@@ -315,12 +460,14 @@ placeholderTextOf el =
     in
         if String.isEmpty s then
             []
+
         else
-            [ Ui.htmlAttribute "placeholder" s ]
+            [Ui.htmlAttribute "placeholder" s]
 
 
 extractText : Element msg -> String
-extractText el = Ui.elementText el
+extractText el =
+    Ui.elementText el
 
 
 -- Internal: build a bare input element by tag for fixed-msg controls
@@ -335,33 +482,114 @@ inputElement inputType msg val =
         ]
 
 
+-- Internal: partition user `attrs` into (layoutAttrs, controlAttrs).
+-- Layout / size / alignment attrs hoist to the wrapWithLabel
+-- wrapper so a user's `Ui.width fill` / `Ui.height fill` /
+-- `Ui.padding 16` / `Ui.alignTop` etc. apply to the outer
+-- container (the `Ui.el` / `Ui.row` / `Ui.column` `wrapWithLabel`
+-- emits). Form / input / event / visual-style attrs stay on the
+-- inner control (`<textarea>`, `<input>`, ...) where they belong.
+--
+-- Without this split, the wrapper has no layout attrs at all, so
+-- inside `Ui.row [Ui.height fill, Ui.width fill] [Input.multiline ...]`
+-- the wrapper collapses at `flex: 0 0 auto` while the user's
+-- intent (let the textarea fill the row) silently drops on the
+-- floor. Closes the v0.15.55 follow-up to GitHub #63.
+splitLayoutAttrs : List (Attribute msg) -> ( List (Attribute msg), List (Attribute msg) )
+splitLayoutAttrs attrs =
+    splitLayoutAttrsHelp attrs [] []
+
+
+splitLayoutAttrsHelp : List (Attribute msg) -> List (Attribute msg) -> List (Attribute msg) -> ( List (Attribute msg), List (Attribute msg) )
+splitLayoutAttrsHelp attrs layoutAcc controlAcc =
+    case attrs of
+
+        [] ->
+            ( List.reverse layoutAcc, List.reverse controlAcc )
+
+        a :: rest ->
+            if isLayoutAttr a then
+                splitLayoutAttrsHelp rest (a :: layoutAcc) controlAcc
+
+            else
+                splitLayoutAttrsHelp rest layoutAcc (a :: controlAcc)
+
+
+-- Layout / size / alignment attrs that should land on the wrapper
+-- div, not on the underlying form control. Visual-style attrs
+-- (AttrFontSize / AttrBgColor / AttrBorderWidth etc.) STAY on the
+-- control — they style the input itself, not the wrapper.
+isLayoutAttr : Attribute msg -> Bool
+isLayoutAttr attr =
+    case attr of
+
+        AttrWidth _ ->
+            True
+
+        AttrHeight _ ->
+            True
+
+        AttrAlignX _ ->
+            True
+
+        AttrAlignY _ ->
+            True
+
+        AttrPadding _ _ _ _ ->
+            True
+
+        AttrSpacing _ ->
+            True
+
+        AttrNearby _ _ ->
+            True
+
+        AttrPointer ->
+            True
+
+        AttrOverflow _ _ ->
+            True
+
+        _ ->
+            False
+
+
+-- When at least one layout attr was hoisted to the wrapper, the
+-- inner control becomes implicit `Ui.fill` of the wrapper so the
+-- hoisted layout flows through. Without this, `Ui.width fill` on
+-- the wrapper has nothing to stretch against (the textarea sits
+-- at content-line height). When NO layout attrs are supplied —
+-- the default for compact / shrink-to-content inputs — we emit no
+-- implicit fill so the inputs keep their natural intrinsic size.
+implicitFillIfHoisted : List (Attribute msg) -> List (Attribute msg)
+implicitFillIfHoisted layoutAttrs =
+    if List.isEmpty layoutAttrs then
+        []
+
+    else
+        [ Ui.width Ui.fill, Ui.height Ui.fill ]
+
+
 -- Wrap a control in its label according to LabelPosition. Hidden
 -- labels emit aria-label on the wrapper for screen-reader access.
 wrapWithLabel : Label msg -> List (Attribute msg) -> Element msg -> Element msg
 wrapWithLabel lbl wrapperAttrs control =
     case lbl of
+
         LabelHidden text ->
             Ui.el (Ui.htmlAttribute "aria-label" text :: wrapperAttrs) control
 
         Label pos labelAttrs labelEl ->
             case pos of
+
                 AbovePos ->
-                    Ui.column wrapperAttrs
-                        [ Ui.el labelAttrs labelEl
-                        , control
-                        ]
+                    Ui.column wrapperAttrs [ Ui.el labelAttrs labelEl, control ]
+
                 BelowPos ->
-                    Ui.column wrapperAttrs
-                        [ control
-                        , Ui.el labelAttrs labelEl
-                        ]
+                    Ui.column wrapperAttrs [ control, Ui.el labelAttrs labelEl ]
+
                 LeftPos ->
-                    Ui.row wrapperAttrs
-                        [ Ui.el labelAttrs labelEl
-                        , control
-                        ]
+                    Ui.row wrapperAttrs [ Ui.el labelAttrs labelEl, control ]
+
                 RightPos ->
-                    Ui.row wrapperAttrs
-                        [ control
-                        , Ui.el labelAttrs labelEl
-                        ]
+                    Ui.row wrapperAttrs [ control, Ui.el labelAttrs labelEl ]

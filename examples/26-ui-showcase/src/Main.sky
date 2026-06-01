@@ -15,6 +15,7 @@ type alias Model =
 type Msg
     = Inc
     | Dec
+    | Edit String
 
 
 init : {  } -> ( Model, Cmd Msg )
@@ -36,6 +37,12 @@ update msg model =
 
         Dec ->
             ( { model | count = model.count - 1 }, Cmd.none )
+
+        Edit _ ->
+            -- Showcase doesn't persist the textarea value; the
+            -- typed onChange callback exists so RegressionGates'
+            -- `inputMultilineFill` fixture compiles end-to-end.
+            ( model, Cmd.none )
 
 
 white : Ui.Color
@@ -259,7 +266,7 @@ view model =
                 , Ui.spacing 18
                 , Ui.htmlAttribute "data-test-id" "showcase-root"
                 ]
-                (originalSections ++ RegressionGates.cases))
+                (originalSections ++ RegressionGates.cases Edit))
 
 
 main =

@@ -309,6 +309,25 @@ try {
             ok(`triple-inner flex-grow = 1`);
         }
 
+        // Input.multiline fill (#403 / v0.15.55 — the #63 follow-up).
+        // The outer column is fixed-height 120; Input.multiline carries
+        // `Ui.height fill` so the textarea should fill the column.
+        // Pre-fix the wrapWithLabel-emitted wrapper carried no layout
+        // attrs at all, so the textarea collapsed at content-line
+        // height (~22 px) even though the user supplied fill.
+        const inputTa = await page.evaluate(() => {
+            const ta = document.querySelector('[data-test-id="input-multiline-textarea"]');
+            if (!ta) return null;
+            const r = ta.getBoundingClientRect();
+            return { width: r.width, height: r.height };
+        });
+        if (inputTa) {
+            // Outer is 120px tall; textarea should fill it within tolerance.
+            approxEq("input-multiline-textarea height", inputTa.height, 120, PIXEL_TOLERANCE);
+        } else {
+            fail("input-multiline-textarea", "missing textarea[data-test-id=input-multiline-textarea]");
+        }
+
         // wrapWithLabel shape (AsRow propagation, the canonical
         // issue #63 reproducer for the horizontal axis).
         const wrapMid = await measure(page, "wrap-mid");

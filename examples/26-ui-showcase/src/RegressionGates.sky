@@ -28,6 +28,7 @@ import Std.Ui as Ui exposing (Element)
 import Std.Ui.Background as Background
 import Std.Ui.Border as Border
 import Std.Ui.Font as Font
+import Std.Ui.Input as Input
 import Std.Ui.Transition as Transition
 import Std.Ui.Animation as Animation
 import Std.Ui.Transform as Transform
@@ -174,6 +175,36 @@ fixedAndFill =
               ]
               Ui.none
         ]
+
+
+-- v0.15.55 follow-up to #63: Input.* attrs split. Layout attrs on
+-- the Input.multiline call hoist to the wrapper; the inner
+-- <textarea> gains implicit fill so the cascade flows through.
+-- Pre-fix the wrapper was layout-attrs-empty and the textarea
+-- collapsed at content-line height even though the user supplied
+-- `Ui.height fill` on Input.multiline.
+--
+-- Takes an `onChange` constructor from the caller so this fixture
+-- keeps the polymorphic `Element msg` shape the rest of cases uses.
+inputMultilineFill : (String -> msg) -> Element msg
+inputMultilineFill onEdit =
+    Ui.column
+        [ Ui.width Ui.fill
+        , Ui.height (Ui.px 120)
+        , testId "input-multiline-outer"
+        ]
+        [Input.multiline
+            [ Ui.width Ui.fill
+            , Ui.height Ui.fill
+            , Background.color (Ui.rgb 240 245 255)
+            , Ui.htmlAttribute "data-test-id" "input-multiline-textarea"
+            ]
+            { onChange = onEdit
+            , text = "fill the column"
+            , placeholder = Nothing
+            , label = Input.labelHidden "Body"
+            , spellcheck = False
+            }]
 
 
 -- ─── 2. Viewport-responsive stub ───────────────────────────────
@@ -538,14 +569,20 @@ card sectionId title body =
         ]
 
 
--- Composite list — wired into Main's view.
-cases : List (Element msg)
-cases =
+-- Composite list — wired into Main's view. Takes an `onEdit`
+-- constructor so the `inputMultilineFill` fixture (#403 / v0.15.55)
+-- can route its typed `onChange` back to the caller's Msg type.
+cases : (String -> msg) -> List (Element msg)
+cases onEdit =
     [ card "triple-nested" "Triple-nested fill (#63 class)" tripleNestedFill
     , card
           "wrap-label"
           "wrapWithLabel shape (AsRow #63 class)"
           wrapWithLabelShape
+    , card
+          "input-multiline"
+          "Input.multiline fill (#403 / v0.15.55)"
+          (inputMultilineFill onEdit)
     , card "portion" "fillPortion 1:2:3" portionRow
     , card "fixed-fill" "Fixed-px siblings of fill child" fixedAndFill
     , card "viewport" "Viewport-resize stub (#376)" viewportStub

@@ -33,6 +33,7 @@ import qualified Sky.Build.UiPseudoClassSpec
 import qualified Sky.Build.UiTransitionAnimationSpec
 import qualified Sky.Build.UiAspectGridSpec
 import qualified Sky.Build.UiMultilineTextareaSpec
+import qualified Sky.Build.InputAttrsSplitSpec
 import qualified Sky.Build.ExposingTypeCtorsSpec
 import qualified Sky.Build.LetForwardRefSpec
 import qualified Sky.Build.EntryLocalShadowsDepSpec
@@ -274,6 +275,13 @@ main = hspec $ do
     -- routes through a real <textarea> element with the value-attr
     -- → text-content splice the Live runtime already supports.
     describe "Sky.Build.UiMultilineTextarea" Sky.Build.UiMultilineTextareaSpec.spec
+    -- Input.* attrs partition between wrapper + inner control —
+    -- GitHub issue #63 follow-up: layout/size/alignment attrs
+    -- hoist to the wrapWithLabel wrapper so the layout chain
+    -- propagates; form / event / visual attrs stay on the inner
+    -- control. Pre-fix: textarea-fill-height inside a row
+    -- collapsed because the wrapper carried no layout attrs.
+    describe "Sky.Build.InputAttrsSplit" Sky.Build.InputAttrsSplitSpec.spec
     describe "Sky.Build.ExposingTypeCtors" Sky.Build.ExposingTypeCtorsSpec.spec
     describe "Sky.Build.LetForwardRef"     Sky.Build.LetForwardRefSpec.spec
     describe "Sky.Build.EntryLocalShadowsDep" Sky.Build.EntryLocalShadowsDepSpec.spec

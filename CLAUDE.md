@@ -1139,6 +1139,18 @@ view model =
    `Main.sky` dispatcher. See `examples/19-skyforum`'s 8-module
    form for the working shape.
 
+4. **`Input.*` size / layout attrs apply to the wrapper, form
+   attrs stay on the inner control.** Every `Std.Ui.Input.*` call
+   (text / multiline / email / username / search / currentPassword
+   / newPassword / slider / checkbox / radio / radioRow) routes
+   layout attrs (`Ui.width`/`Ui.height`/`Ui.padding`/`Ui.spacing`/
+   `Ui.alignX`/`Ui.alignY`/`Ui.nearby`/`Ui.pointer`/`Ui.overflow`)
+   to the outer wrapper `wrapWithLabel` emits, while form / event /
+   visual attrs stay on the inner `<input>` / `<textarea>`. So
+   `Input.multiline [Ui.height Ui.fill] {...}` inside a column-fill
+   parent fills the parent; `Background.color (Ui.rgb 240 240 240)`
+   colours the textarea itself, not the wrapper.
+
 ### Surface highlights
 
 Full reference: `docs/skyui/overview.md`.
