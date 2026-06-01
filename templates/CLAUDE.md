@@ -2069,11 +2069,35 @@ Http.defaultRequest "https://api.example.com/v1/foo"
     |> Http.withTimeout 60000              -- 60 s; 0 disables
     |> Http.request                         -- Task Error HttpResponse
 
--- Retry on transient errors:
+-- Retry on transient errors (uniform Sky.Core.Task surface):
+--
+--   * `RetryPolicy e` carries the body-Task's error type.
+--   * `ShouldRetry e = RetryAlways | RetryWhen (e -> Bool)` is the
+--     HM-pure predicate ADT (replaces `shouldRetry : any` from
+--     v0.15.44). `RetryAlways` is the default in every fresh
+--     policy; `retryOn` (or its `with*` alias `withRetryOn`)
+--     wraps a typed predicate in `RetryWhen`.
+import Sky.Core.Error as Error
+
+-- Default: retry every Err (RetryAlways).
+policyA = Task.exponentialBackoff 3 500
+
+-- Typed-predicate: only retry transient errors (RetryWhen).
+policyB =
+    Task.exponentialBackoff 3 500
+        |> Task.withJitter
+        |> Task.retryOn Error.isRetryable
+
+-- Builder pattern (mirror of `Http.defaultRequest |> Http.withTimeout`):
+policyC =
+    Task.defaultRetryPolicy
+        |> Task.withMaxAttempts 5
+        |> Task.withBaseMs 250
+        |> Task.withRetryOn Error.isRetryable
+
 fetchToken : Task Error String
 fetchToken =
-    Task.retryWith
-        (Task.exponentialBackoff 5 500 |> Task.withJitter)
+    Task.retryWith policyB
         (Http.get tokenUrl |> Task.map (\resp -> resp.body))
 
 Http.parseQuery "a=1&b=2"   -- Dict String String (pure; Go net/url)

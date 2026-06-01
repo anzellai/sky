@@ -684,7 +684,7 @@ Each binding is either:
 
 | Module | Path | Key functions |
 |---|---|---|
-| `Task` | `Sky.Core.Task` | succeed, fail, map, andThen, perform, sequence, parallel, lazy, run, fromResult, andThenResult, mapError, onError; **retryWith** + RetryPolicy (linearBackoff, exponentialBackoff, withJitter, retryOn) |
+| `Task` | `Sky.Core.Task` | succeed, fail, map, andThen, perform, sequence, parallel, lazy, run, fromResult, andThenResult, mapError, onError; **retryWith** + `RetryPolicy e` + `ShouldRetry e` ADT (RetryAlways \| RetryWhen (e -> Bool)). Build via linearBackoff / exponentialBackoff / defaultRetryPolicy; decorate via withJitter / withMaxAttempts / withBaseMs / withKind / withRetryOn (alias for retryOn). v0.15.50+ ShouldRetry is HM-pure (portable to Rust / WASM backends). |
 | `Cmd` | `Std.Cmd` | none, batch, perform, publish (echo-by-default pub/sub from update return), publishNoEcho (opt-out echo — broker skips publisher's own subscription) |
 | `Sub` | `Std.Sub` | none, every, batch, subscribeTopic (pub/sub receive) |
 | `PubSub` | `Std.PubSub` | publish (Task-shaped — callable from raw `api` handlers / post-init / scheduled jobs; complements `Cmd.publish` which is bound to update-returns), publishNoEcho (Task-shaped no-echo — sets the broker's SkipOrigin bit for v0.16+ cross-process tier propagation) |

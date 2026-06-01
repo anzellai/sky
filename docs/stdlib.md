@@ -433,11 +433,19 @@ main =
 | `Task.run` | `Task e a -> Result e a` | Force at the boundary |
 | `Task.fromResult` | `Result e a -> Task e a` | Bridge from Result |
 | `Task.andThenResult` | `(a -> Result e b) -> Task e a -> Task e b` | Chain Result step after Task |
-| `Task.linearBackoff` | `Int -> Int -> RetryPolicy` | (maxAttempts, delayMs) — same delay every retry |
-| `Task.exponentialBackoff` | `Int -> Int -> RetryPolicy` | (maxAttempts, baseMs) — `baseMs * 2^(n-1)`, capped at 30 s |
-| `Task.withJitter` | `RetryPolicy -> RetryPolicy` | Randomise delay in `[0.5×, 1.5×]` to spread retry waves |
-| `Task.retryOn` | `(e -> Bool) -> RetryPolicy -> RetryPolicy` | Predicate-gate retry (e.g. transient-vs-validation) |
-| `Task.retryWith` | `RetryPolicy -> Task e a -> Task e a` | Drive task up to maxAttempts; first Ok wins, last Err otherwise |
+| `Task.RetryPolicy e` | record alias | `{ maxAttempts : Int, baseMs : Int, jitter : Bool, kind : Int, shouldRetry : ShouldRetry e }` — `e` flows from the body Task; build via `linearBackoff` / `exponentialBackoff` / `defaultRetryPolicy` then decorate |
+| `Task.ShouldRetry e` | ADT | `RetryAlways \| RetryWhen (e -> Bool)` — HM-pure predicate (replaces `shouldRetry : any` from v0.15.44); portable to statically-typed backends (Rust / WASM) without runtime boxing |
+| `Task.retryAlways` | `ShouldRetry e` | Pure-Sky `RetryAlways` sentinel — the default in every fresh policy |
+| `Task.linearBackoff` | `Int -> Int -> RetryPolicy e` | (maxAttempts, delayMs) — same delay every retry |
+| `Task.exponentialBackoff` | `Int -> Int -> RetryPolicy e` | (maxAttempts, baseMs) — `baseMs * 2^(n-1)`, capped at 30 s |
+| `Task.defaultRetryPolicy` | `RetryPolicy e` | Sensible default: 3 attempts, 500 ms exponential base, no jitter, `RetryAlways` — start here when building with `with*` helpers |
+| `Task.withMaxAttempts` | `Int -> RetryPolicy e -> RetryPolicy e` | Builder helper — override `maxAttempts` |
+| `Task.withBaseMs` | `Int -> RetryPolicy e -> RetryPolicy e` | Builder helper — override `baseMs` |
+| `Task.withKind` | `Int -> RetryPolicy e -> RetryPolicy e` | Builder helper — override backoff `kind` (`0 = linear, 1 = exponential`) |
+| `Task.withJitter` | `RetryPolicy e -> RetryPolicy e` | Randomise delay in `[0.5×, 1.5×]` to spread retry waves |
+| `Task.withRetryOn` | `(e -> Bool) -> RetryPolicy e -> RetryPolicy e` | Builder alias for `retryOn` — wraps predicate in `RetryWhen` |
+| `Task.retryOn` | `(e -> Bool) -> RetryPolicy e -> RetryPolicy e` | Predicate-gate retry (e.g. transient-vs-validation) — sets `shouldRetry = RetryWhen predicate` |
+| `Task.retryWith` | `RetryPolicy e -> Task e a -> Task e a` | Drive task up to maxAttempts; first Ok wins, last Err otherwise |
 | `Task.map2`...`Task.map5`, `Task.andMap` | combinators | NOT YET IMPLEMENTED — use `Task.parallel [...] \|> Task.map ...` or `Result.map2..5` for the Result counterparts |
 
 ### `Cmd` / `Sub` — Sky.Live commands and subscriptions
