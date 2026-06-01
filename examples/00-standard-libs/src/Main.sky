@@ -73,6 +73,18 @@ taskRetrySuite =
                 case Task.perform (Task.retryWith policy (Task.succeed "j")) of
                     Ok v -> Test.equal "j" v
                     Err _ -> Test.isFalse True)
+        , Test.test "retryOn predicate short-circuits" (\_ ->
+            -- v0.15.50: ShouldRetry e ADT. retryOn wraps the predicate in
+            -- RetryWhen; when it returns False, retryWith stops the loop
+            -- after the first failure rather than honouring maxAttempts.
+            let
+                policy =
+                    Task.linearBackoff 5 1
+                        |> Task.retryOn (\_ -> False)
+            in
+                case Task.perform (Task.retryWith policy (Task.fail (Error.io "no-retry"))) of
+                    Err _ -> Test.isTrue True
+                    Ok _ -> Test.isFalse True)
         ]
 
 

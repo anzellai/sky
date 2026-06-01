@@ -6,6 +6,19 @@ import (
 	"time"
 )
 
+// retryAlwaysADT builds a `RetryAlways` ShouldRetry value as the
+// runtime sees it post-v0.15.50. The SkyADT layout mirrors what
+// codegen emits for the constructor.
+func retryAlwaysADT() any {
+	return SkyADT{Tag: 0, SkyName: "RetryAlways", Fields: nil}
+}
+
+// retryWhenADT wraps a Sky predicate `(e -> Bool)` in the RetryWhen
+// constructor.
+func retryWhenADT(predicate func(any) any) any {
+	return SkyADT{Tag: 1, SkyName: "RetryWhen", Fields: []any{predicate}}
+}
+
 // Task.retryWith returns the first successful result and stops calling
 // the body after the first Ok.
 func TestTaskRetryStopOnOk(t *testing.T) {
@@ -23,7 +36,7 @@ func TestTaskRetryStopOnOk(t *testing.T) {
 		"baseMs":      10,
 		"jitter":      false,
 		"kind":        0,
-		"shouldRetry": nil,
+		"shouldRetry": retryAlwaysADT(),
 	}
 	task := Task_retryWith(policy, body)
 	res := anyTaskInvoke(task)
@@ -51,7 +64,7 @@ func TestTaskRetryExhaustsAttempts(t *testing.T) {
 		"baseMs":      1,
 		"jitter":      false,
 		"kind":        0,
-		"shouldRetry": nil,
+		"shouldRetry": retryAlwaysADT(),
 	}
 	task := Task_retryWith(policy, body)
 	res := anyTaskInvoke(task)
@@ -75,7 +88,7 @@ func TestTaskRetryShouldRetryFalse(t *testing.T) {
 		"baseMs":      1,
 		"jitter":      false,
 		"kind":        0,
-		"shouldRetry": func(_ any) any { return false },
+		"shouldRetry": retryWhenADT(func(_ any) any { return false }),
 	}
 	task := Task_retryWith(policy, body)
 	res := anyTaskInvoke(task)
