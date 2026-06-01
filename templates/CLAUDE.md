@@ -4806,6 +4806,13 @@ The server provides:
 - Diagnostics on save (type errors, parse errors)
 - Hover with inferred types
 - Completion (top-level defs + stdlib)
+- Go-to-definition, references, rename (workspace-wide)
+- Signature help (per-parameter ranges so the active argument
+  is highlighted in the editor's signature popup)
+- Code actions (quick-fixes: unused imports, organize imports)
+- Semantic tokens (type-aware syntax highlighting)
+- Call hierarchy (v0.15.50+: "Show Call Hierarchy" — incoming
+  callers + outgoing callees for any callable)
 
 ### Incremental Builds
 

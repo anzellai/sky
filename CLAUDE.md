@@ -527,7 +527,7 @@ sky update                         # update deps
 sky upgrade                        # self-upgrade binary
 sky upgrade-claude                 # refresh ./CLAUDE.md from binary's embedded template
 sky clean                          # remove sky-out/ dist/
-sky lsp                            # JSON-RPC LSP server (stdio)
+sky lsp                            # JSON-RPC LSP server (stdio) — hover, definition, references, rename, signatureHelp, codeAction, semanticTokens, completion, call-hierarchy (v0.15.50+: prepare/incoming/outgoing)
 sky --version                      # `sky dev` on local builds; CI injects release version
 ```
 

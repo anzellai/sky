@@ -39,7 +39,51 @@ From `serverCapabilities` in `src/Sky/Lsp/Server.hs`:
 | `textDocument/codeAction` | yes | `quickfix` + `source.organizeImports` kinds |
 | `textDocument/semanticTokens/full` | yes | Syntactic highlighting |
 | `textDocument/completion` | yes | Triggered on `.` (qualified-name) |
+| `textDocument/prepareCallHierarchy` | yes | v0.15.50+: cursor → CallHierarchyItem[] |
+| `callHierarchy/incomingCalls` | yes | v0.15.50+: who calls this callable |
+| `callHierarchy/outgoingCalls` | yes | v0.15.50+: what does this callable call |
 | `workspace/symbol` | no | Use `documentSymbol` per-file |
+
+### Call-hierarchy wire shape (v0.15.50+)
+
+Editors that wire `prepareCallHierarchy` (VS Code's "Show Call
+Hierarchy", Neovim's `vim.lsp.buf.incoming_calls()`,
+Helix's `:lsp-workspace-symbol` panel, Zed's
+"Call Hierarchy" command) all speak the LSP-3.17 protocol:
+
+```json
+// 1. textDocument/prepareCallHierarchy
+//    Request:  { textDocument: { uri }, position: { line, character } }
+//    Response: CallHierarchyItem[]
+{ "name": "applyMsg", "kind": 12, "uri": "file:///path/Main.sky",
+  "range":          { "start": {...}, "end": {...} },
+  "selectionRange": { "start": {...}, "end": {...} },
+  "detail":         "applyMsg : Msg -> Int -> Int" }
+
+// 2. callHierarchy/incomingCalls
+//    Request:  { item: CallHierarchyItem }
+//    Response: CallHierarchyIncomingCall[]
+{ "from": <CallHierarchyItem of caller>,
+  "fromRanges": [ { "start": {...}, "end": {...} }, ... ] }
+
+// 3. callHierarchy/outgoingCalls
+//    Request:  { item: CallHierarchyItem }
+//    Response: CallHierarchyOutgoingCall[]
+{ "to":   <CallHierarchyItem of callee>,
+  "fromRanges": [ { "start": {...}, "end": {...} }, ... ] }
+```
+
+`kind: 12` is `SymbolKind.Function` per LSP. `selectionRange` is
+the identifier proper; `range` matches it (Sky's index doesn't
+carry whole-declaration spans yet, so range == selectionRange).
+`detail` carries the type signature when known so editors can show
+it next to the entry without a follow-up hover request.
+
+Implementation: `handlePrepareCallHierarchy` /
+`handleIncomingCalls` / `handleOutgoingCalls` in
+`src/Sky/Lsp/Server.hs`. Same-file fallback covers the
+didOpen-only flow (workspace index not yet built) — prepare still
+resolves on a fresh project before buildIndex returns.
 
 ## What gets indexed
 
