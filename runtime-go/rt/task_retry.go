@@ -82,16 +82,16 @@ func computeDelay(kind, baseMs, attempt int, jitter bool) time.Duration {
 // `shouldRetry` field.  v0.15.50: the field is now the `ShouldRetry e`
 // ADT (RetryAlways | RetryWhen (e -> Bool)) instead of the previous
 // `any` value.  We switch on the constructor tag — cheaper than the
-// reflect-backed callable detection, exhaustiveness-checked at the
-// Sky source level, and portable to statically-typed backends.
+// reflect-backed callable detection and exhaustiveness-checked at the
+// Sky source level.
 //
 // Defensive defaults: unknown ctor name OR malformed RetryWhen payload
 // → retry (safer than dropping the err).
-func callShouldRetry(should any, errValue any) bool {
-	if should == nil {
+func callShouldRetry(fn any, errValue any) bool {
+	if fn == nil {
 		return true
 	}
-	name, fields := readShouldRetry(should)
+	name, fields := readShouldRetry(fn)
 	switch name {
 	case "RetryAlways":
 		return true
@@ -99,15 +99,15 @@ func callShouldRetry(should any, errValue any) bool {
 		if len(fields) != 1 {
 			return true
 		}
-		fn := fields[0]
-		if predicate, ok := fn.(func(any) any); ok {
+		inner := fields[0]
+		if predicate, ok := inner.(func(any) any); ok {
 			r := predicate(errValue)
 			if b, ok := r.(bool); ok {
 				return b
 			}
 			return true
 		}
-		r := skyCallOne(fn, errValue)
+		r := skyCallOne(inner, errValue)
 		if b, ok := r.(bool); ok {
 			return b
 		}
