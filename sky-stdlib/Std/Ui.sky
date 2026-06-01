@@ -2862,6 +2862,18 @@ widthCssIn parentCtx lng =
 -- maps to flex-grow on the parent's MAIN axis, where portions
 -- actually divide the free space. On the cross axis a portion is
 -- meaningless — the child simply stretches.
+--
+-- F1 asymmetry note. The cross-axis WIDTH fill keeps the explicit
+-- `width: 100%` because column / el / textColumn parents have
+-- DEFINITE block widths (inherited from <body>/viewport) in 99% of
+-- real pages — so the `100%` resolves cleanly AND additionally
+-- protects against the F4 interaction (e.g. `[Ui.width Ui.fill,
+-- Ui.centerX]` where `align-self: center` cascades over the
+-- stretch). The cross-axis HEIGHT fill (heightFillFor below)
+-- DOES strip `height: 100%` because row parents commonly have
+-- indefinite heights (flex-grow-derived or content-derived) and
+-- the `100%` collapses harmfully — that's the documented #63
+-- + Z2/Z3 bug class.
 widthFillFor : LayoutContext -> Int -> String
 widthFillFor parentCtx n =
     case parentCtx of
@@ -2910,12 +2922,14 @@ heightCssIn parentCtx lng =
             "height: " ++ String.fromInt n ++ "vw;"
 
 
+-- See F1 note on widthFillFor — cross-axis stays as bare
+-- `align-self: stretch;` for correctness under indefinite parents.
 heightFillFor : LayoutContext -> Int -> String
 heightFillFor parentCtx n =
     case parentCtx of
 
         AsRow ->
-            "align-self: stretch; height: 100%;"
+            "align-self: stretch;"
 
         AsColumn ->
             "flex-grow: " ++ String.fromInt n ++ "; min-height: 0;"
