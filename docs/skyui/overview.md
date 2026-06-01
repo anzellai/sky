@@ -383,7 +383,7 @@ view model =
 
 | Attr list | Reaches |
 |---|---|
-| `wrapperAttrs` | The outer 100 vh `<div>` (the page-tall flex floor). Background colours paint the whole viewport; Font.color / Font.family cascade to every descendant; raw style overrides via `Ui.htmlAttribute "style" "flex-direction: row;"` (rare). |
+| `wrapperAttrs` | The outer 100 vh `<div>` (the page-tall flex floor). Background colours paint the whole viewport; Font.color / Font.family cascade to every descendant; Border / class / aria-* / data-* attach to the wrapper directly. |
 | `rootAttrs` | The root element rendered under the wrapper (same as `Ui.layout`'s arg). `Ui.width` / `Ui.height` / `Ui.padding` / `Ui.spacing` etc. apply here. |
 
 `Ui.layout attrs el` is equivalent to `Ui.layoutWith {

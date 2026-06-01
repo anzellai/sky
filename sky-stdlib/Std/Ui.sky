@@ -1696,9 +1696,15 @@ layout rootAttrs root =
 --   * document-level typography: `wrapperAttrs = [Font.color text,
 --     Font.family [Font.sansSerif]]` cascades to every descendant
 --   * background image at the page level
---   * row-direction page (rare; default `flex-direction: column`
---     can be overridden by `wrapperAttrs =
---     [Ui.htmlAttribute "style" "flex-direction: row;"]`)
+--   * border / class / aria-* / data-* attrs that need to sit on
+--     the page wrapper for analytics / CSS selectors / a11y
+--     landmark routing
+--
+-- For row-direction page layouts, wrap your root in a `Ui.row`
+-- — the wrapper stays `flex-direction: column` (its single child
+-- is your row, which renders flex-row internally). The default
+-- column wrapper is load-bearing for the standard "vertical
+-- scroll" page model.
 --
 -- `Ui.layout attrs el` is exactly `Ui.layoutWith { wrapperAttrs =
 -- [], rootAttrs = attrs } el` — call-site byte-identical for

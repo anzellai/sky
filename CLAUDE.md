@@ -1189,8 +1189,8 @@ Ui.layoutWith { wrapperAttrs : [Attr msg], rootAttrs : [Attr msg] } -> Element m
 
 Additive entry point. `wrapperAttrs` reach the outer 100 vh
 `<div>` page wrapper (Background.color for page-wide dark mode,
-Font.color / Font.family for document-wide typography, raw
-`htmlAttribute "style"` for `flex-direction: row` overrides).
+Font.color / Font.family for document-wide typography, Border /
+class / aria-* / data-* for analytics / a11y landmark routing).
 `rootAttrs` apply to the root element (same as `Ui.layout`'s
 argument).
 
