@@ -2869,11 +2869,24 @@ generateDeclsForDep canMod modPrefix =
     go keepName (Can.DeclareRec def defs rest) =
         mkDef keepName def ++ concatMap (mkDef keepName) defs ++ go keepName rest
 
-    mkDef keepName def = case def of
+    mkDef keepName def0 = case def0 of
         Can.DestructDef _ _ -> []
-        _ | not (keepName (defName def)) -> []
+        _ | not (keepName (defName def0)) -> []
         _ ->
-          let -- For TypedDef, the 5th field is the RETURN type only;
+          let -- v0.15.52 #398 — Eta-expand point-free aliases at the
+              -- dep-emission entry point too.  Without this, a dep
+              -- module's `tickle = String.toUpper` produced a 0-arity
+              -- Go thunk that callers couldn't apply.  Mirrors the
+              -- same rewrite in `generateDef` (entry-module path).
+              -- Use the per-module-scoped solved view so the eta
+              -- arity lookup matches the dep's own HM ledger (the
+              -- `_stPerModuleEnv` path that closes #365's cross-
+              -- module collisions).
+              depSolved = Solve.withCurrentModule
+                              (Just (ModuleName.toString (Can._name canMod)))
+                              (Rec._cg_solvedTypes getCgEnv)
+              def = etaExpandPointFreeScoped depSolved def0
+              -- For TypedDef, the 5th field is the RETURN type only;
               -- per-pattern arg types live in `typedPats :: [(Pat, Type)]`.
               (name, params, body, mAnnotArgs, _mAnnotRet) = case def of
                 Can.Def (A.At _ n) pats expr ->
@@ -3973,6 +3986,97 @@ generateDefMaybe home reachable dceEnabled def solvedTypes = case def of
             else []
 
 
+-- | v0.15.52 #398 — Point-free top-level alias eta-expansion.
+--
+-- Detects `name = expr` (or annotated `name : a -> b -> c; name =
+-- expr`) where `expr` syntactically has type `T1 -> ... -> Tn -> Tr`
+-- with n ≥ 1 but the binding's syntactic param count is < n. Returns
+-- an eta-expanded equivalent with synthetic PVar patterns + a body
+-- of the form `Call expr [VarLocal p_0, ..., VarLocal p_{n-1}]`.
+--
+-- Without this rewrite, the lowerer infers arity from the syntactic
+-- param count and emits a 0-arity Go thunk wrapper around an N-arity
+-- value, so every call site fails `go build` with `too many arguments
+-- in call to <name>`.
+--
+-- For TypedDef the annotation supplies arrow arity; for Can.Def the
+-- HM-solved type does. Only expand when the type genuinely has
+-- arrows beyond the syntactic params — otherwise we'd break value
+-- bindings that happen to have function-typed return slots (e.g.
+-- `init : Cmd Msg` produces a Cmd value, not a function).
+etaExpandPointFree :: Solve.SolvedTypes -> Can.Def -> Can.Def
+etaExpandPointFree = etaExpandWith Solve.lookupSolvedVar
+
+
+-- | Module-scoped variant — used from `generateDeclsForDep` so the
+-- arity lookup consults the dep's own per-module env first (closes
+-- the cross-module same-name collision class — same shape as #365).
+etaExpandPointFreeScoped :: Solve.SolvedTypes -> Can.Def -> Can.Def
+etaExpandPointFreeScoped = etaExpandWith Solve.lookupSolvedVarScoped
+
+
+etaExpandWith
+    :: (String -> Solve.SolvedTypes -> Maybe T.Type)
+    -> Solve.SolvedTypes
+    -> Can.Def
+    -> Can.Def
+etaExpandWith lookupFn solved def = case def of
+    Can.Def lname@(A.At _ n) [] body ->
+        case lookupFn n solved of
+            Just ty
+              | arrowArity ty > 0
+              , canEtaBody body ->
+                let arity = arrowArity ty
+                    fresh = etaParamNames arity
+                    region = A.toRegion body
+                    pats = [ A.At region (Can.PVar p) | p <- fresh ]
+                    args = [ A.At region (Can.VarLocal p) | p <- fresh ]
+                    body' = A.At region (Can.Call body args)
+                in Can.Def lname pats body'
+            _ -> def
+    Can.TypedDef lname@(A.At _ _n) freeVars [] body retTy ->
+        let arity = arrowArity retTy
+        in if arity > 0 && canEtaBody body
+            then
+                let (paramTys, deepRet) = peelArrows arity retTy
+                    fresh = etaParamNames arity
+                    region = A.toRegion body
+                    pats = [ A.At region (Can.PVar p) | p <- fresh ]
+                    args = [ A.At region (Can.VarLocal p) | p <- fresh ]
+                    typedPats = zip pats paramTys
+                    body' = A.At region (Can.Call body args)
+                in Can.TypedDef lname freeVars typedPats body' deepRet
+            else def
+    _ -> def
+  where
+    arrowArity (Can.TLambda _ to) = 1 + arrowArity to
+    arrowArity _ = 0
+
+    peelArrows 0 t = ([], t)
+    peelArrows k (Can.TLambda from to) =
+        let (rest, r) = peelArrows (k - 1) to
+        in (from : rest, r)
+    peelArrows _ t = ([], t)
+
+    etaParamNames k = [ "_skyEta_p" ++ show i | i <- [0 .. k - 1] ]
+
+    -- Only eta-expand bodies that REFER to a value (a top-level /
+    -- kernel binding, a local, or a constructor). Avoid wrapping
+    -- already-effectful expressions whose return type happens to
+    -- be a function (`foo : Int -> Int` resulting from a `let` /
+    -- partial-app pipeline) because their evaluation may have
+    -- effects that must not run per call. The reference cases here
+    -- are the safe subset where the body is itself a pure name
+    -- pointing at a function value.
+    canEtaBody (A.At _ inner) = case inner of
+        Can.VarTopLevel _ _   -> True
+        Can.VarKernel _ _     -> True
+        Can.VarLocal _        -> True
+        Can.VarCtor{}         -> True
+        Can.Accessor _        -> True
+        _                     -> False
+
+
 -- | Read SKY_DCE env var once. Default: enabled.
 lookupDceFlag :: IO String
 lookupDceFlag = do
@@ -3982,8 +4086,19 @@ lookupDceFlag = do
 
 -- | Generate Go for a single definition, using solved types for signatures
 generateDef :: ModuleName.Canonical -> Can.Def -> Solve.SolvedTypes -> [GoIr.GoDecl]
-generateDef home def solvedTypes =
-    let (name, params, body) = case def of
+generateDef home def0 solvedTypes =
+    -- v0.15.52 #398 — Point-free top-level alias of a polymorphic /
+    -- N-ary function (e.g. `tickle = String.toUpper` where
+    -- `String.toUpper : String -> String`) syntactically has 0
+    -- parameters but its sig has arrow arity ≥ 1. Pre-fix, the
+    -- lowerer trusted the syntactic param count and emitted a
+    -- nullary thunk wrapper (`func tickle() func(string) string`);
+    -- call sites then hit `too many arguments in call to tickle`.
+    -- Eta-expand at the codegen entry point: synthesize fresh PVar
+    -- patterns for every leftover arrow + wrap the body as a Call
+    -- so the rest of `generateDef` sees a normal N-ary function.
+    let def = etaExpandPointFree solvedTypes def0
+        (name, params, body) = case def of
             Can.Def (A.At _ n) pats expr -> (n, pats, expr)
             Can.TypedDef (A.At _ n) _ typedPats expr _ ->
                 (n, map fst typedPats, expr)

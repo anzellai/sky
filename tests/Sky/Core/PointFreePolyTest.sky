@@ -1,0 +1,59 @@
+module Sky.Core.PointFreePolyTest exposing (tests)
+
+-- Regression fence for #398 — point-free top-level alias of a
+-- polymorphic / N-ary function.
+--
+-- Pre-fix, `tickle = String.toUpper` lowered to a 0-arity Go
+-- thunk and call sites failed `go build`.  Post-fix, the
+-- canonical lowerer's `etaExpandPointFree` rewrites the def to
+-- a normal N-ary function before codegen.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.Maybe as Maybe
+import Sky.Test as Test exposing (Test)
+
+
+-- 1-arg point-free alias of a monomorphic stdlib function.
+tickle : String -> String
+tickle =
+    String.toUpper
+
+
+-- 2-arg point-free alias.
+joinStr : String -> String -> String
+joinStr =
+    String.append
+
+
+-- 1-arg point-free alias of a polymorphic stdlib function.
+firstOf : List a -> Maybe a
+firstOf =
+    List.head
+
+
+tests : List Test
+tests =
+    [ Test.suite
+        "Point-free polymorphic alias (#398)"
+        [ Test.test
+            "1-arg monomorphic alias works"
+            (\_ -> Test.equal "HELLO" (tickle "hello"))
+        , Test.test
+            "2-arg monomorphic alias works"
+            (\_ -> Test.equal "hilo" (joinStr "hi" "lo"))
+        , Test.test
+            "1-arg polymorphic alias on Int list"
+            (\_ ->
+                case firstOf [ 7, 8, 9 ] of
+                    Just n -> Test.equal 7 n
+                    Nothing -> Test.isFalse True)
+        , Test.test
+            "1-arg polymorphic alias on empty list returns Nothing"
+            (\_ ->
+                case firstOf [] of
+                    Just _ -> Test.isFalse True
+                    Nothing -> Test.isTrue True)
+        ]
+    ]

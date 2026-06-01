@@ -69,6 +69,7 @@ import qualified Sky.Build.TaskResultBridgesSpec
 import qualified Sky.Build.CheckIsBuildSpec
 import qualified Sky.Build.RecordFieldOrderSpec
 import qualified Sky.Build.RecordCtorEmptyListSpec
+import qualified Sky.Build.PointFreePolyAliasSpec
 import qualified Sky.Build.HofTypedMsgSpec
 import qualified Sky.Build.CoerceArgParametricSpec
 import qualified Sky.Build.IsPlainIdentSpec
@@ -409,6 +410,10 @@ main = hspec $ do
     -- arg via rt.AsListT[T]. Pre-fix, `Item 1 "first" []` shipped
     -- `Item(1, "first", []any{})` and go build rejected.
     describe "Sky.Build.RecordCtorEmptyList" Sky.Build.RecordCtorEmptyListSpec.spec
+    -- #398: point-free top-level alias of a polymorphic / N-ary
+    -- function. Pre-fix, `tickle = String.toUpper` emitted a
+    -- 0-arity Go thunk wrapper; call sites failed `go build`.
+    describe "Sky.Build.PointFreePolyAlias" Sky.Build.PointFreePolyAliasSpec.spec
     -- Limitation #18 (other half): renderHofParamTy used to hardcode
     -- the inner-function return as `any`, breaking helpers with typed
     -- (String -> Msg) callbacks. Now routes via typeStrWithAliasesReg.
