@@ -18,6 +18,9 @@
 --   * textDocument/signatureHelp         (parameter info while typing a call)
 --   * textDocument/codeAction            (quick-fixes: unused imports, add annot)
 --   * textDocument/semanticTokens/full   (type-aware syntax highlighting)
+--   * textDocument/prepareCallHierarchy  (cursor → callable item)
+--   * callHierarchy/incomingCalls        (callers of a callable)
+--   * callHierarchy/outgoingCalls        (callees of a callable)
 --
 -- Editors supported: VS Code, Neovim, Emacs, Zed, Helix, Sublime LSP.
 --
@@ -234,6 +237,12 @@ dispatch st req = do
         "textDocument/codeAction"          -> handleCodeAction docs req reqId
         "textDocument/semanticTokens/full" -> handleSemanticTokens docs req reqId
         "textDocument/inlayHint"           -> handleInlayHint st req reqId
+        -- v0.15.50 — LSP call-hierarchy. Three methods: prepare turns
+        -- a cursor into the callable at that position; incoming /
+        -- outgoing walk the workspace index for callers / callees.
+        "textDocument/prepareCallHierarchy" -> handlePrepareCallHierarchy st req reqId
+        "callHierarchy/incomingCalls"       -> handleIncomingCalls st req reqId
+        "callHierarchy/outgoingCalls"       -> handleOutgoingCalls st req reqId
         _ -> case reqId of
             Just _  -> sendReply reqId A.Null
             Nothing -> return ()
@@ -814,6 +823,395 @@ handleReferencesIdx st req reqId = do
                 ]
 
 
+-- ─── Call hierarchy (Stage 6 / v0.15.50) ──────────────────────────────
+--
+-- Three LSP methods backing "Show Call Hierarchy" in editors:
+--
+--   1. textDocument/prepareCallHierarchy
+--      Cursor → CallHierarchyItem[]. We resolve the identifier at
+--      cursor via Idx.lookupAtCursor (workspace index) with a
+--      same-file top-level fallback for the didOpen-only flow before
+--      the index has been built.
+--
+--   2. callHierarchy/incomingCalls
+--      Given a CallHierarchyItem, walk every parsed module in
+--      idxFileSrc, find top-level values whose body references the
+--      target name, and emit { from: callerItem, fromRanges: [refs] }
+--      grouped by enclosing top-level binding (one entry per caller
+--      value, multiple ranges if the caller calls the target many
+--      times).
+--
+--   3. callHierarchy/outgoingCalls
+--      Given a CallHierarchyItem, find that value's body in its
+--      file's parsed module, walk it for references, resolve each
+--      via the workspace index, and emit { to: calleeItem,
+--      fromRanges: [refs] } grouped by callee. Self-references and
+--      pattern-bound locals are excluded (they aren't callable
+--      symbols).
+--
+-- The wire shape matches the LSP spec literally:
+--   CallHierarchyItem { name, kind=12, uri, range, selectionRange, detail? }
+--   IncomingCall      { from: CallHierarchyItem, fromRanges: Range[] }
+--   OutgoingCall      { to:   CallHierarchyItem, fromRanges: Range[] }
+
+-- | Build a CallHierarchyItem JSON object from the bits we have.
+-- kind=12 is SymbolKind.Function per LSP. selectionRange is the
+-- identifier proper; range covers the whole declaration but in
+-- practice we use the same region as selectionRange because Sky's
+-- index doesn't carry whole-declaration spans.
+mkCallHierarchyItem
+    :: String       -- ^ name (local, no qualifier)
+    -> FilePath     -- ^ file (will be turned into a file:// URI)
+    -> A.Region     -- ^ declaration / selection region (1-based)
+    -> Maybe String -- ^ detail (e.g. type signature or module)
+    -> A.Value
+mkCallHierarchyItem name file reg mDetail =
+    let r = regionToLspRange reg
+        base =
+            [ "name"           A..= T.pack name
+            , "kind"           A..= (12 :: Int)     -- SymbolKind.Function
+            , "uri"            A..= pathToUri file
+            , "range"          A..= r
+            , "selectionRange" A..= r
+            ]
+        full = case mDetail of
+            Just d  -> base ++ [ "detail" A..= T.pack d ]
+            Nothing -> base
+    in A.object full
+
+
+-- | A CallHierarchyItem reconstructed from incoming params has the
+-- shape produced by mkCallHierarchyItem above. We pull (name, uri,
+-- region) back out; the rest of the payload is opaque to us.
+parseItem :: A.Value -> Maybe (String, T.Text, A.Region)
+parseItem v = do
+    o <- asObj v
+    name <- case KM.lookup "name" o of
+        Just (A.String s) -> Just (T.unpack s)
+        _                 -> Nothing
+    uri  <- case KM.lookup "uri" o of
+        Just (A.String s) -> Just s
+        _                 -> Nothing
+    -- selectionRange is the identifier proper; range covers the
+    -- whole declaration. We prefer selectionRange because that's
+    -- the precise binding region the index uses.
+    rangeJson <- case KM.lookup "selectionRange" o of
+        Just r  -> Just r
+        Nothing -> KM.lookup "range" o
+    reg <- regionFromLspRange rangeJson
+    return (name, uri, reg)
+
+
+-- | Inverse of regionToLspRange — { start: {line,character}, end: ... }
+-- in 0-based LSP coords back to a 1-based A.Region.
+regionFromLspRange :: A.Value -> Maybe A.Region
+regionFromLspRange v = do
+    o <- asObj v
+    s <- KM.lookup "start" o >>= asObj
+    e <- KM.lookup "end"   o >>= asObj
+    sl <- intField "line"      s
+    sc <- intField "character" s
+    el <- intField "line"      e
+    ec <- intField "character" e
+    return (A.Region
+        (A.Position (sl + 1) (sc + 1))
+        (A.Position (el + 1) (ec + 1)))
+  where
+    intField k o = case KM.lookup (AK.fromString k) o of
+        Just (A.Number n) -> Just (round n)
+        _                 -> Nothing
+
+
+-- | Same-file fallback when the workspace index doesn't have the
+-- name (e.g. didOpen on a brand-new file before buildIndex runs).
+-- Looks for a top-level value with this name in the parsed module
+-- and returns its name + declaration region.
+findTopLevelInModule :: Src.Module -> String -> Maybe (String, A.Region)
+findTopLevelInModule srcMod name =
+    case [ (n, reg)
+         | A.At _ v <- Src._values srcMod
+         , let A.At reg n = Src._valueName v
+         , n == name
+         ] of
+        ((n, r):_) -> Just (n, r)
+        []         -> Nothing
+
+
+-- ── prepareCallHierarchy ─────────────────────────────────────────────
+
+handlePrepareCallHierarchy :: ServerState -> A.Value -> Maybe A.Value -> IO ()
+handlePrepareCallHierarchy st req reqId = do
+    let uri  = jsonStrAt ["params", "textDocument", "uri"] req
+        line = jsonIntAt ["params", "position", "line"] req
+        col  = jsonIntAt ["params", "position", "character"] req
+        path = uriToPath uri
+    docs <- IORef.readIORef (ssDocs st)
+    case Map.lookup uri docs of
+        Nothing -> sendReply reqId A.Null
+        Just (_, text) -> case Parse.parseModule text of
+            Left _ -> sendReply reqId A.Null
+            Right srcMod -> case identAtPositionWithText srcMod text (line + 1) (col + 1) of
+                Nothing -> sendReply reqId A.Null
+                Just rawName -> do
+                    let name = simpleName rawName
+                    idx <- getIndex st path
+                    -- Prefer the workspace index — it gives us the
+                    -- authoritative declaration file + region. Fall
+                    -- back to a same-file top-level scan so prepare
+                    -- still resolves before the index is warm.
+                    case Idx.lookupAtCursor idx path (line + 1) (col + 1) name of
+                        Just s ->
+                            sendReply reqId $ A.toJSON
+                                [ mkCallHierarchyItem
+                                    (Idx.symLocalName s)
+                                    (Idx.symFile s)
+                                    (Idx.symRegion s)
+                                    (Idx.symTypeSig s)
+                                ]
+                        Nothing ->
+                            case findTopLevelInModule srcMod name of
+                                Just (n, r) ->
+                                    sendReply reqId $ A.toJSON
+                                        [ mkCallHierarchyItem n path r Nothing ]
+                                Nothing -> sendReply reqId (A.toJSON ([] :: [A.Value]))
+
+
+-- ── incomingCalls ────────────────────────────────────────────────────
+
+handleIncomingCalls :: ServerState -> A.Value -> Maybe A.Value -> IO ()
+handleIncomingCalls st req reqId =
+    case jsonValAt ["params", "item"] req >>= parseItem of
+        Nothing -> sendReply reqId (A.toJSON ([] :: [A.Value]))
+        Just (name, uriTxt, _reg) -> do
+            let path = uriToPath uriTxt
+            idx <- getIndex st path
+            -- Walk every parsed module file. For each top-level
+            -- value whose body has refs to `name`, group them under
+            -- the calling value's CallHierarchyItem.
+            let target = name
+                modList = Map.toList (Idx.idxFileSrc idx)
+                callerEntries = concatMap (callersInFile target) modList
+            -- Same-file callers — the index won't include the open
+            -- buffer's unsaved edits, so we also walk the open
+            -- document directly. Dedupe by (callerName, callerFile)
+            -- so the open-buffer pass doesn't double-count entries
+            -- already in the index.
+            docs <- IORef.readIORef (ssDocs st)
+            sameOpen <- case Map.lookup uriTxt docs of
+                Just (_, text) -> case Parse.parseModule text of
+                    Right m -> return (sameFileCallers target path m)
+                    Left _  -> return []
+                Nothing -> return []
+            let allEntries = dedupeIncoming (callerEntries ++ sameOpen)
+            sendReply reqId (A.toJSON allEntries)
+  where
+    -- Find callers in a parsed module file. Each caller is a
+    -- top-level value whose body references the target name.
+    callersInFile :: String -> (FilePath, T.Text) -> [A.Value]
+    callersInFile target (filePath, src) =
+        case Parse.parseModule src of
+            Left _  -> []
+            Right m -> sameFileCallers target filePath m
+
+    sameFileCallers :: String -> FilePath -> Src.Module -> [A.Value]
+    sameFileCallers target filePath m =
+        [ A.object
+            [ "from" A..= mkCallHierarchyItem
+                            callerName filePath callerReg Nothing
+            , "fromRanges" A..= map regionToLspRange refRegions
+            ]
+        | A.At _ v <- Src._values m
+        , let A.At callerReg callerName = Src._valueName v
+        , callerName /= target  -- skip self-recursion as an "incoming" entry
+        , let refRegions = refsInExpr target Set.empty (Src._valueBody v)
+        , not (null refRegions)
+        ]
+
+    -- Dedupe by (caller name + uri) — merge fromRanges if both
+    -- index and open-buffer surfaced the same caller. Naive but
+    -- the list is tiny (one per caller value).
+    dedupeIncoming :: [A.Value] -> [A.Value]
+    dedupeIncoming = go []
+      where
+        go acc [] = reverse acc
+        go acc (x:xs) =
+            let key = keyFor x
+                (matched, rest) = partitionMatch key xs
+            in if any (\a -> keyFor a == key) acc
+                then go acc rest
+                else go (mergeMany (x:matched) : acc) rest
+
+        keyFor v = case asObj v >>= KM.lookup "from" >>= asObj of
+            Just o ->
+                let n = case KM.lookup "name" o of
+                            Just (A.String s) -> T.unpack s
+                            _                 -> ""
+                    u = case KM.lookup "uri" o of
+                            Just (A.String s) -> T.unpack s
+                            _                 -> ""
+                in n ++ "@" ++ u
+            Nothing -> ""
+
+        partitionMatch _ [] = ([], [])
+        partitionMatch k (y:ys) =
+            let (ms, ns) = partitionMatch k ys
+            in if keyFor y == k then (y:ms, ns) else (ms, y:ns)
+
+        mergeMany [x] = x
+        mergeMany xs =
+            let ranges = concatMap extractRanges xs
+                from0  = case xs of
+                    (h:_) -> case asObj h >>= KM.lookup "from" of
+                        Just j  -> j
+                        Nothing -> A.Null
+                    [] -> A.Null
+            in A.object
+                [ "from"       A..= from0
+                , "fromRanges" A..= ranges
+                ]
+
+        extractRanges v = case asObj v >>= KM.lookup "fromRanges" of
+            Just (A.Array a) -> foldr (:) [] a
+            _ -> []
+
+
+-- ── outgoingCalls ────────────────────────────────────────────────────
+
+handleOutgoingCalls :: ServerState -> A.Value -> Maybe A.Value -> IO ()
+handleOutgoingCalls st req reqId = do
+    case jsonValAt ["params", "item"] req >>= parseItem of
+        Nothing -> sendReply reqId (A.toJSON ([] :: [A.Value]))
+        Just (name, uri, _itemReg) -> do
+            let path = uriToPath uri
+            docs <- IORef.readIORef (ssDocs st)
+            -- Prefer the open buffer's text (most up-to-date) and
+            -- fall back to reading from disk for the index-file case.
+            mText <- case Map.lookup uri docs of
+                Just (_, t) -> return (Just t)
+                Nothing     -> do
+                    r <- try (T.pack <$> readFile path)
+                            :: IO (Either SomeException T.Text)
+                    case r of
+                        Right t -> return (Just t)
+                        Left _  -> return Nothing
+            case mText >>= parseAndFindBody name of
+                Nothing -> sendReply reqId (A.toJSON ([] :: [A.Value]))
+                Just (paramNames, body) -> do
+                    idx <- getIndex st path
+                    -- Collect every (refRegion, refName) pair in the
+                    -- body. Refs to the value's own parameters are
+                    -- not callable; refs to the value itself stay in
+                    -- (self-recursion IS an outgoing call to ourselves).
+                    let allRefs = collectVarRefs body
+                        notLocal (_, n) = not (Set.member n paramNames)
+                        externals = filter notLocal allRefs
+                        -- Resolve each ref to a callee (file, region, displayName).
+                        resolved = mapMaybe (resolveRef idx) externals
+                        -- Group by (calleeName, calleeFile).
+                        grouped = groupByCallee resolved
+                    sendReply reqId (A.toJSON (map (renderOutgoing) grouped))
+  where
+    parseAndFindBody :: String -> T.Text -> Maybe (Set.Set String, Src.Expr)
+    parseAndFindBody n text = case Parse.parseModule text of
+        Left _  -> Nothing
+        Right m ->
+            case [ v
+                 | A.At _ v <- Src._values m
+                 , let A.At _ nm = Src._valueName v
+                 , nm == n
+                 ] of
+                (v:_) ->
+                    let paramSet = Set.fromList
+                                     (concatMap patternNames (Src._valuePatterns v))
+                    in Just (paramSet, Src._valueBody v)
+                []    -> Nothing
+
+    -- Walk the expression collecting (region, name) for every Var /
+    -- VarQual reference. Mirrors refsInExpr but doesn't filter by
+    -- target — we want every call site.
+    collectVarRefs :: Src.Expr -> [(A.Region, String)]
+    collectVarRefs (A.At reg e) = case e of
+        Src.Var n        -> [(reg, n)]
+        Src.VarQual q n  -> [(reg, q ++ "." ++ n)]
+        Src.Call f xs    -> collectVarRefs f ++ concatMap collectVarRefs xs
+        Src.Binops pairs final ->
+            concat [collectVarRefs e' | (e', _) <- pairs] ++ collectVarRefs final
+        Src.Lambda _ body  -> collectVarRefs body
+        Src.If branches elseE ->
+            concat [collectVarRefs a ++ collectVarRefs b | (a, b) <- branches]
+            ++ collectVarRefs elseE
+        Src.Let defs body ->
+            concatMap (\(A.At _ d) -> case d of
+                Src.Define _ _ b _ -> collectVarRefs b
+                Src.Destruct _ b   -> collectVarRefs b) defs
+            ++ collectVarRefs body
+        Src.Case scrut arms ->
+            collectVarRefs scrut ++ concatMap (\(_, b) -> collectVarRefs b) arms
+        Src.Access t _   -> collectVarRefs t
+        Src.Update _ fields  -> concat [collectVarRefs v | (_, v) <- fields]
+        Src.Record fields    -> concat [collectVarRefs v | (_, v) <- fields]
+        Src.Tuple a b cs ->
+            collectVarRefs a ++ collectVarRefs b ++ concatMap collectVarRefs cs
+        Src.List xs     -> concatMap collectVarRefs xs
+        Src.Negate i    -> collectVarRefs i
+        Src.Paren e'    -> collectVarRefs e'
+        _ -> []
+
+    -- Resolve a (region, dotted-name) ref via the workspace index.
+    -- Returns (callee name, callee file, callee declRegion, ref
+    -- region) so we have both the destination and the source slot.
+    resolveRef
+        :: Idx.Index
+        -> (A.Region, String)
+        -> Maybe (String, FilePath, A.Region, A.Region)
+    resolveRef idx (refReg, refName) =
+        -- Match by qualified name first (handles `String.length`),
+        -- then by local name. We only surface refs that point at a
+        -- known top-level callable — pattern-bound locals, kernel
+        -- calls without a declared file, and type-only references
+        -- get filtered out.
+        case Map.lookup refName (Idx.idxByQual idx) of
+            Just s  -> entry s
+            Nothing -> case Map.lookup (simpleName refName) (Idx.idxByLocal idx) of
+                Just (s:_) -> entry s
+                _          -> Nothing
+      where
+        entry s
+            | Idx.symFile s == "" = Nothing
+            | otherwise = Just
+                ( Idx.symLocalName s
+                , Idx.symFile s
+                , Idx.symRegion s
+                , refReg
+                )
+
+    groupByCallee
+        :: [(String, FilePath, A.Region, A.Region)]
+        -> [(String, FilePath, A.Region, [A.Region])]
+    groupByCallee = go []
+      where
+        go acc [] = reverse acc
+        go acc ((n,f,dr,rr):xs) =
+            let key = n ++ "@" ++ f
+            in case lookupKey key acc of
+                Just _  -> go (bumpKey key rr acc) xs
+                Nothing -> go ((n,f,dr,[rr]) : acc) xs
+        lookupKey _ [] = Nothing
+        lookupKey k ((n,f,_,_):rest)
+            | (n ++ "@" ++ f) == k = Just ()
+            | otherwise            = lookupKey k rest
+        bumpKey _ _ [] = []
+        bumpKey k rr ((n,f,dr,rrs):rest)
+            | (n ++ "@" ++ f) == k = (n,f,dr,rrs ++ [rr]) : rest
+            | otherwise            = (n,f,dr,rrs) : bumpKey k rr rest
+
+    renderOutgoing :: (String, FilePath, A.Region, [A.Region]) -> A.Value
+    renderOutgoing (n, f, dr, rrs) = A.object
+        [ "to"         A..= mkCallHierarchyItem n f dr Nothing
+        , "fromRanges" A..= map regionToLspRange rrs
+        ]
+
+
 handleDidSaveSt :: ServerState -> A.Value -> IO ()
 handleDidSaveSt st req = do
     let uri  = jsonStrAt ["params", "textDocument", "uri"] req
@@ -1092,6 +1490,14 @@ initializeResult = A.object
         , "inlayHintProvider" A..= A.object
             [ "resolveProvider" A..= False
             ]
+        -- v0.15.50 — LSP call-hierarchy:
+        -- textDocument/prepareCallHierarchy + callHierarchy/incomingCalls
+        -- + callHierarchy/outgoingCalls. The boolean form turns the
+        -- capability on with default options; per LSP spec editors
+        -- (VS Code, Neovim, Helix, Zed) automatically wire the new
+        -- "Show Call Hierarchy" command + side-panel navigation once
+        -- the server advertises this.
+        , "callHierarchyProvider" A..= True
         ]
     , "serverInfo" A..= A.object
         [ "name"    A..= ("sky-lsp" :: T.Text)
@@ -3714,6 +4120,17 @@ jsonArrAt :: [T.Text] -> A.Value -> Maybe [A.Value]
 jsonArrAt path v = case descend path v of
     A.Array xs -> Just (foldr (:) [] xs)
     _ -> Nothing
+
+
+-- | Pull an arbitrary JSON sub-value out of a nested key path.
+-- Returns Nothing for missing keys; Just for any present value
+-- (including Null / arrays / objects). Used by call-hierarchy's
+-- incoming/outgoing handlers to grab the opaque CallHierarchyItem
+-- from `params.item`.
+jsonValAt :: [T.Text] -> A.Value -> Maybe A.Value
+jsonValAt path v = case descend path v of
+    A.Null -> Nothing
+    x      -> Just x
 
 
 descend :: [T.Text] -> A.Value -> A.Value
