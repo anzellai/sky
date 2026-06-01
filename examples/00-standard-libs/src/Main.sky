@@ -85,6 +85,20 @@ taskRetrySuite =
                 case Task.perform (Task.retryWith policy (Task.fail (Error.io "no-retry"))) of
                     Err _ -> Test.isTrue True
                     Ok _ -> Test.isFalse True)
+        , Test.test "defaultRetryPolicy builder chain" (\_ ->
+            -- v0.15.51: defaultRetryPolicy + with* helpers mirror
+            -- Http.defaultRequest's builder convention. withRetryOn is
+            -- the clearer alias for retryOn — same RetryWhen wrap.
+            let
+                policy =
+                    Task.defaultRetryPolicy
+                        |> Task.withMaxAttempts 5
+                        |> Task.withBaseMs 1
+                        |> Task.withRetryOn Error.isRetryable
+            in
+                case Task.perform (Task.retryWith policy (Task.succeed "built")) of
+                    Ok v -> Test.equal "built" v
+                    Err _ -> Test.isFalse True)
         ]
 
 
