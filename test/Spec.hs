@@ -61,6 +61,7 @@ import qualified Sky.Format.FormatSpec
 import qualified Sky.Build.GoKeywordCollisionSpec
 import qualified Sky.Build.NestedPatternSpec
 import qualified Sky.Build.ConsCtorPatternSpec
+import qualified Sky.Build.ConsPatternLengthSpec
 import qualified Sky.Build.CtorConsPatternSpec
 import qualified Sky.Build.EnvPrefixSpec
 import qualified Sky.Build.FfiGenMultiSpec
@@ -368,6 +369,11 @@ main = hspec $ do
     -- lowerer now emits a head-discriminator check on `(Ctor x) :: rest`
     -- so the body only fires when the head's actual ctor matches.
     describe "Sky.Build.ConsCtorPattern" Sky.Build.ConsCtorPatternSpec.spec
+    -- Cons-pattern length-guard regression (#402). Walks the
+    -- cons-chain so `a :: b :: c :: _` emits `len >= 3` and
+    -- `a :: b :: []` emits `len == 2`, not the buggy `len >= 1 &&
+    -- len(tail) >= 1` (which collapsed to `>= 2` regardless of arm).
+    describe "Sky.Build.ConsPatternLength" Sky.Build.ConsPatternLengthSpec.spec
     -- Inverse of ConsCtorPattern: cons / fixed-length-list pattern
     -- INSIDE a ctor arg (`Just (h :: _)`, `Ok [a, b]`). Pre-fix,
     -- argPatternCondition only narrowed for ctor / literal sub-

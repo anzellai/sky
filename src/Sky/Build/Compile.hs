@@ -11395,14 +11395,37 @@ patternCondition subject pat = case pat of
     -- AttrDescribe. The head-discriminator now joins the length
     -- check via `&&`.
     Can.PCons h t ->
-        let lenCond = GoIr.GoBinary ">="
+        -- Walk the cons-chain to compute the correct length guard.
+        -- `a :: b :: c :: _`  →  len(subj) >= 3
+        -- `a :: b :: []`      →  len(subj) == 2
+        -- `a :: rest`         →  len(subj) >= 1
+        -- Before #402's fix, every PCons emitted only `>= 1` and the
+        -- recursive `consTailCondition` added another `>= 1` for each
+        -- nested cons — so `a :: b :: c :: _` came out as `>= 1 &&
+        -- >= 1` (== `>= 2`), letting a 2-element list enter the arm
+        -- and panic on `head[2]` access at the body's binding code.
+        let (minLen, isExact) = consChainLength (A.At A.one (Can.PCons h t))
+            lenOp = if isExact then "==" else ">="
+            lenCond = GoIr.GoBinary lenOp
                 (GoIr.GoCall (GoIr.GoIdent "len")
                     [ GoIr.GoCall (GoIr.GoIdent "rt.AsList") [GoIr.GoIdent subject] ])
-                (GoIr.GoIntLit 1)
+                (GoIr.GoIntLit minLen)
+            -- Head/tail discriminator narrowing on the OUTER cons. The
+            -- chain-length condition above already covers structural
+            -- length; per-head ADT/literal narrowing still routes
+            -- through consHeadCondition / consTailCondition for the
+            -- top cons (deeper-position head narrowing is left to a
+            -- future patch — the current bug repro never needed it).
             (A.At _ hPat) = h
             (A.At _ tPat) = t
             headCond = consHeadCondition subject hPat
-            tailCond = consTailCondition subject tPat
+            -- Skip the tail condition when the tail is itself a PCons
+            -- (length now folded into `lenCond`) or PList (same — the
+            -- exact match is already baked into `lenCond`/`isExact`).
+            tailCond = case tPat of
+                Can.PCons _ _ -> Nothing
+                Can.PList _   -> Nothing
+                _             -> consTailCondition subject tPat
             extras = [ c | Just c <- [headCond, tailCond] ]
         in Just $ foldl (GoIr.GoBinary "&&") lenCond extras
 
@@ -11545,6 +11568,39 @@ argPatternCondition subject ctorName idx pat = case pat of
             _            -> Nothing
 
 
+-- | Walk a cons-chain pattern and compute its required list-length
+-- guard.
+--
+-- Returns `(minLen, isExact)`:
+--
+--   * `a :: b :: c :: _`     → (3, False)  — at least 3 elements
+--   * `a :: b :: []`         → (2, True)   — exactly 2
+--   * `a :: rest`            → (1, False)
+--   * `_ :: [x]`             → (2, True)   — head + 1-element tail
+--
+-- Stops at the first non-cons, non-list tail (PVar / PAnything /
+-- PUnit / PRecord / PAlias / PCtor / literal). PAlias unwraps and
+-- recurses so `((a :: b :: []) as whole)` still counts as 2.
+--
+-- Bug #402 fix: prior codegen emitted only `>= 1` per cons-step,
+-- causing arms like `a :: b :: c :: _` (need ≥ 3) to share the same
+-- guard as `a :: b :: _` (need ≥ 2) — a 2-element list could
+-- enter the longer arm and panic on `head[2]` access in the body.
+consChainLength :: Can.Pattern -> (Int, Bool)
+consChainLength (A.At _ p) = case p of
+    Can.PCons _ t ->
+        let (n, exact) = consChainLength t
+        in (n + 1, exact)
+    Can.PList xs ->
+        (length xs, True)
+    Can.PAlias inner _ ->
+        consChainLength inner
+    _ ->
+        -- PVar / PAnything / PUnit / PRecord / PCtor / literal — the
+        -- tail accepts any remaining suffix (≥ 0 more elements).
+        (0, False)
+
+
 -- | Discriminator condition for the head pattern of a `(h :: t)` cons.
 -- The cons-pattern itself only checks `len >= 1`; this function adds
 -- the head's narrowing condition so that, e.g., `(AttrDescribe d) ::
@@ -11651,16 +11707,21 @@ patternConditionForExpr subjectRaw pat = case pat of
                         [GoIr.GoCall (GoIr.GoIdent "any") [GoIr.GoRaw subjectRaw]])
                     (GoIr.GoIntLit ctorIdx)
 
-    Can.PCons _ _ ->
-        -- Nested cons (e.g. `(_ :: _) :: _`): the inner needs at
-        -- least one element of its own. Only emit the length check —
-        -- deeper recursion would need more plumbing and the common
-        -- pattern is single-level.
-        Just $ GoIr.GoBinary ">="
+    Can.PCons h t ->
+        -- Nested cons (e.g. `(_ :: _) :: _`, or the inner cons from a
+        -- `b :: c :: _` tail): walk the chain to compute the exact
+        -- minimum length the inner sub-list must have. Single-level
+        -- bug case (#402): a tail pattern `b :: c :: _` previously
+        -- emitted just `>= 1`, so an outer-arm length of `>= 2`
+        -- accepted any 2-element list, then the body's binding code
+        -- read `tail[1]` of a 1-element tail → IndexOutOfRange panic.
+        let (minLen, isExact) = consChainLength (A.At A.one (Can.PCons h t))
+            lenOp = if isExact then "==" else ">="
+        in Just $ GoIr.GoBinary lenOp
             (GoIr.GoCall (GoIr.GoIdent "len")
                 [ GoIr.GoCall (GoIr.GoQualified "rt" "AsList")
                     [GoIr.GoRaw subjectRaw] ])
-            (GoIr.GoIntLit 1)
+            (GoIr.GoIntLit minLen)
 
     Can.PList xs ->
         Just $ GoIr.GoBinary "=="

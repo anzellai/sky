@@ -311,6 +311,7 @@ test-suite sky-tests
       Sky.Build.GoKeywordCollisionSpec
       Sky.Build.NestedPatternSpec
       Sky.Build.ConsCtorPatternSpec
+      Sky.Build.ConsPatternLengthSpec
       Sky.Build.CtorConsPatternSpec
       Sky.Build.EnvPrefixSpec
       Sky.Build.FfiGenMultiSpec
