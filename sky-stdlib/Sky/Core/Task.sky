@@ -144,13 +144,13 @@ lazy =
 -- | Predicate ADT for `RetryPolicy.shouldRetry`.  Encodes the two
 -- value shapes the retry combinator accepts: the default "always
 -- retry" sentinel, or a user-supplied predicate.  Replaces the
--- prior `shouldRetry : any` field, which relied on Go's
--- `interface{}` runtime and could not be lowered to any
--- statically-typed backend (Rust, WASM, future C) without runtime
--- boxing / downcasts.  The Go runtime's `task_retry_with` already
--- type-asserts on the value at each attempt; switching that to a
--- match on the constructor tag is cheaper, exhaustiveness-checked
--- at compile time, and portable.
+-- prior `shouldRetry : any` field, aligning the retry surface with
+-- the v0.15.x type-directed-lowering refactor's goal of avoiding
+-- `any` wherever a real ADT or parametric type expresses the same
+-- intent.  The Go runtime's `task_retry_with` already type-asserts
+-- on the value at each attempt; switching that to a match on the
+-- constructor tag is cheaper and exhaustiveness-checked at the
+-- Sky source level.
 type ShouldRetry e
     = RetryAlways
     | RetryWhen (e -> Bool)
