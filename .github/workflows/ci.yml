@@ -86,23 +86,33 @@ jobs:
       - name: Smoke-test sky binary
         run: sky --version
 
-      # v0.16.0 PR 1 drift gate: runtime-go/rt/console_app/main.go is
-      # the Sky.Live console UI translated to Go. The bytes are
-      # checked in; this step re-runs scripts/regenerate-console.sh
-      # against the just-built compiler and asserts the result has
-      # NOT diverged from the committed copy. A failure here means
-      # someone touched sky-bundled/console/src/*.sky (or a stdlib
-      # change perturbed the generated Go) without re-running the
-      # regen script — the user-visible inline console would be out
-      # of sync with its source.
+      # v0.16.0 drift gate: runtime-go/rt/console_app/main.go is the
+      # Sky.Live console UI translated to Go and committed to the
+      # tree. PR 1 introduced the drift check; PR 2 removed the
+      # in-tree Sky source (sky-bundled/console/), so this step
+      # now skips when the source isn't present locally — the
+      # script exits 2 ("no source"), which we treat as a no-op
+      # (we cannot detect drift without the source). Maintainer
+      # workflow: regenerate via SKY_CONSOLE_SRC=<external path>
+      # ./scripts/regenerate-console.sh, commit the diff.
       #
       # SKY_REGEN_SKIP_CABAL=1: cabal already built sky earlier in
       # this job; re-running it would waste ~2 min of cold-cache
-      # rebuild for no value. The local-build path lets us reuse
-      # ./sky-out/sky directly.
+      # rebuild for no value.
       - name: Console inline-copy drift check
         run: |
+          set +e
           SKY_REGEN_SKIP_CABAL=1 ./scripts/regenerate-console.sh
+          rc=$?
+          set -e
+          if [ "$rc" -eq 2 ]; then
+            echo "::notice::console source not in tree (PR 2 removed sky-bundled/console/); skipping drift check"
+            exit 0
+          fi
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::regenerate-console.sh exited $rc"
+            exit "$rc"
+          fi
           git diff --exit-code runtime-go/rt/console_app/ || {
             echo '::error::runtime-go/rt/console_app/ is stale — run scripts/regenerate-console.sh and commit the result'
             git diff --stat runtime-go/rt/console_app/
