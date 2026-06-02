@@ -46,6 +46,7 @@ import qualified Sky.Build.HttpTypesSpec
 import qualified Sky.Build.CryptoAeadSpec
 import qualified Sky.Build.PubSubPublishTaskSpec
 import qualified Sky.Build.PubSubPublishNoEchoSpec
+import qualified Sky.Build.SkyLiveHeadSpec
 import qualified Sky.Build.ServerStreamSpec
 import qualified Sky.Build.HttpStreamForEachSpec
 import qualified Sky.Build.WebviewAppSpec
@@ -319,6 +320,12 @@ main = hspec $ do
     -- the broker round-trip; in v0.16+ cross-process broker tiers the
     -- saved hop is 10-100ms+ of latency.
     describe "Sky.Build.PubSubPublishNoEcho" Sky.Build.PubSubPublishNoEchoSpec.spec
+    -- v0.15.58: Sky.Live per-page <head> injection — optional
+    -- `head : Model -> List (Html msg)` field on Live.app cfg.
+    -- Runtime invokes per full GET, splices result into <head>
+    -- after the baseline meta tags. Absent field → byte-identical
+    -- pre-feature output. Helpers in Std.Live.Head.
+    describe "Sky.Build.SkyLiveHead" Sky.Build.SkyLiveHeadSpec.spec
     -- Cycle 4 HS-Server / issue #362: Sky.Http.Server.Stream — server-side
     -- streaming HTTP response primitive (mirror of Sky.Core.Http.Stream).
     -- Unblocks LLM token-stream proxying + SSE endpoints without

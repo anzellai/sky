@@ -1135,6 +1135,45 @@ main =
 
 See [Sky.Live overview](skylive/overview.md) for the full TEA flow.
 
+#### `Std.Live.Head` — per-page `<head>` injection (v0.15.58+)
+
+Optional `head : Model -> List (Html msg)` field on `Live.app`'s
+cfg record. Runtime renders the list and splices it into `<head>`
+on every full GET, after the runtime's required baseline meta
+tags and before the inline `<style>` reset. Absent field → empty
+insert (byte-identical to pre-v0.15.58 output).
+
+```elm
+import Std.Live.Head as Head
+
+headFor model =
+    [ Head.title (titleFor model.page)
+    , Head.meta "description" (descriptionFor model.page)
+    , Head.canonical (canonicalFor model.page)
+    , Head.metaProperty "og:title" (titleFor model.page)
+    , Head.themeColor "#1a1a2e"
+    , Head.jsonLd (jsonLdFor model.page)
+    ]
+```
+
+Helpers (all return `Html msg`):
+
+| Helper | Emits |
+|---|---|
+| `title : String -> Html msg` | `<title>…</title>` |
+| `meta : String -> String -> Html msg` | `<meta name="…" content="…">` |
+| `metaProperty : String -> String -> Html msg` | `<meta property="…" content="…">` (Open Graph, Facebook) |
+| `link : List (String, String) -> Html msg` | `<link …>` with arbitrary attrs (preload, favicons, …) |
+| `canonical : String -> Html msg` | `<link rel="canonical" href="…">` |
+| `jsonLd : String -> Html msg` | `<script type="application/ld+json">…</script>` (raw JSON) |
+| `themeColor : String -> Html msg` | `<meta name="theme-color" content="…">` |
+| `rss : String -> String -> Html msg` | `<link rel="alternate" type="application/rss+xml" …>` |
+
+SSE patches scope to `<body>`, so head updates require a full
+reload — fine for the typical case (head depends on page identity,
+which changes via sky-nav navigation that already does a full-body
+fetch + history push).
+
 ### `Event` — typed DOM event bindings (`Std.Html.Events`)
 
 v0.13: `Std.Html.Events` (renamed from `Std.Live.Events`). Each builder

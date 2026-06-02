@@ -766,6 +766,7 @@ Each binding is either:
 | `Server` | `Sky.Http.Server` | param, queryParam, header, getCookie, static (Layer 3 surface); higher-level `get/post/listen/text/json/html` stay kernel-only |
 | `Stream` | `Sky.Http.Server.Stream` | stream, emit, finish, withContentType — server-side streaming HTTP responses (SSE / LLM token forwarding / chunked downloads). Mirror of `Sky.Core.Http.Stream` (which reads upstream bodies as Sub events). See `docs/skylive/http-streaming.md` §"Server-side" + `examples/30-sse-server-demo`. Synchronous bridge: `Sky.Core.Http.Stream.forEachChunk hdl body` (v0.15.41+) drains an upstream stream from inside a plain Sky.Http.Server handler goroutine — needed for the relay shape (upstream chunks → `Server.Stream.emit` downstream chunk-for-chunk; no Sky.Live update loop required). See `docs/skylive/http-streaming.md` §"Synchronous relay" + `examples/32-sse-relay`. |
 | `Middleware` | `Sky.Http.Middleware` | withCors, withLogging, withBasicAuth, withRateLimit |
+| `Head` | `Std.Live.Head` | v0.15.58+. Per-page `<head>` injection — `title` / `meta name content` / `metaProperty property content` (OG) / `link [(k, v)...]` / `canonical href` / `jsonLd body` / `themeColor color` / `rss href title`. Opt in via optional `head : Model -> List (Html msg)` field on `Live.app` cfg; runtime splices the rendered list into `<head>` after baseline meta + before inline `<style>`. Absent field → byte-identical to pre-v0.15.58 output. |
 | `RateLimit` | `Sky.Http.RateLimit` | allow |
 | `WebSocket` | `Sky.Core.WebSocket` (client) + `Sky.Http.Server.WebSocket` (server) | v0.15.46+. Bidirectional sockets — collab editor ops, multiplayer, bidirectional LLM chat, financial feeds. Client: `connect` / `connectWith` / `send` / `sendBinary` / `close` / `closeWithCode` (Task-tier) + `onOpen` / `onMessage` / `onClose` / `onError` (Sub-tier). Server: `upgrade` (returns from a Sky.Http.Server handler) + `sendToClient` / `sendBinaryToClient` / `broadcast` / `closeClient`. Built on `nhooyr.io/websocket`. Default 30 s heartbeat + 1 MiB max message + 64-frame read buffer. Server production gate: empty `originPatterns` returns 403 when `ENV=production`. **Stdlib typed-record convention (v0.15.46+): every typed record ships with a `default*` constructor + `with*` builder per field — always compose via builders so future field additions don't break call sites.** See `examples/33-websocket-echo`. |
 | `Cache` | `Std.Cache` | v0.15.47+. LRU + TTL in-memory cache, `Cache k v` parametric on key and value. `CacheCfg` ships with `defaultCfg` + `withMaxEntries` / `withTTL` / `withMaxBytes` per v0.15.46 convention. `new` / `get` / `put` / `remove` / `clear` / `size` / `stats` (monotone hits/misses/evictions). Backed by `hashicorp/golang-lru/v2`; lazy TTL expiry (no background goroutine). |
@@ -801,6 +802,67 @@ main =
 HTTP-first (full HTML on load, patches on events), SSE
 subscriptions, session stores (memory / sqlite / redis / postgres /
 firestore), type-safe events, VNode diffing.
+
+### Per-page `<head>` injection (v0.15.58+)
+
+Add an optional `head : Model -> List (Html msg)` field on the
+`Live.app` cfg. The runtime calls it once per full GET (initial
+page load + sky-nav navigation) and splices the returned list
+into `<head>` AFTER the runtime's required `<meta charset>` /
+`<meta viewport>` / `<meta sky-base>` tags and BEFORE the inline
+`<style>` reset. The HM signature is row-open (`appExt` row var),
+so existing apps that omit the field type-check + build unchanged
+— the output is byte-identical to the pre-v0.15.58 wrap.
+
+```elm
+import Std.Live.Head as Head
+
+main =
+    Live.app
+        { init = init, update = update, view = view, subscriptions = subscriptions
+        , routes = [ route "/" HomePage, route "/blog/:slug" BlogPostPage ]
+        , notFound = HomePage
+        , head = headFor
+        }
+
+
+headFor : Model -> List (Html Msg)
+headFor model =
+    [ Head.title (titleFor model.page)
+    , Head.meta "description" (descriptionFor model.page)
+    , Head.canonical (canonicalFor model.page)
+    , Head.metaProperty "og:title" (titleFor model.page)
+    , Head.metaProperty "og:image" "https://example.com/og.png"
+    , Head.themeColor "#1a1a2e"
+    , Head.rss "/rss.xml" "Site Blog"
+    , Head.jsonLd (jsonLdFor model.page)  -- raw JSON string body
+    ]
+```
+
+`Std.Live.Head` helpers (all return `Html msg` so they compose
+into the same list):
+
+| Helper | Emits |
+|---|---|
+| `title : String -> Html msg` | `<title>…</title>` |
+| `meta : String -> String -> Html msg` | `<meta name="…" content="…">` |
+| `metaProperty : String -> String -> Html msg` | `<meta property="…" content="…">` (Open Graph, Facebook) |
+| `link : List (String, String) -> Html msg` | `<link …>` with arbitrary attr pairs |
+| `canonical : String -> Html msg` | `<link rel="canonical" href="…">` |
+| `jsonLd : String -> Html msg` | `<script type="application/ld+json">…</script>` (raw JSON body) |
+| `themeColor : String -> Html msg` | `<meta name="theme-color" content="…">` |
+| `rss : String -> String -> Html msg` | `<link rel="alternate" type="application/rss+xml" …>` |
+
+Pair with `Std.Html.node "link" […] []` for cases the helpers
+don't cover (preload hints, custom favicon shapes, …).
+
+**SSE patches scope to `<body>`** — head updates require a full
+reload. That matches the typical case (head is derived from page
+identity; in-app navigation already triggers a sky-nav fetch +
+full-body patch + history push). For a UI that swaps `<head>`
+contents on every Msg, drop the `head` field and emit a
+`<title>`/`<meta>` inside `view` via `Html.node` — the diff layer
+patches normal DOM nodes regardless of position.
 
 ### URL routing + history
 
