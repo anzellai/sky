@@ -2592,6 +2592,19 @@ type liveApp struct {
 	// navigation that already triggers a sky-nav fetch +
 	// full-body patch + history push).
 	head          any
+	// consoleAuth : Request -> Task Error (Maybe Identity) — optional.
+	// When the embedded console mounts in `app`-mode (env
+	// SKY_CONSOLE_AUTH=app), the framework calls this callback BEFORE
+	// every /_sky/console request. `Nothing` → 403 + structured
+	// `console.auth.denied` audit log. `Just identity` → the request
+	// proceeds; the identity is attached to a __Host-sky_console
+	// session cookie for the duration of consoleAuthSessionTTL.
+	//
+	// nil → no callback; mode falls back to token-mode (or off in
+	// production when SKY_CONSOLE_AUTH is unset, per the production
+	// gate in evaluateConsoleAuth). Same row-poly pattern as v0.15.58
+	// `head` field — apps that omit `consoleAuth` build byte-identical.
+	consoleAuth   any
 	api           []apiRoute   // REST-style custom handlers alongside Live pages
 	staticDir     string       // Serves files from this directory under /static/…
 	staticURL     string       // URL mount prefix (default "/static")
@@ -2950,6 +2963,7 @@ func liveAppRun(cfg any) any {
 		notFound:      Field(cfg, "NotFound"),
 		guard:         Field(cfg, "Guard"),
 		head:          Field(cfg, "Head"),
+		consoleAuth:   Field(cfg, "ConsoleAuth"),
 		locker:        newSessionLocker(),
 		msgTags:       make(map[string]int),
 		bannerCfg:     resolveBannerStrings(loadLiveBannerConfig(), cfg),
@@ -3050,6 +3064,12 @@ func liveAppRun(cfg any) any {
 	// the latter doesn't collide on /_sky/console (safeMount's
 	// dedup catches that case anyway, but the explicit order
 	// documents intent).
+	//
+	// PR 3 (v0.16.0): the app's optional `consoleAuth` field rides
+	// in as an opaque `any` — `MountEmbeddedConsole` interprets it
+	// inside the `app`-mode gate. nil → token-mode / production-mode
+	// fallback per evaluateConsoleAuth.
+	SetConsoleAuthCallback(app.consoleAuth)
 	MountEmbeddedConsole(mux)
 	// If THIS process is a sub-app (env vars from MountSubApp set),
 	// kick the push exporter — Log.* / counter / span writes flow

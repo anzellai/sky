@@ -1,0 +1,72 @@
+module Std.Live.Console exposing
+    ( Identity
+    )
+
+-- | Std.Live.Console — types exposed for the optional `consoleAuth`
+-- field on `Live.app` cfg (v0.16.0).
+--
+-- The `consoleAuth` callback is row-polymorphic, optional, and has
+-- shape:
+--
+--     consoleAuth : Request -> Task Error (Maybe Identity)
+--
+-- When the framework gates `/_sky/console` in `app`-mode (env
+-- `SKY_CONSOLE_AUTH=app`), it invokes the callback per request,
+-- BEFORE mounting console routes. `Nothing` → 403 + structured
+-- `console.auth.denied` audit log. `Just identity` → the request
+-- continues; the identity rides on the same `__Host-sky_console`
+-- session cookie + is attached to subsequent telemetry for audit.
+--
+-- Use this when the app already has an SSO / multi-tenant session
+-- middleware: thread it into `consoleAuth` and the embedded console
+-- inherits the same auth surface — no second token to provision.
+--
+-- Example shape:
+--
+--     import Std.Live.Console exposing (Identity)
+--     import Sky.Core.Dict as Dict
+--
+--     identifyAdmin : Request -> Task Error (Maybe Identity)
+--     identifyAdmin req =
+--         case Auth.sessionFromCookie req of
+--             Nothing -> Task.succeed Nothing
+--             Just session ->
+--                 if session.role == "admin" then
+--                     Task.succeed
+--                         (Just
+--                             { subject = session.userId
+--                             , email = session.email
+--                             , claims = Dict.empty
+--                             }
+--                         )
+--                 else
+--                     Task.succeed Nothing
+--
+--     main =
+--         Live.app
+--             { init = init, update = update, view = view
+--             , subscriptions = subscriptions
+--             , routes = routes, notFound = HomePage
+--             , consoleAuth = identifyAdmin
+--             }
+--
+-- The `claims` Dict is reserved for v0.16.5 RBAC integration
+-- (custom-attribute predicates against console actions). Pass
+-- `Dict.empty` today if you have no extra attributes — the framework
+-- will treat any non-empty Identity as authorised in v0.16.0.
+
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Dict exposing (Dict)
+
+
+-- | Identity returned by the `consoleAuth` callback when access is
+-- permitted. `subject` is the user's stable identifier (GitHub
+-- login / email / database UUID). `email` is surfaced separately
+-- so the audit log line is human-scannable. `claims` carries any
+-- extra attributes the v0.16.5 RBAC layer will consult.
+type alias Identity =
+    { subject : String
+    , email : String
+    , claims : Dict String String
+    }
