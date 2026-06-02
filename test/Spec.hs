@@ -48,6 +48,7 @@ import qualified Sky.Build.PubSubPublishTaskSpec
 import qualified Sky.Build.PubSubPublishNoEchoSpec
 import qualified Sky.Build.SkyLiveHeadSpec
 import qualified Sky.Build.SkyLiveConsoleAuthSpec
+import qualified Sky.Build.StdUiChartSpec
 import qualified Sky.Build.ServerStreamSpec
 import qualified Sky.Build.HttpStreamForEachSpec
 import qualified Sky.Build.WebviewAppSpec
@@ -331,6 +332,9 @@ main = hspec $ do
     -- row-poly pattern as v0.15.58 `head`. Three-mode auth gate via
     -- SKY_CONSOLE_AUTH=token|app|off + production decline when unset.
     describe "Sky.Build.SkyLiveConsoleAuth" Sky.Build.SkyLiveConsoleAuthSpec.spec
+    -- v0.16.0 PR 4: Std.Ui.Chart primitives — line / area / bar /
+    -- sparkline / heatmap. Server-rendered SVG, no JS.
+    describe "Sky.Build.StdUiChart" Sky.Build.StdUiChartSpec.spec
     -- Cycle 4 HS-Server / issue #362: Sky.Http.Server.Stream — server-side
     -- streaming HTTP response primitive (mirror of Sky.Core.Http.Stream).
     -- Unblocks LLM token-stream proxying + SSE endpoints without

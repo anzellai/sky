@@ -321,6 +321,7 @@ test-suite sky-tests
       Sky.Build.PubSubPublishNoEchoSpec
       Sky.Build.SkyLiveHeadSpec
       Sky.Build.SkyLiveConsoleAuthSpec
+      Sky.Build.StdUiChartSpec
       Sky.Build.ServerStreamSpec
       Sky.Build.HttpStreamForEachSpec
       Sky.Build.WebviewAppSpec
