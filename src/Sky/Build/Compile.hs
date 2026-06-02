@@ -28,6 +28,7 @@ import System.IO.Unsafe (unsafePerformIO)
 import System.FilePath (takeDirectory, takeExtension, (</>))
 
 import qualified Data.ByteString as BS
+import Sky.Build.EmbedDirTH (isEmbeddableRuntimeFile, isEmbeddableRuntimeDir)
 import Sky.Build.EmbeddedRuntime (embeddedRuntime, embeddedSkyStdlib)
 import qualified Sky.Build.TailCallOpt as TCO
 import qualified Sky.Build.LowerCtx as LC
@@ -2693,25 +2694,44 @@ writeEmbeddedSkyStdlib outDir = do
 -- already-handled `rt.go` at the top level (copied verbatim above
 -- from the canonical source).
 --
--- Why filter to .go only: the runtime source tree may contain
--- ancillary files (README.md, _test.go regression artefacts the dev
--- wants to keep local-only, etc.) that the released binary shouldn't
--- need. The embedded path (writeEmbeddedRuntime) doesn't have this
--- problem because embedDir already filters to what TH bundled at
--- compile time.
+-- Why we filter:
+--
+--   * `.go` only — non-Go files (README.md, etc.) don't belong in
+--     a user's build tree.
+--   * Test files (`*_test.go`) — Go's `go build` already filters
+--     them from the binary, but they bloat the materialised `rt/`
+--     tree by ~1+ MB and would otherwise leak the runtime's own
+--     test suite into every user project's source.
+--   * Test fixtures (`testdata/`) — Go convention for fixture data
+--     that ships with tests; same reasoning.
+--   * Editor / OS junk (`.bak`, `.DS_Store`, etc.).
+--
+-- Single source of truth lives in `Sky.Build.EmbedDirTH`
+-- (`isEmbeddableRuntimeFile` / `isEmbeddableRuntimeDir`) so both
+-- the TH-embed path AND this on-disk copy path apply identical
+-- rules — a file kept in the binary but excluded here (or vice
+-- versa) would be an invisible behaviour split between `sky`-
+-- shipped vs `SKY_RUNTIME_DIR`-overridden builds.
 copyRuntimeRecursive :: FilePath -> FilePath -> IO ()
-copyRuntimeRecursive src dst = do
-    createDirectoryIfMissing True dst
-    entries <- System.Directory.listDirectory src
-    mapM_ (copyOne src dst) entries
+copyRuntimeRecursive src dst = go ""
   where
-    copyOne s d name = do
-        let srcPath = s </> name
-        let dstPath = d </> name
+    go subRel = do
+        let srcDir = if null subRel then src else src </> subRel
+            dstDir = if null subRel then dst else dst </> subRel
+        createDirectoryIfMissing True dstDir
+        entries <- System.Directory.listDirectory srcDir
+        mapM_ (copyOne subRel) entries
+
+    copyOne subRel name = do
+        let rel = if null subRel then name else subRel </> name
+            srcPath = src </> rel
+            dstPath = dst </> rel
         isDir <- doesDirectoryExist srcPath
         if isDir
-            then copyRuntimeRecursive srcPath dstPath
-            else when (isGoSource name && name /= "rt.go") $
+            then when (isEmbeddableRuntimeDir name) $ go rel
+            else when (isGoSource name
+                        && name /= "rt.go"
+                        && isEmbeddableRuntimeFile rel) $
                 copyFile srcPath dstPath
 
     isGoSource name =
