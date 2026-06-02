@@ -2590,9 +2590,14 @@ typecheckWorkspace config entryPath = do
     let moduleOrder = Graph.compilationOrder modules
 
     -- Parse all
+    writeIORef globalConsoleNeeded False
     parsed <- Async.forConcurrently moduleOrder $ \modInfo -> do
         src <- TIO.readFile (Graph._mi_path modInfo)
-        return (modInfo, src, Parse.parseModule src)
+        let parseRes = Parse.parseModule src
+        case parseRes of
+            Right srcMod -> noteImportsForConsoleHint srcMod
+            Left _       -> return ()
+        return (modInfo, src, parseRes)
     let okParsed =
             [ (Graph._mi_name mi, Graph._mi_path mi, src, m)
             | (mi, src, Right m) <- parsed
@@ -3765,10 +3770,18 @@ collectGoImports _canMod srcMod =
     -- triggering the cycle — see runtime-go/rt/console_inline.go for
     -- the registration shim).
     ++ ( if unsafePerformIO (readIORef globalConsoleNeeded)
+            || entryUsesConsole
          then [ GoIr.GoImport "sky-app/rt/console_app" (Just "_") ]
          else [] )
     ++ sideEffectImports (Src._imports srcMod)
   where
+    entryUsesConsole = any importTriggersConsoleLocal (Src._imports srcMod)
+    importTriggersConsoleLocal imp =
+        let A.At _ segs = Src._importName imp
+        in case segs of
+            ("Std":"Live":_)         -> True
+            ("Sky":"Http":"Server":_) -> True
+            _                         -> False
     sideEffectImports imps =
         [ GoIr.GoImport (skyModToGoPath segs) (Just "_")
         | imp <- imps
