@@ -83,6 +83,28 @@ globalUnionNames :: IORef (Set.Set String)
 globalUnionNames = unsafePerformIO $ newIORef Set.empty
 
 
+-- | v0.16.0 binary-size hardening: tracks whether the user program
+-- imports any module that triggers a runtime console mount
+-- (Sky.Live `Std.Live*` or Sky.Http.Server `Sky.Http.Server*`).
+-- When False, `collectGoImports` omits the blank
+-- `_ "sky-app/rt/console_app"` import so Go's linker tree-shakes the
+-- entire console UI + Std.Db + Std.Auth + session-store driver chain
+-- out of the binary. A trivial Sky.Cli `hello-world` linked 241 MB
+-- pre-fix; ~12 MB after, because the console_app subpackage
+-- transitively imports Sky.Live's HTTP + DB + auth stack and only the
+-- side-effect init() registration was making it appear "used".
+--
+-- Set lazily in the parse phase by `noteImportsForConsoleHint`
+-- (called from `continueCompile` after `parseModule` succeeds for the
+-- entry module + every dep) — every Src.Module's import list is
+-- scanned. Reset to False at the start of every compile so successive
+-- `sky build` invocations within one process (LSP, watch mode) see a
+-- fresh accumulator.
+{-# NOINLINE globalConsoleNeeded #-}
+globalConsoleNeeded :: IORef Bool
+globalConsoleNeeded = unsafePerformIO $ newIORef False
+
+
 -- | v0.13 Phase A5: entry-module source path, set once per
 -- compilation, read at call-site codegen to key into
 -- `_cg_callSiteInstances` by (path, line, col).  Set in
@@ -683,6 +705,12 @@ collectIncrementalHashInputs = do
 
 continueCompile :: Toml.SkyConfig -> FilePath -> FilePath -> [Graph.ModuleInfo] -> String -> IO (Either String FilePath)
 continueCompile config entryPath outDir moduleOrder srcHash = do
+    -- v0.16.0 binary-size hardening: reset the console-needed flag at
+    -- the start of every compile so successive sky-build / LSP /
+    -- sky-watch invocations in one process see a fresh accumulator.
+    -- The flag is OR'd True later in this function as each parsed
+    -- Src.Module's imports are scanned by `noteImportsForConsoleHint`.
+    writeIORef globalConsoleNeeded False
 
     -- Phase 2: Parse all modules in parallel — parsing is pure text→AST
     -- with no cross-module dependencies, so it parallelises trivially.
@@ -694,7 +722,12 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
         case Parse.parseModule src of
             Left err ->
                 return (modInfo, Left err)
-            Right srcMod ->
+            Right srcMod -> do
+                -- v0.16.0 binary-size hardening: scan this module's
+                -- imports for Std.Live* / Sky.Http.Server* so
+                -- `collectGoImports` can conditionally emit the
+                -- blank `_ "sky-app/rt/console_app"` import.
+                noteImportsForConsoleHint srcMod
                 return (modInfo, Right srcMod)
     let formatted = flip map parseResults $ \(modInfo, r) -> case r of
             Left err ->
@@ -3706,17 +3739,34 @@ collectGoImports _canMod srcMod =
     -- a pure value. If main uses rt.* anywhere, Go doesn't complain about
     -- adding a blank import alongside the aliased one.
     -- Simpler: emit `_ = rt.Log_println` in a blank var at top.
-    [ GoIr.GoImport "sky-app/rt" (Just "rt")
-    -- v0.16.0: blank-import the inline console subpackage so its init()
-    -- registers rt.MountInlineConsole's hook. Without this, every Sky
-    -- binary would return ErrInlineConsoleUnavailable from
-    -- maybeAutoMountConsole's replacement. The console_app subpackage
-    -- itself imports `sky-app/rt`, so the reverse dependency is fine
-    -- (Go links the side-effect import without triggering the cycle
-    -- because rt does NOT import console_app — see runtime-go/rt/
-    -- console_inline.go for the registration shim).
-    , GoIr.GoImport "sky-app/rt/console_app" (Just "_")
-    ]
+    [ GoIr.GoImport "sky-app/rt" (Just "rt") ]
+    -- v0.16.0 binary-size hardening: the inline console subpackage's
+    -- init() registers rt.MountInlineConsole's hook. Pre-v0.16.0 we
+    -- emitted the blank import UNCONDITIONALLY, which meant every Sky
+    -- binary (including Sky.Cli batch jobs / Sky.Tui apps that NEVER
+    -- call MountEmbeddedConsole) linked the entire Sky.Live HTTP +
+    -- Std.Db + Std.Auth + session-store stack via the console_app
+    -- subpackage's transitive imports — a hello-world CLI ballooned
+    -- to 241 MB on linux/amd64.
+    --
+    -- The detection is consumer-side: `MountEmbeddedConsole` is only
+    -- called from `Live.app` (live.go) and `Server.listen` (rt.go).
+    -- An app that doesn't import `Std.Live*` or `Sky.Http.Server*`
+    -- never reaches either call site, so the console_app side effects
+    -- are pure dead weight.
+    --
+    -- `globalConsoleNeeded` is populated in the parse phase by
+    -- `noteImportsForConsoleHint` walking every parsed Src.Module
+    -- (entry + deps). True → emit blank import (current behaviour).
+    -- False → skip; Go's linker tree-shakes the console UI +
+    -- Sky.Live + Std.Db + Std.Auth + sqlite/postgres/redis drivers
+    -- away. console_app itself imports `sky-app/rt`, so the reverse
+    -- dependency is fine (Go links the side-effect import without
+    -- triggering the cycle — see runtime-go/rt/console_inline.go for
+    -- the registration shim).
+    ++ ( if unsafePerformIO (readIORef globalConsoleNeeded)
+         then [ GoIr.GoImport "sky-app/rt/console_app" (Just "_") ]
+         else [] )
     ++ sideEffectImports (Src._imports srcMod)
   where
     sideEffectImports imps =
@@ -3736,6 +3786,27 @@ collectGoImports _canMod srcMod =
             in case rest of
                 [] -> firstTwo
                 _  -> firstTwo ++ "/" ++ List.intercalate "/" rest
+
+
+-- | v0.16.0 binary-size hardening: scan a parsed Src.Module's imports
+-- and OR the console-needed flag into the global accumulator. Called
+-- once per parsed module during the parse phase. Triggers on any
+-- import whose dotted path begins with `Std.Live` or
+-- `Sky.Http.Server` — both runtimes call `MountEmbeddedConsole` which
+-- requires the inline-console subpackage's init() registration.
+-- Module name prefixes are matched at SEGMENT boundaries so a future
+-- `Std.LiveExt`-shaped name doesn't accidentally trigger.
+noteImportsForConsoleHint :: Src.Module -> IO ()
+noteImportsForConsoleHint srcMod =
+    let needed = any importTriggersConsole (Src._imports srcMod)
+    in when needed (writeIORef globalConsoleNeeded True)
+  where
+    importTriggersConsole imp =
+        let A.At _ segs = Src._importName imp
+        in case segs of
+            ("Std":"Live":_)         -> True
+            ("Sky":"Http":"Server":_) -> True
+            _                         -> False
 
 
 -- | Check if module imports Task
