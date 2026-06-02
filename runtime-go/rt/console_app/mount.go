@@ -67,11 +67,21 @@ func MountInlineConsole(mux *http.ServeMux, basePath string) error {
 	}
 	prefix := normaliseBasePath(basePath)
 	path := prefix + "/_sky/console"
+	// PR 3 (v0.16.0): wrap the bundled handler with the rt-side auth
+	// gate. rt.ConsoleGate is a thin shim around evaluateConsoleAuth
+	// that returns true when the request may proceed; false (with the
+	// response already written) otherwise.
+	gated := func(w http.ResponseWriter, r *http.Request) {
+		if !rt.ConsoleGate(w, r) {
+			return
+		}
+		handleConsoleRoot(w, r)
+	}
 	// Two-arg signature: handle both /_sky/console and /_sky/console/
 	// (Go's ServeMux treats trailing-slash as different patterns).
-	mux.HandleFunc(path, handleConsoleRoot)
+	mux.HandleFunc(path, gated)
 	if !strings.HasSuffix(path, "/") {
-		mux.HandleFunc(path+"/", handleConsoleRoot)
+		mux.HandleFunc(path+"/", gated)
 	}
 	return nil
 }

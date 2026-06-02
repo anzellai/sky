@@ -316,12 +316,17 @@ func resetReadiness(t *testing.T) {
 	readinessReady.Store(true)
 	probes := []func() error{}
 	readinessProbes.Store(&probes)
+	// v0.16.0 PR 3: the console auth state is snapshotted once per
+	// process; reset it so each test gets a fresh resolveConsoleAuthMode
+	// pass against whatever env vars it sets via t.Setenv.
+	ResetConsoleAuthStateForTesting()
 	t.Cleanup(func() {
 		readinessReady.Store(true)
 		probes := []func() error{}
 		readinessProbes.Store(&probes)
 		SetProductionMode(false)
 		os.Unsetenv("SKY_METRICS_TOKEN")
+		ResetConsoleAuthStateForTesting()
 	})
 }
 

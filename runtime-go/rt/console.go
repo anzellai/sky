@@ -90,27 +90,20 @@ func MountConsoleEndpoints(mux *http.ServeMux) {
 // onto `mux` at `/_sky/console`. Replaces the v0.15.x subprocess +
 // reverse-proxy path entirely.
 //
-// v0.16.0 contract:
-//   - Dev-mode (`productionFromEnv()` returns false): always mount.
-//     Dev banner remains visible; same-origin link works.
-//   - Production mode: mount ONLY when an admin token is configured
-//     via `SKY_ADMIN_TOKEN` / `SKY_METRICS_TOKEN` /
-//     `SKY_CONSOLE_TOKEN_SECRET`. Without one, the console stays
-//     offline so we don't expose telemetry to anonymous reads.
-//   - Skip entirely when running AS a sub-app (legacy mode —
-//     `SKY_LIVE_BASE_PATH` set); a sub-app shouldn't host its own
-//     console.
-//
-// Auth: PR 2 keeps the existing `consoleAccessAllowed` gate (lives
-// in the JSON API handlers below). PR 3 replaces it with the new
-// `SKY_CONSOLE_AUTH=token|app|off` env-driven gate. The inline
-// path is intentionally permissive in PR 2 — it serves the static
-// HTML shell to dev users without auth, identical to the v0.15.x
-// dev-mode subprocess.
+// v0.16.0 contract (PR 3):
+//   - Sub-app context (`SKY_LIVE_BASE_PATH` set) → skip entirely;
+//     the parent owns its own console.
+//   - `SKY_CONSOLE_EMBED=off|0|false` → skip (legacy opt-out, kept).
+//   - `SKY_CONSOLE_AUTH=off` → skip and log the explicit decline.
+//   - Production mode (`ENV` ∈ unset-but-non-dev-marker) AND
+//     `SKY_CONSOLE_AUTH` unset → skip + warn `console.disabled
+//     reason=auth-unset`. No silent open-to-the-world.
+//   - Otherwise mount, with per-request auth gating handled by
+//     evaluateConsoleAuth (token cookie / app callback / dev open).
 //
 // The function logs (best-effort) to stderr on outcome:
-//   - "inline console mounted at /_sky/console"
-//   - "inline console skipped (production + no auth secret)"
+//   - "inline console mounted at /_sky/console mode=<m>"
+//   - "inline console skipped reason=<r>"
 //   - "inline console unavailable: <ErrInlineConsoleUnavailable>"
 //     when the host binary failed to link `sky-app/rt/console_app`
 //     (the compiler emits the blank import; missing means a build
@@ -130,18 +123,25 @@ func MountEmbeddedConsole(mux *http.ServeMux) {
 	if v := os.Getenv("SKY_CONSOLE_EMBED"); v == "off" || v == "0" || v == "false" {
 		return
 	}
-	// Production gate: require an admin token, otherwise stay
-	// silent — exposing logs/traces/metrics to anonymous reads in
-	// production is the bug the legacy subprocess auth gate was
-	// added to close. PR 3 generalises this via SKY_CONSOLE_AUTH.
-	if productionFromEnv() && adminTokenSecret() == "" {
-		fmt.Fprintln(os.Stderr, "[sky.console] inline console skipped (production mode requires SKY_ADMIN_TOKEN; see docs/v0.16.x-console/EMBEDDED.md)")
+	st := loadConsoleAuthState()
+	switch st.mode {
+	case consoleAuthModeOff:
+		fmt.Fprintln(os.Stderr, "[sky.console] inline console skipped reason=auth-off (SKY_CONSOLE_AUTH=off)")
+		logStructured("info", "console.disabled", "reason", "auth-off")
+		return
+	case consoleAuthModeUnsetProd:
+		fmt.Fprintln(os.Stderr, "[sky.console] inline console skipped reason=auth-unset (production mode requires SKY_CONSOLE_AUTH; see docs/v0.16.x-console/EMBEDDED.md)")
+		logStructured("warn", "console.disabled", "reason", "auth-unset")
 		return
 	}
 	// Initialise the ingest token even though the inline mount
 	// doesn't use it directly — keeps observability federation
 	// (push exporter from foreign sub-apps, if any) functional.
 	IngestTokenInit()
+	// Login POST handler (always-on companion when the gate is
+	// active). Mount BEFORE the inline catch-all so the more-specific
+	// pattern wins in Go's ServeMux longest-prefix-match.
+	mountConsoleAuthRoutes(mux)
 	if err := MountInlineConsole(mux, ""); err != nil {
 		// ErrInlineConsoleUnavailable means the user's app didn't
 		// link sky-app/rt/console_app — fall back to the legacy
@@ -151,7 +151,7 @@ func MountEmbeddedConsole(mux *http.ServeMux) {
 		fmt.Fprintf(os.Stderr, "[sky.console] inline console unavailable: %v; falling back to legacy HTML shell\n", err)
 		return
 	}
-	fmt.Fprintln(os.Stderr, "[sky.console] inline console mounted at /_sky/console")
+	fmt.Fprintf(os.Stderr, "[sky.console] inline console mounted at /_sky/console mode=%s\n", describeConsoleAuthMode(st.mode))
 }
 
 // HandleConsole serves the dashboard's HTML shell — a static
@@ -168,24 +168,17 @@ func HandleConsole(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(consoleHTML))
 }
 
-// consoleAccessAllowed implements the auth gate. Returns true when
-// the request may proceed; false when a response (401 / 503) has
-// been written.
+// consoleAccessAllowed implements the auth gate.
+//
+// v0.16.0 PR 3: delegates to evaluateConsoleAuth which dispatches
+// on SKY_CONSOLE_AUTH = token | app | off (+ the production +
+// dev-open defaults). The v0.15.x admin-token / serverless branches
+// migrated INTO that function, so this is now a thin alias.
+//
+// Returns true when the request may proceed; false when a response
+// (401 / 403 / 503) has been written.
 func consoleAccessAllowed(w http.ResponseWriter, r *http.Request) bool {
-	if IsServerless() {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusServiceUnavailable)
-		w.Write([]byte(`{"status":"unavailable","hint":"dashboard requires always-on CPU; use OTLP push to your observability vendor instead (configure OTEL_EXPORTER_OTLP_ENDPOINT)"}`))
-		return false
-	}
-	if isProductionMode() && !hasAdminAuth(r) {
-		w.Header().Set("WWW-Authenticate", `Basic realm="sky-console"`)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(`{"status":"unauthorized","hint":"set SKY_METRICS_TOKEN and pass via Authorization: Bearer <token>"}`))
-		return false
-	}
-	return true
+	return evaluateConsoleAuth(w, r)
 }
 
 // ─── API handlers (JSON) ──────────────────────────────────────
