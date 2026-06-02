@@ -3022,10 +3022,11 @@ func liveAppRun(cfg any) any {
 	// *liveApp without an update-tuple context.
 	registerProcessBroker(app)
 
-	// Resolve listen port early so sub-app spawn helpers
-	// (maybeAutoMountConsole below) can pass it to children via
-	// SKY_PARENT_URL — that's how the observability push exporter
-	// finds us. cfg.Port wins over env; both fall back to 8080.
+	// Resolve listen port early. cfg.Port wins over env; both fall
+	// back to 8080. (Pre-v0.16.0 this was needed to seed
+	// SKY_PARENT_URL on subprocess-spawned console children; the
+	// inline console doesn't run as a child process so the port is
+	// just for the listener.)
 	port := 8080
 	if p := Field(cfg, "Port"); p != nil {
 		port = AsInt(p)
@@ -3035,22 +3036,21 @@ func liveAppRun(cfg any) any {
 			port = n
 		}
 	}
+	_ = port // referenced again below; keep the name in scope
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/_sky/event", app.handleEvent)
 	mux.HandleFunc("/_sky/sse", app.handleSSE)
 	mux.HandleFunc("/_sky/config", app.handleConfig)
-	// Auto-mount Sky Console sub-app FIRST so MountObservability
-	// Endpoints' legacy /_sky/console fallback can see the flag
-	// and skip its own registration. Dev mode only; no-op in
-	// production / sub-app contexts. Skipped entirely when running
-	// AS a sub-app (basePath != "") — sub-apps don't host their own
-	// sub-consoles.
-	parentPortForChildren := port
-	if app.basePath != "" {
-		parentPortForChildren = 0 // we're a sub-app; no sub-children
-	}
-	maybeAutoMountConsole(mux, app.basePath, parentPortForChildren)
+	// v0.16.0: in-process inline Sky Console mount. Replaces the
+	// v0.15.x subprocess + reverse-proxy mount. The function
+	// internally gates on production-mode + sub-app context, so we
+	// can call it unconditionally. Must run BEFORE
+	// MountObservabilityEndpoints so the legacy HTML shell inside
+	// the latter doesn't collide on /_sky/console (safeMount's
+	// dedup catches that case anyway, but the explicit order
+	// documents intent).
+	MountEmbeddedConsole(mux)
 	// If THIS process is a sub-app (env vars from MountSubApp set),
 	// kick the push exporter — Log.* / counter / span writes flow
 	// to the parent. No-op for standalone (parent) runs.
@@ -3212,19 +3212,13 @@ func liveAppRun(cfg any) any {
 		// finish + the goroutine exits cleanly. Idempotent —
 		// safe to call when no worker was ever spawned.
 		JobsShutdown()
-		// Close the parent HTTP server BEFORE killing sub-apps.
-		// Order matters: if a `/_sky/console/*` request is being
-		// reverse-proxied when Ctrl-C lands, killing the console
-		// child first leaves the proxy mid-body-copy with a dead
-		// upstream — "ReverseProxy read error during body copy:
-		// unexpected EOF". Closing the parent first ends those
-		// in-flight proxied requests; only then tear the children
-		// down.
+		// v0.16.0: the inline console runs in-process, so there's
+		// no child to tear down. Pre-v0.16.0 this section closed
+		// srv.Close() FIRST (to drain in-flight reverse-proxy
+		// requests) then ShutdownSubApps() to signal the console
+		// child. Now the console handler runs on the same mux, so
+		// closing the server is sufficient.
 		_ = srv.Close()
-		// Tear down any sub-apps spawned via MountSubApp (the dev
-		// console + any user-mounted billing/admin/etc. processes).
-		// Idempotent + bounded (2s SIGTERM grace then SIGKILL).
-		ShutdownSubApps()
 		// If srv.Close completes the listener teardown, ListenAndServe
 		// returns and the function exits naturally. If something hangs,
 		// a second Ctrl-C escapes via os.Exit. Without this watchdog,

@@ -258,27 +258,9 @@ func TestIngestToken_HonoursEnv(t *testing.T) {
 	}
 }
 
-// TestSubAppNamespaceFromPath — namespace derivation is deterministic
-// across all input shapes.
-func TestSubAppNamespaceFromPath(t *testing.T) {
-	cases := []struct {
-		in, want string
-	}{
-		{"/_sky/console", "console"},
-		{"/billing", "billing"},
-		{"/admin/v2", "admin_v2"},
-		{"/foo/bar/baz", "foo_bar_baz"},
-		{"", "subapp"},
-		{"/", "subapp"},
-		{"/!!!", "subapp"},
-		{"/Admin-Panel", "AdminPanel"}, // hyphen stripped
-		{"/api/v1.2", "api_v12"},        // dot stripped
-		{"/_sky/console/", "console"},   // trailing slash stripped
-	}
-	for _, c := range cases {
-		got := subAppNamespaceFromPath(c.in)
-		if got != c.want {
-			t.Errorf("subAppNamespaceFromPath(%q) = %q; want %q", c.in, got, c.want)
-		}
-	}
-}
+// (v0.16.0 PR 2: TestSubAppNamespaceFromPath removed — the
+// subprocess + reverse-proxy mount path is gone; the namespace
+// helper that test exercised was in subapp.go which is now
+// deleted. v0.16.1 reintroduces a similar helper for the
+// exporter-side namespacing, at which point the test moves into
+// its companion spec.)

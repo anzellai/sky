@@ -39,11 +39,52 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 )
+
+// adminTokenSecret returns the per-app admin secret that gates
+// every privileged Sky.Live surface — /_sky/console (HS256 JWT
+// signing), /_sky/metrics (Bearer auth), and any future admin-
+// only endpoint. One secret per app, multiple surfaces, one
+// trust domain.
+//
+// The canonical env var is SKY_ADMIN_TOKEN. Two legacy aliases
+// are honoured for tenants seeded on earlier Sky versions:
+//
+//   - SKY_METRICS_TOKEN — v0.14.21's first-pass unification name
+//     (kept "metrics" in the name; promoted to admin-wide).
+//   - SKY_CONSOLE_TOKEN_SECRET — v0.14.20's console-specific
+//     secret before any unification.
+//
+// Returns "" when nothing is set — admin auth is off and the
+// production-mode console mount declines (see
+// `MountEmbeddedConsole`).
+//
+// Moved from runtime-go/rt/subapp.go in v0.16.0 PR 2 when the
+// subprocess + reverse-proxy mount path was deleted.
+// adminTokenSecret stays here because every caller is part of
+// the admin-auth surface (this file + observability.go metrics
+// gate).
+func adminTokenSecret() string {
+	if s := os.Getenv("SKY_ADMIN_TOKEN"); s != "" {
+		return s
+	}
+	if s := os.Getenv("SKY_METRICS_TOKEN"); s != "" {
+		return s
+	}
+	return os.Getenv("SKY_CONSOLE_TOKEN_SECRET")
+}
+
+// consoleAdminSecret is a thin alias kept so callers that imported
+// this name from v0.14.21 keep compiling. Use adminTokenSecret for
+// new code.
+func consoleAdminSecret() string {
+	return adminTokenSecret()
+}
 
 // consoleAuthCookieName is the session cookie the tenant runtime
 // issues after a successful URL-token verification. Same shape as

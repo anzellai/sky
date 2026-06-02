@@ -7620,17 +7620,15 @@ func Server_listen(port any, routes any) any {
 	// any of the user's routes so the catch-all "/" pattern in
 	// user code doesn't shadow them. Opt-out via
 	// OBSERVABILITY_DISABLED=1.
-	// Auto-mount the bundled Sky Console as a sub-app at
-	// /_sky/console in dev mode. Must run BEFORE
-	// MountObservabilityEndpoints so the legacy console mount inside
-	// it sees the flag and stays out. Same helper Sky.Live uses, same
-	// gates — never spawns in production, never recurses when
-	// SKY_LIVE_BASE_PATH is already set, never blocks startup on
-	// spawn failure. parentBasePath is "" because Sky.Http.Server has
-	// no concept of being itself mounted as a sub-app today.
-	// Pass `p` so the console child can push observability data
-	// back to us via SKY_PARENT_URL=http://127.0.0.1:<p>.
-	maybeAutoMountConsole(mux, "", p)
+	// v0.16.0: in-process inline Sky Console mount. Replaces the
+	// v0.15.x subprocess + reverse-proxy mount. Must run BEFORE
+	// MountObservabilityEndpoints so the legacy console HTML root
+	// inside it can defer to the inline one. Same gates as
+	// Sky.Live (production+no-secret → skipped; SKY_LIVE_BASE_PATH
+	// set → skipped; SKY_CONSOLE_EMBED=off → skipped). No port
+	// argument needed — handler runs on this mux directly.
+	_ = p
+	MountEmbeddedConsole(mux)
 	MountObservabilityEndpoints(mux)
 	// If THIS process is a sub-app (SKY_PARENT_URL + SKY_LIVE_NAMESPACE
 	// set), start the push-exporter so Log.* / metric / span writes
@@ -7662,18 +7660,14 @@ func Server_listen(port any, routes any) any {
 		IdleTimeout:       httpEnvTimeout("SKY_HTTP_IDLE_TIMEOUT", serverIdleTimeout),
 		MaxHeaderBytes:    serverMaxHeaderBytes,
 	}
-	// Tear down sub-apps on signal so the dev-console child doesn't
-	// orphan when the user kills `sky run`. Sky.Live has its own
-	// richer shutdown handler (graceful SSE close, OTel flush, etc.);
-	// Sky.Http.Server doesn't, so a minimal handler is added here
-	// specifically for sub-app cleanup. Without this the child
-	// process group would survive parent exit and keep its port
-	// bound, making subsequent runs hit "address already in use".
+	// v0.16.0: inline console runs in-process — no children to
+	// signal. Still install a SIGINT/SIGTERM/SIGHUP handler so the
+	// server closes gracefully (drains in-flight requests) rather
+	// than dropping connections.
 	srvSigCh := make(chan os.Signal, 2)
 	signal.Notify(srvSigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 	go func() {
 		<-srvSigCh
-		ShutdownSubApps()
 		_ = srv.Close()
 	}()
 	fmt.Printf("Sky server listening on http://localhost:%d\n", p)
