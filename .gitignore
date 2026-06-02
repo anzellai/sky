@@ -117,3 +117,8 @@ sky.zip
 # screenshots, traces. Not source; per-developer; regenerated
 # whenever scripts/verify-examples.sh is run.
 _verify/
+
+# v0.16.0 PR 3 — auto-generated dev-mode console token persisted
+# next to the app for stable URLs across rebuilds. Per-machine,
+# never source.
+.sky/

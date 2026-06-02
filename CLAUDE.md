@@ -669,6 +669,24 @@ SKY_SUBAPP_VERBOSE=0        # 1 forwards spawned-child stdout/stderr to parent t
 SKY_BIN=…                   # override `sky` binary path for SpawnSkyConsole
 SKY_ADMIN_TOKEN=…           # /_sky/metrics + /_sky/console require Bearer in production
                             # (legacy: SKY_METRICS_TOKEN / SKY_CONSOLE_TOKEN_SECRET still honoured)
+SKY_CONSOLE_AUTH=token      # v0.16.0+ three-mode console auth gate:
+                            #   token → __Host-sky_console cookie + login POST form
+                            #           (HKDF-derived signing key from SKY_CONSOLE_TOKEN)
+                            #   app   → row-poly consoleAuth callback on Live.app cfg
+                            #           (Request -> Task Error (Maybe Identity))
+                            #   off   → console doesn't mount at all
+                            # Production (ENV != dev/development/local) AND unset →
+                            # mount declines + emits `console.disabled reason=auth-unset`
+                            # warn log. Dev mode + unset → preserves v0.15.x open-in-dev
+                            # behaviour.
+SKY_CONSOLE_TOKEN=…         # v0.16.0+ secret used to derive the __Host- cookie HMAC key
+                            # via HKDF-SHA256(secret, build-commit, "sky-console-cookie").
+                            # Token-mode login form accepts THIS value verbatim.
+SKY_CONSOLE_EMBED_ORIGIN=…  # v0.16.0+ opt-in for the URL handshake (?token=<JWT> →
+                            # session cookie). Must be set to the EXACT origin of the
+                            # embedding iframe (SkyDeploy control-plane). Unset → the
+                            # URL handshake is disabled entirely. Closes the cookie/
+                            # JWT confusion attack surface from the security review.
 SKY_CONSOLE_DB_PATH=…       # when set, telemetry dual-writes every
                             # log/metric/span to the SQLite file at this
                             # path (WAL mode, 24h log/span retention,
@@ -767,6 +785,7 @@ Each binding is either:
 | `Stream` | `Sky.Http.Server.Stream` | stream, emit, finish, withContentType — server-side streaming HTTP responses (SSE / LLM token forwarding / chunked downloads). Mirror of `Sky.Core.Http.Stream` (which reads upstream bodies as Sub events). See `docs/skylive/http-streaming.md` §"Server-side" + `examples/30-sse-server-demo`. Synchronous bridge: `Sky.Core.Http.Stream.forEachChunk hdl body` (v0.15.41+) drains an upstream stream from inside a plain Sky.Http.Server handler goroutine — needed for the relay shape (upstream chunks → `Server.Stream.emit` downstream chunk-for-chunk; no Sky.Live update loop required). See `docs/skylive/http-streaming.md` §"Synchronous relay" + `examples/32-sse-relay`. |
 | `Middleware` | `Sky.Http.Middleware` | withCors, withLogging, withBasicAuth, withRateLimit |
 | `Head` | `Std.Live.Head` | v0.15.58+. Per-page `<head>` injection — `title` / `meta name content` / `metaProperty property content` (OG) / `link [(k, v)...]` / `canonical href` / `jsonLd body` / `themeColor color` / `rss href title`. Opt in via optional `head : Model -> List (Html msg)` field on `Live.app` cfg; runtime splices the rendered list into `<head>` after baseline meta + before inline `<style>`. Absent field → byte-identical to pre-v0.15.58 output. |
+| `Console` | `Std.Live.Console` | v0.16.0+. `Identity` type alias (`{ subject, email, claims : Dict String String }`) for the optional row-poly `consoleAuth : Request -> Task Error (Maybe Identity)` field on `Live.app` cfg. Framework calls the callback before mounting `/_sky/console` when `SKY_CONSOLE_AUTH=app`. `Nothing` → 403 + `console.auth.denied` audit log; `Just identity` → set `__Host-sky_console` cookie + allow. Same row-open pattern as v0.15.58 `head` — absent field → byte-identical to pre-v0.16.0 output. |
 | `RateLimit` | `Sky.Http.RateLimit` | allow |
 | `WebSocket` | `Sky.Core.WebSocket` (client) + `Sky.Http.Server.WebSocket` (server) | v0.15.46+. Bidirectional sockets — collab editor ops, multiplayer, bidirectional LLM chat, financial feeds. Client: `connect` / `connectWith` / `send` / `sendBinary` / `close` / `closeWithCode` (Task-tier) + `onOpen` / `onMessage` / `onClose` / `onError` (Sub-tier). Server: `upgrade` (returns from a Sky.Http.Server handler) + `sendToClient` / `sendBinaryToClient` / `broadcast` / `closeClient`. Built on `nhooyr.io/websocket`. Default 30 s heartbeat + 1 MiB max message + 64-frame read buffer. Server production gate: empty `originPatterns` returns 403 when `ENV=production`. **Stdlib typed-record convention (v0.15.46+): every typed record ships with a `default*` constructor + `with*` builder per field — always compose via builders so future field additions don't break call sites.** See `examples/33-websocket-echo`. |
 | `Cache` | `Std.Cache` | v0.15.47+. LRU + TTL in-memory cache, `Cache k v` parametric on key and value. `CacheCfg` ships with `defaultCfg` + `withMaxEntries` / `withTTL` / `withMaxBytes` per v0.15.46 convention. `new` / `get` / `put` / `remove` / `clear` / `size` / `stats` (monotone hits/misses/evictions). Backed by `hashicorp/golang-lru/v2`; lazy TTL expiry (no background goroutine). |
