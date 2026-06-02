@@ -6,6 +6,7 @@ import Std.Live as Live
 import Std.Ui as Ui exposing (Element)
 import Std.Ui.Background as Background
 import Std.Ui.Border as Border
+import Std.Ui.Chart as Chart
 import Std.Ui.Font as Font
 import RegressionGates
 
@@ -204,6 +205,134 @@ clipDemo =
             (Ui.text "this 460px strip is clipped to the 240px box on x"))
 
 
+
+
+-- ─── Chart demos (Std.Ui.Chart, v0.16.0 PR 4) ────────────────
+
+
+lineChartDemo : Element Msg
+lineChartDemo =
+    Chart.line
+        (Chart.defaultCfg
+            |> Chart.withWidth 600
+            |> Chart.withHeight 180
+            |> Chart.withTitle "Requests / sec (last 60 s)"
+        )
+        [ Chart.series
+            [ (0.0, 12.0), (1.0, 18.0), (2.0, 15.0), (3.0, 22.0)
+            , (4.0, 28.0), (5.0, 24.0), (6.0, 31.0), (7.0, 29.0)
+            , (8.0, 35.0), (9.0, 33.0), (10.0, 40.0), (11.0, 38.0)
+            ]
+            |> Chart.withSeriesLabel "/api"
+            |> Chart.withSeriesColor (Ui.rgb 50 150 200)
+        , Chart.series
+            [ (0.0, 5.0), (1.0, 7.0), (2.0, 6.0), (3.0, 9.0)
+            , (4.0, 11.0), (5.0, 10.0), (6.0, 13.0), (7.0, 12.0)
+            , (8.0, 14.0), (9.0, 13.0), (10.0, 16.0), (11.0, 15.0)
+            ]
+            |> Chart.withSeriesLabel "/admin"
+            |> Chart.withSeriesColor (Ui.rgb 220 130 60)
+        ]
+
+
+areaChartDemo : Element Msg
+areaChartDemo =
+    Chart.area
+        (Chart.defaultCfg
+            |> Chart.withWidth 600
+            |> Chart.withHeight 160
+            |> Chart.withTitle "Stacked usage (MB)"
+        )
+        [ Chart.series
+            [ (0.0, 200.0), (1.0, 240.0), (2.0, 280.0), (3.0, 320.0)
+            , (4.0, 360.0), (5.0, 410.0)
+            ]
+            |> Chart.withSeriesColor (Ui.rgb 100 180 100)
+        ]
+
+
+barChartDemo : Element Msg
+barChartDemo =
+    Chart.bar
+        (Chart.defaultCfg
+            |> Chart.withWidth 600
+            |> Chart.withHeight 180
+            |> Chart.withTitle "Top routes (req/min)"
+        )
+        [ Chart.series
+            [ (0.0, 1200.0), (1.0, 850.0), (2.0, 640.0), (3.0, 420.0), (4.0, 180.0) ]
+            |> Chart.withSeriesColor (Ui.rgb 96 128 224)
+        ]
+
+
+sparklineDemo : Element Msg
+sparklineDemo =
+    Ui.row
+        [ Ui.spacing 16, Ui.centerY ]
+        [ Ui.column
+            [ Ui.spacing 4 ]
+            [ Ui.el [ Font.size 12 ] (Ui.text "Throughput")
+            , Ui.el [ Font.size 20, Font.bold ] (Ui.text "1.2 k/s")
+            , Ui.el
+                [ Ui.width (Ui.px 140), Ui.height (Ui.px 32) ]
+                (Chart.sparkline
+                    (Chart.defaultCfg
+                        |> Chart.withWidth 140
+                        |> Chart.withHeight 32
+                        |> Chart.withColor (Ui.rgb 50 150 100)
+                    )
+                    [ 0.4, 0.6, 0.5, 0.8, 0.7, 0.9, 1.0, 0.95, 1.2, 1.15, 1.3 ])
+            ]
+        , Ui.column
+            [ Ui.spacing 4 ]
+            [ Ui.el [ Font.size 12 ] (Ui.text "p95 latency")
+            , Ui.el [ Font.size 20, Font.bold ] (Ui.text "84 ms")
+            , Ui.el
+                [ Ui.width (Ui.px 140), Ui.height (Ui.px 32) ]
+                (Chart.sparkline
+                    (Chart.defaultCfg
+                        |> Chart.withWidth 140
+                        |> Chart.withHeight 32
+                        |> Chart.withColor (Ui.rgb 220 130 60)
+                    )
+                    [ 60.0, 72.0, 68.0, 80.0, 75.0, 90.0, 85.0, 95.0, 82.0, 88.0, 84.0 ])
+            ]
+        , Ui.column
+            [ Ui.spacing 4 ]
+            [ Ui.el [ Font.size 12 ] (Ui.text "Error rate")
+            , Ui.el [ Font.size 20, Font.bold, Font.color (Ui.rgb 200 60 60) ] (Ui.text "0.4 %")
+            , Ui.el
+                [ Ui.width (Ui.px 140), Ui.height (Ui.px 32) ]
+                (Chart.sparkline
+                    (Chart.defaultCfg
+                        |> Chart.withWidth 140
+                        |> Chart.withHeight 32
+                        |> Chart.withColor (Ui.rgb 200 60 60)
+                    )
+                    [ 0.2, 0.3, 0.25, 0.4, 0.35, 0.5, 0.45, 0.6, 0.5, 0.45, 0.4 ])
+            ]
+        ]
+
+
+heatmapDemo : Element Msg
+heatmapDemo =
+    Chart.heatmap
+        (Chart.defaultCfg
+            |> Chart.withWidth 600
+            |> Chart.withHeight 160
+            |> Chart.withTitle "Errors per hour (Mon-Sun x 24 h)"
+            |> Chart.withColor (Ui.rgb 200 80 80)
+        )
+        [ [ 0.0, 0.0, 1.0, 2.0, 4.0, 8.0, 12.0, 18.0, 22.0, 18.0, 15.0, 12.0, 10.0, 8.0, 6.0, 5.0, 4.0, 3.0, 2.0, 1.0, 0.0, 0.0, 0.0, 0.0 ]
+        , [ 0.0, 0.0, 0.0, 1.0, 3.0, 6.0, 10.0, 16.0, 20.0, 22.0, 18.0, 15.0, 12.0, 10.0, 8.0, 6.0, 5.0, 4.0, 2.0, 1.0, 0.0, 0.0, 0.0, 0.0 ]
+        , [ 0.0, 0.0, 1.0, 2.0, 5.0, 10.0, 14.0, 20.0, 24.0, 22.0, 18.0, 14.0, 12.0, 10.0, 8.0, 7.0, 5.0, 4.0, 3.0, 2.0, 0.0, 0.0, 0.0, 0.0 ]
+        , [ 0.0, 0.0, 0.0, 1.0, 2.0, 5.0, 8.0, 14.0, 18.0, 20.0, 16.0, 12.0, 10.0, 8.0, 6.0, 5.0, 4.0, 3.0, 2.0, 1.0, 0.0, 0.0, 0.0, 0.0 ]
+        , [ 0.0, 0.0, 1.0, 3.0, 6.0, 12.0, 16.0, 22.0, 28.0, 26.0, 22.0, 18.0, 14.0, 12.0, 10.0, 8.0, 6.0, 5.0, 3.0, 2.0, 1.0, 0.0, 0.0, 0.0 ]
+        , [ 0.0, 0.0, 0.0, 1.0, 2.0, 4.0, 6.0, 10.0, 12.0, 14.0, 12.0, 10.0, 8.0, 7.0, 6.0, 5.0, 4.0, 3.0, 2.0, 1.0, 0.0, 0.0, 0.0, 0.0 ]
+        , [ 0.0, 0.0, 0.0, 0.0, 1.0, 3.0, 5.0, 8.0, 10.0, 12.0, 10.0, 8.0, 7.0, 6.0, 5.0, 4.0, 3.0, 2.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0 ]
+        ]
+
+
 counterDemo : Model -> Element Msg
 counterDemo model =
     Ui.row
@@ -251,6 +380,11 @@ view model =
             , section "textColumn spacing" textColumnDemo
             , section "clipX overflow" clipDemo
             , section "button + events" (counterDemo model)
+            , section "Chart — line (req/s timeseries, 2 series)" lineChartDemo
+            , section "Chart — area (stacked usage)" areaChartDemo
+            , section "Chart — bar (route popularity)" barChartDemo
+            , section "Chart — sparklines (dashboard cards)" sparklineDemo
+            , section "Chart — heatmap (24 h x 7 d errors)" heatmapDemo
             ]
     in
         Ui.layout
