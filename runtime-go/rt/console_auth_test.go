@@ -11,7 +11,12 @@ import (
 // TestConsoleAuthAcceptsUrlToken — first-hit flow: ?token=<JWT>
 // verifies, sets sky_console_sid cookie, 302-redirects to the
 // same path with the token stripped.
+//
+// v0.16.0 PR 3: the URL handshake is opt-in via
+// SKY_CONSOLE_EMBED_ORIGIN. We set the env var + an Origin header
+// matching it so the hardened gate accepts the redeem.
 func TestConsoleAuthAcceptsUrlToken(t *testing.T) {
+	t.Setenv("SKY_CONSOLE_EMBED_ORIGIN", "https://dev.example")
 	secret := "a-32-byte-or-longer-test-secret-key"
 	tok, err := MintConsoleUrlToken(secret, "anzel@test", "42", 10*time.Minute)
 	if err != nil {
@@ -26,6 +31,7 @@ func TestConsoleAuthAcceptsUrlToken(t *testing.T) {
 	gate := consoleTokenAuth(secret, inner)
 
 	r := httptest.NewRequest("GET", "/_sky/console/?token="+tok, nil)
+	r.Header.Set("Origin", "https://dev.example")
 	w := httptest.NewRecorder()
 	gate.ServeHTTP(w, r)
 
@@ -61,6 +67,7 @@ func TestConsoleAuthAcceptsUrlToken(t *testing.T) {
 // first hit set the session cookie, the inner handler is reached
 // directly on subsequent requests with no token in the URL.
 func TestConsoleAuthAcceptsCookieOnSubsequentRequest(t *testing.T) {
+	t.Setenv("SKY_CONSOLE_EMBED_ORIGIN", "https://dev.example")
 	secret := "a-32-byte-or-longer-test-secret-key"
 	// Build a session cookie by going through the issue path.
 	urlTok, _ := MintConsoleUrlToken(secret, "anzel@test", "42", 10*time.Minute)
@@ -68,6 +75,7 @@ func TestConsoleAuthAcceptsCookieOnSubsequentRequest(t *testing.T) {
 		w.WriteHeader(200)
 	}))
 	r1 := httptest.NewRequest("GET", "/_sky/console/?token="+urlTok, nil)
+	r1.Header.Set("Origin", "https://dev.example")
 	w1 := httptest.NewRecorder()
 	gate.ServeHTTP(w1, r1)
 	cookie := findSetCookie(w1.Result().Header, consoleAuthCookieName)
@@ -97,6 +105,7 @@ func TestConsoleAuthAcceptsCookieOnSubsequentRequest(t *testing.T) {
 // TestConsoleAuthRejectsBadToken — wrong signature on the URL
 // token must 401 + render the landing page, never reach inner.
 func TestConsoleAuthRejectsBadToken(t *testing.T) {
+	t.Setenv("SKY_CONSOLE_EMBED_ORIGIN", "https://dev.example")
 	secret := "a-32-byte-or-longer-test-secret-key"
 	// Token signed with a DIFFERENT secret.
 	badTok, _ := MintConsoleUrlToken("different-secret-32-bytes-or-more", "x", "1", 10*time.Minute)
@@ -106,6 +115,7 @@ func TestConsoleAuthRejectsBadToken(t *testing.T) {
 		called = true
 	}))
 	r := httptest.NewRequest("GET", "/_sky/console/?token="+badTok, nil)
+	r.Header.Set("Origin", "https://dev.example")
 	w := httptest.NewRecorder()
 	gate.ServeHTTP(w, r)
 
@@ -122,6 +132,7 @@ func TestConsoleAuthRejectsBadToken(t *testing.T) {
 
 // TestConsoleAuthRejectsExpiredToken — exp claim in the past.
 func TestConsoleAuthRejectsExpiredToken(t *testing.T) {
+	t.Setenv("SKY_CONSOLE_EMBED_ORIGIN", "https://dev.example")
 	secret := "a-32-byte-or-longer-test-secret-key"
 	tok, _ := MintConsoleUrlToken(secret, "x", "1", -1*time.Minute)
 
@@ -130,6 +141,7 @@ func TestConsoleAuthRejectsExpiredToken(t *testing.T) {
 		called = true
 	}))
 	r := httptest.NewRequest("GET", "/_sky/console/?token="+tok, nil)
+	r.Header.Set("Origin", "https://dev.example")
 	w := httptest.NewRecorder()
 	gate.ServeHTTP(w, r)
 

@@ -38,6 +38,7 @@ package rt
 import (
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"net/http"
 	"os"
 	"strings"
@@ -114,6 +115,18 @@ const consoleAuthSessionTTL = 4 * time.Hour
 //      Referer clean).
 //   3. Else → 401 with a small landing page suggesting the user
 //      open the console from their skydeploy.app dashboard.
+//
+// v0.16.0 PR 3 hardening:
+//   - URL-handshake disabled by default. Set
+//     `SKY_CONSOLE_EMBED_ORIGIN=<exact-origin>` to opt in (the iframe
+//     embedder origin, matched against Origin/Referer at request
+//     time). Closes the cookie/JWT-confusion attack surface from
+//     the security review.
+//   - `jti` claim required and consumed one-shot via the
+//     `consumedJTI` sync.Map. Replays denied.
+//   - `aud` claim must match the build-time commit hash; mismatch
+//     denied. Caller-supplied tokens minted for a different binary
+//     no longer redeem.
 func consoleTokenAuth(secret string, inner http.Handler) http.Handler {
 	keyBytes := []byte(secret)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -125,6 +138,20 @@ func consoleTokenAuth(secret string, inner http.Handler) http.Handler {
 			}
 		}
 		// First-hit path — verify ?token=
+		//
+		// Opt-in gate: SKY_CONSOLE_EMBED_ORIGIN must be set, and the
+		// request's Origin (or Referer fallback) must match. Closes
+		// the case where an HS256 token leaked from one origin gets
+		// redeemed against a binary that doesn't expect URL tokens
+		// at all.
+		if !consoleEmbedAllowed() {
+			consoleAuth401(w, r)
+			return
+		}
+		if !requestOriginMatchesEmbed(r) {
+			consoleAuth401(w, r)
+			return
+		}
 		token := r.URL.Query().Get("token")
 		if token == "" {
 			consoleAuth401(w, r)
@@ -132,6 +159,35 @@ func consoleTokenAuth(secret string, inner http.Handler) http.Handler {
 		}
 		claims, ok := verifyConsoleJwt(token, keyBytes)
 		if !ok {
+			consoleAuth401(w, r)
+			return
+		}
+		// One-shot `jti` enforcement.
+		jtiVal, _ := claims["jti"].(string)
+		if jtiVal == "" {
+			consoleAuth401(w, r)
+			return
+		}
+		// Expiry already enforced by jwt.Parse, but read it back for
+		// the JTI map's pruning window.
+		var expUnix int64
+		if expF, ok := claims["exp"].(float64); ok {
+			expUnix = int64(expF)
+		}
+		if !rememberConsumedJTI(jtiVal, expUnix) {
+			// Replay attempt
+			consoleAuth401(w, r)
+			return
+		}
+		startJTIJanitor()
+		// `aud` claim must match the build's commit. SkyDeploy mints
+		// these on the control-plane with the tenant's published
+		// build ID; if the tenant is rolling out a new build the URL
+		// minted before the rollout shouldn't authenticate against
+		// the new binary.
+		audClaim, _ := claims["aud"].(string)
+		expectedAud := expectedConsoleAud()
+		if expectedAud != "" && audClaim != expectedAud {
 			consoleAuth401(w, r)
 			return
 		}
@@ -166,6 +222,48 @@ func consoleTokenAuth(secret string, inner http.Handler) http.Handler {
 		u.RawQuery = q.Encode()
 		http.Redirect(w, r, u.RequestURI(), http.StatusFound)
 	})
+}
+
+// requestOriginMatchesEmbed returns true when the incoming request's
+// Origin / Referer matches the configured SKY_CONSOLE_EMBED_ORIGIN.
+// Header matching is exact-string after a strings.TrimSpace; we
+// don't loosen to suffix/wildcard because the security review's
+// whole point was "no fuzzy origin matching".
+func requestOriginMatchesEmbed(r *http.Request) bool {
+	allowed := consoleEmbedOrigin()
+	if allowed == "" {
+		return false
+	}
+	if got := strings.TrimSpace(r.Header.Get("Origin")); got != "" {
+		return got == allowed
+	}
+	// Origin is optional on same-site GETs; fall back to Referer
+	// origin (scheme+host[:port]).
+	if ref := r.Header.Get("Referer"); ref != "" {
+		// Extract origin from the Referer URL.
+		if i := strings.Index(ref, "://"); i > 0 {
+			rest := ref[i+3:]
+			if j := strings.IndexAny(rest, "/?#"); j >= 0 {
+				rest = rest[:j]
+			}
+			candidate := ref[:i+3] + rest
+			return candidate == allowed
+		}
+	}
+	return false
+}
+
+// expectedConsoleAud returns the build's commit hash from
+// `currentBuildInfo`. Falls back to "" on a dev build so the aud
+// check passes when the operator hasn't wired -X buildCommit (the
+// strict gate only activates on real release builds where the
+// commit is injected).
+func expectedConsoleAud() string {
+	bi := currentBuildInfo()
+	if bi.Commit == "" || bi.Commit == "dev" {
+		return ""
+	}
+	return bi.Commit
 }
 
 // verifyConsoleJwt parses + checks an HS256 JWT. Returns claims +
@@ -257,15 +355,26 @@ const consoleAuth401Page = `<!DOCTYPE html>
 // one place.
 
 // MintConsoleUrlToken — Go-side helper for tooling. Produces an
-// HS256 JWT with `{sub, aud, iss, iat, exp}` claims using the same
-// secret the tenant runtime verifies against. ttl typically 10
+// HS256 JWT with `{sub, aud, jti, iss, iat, exp}` claims using the
+// same secret the tenant runtime verifies against. ttl typically 10
 // minutes (URL token's expiry — short for theft-resistance).
+//
+// v0.16.0 PR 3: the `jti` claim is now a 16-byte random hex string,
+// consumed one-shot by the tenant runtime via `consumedJTI`. Tokens
+// are single-use even within their expiry window — replays denied.
+// `aud` should be the tenant's deployed build-commit hash (or the
+// appID for back-compat where the tenant runtime hasn't enabled
+// the strict aud-claim check, which only fires when buildCommit is
+// injected — see expectedConsoleAud).
 //
 // Usage: ConsoleURL = "https://<app>.skydeploy.app/_sky/console?token=" + MintConsoleUrlToken(...)
 func MintConsoleUrlToken(secret, userEmail, appID string, ttl time.Duration) (string, error) {
+	jtiBytes := make([]byte, 16)
+	_, _ = rand.Read(jtiBytes)
 	mc := jwt.MapClaims{
 		"sub": userEmail,
 		"aud": appID,
+		"jti": hex.EncodeToString(jtiBytes),
 		"iss": "skydeploy-control-plane",
 		"iat": time.Now().Unix(),
 		"exp": time.Now().Add(ttl).Unix(),
