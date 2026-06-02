@@ -96,8 +96,7 @@ func loadDotEnvFile(path string, override bool) error {
 			continue
 		}
 		key := strings.TrimSpace(line[:eq])
-		val := strings.TrimSpace(line[eq+1:])
-		val = stripMatchingQuotes(val)
+		val := stripDotEnvValue(line[eq+1:])
 		if _, set := os.LookupEnv(key); set && !override {
 			continue
 		}
@@ -106,12 +105,61 @@ func loadDotEnvFile(path string, override bool) error {
 	return sc.Err()
 }
 
-func stripMatchingQuotes(s string) string {
-	if len(s) >= 2 {
-		first, last := s[0], s[len(s)-1]
-		if (first == '"' && last == '"') || (first == '\'' && last == '\'') {
-			return s[1 : len(s)-1]
+// stripDotEnvValue normalises a raw `KEY=…` RHS into its actual value,
+// matching godotenv / python-dotenv / Foreman semantics:
+//   * unquoted `value` — trim surrounding whitespace
+//   * unquoted `value  # comment` — strip the trailing comment when
+//     `#` is preceded by whitespace (so `tag#1` stays intact and only
+//     `tag #1` becomes `tag`)
+//   * quoted `"value"` / `'value'` — strip the matching outer quotes and
+//     preserve the inner content verbatim (a `#` inside quotes is part
+//     of the value)
+//
+// This is the canonical .env contract every other ecosystem honours; Sky
+// previously kept the trailing `# comment` as part of the value, which
+// silently broke any deploy whose `.env` had a trailing comment on a
+// load-bearing setting (real-world hit on sky-lang.org's OAuth callback,
+// 2026-06-02).
+func stripDotEnvValue(raw string) string {
+	// Drop only leading whitespace first so the quote check sees the
+	// real opening character. Trailing whitespace handled per-branch.
+	s := strings.TrimLeft(raw, " \t")
+	if s == "" {
+		return ""
+	}
+	if first := s[0]; first == '"' || first == '\'' {
+		// Quoted value — content runs to the matching closing quote;
+		// anything after it is treated as comment / ignored.
+		if end := strings.IndexByte(s[1:], first); end >= 0 {
+			return s[1 : 1+end]
+		}
+		// Unterminated quote — fall through and treat the whole thing
+		// as an unquoted value (the closing quote, if any, sits in
+		// trailing space and would be lost regardless).
+	}
+	// Leading `#` on an unquoted value means the whole RHS is a
+	// comment and the value is empty (matches godotenv / python-dotenv:
+	// `KEY=# stuff` → "" and `KEY= # stuff` → "" after the TrimLeft above).
+	if s[0] == '#' {
+		return ""
+	}
+	// Unquoted: strip a trailing ` # …` (or `\t#…`) comment. A `#`
+	// without preceding whitespace is part of the value (hash tags,
+	// fragment identifiers, comment markers inside URLs).
+	if i := indexInlineCommentStart(s); i >= 0 {
+		s = s[:i]
+	}
+	return strings.TrimRight(s, " \t")
+}
+
+// indexInlineCommentStart returns the byte index of the inline comment
+// `#` (preceded by ASCII whitespace) in an unquoted value, or -1 if
+// the value carries no inline comment.
+func indexInlineCommentStart(s string) int {
+	for i := 1; i < len(s); i++ {
+		if s[i] == '#' && (s[i-1] == ' ' || s[i-1] == '\t') {
+			return i
 		}
 	}
-	return s
+	return -1
 }
