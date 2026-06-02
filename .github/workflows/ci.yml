@@ -86,6 +86,29 @@ jobs:
       - name: Smoke-test sky binary
         run: sky --version
 
+      # v0.16.0 PR 1 drift gate: runtime-go/rt/console_app/main.go is
+      # the Sky.Live console UI translated to Go. The bytes are
+      # checked in; this step re-runs scripts/regenerate-console.sh
+      # against the just-built compiler and asserts the result has
+      # NOT diverged from the committed copy. A failure here means
+      # someone touched sky-bundled/console/src/*.sky (or a stdlib
+      # change perturbed the generated Go) without re-running the
+      # regen script — the user-visible inline console would be out
+      # of sync with its source.
+      #
+      # SKY_REGEN_SKIP_CABAL=1: cabal already built sky earlier in
+      # this job; re-running it would waste ~2 min of cold-cache
+      # rebuild for no value. The local-build path lets us reuse
+      # ./sky-out/sky directly.
+      - name: Console inline-copy drift check
+        run: |
+          SKY_REGEN_SKIP_CABAL=1 ./scripts/regenerate-console.sh
+          git diff --exit-code runtime-go/rt/console_app/ || {
+            echo '::error::runtime-go/rt/console_app/ is stale — run scripts/regenerate-console.sh and commit the result'
+            git diff --stat runtime-go/rt/console_app/
+            exit 1
+          }
+
       # macOS GitHub runners don't ship GNU coreutils — bare `timeout`
       # (used by example-sweep.sh + the cabal test step below) is
       # missing, causing exit 127 ("command not found"). Install
