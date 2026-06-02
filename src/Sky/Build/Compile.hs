@@ -3686,7 +3686,17 @@ collectGoImports _canMod srcMod =
     -- a pure value. If main uses rt.* anywhere, Go doesn't complain about
     -- adding a blank import alongside the aliased one.
     -- Simpler: emit `_ = rt.Log_println` in a blank var at top.
-    [ GoIr.GoImport "sky-app/rt" (Just "rt") ]
+    [ GoIr.GoImport "sky-app/rt" (Just "rt")
+    -- v0.16.0: blank-import the inline console subpackage so its init()
+    -- registers rt.MountInlineConsole's hook. Without this, every Sky
+    -- binary would return ErrInlineConsoleUnavailable from
+    -- maybeAutoMountConsole's replacement. The console_app subpackage
+    -- itself imports `sky-app/rt`, so the reverse dependency is fine
+    -- (Go links the side-effect import without triggering the cycle
+    -- because rt does NOT import console_app — see runtime-go/rt/
+    -- console_inline.go for the registration shim).
+    , GoIr.GoImport "sky-app/rt/console_app" (Just "_")
+    ]
     ++ sideEffectImports (Src._imports srcMod)
   where
     sideEffectImports imps =
