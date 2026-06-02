@@ -1083,31 +1083,30 @@ not shipped)
     asserts the rendered output changes. Estimated effort:
     quarter-day (cell only, no code change expected).
 
-  * **#415 — `sky install` silently fails to populate
+  * ~~**#415 — `sky install` silently fails to populate
     `.skydeps/<name>/src/` when the cache is corrupt or
-    incomplete.** v0.15.57 verification surfaced this:
-    `.skydeps/github.com_anzellai_sky-tailwind/.git/` is
-    present but empty (no HEAD, no refs/heads). `sky install`
-    reports "github.com/anzellai/sky-tailwind (cached)" + exits
-    0 even though `.skydeps/.../src/Tailwind/*.sky` doesn't
-    exist on disk — the dep import resolves to "module
-    Tailwind exposing (..)" but `tw` is undefined in scope.
-    Result: `examples/13-skyshop/src/Ui/Layout.sky:91:5` fails
-    with `Undefined name: tw`. Pre-existing bug
-    independent of v0.15.57 work, but caught during cabal-test
-    verification. **Fix shape:** `sky install` should verify
-    that each dep dir's `src/*.sky` glob is non-empty post-
-    clone; on cache hit, re-validate the cache before
-    short-circuiting. Estimated effort: half-day.
+    incomplete.**~~ **SHIPPED in v0.15.57** —
+    `Sky.Build.SkyDeps.ensureDep` now validates that each cached
+    `.skydeps/<name>/` contains at least one `.sky` file (via
+    `hasSkyFile`'s depth-2 walk under `src/` or root) before
+    short-circuiting; an empty / corrupt dir gets wiped + re-
+    cloned. The bug surfaced on `examples/13-skyshop` —
+    `.skydeps/github.com_anzellai_sky-tailwind/.git/` was a
+    bare-empty clone (no HEAD, no refs/heads) and `sky install`
+    reported "(cached)" without verifying. Result was
+    `Undefined name: tw` in
+    `examples/13-skyshop/src/Ui/Layout.sky:91:5` at canonicalise
+    time. Post-fix: `sky install` re-clones the dep on a corrupt
+    cache; the skyshop example builds cleanly.
 
   * **#416 — `Sky.Build.SkyshopCompiles` cabal spec depends on
-    `.skydeps/` being populated.** Surfaces the #415 install
-    bug as a hard fail in cabal-test. Either: (a) wire the
-    spec to invoke `sky install` as a setup step (fragile —
-    needs network), or (b) gate the spec on `.skydeps/` being
-    present, with `pendingWith "sky install must run first"`
-    when it isn't. Recommend (b) so the spec stays self-
-    contained but actionable. Estimated effort: quarter-day.
+    `.skydeps/` being populated.** With #415 shipped the spec
+    will succeed on the first cabal-test invocation IF the
+    network is reachable. For offline / CI-sandbox runs the
+    spec still needs a `pendingWith "sky install must run with
+    network access"` gate. Defer to v0.15.58 — adding the gate
+    is independent of v0.15.57's correctness theme. Estimated
+    effort: quarter-day.
 
   * **#417 — `SKY_RUNTIME_DIR` env should NOT take priority
     over a binary-adjacent runtime-go.** v0.15.57 surfaced
