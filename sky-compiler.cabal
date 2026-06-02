@@ -38,6 +38,20 @@ extra-source-files:
     -- user app `sky-out/` (no chicken-and-egg "sky must build the
     -- console at user-install time" problem).
     runtime-go/rt/console_app/*.go
+    -- sky-stdlib subdirs MUST be listed explicitly per directory.
+    -- Same Issue #58 cause as the runtime-go subdirs above: cabal sdist
+    -- does NOT recurse into subdirectories of an extra-source-files
+    -- glob — it only matches the literal pattern.  A missing entry
+    -- silently drops every .sky in that subdir from the published
+    -- sdist tarball, so the TH walk in EmbeddedRuntime.hs (which
+    -- reads from the extracted sdist when cabal build kicks off)
+    -- never sees the file, the embedded list omits it, and user
+    -- builds fail with `Module X imported but does not export Y`.
+    --
+    -- AUDIT: every directory under sky-stdlib/ that contains a .sky
+    -- file MUST be reflected here.  When adding a new sub-module
+    -- like `Std.Live.Head`, file in this list FIRST (or the new
+    -- module silently disappears from released binaries).
     sky-stdlib/Sky/Core/*.sky
     sky-stdlib/Sky/Core/Http/*.sky
     sky-stdlib/Sky/Core/Json/*.sky
@@ -47,6 +61,7 @@ extra-source-files:
     sky-stdlib/Sky/Http/Server/*.sky
     sky-stdlib/Std/*.sky
     sky-stdlib/Std/Db/*.sky
+    sky-stdlib/Std/Live/*.sky
     sky-stdlib/Std/Ui/*.sky
     sky-stdlib/Std/Html/*.sky
     tools/sky-ffi-inspect/main.go
