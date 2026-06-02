@@ -294,6 +294,7 @@ test-suite sky-tests
       Sky.Build.CryptoAeadSpec
       Sky.Build.PubSubPublishTaskSpec
       Sky.Build.PubSubPublishNoEchoSpec
+      Sky.Build.SkyLiveHeadSpec
       Sky.Build.ServerStreamSpec
       Sky.Build.HttpStreamForEachSpec
       Sky.Build.WebviewAppSpec

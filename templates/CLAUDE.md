@@ -2535,6 +2535,44 @@ main =
 **Navigation**: `a [ href "/about", attribute "sky-nav" "" ] [ text "About" ]`
 **Styling**: Use `Std.Css` with `stylesheet`/`rule` — not inline style strings.
 
+### Per-page `<head>` injection (Sky.Live)
+
+Add an optional `head : Model -> List (Html msg)` field to the
+`app` cfg to inject per-page `<title>`, SEO meta tags, canonical
+URLs, Open Graph, Twitter Card, JSON-LD, theme-color, favicons,
+etc. Helpers live in `Std.Live.Head`. The field is row-open on
+the HM signature — apps that omit it build unchanged.
+
+```elm
+import Std.Live.Head as Head
+
+headFor model =
+    [ Head.title (titleFor model.page)
+    , Head.meta "description" (descriptionFor model.page)
+    , Head.canonical (canonicalFor model.page)
+    , Head.metaProperty "og:title" (titleFor model.page)
+    , Head.metaProperty "og:image" "https://example.com/og.png"
+    , Head.themeColor "#1a1a2e"
+    , Head.jsonLd (jsonLdFor model.page)   -- raw JSON string
+    ]
+
+main =
+    app
+        { init = init, update = update, view = view
+        , subscriptions = subscriptions
+        , routes = [ ... ], notFound = HomePage
+        , head = headFor
+        }
+```
+
+`Std.Live.Head` helpers: `title` / `meta name content` /
+`metaProperty property content` / `link [(k, v)...]` (arbitrary
+attrs) / `canonical href` / `jsonLd body` / `themeColor color` /
+`rss href feedTitle`. SSE patches scope to `<body>`, so head
+updates require a full reload — fine for the typical "head
+depends on page identity" case (in-app navigation already does a
+full-body sky-nav fetch + history push).
+
 ### URL routing + history (Sky.Live)
 
 `routes` is the URL → Page mapping; the runtime matches in

@@ -2515,6 +2515,21 @@ type liveApp struct {
 	routes        []liveRoute
 	notFound      any
 	guard         any          // Maybe (Msg -> Model -> Result String ()) — nil = no guard
+	// head : Model -> List (Html msg) — optional. When set, the
+	// returned list is rendered to HTML and spliced into <head> on
+	// the initial full-page response, after the baseline meta tags
+	// and before <style>. Use for per-page <title>, SEO meta tags,
+	// canonical URLs, Open Graph, Twitter Card, JSON-LD structured
+	// data, theme-color, RSS, favicons, etc. nil → no extra head
+	// content (default). Helpers live in Std.Live.Head.
+	//
+	// Only the initial GET (`handleInitial`) honours this — SSE
+	// patches scope to <body>, so a head change does NOT re-emit
+	// until a full reload. That matches the typical case (head is
+	// derived from page identity, which changes via in-app
+	// navigation that already triggers a sky-nav fetch +
+	// full-body patch + history push).
+	head          any
 	api           []apiRoute   // REST-style custom handlers alongside Live pages
 	staticDir     string       // Serves files from this directory under /static/…
 	staticURL     string       // URL mount prefix (default "/static")
@@ -2872,6 +2887,7 @@ func liveAppRun(cfg any) any {
 		subscriptions: Field(cfg, "Subscriptions"),
 		notFound:      Field(cfg, "NotFound"),
 		guard:         Field(cfg, "Guard"),
+		head:          Field(cfg, "Head"),
 		locker:        newSessionLocker(),
 		msgTags:       make(map[string]int),
 		bannerCfg:     resolveBannerStrings(loadLiveBannerConfig(), cfg),
@@ -3353,7 +3369,53 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	// content for root-mounted apps — the JS treats "" as "no
 	// prefix" (the historical default).
 	baseMeta := fmt.Sprintf(`<meta name="sky-base" content=%q>`, app.basePath)
-	fmt.Fprintf(w, "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">%s<style>%s</style></head><body><div id=\"sky-root\">%s</div>%s<script>%s</script></body></html>", baseMeta, liveBaseCSS, body, devBanner, liveJSWithCfgAndCsrfWithBase(sid, app.bannerCfg, csrfToken, app.basePath))
+	// App-supplied head content (Live.app cfg.head : Model -> List
+	// (Html msg)). Sits AFTER baseMeta + the runtime's required
+	// charset / viewport tags, BEFORE the inline <style> reset, so
+	// app overrides (custom favicon, canonical URL, JSON-LD,
+	// per-page title) win against the defaults and the runtime's
+	// own reset still wins against any clashing inline-style
+	// override in the app's head. Empty string when app didn't
+	// supply `head` — byte-identical to pre-v0.15.58 output.
+	headExtra := renderAppHead(app.head, model)
+	fmt.Fprintf(w, "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">%s%s<style>%s</style></head><body><div id=\"sky-root\">%s</div>%s<script>%s</script></body></html>", baseMeta, headExtra, liveBaseCSS, body, devBanner, liveJSWithCfgAndCsrfWithBase(sid, app.bannerCfg, csrfToken, app.basePath))
+}
+
+// renderAppHead invokes the optional `head : Model -> List (Html
+// msg)` callback and serialises the returned list to a single HTML
+// string ready to splice into <head>. Returns "" when `head` is
+// nil (the optional-field default), when the callback returns
+// nil, when the result isn't a list, or when the list is empty —
+// matching the pre-feature output byte-for-byte.
+//
+// Each element is rendered via the same renderVNode pipeline the
+// body uses, with a discarded handlers map (head nodes never have
+// event bindings — `onClick`-style attrs on a <title>/<meta>/
+// <link>/<script> would be a user bug, but we don't enforce it
+// here; the renderer emits the sky-event attr and the JS driver
+// simply never finds the element in the body).
+func renderAppHead(head any, model any) string {
+	if head == nil {
+		return ""
+	}
+	result := sky_call(head, model)
+	if result == nil {
+		return ""
+	}
+	nodes := asList(result)
+	if len(nodes) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	// Discardable handlers map — head elements should not produce
+	// wire-event bindings (no JS driver to listen on them), and
+	// each <head> serialisation is one-shot per full GET.
+	handlers := map[string]any{}
+	for _, n := range nodes {
+		vn := HtmlToVNode(n)
+		sb.WriteString(renderVNode(vn, handlers))
+	}
+	return sb.String()
 }
 
 // liveBaseCSS is the minimal reset injected into every Sky.Live page.

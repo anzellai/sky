@@ -1,0 +1,171 @@
+module Std.Live.Head exposing
+    ( title
+    , meta
+    , metaProperty
+    , link
+    , canonical
+    , jsonLd
+    , themeColor
+    , rss
+    )
+
+-- | Std.Live.Head — typed helpers for emitting per-page <head>
+-- content from a Sky.Live app via the optional `head : Model ->
+-- List (Html msg)` field on `Live.app`.
+--
+-- The runtime calls the user-supplied `head` callback once per
+-- full GET (initial page load / sky-nav navigation) and splices
+-- the rendered string into <head> AFTER the runtime's required
+-- charset + viewport tags and BEFORE the inline <style> reset.
+-- SSE patches scope to <body>, so head updates require a full
+-- reload (which sky-nav already does for in-app navigation —
+-- the typical case where head changes between pages).
+--
+-- Every helper here returns `Html msg` so the list type lines up
+-- with the rest of the Std.Html ecosystem. AttributeMsg is the
+-- same type used in view bodies, but head elements should never
+-- carry event handlers (the JS driver never binds them).
+--
+-- Pair with Std.Html / Std.Html.Attributes for cases not covered
+-- here — e.g. preload hints, custom `<link>` shapes:
+--
+--     import Std.Html as Html
+--     import Std.Html.Attributes as Attr
+--
+--     extra =
+--         [ Html.node "link" [ Attr.rel "preload", Attr.href "/font.woff2"
+--                            , Attr.attribute "as" "font", Attr.attribute "crossorigin" "" ] []
+--         ]
+--
+-- Typical usage:
+--
+--     import Std.Live.Head as Head
+--
+--     headFor : Model -> List (Html Msg)
+--     headFor model =
+--         [ Head.title (titleFor model.page)
+--         , Head.meta "description" (descriptionFor model.page)
+--         , Head.canonical (canonicalFor model.page)
+--         , Head.metaProperty "og:title" (titleFor model.page)
+--         , Head.metaProperty "og:image" "https://example.com/og.png"
+--         , Head.metaProperty "og:type" "website"
+--         , Head.themeColor "#1a1a2e"
+--         , Head.rss "/rss.xml" "Site Blog"
+--         , Head.jsonLd jsonLdBlobFor model.page
+--         ]
+
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Std.Html as Html exposing (Html)
+import Std.Html.Attributes as Attr exposing (Attribute)
+
+
+-- ─── Title ──────────────────────────────────────────────────────
+
+
+-- title text — emits `<title>text</title>`. The runtime renders
+-- the string with HTML-escape, so titles containing `&`/`<`/`>`
+-- are safe.
+title : String -> Html msg
+title s =
+    Html.title [] [ Html.text s ]
+
+
+-- ─── Generic meta + link ────────────────────────────────────────
+
+
+-- meta name content — emits `<meta name="…" content="…">`. The
+-- documented name attribute is used for SEO meta tags:
+-- description, keywords, author, robots, viewport overrides, etc.
+meta : String -> String -> Html msg
+meta name content =
+    Html.meta
+        [ Attr.attribute "name" name
+        , Attr.attribute "content" content
+        ]
+
+
+-- metaProperty property content — emits `<meta property="…"
+-- content="…">`. Used for Open Graph tags (`og:title`,
+-- `og:image`, `og:type`, …) and Facebook-specific tags.
+-- HTML doesn't actually validate the distinction between
+-- `name=` and `property=` — both work for OG in practice — but
+-- the OG spec recommends `property=` so we keep the surface
+-- typed against the convention.
+metaProperty : String -> String -> Html msg
+metaProperty property content =
+    Html.meta
+        [ Attr.attribute "property" property
+        , Attr.attribute "content" content
+        ]
+
+
+-- link [(key, val), …] — emits `<link …>` with arbitrary attrs.
+-- Use for favicons, alternate stylesheets, preload hints, etc.
+-- The key/value pairs go through HTML-attribute escaping.
+--
+-- Example:
+--     Head.link [("rel", "icon"), ("type", "image/svg+xml"), ("href", "/favicon.svg")]
+link : List (String, String) -> Html msg
+link attrs =
+    Html.link (List.map pairToAttr attrs)
+
+
+pairToAttr : (String, String) -> Attribute msg
+pairToAttr pair =
+    Attr.attribute (fst pair) (snd pair)
+
+
+-- ─── Convenience shortcuts ──────────────────────────────────────
+
+
+-- canonical href — emits `<link rel="canonical" href="…">`. Tell
+-- search engines which URL is authoritative for this page (when
+-- the same content is reachable via multiple URLs).
+canonical : String -> Html msg
+canonical href =
+    Html.link
+        [ Attr.attribute "rel" "canonical"
+        , Attr.attribute "href" href
+        ]
+
+
+-- jsonLd body — emits `<script type="application/ld+json">…</script>`
+-- with the raw JSON body. The renderer treats <script> bodies as
+-- raw text (CDATA-like), so JSON containing `&`/`<`/`>` round-trips
+-- verbatim. Build the JSON via Std.Json.Encode and call
+-- `JsonEnc.encode` for safe escaping.
+--
+-- NOTE: the runtime emits the script body verbatim — caller is
+-- responsible for ensuring the JSON cannot contain `</script>` (e.g.
+-- by avoiding user-controlled strings, or by escaping `<` as
+-- `<` before splicing). Schema.org JSON-LD generated from
+-- typed data via `Json.Encode` is always safe.
+jsonLd : String -> Html msg
+jsonLd body =
+    Html.script
+        [ Attr.attribute "type" "application/ld+json" ]
+        [ Html.text body ]
+
+
+-- themeColor color — emits `<meta name="theme-color" content="…">`.
+-- Browsers (mobile address bar, PWA splash screen) honour this for
+-- chrome tinting. Use a CSS hex / rgb / named colour string.
+themeColor : String -> Html msg
+themeColor color =
+    meta "theme-color" color
+
+
+-- rss href title — emits `<link rel="alternate" type="application/
+-- rss+xml" href="…" title="…">`. Feed readers + browsers discover
+-- a site's RSS feed via this link. Pair with an actual feed
+-- endpoint (Sky.Http.Server `Server.get "/rss.xml" rssHandler`).
+rss : String -> String -> Html msg
+rss href feedTitle =
+    Html.link
+        [ Attr.attribute "rel" "alternate"
+        , Attr.attribute "type" "application/rss+xml"
+        , Attr.attribute "href" href
+        , Attr.attribute "title" feedTitle
+        ]
