@@ -54,7 +54,6 @@ import qualified Sky.Doc.Index as DocIdx
 import qualified Sky.Doc.Terminal as DocTerm
 import qualified Sky.Doc.Render as DocRender
 import qualified Sky.Build.EmbeddedDocServer
-import qualified Sky.Build.EmbeddedConsole
 
 import qualified Control.Concurrent.Async as Async
 import qualified Control.Concurrent.QSem as QSem
@@ -2004,111 +2003,43 @@ findProjectRootUpward dir = do
 -- --tui swaps the entrypoint (@src/Main.sky@) for the bundled Tui
 -- variant (@src/MainTui.sky@) before building. Both share the same
 -- @State.sky@ + @View.sky@ — only the app-runner module changes.
+-- | `sky console` — v0.16.0 PR 2 deprecation surface.
+--
+-- The pre-v0.16.0 implementation materialised an embedded Sky source
+-- tree (via Sky.Build.EmbeddedConsole), shelled out to itself to
+-- `sky build` it (a recursive Go build inside the user's terminal),
+-- and ran the resulting binary as a foreground console process.
+-- That recursive Go build was the e2-micro OOM cause v0.16.0 is
+-- closing — it has been deleted alongside Sky.Build.EmbeddedConsole
+-- and `sky-bundled/console/`.
+--
+-- The replacement is the IN-PROCESS inline console: every Sky.Live
+-- and Sky.Http.Server binary now auto-mounts the Sky Console at
+-- `/_sky/console` (gated by the production / SKY_CONSOLE_EMBED
+-- rules in runtime-go/rt/console.go's MountEmbeddedConsole). Users
+-- reach it from any running app's URL — no standalone command
+-- needed.
+--
+-- This stub prints a deprecation notice and exits 0. It is kept
+-- (rather than deleted from the CLI grammar) so existing scripts /
+-- shell aliases that invoke `sky console` don't fail loudly during
+-- the v0.15 → v0.16 transition; they just learn about the new
+-- shape. v0.17 may drop the subcommand entirely.
 runConsole :: ConsoleOpts -> IO (Either String ())
-runConsole opts = do
-    cache <- System.Directory.getXdgDirectory System.Directory.XdgCache "sky"
-    -- skyBuildVersion is "dev" on local builds, "0.13.4" etc. on
-    -- releases — both are filesystem-safe. Don't use skyVersionString,
-    -- which prefixes "sky " (a space breaks shell completions later).
-    let root = cache </> ("console-" ++ skyBuildVersion)
-        srcDir = root </> "src"
-        -- Live and TUI build different binaries from different entry
-        -- points but share the same source tree. Cache them under
-        -- distinct names so once a user has built one, switching to
-        -- the other doesn't accidentally re-run the wrong binary.
-        binName = if _consoleTui opts then "app-tui" else "app-live"
-        binPath = root </> "sky-out" </> binName
-    -- 1. Materialise embedded sources (idempotent — overwrites). Cheap
-    --    enough to redo every invocation; ensures any local cache
-    --    corruption self-heals.
-    createDirectoryIfMissing True srcDir
-    let writeFileBytes p bytes = do
-            createDirectoryIfMissing True (takeDirectory p)
-            B.writeFile p bytes
-    mapM_ (\(rel, bytes) -> writeFileBytes (root </> rel) bytes)
-          Sky.Build.EmbeddedConsole.embeddedConsoleApp
-    -- 2. Select entry point.
-    let entry  = if _consoleTui opts then "src/MainTui.sky" else "src/Main.sky"
-        haveTui = any (\(p, _) -> p == "src/MainTui.sky")
-                      Sky.Build.EmbeddedConsole.embeddedConsoleApp
-    when (_consoleTui opts && not haveTui) $ do
-        hPutStrLn stderr "sky console --tui: bundled MainTui.sky missing (Phase D not yet shipped in this binary)."
-        exitWith (ExitFailure 1)
-    -- 3. Build if cache miss. Shell out to ourselves so we reuse
-    --    the same compile pipeline as `sky build`.
-    skyBin <- System.Environment.getExecutablePath
-    haveBin <- doesFileExist binPath
-    when (not haveBin) $ do
-        putStrLn $ "sky console: building (one-time per version, into " ++ root ++ ")..."
-        let bp = (System.Process.proc skyBin ["build", entry])
-                    { System.Process.cwd = Just root
-                    , System.Process.std_out = System.Process.Inherit
-                    , System.Process.std_err = System.Process.Inherit
-                    }
-        (_, _, _, ph) <- System.Process.createProcess bp
-        bec <- System.Process.waitForProcess ph
-        case bec of
-            ExitSuccess -> do
-                -- `sky build` always writes to sky-out/app; rename to
-                -- the backend-specific name so Live + TUI binaries can
-                -- coexist in the same cache dir.
-                let built = root </> "sky-out" </> "app"
-                ok <- doesFileExist built
-                if ok
-                    then renameFile built binPath
-                    else do
-                        hPutStrLn stderr "sky console: build succeeded but sky-out/app is missing"
-                        exitWith (ExitFailure 1)
-            ExitFailure n -> do
-                hPutStrLn stderr $ "sky console: build failed (exit " ++ show n ++ ")"
-                exitWith (ExitFailure n)
-    -- 4. Run. Sky.Live binds via SKY_LIVE_PORT (and Sky.Tui ignores
-    --    the env var, so the same setup works for both backends).
-    env0 <- System.Environment.getEnvironment
-    let env1 = filter (\(k, _) ->
-                  k /= "SKY_LIVE_PORT" && k /= "SKY_CONSOLE_EMBED") env0
-              ++ [ ("SKY_LIVE_PORT", show (_consolePort opts))
-                 -- Standalone `sky console` IS the console — it must
-                 -- NOT auto-mount another console under itself or we
-                 -- spawn an orphan tree (see runtime-go/rt/subapp.go
-                 -- maybeAutoMountConsole gate). The reverse-proxy
-                 -- mount path sets this too; setting it here covers
-                 -- the standalone case.
-                 , ("SKY_CONSOLE_EMBED", "off")
-                 ]
-        rp = (System.Process.proc binPath [])
-                { System.Process.env = Just env1
-                , System.Process.std_out = System.Process.Inherit
-                , System.Process.std_err = System.Process.Inherit
-                , System.Process.std_in  = System.Process.Inherit
-                }
-    if _consoleTui opts
-        then putStrLn   "sky console: starting Sky.Tui (Ctrl-C to exit)..."
-        else putStrLn $ "sky console: starting on http://127.0.0.1:" ++ show (_consolePort opts)
-                     ++ " (Ctrl-C to stop)"
-    (_, _, _, rph) <- System.Process.createProcess rp
-    -- Signal-forwarding: when our parent kills us with SIGTERM /
-    -- SIGHUP (the lifecycle every sub-app mount uses to tear down
-    -- children — see runtime-go/rt/subapp.go ShutdownSubApps),
-    -- Haskell's default handler exits immediately and the spawned
-    -- app-live grandchild gets reparented to PID 1 — process leak.
-    -- Install explicit handlers that terminate the child first.
-    -- SIGINT (Ctrl-C) already works via Haskell's UserInterrupt
-    -- bubbling through bracket, but for symmetry handle it here too.
-    forwardChildSignals rph
-    rec' <- Control.Exception.bracket_ (return ())
-        -- Even if we exit via uncaught exception, terminate the child.
-        (do
-            mec <- System.Process.getProcessExitCode rph
-            case mec of
-                Just _  -> return ()
-                Nothing -> System.Process.terminateProcess rph)
-        (System.Process.waitForProcess rph)
-    case rec' of
-        ExitSuccess     -> return (Right ())
-        ExitFailure 130 -> return (Right ())   -- Ctrl-C; normal exit
-        ExitFailure 143 -> return (Right ())   -- SIGTERM (128 + 15); normal teardown
-        ExitFailure n   -> exitWith (ExitFailure n)
+runConsole _opts = do
+    putStrLn ""
+    putStrLn "sky console: the standalone command is deprecated in v0.16.0."
+    putStrLn ""
+    putStrLn "The Sky Console is now embedded in every Sky.Live + Sky.Http.Server"
+    putStrLn "binary — reach it at <your-app-origin>/_sky/console."
+    putStrLn ""
+    putStrLn "Quick start:"
+    putStrLn "  cd <your project>"
+    putStrLn "  sky run src/Main.sky"
+    putStrLn "  # browse http://localhost:<port>/_sky/console"
+    putStrLn ""
+    putStrLn "See docs/v0.16.x-console/EMBEDDED.md for the migration notes."
+    return (Right ())
 
 
 -- | Pull the `"tag_name"` field out of a GitHub release JSON blob. We
