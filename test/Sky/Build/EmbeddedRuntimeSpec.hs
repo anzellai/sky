@@ -15,11 +15,26 @@ import Test.Hspec
 import qualified Data.ByteString as BS
 import System.Directory (getCurrentDirectory, doesFileExist, createDirectoryIfMissing,
                          listDirectory, doesDirectoryExist)
+import System.Environment (getEnvironment)
 import System.FilePath ((</>), takeFileName)
 import System.IO.Temp (withSystemTempDirectory)
 import System.Process (readCreateProcessWithExitCode, proc, CreateProcess(..))
 import System.Exit (ExitCode(..))
 import Data.List (sort)
+
+
+-- | Strip SKY_RUNTIME_DIR from a process env so the test's `sky build`
+-- doesn't get hijacked by a parent-repo runtime-go pinned by a nix
+-- shellHook (`export SKY_RUNTIME_DIR="$PWD/runtime-go"` from the
+-- parent repo's .envrc). v0.15.57 #409 verification surfaced this:
+-- when an agent runs in a worktree, the shellHook still points
+-- SKY_RUNTIME_DIR at the parent repo's runtime-go, so `sky build`
+-- inside the spec's tempdir copies the WRONG runtime-go from the
+-- parent — making the disk-tree comparison spuriously fail.
+scrubRuntimeEnv :: IO [(String, String)]
+scrubRuntimeEnv = do
+    env <- getEnvironment
+    return [ (k, v) | (k, v) <- env, k /= "SKY_RUNTIME_DIR" ]
 
 
 findSky :: IO FilePath
@@ -70,9 +85,10 @@ spec = do
                     , "import Std.Log exposing (println)"
                     , "main = println \"hi\""
                     ]
+                env <- scrubRuntimeEnv
                 (ec, _out, _err) <- readCreateProcessWithExitCode
                     (proc sky ["build", "src/Main.sky"])
-                        { cwd = Just dir } ""
+                        { cwd = Just dir, env = Just env } ""
                 ec `shouldBe` ExitSuccess
                 let matRtDir = dir </> "sky-out" </> "rt"
                 matEntries <- listDirectory matRtDir
@@ -116,9 +132,10 @@ spec = do
                     , "import Std.Log exposing (println)"
                     , "main = println \"hi\""
                     ]
+                env <- scrubRuntimeEnv
                 (ec, _out, _err) <- readCreateProcessWithExitCode
                     (proc sky ["build", "src/Main.sky"])
-                        { cwd = Just dir } ""
+                        { cwd = Just dir, env = Just env } ""
                 ec `shouldBe` ExitSuccess
                 let jobsFile  = dir </> "sky-out" </> "rt" </> "jobs" </> "jobs.go"
                     telemFile = dir </> "sky-out" </> "rt" </> "telemetry"

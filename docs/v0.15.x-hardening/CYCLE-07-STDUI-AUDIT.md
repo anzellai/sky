@@ -1083,6 +1083,54 @@ not shipped)
     asserts the rendered output changes. Estimated effort:
     quarter-day (cell only, no code change expected).
 
+  * **#415 — `sky install` silently fails to populate
+    `.skydeps/<name>/src/` when the cache is corrupt or
+    incomplete.** v0.15.57 verification surfaced this:
+    `.skydeps/github.com_anzellai_sky-tailwind/.git/` is
+    present but empty (no HEAD, no refs/heads). `sky install`
+    reports "github.com/anzellai/sky-tailwind (cached)" + exits
+    0 even though `.skydeps/.../src/Tailwind/*.sky` doesn't
+    exist on disk — the dep import resolves to "module
+    Tailwind exposing (..)" but `tw` is undefined in scope.
+    Result: `examples/13-skyshop/src/Ui/Layout.sky:91:5` fails
+    with `Undefined name: tw`. Pre-existing bug
+    independent of v0.15.57 work, but caught during cabal-test
+    verification. **Fix shape:** `sky install` should verify
+    that each dep dir's `src/*.sky` glob is non-empty post-
+    clone; on cache hit, re-validate the cache before
+    short-circuiting. Estimated effort: half-day.
+
+  * **#416 — `Sky.Build.SkyshopCompiles` cabal spec depends on
+    `.skydeps/` being populated.** Surfaces the #415 install
+    bug as a hard fail in cabal-test. Either: (a) wire the
+    spec to invoke `sky install` as a setup step (fragile —
+    needs network), or (b) gate the spec on `.skydeps/` being
+    present, with `pendingWith "sky install must run first"`
+    when it isn't. Recommend (b) so the spec stays self-
+    contained but actionable. Estimated effort: quarter-day.
+
+  * **#417 — `SKY_RUNTIME_DIR` env should NOT take priority
+    over a binary-adjacent runtime-go.** v0.15.57 surfaced
+    this: the nix shellHook pins SKY_RUNTIME_DIR to the parent
+    repo's runtime-go, but when running `sky` from a worktree
+    binary, the worktree's runtime-go is what should be picked
+    up. Currently the env override wins unconditionally. The
+    `EmbeddedRuntimeSpec` workaround (added in v0.15.57)
+    scrubs SKY_RUNTIME_DIR before invoking sky build — but the
+    USER-FACING semantic is still wrong: a developer in a
+    worktree gets the parent repo's runtime, masking any
+    runtime-local fix or experiment. **Fix shape:** Prefer the
+    binary-adjacent runtime-go over the env override when
+    both exist AND when the env var points to a different
+    physical path. Or: prefer the env override only when set
+    EXPLICITLY by the user (not by a shellHook detected as
+    inherited from a parent shell). The cleanest decision is
+    probably "prefer the env-set value when it exists AND the
+    binary-adjacent runtime-go is missing" — flip the
+    precedence to be exe-dir first, env as fallback. Estimated
+    effort: half-day (single-file change + matrix cell +
+    user-doc note for the SKY_RUNTIME_DIR semantics).
+
 ### §7.3 Verification gate results
 
   * `cabal test --skip=Sky.Build.VerifyAll` from wiped tree —
