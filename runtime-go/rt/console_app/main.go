@@ -67,8 +67,6 @@ func Sky_Core_Error_Error_Error(v0 Sky_Core_Error_ErrorKind, v1 Sky_Core_Error_E
 }
 
 // SKY-ORIGIN: src/Main.sky:152:1
-func init() { rt.RegisterAdtTag("Error", 0) }
-
 type Sky_Core_Error_ErrorDetails = rt.SkyADT
 
 func Sky_Core_Error_ErrorDetails_FfiPanic(v0 Sky_Core_Error_PanicInfo_R) Sky_Core_Error_ErrorDetails {
@@ -92,14 +90,6 @@ func Sky_Core_Error_ErrorDetails_Custom(v0 string) Sky_Core_Error_ErrorDetails {
 }
 
 // SKY-ORIGIN: src/Main.sky:152:1
-func init() {
-	rt.RegisterAdtTag("FfiPanic", 0)
-	rt.RegisterAdtTag("TypeMismatch", 1)
-	rt.RegisterAdtTag("HttpStatus", 2)
-	rt.RegisterAdtTag("JsonDecode", 3)
-	rt.RegisterAdtTag("Custom", 4)
-}
-
 type Sky_Core_Error_ErrorKind = int
 
 const (
@@ -247,8 +237,6 @@ func Sky_Core_Task_ShouldRetry_RetryWhen(v0 any) Sky_Core_Task_ShouldRetry {
 }
 
 // SKY-ORIGIN: src/Main.sky:152:1
-func init() { rt.RegisterAdtTag("RetryAlways", 0); rt.RegisterAdtTag("RetryWhen", 1) }
-
 type Sky_Core_Task_RetryPolicy_R[T1 any] struct {
 	MaxAttempts int
 	BaseMs      int
@@ -501,13 +489,6 @@ func Std_Html_Attributes_Attribute_EventAttr(v0 Std_Html_Attributes_Event) Std_H
 var Std_Html_Attributes_Attribute_NoAttr Std_Html_Attributes_Attribute = Std_Html_Attributes_Attribute{Tag: 3, SkyName: "NoAttr"}
 
 // SKY-ORIGIN: src/Main.sky:152:1
-func init() {
-	rt.RegisterAdtTag("Attr", 0)
-	rt.RegisterAdtTag("BoolAttr", 1)
-	rt.RegisterAdtTag("EventAttr", 2)
-	rt.RegisterAdtTag("NoAttr", 3)
-}
-
 type Std_Html_Attributes_Event = rt.SkyADT
 
 func Std_Html_Attributes_Event_OnMsg(v0 string, v1 any) Std_Html_Attributes_Event {
@@ -527,13 +508,6 @@ func Std_Html_Attributes_Event_OnRaw(v0 string, v1 any) Std_Html_Attributes_Even
 }
 
 // SKY-ORIGIN: src/Main.sky:152:1
-func init() {
-	rt.RegisterAdtTag("OnMsg", 0)
-	rt.RegisterAdtTag("OnString", 1)
-	rt.RegisterAdtTag("OnBool", 2)
-	rt.RegisterAdtTag("OnRaw", 3)
-}
-
 func Std_Html_Attributes_class(v string) rt.SkyAttribute {
 	return rt.Coerce[rt.SkyAttribute](Std_Html_Attributes_Attribute_Attr("class", v))
 }
@@ -617,12 +591,6 @@ func Std_Html_Html_HRaw(v0 string) Std_Html_Html {
 }
 
 // SKY-ORIGIN: src/Main.sky:152:1
-func init() {
-	rt.RegisterAdtTag("HElement", 0)
-	rt.RegisterAdtTag("HText", 1)
-	rt.RegisterAdtTag("HRaw", 2)
-}
-
 func Std_Html_text(s string) Std_Html_Html {
 	return rt.Coerce[Std_Html_Html](Std_Html_Html_HText(s))
 }
@@ -730,8 +698,6 @@ func Std_Ui_AnimationEntry_AnimationEntry(v0 string, v1 string, v2 string, v3 bo
 }
 
 // SKY-ORIGIN: src/Main.sky:152:1
-func init() { rt.RegisterAdtTag("AnimationEntry", 0) }
-
 type Std_Ui_Attribute = rt.SkyADT
 
 var Std_Ui_Attribute_NoAttribute Std_Ui_Attribute = Std_Ui_Attribute{Tag: 0, SkyName: "NoAttribute"}
@@ -879,47 +845,6 @@ func Std_Ui_Attribute_AttrAnimation(v0 string, v1 string, v2 string, v3 bool) St
 }
 
 // SKY-ORIGIN: src/Main.sky:152:1
-func init() {
-	rt.RegisterAdtTag("NoAttribute", 0)
-	rt.RegisterAdtTag("AttrWidth", 1)
-	rt.RegisterAdtTag("AttrHeight", 2)
-	rt.RegisterAdtTag("AttrAlignX", 3)
-	rt.RegisterAdtTag("AttrAlignY", 4)
-	rt.RegisterAdtTag("AttrNearby", 5)
-	rt.RegisterAdtTag("AttrPadding", 6)
-	rt.RegisterAdtTag("AttrSpacing", 7)
-	rt.RegisterAdtTag("AttrStyle", 8)
-	rt.RegisterAdtTag("AttrDescribe", 9)
-	rt.RegisterAdtTag("AttrClass", 10)
-	rt.RegisterAdtTag("AttrEvent", 11)
-	rt.RegisterAdtTag("AttrAttribute", 12)
-	rt.RegisterAdtTag("AttrFontSize", 13)
-	rt.RegisterAdtTag("AttrFontColor", 14)
-	rt.RegisterAdtTag("AttrFontFamily", 15)
-	rt.RegisterAdtTag("AttrFontWeight", 16)
-	rt.RegisterAdtTag("AttrFontItalic", 17)
-	rt.RegisterAdtTag("AttrFontUnderline", 18)
-	rt.RegisterAdtTag("AttrFontDecoration", 19)
-	rt.RegisterAdtTag("AttrFontLetterSpacing", 20)
-	rt.RegisterAdtTag("AttrFontWordSpacing", 21)
-	rt.RegisterAdtTag("AttrFontAlign", 22)
-	rt.RegisterAdtTag("AttrBgColor", 23)
-	rt.RegisterAdtTag("AttrBgImage", 24)
-	rt.RegisterAdtTag("AttrBgGradient", 25)
-	rt.RegisterAdtTag("AttrBorderWidth", 26)
-	rt.RegisterAdtTag("AttrBorderWidthEach", 27)
-	rt.RegisterAdtTag("AttrBorderColor", 28)
-	rt.RegisterAdtTag("AttrBorderRounded", 29)
-	rt.RegisterAdtTag("AttrBorderStyle", 30)
-	rt.RegisterAdtTag("AttrBorderShadow", 31)
-	rt.RegisterAdtTag("AttrBorderInsetShadow", 32)
-	rt.RegisterAdtTag("AttrPointer", 33)
-	rt.RegisterAdtTag("AttrOverflow", 34)
-	rt.RegisterAdtTag("AttrPseudoRule", 35)
-	rt.RegisterAdtTag("AttrTransition", 36)
-	rt.RegisterAdtTag("AttrAnimation", 37)
-}
-
 type Std_Ui_Breakpoint = rt.SkyADT
 
 var Std_Ui_Breakpoint_SmAndUp Std_Ui_Breakpoint = Std_Ui_Breakpoint{Tag: 0, SkyName: "SmAndUp"}
@@ -953,23 +878,6 @@ func Std_Ui_Breakpoint_Custom(v0 int, v1 int) Std_Ui_Breakpoint {
 }
 
 // SKY-ORIGIN: src/Main.sky:152:1
-func init() {
-	rt.RegisterAdtTag("SmAndUp", 0)
-	rt.RegisterAdtTag("MdAndUp", 1)
-	rt.RegisterAdtTag("LgAndUp", 2)
-	rt.RegisterAdtTag("XlAndUp", 3)
-	rt.RegisterAdtTag("Mobile", 4)
-	rt.RegisterAdtTag("Tablet", 5)
-	rt.RegisterAdtTag("Desktop", 6)
-	rt.RegisterAdtTag("DarkMode", 7)
-	rt.RegisterAdtTag("LightMode", 8)
-	rt.RegisterAdtTag("ReducedMotion", 9)
-	rt.RegisterAdtTag("TouchDevice", 10)
-	rt.RegisterAdtTag("Portrait", 11)
-	rt.RegisterAdtTag("Landscape", 12)
-	rt.RegisterAdtTag("Custom", 13)
-}
-
 type Std_Ui_Color = rt.SkyADT
 
 func Std_Ui_Color_Rgba(v0 int, v1 int, v2 int, v3 float64) Std_Ui_Color {
@@ -977,8 +885,6 @@ func Std_Ui_Color_Rgba(v0 int, v1 int, v2 int, v3 float64) Std_Ui_Color {
 }
 
 // SKY-ORIGIN: src/Main.sky:152:1
-func init() { rt.RegisterAdtTag("Rgba", 0) }
-
 type Std_Ui_Description = rt.SkyADT
 
 var Std_Ui_Description_NoDescription Std_Ui_Description = Std_Ui_Description{Tag: 0, SkyName: "NoDescription"}
@@ -1008,20 +914,6 @@ var Std_Ui_Description_DescButton Std_Ui_Description = Std_Ui_Description{Tag: 9
 var Std_Ui_Description_DescParagraph Std_Ui_Description = Std_Ui_Description{Tag: 10, SkyName: "DescParagraph"}
 
 // SKY-ORIGIN: src/Main.sky:152:1
-func init() {
-	rt.RegisterAdtTag("NoDescription", 0)
-	rt.RegisterAdtTag("DescMain", 1)
-	rt.RegisterAdtTag("DescNavigation", 2)
-	rt.RegisterAdtTag("DescContentInfo", 3)
-	rt.RegisterAdtTag("DescComplementary", 4)
-	rt.RegisterAdtTag("DescHeading", 5)
-	rt.RegisterAdtTag("DescLabel", 6)
-	rt.RegisterAdtTag("DescLivePolite", 7)
-	rt.RegisterAdtTag("DescLiveAssertive", 8)
-	rt.RegisterAdtTag("DescButton", 9)
-	rt.RegisterAdtTag("DescParagraph", 10)
-}
-
 type Std_Ui_Element = rt.SkyADT
 
 var Std_Ui_Element_Empty Std_Ui_Element = Std_Ui_Element{Tag: 0, SkyName: "Empty"}
@@ -1043,14 +935,6 @@ func Std_Ui_Element_Raw(v0 any) Std_Ui_Element {
 }
 
 // SKY-ORIGIN: src/Main.sky:152:1
-func init() {
-	rt.RegisterAdtTag("Empty", 0)
-	rt.RegisterAdtTag("Text", 1)
-	rt.RegisterAdtTag("Node", 2)
-	rt.RegisterAdtTag("TaggedNode", 3)
-	rt.RegisterAdtTag("Raw", 4)
-}
-
 type Std_Ui_HAlign = int
 
 const (
@@ -1098,16 +982,6 @@ func Std_Ui_Length_Vw(v0 int) Std_Ui_Length {
 }
 
 // SKY-ORIGIN: src/Main.sky:152:1
-func init() {
-	rt.RegisterAdtTag("Px", 0)
-	rt.RegisterAdtTag("Content", 1)
-	rt.RegisterAdtTag("Fill", 2)
-	rt.RegisterAdtTag("Min", 3)
-	rt.RegisterAdtTag("Max", 4)
-	rt.RegisterAdtTag("Vh", 5)
-	rt.RegisterAdtTag("Vw", 6)
-}
-
 type Std_Ui_Location = int
 
 const (
@@ -3182,22 +3056,6 @@ func State_Msg_PivotToTrace(v0 string) State_Msg {
 }
 
 // SKY-ORIGIN: src/Main.sky:152:1
-func init() {
-	rt.RegisterAdtTag("SelectTab", 0)
-	rt.RegisterAdtTag("Tick", 1)
-	rt.RegisterAdtTag("GotOverview", 2)
-	rt.RegisterAdtTag("GotLogs", 3)
-	rt.RegisterAdtTag("GotMetrics", 4)
-	rt.RegisterAdtTag("GotTraces", 5)
-	rt.RegisterAdtTag("GotErrors", 6)
-	rt.RegisterAdtTag("LogFilterQuery", 7)
-	rt.RegisterAdtTag("LogFilterToggleLevel", 8)
-	rt.RegisterAdtTag("LogFilterPickSession", 9)
-	rt.RegisterAdtTag("LogFilterClear", 10)
-	rt.RegisterAdtTag("TraceFilterQuery", 11)
-	rt.RegisterAdtTag("PivotToTrace", 12)
-}
-
 type State_Tab = int
 
 const (

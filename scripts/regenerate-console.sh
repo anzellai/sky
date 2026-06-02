@@ -84,10 +84,19 @@ if [ ! -x "$SKY" ]; then
 fi
 say "using $($SKY --version 2>&1 | head -1)"
 
-CONSOLE_SRC="$ROOT/sky-bundled/console"
+CONSOLE_SRC="${SKY_CONSOLE_SRC:-$ROOT/sky-bundled/console}"
 if [ ! -f "$CONSOLE_SRC/src/Main.sky" ]; then
-    warn "sky-bundled/console/src/Main.sky not found"
-    exit 1
+    warn "console Sky source not found at $CONSOLE_SRC/src/Main.sky."
+    warn ""
+    warn "v0.16.0 PR 2 deleted the in-tree sky-bundled/console/ tree —"
+    warn "the canonical artefact is runtime-go/rt/console_app/main.go"
+    warn "(committed). Set SKY_CONSOLE_SRC to point at an external"
+    warn "checkout of the Sky source to re-run this script."
+    warn ""
+    warn "Drift detection (CI): when sky-bundled/console is absent,"
+    warn "this script's exit-code-1 is treated as 'no-op' by the"
+    warn "calling workflow."
+    exit 2
 fi
 
 say "wiping previous console sky-out + skycache for hermetic build"
@@ -208,6 +217,84 @@ $0 ~ /^func main\(\) \{$/ {
         }
     }
     next
+}
+
+# v0.16.0 PR 2: drop init() blocks whose body is entirely
+# rt.RegisterAdtTag() calls. These would otherwise pollute the host
+# binarys global rt.adtTagRegistry (in rt.go) with the inline
+# consoles ADT tags — colliding with user-app Msg names that share
+# any of {Tick, SelectTab, GotOverview, ...} and silently mis-routing
+# wire-event dispatch. PR 3 reintroduces these via namespaced
+# Register/Lookup APIs. Until then PR 2 + the static-render-only
+# MountInlineConsole path dont need them.
+#
+# We detect the pattern by buffering the entire init() block, then
+# checking that EVERY non-brace / non-blank line is exactly a
+# `rt.RegisterAdtTag(...)` invocation. Mixed init blocks (e.g. a
+# future combined RegisterAdtTag + RegisterGobType) are preserved
+# verbatim — drop is conservative.
+$0 ~ /^func init\(\) \{/ {
+    block = $0
+    adt_lines = 0
+    other_lines = 0
+    # Single-line form: `func init() { rt.RegisterAdtTag(...) }`
+    if ($0 ~ /\}$/) {
+        # Strip the func init() { and trailing }; check body
+        body = $0
+        sub(/^func init\(\) \{[[:space:]]*/, "", body)
+        sub(/[[:space:]]*\}$/, "", body)
+        # Split on `;` and check each statement
+        n = split(body, parts, /;/)
+        all_adt = (n > 0)
+        for (i = 1; i <= n; i++) {
+            stmt = parts[i]
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", stmt)
+            if (stmt == "") continue
+            if (stmt !~ /^rt\.RegisterAdtTag\(/) {
+                all_adt = 0
+                break
+            }
+        }
+        if (all_adt) {
+            # Skip the block entirely; consume the trailing blank line
+            # if any so we dont leave a gap.
+            if ((getline line) > 0) {
+                if (line != "") {
+                    print line
+                }
+            }
+            next
+        }
+        # Mixed / no RegisterAdtTag — fall through to default print
+    } else {
+        # Multi-line form: read until matching `}`
+        while ((getline line) > 0) {
+            block = block "\n" line
+            if (line ~ /^\}$/) {
+                break
+            }
+            stripped = line
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", stripped)
+            if (stripped == "") continue
+            if (stripped ~ /^rt\.RegisterAdtTag\(/) {
+                adt_lines++
+            } else {
+                other_lines++
+            }
+        }
+        if (adt_lines > 0 && other_lines == 0) {
+            # Pure RegisterAdtTag block — drop it.
+            if ((getline line) > 0) {
+                if (line != "") {
+                    print line
+                }
+            }
+            next
+        }
+        # Mixed or no RegisterAdtTag — emit the buffered block verbatim.
+        print block
+        next
+    }
 }
 
 # Default emit. Flush any pending SKY-ORIGIN comment first (for the
