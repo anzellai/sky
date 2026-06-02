@@ -1181,6 +1181,39 @@ declaration per element, sourced from `alignSelfX/Y` only.
 User-visible rendering identical to v0.15.55; code is
 order-independent.
 
+### Void-element pseudo-class / animation / transition / media-
+### query style hoist (v0.15.57+ — #409)
+
+Pseudo-class rules (`Background.activeColor` / `hoverColor` /
+`focusColor`), CSS transitions (`Std.Ui.Transition.attribute`),
+keyframe animations (`Std.Ui.Animation.attribute`), and breakpoint
+media queries (`Ui.breakpoint Ui.mobile [...]`) all emit a
+sky-id-scoped `<style>` element to apply the rule. Pre-v0.15.57
+the runtime prepended that `<style>` as the FIRST CHILD of the
+carrying element — fine for `<div>` / `<button>` / etc., but
+silently DROPPED on void HTML elements (`<input>`, `<img>`,
+`<br>`, `<hr>`, …) because `renderVNode` skips children for
+void tags (the self-closing `/>` ends the element).
+
+Post-v0.15.57: the style block is hoisted to a SIBLING slot
+immediately after the void element. CSS selector still keys off
+the void element's sky-id, so the rule applies correctly. This
+means:
+
+```elm
+Input.text
+    [ Background.color (Ui.rgb 240 240 240)
+    , Background.activeColor (Ui.rgb 200 100 50)   -- now works on <input>
+    , Background.hoverColor  (Ui.rgb 50 50 200)    -- @media (hover: hover) gate
+    ]
+    cfg
+```
+
+The `<input>` inside `Input.text`'s wrapper renders with a
+sibling `<style data-sky-pc="<input-sky-id>">` carrying the
+`:active` + `:hover` rules. No call-site change needed for
+existing code — the runtime fix is transparent.
+
 ### `Ui.layoutWith` — wrapper customisation (v0.15.56)
 
 ```elm

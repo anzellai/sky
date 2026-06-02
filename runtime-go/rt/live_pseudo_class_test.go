@@ -52,22 +52,50 @@ func TestInjectPseudoClassStyles_HoverIsHoverGated(t *testing.T) {
 // `:focus-visible`, `:active`, `:disabled` are NOT gated behind
 // `(hover: hover)` — they apply on every device (keyboards exist
 // on tablets, accessibility tools simulate disabled state).
+//
+// The void <input> sits inside a <div> root so the v0.15.57 #409
+// fix's sibling-hoist path is exercised: the style child can't go
+// INSIDE the void <input>, so it lands as a sibling of the input
+// directly after it. CSS selectors still target the input by its
+// sky-id, so the styling works on either layout.
 func TestInjectPseudoClassStyles_FocusNotHoverGated(t *testing.T) {
-	tree := el("input", map[string]string{
-		"data-sky-pc-rules": "v| border-color: rgba(0, 122, 255, 1);",
-	})
+	tree := el("div", nil,
+		el("input", map[string]string{
+			"data-sky-pc-rules": "v| border-color: rgba(0, 122, 255, 1);",
+		}),
+	)
 	assignSkyIDs(&tree, "r")
 	injectPseudoClassStyles(&tree)
 
-	if len(tree.Children) < 1 || tree.Children[0].Tag != "style" {
-		t.Fatalf("expected first child to be <style>: %+v", tree.Children)
+	// Layout: <div> contains <input> + <style data-sky-pc=input-id>
+	// (the style is a SIBLING of the void input — #409 sibling-hoist).
+	if len(tree.Children) != 2 {
+		t.Fatalf("expected 2 children (input + sibling style), got %d: %+v",
+			len(tree.Children), tree.Children)
 	}
-	text := tree.Children[0].Children[0].Text
+	inputNode := tree.Children[0]
+	styleNode := tree.Children[1]
+	if inputNode.Tag != "input" {
+		t.Fatalf("first child should be input, got %s", inputNode.Tag)
+	}
+	if styleNode.Tag != "style" {
+		t.Fatalf("second child should be sibling style, got %s", styleNode.Tag)
+	}
+	// Marker stripped from the void input.
+	if _, ok := inputNode.Attrs["data-sky-pc-rules"]; ok {
+		t.Errorf("marker leaked on void input: %v", inputNode.Attrs)
+	}
+	// Style scope keys off the INPUT's sky-id (not the parent div).
+	if styleNode.Attrs["data-sky-pc"] != inputNode.SkyID {
+		t.Errorf("data-sky-pc=%q ≠ input sky-id %q",
+			styleNode.Attrs["data-sky-pc"], inputNode.SkyID)
+	}
+	text := styleNode.Children[0].Text
 	if strings.Contains(text, "@media (hover: hover)") {
 		t.Errorf(":focus-visible MUST NOT be hover-gated: %q", text)
 	}
-	if !strings.Contains(text, `[sky-id="r"]:focus-visible`) {
-		t.Errorf("missing :focus-visible selector: %q", text)
+	if !strings.Contains(text, `[sky-id="`+inputNode.SkyID+`"]:focus-visible`) {
+		t.Errorf("missing :focus-visible selector keyed off input id: %q", text)
 	}
 }
 
@@ -195,23 +223,87 @@ func TestInjectPseudoClassStyles_StyleEscape(t *testing.T) {
 // TestInjectPseudoClassStyles_UnknownTagSkipped — forward-compat
 // guard: a future Sky compiler emitting an unknown tag (e.g. `c`
 // for `:checked`) shouldn't break the older runtime. Unknown
-// entries are silently dropped.
+// entries are silently dropped. Void <input> wrapped in <div>
+// so the v0.15.57 #409 sibling-hoist path applies.
 func TestInjectPseudoClassStyles_UnknownTagSkipped(t *testing.T) {
-	tree := el("input", map[string]string{
-		"data-sky-pc-rules": "h| color: red;||z| background: blue;",
-	})
+	tree := el("div", nil,
+		el("input", map[string]string{
+			"data-sky-pc-rules": "h| color: red;||z| background: blue;",
+		}),
+	)
 	assignSkyIDs(&tree, "r")
 	injectPseudoClassStyles(&tree)
 
-	if len(tree.Children) < 1 || tree.Children[0].Tag != "style" {
-		t.Fatalf("expected style child: %+v", tree.Children)
+	if len(tree.Children) != 2 {
+		t.Fatalf("expected 2 children (input + sibling style), got %d", len(tree.Children))
 	}
-	text := tree.Children[0].Children[0].Text
+	if tree.Children[1].Tag != "style" {
+		t.Fatalf("second child should be sibling style: %+v", tree.Children[1])
+	}
+	text := tree.Children[1].Children[0].Text
 	if !strings.Contains(text, ":hover") {
 		t.Errorf("known :hover rule lost: %q", text)
 	}
 	if strings.Contains(text, "background: blue") {
 		t.Errorf("unknown 'z' tag should be dropped: %q", text)
+	}
+}
+
+
+// TestInjectPseudoClassStyles_VoidElementSiblingHoist — v0.15.57 #409.
+// A pseudo-class attached to a void element (<input>, <img>, <br>, …)
+// must NOT be silently dropped just because void HTML elements can't
+// carry children. The fix hoists the <style> to a SIBLING slot
+// immediately after the void element; the CSS selector keys off the
+// void element's sky-id so the rule still applies.
+func TestInjectPseudoClassStyles_VoidElementSiblingHoist(t *testing.T) {
+	tree := el("div", nil,
+		el("input", map[string]string{
+			"data-sky-pc-rules": "a| background-color: rgba(200, 100, 50, 1);",
+		}),
+		el("input", map[string]string{
+			"data-sky-pc-rules": "h| border-color: rgba(0, 122, 255, 1);",
+		}),
+	)
+	assignSkyIDs(&tree, "r")
+	injectPseudoClassStyles(&tree)
+
+	// Expect 4 children: input1, style1, input2, style2.
+	if len(tree.Children) != 4 {
+		t.Fatalf("expected 4 children (2 inputs + 2 sibling styles), got %d: %+v",
+			len(tree.Children), tree.Children)
+	}
+	for i, expected := range []string{"input", "style", "input", "style"} {
+		if tree.Children[i].Tag != expected {
+			t.Errorf("child %d: tag=%q, want %q", i, tree.Children[i].Tag, expected)
+		}
+	}
+	// Style1 keys off input1's sky-id.
+	in1 := tree.Children[0]
+	st1 := tree.Children[1]
+	if st1.Attrs["data-sky-pc"] != in1.SkyID {
+		t.Errorf("sibling style[1] data-sky-pc=%q ≠ input[0] sky-id %q",
+			st1.Attrs["data-sky-pc"], in1.SkyID)
+	}
+	if !strings.Contains(st1.Children[0].Text, `[sky-id="`+in1.SkyID+`"]:active`) {
+		t.Errorf("sibling style[1] doesn't target input[0] :active: %q", st1.Children[0].Text)
+	}
+	// Style2 keys off input2's sky-id and has :hover gated.
+	in2 := tree.Children[2]
+	st2 := tree.Children[3]
+	if st2.Attrs["data-sky-pc"] != in2.SkyID {
+		t.Errorf("sibling style[3] data-sky-pc=%q ≠ input[2] sky-id %q",
+			st2.Attrs["data-sky-pc"], in2.SkyID)
+	}
+	if !strings.Contains(st2.Children[0].Text, "@media (hover: hover)") {
+		t.Errorf("sibling style[3] :hover not @media-gated: %q", st2.Children[0].Text)
+	}
+	// Markers stripped from both inputs.
+	if _, ok := in1.Attrs["data-sky-pc-rules"]; ok {
+		t.Errorf("marker leaked on input1: %v", in1.Attrs)
+	}
+	if _, ok := in2.Attrs["data-sky-pc-rules"]; ok {
+		t.Errorf("marker leaked on input2: %v", in2.Attrs)
 	}
 }
 

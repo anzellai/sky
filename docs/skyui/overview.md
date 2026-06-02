@@ -761,6 +761,28 @@ Explicit alternatives:
 [sky-id="r.0.2#button"]:active { background-color: rgba(0, 62, 175, 1); }
 ```
 
+### Void-element pseudo-class hoist (v0.15.57+ — #409)
+
+Pseudo-class rules attached to a VOID HTML element (`<input>`, `<img>`, `<br>`, `<hr>`, etc.) now render correctly. Pre-v0.15.57 the runtime prepended the `<style>` block as a first CHILD of the element carrying the rule — fine for `<div>` / `<button>`, but silently dropped on void tags because `renderVNode` skips children for void elements (the self-closing `/>` ends the tag).
+
+Post-v0.15.57: the runtime hoists the `<style>` block to a SIBLING slot immediately AFTER the void element. The CSS selector still keys off the void element's `sky-id`, so the rule applies correctly.
+
+```elm
+-- Both styles work identically post-v0.15.57:
+Input.text
+    [ Background.color (Ui.rgb 240 240 240)
+    , Background.activeColor (Ui.rgb 200 100 50)   -- :active works on <input>
+    , Background.hoverColor (Ui.rgb 50 50 200)     -- @media (hover: hover) gate
+    ]
+    { onChange = UpdateText, text = m.text, ... }
+
+Ui.image
+    [ Border.activeColor (Ui.rgb 0 122 255) ]      -- :active works on <img>
+    { src = "logo.png", description = "logo" }
+```
+
+The fix applies uniformly to all four style-injection passes (pseudo-class, animation, transition, media-query), so `Std.Ui.Animation.attribute` / `Std.Ui.Transition.attribute` / `Ui.breakpoint` all work on void elements too.
+
 ### Composition with `Ui.breakpoint`
 
 `Background.hoverColor` inside `Ui.breakpoint Ui.mobile [...]` works as expected — the breakpoint wraps the element and the pseudo-rule attaches to the element itself; both layers stack via CSS inheritance. Each layer gets its own scoped `<style>` block, so neither cross-contaminates.

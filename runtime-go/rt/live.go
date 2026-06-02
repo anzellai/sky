@@ -538,50 +538,25 @@ func assignSkyIDs(n *VNode, path string) {
 // element. Post-condition: marker attrs removed; style child
 // prepended where present.
 func injectMediaQueryStyles(n *VNode) {
-	if n.Kind != "element" {
-		return
-	}
-	query, hasQuery := n.Attrs["data-sky-mq-q"]
-	rules, hasRules := n.Attrs["data-sky-mq-rules"]
-	if hasQuery && hasRules && n.SkyID != "" {
-		// Build the scoped style content.
-		// Selector: `[sky-id="..."]` — exact-match attribute
-		// selector keys directly off the sky-id we already emit
-		// for diff-patch addressing. Same string is escaped by
-		// html.EscapeString during render so no quote-injection
-		// surface.
-		selector := `[sky-id="` + n.SkyID + `"]`
-		// CSS-escape inside the style element: the `rules` string
-		// must NOT contain a closing `</style>` sequence (browsers
-		// terminate <style> on that literal regardless of context).
-		// Strip defensively.
-		safeRules := strings.ReplaceAll(rules, "</style", "")
-		safeRules = strings.ReplaceAll(safeRules, "</STYLE", "")
-		safeQuery := strings.ReplaceAll(query, "</style", "")
-		safeQuery = strings.ReplaceAll(safeQuery, "</STYLE", "")
-		styleText := "@media " + safeQuery + " { " + selector +
-			" { " + safeRules + " } }"
-		styleNode := VNode{
-			Kind: "element",
-			Tag:  "style",
-			Attrs: map[string]string{
-				"data-sky-mq": n.SkyID,
-			},
-			Children: []VNode{{Kind: "raw", Text: styleText}},
-		}
-		// Strip marker attrs from the wire output — they served
-		// their purpose and shouldn't leak as inert data-* on the
-		// rendered HTML.
-		delete(n.Attrs, "data-sky-mq-q")
-		delete(n.Attrs, "data-sky-mq-rules")
-		// Prepend style as the first child so it parses before any
-		// rendered content (matches the convention used by the
-		// outer Ui.layout wrapper's body-reset style block).
-		n.Children = append([]VNode{styleNode}, n.Children...)
-	}
-	for i := range n.Children {
-		injectMediaQueryStyles(&n.Children[i])
-	}
+	injectStyleMarker(n, styleMarkerSpec{
+		markerAttrs: []string{"data-sky-mq-q", "data-sky-mq-rules"},
+		styleAttr:   "data-sky-mq",
+		build: func(skyID string, attrs map[string]string) string {
+			query := attrs["data-sky-mq-q"]
+			rules := attrs["data-sky-mq-rules"]
+			if query == "" || rules == "" {
+				return ""
+			}
+			selector := `[sky-id="` + skyID + `"]`
+			safeRules := strings.ReplaceAll(rules, "</style", "")
+			safeRules = strings.ReplaceAll(safeRules, "</STYLE", "")
+			safeQuery := strings.ReplaceAll(query, "</style", "")
+			safeQuery = strings.ReplaceAll(safeQuery, "</STYLE", "")
+			return "@media " + safeQuery + " { " + selector +
+				" { " + safeRules + " } }"
+		},
+		recurse: injectMediaQueryStyles,
+	})
 }
 
 // injectPseudoClassStyles walks the tree after assignSkyIDs and
@@ -619,30 +594,151 @@ func injectMediaQueryStyles(n *VNode) {
 // element. Post-condition: marker attr removed; style child
 // prepended where present.
 func injectPseudoClassStyles(n *VNode) {
+	injectStyleMarker(n, styleMarkerSpec{
+		markerAttrs: []string{"data-sky-pc-rules"},
+		styleAttr:   "data-sky-pc",
+		build: func(skyID string, attrs map[string]string) string {
+			return buildPseudoClassStyleText(skyID, attrs["data-sky-pc-rules"])
+		},
+		recurse: injectPseudoClassStyles,
+	})
+}
+
+
+// styleMarkerSpec describes one style-injection pass. All four passes
+// (media-query / pseudo-class / transition / animation) share the
+// same shape: locate a marker attr on an element with a sky-id, build
+// a CSS block scoped to that id, drop the marker, attach a <style>
+// element carrying the CSS block.
+//
+// v0.15.57 #409 — the canonical "attach as first child" path silently
+// drops the <style> when the element is a VOID HTML element (<input>,
+// <img>, <br>, …) because renderVNode skips children for void tags.
+// The shared injector hoists the <style> to a sibling slot in that
+// case (handled by the parent's child-loop pass).
+type styleMarkerSpec struct {
+	// markerAttrs is the list of data-* attrs the pass consumes (all
+	// stripped from the wire output after processing, even on
+	// no-match — so an empty marker doesn't leak as inert data-*).
+	markerAttrs []string
+	// styleAttr is the data-* attr stamped on the emitted <style>
+	// element (e.g. "data-sky-pc" / "data-sky-mq" / "data-sky-tr" /
+	// "data-sky-anim"), keyed to the element's sky-id.
+	styleAttr string
+	// build builds the CSS body. Returns "" if there's nothing to
+	// emit (the marker was empty / malformed).
+	build func(skyID string, attrs map[string]string) string
+	// recurse is the entry point used to recursively walk children
+	// (passed in so each pass keeps its own identity for tracing).
+	recurse func(*VNode)
+}
+
+
+// injectStyleMarker applies a single style-injection spec to a VNode
+// + its descendants. Handles both the non-void case (attach style as
+// first child) and the void case (hoist to sibling after).
+func injectStyleMarker(n *VNode, spec styleMarkerSpec) {
 	if n.Kind != "element" {
 		return
 	}
-	encoded, ok := n.Attrs["data-sky-pc-rules"]
-	if ok && n.SkyID != "" && encoded != "" {
-		styleText := buildPseudoClassStyleText(n.SkyID, encoded)
-		if styleText != "" {
-			styleNode := VNode{
-				Kind: "element",
-				Tag:  "style",
-				Attrs: map[string]string{
-					"data-sky-pc": n.SkyID,
-				},
-				Children: []VNode{{Kind: "raw", Text: styleText}},
-			}
-			n.Children = append([]VNode{styleNode}, n.Children...)
+	if !isVoidTag(n.Tag) {
+		// Non-void self: prepend style child if marker present.
+		applyMarkerAsFirstChild(n, spec)
+	}
+	// Walk children, splicing sibling style blocks after any void
+	// child that still carries a marker (because the self-handler
+	// above bailed for void).
+	n.Children = walkChildrenWithVoidSiblingHoist(n.Children, spec)
+}
+
+
+// applyMarkerAsFirstChild handles the canonical case: build the
+// style body, prepend as first child, strip marker(s). Caller must
+// already have decided n is non-void.
+func applyMarkerAsFirstChild(n *VNode, spec styleMarkerSpec) {
+	if n.SkyID == "" {
+		// No id → no scope. Strip markers anyway so they don't leak.
+		for _, ma := range spec.markerAttrs {
+			delete(n.Attrs, ma)
 		}
-		// Marker attr stripped regardless — bad/empty input
-		// shouldn't leak as inert data-* either.
-		delete(n.Attrs, "data-sky-pc-rules")
+		return
 	}
-	for i := range n.Children {
-		injectPseudoClassStyles(&n.Children[i])
+	hasAny := false
+	for _, ma := range spec.markerAttrs {
+		if v, ok := n.Attrs[ma]; ok && v != "" {
+			hasAny = true
+			break
+		}
 	}
+	if !hasAny {
+		// Strip empty markers regardless.
+		for _, ma := range spec.markerAttrs {
+			delete(n.Attrs, ma)
+		}
+		return
+	}
+	styleText := spec.build(n.SkyID, n.Attrs)
+	for _, ma := range spec.markerAttrs {
+		delete(n.Attrs, ma)
+	}
+	if styleText == "" {
+		return
+	}
+	styleNode := VNode{
+		Kind: "element",
+		Tag:  "style",
+		Attrs: map[string]string{
+			spec.styleAttr: n.SkyID,
+		},
+		Children: []VNode{{Kind: "raw", Text: styleText}},
+	}
+	n.Children = append([]VNode{styleNode}, n.Children...)
+}
+
+
+// walkChildrenWithVoidSiblingHoist recurses into each child + splices
+// a sibling <style> immediately after any VOID child whose marker
+// survived the self-handler's bail. See #409.
+func walkChildrenWithVoidSiblingHoist(children []VNode, spec styleMarkerSpec) []VNode {
+	out := make([]VNode, 0, len(children))
+	for i := range children {
+		child := &children[i]
+		spec.recurse(child)
+		// Capture the void-child's marker BEFORE we append (the recurse
+		// call may have stripped non-void markers from deep descendants
+		// but a void child's marker still sits on the child).
+		var hoist *VNode
+		if child.Kind == "element" && isVoidTag(child.Tag) && child.SkyID != "" {
+			hasAny := false
+			for _, ma := range spec.markerAttrs {
+				if v, ok := child.Attrs[ma]; ok && v != "" {
+					hasAny = true
+					break
+				}
+			}
+			if hasAny {
+				styleText := spec.build(child.SkyID, child.Attrs)
+				if styleText != "" {
+					hoist = &VNode{
+						Kind: "element",
+						Tag:  "style",
+						Attrs: map[string]string{
+							spec.styleAttr: child.SkyID,
+						},
+						Children: []VNode{{Kind: "raw", Text: styleText}},
+					}
+				}
+				for _, ma := range spec.markerAttrs {
+					delete(child.Attrs, ma)
+				}
+			}
+		}
+		out = append(out, *child)
+		if hoist != nil {
+			out = append(out, *hoist)
+		}
+	}
+	return out
 }
 
 // buildPseudoClassStyleText parses the `data-sky-pc-rules` marker
@@ -772,45 +868,27 @@ func applyStyleInjections(n *VNode) {
 //
 // Pre-condition: assignSkyIDs has already stamped n.SkyID.
 func injectTransitionStyles(n *VNode) {
-	if n.Kind != "element" {
-		return
-	}
-	rules, ok := n.Attrs["data-sky-tr-rules"]
-	respectRaw := n.Attrs["data-sky-tr-respect"]
-	if ok && n.SkyID != "" && rules != "" {
-		respect := respectRaw != "0"
-		// Defensive `</style>` strip — same hardening as the
-		// other style-injection passes.
-		safeRules := strings.ReplaceAll(rules, "</style", "")
-		safeRules = strings.ReplaceAll(safeRules, "</STYLE", "")
-		selector := `[sky-id="` + n.SkyID + `"]`
-		var styleText string
-		if respect {
-			styleText = "@media (prefers-reduced-motion: no-preference) { " +
-				selector + " { transition: " + safeRules + "; } }"
-		} else {
-			styleText = selector + " { transition: " + safeRules + "; }"
-		}
-		styleNode := VNode{
-			Kind: "element",
-			Tag:  "style",
-			Attrs: map[string]string{
-				"data-sky-tr": n.SkyID,
-			},
-			Children: []VNode{{Kind: "raw", Text: styleText}},
-		}
-		delete(n.Attrs, "data-sky-tr-rules")
-		delete(n.Attrs, "data-sky-tr-respect")
-		n.Children = append([]VNode{styleNode}, n.Children...)
-	} else if ok {
-		// Marker present but empty/no sky-id — strip anyway so
-		// it doesn't pollute the wire.
-		delete(n.Attrs, "data-sky-tr-rules")
-		delete(n.Attrs, "data-sky-tr-respect")
-	}
-	for i := range n.Children {
-		injectTransitionStyles(&n.Children[i])
-	}
+	injectStyleMarker(n, styleMarkerSpec{
+		markerAttrs: []string{"data-sky-tr-rules", "data-sky-tr-respect"},
+		styleAttr:   "data-sky-tr",
+		build: func(skyID string, attrs map[string]string) string {
+			rules := attrs["data-sky-tr-rules"]
+			respectRaw := attrs["data-sky-tr-respect"]
+			if rules == "" {
+				return ""
+			}
+			respect := respectRaw != "0"
+			safeRules := strings.ReplaceAll(rules, "</style", "")
+			safeRules = strings.ReplaceAll(safeRules, "</STYLE", "")
+			selector := `[sky-id="` + skyID + `"]`
+			if respect {
+				return "@media (prefers-reduced-motion: no-preference) { " +
+					selector + " { transition: " + safeRules + "; } }"
+			}
+			return selector + " { transition: " + safeRules + "; }"
+		},
+		recurse: injectTransitionStyles,
+	})
 }
 
 // injectAnimationStyles walks the tree after assignSkyIDs and
@@ -843,30 +921,14 @@ func injectTransitionStyles(n *VNode) {
 // already structurally unique within a page; we strip the
 // non-CSS-ident chars to produce a safe @keyframes name suffix.
 func injectAnimationStyles(n *VNode) {
-	if n.Kind != "element" {
-		return
-	}
-	encoded, ok := n.Attrs["data-sky-anim-rules"]
-	if ok && n.SkyID != "" && encoded != "" {
-		styleText := buildAnimationStyleText(n.SkyID, encoded)
-		if styleText != "" {
-			styleNode := VNode{
-				Kind: "element",
-				Tag:  "style",
-				Attrs: map[string]string{
-					"data-sky-anim": n.SkyID,
-				},
-				Children: []VNode{{Kind: "raw", Text: styleText}},
-			}
-			n.Children = append([]VNode{styleNode}, n.Children...)
-		}
-		delete(n.Attrs, "data-sky-anim-rules")
-	} else if ok {
-		delete(n.Attrs, "data-sky-anim-rules")
-	}
-	for i := range n.Children {
-		injectAnimationStyles(&n.Children[i])
-	}
+	injectStyleMarker(n, styleMarkerSpec{
+		markerAttrs: []string{"data-sky-anim-rules"},
+		styleAttr:   "data-sky-anim",
+		build: func(skyID string, attrs map[string]string) string {
+			return buildAnimationStyleText(skyID, attrs["data-sky-anim-rules"])
+		},
+		recurse: injectAnimationStyles,
+	})
 }
 
 // skyIDToCSSIdent rewrites a sky-id (`r.0.2#div`) into a CSS-safe

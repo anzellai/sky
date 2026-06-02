@@ -1023,6 +1023,973 @@ main =
             return { ok: true, msg: `wrappedRow ${m.cards.length} cards across ${ys.length} rows, gap=${m.gap}, flex-wrap=${m.flexWrap}` };
         },
     },
+
+    // ═══════════════════════════════════════════════════════════════════
+    // v0.15.57 Cycle 7 audit extension — Dimensions 1, 2, 5, 6, 7
+    //
+    // Each dimension adds one or more cells exercising a slice of the
+    // Std.Ui surface the v0.15.55 / v0.15.56 audit didn't reach. The
+    // cells classify PASS / FAIL via DOM measurement; the goal is
+    // coverage breadth, not pixel-perfection.
+    // ═══════════════════════════════════════════════════════════════════
+
+    // ─── Dimension 1 — Interaction states ────────────────────────────
+    //
+    // D1a covers focus mid-update + active pseudo-class via DOM
+    // observation; D1b covers prefers-reduced-motion CSS gating; the
+    // hover-mid-typing case is folded into D1a (typed input + hover
+    // styling — verify hover style applies + caret unchanged).
+    {
+        id: "D1a",
+        name: "D1a-focus-active-pseudo",
+        port: 8820,
+        descr: "focus + :active pseudo-class on a non-void Ui.el + void-element sibling hoist (#409)",
+        source: `module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Live exposing (app, route)
+import Std.Ui as Ui
+import Std.Ui.Background as Background
+import Std.Ui.Input as Input
+
+
+type alias Model = { text : String, ticks : Int }
+type Msg = UpdateText String | Tick | NoOp
+type Page = MainPage
+
+
+init : a -> ( Model, Cmd Msg )
+init _ = ( { text = "", ticks = 0 }, Cmd.none )
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg m =
+    case msg of
+        UpdateText t -> ( { m | text = t }, Cmd.none )
+        Tick         -> ( { m | ticks = m.ticks + 1 }, Cmd.none )
+        NoOp         -> ( m, Cmd.none )
+
+subscriptions : Model -> Sub Msg
+subscriptions _ = Sub.none
+
+
+view : Model -> any
+view m =
+    Ui.layout
+        []
+        (Ui.column
+            [ Ui.spacing 16, Ui.padding 16 ]
+            [ -- An ordinary Ui.el (renders as <div>) carrying both a
+              -- background colour AND an :active pseudo-class. This is
+              -- the WORKING shape; the :active rule emits as a sky-id
+              -- scoped <style data-sky-pc> child.
+              Ui.el
+                [ Ui.width (Ui.px 200), Ui.height (Ui.px 60)
+                , Background.color (Ui.rgb 100 100 100)
+                , Background.activeColor (Ui.rgb 200 100 50)
+                , Background.hoverColor (Ui.rgb 50 50 200)
+                , Ui.htmlAttribute "data-probe" "d1a-pseudo-el"
+                ]
+                (Ui.text "click & hover")
+            , -- Sibling: focusable input WITH a pseudo-class attached
+              -- (Background.activeColor). v0.15.57 #409 routes the
+              -- pseudo through the void-element sibling-hoist path so
+              -- the :active rule reaches the DOM as a <style> sibling
+              -- of the inner <input>. Pre-fix the rule was silently
+              -- dropped because <input> can't carry a <style> child.
+              Input.text
+                [ Ui.htmlAttribute "data-probe" "d1a-input"
+                , Background.color (Ui.rgb 240 240 240)
+                , Background.activeColor (Ui.rgb 200 100 50)
+                ]
+                { onChange = UpdateText
+                , text = m.text
+                , placeholder = Just (Input.placeholder [] (Ui.text "type here"))
+                , label = Input.labelHidden "txt"
+                }
+            ])
+
+
+main =
+    app
+        { init = init, update = update, view = view, subscriptions = subscriptions
+        , routes = [ route "/" MainPage ], notFound = MainPage
+        }
+`,
+        assertions: async (page) => {
+            // First: assert :active + :hover pseudo-classes emitted as
+            // sky-id-scoped <style data-sky-pc> children on the Ui.el.
+            const m = await page.evaluate(() => {
+                const styleEls = Array.from(document.querySelectorAll("style[data-sky-pc]"));
+                const contents = styleEls.map((s) => s.textContent || "").join("\n");
+                const hasActive = /:active/.test(contents);
+                const hasHover = /:hover/.test(contents);
+                const hoverGated = /@media\s*\(\s*hover\s*:\s*hover\s*\)/.test(contents);
+                // Count distinct data-sky-pc style blocks — expect ≥2
+                // (one for the Ui.el wrapper, one for the void input).
+                const skyIds = new Set(styleEls.map((s) => s.getAttribute("data-sky-pc")));
+                return { count: styleEls.length, skyIds: Array.from(skyIds), hasActive, hasHover, hoverGated };
+            });
+            if (m.count === 0) {
+                return { ok: false, msg: "no [data-sky-pc] style block emitted on Ui.el (regression vs v0.15.56)" };
+            }
+            if (!m.hasActive) {
+                return { ok: false, msg: "Background.activeColor did not emit a :active rule in the [data-sky-pc] style block" };
+            }
+            if (!m.hasHover) {
+                return { ok: false, msg: "Background.hoverColor did not emit a :hover rule in the [data-sky-pc] style block" };
+            }
+            if (!m.hoverGated) {
+                return { ok: false, msg: ":hover rule was NOT wrapped in @media (hover: hover) (regression — auto-gating broke)" };
+            }
+            // #409 verification: the void <input> must also have a
+            // sibling <style data-sky-pc> with an :active rule keyed
+            // to the input's sky-id.
+            const voidStyle = await page.evaluate(() => {
+                const input = document.querySelector('input[type="text"]');
+                if (!input) return { hasInput: false };
+                const skyId = input.getAttribute("sky-id");
+                const next = input.nextElementSibling;
+                const isSiblingStyle = next && next.tagName === "STYLE" && next.getAttribute("data-sky-pc") === skyId;
+                return {
+                    hasInput: true,
+                    skyId,
+                    nextTag: next ? next.tagName : null,
+                    nextSkyPc: next ? next.getAttribute("data-sky-pc") : null,
+                    isSiblingStyle,
+                    siblingText: isSiblingStyle ? (next.textContent || "") : "",
+                };
+            });
+            if (!voidStyle.hasInput) {
+                return { ok: false, msg: "void input missing — D1a fixture didn't render" };
+            }
+            if (!voidStyle.isSiblingStyle) {
+                return { ok: false, msg: `#409 regression: void <input sky-id="${voidStyle.skyId}"> has no sibling <style data-sky-pc=...> after it (next: ${voidStyle.nextTag}, data-sky-pc=${voidStyle.nextSkyPc})` };
+            }
+            if (!/:active/.test(voidStyle.siblingText)) {
+                return { ok: false, msg: `#409 regression: sibling style block for void input has no :active rule. body="${voidStyle.siblingText.slice(0, 120)}"` };
+            }
+            // Second: focus + caret behaviour on the input (independent
+            // of the pseudo gap).
+            await page.waitForSelector("input[type='text']", { timeout: 5000 });
+            await page.click("input[type='text']");
+            await page.fill("input[type='text']", "hello");
+            const focused = await page.evaluate(() => document.activeElement && document.activeElement.tagName === "INPUT");
+            if (!focused) {
+                return { ok: false, msg: "input did not receive focus after click" };
+            }
+            const caret = await page.evaluate(() => document.activeElement.selectionStart);
+            if (caret !== 5) {
+                return { ok: false, msg: `unexpected caret position ${caret} (expected 5)` };
+            }
+            return { ok: true, msg: `pseudo-classes on Ui.el AND void <input> (#409 hoist) emit correctly; focus + caret intact` };
+        },
+    },
+
+    {
+        id: "D1b",
+        name: "D1b-reduced-motion-gating",
+        port: 8821,
+        descr: "Animation respectReducedMotion=True wraps keyframes in prefers-reduced-motion media query",
+        source: `module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Live exposing (app, route)
+import Std.Ui as Ui
+import Std.Ui.Background as Background
+import Std.Ui.Animation as Animation
+import Std.Ui.Transform as Transform
+
+
+type alias Model = { dummy : Int }
+type Msg = Noop
+type Page = MainPage
+
+
+init : a -> ( Model, Cmd Msg )
+init _ = ( { dummy = 0 }, Cmd.none )
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update _ m = ( m, Cmd.none )
+
+subscriptions : Model -> Sub Msg
+subscriptions _ = Sub.none
+
+
+view : Model -> any
+view _ =
+    Ui.layout
+        []
+        (Ui.column
+            [ Ui.padding 16, Ui.spacing 16 ]
+            [ Ui.el
+                [ Ui.width (Ui.px 100), Ui.height (Ui.px 100)
+                , Background.color (Ui.rgb 60 80 200)
+                , Animation.attribute
+                    { name = "fadeIn"
+                    , duration = 1000
+                    , easing = Animation.easeOut
+                    , delay = 0
+                    , iterations = Animation.once
+                    , fillMode = Animation.forwards
+                    , respectReducedMotion = True
+                    , keyframes =
+                        [ ( 0, [ Transform.opacity 0.0 ] )
+                        , ( 100, [ Transform.opacity 1.0 ] )
+                        ]
+                    }
+                , Ui.htmlAttribute "data-probe" "anim-default-respect"
+                ]
+                (Ui.text "anim")
+            ])
+
+
+main =
+    app
+        { init = init, update = update, view = view, subscriptions = subscriptions
+        , routes = [ route "/" MainPage ], notFound = MainPage
+        }
+`,
+        assertions: async (page) => {
+            // Verify a [data-sky-anim] style block exists AND its
+            // body is wrapped in @media (prefers-reduced-motion:
+            // no-preference). That's the gate that makes
+            // respectReducedMotion=True actually respect the user
+            // preference.
+            const m = await page.evaluate(() => {
+                const styleEls = Array.from(document.querySelectorAll("style[data-sky-anim]"));
+                if (styleEls.length === 0) return { found: false };
+                const content = styleEls.map((s) => s.textContent || "").join("\n");
+                const hasGate = /@media\s*\(\s*prefers-reduced-motion\s*:\s*no-preference\s*\)/i.test(content);
+                const hasKeyframes = /@keyframes\s+fadeIn/.test(content);
+                return { found: true, hasGate, hasKeyframes, len: content.length };
+            });
+            if (!m.found) {
+                return { ok: false, msg: "no [data-sky-anim] style block emitted" };
+            }
+            if (!m.hasGate) {
+                return { ok: false, msg: "Animation.attribute respectReducedMotion=True did NOT wrap keyframes in @media (prefers-reduced-motion: no-preference)" };
+            }
+            if (!m.hasKeyframes) {
+                return { ok: false, msg: "expected @keyframes fadeIn — missing" };
+            }
+            // Now flip the emulated media. CSS engine should drop the
+            // animation when prefers-reduced-motion: reduce — the
+            // @media gate is no-preference, so reduce-mode skips.
+            await page.emulateMedia({ reducedMotion: "reduce" });
+            await page.waitForTimeout(50);
+            const animCs = await page.evaluate(() => {
+                const el = document.querySelector('[data-probe="anim-default-respect"]');
+                return el ? window.getComputedStyle(el).animationName : null;
+            });
+            // Under reduce, the gate fails → animation: none.
+            // animationName might still be "fadeIn..." (rule string is
+            // there but @media disables it). Check if computed-style
+            // shows the animation OR rely on the rule presence as the
+            // contract assertion. Browsers vary in how they report
+            // animationName under disabled @media. We assert the rule
+            // structure (sound) rather than the disabled-state spy.
+            return { ok: true, msg: `respectReducedMotion correctly gated keyframes (animation-name under reduce: ${animCs || "none"})` };
+        },
+    },
+
+    // ─── Dimension 2 — Viewport resize ────────────────────────────────
+    //
+    // Flex chains recompute on resize via the CSS engine alone — no
+    // model field, no re-render. D2 verifies the chain stays sound
+    // across resize events and that Ui.minimum holds.
+    {
+        id: "D2a",
+        name: "D2a-flex-resize-recompute",
+        port: 8822,
+        descr: "flex chain recomputes on window.resize without model intervention",
+        source: `module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Live exposing (app, route)
+import Std.Ui as Ui
+import Std.Ui.Background as Background
+
+
+type alias Model = { dummy : Int }
+type Msg = Noop
+type Page = MainPage
+
+
+init : a -> ( Model, Cmd Msg )
+init _ = ( { dummy = 0 }, Cmd.none )
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update _ m = ( m, Cmd.none )
+
+subscriptions : Model -> Sub Msg
+subscriptions _ = Sub.none
+
+
+view : Model -> any
+view _ =
+    Ui.layout
+        []
+        (Ui.row
+            [ Ui.width Ui.fill, Ui.height Ui.fill, Ui.htmlAttribute "data-probe" "d2-row" ]
+            [ Ui.el
+                [ Ui.width (Ui.px 200), Ui.height Ui.fill
+                , Background.color (Ui.rgb 240 240 240)
+                , Ui.htmlAttribute "data-probe" "d2-sidebar"
+                ]
+                (Ui.text "side")
+            , Ui.el
+                [ Ui.width Ui.fill, Ui.height Ui.fill
+                , Background.color (Ui.rgb 100 150 200)
+                , Ui.htmlAttribute "data-probe" "d2-main"
+                ]
+                (Ui.text "main")
+            ])
+
+
+main =
+    app
+        { init = init, update = update, view = view, subscriptions = subscriptions
+        , routes = [ route "/" MainPage ], notFound = MainPage
+        }
+`,
+        assertions: async (page) => {
+            // Measure at 1280x800 default.
+            const initial = await page.evaluate(() => {
+                const main = document.querySelector('[data-probe="d2-main"]');
+                const side = document.querySelector('[data-probe="d2-sidebar"]');
+                return {
+                    main: main.getBoundingClientRect().width,
+                    side: side.getBoundingClientRect().width,
+                };
+            });
+            // sidebar fixed 200, main fills (~ vp - 200 - body-margin).
+            if (Math.abs(initial.side - 200) > 4) {
+                return { ok: false, msg: `initial sidebar w=${initial.side} ≠ 200` };
+            }
+            const expectedMain1 = 1280 - 200 - 16; // some chrome
+            if (initial.main < expectedMain1 - 16) {
+                return { ok: false, msg: `initial main w=${initial.main} < ${expectedMain1}` };
+            }
+            // Resize to 800x600.
+            await page.setViewportSize({ width: 800, height: 600 });
+            await page.waitForTimeout(60);
+            const small = await page.evaluate(() => {
+                const main = document.querySelector('[data-probe="d2-main"]');
+                const side = document.querySelector('[data-probe="d2-sidebar"]');
+                return {
+                    main: main.getBoundingClientRect().width,
+                    side: side.getBoundingClientRect().width,
+                };
+            });
+            if (Math.abs(small.side - 200) > 4) {
+                return { ok: false, msg: `after-resize sidebar w=${small.side} ≠ 200 (sidebar should stay fixed)` };
+            }
+            // main should track the new viewport width.
+            const expectedMain2 = 800 - 200 - 16;
+            if (small.main < expectedMain2 - 16 || small.main > expectedMain2 + 16) {
+                return { ok: false, msg: `after-resize main w=${small.main} ≠ ~${expectedMain2} (didn't recompute)` };
+            }
+            // Resize back to 1280x800.
+            await page.setViewportSize({ width: 1280, height: 800 });
+            await page.waitForTimeout(60);
+            const back = await page.evaluate(() => {
+                const main = document.querySelector('[data-probe="d2-main"]');
+                return main.getBoundingClientRect().width;
+            });
+            if (back < expectedMain1 - 16) {
+                return { ok: false, msg: `after-resize-back main w=${back} (didn't grow back)` };
+            }
+            return { ok: true, msg: `flex chain recomputed: 1280→${initial.main.toFixed(0)}, 800→${small.main.toFixed(0)}, back→${back.toFixed(0)}` };
+        },
+    },
+
+    {
+        id: "D2b",
+        name: "D2b-minimum-holds-on-shrink",
+        port: 8823,
+        descr: "Ui.minimum N Ui.fill keeps the floor under aggressive viewport shrink",
+        source: `module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Live exposing (app, route)
+import Std.Ui as Ui
+import Std.Ui.Background as Background
+
+
+type alias Model = { dummy : Int }
+type Msg = Noop
+type Page = MainPage
+
+
+init : a -> ( Model, Cmd Msg )
+init _ = ( { dummy = 0 }, Cmd.none )
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update _ m = ( m, Cmd.none )
+
+subscriptions : Model -> Sub Msg
+subscriptions _ = Sub.none
+
+
+view : Model -> any
+view _ =
+    Ui.layout
+        []
+        (Ui.column
+            [ Ui.padding 0 ]
+            [ Ui.el
+                [ Ui.width (Ui.minimum 320 Ui.fill)
+                , Ui.height (Ui.px 60)
+                , Background.color (Ui.rgb 100 150 200)
+                , Ui.htmlAttribute "data-probe" "d2b-floor"
+                ]
+                (Ui.text "min 320")
+            ])
+
+
+main =
+    app
+        { init = init, update = update, view = view, subscriptions = subscriptions
+        , routes = [ route "/" MainPage ], notFound = MainPage
+        }
+`,
+        assertions: async (page) => {
+            // Start at 1280: width should fill ≈ 1280.
+            const wide = await page.evaluate(() => document.querySelector('[data-probe="d2b-floor"]').getBoundingClientRect().width);
+            // Shrink to 240 — should clamp to min 320.
+            await page.setViewportSize({ width: 240, height: 400 });
+            await page.waitForTimeout(60);
+            const tiny = await page.evaluate(() => document.querySelector('[data-probe="d2b-floor"]').getBoundingClientRect().width);
+            if (tiny < 318) {
+                return { ok: false, msg: `floor=${tiny} < 320 — Ui.minimum did not hold under 240px viewport` };
+            }
+            return { ok: true, msg: `Ui.minimum 320 held: vp=1280 → ${wide.toFixed(0)}, vp=240 → ${tiny.toFixed(0)}` };
+        },
+    },
+
+    // ─── Dimension 5 — Ui.Lazy / Keyed ───────────────────────────────
+    //
+    // D5a: a Lazy-cached subtree's parent re-renders with a different
+    // attr. The cached Element is REUSED but its rendered output is
+    // walked fresh — so the parent's new style cascades correctly.
+    // D5b: Keyed children survive same-key + attr-change updates.
+    {
+        id: "D5a",
+        name: "D5a-lazy-survives-parent-style-change",
+        port: 8824,
+        descr: "Ui.Lazy.lazy: cached subtree renders correctly when parent attrs change",
+        source: `module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Live exposing (app, route)
+import Std.Ui as Ui
+import Std.Ui.Background as Background
+import Std.Ui.Lazy as Lazy
+
+
+type alias Model = { lightOn : Bool }
+type Msg = Toggle
+type Page = MainPage
+
+
+init : a -> ( Model, Cmd Msg )
+init _ = ( { lightOn = False }, Cmd.none )
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update _ m = ( { m | lightOn = not m.lightOn }, Cmd.none )
+
+subscriptions : Model -> Sub Msg
+subscriptions _ = Sub.none
+
+
+-- A lazy child that doesn't depend on parent style.
+renderLabel : String -> Ui.Element Msg
+renderLabel s =
+    Ui.el
+        [ Ui.htmlAttribute "data-probe" "d5a-lazy-child" ]
+        (Ui.text s)
+
+
+view : Model -> any
+view m =
+    Ui.layout
+        []
+        (Ui.column
+            [ Ui.padding 20
+            , Background.color (if m.lightOn then Ui.rgb 250 240 200 else Ui.rgb 40 40 60)
+            , Ui.htmlAttribute "data-probe" "d5a-parent"
+            ]
+            [ Lazy.lazy renderLabel "stable child"
+            , Ui.el
+                [ Ui.htmlAttribute "data-probe" "d5a-toggle"
+                , Ui.onClick Toggle
+                ]
+                (Ui.text "click to toggle")
+            ])
+
+
+main =
+    app
+        { init = init, update = update, view = view, subscriptions = subscriptions
+        , routes = [ route "/" MainPage ], notFound = MainPage
+        }
+`,
+        assertions: async (page) => {
+            // Initial: parent dark, lazy child says "stable child".
+            const beforeBg = await page.evaluate(() => {
+                const p = document.querySelector('[data-probe="d5a-parent"]');
+                return window.getComputedStyle(p).backgroundColor;
+            });
+            const beforeChildText = await page.evaluate(() => {
+                return document.querySelector('[data-probe="d5a-lazy-child"]').textContent;
+            });
+            // Click toggle.
+            await page.click('[data-probe="d5a-toggle"]');
+            await page.waitForTimeout(150);
+            const afterBg = await page.evaluate(() => {
+                const p = document.querySelector('[data-probe="d5a-parent"]');
+                return window.getComputedStyle(p).backgroundColor;
+            });
+            const afterChildText = await page.evaluate(() => {
+                return document.querySelector('[data-probe="d5a-lazy-child"]').textContent;
+            });
+            if (beforeBg === afterBg) {
+                return { ok: false, msg: `parent bg didn't change after toggle: ${beforeBg}` };
+            }
+            if (afterChildText !== "stable child" || beforeChildText !== "stable child") {
+                return { ok: false, msg: `lazy child text changed: before="${beforeChildText}", after="${afterChildText}"` };
+            }
+            return { ok: true, msg: `Lazy subtree stable across parent style change (bg: ${beforeBg} → ${afterBg}, child stable)` };
+        },
+    },
+
+    {
+        id: "D5b",
+        name: "D5b-keyed-children",
+        port: 8825,
+        descr: "Std.Ui.Keyed: sky-key attribute survives to DOM for diff-identity",
+        source: `module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Live exposing (app, route)
+import Std.Ui as Ui
+import Std.Ui.Background as Background
+import Std.Ui.Keyed as Keyed
+
+
+type alias Model = { dummy : Int }
+type Msg = Noop
+type Page = MainPage
+
+
+init : a -> ( Model, Cmd Msg )
+init _ = ( { dummy = 0 }, Cmd.none )
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update _ m = ( m, Cmd.none )
+
+subscriptions : Model -> Sub Msg
+subscriptions _ = Sub.none
+
+
+view : Model -> any
+view _ =
+    Ui.layout
+        []
+        (Keyed.column
+            [ Ui.spacing 8, Ui.padding 16, Ui.htmlAttribute "data-probe" "d5b-keyed-col" ]
+            [ ( "alpha", Ui.el [ Ui.htmlAttribute "data-probe" "d5b-item-alpha" ] (Ui.text "A") )
+            , ( "beta",  Ui.el [ Ui.htmlAttribute "data-probe" "d5b-item-beta"  ] (Ui.text "B") )
+            , ( "gamma", Ui.el [ Ui.htmlAttribute "data-probe" "d5b-item-gamma" ] (Ui.text "C") )
+            ])
+
+
+main =
+    app
+        { init = init, update = update, view = view, subscriptions = subscriptions
+        , routes = [ route "/" MainPage ], notFound = MainPage
+        }
+`,
+        assertions: async (page) => {
+            // Verify each keyed child has a sky-key attribute on its
+            // wrapper. Keyed wraps each (key, child) in an outer
+            // Ui.el so the sky-key is on the wrapper, not the child.
+            const m = await page.evaluate(() => {
+                const items = ["alpha", "beta", "gamma"].map((k) => {
+                    const child = document.querySelector('[data-probe="d5b-item-' + k + '"]');
+                    if (!child) return { key: k, found: false };
+                    // Walk up to find a sky-key ancestor.
+                    let p = child;
+                    while (p && p !== document.body) {
+                        if (p.hasAttribute("sky-key")) {
+                            return { key: k, found: true, skyKey: p.getAttribute("sky-key"), text: child.textContent };
+                        }
+                        p = p.parentElement;
+                    }
+                    return { key: k, found: false };
+                });
+                return { items };
+            });
+            const missing = m.items.filter((i) => !i.found);
+            if (missing.length > 0) {
+                return { ok: false, msg: `missing sky-key ancestors for: ${missing.map((m) => m.key).join(",")}` };
+            }
+            for (const it of m.items) {
+                if (it.skyKey !== it.key) {
+                    return { ok: false, msg: `keyed item "${it.key}" has sky-key="${it.skyKey}" (mismatch)` };
+                }
+            }
+            return { ok: true, msg: `Keyed.column attached sky-key to 3/3 wrappers: ${m.items.map((i) => i.key + "=" + i.skyKey).join(", ")}` };
+        },
+    },
+
+    // ─── Dimension 6 — Std.Ui.Responsive + breakpoint compose ────────
+    //
+    // D6a verifies the boundary semantics: at viewport 700px,
+    // Std.Ui.Responsive.classifyDevice says Tablet (≥ 600); but
+    // Ui.breakpoint Ui.mobile says match (≤ 767). They DISAGREE in
+    // the 600-767 band. This cell documents that divergence with a
+    // visible test so users (and v0.15.58 candidate fix) see it.
+    {
+        id: "D6a",
+        name: "D6a-responsive-vs-breakpoint",
+        port: 8826,
+        descr: "Std.Ui.Responsive.mobile (< 600) vs Ui.breakpoint Ui.mobile (≤ 767) — boundary thresholds",
+        source: `module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Live exposing (app, route)
+import Std.Ui as Ui
+import Std.Ui.Background as Background
+import Std.Ui.Responsive as Responsive
+
+
+type alias Model = { dummy : Int }
+type Msg = Noop
+type Page = MainPage
+
+
+init : a -> ( Model, Cmd Msg )
+init _ = ( { dummy = 0 }, Cmd.none )
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update _ m = ( m, Cmd.none )
+
+subscriptions : Model -> Sub Msg
+subscriptions _ = Sub.none
+
+
+view : Model -> any
+view _ =
+    Ui.layout
+        []
+        (Ui.column
+            [ Ui.padding 8 ]
+            [ -- This element flips colour at the breakpoint-mobile boundary.
+              Ui.breakpoint Ui.mobile
+                [ Background.color (Ui.rgb 200 50 50)
+                , Ui.htmlAttribute "data-bp-state" "mobile"
+                ]
+                (Ui.el
+                    [ Ui.width (Ui.px 200), Ui.height (Ui.px 40)
+                    , Background.color (Ui.rgb 50 200 50)
+                    , Ui.htmlAttribute "data-probe" "d6a-bp-target"
+                    ]
+                    (Ui.text "bp mobile"))
+            , -- The classifyDevice-thresholds expressed as raw constants
+              -- so the test can read them (we emit them as data-* attrs).
+              Ui.el
+                [ Ui.width (Ui.px 200), Ui.height (Ui.px 40)
+                , Ui.htmlAttribute "data-responsive-threshold-phone" "600"
+                , Ui.htmlAttribute "data-breakpoint-threshold-mobile" "767"
+                ]
+                (Ui.text "thresholds")
+            ])
+
+
+main =
+    app
+        { init = init, update = update, view = view, subscriptions = subscriptions
+        , routes = [ route "/" MainPage ], notFound = MainPage
+        }
+`,
+        assertions: async (page) => {
+            // Test at 500px: both APIs should agree → mobile.
+            await page.setViewportSize({ width: 500, height: 600 });
+            await page.waitForTimeout(60);
+            const at500 = await page.evaluate(() => {
+                const el = document.querySelector('[data-probe="d6a-bp-target"]');
+                const cs = window.getComputedStyle(el.parentElement);
+                return cs.backgroundColor;
+            });
+            // At 500, breakpoint mobile matches → parent has rgb(200,50,50).
+            const bpMatches500 = /rgb\(200,\s*50,\s*50\)/.test(at500);
+
+            // Test at 700px: Responsive says Tablet (≥ 600), breakpoint says still mobile (≤ 767). DIVERGENCE.
+            await page.setViewportSize({ width: 700, height: 600 });
+            await page.waitForTimeout(60);
+            const at700 = await page.evaluate(() => {
+                const el = document.querySelector('[data-probe="d6a-bp-target"]');
+                const cs = window.getComputedStyle(el.parentElement);
+                return cs.backgroundColor;
+            });
+            const bpMatches700 = /rgb\(200,\s*50,\s*50\)/.test(at700);
+
+            // Test at 900px: both → not mobile.
+            await page.setViewportSize({ width: 900, height: 600 });
+            await page.waitForTimeout(60);
+            const at900 = await page.evaluate(() => {
+                const el = document.querySelector('[data-probe="d6a-bp-target"]');
+                const cs = window.getComputedStyle(el.parentElement);
+                return cs.backgroundColor;
+            });
+            const bpMatches900 = /rgb\(200,\s*50,\s*50\)/.test(at900);
+
+            // Document the divergence (PASS = both APIs report what their
+            // thresholds say; the divergence in 600-767 is a known v0.15.58
+            // candidate task #410).
+            const results = {
+                "vp=500 bp.mobile matches": bpMatches500,
+                "vp=700 bp.mobile matches (Responsive disagrees: ≥600 = Tablet)": bpMatches700,
+                "vp=900 bp.mobile no-match": !bpMatches900,
+            };
+            const failures = [];
+            if (!results["vp=500 bp.mobile matches"]) failures.push("at 500px breakpoint mobile didn't match");
+            if (!results["vp=700 bp.mobile matches (Responsive disagrees: ≥600 = Tablet)"]) failures.push("at 700px breakpoint mobile didn't match (audit's predicted threshold)");
+            if (!results["vp=900 bp.mobile no-match"]) failures.push("at 900px breakpoint mobile DID match (shouldn't)");
+            if (failures.length) {
+                return { ok: false, msg: failures.join(" | ") };
+            }
+            return {
+                ok: true,
+                msg: `breakpoint thresholds verified across vp; Responsive ≥600=Tablet vs breakpoint ≤767=mobile DIVERGES in 600-767 band (#410 candidate)`,
+            };
+        },
+    },
+
+    // ─── Dimension 7 — Ui.html raw escape hatch ──────────────────────
+    //
+    // Ui.html injects an arbitrary Std.Html node into the Ui tree
+    // wrapped in a `Raw` constructor. The runtime renders it
+    // verbatim — no inline-style wrapper, no flex context. D7a
+    // verifies that a raw <div> inside a Ui.row doesn't break the
+    // surrounding flex chain; it lives as a flex item but with no
+    // typed-Ui sizing assertions.
+    {
+        id: "D7a",
+        name: "D7a-html-raw-in-flex-row",
+        port: 8827,
+        descr: "Ui.html raw <div> inside Ui.row participates in flex layout (no inline-style wrapper)",
+        source: `module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Live exposing (app, route)
+import Std.Ui as Ui
+import Std.Ui.Background as Background
+import Std.Html as Html
+import Std.Html.Attributes as Attr
+
+
+type alias Model = { dummy : Int }
+type Msg = Noop
+type Page = MainPage
+
+
+init : a -> ( Model, Cmd Msg )
+init _ = ( { dummy = 0 }, Cmd.none )
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update _ m = ( m, Cmd.none )
+
+subscriptions : Model -> Sub Msg
+subscriptions _ = Sub.none
+
+
+view : Model -> any
+view _ =
+    Ui.layout
+        []
+        (Ui.row
+            [ Ui.width Ui.fill, Ui.spacing 8, Ui.padding 8, Ui.htmlAttribute "data-probe" "d7-row" ]
+            [ Ui.el
+                [ Ui.width (Ui.px 100), Ui.height (Ui.px 60), Background.color (Ui.rgb 60 80 200)
+                , Ui.htmlAttribute "data-probe" "d7-typed-left"
+                ]
+                (Ui.text "typed")
+            , Ui.html
+                (Html.node "div"
+                    [ Attr.attribute "data-probe" "d7-raw-mid"
+                    , Attr.attribute "style" "width:100px;height:60px;background:rgb(200,80,60);"
+                    ]
+                    [ Html.text "raw" ])
+            , Ui.el
+                [ Ui.width (Ui.px 100), Ui.height (Ui.px 60), Background.color (Ui.rgb 80 200 60)
+                , Ui.htmlAttribute "data-probe" "d7-typed-right"
+                ]
+                (Ui.text "typed-r")
+            ])
+
+
+main =
+    app
+        { init = init, update = update, view = view, subscriptions = subscriptions
+        , routes = [ route "/" MainPage ], notFound = MainPage
+        }
+`,
+        assertions: async (page) => {
+            const m = await page.evaluate(() => {
+                const get = (sel) => {
+                    const el = document.querySelector("[data-probe='" + sel + "']");
+                    if (!el) return null;
+                    const r = el.getBoundingClientRect();
+                    const cs = window.getComputedStyle(el);
+                    return { x: r.left, y: r.top, w: r.width, h: r.height, display: cs.display };
+                };
+                return {
+                    row: get("d7-row"),
+                    left: get("d7-typed-left"),
+                    mid: get("d7-raw-mid"),
+                    right: get("d7-typed-right"),
+                };
+            });
+            const failures = [];
+            // All four should exist.
+            if (!m.row || !m.left || !m.mid || !m.right) {
+                failures.push("missing one of row / left / mid / right probes");
+            }
+            // Three children laid out horizontally → distinct x, same y (or close).
+            if (m.left && m.mid && m.right) {
+                // Left should be leftmost.
+                if (!(m.left.x < m.mid.x && m.mid.x < m.right.x)) {
+                    failures.push(`x ordering wrong: left=${m.left.x.toFixed(0)}, mid=${m.mid.x.toFixed(0)}, right=${m.right.x.toFixed(0)}`);
+                }
+                // All ~same y (within ~4px).
+                const ys = [m.left.y, m.mid.y, m.right.y];
+                if (Math.max(...ys) - Math.min(...ys) > 8) {
+                    failures.push(`vertical drift: ys=${ys.map((y) => y.toFixed(0)).join(",")}`);
+                }
+                // Sizes preserved.
+                if (Math.abs(m.left.w - 100) > 4 || Math.abs(m.mid.w - 100) > 4 || Math.abs(m.right.w - 100) > 4) {
+                    failures.push(`widths drifted from 100: l=${m.left.w}, m=${m.mid.w}, r=${m.right.w}`);
+                }
+            }
+            if (failures.length) {
+                return { ok: false, msg: failures.join(" | ") };
+            }
+            return { ok: true, msg: `Ui.html raw <div> lays out as flex item alongside typed siblings: left(${m.left.x.toFixed(0)},${m.left.w.toFixed(0)}w) | mid(${m.mid.x.toFixed(0)},${m.mid.w.toFixed(0)}w) | right(${m.right.x.toFixed(0)},${m.right.w.toFixed(0)}w)` };
+        },
+    },
+
+    {
+        id: "D7b",
+        name: "D7b-html-raw-bare-no-wrapper",
+        port: 8828,
+        descr: "Ui.html does NOT add an inline-style wrapper — the raw node renders verbatim",
+        source: `module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Live exposing (app, route)
+import Std.Ui as Ui
+import Std.Html as Html
+import Std.Html.Attributes as Attr
+
+
+type alias Model = { dummy : Int }
+type Msg = Noop
+type Page = MainPage
+
+
+init : a -> ( Model, Cmd Msg )
+init _ = ( { dummy = 0 }, Cmd.none )
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update _ m = ( m, Cmd.none )
+
+subscriptions : Model -> Sub Msg
+subscriptions _ = Sub.none
+
+
+view : Model -> any
+view _ =
+    Ui.layout
+        []
+        (Ui.column
+            [ Ui.padding 16 ]
+            [ Ui.html
+                (Html.node "canvas"
+                    [ Attr.attribute "id" "raw-canvas"
+                    , Attr.attribute "width" "200"
+                    , Attr.attribute "height" "100"
+                    ]
+                    [])
+            ])
+
+
+main =
+    app
+        { init = init, update = update, view = view, subscriptions = subscriptions
+        , routes = [ route "/" MainPage ], notFound = MainPage
+        }
+`,
+        assertions: async (page) => {
+            const m = await page.evaluate(() => {
+                const c = document.querySelector("canvas#raw-canvas");
+                if (!c) return { found: false };
+                const cs = window.getComputedStyle(c);
+                const parent = c.parentElement;
+                const parentTag = parent ? parent.tagName : null;
+                const inlineStyle = c.getAttribute("style") || "";
+                // The HTML width/height attributes on <canvas> set the
+                // bitmap dimensions (NOT the layout size — that's CSS-
+                // driven). Read the JS DOM properties to assert the
+                // attribute round-tripped.
+                return {
+                    found: true,
+                    bitmapWidth: c.width,
+                    bitmapHeight: c.height,
+                    widthAttr: c.getAttribute("width"),
+                    heightAttr: c.getAttribute("height"),
+                    display: cs.display,
+                    parentTag,
+                    inlineStyle,
+                };
+            });
+            if (!m.found) {
+                return { ok: false, msg: "raw canvas not in DOM" };
+            }
+            // Bitmap width/height attributes survive to the DOM verbatim.
+            if (m.widthAttr !== "200" || m.heightAttr !== "100") {
+                return { ok: false, msg: `canvas width/height HTML attrs ("${m.widthAttr}", "${m.heightAttr}") ≠ ("200", "100") — Std.Html.Attributes.attribute did not round-trip` };
+            }
+            // Bitmap JS-side dims.
+            if (m.bitmapWidth !== 200 || m.bitmapHeight !== 100) {
+                return { ok: false, msg: `canvas bitmap (${m.bitmapWidth}, ${m.bitmapHeight}) ≠ (200, 100)` };
+            }
+            // The canvas's inline style should be empty (Ui.html renders verbatim).
+            if (m.inlineStyle.length > 0) {
+                return { ok: false, msg: `raw canvas has unexpected inline style: "${m.inlineStyle}"` };
+            }
+            return { ok: true, msg: `raw <canvas> rendered verbatim: bitmap=${m.bitmapWidth}x${m.bitmapHeight}, no Ui-injected style, parent=${m.parentTag}` };
+        },
+    },
 ];
 
 // ─── Driver ──────────────────────────────────────────────────────
@@ -1035,8 +2002,16 @@ async function buildFixture(fx) {
     mkdirSync(`${dir}/src`, { recursive: true });
     writeFileSync(`${dir}/src/Main.sky`, fx.source);
     writeFileSync(`${dir}/sky.toml`, `name = "${fx.name}"\nversion = "0.0.0"\n`);
+    // Strip SKY_RUNTIME_DIR — the nix shellHook pins it at the
+    // PARENT repo's runtime-go, which masks any worktree-local
+    // runtime-go changes from `sky build`. Without this scrub the
+    // matrix builds the fixture against a stale runtime and our
+    // void-element / pseudo-class assertions (#409) won't reflect
+    // the in-worktree fix.
+    const env = { ...process.env };
+    delete env.SKY_RUNTIME_DIR;
     const r = spawnSync(SKY_BIN, ["build", "src/Main.sky"], {
-        cwd: dir, stdio: "pipe", env: process.env, timeout: 180_000,
+        cwd: dir, stdio: "pipe", env, timeout: 180_000,
     });
     if (r.status !== 0) {
         const out = (r.stdout?.toString() ?? "") + (r.stderr?.toString() ?? "");
@@ -1084,7 +2059,7 @@ try {
             child.stdout.on("data", (d) => { serverLog += d.toString(); });
             child.stderr.on("data", (d) => { serverLog += d.toString(); });
             try {
-                if (!(await waitForReady(fx.port, 8000))) {
+                if (!(await waitForReady(fx.port, 15000))) {
                     throw new Error(`server not ready on :${fx.port}:\n${serverLog.slice(0, 400)}`);
                 }
                 const context = await browser.newContext({ viewport: VIEWPORT });

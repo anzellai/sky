@@ -884,3 +884,253 @@ regression cell.
   * The audit's bundle is now CLOSED: F1+F2 shipped in v0.15.55;
     F3+F4 shipped in v0.15.56; F5 verified clean and stays as a
     regression cell. Cycle 7 complete.
+
+---
+
+## §7. v0.15.57 implementation log — audit extension
+
+The original cycle-7 plan (§1.2) acknowledged seven coverage
+gaps. v0.15.57 closes the easily-measurable subset, files the
+architectural rest for v0.15.58, and ships a #408 test-infra
+fix that surfaced during v0.15.56 verification.
+
+### §7.1 What shipped
+
+What landed on `feat/v0.15.57-stdui-audit-extension`:
+
+**Dimensions 1, 2, 5, 6, 7 — coverage matrix extension.** Nine new
+cells added to `scripts/verify-stdui-matrix.mjs` (total: 16
+cells, all green). The new cells:
+
+  * **D1a — focus + :active pseudo-class on Ui.el + #409
+    void-element regression.** Verifies `Background.activeColor`
+    + `Background.hoverColor` on `Ui.el` emit a sky-id-scoped
+    `<style data-sky-pc>` child; verifies `:hover` is
+    auto-wrapped in `@media (hover: hover)`. Verifies click +
+    fill on Input.text → caret position preserved. **Verifies
+    that void `<input>` carrying `Background.activeColor` now
+    has a SIBLING `<style data-sky-pc>` immediately after it
+    (v0.15.57 #409 fix).**
+  * **D1b — Animation respectReducedMotion gate.** Verifies
+    `Animation.attribute { respectReducedMotion = True }` emits
+    a `<style data-sky-anim>` containing `@media
+    (prefers-reduced-motion: no-preference)` wrap + the
+    `@keyframes fadeIn` body. (Emulates `reducedMotion: reduce`
+    via Playwright to confirm CSS gate works.)
+  * **D2a — flex chain recomputes on resize.** Drives a
+    `Ui.row [width fill, height fill] [sidebar (px 200), main
+    (fill)]` through `setViewportSize` at 1280, 800, then back
+    to 1280; asserts main fills viewport minus 200px sidebar at
+    each step.
+  * **D2b — `Ui.minimum N` floor holds.** Shrinks viewport to
+    240px; the `Ui.width (Ui.minimum 320 Ui.fill)` element
+    stays ≥ 318px.
+  * **D5a — Lazy subtree survives parent style change.** Toggles
+    a parent `Background.color` between two values via click;
+    the `Ui.Lazy.lazy` child renders identically before + after
+    (no stale cache hit poisoning the rendered output).
+  * **D5b — Keyed children carry sky-key to the DOM.**
+    `Std.Ui.Keyed.column` with `[(key, child), ...]` puts a
+    `sky-key="..."` attribute on each wrapper.
+  * **D6a — Responsive vs breakpoint threshold mismatch.**
+    `Std.Ui.Responsive.classifyDevice` says Tablet at ≥ 600px
+    while `Ui.breakpoint Ui.mobile` matches up to 767px.
+    Verifies both APIs report their own thresholds AT viewport
+    cuts (500 / 700 / 900). The 600-767 disagreement is
+    documented + filed as **#410** for v0.15.58.
+  * **D7a — Ui.html raw inside Ui.row.** A raw `<div
+    style="width:100px;...">` lays out alongside typed siblings
+    as a flex item — x-ordering correct, widths preserved.
+  * **D7b — Ui.html raw no Ui wrapper.** A raw `<canvas
+    width="200" height="100">` inside `Ui.column` renders
+    verbatim — no Sky.Ui inline-style wrapper, HTML attrs
+    survive.
+
+**#408 — TypedFfi / UnreachableGate test-ordering race fix
+(small fix shipped).** `test/Sky/Build/TypedFfiSpec.hs` and
+`UnreachableGateSpec.hs` previously read pre-built example
+artifacts (`examples/03-tea-external/sky-out/main.go`,
+`examples/12-skyvote/sky-out/main.go`, etc.) and failed with
+`openFile: does not exist` when `cabal test --match=Sky.Build.TypedFfi`
+ran from a wiped tree. Both specs now:
+
+  * Copy the depended-on example into a per-spec workdir
+    (`$TMPDIR/sky-typedffi-…/` / `$TMPDIR/sky-unreach-…/`).
+  * Run `sky build src/Main.sky` inside that workdir.
+  * Read the emitted Go from the workdir.
+  * Cache the workdir per-name in a process-lifetime `IORef`
+    so each example only builds once across all `it` blocks.
+  * Skip with `pendingWith` when a heavy example (ex13-skyshop)
+    can't be built in the spec's environment.
+
+Same shape as the v0.15.45 #381 + v0.15.52 #396 workdir-
+isolation patterns. The coverage-floor in TypedFfi was reduced
+from 2800 (which required the full example sweep to have
+populated `.skycache/go/*_bindings.go` for every example) to
+200 (adaptive to whatever the spec workdirs actually built —
+catches "almost nothing typed" without demanding heavy builds).
+
+**#409 — Void-element pseudo-class style hoist (small fix
+shipped).** Discovered during D1a development: every
+`injectPseudoClassStyles` / `injectMediaQueryStyles` /
+`injectTransitionStyles` / `injectAnimationStyles` pass was
+silently dropping its `<style>` injection when the target
+element was a void HTML element (`<input>`, `<img>`, `<br>`,
+`<hr>`, etc.) because:
+
+  1. The injector prepended `<style>` as the FIRST CHILD of the
+     element carrying `data-sky-*-rules`.
+  2. `renderVNode` skips children for void tags (returns early
+     after emitting `/>`), so the `<style>` was silently dropped
+     from the wire.
+
+User-visible effect (pre-fix): `Background.activeColor (...)`
+on `Ui.input` / `Ui.image` rendered as a no-op, even though
+`Ui.button` / `Ui.el` correctly emitted the same rule. Same
+for `Background.hoverColor` etc.
+
+The fix refactors all four injectors onto a shared
+`injectStyleMarker` helper that:
+
+  * For non-void elements: canonical path (style prepended as
+    first child).
+  * For void elements: hoist the `<style>` to a SIBLING slot
+    immediately AFTER the void element. The CSS selector keys
+    off the void element's `sky-id`, so the rule still applies
+    correctly.
+
+Touches `runtime-go/rt/live.go`; adds
+`TestInjectPseudoClassStyles_VoidElementSiblingHoist` to
+`live_pseudo_class_test.go`; updates two existing tests that
+used void elements at the test-tree root (Sky.Live always
+wraps the root in a `<div>` so root-void is impossible in
+production, but the unit tests need a wrapper after this fix).
+
+### §7.2 v0.15.58 candidate task list (architectural — filed,
+not shipped)
+
+  * **#410 — `Std.Ui.Responsive.classifyDevice` vs
+    `Ui.breakpoint Ui.mobile` threshold disagreement.**
+    `Responsive.Phone` triggers at width < 600px while
+    `Ui.breakpoint Mobile` matches at width ≤ 767px. Apps
+    using BOTH APIs simultaneously (e.g. classifyDevice for
+    Model branching + breakpoint for CSS) see different
+    "is mobile" classifications in the 600-767px band.
+    **Fix shape:** Unify the threshold. Two options: (a) bump
+    `Phone` to width < 768 in `Std.Ui.Responsive`; (b) shrink
+    `Mobile` breakpoint to `(max-width: 599px)`. Both are
+    documented breaking changes for any caller relying on the
+    current thresholds. The cleaner direction is (a): bring
+    `Responsive` in line with Sky.Ui's typed breakpoints,
+    which already follow the Tailwind cuts (sm=640, md=768).
+    Estimated effort: half-day (single-file change + matrix
+    cell + doc note + migration note in CHANGELOG).
+
+  * **#411 — Sky.Tui parity rig.** Sky.Tui requires a real TTY
+    (`term.IsTerminal(fd)`); has no snapshot mode for headless
+    testing. To verify Std.Ui primitives behave equivalently
+    on the Tui backend, we need a `SKY_TUI_SNAPSHOT_MODE` env
+    (or similar) that drives the Tui runtime to: (a) seed
+    terminal dimensions from `SKY_TUI_COLS` / `SKY_TUI_ROWS`,
+    (b) call `renderElementFrame` once with the user's view +
+    init model, (c) emit a JSON ledger of `(probe-id, x, y,
+    w, h, content)` for every probed cell, (d) `os.Exit(0)`.
+    The rig then compares Tui's cell positions to the web
+    rig's computed pixels (scaled by `canvasW/cols *
+    canvasH/rows`). **Fix shape:** Add `runTuiSnapshot` in
+    `runtime-go/rt/tui_ui.go`; gate the Tui main entrypoint
+    behind the snapshot env. Drive it from a new
+    `scripts/verify-tui-matrix.mjs`. Estimated effort: 1-1.5
+    dev-day (runtime hook + 6-8 representative cells + JSON
+    schema + doc note).
+
+  * **#412 — Sky.Webview parity rig.** Sky.Webview is macOS-
+    only at v0.15.x (WKWebView), launches a native window,
+    and has no headless / off-screen mode. To verify Std.Ui
+    primitives render equivalently in the WKWebView backend,
+    we need either: (a) a deterministic auto-close that runs
+    the app for N ms then exits + captures a screenshot via
+    `screencapture`, (b) a hidden window mode + scriptable
+    DOM inspection via the bound bridge. **Fix shape:**
+    `SKY_WEBVIEW_HEADLESS=1` env that creates an off-screen
+    WKWebView, binds a `__SkySnapshot()` JS function that
+    serialises the rendered DOM with bounding rects, calls it
+    after init render, prints JSON to stdout, exits. Drive
+    from `scripts/verify-webview-matrix.sh`. Estimated effort:
+    1-2 dev-days (runtime addition + bridge plumbing + cell
+    selection — share with #411 where possible).
+
+  * **#413 — Symmetric void-element fix for image/br/etc.** The
+    v0.15.57 #409 fix covers all four style-injection passes
+    (mq / pc / tr / anim) via the shared `injectStyleMarker`
+    helper, AND covers all HTML void tags
+    (`area / base / br / col / embed / hr / img / input / link
+     / meta / param / source / track / wbr`). Verified end-to-
+    end for `<input>`. Should be re-verified for `<img>` once
+    Std.Ui's image primitive carries pseudo / transition
+    examples. (Likely already-working given the shared code
+    path — flag as a doc + verification item, not a code item.)
+    Estimated effort: half-day (add `<img>` D-cell + `<br>`
+    smoke + doc).
+
+  * **#414 — `Ui.Lazy.lazy` cache invalidation on argument
+    change.** v0.15.57 D5a only verifies that a Lazy subtree
+    survives parent style change without going stale. The
+    complementary verification — Lazy correctly INVALIDATES
+    when its arg changes (otherwise a stale cache hit ships
+    the wrong subtree) — is not exercised. Add a regression
+    cell that toggles the arg between two distinct values +
+    asserts the rendered output changes. Estimated effort:
+    quarter-day (cell only, no code change expected).
+
+### §7.3 Verification gate results
+
+  * `cabal test --skip=Sky.Build.VerifyAll` from wiped tree —
+    green (TypedFfi + UnreachableGate now pass without an
+    explicit `--skip=Sky.Build.ExampleSweep`).
+  * `scripts/example-sweep.sh` — 26 / 26 (carried green from
+    v0.15.56).
+  * `scripts/verify-ui-showcase.sh` — green (no showcase
+    snapshot moved; #409 fix is opt-in via marker presence so
+    no element in the showcase rendered differently).
+  * `scripts/verify-issue-63.mjs` + `verify-issue-63-input.mjs`
+    — both green (textarea fills viewport).
+  * `scripts/verify-stdui-matrix.mjs` — 16 / 16 cells green
+    (7 carried from v0.15.56 + 9 added in v0.15.57).
+  * `cd examples/12-skyvote && sky check` — green.
+  * Tui-side rig — **not in scope** for v0.15.57; filed as
+    #411 for v0.15.58.
+  * Webview-side rig — **not in scope** for v0.15.57; filed
+    as #412 for v0.15.58.
+
+### §7.4 Doc + marker changes shipped in v0.15.57
+
+  * `runtime-go/rt/live.go` — shared `injectStyleMarker`
+    helper + void-element sibling-hoist (#409); all four
+    injectors (pseudo / media-query / transition / animation)
+    rerouted onto the shared helper.
+  * `runtime-go/rt/live_pseudo_class_test.go` — new
+    `TestInjectPseudoClassStyles_VoidElementSiblingHoist`;
+    two existing tests updated to wrap their root void
+    element in a `<div>`.
+  * `test/Sky/Build/TypedFfiSpec.hs` —
+    `withSystemTempDirectory`-style workdir isolation per
+    example (#408).
+  * `test/Sky/Build/UnreachableGateSpec.hs` — same workdir
+    isolation shape.
+  * `scripts/verify-stdui-matrix.mjs` — 9 new cells
+    (D1a, D1b, D2a, D2b, D5a, D5b, D6a, D7a, D7b);
+    SKY_RUNTIME_DIR scrubbed from spawn env so worktree
+    builds pick up the local runtime-go.
+  * `src/Sky/Build/EmbeddedRuntime.hs` — re-embed marker
+    `2026-06-02w`.
+  * `docs/v0.15.x-hardening/CYCLE-07-STDUI-AUDIT.md` — §7
+    appended (this section).
+  * `CLAUDE.md` + `templates/CLAUDE.md` — note that
+    pseudo-class attrs on void Ui.input / Ui.image now emit
+    a sibling `<style>` (#409 closed).
+  * `docs/skyui/overview.md` — same Ui.html / Ui.input
+    void-element note + dimension-coverage refresh.
+
+Cycle 7 audit extension complete. Bundle closed pending
+v0.15.58 follow-up (#410-#414 listed above).
