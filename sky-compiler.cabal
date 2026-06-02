@@ -32,6 +32,12 @@ extra-source-files:
     -- fails with `package sky-app/rt/jobs is not in std`. Issue #58.
     runtime-go/rt/jobs/*.go
     runtime-go/rt/telemetry/*.go
+    -- v0.16.0 PR 1: inline Sky.Live console UI translated to Go by
+    -- scripts/regenerate-console.sh. Committed under runtime-go/rt
+    -- so it materialises alongside the rest of the runtime in
+    -- user app `sky-out/` (no chicken-and-egg "sky must build the
+    -- console at user-install time" problem).
+    runtime-go/rt/console_app/*.go
     sky-stdlib/Sky/Core/*.sky
     sky-stdlib/Sky/Core/Http/*.sky
     sky-stdlib/Sky/Core/Json/*.sky
