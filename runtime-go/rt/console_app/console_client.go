@@ -162,11 +162,20 @@ const consoleClientJSBody = `
     return es;
   }
 
-  // sendEvent — POST {msg, args} envelope to /_sky/console/_event.
+  // sendEvent — POST envelope to /_sky/console/_event. v0.16.1 PR9
+  // wire shape: {hid: "<sky-id>.<event>", args: [...]}. The hid is
+  // the canonical handler key produced by rt.HtmlRenderWithHandlers
+  // at last render; the server's update loop looks it up against
+  // the per-session handlers map (populated at the same render) to
+  // get back the typed Msg. The 'msg' field is preserved for the
+  // admin-tool name+args fallback path but normal browser POSTs
+  // identify exclusively by hid — bypassing the brittle name-based
+  // wire decode entirely.
+  //
   // Non-blocking; the SSE channel delivers the resulting patches
   // out-of-band so we don't need to await the response body.
-  function sendEvent(msg, args) {
-    var body = JSON.stringify({ msg: msg, args: args || [] });
+  function sendEvent(hid, msg, args) {
+    var body = JSON.stringify({ hid: hid, msg: msg, args: args || [] });
     try {
       fetch('/_sky/console/_event', {
         method: 'POST',
@@ -178,19 +187,42 @@ const consoleClientJSBody = `
   }
 
   // Capture click / input / submit / change / keydown gestures on
-  // [data-sky-console] subtree. Looks for the standard Sky.Live
-  // sky-<event> attribute the renderer emits for each onClick /
-  // onInput / etc. bound by Std.Ui's view helpers.
+  // [data-sky-console] subtree. The element-of-interest is whichever
+  // ancestor of e.target carries a data-sky-hid attribute matching
+  // the dispatched event (e.g. "console.0.div.2.click" for a click).
+  // sky-<event> attributes remain on the element for backward
+  // compatibility with smoke probes that read the Msg display name;
+  // browser dispatch goes through the hid path exclusively.
   var events = ["click", "input", "change", "submit", "keydown", "focus", "blur"];
   for (var i = 0; i < events.length; i++) {
     (function(ev) {
       consoleRoot.addEventListener(ev, function(e) {
         var t = e.target;
         if (!t || !t.closest) return;
-        var el = t.closest('[sky-' + ev + ']');
+        // Look for an ancestor whose data-sky-hid ends with this
+        // event name. The renderer emits one data-sky-hid per
+        // event-bound element; click handlers stop at the first
+        // match.
+        var el = null;
+        var node = t;
+        while (node && node !== consoleRoot && node.getAttribute) {
+          var hidAttr = node.getAttribute('data-sky-hid');
+          if (hidAttr && hidAttr.indexOf('.' + ev, hidAttr.length - ev.length - 1) >= 0) {
+            el = node;
+            break;
+          }
+          // Fallback: sky-<event> attribute on the same node — used
+          // when the renderer emits both attributes (current shape).
+          if (node.getAttribute('sky-' + ev)) {
+            el = node;
+            break;
+          }
+          node = node.parentNode;
+        }
         if (!el || !consoleRoot.contains(el)) return;
-        var msg = el.getAttribute('sky-' + ev);
-        if (!msg) return;
+        var hid = el.getAttribute('data-sky-hid') || '';
+        var msg = el.getAttribute('sky-' + ev) || '';
+        if (!hid && !msg) return;
         if (ev === "submit") e.preventDefault();
         var args = [];
         if (ev === "input" || ev === "change") {
@@ -214,7 +246,7 @@ const consoleClientJSBody = `
         } else if (ev === "keydown") {
           args.push(e.key || "");
         }
-        sendEvent(msg, args);
+        sendEvent(hid, msg, args);
       });
     })(events[i]);
   }

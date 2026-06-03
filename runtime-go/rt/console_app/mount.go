@@ -152,7 +152,31 @@ func handleConsoleRoot(w http.ResponseWriter, r *http.Request) {
 	// pump that init_ already wired.
 	model = hydrateInitialModel(model)
 	htmlNode := viewWrapped(model)
-	body := rt.HtmlRender(htmlNode)
+	// v0.16.1 PR9 — use HtmlRenderWithHandlers so the hid→Msg map
+	// captured at render time can drive the click loop. The legacy
+	// HtmlRender entry point silently discards this map (the typed
+	// Msg never reaches the dispatcher), which is the root cause of
+	// the user-reported "clicks do nothing" symptom.
+	body, handlers := rt.HtmlRenderWithHandlers(htmlNode, "console")
+
+	// Mint / read the SSE-channel cookie BEFORE writing the body so
+	// the cookie is in the response headers (writing the body locks
+	// headers). The session ID is the bridge between this initial
+	// GET and the subsequent SSE / POST endpoints — the update loop
+	// uses it to find the right handlers map when a click POST
+	// arrives.
+	sid := rt.ConsoleSSESessionID(r, w)
+
+	// Convert the rendered tree to the form SeedConsoleLoopSession
+	// expects. We re-derive vn locally so we don't mutate the
+	// renderer's internal state — assignSkyIDs already ran inside
+	// HtmlRenderWithHandlers, but we need an addressable *VNode to
+	// hand off. The cost is one extra HtmlToVNode walk per initial
+	// GET; negligible (<1ms) for an admin-only surface.
+	vn := rt.HtmlToVNode(htmlNode)
+	rt.AssignSkyIDsForConsole(&vn)
+	rt.ApplyStyleInjectionsForConsole(&vn)
+	rt.SeedConsoleLoopSession(sid, model, &vn, body, handlers)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
