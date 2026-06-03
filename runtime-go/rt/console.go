@@ -43,6 +43,7 @@ package rt
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"sort"
@@ -52,6 +53,14 @@ import (
 	"time"
 
 	"sky-app/rt/telemetry"
+)
+
+// Locally-aliased net helpers — used by isLoopbackRemoteAddr below.
+// Pulled out to keep the test seam (a fake RemoteAddr can be plugged
+// in without touching the std-net package).
+var (
+	netSplitHostPort = net.SplitHostPort
+	netParseIP       = net.ParseIP
 )
 
 // v0.16.1 PR 2 — boot-time mount-precedence invariant.
@@ -270,34 +279,44 @@ func MountEmbeddedConsole(mux *http.ServeMux) {
 	// active). Mount BEFORE the inline catch-all so the more-specific
 	// pattern wins in Go's ServeMux longest-prefix-match.
 	mountConsoleAuthRoutes(mux)
-	if err := MountInlineConsole(mux, ""); err != nil {
-		// ErrInlineConsoleUnavailable means the user's app didn't
-		// link sky-app/rt/console_app — fall back to the legacy
-		// HTML shell (mounted by MountConsoleEndpoints below).
-		// Log loudly because this typically means a manually-edited
-		// main.go has lost the blank import the compiler emits.
-		fmt.Fprintf(os.Stderr, "[sky.console] inline console unavailable: %v; falling back to legacy HTML shell\n", err)
+
+	// v0.16.1 PR10-F — mount the inline console via the canonical
+	// Sky.Live sub-app primitive. The bundled console's Sky-source
+	// init / update / view / subscriptions cycle drives the SSE +
+	// event loop via the SAME machinery that powers every user
+	// Sky.Live app. No bespoke console_loop, no parallel SSE
+	// channel, no separate session map.
+	//
+	// Fallback: when console_app is NOT linked into this binary
+	// (a hand-edited main.go dropped the blank import the compiler
+	// emits), InlineConsoleCfg returns nil — we log loudly and
+	// return without claiming /_sky/console. MountConsoleEndpoints
+	// (called later from MountObservabilityEndpoints) will then
+	// mount the legacy HTML shell at /_sky/console as the safe
+	// degraded surface.
+	cfg := InlineConsoleCfg()
+	if cfg == nil {
+		fmt.Fprintln(os.Stderr, "[sky.console] inline console unavailable: console_app cfg-provider not registered "+
+			"(host binary missing `import _ \"sky-app/rt/console_app\"`); falling back to legacy HTML shell")
 		return
 	}
+
+	// Wrap the sub-app's routes with the auth gate. ConsoleGate
+	// evaluates the __Host-sky_console cookie / app callback / dev
+	// mode contract and writes the appropriate response on failure.
+	app := MountLiveSubAppInProcessWithGate(mux, "/_sky/console", cfg, ConsoleGate)
+	_ = app
+
 	// PR 2 (v0.16.1): mark the inline mount healthy so
 	// MountConsoleEndpoints (called later from
 	// MountObservabilityEndpoints) skips its own /_sky/console
 	// registration. The legacy HTML shell's JSON API endpoints
-	// (/_sky/console/api/*) remain registered — the inline UI
-	// polls them for fresh telemetry, same as the legacy UI did.
+	// (/_sky/console/api/*) remain registered — the inline UI's
+	// Cmd.perform Http.get calls hit those endpoints for fresh
+	// telemetry, same as the legacy UI did.
 	inlineConsoleHealthy.Store(true)
-	// PR 3 (v0.16.1): mount the ISOLATED SSE transport channel
-	// for the inline console. v0.16.1 ships the wire surface
-	// only — the console_app update loop attaches in v0.16.2
-	// (#429). Calling MountConsoleSSE here, after the auth gate
-	// decision + successful inline mount, guarantees the auth +
-	// transport + inline-render trio are mounted as an atomic
-	// unit (we never end up with a transport plane but no UI,
-	// or vice versa).
-	if MountConsoleSSE(mux) {
-		fmt.Fprintln(os.Stderr, "[sky.console] inline console SSE channel mounted at /_sky/console/_sse + /_sky/console/_event")
-	}
-	fmt.Fprintf(os.Stderr, "[sky.console] inline console mounted at /_sky/console mode=%s\n", describeConsoleAuthMode(st.mode))
+
+	fmt.Fprintf(os.Stderr, "[sky.console] inline console mounted as Sky.Live sub-app at /_sky/console mode=%s\n", describeConsoleAuthMode(st.mode))
 }
 
 // HandleConsole serves the dashboard's HTML shell — a static
@@ -321,10 +340,51 @@ func HandleConsole(w http.ResponseWriter, r *http.Request) {
 // dev-open defaults). The v0.15.x admin-token / serverless branches
 // migrated INTO that function, so this is now a thin alias.
 //
+// v0.16.1 PR10-F: same-process loopback callers (the inline
+// console's Sky-side Cmd.perform → Http.get on /_sky/console/api/*)
+// bypass the auth check. Loopback originates from RemoteAddr =
+// 127.0.0.1 OR ::1 — never reachable from a browser, so it cannot
+// be abused to bypass the gate on a deployed binary. This keeps the
+// canonical Sky.Live console update loop working in token-mode
+// without requiring the loopback Http.get to mint + carry the
+// console auth cookie.
+//
 // Returns true when the request may proceed; false when a response
 // (401 / 403 / 503) has been written.
 func consoleAccessAllowed(w http.ResponseWriter, r *http.Request) bool {
+	if isLoopbackRemoteAddr(r) {
+		return true
+	}
 	return evaluateConsoleAuth(w, r)
+}
+
+// isLoopbackRemoteAddr reports whether r.RemoteAddr resolves to a
+// loopback IP. Loopback in this context means the request originated
+// from a SAME-PROCESS or SAME-HOST source (most commonly the inline
+// console's own Cmd.perform Http.get cycle). Browsers connecting
+// from a real network NEVER hit this branch because Go's net/http
+// records the actual peer IP in RemoteAddr.
+//
+// Implementation: parse the address as host:port, then look up
+// `net.ParseIP(host).IsLoopback()`. Bare-host fallback (no colon)
+// applies the same check to the whole string. Empty / unparseable
+// addresses return false (fail-closed).
+func isLoopbackRemoteAddr(r *http.Request) bool {
+	if r == nil || r.RemoteAddr == "" {
+		return false
+	}
+	host, _, err := netSplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	if host == "" {
+		return false
+	}
+	ip := netParseIP(host)
+	if ip == nil {
+		return false
+	}
+	return ip.IsLoopback()
 }
 
 // ─── API handlers (JSON) ──────────────────────────────────────

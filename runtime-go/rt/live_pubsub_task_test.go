@@ -96,10 +96,17 @@ func Test_PubSubPublishTask_DeliversToSubscriber(t *testing.T) {
 	}
 }
 
-// Test_PubSubPublishTask_LastRegisteredWins — a process running
+// Test_PubSubPublishTask_FirstRegisteredWins — a process running
 // multiple Live.app starts (rare but legal) sees PubSub_publish
-// route to the most recently registered app's broker.
-func Test_PubSubPublishTask_LastRegisteredWins(t *testing.T) {
+// route to the FIRST registered app's broker.
+//
+// v0.16.1 PR10-F flipped registerProcessBroker from last-writer-wins
+// to first-writer-wins so the canonical sub-app mount path
+// (MountLiveSubAppInProcess) couldn't accidentally shadow the host
+// app's broker after AssertConsoleInvariantOrExit runs the inline
+// console mount. The host app's call from liveAppRun happens first;
+// any sub-app's subsequent call is a no-op.
+func Test_PubSubPublishTask_FirstRegisteredWins(t *testing.T) {
 	unregisterProcessBroker()
 	t.Cleanup(unregisterProcessBroker)
 
@@ -107,7 +114,7 @@ func Test_PubSubPublishTask_LastRegisteredWins(t *testing.T) {
 	second := &liveApp{topics: newTopicRegistry(16)}
 
 	registerProcessBroker(first)
-	registerProcessBroker(second) // overwrites; last writer wins
+	registerProcessBroker(second) // no-op under first-writer-wins
 
 	firstCh, firstCancel := first.topics.Subscribe("topic")
 	defer firstCancel()
@@ -117,22 +124,23 @@ func Test_PubSubPublishTask_LastRegisteredWins(t *testing.T) {
 	taskFn := PubSub_publish("topic", "p").(func() any)
 	_ = taskFn()
 
-	// First app's subscriber must not receive — publish went to
-	// second app's broker.
+	// First app's subscriber receives — publish went to first app's
+	// broker (registered earlier).
 	select {
 	case ev := <-firstCh:
-		t.Fatalf("first app's subscriber unexpectedly received: %v", ev.Payload)
-	default:
-	}
-
-	// Second app's subscriber receives.
-	select {
-	case ev := <-secondCh:
 		if ev.Payload != "p" {
 			t.Fatalf("expected payload \"p\", got %v", ev.Payload)
 		}
 	default:
-		t.Fatal("second app's subscriber did not receive the broadcast")
+		t.Fatal("first app's subscriber did not receive the broadcast")
+	}
+
+	// Second app's subscriber must not receive — its registration was
+	// a no-op (first-writer-wins).
+	select {
+	case ev := <-secondCh:
+		t.Fatalf("second app's subscriber unexpectedly received: %v", ev.Payload)
+	default:
 	}
 }
 

@@ -2833,10 +2833,19 @@ func Live_api(spec any, handler any) any {
 // is an unmounted framework path — we must return a plain 404 rather
 // than fall through to the user's notFound page (which would leak the
 // app's UI for typoed/probed framework URLs like /_sky/conslole).
+//
+// v0.16.1 PR10-F: when this *liveApp is itself a sub-app mounted under
+// `/_sky/*` (e.g. the inline console at `/_sky/console`), the guard
+// must NOT 404 on requests whose path matches the sub-app's own
+// basePath — that prefix IS the sub-app's home. We only reject paths
+// that fall under /_sky/ AND OUTSIDE the sub-app's basePath; or for
+// root-mounted apps (basePath == "") any /_sky/ path.
 func (app *liveApp) dispatchRoot(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(r.URL.Path, "/_sky/") {
-		http.NotFound(w, r)
-		return
+		if app.basePath == "" || !pathInBasePath(r.URL.Path, app.basePath) {
+			http.NotFound(w, r)
+			return
+		}
 	}
 	for _, ar := range app.api {
 		if ar.method != "" && !strings.EqualFold(ar.method, r.Method) {
@@ -2957,6 +2966,14 @@ func unpackResponse(v any) (int, map[string]string, string) {
 // paths still 404 (browser noise like /favicon.ico shouldn't render
 // the SPA), so handler-state protection survives.
 func matchAnyRoute(app *liveApp, urlPath string) ([]string, bool) {
+	// v0.16.1 PR10-F — sub-apps see urlPath that still includes the
+	// basePath prefix (because the parent's mux dispatches the full
+	// path through). For route matching we compare against the
+	// "logical" path INSIDE the sub-app, which is whatever sits after
+	// basePath. So /_sky/console/about routes against /about inside
+	// the sub-app; /_sky/console (bare) and /_sky/console/ both route
+	// against /.
+	urlPath = trimBasePathPrefix(urlPath, app.basePath)
 	for _, rt := range app.routes {
 		if params, ok := matchRoute(rt.path, urlPath); ok {
 			return params, true
@@ -2969,6 +2986,11 @@ func matchAnyRoute(app *liveApp, urlPath string) ([]string, bool) {
 }
 
 func applyRoute(app *liveApp, model any, urlPath string) any {
+	// v0.16.1 PR10-F — strip the sub-app's basePath so route patterns
+	// stay basePath-agnostic. Sub-apps declare routes like "/" or
+	// "/about" inside their own world; the parent's mux passes the
+	// full URL through. See matchAnyRoute for the parallel comment.
+	urlPath = trimBasePathPrefix(urlPath, app.basePath)
 	for _, rt := range app.routes {
 		if params, ok := matchRoute(rt.path, urlPath); ok {
 			page := fillRoutePage(rt.page, params)
@@ -5578,6 +5600,58 @@ func normaliseBasePath(s string) string {
 		s = "/" + s
 	}
 	return s
+}
+
+// pathInBasePath reports whether `path` falls under `basePath`. Both
+// inputs already normalised (basePath via normaliseBasePath, path is
+// whatever the browser sent). Matches:
+//
+//   - `path == basePath`                            ← exact (e.g. /_sky/console)
+//   - `strings.HasPrefix(path, basePath + "/")`     ← inside subtree
+//
+// Excluded (so /_sky/consoleX doesn't match /_sky/console):
+//
+//   - bare-prefix-no-slash like "/_sky/consoleX".
+//
+// Empty basePath returns false (root-mounted apps don't claim any
+// /_sky/ prefix — they're called from the OTHER dispatchRoot branch).
+func pathInBasePath(path, basePath string) bool {
+	if basePath == "" {
+		return false
+	}
+	if path == basePath {
+		return true
+	}
+	return strings.HasPrefix(path, basePath+"/")
+}
+
+// trimBasePathPrefix returns the "logical" path inside a sub-app's
+// world by stripping its basePath prefix. Examples (basePath
+// `/_sky/console`):
+//
+//	"/_sky/console"          → "/"
+//	"/_sky/console/"         → "/"
+//	"/_sky/console/about"    → "/about"
+//	"/_sky/console/users/42" → "/users/42"
+//	"/other"                 → "/other"   (unchanged when not in subtree)
+//
+// Empty basePath is the identity. Used by matchAnyRoute + applyRoute
+// so sub-app routes stay basePath-agnostic.
+func trimBasePathPrefix(path, basePath string) string {
+	if basePath == "" {
+		return path
+	}
+	if path == basePath {
+		return "/"
+	}
+	if strings.HasPrefix(path, basePath+"/") {
+		out := strings.TrimPrefix(path, basePath)
+		if out == "" {
+			return "/"
+		}
+		return out
+	}
+	return path
 }
 
 func liveJSWithCfgAndCsrf(sid string, cfg liveBannerConfig, csrfToken string) string {

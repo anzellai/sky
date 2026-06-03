@@ -104,6 +104,14 @@ type liveMountOpts struct {
 	// skyIDPrefix: sky-id namespace prefix. Defaults to "r" for the
 	// host; sub-apps use `sky-<sanitised(basePath)>`.
 	skyIDPrefix string
+
+	// authGate: optional pre-handler gate. When set, every route
+	// registered for the sub-app first calls authGate(w, r); if it
+	// returns false, the response has already been written and the
+	// handler is skipped. Used by MountEmbeddedConsole (v0.16.1
+	// PR10-F) to keep the bundled console behind ConsoleGate without
+	// requiring the gate to live inside every Sky.Live handler.
+	authGate func(http.ResponseWriter, *http.Request) bool
 }
 
 // sanitiseBasePathForCookie turns a URL prefix into a cookie /
@@ -254,6 +262,38 @@ func longestFirst(rs []inProcessSubAppRoute) {
 //
 // PR10-C (v0.16.1).
 func MountLiveSubAppInProcess(parentMux *http.ServeMux, prefix string, cfg any) *liveApp {
+	return mountLiveSubAppInProcessWithGate(parentMux, prefix, cfg, nil)
+}
+
+// MountLiveSubAppInProcessWithGate is the auth-gated variant of
+// MountLiveSubAppInProcess. The `gate` callback runs BEFORE every
+// route handler the sub-app installs (handleEvent / handleSSE /
+// handleConfig / handleInitial / static files). Returning false from
+// the gate skips the handler — the gate is expected to have already
+// written the response (401 / 403 / 503 / etc).
+//
+// Use case: rt.MountEmbeddedConsole wraps the bundled console behind
+// rt.ConsoleGate (token cookie / app callback / production gate). The
+// gate is per-app rather than per-route because a sub-app's HTTP
+// surface is uniform — if you can hit GET /_sky/console/, you should
+// also be able to POST /_sky/console/_sky/event.
+//
+// PR10-F (v0.16.1).
+func MountLiveSubAppInProcessWithGate(
+	parentMux *http.ServeMux,
+	prefix string,
+	cfg any,
+	gate func(http.ResponseWriter, *http.Request) bool,
+) *liveApp {
+	return mountLiveSubAppInProcessWithGate(parentMux, prefix, cfg, gate)
+}
+
+func mountLiveSubAppInProcessWithGate(
+	parentMux *http.ServeMux,
+	prefix string,
+	cfg any,
+	gate func(http.ResponseWriter, *http.Request) bool,
+) *liveApp {
 	if parentMux == nil {
 		panic("rt.MountLiveSubAppInProcess: parentMux is nil")
 	}
@@ -279,13 +319,14 @@ func MountLiveSubAppInProcess(parentMux *http.ServeMux, prefix string, cfg any) 
 		isSubApp:    true,
 		cookieName:  "sky_" + sanitised + "_sid",
 		skyIDPrefix: "sky-" + sanitised,
+		authGate:    gate,
 	}
 
 	app := newLiveAppFromCfg(cfg, opts)
 
 	// Register routes under the prefix. Go's ServeMux longest-prefix
 	// matching ensures the parent's catch-all "/" sees them last.
-	registerSubAppRoutes(parentMux, app, prefix)
+	registerSubAppRoutes(parentMux, app, prefix, gate)
 
 	// Commit to the registry. Once visible, namespace propagation
 	// (telemetry_namespace.go's middleware) starts tagging incoming
@@ -378,31 +419,62 @@ func defaultSubAppSessionTTL() time.Duration {
 // Important: the parent's `/_sky/event` etc. + the sub-app's
 // `<prefix>/_sky/event` are DIFFERENT pattern strings on the same
 // ServeMux. Go's longest-prefix matching ensures no cross-talk.
-func registerSubAppRoutes(parentMux *http.ServeMux, app *liveApp, prefix string) {
-	parentMux.HandleFunc(prefix+"/_sky/event", app.handleEvent)
-	parentMux.HandleFunc(prefix+"/_sky/sse", app.handleSSE)
-	parentMux.HandleFunc(prefix+"/_sky/config", app.handleConfig)
+//
+// When `gate` is non-nil, every registered handler is wrapped in a
+// shim that calls gate(w, r) FIRST. Returning false from gate
+// short-circuits (gate already wrote the response). Used by
+// MountEmbeddedConsole (v0.16.1 PR10-F) to enforce ConsoleGate
+// across every console route uniformly.
+func registerSubAppRoutes(
+	parentMux *http.ServeMux,
+	app *liveApp,
+	prefix string,
+	gate func(http.ResponseWriter, *http.Request) bool,
+) {
+	wrap := func(h http.HandlerFunc) http.HandlerFunc {
+		if gate == nil {
+			return h
+		}
+		return func(w http.ResponseWriter, r *http.Request) {
+			if !gate(w, r) {
+				return
+			}
+			h(w, r)
+		}
+	}
+	parentMux.HandleFunc(prefix+"/_sky/event", wrap(app.handleEvent))
+	parentMux.HandleFunc(prefix+"/_sky/sse", wrap(app.handleSSE))
+	parentMux.HandleFunc(prefix+"/_sky/config", wrap(app.handleConfig))
 	// Static files for the sub-app (if configured).
 	if app.staticDir != "" {
 		sp := prefix + app.staticURL
 		if !strings.HasSuffix(sp, "/") {
 			sp += "/"
 		}
-		parentMux.Handle(sp,
-			http.StripPrefix(sp, http.FileServer(http.Dir(app.staticDir))))
+		fileHandler := http.StripPrefix(sp, http.FileServer(http.Dir(app.staticDir)))
+		if gate == nil {
+			parentMux.Handle(sp, fileHandler)
+		} else {
+			parentMux.HandleFunc(sp, func(w http.ResponseWriter, r *http.Request) {
+				if !gate(w, r) {
+					return
+				}
+				fileHandler.ServeHTTP(w, r)
+			})
+		}
 	}
 	// The sub-app's "render this page" catch-all. Sub-app's
 	// dispatchRoot inspects r.URL.Path against its routes; the host
 	// catches everything else via its own catch-all "/".
-	parentMux.HandleFunc(prefix+"/", app.dispatchRoot)
+	parentMux.HandleFunc(prefix+"/", wrap(app.dispatchRoot))
 	// Bare prefix without trailing "/" should redirect to the
 	// trailing-slash form so relative URLs in the sub-app's HTML
 	// resolve correctly.
-	parentMux.HandleFunc(prefix, func(w http.ResponseWriter, r *http.Request) {
+	parentMux.HandleFunc(prefix, wrap(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == prefix {
 			http.Redirect(w, r, prefix+"/", http.StatusFound)
 			return
 		}
 		app.dispatchRoot(w, r)
-	})
+	}))
 }

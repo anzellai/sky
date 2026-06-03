@@ -15,13 +15,33 @@ import "sync/atomic"
 var processBroker atomic.Pointer[liveApp]
 
 // registerProcessBroker — called once per Live.app startup, after
-// app.topics has been wired from app.store.Broker(). Subsequent
-// callers overwrite the previous registration (last writer wins).
+// app.topics has been wired from app.store.Broker().
+//
+// FIRST-WRITER-WINS semantics (v0.16.1 PR10-F):
+//
+//   The HOST application's broker is the canonical process broker for
+//   Std.PubSub.publish — that's the broker user code expects when it
+//   reaches for a Task-shaped publish from raw `api` handlers /
+//   post-init goroutines / scheduled jobs. Sub-apps mounted via
+//   MountLiveSubAppInProcess (e.g. the v0.16.1 PR10 inline console at
+//   /_sky/console) have their OWN private broker for their OWN
+//   internal pub/sub; they MUST NOT clobber the host's registration.
+//
+//   Pre-v0.16.1 PR10 the semantics were last-writer-wins: the most
+//   recent registration won. With the canonical Sky.Live mount path
+//   driving the inline console, MountEmbeddedConsole's sub-app
+//   registration would have shadowed the host app's broker right after
+//   AssertConsoleInvariantOrExit's predecessor (liveAppRun's
+//   registerProcessBroker call). The host's Std.PubSub.publish would
+//   then route to the console's empty broker — silent breakage.
 //
 // Tests use unregisterProcessBroker() to keep package state clean
 // between cases.
 func registerProcessBroker(app *liveApp) {
-	processBroker.Store(app)
+	// CompareAndSwap from nil to app: succeeds only when no prior
+	// broker is registered (host app's first call wins). Subsequent
+	// callers (sub-apps) silently no-op.
+	processBroker.CompareAndSwap(nil, app)
 }
 
 // unregisterProcessBroker — test helper; in production the process
