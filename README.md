@@ -327,7 +327,19 @@ SKY_LOG_FORMAT=json
 SKY_LOG_LEVEL=info
 SKY_ADMIN_TOKEN=…           # /_sky/metrics + /_sky/console require Bearer in prod
                             # (legacy: SKY_METRICS_TOKEN / SKY_CONSOLE_TOKEN_SECRET still honoured)
-# OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
+
+# v0.16.0 — console auth (BREAKING in production):
+SKY_CONSOLE_AUTH=token      # token | app | off — in production, UNSET = FATAL EXIT at boot
+SKY_CONSOLE_TOKEN=…         # 32-byte hex; required when SKY_CONSOLE_AUTH=token
+
+# v0.16.1+ — HubExporter (push telemetry to a remote console hub)
+SKY_CONSOLE_HUB=…           # https://… OTLP HTTP+protobuf endpoint
+SKY_CONSOLE_HUB_TOKEN=…     # ≥32-byte bearer
+SKY_CONSOLE_SPOOL_MODE=auto # auto | file | memory (auto picks memory on serverless)
+
+# v0.16.1+ — OTel export is HTTP/protobuf ONLY (no gRPC dep, smaller binary):
+# OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318  # MUST be HTTP port (not gRPC 4317)
+# OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf               # 'grpc' triggers boot warning + disables export
 ```
 
 Precedence: **process env > `.env` > `sky.toml`**. The `.env` file is

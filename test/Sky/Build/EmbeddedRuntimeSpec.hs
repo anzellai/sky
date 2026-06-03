@@ -73,9 +73,18 @@ spec = do
             -- Restrict comparison to top-level .go files which is
             -- what the embedded runtime tracks.
             diskEntries <- listDirectory diskRtDir
+            -- v0.16.0 PR 2d added embedDirRecursive filtering so
+            -- _test.go files don't ship in user binaries (saves
+            -- ~1 MB per binary). The disk-vs-materialised compare
+            -- must mirror that filter or we get a phantom diff.
+            -- Also skip directories (subpackages like console_app/,
+            -- telemetry/) since the embed comparison is flat-top-level.
             let diskFiles =
                     [ diskRtDir </> e
-                    | e <- diskEntries, ".go" `suffixOf` e ]
+                    | e <- diskEntries
+                    , ".go" `suffixOf` e
+                    , not ("_test.go" `suffixOf` e)
+                    ]
             withSystemTempDirectory "sky-p3-3" $ \dir -> do
                 createDirectoryIfMissing True (dir </> "src")
                 writeFile (dir </> "sky.toml")

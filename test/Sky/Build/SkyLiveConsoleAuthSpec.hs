@@ -68,9 +68,18 @@ spec = describe "Sky.Live consoleAuth field + auth gate (v0.16.0)" $ do
                     body <- fetchPathWithEnv tmp 18744 "/" []
                     (length body > 0) `shouldBe` True
 
-    it "production mode + SKY_CONSOLE_AUTH unset → /_sky/console 404" $ do
+    it "production mode + SKY_CONSOLE_AUTH=off → /_sky/console 404 (no console)" $ do
+        -- v0.16.1 PR2: when SKY_CONSOLE_AUTH is *unset* in production,
+        -- the runtime now fatal-exits at boot (refuses to start with
+        -- an ambiguous security posture) instead of silently declining
+        -- the mount. Operators who genuinely want no console in
+        -- production must explicitly set SKY_CONSOLE_AUTH=off — that
+        -- declines the mount but keeps the process running. We test
+        -- the "off" path here; the fatal-exit-on-unset path is
+        -- exercised by runtime-go/rt/console_boot_test.go's
+        -- TestAssertConsoleInvariant_FatalWhenNeitherHealthyAndAuthSet.
         sky <- findSky
-        withSystemTempDirectory "sky-live-consoleauth-produnset" $ \tmp -> do
+        withSystemTempDirectory "sky-live-consoleauth-prodoff" $ \tmp -> do
             writeFixture tmp fixtureWithoutConsoleAuth
             (ec, out, errOut) <- runSky sky ["build", "src/Main.sky"] tmp
             if ec /= ExitSuccess
@@ -78,7 +87,9 @@ spec = describe "Sky.Live consoleAuth field + auth gate (v0.16.0)" $ do
                     "sky build failed.\n" ++ out ++ "\n" ++ errOut
                 else do
                     body <- fetchPathWithEnv tmp 18745 "/_sky/console"
-                                [ ("ENV", "production") ]
+                                [ ("ENV", "production")
+                                , ("SKY_CONSOLE_AUTH", "off")
+                                ]
                     -- 404 → body is the default Go ServeMux "404 page not
                     -- found" text. We assert the absence of console
                     -- markers as a sufficient proxy.

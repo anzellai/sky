@@ -4239,7 +4239,29 @@ SKY_CONSOLE_DB_PATH=…           # write-through telemetry to a SQLite file
                                 # (WAL; 24h log/span TTL, 7d metric TTL).
                                 # SkyDeploy injects /data/console.db on
                                 # Pro+ tenants. Unset → pure in-RAM.
-# OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318  # optional OTel export
+
+# v0.16.0 — console auth gate (BREAKING in production):
+SKY_CONSOLE_AUTH=token          # token | app | off (default unset)
+                                # PRODUCTION: unset = FATAL EXIT at boot.
+                                # Set to 'off' to intentionally decline console.
+SKY_CONSOLE_TOKEN=…             # 32-byte hex; HKDF-derives the __Host- cookie key
+                                # Required when SKY_CONSOLE_AUTH=token
+
+# v0.16.1+ — HubExporter (in-process OTLP push to a remote console hub)
+# Unset → exporter off. When set, ships logs/metrics/spans every batch interval.
+SKY_CONSOLE_HUB=…               # https://… OTLP HTTP+protobuf endpoint
+SKY_CONSOLE_HUB_TOKEN=…         # ≥32-byte bearer; refuses to start if shorter
+SKY_CONSOLE_BATCH_INTERVAL_MS=2000  # 2 s on VMs; 200 ms in serverless
+SKY_CONSOLE_SPOOL_MODE=auto     # auto | file | memory
+                                # auto-detects via K_SERVICE / AWS_LAMBDA_FUNCTION_NAME → memory
+SKY_CONSOLE_SPOOL_PATH=…        # file mode; default platform-specific
+SKY_CONSOLE_SPOOL_RETENTION=168h    # delete rows older than this
+SKY_CONSOLE_SPOOL_MAX_BYTES=104857600  # 100 MB hard cap; oldest evicted
+
+# v0.16.1+ — OTel export is HTTP/protobuf ONLY (no gRPC dep; keeps binary small)
+# OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318  # USE THE HTTP PORT (4318)
+# OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf               # 'grpc' triggers startup warning + disables export
+                                                          # (prevents CPU-burning HTTP/1 → gRPC retry storm)
 
 # ─── secrets ───────────────────────────────────────────────────────
 SKY_AUTH_TOKEN_SECRET=…         # ≥32 bytes; Sky errors at startup if shorter

@@ -192,6 +192,15 @@ func MountConsoleEndpoints(mux *http.ServeMux) {
 	if skyGetenv("CONSOLE_DISABLED") == "1" {
 		return
 	}
+	// v0.16.1 PR14: SKY_CONSOLE_AUTH=off means "no console at all".
+	// Pre-PR14 the legacy HTML shell still mounted in this case,
+	// surfacing console UI on a deployment that explicitly declined
+	// it. Honour the off mode universally — inline already declines
+	// via MountEmbeddedConsole's consoleAuthModeOff branch; this
+	// closes the matching legacy path.
+	if v := os.Getenv("SKY_CONSOLE_AUTH"); v == "off" {
+		return
+	}
 	// PR 2 (v0.16.1): skip the legacy HTML shell registration when
 	// the inline console (MountEmbeddedConsole, called first from
 	// the boot path) already claimed `/_sky/console`. Previously

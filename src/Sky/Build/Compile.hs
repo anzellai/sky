@@ -2464,6 +2464,18 @@ listDirectoryHs = listDirectory
 copyRuntime :: FilePath -> IO ()
 copyRuntime outDir = do
     let rtDir = outDir </> "rt"
+    -- v0.16.1 PR14: wipe stale rt/ contents before re-materialising.
+    -- Without this, files DELETED from runtime-go/ (e.g., PR10-G's
+    -- console_loop.go) persist in sky-out/rt/ across rebuilds and
+    -- the next `go build` fails on undefined references because the
+    -- stale file references symbols that no longer exist. Doesn't
+    -- affect Go's incremental build cache (that lives in
+    -- ~/Library/Caches/go-build, not sky-out/rt/). Detected via
+    -- cabal HoverShadowingSpec/RenameStableSpec failing after PR10-G;
+    -- repo-root sky-out/ had a stale console_loop.go that referenced
+    -- the now-deleted ConsoleSSEBroadcast.
+    rtExists <- doesDirectoryExist rtDir
+    when rtExists $ System.Directory.removeDirectoryRecursive rtDir
     createDirectoryIfMissing True rtDir
     mRuntime <- locateRuntimeDir
     case mRuntime of
