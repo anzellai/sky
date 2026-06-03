@@ -3252,6 +3252,13 @@ func liveAppRun(cfg any) any {
 		// finish + the goroutine exits cleanly. Idempotent —
 		// safe to call when no worker was ever spawned.
 		JobsShutdown()
+		// v0.16.1: drain the in-process HubExporter (and any other
+		// registered shutdown hook) BEFORE srv.Close. 8 s budget
+		// leaves 2 s safety within Cloud Run's 10 s grace window.
+		// LIFO order — HubExporter (registered last, during boot)
+		// runs first; future v0.17+ hooks fan out from here. No-op
+		// when no exporter / no hooks are registered.
+		RunShutdownHooks(8 * time.Second)
 		// v0.16.0: the inline console runs in-process, so there's
 		// no child to tear down. Pre-v0.16.0 this section closed
 		// srv.Close() FIRST (to drain in-flight reverse-proxy

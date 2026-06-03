@@ -7674,6 +7674,11 @@ func Server_listen(port any, routes any) any {
 	signal.Notify(srvSigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 	go func() {
 		<-srvSigCh
+		// v0.16.1: drain HubExporter (and any other shutdown
+		// hook) BEFORE srv.Close so pending telemetry pushes
+		// reach the hub within Cloud Run / k8s grace windows.
+		// 8 s budget matches Sky.Live's signal handler.
+		RunShutdownHooks(8 * time.Second)
 		_ = srv.Close()
 	}()
 	fmt.Printf("Sky server listening on http://localhost:%d\n", p)

@@ -473,7 +473,10 @@ func severityFromLevel(level string) Severity {
 
 // ─── lifecycle ───────────────────────────────────────────────────
 
-// Start kicks off the drainer goroutine. Idempotent.
+// Start kicks off the drainer goroutine. Idempotent. Registers a
+// shutdown hook so SIGTERM drain runs Flush(8s) before the process
+// exits — see shutdown.go for the registry, live.go/rt.go for the
+// signal-handler call sites.
 func (e *HubExporter) Start(ctx context.Context) {
 	if e == nil {
 		return
@@ -498,6 +501,23 @@ func (e *HubExporter) Start(ctx context.Context) {
 			}()
 			e.drain(ctx)
 		}()
+		// Register shutdown hook — runs before srv.Close so any
+		// pending push reaches the hub within the orchestrator
+		// grace window.
+		RegisterShutdownHook("hub-exporter", func(hookCtx context.Context) {
+			// Hook's deadline is the remaining ctx budget. Cap at
+			// 8s so we leave 2s safety inside Cloud Run's 10s
+			// grace.
+			deadline := 8 * time.Second
+			if dl, ok := hookCtx.Deadline(); ok {
+				remaining := time.Until(dl)
+				if remaining < deadline {
+					deadline = remaining
+				}
+			}
+			_ = e.Flush(deadline)
+			e.Stop()
+		})
 	})
 }
 
