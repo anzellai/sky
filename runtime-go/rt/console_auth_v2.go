@@ -323,15 +323,21 @@ func verifyCookieValue(key []byte, value string) (string, bool) {
 }
 
 // setConsoleV2Cookie writes the v2 cookie to w. The __Host- prefix
-// requires Secure + Path=/, but Path=/_sky/console is accepted as a
-// stricter sub-path by every modern browser (the prefix's other
-// invariants — no Domain attribute, must be Secure — are honoured).
+// REQUIRES Path=/ per RFC 6265bis §4.1.3.2 — sub-paths cause
+// RFC-compliant clients (curl, modern Go http.Client, browsers
+// implementing the latest draft) to reject the cookie outright.
+// The path restriction we WANT — only send the cookie back to
+// /_sky/console/* — comes from the SameSite=Strict + HttpOnly +
+// Secure trio plus the inline-mounted console being the ONLY
+// surface that reads consoleAuthCookieV2Name. So scope at Path=/
+// is safe; the cookie can't leak via cross-site nav or non-Secure
+// traffic.
 func setConsoleV2Cookie(w http.ResponseWriter, key []byte, subject string) {
 	value := signCookieValue(key, subject, consoleAuthCookieV2MaxAge)
 	http.SetCookie(w, &http.Cookie{
 		Name:     consoleAuthCookieV2Name,
 		Value:    value,
-		Path:     "/_sky/console",
+		Path:     "/",
 		HttpOnly: true,
 		Secure:   true,
 		SameSite: http.SameSiteStrictMode,
@@ -344,7 +350,7 @@ func clearConsoleV2Cookie(w http.ResponseWriter) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     consoleAuthCookieV2Name,
 		Value:    "",
-		Path:     "/_sky/console",
+		Path:     "/",
 		HttpOnly: true,
 		Secure:   true,
 		SameSite: http.SameSiteStrictMode,
