@@ -2661,6 +2661,18 @@ type liveApp struct {
 	// correctly — without this, a sub-app's wire calls would hit
 	// the PARENT mux instead of the sub-app's.
 	basePath string
+	// cookieName: the session cookie name. Defaults to "sky_sid" for
+	// root-mounted apps. Sub-apps mounted via MountLiveSubAppInProcess
+	// MUST use a distinct name (e.g. "sky_console_sid") so the
+	// parent's session cookie and the sub-app's session cookie don't
+	// collide on the same browser origin. v0.16.1 PR10.
+	cookieName string
+	// skyIDPrefix: the prefix prepended to every assignSkyIDs walk.
+	// Defaults to "r" for root-mounted apps. Sub-apps use a distinct
+	// prefix (e.g. "sky-console") so logs / diffs / handler lookups
+	// stay unambiguous when both parent + sub-app render into the
+	// same browser tab. v0.16.1 PR10.
+	skyIDPrefix string
 	// topics — pub/sub registry (Cycle 3 P46). Same pointer the
 	// app.store.Broker() returns; cached here so subscribe / publish
 	// call sites don't have to indirect through the store on every
@@ -2708,6 +2720,29 @@ type liveApp struct {
 // Cycle 3 P47 / pub/sub prereq 2 — docs/skylive/pubsub-design.md §3.2.
 func (a *liveApp) nextGlobalSeq() int64 {
 	return a.globalSeq.Add(1)
+}
+
+// skyIDPrefixOrDefault returns the per-app sky-id namespace prefix,
+// falling back to "r" for app instances that pre-date the v0.16.1
+// PR10 field. Centralising the default here keeps the historic
+// behaviour for any *liveApp constructed outside liveAppRun (e.g.
+// test fixtures that field-init the struct directly).
+func (a *liveApp) skyIDPrefixOrDefault() string {
+	if a == nil || a.skyIDPrefix == "" {
+		return "r"
+	}
+	return a.skyIDPrefix
+}
+
+// cookieNameOrDefault returns the per-app session cookie name,
+// falling back to "sky_sid" for app instances that pre-date the
+// v0.16.1 PR10 field. Used by sessionIDNamed-aware call sites that
+// otherwise would have hard-coded the legacy name.
+func (a *liveApp) cookieNameOrDefault() string {
+	if a == nil || a.cookieName == "" {
+		return "sky_sid"
+	}
+	return a.cookieName
 }
 
 // Publish is the app-level fan-out entry point that all broadcast
@@ -3018,6 +3053,8 @@ func liveAppRun(cfg any) any {
 		msgTags:       make(map[string]int),
 		bannerCfg:     resolveBannerStrings(loadLiveBannerConfig(), cfg),
 		basePath:      normaliseBasePath(skyGetenv("LIVE_BASE_PATH")),
+		cookieName:    "sky_sid",
+		skyIDPrefix:   "r",
 	}
 	for _, r := range asList(Field(cfg, "Routes")) {
 		if lr, ok := r.(liveRoute); ok {
@@ -3424,7 +3461,7 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	// would otherwise wipe sess.handlers and break the very next event
 	// POST with "handler not found". Per-session lock prevents
 	// concurrent re-renders racing each other's handlers.
-	sid := sessionID(r, w, app.sessionTTL)
+	sid := sessionIDNamed(r, w, app.sessionTTL, app.cookieName)
 	app.locker.Lock(sid)
 	defer app.locker.Unlock(sid)
 
@@ -3482,7 +3519,7 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	app.setupSubscriptions(sess)
 
 	vn := HtmlToVNode(sky_call(app.view, model))
-	assignSkyIDs(&vn, "r")
+	assignSkyIDs(&vn, app.skyIDPrefixOrDefault())
 	applyStyleInjections(&vn)
 	body := renderVNode(vn, sess.handlers)
 	// Initial mount writes the full HTML directly into the HTTP
@@ -3707,7 +3744,7 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 	if len(sess.handlers) == 0 && sess.model != nil {
 		sess.handlers = map[string]any{}
 		vn := HtmlToVNode(sky_call(app.view, sess.model))
-		assignSkyIDs(&vn, "r")
+		assignSkyIDs(&vn, app.skyIDPrefixOrDefault())
 		applyStyleInjections(&vn)
 		body := renderVNode(vn, sess.handlers)
 		// Route through commitRender (Cycle 3 P40 / Gap C7) so
@@ -3898,7 +3935,7 @@ func (app *liveApp) dispatchBatched(sess *liveSession, ev batchedEvent) {
 	if len(sess.handlers) == 0 && sess.model != nil {
 		sess.handlers = map[string]any{}
 		vn := HtmlToVNode(sky_call(app.view, sess.model))
-		assignSkyIDs(&vn, "r")
+		assignSkyIDs(&vn, app.skyIDPrefixOrDefault())
 		applyStyleInjections(&vn)
 		body := renderVNode(vn, sess.handlers)
 		// Route through commitRender (Cycle 3 P40 / Gap C7) so
@@ -4137,7 +4174,7 @@ func (app *liveApp) dispatch(sess *liveSession, msg any) (body string) {
 	finalCmd = cmd
 	sess.handlers = map[string]any{}
 	vn := HtmlToVNode(sky_call(app.view, sess.model))
-	assignSkyIDs(&vn, "r")
+	assignSkyIDs(&vn, app.skyIDPrefixOrDefault())
 	applyStyleInjections(&vn)
 	body = renderVNode(vn, sess.handlers)
 	// Commit prevTree + lastComputedBody as one atomic step (Cycle 3
@@ -4196,7 +4233,7 @@ func (app *liveApp) dispatch(sess *liveSession, msg any) (body string) {
 func (app *liveApp) renderView(sess *liveSession) string {
 	sess.handlers = map[string]any{}
 	vn := HtmlToVNode(sky_call(app.view, sess.model))
-	assignSkyIDs(&vn, "r")
+	assignSkyIDs(&vn, app.skyIDPrefixOrDefault())
 	applyStyleInjections(&vn)
 	body := renderVNode(vn, sess.handlers)
 	sess.commitRender(&vn, body)
@@ -5053,7 +5090,11 @@ func (app *liveApp) runStreamSubscriberDispatch(sess *liveSession, toMsg any, ev
 //     interval.
 func (app *liveApp) handleSSE(w http.ResponseWriter, r *http.Request) {
 	sid := ""
-	if c, err := r.Cookie("sky_sid"); err == nil {
+	cookieName := app.cookieName
+	if cookieName == "" {
+		cookieName = "sky_sid"
+	}
+	if c, err := r.Cookie(cookieName); err == nil {
 		sid = c.Value
 	}
 	if sid == "" {
@@ -5146,7 +5187,7 @@ func (app *liveApp) handleSSE(w http.ResponseWriter, r *http.Request) {
 		func() {
 			defer func() { _ = recover() }()
 			vn := HtmlToVNode(sky_call(app.view, sess.model))
-			assignSkyIDs(&vn, "r")
+			assignSkyIDs(&vn, app.skyIDPrefixOrDefault())
 			applyStyleInjections(&vn)
 			sess.handlers = map[string]any{}
 			body := renderVNode(vn, sess.handlers)
@@ -5221,7 +5262,19 @@ func (app *liveApp) handleSSE(w http.ResponseWriter, r *http.Request) {
 }
 
 func sessionID(r *http.Request, w http.ResponseWriter, ttl time.Duration) string {
-	if c, err := r.Cookie("sky_sid"); err == nil {
+	return sessionIDNamed(r, w, ttl, "sky_sid")
+}
+
+// sessionIDNamed is the per-app cookie-name-aware session ID resolver.
+// Reads / writes the named cookie instead of the hard-coded "sky_sid".
+// v0.16.1 PR10: sub-apps mounted via MountLiveSubAppInProcess use a
+// distinct name so their cookie doesn't collide with the parent app's
+// on the same origin.
+func sessionIDNamed(r *http.Request, w http.ResponseWriter, ttl time.Duration, cookieName string) string {
+	if cookieName == "" {
+		cookieName = "sky_sid"
+	}
+	if c, err := r.Cookie(cookieName); err == nil {
 		return c.Value
 	}
 	b := make([]byte, 16)
@@ -5255,7 +5308,7 @@ func sessionID(r *http.Request, w http.ResponseWriter, ttl time.Duration) string
 		sameSite, secure = http.SameSiteNoneMode, true
 	}
 	http.SetCookie(w, &http.Cookie{
-		Name:     "sky_sid",
+		Name:     cookieName,
 		Value:    sid,
 		Path:     "/",
 		HttpOnly: true,
