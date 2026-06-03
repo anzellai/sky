@@ -203,6 +203,12 @@ func MountConsoleSSE(mux *http.ServeMux) bool {
 
 	consoleSSE.registered.Store(true)
 	consoleSSEHealthy.Store(true)
+	// v0.16.1 PR 8 — kick the console_app update loop. The loop
+	// drains ConsoleEventChannel(), dispatches each event through
+	// hooks.Update + diff + broadcast. No-op when console_app
+	// hasn't registered hooks (the wire surface still works; only
+	// the click→update→broadcast loop is absent).
+	startConsoleUpdateLoopFromMount()
 	return true
 }
 
