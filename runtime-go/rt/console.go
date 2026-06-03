@@ -286,6 +286,17 @@ func MountEmbeddedConsole(mux *http.ServeMux) {
 	// (/_sky/console/api/*) remain registered — the inline UI
 	// polls them for fresh telemetry, same as the legacy UI did.
 	inlineConsoleHealthy.Store(true)
+	// PR 3 (v0.16.1): mount the ISOLATED SSE transport channel
+	// for the inline console. v0.16.1 ships the wire surface
+	// only — the console_app update loop attaches in v0.16.2
+	// (#429). Calling MountConsoleSSE here, after the auth gate
+	// decision + successful inline mount, guarantees the auth +
+	// transport + inline-render trio are mounted as an atomic
+	// unit (we never end up with a transport plane but no UI,
+	// or vice versa).
+	if MountConsoleSSE(mux) {
+		fmt.Fprintln(os.Stderr, "[sky.console] inline console SSE channel mounted at /_sky/console/_sse")
+	}
 	fmt.Fprintf(os.Stderr, "[sky.console] inline console mounted at /_sky/console mode=%s\n", describeConsoleAuthMode(st.mode))
 }
 
