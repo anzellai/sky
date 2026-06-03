@@ -695,6 +695,17 @@ SKY_CONSOLE_DB_PATH=…       # when set, telemetry dual-writes every
                             # bundled console mini-app can render
                             # history beyond the 10k-line / 1k-span
                             # in-RAM caps. Unset → pure in-RAM (default).
+
+# v0.16.1+ — HubExporter (in-process OTLP push to a remote console hub)
+SKY_CONSOLE_HUB=…           # https://… OTLP endpoint. Unset → exporter off.
+SKY_CONSOLE_HUB_TOKEN=…     # ≥32-byte bearer. Refuses to start if shorter.
+SKY_CONSOLE_BATCH_INTERVAL_MS=2000  # 2 s on VMs; 200 ms in serverless.
+SKY_CONSOLE_SPOOL_MODE=auto # auto | file | memory. Auto-detects via
+                            # K_SERVICE / AWS_LAMBDA_FUNCTION_NAME → memory.
+SKY_CONSOLE_SPOOL_PATH=…    # file mode. Default: /var/lib/sky/console-spool.db
+                            # (linux) / ~/Library/Application Support/sky/…
+SKY_CONSOLE_SPOOL_RETENTION=168h    # delete rows older than this
+SKY_CONSOLE_SPOOL_MAX_BYTES=104857600  # 100 MB hard cap; oldest evicted
 ```
 
 The production gate is `ENV` then `SKY_ENV` fallback. Unset OR

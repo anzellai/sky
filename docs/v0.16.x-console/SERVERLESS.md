@@ -16,18 +16,20 @@ The collector design in `EXPORTER.md` assumes always-on processes with persisten
 
 A spool-on-disk design loses data on every container recycle. A "retry forever in background" loop doesn't run when the container is paused. The naive in-process exporter from `EXPORTER.md` would silently lose telemetry.
 
-## Auto-detection — what triggers serverless mode
+## Auto-detection — what triggers serverless mode (v0.16.1 shipped)
 
-The exporter inspects these env vars at startup:
+The exporter inspects these env vars at startup via `rt.IsServerless()`:
 
 ```
-K_SERVICE                   set → Cloud Run        → serverless mode
+K_SERVICE                   set → Cloud Run        → serverless mode (memory spool)
 K_REVISION                  set → Cloud Run revision → tag service.instance.id
-AWS_LAMBDA_FUNCTION_NAME    set → Lambda            → serverless mode
+AWS_LAMBDA_FUNCTION_NAME    set → Lambda            → serverless mode (memory spool)
 AWS_LAMBDA_LOG_STREAM_NAME  set → Lambda invocation → tag service.instance.id
 ```
 
-If any of these are set, the exporter switches to **memory mode** automatically. Override with `SKY_CONSOLE_SPOOL=file` only if you've explicitly arranged a persistent volume mount (Cloud Run with a Cloud Storage FUSE mount, for example).
+If `K_SERVICE` OR `AWS_LAMBDA_FUNCTION_NAME` is set, the exporter switches to **memory mode** automatically. Explicit override via `SKY_CONSOLE_SPOOL_MODE=file` only if you've arranged a persistent volume mount (Cloud Run with a Cloud Storage FUSE mount, for example).
+
+Tested by `TestSpool_AutoDetect_ServerlessUsesMemory` and `TestSpool_AutoDetect_VMUsesFile`.
 
 ## Serverless-specific exporter behaviour
 
@@ -46,28 +48,23 @@ The push cadence change (200 ms vs 2 s) is the most important behavioural differ
 
 ## SIGTERM drain — the critical mechanism
 
-Cloud Run sends `SIGTERM` to the container ~10 seconds before forced kill. Sky's runtime installs a handler at framework init:
+Cloud Run sends `SIGTERM` to the container ~10 seconds before forced kill. Sky's runtime installs a handler at framework init via the `runtime-go/rt/shutdown.go` registry (v0.16.1 shipped):
 
 ```go
-// runtime-go/rt/exporter.go (sketch — actual implementation v0.16.1)
-func installShutdownHook(exp Exporter) {
-    c := make(chan os.Signal, 1)
-    signal.Notify(c, syscall.SIGTERM, syscall.SIGINT)
-    go func() {
-        <-c
-        // 1. Mark runtime as shutting down — new HTTP requests get 503
-        rt.MarkShuttingDown()
-        // 2. Block new telemetry writes (writer goroutine accepts but discards)
-        exp.StopAcceptingWrites()
-        // 3. Flush remaining queue with 8 s deadline
-        exp.FlushWithDeadline(8 * time.Second)
-        // 4. Exit cleanly within remaining 2 s safety margin
-        os.Exit(0)
-    }()
-}
+// runtime-go/rt/shutdown.go — LIFO registry
+rt.RegisterShutdownHook("hub-exporter", func(deadline time.Duration) {
+    exporter.Flush(deadline)
+})
+
+// Sky.Live (live.go) + Sky.Http.Server (rt.go) signal handlers
+go func() {
+    <-c // SIGTERM
+    rt.RunShutdownHooks(8 * time.Second) // 8 s budget, LIFO
+    srv.Close()
+}()
 ```
 
-8-second budget leaves 2 s safety within Cloud Run's 10-s grace window. Lambda's similar (`runtime_extension`-style hook). Verifiable via SkyDeploy's existing per-tenant Cloud Run deploys.
+8-second budget leaves 2 s safety within Cloud Run's 10-s grace window. Lambda's similar (`runtime_extension`-style hook). Tested by `TestHubExporter_SIGTERMDrain` — 1000 Submits flushed at 100 % delivery in 26.8 ms (well within budget).
 
 **Why not push synchronously during the request lifecycle:** that would add 10-50 ms latency to every response. Async + SIGTERM drain is the right trade-off.
 

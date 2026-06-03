@@ -2,7 +2,9 @@
 
 > Mode A from `OVERVIEW.md`: in-process console UI served at `/_sky/console`
 > on the same listener as the app, backed by local SQLite.
-> Lands in v0.16.0.
+> Shipped: v0.16.0 (HTML mount + auth + Std.Ui charts) and v0.16.1 (isolated
+> SSE channel transport surface). Full live-UI interactivity follows in
+> v0.16.2 (task #429) — the SSE plumbing is in place.
 
 ## Goal
 
@@ -169,17 +171,30 @@ This is its own v0.16.0 deliverable; doesn't block on console-specific work.
 
 **New in v0.16.0**: apps can set `consoleAuth` field on `Live.app` to gate the console behind their existing session middleware. sky-lang.org's `src/Auth/Console.sky` (the 100-line JWT-mint pattern from tonight) can be deleted post-v0.16.0 deploy.
 
-## Implementation milestones (v0.16.0)
+## Implementation milestones — SHIPPED
+
+### v0.16.0
 
 | Day | Work |
 |---|---|
 | 1-2 | Build pipeline: cabal target that runs `sky` against `sky-bundled/console/` to emit Go code, writes to `runtime-go/rt/console_app/`. Cabal install includes this in the runtime package. |
-| 3 | Framework `MountEmbeddedConsole(mux)` replaces `SpawnSkyConsole`. Delete subprocess + reverse-proxy code (`runtime-go/rt/subapp.go:SpawnSkyConsole`). |
-| 4 | `<dataDir>/<projectName>.console.db` storage path + collision warn. Migrate v0.15.x's `SKY_CONSOLE_DB_PATH` env to back-compat alias. |
+| 3 | Framework `MountEmbeddedConsole(mux)` replaces `SpawnSkyConsole`. Subprocess + reverse-proxy code deleted. |
+| 4 | `<dataDir>/<projectName>.console.db` storage path + collision warn. v0.15.x's `SKY_CONSOLE_DB_PATH` env back-compat. |
 | 5 | Auth: `SKY_CONSOLE_AUTH` gate + `consoleAuth` row-poly field + `__Host-` cookie + HKDF key derivation + one-shot JTI enforcement. |
 | 6 | Std.Ui chart primitives (line / area / bar / sparkline / heatmap). |
 
 Tested on sky-lang.org's e2-micro VM before tagging v0.16.0. No OOM, console accessible at `/_sky/console`, all five tabs render real data.
+
+### v0.16.1
+
+| PR | SHA | Work |
+|---|---|---|
+| PR1 | `7e36d152` `b355eb80` | `/_sky/*` namespace reserved in `dispatchRoot` — unmounted paths return plain 404 instead of user's `notFound` page (closes info-leakage class). |
+| PR2 | `9f568b53` `94334596` `23be9b52` | Atomic `inlineConsoleHealthy` / `legacyConsoleHealthy` flags. Legacy `/_sky/console` HTML shell skipped when inline is healthy. Boot-time fatal when `SKY_CONSOLE_AUTH` is set but neither path mounts. 13 specs. |
+| 61cf4c3c | (pre-PR audit) | `__Host-sky_console` cookie now uses `Path=/` per RFC 6265bis §4.1.3.2 — the `__Host-` prefix requires it. |
+| PR3 | `ca48b087` `cb5f1d3e` `96f2fbac` | Isolated SSE channel: `/_sky/console/_sse` + `/_sky/console/_event` with own session map / queue / drop counter (not shared with host `/_sky/sse`). Auth reuses `__Host-sky_console` cookie. 13 specs. **Transport-only — full live-UI interactivity is v0.16.2 (#429).** |
+
+The host-app SSE channel and the console SSE channel cannot cross-contaminate sessions, queues, or drop counters — verified by `TestConsoleSSE_IsolatedFromHostSession`.
 
 ## Memory budget on e2-micro
 

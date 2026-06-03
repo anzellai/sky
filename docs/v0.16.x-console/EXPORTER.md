@@ -203,18 +203,23 @@ Per-app instance overhead under realistic load:
 
 None of these break Sky's target users. They're upper-bound limits, documented to users in `OPS.md`.
 
-## Implementation milestones (v0.16.1)
+## Implementation milestones (v0.16.1) — SHIPPED
 
-| Day | Work |
-|---|---|
-| 1 | Channel-based writer + drainer skeleton in `runtime-go/rt/exporter.go`. In-memory ring stays from existing code. |
-| 2 | OTLP encoding + gRPC transport + connection management. Single push test. |
-| 2 | SQLite spool schema + write/read/delete batches. Cap enforcement. |
-| 3 | Memory-mode spool (just a bigger ring). Auto-detection from `K_SERVICE`. |
-| 3 | Backpressure + priority drop logic. Counter emission. |
-| 3 | SIGTERM drain hook + tests. Circuit breaker. |
+| PR | SHA | Work |
+|---|---|---|
+| PR4.a | `360a90af` | Channel-based writer + drainer skeleton in `runtime-go/rt/exporter.go`. Bounded ring + Submit hot-path API. |
+| PR4.b | `360a90af` | OTLP encoding via HTTP+JSON transport (gRPC deferred to v0.16.2 — no `otlptracegrpc` in `runtime-go/go.sum` and avoiding 4+ MB dep surface). Single-push fully tested. |
+| PR4.c | `360a90af` | Backpressure + priority drop logic. Counter emission via Prometheus `/_sky/metrics`. |
+| PR4.d | `360a90af` | Circuit breaker (50 consecutive failures → 30 s open → single half-open probe → closed-on-success). |
+| PR4.e | `fda63d28` | SIGTERM drain hook via `runtime-go/rt/shutdown.go` registry. 8 s deadline. LIFO ordering so newest subsystem cleans up first. |
+| PR4.f | `da4d3364` | 10 tests in `runtime-go/rt/exporter_test.go` — 5 reliability invariants + 5 smoke. All green. |
+| PR5.a | `2ad839a0` | SQLite WAL spool schema + write/read/delete batches. Retention sweep + circular truncation. `modernc.org/sqlite` (already in go.mod via `live_store`/`telemetry/persist`). |
+| PR5.b | `2ad839a0` | Memory-mode spool (bounded ring, no disk writes). Auto-detection via existing `IsServerless()` (`K_SERVICE` / `AWS_LAMBDA_FUNCTION_NAME`). |
+| PR5.c | `a3dcbf94` | 16 spool tests including `TestSpool_CrashResilience` (replay-on-boot) and `TestSpool_FileMode_DoesNotBlockOnSlowDisk` (p99.99 stays sub-ms with 100 ms simulated fsync). |
 
-Tests live in `runtime-go/rt/exporter_test.go`. The "never blocks hot path" test gates the patch — must pass before v0.16.1 tag.
+The gate: `TestHubExporter_HotPathNeverBlocks` — Submit at 2.38M Hz, p99.99 = 96.08 µs no-race / 100.2 µs with `-race`, 10× below the 1 ms architectural ceiling. After PR5 spool integration: still 34.0-98.4 µs no-race. Spool writes are confirmed async on the drainer goroutine, never on the caller.
+
+Tests live in `runtime-go/rt/exporter_test.go` and `runtime-go/rt/exporter_spool_test.go`. The "never blocks hot path" test gates the v0.16.1 tag.
 
 ## Env var summary
 
