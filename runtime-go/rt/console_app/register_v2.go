@@ -117,16 +117,81 @@ func hookView(model any) any {
 //	{"msg": "<MsgCtorName>", "args": [<arg0>, ...]}
 //
 // Returns (msg, true) on resolution; (nil, false) otherwise.
+//
+// Implementation note (v0.16.1 PR 8): the generated console_app/main.go
+// emits ADT constructors (`State_Msg_SelectTab`, `State_Msg_Tick`,
+// etc.) but does NOT call `rt.RegisterAdtTag` at package init — v0.16.0
+// PR 2 deliberately stripped those calls to avoid colliding with the
+// user app's own Msg type in the global registry.
+//
+// That means rt's generic fallback (decodeConsoleEventMsg →
+// LookupAdtTag) returns "unknown" for every console Msg name, and the
+// loop drops the event. We close the gap here with a LOCAL map: each
+// Msg constructor name resolves to either the bare zero-arg State_Msg
+// value OR a builder that consumes the first wire arg.
+//
+// The map is local to console_app — it never touches the global ADT
+// registry, so the user-app's Msg type stays free of collision.
 func hookDecodeMsg(envelope map[string]any) (any, bool) {
 	name, _ := envelope["msg"].(string)
 	if name == "" {
 		return nil, false
 	}
-	// Delegate to rt's generic fallback so we don't duplicate the
-	// SkyADT-from-name logic. Returning false here means rt's
-	// decodeConsoleEventMsg falls through to its own LookupAdtTag
-	// path — which works for every Msg in the current generated
-	// console_app (none take typed-record args).
+	args, _ := envelope["args"].([]any)
+
+	// Helpers to extract typed args.
+	stringAt := func(i int) string {
+		if i >= len(args) {
+			return ""
+		}
+		switch v := args[i].(type) {
+		case string:
+			return v
+		case nil:
+			return ""
+		default:
+			return ""
+		}
+	}
+
+	switch name {
+	case "Tick":
+		return State_Msg_Tick, true
+	case "LogFilterClear":
+		return State_Msg_LogFilterClear, true
+	case "SelectTab":
+		// SelectTab takes a State_Tab; the wire form is a string of
+		// the tab name ("OverviewTab" / "LogsTab" / …). Map back.
+		tab := stringAt(0)
+		switch tab {
+		case "OverviewTab":
+			return State_Msg_SelectTab(State_Tab_OverviewTab), true
+		case "LogsTab":
+			return State_Msg_SelectTab(State_Tab_LogsTab), true
+		case "MetricsTab":
+			return State_Msg_SelectTab(State_Tab_MetricsTab), true
+		case "TracesTab":
+			return State_Msg_SelectTab(State_Tab_TracesTab), true
+		case "ErrorsTab":
+			return State_Msg_SelectTab(State_Tab_ErrorsTab), true
+		}
+		// Unknown tab name — drop.
+		return nil, false
+	case "LogFilterQuery":
+		return State_Msg_LogFilterQuery(stringAt(0)), true
+	case "LogFilterToggleLevel":
+		return State_Msg_LogFilterToggleLevel(stringAt(0)), true
+	case "LogFilterPickSession":
+		return State_Msg_LogFilterPickSession(stringAt(0)), true
+	case "TraceFilterQuery":
+		return State_Msg_TraceFilterQuery(stringAt(0)), true
+	case "PivotToTrace":
+		return State_Msg_PivotToTrace(stringAt(0)), true
+	}
+	// GotOverview / GotLogs / GotMetrics / GotTraces / GotErrors are
+	// the result-Msg constructors — they're never dispatched from the
+	// client; the update loop's runConsolePerform feeds them back via
+	// sky_call(toMsg, result). No external decode path needed.
 	return nil, false
 }
 
