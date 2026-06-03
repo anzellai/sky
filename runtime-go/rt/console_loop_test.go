@@ -553,3 +553,243 @@ func resetConsoleAuthLoadState() {
 	// is consulted by Go's package-test linker (same package). If it's
 	// absent, this no-op keeps the call site benign.
 }
+
+// ─── PR9: hid-based dispatch tests ───────────────────────────────
+
+// TestHtmlRenderWithHandlers_PopulatesMap verifies that the new
+// rt.HtmlRenderWithHandlers entry point captures the typed Msg
+// for every onClick / onInput / etc. bound element. This is the
+// piece v0.16.1 PR9 added to close the wire-protocol mismatch the
+// inline console hit.
+func TestHtmlRenderWithHandlers_PopulatesMap(t *testing.T) {
+	// Build a Sky-shape Html ADT with a click-bound div. The shape
+	// mirrors what Std.Html.div [Events.onClick OpenLogs] [Html.text
+	// "Logs tab"] produces at runtime — see applyHtmlAttr in live.go
+	// for the EventAttr (OnMsg event msg) inner-ADT shape.
+	clickMsg := SkyADT{SkyName: "OpenLogs"}
+	onMsg := SkyADT{SkyName: "OnMsg", Fields: []any{"click", clickMsg}}
+	eventAttr := SkyADT{SkyName: "EventAttr", Fields: []any{onMsg}}
+	textChild := SkyADT{SkyName: "HText", Fields: []any{"Logs tab"}}
+	// HElement carries (tag, attrs-list, children-list). asList()
+	// accepts a bare []any so we don't have to construct Cons/Nil
+	// here.
+	node := SkyADT{SkyName: "HElement", Fields: []any{
+		"div",
+		[]any{eventAttr},
+		[]any{textChild},
+	}}
+
+	body, handlers := HtmlRenderWithHandlers(node, "console")
+
+	// Body should contain BOTH the sky-id attribute AND the
+	// data-sky-hid wire attribute — the client needs both.
+	if !containsSubstr(body, "sky-id=") {
+		t.Fatalf("body missing sky-id: %s", body)
+	}
+	if !containsSubstr(body, "data-sky-hid=") {
+		t.Fatalf("body missing data-sky-hid: %s", body)
+	}
+	// Handlers map should have exactly one entry — the click
+	// binding — and its value should be the typed Msg we passed
+	// in (SkyADT{SkyName:"OpenLogs"}).
+	if len(handlers) != 1 {
+		t.Fatalf("handlers count: got %d, want 1 (entries=%v)", len(handlers), handlers)
+	}
+	var gotMsg any
+	var gotHid string
+	for hid, v := range handlers {
+		gotHid = hid
+		gotMsg = v
+	}
+	adt, ok := gotMsg.(SkyADT)
+	if !ok {
+		t.Fatalf("handler value: got %T, want SkyADT", gotMsg)
+	}
+	if adt.SkyName != "OpenLogs" {
+		t.Fatalf("handler msg name: got %q, want OpenLogs", adt.SkyName)
+	}
+	// The hid must end in ".click" so the client's event capture
+	// can match it against the dispatched event.
+	if !containsSubstr(gotHid, ".click") {
+		t.Fatalf("handler hid: got %q, want suffix .click", gotHid)
+	}
+	// And it must start with the requested prefix so the host's
+	// "r"-namespaced ids don't collide.
+	if !containsSubstr(gotHid, "console") {
+		t.Fatalf("handler hid: got %q, want prefix containing console", gotHid)
+	}
+}
+
+// TestConsoleLoop_HidLookupRoutes verifies that an event carrying
+// `ev.Hid` resolves the typed Msg via the session's handlers map
+// — the canonical wire path for browser clicks. The handlers map
+// is pre-seeded via SeedConsoleLoopSession (the same shape mount.go
+// uses on the initial GET).
+func TestConsoleLoop_HidLookupRoutes(t *testing.T) {
+	resetConsoleLoop(t)
+	consoleSSE.mu.Lock()
+	consoleSSE.eventCh = make(chan ConsoleEvent, 16)
+	consoleSSE.bufferSize = 16
+	consoleSSE.registered.Store(true)
+	consoleSSE.mu.Unlock()
+
+	f := &fakeConsoleHooks{
+		model:    0,
+		viewHTML: minimalView(0),
+		initCmd:  Cmd_none(),
+	}
+	h := f.hooks()
+	// No DecodeMsg — hid lookup should bypass it entirely.
+	RegisterConsoleAppHooks(h)
+
+	// Pre-seed session with handlers map keyed on a known hid.
+	const sid = "test-sid-hid"
+	const hid = "console.0.div.2.click"
+	handlers := map[string]any{
+		hid: SkyADT{SkyName: "Inc"},
+	}
+	SeedConsoleLoopSession(sid, 0, nil, "", handlers)
+
+	StartConsoleUpdateLoop()
+	defer ResetConsoleLoopStateForTesting()
+
+	// POSTed event with hid only — no msg / args.
+	consoleSSE.eventCh <- ConsoleEvent{
+		SessionID:  sid,
+		Hid:        hid,
+		Payload:    map[string]any{"hid": hid},
+		ReceivedAt: time.Now(),
+	}
+
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if atomic.LoadInt32(&f.updateCallCount) >= 1 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	if got := atomic.LoadInt32(&f.updateCallCount); got < 1 {
+		t.Fatalf("Update was not called via hid lookup: got count=%d", got)
+	}
+	sess := consoleLoopGetSession(sid)
+	if sess == nil {
+		t.Fatalf("session disappeared after seed")
+	}
+	sess.mu.Lock()
+	m := sess.model
+	sess.mu.Unlock()
+	if v, ok := m.(int); !ok || v != 1 {
+		t.Fatalf("model after hid-routed Inc: got %v, want 1", m)
+	}
+}
+
+// TestConsoleLoop_UnknownHidFallsBackOrDrops verifies that an event
+// with a hid the session doesn't recognise falls through to the
+// name+args fallback path. When neither path resolves, the event
+// is dropped silently (no Update call).
+func TestConsoleLoop_UnknownHidFallsBackOrDrops(t *testing.T) {
+	resetConsoleLoop(t)
+	consoleSSE.mu.Lock()
+	consoleSSE.eventCh = make(chan ConsoleEvent, 16)
+	consoleSSE.bufferSize = 16
+	consoleSSE.registered.Store(true)
+	consoleSSE.mu.Unlock()
+
+	f := &fakeConsoleHooks{
+		model:    0,
+		viewHTML: minimalView(0),
+		initCmd:  Cmd_none(),
+	}
+	h := f.hooks()
+	RegisterConsoleAppHooks(h)
+	StartConsoleUpdateLoop()
+	defer ResetConsoleLoopStateForTesting()
+
+	// POST with a hid the session doesn't know AND no msg →
+	// falls through name path, which then drops (no msg name).
+	consoleSSE.eventCh <- ConsoleEvent{
+		SessionID:  "test-sid-unknown-hid",
+		Hid:        "totally.unknown.hid.click",
+		Payload:    map[string]any{"hid": "totally.unknown.hid.click"},
+		ReceivedAt: time.Now(),
+	}
+
+	time.Sleep(200 * time.Millisecond)
+	if got := atomic.LoadInt32(&f.updateCallCount); got != 0 {
+		t.Fatalf("Update should NOT be called on unknown hid + no fallback: got count=%d", got)
+	}
+}
+
+// TestConsoleLoop_RenderUpdatesSessionHandlers verifies that each
+// render refreshes the session's handlers map. PR9-E contract: the
+// renderer's handlers output replaces sess.handlers, so the next
+// click on a hid produced by the new render resolves correctly.
+func TestConsoleLoop_RenderUpdatesSessionHandlers(t *testing.T) {
+	resetConsoleLoop(t)
+	consoleSSE.mu.Lock()
+	consoleSSE.eventCh = make(chan ConsoleEvent, 16)
+	consoleSSE.bufferSize = 16
+	consoleSSE.registered.Store(true)
+	consoleSSE.mu.Unlock()
+
+	// View returns a click-bound div whose Msg is SkyADT{SkyName:"Inc"}.
+	// After one render, sess.handlers should contain exactly one entry
+	// mapping the rendered element's hid to that Msg.
+	clickMsg := SkyADT{SkyName: "Inc"}
+	onMsg := SkyADT{SkyName: "OnMsg", Fields: []any{"click", clickMsg}}
+	eventAttr := SkyADT{SkyName: "EventAttr", Fields: []any{onMsg}}
+	textChild := SkyADT{SkyName: "HText", Fields: []any{"Click"}}
+	viewHTML := SkyADT{SkyName: "HElement", Fields: []any{
+		"div",
+		[]any{eventAttr},
+		[]any{textChild},
+	}}
+	f := &fakeConsoleHooks{
+		model:    0,
+		viewHTML: viewHTML,
+		initCmd:  Cmd_none(),
+	}
+	h := f.hooks()
+	// Custom decoder so a Tick name routes to Inc — keeps test
+	// independent of LookupAdtTag.
+	h.DecodeMsg = func(env map[string]any) (any, bool) {
+		name, _ := env["msg"].(string)
+		if name == "Tick" {
+			return SkyADT{SkyName: "Inc"}, true
+		}
+		return nil, false
+	}
+	RegisterConsoleAppHooks(h)
+	StartConsoleUpdateLoop()
+	defer ResetConsoleLoopStateForTesting()
+
+	const sid = "test-sid-handlers-refresh"
+	consoleSSE.eventCh <- ConsoleEvent{
+		SessionID:  sid,
+		Payload:    map[string]any{"msg": "Tick"},
+		ReceivedAt: time.Now(),
+	}
+
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if atomic.LoadInt32(&f.updateCallCount) >= 1 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	sess := consoleLoopGetSession(sid)
+	if sess == nil {
+		t.Fatalf("session not created")
+	}
+	sess.mu.Lock()
+	handlers := sess.handlers
+	sess.mu.Unlock()
+	if len(handlers) != 1 {
+		t.Fatalf("handlers after render: got %d entries, want 1 (handlers=%v)", len(handlers), handlers)
+	}
+}
+
+// containsSubstr is defined earlier in this file (PR3/PR8 SSE-broadcast
+// tests). PR9 reuses it.
