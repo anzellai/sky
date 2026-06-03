@@ -297,20 +297,64 @@ cleaner architecture.
 | PR | What | Status | Risk |
 |---|---|---|---|
 | PR10-A | Per-app `cookieName` + `skyIDPrefix` scaffolding | ✅ Landed at `b9654140` | Low |
-| PR10-B | Extract `liveAppMountCore` from `liveAppRun` | Pending | Medium — touches a 340-line function |
-| PR10-C | Add `MountLiveSubAppInProcess` primitive + tests | Pending | Low (builds on B) |
-| PR10-D | Telemetry namespace context propagation | Pending | Medium — needs Sky stdlib `Log.*` / `Trace.*` to read context |
-| PR10-E | console_app registers as Sky.Live cfg | Pending | Medium — type-shape mapping from typed Go funcs to Sky cfg map |
-| PR10-F | `MountEmbeddedConsole` uses `MountLiveSubAppInProcess` | Pending | High — Playwright must verify |
-| PR10-G | Delete parallel infra (console_loop, hooks, sse stubs, client_js) | Pending | Low (after F is green) |
-| PR10-H | `docs/v0.16.x-console/TELEMETRY_FLOW.md` | Pending | Low |
-| PR10-I | `examples/34-multi-tier-console/` showcase | Pending | Low |
-| PR10-J | Playwright verification: tab clicks + namespace filters on the showcase | Pending | **Hard gate** |
+| PR10-B | Extract `liveAppMountCore` from `liveAppRun` | ✅ Landed (subsumed into PR10-C — `newLiveAppFromCfg` + `registerSubAppRoutes` are the extracted halves) | Medium |
+| PR10-C | Add `MountLiveSubAppInProcess` primitive + tests | ✅ Landed at `efa26137` — 11 regression tests green | Low |
+| PR10-D | Telemetry namespace context propagation | ✅ Landed at `efa26137` — middleware wraps `ObservabilityMiddleware`, namespace flows through ctx | Medium |
+| PR10-E | console_app registers as Sky.Live cfg | ⏸ **Deferred to v0.16.2** (see below) | High |
+| PR10-F | `MountEmbeddedConsole` uses `MountLiveSubAppInProcess` | ⏸ **Deferred to v0.16.2** | High |
+| PR10-G | Delete parallel infra (console_loop, hooks, sse stubs, client_js) | ⏸ **Deferred to v0.16.2** (after F) | Low |
+| PR10-H | `docs/v0.16.x-console/TELEMETRY_FLOW.md` | ✅ Landed at `68cc04ab` | Low |
+| PR10-I | `examples/34-multi-tier-console/` showcase | ✅ Landed at `68cc04ab` — 4 logical tiers in one binary, console aggregates per-namespace | Low |
+| PR10-J | Playwright verification: tab clicks + namespace filters on the showcase | ✅ Landed at `68cc04ab` — 13 PASS assertions; legacy console-click-test.mjs still green | **Hard gate met** |
 
-Each PR has its own commit + Playwright/test gate. PR10-F is the
-risk concentration — if Playwright breaks after F, rollback is to PR10-E
-state which is still functional (parallel infra remains until G deletes
-it).
+### Why E/F/G defer to v0.16.2
+
+After landing PR10-B/C/D, the audit of `liveAppRun`'s setup
+sequence surfaced FOUR process-global hooks that the current parallel
+console infra entangles non-trivially:
+
+1. `SetConsoleAuthCallback(app.consoleAuth)` — single-app slot in
+   `console_auth.go`; the console-as-Sky.Live path needs its own
+   `consoleAuth` field which the sub-app's cfg shape doesn't carry.
+2. `registerProcessBroker(app)` — `Std.PubSub.publish` reaches THE
+   process-global broker; the sub-app shouldn't overwrite the host's.
+   Already "last writer wins" tolerant, but a console-as-sub-app
+   would currently STOMP the host's broker since the console mount
+   runs DURING `liveAppRun` (between fields being populated).
+3. `os.Setenv("SKY_PARENT_URL", ...)` — the console's `init_` reads
+   this from env; moving init to inside `MountLiveSubAppInProcess`
+   would re-trigger the env seed for every sub-app boot.
+4. CSRF middleware integration — the console currently uses its own
+   isolated SSE channel + POST endpoint at `/_sky/console/_event`
+   (PR3 isolation). Routing through canonical Sky.Live `/_sky/event`
+   would re-introduce the cookie-vs-CSRF interaction that PR3 cleanly
+   separated.
+
+The v0.16.1 in-process primitive ships TODAY because the
+multi-tier-example use case + telemetry namespace propagation are
+unambiguously additive — neither touches the entangled hooks.
+
+The console-as-Sky.Live refactor (E/F/G) requires its OWN cycle to:
+- Decompose the four hooks into clean injection points (each
+  hook gets a per-app capability rather than a process global)
+- Add a Sky cfg→Go bridge so console_app's typed hooks can satisfy
+  `Field(cfg, "Init")` without losing static typing
+- Run the migration in the same cycle that v0.16.2's `sky console serve`
+  hub mode lands, which ALSO needs a unified console source
+
+Splitting v0.16.2 into "(a) deferred E/F/G + (b) hub binary" gives the
+console exactly ONE refactor instead of TWO — and the user-facing
+multi-tier example pattern is the same in both worlds because
+`MountLiveSubAppInProcess` is already the public primitive.
+
+### Acceptance criteria status (v0.16.1)
+
+1. ✅ `go test ./rt/...` green
+2. ⏳ `cabal test` — pending (run before push to main)
+3. ✅ `examples/34-multi-tier-console/` builds + Playwright green
+4. ⏳ sky-lang.org production canary — pending (separate redeploy step)
+5. ✅ `TELEMETRY_FLOW.md` covers 4 topologies with diagrams + tested example
+6. ⏸ Console source unification — moves to v0.16.2 per the rationale above
 
 ## Backwards compatibility
 

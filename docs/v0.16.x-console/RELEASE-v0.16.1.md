@@ -81,3 +81,60 @@ These were scoped OUT of v0.16.1 per the audit:
 ## SkyDeploy bump
 
 After v0.16.1 tag: `SKY_VERSION` bump from `0.16.0` → `0.16.1` across the five Dockerfile refs in `~/works/playground/skydeploy/`. Tracked as task #433.
+
+## PR10 — `MountLiveSubAppInProcess` primitive + telemetry namespace foundation
+
+Landed 2026-06-03. Two atomic commits:
+
+- `efa26137` — `feat(rt): MountLiveSubAppInProcess + service.namespace propagation (PR10-B/C/D)`
+- `68cc04ab` — `docs(v0.16.x-console): TELEMETRY_FLOW.md + examples/34-multi-tier-console (PR10-H/I/J)`
+
+### What PR10 ships
+
+1. **`rt.MountLiveSubAppInProcess(parentMux, prefix, cfg)`** — new
+   public primitive at `runtime-go/rt/subapp_inprocess.go`. Mounts a
+   second Sky.Live app on the parent's mux under a path prefix, with
+   its own session map / sky-id namespace / broker. Backed by
+   11 regression tests covering sanitisation, registry shape,
+   longest-prefix matching, double-mount panic, and zero-cost in
+   the empty-registry case.
+
+2. **`service.namespace` propagation middleware** —
+   `runtime-go/rt/telemetry_namespace.go` adds `WithSubAppNamespace`
+   (wired into `ObservabilityMiddleware`) that stamps every request
+   context with the matching sub-app's prefix as a namespace label.
+   Foundation for per-app filtering in the console UI.
+
+3. **`docs/v0.16.x-console/TELEMETRY_FLOW.md`** — design doc with
+   ASCII diagrams for the four telemetry topologies (single-process
+   host, single-process nested sub-apps, fork+exec MountSubApp,
+   distributed hub) + cookie/sky-id namespace decisions + privacy-mode
+   fallback.
+
+4. **`examples/34-multi-tier-console/`** — one Sky.Live binary with
+   four logical tiers (host / billing / jobs / auth) each emitting
+   `service.namespace`-tagged logs. Console aggregates all four into
+   one pane. Playwright e2e (13 PASS assertions, ALL GREEN).
+
+### What PR10 explicitly defers to v0.16.2
+
+PR10-E/F/G (refactoring the inline console itself to use
+`MountLiveSubAppInProcess` and deleting the parallel
+`console_loop.go` / `console_sse.go` / `console_app_hooks.go`
+~1750 LOC) deferred. The console's current parallel infra
+entangles four process-global hooks (consoleAuth slot, processBroker,
+SKY_PARENT_URL env seed, CSRF-vs-isolated-SSE separation) that need
+their own decomposition cycle. Per the RFC's "Why E/F/G defer"
+section, the cleanest landing site is v0.16.2 alongside the
+hub-mode console source unification.
+
+### Acceptance criteria
+
+| Criterion | Status |
+|---|---|
+| `go test ./rt/...` green | ✅ |
+| `examples/34-multi-tier-console/` builds + Playwright green | ✅ |
+| `docs/v0.16.x-console/TELEMETRY_FLOW.md` 4-topology design | ✅ |
+| Existing `console-click-test.mjs` against examples/09 still green | ✅ |
+| `cabal test` clean | pending (run before tag) |
+| sky-lang.org canary | pending (separate redeploy) |
