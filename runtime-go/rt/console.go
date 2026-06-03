@@ -295,7 +295,7 @@ func MountEmbeddedConsole(mux *http.ServeMux) {
 	// unit (we never end up with a transport plane but no UI,
 	// or vice versa).
 	if MountConsoleSSE(mux) {
-		fmt.Fprintln(os.Stderr, "[sky.console] inline console SSE channel mounted at /_sky/console/_sse")
+		fmt.Fprintln(os.Stderr, "[sky.console] inline console SSE channel mounted at /_sky/console/_sse + /_sky/console/_event")
 	}
 	fmt.Fprintf(os.Stderr, "[sky.console] inline console mounted at /_sky/console mode=%s\n", describeConsoleAuthMode(st.mode))
 }

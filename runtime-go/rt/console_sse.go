@@ -10,11 +10,10 @@ package rt
 //
 // v0.16.2 (task #429) plumbs the bundled console's update loop
 // into an SSE pump so the UI ticks. v0.16.1 lands the WIRE
-// SURFACE only — /_sky/console/_sse — as an ISOLATED transport
-// plane that does NOT cross-contaminate with the host app's
-// /_sky/sse session map / queue / SSE buffer / drop counter.
-// The companion /_sky/console/_event POST endpoint follows in
-// commit 2.
+// SURFACE only — /_sky/console/_sse + /_sky/console/_event — as
+// an ISOLATED transport plane that does NOT cross-contaminate
+// with the host app's /_sky/sse + /_sky/event session map /
+// queue / SSE buffer / drop counter.
 //
 // Why isolate?
 //
@@ -70,8 +69,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math/rand"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -169,9 +170,6 @@ var consoleSSECookieMaxAge = consoleAuthCookieV2MaxAge
 // every request is run through `evaluateConsoleAuth` first;
 // unauth requests get the standard 401 + login form response from
 // that helper.
-//
-// Commit 1 mounts /_sky/console/_sse only; commit 2 adds the POST
-// /_sky/console/_event endpoint.
 func MountConsoleSSE(mux *http.ServeMux) bool {
 	if mux == nil {
 		return false
@@ -201,6 +199,7 @@ func MountConsoleSSE(mux *http.ServeMux) bool {
 	consoleSSE.mu.Unlock()
 
 	safeMount(mux, "/_sky/console/_sse", handleConsoleSSE)
+	safeMount(mux, "/_sky/console/_event", handleConsoleEvent)
 
 	consoleSSE.registered.Store(true)
 	consoleSSEHealthy.Store(true)
@@ -334,6 +333,101 @@ func handleConsoleSSE(w http.ResponseWriter, r *http.Request) {
 // can dial it down to milliseconds; production callers leave it
 // at 15 s.
 var consoleSSEHeartbeatInterval = 15 * time.Second
+
+// ──── POST event handler ─────────────────────────────────────────
+
+// consoleEventMaxBody caps inbound POST bodies. The inline
+// console's wire events are tiny (single click / input / submit
+// envelopes); anything larger is malformed or attack traffic.
+// Reject with 413 so the client doesn't silently truncate.
+const consoleEventMaxBody = 1 << 20 // 1 MiB
+
+// handleConsoleEvent serves the isolated /_sky/console/_event
+// channel. POST-only; auth-gated; non-blocking enqueue into
+// ConsoleEventChannel. CSRF is NOT required — Same-Site=Strict
+// + __Host- prefix + HttpOnly auth cookie give the equivalent
+// guarantee (per AUDIT-v0.16.1.md §S1 + csrf_middleware.go's
+// isObservabilityPath bypass).
+//
+// v0.16.1 contract: the POST returns 200 + a minimal queued
+// envelope as soon as the event lands in the channel. The
+// channel reader (v0.16.2 console_app update loop) acks the
+// dispatch via a subsequent SSE patch frame — the POST does NOT
+// wait for the Msg to traverse update + view.
+func handleConsoleEvent(w http.ResponseWriter, r *http.Request) {
+	if !evaluateConsoleAuth(w, r) {
+		return
+	}
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", "POST")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	body, err := io.ReadAll(io.LimitReader(r.Body, consoleEventMaxBody+1))
+	if err != nil {
+		http.Error(w, "read error", http.StatusBadRequest)
+		return
+	}
+	if len(body) > consoleEventMaxBody {
+		http.Error(w, "body too large", http.StatusRequestEntityTooLarge)
+		return
+	}
+
+	sid := consoleSSESessionID(r, w)
+	payload := map[string]any{}
+	if len(body) > 0 {
+		if err := json.Unmarshal(body, &payload); err != nil {
+			http.Error(w, "bad json", http.StatusBadRequest)
+			return
+		}
+	}
+
+	headers := map[string]string{}
+	for k, v := range r.Header {
+		if len(v) > 0 {
+			headers[strings.ToLower(k)] = v[0]
+		}
+	}
+	evt := ConsoleEvent{
+		SessionID:  sid,
+		Payload:    payload,
+		Headers:    headers,
+		ReceivedAt: time.Now(),
+	}
+
+	// Non-blocking enqueue. The eventCh capacity is 256 (set in
+	// MountConsoleSSE) which is well above the host's per-session
+	// queueMax — console traffic is admin-only low volume. If we
+	// hit this cap something is misbehaving and dropping with a
+	// 503 + counter is the right shape (operator sees the metric,
+	// can scale the v0.16.2 update loop's drain rate).
+	select {
+	case consoleSSE.eventCh <- evt:
+	default:
+		recordConsoleEventDrop(sid)
+		http.Error(w, "event channel full", http.StatusServiceUnavailable)
+		return
+	}
+
+	// 200 OK with a minimal envelope. v0.16.2 widens this to
+	// carry the dispatch sequence number + ack list once the
+	// update loop is plumbed in.
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Sky-Console-SSE", "1")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(`{"status":"queued"}`))
+}
+
+// recordConsoleEventDrop increments
+// sky_console_event_drops_total{session=<sid>}. Rises when the
+// POST channel fills + we 503. Operators use it as a signal that
+// the v0.16.2 update loop's drain rate is starving.
+func recordConsoleEventDrop(sid string) {
+	telemetry.Default().Inc("sky_console_event_drops_total", map[string]string{
+		"session": sid,
+	})
+}
 
 // ──── Session helpers ────────────────────────────────────────────
 
