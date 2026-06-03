@@ -234,9 +234,15 @@ NOT to do without explicit user ask:
 - Wiping `.skycache/ffi/` in `examples/13-skyshop/` — 15+ min of
   Stripe SDK introspection on next sweep.
 
-Periodic hygiene (set a Calendar reminder if you run sweeps
-daily): `go clean -cache` weekly. Worktree dir cleanup after EVERY
-agent cherry-pick.
+**Automatic hygiene** (added 2026-06-03 PR13). `scripts/build.sh` AND
+`scripts/example-sweep.sh` end with a 5-GB-threshold check on
+`~/Library/Caches/go-build`; over-threshold triggers `go clean -cache`
+automatically. So after any compiler rebuild or example sweep the
+cache caps at ~5 GB before the next operation can re-bloat it. Periodic
+manual hygiene is no longer required for normal workflows. The recipe
+in `## Disk hygiene` above is still the right escape hatch when you
+need to reclaim aggressively (e.g., before spawning many agents).
+Worktree dir cleanup after EVERY agent cherry-pick remains manual.
 
 When the host shows < 5 GB free, ABORT the next agent spawn until
 cleanup completes — an agent that runs into ENOSPC mid-build leaves

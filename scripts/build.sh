@@ -131,5 +131,18 @@ if [[ $RUN_SWEEP -eq 1 ]]; then
     fi
 fi
 
+# ─── post-build hygiene: keep go-build cache from growing without bound ───
+# CLAUDE.md §6 — Sky compiler rebuilds + example sweeps accumulate multi-GB
+# go-build entries that auto-prune doesn't catch on macOS. Reclaim
+# aggressively when cache exceeds 5 GB. Safe: fresh builds always work,
+# next build adds ~1-2 min to repopulate hot paths.
+cache_kb=$(du -sk "${HOME}/Library/Caches/go-build" 2>/dev/null | awk '{print $1}')
+cache_kb=${cache_kb:-0}
+if [[ "$cache_kb" -gt 5242880 ]]; then
+    cache_gb=$(( cache_kb / 1048576 ))
+    say "go-build cache is ${cache_gb} GB — running 'go clean -cache'"
+    go clean -cache 2>/dev/null || true
+fi
+
 say "done. binaries:"
 printf '  %s\n' "$ROOT/sky-out/sky" "$ROOT/bin/sky-ffi-inspect"

@@ -358,3 +358,15 @@ mirror_back_to_intree
 if [[ -n "$WORKDIR" ]]; then
     echo "  [workdir] mirrored builds back to $ROOT/examples/"
 fi
+
+# ─── post-sweep hygiene: keep go-build cache from growing without bound ───
+# CLAUDE.md §6 — a full sweep of 30+ examples adds 5-15 GB of incremental
+# go-build entries that auto-prune doesn't catch on macOS. Reclaim
+# aggressively when cache exceeds 5 GB. Safe: fresh builds always work.
+cache_kb=$(du -sk "${HOME}/Library/Caches/go-build" 2>/dev/null | awk '{print $1}')
+cache_kb=${cache_kb:-0}
+if [[ "$cache_kb" -gt 5242880 ]]; then
+    cache_gb=$(( cache_kb / 1048576 ))
+    echo "  [hygiene] go-build cache is ${cache_gb} GB — running 'go clean -cache'"
+    go clean -cache 2>/dev/null || true
+fi
