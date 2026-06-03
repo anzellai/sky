@@ -154,6 +154,20 @@ func handleConsoleRoot(w http.ResponseWriter, r *http.Request) {
 	// rendered produces a self-contained `<div>` tree with inline
 	// styles. We add the doctype + html/head/body shell here for
 	// browser compatibility.
+	//
+	// v0.16.1 PR 8 — bundle the inline client-side script that:
+	//   1. Opens an EventSource on /_sky/console/_sse and applies
+	//      the SSE-delivered `event: patches` / `event: patch`
+	//      frames to the rendered DOM.
+	//   2. Captures gestures on the [data-sky-console] subtree and
+	//      POSTs {msg, args} envelopes to /_sky/console/_event so
+	//      console_loop.go (the rt-side update loop) can fold them
+	//      through hooks.Update + diff + broadcast.
+	//
+	// Why the wrapping `<div data-sky-console>`: a host app may run
+	// its own Sky.Live JS on the same page. Scoping our gesture
+	// listeners to elements inside `[data-sky-console]` keeps the
+	// two click handlers cleanly separated.
 	fmt.Fprintf(w,
 		"<!DOCTYPE html>\n"+
 			"<html lang=\"en\">\n"+
@@ -164,9 +178,11 @@ func handleConsoleRoot(w http.ResponseWriter, r *http.Request) {
 			"  <title>Sky Console</title>\n"+
 			"  <style>html,body{margin:0;padding:0;background:#0f1115;color:#e4e6eb;font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;}</style>\n"+
 			"</head>\n"+
-			"<body>%s</body>\n"+
+			"<body><div id=\"sky-console-root\" data-sky-console=\"1\">%s</div>\n"+
+			"<script>%s</script>\n"+
+			"</body>\n"+
 			"</html>\n",
-		body)
+		body, consoleClientJS())
 }
 
 // normaliseBasePath mirrors rt.normaliseBasePath so callers don't need
