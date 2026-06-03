@@ -206,10 +206,50 @@ func InitTracer(cfg TracerConfig) error {
 		return nil
 	}
 
-	// Build the OTLP/HTTP exporter. We default to HTTP not gRPC
-	// because HTTP is firewall-friendly + most managed collectors
-	// expose it. gRPC users can switch via OTEL_EXPORTER_OTLP_PROTOCOL
-	// (handled by the SDK env-var reader).
+	// Build the OTLP/HTTP exporter. Sky.Live ships HTTP/protobuf ONLY —
+	// we deliberately do NOT link otlptracegrpc (saves ~4 MB binary).
+	// If the user sets OTEL_EXPORTER_OTLP_PROTOCOL=grpc or points at
+	// port 4317 (the well-known gRPC port), the export will fail
+	// repeatedly with "malformed HTTP response" because the collector
+	// is speaking HTTP/2 framed gRPC, not HTTP/1.x.  In v0.16.1 PR12
+	// we surface a clear startup warning rather than letting the retry
+	// loop silently burn CPU on small VMs.
+	protocol := strings.ToLower(strings.TrimSpace(os.Getenv("OTEL_EXPORTER_OTLP_PROTOCOL")))
+	if protocol == "grpc" {
+		fmt.Fprintf(os.Stderr,
+			"[sky.otel] WARN OTEL_EXPORTER_OTLP_PROTOCOL=grpc, but this Sky build only ships HTTP/protobuf. "+
+				"Set OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf and point OTEL_EXPORTER_OTLP_ENDPOINT at the "+
+				"collector's HTTP port (typically :4318). External tracing export DISABLED for this run.\n")
+		// Don't init the exporter — empty endpoint config path picks
+		// up the no-export branch below.
+		cfg.Endpoint = ""
+	}
+	if cfg.Endpoint != "" && (strings.Contains(cfg.Endpoint, ":4317") || strings.HasSuffix(cfg.Endpoint, "4317")) {
+		fmt.Fprintf(os.Stderr,
+			"[sky.otel] WARN OTEL_EXPORTER_OTLP_ENDPOINT=%s targets port 4317 (the OTLP/gRPC port) but Sky.Live "+
+				"only ships HTTP/protobuf. Point at the collector's HTTP port (typically :4318) or external tracing "+
+				"will retry-fail and waste CPU. External tracing export DISABLED for this run.\n",
+			cfg.Endpoint)
+		cfg.Endpoint = ""
+	}
+	if cfg.Endpoint == "" {
+		// Either originally empty, or one of the guards above tripped.
+		// Wire the no-export TracerProvider (extra processors only) so
+		// the in-process span ring still feeds the Sky Console.
+		if len(extraProcessors) > 0 {
+			opts := []sdktrace.TracerProviderOption{}
+			for _, p := range extraProcessors {
+				opts = append(opts, sdktrace.WithSpanProcessor(p))
+			}
+			tp := sdktrace.NewTracerProvider(opts...)
+			otel.SetTracerProvider(tp)
+			tracerProvider = tp
+			currentTracer = tp.Tracer("sky-app")
+		}
+		currentCfg = cfg
+		tracerInited = true
+		return nil
+	}
 	exporterOpts := []otlptracehttp.Option{
 		otlptracehttp.WithEndpoint(cleanEndpoint(cfg.Endpoint)),
 	}
@@ -219,6 +259,14 @@ func InitTracer(cfg TracerConfig) error {
 	if len(cfg.Headers) > 0 {
 		exporterOpts = append(exporterOpts, otlptracehttp.WithHeaders(cfg.Headers))
 	}
+	// Cap retry budget so a misconfigured endpoint can't peg the CPU:
+	// max 30 seconds of retries per batch, then drop the batch.
+	exporterOpts = append(exporterOpts, otlptracehttp.WithRetry(otlptracehttp.RetryConfig{
+		Enabled:         true,
+		InitialInterval: 1 * time.Second,
+		MaxInterval:     5 * time.Second,
+		MaxElapsedTime:  30 * time.Second,
+	}))
 	exp, err := otlptrace.New(context.Background(),
 		otlptracehttp.NewClient(exporterOpts...))
 	if err != nil {
