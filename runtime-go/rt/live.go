@@ -3082,6 +3082,25 @@ func liveAppRun(cfg any) any {
 	// inside the `app`-mode gate. nil → token-mode / production-mode
 	// fallback per evaluateConsoleAuth.
 	SetConsoleAuthCallback(app.consoleAuth)
+	// v0.16.1 PR7 — seed SKY_PARENT_URL so the inline console_app's
+	// init_ reads OUR OWN listener's loopback when it builds the
+	// initial Model. The /_sky/console/api/* endpoints serve real
+	// telemetry via MountConsoleEndpoints (mounted later as part of
+	// MountObservabilityEndpoints). Without this, init_ falls back to
+	// `State_mockOverview()` + `State_mockLogs()` and the deployed
+	// console UI renders "Standalone mode — no parent URL configured"
+	// with all-zero stats.
+	//
+	// SAFE: StartPushExporter gates on BOTH SKY_PARENT_URL +
+	// SKY_LIVE_NAMESPACE being set. We only seed SKY_PARENT_URL, so
+	// the push-exporter stays a no-op for the parent app (only
+	// MountSubApp children set both).
+	//
+	// Only seed when UNSET — never overwrite a user-supplied value
+	// (legacy v0.15 subprocess apps may still set this in env).
+	if os.Getenv("SKY_PARENT_URL") == "" {
+		os.Setenv("SKY_PARENT_URL", fmt.Sprintf("http://127.0.0.1:%d", port))
+	}
 	MountEmbeddedConsole(mux)
 	// If THIS process is a sub-app (env vars from MountSubApp set),
 	// kick the push exporter — Log.* / counter / span writes flow

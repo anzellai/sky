@@ -7628,6 +7628,15 @@ func Server_listen(port any, routes any) any {
 	// set → skipped; SKY_CONSOLE_EMBED=off → skipped). No port
 	// argument needed — handler runs on this mux directly.
 	_ = p
+	// v0.16.1 PR7 — seed SKY_PARENT_URL so the inline console_app's
+	// init_ reads OUR OWN listener's loopback when it builds the
+	// initial Model. Mirror of the liveAppRun setup; see that path's
+	// comment for the full rationale. Same safety: StartPushExporter
+	// needs BOTH SKY_PARENT_URL + SKY_LIVE_NAMESPACE — we only seed
+	// the URL, so push-export stays inactive for standalone apps.
+	if os.Getenv("SKY_PARENT_URL") == "" {
+		os.Setenv("SKY_PARENT_URL", fmt.Sprintf("http://127.0.0.1:%d", p))
+	}
 	MountEmbeddedConsole(mux)
 	MountObservabilityEndpoints(mux)
 	// v0.16.1 PR 2 — boot-time mount-precedence invariant. When the
