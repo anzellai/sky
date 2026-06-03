@@ -105,8 +105,13 @@ func TestSetConsoleV2Cookie_AttributesAreCorrect(t *testing.T) {
 			break
 		}
 	}
-	if !strings.Contains(raw, "Path=/_sky/console") {
-		t.Errorf("cookie Path: raw header does not contain Path=/_sky/console: %q", raw)
+	// Cookie Path is "/" per RFC 6265 §5.2.4 — __Host- prefix
+	// REQUIRES Path=/ (commit 61cf4c3c, v0.16.1 Item 1). A
+	// non-"/" path on a __Host- cookie is rejected by browsers and
+	// causes the cookie to silently never persist.
+	if !strings.Contains(raw, "Path=/;") && !strings.HasSuffix(strings.TrimSpace(raw), "Path=/") {
+		// Allow either `Path=/;` (followed by more attrs) or trailing `Path=/`.
+		t.Errorf("cookie Path: raw header does not contain Path=/ (RFC: __Host- requires Path=/): %q", raw)
 	}
 	wantMaxAge := fmt.Sprintf("Max-Age=%d", int(consoleAuthCookieV2MaxAge.Seconds()))
 	if !strings.Contains(raw, wantMaxAge) {
