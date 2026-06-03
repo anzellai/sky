@@ -208,6 +208,44 @@ func HtmlRender(node any) string {
 	return renderVNode(HtmlToVNode(node), map[string]any{})
 }
 
+// HtmlRenderWithHandlers serialises a Sky `Html` ADT to an HTML string
+// AND returns the per-hid typed-Msg lookup table populated by the
+// internal renderer. Caller-owned alternative to HtmlRender for paths
+// that need to dispatch hid-keyed events (e.g. the inline Sky Console
+// mount in console_app/mount.go).
+//
+// idPrefix is the stable namespace anchor for assignSkyIDs. Use "r"
+// to match the host Sky.Live convention; the console plane MAY pick
+// a different prefix ("console") so its sky-ids never collide with
+// the host's when both surfaces run in the same page (the console
+// scopes click capture to [data-sky-console] so this only matters
+// for diagnostic clarity).
+//
+// The function ALSO runs the Std.Ui style-marker rewriters
+// (applyStyleInjections — media-query / pseudo-class / transition /
+// animation hoisting) so the emitted HTML matches what Sky.Live's
+// commitRender path emits. Without this, dynamic styles wouldn't
+// hydrate on the inline mount's first paint.
+//
+// Wire shape for the returned map:
+//
+//	"<sky-id>.<event>" → typed Msg (Sky-side Msg constructor value)
+//
+// matches the host's `data-sky-hid="<id>"` attribute the client JS
+// reads. dispatchConsoleMsg's hid-keyed lookup consumes this map to
+// resolve a Msg without re-deriving it from the wire payload.
+func HtmlRenderWithHandlers(node any, idPrefix string) (string, map[string]any) {
+	if idPrefix == "" {
+		idPrefix = "r"
+	}
+	handlers := map[string]any{}
+	vn := HtmlToVNode(node)
+	assignSkyIDs(&vn, idPrefix)
+	applyStyleInjections(&vn)
+	body := renderVNode(vn, handlers)
+	return body, handlers
+}
+
 func init() {
 	RegisterPure("htmlRender", func(args []any) any {
 		if len(args) < 1 {
