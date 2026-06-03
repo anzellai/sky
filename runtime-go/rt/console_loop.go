@@ -62,10 +62,11 @@ import (
 type consoleLoopSession struct {
 	sid      string
 	mu       sync.Mutex
-	model    any    // opaque to rt; State_Model_R inside console_app
-	prevTree *VNode // last rendered + assigned VNode for diff baseline
-	prevBody string // raw HTML — full-snapshot fallback when prev is nil
-	seq      int64  // monotonic frame seq for this session
+	model    any            // opaque to rt; State_Model_R inside console_app
+	prevTree *VNode         // last rendered + assigned VNode for diff baseline
+	prevBody string         // raw HTML — full-snapshot fallback when prev is nil
+	handlers map[string]any // per-hid typed Msg lookup; populated per render
+	seq      int64          // monotonic frame seq for this session
 	closed   atomic.Bool
 }
 
@@ -169,6 +170,23 @@ func runConsoleUpdateLoop() {
 // handleConsoleEventDispatch is the per-event entry into the TEA
 // loop. Defers panic recovery so a bad Msg shape doesn't kill the
 // goroutine; logs + drops the event instead.
+//
+// v0.16.1 PR9 dispatch order:
+//
+//  1. **Hid lookup (preferred)**. If `ev.Hid` is set AND the session's
+//     handlers map (populated at last render) has a matching entry,
+//     use that typed Msg directly. No wire-decode required — the
+//     Msg is the value the renderer originally captured for that
+//     element + event. Bypasses the brittle "name + args" wire
+//     shape entirely.
+//  2. **Name+args wire fallback**. For admin-tool smoke probes
+//     posting `{msg, args}` without a hid (and as a fallback when
+//     the hid is unknown — e.g. the user clicked an element that
+//     was rendered in a previous frame but no longer exists in the
+//     current render), drop into decodeConsoleEventMsg.
+//
+// The session is resolved BEFORE hid lookup so we have access to
+// the handlers map.
 func handleConsoleEventDispatch(ev ConsoleEvent) {
 	defer func() {
 		if rec := recover(); rec != nil {
@@ -179,12 +197,38 @@ func handleConsoleEventDispatch(ev ConsoleEvent) {
 	if !ok {
 		return
 	}
+	sess := getOrCreateConsoleLoopSession(ev.SessionID, hooks)
+
+	if ev.Hid != "" {
+		if msg, found := lookupHandlerMsg(sess, ev.Hid); found {
+			dispatchConsoleMsg(sess, msg, hooks)
+			return
+		}
+		// Unknown hid — log + fall through to the name+args fallback
+		// (admin smoke probes may post a hid AND name). If the
+		// fallback also fails, the event is dropped silently.
+		fmt.Printf("[sky.console] hid %q not in session handlers (sid=%s); trying name fallback\n", ev.Hid, ev.SessionID)
+	}
+
 	msg, decoded := decodeConsoleEventMsg(ev, hooks)
 	if !decoded {
 		return
 	}
-	sess := getOrCreateConsoleLoopSession(ev.SessionID, hooks)
 	dispatchConsoleMsg(sess, msg, hooks)
+}
+
+// lookupHandlerMsg fetches the typed Msg for a hid under the session
+// lock. Returns (nil, false) when the hid isn't in the current
+// handlers map (e.g. the rendered tree shifted between client
+// observation and POST arrival).
+func lookupHandlerMsg(sess *consoleLoopSession, hid string) (any, bool) {
+	sess.mu.Lock()
+	defer sess.mu.Unlock()
+	if sess.handlers == nil {
+		return nil, false
+	}
+	msg, ok := sess.handlers[hid]
+	return msg, ok
 }
 
 // decodeConsoleEventMsg turns a wire envelope into a typed Msg value.
@@ -298,8 +342,16 @@ func dispatchConsoleMsg(sess *consoleLoopSession, msg any, hooks *ConsoleAppHook
 		sess.model = newModel
 		pendingCmd = cmd
 		// Render new view → VNode → diff against prev.
+		//
+		// v0.16.1 PR9: the renderer's handlers map MUST be captured
+		// (not discarded into a "dummy") so the next click on a
+		// hid-tagged element can resolve to its typed Msg. We swap
+		// it onto the session AFTER a successful render so a panic
+		// half-way through doesn't leave the session with a partial
+		// map that would later fail every hid lookup.
 		var newTree *VNode
 		var newBody string
+		var newHandlers map[string]any
 		func() {
 			defer func() {
 				if rec := recover(); rec != nil {
@@ -310,10 +362,11 @@ func dispatchConsoleMsg(sess *consoleLoopSession, msg any, hooks *ConsoleAppHook
 			vn := HtmlToVNode(htmlVal)
 			assignSkyIDs(&vn, "console")
 			applyStyleInjections(&vn)
-			dummyHandlers := map[string]any{}
-			body := renderVNode(vn, dummyHandlers)
+			handlers := map[string]any{}
+			body := renderVNode(vn, handlers)
 			newTree = &vn
 			newBody = body
+			newHandlers = handlers
 		}()
 		if newTree == nil {
 			// view panicked; bail without broadcasting a stale
@@ -324,6 +377,7 @@ func dispatchConsoleMsg(sess *consoleLoopSession, msg any, hooks *ConsoleAppHook
 		pendingFrame = buildConsoleSSEFrame(sess, newTree, newBody, seq)
 		sess.prevTree = newTree
 		sess.prevBody = newBody
+		sess.handlers = newHandlers
 	}()
 	if pendingFrame != nil {
 		ConsoleSSEBroadcast(pendingFrame)
@@ -462,6 +516,70 @@ func runConsolePerform(sess *consoleLoopSession, task, toMsg any, hooks *Console
 		return
 	}
 	dispatchConsoleMsg(sess, resultMsg, hooks)
+}
+
+// AssignSkyIDsForConsole exposes the package-internal assignSkyIDs
+// walker to console_app. Stamps every element node in the tree with
+// a stable "console.<path>" key so the renderer's hid output stays
+// consistent across the initial GET (mount.go) and subsequent
+// update-loop renders (dispatchConsoleMsg).
+//
+// The prefix MUST match the prefix used at render time. We use
+// "console" to keep the host's "r"-namespaced ids distinct so a
+// stray host-side click handler can't grab a console hid.
+func AssignSkyIDsForConsole(n *VNode) {
+	assignSkyIDs(n, "console")
+}
+
+// ApplyStyleInjectionsForConsole exposes the package-internal
+// applyStyleInjections walker to console_app so its initial-GET
+// render path produces the same hoisted-style HTML the update loop
+// emits. Without this, first-paint and subsequent renders would
+// differ on pseudo-class / animation / media-query trees and the
+// first diff would churn the entire DOM unnecessarily.
+func ApplyStyleInjectionsForConsole(n *VNode) {
+	applyStyleInjections(n)
+}
+
+// SeedConsoleLoopSession populates a freshly-minted session with the
+// model + rendered VNode + handlers map produced by an initial GET
+// to /_sky/console. Called from console_app/mount.go right after
+// `HtmlRenderWithHandlers` produces the first body — the session
+// then has everything it needs to:
+//
+//   - Resolve hid lookups for the first click (typed Msg available
+//     from the moment the page hits the browser, no re-init).
+//   - Diff subsequent renders against the body the browser already
+//     has (so PR9-E re-renders emit `event: patches` against the
+//     correct baseline rather than triggering a full-body replace
+//     on every interaction).
+//
+// Sid MUST be the same value the SSE channel cookie carries; mount.go
+// passes the cookie value through. If the session already exists
+// (e.g. the user reloads the page) the seed is treated as a NEW
+// initial snapshot — model + prevTree + handlers all replaced. This
+// is safe because the browser has just replaced its DOM with the new
+// body anyway.
+//
+// Safe to call before ConsoleAppHooks are registered (the loop will
+// pick the session up on first dispatch).
+func SeedConsoleLoopSession(sid string, model any, tree *VNode, body string, handlers map[string]any) {
+	if sid == "" {
+		return
+	}
+	consoleLoop.mu.Lock()
+	defer consoleLoop.mu.Unlock()
+	sess, ok := consoleLoop.sessions[sid]
+	if !ok {
+		sess = &consoleLoopSession{sid: sid}
+		consoleLoop.sessions[sid] = sess
+	}
+	sess.mu.Lock()
+	defer sess.mu.Unlock()
+	sess.model = model
+	sess.prevTree = tree
+	sess.prevBody = body
+	sess.handlers = handlers
 }
 
 // consoleLoopSessionCount returns the number of live sessions on the

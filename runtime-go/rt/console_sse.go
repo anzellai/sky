@@ -83,8 +83,17 @@ import (
 // ConsoleEvent is the wire shape of a console POST event. v0.16.2
 // will widen this — the channel exists as plumbing so the
 // surface is mechanically stable across the version boundary.
+//
+// v0.16.1 PR9: `Hid` carries the `data-sky-hid` attribute the client
+// JS reads off the clicked element ("<sky-id>.<event>"). When set,
+// the update loop resolves the typed Msg via the per-session
+// handlers map populated at last render — bypassing the brittle
+// name+args wire decode entirely. When empty, the loop falls back
+// to the legacy {msg, args} path (preserved for admin-tool smoke
+// probes that don't have a hid).
 type ConsoleEvent struct {
 	SessionID  string            `json:"sid"`
+	Hid        string            `json:"hid,omitempty"`
 	Payload    map[string]any    `json:"payload"`
 	Headers    map[string]string `json:"-"` // set server-side from request headers
 	ReceivedAt time.Time         `json:"-"`
@@ -389,6 +398,13 @@ func handleConsoleEvent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// v0.16.1 PR9: `hid` is the canonical wire field for hid-keyed
+	// dispatch ("<sky-id>.<event>" — see HtmlRenderWithHandlers).
+	// The client JS lifts it off the clicked element's data-sky-hid
+	// attribute. If absent the loop falls back to the {msg, args}
+	// shape; useful for admin-tool smoke probes.
+	hid, _ := payload["hid"].(string)
+
 	headers := map[string]string{}
 	for k, v := range r.Header {
 		if len(v) > 0 {
@@ -397,6 +413,7 @@ func handleConsoleEvent(w http.ResponseWriter, r *http.Request) {
 	}
 	evt := ConsoleEvent{
 		SessionID:  sid,
+		Hid:        hid,
 		Payload:    payload,
 		Headers:    headers,
 		ReceivedAt: time.Now(),
@@ -436,6 +453,23 @@ func recordConsoleEventDrop(sid string) {
 }
 
 // ──── Session helpers ────────────────────────────────────────────
+
+// ConsoleSSESessionID is the exported wrapper around the package-
+// internal session-ID minter. console_app's MountInlineConsole calls
+// this on the initial GET so it can pre-seed the update loop with
+// the rendered tree + handlers map under the same sid the SSE
+// channel + POST endpoint will later read off the cookie.
+//
+// Externally identical contract to consoleSSESessionID:
+//   - Reads `__Host-sky_console_sse` if present.
+//   - Otherwise mints a fresh 16-byte hex ID + writes Set-Cookie.
+//
+// w may be nil in test paths; production callers always pass the
+// real http.ResponseWriter so the cookie travels back to the
+// browser.
+func ConsoleSSESessionID(r *http.Request, w http.ResponseWriter) string {
+	return consoleSSESessionID(r, w)
+}
 
 // consoleSSESessionID reads `__Host-sky_console_sse` from the
 // request OR mints a new one + writes it via Set-Cookie.
