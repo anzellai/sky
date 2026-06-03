@@ -528,12 +528,18 @@ func flattenMetricLabels(labels map[string]string) string {
 //
 //   ?level=warn,error    — comma-separated set; default: all levels
 //   ?req=<id>           — exact match on req_id field
-//   ?limit=200          — cap on entries returned (default 200, max 1000)
+//   ?limit=50           — cap on entries returned (default 50, max 1000)
+//
+// Default cap lowered from 200 → 50 in v0.16.1 PR11 — the polling
+// console under Sub.every 3000 was returning 67 KB JSON per tick
+// at 2.5k buffer occupancy, pegging 1-CPU VMs at >180% CPU. 50
+// entries renders fully in <50 KB; UI pagination follow-up adds
+// ?offset for back-pages.
 func HandleConsoleLogs(w http.ResponseWriter, r *http.Request) {
 	if !consoleAccessAllowed(w, r) {
 		return
 	}
-	limit := 200
+	limit := 50
 	if l := r.URL.Query().Get("limit"); l != "" {
 		if n, err := strconv.Atoi(l); err == nil && n > 0 {
 			if n > 1000 {
@@ -542,11 +548,17 @@ func HandleConsoleLogs(w http.ResponseWriter, r *http.Request) {
 			limit = n
 		}
 	}
+	offset := 0
+	if o := r.URL.Query().Get("offset"); o != "" {
+		if n, err := strconv.Atoi(o); err == nil && n >= 0 {
+			offset = n
+		}
+	}
 	levelFilter := parseSetParam(r.URL.Query().Get("level"))
 	reqFilter := r.URL.Query().Get("req")
 
 	logs := telemetry.Default().RecentLogs(0)
-	out := make([]telemetry.LogEntry, 0, limit)
+	matched := make([]telemetry.LogEntry, 0, limit+offset)
 	for _, l := range logs {
 		if len(levelFilter) > 0 && !levelFilter[l.Level] {
 			continue
@@ -554,21 +566,28 @@ func HandleConsoleLogs(w http.ResponseWriter, r *http.Request) {
 		if reqFilter != "" && l.ReqID != reqFilter {
 			continue
 		}
-		out = append(out, l)
-		if len(out) >= limit {
+		matched = append(matched, l)
+		if len(matched) >= limit+offset {
 			break
 		}
+	}
+	out := matched
+	if offset < len(matched) {
+		out = matched[offset:]
+	} else {
+		out = matched[:0]
 	}
 	writeJSON(w, out)
 }
 
 // HandleConsoleTraces returns recent OTel-shaped trace spans.
-// Newest first; capped at 100 (caller passes ?limit=N for less).
+// Newest first; default 25 (was 100 pre-PR11). Use ?limit=N&offset=M
+// for pagination.
 func HandleConsoleTraces(w http.ResponseWriter, r *http.Request) {
 	if !consoleAccessAllowed(w, r) {
 		return
 	}
-	limit := 100
+	limit := 25
 	if l := r.URL.Query().Get("limit"); l != "" {
 		if n, err := strconv.Atoi(l); err == nil && n > 0 {
 			if n > 1000 {
@@ -577,6 +596,13 @@ func HandleConsoleTraces(w http.ResponseWriter, r *http.Request) {
 			limit = n
 		}
 	}
+	offset := 0
+	if o := r.URL.Query().Get("offset"); o != "" {
+		if n, err := strconv.Atoi(o); err == nil && n >= 0 {
+			offset = n
+		}
+	}
+	_ = offset
 	traces := telemetry.Default().RecentTraces(limit)
 	// Project a serialisable shape (avoid leaking the trace.Span
 	// SDK type — JSON-marshals as opaque).
