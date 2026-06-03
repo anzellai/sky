@@ -189,6 +189,16 @@ type HubExporter struct {
 	doneCh    chan struct{}
 	draining  atomic.Bool
 
+	// Durability (PR 5). The spool persists batches that haven't
+	// been acked by the hub. Attached via attachSpool; nil means
+	// no durability layer (memory-only). Writes happen in the
+	// drainer goroutine — never on the Submit hot path.
+	spoolMu         sync.RWMutex
+	spool           spool
+	spoolCfg        spoolConfig
+	spoolWriteFails int64 // atomic
+	spoolReplayed   atomic.Bool
+
 	// Test hooks — set via SetTransport for in-test stub server.
 	// nil → use httpC.
 	transportOverride func(ctx context.Context, body []byte) (statusCode int, err error)
@@ -318,6 +328,25 @@ func NewHubExporter() *HubExporter {
 		doneCh:            make(chan struct{}),
 	}
 	exp.circuit.Store(int32(circuitClosed))
+
+	// Open the durability layer (PR 5). File mode on VMs, memory
+	// on serverless, none under explicit override. A spool open
+	// failure is non-fatal — the exporter still runs against the
+	// in-memory ring, just without the survives-restart guarantee.
+	exp.spoolCfg = resolveSpoolConfig()
+	if sp, err := openSpool(exp.spoolCfg); err != nil {
+		fmt.Fprintf(os.Stderr,
+			"[sky.hub-exporter] spool open (%s) failed: %v; "+
+				"falling back to memory-only mode\n",
+			exp.spoolCfg.mode, err)
+		telemetry.Default().SetGauge("sky_telemetry_spool_mode",
+			map[string]string{"mode": "none"}, 1)
+	} else if sp != nil {
+		exp.attachSpool(sp)
+	} else {
+		telemetry.Default().SetGauge("sky_telemetry_spool_mode",
+			map[string]string{"mode": "none"}, 1)
+	}
 	return exp
 }
 
@@ -501,6 +530,20 @@ func (e *HubExporter) Start(ctx context.Context) {
 			}()
 			e.drain(ctx)
 		}()
+		// Spool retention sweep (PR 5). Runs in its own goroutine
+		// so the drainer hot loop stays clean. Skipped when no
+		// spool is attached (memory-only / disabled).
+		if e.activeSpool() != nil {
+			go func() {
+				defer func() {
+					if r := recover(); r != nil {
+						fmt.Fprintf(os.Stderr,
+							"[sky.hub-exporter] spool sweep panicked: %v\n", r)
+					}
+				}()
+				e.spoolRetentionSweep(ctx, e.spoolCfg)
+			}()
+		}
 		// Register shutdown hook — runs before srv.Close so any
 		// pending push reaches the hub within the orchestrator
 		// grace window.
@@ -530,6 +573,16 @@ func (e *HubExporter) Stop() {
 	e.stopOnce.Do(func() {
 		e.draining.Store(true)
 		close(e.stopCh)
+		// Close the spool — releases the SQLite handle (file mode)
+		// or zeroes the RAM buffer (memory mode). Best-effort; a
+		// close error doesn't propagate because Stop has no return.
+		e.spoolMu.Lock()
+		sp := e.spool
+		e.spool = nil
+		e.spoolMu.Unlock()
+		if sp != nil {
+			_ = sp.Close()
+		}
 		// Don't clear activeHubExporter — Stop is typically called
 		// during shutdown, after which the runtime exits. Leaving
 		// the singleton in place keeps any in-flight Submit() calls
@@ -602,6 +655,14 @@ func (e *HubExporter) Metrics() map[string]int64 {
 // drain — pulls batches off the channel, OTLP-encodes, pushes. Runs
 // until stopCh closes.
 func (e *HubExporter) drain(ctx context.Context) {
+	// One-time replay of any batches the previous process left
+	// unacked in the spool. Idempotent at the hub: replays carry
+	// the same payload as the original attempt; the hub
+	// deduplicates by signal id in the v0.16.2 receiver.
+	if !e.spoolReplayed.Swap(true) {
+		e.replaySpoolOnBoot(ctx)
+	}
+
 	// Pre-allocate batch buffer once; reuse on each cycle.
 	batch := make([]telemetryItem, 0, e.batchMax)
 	batchBytes := 0
@@ -613,7 +674,19 @@ func (e *HubExporter) drain(ctx context.Context) {
 		if len(batch) == 0 {
 			return
 		}
-		e.pushBatch(ctx, batch)
+		// Spool first (best-effort), then push. The spool write
+		// runs on this drainer goroutine — Submit is unaffected.
+		// A spool failure counts a write_failures_total but doesn't
+		// abort the push, so even if the durability layer is down
+		// the hub still sees the data when reachable.
+		token := e.spoolPersistAttempt(ctx, batch)
+		if e.pushBatch(ctx, batch) {
+			e.spoolAckAttempt(ctx, token)
+		}
+		// On push failure the spool row is left in place; on next
+		// process restart the drainer replays it via
+		// replaySpoolOnBoot.
+
 		// Release retained payloads back to the byte counter so
 		// future Submits have room.
 		var released int64
@@ -660,10 +733,12 @@ func (e *HubExporter) drain(ctx context.Context) {
 
 // pushBatch sends the batch to the hub with retry + circuit-breaker
 // gating. Single hub URL per exporter; future PRs add HTTP+gRPC
-// fan-out.
-func (e *HubExporter) pushBatch(ctx context.Context, batch []telemetryItem) {
+// fan-out. Returns true iff EVERY kind's POST succeeded — the
+// drainer uses this to decide whether to Ack the spool row (success
+// → ack, failure → leave for next-boot replay).
+func (e *HubExporter) pushBatch(ctx context.Context, batch []telemetryItem) bool {
 	if len(batch) == 0 {
-		return
+		return true
 	}
 	// Circuit gate.
 	state := CircuitState(e.circuit.Load())
@@ -677,7 +752,7 @@ func (e *HubExporter) pushBatch(ctx context.Context, batch []telemetryItem) {
 			e.pushFailCircuit.Add(int64(len(batch)))
 			telemetry.Default().Add("sky_telemetry_push_failures_total",
 				map[string]string{"reason": "circuit-open"}, float64(len(batch)))
-			return
+			return false
 		}
 	}
 
@@ -718,6 +793,7 @@ func (e *HubExporter) pushBatch(ctx context.Context, batch []telemetryItem) {
 			e.circuitOpenedAt.Store(time.Now().UnixNano())
 		}
 	}
+	return anyOK && !anyFailed
 }
 
 func (e *HubExporter) transitionCircuit(to CircuitState) {
