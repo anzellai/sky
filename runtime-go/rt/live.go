@@ -3100,6 +3100,14 @@ func liveAppRun(cfg any) any {
 	if app.basePath == "" {
 		MountObservabilityEndpoints(mux)
 	}
+	// v0.16.1 PR 2 — boot-time mount-precedence invariant. When the
+	// user EXPLICITLY asked for a console (SKY_CONSOLE_AUTH=token|app,
+	// not a sub-app, SKY_CONSOLE_EMBED not off) but neither the
+	// inline nor the legacy mount actually claimed /_sky/console,
+	// this prints a FATAL stderr line + os.Exit(1). Catches the
+	// hand-edited main.go that lost the console_app blank import.
+	// No-op when shouldHaveConsole is false (off / unset / sub-app).
+	AssertConsoleInvariantOrExit()
 	// Static assets (if configured) mounted first so api/page routing
 	// doesn't shadow them.
 	if app.staticDir != "" {
