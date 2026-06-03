@@ -48,10 +48,120 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"sky-app/rt/telemetry"
 )
+
+// v0.16.1 PR 2 — boot-time mount-precedence invariant.
+//
+// Two atomic flags record whether each console-mount path actually
+// claimed `/_sky/console`:
+//
+//   - inlineConsoleHealthy: MountEmbeddedConsole successfully wired
+//     the inline Sky.Live-rendered console (PR 2 of v0.16.0).
+//   - legacyConsoleHealthy: MountConsoleEndpoints successfully wired
+//     the hand-written HTML shell (HandleConsole, pre-v0.16.0
+//     canonical path).
+//
+// Pre-v0.16.1, both paths attempted to register `/_sky/console`
+// whenever they ran. `safeMount`'s sync.Map-backed dedup turned the
+// duplicate Go ServeMux registration into a no-op so the runtime
+// didn't panic, but the surviving handler was registration-order-
+// dependent: first writer won.
+//
+// The fix:
+//
+//   1. When `MountEmbeddedConsole` mounts inline successfully, it
+//      sets `inlineConsoleHealthy` BEFORE `MountObservabilityEndpoints`
+//      runs (which is where `MountConsoleEndpoints` lives).
+//   2. `MountConsoleEndpoints` checks the flag and SKIPS the
+//      `/_sky/console` HTML-shell registration when inline owns it.
+//      The JSON API endpoints under `/_sky/console/api/*` stay —
+//      they're MORE specific patterns under Go ServeMux longest-
+//      prefix-match, so they coexist with the inline mount and are
+//      what the inline console (and the legacy shell, when it
+//      serves) call back into for fresh telemetry.
+//   3. A boot-time invariant check (called from the Sky.Live +
+//      Sky.Http.Server entry points) verifies that, when
+//      `SKY_CONSOLE_AUTH` is explicitly set to a non-`off` value
+//      AND we're not in sub-app context AND `SKY_CONSOLE_EMBED`
+//      isn't off, AT LEAST ONE of {inline, legacy} ended up
+//      claiming the path. If neither did, we exit 1 with a clear
+//      stderr line — the user explicitly asked for a console but
+//      none ever materialised.
+var (
+	inlineConsoleHealthy atomic.Bool
+	legacyConsoleHealthy atomic.Bool
+)
+
+// InlineConsoleHealthy reports whether MountEmbeddedConsole
+// successfully mounted the inline console for this binary. Public so
+// the boot-time invariant + downstream observability surfaces can
+// inspect the post-mount state.
+func InlineConsoleHealthy() bool {
+	return inlineConsoleHealthy.Load()
+}
+
+// LegacyConsoleHealthy reports whether MountConsoleEndpoints
+// successfully mounted the legacy HTML shell for this binary.
+func LegacyConsoleHealthy() bool {
+	return legacyConsoleHealthy.Load()
+}
+
+// ResetConsoleHealthFlagsForTesting clears the atomic mount-health
+// flags so individual tests can re-run the mount paths from a clean
+// slate. Test-only; not part of the public API.
+func ResetConsoleHealthFlagsForTesting() {
+	inlineConsoleHealthy.Store(false)
+	legacyConsoleHealthy.Store(false)
+}
+
+// shouldHaveConsole reports whether the user EXPLICITLY asked for a
+// console to be served at `/_sky/console` for this binary. Returns
+// true only when `SKY_CONSOLE_AUTH` is set to `token` / `app`
+// (NOT `off`, NOT unset), AND `SKY_CONSOLE_EMBED` is not off, AND
+// we're not running as a sub-app (parent owns the console).
+//
+// This is the gate for the boot-time invariant: if `shouldHaveConsole`
+// is true but neither flag is set after both mount paths ran, exit
+// loudly rather than silently leave the user with a missing surface.
+func shouldHaveConsole() bool {
+	if base := os.Getenv("SKY_LIVE_BASE_PATH"); base != "" {
+		return false
+	}
+	if v := os.Getenv("SKY_CONSOLE_EMBED"); v == "off" || v == "0" || v == "false" {
+		return false
+	}
+	raw := strings.ToLower(strings.TrimSpace(os.Getenv("SKY_CONSOLE_AUTH")))
+	return raw == "token" || raw == "app"
+}
+
+// AssertConsoleInvariantOrExit verifies the mount-precedence
+// invariant. Called from Sky.Live + Sky.Http.Server boot AFTER both
+// `MountEmbeddedConsole` and `MountObservabilityEndpoints` have run.
+// When `shouldHaveConsole` is true but BOTH mount-health flags are
+// false, prints a stderr line and `os.Exit(1)`. Otherwise no-op.
+//
+// Idempotent: re-running with the same env + flag state is safe.
+// The exit path is OS-level so tests must drive it via subprocess
+// (os/exec).
+func AssertConsoleInvariantOrExit() {
+	if !shouldHaveConsole() {
+		return
+	}
+	if inlineConsoleHealthy.Load() || legacyConsoleHealthy.Load() {
+		return
+	}
+	mode := strings.ToLower(strings.TrimSpace(os.Getenv("SKY_CONSOLE_AUTH")))
+	fmt.Fprintf(os.Stderr,
+		"[sky.console] FATAL: SKY_CONSOLE_AUTH=%s is set but neither inline nor legacy console mounted /_sky/console. "+
+			"Either link the console_app blank import (the compiler emits this for every Sky.Live + Sky.Http.Server "+
+			"app — a hand-edited main.go may have dropped it) OR set SKY_CONSOLE_AUTH=off to declare the surface "+
+			"intentionally absent.\n", mode)
+	os.Exit(1)
+}
 
 // MountConsoleEndpoints wires the console routes onto a ServeMux.
 // Called from MountObservabilityEndpoints when the dashboard is
@@ -73,12 +183,30 @@ func MountConsoleEndpoints(mux *http.ServeMux) {
 	if skyGetenv("CONSOLE_DISABLED") == "1" {
 		return
 	}
-	// Always attempt to register the legacy HTML shell as a fallback.
-	// `safeMount`'s sync.Map guard turns a duplicate registration
-	// (when MountEmbeddedConsole already claimed the path) into a
-	// no-op. Inline-console-unavailable binaries (i.e. apps that
-	// somehow didn't link console_app) still get a working dashboard.
-	safeMount(mux, "/_sky/console", HandleConsole)
+	// PR 2 (v0.16.1): skip the legacy HTML shell registration when
+	// the inline console (MountEmbeddedConsole, called first from
+	// the boot path) already claimed `/_sky/console`. Previously
+	// both paths called `safeMount` for the same pattern and
+	// `safeMount`'s sync.Map dedup made one a no-op based on
+	// registration order — fragile + order-dependent. Now intent is
+	// explicit: inline wins by design, legacy serves only when
+	// inline declined (no console_app blank import, or it failed at
+	// mount time).
+	//
+	// The JSON API endpoints below are NOT gated — they're more-
+	// specific patterns under Go ServeMux longest-prefix-match
+	// (`/_sky/console/api/...` ≠ `/_sky/console`), so they coexist
+	// with whichever path serves the root and feed both UIs.
+	if !inlineConsoleHealthy.Load() {
+		safeMount(mux, "/_sky/console", HandleConsole)
+		// Only flip the legacy-healthy flag when WE registered the
+		// path. The `safeMount` panic-recover hides duplicate
+		// registrations, but in this branch the inline path didn't
+		// claim it so our registration must have succeeded (modulo
+		// user-mounted `/_sky/console`, which is an explicit opt-out
+		// the user already declared by mounting their own handler).
+		legacyConsoleHealthy.Store(true)
+	}
 	safeMount(mux, "/_sky/console/api/overview", HandleConsoleOverview)
 	safeMount(mux, "/_sky/console/api/metrics-summary", HandleConsoleMetricsSummary)
 	safeMount(mux, "/_sky/console/api/logs", HandleConsoleLogs)
@@ -151,6 +279,13 @@ func MountEmbeddedConsole(mux *http.ServeMux) {
 		fmt.Fprintf(os.Stderr, "[sky.console] inline console unavailable: %v; falling back to legacy HTML shell\n", err)
 		return
 	}
+	// PR 2 (v0.16.1): mark the inline mount healthy so
+	// MountConsoleEndpoints (called later from
+	// MountObservabilityEndpoints) skips its own /_sky/console
+	// registration. The legacy HTML shell's JSON API endpoints
+	// (/_sky/console/api/*) remain registered — the inline UI
+	// polls them for fresh telemetry, same as the legacy UI did.
+	inlineConsoleHealthy.Store(true)
 	fmt.Fprintf(os.Stderr, "[sky.console] inline console mounted at /_sky/console mode=%s\n", describeConsoleAuthMode(st.mode))
 }
 
