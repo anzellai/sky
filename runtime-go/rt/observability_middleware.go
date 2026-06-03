@@ -97,6 +97,14 @@ func WithRequestID(ctx context.Context, id string) context.Context {
 // check endpoints are also skipped so the per-second readyz pings
 // from orchestrators don't drown out real traffic in dashboards.
 func ObservabilityMiddleware(next http.Handler) http.Handler {
+	// PR10-D — stamp service.namespace on the request context so
+	// telemetry call sites can label per-app emissions. Wrapping
+	// next lets the namespace tag survive even the early-exit paths
+	// below (/_sky/* short-circuit + OBSERVABILITY_DISABLED bail).
+	// Cost is one map snapshot read per request; the inner loop
+	// returns immediately when no in-process sub-apps are mounted
+	// (the common case).
+	next = WithSubAppNamespace(next)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/_sky/") {
 			next.ServeHTTP(w, r)
