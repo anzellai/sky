@@ -2752,7 +2752,19 @@ func Live_api(spec any, handler any) any {
 // dispatchRoot routes a request to:
 //  1. a matching apiRoute (REST handler), OR
 //  2. handleInitial (Live page render).
+//
+// Framework namespace guard: /_sky/* is reserved for the Sky runtime
+// (event POST, SSE, console, metrics, healthz, readyz, buildinfo, etc).
+// Specific /_sky/* endpoints are registered EXACT-match on the mux and
+// never reach dispatchRoot. Anything that DOES reach here under /_sky/*
+// is an unmounted framework path — we must return a plain 404 rather
+// than fall through to the user's notFound page (which would leak the
+// app's UI for typoed/probed framework URLs like /_sky/conslole).
 func (app *liveApp) dispatchRoot(w http.ResponseWriter, r *http.Request) {
+	if strings.HasPrefix(r.URL.Path, "/_sky/") {
+		http.NotFound(w, r)
+		return
+	}
 	for _, ar := range app.api {
 		if ar.method != "" && !strings.EqualFold(ar.method, r.Method) {
 			continue
