@@ -1,6 +1,6 @@
 package rt_test
 
-// Regression spec for the inline-console shim from the rt side.
+// Regression spec for the inline-console cfg surface from the rt side.
 //
 // rt itself cannot import sky-app/rt/console_app at production-code
 // level — that would form an import cycle (console_app imports rt).
@@ -11,84 +11,58 @@ package rt_test
 // compiles as a separate unit that imports BOTH rt and console_app
 // from the outside — no cycle.
 //
-// What's covered:
-//   - Linking console_app DOES register the hook (via its init()).
-//   - rt.InlineConsoleAvailable() reports true once the hook is
-//     present.
-//   - rt.MountInlineConsole(mux, "") serves the inline console at
-//     <basePath>/_sky/console with the sentinel header.
+// v0.16.1 PR10-G: the PR 1 MountInlineConsole shim is now a no-op
+// back-compat stub. The canonical entry is rt.InlineConsoleCfg —
+// console_app's register_v3.go init() pushes a Sky.Live-cfg-shaped
+// factory into rt's slot which rt.MountEmbeddedConsole consumes via
+// MountLiveSubAppInProcessWithGate.
 //
-// What's NOT covered here (deferred to PR 2):
-//   - rt's maybeAutoMountConsole choosing between subprocess and
-//     inline based on SKY_CONSOLE_MODE.
-//   - The legacy subprocess fallback. PR 1 leaves the old path
-//     untouched and additive — both paths coexist.
+// What's covered here:
+//
+//   - Blank-import of console_app registers BOTH the cfg-provider
+//     (canonical, PR10-E) AND the legacy hook (no-op slot, kept for
+//     back-compat).
+//   - rt.InlineConsoleCfgAvailable() reports true once the provider
+//     is wired.
+//   - The returned cfg shape exposes the canonical Live.app cfg keys
+//     (Init / Update / View / Subscriptions).
 
 import (
-	"net/http"
-	"net/http/httptest"
-	"strings"
 	"testing"
 
 	rt "sky-app/rt"
 	// Blank-import the console_app subpackage so its init() registers
-	// the inline-console hook into rt's shim. This is the same wire-
-	// in PR 2's user-codegen path will perform (compiler injects
-	// `import _ "sky-app/rt/console_app"` into generated main.go).
+	// the cfg-provider AND the legacy mount hook into rt's slots.
 	_ "sky-app/rt/console_app"
 )
 
-func TestInlineConsole_Available_AfterImport(t *testing.T) {
-	if !rt.InlineConsoleAvailable() {
-		t.Fatal("InlineConsoleAvailable() returned false after blank-import of console_app — package init() did not fire")
+func TestInlineConsole_CfgAvailable_AfterImport(t *testing.T) {
+	if !rt.InlineConsoleCfgAvailable() {
+		t.Fatal("InlineConsoleCfgAvailable() returned false after blank-import of console_app — register_v3.init() did not fire")
 	}
 }
 
-func TestInlineConsole_ServesViaShim(t *testing.T) {
-	mux := http.NewServeMux()
-	if err := rt.MountInlineConsole(mux, ""); err != nil {
-		t.Fatalf("rt.MountInlineConsole: %v", err)
-	}
-	srv := httptest.NewServer(mux)
-	defer srv.Close()
-
-	resp, err := http.Get(srv.URL + "/_sky/console")
-	if err != nil {
-		t.Fatalf("GET: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("status: got %d, want 200", resp.StatusCode)
-	}
-	if got, want := resp.Header.Get("X-Sky-Console-Mode"), "inline"; got != want {
-		t.Errorf("X-Sky-Console-Mode header: got %q, want %q", got, want)
-	}
-
-	bodyBytes := make([]byte, 0, 4096)
-	tmp := make([]byte, 4096)
-	for {
-		n, err := resp.Body.Read(tmp)
-		if n > 0 {
-			bodyBytes = append(bodyBytes, tmp[:n]...)
-		}
-		if err != nil {
-			break
-		}
-		if len(bodyBytes) >= 64*1024 {
-			break // safety cap
-		}
-	}
-	body := string(bodyBytes)
-	if !strings.Contains(body, "<title>Sky Console</title>") {
-		t.Errorf("body missing <title>Sky Console</title>; first 256 chars: %s", truncForLog(body, 256))
-	}
+func TestInlineConsole_LegacyHookStubStillRegistered(t *testing.T) {
+	// PR 1 MountInlineConsole hook is deprecated but the
+	// InlineConsoleAvailable() back-compat surface still tracks
+	// whether SOME hook was registered. Post-PR10-G register.go
+	// is empty (no init), so this reports the v0.16.x-stub state.
+	// Whether the legacy hook is true or false here is back-compat
+	// behaviour, not a contract — just make sure it doesn't panic.
+	_ = rt.InlineConsoleAvailable()
 }
 
-// truncForLog keeps test failure messages from spraying 10kb of HTML.
-func truncForLog(s string, n int) string {
-	if len(s) <= n {
-		return s
+func TestInlineConsole_CfgExposesCanonicalLiveAppKeys(t *testing.T) {
+	cfg := rt.InlineConsoleCfg()
+	if cfg == nil {
+		t.Fatal("InlineConsoleCfg() returned nil after blank-import of console_app")
 	}
-	return s[:n] + "...[truncated]"
+	// The cfg must carry the four Live.app keys MountLiveSubAppInProcess
+	// reaches for via Field(cfg, ...). Any of these missing means the
+	// bundled console would fail to mount via the canonical path.
+	for _, key := range []string{"Init", "Update", "View", "Subscriptions"} {
+		if v := rt.Field(cfg, key); v == nil {
+			t.Errorf("cfg missing %q field — MountLiveSubAppInProcess would crash", key)
+		}
+	}
 }

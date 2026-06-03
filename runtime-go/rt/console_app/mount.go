@@ -13,30 +13,28 @@
 //       sky-out/rt/*.go              package rt
 //       sky-out/rt/console_app/*.go  package console_app  imports sky-app/rt
 //
-// PR 1 status (v0.16.0):
-//   - main.go contains the generated Go translation of
-//     sky-bundled/console/src/*.sky.
-//   - This file (mount.go) exposes MountInlineConsole — the public
-//     entry point a host app calls to register the console handlers
-//     onto an existing *http.ServeMux. The implementation is
-//     intentionally minimal for PR 1: a single server-rendered HTML
-//     view from the bundled Sky source. SSE / event dispatch / full
-//     Sky.Live wiring lands in PR 2/3.
-//   - rt (the parent package) cannot import console_app — that would
-//     be an import cycle (console_app imports rt). Instead, the rt
-//     side exposes rt.MountInlineConsole as a registration shim
-//     (see runtime-go/rt/console_inline.go); console_app's init()
-//     in register.go pushes its implementation into that shim.
-//     Until something in the user's binary imports console_app
-//     (blank import is sufficient), the shim returns
-//     ErrInlineConsoleUnavailable. PR 2 adds the wiring in user
-//     codegen + flips SKY_CONSOLE_MODE's default to inline.
+// v0.16.1 PR10-G status:
+//   - The bespoke MountInlineConsole one-shot HTML render path is
+//     DELETED. The canonical mount path is rt.MountEmbeddedConsole,
+//     which now uses rt.MountLiveSubAppInProcessWithGate against the
+//     Sky-source cfg returned by InlineConsoleCfg() (registered via
+//     console_app's init in register_v3.go).
+//   - main.go's generated `init_` / `update` / `viewWrapped` /
+//     `subscriptions` are still the Sky-source TEA loop — they're just
+//     consumed via the canonical Sky.Live machinery now instead of
+//     console_app's own handleConsoleRoot.
+//   - register.go (PR 1's MountInlineConsole shim) is removed; the
+//     hook surface lives in rt.RegisterInlineConsoleHook as a no-op
+//     for back-compat.
+//   - hydrateInitialModel + computeOverview / computeLogs / etc. are
+//     KEPT — they're the in-process telemetry → State_*_R bridges the
+//     bundled console's Cmd-shaped Http.get loopback replaces. v0.16.2
+//     may inline those bridges directly into the Sky source so the
+//     loopback Http.get becomes unnecessary.
 
 package console_app
 
 import (
-	"fmt"
-	"net/http"
 	"sort"
 	"strings"
 	"time"
@@ -45,223 +43,19 @@ import (
 	"sky-app/rt/telemetry"
 )
 
-// MountInlineConsole registers the inline Sky Console handlers on
-// `mux`. basePath is the same kind of prefix Sky.Live's MountSubApp
-// would use ("" for "no prefix"; "/admin" for "this app sits under
-// /admin/_sky/console/…"). The function is safe to call exactly
-// once per mux; subsequent calls on the same mux + path will panic
-// inside net/http when registering a duplicate pattern.
+// hydrateInitialModel (v0.16.1 PR7-B; kept after PR10-G) replaces the
+// data-driven fields of `m` with values pulled directly from
+// `telemetry.Default()` plus rt-side build info / production-mode
+// flags. The bundled console's `init_` returns a sparsely-populated
+// model; this overlay fills the data slots so the initial render
+// shows real numbers before the first Cmd-spawned HTTP loopback fires.
 //
-// What it serves (PR 1):
-//   - GET <basePath>/_sky/console      — server-rendered HTML shell
-//     produced by calling the bundled Sky.Live console's init/view
-//     functions on a fresh Model. No JS bundling, no SSE patch
-//     channel — the UI is static-rendered at request time. PR 2/3
-//     wires up the full Sky.Live event + SSE plumbing.
-//
-// The JSON API endpoints (/_sky/console/api/*) are NOT touched here.
-// They are mounted by rt.MountConsoleEndpoints (the existing
-// console.go path) — keeping the two surfaces separate makes the PR
-// 1 deletion-window (PR 2) cleaner: PR 2 removes the legacy HTML
-// shell, but the JSON API stays exactly where it is.
-func MountInlineConsole(mux *http.ServeMux, basePath string) error {
-	if mux == nil {
-		return fmt.Errorf("console_app: MountInlineConsole called with nil *http.ServeMux")
-	}
-	prefix := normaliseBasePath(basePath)
-	path := prefix + "/_sky/console"
-	// PR 3 (v0.16.0): wrap the bundled handler with the rt-side auth
-	// gate. rt.ConsoleGate is a thin shim around evaluateConsoleAuth
-	// that returns true when the request may proceed; false (with the
-	// response already written) otherwise.
-	gated := func(w http.ResponseWriter, r *http.Request) {
-		if !rt.ConsoleGate(w, r) {
-			return
-		}
-		handleConsoleRoot(w, r)
-	}
-	// Two-arg signature: handle both /_sky/console and /_sky/console/
-	// (Go's ServeMux treats trailing-slash as different patterns).
-	mux.HandleFunc(path, gated)
-	if !strings.HasSuffix(path, "/") {
-		mux.HandleFunc(path+"/", gated)
-	}
-	return nil
-}
-
-// handleConsoleRoot renders the initial HTML view of the bundled
-// console. The view is derived by calling the generated `init_` to
-// produce a starter Model, then `viewWrapped` to produce a Sky.Html
-// value, then rt.HtmlRender to flatten it to HTML.
-//
-// Authentication is intentionally NOT enforced here for PR 1 — the
-// host app's mux will route via rt.consoleAccessAllowed in PR 2/3
-// when this becomes the canonical mount path. For now the inline
-// path is opt-in (SKY_CONSOLE_MODE=inline) so it never auto-mounts
-// on a user app's listener.
-func handleConsoleRoot(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		w.Header().Set("Allow", "GET, HEAD")
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
-	}
-
-	defer func() {
-		// Defensive: if the generated Sky code panics for any reason
-		// (e.g. a stdlib version mismatch between the regen-time
-		// runtime-go and the host's), serve a 500 with a diagnostic
-		// hint rather than letting the panic propagate.
-		if rec := recover(); rec != nil {
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			w.WriteHeader(http.StatusInternalServerError)
-			fmt.Fprintf(w,
-				"<!DOCTYPE html><html><body style=\"font-family:system-ui;padding:24px;\">"+
-					"<h1>Sky Console — inline mount panic</h1>"+
-					"<p>The bundled console UI panicked while rendering. This is a Sky compiler / "+
-					"stdlib mismatch — regenerate via <code>scripts/regenerate-console.sh</code> "+
-					"against the current runtime.</p>"+
-					"<pre style=\"background:#f0f0f0;padding:12px;overflow:auto;\">%v</pre>"+
-					"</body></html>",
-					rec)
-		}
-	}()
-
-	// Build the initial Model via the generated init_ function. The
-	// init takes a request shape — pass an empty Dict-shaped value
-	// because the bundled console doesn't read req fields (it reads
-	// SKY_PARENT_URL from env instead).
-	req := map[string]any{"path": "/", "query": ""}
-	tuple := init_[any](req)
-	model, ok := tuple.V0.(State_Model_R)
-	if !ok {
-		// Should never happen — init_ is statically typed to return
-		// SkyTuple2{V0: State_Model_R}. Treat as compiler bug.
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.WriteHeader(http.StatusInternalServerError)
-		fmt.Fprintf(w, "console_app: init_ returned unexpected V0 type %T", tuple.V0)
-		return
-	}
-	// v0.16.1 PR7-B — pre-populate data-driven fields directly from
-	// telemetry.Default() so the first render shows real numbers.
-	// Without this, init_'s emitted Cmd would fetch the data
-	// asynchronously via Http.get loopbacks — but the inline mount
-	// renders synchronously to the response body before any update
-	// loop turns the wheel, so first paint would always show empty
-	// Overview / mock Logs. PR8's SSE-driven update loop refreshes
-	// these fields on subsequent ticks via the same Sub.every 3000
-	// pump that init_ already wired.
-	model = hydrateInitialModel(model)
-	htmlNode := viewWrapped(model)
-	// v0.16.1 PR9 — use HtmlRenderWithHandlers so the hid→Msg map
-	// captured at render time can drive the click loop. The legacy
-	// HtmlRender entry point silently discards this map (the typed
-	// Msg never reaches the dispatcher), which is the root cause of
-	// the user-reported "clicks do nothing" symptom.
-	body, handlers := rt.HtmlRenderWithHandlers(htmlNode, "console")
-
-	// Mint / read the SSE-channel cookie BEFORE writing the body so
-	// the cookie is in the response headers (writing the body locks
-	// headers). The session ID is the bridge between this initial
-	// GET and the subsequent SSE / POST endpoints — the update loop
-	// uses it to find the right handlers map when a click POST
-	// arrives.
-	sid := rt.ConsoleSSESessionID(r, w)
-
-	// Convert the rendered tree to the form SeedConsoleLoopSession
-	// expects. We re-derive vn locally so we don't mutate the
-	// renderer's internal state — assignSkyIDs already ran inside
-	// HtmlRenderWithHandlers, but we need an addressable *VNode to
-	// hand off. The cost is one extra HtmlToVNode walk per initial
-	// GET; negligible (<1ms) for an admin-only surface.
-	vn := rt.HtmlToVNode(htmlNode)
-	rt.AssignSkyIDsForConsole(&vn)
-	rt.ApplyStyleInjectionsForConsole(&vn)
-	rt.SeedConsoleLoopSession(sid, model, &vn, body, handlers)
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("X-Sky-Console-Mode", "inline")
-	if r.Method == http.MethodHead {
-		w.WriteHeader(http.StatusOK)
-		return
-	}
-	w.WriteHeader(http.StatusOK)
-	// Wrap the body fragment in a minimal HTML5 document. The
-	// generated view returns a layout-rooted Std.Ui tree, which when
-	// rendered produces a self-contained `<div>` tree with inline
-	// styles. We add the doctype + html/head/body shell here for
-	// browser compatibility.
-	//
-	// v0.16.1 PR 8 — bundle the inline client-side script that:
-	//   1. Opens an EventSource on /_sky/console/_sse and applies
-	//      the SSE-delivered `event: patches` / `event: patch`
-	//      frames to the rendered DOM.
-	//   2. Captures gestures on the [data-sky-console] subtree and
-	//      POSTs {msg, args} envelopes to /_sky/console/_event so
-	//      console_loop.go (the rt-side update loop) can fold them
-	//      through hooks.Update + diff + broadcast.
-	//
-	// Why the wrapping `<div data-sky-console>`: a host app may run
-	// its own Sky.Live JS on the same page. Scoping our gesture
-	// listeners to elements inside `[data-sky-console]` keeps the
-	// two click handlers cleanly separated.
-	fmt.Fprintf(w,
-		"<!DOCTYPE html>\n"+
-			"<html lang=\"en\">\n"+
-			"<head>\n"+
-			"  <meta charset=\"utf-8\">\n"+
-			"  <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n"+
-			"  <meta name=\"sky-console-mode\" content=\"inline\">\n"+
-			"  <title>Sky Console</title>\n"+
-			"  <style>html,body{margin:0;padding:0;background:#0f1115;color:#e4e6eb;font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;}</style>\n"+
-			"</head>\n"+
-			"<body><div id=\"sky-console-root\" data-sky-console=\"1\">%s</div>\n"+
-			"<script>%s</script>\n"+
-			"</body>\n"+
-			"</html>\n",
-		body, consoleClientJS())
-}
-
-// normaliseBasePath mirrors rt.normaliseBasePath so callers don't need
-// to know the prefix-cleaning rules. (Trimmed copy to avoid an
-// exported-helper churn in rt itself, which PR 2 will revisit when
-// the rt-side mounting code consolidates.)
-//
-// Rules:
-//   - "" or "/" → ""        (no prefix; routes mount at /_sky/console)
-//   - "/admin"  → "/admin"
-//   - "admin"   → "/admin"  (leading slash inserted)
-//   - "/admin/" → "/admin"  (trailing slash stripped)
-func normaliseBasePath(p string) string {
-	p = strings.TrimSpace(p)
-	if p == "" || p == "/" {
-		return ""
-	}
-	if !strings.HasPrefix(p, "/") {
-		p = "/" + p
-	}
-	if strings.HasSuffix(p, "/") {
-		p = strings.TrimRight(p, "/")
-	}
-	return p
-}
-
-// hydrateInitialModel (v0.16.1 PR7-B) replaces the data-driven
-// fields of `m` with values pulled directly from `telemetry.Default()`
-// plus rt-side build info / production-mode flags. Mirror of what
-// HandleConsoleOverview / HandleConsoleLogs / HandleConsoleMetricsSummary
-// / HandleConsoleTraces / HandleConsoleErrors compute — minus the
-// JSON-encode hop, since we're staying in-process.
-//
-// Why "overlay" rather than "rebuild from scratch": init_ also sets
-// LogFilter defaults, Tab=Overview, TraceQuery="", LastError="",
-// ParentUrl — preserving those means future tweaks to the Sky-source
-// init_ stay live without touching this Go path.
-//
-// Resilience: the underlying telemetry.Default() returns empty slices
-// when nothing has been recorded (cold start, immediately after
-// process boot). Empty slices in State_*_R are fine — they render as
-// "no entries" cards rather than the misleading mock-mode banner.
+// Post-PR10-F the canonical Sky.Live handleInitial still calls
+// `init_` (via Field(cfg, "Init") and sky_call), and the bundled
+// console's first render still needs the overlay to surface real
+// telemetry. The function stays as an in-process bridge against
+// rt.telemetry.Default(); v0.16.2 may move the bridge into the Sky
+// source via dedicated Cmd-shaped helpers.
 //
 // Performance: each call walks the in-RAM ring buffers (capped at
 // 10K logs / 1K spans by default). Per-request cost in the µs range;

@@ -1,27 +1,16 @@
-// hydrate_test.go — regression spec for v0.16.1 PR7-B's
-// hydrateInitialModel + the inline-mount rendered output.
+// hydrate_test.go — regression spec for hydrateInitialModel + the
+// telemetry → State_*_R bridges.
 //
-// The bug PR7 closes: production users on sky-lang.org saw the
-// rendered console UI carrying "Standalone mode — no parent URL
-// configured" + all-zero stats because:
-//
-//  1. The inline mount path doesn't set SKY_PARENT_URL (PR7-A fixes
-//     this at the rt.live.go boot path).
-//  2. Even with SKY_PARENT_URL set, init_'s returned Cmd would be
-//     discarded by handleConsoleRoot — so the first render still
-//     showed empty data (PR7-B closes this by reading telemetry
-//     directly).
-//
-// These tests pin the FIXED behaviour: a fresh app with some recorded
-// log + counter increments must render real numbers, not the mock
-// banner or zeros.
+// Pre-v0.16.1 PR10-G these tests covered an end-to-end MountInlineConsole
+// HTTP rendering path too, but that bespoke surface is gone (the
+// canonical Sky.Live mount handles the HTTP layer now — see
+// rt.MountEmbeddedConsole). The bridges hydrateInitialModel uses to
+// surface telemetry on the first render stay, so the per-bridge tests
+// stay.
 
 package console_app
 
 import (
-	"net/http"
-	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
@@ -106,82 +95,11 @@ func TestHydrateInitialModel_PopulatesLogs(t *testing.T) {
 	}
 }
 
-// TestHandleConsoleRoot_RendersRealData is the end-to-end gate:
-// after the rt mount path runs init_ + hydrate, the rendered HTML
-// must NOT contain the mock-mode banner strings and SHOULD contain
-// a non-zero Requests count.
-//
-// This is the test that v0.16.1 PR7 fixes — pre-PR7, this fails
-// because init_ returns mock strings or empty zeros, depending on
-// whether SKY_PARENT_URL was seeded.
-func TestHandleConsoleRoot_RendersRealData(t *testing.T) {
-	telemetry.ResetDefault()
-	store := telemetry.Default()
-
-	// Generate some real telemetry the same way a production app
-	// would: HTTP request counter + a structured log line.
-	store.Inc("sky_live_requests_total", map[string]string{"status": "200"})
-	store.Inc("sky_live_requests_total", map[string]string{"status": "200"})
-	store.Inc("sky_live_requests_total", map[string]string{"status": "200"})
-	store.AppendLog(telemetry.LogEntry{
-		TS:      time.Now(),
-		Level:   "info",
-		Message: "request handled",
-	})
-
-	mux := http.NewServeMux()
-	if err := MountInlineConsole(mux, ""); err != nil {
-		t.Fatalf("MountInlineConsole: %v", err)
-	}
-	srv := httptest.NewServer(mux)
-	defer srv.Close()
-
-	resp, err := http.Get(srv.URL + "/_sky/console")
-	if err != nil {
-		t.Fatalf("GET /_sky/console: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status: got %d, want 200", resp.StatusCode)
-	}
-	bodyBytes, err := readBodyN(resp, 512*1024)
-	if err != nil {
-		t.Fatalf("read body: %v", err)
-	}
-	body := string(bodyBytes)
-
-	// Bug signatures — these strings MUST NOT appear in the rendered
-	// output anymore. They came from State_mockLogs() when init_ fell
-	// back to mock mode (SKY_PARENT_URL unset). PR7-A's seed + PR7-B's
-	// direct hydration both contribute to suppressing them.
-	for _, mock := range []string{
-		"Standalone mode",
-		"no parent URL configured",
-		"Run from a host app to see live telemetry",
-	} {
-		if strings.Contains(body, mock) {
-			t.Errorf("rendered body contains mock-mode signature %q — bug is back\nbody head:\n%s", mock, head(body, 1024))
-		}
-	}
-
-	// We need at least ONE substring evidence that the rendered HTML
-	// reflects the injected telemetry. The Overview tab prints
-	// RequestsTotal as a number; with 3 increments we expect to see
-	// "3" rendered somewhere in the Overview surface. The exact CSS
-	// makes a strict string match brittle; instead we assert the
-	// overview metric label is present (the Sky source spells it
-	// "Requests" — case-insensitive grep to survive minor styling
-	// tweaks across regen).
-	if !strings.Contains(strings.ToLower(body), "requests") {
-		t.Errorf("rendered body has no 'Requests' KPI label — Overview tab likely empty.\nbody head:\n%s", head(body, 2048))
-	}
-}
-
-// TestHandleConsoleRoot_ConsoleCurrentBuildInfo cross-checks the
-// rt-side accessor returns a populated BuildInfo even with the
-// default unset ld-flags (so the inline console renders dev-mode
-// safe strings, not "" + "" + "").
-func TestHandleConsoleRoot_ConsoleCurrentBuildInfo(t *testing.T) {
+// TestConsoleCurrentBuildInfo cross-checks the rt-side accessor
+// returns a populated BuildInfo even with the default unset ld-flags
+// (so the inline console renders dev-mode safe strings, not "" + ""
+// + "").
+func TestConsoleCurrentBuildInfo(t *testing.T) {
 	bi := rt.ConsoleCurrentBuildInfo()
 	if bi.SkyVersion == "" {
 		t.Errorf("ConsoleCurrentBuildInfo.SkyVersion: got empty")

@@ -1,27 +1,19 @@
-// inline-console registration shim (v0.16.0 PR 1).
+// inline-console mount shim — back-compat stub (v0.16.1 PR10-G).
 //
-// PR 1 introduces a new mount path: in-process, no subprocess, the
-// console UI handlers register directly on the host app's
-// *http.ServeMux. The console source lives at
-// runtime-go/rt/console_app/, which is a subpackage of `sky-app/rt`.
+// PR 1 (v0.16.0) introduced this hook so console_app could register
+// its bespoke MountInlineConsole implementation against rt's package-
+// level slot. PR 10-F replaced that mount path with the canonical
+// MountLiveSubAppInProcess — driven by the new cfg-provider hook in
+// console_inline_cfg.go.
 //
-// Direction of imports matters: console_app imports rt (the
-// generated Go calls hundreds of rt.* helpers). The reverse —
-// rt importing console_app — would create a circular import.
+// This file retains the PR 1 surface (RegisterInlineConsoleHook /
+// MountInlineConsole / InlineConsoleAvailable / ErrInlineConsoleUnavailable)
+// as a back-compat stub so downstream binaries still link. The hook
+// is a no-op: callers that register a function get to keep that
+// function, but rt's MountEmbeddedConsole no longer consults it.
 //
-// To bridge that, console_app registers its MountInlineConsole
-// implementation into rt's package-level hook here via
-// RegisterInlineConsoleHook (called from console_app's init()).
-// Code in rt that wants to mount the inline console calls
-// MountInlineConsole, which forwards to the registered hook
-// if one is present, or returns ErrInlineConsoleUnavailable
-// otherwise.
-//
-// For PR 1, NOTHING in this rt package side-effect-imports
-// console_app — that wiring lands in PR 2 along with the
-// switch from subprocess-default to inline-default. PR 1's
-// goal is purely to prove the path: a Go test inside
-// console_app calls its own MountInlineConsole directly.
+// v1.0.0 will drop this stub; v0.16.x keeps it to preserve linkability
+// across the architectural transition.
 
 package rt
 
@@ -32,36 +24,35 @@ import (
 )
 
 // ErrInlineConsoleUnavailable is returned by MountInlineConsole when
-// the host binary did not link console_app (no blank import; no PR-2
-// codegen wiring yet). Callers can fall back to the legacy
-// subprocess / HTML-shell path on this error.
-var ErrInlineConsoleUnavailable = errors.New("sky-app/rt: inline console not linked into this binary (import _ \"sky-app/rt/console_app\" or set SKY_CONSOLE_MODE=subprocess)")
+// the host binary did not link console_app. Kept as a public sentinel
+// for callers that switch on it.
+var ErrInlineConsoleUnavailable = errors.New("sky-app/rt: inline console mount hook is no longer the canonical path; rt.MountEmbeddedConsole now uses MountLiveSubAppInProcess directly")
 
 // inlineConsoleHook is set at init() time by console_app via
-// RegisterInlineConsoleHook. nil when console_app is not linked.
+// RegisterInlineConsoleHook. Post-PR10-G no rt code consults it,
+// but the slot stays so registration calls don't error out.
 var (
 	inlineConsoleHookMu sync.RWMutex
 	inlineConsoleHook   func(mux *http.ServeMux, basePath string) error
 )
 
-// RegisterInlineConsoleHook is called from console_app's package
-// init() to register its MountInlineConsole implementation against
-// this shim. It's exported because the registration crosses a
-// package boundary, but it isn't part of the rt public API — user
-// code should never call it.
-//
-// Idempotent: a second call replaces the first. Concurrent calls
-// are serialised by the mutex.
+// RegisterInlineConsoleHook is the PR 1 registration shim. Kept as a
+// no-op-friendly slot so console_app's existing init() in register.go
+// still links. v1.0.0 may delete; v0.16.x preserves linkability.
 func RegisterInlineConsoleHook(fn func(mux *http.ServeMux, basePath string) error) {
 	inlineConsoleHookMu.Lock()
 	inlineConsoleHook = fn
 	inlineConsoleHookMu.Unlock()
 }
 
-// MountInlineConsole forwards to the console_app-registered hook
-// when present, otherwise returns ErrInlineConsoleUnavailable.
+// MountInlineConsole forwards to the registered hook for back-compat.
+// rt's MountEmbeddedConsole no longer calls this — it routes through
+// the canonical Sky.Live sub-app primitive instead. Callers that
+// reach for this directly get the legacy one-shot HTML render path
+// from console_app/mount.go (also deprecated).
 //
-// Public API. Stable from v0.16.0 onward.
+// Deprecated: use rt.InlineConsoleCfg + rt.MountLiveSubAppInProcess
+// when you need a console mount outside of the auto-mount path.
 func MountInlineConsole(mux *http.ServeMux, basePath string) error {
 	inlineConsoleHookMu.RLock()
 	fn := inlineConsoleHook
@@ -73,9 +64,8 @@ func MountInlineConsole(mux *http.ServeMux, basePath string) error {
 }
 
 // InlineConsoleAvailable reports whether console_app has been linked
-// into this binary. Useful for the SKY_CONSOLE_MODE selector when it
-// needs to choose between inline and subprocess fallback without
-// actually attempting the mount.
+// into this binary AND registered its hook. Post-PR10-G the canonical
+// signal is rt.InlineConsoleCfgAvailable(); this stays for back-compat.
 func InlineConsoleAvailable() bool {
 	inlineConsoleHookMu.RLock()
 	ok := inlineConsoleHook != nil
