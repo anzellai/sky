@@ -19,6 +19,7 @@ module Sky.Type.Solve
     , emptySolvedTypes               -- v0.15.x P37a
     , lookupSolvedVar                -- v0.15.x P37a
     , lookupSolvedVarScoped          -- v0.15.6 #365 — per-module env lookup
+    , moduleForRegion                -- v0.15.6 #365 — region -> defining module
     , lookupSolvedRegion             -- v0.15.x P37a
     , lookupSolvedRegionScoped       -- v0.15.6 #365 — per-module region lookup
     , insertSolvedVar                -- v0.15.x P37a
@@ -186,6 +187,25 @@ lookupSolvedVarScoped name solvedTypes =
                         Nothing -> Map.lookup name (_stEnv solvedTypes)
                 Nothing -> Map.lookup name (_stEnv solvedTypes)
         Nothing -> Map.lookup name (_stEnv solvedTypes)
+
+
+-- | v0.15.6 #365 — determine the module that *defines* a region by
+-- which per-module region map contains it.  Regions are file-unique,
+-- so a hit is unambiguous; returns `Just` only on a single match.
+--
+-- This is the deterministic counterpart to the render-order
+-- `globalCurrentDepModule` IORef hint in `Compile.hs`: that hint can
+-- lag behind a lazily-forced decl thunk (it stuck on the FIRST dep,
+-- so a later dep's `let encodeOne x = …` read the first dep's
+-- ambiguous per-module entry and degraded to `any`).  Deriving the
+-- module from the def's own region instead is stable regardless of
+-- thunk-forcing order.
+moduleForRegion :: A.Region -> SolvedTypes -> Maybe String
+moduleForRegion r solvedTypes =
+    case [ m | (m, rm) <- Map.toList (_stPerModuleRegions solvedTypes)
+             , Map.member r rm ] of
+        [m] -> Just m
+        _   -> Nothing
 
 
 -- | Look up the HM type recorded at a given source region.

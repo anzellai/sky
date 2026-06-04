@@ -11106,7 +11106,22 @@ defToStmts def = case def of
         -- module's version survived the flat _stEnv ambiguity
         -- collapse).
         let solved = Rec._cg_solvedTypes getCgEnv
-            curMod = unsafePerformIO (readIORef globalCurrentDepModule)
+            iorefMod = unsafePerformIO (readIORef globalCurrentDepModule)
+            -- v0.15.6 #365 — derive the defining module from the def's own
+            -- body region instead of trusting the render-order IORef hint.
+            -- The hint is set by sentinel decls in pkg-decls order, but the
+            -- lazily-forced `defToStmts` thunks don't force in that order —
+            -- it stuck on the FIRST dep, so a later dep's `let encodeOne
+            -- x = …` read the first dep's *ambiguous* per-module entry and
+            -- degraded to `func(x any)`.  Regions are file-unique, so the
+            -- per-module region ledger gives the module deterministically.
+            -- Only override inside dep-rendering context (iorefMod set);
+            -- entry-module decls keep the flat-lookup (`Nothing`) path.
+            curMod = case iorefMod of
+                Just im -> case Solve.moduleForRegion (A.toRegion body) solved of
+                    Just rm -> Just rm
+                    Nothing -> Just im
+                Nothing -> Nothing
             scopedSolved = Solve.withCurrentModule curMod solved
             inferredTy = Solve.lookupSolvedVarScoped name scopedSolved
             (paramTys, retTy) = case inferredTy of
