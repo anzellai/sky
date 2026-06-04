@@ -7441,6 +7441,26 @@ func Server_listen(port any, routes any) any {
 	routeList := AsList(routes)
 	mux := http.NewServeMux()
 
+	// v0.16.3 #466 follow-up: count paths so we know when to apply
+	// method-aware registration. Method-aware patterns ("GET /api/x")
+	// disambiguate two routes on the SAME path with DIFFERENT methods,
+	// but they CONFLICT with wildcard-method routes registered on
+	// MORE SPECIFIC paths (Go's mux gates this case — neither pattern
+	// strictly more specific). The MountEmbeddedConsole subapp
+	// registers `/_sky/console/_sky/event` wildcard-method, so a
+	// blanket `GET /` from a user handler trips that gate. Fix:
+	// use the method prefix ONLY when 2+ routes share the path —
+	// otherwise stay path-only (which Go's mux happily treats as
+	// "any method on this path"). Preserves the same-path-different-
+	// method coexistence that #466 unlocked without breaking the
+	// console mount.
+	pathRouteCount := make(map[string]int, len(routeList))
+	for _, r := range routeList {
+		if rt, ok := r.(SkyRoute); ok && rt.StaticDir == "" {
+			pathRouteCount[rt.Path]++
+		}
+	}
+
 	for _, r := range routeList {
 		route := r.(SkyRoute)
 		handler := route.Handler
@@ -7467,16 +7487,15 @@ func Server_listen(port any, routes any) any {
 			continue
 		}
 
-		// v0.16.3 fix(#466): register with Go 1.22+ method-aware mux
-		// pattern when the route declares a specific Method. This is
-		// what makes `Server.get "/api/todos" h1` + `Server.post
-		// "/api/todos" h2` coexist — previously they panicked at boot
-		// with `pattern "/api/todos" conflicts with pattern "/api/todos"`
-		// because mux saw two registrations for the same path. Method
-		// "" (api-style without prefix) and "*" (Server.any) both keep
-		// the legacy path-only registration.
+		// v0.16.3 fix(#466) + refinement: register with Go 1.22+
+		// method-aware mux pattern ONLY when 2+ routes share this
+		// path (i.e. same-path-different-method case that #466 was
+		// originally about). For unique paths, stay path-only — that
+		// keeps Go's "wildcard-method on more-specific path" conflict
+		// rule from tripping on the console mount (#466 follow-up,
+		// caught 2026-06-04 by VerifyScenarioSpec via 15-http-server).
 		muxPattern := pattern
-		if route.Method != "" && route.Method != "*" {
+		if pathRouteCount[pattern] > 1 && route.Method != "" && route.Method != "*" {
 			muxPattern = route.Method + " " + pattern
 		}
 		mux.HandleFunc(muxPattern, func(w http.ResponseWriter, req *http.Request) {
