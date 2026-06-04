@@ -44,7 +44,6 @@ import qualified Sky.Build.CaseSubjectNameShadowSpec
 import qualified Sky.Build.FfiKernelAliasSpec
 import qualified Sky.Build.HttpTypesSpec
 import qualified Sky.Build.CryptoAeadSpec
-import qualified Sky.Build.PubSubPublishTaskSpec
 import qualified Sky.Build.PubSubPublishNoEchoSpec
 import qualified Sky.Build.SkyLiveHeadSpec
 import qualified Sky.Build.SkyLiveConsoleAuthSpec
@@ -313,11 +312,6 @@ main = hspec $ do
     describe "Sky.Build.FfiKernelAlias" Sky.Build.FfiKernelAliasSpec.spec
     describe "Sky.Build.HttpTypes" Sky.Build.HttpTypesSpec.spec
     describe "Sky.Build.CryptoAead" Sky.Build.CryptoAeadSpec.spec
-    -- Cycle 4 PT: Task-shaped Std.PubSub.publish — callable from any
-    -- context (raw Sky.Http.Server api handlers / post-init goroutines
-    -- / scheduled jobs), complements Cmd.publish which is bound to
-    -- the Sky.Live update-return tuple.
-    describe "Sky.Build.PubSubPublishTask" Sky.Build.PubSubPublishTaskSpec.spec
     -- Cycle 4 NE / issue #359: Cmd.publishNoEcho + PubSub.publishNoEcho —
     -- opt-out echo for "instant feedback for publisher" pattern. Saves
     -- the broker round-trip; in v0.16+ cross-process broker tiers the

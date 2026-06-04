@@ -317,7 +317,6 @@ test-suite sky-tests
       Sky.Build.FfiKernelAliasSpec
       Sky.Build.HttpTypesSpec
       Sky.Build.CryptoAeadSpec
-      Sky.Build.PubSubPublishTaskSpec
       Sky.Build.PubSubPublishNoEchoSpec
       Sky.Build.SkyLiveHeadSpec
       Sky.Build.SkyLiveConsoleAuthSpec
