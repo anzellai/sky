@@ -8139,8 +8139,11 @@ func Middleware_withBasicAuth(expectedUser any, expectedPass any, handler any) a
 			if !(userOk && passOk) {
 				return Ok[any, any](SkyResponse{Status: 401, Body: "bad credentials"})
 			}
+			// v0.16.3 #468 — anyTaskInvoke handles typed SkyTask[E, A]
+			// via reflect-fallback; raw `task.(func() any)()` panicked
+			// on typed handlers.
 			task := SkyCall(handler, req)
-			return task.(func() any)()
+			return any(anyTaskInvoke(task))
 		}
 	}
 }
@@ -8177,8 +8180,11 @@ func Middleware_withRateLimit(name any, capacity any, refillPerSec any, handler 
 					Headers: map[string]string{"Retry-After": "1"},
 				})
 			}
+			// v0.16.3 #468 — anyTaskInvoke handles typed SkyTask[E, A]
+			// via reflect-fallback; raw `task.(func() any)()` panicked
+			// on typed handlers.
 			task := SkyCall(handler, req)
-			return task.(func() any)()
+			return any(anyTaskInvoke(task))
 		}
 	}
 }
