@@ -1,0 +1,111 @@
+module Main exposing (main)
+
+-- examples/37-composite-live-shop — Sky.Live composite test app.
+--
+-- A tiny e-commerce demo that exercises Sky.Live + Std.Ui's breadth:
+-- layout / Background / Border / Font / Region / Input / Chart /
+-- Lazy / Keyed / Responsive + Std.Live.Head + pub/sub via
+-- Cmd.publish + Sub.subscribeTopic in a single fixture. Multi-module
+-- mandatory per CLAUDE.md Limitation #17.
+import Sky.Core.Prelude exposing (..)
+import Std.Cmd as Cmd
+import Std.Live exposing (app, route)
+import Std.Sub as Sub
+import Std.Ui as Ui
+import Std.Ui exposing (Element)
+import Std.Ui.Background as Background
+import Std.Ui.Font as Font
+import Catalogue
+import Head
+import State exposing (..)
+import Update exposing (update)
+import View.Analytics exposing (analyticsView)
+import View.Cart exposing (cartView)
+import View.Common as Common
+import View.Home exposing (homeView)
+import View.Product exposing (productView)
+import View.SignIn exposing (signInView)
+
+
+init : a -> ( Model, Cmd Msg )
+init _req =
+    ( { products = Catalogue.seedProducts
+      , cart = []
+      , cartFlash = ""
+      , page = HomePage
+      , session = Nothing
+      , signInError = ""
+      , sort = SortName
+      , filter = ""
+      , viewport = { width = 1280, height = 720 }
+      , tick = 0
+      , sales = Catalogue.seedSales
+      , notifyOnRestock = False
+      , maxPrice = 0
+      , recentTopic = ""
+      }
+    , Cmd.none
+    )
+
+
+view : Model -> any
+view model =
+    Ui.layoutWith
+        { wrapperAttrs = [ Background.color (Ui.rgb 250 248 244)
+          , Font.family "system-ui, -apple-system, sans-serif"
+          , Font.size 14
+          , Font.color (Ui.rgb 30 30 36)
+          ]
+        , rootAttrs = []
+        }
+        (Ui.column
+            [ Ui.width Ui.fill, Ui.spacing 24 ]
+            [ Common.topNav model
+            , Ui.column
+                  [ Ui.paddingXY 24 16, Ui.spacing 16, Ui.width Ui.fill ]
+                  [pageBody model]
+            , Common.footer
+            ])
+
+
+pageBody : Model -> Element Msg
+pageBody model =
+    case model.page of
+
+        HomePage ->
+            homeView model
+
+        ProductPage slug ->
+            productView model slug
+
+        CartPage ->
+            cartView model
+
+        AnalyticsPage ->
+            analyticsView model
+
+        SignInPage ->
+            signInView model
+
+
+subscriptions : Model -> Sub.Sub Msg
+subscriptions _ =
+    Sub.batch
+        [ Sub.every 5000 Tick, Sub.subscribeTopic "cart" CartTopicReceived ]
+
+
+main =
+    app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        , routes = [ route "/" HomePage
+          , route "/cart" CartPage
+          , route "/analytics" AnalyticsPage
+          , route "/sign-in" SignInPage
+          , route "/products/:slug" ProductPage
+          ]
+        , notFound = HomePage
+        , head = Head.headFor
+        }

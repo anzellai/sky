@@ -1,0 +1,206 @@
+module View.Home exposing (homeView)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.ToString as ToString
+import Std.Ui as Ui
+import Std.Ui exposing (Element)
+import Std.Ui.Background as Background
+import Std.Ui.Border as Border
+import Std.Ui.Font as Font
+import Std.Ui.Input as Input
+import Std.Ui.Keyed as Keyed
+import Std.Ui.Lazy as Lazy
+import Std.Ui.Region as Region
+import State exposing (..)
+import Catalogue
+import View.Common as Common
+
+
+homeView : Model -> Element Msg
+homeView model =
+    let
+        filtered =
+            Catalogue.filterProducts model.filter model.maxPrice model.products
+        sorted = Catalogue.sortProducts model.sort filtered
+    in
+        Ui.column
+            [ Ui.width Ui.fill, Ui.spacing 20 ]
+            [ Common.mobileHint
+            , hero
+            , Lazy.lazy controlBar model
+            , gridSection sorted
+            , Common.flashBanner model.cartFlash
+            ]
+
+
+hero : Element Msg
+hero =
+    Ui.column
+        [ Ui.width Ui.fill
+        , Ui.paddingXY 32 28
+        , Ui.spacing 8
+        , Background.color (Ui.rgb 18 41 79)
+        , Border.rounded 6
+        ]
+        [ Ui.el
+              [ Region.heading 2
+              , Font.color (Ui.rgb 255 255 255)
+              , Font.size 26
+              , Font.bold
+              ]
+              (Ui.text "Carefully made things")
+        , Ui.paragraph
+              [ Font.color (Ui.rgb 220 220 230), Font.size 14 ]
+              [Ui.text
+                  "A tiny demo storefront exercising Sky.Live, Std.Ui, charts and pub/sub. Every primitive on this page is a Std.Ui call."]
+        ]
+
+
+controlBar : Model -> Element Msg
+controlBar model =
+    Ui.wrappedRow
+        [ Ui.spacing 16
+        , Ui.width Ui.fill
+        , Ui.paddingXY 16 16
+        , Background.color (Ui.rgb 255 255 255)
+        , Border.rounded 6
+        , Border.width 1
+        , Border.color Common.hairline
+        ]
+        [ Input.text
+              [Ui.width (Ui.px 240)]
+              { onChange = FilterChanged
+              , text = model.filter
+              , placeholder = Just (Input.placeholder [] (Ui.text "Search products…"))
+              , label = Input.labelAbove
+                    [ Font.size 12, Font.color Common.muted ]
+                    (Ui.text "Filter")
+              }
+        , Input.slider
+              [Ui.width (Ui.px 200)]
+              { onChange = MaxPriceChanged
+              , value = ToString.fromInt (model.maxPrice // 100)
+              , min = "0"
+              , max = "150"
+              , step = "5"
+              , label = Input.labelAbove
+                    [ Font.size 12, Font.color Common.muted ]
+                    (Ui.text
+                        ("Max price · $"
+                            ++ ToString.fromInt (model.maxPrice // 100)))
+              }
+        , Input.radioRow
+              []
+              { onChange = ChangeSort
+              , selected = sortToString model.sort
+              , options = [ Input.option "name" (Ui.text "Name")
+                , Input.option "price-asc" (Ui.text "$ ↑")
+                , Input.option "price-desc" (Ui.text "$ ↓")
+                ]
+              , label = Input.labelAbove
+                    [ Font.size 12, Font.color Common.muted ]
+                    (Ui.text "Sort by")
+              }
+        , Input.checkbox
+              []
+              { onChange = ToggleNotify
+              , icon = checkmarkIcon
+              , checked = model.notifyOnRestock
+              , label = Input.labelLeft
+                    [Font.size 12]
+                    (Ui.text "Notify me when stock returns")
+              }
+        ]
+
+
+checkmarkIcon : Bool -> Element Msg
+checkmarkIcon checked =
+    Ui.el
+        [ Background.color
+              (if checked then
+                  Ui.rgb 60 160 90
+
+              else
+                  Ui.rgb 240 240 244)
+        , Border.rounded 3
+        , Border.width 1
+        , Border.color Common.hairline
+        , Ui.width (Ui.px 18)
+        , Ui.height (Ui.px 18)
+        , Font.color (Ui.rgb 255 255 255)
+        , Font.size 12
+        , Font.bold
+        , Font.alignCenter
+        ]
+        (Ui.text (if checked then
+            "✓"
+
+        else
+            ""))
+
+
+gridSection : List Product -> Element Msg
+gridSection products =
+    if List.isEmpty products then
+        Ui.el
+            [ Ui.paddingXY 24 32, Font.color Common.muted ]
+            (Ui.text "No products match — relax the filter or the price cap.")
+
+    else
+        Keyed.column
+            [ Ui.spacing 16, Ui.width Ui.fill ]
+            [( "grid", productGrid products )]
+
+
+productGrid : List Product -> Element Msg
+productGrid products =
+    Ui.wrappedRow
+        [ Ui.spacing 16, Ui.width Ui.fill ]
+        (List.map productCard products)
+
+
+productCard : Product -> Element Msg
+productCard p =
+    Ui.column
+        [ Ui.width (Ui.px 220)
+        , Ui.paddingXY 12 12
+        , Ui.spacing 8
+        , Background.color (Ui.rgb 255 255 255)
+        , Border.rounded 6
+        , Border.width 1
+        , Border.color Common.hairline
+        , Border.shadow
+              { offsetX = 0
+              , offsetY = 1
+              , blur = 2
+              , spread = 0
+              , color = Ui.rgba 0 0 0 4.0e-2
+              }
+        ]
+        [ Ui.el
+              [ Ui.width Ui.fill
+              , Ui.height (Ui.px 120)
+              , Background.color (Ui.rgb 244 240 232)
+              , Border.rounded 4
+              , Font.alignCenter
+              , Font.color Common.muted
+              , Font.size 11
+              ]
+              (Ui.text p.category)
+        , Ui.link
+              [ Font.color Common.brand, Font.bold, Font.size 15 ]
+              { url = "/products/" ++ p.slug, label = Ui.text p.name }
+        , Ui.paragraph
+              [ Font.color Common.muted, Font.size 12 ]
+              [Ui.text p.description]
+        , Ui.row
+              [Ui.width Ui.fill]
+              [ Ui.el
+                    [ Font.color Common.brand, Font.bold, Font.size 16 ]
+                    (Ui.text (formatMoney p.priceCents))
+              , Ui.el
+                    [Ui.alignRight]
+                    (Common.primaryButton (AddToCart p.id) "Add")
+              ]
+        ]

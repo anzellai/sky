@@ -1,0 +1,165 @@
+module View.Analytics exposing (analyticsView)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.ToString as ToString
+import Std.Ui as Ui
+import Std.Ui exposing (Element)
+import Std.Ui.Background as Background
+import Std.Ui.Border as Border
+import Std.Ui.Chart as Chart
+import Std.Ui.Font as Font
+import Std.Ui.Region as Region
+import State exposing (..)
+import View.Common as Common
+
+
+analyticsView : Model -> Element Msg
+analyticsView model =
+    Ui.column
+        [ Ui.width Ui.fill, Ui.spacing 20 ]
+        [ Ui.el
+              [ Region.heading 2, Font.size 22, Font.bold ]
+              (Ui.text "Analytics")
+        , Ui.paragraph
+              [ Font.color Common.muted, Font.size 13 ]
+              [Ui.text
+                  "Synthetic data — exists to exercise Std.Ui.Chart's line + bar + sparkline primitives."]
+        , Common.adaptStack
+              model.viewport
+              [ chartCard "Daily sales" (lineChart model.sales)
+              , chartCard "Top categories" categoryBars
+              ]
+        , sparklineRow model
+        ]
+
+
+chartCard : String -> Element Msg -> Element Msg
+chartCard title body =
+    Ui.column
+        [ Ui.spacing 8
+        , Ui.paddingXY 16 16
+        , Background.color (Ui.rgb 255 255 255)
+        , Border.rounded 6
+        , Border.width 1
+        , Border.color Common.hairline
+        , Ui.width Ui.fill
+        ]
+        [ Ui.el [ Font.size 14, Font.color Common.muted ] (Ui.text title)
+        , body
+        ]
+
+
+lineChart : List Int -> Element Msg
+lineChart sales =
+    Chart.line
+        (Chart.defaultCfg |> Chart.withWidth 480 |> Chart.withHeight 180
+            |> Chart.withTitle "Last 30 days (USD)")
+        [Chart.series (toPoints sales) |> Chart.withSeriesLabel "Revenue"
+            |> Chart.withSeriesColor (Ui.rgb 60 130 200)]
+
+
+categoryBars : Element Msg
+categoryBars =
+    Chart.bar
+        (Chart.defaultCfg |> Chart.withWidth 480 |> Chart.withHeight 180
+            |> Chart.withTitle "Sales by category")
+        [Chart.series
+            [ ( 0.0, 1200.0 )
+            , ( 1.0, 880.0 )
+            , ( 2.0, 540.0 )
+            , ( 3.0, 420.0 )
+            , ( 4.0, 200.0 )
+            ]
+            |> Chart.withSeriesColor (Ui.rgb 220 130 60)]
+
+
+sparklineRow : Model -> Element Msg
+sparklineRow model =
+    Ui.row
+        [ Ui.spacing 24
+        , Ui.paddingXY 16 16
+        , Background.color (Ui.rgb 255 255 255)
+        , Border.rounded 6
+        , Border.width 1
+        , Border.color Common.hairline
+        , Ui.width Ui.fill
+        ]
+        [ sparklineMetric
+              "Cart items"
+              (cartCount model.cart)
+              (recentSparklineFloats model.tick)
+        , sparklineMetric
+              "Active sessions"
+              42
+              (recentSparklineFloats (model.tick + 7))
+        , sparklineMetric
+              "Revenue ($k)"
+              12
+              (recentSparklineFloats (model.tick + 13))
+        ]
+
+
+sparklineMetric : String -> Int -> List Float -> Element Msg
+sparklineMetric label value xs =
+    Ui.column
+        [Ui.spacing 4]
+        [ Ui.el [ Font.size 11, Font.color Common.muted ] (Ui.text label)
+        , Ui.el
+              [ Font.size 22, Font.bold, Font.color Common.brand ]
+              (Ui.text (ToString.fromInt value))
+        , Ui.el
+              [ Ui.width (Ui.px 140), Ui.height (Ui.px 32) ]
+              (Chart.sparkline
+                  (Chart.defaultCfg |> Chart.withWidth 140 |> Chart.withHeight 32
+                      |> Chart.withColor (Ui.rgb 60 160 90))
+                  xs)
+        ]
+
+
+toPoints : List Int -> List ( Float, Float )
+toPoints xs =
+    indexedFloats 0 xs
+
+
+indexedFloats : Int -> List Int -> List ( Float, Float )
+indexedFloats i xs =
+    case xs of
+
+        [] ->
+            []
+
+        h :: rest ->
+            ( intToFloat i, intToFloat h ) :: indexedFloats (i + 1) rest
+
+
+intToFloat : Int -> Float
+intToFloat n =
+    case String.toFloat (String.fromInt n) of
+
+        Just f ->
+            f
+
+        Nothing ->
+            0.0
+
+
+recentSparklineFloats : Int -> List Float
+recentSparklineFloats seed =
+    let
+        base = modBy 20 seed
+        ramp =
+            [ base + 4
+            , base + 8
+            , base + 5
+            , base + 11
+            , base + 9
+            , base + 14
+            , base + 12
+            , base + 17
+            , base + 15
+            , base + 19
+            ]
+    in
+        List.map intToFloat ramp

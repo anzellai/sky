@@ -1,0 +1,100 @@
+module CompositeLiveShopTest exposing (main, tests)
+
+-- Sky.Test assertions over the composite's pure helpers. Each
+-- module participates so a regression anywhere in State / Catalogue
+-- surfaces here without spinning the runtime.
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Test as Test exposing (Test)
+import State exposing (..)
+import Catalogue
+
+
+main =
+    Test.runMain tests
+
+
+tests : List Test
+tests =
+    [ Test.test
+          "formatMoney renders cents with leading zero"
+          (\_ -> Test.equal "$0.05" (formatMoney 5))
+    , Test.test
+          "formatMoney renders dollars + cents"
+          (\_ -> Test.equal "$12.34" (formatMoney 1234))
+    , Test.test
+          "formatMoney handles negative balances"
+          (\_ -> Test.equal "-$1.20" (formatMoney (-120)))
+    , Test.test
+          "padStringLeft pads to width"
+          (\_ -> Test.equal "007" (padStringLeft 3 "0" "7"))
+    , Test.test
+          "padStringLeft leaves long strings untouched"
+          (\_ -> Test.equal "123" (padStringLeft 2 "0" "123"))
+    , Test.test
+          "cartCount sums quantities"
+          (\_ ->
+              Test.equal
+                  5
+                  (cartCount
+                      [ { productId = 1
+                        , slug = "a"
+                        , name = "a"
+                        , unitPriceCents = 100
+                        , qty = 2
+                        }
+                      , { productId = 2
+                        , slug = "b"
+                        , name = "b"
+                        , unitPriceCents = 100
+                        , qty = 3
+                        }
+                      ]))
+    , Test.test
+          "cartTotalCents multiplies through"
+          (\_ ->
+              Test.equal
+                  800
+                  (cartTotalCents
+                      [ { productId = 1
+                        , slug = "a"
+                        , name = "a"
+                        , unitPriceCents = 200
+                        , qty = 2
+                        }
+                      , { productId = 2
+                        , slug = "b"
+                        , name = "b"
+                        , unitPriceCents = 100
+                        , qty = 4
+                        }
+                      ]))
+    , Test.test
+          "sortFromString round-trips canonical labels"
+          (\_ ->
+              Test.equal
+                  [ SortPriceAsc, SortPriceDesc, SortName, SortName ]
+                  [ sortFromString "price-asc"
+                  , sortFromString "price-desc"
+                  , sortFromString "name"
+                  , sortFromString "garbage"
+                  ])
+    , Test.test
+          "findProductBySlug matches by slug"
+          (\_ ->
+              case findProductBySlug "linen-tee" Catalogue.seedProducts of
+
+                  Just p ->
+                      Test.equal "Linen Tee" p.name
+
+                  Nothing ->
+                      Test.fail "slug not found")
+    , Test.test
+          "Catalogue.filterProducts narrows by needle"
+          (\_ ->
+              let
+                  hits =
+                      Catalogue.filterProducts "linen" 0 Catalogue.seedProducts
+              in
+                  Test.equal 1 (List.length hits))
+    ]

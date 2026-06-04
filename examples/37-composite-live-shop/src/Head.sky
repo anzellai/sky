@@ -1,0 +1,73 @@
+module Head exposing (headFor)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Html exposing (Html)
+import Std.Live.Head as Head
+import State exposing (..)
+
+
+headFor : Model -> List (Html Msg)
+headFor model =
+    let
+        meta = pageMeta model
+    in
+        [ Head.title meta.title
+        , Head.meta "description" meta.description
+        , Head.canonical meta.canonical
+        , Head.metaProperty "og:title" meta.title
+        , Head.metaProperty "og:type" "website"
+        , Head.metaProperty "og:url" meta.canonical
+        , Head.metaProperty "og:image" "https://example.com/og/skybazaar.png"
+        , Head.themeColor "#12294f"
+        , Head.rss "/rss.xml" "Sky Bazaar new arrivals"
+        ]
+
+type alias PageMeta =
+    { title : String
+    , description : String
+    , canonical : String
+    }
+
+
+pageMeta : Model -> PageMeta
+pageMeta model =
+    case model.page of
+
+        HomePage ->
+            { title = "Sky Bazaar — carefully made things"
+            , description = "A tiny demo storefront exercising Sky.Live, Std.Ui, and pub/sub."
+            , canonical = "https://shop.example/"
+            }
+
+        ProductPage slug ->
+            case findProductBySlug slug model.products of
+
+                Just p ->
+                    { title = p.name ++ " · Sky Bazaar"
+                    , description = p.description
+                    , canonical = "https://shop.example/products/" ++ p.slug
+                    }
+
+                Nothing ->
+                    { title = "Sky Bazaar · product"
+                    , description = "Product detail page."
+                    , canonical = "https://shop.example/products/" ++ slug
+                    }
+
+        CartPage ->
+            { title = "Your cart · Sky Bazaar"
+            , description = "Items selected for checkout."
+            , canonical = "https://shop.example/cart"
+            }
+
+        AnalyticsPage ->
+            { title = "Analytics · Sky Bazaar"
+            , description = "Revenue and category breakdowns."
+            , canonical = "https://shop.example/analytics"
+            }
+
+        SignInPage ->
+            { title = "Sign in · Sky Bazaar"
+            , description = "Sign in to checkout."
+            , canonical = "https://shop.example/sign-in"
+            }

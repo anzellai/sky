@@ -1,0 +1,142 @@
+module Update exposing (update)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Std.Cmd as Cmd
+import State exposing (..)
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Navigate page ->
+            ( { model | page = page, cartFlash = "" }, Cmd.none )
+
+        AddToCart productId ->
+            case findProductById productId model.products of
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+                Just product ->
+                    let
+                        newCart = addOrBump product model.cart
+                        announcement = "Added " ++ product.name
+                        count = cartCount newCart
+                        payload = mkCartPayload product.name count
+                    in
+                        ( { model | cart = newCart
+                          , cartFlash = announcement
+                          , recentTopic = announcement
+                          }
+                        , Cmd.batch [Cmd.publish "cart" payload]
+                        )
+
+        RemoveFromCart productId ->
+            ( { model | cart = List.filter (\it -> it.productId /= productId) model.cart
+              , cartFlash = ""
+              }
+            , Cmd.none
+            )
+
+        ChangeSort raw ->
+            ( { model | sort = sortFromString raw }, Cmd.none )
+
+        FilterChanged needle ->
+            ( { model | filter = needle }, Cmd.none )
+
+        MaxPriceChanged raw ->
+            let
+                clean = String.trim raw
+                cents = parsePriceCents clean
+            in
+                ( { model | maxPrice = cents }, Cmd.none )
+
+        ToggleNotify checked ->
+            ( { model | notifyOnRestock = checked }, Cmd.none )
+
+        DoSignIn creds ->
+            if String.isEmpty (String.trim creds.email) then
+                ( { model | signInError = "Email is required." }, Cmd.none )
+
+            else if String.length creds.password < 4 then
+                ( { model | signInError = "Password must be at least 4 characters."
+                  }
+                , Cmd.none
+                )
+
+            else
+                ( { model | session = Just { email = String.trim creds.email }
+                  , signInError = ""
+                  , page = HomePage
+                  }
+                , Cmd.none
+                )
+
+        LogoutClicked ->
+            ( { model | session = Nothing, page = HomePage, cart = [] }
+            , Cmd.none
+            )
+
+        Tick ->
+            ( { model | tick = model.tick + 1 }, Cmd.none )
+
+        CartTopicReceived _ ->
+            ( model, Cmd.none )
+
+        CheckoutClicked ->
+            case model.session of
+
+                Nothing ->
+                    ( { model | page = SignInPage }, Cmd.none )
+
+                Just _ ->
+                    ( { model | cart = []
+                      , cartFlash = "Order placed. Thank you!"
+                      }
+                    , Cmd.none
+                    )
+
+
+addOrBump : Product -> List CartItem -> List CartItem
+addOrBump product items =
+    if List.any (\it -> it.productId == product.id) items then
+        List.map
+            (\it ->
+                if it.productId == product.id then
+                    { it | qty = it.qty + 1 }
+
+                else
+                    it)
+            items
+
+    else
+        items
+            ++ [{ productId = product.id
+               , slug = product.slug
+               , name = product.name
+               , unitPriceCents = product.priceCents
+               , qty = 1
+               }]
+
+
+-- "12.50" → 1250 cents. Anything unparseable → 0 (treated as "no
+-- cap"). Used by MaxPriceChanged from the slider's String payload.
+parsePriceCents : String -> Int
+parsePriceCents raw =
+    case String.toInt raw of
+
+        Just n ->
+            n * 100
+
+        Nothing ->
+            0
+
+
+mkCartPayload : String -> Int -> { name : String
+, count : Int
+}
+mkCartPayload name count =
+    { name = name, count = count }

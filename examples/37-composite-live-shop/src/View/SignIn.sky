@@ -1,0 +1,77 @@
+module View.SignIn exposing (signInView)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Std.Ui as Ui
+import Std.Ui exposing (Element)
+import Std.Ui.Background as Background
+import Std.Ui.Border as Border
+import Std.Ui.Font as Font
+import Std.Ui.Region as Region
+import State exposing (..)
+import View.Common as Common
+
+
+signInView : Model -> Element Msg
+signInView model =
+    Ui.column
+        [ Ui.centerX, Ui.width (Ui.px 360), Ui.spacing 16 ]
+        [ Ui.el
+              [ Region.heading 2, Font.size 22, Font.bold ]
+              (Ui.text "Sign in")
+        , Ui.paragraph
+              [ Font.color Common.muted, Font.size 13 ]
+              [Ui.text
+                  "Demo doesn't really authenticate. Any email + password ≥ 4 chars unlocks checkout."]
+        , Ui.form
+              [Ui.onSubmit DoSignIn]
+              [Ui.column
+                  [ Ui.spacing 12
+                  , Ui.paddingXY 16 16
+                  , Background.color (Ui.rgb 255 255 255)
+                  , Border.rounded 6
+                  , Border.width 1
+                  , Border.color Common.hairline
+                  ]
+                  [ labelledField "Email" "email" "email"
+                  , labelledField "Password" "password" "password"
+                  , errorLine model.signInError
+                  , Ui.input
+                        [ Ui.htmlAttribute "type" "submit"
+                        , Ui.htmlAttribute "value" "Sign in"
+                        , Background.color Common.brandAccent
+                        , Background.hoverColor (Ui.rgb 200 70 20)
+                        , Font.color (Ui.rgb 255 255 255)
+                        , Font.bold
+                        , Border.rounded 4
+                        , Ui.paddingXY 12 8
+                        ]
+                  ]]
+        ]
+
+
+labelledField : String -> String -> String -> Element Msg
+labelledField labelText nameAttr typeAttr =
+    Ui.column
+        [Ui.spacing 4]
+        [ Ui.el [ Font.size 12, Font.color Common.muted ] (Ui.text labelText)
+        , Ui.input
+              [ Ui.htmlAttribute "type" typeAttr
+              , Ui.name nameAttr
+              , Border.width 1
+              , Border.color Common.hairline
+              , Border.rounded 3
+              , Background.focusColor (Ui.rgb 250 250 245)
+              , Border.color (Ui.rgb 200 200 200)
+              , Ui.paddingXY 8 6
+              ]
+        ]
+
+
+errorLine : String -> Element Msg
+errorLine err =
+    if String.isEmpty err then
+        Ui.text ""
+
+    else
+        Ui.el [ Font.color (Ui.rgb 200 60 60), Font.size 12 ] (Ui.text err)

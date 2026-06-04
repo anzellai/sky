@@ -1,0 +1,249 @@
+module Catalogue exposing (seedProducts, seedSales, sortProducts, filterProducts)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import State exposing (..)
+
+
+seedProducts : List Product
+seedProducts =
+    [ Product
+          1
+          "linen-tee"
+          "Linen Tee"
+          "Breathable summer top, oat colour."
+          4200
+          "/img/linen-tee.png"
+          "apparel"
+          12
+    , Product
+          2
+          "denim-jacket"
+          "Denim Jacket"
+          "Mid-wash with brass hardware."
+          12800
+          "/img/denim-jacket.png"
+          "apparel"
+          6
+    , Product
+          3
+          "leather-belt"
+          "Leather Belt"
+          "Full-grain, made in Spain."
+          5400
+          "/img/leather-belt.png"
+          "accessories"
+          18
+    , Product
+          4
+          "cotton-socks"
+          "Cotton Socks"
+          "Three-pack, breathable ribbed."
+          1800
+          "/img/socks.png"
+          "apparel"
+          40
+    , Product
+          5
+          "canvas-tote"
+          "Canvas Tote"
+          "Heavyweight 14oz, deep pockets."
+          2600
+          "/img/tote.png"
+          "accessories"
+          25
+    , Product
+          6
+          "wool-beanie"
+          "Wool Beanie"
+          "Italian merino, single seam."
+          3200
+          "/img/beanie.png"
+          "accessories"
+          14
+    , Product
+          7
+          "silver-ring"
+          "Silver Ring"
+          "Sterling, hand-finished."
+          8800
+          "/img/ring.png"
+          "jewellery"
+          8
+    , Product
+          8
+          "ceramic-mug"
+          "Ceramic Mug"
+          "Stoneware, dishwasher-safe."
+          2200
+          "/img/mug.png"
+          "home"
+          30
+    , Product
+          9
+          "incense-set"
+          "Incense Set"
+          "Three scents, hand-rolled."
+          1900
+          "/img/incense.png"
+          "home"
+          22
+    , Product
+          10
+          "notebook"
+          "A5 Notebook"
+          "100gsm, dotted, lay-flat."
+          1400
+          "/img/notebook.png"
+          "stationery"
+          50
+    , Product
+          11
+          "pen-set"
+          "Pen Set"
+          "Three fineliners + one rollerball."
+          2400
+          "/img/pen-set.png"
+          "stationery"
+          17
+    , Product
+          12
+          "tote-water-bottle"
+          "Water Bottle"
+          "750ml, vacuum insulated."
+          3400
+          "/img/water-bottle.png"
+          "home"
+          11
+    ]
+
+
+-- Synthetic sales-over-time series: 30 days of daily totals (in
+-- dollars). Use deterministic numbers so the chart is stable across
+-- runs.
+seedSales : List Int
+seedSales =
+    [ 320
+    , 280
+    , 410
+    , 380
+    , 460
+    , 520
+    , 480
+    , 510
+    , 590
+    , 540
+    , 600
+    , 640
+    , 620
+    , 700
+    , 680
+    , 740
+    , 760
+    , 700
+    , 820
+    , 880
+    , 840
+    , 900
+    , 940
+    , 920
+    , 990
+    , 1020
+    , 1080
+    , 1040
+    , 1120
+    , 1180
+    ]
+
+
+sortProducts : Sort -> List Product -> List Product
+sortProducts sort products =
+    case sort of
+
+        SortName ->
+            sortByName products
+
+        SortPriceAsc ->
+            sortByPriceAsc products
+
+        SortPriceDesc ->
+            sortByPriceDesc products
+
+
+-- Insertion sort: 12 items, no need for anything fancy and we sidestep
+-- a stdlib that doesn't expose List.sortBy yet.
+sortByName : List Product -> List Product
+sortByName xs =
+    List.foldl (\p acc -> insertByName p acc) [] xs
+
+
+insertByName : Product -> List Product -> List Product
+insertByName p acc =
+    case acc of
+
+        [] ->
+            [p]
+
+        h :: rest ->
+            if p.name <= h.name then
+                p :: acc
+
+            else
+                h :: insertByName p rest
+
+
+sortByPriceAsc : List Product -> List Product
+sortByPriceAsc xs =
+    List.foldl (\p acc -> insertByPriceAsc p acc) [] xs
+
+
+insertByPriceAsc : Product -> List Product -> List Product
+insertByPriceAsc p acc =
+    case acc of
+
+        [] ->
+            [p]
+
+        h :: rest ->
+            if p.priceCents <= h.priceCents then
+                p :: acc
+
+            else
+                h :: insertByPriceAsc p rest
+
+
+sortByPriceDesc : List Product -> List Product
+sortByPriceDesc xs =
+    List.foldl (\p acc -> insertByPriceDesc p acc) [] xs
+
+
+insertByPriceDesc : Product -> List Product -> List Product
+insertByPriceDesc p acc =
+    case acc of
+
+        [] ->
+            [p]
+
+        h :: rest ->
+            if p.priceCents >= h.priceCents then
+                p :: acc
+
+            else
+                h :: insertByPriceDesc p rest
+
+
+filterProducts : String -> Int -> List Product -> List Product
+filterProducts needle maxCents products =
+    let
+        priceCap =
+            if maxCents <= 0 then
+                999999
+
+            else
+                maxCents
+    in
+        List.filter
+            (\p ->
+                containsCaseInsensitive needle p.name && p.priceCents
+                    <= priceCap)
+            products

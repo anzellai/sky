@@ -1,0 +1,212 @@
+module View.Common exposing (..)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.ToString as ToString
+import Std.Ui as Ui
+import Std.Ui exposing (Element)
+import Std.Ui.Background as Background
+import Std.Ui.Border as Border
+import Std.Ui.Font as Font
+import Std.Ui.Region as Region
+import Std.Ui.Responsive as Responsive exposing (DeviceClass(..))
+import State exposing (..)
+
+
+brand : Ui.Color
+brand =
+    Ui.rgb 18 41 79
+
+
+brandAccent : Ui.Color
+brandAccent =
+    Ui.rgb 224 96 32
+
+
+pageBg : Ui.Color
+pageBg =
+    Ui.rgb 250 248 244
+
+
+cardBg : Ui.Color
+cardBg =
+    Ui.rgb 255 255 255
+
+
+muted : Ui.Color
+muted =
+    Ui.rgb 110 110 120
+
+
+hairline : Ui.Color
+hairline =
+    Ui.rgb 224 220 212
+
+
+navLink : Page -> String -> Element Msg
+navLink target label =
+    Ui.button
+        [ Background.color brand
+        , Background.hoverColor (Ui.rgb 30 60 100)
+        , Font.color (Ui.rgb 255 255 255)
+        , Font.size 13
+        , Border.rounded 4
+        , Ui.paddingXY 12 6
+        ]
+        { onPress = Just (Navigate target), label = Ui.text label }
+
+
+primaryButton : Msg -> String -> Element Msg
+primaryButton msg label =
+    Ui.button
+        [ Background.color brandAccent
+        , Background.hoverColor (Ui.rgb 200 70 20)
+        , Font.color (Ui.rgb 255 255 255)
+        , Font.bold
+        , Font.size 13
+        , Border.rounded 4
+        , Ui.paddingXY 14 8
+        ]
+        { onPress = Just msg, label = Ui.text label }
+
+
+ghostButton : Msg -> String -> Element Msg
+ghostButton msg label =
+    Ui.button
+        [ Background.color (Ui.rgb 255 255 255)
+        , Border.width 1
+        , Border.color hairline
+        , Font.color brand
+        , Font.size 12
+        , Border.rounded 4
+        , Ui.paddingXY 10 6
+        ]
+        { onPress = Just msg, label = Ui.text label }
+
+
+cartPill : Int -> Element Msg
+cartPill n =
+    Ui.el
+        [ Background.color (Ui.rgb 255 255 255)
+        , Font.color brand
+        , Font.bold
+        , Font.size 12
+        , Border.rounded 999
+        , Ui.paddingXY 10 4
+        , Border.width 1
+        , Border.color hairline
+        ]
+        (Ui.text ("Cart · " ++ ToString.fromInt n))
+
+
+sessionPill : Maybe Session -> Element Msg
+sessionPill maybe =
+    case maybe of
+
+        Just sess ->
+            Ui.row
+                [Ui.spacing 8]
+                [ Ui.el
+                      [ Font.color (Ui.rgb 255 255 255), Font.size 12 ]
+                      (Ui.text sess.email)
+                , ghostButton LogoutClicked "sign out"
+                ]
+
+        Nothing ->
+            navLink SignInPage "Sign in"
+
+
+topNav : Model -> Element Msg
+topNav model =
+    Ui.row
+        [ Ui.width Ui.fill
+        , Ui.spacing 16
+        , Ui.paddingXY 24 12
+        , Background.color brand
+        , Region.navigation
+        ]
+        [ Ui.el
+              [ Region.heading 1
+              , Font.color (Ui.rgb 255 255 255)
+              , Font.bold
+              , Font.size 18
+              ]
+              (Ui.text "Sky Bazaar")
+        , navLink HomePage "Shop"
+        , navLink AnalyticsPage "Analytics"
+        , navLink CartPage "Cart"
+        , Ui.el [Ui.alignRight] (cartPill (cartCount model.cart))
+        , Ui.el [Ui.alignRight] (sessionPill model.session)
+        ]
+
+
+footer : Element Msg
+footer =
+    Ui.row
+        [ Ui.width Ui.fill
+        , Ui.paddingXY 24 16
+        , Ui.spacing 16
+        , Background.color (Ui.rgb 240 236 228)
+        , Region.footer
+        , Border.widthEach { top = 1, right = 0, bottom = 0, left = 0 }
+        , Border.color hairline
+        ]
+        [ Ui.el
+              [ Font.color muted, Font.size 12, Ui.alignLeft ]
+              (Ui.text
+                  "Sky.Live composite test app · examples/37-composite-live-shop")
+        , Ui.el
+              [ Font.color muted, Font.size 12, Ui.alignRight ]
+              (Ui.text "© 2026 Sky Bazaar")
+        ]
+
+
+-- Mobile-first banner: hidden on tablet and above. Demonstrates
+-- Ui.breakpoint without a model field.
+mobileHint : Element Msg
+mobileHint =
+    Ui.breakpoint
+        Ui.mobile
+        [ Background.color (Ui.rgb 255 248 220)
+        , Border.color (Ui.rgb 240 220 170)
+        , Border.width 1
+        , Border.rounded 4
+        , Ui.paddingXY 12 8
+        , Font.size 12
+        ]
+        (Ui.text "Tip: rotate to landscape for a richer grid layout.")
+
+
+-- Wrapper that swaps to a single-column flow on phones by changing
+-- the rendered Element via Std.Ui.Responsive. Picks the layout type
+-- per device class — phones get a column, larger screens a row.
+adaptStack : Viewport -> List (Element Msg) -> Element Msg
+adaptStack vp children =
+    case Responsive.classifyDevice vp of
+
+        Phone ->
+            Ui.column [ Ui.spacing 16, Ui.width Ui.fill ] children
+
+        _ ->
+            Ui.row [ Ui.spacing 16, Ui.width Ui.fill ] children
+
+
+-- Flash banner — only renders when non-empty so the slot
+-- collapses in steady state. Pseudo-class hover used on the
+-- dismiss link to demonstrate Background.hoverColor on a button.
+flashBanner : String -> Element Msg
+flashBanner text =
+    if String.isEmpty text then
+        Ui.text ""
+
+    else
+        Ui.row
+            [ Ui.width Ui.fill
+            , Background.color (Ui.rgb 230 244 220)
+            , Border.color (Ui.rgb 180 220 150)
+            , Border.width 1
+            , Border.rounded 4
+            , Ui.paddingXY 12 8
+            , Ui.spacing 12
+            ]
+            [Ui.el [ Font.color (Ui.rgb 30 80 30), Font.size 13 ] (Ui.text text)]

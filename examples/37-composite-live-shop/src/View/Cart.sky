@@ -1,0 +1,106 @@
+module View.Cart exposing (cartView)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.ToString as ToString
+import Std.Ui as Ui
+import Std.Ui exposing (Element)
+import Std.Ui.Background as Background
+import Std.Ui.Border as Border
+import Std.Ui.Font as Font
+import Std.Ui.Keyed as Keyed
+import Std.Ui.Region as Region
+import State exposing (..)
+import View.Common as Common
+
+
+cartView : Model -> Element Msg
+cartView model =
+    if List.isEmpty model.cart then
+        emptyCart
+
+    else
+        Ui.column
+            [ Ui.width Ui.fill, Ui.spacing 16 ]
+            [ Ui.el
+                  [ Region.heading 2, Font.size 22, Font.bold ]
+                  (Ui.text "Your cart")
+            , Keyed.column
+                  [ Ui.width Ui.fill, Ui.spacing 8 ]
+                  (List.map cartRowKeyed model.cart)
+            , summaryRow model
+            , Common.flashBanner model.cartFlash
+            ]
+
+
+emptyCart : Element Msg
+emptyCart =
+    Ui.column
+        [ Ui.spacing 12, Ui.paddingXY 24 32 ]
+        [ Ui.el
+              [ Region.heading 2, Font.size 18 ]
+              (Ui.text "Your cart is empty")
+        , Ui.el
+              [ Font.color Common.muted, Font.size 13 ]
+              (Ui.text
+                  "Browse the shop and add a few items to see this page light up.")
+        , Common.primaryButton (Navigate HomePage) "Start shopping"
+        ]
+
+
+cartRowKeyed : CartItem -> ( String, Element Msg )
+cartRowKeyed item =
+    ( "cart-" ++ ToString.fromInt item.productId, cartRow item )
+
+
+cartRow : CartItem -> Element Msg
+cartRow item =
+    Ui.row
+        [ Ui.width Ui.fill
+        , Ui.paddingXY 12 10
+        , Ui.spacing 12
+        , Background.color (Ui.rgb 255 255 255)
+        , Border.rounded 4
+        , Border.width 1
+        , Border.color Common.hairline
+        ]
+        [ Ui.el
+              [ Font.color Common.brand, Font.bold, Font.size 14 ]
+              (Ui.text item.name)
+        , Ui.el
+              [ Font.color Common.muted, Font.size 12 ]
+              (Ui.text ("× " ++ ToString.fromInt item.qty))
+        , Ui.el
+              [ Ui.alignRight
+              , Font.color Common.brand
+              , Font.bold
+              , Font.size 14
+              ]
+              (Ui.text (formatMoney (item.unitPriceCents * item.qty)))
+        , Common.ghostButton (RemoveFromCart item.productId) "Remove"
+        ]
+
+
+summaryRow : Model -> Element Msg
+summaryRow model =
+    Ui.row
+        [ Ui.width Ui.fill
+        , Ui.paddingXY 12 14
+        , Ui.spacing 16
+        , Background.color (Ui.rgb 240 244 248)
+        , Border.rounded 4
+        ]
+        [ Ui.el
+              [ Font.size 14, Font.color Common.muted ]
+              (Ui.text ("Items: " ++ ToString.fromInt (cartCount model.cart)))
+        , Ui.el
+              [ Ui.alignRight
+              , Font.bold
+              , Font.size 18
+              , Font.color Common.brand
+              ]
+              (Ui.text ("Total " ++ formatMoney (cartTotalCents model.cart)))
+        , Ui.el
+              [Ui.alignRight]
+              (Common.primaryButton CheckoutClicked "Checkout")
+        ]

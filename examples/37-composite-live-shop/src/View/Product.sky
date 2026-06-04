@@ -1,0 +1,83 @@
+module View.Product exposing (productView)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.ToString as ToString
+import Std.Ui as Ui
+import Std.Ui exposing (Element)
+import Std.Ui.Background as Background
+import Std.Ui.Border as Border
+import Std.Ui.Font as Font
+import Std.Ui.Region as Region
+import State exposing (..)
+import View.Common as Common
+
+
+productView : Model -> String -> Element Msg
+productView model slug =
+    case findProductBySlug slug model.products of
+
+        Just product ->
+            productDetail product
+
+        Nothing ->
+            notFoundCard slug
+
+
+productDetail : Product -> Element Msg
+productDetail p =
+    Ui.row [ Ui.width Ui.fill, Ui.spacing 24 ] [ heroImage p, detailPanel p ]
+
+
+heroImage : Product -> Element Msg
+heroImage p =
+    Ui.el
+        [ Ui.width (Ui.px 320)
+        , Ui.height (Ui.px 320)
+        , Background.color (Ui.rgb 240 234 222)
+        , Border.rounded 8
+        , Font.color Common.muted
+        , Font.alignCenter
+        , Font.size 13
+        ]
+        (Ui.text ("Image · " ++ p.category))
+
+
+detailPanel : Product -> Element Msg
+detailPanel p =
+    Ui.column
+        [ Ui.width Ui.fill, Ui.spacing 12 ]
+        [ Ui.el [ Region.heading 2, Font.size 22, Font.bold ] (Ui.text p.name)
+        , Ui.el
+              [ Font.color Common.muted, Font.size 12 ]
+              (Ui.text ("Category: " ++ p.category))
+        , Ui.el
+              [ Font.color Common.brand, Font.size 24, Font.bold ]
+              (Ui.text (formatMoney p.priceCents))
+        , Ui.paragraph
+              [ Font.color (Ui.rgb 60 60 70), Font.size 14 ]
+              [Ui.text p.description]
+        , Ui.row
+              [Ui.spacing 8]
+              [Ui.el
+                  [ Font.size 12, Font.color Common.muted ]
+                  (Ui.text ("In stock: " ++ ToString.fromInt p.stock))]
+        , Ui.row
+              [Ui.spacing 12]
+              [ Common.primaryButton (AddToCart p.id) "Add to cart"
+              , Common.ghostButton (Navigate HomePage) "← Back to shop"
+              ]
+        ]
+
+
+notFoundCard : String -> Element Msg
+notFoundCard slug =
+    Ui.column
+        [ Ui.spacing 8, Ui.paddingXY 24 24 ]
+        [ Ui.el
+              [ Region.heading 2, Font.size 18 ]
+              (Ui.text "We couldn't find that product")
+        , Ui.el
+              [ Font.color Common.muted, Font.size 13 ]
+              (Ui.text ("No product with slug '" ++ slug ++ "'."))
+        , Common.ghostButton (Navigate HomePage) "Back to shop"
+        ]

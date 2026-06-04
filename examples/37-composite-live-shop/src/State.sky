@@ -1,0 +1,198 @@
+module State exposing (..)
+
+-- Pure types + same-module helpers. No Std.Ui imports here so the
+-- per-module HM heap stays well below Limitation #17's heap-exhaustion
+-- limit; the heavy unification load lives in the per-View modules.
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+
+type alias Product =
+    { id : Int
+    , slug : String
+    , name : String
+    , description : String
+    , priceCents : Int
+    , imageUrl : String
+    , category : String
+    , stock : Int
+    }
+
+type alias CartItem =
+    { productId : Int
+    , slug : String
+    , name : String
+    , unitPriceCents : Int
+    , qty : Int
+    }
+
+type alias Session =
+    { email : String }
+
+type alias SignInForm =
+    { email : String
+    , password : String
+    }
+
+-- The home page lays the catalogue out in a card grid; the sort
+-- selector is a typed enum because the wire delivers it as a String
+-- ("price-asc" / "price-desc" / "name") that we normalise into an
+-- ADT on receipt so update never branches on raw strings.
+type Sort
+    = SortName
+    | SortPriceAsc
+    | SortPriceDesc
+
+type Page
+    = HomePage
+    | ProductPage String
+    | CartPage
+    | AnalyticsPage
+    | SignInPage
+
+type alias Viewport =
+    { width : Int
+    , height : Int
+    }
+
+type alias Model =
+    { products : List Product
+    , cart : List CartItem
+    , cartFlash : String
+    , page : Page
+    , session : Maybe Session
+    , signInError : String
+    , sort : Sort
+    , filter : String
+    , viewport : Viewport
+    , tick : Int
+    , sales : List Int
+    , notifyOnRestock : Bool
+    , maxPrice : Int
+    , recentTopic : String
+    }
+
+type Msg
+    = Navigate Page
+    | AddToCart Int
+    | RemoveFromCart Int
+    | ChangeSort String
+    | FilterChanged String
+    | MaxPriceChanged String
+    | ToggleNotify Bool
+    | DoSignIn SignInForm
+    | LogoutClicked
+    | Tick
+    | CartTopicReceived any
+    | CheckoutClicked
+
+
+sortFromString : String -> Sort
+sortFromString s =
+    case s of
+
+        "price-asc" ->
+            SortPriceAsc
+
+        "price-desc" ->
+            SortPriceDesc
+
+        _ ->
+            SortName
+
+
+sortToString : Sort -> String
+sortToString s =
+    case s of
+
+        SortName ->
+            "name"
+
+        SortPriceAsc ->
+            "price-asc"
+
+        SortPriceDesc ->
+            "price-desc"
+
+
+sortLabel : Sort -> String
+sortLabel s =
+    case s of
+
+        SortName ->
+            "Name (A→Z)"
+
+        SortPriceAsc ->
+            "Price (low to high)"
+
+        SortPriceDesc ->
+            "Price (high to low)"
+
+
+cartCount : List CartItem -> Int
+cartCount items =
+    List.foldl (\it acc -> acc + it.qty) 0 items
+
+
+cartTotalCents : List CartItem -> Int
+cartTotalCents items =
+    List.foldl (\it acc -> acc + (it.unitPriceCents * it.qty)) 0 items
+
+
+-- Currency formatting in cents → dollars + 2dp. Bug #462 forbids
+-- relying on String.padLeft with a non-digit char, so we build the
+-- two-digit cents fragment via Sky-side helpers.
+formatMoney : Int -> String
+formatMoney cents =
+    let
+        sign =
+            if cents < 0 then
+                "-"
+
+            else
+                ""
+        magnitude =
+            if cents < 0 then
+                -cents
+
+            else
+                cents
+        dollars = magnitude // 100
+        rest = magnitude - (dollars * 100)
+        restStr = padStringLeft 2 "0" (String.fromInt rest)
+    in
+        sign ++ "$" ++ String.fromInt dollars ++ "." ++ restStr
+
+
+padStringLeft : Int -> String -> String -> String
+padStringLeft target pad s =
+    let
+        deficit = target - String.length s
+    in
+        if deficit <= 0 then
+            s
+
+        else
+            String.repeat deficit pad ++ s
+
+
+findProductBySlug : String -> List Product -> Maybe Product
+findProductBySlug slug products =
+    List.find (\p -> p.slug == slug) products
+
+
+findProductById : Int -> List Product -> Maybe Product
+findProductById id products =
+    List.find (\p -> p.id == id) products
+
+
+containsCaseInsensitive : String -> String -> Bool
+containsCaseInsensitive needle haystack =
+    let
+        n = String.toLower (String.trim needle)
+    in
+        if String.isEmpty n then
+            True
+
+        else
+            String.contains n (String.toLower haystack)

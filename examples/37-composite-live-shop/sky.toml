@@ -1,0 +1,11 @@
+name = "composite-live-shop"
+version = "0.1.0"
+entry = "src/Main.sky"
+
+[source]
+root = "src"
+
+[live]
+port = 8005
+store = "memory"
+input = "debounce"
