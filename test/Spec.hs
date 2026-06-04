@@ -131,6 +131,7 @@ import qualified Sky.Cli.TestSpec
 import qualified Sky.Cli.UpgradeClaudeSpec
 import qualified Sky.Cli.WatchSpec
 import qualified Sky.Cli.DoctorSpec
+import qualified Sky.Build.HubConsoleServeSpec
 
 main :: IO ()
 main = hspec $ do
@@ -695,3 +696,7 @@ main = hspec $ do
     -- running (the most user-visible policy).
     describe "Sky.Cli.Watch"               Sky.Cli.WatchSpec.spec
     describe "Sky.Cli.Doctor"              Sky.Cli.DoctorSpec.spec
+    -- v0.16.4 Chunks 2+3: `sky console-serve` hub daemon. Asserts
+    -- the materialise + go build ./cmd/sky-hub + exec path lands on
+    -- a daemon that accepts OTLP/JSON and persists to SQLite.
+    describe "Sky.Build.HubConsoleServe"   Sky.Build.HubConsoleServeSpec.spec

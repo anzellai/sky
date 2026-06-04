@@ -2095,30 +2095,104 @@ runConsole _opts = do
     return (Right ())
 
 
--- | `sky console-serve` — the Sky Console hub daemon. v0.16.4 Chunk 1
--- ships the CLI scaffolding only: prints the resolved config and
--- exits 0 so the flag plumbing is verifiable end-to-end. Chunk 2 will
--- replace this with the actual OTLP HTTP receiver + storage + UI.
+-- | `sky console-serve` — the Sky Console hub daemon. v0.16.4
+-- Chunks 2 + 3 wire the OTLP/HTTP receiver + SQLite hot store.
+--
+-- Strategy: materialise the TH-embedded runtime-go tree into a
+-- version-scoped cache dir under ~/.cache/sky/hub-<version>/, run
+-- `go build ./cmd/sky-hub` to produce a standalone hub binary,
+-- then exec it with the resolved flag values forwarded. The build
+-- is one-shot per Sky version (subsequent invocations short-
+-- circuit on a present binary), so steady-state startup is a
+-- single process spawn.
+--
+-- Mirrors the materialise-then-spawn pattern in `runDocServe`
+-- (above), but the child here is pure Go — we don't invoke
+-- `sky build` on Sky source (there is none for the hub daemon).
 --
 -- See docs/v0.16.x-console/v0.16.4-IMPLEMENTATION-PLAN.md.
 runConsoleServe :: ConsoleServeOpts -> IO (Either String ())
 runConsoleServe opts = do
-    putStrLn ""
-    putStrLn "sky console-serve — Sky Console Hub daemon"
-    putStrLn ""
-    putStrLn $ "  port:      " ++ show (_hubPort opts)
-    putStrLn $ "  data-dir:  " ++ _hubDataDir opts
-    putStrLn $ "  auth:      " ++ _hubAuth opts
+    -- Validate flag combinations up front (fail fast before
+    -- materialising anything).
     case (_hubTlsCert opts, _hubTlsKey opts) of
-        (Just c, Just k)   -> putStrLn $ "  tls:       " ++ c ++ " / " ++ k
-        (Nothing, Nothing) -> putStrLn   "  tls:       (off — HTTP only)"
-        _                  -> putStrLn   "  tls:       INCOMPLETE (need both --tls-cert and --tls-key)"
-    putStrLn ""
-    putStrLn "STATUS: v0.16.4 Chunk 1 (CLI scaffolding) only — receiver,"
-    putStrLn "        storage, and UI ship in Chunks 2-7. See"
-    putStrLn "        docs/v0.16.x-console/v0.16.4-IMPLEMENTATION-PLAN.md."
-    putStrLn ""
-    return (Right ())
+        (Just _, Nothing) -> do
+            hPutStrLn stderr "sky console-serve: --tls-cert set but --tls-key missing"
+            exitWith (ExitFailure 2)
+        (Nothing, Just _) -> do
+            hPutStrLn stderr "sky console-serve: --tls-key set but --tls-cert missing"
+            exitWith (ExitFailure 2)
+        _ -> return ()
+    let auth = _hubAuth opts
+    when (auth /= "token" && auth /= "off" && auth /= "app") $ do
+        hPutStrLn stderr $
+            "sky console-serve: unknown --auth mode " ++ show auth
+            ++ " (want token|off|app)"
+        exitWith (ExitFailure 2)
+
+    -- Materialise the embedded runtime-go tree into the version-
+    -- scoped cache root.  Idempotent: an existing cache from a
+    -- previous invocation is left in place (writeOne overwrites
+    -- per-file, which is cheap on a warm cache).
+    cache <- System.Directory.getXdgDirectory System.Directory.XdgCache "sky"
+    let root    = cache </> ("hub-" ++ skyBuildVersion)
+        binPath = root </> "sky-hub"
+    createDirectoryIfMissing True root
+    Compile.writeEmbeddedRuntime root
+
+    -- One-shot build per Sky version. Reusing the binary on
+    -- repeat invocations keeps the steady-state startup latency
+    -- to a single process spawn.
+    haveBin <- doesFileExist binPath
+    when (not haveBin) $ do
+        putStrLn $ "sky console-serve: building hub daemon (one-time per "
+                ++ "version, into " ++ root ++ ")..."
+        let bp = (System.Process.proc "go" [ "build", "-o", "sky-hub"
+                                            , "./cmd/sky-hub"
+                                            ])
+                    { System.Process.cwd     = Just root
+                    , System.Process.std_out = System.Process.Inherit
+                    , System.Process.std_err = System.Process.Inherit
+                    }
+        (_, _, _, ph) <- System.Process.createProcess bp
+        bec <- System.Process.waitForProcess ph
+        case bec of
+            ExitSuccess -> return ()
+            ExitFailure n -> do
+                hPutStrLn stderr $ "sky console-serve: go build sky-hub failed (exit "
+                                   ++ show n ++ ")"
+                exitWith (ExitFailure n)
+
+    -- Forward flags to the child.  Env carries SKY_CONSOLE_HUB_TOKEN
+    -- + SKY_CONSOLE_HUB_MAX_PAYLOAD + SKY_CONSOLE_HUB_RETENTION_HOURS
+    -- transparently via the inherited environment.
+    let baseArgs =
+            [ "--port", show (_hubPort opts)
+            , "--data-dir", _hubDataDir opts
+            , "--auth", auth
+            ]
+        tlsArgs = case (_hubTlsCert opts, _hubTlsKey opts) of
+            (Just c, Just k) -> [ "--tls-cert", c, "--tls-key", k ]
+            _                -> []
+        rp = (System.Process.proc binPath (baseArgs ++ tlsArgs))
+                { System.Process.std_out = System.Process.Inherit
+                , System.Process.std_err = System.Process.Inherit
+                , System.Process.std_in  = System.Process.Inherit
+                }
+    (_, _, _, rph) <- System.Process.createProcess rp
+    forwardChildSignals rph
+    rec' <- Control.Exception.bracket_ (return ())
+        (do
+            mec <- System.Process.getProcessExitCode rph
+            case mec of
+                Just _  -> return ()
+                Nothing -> System.Process.terminateProcess rph)
+        (System.Process.waitForProcess rph)
+    case rec' of
+        ExitSuccess     -> return (Right ())
+        ExitFailure 130 -> return (Right ())
+        ExitFailure 143 -> return (Right ())
+        ExitFailure n   -> exitWith (ExitFailure n)
 
 
 -- | Pull the `"tag_name"` field out of a GitHub release JSON blob. We

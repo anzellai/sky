@@ -38,6 +38,12 @@ extra-source-files:
     -- user app `sky-out/` (no chicken-and-egg "sky must build the
     -- console at user-install time" problem).
     runtime-go/rt/console_app/*.go
+    -- v0.16.4 Chunk 2+3: hub daemon receiver + SQLite store +
+    -- standalone driver. Materialised by runConsoleServe so the
+    -- `sky console-serve` subcommand can `go build ./cmd/sky-hub`
+    -- against a freshly-extracted tree.
+    runtime-go/rt/hub/*.go
+    runtime-go/cmd/sky-hub/*.go
     -- sky-stdlib subdirs MUST be listed explicitly per directory.
     -- Same Issue #58 cause as the runtime-go subdirs above: cabal sdist
     -- does NOT recurse into subdirectories of an extra-source-files
@@ -406,3 +412,4 @@ test-suite sky-tests
     , Sky.Cli.UpgradeClaudeSpec
     , Sky.Cli.WatchSpec
     , Sky.Cli.DoctorSpec
+    , Sky.Build.HubConsoleServeSpec
