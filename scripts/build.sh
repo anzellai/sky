@@ -136,12 +136,23 @@ fi
 # go-build entries that auto-prune doesn't catch on macOS. Reclaim
 # aggressively when cache exceeds 5 GB. Safe: fresh builds always work,
 # next build adds ~1-2 min to repopulate hot paths.
-cache_kb=$(du -sk "${HOME}/Library/Caches/go-build" 2>/dev/null | awk '{print $1}')
-cache_kb=${cache_kb:-0}
-if [[ "$cache_kb" -gt 5242880 ]]; then
-    cache_gb=$(( cache_kb / 1048576 ))
-    say "go-build cache is ${cache_gb} GB — running 'go clean -cache'"
-    go clean -cache 2>/dev/null || true
+#
+# Cross-platform cache path detection — Linux uses $XDG_CACHE_HOME or
+# ~/.cache/go-build; macOS uses ~/Library/Caches/go-build. Pre-fix,
+# the hardcoded macOS path made `du` exit non-zero on Linux runners
+# (path doesn't exist), and pipefail + set -e propagated that to a
+# script-level exit 1 — even though self-tests passed cleanly (Linux
+# CI failure 2026-06-04 on commit 549d4701).
+go_cache_dir="${HOME}/Library/Caches/go-build"
+[[ -d "$go_cache_dir" ]] || go_cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/go-build"
+if [[ -d "$go_cache_dir" ]]; then
+    cache_kb=$(du -sk "$go_cache_dir" 2>/dev/null | awk '{print $1}')
+    cache_kb=${cache_kb:-0}
+    if [[ "$cache_kb" -gt 5242880 ]]; then
+        cache_gb=$(( cache_kb / 1048576 ))
+        say "go-build cache is ${cache_gb} GB — running 'go clean -cache'"
+        go clean -cache 2>/dev/null || true
+    fi
 fi
 
 say "done. binaries:"
