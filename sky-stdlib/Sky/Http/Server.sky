@@ -9,7 +9,7 @@
 -- hover surfaces `String -> (Request -> Task Error Response) ->
 -- Route`, and consumers can annotate their handlers exactly.
 module Sky.Http.Server exposing
-    ( Request, Response, Route, Server, Cookie
+    ( Request, Response, Route, Server, Cookie, Handler
     , get, post, put, delete, any, api
     , listen
     , text, json, html, withStatus, redirect
@@ -53,6 +53,16 @@ type alias Response =
     , headers : Dict String String
     , contentType : String
     }
+
+
+-- | The shape of every Sky HTTP handler: a function from an inbound
+-- `Request` to a `Task` yielding a `Response`.  A transparent alias for
+-- `(Request -> Task Error Response)`, so a value annotated `Handler`
+-- unifies with the parameter of `get` / `post` / … and the
+-- `Sky.Http.Middleware` composers decorate handlers without an opaque
+-- wrapper type.
+type alias Handler =
+    Request -> Task Error Response
 
 
 -- | A registered route.  Opaque — produced by `get` / `post` /

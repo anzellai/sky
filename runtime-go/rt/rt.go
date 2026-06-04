@@ -8108,8 +8108,12 @@ func Middleware_withBasicAuth(expectedUser any, expectedPass any, handler any) a
 			if !(userOk && passOk) {
 				return Ok[any, any](SkyResponse{Status: 401, Body: "bad credentials"})
 			}
+			// Run the wrapped handler's task. Use anyTaskInvoke (as CORS /
+			// logging do) rather than a bare `func() any` assertion: a Sky
+			// handler returns a typed SkyTask[E, A], not a thunk, so the old
+			// assertion panicked at runtime.
 			task := SkyCall(handler, req)
-			return task.(func() any)()
+			return anyTaskInvoke(task)
 		}
 	}
 }
@@ -8146,8 +8150,10 @@ func Middleware_withRateLimit(name any, capacity any, refillPerSec any, handler 
 					Headers: map[string]string{"Retry-After": "1"},
 				})
 			}
+			// See withBasicAuth: anyTaskInvoke handles the typed SkyTask the
+			// wrapped handler returns (the old `func() any` assertion panicked).
 			task := SkyCall(handler, req)
-			return task.(func() any)()
+			return anyTaskInvoke(task)
 		}
 	}
 }

@@ -9,6 +9,7 @@ module Sky.Http.Middleware exposing
 
 
 import Sky.Ffi as Ffi
+import Sky.Http.Server exposing (Handler)
 
 
 -- | `withCors allowedOrigins handler` — add CORS headers for the
