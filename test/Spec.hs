@@ -76,6 +76,7 @@ import qualified Sky.Build.TaskResultBridgesSpec
 import qualified Sky.Build.CheckIsBuildSpec
 import qualified Sky.Build.RecordFieldOrderSpec
 import qualified Sky.Build.RecordCtorEmptyListSpec
+import qualified Sky.Build.RuntimeFingerprintSpec
 import qualified Sky.Build.PointFreePolyAliasSpec
 import qualified Sky.Build.HofTypedMsgSpec
 import qualified Sky.Build.CoerceArgParametricSpec
@@ -459,6 +460,11 @@ main = hspec $ do
     -- arg via rt.AsListT[T]. Pre-fix, `Item 1 "first" []` shipped
     -- `Item(1, "first", []any{})` and go build rejected.
     describe "Sky.Build.RecordCtorEmptyList" Sky.Build.RecordCtorEmptyListSpec.spec
+    -- #460: copyRuntime wipes stale sky-out/rt/*.go when the embedded
+    -- runtime fingerprint has drifted. Pre-fix, PR10-G's deleted
+    -- console_loop.go / subapp.go lingered in downstream apps and
+    -- broke `go build` with duplicate-declaration errors.
+    describe "Sky.Build.RuntimeFingerprint" Sky.Build.RuntimeFingerprintSpec.spec
     -- #398: point-free top-level alias of a polymorphic / N-ary
     -- function. Pre-fix, `tickle = String.toUpper` emitted a
     -- 0-arity Go thunk wrapper; call sites failed `go build`.

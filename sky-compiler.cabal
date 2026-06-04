@@ -351,6 +351,7 @@ test-suite sky-tests
       Sky.Build.CheckIsBuildSpec
       Sky.Build.RecordFieldOrderSpec
       Sky.Build.RecordCtorEmptyListSpec
+      Sky.Build.RuntimeFingerprintSpec
       Sky.Build.PointFreePolyAliasSpec
       Sky.Build.HofTypedMsgSpec
       Sky.Build.CoerceArgParametricSpec
