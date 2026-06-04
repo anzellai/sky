@@ -4897,6 +4897,22 @@ func Coerce[T any](v any) T {
 			rv.Type().Key().Kind() == reflect.String {
 			return narrowMapToStruct(rv, targetTy).Interface().(T)
 		}
+		// v0.16.3 #467 — struct→struct cross-shape narrowing for the
+		// user-facing Coerce[T] surface. Mirrors coerceInner's branch
+		// at line 539: a runtime FFI struct (rt.SkyResponse,
+		// rt.SkyRequest, rt.HttpResponse, …) flowing into a user-declared
+		// `type alias`-emitted Go struct (Sky_Http_Server_Response_R,
+		// _Request_R, etc.) needs a field-by-field rebuild.  Pre-fix,
+		// the documented `Server.json body |> Server.withStatus 201`
+		// idiom panicked: Server.withStatus returns rt.SkyResponse, but
+		// the typed-codegen wrap is `Coerce[Sky_Http_Server_Response_R]`.
+		// narrowStructToStruct already exists and is gated against ADT
+		// + tuple shapes, so this is a safe minimal-blast-radius fix.
+		if rv.Kind() == reflect.Struct && targetTy.Kind() == reflect.Struct {
+			if narrowed, ok := narrowStructToStruct(rv, targetTy); ok {
+				return narrowed.Interface().(T)
+			}
+		}
 	}
 	// REACHABLE-FROM-SKY in two shapes:
 	// (1) `rt.Coerce[T](anyValueFromFfi)` — the FFI returned a value

@@ -322,6 +322,7 @@ test-suite sky-tests
       Sky.Build.SkyLiveConsoleAuthSpec
       Sky.Build.StdUiChartSpec
       Sky.Build.ServerStreamSpec
+      Sky.Build.ServerWithStatusSpec
       Sky.Build.HttpStreamForEachSpec
       Sky.Build.WebviewAppSpec
       Sky.Build.WebviewLoopbackAssetsSpec

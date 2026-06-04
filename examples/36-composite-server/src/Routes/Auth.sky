@@ -167,13 +167,12 @@ logAndFail op e =
                                ("internal error (ref " ++ errId ++ ")")))
 
 
--- Build a typed Response record directly.  See Routes.Todos
--- for the rationale (Server.json |> Server.withStatus mismatches
--- the typed codegen's expected record-alias shape).
+-- v0.16.3 #467 fix verification — the canonical `|>` chain (per
+-- CLAUDE.md / docs/stdlib.md) now works.  Pre-fix this panicked
+-- with `rt.Coerce: expected ..._Response_R, got rt.SkyResponse`.
+-- Closes the workaround documented at Routes.Todos.errorJson.
 errorJson : Int -> String -> Response
 errorJson status message =
-    { status = status
-    , body = JsonEnc.encode 0 (JsonEnc.object [( "error", JsonEnc.string message )])
-    , headers = Dict.empty
-    , contentType = "application/json"
-    }
+    JsonEnc.encode 0 (JsonEnc.object [( "error", JsonEnc.string message )])
+        |> Server.json
+        |> Server.withStatus status
