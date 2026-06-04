@@ -7476,6 +7476,37 @@ exprToGo (A.At _ expr) = case expr of
                 , Just expr <- typedCall ->
                     expr
 
+            -- v0.16.3 (#463 + #465) — partial application of a kernel.
+            -- When the kernel's declared arity exceeds the supplied
+            -- args, emit a closure capturing the supplied args and
+            -- taking the remaining as `any`-typed lambda params. The
+            -- closure body calls the DYNAMIC (any-typed) kernel form
+            -- so every position accepts `any` without further
+            -- coercion.
+            --
+            -- Pre-fix: the literal-args arm (typedKernelLiterals)
+            -- would route under-arity calls like `Regex.replace "-"
+            -- "_"` to `rt.Regex_replaceT("-", "_")` — the typed
+            -- companion is `func(string, string, string) string`,
+            -- which Go rejects at `go build` with "not enough
+            -- arguments". The lookupKernelType arm had the same
+            -- pathology for `JsonDec.decodeString decoder`: its
+            -- arity gate `length kernelParamGoTys == length args`
+            -- only took the first `length args` slots from the type
+            -- chain, so partial-app silently matched.
+            --
+            -- This arm fires BEFORE the literal-args + typed-coerce
+            -- + lookupKernelType arms, so under-arity calls reach
+            -- the closure path uniformly. The `Just arity` gate
+            -- limits us to kernels we actually know — anything we
+            -- can't get an arity for falls through to the existing
+            -- path (no behaviour change for unknown kernels).
+            Can.VarKernel modName funcName
+                | Just kernelArity <- kernelArityOf modName funcName
+                , length args < kernelArity ->
+                    emitPartialKernelCall modName funcName args
+                        (kernelArity - length args)
+
             -- P7 step 5: generalise the zero-arg FFI migration. Any
             -- Sky `KernelMod.fn ()` where (a) the kernel module name
             -- starts with "Go_" (i.e. it's a user-added FFI package,
@@ -10352,6 +10383,84 @@ emitPartialUserCall func suppliedArgs missing =
                      ultRetType
                      innerParamTys
     in wrappedExpr
+
+
+-- | Total arity of a kernel — total `->` count in its HM signature.
+-- Combines two oracles:
+--   1. `Kernel.lookup` registry — authoritative for built-in kernels.
+--   2. `ConstrainExpr.lookupKernelType` — fallback via TLambda chain.
+-- Returns Nothing when neither knows the kernel (caller-side decides
+-- whether to fall through to the generic dispatch path).
+kernelArityOf :: String -> String -> Maybe Int
+kernelArityOf modName funcName =
+    case Kernel.lookup modName funcName of
+        Just ki -> Just (Kernel._ki_arity ki)
+        Nothing ->
+            case ConstrainExpr.lookupKernelType modName funcName of
+                Just (T.Forall _ ty) -> Just (kernelArrowCount ty)
+                Nothing              -> Nothing
+  where
+    kernelArrowCount (T.TLambda _ r) = 1 + kernelArrowCount r
+    kernelArrowCount _ = 0
+
+
+-- | #463 / #465 partial-app fix. When a kernel-headed Can.Call has FEWER
+-- args than the kernel's declared arity, emit a closure that captures
+-- the supplied args and takes the remaining as fresh `any` params, then
+-- calls the dynamic (any-typed) kernel form (`rt.<Mod>_<func>(all...)`).
+-- The closure's outer shape is `func(any) any` chained per missing arg
+-- so it satisfies any-typed HOF slots (e.g. List.map's first param
+-- routes through Coerce[func(any) any]).
+--
+-- Why route through the DYNAMIC kernel (no `T` suffix) and not the
+-- typed one: the remaining args land as `any`-typed closure params; the
+-- supplied args may also be `any` after Sky's any-erased dispatch. The
+-- typed variant expects concrete Go primitives (string/int/...); routing
+-- through it would require coercing each `any` to its concrete shape AND
+-- the closure's return type would have to match the typed kernel's
+-- return. The dynamic kernel accepts `any` for every position and
+-- returns `any` — zero impedance mismatch with the wrapping HOF.
+emitPartialKernelCall
+    :: String          -- ^ kernel module name (e.g. "Regex")
+    -> String          -- ^ kernel function name (e.g. "replace")
+    -> [Can.Expr]      -- ^ supplied args at the call site
+    -> Int             -- ^ missing args = arity - length supplied
+    -> GoIr.GoExpr
+emitPartialKernelCall modName funcName suppliedArgs missing =
+    let -- Resolve the kernel's dynamic (any-typed) Go name. Prefer the
+        -- registry entry — it carries the canonical `rt.<Mod>_<fn>`
+        -- string and would otherwise diverge from `_<func>` naming
+        -- (e.g. `Log.println` → `rt.Log_println`, no transform needed
+        -- but the registry is the source of truth).
+        kernelGoName = case Kernel.lookup modName funcName of
+            Just ki  -> Kernel._ki_goName ki
+            Nothing  -> "rt." ++ modName ++ "_" ++ funcName
+        -- Closure param names for the missing args, plus their
+        -- supplied counterparts (already-evaluated Sky exprs).
+        suppliedGo = map exprToGo suppliedArgs
+        extraNames = [ "__pk" ++ show i | i <- [0 .. missing - 1] ]
+        extraIdents = map GoIr.GoIdent extraNames
+        -- Build the final kernel invocation: all supplied + all
+        -- remaining args, in declaration order. The dynamic kernel
+        -- accepts every position as `any`, so no coercion is needed
+        -- on the supplied side (they're already lowered through
+        -- exprToGo into any-compatible Go values).
+        finalCall = GoIr.GoCall (GoIr.GoIdent kernelGoName)
+                                (suppliedGo ++ extraIdents)
+        -- Wrap each closure layer outer-most-last. Each missing arg
+        -- becomes one curried lambda: func(__pkN any) <inner-ret>.
+        -- Inner return types nest: deepest is `any`, each outer
+        -- wraps with `func(any) <prev>`.
+        wrapperReturnType 0 = "any"
+        wrapperReturnType n = "func(any) " ++ wrapperReturnType (n - 1)
+        buildWrapper :: (Int, String) -> GoIr.GoExpr -> GoIr.GoExpr
+        buildWrapper (i, name) inner =
+            let retTy = wrapperReturnType (missing - 1 - i)
+            in GoIr.GoFuncLit
+                 [GoIr.GoParam name "any"]
+                 retTy
+                 [GoIr.GoReturn inner]
+    in foldr buildWrapper finalCall (zip [0..] extraNames)
 
 
 ctorToGo :: Can.CtorOpts -> ModuleName.Canonical -> String -> String -> Can.Annotation -> GoIr.GoExpr

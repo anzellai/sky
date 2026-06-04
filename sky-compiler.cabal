@@ -353,6 +353,7 @@ test-suite sky-tests
       Sky.Build.RecordCtorEmptyListSpec
       Sky.Build.RuntimeFingerprintSpec
       Sky.Build.PointFreePolyAliasSpec
+      Sky.Build.PartialKernelAppSpec
       Sky.Build.HofTypedMsgSpec
       Sky.Build.CoerceArgParametricSpec
       Sky.Build.IsPlainIdentSpec

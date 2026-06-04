@@ -78,6 +78,7 @@ import qualified Sky.Build.RecordFieldOrderSpec
 import qualified Sky.Build.RecordCtorEmptyListSpec
 import qualified Sky.Build.RuntimeFingerprintSpec
 import qualified Sky.Build.PointFreePolyAliasSpec
+import qualified Sky.Build.PartialKernelAppSpec
 import qualified Sky.Build.HofTypedMsgSpec
 import qualified Sky.Build.CoerceArgParametricSpec
 import qualified Sky.Build.IsPlainIdentSpec
@@ -470,6 +471,13 @@ main = hspec $ do
     -- function. Pre-fix, `tickle = String.toUpper` emitted a
     -- 0-arity Go thunk wrapper; call sites failed `go build`.
     describe "Sky.Build.PointFreePolyAlias" Sky.Build.PointFreePolyAliasSpec.spec
+    -- #463 + #465: partial application of a typed FFI kernel used to
+    -- route the under-arity call to the typed companion (e.g.
+    -- `rt.Regex_replaceT("-", "_")` with 2 args against a 3-arg
+    -- kernel) — `go build` rejected with "not enough arguments". Now
+    -- emits a closure that captures the supplied args + takes the
+    -- remaining as `any`-typed params, calling the DYNAMIC kernel.
+    describe "Sky.Build.PartialKernelApp" Sky.Build.PartialKernelAppSpec.spec
     -- Limitation #18 (other half): renderHofParamTy used to hardcode
     -- the inner-function return as `any`, breaking helpers with typed
     -- (String -> Msg) callbacks. Now routes via typeStrWithAliasesReg.
