@@ -7451,7 +7451,19 @@ func Server_listen(port any, routes any) any {
 			continue
 		}
 
-		mux.HandleFunc(pattern, func(w http.ResponseWriter, req *http.Request) {
+		// v0.16.3 fix(#466): register with Go 1.22+ method-aware mux
+		// pattern when the route declares a specific Method. This is
+		// what makes `Server.get "/api/todos" h1` + `Server.post
+		// "/api/todos" h2` coexist — previously they panicked at boot
+		// with `pattern "/api/todos" conflicts with pattern "/api/todos"`
+		// because mux saw two registrations for the same path. Method
+		// "" (api-style without prefix) and "*" (Server.any) both keep
+		// the legacy path-only registration.
+		muxPattern := pattern
+		if route.Method != "" && route.Method != "*" {
+			muxPattern = route.Method + " " + pattern
+		}
+		mux.HandleFunc(muxPattern, func(w http.ResponseWriter, req *http.Request) {
 			// Panic recovery — one bad handler mustn't kill the process.
 			// Audit P1-5: prod-mode logs omit the Go stack trace from
 			// stderr (to avoid leaking internal paths + memory
