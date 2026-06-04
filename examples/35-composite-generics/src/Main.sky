@@ -1,0 +1,94 @@
+module Main exposing (main)
+
+-- examples/35-composite-generics — CLI entry point.
+--
+-- Reads the embedded sample CSV (or, with `--json`, the embedded JSON
+-- batch), runs the full enrich+aggregate+render pipeline, and prints
+-- the text + JSON report. Exercises every stdlib surface the v0.16.2
+-- composite covers — see State/Decode/Compute/Report modules for the
+-- per-domain breakdown.
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.Maybe as Maybe
+import Sky.Core.Result as Result
+import Sky.Core.Task as Task
+import Sky.Core.Pure as Pure
+import Sky.Core.Error as Error exposing (Error)
+import Std.Log exposing (println)
+import System
+import State exposing (Transaction, EnrichedRow)
+import Decode
+import Compute
+import Report
+
+
+main =
+    let
+        pipeline = runPipeline () |> Task.onError reportError
+        _ = Task.run pipeline
+    in
+        ()
+
+
+runPipeline : () -> Task Error ()
+runPipeline _ =
+    Pure.systemArgs ()
+        |> Task.andThen
+               (\argv ->
+                   let
+                       args = List.drop 1 argv
+                       useJson = List.member "--json" args
+                   in
+                       Pure.timeUnixMillis ()
+                           |> Task.andThen
+                                  (\nowMs ->
+                                      let
+                                          nowStr = String.fromInt nowMs
+                                      in
+                                          runReport useJson nowStr))
+
+
+runReport : Bool -> String -> Task Error ()
+runReport useJson nowStr =
+    case loadTransactions useJson of
+
+        Ok txs ->
+            let
+                enriched = List.map Compute.enrich txs
+                report = Report.buildReport nowStr enriched
+                _ = println (Report.renderText report)
+                _ = println ""
+                _ = println "--- JSON ---"
+                _ = println (Report.encodeReport report)
+            in
+                Task.succeed ()
+
+        Err e ->
+            Task.fail e
+
+
+loadTransactions : Bool -> Result Error (List Transaction)
+loadTransactions useJson =
+    if useJson then
+        Decode.decodeJsonBatch sampleJson
+
+    else
+        Decode.parseCsv Decode.sampleCsv
+
+
+sampleJson : String
+sampleJson =
+    """[
+      {"id":1,"account":"acme","amount":"99.99","currency":"USD","category":"salary","timestamp":1717000000},
+      {"id":2,"account":"acme","amount":"-12.50","currency":"USD","category":"coffee","timestamp":1717003600},
+      {"id":3,"account":"beta","amount":"200.00","currency":"USD","category":"refund-something","timestamp":1717007200}
+    ]"""
+
+
+reportError : Error -> Task Error ()
+reportError e =
+    let
+        _ = println ("Error: " ++ Error.toString e)
+    in
+        System.exit 1

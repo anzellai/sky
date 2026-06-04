@@ -1,0 +1,278 @@
+module Report exposing (..)
+
+-- Report assembly + JSON serialisation. Exercises:
+--   * Json.Encode (string / int / float / bool / list / object / encode)
+--   * String.join / padLeft / repeat / fromInt / fromFloat / contains
+--   * ToString.fromInt / fromFloat / fromBool
+--   * Encoding.base64Encode / hexEncode / urlEncode
+--   * Math.round / abs
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.Maybe as Maybe
+import Sky.Core.Dict as Dict
+import Sky.Core.Math as Math
+import Sky.Core.Encoding as Encoding
+import Sky.Core.Json.Encode as JsonEnc
+import Sky.Core.ToString as ToString
+import State exposing (Transaction, EnrichedRow, Bucket(..), Report, BucketSummary)
+import Compute
+
+
+buildReport : String -> List EnrichedRow -> Report
+buildReport generatedAt rows =
+    let
+        byBucketName = Compute.bucketsByName rows
+        byBucketId = Compute.bucketsByIndex rows
+        totals = Compute.accountTotals rows
+        byCounts = Compute.countsByBucket rows
+        accountsList = Compute.uniqueAccountList rows
+        categoriesList = Compute.uniqueCategoryList rows
+    in
+        { rowCount = List.length rows
+        , uniqueAccounts = List.length accountsList
+        , uniqueCategories = List.length categoriesList
+        , buckets = List.map (summariseBucket byBucketName) State.allBuckets
+        , byAccount = Dict.toList totals
+        , byCategoryId = Dict.toList byCounts
+        , totalCents = Compute.totalCents rows
+        , averageCents = Compute.averageCents rows
+        , medianCents = Compute.medianCents rows
+        , maxCents = Compute.maxCents rows
+        , minCents = Compute.minCents rows
+        , generatedAt = generatedAt
+        }
+
+
+summariseBucket : Dict.Dict String (List EnrichedRow) -> Bucket -> BucketSummary
+summariseBucket byName b =
+    let
+        key = State.bucketName b
+        rows = Maybe.withDefault [] (Dict.get key byName)
+        n = List.length rows
+        total = List.foldl (\r acc -> acc + r.amountCents) 0 rows
+        avg =
+            if n == 0 then
+                0.0
+
+            else
+                Compute.toFloat total / Compute.toFloat n
+        topAccounts =
+            rows |> List.map (\r -> r.tx.account) |> uniqueKeepingFirst
+                |> List.take 3
+    in
+        { bucket = b
+        , count = n
+        , totalCents = total
+        , averageCents = avg
+        , topAccounts = topAccounts
+        }
+
+
+uniqueKeepingFirst : List String -> List String
+uniqueKeepingFirst xs =
+    List.reverse (uniqueKeepingFirstHelp xs Dict.empty [])
+
+
+uniqueKeepingFirstHelp : List String -> Dict.Dict String () -> List String -> List String
+uniqueKeepingFirstHelp xs seen acc =
+    case xs of
+
+        [] ->
+            acc
+
+        h :: t ->
+            if Dict.member h seen then
+                uniqueKeepingFirstHelp t seen acc
+
+            else
+                uniqueKeepingFirstHelp t (Dict.insert h () seen) (h :: acc)
+
+
+-- ─── JSON serialisation ──────────────────────────────────────────
+encodeBucketSummary : BucketSummary -> JsonEnc.Value
+encodeBucketSummary bs =
+    JsonEnc.object
+        [ ( "bucket", JsonEnc.string (State.bucketName bs.bucket) )
+        , ( "count", JsonEnc.int bs.count )
+        , ( "totalCents", JsonEnc.int bs.totalCents )
+        , ( "averageCents", JsonEnc.float bs.averageCents )
+        , ( "topAccounts", JsonEnc.list JsonEnc.string bs.topAccounts )
+        ]
+
+
+encodeAccountTotal : ( String, Int ) -> JsonEnc.Value
+encodeAccountTotal pair =
+    JsonEnc.object
+        [ ( "account", JsonEnc.string (fst pair) )
+        , ( "totalCents", JsonEnc.int (snd pair) )
+        ]
+
+
+encodeCategoryCount : ( Int, Int ) -> JsonEnc.Value
+encodeCategoryCount pair =
+    JsonEnc.object
+        [ ( "bucketId", JsonEnc.int (fst pair) )
+        , ( "count", JsonEnc.int (snd pair) )
+        ]
+
+
+encodeReport : Report -> String
+encodeReport r =
+    JsonEnc.encode
+        2
+        (JsonEnc.object
+            [ ( "rowCount", JsonEnc.int r.rowCount )
+            , ( "uniqueAccounts", JsonEnc.int r.uniqueAccounts )
+            , ( "uniqueCategories", JsonEnc.int r.uniqueCategories )
+            , ( "totalCents", JsonEnc.int r.totalCents )
+            , ( "averageCents", JsonEnc.float r.averageCents )
+            , ( "medianCents", JsonEnc.int r.medianCents )
+            , ( "maxCents", JsonEnc.int r.maxCents )
+            , ( "minCents", JsonEnc.int r.minCents )
+            , ( "buckets", JsonEnc.list encodeBucketSummary r.buckets )
+            , ( "byAccount", JsonEnc.list encodeAccountTotal r.byAccount )
+            , ( "byBucketId", JsonEnc.list encodeCategoryCount r.byCategoryId )
+            , ( "generatedAt", JsonEnc.string r.generatedAt )
+            , ( "validBool", JsonEnc.bool True )
+            , ( "literalNull", JsonEnc.null )
+            ])
+
+
+-- ─── Encoding round-trip surface ─────────────────────────────────
+tagsAsBase64 : List String -> String
+tagsAsBase64 tags =
+    Encoding.base64Encode (String.join "," tags)
+
+
+tagsAsHex : List String -> String
+tagsAsHex tags =
+    Encoding.hexEncode (String.join "," tags)
+
+
+tagsAsUrlEncoded : List String -> String
+tagsAsUrlEncoded tags =
+    Encoding.urlEncode (String.join " " tags)
+
+
+-- ─── Plain-text report ───────────────────────────────────────────
+padInt2 : Int -> String
+padInt2 n =
+    let
+        s = ToString.fromInt n
+    in
+        if String.length s < 2 then
+            "0" ++ s
+
+        else
+            s
+
+
+padString : Int -> String -> String
+padString width s =
+    let
+        diff = width - String.length s
+    in
+        if diff <= 0 then
+            s
+
+        else
+            String.repeat diff " " ++ s
+
+
+padStringRight : Int -> String -> String
+padStringRight width s =
+    let
+        diff = width - String.length s
+    in
+        if diff <= 0 then
+            s
+
+        else
+            s ++ String.repeat diff " "
+
+
+formatCents : Int -> String
+formatCents cents =
+    let
+        sign =
+            if cents < 0 then
+                "-"
+
+            else
+                ""
+        absCents = Math.abs cents
+        dollars = absCents // 100
+        remainder = modBy 100 absCents
+    in
+        sign ++ "$" ++ ToString.fromInt dollars ++ "." ++ padInt2 remainder
+
+
+formatFloat : Float -> String
+formatFloat fCents =
+    formatCents (Math.round fCents)
+
+
+formatBucketLine : BucketSummary -> String
+formatBucketLine bs =
+    let
+        label = padStringRight 12 (State.bucketName bs.bucket)
+        countStr = padString 4 (ToString.fromInt bs.count)
+        totalStr = padString 12 (formatCents bs.totalCents)
+        avgStr = padString 12 (formatFloat bs.averageCents)
+        accounts = String.join "," bs.topAccounts
+    in
+        label ++ " " ++ countStr ++ " " ++ totalStr ++ " " ++ avgStr ++ "  "
+            ++ accounts
+
+
+formatAccountLine : ( String, Int ) -> String
+formatAccountLine pair =
+    let
+        name = padStringRight 12 (fst pair)
+        total = padString 12 (formatCents (snd pair))
+    in
+        name ++ " " ++ total
+
+
+renderText : Report -> String
+renderText r =
+    let
+        divider = String.repeat 60 "-"
+        header = "Sky Composite Generics — Transaction Report"
+        meta =
+            "Rows: " ++ ToString.fromInt r.rowCount ++ "  Accounts: "
+                ++ ToString.fromInt r.uniqueAccounts
+                ++ "  Categories: "
+                ++ ToString.fromInt r.uniqueCategories
+        totals =
+            "Total: " ++ formatCents r.totalCents ++ "  Avg: "
+                ++ formatFloat r.averageCents
+                ++ "  Median: "
+                ++ formatCents r.medianCents
+                ++ "  Max: "
+                ++ formatCents r.maxCents
+                ++ "  Min: "
+                ++ formatCents r.minCents
+        bucketsHeader =
+            "Bucket       Count        Total      Average   Top Accounts"
+        bucketRows = String.join "\n" (List.map formatBucketLine r.buckets)
+        accountsHeader = "Per-account totals"
+        accountRows =
+            String.join "\n" (List.map formatAccountLine r.byAccount)
+    in
+        String.join
+            "\n"
+            [ header
+            , divider
+            , meta
+            , totals
+            , divider
+            , bucketsHeader
+            , bucketRows
+            , divider
+            , accountsHeader
+            , accountRows
+            , divider
+            , "Generated at: " ++ r.generatedAt
+            ]

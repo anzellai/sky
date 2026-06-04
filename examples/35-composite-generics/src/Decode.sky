@@ -1,0 +1,152 @@
+module Decode exposing (..)
+
+-- CSV ingest + Json.Decode pipeline composition. Exercises:
+--   * String.split / String.lines / String.trim / String.replace
+--   * Json.Decode (string/int/field/list/map/andThen/oneOf)
+--   * Json.Decode.Pipeline (required / optional)
+--   * Result.combine
+--   * Maybe and Result combinators
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.Maybe as Maybe
+import Sky.Core.Result as Result
+import Sky.Core.Json.Decode as JsonDec
+import Sky.Core.Json.Decode.Pipeline as Pipeline
+import Sky.Core.Error as Error exposing (Error)
+import State exposing (Transaction)
+
+
+sampleCsv : String
+sampleCsv =
+    """id,account,amount,currency,category,timestamp
+1,acme,1200.55,USD,salary,1717000000
+2,acme,-49.99,USD,coffee,1717003600
+3,acme,-1800.00,USD,rent,1717007200
+4,beta,200.00,USD,refund-purchase,1717010800
+5,beta,-15.50,EUR,grocery,1717014400
+6,beta,3500.00,USD,salary,1717018000
+7,gamma,-220.10,USD,utility-bill,1717021600
+8,gamma,-99.00,EUR,coffee,1717025200
+9,gamma,500.00,USD,transfer-in,1717028800
+10,delta,-450.00,GBP,rent,1717032400
+11,delta,1100.25,USD,bonus,1717036000
+12,delta,-22.00,USD,coffee,1717039600
+13,epsilon,75.00,USD,refund-misc,1717043200
+14,epsilon,-310.40,USD,utility-bill,1717046800
+15,epsilon,2200.00,USD,salary,1717050400
+16,zeta,-12.30,USD,coffee,1717054000
+17,zeta,820.00,USD,bonus,1717057600
+18,zeta,-99.99,USD,subscription,1717061200
+19,eta,-1400.00,USD,rent,1717064800
+20,eta,4200.00,USD,salary,1717068400"""
+
+
+parseCsv : String -> Result Error (List Transaction)
+parseCsv body =
+    let
+        cleaned = String.trim body
+        allLines = String.lines cleaned
+        dataLines = List.drop 1 allLines
+    in
+        Result.combine (List.map parseRow dataLines)
+
+
+parseRow : String -> Result Error Transaction
+parseRow line =
+    let
+        cells = List.map String.trim (String.split "," line)
+    in
+        case cells of
+
+            [idStr, account, amount, currency, category, tsStr] ->
+                Result.map2
+                    (\rowId timestamp ->
+                        { id = rowId
+                        , account = account
+                        , amount = amount
+                        , currency = currency
+                        , category = category
+                        , timestamp = timestamp
+                        })
+                    (parseIntField "id" idStr)
+                    (parseIntField "timestamp" tsStr)
+
+            _ ->
+                Err (Error.decode ("expected 6 cells, got: " ++ line))
+
+
+parseIntField : String -> String -> Result Error Int
+parseIntField fieldName raw =
+    case String.toInt raw of
+
+        Just n ->
+            Ok n
+
+        Nothing ->
+            Err
+                (Error.decode
+                    ("field " ++ fieldName ++ " is not an int: " ++ raw))
+
+
+-- ─── Json.Decode.Pipeline path ────────────────────────────────────
+--
+-- Builds Transaction via the same field-by-field pipeline style
+-- used in examples/06-json. Exercises the Pipeline.required combinator
+-- AND the Decode.succeed Ctor application.
+transactionDecoder : JsonDec.Decoder Transaction
+transactionDecoder =
+    JsonDec.succeed
+        (\rowId account amount currency category timestamp ->
+            { id = rowId
+            , account = account
+            , amount = amount
+            , currency = currency
+            , category = category
+            , timestamp = timestamp
+            })
+        |> Pipeline.required "id" JsonDec.int
+        |> Pipeline.required "account" JsonDec.string
+        |> Pipeline.required "amount" JsonDec.string
+        |> Pipeline.optional "currency" JsonDec.string "USD"
+        |> Pipeline.required "category" JsonDec.string
+        |> Pipeline.required "timestamp" JsonDec.int
+
+
+transactionsDecoder : JsonDec.Decoder (List Transaction)
+transactionsDecoder =
+    JsonDec.list transactionDecoder
+
+
+decodeJsonBatch : String -> Result Error (List Transaction)
+decodeJsonBatch body =
+    JsonDec.decodeString transactionsDecoder body
+
+
+-- A bucket-of-counts decoder, exercising andThen + map.
+bucketCountsDecoder : JsonDec.Decoder Int
+bucketCountsDecoder =
+    JsonDec.field "count" JsonDec.int
+        |> JsonDec.andThen
+               (\n ->
+                   if n < 0 then
+                       JsonDec.fail "count must be non-negative"
+
+                   else
+                       JsonDec.succeed n)
+
+
+-- oneOf decoder picking the first key present.
+flexAmountDecoder : JsonDec.Decoder String
+flexAmountDecoder =
+    JsonDec.oneOf
+        [ JsonDec.field "amount" JsonDec.string
+        , JsonDec.field "value" JsonDec.string
+        , JsonDec.succeed "0.00"
+        ]
+
+
+-- Pull a single account name out of a nested path.
+nestedAccountDecoder : JsonDec.Decoder String
+nestedAccountDecoder =
+    JsonDec.at [ "meta", "account" ] JsonDec.string

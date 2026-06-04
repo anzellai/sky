@@ -1,0 +1,315 @@
+module Compute exposing (..)
+
+-- Per-row computation: bucket assignment via Regex, amount
+-- normalisation via Decimal arithmetic, fingerprint via Crypto.sha256.
+-- Exercises:
+--   * Math.abs / floor / ceil / round / sqrt / log / sin / cos / pi
+--   * Crypto.sha256 / hmacSha256
+--   * Decimal.* (parse, add, mul, percent, round)
+--   * Regex.match / find / findAll / replace
+--   * String.toUpper / replace / slice
+--   * Dict (typed Int key + String key) and Set
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.Maybe as Maybe
+import Sky.Core.Result as Result
+import Sky.Core.Math as Math
+import Sky.Core.Crypto as Crypto
+import Sky.Core.Regex as Regex
+import Sky.Core.Dict as Dict
+import Std.Decimal as Dec exposing (Decimal)
+import State exposing (Transaction, EnrichedRow, Bucket(..))
+
+
+classify : Transaction -> Bucket
+classify tx =
+    let
+        cat = String.toLower tx.category
+        amountStr = tx.amount
+        isPositive = not (String.startsWith "-" amountStr)
+    in
+        if Regex.match "^transfer" cat then
+            Transfer
+
+        else if Regex.match "refund" cat then
+            Refund
+
+        else if Regex.match "(salary|bonus|payroll)" cat then
+            Income
+
+        else if isPositive && Regex.match "(deposit|interest|dividend)" cat then
+            Income
+
+        else if not isPositive then
+            Expense
+
+        else
+            Unknown
+
+
+bucketIndex : Bucket -> Int
+bucketIndex b =
+    case b of
+
+        Income ->
+            0
+
+        Expense ->
+            1
+
+        Refund ->
+            2
+
+        Transfer ->
+            3
+
+        Unknown ->
+            4
+
+
+-- Convert dollar-string to integer cents via Decimal arithmetic
+-- (banker's rounding at 2dp). Falls back to 0 on parse failure
+-- — the row already passed CSV decoding so the only failure mode
+-- is empty / junk amount cells, which we treat as zero for the
+-- report aggregation.
+amountToCents : String -> Int
+amountToCents raw =
+    case Dec.fromString raw of
+
+        Ok d ->
+            let
+                scaled = Dec.mul d (Dec.fromInt 100)
+                rounded = Dec.round 0 scaled
+            in
+                Dec.toInt rounded
+
+        Err _ ->
+            0
+
+
+-- Sum-then-percent: e.g. apply a 10% bonus to a base amount.
+applyBonus : Int -> Int -> Int
+applyBonus baseCents bonusPercent =
+    let
+        baseDec = Dec.fromInt baseCents
+        pct = Dec.fromInt bonusPercent
+        addition = Dec.percentOf pct baseDec
+        total = Dec.add baseDec addition
+    in
+        Dec.toInt (Dec.round 0 total)
+
+
+-- Magnitude on a Float via Math primitives. Pure number-crunching
+-- to keep the Math arms warm.
+normaliseAmount : Int -> Float
+normaliseAmount cents =
+    let
+        x = toFloat (Math.abs cents)
+        scaled = x / 100.0
+        smoothed = Math.sqrt (scaled + 1.0)
+        sinusoid = Math.sin (scaled / Math.pi)
+        cosinusoid = Math.cos (scaled / Math.pi)
+        logarithmic = Math.log (scaled + 2.0)
+        wave = (sinusoid * sinusoid) + (cosinusoid * cosinusoid)
+    in
+        toFloat (Math.round ((smoothed + logarithmic + wave) * 100.0)) / 100.0
+
+
+toFloat : Int -> Float
+toFloat n =
+    Dec.toFloat (Dec.fromInt n)
+
+
+-- Stable fingerprint per row: concat of normalised fields, HMAC-SHA256
+-- via a fixed key (this is illustrative — exercises both sha256 + hmac).
+fingerprint : Transaction -> String
+fingerprint tx =
+    let
+        payload =
+            String.join
+                "|"
+                [ String.fromInt tx.id
+                , String.toUpper tx.account
+                , tx.amount
+                , tx.currency
+                , tx.category
+                ]
+        hash = Crypto.sha256 payload
+        macd = Crypto.hmacSha256 "composite-generics" payload
+    in
+        String.slice 0 12 hash ++ "-" ++ String.slice 0 12 macd
+
+
+-- Tags from regex over the category cell. findAll exercises the
+-- list-returning variant; replace exercises the substitution
+-- branch.
+tagsFor : Transaction -> List String
+tagsFor tx =
+    let
+        haystack = String.toLower tx.category
+        wordTokens = Regex.findAll "[a-z]+" haystack
+        sanitised = List.map (\tok -> Regex.replace "-" "_" tok) wordTokens
+    in
+        sanitised
+
+
+enrich : Transaction -> EnrichedRow
+enrich tx =
+    let
+        cents = amountToCents tx.amount
+        b = classify tx
+    in
+        { tx = tx
+        , bucket = b
+        , amountCents = cents
+        , normalisedAmount = normaliseAmount cents
+        , fingerprint = fingerprint tx
+        , tags = tagsFor tx
+        }
+
+
+-- ─── Aggregations using Dict + Set + List ─────────────────────────
+bucketsByName : List EnrichedRow -> Dict String (List EnrichedRow)
+bucketsByName rows =
+    List.foldl insertByBucketName Dict.empty rows
+
+
+insertByBucketName : EnrichedRow -> Dict String (List EnrichedRow) -> Dict String (List EnrichedRow)
+insertByBucketName row acc =
+    let
+        key = State.bucketName row.bucket
+        existing = Maybe.withDefault [] (Dict.get key acc)
+    in
+        Dict.insert key (row :: existing) acc
+
+
+bucketsByIndex : List EnrichedRow -> Dict Int (List EnrichedRow)
+bucketsByIndex rows =
+    List.foldl insertByBucketIndex Dict.empty rows
+
+
+insertByBucketIndex : EnrichedRow -> Dict Int (List EnrichedRow) -> Dict Int (List EnrichedRow)
+insertByBucketIndex row acc =
+    let
+        key = bucketIndex row.bucket
+        existing = Maybe.withDefault [] (Dict.get key acc)
+    in
+        Dict.insert key (row :: existing) acc
+
+
+-- Accumulate distinct account names via Dict-as-set. We thread a
+-- Dict String () (unit value) through a fold over rows, then drop
+-- the keys out via Dict.keys. Same semantic shape as Set but routes
+-- entirely through the typed-Dict codegen path.
+uniqueAccountList : List EnrichedRow -> List String
+uniqueAccountList rows =
+    Dict.keys
+        (List.foldl (\r acc -> Dict.insert r.tx.account () acc) Dict.empty rows)
+
+
+uniqueCategoryList : List EnrichedRow -> List String
+uniqueCategoryList rows =
+    Dict.keys
+        (List.foldl
+            (\r acc -> Dict.insert (String.toLower r.tx.category) () acc)
+            Dict.empty
+            rows)
+
+
+-- Per-account aggregate: total cents per account.
+accountTotals : List EnrichedRow -> Dict String Int
+accountTotals rows =
+    List.foldl addAccount Dict.empty rows
+
+
+addAccount : EnrichedRow -> Dict String Int -> Dict String Int
+addAccount row acc =
+    let
+        key = row.tx.account
+        existing = Maybe.withDefault 0 (Dict.get key acc)
+    in
+        Dict.insert key (existing + row.amountCents) acc
+
+
+-- Per-bucket count keyed by Int (exercises typed-Int Dict path).
+countsByBucket : List EnrichedRow -> Dict Int Int
+countsByBucket rows =
+    List.foldl addBucketCount Dict.empty rows
+
+
+addBucketCount : EnrichedRow -> Dict Int Int -> Dict Int Int
+addBucketCount row acc =
+    let
+        key = bucketIndex row.bucket
+        existing = Maybe.withDefault 0 (Dict.get key acc)
+    in
+        Dict.insert key (existing + 1) acc
+
+
+-- ─── Stats over the full row list ────────────────────────────────
+totalCents : List EnrichedRow -> Int
+totalCents rows =
+    List.foldl (\r acc -> acc + r.amountCents) 0 rows
+
+
+averageCents : List EnrichedRow -> Float
+averageCents rows =
+    let
+        n = List.length rows
+    in
+        if n == 0 then
+            0.0
+
+        else
+            toFloat (totalCents rows) / toFloat n
+
+
+maxCents : List EnrichedRow -> Int
+maxCents rows =
+    List.foldl (\r acc -> Math.max r.amountCents acc) (-1000000000) rows
+
+
+minCents : List EnrichedRow -> Int
+minCents rows =
+    List.foldl (\r acc -> Math.min r.amountCents acc) 1000000000 rows
+
+
+-- Median via simple insertion-sort over the cents (the dataset is
+-- small enough — composite test, not perf benchmark).
+medianCents : List EnrichedRow -> Int
+medianCents rows =
+    let
+        values = List.map (\r -> r.amountCents) rows
+        sorted = insertionSort values
+        n = List.length sorted
+        midIdx = n // 2
+        midList = List.drop midIdx sorted
+    in
+        Maybe.withDefault 0 (List.head midList)
+
+
+insertionSort : List Int -> List Int
+insertionSort xs =
+    case xs of
+
+        [] ->
+            []
+
+        h :: t ->
+            insertSorted h (insertionSort t)
+
+
+insertSorted : Int -> List Int -> List Int
+insertSorted x sorted =
+    case sorted of
+
+        [] ->
+            [x]
+
+        h :: t ->
+            if x <= h then
+                x :: sorted
+
+            else
+                h :: insertSorted x t

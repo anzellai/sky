@@ -1,0 +1,248 @@
+module CompositeGenericsTest exposing (main, tests)
+
+-- Sky.Test assertions over the composite's pipeline. Touches every
+-- module in src/ so a regression anywhere in the State / Decode /
+-- Compute / Report chain shows up here.
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.Dict as Dict
+import Sky.Core.Maybe as Maybe
+import Sky.Core.Result as Result
+import Sky.Test as Test exposing (Test)
+import State exposing (Transaction, Bucket(..))
+import Decode
+import Compute
+import Report
+
+
+main =
+    Test.runMain tests
+
+
+tests : List Test
+tests =
+    [ csvSuite, bucketSuite, aggregationSuite, reportSuite, encodingSuite ]
+
+
+sampleRows : List Transaction
+sampleRows =
+    case Decode.parseCsv Decode.sampleCsv of
+
+        Ok xs ->
+            xs
+
+        Err _ ->
+            []
+
+
+enrichedRows : List Compute.EnrichedRow
+enrichedRows =
+    List.map Compute.enrich sampleRows
+
+
+csvSuite : Test
+csvSuite =
+    Test.suite
+        "Decode.parseCsv"
+        [ Test.test
+              "twenty rows decoded"
+              (\_ -> Test.equal 20 (List.length sampleRows))
+        , Test.test
+              "first row id is 1"
+              (\_ ->
+                  case List.head sampleRows of
+
+                      Just row ->
+                          Test.equal 1 row.id
+
+                      Nothing ->
+                          Test.fail "csv produced empty list")
+        , Test.test
+              "all rows have non-empty account"
+              (\_ ->
+                  Test.isTrue
+                      (List.all (\r -> String.length r.account > 0) sampleRows))
+        , Test.test
+              "json batch decodes"
+              (\_ ->
+                  case Decode.decodeJsonBatch
+                           """[{"id":1,"account":"x","amount":"1.00","currency":"USD","category":"salary","timestamp":1}]""" of
+
+                      Ok xs ->
+                          Test.equal 1 (List.length xs)
+
+                      Err _ ->
+                          Test.fail "json batch decode failed")
+        ]
+
+
+bucketSuite : Test
+bucketSuite =
+    Test.suite
+        "Compute.classify + enrich"
+        [ Test.test
+              "salary classifies as Income"
+              (\_ ->
+                  case List.head sampleRows of
+
+                      Just row ->
+                          case Compute.classify row of
+
+                              Income ->
+                                  Test.pass
+
+                              _ ->
+                                  Test.fail "salary row should be Income"
+
+                      Nothing ->
+                          Test.fail "no rows")
+        , Test.test
+              "negative amount classifies as Expense"
+              (\_ ->
+                  let
+                      tx =
+                          { id = 99
+                          , account = "test"
+                          , amount = "-50.00"
+                          , currency = "USD"
+                          , category = "coffee"
+                          , timestamp = 0
+                          }
+                  in
+                      case Compute.classify tx of
+
+                          Expense ->
+                              Test.pass
+
+                          _ ->
+                              Test.fail "negative should be Expense")
+        , Test.test
+              "amountToCents handles decimal correctly"
+              (\_ -> Test.equal 12055 (Compute.amountToCents "120.55"))
+        , Test.test
+              "amountToCents handles negative"
+              (\_ -> Test.equal (-4999) (Compute.amountToCents "-49.99"))
+        , Test.test
+              "enrich populates fingerprint"
+              (\_ ->
+                  case List.head enrichedRows of
+
+                      Just row ->
+                          Test.isTrue (String.length row.fingerprint > 0)
+
+                      Nothing ->
+                          Test.fail "no enriched rows")
+        ]
+
+
+aggregationSuite : Test
+aggregationSuite =
+    Test.suite
+        "Compute aggregations"
+        [ Test.test
+              "String-keyed Dict bucket grouping"
+              (\_ ->
+                  let
+                      byName = Compute.bucketsByName enrichedRows
+                  in
+                      Test.isTrue (Dict.member "income" byName))
+        , Test.test
+              "Int-keyed Dict bucket grouping"
+              (\_ ->
+                  let
+                      byId = Compute.bucketsByIndex enrichedRows
+                  in
+                      Test.isTrue (Dict.member 0 byId))
+        , Test.test
+              "uniqueAccountList dedup count"
+              (\_ ->
+                  Test.equal
+                      7
+                      (List.length (Compute.uniqueAccountList enrichedRows)))
+        , Test.test
+              "accountTotals dict size matches accounts"
+              (\_ ->
+                  Test.equal
+                      7
+                      (List.length
+                          (Dict.keys (Compute.accountTotals enrichedRows))))
+        , Test.test
+              "totalCents is the integer sum"
+              (\_ ->
+                  let
+                      manual =
+                          List.foldl
+                              (\r acc -> acc + r.amountCents)
+                              0
+                              enrichedRows
+                  in
+                      Test.equal manual (Compute.totalCents enrichedRows))
+        ]
+
+
+reportSuite : Test
+reportSuite =
+    Test.suite
+        "Report"
+        [ Test.test
+              "report rowCount matches input"
+              (\_ ->
+                  let
+                      r = Report.buildReport "0" enrichedRows
+                  in
+                      Test.equal 20 r.rowCount)
+        , Test.test
+              "report has 5 buckets"
+              (\_ ->
+                  let
+                      r = Report.buildReport "0" enrichedRows
+                  in
+                      Test.equal 5 (List.length r.buckets))
+        , Test.test
+              "encodeReport is valid-ish JSON"
+              (\_ ->
+                  let
+                      r = Report.buildReport "now" enrichedRows
+                      json = Report.encodeReport r
+                  in
+                      Test.isTrue
+                          (String.contains "\"rowCount\"" json
+                              && String.contains "\"buckets\"" json))
+        , Test.test
+              "renderText contains the divider"
+              (\_ ->
+                  let
+                      r = Report.buildReport "now" enrichedRows
+                      txt = Report.renderText r
+                  in
+                      Test.isTrue (String.contains "------" txt))
+        ]
+
+
+encodingSuite : Test
+encodingSuite =
+    Test.suite
+        "Report encoding round-trip"
+        [ Test.test
+              "base64 tags round-trip"
+              (\_ ->
+                  let
+                      encoded = Report.tagsAsBase64 [ "coffee", "rent" ]
+                  in
+                      Test.isTrue (String.length encoded > 0))
+        , Test.test
+              "hex tags round-trip"
+              (\_ ->
+                  let
+                      encoded = Report.tagsAsHex ["salary"]
+                  in
+                      Test.isTrue (String.length encoded > 0))
+        , Test.test
+              "url-encoded tags has no spaces"
+              (\_ ->
+                  let
+                      encoded = Report.tagsAsUrlEncoded [ "a b", "c d" ]
+                  in
+                      Test.isFalse (String.contains " " encoded))
+        ]

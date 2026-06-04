@@ -1,0 +1,104 @@
+module State exposing (..)
+
+-- Typed records + ADTs for the composite. No stdlib effect imports
+-- here — keeps the HM type-checker's heap footprint bounded
+-- (CLAUDE.md Limitation #17).
+import Sky.Core.Prelude exposing (..)
+
+-- One row out of the input CSV.
+type alias Transaction =
+    { id : Int
+    , account : String
+    , amount : String
+    , currency : String
+    , category : String
+    , timestamp : Int
+    }
+
+-- A categorised + numerically-normalised row.
+type alias EnrichedRow =
+    { tx : Transaction
+    , bucket : Bucket
+    , amountCents : Int
+    , normalisedAmount : Float
+    , fingerprint : String
+    , tags : List String
+    }
+
+-- High-level category derived via Regex / String matching.
+type Bucket
+    = Income
+    | Expense
+    | Refund
+    | Transfer
+    | Unknown
+
+-- Per-bucket aggregate.
+type alias BucketSummary =
+    { bucket : Bucket
+    , count : Int
+    , totalCents : Int
+    , averageCents : Float
+    , topAccounts : List String
+    }
+
+-- Top-level report assembled by Report.sky.
+type alias Report =
+    { rowCount : Int
+    , uniqueAccounts : Int
+    , uniqueCategories : Int
+    , buckets : List BucketSummary
+    , byAccount : List ( String, Int )
+    , byCategoryId : List ( Int, Int )
+    , totalCents : Int
+    , averageCents : Float
+    , medianCents : Int
+    , maxCents : Int
+    , minCents : Int
+    , generatedAt : String
+    }
+
+
+bucketName : Bucket -> String
+bucketName b =
+    case b of
+
+        Income ->
+            "income"
+
+        Expense ->
+            "expense"
+
+        Refund ->
+            "refund"
+
+        Transfer ->
+            "transfer"
+
+        Unknown ->
+            "unknown"
+
+
+bucketFromName : String -> Bucket
+bucketFromName s =
+    case s of
+
+        "income" ->
+            Income
+
+        "expense" ->
+            Expense
+
+        "refund" ->
+            Refund
+
+        "transfer" ->
+            Transfer
+
+        _ ->
+            Unknown
+
+
+allBuckets : List Bucket
+allBuckets =
+    [ Income, Expense, Refund, Transfer, Unknown ]
