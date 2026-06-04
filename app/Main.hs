@@ -908,6 +908,8 @@ data Command
     | Upgrade
     | UpgradeClaude              -- refresh ./CLAUDE.md from embedded template
     | Console ConsoleOpts        -- run bundled Sky Console mini-app
+    | ConsoleServe ConsoleServeOpts
+                                 -- run the standalone Sky Console hub daemon
     | Doc DocOpts                -- print / serve API documentation
     | Doctor Doctor.DoctorOpts   -- diagnose project / runtime issues
     | Db DbAction FilePath       -- sky db status / sky db migrate
@@ -926,6 +928,18 @@ data DbAction
 data ConsoleOpts = ConsoleOpts
     { _consolePort :: Int        -- Sky.Live port (default 8025)
     , _consoleTui  :: Bool       -- --tui: run via Sky.Tui instead
+    } deriving (Show)
+
+
+-- | Options for `sky console serve` — the standalone Hub daemon.
+-- v0.16.4 Chunk 1. See docs/v0.16.x-console/v0.16.4-IMPLEMENTATION-PLAN.md
+-- for the full chunked scope.
+data ConsoleServeOpts = ConsoleServeOpts
+    { _hubPort    :: !Int             -- HTTP listen port (default 4000)
+    , _hubDataDir :: !FilePath        -- SQLite + future DuckDB live here
+    , _hubAuth    :: !String          -- "token" | "app" | "off"
+    , _hubTlsCert :: !(Maybe FilePath)
+    , _hubTlsKey  :: !(Maybe FilePath)
     } deriving (Show)
 
 
@@ -989,6 +1003,9 @@ commandParser = subparser
     <> command "console"
         (info (Console <$> consoleOptsParser)
             (progDesc "Run the bundled Sky Console dashboard (Std.Ui Sky.Live; --tui for terminal)"))
+    <> command "console-serve"
+        (info (ConsoleServe <$> consoleServeOptsParser)
+            (progDesc "Run as a Sky Console hub daemon — OTLP receiver + multi-service dashboard"))
     <> command "doc"
         (info (Doc <$> docOptsParser)
             (progDesc "Print or browse API docs (--serve for HTTP server)"))
@@ -1038,6 +1055,40 @@ consoleOptsParser = ConsoleOpts
         ( long "tui"
        <> help "Run via Sky.Tui in the terminal instead of the browser"
         )
+
+
+-- Parser for `sky console-serve` flags (Hub daemon, v0.16.4).
+consoleServeOptsParser :: Parser ConsoleServeOpts
+consoleServeOptsParser = ConsoleServeOpts
+    <$> option auto
+        ( long "port"
+       <> short 'p'
+       <> metavar "PORT"
+       <> value 4000
+       <> help "HTTP listen port (default 4000)"
+        )
+    <*> strOption
+        ( long "data-dir"
+       <> metavar "DIR"
+       <> value "./skyhub-data"
+       <> help "Directory for the hub's SQLite database (default ./skyhub-data)"
+        )
+    <*> strOption
+        ( long "auth"
+       <> metavar "MODE"
+       <> value "token"
+       <> help "Auth mode: token | app | off (default token; SKY_CONSOLE_HUB_TOKEN required for token)"
+        )
+    <*> optional (strOption
+        ( long "tls-cert"
+       <> metavar "FILE"
+       <> help "Path to TLS certificate (enables HTTPS when paired with --tls-key)"
+        ))
+    <*> optional (strOption
+        ( long "tls-key"
+       <> metavar "FILE"
+       <> help "Path to TLS key (required when --tls-cert is set)"
+        ))
 
 
 -- Parser for `sky doc` flags.
@@ -1614,6 +1665,8 @@ runCommand cmd = case cmd of
 
     Console opts -> runConsole opts
 
+    ConsoleServe opts -> runConsoleServe opts
+
     Doc opts -> runDoc opts
 
     Doctor opts -> do
@@ -2039,6 +2092,32 @@ runConsole _opts = do
     putStrLn "  # browse http://localhost:<port>/_sky/console"
     putStrLn ""
     putStrLn "See docs/v0.16.x-console/EMBEDDED.md for the migration notes."
+    return (Right ())
+
+
+-- | `sky console-serve` — the Sky Console hub daemon. v0.16.4 Chunk 1
+-- ships the CLI scaffolding only: prints the resolved config and
+-- exits 0 so the flag plumbing is verifiable end-to-end. Chunk 2 will
+-- replace this with the actual OTLP HTTP receiver + storage + UI.
+--
+-- See docs/v0.16.x-console/v0.16.4-IMPLEMENTATION-PLAN.md.
+runConsoleServe :: ConsoleServeOpts -> IO (Either String ())
+runConsoleServe opts = do
+    putStrLn ""
+    putStrLn "sky console-serve — Sky Console Hub daemon"
+    putStrLn ""
+    putStrLn $ "  port:      " ++ show (_hubPort opts)
+    putStrLn $ "  data-dir:  " ++ _hubDataDir opts
+    putStrLn $ "  auth:      " ++ _hubAuth opts
+    case (_hubTlsCert opts, _hubTlsKey opts) of
+        (Just c, Just k)   -> putStrLn $ "  tls:       " ++ c ++ " / " ++ k
+        (Nothing, Nothing) -> putStrLn   "  tls:       (off — HTTP only)"
+        _                  -> putStrLn   "  tls:       INCOMPLETE (need both --tls-cert and --tls-key)"
+    putStrLn ""
+    putStrLn "STATUS: v0.16.4 Chunk 1 (CLI scaffolding) only — receiver,"
+    putStrLn "        storage, and UI ship in Chunks 2-7. See"
+    putStrLn "        docs/v0.16.x-console/v0.16.4-IMPLEMENTATION-PLAN.md."
+    putStrLn ""
     return (Right ())
 
 
