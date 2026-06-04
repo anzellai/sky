@@ -359,6 +359,7 @@ test-suite sky-tests
       Sky.Build.IsPlainIdentSpec
       Sky.Build.InferExprTypeBinopSpec
       Sky.Build.CoerceArgListMapInterplaySpec
+      Sky.Build.CrossModuleSetSpec
       Sky.Build.LowerCtxCascadeSpec
       Sky.Build.LetBodyCascadeResumeSpec
       Sky.Build.SnapshotCallerCtxSpec

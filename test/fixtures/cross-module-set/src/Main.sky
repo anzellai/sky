@@ -1,0 +1,48 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Set as Set
+import Helper
+import Helper2
+import Std.Log exposing (println)
+
+
+-- Inline same-module variant — same shape as Helper.uniqueOf but
+-- never crosses a module boundary. The pre-#461 codegen for this
+-- shape ALSO panicked when annotated; locking it down too.
+uniqueInline : List String -> Set String
+uniqueInline xs =
+    Set.fromList xs
+
+
+main =
+    -- Cross-module: Helper.uniqueOf returns Set String. Pre-fix this
+    -- panicked with `rt.Coerce: expected map[interface {}]bool, got
+    -- rt.SkySet`. Should print 2 (a, b).
+    let
+        crossOne =
+            Set.size (Helper.uniqueOf [ "a", "b", "a" ])
+
+        -- Cross-cross: Helper2.passthrough → Helper.uniqueOf → Main.
+        -- Should print 3 (a, b, c).
+        crossTwo =
+            Set.size (Helper2.passthrough [ "a", "b", "a", "c" ])
+
+        -- Insert-chain on a cross-module Set value. Should print 3
+        -- (a, b, plus the inserted c).
+        chain =
+            Set.size (Set.insert "c" (Helper.uniqueOf [ "a", "b", "a" ]))
+
+        -- Same-module annotated. Should print 2.
+        inlineSize =
+            Set.size (uniqueInline [ "a", "b", "a" ])
+    in
+    println
+        (String.fromInt crossOne
+            ++ "/"
+            ++ String.fromInt crossTwo
+            ++ "/"
+            ++ String.fromInt chain
+            ++ "/"
+            ++ String.fromInt inlineSize
+        )

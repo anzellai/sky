@@ -1,0 +1,9 @@
+module Helper exposing (uniqueOf)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Set as Set
+
+
+uniqueOf : List String -> Set String
+uniqueOf xs =
+    Set.fromList xs

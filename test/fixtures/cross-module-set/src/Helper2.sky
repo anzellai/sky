@@ -1,0 +1,10 @@
+module Helper2 exposing (passthrough)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Set as Set
+import Helper
+
+
+passthrough : List String -> Set String
+passthrough xs =
+    Helper.uniqueOf xs

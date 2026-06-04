@@ -733,6 +733,16 @@ func narrowReflectValue(src reflect.Value, target reflect.Type) reflect.Value {
 			return narrowed
 		}
 	}
+	// #461 — SkySet (struct) → map[any]V (Sky's typed Go form for
+	// `Set a`). Reached when a Set flows through a nested narrowing
+	// path: record field of type `Set a`, slice element of type
+	// `Set a`, etc. Top-level Coerce[map[any]V] also delegates to
+	// skySetToMap explicitly; this branch covers everything else.
+	if src.Kind() == reflect.Struct && target.Kind() == reflect.Map {
+		if narrowed, ok := skySetToMap(src.Interface(), target); ok {
+			return narrowed
+		}
+	}
 	if target.Kind() == reflect.String {
 		return reflect.ValueOf(fmt.Sprintf("%v", src.Interface()))
 	}
@@ -4912,6 +4922,19 @@ func Coerce[T any](v any) T {
 			if narrowed, ok := narrowStructToStruct(rv, targetTy); ok {
 				return narrowed.Interface().(T)
 			}
+		}
+		// v0.16.3 #461 — SkySet → map[any]V narrowing. Sky's typed Go
+		// form for `Set a` is `map[any]bool`, but the rt.Set_* kernels
+		// hash by `fmt.Sprintf("%v", v)` and return an opaque SkySet
+		// struct ({items: map[string]any}). At a same-module inline
+		// call the result feeds the next any-typed kernel directly;
+		// at a cross-module boundary the typed-codegen wrapper emits
+		// `rt.Coerce[map[any]bool](...)` and panics without this
+		// branch. Walk SkySet.items's VALUES (the originals) and
+		// build the typed map. Mirrors `asSkyResponse` for the
+		// rt.SkyResponse → typed-alias-struct case.
+		if narrowed, ok := skySetToMap(v, targetTy); ok {
+			return narrowed.Interface().(T)
 		}
 	}
 	// REACHABLE-FROM-SKY in two shapes:

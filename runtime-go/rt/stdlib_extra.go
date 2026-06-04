@@ -46,20 +46,93 @@ func Set_fromList(list any) any {
 	return s
 }
 
-// toSkySet accepts either a SkySet or a typed-codegen slice (`[]A`) and
-// returns a SkySet view. Typed codegen's `Set.fromList [1,2,3]` produces
-// `[]int`; downstream any-variant kernels (Set_insert, Set_member) must
-// accept both shapes instead of hard-asserting `.(SkySet)`. Matches the
-// AsList widening pattern used by list kernels.
+// toSkySet accepts a SkySet, a typed-codegen slice (`[]A`), or a
+// `map[K]V`-shaped typed Set (`map[any]bool` is Sky's typed Go form
+// for `Set a`; v0.15.45 Layer-3 + #461). Returns a SkySet view.
+// Typed codegen's `Set.fromList [1,2,3]` produces `[]int`; downstream
+// any-variant kernels (Set_insert, Set_member) must accept both
+// shapes instead of hard-asserting `.(SkySet)`. Matches the AsList
+// widening pattern used by list kernels.
 func toSkySet(v any) SkySet {
 	if s, ok := v.(SkySet); ok {
 		return s
+	}
+	// #461 — accept a typed Sky-Set map. The typed Go form for
+	// `Set a` is `map[any]bool` (or `map[any]V` with bool-ish V at
+	// the codegen layer). When a Set returned by a typed-codegen
+	// cross-module call flows back into an any-typed Set kernel,
+	// reify it back into a SkySet so the existing kernel arithmetic
+	// (string-keyed dedup) still works.
+	if v != nil {
+		rv := reflect.ValueOf(v)
+		if rv.IsValid() && rv.Kind() == reflect.Map {
+			items := map[string]any{}
+			for _, k := range rv.MapKeys() {
+				key := k.Interface()
+				items[fmt.Sprintf("%v", key)] = key
+			}
+			return SkySet{items: items}
+		}
 	}
 	items := map[string]any{}
 	for _, x := range asList(v) {
 		items[fmt.Sprintf("%v", x)] = x
 	}
 	return SkySet{items: items}
+}
+
+// skySetToMap converts a SkySet to a typed Sky-Set map by iterating
+// `items`'s VALUES (the original Sky values; the keys are stringified
+// reps used for dedup). Used by rt.Coerce to bridge the SkySet → map
+// gap at cross-module Set-returning boundaries (#461). targetTy must
+// be a `map[K]V` shape; V defaults to bool for Sky's `Set a` typed Go
+// form (`map[any]bool`), but any kind of V works as long as zero(V)
+// is a sensible "present" marker.
+//
+// Returns the converted reflect.Value + ok=true on success; ok=false
+// when the source isn't a SkySet OR the target isn't a map-with-
+// interface-key shape. Caller can fall through to other narrowers.
+func skySetToMap(v any, targetTy reflect.Type) (reflect.Value, bool) {
+	if v == nil || targetTy == nil {
+		return reflect.Value{}, false
+	}
+	s, ok := v.(SkySet)
+	if !ok {
+		return reflect.Value{}, false
+	}
+	if targetTy.Kind() != reflect.Map {
+		return reflect.Value{}, false
+	}
+	keyTy := targetTy.Key()
+	valTy := targetTy.Elem()
+	// Key must be `any` (interface{}) — Sky's typed Go form is
+	// `map[any]bool`. A more concrete key kind (`map[string]bool`)
+	// would need element-wise narrowing; defer that to a follow-up
+	// if a real use surfaces.
+	if keyTy.Kind() != reflect.Interface {
+		return reflect.Value{}, false
+	}
+	out := reflect.MakeMapWithSize(targetTy, len(s.items))
+	zeroV := reflect.Zero(valTy)
+	// For bool-valued maps, "present" is true rather than zero.
+	presentV := zeroV
+	if valTy.Kind() == reflect.Bool {
+		presentV = reflect.ValueOf(true).Convert(valTy)
+	}
+	for _, val := range s.items {
+		if val == nil {
+			continue
+		}
+		kv := reflect.ValueOf(val)
+		if !kv.IsValid() {
+			continue
+		}
+		// Wrap in interface{} since keyTy is interface.
+		keyV := reflect.New(keyTy).Elem()
+		keyV.Set(kv)
+		out.SetMapIndex(keyV, presentV)
+	}
+	return out, true
 }
 
 func Set_insert(v any, set any) any {

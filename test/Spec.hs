@@ -84,6 +84,7 @@ import qualified Sky.Build.CoerceArgParametricSpec
 import qualified Sky.Build.IsPlainIdentSpec
 import qualified Sky.Build.InferExprTypeBinopSpec
 import qualified Sky.Build.CoerceArgListMapInterplaySpec
+import qualified Sky.Build.CrossModuleSetSpec
 import qualified Sky.Build.LowerCtxCascadeSpec
 import qualified Sky.Build.LetBodyCascadeResumeSpec
 import qualified Sky.Build.SnapshotCallerCtxSpec
@@ -523,6 +524,13 @@ main = hspec $ do
     -- `coerceArg` skip-check vote.
     describe "Sky.Build.CoerceArgListMapInterplay"
                                             Sky.Build.CoerceArgListMapInterplaySpec.spec
+    -- v0.16.3 #461 — cross-module Set returns must not panic.
+    -- SkySet (runtime kernel struct) → map[any]bool (Sky's typed Go
+    -- form for `Set a`) bridge in rt.Coerce + narrowReflectValue +
+    -- toSkySet. Locks the 4-shape fixture (cross-call, cross-cross
+    -- passthrough, insert chain on a cross-module value, inline
+    -- same-module annotated).
+    describe "Sky.Build.CrossModuleSet"     Sky.Build.CrossModuleSetSpec.spec
     -- v0.15.x hardening / Cycle 1 P6 — LowerCtx cascade Phase 2.
     -- Promotes `lowerExpr` / `lowerExprExpectGo` from no-op
     -- delegates into REAL ctx-installing wrappers, and migrates
