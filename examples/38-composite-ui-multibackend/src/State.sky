@@ -1,0 +1,211 @@
+module State exposing (..)
+
+-- examples/38-composite-ui-multibackend — pure types + helpers.
+--
+-- No Std.Ui imports here so the per-module HM heap stays well below
+-- Limitation #17's heap-exhaustion limit. The heavy Std.Ui unification
+-- load lives in the View module.
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+
+-- A "habit" carries an id, name, and a list of (day-index, done?)
+-- entries. Day index is whole-day count since the Unix epoch (UTC),
+-- i.e. `unix-millis / 86_400_000`. Using a plain List instead of a
+-- Dict avoids cross-module `Dict Int Bool` bugs (#461) — the lookup
+-- + toggle helpers below close it in O(n) which is fine for daily-
+-- habit-sized lists (the UI caps the window at 7 days anyway).
+type alias Habit =
+    { id : Int
+    , name : String
+    , history : List ( Int, Bool )
+    }
+
+type alias Viewport =
+    { width : Int
+    , height : Int
+    }
+
+type alias Model =
+    { habits : List Habit
+    , draft : String
+    , nextId : Int
+    , todayIndex : Int
+    , viewport : Viewport
+    }
+
+type Msg
+    = UpdateDraft String
+    | AddHabit
+    | ToggleHabit Int Int
+    | RemoveHabit Int
+    | Tick
+    | QuitTui
+    | NoOp
+
+
+-- Seed habits so the empty state isn't the only thing visible on
+-- first boot. Three habits, varied completion over the past 7 days
+-- so the bar chart has something to draw.
+seedHabits : Int -> List Habit
+seedHabits today =
+    [ { id = 1
+      , name = "Walk 5k steps"
+      , history = seedHistory today [ True, True, False, True, True, False, True ]
+      }
+    , { id = 2
+      , name = "Read 20 minutes"
+      , history = seedHistory today [ True, False, True, True, True, True, False ]
+      }
+    , { id = 3
+      , name = "No screens after 10pm"
+      , history = seedHistory today [ False, True, False, True, False, True, True ]
+      }
+    ]
+
+
+-- Map a list of past 7 day flags to (dayIndex, done?) pairs ending
+-- on `today` (inclusive). Index 0 is 6 days ago, 6 is today.
+seedHistory : Int -> List Bool -> List ( Int, Bool )
+seedHistory today flags =
+    let
+        offsets = List.range 0 6
+    in
+        seedHistoryHelp today offsets flags []
+
+
+seedHistoryHelp : Int -> List Int -> List Bool -> List ( Int, Bool ) -> List ( Int, Bool )
+seedHistoryHelp today offsets flags acc =
+    case ( offsets, flags ) of
+
+        ( i :: ix, b :: bs ) ->
+            seedHistoryHelp today ix bs (acc ++ [( today - (6 - i), b )])
+
+        _ ->
+            acc
+
+
+-- True when this habit was marked done on the given day.
+isDoneOn : Habit -> Int -> Bool
+isDoneOn habit day =
+    case List.find (\entry -> fst entry == day) habit.history of
+
+        Just entry ->
+            snd entry
+
+        Nothing ->
+            False
+
+
+-- Flip the day's flag. If no entry exists yet, insert one set to True;
+-- if it does, flip the existing value. Returns a fresh habit.
+toggleHabit : Int -> Habit -> Habit
+toggleHabit day habit =
+    if List.any (\entry -> fst entry == day) habit.history then
+        { habit | history = List.map (toggleOne day) habit.history }
+
+    else
+        { habit | history = habit.history ++ [( day, True )] }
+
+
+toggleOne : Int -> ( Int, Bool ) -> ( Int, Bool )
+toggleOne target entry =
+    if fst entry == target then
+        ( fst entry, not (snd entry) )
+
+    else
+        entry
+
+
+-- Completion rate across all habits for a given day, expressed as a
+-- 0..100 integer percentage. 0 / 0 returns 0 (no habits → no
+-- completion).
+completionRate : Int -> List Habit -> Int
+completionRate day habits =
+    let
+        total = List.length habits
+        done = List.length (List.filter (\h -> isDoneOn h day) habits)
+    in
+        if total == 0 then
+            0
+
+        else
+            (done * 100) // total
+
+
+-- Past 7 days of completion rates ending on `today`. Used by both
+-- the bar chart (Std.Ui.Chart.bar) and the summary line.
+recentRates : Int -> List Habit -> List Int
+recentRates today habits =
+    List.map (\d -> completionRate d habits) (recentDays today)
+
+
+recentDays : Int -> List Int
+recentDays today =
+    List.map (\i -> today - (6 - i)) (List.range 0 6)
+
+
+-- Build a new id larger than every existing id. Avoids the "id 0 →
+-- 0" footgun when habits get removed.
+nextHabitId : List Habit -> Int
+nextHabitId habits =
+    List.foldl
+        (\h acc ->
+            if h.id >= acc then
+                h.id + 1
+
+            else
+                acc)
+        1
+        habits
+
+
+-- Trim + validate a draft entry. Returns Nothing if the trimmed
+-- string is empty so the caller can show inline feedback.
+parseDraft : String -> Maybe String
+parseDraft raw =
+    let
+        clean = String.trim raw
+    in
+        if String.isEmpty clean then
+            Nothing
+
+        else
+            Just clean
+
+
+-- Render a day index back to a human label relative to today.
+-- `today` is the index itself; today-6 reads as "6d ago". Used as
+-- the chart's x-axis tick label.
+dayLabel : Int -> Int -> String
+dayLabel today day =
+    let
+        delta = today - day
+    in
+        if delta == 0 then
+            "today"
+
+        else if delta == 1 then
+            "1d ago"
+
+        else
+            String.fromInt delta ++ "d ago"
+
+
+-- Two-digit zero-padded — only used by tests + the header. Routes
+-- through padStringLeft to dodge any residual padLeft-Char wobble.
+pad2 : Int -> String
+pad2 n =
+    padStringLeft 2 "0" (String.fromInt n)
+
+
+padStringLeft : Int -> String -> String -> String
+padStringLeft target pad s =
+    let
+        deficit = target - String.length s
+    in
+        if deficit <= 0 then
+            s
+
+        else
+            String.repeat deficit pad ++ s

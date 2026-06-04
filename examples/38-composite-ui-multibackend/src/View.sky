@@ -1,0 +1,391 @@
+module View exposing (view, viewElement)
+
+-- The SHARED view module — used by Sky.Live, Sky.Tui, and
+-- Sky.Webview entry points alike. `viewElement` is the backend-
+-- agnostic Element tree; `view` wraps it with `Ui.layout` for the
+-- HTML-shaped backends (Live + Webview). Tui consumes
+-- `viewElement` directly.
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.ToString as ToString
+import Std.Ui as Ui
+import Std.Ui exposing (Element)
+import Std.Ui.Background as Background
+import Std.Ui.Border as Border
+import Std.Ui.Chart as Chart
+import Std.Ui.Font as Font
+import Std.Ui.Input as Input
+import Std.Ui.Region as Region
+import State exposing (..)
+
+
+-- ─── Palette ────────────────────────────────────────────────────────
+brand : Ui.Color
+brand =
+    Ui.rgb 60 110 180
+
+
+brandDeep : Ui.Color
+brandDeep =
+    Ui.rgb 30 70 130
+
+
+muted : Ui.Color
+muted =
+    Ui.rgb 110 110 120
+
+
+hairline : Ui.Color
+hairline =
+    Ui.rgb 220 220 226
+
+
+cardBg : Ui.Color
+cardBg =
+    Ui.rgb 255 255 255
+
+
+pageBg : Ui.Color
+pageBg =
+    Ui.rgb 246 246 250
+
+
+okGreen : Ui.Color
+okGreen =
+    Ui.rgb 60 150 90
+
+
+-- ─── Element-shape view (shared across Tui / Live / Webview) ───────
+viewElement : Model -> Element Msg
+viewElement model =
+    Ui.column
+        [ Ui.width Ui.fill
+        , Ui.spacing 18
+        , Ui.paddingXY 24 18
+        , Background.color pageBg
+        , Font.color (Ui.rgb 30 30 36)
+        ]
+        [ header model
+        , summaryRow model
+        , addHabitForm model
+        , habitsSection model
+        , chartSection model
+        , footer
+        ]
+
+
+-- HTML-shaped wrapper — feeds the Sky.Live + Sky.Webview entry
+-- points (both consume Html via Ui.layout). Sky.Tui takes
+-- `viewElement` directly.
+view : Model -> any
+view model =
+    Ui.layout [] (viewElement model)
+
+
+-- ─── Header ─────────────────────────────────────────────────────────
+header : Model -> Element Msg
+header model =
+    Ui.row
+        [ Ui.width Ui.fill
+        , Ui.paddingXY 18 14
+        , Ui.spacing 12
+        , Background.color brand
+        , Border.rounded 6
+        , Region.navigation
+        ]
+        [ Ui.el
+              [ Region.heading 1
+              , Font.color (Ui.rgb 255 255 255)
+              , Font.bold
+              , Font.size 20
+              ]
+              (Ui.text "Sky Habits")
+        , Ui.el
+              [ Font.color (Ui.rgb 220 230 245), Font.size 13, Ui.alignRight ]
+              (Ui.text ("Day " ++ ToString.fromInt model.todayIndex))
+        ]
+
+
+-- ─── Summary ───────────────────────────────────────────────────────
+summaryRow : Model -> Element Msg
+summaryRow model =
+    let
+        habitCount = List.length model.habits
+        todayRate = completionRate model.todayIndex model.habits
+        weekRates = recentRates model.todayIndex model.habits
+        weekAvg = averageInt weekRates
+    in
+        Ui.row
+            [ Ui.width Ui.fill, Ui.spacing 12 ]
+            [ statTile "Habits tracked" (ToString.fromInt habitCount)
+            , statTile "Today" (ToString.fromInt todayRate ++ "%")
+            , statTile "7-day avg" (ToString.fromInt weekAvg ++ "%")
+            ]
+
+
+statTile : String -> String -> Element Msg
+statTile label value =
+    Ui.column
+        [ Ui.spacing 4
+        , Ui.paddingXY 14 10
+        , Ui.width Ui.fill
+        , Background.color cardBg
+        , Border.rounded 6
+        , Border.width 1
+        , Border.color hairline
+        ]
+        [ Ui.el [ Font.size 11, Font.color muted ] (Ui.text label)
+        , Ui.el
+              [ Font.size 22, Font.bold, Font.color brandDeep ]
+              (Ui.text value)
+        ]
+
+
+averageInt : List Int -> Int
+averageInt xs =
+    let
+        n = List.length xs
+        total = List.foldl (\x acc -> acc + x) 0 xs
+    in
+        if n == 0 then
+            0
+
+        else
+            total // n
+
+
+-- ─── Add habit form ────────────────────────────────────────────────
+addHabitForm : Model -> Element Msg
+addHabitForm model =
+    Ui.row
+        [ Ui.width Ui.fill
+        , Ui.spacing 12
+        , Ui.paddingXY 14 12
+        , Background.color cardBg
+        , Border.rounded 6
+        , Border.width 1
+        , Border.color hairline
+        ]
+        [ Input.text
+              [ Ui.width Ui.fill, Ui.paddingXY 10 8 ]
+              { onChange = UpdateDraft
+              , text = model.draft
+              , placeholder = Just
+                    (Input.placeholder
+                        []
+                        (Ui.text "New habit (e.g. drink water)"))
+              , label = Input.labelHidden "New habit"
+              }
+        , Ui.button
+              [ Background.color brand
+              , Background.hoverColor brandDeep
+              , Font.color (Ui.rgb 255 255 255)
+              , Font.bold
+              , Font.size 13
+              , Ui.paddingXY 16 10
+              , Border.rounded 4
+              ]
+              { onPress = Just AddHabit, label = Ui.text "Add" }
+        ]
+
+
+-- ─── Habits list with toggle checkboxes ────────────────────────────
+habitsSection : Model -> Element Msg
+habitsSection model =
+    Ui.column
+        [ Ui.width Ui.fill, Ui.spacing 10 ]
+        [ Ui.el [ Region.heading 2, Font.size 16, Font.bold ] (Ui.text "Habits")
+        , habitsListOrEmpty model
+        ]
+
+
+habitsListOrEmpty : Model -> Element Msg
+habitsListOrEmpty model =
+    case model.habits of
+
+        [] ->
+            Ui.el
+                [ Ui.paddingXY 14 12
+                , Background.color cardBg
+                , Border.rounded 6
+                , Border.width 1
+                , Border.color hairline
+                , Font.color muted
+                , Font.size 13
+                , Ui.width Ui.fill
+                ]
+                (Ui.text "No habits yet. Add one above to get started.")
+
+        _ ->
+            Ui.column
+                [ Ui.spacing 8, Ui.width Ui.fill ]
+                (List.map (habitRow model.todayIndex) model.habits)
+
+
+habitRow : Int -> Habit -> Element Msg
+habitRow today habit =
+    let
+        doneToday = isDoneOn habit today
+        weekDone =
+            List.length
+                (List.filter (\day -> isDoneOn habit day) (recentDays today))
+    in
+        Ui.row
+            [ Ui.width Ui.fill
+            , Ui.spacing 12
+            , Ui.paddingXY 14 10
+            , Background.color cardBg
+            , Border.rounded 6
+            , Border.width 1
+            , Border.color hairline
+            ]
+            [ Input.checkbox
+                  []
+                  { onChange = \_ -> ToggleHabit habit.id today
+                  , checked = doneToday
+                  , icon = checkmarkIcon
+                  , label = Input.labelRight [] (Ui.text habit.name)
+                  }
+            , Ui.el
+                  [ Ui.alignRight, Font.size 12, Font.color muted ]
+                  (Ui.text (ToString.fromInt weekDone ++ "/7 this week"))
+            , Ui.button
+                  [ Background.color (Ui.rgb 240 240 244)
+                  , Background.hoverColor (Ui.rgb 230 100 90)
+                  , Border.rounded 4
+                  , Font.size 12
+                  , Ui.paddingXY 10 6
+                  ]
+                  { onPress = Just (RemoveHabit habit.id)
+                  , label = Ui.text "Remove"
+                  }
+            ]
+
+
+-- ─── Chart section ─────────────────────────────────────────────────
+chartSection : Model -> Element Msg
+chartSection model =
+    Ui.column
+        [ Ui.width Ui.fill
+        , Ui.spacing 8
+        , Ui.paddingXY 14 12
+        , Background.color cardBg
+        , Border.rounded 6
+        , Border.width 1
+        , Border.color hairline
+        ]
+        [ Ui.el
+              [ Region.heading 2, Font.size 16, Font.bold ]
+              (Ui.text "Completion · last 7 days")
+        , Ui.el
+              [ Font.color muted, Font.size 12 ]
+              (Ui.text "Percentage of habits completed per day.")
+        , barChart model
+        , textSummary model
+        ]
+
+
+barChart : Model -> Element Msg
+barChart model =
+    let
+        rates = recentRates model.todayIndex model.habits
+        points = ratesToPoints rates
+    in
+        Chart.bar
+            (Chart.defaultCfg |> Chart.withWidth 480 |> Chart.withHeight 160
+                |> Chart.withTitle "Daily completion rate (%)"
+                |> Chart.withYRange 0.0 100.0)
+            [Chart.series points |> Chart.withSeriesLabel "% complete"
+                |> Chart.withSeriesColor okGreen]
+
+
+ratesToPoints : List Int -> List ( Float, Float )
+ratesToPoints rates =
+    indexedFloats 0 rates
+
+
+indexedFloats : Int -> List Int -> List ( Float, Float )
+indexedFloats i xs =
+    case xs of
+
+        [] ->
+            []
+
+        head :: rest ->
+            ( intToFloat i, intToFloat head ) :: indexedFloats (i + 1) rest
+
+
+intToFloat : Int -> Float
+intToFloat n =
+    case String.toFloat (String.fromInt n) of
+
+        Just f ->
+            f
+
+        Nothing ->
+            0.0
+
+
+textSummary : Model -> Element Msg
+textSummary model =
+    Ui.paragraph
+        [ Font.size 12, Font.color muted ]
+        [Ui.text (summaryText model)]
+
+
+summaryText : Model -> String
+summaryText model =
+    let
+        labelsAndRates =
+            List.map
+                (\day ->
+                    dayLabel model.todayIndex day ++ ": "
+                        ++ ToString.fromInt (completionRate day model.habits)
+                        ++ "%")
+                (recentDays model.todayIndex)
+    in
+        String.join " · " labelsAndRates
+
+
+-- Custom checkbox tick. The Input.checkbox `icon` field is a
+-- `Bool -> Element msg` so we paint a small filled square when
+-- checked and an outline when unchecked. Works the same under
+-- Live, Tui (ANSI cells), and Webview (WKWebView).
+checkmarkIcon : Bool -> Element Msg
+checkmarkIcon checked =
+    Ui.el
+        [ Background.color
+              (if checked then
+                  okGreen
+
+              else
+                  Ui.rgb 240 240 244)
+        , Border.rounded 3
+        , Border.width 1
+        , Border.color hairline
+        , Ui.width (Ui.px 18)
+        , Ui.height (Ui.px 18)
+        ]
+        (Ui.text "")
+
+
+-- ─── Footer ────────────────────────────────────────────────────────
+footer : Element Msg
+footer =
+    Ui.row
+        [ Ui.width Ui.fill
+        , Ui.paddingXY 18 12
+        , Ui.spacing 12
+        , Background.color (Ui.rgb 235 235 240)
+        , Border.rounded 6
+        , Region.footer
+        ]
+        [ Ui.el
+              [ Font.color muted, Font.size 12 ]
+              (Ui.text
+                  "Sky composite test app · examples/38-composite-ui-multibackend")
+        , Ui.el
+              [ Ui.alignRight, Font.color muted, Font.size 12 ]
+              (Ui.text "Live · Tui · Webview from one source")
+        ]

@@ -1,0 +1,64 @@
+module Update exposing (update)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.System as System
+import Std.Cmd as Cmd
+import State exposing (..)
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        UpdateDraft text ->
+            ( { model | draft = text }, Cmd.none )
+
+        AddHabit ->
+            case parseDraft model.draft of
+
+                Nothing ->
+                    ( { model | draft = "" }, Cmd.none )
+
+                Just name ->
+                    let
+                        habit =
+                            { id = model.nextId, name = name, history = [] }
+                    in
+                        ( { model | habits = model.habits ++ [habit]
+                          , nextId = model.nextId + 1
+                          , draft = ""
+                          }
+                        , Cmd.none
+                        )
+
+        ToggleHabit habitId day ->
+            ( { model | habits = List.map
+                    (\h ->
+                        if h.id == habitId then
+                            toggleHabit day h
+
+                        else
+                            h)
+                    model.habits
+              }
+            , Cmd.none
+            )
+
+        RemoveHabit habitId ->
+            ( { model | habits = List.filter (\h -> h.id /= habitId) model.habits
+              }
+            , Cmd.none
+            )
+
+        Tick ->
+            ( model, Cmd.none )
+
+        QuitTui ->
+            -- Tui-only path: the runtime's signal-trap shutdown
+            -- restores TTY first then exits. Reach for
+            -- System.exit so a `q` keypress feels native.
+            ( model, Cmd.perform (System.exit 0) (\_ -> NoOp) )
+
+        NoOp ->
+            ( model, Cmd.none )

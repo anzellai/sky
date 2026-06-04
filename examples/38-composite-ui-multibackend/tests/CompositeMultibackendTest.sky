@@ -1,0 +1,101 @@
+module CompositeMultibackendTest exposing (main, tests)
+
+-- Sky.Test assertions over the composite's pure helpers. Each test
+-- pins a single backend-agnostic invariant — the helpers live in
+-- State.sky so a regression anywhere in date / completion math /
+-- habit toggling surfaces here without booting any UI.
+import Sky.Core.Prelude exposing (..)
+import Sky.Test as Test exposing (Test)
+import State exposing (..)
+
+
+main =
+    Test.runMain tests
+
+
+sampleHabits : List Habit
+sampleHabits =
+    [ { id = 1
+      , name = "Hydrate"
+      , history = [ ( 100, True ), ( 101, True ), ( 102, False ) ]
+      }
+    , { id = 2
+      , name = "Walk"
+      , history = [ ( 100, True ), ( 101, False ), ( 102, True ) ]
+      }
+    ]
+
+
+tests : List Test
+tests =
+    [ Test.test "pad2 zero-pads single digit" (\_ -> Test.equal "07" (pad2 7))
+    , Test.test
+          "pad2 leaves two-digit untouched"
+          (\_ -> Test.equal "42" (pad2 42))
+    , Test.test
+          "isDoneOn returns True for done entry"
+          (\_ ->
+              let
+                  h =
+                      { id = 1
+                      , name = "x"
+                      , history = [ ( 100, True ), ( 101, False ) ]
+                      }
+              in
+                  Test.equal True (isDoneOn h 100))
+    , Test.test
+          "isDoneOn returns False for absent day"
+          (\_ ->
+              let
+                  h = { id = 1, name = "x", history = [( 100, True )] }
+              in
+                  Test.equal False (isDoneOn h 999))
+    , Test.test
+          "toggleHabit flips existing day"
+          (\_ ->
+              let
+                  h = { id = 1, name = "x", history = [( 100, True )] }
+                  flipped = toggleHabit 100 h
+              in
+                  Test.equal False (isDoneOn flipped 100))
+    , Test.test
+          "toggleHabit inserts new day as True"
+          (\_ ->
+              let
+                  h = { id = 1, name = "x", history = [] }
+                  added = toggleHabit 100 h
+              in
+                  Test.equal True (isDoneOn added 100))
+    , Test.test
+          "completionRate sums fractions per day"
+          (\_ -> Test.equal 100 (completionRate 100 sampleHabits))
+    , Test.test
+          "completionRate handles zero habits"
+          (\_ -> Test.equal 0 (completionRate 100 []))
+    , Test.test
+          "nextHabitId is 1 on empty"
+          (\_ -> Test.equal 1 (nextHabitId []))
+    , Test.test
+          "nextHabitId follows max"
+          (\_ -> Test.equal 3 (nextHabitId sampleHabits))
+    , Test.test
+          "parseDraft rejects whitespace"
+          (\_ ->
+              case parseDraft "   " of
+
+                  Nothing ->
+                      Test.pass
+
+                  Just _ ->
+                      Test.fail "expected Nothing for whitespace")
+    , Test.test
+          "parseDraft trims valid"
+          (\_ ->
+              case parseDraft "  drink water  " of
+
+                  Just s ->
+                      Test.equal "drink water" s
+
+                  Nothing ->
+                      Test.fail "expected Just for non-empty")
+    ]

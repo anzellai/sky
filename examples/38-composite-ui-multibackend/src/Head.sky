@@ -1,0 +1,23 @@
+module Head exposing (headFor)
+
+-- Sky.Live-only `<head>` injection. The `head` field on Live.app's
+-- cfg is row-open — Tui.app and Webview.app don't see it. So this
+-- module is imported ONLY by the Live branch of Main.sky.
+import Sky.Core.Prelude exposing (..)
+import Std.Html exposing (Html)
+import Std.Live.Head as Head
+import State exposing (..)
+
+
+headFor : Model -> List (Html Msg)
+headFor _model =
+    [ Head.title "Sky Habits — single source, three backends"
+    , Head.meta
+          "description"
+          "Habit tracker rendered identically under Sky.Live, Sky.Tui, and Sky.Webview from one view function."
+    , Head.canonical "https://composite.example/habits"
+    , Head.metaProperty "og:title" "Sky Habits — single source, three backends"
+    , Head.metaProperty "og:type" "website"
+    , Head.metaProperty "og:url" "https://composite.example/habits"
+    , Head.themeColor "#3c6eb4"
+    ]

@@ -1,0 +1,145 @@
+module Main exposing (main)
+
+-- examples/38-composite-ui-multibackend — ONE Sky source rendering
+-- IDENTICALLY across Sky.Live (web), Sky.Tui (terminal), and
+-- Sky.Webview (desktop). The shared View module owns Model + view;
+-- this file's sole job is to argv-dispatch into the right backend
+-- entry point.
+--
+--   ./sky-out/app             →  Sky.Live  on  :8006  (default)
+--   ./sky-out/app --tui       →  Sky.Tui   (ANSI cells, full screen)
+--   ./sky-out/app --webview   →  Sky.Webview (macOS only; stub
+--                                elsewhere returns Err Error at
+--                                runtime per CLAUDE.md §Webview).
+--
+-- Per CLAUDE.md, `sky build` flips to CGO_ENABLED=1 when it sees
+-- `rt.Webview_app` in the emitted Go — so this app builds with
+-- cgo on macOS and falls back to the stub on other platforms.
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.System as System
+import Sky.Core.Task as Task
+import Sky.Core.Time as Time
+import Std.Cmd as Cmd
+import Std.Live as Live
+import Std.Sub as Sub
+import Std.Sub exposing (Sub)
+import Std.Tui as Tui
+import Std.Webview as Webview
+import Head
+import State exposing (..)
+import Update exposing (update)
+import View exposing (view, viewElement)
+
+
+-- ─── Init ───────────────────────────────────────────────────────────
+--
+-- `init` accepts a polymorphic argument (Live passes a request
+-- record; Tui + Webview pass unit). The body never touches it, so
+-- the same function satisfies every backend.
+init : a -> ( Model, Cmd Msg )
+init _ =
+    let
+        today = todayIndex
+    in
+        ( { habits = seedHabits today
+          , draft = ""
+          , nextId = nextHabitId (seedHabits today)
+          , todayIndex = today
+          , viewport = { width = 1280, height = 720 }
+          }
+        , Cmd.none
+        )
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+-- Read `Time.now ()` once at module load (Task.run synchronously
+-- forces it) so `init` doesn't need to thread Cmd.perform for the
+-- initial day index. `todayIndex` is `unix-millis / 86_400_000`,
+-- i.e. a whole-day count since the Unix epoch.
+todayIndex : Int
+todayIndex =
+    let
+        nowMs = currentMillis
+        millisPerDay = 86400000
+    in
+        nowMs // millisPerDay
+
+
+currentMillis : Int
+currentMillis =
+    Result.withDefault 0 (Task.run (Time.unixMillis ()))
+
+
+-- The dispatch: read argv once and pick the right backend.
+argsList : List String
+argsList =
+    Result.withDefault [] (Task.run (System.args ()))
+
+
+-- ─── main ───────────────────────────────────────────────────────────
+main =
+    case List.head argsList of
+
+        Just "--tui" ->
+            Tui.app
+                { init = init
+                , update = update
+                , view = viewElement
+                , subscriptions = subscriptions
+                , onKey = onKey
+                }
+                |> Task.run
+
+        Just "--webview" ->
+            Webview.app
+                { init = init
+                , update = update
+                , view = view
+                , subscriptions = subscriptions
+                , window = { title = "Sky Habits", size = ( 960, 720 ) }
+                }
+                |> Task.run
+
+        _ ->
+            Live.app
+                { init = init
+                , update = update
+                , view = view
+                , subscriptions = subscriptions
+                , routes = [Live.route "/" HomePage]
+                , notFound = HomePage
+                , head = Head.headFor
+                }
+                |> Task.run
+
+-- Single page constructor — the Live branch uses Page (an ADT
+-- with one variant) so Live.app's `routes` field stays well-typed.
+-- Tui + Webview ignore routing.
+type Page
+    = HomePage
+
+-- Tui-only key handler. `q` exits the process (runtime's
+-- top-level recover handles cleanup); everything else falls
+-- through to Tick (the harmless model-touch Msg). In-tree
+-- button + checkbox events arrive via Tab+Enter as usual.
+type alias KeyEvent =
+    { kind : String
+    , value : String
+    }
+
+
+onKey : KeyEvent -> Msg
+onKey k =
+    if k.kind == "char" && k.value == "q" then
+        QuitTui
+
+    else if k.kind == "ctrl" && k.value == "c" then
+        QuitTui
+
+    else
+        NoOp
