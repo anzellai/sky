@@ -35,9 +35,14 @@ CACHE_DIR=$(mktemp -d "${WORKROOT}/sky-cabal-gocache.XXXXXX")
 echo "[cabal-test] GOCACHE=${CACHE_DIR}"
 
 # Trap MUST clean up even on Ctrl-C / kill / cabal failure.
+# DO NOT add `exec` below — `exec cabal …` replaces this bash
+# process, discarding the trap. The cache survives, leaking
+# tens of GB per run. (Bit us 2026-06-04 — 81 GB orphan after
+# v0.16.1 cabal sweep — see task #459.)
 trap 'rm -rf "${CACHE_DIR}" 2>/dev/null || true' EXIT INT TERM
 
 export GOCACHE="${CACHE_DIR}"
 
-# Forward all args to cabal test verbatim.
-exec cabal test "$@"
+# Forward all args to cabal test verbatim. Bash exits with
+# cabal's status code; the EXIT trap fires on the way out.
+cabal test "$@"
