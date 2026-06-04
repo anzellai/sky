@@ -44,10 +44,9 @@ main =
                 ("sky doc-server: " ++ dir ++ " on :" ++ String.fromInt port)
     in
         if dir == "" then
-            Task.run
-                (Task.fail
-                    (Error.unexpected
-                        "SKY_DOC_DIR not set — run via `sky doc --serve`."))
+            Task.fail
+                (Error.unexpected
+                    "SKY_DOC_DIR not set — run via `sky doc --serve`.")
         else
             Server.listen port
                 [ Server.any "/" (dispatch dir)
