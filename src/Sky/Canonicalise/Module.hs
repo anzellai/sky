@@ -212,14 +212,22 @@ canonicaliseWithDeps deps srcMod =
         -- Register type aliases
         env4 = registerAliases tmap aliasMap env3 (Src._aliases srcMod)
 
+        -- Canonicalise aliases
+        aliases = canonicaliseAliases tmap aliasMap env4 (Src._aliases srcMod)
+
+        -- Local ∪ dependency alias bodies, keyed by (home, name).  Used to
+        -- expand an alias-typed annotation into its function shape BEFORE the
+        -- param/return split in `canonicaliseValue` (see the comment there).
+        bodyAliases = buildAliasMap
+            (Map.union
+                (Map.mapKeys (\n -> (modName, n)) aliases)
+                depAliasMap)
+
         -- Canonicalise declarations
-        decls = canonicaliseDecls tmap aliasMap env4 (Src._values srcMod)
+        decls = canonicaliseDecls bodyAliases tmap aliasMap env4 (Src._values srcMod)
 
         -- Canonicalise unions
         unions = canonicaliseUnions tmap aliasMap env4 (Src._unions srcMod)
-
-        -- Canonicalise aliases
-        aliases = canonicaliseAliases tmap aliasMap env4 (Src._aliases srcMod)
 
         -- Exports
         exports = canonicaliseExports (Src._exports srcMod)
@@ -1640,19 +1648,21 @@ registerAliases tmap aliasMap env aliases =
 
 -- | Canonicalise all value declarations
 canonicaliseDecls
-    :: Map.Map String ModuleName.Canonical
+    :: AliasMap
+    -> Map.Map String ModuleName.Canonical
     -> Map.Map String ModuleName.Canonical
     -> Env.Env -> [A.Located Src.Value] -> Can.Decls
-canonicaliseDecls tmap aliasMap env values =
-    foldr (\v rest -> Can.Declare (canonicaliseValue tmap aliasMap env v) rest) Can.SaveTheEnvironment values
+canonicaliseDecls bodyAliases tmap aliasMap env values =
+    foldr (\v rest -> Can.Declare (canonicaliseValue bodyAliases tmap aliasMap env v) rest) Can.SaveTheEnvironment values
 
 
 -- | Canonicalise a single value declaration
 canonicaliseValue
-    :: Map.Map String ModuleName.Canonical
+    :: AliasMap
+    -> Map.Map String ModuleName.Canonical
     -> Map.Map String ModuleName.Canonical
     -> Env.Env -> A.Located Src.Value -> Can.Def
-canonicaliseValue tmap aliasMap env (A.At _ val) =
+canonicaliseValue bodyAliases tmap aliasMap env (A.At _ val) =
     let
         name = Src._valueName val
         params = Src._valuePatterns val
@@ -1674,7 +1684,20 @@ canonicaliseValue tmap aliasMap env (A.At _ val) =
         Just (A.At _ srcType) ->
             let
                 home = Env._home env
-                canType = CanType.canonicaliseTypeAnnotationWithAliases tmap aliasMap home srcType
+                canTypeRaw = CanType.canonicaliseTypeAnnotationWithAliases tmap aliasMap home srcType
+                -- Unfold an alias at the HEAD of the annotation before
+                -- splitting params from the return type.  When the whole
+                -- annotation is a type alias whose body is a function
+                -- (`f : Handler` where `type alias Handler = Request ->
+                -- Task Error Response`), the raw canonical form is a nominal
+                -- `TType` that `arrowArgs` cannot peel — so without this the
+                -- def's parameters would be dropped and the body checked
+                -- against the unpeeled alias.  Only the head is unfolded:
+                -- argument / return leaf types keep their nominal form (the
+                -- later module-level alias-expansion pass handles those), so
+                -- the typed lowering of ordinary `f : Rec -> String`
+                -- signatures is byte-for-byte unchanged.
+                canType = unfoldHeadAlias bodyAliases canTypeRaw
                 freeVars = CanType.freeTypeVars srcType
                 nPats = length canPatterns
                 typedPatterns = zip canPatterns (take nPats (arrowArgs canType))
@@ -1691,10 +1714,37 @@ canonicaliseValue tmap aliasMap env (A.At _ val) =
             Can.TypedDef name freeVars typedPatterns canBody resultType
 
 
--- | Extract argument types from a function type
+-- | Extract argument types from a function type.  Unwraps a `TAlias`
+-- head so an alias whose body is a function (`type alias Handler =
+-- Request -> Task Error Response`) contributes its parameters.
 arrowArgs :: Can.Type -> [Can.Type]
 arrowArgs (Can.TLambda from to) = from : arrowArgs to
+arrowArgs (Can.TAlias _ _ _ aliasInner) = arrowArgs (aliasBodyType aliasInner)
 arrowArgs _ = []
+
+
+-- | The underlying type carried by a `TAlias`'s filled/hoisted body.
+aliasBodyType :: Can.AliasType -> Can.Type
+aliasBodyType (Can.Filled t)  = t
+aliasBodyType (Can.Hoisted t) = t
+
+
+-- | Replace a type alias that appears AT THE HEAD of an annotation with
+-- its (substituted) body, so a function-typed alias contributes its
+-- parameters when the def is split.  Only the head is touched —
+-- argument and return leaf types are left as-is.  The visited set keys
+-- on `(home, name)` so a mutually-recursive alias chain can't loop.
+unfoldHeadAlias :: AliasMap -> Can.Type -> Can.Type
+unfoldHeadAlias amap = go Set.empty
+  where
+    go visited ty = case ty of
+        Can.TType home name args
+            | Just (rHome, Can.Alias vars body) <- lookupAlias amap home name
+            , not (Set.member (rHome, name) visited)
+            , length vars == length args ->
+                let subst = Map.fromList (zip vars args)
+                in go (Set.insert (rHome, name) visited) (substTypeVars subst body)
+        _ -> ty
 
 
 -- | Extract the result type from a function type, stripping exactly N
@@ -1703,6 +1753,7 @@ arrowArgs _ = []
 arrowResultN :: Int -> Can.Type -> Can.Type
 arrowResultN n t | n <= 0 = t
 arrowResultN n (Can.TLambda _ to) = arrowResultN (n - 1) to
+arrowResultN n (Can.TAlias _ _ _ aliasInner) = arrowResultN n (aliasBodyType aliasInner)
 arrowResultN _ t = t
 
 

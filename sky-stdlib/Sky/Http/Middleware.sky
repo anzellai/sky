@@ -3,53 +3,49 @@
 --
 -- Each `with*` helper takes a `Handler` and returns a new
 -- decorated `Handler`.  Compose by chaining with `|>`.
-module Sky.Http.Middleware exposing
-    ( Handler
-    , withCors, withLogging, withBasicAuth, withRateLimit
-    )
-
+--
+-- `Handler` itself lives in `Sky.Http.Server` (v0.16.4 — canonical
+-- home alongside `Request` / `Response`).  Import it from there to
+-- annotate your own middleware:
+--
+--     import Sky.Http.Server exposing (Handler)
+--     import Sky.Http.Middleware as Mw
+--
+--     myAuthed : Handler -> Handler
+--     myAuthed = Mw.withBasicAuth "user" "pass"
+module Sky.Http.Middleware exposing (withCors, withLogging, withBasicAuth, withRateLimit)
 
 import Sky.Ffi as Ffi
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Task as Task exposing (Task)
 import Sky.Core.Error as Error exposing (Error)
-import Sky.Http.Server exposing (Request, Response)
-
-
--- | A request handler — receives the parsed `Request`, returns a
--- `Task Error Response`. Middleware wrap one handler in another:
--- `withCors origins handler : Handler` returns a NEW Handler that
--- adds the CORS headers around the wrapped one.
---
--- v0.16.3 close of #464: pre-fix, the with* helpers below
--- referenced `Handler` as a free variable; downstream callers
--- couldn't write `myMiddleware : Handler -> Handler` without a
--- local re-binding because the type alias wasn't declared OR
--- exposed.
-type alias Handler =
-    Request -> Task Error Response
+import Sky.Http.Server exposing (Request, Response, Handler)
 
 
 -- | `withCors allowedOrigins handler` — add CORS headers for the
 -- given origin allow-list.
 withCors : List String -> Handler -> Handler
-withCors = Ffi.kernel "Middleware_withCors"
+withCors =
+    Ffi.kernel "Middleware_withCors"
 
 
 -- | `withLogging handler` — log each request as `method path
 -- status duration` on stdout.
 withLogging : Handler -> Handler
-withLogging = Ffi.kernel "Middleware_withLogging"
+withLogging =
+    Ffi.kernel "Middleware_withLogging"
 
 
 -- | `withBasicAuth username password handler` — require HTTP
 -- Basic auth with the given credentials.
 withBasicAuth : String -> String -> Handler -> Handler
-withBasicAuth = Ffi.kernel "Middleware_withBasicAuth"
+withBasicAuth =
+    Ffi.kernel "Middleware_withBasicAuth"
 
 
 -- | `withRateLimit key requestsPerWindow windowSeconds handler`
 -- — per-IP fixed-window rate limit.  `key` is a label for the
 -- limiter (so multiple middlewares can share or partition).
 withRateLimit : String -> Int -> Int -> Handler -> Handler
-withRateLimit = Ffi.kernel "Middleware_withRateLimit"
+withRateLimit =
+    Ffi.kernel "Middleware_withRateLimit"

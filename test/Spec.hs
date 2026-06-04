@@ -20,6 +20,7 @@ import qualified Sky.Canonicalise.QualifiedTypeAliasSpec
 import qualified Sky.Canonicalise.DualImportCollisionSpec
 import qualified Sky.Canonicalise.AliasNameCollisionSpec
 import qualified Sky.Canonicalise.PipelineIntegritySpec
+import qualified Sky.Canonicalise.HeadAliasFunctionSigSpec
 import qualified Sky.Type.ExhaustivenessSpec
 import qualified Sky.Type.AnyWildcardSpec
 import qualified Sky.Type.NumericBinopSpec
@@ -217,6 +218,14 @@ main = hspec $ do
     -- per bug — see PipelineIntegritySpec.hs header for context.
     describe "Sky.Canonicalise.PipelineIntegrity"
                                          Sky.Canonicalise.PipelineIntegritySpec.spec
+    -- v0.16.4 (contributor PR #123, Module.hs portion only): a value
+    -- def whose entire signature is a function-typed alias
+    -- (`view : Renderer Msg` over `type alias Renderer msg = Model ->
+    -- Element msg`) used to drop its params at canonicalisation
+    -- because `arrowArgs` peeled only `TLambda`, never `TAlias`.
+    -- Canonical Elm syntax; Sky now matches.
+    describe "Sky.Canonicalise.HeadAliasFunctionSig"
+                                         Sky.Canonicalise.HeadAliasFunctionSigSpec.spec
     describe "Sky.Type.Exhaustiveness"   Sky.Type.ExhaustivenessSpec.spec
     -- Cross-branch HM `any` wildcard fix (compiler bug #3). Distinct
     -- occurrences of `any` in source types must NOT share a single

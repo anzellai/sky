@@ -2379,10 +2379,14 @@ Every binding carries an HM signature (v0.15.44+).  `sky doc
 Server.get` returns the real type; LSP hover surfaces `String ->
 (Request -> Task Error Response) -> Route`.
 
-```elm
-import Sky.Http.Server as Server exposing (Request, Response, Route)
+`Handler` is exported as a transparent alias for
+`Request -> Task Error Response`.  Annotate handlers at head
+position (v0.16.4+):
 
-handleHome : Request -> Task Error Response
+```elm
+import Sky.Http.Server as Server exposing (Request, Response, Handler)
+
+handleHome : Handler
 handleHome _ =
     Task.succeed (Server.text "Hello!")
 

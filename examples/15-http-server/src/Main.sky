@@ -4,7 +4,7 @@ import Sky.Core.Prelude exposing (..)
 import Sky.Core.Task as Task
 import Sky.Core.String as String
 import Sky.Http.Server as Server
-import Sky.Http.Server exposing (Request, Response)
+import Sky.Http.Server exposing (Request, Response, Handler)
 import Sky.Core.Error as Error exposing (Error)
 
 
@@ -20,7 +20,11 @@ main =
         ]
 
 
-handleHome : Request -> Task Error Response
+-- v0.16.4 — the `: Handler` head annotation is canonical Elm shape
+-- (`type alias Handler = Request -> Task Error Response` lives in
+-- `Sky.Http.Server`).  The same handlers work with the long-form
+-- `: Request -> Task Error Response` if you prefer to be explicit.
+handleHome : Handler
 handleHome req =
     Task.succeed
         (Server.html
@@ -33,7 +37,7 @@ handleHome req =
 </ul>""")
 
 
-handleHello : Request -> Task Error Response
+handleHello : Handler
 handleHello req =
     let
         name =
@@ -48,12 +52,12 @@ handleHello req =
         Task.succeed (Server.text ("Hello, " ++ name ++ "!"))
 
 
-handleStatus : Request -> Task Error Response
+handleStatus : Handler
 handleStatus req =
     Task.succeed (Server.json "{\"status\":\"ok\",\"server\":\"Sky\"}")
 
 
-handleEcho : Request -> Task Error Response
+handleEcho : Handler
 handleEcho req =
     Task.succeed (Server.json req.body |> Server.withHeader "X-Echo" "true")
 
@@ -80,7 +84,7 @@ parseVisitInt v =
             1
 
 
-handleCookieDemo : Request -> Task Error Response
+handleCookieDemo : Handler
 handleCookieDemo req =
     let
         visitCount = parseVisitCount (Server.getCookie "visits" req)
@@ -95,6 +99,6 @@ handleCookieDemo req =
                     |> Server.withCookie visitCookie)
 
 
-handleRedirect : Request -> Task Error Response
+handleRedirect : Handler
 handleRedirect req =
     Task.succeed (Server.redirect "/hello/redirected")

@@ -1139,6 +1139,25 @@ Routes: `get/post/put/delete/any` | groups with prefix | cookies
 `header`, `getCookie` | responses: `text`, `json`, `html`,
 `withStatus`, `redirect` | middleware: `Handler -> Handler`.
 
+**Handler annotation (v0.16.4+).** Named handlers ascribe at
+head position with the `Handler` alias:
+
+```elm
+import Sky.Http.Server exposing (Handler)
+
+getUser : Handler
+getUser req = ...
+```
+
+`Handler` is a transparent alias for
+`Request -> Task Error Response`, exported from
+`Sky.Http.Server`. The long-form `: Request -> Task Error Response`
+still works — pick whichever reads better at the call site. Same
+pattern works for any function-typed alias:
+`view : Renderer Msg`, `decodeUser : Decoder User`, etc. This is
+canonical Elm shape; head-position alias unfolding was closed by
+contributor PR #123.
+
 ## Sky Console + sub-app mount + observability
 
 Every Sky.Live and Sky.Http.Server app auto-mounts a Std.Ui dev
@@ -1683,6 +1702,23 @@ verified against HEAD.
     `type alias` for the whole arrow type.
 ### Closed in v0.15 (kept here for grep)
 
+- ~~Head-position type alias of a function signature dropped
+  parameters at canonicalisation~~ — closed in v0.16.4 via
+  contributor PR #123 (arthurmaciel). `arrowArgs` / `arrowResultN`
+  used to peel only `TLambda`, so `view : Renderer Msg` over
+  `type alias Renderer msg = Model -> Element msg` (canonical Elm
+  syntax) failed because the alias-reference is a nominal `TType`
+  at that point. New `unfoldHeadAlias` in
+  `Sky.Canonicalise.Module` peels a `TAlias` at the head of the
+  annotation before the split, with a visited-set guarding mutual
+  recursion. Head-only: argument / return leaf types keep their
+  nominal form, so existing typed lowering of ordinary
+  `f : Rec -> String` signatures is byte-identical.
+  `Sky.Http.Server.Handler` moved here as its canonical home
+  (was in `Sky.Http.Middleware` per v0.16.3 #464); Middleware
+  imports it from Server. AI-written code can now write
+  `myHandler : Handler` directly. Regression:
+  `Sky.Canonicalise.HeadAliasFunctionSig` (5 cases).
 - ~~Cons-pattern length-guard shared between arms (#402)~~ —
   closed in v0.15.54. The codegen previously emitted only
   `len(subj) >= 1` per cons step, so `a :: b :: c :: _` and

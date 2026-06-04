@@ -299,6 +299,7 @@ test-suite sky-tests
       Sky.Canonicalise.DualImportCollisionSpec
       Sky.Canonicalise.AliasNameCollisionSpec
       Sky.Canonicalise.PipelineIntegritySpec
+      Sky.Canonicalise.HeadAliasFunctionSigSpec
       Sky.Type.ExhaustivenessSpec
       Sky.Type.AnyWildcardSpec
       Sky.Type.NumericBinopSpec
