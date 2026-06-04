@@ -1,0 +1,142 @@
+module Main exposing (main)
+
+-- examples/36-composite-server — entry point.
+--
+-- Modes:
+--   ./app             — start the HTTP server on Config.port
+--   ./app --migrate   — apply pending Db migrations then exit (the
+--                       shape that `sky db migrate` invokes)
+--
+-- Environment:
+--   SKY_AUTH_TOKEN_SECRET — JWT secret.  MUST be >= 32 bytes.  In dev
+--                           generate via `head -c 64 /dev/urandom | base64`.
+--   SKY_COMPOSITE_DB      — sqlite path; default ./composite-server.db
+--   SKY_COMPOSITE_PORT    — server port; default 8000
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.Task as Task
+import Sky.Core.Time as Time
+import Sky.Core.Pure as Pure
+import Sky.Core.Error as Error exposing (Error)
+import System
+import Std.Log exposing (println)
+import Std.Db as Db
+import Std.Cache as Cache
+import Migrations
+import Server as App
+import State exposing (Config)
+
+
+main =
+    let
+        run = entry () |> Task.onError reportError
+        _ = Task.run run
+    in
+        ()
+
+
+entry : () -> Task Error ()
+entry _ =
+    Pure.systemArgs ()
+        |> Task.andThen
+               (\args ->
+                   let
+                       cfg = readConfig
+                   in
+                       if List.member "--migrate" args then
+                           runMigrate cfg
+
+                       else
+                           runServer cfg)
+
+
+readConfig : Config
+readConfig =
+    { port = Maybe.withDefault
+          8000
+          (String.toInt (System.getenvOr "SKY_COMPOSITE_PORT" "8000"))
+    , dbPath = System.getenvOr "SKY_COMPOSITE_DB" "./composite-server.db"
+    , jwtSecret = System.getenvOr "SKY_AUTH_TOKEN_SECRET" ""
+    , tokenTtlSeconds = 86400
+    , rateLimitCapacity = 60
+    , rateLimitRefill = 10
+    , healthCacheTtlMs = 30000
+    , corsOrigins = ["*"]
+    }
+
+
+runMigrate : Config -> Task Error ()
+runMigrate cfg =
+    Db.open "sqlite" cfg.dbPath
+        |> Task.andThen
+               (\db ->
+                   Db.migrate db Migrations.all
+                       |> Task.andThen
+                              (\applied ->
+                                  let
+                                      _ =
+                                          println
+                                              ("Applied "
+                                                  ++ String.fromInt
+                                                         (List.length applied)
+                                                  ++ " migration(s)")
+                                      _ =
+                                          List.map
+                                              (\n -> println ("  - " ++ n))
+                                              applied
+                                  in
+                                      Db.close db))
+
+
+runServer : Config -> Task Error ()
+runServer cfg =
+    if String.length cfg.jwtSecret < 32 then
+        let
+            _ = println "ERROR: SKY_AUTH_TOKEN_SECRET must be >= 32 bytes."
+        in
+            Task.fail
+                (Error.invalidInput "SKY_AUTH_TOKEN_SECRET must be >= 32 bytes")
+
+    else
+        bootServer cfg
+
+
+bootServer : Config -> Task Error ()
+bootServer cfg =
+    Db.open "sqlite" cfg.dbPath
+        |> Task.andThen
+               (\db ->
+                   Db.migrate db Migrations.all
+                       |> Task.andThen
+                              (\_ ->
+                                  Time.unixMillis ()
+                                      |> Task.andThen
+                                             (\bootMs -> startApp cfg db bootMs)))
+
+
+startApp : Config -> Db -> Int -> Task Error ()
+startApp cfg db bootMs =
+    let
+        cacheCfg =
+            Cache.defaultCfg |> Cache.withMaxEntries 64
+                |> Cache.withTTL cfg.healthCacheTtlMs
+    in
+        Cache.new cacheCfg
+            |> Task.andThen
+                   (\cache ->
+                       let
+                           _ =
+                               println
+                                   ("composite-server listening on :"
+                                       ++ String.fromInt cfg.port)
+                       in
+                           App.run cfg bootMs db cache)
+
+
+reportError : Error -> Task Error ()
+reportError e =
+    let
+        _ = println ("[fatal] " ++ Error.toString e)
+    in
+        System.exit 1

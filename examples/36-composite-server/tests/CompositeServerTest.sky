@@ -1,0 +1,226 @@
+module CompositeServerTest exposing (main, tests)
+
+-- Sky.Test assertions over the composite's PURE helpers — decoders,
+-- password hashing round-trip, JWT mint/verify, CSV encode, base64
+-- round-trip in the health body, todo encode shape.  Effectful paths
+-- (Db / Server.listen / PubSub) get coverage via the boot probe in
+-- README — these tests cover everything that doesn't need a runtime.
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.Result as Result
+import Sky.Core.Json.Decode as JsonDec
+import Sky.Core.Json.Encode as JsonEnc
+import Sky.Core.Encoding as Encoding
+import Sky.Test as Test exposing (Test, TestResult(..))
+import Std.Log exposing (println)
+import State exposing (Credentials, AuthClaims, Todo)
+import Auth
+import Routes.Auth as AuthRoutes
+import Routes.Todos as TodosRoutes
+import Routes.Health as HealthRoutes
+
+
+main =
+    Test.runMain tests
+
+
+tests : List Test
+tests =
+    [ credentialsSuite, jwtSuite, todoSuite, healthSuite, passwordSuite ]
+
+
+credentialsSuite : Test
+credentialsSuite =
+    Test.suite
+        "credentials decoder"
+        [ Test.test
+              "decodes well-formed body"
+              (\_ ->
+                  case JsonDec.decodeString
+                           AuthRoutes.credentialsDecoder
+                           """{"email":"a@b.com","password":"hunter2"}""" of
+
+                      Ok creds ->
+                          Test.equal "a@b.com" creds.email
+
+                      Err _ ->
+                          Test.fail "well-formed body should decode")
+        , Test.test
+              "rejects missing field"
+              (\_ ->
+                  case JsonDec.decodeString
+                           AuthRoutes.credentialsDecoder
+                           """{"email":"a@b.com"}""" of
+
+                      Ok _ ->
+                          Test.fail "missing password should fail"
+
+                      Err _ ->
+                          Test.pass)
+        ]
+
+
+jwtSuite : Test
+jwtSuite =
+    Test.suite
+        "JWT mint + verify"
+        [ Test.test
+              "mintToken + verifyBearer round-trip"
+              (\_ ->
+                  let
+                      secret = String.repeat 64 "k"
+                      claims =
+                          { userId = 42, email = "user@example.com", exp = 0 }
+                  in
+                      case Auth.mintToken secret 1000000 3600 claims of
+
+                          Err _ ->
+                              Test.fail "mintToken should succeed"
+
+                          Ok token ->
+                              case Auth.verifyBearer
+                                       secret
+                                       1000000
+                                       ("Bearer " ++ token) of
+
+                                  Ok decoded ->
+                                      Test.equal 42 decoded.userId
+
+                                  Err _ ->
+                                      Test.fail "verifyBearer should succeed")
+        , Test.test
+              "expired token rejected"
+              (\_ ->
+                  let
+                      secret = String.repeat 64 "k"
+                      claims = { userId = 1, email = "x@y.z", exp = 0 }
+                  in
+                      case Auth.mintToken secret 1000 1 claims of
+
+                          Err _ ->
+                              Test.fail "mint should succeed"
+
+                          Ok token ->
+                              case Auth.verifyBearer
+                                       secret
+                                       1000000
+                                       ("Bearer " ++ token) of
+
+                                  Ok _ ->
+                                      Test.fail "expired token must reject"
+
+                                  Err _ ->
+                                      Test.pass)
+        , Test.test
+              "missing Bearer prefix rejected"
+              (\_ ->
+                  let
+                      secret = String.repeat 64 "k"
+                  in
+                      case Auth.verifyBearer secret 1000 "abc.def.ghi" of
+
+                          Ok _ ->
+                              Test.fail "non-bearer must reject"
+
+                          Err _ ->
+                              Test.pass)
+        ]
+
+
+todoSuite : Test
+todoSuite =
+    Test.suite
+        "todo encode"
+        [ Test.test
+              "encodeTodo emits all fields"
+              (\_ ->
+                  let
+                      todo =
+                          { id = "abc123"
+                          , userId = 7
+                          , text = "buy milk"
+                          , done = False
+                          , createdAt = 1717000000000
+                          }
+                      json = JsonEnc.encode 0 (TodosRoutes.encodeTodo todo)
+                  in
+                      Test.isTrue
+                          (String.contains "\"id\":\"abc123\"" json
+                              && String.contains "\"userId\":7" json
+                              && String.contains "\"text\":\"buy milk\"" json
+                              && String.contains "\"done\":false" json))
+        , Test.test
+              "todoCreate decoder accepts text"
+              (\_ ->
+                  case JsonDec.decodeString
+                           TodosRoutes.todoCreateDecoder
+                           """{"text":"hello"}""" of
+
+                      Ok payload ->
+                          Test.equal "hello" payload.text
+
+                      Err _ ->
+                          Test.fail "todoCreate must decode")
+        ]
+
+
+healthSuite : Test
+healthSuite =
+    Test.suite
+        "health body"
+        [ Test.test
+              "uptime body carries ok + uptimeMs"
+              (\_ ->
+                  let
+                      body = HealthRoutes.uptimeBody 1000 2500
+                  in
+                      Test.isTrue
+                          (String.contains "\"ok\":true" body
+                              && String.contains "\"uptimeMs\":1500" body))
+        , Test.test
+              "base64 boot identifier round-trips"
+              (\_ ->
+                  let
+                      encoded = Encoding.base64Encode "1717000000"
+                      decoded = Encoding.base64Decode encoded
+                  in
+                      case decoded of
+
+                          Ok back ->
+                              Test.equal "1717000000" back
+
+                          Err _ ->
+                              Test.fail "base64 decode must succeed")
+        ]
+
+
+passwordSuite : Test
+passwordSuite =
+    Test.suite
+        "password hashing"
+        [ Test.test
+              "hash + verify accepts correct password"
+              (\_ ->
+                  case Auth.hashPassword "correct horse battery staple" of
+
+                      Err _ ->
+                          Test.fail "hash should succeed"
+
+                      Ok hash ->
+                          Test.isTrue
+                              (Auth.verifyPassword
+                                  "correct horse battery staple"
+                                  hash))
+        , Test.test
+              "verify rejects wrong password"
+              (\_ ->
+                  case Auth.hashPassword "secret-alpha-1" of
+
+                      Err _ ->
+                          Test.fail "hash should succeed"
+
+                      Ok hash ->
+                          Test.isFalse
+                              (Auth.verifyPassword "secret-bravo-2" hash))
+        ]

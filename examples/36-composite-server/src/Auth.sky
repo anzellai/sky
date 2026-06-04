@@ -1,0 +1,102 @@
+module Auth exposing (hashPassword, verifyPassword, mintToken, verifyBearer, claimsDecoder)
+
+-- Wraps Std.Auth + Sky.Core.Jwt with the composite's typed AuthClaims
+-- record.  Exercises both the pure crypto tier (hashPassword /
+-- verifyPassword / signToken / verifyToken) and the typed-builder
+-- alternative (Jwt.encode / Jwt.decode) so a regression in either
+-- surface lands here.
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.Result as Result
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.Json.Decode as JsonDec
+import Sky.Core.Json.Encode as JsonEnc
+import Sky.Core.Jwt as Jwt
+import Std.Auth as StdAuth
+import State exposing (AuthClaims)
+
+
+-- Bcrypt hash with the default cost.  Result-shaped so the call
+-- site decides how to surface failure (we wrap into a 500 in the
+-- register route).
+hashPassword : String -> Result Error String
+hashPassword password =
+    StdAuth.hashPassword password
+
+
+-- Constant-time bcrypt verify.  `Result.withDefault False` collapses
+-- internal errors to "deny" — never grant on infra failure.
+verifyPassword : String -> String -> Bool
+verifyPassword password storedHash =
+    Result.withDefault False (StdAuth.verifyPassword password storedHash)
+
+
+-- Build a JWT carrying the user's id + email + expiry, signed with
+-- the configured HS256 secret.  Uses Sky.Core.Jwt directly so the
+-- composite exercises the typed-builder surface alongside the
+-- short-form Std.Auth.signToken in the suite below.
+mintToken : String -> Int -> Int -> AuthClaims -> Result Error String
+mintToken secret nowSeconds ttlSeconds payload =
+    let
+        alg = Jwt.hs256 secret
+        c =
+            Jwt.claims |> Jwt.subject (String.fromInt payload.userId)
+                |> Jwt.issuer "sky-composite-server"
+                |> Jwt.issuedAt nowSeconds
+                |> Jwt.expiresAt (nowSeconds + ttlSeconds)
+                |> Jwt.withClaim "email" (JsonEnc.string payload.email)
+    in
+        Jwt.encode alg c
+
+
+-- Verify a `Authorization: Bearer <jwt>` header, returning the
+-- decoded AuthClaims on success.  Drives the protected-route gate.
+verifyBearer : String -> Int -> String -> Result Error AuthClaims
+verifyBearer secret nowSeconds authHeader =
+    case stripBearer authHeader of
+
+        Just token ->
+            Jwt.decode (Jwt.hs256 secret) nowSeconds token
+                |> Result.andThen
+                       (\payload -> JsonDec.decodeString claimsDecoder payload)
+
+        Nothing ->
+            Err
+                (Error.permissionDenied
+                    |> Error.withMessage
+                           "Missing or malformed Authorization header")
+
+
+-- Decode the JWT payload into the typed AuthClaims record.  `sub`
+-- arrives as a String in JWTs by spec — parse it back to Int.
+claimsDecoder : JsonDec.Decoder AuthClaims
+claimsDecoder =
+    JsonDec.map3
+        (\sub email exp ->
+            { userId = parseIntOrZero sub, email = email, exp = exp })
+        (JsonDec.field "sub" JsonDec.string)
+        (JsonDec.field "email" JsonDec.string)
+        (JsonDec.field "exp" JsonDec.int)
+
+
+parseIntOrZero : String -> Int
+parseIntOrZero s =
+    case String.toInt s of
+
+        Just n ->
+            n
+
+        Nothing ->
+            0
+
+
+stripBearer : String -> Maybe String
+stripBearer authHeader =
+    let
+        trimmed = String.trim authHeader
+    in
+        if String.startsWith "Bearer " trimmed then
+            Just (String.trim (String.slice 7 (String.length trimmed) trimmed))
+
+        else
+            Nothing

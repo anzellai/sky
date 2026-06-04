@@ -1,0 +1,38 @@
+module Middleware exposing (withCors, withLogging, withRateLimit, withBasicAuth)
+
+-- Local typed wrappers over the kernel middleware dispatchers.
+--
+-- The stdlib `Sky.Http.Middleware` module declares its helpers as
+-- `Handler -> Handler` where `Handler` is an undeclared name — Sky's
+-- HM treats it as an opaque type that doesn't unify with the actual
+-- handler shape `Request -> Task Error Response`, so passing the
+-- result to `Server.get` / `Server.post` produces a type error.
+-- (Filed as a finding in the v0.16.2 composite-server work; until
+-- the stdlib module exports a typed Handler alias, this re-binding
+-- via `Ffi.kernel` is the canonical workaround.)
+import Sky.Ffi as Ffi
+import Sky.Core.Error exposing (Error)
+import Sky.Http.Server exposing (Request, Response)
+
+type alias Handler =
+    Request -> Task Error Response
+
+
+withCors : List String -> Handler -> Handler
+withCors =
+    Ffi.kernel "Middleware_withCors"
+
+
+withLogging : Handler -> Handler
+withLogging =
+    Ffi.kernel "Middleware_withLogging"
+
+
+withRateLimit : String -> Int -> Int -> Handler -> Handler
+withRateLimit =
+    Ffi.kernel "Middleware_withRateLimit"
+
+
+withBasicAuth : String -> String -> Handler -> Handler
+withBasicAuth =
+    Ffi.kernel "Middleware_withBasicAuth"

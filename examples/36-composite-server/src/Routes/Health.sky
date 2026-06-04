@@ -1,0 +1,158 @@
+module Routes.Health exposing (handleHealth, handleExport, uptimeBody)
+
+-- /api/health (cached via Std.Cache) + /api/export.csv (streamed via
+-- Sky.Http.Server.Stream + Std.Csv).  Exercises:
+--   * Std.Cache (single-key TTL cache wrapping the health body)
+--   * Sky.Http.Server.Stream (server-side incremental writes)
+--   * Std.Csv.encode (RFC 4180 quoting on todo text)
+--   * Sky.Core.Time.{unixMillis, format} for uptime computation
+--   * Sky.Core.Encoding.base64Encode for the build-info opaque hash
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Dict as Dict
+import Sky.Core.List as List
+import Sky.Core.Maybe as Maybe
+import Sky.Core.String as String
+import Sky.Core.Task as Task
+import Sky.Core.Time as Time
+import Sky.Core.Encoding as Encoding
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.Json.Encode as JsonEnc
+import Sky.Http.Server as Server
+import Sky.Http.Server exposing (Request, Response)
+import Sky.Http.Server.Stream as Stream
+import Std.Db as Db
+import Std.Cache as Cache
+import Std.Csv as Csv
+import Std.Log as Log
+import Auth
+import State exposing (Config, Todo, AuthClaims)
+
+
+-- ─── /api/health ───────────────────────────────────────────────────
+handleHealth : Cache.Cache String String -> Int -> Request -> Task Error Response
+handleHealth cache bootMs _req =
+    Cache.get cache "health"
+        |> Task.andThen
+               (\hit ->
+                   case hit of
+
+                       Just body ->
+                           Task.succeed
+                               (Server.json body
+                                   |> Server.withHeader "X-Cache" "hit")
+
+                       Nothing ->
+                           rebuildHealth cache bootMs)
+
+
+rebuildHealth : Cache.Cache String String -> Int -> Task Error Response
+rebuildHealth cache bootMs =
+    Time.unixMillis ()
+        |> Task.andThen
+               (\nowMs ->
+                   let
+                       body = uptimeBody bootMs nowMs
+                   in
+                       Cache.put cache "health" body
+                           |> Task.andThen
+                                  (\_ ->
+                                      Task.succeed
+                                          (Server.json body
+                                              |> Server.withHeader
+                                                     "X-Cache"
+                                                     "miss")))
+
+
+-- Pure helper — easy to unit-test from CompositeServerTest.sky.  The
+-- opaque "build" id is a base64 of the boot timestamp so we exercise
+-- Sky.Core.Encoding.base64Encode in the test suite too.
+uptimeBody : Int -> Int -> String
+uptimeBody bootMs nowMs =
+    let
+        uptimeMs = nowMs - bootMs
+        opaque = Encoding.base64Encode (String.fromInt bootMs)
+    in
+        JsonEnc.encode
+            0
+            (JsonEnc.object
+                [ ( "ok", JsonEnc.bool True )
+                , ( "uptimeMs", JsonEnc.int uptimeMs )
+                , ( "build", JsonEnc.string opaque )
+                ])
+
+
+-- ─── /api/export.csv ───────────────────────────────────────────────
+handleExport : Config -> Db -> Request -> Task Error Response
+handleExport cfg db req =
+    case Server.header "Authorization" req of
+
+        Nothing ->
+            Task.succeed (errorJson 401 "missing Authorization header")
+
+        Just authHeader ->
+            Time.unixMillis ()
+                |> Task.andThen
+                       (\nowMs ->
+                           case Auth.verifyBearer
+                                    cfg.jwtSecret
+                                    (nowMs // 1000)
+                                    authHeader of
+
+                               Ok claims ->
+                                   streamCsv db claims
+
+                               Err _ ->
+                                   Task.succeed (errorJson 401 "invalid token"))
+
+
+streamCsv : Db -> AuthClaims -> Task Error Response
+streamCsv db claims =
+    Db.query
+        db
+        "SELECT id, user_id, text, done, created_at FROM todos WHERE user_id = ? ORDER BY created_at DESC"
+        [String.fromInt claims.userId]
+        |> Task.andThen
+               (\rows ->
+                   let
+                       header =
+                           Csv.encode
+                               { header = [ "id"
+                                 , "user_id"
+                                 , "text"
+                                 , "done"
+                                 , "created_at"
+                                 ]
+                               , rows = []
+                               }
+                       body =
+                           Csv.encode
+                               { header = [], rows = List.map rowToCells rows }
+                   in
+                       Stream.stream
+                           "text/csv; charset=utf-8"
+                           (\writer ->
+                               Stream.emit header writer
+                                   |> Task.andThen
+                                          (\_ -> Stream.emit body writer)
+                                   |> Task.andThen (\_ -> Stream.finish writer)))
+
+
+rowToCells : Dict String String -> List String
+rowToCells row =
+    [ Maybe.withDefault "" (Dict.get "id" row)
+    , Maybe.withDefault "" (Dict.get "user_id" row)
+    , Maybe.withDefault "" (Dict.get "text" row)
+    , Maybe.withDefault "0" (Dict.get "done" row)
+    , Maybe.withDefault "0" (Dict.get "created_at" row)
+    ]
+
+
+-- Build a typed Response record directly.  See Routes.Todos
+-- for the rationale.
+errorJson : Int -> String -> Response
+errorJson status message =
+    { status = status
+    , body = JsonEnc.encode 0 (JsonEnc.object [( "error", JsonEnc.string message )])
+    , headers = Dict.empty
+    , contentType = "application/json"
+    }

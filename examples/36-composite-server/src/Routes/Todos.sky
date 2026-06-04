@@ -1,0 +1,236 @@
+module Routes.Todos exposing (handleList, handleCreate, handleDelete, todoCreateDecoder, encodeTodo)
+
+-- Authenticated CRUD over the `todos` table.  Exercises:
+--   * Sky.Http.Server.param (URL captures)
+--   * Sky.Http.Server.header (Authorization)
+--   * Std.Db.{query, insertRow, deleteById, findOneByField}
+--   * Std.PubSub.publish (fired on every new todo — Task-shaped pub
+--     from inside a Sky.Http.Server handler, NOT a Sky.Live update
+--     return)
+--   * Sky.Core.Crypto.randomToken (per-todo id)
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Dict as Dict
+import Sky.Core.List as List
+import Sky.Core.Maybe as Maybe
+import Sky.Core.String as String
+import Sky.Core.Task as Task
+import Sky.Core.Time as Time
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.Json.Decode as JsonDec
+import Sky.Core.Json.Encode as JsonEnc
+import Sky.Core.Crypto as Crypto
+import Sky.Http.Server as Server
+import Sky.Http.Server exposing (Request, Response)
+import Std.Db as Db
+import Std.Log as Log
+import Std.PubSub as PubSub
+import Auth
+import State exposing (Config, Todo, TodoCreate, AuthClaims)
+
+
+todoCreateDecoder : JsonDec.Decoder TodoCreate
+todoCreateDecoder =
+    JsonDec.map (\text -> { text = text }) (JsonDec.field "text" JsonDec.string)
+
+
+encodeTodo : Todo -> JsonEnc.Value
+encodeTodo todo =
+    JsonEnc.object
+        [ ( "id", JsonEnc.string todo.id )
+        , ( "userId", JsonEnc.int todo.userId )
+        , ( "text", JsonEnc.string todo.text )
+        , ( "done", JsonEnc.bool todo.done )
+        , ( "createdAt", JsonEnc.int todo.createdAt )
+        ]
+
+
+rowToTodo : Dict String String -> Todo
+rowToTodo row =
+    { id = Maybe.withDefault "" (Dict.get "id" row)
+    , userId = Maybe.withDefault
+          0
+          (String.toInt (Maybe.withDefault "0" (Dict.get "user_id" row)))
+    , text = Maybe.withDefault "" (Dict.get "text" row)
+    , done = (Maybe.withDefault "0" (Dict.get "done" row)) == "1"
+    , createdAt = Maybe.withDefault
+          0
+          (String.toInt (Maybe.withDefault "0" (Dict.get "created_at" row)))
+    }
+
+
+handleList : Config -> Db -> Request -> Task Error Response
+handleList cfg db req =
+    withAuth
+        cfg
+        req
+        (\claims ->
+            Db.query
+                db
+                "SELECT id, user_id, text, done, created_at FROM todos WHERE user_id = ? ORDER BY created_at DESC"
+                [String.fromInt claims.userId]
+                |> Task.andThen
+                       (\rows ->
+                           let
+                               todos = List.map rowToTodo rows
+                               body =
+                                   JsonEnc.encode
+                                       0
+                                       (JsonEnc.list encodeTodo todos)
+                           in
+                               Task.succeed (Server.json body)))
+
+
+handleCreate : Config -> Db -> Request -> Task Error Response
+handleCreate cfg db req =
+    withAuth
+        cfg
+        req
+        (\claims ->
+            case JsonDec.decodeString todoCreateDecoder req.body of
+
+                Err _ ->
+                    Task.succeed (errorJson 400 "expected {text}")
+
+                Ok payload ->
+                    insertTodo db claims payload)
+
+
+insertTodo : Db -> AuthClaims -> TodoCreate -> Task Error Response
+insertTodo db claims payload =
+    Crypto.randomToken 12
+        |> Task.andThen
+               (\todoId ->
+                   Time.unixMillis ()
+                       |> Task.andThen
+                              (\nowMs ->
+                                  let
+                                      fields =
+                                          Dict.empty |> Dict.insert "id" todoId
+                                              |> Dict.insert
+                                                     "user_id"
+                                                     (String.fromInt
+                                                         claims.userId)
+                                              |> Dict.insert "text" payload.text
+                                              |> Dict.insert "done" "0"
+                                              |> Dict.insert
+                                                     "created_at"
+                                                     (String.fromInt nowMs)
+                                  in
+                                      Db.insertRow db "todos" fields
+                                          |> Task.andThen
+                                                 (\_ ->
+                                                     publishTodoCreated
+                                                         { id = todoId
+                                                         , userId = claims.userId
+                                                         , text = payload.text
+                                                         , done = False
+                                                         , createdAt = nowMs
+                                                         })))
+
+
+-- Task-shaped publish.  Returns the subscriber count, but the route
+-- never refuses the request when no Live.app is listening — the
+-- publish failure is logged + swallowed via Task.onError.
+publishTodoCreated : Todo -> Task Error Response
+publishTodoCreated todo =
+    PubSub.publish "todos.created" (encodeTodo todo)
+        |> Task.onError
+               (\e ->
+                   let
+                       _ =
+                           Log.warnWith
+                               "publish.todoCreated"
+                               [( "error", Error.toString e )]
+                   in
+                       Task.succeed 0)
+        |> Task.andThen
+               (\_ ->
+                   Task.succeed
+                       (Server.json (JsonEnc.encode 0 (encodeTodo todo))))
+
+
+handleDelete : Config -> Db -> Request -> Task Error Response
+handleDelete cfg db req =
+    withAuth
+        cfg
+        req
+        (\claims ->
+            case Server.param "id" req of
+
+                Nothing ->
+                    Task.succeed (errorJson 400 "missing :id path param")
+
+                Just todoId ->
+                    deleteIfOwned db claims todoId)
+
+
+deleteIfOwned : Db -> AuthClaims -> String -> Task Error Response
+deleteIfOwned db claims todoId =
+    Db.findOneByField db "todos" "id" todoId
+        |> Task.andThen
+               (\maybeRow ->
+                   case maybeRow of
+
+                       Nothing ->
+                           Task.succeed (errorJson 404 "todo not found")
+
+                       Just row ->
+                           let
+                               ownerStr =
+                                   Maybe.withDefault
+                                       "0"
+                                       (Dict.get "user_id" row)
+                           in
+                               if ownerStr /= String.fromInt claims.userId then
+                                   Task.succeed (errorJson 403 "not your todo")
+
+                               else
+                                   Db.deleteById db "todos" todoId
+                                       |> Task.andThen
+                                              (\_ ->
+                                                  Task.succeed
+                                                      (Server.json
+                                                          "{\"deleted\":true}")))
+
+
+-- ─── Helpers ───────────────────────────────────────────────────────
+
+
+-- Authenticated-route gate.  Pulls Authorization, verifies the JWT,
+-- routes to `kont` on success or a 401 on failure.  Threads the
+-- current unix-seconds via Time so the JWT exp check sees realtime.
+withAuth : Config -> Request -> (AuthClaims -> Task Error Response) -> Task Error Response
+withAuth cfg req kont =
+    case Server.header "Authorization" req of
+
+        Nothing ->
+            Task.succeed (errorJson 401 "missing Authorization header")
+
+        Just authHeader ->
+            Time.unixMillis ()
+                |> Task.andThen
+                       (\nowMs ->
+                           case Auth.verifyBearer
+                                    cfg.jwtSecret
+                                    (nowMs // 1000)
+                                    authHeader of
+
+                               Ok claims ->
+                                   kont claims
+
+                               Err _ ->
+                                   Task.succeed (errorJson 401 "invalid token"))
+
+
+-- Build a typed Response record directly.  Going via
+-- `Server.json |> Server.withStatus` triggers a runtime
+-- coerce panic — the kernel returns `rt.SkyResponse` but
+-- the typed codegen expects `Sky_Http_Server_Response_R`
+-- (record alias).  A record literal lowers cleanly.
+errorJson : Int -> String -> Response
+errorJson status message =
+    { status = status
+    , body = JsonEnc.encode 0 (JsonEnc.object [( "error", JsonEnc.string message )])
+    , headers = Dict.empty
+    , contentType = "application/json"
+    }

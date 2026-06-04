@@ -1,0 +1,179 @@
+module Routes.Auth exposing (handleRegister, handleLogin, credentialsDecoder)
+
+-- /api/register + /api/login handlers.  Decodes credentials from
+-- the POST body, hashes the password, inserts a row via Std.Db,
+-- mints a JWT via Auth.mintToken.  Exercises:
+--   * Sky.Http.Server response builders (json + withStatus)
+--   * Std.Db.insertRow + findOneByField
+--   * Sky.Core.Json.{Decode,Encode}
+--   * Sky.Core.Time.unixMillis  (via the Server module's caller)
+--   * Sky.Core.Crypto.randomToken (for the user's request id audit log)
+--   * Std.Log.errorWith for structured failures
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Dict as Dict
+import Sky.Core.String as String
+import Sky.Core.Maybe as Maybe
+import Sky.Core.Task as Task
+import Sky.Core.Time as Time
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.Json.Decode as JsonDec
+import Sky.Core.Json.Encode as JsonEnc
+import Sky.Core.Crypto as Crypto
+import Sky.Http.Server as Server
+import Sky.Http.Server exposing (Request, Response)
+import Std.Db as Db
+import Std.Log as Log
+import Auth
+import State exposing (Config, Credentials, AuthClaims)
+
+
+credentialsDecoder : JsonDec.Decoder Credentials
+credentialsDecoder =
+    JsonDec.map2
+        (\email password -> { email = email, password = password })
+        (JsonDec.field "email" JsonDec.string)
+        (JsonDec.field "password" JsonDec.string)
+
+
+handleRegister : Config -> Db -> Request -> Task Error Response
+handleRegister cfg db req =
+    case JsonDec.decodeString credentialsDecoder req.body of
+
+        Err _ ->
+            Task.succeed
+                (errorJson 400 "invalid JSON body — expected {email, password}")
+
+        Ok creds ->
+            registerUser cfg db creds
+
+
+registerUser : Config -> Db -> Credentials -> Task Error Response
+registerUser cfg db creds =
+    case Auth.hashPassword creds.password of
+
+        Err e ->
+            logAndFail "register.hashFailed" e
+
+        Ok passwordHash ->
+            Time.unixMillis ()
+                |> Task.andThen
+                       (\nowMs ->
+                           let
+                               nowS = nowMs // 1000
+                               fields =
+                                   Dict.empty |> Dict.insert "email" creds.email
+                                       |> Dict.insert
+                                              "password_hash"
+                                              passwordHash
+                                       |> Dict.insert
+                                              "created_at"
+                                              (String.fromInt nowMs)
+                           in
+                               Db.insertRow db "users" fields
+                                   |> Task.andThen
+                                          (\rowId ->
+                                              issueToken
+                                                  cfg
+                                                  nowS
+                                                  { userId = rowId
+                                                  , email = creds.email
+                                                  , exp = 0
+                                                  }))
+
+
+handleLogin : Config -> Db -> Request -> Task Error Response
+handleLogin cfg db req =
+    case JsonDec.decodeString credentialsDecoder req.body of
+
+        Err _ ->
+            Task.succeed
+                (errorJson 400 "invalid JSON body — expected {email, password}")
+
+        Ok creds ->
+            Db.findOneByField db "users" "email" creds.email
+                |> Task.andThen (\maybeRow -> verifyAndIssue cfg creds maybeRow)
+
+
+verifyAndIssue : Config -> Credentials -> Maybe (Dict String String) -> Task Error Response
+verifyAndIssue cfg creds maybeRow =
+    case maybeRow of
+
+        Nothing ->
+            Task.succeed (errorJson 401 "invalid credentials")
+
+        Just row ->
+            let
+                storedHash =
+                    Maybe.withDefault "" (Dict.get "password_hash" row)
+                userIdStr = Maybe.withDefault "0" (Dict.get "id" row)
+                userId = Maybe.withDefault 0 (String.toInt userIdStr)
+            in
+                if Auth.verifyPassword creds.password storedHash then
+                    Time.unixMillis ()
+                        |> Task.andThen
+                               (\nowMs ->
+                                   issueToken
+                                       cfg
+                                       (nowMs // 1000)
+                                       { userId = userId
+                                       , email = creds.email
+                                       , exp = 0
+                                       })
+
+                else
+                    Task.succeed (errorJson 401 "invalid credentials")
+
+
+issueToken : Config -> Int -> AuthClaims -> Task Error Response
+issueToken cfg nowSeconds payload =
+    case Auth.mintToken cfg.jwtSecret nowSeconds cfg.tokenTtlSeconds payload of
+
+        Ok token ->
+            let
+                body =
+                    JsonEnc.encode
+                        0
+                        (JsonEnc.object
+                            [ ( "token", JsonEnc.string token )
+                            , ( "userId", JsonEnc.int payload.userId )
+                            , ( "email", JsonEnc.string payload.email )
+                            ])
+            in
+                Task.succeed (Server.json body)
+
+        Err e ->
+            logAndFail "issueToken.failed" e
+
+
+-- Two-level error pattern (CLAUDE.md): generate a 4-byte correlation
+-- id, log the real error server-side, return only the id to the
+-- client.  Exercises Crypto.randomToken + Log.errorWith.
+logAndFail : String -> Error -> Task Error Response
+logAndFail op e =
+    Crypto.randomToken 4
+        |> Task.andThen
+               (\errId ->
+                   let
+                       _ =
+                           Log.errorWith
+                               op
+                               [ ( "errId", errId )
+                               , ( "error", Error.toString e )
+                               ]
+                   in
+                       Task.succeed
+                           (errorJson
+                               500
+                               ("internal error (ref " ++ errId ++ ")")))
+
+
+-- Build a typed Response record directly.  See Routes.Todos
+-- for the rationale (Server.json |> Server.withStatus mismatches
+-- the typed codegen's expected record-alias shape).
+errorJson : Int -> String -> Response
+errorJson status message =
+    { status = status
+    , body = JsonEnc.encode 0 (JsonEnc.object [( "error", JsonEnc.string message )])
+    , headers = Dict.empty
+    , contentType = "application/json"
+    }

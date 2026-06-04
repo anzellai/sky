@@ -1,0 +1,132 @@
+module Server exposing (run)
+
+-- Wires the router + middleware stack.  Each route's handler is
+-- composed bottom-up: the raw `Request -> Task Error Response`
+-- handler gets withRateLimit (for bearer-bearing routes only),
+-- then withLogging (everything), then withCors (everything).
+--
+-- The composite intentionally calls every middleware once so the
+-- regression set catches a misregistered kernel sig.
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Dict as Dict
+import Sky.Core.String as String
+import Sky.Core.Task as Task
+import Sky.Core.Error exposing (Error)
+import Sky.Http.Server as HttpServer
+import Sky.Http.Server exposing (Request, Response)
+import Sky.Http.RateLimit as RateLimit
+import Middleware
+import Std.Cache as Cache
+import Std.Log as Log
+import Routes.Auth as AuthRoutes
+import Routes.Todos as TodosRoutes
+import Routes.Health as HealthRoutes
+import State exposing (Config)
+
+
+run : Config -> Int -> Db -> Cache.Cache String String -> Task Error ()
+run cfg bootMs db cache =
+    let
+        -- Explicit lambdas around partial applications dodge defensive
+        -- constraint #463 (3-arg typed FFI kernel partial-application
+        -- miscompile) and keep the wrapping shape obvious.
+        cors h = Middleware.withCors cfg.corsOrigins h
+        -- Two-layer middleware stack: CORS + structured request logging.
+        -- We intentionally compose via the runtime kernel rather than
+        -- through `Sky.Http.Middleware`'s `Handler -> Handler` shape
+        -- (which the stdlib leaves an undeclared free type variable —
+        -- see Middleware.sky for the typed re-binding).
+        wrap h = cors (Middleware.withLogging h)
+        -- Per-request rate limit is enforced at the handler boundary
+        -- via `RateLimit.allow` rather than `Middleware.withRateLimit`
+        -- because the latter's runtime cast (`task.(func() any)()`) is
+        -- incompatible with the typed `SkyTask[Error, Response_R]`
+        -- shape that handlers emit under v0.15 type-directed lowering.
+        guarded h =
+            wrap (rateLimit "api" cfg.rateLimitCapacity cfg.rateLimitRefill h)
+        _ =
+            Log.infoWith
+                "server.starting"
+                [ ( "port", String.fromInt cfg.port )
+                , ( "rateLimitProbe", probeRateLimit )
+                ]
+        -- Sky.Http.Server's net/http-based dispatcher routes by path
+        -- only (Route.Method is captured but unused in Server_listen).
+        -- We dispatch GET vs POST on the same /api/todos pathname here.
+        todosByMethod req =
+            if req.method == "POST" then
+                TodosRoutes.handleCreate cfg db req
+
+            else
+                TodosRoutes.handleList cfg db req
+    in
+        HttpServer.listen
+            cfg.port
+            [ HttpServer.api
+                  "POST /api/register"
+                  (wrap (AuthRoutes.handleRegister cfg db))
+            , HttpServer.api
+                  "POST /api/login"
+                  (wrap (AuthRoutes.handleLogin cfg db))
+            , HttpServer.api "/api/todos" (guarded todosByMethod)
+            , HttpServer.api
+                  "DELETE /api/todos/:id"
+                  (guarded (TodosRoutes.handleDelete cfg db))
+            -- Streaming responses bypass the middleware wrap.  Both
+            -- `Middleware.withLogging` and `Middleware.withCors`
+            -- consume the stream-handler sentinel token while peeking
+            -- at the response status, but never re-emit it onto the
+            -- returned SkyResult — the dispatcher then sees a bare
+            -- "__sky_stream:N" Body with no StreamHandler attached and
+            -- writes it as a plain text response.  Exporting outside
+            -- the wrap preserves the chunked-write path.
+            , HttpServer.api
+                  "GET /api/export.csv"
+                  (HealthRoutes.handleExport cfg db)
+            , HttpServer.api
+                  "GET /api/health"
+                  (wrap (HealthRoutes.handleHealth cache bootMs))
+            ]
+
+
+probeRateLimit : String
+probeRateLimit =
+    if RateLimit.allow "probe" "0.0.0.0" 100 100 then
+        "true"
+
+    else
+        "false"
+
+
+-- In-handler rate limit gate.  Returns a 429 Response directly when
+-- the bucket is empty; otherwise threads the request through `inner`.
+rateLimit : String -> Int -> Int -> (Request -> Task Error Response) -> Request -> Task Error Response
+rateLimit name capacity refill inner req =
+    let
+        ip = clientIp req
+    in
+        if RateLimit.allow name ip capacity refill then
+            inner req
+
+        else
+            Task.succeed (rateLimitedResponse)
+
+
+clientIp : Request -> String
+clientIp req =
+    case Dict.get "X-Forwarded-For" req.headers of
+
+        Just v ->
+            v
+
+        Nothing ->
+            req.remoteAddr
+
+
+rateLimitedResponse : Response
+rateLimitedResponse =
+    { status = 429
+    , body = "{\"error\":\"rate limit exceeded\"}"
+    , headers = Dict.empty
+    , contentType = "application/json"
+    }

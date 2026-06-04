@@ -1,0 +1,52 @@
+module State exposing (..)
+
+-- Typed records + ADTs for the composite server. No stdlib effect
+-- imports here — keeps the HM type-checker's heap footprint bounded
+-- (CLAUDE.md Limitation #17).
+import Sky.Core.Prelude exposing (..)
+
+type alias User =
+    { id : Int
+    , email : String
+    , passwordHash : String
+    , createdAt : Int
+    }
+
+type alias Todo =
+    { id : String
+    , userId : Int
+    , text : String
+    , done : Bool
+    , createdAt : Int
+    }
+
+type alias AuthClaims =
+    { userId : Int
+    , email : String
+    , exp : Int
+    }
+
+type alias Config =
+    { port : Int
+    , dbPath : String
+    , jwtSecret : String
+    , tokenTtlSeconds : Int
+    , rateLimitCapacity : Int
+    , rateLimitRefill : Int
+    , healthCacheTtlMs : Int
+    , corsOrigins : List String
+    }
+
+-- A decoded credentials envelope from /api/{register,login} POST
+-- bodies.  Decoded once at the wire boundary, then passed by-value
+-- through the handlers.
+type alias Credentials =
+    { email : String
+    , password : String
+    }
+
+-- A decoded /api/todos POST body.  No `done` field — every newly
+-- created todo starts as not-done; callers PATCH later (not modelled
+-- in this composite — DELETE is the only mutation post-create).
+type alias TodoCreate =
+    { text : String }
