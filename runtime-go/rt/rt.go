@@ -8084,6 +8084,14 @@ func Middleware_withLogging(handler any) any {
 			start := time.Now()
 			task := SkyCall(handler, req)
 			res := any(anyTaskInvoke(task))
+			// v0.16.3 #469 — asSkyResponse below consumes the
+			// pending-stream-handler registry as part of restoring
+			// the StreamHandler closure from the body sentinel. Pre-fix
+			// withLogging discarded the resulting `resp` and returned
+			// the original `res`, so the next asSkyResponse call (in
+			// the listener) found an empty registry and wrote the
+			// literal `__sky_stream:N` to the wire. Symmetric with
+			// withCors: wrap the resolved `resp` in Ok and return that.
 			status := 0
 			if sr, ok := res.(SkyResult[any, any]); ok && sr.Tag == 0 {
 				if resp, ok := asSkyResponse(sr.OkValue); ok {
@@ -8091,6 +8099,15 @@ func Middleware_withLogging(handler any) any {
 					if status == 0 {
 						status = 200
 					}
+					dur := time.Since(start).Milliseconds()
+					ctx := map[string]any{
+						"method": r.Method,
+						"path":   r.Path,
+						"status": status,
+						"ms":     dur,
+					}
+					logEmit(logLevelInfo, "info", "http request", ctx)
+					return Ok[any, any](resp)
 				}
 			}
 			dur := time.Since(start).Milliseconds()
