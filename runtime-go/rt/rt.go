@@ -6786,9 +6786,28 @@ func runeCount(s string) int {
 	return n
 }
 
+// padChar renders a Sky Char as its single-character string form.
+// Sky Char is a unicode codepoint; the lowering boxes it as a rune
+// (or an int after Char.toCode) inside an `any`. Earlier kernels
+// formatted via fmt.Sprintf("%v", ch) which spells "32" for ' '
+// (decimal codepoint) — see #462. This helper produces " " for ' '.
+func padChar(ch any) string {
+	// rune is an alias for int32 — one case covers both.
+	switch v := ch.(type) {
+	case rune:
+		return string(v)
+	case int:
+		return string(rune(v))
+	case string:
+		return v
+	default:
+		return fmt.Sprintf("%v", ch)
+	}
+}
+
 func String_padLeft(n any, ch any, s any) any {
 	str := fmt.Sprintf("%v", s)
-	pad := fmt.Sprintf("%v", ch)
+	pad := padChar(ch)
 	target := AsInt(n)
 	for runeCount(str) < target {
 		str = pad + str
@@ -6798,7 +6817,7 @@ func String_padLeft(n any, ch any, s any) any {
 
 func String_padRight(n any, ch any, s any) any {
 	str := fmt.Sprintf("%v", s)
-	pad := fmt.Sprintf("%v", ch)
+	pad := padChar(ch)
 	target := AsInt(n)
 	for runeCount(str) < target {
 		str = str + pad
