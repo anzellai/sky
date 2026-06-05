@@ -22,38 +22,14 @@ module Sky.Parse.MultiLineRecordFieldSpec (spec) where
 --
 -- Fix: switch the first-field path to `freshLine` so the rule is
 -- uniform across fields.
+--
+-- Tier 1 (task #491): migrated from subprocess `sky check` to
+-- in-process `Compile.compile` via Sky.Build.Helpers.InProcessCompile.
 
 import Test.Hspec
-import qualified System.Exit as Exit
-import System.Directory (getCurrentDirectory, doesFileExist, createDirectoryIfMissing)
-import System.FilePath ((</>))
-import System.Process (readCreateProcessWithExitCode, shell)
-import System.IO.Temp (withSystemTempDirectory)
 import Data.List (isInfixOf)
 
-
-findSky :: IO FilePath
-findSky = do
-    cwd <- getCurrentDirectory
-    let c = cwd </> "sky-out" </> "sky"
-    ok <- doesFileExist c
-    if ok then return c else fail ("missing: " ++ c)
-
-
-checkOnly :: String -> IO (Int, String)
-checkOnly src =
-    withSystemTempDirectory "sky-multiline-record" $ \tmp -> do
-        sky <- findSky
-        createDirectoryIfMissing True (tmp </> "src")
-        writeFile (tmp </> "src" </> "Main.sky") src
-        writeFile (tmp </> "sky.toml") "name = \"multiline-record-test\"\n"
-        let cmd = "cd " ++ tmp ++ " && " ++ sky ++ " check src/Main.sky 2>&1"
-        (ec, sout, serr) <- readCreateProcessWithExitCode (shell cmd) ""
-        let combined = sout ++ serr
-            ecInt = case ec of
-                Exit.ExitSuccess -> 0
-                Exit.ExitFailure n -> n
-        return (ecInt, combined)
+import Sky.Build.Helpers.InProcessCompile (CompileResult(..), compileInProcess)
 
 
 spec :: Spec
@@ -85,10 +61,14 @@ spec = do
                     , ""
                     , "main = println view"
                     ]
-            (ec, out) <- checkOnly src
-            ec `shouldBe` 0
-            out `shouldNotSatisfy` ("DeclarationError" `isInfixOf`)
-            out `shouldSatisfy` ("No errors found" `isInfixOf`)
+            result <- compileInProcess src
+            case result of
+                CompileErr e -> do
+                    -- Pre-fix bug surfaced as a parser DeclarationError;
+                    -- any non-empty CompileErr is itself a regression here.
+                    e `shouldNotSatisfy` ("DeclarationError" `isInfixOf`)
+                    expectationFailure ("compile failed: " ++ e)
+                CompileOk _ -> return ()
 
 
         it "first field's RHS on next line, with `++` continuation" $ do
@@ -127,10 +107,12 @@ spec = do
                     , ""
                     , "main = println \"ok\""
                     ]
-            (ec, out) <- checkOnly src
-            ec `shouldBe` 0
-            out `shouldNotSatisfy` ("DeclarationError" `isInfixOf`)
-            out `shouldSatisfy` ("No errors found" `isInfixOf`)
+            result <- compileInProcess src
+            case result of
+                CompileErr e -> do
+                    e `shouldNotSatisfy` ("DeclarationError" `isInfixOf`)
+                    expectationFailure ("compile failed: " ++ e)
+                CompileOk _ -> return ()
 
 
         it "all fields same-line — sanity" $ do
@@ -154,6 +136,7 @@ spec = do
                     , ""
                     , "main = println view"
                     ]
-            (ec, out) <- checkOnly src
-            ec `shouldBe` 0
-            out `shouldSatisfy` ("No errors found" `isInfixOf`)
+            result <- compileInProcess src
+            case result of
+                CompileErr e -> expectationFailure ("compile failed: " ++ e)
+                CompileOk _  -> return ()

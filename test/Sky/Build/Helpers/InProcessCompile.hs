@@ -1,7 +1,9 @@
 module Sky.Build.Helpers.InProcessCompile
     ( compileInProcess
+    , compileInProcessMulti
     , CompileResult(..)
     , withSilencedStdout
+    , withCapturedStdout
     ) where
 
 -- | Tier 1 test infrastructure (task #491) — call the compiler
@@ -34,10 +36,10 @@ module Sky.Build.Helpers.InProcessCompile
 import qualified Sky.Build.Compile as Compile
 import qualified Sky.Sky.Toml as Toml
 import System.Directory (createDirectoryIfMissing)
-import System.FilePath ((</>))
-import System.IO (hClose, stdout, openFile, IOMode (..))
+import System.FilePath ((</>), takeDirectory)
+import System.IO (hClose, stdout, openFile, IOMode (..), hFlush)
 import GHC.IO.Handle (hDuplicate, hDuplicateTo)
-import System.IO.Temp (withSystemTempDirectory)
+import System.IO.Temp (withSystemTempDirectory, withSystemTempFile)
 import Control.Exception (bracket, catch, SomeException)
 
 
@@ -50,8 +52,13 @@ data CompileResult
         }
     | CompileErr
         { errMsg :: String
-        -- ^ The compiler's error string — same format as the
-        -- subprocess error path.
+        -- ^ The compiler's error string — concatenation of the
+        -- structured diagnostic text that the CLI prints to
+        -- stdout (TYPE ERROR / PARSE ERROR / NAMING ERROR /
+        -- EXHAUSTIVENESS ERROR blocks, [E0001]…[E5999] codes,
+        -- source snippets, etc.) and the `Left` returned by
+        -- `Compile.compile`.  Same bytes the subprocess error path
+        -- captures via stdout+stderr.
         }
     deriving (Show)
 
@@ -62,9 +69,10 @@ data CompileResult
 -- runs the full Sky lowering pipeline (parse → canonicalise →
 -- HM → lower) into `sky-out/main.go`.
 --
--- The function silences the compiler's `putStrLn`-style progress
--- output via stdout redirection so Hspec's test runner doesn't
--- interleave compiler chatter with spec results.
+-- The function captures the compiler's stdout (where structured
+-- diagnostics are emitted via `putStrLn`) and routes it into the
+-- `errMsg` field on failure so tests can assert on the diagnostic
+-- text (e.g. `out `shouldSatisfy` ("[E2001]" `isInfixOf`)`).
 --
 -- NOTE: stdlib + runtime-go materialisation still hits disk
 -- (Compile.writeEmbeddedSkyStdlib + copyRuntime).  These are
@@ -73,22 +81,54 @@ data CompileResult
 -- refinement could thread a cached tempdir across calls in a
 -- beforeAll hook for further savings.
 compileInProcess :: String -> IO CompileResult
-compileInProcess skySrc = withSystemTempDirectory "sky-inproc" $ \tmp -> do
-    let srcDir = tmp </> "src"
-        outDir = tmp </> "sky-out"
-        entry  = srcDir </> "Main.sky"
+compileInProcess skySrc =
+    compileInProcessMulti [("src/Main.sky", skySrc)]
+
+
+-- | Compile a multi-file Sky project in-process.  Each tuple is
+-- @(relativePath, sourceText)@ where the relative path is taken
+-- from the project root (so `"src/Main.sky"`, `"src/View.sky"`,
+-- `"tests/MyTest.sky"` all live alongside one another).  The
+-- entry point is conventionally `"src/Main.sky"` — every spec in
+-- this codebase uses that name.
+--
+-- The function materialises a minimal `sky.toml`, writes each
+-- file (creating any necessary intermediate directories), then
+-- compiles `src/Main.sky` exactly like `compileInProcess`.
+--
+-- Use this for specs that need dep modules (`src/State.sky` +
+-- `src/View.sky` + `src/Main.sky`), test files (`tests/*.sky`
+-- alongside `src/Main.sky`), or any other multi-file shape.
+compileInProcessMulti :: [(FilePath, String)] -> IO CompileResult
+compileInProcessMulti files = withSystemTempDirectory "sky-inproc" $ \tmp -> do
+    let outDir = tmp </> "sky-out"
+        entry  = tmp </> "src" </> "Main.sky"
         tomlSrc = unlines
             [ "name = \"tmp\""
             , "version = \"0.0.0\""
+            , "entry = \"src/Main.sky\""
+            , ""
+            , "[source]"
+            , "root = \"src\""
             ]
-    createDirectoryIfMissing True srcDir
     createDirectoryIfMissing True outDir
-    writeFile entry skySrc
+    writeFile (tmp </> "sky.toml") tomlSrc
+    -- Materialise every file, creating intermediate directories.
+    mapM_ (\(relPath, content) -> do
+            let fullPath = tmp </> relPath
+            createDirectoryIfMissing True (takeDirectory fullPath)
+            writeFile fullPath content)
+        files
     let config = Toml.parseSkyToml tomlSrc
-    result <- withSilencedStdout (Compile.compile config entry outDir)
-        `catch` (\e -> return (Left (show (e :: SomeException))))
+    (captured, result) <- withCapturedStdout
+        (Compile.compile config entry outDir
+            `catch` (\e -> return (Left (show (e :: SomeException)))))
     case result of
-        Left err -> return (CompileErr err)
+        Left err ->
+            -- Combine: structured stdout diagnostics (TYPE ERROR
+            -- block, [E2001] code, etc.) FIRST so isInfixOf scans
+            -- find them; the bare `Left` summary after.
+            return (CompileErr (captured ++ "\n" ++ err))
         Right _path -> do
             mainGoText <- readFile (outDir </> "main.go")
             length mainGoText `seq` return (CompileOk mainGoText)
@@ -111,3 +151,34 @@ withSilencedStdout action = do
             hDuplicateTo saved stdout
             hClose saved)
         (const action)
+
+
+-- | Run an IO action with stdout redirected to a fresh temp file,
+-- returning both the captured output and the action's result.
+-- Restores the original stdout on the way out (success or
+-- exception).
+--
+-- This is the variant `compileInProcessMulti` uses so that
+-- structured diagnostic blocks (which `Sky.Build.Compile` writes
+-- via `putStrLn`) survive into `CompileErr.errMsg`.
+withCapturedStdout :: IO a -> IO (String, a)
+withCapturedStdout action = do
+    withSystemTempFile "sky-inproc-stdout" $ \tmpPath tmpHandle -> do
+        hClose tmpHandle  -- close the handle System.IO.Temp gave us;
+                          -- we'll re-open via dup2 ourselves.
+        bracket
+            (do
+                saved <- hDuplicate stdout
+                redir <- openFile tmpPath WriteMode
+                hDuplicateTo redir stdout
+                hClose redir
+                return saved)
+            (\saved -> do
+                hFlush stdout
+                hDuplicateTo saved stdout
+                hClose saved)
+            (\_ -> do
+                r <- action
+                hFlush stdout
+                captured <- readFile tmpPath
+                length captured `seq` return (captured, r))

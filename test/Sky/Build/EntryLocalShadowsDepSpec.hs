@@ -1,13 +1,9 @@
 module Sky.Build.EntryLocalShadowsDepSpec (spec) where
 
 import Test.Hspec
-import System.Directory (getCurrentDirectory, doesFileExist,
-                         createDirectoryIfMissing)
-import System.FilePath ((</>))
-import System.IO.Temp (withSystemTempDirectory)
-import System.Process (readCreateProcessWithExitCode, proc, CreateProcess(..))
-import System.Exit (ExitCode(..))
 import Data.List (isInfixOf)
+
+import Sky.Build.Helpers.InProcessCompile (CompileResult(..), compileInProcessMulti)
 
 
 -- Regression: when the entry module has a lambda param (or any
@@ -32,18 +28,24 @@ import Data.List (isInfixOf)
 -- The fix: when entry's key resolves to a type and any dep's same
 -- key resolves to a structurally-distinct type, collapse to
 -- `_ambig` so downstream codegen falls back to safe any-routing.
+--
+-- Tier 1 (task #491): migrated from subprocess `sky build` to
+-- in-process `compileInProcessMulti` (multi-file project: State.sky
+-- + View.sky + Main.sky).  The `app` binary existence check is
+-- dropped — in-process compile only emits main.go, never invokes
+-- go build — but the load-bearing main.go inspection (the badShadow
+-- predicate that gates the regression) is byte-identical.
 spec :: Spec
 spec = describe "entry-local does not shadow dep top-level in solvedTypes" $ do
     it "lets a dep call with the same name as an entry-local stay typed" $ do
-        sky <- findSky
-        withSystemTempDirectory "sky-entry-local-shadow" $ \tmp -> do
-            writeMultiModule tmp
-            (ec, _, errOut) <- runSky sky ["build", "src/Main.sky"] tmp
-            if ec /= ExitSuccess
-              then expectationFailure ("sky build failed:\n" ++ errOut)
-              else do
-                built <- doesFileExist (tmp </> "sky-out" </> "app")
-                built `shouldBe` True
+        result <- compileInProcessMulti
+            [ ("src/State.sky", stateSrc)
+            , ("src/View.sky",  viewSrc)
+            , ("src/Main.sky",  mainSrc)
+            ]
+        case result of
+            CompileErr e -> expectationFailure ("compile failed:\n" ++ e)
+            CompileOk body -> do
                 -- The dep call `List.filter keep items` returns
                 -- `List Item` and lives in a `let filtered = ...`
                 -- binding inside View.visibleItems. Pre-fix the
@@ -53,37 +55,12 @@ spec = describe "entry-local does not shadow dep top-level in solvedTypes" $ do
                 -- for the binding's Go output and require that the
                 -- coerce target (if any) be a List or Item shape,
                 -- never the entry-local's record name.
-                body <- readFile (tmp </> "sky-out" </> "main.go")
                 let filteredLines = filter ("filtered" `isInfixOf`)
                                     (lines body)
                     badShadow = any (\ln ->
                         "rt.Coerce[State_Bucket_R]" `isInfixOf` ln
                         && "filtered" `isInfixOf` ln) filteredLines
                 badShadow `shouldBe` False
-
-  where
-    findSky :: IO FilePath
-    findSky = do
-        cwd <- getCurrentDirectory
-        let candidate = cwd </> "sky-out" </> "sky"
-        ok <- doesFileExist candidate
-        if ok then return candidate
-              else fail ("sky binary missing at " ++ candidate)
-
-    runSky :: FilePath -> [String] -> FilePath -> IO (ExitCode, String, String)
-    runSky sky args workDir = do
-        let cp = (proc sky args) { cwd = Just workDir }
-        readCreateProcessWithExitCode cp ""
-
-    writeMultiModule :: FilePath -> IO ()
-    writeMultiModule dir = do
-        createDirectoryIfMissing True (dir </> "src")
-        writeFile (dir </> "sky.toml")
-            ("name = \"shadow-fixture\"\nversion = \"0.0.0\"\n"
-             ++ "entry = \"src/Main.sky\"\n\n[source]\nroot = \"src\"\n")
-        writeFile (dir </> "src" </> "State.sky") stateSrc
-        writeFile (dir </> "src" </> "View.sky") viewSrc
-        writeFile (dir </> "src" </> "Main.sky") mainSrc
 
 
 -- ─── Fixtures ──────────────────────────────────────────────────

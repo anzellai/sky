@@ -23,40 +23,19 @@ module Sky.Parse.MultiLineExposingSpec (spec) where
 --
 -- Both invariants pinned here: the multi-line shape compiles + runs;
 -- a real parse error fails the build (not a warning).
+--
+-- Tier 1 (task #491): migrated from subprocess `sky build` to
+-- in-process `Compile.compile` via Sky.Build.Helpers.InProcessCompile.
+-- The "Build complete" stdout assertion (which the subprocess
+-- captured from stdout via 2>&1) becomes the byte-identical
+-- CompileOk success check; the failure-path assertion that
+-- stdout contains "[E0001]" is preserved by scanning the
+-- captured-stdout text routed into CompileErr.errMsg.
 
 import Test.Hspec
-import qualified System.Exit as Exit
-import System.Directory (getCurrentDirectory, doesFileExist, createDirectoryIfMissing)
-import System.FilePath ((</>))
-import System.Process (readCreateProcessWithExitCode, shell)
-import System.IO.Temp (withSystemTempDirectory)
 import Data.List (isInfixOf)
 
-
-findSky :: IO FilePath
-findSky = do
-    cwd <- getCurrentDirectory
-    let c = cwd </> "sky-out" </> "sky"
-    ok <- doesFileExist c
-    if ok then return c else fail ("missing: " ++ c)
-
-
--- Build a tiny one-file Sky project from a literal source string,
--- run `sky build src/Main.sky`, and return (exitCode, stdout++stderr).
-buildLiteral :: String -> IO (Int, String)
-buildLiteral src =
-    withSystemTempDirectory "sky-multiline" $ \tmp -> do
-        sky <- findSky
-        createDirectoryIfMissing True (tmp </> "src")
-        writeFile (tmp </> "src" </> "Main.sky") src
-        writeFile (tmp </> "sky.toml") "name = \"multiline-test\"\n"
-        let cmd = "cd " ++ tmp ++ " && " ++ sky ++ " build src/Main.sky 2>&1"
-        (ec, sout, serr) <- readCreateProcessWithExitCode (shell cmd) ""
-        let combined = sout ++ serr
-            ecInt = case ec of
-                Exit.ExitSuccess -> 0
-                Exit.ExitFailure n -> n
-        return (ecInt, combined)
+import Sky.Build.Helpers.InProcessCompile (CompileResult(..), compileInProcess)
 
 
 spec :: Spec
@@ -79,9 +58,10 @@ spec = do
                     , "main ="
                     , "    println (String.fromInt (double 21))"
                     ]
-            (ec, out) <- buildLiteral src
-            ec `shouldBe` 0
-            out `shouldSatisfy` ("Build complete" `isInfixOf`)
+            result <- compileInProcess src
+            case result of
+                CompileErr e -> expectationFailure ("compile failed: " ++ e)
+                CompileOk _  -> return ()
 
         it "import with multi-line exposing list works" $ do
             let src = unlines
@@ -95,9 +75,10 @@ spec = do
                     , "main ="
                     , "    println \"hello multi-line\""
                     ]
-            (ec, out) <- buildLiteral src
-            ec `shouldBe` 0
-            out `shouldSatisfy` ("Build complete" `isInfixOf`)
+            result <- compileInProcess src
+            case result of
+                CompileErr e -> expectationFailure ("compile failed: " ++ e)
+                CompileOk _  -> return ()
 
         it "one-export-per-line with leading commas (the canonical sky fmt shape)" $ do
             let src = unlines
@@ -121,8 +102,10 @@ spec = do
                     , ""
                     , "main = println \"ok\""
                     ]
-            (ec, _) <- buildLiteral src
-            ec `shouldBe` 0
+            result <- compileInProcess src
+            case result of
+                CompileErr e -> expectationFailure ("compile failed: " ++ e)
+                CompileOk _  -> return ()
 
     describe "Parse errors are now FATAL (not silently downgraded to warnings)" $ do
 
@@ -137,11 +120,14 @@ spec = do
                     , ""
                     , "main = 1"
                     ]
-            (ec, out) <- buildLiteral src
-            ec `shouldNotBe` 0
-            -- v0.13 Layer 1: parser failures emit a structured
-            -- Diagnostic with the stable code [E0001] (parse-error
-            -- category).  Pre-v0.13 the test looked for the raw
-            -- `PARSE ERROR: <path>: <ctor>` message that surfaced
-            -- the Haskell constructor name to end users.
-            out `shouldSatisfy` ("[E0001]" `isInfixOf`)
+            result <- compileInProcess src
+            case result of
+                CompileOk _ ->
+                    expectationFailure "expected a hard parse failure but compile succeeded"
+                CompileErr e ->
+                    -- v0.13 Layer 1: parser failures emit a structured
+                    -- Diagnostic with the stable code [E0001] (parse-error
+                    -- category).  Pre-v0.13 the test looked for the raw
+                    -- `PARSE ERROR: <path>: <ctor>` message that surfaced
+                    -- the Haskell constructor name to end users.
+                    e `shouldSatisfy` ("[E0001]" `isInfixOf`)

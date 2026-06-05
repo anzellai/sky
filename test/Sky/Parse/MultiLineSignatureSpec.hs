@@ -1,12 +1,8 @@
 module Sky.Parse.MultiLineSignatureSpec (spec) where
 
 import Test.Hspec
-import System.Directory (getCurrentDirectory, doesFileExist,
-                         createDirectoryIfMissing)
-import System.FilePath ((</>))
-import System.IO.Temp (withSystemTempDirectory)
-import System.Process (readCreateProcessWithExitCode, proc, CreateProcess(..))
-import System.Exit (ExitCode(..))
+
+import Sky.Build.Helpers.InProcessCompile (CompileResult(..), compileInProcess)
 
 
 -- Regression: prior to the 2026-05-23 parser fix, a top-level
@@ -25,30 +21,28 @@ import System.Exit (ExitCode(..))
 -- + `:`), then value def. Multi-line `->` continuation INSIDE
 -- the type body is still not supported (workaround: extract a
 -- type alias).
+--
+-- Tier 1 (task #491): migrated from subprocess `sky build` to
+-- in-process `Compile.compile` via Sky.Build.Helpers.InProcessCompile.
 spec :: Spec
 spec = describe "parser accepts multi-line declaration signatures" $ do
     it "compiles `name\\n    : T` (lower-cased declaration)" $ do
-        sky <- findSky
-        withSystemTempDirectory "sky-multiline-sig-lower" $ \tmp -> do
-            writeFixture tmp lowerFixture
-            (ec, _, _err) <- runSky sky ["build", "src/Main.sky"] tmp
-            ec `shouldBe` ExitSuccess
-            built <- doesFileExist (tmp </> "sky-out" </> "app")
-            built `shouldBe` True
+        result <- compileInProcess lowerFixture
+        case result of
+            CompileErr e -> expectationFailure ("compile failed: " ++ e)
+            CompileOk _  -> return ()
 
     it "compiles `Name\\n    : T` (upper-cased declaration)" $ do
-        sky <- findSky
-        withSystemTempDirectory "sky-multiline-sig-upper" $ \tmp -> do
-            writeFixture tmp upperFixture
-            (ec, _, _err) <- runSky sky ["build", "src/Main.sky"] tmp
-            ec `shouldBe` ExitSuccess
+        result <- compileInProcess upperFixture
+        case result of
+            CompileErr e -> expectationFailure ("compile failed: " ++ e)
+            CompileOk _  -> return ()
 
     it "compiles an inline record in a same-line signature" $ do
-        sky <- findSky
-        withSystemTempDirectory "sky-inline-record-sig" $ \tmp -> do
-            writeFixture tmp inlineRecordFixture
-            (ec, _, _err) <- runSky sky ["build", "src/Main.sky"] tmp
-            ec `shouldBe` ExitSuccess
+        result <- compileInProcess inlineRecordFixture
+        case result of
+            CompileErr e -> expectationFailure ("compile failed: " ++ e)
+            CompileOk _  -> return ()
 
 
 lowerFixture :: String
@@ -103,28 +97,3 @@ inlineRecordFixture = unlines
     , "    let _ = println (processReq 42 { name = \"Alice\", age = 30 })"
     , "    in ()"
     ]
-
-
-writeFixture :: FilePath -> String -> IO ()
-writeFixture tmp src = do
-    createDirectoryIfMissing True (tmp </> "src")
-    writeFile (tmp </> "src" </> "Main.sky") src
-    writeFile (tmp </> "sky.toml") $ unlines
-        [ "name = \"test\""
-        , "version = \"0.1.0\""
-        , "entry = \"src/Main.sky\""
-        , ""
-        , "[source]"
-        , "root = \"src\""
-        ]
-
-
-runSky :: FilePath -> [String] -> FilePath -> IO (ExitCode, String, String)
-runSky sky args cwd =
-    readCreateProcessWithExitCode (proc sky args) { cwd = Just cwd } ""
-
-
-findSky :: IO FilePath
-findSky = do
-    cwd <- getCurrentDirectory
-    return (cwd </> "sky-out" </> "sky")

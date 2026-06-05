@@ -23,38 +23,18 @@ module Sky.Parse.MultiLineParenAppSpec (spec) where
 -- exclude Sky keywords (`then`, `else`, `in`, `of`, …) so the relaxed
 -- rule doesn't accidentally consume them as continuation args (which
 -- would break if/then/else and let/in / case/of parses).
+--
+-- Tier 1 (task #491): migrated from subprocess `sky check` to
+-- in-process `Compile.compile` via Sky.Build.Helpers.InProcessCompile.
+-- The pre-fix assertion that stdout contains "No errors found" is
+-- replaced by checking compileInProcess returns CompileOk (success
+-- gate is byte-identical); the negative assertion that stdout NOT
+-- contain "Expected , or )" is preserved as a CompileErr text check
+-- in the failing-path tests (where applicable).
 
 import Test.Hspec
-import qualified System.Exit as Exit
-import System.Directory (getCurrentDirectory, doesFileExist, createDirectoryIfMissing)
-import System.FilePath ((</>))
-import System.Process (readCreateProcessWithExitCode, shell)
-import System.IO.Temp (withSystemTempDirectory)
-import Data.List (isInfixOf)
 
-
-findSky :: IO FilePath
-findSky = do
-    cwd <- getCurrentDirectory
-    let c = cwd </> "sky-out" </> "sky"
-    ok <- doesFileExist c
-    if ok then return c else fail ("missing: " ++ c)
-
-
-checkOnly :: String -> IO (Int, String)
-checkOnly src =
-    withSystemTempDirectory "sky-multiline-paren" $ \tmp -> do
-        sky <- findSky
-        createDirectoryIfMissing True (tmp </> "src")
-        writeFile (tmp </> "src" </> "Main.sky") src
-        writeFile (tmp </> "sky.toml") "name = \"multiline-paren-test\"\n"
-        let cmd = "cd " ++ tmp ++ " && " ++ sky ++ " check src/Main.sky 2>&1"
-        (ec, sout, serr) <- readCreateProcessWithExitCode (shell cmd) ""
-        let combined = sout ++ serr
-            ecInt = case ec of
-                Exit.ExitSuccess -> 0
-                Exit.ExitFailure n -> n
-        return (ecInt, combined)
+import Sky.Build.Helpers.InProcessCompile (CompileResult(..), compileInProcess)
 
 
 spec :: Spec
@@ -82,10 +62,10 @@ spec = do
                     , ""
                     , "main = let _ = view in println \"ok\""
                     ]
-            (ec, out) <- checkOnly src
-            ec `shouldBe` 0
-            out `shouldNotSatisfy` ("Expected , or )" `isInfixOf`)
-            out `shouldSatisfy` ("No errors found" `isInfixOf`)
+            result <- compileInProcess src
+            case result of
+                CompileErr e -> expectationFailure ("compile failed: " ++ e)
+                CompileOk _  -> return ()
 
 
         it "outer (inner\\n    \"x\") — string arg on next line" $ do
@@ -109,9 +89,10 @@ spec = do
                     , ""
                     , "main = println view"
                     ]
-            (ec, out) <- checkOnly src
-            ec `shouldBe` 0
-            out `shouldSatisfy` ("No errors found" `isInfixOf`)
+            result <- compileInProcess src
+            case result of
+                CompileErr e -> expectationFailure ("compile failed: " ++ e)
+                CompileOk _  -> return ()
 
 
     describe "Keyword-aware exprStart: relaxed rule doesn't break if/then/else" $ do
@@ -140,6 +121,7 @@ spec = do
                     , ""
                     , "main = println (speak False)"
                     ]
-            (ec, out) <- checkOnly src
-            ec `shouldBe` 0
-            out `shouldSatisfy` ("No errors found" `isInfixOf`)
+            result <- compileInProcess src
+            case result of
+                CompileErr e -> expectationFailure ("compile failed: " ++ e)
+                CompileOk _  -> return ()

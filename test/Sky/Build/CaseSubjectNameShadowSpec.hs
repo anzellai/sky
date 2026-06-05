@@ -1,13 +1,9 @@
 module Sky.Build.CaseSubjectNameShadowSpec (spec) where
 
 import Test.Hspec
-import System.Directory (getCurrentDirectory, doesFileExist,
-                         createDirectoryIfMissing)
-import System.FilePath ((</>))
-import System.IO.Temp (withSystemTempDirectory)
-import System.Process (readCreateProcessWithExitCode, proc, CreateProcess(..))
-import System.Exit (ExitCode(..))
 import Data.List (isInfixOf)
+
+import Sky.Build.Helpers.InProcessCompile (CompileResult(..), compileInProcess)
 
 
 -- Regression (Cycle 3 task #330 / Dev P40 — examples/13-skyshop
@@ -31,19 +27,19 @@ import Data.List (isInfixOf)
 -- The fix prefers `Solve.lookupSolvedRegion subjectRegion solvedTypes`
 -- for the case-subject's typed shape. Region keys are per source
 -- location and immune to flat-name pollution.
+--
+-- Tier 1 (task #491): migrated from subprocess `sky build` to
+-- in-process `compileInProcess`.  The `app` binary existence check
+-- is dropped (in-process compile only emits main.go); the
+-- load-bearing main.go inspection — pollution gate on the
+-- generic withDefault body — is byte-identical.
 spec :: Spec
 spec = describe "case-of subject type doesn't leak across name-clashing locals" $ do
     it "polymorphic Result.withDefault body stays generic when an unrelated local r is pinned" $ do
-        sky <- findSky
-        withSystemTempDirectory "sky-case-subject-shadow" $ \tmp -> do
-            writeFixture tmp
-            (ec, _, errOut) <- runSky sky ["build", "src/Main.sky"] tmp
-            if ec /= ExitSuccess
-              then expectationFailure ("sky build failed:\n" ++ errOut)
-              else do
-                built <- doesFileExist (tmp </> "sky-out" </> "app")
-                built `shouldBe` True
-                body <- readFile (tmp </> "sky-out" </> "main.go")
+        result <- compileInProcess mainSrc
+        case result of
+            CompileErr e -> expectationFailure ("sky build failed:\n" ++ e)
+            CompileOk body -> do
                 -- Find the generic `Sky_Core_Result_withDefault[T1 any]`
                 -- declaration; its body MUST coerce the case subject
                 -- as `rt.ResultCoerce[any, any]` (the polymorphic
@@ -74,31 +70,7 @@ takeBody header ls =
                 || (not (null ln) && head ln == '}')
 
 
-findSky :: IO FilePath
-findSky = do
-    cwd <- getCurrentDirectory
-    let candidate = cwd </> "sky-out" </> "sky"
-    ok <- doesFileExist candidate
-    if ok then return candidate
-          else fail ("sky binary missing at " ++ candidate)
-
-
-runSky :: FilePath -> [String] -> FilePath -> IO (ExitCode, String, String)
-runSky sky args workDir = do
-    let cp = (proc sky args) { cwd = Just workDir }
-    readCreateProcessWithExitCode cp ""
-
-
 -- ─── Fixture ──────────────────────────────────────────────────────
-
-
-writeFixture :: FilePath -> IO ()
-writeFixture dir = do
-    createDirectoryIfMissing True (dir </> "src")
-    writeFile (dir </> "sky.toml")
-        ("name = \"case-subject-shadow\"\nversion = \"0.0.0\"\n"
-         ++ "entry = \"src/Main.sky\"\n\n[source]\nroot = \"src\"\n")
-    writeFile (dir </> "src" </> "Main.sky") mainSrc
 
 
 mainSrc :: String
