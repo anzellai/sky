@@ -37,6 +37,12 @@ module Sky.Build.UiFillCssSpec (spec) where
 --
 -- This spec greps the lowered Go output for the OLD bad combos and
 -- the EXPECTED new combo to fence the contract.
+--
+-- Combiner #1 (task #489): pre-combiner the 4 `it` blocks each
+-- spawned an INDEPENDENT sky build of the SAME fixture, emitting
+-- byte-identical Go four times.  `beforeAll` runs the build ONCE
+-- and shares the resulting main.go across every case — 4 sky
+-- builds → 1 sky build, with no loss in regression coverage.
 
 import Test.Hspec
 import qualified System.Exit as Exit
@@ -103,11 +109,14 @@ fixture = unlines
     ]
 
 
+-- Build the fixture ONCE per describe block via beforeAll; each
+-- `it` then takes the cached (exitCode, mainGo, err) tuple.  4
+-- subprocess sky-builds collapse into 1.
 spec :: Spec
-spec = describe "Std.Ui cross-axis fill emission (F1 + F4)" $ do
+spec = beforeAll (buildAndReadMain fixture) $
+    describe "Std.Ui cross-axis fill emission (F1 + F4)" $ do
 
-    it "heightFillFor AsRow does NOT emit `height: 100%`" $ do
-        (ec, mainGo, err) <- buildAndReadMain fixture
+    it "heightFillFor AsRow does NOT emit `height: 100%`" $ \(ec, mainGo, err) -> do
         ec `shouldBe` 0
         err `shouldBe` ""
         -- F1 fix signature. heightFillFor AsRow previously emitted
@@ -128,8 +137,7 @@ spec = describe "Std.Ui cross-axis fill emission (F1 + F4)" $ do
         mainGo `shouldNotSatisfy`
             ("align-self: stretch; height:" `isInfixOf`)
 
-    it "widthFillFor cross-axis keeps `width: 100%` (column parents have definite widths)" $ do
-        (ec, mainGo, err) <- buildAndReadMain fixture
+    it "widthFillFor cross-axis keeps `width: 100%` (column parents have definite widths)" $ \(ec, mainGo, err) -> do
         ec `shouldBe` 0
         err `shouldBe` ""
         -- F1+F4 asymmetry: width cross-axis fill KEEPS the explicit
@@ -145,8 +153,7 @@ spec = describe "Std.Ui cross-axis fill emission (F1 + F4)" $ do
         mainGo `shouldSatisfy`
             ("width: 100%;" `isInfixOf`)
 
-    it "F4: widthFillFor cross-axis does NOT emit `align-self: stretch`" $ do
-        (ec, mainGo, err) <- buildAndReadMain fixture
+    it "F4: widthFillFor cross-axis does NOT emit `align-self: stretch`" $ \(ec, mainGo, err) -> do
         ec `shouldBe` 0
         err `shouldBe` ""
         -- F4 fix signature. `widthFillFor AsColumn/AsEl/AsTextColumn`
@@ -157,8 +164,7 @@ spec = describe "Std.Ui cross-axis fill emission (F1 + F4)" $ do
         mainGo `shouldNotSatisfy`
             ("align-self: stretch; width: 100%;" `isInfixOf`)
 
-    it "main-axis fill still emits flex-grow + min-{axis}: 0" $ do
-        (ec, mainGo, err) <- buildAndReadMain fixture
+    it "main-axis fill still emits flex-grow + min-{axis}: 0" $ \(ec, mainGo, err) -> do
         ec `shouldBe` 0
         err `shouldBe` ""
         -- Main-axis emission unchanged. The fixture's column->row
