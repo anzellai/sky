@@ -5,7 +5,6 @@ module State exposing (..)
 -- (CLAUDE.md Limitation #17).
 import Sky.Core.Prelude exposing (..)
 
-
 -- ─── Tabs ────────────────────────────────────────────────────────
 
 -- The console has 5 tabs. Active tab is part of Model so navigation
@@ -26,12 +25,21 @@ type Tab
 tabLabel : Tab -> String
 tabLabel tab =
     case tab of
-        OverviewTab -> "Overview"
-        MetricsTab  -> "Metrics"
-        LogsTab     -> "Logs"
-        TracesTab   -> "Traces"
-        ErrorsTab   -> "Errors"
 
+        OverviewTab ->
+            "Overview"
+
+        MetricsTab ->
+            "Metrics"
+
+        LogsTab ->
+            "Logs"
+
+        TracesTab ->
+            "Traces"
+
+        ErrorsTab ->
+            "Errors"
 
 -- ─── Data shapes (mirror /_sky/console/api/* JSON) ──────────────
 
@@ -41,17 +49,16 @@ tabLabel tab =
 -- bundled sub-app (SKY_PARENT_URL set). Falls back to a small
 -- mock for standalone `sky console` invocations.
 type alias Overview =
-    { skyVersion      : String
-    , commit          : String
-    , builtAt         : String
-    , uptimeSeconds   : Int
-    , requestsTotal   : Int
-    , errorRate5xx    : Float
-    , bufferLogUsed   : Int
+    { skyVersion : String
+    , commit : String
+    , builtAt : String
+    , uptimeSeconds : Int
+    , requestsTotal : Int
+    , errorRate5xx : Float
+    , bufferLogUsed : Int
     , bufferTraceUsed : Int
-    , productionMode  : Bool
+    , productionMode : Bool
     }
-
 
 -- Log entry shown in the Logs tab — wire shape mirrors
 -- `telemetry.LogEntry` JSON serialisation. Extra context fields
@@ -59,46 +66,42 @@ type alias Overview =
 -- correlate entries that share a request or a session — click a
 -- badge → filter to "everything this session did".
 type alias LogEntry =
-    { time     : String
-    , level    : String
-    , message  : String
-    , subapp   : String   -- empty for parent-emitted entries
-    , reqId    : String   -- HTTP request id (correlates request lifecycle)
-    , sessionId: String   -- Sky.Live session id (correlates one user's path)
-    , userLabel: String   -- "alice@example.com #u_42" — user code sets via Std.Live.identifySession (TBD)
-    , route    : String
-    , status   : Float    -- HTTP status (0 for non-HTTP entries)
-    , latencyMs: Float
+    { time : String
+    , level : String
+    , message : String
+    , subapp : String
+    , reqId : String
+    , sessionId : String
+    , userLabel : String
+    , route : String
+    , status : Float
+    , latencyMs : Float
     }
-
 
 type alias MetricRow =
-    { name   : String
-    , typ    : String   -- counter / gauge / histogram
-    , labels : String   -- "key1=v1, key2=v2" rendered server-side
-    , value  : Float
-    , sum    : Float    -- populated for histograms
-    , count  : Float
+    { name : String
+    , typ : String
+    , labels : String
+    , value : Float
+    , sum : Float
+    , count : Float
     }
-
 
 type alias TraceRow =
-    { traceId    : String
-    , spanId     : String
-    , parentId   : String
-    , name       : String
-    , kind       : String
-    , startTime  : String
+    { traceId : String
+    , spanId : String
+    , parentId : String
+    , name : String
+    , kind : String
+    , startTime : String
     , durationMs : Float
-    , status     : String
+    , status : String
     }
-
 
 type alias ErrorRow =
-    { count   : Int
+    { count : Int
     , message : String
     }
-
 
 -- ─── Logs filter ────────────────────────────────────────────────
 
@@ -106,11 +109,11 @@ type alias ErrorRow =
 -- pivot. UI-side state; serialises into the /_sky/console/api/logs
 -- query string on every refresh.
 type alias LogFilter =
-    { query     : String   -- free-text substring match (case-insensitive)
-    , session   : String   -- exact match on sessionId; empty = no filter
+    { query : String
+    , session : String
     , showDebug : Bool
-    , showInfo  : Bool
-    , showWarn  : Bool
+    , showInfo : Bool
+    , showWarn : Bool
     , showError : Bool
     }
 
@@ -119,30 +122,57 @@ type alias LogFilter =
 -- noop dispatch). Users opt in via the filter pill on the Logs tab.
 emptyLogFilter : LogFilter
 emptyLogFilter =
-    { query     = ""
-    , session   = ""
+    { query = ""
+    , session = ""
     , showDebug = False
-    , showInfo  = True
-    , showWarn  = True
+    , showInfo = True
+    , showWarn = True
     , showError = True
     }
 
+-- ─── Store interface (v0.16.4 B3) ───────────────────────────────
 
--- ─── Model + Msg ─────────────────────────────────────────────────
-
-type alias Model =
-    { tab       : Tab
-    , parentUrl : String        -- empty → standalone; mock data
-    , overview  : Overview
-    , logs      : List LogEntry
-    , metrics   : List MetricRow
-    , traces    : List TraceRow
-    , errors    : List ErrorRow
-    , lastError : String        -- one-line surface for fetch failures
-    , logFilter : LogFilter
-    , traceQuery : String       -- client-side Traces-tab filter (name / id)
+-- Read-only data plane for the console UI.  Each field is a
+-- Task-returning function that fetches one slice of telemetry.
+-- The bundled console doesn't care how the bytes are produced —
+-- only that the typed shape comes back.
+--
+-- Two implementations ship in v0.16.4:
+--   * `httpStore` (Main.sky) — closes over `parentUrl`, issues
+--     `GET <parent>/_sky/console/api/*` for each read.  This is
+--     the embedded-mode behaviour (every Sky.Live app's auto-
+--     mounted /_sky/console/ subpath).
+--   * `hubStore` (v0.16.4 B4) — backed by direct SQLite reads
+--     over the hub's `console-hot.db` schema.  Same shape as
+--     httpStore; one source ↔ three deployment shapes
+--     (embedded / hub-single / hub-multi).
+--
+-- `listServices` is the v0.16.4 hub addition: embedded mode
+-- reports a single-element list (the host app's name);
+-- hubStore returns the distinct service_name values present.
+type alias Store =
+    { readOverview : () -> Task Error Overview
+    , readLogs : LogFilter -> Task Error (List LogEntry)
+    , readMetrics : () -> Task Error (List MetricRow)
+    , readTraces : () -> Task Error (List TraceRow)
+    , readErrors : () -> Task Error (List ErrorRow)
+    , listServices : () -> Task Error (List String)
     }
 
+-- ─── Model + Msg ─────────────────────────────────────────────────
+type alias Model =
+    { tab : Tab
+    , parentUrl : String
+    , store : Store
+    , overview : Overview
+    , logs : List LogEntry
+    , metrics : List MetricRow
+    , traces : List TraceRow
+    , errors : List ErrorRow
+    , lastError : String
+    , logFilter : LogFilter
+    , traceQuery : String
+    }
 
 -- Msg covers tab switches + scheduled refresh + each per-endpoint
 -- response. Result-typed responses use the canonical Sky.Core.Error
@@ -161,44 +191,67 @@ type Msg
     | LogFilterPickSession String
     | LogFilterClear
     | TraceFilterQuery String
-    | PivotToTrace String   -- jump to Traces tab filtered by a trace id
+    | PivotToTrace String
 
 
 -- ─── Defaults ────────────────────────────────────────────────────
-
 emptyOverview : Overview
 emptyOverview =
-    { skyVersion      = "—"
-    , commit          = "—"
-    , builtAt         = "—"
-    , uptimeSeconds   = 0
-    , requestsTotal   = 0
-    , errorRate5xx    = 0.0
-    , bufferLogUsed   = 0
+    { skyVersion = "—"
+    , commit = "—"
+    , builtAt = "—"
+    , uptimeSeconds = 0
+    , requestsTotal = 0
+    , errorRate5xx = 0.0
+    , bufferLogUsed = 0
     , bufferTraceUsed = 0
-    , productionMode  = False
+    , productionMode = False
     }
 
 
 -- Mock overview used by standalone `sky console` (no parent URL).
 mockOverview : Overview
-mockOverview = emptyOverview
+mockOverview =
+    emptyOverview
 
 
 mockLogs : List LogEntry
 mockLogs =
-    [ { time = "—", level = "info", message = "Standalone mode — no parent URL configured.", subapp = "", reqId = "", sessionId = "", userLabel = "", route = "", status = 0.0, latencyMs = 0.0 }
-    , { time = "—", level = "info", message = "Run from a host app to see live telemetry.", subapp = "", reqId = "", sessionId = "", userLabel = "", route = "", status = 0.0, latencyMs = 0.0 }
+    [ { time = "—"
+      , level = "info"
+      , message = "Standalone mode — no parent URL configured."
+      , subapp = ""
+      , reqId = ""
+      , sessionId = ""
+      , userLabel = ""
+      , route = ""
+      , status = 0.0
+      , latencyMs = 0.0
+      }
+    , { time = "—"
+      , level = "info"
+      , message = "Run from a host app to see live telemetry."
+      , subapp = ""
+      , reqId = ""
+      , sessionId = ""
+      , userLabel = ""
+      , route = ""
+      , status = 0.0
+      , latencyMs = 0.0
+      }
     ]
 
 
 mockMetrics : List MetricRow
-mockMetrics = []
+mockMetrics =
+    []
 
 
 mockTraces : List TraceRow
-mockTraces = []
+mockTraces =
+    []
 
 
 mockErrors : List ErrorRow
-mockErrors = []
+mockErrors =
+    []

@@ -146,6 +146,25 @@ errorRowDecoder =
         |> Pipeline.optional "message" Decode.string ""
 
 
+-- ─── Store factory (v0.16.4 B3) ─────────────────────────────────
+
+
+-- Build the HTTP-backed Store the embedded console uses.  Each
+-- field closes over the parent URL + the locally-defined decoder
+-- and delegates to the same Http.get + Decode.decodeString pipeline
+-- as before.  v0.16.4 hub mounts will plug in `hubStore` instead
+-- (B4) — same shape, SQLite-backed.
+httpStore : String -> Store
+httpStore parent =
+    { readOverview = \_ -> fetchOverview parent
+    , readLogs     = \filter -> fetchLogs parent filter
+    , readMetrics  = \_ -> fetchMetrics parent
+    , readTraces   = \_ -> fetchTraces parent
+    , readErrors   = \_ -> fetchErrors parent
+    , listServices = \_ -> Task.succeed [ "" ]
+    }
+
+
 -- ─── Init / update / subscriptions / view ────────────────────────
 
 init : a -> ( Model, Cmd Msg )
@@ -155,6 +174,7 @@ init _req =
         startModel =
             { tab       = OverviewTab
             , parentUrl = parent
+            , store     = httpStore parent
             , overview  = if parent == "" then mockOverview else emptyOverview
             , logs      = if parent == "" then mockLogs else []
             , metrics   = []
@@ -167,7 +187,7 @@ init _req =
     in
     -- Fire one immediate fetch so the initial render isn't empty;
     -- the 3 s Sub.every then keeps it fresh.
-    ( startModel, fetchForTab parent startModel.tab startModel.logFilter )
+    ( startModel, fetchForTab startModel startModel.tab startModel.logFilter )
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -182,11 +202,11 @@ update msg model =
             -- proxy errors when re-renders ran longer than 3 s on
             -- larger Metrics / Traces datasets.
             ( { model | tab = tab }
-            , fetchForTab model.parentUrl tab model.logFilter
+            , fetchForTab model tab model.logFilter
             )
 
         Tick ->
-            ( model, fetchForTab model.parentUrl model.tab model.logFilter )
+            ( model, fetchForTab model model.tab model.logFilter )
 
         GotOverview (Ok ov) ->
             ( { model | overview = ov, lastError = "" }, Cmd.none )
@@ -224,7 +244,7 @@ update msg model =
                 f2 = { f | query = q }
             in
             ( { model | logFilter = f2 }
-            , fetchLogsOnly model.parentUrl f2
+            , fetchLogsOnly model f2
             )
 
         LogFilterToggleLevel lvl ->
@@ -239,7 +259,7 @@ update msg model =
                         _       -> f
             in
             ( { model | logFilter = f2 }
-            , fetchLogsOnly model.parentUrl f2
+            , fetchLogsOnly model f2
             )
 
         LogFilterPickSession sid ->
@@ -248,12 +268,12 @@ update msg model =
                 f2 = { f | session = sid }
             in
             ( { model | logFilter = f2, tab = LogsTab }
-            , fetchLogsOnly model.parentUrl f2
+            , fetchLogsOnly model f2
             )
 
         LogFilterClear ->
             ( { model | logFilter = emptyLogFilter }
-            , fetchLogsOnly model.parentUrl emptyLogFilter
+            , fetchLogsOnly model emptyLogFilter
             )
 
         -- Traces filter is purely client-side — every span is
@@ -266,16 +286,16 @@ update msg model =
         -- fetches traces if they aren't loaded yet.
         PivotToTrace tid ->
             ( { model | tab = TracesTab, traceQuery = tid }
-            , Cmd.perform (fetchTraces model.parentUrl) GotTraces
+            , Cmd.perform (model.store.readTraces ()) GotTraces
             )
 
 
-fetchLogsOnly : String -> LogFilter -> Cmd Msg
-fetchLogsOnly parent filter =
-    if parent == "" then
+fetchLogsOnly : Model -> LogFilter -> Cmd Msg
+fetchLogsOnly model filter =
+    if model.parentUrl == "" then
         Cmd.none
     else
-        Cmd.perform (fetchLogs parent filter) GotLogs
+        Cmd.perform (model.store.readLogs filter) GotLogs
 
 
 -- Fetch ONLY what the currently-active tab needs (+ overview,
@@ -290,24 +310,24 @@ fetchLogsOnly parent filter =
 -- + request counter), PLUS exactly one of the current tab's
 -- endpoints. Tick interval also bumped to 3 s to give larger
 -- re-renders breathing room.
-fetchForTab : String -> Tab -> LogFilter -> Cmd Msg
-fetchForTab parent tab filter =
-    if parent == "" then
+fetchForTab : Model -> Tab -> LogFilter -> Cmd Msg
+fetchForTab model tab filter =
+    if model.parentUrl == "" then
         Cmd.none
     else
         Cmd.batch
-            (Cmd.perform (fetchOverview parent) GotOverview
-                :: tabFetches parent tab filter)
+            (Cmd.perform (model.store.readOverview ()) GotOverview
+                :: tabFetches model tab filter)
 
 
-tabFetches : String -> Tab -> LogFilter -> List (Cmd Msg)
-tabFetches parent tab filter =
+tabFetches : Model -> Tab -> LogFilter -> List (Cmd Msg)
+tabFetches model tab filter =
     case tab of
         OverviewTab -> []
-        LogsTab     -> [ Cmd.perform (fetchLogs parent filter) GotLogs ]
-        MetricsTab  -> [ Cmd.perform (fetchMetrics parent) GotMetrics ]
-        TracesTab   -> [ Cmd.perform (fetchTraces parent) GotTraces ]
-        ErrorsTab   -> [ Cmd.perform (fetchErrors parent) GotErrors ]
+        LogsTab     -> [ Cmd.perform (model.store.readLogs filter) GotLogs ]
+        MetricsTab  -> [ Cmd.perform (model.store.readMetrics ()) GotMetrics ]
+        TracesTab   -> [ Cmd.perform (model.store.readTraces ()) GotTraces ]
+        ErrorsTab   -> [ Cmd.perform (model.store.readErrors ()) GotErrors ]
 
 
 fetchOverview : String -> Task Error Overview
