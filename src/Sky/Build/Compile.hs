@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 -- | Single-module compilation pipeline.
 -- Source → Parse → Canonicalise → (TODO: Type Check) → Generate Go
 module Sky.Build.Compile where
@@ -196,6 +197,45 @@ globalDceDisabled = unsafePerformIO $ newIORef False
 {-# NOINLINE globalAnonRecords #-}
 globalAnonRecords :: IORef (Map.Map String (Map.Map String T.FieldType))
 globalAnonRecords = unsafePerformIO $ newIORef Map.empty
+
+
+-- | v0.16.5 #492 residual — CSE-resistant IORef read for pure
+-- contexts.
+--
+-- Several pure functions in this module need to read a process-
+-- global IORef from a `let`-binding inside the function body
+-- (whole-program DCE checks against `globalReachableProgram`,
+-- per-compile flags against `globalDceDisabled`, etc.). The
+-- naïve idiom is
+--
+--     reached = unsafePerformIO (readIORef globalReachableProgram)
+--
+-- which works in a single-compile process but breaks under
+-- in-process multi-compile testing: GHC sees the same
+-- `unsafePerformIO (readIORef ...)` expression at distinct call
+-- sites + distinct invocations of the enclosing function, then
+-- floats it out and caches the result via CSE. The IORef gets
+-- written to by `continueCompile` at the start of each compile;
+-- the CSE cache means later compiles read the FIRST compile's
+-- value.
+--
+-- This helper makes the read opaque to GHC's optimiser. The
+-- {-# NOINLINE #-} pragma forbids inlining; the strict bang
+-- pattern on `ref` ensures GHC can't move evaluation; the
+-- function-call surface is no longer a sub-expression GHC can
+-- CSE across call sites.
+--
+-- Use this at every let-binding site in pure functions that
+-- reads a compile-scoped global. Replaces the residual sites
+-- documented in #492:
+--   - generateAliasForDep (globalReachableProgram, globalDceDisabled)
+--   - goPreambleParts (globalIsInlineConsoleBuild, globalConsoleNeeded)
+--   - generateUnionForDep (globalUnionNames)
+--   - record-field codegen (globalAllFieldIdx)
+--   - dep-module dispatch (globalCurrentDepModule)
+{-# NOINLINE readIORefNoCse #-}
+readIORefNoCse :: IORef a -> a
+readIORefNoCse !ref = unsafePerformIO (readIORef ref)
 
 
 -- | v0.15 Stage B — per-region HM type map for the current module.
@@ -3011,8 +3051,8 @@ generateDeclsForDep canMod modPrefix =
         -- `main`. Empty reached set → keep everything (DCE off via
         -- `SKY_DCE=0` or pre-canon-fixpoint code path).
         canonicalModName = ModuleName.toString (Can._name canMod)
-        reached = unsafePerformIO (readIORef globalReachableProgram)
-        dceOff  = unsafePerformIO (readIORef globalDceDisabled)
+        reached = readIORefNoCse globalReachableProgram
+        dceOff  = readIORefNoCse globalDceDisabled
         keepName n =
             dceOff
             || Set.null reached
@@ -3873,14 +3913,14 @@ collectGoImports _canMod srcMod =
     -- dependency is fine (Go links the side-effect import without
     -- triggering the cycle — see runtime-go/rt/console_inline.go for
     -- the registration shim).
-    ++ ( if unsafePerformIO (readIORef globalIsInlineConsoleBuild)
+    ++ ( if readIORefNoCse globalIsInlineConsoleBuild
          then
             -- v0.16.4 — the current build IS the inline console
             -- source. Suppress the self-referential import; otherwise
             -- the post-transform `package console_app` would import
             -- itself and `go build` rejects the cycle.
             []
-         else if unsafePerformIO (readIORef globalConsoleNeeded)
+         else if readIORefNoCse globalConsoleNeeded
                  || entryUsesConsole
               then [ GoIr.GoImport "sky-app/rt/console_app" (Just "_") ]
               else [] )
@@ -6691,7 +6731,7 @@ typeStrWithAliasesReg recAliases fieldIdx tvarMap ty = case ty of
             unionRecovery
               | not (null modStr) = Nothing
               | otherwise =
-                  let allUnions = unsafePerformIO (readIORef globalUnionNames)
+                  let allUnions = readIORefNoCse globalUnionNames
                   in if Set.null allUnions
                        then Nothing
                        else if Set.member name allUnions
@@ -6886,7 +6926,7 @@ tvarsInEmitted ty = case ty of
                 (\(T.FieldType _ ft) -> tvarsInEmitted ft)
                 (Map.elems fields)
             fieldNames = Map.keys fields
-            fieldIdx = unsafePerformIO (readIORef globalAllFieldIdx)
+            fieldIdx = readIORefNoCse globalAllFieldIdx
             aliasMatch = Rec.lookupRecordAlias fieldIdx fieldNames
             syntheticForRec = case aliasMatch of
                 Just aliasName ->
@@ -11147,7 +11187,7 @@ defToStmts def = case def of
         -- module's version survived the flat _stEnv ambiguity
         -- collapse).
         let solved = Rec._cg_solvedTypes getCgEnv
-            curMod = unsafePerformIO (readIORef globalCurrentDepModule)
+            curMod = readIORefNoCse globalCurrentDepModule
             scopedSolved = Solve.withCurrentModule curMod solved
             inferredTy = Solve.lookupSolvedVarScoped name scopedSolved
             (paramTys, retTy) = case inferredTy of
