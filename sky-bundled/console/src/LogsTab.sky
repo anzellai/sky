@@ -1,0 +1,432 @@
+module LogsTab exposing (viewLogsTab)
+
+-- v0.16.4 B6 — per-service drill-down Logs page. Rendered by
+-- View.sky's content router when `Model.hubDbPath /= ""` AND the
+-- active tab is `LogsTab`. Embedded / standalone consoles keep
+-- View.sky's existing single-service `logsView`.
+--
+-- Layout: scope banner (showing currently-selected service + a
+-- "back to all" chip) → filter panel (free-text search + level
+-- toggles) → log table. Log rows render the same way as the
+-- existing logs tab — same columns, same colour cues; the only
+-- delta is that rows are pre-filtered server-side by service
+-- name, so the table is already scoped to whatever
+-- `model.selectedService` is at the time of the fetch.
+--
+-- Per HUB-UI.md §"Tab: Logs": SSE-live updates, level-filter
+-- chips, click a log → expand (deferred to v0.17), service filter
+-- inherited from the multi-service Overview's scope.
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Std.Ui as Ui
+import Std.Ui exposing (Element)
+import Std.Ui.Background as Background
+import Std.Ui.Border as Border
+import Std.Ui.Font as Font
+import State exposing (..)
+
+
+-- ─── Palette (mirrors View.sky's dark theme) ────────────────────
+bgPage : Ui.Color
+bgPage =
+    Ui.rgb 20 23 28
+
+
+bgSurface : Ui.Color
+bgSurface =
+    Ui.rgb 28 32 39
+
+
+bgRaised : Ui.Color
+bgRaised =
+    Ui.rgb 20 23 28
+
+
+bgCode : Ui.Color
+bgCode =
+    Ui.rgb 44 50 60
+
+
+border_ : Ui.Color
+border_ =
+    Ui.rgb 53 59 70
+
+
+borderSoft : Ui.Color
+borderSoft =
+    Ui.rgb 42 47 56
+
+
+textPrimary : Ui.Color
+textPrimary =
+    Ui.rgb 240 243 247
+
+
+textSecondary : Ui.Color
+textSecondary =
+    Ui.rgb 197 203 212
+
+
+textMuted : Ui.Color
+textMuted =
+    Ui.rgb 141 150 163
+
+
+accent : Ui.Color
+accent =
+    Ui.rgb 126 182 255
+
+
+warn : Ui.Color
+warn =
+    Ui.rgb 255 178 77
+
+
+err : Ui.Color
+err =
+    Ui.rgb 255 117 117
+
+
+-- ─── Entry point ────────────────────────────────────────────────
+viewLogsTab : Model -> List (Element Msg)
+viewLogsTab model =
+    [ scopeBanner model.selectedService
+    , filterPanel model.logFilter
+    , logsPanel model.logs
+    ]
+
+
+-- ─── Scope banner ───────────────────────────────────────────────
+--
+-- Mirror of the Overview's `selectorHeader` so the user keeps the
+-- selection context visible across tabs. Click "All services" →
+-- clears the per-tab service filter via SelectService "".
+scopeBanner : String -> Element Msg
+scopeBanner selected =
+    let
+        label =
+            if selected == "" then
+                "All services"
+
+            else
+                selected
+    in
+        Ui.row
+            [ Ui.width Ui.fill
+            , Ui.spacing 10
+            , Background.color bgRaised
+            , Border.width 1
+            , Border.color border_
+            , Border.rounded 6
+            , Ui.paddingXY 14 10
+            ]
+            [ Ui.el
+                  [ Font.size 11
+                  , Font.color textMuted
+                  , Font.letterSpacing 5.0e-2
+                  ]
+                  (Ui.text "SCOPE")
+            , Ui.el
+                  [ Font.size 14, Font.bold, Font.color textPrimary ]
+                  (Ui.text label)
+            , Ui.el [Ui.width Ui.fill] (Ui.text "")
+            , allServicesChip (selected == "")
+            ]
+
+
+allServicesChip : Bool -> Element Msg
+allServicesChip isActive =
+    let
+        bg =
+            if isActive then
+                accent
+
+            else
+                bgCode
+        fg =
+            if isActive then
+                bgPage
+
+            else
+                textSecondary
+    in
+        Ui.el
+            [ Ui.paddingXY 10 6
+            , Background.color bg
+            , Border.rounded 4
+            , Ui.pointer
+            , Ui.onClick (SelectService "")
+            , Font.color fg
+            , Font.size 12
+            , Font.bold
+            ]
+            (Ui.text "All services")
+
+
+-- ─── Filter panel (level toggles + free-text search) ────────────
+filterPanel : LogFilter -> Element Msg
+filterPanel f =
+    Ui.column
+        [ Background.color bgRaised
+        , Border.width 1
+        , Border.color border_
+        , Border.rounded 6
+        , Ui.padding 12
+        , Ui.spacing 8
+        , Ui.width Ui.fill
+        ]
+        [ Ui.row
+              [ Ui.width Ui.fill, Ui.spacing 8 ]
+              [ Ui.input
+                    [ Ui.htmlAttribute "type" "search"
+                    , Ui.htmlAttribute
+                          "placeholder"
+                          "Search message / route / subapp…"
+                    , Ui.htmlAttribute "value" f.query
+                    , Ui.onInput LogFilterQuery
+                    , Ui.width Ui.fill
+                    , Background.color bgCode
+                    , Border.width 1
+                    , Border.color border_
+                    , Border.rounded 4
+                    , Ui.paddingXY 8 6
+                    , Font.color textPrimary
+                    , Font.size 12
+                    , Font.family "ui-monospace, Menlo, monospace"
+                    ]
+              , levelToggle "debug" f.showDebug
+              , levelToggle "info" f.showInfo
+              , levelToggle "warn" f.showWarn
+              , levelToggle "error" f.showError
+              , Ui.el
+                    [ Ui.paddingXY 8 6
+                    , Background.color bgCode
+                    , Border.rounded 4
+                    , Ui.pointer
+                    , Ui.onClick LogFilterClear
+                    , Font.color textSecondary
+                    , Font.size 11
+                    ]
+                    (Ui.text "clear")
+              ]
+        , if f.session == "" then
+              Ui.text ""
+
+          else
+              Ui.row
+                  [ Ui.spacing 6, Font.size 11, Font.color textMuted ]
+                  [ Ui.text "Filtering by session: "
+                  , Ui.el
+                        [ Font.family "ui-monospace, Menlo, monospace"
+                        , Font.color accent
+                        ]
+                        (Ui.text f.session)
+                  ]
+        ]
+
+
+levelToggle : String -> Bool -> Element Msg
+levelToggle lvl on =
+    let
+        bg =
+            if on then
+                bgCode
+
+            else
+                bgSurface
+        fg =
+            if on then
+                levelColor lvl
+
+            else
+                textMuted
+    in
+        Ui.el
+            [ Background.color bg
+            , Border.width 1
+            , Border.color border_
+            , Border.rounded 4
+            , Ui.paddingXY 8 6
+            , Ui.pointer
+            , Ui.onClick (LogFilterToggleLevel lvl)
+            , Font.color fg
+            , Font.bold
+            , Font.size 11
+            ]
+            (Ui.text (String.toUpper lvl))
+
+
+-- ─── Logs table ─────────────────────────────────────────────────
+logsPanel : List LogEntry -> Element Msg
+logsPanel entries =
+    panel
+        "Recent log entries"
+        (if List.isEmpty entries then
+            [emptyState
+                "No log entries for this service yet — the SSE tail will fill this in."]
+
+        else
+            List.map logRow entries)
+
+
+logRow : LogEntry -> Element Msg
+logRow e =
+    Ui.row
+        [ Ui.width Ui.fill
+        , Ui.paddingXY 0 6
+        , Ui.spacing 12
+        , Border.widthEach { top = 0, right = 0, bottom = 1, left = 0 }
+        , Border.color borderSoft
+        ]
+        [ Ui.el
+              [ Ui.width (Ui.px 80)
+              , Font.color textMuted
+              , Font.family "ui-monospace, Menlo, monospace"
+              , Font.size 12
+              ]
+              (Ui.text (compactTime e.time))
+        , Ui.el
+              [ Ui.width (Ui.px 50)
+              , Font.color (levelColor e.level)
+              , Font.bold
+              , Font.size 12
+              ]
+              (Ui.text (String.toUpper e.level))
+        , subappBadge e.subapp
+        , sessionBadge e.sessionId
+        , traceBadge e.reqId
+        , Ui.el
+              [ Ui.width Ui.fill
+              , Font.color (levelTextColor e.level)
+              , Font.size 13
+              ]
+              (Ui.text e.message)
+        ]
+
+
+sessionBadge : String -> Element Msg
+sessionBadge sid =
+    if sid == "" then
+        Ui.el [Ui.width (Ui.px 80)] (Ui.text "")
+
+    else
+        Ui.el
+            [ Ui.width (Ui.px 80)
+            , Background.color bgCode
+            , Border.rounded 3
+            , Ui.paddingXY 6 2
+            , Ui.pointer
+            , Ui.onClick (LogFilterPickSession sid)
+            , Font.family "ui-monospace, Menlo, monospace"
+            , Font.size 11
+            , Font.color accent
+            ]
+            (Ui.text (String.left 8 sid))
+
+
+traceBadge : String -> Element Msg
+traceBadge tid =
+    if tid == "" then
+        Ui.el [Ui.width (Ui.px 92)] (Ui.text "")
+
+    else
+        Ui.el
+            [ Ui.width (Ui.px 92)
+            , Background.color bgCode
+            , Border.rounded 3
+            , Ui.paddingXY 6 2
+            , Ui.pointer
+            , Ui.onClick (PivotToTrace tid)
+            , Font.family "ui-monospace, Menlo, monospace"
+            , Font.size 11
+            , Font.color textSecondary
+            ]
+            (Ui.text ("trace " ++ String.left 8 tid))
+
+
+subappBadge : String -> Element Msg
+subappBadge sub =
+    if sub == "" then
+        Ui.el [Ui.width (Ui.px 70)] (Ui.text "")
+
+    else
+        Ui.el
+            [ Ui.width (Ui.px 70)
+            , Background.color bgCode
+            , Border.rounded 3
+            , Ui.paddingXY 6 2
+            , Font.family "ui-monospace, Menlo, monospace"
+            , Font.size 11
+            , Font.color textSecondary
+            ]
+            (Ui.text sub)
+
+
+compactTime : String -> String
+compactTime ts =
+    case String.split "T" ts of
+
+        [_date, rest] ->
+            String.left 8 rest
+
+        _ ->
+            ts
+
+
+levelColor : String -> Ui.Color
+levelColor level =
+    case level of
+
+        "warn" ->
+            warn
+
+        "error" ->
+            err
+
+        _ ->
+            textMuted
+
+
+levelTextColor : String -> Ui.Color
+levelTextColor level =
+    case level of
+
+        "warn" ->
+            warn
+
+        "error" ->
+            err
+
+        _ ->
+            textPrimary
+
+
+-- ─── Shared primitives (mirrors View.sky) ───────────────────────
+panel : String -> List (Element Msg) -> Element Msg
+panel title children =
+    Ui.column
+        [ Background.color bgRaised
+        , Border.width 1
+        , Border.color border_
+        , Border.rounded 6
+        , Ui.padding 14
+        , Ui.spacing 6
+        , Ui.width Ui.fill
+        ]
+        (Ui.el
+            [ Font.size 12
+            , Font.bold
+            , Font.color textMuted
+            , Font.letterSpacing 5.0e-2
+            , Ui.paddingXY 0 4
+            ]
+            (Ui.text (String.toUpper title))
+            :: children)
+
+
+emptyState : String -> Element Msg
+emptyState message =
+    Ui.el
+        [ Ui.padding 20, Ui.centerX, Font.color textMuted, Font.italic ]
+        (Ui.text message)

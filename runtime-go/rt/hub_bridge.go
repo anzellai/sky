@@ -90,6 +90,20 @@ type HubStoreReader interface {
 	// rate over the last 60 s window per service, and emits 30
 	// 2-second buckets for each sparkline.
 	ServiceStatsJSON() (string, error)
+
+	// QueryFilteredLogsJSON / QueryFilteredMetricsJSON /
+	// QueryFilteredSpansJSON / QueryFilteredErrorsJSON (v0.16.4 B6)
+	// — per-service drill-down variants of the readers above.
+	// `serviceName == ""` means "all services" (no filter — the
+	// store-side WHERE clause is omitted).
+	//
+	// Wire shape matches the single-service variants exactly so the
+	// Sky-side typed record narrowing (rt.Coerce →
+	// narrowMapToStruct) is reused.
+	QueryFilteredLogsJSON(serviceName, filterJSON string) (string, error)
+	QueryFilteredMetricsJSON(serviceName string) (string, error)
+	QueryFilteredSpansJSON(serviceName string) (string, error)
+	QueryFilteredErrorsJSON(serviceName string) (string, error)
 }
 
 var (
@@ -417,4 +431,111 @@ func decodeRowsJSON(raw string) ([]any, error) {
 		out[i] = row
 	}
 	return out, nil
+}
+
+// hubStringArg coerces a Sky-side argument (typically a `String`
+// passed through the typed kernel dispatch) into a Go `string`.
+// Returns "" for `nil` or non-string values so callers can treat
+// an empty service-name as "no filter".
+func hubStringArg(v any) string {
+	if v == nil {
+		return ""
+	}
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return ""
+}
+
+// Hub_readFilteredLogs implements:
+//
+//	HubStore.hubReadFilteredLogs : String -> String -> LogFilter -> Task Error (List LogEntry)
+//
+// The first arg is the unused dbPath (multi-store future), the
+// second is the service name to filter by, the third is the
+// LogFilter record. An empty service name means "no filter".
+func Hub_readFilteredLogs(_dbPathArg, serviceArg, filterArg any) any {
+	return func() any {
+		r := getHubStore()
+		if r == nil {
+			return Ok[any, any]([]any{})
+		}
+		svc := hubStringArg(serviceArg)
+		filterJSON := encodeFilterJSON(filterArg)
+		out, err := r.QueryFilteredLogsJSON(svc, filterJSON)
+		if err != nil {
+			return Err[any, any](ErrFfi("hub.readFilteredLogs: " + err.Error()))
+		}
+		rows, err := decodeRowsJSON(out)
+		if err != nil {
+			return Err[any, any](ErrFfi("hub.readFilteredLogs: decode: " + err.Error()))
+		}
+		return Ok[any, any](rows)
+	}
+}
+
+// Hub_readFilteredMetrics implements:
+//
+//	HubStore.hubReadFilteredMetrics : String -> String -> Task Error (List MetricRow)
+func Hub_readFilteredMetrics(_dbPathArg, serviceArg any) any {
+	return func() any {
+		r := getHubStore()
+		if r == nil {
+			return Ok[any, any]([]any{})
+		}
+		svc := hubStringArg(serviceArg)
+		out, err := r.QueryFilteredMetricsJSON(svc)
+		if err != nil {
+			return Err[any, any](ErrFfi("hub.readFilteredMetrics: " + err.Error()))
+		}
+		rows, err := decodeRowsJSON(out)
+		if err != nil {
+			return Err[any, any](ErrFfi("hub.readFilteredMetrics: decode: " + err.Error()))
+		}
+		return Ok[any, any](rows)
+	}
+}
+
+// Hub_readFilteredTraces implements:
+//
+//	HubStore.hubReadFilteredTraces : String -> String -> Task Error (List TraceRow)
+func Hub_readFilteredTraces(_dbPathArg, serviceArg any) any {
+	return func() any {
+		r := getHubStore()
+		if r == nil {
+			return Ok[any, any]([]any{})
+		}
+		svc := hubStringArg(serviceArg)
+		out, err := r.QueryFilteredSpansJSON(svc)
+		if err != nil {
+			return Err[any, any](ErrFfi("hub.readFilteredTraces: " + err.Error()))
+		}
+		rows, err := decodeRowsJSON(out)
+		if err != nil {
+			return Err[any, any](ErrFfi("hub.readFilteredTraces: decode: " + err.Error()))
+		}
+		return Ok[any, any](rows)
+	}
+}
+
+// Hub_readFilteredErrors implements:
+//
+//	HubStore.hubReadFilteredErrors : String -> String -> Task Error (List ErrorRow)
+func Hub_readFilteredErrors(_dbPathArg, serviceArg any) any {
+	return func() any {
+		r := getHubStore()
+		if r == nil {
+			return Ok[any, any]([]any{})
+		}
+		svc := hubStringArg(serviceArg)
+		out, err := r.QueryFilteredErrorsJSON(svc)
+		if err != nil {
+			return Err[any, any](ErrFfi("hub.readFilteredErrors: " + err.Error()))
+		}
+		rows, err := decodeRowsJSON(out)
+		if err != nil {
+			return Err[any, any](ErrFfi("hub.readFilteredErrors: decode: " + err.Error()))
+		}
+		return Ok[any, any](rows)
+	}
 }

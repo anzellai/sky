@@ -116,7 +116,18 @@ say "running sky build against sky-bundled/console/src/Main.sky"
 # src/Sky/Build/Compile.hs (`globalIsInlineConsoleBuild`).
 (
     cd "$CONSOLE_SRC"
-    SKY_BUILD_IS_INLINE_CONSOLE=1 timeout 600 "$SKY" build src/Main.sky
+    # SKY_RUNTIME_DIR points at the worktree-root runtime-go so the
+    # compiler's `locateRuntimeDir` probe (which walks up from cwd
+    # AND from the binary's path) finds the in-tree edits rather
+    # than falling through to the embedded copy baked into the
+    # binary at TH-time. Without this, edits to runtime-go/rt/*.go
+    # under a worktree cwd silently fall through to the stale
+    # embedded snapshot — visible as "undefined rt.NewSymbol" go
+    # build failures even though `strings sky-out/sky` shows the
+    # symbol IS in the binary.
+    SKY_RUNTIME_DIR="$ROOT/runtime-go" \
+        SKY_BUILD_IS_INLINE_CONSOLE=1 \
+        timeout 600 "$SKY" build src/Main.sky
 )
 
 GENERATED="$CONSOLE_SRC/sky-out/main.go"

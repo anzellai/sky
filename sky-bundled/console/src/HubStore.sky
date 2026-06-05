@@ -39,6 +39,16 @@ hubStore dbPath =
     , readErrors = \_ -> hubReadErrors dbPath
     , listServices = \_ -> hubListServices dbPath
     , readServiceStats = \_ -> hubReadServiceStats dbPath
+    -- v0.16.4 B6: per-service drill-down readers.  Each takes the
+    -- service name as the first arg; an empty name means "all
+    -- services" which the runtime treats as no filter (falls back
+    -- to the un-filtered query).  Same JSON-encoded payload as
+    -- the single-service readers; rt.Coerce narrows into the
+    -- typed records at the call site.
+    , readFilteredLogs = \svc filter -> hubReadFilteredLogs dbPath svc filter
+    , readFilteredMetrics = \svc -> hubReadFilteredMetrics dbPath svc
+    , readFilteredTraces = \svc -> hubReadFilteredTraces dbPath svc
+    , readFilteredErrors = \svc -> hubReadFilteredErrors dbPath svc
     }
 
 
@@ -75,3 +85,29 @@ hubListServices =
 hubReadServiceStats : String -> Task Error (List ServiceStat)
 hubReadServiceStats =
     Ffi.kernel "Hub_readServiceStats"
+
+
+-- v0.16.4 B6: per-service drill-down kernels. Same shape as the
+-- single-service readers above, plus a leading `String` arg
+-- carrying the service name to filter by (empty = no filter).
+-- Wire payload matches the existing single-service shape so the
+-- typed Sky-side record narrowing path (rt.Coerce →
+-- narrowMapToStruct) is reused verbatim.
+hubReadFilteredLogs : String -> String -> LogFilter -> Task Error (List LogEntry)
+hubReadFilteredLogs =
+    Ffi.kernel "Hub_readFilteredLogs"
+
+
+hubReadFilteredMetrics : String -> String -> Task Error (List MetricRow)
+hubReadFilteredMetrics =
+    Ffi.kernel "Hub_readFilteredMetrics"
+
+
+hubReadFilteredTraces : String -> String -> Task Error (List TraceRow)
+hubReadFilteredTraces =
+    Ffi.kernel "Hub_readFilteredTraces"
+
+
+hubReadFilteredErrors : String -> String -> Task Error (List ErrorRow)
+hubReadFilteredErrors =
+    Ffi.kernel "Hub_readFilteredErrors"

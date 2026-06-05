@@ -154,6 +154,245 @@ func TestStoreReader_ServiceStatsJSON_EmptyStore(t *testing.T) {
 	}
 }
 
+// TestStoreReader_QueryFilteredLogs verifies the v0.16.4 B6
+// per-service filter narrows the log query to the named service.
+// Pre-B6 every tab pulled the whole un-filtered store; the
+// drill-down UI needs server-side scope so the wire payload stays
+// bounded even on multi-tenant deployments.
+//
+// Setup: insert 5 log rows for "alpha" and 5 for "beta", then
+// query with serviceName="alpha". The result MUST contain only
+// alpha's rows.
+func TestStoreReader_QueryFilteredLogs(t *testing.T) {
+	dir := t.TempDir()
+	s, err := newStore(dir, storeOptions{retentionHours: 24, pruneInterval: time.Hour})
+	if err != nil {
+		t.Fatalf("newStore: %v", err)
+	}
+	defer s.Close()
+
+	now := time.Now().UTC()
+	for i := 0; i < 5; i++ {
+		s.Insert([]pendingItem{{
+			kind:        signalLog,
+			ts:          now.Add(-time.Duration(i) * time.Second),
+			serviceName: "alpha",
+			level:       "info",
+			message:     "alpha-msg",
+		}})
+		s.Insert([]pendingItem{{
+			kind:        signalLog,
+			ts:          now.Add(-time.Duration(i) * time.Second),
+			serviceName: "beta",
+			level:       "info",
+			message:     "beta-msg",
+		}})
+	}
+	s.FlushSync(2 * time.Second)
+
+	reader := s.AsReader()
+	out, err := reader.QueryFilteredLogsJSON("alpha", "")
+	if err != nil {
+		t.Fatalf("QueryFilteredLogsJSON: %v", err)
+	}
+	var rows []hubLogRow
+	if err := json.Unmarshal([]byte(out), &rows); err != nil {
+		t.Fatalf("unmarshal: %v\nraw=%s", err, out)
+	}
+	if len(rows) == 0 {
+		t.Fatalf("got 0 rows for alpha, want > 0; raw=%s", out)
+	}
+	for _, r := range rows {
+		if r.Subapp != "alpha" {
+			t.Errorf("row.Subapp=%q, want alpha; raw=%s", r.Subapp, out)
+		}
+		if r.Message != "alpha-msg" {
+			t.Errorf("row.Message=%q, want alpha-msg", r.Message)
+		}
+	}
+
+	// Empty service name = no filter → returns rows from both services.
+	out, err = reader.QueryFilteredLogsJSON("", "")
+	if err != nil {
+		t.Fatalf("QueryFilteredLogsJSON(\"\"): %v", err)
+	}
+	if err := json.Unmarshal([]byte(out), &rows); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	seen := map[string]bool{}
+	for _, r := range rows {
+		seen[r.Subapp] = true
+	}
+	if !seen["alpha"] || !seen["beta"] {
+		t.Errorf("empty-service should return rows from both services; seen=%v", seen)
+	}
+}
+
+// TestStoreReader_QueryFilteredMetrics — same pattern as Logs.
+// Insert metrics for two services, assert the named filter
+// narrows to one.
+func TestStoreReader_QueryFilteredMetrics(t *testing.T) {
+	dir := t.TempDir()
+	s, err := newStore(dir, storeOptions{retentionHours: 24, pruneInterval: time.Hour})
+	if err != nil {
+		t.Fatalf("newStore: %v", err)
+	}
+	defer s.Close()
+
+	now := time.Now().UTC()
+	for i := 0; i < 3; i++ {
+		s.Insert([]pendingItem{{
+			kind:        signalMetric,
+			ts:          now.Add(-time.Duration(i) * time.Second),
+			serviceName: "alpha",
+			metricName:  "alpha-counter",
+			metricType:  "counter",
+			value:       float64(i),
+		}})
+		s.Insert([]pendingItem{{
+			kind:        signalMetric,
+			ts:          now.Add(-time.Duration(i) * time.Second),
+			serviceName: "beta",
+			metricName:  "beta-counter",
+			metricType:  "counter",
+			value:       float64(i + 100),
+		}})
+	}
+	s.FlushSync(2 * time.Second)
+
+	reader := s.AsReader()
+	out, err := reader.QueryFilteredMetricsJSON("alpha")
+	if err != nil {
+		t.Fatalf("QueryFilteredMetricsJSON: %v", err)
+	}
+	var rows []hubMetricRow
+	if err := json.Unmarshal([]byte(out), &rows); err != nil {
+		t.Fatalf("unmarshal: %v\nraw=%s", err, out)
+	}
+	if len(rows) == 0 {
+		t.Fatalf("got 0 rows for alpha, want > 0; raw=%s", out)
+	}
+	for _, r := range rows {
+		if r.Name != "alpha-counter" {
+			t.Errorf("row.Name=%q, want alpha-counter; raw=%s", r.Name, out)
+		}
+	}
+}
+
+// TestStoreReader_QueryFilteredSpans — same pattern as Logs but
+// over the span table.
+func TestStoreReader_QueryFilteredSpans(t *testing.T) {
+	dir := t.TempDir()
+	s, err := newStore(dir, storeOptions{retentionHours: 24, pruneInterval: time.Hour})
+	if err != nil {
+		t.Fatalf("newStore: %v", err)
+	}
+	defer s.Close()
+
+	now := time.Now().UTC()
+	for i := 0; i < 3; i++ {
+		start := now.Add(-time.Duration(i+1) * time.Second)
+		s.Insert([]pendingItem{{
+			kind:        signalSpan,
+			ts:          start,
+			serviceName: "alpha",
+			spanName:    "alpha-op",
+			traceID:     "tr-a",
+			spanID:      "sp-a",
+			startTime:   start,
+			endTime:     start.Add(50 * time.Millisecond),
+		}})
+		s.Insert([]pendingItem{{
+			kind:        signalSpan,
+			ts:          start,
+			serviceName: "beta",
+			spanName:    "beta-op",
+			traceID:     "tr-b",
+			spanID:      "sp-b",
+			startTime:   start,
+			endTime:     start.Add(50 * time.Millisecond),
+		}})
+	}
+	s.FlushSync(2 * time.Second)
+
+	reader := s.AsReader()
+	out, err := reader.QueryFilteredSpansJSON("alpha")
+	if err != nil {
+		t.Fatalf("QueryFilteredSpansJSON: %v", err)
+	}
+	var rows []hubTraceRow
+	if err := json.Unmarshal([]byte(out), &rows); err != nil {
+		t.Fatalf("unmarshal: %v\nraw=%s", err, out)
+	}
+	if len(rows) == 0 {
+		t.Fatalf("got 0 rows for alpha, want > 0; raw=%s", out)
+	}
+	for _, r := range rows {
+		if r.Name != "alpha-op" {
+			t.Errorf("row.Name=%q, want alpha-op; raw=%s", r.Name, out)
+		}
+		// hubTraceRow.Kind carries the service name (legacy
+		// field-mapping; see bridge.go::QuerySpansJSON).
+		if r.Kind != "alpha" {
+			t.Errorf("row.Kind=%q, want alpha; raw=%s", r.Kind, out)
+		}
+	}
+}
+
+// TestStoreReader_QueryFilteredErrors — error rollup MUST exclude
+// rows from other services. Insert error logs for two services,
+// assert the rollup count for the named service excludes the
+// other.
+func TestStoreReader_QueryFilteredErrors(t *testing.T) {
+	dir := t.TempDir()
+	s, err := newStore(dir, storeOptions{retentionHours: 24, pruneInterval: time.Hour})
+	if err != nil {
+		t.Fatalf("newStore: %v", err)
+	}
+	defer s.Close()
+
+	now := time.Now().UTC()
+	for i := 0; i < 4; i++ {
+		s.Insert([]pendingItem{{
+			kind:        signalLog,
+			ts:          now.Add(-time.Duration(i) * time.Second),
+			serviceName: "alpha",
+			level:       "error",
+			message:     "alpha-error",
+		}})
+	}
+	// 2 error rows for beta with a distinct message.
+	for i := 0; i < 2; i++ {
+		s.Insert([]pendingItem{{
+			kind:        signalLog,
+			ts:          now.Add(-time.Duration(i) * time.Second),
+			serviceName: "beta",
+			level:       "error",
+			message:     "beta-error",
+		}})
+	}
+	s.FlushSync(2 * time.Second)
+
+	reader := s.AsReader()
+	out, err := reader.QueryFilteredErrorsJSON("alpha")
+	if err != nil {
+		t.Fatalf("QueryFilteredErrorsJSON: %v", err)
+	}
+	var rows []hubErrorRow
+	if err := json.Unmarshal([]byte(out), &rows); err != nil {
+		t.Fatalf("unmarshal: %v\nraw=%s", err, out)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("got %d distinct messages for alpha, want 1; raw=%s", len(rows), out)
+	}
+	if rows[0].Message != "alpha-error" {
+		t.Errorf("rows[0].Message=%q, want alpha-error", rows[0].Message)
+	}
+	if rows[0].Count != 4 {
+		t.Errorf("rows[0].Count=%d, want 4", rows[0].Count)
+	}
+}
+
 // TestStoreReader_ServiceStatsJSON_WarnThreshold sits in the
 // 1–5% error-rate band → "warn" pill. Locks in the threshold so
 // future tuning doesn't silently change the UX.

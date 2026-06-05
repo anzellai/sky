@@ -1,0 +1,199 @@
+module ErrorsTab exposing (viewErrorsTab)
+
+-- v0.16.4 B6 — per-service drill-down Errors page. Rendered by
+-- View.sky's content router when `Model.hubDbPath /= ""` AND the
+-- active tab is `ErrorsTab`. Embedded / standalone consoles keep
+-- View.sky's existing `errorsView`.
+--
+-- Layout: scope banner → error rollup list (count + message), one
+-- row per distinct error message. The aggregator on the hub side
+-- counts message frequency over the most recent 500 error-level
+-- log rows; same shape as the un-filtered error rollup.
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Std.Ui as Ui
+import Std.Ui exposing (Element)
+import Std.Ui.Background as Background
+import Std.Ui.Border as Border
+import Std.Ui.Font as Font
+import State exposing (..)
+
+
+bgPage : Ui.Color
+bgPage =
+    Ui.rgb 20 23 28
+
+
+bgRaised : Ui.Color
+bgRaised =
+    Ui.rgb 20 23 28
+
+
+bgCode : Ui.Color
+bgCode =
+    Ui.rgb 44 50 60
+
+
+border_ : Ui.Color
+border_ =
+    Ui.rgb 53 59 70
+
+
+borderSoft : Ui.Color
+borderSoft =
+    Ui.rgb 42 47 56
+
+
+textPrimary : Ui.Color
+textPrimary =
+    Ui.rgb 240 243 247
+
+
+textSecondary : Ui.Color
+textSecondary =
+    Ui.rgb 197 203 212
+
+
+textMuted : Ui.Color
+textMuted =
+    Ui.rgb 141 150 163
+
+
+accent : Ui.Color
+accent =
+    Ui.rgb 126 182 255
+
+
+err : Ui.Color
+err =
+    Ui.rgb 255 117 117
+
+
+-- ─── Entry point ────────────────────────────────────────────────
+viewErrorsTab : Model -> List (Element Msg)
+viewErrorsTab model =
+    [ scopeBanner model.selectedService, errorsPanel model.errors ]
+
+
+scopeBanner : String -> Element Msg
+scopeBanner selected =
+    let
+        label =
+            if selected == "" then
+                "All services"
+
+            else
+                selected
+    in
+        Ui.row
+            [ Ui.width Ui.fill
+            , Ui.spacing 10
+            , Background.color bgRaised
+            , Border.width 1
+            , Border.color border_
+            , Border.rounded 6
+            , Ui.paddingXY 14 10
+            ]
+            [ Ui.el
+                  [ Font.size 11
+                  , Font.color textMuted
+                  , Font.letterSpacing 5.0e-2
+                  ]
+                  (Ui.text "SCOPE")
+            , Ui.el
+                  [ Font.size 14, Font.bold, Font.color textPrimary ]
+                  (Ui.text label)
+            , Ui.el [Ui.width Ui.fill] (Ui.text "")
+            , allServicesChip (selected == "")
+            ]
+
+
+allServicesChip : Bool -> Element Msg
+allServicesChip isActive =
+    let
+        bg =
+            if isActive then
+                accent
+
+            else
+                bgCode
+        fg =
+            if isActive then
+                bgPage
+
+            else
+                textSecondary
+    in
+        Ui.el
+            [ Ui.paddingXY 10 6
+            , Background.color bg
+            , Border.rounded 4
+            , Ui.pointer
+            , Ui.onClick (SelectService "")
+            , Font.color fg
+            , Font.size 12
+            , Font.bold
+            ]
+            (Ui.text "All services")
+
+
+errorsPanel : List ErrorRow -> Element Msg
+errorsPanel rows =
+    panel
+        "Top errors by frequency"
+        (if List.isEmpty rows then
+            [emptyState "No errors for this service — nice work."]
+
+        else
+            List.map errorRowView rows)
+
+
+errorRowView : ErrorRow -> Element Msg
+errorRowView r =
+    Ui.row
+        [ Ui.width Ui.fill
+        , Ui.paddingXY 0 6
+        , Ui.spacing 12
+        , Border.widthEach { top = 0, right = 0, bottom = 1, left = 0 }
+        , Border.color borderSoft
+        ]
+        [ Ui.el
+              [ Ui.width (Ui.px 60)
+              , Font.color err
+              , Font.bold
+              , Font.size 13
+              , Font.family "ui-monospace, Menlo, monospace"
+              ]
+              (Ui.text ("×" ++ String.fromInt r.count))
+        , Ui.el [ Font.size 13, Font.color textPrimary ] (Ui.text r.message)
+        ]
+
+
+panel : String -> List (Element Msg) -> Element Msg
+panel title children =
+    Ui.column
+        [ Background.color bgRaised
+        , Border.width 1
+        , Border.color border_
+        , Border.rounded 6
+        , Ui.padding 14
+        , Ui.spacing 6
+        , Ui.width Ui.fill
+        ]
+        (Ui.el
+            [ Font.size 12
+            , Font.bold
+            , Font.color textMuted
+            , Font.letterSpacing 5.0e-2
+            , Ui.paddingXY 0 4
+            ]
+            (Ui.text (String.toUpper title))
+            :: children)
+
+
+emptyState : String -> Element Msg
+emptyState message =
+    Ui.el
+        [ Ui.padding 20, Ui.centerX, Font.color textMuted, Font.italic ]
+        (Ui.text message)

@@ -167,6 +167,16 @@ emptyLogFilter =
 -- `listServices` is the v0.16.4 hub addition: embedded mode
 -- reports a single-element list (the host app's name);
 -- hubStore returns the distinct service_name values present.
+--
+-- `readFiltered*` (v0.16.4 B6) are the per-service drill-down
+-- variants of readLogs/readMetrics/readTraces/readErrors used by
+-- the dedicated tab pages (LogsTab.sky / MetricsTab.sky / …) when
+-- the user picks a service from the multi-service Overview's
+-- service card scroller. The first `String` arg is the service
+-- name; an empty string means "all services" (callers should fall
+-- back to the unfiltered read in that case). Embedded mode wires
+-- these to the existing single-service readers (the `svc` arg is
+-- ignored — embedded mode only knows about the host app).
 type alias Store =
     { readOverview : () -> Task Error Overview
     , readLogs : LogFilter -> Task Error (List LogEntry)
@@ -175,6 +185,10 @@ type alias Store =
     , readErrors : () -> Task Error (List ErrorRow)
     , listServices : () -> Task Error (List String)
     , readServiceStats : () -> Task Error (List ServiceStat)
+    , readFilteredLogs : String -> LogFilter -> Task Error (List LogEntry)
+    , readFilteredMetrics : String -> Task Error (List MetricRow)
+    , readFilteredTraces : String -> Task Error (List TraceRow)
+    , readFilteredErrors : String -> Task Error (List ErrorRow)
     }
 
 -- ─── Model + Msg ─────────────────────────────────────────────────

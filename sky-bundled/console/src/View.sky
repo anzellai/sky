@@ -10,6 +10,10 @@ import Std.Ui.Border as Border
 import Std.Ui.Font as Font
 import State exposing (..)
 import Overview exposing (viewOverview)
+import LogsTab exposing (viewLogsTab)
+import MetricsTab exposing (viewMetricsTab)
+import TracesTab exposing (viewTracesTab)
+import ErrorsTab exposing (viewErrorsTab)
 
 
 -- ─── Palette ─────────────────────────────────────────────────────
@@ -223,16 +227,37 @@ content model =
                     overviewView model.overview
 
             MetricsTab ->
-                metricsView model.metrics
+                -- v0.16.4 B6: hub-mode drill-down. When a service
+                -- is selected in the multi-service Overview the
+                -- new MetricsTab page renders a scope banner +
+                -- pre-filtered metrics. Embedded / standalone
+                -- consoles keep the existing single-service view.
+                if model.hubDbPath /= "" then
+                    viewMetricsTab model
+
+                else
+                    metricsView model.metrics
 
             LogsTab ->
-                logsView model
+                if model.hubDbPath /= "" then
+                    viewLogsTab model
+
+                else
+                    logsView model
 
             TracesTab ->
-                tracesView model.traceQuery model.traces
+                if model.hubDbPath /= "" then
+                    viewTracesTab model
+
+                else
+                    tracesView model.traceQuery model.traces
 
             ErrorsTab ->
-                errorsView model.errors)
+                if model.hubDbPath /= "" then
+                    viewErrorsTab model
+
+                else
+                    errorsView model.errors)
 
 
 -- ─── Overview tab ────────────────────────────────────────────────

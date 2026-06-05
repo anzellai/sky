@@ -1,0 +1,408 @@
+module TracesTab exposing (viewTracesTab)
+
+-- v0.16.4 B6 — per-service drill-down Traces page. Rendered by
+-- View.sky's content router when `Model.hubDbPath /= ""` AND the
+-- active tab is `TracesTab`. Embedded / standalone consoles keep
+-- View.sky's existing `tracesView`.
+--
+-- Layout: scope banner → free-text trace filter → flame-graph-
+-- styled span tree per trace. Same renderer as View.sky's
+-- single-service tracesView; the only delta is scope-banner +
+-- pre-filtered rows.
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Std.Ui as Ui
+import Std.Ui exposing (Element)
+import Std.Ui.Background as Background
+import Std.Ui.Border as Border
+import Std.Ui.Font as Font
+import State exposing (..)
+
+
+bgPage : Ui.Color
+bgPage =
+    Ui.rgb 20 23 28
+
+
+bgRaised : Ui.Color
+bgRaised =
+    Ui.rgb 20 23 28
+
+
+bgCode : Ui.Color
+bgCode =
+    Ui.rgb 44 50 60
+
+
+border_ : Ui.Color
+border_ =
+    Ui.rgb 53 59 70
+
+
+borderSoft : Ui.Color
+borderSoft =
+    Ui.rgb 42 47 56
+
+
+textPrimary : Ui.Color
+textPrimary =
+    Ui.rgb 240 243 247
+
+
+textSecondary : Ui.Color
+textSecondary =
+    Ui.rgb 197 203 212
+
+
+textMuted : Ui.Color
+textMuted =
+    Ui.rgb 141 150 163
+
+
+accent : Ui.Color
+accent =
+    Ui.rgb 126 182 255
+
+
+err : Ui.Color
+err =
+    Ui.rgb 255 117 117
+
+
+-- ─── Entry point ────────────────────────────────────────────────
+viewTracesTab : Model -> List (Element Msg)
+viewTracesTab model =
+    [ scopeBanner model.selectedService
+    , tracesFilterPanel model.traceQuery
+    , tracesPanel model.traceQuery model.traces
+    ]
+
+
+scopeBanner : String -> Element Msg
+scopeBanner selected =
+    let
+        label =
+            if selected == "" then
+                "All services"
+
+            else
+                selected
+    in
+        Ui.row
+            [ Ui.width Ui.fill
+            , Ui.spacing 10
+            , Background.color bgRaised
+            , Border.width 1
+            , Border.color border_
+            , Border.rounded 6
+            , Ui.paddingXY 14 10
+            ]
+            [ Ui.el
+                  [ Font.size 11
+                  , Font.color textMuted
+                  , Font.letterSpacing 5.0e-2
+                  ]
+                  (Ui.text "SCOPE")
+            , Ui.el
+                  [ Font.size 14, Font.bold, Font.color textPrimary ]
+                  (Ui.text label)
+            , Ui.el [Ui.width Ui.fill] (Ui.text "")
+            , allServicesChip (selected == "")
+            ]
+
+
+allServicesChip : Bool -> Element Msg
+allServicesChip isActive =
+    let
+        bg =
+            if isActive then
+                accent
+
+            else
+                bgCode
+        fg =
+            if isActive then
+                bgPage
+
+            else
+                textSecondary
+    in
+        Ui.el
+            [ Ui.paddingXY 10 6
+            , Background.color bg
+            , Border.rounded 4
+            , Ui.pointer
+            , Ui.onClick (SelectService "")
+            , Font.color fg
+            , Font.size 12
+            , Font.bold
+            ]
+            (Ui.text "All services")
+
+
+tracesFilterPanel : String -> Element Msg
+tracesFilterPanel query =
+    Ui.row
+        [ Background.color bgRaised
+        , Border.width 1
+        , Border.color border_
+        , Border.rounded 6
+        , Ui.padding 12
+        , Ui.spacing 8
+        , Ui.width Ui.fill
+        ]
+        [ Ui.input
+              [ Ui.htmlAttribute "type" "search"
+              , Ui.htmlAttribute
+                    "placeholder"
+                    "Filter traces by span name or trace id…"
+              , Ui.htmlAttribute "value" query
+              , Ui.onInput TraceFilterQuery
+              , Ui.width Ui.fill
+              , Background.color bgCode
+              , Border.width 1
+              , Border.color border_
+              , Border.rounded 4
+              , Ui.paddingXY 8 6
+              , Font.color textPrimary
+              , Font.size 12
+              , Font.family "ui-monospace, Menlo, monospace"
+              ]
+        , Ui.el
+              [ Ui.paddingXY 8 6
+              , Background.color bgCode
+              , Border.rounded 4
+              , Ui.pointer
+              , Ui.onClick (TraceFilterQuery "")
+              , Font.color textSecondary
+              , Font.size 11
+              ]
+              (Ui.text "clear")
+        ]
+
+
+tracesPanel : String -> List TraceRow -> Element Msg
+tracesPanel query rows =
+    let
+        lq = String.toLower (String.trim query)
+        matches r =
+            String.contains lq (String.toLower r.name)
+                || String.contains lq (String.toLower r.traceId)
+        keepTrace tid = List.any (\r -> r.traceId == tid && matches r) rows
+        visibleIds =
+            if lq == "" then
+                distinctTraceIds rows
+
+            else
+                List.filter keepTrace (distinctTraceIds rows)
+    in
+        panel
+            "Recent traces"
+            (if List.isEmpty rows then
+                [emptyState "No traces captured for this service yet."]
+
+            else if List.isEmpty visibleIds then
+                [emptyState "No traces match the filter."]
+
+            else
+                List.map (traceGroupView rows) visibleIds)
+
+
+distinctTraceIds : List TraceRow -> List String
+distinctTraceIds rows =
+    List.foldl
+        (\r acc ->
+            if r.traceId == "" || List.member r.traceId acc then
+                acc
+
+            else
+                acc ++ [r.traceId])
+        []
+        rows
+
+
+spanDepth : List TraceRow -> Int -> String -> Int
+spanDepth rows fuel parentId =
+    if fuel <= 0 || parentId == "" then
+        0
+
+    else
+        case List.find (\r -> r.spanId == parentId) rows of
+
+            Just parent ->
+                1 + spanDepth rows (fuel - 1) parent.parentId
+
+            Nothing ->
+                0
+
+
+traceGroupView : List TraceRow -> String -> Element Msg
+traceGroupView allRows tid =
+    let
+        spans = List.filter (\r -> r.traceId == tid) allRows
+        shortId =
+            if String.length tid >= 8 then
+                String.slice 0 8 tid
+
+            else
+                tid
+        rootName =
+            case List.find (\r -> r.parentId == "") spans of
+
+                Just root ->
+                    root.name
+
+                Nothing ->
+                    case List.head spans of
+
+                        Just s ->
+                            s.name
+
+                        Nothing ->
+                            "(trace)"
+    in
+        Ui.column
+            [ Ui.width Ui.fill
+            , Ui.paddingXY 0 8
+            , Ui.spacing 2
+            , Border.widthEach { top = 0, right = 0, bottom = 1, left = 0 }
+            , Border.color borderSoft
+            ]
+            (Ui.row
+                [ Ui.spacing 8, Ui.paddingXY 0 2 ]
+                [ Ui.el
+                      [ Font.family "ui-monospace, Menlo, monospace"
+                      , Font.size 11
+                      , Font.color accent
+                      , Background.color bgCode
+                      , Ui.paddingXY 6 2
+                      , Border.rounded 3
+                      ]
+                      (Ui.text ("trace " ++ shortId))
+                , Ui.el
+                      [ Font.size 12, Font.color textSecondary ]
+                      (Ui.text
+                          (rootName ++ " · "
+                              ++ String.fromInt (List.length spans)
+                              ++ " spans"))
+                ]
+                :: List.map (spanRowView allRows) spans)
+
+
+spanRowView : List TraceRow -> TraceRow -> Element Msg
+spanRowView allRows r =
+    let
+        statusErr = r.status == "error"
+        depth = spanDepth allRows 32 r.parentId
+        indent = depth * 18
+    in
+        Ui.row
+            [ Ui.width Ui.fill
+            , Ui.paddingEach { top = 3, right = 0, bottom = 3, left = indent }
+            , Ui.spacing 10
+            ]
+            [ Ui.el
+                  [ Ui.width (Ui.px 76)
+                  , Font.color textMuted
+                  , Font.family "ui-monospace, Menlo, monospace"
+                  , Font.size 11
+                  ]
+                  (Ui.text (compactTime r.startTime))
+            , Ui.el
+                  [ Ui.width (Ui.px 40)
+                  , Font.color
+                        (if statusErr then
+                            err
+
+                        else
+                            textMuted)
+                  , Font.bold
+                  , Font.size 10
+                  ]
+                  (Ui.text
+                      (if statusErr then
+                          "ERR"
+
+                      else
+                          "OK"))
+            , Ui.el
+                  [ Ui.width Ui.fill
+                  , Font.size 13
+                  , Font.color textPrimary
+                  , Font.family "ui-monospace, Menlo, monospace"
+                  ]
+                  (Ui.text
+                      ((if depth > 0 then
+                          "└ "
+
+                      else
+                          "")
+                          ++ r.name))
+            , Ui.el
+                  [ Font.color textSecondary
+                  , Font.family "ui-monospace, Menlo, monospace"
+                  , Font.size 12
+                  ]
+                  (Ui.text (formatFloat r.durationMs ++ "ms"))
+            ]
+
+
+compactTime : String -> String
+compactTime ts =
+    case String.split "T" ts of
+
+        [_date, rest] ->
+            String.left 8 rest
+
+        _ ->
+            ts
+
+
+formatFloat : Float -> String
+formatFloat f =
+    let
+        scaled = Math.round (f * 100.0)
+        whole = scaled // 100
+        frac = modBy 100 scaled
+        fracS =
+            if frac < 10 then
+                "0" ++ String.fromInt frac
+
+            else
+                String.fromInt frac
+    in
+        if frac == 0 then
+            String.fromInt whole
+
+        else
+            String.fromInt whole ++ "." ++ fracS
+
+
+panel : String -> List (Element Msg) -> Element Msg
+panel title children =
+    Ui.column
+        [ Background.color bgRaised
+        , Border.width 1
+        , Border.color border_
+        , Border.rounded 6
+        , Ui.padding 14
+        , Ui.spacing 6
+        , Ui.width Ui.fill
+        ]
+        (Ui.el
+            [ Font.size 12
+            , Font.bold
+            , Font.color textMuted
+            , Font.letterSpacing 5.0e-2
+            , Ui.paddingXY 0 4
+            ]
+            (Ui.text (String.toUpper title))
+            :: children)
+
+
+emptyState : String -> Element Msg
+emptyState message =
+    Ui.el
+        [ Ui.padding 20, Ui.centerX, Font.color textMuted, Font.italic ]
+        (Ui.text message)

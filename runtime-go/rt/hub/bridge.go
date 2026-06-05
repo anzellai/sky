@@ -563,3 +563,152 @@ func classifyStatus(errorRate float64) string {
 		return "ok"
 	}
 }
+
+// ─── v0.16.4 B6 — per-service drill-down readers ──────────────────
+//
+// These are thin layers over the un-filtered variants above:
+// they apply a `WHERE service_name = ?` clause via the existing
+// LogFilter / MetricFilter / SpanFilter `ServiceName` field, then
+// reuse the same row → wire-shape converter. An empty service
+// name short-circuits to the un-filtered reader so callers don't
+// need to special-case "all services" — the SQL WHERE clause
+// just doesn't apply that arm.
+
+// QueryFilteredLogsJSON narrows the log read to a single service.
+// `serviceName == ""` falls through to the un-filtered query.
+func (r *storeReader) QueryFilteredLogsJSON(serviceName, filterJSON string) (string, error) {
+	var f hubLogFilter
+	if filterJSON != "" {
+		if err := json.Unmarshal([]byte(filterJSON), &f); err != nil {
+			return "", fmt.Errorf("filter unmarshal: %w", err)
+		}
+	}
+	storeFilter := LogFilter{
+		ServiceName: serviceName,
+		Limit:       200,
+		Level:       pickSingleLevel(f),
+	}
+	rows, err := r.s.QueryLogs(storeFilter)
+	if err != nil {
+		return "", err
+	}
+	out := make([]hubLogRow, 0, len(rows))
+	for _, row := range rows {
+		if f.Query != "" && !logMatchesQuery(row, f.Query) {
+			continue
+		}
+		if f.Session != "" && row.Attrs["session_id"] != f.Session {
+			continue
+		}
+		out = append(out, toHubLogRow(row))
+	}
+	b, err := json.Marshal(out)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+// QueryFilteredMetricsJSON narrows the metric read to a single
+// service. `serviceName == ""` falls through to the un-filtered
+// query.
+func (r *storeReader) QueryFilteredMetricsJSON(serviceName string) (string, error) {
+	rows, err := r.s.QueryMetrics(MetricFilter{
+		ServiceName: serviceName,
+		Limit:       200,
+	})
+	if err != nil {
+		return "", err
+	}
+	out := make([]hubMetricRow, 0, len(rows))
+	for _, m := range rows {
+		labels := ""
+		if len(m.Attrs) > 0 {
+			parts := make([]string, 0, len(m.Attrs))
+			for k, v := range m.Attrs {
+				parts = append(parts, k+"="+v)
+			}
+			labels = strings.Join(parts, ", ")
+		}
+		out = append(out, hubMetricRow{
+			Name:   m.Name,
+			Typ:    m.Type,
+			Labels: labels,
+			Value:  m.Value,
+			Sum:    0,
+			Count:  0,
+		})
+	}
+	b, err := json.Marshal(out)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+// QueryFilteredSpansJSON narrows the span read to a single
+// service. `serviceName == ""` falls through to the un-filtered
+// query.
+func (r *storeReader) QueryFilteredSpansJSON(serviceName string) (string, error) {
+	rows, err := r.s.QuerySpans(SpanFilter{
+		ServiceName: serviceName,
+		Limit:       100,
+	})
+	if err != nil {
+		return "", err
+	}
+	out := make([]hubTraceRow, 0, len(rows))
+	for _, sp := range rows {
+		durMs := 0.0
+		if !sp.StartTime.IsZero() && !sp.EndTime.IsZero() {
+			durMs = float64(sp.EndTime.Sub(sp.StartTime)) / float64(time.Millisecond)
+		}
+		status := ""
+		if sp.Attrs != nil {
+			status = sp.Attrs["status"]
+		}
+		out = append(out, hubTraceRow{
+			TraceID:    sp.TraceID,
+			SpanID:     sp.SpanID,
+			ParentID:   sp.ParentID,
+			Name:       sp.Name,
+			Kind:       sp.ServiceName,
+			StartTime:  sp.StartTime.UTC().Format(time.RFC3339),
+			DurationMs: durMs,
+			Status:     status,
+		})
+	}
+	b, err := json.Marshal(out)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+// QueryFilteredErrorsJSON narrows the error rollup to a single
+// service. `serviceName == ""` falls through to the un-filtered
+// query. Aggregation strategy mirrors QueryErrorsJSON — count by
+// message over the most recent error-level log rows.
+func (r *storeReader) QueryFilteredErrorsJSON(serviceName string) (string, error) {
+	rows, err := r.s.QueryLogs(LogFilter{
+		ServiceName: serviceName,
+		Level:       "error",
+		Limit:       500,
+	})
+	if err != nil {
+		return "", err
+	}
+	counts := make(map[string]int, len(rows))
+	for _, row := range rows {
+		counts[row.Message]++
+	}
+	out := make([]hubErrorRow, 0, len(counts))
+	for msg, c := range counts {
+		out = append(out, hubErrorRow{Count: c, Message: msg})
+	}
+	b, err := json.Marshal(out)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}

@@ -798,4 +798,13 @@ registry = Map.fromList
     -- the same rt.Coerce → narrowMapToStruct path as the other
     -- Hub_* readers.
     , (("Hub", "readServiceStats"), KernelInfo "rt.Hub_readServiceStats" 1 False)
+    -- v0.16.4 B6: per-service drill-down kernels. Each takes the
+    -- service name as a leading String arg; an empty name means
+    -- "no filter" (all services). Used by the drill-down tab pages
+    -- (LogsTab.sky / MetricsTab.sky / TracesTab.sky / ErrorsTab.sky)
+    -- when the user picks a service from the multi-service Overview.
+    , (("Hub", "readFilteredLogs"),    KernelInfo "rt.Hub_readFilteredLogs" 3 False)
+    , (("Hub", "readFilteredMetrics"), KernelInfo "rt.Hub_readFilteredMetrics" 2 False)
+    , (("Hub", "readFilteredTraces"),  KernelInfo "rt.Hub_readFilteredTraces" 2 False)
+    , (("Hub", "readFilteredErrors"),  KernelInfo "rt.Hub_readFilteredErrors" 2 False)
     ]
