@@ -15,43 +15,18 @@ module Sky.Type.AnyWildcardSpec (spec) where
 -- WILDCARD — every occurrence gets its own fresh unification
 -- variable, never shared via the cache. This restores the "any
 -- unifies with anything, independently" semantics users expect.
+--
+-- Tier 1 (task #491): in-process via compileInProcess. The
+-- pre-Tier-1 spec ran the produced binary to confirm the runtime
+-- behaviour ("got something" / "both unwraps type-checked" /
+-- "two-any-args ok") — the bug-shape was a compile-time HM type
+-- error, so a clean CompileOk is the actual regression check.
+-- Runtime behaviour of `any`-typed values is covered by
+-- runtime-go/rt/*_test.go.
 
 import Test.Hspec
-import qualified System.Exit as Exit
-import System.Directory (getCurrentDirectory, doesFileExist, createDirectoryIfMissing)
-import System.FilePath ((</>))
-import System.Process (readCreateProcessWithExitCode, shell)
-import System.IO.Temp (withSystemTempDirectory)
-import Data.List (isInfixOf)
 
-
-findSky :: IO FilePath
-findSky = do
-    cwd <- getCurrentDirectory
-    let c = cwd </> "sky-out" </> "sky"
-    ok <- doesFileExist c
-    if ok then return c else fail ("missing: " ++ c)
-
-
-buildAndRun :: String -> IO (Int, String, String)
-buildAndRun src =
-    withSystemTempDirectory "sky-any-wild" $ \tmp -> do
-        sky <- findSky
-        createDirectoryIfMissing True (tmp </> "src")
-        writeFile (tmp </> "src" </> "Main.sky") src
-        writeFile (tmp </> "sky.toml") "name = \"any-wild-test\"\n"
-        let buildCmd = "cd " ++ tmp ++ " && " ++ sky ++ " build src/Main.sky 2>&1"
-        (bec, bout, berr) <- readCreateProcessWithExitCode (shell buildCmd) ""
-        let buildOut = bout ++ berr
-            bInt = case bec of
-                Exit.ExitSuccess -> 0
-                Exit.ExitFailure n -> n
-        if bInt /= 0
-            then return (bInt, buildOut, "")
-            else do
-                let runCmd = "cd " ++ tmp ++ " && ./sky-out/app 2>&1"
-                (_, rout, rerr) <- readCreateProcessWithExitCode (shell runCmd) ""
-                return (0, buildOut, rout ++ rerr)
+import Sky.Build.Helpers.InProcessCompile (CompileResult(..), compileInProcess)
 
 
 spec :: Spec
@@ -82,9 +57,10 @@ spec = do
                     , "        Just _  -> println \"got something\""
                     , "        Nothing -> println \"got nothing\""
                     ]
-            (ec, _build, runOut) <- buildAndRun src
-            ec `shouldBe` 0
-            runOut `shouldSatisfy` ("got something" `isInfixOf`)
+            result <- compileInProcess src
+            case result of
+                CompileErr e -> expectationFailure ("compile failed: " ++ e)
+                CompileOk _  -> return ()
 
         it "same-name `any` in function sig + ctor arg do not share" $ do
             -- Function takes `Maybe any` and produces `any` —
@@ -111,9 +87,10 @@ spec = do
                     , "    in"
                     , "        println \"done\""
                     ]
-            (ec, _, runOut) <- buildAndRun src
-            ec `shouldBe` 0
-            runOut `shouldSatisfy` ("both unwraps type-checked" `isInfixOf`)
+            result <- compileInProcess src
+            case result of
+                CompileErr e -> expectationFailure ("compile failed: " ++ e)
+                CompileOk _  -> return ()
 
         it "two ctor args both `any` get independent unification slots" $ do
             -- Both fields of the constructor are `any` — they must
@@ -134,6 +111,7 @@ spec = do
                     , "    in"
                     , "        println \"two-any-args ok\""
                     ]
-            (ec, _, runOut) <- buildAndRun src
-            ec `shouldBe` 0
-            runOut `shouldSatisfy` ("two-any-args ok" `isInfixOf`)
+            result <- compileInProcess src
+            case result of
+                CompileErr e -> expectationFailure ("compile failed: " ++ e)
+                CompileOk _  -> return ()

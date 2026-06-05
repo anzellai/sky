@@ -21,38 +21,13 @@ module Sky.Canonicalise.QualifiedTypeAliasSpec (spec) where
 -- Fix: thread an `aliasMap : alias-segment → full module name` map
 -- through canonicaliseTypeAnnotationWithAliases so resolveTypeQualWith
 -- consults it before the literal-qualifier fallback.
+--
+-- Tier 1 (task #491): in-process via compileInProcess. ZERO subprocess.
 
 import Test.Hspec
-import qualified System.Exit as Exit
-import System.Directory (getCurrentDirectory, doesFileExist, createDirectoryIfMissing)
-import System.FilePath ((</>))
-import System.Process (readCreateProcessWithExitCode, shell)
-import System.IO.Temp (withSystemTempDirectory)
 import Data.List (isInfixOf)
 
-
-findSky :: IO FilePath
-findSky = do
-    cwd <- getCurrentDirectory
-    let c = cwd </> "sky-out" </> "sky"
-    ok <- doesFileExist c
-    if ok then return c else fail ("missing: " ++ c)
-
-
-checkOnly :: String -> IO (Int, String)
-checkOnly src =
-    withSystemTempDirectory "sky-qual-alias" $ \tmp -> do
-        sky <- findSky
-        createDirectoryIfMissing True (tmp </> "src")
-        writeFile (tmp </> "src" </> "Main.sky") src
-        writeFile (tmp </> "sky.toml") "name = \"qual-alias-test\"\n"
-        let cmd = "cd " ++ tmp ++ " && " ++ sky ++ " check src/Main.sky 2>&1"
-        (ec, sout, serr) <- readCreateProcessWithExitCode (shell cmd) ""
-        let combined = sout ++ serr
-            ecInt = case ec of
-                Exit.ExitSuccess -> 0
-                Exit.ExitFailure n -> n
-        return (ecInt, combined)
+import Sky.Build.Helpers.InProcessCompile (CompileResult(..), compileInProcess)
 
 
 spec :: Spec
@@ -75,10 +50,14 @@ spec = do
                     , ""
                     , "main = let _ = mkColor 100 in println \"ok\""
                     ]
-            (ec, out) <- checkOnly src
-            ec `shouldBe` 0
-            out `shouldNotSatisfy` ("Color vs Color" `isInfixOf`)
-            out `shouldSatisfy` ("No errors found" `isInfixOf`)
+            result <- compileInProcess src
+            case result of
+                CompileErr e -> do
+                    -- Confirm the specific bug-class string is absent
+                    -- even if compilation failed for some other reason.
+                    e `shouldNotSatisfy` ("Color vs Color" `isInfixOf`)
+                    expectationFailure ("compile failed: " ++ e)
+                CompileOk _ -> return ()
 
 
         it "qualified type from a user dep module resolves under alias" $ do
@@ -97,6 +76,7 @@ spec = do
                     , ""
                     , "main = let _ = wrap 42 in println \"ok\""
                     ]
-            (ec, out) <- checkOnly src
-            ec `shouldBe` 0
-            out `shouldSatisfy` ("No errors found" `isInfixOf`)
+            result <- compileInProcess src
+            case result of
+                CompileErr e -> expectationFailure ("compile failed: " ++ e)
+                CompileOk _ -> return ()

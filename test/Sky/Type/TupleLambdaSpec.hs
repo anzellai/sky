@@ -24,38 +24,13 @@ module Sky.Type.TupleLambdaSpec (spec) where
 -- structural `T.CEqual` constraint tying the outer `ty` to the
 -- pattern's structure (tuple/cons/list). Used by
 -- `constrainLambda` for lambda parameters.
+--
+-- Tier 1 (task #491): in-process via compileInProcess.
 
 import Test.Hspec
-import qualified System.Exit as Exit
-import System.Directory (getCurrentDirectory, doesFileExist, createDirectoryIfMissing)
-import System.FilePath ((</>))
-import System.Process (readCreateProcessWithExitCode, shell)
-import System.IO.Temp (withSystemTempDirectory)
 import Data.List (isInfixOf)
 
-
-findSky :: IO FilePath
-findSky = do
-    cwd <- getCurrentDirectory
-    let c = cwd </> "sky-out" </> "sky"
-    ok <- doesFileExist c
-    if ok then return c else fail ("missing: " ++ c)
-
-
-buildOnly :: String -> IO (Int, String)
-buildOnly src =
-    withSystemTempDirectory "sky-tuple-lambda" $ \tmp -> do
-        sky <- findSky
-        createDirectoryIfMissing True (tmp </> "src")
-        writeFile (tmp </> "src" </> "Main.sky") src
-        writeFile (tmp </> "sky.toml") "name = \"tuple-lambda-test\"\n"
-        let cmd = "cd " ++ tmp ++ " && " ++ sky ++ " build src/Main.sky 2>&1"
-        (ec, sout, serr) <- readCreateProcessWithExitCode (shell cmd) ""
-        let combined = sout ++ serr
-            ecInt = case ec of
-                Exit.ExitSuccess -> 0
-                Exit.ExitFailure n -> n
-        return (ecInt, combined)
+import Sky.Build.Helpers.InProcessCompile (CompileResult(..), compileInProcess)
 
 
 spec :: Spec
@@ -95,23 +70,21 @@ spec = do
                     , "    let _ = go [ ( \"t1\", Failed \"oops\" ) ]"
                     , "    in println \"ok\""
                     ]
-            (ec, out) <- buildOnly src
-            -- Sky type-check should succeed. Go build may fail on
-            -- unrelated typed-codegen issues — we only assert the HM
-            -- got past the tuple-destructure step (no
-            -- "Variable 'msg' type mismatch" or "String vs R" error).
-            out `shouldNotSatisfy` ("Variable 'msg' type mismatch" `isInfixOf`)
-            out `shouldNotSatisfy` ("String vs R"                 `isInfixOf`)
-            -- And exit code is 0 if Go-build succeeded; if it
-            -- errored on something unrelated, that's outside this
-            -- spec's scope. We accept either.
-            ec `shouldSatisfy` (\n -> n == 0 || n == 1)
-            out `shouldSatisfy` ("Compilation successful" `isInfixOf`)
+            result <- compileInProcess src
+            case result of
+                CompileErr e -> do
+                    -- Pin the pre-fix failure strings even on a
+                    -- compile failure (so a real regression of the
+                    -- tuple-pattern fix surfaces immediately).
+                    e `shouldNotSatisfy` ("Variable 'msg' type mismatch" `isInfixOf`)
+                    e `shouldNotSatisfy` ("String vs R"                 `isInfixOf`)
+                    expectationFailure ("compile failed: " ++ e)
+                CompileOk _ -> return ()
 
 
     describe "`/=` operator works on polymorphic generic params" $ do
 
-        it "Sky.Test.notEqual : a -> a -> TestResult compiles + runs" $ do
+        it "Sky.Test.notEqual : a -> a -> TestResult compiles" $ do
             -- Pre-fix: `expected /= actual` lowered to Go-native
             -- `expected != actual` which fails with
             -- `incomparable types in type set` for `T any` generics.
@@ -132,6 +105,7 @@ spec = do
                     , "    else"
                     , "        println \"oops\""
                     ]
-            (ec, out) <- buildOnly src
-            ec `shouldBe` 0
-            out `shouldSatisfy` ("Build complete" `isInfixOf`)
+            result <- compileInProcess src
+            case result of
+                CompileErr e -> expectationFailure ("compile failed: " ++ e)
+                CompileOk _ -> return ()

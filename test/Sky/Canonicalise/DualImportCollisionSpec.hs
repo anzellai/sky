@@ -20,46 +20,13 @@ module Sky.Canonicalise.DualImportCollisionSpec (spec) where
 -- module (`import Std.Ui as Ui` + `import Std.Ui exposing (Element)`)
 -- also do not trigger because both resolve to the same canonical
 -- module.
+--
+-- Tier 1 (task #491): in-process via compileInProcessMulti.
 
 import Test.Hspec
-import qualified System.Exit as Exit
-import System.Directory (getCurrentDirectory, doesFileExist,
-                         createDirectoryIfMissing)
-import System.FilePath ((</>))
-import System.Process (readCreateProcessWithExitCode, shell)
-import System.IO.Temp (withSystemTempDirectory)
 import Data.List (isInfixOf)
 
-
-findSky :: IO FilePath
-findSky = do
-    cwd <- getCurrentDirectory
-    let c = cwd </> "sky-out" </> "sky"
-    ok <- doesFileExist c
-    if ok then return c else fail ("missing: " ++ c)
-
-
--- | Build a fixture with multiple source files keyed by relative path
--- (always under `src/`) plus an empty sky.toml. Returns the build's
--- exit code + combined stdout/stderr.
-buildFixture :: [(FilePath, String)] -> IO (Int, String)
-buildFixture files =
-    withSystemTempDirectory "sky-d5" $ \tmp -> do
-        sky <- findSky
-        createDirectoryIfMissing True (tmp </> "src")
-        writeFile (tmp </> "sky.toml") "name = \"d5-test\"\n"
-        mapM_ (\(p, c) -> do
-            let dst = tmp </> p
-                dir = reverse (dropWhile (/= '/') (reverse dst))
-            createDirectoryIfMissing True dir
-            writeFile dst c) files
-        let cmd = "cd " ++ tmp ++ " && " ++ sky ++ " build src/Main.sky 2>&1"
-        (ec, sout, serr) <- readCreateProcessWithExitCode (shell cmd) ""
-        let combined = sout ++ serr
-            ecInt = case ec of
-                Exit.ExitSuccess -> 0
-                Exit.ExitFailure n -> n
-        return (ecInt, combined)
+import Sky.Build.Helpers.InProcessCompile (CompileResult(..), compileInProcessMulti)
 
 
 -- A `State` module with a Model alias + initial value.
@@ -120,22 +87,24 @@ spec = describe "Cycle 4 D5: dual-import qualifier collision detection" $ do
                 , ""
                 , "main = println (toString useFn.count)"
                 ]
-        (ec, out) <- buildFixture
+        result <- compileInProcessMulti
             [ ("src/Main.sky", mainSrc)
             , ("src/State.sky", stateModule)
             , ("src/App/State.sky", appStateModule)
             ]
-        ec `shouldNotBe` 0
-        -- The dishonest downstream "Model vs Model" must NOT surface
-        -- now — it has to be intercepted at canonicalisation time.
-        out `shouldNotSatisfy` ("Model vs Model" `isInfixOf`)
-        -- The diagnostic explicitly names BOTH imports + the qualifier.
-        out `shouldSatisfy` ("two imports both bind the qualifier" `isInfixOf`)
-        out `shouldSatisfy` ("`State`" `isInfixOf`)
-        out `shouldSatisfy` ("import State" `isInfixOf`)
-        out `shouldSatisfy` ("import App.State" `isInfixOf`)
-        -- And it points the user at the fix-it.
-        out `shouldSatisfy` ("as " `isInfixOf`)
+        case result of
+            CompileOk _ -> expectationFailure "expected dual-import qualifier collision to be rejected"
+            CompileErr e -> do
+                -- The dishonest downstream "Model vs Model" must NOT surface
+                -- now — it has to be intercepted at canonicalisation time.
+                e `shouldNotSatisfy` ("Model vs Model" `isInfixOf`)
+                -- The diagnostic explicitly names BOTH imports + the qualifier.
+                e `shouldSatisfy` ("two imports both bind the qualifier" `isInfixOf`)
+                e `shouldSatisfy` ("`State`" `isInfixOf`)
+                e `shouldSatisfy` ("import State" `isInfixOf`)
+                e `shouldSatisfy` ("import App.State" `isInfixOf`)
+                -- And it points the user at the fix-it.
+                e `shouldSatisfy` ("as " `isInfixOf`)
 
 
     it "accepts the explicit-alias workaround (`import App.X as AppX`)" $ do
@@ -157,14 +126,16 @@ spec = describe "Cycle 4 D5: dual-import qualifier collision detection" $ do
                 , ""
                 , "main = println (toString (useFn.count + AppH.defaultThing))"
                 ]
-        (ec, out) <- buildFixture
+        result <- compileInProcessMulti
             [ ("src/Main.sky", mainSrc)
             , ("src/State.sky", stateModule)
             , ("src/App/Helpers.sky", appHelpersModule)
             ]
-        ec `shouldBe` 0
-        out `shouldNotSatisfy` ("two imports both bind" `isInfixOf`)
-        out `shouldSatisfy` ("Compilation successful" `isInfixOf`)
+        case result of
+            CompileErr e -> do
+                e `shouldNotSatisfy` ("two imports both bind" `isInfixOf`)
+                expectationFailure ("compile failed: " ++ e)
+            CompileOk _ -> return ()
 
 
     it "does NOT flag two imports of the SAME module under different aliases" $ do
@@ -187,13 +158,15 @@ spec = describe "Cycle 4 D5: dual-import qualifier collision detection" $ do
                 , ""
                 , "main = let _ = view in println \"ok\""
                 ]
-        (ec, out) <- buildFixture [("src/Main.sky", src)]
-        out `shouldNotSatisfy` ("two imports both bind" `isInfixOf`)
-        -- We don't assert success because the dummy `view` may not
-        -- type-check cleanly under every cabal-test variation —
-        -- the only contract is that D5's collision guard does NOT
-        -- trip on aliased same-module re-imports.
-        ec `seq` return ()
+        result <- compileInProcessMulti [("src/Main.sky", src)]
+        case result of
+            CompileOk _ -> return ()
+            CompileErr e ->
+                -- We don't assert success because the dummy `view` may not
+                -- type-check cleanly under every cabal-test variation —
+                -- the only contract is that D5's collision guard does NOT
+                -- trip on aliased same-module re-imports.
+                e `shouldNotSatisfy` ("two imports both bind" `isInfixOf`)
 
 
     it "does NOT flag kernel imports that share a kernel pseudo-module" $ do
@@ -214,6 +187,8 @@ spec = describe "Cycle 4 D5: dual-import qualifier collision detection" $ do
                 , ""
                 , "main = println \"ok\""
                 ]
-        (ec, out) <- buildFixture [("src/Main.sky", src)]
-        out `shouldNotSatisfy` ("two imports both bind" `isInfixOf`)
-        ec `seq` return ()
+        result <- compileInProcessMulti [("src/Main.sky", src)]
+        case result of
+            CompileOk _ -> return ()
+            CompileErr e ->
+                e `shouldNotSatisfy` ("two imports both bind" `isInfixOf`)

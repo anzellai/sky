@@ -1,74 +1,82 @@
 module Sky.Canonicalise.KernelFallbackSpec (spec) where
 
+-- Regression for the canonicaliser fallback that ships kernel calls
+-- without their `rt.` prefix when the user hasn't written an explicit
+-- `import Sky.Core.<Mod> as <Mod>`.
+--
+-- Bug shape: `Crypto.sha256 raw` resolves via `resolveQualVar`'s
+-- fallback to `VarTopLevel "Crypto" "sha256"`, the lowerer emits
+-- `Crypto_sha256(arg)` (no `rt.` prefix), and `go build` fails with
+-- `undefined: Crypto_sha256`.
+--
+-- Fix: `resolveQualVar` consults `kernelModules` on fallback so any
+-- registered kernel qualifier resolves as `VarKernel`, matching the
+-- explicit-import path. Same shape applies to Encoding, Hex, Time,
+-- Slog, Char, Path, Math, Regex etc. — pick the ones that actually
+-- chain through `typedKernelArgCoerce` so the deeply-nested call
+-- shape (the one that surfaced the bug originally) is exercised.
+--
+-- Tier 1 (task #491): in-process via compileInProcess; the pre-Tier-1
+-- spec also ran the produced binary to confirm Crypto.sha256 "hello"
+-- emits the canonical 12-char prefix `2cf24dba5fb0`. That runtime
+-- check is covered by runtime-go/rt/*_test.go's sha256 unit tests —
+-- the spec's contribution is the lowered-Go shape, which is asserted
+-- directly off the CompileOk Go source.
+
 import Test.Hspec
-import System.Directory (getCurrentDirectory, createDirectoryIfMissing,
-                         copyFile, doesFileExist, listDirectory, doesDirectoryExist)
-import System.FilePath ((</>))
-import System.IO.Temp (withSystemTempDirectory)
-import System.Process (readCreateProcessWithExitCode, proc, CreateProcess(..))
-import System.Exit (ExitCode(..))
 import Data.List (isInfixOf)
 
-
-findSky :: IO FilePath
-findSky = do
-    cwd <- getCurrentDirectory
-    let c = cwd </> "sky-out" </> "sky"
-    ok <- doesFileExist c
-    if ok then return c else fail ("missing: " ++ c)
+import Sky.Build.Helpers.InProcessCompile (CompileResult(..), compileInProcess)
 
 
-copyTree :: FilePath -> FilePath -> IO ()
-copyTree src dst = do
-    createDirectoryIfMissing True dst
-    entries <- listDirectory src
-    mapM_ copyEntry entries
-  where
-    copyEntry e = do
-        let s = src </> e
-            d = dst </> e
-        isF <- doesFileExist s
-        if isF
-            then copyFile s d
-            else do
-                isD <- doesDirectoryExist s
-                if isD then copyTree s d else return ()
+fixtureSrc :: String
+fixtureSrc = unlines
+    [ "module Main exposing (main)"
+    , ""
+    , "{-|"
+    , "Regression for the canonicaliser fallback that ships kernel calls"
+    , "without their `rt.` prefix when the user hasn't written an explicit"
+    , "`import Sky.Core.<Mod> as <Mod>`."
+    , "-}"
+    , ""
+    , "import Sky.Core.Prelude exposing (..)"
+    , "import Sky.Core.Task as Task"
+    , "import Std.Log as Log"
+    , ""
+    , ""
+    , "main ="
+    , "    -- Crypto.sha256 nested inside String.slice (typedKernelArgCoerce"
+    , "    -- arg coercion path) — the original failure mode in"
+    , "    -- <downstream>/Services/Stripe.sky webhook logging."
+    , "    let"
+    , "        digest = String.slice 0 12 (Crypto.sha256 \"hello\")"
+    , "        encoded = Encoding.base64Encode \"secret\""
+    , "    in"
+    , "        Task.run (Log.println (digest ++ \" \" ++ encoded))"
+    ]
 
 
 spec :: Spec
 spec = do
     describe "Canonicaliser falls back to kernel registry for unimported qualifiers" $ do
-        it "Crypto.sha256 / Encoding.base64Encode used without explicit import compile and run" $ do
-            sky <- findSky
-            cwd <- getCurrentDirectory
-            let fixtureRoot = cwd </> "test" </> "fixtures" </> "kernel-fallback"
-            withSystemTempDirectory "sky-kfb" $ \tmp -> do
-                copyTree fixtureRoot tmp
-                let cp = (proc sky ["build", "src/Main.sky"]) { cwd = Just tmp }
-                (ec, out, err) <- readCreateProcessWithExitCode cp ""
-                let combined = out ++ err
-                ec `shouldBe` ExitSuccess
-                -- Generated Go must call the kernel through the rt
-                -- package — bare `Crypto_sha256(` is the failure mode
-                -- the canonicaliser fallback used to ship.
-                main_go <- readFile (tmp </> "sky-out" </> "main.go")
-                main_go `shouldSatisfy` ("rt.Crypto_sha256(" `isInfixOf`)
-                -- Encoding.base64Encode lowers via the typed-kernel
-                -- literal-arg path to the `T`-suffix variant
-                -- (`Encoding_base64EncodeT`), so accept either form
-                -- — the bug-shape we guard against is the missing
-                -- `rt.` prefix, not the `T` suffix.
-                main_go `shouldSatisfy` \s ->
-                    "rt.Encoding_base64Encode" `isInfixOf` s
-                -- Defence in depth: the bare-name form must be absent
-                -- (a regression would emit `Crypto_sha256(` somewhere).
-                main_go `shouldSatisfy` \s -> not (" Crypto_sha256(" `isInfixOf` s)
-                                           && not ("(Crypto_sha256(" `isInfixOf` s)
-                                           && not ("=Crypto_sha256(" `isInfixOf` s)
-                -- And the binary actually runs.
-                let runApp = (proc (tmp </> "sky-out" </> "app") []) { cwd = Just tmp }
-                (rec_, rout, rerr) <- readCreateProcessWithExitCode runApp ""
-                let rcombined = rout ++ rerr
-                rec_ `shouldBe` ExitSuccess
-                -- Crypto.sha256 "hello" → 2cf24dba5fb0a30e... (12-char prefix).
-                rcombined `shouldSatisfy` ("2cf24dba5fb0" `isInfixOf`)
+        it "Crypto.sha256 / Encoding.base64Encode used without explicit import lower to rt.*" $ do
+            result <- compileInProcess fixtureSrc
+            case result of
+                CompileErr e -> expectationFailure ("compile failed: " ++ e)
+                CompileOk main_go -> do
+                    -- Generated Go must call the kernel through the rt
+                    -- package — bare `Crypto_sha256(` is the failure mode
+                    -- the canonicaliser fallback used to ship.
+                    main_go `shouldSatisfy` ("rt.Crypto_sha256(" `isInfixOf`)
+                    -- Encoding.base64Encode lowers via the typed-kernel
+                    -- literal-arg path to the `T`-suffix variant
+                    -- (`Encoding_base64EncodeT`), so accept either form
+                    -- — the bug-shape we guard against is the missing
+                    -- `rt.` prefix, not the `T` suffix.
+                    main_go `shouldSatisfy` \s ->
+                        "rt.Encoding_base64Encode" `isInfixOf` s
+                    -- Defence in depth: the bare-name form must be absent
+                    -- (a regression would emit `Crypto_sha256(` somewhere).
+                    main_go `shouldSatisfy` \s -> not (" Crypto_sha256(" `isInfixOf` s)
+                                               && not ("(Crypto_sha256(" `isInfixOf` s)
+                                               && not ("=Crypto_sha256(" `isInfixOf` s)

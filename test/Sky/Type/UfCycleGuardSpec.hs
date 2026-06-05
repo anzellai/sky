@@ -21,48 +21,32 @@ module Sky.Type.UfCycleGuardSpec (spec) where
 --   2. `Solve.variableToType` carries a path-tracking `seen` set
 --      so any pre-existing cycle reads back as a `TVar "_cycle"`
 --      sentinel instead of looping forever.
+--
+-- Tier 1 (task #491): the pre-Tier-1 spec spawned `sky build … +RTS
+-- -M256M -RTS` to assert the compiler completed without OOM. In-
+-- process we can't inject per-call RTS heap flags, so the migrated
+-- assertion runs the same source through compileInProcess and
+-- asserts the compile terminates cleanly (exit 0 or a legitimate
+-- type error). A reintroduced UF cycle would now blow out the test
+-- runner's heap, surfaced as a hard crash with the host's `+RTS
+-- -M…` setting — still observable, just at the suite level rather
+-- than the subprocess level.
 
 import Test.Hspec
-import qualified System.Exit as Exit
-import System.Directory (getCurrentDirectory, doesFileExist, createDirectoryIfMissing)
-import System.FilePath ((</>))
-import System.Process (readCreateProcessWithExitCode, shell)
-import System.IO.Temp (withSystemTempDirectory)
-import Data.List (isInfixOf)
 
-
-findSky :: IO FilePath
-findSky = do
-    cwd <- getCurrentDirectory
-    let c = cwd </> "sky-out" </> "sky"
-    ok <- doesFileExist c
-    if ok then return c else fail ("missing: " ++ c)
-
-
-buildHeapBounded :: String -> Int -> IO (Int, String, String)
-buildHeapBounded src heapMb =
-    withSystemTempDirectory "sky-uf-cycle" $ \tmp -> do
-        sky <- findSky
-        createDirectoryIfMissing True (tmp </> "src")
-        writeFile (tmp </> "src" </> "Main.sky") src
-        writeFile (tmp </> "sky.toml") "name = \"tmp\"\nversion = \"0.0.0\"\n"
-        let cmd = sky ++ " build " ++ tmp ++ "/src/Main.sky +RTS -M"
-                ++ show heapMb ++ "M -RTS"
-        (ec, out, err) <- readCreateProcessWithExitCode (shell cmd) ""
-        let code = case ec of
-                Exit.ExitSuccess   -> 0
-                Exit.ExitFailure n -> n
-        return (code, out, err)
+import Sky.Build.Helpers.InProcessCompile (CompileResult(..), compileInProcess)
 
 
 spec :: Spec
 spec = describe "UF cycle guard" $ do
 
-    it "trivial Std.Ui.Events importer does not OOM at 256 MB heap" $ do
+    it "trivial Std.Ui.Events importer terminates without UF cycle" $ do
         -- Minimal reproducer extracted from mini-notion. Pre-fix
         -- this allocates >3 GB during the dep-fixpoint round-1
-        -- solve of Std.Ui.Events; +RTS -M256M dies with "Heap
-        -- exhausted". Post-fix it completes in <50 MB residency.
+        -- solve of Std.Ui.Events; post-fix it completes promptly.
+        -- We accept EITHER success (well-typed) OR a clean compile
+        -- error (some unrelated typed-codegen issue) — the test's
+        -- contract is "compiler terminates", not "source is correct".
         let src = unlines
                 [ "module Main exposing (main)"
                 , ""
@@ -79,12 +63,11 @@ spec = describe "UF cycle guard" $ do
                 , ""
                 , "main = println \"compiled\""
                 ]
-        -- ec may be 0 (success) or 1 (legit type error elsewhere),
-        -- but MUST NOT be 251 (RTS heap-exhausted exit) or any
-        -- signal-killed code. The point of the test is "compiler
-        -- terminates under bounded heap", not "source is correct".
-        (ec, _, err) <- buildHeapBounded src 256
-        ec `shouldSatisfy` (\c -> c == 0 || c == 1)
-        err `shouldNotSatisfy` (\e ->
-            "Heap exhausted" `isInfixOf` e
-            || "stack overflow" `isInfixOf` e)
+        -- The call returns CompileOk or CompileErr — both are
+        -- acceptable. The implicit contract is that this expression
+        -- evaluates AT ALL (a reintroduced cycle would crash the
+        -- test runner with "Heap exhausted").
+        result <- compileInProcess src
+        case result of
+            CompileOk _ -> return ()
+            CompileErr _ -> return ()

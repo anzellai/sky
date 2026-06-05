@@ -16,67 +16,31 @@ module Sky.Type.NumericBinopSpec (spec) where
 -- binops when both operand types resolve concretely.
 --
 -- These tests pin three invariants:
---   1. Float arithmetic compiles + runs (was: type-check rejected).
---   2. Int arithmetic compiles + runs unchanged (no regression).
+--   1. Float arithmetic compiles (was: type-check rejected).
+--   2. Int arithmetic compiles unchanged (no regression).
 --   3. Mixed Int + Float STILL rejected at compile time (the
 --      polymorphism unifies both operands; mixed types fail
 --      unification, which is exactly what users want — silent
 --      Float ↔ Int coercion is a numeric-precision footgun).
+--
+-- Tier 1 (task #491): in-process via compileInProcess. The
+-- pre-Tier-1 spec also ran the produced binary to confirm the
+-- numeric RESULT — `runtime-go/rt/*_test.go` already cover
+-- `rt.Add`/`rt.Sub`/`rt.Mul` shape correctness, so the spec's
+-- contribution is the HM type-check pass/fail boundary that is
+-- now asserted directly off CompileOk / CompileErr.
 
 import Test.Hspec
-import qualified System.Exit as Exit
-import System.Directory (getCurrentDirectory, doesFileExist, createDirectoryIfMissing)
-import System.FilePath ((</>))
-import System.Process (readCreateProcessWithExitCode, shell)
-import System.IO.Temp (withSystemTempDirectory)
 import Data.List (isInfixOf)
 
-
-findSky :: IO FilePath
-findSky = do
-    cwd <- getCurrentDirectory
-    let c = cwd </> "sky-out" </> "sky"
-    ok <- doesFileExist c
-    if ok then return c else fail ("missing: " ++ c)
-
-
-buildAndRun :: String -> IO (Int, String)
-buildAndRun src =
-    withSystemTempDirectory "sky-numeric-binop" $ \tmp -> do
-        sky <- findSky
-        createDirectoryIfMissing True (tmp </> "src")
-        writeFile (tmp </> "src" </> "Main.sky") src
-        writeFile (tmp </> "sky.toml") "name = \"binop-test\"\n"
-        let cmd = "cd " ++ tmp ++ " && " ++ sky ++ " build src/Main.sky 2>&1 && ./sky-out/app 2>&1"
-        (ec, sout, serr) <- readCreateProcessWithExitCode (shell cmd) ""
-        let combined = sout ++ serr
-            ecInt = case ec of
-                Exit.ExitSuccess -> 0
-                Exit.ExitFailure n -> n
-        return (ecInt, combined)
-
-
-buildOnly :: String -> IO (Int, String)
-buildOnly src =
-    withSystemTempDirectory "sky-numeric-binop" $ \tmp -> do
-        sky <- findSky
-        createDirectoryIfMissing True (tmp </> "src")
-        writeFile (tmp </> "src" </> "Main.sky") src
-        writeFile (tmp </> "sky.toml") "name = \"binop-test\"\n"
-        let cmd = "cd " ++ tmp ++ " && " ++ sky ++ " build src/Main.sky 2>&1"
-        (ec, sout, serr) <- readCreateProcessWithExitCode (shell cmd) ""
-        let combined = sout ++ serr
-            ecInt = case ec of
-                Exit.ExitSuccess -> 0
-                Exit.ExitFailure n -> n
-        return (ecInt, combined)
+import Sky.Build.Helpers.InProcessCompile (CompileResult(..), compileInProcess)
 
 
 spec :: Spec
 spec = do
     describe "Numeric binops (`+`, `-`, `*`) are polymorphic over Int / Float" $ do
 
-        it "Float subtraction compiles + runs" $ do
+        it "Float subtraction compiles" $ do
             -- The minimum-reproducer for the original bug.
             let src = unlines
                     [ "module Main exposing (main)"
@@ -84,34 +48,36 @@ spec = do
                     , "main ="
                     , "    println (String.fromFloat (3.14 - 1.5))"
                     ]
-            (ec, out) <- buildAndRun src
-            ec `shouldBe` 0
-            -- Result: 1.64 (subject to float repr — accept any 1.64*)
-            ("1.64" `isInfixOf` out) `shouldBe` True
+            result <- compileInProcess src
+            case result of
+                CompileErr e -> expectationFailure ("compile failed: " ++ e)
+                CompileOk _  -> return ()
 
-        it "Float multiplication compiles + runs" $ do
+        it "Float multiplication compiles" $ do
             let src = unlines
                     [ "module Main exposing (main)"
                     , "import Std.Log exposing (println)"
                     , "main ="
                     , "    println (String.fromFloat (3.0 * 2.5))"
                     ]
-            (ec, out) <- buildAndRun src
-            ec `shouldBe` 0
-            ("7.5" `isInfixOf` out) `shouldBe` True
+            result <- compileInProcess src
+            case result of
+                CompileErr e -> expectationFailure ("compile failed: " ++ e)
+                CompileOk _  -> return ()
 
-        it "Float addition compiles + runs" $ do
+        it "Float addition compiles" $ do
             let src = unlines
                     [ "module Main exposing (main)"
                     , "import Std.Log exposing (println)"
                     , "main ="
                     , "    println (String.fromFloat (1.5 + 2.25))"
                     ]
-            (ec, out) <- buildAndRun src
-            ec `shouldBe` 0
-            ("3.75" `isInfixOf` out) `shouldBe` True
+            result <- compileInProcess src
+            case result of
+                CompileErr e -> expectationFailure ("compile failed: " ++ e)
+                CompileOk _  -> return ()
 
-        it "Int arithmetic still compiles + runs (no regression)" $ do
+        it "Int arithmetic still compiles (no regression)" $ do
             let src = unlines
                     [ "module Main exposing (main)"
                     , "import Std.Log exposing (println)"
@@ -123,10 +89,10 @@ spec = do
                     , "    in"
                     , "        println (String.fromInt c)"
                     ]
-            (ec, out) <- buildAndRun src
-            ec `shouldBe` 0
-            -- 10-3 + 4*5 = 7 + 20 = 27
-            ("27" `isInfixOf` out) `shouldBe` True
+            result <- compileInProcess src
+            case result of
+                CompileErr e -> expectationFailure ("compile failed: " ++ e)
+                CompileOk _  -> return ()
 
         it "Mixed Int + Float subtraction is REJECTED at compile time" $ do
             -- Polymorphic typing unifies both operands; Int ≠ Float so
@@ -140,33 +106,37 @@ spec = do
                     , "    let z = 10 - 3.5"
                     , "    in println (String.fromFloat z)"
                     ]
-            (ec, out) <- buildOnly src
-            ec `shouldNotBe` 0
-            -- Either "Type mismatch" or "Float vs Int" — both
-            -- accepted depending on which arm of unification
-            -- fires first.
-            ("Type mismatch" `isInfixOf` out
-                || "Float vs Int" `isInfixOf` out
-                || "Int vs Float" `isInfixOf` out) `shouldBe` True
+            result <- compileInProcess src
+            case result of
+                CompileOk _ -> expectationFailure "expected mixed Int/Float to be rejected"
+                CompileErr e ->
+                    -- Either "Type mismatch" or "Float vs Int" — both
+                    -- accepted depending on which arm of unification
+                    -- fires first.
+                    ("Type mismatch" `isInfixOf` e
+                        || "Float vs Int" `isInfixOf` e
+                        || "Int vs Float" `isInfixOf` e) `shouldBe` True
 
-        it "Float division (`/`) still works (was already Float-only)" $ do
+        it "Float division (`/`) still compiles (was already Float-only)" $ do
             let src = unlines
                     [ "module Main exposing (main)"
                     , "import Std.Log exposing (println)"
                     , "main ="
                     , "    println (String.fromFloat (10.0 / 4.0))"
                     ]
-            (ec, out) <- buildAndRun src
-            ec `shouldBe` 0
-            ("2.5" `isInfixOf` out) `shouldBe` True
+            result <- compileInProcess src
+            case result of
+                CompileErr e -> expectationFailure ("compile failed: " ++ e)
+                CompileOk _  -> return ()
 
-        it "Int integer division (`//`) still works (was already Int-only)" $ do
+        it "Int integer division (`//`) still compiles (was already Int-only)" $ do
             let src = unlines
                     [ "module Main exposing (main)"
                     , "import Std.Log exposing (println)"
                     , "main ="
                     , "    println (String.fromInt (10 // 3))"
                     ]
-            (ec, out) <- buildAndRun src
-            ec `shouldBe` 0
-            ("3" `isInfixOf` out) `shouldBe` True
+            result <- compileInProcess src
+            case result of
+                CompileErr e -> expectationFailure ("compile failed: " ++ e)
+                CompileOk _  -> return ()

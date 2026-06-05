@@ -23,40 +23,17 @@ module Sky.Type.RecordFieldExactnessSpec (spec) where
 -- is closed (extension bound to `EmptyRecord1`), the opposite side's
 -- extra fields are illegal — fail unification. Open records (still
 -- a FlexVar extension) keep the row-poly merge.
+--
+-- Tier 1 (task #491): in-process via compileInProcess(Multi).
 
 import Test.Hspec
-import qualified System.Exit as Exit
-import System.Directory (getCurrentDirectory, doesFileExist, createDirectoryIfMissing)
-import System.FilePath ((</>))
-import System.Process (readCreateProcessWithExitCode, shell)
-import System.IO.Temp (withSystemTempDirectory)
 import Data.List (isInfixOf)
 
-
-findSky :: IO FilePath
-findSky = do
-    cwd <- getCurrentDirectory
-    let c = cwd </> "sky-out" </> "sky"
-    ok <- doesFileExist c
-    if ok then return c else fail ("missing: " ++ c)
-
-
-checkOnly :: [(FilePath, String)] -> IO (Int, String)
-checkOnly files =
-    withSystemTempDirectory "sky-record-exactness" $ \tmp -> do
-        sky <- findSky
-        createDirectoryIfMissing True (tmp </> "src")
-        mapM_ (\(p, c) -> do
-            let full = tmp </> p
-            writeFile full c) files
-        writeFile (tmp </> "sky.toml") "name = \"record-exact-test\"\n"
-        let cmd = "cd " ++ tmp ++ " && " ++ sky ++ " check src/Main.sky 2>&1"
-        (ec, sout, serr) <- readCreateProcessWithExitCode (shell cmd) ""
-        let combined = sout ++ serr
-            ecInt = case ec of
-                Exit.ExitSuccess -> 0
-                Exit.ExitFailure n -> n
-        return (ecInt, combined)
+import Sky.Build.Helpers.InProcessCompile
+    ( CompileResult(..)
+    , compileInProcess
+    , compileInProcessMulti
+    )
 
 
 spec :: Spec
@@ -79,9 +56,11 @@ spec = do
                     , ""
                     , "main = println test"
                     ]
-            (ec, out) <- checkOnly [("src/Main.sky", src)]
-            ec `shouldBe` 1
-            out `shouldSatisfy` ("Type mismatch" `isInfixOf`)
+            result <- compileInProcess src
+            case result of
+                CompileOk _ -> expectationFailure "expected wrong-field-name literal to be rejected"
+                CompileErr e ->
+                    e `shouldSatisfy` ("Type mismatch" `isInfixOf`)
 
         it "cross-module: wrong-field-name record literal fails type-check" $ do
             -- Same shape but the function lives in a dep module.
@@ -107,9 +86,14 @@ spec = do
                     , ""
                     , "main = println test"
                     ]
-            (ec, out) <- checkOnly [("src/Lib.sky", lib), ("src/Main.sky", main_)]
-            ec `shouldBe` 1
-            out `shouldSatisfy` ("Type mismatch" `isInfixOf`)
+            result <- compileInProcessMulti
+                [ ("src/Lib.sky", lib)
+                , ("src/Main.sky", main_)
+                ]
+            case result of
+                CompileOk _ -> expectationFailure "expected cross-module wrong-field literal to be rejected"
+                CompileErr e ->
+                    e `shouldSatisfy` ("Type mismatch" `isInfixOf`)
 
         it "correct-shape record literal still passes" $ do
             -- Sanity: closed-record exactness only rejects when fields
@@ -128,9 +112,10 @@ spec = do
                     , ""
                     , "main = println test"
                     ]
-            (ec, out) <- checkOnly [("src/Main.sky", src)]
-            ec `shouldBe` 0
-            out `shouldSatisfy` ("No errors found" `isInfixOf`)
+            result <- compileInProcess src
+            case result of
+                CompileErr e -> expectationFailure ("compile failed: " ++ e)
+                CompileOk _ -> return ()
 
 
     describe "Cross-module externals register all top-level names (not only functions)" $ do
@@ -155,9 +140,11 @@ spec = do
                     , ""
                     , "main = let _ = test in println \"ok\""
                     ]
-            (ec, out) <- checkOnly [("src/Main.sky", src)]
-            ec `shouldBe` 1
-            out `shouldSatisfy` ("Type" `isInfixOf`)
-            -- The error names the offender so users know what to fix.
-            out `shouldSatisfy` (\s -> "Std.Ui.fill" `isInfixOf` s
-                                    || "fill" `isInfixOf` s)
+            result <- compileInProcess src
+            case result of
+                CompileOk _ -> expectationFailure "expected `Ui.fill 1` to be rejected"
+                CompileErr e -> do
+                    e `shouldSatisfy` ("Type" `isInfixOf`)
+                    -- The error names the offender so users know what to fix.
+                    e `shouldSatisfy` (\s -> "Std.Ui.fill" `isInfixOf` s
+                                          || "fill" `isInfixOf` s)

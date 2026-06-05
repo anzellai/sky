@@ -26,38 +26,13 @@ module Sky.Type.UiOnSubmitTypedRecordSpec (spec) where
 -- This regression spec confirms BOTH shapes type-check in-module:
 --   1. `Ui.onSubmit DoSignOut` where `DoSignOut : Msg` (plain)
 --   2. `Ui.onSubmit DoSignIn`  where `DoSignIn : LoginForm -> Msg`
+--
+-- Tier 1 (task #491): in-process via compileInProcess.
 
 import Test.Hspec
-import qualified System.Exit as Exit
-import System.Directory (getCurrentDirectory, doesFileExist, createDirectoryIfMissing)
-import System.FilePath ((</>))
-import System.Process (readCreateProcessWithExitCode, shell)
-import System.IO.Temp (withSystemTempDirectory)
 import Data.List (isInfixOf)
 
-
-findSky :: IO FilePath
-findSky = do
-    cwd <- getCurrentDirectory
-    let c = cwd </> "sky-out" </> "sky"
-    ok <- doesFileExist c
-    if ok then return c else fail ("missing: " ++ c)
-
-
-checkOnly :: String -> IO (Int, String)
-checkOnly src =
-    withSystemTempDirectory "sky-ui-onsubmit" $ \tmp -> do
-        sky <- findSky
-        createDirectoryIfMissing True (tmp </> "src")
-        writeFile (tmp </> "src" </> "Main.sky") src
-        writeFile (tmp </> "sky.toml") "name = \"ui-onsubmit-test\"\n"
-        let cmd = "cd " ++ tmp ++ " && " ++ sky ++ " check src/Main.sky 2>&1"
-        (ec, sout, serr) <- readCreateProcessWithExitCode (shell cmd) ""
-        let combined = sout ++ serr
-            ecInt = case ec of
-                Exit.ExitSuccess -> 0
-                Exit.ExitFailure n -> n
-        return (ecInt, combined)
+import Sky.Build.Helpers.InProcessCompile (CompileResult(..), compileInProcess)
 
 
 -- The user's failing pattern from a downstream app (CC port report,
@@ -119,12 +94,12 @@ spec = do
     describe "Std.Ui.onSubmit accepts both plain Msg and (record -> Msg) in-module" $ do
 
         it "in-module Msg + view + onSubmit DoSignIn (record-arg) type-checks" $ do
-            (ec, out) <- checkOnly inModuleSrc
-            -- The fix should land us at "No errors found." (sky check
-            -- exit 0) for this exact shape. The pre-fix failure mode
-            -- emits "Type mismatch: Element" in the output; assert it
-            -- does NOT.
-            out `shouldNotSatisfy` ("Type mismatch: Element" `isInfixOf`)
-            out `shouldNotSatisfy` ("vs Element Msg"         `isInfixOf`)
-            ec `shouldBe` 0
-            out `shouldSatisfy` ("No errors found" `isInfixOf`)
+            result <- compileInProcess inModuleSrc
+            case result of
+                CompileErr e -> do
+                    -- Pin the specific pre-fix failure strings even
+                    -- when compilation fails for some other reason.
+                    e `shouldNotSatisfy` ("Type mismatch: Element" `isInfixOf`)
+                    e `shouldNotSatisfy` ("vs Element Msg"         `isInfixOf`)
+                    expectationFailure ("compile failed: " ++ e)
+                CompileOk _ -> return ()

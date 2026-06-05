@@ -45,46 +45,15 @@ module Sky.Canonicalise.AliasNameCollisionSpec (spec) where
 --     home is a true ambiguity — but in practice this is gated by
 --     D5 (PR #105) at the qualifier level so we don't reach this
 --     branch with conflicting bodies.
+--
+-- Tier 1 (task #491): runs the multi-module compile in-process via
+-- Sky.Build.Helpers.InProcessCompile.compileInProcessMulti. ZERO
+-- subprocess, ZERO `go build`, ZERO GOCACHE writes.
 
 import Test.Hspec
-import qualified System.Exit as Exit
-import System.Directory (getCurrentDirectory, doesFileExist,
-                         createDirectoryIfMissing)
-import System.FilePath ((</>))
-import System.Process (readCreateProcessWithExitCode, shell)
-import System.IO.Temp (withSystemTempDirectory)
 import Data.List (isInfixOf)
 
-
-findSky :: IO FilePath
-findSky = do
-    cwd <- getCurrentDirectory
-    let c = cwd </> "sky-out" </> "sky"
-    ok <- doesFileExist c
-    if ok then return c else fail ("missing: " ++ c)
-
-
--- | Build a fixture with multiple source files keyed by relative path
--- (always under `src/`) plus an empty sky.toml. Returns the build's
--- exit code + combined stdout/stderr.
-buildFixture :: [(FilePath, String)] -> IO (Int, String)
-buildFixture files =
-    withSystemTempDirectory "sky-350" $ \tmp -> do
-        sky <- findSky
-        createDirectoryIfMissing True (tmp </> "src")
-        writeFile (tmp </> "sky.toml") "name = \"alias-name-test\"\n"
-        mapM_ (\(p, c) -> do
-            let dst = tmp </> p
-                dir = reverse (dropWhile (/= '/') (reverse dst))
-            createDirectoryIfMissing True dir
-            writeFile dst c) files
-        let cmd = "cd " ++ tmp ++ " && " ++ sky ++ " build src/Main.sky 2>&1"
-        (ec, sout, serr) <- readCreateProcessWithExitCode (shell cmd) ""
-        let combined = sout ++ serr
-            ecInt = case ec of
-                Exit.ExitSuccess -> 0
-                Exit.ExitFailure n -> n
-        return (ecInt, combined)
+import Sky.Build.Helpers.InProcessCompile (CompileResult(..), compileInProcessMulti)
 
 
 -- An `App.State` module with its own Model alias + initial helper.
@@ -171,15 +140,17 @@ spec =
                     , ""
                     , "main = println (toString useApp.count ++ \"/\" ++ useLib.name)"
                     ]
-            (ec, out) <- buildFixture
+            result <- compileInProcessMulti
                 [ ("src/Main.sky",       mainSrc)
                 , ("src/App/State.sky",  appStateModule)
                 , ("src/Lib/State.sky",  libStateModule)
                 ]
-            -- The dishonest "Model vs Model" must not surface.
-            out `shouldNotSatisfy` ("Model vs Model" `isInfixOf`)
-            ec `shouldBe` 0
-            out `shouldSatisfy` ("Compilation successful" `isInfixOf`)
+            case result of
+                CompileErr e -> do
+                    -- The dishonest "Model vs Model" must not surface.
+                    e `shouldNotSatisfy` ("Model vs Model" `isInfixOf`)
+                    expectationFailure ("compile failed: " ++ e)
+                CompileOk _ -> return ()
 
 
         it "preserves alias-body identity per home module (#350)" $ do
@@ -209,13 +180,14 @@ spec =
                     , ""
                     , "main = println (toString appCount ++ \"|\" ++ libName)"
                     ]
-            (ec, out) <- buildFixture
+            result <- compileInProcessMulti
                 [ ("src/Main.sky",       mainSrc)
                 , ("src/App/State.sky",  appStateModule)
                 , ("src/Lib/State.sky",  libStateModule)
                 ]
-            ec `shouldBe` 0
-            out `shouldSatisfy` ("Compilation successful" `isInfixOf`)
+            case result of
+                CompileErr e -> expectationFailure ("compile failed: " ++ e)
+                CompileOk _ -> return ()
 
 
         it "qualified type referenced via a re-exporting transit module (#361)" $ do
@@ -249,12 +221,14 @@ spec =
                     , ""
                     , "main = println (showRepo emptyModel.repo)"
                     ]
-            (ec, out) <- buildFixture
+            result <- compileInProcessMulti
                 [ ("src/Main.sky",          mainSrc)
                 , ("src/State.sky",         stateReexportModule)
                 , ("src/Github/Api.sky",    githubApiModule)
                 ]
-            out `shouldNotSatisfy` ("RepoInfo vs {" `isInfixOf`)
-            out `shouldNotSatisfy` ("type mismatch" `isInfixOf`)
-            ec `shouldBe` 0
-            out `shouldSatisfy` ("Compilation successful" `isInfixOf`)
+            case result of
+                CompileErr e -> do
+                    e `shouldNotSatisfy` ("RepoInfo vs {" `isInfixOf`)
+                    e `shouldNotSatisfy` ("type mismatch" `isInfixOf`)
+                    expectationFailure ("compile failed: " ++ e)
+                CompileOk _ -> return ()
