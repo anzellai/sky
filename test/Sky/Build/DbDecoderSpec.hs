@@ -12,16 +12,17 @@ module Sky.Build.DbDecoderSpec (spec) where
 --      (`succeed Ctor |> andMap (string "x") |> andMap (int "y")`)
 --      type-checks + builds + emits the kernel calls (not a panic
 --      stub).
+--
+-- Tier 1 (task #491): the compile-and-inspect `it` block uses the
+-- in-process compile helper.  ZERO subprocess.  ZERO `go build`.
 
 import Test.Hspec
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
 import Data.List (isInfixOf)
-import System.Directory (doesFileExist, createDirectoryIfMissing, getCurrentDirectory)
-import System.FilePath ((</>))
-import System.IO.Temp (withSystemTempDirectory)
-import System.Process (readCreateProcessWithExitCode, proc, CreateProcess(..))
-import System.Exit (ExitCode(..))
+import System.Directory (doesFileExist)
+
+import Sky.Build.Helpers.InProcessCompile (CompileResult(..), compileInProcess)
 
 
 spec :: Spec
@@ -55,87 +56,57 @@ spec = describe "v0.15.45 — Std.Db.Decode typed pipeline" $ do
             (needle `isInfixOf` body) `shouldBe` True) mustHave
 
     it "pipeline-style userDecoder type-checks + builds + routes to rt.DbDec_*" $ do
-        sky <- findSky
-        withSystemTempDirectory "sky-db-decoder" $ \tmp -> do
-            writeDecoderFixture tmp
-            (ec, out, errOut) <- runSky sky ["build", "src/Main.sky"] tmp
-            if ec /= ExitSuccess
-                then expectationFailure $
-                    "sky build failed.\n" ++ out ++ "\n" ++ errOut
-                else do
-                    body <- readFile (tmp </> "sky-out" </> "main.go")
-                    -- Call sites route to rt.DbDec_* kernels.
-                    ("rt.DbDec_succeed" `isInfixOf` body) `shouldBe` True
-                    ("rt.DbDec_andMap" `isInfixOf` body) `shouldBe` True
-                    ("rt.DbDec_string" `isInfixOf` body) `shouldBe` True
-                    ("rt.DbDec_int" `isInfixOf` body) `shouldBe` True
-                    -- Note: the dead alias-body declarations may
-                    -- carry `rt.Ffi_kernel("DbDec_...")` panic stubs
-                    -- for the Layer-3 source-side bindings (e.g.
-                    -- `func Std_Db_Decode_succeed() … { return
-                    -- rt.Coerce[...](rt.Ffi_kernel("DbDec_succeed")) }`).
-                    -- That's fine — the user code's call sites are
-                    -- rewritten to the typed kernel dispatch via
-                    -- Stage-4 alias resolution, which is what the
-                    -- rt.DbDec_* assertions above pin.
+        result <- compileInProcess decoderFixture
+        case result of
+            CompileErr e -> expectationFailure ("compile failed: " ++ e)
+            CompileOk body -> do
+                -- Call sites route to rt.DbDec_* kernels.
+                ("rt.DbDec_succeed" `isInfixOf` body) `shouldBe` True
+                ("rt.DbDec_andMap" `isInfixOf` body) `shouldBe` True
+                ("rt.DbDec_string" `isInfixOf` body) `shouldBe` True
+                ("rt.DbDec_int" `isInfixOf` body) `shouldBe` True
+                -- Note: the dead alias-body declarations may
+                -- carry `rt.Ffi_kernel("DbDec_...")` panic stubs
+                -- for the Layer-3 source-side bindings (e.g.
+                -- `func Std_Db_Decode_succeed() … { return
+                -- rt.Coerce[...](rt.Ffi_kernel("DbDec_succeed")) }`).
+                -- That's fine — the user code's call sites are
+                -- rewritten to the typed kernel dispatch via
+                -- Stage-4 alias resolution, which is what the
+                -- rt.DbDec_* assertions above pin.
 
 
 -- ── Fixtures ──────────────────────────────────────────────────────
 
 
-writeDecoderFixture :: FilePath -> IO ()
-writeDecoderFixture tmp = do
-    writeFile (tmp </> "sky.toml") tomlFixture
-    let srcDir = tmp </> "src"
-    createDirectoryIfMissing True srcDir
-    writeFile (srcDir </> "Main.sky") decoderFixture
-  where
-    tomlFixture = unlines
-        [ "name = \"db-decoder-test\""
-        , "version = \"0.0.0\""
-        , "[source]"
-        , "root = \".\""
-        ]
-    decoderFixture = unlines
-        [ "module Main exposing (main)"
-        , ""
-        , "import Sky.Core.Prelude exposing (..)"
-        , "import Std.Db.Decode as Decode"
-        , "import Std.Log exposing (println)"
-        , ""
-        , "type alias User ="
-        , "    { id    : Int"
-        , "    , name  : String"
-        , "    , email : String"
-        , "    }"
-        , ""
-        , "userDecoder : Decoder User"
-        , "userDecoder ="
-        , "    Decode.succeed (\\i n e -> { id = i, name = n, email = e })"
-        , "        |> Decode.andMap (Decode.int \"id\")"
-        , "        |> Decode.andMap (Decode.string \"name\")"
-        , "        |> Decode.andMap (Decode.string \"email\")"
-        , ""
-        , "-- Force the decoder to be kept by the DCE pass by referencing"
-        , "-- it from `main`. We just need its shape to appear in the"
-        , "-- emitted Go — actual execution is covered by the runtime-go"
-        , "-- tests + the example sweep."
-        , "main : Int"
-        , "main ="
-        , "    let _ = println \"decoder built\""
-        , "        _ = userDecoder"
-        , "    in 0"
-        ]
-
-
-findSky :: IO FilePath
-findSky = do
-    cwd <- getCurrentDirectory
-    let candidate = cwd </> "sky-out" </> "sky"
-    ok <- doesFileExist candidate
-    if ok then return candidate else return "sky"
-
-
-runSky :: FilePath -> [String] -> FilePath -> IO (ExitCode, String, String)
-runSky sky args dir = readCreateProcessWithExitCode
-    ((proc sky args) { cwd = Just dir }) ""
+decoderFixture :: String
+decoderFixture = unlines
+    [ "module Main exposing (main)"
+    , ""
+    , "import Sky.Core.Prelude exposing (..)"
+    , "import Std.Db.Decode as Decode"
+    , "import Std.Log exposing (println)"
+    , ""
+    , "type alias User ="
+    , "    { id    : Int"
+    , "    , name  : String"
+    , "    , email : String"
+    , "    }"
+    , ""
+    , "userDecoder : Decoder User"
+    , "userDecoder ="
+    , "    Decode.succeed (\\i n e -> { id = i, name = n, email = e })"
+    , "        |> Decode.andMap (Decode.int \"id\")"
+    , "        |> Decode.andMap (Decode.string \"name\")"
+    , "        |> Decode.andMap (Decode.string \"email\")"
+    , ""
+    , "-- Force the decoder to be kept by the DCE pass by referencing"
+    , "-- it from `main`. We just need its shape to appear in the"
+    , "-- emitted Go — actual execution is covered by the runtime-go"
+    , "-- tests + the example sweep."
+    , "main : Int"
+    , "main ="
+    , "    let _ = println \"decoder built\""
+    , "        _ = userDecoder"
+    , "    in 0"
+    ]
