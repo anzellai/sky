@@ -140,9 +140,15 @@ func (c *HubConfig) Validate() error {
 		// permitted — operator deliberately disables auth (local
 		// dev / behind a trusted reverse proxy).
 	case "app":
-		return fmt.Errorf("hub: auth=app not implemented until Chunk 7")
+		// v0.16.4 B8: console UI gated by a Go-side callback
+		// (RegisterAppAuthCallback). OTLP receivers continue to
+		// require the bearer token — machine-to-machine push is
+		// not the surface app-auth is designed for.
+		if c.Token == "" {
+			return fmt.Errorf("hub: auth=app requires SKY_CONSOLE_HUB_TOKEN for OTLP receivers (app-mode covers the UI; receivers stay bearer)")
+		}
 	default:
-		return fmt.Errorf("hub: unknown auth mode %q (want token|off)", c.AuthMode)
+		return fmt.Errorf("hub: unknown auth mode %q (want token|off|app)", c.AuthMode)
 	}
 	if c.TLSCert != "" && c.TLSKey == "" {
 		return fmt.Errorf("hub: --tls-cert set but --tls-key missing")
@@ -184,7 +190,19 @@ func buildMux(cfg HubConfig, store *Store) *http.ServeMux {
 	recv.attach(mux)
 
 	if consoleCfg := rt.InlineConsoleCfg(); consoleCfg != nil {
-		rt.MountLiveSubAppInProcess(mux, "/console", consoleCfg)
+		switch cfg.AuthMode {
+		case "app":
+			// v0.16.4 B8: console gated by registered Go-side callback.
+			// Operators (SkyDeploy hub-host, etc.) wire the callback via
+			// RegisterAppAuthCallback before Run(). consoleGateApp
+			// returns 503 if no callback is registered (fail closed).
+			rt.MountLiveSubAppInProcessWithGate(mux, "/console", consoleCfg, consoleGateApp)
+		default:
+			// "off" and "token" modes mount the console open. Operators
+			// running "token" mode are expected to gate the UI behind a
+			// reverse proxy or VPN — token-mode covers OTLP only.
+			rt.MountLiveSubAppInProcess(mux, "/console", consoleCfg)
+		}
 		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/" {
 				http.Redirect(w, r, "/console/", http.StatusSeeOther)
