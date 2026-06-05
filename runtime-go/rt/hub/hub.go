@@ -38,6 +38,13 @@ import (
 	"time"
 
 	rt "sky-app/rt"
+
+	// v0.16.4 Option B B7: blank import wires console_app's package
+	// init() — RegisterInlineConsoleCfgProvider — so InlineConsoleCfg()
+	// returns the bundled console's Sky.Live cfg shape. Without this
+	// import, the hub would link clean but the console mount below
+	// would silently fall through to nil cfg.
+	_ "sky-app/rt/console_app"
 )
 
 // HubConfig carries the resolved CLI + env config. Constructed by Run
@@ -152,6 +159,47 @@ func (c *HubConfig) Validate() error {
 	return nil
 }
 
+// buildMux constructs the hub's ServeMux: OTLP receiver routes,
+// healthz/readyz, and (when console_app's cfg provider is
+// registered) the bundled Sky.Live console at /console/ plus a
+// `/` → `/console/` redirect.
+//
+// Factored out of Run for testability — mount/redirect/route
+// regressions can exercise the mux via httptest.NewServer without
+// needing to bind a port or signal-shutdown.
+//
+// v0.16.4 Option B B7: mounts the bundled Sky.Live console as a
+// sub-app at /console/. The OTLP receiver's specific paths
+// (/v1/logs, /v1/metrics, /v1/traces) and health probes
+// (/_hub/healthz, /_hub/readyz) win Go's longest-prefix-match, so
+// the catch-all under /console/ never shadows them.
+//
+// When console_app's cfg provider isn't registered (a hand-built
+// hub without the blank import above), InlineConsoleCfg returns
+// nil — skip the mount + redirect with a stderr breadcrumb so the
+// OTLP ingest side still works headlessly.
+func buildMux(cfg HubConfig, store *Store) *http.ServeMux {
+	recv := newReceiver(cfg, store)
+	mux := http.NewServeMux()
+	recv.attach(mux)
+
+	if consoleCfg := rt.InlineConsoleCfg(); consoleCfg != nil {
+		rt.MountLiveSubAppInProcess(mux, "/console", consoleCfg)
+		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/" {
+				http.Redirect(w, r, "/console/", http.StatusSeeOther)
+				return
+			}
+			http.NotFound(w, r)
+		})
+	} else if os.Getenv("SKY_CONSOLE_HUB_QUIET") == "" {
+		fmt.Fprintln(os.Stderr,
+			"[sky.hub] console_app cfg provider not registered — UI surface disabled; OTLP ingest remains active")
+	}
+
+	return mux
+}
+
 // Run starts the hub. Blocks until SIGINT/SIGTERM or a fatal listen
 // error. Returns nil on graceful shutdown.
 //
@@ -186,9 +234,7 @@ func Run(cfg HubConfig) error {
 	// empty payloads if no reader is registered yet.
 	rt.SetHubStore(store.AsReader())
 
-	recv := newReceiver(cfg, store)
-	mux := http.NewServeMux()
-	recv.attach(mux)
+	mux := buildMux(cfg, store)
 
 	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", cfg.Port))
 	if err != nil {
