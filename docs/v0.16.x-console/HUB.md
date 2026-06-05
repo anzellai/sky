@@ -72,10 +72,70 @@ Hub uses the same `SKY_CONSOLE_AUTH=token|app|off` env var as embedded mode.
 **`app` mode** (multi-tenant — the SkyDeploy-as-hub case):
 - Hub itself is a Sky.Live app. It defines its own `consoleAuth` callback.
 - The callback returns `Identity` with `claims.tenant = "<tenant-id>"`.
-- Tenant scoping is enforced by the storage layer: queries filter by `service.name LIKE '<tenant>-%'` or similar attribute-based ACL.
+- Tenant scoping is enforced by the storage layer: queries filter by `service_name LIKE '<tenant>%'` (kernel-derived, NOT caller-supplied) at the SQLite WHERE-clause layer.
 - This is how SkyDeploy can run ONE hub for all its customers, each customer seeing only their services.
 
-The exact tenant-isolation enforcement (storage attribute-based ACL) lives in `OPS.md` / v0.16.5.
+### Tenant isolation — defense-in-depth (v0.16.5 / v0.16.6)
+
+Tenant scope flows through THREE layers, each independently sufficient:
+
+1. **Auth-gate layer.** The hub's `consoleAuth` callback runs BEFORE
+   the request reaches the bundled console. It validates the
+   signed-in user, derives the tenant from your auth backend
+   (Auth0/Clerk/your DB), and writes the `Identity` to
+   `r.Context()` via `rt.IdentityContextKey`.
+
+2. **Session-mint layer.** When the bundled console (a Sky.Live
+   app under the hub) mints a session for the user, it copies
+   `IdentityFromContext(r.Context())` onto `liveSession.identity`
+   and gob-persists it via the session store so it survives a
+   restart or replica fail-over. Subsequent SSE patches and
+   `Cmd.perform` calls in the bundled console run within scope of
+   that identity.
+
+3. **SQL-WHERE layer.** Every `Hub_readFiltered*` kernel reads the
+   identity off `currentLiveSession()`, extracts `claims["tenant"]`
+   as the tenant prefix, and dispatches to the `WithTenant`
+   variant of the storage reader. The SQL appends
+   `AND service_name LIKE prefix || '%'` — the SQLite engine, not
+   the bundled console code, enforces row scope. A caller-provided
+   `serviceName` that doesn't start with the tenant prefix is
+   rejected at the kernel layer with
+   `Err("service outside tenant scope")` and never reaches the
+   store.
+
+Bundled-console code DOES surface the identity into its `Model`
+(via `Hub.currentIdentity` → `GotIdentity` Msg arm) so the UI can
+render "logged in as <email>" and pre-derive a tenantPrefix for
+the service selector. But the security boundary lives in layers
+1 and 3 — a bug in the Sky-source console (or a malicious replay)
+can't widen the scope.
+
+**Operator naming convention.** Use a consistent prefix scheme on
+your `service.name` attributes. The simplest is
+`<tenant>-<service>` (e.g. `customer-42-billing`,
+`customer-42-frontend`).  Your `consoleAuth` callback returns
+`claims["tenant"] = "customer-42-"` (with trailing separator) —
+the LIKE clause becomes `service_name LIKE 'customer-42-%'`.
+
+`%` and `_` in tenant claims are stripped at the SQL helper
+(`escapeLikePrefix`) so a malicious claim can't widen the scope
+via wildcard injection.
+
+### Why not framework-automatic?
+
+A previous design had the runtime auto-derive tenant scoping
+purely from claims with no Sky-source visibility.  That's
+brittle: bundled console UI couldn't show "filtered by tenant
+X", the scope was invisible at call sites, and adding a second
+tenant claim shape (per-project subscoping, say) required a
+runtime change.
+
+The shipped design exposes Identity to the Sky-source console
+via `Hub.currentIdentity`, lets it thread the tenantPrefix on
+explicit service-name arguments, AND keeps the kernel-layer
+gate so the security boundary remains operator-controlled (not
+caller-controlled).  Best of both: explicit + enforced.
 
 ## Storage — two-tier (hot SQLite + warm DuckDB)
 
