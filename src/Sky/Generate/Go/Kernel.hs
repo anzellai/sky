@@ -807,4 +807,10 @@ registry = Map.fromList
     , (("Hub", "readFilteredMetrics"), KernelInfo "rt.Hub_readFilteredMetrics" 2 False)
     , (("Hub", "readFilteredTraces"),  KernelInfo "rt.Hub_readFilteredTraces" 2 False)
     , (("Hub", "readFilteredErrors"),  KernelInfo "rt.Hub_readFilteredErrors" 2 False)
+    -- v0.16.5 #493: identity-aware kernel.  Returns the currently
+    -- signed-in Std.Live.Console.Identity from the live session
+    -- (populated at session-mint time by dispatchRoot from r.Context
+    -- written by the auth gate).  Sky-side callers use this to read
+    -- `claims.tenant` and pre-filter their queries.
+    , (("Hub", "currentIdentity"),     KernelInfo "rt.Hub_currentIdentity" 1 False)
     ]

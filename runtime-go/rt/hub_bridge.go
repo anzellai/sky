@@ -129,6 +129,67 @@ func getHubStore() HubStoreReader {
 	return hubStoreReader
 }
 
+// Hub_currentIdentity implements:
+//
+//	Hub.currentIdentity : String -> Task Error Identity
+//
+// v0.16.5 #493. Returns the authenticated `Std.Live.Console.Identity`
+// stashed on the current liveSession at mint time by dispatchRoot
+// (from IdentityFromContext(r.Context()) written by the auth gate).
+//
+// `_dbPathArg` is reserved for the multi-store future — same shape
+// as other Hub_* kernels for consistency.
+//
+// Failure modes:
+//   - No live session in scope (CLI / unit test) → Err with explicit
+//     "no live session" message. Caller decides whether to treat as
+//     anonymous or fatal.
+//   - Live session exists but identityValid is false (gate didn't
+//     write, auth=off path) → Err with "no identity in session".
+//     The bundled console treats this as "anonymous read all".
+//   - Identity present → Ok with the typed record matching
+//     `Std.Live.Console.Identity`'s field shape.
+func Hub_currentIdentity(_dbPathArg any) any {
+	return func() any {
+		sess := currentLiveSession()
+		if sess == nil {
+			return Err[any, any](ErrFfi("hub.currentIdentity: no live session in scope"))
+		}
+		id, ok := SessionIdentity(sess)
+		if !ok {
+			return Err[any, any](ErrFfi("hub.currentIdentity: no identity in session (auth=off or gate didn't run)"))
+		}
+		// Match Std.Live.Console.Identity's record shape exactly so
+		// rt.Coerce[Std_Live_Console_Identity_R] narrows cleanly on
+		// the Sky side. Claims is a Dict String String — the runtime
+		// already round-trips map[string]string via the existing Dict
+		// kernel infrastructure.
+		claims := id.Claims
+		if claims == nil {
+			claims = map[string]string{}
+		}
+		out := map[string]any{
+			"subject": id.Subject,
+			"email":   id.Email,
+			"claims":  dictFromStringMap(claims),
+		}
+		return Ok[any, any](out)
+	}
+}
+
+// dictFromStringMap converts a Go map[string]string to the rt
+// representation of `Dict String String` — built on top of the
+// existing Dict_empty / Dict_insert primitives. Local to hub_bridge.go
+// because no other kernel currently constructs a Dict; promote to a
+// shared helper if a second caller appears.
+func dictFromStringMap(m map[string]string) any {
+	d := Dict_empty()
+	for k, v := range m {
+		d = Dict_insert(k, v, d)
+	}
+	return d
+}
+
 // Hub_readOverview implements:
 //
 //	HubStore.hubReadOverview : String -> Task Error Overview
