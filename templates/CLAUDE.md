@@ -12,125 +12,209 @@ through `Task`, every fallible value returns `Result Error a`, and
 surfaces at check time. No runtime panics from well-typed Sky code, no
 nil leakage, no silent numeric coercion.
 
-**Typed Go output (v0.15.x).** Generated Go functions have fully-typed
+**Typed Go output.** Generated Go functions have fully-typed
 signatures end-to-end. Type-directed lowering propagates the slot's
 expected type into lambda bodies, record-field inits, list elements,
 and call args — so `{ onSubmit = \s -> Tag ("L:" ++ s), ... }` against
 `Cfg Msg` emits `func(string) Msg`, not `func(any) any`. Parametric
 record aliases compile to Go generics (`type Cfg_R[T1 any] struct{...}`
-with per-instance type args). Layer 3 stdlib: every kernel module
-surfaced as Sky source under `sky-stdlib/{Sky/Core,Std,Sky/Http}/*.sky`
-— typed kernel dispatch preserved via the `Ffi.kernel` mechanism.
-Tail-recursive Sky functions auto-TCO to `for { ... continue }` Go
-loops (constant stack). Browse the full API surface with
-`sky doc --serve`.
+with per-instance type args). Tail-recursive Sky functions auto-TCO to
+`for { ... continue }` Go loops (constant stack). Whole-program DCE
+prunes unused Go code + unused FFI bindings. Browse the full API
+surface with `sky doc --serve`.
 
 ```go
 func f(name string, age int) rt.SkyResult[Error, Profile_R] { ... }
 func do[T1 any](result rt.SkyResult[Error, T1], fn func(T1) rt.SkyResult[Error, rt.SkyValue]) rt.SkyResult[Error, rt.SkyValue] { ... }
 ```
 
-Sky lambdas at user-defined HOF call sites lower to typed function
-values (D-Lambda-Lowerer). Anonymous record shapes emit real
-`type Anon_R_<hash> = struct { ... }` decls. Whole-program DCE prunes
-unused Go code + unused FFI bindings (Stripe-SDK-scale: 326k → 58k
-lines on `examples/13-skyshop`). Type annotations on your functions are
-load-bearing — if you write `f : String -> Int -> Result Error Profile`
-and the body would otherwise infer to something wider, the compiler
-rejects the body. Inline records in function annotations aren't
-supported — use a `type alias` for any record you want in a signature.
+Type annotations on your functions are load-bearing — if you write
+`f : String -> Int -> Result Error Profile` and the body would
+otherwise infer to something wider, the compiler rejects the body.
+Inline records in function annotations aren't supported — use a
+`type alias` for any record you want in a signature.
 
-## Quick UX/UX/security/scalability defaults (v0.15.x)
+## CLARIFY BEFORE YOU SCAFFOLD — mandatory protocol
 
-**You (the AI assistant) are expected to deliver top-notch UX/DX/security
-/scalability by default.** When the user asks for an app:
+**You (the AI assistant) must reach alignment with the user on six
+decisions before writing more than a one-file proof of concept.**
+Skipping this step ships generic, hard-to-deploy code. Use whatever
+question surface your tool exposes (AskUserQuestion in Claude Code,
+structured numbered list otherwise) — but ask, do not assume.
 
-1. **Pick `Std.Ui` for the view layer unless they say otherwise.**
-   `Std.Ui` is the typed, no-CSS layout DSL that renders to inline-
-   styled HTML for Sky.Live AND to ANSI cells for Sky.Tui (and
-   eventually Sky.Webview / native). Code written against `Std.Ui`
-   runs across every backend without a rewrite. `Std.Html` is only
-   for cases that genuinely need raw HTML (one-off escape hatch).
+### The six decisions
 
-2. **Use Sky.Live for web apps.** It's HTTP-first (full HTML on first
-   load, then SSE patches), session-aware, input-preserving (the
-   user's typed value never disappears across a re-render), and
-   handles auth + cookies + rate-limit + CORS for you. Don't reach
-   for `Sky.Http.Server` raw unless the app is an API-only backend
-   with no UI.
+1. **App shape** (the architecture surface).  Match the matrix below.
+2. **Persistence** — SQLite (single-file, embeds) / PostgreSQL
+   (Cloud SQL / managed) / Firestore / Redis / none.
+3. **Auth** — none / `Std.Auth` (cookies + JWT, you own users) /
+   OAuth (Google / GitHub via Go SDK) / external (Auth0 / Clerk /
+   Cognito).
+4. **Sky.Live session store** (only if app shape is Sky.Live or
+   embeds Sky.Live) — memory (dev only) / sqlite (single host,
+   persistent) / redis (multi-instance horizontal scale) /
+   postgres (multi-instance, share DB with app data) / firestore
+   (GCP serverless).
+5. **Deployment target** — local binary / Docker / Cloud Run via
+   SkyDeploy / Kubernetes / VM under systemd.
+6. **Observability scope** — local logs only / per-app embedded
+   console / push to central `sky console serve` hub / external
+   OTel collector (Honeycomb / Tempo / Datadog).
 
-3. **Authentication: default to `Std.Auth`.** `hashPassword` /
-   `verifyPassword` (bcrypt), `signToken` / `verifyToken` (HS256 JWT),
-   `register` / `login` / `setRole`. NEVER log a password, NEVER
-   `fmt.Sprintf("%v", secret)`. Forms with password fields use
-   `Ui.form [Ui.onSubmit DoSignIn]` — never per-keystroke `onInput`
-   on a password input.
+### App shape decision matrix
 
-4. **Database: default to `Std.Db` + SQLite** for prototypes / single-
-   user. Promote to PostgreSQL or Redis when the user says
-   "deployment" / "production" / "multi-tenant". Sky.Live's session
-   store defaults to memory (lost on restart) — for deploy targets
-   use `[live] store = "sqlite"` / `"redis"` / `"postgres"`.
+| User wants…                              | Use                | Entry point shape                  | Notes |
+|------------------------------------------|--------------------|------------------------------------|-------|
+| Web app (forms, real-time, UI state)     | **Sky.Live**       | `Std.Live.app cfg`                 | HTTP-first; SSE patches; sessions + cookies + routing built in. |
+| HTTP / JSON API (no browser UI)          | **Sky.Http.Server**| `Server.listen 8000 [...]`         | Routes + middleware (CORS, rate-limit, logging, basic-auth). |
+| Multi-tenant SaaS / dashboard            | **Sky.Live + auth-app gate** | `Live.app { consoleAuth = … }` | Pair with `sky console serve` hub for shared telemetry. |
+| Background job / cron worker             | **Sky.Cli**        | `main = Task.run scheduledWork`    | No UI loop; long-running goroutines via `Task.parallel`. |
+| Terminal UI (TUI)                        | **Sky.Tui**        | `Std.Tui.app cfg`                  | Same view code as Sky.Live; renders to ANSI cells. |
+| One-shot CLI tool                        | **Sky.Cli**        | `main = Task.run cliCmd`           | Argparse via `System.args`. |
+| Desktop app                              | **Sky.Webview**    | `Std.Webview.app cfg`              | macOS in v0.1; Linux / Windows in v0.2. |
+| WebSocket-driven feed (chat, multiplayer)| **Sky.Http.Server.WebSocket** or **Sky.Live + WS sub** | `Server.upgrade req` | Bidirectional; nhooyr.io/websocket. |
+| Server-sent stream (LLM tokens, SSE)     | **Sky.Http.Server.Stream** | `Server.Stream.emit` | Mirror of `Sky.Core.Http.Stream` consumer. |
 
-5. **Ask the user about architecture choices BEFORE scaffolding.**
-   Required questions (use whatever your chat surface supports —
-   AskUserQuestion in Claude Code, structured prompts otherwise):
+### Pinned defaults (always apply unless the user overrules)
 
-   - **Backend shape**: "Web app (Sky.Live)" / "Terminal UI (Sky.Tui)"
-     / "Desktop app (Sky.Webview — macOS only in v0.1)" / "CLI (Sky.Cli)"
-     / "HTTP API only".
-   - **Database**: "SQLite (local file)" / "PostgreSQL (deploy-ready)"
-     / "None (pure compute)".
-   - **Authentication**: "None" / "Std.Auth (built-in cookies + JWT)"
-     / "OAuth (Google / GitHub via existing Go SDK)".
-   - **Session store** (for Sky.Live): "Memory (dev)" / "SQLite (local
-     persistent)" / "Redis (multi-instance)" / "Postgres (deploy)".
+* **View layer** — `Std.Ui` (typed no-CSS DSL).  Renders to HTML
+  (Sky.Live), ANSI (Sky.Tui), or native Webview from the same
+  source.  Reach for `Std.Html` only when wrapping raw markup the
+  user already wrote.
+* **Auth** — `Std.Auth.{register, login, setRole, signToken,
+  verifyToken, hashPassword, verifyPassword}`.  bcrypt + HS256 JWT
+  cookies.  NEVER log a password, NEVER `fmt.Sprintf("%v", secret)`.
+* **Forms with password fields** — `Ui.form [Ui.onSubmit DoSignIn]`
+  with a typed record arg.  NEVER `onInput UpdatePassword` per
+  keystroke (defeats password managers + leaks the value into
+  Model + the session store).
+* **DB** — `Std.Db` with SQLite for prototypes / single-host;
+  PostgreSQL when the user says "deployment" / "multi-instance" /
+  "scale".  Migrations via `sky db migrate` + the `_sky_migrations`
+  ledger.
+* **Numeric money** — `Std.Money` (currency-typed) on `Std.Decimal`.
+  NEVER raw `Float` for currency.  Banker's rounding by default.
+* **Concurrency** — `Cmd.batch` / `Task.parallel` for parallel
+  effects; `Sub.subscribeTopic` + `Cmd.publish` for in-process
+  pub/sub.  Both run under the Sky.Live update loop without race
+  conditions.
+* **Observability** — Sky.Live + Sky.Http.Server auto-mount
+  `/_sky/console`, `/_sky/metrics`, `/_sky/healthz`, `/_sky/readyz`,
+  `/_sky/buildinfo`.  In production gate them via
+  `SKY_CONSOLE_AUTH=app` + your `consoleAuth` callback.  Push to a
+  shared hub with `SKY_CONSOLE_HUB` + `SKY_CONSOLE_HUB_TOKEN` when
+  multiple apps.
+* **Errors** — `Result Error a` / `Task Error a`.  NEVER `String`
+  as an error type.  NEVER throw a panic in Sky source — panic
+  recovery is for FFI / runtime bugs, not user code.
+* **No raw HTML / JS strings in view code.** `Std.Ui` already
+  HTML-escapes every value.  Accessibility lives in `Std.Ui.Region`
+  (real `<h1>` / `<main>` / `<nav>` / `<footer>` + `aria-*`).
+  `data-sky-eval` is forbidden — use `data-sky-path` for URL
+  sync and named typed attrs for everything else.
 
-   Then update `sky.toml` automatically with the right `[live]`,
-   `[database]`, `[auth]` sections (see "sky.toml" section below for
-   the exact keys). Run `sky install` if a Go FFI dep was added.
+### sky.toml — the right shape per decision
 
-6. **No raw HTML/JS strings in view code.** `Std.Ui` builders give you
-   accessibility for free (real `<h1>` from `Region.heading 1`, real
-   `<main>` from `Region.mainContent`, `aria-label` from `Region.label`).
-   Browser XSS is impossible by construction — every value goes through
-   the typed VNode renderer which HTML-escapes everything.
+After the user answers the six decisions, write `sky.toml`
+deterministically:
 
-7. **Errors return `Result Error a` / `Task Error a`.** NEVER use a
-   `String` as an error type. NEVER throw a panic in Sky source —
-   the runtime panic-recovery is for FFI / runtime bugs, not user code.
+```toml
+name = "<project-name>"
+version = "0.1.0"
+entry = "src/Main.sky"
 
-8. **For multi-instance deployments**, the user MUST be aware of the
-   Sky.Live session store config. Memory store = sessions lost on each
-   pod restart. Postgres/Redis = sessions ride deploys. Surface this
-   when the user mentions Docker / Kubernetes / scaling.
+[live]                          # only if app shape = Sky.Live
+port = 8000
+store = "sqlite"                # memory / sqlite / redis / postgres / firestore
+storePath = "sessions.db"       # path / connection string per store
+ttl = "30m"
+
+[database]                      # only if persistence != none
+driver = "sqlite"               # sqlite / postgres
+url = "DATABASE_URL"            # env-var reference for production
+
+[auth]                          # only if auth != none
+cookie = "sky_sid"
+ttl = "24h"
+# secret comes from SKY_AUTH_TOKEN_SECRET — never commit it
+
+[log]
+format = "json"
+level  = "info"
+```
+
+Add `[env] prefix = "MYAPP"` only if the user is running multiple
+Sky apps in the same process group and needs namespaced env vars.
+
+### Production gate — surface to the user
+
+Sky locks down the dev console + banner + metrics endpoint when
+`ENV` is anything other than unset / `dev` / `development` /
+`local`.  When the user mentions "deploy" / "production" / "Cloud
+Run" / "Kubernetes":
+
+* Confirm `ENV=production` is set on the runtime.
+* Confirm `SKY_AUTH_TOKEN_SECRET` is at least 32 bytes (Sky errors
+  at startup if shorter).
+* Confirm `SKY_CONSOLE_AUTH` is set (token or app); production
+  with `SKY_CONSOLE_AUTH` unset emits a warn log and refuses to
+  mount `/_sky/console`.
+* Confirm session store is NOT memory if there will be more than
+  one replica.
+
+### When you are unsure — say so
+
+If the user's request is ambiguous, the right move is **one
+focused clarifying question per ambiguity**, not a heroic guess.
+Examples of ambiguity that warrant a question:
+
+* "build me a CRM" → which entity types?  which auth?  which deploy
+  target?  ask before scaffolding.
+* "add an admin dashboard" → does it live in the same Sky.Live app
+  as a sub-route, or as a separate hub binary?  ask.
+* "let users upload files" → max size? mime allowlist? storage
+  backend (local / S3-compatible / GCS)?  ask.
+* "send them an email" → which provider? `SKY_EMAIL_DRY_RUN=1` in
+  dev?  ask.
+
+**Production-grade means** the app survives a restart, scales
+horizontally without losing user state, refuses cross-tenant
+reads, doesn't paint a permanent error banner on transient
+upstream failures, and emits structured logs every operator can
+trace.  All of that is achievable with the stdlib defaults — but
+only if you asked the right six questions.
 
 ## Reading order for AI assistants
 
-If you're an AI code assistant building Sky applications on behalf of a
-user, read the following sections IN ORDER before producing any code.
-Skipping ahead leads to code that type-checks but panics at runtime —
-the "if it compiles it works" guarantee depends on you respecting a
-handful of idioms the ML-family / Elm-compatible syntax makes non-obvious.
+If you're an AI code assistant building Sky applications on behalf of
+a user, read the following sections IN ORDER before producing more
+than a one-file proof of concept. Skipping ahead leads to code that
+type-checks but panics at runtime — the "if it compiles, it works"
+guarantee depends on you respecting a handful of idioms the
+ML-family / Elm-compatible syntax makes non-obvious.
 
-1. **Quick UX/UX/security/scalability defaults** (above) — internalise
-   first; affects every choice you make downstream.
-2. **Cardinal Rules** (below) — 10 rules that, if you follow them, keep
-   you out of 90% of the pitfalls real Sky projects have hit.
-3. **Common Pitfalls & Fixes** — error → cause → fix table. Skim this so
-   the messages users report are instantly mappable to action.
-4. **Real-World App Skeletons** — complete runnable starter code for the
-   most common app shapes (CRUD, auth, chat/LLM, dashboard, REST API).
-   Copy + adapt; do not invent from scratch.
-5. **Standard Library — Complete API** — authoritative signatures. If a
-   claim here conflicts with something you saw elsewhere, the stdlib
-   section wins.
-6. **Troubleshooting Cookbook** — when the user reports a specific error
-   message, start here.
-7. **Known Limitations** — work-arounds for things the compiler can't do.
+0. **CLARIFY BEFORE YOU SCAFFOLD** (above) — the six decisions the
+   user MUST answer before you commit to an architecture.  Production-
+   grade code is not a guess.
+1. **Pinned defaults** (above) — the libraries + patterns to reach
+   for without thinking, given a confirmed app shape.
+2. **Cardinal Rules** (below) — 10 rules that, if you follow them,
+   keep you out of 90 % of the pitfalls real Sky projects have hit.
+3. **Common Pitfalls & Fixes** — error → cause → fix table.  Skim so
+   user-reported messages are instantly mappable to action.
+4. **Real-World App Skeletons** — complete runnable starter code for
+   the most common app shapes.  Copy + adapt; do not invent from
+   scratch.
+5. **Standard Library — Complete API** — authoritative signatures.
+   If a claim here conflicts with something you saw elsewhere, the
+   stdlib section wins.
+6. **Troubleshooting Cookbook** — when the user reports a specific
+   error message, start here.
+7. **Known Limitations** — work-arounds for things the compiler
+   can't yet do.
 
-Everything else (FFI details, sky.toml, formatter rules) is reference,
-consult on-demand.
+Everything else (FFI details, sky.toml, formatter rules) is
+reference, consult on-demand.
 
 ---
 
@@ -4478,17 +4562,10 @@ records the per-version closures if you want history.
 - **Zero-arg `Css.*` constants DO need `()`** — `Css.zero ()`, `Css.auto ()`, `Css.none ()`, `Css.transparent ()`, `Css.inherit ()`, `Css.initial ()`, `Css.borderBox ()`, `Css.systemFont ()`, `Css.monoFont ()`, `Css.userSelectNone ()`. Bare form is now a clean type error (no longer the silent function-pointer leak it used to be), but the `()` is still required. Pattern: any `Css.X` that names a literal CSS keyword takes `()`; value constructors like `px`, `rem`, `em`, `hex`, `rgba` take their arguments directly.
 - **Non-tail-recursive list operations are O(N) on Go stack** — `map`, `filter`, `foldr`, `length`, `concat`, `concatMap`, `take`, `append`, `range`, `zip`, `indexedMap`, `Maybe.combine`, `Result.combine` recurse. Tail-recursive operations (`foldl`, `find`, `any`, `all`, `member`, `drop`) are auto-TCO'd to constant stack. For very large lists (200k+ elements) prefer the tail-recursive accumulator pattern.
 - **Multi-line function signatures with continuation INSIDE the type body** — `name\n    : T` (the `:` on a continuation line) parses cleanly. Continuation INSIDE the type body (`T1\n    -> T2`) is not supported — extract a `type alias` for the whole arrow type.
-### Closed in v0.15 (for grep)
-
-- ~~Same-named local lambdas across modules → `reflect: Call using X as type Y` panic~~ — closed in v0.15.30 via the scoped LowerCtx cascade (per-module env ledger in `Solve.SolvedTypes`, consulted at every reader site).
-
-- ~~Let bindings with parameters after multi-line case~~ — `let mark j = …` after a `case … of` arm now parses cleanly.
-- ~~Zero-arity functions reading env vars memoised at init()~~ — `apiKey = System.getenvOr "K" "def"` now reads the runtime environment.
-- ~~`exposing (Type(..))` for user-module ADT constructors~~ — user `type Color = Red | Green` exporting `Color(..)` and imported `exposing (Color(..))` now exposes unqualified constructors.
-- ~~`import X as Alias` leaks the alias into codegen~~ — `import Lib.Db as Chat` now emits `Lib_Db_Message_R` (source module name), not `Chat_Message_R`.
-- ~~`let` bindings don't support forward references~~ — `let a = b + 1; b = 5 in a` now compiles and evaluates correctly.
-- ~~Parametric record alias bugs (Surfaces 1, 2, 3)~~ — closed by v0.15 type-directed lowering + Go generics on parametric records.
-- ~~Same-module polymorphic call pinned by first instantiation~~ — sibling refs to polymorphic annotated TypedDefs now alpha-rename per call site.
+For closures (parametric record aliases, polymorphic
+re-instantiation, panic-class hardening, head-alias unfolding, etc.)
+the canonical reference is `docs/KNOWN_LIMITATIONS.md` in the Sky
+repo + `git log`.  Anything not on the active list above is fixed.
 
 ## Coding Conventions
 
