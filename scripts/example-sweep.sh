@@ -15,17 +15,31 @@
 #                     by rm -rf'ing the in-tree sky-out/ + .skycache/go
 #                     directories TypedFfi reads from. Cleaned up on
 #                     exit via trap.
+#   --jobs N          override parallel worker count. Default: read from
+#                     scripts/lib/concurrency.sh (CPU/mem-aware). Set 1
+#                     to force sequential mode (debugging / CI fallback).
 #
 # Exit 0 on full pass; non-zero and a failure list on any failure.
+#
+# v0.16.5 parallel mode: per-example work happens in xargs -P workers.
+# Each worker writes a one-line result file to $RESULTS_DIR/$name.result
+# (OK / SKIP <reason> / FAIL <message>) and the coordinator aggregates
+# at the end. Server examples bind their pre-assigned port from the
+# EXAMPLES table — no port allocator needed because each example owns
+# a distinct port in the table.
 
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
+# shellcheck source=lib/concurrency.sh
+source "$ROOT/scripts/lib/concurrency.sh"
+
 BUILD_ONLY=0
 CLEAN=1
 WORKDIR=""
+JOBS_OVERRIDE=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --build-only) BUILD_ONLY=1; shift ;;
@@ -38,11 +52,25 @@ while [[ $# -gt 0 ]]; do
         --workdir=*)
             WORKDIR="${1#--workdir=}"
             shift ;;
+        --jobs)
+            shift
+            [[ $# -gt 0 ]] || { echo "--jobs requires a count argument" >&2; exit 2; }
+            JOBS_OVERRIDE="$1"
+            shift ;;
+        --jobs=*)
+            JOBS_OVERRIDE="${1#--jobs=}"
+            shift ;;
         --help|-h)
-            sed -n '2,21p' "$0"; exit 0 ;;
+            sed -n '2,30p' "$0"; exit 0 ;;
         *) echo "unknown flag: $1" >&2; exit 2 ;;
     esac
 done
+
+if [[ -n "$JOBS_OVERRIDE" ]]; then
+    MAX_WORKERS="$JOBS_OVERRIDE"
+else
+    MAX_WORKERS=$(compute_max_workers)
+fi
 
 SKY="$ROOT/sky-out/sky"
 [[ -x "$SKY" ]] || { echo "missing $SKY — run scripts/build.sh first" >&2; exit 2; }
@@ -241,21 +269,28 @@ declare -a EXAMPLES=(
     "31-webview-stopwatch-ui:gui"
 )
 
-pass=0; fail=0
-declare -a failures=()
+# Per-worker result files. Each call to run_example writes ONE LINE
+# to $RESULTS_DIR/$name.result of the form:
+#   OK\n
+#   SKIP <reason>\n
+#   FAIL <message>\n
+# The coordinator at the end of the script aggregates and reports.
+RESULTS_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sky-sweep-results.XXXXXX")
+trap 'rm -rf "$RESULTS_DIR" 2>/dev/null || true' EXIT
 
 run_example() {
     local name="$1" kind="$2" port="${3:-}" path="${4:-/}"
     local dir="$EXAMPLES_ROOT/$name"
-    [[ -d "$dir" ]] || { failures+=("$name: missing directory"); fail=$((fail+1)); return; }
+    local result_file="$RESULTS_DIR/$name.result"
+
+    [[ -d "$dir" ]] || { printf 'FAIL missing directory\n' > "$result_file"; return; }
 
     # GUI examples (Fyne) need X11/GTK dev libs on Linux. On a headless
     # CI runner without them, the Go build pulls in cgo deps that fail
     # at link time. Honoured by `sky verify` / `sky test` too.
     # Set SKIP_GUI_LINUX=0 in an env with the libs installed to override.
     if [[ "$kind" == "gui" && "$(uname -s)" == "Linux" && "${SKIP_GUI_LINUX:-1}" == "1" ]]; then
-        echo "  [skip] $name: GUI example on Linux (set SKIP_GUI_LINUX=0 to run)"
-        pass=$((pass+1))
+        printf 'SKIP GUI example on Linux (set SKIP_GUI_LINUX=0 to run)\n' > "$result_file"
         return
     fi
 
@@ -275,14 +310,15 @@ run_example() {
             "$SKY" install >/tmp/sky-install-"$name".log 2>&1 || { echo "install failed"; exit 2; }
         fi
         "$SKY" build src/Main.sky >/tmp/sky-build-"$name".log 2>&1
-    ) || { failures+=("$name: build failed — /tmp/sky-build-$name.log"); fail=$((fail+1)); return; }
+    ) || { printf 'FAIL build failed — /tmp/sky-build-%s.log\n' "$name" > "$result_file"; return; }
 
     if [[ $BUILD_ONLY -eq 1 || "$kind" == "gui" ]]; then
-        pass=$((pass+1)); return
+        printf 'OK\n' > "$result_file"
+        return
     fi
 
     local bin="$dir/sky-out/app"
-    [[ -x "$bin" ]] || { failures+=("$name: $bin missing"); fail=$((fail+1)); return; }
+    [[ -x "$bin" ]] || { printf 'FAIL %s missing\n' "$bin" > "$result_file"; return; }
 
     case "$kind" in
         cli)
@@ -294,11 +330,11 @@ run_example() {
             # and surfaces a graceful Err on a wedged one.
             out=$( (cd "$dir" && SKY_HTTP_CLIENT_TIMEOUT=5s run_with_timeout 10 "$bin") 2>&1 ) || rc=$?
             if [[ $rc -ne 0 ]]; then
-                failures+=("$name: cli non-zero exit (rc=$rc) — last 20 lines: $(printf '%s' "$out" | tail -20 | tr '\n' ' | ')")
-                fail=$((fail+1)); return
+                printf 'FAIL cli non-zero exit (rc=%s) — last 20 lines: %s\n' "$rc" "$(printf '%s' "$out" | tail -20 | tr '\n' ' | ')" > "$result_file"
+                return
             fi
-            [[ -n "$out" ]] || { failures+=("$name: empty stdout"); fail=$((fail+1)); return; }
-            pass=$((pass+1)) ;;
+            [[ -n "$out" ]] || { printf 'FAIL empty stdout\n' > "$result_file"; return; }
+            printf 'OK\n' > "$result_file" ;;
         server)
             local pid log url
             log=$(mktemp)
@@ -315,20 +351,67 @@ run_example() {
             kill -9 "$pid" 2>/dev/null
             wait "$pid" 2>/dev/null
             if [[ $ok -eq 1 ]]; then
-                pass=$((pass+1))
+                printf 'OK\n' > "$result_file"
             else
-                failures+=("$name: no HTTP 2xx/3xx at $url — log $log")
-                fail=$((fail+1))
+                printf 'FAIL no HTTP 2xx/3xx at %s — log %s\n' "$url" "$log" > "$result_file"
             fi
             rm -f "$log" ;;
-        *) failures+=("$name: unknown kind '$kind'"); fail=$((fail+1)) ;;
+        *) printf 'FAIL unknown kind %s\n' "$kind" > "$result_file" ;;
     esac
 }
 
-for entry in "${EXAMPLES[@]}"; do
+# Worker entry — invoked via xargs -P. Single arg: colon-encoded entry
+# from $EXAMPLES (name:kind[:port[:path]]). We re-source the script's
+# globals via env — RESULTS_DIR, EXAMPLES_ROOT, SKY, SKY_RUNTIME_DIR,
+# CLEAN, BUILD_ONLY — all already exported in the parent shell.
+sweep_worker() {
+    local entry="$1"
+    local name kind port path
     IFS=':' read -r name kind port path <<<"$entry"
+    run_example "$name" "$kind" "$port" "${path:-/}"
+}
+
+# Export the worker + helper functions + env for xargs subshells.
+export -f run_example sweep_worker run_with_timeout
+export EXAMPLES_ROOT SKY SKY_RUNTIME_DIR CLEAN BUILD_ONLY
+export RESULTS_DIR SKIP_GUI_LINUX TIMEOUT_CMD
+
+# Display banner + parallel summary.
+echo
+printf '  building %d examples with %d worker(s)\n' "${#EXAMPLES[@]}" "$MAX_WORKERS"
+describe_concurrency | sed 's/^/  /'
+echo
+
+# Print one "starting" line per example so progress is visible while
+# workers run.  Each worker still writes to $RESULTS_DIR.
+for entry in "${EXAMPLES[@]}"; do
+    IFS=':' read -r name kind _port _path <<<"$entry"
     printf '   %-22s %s\n' "$name" "$kind"
-    run_example "$name" "$kind" "$port" "$path"
+done
+
+# Fan out across xargs -P workers. Each subshell receives one entry
+# string on stdin; sweep_worker parses it and writes its result.
+printf '%s\n' "${EXAMPLES[@]}" \
+    | xargs -P "$MAX_WORKERS" -I {} bash -c 'sweep_worker "$@"' _ {}
+
+# Aggregate results.
+pass=0; fail=0
+declare -a failures=()
+for entry in "${EXAMPLES[@]}"; do
+    IFS=':' read -r name _ _ _ <<<"$entry"
+    local_result="$RESULTS_DIR/$name.result"
+    if [[ ! -r "$local_result" ]]; then
+        failures+=("$name: NO RESULT (worker crashed or never ran)")
+        fail=$((fail+1))
+        continue
+    fi
+    line=$(head -1 "$local_result")
+    case "$line" in
+        OK)        pass=$((pass+1)) ;;
+        SKIP\ *)   pass=$((pass+1)) ;;
+        FAIL\ *)   failures+=("$name: ${line#FAIL }"); fail=$((fail+1)) ;;
+        *)         failures+=("$name: malformed result '$line'"); fail=$((fail+1)) ;;
+    esac
 done
 
 echo
