@@ -28,10 +28,12 @@ import Test.Hspec
 import System.Process (readCreateProcessWithExitCode, proc, CreateProcess(..))
 import System.Exit (ExitCode(..))
 import System.Directory (listDirectory, getCurrentDirectory, doesFileExist,
-                         removePathForcibly)
-import System.FilePath ((</>), takeFileName)
+                         createDirectoryIfMissing, removePathForcibly)
+import System.Environment (lookupEnv)
+import System.FilePath ((</>), takeFileName, takeBaseName)
 import System.IO.Temp (withSystemTempDirectory)
 import Data.List (isSuffixOf, isInfixOf, sort)
+import qualified Control.Concurrent.Async as Async
 
 
 -- Per-file accept/reject pair. We accept exit code only, not stderr
@@ -75,14 +77,36 @@ spec = do
             -- (so the sweep stays as fast as the pre-fix in-tree
             -- shared-cwd run) but isolates the artefacts from any
             -- OTHER spec that also pokes the repo's `sky-out/`.
-            divergences <- withSystemTempDirectory "sky-cib-sweep" $ \tmp ->
-                traverse (runBoth sky tmp) skyFiles
+            -- v0.16.5: parallel-pool the 70-fixture sweep.
+            -- Split into N chunks (MAX_TEST_WORKERS, default 4).
+            -- Each chunk gets ONE shared workdir — fixtures within
+            -- a chunk RE-USE the same .skycache, keeping the warm-
+            -- cache property of the pre-parallel sequential code.
+            -- Chunks run concurrently with each other; fixtures
+            -- within a chunk run sequentially.
+            workers <- maybe 4 read <$> lookupEnv "MAX_TEST_WORKERS"
+            divergences <- withSystemTempDirectory "sky-cib-sweep" $ \parentTmp -> do
+                let chunkSize = (length skyFiles + workers - 1) `div` workers
+                    chunks = zip [0 ..] (chunkList chunkSize skyFiles)
+                results <- Async.forConcurrently chunks $ \(idx, chunk) -> do
+                    let chunkDir = parentTmp </> "chunk-" ++ show (idx :: Int)
+                    createDirectoryIfMissing True chunkDir
+                    mapM (runBoth sky chunkDir) chunk
+                return (concat results)
             let disagreeing =
                     [ (takeFileName f, c, b)
                     | (f, c, b) <- divergences
                     , c /= b
                     ]
             disagreeing `shouldBe` []
+
+
+-- Split a list into chunks of N. Total length preserved.
+chunkList :: Int -> [a] -> [[a]]
+chunkList n xs
+    | n <= 0    = [xs]
+    | null xs   = []
+    | otherwise = take n xs : chunkList n (drop n xs)
 
 
 -- Run both `sky check` and `sky build` against the fixture inside
