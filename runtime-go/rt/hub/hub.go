@@ -36,6 +36,8 @@ import (
 	"strconv"
 	"syscall"
 	"time"
+
+	rt "sky-app/rt"
 )
 
 // HubConfig carries the resolved CLI + env config. Constructed by Run
@@ -175,6 +177,14 @@ func Run(cfg HubConfig) error {
 	if err != nil {
 		return fmt.Errorf("hub: open store: %w", err)
 	}
+
+	// v0.16.4 Option B B4: register the store as the Sky-callable
+	// hub-store reader. Once registered, the bundled console's
+	// Hub_* kernels (`runtime-go/rt/hub_bridge.go`) read from THIS
+	// store instead of issuing HTTP fetches against /_sky/console.
+	// Safe to call before HTTP starts — the kernels degrade to
+	// empty payloads if no reader is registered yet.
+	rt.SetHubStore(store.AsReader())
 
 	recv := newReceiver(cfg, store)
 	mux := http.NewServeMux()

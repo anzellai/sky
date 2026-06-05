@@ -28,6 +28,7 @@ import Std.Live exposing (app, route)
 import Std.Ui as Ui
 import State exposing (..)
 import View exposing (view)
+import HubStore exposing (hubStore)
 
 
 -- ─── Decoders for the parent's /_sky/console/api/* JSON ──────────
@@ -171,12 +172,36 @@ init : a -> ( Model, Cmd Msg )
 init _req =
     let
         parent = System.getenvOr "SKY_PARENT_URL" ""
+        hubDbPath = System.getenvOr "SKY_CONSOLE_HUB_DB" ""
+
+        -- v0.16.4 Option B B4: when SKY_CONSOLE_HUB_DB is set the
+        -- console is running IN-PROCESS with the hub daemon and
+        -- reads telemetry via direct SQLite kernels (HubStore.sky)
+        -- against the hub's console-hot.db.  Otherwise stick with
+        -- the embedded-mode HTTP-backed Store (httpStore) that
+        -- shipped in B3.  Either factory returns the same Store
+        -- typed record; downstream code (fetchForTab,
+        -- fetchLogsOnly, …) doesn't change.
+        chosenStore =
+            if hubDbPath /= "" then
+                hubStore hubDbPath
+            else
+                httpStore parent
+
+        -- When the hub mode is active we always render against
+        -- real data — the parent-url-empty placeholder text is
+        -- specific to standalone `sky console` invocations that
+        -- have NEITHER a parent NOR a hub DB.
+        isStandalone =
+            parent == "" && hubDbPath == ""
+
         startModel =
             { tab       = OverviewTab
             , parentUrl = parent
-            , store     = httpStore parent
-            , overview  = if parent == "" then mockOverview else emptyOverview
-            , logs      = if parent == "" then mockLogs else []
+            , hubDbPath = hubDbPath
+            , store     = chosenStore
+            , overview  = if isStandalone then mockOverview else emptyOverview
+            , logs      = if isStandalone then mockLogs else []
             , metrics   = []
             , traces    = []
             , errors    = []
@@ -292,10 +317,18 @@ update msg model =
 
 fetchLogsOnly : Model -> LogFilter -> Cmd Msg
 fetchLogsOnly model filter =
-    if model.parentUrl == "" then
-        Cmd.none
-    else
+    if hasStoreSource model then
         Cmd.perform (model.store.readLogs filter) GotLogs
+    else
+        Cmd.none
+
+
+-- True when a real data source is wired (embedded mode via SKY_PARENT_URL
+-- OR hub mode via SKY_CONSOLE_HUB_DB). Standalone mode (neither set) keeps
+-- the mock-data placeholders and skips fetches.
+hasStoreSource : Model -> Bool
+hasStoreSource model =
+    model.parentUrl /= "" || model.hubDbPath /= ""
 
 
 -- Fetch ONLY what the currently-active tab needs (+ overview,
@@ -312,12 +345,12 @@ fetchLogsOnly model filter =
 -- re-renders breathing room.
 fetchForTab : Model -> Tab -> LogFilter -> Cmd Msg
 fetchForTab model tab filter =
-    if model.parentUrl == "" then
-        Cmd.none
-    else
+    if hasStoreSource model then
         Cmd.batch
             (Cmd.perform (model.store.readOverview ()) GotOverview
                 :: tabFetches model tab filter)
+    else
+        Cmd.none
 
 
 tabFetches : Model -> Tab -> LogFilter -> List (Cmd Msg)
@@ -382,9 +415,7 @@ fetchErrors parent =
 
 subscriptions : Model -> Sub Msg
 subscriptions model =
-    if model.parentUrl == "" then
-        Sub.none
-    else
+    if hasStoreSource model then
         -- Refresh every 3 s. Each tick fires overview + the active
         -- tab's endpoint (see `fetchForTab`) — typically 2 fetches.
         -- The 3 s window gives the dispatcher room to finish the
@@ -392,6 +423,8 @@ subscriptions model =
         -- the "context canceled" proxy-error pile-up seen with the
         -- pre-fix 5-endpoints-every-2s pattern.
         Sub.every 3000 Tick
+    else
+        Sub.none
 
 
 viewWrapped : Model -> any

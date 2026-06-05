@@ -774,4 +774,22 @@ registry = Map.fromList
     , (("Config", "decodeYaml"),           KernelInfo "rt.Config_decodeYaml" 2 False)
     , (("Config", "decodeJson"),           KernelInfo "rt.Config_decodeJson" 2 False)
     , (("Config", "loadFromFile"),         KernelInfo "rt.Config_loadFromFile" 2 False)
+
+    -- ═══════════════════════════════════════════════════════
+    -- Hub (v0.16.4 Option B B4) — bundled console's SQLite-backed
+    -- Store. Used when the console runs IN-PROCESS with the
+    -- `sky console-serve` hub daemon. Same Sky-side shape as the
+    -- embedded console's httpStore (Main.sky) — drop-in factory.
+    --
+    -- Runtime: runtime-go/rt/hub_bridge.go declares the
+    -- HubStoreReader interface + the Hub_* kernels; the hub-side
+    -- impl lives in runtime-go/rt/hub/bridge.go and registers via
+    -- rt.SetHubStore at hub.Run startup.
+    -- ═══════════════════════════════════════════════════════
+    , (("Hub", "readOverview"),    KernelInfo "rt.Hub_readOverview" 1 False)
+    , (("Hub", "readLogs"),        KernelInfo "rt.Hub_readLogs" 2 False)
+    , (("Hub", "readMetrics"),     KernelInfo "rt.Hub_readMetrics" 1 False)
+    , (("Hub", "readTraces"),      KernelInfo "rt.Hub_readTraces" 1 False)
+    , (("Hub", "readErrors"),      KernelInfo "rt.Hub_readErrors" 1 False)
+    , (("Hub", "listServices"),    KernelInfo "rt.Hub_listServices" 1 False)
     ]

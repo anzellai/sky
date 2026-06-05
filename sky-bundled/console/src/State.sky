@@ -160,9 +160,16 @@ type alias Store =
     }
 
 -- ─── Model + Msg ─────────────────────────────────────────────────
+--
+-- `parentUrl` (SKY_PARENT_URL) is set when running as the embedded
+-- console; `hubDbPath` (SKY_CONSOLE_HUB_DB) is set when running
+-- in-process with the hub daemon. Either being non-empty enables
+-- live fetches via the Store; both empty = standalone mode with
+-- mock data.
 type alias Model =
     { tab : Tab
     , parentUrl : String
+    , hubDbPath : String
     , store : Store
     , overview : Overview
     , logs : List LogEntry

@@ -1,0 +1,62 @@
+module HubStore exposing (hubStore)
+
+-- HubStore — the bundled console's data plane when it runs in-process
+-- with the `sky console-serve` hub daemon. Same typed shape as
+-- Main.sky's `httpStore` — one source ↔ three deployment shapes
+-- (embedded via httpStore / hub-single via hubStore / hub-multi via
+-- future B5 expansion).
+--
+-- Plumbing: each field is a thin Ffi.kernel wrapper that the
+-- compiler rewrites to a direct call into runtime-go/rt/hub_bridge.go.
+-- The runtime kernel looks up the globally-registered HubStoreReader
+-- (set by the hub at Run() startup) and forwards the query.
+import Sky.Core.Prelude exposing (..)
+import Sky.Ffi as Ffi
+import State exposing (Store, Overview, LogEntry, MetricRow, TraceRow, ErrorRow, LogFilter)
+
+
+-- | Build a Store backed by direct SQLite reads against the hub's
+-- console-hot.db. Drop-in replacement for Main.sky's `httpStore`.
+-- The `dbPath` argument is reserved for the multi-store future
+-- (one hub serving multiple databases — not in v0.16.4); the
+-- current runtime ignores it and reads the process-global
+-- HubStoreReader.
+hubStore : String -> Store
+hubStore dbPath =
+    { readOverview = \_ -> hubReadOverview dbPath
+    , readLogs = \filter -> hubReadLogs dbPath filter
+    , readMetrics = \_ -> hubReadMetrics dbPath
+    , readTraces = \_ -> hubReadTraces dbPath
+    , readErrors = \_ -> hubReadErrors dbPath
+    , listServices = \_ -> hubListServices dbPath
+    }
+
+
+hubReadOverview : String -> Task Error Overview
+hubReadOverview =
+    Ffi.kernel "Hub_readOverview"
+
+
+hubReadLogs : String -> LogFilter -> Task Error (List LogEntry)
+hubReadLogs =
+    Ffi.kernel "Hub_readLogs"
+
+
+hubReadMetrics : String -> Task Error (List MetricRow)
+hubReadMetrics =
+    Ffi.kernel "Hub_readMetrics"
+
+
+hubReadTraces : String -> Task Error (List TraceRow)
+hubReadTraces =
+    Ffi.kernel "Hub_readTraces"
+
+
+hubReadErrors : String -> Task Error (List ErrorRow)
+hubReadErrors =
+    Ffi.kernel "Hub_readErrors"
+
+
+hubListServices : String -> Task Error (List String)
+hubListServices =
+    Ffi.kernel "Hub_listServices"
