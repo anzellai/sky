@@ -77,6 +77,19 @@ type HubStoreReader interface {
 	// Services returns the distinct service_name values currently
 	// in the store.
 	Services() ([]string, error)
+
+	// ServiceStatsJSON returns a JSON-encoded []ServiceStat payload
+	// (camelCase keys matching `State.ServiceStat` in
+	// `sky-bundled/console/src/State.sky`):
+	//
+	//   [ { name, status, reqsPerSec, p95Ms, errorRate,
+	//       sparkRps : [Float...], sparkP95 : [Float...] }, ... ]
+	//
+	// Aggregation is the hub-side responsibility — the bridge in
+	// `runtime-go/rt/hub/bridge.go` derives req/s + p95 + error
+	// rate over the last 60 s window per service, and emits 30
+	// 2-second buckets for each sparkline.
+	ServiceStatsJSON() (string, error)
 }
 
 var (
@@ -253,6 +266,88 @@ func Hub_listServices(_dbPathArg any) any {
 		}
 		return Ok[any, any](out)
 	}
+}
+
+// Hub_readServiceStats implements:
+//
+//	HubStore.hubReadServiceStats : String -> Task Error (List ServiceStat)
+//
+// Delegates to the reader's ServiceStatsJSON which aggregates the
+// last 60 s of telemetry per service into req/s + p95 + error-rate
+// + sparkline buckets.  The bridge returns one JSON row per
+// distinct service_name; an empty store → empty list (no error).
+func Hub_readServiceStats(_dbPathArg any) any {
+	return func() any {
+		r := getHubStore()
+		if r == nil {
+			return Ok[any, any]([]any{})
+		}
+		out, err := r.ServiceStatsJSON()
+		if err != nil {
+			return Err[any, any](ErrFfi("hub.readServiceStats: " + err.Error()))
+		}
+		rows, err := decodeServiceStatRows(out)
+		if err != nil {
+			return Err[any, any](ErrFfi("hub.readServiceStats: decode: " + err.Error()))
+		}
+		return Ok[any, any](rows)
+	}
+}
+
+// decodeServiceStatRows parses the JSON array emitted by
+// ServiceStatsJSON into a []any whose entries are map[string]any
+// shapes that rt.Coerce narrows to State_ServiceStat_R via
+// narrowMapToStruct.  The `sparkRps` / `sparkP95` arrays are
+// preserved as `[]any` of float64 — rt.AsListT[float64] handles
+// the per-element coerce at the typed slot.
+func decodeServiceStatRows(raw string) ([]any, error) {
+	if raw == "" || raw == "null" {
+		return []any{}, nil
+	}
+	var arr []map[string]any
+	if err := json.Unmarshal([]byte(raw), &arr); err != nil {
+		return nil, err
+	}
+	out := make([]any, len(arr))
+	for i, row := range arr {
+		// JSON unmarshal hands us []interface{} for the spark
+		// fields. narrowMapToStruct + rt.AsListT[float64] expects
+		// []any, which is the same underlying type — no conversion
+		// needed.  Pre-emptively flatten nested int → float to
+		// match the Float-typed slot on the Sky side.
+		if s, ok := row["sparkRps"].([]any); ok {
+			row["sparkRps"] = coerceFloatList(s)
+		}
+		if s, ok := row["sparkP95"].([]any); ok {
+			row["sparkP95"] = coerceFloatList(s)
+		}
+		out[i] = row
+	}
+	return out, nil
+}
+
+// coerceFloatList walks a heterogeneous slice and forces every
+// element to float64.  JSON-unmarshalling gives us float64 for
+// every numeric, but an upstream encoder change (e.g. integer
+// sample counts) could surface as json.Number; this keeps the
+// downstream rt.AsListT[float64] happy without panicking.
+func coerceFloatList(in []any) []any {
+	out := make([]any, len(in))
+	for i, v := range in {
+		switch x := v.(type) {
+		case float64:
+			out[i] = x
+		case float32:
+			out[i] = float64(x)
+		case int:
+			out[i] = float64(x)
+		case int64:
+			out[i] = float64(x)
+		default:
+			out[i] = 0.0
+		}
+	}
+	return out
 }
 
 // encodeFilterJSON converts the Sky-side LogFilter record (which

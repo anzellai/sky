@@ -18,15 +18,16 @@ import (
 // numbers; the QueryXJSON methods accept a builder so per-test
 // scenarios can vary the output without hand-rolling JSON.
 type fakeHubStoreReader struct {
-	logs    int
-	metrics int
-	spans   int
-	rowsLog string
-	rowsMet string
-	rowsSpn string
-	rowsErr string
-	svcs    []string
-	err     error
+	logs       int
+	metrics    int
+	spans      int
+	rowsLog    string
+	rowsMet    string
+	rowsSpn    string
+	rowsErr    string
+	rowsStats  string
+	svcs       []string
+	err        error
 }
 
 func (f *fakeHubStoreReader) Counts() (int, int, int, error) {
@@ -63,6 +64,13 @@ func (f *fakeHubStoreReader) QueryErrorsJSON() (string, error) {
 
 func (f *fakeHubStoreReader) Services() ([]string, error) {
 	return f.svcs, f.err
+}
+
+func (f *fakeHubStoreReader) ServiceStatsJSON() (string, error) {
+	if f.err != nil {
+		return "", f.err
+	}
+	return f.rowsStats, nil
 }
 
 // resetHubStore clears the registry; called from each test that
@@ -225,6 +233,75 @@ func TestHubReadLogs_BadJSON_ReturnsErr(t *testing.T) {
 	res := task().(SkyResult[any, any])
 	if res.Tag != 1 {
 		t.Fatalf("expected Err from bad JSON, got Ok %v", res.OkValue)
+	}
+}
+
+// TestHubReadServiceStats_RoutesThroughReader exercises the v0.16.4 B5
+// kernel: the fake reader supplies a JSON array; the kernel narrows it
+// into the []any of map[string]any that rt.Coerce[State_ServiceStat_R]
+// will then unpack at the call site on the Sky side.
+func TestHubReadServiceStats_RoutesThroughReader(t *testing.T) {
+	resetHubStore(t)
+	stats := []any{
+		map[string]any{
+			"name":       "alpha",
+			"status":     "ok",
+			"reqsPerSec": 4.2,
+			"p95Ms":      120.0,
+			"errorRate":  0.0,
+			"sparkRps":   []any{0.0, 1.0, 2.0},
+			"sparkP95":   []any{50.0, 60.0, 55.0},
+		},
+		map[string]any{
+			"name":       "beta",
+			"status":     "warn",
+			"reqsPerSec": 11.5,
+			"p95Ms":      230.0,
+			"errorRate":  0.02,
+			"sparkRps":   []any{1.0, 2.0, 3.0},
+			"sparkP95":   []any{150.0, 200.0, 230.0},
+		},
+	}
+	SetHubStore(&fakeHubStoreReader{rowsStats: mustJSON(stats)})
+
+	task := Hub_readServiceStats("/tmp/x").(func() any)
+	res := task().(SkyResult[any, any])
+	if res.Tag != 0 {
+		t.Fatalf("expected Ok, got Err %v", res.ErrValue)
+	}
+	rows := res.OkValue.([]any)
+	if len(rows) != 2 {
+		t.Fatalf("rows=%d, want 2", len(rows))
+	}
+	first := rows[0].(map[string]any)
+	if first["name"] != "alpha" || first["status"] != "ok" {
+		t.Errorf("alpha row: %+v", first)
+	}
+	if first["reqsPerSec"].(float64) != 4.2 {
+		t.Errorf("alpha reqsPerSec: %v", first["reqsPerSec"])
+	}
+	// sparkRps should survive the float coercion pass.
+	rps := first["sparkRps"].([]any)
+	if len(rps) != 3 || rps[1].(float64) != 1.0 {
+		t.Errorf("alpha sparkRps: %v", rps)
+	}
+	second := rows[1].(map[string]any)
+	if second["status"] != "warn" {
+		t.Errorf("beta status: %v", second["status"])
+	}
+}
+
+func TestHubReadServiceStats_NoStoreRegistered_EmptyOk(t *testing.T) {
+	resetHubStore(t)
+	SetHubStore(nil)
+	task := Hub_readServiceStats("/tmp/x").(func() any)
+	res := task().(SkyResult[any, any])
+	if res.Tag != 0 {
+		t.Fatalf("expected Ok with empty list when no reader; got Err %v", res.ErrValue)
+	}
+	rows := res.OkValue.([]any)
+	if len(rows) != 0 {
+		t.Errorf("rows=%d, want 0", len(rows))
 	}
 }
 

@@ -103,6 +103,23 @@ type alias ErrorRow =
     , message : String
     }
 
+-- Per-service rollup row consumed by the multi-service Overview
+-- (v0.16.4 B5). One ServiceStat per distinct service_name in the
+-- hub's `console-hot.db`. `status` is a 3-state pill mapped from
+-- the recent error rate: "ok" (green, < 1%), "warn" (amber, 1-5%),
+-- "err" (red, > 5%). `sparkRps` / `sparkP95` carry the last ~60s
+-- of req-per-second + p95-latency samples so the card can render
+-- a sparkline without round-tripping the full log table.
+type alias ServiceStat =
+    { name : String
+    , status : String
+    , reqsPerSec : Float
+    , p95Ms : Float
+    , errorRate : Float
+    , sparkRps : List Float
+    , sparkP95 : List Float
+    }
+
 -- ─── Logs filter ────────────────────────────────────────────────
 
 -- Multi-axis filter: free-text search + level toggles + session id
@@ -157,6 +174,7 @@ type alias Store =
     , readTraces : () -> Task Error (List TraceRow)
     , readErrors : () -> Task Error (List ErrorRow)
     , listServices : () -> Task Error (List String)
+    , readServiceStats : () -> Task Error (List ServiceStat)
     }
 
 -- ─── Model + Msg ─────────────────────────────────────────────────
@@ -179,6 +197,8 @@ type alias Model =
     , lastError : String
     , logFilter : LogFilter
     , traceQuery : String
+    , selectedService : String
+    , serviceStats : List ServiceStat
     }
 
 -- Msg covers tab switches + scheduled refresh + each per-endpoint
@@ -199,6 +219,8 @@ type Msg
     | LogFilterClear
     | TraceFilterQuery String
     | PivotToTrace String
+    | SelectService String
+    | GotServiceStats (Result Error (List ServiceStat))
 
 
 -- ─── Defaults ────────────────────────────────────────────────────

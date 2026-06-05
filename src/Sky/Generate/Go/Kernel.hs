@@ -786,10 +786,16 @@ registry = Map.fromList
     -- impl lives in runtime-go/rt/hub/bridge.go and registers via
     -- rt.SetHubStore at hub.Run startup.
     -- ═══════════════════════════════════════════════════════
-    , (("Hub", "readOverview"),    KernelInfo "rt.Hub_readOverview" 1 False)
-    , (("Hub", "readLogs"),        KernelInfo "rt.Hub_readLogs" 2 False)
-    , (("Hub", "readMetrics"),     KernelInfo "rt.Hub_readMetrics" 1 False)
-    , (("Hub", "readTraces"),      KernelInfo "rt.Hub_readTraces" 1 False)
-    , (("Hub", "readErrors"),      KernelInfo "rt.Hub_readErrors" 1 False)
-    , (("Hub", "listServices"),    KernelInfo "rt.Hub_listServices" 1 False)
+    , (("Hub", "readOverview"),     KernelInfo "rt.Hub_readOverview" 1 False)
+    , (("Hub", "readLogs"),         KernelInfo "rt.Hub_readLogs" 2 False)
+    , (("Hub", "readMetrics"),      KernelInfo "rt.Hub_readMetrics" 1 False)
+    , (("Hub", "readTraces"),       KernelInfo "rt.Hub_readTraces" 1 False)
+    , (("Hub", "readErrors"),       KernelInfo "rt.Hub_readErrors" 1 False)
+    , (("Hub", "listServices"),     KernelInfo "rt.Hub_listServices" 1 False)
+    -- v0.16.4 B5: per-service rollup (req/s, p95, error rate +
+    -- sparkline windows). One row per distinct service_name in the
+    -- hub's hot store.  Returns List ServiceStat — narrows through
+    -- the same rt.Coerce → narrowMapToStruct path as the other
+    -- Hub_* readers.
+    , (("Hub", "readServiceStats"), KernelInfo "rt.Hub_readServiceStats" 1 False)
     ]

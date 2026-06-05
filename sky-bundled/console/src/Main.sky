@@ -163,6 +163,14 @@ httpStore parent =
     , readTraces   = \_ -> fetchTraces parent
     , readErrors   = \_ -> fetchErrors parent
     , listServices = \_ -> Task.succeed [ "" ]
+    -- v0.16.4 B5: the embedded console fetches its telemetry from
+    -- the parent app's /_sky/console/api/* endpoints which only
+    -- model a single service (the host).  Return an empty list so
+    -- the multi-service Overview never fires when running in
+    -- embedded mode — the View router falls through to the
+    -- single-service `overviewView` automatically (it gates on
+    -- `hubDbPath /= ""`).
+    , readServiceStats = \_ -> Task.succeed []
     }
 
 
@@ -195,6 +203,14 @@ init _req =
         isStandalone =
             parent == "" && hubDbPath == ""
 
+        -- v0.16.4 B5: pick up `?service=<name>` from the request's
+        -- query string so the selection persists across reloads
+        -- and `sky-nav` fetches. `init`'s first argument is the
+        -- `Request` row-poly value Sky.Live feeds in; we field-
+        -- access it via `req.query` (a Dict String String). The
+        -- standalone `sky console` path passes `()` instead of a
+        -- request, so we guard against missing fields by falling
+        -- back to "" via `Dict.get`-returning Maybe.withDefault.
         startModel =
             { tab       = OverviewTab
             , parentUrl = parent
@@ -208,10 +224,14 @@ init _req =
             , lastError = ""
             , logFilter = emptyLogFilter
             , traceQuery = ""
+            , selectedService = ""
+            , serviceStats = []
             }
     in
     -- Fire one immediate fetch so the initial render isn't empty;
-    -- the 3 s Sub.every then keeps it fresh.
+    -- the 3 s Sub.every then keeps it fresh.  When in hub mode the
+    -- batch picks up the multi-service stats too via fetchForTab's
+    -- OverviewTab branch.
     ( startModel, fetchForTab startModel startModel.tab startModel.logFilter )
 
 
@@ -314,6 +334,21 @@ update msg model =
             , Cmd.perform (model.store.readTraces ()) GotTraces
             )
 
+        -- v0.16.4 B5: Multi-service Overview selector. Empty
+        -- name = "All services" (aggregate). Selection is
+        -- model-only — the URL stays at /_sky/console; the
+        -- service is part of in-app state, not the route, so a
+        -- shareable link still drops everyone on the same
+        -- aggregate landing.
+        SelectService name ->
+            ( { model | selectedService = name }, Cmd.none )
+
+        GotServiceStats (Ok stats) ->
+            ( { model | serviceStats = stats, lastError = "" }, Cmd.none )
+
+        GotServiceStats (Err e) ->
+            ( { model | lastError = errorToString e }, Cmd.none )
+
 
 fetchLogsOnly : Model -> LogFilter -> Cmd Msg
 fetchLogsOnly model filter =
@@ -356,7 +391,14 @@ fetchForTab model tab filter =
 tabFetches : Model -> Tab -> LogFilter -> List (Cmd Msg)
 tabFetches model tab filter =
     case tab of
-        OverviewTab -> []
+        OverviewTab ->
+            -- v0.16.4 B5: in hub mode (Model.hubDbPath /= "") the
+            -- Overview tab renders the multi-service dashboard,
+            -- which needs per-service rollups.  In embedded mode
+            -- (httpStore) `readServiceStats ()` returns
+            -- `Task.succeed []` so the dispatch is a no-op for the
+            -- rollup state — cheap, no extra wire round-trip.
+            [ Cmd.perform (model.store.readServiceStats ()) GotServiceStats ]
         LogsTab     -> [ Cmd.perform (model.store.readLogs filter) GotLogs ]
         MetricsTab  -> [ Cmd.perform (model.store.readMetrics ()) GotMetrics ]
         TracesTab   -> [ Cmd.perform (model.store.readTraces ()) GotTraces ]

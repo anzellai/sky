@@ -12,7 +12,16 @@ module HubStore exposing (hubStore)
 -- (set by the hub at Run() startup) and forwards the query.
 import Sky.Core.Prelude exposing (..)
 import Sky.Ffi as Ffi
-import State exposing (Store, Overview, LogEntry, MetricRow, TraceRow, ErrorRow, LogFilter)
+import State exposing
+    ( Store
+    , Overview
+    , LogEntry
+    , MetricRow
+    , TraceRow
+    , ErrorRow
+    , LogFilter
+    , ServiceStat
+    )
 
 
 -- | Build a Store backed by direct SQLite reads against the hub's
@@ -29,6 +38,7 @@ hubStore dbPath =
     , readTraces = \_ -> hubReadTraces dbPath
     , readErrors = \_ -> hubReadErrors dbPath
     , listServices = \_ -> hubListServices dbPath
+    , readServiceStats = \_ -> hubReadServiceStats dbPath
     }
 
 
@@ -60,3 +70,8 @@ hubReadErrors =
 hubListServices : String -> Task Error (List String)
 hubListServices =
     Ffi.kernel "Hub_listServices"
+
+
+hubReadServiceStats : String -> Task Error (List ServiceStat)
+hubReadServiceStats =
+    Ffi.kernel "Hub_readServiceStats"
