@@ -1,0 +1,121 @@
+module Main exposing (main)
+
+-- examples/39-hub-demo / billing-app — Sky.Live app for the
+-- v0.16.6 #493 hub-demo cluster.  Pairs with frontend-app under
+-- the same tenant (customer-42-*).  Both apps push telemetry to
+-- ONE `sky console serve` hub via the HubExporter (SKY_CONSOLE_HUB
+-- + SKY_CONSOLE_HUB_TOKEN).
+--
+-- Service-name convention: sky.toml's `name = "customer-42-billing"`
+-- — the OTel exporter uses this as `service.name` for every signal.
+-- The hub's bundled console then filters via the tenant prefix
+-- "customer-42-" derived from the signed-in identity's
+-- `claims["tenant"]`.
+--
+-- Behaviour: tick every 3 s, emit a structured info log + bump an
+-- in-memory counter rendered in the page.  Realistic-shaped log
+-- lines (request_id / customer_id / amount) so the bundled console
+-- screenshots look like a real billing surface.
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Random as Random
+import Sky.Core.Task as Task
+import Std.Cmd as Cmd
+import Std.Html exposing (..)
+import Std.Html.Attributes exposing (..)
+import Std.Live exposing (app, route)
+import Std.Log as Log
+import Std.Sub as Sub
+
+type Page
+    = HomePage
+
+type Msg
+    = Tick
+    | EmittedLog (Result Error Int)
+
+type alias Model =
+    { tickCount : Int
+    , lastAmount : Int
+    }
+
+
+init : a -> ( Model, Cmd Msg )
+init _req =
+    ( { tickCount = 0, lastAmount = 0 }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Tick ->
+            ( { model | tickCount = model.tickCount + 1 }
+            , Cmd.perform (emitInvoiceLog model.tickCount) EmittedLog
+            )
+
+        EmittedLog (Ok amount) ->
+            ( { model | lastAmount = amount }, Cmd.none )
+
+        EmittedLog (Err _) ->
+            ( model, Cmd.none )
+
+
+-- Picks a pseudo-random invoice amount and emits a structured
+-- log line.  Returns the amount so update can stash it in Model
+-- for the rendered page.
+emitInvoiceLog : Int -> Task Error Int
+emitInvoiceLog seq =
+    Random.range 100 9900
+        |> Task.andThen
+               (\amount ->
+                   Log.infoWith
+                       "billing.invoice.charged"
+                       [ "request_id"
+                       , "req-" ++ String.fromInt seq
+                       , "customer_id"
+                       , "cust-" ++ String.fromInt (modBy 7 seq)
+                       , "amount_cents"
+                       , String.fromInt amount
+                       , "currency"
+                       , "USD"
+                       ]
+                       |> Task.map (\_ -> amount))
+
+
+view : Model -> Html Msg
+view model =
+    div
+        [style "font-family: system-ui, sans-serif; padding: 24px"]
+        [ h1 [] [text "customer-42 / billing-app"]
+        , p [] [text "Sky.Live app pushing telemetry to the hub."]
+        , p [] [ text "Ticks: ", text (String.fromInt model.tickCount) ]
+        , p
+              []
+              [ text "Last invoice amount (cents): "
+              , text (String.fromInt model.lastAmount)
+              ]
+        , p
+              [style "color: #888"]
+              [ text "Open the hub at "
+              , a
+                    [href "http://localhost:8025/"]
+                    [text "http://localhost:8025/"]
+              , text " to see this app's logs alongside the frontend-app."
+              ]
+        ]
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _model =
+    Sub.every 3000 Tick
+
+
+main =
+    app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        , routes = [route "/" HomePage]
+        , notFound = HomePage
+        }

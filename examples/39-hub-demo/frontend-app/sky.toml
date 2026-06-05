@@ -1,0 +1,10 @@
+name = "customer-42-frontend"
+version = "0.1.0"
+entry = "src/Main.sky"
+
+[live]
+port = 8040
+
+[log]
+level = "info"
+format = "json"

@@ -1,0 +1,10 @@
+name = "customer-42-billing"
+version = "0.1.0"
+entry = "src/Main.sky"
+
+[live]
+port = 8039
+
+[log]
+level = "info"
+format = "json"
