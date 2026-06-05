@@ -7553,7 +7553,7 @@ exprToGo (A.At _ expr) = case expr of
                 | take 3 modName == "Go_"
                 , all isUnitArg args
                 , let typedName = modName ++ "_" ++ funcName ++ "T"
-                , Set.member typedName typedFfiWrapperSet ->
+                , Set.member typedName (typedFfiWrapperSet ()) ->
                     GoIr.GoCall (GoIr.GoQualified "rt" typedName) []
 
             -- P7 step 5b: migrate N-arg FFI by coercing each arg to the
@@ -7568,8 +7568,8 @@ exprToGo (A.At _ expr) = case expr of
                 , not (null args)
                 , not (all isUnitArg args)
                 , let typedName = modName ++ "_" ++ funcName ++ "T"
-                , Set.member typedName typedFfiWrapperSet
-                , Just paramTys <- Map.lookup typedName typedFfiWrapperParams
+                , Set.member typedName (typedFfiWrapperSet ())
+                , Just paramTys <- Map.lookup typedName (typedFfiWrapperParams ())
                 , length paramTys == length args ->
                     let anyWrapperName = modName ++ "_" ++ funcName
                     in GoIr.GoCall (GoIr.GoQualified "rt" typedName)
@@ -8602,19 +8602,28 @@ typedKernelLiterals = Set.fromList
     ]
 
 
--- | Snapshot of Env.ffiTypedWrapperNamesRef taken at every lookup. The
--- unsafePerformIO is fine here: the set is populated once at compile
--- start (before canonicalisation runs) and never mutated afterwards.
+-- | Snapshot of Env.ffiTypedWrapperNamesRef taken at every lookup.
+--
+-- Bug #492: this was previously a top-level CAF
+-- (`typedFfiWrapperSet :: Set.Set String`).  GHC memoised the first
+-- IORef read for the lifetime of the process; multi-compile-per-
+-- process consumers (`sky watch`, `sky lsp`, Tier 1 test infra)
+-- saw the first compile's FFI snapshot forever.  Adding the unit
+-- argument turns this into a function (GHC does NOT memoise
+-- function results across calls), and the NOINLINE pragma blocks
+-- CSE from collapsing repeated `typedFfiWrapperSet ()` calls into
+-- a shared expression.
 {-# NOINLINE typedFfiWrapperSet #-}
-typedFfiWrapperSet :: Set.Set String
-typedFfiWrapperSet = unsafePerformIO (readIORef Env.ffiTypedWrapperNamesRef)
+typedFfiWrapperSet :: () -> Set.Set String
+typedFfiWrapperSet () = unsafePerformIO (readIORef Env.ffiTypedWrapperNamesRef)
 
 
 -- | Companion snapshot of typed-wrapper param Go types, keyed by the
--- T-suffix wrapper name. See typedFfiWrapperSet for the invariant.
+-- T-suffix wrapper name.  Bug #492 fix applied: unit-arg + NOINLINE
+-- so multi-compile-per-process consumers re-read the IORef each call.
 {-# NOINLINE typedFfiWrapperParams #-}
-typedFfiWrapperParams :: Map.Map String [String]
-typedFfiWrapperParams = unsafePerformIO (readIORef Env.ffiTypedWrapperParamsRef)
+typedFfiWrapperParams :: () -> Map.Map String [String]
+typedFfiWrapperParams () = unsafePerformIO (readIORef Env.ffiTypedWrapperParamsRef)
 
 
 -- | Typed-wrapper param types that the sky-out/main.go call site can
@@ -11331,7 +11340,7 @@ caseToGo mExpectedGo subject branches =
                 | take 3 fnName == "Go_"
                 , not (null fnName)
                 , last fnName == 'T'
-                , Set.member fnName typedFfiWrapperSet
+                , Set.member fnName (typedFfiWrapperSet ())
                 -> True
             GoIr.GoCall (GoIr.GoIdent qualName) _
                 | Just retTy <- Map.lookup qualName funcRetTypeMap

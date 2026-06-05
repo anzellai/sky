@@ -339,7 +339,7 @@ checkImportExposingAgainstDep deps imps = concatMap check imps
         A.At _ (Src.ExposingList xs) ->
             let A.At _ segs = Src._importName imp
                 path = ModuleName.joinWith "." segs
-                isKernel = Map.member path Env.kernelModules
+                isKernel = Map.member path (Env.kernelModules ())
             in if isKernel
                 then []  -- kernel surface is defined by the registry, skip
                 else case fmap filterDepByExports (Map.lookup path deps) of
@@ -422,8 +422,8 @@ processImportWith deps _home env imp =
                      || not (null (_dep_unions dep))
             Nothing  -> False
 
-        isKernel = Map.member importPath Env.kernelModules
-        kernelName = Map.findWithDefault "" importPath Env.kernelModules
+        isKernel = Map.member importPath (Env.kernelModules ())
+        kernelName = Map.findWithDefault "" importPath (Env.kernelModules ())
 
         -- Effective binding source: FFI/dep if it exists, else kernel
         -- (if registered), else nothing. This collapses the prior
@@ -591,7 +591,7 @@ resolveExposedCtor _isKernel _kernelName (A.At _ exposed) = case exposed of
 -- | Get kernel vars for a stdlib module
 kernelVarsFor :: String -> [(String, Env.VarHome)]
 kernelVarsFor modName =
-    case Map.lookup modName kernelFunctions of
+    case Map.lookup modName (kernelFunctions ()) of
         Just funcs -> map (\f -> (f, Env.VarKernel modName f)) funcs
         Nothing -> []
 
@@ -606,8 +606,8 @@ kernelCtorsFor _ = []
 -- Merged with FFI registry entries populated by Sky.Build.Compile
 -- before canonicalisation — see Env.ffiKernelFunctionsRef.
 {-# NOINLINE kernelFunctions #-}
-kernelFunctions :: Map.Map String [String]
-kernelFunctions =
+kernelFunctions :: () -> Map.Map String [String]
+kernelFunctions () =
     Map.unionWith (++) staticKernelFunctions
         (unsafePerformIO (readIORef Env.ffiKernelFunctionsRef))
 
@@ -746,7 +746,7 @@ detectImportAliasCollisions imps =
                       Nothing    -> case segs of
                           [] -> importPath  -- defensive — parser shouldn't allow
                           _  -> last segs
-                  src = Map.findWithDefault importPath importPath Env.kernelModules
+                  src = Map.findWithDefault importPath importPath (Env.kernelModules ())
             ]
 
         -- Group entries by qualifier. Earliest-region first per group so
@@ -849,7 +849,7 @@ detectExposingCollisions deps imps =
     in Map.filter (\srcs -> length (distinct srcs) > 1)
        $ Map.map distinct byName
   where
-    canonicalSource path = Map.findWithDefault path path Env.kernelModules
+    canonicalSource path = Map.findWithDefault path path (Env.kernelModules ())
 
     contributionsFor :: Src.Import -> [(String, String)]
     contributionsFor imp =
@@ -868,8 +868,8 @@ detectExposingCollisions deps imps =
         Src.ExposedOperator _ -> []
 
     allExposedNames path =
-        let kernelName = Map.findWithDefault "" path Env.kernelModules
-            kernelFns  = Map.findWithDefault [] kernelName kernelFunctions
+        let kernelName = Map.findWithDefault "" path (Env.kernelModules ())
+            kernelFns  = Map.findWithDefault [] kernelName (kernelFunctions ())
             depFns = case fmap filterDepByExports (Map.lookup path deps) of
                 Just d  -> _dep_aliases d ++ _dep_values d
                             ++ map (\(un, _, _) -> un) (_dep_unions d)
@@ -1029,7 +1029,7 @@ collectUnboundNameErrors env srcMod =
             -- _qualVars; they're resolved via `kernelToGo`'s default
             -- `Mod_Fn` fallback. Missing kernel runtime functions
             -- get caught by the codegen validator (E4005) instead.
-            , not (Map.member q Env.kernelModules)
+            , not (Map.member q (Env.kernelModules ()))
             -- Only check qualifiers that ARE known (imported via
             -- alias / present in the _qualVars or _qualCtors map).
             -- Unknown qualifiers are handled by the canonicaliser
@@ -1059,7 +1059,7 @@ collectUnboundNameErrors env srcMod =
         -- module, not a cryptic `undefined: NotARealModule_foo`.
         knownQualifiers =
             Set.unions
-                [ Set.fromList (Map.keys Env.kernelModules)
+                [ Set.fromList (Map.keys (Env.kernelModules ()))
                 , Set.fromList (Map.keys (Env._qualVars env))
                 , Set.fromList (Map.keys (Env._qualCtors env))
                 , Set.fromList (Map.keys (Env._importAliases env))
@@ -1132,7 +1132,7 @@ collectUnboundDiagnostics path env srcMod =
             in collectQualifiedRefs shadowed body
         allQualRefs = concatMap collectQual (Src._values srcMod)
         isKnownQualifier q =
-               Map.member q Env.kernelModules
+               Map.member q (Env.kernelModules ())
             || isJust (Env.lookupImportAlias q env)
         -- Flag a qualified ref iff the qualifier IS known (so we know
         -- the user MEANS this module) BUT the qualified lookup fails.
@@ -1145,7 +1145,7 @@ collectUnboundDiagnostics path env srcMod =
                 Nothing ->
                     -- Also check the kernel module fallback the
                     -- canonicaliser uses (e.g. `Crypto.sha256`).
-                    not (Map.member q Env.kernelModules &&
+                    not (Map.member q (Env.kernelModules ()) &&
                          qualifiedExistsInKernel q n)
             ]
         mkQualDiag (q, n, reg) =
@@ -1160,7 +1160,7 @@ collectUnboundDiagnostics path env srcMod =
         -- of the rendered-string detector above; see notes there.
         knownQualifiers =
             Set.unions
-                [ Set.fromList (Map.keys Env.kernelModules)
+                [ Set.fromList (Map.keys (Env.kernelModules ()))
                 , Set.fromList (Map.keys (Env._qualVars env))
                 , Set.fromList (Map.keys (Env._qualCtors env))
                 , Set.fromList (Map.keys (Env._importAliases env))
@@ -1447,7 +1447,7 @@ isKernelImport :: Src.Import -> Bool
 isKernelImport imp =
     let segs = case Src._importName imp of A.At _ s -> s
         path = ModuleName.joinWith "." segs
-    in Map.member path Env.kernelModules
+    in Map.member path (Env.kernelModules ())
 
 
 staticKernelFunctions :: Map.Map String [String]

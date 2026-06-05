@@ -178,7 +178,7 @@ resolveQualVar env qualifier name =
                     -- `VarTopLevel "Crypto" "sha256"` and the lowerer
                     -- ships `Crypto_sha256(arg)` (no `rt.` prefix) —
                     -- failing `go build` with "undefined: Crypto_sha256".
-                    case Map.lookup qualifier Env.kernelModules of
+                    case Map.lookup qualifier (Env.kernelModules ()) of
                         Just kernelMod -> Can.VarKernel kernelMod name
                         Nothing ->
                             case Env.lookupImportAlias qualifier env of

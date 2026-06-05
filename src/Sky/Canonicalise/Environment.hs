@@ -343,8 +343,8 @@ ffiTypedWrapperParamsRef = unsafePerformIO (newIORef Map.empty)
 -- also added the `log/slog` FFI — the kernel API was the documented
 -- one and the flip silently hijacked them onto FFI bindings).
 {-# NOINLINE kernelModules #-}
-kernelModules :: Map.Map String String
-kernelModules = Map.union staticKernelModules (unsafePerformIO (readIORef ffiKernelModulesRef))
+kernelModules :: () -> Map.Map String String
+kernelModules () = Map.union staticKernelModules (unsafePerformIO (readIORef ffiKernelModulesRef))
 
 
 staticKernelModules :: Map.Map String String
