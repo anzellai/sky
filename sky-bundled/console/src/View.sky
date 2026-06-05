@@ -9,6 +9,7 @@ import Std.Ui.Background as Background
 import Std.Ui.Border as Border
 import Std.Ui.Font as Font
 import State exposing (..)
+import Overview exposing (viewOverview)
 
 
 -- ─── Palette ─────────────────────────────────────────────────────
@@ -209,7 +210,17 @@ content model =
         (case model.tab of
 
             OverviewTab ->
-                overviewView model.overview
+                -- v0.16.4 B5: hub mode shows the multi-service
+                -- dashboard (Overview.viewOverview).  Embedded /
+                -- standalone modes (no SKY_CONSOLE_HUB_DB) keep
+                -- the single-service Overview that's shipped since
+                -- v0.16.0 — byte-identical output for embedded
+                -- consoles.
+                if model.hubDbPath /= "" then
+                    viewOverview model
+
+                else
+                    overviewView model.overview
 
             MetricsTab ->
                 metricsView model.metrics

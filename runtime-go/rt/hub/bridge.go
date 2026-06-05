@@ -16,6 +16,8 @@ package hub
 import (
 	"encoding/json"
 	"fmt"
+	"math"
+	"sort"
 	"strings"
 	"time"
 
@@ -293,4 +295,271 @@ func (r *storeReader) QueryErrorsJSON() (string, error) {
 // Services delegates to Store.Services.
 func (r *storeReader) Services() ([]string, error) {
 	return r.s.Services()
+}
+
+// hubServiceStatRow mirrors `sky-bundled/console/src/State.sky`'s
+// `ServiceStat` typed record. Field tags use lowerCamel so
+// `narrowMapToStruct` (rt.Coerce's struct narrower) resolves them
+// off its lower-first probe path.
+type hubServiceStatRow struct {
+	Name       string    `json:"name"`
+	Status     string    `json:"status"`
+	ReqsPerSec float64   `json:"reqsPerSec"`
+	P95Ms      float64   `json:"p95Ms"`
+	ErrorRate  float64   `json:"errorRate"`
+	SparkRps   []float64 `json:"sparkRps"`
+	SparkP95   []float64 `json:"sparkP95"`
+}
+
+// statsWindow is the size of the per-service aggregation window.
+// 60 s matches the typical Cloud-Run-style "recent activity" look-
+// back and gives the sparkline 30 2-second buckets at most.
+const statsWindow = 60 * time.Second
+
+// statsBucketCount controls the sparkline resolution. 30 ×
+// 2 s = 60 s window. Plenty for a UI thumbnail; cheaper than
+// 1 s buckets which would double the wire payload.
+const statsBucketCount = 30
+
+// ServiceStatsJSON aggregates the last `statsWindow` seconds of
+// telemetry per service into the wire shape consumed by the Sky
+// console's multi-service Overview (v0.16.4 B5).
+//
+// Aggregation strategy:
+//   - req/s        : count of telemetry_log rows in the window /
+//                    window-seconds. Logs are the cheapest signal
+//                    that's always populated; metrics/spans not
+//                    every service emits.
+//   - p95          : sorted "latency_ms" / "duration_ms" attrs
+//                    from spans + logs, take the 95th percentile.
+//                    Zero when no latency observations recorded.
+//   - error rate   : ratio of error-level log rows over total log
+//                    rows in the window. Same denominator as req/s
+//                    so the rate is comparable.
+//   - sparkRps/P95 : bucketed series, oldest → newest.
+//
+// One round-trip per call — a handful of indexed queries over the
+// (service_name, time DESC) indexes; well-bounded.
+func (r *storeReader) ServiceStatsJSON() (string, error) {
+	services, err := r.s.Services()
+	if err != nil {
+		return "", err
+	}
+	now := time.Now().UTC()
+	since := now.Add(-statsWindow)
+	rows := make([]hubServiceStatRow, 0, len(services))
+	for _, svc := range services {
+		if svc == "" {
+			continue
+		}
+		row, err := r.s.aggregateServiceStat(svc, since, now)
+		if err != nil {
+			return "", fmt.Errorf("aggregate %s: %w", svc, err)
+		}
+		rows = append(rows, row)
+	}
+	b, err := json.Marshal(rows)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+// aggregateServiceStat computes a single ServiceStat row by
+// running three small SELECTs over the (service_name, time) index.
+// All three queries are O(log N + window-rows); the per-call cost
+// is dominated by the log count, not the latency parsing.
+func (s *Store) aggregateServiceStat(svc string, since, until time.Time) (hubServiceStatRow, error) {
+	rows := hubServiceStatRow{
+		Name:     svc,
+		Status:   "ok",
+		SparkRps: make([]float64, statsBucketCount),
+		SparkP95: make([]float64, statsBucketCount),
+	}
+
+	// 1. Pull every log row in the window — drives req/s, error
+	// rate, and the latency observations.
+	logRows, err := s.QueryLogs(LogFilter{
+		ServiceName: svc,
+		Since:       since,
+		Until:       until,
+		Limit:       10000,
+	})
+	if err != nil {
+		return rows, err
+	}
+
+	// 2. Pull every span row in the window — drives the p95
+	// latency calc when spans carry duration_ms.
+	spanRows, err := s.QuerySpans(SpanFilter{
+		ServiceName: svc,
+		Since:       since,
+		Until:       until,
+		Limit:       10000,
+	})
+	if err != nil {
+		return rows, err
+	}
+
+	windowSec := until.Sub(since).Seconds()
+	if windowSec <= 0 {
+		windowSec = 1
+	}
+
+	// req/s = total log rows in the window / window-seconds.
+	rows.ReqsPerSec = float64(len(logRows)) / windowSec
+
+	// error rate = errors / total. Both numerator + denominator
+	// are log-row counts so the ratio is bounded by [0, 1].
+	errorCount := 0
+	latencies := make([]float64, 0, len(logRows)+len(spanRows))
+	for _, l := range logRows {
+		if l.Level == "error" {
+			errorCount++
+		}
+		if l.Attrs != nil {
+			if v, ok := parseFloatAttr(l.Attrs["latency_ms"]); ok {
+				latencies = append(latencies, v)
+			}
+		}
+	}
+	if len(logRows) > 0 {
+		rows.ErrorRate = float64(errorCount) / float64(len(logRows))
+	}
+
+	for _, sp := range spanRows {
+		if !sp.StartTime.IsZero() && !sp.EndTime.IsZero() {
+			ms := float64(sp.EndTime.Sub(sp.StartTime)) / float64(time.Millisecond)
+			if ms > 0 {
+				latencies = append(latencies, ms)
+			}
+		}
+	}
+
+	rows.P95Ms = percentile(latencies, 0.95)
+
+	// Bucket logs + span latencies into the sparkline series.
+	bucketSize := until.Sub(since) / statsBucketCount
+	if bucketSize <= 0 {
+		bucketSize = time.Second
+	}
+	// req/s buckets: count log rows per bucket / bucket-seconds.
+	reqCounts := make([]int, statsBucketCount)
+	for _, l := range logRows {
+		idx := bucketIndex(l.Time, since, bucketSize)
+		if idx >= 0 && idx < statsBucketCount {
+			reqCounts[idx]++
+		}
+	}
+	bucketSec := bucketSize.Seconds()
+	if bucketSec <= 0 {
+		bucketSec = 1
+	}
+	for i, c := range reqCounts {
+		rows.SparkRps[i] = float64(c) / bucketSec
+	}
+
+	// p95 latency buckets: group every observation by bucket then
+	// run percentile per bucket. Skipped buckets stay at zero —
+	// the sparkline tolerates a flat tail (matches the "no
+	// traffic" reading).
+	latBuckets := make([][]float64, statsBucketCount)
+	for _, sp := range spanRows {
+		if sp.StartTime.IsZero() || sp.EndTime.IsZero() {
+			continue
+		}
+		ms := float64(sp.EndTime.Sub(sp.StartTime)) / float64(time.Millisecond)
+		idx := bucketIndex(sp.StartTime, since, bucketSize)
+		if idx >= 0 && idx < statsBucketCount && ms > 0 {
+			latBuckets[idx] = append(latBuckets[idx], ms)
+		}
+	}
+	for _, l := range logRows {
+		if l.Attrs == nil {
+			continue
+		}
+		v, ok := parseFloatAttr(l.Attrs["latency_ms"])
+		if !ok {
+			continue
+		}
+		idx := bucketIndex(l.Time, since, bucketSize)
+		if idx >= 0 && idx < statsBucketCount {
+			latBuckets[idx] = append(latBuckets[idx], v)
+		}
+	}
+	for i, bucket := range latBuckets {
+		rows.SparkP95[i] = percentile(bucket, 0.95)
+	}
+
+	rows.Status = classifyStatus(rows.ErrorRate)
+	return rows, nil
+}
+
+// bucketIndex maps an observation timestamp to its sparkline
+// bucket index. Returns -1 when the timestamp is outside the
+// window (defensive — shouldn't happen given the SQL WHERE clause,
+// but a clock skew between writer + reader could produce one).
+func bucketIndex(ts time.Time, since time.Time, bucketSize time.Duration) int {
+	if bucketSize <= 0 {
+		return -1
+	}
+	off := ts.Sub(since)
+	if off < 0 {
+		return -1
+	}
+	return int(off / bucketSize)
+}
+
+// parseFloatAttr accepts the attr-bag value strings the runtime
+// stores ("3.14" / "42") and returns the parsed float. The bool
+// return signals whether the parse succeeded — callers skip the
+// observation rather than counting a zero.
+func parseFloatAttr(raw string) (float64, bool) {
+	if raw == "" {
+		return 0, false
+	}
+	var f float64
+	_, err := fmt.Sscanf(raw, "%f", &f)
+	if err != nil {
+		return 0, false
+	}
+	return f, true
+}
+
+// percentile returns the p-th percentile of vals. Empty input
+// returns 0 — the caller treats that as "no observations"
+// rather than "latency is zero".
+//
+// Uses the classic "nearest-rank" definition: index = ceil(p * N).
+// Cheaper than linear interpolation; accuracy is sufficient for
+// the UI's 1-decimal-place display.
+func percentile(vals []float64, p float64) float64 {
+	if len(vals) == 0 {
+		return 0
+	}
+	sorted := make([]float64, len(vals))
+	copy(sorted, vals)
+	sort.Float64s(sorted)
+	idx := int(math.Ceil(p*float64(len(sorted)))) - 1
+	if idx < 0 {
+		idx = 0
+	}
+	if idx >= len(sorted) {
+		idx = len(sorted) - 1
+	}
+	return sorted[idx]
+}
+
+// classifyStatus maps the recent error rate into the 3-state pill
+// (ok / warn / err) the Overview UI renders. Thresholds match the
+// embedded console's existing convention (1% warn / 5% err).
+func classifyStatus(errorRate float64) string {
+	switch {
+	case errorRate > 0.05:
+		return "err"
+	case errorRate >= 0.01:
+		return "warn"
+	default:
+		return "ok"
+	}
 }

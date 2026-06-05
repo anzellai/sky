@@ -1,0 +1,726 @@
+module Overview exposing (viewOverview)
+
+-- v0.16.4 B5 — multi-service Overview page. Rendered by View.sky's
+-- content router when `Model.hubDbPath /= ""` (the host is the
+-- `sky console-serve` hub daemon) AND the active tab is OverviewTab.
+-- When neither is true the View dispatches to the single-service
+-- `overviewView` it has shipped since v0.16.0, byte-identical.
+--
+-- Layout: left scroller of service cards (one per
+-- Model.serviceStats entry) + right pane carrying aggregate charts.
+-- Service selection is carried on `Model.selectedService` —
+-- empty = "All services" mode (aggregate), non-empty = drill in
+-- on that service's per-tab data. Selection persists across
+-- reloads via the `?service=foo` query-string parameter; the runtime
+-- re-reads init's path on every `sky-nav` fetch + popstate so the
+-- address bar matches.
+--
+-- Sparklines + aggregate charts use Std.Ui.Chart primitives
+-- (v0.16.0 PR 4). Both run pure-Sky — no extra Go runtime needed.
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Std.Ui as Ui
+import Std.Ui exposing (Element)
+import Std.Ui.Background as Background
+import Std.Ui.Border as Border
+import Std.Ui.Font as Font
+import Std.Ui.Chart as Chart
+import State exposing (..)
+
+
+-- ─── Palette (mirrors View.sky's dark theme) ────────────────────
+bgPage : Ui.Color
+bgPage =
+    Ui.rgb 20 23 28
+
+
+bgSurface : Ui.Color
+bgSurface =
+    Ui.rgb 28 32 39
+
+
+bgRaised : Ui.Color
+bgRaised =
+    Ui.rgb 20 23 28
+
+
+bgCode : Ui.Color
+bgCode =
+    Ui.rgb 44 50 60
+
+
+border_ : Ui.Color
+border_ =
+    Ui.rgb 53 59 70
+
+
+borderSoft : Ui.Color
+borderSoft =
+    Ui.rgb 42 47 56
+
+
+textPrimary : Ui.Color
+textPrimary =
+    Ui.rgb 240 243 247
+
+
+textSecondary : Ui.Color
+textSecondary =
+    Ui.rgb 197 203 212
+
+
+textMuted : Ui.Color
+textMuted =
+    Ui.rgb 141 150 163
+
+
+accent : Ui.Color
+accent =
+    Ui.rgb 126 182 255
+
+
+pillOk : Ui.Color
+pillOk =
+    Ui.rgb 88 199 116
+
+
+pillWarn : Ui.Color
+pillWarn =
+    Ui.rgb 255 178 77
+
+
+pillErr : Ui.Color
+pillErr =
+    Ui.rgb 255 117 117
+
+
+-- ─── Entry point ────────────────────────────────────────────────
+--
+-- Returns a list of children to drop into View.sky's existing
+-- `Ui.column [ width fill, padding 20, spacing 16 ]` container —
+-- same shape as the other tab views (overviewView / metricsView /
+-- logsView / …).
+viewOverview : Model -> List (Element Msg)
+viewOverview model =
+    [ selectorHeader model, twoPaneLayout model ]
+
+
+-- ─── Selector header ────────────────────────────────────────────
+--
+-- Always-on row that names the currently-scoped service + a
+-- single "All services" reset chip. Pre-cycle-7 designs used a
+-- dropdown; chips win for keyboard navigation (every entry is a
+-- focusable button) and they fit naturally into the dark palette
+-- without a custom <select> theme.
+selectorHeader : Model -> Element Msg
+selectorHeader model =
+    let
+        scoped =
+            if model.selectedService == "" then
+                "All services"
+
+            else
+                model.selectedService
+    in
+        Ui.row
+            [ Ui.width Ui.fill
+            , Ui.spacing 10
+            , Background.color bgRaised
+            , Border.width 1
+            , Border.color border_
+            , Border.rounded 6
+            , Ui.paddingXY 14 10
+            ]
+            [ Ui.el
+                  [ Font.size 11
+                  , Font.color textMuted
+                  , Font.letterSpacing 5.0e-2
+                  ]
+                  (Ui.text "SCOPE")
+            , Ui.el
+                  [ Font.size 14, Font.bold, Font.color textPrimary ]
+                  (Ui.text scoped)
+            , Ui.el [Ui.width Ui.fill] (Ui.text "")
+            , allServicesChip (model.selectedService == "")
+            ]
+
+
+allServicesChip : Bool -> Element Msg
+allServicesChip isActive =
+    let
+        bg =
+            if isActive then
+                accent
+
+            else
+                bgCode
+        fg =
+            if isActive then
+                bgPage
+
+            else
+                textSecondary
+    in
+        Ui.el
+            [ Ui.paddingXY 10 6
+            , Background.color bg
+            , Border.rounded 4
+            , Ui.pointer
+            , Ui.onClick (SelectService "")
+            , Font.color fg
+            , Font.size 12
+            , Font.bold
+            ]
+            (Ui.text "All services")
+
+
+-- ─── Two-pane layout ────────────────────────────────────────────
+--
+-- Left: service-card scroller. Right: aggregate charts when
+-- "All services" is selected, otherwise a focused breakdown for
+-- the chosen service. The grid is hand-rolled (not Std.Ui.Grid)
+-- so the right pane fills naturally — a single `width fill`
+-- cascade gives the responsive shrink we want without a media-
+-- query.
+twoPaneLayout : Model -> Element Msg
+twoPaneLayout model =
+    Ui.row
+        [ Ui.width Ui.fill, Ui.spacing 16, Ui.alignTop ]
+        [ serviceCardScroller model
+        , Ui.el [Ui.width Ui.fill] (rightPane model)
+        ]
+
+
+-- Left pane — list of cards, one per service in Model.serviceStats.
+serviceCardScroller : Model -> Element Msg
+serviceCardScroller model =
+    Ui.column
+        [ Ui.width (Ui.px 320), Ui.spacing 8, Ui.alignTop ]
+        (if List.isEmpty model.serviceStats then
+            [emptyCard]
+
+        else
+            List.map (serviceCard model.selectedService) model.serviceStats)
+
+
+emptyCard : Element Msg
+emptyCard =
+    Ui.column
+        [ Background.color bgRaised
+        , Border.width 1
+        , Border.color border_
+        , Border.rounded 6
+        , Ui.padding 14
+        , Ui.spacing 6
+        , Ui.width Ui.fill
+        ]
+        [ Ui.el
+              [ Font.size 11, Font.color textMuted, Font.letterSpacing 5.0e-2 ]
+              (Ui.text "NO SERVICES YET")
+        , Ui.el
+              [ Font.size 13, Font.color textSecondary ]
+              (Ui.text
+                  "Push telemetry to the hub via OTLP HTTP or the Sky exporter.")
+        ]
+
+
+serviceCard : String -> ServiceStat -> Element Msg
+serviceCard selected stat =
+    let
+        isSelected = selected == stat.name
+        borderColor =
+            if isSelected then
+                accent
+
+            else
+                border_
+    in
+        Ui.column
+            [ Background.color bgRaised
+            , Border.width 1
+            , Border.color borderColor
+            , Border.rounded 6
+            , Ui.padding 12
+            , Ui.spacing 8
+            , Ui.width Ui.fill
+            , Ui.pointer
+            , Ui.onClick (SelectService stat.name)
+            ]
+            [ cardHeader stat, cardMetricsRow stat, cardSparklines stat ]
+
+
+cardHeader : ServiceStat -> Element Msg
+cardHeader stat =
+    Ui.row
+        [ Ui.width Ui.fill, Ui.spacing 8 ]
+        [ Ui.el
+              [ Ui.width Ui.fill
+              , Font.size 14
+              , Font.bold
+              , Font.color textPrimary
+              ]
+              (Ui.text stat.name)
+        , statusPill stat.status
+        ]
+
+
+statusPill : String -> Element Msg
+statusPill status =
+    let
+        color = statusColor status
+        label = String.toUpper status
+    in
+        Ui.el
+            [ Background.color color
+            , Border.rounded 3
+            , Ui.paddingXY 6 2
+            , Font.color bgPage
+            , Font.size 10
+            , Font.bold
+            ]
+            (Ui.text label)
+
+
+statusColor : String -> Ui.Color
+statusColor status =
+    case status of
+
+        "ok" ->
+            pillOk
+
+        "warn" ->
+            pillWarn
+
+        "err" ->
+            pillErr
+
+        _ ->
+            textMuted
+
+
+cardMetricsRow : ServiceStat -> Element Msg
+cardMetricsRow stat =
+    Ui.row
+        [ Ui.width Ui.fill, Ui.spacing 14 ]
+        [ statBlock "REQS/S" (formatFloat stat.reqsPerSec)
+        , statBlock "P95 MS" (formatFloat stat.p95Ms)
+        , statBlock "ERR %" (formatPercent stat.errorRate)
+        ]
+
+
+statBlock : String -> String -> Element Msg
+statBlock label value =
+    Ui.column
+        [ Ui.spacing 2, Ui.width Ui.fill ]
+        [ Ui.el
+              [ Font.size 9, Font.color textMuted, Font.letterSpacing 5.0e-2 ]
+              (Ui.text label)
+        , Ui.el
+              [ Font.size 13
+              , Font.bold
+              , Font.color textPrimary
+              , Font.family "ui-monospace, Menlo, monospace"
+              ]
+              (Ui.text value)
+        ]
+
+
+-- Card sparklines — `sparkRps` over the last ~60s and `sparkP95`
+-- over the same window. Renders empty placeholder when the lists
+-- are empty so the card height stays stable while the hub is
+-- still bootstrapping.
+cardSparklines : ServiceStat -> Element Msg
+cardSparklines stat =
+    Ui.row
+        [ Ui.width Ui.fill, Ui.spacing 8 ]
+        [ Ui.column
+              [ Ui.width Ui.fill, Ui.spacing 2 ]
+              [ Ui.el
+                    [ Font.size 9
+                    , Font.color textMuted
+                    , Font.letterSpacing 5.0e-2
+                    ]
+                    (Ui.text "REQ/S")
+              , sparkOrPlaceholder stat.sparkRps accent
+              ]
+        , Ui.column
+              [ Ui.width Ui.fill, Ui.spacing 2 ]
+              [ Ui.el
+                    [ Font.size 9
+                    , Font.color textMuted
+                    , Font.letterSpacing 5.0e-2
+                    ]
+                    (Ui.text "P95")
+              , sparkOrPlaceholder stat.sparkP95 pillWarn
+              ]
+        ]
+
+
+sparkOrPlaceholder : List Float -> Ui.Color -> Element Msg
+sparkOrPlaceholder values color =
+    let
+        cfg =
+            Chart.defaultCfg |> Chart.withWidth 120 |> Chart.withHeight 28
+                |> Chart.withColor color
+                |> Chart.withGridLines False
+    in
+        if List.isEmpty values then
+            Ui.el
+                [ Ui.width Ui.fill
+                , Background.color bgCode
+                , Border.rounded 3
+                , Ui.paddingXY 6 6
+                , Font.color textMuted
+                , Font.size 10
+                ]
+                (Ui.text "no data")
+
+        else
+            Ui.el
+                [ Ui.width Ui.fill
+                , Background.color bgCode
+                , Border.rounded 3
+                , Ui.padding 2
+                ]
+                (Chart.sparkline cfg values)
+
+
+-- ─── Right pane ─────────────────────────────────────────────────
+--
+-- When "All services" (`selectedService = ""`), render the
+-- aggregate charts. Otherwise render a focused breakdown that
+-- summarises the picked service + a hint about what to click for
+-- the deeper tabs (Metrics / Logs / Traces / Errors).
+rightPane : Model -> Element Msg
+rightPane model =
+    if model.selectedService == "" then
+        aggregatePane model.serviceStats
+
+    else
+        focusedPane model
+
+
+aggregatePane : List ServiceStat -> Element Msg
+aggregatePane stats =
+    Ui.column
+        [ Ui.width Ui.fill, Ui.spacing 12 ]
+        [ aggregateChartPanel
+              "Requests / second (per service)"
+              (aggregateRpsSeries stats)
+        , aggregateChartPanel
+              "p95 latency (ms, per service)"
+              (aggregateP95Series stats)
+        , errorRatePanel stats
+        ]
+
+
+-- One labelled `Chart.line` panel over per-service series. Each
+-- service contributes a `Chart.series` keyed on its name; chart
+-- legends fall back to "title" attrs on the SVG paths
+-- (Chart.withSeriesLabel sets these).
+aggregateChartPanel : String -> List Chart.Series -> Element Msg
+aggregateChartPanel title seriesList =
+    Ui.column
+        [ Background.color bgRaised
+        , Border.width 1
+        , Border.color border_
+        , Border.rounded 6
+        , Ui.padding 14
+        , Ui.spacing 10
+        , Ui.width Ui.fill
+        ]
+        [ Ui.el
+              [ Font.size 11
+              , Font.color textMuted
+              , Font.bold
+              , Font.letterSpacing 5.0e-2
+              ]
+              (Ui.text (String.toUpper title))
+        , chartOrEmpty seriesList
+        ]
+
+
+chartOrEmpty : List Chart.Series -> Element Msg
+chartOrEmpty seriesList =
+    if List.isEmpty seriesList then
+        Ui.el
+            [ Ui.padding 16
+            , Ui.centerX
+            , Font.color textMuted
+            , Font.italic
+            , Font.size 12
+            ]
+            (Ui.text "Waiting for samples…")
+
+    else
+        let
+            cfg =
+                Chart.defaultCfg |> Chart.withWidth 600 |> Chart.withHeight 160
+                    |> Chart.withColor accent
+        in
+            Chart.line cfg seriesList
+
+
+-- Build a list of Chart.Series from the per-service `sparkRps`
+-- lists. X coordinate is the index (0..N-1); the chart's xRange
+-- auto-fits. Empty `sparkRps` series are filtered out so the
+-- chart doesn't render a flat zero line for newcomers.
+aggregateRpsSeries : List ServiceStat -> List Chart.Series
+aggregateRpsSeries stats =
+    List.filter
+        (\s -> not (List.isEmpty s.points))
+        (List.map (\stat -> seriesFromValues stat.name stat.sparkRps) stats)
+
+
+aggregateP95Series : List ServiceStat -> List Chart.Series
+aggregateP95Series stats =
+    List.filter
+        (\s -> not (List.isEmpty s.points))
+        (List.map (\stat -> seriesFromValues stat.name stat.sparkP95) stats)
+
+
+-- Convert a `List Float` into a `Chart.Series` with x = index.
+-- v0.16.0's Chart.Point alias is (Float, Float). `indexedMap`
+-- pairs each value with its index; we coerce the index to Float
+-- via String.toFloat so we don't need a separate stdlib helper.
+seriesFromValues : String -> List Float -> Chart.Series
+seriesFromValues label values =
+    let
+        points = List.indexedMap pairIndex values
+    in
+        Chart.series points |> Chart.withSeriesLabel label
+
+
+pairIndex : Int -> Float -> ( Float, Float )
+pairIndex i v =
+    ( intToFloat i, v )
+
+
+intToFloat : Int -> Float
+intToFloat n =
+    case String.toFloat (String.fromInt n) of
+
+        Just f ->
+            f
+
+        Nothing ->
+            0.0
+
+
+-- Error-rate panel — a small bar grid sorted by error % so the
+-- noisiest services bubble up. Each row carries its rate +
+-- pill colour. Empty list emits the same waiting placeholder.
+errorRatePanel : List ServiceStat -> Element Msg
+errorRatePanel stats =
+    Ui.column
+        [ Background.color bgRaised
+        , Border.width 1
+        , Border.color border_
+        , Border.rounded 6
+        , Ui.padding 14
+        , Ui.spacing 8
+        , Ui.width Ui.fill
+        ]
+        [ Ui.el
+              [ Font.size 11
+              , Font.color textMuted
+              , Font.bold
+              , Font.letterSpacing 5.0e-2
+              ]
+              (Ui.text "ERROR RATE (5xx) BY SERVICE")
+        , if List.isEmpty stats then
+              Ui.el
+                  [ Ui.padding 16
+                  , Ui.centerX
+                  , Font.color textMuted
+                  , Font.italic
+                  , Font.size 12
+                  ]
+                  (Ui.text "Waiting for samples…")
+
+          else
+              Ui.column
+                  [ Ui.width Ui.fill, Ui.spacing 6 ]
+                  (List.map errorRateRow stats)
+        ]
+
+
+errorRateRow : ServiceStat -> Element Msg
+errorRateRow stat =
+    Ui.row
+        [ Ui.width Ui.fill
+        , Ui.paddingXY 0 4
+        , Ui.spacing 10
+        , Border.widthEach { top = 0, right = 0, bottom = 1, left = 0 }
+        , Border.color borderSoft
+        ]
+        [ Ui.el
+              [ Ui.width (Ui.px 180)
+              , Font.size 12
+              , Font.color textPrimary
+              , Font.family "ui-monospace, Menlo, monospace"
+              ]
+              (Ui.text stat.name)
+        , statusPill stat.status
+        , Ui.el
+              [ Ui.width Ui.fill
+              , Font.size 12
+              , Font.color textSecondary
+              , Font.family "ui-monospace, Menlo, monospace"
+              ]
+              (Ui.text (formatPercent stat.errorRate))
+        ]
+
+
+-- ─── Focused pane (one service selected) ────────────────────────
+--
+-- When the user drills into a single service via a card click,
+-- the right pane summarises that service's headline numbers +
+-- guides to the deeper tabs. Drill-down tabs (B6) will pre-filter
+-- their queries by Model.selectedService.
+focusedPane : Model -> Element Msg
+focusedPane model =
+    let
+        maybeStat = findStat model.selectedService model.serviceStats
+    in
+        case maybeStat of
+
+            Nothing ->
+                Ui.column
+                    [ Background.color bgRaised
+                    , Border.width 1
+                    , Border.color border_
+                    , Border.rounded 6
+                    , Ui.padding 14
+                    , Ui.spacing 10
+                    , Ui.width Ui.fill
+                    ]
+                    [Ui.el
+                        [ Font.size 13, Font.color textSecondary, Font.italic ]
+                        (Ui.text
+                            ("Service \"" ++ model.selectedService
+                                ++ "\" has no recent samples yet — "
+                                ++ "click All services to return to aggregate."))]
+
+            Just stat ->
+                Ui.column
+                    [ Ui.width Ui.fill, Ui.spacing 12 ]
+                    [ focusedHeader stat, focusedCharts stat, focusedHint ]
+
+
+focusedHeader : ServiceStat -> Element Msg
+focusedHeader stat =
+    Ui.column
+        [ Background.color bgRaised
+        , Border.width 1
+        , Border.color border_
+        , Border.rounded 6
+        , Ui.padding 14
+        , Ui.spacing 8
+        , Ui.width Ui.fill
+        ]
+        [ Ui.row
+              [ Ui.width Ui.fill, Ui.spacing 10 ]
+              [ Ui.el
+                    [ Ui.width Ui.fill
+                    , Font.size 16
+                    , Font.bold
+                    , Font.color textPrimary
+                    ]
+                    (Ui.text stat.name)
+              , statusPill stat.status
+              ]
+        , Ui.row
+              [ Ui.width Ui.fill, Ui.spacing 20 ]
+              [ statBlock "REQS/S" (formatFloat stat.reqsPerSec)
+              , statBlock "P95 MS" (formatFloat stat.p95Ms)
+              , statBlock "ERR %" (formatPercent stat.errorRate)
+              ]
+        ]
+
+
+focusedCharts : ServiceStat -> Element Msg
+focusedCharts stat =
+    Ui.column
+        [ Ui.width Ui.fill, Ui.spacing 12 ]
+        [ aggregateChartPanel
+              "Requests / second"
+              (singleSeries stat.name stat.sparkRps accent)
+        , aggregateChartPanel
+              "p95 latency (ms)"
+              (singleSeries stat.name stat.sparkP95 pillWarn)
+        ]
+
+
+singleSeries : String -> List Float -> Ui.Color -> List Chart.Series
+singleSeries label values color =
+    if List.isEmpty values then
+        []
+
+    else
+        [Chart.series (List.indexedMap pairIndex values)
+            |> Chart.withSeriesLabel label
+            |> Chart.withSeriesColor color]
+
+
+focusedHint : Element Msg
+focusedHint =
+    Ui.el
+        [ Background.color bgCode
+        , Border.rounded 4
+        , Ui.padding 10
+        , Ui.width Ui.fill
+        , Font.size 12
+        , Font.color textSecondary
+        ]
+        (Ui.text
+            ("Drill into Logs / Traces / Errors tabs above — they'll "
+                ++ "auto-filter to the selected service once B6 ships."))
+
+
+findStat : String -> List ServiceStat -> Maybe ServiceStat
+findStat name stats =
+    List.find (\s -> s.name == name) stats
+
+
+-- ─── Format helpers (mirror View.sky) ───────────────────────────
+--
+-- Two-decimal float renderer that avoids scientific notation
+-- artefacts from String.fromFloat. Same shape as View.sky's
+-- private helper — local copy keeps the two modules independent
+-- (no circular import risk).
+formatFloat : Float -> String
+formatFloat f =
+    let
+        scaled = Math.round (f * 100.0)
+        whole = scaled // 100
+        frac = modBy 100 scaled
+        fracS =
+            if frac < 10 then
+                "0" ++ String.fromInt frac
+
+            else
+                String.fromInt frac
+    in
+        if frac == 0 then
+            String.fromInt whole
+
+        else
+            String.fromInt whole ++ "." ++ fracS
+
+
+formatPercent : Float -> String
+formatPercent f =
+    let
+        scaled = Math.round (f * 10000.0)
+        whole = scaled // 100
+        frac = modBy 100 scaled
+        fracStr =
+            if frac < 10 then
+                "0" ++ String.fromInt frac
+
+            else
+                String.fromInt frac
+    in
+        String.fromInt whole ++ "." ++ fracStr ++ "%"
