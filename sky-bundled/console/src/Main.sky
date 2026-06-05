@@ -22,13 +22,15 @@ import Sky.Core.Http as Http
 import Sky.Core.Json.Decode as Decode
 import Sky.Core.Json.Decode.Pipeline as Pipeline
 import Sky.Core.Task as Task
+import Sky.Core.Maybe as Maybe
+import Sky.Core.Dict as Dict
 import Std.Cmd as Cmd
 import Std.Sub as Sub
 import Std.Live exposing (app, route)
 import Std.Ui as Ui
 import State exposing (..)
 import View exposing (view)
-import HubStore exposing (hubStore)
+import HubStore exposing (hubStore, hubCurrentIdentity)
 
 
 -- ─── Decoders for the parent's /_sky/console/api/* JSON ──────────
@@ -235,13 +237,37 @@ init _req =
             , traceQuery = ""
             , selectedService = ""
             , serviceStats = []
+            -- v0.16.6 #493 part 2c: identity is fetched async from
+            -- the hub via Hub_currentIdentity; until the response
+            -- arrives it stays Nothing and tenantPrefix stays "" so
+            -- the per-tab queries see all data the operator's gate
+            -- let in.
+            , identity = Nothing
+            , tenantPrefix = ""
             }
+
+        -- Fetch the signed-in identity on boot. Only meaningful
+        -- when running in hub mode (hubDbPath != "") with the
+        -- auth-gate active; standalone runs and embedded-without-
+        -- hub runs both get an Err which the GotIdentity arm
+        -- silently absorbs (identity stays Nothing).
+        identityCmd =
+            if hubDbPath /= "" then
+                Cmd.perform (hubCurrentIdentity hubDbPath) GotIdentity
+            else
+                Cmd.none
     in
     -- Fire one immediate fetch so the initial render isn't empty;
     -- the 3 s Sub.every then keeps it fresh.  When in hub mode the
     -- batch picks up the multi-service stats too via fetchForTab's
-    -- OverviewTab branch.
-    ( startModel, fetchForTab startModel startModel.tab startModel.logFilter )
+    -- OverviewTab branch.  identityCmd lands a single Hub_currentIdentity
+    -- result; subsequent update sets model.identity + tenantPrefix.
+    ( startModel
+    , Cmd.batch
+        [ fetchForTab startModel startModel.tab startModel.logFilter
+        , identityCmd
+        ]
+    )
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -357,6 +383,30 @@ update msg model =
 
         GotServiceStats (Err e) ->
             ( { model | lastError = errorToString e }, Cmd.none )
+
+        -- v0.16.6 #493 part 2c.  Identity arrived from
+        -- Hub_currentIdentity.  Success: derive the tenant filter
+        -- from the `tenant` claim (operator convention — same
+        -- pattern as SkyDeploy).  Failure: silently leave identity
+        -- + tenantPrefix at their defaults — the per-tab queries
+        -- already use "" as the no-filter sentinel.  We do NOT
+        -- surface the Err on `model.lastError` because the
+        -- standalone-no-hub path always fails this call and would
+        -- otherwise paint a permanent error banner on /_sky/console.
+        GotIdentity (Ok identity) ->
+            let
+                tenant =
+                    Maybe.withDefault "" (Dict.get "tenant" identity.claims)
+            in
+            ( { model
+                | identity = Just identity
+                , tenantPrefix = tenant
+              }
+            , Cmd.none
+            )
+
+        GotIdentity (Err _) ->
+            ( model, Cmd.none )
 
 
 fetchLogsOnly : Model -> LogFilter -> Cmd Msg

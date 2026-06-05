@@ -4,6 +4,7 @@ module State exposing (..)
 -- type-checker stays well below the heap-exhaustion limit
 -- (CLAUDE.md Limitation #17).
 import Sky.Core.Prelude exposing (..)
+import Sky.Core.Dict exposing (Dict)
 
 -- ─── Tabs ────────────────────────────────────────────────────────
 
@@ -213,6 +214,24 @@ type alias Model =
     , traceQuery : String
     , selectedService : String
     , serviceStats : List ServiceStat
+    , identity : Maybe Identity
+    , tenantPrefix : String
+    }
+
+-- Identity threaded from the hub auth-gate via Hub_currentIdentity
+-- (v0.16.6 / #493 part 2c).  Match Std.Live.Console.Identity's
+-- record shape exactly so the existing record-narrowing path
+-- (rt.Coerce[State_Identity_R]) round-trips cleanly.
+--
+-- Identity is populated asynchronously: the bundled console issues
+-- `Cmd.perform Hub.currentIdentity GotIdentity` in init; the response
+-- flows through update.  Until the response arrives `identity` is
+-- Nothing — every per-tab fetch uses the empty tenant prefix (i.e.
+-- it sees all data the operator's gate let in).
+type alias Identity =
+    { subject : String
+    , email : String
+    , claims : Dict String String
     }
 
 -- Msg covers tab switches + scheduled refresh + each per-endpoint
@@ -235,6 +254,11 @@ type Msg
     | PivotToTrace String
     | SelectService String
     | GotServiceStats (Result Error (List ServiceStat))
+    -- v0.16.6 #493 part 2c: identity from the auth-gate.  Populated
+    -- by `Cmd.perform Hub.currentIdentity GotIdentity` in init.
+    -- A successful response with a tenant claim derives the
+    -- tenantPrefix used to filter service-name queries.
+    | GotIdentity (Result Error Identity)
 
 
 -- ─── Defaults ────────────────────────────────────────────────────

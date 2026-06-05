@@ -1,4 +1,4 @@
-module HubStore exposing (hubStore)
+module HubStore exposing (hubStore, hubCurrentIdentity)
 
 -- HubStore — the bundled console's data plane when it runs in-process
 -- with the `sky console-serve` hub daemon. Same typed shape as
@@ -21,6 +21,7 @@ import State exposing
     , ErrorRow
     , LogFilter
     , ServiceStat
+    , Identity
     )
 
 
@@ -111,3 +112,17 @@ hubReadFilteredTraces =
 hubReadFilteredErrors : String -> String -> Task Error (List ErrorRow)
 hubReadFilteredErrors =
     Ffi.kernel "Hub_readFilteredErrors"
+
+
+-- v0.16.6 #493 part 2c: read the signed-in identity carried on
+-- the current Sky.Live session.  The hub's auth-app gate populates
+-- `r.Context()` with `rt.IdentityContextKey` before forwarding;
+-- the runtime mints the live session with that identity attached.
+-- `Hub_currentIdentity` returns it as a Sky-shaped record (subject,
+-- email, claims).  Empty `dbPath` is the standalone-no-hub case;
+-- the kernel returns `Err` so the bundled console falls back to
+-- "no tenant filter".  Same dbPath-as-token shape as every other
+-- Hub_* kernel so the call sites stay uniform.
+hubCurrentIdentity : String -> Task Error Identity
+hubCurrentIdentity =
+    Ffi.kernel "Hub_currentIdentity"
