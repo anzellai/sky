@@ -280,6 +280,7 @@ test-suite sky-tests
     build-depends: unix >= 2.7
 
   other-modules:
+      Sky.Build.Helpers.InProcessCompile
       Sky.Build.Validator
       Sky.Build.CompileSpec
       Sky.Build.MainPanicRecoverSpec

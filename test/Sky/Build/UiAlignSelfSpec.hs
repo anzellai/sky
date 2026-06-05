@@ -25,61 +25,27 @@ module Sky.Build.UiAlignSelfSpec (spec) where
 -- Post-F4 invariant: at most ONE `align-self` declaration per
 -- element, sourced from `alignSelfX/Y` only.
 --
--- Combiner #1 (task #489): both axis fixtures (width-axis under a
--- column parent, height-axis under a row parent) now share ONE
--- multi-fixture Main.sky compiled by a SINGLE `sky build` →
--- SINGLE `go build` invocation.  Pre-combiner this spec ran two
--- subprocess sky-builds; post-combiner it runs one, halving the
--- GOCACHE footprint with no regression-coverage loss.  In fact
--- the combined assertion is STRICTER — a partial F4 fix that
--- re-emitted `stretch` on only ONE axis trips the global
--- "stretch nowhere" check as cleanly as it would have tripped a
--- per-axis check, AND the count-based "center appears ≥ 2 times"
--- assertion proves both alignment attrs still emit their
--- explicit `align-self: center;` declaration.
+-- Combiner #1 (task #489): both axis fixtures combined into ONE
+-- multi-fixture Main.sky → single sky build.
+--
+-- Tier 1 (task #491): no subprocess `sky build` at all — the
+-- compile pipeline runs IN-PROCESS via Sky.Build.Helpers.
+-- InProcessCompile.compileInProcess.  ZERO subprocess.  ZERO
+-- `go build`.  ZERO GOCACHE writes.  ~2 s per call instead of
+-- ~10 s; ~MB disk per call instead of ~100 MB; no cache-pressure
+-- contribution to the rest of cabal-test.
 
 import Test.Hspec
-import qualified System.Exit as Exit
-import System.Directory (getCurrentDirectory, doesFileExist, createDirectoryIfMissing)
-import System.FilePath ((</>))
-import System.Process (readCreateProcessWithExitCode, shell)
-import System.IO.Temp (withSystemTempDirectory)
 import Data.List (isInfixOf, tails)
 
-
-findSky :: IO FilePath
-findSky = do
-    cwd <- getCurrentDirectory
-    let c = cwd </> "sky-out" </> "sky"
-    ok <- doesFileExist c
-    if ok then return c else fail ("missing: " ++ c)
-
-
--- | Single multi-fixture project: both axes' views live as
--- separate top-level functions in Main.sky; ONE sky build covers
--- both.  Returns the combined emitted main.go (or an error string
--- + exit code on build failure).
-buildCombinedMain :: IO (Int, String, String)
-buildCombinedMain =
-    withSystemTempDirectory "sky-ui-alignself" $ \tmp -> do
-        sky <- findSky
-        createDirectoryIfMissing True (tmp </> "src")
-        writeFile (tmp </> "src" </> "Main.sky") combinedFixture
-        writeFile (tmp </> "sky.toml") "name = \"tmp\"\nversion = \"0.0.0\"\n"
-        let buildCmd = "cd " ++ tmp ++ " && " ++ sky ++ " build src/Main.sky 2>&1"
-        (bec, bout, berr) <- readCreateProcessWithExitCode (shell buildCmd) ""
-        case bec of
-            Exit.ExitFailure n -> return (n, "", "build failed: " ++ bout ++ berr)
-            Exit.ExitSuccess -> do
-                main_go <- readFile (tmp </> "sky-out" </> "main.go")
-                return (0, main_go, "")
+import Sky.Build.Helpers.InProcessCompile (CompileResult(..), compileInProcess)
 
 
 -- | Combined fixture: width-axis + height-axis views in ONE
 -- Main.sky.  The combined view nests both shapes so the lowerer
 -- emits BOTH `widthFillFor AsColumn` (under outer column) AND
 -- `heightFillFor AsRow` (under inner row) into the same main.go
--- on a single go build.
+-- on a single in-process compile.
 combinedFixture :: String
 combinedFixture = unlines
     [ "module Main exposing (main)"
@@ -141,21 +107,23 @@ spec :: Spec
 spec = describe "Std.Ui align-self single-emission contract (F4)" $ do
 
     it "neither width-axis (column parent) nor height-axis (row parent) emits align-self: stretch; both alignment attrs still emit align-self: center" $ do
-        (ec, mainGo, err) <- buildCombinedMain
-        ec `shouldBe` 0
-        err `shouldBe` ""
-        -- F4 invariant: NO `align-self: stretch` ANYWHERE in the
-        -- emitted main.go.  A partial fix that left it on only ONE
-        -- axis would still trip this assertion — strictly more
-        -- coverage than the pre-combiner per-axis split.
-        mainGo `shouldNotSatisfy`
-            ("align-self: stretch" `isInfixOf`)
-        -- Both fixtures' alignment attrs MUST still produce their
-        -- explicit `align-self: center;` declaration — at LEAST
-        -- two of them in the combined output (one per fixture).
-        countOccurrences "align-self: center;" mainGo `shouldSatisfy` (>= 2)
-        -- The width-fill emitter must keep `width: 100%` so the
-        -- canonical `[Ui.width (Ui.maximum 760 Ui.fill), Ui.centerX]`
-        -- shape still fills width before centring (showcase shell).
-        mainGo `shouldSatisfy`
-            ("width: 100%;" `isInfixOf`)
+        result <- compileInProcess combinedFixture
+        case result of
+            CompileErr e -> expectationFailure ("compile failed: " ++ e)
+            CompileOk goSrc -> do
+                -- F4 invariant: NO `align-self: stretch` ANYWHERE in
+                -- the emitted main.go.  A partial fix that left it
+                -- on only ONE axis would still trip this assertion.
+                goSrc `shouldNotSatisfy`
+                    ("align-self: stretch" `isInfixOf`)
+                -- Both fixtures' alignment attrs MUST still produce
+                -- their explicit `align-self: center;` declaration —
+                -- at LEAST two of them in the combined output (one
+                -- per fixture).
+                countOccurrences "align-self: center;" goSrc `shouldSatisfy` (>= 2)
+                -- The width-fill emitter must keep `width: 100%` so
+                -- the canonical `[Ui.width (Ui.maximum 760 Ui.fill),
+                -- Ui.centerX]` shape still fills width before
+                -- centring (showcase shell).
+                goSrc `shouldSatisfy`
+                    ("width: 100%;" `isInfixOf`)
