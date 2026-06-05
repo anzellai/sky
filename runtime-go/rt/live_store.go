@@ -834,6 +834,14 @@ type storableSession struct {
 	// restore — handleEvent already handles empty prevTree.
 	LastSeen time.Time
 	OutSeq   int64
+	// v0.16.5 #493 — auth identity stashed at mint time by
+	// dispatchRoot from IdentityFromContext(r.Context()). Round-trips
+	// through gob so DB-backed stores survive restart/replica
+	// reshuffles with identity intact. Existing persisted sessions
+	// (pre-v0.16.5) decode with the zero ConsoleIdentity + false —
+	// matches "no gate ran" semantics, no migration required.
+	Identity      ConsoleIdentity
+	IdentityValid bool
 }
 
 func encodeSession(s *liveSession) ([]byte, error) {
@@ -855,9 +863,11 @@ func encodeSession(s *liveSession) ([]byte, error) {
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
 	if err := enc.Encode(storableSession{
-		Model:    s.model,
-		LastSeen: s.lastSeenTime(),
-		OutSeq:   s.localSeq,
+		Model:         s.model,
+		LastSeen:      s.lastSeenTime(),
+		OutSeq:        s.localSeq,
+		Identity:      s.identity,
+		IdentityValid: s.identityValid,
 	}); err != nil {
 		return nil, err
 	}
@@ -941,11 +951,13 @@ func decodeSession(blob []byte) (*liveSession, error) {
 		return nil, err
 	}
 	sess := &liveSession{
-		model:     st.Model,
-		prevTree:  nil, // rebuilt on next render via handleEvent
-		handlers:  map[string]any{},
-		sseCh:     make(chan sseFrame, sseChanBuffer),
-		cancelSub: make(chan struct{}),
+		model:         st.Model,
+		identity:      st.Identity,
+		identityValid: st.IdentityValid,
+		prevTree:      nil, // rebuilt on next render via handleEvent
+		handlers:      map[string]any{},
+		sseCh:         make(chan sseFrame, sseChanBuffer),
+		cancelSub:     make(chan struct{}),
 		// Cycle 3 P36 / Gap C4: provision the terminal-teardown
 		// channel so persistent-store rehydrates can also be cleanly
 		// stopped by markDone when the session is later evicted.

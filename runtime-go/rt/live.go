@@ -1968,9 +1968,26 @@ type liveSession struct {
 	// the dispatch path can include it in observability logs
 	// without having to thread sid through every helper signature.
 	// Populated when the session is loaded/created via getOrInit.
-	sid      string
-	model    any
-	handlers map[string]any
+	sid string
+	// identity / identityValid — v0.16.5 #493 session-identity bridge.
+	// At mint time dispatchRoot reads IdentityFromContext(r.Context())
+	// and, if a gate populated it, stashes the result here.  Kernels
+	// downstream (notably the hub's Hub_currentIdentity) read it back
+	// via SessionIdentity(sess) and use the claims to filter queries.
+	//
+	// `identityValid` is a separate bool because the zero
+	// ConsoleIdentity is ambiguous — "no gate ran" and "gate allowed
+	// an anonymous identity with empty claims" look the same on the
+	// wire. The bool disambiguates without forcing every Sky.Live app
+	// to know about Identity types.
+	//
+	// Persistence: both fields are included in storableSession so
+	// DB-backed session stores round-trip identity across restarts
+	// and replicas (sqlite / postgres / redis / firestore).
+	identity      ConsoleIdentity
+	identityValid bool
+	model         any
+	handlers      map[string]any
 	prevTree *VNode // Last rendered tree; used by the diff protocol.
 	// View-body bookkeeping for the SSE no-op suppression contract
 	// (Cycle 3 P39 / Gap C2 — split out from the historical single
@@ -3513,6 +3530,17 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 			sseCh:     make(chan sseFrame, sseChanBuffer),
 			cancelSub: make(chan struct{}),
 			done:      make(chan struct{}),
+		}
+		// v0.16.5 #493 — session-identity bridge. If the gate that
+		// preceded this handler (MountLiveSubAppInProcessWithGate's
+		// `gate` callback, e.g. hub.consoleGateApp) wrote an Identity
+		// to r.Context(), stash it on the fresh session so downstream
+		// kernels can read it via SessionIdentity / currentLiveSession.
+		// Survives encode/decode round-trips for DB-backed stores —
+		// see storableSession in live_store.go.
+		if id, ok := IdentityFromContext(r.Context()); ok {
+			sess.identity = id
+			sess.identityValid = true
 		}
 	}
 	// Always set sid — both on fresh sessions AND on resumes from

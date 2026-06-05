@@ -73,6 +73,39 @@ func (f *fakeHubStoreReader) ServiceStatsJSON() (string, error) {
 	return f.rowsStats, nil
 }
 
+// QueryFiltered* methods — v0.16.4 B6 added these to the interface but
+// the test fake wasn't updated; v0.16.5 closes the gap with stub
+// implementations that mirror the unfiltered companions.  Tests that
+// specifically exercise filtered behaviour can override rowsLog /
+// rowsMetrics / rowsSpans / rowsErrors per-call.
+func (f *fakeHubStoreReader) QueryFilteredLogsJSON(serviceName, filterJSON string) (string, error) {
+	if f.err != nil {
+		return "", f.err
+	}
+	return f.rowsLog, nil
+}
+
+func (f *fakeHubStoreReader) QueryFilteredMetricsJSON(serviceName string) (string, error) {
+	if f.err != nil {
+		return "", f.err
+	}
+	return f.rowsMet, nil
+}
+
+func (f *fakeHubStoreReader) QueryFilteredSpansJSON(serviceName string) (string, error) {
+	if f.err != nil {
+		return "", f.err
+	}
+	return f.rowsSpn, nil
+}
+
+func (f *fakeHubStoreReader) QueryFilteredErrorsJSON(serviceName string) (string, error) {
+	if f.err != nil {
+		return "", f.err
+	}
+	return f.rowsErr, nil
+}
+
 // resetHubStore clears the registry; called from each test that
 // touches the global so parallel test runs don't leak state.
 func resetHubStore(t *testing.T) {

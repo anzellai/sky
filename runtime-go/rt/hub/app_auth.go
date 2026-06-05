@@ -40,37 +40,18 @@ import (
 	rt "sky-app/rt"
 )
 
-// identityContextKey is the typed key used to stash the
-// ConsoleIdentity on the request context after consoleGateApp
-// allows a request. Downstream handlers (the bundled console_app's
-// Hub_* kernels via hub_bridge.go) read it via IdentityFromContext.
+// IdentityFromContext re-exports rt.IdentityFromContext so existing
+// hub package callers (and external code that already imports
+// `hub.IdentityFromContext`) keep working after v0.16.5 moved the
+// canonical implementation to package rt.
 //
-// Using a private type as the key — recommended Go pattern — so
-// no other package can accidentally collide on the same key.
-type identityContextKey struct{}
-
-// IdentityFromContext returns the ConsoleIdentity stashed by
-// consoleGateApp on the request context, or the zero ConsoleIdentity
-// and false when no identity is present (auth=off, or token-mode
-// where no identity callback ran).
+// The move was needed so Sky.Live's session-mint code in rt can read
+// identity from the request context — hub can't import rt's
+// internals, but rt can own the bridge helpers used by both sides.
 //
-// Pattern for callers:
-//
-//	if id, ok := hub.IdentityFromContext(r.Context()); ok {
-//	    tenant := id.Claims["tenant"]
-//	    // ... filter queries by tenant
-//	}
-//
-// The lookup is O(1) — context.Value walks the linked list of values
-// but the chain is short in practice (Sky.Live + hub gate together
-// add ~3 frames).
+// Going forward, prefer `rt.IdentityFromContext` directly.
 func IdentityFromContext(ctx context.Context) (rt.ConsoleIdentity, bool) {
-	v := ctx.Value(identityContextKey{})
-	if v == nil {
-		return rt.ConsoleIdentity{}, false
-	}
-	id, ok := v.(rt.ConsoleIdentity)
-	return id, ok
+	return rt.IdentityFromContext(ctx)
 }
 
 // AppAuthCallback is the Go-side hook for `--auth app`. Returns
@@ -136,13 +117,16 @@ func consoleGateApp(w http.ResponseWriter, r *http.Request) bool {
 		return false
 	}
 	// Stash identity on the request context so downstream handlers
-	// (the bundled console_app's Hub_* kernels via hub_bridge.go)
-	// can read identity.Claims["tenant"] and pre-filter store
-	// queries. We mutate *r in place because the surrounding
-	// `MountLiveSubAppInProcessWithGate` doesn't (yet) allow the
-	// gate to return a modified request — the *r = *r.WithContext
+	// (the bundled console_app's Hub_* kernels via hub_bridge.go,
+	// AND Sky.Live's session-mint code in rt.dispatchRoot) can read
+	// identity.Claims["tenant"]. We mutate *r in place because the
+	// surrounding `MountLiveSubAppInProcessWithGate` doesn't allow
+	// the gate to return a modified request — the *r = *r.WithContext
 	// idiom is the standard Go middleware pattern for this case.
-	ctx := context.WithValue(r.Context(), identityContextKey{}, identity)
+	//
+	// v0.16.5 #493: rt owns the key now (rt.IdentityContextKey) so
+	// session-mint can read what we write here.
+	ctx := context.WithValue(r.Context(), rt.IdentityContextKey, identity)
 	*r = *r.WithContext(ctx)
 	return true
 }
