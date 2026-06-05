@@ -1,10 +1,16 @@
 # Sky
 
-[sky-lang.org](https://sky-lang.org) · [Examples](examples/) · [Docs](docs/)
+[sky-lang.org](https://sky-lang.org) · [Docs](docs/) · [Examples](examples/) · [SkyDeploy](https://skydeploy.app)
 
-> **Experimental** — Sky is an opinionated, AI-friendly programming language under active development. APIs and internals may change between minor versions.
+> **Status: v0.16.x release candidate.** Public APIs are stable for the
+> v1.0 line; minor versions ship features additively. Internals can
+> still change between minor versions.
 
-Sky is a fullstack programming language that combines **Go's pragmatism** with the **elegance of pure-functional, ML-family languages**. Write functional, strongly-typed code with a batteries-included stdlib — `Sky.Live` for server-driven UI, `Sky.Tui` for terminal UI (sharing the same `Std.Ui` code), `Std.Db` for SQL persistence, `Std.Auth` for sessions, `Sky.Core.Error` for unified error handling — import any Go package with auto-generated FFI bindings (no hand-written glue), and ship a single portable binary. Sky's explicit types, exhaustive pattern matching, and strict `Task` effect boundary make it **AI-friendly by design**: both humans and LLMs tend to write code that compiles the first time.
+Sky is a **fullstack functional language that compiles to typed Go**.
+You write Elm-style syntax — explicit types, exhaustive pattern matching,
+no runtime exceptions — and ship a single static binary with a
+batteries-included stdlib, observability built in, and any Go package
+just an `import` away.
 
 ```elm
 module Main exposing (main)
@@ -15,407 +21,271 @@ main =
     println "Hello from Sky!"
 ```
 
-## Current state (v0.15.x)
+```bash
+sky init hello && cd hello && sky run src/Main.sky
+```
 
-- **Type-directed lowering throughout (v0.15).** Sub-expressions at
-  lambda bodies, record-field inits, list elements, and call args
-  lower with the slot's typed Go form propagated. Closes the long-
-  standing parametric-record-alias bug class (callback fields keep
-  their typed callee parameter; cross-alias passing works without
-  the alias-chain workaround; inline lambdas in record fields keep
-  their typed shape). Architecture write-up:
-  [docs/v1-rfc/type-soundness-deep-analysis.md](docs/v1-rfc/type-soundness-deep-analysis.md).
-- **Go generics on parametric record aliases (v0.15).** A
-  `type alias Cfg msg = { onSubmit : msg, label : String, ... }` now
-  emits `type Cfg_R[T1 any] struct { OnSubmit T1; Label string; ... }`
-  with per-instance type args. Stripe-SDK-scale benchmark
-  (`examples/13-skyshop`, 76 k FFI symbols) still tree-shakes
-  `main.go` 14 k → 4 k lines (−71 %) and `stripe_bindings.go`
-  326 k → 58 k lines (−82 %).
-- **Same-module polymorphic re-instantiation (v0.15).** Annotated
-  `f : Cfg msg -> msg` called with `msg=Int` AND `msg=Bool` in the
-  same module both work — sibling references alpha-rename per call
-  site. Wildcard-`any` sigs stay on the shared-env path so body ↔
-  caller unification chains keep soundness.
-- **Layer 3 stdlib — every kernel module is Sky source** (carried
-  forward from v0.14). Browse via
-  `sky-stdlib/{Sky/Core,Std,Sky/Http}/*.sky`, or `sky doc --serve`
-  for a browsable HTTP doc server with type-signature search
-  (Hoogle-style), in-module symbol filter, and Markdown rendering.
-- **Auto-TCO.** Every Sky function with tail-position self-recursion
-  compiles to a `for { ... continue }` Go loop. Constant Go stack
-  regardless of input size. Applies to user code, not just stdlib.
-- **Sky Console + sub-app mount + observability federation.** Every
-  Sky.Live / Sky.Http.Server app auto-mounts a Std.Ui dashboard at
-  `/_sky/console` in dev mode. Prometheus metrics at `/_sky/metrics`
-  (Bearer-gated in production). `rt.MountSubApp` hosts any Sky binary
-  (or any HTTP server) under any URL prefix; logs / metrics / spans
-  push back to the parent for one-scrape observability across the
-  tree.
-- **LSP, dev tooling.** Hover + goto-def for every USED symbol class.
-  `sky watch` (file-watch rebuild + restart with sticky-on-error
-  policy), `sky doctor` (project + env health checks), `sky console`
-  (standalone Std.Ui dashboard — Live or Tui backend).
-- **27 example projects** covering CLI, Sky.Tui, Sky.Live + Sky.Http
-  apps, databases (SQLite / PostgreSQL / Firestore), payments
-  (Stripe), auth, GUI (Fyne), a Reddit/HN-style forum, and a
-  visual-regression Std.Ui showcase.
+## Why Sky
 
-## What Sky brings together
+- **If it compiles, it works.** Every side effect returns
+  `Task Error a`; every fallible value returns `Result Error a`;
+  `sky check` invokes `go build` on the emitted Go so any shape
+  mismatch surfaces at type-check time. There is no runtime null,
+  no uncaught exception, no silent numeric coercion.
+- **One language, every shape.** The same `init / update / view /
+  subscriptions` source compiles to a server-rendered web app
+  (Sky.Live), a terminal UI (Sky.Tui), or a native desktop window
+  (Sky.Webview).
+- **Batteries included.** Auth, database, HTTP client + server,
+  WebSocket, JSON, JWT, CSV, email, encryption, observability —
+  every primitive a real app needs is in the stdlib (`Std.Db`,
+  `Std.Auth`, `Std.Ui`, `Std.Cache`, `Std.Email`, …) and
+  documented with `sky doc --serve`.
+- **Go's whole ecosystem.** `sky add github.com/some/package` —
+  the compiler introspects the Go package and generates strict,
+  typed Sky bindings. No hand-written FFI glue. Stripe SDK
+  (~76k FFI symbols) compiles and tree-shakes to a 4k-line
+  `main.go`.
+- **AI-friendly by design.** Explicit annotations, exhaustive
+  pattern matching, no implicit coercions, no exceptions. LLMs
+  generate code that compiles the first time. The shipped
+  `CLAUDE.md` and `sky init`'s starter `CLAUDE.md` give any
+  AI assistant the load-bearing context to scaffold production
+  apps directly.
+- **One binary out the back.** Every project compiles to a
+  static Go binary. Deploy with `scp`, with Docker, with
+  [SkyDeploy](https://skydeploy.app), or as a CLI you `brew
+  install`.
 
-- **Go compilation target** — fast builds, single static binary,
-  access to the full Go ecosystem (databases, HTTP servers, cloud
-  SDKs).
-- **Pure-functional ML-family front-end** — Hindley-Milner type
-  inference, algebraic data types, exhaustive pattern matching, pure
-  functions, model/update/view/subscriptions architecture (TEA).
-- **Server-driven UI** — DOM diffing, SSE subscriptions, session
-  management on the server. No client-side framework. (Same
-  architectural style popularised by Phoenix LiveView; design +
-  implementation independent.)
+## Hello, Sky
 
-Sky compiles to Go. One binary runs your API, DB access, and
-server-rendered interactive UI — one codebase, one language, one
-deployment artifact.
-
-> Sky's surface syntax is deliberately compatible with the Elm language
-> (BSD-3-Clause, © Evan Czaplicki and contributors) and several files
-> in the type-inference core are derivative works adapted from
-> elm/compiler. Full attribution + licence text in [NOTICE.md](NOTICE.md).
-
-## Implementation
-
-The compiler is in **Haskell** (GHC 9.4+). Single `sky` binary. Runtime
-in Go (`runtime-go/rt/`), embedded into the binary via Template
-Haskell — no separate install. See
-[docs/compiler/journey.md](docs/compiler/journey.md) for the TS → Go →
-self-hosted Sky → Haskell history.
-
-## What's in the box
-
-Six killer modules cover the common needs of any modern web app — no
-plugins, no separate services, no `npm install`.
-
-### Sky.Live — server-driven UI
+A counter web app — type-checked, server-driven, no JavaScript.
 
 ```elm
-type Msg = Increment | Decrement
+module Main exposing (main)
 
+import Std.Cmd as Cmd
+import Std.Live exposing (app, route)
+import Std.Sub as Sub
+import Std.Ui as Ui
+import Std.Ui.Font as Font
+
+
+type Msg
+    = Increment
+    | Decrement
+
+
+type alias Model = { count : Int }
+
+
+init : a -> ( Model, Cmd Msg )
+init _ = ( { count = 0 }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
         Increment -> ( { model | count = model.count + 1 }, Cmd.none )
         Decrement -> ( { model | count = model.count - 1 }, Cmd.none )
 
-view model =
-    div []
-        [ button [ onClick Increment ] [ text "+" ]
-        , span [] [ text (String.fromInt model.count) ]
-        , button [ onClick Decrement ] [ text "-" ]
-        ]
-```
 
-Full TEA loop (`init / update / view / subscriptions`), async work via
-`Cmd.perform`, persistent sessions across deploys (memory / SQLite /
-Redis / Postgres / Firestore), input-authority protocol that protects
-the user's typed value across re-renders, reverse-proxy-hardened SSE
-with auto-reconnect + retry queue. See
-[Sky.Live overview](docs/skylive/overview.md).
-
-### Std.Ui — typed no-CSS layout DSL
-
-```elm
-import Std.Ui as Ui
-import Std.Ui.Background as Background
-import Std.Ui.Font as Font
-
+view : Model -> Ui.Element Msg
 view model =
     Ui.layout []
-        (Ui.row
-            [ Ui.spacing 12, Ui.padding 16, Background.color (Ui.rgb 255 102 0) ]
+        (Ui.row [ Ui.spacing 16, Ui.padding 24 ]
             [ Ui.button [] { onPress = Just Decrement, label = Ui.text "−" }
-            , Ui.el [ Font.size 24, Font.bold ] (Ui.text (String.fromInt model.count))
+            , Ui.el [ Font.size 24 ] (Ui.text (String.fromInt model.count))
             , Ui.button [] { onPress = Just Increment, label = Ui.text "+" }
             ])
+
+
+main =
+    app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = \_ -> Sub.none
+        , routes = [ route "/" () ]
+        , notFound = ()
+        }
 ```
-
-Build a UI from typed primitives (`row`, `column`, `el`, `paragraph`,
-`textColumn`, `link`, `image`, `button`, `input`, `form`, `html`) and
-typed attributes from focused sub-modules (`Background.color`,
-`Border.rounded`, `Font.size`, `Region.heading`, …). Renders to
-inline-styled HTML with semantic tags dispatched from `Region.*`
-(`<h1..h6>`, `<main>`, `<nav>`, `<aside>`, `<footer>`). Forms with the
-password best-practice pattern (`Ui.form` + `Ui.onSubmit` decoding
-formData into a typed record — secret never enters Model). File /
-image upload with browser-side resize hints. Same source code runs in
-both `Sky.Live` (browser) and `Sky.Tui` (terminal — see below). See
-[Sky.Ui overview](docs/skyui/overview.md). Prior-art attribution:
-[NOTICE.md](NOTICE.md).
-
-### Sky.Tui — terminal UI with the same Std.Ui code
-
-```elm
--- shared.sky — both Live and Tui share this view + update
-view model =
-    Ui.column [ Ui.spacing 8, Ui.padding 16 ]
-        [ Ui.el [ Font.bold, Font.size 24 ] (Ui.text (String.fromInt model.count))
-        , Ui.row [ Ui.spacing 4 ]
-            [ Ui.button [] { onPress = Just Decrement, label = Ui.text "−" }
-            , Ui.button [] { onPress = Just Increment, label = Ui.text "+" }
-            ]
-        ]
-```
-
-```elm
--- Main.sky (web)             -- MainTui.sky (terminal)
-main = Live.app cfg            main = Tui.app cfg |> Task.run
-```
-
-Same `update` semantics, same `view` widgets, two completely different
-output targets. Sky.Tui handles bracketed paste, wide chars (CJK +
-emoji + ZWJ), focus rings, scroll wheel, mouse press, viewport pixel
-canvas (1280×720 logical px maps to cells), resize via SIGWINCH. See
-[Sky.Tui overview](docs/skytui/overview.md) and
-[examples/22-tui-stopwatch-ui](examples/22-tui-stopwatch-ui) for a
-stopwatch in <100 lines that runs in both backends.
-
-### Std.Auth — authentication, in the box
-
-```elm
-Auth.register db "alice@example.com" password
-    |> Task.andThenResult (\uid ->
-        Auth.signToken secret (Dict.fromList [("sub", String.fromInt uid)]) 86400)
-```
-
-bcrypt password hashing, HMAC-SHA256 JWTs, plus optional DB-backed
-`register` / `login` / `setRole`. Minimum-32-byte secret enforcement,
-constant-time compare, configurable cost. See
-[Std.Auth overview](docs/skyauth/overview.md).
-
-### Std.Db — one API for SQLite + PostgreSQL
-
-```elm
-Db.withTransaction db (\tx ->
-    Db.exec tx "UPDATE accounts SET balance = balance - ? WHERE id = ?" [amount, fromId]
-        |> Task.andThen (\_ ->
-            Db.exec tx "UPDATE accounts SET balance = balance + ? WHERE id = ?" [amount, toId]))
-```
-
-Parameter-safe queries, transactions, conventional CRUD helpers
-(`insertRow` / `getById` / `updateById` / `deleteById` /
-`findOneByField` / `findManyByField` / `findByConditions`). Switch
-driver in `sky.toml`; never touch it again in your code. See
-[Std.Db overview](docs/skydb/overview.md).
-
-### Sky Console + observability + sub-app mount
-
-Every Sky.Live / Sky.Http.Server app ships with:
-
-| Surface | What it is |
-|---|---|
-| `🔍 Console` link | Floating bottom-right anchor injected into every dev-mode page. Same-origin link to `/_sky/console`. |
-| `/_sky/console` | Bundled Std.Ui dashboard reverse-proxied behind your app. Tabs: Overview · Metrics · Logs · Traces · Errors. Auto-aggregates everything from your app + every mounted sub-app. |
-| `/_sky/metrics` | Prometheus scrape endpoint (Bearer-gated in production). `sky_live_requests_total{route,status}`, `sky_live_request_seconds`, custom counters via `rt.RecordCounter`. |
-| `/_sky/healthz` / `/_sky/readyz` / `/_sky/buildinfo` | k8s / Cloud Run probes + build metadata. |
-| Structured logs | `Log.info` / `.warn` / `.error` / `.infoWith` with level + message + request-correlation ID; HTTP access log automatic. |
-| Trace spans | Every HTTP request opens a span; `rt.RecordTrace` adds children. Exports to OpenTelemetry if `OTEL_EXPORTER_OTLP_ENDPOINT` is set. |
-
-**Sub-app mount** — host multiple Sky apps under one binary, with
-federated observability:
-
-```go
-// Inside your parent Sky app's generated main.go
-rt.MountSubApp(mux, "/billing", rt.SpawnBinary("./billing-app"))
-rt.MountSubApp(mux, "/admin",   rt.SpawnBinary("./admin-app"))
-rt.MountSubApp(mux, "/docs",    rt.SpawnBinary("./hugo-server"))
-```
-
-Each sub-app runs as its own child process — own session store, own
-update loop, own cookies, zero shared state. The reverse proxy gives
-the user a single port and origin. **Observability federates
-automatically**: every log / metric / span the child emits gets pushed
-back to the parent labelled `subapp="billing"`, so one Prometheus
-scrape on the parent covers the whole tree.
 
 ```bash
-sky run                      # dev — console, banner, logs/metrics on
-ENV=production sky-out/app   # prod — console gone, /_sky/metrics behind Bearer auth
+sky run src/Main.sky    # http://localhost:8000
 ```
 
-### Std.Decimal + Std.Money + Std.Time — production-grade arithmetic + time
+Add `Std.Tui.app cfg` to ship the same `view` to a terminal
+canvas, or `Std.Webview.app cfg` for a native desktop window.
 
-```elm
--- Exact arithmetic — 0.1 + 0.2 = 0.3 genuinely
-total = Dec.add (Dec.fromString "0.1" |> okOr Dec.zero)
-                (Dec.fromString "0.2" |> okOr Dec.zero)
-
--- Currency-typed Money — USD vs JPY rejected at compile time
-subTotal = Money.fromMajor Money.USD 100
-tax      = Money.percentOf (Dec.fromString "8.875" |> okOr Dec.zero) subTotal
-total    = Money.add subTotal tax       -- "$108.88"
-
--- Fair-split invoice — sums to $100 exactly
-parts = Money.allocate 3 (Money.fromMajor Money.USD 100)
-        -- → [$33.34, $33.33, $33.33]
-
--- Timezone-aware (no /usr/share/zoneinfo needed; embedded tzdata)
-nextMonth = Stime.addMonths 1 today    -- Jan 31 + 1 → Feb 28/29 clamped
-```
-
-`Decimal` backed by `shopspring/decimal`; `Money` enforces currency-
-match at the type level; `Std.Time` ships embedded `time/tzdata`. ISO
-4217 enum covers 50+ codes + crypto (BTC, ETH, USDT, USDC). Full
-surface: [Standard library reference](docs/stdlib.md).
-
-## Quick start
+## Install
 
 ```bash
 # macOS / Linux — single-binary install
-curl -fsSL https://raw.githubusercontent.com/anzellai/sky/main/install.sh | sh
+curl -fsSL https://sky-lang.org/install | bash
 
-# or with Docker
-docker run --rm -v $(pwd):/app -w /app anzel/sky sky --help
+# or build from source (Haskell GHC 9.4+ required to build the compiler)
+git clone https://github.com/anzellai/sky
+cd sky && cabal install --installdir=$HOME/.local/bin exe:sky
 ```
 
-> **Prerequisite:** [Go](https://go.dev) 1.21+ — Sky compiles to Go.
+The `sky` binary embeds the runtime, stdlib, and Sky Console.
+End users only need `sky` on PATH and Go 1.21+ available for
+codegen.
 
-```bash
-sky init hello
-cd hello
-sky run src/Main.sky                  # build + run
-sky watch src/Main.sky                # rebuild + restart on save
-sky doc --serve                       # browsable API docs (any browser)
-sky doctor                            # health checks
-```
+## Pick your shape
 
-See [docs/getting-started.md](docs/getting-started.md) for a
-walkthrough.
+Match the application to the right surface — every shape uses the
+same TEA-style `init / update / view / subscriptions`.
+
+| What you're building                    | Surface           | Entry point                | Default deployment   |
+|-----------------------------------------|-------------------|----------------------------|----------------------|
+| Web app (server-driven, real-time)      | **Sky.Live**      | `Std.Live.app cfg`         | Cloud Run / VM       |
+| HTTP / JSON API (no UI)                 | **Sky.Http.Server** | `Server.listen 8000 [...]` | Cloud Run / VM     |
+| Terminal UI (TUI)                       | **Sky.Tui**       | `Std.Tui.app cfg`          | `brew install` / CLI |
+| CLI tool (no UI loop)                   | **Sky.Cli**       | `main = Task.run ...`      | `brew install`       |
+| Native desktop app                      | **Sky.Webview**   | `Std.Webview.app cfg`      | `.app` / `.exe`      |
+
+Every backend shares `Std.Ui` for layout, `Std.Auth` for sessions,
+`Std.Db` for persistence, `Std.Log` / `Std.Trace` for
+observability, and `Sky.Core.*` for pure primitives.
+
+## What ships with Sky
+
+A short tour. Full reference at `sky doc --serve` or
+[docs/stdlib.md](docs/stdlib.md).
+
+| Module                 | What it gives you                                                                 |
+|------------------------|-----------------------------------------------------------------------------------|
+| `Std.Ui`               | Typed no-CSS layout DSL (`row`/`column`/`el`/`button`/`input` + `Background`/`Border`/`Font`/`Region` subs). Renders to inline-styled HTML, ANSI cells, or native Webview from the same source. |
+| `Std.Live`             | Sky.Live runtime — TEA app + SSE patches + session stores (memory / sqlite / redis / postgres / firestore) + routing + cookies + auth gates. |
+| `Sky.Http.Server`      | HTTP server with typed routes, middleware (CORS / logging / rate-limit / basic-auth), streaming responses, WebSocket upgrade. |
+| `Std.Auth`             | bcrypt password hashing, HS256 / RS256 JWT, register / login / roles. Typed secrets — never `fmt.Sprintf("%v", token)`. |
+| `Std.Db`               | SQLite + PostgreSQL via one interface. Connection pool, prepared statements, versioned migrations, `Db.RowDecoder`, `withTransaction`. |
+| `Std.Money` + `Std.Decimal` | Arbitrary-precision Decimal + currency-typed Money (50+ ISO 4217 codes + crypto) with `allocate` for fair splits and conversion rates. |
+| `Std.Cache`            | LRU + TTL in-memory cache, parametric on key + value, monotone stats. |
+| `Std.Email`            | Resend / SES / SendGrid / SMTP under one typed `EmailProvider`. `SKY_EMAIL_DRY_RUN=1` for tests. |
+| `Std.Compression` / `Std.Csv` / `Std.Config` | gzip / zstd; RFC 4180 CSV; TOML / YAML / JSON decoders that mirror `Sky.Core.Json.Decode`. |
+| `Sky.Core.WebSocket`   | Client + server bidirectional sockets. |
+| `Sky.Core.Crypto`      | SHA-256 / 512, HMAC, RSA sign/verify, AES-GCM, ChaCha20, scrypt password derivation, AEAD constants. |
+| `Std.Webview`          | Native desktop window (macOS in v0.1; Linux / Windows in v0.2). |
+
+## Observability — built in
+
+Every Sky.Live and Sky.Http.Server app auto-mounts:
+
+- `/_sky/console` — Std.Ui dashboard with overview, logs,
+  metrics, traces, errors (production-gated via
+  `SKY_CONSOLE_AUTH`).
+- `/_sky/metrics` — Prometheus scrape endpoint
+  (`sky_live_requests_total{route,status}`, latency histograms,
+  drop counters).
+- `/_sky/healthz` / `/_sky/readyz` — liveness + readiness probes.
+- `/_sky/buildinfo` — commit, build timestamp, Sky version.
+
+Run **`sky console serve`** to stand up a central hub that
+multiple Sky apps push telemetry to via the `HubExporter`
+(OTLP/HTTP). See [docs/v0.16.x-console/HUB.md](docs/v0.16.x-console/HUB.md)
+for the multi-service dashboard, tenant isolation, and the
+3-layer auth defense-in-depth model.
+
+`OTEL_EXPORTER_OTLP_ENDPOINT` is honoured for the standard
+OpenTelemetry collector — point at Honeycomb, Grafana Tempo,
+Datadog, etc.
 
 ## Going to production
 
-Two things flip Sky from dev to production: a config block in
-`sky.toml` and a small set of env vars. Both read at process start —
-no rebuild needed.
-
-### `sky.toml` (compiled defaults — checked into your repo)
-
 ```toml
-[live]
-port         = 8000         # default if SKY_LIVE_PORT not set
-store        = "postgres"   # memory | sqlite | redis | postgres | firestore
-ttl          = "24h"
-maxBodyBytes = 5242880      # 5 MiB cap on /_sky/event POST
+# sky.toml
+name = "myapp"
+version = "1.0.0"
+entry = "src/Main.sky"
 
-[log]
-format = "json"             # plain (dev default) | json (prod default)
-level  = "info"
+[live]
+port = 8000
+store = "sqlite"          # memory / sqlite / redis / postgres / firestore
+storePath = "sessions.db"
+ttl = "30m"
+
+[database]
+driver = "sqlite"         # sqlite / postgres
+url = "DATABASE_URL"
 
 [auth]
-tokenTtl       = "24h"
-cookie         = "sky_sid"
+cookie = "sky_sid"
+ttl = "24h"
 # tokenSecret read from SKY_AUTH_TOKEN_SECRET (never put secrets in sky.toml)
+
+[log]
+format = "json"           # plain / json
+level  = "info"
 ```
-
-### `.env` / process env (deploy-time secrets + per-env overrides)
-
-```dotenv
-ENV=production              # gates dev console + banner OFF; /_sky/metrics behind auth
-SKY_LIVE_PORT=8080          # or honour PORT (Cloud Run / Fly / Heroku)
-SKY_LIVE_STORE=postgres
-DATABASE_URL=postgres://…   # fallback when SKY_LIVE_STORE_PATH unset
-SKY_AUTH_TOKEN_SECRET=…     # ≥32 bytes; Sky errors at startup if shorter
-SKY_LOG_FORMAT=json
-SKY_LOG_LEVEL=info
-SKY_ADMIN_TOKEN=…           # /_sky/metrics + /_sky/console require Bearer in prod
-                            # (legacy: SKY_METRICS_TOKEN / SKY_CONSOLE_TOKEN_SECRET still honoured)
-
-# v0.16.0 — console auth (BREAKING in production):
-SKY_CONSOLE_AUTH=token      # token | app | off — in production, UNSET = FATAL EXIT at boot
-SKY_CONSOLE_TOKEN=…         # 32-byte hex; required when SKY_CONSOLE_AUTH=token
-
-# v0.16.1+ — HubExporter (push telemetry to a remote console hub)
-SKY_CONSOLE_HUB=…           # https://… OTLP HTTP+protobuf endpoint
-SKY_CONSOLE_HUB_TOKEN=…     # ≥32-byte bearer
-SKY_CONSOLE_SPOOL_MODE=auto # auto | file | memory (auto picks memory on serverless)
-
-# v0.16.1+ — OTel export is HTTP/protobuf ONLY (no gRPC dep, smaller binary):
-# OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318  # MUST be HTTP port (not gRPC 4317)
-# OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf               # 'grpc' triggers boot warning + disables export
-```
-
-Precedence: **process env > `.env` > `sky.toml`**. The `.env` file is
-auto-loaded but never overrides real env vars — so a `docker run -e
-ENV=production` always wins.
-
-The `productionFromEnv()` gate (`ENV` then `SKY_ENV`, anything outside
-`{dev, development, local}` counts as production) governs three things:
-dev console mount, `🔍 Console` banner, `/_sky/metrics` auth. One env
-var, one switch.
-
-Reference: [Sky.Live overview — env precedence](docs/skylive/overview.md#environment-variable-precedence).
-
-### Building from source
 
 ```bash
-# easiest path on any system with nix
-nix develop                # GHC 9.4.8 + Go + system deps, sandboxed
-./scripts/build.sh --clean
+ENV=production \
+SKY_AUTH_TOKEN_SECRET="$(openssl rand -base64 48)" \
+SKY_CONSOLE_AUTH=app SKY_CONSOLE_TOKEN="$(openssl rand -base64 48)" \
+sky build src/Main.sky && ./sky-out/app
 ```
 
-See [docs/development.md](docs/development.md) for the full build +
-test story (pinned toolchain, reproducible Nix builds, contributor
-guide).
+The production gate is `ENV` (then `SKY_ENV` fallback). Unset
+or `dev` / `development` / `local` → dev mode. Anything else
+locks down the dev console, banner, and metrics endpoint.
+
+Deploy to GCP Cloud Run with one command via
+[SkyDeploy](https://skydeploy.app), or `scp` the binary and run
+it under your favourite supervisor.
 
 ## Documentation
 
-| Area | Link |
-|---|---|
-| Getting started | [docs/getting-started.md](docs/getting-started.md) |
-| `sky.toml` reference | [docs/sky-toml.md](docs/sky-toml.md) |
-| Language syntax | [docs/language/syntax.md](docs/language/syntax.md) |
-| Types | [docs/language/types.md](docs/language/types.md) |
-| Pattern matching | [docs/language/pattern-matching.md](docs/language/pattern-matching.md) |
-| Modules | [docs/language/modules.md](docs/language/modules.md) |
-| Go FFI interop | [docs/ffi/go-interop.md](docs/ffi/go-interop.md) |
-| FFI design | [docs/ffi/ffi-design.md](docs/ffi/ffi-design.md) |
-| Error system | [docs/errors/error-system.md](docs/errors/error-system.md) |
-| **Standard library reference** | [docs/stdlib.md](docs/stdlib.md) |
-| **Std.Auth overview** | [docs/skyauth/overview.md](docs/skyauth/overview.md) |
-| **Std.Db overview** | [docs/skydb/overview.md](docs/skydb/overview.md) |
-| Sky.Live overview | [docs/skylive/overview.md](docs/skylive/overview.md) |
-| Sky.Live architecture | [docs/skylive/architecture.md](docs/skylive/architecture.md) |
-| Std.Ui overview | [docs/skyui/overview.md](docs/skyui/overview.md) |
-| Sky.Tui overview | [docs/skytui/overview.md](docs/skytui/overview.md) |
-| Compiler architecture | [docs/compiler/architecture.md](docs/compiler/architecture.md) |
-| Compiler pipeline | [docs/compiler/pipeline.md](docs/compiler/pipeline.md) |
-| Compiler journey (TS → Go → Sky → Haskell) | [docs/compiler/journey.md](docs/compiler/journey.md) |
-| CLI reference | [docs/tooling/cli.md](docs/tooling/cli.md) |
-| Testing (`sky test`) | [docs/tooling/testing.md](docs/tooling/testing.md) |
-| LSP | [docs/tooling/lsp.md](docs/tooling/lsp.md) |
-| Known limitations | [docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md) |
-| Development & contributing | [docs/development.md](docs/development.md) |
+- **[Getting started](docs/getting-started.md)** — install + your
+  first app in 5 minutes.
+- **[Stdlib reference](docs/stdlib.md)** — every module, every
+  function, indexed by tier (Pure / Fallible-pure / Task /
+  Diverging).
+- **[Sky.Live](docs/skylive/overview.md)** — server-driven UI
+  + SSE patches + sessions + routing.
+- **[Std.Ui](docs/skyui/overview.md)** — typed no-CSS layout DSL.
+- **[Sky.Tui](docs/skytui/overview.md)** — terminal backend for
+  `Std.Ui`.
+- **[Sky.Webview](docs/skywebview/overview.md)** — native desktop
+  window.
+- **[Std.Auth](docs/skyauth/overview.md)** — sessions + JWT + roles.
+- **[Std.Db](docs/skydb/overview.md)** — SQLite + PostgreSQL.
+- **[`sky.toml`](docs/sky-toml.md)** — every config key.
+- **[CLI](docs/tooling/cli.md) / [LSP](docs/tooling/lsp.md) /
+  [Testing](docs/tooling/testing.md)**.
+- **[Known limitations](docs/KNOWN_LIMITATIONS.md)** —
+  current-version constraints + workarounds.
+- **[Compiler journey](docs/compiler/journey.md)** — how Sky got
+  here (historical context, kept for contributors).
 
-## Status
+## Examples
 
-- **Core principle: "if it compiles, it works."** Every known runtime
-  panic class has a regression test in `runtime-go/rt/*_test.go` or
-  `test/Sky/**Spec.hs`. Defence in depth (panic recovery + `Err`-
-  return at Task boundaries) is the floor.
-- **27 example projects** under `examples/` — clean build from a wiped
-  slate is a release gate.
-- **`sky verify`** is the canonical runtime check: builds AND runs each
-  example, hits HTTP endpoints, honours per-example `verify.json`
-  scenarios.
-- **Test matrix** — 306 cabal hspec specs + 25+ runtime Go tests +
-  70-file `test-files/*.sky` self-test loop + format idempotency +
-  Playwright browser sweep across every Sky.Live / Sky.Http.Server
-  example.
-- **FFI generation** — Stripe SDK (8 896 types), Firestore, Fyne, and
-  others auto-bind.
+39 examples ship in [`examples/`](examples/). Each builds clean
+from a wiped slate (`rm -rf sky-out .skycache .skydeps && sky build`).
+
+| Range  | Category                              |
+|--------|---------------------------------------|
+| 01-08  | Hello / CLI / Go-FFI / file / system  |
+| 09-12  | Sky.Cli / Sky.Tui counters & TODOs    |
+| 13     | Stripe-SDK-scale FFI benchmark (76k symbols) |
+| 14-25  | Sky.Live + Sky.Http.Server apps       |
+| 26     | `examples/26-ui-showcase` — every Std.Ui primitive |
+| 29-31  | Sky.Webview + WebGL spike             |
+| 32-33  | SSE relay + WebSocket echo            |
+| 34-38  | Multi-tier + composite-test apps      |
+| 39     | Two Sky.Live apps → one hub (v0.16.6) |
 
 ## Contributing
 
-Issues + PRs welcome. See the docs tree for architecture context
-before opening a structural PR.
+Issues and PRs welcome at
+[github.com/anzellai/sky](https://github.com/anzellai/sky). The
+[compiler architecture](docs/compiler/architecture.md) write-up
+and [pipeline doc](docs/compiler/pipeline.md) are the right
+starting points for compiler work. Run `cabal test` (cap with
+`timeout 3600`) before any PR; `scripts/example-sweep.sh`
+validates every example builds.
 
 ## Licence
 
