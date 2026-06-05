@@ -105,6 +105,24 @@ globalConsoleNeeded :: IORef Bool
 globalConsoleNeeded = unsafePerformIO $ newIORef False
 
 
+-- | v0.16.4 — gate for "the current `sky build` IS itself producing
+-- the inline-console source file." When True,
+-- `collectGoImports` MUST suppress the
+-- `_ "sky-app/rt/console_app"` self-import — otherwise the emitted
+-- `package main` imports its own future-package incarnation and
+-- `go build` reports an import cycle.
+--
+-- Set by reading `SKY_BUILD_IS_INLINE_CONSOLE=1` at the start of
+-- every compile (same reset cycle as `globalConsoleNeeded`). The
+-- `scripts/regenerate-console.sh` pipeline exports this env var
+-- before invoking `sky build` on `sky-bundled/console/src/Main.sky`.
+-- User-app builds never set it, so behaviour for normal Sky.Live +
+-- Sky.Http.Server projects is unchanged.
+{-# NOINLINE globalIsInlineConsoleBuild #-}
+globalIsInlineConsoleBuild :: IORef Bool
+globalIsInlineConsoleBuild = unsafePerformIO $ newIORef False
+
+
 -- | v0.13 Phase A5: entry-module source path, set once per
 -- compilation, read at call-site codegen to key into
 -- `_cg_callSiteInstances` by (path, line, col).  Set in
@@ -711,6 +729,13 @@ continueCompile config entryPath outDir moduleOrder srcHash = do
     -- The flag is OR'd True later in this function as each parsed
     -- Src.Module's imports are scanned by `noteImportsForConsoleHint`.
     writeIORef globalConsoleNeeded False
+
+    -- v0.16.4 — read the "this build IS the inline console source"
+    -- gate. The regenerate-console.sh pipeline sets
+    -- SKY_BUILD_IS_INLINE_CONSOLE=1 before invoking sky build so
+    -- collectGoImports skips the self-import.
+    inlineConsoleEnv <- System.Environment.lookupEnv "SKY_BUILD_IS_INLINE_CONSOLE"
+    writeIORef globalIsInlineConsoleBuild (inlineConsoleEnv == Just "1")
 
     -- Phase 2: Parse all modules in parallel — parsing is pure text→AST
     -- with no cross-module dependencies, so it parallelises trivially.
@@ -3848,10 +3873,17 @@ collectGoImports _canMod srcMod =
     -- dependency is fine (Go links the side-effect import without
     -- triggering the cycle — see runtime-go/rt/console_inline.go for
     -- the registration shim).
-    ++ ( if unsafePerformIO (readIORef globalConsoleNeeded)
-            || entryUsesConsole
-         then [ GoIr.GoImport "sky-app/rt/console_app" (Just "_") ]
-         else [] )
+    ++ ( if unsafePerformIO (readIORef globalIsInlineConsoleBuild)
+         then
+            -- v0.16.4 — the current build IS the inline console
+            -- source. Suppress the self-referential import; otherwise
+            -- the post-transform `package console_app` would import
+            -- itself and `go build` rejects the cycle.
+            []
+         else if unsafePerformIO (readIORef globalConsoleNeeded)
+                 || entryUsesConsole
+              then [ GoIr.GoImport "sky-app/rt/console_app" (Just "_") ]
+              else [] )
     ++ sideEffectImports (Src._imports srcMod)
   where
     entryUsesConsole = any importTriggersConsoleLocal (Src._imports srcMod)
