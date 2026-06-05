@@ -40,6 +40,7 @@ package rt
 
 import (
 	"encoding/json"
+	"strings"
 	"sync"
 )
 
@@ -104,6 +105,25 @@ type HubStoreReader interface {
 	QueryFilteredMetricsJSON(serviceName string) (string, error)
 	QueryFilteredSpansJSON(serviceName string) (string, error)
 	QueryFilteredErrorsJSON(serviceName string) (string, error)
+}
+
+// HubStoreReaderWithTenant is the v0.16.6 #493 part 2c-defense
+// extension of HubStoreReader.  When the live session carries a
+// tenant claim, the Hub_readFiltered* kernels prefer these variants
+// — the SQL layer applies `AND service_name LIKE prefix || '%'` so
+// the SQLite engine (not the caller) enforces the row scope.
+//
+// Optional by design: legacy readers + test fakes that only satisfy
+// HubStoreReader continue to work; the kernel layer type-asserts
+// for the optional interface and falls through to the un-scoped
+// path when absent (no tenant claim) or when the fake doesn't
+// implement it (still rejected at the kernel layer if a tenant
+// claim is present).
+type HubStoreReaderWithTenant interface {
+	QueryFilteredLogsJSONWithTenant(serviceName, tenantPrefix, filterJSON string) (string, error)
+	QueryFilteredMetricsJSONWithTenant(serviceName, tenantPrefix string) (string, error)
+	QueryFilteredSpansJSONWithTenant(serviceName, tenantPrefix string) (string, error)
+	QueryFilteredErrorsJSONWithTenant(serviceName, tenantPrefix string) (string, error)
 }
 
 var (
@@ -508,6 +528,49 @@ func hubStringArg(v any) string {
 	return ""
 }
 
+// tenantPrefixForSession returns the tenant prefix derived from the
+// current goroutine's live-session identity, or "" when none is in
+// scope.  Used by every Hub_readFiltered* kernel as the
+// defense-in-depth gate: even if the bundled console mis-threads
+// the prefix, the kernel always applies the session's claim.
+//
+// v0.16.6 #493 part 2c-defense.  Convention matches Std.Auth /
+// SkyDeploy: the tenant identifier lives on `claims["tenant"]`.
+func tenantPrefixForSession() string {
+	sess := currentLiveSession()
+	if sess == nil {
+		return ""
+	}
+	id, ok := SessionIdentity(sess)
+	if !ok || id.Claims == nil {
+		return ""
+	}
+	return id.Claims["tenant"]
+}
+
+// rejectCrossTenantSvc enforces that an explicit service-name
+// argument is scoped within the caller's tenant.  Returns ("", true)
+// when the caller didn't pick a specific service (svc == "") so
+// the kernel can rely on the tenant prefix alone; returns (svc,
+// true) when svc starts with the tenant prefix (in-scope), and ("",
+// false) otherwise — the caller treats false as "refuse the query
+// with an Err that says cross-tenant".
+//
+// When the session has NO tenant claim, every svc is in-scope; the
+// caller passes through unchanged.
+func rejectCrossTenantSvc(svc, tenantPrefix string) (string, bool) {
+	if tenantPrefix == "" {
+		return svc, true
+	}
+	if svc == "" {
+		return "", true
+	}
+	if strings.HasPrefix(svc, tenantPrefix) {
+		return svc, true
+	}
+	return "", false
+}
+
 // Hub_readFilteredLogs implements:
 //
 //	HubStore.hubReadFilteredLogs : String -> String -> LogFilter -> Task Error (List LogEntry)
@@ -522,8 +585,13 @@ func Hub_readFilteredLogs(_dbPathArg, serviceArg, filterArg any) any {
 			return Ok[any, any]([]any{})
 		}
 		svc := hubStringArg(serviceArg)
+		tenant := tenantPrefixForSession()
+		effectiveSvc, ok := rejectCrossTenantSvc(svc, tenant)
+		if !ok {
+			return Err[any, any](ErrFfi("hub.readFilteredLogs: service outside tenant scope"))
+		}
 		filterJSON := encodeFilterJSON(filterArg)
-		out, err := r.QueryFilteredLogsJSON(svc, filterJSON)
+		out, err := readFilteredLogsRouted(r, effectiveSvc, tenant, filterJSON)
 		if err != nil {
 			return Err[any, any](ErrFfi("hub.readFilteredLogs: " + err.Error()))
 		}
@@ -533,6 +601,19 @@ func Hub_readFilteredLogs(_dbPathArg, serviceArg, filterArg any) any {
 		}
 		return Ok[any, any](rows)
 	}
+}
+
+// readFilteredLogsRouted prefers the tenant-aware
+// HubStoreReaderWithTenant API; falls through to the legacy reader
+// when the runtime hasn't been upgraded (typically test fakes that
+// only satisfy the v0.16.4 interface).
+func readFilteredLogsRouted(r HubStoreReader, svc, tenant, filterJSON string) (string, error) {
+	if tenant != "" {
+		if t, ok := r.(HubStoreReaderWithTenant); ok {
+			return t.QueryFilteredLogsJSONWithTenant(svc, tenant, filterJSON)
+		}
+	}
+	return r.QueryFilteredLogsJSON(svc, filterJSON)
 }
 
 // Hub_readFilteredMetrics implements:
@@ -545,7 +626,24 @@ func Hub_readFilteredMetrics(_dbPathArg, serviceArg any) any {
 			return Ok[any, any]([]any{})
 		}
 		svc := hubStringArg(serviceArg)
-		out, err := r.QueryFilteredMetricsJSON(svc)
+		tenant := tenantPrefixForSession()
+		effectiveSvc, ok := rejectCrossTenantSvc(svc, tenant)
+		if !ok {
+			return Err[any, any](ErrFfi("hub.readFilteredMetrics: service outside tenant scope"))
+		}
+		var (
+			out string
+			err error
+		)
+		if tenant != "" {
+			if t, tok := r.(HubStoreReaderWithTenant); tok {
+				out, err = t.QueryFilteredMetricsJSONWithTenant(effectiveSvc, tenant)
+			} else {
+				out, err = r.QueryFilteredMetricsJSON(effectiveSvc)
+			}
+		} else {
+			out, err = r.QueryFilteredMetricsJSON(effectiveSvc)
+		}
 		if err != nil {
 			return Err[any, any](ErrFfi("hub.readFilteredMetrics: " + err.Error()))
 		}
@@ -567,7 +665,24 @@ func Hub_readFilteredTraces(_dbPathArg, serviceArg any) any {
 			return Ok[any, any]([]any{})
 		}
 		svc := hubStringArg(serviceArg)
-		out, err := r.QueryFilteredSpansJSON(svc)
+		tenant := tenantPrefixForSession()
+		effectiveSvc, ok := rejectCrossTenantSvc(svc, tenant)
+		if !ok {
+			return Err[any, any](ErrFfi("hub.readFilteredTraces: service outside tenant scope"))
+		}
+		var (
+			out string
+			err error
+		)
+		if tenant != "" {
+			if t, tok := r.(HubStoreReaderWithTenant); tok {
+				out, err = t.QueryFilteredSpansJSONWithTenant(effectiveSvc, tenant)
+			} else {
+				out, err = r.QueryFilteredSpansJSON(effectiveSvc)
+			}
+		} else {
+			out, err = r.QueryFilteredSpansJSON(effectiveSvc)
+		}
 		if err != nil {
 			return Err[any, any](ErrFfi("hub.readFilteredTraces: " + err.Error()))
 		}
@@ -589,7 +704,24 @@ func Hub_readFilteredErrors(_dbPathArg, serviceArg any) any {
 			return Ok[any, any]([]any{})
 		}
 		svc := hubStringArg(serviceArg)
-		out, err := r.QueryFilteredErrorsJSON(svc)
+		tenant := tenantPrefixForSession()
+		effectiveSvc, ok := rejectCrossTenantSvc(svc, tenant)
+		if !ok {
+			return Err[any, any](ErrFfi("hub.readFilteredErrors: service outside tenant scope"))
+		}
+		var (
+			out string
+			err error
+		)
+		if tenant != "" {
+			if t, tok := r.(HubStoreReaderWithTenant); tok {
+				out, err = t.QueryFilteredErrorsJSONWithTenant(effectiveSvc, tenant)
+			} else {
+				out, err = r.QueryFilteredErrorsJSON(effectiveSvc)
+			}
+		} else {
+			out, err = r.QueryFilteredErrorsJSON(effectiveSvc)
+		}
 		if err != nil {
 			return Err[any, any](ErrFfi("hub.readFilteredErrors: " + err.Error()))
 		}

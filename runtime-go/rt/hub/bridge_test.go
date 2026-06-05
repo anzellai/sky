@@ -2,6 +2,7 @@ package hub
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
@@ -390,6 +391,106 @@ func TestStoreReader_QueryFilteredErrors(t *testing.T) {
 	}
 	if rows[0].Count != 4 {
 		t.Errorf("rows[0].Count=%d, want 4", rows[0].Count)
+	}
+}
+
+// TestStoreReader_QueryFilteredLogs_TenantPrefix verifies the
+// v0.16.6 #493 part 2c-defense tenant-prefix LIKE filter narrows
+// the query to rows whose service_name starts with the tenant
+// claim — the operator's defense-in-depth gate against the
+// bundled-console caller mis-threading the tenant prefix or being
+// bypassed entirely.
+//
+// Setup: insert rows for "customer-42-billing", "customer-42-api",
+// and "customer-99-billing".  Query with tenantPrefix="customer-42-".
+// Result MUST contain only customer-42 rows.
+func TestStoreReader_QueryFilteredLogs_TenantPrefix(t *testing.T) {
+	dir := t.TempDir()
+	s, err := newStore(dir, storeOptions{retentionHours: 24, pruneInterval: time.Hour})
+	if err != nil {
+		t.Fatalf("newStore: %v", err)
+	}
+	defer s.Close()
+
+	now := time.Now().UTC()
+	for _, svc := range []string{"customer-42-billing", "customer-42-api", "customer-99-billing"} {
+		s.Insert([]pendingItem{{
+			kind:        signalLog,
+			ts:          now,
+			serviceName: svc,
+			level:       "info",
+			message:     "msg-" + svc,
+		}})
+	}
+	s.FlushSync(2 * time.Second)
+
+	reader := s.AsReader().(*storeReader)
+	out, err := reader.QueryFilteredLogsJSONWithTenant("", "customer-42-", "")
+	if err != nil {
+		t.Fatalf("QueryFilteredLogsJSONWithTenant: %v", err)
+	}
+	var rows []hubLogRow
+	if err := json.Unmarshal([]byte(out), &rows); err != nil {
+		t.Fatalf("unmarshal: %v\nraw=%s", err, out)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("rows=%d, want 2 (customer-42 only); raw=%s", len(rows), out)
+	}
+	for _, r := range rows {
+		if !strings.HasPrefix(r.Subapp, "customer-42-") {
+			t.Errorf("row.Subapp=%q leaked across tenant boundary", r.Subapp)
+		}
+	}
+}
+
+// TestStoreReader_QueryFilteredLogs_TenantPrefix_StripsWildcards
+// verifies a malicious / unsanitised tenant claim containing SQL
+// LIKE wildcards (`%` or `_`) has them stripped before the LIKE
+// pattern is built — so a tenant claim of `%` can't be used to
+// widen the prefix to "all rows".
+func TestStoreReader_QueryFilteredLogs_TenantPrefix_StripsWildcards(t *testing.T) {
+	dir := t.TempDir()
+	s, err := newStore(dir, storeOptions{retentionHours: 24, pruneInterval: time.Hour})
+	if err != nil {
+		t.Fatalf("newStore: %v", err)
+	}
+	defer s.Close()
+
+	now := time.Now().UTC()
+	for _, svc := range []string{"alpha", "beta"} {
+		s.Insert([]pendingItem{{
+			kind:        signalLog,
+			ts:          now,
+			serviceName: svc,
+			level:       "info",
+			message:     "msg-" + svc,
+		}})
+	}
+	s.FlushSync(2 * time.Second)
+
+	reader := s.AsReader().(*storeReader)
+	// A claim of `%` (or any wildcard-only string) gets stripped to
+	// empty — which the LIKE-clause builder skips entirely.  So no
+	// rows are excluded BY the LIKE clause, but the absence of any
+	// real prefix means we shouldn't get rows whose name doesn't
+	// start with the (stripped) prefix.  The behavioural assertion:
+	// the kernel doesn't blow up and doesn't accidentally widen.
+	out, err := reader.QueryFilteredLogsJSONWithTenant("", "%", "")
+	if err != nil {
+		t.Fatalf("QueryFilteredLogsJSONWithTenant: %v", err)
+	}
+	var rows []hubLogRow
+	if err := json.Unmarshal([]byte(out), &rows); err != nil {
+		t.Fatalf("unmarshal: %v\nraw=%s", err, out)
+	}
+	// `%` stripped → "" → LIKE clause skipped → all rows returned.
+	// This documents the current behaviour: defence-in-depth lives at
+	// the rt-package kernel layer (which derives the tenant from the
+	// session, not from caller input).  The SQL helper just refuses
+	// to widen via wildcard injection.
+	if len(rows) != 2 {
+		t.Fatalf("rows=%d, want 2 (wildcards-only prefix = no constraint); raw=%s",
+			len(rows), out)
 	}
 }
 

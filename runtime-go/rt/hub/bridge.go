@@ -577,6 +577,15 @@ func classifyStatus(errorRate float64) string {
 // QueryFilteredLogsJSON narrows the log read to a single service.
 // `serviceName == ""` falls through to the un-filtered query.
 func (r *storeReader) QueryFilteredLogsJSON(serviceName, filterJSON string) (string, error) {
+	return r.QueryFilteredLogsJSONWithTenant(serviceName, "", filterJSON)
+}
+
+// QueryFilteredLogsJSONWithTenant is the tenant-scoped variant
+// shipped by v0.16.6 #493 part 2c-defense.  `tenantPrefix == ""`
+// keeps the v0.16.4 behaviour byte-identical; non-empty applies
+// `AND service_name LIKE prefix || '%'` at the SQL layer so the
+// SQLite engine — not the caller — enforces the row scope.
+func (r *storeReader) QueryFilteredLogsJSONWithTenant(serviceName, tenantPrefix, filterJSON string) (string, error) {
 	var f hubLogFilter
 	if filterJSON != "" {
 		if err := json.Unmarshal([]byte(filterJSON), &f); err != nil {
@@ -584,9 +593,10 @@ func (r *storeReader) QueryFilteredLogsJSON(serviceName, filterJSON string) (str
 		}
 	}
 	storeFilter := LogFilter{
-		ServiceName: serviceName,
-		Limit:       200,
-		Level:       pickSingleLevel(f),
+		ServiceName:  serviceName,
+		TenantPrefix: tenantPrefix,
+		Limit:        200,
+		Level:        pickSingleLevel(f),
 	}
 	rows, err := r.s.QueryLogs(storeFilter)
 	if err != nil {
@@ -613,9 +623,16 @@ func (r *storeReader) QueryFilteredLogsJSON(serviceName, filterJSON string) (str
 // service. `serviceName == ""` falls through to the un-filtered
 // query.
 func (r *storeReader) QueryFilteredMetricsJSON(serviceName string) (string, error) {
+	return r.QueryFilteredMetricsJSONWithTenant(serviceName, "")
+}
+
+// QueryFilteredMetricsJSONWithTenant is the tenant-scoped variant
+// (v0.16.6 #493 part 2c-defense).
+func (r *storeReader) QueryFilteredMetricsJSONWithTenant(serviceName, tenantPrefix string) (string, error) {
 	rows, err := r.s.QueryMetrics(MetricFilter{
-		ServiceName: serviceName,
-		Limit:       200,
+		ServiceName:  serviceName,
+		TenantPrefix: tenantPrefix,
+		Limit:        200,
 	})
 	if err != nil {
 		return "", err
@@ -650,9 +667,16 @@ func (r *storeReader) QueryFilteredMetricsJSON(serviceName string) (string, erro
 // service. `serviceName == ""` falls through to the un-filtered
 // query.
 func (r *storeReader) QueryFilteredSpansJSON(serviceName string) (string, error) {
+	return r.QueryFilteredSpansJSONWithTenant(serviceName, "")
+}
+
+// QueryFilteredSpansJSONWithTenant is the tenant-scoped variant
+// (v0.16.6 #493 part 2c-defense).
+func (r *storeReader) QueryFilteredSpansJSONWithTenant(serviceName, tenantPrefix string) (string, error) {
 	rows, err := r.s.QuerySpans(SpanFilter{
-		ServiceName: serviceName,
-		Limit:       100,
+		ServiceName:  serviceName,
+		TenantPrefix: tenantPrefix,
+		Limit:        100,
 	})
 	if err != nil {
 		return "", err
@@ -690,10 +714,17 @@ func (r *storeReader) QueryFilteredSpansJSON(serviceName string) (string, error)
 // query. Aggregation strategy mirrors QueryErrorsJSON — count by
 // message over the most recent error-level log rows.
 func (r *storeReader) QueryFilteredErrorsJSON(serviceName string) (string, error) {
+	return r.QueryFilteredErrorsJSONWithTenant(serviceName, "")
+}
+
+// QueryFilteredErrorsJSONWithTenant is the tenant-scoped variant
+// (v0.16.6 #493 part 2c-defense).
+func (r *storeReader) QueryFilteredErrorsJSONWithTenant(serviceName, tenantPrefix string) (string, error) {
 	rows, err := r.s.QueryLogs(LogFilter{
-		ServiceName: serviceName,
-		Level:       "error",
-		Limit:       500,
+		ServiceName:  serviceName,
+		TenantPrefix: tenantPrefix,
+		Level:        "error",
+		Limit:        500,
 	})
 	if err != nil {
 		return "", err

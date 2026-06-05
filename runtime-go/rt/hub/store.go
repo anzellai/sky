@@ -433,11 +433,12 @@ func (s *Store) runPrune() error {
 
 // LogFilter narrows the log read.
 type LogFilter struct {
-	ServiceName string    // "" → no filter
-	Level       string    // "" → no filter
-	Since       time.Time // zero → no lower bound
-	Until       time.Time // zero → no upper bound
-	Limit       int       // 0 → 100
+	ServiceName  string    // "" → no exact-match filter
+	TenantPrefix string    // "" → no tenant scoping; non-empty → AND service_name LIKE prefix || '%'
+	Level        string    // "" → no filter
+	Since        time.Time // zero → no lower bound
+	Until        time.Time // zero → no upper bound
+	Limit        int       // 0 → 100
 }
 
 // LogRow mirrors a telemetry_log SELECT row.
@@ -481,10 +482,14 @@ func (s *Store) QueryLogs(filter LogFilter) ([]LogRow, error) {
 func buildLogQuery(f LogFilter) (string, []any) {
 	q := `SELECT id, service_name, time, level, message, trace_id, span_id, attrs
 	      FROM telemetry_log WHERE 1=1`
-	args := make([]any, 0, 4)
+	args := make([]any, 0, 5)
 	if f.ServiceName != "" {
 		q += ` AND service_name = ?`
 		args = append(args, f.ServiceName)
+	}
+	if f.TenantPrefix != "" {
+		q += ` AND service_name LIKE ?`
+		args = append(args, escapeLikePrefix(f.TenantPrefix)+"%")
 	}
 	if f.Level != "" {
 		q += ` AND level = ?`
@@ -510,11 +515,12 @@ func buildLogQuery(f LogFilter) (string, []any) {
 
 // MetricFilter narrows the metric read.
 type MetricFilter struct {
-	ServiceName string
-	Name        string
-	Since       time.Time
-	Until       time.Time
-	Limit       int
+	ServiceName  string
+	TenantPrefix string // "" → no tenant scoping
+	Name         string
+	Since        time.Time
+	Until        time.Time
+	Limit        int
 }
 
 // MetricRow mirrors a telemetry_metric SELECT row.
@@ -532,10 +538,14 @@ type MetricRow struct {
 func (s *Store) QueryMetrics(filter MetricFilter) ([]MetricRow, error) {
 	q := `SELECT id, service_name, time, name, type, value, attrs
 	      FROM telemetry_metric WHERE 1=1`
-	args := make([]any, 0, 4)
+	args := make([]any, 0, 5)
 	if filter.ServiceName != "" {
 		q += ` AND service_name = ?`
 		args = append(args, filter.ServiceName)
+	}
+	if filter.TenantPrefix != "" {
+		q += ` AND service_name LIKE ?`
+		args = append(args, escapeLikePrefix(filter.TenantPrefix)+"%")
 	}
 	if filter.Name != "" {
 		q += ` AND name = ?`
@@ -580,11 +590,12 @@ func (s *Store) QueryMetrics(filter MetricFilter) ([]MetricRow, error) {
 
 // SpanFilter narrows the span read.
 type SpanFilter struct {
-	ServiceName string
-	TraceID     string
-	Since       time.Time
-	Until       time.Time
-	Limit       int
+	ServiceName  string
+	TenantPrefix string // "" → no tenant scoping
+	TraceID      string
+	Since        time.Time
+	Until        time.Time
+	Limit        int
 }
 
 // SpanRow mirrors a telemetry_span SELECT row.
@@ -605,10 +616,14 @@ type SpanRow struct {
 func (s *Store) QuerySpans(filter SpanFilter) ([]SpanRow, error) {
 	q := `SELECT id, service_name, time, name, trace_id, span_id, parent_id, start_time, end_time, attrs
 	      FROM telemetry_span WHERE 1=1`
-	args := make([]any, 0, 4)
+	args := make([]any, 0, 5)
 	if filter.ServiceName != "" {
 		q += ` AND service_name = ?`
 		args = append(args, filter.ServiceName)
+	}
+	if filter.TenantPrefix != "" {
+		q += ` AND service_name LIKE ?`
+		args = append(args, escapeLikePrefix(filter.TenantPrefix)+"%")
 	}
 	if filter.TraceID != "" {
 		q += ` AND trace_id = ?`
@@ -773,4 +788,30 @@ func max(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// escapeLikePrefix strips SQLite LIKE wildcards (`%` and `_`) from
+// the tenant prefix so a malicious / unsanitised claim can't widen
+// the prefix scope.  Legitimate tenant claims (slug / UUID / numeric
+// ID) never contain LIKE metachars; if any do appear we drop them
+// rather than enable an ESCAPE clause (which would propagate
+// through every WHERE-clause builder in this file).  Caller appends
+// `%` AFTER calling this helper.
+func escapeLikePrefix(p string) string {
+	if p == "" {
+		return ""
+	}
+	for i := 0; i < len(p); i++ {
+		if p[i] == '%' || p[i] == '_' {
+			out := make([]byte, 0, len(p))
+			out = append(out, p[:i]...)
+			for j := i; j < len(p); j++ {
+				if p[j] != '%' && p[j] != '_' {
+					out = append(out, p[j])
+				}
+			}
+			return string(out)
+		}
+	}
+	return p
 }
