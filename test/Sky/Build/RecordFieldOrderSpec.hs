@@ -22,74 +22,65 @@ module Sky.Build.RecordFieldOrderSpec (spec) where
 -- Same shape as the #381 ExampleSweep fix: invoke `sky build` with
 -- `cwd = $TMPDIR/sky-rfo-…` so emit lands in the tempdir and the
 -- spec reads from there.
+--
+-- Tier 1 (task #491): no subprocess `sky build` — the compile
+-- pipeline runs IN-PROCESS via Sky.Build.Helpers.InProcessCompile.
+-- Workdir isolation is now structural (each call uses a fresh
+-- tempdir + ZERO shared sky-out/) and there's no cwd-race surface.
 
 import Test.Hspec
-import System.IO.Temp (withSystemTempDirectory)
-import System.Process (readCreateProcessWithExitCode, proc, CreateProcess(..))
-import System.Directory (getCurrentDirectory, doesFileExist)
-import System.FilePath ((</>))
 import Data.List (isInfixOf)
+
+import Sky.Build.Helpers.InProcessCompile (CompileResult(..), compileInProcess)
 
 
 spec :: Spec
 spec = do
     describe "record auto-ctor honours source field order (audit P0-4)" $ do
         it "generates struct + ctor in declaration order, not alphabetical" $ do
-            cwd <- getCurrentDirectory
-            let sky = cwd </> "sky-out" </> "sky"
-            haveSky <- doesFileExist sky
-            haveSky `shouldBe` True
-            withSystemTempDirectory "sky-rfo" $ \dir -> do
-                -- Fields declared b, a, c — deliberately non-alphabetical
-                -- so a broken implementation sorts them into a, b, c and
-                -- the test catches it.
-                let src = unlines
-                        [ "module M exposing (..)"
-                        , ""
-                        , "import Sky.Core.Prelude exposing (..)"
-                        , ""
-                        , "type alias R ="
-                        , "    { beta : Int"
-                        , "    , alpha : String"
-                        , "    , gamma : Bool"
-                        , "    }"
-                        , ""
-                        , "sample : R"
-                        , "sample = R 99 \"hi\" True"
-                        , ""
-                        , "-- Force the function into the reachable graph."
-                        , "main = sample"
-                        ]
-                    fixture = dir </> "M.sky"
-                writeFile fixture src
-                -- Run `sky build` with cwd = $dir so emit lands at
-                -- $dir/sky-out/main.go (NOT the in-tree sky-out/).
-                -- We care about the emitted struct + ctor, not whether
-                -- `go build` succeeds — unrelated module-prefix cases
-                -- can fail the final link without affecting this
-                -- regression. Run the build, ignore its exit code,
-                -- and inspect the generated Go directly.
-                let cp = (proc sky ["build", fixture]) { cwd = Just dir }
-                _ <- readCreateProcessWithExitCode cp ""
-                goSrc <- readFile (dir </> "sky-out" </> "main.go")
-                -- The entry-module's alias `R` emits as `R_R` (struct
-                -- suffix = `_R`). For non-entry dep modules it would
-                -- be prefixed (`M_R_R`). Either way, the field order
-                -- is what this test guards.
-                let structOrder = "type R_R struct {\n\tBeta int\n\tAlpha string\n\tGamma bool\n}"
-                (structOrder `isInfixOf` goSrc) `shouldBe` True
-                -- Constructor's positional params map to fields in
-                -- declaration order (p0→Beta, p1→Alpha, p2→Gamma).
-                -- Pre-fix alphabetical would give
-                -- `Alpha: ...p0, Beta: ...p1, Gamma: ...p2` — catastrophic
-                -- because the user calls `R 99 "hi" True` expecting
-                -- beta=99 but would receive alpha=99 (int→string cast
-                -- panic).
-                -- With typed-codegen, the ctor params are concretely
-                -- typed (int/string/bool) so rt.CoerceX isn't needed;
-                -- accept either the coerced or raw form, but still
-                -- assert the FIELD ORDER is Beta→Alpha→Gamma.
-                let ctorTyped = "Beta: p0, Alpha: p1, Gamma: p2"
-                    ctorCoerced = "Beta: rt.CoerceInt(p0), Alpha: rt.CoerceString(p1), Gamma: rt.CoerceBool(p2)"
-                ((ctorTyped `isInfixOf` goSrc) || (ctorCoerced `isInfixOf` goSrc))
-                    `shouldBe` True
+            -- Fields declared b, a, c — deliberately non-alphabetical
+            -- so a broken implementation sorts them into a, b, c and
+            -- the test catches it.
+            let src = unlines
+                    [ "module Main exposing (main)"
+                    , ""
+                    , "import Sky.Core.Prelude exposing (..)"
+                    , ""
+                    , "type alias R ="
+                    , "    { beta : Int"
+                    , "    , alpha : String"
+                    , "    , gamma : Bool"
+                    , "    }"
+                    , ""
+                    , "sample : R"
+                    , "sample = R 99 \"hi\" True"
+                    , ""
+                    , "-- Force the function into the reachable graph."
+                    , "main = sample"
+                    ]
+            result <- compileInProcess src
+            case result of
+                CompileErr e -> expectationFailure ("compile failed: " ++ e)
+                CompileOk goSrc -> do
+                    -- The entry-module's alias `R` emits as `R_R`
+                    -- (struct suffix = `_R`). For non-entry dep
+                    -- modules it would be prefixed (`M_R_R`). Either
+                    -- way, the field order is what this test guards.
+                    let structOrder = "type R_R struct {\n\tBeta int\n\tAlpha string\n\tGamma bool\n}"
+                    (structOrder `isInfixOf` goSrc) `shouldBe` True
+                    -- Constructor's positional params map to fields in
+                    -- declaration order (p0→Beta, p1→Alpha, p2→Gamma).
+                    -- Pre-fix alphabetical would give
+                    -- `Alpha: ...p0, Beta: ...p1, Gamma: ...p2` —
+                    -- catastrophic because the user calls
+                    -- `R 99 "hi" True` expecting beta=99 but would
+                    -- receive alpha=99 (int→string cast panic).
+                    -- With typed-codegen, the ctor params are
+                    -- concretely typed (int/string/bool) so
+                    -- rt.CoerceX isn't needed; accept either the
+                    -- coerced or raw form, but still assert the
+                    -- FIELD ORDER is Beta→Alpha→Gamma.
+                    let ctorTyped = "Beta: p0, Alpha: p1, Gamma: p2"
+                        ctorCoerced = "Beta: rt.CoerceInt(p0), Alpha: rt.CoerceString(p1), Gamma: rt.CoerceBool(p2)"
+                    ((ctorTyped `isInfixOf` goSrc) || (ctorCoerced `isInfixOf` goSrc))
+                        `shouldBe` True
