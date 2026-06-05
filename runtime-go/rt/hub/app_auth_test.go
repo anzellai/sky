@@ -19,6 +19,7 @@
 package hub
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -139,6 +140,58 @@ func TestConsoleGateApp_CallbackAllows(t *testing.T) {
 		// 200 is the default for ResponseRecorder when nothing was
 		// written. The gate writes ONLY on deny.
 		t.Errorf("status = %d, want 200 (unwritten by gate)", rec.Code)
+	}
+}
+
+// TestConsoleGateApp_IdentityThreadsToContext — the v0.16.5 tenant
+// gate's main invariant: after the gate allows, downstream handlers
+// can read the ConsoleIdentity from r.Context() via
+// IdentityFromContext. Without this, app-auth-mode can't filter
+// queries by tenant.
+func TestConsoleGateApp_IdentityThreadsToContext(t *testing.T) {
+	expected := rt.ConsoleIdentity{
+		Subject: "bob",
+		Email:   "bob@example.com",
+		Claims:  map[string]string{"tenant": "customer-99"},
+	}
+	RegisterAppAuthCallback(func(r *http.Request) (rt.ConsoleIdentity, bool) {
+		return expected, true
+	})
+	defer RegisterAppAuthCallback(nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/console/", nil)
+	rec := httptest.NewRecorder()
+	ok := consoleGateApp(rec, req)
+
+	if !ok {
+		t.Fatalf("gate denied — wanted allow")
+	}
+	got, present := IdentityFromContext(req.Context())
+	if !present {
+		t.Fatal("IdentityFromContext returned not-present after gate allowed")
+	}
+	if got.Subject != expected.Subject {
+		t.Errorf("Subject = %q, want %q", got.Subject, expected.Subject)
+	}
+	if got.Email != expected.Email {
+		t.Errorf("Email = %q, want %q", got.Email, expected.Email)
+	}
+	if got.Claims["tenant"] != expected.Claims["tenant"] {
+		t.Errorf("tenant claim = %q, want %q",
+			got.Claims["tenant"], expected.Claims["tenant"])
+	}
+}
+
+// TestIdentityFromContext_NoIdentity — pure helper test for the
+// off-mode / no-auth-ran case. Returns (zero, false).
+func TestIdentityFromContext_NoIdentity(t *testing.T) {
+	ctx := context.Background()
+	id, ok := IdentityFromContext(ctx)
+	if ok {
+		t.Errorf("IdentityFromContext on bare context returned ok=true; want false")
+	}
+	if id.Subject != "" || id.Email != "" || len(id.Claims) != 0 {
+		t.Errorf("zero ConsoleIdentity expected on no-identity ctx, got %+v", id)
 	}
 }
 

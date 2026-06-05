@@ -33,11 +33,45 @@
 package hub
 
 import (
+	"context"
 	"net/http"
 	"sync"
 
 	rt "sky-app/rt"
 )
+
+// identityContextKey is the typed key used to stash the
+// ConsoleIdentity on the request context after consoleGateApp
+// allows a request. Downstream handlers (the bundled console_app's
+// Hub_* kernels via hub_bridge.go) read it via IdentityFromContext.
+//
+// Using a private type as the key — recommended Go pattern — so
+// no other package can accidentally collide on the same key.
+type identityContextKey struct{}
+
+// IdentityFromContext returns the ConsoleIdentity stashed by
+// consoleGateApp on the request context, or the zero ConsoleIdentity
+// and false when no identity is present (auth=off, or token-mode
+// where no identity callback ran).
+//
+// Pattern for callers:
+//
+//	if id, ok := hub.IdentityFromContext(r.Context()); ok {
+//	    tenant := id.Claims["tenant"]
+//	    // ... filter queries by tenant
+//	}
+//
+// The lookup is O(1) — context.Value walks the linked list of values
+// but the chain is short in practice (Sky.Live + hub gate together
+// add ~3 frames).
+func IdentityFromContext(ctx context.Context) (rt.ConsoleIdentity, bool) {
+	v := ctx.Value(identityContextKey{})
+	if v == nil {
+		return rt.ConsoleIdentity{}, false
+	}
+	id, ok := v.(rt.ConsoleIdentity)
+	return id, ok
+}
 
 // AppAuthCallback is the Go-side hook for `--auth app`. Returns
 // (identity, true) on allow, (_, false) on deny. The callback
@@ -101,10 +135,15 @@ func consoleGateApp(w http.ResponseWriter, r *http.Request) bool {
 		http.Error(w, "", http.StatusUnauthorized)
 		return false
 	}
-	// Stash the identity on the request context so downstream
-	// store-query kernels can read the tenant claim. Threaded via
-	// rt's ConsoleIdentity helpers (same shape as inline mode).
-	_ = identity // tenant-claim threading lands in B8b
+	// Stash identity on the request context so downstream handlers
+	// (the bundled console_app's Hub_* kernels via hub_bridge.go)
+	// can read identity.Claims["tenant"] and pre-filter store
+	// queries. We mutate *r in place because the surrounding
+	// `MountLiveSubAppInProcessWithGate` doesn't (yet) allow the
+	// gate to return a modified request — the *r = *r.WithContext
+	// idiom is the standard Go middleware pattern for this case.
+	ctx := context.WithValue(r.Context(), identityContextKey{}, identity)
+	*r = *r.WithContext(ctx)
 	return true
 }
 
